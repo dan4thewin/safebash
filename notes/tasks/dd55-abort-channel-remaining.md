@@ -1,6 +1,6 @@
 ---
 title: "DD#55 (A)-channel abort — remaining: pipefail, c cmdsub, descriptive messages, janet pipeline"
-status: ready
+status: done
 priority: P2
 kind: bug
 depends: []
@@ -88,3 +88,18 @@ non-first-`-` stage-drop. `pipeline && C`/`pipeline || C` now rejected
 (55.7/8/9 — emit_cmdsub is still a TODO for externals), descriptive-message
 aborts (cd/echo-write/redirect-open, 55.20-29 native-only), and `$!`/getcpid
 (38.5, 55.19). These are independent of the pipefail work.
+
+---
+
+## DONE 2026-09-13 (journal 282)
+
+Remaining gates resolved:
+
+- **pipefail-on-non-last aborts in c** — 21.3 and 55.10 pass in c, with the
+  failing stage named in the diagnostic. Per-segment `-` suppression still
+  holds (55.11, 55.35: the latter must report the *second* stage).
+- **c cmdsub abort** — was already [DONE]; the missing diagnostic landed here.
+- **cd / echo-write / redirect descriptive messages in c** — 55.20-29 already
+  ran unguarded in both modes and assert the message text; verified green.
+- **janet pipeline abort** and the **janet diagnostic decision** — moot: the
+  janet backend was removed under DD#104.

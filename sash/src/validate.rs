@@ -2098,6 +2098,23 @@ const BUILTINS: &[&str] = &[
     // value-only). `matchall` fills its out-array with every match.
     "match",
     "matchall",
+    // Value-only intrinsics. They are listed here for exactly one reason: a
+    // name in BUILTINS is never PATH-resolved. Leaving them out made the safe
+    // set host-dependent — `join`, `basename` and `dirname` have coreutils
+    // twins and silently exec'd them in statement position, while the rest
+    // escaped only because no binary of that name happened to be installed.
+    // VALUE_ONLY_INTRINSICS below then makes statement position SB5073.
+    "len",
+    "strlen",
+    "keys",
+    "join",
+    "sub",
+    "gsub",
+    "toupper",
+    "tolower",
+    "basename",
+    "dirname",
+    "random",
 ];
 
 /// Intrinsics that are **value-producing only**: they are legal as a `$( )`
@@ -2109,9 +2126,15 @@ const BUILTINS: &[&str] = &[
 /// with `sash: bug: bare command passed to sash_exec`.
 ///
 /// `argv` is deliberately absent — DD#60's `argv [N] a` out-param form is a
-/// legal statement. The other value intrinsics (`len`, `keys`, `join`,
-/// `toupper`, `random`, …) are not in `BUILTINS` at all, so they already get
-/// SB5011 in statement position.
+/// legal statement. So are `match`/`matchall`, which are boolean commands with
+/// out-array forms.
+///
+/// The remaining value intrinsics (`len`, `keys`, `join`, `toupper`, `random`,
+/// …) used to be absent from `BUILTINS` on the theory that they "already get
+/// SB5011 in statement position". That was false: SB5011 only fires when no
+/// PATH binary matches, so `join`, `basename` and `dirname` silently exec'd
+/// their coreutils twins, and the others were safe only by accident of what
+/// was installed. They are now in both lists.
 const VALUE_ONLY_INTRINSICS: &[&str] = &[
     "getenv",
     "status",
@@ -2123,6 +2146,17 @@ const VALUE_ONLY_INTRINSICS: &[&str] = &[
     "argc",
     "arg",
     "signum",
+    "len",
+    "strlen",
+    "keys",
+    "join",
+    "sub",
+    "gsub",
+    "toupper",
+    "tolower",
+    "basename",
+    "dirname",
+    "random",
 ];
 
 fn collect_functions(stmts: &[Statement], funcs: &mut HashSet<String>) {

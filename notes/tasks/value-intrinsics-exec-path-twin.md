@@ -1,6 +1,6 @@
 ---
 title: "value intrinsics with a PATH twin silently exec it in statement position"
-status: ready
+status: done
 priority: P1
 kind: bug
 depends: []
@@ -85,3 +85,25 @@ in command position showed `basename` and `join` compiling when every sibling
 intrinsic was rejected; DG asked why the c backend wanted an external, which is
 what turned it up. The probe was looking for a c-backend hole and found a
 front-end one.
+
+---
+
+## DONE 2026-09-13 (journal 282)
+
+Scope B as DG directed. All 11 value intrinsics — `len`, `strlen`, `keys`,
+`join`, `sub`, `gsub`, `toupper`, `tolower`, `basename`, `dirname`, `random` —
+added to **both** `BUILTINS` (so they are never PATH-resolved) and
+`VALUE_ONLY_INTRINSICS` (so statement position is SB5073). The doc comment
+that asserted the false invariant was corrected in place.
+
+`random` has no `BuiltinCmd` variant and never appears in `from_name`; it is
+resolved by name in `transform/expr_handlers.rs`, which is why a search of the
+builtin table missed it.
+
+Specs `via.13-20` in errors.sh, deliberately split: `basename`/`dirname`/`join`
+have a real PATH twin on this host, `random`/`len`/`toupper` do not. The second
+group is the one that makes the property host-independent — it must reject for
+being value-only, not because a PATH lookup happened to miss. `via.19-20` pin
+that the value-producing forms still work.
+
+Fail-first: reverting validate.rs fails exactly via.13-18 in both modes.

@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup errors
-plan=173
+plan=181
 echo "1..$plan" >&3
 
 set +e
@@ -62,7 +62,7 @@ run_sash 'int x=9223372036854775807; (( x += 1 )); echo $x'
 run_sash '/bin/false
 echo should_not_reach'
 [[ $rc != 0 && $out != *"should_not_reach"* && -z $err ]] \
-  && { ! in_modes native || [[ $rerr == *"/bin/false: command failed (exit 1)"* ]]; }; chk 55.1
+  && [[ $rerr == *"/bin/false: command failed (exit 1)"* ]]; chk 55.1
 
 # 55.2 variable assignment no exit check
 run_sash 'x=hello; echo $x'
@@ -92,7 +92,7 @@ run_sash 'fn f { x=$(/bin/false); attest x [[ -n $x ]]; echo $x }; f'
 # 55.8 x=$(cmd) where cmd fails aborts (taint orthogonal — don't reference x)
 run_sash 'x=$(/bin/false); attest x [[ -n $x ]]'
 [[ $rc != 0 && -z $err ]] \
-  && { ! in_modes native || [[ $rerr == *"/bin/false: command failed (exit 1)"* ]]; }; chk 55.8
+  && [[ $rerr == *"/bin/false: command failed (exit 1)"* ]]; chk 55.8
 
 # 55.9 x=$(- cmd) captures output (discards exit). The output is external →
 # tainted, so it must be attested before use. (Was a pre-existing taint hole:
@@ -111,7 +111,7 @@ run_sash 'x=$(- /bin/false); attest x [[ -z $x ]]; echo "survived[$x]"'
 # 55.10 pipefail always on
 run_sash '/bin/false | /bin/true'
 [[ $rc != 0 && -z $err ]] \
-  && { ! in_modes native || [[ $rerr == *"/bin/false: command failed (exit 1)"* ]]; }; chk 55.10
+  && [[ $rerr == *"/bin/false: command failed (exit 1)"* ]]; chk 55.10
 
 # 55.11 - cmd1 | cmd2 suppresses cmd1 but checks cmd2
 run_sash '- /bin/false | /bin/true'
@@ -137,7 +137,7 @@ run_sash 'if /bin/true | /bin/true; then echo T; else echo E; fi'
 run_sash '- /bin/true | /bin/false
 echo AFTER'
 [[ $rc != 0 && $out != *"AFTER"* && -z $err ]] \
-  && { ! in_modes native || [[ $rerr == *"/bin/false: command failed (exit 1)"* ]]; }; chk 55.35
+  && [[ $rerr == *"/bin/false: command failed (exit 1)"* ]]; chk 55.35
 
 # 55.36 leading `-` on a first-segment failure does NOT abort; AFTER runs.
 run_sash '- /bin/false | /bin/true
@@ -188,24 +188,16 @@ run_sash 'fn f -> int { - /bin/false; return $?; }'
 run_sash '/nonexistent_binary_xyz &
 wait'
 [[ $rc != 0 && -z $err ]] \
-  && { ! in_modes native || [[ $rerr == *"/nonexistent_binary_xyz: No such file or directory"* ]]; }; chk 55.16
+  && [[ $rerr == *"/nonexistent_binary_xyz: No such file or directory"* ]]; chk 55.16
 
 # 55.30 fg UNCAUGHT exec failure → child errno detail + parent uncaught
 #       abort (both lines). DD#55: child owns exec errors; parent's
 #       command-failed fires because it is uncaught.
-#       native-only, and ONLY for the second line: c gets rc 127, the empty
-#       stdout, and the child's errno line right, but has no sash_emsg on the
-#       abort path so `command failed (exit 127)` never prints.
-#       Task: c-dd55-abort-channel. Re-measured 2026-09-13.
-if in_modes native; then
-    run_sash '/nonexistent_binary_xyz
+run_sash '/nonexistent_binary_xyz
 echo unreached'
-    [[ $rc != 0 && -z $out \
-       && $rerr == *"/nonexistent_binary_xyz: No such file or directory"* \
-       && $rerr == *"/nonexistent_binary_xyz: command failed (exit 127)"* ]]; chk 55.30
-else
-    skip_chk 55.30
-fi
+[[ $rc != 0 && -z $out \
+   && $rerr == *"/nonexistent_binary_xyz: No such file or directory"* \
+   && $rerr == *"/nonexistent_binary_xyz: command failed (exit 127)"* ]]; chk 55.30
 
 # 55.31 CAUGHT exec failure (`|| …`) → only the child's errno detail; the
 #       parent does NOT abort, so no command-failed line.
@@ -596,6 +588,38 @@ n=$(len a)
 echo "n=$n"'
 [[ $rc = 0 && $out == n=* && -z $err ]]; chk via.12
 
+# via.13-18 a value intrinsic in statement position is SB5073 **regardless of
+# what is installed on the build host**. Before 2026-09-13 these names were in
+# neither BUILTINS nor VALUE_ONLY_INTRINSICS, so statement position fell
+# through to PATH resolution: join/basename/dirname have coreutils twins and
+# were silently exec'd (a real external program, with the real taint
+# consequences), while len/toupper/random "passed" only because no binary of
+# that name happened to exist. The safe set was host-dependent.
+#
+# via.13-15 are the three names with a real PATH twin on this host.
+run_sash 'basename /a/b'
+[[ $rc != 0 && -z $out && $err == *SB5073* && $err != *"sash: bug"* ]]; chk via.13
+run_sash 'dirname /a/b'
+[[ $rc != 0 && -z $out && $err == *SB5073* && $err != *"sash: bug"* ]]; chk via.14
+run_sash 'join a ","'
+[[ $rc != 0 && -z $out && $err == *SB5073* && $err != *"sash: bug"* ]]; chk via.15
+# via.16-18 are names with no twin — the control. They must reject for the same
+# reason (being value-only), not because PATH lookup happened to miss.
+run_sash 'random'
+[[ $rc != 0 && -z $out && $err == *SB5073* && $err != *"sash: bug"* ]]; chk via.16
+run_sash 'len m'
+[[ $rc != 0 && -z $out && $err == *SB5073* && $err != *"sash: bug"* ]]; chk via.17
+run_sash 'toupper x'
+[[ $rc != 0 && -z $out && $err == *SB5073* && $err != *"sash: bug"* ]]; chk via.18
+
+# via.19-20 the value-producing forms are untouched
+run_sash 'str b=$(basename /a/b)
+echo $b'
+[[ $rc = 0 && $out = b && -z $err ]]; chk via.19
+run_sash 'str d=$(dirname /a/b)
+echo $d'
+[[ $rc = 0 && $out = /a && -z $err ]]; chk via.20
+
 # ── `join`'s separator is fixed at compile time (SB5074) ──
 # The SSA operand is a compile-time String, so a non-literal separator had
 # nothing to lower to — the transform rendered the argument's *source text*
@@ -799,18 +823,18 @@ run_sash '/bin/false || { echo "s=$(status)"; }'
 # 55.57 SIGTERM -> 143, matching bash
 run_sash '/usr/bin/timeout --preserve-status -s TERM 0.1 /bin/sleep 5'
 [[ $rc = 143 ]] \
-  && { ! in_modes native || [[ $rerr == *"(exit 143)"* ]]; }; chk 55.57
+  && [[ $rerr == *"(exit 143)"* ]]; chk 55.57
 
 # 55.58 SIGPIPE -> 141. DD#55 makes the abort itself deliberate ("SIGPIPE is
 # the programmer's responsibility"); this pins the STATUS it aborts with.
 run_sash '/usr/bin/timeout --preserve-status -s PIPE 0.1 /bin/sleep 5'
 [[ $rc = 141 ]] \
-  && { ! in_modes native || [[ $rerr == *"(exit 141)"* ]]; }; chk 55.58
+  && [[ $rerr == *"(exit 141)"* ]]; chk 55.58
 
 # 55.59 a normal exit code is unaffected by the 128+signum path
 run_sash '/bin/sh -c "exit 42"'
 [[ $rc = 42 ]] \
-  && { ! in_modes native || [[ $rerr == *"(exit 42)"* ]]; }; chk 55.59
+  && [[ $rerr == *"(exit 42)"* ]]; chk 55.59
 
 # --- DD#55 + DD#99: the read family runs the same open(2) guard ---
 # `read ARR < f` / `readline v < f` carry their own redirects (SsaInst::

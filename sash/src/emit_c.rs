@@ -259,6 +259,11 @@ fn emit_prologue(out: &mut String) {
     .unwrap();
     writeln!(
         out,
+        "extern void sash_emsg_status(const char* np, i64 nl, i64 status);"
+    )
+    .unwrap();
+    writeln!(
+        out,
         "extern const char* const* sash_envp;  /* set by sash-rt _start */"
     )
     .unwrap();
@@ -2090,10 +2095,17 @@ fn emit_exec(e: &mut Emit, name: &str, args: &[SsaValue], checked: bool, types: 
     // The `checked` flag is false in condition/suppressed positions (computed
     // on the SSA), so this matches native's emit_status_abort_check.
     if checked {
+        // DD#55: the descriptive diagnostic goes out only on the real abort,
+        // so a caught (`||`) or `-`-suppressed failure stays silent — the same
+        // placement native uses in emit_status_abort_check. Without this the c
+        // backend produced the right exit status and the child's errno line but
+        // never the parent's `command failed (exit N)` (spec 55.30).
+        let abort = abort_target(e);
+        let esc = c_escape(name);
         writeln!(
             e.out,
-            "    if (__exit_status != 0) goto {};",
-            abort_target(e)
+            "    if (__exit_status != 0) {{ sash_emsg_status(\"{esc}\", {}, __exit_status); goto {abort}; }}",
+            name.len()
         )
         .unwrap();
     }
@@ -3169,7 +3181,17 @@ fn emit_cmdsub_exec_c(
     )
     .unwrap();
     if !suppressed {
-        writeln!(e.out, "    if ({t}_st != 0) sash_exit({t}_st);", t = t).unwrap();
+        // DD#55: same diagnostic native emits in emit_cmdsub_abort_check
+        // (value_handlers.rs:875). A `-`-suppressed capture never reaches here,
+        // so it stays silent.
+        let esc = c_escape(name);
+        writeln!(
+            e.out,
+            "    if ({t}_st != 0) {{ sash_emsg_status(\"{esc}\", {nl}, {t}_st); sash_exit({t}_st); }}",
+            t = t,
+            nl = name.len()
+        )
+        .unwrap();
     }
     (format!("{}_p", t), format!("{}_l", t))
 }
@@ -3441,18 +3463,10 @@ fn emit_pipeline(
     negated: &[bool],
     types: &VarTypes,
 ) {
+    if emit_degenerate_pipeline(e, stages, checked, capture_read_fd, types) {
+        return;
+    }
     let n = stages.len();
-    if n == 0 {
-        return;
-    }
-    if n == 1 && !capture_read_fd {
-        // Degenerate 1-stage pipeline: emit as a plain command carrying the
-        // pipeline's own `checked` so a bare failing stage still aborts.
-        let (name, args, redirects) = &stages[0];
-        let kind = BuiltinCmd::from_name(name);
-        emit_command(e, name, &kind, args, redirects, checked, types);
-        return;
-    }
 
     let p = e.fresh();
     // With capture, an extra pipe (index n-1) carries last-stage → parent.
@@ -3479,16 +3493,58 @@ fn emit_pipeline(
     }
 
     emit_pipeline_parent_close(e, &p, num_pipes, capture_read_fd);
-    emit_pipeline_wait(e, &p, n, suppressed, negated);
+    emit_pipeline_finish(e, &p, checked, suppressed, negated, stages);
+}
+
+/// A 0- or 1-stage "pipeline" needs none of the fork/pipe machinery. Returns
+/// true when it handled the case. Split out of `emit_pipeline` to keep that
+/// function under the complexity gate.
+fn emit_degenerate_pipeline(
+    e: &mut Emit,
+    stages: &[(String, Vec<SsaValue>, Vec<crate::ir::Redirect>)],
+    checked: bool,
+    capture_read_fd: bool,
+    types: &VarTypes,
+) -> bool {
+    let n = stages.len();
+    if n == 0 {
+        return true;
+    }
+    if n == 1 && !capture_read_fd {
+        // Degenerate 1-stage pipeline: emit as a plain command carrying the
+        // pipeline's own `checked` so a bare failing stage still aborts.
+        let (name, args, redirects) = &stages[0];
+        let kind = BuiltinCmd::from_name(name);
+        emit_command(e, name, &kind, args, redirects, checked, types);
+        return true;
+    }
+    false
+}
+
+/// Reap the children, publish the aggregate status, and apply the DD#55 abort.
+/// Split out of `emit_pipeline` to keep that function under the complexity gate.
+fn emit_pipeline_finish(
+    e: &mut Emit,
+    p: &str,
+    checked: bool,
+    suppressed: &[bool],
+    negated: &[bool],
+    stages: &[(String, Vec<SsaValue>, Vec<crate::ir::Redirect>)],
+) {
+    emit_pipeline_wait(e, p, suppressed, negated, stages);
     writeln!(e.out, "    __exit_status = {p}_status;", p = p).unwrap();
     writeln!(e.out, "    __test_result = (__exit_status == 0) ? 1 : 0;").unwrap();
     // DD#55: a nonzero aggregate aborts in a `checked` (statement) position;
-    // `checked` is false in condition / END positions (no abort there).
+    // `checked` is false in condition / END positions (no abort there). The
+    // diagnostic names the stage that actually failed, which `{p}_fail` carried
+    // out of the first-nonzero fold in emit_pipeline_wait.
     if checked {
+        let abort = abort_target(e);
         writeln!(
             e.out,
-            "    if (__exit_status != 0) goto {};",
-            abort_target(e)
+            "    if (__exit_status != 0) {{ sash_emsg_status({p}_fail, {p}_fail_len, \
+             __exit_status); goto {abort}; }}",
+            p = p
         )
         .unwrap();
     }
@@ -3530,9 +3586,25 @@ fn emit_pipeline_parent_close(e: &mut Emit, p: &str, num_pipes: usize, capture_r
 /// aggregate = first-nonzero status over the NON-suppressed stages.
 /// A `-`-suppressed stage still ran; only its status is excluded. DD#70: a
 /// `!`-negated stage inverts its status (0↔nonzero) before the fold.
-fn emit_pipeline_wait(e: &mut Emit, p: &str, n: usize, suppressed: &[bool], negated: &[bool]) {
+fn emit_pipeline_wait(
+    e: &mut Emit,
+    p: &str,
+    suppressed: &[bool],
+    negated: &[bool],
+    stages: &[(String, Vec<SsaValue>, Vec<crate::ir::Redirect>)],
+) {
     writeln!(e.out, "    i64 {p}_status = 0;", p = p).unwrap();
-    for i in 0..n {
+    // DD#55: the diagnostic names the FAILING stage, not the last one, so the
+    // name is captured by the same first-nonzero fold that picks the status
+    // (native materializes all stage names and lets wait_for_children pick —
+    // inst_handlers.rs:68). A null name is skipped by sash_emsg_status.
+    writeln!(
+        e.out,
+        "    const char* {p}_fail = 0; i64 {p}_fail_len = 0;",
+        p = p
+    )
+    .unwrap();
+    for (i, stage) in stages.iter().enumerate() {
         let is_suppressed = suppressed.get(i).copied().unwrap_or(false);
         let is_negated = negated.get(i).copied().unwrap_or(false);
         if is_suppressed {
@@ -3545,10 +3617,13 @@ fn emit_pipeline_wait(e: &mut Emit, p: &str, n: usize, suppressed: &[bool], nega
         } else {
             format!("{p}_st", p = p)
         };
+        let esc = c_escape(&stage.0);
+        let nl = stage.0.len();
         writeln!(
             e.out,
             "    {{ i64 {p}_st = sash_wait({p}_pids[{i}]); i64 {p}_s2 = {st}; \
-             if ({p}_status == 0 && {p}_s2 != 0) {p}_status = {p}_s2; }}",
+             if ({p}_status == 0 && {p}_s2 != 0) {{ {p}_status = {p}_s2; \
+             {p}_fail = \"{esc}\"; {p}_fail_len = {nl}; }} }}",
             p = p,
             i = i,
             st = st

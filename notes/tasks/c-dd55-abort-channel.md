@@ -1,6 +1,6 @@
 ---
 title: "C backend lacks the DD#55 (A)-channel implicit-exit abort"
-status: ready
+status: done
 scope: c/janet backends only (native complete)
 priority: P2
 kind: bug
@@ -60,3 +60,17 @@ precondition for un-guarding them.
 The janet backend is removed. This task was filed against both
 backends; the **c** half is still real and still open — it shows up
 as one of the c-mode skips. The janet half is gone, not fixed.
+
+---
+
+## DONE 2026-09-13 (journal 282)
+
+The last piece was the descriptive diagnostic. c had the right control flow
+and exit status but never called `sash_emsg_status`, which the runtime already
+exported — it was simply not declared in the c prologue. Added there and at
+all three abort sites (external `emit_exec`, command substitution
+`emit_cmdsub_exec_c`, pipeline `emit_pipeline`).
+
+Spec 55.30 un-gated, and the eight inline `{ ! in_modes native || … }` message
+guards in errors.sh made unconditional. errors.sh now has zero mode guards and
+passes 181/181 in both backends.

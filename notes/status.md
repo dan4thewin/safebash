@@ -1,3 +1,44 @@
+## ══ STATUS (2026-09-13) — DD#55 channel complete in c; PATH twins closed ══
+
+**Journal 282.** Sweep **4232 passing, 9 skipped, 0 failing**. 17 flips (55.30
+un-gated + 16 new tests). c **2057 → 2066**, native **2158 → 2166**.
+
+**55.30 fixed, and two more paths behind it.** The filed gap was one missing
+`sash_emsg_status` call on c's external-abort path. Fixing it exposed that
+errors.sh had eight *inline* `{ ! in_modes native || … }` message guards — not
+skips, so the tests ran in c but never asserted the message. Five went green
+immediately; the other three were different abort paths: **command
+substitution** (`emit_cmdsub_exec_c`) and **pipeline** (`emit_pipeline`), both
+aborting with the right status and no diagnostic. Both fixed.
+
+The pipeline case names the **failing** stage, so the name rides the
+first-nonzero fold alongside the status (c's version of native materializing
+all stage names for `wait_for_children`). `55.35` (`- /bin/true | /bin/false`)
+is the proof: it must report the second stage, not the suppressed first.
+
+**errors.sh now has zero mode guards and passes 181/181 in both backends.**
+
+**PATH twins closed (P1, DG's scope B).** `VALUE_ONLY_INTRINSICS`' doc comment
+claimed the other value intrinsics "already get SB5011 in statement position".
+SB5011 is *command not found* — it only fires when PATH lookup misses. So
+`basename`, `dirname` and `join` silently forked their coreutils twins, and
+the rest were safe only because this host has no `/usr/bin/len`. All 11 are
+now in **both** `BUILTINS` (never PATH-resolved) and `VALUE_ONLY_INTRINSICS`
+(statement position = SB5073). `via.13-18` pin three names with a real twin
+and three without, so the property is host-independent rather than
+accidentally true.
+
+**Tasks closed:** `value-intrinsics-exec-path-twin`, `c-dd55-abort-channel`,
+`dd55-abort-channel-remaining`.
+
+**Repo hygiene:** four spec harness artifacts (`out`, `err`, `.input.sh`, a
+superseded `31.4.sh.draft.2`) had been tracked in git; removed, with a scoped
+`.gitignore` block so an interrupted run cannot put them back.
+
+**The 9 remaining skips are not c defects:** `104.x` and `57.46x` invoke the
+`sash` CLI directly so `SASH_MODE` never reaches them, and `32.x` asserts an
+ELF section only the Cranelift-linked binary has.
+
 ## ══ STATUS (2026-09-13) — the taint backstop never ran on the c path ══
 
 **Journal 281.** Sweep **4215 passing, 10 skipped, 0 failing**. 16 flips, all
