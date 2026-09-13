@@ -65,3 +65,38 @@ wrong-arity `sash: bug:` abort, and the `signum` doc bug. See that task.
 ## Closed 2026-09-10 (backlog prune)
 
 Bookkeeping only — closed 2026-09-10. Successor `bug-arith-sexpr-intrinsics-zero` is the live, comprehensive task.
+
+## Addendum 2026-09-13 — reopened and closed (journal 298)
+
+Gate 1 named `$(( (getcpid) ))` explicitly. It was **not met**. Measured at
+`47a37a1`, sixteen days after this task was marked done:
+
+```
+/bin/sleep 1 &
+echo $(getcpid)          -> 3827668
+int n = $(( (getcpid) )) -> 0
+```
+
+`resolve_nullary_sexpr` had `getpid` → the `$$` slot and `status` → the `$?`
+slot, with a comment reading "`getcpid` (`$!`) is excluded — filed". It reuses
+`$!` exactly the same way; the fix is one arm.
+
+**Why it stayed silent.** The fallback branch under those arms treats an
+unknown nullary name as a *variable* reference — `$(( (x) ))` is arithmetic
+grouping, which is correct and deliberate. A misspelling is caught there by
+SB5031 ("assigned nowhere, possible typo"). But `validate` exempts every
+intrinsic name from that check, so `getcpid` — a name it knows perfectly well
+— was waved past the typo check *and* not handled by the transform, and read
+an unset slot. Two passes disagreeing about whether a name is an intrinsic, and
+the disagreement landing in the one branch that cannot report it.
+
+**And why the deferral survived.** No spec was ever written for it. The
+`sx.1`–`sx.11` block covers `argc`, `getpid`, `getppid`, `epochseconds`,
+`status`, `random` and `signum`. `getcpid` is in the gate text and in the
+symptom table at the top of this file, and nowhere in `spec/`. A gate that is
+only prose is not a gate.
+
+Now `sx.24` / `sx.25`, native and c. `sx.25` pins the sexpr against the `$!`
+punctuation sugar, which always worked here — the two spellings disagreeing is
+what made it silent.
+

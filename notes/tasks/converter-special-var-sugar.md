@@ -1,6 +1,6 @@
 ---
 title: "sash-convert + docs — emit/teach the canonical keyword specials ($? → $(status), $! → $(getcpid), $$ → $(getpid))"
-status: ready
+status: done
 priority: P3
 kind: task
 depends: [dd75-special-var-sugar]
@@ -27,3 +27,44 @@ surfaces that carry the project's *voice*:
 Kept out of the compiler commit deliberately: the compiler already accepts both
 spellings, so nothing is blocked; these are documentation/tooling changes best
 reviewed with DG.
+
+## Done 2026-09-13 (journal 298)
+
+`canonical_special` + `in_arithmetic` in `sash-convert/src/convert.rs`;
+`.SH SPECIAL VALUES` in `docs/sash.1`; the two `GUIDE.md` mentions corrected.
+Specs `57.111`–`57.115`. Sweep 4445 passing, 0 failing, 0 flips.
+
+**Gate 2 named SUBSET.md, which no longer exists** (removed 2026-08-29 — it had
+drifted from the DDs). The manpage is where language surface is taught now, and
+it did not mention the keyword forms *at all*: `getpid`, `getcpid` and `status`
+appeared nowhere in `docs/sash.1`. So the new section is not a reframe of
+existing prose, it is the first documentation these three have had.
+
+**There are two canonical spellings, not one**, and the gate's flat mapping
+would have produced non-compiling output:
+
+| context | canonical |
+|---|---|
+| command position | `$(status)` / `$(getpid)` / `$(getcpid)` |
+| arithmetic operand | `(status)` / `(getpid)` / `(getcpid)` |
+
+`$(status)` inside `$(( ))` is **SB4020** — a command substitution is not an
+arithmetic operand. The punctuation sugar reads the same in both, which is
+exactly why a mechanical rewrite has to know its context. `$#` already had
+this shape (`$(( (argc) - 1 ))`) and the note on it in `convert_simple_expansion`
+describes the same trap.
+
+**These three convert inside a function body**, unlike `$@`/`$*`/`$#`. They are
+process-wide; the positionals are the caller's arguments. The existing
+`in_function` early-return had to move.
+
+## One bug found, one bug fixed on the way
+
+**`$(( (getcpid) ))` was a silent 0** — see the addendum on
+`bug-arith-keyword-pid-intrinsic-zero`, which was marked *done* with that exact
+gate unmet. It blocked this task: the converter cannot emit an arithmetic
+spelling that evaluates to the wrong value.
+
+**`[ … ]` conversion corrupted its own output** — unfiled, pre-existing, and
+broad. See the journal; `if [ "$1" = x ]` produced
+`if [[ $1 = x ]]$arg1" = x ]`.

@@ -153,7 +153,9 @@ fn walk_node(
             convert_unset_command(node, source, patches);
         }
         "test_command" => {
-            convert_test_command(node, source, patches, prefix_lines);
+            if convert_test_command(node, source, patches, prefix_lines, annotate, collections) {
+                return;
+            }
         }
         "subshell" => {
             // Subshell: mark as MANUAL for now (mechanical conversion is complex)
@@ -738,12 +740,65 @@ fn render_subtree(
 ) -> String {
     let mut sub = Vec::new();
     walk_node(node, source, &mut sub, prefix_lines, annotate, collections);
-    let text = node_text(node, source);
-    let base = node.start_byte();
-    sub.sort_by_key(|p| (p.start, p.end));
+    splice_patches(
+        node_text(node, source),
+        node.start_byte(),
+        &mut sub,
+        source,
+        prefix_lines,
+    )
+}
+
+/// Like `render_subtree`, but walks only `node`'s children — for a caller
+/// that is itself the handler for `node`'s kind and would otherwise
+/// recurse into itself.
+fn render_children(
+    node: Node,
+    source: &[u8],
+    prefix_lines: &mut Vec<(usize, String)>,
+    annotate: bool,
+    collections: &Names,
+) -> String {
+    let mut sub = Vec::new();
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        walk_node(child, source, &mut sub, prefix_lines, annotate, collections);
+    }
+    splice_patches(
+        node_text(node, source),
+        node.start_byte(),
+        &mut sub,
+        source,
+        prefix_lines,
+    )
+}
+
+/// Apply `patches` (absolute byte offsets) to `text`, which starts at
+/// `base`. Patches that overlap an earlier one are skipped — they cannot
+/// be expressed in the output, and emitting them anyway duplicates source.
+fn splice_patches(
+    text: &str,
+    base: usize,
+    patches: &mut [Patch],
+    source: &[u8],
+    prefix_lines: &mut Vec<(usize, String)>,
+) -> String {
+    // A spliced patch never reaches `convert`'s hoist loop, so carry its
+    // own prefix line across here — `$HOME` inside a `[ … ]` still needs
+    // its `getenv`+`attest` pair emitted above the statement.
+    for patch in patches.iter() {
+        if let Some(ref pl) = patch.prefix_line {
+            let line = source[..patch.start]
+                .iter()
+                .filter(|b| **b == b'\n')
+                .count();
+            prefix_lines.push((line, pl.clone()));
+        }
+    }
+    patches.sort_by_key(|p| (p.start, p.end));
     let mut out = String::with_capacity(text.len());
     let mut pos = base;
-    for patch in &sub {
+    for patch in patches.iter() {
         if patch.start < pos {
             continue;
         }
@@ -890,13 +945,30 @@ fn strip_unnecessary_quotes(inner: &str) -> String {
     result
 }
 
+/// Rewrite a `[ … ]` / `[[ … ]]` test. Returns true when it replaced the
+/// whole node, in which case the caller must **not** recurse into the
+/// children: their patches are already spliced into the replacement.
+///
+/// A whole-node replacement and a patch inside that node cannot both be
+/// applied — the inner one re-emits source the outer one already consumed,
+/// and the output is silently corrupt. `if [ "$1" = x ]` used to convert
+/// to `if [[ $1 = x ]]$arg1" = x ]`, and every `[ … ]` holding a known env
+/// var, a positional or a `${#s}` had the same shape.
 fn convert_test_command(
     node: Node,
     source: &[u8],
     patches: &mut Vec<Patch>,
     prefix_lines: &mut Vec<(usize, String)>,
-) {
-    let text = node_text(node, source);
+    annotate: bool,
+    collections: &Names,
+) -> bool {
+    let raw = node_text(node, source);
+    // Rendering the children has to happen before the decisions, because
+    // they read the text — but its prefix lines are only correct if the
+    // replacement is actually emitted, so they are held aside until then.
+    let mut sub_prefix = Vec::new();
+    let rendered = render_children(node, source, &mut sub_prefix, annotate, collections);
+    let text = rendered.as_str();
 
     // Check for numeric comparisons — in either [ ] or [[ ]] form
     let (is_double, is_single) = (
@@ -911,16 +983,17 @@ fn convert_test_command(
                 patches.push(Patch::replace_node(
                     node,
                     replacement,
-                    Some(text.to_string()),
+                    Some(raw.to_string()),
                 ));
-                return;
+                prefix_lines.append(&mut sub_prefix);
+                return true;
             }
             NumericResult::TooComplex => {
                 let line = node.start_position().row;
                 prefix_lines.push((line, "# MANUAL: numeric comparison needs conversion to (( )) — operands too complex for auto-convert".to_string()));
                 // Still convert [ ] → [[ ]] below if single bracket
                 if is_double {
-                    return;
+                    return false;
                 }
             }
             NumericResult::NotNumeric => {}
@@ -937,8 +1010,10 @@ fn convert_test_command(
         patches.push(Patch::replace_node(
             node,
             replacement,
-            Some(text.to_string()),
+            Some(raw.to_string()),
         ));
+        prefix_lines.append(&mut sub_prefix);
+        return true;
     }
 
     // Fix regex patterns: convert POSIX [-...] and [...-] to Plan 9 [\-...]
@@ -949,10 +1024,13 @@ fn convert_test_command(
             let fixed = fix_regex_dashes(pattern);
             if fixed != pattern {
                 let full = format!("[[ {} =~ {} ]]", &inner[..re_start], fixed);
-                patches.push(Patch::replace_node(node, full, Some(text.to_string())));
+                patches.push(Patch::replace_node(node, full, Some(raw.to_string())));
+                prefix_lines.append(&mut sub_prefix);
+                return true;
             }
         }
     }
+    false
 }
 
 /// Rewrite POSIX-style character class dashes to Plan 9 escaped form.
@@ -1128,6 +1206,49 @@ fn convert_tilde_word(
     });
 }
 
+/// The DD#75 canonical keyword spelling of a punctuation special, or None
+/// if the name is not one of the three.
+///
+/// The spelling depends on where the expansion sits. In command position
+/// the keyword is a command substitution, `$(status)`; as an arithmetic
+/// operand it is the DD#58 sexpr, `(status)`. They are not
+/// interchangeable — `$(( $(status) + 0 ))` is SB4020, the same trap `$#`
+/// hit (see the `(argc)` note in `convert_simple_expansion`).
+///
+/// `$?`/`$$`/`$!` are process-wide, so unlike the positional specials they
+/// mean the same thing inside a function body as outside it.
+fn canonical_special(name: &str, arith: bool) -> Option<&'static str> {
+    let keyword = match name {
+        "?" => "status",
+        "$" => "getpid",
+        "!" => "getcpid",
+        _ => return None,
+    };
+    Some(match (keyword, arith) {
+        ("status", false) => "$(status)",
+        ("status", true) => "(status)",
+        ("getpid", false) => "$(getpid)",
+        ("getpid", true) => "(getpid)",
+        ("getcpid", false) => "$(getcpid)",
+        _ => "(getcpid)",
+    })
+}
+
+/// Whether `node` sits inside an arithmetic context — `$(( … ))`, a bare
+/// `(( … ))` statement, or a C-style `for (( … ))` header.
+fn in_arithmetic(node: Node) -> bool {
+    let mut cur = node.parent();
+    while let Some(n) = cur {
+        match n.kind() {
+            "arithmetic_expansion" | "c_style_for_statement" => return true,
+            "compound_statement" if n.child(0).is_some_and(|c| c.kind() == "((") => return true,
+            _ => {}
+        }
+        cur = n.parent();
+    }
+    false
+}
+
 fn convert_simple_expansion(
     node: Node,
     source: &[u8],
@@ -1167,10 +1288,23 @@ fn convert_simple_expansion(
                 }
             }
             "special_variable_name" => {
+                let name = node_text(child, source);
+                // DD#75 §1: the keyword forms are canonical and the
+                // punctuation is input sugar. These three are process-wide,
+                // not positional, so they convert inside a function body too
+                // — unlike $@/$*/$# below, which are the caller's args.
+                if let Some(keyword) = canonical_special(name, in_arithmetic(node)) {
+                    patches.push(Patch::replace_span(
+                        start,
+                        end,
+                        keyword.to_string(),
+                        Some(node_text(node, source).to_string()),
+                    ));
+                    continue;
+                }
                 if in_function {
                     continue;
                 }
-                let name = node_text(child, source);
                 // DD#60: $@/$* → $(argv 1) (array splat); $# → user-arg count
                 // ($(argc) is C argc, so subtract the program-name slot).
                 // A splat is unquoted in sash-native (DD#22), so when the

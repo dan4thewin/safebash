@@ -342,6 +342,64 @@ write
 not
 .RB \[dq] [[\ $a\ \-eq\ $b\ ]] \[dq].
 .
+.SH SPECIAL VALUES
+Three values that bash spells with punctuation have keyword names in sash,
+and the keyword name is the canonical one (DD#75).
+The punctuation is accepted as input sugar; it is what
+.B sash\-convert
+rewrites away.
+.TP
+.B $(status)
+The exit status of the most recent command.
+bash spells this
+.BR $? .
+.TP
+.B $(getpid)
+This process's pid.
+bash spells this
+.BR $$ .
+.TP
+.B $(getcpid)
+The pid of the most recent background job.
+bash spells this
+.BR $! .
+.PP
+.B The spelling depends on where the value sits.
+In command position the keyword is a command substitution,
+.BR $(status) .
+As an arithmetic operand it is the
+.RB \[dq] (name\ args\|.\|.\|.) \[dq]
+call form,
+.BR (status) ,
+with no
+.BR $ :
+.PP
+.RS
+.EX
+echo $(status)              # command position
+n=$(( (status) + 1 ))       # arithmetic operand
+.EE
+.RE
+.PP
+These are not interchangeable.
+.B $(status)
+inside
+.RB \[dq] $((\ )) \[dq]
+is
+.BR SB4020 ,
+because a command substitution is not an arithmetic operand.
+The punctuation sugar
+.RB ( $? )
+reads the same in both, which is why a mechanical rewrite has to know
+which context it is in.
+.PP
+.B $(status)
+is rejected with
+.B SB5012
+where no command has run yet \(em at the top of a script, and after a
+background job, which does not set it.
+The punctuation spelling is rejected in exactly the same places.
+.
 .SH REGULAR EXPRESSIONS
 Regexes appear in
 .RB \[dq] "[[ $v =~ RE ]]" \[dq],

@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup arithmetic
-plan=203
+plan=205
 echo "1..$plan" >&3
 
 set +e
@@ -329,6 +329,16 @@ run_sash 'echo $(( (argc) + 10 ))'
 # sx.8 random in a sexpr, captured to int — two draws differ (buggy → 0,0)
 run_sash 'int a=$(( (random) )); int b=$(( (random) )); echo $(( a != b ))'
 [[ $rc = 0 && $out = "1" && -z $err ]]; chk sx.8
+# sx.24 getcpid in a sexpr — it was the one name left out of the DD#58 fix,
+# and because `validate` exempts every intrinsic name from the SB5031 typo
+# check the omission did not read as "unknown name": it fell through to the
+# variable branch, read an unset slot, and was a silent 0.
+run_sash '/bin/sleep 0 & echo $(( (getcpid) > 0 ))'
+[[ $rc = 0 && $out = "1" && -z $err ]]; chk sx.24
+# sx.25 …and the sexpr agrees with the `$!` punctuation sugar, which always
+# worked here — the two spellings disagreeing is what made it silent
+run_sash '/bin/sleep 0 & int a=$(( (getcpid) )); int b=$(( $! )); echo $(( a == b ))'
+[[ $rc = 0 && $out = "1" && -z $err ]]; chk sx.25
 # sx.7 signum — read the sash_signum global.
 # signum with no signal received → 0 (pins it computes in a sexpr)
 run_sash 'echo $(( (signum) ))'

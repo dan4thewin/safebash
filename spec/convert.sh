@@ -6,7 +6,7 @@ set -eu
 # Run only in native mode to avoid 3× redundancy.
 [[ ${SASH_MODE:-native} != native ]] && exit 0
 setup convert
-plan=135
+plan=145
 echo "1..$plan" >&3
 
 set +e
@@ -911,6 +911,69 @@ run_convert '#!/bin/bash
 x=hello
 cat <<< "$x" > out'
 [[ $rc = 0 && $out == *'echo "$x" | cat  > out'* || $out == *'echo "$x" | cat > out'* ]]; chk 57.110
+
+# ── DD#75 §1: the keyword specials are canonical, the punctuation is sugar ──
+
+# 57.111 $? → $(status)
+run_convert '#!/bin/bash
+/bin/true
+echo "$?"'
+[[ $rc = 0 && $out == *'echo "$(status)"'* && -z $err ]]; chk 57.111
+
+# 57.112 $$ → $(getpid), spliced inside a string
+run_convert '#!/bin/bash
+echo "pid-$$"'
+[[ $rc = 0 && $out == *'echo "pid-$(getpid)"'* && -z $err ]]; chk 57.112
+
+# 57.113 $! → $(getcpid)
+run_convert '#!/bin/bash
+/bin/sleep 0 &
+echo $!'
+[[ $rc = 0 && $out == *'echo $(getcpid)'* && -z $err ]]; chk 57.113
+
+# 57.114 in arithmetic the canonical spelling is the DD#58 sexpr — the
+# command-substitution form is not an arith operand (SB4020), the same trap
+# `$#` → `$(( (argc) - 1 ))` already had
+run_convert '#!/bin/bash
+n=$(( $? + $$ ))'
+[[ $rc = 0 && $out == *'$(( (status) + (getpid) ))'* && -z $err ]]; chk 57.114
+
+# 57.115 …and these three are process-wide, so unlike $@/$*/$# they convert
+# inside a function body too
+run_convert '#!/bin/bash
+f() { /bin/true; echo $?; }'
+[[ $rc = 0 && $out == *'echo $(status)'* && -z $err ]]; chk 57.115
+
+# ── whole-node rewrites must compose with patches inside the node ──
+# A `[ … ]` replacement and a patch inside it cannot both be applied: the
+# inner one re-emits source the outer one already consumed. The output was
+# silently corrupt, not an error.
+
+# 57.116 `[ "$HOME" = x ]` — was `if [[ $HOME = x ]]$home" = x ]`
+run_convert '#!/bin/bash
+if [ "$HOME" = x ]; then echo y; fi'
+[[ $rc = 0 && $out == *'if [[ $home = x ]]; then echo y; fi'* && -z $err ]]; chk 57.116
+
+# 57.117 …and the hoisted getenv+attest survives the splice
+run_convert '#!/bin/bash
+if [ "$HOME" = x ]; then echo y; fi'
+[[ $rc = 0 && $out == *'home=$(getenv HOME)'* && $out == *'attest home'* ]]; chk 57.117
+
+# 57.118 `[ "$1" = x ]` — the commonest shape of the bug
+run_convert '#!/bin/bash
+if [ "$1" = x ]; then echo y; fi'
+[[ $rc = 0 && $out == *'if [[ $arg1 = x ]]; then echo y; fi'* && -z $err ]]; chk 57.118
+
+# 57.119 `${#s}` inside a test converts to $(strlen …) exactly once
+run_convert '#!/bin/bash
+s=abc
+if [ "${#s}" -gt 0 ]; then echo y; fi'
+[[ $rc = 0 && $out == *'$(strlen $s)'* && $out != *'${#s}'* && -z $err ]]; chk 57.119
+
+# 57.120 a test with nothing to splice is untouched by the composition
+run_convert '#!/bin/bash
+if [ x = y ]; then echo y; fi'
+[[ $rc = 0 && $out == *'if [[ x = y ]]; then echo y; fi'* && -z $err ]]; chk 57.120
 
 set -e
 tally

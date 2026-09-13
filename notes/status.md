@@ -1,3 +1,69 @@
+## ══ STATUS (2026-09-13) — keyword specials, and two silent-corruption bugs ══
+
+**Journal 298.** `converter-special-var-sugar` **done**. Sweep **4445 passing,
+9 skipped, 0 failing, 0 flips** (+14). Fail-first predicted 8 of 10 converter
+specs (2 are controls) and 2 arith specs × 2 modes — all as observed.
+
+`$?`/`$$`/`$!` → `$(status)`/`$(getpid)`/`$(getcpid)`. **Two canonical
+spellings, not one**: in arithmetic it is the DD#58 sexpr `(status)`, because
+`$(status)` inside `$(( ))` is SB4020. `$#` already had this shape and the
+comment warning about it sat six lines above the code I was editing. These
+three are process-wide, so unlike `$@`/`$*`/`$#` they convert inside a function
+body too.
+
+**Gate 2 named SUBSET.md, gone since 2026-08-29.** The manpage is where
+language surface is taught now, and it did not mention `getpid`, `getcpid` or
+`status` **at all** — the new `.SH SPECIAL VALUES` is their first
+documentation.
+
+## Two silent-corruption bugs, both pre-existing
+
+**`$(( (getcpid) ))` was 0** while `$(getcpid)` was correct.
+`bug-arith-keyword-pid-intrinsic-zero` is marked **done** and names that exact
+gate. `resolve_nullary_sexpr` even admits it: "`getcpid` (`$!`) is excluded —
+filed", pointing at the filing that says otherwise. One arm; it reuses `$!` the
+way `getpid` reuses `$$`.
+
+*Why silent:* the fallback treats an unknown nullary name as a variable
+(correct — `$(( (x) ))` is grouping), and a typo there is caught by SB5031. But
+`validate` **exempts every intrinsic name** from the typo check. So `getcpid`
+was waved past the check that would have caught it *because* it is an
+intrinsic, then not handled by the transform that handles intrinsics. An
+exemption granted on one pass's knowledge, consumed by a pass that lacks it.
+
+*Why it outlived the fix:* **no spec.** `sx.1`–`sx.11` pin every other
+intrinsic. `getcpid` was in the gate text and nowhere in `spec/`. A gate that
+is only prose does not fail. Now `sx.24`/`sx.25`, native and c.
+
+**`[ … ]` conversion corrupted its own output** — unfiled, and hitting one of
+the commonest lines in shell:
+
+```
+if [ "$1" = x ]; then echo y; fi
+  ->  if [[ $1 = x ]]$arg1" = x ]; then echo y; fi
+```
+
+Every `[ … ]` holding a known env var, a positional or a `${#s}`. This is the
+exact shape I described *in the abstract* in journal 297 one day earlier while
+fixing the patch sort order — and did not go looking for other instances of.
+Writing down the general shape is not the same as checking for it.
+
+Fixed by composition, not suppression: `convert_test_command` renders its
+children to text, transforms that, and tells `walk_node` not to recurse.
+Two traps found by testing — the decision must be made on raw text while the
+output uses the splice (else the hoisted `getenv`+`attest` line duplicates),
+and `prefix_line` rides on the `Patch`, so a spliced patch skips `convert`'s
+hoist loop and the pair goes silently missing.
+
+## Process
+
+**A spec-id collision was caught only by a count mismatch.** `sx.12`/`sx.13`
+already existed further down `arithmetic.sh`; later `chk` wins, both passed,
+nothing reported it. Totals were 4 short of prediction (2 ids × 2 modes).
+AGENTS.md now carries the mechanical duplicate check and a note to **predict
+the sweep total before running it** — a green sweep with an unexpected total
+means specs collided, vanished or were skipped.
+
 ## ══ STATUS (2026-09-13) — here-strings convert now ══
 
 **Journal 297.** `converter-herestring-to-pipe` **done**. Sweep

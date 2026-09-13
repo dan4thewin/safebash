@@ -250,6 +250,22 @@ records `$SASH_MODE:N`, so the same `N` in two files (e.g. `53.1` in both
 tests, `grep -rn "chk <prefix>\." spec/*.sh` to pick a collision-free block
 (each file tends to own a DD-numbered range, e.g. convert.sh = `57.x`).
 
+**Reading a range of the file is not that check.** An `sx.12` added after the
+`sx.1`-`sx.11` block collided with an `sx.12` further down the same file, and
+both passed, so nothing reported it. Run the mechanical check after adding:
+
+```sh
+grep -ho '\bchk [A-Za-z0-9._]*' spec/*.sh | grep -v skip_chk | sort | uniq -d
+```
+
+Empty means clean. (`skip_chk` is excluded because the `chk`/`skip_chk` pairs
+in `compiler.sh` and `misc.sh` are mode guards -- exactly one branch fires.)
+
+**Predict the sweep total before running it.** N new specs in a native-only
+file is +N; in a dual-mode file it is +2N. A green sweep whose total is not
+what you predicted means specs collided, vanished, or were skipped -- the
+collision above was found only that way.
+
 Query with:
 
 ```sql

@@ -611,13 +611,17 @@ fn try_arith_int_intrinsic(
 /// must not differ from `len`/user int fns. `getpid`/`status` reuse the
 /// `$$`/`$?` specials (native + c lower them directly); the rest reuse the
 /// word-form `CmdSubst` node (codegen computes the i64: native direct via
-/// `int_intrinsic_i64`, c via its atoi fallback). `getcpid` (`$!`) is excluded
-/// — filed. A string intrinsic here is category B (rejected in type_check);
-/// see bug-arith-sexpr-intrinsics-zero.
+/// `int_intrinsic_i64`, c via its atoi fallback). `getcpid` reuses `$!` the
+/// same way — it was once excluded, and because `validate` exempts every
+/// intrinsic name from the SB5031 typo check, the exclusion did not surface
+/// as "unknown name" but fell through to the variable branch below and read
+/// an unset slot: a silent 0. A string intrinsic here is category B (rejected
+/// in type_check); see bug-arith-sexpr-intrinsics-zero.
 fn resolve_nullary_sexpr(name: &str, state: &VersionState) -> Option<SsaValue> {
     match name {
         "getpid" => Some(SsaValue::Var(state.lookup("$"))),
         "status" => Some(SsaValue::Var(state.lookup("?"))),
+        "getcpid" => Some(SsaValue::Var(state.lookup("!"))),
         "getppid" | "argc" | "random" | "signum" | "epochseconds" => Some(SsaValue::CmdSubst {
             argv: vec![SsaValue::Literal(name.to_string())],
             redirects: vec![],

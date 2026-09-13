@@ -250,7 +250,12 @@ value as a function argument is a read, which is a compile error.
 Top-level `$1`–`$N` are compile errors (DD#46: use `$(argv N)`).
 
 **Clean sources:** literals, arithmetic from clean operands, `$0`,
-`$#`, `$?`, `$$`, variables assigned from clean expressions.
+`$#`, `$(status)`, `$(getpid)`, `$(getcpid)`, variables assigned from
+clean expressions. The punctuation spellings `$?`/`$$`/`$!` are input
+sugar for the last three (DD#75); the keyword form is canonical and is
+what `sash-convert` emits. As an arithmetic operand the spelling is the
+`(name)` sexpr — `$(( (status) + 1 ))` — not the command substitution,
+which is SB4020 there.
 
 **Auto-attest:** `known_externals.rs` provides auto-attest patterns
 for 26 environment variables and 25 commands.
@@ -303,7 +308,7 @@ is a compile-time error.
 
 - `int x=5` / `declare int x=5` / `declare -i x` — int variables
 - `fn name() -> int { }` — int-returning functions
-- `$#`, `$?`, `$((...))` — intrinsically int
+- `$#`, `$(status)` (sugar: `$?`), `$((...))` — intrinsically int
 
 ### Phase 6: Transform
 
