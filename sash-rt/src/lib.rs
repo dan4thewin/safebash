@@ -11,7 +11,8 @@
 #![allow(improper_ctypes_definitions)]
 #![allow(static_mut_refs)]
 
-use rustix::fd::BorrowedFd;
+use rustix::fd::{AsRawFd, BorrowedFd};
+use rustix::fs::{memfd_create, MemfdFlags};
 
 // ═══════════════════════════════════════════════════════════════
 // Libc stubs — required in no_std without libc.
@@ -2764,30 +2765,52 @@ pub extern "C" fn sash_epochseconds() -> (*mut u8, usize) {
     (ptr, len)
 }
 
-/// Start capturing stdout: create pipe, save stdout, redirect stdout to pipe.
-/// Returns (saved_stdout_fd, pipe_read_fd).
+/// Start capturing stdout: save stdout, point it at an anonymous memory file.
+/// Returns (saved_stdout_fd, capture_fd).
+///
+/// A pipe would deadlock here.  The captured body runs *in-process*, so nothing
+/// drains while it writes; past the 64 KiB pipe buffer the writer blocks forever
+/// waiting for a reader that cannot start until the body returns.  A `memfd` has
+/// no such wall: it is an ordinary file, so writes never block, yet it stays an
+/// *fd*, so redirects, `dup2`, and forked children keep working unchanged.
 #[no_mangle]
 pub extern "C" fn sash_capture_start() -> (i64, i64) {
     let saved = sash_dup(1);
-    let mut pipe_fds = [0i64; 2];
-    sash_pipe(pipe_fds.as_mut_ptr());
-    let pipe_r = pipe_fds[0];
-    let pipe_w = pipe_fds[1];
-    sash_dup2(pipe_w, 1);
-    sash_close(pipe_w);
-    (saved, pipe_r)
+    let cap = match memfd_create(c"sash-capture", MemfdFlags::CLOEXEC) {
+        Ok(f) => {
+            let raw = f.as_raw_fd() as i64;
+            core::mem::forget(f);
+            raw
+        }
+        Err(e) => {
+            set_last_errno(e);
+            return (saved, -1);
+        }
+    };
+    // `dup2` makes fd 1 share `cap`'s file description, so the offset `cap` sees
+    // also advances for writes made through fd 1 — including a forked child's.
+    sash_dup2(cap, 1);
+    (saved, cap)
 }
 
 /// End capturing: restore stdout, read all captured data, return (ptr, len).
 /// Strips trailing newlines (bash convention).
 #[no_mangle]
-pub extern "C" fn sash_capture_end(saved_stdout: i64, pipe_read: i64) -> (*mut u8, usize) {
+pub extern "C" fn sash_capture_end(saved_stdout: i64, cap_fd: i64) -> (*mut u8, usize) {
     // Restore original stdout
     sash_dup2(saved_stdout, 1);
     sash_close(saved_stdout);
 
-    let (ptr, total) = sash_capture_drain(pipe_read);
-    sash_close(pipe_read);
+    if cap_fd < 0 {
+        return (core::ptr::null_mut(), 0);
+    }
+    // The body left the offset at end-of-data; rewind before draining.
+    let fd = unsafe { BorrowedFd::borrow_raw(cap_fd as i32) };
+    if let Err(e) = rustix::fs::seek(fd, rustix::fs::SeekFrom::Start(0)) {
+        set_last_errno(e);
+    }
+    let (ptr, total) = sash_capture_drain(cap_fd);
+    sash_close(cap_fd);
     (ptr, total)
 }
 

@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup misc
-plan=42
+plan=48
 echo "1..$plan" >&3
 
 set +e
@@ -313,9 +313,8 @@ echo $(strlen $x)'
   # runtime entry point (sash_capture_end). A NON-REGRESSION guard, not a
   # fixed bug: that path already stripped newlines correctly, and it
   # passes on both sides of the fix. It guards the reroute onto the shared
-  # drain. Its 64 KiB half is untestable — a function body runs in-process,
-  # so a capture past the pipe buffer deadlocks before truncation can
-  # apply (bug-fn-capture-pipe-deadlock). Hence the small payload.
+  # drain. The 64 KiB half of that path is cap.7/cap.8 below, which only
+  # became reachable once the deadlock was gone.
   run_sash 'fn emit {
   /bin/printf "hello\n\n\n"
 }
@@ -323,6 +322,95 @@ str x=$(emit)
 attest x [[ -n $x ]]
 echo $(strlen $x)'
   [[ $rc = 0 && $out = "5" && -z $rerr ]]; chk cap.6
+
+  # A captured function body runs *in-process*: sash_capture_start points
+  # fd 1 at a sink, the body runs, and sash_capture_end reads afterwards.
+  # Nothing drains while the body writes. With a pipe as the sink that is a
+  # deadlock, not a truncation — past the 64 KiB pipe buffer the writer
+  # blocks forever waiting for a reader that cannot start until it returns.
+  # The sink is a memfd for exactly this reason: an ordinary file never
+  # blocks, but is still an fd, so redirects and forked children still work.
+  # Pre-fix these three hit the hang guard (rc 124), not a wrong answer.
+
+  # cap.7 in-process writes past the pipe buffer: ~450 KB from echo alone
+  run_sash 'fn emit {
+  int i=0
+  while (( i < 20000 )); do
+    echo "line-of-text-number-$i"
+    (( i++ ))
+  done
+}
+str x=$(emit)
+attest x [[ -n $x ]]
+echo $(strlen $x)'
+  [[ $rc = 0 && $out = "508889" && -z $rerr ]]; chk cap.7
+
+  # cap.8 the same wall via an *external* command inside the body. The
+  # original filing named only in-process writes; a forked child inherits
+  # fd 1 and blocks on the same buffer, so this hung too.
+  run_sash 'fn emit {
+  /bin/cat cap_big.txt
+}
+str x=$(emit)
+attest x [[ -n $x ]]
+echo $(strlen $x)'
+  [[ $rc = 0 && $out = "100000" && -z $rerr ]]; chk cap.8
+
+  # cap.9 ...and not by silently swallowing the hang guard
+  [[ $rc != 124 ]]; chk cap.9
+
+  # cap.10 a redirect *inside* a captured body still reaches the file, and
+  # its output stays out of the capture. A NON-REGRESSION guard: it passes
+  # on both sides of the fix. It pins why the sink stays an fd rather than
+  # becoming a userspace buffer — a buffer keyed on "fd == 1" would swallow
+  # the redirected write and lose the file, and nothing else would notice.
+  run_sash 'fn emit {
+  echo hidden > cap_redir.txt
+  echo visible
+}
+str x=$(emit)
+attest x [[ -n $x ]]
+str f=$(/bin/cat cap_redir.txt)
+attest f [[ -n $f ]]
+echo "[$x][$f]"'
+  [[ $rc = 0 && $out = "[visible][hidden]" && -z $rerr ]]; chk cap.10
+
+  # cap.11 in-process and forked writes interleave in issue order. Also a
+  # NON-REGRESSION guard — a pipe ordered these correctly too. It pins the
+  # property the memfd has to preserve: fd 1 and the capture handle share
+  # one file description, so a child's writes advance the same offset the
+  # parent's do. Two independent handles would silently overwrite.
+  run_sash 'fn emit {
+  echo one
+  /bin/echo two
+  echo three
+}
+str x=$(emit)
+attest x [[ -n $x ]]
+echo "[$x]"'
+  [[ $rc = 0 && $out = "[one
+two
+three]" && -z $rerr ]]; chk cap.11
+
+  # cap.12 KNOWN DIVERGENCE, pinned deliberately. The capture sink is a
+  # regular file, so a body probing its own stdout sees a file where bash
+  # sees a pipe: bash prints PIPE here, sash prints NOTPIPE. Measured on
+  # both sides — the pipe runtime printed PIPE. This is the price of the
+  # memfd, and the only observable difference it introduces; `-t 1` still
+  # agrees with bash (NOTTY both). The alternative was an unconditional
+  # hang past 64 KiB (cap.7/cap.8). If this call is ever reversed, this
+  # spec flips and says so out loud instead of drifting unnoticed.
+  run_sash 'fn emit {
+  if [[ -p /dev/stdout ]]; then
+    echo PIPE
+  else
+    echo NOTPIPE
+  fi
+}
+str x=$(emit)
+attest x [[ -n $x ]]
+echo "[$x]"'
+  [[ $rc = 0 && $out = "[NOTPIPE]" && -z $rerr ]]; chk cap.12
 
 set -e
 tally

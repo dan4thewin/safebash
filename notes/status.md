@@ -1,3 +1,72 @@
+## ══ STATUS (2026-09-13) — the capture sink stops being a pipe ══
+
+**The `$(f)` deadlock is fixed.** Journal 276. Sweep **4095 passing, 29
+skipped, 0 failing**, zero flips, +12 specs. **One divergence from bash
+awaits DG's sign-off** (below).
+
+DG did not pick from the four options in the filing. He asked whether a
+pipe could be replaced by a buffer when both sides are non-external. We
+have no such optimization — I looked — and the precondition would not have
+covered the bug anyway, because the filing had the scope wrong.
+
+**The deadlock is not about in-process writes.** An *external* command
+inside a captured body hangs identically: a forked child inherits fd 1 and
+blocks on the same 64 KiB wall. It is about **nobody reading**, and the
+reader cannot start until the body returns. Any fix scoped to in-process
+writes — including the literal userspace-buffer reading — leaves that case
+hanging.
+
+**The sink has to stay an fd.** A userspace buffer keyed on "fd == 1"
+swallows `echo hidden > f` inside a captured body, because fd 1 was
+temporarily rebound by the redirect and the buffer cannot know. Nothing
+else in the program would notice. Pinned as `cap.10`.
+
+So the requirement is narrower than "replace the pipe with a buffer": it is
+**keep the fd, lose the blocking**. `memfd_create` is exactly that — a
+regular file with no filesystem behind it, so writes never block, yet it is
+still an fd. It is also option B from the filing with its cost deleted: no
+path, no `$TMPDIR`, nothing to clean up on the abort paths.
+
+Entirely inside `sash-rt`. The `(saved, handle)` pair is unchanged, so the
+SSA instructions, Cranelift signatures, and `emit_c` are untouched — c-mode
+picked the fix up for free. `dup2` makes fd 1 and the handle share one file
+description, so a child's writes advance the same offset the parent's do
+and the interleaving is correct by construction (`cap.11`).
+
+| case                               | before        | after    | bash     |
+|------------------------------------|---------------|----------|----------|
+| in-process ~500 KB (`cap.7`)       | hang (rc 124) | `508889` | `508889` |
+| external in body 100 KB (`cap.8`)  | hang (rc 124) | `100000` | `100000` |
+
+### Needs DG: an accepted divergence
+
+The sink is a regular file, so a body probing its own stdout sees one.
+`[[ -p /dev/stdout ]]` inside `$(f)` is `NOTPIPE`; bash says `PIPE`, and so
+did sash before this change — measured on both sides, not reasoned about.
+`-t 1` still agrees with bash. Narrow, but the north star is byte-identical
+output, so it is not mine to wave away. It buys removal of an unconditional
+hang. Pinned as `cap.12` so a reversal flips a spec instead of the delta
+becoming folklore. The alternatives that keep the pipe do not survive: a
+larger pipe moves the wall to 1 MB and leaves it a wall; forking the body is
+bash-exact but costs assignment visibility, a language-surface change.
+
+### New bug found
+
+**Nested function capture is broken.** `h() { i=$(g); }; o=$(h)` fails with
+`sash: read failed`. Codegen holds the capture handles in a *single* pair of
+slots, so the inner capture clobbers the outer's. Pre-existing — identical
+on the pipe runtime — and not from this work. P2, ready, options in
+`bug-nested-function-capture-clobbers-handles`. It surfaced because a test
+written to guard redirects happened to nest two captures.
+
+### Pattern worth naming
+
+Third filing in a row that undersold its own bug. This one described the
+reproduction it happened to trip over rather than the class, and the
+in-process framing pointed straight at the one fix that does not work.
+Reproducing is necessary and not sufficient; the question after "does it
+reproduce" is "what else is in this class".
+
 ## ══ STATUS (2026-09-13) — capture collapsed onto one drain ══
 
 **Two capture bugs fixed; a third found and blocked on DG.**

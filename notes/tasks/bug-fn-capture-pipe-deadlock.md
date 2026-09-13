@@ -1,9 +1,8 @@
 ---
-status: blocked
+status: done
 priority: P2
 kind: bug
 depends: []
-blocked-on: "DG — the fix is a fork with a semantic consequence (see Options)."
 ---
 
 # `$(f)` on a user function hangs forever when the function writes more
@@ -101,3 +100,57 @@ existing programs and deserves a DD rather than a bug fix.
 
 2026-09-13, verifying the `sash_capture_drain` fix. The large-capture
 spec for the function path hung, and it reproduced on the pre-fix build.
+
+## Resolved 2026-09-13 — none of the four options
+
+DG did not pick from the list. He asked whether a pipe could be replaced by
+a buffer when both sides are non-external. That reframing found two errors
+in this note.
+
+**The scope above is wrong.** "The function body runs in this same process"
+describes the reproduction, not the bug. An *external* command inside a
+captured body hangs identically — a forked child inherits fd 1 and blocks
+on the same 64 KiB wall:
+
+```sh
+fn emit { /bin/cat 200kb.txt; }
+str x=$(emit)      # rc 124, hang guard
+```
+
+The deadlock is not about who writes. It is about **nobody reading**. Any
+fix scoped to in-process writes — including the literal userspace-buffer
+reading of DG's question — leaves this case hanging.
+
+**Option B's cost was imaginary.** B wanted a temp file and paid for it
+with a path, `$TMPDIR`, and cleanup on the abort paths. `memfd_create` is a
+regular file with no filesystem behind it: anonymous, in-memory, no path,
+nothing to clean up, freed when the last fd closes. It is B without the
+cost, and it is DG's buffer — the kernel holds it, and it stays an *fd*,
+which is what keeps `dup2`, redirects, and forked children working.
+
+Keeping it an fd is load-bearing, not incidental. A userspace buffer keyed
+on "fd == 1" swallows `echo hidden > f` inside a captured body, because fd 1
+was temporarily rebound and the buffer cannot know. Pinned as `cap.10`.
+
+**Shipped:** `sash_capture_start` swaps `pipe()` for `memfd_create`;
+`sash_capture_end` seeks to 0 before draining. Entirely inside `sash-rt` —
+the `(saved, handle)` pair is unchanged, so the SSA instructions, Cranelift
+signatures, and `emit_c` are untouched and c-mode fixed itself.
+
+Specs `cap.7`–`cap.12` in `spec/misc.sh`; `cap.7`/`cap.8`/`cap.9` verified
+failing (rc 124) against the pre-fix runtime. Journal 276.
+
+### Accepted cost
+
+The sink is a regular file, so `[[ -p /dev/stdout ]]` inside a captured body
+is now `NOTPIPE` where bash says `PIPE` (and where sash itself said `PIPE`
+before — measured, not assumed). `-t 1` still agrees with bash. Pinned as
+`cap.12` so a reversal flips a spec rather than going unnoticed.
+**Outstanding: DG has not signed off on this divergence.**
+
+### Separate bug found
+
+Nested function capture (`h() { i=$(g); }; o=$(h)`) fails with `sash: read
+failed` — a single pair of handle slots in codegen, clobbered by the inner
+capture. Pre-existing on both runtimes. Filed as
+`bug-nested-function-capture-clobbers-handles`.
