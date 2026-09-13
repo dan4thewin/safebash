@@ -54,7 +54,11 @@ run_sash 'readonly x=5'
 run_sash 'export FOO=bar'
 [[ $rc != 0 && -z $out && -n $err ]]; chk 57.45d
 
-# --- 57.74: removed flags --- (sash CLI flag rejection — native only)
+# --- 57.74: removed flags --- (sash CLI flag rejection)
+# native-only, and NOT a c-backend gap: these invoke the `sash` CLI directly
+# rather than run_sash, so SASH_MODE never reaches them. Running the group in
+# c mode would execute the identical three commands a second time. Audited
+# 2026-09-13: keep the guard, it is de-duplication, not a suppressed defect.
 
 if in_modes native; then
     # 57.74a --emit-source

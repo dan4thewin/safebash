@@ -43,15 +43,12 @@ run_sash 'exit'
 [[ $rc = 0 && -z $err ]]; chk 89.7
 
 # 89.8 the FULL i64 reaches the END block via `$?` (before the 8-bit boundary
-# truncation): END sees 300, the process exits 44. native only — the c backend's
-# main-body `exit N` skips END (bug-emit-c-exit-skips-end).
-if in_modes native; then
-    run_sash 'int code=300
+# truncation): END sees 300, the process exits 44.
+run_sash 'int code=300
 END { int c=$?
 /bin/echo "END c=$c" }
 exit $code'
-    [[ $rc = 44 && $out == *"END c=300"* && -z $err ]]; chk 89.8
-else skip_chk 89.8; fi
+[[ $rc = 44 && $out == *"END c=300"* && -z $err ]]; chk 89.8
 
 set -e
 tally

@@ -1093,13 +1093,30 @@ fn emit_inst(e: &mut Emit, inst: &SsaInst, types: &VarTypes) {
             all,
         } => emit_match_into_c(e, subject, pattern, array, *all, types),
         SsaInst::ArgvFill { array, start } => emit_argv_fill_c(e, array, *start),
-        _ => {
-            writeln!(
-                e.out,
-                "    /* TODO inst: {:?} */",
+
+        // Exhaustive on purpose — no `_ =>`. These ten are claimed by the
+        // three sub-dispatchers above, which return true when they emit.
+        // Reaching this arm means one of them returned false for a variant it
+        // owns, which is a compiler bug.
+        //
+        // This used to be `_ => writeln!("/* TODO inst: … */")`, the same
+        // fail-open default as the old `emit_command_body` arm: a C comment,
+        // so the instruction silently disappeared from a program that still
+        // compiled and ran.
+        SsaInst::ReadLine { .. }
+        | SsaInst::ReadArray { .. }
+        | SsaInst::ArrayAppend { .. }
+        | SsaInst::MapFromArray { .. }
+        | SsaInst::SplitValue { .. }
+        | SsaInst::Attest { .. }
+        | SsaInst::AttestAll { .. }
+        | SsaInst::AttestRetag { .. }
+        | SsaInst::CaptureStart { .. }
+        | SsaInst::CaptureEnd { .. } => {
+            panic!(
+                "ICE: {:?} is owned by a sub-dispatcher that declined it",
                 std::mem::discriminant(inst)
             )
-            .unwrap();
         }
     }
 }
@@ -1709,7 +1726,7 @@ fn emit_builtin_extra(
     args: &[SsaValue],
     checked: bool,
     types: &VarTypes,
-) -> bool {
+) {
     match kind {
         // DD#63: `match S P` boolean command → sash_regex_match (matched ? 0:1).
         BuiltinCmd::Match => emit_match_c(e, args, types),
@@ -1719,16 +1736,14 @@ fn emit_builtin_extra(
         // DD#56 signal builtin: signal N IGN/DFL/EXIT → sash_trap;
         // signal N FLAG → sash_signal_flag.
         BuiltinCmd::TrapSignal | BuiltinCmd::SignalFlag => emit_signal_builtin_c(e, kind, args),
-        // `cmd &` background / `$!` / `wait` handled in a sub-dispatcher.
-        _ => return emit_bg_builtin_c(e, kind, args, types),
+        _ => panic!("ICE: emit_builtin_extra called with {kind:?}"),
     }
-    true
 }
 
 /// Background-job builtins split out of `emit_builtin_extra` (complexity gate):
 /// `cmd &` (SubshellStart fork), `$!` (StoreBgPid), and `wait`. Returns true
 /// when it handled `kind`.
-fn emit_bg_builtin_c(e: &mut Emit, kind: &BuiltinCmd, args: &[SsaValue], types: &VarTypes) -> bool {
+fn emit_bg_builtin_c(e: &mut Emit, kind: &BuiltinCmd, args: &[SsaValue], types: &VarTypes) {
     match kind {
         // Fork; the pid lands in __test_result so the Branch dispatches child
         // (0) vs parent (pid). Mirrors native emit_subshell_start.
@@ -1752,9 +1767,8 @@ fn emit_bg_builtin_c(e: &mut Emit, kind: &BuiltinCmd, args: &[SsaValue], types: 
         // `wait [PID]` — reap a background child, adopting its exit status.
         // No-arg `wait` waits for `$!`. Mirrors native emit_wait.
         BuiltinCmd::Wait => emit_wait_c(e, args, types),
-        _ => return false,
+        _ => panic!("ICE: emit_bg_builtin_c called with {kind:?}"),
     }
-    true
 }
 
 /// `wait [PID]`: reap a child by pid (or, with no arg, `$!`), adopting its
@@ -1911,12 +1925,109 @@ fn emit_command_body(
         // first arg as int; if zero → status=1, test_result=0; else
         // status=0, test_result=1.
         BuiltinCmd::LetExit => emit_let_exit(e, args, types),
+
+        // ── delegated groups ──────────────────────────────────────────
+        BuiltinCmd::Exec | BuiltinCmd::Close | BuiltinCmd::TableDelete => {
+            emit_process_builtin(e, kind, args, checked, types)
+        }
+        BuiltinCmd::Match | BuiltinCmd::Cd | BuiltinCmd::TrapSignal | BuiltinCmd::SignalFlag => {
+            emit_builtin_extra(e, name, kind, args, checked, types)
+        }
+        BuiltinCmd::SubshellStart | BuiltinCmd::StoreBgPid | BuiltinCmd::Wait => {
+            emit_bg_builtin_c(e, kind, args, types)
+        }
+
+        // ── never reaches command position ────────────────────────────
+        //
+        // This match is exhaustive on purpose: there is no `_ =>`. The c
+        // backend is a full backend held to byte-identical parity with
+        // native, so "unsupported builtin" is not a state it may be in. A
+        // variant is either emitted above or cannot arrive here at all, and
+        // adding a variant without saying which fails the Rust build.
+        //
+        // It used to end in `_ => writeln!("/* TODO command: … */")`, which
+        // emitted a C *comment*: the C compiled, the binary ran, and the
+        // statement silently vanished. That fail-open default produced three
+        // silently-wrong builtins (`exec`, `close`, `unset m[k]` — journal
+        // 278). Reaching an arm below means the transform produced something
+        // impossible, which is a compiler bug, not a user error — hence ICE.
+
+        // The 24 variants below cannot arrive in command position. They are
+        // listed exhaustively (rather than as `_`) so that adding a variant
+        // forces a decision here; `ice_unreachable_command` explains which
+        // group each belongs to and why.
+        BuiltinCmd::Write
+        | BuiltinCmd::RedirectPush
+        | BuiltinCmd::RedirectPop
+        | BuiltinCmd::Len
+        | BuiltinCmd::Strlen
+        | BuiltinCmd::Keys
+        | BuiltinCmd::Join
+        | BuiltinCmd::Sub
+        | BuiltinCmd::Gsub
+        | BuiltinCmd::MatchAll
+        | BuiltinCmd::Toupper
+        | BuiltinCmd::Tolower
+        | BuiltinCmd::Basename
+        | BuiltinCmd::Dirname
+        | BuiltinCmd::Argv
+        | BuiltinCmd::Test
+        | BuiltinCmd::Attest
+        | BuiltinCmd::Read
+        | BuiltinCmd::Mapfile
+        | BuiltinCmd::Break
+        | BuiltinCmd::Continue
+        | BuiltinCmd::Return
+        | BuiltinCmd::Signal
+        | BuiltinCmd::Unset => ice_unreachable_command(kind, name),
+    }
+}
+
+/// Terminal for the `BuiltinCmd` variants that cannot appear in command
+/// position. Split out of `emit_command_body` so that dispatcher stays under
+/// the complexity gate; the three groups below are the three distinct reasons
+/// a variant is unreachable there.
+///
+/// Reaching any of these means the transform produced something impossible,
+/// which is a compiler bug rather than a user error — hence ICE rather than a
+/// diagnostic. There is deliberately no "unsupported builtin" outcome: the c
+/// backend is a full backend held to byte-identical parity with native, so a
+/// variant is either emitted or impossible, with no third category.
+fn ice_unreachable_command(kind: &BuiltinCmd, name: &str) -> ! {
+    match kind {
+        // Rewritten before codegen: DD#99 `write` becomes `echo` with the
+        // newline suppressed (transform/cmd_handlers.rs:rewrite_write_as_echo),
+        // and the compound-redirect pair is intercepted by
+        // `emit_compound_redirect` before emit_command_body is called.
+        BuiltinCmd::Write | BuiltinCmd::RedirectPush | BuiltinCmd::RedirectPop => {
+            panic!("ICE: {kind:?} is rewritten before codegen and must not reach emit_command_body (as `{name}`)")
+        }
+
+        // Expression intrinsics: resolved during transform
+        // (transform/expr_handlers.rs) into SSA values, so they never survive
+        // as a command.
+        BuiltinCmd::Len
+        | BuiltinCmd::Strlen
+        | BuiltinCmd::Keys
+        | BuiltinCmd::Join
+        | BuiltinCmd::Sub
+        | BuiltinCmd::Gsub
+        | BuiltinCmd::MatchAll
+        | BuiltinCmd::Toupper
+        | BuiltinCmd::Tolower
+        | BuiltinCmd::Basename
+        | BuiltinCmd::Dirname
+        | BuiltinCmd::Argv => {
+            panic!("ICE: {kind:?} is an expression intrinsic resolved in transform and must not reach emit_command_body (as `{name}`)")
+        }
+
+        // Carried by their own SsaInst or dissolved by the transform:
+        // `[[` → SsaInst::Test, `read`/`readline` → SsaInst::ReadLine,
+        // `break`/`continue`/`return` → control flow, `signal` → TrapSignal /
+        // SignalFlag, `unset` → TableDelete or removal, `mapfile` →
+        // recognition only (the validator rejects it).
         _ => {
-            if !emit_process_builtin(e, kind, args, checked, types)
-                && !emit_builtin_extra(e, name, kind, args, checked, types)
-            {
-                writeln!(e.out, "    /* TODO command: {} ({:?}) */", name, kind).unwrap();
-            }
+            panic!("ICE: {kind:?} is lowered to its own instruction and must not reach emit_command_body (as `{name}`)")
         }
     }
 }
@@ -1935,14 +2046,13 @@ fn emit_process_builtin(
     args: &[SsaValue],
     checked: bool,
     types: &VarTypes,
-) -> bool {
+) {
     match kind {
         BuiltinCmd::Exec => emit_exec_builtin(e, args, types),
         BuiltinCmd::Close => emit_close_builtin(e, args, checked, types),
         BuiltinCmd::TableDelete => emit_table_delete_c(e, args, types),
-        _ => return false,
+        _ => panic!("ICE: emit_process_builtin called with {kind:?}"),
     }
-    true
 }
 
 /// __let_exit: take the value of an arithmetic test (string holding

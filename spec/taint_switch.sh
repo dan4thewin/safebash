@@ -32,30 +32,23 @@ unset SASH_CFLAGS
 
 # ── --no-taint-cst: CST off, SSA backstop remains (native only) ──
 export SASH_CFLAGS=--no-taint-cst
-if in_modes native; then
-    # sw.4 the SSA backstop still rejects an assigned tainted source
-    run_sash 'x=$(getenv HOME); echo $x'
-    [[ $rc != 0 && -z $out ]]; chk sw.4
-    # sw.5 the SSA backstop catches a value propagated through echo
-    run_sash 'y=$(getenv HOME); x=$(echo $y); echo $x'
-    [[ $rc != 0 && -z $out ]]; chk sw.5
-    # sw.8 the SSA backstop catches an operand propagated through a transform
-    # builtin ($(toupper …)) — cmd_subst_taint propagates operand taint (DD#82)
-    run_sash 'y=$(getenv HOME); x=$(toupper $y); echo $x'
-    [[ $rc != 0 && -z $out ]]; chk sw.8
-    # sw.9 the SSA backstop rejects a pipeline laundered through a leading
-    # builtin (`echo ig | /bin/cat f | read x`). It could not: `clean_pipe` was
-    # hardcoded `true` for every lastpipe read, so the backstop was inert for
-    # this shape and the front-end pass was the only layer — and it missed it.
-    run_sash 'echo ig | /bin/cat /etc/hostname | readline x
+# sw.4 the SSA backstop still rejects an assigned tainted source
+run_sash 'x=$(getenv HOME); echo $x'
+[[ $rc != 0 && -z $out ]]; chk sw.4
+# sw.5 the SSA backstop catches a value propagated through echo
+run_sash 'y=$(getenv HOME); x=$(echo $y); echo $x'
+[[ $rc != 0 && -z $out ]]; chk sw.5
+# sw.8 the SSA backstop catches an operand propagated through a transform
+# builtin ($(toupper …)) — cmd_subst_taint propagates operand taint (DD#82)
+run_sash 'y=$(getenv HOME); x=$(toupper $y); echo $x'
+[[ $rc != 0 && -z $out ]]; chk sw.8
+# sw.9 the SSA backstop rejects a pipeline laundered through a leading
+# builtin (`echo ig | /bin/cat f | read x`). It could not: `clean_pipe` was
+# hardcoded `true` for every lastpipe read, so the backstop was inert for
+# this shape and the front-end pass was the only layer — and it missed it.
+run_sash 'echo ig | /bin/cat /etc/hostname | readline x
 echo "$x"'
-    [[ $rc != 0 && -z $out ]]; chk sw.9
-else
-    skip_chk sw.4
-    skip_chk sw.5
-    skip_chk sw.8
-    skip_chk sw.9
-fi
+[[ $rc != 0 && -z $out ]]; chk sw.9
 unset SASH_CFLAGS
 
 set -e

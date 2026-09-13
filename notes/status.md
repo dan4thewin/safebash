@@ -1,3 +1,45 @@
+## ══ STATUS (2026-09-13) — the taint backstop never ran on the c path ══
+
+**Journal 281.** Sweep **4215 passing, 10 skipped, 0 failing**. 16 flips, all
+skipped→passing. c coverage **2041 → 2057**; skips **26 → 10**.
+
+DG's directive was *fix p1 and plan, audit 26*. All three done.
+
+**The audit found a taint bypass.** `sw.4/5/8/9` run under `--no-taint-cst`
+to exercise the SSA backstop in isolation. Native rejects all four; **c
+printed the tainted values** (`/home/dg`, `/HOME/DG`, the hostname).
+`emit_c_to_stdout` is five lines and never called `run_ssa_taint_gate` —
+the gate had exactly one call site, extracted for `compile_native`'s
+complexity budget, and the c path was never given it. Not exploitable under
+default flags (the CST pass still rejects), but a backstop exists for when
+layer 1 has a gap, and the c backend is the **differential oracle** — an
+oracle running different gates is not comparing the same compiler. Fixed.
+
+**16 of the 26 skips were stale.** Ten (`cov.26`–`cov.75`) measure
+byte-identical in both backends; their guards only ever said "native.",
+which was the mode the author ran, not a claim about c. `89.8` cited a bug
+fixed in `29b0b43`; `55.31` cited a gap it does not have. That is **seven**
+stale guards across three sessions, every one hiding something:
+
+> A skip is a bug report that suppresses its own evidence. It never fails,
+> so it never expires.
+
+The 10 survivors now record what was measured and when; the one real gap
+(`55.30`, missing only the second stderr line) cites `c-dd55-abort-channel`.
+
+**P1 `fail-open-todo-arms-in-emit-c` closed.** DG's challenge — *"why would
+there be unsupported in C backend?"* — retired the task's recommended option
+(A). No DD sanctions a c subset, so a fallback arm is either a real gap (a
+bug) or an impossible state (an ICE); "unsupported" would have invented a
+third category. `emit_command_body` (41 `BuiltinCmd` variants) and
+`emit_inst` (17 `SsaInst`) are now exhaustive with ICE terminals, verified
+by a dummy variant producing `E0004`.
+
+**Next up:** `value-intrinsics-exec-path-twin` (P1, DG approved scope B) —
+`join`/`basename`/`dirname` PATH-resolve and exec the system binary in
+statement position; the others escape only because no twin happens to exist,
+making the safe set host-dependent.
+
 ## ══ STATUS (2026-09-13) — compound stages in c; a blank line ate the input ══
 
 **Journal 280.** Sweep **4199 passing, 26 skipped, 0 failing**. All 29 flips

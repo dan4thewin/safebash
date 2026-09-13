@@ -1,6 +1,6 @@
 ---
 title: "emit_c's `_ =>` arms emit a TODO *comment* for unimplemented builtins/insts (fail-open)"
-status: ready
+status: done
 priority: P1
 kind: bug
 depends: []
@@ -74,3 +74,35 @@ compose: exhaustive match, with the explicitly-unsupported arms emitting the
 
 Found while closing `c-exec-support`. The same audit direction should be run
 against `SsaInst` — it was observed to have the pattern but was not probed.
+
+
+---
+
+## DONE 2026-09-13 (journal 281)
+
+Implemented as **(C) exhaustive match + ICE terminals**. Option (A), a
+user-facing "unsupported construct" diagnostic, was **retired** after DG
+asked: *"why would there be unsupported in C backend?"* No DD sanctions a
+c-backend subset — it is a full backend at byte-identical parity and the
+differential oracle — so a fallback arm means either a real gap (implement
+it) or an impossible state (ICE). A diagnostic would have legitimized a
+third category that must not exist.
+
+- `emit_command_body` exhaustive over all 41 `BuiltinCmd` variants: 7 direct,
+  3 delegating group arms, 3 ICE arms with provenance for the 24 that cannot
+  arrive. Each of the 24 was traced, not assumed — `RedirectPush`/`Pop` are
+  intercepted by `emit_compound_redirect`, the value intrinsics resolve in
+  `transform/expr_handlers.rs`, and `BuiltinCmd::Write` has **zero** matches
+  anywhere because `rewrite_write_as_echo` rewrites it pre-codegen.
+- `emit_inst` exhaustive over `SsaInst` (the follow-up this task's Notes
+  asked for — done here rather than deferred).
+- `emit_process_builtin` / `emit_builtin_extra` / `emit_bg_builtin_c` changed
+  from `-> bool` chaining to `()` with ICE arms; the boolean chain was the
+  mechanism that let an unhandled variant fall through silently.
+- Both `/* TODO command: … */` and `/* TODO inst: … */` fail-open writes are
+  gone.
+
+Gate proven by adding a dummy `BuiltinCmd` variant and observing
+`error[E0004]: non-exhaustive patterns`. Grouped `|` patterns count as one
+decision, so the complexity gate was unaffected. Sweep: 0 regressions,
+0 ICEs across a 15-surface behavioural probe.

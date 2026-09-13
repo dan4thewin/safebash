@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup wordsplit
-plan=118
+plan=123
 echo "1..$plan" >&3
 
 set +e

@@ -192,7 +192,11 @@ wait'
 
 # 55.30 fg UNCAUGHT exec failure → child errno detail + parent uncaught
 #       abort (both lines). DD#55: child owns exec errors; parent's
-#       command-failed fires because it is uncaught. native (msg format).
+#       command-failed fires because it is uncaught.
+#       native-only, and ONLY for the second line: c gets rc 127, the empty
+#       stdout, and the child's errno line right, but has no sash_emsg on the
+#       abort path so `command failed (exit 127)` never prints.
+#       Task: c-dd55-abort-channel. Re-measured 2026-09-13.
 if in_modes native; then
     run_sash '/nonexistent_binary_xyz
 echo unreached'
@@ -205,14 +209,10 @@ fi
 
 # 55.31 CAUGHT exec failure (`|| …`) → only the child's errno detail; the
 #       parent does NOT abort, so no command-failed line.
-if in_modes native; then
-    run_sash '/nonexistent_binary_xyz || echo caught'
-    [[ $rc = 0 && $out = "caught" && -z $err \
-       && $rerr == *"/nonexistent_binary_xyz: No such file or directory"* \
-       && $rerr != *"command failed"* ]]; chk 55.31
-else
-    skip_chk 55.31
-fi
+run_sash '/nonexistent_binary_xyz || echo caught'
+[[ $rc = 0 && $out = "caught" && -z $err \
+   && $rerr == *"/nonexistent_binary_xyz: No such file or directory"* \
+   && $rerr != *"command failed"* ]]; chk 55.31
 
 # 55.17 $(status) only valid as first expression in handling branch
 run_sash 'cmd || { s=$(status); echo $s; }'

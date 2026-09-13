@@ -190,7 +190,7 @@ pub fn cli_main(args: Vec<String>) {
         std::process::exit(1);
     }
 
-    if maybe_emit_alt_output(&parsed.flags, &program) {
+    if maybe_emit_alt_output(input, &parsed.flags, &program) {
         return;
     }
 
@@ -389,13 +389,13 @@ fn enforce_transform_diags(input: &str, program: &crate::ir::Program) {
 /// (`--emit-ir`, `--emit-c`, `--manifest`). Returns `true` if one
 /// fired (caller should return); `false` if none matched (caller
 /// proceeds to native codegen).
-fn maybe_emit_alt_output(flags: &[&str], program: &crate::ir::Program) -> bool {
+fn maybe_emit_alt_output(input: &str, flags: &[&str], program: &crate::ir::Program) -> bool {
     if flags.contains(&"--emit-ir") {
         print!("{}", emit_ir::emit_ir(program));
         return true;
     }
     if flags.contains(&"--emit-c") {
-        emit_c_to_stdout(program);
+        emit_c_to_stdout(input, flags, program);
         return true;
     }
     if flags.contains(&"--manifest") {
@@ -410,9 +410,18 @@ fn maybe_emit_alt_output(flags: &[&str], program: &crate::ir::Program) -> bool {
 /// linked against libsash_rt.a is a differential oracle against
 /// Cranelift-compiled output of the same SSA — any disagreement
 /// is a bug somewhere in the compiler.
-fn emit_c_to_stdout(program: &crate::ir::Program) {
+fn emit_c_to_stdout(input: &str, flags: &[&str], program: &crate::ir::Program) {
     let type_map = type_check::infer_types(program);
     let (ssa, _) = transform::ir_to_ssa_typed(program, type_map);
+    // DD#82: the SSA taint backstop runs here too. It is the *second* layer —
+    // the CST pass normally rejects first — but `--no-taint-cst` disables that
+    // one, and the backstop also covers documented CST gaps (see the note at
+    // validate.rs:2569). Omitting it here left `--emit-c` with no taint
+    // enforcement whatsoever under `--no-taint-cst`: `x=$(getenv HOME); echo $x`
+    // compiled and printed the value, where native exits 1. The c backend is
+    // also the differential oracle, so it has to run the same gates or the
+    // comparison is between two different compilers.
+    run_ssa_taint_gate(input, &ssa, flags);
     print!("{}", emit_c::emit_c(&ssa));
 }
 

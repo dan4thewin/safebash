@@ -17,7 +17,7 @@ set -eu
 . common.sh
 setup collparam
 set +e
-plan=34
+plan=37
 echo "1..$plan" >&3
 
 # ── Part A: binding and reading ───────────────────────────────────

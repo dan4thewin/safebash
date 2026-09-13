@@ -95,12 +95,8 @@ run_sash '[[abc=~b]] && echo match'
 [[ $rc = 0 && $out = match && -z $err ]]; chk cov.25
 # cov.26 `>&N` dup redirect (emit_dup_output) — only the harness/converter use
 # it; no spec exercises the compiled codegen path. `echo hi >&2` → stderr.
-if in_modes native; then
-    run_sash 'echo hi >&2'
-    [[ $rc = 0 && -z $out && $rerr = hi ]]; chk cov.26
-else
-    skip_chk cov.26
-fi
+run_sash 'echo hi >&2'
+[[ $rc = 0 && -z $out && $rerr = hi ]]; chk cov.26
 # cov.86-88 a `>&`/`<&` fd-dup target that isn't a plain fd number is rejected
 # SB4048 (DG 2026-08-29) — was a silent dup-to-fd-2 fallback
 # (bug-redirect-dup-target-unvalidated). All modes (parse reject).
@@ -113,19 +109,11 @@ run_sash 'echo hi >&-'
 # cov.27 a file redirect whose TARGET is a variable expansion (`> $f`) — the
 # only `> $var` specs are taint rejections, so this clean codegen path (redirect
 # target as a runtime expr) is untested.
-if in_modes native; then
-    run_sash 'f=rvfile; echo hi > $f; cat $f'
-    [[ $rc = 0 && $out = hi && -z $err ]]; chk cov.27
-else
-    skip_chk cov.27
-fi
+run_sash 'f=rvfile; echo hi > $f; cat $f'
+[[ $rc = 0 && $out = hi && -z $err ]]; chk cov.27
 # cov.28 append (`>>`) to a variable-expansion target
-if in_modes native; then
-    run_sash 'f=rvfile2; echo a > $f; echo b >> $f; cat $f'
-    [[ $rc = 0 && $out = $'a\nb' && -z $err ]]; chk cov.28
-else
-    skip_chk cov.28
-fi
+run_sash 'f=rvfile2; echo a > $f; echo b >> $f; cat $f'
+[[ $rc = 0 && $out = $'a\nb' && -z $err ]]; chk cov.28
 # cov.29-48 arithmetic-operator coverage: no feature spec exercises these
 # operators with a variable operand, leaving transform/expr_handlers.rs
 # (unaryop_to_ssa / try_fold_unop / incdec_to_ssa / compound_assign_to_ssa /
@@ -226,12 +214,8 @@ run_sash 'echo $(< /etc/hostname)'
 # `echo a b c`, no word-split — a deliberate divergence from bash), and the
 # tainted loop var is attested with a predicate. Native-only: the c backend does
 # an extra empty EOF iteration here (task c-pipe-while-read-eof-extra-iter).
-if in_modes native; then
-    run_sash 'for x in $(echo a b c); do attest x [[ -n $x ]]; echo "$x"; done'
-    [[ $rc = 0 && $out = "a b c" && -z $err ]]; chk cov.61
-else
-    skip_chk cov.61
-fi
+run_sash 'for x in $(echo a b c); do attest x [[ -n $x ]]; echo "$x"; done'
+[[ $rc = 0 && $out = "a b c" && -z $err ]]; chk cov.61
 # cov.62 a backtick inside "…" is a LITERAL char (lexer scan_dq_backtick emits a
 # Literal, not a CommandSub): backticks are only top-level `$( )` sugar and have
 # no special meaning in quotes (DG 2026-08-28). The command is never run — the
@@ -259,14 +243,10 @@ run_sash 'int a=6; int b=3; echo $(( a ^ b ))'
 # cov.68-69 runtime divide/modulo by zero (codegen/arithmetic.rs
 # emit_div_by_zero_error) — the FIRING path: bash's "division by 0" to stderr,
 # result 0, rc 0 (cov.57 only tested the ternary-UNTAKEN, non-firing case).
-if in_modes native; then
-    run_sash 'int x=0; echo $(( 5 / x ))'
-    [[ $rc = 0 && $out = 0 && $rerr == *"division by 0"* ]]; chk cov.68
-    run_sash 'int x=0; echo $(( 5 % x ))'
-    [[ $rc = 0 && $out = 0 && $rerr == *"division by 0"* ]]; chk cov.69
-else
-    skip_chk cov.68; skip_chk cov.69
-fi
+run_sash 'int x=0; echo $(( 5 / x ))'
+[[ $rc = 0 && $out = 0 && $rerr == *"division by 0"* ]]; chk cov.68
+run_sash 'int x=0; echo $(( 5 % x ))'
+[[ $rc = 0 && $out = 0 && $rerr == *"division by 0"* ]]; chk cov.69
 # cov.70 non-final comma in a condition that is NOT a mutation → SB5007 via
 # validate_arith_comma_in_condition (a bare name `a` as a non-final comma part).
 # Distinct from cov.2 (`a==1, b=2`) whose final `b=2` mutation trips the earlier
@@ -280,37 +260,21 @@ run_sash 's="x"; s=~ s/a/b'
 [[ $rc != 0 && -z $out && $err == *SB4032* ]]; chk cov.71
 # cov.72 substring `${var:off:len}` → native codegen emit_string_op_expansion
 # (the only ParamExpansion operator that still reaches codegen; DD#65). native.
-if in_modes native; then
-    run_sash 's="hello"; echo ${s:1:3}'
-    [[ $rc = 0 && $out = ell && -z $err ]]; chk cov.72
-else
-    skip_chk cov.72
-fi
+run_sash 's="hello"; echo ${s:1:3}'
+[[ $rc = 0 && $out = ell && -z $err ]]; chk cov.72
 # cov.73 `keys` as the sole source of a for-in loop (the array-splat for-in
 # path). native.
-if in_modes native; then
-    run_sash 'map m=([x]=1 [y]=2); for k in $(keys m); do echo $k; done'
-    [[ $rc = 0 && $out = $'x\ny' && -z $err ]]; chk cov.73
-else
-    skip_chk cov.73
-fi
+run_sash 'map m=([x]=1 [y]=2); for k in $(keys m); do echo $k; done'
+[[ $rc = 0 && $out = $'x\ny' && -z $err ]]; chk cov.73
 # cov.74 a compact (glued) dispatch operator `[[ $x ==b { … } ]]` → parser
 # extract_compact_operator (operator-adjacent-to-pattern split). native.
-if in_modes native; then
-    run_sash 'x=b; [[ $x ==b { echo m } ]]'
-    [[ $rc = 0 && $out = m && -z $err ]]; chk cov.74
-else
-    skip_chk cov.74
-fi
+run_sash 'x=b; [[ $x ==b { echo m } ]]'
+[[ $rc = 0 && $out = m && -z $err ]]; chk cov.74
 # cov.75 a predicate function whose body is a dispatch with a default arm where
 # every arm returns → validate case_always_returns (definite-return, DD#74).
 # native.
-if in_modes native; then
-    run_sash 'f() { [[ $1 == a { return 0 } || { return 1 } ]] }; if f a; then echo yes; fi'
-    [[ $rc = 0 && $out = yes && -z $err ]]; chk cov.75
-else
-    skip_chk cov.75
-fi
+run_sash 'f() { [[ $1 == a { return 0 } || { return 1 } ]] }; if f a; then echo yes; fi'
+[[ $rc = 0 && $out = yes && -z $err ]]; chk cov.75
 
 # --- coverage grind (2026-08-29): drive never-run named fns to count>0 ---
 # (Verified via cargo-llvm-cov per-function count: each spec below flips its

@@ -33,6 +33,11 @@ run_sash_emit_ir() {
     rm -f .input.sash out err
 }
 
+# --- 104.x: --emit-ir capture ---
+# native-only, and NOT a c-backend gap: the helper above runs `sash --emit-ir`
+# directly, a backend-independent CLI surface that terminates before any
+# codegen. c mode would re-run identical commands. Audited 2026-09-13.
+
 # 104.1 --emit-ir accepted, and stamps a version a consumer can refuse on
 if in_modes native; then
     run_sash_emit_ir 'echo hello'
@@ -89,6 +94,11 @@ run_sash 'for f in **/*.sh; do echo $f; done'
 # 20.33 pipefail always on
 run_sash '/bin/false | /bin/true'
 [[ $rc != 0 && -z $err ]]; chk 20.33
+
+# --- 32.x: embedded source section ---
+# native-only by construction, NOT a suppressed defect: the section lives in
+# the ELF that Cranelift links. c mode produces a gcc-linked binary with no
+# .sash_source at all, so there is nothing to assert. Audited 2026-09-13.
 
 # 32.1 binary contains .sash_source section (native ELF only)
 if in_modes native; then
