@@ -373,8 +373,14 @@ never sees it and the instrumented artifacts look fresh. The leftover binary
 is slower and drops `default_*.profraw` wherever it runs. Use `mk cov-reset`.
 
 `coverage.db` (repo root, **untracked and gitignored**, same status as
-`spec.db`) holds lcov line/function data so uncovered lines can be joined
-against the indexnudge `symbols` table and ranked **by function**:
+`spec.db`) holds lcov line/function/branch data so uncovered lines can be
+joined against the indexnudge `symbols` table and ranked **by function**.
+Build it with `mk cov-db` after a `mk cov-branch`; it reads the lcov that
+`contrib/coverage.sh --lcov` writes to `target/coverage/`. That directory
+survives `mk cov-reset` (which removes only `target/release`) — **the lcov
+cannot be regenerated afterwards**, because `cov-reset` drops the covmap
+along with the instrumented binary. The summary table names thin *files*;
+only the lcov names thin *lines*.
 
 ```sql
 ATTACH 'coverage.db' AS cov;
@@ -387,6 +393,15 @@ GROUP BY s.file, s.name, s.start_line ORDER BY uncov DESC;
 
 **`sash-rt` is not measured by any of this.** It is `#![no_std]` with no
 libc, so instrumentation compiles but nothing writes a profraw at exit.
+
+**`mk build` must build every workspace member.** It once omitted
+`sash-expand`, which only ever worked because `mk test` builds it as a side
+effect of `cargo test`. The moment something removed `target/release` — which
+`mk cov` and `mk cov-reset` both do by design — spec `54.1` failed, and it
+failed *obscurely*: the spec locates the binary with `which sash-expand`, so a
+missing one becomes an empty path and the error is a compile failure about a
+config file. If a spec shells out to a helper binary, `mk build` has to
+produce it.
 
 ## Code index
 

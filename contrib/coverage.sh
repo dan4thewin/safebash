@@ -20,25 +20,34 @@
 # The canary below makes all three loud: one sash invocation must drop a
 # profraw, or we abort before spending a full sweep on a dud.
 #
-# Usage: contrib/coverage.sh [--branch] [--with-unit]
+# Usage: contrib/coverage.sh [--branch] [--with-unit] [--lcov FILE]
 #   --branch     also measure branch coverage. Requires nightly
 #                (-Zcoverage-options=branch is unstable); the shipped build
 #                stays stable, nightly is used for measurement only.
 #   --with-unit  include the in-crate unit tests. Off by default: the goal is
 #                what the SPEC SUITE reaches, and folding unit tests in hides
 #                exactly the should-never-run assertions worth finding.
+#   --lcov FILE  also write per-line/-branch detail to FILE. The summary table
+#                says which FILES are thin; only lcov says which LINES, and it
+#                cannot be recovered after `mk cov-reset` drops the covmap.
+#                Feed it to contrib/covdb.py to triage by function.
 set -eu
 cd "$(dirname "$0")/.."
 
 toolchain=""
 branch=""
 with_unit=""
-for a in "$@"; do
-    case "$a" in
+lcov=""
+while [ $# -gt 0 ]; do
+    case "$1" in
         --branch) toolchain="+nightly"; branch="--branch" ;;
         --with-unit) with_unit=1 ;;
-        *) echo "usage: contrib/coverage.sh [--branch] [--with-unit]" >&2; exit 1 ;;
+        --lcov) shift; lcov="${1:-}"
+                [ -n "$lcov" ] || { echo "--lcov needs a path" >&2; exit 1; } ;;
+        *) echo "usage: contrib/coverage.sh [--branch] [--with-unit] [--lcov FILE]" >&2
+           exit 1 ;;
     esac
+    shift
 done
 
 # sash-rt, sash-convert and sash-expand are separate concerns; tests and the
@@ -77,6 +86,13 @@ bash spec/run.sh >/dev/null 2>&1
 n=$(ls target/*.profraw 2>/dev/null | wc -l)
 echo "profraws from sweep: $n"
 cargo $toolchain llvm-cov report --release $branch --ignore-filename-regex "$IGNORE"
+
+if [ -n "$lcov" ]; then
+    mkdir -p "$(dirname "$lcov")"
+    cargo $toolchain llvm-cov report --release $branch \
+        --ignore-filename-regex "$IGNORE" --lcov --output-path "$lcov"
+    echo "lcov written to $lcov"
+fi
 
 cat <<'EOF'
 

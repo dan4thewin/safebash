@@ -5,7 +5,7 @@
 set -eu
 . common.sh
 setup var_modifiers
-plan=133
+plan=136
 echo "1..$plan" >&3
 
 set +e
@@ -239,6 +239,22 @@ run_sash 'fn f { /bin/echo $1:-$((2 + 3)) }; f'
 # like the braced `${1:-$(ext)}` (the sugar changes only the spelling).
 run_sash 'fn f { /bin/echo $1:-$(/bin/echo Z) }; f'
 [[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk vm.bl15
+# vm.bl16 `${…}` interpolation inside a brace-less operand. The operand scan
+# must follow the braces to their match rather than stopping at the first `}`
+# (lexer.rs:skip_braced_to_close) — without it the operand would end mid-word.
+run_sash 'str y=inner; str x=""; /bin/echo $x:-${y}'
+[[ $rc = 0 && $out = "inner" && -z $err ]]; chk vm.bl16
+# vm.bl17 a `)` inside quotes inside a `$( )` brace-less operand. The paren
+# scan counts depth, so it must skip quoted regions or this `)` closes the
+# substitution early and the operand is truncated to `$(echo "a`.
+run_sash 'str x=""; /bin/echo $x:-$(echo "a)b")'
+[[ $rc = 0 && $out = "a)b" && -z $err ]]; chk vm.bl17
+# vm.bl18 a `` `…` `` run inside a brace-less operand. Asserted as brace-less ≡
+# braced rather than against a literal: the default word is a `"…"` body, where
+# a backtick is a literal character (DG 2026-08-28), and this test is about the
+# two spellings agreeing — it stays correct if that rule is ever revisited.
+run_sash 'str x=""; str a=$x:-`echo hi`; str b=${x:-`echo hi`}; [[ $a = $b ]] && /bin/echo same'
+[[ $rc = 0 && $out = "same" && -z $err ]]; chk vm.bl18
 
 # ── DD#96: comma-chained `s///` edits ──
 # DG 2026-09-08: `,` sequences edits, in BOTH the mutating statement form and

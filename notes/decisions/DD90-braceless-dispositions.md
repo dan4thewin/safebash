@@ -56,6 +56,19 @@ available as `${x}:-foo` or by quoting.
    supports literal text and `$name` / `${…}` interpolation, but a command /
    arithmetic / backtick operand must be braced (`${x:-$(cmd)}`). A brace-less
    operand that reaches one falls back transparently to the pre-DD#90 tokenization.
+
+   **SUPERSEDED — DD#91 follow-up (DG, 2026-09-04).** Rule 4 no longer holds:
+   a `$( )` / `$(( ))` / `` `…` `` run IS a valid brace-less operand and is
+   consumed whole. `scan_braceless_operand` follows the construct to its close
+   (`skip_paren_to_close`, counting depth and skipping quoted regions so a `)`
+   inside `'…'`/`"…"` does not miscount; `skip_backtick_to_close`;
+   `skip_braced_to_close`) and only returns `None` — falling back to the
+   pre-DD#90 tokenization — when the run is *unterminated*. Specs vm.bl13–bl18.
+
+   Note the backtick case is 1-to-1 with the braced spelling but not with
+   `$( )`: the operand becomes a `"…"` body, where a backtick is a literal
+   character (DG 2026-08-28), so `` ${x:-`cmd`} `` and `` $x:-`cmd` `` both
+   yield the backticks verbatim while `${x:-$(cmd)}` runs the command.
 5. **Interpolation inside `"…"`** — DG 2026-09-04, "err on the side of clarity":
    a bare `"$x:-foo"` is `$x` + the literal `:-foo`, NOT a disposition. Inside
    double quotes the disposition must be braced (`"${x:-foo}"`).
@@ -81,7 +94,10 @@ the braced spelling. Verified side-by-side (`$x:-foo` ≡ `${x:-foo}`).
   construction.
 
 Specs: `var_modifiers.sh` vm.bl1–bl12 (scalar + disambiguation + interpolation
-exclusion + whitespace), `glob_splat.sh` gs.25–gs.30 (array). journal 242.
+exclusion + whitespace), vm.bl13–bl18 (the DD#91-follow-up substitution
+operands: `$( )`, `$(( ))`, taint parity, `${…}` nesting, a quoted `)` inside
+`$( )`, and backtick ≡ braced), `glob_splat.sh` gs.25–gs.30 (array).
+journal 242, 307.
 
 ## See also
 

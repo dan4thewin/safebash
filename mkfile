@@ -1,11 +1,13 @@
 RT=sash-rt
 SASH=sash
 CONVERT=sash-convert
+EXPAND=sash-expand
 CSRC=`ls sash-rt/csrc/*.c sash-rt/csrc/*.S sash-rt/csrc/*.h | tr '\n' ' '`
 
 build:V: $RT/target/release/libsash_rt.a target/release/sash-regex target/release/sash-getopt
 	(cd $SASH && cargo build --release)
 	(cd $CONVERT && cargo build --release)
+	(cd $EXPAND && cargo build --release)
 
 target/release/sash-regex: sash-rt/csrc/sash-regex.c sash-rt/csrc/regcomp.c sash-rt/csrc/regexec.c sash-rt/csrc/regaux.c
 	mkdir -p target/release
@@ -54,14 +56,22 @@ lint:V:
 # live in contrib/coverage.sh — the previous recipes set `SASH=`, which
 # spec/run.sh does not read, and used `$PWD`, which inside a mkfile is a mk
 # variable that expands empty. Both measured the wrong binary silently.
+# lcov detail goes to target/coverage/ (survives cov-reset, which only drops
+# target/release) so `mk cov-db` can triage by function afterwards. The summary
+# table names thin FILES; only the lcov names thin LINES, and it cannot be
+# regenerated once cov-reset has dropped the covmap.
 cov:V:
-	bash contrib/coverage.sh
+	bash contrib/coverage.sh --lcov target/coverage/base.lcov
 
 cov-branch:V:
-	bash contrib/coverage.sh --branch
+	bash contrib/coverage.sh --branch --lcov target/coverage/branch.lcov
 
 cov-unit:V:
-	bash contrib/coverage.sh --with-unit
+	bash contrib/coverage.sh --with-unit --lcov target/coverage/unit.lcov
+
+# Rank uncovered lines by function, joining the lcov against the indexnudge index.
+cov-db:V:
+	python3 contrib/covdb.py target/coverage/branch.lcov coverage.db
 
 cov-rpt:V:
 	(cd $SASH && cargo llvm-cov report --release)

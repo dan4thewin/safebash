@@ -1372,12 +1372,15 @@ fn parse_disposition_operator(
 
 /// DD#65: the `${var:-WORD}` default is a double-quoted-string body whose
 /// terminator is the closing `}` (the brace scanner already stripped it), so
-/// the default is *exactly* a `"…"`: `$var`/`${…}`/`$(…)`/`$((…))`/`$'…'`/
-/// `` `…` `` interpolate; every other byte — including whitespace (kept
-/// verbatim) and quotes (`'`/`"` are literal) — is literal text. Any byte can
-/// still be encoded via a `$'…'` C-string (e.g. `$'a\x7db'` → `a}b`). The
-/// result is an `ExprKind::DoubleQuoted`, identical to a real double-quoted
-/// word. Empty → empty literal.
+/// the default is *exactly* a `"…"`: `$var`/`${…}`/`$(…)`/`$((…))`/`$'…'`
+/// interpolate; every other byte — including whitespace (kept verbatim) and
+/// quotes (`'`/`"` are literal) — is literal text. A `` `…` `` is literal
+/// too, for the same reason: backticks are top-level `$( )` sugar with no
+/// meaning inside quotes (DG 2026-08-28), and this body is a quotes body, so
+/// `` ${x:-`cmd`} `` yields the backticks verbatim rather than running `cmd`.
+/// Any byte can still be encoded via a `$'…'` C-string (e.g. `$'a\x7db'` →
+/// `a}b`). The result is an `ExprKind::DoubleQuoted`, identical to a real
+/// double-quoted word. Empty → empty literal.
 fn parse_default_word(s: &str, span: Span) -> Result<Box<Expr>, Diagnostic> {
     let mut scanner = Scanner::new(s);
     let parts = scanner.scan_default_body();

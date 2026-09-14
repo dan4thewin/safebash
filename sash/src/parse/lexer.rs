@@ -804,8 +804,11 @@ impl Scanner {
     /// Scan a brace-less disposition operand from `from` to the word boundary.
     /// Literal bytes and `$name` / `${…}` interpolation are consumed (quotes are
     /// ordinary literal bytes, DD#65); an unnested whitespace or word-terminator
-    /// (`;|&()<>{}#`) ends it. Returns `None` for a `$( )` / `$(( ))` / backtick
-    /// operand (those require braces).
+    /// (`;|&()<>{}#`) ends it. A `$( )` / `$(( ))` / `` `…` `` is consumed whole
+    /// as part of the operand (DD#91 follow-up, DG 2026-09-04 — DD#90's original
+    /// rule 4 required braces for these; see specs vm.bl13–vm.bl18). `None` only
+    /// when such a run is *unterminated*, which makes the operand scan fail and
+    /// the word fall back to the pre-DD#90 tokenization.
     fn scan_braceless_operand(&self, from: usize) -> Option<(String, usize)> {
         let s = &self.source;
         let mut p = from;
