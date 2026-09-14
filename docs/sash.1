@@ -400,6 +400,47 @@ where no command has run yet \(em at the top of a script, and after a
 background job, which does not set it.
 The punctuation spelling is rejected in exactly the same places.
 .
+.SH FUNCTIONS AND RECURSION
+Functions are
+.B inlined.
+There is no runtime call stack, so in general a function cannot call itself \[em]
+inlining would not terminate \[em] and such calls are rejected with
+.BR SB5037 .
+.PP
+.B One shape is allowed:
+a direct self
+.I tail
+call, where the recursive call is the producer of a
+.BR return .
+That is compiled to a loop and runs in constant stack.
+Write recursion in accumulator form:
+.PP
+.EX
+fn fact \-> int {
+  int n=$(($1)); int acc=$(($2))
+  if (( n <= 1 )); then return $(( acc )); fi
+  int n1=$(( n \- 1 )); int a1=$(( n * acc ))
+  return $(( (fact n1 a1) ))
+}
+int r=$(( (fact 5 1) ))          # 120
+.EE
+.PP
+Everything else is
+.BR SB5037 :
+.TP
+.B non\-tail self\-call
+.RB \[dq] return\ $((\ n\ *\ (f\ m)\ ))\[dq]
+\[em] the multiply happens
+.I after
+the call returns, so there is nothing to turn into a loop.
+This is what a direct translation of the textbook factorial produces.
+.TP
+.B mutual recursion
+.I f
+calls
+.IR g ,
+which calls
+.IR f .
 .SH REGULAR EXPRESSIONS
 Regexes appear in
 .RB \[dq] "[[ $v =~ RE ]]" \[dq],

@@ -1,13 +1,14 @@
 ---
 title: "spec.db clause text: 1255 clause ids have no requirement text"
-status: ready
+status: blocked
 priority: P3
 kind: effort
 depends: []
+blocked-on: "DG — two DECIDE gates below (id keying, and the `dd` value for named suites)"
 gates:
   - "The consumer is the eventual specification document (`specification-document`, DG 2026-09-07) — so the text is wanted, but its KEYING is provisional"
   - "DECIDE: author against today's chronological ids and re-key later, or wait for the document's logical id scheme"
-  - "FIRST (independent of the above): export the existing 231 clauses to a version-controlled `spec/clauses.sql` seed (today the text exists only inside the binary spec.db)"
+  - "DONE (2026-09-12): the seed exists — `spec/clauses.tsv`, tracked, 225 rows, applied idempotently by `run.sh` alongside `spec/schema.sql`"
   - "DECIDE: what `dd` value the named suites (`cov.*`, `vm.*`, `dp.*`, …) get — they are not DD-numbered but most map to a governing DD"
   - "Each slice: clause rows added, `SELECT COUNT(*) FROM tests WHERE NOT EXISTS (…clause…)` drops, `PRAGMA foreign_key_check` shrinks"
 ---
@@ -97,3 +98,63 @@ The residual is *not* an integrity fault — FKs are unenforced
 alternative to authoring text is making `clause_id` nullable and NULLing the
 unbacked ones for a clean `foreign_key_check`; that discards the "which clause
 *would* apply" hint, so it is only worth it if gate 1 comes back won't-do.
+
+
+---
+
+## Re-measured 2026-09-14
+
+**Gate 2 is done and the filing did not know it.** `spec/clauses.tsv` is
+tracked (225 rows — the original 231 less DD#15's six orphans, dropped in
+`219a8bc`), and `spec/run.sh:20-23` applies `schema.sql` then imports the TSV
+before recording anything, so a fresh clone with no `spec.db` rebuilds it
+correctly. The export recipe is in `AGENTS.md`. Nothing to do here.
+
+**The gap has grown 62% since filing.**
+
+| | filed 2026-09-07 | now |
+|---|---:|---:|
+| unbacked clause ids | 1255 | **2029** |
+| tests behind them | 3703 | **4000** |
+| tests with a backing clause | 754 | **509** |
+
+Split today: 957 DD-numbered ids (1839 tests), 1072 named-suite ids (2161).
+
+Backed *fell* because DD#15's orphans were dropped while the suite grew from
+~3100 to 4509 tests. The filing's own suggestion — "when a DD is touched, add
+its clause rows in the same commit" — has not been happening. I did not do it
+either across the four commits before this one, which is the honest evidence
+that opportunistic authoring does not work without the keying question
+settled: there is no point writing rows against ids that are expected to be
+re-keyed.
+
+## Blocked on DG — two questions, both consequential
+
+Both were already marked DECIDE in the original gates and neither has been
+answered. Stating them plainly so they can be answered quickly:
+
+**1. Key clause text against today's chronological ids, or wait?**
+Clause ids currently mirror spec test ids, which are DD-numbered by the order
+things were built, not by logic. DG has said (2026-09-07) the specification
+document will have its own logical scheme. So either:
+- **(a) author now against today's ids** and accept a re-keying pass later.
+  2029 ids is a large body of text to move, but the TSV makes it a mechanical
+  transform and the text itself survives.
+- **(b) wait for the document's scheme.** Nothing is lost meanwhile except
+  time — the `clauses` table has no consumer today.
+
+(a) only pays if the re-key is genuinely mechanical, which depends on whether
+the document's ids are a *renaming* of these or a *regrouping* of them. That
+is DG's call and not knowable from here.
+
+**2. What `dd` value do named suites get?**
+`clauses.dd` is `INTEGER NOT NULL`, and `cov.*` / `vm.*` / `dp.*` / `cf.*` /
+`av.*` / `gs.*` / `nl.*` are not DD-numbered. Most map to a governing DD
+(`gs.*` → DD#69, `dp.*` → DD#66/#71, `vm.*` → the var-modifier DDs, `cf.*` →
+control flow). Either map each family, or use a sentinel `0` for "suite, not a
+DD clause". This one is cheap to reverse and could be decided either way, but
+it should be decided *before* bulk authoring, not during.
+
+Until (1) is answered, this task should stay blocked rather than ready —
+listing it as ready invites exactly the half-done authoring that widened the
+gap.

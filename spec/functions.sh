@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup functions
-plan=98
+plan=102
 echo "1..$plan" >&3
 
 set +e
@@ -601,6 +601,60 @@ run_sash 'array a=(x y z)
 run_sash 'fn f { echo "n=$(len args)" }
 f x y z'
 [[ $rc = 0 && $out = "n=3" && -z $err ]]; chk sp.8
+
+# ── DD#27: recursion, and the one shape that is allowed ──
+# These pin the examples in docs/GUIDE.md ("Functions, inlining, and
+# recursion") and docs/sash.1 (FUNCTIONS AND RECURSION). Documented examples
+# that nothing compiles are how a doc drifts into being wrong — GUIDE.md said
+# flatly "SB5037 rejects recursion" while the accumulator form below had been
+# compiling to a loop all along.
+
+# rec.1 the documented accumulator factorial compiles and runs
+run_sash 'fn fact -> int {
+  int n=$(($1)); int acc=$(($2))
+  if (( n <= 1 )); then return $(( acc )); fi
+  int n1=$(( n - 1 )); int a1=$(( n * acc ))
+  return $(( (fact n1 a1) ))
+}
+int r=$(( (fact 5 1) ))
+echo $r'
+[[ $rc = 0 && $out = 120 && -z $err ]]; chk rec.1
+
+# rec.2 …and it is a loop, not a stack: a depth that would blow any inliner
+run_sash 'fn count -> int {
+  int n=$(($1)); int acc=$(($2))
+  if (( n <= 0 )); then return $(( acc )); fi
+  int n1=$(( n - 1 )); int a1=$(( acc + 1 ))
+  return $(( (count n1 a1) ))
+}
+int r=$(( (count 100000 0) ))
+echo $r'
+[[ $rc = 0 && $out = 100000 && -z $err ]]; chk rec.2
+
+# rec.3 a NON-tail self-call is SB5037 — the multiply happens after the call
+# returns, so there is nothing to turn into a loop. This is what a direct
+# translation of the textbook factorial produces.
+run_sash 'fn f -> int {
+  int n=$(($1))
+  if (( n <= 1 )); then return 1; fi
+  int m=$(( n - 1 ))
+  return $(( n * (f m) ))
+}
+int r=$(( (f 5) ))
+echo $r'
+[[ $rc != 0 && $err == *SB5037* ]]; chk rec.3
+
+# rec.4 mutual recursion is SB5037 too
+run_sash 'fn a -> int {
+  int n=$(($1))
+  if (( n <= 0 )); then return 0; fi
+  int m=$(( n - 1 ))
+  return $(( (b m) ))
+}
+fn b -> int { int n=$(($1)); return $(( (a n) )) }
+int r=$(( (a 3) ))
+echo $r'
+[[ $rc != 0 && $err == *SB5037* ]]; chk rec.4
 
 set -e
 tally

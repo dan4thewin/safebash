@@ -316,6 +316,38 @@ is a compile-time error.
 merge points, basic blocks with explicit terminators, control flow
 graph construction. Function inlining. Arithmetic evaluation.
 
+#### Functions, inlining, and recursion (DD#27)
+
+Functions are **inlined**. There is no runtime call stack, so a function
+cannot in general call itself — inlining would not terminate. `SB5037`
+rejects those calls.
+
+**One shape is allowed: a direct self tail-call**, where the recursive call
+is the producer of a `return`. That compiles to a **loop**, so it runs in
+O(1) stack. Write recursion in accumulator form:
+
+```sash
+fn fact -> int {
+  int n=$(($1)); int acc=$(($2))
+  if (( n <= 1 )); then return $(( acc )); fi
+  int n1=$(( n - 1 )); int a1=$(( n * acc ))
+  return $(( (fact n1 a1) ))     # tail self-call → compiled to a loop
+}
+int r=$(( (fact 5 1) ))          # 120
+```
+
+Everything else is `SB5037`:
+
+| shape | result |
+|---|---|
+| direct self tail-call — `return $(( (f …) ))` | compiled to a loop |
+| non-tail self-call — `return $(( n * (f m) ))` | **SB5037** |
+| mutual recursion — `f` calls `g` calls `f` | **SB5037** |
+
+The non-tail case is the one worth naming explicitly, because it is what a
+direct translation of the textbook factorial produces: the multiply happens
+*after* the call returns, so there is nothing to turn into a loop.
+
 ### Phases 7–9: Fold, Codegen, Link
 
 Constant folding, then `codegen/` lowers SSA to Cranelift IR. Declares
@@ -456,8 +488,10 @@ Only a fork inheriting *this* capture's stdout disqualifies a site.
 
 The runtime keeps a **stack** of capture frames, because an impure capture
 can nest inside a pure one: the memfd path pushes a transparent frame that
-suspends buffer diversion for its duration. Depth is static (SB5037 rejects
-recursion, and functions are inlined).
+suspends buffer diversion for its duration. Depth is static: functions are
+inlined, and the one recursive shape sash accepts — a direct self tail-call —
+becomes a loop rather than a nested frame. Everything else is SB5037. (See
+[Functions, inlining, and recursion](#functions-inlining-and-recursion-dd27).)
 
 One consequence is deliberately observable: a pure body probing its own
 stdout (`[[ -p /dev/stdout ]]`, `-t 1`) sees the caller's real stdout, while

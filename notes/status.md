@@ -1,3 +1,48 @@
+## ══ STATUS (2026-09-14) — GUIDE.md asserted the opposite about recursion ══
+
+**Journal 303.** Sweep **4508 passing, 9 skipped, 0 failing, 0 flips** (+8:
+4 recursion specs × 2 modes). `docs-tail-recursion-args-model` **done**;
+`spec-db-clause-text` moved to **blocked (DG)**.
+
+## The documentation bug
+
+> `GUIDE.md:459` — "Depth is static (SB5037 rejects recursion…)"
+
+False. SB5037 rejects everything **except** a direct self tail-call, which is
+compiled to a **loop** — and SB5037's own message already says so. The
+diagnostic was right; the architecture doc asserted the opposite, in a
+parenthetical.
+
+| shape | result |
+|---|---|
+| direct self tail-call | compiled to a loop |
+| non-tail self-call `return $(( n * (f m) ))` | SB5037 |
+| mutual recursion | SB5037 |
+
+Now documented in `GUIDE.md` (new subsection under Phase 6) and `sash.1`
+(new `.SH FUNCTIONS AND RECURSION` — it had no functions section at all).
+Specs `rec.1`–`rec.4`; `rec.2` runs **100,000** recursive calls, which
+demonstrates the loop rather than asserting it.
+
+Two of that task's four gates were moot: they targeted `SUBSET.md`, removed
+2026-08-29 **for drifting from the DDs**, and repeated the `$# ≡ ${#args}`
+error already corrected in journal 300. One wrong sentence, two filings.
+
+## Needs DG — two items
+
+1. **`spec-db-clause-text`** (now `blocked`). Gate 2 was already done
+   (`spec/clauses.tsv` is tracked and `run.sh` imports it). The two DECIDE
+   gates remain: key clause text against today's chronological ids and re-key
+   later, or wait for the specification document's scheme? And what `dd` value
+   do the named suites (`cov.*`, `vm.*`, …) get? Re-measured, the gap grew
+   **1255 → 2029 ids** and backed tests **fell 754 → 509**; opportunistic
+   authoring is not happening while the keying is provisional.
+2. **`harness-diagnostic-advice-compiles`** (P3). Three options for making
+   "a diagnostic's advice must compile" structural. The one that works
+   changes the `Diagnostic` type (suggestions as data, not prose).
+
+---
+
 ## ══ STATUS (2026-09-14) — externalized true/false get a CHECK ══
 
 **Journal 302.** Sweep **4500 passing, 9 skipped, 0 failing, 0 flips** (+7,
