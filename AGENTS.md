@@ -10,9 +10,11 @@ the stamina for incremental implementation.
 
 The compiler works end-to-end: bash source → parse → validate →
 lower → type check → transform → fold → codegen → link → static ELF.
-Output is byte-identical to Bash. Also supports `--janet`, `--janet-map`,
-`--emit-c`, `--manifest` and `--extract` modes; `sash --help` lists the
-full set. (`--emit-source`/`--annotate`/`--nolint` are **sash-convert**
+Output is byte-identical to Bash. Also supports `--emit-c`, `--emit-ir`,
+`--manifest`, `--extract`, `--trace`, `--no-taint`, `--heap-size` and
+`--sysroot`; `sash --help` lists the full set. (`--janet`/`--janet-map` are
+**gone** — the Janet backend was removed by DD#104 in favour of the
+`--emit-ir` seam.) (`--emit-source`/`--annotate`/`--nolint` are **sash-convert**
 flags — `sash` rejects them, DD#57.)
 
 Read the journal prologue (`notes/journal/001-prologue.md`) before
@@ -91,7 +93,8 @@ on a consequential fork violates Decision authority.
 - **sash-rt/** — pure Rust `#![no_std]` runtime crate (rustix, no libc)
 - **sash-convert/** — bash → sash-native converter
 - **sash-expand/** — expansion utilities
-- **docs/** — GUIDE, TIMELINE
+- **sash-getopt/** — option-parsing helper (`mk sash-getopt-test`)
+- **docs/** — GUIDE, REVIEW, TIMELINE, sash.1
 - **notes/** — iwe knowledge graph: journal, decisions, tasks, status, architecture
 - **audit/** — adversarial audit findings and remediation
 - **contrib/** — contributed scripts/tools
@@ -99,7 +102,7 @@ on a consequential fork violates Decision authority.
 - **exp/** — git submodule → safebash-exp (historical experiments, not needed for build)
 - **spec.db** — SQLite database of all spec test results (repo root,
   **untracked and gitignored** — a local development artifact, not in git)
-- **95 design decisions** in `notes/decisions/` (one file per DD, numbered up to DD#107)
+- **97 design decisions** in `notes/decisions/` (one file per DD, numbered up to DD#109)
 - **1 adversarial audit** completed (5 models, 3 passes, remediation done)
 - **tree-sitter**: not used by the main compiler (hand-written parser). The
   `sash-convert` crate uses **stock** `tree-sitter-bash 0.25` on bash input.
@@ -194,7 +197,7 @@ backend, removed by DD#104 in favour of the `--emit-ir` seam),
 
 - `notes/status.md` — current priority, just completed, next up
 - `notes/decisions/` — one file per DD#, bare frontmatter with status
-- `notes/journal/` — full journal in 54 files
+- `notes/journal/` — full journal (310 files and counting)
 - `notes/tasks/` — backlog with bare frontmatter (status, depends, gates)
 - `docs/GUIDE.md` — architecture overview (public-facing)
 - the safe subset is defined by the DDs in `notes/decisions/` (SUBSET.md was
@@ -812,7 +815,7 @@ doctest was a 4-space-indented code block in `validate::check_taint`'s doc
 comment holding *sash* source, which rustdoc dutifully compiled as Rust.
 
 Steps 1 and 2 are **both** gates now. Step 2 (the spec suite) is still the
-one that carries the behavioural weight — 4542 tests against 77 units — so
+one that carries the behavioural weight — 4611 tests against 77 units — so
 when the two disagree about whether something is covered, believe the specs.
 Keep running anything long under `timeout`.
 

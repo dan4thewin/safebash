@@ -40,10 +40,6 @@ bc.f1-bc.f5.
 
 **`:ir-version` stays at 1** — DG: no consumers yet.
 
-**Note:** AGENTS.md's "Rust tests" section is stale — `sash/tests/` no longer
-exists (the test redux removed it), so `codegen_tests` etc. and the
-"step 1 is not achievable" caveat no longer apply.
-
 ## ══ OPEN FOR DG ══
 
 1. **Compound-redirect machinery** (`dead-compound-redirect-machinery.md`) —
