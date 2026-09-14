@@ -1,7 +1,41 @@
 ## ══ STATUS (2026-09-14) — the guard that declined to act ══
 
-**Journals 311, 312, 313.** Sweep **4661 passing, 10 skipped, 0 failing**.
-35 unit tests. Pushed through `36e5f0e`.
+**Journals 311–315.** Sweep **4667 passing, 10 skipped, 0 failing**.
+35 unit tests. Pushed through `7564412`.
+
+**Journals 314–315 continued the same ranking, with a different split.** Not
+every zero-hit arm is a defect — but the count alone never decided which.
+
+- **SB5002 cascade** (journal 314) — a bare heredoc in command-name position
+  put the internal lexer sentinel `__HEREDOC__` into a user-facing "command
+  not found", then re-reported each heredoc body line as SB5011.
+  `validate_command` already guards this, but the command-head check is a
+  separate walk, so the early return had no reach into it. Fixed at the batch
+  level in `run_structural_checks` — when SB5002 is present it is reported
+  alone, which is what the `lib.rs` comment already claimed pass ordering
+  guaranteed. Specs `cov.101`/`cov.102`.
+- **Two dead arms removed** (journal 315) — `transform/expressions.rs`'s
+  `$EPOCHSECONDS` synthesis contradicted `validate.rs:1447`, which rejects the
+  spelling outright and runs first; and `ssa_taint.rs`'s `attest` exemption
+  never fired because every attest form is lowered by `lower_if_attest` into
+  branch machinery, never an `SsaInst::Command`. The second was confirmed by
+  instrumenting the guard across four spec files, not by inspection, and its
+  reasoning stays as a comment naming when the exemption must return.
+- **Unreachable but kept** — `resolve.rs`'s two guards (`name.is_empty()`,
+  the `let…else` on a non-literal head) are unreachable only because
+  `run_structural_checks` exits first. That is a *cross-pass* invariant, not a
+  local one, so unlike the lexer arms in journal 312 they were left as returns
+  rather than promoted to panics. See
+  `notes/tasks/resolve-guards-unreachable-by-earlier-pass.md`.
+- **`cov.103`** — an escaped backtick inside a backtick substitution earns a
+  distinct SB5020 wording; nothing in the suite had ever written one.
+
+**The rule that emerged: a local invariant earns an assertion; a cross-pass
+one earns a comment.**
+
+**Coverage has not been re-measured since `36e5f0e`** — SB4057, `cov.101–103`
+and the `-[[ ]]` specs should convert several arms. Re-run `mk cov-branch` →
+`mk cov-db` → `mk cov-reset` before the next ranking pass.
 
 Three sessions of branch-coverage asymmetry work, and every one of them turned
 up a defect rather than a test gap. The shape repeats: **a guard that computes
