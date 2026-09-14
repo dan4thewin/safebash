@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup types
-plan=205
+plan=212
 echo "1..$plan" >&3
 
 set +e
@@ -801,6 +801,58 @@ run_sash 'if [[ i? 9223372036854775807 ]] && ! [[ i? 9223372036854775808 ]]; the
 # 77.9 a validated value converts safely; `i?` guarantees no overflow trap.
 run_sash 's=100; [[ i? $s ]] && echo $(( ${s:-0} * 2 ))'
 [[ $rc = 0 && $out = "200" && -z $err ]]; chk 77.9
+
+# ── DD#77 conversion dispositions over the strict grammar ────────────
+# 77.1-77.9 above cover the `i?` TEST (sash_is_int). These cover the
+# CONVERSION — `${s:-N}` / `${s:?M}` in arithmetic, i.e. sash_atoi_or and
+# sash_atoi_or_abort over parse_strict_i64. hint.2/hint.3 only ever passed
+# a well-formed value, so every edge of the grammar was uncovered; the only
+# tests of it were in sash-rt-tests/tests/unit_tests.rs, against the raw
+# `sash_atoi`, whose lenient C-atoi behaviour no sash program can reach.
+# 77.10 leading whitespace is not part of the grammar — `:-` takes the default
+run_sash 's="  42"
+int n=$(( ${s:-7} ))
+echo $n'
+[[ $rc = 0 && $out = "7" && -z $err ]]; chk 77.10
+
+# 77.11 …and `:?` aborts with the given message rather than parsing it
+run_sash 's="  42"
+int n=$(( ${s:?not an int} ))
+echo $n'
+[[ $rc != 0 && $rerr == *"not an int"* ]]; chk 77.11
+
+# 77.12 trailing junk is rejected whole — no partial parse to 42 (cf. 77.4)
+run_sash 's="42abc"
+int n=$(( ${s:-7} ))
+echo $n'
+[[ $rc = 0 && $out = "7" && -z $err ]]; chk 77.12
+
+# 77.13 a leading `+` IS part of the grammar and converts
+run_sash 's="+42"
+int n=$(( ${s:-7} ))
+echo $n'
+[[ $rc = 0 && $out = "42" && -z $err ]]; chk 77.13
+
+# 77.14 leading zeros are decimal, not octal — `007` is 7, not an error
+run_sash 's="007"
+int n=$(( ${s:-9} ))
+echo $n'
+[[ $rc = 0 && $out = "7" && -z $err ]]; chk 77.14
+
+# 77.15 out-of-range input is a DISPOSITION concern, not an arithmetic
+# overflow trap (DD#77): i64::MAX+1 is simply not a valid integer, so `:-`
+# yields the default and the program exits 0. Contrast 25.8, where an
+# operation overflows and the trap fires.
+run_sash 's="9223372036854775808"
+int n=$(( ${s:-7} ))
+echo $n'
+[[ $rc = 0 && $out = "7" && -z $err ]]; chk 77.15
+
+# 77.16 …while i64::MIN itself is in range and converts exactly
+run_sash 's="-9223372036854775808"
+int n=$(( ${s:-7} ))
+echo $n'
+[[ $rc = 0 && $out = "-9223372036854775808" && -z $err ]]; chk 77.16
 
 # ── DD#93 Part C: content-shape tests `p?` / `g?` ──
 # Sibling shape tests to `i?`, spelled with the same `?` suffix (kept out of
