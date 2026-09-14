@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup errors
-plan=186
+plan=194
 echo "1..$plan" >&3
 
 set +e
@@ -983,6 +983,53 @@ n=0" && -z $err && -z $rerr ]]; chk 55.71
 echo done'
   [[ $rc != 0 && -z $out && -z $err \
  && $rerr == *"/nonexistent_dir_55/f: No such file or directory"* ]]; chk 55.72
+
+# --- 95.13-95.20: SB4056, a list/pipeline operator with no right operand ----
+# `parse_trailing_list_op` did `parse_list_operand(...).unwrap_or(true_cmd)`,
+# so a missing right-hand side became an implicit `true`: `echo a &&` compiled
+# and printed `a`. The pipeline loop had the same hole by a different route --
+# with no stage after the `|` the `while` simply fell out and the pipeline was
+# returned as its left side alone. bash rejects all three outright. Found by
+# branch coverage: `parse_statement`'s at_eof guard had 0 hits against 19915,
+# and the only caller that could reach it was the trailing-pipe path.
+# Journal 311.
+
+# 95.13 trailing `&&`
+run_sash 'echo a &&'
+[[ $rc != 0 && -z $out && $err == *SB4056* ]]; chk 95.13
+
+# 95.14 trailing `||`
+run_sash 'echo a ||'
+[[ $rc != 0 && -z $out && $err == *SB4056* ]]; chk 95.14
+
+# 95.15 trailing `|`
+run_sash 'echo a |'
+[[ $rc != 0 && -z $out && $err == *SB4056* ]]; chk 95.15
+
+# 95.16 a trailing newline does not supply the operand — `skip_terminators`
+#       runs before the operand is parsed, so this is the same error
+run_sash 'echo a &&
+'
+[[ $rc != 0 && -z $out && $err == *SB4056* ]]; chk 95.16
+
+# 95.17 control: a trailing `&` is NOT this error. Background genuinely has no
+#       right operand, and `background_list_op` still synthesises the `true`.
+#       bash accepts it too.
+run_sash 'echo a &'
+[[ $rc = 0 && $out = "a" && -z $err ]]; chk 95.17
+
+# 95.18 control: a complete `&&` chain still folds left (DD#95)
+run_sash 'true && echo x && echo y'
+[[ $rc = 0 && $out = "x
+y" && -z $err ]]; chk 95.18
+
+# 95.19 control: a complete `||` still runs its right side
+run_sash 'false || echo c'
+[[ $rc = 0 && $out = "c" && -z $err ]]; chk 95.19
+
+# 95.20 control: a multi-stage pipeline is unaffected
+run_sash 'echo a | cat | cat'
+[[ $rc = 0 && $out = "a" && -z $err ]]; chk 95.20
 
 set -e
 tally

@@ -1,44 +1,45 @@
-## ══ STATUS (2026-09-14) — SB5049 now covers same-scope redeclaration ══
+## ══ STATUS (2026-09-14) — SB4056: an operator with nothing after it ══
 
-**Journal 310.** Sweep **4611 passing, 10 skipped, 0 failing** (+26).
-fmt / clippy / complexity gate green; `cargo test --release` 77 passing.
+**Journal 311.** Sweep **4627 passing, 10 skipped, 0 failing**.
 
-DG's call: *a typed declaration (`str`/`int`/`array`/`map`/`const`) of a name
-already declared in the **same** scope is SB5049, regardless of type match.*
-SB5049 previously fired only **cross**-scope, so at top level `str x` twice,
-`str x` then `int x` (**type change**), and `str x` then `const x`
-(**acquires const**) were all accepted — a variable's contract could change
-partway down a file with no diagnostic.
+**Bug fixed (stop-everything).** `echo a &&`, `echo a ||` and `echo a |` all
+**compiled and ran**, printing `a` and exiting 0. bash rejects all three.
 
-`check_redeclaration` is the companion to `check_no_shadow`. Control-flow
-bodies share the enclosing scope (DD#86 gives control flow no scope); a
-function body gets a fresh map; top level and the DD#56 END body share one.
-Sibling-function locals and repeated `for x` stay legal — the literal reading
-of "regardless of scope" would have broken both.
+Two mechanisms, same hole:
 
-**SB4044 no longer fires on a declaration.** `const x=1; const x=2` said
-"cannot be reassigned" when nothing was assigned. Proved nothing was lost: a
-13-case const battery before/after — six dropped the redundant SB4044,
-**none became accepted**. SB4044 now means only a bare assignment to a const.
+- `parse_trailing_list_op` did `parse_list_operand(...).unwrap_or(true_cmd)`
+  — a missing right operand was **substituted with `true`**, so `echo a &&`
+  parsed as `echo a && true`. Checked before touching: no DD covers it, and
+  `git log -S` shows it predates the left-associativity fix (`dad1dfe`) and
+  was carried through unchanged. A default, never a decision.
+- the pipeline loop fell out when `parse_statement` returned `None`, so the
+  `|` was discarded and the pipeline returned as its left side alone.
 
-**Bug found and fixed (pre-existing, predates `be36208`).**
-`parse_declaration_assignments` stopped at newline/`;`/EOF/redirect but not
-at `}`, so a declaration that was the **last** statement in any brace block
-(`fn`/`for`/`if`/`while`/`END`) ate the closing brace as a candidate name:
+`background_list_op`'s `true_cmd` **stays** — a trailing `&` genuinely has no
+right operand and bash accepts it. `&` is a terminator, `&&` is infix.
 
-```
-sash -c 'fn f { str x="a" }'   →  SB4014 expected variable name in declaration
-```
+**How it was found: branch-coverage asymmetry**, not testing. The useful
+ranking is a zero-hit arm whose *sibling* ran tens of thousands of times — a
+path the compiler has structurally never taken. `parse_statement`'s `at_eof`
+guard had 0 against 19,915; five of its six callers check `at_eof` first, and
+the sixth (trailing pipe) was the bug. **Second time in three days** this
+shape was a real defect (the first: `Program::end_block`, journal 309). The
+query is recorded in `notes/tasks/lexer-hot-line-zero-arms.md`.
 
-`brace.sh` had 27 tests and none caught it — they all either put a `;` after
-the declaration or ended the block with a command. Fix: `Tok::RBrace` in the
-stop set. Found only because the new 86.x specs were written in the compact
-brace form.
+Also simplified `transform/entry.rs:152`: `!starts_with(x) && !contains(x)` is
+exactly `!contains(x)` — the first test can never change the result (0 hits
+against 19,624).
 
-Specs: `scope.sh` 86.31-86.38, `types.sh` 35.7 (rewritten), `brace.sh`
-bc.f1-bc.f5.
+Specs: `errors.sh` 95.13–95.20 (three trailing operators, a trailing newline,
+and four controls: `echo a &`, a folded `&&` chain, a live `||`, a three-stage
+pipeline).
 
-**`:ir-version` stays at 1** — DG: no consumers yet.
+**Coverage now 84.64% branches, 583 missed** (was 84.21%/599 before the END
+wiring). `validate.rs` misses 103 → 90.
+
+**Next up:** `notes/tasks/lexer-hot-line-zero-arms.md` — two more hot-line
+zero-arms (`lexer.rs:235`, `lexer.rs:1581`), each needing a dead-code vs.
+assertion verdict per DG's rule.
 
 ## ══ OPEN FOR DG ══
 

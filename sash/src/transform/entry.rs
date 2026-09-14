@@ -149,16 +149,22 @@ pub(super) fn uncheck_last_condition_inst(insts: &mut [SsaInst]) {
 /// of END). Mark them all unchecked.
 fn mark_unchecked_in_end_blocks(ssa: &mut SsaProgram) {
     for block in ssa.blocks.values_mut() {
-        if !block.label.starts_with("__end__") && !block.label.contains("__end__") {
-            continue;
+        // `starts_with` implies `contains`, so the old `!starts_with(x) &&
+        // !contains(x)` was exactly `!contains(x)` — the first test could never
+        // change the result, and its arm measured 0 hits against 19624.
+        if block.label.contains("__end__") {
+            mark_block_unchecked(block);
         }
-        for inst in block.insts.iter_mut() {
-            match inst {
-                SsaInst::Command { checked, .. } | SsaInst::Pipeline { checked, .. } => {
-                    *checked = false;
-                }
-                _ => {}
+    }
+}
+
+fn mark_block_unchecked(block: &mut BasicBlock) {
+    for inst in block.insts.iter_mut() {
+        match inst {
+            SsaInst::Command { checked, .. } | SsaInst::Pipeline { checked, .. } => {
+                *checked = false;
             }
+            _ => {}
         }
     }
 }

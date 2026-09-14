@@ -2248,13 +2248,26 @@ fn parse_trailing_pipeline(
     }
     let span = stmt.span;
     let mut commands = vec![stmt];
-    while matches!(scanner.peek().token, Tok::Pipe) {
+    // One iteration by construction: `parse_statement` consumes the whole rest
+    // of the pipeline and `append_pipeline_stage` merges it, so there is never
+    // a second `|` left to see. It was a `while` only because the old code
+    // could fall through without consuming anything — the path that dropped a
+    // trailing `|` on the floor (SB4056).
+    if matches!(scanner.peek().token, Tok::Pipe) {
+        let pipe_span = scanner.peek().span;
         scanner.next();
         skip_terminators(scanner);
-        if let Some(next_stmt) = parse_statement(scanner)? {
-            append_pipeline_stage(&mut commands, next_stmt);
-            break;
-        }
+        // Same hole as the list operators: with no stage after the `|` the loop
+        // simply fell out and the pipeline was returned as its left side alone,
+        // so `echo a |` compiled and printed `a`. bash rejects it.
+        let Some(next_stmt) = parse_statement(scanner)? else {
+            return Err(parse_error(
+                span_from(scanner, pipe_span.start),
+                "SB4056",
+                "`|` has no right-hand side — a pipeline needs a command on both sides".to_string(),
+            ));
+        };
+        append_pipeline_stage(&mut commands, next_stmt);
     }
     // DD#55 / SB4023: `pipeline && C` / `pipeline || C` is rejected — see
     // reject_pipeline_and_or_postfix.
@@ -2366,9 +2379,29 @@ fn parse_trailing_list_op(
             None => chain_op = Some(op.clone()),
         }
         let span = left.span;
+        let op_start = scanner.peek().span.start;
         scanner.next(); // consume && / ||
         skip_terminators(scanner);
-        let right = parse_list_operand(scanner)?.unwrap_or_else(|| Statement::true_cmd(span));
+        // A missing right operand is a syntax error (SB4056), not an implicit
+        // `true`. The old `.unwrap_or(true_cmd)` silently turned `echo a &&`
+        // into `echo a && true`, which compiled and ran while bash rejects the
+        // text outright. (`background_list_op` still synthesises a `true` — a
+        // trailing `&` genuinely has no right operand.)
+        let Some(right) = parse_list_operand(scanner)? else {
+            return Err(parse_error(
+                span_from(scanner, op_start),
+                "SB4056",
+                format!(
+                    "`{}` has no right-hand side — a list operator needs a command \
+                     on both sides",
+                    match op {
+                        ListOp::And => "&&",
+                        ListOp::Or => "||",
+                        ListOp::Background => "&",
+                    }
+                ),
+            ));
+        };
         left = Statement {
             kind: StmtKind::List(List {
                 op,
