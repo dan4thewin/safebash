@@ -23,7 +23,6 @@ use cranelift_object::{ObjectBuilder, ObjectModule};
 
 use crate::ssa::*;
 
-use super::redirects::SavedFd;
 use super::types::InstCtx;
 
 /// Compile sash source to a native object file.
@@ -256,7 +255,6 @@ fn is_catching_construct_exit(label: &str) -> bool {
 
 fn emit_all_blocks(mut ctx: EmitCtx) {
     let block_ids: Vec<BlockId> = ctx.program.blocks.keys().copied().collect();
-    let mut redirect_stack: Vec<Vec<SavedFd>> = Vec::new();
     for (idx, &ssa_id) in block_ids.iter().enumerate() {
         let Some(ssa_block) = block_to_emit(&ctx, ssa_id) else {
             continue;
@@ -265,7 +263,7 @@ fn emit_all_blocks(mut ctx: EmitCtx) {
             ctx.builder.switch_to_block(ctx.cl_blocks[&ssa_id]);
         }
         emit_block_entry_hooks(&mut ctx, &ssa_block.label);
-        let terminated = emit_block_insts(&mut ctx, ssa_block, ssa_id, &mut redirect_stack);
+        let terminated = emit_block_insts(&mut ctx, ssa_block, ssa_id);
         if !terminated {
             emit_terminator(&mut ctx, ssa_block);
         }
@@ -313,12 +311,7 @@ fn emit_block_entry_hooks(ctx: &mut EmitCtx, label: &str) {
 
 /// Emit all instructions in a block; return true if any instruction
 /// terminated the block early (e.g. `exit`).
-fn emit_block_insts(
-    ctx: &mut EmitCtx,
-    ssa_block: &BasicBlock,
-    ssa_id: BlockId,
-    redirect_stack: &mut Vec<Vec<SavedFd>>,
-) -> bool {
+fn emit_block_insts(ctx: &mut EmitCtx, ssa_block: &BasicBlock, ssa_id: BlockId) -> bool {
     let mut block_terminated = false;
     // DD#55: the instruction in condition position has its redirect open(2)
     // failure caught by if/||/while, not aborted — distinct from `-`
@@ -343,7 +336,6 @@ fn emit_block_insts(
                 exit_status_var: ctx.exit_status_var,
                 pipe_read_fd_var: ctx.pipe_read_fd_var,
                 capture_slots: ctx.capture_slots,
-                redirect_stack,
                 end_cl_block: ctx.end_cl_block,
                 program: ctx.program,
                 ssa_id,

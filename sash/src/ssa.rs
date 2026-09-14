@@ -86,10 +86,6 @@ pub enum BuiltinCmd {
     /// Fork point — used by background `cmd &` (DD#38: `&` is the fork
     /// mechanism). (Subshells `( … )` are rejected; this is not subshell-only.)
     SubshellStart,
-    /// Push current fd state before a redirect.
-    RedirectPush,
-    /// Pop fd state after the redirected scope.
-    RedirectPop,
     /// Capture the most recent background pid into a named variable.
     StoreBgPid,
     /// Install signal handler block.
@@ -177,8 +173,6 @@ impl BuiltinCmd {
             "__set_test_from_status" => Self::SetTestFromStatus,
             "__let_exit" => Self::LetExit,
             "__subshell" => Self::SubshellStart,
-            "__redirect_push" => Self::RedirectPush,
-            "__redirect_pop" => Self::RedirectPop,
             "__store_bg_pid" => Self::StoreBgPid,
             "__trap_signal" => Self::TrapSignal,
             "__signal_flag" => Self::SignalFlag,
@@ -230,8 +224,6 @@ impl BuiltinCmd {
             Self::SetTestFromStatus => "__set_test_from_status",
             Self::LetExit => "__let_exit",
             Self::SubshellStart => "__subshell",
-            Self::RedirectPush => "__redirect_push",
-            Self::RedirectPop => "__redirect_pop",
             Self::StoreBgPid => "__store_bg_pid",
             Self::TrapSignal => "__trap_signal",
             Self::SignalFlag => "__signal_flag",

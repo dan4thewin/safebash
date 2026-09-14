@@ -240,17 +240,13 @@ fn lower_redirected_stmt(
     state: &mut VersionState,
     block: BlockId,
 ) -> BlockId {
-    // A compound body brackets its redirects with __redirect_push/pop.
+    // Every body that reaches here attaches its redirects to the inst it
+    // lowers to. A compound body cannot reach here at all — the parser gives
+    // SB4021 for while/if/for/case/`{ }`, and SB4046 for a function
+    // definition, declaration, assignment, or a test that produces no output.
     // DD#99 `read` lowers to `ReadArray`, which carries its own redirect list
-    // (and therefore gets the DD#55 open(2) guard), so it is attached to the
-    // last inst below rather than bracketed.
-    // (A redirect on a function definition / declaration / assignment is
-    // rejected at parse time — SB4046 — so those never reach here.)
-    let needs_bracket = is_compound_stmt(&r.body.kind);
+    // and therefore gets the DD#55 open(2) guard.
     let redirects = spill_scalar_redirect_targets(&r.redirects, ssa, state, block);
-    if needs_bracket && !redirects.is_empty() {
-        return bracket_compound_with_redirects(r, &redirects, ssa, state, block);
-    }
 
     let result_block = lower_one(&r.body, ssa, state, block);
     attach_redirects_to_result(ssa, block, result_block, &redirects);
@@ -326,46 +322,6 @@ fn attach_redirects_to_result(
     for blk_id in blocks_to_check {
         attach_redirects_to_last_inst(ssa, blk_id, redirects);
     }
-}
-
-fn is_compound_stmt(kind: &StmtKind) -> bool {
-    matches!(
-        kind,
-        StmtKind::While(_)
-            | StmtKind::If(_)
-            | StmtKind::For(_)
-            | StmtKind::Case(_)
-            | StmtKind::Group(_)
-            | StmtKind::Function { .. }
-    )
-}
-
-/// `(while/if/for/case/{}/(...)) > out` — wrap the lowered body with
-/// __redirect_push / __redirect_pop so the redirects apply to every
-/// inst emitted between them.
-fn bracket_compound_with_redirects(
-    r: &Redirected,
-    redirects: &[Redirect],
-    ssa: &mut SsaProgram,
-    state: &mut VersionState,
-    block: BlockId,
-) -> BlockId {
-    ssa.block_mut(block).insts.push(SsaInst::Command {
-        name: "__redirect_push".to_string(),
-        kind: BuiltinCmd::RedirectPush,
-        args: vec![],
-        redirects: redirects.to_vec(),
-        checked: true,
-    });
-    let result_block = lower_one(&r.body, ssa, state, block);
-    ssa.block_mut(result_block).insts.push(SsaInst::Command {
-        name: "__redirect_pop".to_string(),
-        kind: BuiltinCmd::RedirectPop,
-        args: vec![],
-        redirects: redirects.to_vec(),
-        checked: true,
-    });
-    result_block
 }
 
 /// Simple command + redirects: attach the redirects directly to the last

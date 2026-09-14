@@ -142,7 +142,6 @@ pub(super) struct InstCtx<'a> {
     /// by `SsaInst::CaptureStart { site }`. A single shared pair let a nested
     /// capture clobber the enclosing one.
     pub(super) capture_slots: &'a [(cranelift_frontend::Variable, cranelift_frontend::Variable)],
-    pub(super) redirect_stack: &'a mut Vec<Vec<super::redirects::SavedFd>>,
     pub(super) end_cl_block: Option<cranelift_codegen::ir::Block>,
     pub(super) program: &'a crate::ssa::SsaProgram,
     pub(super) ssa_id: usize,

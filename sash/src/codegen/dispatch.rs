@@ -12,7 +12,7 @@ use cranelift_module::Module;
 use cranelift_object::ObjectModule;
 
 use super::commands::lower_echo;
-use super::redirects::{emit_redirects, emit_restore};
+use super::redirects::emit_redirects;
 use super::tests::lower_test_expr;
 use super::types::{emit_int_to_str, find_array_slot, ExternFuncs, InstCtx, VarSlot};
 use super::values::lower_value;
@@ -224,8 +224,6 @@ impl SsaInst {
             BuiltinCmd::SetTestFromStatus => self.emit_set_test_from_status(builder, ctx),
             BuiltinCmd::LetExit => return self.emit_let_exit(args, builder, module, ctx),
             BuiltinCmd::SubshellStart => self.emit_subshell_start(builder, module, ctx),
-            BuiltinCmd::RedirectPush => self.emit_redirect_push(redirects, builder, module, ctx),
-            BuiltinCmd::RedirectPop => self.emit_redirect_pop(builder, module, ctx),
             BuiltinCmd::StoreBgPid => return self.emit_store_bg_pid(args, builder, module, ctx),
             BuiltinCmd::TrapSignal => self.emit_trap_signal(args, builder, module, ctx),
             BuiltinCmd::SignalFlag => self.emit_signal_flag(args, builder, module, ctx),
@@ -295,38 +293,6 @@ impl SsaInst {
         let call = builder.ins().call(fork_ref, &[]);
         let pid = builder.inst_results(call)[0];
         builder.def_var(ctx.test_result_var, pid);
-    }
-
-    fn emit_redirect_push(
-        &self,
-        redirects: &[crate::ir::Redirect],
-        builder: &mut FunctionBuilder,
-        module: &mut ObjectModule,
-        ctx: &mut InstCtx,
-    ) {
-        // Compound-command redirect: save fds, apply redirects
-        let saved = emit_redirects(
-            redirects,
-            builder,
-            module,
-            ctx.externs,
-            ctx.literals,
-            ctx.vars,
-            Some(ctx.exit_status_var),
-        );
-        ctx.redirect_stack.push(saved);
-    }
-
-    fn emit_redirect_pop(
-        &self,
-        builder: &mut FunctionBuilder,
-        module: &mut ObjectModule,
-        ctx: &mut InstCtx,
-    ) {
-        // Compound-command redirect: restore saved fds
-        if let Some(saved) = ctx.redirect_stack.pop() {
-            emit_restore(saved, builder, module, ctx.externs);
-        }
     }
 
     fn emit_trap_signal(

@@ -55,9 +55,6 @@ struct Emit {
     /// there is caught by the if/while, so it must not abort. Mirrors native
     /// `ctx.in_condition`.
     in_condition: bool,
-    /// DD#61/compound redirects: the saved-fd stack for RedirectPush/Pop
-    /// (a `mapfile -t a < file` wraps the read inst in a push/pop pair).
-    redirect_stack: Vec<Vec<SavedFdC>>,
 }
 
 impl Emit {
@@ -69,7 +66,6 @@ impl Emit {
             has_exiting_signals: false,
             cur_block: 0,
             in_condition: false,
-            redirect_stack: Vec::new(),
         }
     }
     fn fresh(&mut self) -> String {
@@ -1751,31 +1747,6 @@ fn emit_signal_builtin_c(e: &mut Emit, kind: &BuiltinCmd, args: &[SsaValue]) {
     writeln!(e.out, "    __exit_status = 0; __test_result = 1;").unwrap();
 }
 
-/// Compound-command redirect commands. `RedirectPush` applies the redirects
-/// and pushes the saved-fd list onto `Emit.redirect_stack`; `RedirectPop`
-/// restores. Returns true if it handled the kind. Kept out of `emit_command`
-/// (complexity gate) and called before the per-command auto-save.
-fn emit_compound_redirect(
-    e: &mut Emit,
-    kind: &BuiltinCmd,
-    redirects: &[crate::ir::Redirect],
-    types: &VarTypes,
-) -> bool {
-    match kind {
-        BuiltinCmd::RedirectPush => {
-            let saved = emit_redirects(e, redirects, types);
-            e.redirect_stack.push(saved);
-        }
-        BuiltinCmd::RedirectPop => {
-            if let Some(saved) = e.redirect_stack.pop() {
-                emit_restore(e, &saved);
-            }
-        }
-        _ => return false,
-    }
-    true
-}
-
 /// Less-common builtins split out of `emit_command` (complexity gate): `match`,
 /// `cd`, and the DD#56 signal builtins. Returns true if it handled `kind`.
 fn emit_builtin_extra(
@@ -1886,14 +1857,6 @@ fn emit_command(
     checked: bool,
     types: &VarTypes,
 ) {
-    // Compound-command redirects (`mapfile -t a < file`, group redirects):
-    // RedirectPush saves+applies onto a persistent stack; RedirectPop restores.
-    // Handled before the per-command auto-save/restore below, which would
-    // otherwise undo the redirect immediately.
-    if emit_compound_redirect(e, kind, redirects, types) {
-        return;
-    }
-
     // Phase 4: redirects wrap the command. On an open(2) failure the body is
     // skipped (no misroute) and the abort is context-governed (DD#55).
     let (saved, failure) = if redirects.is_empty() {
@@ -2021,8 +1984,6 @@ fn emit_command_body(
         // forces a decision here; `ice_unreachable_command` explains which
         // group each belongs to and why.
         BuiltinCmd::Write
-        | BuiltinCmd::RedirectPush
-        | BuiltinCmd::RedirectPop
         | BuiltinCmd::Len
         | BuiltinCmd::Strlen
         | BuiltinCmd::Keys
@@ -2060,10 +2021,8 @@ fn emit_command_body(
 fn ice_unreachable_command(kind: &BuiltinCmd, name: &str) -> ! {
     match kind {
         // Rewritten before codegen: DD#99 `write` becomes `echo` with the
-        // newline suppressed (transform/cmd_handlers.rs:rewrite_write_as_echo),
-        // and the compound-redirect pair is intercepted by
-        // `emit_compound_redirect` before emit_command_body is called.
-        BuiltinCmd::Write | BuiltinCmd::RedirectPush | BuiltinCmd::RedirectPop => {
+        // newline suppressed (transform/cmd_handlers.rs:rewrite_write_as_echo).
+        BuiltinCmd::Write => {
             panic!("ICE: {kind:?} is rewritten before codegen and must not reach emit_command_body (as `{name}`)")
         }
 
