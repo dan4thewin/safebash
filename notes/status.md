@@ -1,3 +1,68 @@
+## ══ STATUS (2026-09-14) — sash-rt is measurable, and four arms disposed ══
+
+**Journal 320.** Sweep **4703 passing, 10 skipped, 0 failing** (+4: two new
+specs × two modes). 36 sash unit tests (+1), 27 sash-convert tests.
+
+DG: *"lets do the profraw for sash-rt and keep ratcheting the branch
+coverage."* Both done.
+
+### sash-rt coverage now works — first numbers ever
+
+`mk rt-cov`, `mk rt-cov-branch`, `mk rt-cov-reset`; driver in
+`contrib/rt-coverage.sh`, dump in `sash-rt/src/coverage.rs` (feature
+`coverage`).
+
+| file | lines | branches | functions |
+|---|---|---|---|
+| `lib.rs` | 82.43% | 67.93% | 91.34% |
+| `inner.rs` | 67.81% | 66.67% | 76.47% |
+| **total** | **81.51%** | **67.83%** | **89.58%** |
+
+2925 profraws from a full sweep. The old claim that `sash-rt` was
+"not measurable this way at all" was wrong: instrumentation always worked
+(2762 `__profc` symbols in the archive), only the *write* was missing.
+`__llvm_profile_write_buffer()` needs no libc — seven objects from rustc's own
+`libprofiler_builtins`, whose closure is `__ehdr_start` plus `memcpy`,
+`memset`, `memcmp`, all three already defined in `sash-rt/src/lib.rs`.
+**Nothing here knows the profraw format**, so an LLVM bump cannot silently
+corrupt it.
+
+Taken from the **rustc sysroot**, not brew clang: the header version and the
+counter layout must come from one toolchain or they disagree.
+
+**`sash_shutdown` now ships unconditionally.** The normal exit path was two
+instructions of naked assembly after `call main`, so no Rust code could hook
+it; the seven `exit_group` calls all route through the new function instead,
+mirroring `sash_startup`. Only `coverage::dump()` inside it is feature-gated.
+
+### Compiler branches: 85.34%, 551 missed
+
+Re-measured at `4fe07a2` (was 85.12% / 562). Lines 95.33%, functions 97.51%.
+
+- **`wrap_with_redirects` never wrapped** — 18574 of 18594 calls arrived with
+  no redirects, the other 20 all returned SB4046, and the whole
+  `StmtKind::Redirected` construction was unexecuted. A command absorbs its own
+  redirects in `parse_simple_command`. Deleting it silently would have let a
+  future redirect **vanish from the AST**, so it became `redirect_reject_noun`,
+  which panics, with `redirect_reject_noun_is_loud_ice` to prove it.
+- **Two unreachable `let`-`else` arms commented, not asserted** —
+  `resolve::resolve_command` and `validate::check_echo_splat`. Both are
+  unreachable because a non-`Literal` head is SB5011 in
+  `run_structural_checks`, which **exits** before either runs. Cross-pass, so
+  by the standing rule they earn a comment, not an ICE. The first was settled
+  by instrumenting, not by reading.
+- **`is_resolvable_external`'s `name.is_empty()` removed** — `''` and `""` lex
+  as quoted forms, so an empty `Literal` head cannot exist, and the fallback
+  was already SB5011 "command '' not found".
+- **`is_identifier_or_subscript`'s unclosed-subscript arm** was reachable with
+  no test — `aw.27`/`aw.28`.
+
+Three arms resisted diagnosis from counts alone and are filed in
+`notes/tasks/branch-coverage-ambiguous-arms.md`. One of them is a possible
+real finding: `embed_artifacts` never skips, so all three of `.sash_source`,
+`.sash_ir` and `.sash_manifest` are always present even though `--manifest` is
+opt-in.
+
 ## ══ STATUS (2026-09-14) — DG's six-part directive, four of six landed ══
 
 **Journals 317–319.** Sweep **4699 passing, 10 skipped, 0 failing**.
@@ -159,77 +224,13 @@ lines: `resolve.rs:207`, `resolve.rs:105`, `validate.rs:3985`,
 
 ## ══ OPEN FOR DG ══
 
-1. **`sash-rt` coverage** — the last part of the directive. Options are
-   written up below; DG picks. Nothing is blocked on it.
-2. **`ir::Program::end_block`** — remove + bump `:ir-version`, remove + keep
+1. **`ir::Program::end_block`** — remove + bump `:ir-version`, remove + keep
    emitting `:end-block nil`, wire it up, or leave it.
 
-*(Items 1 and 2 of the previous list are closed: the compound machinery is
-deleted, and backticks are dropped — which dissolves the `${var:-`cmd`}`
-question entirely, since there is no backtick spelling left to be
-inconsistent about.)*
-
-## ══ sash-rt coverage: the options ══
-
-**The constraint.** `-C instrument-coverage` compiles and maps fine against
-`sash-rt` — the `__llvm_prf_*` sections land in the binary. What never happens
-is the *write*: `__llvm_profile_write_file()` is normally registered as an
-atexit handler by compiler-rt's profiling runtime, which needs libc. A
-`no_std` / no-libc / `panic=abort` static ELF has neither, so it exits with
-live counters and produces no `.profraw`.
-
-**Scale.** `sash-rt/src` is 3879 Rust lines (lib.rs 3630, inner.rs 249). The
-regex engine in `sash-rt/csrc` is ordinary hosted C — `mk` already builds
-`target/release/sash-regex` and a `test_regex` harness with `cc`, so gcov/
-llvm-cov works there today and is **not** part of this problem.
-
-| | approach | cost | what it buys |
-|---|---|---|---|
-| **a** | **Link compiler-rt's buffer writer and drain it ourselves.** `__llvm_profile_write_buffer()` does the serialising; we only supply the destination. See the measurement below. | **small** — ~40 lines of `no_std` Rust plus build wiring; **no format coupling at all** | real line + branch coverage, same `llvm-cov` pipeline as the compiler, no source changes |
-| **b** | **Reimplement the `.profraw` serialiser.** Write the header and sections ourselves from `__llvm_prf_*`. | medium, and **coupled to the profraw version** — an LLVM bump can silently corrupt output | nothing (a) does not already give. Listed only to record that it was measured and is strictly worse. |
-| **c** | **Hosted shadow build.** Compile the same sources as a `std` crate for coverage only. **There is precedent**: `inner.rs` exists *specifically* for this and was `include!()`ed by a `sash-rt-tests` crate — which no longer exists. | low | only reaches the pure parts. `inner.rs` is **249 of 3879 lines — 6%**. The syscall wrappers, where the interesting bugs are, cannot be built hosted. |
-| **d** | **Bespoke counters.** A feature-gated table inside `sash-rt`, bumped at chosen points, written with `write(2)` at exit. | low per counter, unbounded in aggregate | full control, no LLVM coupling — but it is hand-placed, so it measures what someone remembered to measure. That is the opposite of what the campaign is for. |
-| **e** | **Declare it out of scope and cover by behavior.** The spec sweep already drives `sash-rt` through every compiled binary. Prove *function-level* reach with `perf` sampling or `-Z instrument-mcount` rather than line coverage. | lowest | honest, cheap, and no false precision — but it cannot answer "which branch of this parser never ran", which is the question the campaign has been asking |
-
-**Recommendation: (a), and it is far cheaper than first estimated.** The
-initial write-up assumed (a) meant reimplementing the serialiser, and costed
-it as "medium, coupled to the profraw version". Measured, it is neither.
-
-`__llvm_profile_write_file()` is the part that needs libc — path munging,
-`FILE*`, locking, `atexit`. `__llvm_profile_write_buffer()` is not, and it
-lives in a different object. Taking the symbol closure of the buffer path out
-of `libclang_rt.profile-x86_64.a`:
-
-```
-InstrProfilingBuffer.c.o   InstrProfilingWriter.c.o
-InstrProfilingPlatformLinux.c.o   InstrProfilingInternal.c.o
-InstrProfilingVersionVar.c.o   InstrProfilingNameVar.c.o
-InstrProfiling.c.o                                    — 52 KB total
-```
-
-`ld -r` over those seven leaves exactly **three** strong undefined symbols:
-
-| symbol | supplied by |
-|---|---|
-| `__ehdr_start` | the linker, in any static link |
-| `memcpy` | **`sash-rt/src/lib.rs:32`, already there** |
-| `memset` | **`sash-rt/src/lib.rs:42`, already there** |
-
-The `__start___llvm_prf_*` / `__stop___llvm_prf_*` section bounds are weak and
-linker-provided. Nothing else is missing. The libc surface of the *full*
-archive is ~42 symbols including a `FILE*` layer and `printf`; the buffer path
-needs two, and we have both.
-
-So the work is: link seven objects behind a feature flag, then
-`__llvm_profile_get_size_for_buffer()` → `sash_alloc` →
-`__llvm_profile_write_buffer()` → `openat`/`write` over rustix before
-`_exit`. **~40 lines of Rust.** compiler-rt does the serialisation, so there
-is **no profraw-version coupling** — the thing that made (a) look risky was an
-artefact of assuming we would write the format ourselves.
-
-(c) is still worth doing on its own merits as a unit-test home for `inner.rs`,
-but at 6% it was never an answer to the coverage question. (b), (d) and (e)
-are now strictly dominated.
+*(The `sash-rt` coverage item is closed — DG chose (a) and it is implemented;
+see the status block at the top. The compound machinery is deleted, and
+backticks are dropped, which dissolves the `${var:-`cmd`}` question entirely,
+since there is no backtick spelling left to be inconsistent about.)*
 
 ## ══ STATUS (2026-09-14) — coverage: DD#109 landed, uncovered remainder dispositioned ══
 

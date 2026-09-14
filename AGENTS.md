@@ -318,6 +318,30 @@ to "bypass" it — that advice was wrong, and copying it onto
 the indexes in `schema.sql`. Without them the regression query takes about
 four minutes; with them, milliseconds. They cost ~95 MB of local disk.
 
+### Runtime coverage (sash-rt)
+
+`sash-rt` has its own coverage driver — `contrib/rt-coverage.sh`, wrapped as
+`mk rt-cov` / `mk rt-cov-branch` / `mk rt-cov-reset`. `mk cov` deliberately
+ignores `sash-rt`.
+
+It works by linking seven objects out of rustc's `libprofiler_builtins` and
+draining `__llvm_profile_write_buffer()` over rustix at exit
+(`sash-rt/src/coverage.rs`, feature `coverage`). Three things matter:
+
+- the profiler objects must come from the **rustc sysroot**, not brew clang,
+  or the `.profraw` header version and the counter layout disagree;
+- the report runs against a `--whole-archive` reference binary, because `sash`
+  links with `--gc-sections` and each compiled program's covmap is a *subset*;
+- the compiler must be **uninstrumented** (`mk cov-reset` first), or its own
+  profraws land in the same pool.
+
+Compiled programs write a `.profraw` only when `SASH_RT_PROFILE_DIR` is set —
+deliberately not `LLVM_PROFILE_FILE`, which cargo-llvm-cov uses for the
+compiler. Run `mk rt-cov-reset` afterwards: until you do, every binary `sash`
+produces links an instrumented runtime.
+
+Baseline (journal 320): **81.51% lines, 67.83% branches, 89.58% functions**.
+
 ### Rust tests
 
 **`sash/tests/` no longer exists.** All 546 integration tests were deleted

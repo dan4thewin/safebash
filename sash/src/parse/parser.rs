@@ -2236,22 +2236,6 @@ fn parse_trailing_redirects(
     Ok(redirects)
 }
 
-/// Wrap `stmt` in a `Redirected` node iff there are any redirects;
-/// otherwise return it unchanged.
-fn wrap_with_redirects(stmt: Statement, redirects: Vec<Redirect>) -> Statement {
-    if redirects.is_empty() {
-        return stmt;
-    }
-    let span = stmt.span;
-    Statement {
-        kind: StmtKind::Redirected(Redirected {
-            body: Box::new(stmt),
-            redirects,
-        }),
-        span,
-    }
-}
-
 /// If a `|` follows, consume one more pipeline stage and wrap as a
 /// `Pipeline`. Flattens nested pipelines from the right-hand side
 /// so `a | b | c` produces a flat 3-stage pipeline.
@@ -2455,18 +2439,44 @@ fn parse_list_operand(scanner: &mut Scanner) -> Result<Option<Statement>, Diagno
 fn wrap_pipeline_part(scanner: &mut Scanner, stmt: Statement) -> Result<Statement, Diagnostic> {
     let redirects = parse_trailing_redirects(scanner, stmt.span)?;
     if !redirects.is_empty() {
-        if let Some(what) = noncommand_redirect_target(&stmt.kind) {
-            return Err(parse_error(
-                stmt.span,
-                "SB4046",
-                format!(
-                    "a redirect cannot attach to {what} — redirects attach to a command that produces output"
-                ),
-            ));
-        }
+        let what = redirect_reject_noun(&stmt.kind);
+        return Err(parse_error(
+            stmt.span,
+            "SB4046",
+            format!(
+                "a redirect cannot attach to {what} — redirects attach to a command that produces output"
+            ),
+        ));
     }
-    let result = wrap_with_redirects(stmt, redirects);
-    parse_trailing_pipeline(scanner, result)
+    parse_trailing_pipeline(scanner, stmt)
+}
+
+/// The SB4046 noun for a statement that has a trailing redirect still pending
+/// here — or a loud ICE, because there is no such thing as a legal one.
+///
+/// This used to end in `wrap_with_redirects`, which built a `Redirected` node
+/// when `redirects` was non-empty. Branch coverage showed that arm had never
+/// run: of 18594 calls, 18574 arrived with no redirects at all and the other
+/// 20 all returned SB4046. The reason is that a command absorbs its own
+/// trailing redirects in `parse_simple_command` (325 times in the same sweep),
+/// so the only kinds that can still be holding one here are precisely the
+/// kinds `noncommand_redirect_target` names.
+///
+/// Deleting the dead arm silently would have been the wrong repair: if some
+/// statement kind later gains the ability to carry a redirect past
+/// `parse_simple_command`, the `None` case is reached and the redirect would
+/// simply vanish from the AST — output going to a file the program never
+/// opens, with no diagnostic. Panicking instead turns that regression into a
+/// caught ICE. Exercised by `redirect_reject_noun_is_loud_ice`, since no
+/// source text can reach it.
+pub(super) fn redirect_reject_noun(kind: &StmtKind) -> &'static str {
+    match noncommand_redirect_target(kind) {
+        Some(what) => what,
+        None => panic!(
+            "ICE: a trailing redirect survived to wrap_pipeline_part on a \
+             statement kind that should have absorbed it in parse_simple_command"
+        ),
+    }
 }
 
 /// A redirect may only attach to something that produces output. If `kind` is

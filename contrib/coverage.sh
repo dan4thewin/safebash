@@ -51,8 +51,11 @@ while [ $# -gt 0 ]; do
 done
 
 # sash-rt, sash-convert and sash-expand are separate concerns; tests and the
-# 4-line main.rs are not the subject. sash-rt is not measurable this way at
-# all — it is no_std with no libc, so nothing writes a profraw at exit.
+# 4-line main.rs are not the subject. sash-rt has its own driver —
+# contrib/rt-coverage.sh — because it needs a different binary, a different
+# profile pool and an uninstrumented compiler. (This comment used to say
+# sash-rt was "not measurable this way at all"; instrumentation always worked,
+# only the at-exit write was missing. Journal 320.)
 IGNORE='(sash-rt|sash-convert|sash-expand|/tests/|tests\.rs|main\.rs)'
 
 eval "$(cargo $toolchain llvm-cov show-env --sh $branch 2>/dev/null)"

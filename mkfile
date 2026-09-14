@@ -76,6 +76,20 @@ cov-db:V:
 cov-rpt:V:
 	(cd $SASH && cargo llvm-cov report --release)
 
+# Runtime coverage. sash-rt is a separate workspace and a separate concern
+# from `mk cov` (which ignores it); contrib/rt-coverage.sh explains why it
+# needs its own driver.
+rt-cov:V:
+	bash contrib/rt-coverage.sh
+
+rt-cov-branch:V:
+	bash contrib/rt-coverage.sh --branch --lcov target/coverage/rt-branch.lcov
+
+# Undo a runtime coverage run: drop the instrumented archive and rebuild.
+rt-cov-reset:V:
+	rm -rf $RT/target/release target/rt-coverage
+	mk build
+
 # Undo a coverage run. `mk build` alone does NOT: cargo-llvm-cov passes
 # -Cinstrument-coverage through a RUSTC_WRAPPER, so cargo's fingerprint never
 # sees it and the instrumented artifacts look fresh. Leaving them in place

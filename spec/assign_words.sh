@@ -7,7 +7,7 @@
 set -eu
 . common.sh
 setup assign_words
-plan=26
+plan=28
 echo "1..$plan" >&3
 
 set +e
@@ -152,6 +152,17 @@ run_sash 'array a=()
 # aw.26 an `=` in an ARGUMENT is not an assignment attempt and still runs
 run_sash 'echo a=b'
 [[ $rc = 0 && $out = "a=b" && -z $err ]]; chk aw.26
+
+# aw.27-aw.28 an UNCLOSED subscript. `is_identifier_or_subscript` splits on the
+#   first `[` and then requires the word to end in `]`; the "does not end in
+#   `]`" arm was reachable but had no test, so nothing would have caught its
+#   removal. `a]b[=1` (aw.20) reaches the same arm from the other direction.
+run_sash 'a[1=2'
+[[ $rc != 0 && -z $out && $err == *'a[1'* && $err == *'not a valid variable name'* ]]; chk aw.27
+
+# aw.28 ...and trailing junk after a well-formed subscript is not a target
+run_sash 'a[1]x=2'
+[[ $rc != 0 && -z $out && $err == *'a[1]x'* && $err == *'not a valid variable name'* ]]; chk aw.28
 
 set -e
 tally

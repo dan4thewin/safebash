@@ -102,7 +102,12 @@ fn resolved_path_exists(sysroot: &Option<String>, target_path: &str) -> bool {
 /// an absolute path (not a path already, not a builtin, not an intrinsic,
 /// not a user function).
 fn is_resolvable_external(name: &str, funcs: &HashSet<String>) -> bool {
-    if name.is_empty() || name.contains('/') {
+    // No `name.is_empty()` arm: an empty head cannot be an `ExprKind::Literal`.
+    // `''` and `""` lex as quoted forms, not literals, and the word scanner
+    // never emits a zero-length unquoted word — so the arm measured 0 hits and
+    // bought nothing, since an empty name would fall through to SB5011
+    // "command '' not found" anyway.
+    if name.contains('/') {
         return false;
     }
     if INTRINSICS.contains(&name) || funcs.contains(name) {
@@ -204,6 +209,15 @@ fn resolve_command(c: &mut Command, funcs: &HashSet<String>, diags: &mut Vec<Dia
         resolve_expr(arg, funcs, diags);
     }
     // Then resolve the head itself if it is a plain external literal.
+    //
+    // The `else` is unreachable, and measurably so: 8221 commands reached here
+    // during a full sweep and not one had a non-`Literal` head. `validate`
+    // rejects those with SB5011 ("a command name must be a literal path"), and
+    // it runs in `run_structural_checks`, which exits before `resolve_commands`
+    // is called at all. That ordering is deliberate (see the comment on the two
+    // calls in `cli_main`), so this stays a plain `return` rather than an
+    // assertion: the guarantee lives in a different pass, and an ICE here would
+    // encode a cross-pass ordering that this file cannot enforce.
     let ExprKind::Literal(name) = &c.name.kind else {
         return;
     };

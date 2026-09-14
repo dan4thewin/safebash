@@ -567,4 +567,31 @@ mod logos_equivalence {
             );
         }
     }
+
+    /// `wrap_pipeline_part` reaches `redirect_reject_noun` only when a
+    /// trailing redirect is still pending, and every kind that can be holding
+    /// one there is a kind `noncommand_redirect_target` names — so the `None`
+    /// arm is a should-never-run ICE, not a branch any source text can take.
+    /// A command is the case that proves it: it absorbs its own redirects in
+    /// `parse_simple_command`, so seeing one here means that absorption
+    /// stopped happening and the redirect is about to be dropped on the floor.
+    /// Confirms the guard panics rather than returning a noun.
+    #[test]
+    fn redirect_reject_noun_is_loud_ice() {
+        use crate::ir::{Command, Expr, ExprKind, Span, StmtKind};
+
+        let span = Span::new(1, 1);
+        let kind = StmtKind::Command(Command {
+            name: Expr {
+                kind: ExprKind::Literal("echo".to_string()),
+                span,
+            },
+            args: vec![],
+        });
+        let caught = std::panic::catch_unwind(|| crate::parse::parser::redirect_reject_noun(&kind));
+        assert!(
+            caught.is_err(),
+            "a redirect surviving to wrap_pipeline_part on a command must raise a loud ICE"
+        );
+    }
 }

@@ -14,6 +14,9 @@
 use rustix::fd::{AsRawFd, BorrowedFd};
 use rustix::fs::{memfd_create, MemfdFlags};
 
+#[cfg(feature = "coverage")]
+mod coverage;
+
 // ═══════════════════════════════════════════════════════════════
 // Libc stubs — required in no_std without libc.
 // These are called by compiler-generated code for memcpy etc.
@@ -80,7 +83,7 @@ fn panic(info: &core::panic::PanicInfo) -> ! {
     } else {
         let _ = rustix::io::write(fd, b"sash: panic\n");
     }
-    rustix::runtime::exit_group(99)
+    sash_shutdown(99)
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -267,9 +270,26 @@ pub extern "C" fn sash_emsg_status(name_ptr: *const u8, name_len: i64, status: i
 // sash_exit
 // ═══════════════════════════════════════════════════════════════
 
+/// The teardown sequence — the mirror of `sash_startup`, and the single
+/// place any sash program leaves the process.
+///
+/// It exists for the reason `sash_startup` does. `_start` used to inline the
+/// `exit` syscall after `call main`, so the *normal* exit path was two
+/// instructions of per-architecture assembly that no Rust code could hook,
+/// while the seven abnormal paths went through `exit_group` directly. Any
+/// at-exit work therefore had eight sites to add and two of them were in
+/// assembly, written twice. Adding a teardown step now means editing this
+/// function.
+#[no_mangle]
+pub extern "C" fn sash_shutdown(status: i64) -> ! {
+    #[cfg(feature = "coverage")]
+    coverage::dump();
+    rustix::runtime::exit_group(status as i32)
+}
+
 #[no_mangle]
 pub extern "C" fn sash_exit(status: i64) -> ! {
-    rustix::runtime::exit_group(status as i32)
+    sash_shutdown(status)
 }
 
 /// Attest-gate failure diagnostic, then exit(1):
@@ -368,7 +388,7 @@ pub extern "C" fn sash_exec(argv: *const *const u8, envp: *const *const u8) -> !
     unsafe {
         let cmd = *argv;
         if cmd.is_null() {
-            rustix::runtime::exit_group(127);
+            sash_shutdown(127);
         }
 
         let cmd_bytes = cstr_bytes(cmd);
@@ -381,7 +401,7 @@ pub extern "C" fn sash_exec(argv: *const *const u8, envp: *const *const u8) -> !
             let msg = b"sash: bug: bare command passed to sash_exec (expected absolute path)\n";
             let fd = BorrowedFd::borrow_raw(2);
             let _ = rustix::io::write(fd, msg);
-            rustix::runtime::exit_group(127);
+            sash_shutdown(127);
         }
 
         // execve only returns on failure — it yields the `Errno` directly.
@@ -392,7 +412,7 @@ pub extern "C" fn sash_exec(argv: *const *const u8, envp: *const *const u8) -> !
         let e = rustix::runtime::execve(cmd_cstr, argv, envp);
         set_last_errno(e);
         sash_emsg(cmd, cmd_bytes.len() as i64, core::ptr::null(), 0);
-        rustix::runtime::exit_group(127);
+        sash_shutdown(127);
     }
 }
 
@@ -909,7 +929,7 @@ fn capture_push(frame: CaptureFrame) {
         if CAPTURE_DEPTH >= CAPTURE_STACK_MAX {
             let fd = BorrowedFd::borrow_raw(2);
             let _ = rustix::io::write(fd, b"sash: bug: capture nesting exceeded 64\n");
-            rustix::runtime::exit_group(99);
+            sash_shutdown(99);
         }
         CAPTURE_STACK[CAPTURE_DEPTH] = frame;
         CAPTURE_DEPTH += 1;
@@ -921,7 +941,7 @@ fn capture_pop() -> CaptureFrame {
         if CAPTURE_DEPTH == 0 {
             let fd = BorrowedFd::borrow_raw(2);
             let _ = rustix::io::write(fd, b"sash: bug: capture end without start\n");
-            rustix::runtime::exit_group(99);
+            sash_shutdown(99);
         }
         CAPTURE_DEPTH -= 1;
         CAPTURE_STACK[CAPTURE_DEPTH]
@@ -1201,8 +1221,7 @@ pub unsafe extern "C" fn _start() -> ! {
         "call sash_startup",
         "call main",
         "mov rdi, rax",
-        "mov eax, 60",
-        "syscall",
+        "call sash_shutdown",
     )
 }
 
@@ -1224,8 +1243,7 @@ pub unsafe extern "C" fn _start() -> ! {
         "str x1, [x2, :lo12:sash_envp]",
         "bl sash_startup",
         "bl main",
-        "mov x8, #93",
-        "svc #0",
+        "bl sash_shutdown",
     )
 }
 

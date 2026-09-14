@@ -3982,6 +3982,10 @@ fn is_array_splat_source(expr: &Expr) -> bool {
 /// said `@a` after that change, so following it swapped one error for
 /// another.
 fn check_echo_splat(c: &Command, diags: &mut Vec<Diagnostic>) {
+    // Unreachable `else`, for the same reason as `resolve::resolve_command`:
+    // `check_argv_splat` runs from `run_semantic_checks`, which is reached only
+    // after `run_structural_checks` has passed, and a non-`Literal` command
+    // head is SB5011 there. 8125 commands, zero non-literal heads.
     let ExprKind::Literal(name) = &c.name.kind else {
         return;
     };
