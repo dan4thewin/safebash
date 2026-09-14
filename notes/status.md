@@ -1,47 +1,93 @@
-## ══ STATUS (2026-09-14) — SB4056: an operator with nothing after it ══
+## ══ STATUS (2026-09-14) — the guard that declined to act ══
 
-**Journal 311.** Sweep **4627 passing, 10 skipped, 0 failing**.
+**Journals 311, 312, 313.** Sweep **4661 passing, 10 skipped, 0 failing**.
+35 unit tests. Pushed through `36e5f0e`.
 
-**Bug fixed (stop-everything).** `echo a &&`, `echo a ||` and `echo a |` all
-**compiled and ran**, printing `a` and exiting 0. bash rejects all three.
+Three sessions of branch-coverage asymmetry work, and every one of them turned
+up a defect rather than a test gap. The shape repeats: **a guard that computes
+the right condition and then declines to act on it.**
 
-Two mechanisms, same hole:
+- **SB4056** (journal 311) — `echo a &&`, `echo a ||` and `echo a |` all
+  compiled and ran, printing `a`. `parse_trailing_list_op` *substituted*
+  `Statement::true_cmd` for a missing right operand; the pipeline loop fell
+  out and kept only the left side. `background_list_op`'s `true_cmd` stays —
+  a trailing `&` is a terminator, not an infix operator, and bash accepts it.
+- **Three lexer arms** (journal 312) — `scan_word_chars`'s bare leading `=`
+  was genuinely dead (the dispatcher claims `b'='` for `scan_eq_punct`) and is
+  gone with its `Option` wrapper. `Scanner::next`'s direct-pull arm is real,
+  just never taken, and now has two unit tests pinning the no-peek contract.
+  Proving the first required enumerating every route into `scan_word`, which
+  surfaced `scan_via_logos` falling back to a word scan on a DFA miss — all
+  ten dispatched bytes are word-break bytes, so it returned `Tok::Eof`
+  **mid-source** and silently truncated the program. Both are invariant panics
+  now, each with a `#[should_panic]` test, plus a test proving the DFA covers
+  every dispatched byte so they stay unreachable.
+- **SB4057** (journal 313) — eight scan-to-closer helpers ended with
+  `if self.pos < self.source.len() { self.pos += 1; }`. That guard *is* the
+  run-off-the-end detection and it did nothing, so `/bin/echo "hello` and
+  `echo ${x` compiled, ran, and printed. bash rejects all of them. `Scanner`
+  now has one `unterminated` field and one `require_closer` helper replacing
+  the idiom at every site; `parse` reports SB4057 alone, ahead of everything
+  else, with the span on the opener.
 
-- `parse_trailing_list_op` did `parse_list_operand(...).unwrap_or(true_cmd)`
-  — a missing right operand was **substituted with `true`**, so `echo a &&`
-  parsed as `echo a && true`. Checked before touching: no DD covers it, and
-  `git log -S` shows it predates the left-associativity fix (`dad1dfe`) and
-  was carried through unchanged. A default, never a decision.
-- the pipeline loop fell out when `parse_statement` returned `None`, so the
-  `|` was discarded and the pipeline returned as its left side alone.
+`misc.sh` 104.4 failed against SB4057 and was right to: its source was
+`x="a\"b"`, but DD#64 removes shell backslash escaping, so that is three
+tokens ending in a quote that opens a string running to end-of-source. The
+test was correct about `emit_ir` and wrong about how to spell its input.
 
-`background_list_op`'s `true_cmd` **stays** — a trailing `&` genuinely has no
-right operand and bash accepts it. `&` is a terminator, `&&` is infix.
+**Coverage 84.80% branches, 576 missed.** Note `lexer.rs:235` will stay at 0
+in `coverage.db` forever — coverage is built from spec-sweep profraws, and
+that arm is covered by a unit test.
 
-**How it was found: branch-coverage asymmetry**, not testing. The useful
-ranking is a zero-hit arm whose *sibling* ran tens of thousands of times — a
-path the compiler has structurally never taken. `parse_statement`'s `at_eof`
-guard had 0 against 19,915; five of its six callers check `at_eof` first, and
-the sixth (trailing pipe) was the bug. **Second time in three days** this
-shape was a real defect (the first: `Program::end_block`, journal 309). The
-query is recorded in `notes/tasks/lexer-hot-line-zero-arms.md`.
+**The method, for next time.** Rank zero-hit arms by *sibling* traffic, not by
+count. A 0-against-80,000 split is a path the compiler has structurally never
+taken; a low-traffic miss is merely untested. Five for five on real defects.
+Read **both** arms before concluding, and when an arm looks dead, enumerate
+every caller — twice now the enumeration, not the query, found the bug.
 
-Also simplified `transform/entry.rs:152`: `!starts_with(x) && !contains(x)` is
-exactly `!contains(x)` — the first test can never change the result (0 hits
-against 19,624).
+```sql
+WITH pairs AS (
+  SELECT a.file, a.line, a.count AS dead, MAX(b.count) AS live
+  FROM cov_branches a JOIN cov_branches b
+    ON a.file=b.file AND a.line=b.line AND a.block=b.block AND a.branch<>b.branch
+  WHERE a.count=0
+  GROUP BY a.file, a.line, a.block, a.branch
+)
+SELECT file, line, live FROM pairs WHERE live > 1500 ORDER BY live DESC;
+```
 
-Specs: `errors.sh` 95.13–95.20 (three trailing operators, a trailing newline,
-and four controls: `echo a &`, a folded `&&` chain, a live `||`, a three-stage
-pipeline).
-
-**Coverage now 84.64% branches, 583 missed** (was 84.21%/599 before the END
-wiring). `validate.rs` misses 103 → 90.
-
-**Next up:** `notes/tasks/lexer-hot-line-zero-arms.md` — two more hot-line
-zero-arms (`lexer.rs:235`, `lexer.rs:1581`), each needing a dead-code vs.
-assertion verdict per DG's rule.
+**Next up:** re-run `mk cov-branch` / `mk cov-db` / `mk cov-reset` (SB4057
+should convert several arms), then work the ranking down. Unexamined hot
+lines: `resolve.rs:207`, `resolve.rs:105`, `validate.rs:3985`,
+`validate.rs:1222`, `transform/expressions.rs:172`, `lexer.rs:674`,
+`ssa_taint.rs:200`, `codegen/entry.rs:486`.
 
 ## ══ OPEN FOR DG ══
+
+### A redirect on a non-command statement is silently dropped (P1)
+
+`notes/tasks/bug-redirect-silently-dropped-on-noncommand.md`. Same query,
+same shape: `wrap_with_redirects` at `parser.rs:2226` took its non-empty arm
+0 times in 18,467 calls. It is reachable, and the path it feeds throws the
+redirect away.
+
+```
+$ bash -c '(( 1 + 1 )) > /tmp/f'   # creates /tmp/f
+$ sash: compiles, exits 0, never touches the file
+```
+
+`transform/stmt_handlers.rs:373` can only attach a redirect list to a
+`Command`, `ReadLine`, `ReadArray` or `Pipeline` inst; everything else hits a
+`_ => {}`. Five forms are affected — `(( … )) > f`, `- (( … )) > f`,
+`return (( … )) > f`, `return [[ … ]] > f`, and `… && (( … )) > f`.
+
+**The fork is yours.** (a) Reject it, extending the existing "a redirect
+attaches to a command" family — SB4021 already says this about compounds,
+SB4046 about declarations and assignments. (b) Implement it, widening
+`lower_redirected_stmt`'s bracket condition; the machinery exists and works.
+I recommend (a) and did not act. The silent drop has to go either way — only
+the direction is open.
+
 
 1. **Compound-redirect machinery** (`dead-compound-redirect-machinery.md`) —
    DG chose "discuss". New evidence: `notes/tasks/align-parser-with-decisions.md`
