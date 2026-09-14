@@ -2813,9 +2813,11 @@ use std::collections::HashSet;
 /// further down was invisible inside the body, and an array that fell through
 /// `ssa_taint`'s documented array gap leaked unattested:
 ///
-///     fn user { for v in @g; do echo "$v"; done }
-///     argv g
-///     user            # printed unattested argv
+/// ```text
+/// fn user { for v in @g; do echo "$v"; done }
+/// argv g
+/// user            # printed unattested argv
+/// ```
 ///
 /// Phase 1 walks the whole top level, deferring function definitions; phase 2
 /// then walks each body against the completed set. That is sound with no

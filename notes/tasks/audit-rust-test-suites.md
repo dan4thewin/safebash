@@ -1,15 +1,45 @@
 ---
 title: "audit / prune / rehabilitate the Rust test suites (sash/tests/) — significant bit-rot"
-status: deferred
+status: done
 priority: P2
 kind: chore
 depends: []
+resolved: 2026-09-14
 gates:
   - "every Rust test in sash/tests/ either passes deterministically or is deleted / rewritten — no test left in a known-failing state"
   - "the Rust suites no longer depend on shared in-process global compiler state (ARITH_MAP, SYSROOT, squashfs cache) leaking between test calls — full-run results match isolated-run results"
   - "tests that assert behavior we have deliberately dropped (heredocs, `echo -e`, `declare`, `let`, …) are removed, not left failing"
   - "`sash-rt-tests` links and runs (drop dead `sash_streq` / `sash_arith_eval` externs) and is added to `mk test` so the extern-`C` runtime unit tests can't rot unnoticed"
 ---
+
+> **RESOLVED 2026-09-14 (journal 304).** Closed by the test redux, which
+> answered the task's question differently than the task assumed. The task
+> presumed the suites were worth rehabilitating; measurement said otherwise.
+>
+> All 546 live tests in `sash/tests/` were classified with per-test evidence:
+> 210 targeted surfaces we have deliberately retired, 272 were already
+> covered by concrete spec ids, 45 were bash-differentials with no
+> independent assertion, and 19 were live-but-uncovered — of which 15 turned
+> out on re-measurement to already have spec ids too. Only **4** were real
+> gaps. Those 4 became 20 new spec tests; all 546 Rust tests and the
+> `sash/tests/` directory are gone.
+>
+> The decisive finding is the one this task could not have predicted: the
+> harness was **fail-open**. `run_bash_native` called
+> `sash::codegen::compile_to_object` directly, so `validate` never ran, and
+> **49 of its 159 passing tests (31%) compiled programs the real compiler
+> rejects**. `echo -n` is rejected by SB5059 yet still honoured by codegen,
+> which is how `echo_n_multiple_args` "passed" a bash-differential. Any
+> future harness must drive the real CLI, not `compile_to_object`.
+>
+> The final gate — `sash-rt-tests` links and is added to `mk test` — is
+> retired rather than met: the crate was deleted. Every reachable behaviour
+> it covered is now spec-covered (the two genuine gaps it alone protected,
+> `table_grow` past capacity and the DD#77 conversion dispositions, became
+> specs 35.10/35.11 and 77.10-77.16), and the rest were inputs the compiler
+> cannot emit (`atoi_null_ptr`, `table_key_out_of_bounds`, and the lenient
+> `sash_atoi` edges that sit behind the DD#93 Part D `i?` gate).
+
 
 # Audit / prune / rehabilitate the Rust test suites
 

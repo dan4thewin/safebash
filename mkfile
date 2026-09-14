@@ -53,9 +53,7 @@ cov-clean:V:
 	(cd $SASH && cargo llvm-cov clean --workspace) >/dev/null 2>&1
 
 cov-unit:V:
-	(cd $SASH && cargo llvm-cov --no-report --release \
-		--test e2e_tests --test taint_spec_tests \
-		--test codegen_tests \
+	(cd $SASH && cargo llvm-cov --no-report --release --lib \
 		--ignore-run-fail) 2>&1 | tail -1
 
 cov-spec:V:
