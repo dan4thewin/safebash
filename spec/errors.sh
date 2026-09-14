@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup errors
-plan=209
+plan=219
 echo "1..$plan" >&3
 
 set +e
@@ -1096,6 +1096,49 @@ run_sash 'str ux = ""
 # an empty string is terminated, not unterminated
 run_sash '/bin/echo "" | cat'
 [[ $rc = 0 && -z $err ]]; chk 57u.12
+
+# ── SB4046: a redirect on something that produces no output ──────────
+# DG 2026-09-14: no meaningless redirects. bash creates and truncates the
+# file and writes nothing into it; sash used to parse the redirect and then
+# discard it in the transform, diverging silently (the file was never made).
+# rdr.1 a bare arithmetic test
+run_sash '(( 1 + 1 )) > /tmp/sash_rdr_should_not_exist'
+[[ $rc != 0 && $err == *SB4046* && $err == *"arithmetic test"* ]]; chk rdr.1
+# rdr.2 suppressed with `-` — the suppression wraps the redirect, so the
+# redirect still lands on the arithmetic test
+run_sash '- (( 1 + 1 )) > /tmp/sash_rdr_should_not_exist'
+[[ $rc != 0 && $err == *SB4046* ]]; chk rdr.2
+# rdr.3 as a return producer inside a function
+run_sash 'fn g { return (( 1 + 1 )) > /tmp/sash_rdr_should_not_exist
+}
+- g'
+[[ $rc != 0 && $err == *SB4046* ]]; chk rdr.3
+# rdr.4 as the right operand of `&&` — the redirect binds to the operand
+run_sash 'str s = "y"
+[[ $s == x ]] && (( 1 + 1 )) > /tmp/sash_rdr_should_not_exist'
+[[ $rc != 0 && $err == *SB4046* ]]; chk rdr.4
+# rdr.5 a `[[ … ]]` test as a return producer
+run_sash 'fn g { return [[ -f /etc/passwd ]] > /tmp/sash_rdr_should_not_exist
+}
+- g'
+[[ $rc != 0 && $err == *SB4046* && $err == *"test"* ]]; chk rdr.5
+# rdr.6 a bare `[[ … ]]` with a redirect reports the redirect (SB4046), not
+# the unused result (SB4018) — the redirect is caught at parse time
+run_sash '[[ -f /etc/passwd ]] > /tmp/sash_rdr_should_not_exist'
+[[ $rc != 0 && $err == *SB4046* ]]; chk rdr.6
+# rdr.7 without the redirect the same test is still SB4018 — SB4046 did not
+# swallow the unused-result rule
+run_sash '[[ -f /etc/passwd ]]'
+[[ $rc != 0 && $err == *SB4018* ]]; chk rdr.7
+# rdr.8 the file is never created, because the program never compiles
+[[ ! -e /tmp/sash_rdr_should_not_exist ]]; chk rdr.8
+# rdr.9 control: a redirect on a real command still compiles and writes
+run_sash '/bin/echo hi > /tmp/sash_rdr_ok'
+[[ $rc = 0 && -z $err ]]; chk rdr.9
+# rdr.10 control: a redirect inside an if body is untouched
+run_sash 'if [[ -f /etc/passwd ]] { /bin/echo y > /tmp/sash_rdr_ok }'
+[[ $rc = 0 && -z $err ]]; chk rdr.10
+rm -f /tmp/sash_rdr_ok
 
 set -e
 tally

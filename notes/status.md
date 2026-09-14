@@ -33,6 +33,19 @@ every zero-hit arm is a defect — but the count alone never decided which.
 **The rule that emerged: a local invariant earns an assertion; a cross-pass
 one earns a comment.**
 
+**SB4046 widened — no meaningless redirects** (journal 316, DG 2026-09-14).
+The redirect-drop fork is settled: reject. `(( … )) > f` and `[[ … ]] > f`
+produce no output, so bash's create-and-truncate-then-write-nothing is a wart;
+sash now rejects them instead of parsing the redirect and silently discarding
+it. Two nouns added to `noncommand_redirect_target`; all five spellings from
+the task table turn out to be one case, because `-` and `return` wrap the
+*redirect*, not the test. Specs `rdr.1`–`rdr.10`. A bare `[[ … ]] > f` now
+reports SB4046 rather than SB4018 — the more specific of the two, and `rdr.7`
+pins that removing the redirect still leaves SB4018.
+
+**`is_bare_redeclare_noop` purged** (journal 315 addendum, DG). SB5049 stays
+as written — one declaration per name per scope, no exceptions.
+
 **Coverage has not been re-measured since `36e5f0e`** — SB4057, `cov.101–103`
 and the `-[[ ]]` specs should convert several arms. Re-run `mk cov-branch` →
 `mk cov-db` → `mk cov-reset` before the next ranking pass.
@@ -97,31 +110,6 @@ lines: `resolve.rs:207`, `resolve.rs:105`, `validate.rs:3985`,
 `ssa_taint.rs:200`, `codegen/entry.rs:486`.
 
 ## ══ OPEN FOR DG ══
-
-### A redirect on a non-command statement is silently dropped (P1)
-
-`notes/tasks/bug-redirect-silently-dropped-on-noncommand.md`. Same query,
-same shape: `wrap_with_redirects` at `parser.rs:2226` took its non-empty arm
-0 times in 18,467 calls. It is reachable, and the path it feeds throws the
-redirect away.
-
-```
-$ bash -c '(( 1 + 1 )) > /tmp/f'   # creates /tmp/f
-$ sash: compiles, exits 0, never touches the file
-```
-
-`transform/stmt_handlers.rs:373` can only attach a redirect list to a
-`Command`, `ReadLine`, `ReadArray` or `Pipeline` inst; everything else hits a
-`_ => {}`. Five forms are affected — `(( … )) > f`, `- (( … )) > f`,
-`return (( … )) > f`, `return [[ … ]] > f`, and `… && (( … )) > f`.
-
-**The fork is yours.** (a) Reject it, extending the existing "a redirect
-attaches to a command" family — SB4021 already says this about compounds,
-SB4046 about declarations and assignments. (b) Implement it, widening
-`lower_redirected_stmt`'s bracket condition; the machinery exists and works.
-I recommend (a) and did not act. The silent drop has to go either way — only
-the direction is open.
-
 
 1. **Compound-redirect machinery** (`dead-compound-redirect-machinery.md`) —
    DG chose "discuss". New evidence: `notes/tasks/align-parser-with-decisions.md`

@@ -2459,7 +2459,9 @@ fn wrap_pipeline_part(scanner: &mut Scanner, stmt: Statement) -> Result<Statemen
             return Err(parse_error(
                 stmt.span,
                 "SB4046",
-                format!("a redirect cannot attach to {what} — redirects attach to a command"),
+                format!(
+                    "a redirect cannot attach to {what} — redirects attach to a command that produces output"
+                ),
             ));
         }
     }
@@ -2467,18 +2469,33 @@ fn wrap_pipeline_part(scanner: &mut Scanner, stmt: Statement) -> Result<Statemen
     parse_trailing_pipeline(scanner, result)
 }
 
-/// A redirect may only attach to a command. If `kind` is a function
-/// definition, a variable declaration, or a variable assignment, a trailing
-/// redirect is illegal (SB4046) — returns the noun for the diagnostic; `None`
-/// means a redirect is allowed on this statement kind. (Compound commands are
-/// handled separately by `reject_compound_postfix`, SB4021.)
+/// A redirect may only attach to something that produces output. If `kind` is
+/// a function definition, a variable declaration, a variable assignment, an
+/// arithmetic test, or a `[[ … ]]` test, a trailing redirect is illegal
+/// (SB4046) — returns the noun for the diagnostic; `None` means a redirect is
+/// allowed on this statement kind. (Compound commands are handled separately
+/// by `reject_compound_postfix`, SB4021.)
+///
+/// The two test forms are the later additions. Both produce no output, so
+/// bash's behaviour — create and truncate the file, write nothing into it —
+/// is a wart rather than a feature. sash parsed the redirect correctly and
+/// then discarded it in the transform, which diverged from bash *silently*;
+/// DG's call was that a meaningless redirect is an error, not a no-op.
 fn noncommand_redirect_target(kind: &StmtKind) -> Option<&'static str> {
     match kind {
         StmtKind::Function(_) => Some("a function definition"),
         StmtKind::Declaration(_) => Some("a variable declaration"),
         StmtKind::Assignment(_) => Some("a variable assignment"),
+        StmtKind::ArithTest(_) => Some("an arithmetic test"),
+        StmtKind::Command(c) if is_bracket_test(c) => Some("a `[[ … ]]` test"),
         _ => None,
     }
+}
+
+/// The `[[ … ]]` form, which `parse_test_command` builds as a command whose
+/// name is the literal `[[`.
+fn is_bracket_test(c: &Command) -> bool {
+    matches!(&c.name.kind, ExprKind::Literal(n) if n == "[[")
 }
 
 fn background_list_op(scanner: &mut Scanner, left: Statement) -> Statement {
