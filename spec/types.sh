@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup types
-plan=197
+plan=203
 echo "1..$plan" >&3
 
 set +e
@@ -941,6 +941,60 @@ run_sash 'int n=42; echo $(len $n)'
 # spelling disturbs a real collection operand
 run_sash 'array a=(x y z); map m=([k]=v); echo "$(len a) $(len m)"'
 [[ $rc = 0 && $out = "3 1" && -z $err ]]; chk 75.80
+
+# ── Diagnostic advice must be a form the compiler accepts ──
+# A diagnostic's message is a string literal: nothing compiles it and nothing
+# tests it. When the accepted surface moves, the rejection stays correct and
+# the advice silently rots — leaving the worst failure mode there is, where
+# the compiler tells you to write something and then rejects that too.
+# Three instances found: SB4035 (`${a[i]}`), SB5030 (`$(join @a)`), and the
+# string→int hint below. Each pins BOTH the message text and a RUN of the
+# form it recommends; asserting text alone is how SB5030 survived being
+# found, written down, and assigned.
+
+# hint.1 the string→int hint used to read "use `$(($var))`", which is itself
+#        SB4030 — "a string→int conversion must carry a disposition". It sent
+#        the user from one SB4030 to another.
+run_sash 's=5
+int n=$s
+echo $n'
+[[ $rc != 0 && $err == *SB4030* && $err == *'must carry a disposition'* \
+   && $err != *'use `$(($var))`'* ]]; chk hint.1
+
+# hint.2 …and the `:-` form it now recommends compiles and runs
+run_sash 's=5
+int n=$(( ${s:-0} ))
+echo $n'
+[[ $rc = 0 && $out = 5 && -z $err ]]; chk hint.2
+
+# hint.3 …as does the `:?` form
+run_sash 's=7
+int n=$(( ${s:?not an int} ))
+echo $n'
+[[ $rc = 0 && $out = 7 && -z $err ]]; chk hint.3
+
+# hint.4 the int→string direction: the hint names quoting, and quoting works
+run_sash 's=hi
+int v=1
+s=$v
+echo "$s"'
+[[ $rc != 0 && $err == *SB4030* && $err == *'quote it'* ]]; chk hint.4
+
+# hint.5 …and the recommended form runs
+run_sash 's=hi
+int v=1
+s="$v"
+echo "$s"'
+[[ $rc = 0 && $out = 1 && -z $err ]]; chk hint.5
+
+# hint.6 neither hint may name a placeholder that reads as a real variable.
+#        `$var` looked like the user's own variable; `VAR` cannot be mistaken
+#        for one. (The right-hand side is an arbitrary expression here — the
+#        hint is not given its spelling, so a placeholder is the honest form.)
+run_sash 's=5
+int n=$s
+echo $n'
+[[ $rc != 0 && $err == *'${VAR:-0}'* && $err != *'$var'* ]]; chk hint.6
 
 set -e
 tally

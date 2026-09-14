@@ -1560,12 +1560,24 @@ fn type_name(t: VarType) -> &'static str {
     }
 }
 
+/// The hint appended to a type-mismatch error.
+///
+/// `VAR` is a placeholder, not a variable name: the right-hand side here is an
+/// arbitrary expression, and this function is not given its spelling.
+///
+/// The string→int direction must name a **disposition**. Plain `$(($x))` is
+/// not a conversion — it is SB4030 in its own right ("a string→int conversion
+/// must carry a disposition"), so recommending it sent the user from one
+/// SB4030 to another.
 fn conversion_hint(from: VarType, to: VarType) -> String {
     match (from, to) {
-        (VarType::Int, VarType::String) => " — use `\"$var\"` to convert int to string".to_string(),
-        (VarType::String, VarType::Int) => {
-            " — use `$(($var))` to convert string to int".to_string()
+        (VarType::Int, VarType::String) => {
+            " — quote it to convert int to string: `\"$VAR\"`".to_string()
         }
+        (VarType::String, VarType::Int) => " — a string→int conversion goes through \
+             arithmetic and must carry a disposition: `$(( ${VAR:-0} ))` (0 if it \
+             isn't an integer) or `$(( ${VAR:?msg} ))` (abort if it isn't)"
+            .to_string(),
         _ => String::new(),
     }
 }

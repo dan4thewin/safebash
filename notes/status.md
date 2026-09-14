@@ -1,3 +1,48 @@
+## ══ STATUS (2026-09-14) — auditing the advice a diagnostic gives ══
+
+**Journal 301.** Sweep **4493 passing, 9 skipped, 0 failing, 0 flips** (+12:
+6 hint specs × 2 modes). `audit-diagnostic-suggested-spellings` is **done**.
+
+## Third instance, and the one that stings
+
+`type_check::conversion_hint` told every SB4030 string→int mismatch to
+"use `$(($var))`". That is **itself SB4030** — a string→int conversion must
+carry a disposition. The compiler rejected an assignment, gave a fix, and
+rejected the fix, with the right answer sitting one diagnostic away.
+
+Working forms: `$(( ${s:-0} ))` / `$(( ${s:?msg} ))`. Note `int n=${s:-0}` —
+disposition *without* arithmetic — is also rejected, so the advice must name
+both halves. Placeholders changed `$var` → `VAR` (they read as real names).
+
+## Audit method: read stderr, not source
+
+Two confident findings were **false positives**. `` use `@{name}` `` looks in
+source like the invalid braced splat (SB5033); it is a `format!` placeholder
+rendering as `@a`, which is correct. The message a user sees exists only after
+interpolation.
+
+Four of my first thirteen "failures" were my fixtures' fault, not the
+compiler's (`while readline v` needs the redirect off the compound; `a[i]` in
+arithmetic needs `int array`; `map m = @{a:DISP}` needs its result read).
+
+~25 suggestions compiled clean. One bug in twenty-five.
+
+## The gate is NOT closed — needs DG
+
+Manual sweeps find today's instances; the class re-opens whenever a DD retires
+a form, because a message is a string literal and nothing compiles it.
+
+Filed **`harness-diagnostic-advice-compiles` (P3)** with three options and
+deliberately did not pick. The one that makes this structural — carrying
+suggestions as **data on `Diagnostic`** instead of baking them into prose —
+changes the `Diagnostic` type, which is a surface decision. **DG's call.**
+
+Meanwhile the spec shape to copy is `hint.1`–`hint.6` (types.sh) and
+`gs.36`/`gs.37`: assert the message text **and run what it recommends**.
+Text-only assertions are how SB5030 survived DD#100 recording it.
+
+---
+
 ## ══ STATUS (2026-09-14) — `$@` in functions, and a gate that rotted twice ══
 
 **Journal 300.** Sweep **4481 passing, 9 skipped, 0 failing, 0 flips** (+16:
