@@ -112,12 +112,6 @@ safebash/
 │   │   ├── emit_ir.rs     — IR capture (inert Janet data)
 │   │   ├── regex_validate.rs — DD#39/#63 regex validation
 │   │   └── diagnostic.rs  — Error reporting
-│   └── tests/
-│       ├── codegen_tests.rs  — codegen correctness
-│       ├── e2e_tests.rs      — end-to-end compilation and execution
-│       ├── c_tests.rs        — the C backend
-│       ├── brush_compat_tests.rs — Brush compatibility
-│       └── taint_spec_tests.rs — taint model
 ├── sash-convert/          — Bash → sash-native converter
 │   └── src/
 │       ├── main.rs        — CLI entry point
@@ -127,7 +121,6 @@ safebash/
 │                            A SEPARATE cargo workspace — build it with
 │                            `(cd sash-rt && cargo build --release)`.
 ├── sash-expand/           — Expansion utilities
-├── sash-rt-tests/         — Runtime test harness
 ├── docs/                  — GUIDE, TIMELINE, sash.1
 ├── notes/                 — iwe knowledge graph (journal, decisions, tasks)
 ├── audit/                 — Adversarial review results
@@ -571,26 +564,32 @@ the converter's job; the compiler only compiles.
 
 ## Tests
 
-Test files in `sash/tests/`:
+**The spec suite is the authoritative gate.** `cd spec && bash run.sh` runs
+every `spec/*.sh` in both the native and C modes and accumulates results in
+`spec.db` (SQLite, repo root, untracked — every run rewrites it wholesale,
+and `runs` records a `commit_hash` per test so the database is its own
+history). It is currently 4542 tests across 41 files.
 
-| File | What it tests |
-|------|---------------|
-| `codegen_tests.rs` | Compile bash snippets to native, run, check output |
-| `e2e_tests.rs` | Positive (compile+run), negative (expect errors), coercion, annotation, extract, auto-attest |
-| `c_tests.rs` | The `--emit-c` backend |
-| `taint_spec_tests.rs` | Taint model: rejection of tainted reads, attest runtime enforcement, DD#46 positionals |
-| `brush_compat_tests.rs` | Brush shell compatibility |
+`sash/tests/` **no longer exists.** All 546 Rust integration tests, and the
+`sash-rt-tests` crate, were deleted in the 2026-09-14 redux (journal 304)
+after each was classified with per-test evidence: 210 asserted surfaces we
+have deliberately retired, 272 were already covered by concrete spec ids, 45
+were bash-differentials with no independent assertion, and only 4 expressed
+anything a spec could not — those became 20 new spec tests.
 
-Build and run: `mk test` (Plan 9 mk, not make).
+The reason for going that far, rather than repairing: **the harness was
+fail-open.** `run_bash_native` called `sash::codegen::compile_to_object`
+directly, so `validate` never ran. 49 of its 159 passing tests (31%)
+compiled programs the real compiler rejects — `echo -n`, for instance, is
+rejected by SB5059 but still honoured by codegen. A third of that suite's
+green was measuring a pipeline with a pass removed.
 
-**The authoritative gate is the spec suite, not the Rust tests.** `cd spec
-&& bash run.sh` runs every `spec/*.sh` in both the native and C modes and
-accumulates results in `spec.db` (SQLite, repo root, untracked — every run
-rewrites it wholesale, and `runs` records a `commit_hash` per test so the
-database is its own history). Several Rust integration tests currently fail
-or hang at HEAD on surfaces that have since been retired; see
-`notes/tasks/rust-tests-hang-on-retired-surfaces.md`. Always run the Rust
-suites under `timeout`.
+> If you build a new harness, **drive the real `sash` binary**. A harness
+> that calls into the middle of the pipeline tests a compiler we do not ship.
+
+`mk test` (Plan 9 mk, not make) covers what remains: 152 C regex checks, 26
+`sash-grep` checks, and 77 in-crate unit tests (`sash` 30, `sash-convert`
+27, `sash-expand` 20). It is green.
 
 ---
 

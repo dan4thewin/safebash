@@ -1,47 +1,88 @@
-## ══ STATUS (2026-09-14) — GUIDE.md asserted the opposite about recursion ══
+## ══ STATUS (2026-09-14) — 546 Rust tests deleted; `mk test` green again ══
 
-**Journal 303.** Sweep **4508 passing, 9 skipped, 0 failing, 0 flips** (+8:
-4 recursion specs × 2 modes). `docs-tail-recursion-args-model` **done**;
-`spec-db-clause-text` moved to **blocked (DG)**.
+**Journal 304.** Sweep **4542 passing, 9 skipped, 0 failing** (+34 over the
+stretch: 20 replacement specs + 14 DD#77 disposition specs, all × 2 modes).
+`mk test` **rc=0 for the first time in months.**
 
-## The documentation bug
+## The test redux — done
 
-> `GUIDE.md:459` — "Depth is static (SB5037 rejects recursion…)"
+DG's goal, verbatim: *delete as many tests as possible that are obsolete,
+targetting dropped behaviors, or are already adequately covered by spec
+tests; write new spec tests for what remains; rehabilitate and document only
+what cannot be replaced.*
 
-False. SB5037 rejects everything **except** a direct self tail-call, which is
-compiled to a **loop** — and SB5037's own message already says so. The
-diagnostic was right; the architecture doc asserted the opposite, in a
-parenthetical.
+All **546** live integration tests classified with per-test evidence, then
+deleted. `sash/tests/` and `sash-rt-tests/` no longer exist.
 
-| shape | result |
-|---|---|
-| direct self tail-call | compiled to a loop |
-| non-tail self-call `return $(( n * (f m) ))` | SB5037 |
-| mutual recursion | SB5037 |
+| cat | n | basis | outcome |
+|----:|--:|---|---|
+| 1 | 210 | retired surface, per-test diagnostic | deleted |
+| 2 | 272 | signature match vs 2299 spec fixtures | deleted |
+| 3 | 19 | apparently uncovered — **15 already had spec ids** | 4 replaced |
+| 4 | 45 | bash-differential with no independent assertion | deleted |
 
-Now documented in `GUIDE.md` (new subsection under Phase 6) and `sash.1`
-(new `.SH FUNCTIONS AND RECURSION` — it had no functions section at all).
-Specs `rec.1`–`rec.4`; `rec.2` runs **100,000** recursive calls, which
-demonstrates the loop rather than asserting it.
+Only **4 of 546** expressed something a spec could not. They became 20 specs
+(`cf.u1`–`cf.u3`, `g.10`/`g.11`, `cli.24`–`cli.26`, `35.10`/`35.11`).
 
-Two of that task's four gates were moot: they targeted `SUBSET.md`, removed
-2026-08-29 **for drifting from the DDs**, and repeated the `$# ≡ ${#args}`
-error already corrected in journal 300. One wrong sentence, two filings.
+## The finding: the harness was fail-open
 
-## Needs DG — two items
+`run_bash_native` called `sash::codegen::compile_to_object` directly, so
+**`validate` never ran**. `echo -n` is rejected by SB5059 yet honoured by
+codegen, so `echo_n_multiple_args` passed a bash-differential against a
+compiler we do not ship.
 
-1. **`spec-db-clause-text`** (now `blocked`). Gate 2 was already done
-   (`spec/clauses.tsv` is tracked and `run.sh` imports it). The two DECIDE
-   gates remain: key clause text against today's chronological ids and re-key
-   later, or wait for the specification document's scheme? And what `dd` value
-   do the named suites (`cov.*`, `vm.*`, …) get? Re-measured, the gap grew
-   **1255 → 2029 ids** and backed tests **fell 754 → 509**; opportunistic
-   authoring is not happening while the keying is provisional.
-2. **`harness-diagnostic-advice-compiles`** (P3). Three options for making
-   "a diagnostic's advice must compile" structural. The one that works
-   changes the `Diagnostic` type (suggestions as data, not prose).
+**49 of 159 passing tests (31%)** compiled programs the real compiler
+rejects — SB4030 ×24, SB4014 ×7, SB5020 ×6, SB5062 ×3, SB5059 ×2, SB5017 ×2,
+SB4037 ×2. A third of that suite's green was measuring a pipeline with a
+pass removed.
 
----
+**Any future harness must drive the real CLI binary, never
+`compile_to_object`.** Recorded in AGENTS.md.
+
+## sash-rt-tests: two real gaps, closed before deletion
+
+All 60 tests mapped. Most fell to existing specs (25.4–25.12, cov.68/69,
+93.10–93.12). Three assert inputs the compiler cannot emit —
+`atoi_leading_spaces`/`atoi_trailing_junk` pin raw `sash_atoi`'s lenient
+C-atoi edges, but the live path is `sash_atoi_or` → `parse_strict_i64`
+(strict); raw `sash_atoi` only runs behind the DD#93 Part D `i?` gate.
+
+Two were genuine and got specs first:
+- **`table_grow`** had *zero* coverage — `sash_table_new` floors capacity at
+  4 and the largest map literal in the corpus has 3 keys → `35.10`/`35.11`.
+- **DD#77 conversion dispositions** — `hint.2`/`hint.3` only ever passed
+  well-formed values → `77.10`–`77.16`.
+
+## Three repairs that were hiding behind each other
+
+1. **doctest** — `validate::check_taint`'s doc comment illustrated the taint
+   walk with 4-space-indented *sash* source, which rustdoc compiled as Rust.
+2. **`contrib/sash-grep.sash`** — stale against DD#99 (`while read` →
+   `while readline`) and the argv splat rule (`$(argv 1)` → `$(arg 1)`); had
+   not compiled in a long time.
+3. **`contrib/test-regex.sh`** — built it with `2>/dev/null`, turning one
+   fatal compile error into 19 empty-match FAILs pointing at the innocent
+   regex engine. Now fails fast and loud.
+4. **`mk cov-unit`** — named three deleted test targets; repointed at `--lib`.
+
+`mk test` now: 152 C regex + 26 sash-grep + 77 units (sash 30, convert 27,
+expand 20).
+
+## Tasks closed
+
+`audit-rust-test-suites` (P2), `rust-tests-hang-on-retired-surfaces` (P1).
+
+## For DG
+
+- **`bug-array-regex-filter-silent-literal`** (P2, filed) —
+  `array a=(*.ff =~ 'RE')` silently yields 3 un-globbed literal words.
+  `try_array_regex_filter` requires element 0 to be exactly `"*"`. Fix needs
+  a call: generalise the guard to any glob metachar, **or** diagnose with a
+  new SB code. Blanket rejection is wrong — `array a=(x =~ y)` is a
+  legitimate 3-element literal.
+- **`overflow_tests` deletion** — all 17 cases map to spec ids, but it was
+  the only thing exercising `sash-rt/src/inner.rs` directly. Easy to restore
+  if you disagree.
 
 ## ══ STATUS (2026-09-14) — externalized true/false get a CHECK ══
 
@@ -5536,9 +5577,9 @@ modified: 2026-06-07
 <!-- BEGIN: mk-status (regenerated by contrib/status-update.sh) -->
 ## Current branch: hand-parser
 
-## Spec status: 4120 passing / 33 failing of 4544 (spec.db @ 5bec718)
+## Spec status: 4542 passing / 0 failing of 4551 (spec.db @ fffc23f)
 
-_Regenerated 2026-09-08 by `mk status`. Edits inside this block will be
+_Regenerated 2026-09-14 by `mk status`. Edits inside this block will be
 overwritten; edit outside the BEGIN/END markers._
 <!-- END: mk-status -->
 
