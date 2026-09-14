@@ -1,9 +1,33 @@
-status: deferred
+status: done
 priority: P1
 depends: []
 gates:
   - "`mk test` completes"
   - "every retained behaviour has a spec test; the Rust integration suites keep only what a spec cannot express"
+
+> **RESOLVED 2026-09-14 (journal 304).** Both gates now hold, by the more
+> radical of the two routes the task contemplated: `sash/tests/` and
+> `sash-rt-tests/` were deleted outright rather than migrated piecemeal.
+> All 546 integration tests were classified with per-test evidence; only 4
+> expressed anything a spec could not, and those became 20 new spec tests.
+>
+> `mk test` completes and is **green** — 152 C regex checks, 26 sash-grep
+> checks, and 77 in-crate units (sash 30, sash-convert 27, sash-expand 20).
+> Getting there needed three repairs beyond the deletions, each of which had
+> been hidden behind a louder failure upstream:
+>
+> 1. a doctest in `validate::check_taint` — a 4-space-indented block of
+>    *sash* source that rustdoc compiled as Rust;
+> 2. `contrib/sash-grep.sash`, stale against DD#99 (`while read` → `while
+>    readline`) and DD#42 (`$(argv 1)` → `$(arg 1)`), which failed to compile;
+> 3. `contrib/test-regex.sh`, which built that program with `2>/dev/null` and
+>    so turned the compile failure into 19 silent empty-match FAILs instead
+>    of one loud fatal error. Hardened to fail fast.
+>
+> The root cause the task named — the harness bypassing `validate` — was
+> worse than "hangs": it was **fail-open**. 49 of 159 passing bash-differential
+> tests (31%) compiled programs the real compiler rejects.
+
 
 # Rust integration tests: migrate to specs, discard the rest
 

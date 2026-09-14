@@ -91,7 +91,6 @@ on a consequential fork violates Decision authority.
 - **sash-rt/** — pure Rust `#![no_std]` runtime crate (rustix, no libc)
 - **sash-convert/** — bash → sash-native converter
 - **sash-expand/** — expansion utilities
-- **sash-rt-tests/** — runtime test harness
 - **docs/** — GUIDE, TIMELINE
 - **notes/** — iwe knowledge graph: journal, decisions, tasks, status, architecture
 - **audit/** — adversarial audit findings and remediation
@@ -318,16 +317,28 @@ four minutes; with them, milliseconds. They cost ~95 MB of local disk.
 
 ### Rust tests
 
-Tests live in `sash/tests/`:
-- `codegen_tests.rs` (256) — codegen correctness
-- `e2e_tests.rs` (130) — end-to-end compilation and execution
-- `c_tests.rs` (66) — the `--emit-c` backend
-- `brush_compat_tests.rs` (52) — Brush compatibility
-- `taint_spec_tests.rs` (42) — taint/attest scenarios
+**`sash/tests/` no longer exists.** All 546 integration tests were deleted
+in the 2026-09-14 test redux (journal 304) after each was classified with
+per-test evidence: 210 asserted surfaces we have deliberately retired, 272
+were already covered by concrete spec ids, 45 were bash-differentials with
+no independent assertion, and only 4 were genuine gaps — those became 20
+new spec tests. `sash-rt-tests` went the same way, for the same reason.
 
-`oracle_tests.rs` and `janet_tests.rs` **no longer exist** (counts above
-re-measured 2026-09-13; the previous list was stale on both names and
-numbers).
+The decisive finding: **the harness was fail-open.** `run_bash_native`
+called `sash::codegen::compile_to_object` directly, so `validate` never
+ran, and 49 of its 159 passing tests (31%) compiled programs the real
+compiler rejects. `echo -n` is rejected by SB5059 yet still honoured by
+codegen, which is how `echo_n_multiple_args` "passed" a bash-differential
+for so long. **If you build a new harness, drive the real CLI binary — never
+`compile_to_object`.** A test that skips a pass tests a compiler we do not
+ship.
+
+What remains is 77 in-crate unit tests, run by `mk test`:
+- `sash` (30) — parser and codegen units, in `#[cfg(test)]` modules
+- `sash-convert` (27) · `sash-expand` (20)
+
+**The spec suite in `spec/` is the authoritative gate**, and now the only
+one for end-to-end behaviour. Add coverage there, not in a new Rust suite.
 
 ## Code index
 
@@ -729,15 +740,18 @@ Every task ends with:
 8. `git commit` with descriptive message
 9. `git push`
 
-**Step 1 is currently not achievable.** `cargo test --test codegen_tests`
-**hangs forever** — the harness bypasses `validate`, so fixtures using
-surfaces DD#99 retired compile to binaries that never terminate. A further
-~141 Rust integration tests fail at HEAD across brush/e2e/oracle/janet/taint,
-mostly diagnostic-code drift. Until
-`notes/tasks/rust-tests-hang-on-retired-surfaces.md` is resolved, treat step
-2 (the spec suite) as the authoritative gate, and **always run Rust suites
-under `timeout`** so a hang does not consume a session. Verify any Rust
-failure against clean HEAD (`git stash`) before believing you caused it.
+**Step 1 is achievable again as of 2026-09-14.** `mk test` had been red for
+months — first because `cargo test --test codegen_tests` hung forever (the
+harness bypassed `validate`, so fixtures using retired surfaces compiled to
+binaries that never terminated), and latterly because a doctest failed. Both
+causes are gone: the hanging suites were deleted in the test redux, and the
+doctest was a 4-space-indented code block in `validate::check_taint`'s doc
+comment holding *sash* source, which rustdoc dutifully compiled as Rust.
+
+Steps 1 and 2 are **both** gates now. Step 2 (the spec suite) is still the
+one that carries the behavioural weight — 4542 tests against 77 units — so
+when the two disagree about whether something is covered, believe the specs.
+Keep running anything long under `timeout`.
 
 ## Bug policy
 

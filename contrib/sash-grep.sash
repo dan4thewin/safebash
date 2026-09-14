@@ -3,10 +3,10 @@
 # Usage: sash-grep <pattern>
 # Reads stdin, prints lines matching pattern.
 
-pat=$(argv 1)
+pat=$(arg 1)
 attest pat [[ $pat =~ ^.+$ ]]
 
-while read line; do
+while readline line; do
   attest line [[ $line =~ ^.*$ ]]
   if [[ $line =~ $pat ]]; then
     echo $line
