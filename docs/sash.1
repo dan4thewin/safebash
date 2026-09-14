@@ -575,8 +575,36 @@ is rejected as a malformed range.
 .TP
 .B No counted repetition of a group.
 .RB \[dq] (ab){2} \[dq]
-is rejected. Write
-.RB \[dq] (ab)(ab) \[dq].
+is rejected
+.RB ( SB5023 ).
+Write
+.RB \[dq] (ab)(ab) \[dq]
+instead.
+.IP
+This is a limitation of the engine rather than an oversight. The compiler
+expands a bound by re\-lexing the single preceding
+.IR atom ;
+.RB \[dq] ( \[dq]
+and
+.RB \[dq] ) \[dq]
+are operators, not atoms, so the atom it would repeat is the group's last
+element rather than the group. Earlier versions did exactly that:
+.RB \[dq] (ab){2} \[dq]
+compiled as
+.RB \[dq] (ab)b \[dq]
+and reported no match on
+.RB \[dq] ababababab \[dq],
+where bash matches. Rejecting is the deliberate choice \(em a wrong answer
+with no diagnostic is worse than a diagnostic. The rejection covers every
+position, not just a leading group:
+.RB \[dq] a(bc){2} \[dq],
+.RB \[dq] (a)(b){2} \[dq]
+and
+.RB \[dq] (a){2}b \[dq]
+are all rejected, while
+.RB \[dq] (ab)x{2} \[dq]
+is accepted because the repeated atom there is
+.BR x .
 .TP
 .B No empty alternative.
 .RB \[dq] (a|) \[dq]

@@ -94,6 +94,33 @@ Running the dialect against the binary rather than reading about it found
 4. **`[[ $s =~ ^((a))$ ]]` is rejected** as "expected `]]`" —
    `notes/tasks/regex-literal-double-paren.md`, filed.
 
+## Added 2026-09-14 — the group-repeat rejection, as an engine limitation
+
+DG: *add to the doc task to record this as a limitation of the regex engine.*
+
+The section already listed "No counted repetition of a group" under the
+unsupported surface, with `(ab)(ab)` as the workaround. What it did not say is
+**why**, and that is the half that stops the bug report — the same gap that
+made `bug-regex-literal-dash-in-bracket` arrive as a P1 with a three-way fork.
+
+The entry now states:
+
+- it is a limitation of the engine, not an oversight;
+- the mechanism — the compiler expands a bound by re-lexing the single
+  preceding *atom*, and `(` / `)` are operators rather than atoms, so the atom
+  it would repeat is the group's last element;
+- what the old behavior was: `(ab){2}` compiled as `(ab)b` and reported no
+  match on `ababababab`, where bash matches;
+- that rejecting is deliberate — a wrong answer with no diagnostic is worse
+  than a diagnostic;
+- the exact extent, measured: `a(bc){2}`, `(a)(b){2}` and `(a){2}b` are all
+  rejected (it is not only a *leading* group), while `(ab)x{2}` is accepted
+  because the repeated atom there is `x`.
+
+Every one of those claims was probed against the binary, per the task's own
+caution. Rendering checked with `man -P cat`; the one `groff` warning in the
+file (`table wider than line width`) is pre-existing and unrelated.
+
 ## Corrections to the source material
 
 - DD#39's top section still says there is no `{n,m}`. There is; the
