@@ -9,7 +9,7 @@ setup brace
 # backend had a control-flow gap (until / `(( ))`) that these forms hit; all
 # eight constructs were later measured byte-identical between the backends, so
 # the guard was stale and is gone. Running both modes keeps it that way.
-plan=27
+plan=32
 echo "1..$plan" >&3
 
 set +e
@@ -117,6 +117,44 @@ run_sash 'if true { echo y > /dev/null }'
 # E4 nested
 run_sash 'if true { if true { echo y } }'
 [[ $rc = 0 && $out = "y" && -z $err ]]; chk bc.e4
+
+# --- bc.f1-f5: a declaration as the LAST statement in a brace block ---------
+# `parse_declaration_assignments` stops at a newline, a `;`, EOF, or a
+# redirect, but NOT at `}`. A declaration list is greedy because `str a b c`
+# declares three names, so with no stop it consumed the block's closing brace
+# as a candidate name and reported SB4014 "expected variable name in
+# declaration" — pointing at a declaration that was already complete. It hit
+# every brace form, and only when the declaration was last in the block: any
+# following `;` or newline stopped the loop first, which is why every existing
+# brace spec missed it. Journal 310.
+
+# bc.f1 fn — the form the bug was found in
+run_sash 'fn f { str x="a"; echo "$x" }
+f'
+[[ $rc = 0 && $out = "a" && -z $err ]]; chk bc.f1
+
+# bc.f2 for
+run_sash 'for i in 1 2 { str r="y"; echo "$r$i" }'
+[[ $rc = 0 && $out = "y1
+y2" && -z $err ]]; chk bc.f2
+
+# bc.f3 if
+run_sash 'str c="y"
+if [[ $c == y ]] { str x="a"; echo "$x" }'
+[[ $rc = 0 && $out = "a" && -z $err ]]; chk bc.f3
+
+# bc.f4 a multi-name declaration last in a block still takes all its names and
+#       stops at the brace — the fix is a stop token, not a one-name limit
+run_sash 'fn f { str a="1" b="2"; echo "$a$b" }
+f'
+[[ $rc = 0 && $out = "12" && -z $err ]]; chk bc.f4
+
+# bc.f5 control: the redirect stop is unaffected. `int x=5 > f` must still be
+#       the clean SB4046 (a redirect cannot attach to a declaration) rather
+#       than regressing to the misleading SB4014.
+run_sash 'int x=5 > /dev/null
+echo "$x"'
+[[ $rc != 0 && -z $out && $err == *SB4046* ]]; chk bc.f5
 
 set -e
 tally

@@ -1,64 +1,50 @@
-## ══ STATUS (2026-09-14) — END blocks now populate `Program::end_block` ══
+## ══ STATUS (2026-09-14) — SB5049 now covers same-scope redeclaration ══
 
-**Journal 309.** Sweep **4585 passing, 10 skipped, 0 failing**.
-fmt / clippy clean; `cargo test --release` 77 passing, 0 failing.
+**Journal 310.** Sweep **4611 passing, 10 skipped, 0 failing** (+26).
+fmt / clippy / complexity gate green; `cargo test --release` 77 passing.
 
-`ir::Program::end_block` was never set. `parser.rs` bound it to `None` with a
-non-`mut` `let`; `END { }` became a `Function` named `__sash_end__` on
-`statements`, identified downstream by string comparison. The fourteen
-validator guards on the field were **not vestigial** — they are a complete
-consumer side. The *producer* was never written.
+DG's call: *a typed declaration (`str`/`int`/`array`/`map`/`const`) of a name
+already declared in the **same** scope is SB5049, regardless of type match.*
+SB5049 previously fired only **cross**-scope, so at top level `str x` twice,
+`str x` then `int x` (**type change**), and `str x` then `const x`
+(**acquires const**) were all accepted — a variable's contract could change
+partway down a file with no diagnostic.
 
-**Wired it up** (DG's call). `parse()` intercepts `Tok::End` at the top level
-and assigns the field. Two new diagnostics enforce the DD#56 sentence "a
-top-level declaration (exactly one per program)", neither previously
-enforced:
+`check_redeclaration` is the companion to `check_no_shadow`. Control-flow
+bodies share the enclosing scope (DD#86 gives control flow no scope); a
+function body gets a fresh map; top level and the DD#56 END body share one.
+Sibling-function locals and repeated `for x` stay legal — the literal reading
+of "regardless of scope" would have broken both.
 
-- **SB4054** — an `END { }` block must be at the top level
-- **SB4055** — a second `END { }` block
+**SB4044 no longer fires on a declaration.** `const x=1; const x=2` said
+"cannot be reassigned" when nothing was assigned. Proved nothing was lost: a
+13-case const battery before/after — six dropped the redundant SB4044,
+**none became accepted**. SB4044 now means only a bare assignment to a const.
 
-Four defects the name encoding caused, all now fixed: `:end-block nil` lied
-to a `--extract ir` consumer; SB5071 leaked `fn __sash_end__` into user
-diagnostics; two END blocks were silently accepted with the second winning;
-a user function named `__sash_end__` compiled and then died at runtime with
-`sash: bug: bare command passed to sash_exec`.
+**Bug found and fixed (pre-existing, predates `be36208`).**
+`parse_declaration_assignments` stopped at newline/`;`/EOF/redirect but not
+at `}`, so a declaration that was the **last** statement in any brace block
+(`fn`/`for`/`if`/`while`/`END`) ate the closing brace as a candidate name:
 
-**One lost rejection, found and fixed.** END is now top-level scope (the
-correct DD#56 reading, and what the guards already assumed). A
-top-level-vs-END rejection battery found `$@` **accepted** inside END where
-top level gives SB5045 — `check_dollar_at` walked `program.statements` and
-had no end-block path at all. Audited all 35 program-level passes in
-`validate.rs` mechanically: 17 have no direct reference, 13 of those reach
-END via `program_blocks`/`program_scopes`/`function_bodies`, and
-`check_dollar_at` was the only genuinely blind one. It now uses
-`program_blocks` at `in_fn = false`. Battery is 14 rules, all identical in
-both positions.
+```
+sash -c 'fn f { str x="a" }'   →  SB4014 expected variable name in declaration
+```
 
-Specs: `signals.sh` 56.36–56.38 (SB4054, SB4055, `$@`-in-END), `misc.sh`
-104.5 (`:end-block` populated, `__sash_end__` absent from the capture).
+`brace.sh` had 27 tests and none caught it — they all either put a `;` after
+the declaration or ended the block with a command. Fix: `Tok::RBrace` in the
+stop set. Found only because the new 86.x specs were written in the compact
+brace form.
+
+Specs: `scope.sh` 86.31-86.38, `types.sh` 35.7 (rewritten), `brace.sh`
+bc.f1-bc.f5.
+
+**`:ir-version` stays at 1** — DG: no consumers yet.
 
 **Note:** AGENTS.md's "Rust tests" section is stale — `sash/tests/` no longer
 exists (the test redux removed it), so `codegen_tests` etc. and the
 "step 1 is not achievable" caveat no longer apply.
 
 ## ══ OPEN FOR DG ══
-
-0. **`:ir-version` bump?** `:end-block` can now be non-nil for the first
-   time. The *shape* is unchanged (the field always documented the body),
-   but DD#104 says the stamp exists so a consumer can refuse a capture it
-   does not understand, and a consumer written against the old compiler had
-   no reason to write a non-`nil` branch. Currently left at 1.
-
-0b. **SB5049 scope (DG's question: forbid all redeclaration regardless of
-   scope?).** Measured: SB5049 fires *only* cross-scope today. At top level
-   `str x` twice, `str x` then `int x` (type change), and `str x` then
-   `const x` (acquiring const) are all **accepted**. Recommend: *a typed
-   declaration (`str`/`int`/`array`/`map`/`const`) of a name already declared
-   **in the same scope** is SB5049, regardless of type match.* Keeps sibling-
-   function locals and repeated `for x` legal — the literal reading of
-   "regardless of scope" would break both. Also closes the one hole the END
-   wiring widened: `str x` at top level plus `str x` in END is now accepted,
-   because END is top-level scope and top level already permits it.
 
 1. **Compound-redirect machinery** (`dead-compound-redirect-machinery.md`) —
    DG chose "discuss". New evidence: `notes/tasks/align-parser-with-decisions.md`

@@ -83,6 +83,8 @@ pub fn validate(program: &Program) -> Vec<Diagnostic> {
     // SB5049 (DD#86): no shadowing — a typed declaration inside a function of a
     // top-level global name is a redeclaration error.
     check_no_shadow(program, &mut diags);
+    // SB5049 (DD#86): and no second declaration of a name within one scope.
+    check_redeclaration(program, &mut diags);
     // SB5071 (DD#86): a `fn` definition is legal only at the top level.
     check_fn_placement(&blocks, &mut diags);
     // SB5072 (DD#86): a `const` binding inside a loop body.
@@ -256,7 +258,7 @@ fn scan_const_stmt(
     diags: &mut Vec<Diagnostic>,
 ) {
     match &stmt.kind {
-        StmtKind::Declaration(d) => scan_const_decl(d, stmt.span, consts, diags),
+        StmtKind::Declaration(d) => scan_const_decl(d, consts),
         StmtKind::Assignment(a) => flag_if_const(consts, &a.name, stmt.span, diags),
         _ => {}
     }
@@ -265,17 +267,15 @@ fn scan_const_stmt(
     }
 }
 
-/// A declaration reassigns a const if it re-declares/re-inits an already-const
-/// name; a `const`/`readonly` declaration records its names.
-fn scan_const_decl(
-    d: &Declaration,
-    span: Span,
-    consts: &mut std::collections::HashSet<String>,
-    diags: &mut Vec<Diagnostic>,
-) {
-    for a in &d.assignments {
-        flag_if_const(consts, &a.name, span, diags);
-    }
+/// A `const`/`readonly` declaration records its names.
+///
+/// It does NOT report re-declaring an already-const name: that is a
+/// *redeclaration*, which SB5049 reports with the accurate message. SB4044
+/// stays for what it actually describes — a bare assignment writing a const.
+/// (Both used to fire, for `const k` twice and for every typed redeclaration
+/// of a const, telling the user the binding "cannot be reassigned" when they
+/// had not tried to assign to it.)
+fn scan_const_decl(d: &Declaration, consts: &mut std::collections::HashSet<String>) {
     if d.keyword == DeclKeyword::Readonly {
         for a in &d.assignments {
             consts.insert(a.name.clone());
@@ -301,6 +301,91 @@ fn const_reassign_diag(span: Span, name: &str) -> Diagnostic {
         format!(
             "readonly variable `{name}` cannot be reassigned — a `const`/`readonly` \
              binding is immutable"
+        ),
+    )
+}
+
+/// SB5049 (DD#86, same-scope): a *typed* declaration (`str`/`int`/`array`/
+/// `map`/`const`) of a name already declared in the **same** scope.
+///
+/// The companion rule to `check_no_shadow`, which handles the *cross*-scope
+/// case. Together they say: one name, one declaration, per scope. What stays
+/// legal is what lives in a genuinely different scope — two sibling functions
+/// may each declare `str x`, and a `for` variable is not a `Declaration` at
+/// all, so repeating `for x` is untouched.
+///
+/// This deliberately fires on a re-declaration that matches the original type
+/// (`str x` twice), one that *changes* it (`str x` then `int x`), and one that
+/// *acquires* `const` — all three were accepted before, and the latter two
+/// silently changed a variable's contract.
+fn check_redeclaration(program: &Program, diags: &mut Vec<Diagnostic>) {
+    // The top level and the DD#56 `END { }` body are ONE scope: END's
+    // declarations are globals, and `collect_top_level_decls` already pools
+    // them, so `str x` in each is the same name declared twice.
+    let mut seen: HashMap<String, Span> = HashMap::new();
+    scan_scope_redecl(&program.statements, &mut seen, diags);
+    if let Some(ref end) = program.end_block {
+        scan_scope_redecl(end, &mut seen, diags);
+    }
+}
+
+/// Walk one scope. Control-flow bodies are part of the enclosing scope (sash
+/// has no block scope), so they share `seen`; a function body is a new scope
+/// and gets a fresh map.
+fn scan_scope_redecl(
+    stmts: &[Statement],
+    seen: &mut HashMap<String, Span>,
+    diags: &mut Vec<Diagnostic>,
+) {
+    for stmt in stmts {
+        scan_stmt_redecl(stmt, seen, diags);
+    }
+}
+
+fn scan_stmt_redecl(
+    stmt: &Statement,
+    seen: &mut HashMap<String, Span>,
+    diags: &mut Vec<Diagnostic>,
+) {
+    // A function body is a new scope, so it starts from an empty map and its
+    // names never reach the caller's.
+    if let StmtKind::Function(f) = &stmt.kind {
+        let mut inner = HashMap::new();
+        scan_scope_redecl(&f.body, &mut inner, diags);
+        return;
+    }
+    if let StmtKind::Declaration(d) = &stmt.kind {
+        flag_redecl(d, stmt.span, seen, diags);
+    }
+    for body in stmt.child_bodies() {
+        scan_scope_redecl(body, seen, diags);
+    }
+}
+
+fn flag_redecl(
+    d: &Declaration,
+    span: Span,
+    seen: &mut HashMap<String, Span>,
+    diags: &mut Vec<Diagnostic>,
+) {
+    for a in &d.assignments {
+        match seen.get(&a.name) {
+            Some(prev) => diags.push(redecl_diag(span, &a.name, prev.line)),
+            None => {
+                seen.insert(a.name.clone(), span);
+            }
+        }
+    }
+}
+
+fn redecl_diag(span: Span, name: &str, prev_line: usize) -> Diagnostic {
+    Diagnostic::error_span(
+        span,
+        "SB5049",
+        format!(
+            "`{name}` is already declared in this scope (line {prev_line}) — sash has \
+             one declaration per name per scope (DD#86). Assign to the existing \
+             variable with a bare `{name} = …`, or rename this one"
         ),
     )
 }

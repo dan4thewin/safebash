@@ -7,7 +7,7 @@ set -eu
 . common.sh
 setup scope
 set +e
-plan=45
+plan=53
 echo "1..$plan" >&3
 
 # 86.1 `str s` with no initializer declares a string, meaningful-zero ""
@@ -308,6 +308,72 @@ x2" && -z $err ]]; chk 86.29
 run_sash 'fn f { const r="x"; echo "$r" }
 f'
 [[ $rc = 0 && $out = "x" && -z $err ]]; chk 86.30
+
+# --- 86.31-86.38: SB5049 same-scope redeclaration -----------------------
+# DD#86 gives one name one declaration per scope. SB5049 used to enforce only
+# the CROSS-scope half (a typed declaration inside a function of a top-level
+# global), so at top level a name could be declared twice, have its type
+# changed, or silently acquire `const`. Journal 310.
+
+# 86.31 the same declaration twice in one scope
+run_sash 'str x="a"
+str x="b"
+echo "$x"'
+[[ $rc != 0 && -z $out && $err == *SB5049* ]]; chk 86.31
+
+# 86.32 a redeclaration that CHANGES the type. This was the worst of the
+#       accepted cases: the variable's contract changed with no diagnostic.
+run_sash 'str x="a"
+int x=1
+echo "$x"'
+[[ $rc != 0 && -z $out && $err == *SB5049* ]]; chk 86.32
+
+# 86.33 a redeclaration that ACQUIRES const — a mutable variable becoming
+#       immutable partway down the file, silently.
+run_sash 'str x="a"
+const x="b"
+echo "$x"'
+[[ $rc != 0 && -z $out && $err == *SB5049* ]]; chk 86.33
+
+# 86.34 control: two SIBLING functions may each declare the same name. These
+#       are genuinely different scopes; forbidding redeclaration "regardless
+#       of scope" would have broken this.
+run_sash 'fn f { str x="a"; echo "$x" }
+fn g { str x="b"; echo "$x" }
+f
+g'
+[[ $rc = 0 && $out = "a
+b" && -z $err ]]; chk 86.34
+
+# 86.35 control: a `for` variable is not a declaration, so repeating one is
+#       untouched by the rule.
+run_sash 'for x in 1 2 { echo "$x" }
+for x in 3 4 { echo "$x" }'
+[[ $rc = 0 && $out = "1
+2
+3
+4" && -z $err ]]; chk 86.35
+
+# 86.36 control: one declaration introducing two DISTINCT names is not a
+#       redeclaration (the check is per name, not per statement).
+run_sash 'str a="1" b="2"
+echo "$a$b"'
+[[ $rc = 0 && $out = "12" && -z $err ]]; chk 86.36
+
+# 86.37 the top level and the DD#56 END body are ONE scope — END declarations
+#       are globals — so a name declared in both is declared twice.
+run_sash 'str x="a"
+echo "$x"
+END { str x="b" }'
+[[ $rc != 0 && -z $out && $err == *SB5049* ]]; chk 86.37
+
+# 86.38 control flow has no scope of its own (DD#86), so two branches each
+#       declaring the same name are two declarations of one global, not two
+#       locals. Declare once above the `if` and assign in the branches.
+run_sash 'str c="y"
+if [[ $c == y ]] { str x="a" } else { str x="b" }
+echo "$x"'
+[[ $rc != 0 && -z $out && $err == *SB5049* ]]; chk 86.38
 
 set -e
 tally

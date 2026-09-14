@@ -184,9 +184,12 @@ run_sash 'const x=1; (( x++ ))'
 # 35.6 arithmetic assignment `(( x=… ))`
 run_sash 'const x=1; (( x=5 ))'
 [[ $rc != 0 && -z $out && $err == *SB4044* ]]; chk 35.6
-# 35.7 re-declaration of a const
+# 35.7 re-declaration of a const is SB5049, not SB4044. The user did not
+# reassign anything, so "cannot be reassigned" described the wrong act; this
+# is one name declared twice in one scope (DD#86), which is what SB5049 says.
+# Both codes used to fire. SB4044 still covers a bare `x=2` (35.3).
 run_sash 'const x=1; const x=2'
-[[ $rc != 0 && -z $out && $err == *SB4044* ]]; chk 35.7
+[[ $rc != 0 && -z $out && $err == *SB5049* && $err != *SB4044* ]]; chk 35.7
 # 35.8 backstop: `read` into a const (a channel the validate walk doesn't
 # enumerate — caught by VersionState::define so it can never panic)
 run_sash 'const x=1; readline x'

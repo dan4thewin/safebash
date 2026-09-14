@@ -770,6 +770,15 @@ fn parse_declaration_assignments(
                 Tok::Newline
                     | Tok::Semi
                     | Tok::Eof
+                    // A brace block's closer terminates the statement exactly as a
+                    // newline or `;` does, so the declaration list must stop there.
+                    // Without this, `fn f { str x="a" }` consumed the `}` as a
+                    // candidate name and reported SB4014 "expected variable name",
+                    // pointing at a declaration that was already complete. It hit
+                    // every brace form -- fn, for, if, while, and DD#56 END -- and
+                    // only when the declaration was the LAST statement in the block,
+                    // since otherwise a `;` stopped the loop first.
+                    | Tok::RBrace
                     // Stop at a trailing redirect so `int x=5 > f` returns a clean
                     // Declaration; `wrap_pipeline_part` then rejects the redirect
                     // (SB4046) instead of the misleading SB4014 that greedy

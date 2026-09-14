@@ -21,10 +21,17 @@ global) that a reviewer can't trace. Both are footguns.
 - **Globals are read *and* written with no friction** from any function. The
   method-like pattern (a set of functions manipulating shared top-level state)
   is first-class — reading and writing a global look identical to a local.
-- **No shadowing.** A name is a global *xor* a local — never a local hiding a
-  global. Consequently a *typed re-declaration* inside a function of a name that
-  is already a top-level global is an **error** (redeclaration); a *bare*
-  assignment to that name simply **writes** the global.
+- **No shadowing, and one declaration per name per scope.** A name is a global
+  *xor* a local — never a local hiding a global. Consequently a *typed
+  re-declaration* inside a function of a name that is already a top-level
+  global is an **error** (redeclaration); a *bare* assignment to that name
+  simply **writes** the global. The same error covers a second typed
+  declaration within **one** scope, whether or not the type matches — so
+  `str x` twice, `str x` then `int x`, and `str x` then `const x` are all
+  rejected. What stays legal is what lives in a genuinely different scope: two
+  sibling functions may each declare `str x`. Control flow has no scope of its
+  own (below), so two branches declaring one name are two declarations of one
+  global. A `for` variable is not a declaration and is untouched.
 - **`local` is removed** (keyword + the save/restore machinery). Lifetime is now
   positional, so the DD#35 *lifetime* axis is retired.
 - **`local fn` (DD#18) is abandoned** — it was the only other user of `local`,
@@ -102,6 +109,12 @@ lands on *another* declared global — fundamentally undetectable, and rare.
 3. No-shadowing / redeclaration error. **— shipped (journal 227): SB5049,
    `check_no_shadow` in validate.rs; a typed re-declaration inside a function
    of a top-level global is rejected; a bare assignment writes the global.**
+   **Same-scope half completed (journal 310, DG 2026-09-14): `check_redeclaration`
+   rejects a second typed declaration of a name within one scope, regardless of
+   type match. Previously only the cross-scope half was enforced, so at top level
+   a name could be re-declared, have its type changed, or silently acquire
+   `const`. The top level and the DD#56 `END { }` body are one scope. SB4044 no
+   longer fires on a declaration — it means only a bare assignment to a const.**
 4. Dead-variable rejection (new validate pass, dual of DD#62). **— shipped
    (journal 228): SB5050. Reuses the SB5031 read-enumerator (inverted via a
    shared `ReadSink`: Flag mode = SB5031, Collect mode = dead-var) so the two
