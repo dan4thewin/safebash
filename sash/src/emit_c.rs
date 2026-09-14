@@ -1858,11 +1858,16 @@ fn emit_wait_c(e: &mut Emit, args: &[SsaValue], types: &VarTypes) {
     }
 }
 
-/// Dispatch on `BuiltinCmd`. Phase 1 implements echo, exit, true,
-/// false, noop. Phase 4 adds external command exec via the `Other`
-/// arm. Phase 6 adds LetExit (the post-arith-test status setter).
-/// Other builtins emit a `TODO` comment so the C still compiles and
-/// the unsupported area is visible.
+/// Dispatch on `BuiltinCmd`. `Other` goes to `emit_exec` (external command),
+/// and every remaining variant is matched explicitly — there is **no**
+/// catch-all arm, so adding a `BuiltinCmd` variant without handling it here
+/// fails the Rust build.
+///
+/// This used to end in a `_ =>` arm emitting a `/* TODO */` C *comment*, which
+/// meant the C still compiled, the binary still ran, and the statement
+/// silently vanished. That fail-open default produced three silently-wrong
+/// builtins (`exec`, `close`, `unset m[k]` — journal 278) and was closed in
+/// `87ced59`. The sentence describing it outlived it by a commit.
 /// DD#14: `exec > file` with no command is *persistent* fd manipulation — it
 /// rebinds the running process's descriptors for the rest of the program. The
 /// per-command save/restore that wraps every other command would undo it on
