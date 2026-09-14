@@ -660,8 +660,12 @@ fn validate_stmt_ctx(stmt: &Statement, diags: &mut Vec<Diagnostic>, in_condition
         // reset-context constructs (Function, Case) — see `validate_nested`.
         _ => validate_nested(stmt, in_condition, diags),
     }
-    // Validate all expressions in the statement
-    walk_exprs_in_stmt(stmt, &mut |expr, span| validate_expr(expr, span, diags));
+    // Validate the expressions this statement owns. The walk is deliberately
+    // NON-recursive: this function already visits every nested statement (via
+    // `validate_nested` / the `If`/`While`/`For`/`Group` arms), so a deep walk
+    // here would re-validate every nested expression once per enclosing level
+    // and emit each diagnostic depth+1 times (journal 308).
+    walk_own_exprs_in_stmt(stmt, &mut |expr, span| validate_expr(expr, span, diags));
 }
 
 /// DD#70/#71: a typed declaration is a value binding, not a boolean/exit
@@ -1933,6 +1937,13 @@ fn check_glob_chars_in_literal(s: &str, span: Span, diags: &mut Vec<Diagnostic>)
 /// Walk all expressions in a statement, passing each to the callback.
 fn walk_exprs_in_stmt(stmt: &Statement, f: &mut impl FnMut(&Expr, Span)) {
     crate::ir::walk_all_exprs(stmt, &mut |expr| f(expr, expr.span));
+}
+
+/// Walk only the expressions this statement owns directly — see
+/// [`crate::ir::walk_own_exprs`]. For passes that do their own statement
+/// recursion.
+fn walk_own_exprs_in_stmt(stmt: &Statement, f: &mut impl FnMut(&Expr, Span)) {
+    crate::ir::walk_own_exprs(stmt, &mut |expr| f(expr, expr.span));
 }
 
 // ── SB5012: $? availability state machine ─────────────────────

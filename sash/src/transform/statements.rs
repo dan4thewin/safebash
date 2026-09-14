@@ -50,7 +50,12 @@ pub(super) fn lower_one(
         StmtKind::Case(c) => lower_case(c, ssa, state, block),
         StmtKind::ArithTest(expr) => lower_arith_test_stmt(expr, stmt, ssa, state, &mut block),
         StmtKind::Suppressed(inner) => lower_suppressed_stmt(inner, ssa, state, block),
-        StmtKind::Negated(inner) => lower_negated_stmt(inner, ssa, state, block),
+        StmtKind::Negated(_) => unreachable!(
+            "a per-segment `Negated` is peeled by \
+             stmt_handlers::push_pipeline_stage; parse only builds it for a \
+             non-leading pipeline stage (parser.rs `append_pipeline_stage`), \
+             so it never reaches statement dispatch"
+        ),
         StmtKind::ReturnProducer(inner) => lower_return_producer(inner, ssa, state, block),
     }
 }
@@ -595,27 +600,6 @@ fn lower_suppressed_stmt(
         }
     }
     result_block
-}
-
-/// DD#70: a standalone `Negated(inner)` — a `!`-negated boolean. In practice a
-/// per-segment `Negated` is peeled inside a multi-stage pipeline (its status is
-/// inverted in the aggregate, not here); this is the defensive fallback for a
-/// `Negated` reaching statement dispatch. Lower the inner in a consuming
-/// (condition) context and flip the test result, mirroring the standalone
-/// `! cmd` path in `handle_pipeline`.
-fn lower_negated_stmt(
-    inner: &Statement,
-    ssa: &mut SsaProgram,
-    state: &mut VersionState,
-    block: BlockId,
-) -> BlockId {
-    state.in_condition += 1;
-    let block = lower_one(inner, ssa, state, block);
-    state.in_condition -= 1;
-    ssa.block_mut(block)
-        .insts
-        .push(SsaInst::sigil(BuiltinCmd::NegateTestResult, vec![], true));
-    block
 }
 
 fn uncheck_block_from(ssa: &mut SsaProgram, block_id: BlockId, from: usize) {

@@ -204,12 +204,16 @@ impl Statement {
     }
 }
 
-/// Recursively walk all expressions in a statement tree.
+/// Visit the expressions a statement owns *itself*: its [`Statement::direct_exprs`]
+/// each expanded through [`walk_expr_tree`], plus the `${…}` expansions inside a
+/// `(( … ))` statement's `ArithExpr` tree. Does **not** descend into child
+/// statements.
 ///
-/// Visits every `Expr` node in the statement and all nested statements.
-/// The callback receives each expression (including sub-expressions
-/// inside DoubleQuoted, Concat, CommandSubstitution, etc.).
-pub fn walk_all_exprs(stmt: &Statement, f: &mut impl FnMut(&Expr)) {
+/// An analysis that already recurses over `child_bodies()` must use this rather
+/// than [`walk_all_exprs`]. Combining the two visits every nested expression
+/// once per enclosing level, so a diagnostic raised from the callback is emitted
+/// depth+1 times (journal 308).
+pub fn walk_own_exprs(stmt: &Statement, f: &mut impl FnMut(&Expr)) {
     stmt.direct_exprs(&mut |expr| walk_expr_tree(expr, f));
     // `(( … ))` statement / `if`/`while` condition — its `${…}` expansions live
     // in an `ArithExpr` tree, not a direct `Expr`, so surface them here (mirrors
@@ -217,6 +221,15 @@ pub fn walk_all_exprs(stmt: &Statement, f: &mut impl FnMut(&Expr)) {
     if let StmtKind::ArithTest(arith) = &stmt.kind {
         walk_arith_expansions(arith, f);
     }
+}
+
+/// Recursively walk all expressions in a statement tree.
+///
+/// Visits every `Expr` node in the statement and all nested statements.
+/// The callback receives each expression (including sub-expressions
+/// inside DoubleQuoted, Concat, CommandSubstitution, etc.).
+pub fn walk_all_exprs(stmt: &Statement, f: &mut impl FnMut(&Expr)) {
+    walk_own_exprs(stmt, f);
     for body in stmt.child_bodies() {
         for s in body {
             walk_all_exprs(s, f);

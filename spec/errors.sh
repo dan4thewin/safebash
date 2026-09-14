@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup errors
-plan=181
+plan=186
 echo "1..$plan" >&3
 
 set +e
@@ -41,6 +41,45 @@ run_sash 'fn f {
 }
 f a b c'
 [[ $rc != 0 && -z $out && -n $err ]]; chk 0.6
+
+# --- validator walk: each diagnostic exactly once ---------------------
+#
+# `validate_stmt_ctx` recurses into every nested statement AND used to run a
+# *deep* expression walk over the whole statement, so an expression nested N
+# levels deep was validated N+1 times and its diagnostic printed N+1 times.
+# The per-statement walk is now `walk_own_exprs` (direct exprs only); the
+# statement recursion supplies the rest. Journal 308.
+
+# 0.7 baseline: a rejected env var at top level reports once.
+run_sash 'echo $HOME'
+n=$(grep -c SB5018 <<< "$err")
+[[ $rc != 0 && -z $out && $n = 1 ]]; chk 0.7
+
+# 0.8 one level of nesting (a function body) still reports once, not twice.
+run_sash 'fn f { echo $HOME }
+f'
+n=$(grep -c SB5018 <<< "$err")
+[[ $rc != 0 && -z $out && $n = 1 ]]; chk 0.8
+
+# 0.9 two levels (function + if) still reports once, not three times.
+run_sash 'fn f { if /bin/true; then echo $HOME; fi }
+f'
+n=$(grep -c SB5018 <<< "$err")
+[[ $rc != 0 && -z $out && $n = 1 ]]; chk 0.9
+
+# 0.10 the walk must not LOSE a diagnostic: a rejected var reachable only
+# through a construct the statement recursion reaches via `child_bodies`
+# (a `case` pattern, a `for` word list, an `if` condition) is still caught.
+run_sash 'for x in $HOME; do /bin/echo "$x"; done'
+n=$(grep -c SB5018 <<< "$err")
+[[ $rc != 0 && -z $out && $n = 1 ]]; chk 0.10
+
+# 0.11 the subject and an arm pattern of a `[[ ]]` dispatch (DD#66) are both
+# direct exprs of the same statement; each is validated exactly once, so two
+# distinct rejected vars give exactly two diagnostics.
+run_sash '[[ $HOME == $USER { /bin/echo a } ]]'
+n=$(grep -c SB5018 <<< "$err")
+[[ $rc != 0 && -z $out && $n = 2 ]]; chk 0.11
 
 # 21.1 - cmd suppresses exit status
 run_sash '- /bin/false; echo ok'
