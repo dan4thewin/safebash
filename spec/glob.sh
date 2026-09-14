@@ -13,7 +13,7 @@
 set -eu
 . common.sh
 setup glob
-plan=9
+plan=11
 echo "1..$plan" >&3
 
 set +e
@@ -64,6 +64,24 @@ run_sash '/usr/bin/touch g8a.g8x g8b.g8x; array a=(*.g8x); echo $(len a); echo $
 # g.9 a zero-match glob is a real EMPTY array — len 0, and still a collection
 run_sash 'array a=(*.nomatchZZ); echo $(len a)'
 [[ $rc = 0 && $out = "0" && -z $err ]]; chk g.9
+
+# ── DD#73 + readdir regex filter: `array a=(GLOB =~ 'RE')` ───────────
+# The filter form narrows the readdir result by regex. Nothing in the spec
+# corpus reached it; the only coverage was a Rust test that hardcoded an
+# absolute path from a different host, so it could never have passed here.
+# g.10 the regex filter keeps only the entries it matches. The pattern is
+# bare `*` by design: the regex replaces `?` and `[abc]`, which the glob
+# itself does not support (journal 042).
+run_sash "/usr/bin/touch g10a.ff g10b.ff g10c.gg
+array a=(* =~ '\\.ff\$')
+echo \$(len a)"
+[[ $rc = 0 && $out = "2" && -z $err ]]; chk g.10
+
+# g.11 a regex matching nothing yields an empty array, not an error
+run_sash "/usr/bin/touch g11a.hh
+array a=(* =~ 'nomatchQQ\$')
+echo \$(len a)"
+[[ $rc = 0 && $out = "0" && -z $err ]]; chk g.11
 
 set -e
 tally

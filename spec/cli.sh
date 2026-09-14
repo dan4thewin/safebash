@@ -10,7 +10,7 @@ set -eu
 . common.sh
 setup cli
 set +e
-plan=23
+plan=26
 echo "1..$plan" >&3
 
 SASH=$(command -v "${SASH:-sash}")
@@ -150,6 +150,24 @@ err=$($SASH --heap-size=99999999999999999999 u.sash -o h3 2>&1 >/dev/null); rc=$
 # token, so it must be prefix-matched and not read as an unknown flag
 $SASH --heap-size=8M u.sash -o h4 >/dev/null 2>&1; rc=$?
 [[ $rc = 0 && -e h4 ]]; chk cli.23
+
+# cli.24 --manifest reports externals called from a user function's body,
+# and does not leak the function's own name as a dependency.
+printf 'fn g() { date +%%s; }\ng\n' > m3.sash
+out=$($SASH --manifest m3.sash 2>/dev/null); rc=$?
+[[ $rc = 0 && $out == *"/date"* && $out != *"g"$'\n'* ]]; chk cli.24
+
+# cli.25 every stage of a pipeline is a dependency, not just the head.
+printf 'date | cat\n' > m4.sash
+out=$($SASH --manifest m4.sash 2>/dev/null); rc=$?
+[[ $rc = 0 && $out == *"/date"* && $out == *"/cat"* ]]; chk cli.25
+
+# cli.26 DD#55 externalized `true`, so a program of `echo`/`:`/`true` is no
+# longer dependency-free: `true` resolves to a real binary and is listed.
+# (cli.2 still holds — `echo` alone stays empty.)
+printf 'echo hi\n:\ntrue\n' > m5.sash
+out=$($SASH --manifest m5.sash 2>/dev/null); rc=$?
+[[ $rc = 0 && $out == *"/true"* ]]; chk cli.26
 
 set -e
 tally

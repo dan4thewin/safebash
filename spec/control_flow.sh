@@ -5,7 +5,7 @@
 set -eu
 . common.sh
 setup control_flow
-plan=45
+plan=48
 echo "1..$plan" >&3
 
 set +e
@@ -206,6 +206,45 @@ run_sash 'int x=2; if (( x == 1 )); then echo one; elif (( x == 2 )); then echo 
 # cf.i3 if/elif/else chain — else arm runs
 run_sash 'int x=99; if (( x == 1 )); then echo one; elif (( x == 2 )); then echo two; else echo other; fi'
 [[ $rc = 0 && $out = "other" && -z $err ]]; chk cf.i3
+
+# ── `until` — the classic `until COND; do …; done` form ──────────────
+# spec/brace.sh 57-63 covers the DD#96 brace form (`until (( … )) { … }`)
+# only. The `do … done` spelling reaches the same lowering by a different
+# parser path, and nothing exercised it outside the deleted Rust suite.
+# cf.u1 until counts down — the body runs while the condition is false
+run_sash 'int x=3
+until (( x <= 0 )); do
+    echo "$x"
+    x=$(( x - 1 ))
+done
+echo done'
+[[ $rc = 0 && $out = "3
+2
+1
+done" && -z $err ]]; chk cf.u1
+
+# cf.u2 a condition already true at entry runs the body zero times —
+# `until` is the negation of `while`, not a do-while.
+run_sash 'int x=0
+until (( x <= 0 )); do
+    echo body
+    x=$(( x - 1 ))
+done
+echo after'
+[[ $rc = 0 && $out = "after" && -z $err ]]; chk cf.u2
+
+# cf.u3 `if` nested in `while`, guarded by a chain of `||`-joined [[ ]].
+# Separate tests, not one test with `||` inside it — SB4053 rejects that.
+run_sash 'int i=0
+while (( i < 6 )); do
+    if [[ $i == "0" ]] || [[ $i == "2" ]] || [[ $i == "4" ]]; then
+        echo "even $i"
+    fi
+    (( i = i + 1 ))
+done'
+[[ $rc = 0 && $out = "even 0
+even 2
+even 4" && -z $err ]]; chk cf.u3
 
 set -e
 tally

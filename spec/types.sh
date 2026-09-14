@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup types
-plan=203
+plan=205
 echo "1..$plan" >&3
 
 set +e
@@ -995,6 +995,26 @@ run_sash 's=5
 int n=$s
 echo $n'
 [[ $rc != 0 && $err == *'${VAR:-0}'* && $err != *'$var'* ]]; chk hint.6
+
+# ── map growth past the initial table capacity ───────────────────────
+# sash_table_new floors capacity at 4, so table_grow (sash-rt/src/lib.rs)
+# only runs at the 5th key. The largest map literal anywhere else in this
+# corpus has 3 keys, so the rehash path had no spec coverage at all — its
+# only test was sash-rt-tests/tests/unit_tests.rs, which aborts before it.
+# 35.10 a map of 8 keys rehashes and every key still reads back
+run_sash 'map m=([a]=1 [b]=2 [c]=3 [d]=4 [e]=5 [f]=6 [g]=7 [h]=8)
+echo "${m[a]}${m[e]}${m[h]}"
+echo $(len m)'
+[[ $rc = 0 && $out = "158
+8" && -z $err ]]; chk 35.10
+
+# 35.11 keys inserted one at a time across the growth boundary survive it
+run_sash 'map m=([k1]=v1)
+m[k2]=v2; m[k3]=v3; m[k4]=v4; m[k5]=v5; m[k6]=v6
+echo $(len m)
+echo "${m[k1]}${m[k6]}"'
+[[ $rc = 0 && $out = "6
+v1v6" && -z $err ]]; chk 35.11
 
 set -e
 tally
