@@ -501,4 +501,70 @@ mod logos_equivalence {
         }
         assert!(to_tok(LogosTok::Comment).is_none());
     }
+    /// `Scanner::next()` must be able to pull a token straight from the source
+    /// when nothing has been peeked. Every caller in the parser peeks first, so
+    /// branch coverage measured this arm at 0 hits against 86,406 for its
+    /// sibling (journal 311). The arm is the scanner's only token source, not
+    /// dead code — this test pins the no-peek contract so it stays honest.
+    #[test]
+    fn scanner_next_without_peek_pulls_from_source() {
+        use crate::parse::lexer::Scanner;
+        use crate::parse::lexer::Tok;
+
+        let mut sc = Scanner::new("echo hi");
+
+        let first = sc.next();
+        assert_eq!(first.token, Tok::Word("echo".to_string()));
+
+        let second = sc.next();
+        assert_eq!(second.token, Tok::Word("hi".to_string()));
+
+        assert_eq!(sc.next().token, Tok::Eof);
+    }
+
+    /// The peeked path and the direct path must agree token-for-token.
+    #[test]
+    fn scanner_next_agrees_with_peek_then_next() {
+        use crate::parse::lexer::Scanner;
+
+        let src = "if x { echo a; } else { echo b; }";
+        let mut direct = Scanner::new(src);
+        let mut peeked = Scanner::new(src);
+
+        loop {
+            let d = direct.next();
+            peeked.peek();
+            let p = peeked.next();
+            assert_eq!(d.token, p.token);
+            assert_eq!(d.span.start, p.span.start);
+            assert_eq!(d.span.end, p.span.end);
+            if matches!(d.token, crate::parse::lexer::Tok::Eof) {
+                break;
+            }
+        }
+    }
+    /// The byte dispatcher hands ten structural bytes to the `logos` DFA. If
+    /// the DFA failed to match one of them, `scan_via_logos` would silently
+    /// fall back to a word scan that immediately breaks, yielding `Tok::Eof`
+    /// and truncating the program mid-source. Both arms measured 0 hits
+    /// (journal 311/312). This test proves the DFA covers every dispatched
+    /// byte, so the fallback is unreachable rather than merely untested.
+    #[test]
+    fn logos_matches_every_dispatched_structural_byte() {
+        use crate::parse::logos_tokens::LogosTok;
+        use logos::Logos;
+
+        for src in [
+            "\n", "#c\n", ";", "|", "&", "(", ")", "{", "}", ">", ";;", "||", "&&", ">>", ">&",
+            "))",
+        ] {
+            let matched = LogosTok::lexer(src).next();
+            assert!(
+                matches!(matched, Some(Ok(_))),
+                "logos failed to match dispatched input {:?}: {:?}",
+                src,
+                matched
+            );
+        }
+    }
 }

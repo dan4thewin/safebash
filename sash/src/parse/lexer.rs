@@ -338,7 +338,7 @@ impl Scanner {
     /// token. The caller has already established that the first byte is
     /// one of the "structural" bytes (no contextual ambiguity).
     fn scan_via_logos(&mut self, start: usize) -> SpannedToken {
-        use super::logos_tokens::{to_tok, LogosTok};
+        use super::logos_tokens::LogosTok;
         use logos::Logos;
 
         if let Some(tok) = self.arith_hash_word(start) {
@@ -346,33 +346,48 @@ impl Scanner {
         }
         let str_slice = logos_input(&self.source[self.pos..]);
         let mut lex = LogosTok::lexer(str_slice);
-        match lex.next() {
-            Some(Ok(lt)) => {
-                // Read the match length now — this is the last use of `lex`, so
-                // its borrow of `self.source` is released before the `&mut self`
-                // calls below.
-                let len = lex.span().end;
-                if let Some(tok) = self.split_dbl_paren_close(&lt, start) {
-                    return tok;
-                }
-                let end = self.pos + len;
-                let token = if matches!(lt, LogosTok::Comment) {
-                    let text = String::from_utf8_lossy(&self.source[self.pos..end]).to_string();
-                    Tok::Comment(text)
-                } else {
-                    to_tok(lt).expect("logos token without payload mapping")
-                };
-                self.pos = end;
-                SpannedToken {
-                    token,
-                    span: LexSpan { start, end },
-                }
-            }
-            _ => {
-                // Logos didn't match the dispatched byte. Fall back to
-                // word scan so the byte still becomes part of a token.
-                self.scan_word(start)
-            }
+        let matched = lex.next();
+        // Read the match length while `lex` is still alive — this releases its
+        // borrow of `self.source` before the `&mut self` call below.
+        let len = lex.span().end;
+        match matched {
+            Some(Ok(lt)) => self.emit_logos_token(lt, len, start),
+            // The caller dispatched one of ten structural bytes, every one of
+            // which the DFA matches (pinned by
+            // `logos_matches_every_dispatched_structural_byte`). A miss is a
+            // compiler bug, not bad input; the old silent fall-back to
+            // `scan_word` produced `Tok::Eof` and truncated the program
+            // mid-source.
+            other => panic!(
+                "logos failed to match dispatched structural byte {:?}: {:?}",
+                self.source.get(self.pos),
+                other
+            ),
+        }
+    }
+
+    /// Turn a matched `logos` token of `len` bytes into a `SpannedToken`.
+    fn emit_logos_token(
+        &mut self,
+        lt: super::logos_tokens::LogosTok,
+        len: usize,
+        start: usize,
+    ) -> SpannedToken {
+        use super::logos_tokens::{to_tok, LogosTok};
+
+        if let Some(tok) = self.split_dbl_paren_close(&lt, start) {
+            return tok;
+        }
+        let end = self.pos + len;
+        let token = if matches!(lt, LogosTok::Comment) {
+            Tok::Comment(String::from_utf8_lossy(&self.source[self.pos..end]).to_string())
+        } else {
+            to_tok(lt).expect("logos token without payload mapping")
+        };
+        self.pos = end;
+        SpannedToken {
+            token,
+            span: LexSpan { start, end },
         }
     }
 
@@ -1577,17 +1592,14 @@ impl Scanner {
             }
         }
         let mut word = String::new();
+        self.scan_word_chars(&mut word);
 
-        if let Some(eq_tok) = self.scan_word_chars(start, &mut word) {
-            return eq_tok;
-        }
-
-        if word.is_empty() {
-            return SpannedToken {
-                token: Tok::Eof,
-                span: LexSpan { start, end: start },
-            };
-        }
+        assert!(
+            !word.is_empty(),
+            "scan_word at a word-break byte {:?} — the byte dispatcher owns \
+             every break byte, so this is a dispatch bug",
+            self.source.get(start)
+        );
 
         SpannedToken {
             token: classify_word_token(word),
@@ -1629,10 +1641,9 @@ impl Scanner {
         })
     }
 
-    /// Scan word body bytes into `word`. Returns `Some(token)` if a bare `=`
-    /// at word start was consumed (caller emits it directly); returns `None`
-    /// after a normal break / end-of-input.
-    fn scan_word_chars(&mut self, start: usize, word: &mut String) -> Option<SpannedToken> {
+    /// Scan word body bytes into `word`, stopping at a word break or
+    /// end-of-input.
+    fn scan_word_chars(&mut self, word: &mut String) {
         // Subscript-bracket depth within this word. A doubled `[[`/`]]` delimits
         // a `[[ … ]]` test/dispatch only at depth 0; inside a subscript (depth >
         // 0) a `]]` is two subscript closes — e.g. the bare nested cell read
@@ -1643,17 +1654,9 @@ impl Scanner {
             match b {
                 b' ' | b'\t' | b'\n' | b';' | b'|' | b'&' | b'(' | b')' | b'{' | b'}' | b'<'
                 | b'>' | b'#' | b'"' | b'\'' | b'`' | b'$' => break,
-                // A bare leading `=` is its own token; otherwise `=` ends the word.
-                b'=' if word.is_empty() => {
-                    self.pos += 1;
-                    return Some(SpannedToken {
-                        token: Tok::Eq,
-                        span: LexSpan {
-                            start,
-                            end: self.pos,
-                        },
-                    });
-                }
+                // `=` ends the word. A *leading* `=` never reaches here: the
+                // byte dispatcher routes `b'='` to `scan_eq_punct`, and no
+                // caller of `scan_word` advances past its first byte.
                 b'=' => break,
                 // `+=` breaks the word (compound-assign operator).
                 b'+' if self.source.get(self.pos + 1) == Some(&b'=') => break,
@@ -1679,7 +1682,6 @@ impl Scanner {
                 }
             }
         }
-        None
     }
 }
 
@@ -1762,4 +1764,33 @@ fn simple_escape(b: u8) -> Option<char> {
         b'"' => '"',
         _ => return None,
     })
+}
+
+/// The two invariant panics in this module guard paths that the byte
+/// dispatcher makes unreachable (journal 312). DG's rule for the coverage
+/// campaign: an unreachable should-never-run assertion earns a unit test
+/// proving it catches what it claims. These reach past the dispatcher and
+/// call the scan paths directly with the input the dispatcher would never
+/// hand them.
+#[cfg(test)]
+mod invariant_tests {
+    use super::Scanner;
+
+    #[test]
+    #[should_panic(expected = "the byte dispatcher owns")]
+    fn scan_word_rejects_a_word_break_byte() {
+        // A space is a word-break byte; `skip_whitespace` means `scan_word`
+        // never sees one. Reaching past that, the word body is empty.
+        let mut sc = Scanner::new(" ");
+        let _ = sc.scan_word(0);
+    }
+
+    #[test]
+    #[should_panic(expected = "logos failed to match dispatched structural byte")]
+    fn scan_via_logos_rejects_an_unmatched_byte() {
+        // A backslash is never dispatched to logos; the DFA has no rule for
+        // it, so the invariant fires instead of silently truncating.
+        let mut sc = Scanner::new("\\");
+        let _ = sc.scan_via_logos(0);
+    }
 }
