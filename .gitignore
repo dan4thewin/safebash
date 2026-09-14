@@ -59,3 +59,4 @@ spec/cl_fd_out
 # session scratch plan — an AI working file, never part of the tree.
 # Nearly committed by a `git add -A` on 2026-09-13.
 plan.md
+coverage.db

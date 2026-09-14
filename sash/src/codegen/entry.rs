@@ -66,9 +66,24 @@ pub fn compile_to_object(bash_source: &str, enable_trace: bool) -> Result<Vec<u8
         return Err(diags);
     }
 
+    // DD#109: every native compile carries its own IR and manifest. The IR
+    // emitter is exhaustive by construction, so running it on every build
+    // turns "a new IR variant does not render" into an immediate failure of
+    // every compile rather than a latent gap in a rarely-taken flag.
+    let ir_text = crate::emit_ir::emit_ir(&program);
+    let manifest_text = manifest_text(&ssa);
+
     // Catch ICE panics in codegen and convert to clean error messages
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        compile_ssa(&ssa, Some(bash_source), enable_trace)
+        compile_ssa(
+            &ssa,
+            Embedded {
+                source: Some(bash_source),
+                ir: Some(&ir_text),
+                manifest: Some(&manifest_text),
+            },
+            enable_trace,
+        )
     }));
     match result {
         Ok(obj) => Ok(obj),
@@ -87,7 +102,30 @@ fn panic_payload_message(payload: Box<dyn std::any::Any + Send>) -> String {
     }
 }
 
-pub fn compile_ssa(program: &SsaProgram, bash_source: Option<&str>, trace: bool) -> Vec<u8> {
+/// The verbatim artifacts embedded as ELF note sections by a native
+/// compile: the source (DD#45) plus the IR capture and the manifest
+/// (DD#109). Bundled rather than passed as three adjacent `Option<&str>`
+/// parameters, which would be trivially transposable at the call site.
+pub struct Embedded<'a> {
+    pub source: Option<&'a str>,
+    pub ir: Option<&'a str>,
+    pub manifest: Option<&'a str>,
+}
+
+/// The manifest body: one external dependency path per line. Byte-identical
+/// to what `--manifest` prints, so the embedded section and the flag cannot
+/// disagree.
+fn manifest_text(ssa: &SsaProgram) -> String {
+    let mut s = String::new();
+    for dep in &ssa.external_deps {
+        s.push_str(dep);
+        s.push('\n');
+    }
+    s
+}
+
+pub fn compile_ssa(program: &SsaProgram, embedded: Embedded, trace: bool) -> Vec<u8> {
+    let bash_source = embedded.source;
     let reachable = program.reachable();
     let shared_flags = settings::Flags::new(settings::builder());
     let isa = cranelift_native::builder()
@@ -170,7 +208,7 @@ pub fn compile_ssa(program: &SsaProgram, bash_source: Option<&str>, trace: bool)
         .expect("define function");
 
     let mut product = module.finish();
-    embed_sash_source(&mut product, bash_source);
+    embed_artifacts(&mut product, &embedded);
     product.emit().expect("emit object")
 }
 
@@ -430,22 +468,32 @@ fn emit_branch_outcome_trace(
     ctx.builder.seal_block(no_trace_block);
 }
 
-/// DD#45: embed the source as a `.sash_source` ELF section (retrievable via
-/// `--extract`). The source is embedded verbatim: the coercion/rewrite
-/// recorder lived in the old CST→IR lowerer and was removed with tree-sitter
-/// (commit 73caecf); structural bash→sash-native rewriting now lives in the
-/// separate `sash-convert` crate.
-fn embed_sash_source(product: &mut cranelift_object::ObjectProduct, bash_source: Option<&str>) {
-    let Some(src) = bash_source else {
-        return;
-    };
-    let section_id =
+/// DD#45/DD#109: embed the source, the IR capture and the manifest as
+/// `.sash_source` / `.sash_ir` / `.sash_manifest` ELF note sections
+/// (retrievable via `--extract`). All three are embedded verbatim: the
+/// coercion/rewrite recorder lived in the old CST→IR lowerer and was removed
+/// with tree-sitter (commit 73caecf); structural bash→sash-native rewriting
+/// now lives in the separate `sash-convert` crate.
+///
+/// Note sections survive `ld --gc-sections --strip-debug`, which is why the
+/// source section has been readable since DD#45.
+fn embed_artifacts(product: &mut cranelift_object::ObjectProduct, embedded: &Embedded) {
+    for (name, body) in [
+        (&b".sash_source"[..], embedded.source),
+        (&b".sash_ir"[..], embedded.ir),
+        (&b".sash_manifest"[..], embedded.manifest),
+    ] {
+        let Some(body) = body else {
+            continue;
+        };
+        let section_id =
+            product
+                .object
+                .add_section(vec![], name.to_vec(), object::SectionKind::Note);
         product
             .object
-            .add_section(vec![], b".sash_source".to_vec(), object::SectionKind::Note);
-    product
-        .object
-        .append_section_data(section_id, src.as_bytes(), 1);
+            .append_section_data(section_id, body.as_bytes(), 1);
+    }
 }
 
 #[cfg(test)]

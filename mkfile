@@ -49,27 +49,31 @@ lint:V:
 	(cd $SASH && cargo clippy -- -D warnings)
 	(cd $CONVERT && cargo clippy -- -D warnings)
 
-cov-clean:V:
-	(cd $SASH && cargo llvm-cov clean --workspace) >/dev/null 2>&1
+# Coverage. All the fiddly parts (forcing a real instrumented rebuild, the
+# canary that proves it, and the SASH_RELEASE_DIR contract with spec/run.sh)
+# live in contrib/coverage.sh — the previous recipes set `SASH=`, which
+# spec/run.sh does not read, and used `$PWD`, which inside a mkfile is a mk
+# variable that expands empty. Both measured the wrong binary silently.
+cov:V:
+	bash contrib/coverage.sh
+
+cov-branch:V:
+	bash contrib/coverage.sh --branch
 
 cov-unit:V:
-	(cd $SASH && cargo llvm-cov --no-report --release --lib \
-		--ignore-run-fail) 2>&1 | tail -1
-
-cov-spec:V:
-	(cd $SASH && cargo llvm-cov run --release --bin sash ) >/dev/null 2>&1
-	LLVM_PROFILE_FILE="$PWD/target/llvm-cov-target/spec-%p-%m.profraw" \
-		SASH="$PWD/target/llvm-cov-target/release/sash" \
-		bash spec/run.sh >/dev/null 2>&1
+	bash contrib/coverage.sh --with-unit
 
 cov-rpt:V:
 	(cd $SASH && cargo llvm-cov report --release)
 
-cov-full:V:
-	mk cov-clean; mk cov-unit cov-spec; mk cov-rpt
-
-cov-spec-only:V:
-	mk cov-clean; mk cov-spec; mk cov-rpt
+# Undo a coverage run. `mk build` alone does NOT: cargo-llvm-cov passes
+# -Cinstrument-coverage through a RUSTC_WRAPPER, so cargo's fingerprint never
+# sees it and the instrumented artifacts look fresh. Leaving them in place
+# means a slower sash that drops default_*.profraw wherever it runs.
+cov-reset:V:
+	rm -rf target/release
+	rm -f default_*.profraw target/*.profraw
+	mk build
 
 complexity:V:
 	sqlite3 .indexnudge-rust.db "SELECT cyclomatic AS cc, name, file||':'||start_line AS where_ FROM symbols WHERE kind IN ('function','method') AND cyclomatic IS NOT NULL AND file LIKE 'sash/src/%' ORDER BY cyclomatic DESC LIMIT 20;"

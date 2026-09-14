@@ -340,6 +340,54 @@ What remains is 77 in-crate unit tests, run by `mk test`:
 **The spec suite in `spec/` is the authoritative gate**, and now the only
 one for end-to-end behaviour. Add coverage there, not in a new Rust suite.
 
+### Coverage
+
+`mk cov` measures what the **spec suite** reaches in the compiler. `mk
+cov-branch` adds branch coverage (nightly-only — `-Zcoverage-options=branch`
+is unstable; the shipped build stays stable). `mk cov-unit` folds in the
+in-crate unit tests, which is off by default because it hides exactly the
+should-never-run assertions worth finding. **`mk cov-reset` afterwards** —
+see below.
+
+All the logic lives in `contrib/coverage.sh`. Do not hand-roll a coverage
+run; three separate things silently measure *nothing* and still print a
+clean report:
+
+1. **`cargo llvm-cov clean --workspace` does not invalidate
+   `target/release`.** The old fingerprint is reused, the sweep runs against
+   an uninstrumented binary and drops **0 profraws**. `rm -rf target/release`
+   is the only reliable force.
+2. **`spec/run.sh` reads `SASH_RELEASE_DIR`, not `SASH`.** The old
+   `mk cov-spec` exported `SASH=`, so it measured whatever was already in
+   `target/release`.
+3. **`$PWD` inside a mkfile recipe is a *mk* variable**, not a shell one, so
+   the old `LLVM_PROFILE_FILE` path expanded to a bare relative name.
+
+The script gates every run on a **canary**: one `sash` invocation must drop a
+profraw or it aborts. Keep that property in anything you add here — a gate
+that cannot fail is not a gate.
+
+**`mk build` does NOT undo a coverage run.** cargo-llvm-cov passes
+`-Cinstrument-coverage` through a `RUSTC_WRAPPER`, so cargo's fingerprint
+never sees it and the instrumented artifacts look fresh. The leftover binary
+is slower and drops `default_*.profraw` wherever it runs. Use `mk cov-reset`.
+
+`coverage.db` (repo root, **untracked and gitignored**, same status as
+`spec.db`) holds lcov line/function data so uncovered lines can be joined
+against the indexnudge `symbols` table and ranked **by function**:
+
+```sql
+ATTACH 'coverage.db' AS cov;
+SELECT s.file, s.name, COUNT(*) AS uncov
+FROM cov.cov_lines cl
+JOIN symbols s ON s.file=cl.file AND cl.line BETWEEN s.start_line AND s.end_line
+WHERE cl.count=0 AND s.kind IN ('function','method')
+GROUP BY s.file, s.name, s.start_line ORDER BY uncov DESC;
+```
+
+**`sash-rt` is not measured by any of this.** It is `#![no_std]` with no
+libc, so instrumentation compiles but nothing writes a profraw at exit.
+
 ## Code index
 
 <!-- BEGIN indexnudge AGENTS.md block -->

@@ -178,7 +178,7 @@ of the build.
        ▼
  codegen/ → Cranelift IR → object code (.o)
        │     Declares extern functions from sash-rt
-       │     Embeds .sash_source ELF section
+       │     Embeds .sash_source/.sash_ir/.sash_manifest
        │
   [9]  │  Link
        ▼
@@ -344,8 +344,9 @@ direct translation of the textbook factorial produces: the multiply happens
 ### Phases 7–9: Fold, Codegen, Link
 
 Constant folding, then `codegen/` lowers SSA to Cranelift IR. Declares
-extern functions from `sash-rt`. `codegen/entry.rs::embed_sash_source`
-embeds the original source in a `.sash_source` ELF section. Finally,
+extern functions from `sash-rt`. `codegen/entry.rs::embed_artifacts`
+embeds the source, the IR capture and the manifest as `.sash_source`,
+`.sash_ir` and `.sash_manifest` ELF note sections (DD#45, DD#109). Finally,
 `lib.rs` invokes `ld` to link the object with `libsash_rt.a` into a fully
 static ELF binary.
 
@@ -552,9 +553,20 @@ the program can execve, resolved to an absolute path at compile time
 
 ### Source emission
 
-`--extract <binary>` prints the `.sash_source` section that
-`codegen/entry.rs::embed_sash_source` writes into every binary, so a
-compiled program always carries the source it was built from.
+`--extract <binary> [source|ir|manifest]` prints one of the note sections
+that `codegen/entry.rs::embed_artifacts` writes into every native binary, so
+a compiled program always carries the source it was built from, its IR
+capture, and its manifest (DD#45, DD#109). The section defaults to `source`,
+so the original `--extract <binary>` spelling is unchanged.
+
+Because a zero-length section does not survive into the linked ELF, a program
+with no external dependencies has no `.sash_manifest` at all; that reads back
+as an empty manifest rather than an error (scoped by `.sash_source`, so a
+non-sash binary still fails).
+
+Embedding the IR on every compile is what keeps the exhaustive emitter honest:
+a variant that fails to render breaks every build instead of only the rare
+`--emit-ir` invocation.
 
 `--emit-source` and `--annotate` are **sash-convert** flags, not `sash`
 flags (DD#57) — `sash` rejects them and says so. Source transformation is

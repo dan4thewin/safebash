@@ -89,7 +89,7 @@ use std::process::Command;
 const USAGE: &str = "\
 Usage: sash [OPTION]... <script.sh>
        sash [OPTION]... -c 'script'
-       sash --extract <binary>
+       sash --extract <binary> [source|ir|manifest]
 
   -c 'script'         compile SCRIPT, given inline
   -o <output>         write the binary to OUTPUT
@@ -97,7 +97,9 @@ Usage: sash [OPTION]... <script.sh>
   --emit-c            emit C source on stdout instead of a binary
   --emit-ir           emit the IR as inert janet data on stdout (DD#104)
   --manifest          print the program manifest on stdout
-  --extract <binary>  print the .sash_source section of BINARY
+  --extract <binary> [section]
+                      print an embedded section of BINARY: source
+                      (default), ir, or manifest (DD#45, DD#109)
   --no-taint          disable all taint checking (DD#82 escape hatch)
   --trace             compile in runtime tracing (DD#32)
   --heap-size=<size>  heap reservation, e.g. 512K, 64M, 2G (default 256M)
@@ -425,41 +427,65 @@ fn emit_c_to_stdout(input: &str, flags: &[&str], program: &crate::ir::Program) {
     print!("{}", emit_c::emit_c(&ssa));
 }
 
-/// `--extract`: dump the `.sash_source` section from a compiled binary.
+/// `--extract <binary> [source|ir|manifest]`: dump one embedded artifact
+/// section from a compiled binary. The section defaults to `source`, so the
+/// DD#45 spelling `--extract <binary>` keeps its original meaning.
 fn dump_sash_source(args: &[String]) {
     if args.len() < 3 {
         eprintln!("{USAGE}");
         std::process::exit(1);
     }
     let binary_path = &args[2];
+    let which = args.get(3).map(String::as_str).unwrap_or("source");
+    let section = match which {
+        "source" => ".sash_source",
+        "ir" => ".sash_ir",
+        "manifest" => ".sash_manifest",
+        other => {
+            eprintln!(
+                "sash: --extract: unknown section `{other}` (expected source, ir, or manifest)"
+            );
+            std::process::exit(1);
+        }
+    };
     let data = std::fs::read(binary_path).unwrap_or_else(|e| {
         eprintln!("sash: {}: {}", binary_path, e);
         std::process::exit(1);
     });
-    match read_sash_source_section(&data) {
+    match read_artifact_section(&data, section) {
         Ok(source) => print!("{source}"),
         Err(msg) => {
+            // A zero-length section does not survive into the linked ELF, so
+            // a program with no external dependencies has no .sash_manifest
+            // at all. That is an empty manifest, not a missing artifact —
+            // reporting it as an error would make the common case look
+            // broken. `.sash_source` distinguishes the two: a binary that
+            // has one is a sash binary whose manifest is genuinely empty,
+            // and anything else still errors.
+            if section == ".sash_manifest" && read_artifact_section(&data, ".sash_source").is_ok() {
+                return;
+            }
             eprintln!("sash: {binary_path}: {msg}");
             std::process::exit(1);
         }
     }
 }
 
-/// Read the `.sash_source` section body out of an object-file image.
+/// Read one embedded artifact section body out of an object-file image.
 ///
 /// An unreadable section reports the underlying error rather than claiming
 /// the section is absent, which is what the previous loop did.
-fn read_sash_source_section(image: &[u8]) -> Result<String, String> {
+fn read_artifact_section(image: &[u8], section: &str) -> Result<String, String> {
     use object::read::{Object, ObjectSection};
     let obj =
         object::read::File::parse(image).map_err(|e| format!("not a valid object file: {e}"))?;
-    let section = obj
+    let found = obj
         .sections()
-        .find(|s| s.name() == Ok(".sash_source"))
-        .ok_or_else(|| "no .sash_source section found".to_string())?;
-    let body = section
+        .find(|s| s.name() == Ok(section))
+        .ok_or_else(|| format!("no {section} section found"))?;
+    let body = found
         .data()
-        .map_err(|e| format!(".sash_source: unreadable: {e}"))?;
+        .map_err(|e| format!("{section}: unreadable: {e}"))?;
     Ok(std::str::from_utf8(body)
         .unwrap_or("<binary data>")
         .to_string())

@@ -10,7 +10,7 @@ set -eu
 . common.sh
 setup cli
 set +e
-plan=26
+plan=33
 echo "1..$plan" >&3
 
 SASH=$(command -v "${SASH:-sash}")
@@ -168,6 +168,59 @@ out=$($SASH --manifest m4.sash 2>/dev/null); rc=$?
 printf 'echo hi\n:\ntrue\n' > m5.sash
 out=$($SASH --manifest m5.sash 2>/dev/null); rc=$?
 [[ $rc = 0 && $out == *"/true"* ]]; chk cli.26
+
+# ── DD#109: every native compile embeds its IR and manifest ───────────────
+# `--emit-ir` and `--manifest` were terminal stdout modes only, so the
+# exhaustive IR emitter ran only when someone passed the flag. Embedding on
+# every compile makes "a new IR variant does not render" a failure of every
+# build instead of a latent gap in a rarely-taken path.
+
+# 109.1 a native binary carries its IR capture, retrievable by section name.
+$SASH -c 'int n=3
+if (( n > 2 )) { echo big }' -o irbin 2>/dev/null
+out=$($SASH --extract irbin ir 2>/dev/null); rc=$?
+[[ $rc = 0 && $out == *":ir-version 1"* && $out == *":kind :if"* ]]; chk 109.1
+
+# 109.2 the embedded IR is byte-identical to what --emit-ir prints for the
+# same source. The section and the flag cannot drift apart.
+printf 'int n=3\nif (( n > 2 )) { echo big }\n' > ir.sash
+$SASH ir.sash -o irbin2 >/dev/null 2>&1
+flag_ir=$($SASH --emit-ir ir.sash 2>/dev/null)
+sect_ir=$($SASH --extract irbin2 ir 2>/dev/null)
+[[ $flag_ir = "$sect_ir" ]]; chk 109.2
+
+# 109.3 likewise the manifest: the embedded section equals --manifest.
+printf 'date | cat\n' > mf.sash
+$SASH mf.sash -o mfbin >/dev/null 2>&1
+flag_mf=$($SASH --manifest mf.sash 2>/dev/null)
+sect_mf=$($SASH --extract mfbin manifest 2>/dev/null)
+[[ $flag_mf = "$sect_mf" && $sect_mf == *"/date"* ]]; chk 109.3
+
+# 109.4 a program with no external dependencies has an EMPTY manifest, not a
+# missing one. A zero-length section does not survive into the linked ELF, so
+# the absent section must read back as empty rather than as an error — this
+# is the common case (an all-builtin program), and reporting it as a missing
+# artifact would make it look broken.
+$SASH -c 'echo hi' -o nodeps 2>/dev/null
+out=$($SASH --extract nodeps manifest 2>/dev/null); rc=$?
+[[ $rc = 0 && -z $out ]]; chk 109.4
+
+# 109.5 the DD#45 spelling is unchanged: no section argument still means
+# source, so --extract <binary> keeps its original meaning.
+$SASH -c 'echo hello' -o srcbin 2>/dev/null
+out=$($SASH --extract srcbin 2>/dev/null); rc=$?
+[[ $rc = 0 && $out == *"echo hello"* ]]; chk 109.5
+
+# 109.6 an unknown section name is rejected rather than silently treated as
+# the default.
+err=$($SASH --extract srcbin bogus 2>&1 >/dev/null); rc=$?
+[[ $rc != 0 && $err == *"bogus"* ]]; chk 109.6
+
+# 109.7 the empty-manifest fallback is scoped to sash binaries: a file with
+# no .sash_source still errors rather than reporting an empty manifest.
+: > notsash.bin
+$SASH --extract notsash.bin manifest >/dev/null 2>&1; rc=$?
+[[ $rc != 0 ]]; chk 109.7
 
 set -e
 tally
