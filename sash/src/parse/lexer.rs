@@ -170,6 +170,12 @@ pub struct Scanner {
     /// `<<` is the left-shift operator, not a heredoc
     /// (bug-arith-left-shift-heredoc).
     arith_depth: usize,
+    /// First construct whose closing delimiter ran off the end of the source:
+    /// `(offset of the opener, what it was)`. The scan-to-closer helpers all
+    /// stopped at end-of-input and silently pretended they had found the
+    /// closer, so `/bin/echo "hello` and `echo ${x` compiled clean. First one
+    /// wins — later ones are consequences of the first.
+    unterminated: Option<(usize, &'static str)>,
 }
 
 impl Scanner {
@@ -180,7 +186,27 @@ impl Scanner {
             peeked: Vec::new(),
             last_end: 0,
             arith_depth: 0,
+            unterminated: None,
         }
+    }
+
+    /// Step past the closing delimiter of a construct opened at `open_at`, or
+    /// record it as unterminated when the scan ran off the end of the source.
+    fn require_closer(&mut self, open_at: usize, what: &'static str) {
+        if self.pos < self.source.len() {
+            self.pos += 1;
+            return;
+        }
+        if self.unterminated.is_none() {
+            self.unterminated = Some((open_at, what));
+        }
+    }
+
+    /// The first unterminated construct the scan hit, if any. `parse` reports
+    /// it ahead of everything else: an unterminated quote or `${` swallows the
+    /// rest of the program, so any other diagnostic is downstream noise.
+    pub fn unterminated(&self) -> Option<(usize, &'static str)> {
+        self.unterminated
     }
 
     /// Enter arithmetic-scanning mode (`(( … ))` body). Must be paired with
@@ -1014,9 +1040,7 @@ impl Scanner {
             }
         }
         let content = String::from_utf8_lossy(&self.source[inner_start..self.pos]).to_string();
-        if self.pos < self.source.len() {
-            self.pos += 1; // skip closing }
-        }
+        self.require_closer(inner_start.saturating_sub(2), "`${`");
         content
     }
 
@@ -1191,9 +1215,7 @@ impl Scanner {
             self.pos += 1;
         }
         let content = String::from_utf8_lossy(&self.source[content_start..self.pos]).to_string();
-        if self.pos < self.source.len() {
-            self.pos += 1; // skip closing '
-        }
+        self.require_closer(start, "`'` string");
         SpannedToken {
             token: Tok::SingleQuoted(content),
             span: LexSpan {
@@ -1207,9 +1229,7 @@ impl Scanner {
     fn scan_double_quoted(&mut self, start: usize) -> SpannedToken {
         self.pos += 1; // skip opening "
         let parts = self.scan_interp_body(true);
-        if self.pos < self.source.len() {
-            self.pos += 1; // skip closing "
-        }
+        self.require_closer(start, "`\"` string");
         SpannedToken {
             token: Tok::DoubleQuoted(parts),
             span: LexSpan {
@@ -1386,28 +1406,10 @@ impl Scanner {
         let inner_start = self.pos;
         let mut depth = 1i32;
         while self.pos < self.source.len() && depth > 0 {
-            match self.source[self.pos] {
-                b'(' => {
-                    depth += 1;
-                    self.pos += 1;
-                }
-                b')' => {
-                    depth -= 1;
-                    if depth > 0 {
-                        self.pos += 1;
-                    }
-                }
-                b'\'' => self.skip_balanced_squote(),
-                b'"' => self.skip_balanced_dquote(),
-                _ => {
-                    self.pos += 1;
-                }
-            }
+            self.step_dq_cmd_sub(&mut depth);
         }
         let content = String::from_utf8_lossy(&self.source[inner_start..self.pos]).to_string();
-        if self.pos < self.source.len() {
-            self.pos += 1; // skip closing )
-        }
+        self.require_closer(inner_start.saturating_sub(2), "`$(`");
         content
     }
 
@@ -1423,21 +1425,43 @@ impl Scanner {
         String::from_utf8_lossy(&self.source[name_start..self.pos]).to_string()
     }
 
+    /// One byte of a `"…$(…)…"` body: track paren depth, and skip nested
+    /// quoted runs whole so a `)` inside them does not close the substitution.
+    fn step_dq_cmd_sub(&mut self, depth: &mut i32) {
+        match self.source[self.pos] {
+            b'(' => {
+                *depth += 1;
+                self.pos += 1;
+            }
+            b')' => {
+                *depth -= 1;
+                if *depth > 0 {
+                    self.pos += 1;
+                }
+            }
+            b'\'' => self.skip_balanced_squote(),
+            b'"' => self.skip_balanced_dquote(),
+            _ => {
+                self.pos += 1;
+            }
+        }
+    }
+
     /// Skip a single-quoted run starting at `self.pos`. Single quotes
     /// have no escapes; just advance until the closing `'`.
     fn skip_balanced_squote(&mut self) {
+        let open_at = self.pos;
         self.pos += 1; // opening '
         while self.pos < self.source.len() && self.source[self.pos] != b'\'' {
             self.pos += 1;
         }
-        if self.pos < self.source.len() {
-            self.pos += 1;
-        }
+        self.require_closer(open_at, "`'` string");
     }
 
     /// Skip a double-quoted run starting at `self.pos`. Honours `\`
     /// escapes (one extra byte past the backslash).
     fn skip_balanced_dquote(&mut self) {
+        let open_at = self.pos;
         self.pos += 1; // opening "
         while self.pos < self.source.len() && self.source[self.pos] != b'"' {
             if self.source[self.pos] == b'\\' {
@@ -1445,9 +1469,7 @@ impl Scanner {
             }
             self.pos += 1;
         }
-        if self.pos < self.source.len() {
-            self.pos += 1;
-        }
+        self.require_closer(open_at, "`\"` string");
     }
 
     /// A `` ` `` inside a `"…"` string is a **literal** backtick character:
@@ -1464,18 +1486,14 @@ impl Scanner {
             self.pos += 1;
         }
         let content = String::from_utf8_lossy(&self.source[inner_start..self.pos]).to_string();
-        if self.pos < self.source.len() {
-            self.pos += 1; // closing `
-        }
+        self.require_closer(inner_start.saturating_sub(1), "`` ` `` span");
         parts.push(StringPart::Literal(format!("`{}`", content)));
     }
 
     /// Scan $'...' ANSI-C quoted string (opening $' already consumed).
     fn scan_ansi_c_quoted(&mut self, start: usize) -> SpannedToken {
         let bytes = self.scan_ansi_c_bytes();
-        if self.pos < self.source.len() {
-            self.pos += 1; // skip closing '
-        }
+        self.require_closer(start, "`$'` string");
         SpannedToken {
             token: Tok::AnsiCQuoted(String::from_utf8_lossy(&bytes).into_owned()),
             span: LexSpan {

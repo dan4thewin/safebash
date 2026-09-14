@@ -87,9 +87,13 @@ else
 fi
 
 # 104.4 a literal containing a quote and a backslash is escaped for the data
-#       reader rather than terminating the string early
+#       reader rather than terminating the string early.
+#       The source must carry the quote in a single-quoted string: under DD#64
+#       there is no `\\"` inside `"…"`, so the old spelling `x="a\\"b"` closed the
+#       string at the backslash and left a third, unterminated `"` running to
+#       end-of-source. That used to compile silently; it is SB4057 now.
 if in_modes native; then
-    run_sash_emit_ir 'x="a\"b"; echo $x'
+    run_sash_emit_ir "x='a\\\"b'; echo \$x"
     [[ $rc = 0 && $out == *'\\"'* ]]; chk 104.4
 else
     skip_chk 104.4

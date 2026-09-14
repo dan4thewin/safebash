@@ -89,6 +89,22 @@ pub fn parse(source: &str) -> Result<(Program, Vec<Diagnostic>), Vec<Diagnostic>
         );
     }
 
+    // An unterminated quote / `${` swallows everything after it, so whatever
+    // else the parse turned up is downstream of that one mistake. Report it
+    // first and alone (SB4057).
+    if let Some((open_at, what)) = scanner.unterminated() {
+        let (line, col) = scanner.line_col(open_at);
+        let span = Span::new(line, col);
+        return Err(vec![parse_error(
+            span,
+            "SB4057",
+            format!(
+                "unterminated {what} — it is never closed before the end of \
+                 the source, so everything after it was read as part of it"
+            ),
+        )]);
+    }
+
     // A deferred diagnostic is not fatal at parse time; only an Error is.
     if diags
         .iter()

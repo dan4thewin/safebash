@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup errors
-plan=194
+plan=209
 echo "1..$plan" >&3
 
 set +e
@@ -984,6 +984,29 @@ echo done'
   [[ $rc != 0 && -z $out && -z $err \
  && $rerr == *"/nonexistent_dir_55/f: No such file or directory"* ]]; chk 55.72
 
+  # 55.73-55.75 DD#55 suppression written with no space after the `-`.
+  # The lexer emits `Tok::Dash` only when the byte after `-` is a terminator
+  # (space, tab, newline, `;`, `|`, `&`, `)`, `}`, `#`). Any other word-break
+  # byte sends it to `scan_word`, which yields `Tok::Word("-")` instead --
+  # a separate arm in `parse_statement` that read 0 hits against 13,485 in
+  # branch coverage (journal 312). It is reachable, just never written.
+
+  # 55.73 bare `[[ … ]]` is SB4018 -- its result is unused
+  run_sash '[[ -f /nonexistent_dir_55/f ]]
+echo done'
+  [[ $rc != 0 && -z $out && $err == *SB4018* ]]; chk 55.73
+
+  # 55.74 ... and `-[[ … ]]`, no space, suppresses it: this only parses if
+  # the `Tok::Word("-")` arm routes to `parse_suppressed`
+  run_sash '-[[ -f /nonexistent_dir_55/f ]]
+echo done'
+  [[ $rc = 0 && $out = "done" && -z $err && -z $rerr ]]; chk 55.74
+
+  # 55.75 the same arm on a true test -- suppression does not invert
+  run_sash '-[[ -f /etc/passwd ]]
+echo done'
+  [[ $rc = 0 && $out = "done" && -z $err && -z $rerr ]]; chk 55.75
+
 # --- 95.13-95.20: SB4056, a list/pipeline operator with no right operand ----
 # `parse_trailing_list_op` did `parse_list_operand(...).unwrap_or(true_cmd)`,
 # so a missing right-hand side became an implicit `true`: `echo a &&` compiled
@@ -1030,6 +1053,49 @@ run_sash 'false || echo c'
 # 95.20 control: a multi-stage pipeline is unaffected
 run_sash 'echo a | cat | cat'
 [[ $rc = 0 && $out = "a" && -z $err ]]; chk 95.20
+
+# --- 57u.1-57u.12: SB4057, a construct whose closer never arrives ----------
+# Every scan-to-closer helper in the lexer ended with the same idiom:
+#
+#     if self.pos < self.source.len() { self.pos += 1; }   // skip closing X
+#
+# The guard *is* the run-off-the-end detection, and it silently did nothing.
+# So `/bin/echo "hello` and `echo ${x` compiled clean and ran. Found from the
+# branch-coverage asymmetry query via `scan_by_brace_depth`'s length guard
+# (journal 313). bash rejects all of these with "unexpected EOF".
+run_sash '/bin/echo "hello'
+[[ $rc != 0 && -z $out && $err == *SB4057* ]]; chk 57u.1
+run_sash "/bin/echo 'hello"
+[[ $rc != 0 && -z $out && $err == *SB4057* ]]; chk 57u.2
+run_sash 'str ux = "a"
+/bin/echo ${ux'
+[[ $rc != 0 && -z $out && $err == *SB4057* ]]; chk 57u.3
+run_sash 'str ux = "a"
+/bin/echo "${ux"'
+[[ $rc != 0 && -z $out && $err == *SB4057* ]]; chk 57u.4
+run_sash 'str ux = "a"
+/bin/echo ${ux:-z'
+[[ $rc != 0 && -z $out && $err == *SB4057* ]]; chk 57u.5
+run_sash "/bin/echo \$'abc"
+[[ $rc != 0 && -z $out && $err == *SB4057* ]]; chk 57u.6
+# the diagnostic points at the opener, not at end-of-source
+run_sash '/bin/echo "hello'
+[[ $err == *:1:11:* ]]; chk 57u.7
+
+# controls: the terminated spelling of each still compiles and runs
+run_sash '/bin/echo "hello"'
+[[ $rc = 0 && $out = "hello" && -z $err ]]; chk 57u.8
+run_sash "/bin/echo 'hello'"
+[[ $rc = 0 && $out = "hello" && -z $err ]]; chk 57u.9
+run_sash 'str ux = "a"
+/bin/echo ${ux}'
+[[ $rc = 0 && $out = "a" && -z $err ]]; chk 57u.10
+run_sash 'str ux = ""
+/bin/echo ${ux:-z}'
+[[ $rc = 0 && $out = "z" && -z $err ]]; chk 57u.11
+# an empty string is terminated, not unterminated
+run_sash '/bin/echo "" | cat'
+[[ $rc = 0 && -z $err ]]; chk 57u.12
 
 set -e
 tally

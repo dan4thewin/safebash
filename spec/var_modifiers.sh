@@ -5,7 +5,7 @@
 set -eu
 . common.sh
 setup var_modifiers
-plan=136
+plan=138
 echo "1..$plan" >&3
 
 set +e
@@ -185,6 +185,16 @@ run_sash 'x=5; echo "${x.y}"'
 [[ $rc != 0 && -z $out && $err == *SB4047* ]]; chk vm.un3
 run_sash 'x=5; echo "${x:}"'
 [[ $rc != 0 && -z $out && $err == *SB4047* ]]; chk vm.un4
+
+# un5-6: an unterminated `${` runs off the end of the source. `scan_by_brace_depth`
+# loops `while pos < len && depth > 0`; the length guard read 0 hits against
+# 10,820 in branch coverage (journal 312) because every `${` in the suite closes.
+# Following that arm found the scan stopping at end-of-input and pretending it
+# had found the `}` -- `echo ${x` compiled and printed the value. SB4057.
+run_sash 'x=5; echo ${x'
+[[ $rc != 0 && -z $out && $err == *SB4057* ]]; chk vm.un5
+run_sash 'x=5; echo "${x"'
+[[ $rc != 0 && -z $out && $err == *SB4057* ]]; chk vm.un6
 
 # ── Brace-less dispositions (DG 2026-09-04): `$x:-foo` / `$x:?msg` / `$x:~`
 # desugar to the braced form. Only `:-`/`:?`/`:~` immediately after `$name`
