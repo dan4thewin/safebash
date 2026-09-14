@@ -638,9 +638,6 @@ fn lower_one_declaration(
     state: &mut VersionState,
     mut block: BlockId,
 ) -> BlockId {
-    if is_bare_redeclare_noop(a, is_array, is_assoc, state) {
-        return block;
-    }
     // DD#99: `map m = @{a:DISP}` fills a map from an array, pairwise.
     if is_assoc && lower_map_from_array(a, ssa, state, block) {
         return block;
@@ -668,19 +665,6 @@ fn note_readonly(a: &Assignment, d: &Declaration, state: &mut VersionState) {
     if d.keyword == crate::ir::DeclKeyword::Readonly {
         state.readonly_vars.insert(a.name.clone());
     }
-}
-
-/// `declare var` (no value, not -a/-A) on an already-defined variable
-/// is a no-op — don't clobber the existing value.
-fn is_bare_redeclare_noop(
-    a: &Assignment,
-    is_array: bool,
-    is_assoc: bool,
-    state: &VersionState,
-) -> bool {
-    let is_bare =
-        matches!(&a.value.kind, ExprKind::Literal(s) if s.is_empty()) && !is_array && !is_assoc;
-    is_bare && state.lookup(&a.name).version > 0
 }
 
 fn compute_declaration_value(

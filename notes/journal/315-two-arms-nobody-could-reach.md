@@ -78,3 +78,23 @@ and five were defects. What has held is that the *count alone* never decided
 which — every single one needed the callers enumerated or the guard
 instrumented before it could be classified. The query ranks candidates; it
 does not diagnose them.
+
+## Addendum — the third arm, purged (DG, 2026-09-14)
+
+`transform/statements.rs`'s `is_bare_redeclare_noop` was filed rather than
+removed, because it was unreachable *only* under the current SB5049 and a
+narrowed SB5049 would have brought it back to life. DG settled it directly:
+purge the dead function. SB5049 stays as written — one declaration per name
+per scope, no exceptions — so there is no future in which a bare
+redeclaration reaches the transform.
+
+Gone with its single call site in `lower_one_declaration`, 16 lines. Sweep
+unchanged at 4671 passing, 0 failing; 35 lib units; clippy clean. The task
+file is deleted rather than closed — the decision is recorded here.
+
+That closes the last of the arms surfaced by this ranking pass that were
+waiting on a call. The remaining zero-hit candidates
+(`is_fd_number`'s emptiness check, `block_to_emit`'s `fn_` label test,
+`ssa.rs`'s `blocks.get` miss, `handled_elsewhere`'s `ENV_VARS` half) are all
+defensive conditions inside functions that are themselves hot, and none of
+them is coupled to an open decision.
