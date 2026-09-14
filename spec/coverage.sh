@@ -6,7 +6,7 @@
 set -eu
 . common.sh
 setup coverage
-plan=102
+plan=104
 echo "1..$plan" >&3
 
 set +e
@@ -70,6 +70,14 @@ run_sash '<<EOF'
 # the generic tainted-cmdsub SB5020 that a plain backtick earns.
 run_sash 'echo `echo \`/bin/echo hi\``'
 [[ $rc != 0 && -z $out && $err == *SB5020* && $err == *nested* ]]; chk cov.103
+# cov.104 a `$` as the very last byte of the source is a literal `$`, as in
+# bash. This is scan_dollar's end-of-source guard; `-c` passes no trailing
+# newline, so it is the only way to reach it.
+run_sash 'echo $'
+[[ $rc = 0 && $out = '$' ]]; chk cov.104
+# cov.105 the same `$` with a word in front of it.
+run_sash 'echo a$'
+[[ $rc = 0 && $out = 'a$' ]]; chk cov.105
 # cov.15 `$(status)` with no preceding command → SB5012
 run_sash 'echo $(status)'
 [[ $rc != 0 && -z $out && $err == *SB5012* ]]; chk cov.15
