@@ -1,3 +1,48 @@
+## ══ STATUS (2026-09-14) — DG's six-part directive, four of six landed ══
+
+**Journals 317–319.** Sweep **4699 passing, 10 skipped, 0 failing**.
+35 unit tests, 27 sash-convert tests. Pushed through `d8763b9`.
+
+DG's directive: *drop the unreachable compound code; drop backticks as sugar;
+update status; explain "eleven negation spellings"; use abort with message
+disposition for converter; regex already has counted repetition, yes?; give
+sash-rt options.*
+
+- **Compound-redirect machinery removed** (journal 317, `22a898f`).
+  `RedirectPush`/`RedirectPop` were a save/restore pair for redirects on
+  compound statements — 141 lines over six files, **two** parallel
+  implementations of one protocol, for a case SB4021 forecloses in the parser.
+  The `ice_unreachable_command` arm claimed `Write | RedirectPush |
+  RedirectPop` were all "rewritten before codegen"; only `Write` is. Sweep
+  unmoved, which is the point: there was nothing to move.
+- **Backticks dropped as sugar** (journal 318, `783d884`). DD#67's table read
+  "~yes (modulo nesting) | review" for two years; the modulo *was* the answer,
+  since nesting needs `\``, which DD#64 removed. All spellings now **SB5076**
+  — a new code, not the taint code SB5020 the nested case had been borrowing.
+  `sash-convert` already rewrote backticks to `$( )`, so only the compiler
+  half was missing. DD#67 updated; the 2026-06-21 flat-keep resolution struck.
+  - **Bug found while removing the token.** `command_sub_to_expr` carved out
+    content starting with a backtick and kept it as a verbatim `Literal` — a
+    holdover from when backticks were a token. Its surviving caller is `$( )`
+    inside `"…"`, so `` echo "$(`/bin/echo hi`)" `` **compiled**: the whole
+    substitution became a literal, dodging the backtick rejection *and*
+    `check_taint`, and diverging from bash, which runs the command. `cov.103`.
+- **Converter abort disposition** (journal 319, `d8763b9`). DG chose option
+  (b): a bash string variable read in arithmetic converts to `${i:?msg}`.
+  Three spellings (`i`, `$i`, `${i}`) plus the textual subscript path;
+  `declare -i` names, env vars and *writes* are declined. The documented cost
+  stands — bash reads a non-numeric string as 0, so the converted program
+  diverges on exactly those inputs, deliberately. Specs 57.148–57.155.
+  - **Bug caught by existing specs**: the `${i}` arm first matched on child
+    count, which is also true of `${#s}` — it dropped the length operator and
+    silently computed something else. Now matches on node text.
+
+**Three legacy carve-outs in three journals.** 317's dead protocol, 318's
+`starts_with('`')`, 319's child-count test. Each was an explicit special case
+someone added on purpose, each outlived its motivating construct, and each
+kept firing on whatever still matched its predicate. A predicate that is
+structurally true of the thing you want is not a predicate true of *only* it.
+
 ## ══ STATUS (2026-09-14) — the guard that declined to act ══
 
 **Journals 311–315.** Sweep **4667 passing, 10 skipped, 0 failing**.
@@ -111,20 +156,44 @@ lines: `resolve.rs:207`, `resolve.rs:105`, `validate.rs:3985`,
 
 ## ══ OPEN FOR DG ══
 
-1. **Compound-redirect machinery** (`dead-compound-redirect-machinery.md`) —
-   DG chose "discuss". New evidence: `notes/tasks/align-parser-with-decisions.md`
-   **Phase 3, already marked done**, was *"Drop compound-command redirects …
-   Simplifies: Parser, codegen"*. The parser half shipped (SB4021); the
-   transform/codegen/emit_c half never did. So this is unfinished cleanup
-   from a completed task, not staging for a future DD.
-2. **Backtick in a `${var:-WORD}` default** — DG chose "discuss". DD#67's
-   *Resolved* section (DG, 2026-06-21) says flat backticks are 1-to-1 sugar
-   for `$(…)`. The 2026-08-28 rule makes a backtick literal inside `"…"`.
-   DD#65 makes a default word a quotes body. Net: `` ${x:-`cmd`} `` yields
-   backticks verbatim. Note the top-level consequence too — `echo "`date`"`
-   is literal in sash where bash runs it.
-3. **`ir::Program::end_block`** — remove + bump `:ir-version`, remove + keep
+1. **`sash-rt` coverage** — the last part of the directive. Options are
+   written up below; DG picks. Nothing is blocked on it.
+2. **`ir::Program::end_block`** — remove + bump `:ir-version`, remove + keep
    emitting `:end-block nil`, wire it up, or leave it.
+
+*(Items 1 and 2 of the previous list are closed: the compound machinery is
+deleted, and backticks are dropped — which dissolves the `${var:-`cmd`}`
+question entirely, since there is no backtick spelling left to be
+inconsistent about.)*
+
+## ══ sash-rt coverage: the options ══
+
+**The constraint.** `-C instrument-coverage` compiles and maps fine against
+`sash-rt` — the `__llvm_prf_*` sections land in the binary. What never happens
+is the *write*: `__llvm_profile_write_file()` is normally registered as an
+atexit handler by compiler-rt's profiling runtime, which needs libc. A
+`no_std` / no-libc / `panic=abort` static ELF has neither, so it exits with
+live counters and produces no `.profraw`.
+
+**Scale.** `sash-rt/src` is 3879 Rust lines (lib.rs 3630, inner.rs 249). The
+regex engine in `sash-rt/csrc` is ordinary hosted C — `mk` already builds
+`target/release/sash-regex` and a `test_regex` harness with `cc`, so gcov/
+llvm-cov works there today and is **not** part of this problem.
+
+| | approach | cost | what it buys |
+|---|---|---|---|
+| **a** | **Write the `.profraw` ourselves.** Implement `__llvm_profile_write_file` in `no_std` Rust over rustix and call it explicitly before `_exit`. The counters and section symbols already exist; this is serialising them in a documented format. | medium, and **coupled to the profraw version** — an LLVM bump can silently corrupt output | real line + branch coverage, same `llvm-cov` pipeline as the compiler, no source changes |
+| **b** | **Dump the raw sections and reconstruct offline.** Emit `__llvm_prf_cnts` to a fd at exit; rebuild a `.profraw` in the harness. | same format coupling as (a), plus a second moving part | same as (a); the only advantage is the format knowledge sits in Python, where a break is visible |
+| **c** | **Hosted shadow build.** Compile the same sources as a `std` crate for coverage only. **There is precedent**: `inner.rs` exists *specifically* for this and was `include!()`ed by a `sash-rt-tests` crate — which no longer exists. | low | only reaches the pure parts. `inner.rs` is **249 of 3879 lines — 6%**. The syscall wrappers, where the interesting bugs are, cannot be built hosted. |
+| **d** | **Bespoke counters.** A feature-gated table inside `sash-rt`, bumped at chosen points, written with `write(2)` at exit. | low per counter, unbounded in aggregate | full control, no LLVM coupling — but it is hand-placed, so it measures what someone remembered to measure. That is the opposite of what the campaign is for. |
+| **e** | **Declare it out of scope and cover by behavior.** The spec sweep already drives `sash-rt` through every compiled binary. Prove *function-level* reach with `perf` sampling or `-Z instrument-mcount` rather than line coverage. | lowest | honest, cheap, and no false precision — but it cannot answer "which branch of this parser never ran", which is the question the campaign has been asking |
+
+**Recommendation: (a).** It is the only option that produces the same kind of
+number for `sash-rt` that we already have for the compiler, and the format
+coupling is a known, testable failure — a corrupt `.profraw` fails loudly in
+`llvm-cov`, it does not silently under-report. (c) is worth doing *anyway* as
+a cheap unit-test home for `inner.rs`, but at 6% it is not an answer to the
+coverage question. (e) is the honest fallback if (a) proves brittle.
 
 ## ══ STATUS (2026-09-14) — coverage: DD#109 landed, uncovered remainder dispositioned ══
 
