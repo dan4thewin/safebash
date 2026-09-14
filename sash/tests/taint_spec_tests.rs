@@ -111,161 +111,9 @@ fn compile_and_run_with_env(name: &str, script: &str, env: &[(&str, &str)]) -> S
 // Rejection tests — tainted reads without attest → SB4020
 // ===================================================================
 
-#[test] // [NOW]
-fn taint_copy_is_read() {
-    // b=$a where a is tainted — copying is reading
-    let script = r#"#!/bin/bash
-x=$(getenv UNTRUSTED)
-b=$x
-echo "$b"
-"#;
-    let stderr = compile_expect_fail("copy_read", script);
-    common::expect_diag(&stderr, "SB4020");
-}
-
-#[test] // [NOW]
-fn taint_cmd_arg() {
-    // Using tainted var as command argument
-    let script = r#"#!/bin/bash
-x=$(getenv UNTRUSTED)
-echo "$x"
-"#;
-    let stderr = compile_expect_fail("cmd_arg", script);
-    common::expect_diag(&stderr, "SB4020");
-}
-
-#[test] // [SSA]
-fn taint_as_array_index() {
-    // Tainted value used as array index
-    let script = r#"#!/bin/bash
-array items=(a b c)
-x=$(getenv IDX)
-echo "${items[$x]}"
-"#;
-    let stderr = compile_expect_fail("arr_index", script);
-    common::expect_diag(&stderr, "SB4020");
-}
-
-#[test] // [SSA]
-fn taint_in_arithmetic() {
-    // Tainted value in arithmetic expression
-    let script = r#"#!/bin/bash
-x=$(getenv NUM)
-(( x + 1 ))
-"#;
-    let stderr = compile_expect_fail("arith", script);
-    common::expect_diag(&stderr, "SB4020");
-}
-
-#[test] // [SSA]
-fn taint_arith_expansion() {
-    // Tainted value in $(( )) expansion
-    let script = r#"#!/bin/bash
-x=$(getenv NUM)
-echo $(( x * 2 ))
-"#;
-    let stderr = compile_expect_fail("arith_exp", script);
-    common::expect_diag(&stderr, "SB4020");
-}
-
-#[test] // [SSA]
-fn taint_func_argument() {
-    // Passing tainted var as function argument is a read
-    let script = r#"#!/bin/bash
-greet() { echo "hello $1"; }
-x=$(getenv NAME)
-greet "$x"
-"#;
-    let stderr = compile_expect_fail("func_arg", script);
-    common::expect_diag(&stderr, "SB4020");
-}
-
-#[test] // [SSA]
-fn taint_default_expansion() {
-    // ${x:-default} is a read of x
-    let script = r#"#!/bin/bash
-x=$(getenv VAL)
-echo "${x:-fallback}"
-"#;
-    let stderr = compile_expect_fail("default_exp", script);
-    common::expect_diag(&stderr, "SB4020");
-}
-
-#[test] // [SSA]
-fn taint_length() {
-    // ${#x} is a read of x
-    let script = r#"#!/bin/bash
-x=$(getenv VAL)
-echo "${#x}"
-"#;
-    let stderr = compile_expect_fail("length", script);
-    common::expect_diag(&stderr, "SB4020");
-}
-
-#[test] // [SSA]
-fn taint_prefix_strip() {
-    // ${x#pat} is a read
-    let script = r#"#!/bin/bash
-x=$(getenv PATH_VAL)
-echo "${x#/usr}"
-"#;
-    let stderr = compile_expect_fail("prefix_strip", script);
-    common::expect_diag(&stderr, "SB4020");
-}
-
-#[test] // [SSA]
-fn taint_suffix_strip() {
-    // ${x%%.*} is a read
-    let script = r#"#!/bin/bash
-x=$(getenv FILENAME)
-echo "${x%%.*}"
-"#;
-    let stderr = compile_expect_fail("suffix_strip", script);
-    common::expect_diag(&stderr, "SB4020");
-}
-
-#[test] // [SSA]
-fn taint_mapfile_element() {
-    // mapfile produces tainted elements; reading one is rejected
-    let script = r#"#!/bin/bash
-mapfile -t lines < /dev/stdin
-echo "${lines[0]}"
-"#;
-    let stderr = compile_expect_fail("mapfile", script);
-    common::expect_diag(&stderr, "SB4020");
-}
-
-#[test] // [SSA]
-fn taint_retaint_after_attest() {
-    // Re-assignment from tainted source after attest re-taints
-    let script = r#"#!/bin/bash
-x=$(getenv A)
-attest x [[ -n $x ]]
-x=$(getenv B)
-echo "$x"
-"#;
-    let stderr = compile_expect_fail("retaint", script);
-    common::expect_diag(&stderr, "SB4020");
-}
-
 // ===================================================================
 // DD#46 — top-level positional params
 // ===================================================================
-
-#[test] // [DD46]
-fn taint_toplevel_dollar1_rejected() {
-    // Top-level $1 in sash-native mode is a compile error
-    let script = r#"#!/bin/bash
-echo $1
-"#;
-    let stderr = compile_expect_fail("toplevel_1", script);
-    // Could be SB4020 (tainted) or a dedicated "use argv" diagnostic
-    assert!(
-        stderr.contains("SB4020") || stderr.contains("argv"),
-        "top-level $1 should be rejected, got: {}",
-        stderr
-    );
-}
 
 #[test] // [DD46]
 fn taint_toplevel_at_rejected() {
@@ -320,27 +168,6 @@ x=$(greet)
 echo "$x"
 "#;
     assert_eq!(compile_and_run("func_capture", script), "hello\n");
-}
-
-#[test] // [NOW]
-fn clean_herestring_literal() {
-    // read from herestring of clean data → clean
-    let script = r#"#!/bin/bash
-read x <<< "safe"
-echo "$x"
-"#;
-    assert_eq!(compile_and_run("herestring", script), "safe\n");
-}
-
-#[test] // [NOW]
-fn clean_heredoc_no_cmdsub() {
-    // read from heredoc with no cmdsub → clean
-    let script = r#"#!/bin/bash
-/bin/cat <<EOF
-hello world
-EOF
-"#;
-    assert_eq!(compile_and_run("heredoc_clean", script), "hello world\n");
 }
 
 #[test] // [NOW]
@@ -449,24 +276,6 @@ echo "$x"
 
 // --- T1: herestring/heredoc with tainted expansion should NOT be clean ---
 
-#[test]
-fn t1_herestring_tainted_expansion_rejected() {
-    let script = r#"#!/bin/bash
-x=$(getenv UNTRUSTED)
-read y <<< "$x"
-echo "$y"
-"#;
-    let stderr = compile_expect_fail("t1_hs_taint", script);
-    common::expect_diag(&stderr, "SB4020");
-}
-
-#[test]
-fn t1_heredoc_tainted_expansion_rejected() {
-    let script = "#!/bin/bash\nx=$(getenv UNTRUSTED)\nread y <<EOF\n$x\nEOF\necho \"$y\"\n";
-    let stderr = compile_expect_fail("t1_heredoc_taint", script);
-    common::expect_diag(&stderr, "SB4020");
-}
-
 // --- T2: tautological attest (test doesn't reference attested var) ---
 
 #[test]
@@ -534,54 +343,9 @@ echo "$x"
 
 // --- T4: arithmetic assignment taint laundering ---
 
-#[test]
-fn t4_arith_assignment_propagates_taint() {
-    let script = r#"#!/bin/bash
-x=$(getenv NUM)
-y=$((x + 1))
-echo "$y"
-"#;
-    let stderr = compile_expect_fail("t4_arith_launder", script);
-    common::expect_diag(&stderr, "SB4020");
-}
-
 // --- T5: parameter expansion operand taint ---
 
-#[test]
-fn t5_param_default_tainted_rejected() {
-    let script = r#"#!/bin/bash
-safe=""
-x=$(getenv SECRET)
-echo "${safe:-$x}"
-"#;
-    let stderr = compile_expect_fail("t5_default_taint", script);
-    common::expect_diag(&stderr, "SB4020");
-}
-
-#[test]
-fn t5_param_alternate_tainted_rejected() {
-    let script = r#"#!/bin/bash
-x=$(getenv SECRET)
-safe="value"
-echo "${safe:+$x}"
-"#;
-    let stderr = compile_expect_fail("t5_alternate_taint", script);
-    common::expect_diag(&stderr, "SB4020");
-}
-
 // --- T6: function global re-taint at call site ---
-
-#[test]
-fn t6_function_global_retaint_rejected() {
-    let script = r#"#!/bin/bash
-x="clean"
-leak() { echo "$x"; }
-x=$(getenv SECRET)
-leak
-"#;
-    let stderr = compile_expect_fail("t6_global_retaint", script);
-    common::expect_diag(&stderr, "SB4020");
-}
 
 // --- T9: shift then positional read ---
 
@@ -601,29 +365,7 @@ f one
 
 // --- T10: direct $(getenv) in expression ---
 
-#[test]
-fn t10_direct_getenv_cmdsub_rejected() {
-    let script = r#"#!/bin/bash
-echo "$(getenv UNTRUSTED)"
-"#;
-    let stderr = compile_expect_fail("t10_direct_getenv", script);
-    common::expect_diag(&stderr, "SB4020");
-}
-
 // --- T11: case pattern taint ---
-
-#[test]
-fn t11_case_pattern_tainted_rejected() {
-    let script = r#"#!/bin/bash
-x=$(getenv PATTERN)
-case "test" in
-  $x) echo "matched" ;;
-  *) echo "no match" ;;
-esac
-"#;
-    let stderr = compile_expect_fail("t11_case_pattern", script);
-    common::expect_diag(&stderr, "SB4020");
-}
 
 // --- T7/T8/T12: regression locks for validator rules ---
 

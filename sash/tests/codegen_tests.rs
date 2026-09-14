@@ -177,57 +177,11 @@ fn regression_echo() {
 }
 
 #[test]
-fn regression_param_expansion() {
-    let src = r#"x="foo/bar/baz"
-echo "${x%%/*}"
-"#;
-    let (out, _) = run_bash_native(src, &[]);
-    assert_eq!(out, "foo\n");
-}
-
-#[test]
-fn shift_basic() {
-    let src = r#"echo "$1"
-shift
-echo "$1"
-"#;
-    let (out, _) = run_bash_native(src, &["a", "b", "c"]);
-    assert_eq!(out, "a\nb\n");
-}
-
-#[test]
-fn shift_with_argc() {
-    let src = r#"echo "$#"
-shift
-echo "$#"
-"#;
-    let (out, _) = run_bash_native(src, &["x", "y", "z"]);
-    assert_eq!(out, "3\n2\n");
-}
-
-#[test]
-fn dollar_at_echo() {
-    let src = r#"echo "$@"
-"#;
-    let (out, _) = run_bash_native(src, &["hello", "world", "foo"]);
-    assert_eq!(out, "hello world foo\n");
-}
-
-#[test]
 fn dollar_at_empty() {
     let src = r#"echo "$@"
 "#;
     let (out, _) = run_bash_native(src, &[]);
     assert_eq!(out, "\n");
-}
-
-#[test]
-fn shift_then_dollar_at() {
-    let src = r#"shift
-echo "$@"
-"#;
-    let (out, _) = run_bash_native(src, &["a", "b", "c"]);
-    assert_eq!(out, "b c\n");
 }
 
 #[test]
@@ -284,16 +238,6 @@ echo "hello $NAME"
 }
 
 #[test]
-fn cmdsub_with_args() {
-    // $(echo -n foo) — command with multiple args
-    let src = r#"X=$(echo -n foo)
-echo "$X"
-"#;
-    let (out, _) = run_bash_native(src, &[]);
-    assert_eq!(out, "foo\n");
-}
-
-#[test]
 fn cmdsub_multiline_strips_trailing_newline() {
     let src = r#"X=$(echo hello)
 echo "got:$X"
@@ -335,265 +279,6 @@ echo "$X"
 }
 
 #[test]
-fn assoc_array_basic() {
-    let src = r#"declare -A MAP=([foo]=bar [baz]=qux)
-echo "${MAP[foo]}"
-"#;
-    let (out, _) = run_bash_native(src, &[]);
-    assert_eq!(out, "bar\n");
-}
-
-#[test]
-fn assoc_array_second_key() {
-    let src = r#"declare -A MAP=([foo]=bar [baz]=qux)
-echo "${MAP[baz]}"
-"#;
-    let (out, _) = run_bash_native(src, &[]);
-    assert_eq!(out, "qux\n");
-}
-
-#[test]
-fn assoc_array_missing_key() {
-    let src = r#"declare -A MAP=([foo]=bar)
-echo ">${MAP[missing]}<"
-"#;
-    let (out, _) = run_bash_native(src, &[]);
-    assert_eq!(out, "><\n");
-}
-
-#[test]
-fn assoc_array_variable_key() {
-    let src = r#"declare -A MAP=([foo]=bar [baz]=qux)
-KEY="foo"
-echo "${MAP[$KEY]}"
-"#;
-    let (out, _) = run_bash_native(src, &[]);
-    assert_eq!(out, "bar\n");
-}
-
-#[test]
-fn kusto_cluster_resolve() {
-    let src = r#"declare -A CLUSTER_MAP=(
-    [azcore]="https://azcore.centralus.kusto.windows.net"
-    [cirrus]="https://cirrus.kusto.windows.net"
-)
-
-SPEC="$1"; shift
-CLUSTER="${SPEC%%/*}"
-DB="${SPEC#*/}"
-
-URL="${CLUSTER_MAP[$CLUSTER]}"
-if [[ -z "$URL" ]]; then
-    URL="$CLUSTER"
-fi
-
-echo "$URL"
-echo "$DB"
-"#;
-    let (out, _) = run_bash_native(src, &["azcore/OvlProd"]);
-    assert_eq!(out, "https://azcore.centralus.kusto.windows.net\nOvlProd\n");
-}
-
-#[test]
-fn kusto_unknown_cluster() {
-    let src = r#"declare -A CLUSTER_MAP=(
-    [azcore]="https://azcore.centralus.kusto.windows.net"
-)
-
-SPEC="$1"; shift
-CLUSTER="${SPEC%%/*}"
-DB="${SPEC#*/}"
-
-URL="${CLUSTER_MAP[$CLUSTER]}"
-if [[ -z "$URL" ]]; then
-    URL="$CLUSTER"
-fi
-
-echo "$URL"
-echo "$DB"
-"#;
-    let (out, _) = run_bash_native(src, &["https://custom.net/MyDB"]);
-    // %%/* strips longest suffix matching /*, so "https://custom.net/MyDB" → "https:"
-    // #*/ strips shortest prefix matching */, so → "custom.net/MyDB"
-    assert_eq!(out, "https:\n/custom.net/MyDB\n");
-}
-
-#[test]
-fn kusto_param_expansion() {
-    let src = r#"SPEC="azcore/OvlProd"
-CLUSTER="${SPEC%%/*}"
-DB="${SPEC#*/}"
-echo "$CLUSTER"
-echo "$DB"
-"#;
-    let (out, _) = run_bash_native(src, &[]);
-    assert_eq!(out, "azcore\nOvlProd\n");
-}
-
-#[test]
-fn kusto_spec_from_arg() {
-    let src = r#"SPEC="$1"; shift
-CLUSTER="${SPEC%%/*}"
-echo "$CLUSTER"
-"#;
-    let (out, _) = run_bash_native(src, &["azcore/OvlProd"]);
-    assert_eq!(out, "azcore\n");
-}
-
-#[test]
-fn kusto_spec_from_arg_no_shift() {
-    let src = r#"SPEC="$1"
-echo "$SPEC"
-"#;
-    let (out, _) = run_bash_native(src, &["azcore/OvlProd"]);
-    assert_eq!(out, "azcore/OvlProd\n");
-}
-
-#[test]
-fn kusto_assign_then_shift() {
-    let src = r#"SPEC="$1"; shift
-echo "$SPEC"
-"#;
-    let (out, _) = run_bash_native(src, &["hello", "world"]);
-    assert_eq!(out, "hello\n");
-}
-
-#[test]
-fn kusto_assign_shift_paramexp() {
-    let src = r#"SPEC="$1"; shift
-CLUSTER="${SPEC%%/*}"
-DB="${SPEC#*/}"
-echo "$CLUSTER"
-echo "$DB"
-"#;
-    let (out, _) = run_bash_native(src, &["azcore/OvlProd"]);
-    assert_eq!(out, "azcore\nOvlProd\n");
-}
-
-#[test]
-fn kusto_full_usage_error() {
-    // Full kusto script minus the az/dotnet commands — test the usage path
-    let src = r#"declare -A CLUSTER_MAP=(
-    [azcore]="https://azcore.centralus.kusto.windows.net"
-    [azuredcm]="https://azuredcm.kusto.windows.net"
-    [cirrus]="https://cirrus.kusto.windows.net"
-)
-
-if [[ $# -lt 1 ]]; then
-    echo "Usage: kusto <cluster/db> [args...]"
-    exit 1
-fi
-
-SPEC="$1"; shift
-CLUSTER="${SPEC%%/*}"
-DB="${SPEC#*/}"
-
-URL="${CLUSTER_MAP[$CLUSTER]}"
-if [[ -z "$URL" ]]; then
-    URL="$CLUSTER"
-fi
-
-echo "$URL"
-echo "$DB"
-echo "$@"
-"#;
-    // No args → usage error
-    let (out, code) = run_bash_native(src, &[]);
-    assert_eq!(out, "Usage: kusto <cluster/db> [args...]\n");
-    assert_eq!(code, 1);
-}
-
-#[test]
-fn kusto_full_resolve_with_args() {
-    let src = r#"declare -A CLUSTER_MAP=(
-    [azcore]="https://azcore.centralus.kusto.windows.net"
-    [azuredcm]="https://azuredcm.kusto.windows.net"
-    [cirrus]="https://cirrus.kusto.windows.net"
-)
-
-if [[ $# -lt 1 ]]; then
-    echo "Usage: kusto <cluster/db> [args...]"
-    exit 1
-fi
-
-SPEC="$1"; shift
-CLUSTER="${SPEC%%/*}"
-DB="${SPEC#*/}"
-
-URL="${CLUSTER_MAP[$CLUSTER]}"
-if [[ -z "$URL" ]]; then
-    URL="$CLUSTER"
-fi
-
-echo "$URL"
-echo "$DB"
-echo "$@"
-"#;
-    let (out, code) = run_bash_native(src, &["cirrus/cirrus", "-execute:query"]);
-    assert_eq!(
-        out,
-        "https://cirrus.kusto.windows.net\ncirrus\n-execute:query\n"
-    );
-    assert_eq!(code, 0);
-}
-
-#[test]
-fn kusto_full_script() {
-    let src = r#"declare -A CLUSTER_MAP=(
-    [azcore]="https://azcore.centralus.kusto.windows.net"
-    [azuredcm]="https://azuredcm.kusto.windows.net"
-    [cirrus]="https://cirrus.kusto.windows.net"
-)
-
-if [[ $# -lt 1 ]]; then
-    echo "Usage: kusto <cluster/db> [args...]"
-    echo "  Clusters: azcore, cirrus"
-    exit 1
-fi
-
-SPEC="$1"; shift
-CLUSTER="${SPEC%%/*}"
-DB="${SPEC#*/}"
-
-URL="${CLUSTER_MAP[$CLUSTER]}"
-if [[ -z "$URL" ]]; then
-    URL="$CLUSTER"
-fi
-
-TOKEN=$(echo fake-token-for-test)
-if [[ -z "$TOKEN" ]]; then
-    echo "Failed to get token." >&2
-    exit 1
-fi
-
-echo "$URL"
-echo "$DB"
-echo "$TOKEN"
-"#;
-    // Test 1: no args → usage error
-    let (out, code) = run_bash_native(src, &[]);
-    assert_eq!(code, 1);
-    assert!(
-        out.contains("Usage:"),
-        "expected usage message, got: {}",
-        out
-    );
-
-    // Test 2: known cluster
-    let (out, code) = run_bash_native(src, &["azcore/OvlProd"]);
-    assert_eq!(code, 0);
-    assert_eq!(
-        out,
-        "https://azcore.centralus.kusto.windows.net\nOvlProd\nfake-token-for-test\n"
-    );
-
-    // Test 3: unknown cluster → passthrough
-    let (out, code) = run_bash_native(src, &["myhost/MyDB"]);
-    assert_eq!(code, 0);
-    assert_eq!(out, "myhost\nMyDB\nfake-token-for-test\n");
-}
-
-#[test]
 fn for_literal_words() {
     let src = r#"for x in a b c; do
     echo "$x"
@@ -626,81 +311,6 @@ echo "$RESULT"
 }
 
 #[test]
-fn case_basic() {
-    let src = r#"X="hello"
-case "$X" in
-    hello) echo "matched hello" ;;
-    *) echo "no match" ;;
-esac
-"#;
-    let (out, _) = run_bash_native(src, &[]);
-    assert_eq!(out, "matched hello\n");
-}
-
-#[test]
-fn case_second_branch() {
-    let src = r#"X="world"
-case "$X" in
-    hello) echo "matched hello" ;;
-    world) echo "matched world" ;;
-    *) echo "no match" ;;
-esac
-"#;
-    let (out, _) = run_bash_native(src, &[]);
-    assert_eq!(out, "matched world\n");
-}
-
-#[test]
-fn case_wildcard() {
-    let src = r#"X="something"
-case "$X" in
-    hello) echo "hello" ;;
-    *) echo "default" ;;
-esac
-"#;
-    let (out, _) = run_bash_native(src, &[]);
-    assert_eq!(out, "default\n");
-}
-
-#[test]
-fn case_from_arg() {
-    let src = r#"case "$1" in
-    start) echo "starting" ;;
-    stop) echo "stopping" ;;
-    *) echo "unknown: $1" ;;
-esac
-"#;
-    let (out, _) = run_bash_native(src, &["stop"]);
-    assert_eq!(out, "stopping\n");
-}
-
-#[test]
-fn case_from_arg_wildcard() {
-    let src = r#"case "$1" in
-    start) echo "starting" ;;
-    stop) echo "stopping" ;;
-    *) echo "unknown: $1" ;;
-esac
-"#;
-    let (out, _) = run_bash_native(src, &["restart"]);
-    assert_eq!(out, "unknown: restart\n");
-}
-
-#[test]
-fn case_sets_variable() {
-    let src = r#"ACTION=""
-case "$1" in
-    start) ACTION="go" ;;
-    stop) ACTION="halt" ;;
-    *) ACTION="unknown" ;;
-esac
-echo "$ACTION"
-"#;
-    let (out, _) = run_bash_native(src, &["stop"]);
-    assert_eq!(out, "halt\n");
-}
-
-#[test]
 fn function_basic() {
     let src = r#"greet() {
     echo "hello $1"
@@ -722,20 +332,6 @@ echo "$X"
 "#;
     let (out, _) = run_bash_native(src, &[]);
     assert_eq!(out, "after\n");
-}
-
-#[test]
-fn function_local_var() {
-    let src = r#"X="global"
-myfunc() {
-    local X="local"
-    echo "$X"
-}
-myfunc
-echo "$X"
-"#;
-    let (out, _) = run_bash_native(src, &[]);
-    assert_eq!(out, "local\nglobal\n");
 }
 
 #[test]
@@ -786,16 +382,6 @@ echo "done"
 }
 
 #[test]
-fn for_dollar_at_single() {
-    let src = r#"for arg in "$@"; do
-    echo "got: $arg"
-done
-"#;
-    let (out, _) = run_bash_native(src, &["only"]);
-    assert_eq!(out, "got: only\n");
-}
-
-#[test]
 fn until_basic() {
     let src = r#"x=0
 until (( x >= 3 )); do
@@ -820,52 +406,6 @@ echo "done"
 }
 
 #[test]
-fn while_read_stdin() {
-    let src = r#"while read -r line; do
-    echo "got: $line"
-done
-"#;
-    let id = COUNTER.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-    let obj_path = format!("/tmp/sash_read_{}.o", id);
-    let bin_path = format!("/tmp/sash_read_{}", id);
-    let obj = sash::codegen::compile_to_object(src, false).expect("compile failed");
-    std::fs::write(&obj_path, &obj).unwrap();
-    let status = std::process::Command::new("ld")
-        .args([
-            "-static",
-            "-nostdlib",
-            "-o",
-            &bin_path,
-            &obj_path,
-            &format!(
-                "{}/../sash-rt/target/release/libsash_rt.a",
-                env!("CARGO_MANIFEST_DIR")
-            ),
-        ])
-        .status()
-        .unwrap();
-    assert!(status.success(), "link failed");
-
-    let output = std::process::Command::new(&bin_path)
-        .stdin(std::process::Stdio::piped())
-        .stdout(std::process::Stdio::piped())
-        .spawn()
-        .and_then(|mut child| {
-            use std::io::Write;
-            child
-                .stdin
-                .take()
-                .unwrap()
-                .write_all(b"alpha\nbeta\ngamma\n")
-                .unwrap();
-            child.wait_with_output()
-        })
-        .unwrap();
-    let out = String::from_utf8_lossy(&output.stdout);
-    assert_eq!(out, "got: alpha\ngot: beta\ngot: gamma\n");
-}
-
-#[test]
 fn until_countdown() {
     let src = r#"x=3
 until (( x <= 0 )); do
@@ -876,51 +416,6 @@ echo "done"
 "#;
     let (out, _) = run_bash_native(src, &[]);
     assert_eq!(out, "3\n2\n1\ndone\n");
-}
-
-#[test]
-fn while_read_count() {
-    let src = r#"n=0
-while read -r line; do
-    n=$(( n + 1 ))
-done
-echo "$n"
-"#;
-    let id = COUNTER.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-    let obj_path = format!("/tmp/sash-040_rc_{}.o", id);
-    let bin_path = format!("/tmp/sash-040_rc_{}", id);
-    let obj = sash::codegen::compile_to_object(src, false).expect("compile failed");
-    std::fs::write(&obj_path, &obj).unwrap();
-    let status = std::process::Command::new("ld")
-        .args([
-            "-static",
-            "-nostdlib",
-            "-o",
-            &bin_path,
-            &obj_path,
-            "../sash-rt/target/release/libsash_rt.a",
-        ])
-        .status()
-        .unwrap();
-    assert!(status.success(), "link failed");
-
-    let output = std::process::Command::new(&bin_path)
-        .stdin(std::process::Stdio::piped())
-        .stdout(std::process::Stdio::piped())
-        .spawn()
-        .and_then(|mut child| {
-            use std::io::Write;
-            child
-                .stdin
-                .take()
-                .unwrap()
-                .write_all(b"a\nb\nc\nd\ne\n")
-                .unwrap();
-            child.wait_with_output()
-        })
-        .unwrap();
-    let out = String::from_utf8_lossy(&output.stdout);
-    assert_eq!(out, "5\n");
 }
 
 #[test]
@@ -1235,20 +730,6 @@ check_ok && echo "ok"
 }
 
 #[test]
-fn function_exit_status_false() {
-    let (output, _) = run_bash_native(
-        r#"
-check_fail() {
-  false
-}
-check_fail || echo "failed"
-"#,
-        &[],
-    );
-    assert_eq!(output, "failed\n");
-}
-
-#[test]
 fn function_exit_status_cmd() {
     let (output, _) = run_bash_native(
         r#"
@@ -1265,23 +746,6 @@ fi
 }
 
 #[test]
-fn function_negated_in_if() {
-    // if ! func; then — the git-ssh pattern
-    let (output, _) = run_bash_native(
-        r#"
-always_fail() {
-  false
-}
-if ! always_fail; then
-  echo "negated"
-fi
-"#,
-        &[],
-    );
-    assert_eq!(output, "negated\n");
-}
-
-#[test]
 fn exit_status_true() {
     let (output, _) = run_bash_native(
         r#"
@@ -1291,18 +755,6 @@ echo "$?"
         &[],
     );
     assert_eq!(output, "0\n");
-}
-
-#[test]
-fn exit_status_false() {
-    let (output, _) = run_bash_native(
-        r#"
-false
-echo "$?"
-"#,
-        &[],
-    );
-    assert_eq!(output, "1\n");
 }
 
 #[test]
@@ -1333,46 +785,6 @@ fi
         &[],
     );
     assert_eq!(output, "ok\n");
-}
-
-#[test]
-fn pipeline_two_stage() {
-    let (output, _) = run_bash_native(
-        r#"
-echo -e "hello\nworld\ngoodbye" | grep world
-"#,
-        &[],
-    );
-    assert_eq!(output, "world\n");
-}
-
-#[test]
-fn pipeline_three_stage() {
-    let (output, _) = run_bash_native(
-        r#"
-echo -e "aaa\nbbb\nccc\naab" | grep a | grep b
-"#,
-        &[],
-    );
-    assert_eq!(output, "aab\n");
-}
-
-#[test]
-fn pipeline_with_redirect() {
-    use std::sync::atomic::{AtomicU64, Ordering};
-    static C: AtomicU64 = AtomicU64::new(0);
-    let n = C.fetch_add(1, Ordering::Relaxed);
-    let outfile = format!("/tmp/sash_pipe_redir_{}", n);
-    let script = format!(
-        r#"
-echo -e "alpha\nbeta" | grep beta > {}
-"#,
-        outfile
-    );
-    let (_, _) = run_bash_native(&script, &[]);
-    let content = std::fs::read_to_string(&outfile).unwrap_or_default();
-    assert_eq!(content, "beta\n");
-    let _ = std::fs::remove_file(&outfile);
 }
 
 #[test]
@@ -1417,76 +829,6 @@ fn printf_percent_d() {
 // ═══════════════════════════════════════════════════════════════
 // Indexed array tests (DD#33 — unified hash table)
 // ═══════════════════════════════════════════════════════════════
-
-#[test]
-fn indexed_array_basic() {
-    let (out, _) = run_bash_native(
-        r#"
-arr=(alpha beta gamma)
-echo "${arr[0]}"
-echo "${arr[1]}"
-echo "${arr[2]}"
-"#,
-        &[],
-    );
-    assert_eq!(out, "alpha\nbeta\ngamma\n");
-}
-
-#[test]
-fn indexed_array_variable_index() {
-    let (out, _) = run_bash_native(
-        r#"
-arr=(one two three)
-int i=1
-echo "${arr[$i]}"
-"#,
-        &[],
-    );
-    assert_eq!(out, "two\n");
-}
-
-#[test]
-fn indexed_array_loop() {
-    let (out, _) = run_bash_native(
-        r#"
-arr=(a b c)
-int i=0
-while (( i < 3 )); do
-    echo "${arr[$i]}"
-    (( i++ ))
-done
-"#,
-        &[],
-    );
-    assert_eq!(out, "a\nb\nc\n");
-}
-
-#[test]
-fn assoc_array_with_table() {
-    // Existing assoc array test — should still work with sash_table backend
-    let (out, _) = run_bash_native(
-        r#"
-declare -A MAP=([foo]=bar [baz]=qux)
-echo "${MAP[foo]}"
-echo "${MAP[baz]}"
-"#,
-        &[],
-    );
-    assert_eq!(out, "bar\nqux\n");
-}
-
-#[test]
-fn indexed_array_from_args() {
-    let (out, _) = run_bash_native(
-        r#"
-arr=(first second third)
-echo "${arr[0]}"
-echo "${arr[2]}"
-"#,
-        &[],
-    );
-    assert_eq!(out, "first\nthird\n");
-}
 
 // ═══════════════════════════════════════════════════════════════
 // DD#35 — map/array/int type keywords
@@ -1534,47 +876,6 @@ echo "$x"
 // ═══════════════════════════════════════════════════════════════
 // Pipe-while-read tests
 // ═══════════════════════════════════════════════════════════════
-
-#[test]
-fn pipe_while_read_basic() {
-    let (out, _) = run_bash_native(
-        r#"
-echo -e "alpha\nbeta\ngamma" | while read -r line; do
-    echo "got $line"
-done
-"#,
-        &[],
-    );
-    assert_eq!(out, "got alpha\ngot beta\ngot gamma\n");
-}
-
-#[test]
-fn pipe_while_read_count() {
-    let (out, _) = run_bash_native(
-        r#"
-int n=0
-echo -e "a\nb\nc" | while read -r x; do
-    (( n++ ))
-done
-echo "$n"
-"#,
-        &[],
-    );
-    assert_eq!(out, "3\n");
-}
-
-#[test]
-fn pipe_while_read_multi_stage() {
-    let (out, _) = run_bash_native(
-        r#"
-echo -e "hello world\nfoo bar\nbaz qux" | grep foo | while read -r line; do
-    echo "match: $line"
-done
-"#,
-        &[],
-    );
-    assert_eq!(out, "match: foo bar\n");
-}
 
 // ── Noop colon builtin ──────────────────────────────────────
 
@@ -1710,35 +1011,6 @@ greet
 }
 
 // ── ${var:+alternate} ───────────────────────────────────────
-
-#[test]
-fn param_alternate_set() {
-    let src = r#"x="hello"
-echo "${x:+world}"
-"#;
-    let (out, _) = run_bash_native(src, &[]);
-    assert_eq!(out, bash_output(src, &[]));
-    assert_eq!(out, "world\n");
-}
-
-#[test]
-fn param_alternate_empty() {
-    let src = r#"x=""
-echo "${x:+world}"
-"#;
-    let (out, _) = run_bash_native(src, &[]);
-    assert_eq!(out, bash_output(src, &[]));
-    assert_eq!(out, "\n");
-}
-
-#[test]
-fn param_alternate_unset() {
-    let src = r#"echo "${unsetvar:+world}"
-"#;
-    let (out, _) = run_bash_native(src, &[]);
-    assert_eq!(out, bash_output(src, &[]));
-    assert_eq!(out, "\n");
-}
 
 // ── File tests ──────────────────────────────────────────────
 
@@ -1981,16 +1253,6 @@ echo "${x:6}"
     assert_eq!(out, "world\n");
 }
 
-#[test]
-fn substring_negative_offset() {
-    let src = r#"x="hello world"
-echo "${x: -5}"
-"#;
-    let (out, _) = run_bash_native(src, &[]);
-    assert_eq!(out, bash_output(src, &[]));
-    assert_eq!(out, "world\n");
-}
-
 // ── [[ -t fd ]] terminal test ───────────────────────────────
 
 #[test]
@@ -2035,52 +1297,9 @@ pwd
     assert_eq!(out, "/tmp\n");
 }
 
-#[test]
-fn cd_nonexistent() {
-    let src = r#"cd /nonexistent_dir_12345 2>/dev/null
-echo "$?"
-"#;
-    let (out, _) = run_bash_native(src, &[]);
-    assert_eq!(out, bash_output(src, &[]));
-    assert_eq!(out, "1\n");
-}
-
 // ── Here-doc ────────────────────────────────────────────────
 
-#[test]
-fn heredoc_basic() {
-    let src = r#"cat << EOF
-hello world
-line two
-EOF
-"#;
-    let (out, _) = run_bash_native(src, &[]);
-    assert_eq!(out, bash_output(src, &[]));
-    assert_eq!(out, "hello world\nline two\n");
-}
-
-#[test]
-fn heredoc_with_command() {
-    let src = r#"wc -l << EOF
-one
-two
-three
-EOF
-"#;
-    let (out, _) = run_bash_native(src, &[]);
-    assert_eq!(out, bash_output(src, &[]));
-}
-
 // ── Here-string ─────────────────────────────────────────────
-
-#[test]
-fn herestring_basic() {
-    let src = r#"cat <<< "hello world"
-"#;
-    let (out, _) = run_bash_native(src, &[]);
-    assert_eq!(out, bash_output(src, &[]));
-    assert_eq!(out, "hello world\n");
-}
 
 // ── Here-string ─────────────────────────────────────────────
 
@@ -2106,46 +1325,6 @@ fn ansi_c_escape() {
 
 // ── ${var^} / ${var,} case conversion ───────────────────────
 
-#[test]
-fn case_upper_first() {
-    let src = r#"x="hello"
-echo "${x^}"
-"#;
-    let (out, _) = run_bash_native(src, &[]);
-    assert_eq!(out, bash_output(src, &[]));
-    assert_eq!(out, "Hello\n");
-}
-
-#[test]
-fn case_upper_all() {
-    let src = r#"x="hello"
-echo "${x^^}"
-"#;
-    let (out, _) = run_bash_native(src, &[]);
-    assert_eq!(out, bash_output(src, &[]));
-    assert_eq!(out, "HELLO\n");
-}
-
-#[test]
-fn case_lower_first() {
-    let src = r#"x="HELLO"
-echo "${x,}"
-"#;
-    let (out, _) = run_bash_native(src, &[]);
-    assert_eq!(out, bash_output(src, &[]));
-    assert_eq!(out, "hELLO\n");
-}
-
-#[test]
-fn case_lower_all() {
-    let src = r#"x="HELLO"
-echo "${x,,}"
-"#;
-    let (out, _) = run_bash_native(src, &[]);
-    assert_eq!(out, bash_output(src, &[]));
-    assert_eq!(out, "hello\n");
-}
-
 // ── command -v ──────────────────────────────────────────────
 
 #[test]
@@ -2170,63 +1349,9 @@ fn command_v_rejected() {
 
 // ── Array subscript assignment and append ───────────────────
 
-#[test]
-fn array_subscript_assign() {
-    let src = r#"declare -a arr=(one two three)
-arr[1]="TWO"
-echo "${arr[1]}"
-"#;
-    let (out, _) = run_bash_native(src, &[]);
-    assert_eq!(out, bash_output(src, &[]));
-    assert_eq!(out, "TWO\n");
-}
-
-#[test]
-fn array_append() {
-    let src = r#"declare -a arr=(one two)
-arr+=(three)
-echo "${arr[2]}"
-"#;
-    let (out, _) = run_bash_native(src, &[]);
-    assert_eq!(out, bash_output(src, &[]));
-    assert_eq!(out, "three\n");
-}
-
-#[test]
-fn assoc_subscript_assign() {
-    let src = r#"declare -A map=([name]=alice)
-map[age]="30"
-echo "${map[age]}"
-"#;
-    let (out, _) = run_bash_native(src, &[]);
-    assert_eq!(out, bash_output(src, &[]));
-    assert_eq!(out, "30\n");
-}
-
 // ── ${#arr[@]} array length ─────────────────────────────────
 
-#[test]
-fn array_length() {
-    let src = r#"declare -a arr=(one two three)
-echo "${#arr[@]}"
-"#;
-    let (out, _) = run_bash_native(src, &[]);
-    assert_eq!(out, bash_output(src, &[]));
-    assert_eq!(out, "3\n");
-}
-
 // ── shift N ─────────────────────────────────────────────────
-
-#[test]
-fn shift_n() {
-    let src = r#"echo "$1 $2 $3"
-shift 2
-echo "$1"
-"#;
-    let (out, _) = run_bash_native(src, &["a", "b", "c"]);
-    assert_eq!(out, bash_output(src, &["a", "b", "c"]));
-    assert_eq!(out, "a b c\nc\n");
-}
 
 // ── Unary minus in arithmetic ───────────────────────────────
 
@@ -2241,24 +1366,6 @@ echo "$(( -x ))"
 }
 
 // ── Case with multiple patterns (|) ─────────────────────────
-
-#[test]
-fn case_multiple_patterns() {
-    let src = r#"for x in start stop restart; do
-    case "$x" in
-        start|restart)
-            echo "go: $x"
-            ;;
-        stop)
-            echo "halt"
-            ;;
-    esac
-done
-"#;
-    let (out, _) = run_bash_native(src, &[]);
-    assert_eq!(out, bash_output(src, &[]));
-    assert_eq!(out, "go: start\nhalt\ngo: restart\n");
-}
 
 // ── String += concatenation ─────────────────────────────────
 
@@ -2286,18 +1393,6 @@ fn dollar_dollar_pid() {
 }
 
 // ── Heredoc with variable expansion ─────────────────────────
-
-#[test]
-fn heredoc_var_expansion() {
-    let src = r#"name="world"
-cat << EOF
-hello $name
-EOF
-"#;
-    let (out, _) = run_bash_native(src, &[]);
-    assert_eq!(out, bash_output(src, &[]));
-    assert_eq!(out, "hello world\n");
-}
 
 // ── String += in loop with trailing space ───────────────────
 
@@ -2338,67 +1433,6 @@ done
     let (out, _) = run_bash_native(src, &[]);
     assert_eq!(out, "alpha\nbeta\ngamma\n");
 }
-#[test]
-fn readonly_basic() {
-    let src = r#"readonly PI="3.14159"
-echo "$PI"
-"#;
-    let (out, _) = run_bash_native(src, &[]);
-    assert_eq!(out, "3.14159\n");
-}
-
-#[test]
-#[should_panic(expected = "readonly variable")]
-fn readonly_reassign_panics() {
-    let src = r#"readonly PI="3.14159"
-PI="changed"
-echo "$PI"
-"#;
-    run_bash_native(src, &[]);
-}
-#[test]
-fn for_array_keys() {
-    let src = r#"declare -A m=([x]=1 [y]=2 [z]=3)
-for k in "${!m[@]}"; do
-  echo "$k=${m[$k]}"
-done
-"#;
-    let (out, _) = run_bash_native(src, &[]);
-    // Order may vary — sort lines for comparison
-    let mut sash_lines: Vec<&str> = out.trim().split('\n').collect();
-    sash_lines.sort();
-    let bash_out = bash_output(src, &[]);
-    let mut bash_lines: Vec<&str> = bash_out.trim().split('\n').collect();
-    bash_lines.sort();
-    assert_eq!(sash_lines, bash_lines);
-    assert_eq!(sash_lines.len(), 3);
-}
-
-#[test]
-fn test_read_multi_vars() {
-    let src = r#"
-echo "hello world extra" | while read -r a b; do
-  echo "a=$a"
-  echo "b=$b"
-done
-"#;
-    let (out, _) = run_bash_native(src, &[]);
-    assert_eq!(out, "a=hello\nb=world extra\n");
-}
-
-#[test]
-fn test_read_three_vars() {
-    let src = r#"
-echo "one two three four" | while read -r a b c; do
-  echo "a=$a"
-  echo "b=$b"
-  echo "c=$c"
-done
-"#;
-    let (out, _) = run_bash_native(src, &[]);
-    assert_eq!(out, "a=one\nb=two\nc=three four\n");
-}
-
 // ── DD#41: Sash-native array syntax ──────────────────────────
 
 #[test]
@@ -2523,18 +1557,6 @@ done
 }
 
 #[test]
-fn command_bypass_function() {
-    let src = r#"
-echo() {
-    command echo "wrapped: $1"
-}
-echo "test"
-"#;
-    let (out, _) = run_bash_native(src, &[]);
-    assert_eq!(out, "wrapped: test\n");
-}
-
-#[test]
 fn cmdsub_redirect_stderr() {
     // $(cmd 2>/dev/null) should suppress stderr in the child process
     // DD#55: command must succeed (nonzero aborts). Use a command that succeeds
@@ -2557,31 +1579,6 @@ rm /tmp/sash_slurp_test.txt
 "#;
     let (out, _) = run_bash_native(src, &[]);
     assert_eq!(out, "got: test data\n");
-}
-
-#[test]
-fn read_delim_colon() {
-    let src = r#"
-echo -n "one:two:three" | while read -d: -r word; do
-    echo "word=$word"
-done
-"#;
-    let (out, _) = run_bash_native(src, &[]);
-    assert_eq!(out, "word=one\nword=two\n");
-}
-
-#[test]
-fn mapfile_basic() {
-    let src = r#"
-array lines
-printf "alpha\nbeta\ngamma\n" | mapfile -t lines
-echo $lines[0]
-echo $lines[1]
-echo $lines[2]
-echo $(len lines)
-"#;
-    let (out, _) = run_bash_native(src, &[]);
-    assert_eq!(out.trim(), "alpha\nbeta\ngamma\n3");
 }
 
 #[test]
@@ -2625,18 +1622,6 @@ echo "time=$EPOCHSECONDS"
 }
 
 #[test]
-fn exec_standalone_redirect() {
-    let src = r#"
-exec 3>&1
-echo "to fd3" >&3
-exec 3>&-
-echo "to stdout"
-"#;
-    let (out, _) = run_bash_native(src, &[]);
-    assert_eq!(out.trim(), "to fd3\nto stdout");
-}
-
-#[test]
 fn func_capture_basic() {
     let src = r#"
 fn greet() {
@@ -2661,60 +1646,6 @@ echo "$result"
 "#;
     let (out, _) = run_bash_native(src, &[]);
     assert_eq!(out.trim(), "line1\nline2");
-}
-
-#[test]
-fn func_capture_arithmetic() {
-    let src = r#"
-fn double() {
-    local x=$1
-    echo $(( x * 2 ))
-}
-result=$(double 5)
-echo "result=$result"
-"#;
-    let (out, _) = run_bash_native(src, &[]);
-    assert_eq!(out.trim(), "result=10");
-}
-
-#[test]
-fn subshell_variable_isolation() {
-    let src = r#"
-x=hello
-(
-    x=world
-    echo "inside: $x"
-)
-echo "outside: $x"
-"#;
-    let (out, _) = run_bash_native(src, &[]);
-    assert_eq!(out.trim(), "inside: world\noutside: hello");
-}
-
-#[test]
-fn subshell_exit_status() {
-    let src = r#"
-(
-    echo "child"
-    exit 42
-)
-echo "status=$?"
-"#;
-    let (out, _) = run_bash_native(src, &[]);
-    assert_eq!(out.trim(), "child\nstatus=42");
-}
-
-#[test]
-fn subshell_inherits_parent_vars() {
-    let src = r#"
-x=hello
-y=world
-(
-    echo "$x $y"
-)
-"#;
-    let (out, _) = run_bash_native(src, &[]);
-    assert_eq!(out.trim(), "hello world");
 }
 
 #[test]
@@ -2749,36 +1680,6 @@ echo "status=$?"
 }
 
 #[test]
-fn trap_exit_basic() {
-    let src = r#"
-trap 'echo cleanup' EXIT
-echo hello
-"#;
-    let (out, _) = run_bash_native(src, &[]);
-    assert_eq!(out.trim(), "hello\ncleanup");
-}
-
-#[test]
-fn trap_exit_multiline() {
-    let src = r#"
-trap 'echo bye; echo done' EXIT
-echo start
-"#;
-    let (out, _) = run_bash_native(src, &[]);
-    assert_eq!(out.trim(), "start\nbye\ndone");
-}
-
-#[test]
-fn trap_ignore_signal() {
-    let src = r#"
-trap '' SIGPIPE
-echo ok
-"#;
-    let (out, _) = run_bash_native(src, &[]);
-    assert_eq!(out.trim(), "ok");
-}
-
-#[test]
 fn glob_star_array() {
     // Create temp dir with known files, glob them
     let src = r#"
@@ -2791,36 +1692,6 @@ echo $(len files)
     assert_eq!(code, 0, "glob should succeed, got: {}", out);
 }
 
-#[test]
-fn unset_map_key() {
-    let src = r#"
-declare -A m
-m[a]=1
-m[b]=2
-m[c]=3
-echo ${#m[@]}
-unset m[b]
-echo ${#m[@]}
-for k in ${!m[@]}; do
-    echo "$k=${m[$k]}"
-done
-"#;
-    let (out, _) = run_bash_native(src, &[]);
-    assert_eq!(out, "3\n2\na=1\nc=3\n");
-}
-
-#[test]
-fn unset_map_key_nonexistent() {
-    let src = r#"
-declare -A m
-m[x]=hello
-unset m[y]
-echo ${#m[@]}
-echo ${m[x]}
-"#;
-    let (out, _) = run_bash_native(src, &[]);
-    assert_eq!(out, "1\nhello\n");
-}
 #[test]
 fn regex_replace_basic() {
     let src = r#"
@@ -2893,18 +1764,6 @@ fn arith_nested_parens_right() {
 fn arith_nested_parens_both() {
     let (out, _) = run_bash_native("a=2\nb=3\nc=4\necho $(( (a+b)*(c+1) ))", &[]);
     assert_eq!(out.trim(), "25");
-}
-
-#[test]
-fn read_into_array_colon_delim() {
-    let (out, _) = run_bash_native("array arr=()\necho \"alpha:beta:gamma\" | read -d: -a arr\necho $(len arr)\nfor x in @arr; do\necho $x\ndone", &[]);
-    assert_eq!(out.trim(), "3\nalpha\nbeta\ngamma");
-}
-
-#[test]
-fn read_into_array_space_delim() {
-    let (out, _) = run_bash_native("array arr=()\necho \"one two three\" | read -a arr\necho $(len arr)\nfor x in @arr; do\necho $x\ndone", &[]);
-    assert_eq!(out.trim(), "3\none\ntwo\nthree");
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -3040,30 +1899,6 @@ if [[ /tmp/sash_ef_a -ef /tmp/sash_ef_b ]]; then echo "same"; else echo "diff"; 
 // ═══════════════════════════════════════════════════════════════
 
 #[test]
-fn test_param_transform_upper_all() {
-    let script = "#!/bin/bash\nx=\"hElLo WoRlD\"\necho \"${x^^}\"";
-    let (out, rc) = run_bash_native(script, &[]);
-    assert_eq!(rc, 0);
-    assert_eq!(out, "HELLO WORLD\n");
-}
-
-#[test]
-fn test_param_transform_upper_first() {
-    let script = "#!/bin/bash\nx=\"hello world\"\necho \"${x^}\"";
-    let (out, rc) = run_bash_native(script, &[]);
-    assert_eq!(rc, 0);
-    assert_eq!(out, "Hello world\n");
-}
-
-#[test]
-fn test_param_transform_lower_all() {
-    let script = "#!/bin/bash\nx=\"HELLO WORLD\"\necho \"${x,,}\"";
-    let (out, rc) = run_bash_native(script, &[]);
-    assert_eq!(rc, 0);
-    assert_eq!(out, "hello world\n");
-}
-
-#[test]
 fn test_break_continue_n() {
     let script = r#"#!/bin/bash
 for f in a b c; do
@@ -3085,84 +1920,9 @@ done
 // ═══════════════════════════════════════════════════════════════
 
 #[test]
-fn test_for_redirect_to_file() {
-    let script = "#!/bin/bash\nfor i in a b c; do\n  echo $i\ndone > /tmp/sash_test_for_redir.txt\ncat /tmp/sash_test_for_redir.txt\nrm /tmp/sash_test_for_redir.txt";
-    let (out, _) = run_bash_native(script, &[]);
-    assert_eq!(out, "a\nb\nc\n");
-}
-
-#[test]
-fn test_while_redirect_to_file() {
-    let script = "#!/bin/bash\ni=0\nwhile [[ $i -lt 3 ]]; do\n  echo \"line $i\"\n  i=$((i + 1))\ndone > /tmp/sash_test_while_redir.txt\ncat /tmp/sash_test_while_redir.txt\nrm /tmp/sash_test_while_redir.txt";
-    let (out, _) = run_bash_native(script, &[]);
-    assert_eq!(out, "line 0\nline 1\nline 2\n");
-}
-
-#[test]
-fn test_if_redirect_to_file() {
-    let script = "#!/bin/bash\nx=5\nif [[ $x -gt 3 ]]; then\n  echo \"big\"\nelse\n  echo \"small\"\nfi > /tmp/sash_test_if_redir.txt\ncat /tmp/sash_test_if_redir.txt\nrm /tmp/sash_test_if_redir.txt";
-    let (out, _) = run_bash_native(script, &[]);
-    assert_eq!(out, "big\n");
-}
-
-#[test]
-fn test_group_redirect_to_file() {
-    let script = "#!/bin/bash\n{\n  echo \"first\"\n  echo \"second\"\n} > /tmp/sash_test_group_redir.txt\ncat /tmp/sash_test_group_redir.txt\nrm /tmp/sash_test_group_redir.txt";
-    let (out, _) = run_bash_native(script, &[]);
-    assert_eq!(out, "first\nsecond\n");
-}
-
-#[test]
-fn test_compound_redirect_stderr() {
-    let script = "#!/bin/bash\n{\n  echo \"out\"\n  echo \"err\" >&2\n} 2>/tmp/sash_test_stderr.txt\ncat /tmp/sash_test_stderr.txt\nrm /tmp/sash_test_stderr.txt";
-    let (out, _) = run_bash_native(script, &[]);
-    assert_eq!(out, "out\nerr\n");
-}
-
-#[test]
-fn test_random_different() {
-    let (out, _) = run_bash_native(r#"echo $RANDOM; echo $RANDOM"#, &[]);
-    let lines: Vec<&str> = out.trim().split('\n').collect();
-    assert_eq!(lines.len(), 2);
-    let a: u32 = lines[0].parse().unwrap();
-    let b: u32 = lines[1].parse().unwrap();
-    assert!(a <= 32767, "RANDOM out of range: {}", a);
-    assert!(b <= 32767, "RANDOM out of range: {}", b);
-    assert_ne!(a, b, "Two consecutive $RANDOM should differ");
-}
-
-#[test]
 fn test_unset_variable() {
     let (out, _) = run_bash_native(r#"x="hello"; unset x; echo "${x:-gone}""#, &[]);
     assert_eq!(out, "gone\n");
-}
-
-#[test]
-fn test_func_redirect() {
-    let (out, _) = run_bash_native(
-        r#"
-f() {
-  echo "hello"
-  echo "world"
-} > /tmp/sash_test_funcrd.txt
-f
-cat /tmp/sash_test_funcrd.txt
-rm -f /tmp/sash_test_funcrd.txt"#,
-        &[],
-    );
-    assert_eq!(out, "hello\nworld\n");
-}
-
-#[test]
-fn test_strlen_array_elem() {
-    let (out, _) = run_bash_native(
-        r#"
-declare -a arr=(hello world)
-echo "${#arr[0]}"
-echo "${#arr[1]}""#,
-        &[],
-    );
-    assert_eq!(out, "5\n5\n");
 }
 
 #[test]

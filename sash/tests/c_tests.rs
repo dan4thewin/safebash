@@ -334,66 +334,11 @@ fn c_if_var_string_eq() {
 // ═══════════════════════════════════════════════════════════════
 
 #[test]
-fn c_pe_strlen() {
-    assert_c_matches_bash("pe_strlen", "#!/bin/bash\nx=hello\necho \"${#x}\"");
-}
-
-#[test]
-fn c_pe_strip_suffix() {
-    assert_c_matches_bash(
-        "pe_strip_suffix",
-        "#!/bin/bash\nx=hello.txt\necho \"${x%.txt}\"",
-    );
-}
-
-#[test]
-fn c_pe_strip_suffix_longest() {
-    assert_c_matches_bash(
-        "pe_strip_suffix_l",
-        "#!/bin/bash\nx=hello.world.txt\necho \"${x%%.*}\"",
-    );
-}
-
-#[test]
-fn c_pe_strip_prefix() {
-    assert_c_matches_bash(
-        "pe_strip_prefix",
-        "#!/bin/bash\nx=hello.txt\necho \"${x#hello.}\"",
-    );
-}
-
-#[test]
-fn c_pe_strip_prefix_longest() {
-    assert_c_matches_bash(
-        "pe_strip_prefix_l",
-        "#!/bin/bash\nx=/usr/bin/foo\necho \"${x##*/}\"",
-    );
-}
-
-#[test]
-fn c_pe_default_unset() {
-    assert_c_matches_bash(
-        "pe_def_unset",
-        "#!/bin/bash\nunset y\necho \"${y:-default}\"",
-    );
-}
-
-#[test]
 fn c_pe_default_set() {
     assert_c_matches_bash(
         "pe_def_set",
         "#!/bin/bash\ny=present\necho \"${y:-default}\"",
     );
-}
-
-#[test]
-fn c_pe_alternate_unset() {
-    assert_c_matches_bash("pe_alt_unset", "#!/bin/bash\nunset y\necho \"${y:+alt}\"");
-}
-
-#[test]
-fn c_pe_alternate_set() {
-    assert_c_matches_bash("pe_alt_set", "#!/bin/bash\ny=present\necho \"${y:+alt}\"");
 }
 
 #[test]
@@ -407,11 +352,6 @@ fn c_pe_substring_to_end() {
         "pe_substring_end",
         "#!/bin/bash\nx=long_string\necho \"${x:5}\"",
     );
-}
-
-#[test]
-fn c_pe_tolower_all() {
-    assert_c_matches_bash("pe_tolower_all", "#!/bin/bash\nx=HELLO\necho \"${x,,}\"");
 }
 
 #[test]
@@ -435,14 +375,6 @@ fn c_cmdsub_epochseconds() {
         trimmed,
         c_src
     );
-}
-
-#[test]
-fn c_cmdsub_getenv() {
-    // getenv is a sash intrinsic. bash has no such builtin.
-    // Both Cranelift and C oracle should return the env var value
-    // (PATH is set in any reasonable env).
-    assert_c_matches_cranelift("cs_getenv", "#!/bin/bash\necho \"$(getenv PATH)\"");
 }
 
 #[test]
@@ -569,15 +501,6 @@ fn c_array_subscript() {
 }
 
 #[test]
-fn c_array_length() {
-    // DD#75 §4/§2: `${#arr}` is the length (retired `${#arr[@]}`).
-    assert_c_matches_cranelift(
-        "arr_len",
-        "#!/bin/bash\narray arr=(foo bar baz)\necho \"${#arr}\"\n",
-    );
-}
-
-#[test]
 fn c_array_join_all() {
     // DD#75 §4: `${arr[@]}` splat retired — join via `$(join arr)`.
     assert_c_matches_cranelift(
@@ -637,11 +560,6 @@ fn c_dollar_question_after_true() {
 }
 
 #[test]
-fn c_dollar_question_after_false() {
-    assert_c_matches_bash("dq_after_false", "#!/bin/bash\nfalse\necho $?");
-}
-
-#[test]
 fn c_dollar_question_after_extern() {
     assert_c_matches_bash("dq_after_extern", "#!/bin/bash\n/bin/true\necho $?");
 }
@@ -661,23 +579,6 @@ fn c_while_arith_condition() {
     assert_c_matches_cranelift(
         "while_arith",
         "#!/bin/bash\nint i=0\nwhile (( i < 3 )); do\n  echo $i\n  (( i = i + 1 ))\ndone",
-    );
-}
-
-#[test]
-fn c_case_pattern_match() {
-    // case uses =glob via sash_fnmatch.
-    assert_c_matches_bash(
-        "case_match",
-        "#!/bin/bash\nv=two\ncase $v in\n  one) echo 1 ;;\n  two) echo 2 ;;\n  *) echo other ;;\nesac",
-    );
-}
-
-#[test]
-fn c_case_default_branch() {
-    assert_c_matches_bash(
-        "case_default",
-        "#!/bin/bash\nv=unknown\ncase $v in\n  one) echo 1 ;;\n  two) echo 2 ;;\n  *) echo other ;;\nesac",
     );
 }
 

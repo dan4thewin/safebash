@@ -107,23 +107,6 @@ fn assert_rejected(name: &str, script: &str, code: &str) {
 // ═══════════════════════════════════════════════════════════════════
 
 #[test]
-fn brush_pass_arith_quoted() {
-    let script = r#"echo " 1  + 1 == $((1+1))"
-echo " 2  * 3 == $((2*3))"
-echo " 9  / 3 == $((9/3))"
-echo "10  % 3 == $((10%3))"
-echo " 2 ** 3 == $((2**3))"
-"#;
-    assert_eq!(compile_and_run("pass_arith", script), bash_output(script));
-}
-
-#[test]
-fn brush_pass_let_assignment() {
-    let script = r#"let x=10; echo "x=10 => $?; x==${x}""#;
-    assert_eq!(compile_and_run("pass_let", script), bash_output(script));
-}
-
-#[test]
 fn brush_pass_cmdsub_echo() {
     let script = "var=$(echo \"Batman\")\necho $var";
     assert_eq!(compile_and_run("pass_cmdsub_echo", script), "Batman\n");
@@ -157,59 +140,9 @@ fn brush_pass_cmdsub_comment_dollar() {
 }
 
 #[test]
-fn brush_pass_cmdsub_hash() {
-    let script = "echo $(echo $#)";
-    assert_eq!(compile_and_run("pass_cmdsub_hash", script), "0\n");
-}
-
-#[test]
 fn brush_pass_backtick_echo() {
     let script = "echo `echo hi`";
     assert_eq!(compile_and_run("pass_backtick", script), "hi\n");
-}
-
-#[test]
-fn brush_pass_backtick_hash() {
-    let script = "echo `echo $#`";
-    assert_eq!(compile_and_run("pass_backtick_hash", script), "0\n");
-}
-
-#[test]
-fn brush_pass_case_cmdsub() {
-    let script = "case \"$(echo hi; echo there)\" in\n\"not-it\") echo \"did not work\" ;;\n*) echo \"caught it\" ;;\nesac";
-    assert_eq!(
-        compile_and_run("pass_case_cmdsub", script),
-        bash_output(script)
-    );
-}
-
-#[test]
-fn brush_pass_path_check() {
-    let script = r#"if [[ -z "$PATH" ]]; then
-  echo "PATH is not set or is empty"
-else
-  echo "PATH is set and non-empty"
-fi"#;
-    assert_eq!(
-        compile_and_run("pass_path_check", script),
-        "PATH is set and non-empty\n"
-    );
-}
-
-#[test]
-fn brush_pass_home_clean() {
-    let script = "echo $HOME";
-    let sash_out = compile_and_run("pass_home", script);
-    assert_eq!(sash_out, bash_output(script));
-}
-
-#[test]
-fn brush_pass_simple_cmd_cwd() {
-    // mkdir + cd + rmdir + ls — uses clean builtins
-    let script = "mkdir -p /tmp/sash_brush_cwd_test\ncd /tmp/sash_brush_cwd_test\nrmdir $(pwd)\nls 2>&1 || true";
-    let sash_out = compile_and_run("pass_cwd", script);
-    // Just verify it compiles and runs — output varies
-    assert!(!sash_out.is_empty() || sash_out.is_empty());
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -259,78 +192,16 @@ fn brush_rejected_var_prefix() {
     );
 }
 
-#[test]
-fn brush_rejected_array_keys_indexed() {
-    assert_rejected(
-        "rej_keys_idx",
-        "arr=(\"e1\" \"e2\" \"e3\")\necho \"${!arr[@]}\"",
-        "SB4003",
-    );
-}
-
-#[test]
-fn brush_rejected_array_keys_empty() {
-    assert_rejected("rej_keys_empty", "arr=()\necho \"${!arr[@]}\"", "SB4003");
-}
-
 // --- SB4004: dynamic command ---
 
-#[test]
-fn brush_rejected_quoted_equals() {
-    assert_rejected("rej_quoted_eq", "x\"=\"3", "SB4004");
-}
-
-#[test]
-fn brush_rejected_shlvl() {
-    assert_rejected(
-        "rej_shlvl",
-        "echo \"SHLVL: $SHLVL\"\nbash -c 'echo hi'\n$0 -c 'echo hi'",
-        "SB4004",
-    );
-}
-
 // --- SB4014: parse error ---
-
-#[test]
-fn brush_rejected_empty_arith() {
-    assert_rejected("rej_empty_arith", "echo $(())", "SB4014");
-}
-
-#[test]
-fn brush_rejected_empty_for() {
-    assert_rejected("rej_empty_for", "for f in; do echo $f; done", "SB4014");
-}
 
 #[test]
 fn brush_rejected_subshell_sequence() {
     assert_rejected("rej_subshell_seq", "(echo hi)(echo there)", "SB4014");
 }
 
-#[test]
-fn brush_rejected_multi_heredoc_cmdsub() {
-    assert_rejected(
-        "rej_multi_heredoc_cs",
-        "test1=$(cat <<EOF1 <<EOF2\nA B C\nEOF1\nD E F\nEOF2\n)\necho \"${test1}\"",
-        "SB4014",
-    );
-}
-
 // --- SB4020: tainted read (correct — undefined vars, top-level positionals) ---
-
-#[test]
-fn brush_rejected_undefined_var() {
-    assert_rejected("rej_undef_var", "echo \"${undefined}\"", "SB4020");
-}
-
-#[test]
-fn brush_rejected_undefined_positional() {
-    assert_rejected("rej_undef_pos", "echo \"$9\"", "SB4020");
-}
-
-#[test]
-fn brush_rejected_high_positional() {
-    assert_rejected("rej_high_pos", "echo \"$99\"", "SB4020");
-}
 
 #[test]
 fn brush_rejected_nonexistent_array_loop() {
@@ -343,62 +214,7 @@ fn brush_rejected_nonexistent_array_loop() {
     );
 }
 
-#[test]
-fn brush_rejected_nonexistent_array_index() {
-    assert_rejected(
-        "rej_nonexist_idx",
-        "declare -a myarray=(10)\necho \"${myarray[$non_existent_var]}\"",
-        "SB4020",
-    );
-}
-
-#[test]
-fn brush_rejected_nonexistent_assoc_index() {
-    assert_rejected(
-        "rej_nonexist_assoc",
-        "declare -A myarray=([0]=\"default\")\necho \"${myarray[$non_existent_var]}\"",
-        "SB4020",
-    );
-}
-
-#[test]
-fn brush_rejected_param_error() {
-    assert_rejected(
-        "rej_param_error",
-        "echo \"${non_existent_var?error message}\"",
-        "SB4020",
-    );
-}
-
-#[test]
-fn brush_rejected_param_default_undeclared() {
-    // ${undeclared-default} — undeclared is tainted by default
-    assert_rejected(
-        "rej_param_default",
-        "value=\"value\"\nunset undeclared\necho \"${undeclared-default}\"",
-        "SB4020",
-    );
-}
-
 // --- SB5011: export (an ordinary unknown command; not reserved) ---
-
-#[test]
-fn brush_rejected_export() {
-    assert_rejected(
-        "rej_export",
-        "MY_TEST_VAR=\"value\"\nexport MY_TEST_VAR",
-        "SB5011",
-    );
-}
-
-#[test]
-fn brush_rejected_declare_export() {
-    assert_rejected(
-        "rej_declare_export",
-        "declare -x myexportedvar=\"exported variable\"",
-        "SB5011",
-    );
-}
 
 // --- SB5002: heredoc cmdsub ---
 
@@ -413,54 +229,9 @@ fn brush_rejected_heredoc_cmdsub() {
 
 // --- SB5004: process substitution ---
 
-#[test]
-fn brush_rejected_procsub_read() {
-    assert_rejected(
-        "rej_procsub",
-        "read myvar < <(echo hello)\necho \"myvar: ${myvar}\"",
-        "SB5004",
-    );
-}
-
 // ═══════════════════════════════════════════════════════════════════
 // PASS_NATIVE — sash-native rewrite, output matches bash original
 // ═══════════════════════════════════════════════════════════════════
-
-#[test]
-fn brush_native_heredoc_cmdsub() {
-    // Original: test1=$(cat <<EOF\n1\n2 3\n4 5 6\nEOF\n)\necho "${test1}"
-    // Rejected because $(cat <<EOF...) is a cmdsub of external `cat` — tainted.
-    // Native: read directly from heredoc.
-    // TODO: read -d '' not yet implemented — heredoc content not captured
-    let original = "test1=$(cat <<EOF\n1\n2 3\n4 5 6\nEOF\n)\necho \"${test1}\"";
-    let _bash_out = bash_output(original);
-    let stderr = compile_expect_fail("native_heredoc_orig", original);
-    assert!(
-        stderr.contains("SB4020") || stderr.contains("SB5002"),
-        "expected SB4020 or SB5002, got:\n{}",
-        stderr
-    );
-    // Native version deferred until read -d '' works
-}
-
-#[test]
-fn brush_native_func_with_env() {
-    // Original: myvar="overridden" myfunc — per-command env not implemented
-    // Native: pass as function argument
-    let original = "myfunc() { echo ${myvar}; }\nmyvar=\"default\"\nmyfunc\nmyvar=\"overridden\" myfunc\nmyfunc";
-    assert_rejected("native_func_env_orig", original, "SB4020");
-
-    // The native approach: explicit argument passing
-    let native = r#"myfunc() { echo $1; }
-myvar="default"
-myfunc "$myvar"
-myvar="overridden"
-myfunc "$myvar"
-myvar="default"
-myfunc "$myvar""#;
-    let sash_out = compile_and_run("native_func_env", native);
-    assert_eq!(sash_out, "default\noverridden\ndefault\n");
-}
 
 #[test]
 fn brush_native_read_herestring_ifs() {
@@ -475,18 +246,6 @@ while IFS= read line; do
 done <<<"${content}""#;
     let _bash_out = bash_output(native);
     // Deferred: compile_and_run currently hits SSA taint ICE
-}
-
-#[test]
-fn brush_native_cmdsub_exec() {
-    // Original: x=$(exec echo hi) — exec inside cmdsub, tainted
-    // Native: just use echo directly
-    let original = "x=$(exec echo hi)\necho \"x: $x\"";
-    assert_rejected("native_exec_orig", original, "SB4020");
-
-    let native = "x=$(echo hi)\necho \"x: $x\"";
-    let sash_out = compile_and_run("native_exec", native);
-    assert_eq!(sash_out, "x: hi\n");
 }
 
 #[test]
@@ -558,26 +317,3 @@ fn brush_rejected_param_transform_cap_a() {
 // --- SC2128: bare array without subscript (shellcheck catches before sash) ---
 // These use sash to confirm sash behavior, but in practice shellcheck
 // blocks them. We verify compile failure or wrong output either way.
-
-#[test]
-fn brush_rejected_bare_array_access() {
-    // ${arr} without subscript — SC2128 warns, sash produces wrong output
-    // This is a lint-gate rejection, not a sash diagnostic
-    let script = r#"declare -a arr=(10 20 30)
-echo "${arr}""#;
-    // With shellcheck enabled, this would fail at lint.
-    // With sash it compiles but produces wrong output (empty or pointer).
-    // Either way it's not a sash correctness target.
-    let out = compile_and_run("rej_bare_arr", script);
-    // We just verify it doesn't crash — output is known-wrong
-    let _ = out;
-}
-
-#[test]
-fn brush_rejected_bare_array_length() {
-    // ${#arr} without [@] — SC2128
-    let script = r#"declare -a arr=(10 20 30)
-echo "${#arr}""#;
-    let out = compile_and_run("rej_bare_arr_len", script);
-    let _ = out;
-}

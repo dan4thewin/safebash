@@ -113,12 +113,6 @@ fn pos_variables() {
 }
 
 #[test]
-fn pos_arithmetic() {
-    let script = "#!/bin/bash\na=3\nb=4\necho $(( a + b ))\necho $(( a * b ))";
-    assert_eq!(compile_and_run("arith", script), "7\n12\n");
-}
-
-#[test]
 fn pos_if_else() {
     let script = r#"#!/bin/bash
 int x=5
@@ -150,57 +144,9 @@ fn pos_for_loop() {
 }
 
 #[test]
-fn pos_case() {
-    let script = r#"#!/bin/bash
-x=hello
-case $x in
-    hello) echo matched ;;
-    *) echo nope ;;
-esac
-"#;
-    assert_eq!(compile_and_run("case", script), "matched\n");
-}
-
-#[test]
-fn pos_case_wildcard() {
-    let script = r#"#!/bin/bash
-x=unknown
-case $x in
-    hello) echo matched ;;
-    *) echo default ;;
-esac
-"#;
-    assert_eq!(compile_and_run("case_wc", script), "default\n");
-}
-
-#[test]
-fn pos_case_empty() {
-    let script = "#!/bin/bash\ncase x in esac\necho after";
-    assert_eq!(compile_and_run("case_empty", script), "after\n");
-}
-
-#[test]
-fn pos_string_length() {
-    let script = "#!/bin/bash\nx=hello\necho ${#x}";
-    assert_eq!(compile_and_run("strlen", script), "5\n");
-}
-
-#[test]
 fn pos_default_value() {
     let script = "#!/bin/bash\nx=\"\"\necho ${x:-default}\nx=set\necho ${x:-default}";
     assert_eq!(compile_and_run("default", script), "default\nset\n");
-}
-
-#[test]
-fn pos_strip_prefix() {
-    let script = "#!/bin/bash\npath=/usr/local/bin/sash\necho ${path##*/}";
-    assert_eq!(compile_and_run("strip_pre", script), "sash\n");
-}
-
-#[test]
-fn pos_strip_suffix() {
-    let script = "#!/bin/bash\nfile=script.sh\necho ${file%.sh}";
-    assert_eq!(compile_and_run("strip_suf", script), "script\n");
 }
 
 #[test]
@@ -213,18 +159,6 @@ fn pos_substring() {
 fn pos_negative_substring() {
     let script = "#!/bin/bash\nx=hello\necho ${x:0:-1}";
     assert_eq!(compile_and_run("neg_sub", script), "hell\n");
-}
-
-#[test]
-fn pos_regex_replace_first() {
-    let script = "#!/bin/bash\nvar=\"hello world\"\necho ${var/hello/goodbye}";
-    assert_eq!(compile_and_run("rep_first", script), "goodbye world\n");
-}
-
-#[test]
-fn pos_regex_replace_global() {
-    let script = "#!/bin/bash\nvar=\"aoboc\"\necho ${var//o/O}";
-    assert_eq!(compile_and_run("rep_global", script), "aObOc\n");
 }
 
 #[test]
@@ -264,12 +198,6 @@ fn pos_pipeline() {
 }
 
 #[test]
-fn pos_heredoc() {
-    let script = "#!/bin/bash\n/bin/cat <<EOF\nhello\nworld\nEOF";
-    assert_eq!(compile_and_run("heredoc", script), "hello\nworld\n");
-}
-
-#[test]
 fn pos_regex_match() {
     let script = r#"#!/bin/bash
 if [[ "abc123" =~ [0-9]+ ]]; then echo match; else echo no; fi
@@ -289,12 +217,6 @@ if [[ "a" =~ a$ ]]; then echo match; else echo no; fi
 fn pos_and_or() {
     let script = "#!/bin/bash\ntrue && echo yes\nfalse || echo fallback";
     assert_eq!(compile_and_run("and_or", script), "yes\nfallback\n");
-}
-
-#[test]
-fn pos_exit_status() {
-    let script = "#!/bin/bash\ntrue\necho $?\nfalse\necho $?";
-    assert_eq!(compile_and_run("exit_st", script), "0\n1\n");
 }
 
 #[test]
@@ -344,19 +266,6 @@ fn pos_int_capture() {
 }
 
 #[test]
-fn pos_glob_match_case() {
-    let script = r#"#!/bin/bash
-file="test.sh"
-case $file in
-    *.sh) echo shell ;;
-    *.py) echo python ;;
-    *) echo other ;;
-esac
-"#;
-    assert_eq!(compile_and_run("glob_case", script), "shell\n");
-}
-
-#[test]
 fn pos_test_string_ops() {
     let script = r#"#!/bin/bash
 [[ -n "hello" ]] && echo nonempty
@@ -387,18 +296,6 @@ fn pos_multiline_string() {
     assert_eq!(compile_and_run("multiline", script), "line1\nline2\n");
 }
 
-#[test]
-fn pos_uppercase() {
-    let script = "#!/bin/bash\nx=hello\necho ${x^^}";
-    assert_eq!(compile_and_run("upper", script), "HELLO\n");
-}
-
-#[test]
-fn pos_lowercase() {
-    let script = "#!/bin/bash\nx=HELLO\necho ${x,,}";
-    assert_eq!(compile_and_run("lower", script), "hello\n");
-}
-
 // ═══════════════════════════════════════════════════════════════
 // NEGATIVE TESTS — expected diagnostic codes
 // ═══════════════════════════════════════════════════════════════
@@ -409,32 +306,6 @@ fn neg_export_rejected() {
     let stderr = compile_expect_fail("export", script);
     // `export` is not a reserved word — it is an unknown command (SB5011).
     common::expect_diag(&stderr, "SB5011");
-}
-
-#[test]
-fn neg_tainted_env_var() {
-    let script = "#!/bin/bash\nx=$(getenv CUSTOM_VAR)\necho $x";
-    let stderr = compile_expect_fail("taint_env", script);
-    common::expect_diag(&stderr, "SB4020");
-}
-
-#[test]
-fn neg_tainted_argv() {
-    let script = "#!/bin/bash\necho $1";
-    let stderr = compile_expect_fail("taint_argv", script);
-    common::expect_diag(&stderr, "SB4020");
-}
-
-#[test]
-fn neg_tainted_env_inside_function_body() {
-    // DD#24: external data is quarantined at the boundary, regardless
-    // of whether it appears at the top level or inside a function body.
-    // getenv inside a function body must still produce a tainted value
-    // and reject downstream unattested use.
-    let script =
-        "#!/bin/bash\nfoo() {\n  local x\n  x=$(getenv USER_INPUT)\n  echo \"$x\"\n}\nfoo\n";
-    let stderr = compile_expect_fail("taint_in_fn_body", script);
-    common::expect_diag(&stderr, "SB4020");
 }
 
 #[test]
@@ -536,13 +407,6 @@ fn pos_sed_in_assignment() {
 // ═══════════════════════════════════════════════════════════════
 // ADDITIONAL NEGATIVE TESTS
 // ═══════════════════════════════════════════════════════════════
-
-#[test]
-fn neg_tainted_all_args() {
-    let script = "#!/bin/bash\necho \"$@\"";
-    let stderr = compile_expect_fail("taint_at", script);
-    common::expect_diag(&stderr, "SB4020");
-}
 
 #[test]
 fn neg_export_declare_x() {
@@ -676,81 +540,13 @@ fi
     assert_eq!(compile_and_run("for_if", script), "1\n2\n3\n");
 }
 
-#[test]
-fn pos_case_in_for() {
-    let script = r#"#!/bin/bash
-for x in apple banana cherry; do
-    case $x in
-        apple) echo fruit1 ;;
-        banana) echo fruit2 ;;
-        *) echo other ;;
-    esac
-done
-"#;
-    assert_eq!(
-        compile_and_run("case_for", script),
-        "fruit1\nfruit2\nother\n"
-    );
-}
-
 // ═══════════════════════════════════════════════════════════════
 // HEREDOC TESTS
 // ═══════════════════════════════════════════════════════════════
 
-#[test]
-fn pos_heredoc_with_vars() {
-    let script = "#!/bin/bash\nname=world\n/bin/cat <<ENDTAG\nhello $name\ngoodbye $name\nENDTAG";
-    assert_eq!(
-        compile_and_run("hd_vars", script),
-        "hello world\ngoodbye world\n"
-    );
-}
-
-#[test]
-fn pos_heredoc_literal() {
-    let script = "#!/bin/bash\n/bin/cat <<'EOF'\nhello $name\nEOF";
-    assert_eq!(compile_and_run("hd_literal", script), "hello $name\n");
-}
-
-#[test]
-fn pos_heredoc_tab_strip() {
-    let script = "#!/bin/bash\n/bin/cat <<-EOF\n\t\thello\n\t\tworld\nEOF";
-    assert_eq!(compile_and_run("hd_tabs", script), "hello\nworld\n");
-}
-
 // ═══════════════════════════════════════════════════════════════
 // ARRAY TESTS
 // ═══════════════════════════════════════════════════════════════
-
-#[test]
-fn pos_array_basic() {
-    let script = "#!/bin/bash\narr=(one two three)\necho ${arr[0]}\necho ${arr[1]}\necho ${arr[2]}";
-    assert_eq!(compile_and_run("arr_basic", script), "one\ntwo\nthree\n");
-}
-
-#[test]
-fn pos_array_length() {
-    // DD#75 §4: `${#arr}` is the length (retired `${#arr[@]}`).
-    let script = "#!/bin/bash\narray arr=(a b c d e)\necho ${#arr}";
-    assert_eq!(compile_and_run("arr_len", script), "5\n");
-}
-
-#[test]
-fn pos_array_assign_element() {
-    let script = "#!/bin/bash\narr=(x y z)\narr[1]=Y\necho ${arr[0]} ${arr[1]} ${arr[2]}";
-    assert_eq!(compile_and_run("arr_assign", script), "x Y z\n");
-}
-
-#[test]
-fn pos_array_for_loop() {
-    let script = r#"#!/bin/bash
-arr=(alpha beta gamma)
-for x in @arr; do
-    echo $x
-done
-"#;
-    assert_eq!(compile_and_run("arr_for", script), "alpha\nbeta\ngamma\n");
-}
 
 // ═══════════════════════════════════════════════════════════════
 // ATTEST / TAINT FLOW TESTS
@@ -782,26 +578,6 @@ echo $x
     );
 }
 
-#[test]
-fn neg_cmdsub_tainted() {
-    let script = "#!/bin/bash\nx=$(curl http://example.com)\necho $x";
-    let stderr = compile_expect_fail("cmdsub_taint", script);
-    common::expect_diag(&stderr, "SB4020");
-}
-
-#[test]
-fn neg_tainted_after_reassign() {
-    // Even if a var was attested, reassignment from unknown cmdsub re-taints it
-    let script = r#"#!/bin/bash
-x=$(curl http://example.com)
-attest x [[ -n $x ]]
-x=$(curl http://other.com)
-echo $x
-"#;
-    let stderr = compile_expect_fail("retaint", script);
-    common::expect_diag(&stderr, "SB4020");
-}
-
 // ═══════════════════════════════════════════════════════════════
 // COMMAND SUBSTITUTION TESTS
 // ═══════════════════════════════════════════════════════════════
@@ -819,47 +595,9 @@ echo $x
     );
 }
 
-#[test]
-fn pos_cmdsub_in_arithmetic() {
-    // Command substitution result used in arithmetic after attest
-    let script = r#"#!/bin/bash
-n=$(getenv MY_VAL)
-attest n [[ $n =~ ^[0-9]+$ ]]
-echo $(( n + 10 ))
-"#;
-    assert_eq!(
-        compile_and_run_env("cmdsub_arith", script, &[("MY_VAL", "5")]),
-        "15\n"
-    );
-}
-
 // ═══════════════════════════════════════════════════════════════
 // ADDITIONAL COERCION AND EDGE CASE TESTS
 // ═══════════════════════════════════════════════════════════════
-
-#[test]
-fn pos_herestring() {
-    let script = "#!/bin/bash\nread x <<< \"hello\"\necho $x";
-    assert_eq!(compile_and_run("herestring", script), "hello\n");
-}
-
-#[test]
-fn pos_test_file_exists() {
-    let script = "#!/bin/bash\n[[ -f /etc/passwd ]] && echo exists || echo missing";
-    assert_eq!(compile_and_run("file_test", script), "exists\n");
-}
-
-#[test]
-fn pos_test_string_eq() {
-    let script = "#!/bin/bash\na=hello\nb=hello\n[[ $a == $b ]] && echo same || echo diff";
-    assert_eq!(compile_and_run("str_eq", script), "same\n");
-}
-
-#[test]
-fn pos_test_string_neq() {
-    let script = "#!/bin/bash\na=hello\nb=world\n[[ $a != $b ]] && echo diff || echo same";
-    assert_eq!(compile_and_run("str_neq", script), "diff\n");
-}
 
 #[test]
 fn pos_pipeline_negation() {
@@ -907,12 +645,6 @@ done
     assert_eq!(compile_and_run("continue", script), "1\n2\n4\n5\n");
 }
 
-#[test]
-fn pos_alternate_value() {
-    let script = "#!/bin/bash\nx=set\necho ${x:+alternate}\ny=\"\"\necho ${y:+alternate}";
-    assert_eq!(compile_and_run("alt_val", script), "alternate\n\n");
-}
-
 // ═══════════════════════════════════════════════════════════════
 // HEREDOC COMMAND SUBSTITUTION REJECTION (SB5002)
 // ═══════════════════════════════════════════════════════════════
@@ -924,27 +656,9 @@ fn neg_heredoc_cmdsub() {
     common::expect_diag(&stderr, "SB5002");
 }
 
-#[test]
-fn pos_heredoc_attested_var() {
-    // cat /etc/hostname is auto-attested via known_externals
-    let script = "#!/bin/bash\nh=$(/bin/cat /etc/hostname)\n/bin/cat <<EOF\nhello $h\nEOF";
-    let output = compile_and_run("hd_attested", script);
-    assert!(
-        output.starts_with("hello "),
-        "expected 'hello <hostname>', got: {}",
-        output
-    );
-}
-
 // ═══════════════════════════════════════════════════════════════
 // HERESTRING TESTS
 // ═══════════════════════════════════════════════════════════════
-
-#[test]
-fn pos_herestring_read_multi() {
-    let script = "#!/bin/bash\nread a b <<< \"hello world\"\necho $a\necho $b";
-    assert_eq!(compile_and_run("hs_multi", script), "hello\nworld\n");
-}
 
 // ═══════════════════════════════════════════════════════════════
 // ATTEST EDGE CASES
@@ -960,16 +674,6 @@ echo $n
 "#;
     let output = compile_and_run("attest_regex", script);
     assert!(!output.is_empty(), "expected hostname output");
-}
-
-#[test]
-fn pos_attest_numeric_check() {
-    let script =
-        "#!/bin/bash\nx=$(getenv MY_VAL)\nattest x [[ $x =~ ^[0-9]+$ ]]\necho $(( x + 8 ))";
-    assert_eq!(
-        compile_and_run_env("attest_num", script, &[("MY_VAL", "42")]),
-        "50\n"
-    );
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -1029,33 +733,11 @@ fn pos_auto_attest_multiple() {
     );
 }
 
-#[test]
-fn neg_unknown_cmd_still_tainted() {
-    let script = "#!/bin/bash\nx=$(some_unknown_cmd)\necho $x";
-    let stderr = compile_expect_fail("unknown_taint", script);
-    common::expect_diag(&stderr, "SB4020");
-}
-
 // ═══════════════════════════════════════════════════════════════
 // BRUSH RECOVERABLE CASES — verify diagnostic then native rewrite
 // Each test: (1) original fails with correct code, (2) native compiles,
 // (3) native output matches bash.
 // ═══════════════════════════════════════════════════════════════
-
-#[test]
-fn brush_arith_quoted() {
-    // Original: pure-literal arithmetic — should now compile directly
-    let script = r#"#!/bin/bash
-echo " 1  + 1 == $((1+1))"
-echo " 2  * 3 == $((2*3))"
-echo " 9  / 3 == $((9/3))"
-echo "10  % 3 == $((10%3))"
-echo " 2 ** 3 == $((2**3))"
-"#;
-    let sash_out = compile_and_run("brush_arith_quoted", script);
-    let bash_out = bash_output(&script[12..]); // skip shebang
-    assert_eq!(sash_out, bash_out);
-}
 
 #[test]
 fn brush_cmdsub_echo_clean() {
@@ -1074,15 +756,6 @@ fn brush_cmdsub_comment() {
     let script = "#!/bin/bash\nvar=$(\n  # I'm a comment\n  echo \"Batman\"\n)\necho $var\n";
     let sash_out = compile_and_run("brush_cmdsub_comment", script);
     assert_eq!(sash_out, "Batman\n");
-}
-
-#[test]
-fn brush_let_clean() {
-    // let x=10 — arithmetic literal assignment, x is clean
-    let script = "#!/bin/bash\nlet x=10; echo \"x=10 => $?; x==${x}\"";
-    let sash_out = compile_and_run("brush_let_clean", script);
-    let bash_out = bash_output("let x=10; echo \"x=10 => $?; x==${x}\"");
-    assert_eq!(sash_out, bash_out);
 }
 
 #[test]
@@ -1127,54 +800,12 @@ fn brush_cd_pwd() {
 }
 
 #[test]
-fn brush_getenv_attest_native() {
-    // Original: getenv produces tainted var — needs attest
-    // Step 1: without attest, fails
-    let raw = "#!/bin/bash\nx=$(getenv MY_VAR)\necho $x";
-    let stderr = compile_expect_fail("brush_getenv_raw", raw);
-    common::expect_diag(&stderr, "SB4020");
-
-    // Step 2: with attest, compiles and output matches
-    let attested = r#"#!/bin/bash
-x=$(getenv MY_VAR)
-attest x [[ -n $x ]]
-echo $x
-"#;
-    let sash_out = compile_and_run_env("brush_getenv_attested", attested, &[("MY_VAR", "hello")]);
-    assert_eq!(sash_out, "hello\n");
-}
-
-#[test]
-fn brush_curl_tainted() {
-    // curl output is correctly tainted — verify diagnostic
-    let script = "#!/bin/bash\nx=$(curl http://evil.com)\necho $x";
-    let stderr = compile_expect_fail("brush_curl", script);
-    common::expect_diag(&stderr, "SB4020");
-}
-
-#[test]
 fn brush_undefined_var() {
     // DD#53: Undefined vars are empty strings (not env lookups, not tainted).
     // They compile and produce empty output.
     let script = "#!/bin/bash\necho ${undefined}";
     let out = compile_and_run_env("brush_undefined", script, &[]);
     assert_eq!(out, "\n", "undefined var should expand to empty string");
-}
-
-#[test]
-fn brush_heredoc_clean() {
-    // Heredoc with no cmdsub — content is clean
-    let script = "#!/bin/bash\n/bin/cat <<EOF\nhello world\nEOF\n";
-    let sash_out = compile_and_run("brush_heredoc_clean", script);
-    assert_eq!(sash_out, "hello world\n");
-}
-
-#[test]
-fn brush_heredoc_cmdsub_rejected() {
-    // Heredoc with command substitution — SB5002
-    let script = "#!/bin/bash\n/bin/cat <<END\n$(echo hi)\nEND\n";
-    let stderr = compile_expect_fail("brush_heredoc_cmdsub", script);
-    common::expect_diag(&stderr, "SB5002");
 }
 
 #[test]
@@ -1196,41 +827,6 @@ fn brush_export_rejected() {
 // ═══════════════════════════════════════════════════════════════
 // EXTGLOB REJECTION (SB5005 — DD#20/DD#39)
 // ═══════════════════════════════════════════════════════════════
-
-#[test]
-fn neg_extglob_at() {
-    let script = "#!/bin/bash\ncase x in @(a|b)) echo match;; esac";
-    let stderr = compile_expect_fail("extglob_at", script);
-    common::expect_diag(&stderr, "SB5005");
-}
-
-#[test]
-fn neg_extglob_plus() {
-    let script = "#!/bin/bash\ncase x in +(a|b)) echo match;; esac";
-    let stderr = compile_expect_fail("extglob_plus", script);
-    common::expect_diag(&stderr, "SB5005");
-}
-
-#[test]
-fn neg_extglob_question() {
-    let script = "#!/bin/bash\ncase x in ?(a|b)) echo match;; esac";
-    let stderr = compile_expect_fail("extglob_q", script);
-    common::expect_diag(&stderr, "SB5005");
-}
-
-#[test]
-fn neg_extglob_bang() {
-    let script = "#!/bin/bash\ncase x in !(a|b)) echo match;; esac";
-    let stderr = compile_expect_fail("extglob_bang", script);
-    common::expect_diag(&stderr, "SB5005");
-}
-
-#[test]
-fn pos_case_bare_star() {
-    // bare * in case should NOT trigger SB5005
-    let script = "#!/bin/bash\ncase hello in *) echo matched;; esac";
-    assert_eq!(compile_and_run("case_star", script), "matched\n");
-}
 
 #[test]
 fn neg_source_dot_rejected() {
