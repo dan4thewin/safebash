@@ -1,6 +1,6 @@
 ---
 title: "sash-convert: emit a CHECK comment on bash `true`/`false`"
-status: ready
+status: done
 priority: P3
 kind: feature
 depends: []
@@ -38,3 +38,53 @@ attach a one-line hint. Suggested text:
 `# CHECK: sash runs true/false as /usr/bin/true|false (externalized). A bare false aborts (DD#55); true/false are not non-forking builtins.`
 
 Add converter specs mirroring the SC2086 hint specs.
+
+
+---
+
+## Outcome (2026-09-14)
+
+Done. **The filing was accurate** — every claim re-measured against the live
+binary and held, which after three consecutive rotted filings was worth
+confirming rather than assuming:
+
+- bare `false` aborts: `/tmp/t.bin: /usr/bin/false: command failed (exit 1)`,
+  and the statement after it never runs;
+- `false || echo fallback` does **not** abort (status consumed), exit 0;
+- `while true` forks per iteration — timed at **11.1 s for 20,000 passes**,
+  ~0.55 ms each, against a bash builtin that is free.
+
+## One deviation from the gate: two messages, not one
+
+The gate asked for "a `# CHECK:` hint" on statement-position `true`/`false`.
+Implemented as **two** hints, because the two hazards are not the same size
+and a single undifferentiated warning dilutes the serious one:
+
+| position | message |
+|---|---|
+| `false`, status discarded | **ABORTS the program** (DD#55); use `! :` or a function returning 1 |
+| everything else | status matches bash, but each evaluation forks and execs |
+
+`status_is_consumed` walks out through `list` (`&&`/`||`), `negated_command`,
+`command_substitution`, `pipeline`, and the *condition field* of
+`if`/`while`/`until`/`elif` — a command in a loop **body** is in
+discarded-status position like any other statement, so the field check
+matters.
+
+Caught while testing: my first version gave a bare `true` the abort message
+("so a bare `false` ABORTS"), which is both confusing and false — `true`
+cannot abort. The abort wording is now gated on the command actually being
+`false`.
+
+Strings and comments are untouched for free: the hint hangs off
+`convert_command`'s `name` field, so only real command words reach it.
+
+## Verification
+
+Specs 57.141–57.147 in `spec/convert.sh` (plan 165 → 172), including a
+control (57.147) asserting the hint does **not** fire on the word `true`
+inside a string or a comment. Fail-first predicted 57.141–57.146 and observed
+exactly those six; 57.147 was predicted to pass without the change (it
+asserts an absence) and did.
+
+Sweep **4500 passing, 9 skipped, 0 failing, 0 flips**.

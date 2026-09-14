@@ -1,3 +1,39 @@
+## ══ STATUS (2026-09-14) — externalized true/false get a CHECK ══
+
+**Journal 302.** Sweep **4500 passing, 9 skipped, 0 failing, 0 flips** (+7,
+convert.sh native-only). `sash-convert-check-comment-true-false` is **done**.
+
+**The filing was accurate** — first one in four that was. Re-measured anyway:
+bare `false` aborts and the next statement never runs; `false || echo x` does
+not abort; `while true` costs **11.1 s / 20,000 iterations** (~0.55 ms/pass)
+against a free bash builtin.
+
+## Two messages, not one
+
+The gate asked for a hint; it wanted two, because the hazards differ in size:
+
+| position | message |
+|---|---|
+| `false`, status discarded | **ABORTS** (DD#55) — use `! :` or a fn returning 1 |
+| everything else | status matches bash, but forks and execs each pass |
+
+`status_is_consumed` walks out through `list`, `negated_command`,
+`command_substitution`, `pipeline`, and the **condition field** of
+`if`/`while`/`until`/`elif` — a command in a loop *body* is discarded-status
+like any other statement, so the field check is load-bearing.
+
+My first draft told a bare `true` that "a bare `false` ABORTS" — confusing
+and false. The abort wording is now gated on the command being `false`.
+
+## Still open for DG
+
+`harness-diagnostic-advice-compiles` (P3) — three options for making the
+"advice must compile" gate structural. The one that works changes the
+`Diagnostic` type (suggestions as data, not prose), which is a surface
+decision. **DG's call.**
+
+---
+
 ## ══ STATUS (2026-09-14) — auditing the advice a diagnostic gives ══
 
 **Journal 301.** Sweep **4493 passing, 9 skipped, 0 failing, 0 flips** (+12:

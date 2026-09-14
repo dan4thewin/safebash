@@ -424,6 +424,10 @@ fn convert_command(
     let name = node_text(name_node, source);
     let line = node.start_position().row;
 
+    if matches!(name, "true" | "false") {
+        add_true_false_hint(node, name, line, prefix_lines);
+    }
+
     match name {
         // Mechanical: let → (( ))
         "let" => {
@@ -2395,6 +2399,82 @@ fn push_read_attest_hints(
             ),
         ));
     }
+}
+
+// ── DD#69 addendum / DD#23: `true` and `false` are externalized ───────────
+//
+// They resolve to `/usr/bin/true` / `/usr/bin/false`, not to inline
+// non-forking builtins, and that changes two things a bash author will not
+// expect. Which one matters depends entirely on whether the status is
+// consumed, so the hint says one thing or the other rather than both:
+//
+//   - status DISCARDED — a bare `false` **aborts the program** (DD#55),
+//     where bash merely sets `$?`. This is a semantic change and the more
+//     serious of the two.
+//   - status CONSUMED (a condition, a `&&`/`||` list, a negation) — the
+//     meaning is bash's, but each evaluation now forks and execs. Measured
+//     at ~0.55 ms per iteration, so a `while true` busy-loop that was free
+//     in bash is not free here.
+fn add_true_false_hint(
+    node: Node,
+    name: &str,
+    line: usize,
+    prefix_lines: &mut Vec<(usize, String)>,
+) {
+    // Only `false` can abort, and only where nothing reads its status. A bare
+    // `true` is still a no-op — it just costs a fork now — so it takes the
+    // second message, not a warning about a program exit that cannot happen.
+    let msg = if name == "false" && !status_is_consumed(node) {
+        "# CHECK: sash runs `false` as /usr/bin/false (externalized, DD#23) and \
+         nothing reads its status here — so this ABORTS the program (DD#55), \
+         where bash only sets `$?`. For an internal always-fail use `! :` or a \
+         function that returns 1"
+            .to_string()
+    } else {
+        format!(
+            "# CHECK: sash runs `{name}` as /usr/bin/{name} (externalized, \
+             DD#23), so the status matches bash but each evaluation forks and \
+             execs — a `while true` loop is no longer free"
+        )
+    };
+    prefix_lines.push((line, msg));
+}
+
+/// Does something read this command's exit status?
+///
+/// Walks out through the wrappers that consume a status. Anything else means
+/// the status is discarded, which for `false` is the abort case.
+fn status_is_consumed(node: Node) -> bool {
+    let mut child = node;
+    let mut current = node.parent();
+    while let Some(p) = current {
+        match p.kind() {
+            // `&&` / `||`, `! cmd`, `$(…)`, and `if !`-style negation all read it.
+            "list" | "negated_command" | "command_substitution" | "process_substitution" => {
+                return true;
+            }
+            // Only the CONDITION of a loop/branch consumes it; a command in the
+            // body is in discarded-status position like any other statement.
+            "if_statement" | "while_statement" | "until_statement" | "elif_clause" => {
+                return p
+                    .child_by_field_name("condition")
+                    .is_some_and(|c| c.id() == child.id() || contains_node(c, node));
+            }
+            // A pipeline's status is its last stage; earlier stages are dropped,
+            // but sash does not abort on those, so treat the whole thing as read.
+            "pipeline" => return true,
+            // A subshell/compound is transparent — keep walking out.
+            "subshell" | "compound_statement" | "program" | "function_definition" => {}
+            _ => {}
+        }
+        child = p;
+        current = p.parent();
+    }
+    false
+}
+
+fn contains_node(haystack: Node, needle: Node) -> bool {
+    haystack.start_byte() <= needle.start_byte() && needle.end_byte() <= haystack.end_byte()
 }
 
 // ── SC2086 CHECK hints ────────────────────────────────────────

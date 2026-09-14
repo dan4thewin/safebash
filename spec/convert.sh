@@ -6,7 +6,7 @@ set -eu
 # Run only in native mode to avoid 3× redundancy.
 [[ ${SASH_MODE:-native} != native ]] && exit 0
 setup convert
-plan=165
+plan=172
 echo "1..$plan" >&3
 
 set +e
@@ -1124,6 +1124,53 @@ f() {
 }
 f a b'
 [[ $rc = 0 && $out != *'$@'* && $out != *'$*'* && $out == *'echo $#'* && -z $err ]]; chk 57.140
+
+# ── DD#69 addendum / DD#23: `true` and `false` are externalized ──
+# They resolve to /usr/bin/true|false, not inline non-forking builtins. What
+# that costs depends on whether anything reads the status, so the hint says
+# one thing or the other rather than both.
+
+# 57.141 a bare `false` ABORTS (DD#55) where bash only sets $? — the serious
+# case, and the only one that gets the abort wording.
+run_convert '#!/bin/bash
+false
+echo after'
+[[ $rc = 0 && $out == *'ABORTS the program (DD#55)'* && $out == *'! :'* ]]; chk 57.141
+
+# 57.142 a bare `true` cannot abort — it is a no-op that now costs a fork, so
+# it takes the fork wording, NOT a warning about an exit that cannot happen.
+run_convert '#!/bin/bash
+true
+echo after'
+[[ $rc = 0 && $out == *'forks and execs'* && $out != *'ABORTS'* ]]; chk 57.142
+
+# 57.143 a condition consumes the status: bash semantics, but a fork per pass
+run_convert '#!/bin/bash
+while true; do break; done'
+[[ $rc = 0 && $out == *'forks and execs'* && $out != *'ABORTS'* ]]; chk 57.143
+
+# 57.144 …so does a `&&`/`||` list — `false || …` does not abort
+run_convert '#!/bin/bash
+false || echo fallback'
+[[ $rc = 0 && $out == *'forks and execs'* && $out != *'ABORTS'* ]]; chk 57.144
+
+# 57.145 …and a negation
+run_convert '#!/bin/bash
+if ! true; then echo n; fi'
+[[ $rc = 0 && $out == *'forks and execs'* && $out != *'ABORTS'* ]]; chk 57.145
+
+# 57.146 a command SUBSTITUTION reads the status too
+run_convert '#!/bin/bash
+x=$(true)
+echo "$x"'
+[[ $rc = 0 && $out == *'forks and execs'* && $out != *'ABORTS'* ]]; chk 57.146
+
+# 57.147 the word `true` inside a string, or in a comment, is not a command
+run_convert '#!/bin/bash
+echo "true is a word here"
+# a comment mentioning false
+echo ok'
+[[ $rc = 0 && $out != *'externalized, DD#23'* ]]; chk 57.147
 
 set -e
 tally
