@@ -41,7 +41,7 @@ fn parse_quoted_arm(
 
 /// `$`-expansion and flat-backtick arms of `parse_expr`, factored out to
 /// keep the main word loop under the complexity gate. `tok` is one of
-/// `Dollar`/`DollarBrace`/`DollarParen`/`Backtick`/`DollarDblParen`.
+/// `Dollar`/`DollarBrace`/`DollarParen`/`DollarDblParen`.
 fn parse_expansion_arm(
     scanner: &mut Scanner,
     tok: &Tok,
@@ -58,10 +58,6 @@ fn parse_expansion_arm(
         Tok::DollarParen => {
             scanner.next();
             parts.push(parse_command_substitution(scanner, span)?);
-        }
-        Tok::Backtick(content) => {
-            scanner.next();
-            parts.push(command_sub_to_expr(content, span));
         }
         Tok::DollarDblParen => {
             scanner.next();
@@ -150,11 +146,7 @@ fn parse_word_parts(scanner: &mut Scanner, mode: AbsorbMode) -> Result<Expr, Dia
             Tok::SingleQuoted(_) | Tok::DoubleQuoted(_) | Tok::AnsiCQuoted(_) => {
                 parse_quoted_arm(scanner, &tok, span, &mut parts)?;
             }
-            Tok::Dollar(_)
-            | Tok::DollarBrace(_)
-            | Tok::DollarParen
-            | Tok::Backtick(_)
-            | Tok::DollarDblParen => {
+            Tok::Dollar(_) | Tok::DollarBrace(_) | Tok::DollarParen | Tok::DollarDblParen => {
                 parse_expansion_arm(scanner, &tok, span, start, &mut parts)?;
             }
             _ if literal_token_text(&tok, mode).is_some() => {
@@ -648,15 +640,16 @@ fn dynamic_subscript_var(idx: &str) -> Option<&str> {
     }
 }
 
-/// Backticked content gets preserved verbatim (legacy holdover);
-/// modern `$(…)` content lowers to CommandSubstitution.
+/// `$(…)` content lowers to CommandSubstitution.
+///
+/// This used to carve out content starting with a backtick and keep it as a
+/// verbatim `Literal` — a holdover from when backticks were their own token.
+/// It outlived that, and the consequence was a hole: `"$(`cmd`)"` took the
+/// carve-out, so the whole substitution became a literal string. That dodged
+/// the backtick rejection *and* the taint check, and diverged from bash, which
+/// runs the command. Backticks are rejected everywhere now (SB5076), so the
+/// inner script is re-lexed here like any other and the sentinel surfaces.
 fn command_sub_to_expr(content: &str, span: Span) -> Expr {
-    if content.starts_with('`') {
-        return Expr {
-            kind: ExprKind::Literal(content.to_string()),
-            span,
-        };
-    }
     let stmts = parse_sub_script(content, span);
     if let Some(e) = bareword_shortcut_expansion(&stmts, span) {
         return e;

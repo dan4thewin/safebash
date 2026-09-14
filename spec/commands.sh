@@ -47,13 +47,16 @@ run_sash 'x=$(/bin/echo hi | /usr/bin/tr h H); attest x [[ -n $x ]]; echo $x'
 run_sash 'x=$(- /bin/echo hi); echo $x'
 [[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk 14.3e
 
-# 67.4 flat backtick `cmd` is sugar for $(cmd) (DD#67)
+# 67.4 backticks are DROPPED, not sugar (DD#67, DG 2026-09-14). The mapping to
+#      $(cmd) is not 1-to-1 — nesting needs \`, which DD#64 removes — so the
+#      form fails DD#67's own keep-as-sugar test. sash-convert rewrites it.
 run_sash 'x=`echo hi`; echo $x'
-[[ $rc = 0 && $out = "hi" && -z $err ]]; chk 67.4
+[[ $rc != 0 && -z $out && $err == *SB5076* ]]; chk 67.4
 
-# 67.5 nested backticks (\`-escaping) are rejected — use $()
+# 67.5 nested backticks take the same rejection — there is no longer a separate
+#      "ambiguous nesting" case, because no backtick spelling is accepted.
 run_sash 'x=`echo \`date\``; echo $x'
-[[ $rc != 0 && -z $out && -n $err ]]; chk 67.5
+[[ $rc != 0 && -z $out && $err == *SB5076* ]]; chk 67.5
 
 # 67.6 single-bracket `[` is an ordinary literal (DD#67), no longer a
 #      test construct. `[[ … ]]` is the only test form; `arr[i]` subscript

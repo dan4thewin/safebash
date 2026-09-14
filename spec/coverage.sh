@@ -65,11 +65,13 @@ run_sash '<<EOF'
 # body lines must not be re-reported as unknown commands (SB5011).
 run_sash '<<EOF'
 [[ $err != *__HEREDOC__* && $err != *SB5011* ]]; chk cov.102
-# cov.103 an escaped backtick inside a backtick substitution is the `nested`
-# path in scan_backtick_body — it gets its own SB5020 wording, distinct from
-# the generic tainted-cmdsub SB5020 that a plain backtick earns.
-run_sash 'echo `echo \`/bin/echo hi\``'
-[[ $rc != 0 && -z $out && $err == *SB5020* && $err == *nested* ]]; chk cov.103
+# cov.103 a backtick inside a $( ) inside a double-quoted string. command_sub_to_expr
+# used to carve out content starting with a backtick and keep the WHOLE
+# substitution as a verbatim Literal — a holdover from when backticks were their
+# own token. That dodged both the backtick rejection and the taint check, and
+# diverged from bash, which runs the command. Found while dropping the sugar.
+run_sash 'echo "$(`/bin/echo hi`)"'
+[[ $rc != 0 && -z $out && $err == *SB5076* ]]; chk cov.103
 # cov.104 a `$` as the very last byte of the source is a literal `$`, as in
 # bash. This is scan_dollar's end-of-source guard; `-c` passes no trailing
 # newline, so it is the only way to reach it.

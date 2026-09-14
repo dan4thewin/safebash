@@ -2708,8 +2708,8 @@ fn check_rejected_expr(expr: &Expr, diags: &mut Vec<Diagnostic>) {
         ExprKind::Literal(s) if s == "`backtick`" => {
             diags.push(parse_error(
                 expr.span,
-                "SB5020",
-                "nested backticks are ambiguous — use $(...) for nesting".to_string(),
+                "SB5076",
+                "sash has no backtick command substitution — use $(...)".to_string(),
             ));
         }
         ExprKind::ParameterExpansion(pe) => check_rejected_param_expansion(pe, expr.span, diags),

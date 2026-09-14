@@ -24,8 +24,21 @@ structure, same semantics, unambiguous, reversible. Otherwise drop.
 | `name() { }` | `fn name { }` | yes | **re-add candidate** (currently rejected) |
 | `case…esac` | `[[ ]]` dispatch | **no** — glob patterns → `==`/`=~` is a translation | **drop** (DD#66) |
 | `;&` / `;;&` | (none) | no native equivalent | **drop** (DD#66) |
-| `` `cmd` `` | `$(cmd)` | ~yes (modulo nesting) | review |
+| `` `cmd` `` | `$(cmd)` | **no** — nesting needs `\``, which DD#64 removes | **drop** (2026-09-14) |
 | `[ … ]` | `[[ … ]]` | no — different quoting/word-splitting | drop |
+
+### Backticks: resolved as a drop (DG, 2026-09-14)
+
+The table entry read "~yes (modulo nesting) | review" for two years. The
+modulo was the whole answer. `` `cmd` `` maps to `$(cmd)` only while it does
+not nest; nesting requires `` \` ``, and DD#64 removed the shell backslash.
+So the mapping is not total, which is exactly what the 1-to-1 test excludes.
+
+Backticks are now **rejected** (SB5076) in every position where they were
+previously command substitution, and `sash-convert` rewrites them to `$( … )`
+— the standard shape of a drop under this policy. A backtick inside `"…"`
+is unaffected: it has been a literal character since 2026-08-28, and stays
+one.
 
 **Semantic** breaks are *not* sugar candidates — they change meaning, not
 spelling. E.g. DD#64 (no shell backslash) and DD#62 (`==` exact) stay
@@ -63,10 +76,11 @@ semantic.
 - **Re-add `name() { }` AND ksh `function name { }`** as 1-to-1 sugar for
   `fn name { }`. `fn` stays canonical; both bash spellings are accepted
   input that lowers to the same function IR.
-- **Backticks**: keep **flat** `` `…` `` as 1-to-1 sugar for `$(…)`;
-  **reject nested** backticks with a diagnostic (nesting needs
-  `\``-escaping, which DD#64 removes — so it can't map 1-to-1; direct to
-  `$(…)`).
+- ~~**Backticks**: keep **flat** `` `…` `` as 1-to-1 sugar for `$(…)`;
+  **reject nested** backticks with a diagnostic.~~ **Superseded
+  2026-09-14** — the same reasoning that rejects the nested form rejects
+  the flat one, because a form that cannot nest is not a total mapping.
+  All backticks are dropped; see above.
 - **Convert/canonicalize switch lives in `sash-convert`**, not the
   compiler. There is no `--emit-source` CLI flag (it was removed when the
   converter was split out; the compiler rejects it and directs to

@@ -7,7 +7,7 @@
 //!   - Tokens are designed for sash-native (not bash): int, const, array, map,
 //!     attest, signal, END, fn, local fn are first-class keywords.
 //!   - Heredocs are rejected at the scanner level (emits __HEREDOC__ sentinel).
-//!   - Backticks are rejected (emits `backtick` sentinel for error reporting).
+//!   - Backticks are rejected (emits `backtick` sentinel; parser raises SB5076).
 //!   - Single brackets `[` are NOT operators — they appear only inside words
 //!     (array subscripts, case patterns). Only `[[` is a token.
 //!   - Adjacency tracking: `next_is_adjacent()` lets the parser decide whether
@@ -113,7 +113,6 @@ pub enum Tok {
     Dollar(String),      // $var, $1, $@, $#, $?, $$, $!
     DollarBrace(String), // ${...} raw content for sub-parsing
     DollarParen,         // $( — start of command substitution
-    Backtick(String),    // DD#67: flat `cmd` → $(cmd); raw inner content
 
     // Comments
     Comment(String),
@@ -635,24 +634,19 @@ impl Scanner {
         }
     }
 
-    /// DD#67: flat `` `cmd` `` is sugar for `$(cmd)` → `Tok::Backtick`
-    /// carrying the raw inner content. A `\`` inside (the bash nesting
-    /// escape, which DD#64 removes) can't map 1-to-1, so it falls back to
-    /// the `` `backtick` `` sentinel the parser rejects with a diagnostic.
+    /// DD#67 (DG, 2026-09-14): backticks are **dropped**, not sugar. The
+    /// mapping to `$(cmd)` is not 1-to-1 — nesting needs `\``, which DD#64
+    /// removes — so the form fails DD#67's own keep-as-sugar test. Every
+    /// backtick scans to the `` `backtick` `` sentinel; the parser rejects it
+    /// with SB5076 and `sash-convert` rewrites the source to `$( … )`.
     fn scan_backtick(&mut self, start: usize) -> SpannedToken {
         self.pos += 1; // opening `
-        let (content, nested) = self.scan_backtick_body();
-        let terminated = self.pos < self.source.len() && self.source[self.pos] == b'`';
-        if terminated {
+        self.skip_backtick_body();
+        if self.pos < self.source.len() && self.source[self.pos] == b'`' {
             self.pos += 1; // closing `
         }
-        let token = if nested || !terminated {
-            Tok::Word("`backtick`".to_string())
-        } else {
-            Tok::Backtick(content)
-        };
         SpannedToken {
-            token,
+            token: Tok::Word("`backtick`".to_string()),
             span: LexSpan {
                 start,
                 end: self.pos,
@@ -660,24 +654,21 @@ impl Scanner {
         }
     }
 
-    /// Scan a backtick body up to the closing `` ` `` / newline / EOF.
-    /// Returns the raw content and whether a `\`` nesting attempt was seen.
-    fn scan_backtick_body(&mut self) -> (String, bool) {
-        let content_start = self.pos;
-        let mut nested = false;
+    /// Advance past a backtick body to the closing `` ` `` / newline / EOF.
+    /// The content is discarded — the whole construct is rejected — but a
+    /// `\`` is still stepped over so an escaped inner backtick does not end
+    /// the scan early and strand the rest of the line as garbage tokens.
+    fn skip_backtick_body(&mut self) {
         while self.pos < self.source.len()
             && self.source[self.pos] != b'`'
             && self.source[self.pos] != b'\n'
         {
             if self.is_escaped_backtick() {
-                nested = true;
                 self.pos += 2;
             } else {
                 self.pos += 1;
             }
         }
-        let content = String::from_utf8_lossy(&self.source[content_start..self.pos]).into_owned();
-        (content, nested)
     }
 
     /// `\`` at the cursor — the bash nesting escape DD#64 removes.
