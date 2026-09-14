@@ -97,6 +97,7 @@ pub fn convert(source: &str, sc_findings: &[ScFinding], annotate: bool) -> Strin
     let collections = Names {
         all: pass.names,
         maps: pass.maps,
+        ints: collect_int_names(tree.root_node(), src),
     };
 
     // Walk the CST
@@ -174,10 +175,54 @@ fn walk_node(
             ));
             let _ = text; // pass through unchanged
         }
+        // A read in arithmetic needs an explicit string→int disposition
+        // (SB4030). These three arms are the three spellings of one read:
+        // `$i`, `${i}` and bare `i`. Each returns without recursing, because
+        // the patch already covers the whole span.
         "simple_expansion" => {
+            if let Some(name_node) = node.child_by_field_name("name").or_else(|| node.child(1)) {
+                if name_node.kind() == "variable_name" {
+                    if let Some(d) = arith_disposition(name_node, node, source, collections) {
+                        patches.push(Patch::replace_node(
+                            node,
+                            d,
+                            Some(node_text(node, source).to_string()),
+                        ));
+                        return;
+                    }
+                }
+            }
             convert_simple_expansion(node, source, patches, prefix_lines);
         }
+        "variable_name" => {
+            if let Some(d) = arith_disposition(node, node, source, collections) {
+                patches.push(Patch::replace_node(
+                    node,
+                    d,
+                    Some(node_text(node, source).to_string()),
+                ));
+                return;
+            }
+        }
         "expansion" => {
+            // `${i}` — a bare braced read. The node text has to be tested,
+            // not just the child count: `${#s}` is also one `variable_name`
+            // child, and treating it as a plain read drops the length
+            // operator and silently changes what the program computes.
+            if is_bare_braced_read(node, source) {
+                if let Some(inner) = node.named_child(0) {
+                    if inner.kind() == "variable_name" {
+                        if let Some(d) = arith_disposition(inner, node, source, collections) {
+                            patches.push(Patch::replace_node(
+                                node,
+                                d,
+                                Some(node_text(node, source).to_string()),
+                            ));
+                            return;
+                        }
+                    }
+                }
+            }
             convert_expansion(node, source, patches, prefix_lines, collections);
         }
         "for_statement" if node.child(0).is_some_and(|c| c.kind() == "select") => {
@@ -1326,6 +1371,169 @@ fn canonical_special(name: &str, arith: bool) -> Option<&'static str> {
     })
 }
 
+// ── DD#67 / SB4030: string→int disposition (DG, 2026-09-14) ───
+//
+// Bash has one scalar type, so `i=1` is a string that arithmetic silently
+// coerces. Sash makes the coercion explicit: a bare string in arithmetic is
+// SB4030 and must carry `${i:-N}` (default) or `${i:?msg}` (abort).
+//
+// The converter cannot derive the right answer from bash source — the source
+// does not contain it. DG chose **abort**: emit `${i:?msg}`. It preserves the
+// "bad input is an error" reading rather than inventing a zero, at the cost of
+// diverging from bash on non-numeric input, where bash would have used 0. That
+// divergence is deliberate and is the point: a script that silently computed
+// with a garbage operand now says so.
+//
+// Names declared `declare -i` convert to sash `int` and need nothing.
+
+/// The message the converter attaches to every disposition it introduces. It
+/// names the variable so a failure at runtime is self-explaining, and it is
+/// recognisable as machine-written so a reader knows to revisit it.
+fn abort_disposition(name: &str) -> String {
+    format!("${{{}:?{} is not an integer}}", name, name)
+}
+
+/// Pre-pass: every name a `declare -i` / `local -i` / `typeset -i` covers.
+/// These become sash `int`, so arithmetic on them is already well-typed.
+fn collect_int_names(node: Node, source: &[u8]) -> HashSet<String> {
+    let mut ints = HashSet::new();
+    collect_int_names_into(node, source, &mut ints);
+    ints
+}
+
+fn collect_int_names_into(node: Node, source: &[u8], ints: &mut HashSet<String>) {
+    if node.kind() == "declaration_command" {
+        let mut cursor = node.walk();
+        let children: Vec<Node> = node.children(&mut cursor).collect();
+        let has_i = children.iter().skip(1).any(|c| {
+            let t = node_text(*c, source);
+            c.kind() == "word" && t.starts_with('-') && t[1..].contains('i')
+        });
+        if has_i {
+            for child in children.iter().skip(1) {
+                match child.kind() {
+                    "variable_name" => {
+                        ints.insert(node_text(*child, source).to_string());
+                    }
+                    "variable_assignment" => {
+                        if let Some(n) = child.child_by_field_name("name") {
+                            ints.insert(node_text(n, source).to_string());
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        collect_int_names_into(child, source, ints);
+    }
+}
+
+/// Whether an `expansion` is exactly `${name}` — one child, no operator, no
+/// subscript, nothing before the name. `${#s}`, `${s:-x}` and `${a[i]}` are
+/// all excluded: each does something the bare read does not.
+fn is_bare_braced_read(node: Node, source: &[u8]) -> bool {
+    if node.named_child_count() != 1 {
+        return false;
+    }
+    let text = node_text(node, source);
+    let Some(inner) = text.strip_prefix("${").and_then(|t| t.strip_suffix('}')) else {
+        return false;
+    };
+    is_clean_ident(inner)
+}
+
+/// The disposition to emit for a `variable_name` read in arithmetic, or `None`
+/// when the read needs none. `node` is the `variable_name`; `outer` is the node
+/// the patch replaces (the `simple_expansion` for `$i`, else the name itself).
+fn arith_disposition(
+    node: Node,
+    outer: Node,
+    source: &[u8],
+    collections: &Names,
+) -> Option<String> {
+    let name = node_text(node, source);
+    if !is_clean_ident(name) || collections.ints.contains(name) {
+        return None;
+    }
+    // A known env var is rewritten to a `$(getenv …)` + attest pair by
+    // `convert_simple_expansion`; two patches over one span would collide.
+    if known_externals::lookup_env_var(name).is_some() {
+        return None;
+    }
+    if !in_arithmetic(outer, source) || is_arith_assign_target(outer) {
+        return None;
+    }
+    Some(abort_disposition(name))
+}
+
+/// Whether `node` is written rather than read: the left side of `=`/`+=`/…,
+/// the operand of `++`/`--`, or a c-style-for initialiser target. Wrapping a
+/// write in `${…:?}` would be both wrong and unparseable.
+fn is_arith_assign_target(node: Node) -> bool {
+    let Some(parent) = node.parent() else {
+        return false;
+    };
+    match parent.kind() {
+        // tree-sitter models `c = a + 1` as a binary_expression whose operator
+        // happens to be an assignment, so the operator text is the only tell.
+        "binary_expression" => {
+            parent.child_by_field_name("left") == Some(node)
+                && parent
+                    .child(1)
+                    .is_some_and(|op| is_assign_operator(op.kind()))
+        }
+        // `k++` / `--k`
+        "postfix_expression" | "unary_expression" => true,
+        "variable_assignment" => parent.child_by_field_name("name") == Some(node),
+        _ => false,
+    }
+}
+
+/// An arithmetic operator that writes its left operand. `==`, `!=`, `<=` and
+/// `>=` end in `=` but do not write, so the set is listed rather than tested.
+fn is_assign_operator(op: &str) -> bool {
+    matches!(
+        op,
+        "=" | "+=" | "-=" | "*=" | "/=" | "%=" | "<<=" | ">>=" | "&=" | "|=" | "^="
+    )
+}
+
+/// Rewrite an arithmetic expression given as **text** rather than as CST
+/// nodes. Only [`subscript_key`] needs this: bash parses `${a[i+1]}`'s index
+/// as one opaque `word`, so there are no operand nodes to patch, and the
+/// converter synthesises the `$(( … ))` wrapper from the raw text.
+fn arith_text_dispositions(expr: &str, collections: &Names) -> String {
+    let bytes = expr.as_bytes();
+    let mut out = String::with_capacity(expr.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        let c = bytes[i] as char;
+        if !(c.is_ascii_alphabetic() || c == '_') {
+            out.push(c);
+            i += 1;
+            continue;
+        }
+        let start = i;
+        while i < bytes.len() && ((bytes[i] as char).is_ascii_alphanumeric() || bytes[i] == b'_') {
+            i += 1;
+        }
+        let ident = &expr[start..i];
+        // `$i` / `${i}` already carries its own spelling, and a `#` after an
+        // identifier is a bash base prefix (`16#ff`), not a variable read.
+        let sigil = start > 0 && matches!(bytes[start - 1], b'$' | b'{');
+        let base = i < bytes.len() && bytes[i] == b'#';
+        if sigil || base || collections.ints.contains(ident) {
+            out.push_str(ident);
+        } else {
+            out.push_str(&abort_disposition(ident));
+        }
+    }
+    out
+}
+
 /// Whether `node` sits inside an arithmetic context — `$(( … ))`, a bare
 /// `(( … ))` statement, or a C-style `for (( … ))` header.
 fn in_arithmetic(node: Node, source: &[u8]) -> bool {
@@ -1969,13 +2177,13 @@ fn subscript_expansion(inner: &str, collections: &Names) -> Option<String> {
         return None;
     }
     let key = &inner[open + 1..inner.len() - 1];
-    let rewritten = subscript_key(key, collections.maps.contains(name))?;
+    let rewritten = subscript_key(key, collections.maps.contains(name), collections)?;
     Some(format!("${{{}[{}]}}", name, rewritten))
 }
 
 /// The key half of [`subscript_expansion`]. `None` means "already direct,
 /// leave it".
-fn subscript_key(key: &str, is_map: bool) -> Option<String> {
+fn subscript_key(key: &str, is_map: bool, collections: &Names) -> Option<String> {
     // Already direct: an expansion, a quoted literal, or a splat. An integer
     // literal is direct too, and is by far the common case.
     if key.is_empty()
@@ -2008,7 +2216,10 @@ fn subscript_key(key: &str, is_map: bool) -> Option<String> {
             return Some(format!("${{{}}}", key));
         }
     }
-    Some(format!("$(( {} ))", key))
+    Some(format!(
+        "$(( {} ))",
+        arith_text_dispositions(key, collections)
+    ))
 }
 
 /// `${var@X}` — the parameter-transformation form, which sash does not have.
@@ -2095,6 +2306,10 @@ pub(crate) struct Names {
     /// The subset declared `declare -A` / `local -A`, i.e. maps. A map
     /// subscript is a key, not an arithmetic index (DD#80).
     maps: HashSet<String>,
+    /// Names declared `declare -i` / `local -i` / `typeset -i`, which convert
+    /// to sash `int`. Arithmetic on these needs no disposition — see
+    /// [`arith_disposition`].
+    ints: HashSet<String>,
 }
 
 /// The pre-pass state: what names are collections, and which constructs need

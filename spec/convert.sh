@@ -6,7 +6,7 @@ set -eu
 # Run only in native mode to avoid 3× redundancy.
 [[ ${SASH_MODE:-native} != native ]] && exit 0
 setup convert
-plan=172
+plan=180
 echo "1..$plan" >&3
 
 set +e
@@ -751,12 +751,15 @@ i=1
 echo "${a[i]}"'
 [[ $rc = 0 && $out == *'echo "${a[$i]}"'* && -z $err ]]; chk 57.86
 
-# 57.87 an expression subscript becomes explicit arithmetic
+# 57.87 an expression subscript becomes explicit arithmetic, and the read
+#       inside it carries the abort disposition like any other (DG 2026-09-14).
+#       bash parses the index as one opaque `word`, so there are no operand
+#       nodes to patch — `arith_text_dispositions` does it on the raw text.
 run_convert '#!/bin/bash
 declare -a a=(10 20 30)
 i=1
 echo "${a[i+1]}"'
-[[ $rc = 0 && $out == *'${a[$(( i+1 ))]}'* && -z $err ]]; chk 57.87
+[[ $rc = 0 && $out == *'${a[$(( ${i:?i is not an integer}+1 ))]}'* && -z $err ]]; chk 57.87
 
 # 57.88 a nested subscript nests as an expansion, not as arithmetic.
 # tree-sitter-bash cannot parse this form at all — it yields an ERROR node —
@@ -1171,6 +1174,69 @@ echo "true is a word here"
 # a comment mentioning false
 echo ok'
 [[ $rc = 0 && $out != *'externalized, DD#23'* ]]; chk 57.147
+
+# ── DD#57 string→int disposition (DG, 2026-09-14) ──────────────────
+# Bash has one scalar type, so `i=1` is a string that arithmetic silently
+# coerces; sash requires the coercion to be spelled (SB4030). The converter
+# cannot derive the answer from the source, so DG chose **abort**: emit
+# `${i:?msg}`. It keeps "bad input is an error" rather than inventing a zero,
+# and diverges from bash only on input bash would have silently read as 0.
+
+# 57.148 a bare read in $(( )) gets the abort disposition
+run_convert '#!/bin/bash
+i=1
+echo $(( i + 1 ))'
+[[ $rc = 0 && $out == *'$(( ${i:?i is not an integer} + 1 ))'* && -z $err ]]; chk 57.148
+
+# 57.149 `$i` is the same read, same disposition
+run_convert '#!/bin/bash
+i=1
+echo $(( $i + 1 ))'
+[[ $rc = 0 && $out == *'${i:?i is not an integer}'* && $out != *'$i '* && -z $err ]]; chk 57.149
+
+# 57.150 `${i}` likewise
+run_convert '#!/bin/bash
+i=1
+echo $(( ${i} + 1 ))'
+[[ $rc = 0 && $out == *'${i:?i is not an integer}'* && -z $err ]]; chk 57.150
+
+# 57.151 `declare -i` converts to sash `int`, which needs no disposition —
+#        adding one would be noise on a name that is already well-typed.
+run_convert '#!/bin/bash
+declare -i j=2
+echo $(( j + 1 ))'
+[[ $rc = 0 && $out == *'int j=2'* && $out == *'$(( j + 1 ))'* && $out != *':?'* ]]; chk 57.151
+
+# 57.152 an assignment TARGET is written, not read. `${c:?…} = …` is both
+#        wrong and unparseable, so the left side of `=` is left alone.
+run_convert '#!/bin/bash
+i=1
+(( c = i + 1 ))
+echo $c'
+[[ $rc = 0 && $out == *'(( c = ${i:?i is not an integer} + 1 ))'* ]]; chk 57.152
+
+# 57.153 `k++` is a write too
+run_convert '#!/bin/bash
+k=0
+(( k++ ))
+echo $k'
+[[ $rc = 0 && $out == *'(( k++ ))'* && $out != *'k:?'* ]]; chk 57.153
+
+# 57.154 `${#s}` is a length operator, not a plain read. An earlier cut of
+#        this feature matched it on child count alone and replaced the whole
+#        expansion, silently dropping the `#` — the converted program then
+#        computed something else entirely.
+run_convert '#!/bin/bash
+s="hello"
+echo $(( ${#s} + 1 ))'
+[[ $rc = 0 && $out == *'$(( (strlen $s) + 1 ))'* && $out != *'s:?'* ]]; chk 57.154
+
+# 57.155 a bare (non-arithmetic) read is untouched — the disposition is
+#        required by arithmetic, not by every use of a string.
+run_convert '#!/bin/bash
+i=1
+echo $i'
+[[ $rc = 0 && $out == *'echo $i'* && $out != *':?'* ]]; chk 57.155
 
 set -e
 tally
