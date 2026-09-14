@@ -27,6 +27,46 @@ that *looks* like it works. `(ab){2}` against `abab` happens to be the
 case a reader would check, and `(ab)b` does not match it, so the symptom
 is a clean `N` with no diagnostic anywhere.
 
+## Measured cost of supporting it (2026-09-14)
+
+DG asked whether the span replay "can be accomplished as a tiny change".
+Four pieces, and only the first two are tiny.
+
+**1. Track a span, not a point (~8 lines).** Add `prev_atom_end` next to
+`prev_atom_start`, and a small stack of `(` source positions parallel to
+`nbra`, so that on RBRA `prev_atom_start` can be set to the matching `(`
+rather than to the group's last atom.
+
+**2. Replay the span (~12 lines + 5 call sites).** The five existing
+`exprp = prev_atom_start; token = lex(…); operand(token);` sequences become
+one helper that loops until `exprp >= end` and dispatches
+`operator()`/`operand()` exactly as the main loop does — the replayed span
+contains LBRA/RBRA, which are operators, so a plain `operand()` will not do.
+
+**3. Capture-group identity (~5 lines, but this is where the risk is).**
+`operator(LBRA)` does `++cursubid`, so each replayed copy would allocate a
+**new** capture group: `(ab){2}` would report `nsub = 2` where POSIX says
+one group holding the last iteration. `nsub` is observable — DD#63 surfaces
+it as the group count, and `sash-regex.c` reads it to size the match vector
+— so this is not cosmetic. The fix is to reset `cursubid` to its pre-span
+value at the start of each replayed copy, which makes every copy re-derive
+the same ids and leaves `cursubid` at the right maximum afterwards. Small,
+but it mutates shared state inside `operator()`, which every other path
+also uses.
+
+**4. Re-derive the slot budget (~1 line, needs an argument).** The current
+`nslots += 128` per `{` is justified in a comment: 32 copies × (one operand
++ an operator emitting at most two) = 96, with margin. A *group* copy costs
+`2 + ~3·atoms` instead of 3, so a 32× repetition of a ten-atom group needs
+roughly a thousand slots and blows the budget. It must be budgeted from the
+span length rather than a constant. `newinst` enforces the cap regardless,
+so an under-budget is a clean compile error rather than corruption — which
+is the one comfort here.
+
+**Verdict: ~25 lines of mechanism, plus one shared-state change that needs
+care and one budget derivation that needs defending.** Not a one-liner, but
+not large either. Specs 39.28/39.29 pin the rejection and would flip.
+
 ## Options
 
 1. **Keep the rejection.** `{n,m}` is a sash addition to Pike's engine

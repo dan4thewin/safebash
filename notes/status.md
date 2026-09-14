@@ -34,8 +34,11 @@ sash-rt options.*
   stands — bash reads a non-numeric string as 0, so the converted program
   diverges on exactly those inputs, deliberately. Specs 57.148–57.155.
   - **Bug caught by existing specs**: the `${i}` arm first matched on child
-    count, which is also true of `${#s}` — it dropped the length operator and
-    silently computed something else. Now matches on node text.
+    count, which is also true of `${#s}` — it dropped the length operator.
+    Note the asymmetry that made this dangerous: `${#s}` is *bash* input
+    (SB4038 retired it in sash, so the converter's whole job there is to emit
+    `(strlen $s)`), and the **buggy output was legal sash**. `s="42"` would
+    have compiled and printed 43 instead of 3. Now matches on node text.
 
 **Three legacy carve-outs in three journals.** 317's dead protocol, 318's
 `starts_with('`')`, 319's child-count test. Each was an explicit special case
@@ -182,18 +185,51 @@ llvm-cov works there today and is **not** part of this problem.
 
 | | approach | cost | what it buys |
 |---|---|---|---|
-| **a** | **Write the `.profraw` ourselves.** Implement `__llvm_profile_write_file` in `no_std` Rust over rustix and call it explicitly before `_exit`. The counters and section symbols already exist; this is serialising them in a documented format. | medium, and **coupled to the profraw version** — an LLVM bump can silently corrupt output | real line + branch coverage, same `llvm-cov` pipeline as the compiler, no source changes |
-| **b** | **Dump the raw sections and reconstruct offline.** Emit `__llvm_prf_cnts` to a fd at exit; rebuild a `.profraw` in the harness. | same format coupling as (a), plus a second moving part | same as (a); the only advantage is the format knowledge sits in Python, where a break is visible |
+| **a** | **Link compiler-rt's buffer writer and drain it ourselves.** `__llvm_profile_write_buffer()` does the serialising; we only supply the destination. See the measurement below. | **small** — ~40 lines of `no_std` Rust plus build wiring; **no format coupling at all** | real line + branch coverage, same `llvm-cov` pipeline as the compiler, no source changes |
+| **b** | **Reimplement the `.profraw` serialiser.** Write the header and sections ourselves from `__llvm_prf_*`. | medium, and **coupled to the profraw version** — an LLVM bump can silently corrupt output | nothing (a) does not already give. Listed only to record that it was measured and is strictly worse. |
 | **c** | **Hosted shadow build.** Compile the same sources as a `std` crate for coverage only. **There is precedent**: `inner.rs` exists *specifically* for this and was `include!()`ed by a `sash-rt-tests` crate — which no longer exists. | low | only reaches the pure parts. `inner.rs` is **249 of 3879 lines — 6%**. The syscall wrappers, where the interesting bugs are, cannot be built hosted. |
 | **d** | **Bespoke counters.** A feature-gated table inside `sash-rt`, bumped at chosen points, written with `write(2)` at exit. | low per counter, unbounded in aggregate | full control, no LLVM coupling — but it is hand-placed, so it measures what someone remembered to measure. That is the opposite of what the campaign is for. |
 | **e** | **Declare it out of scope and cover by behavior.** The spec sweep already drives `sash-rt` through every compiled binary. Prove *function-level* reach with `perf` sampling or `-Z instrument-mcount` rather than line coverage. | lowest | honest, cheap, and no false precision — but it cannot answer "which branch of this parser never ran", which is the question the campaign has been asking |
 
-**Recommendation: (a).** It is the only option that produces the same kind of
-number for `sash-rt` that we already have for the compiler, and the format
-coupling is a known, testable failure — a corrupt `.profraw` fails loudly in
-`llvm-cov`, it does not silently under-report. (c) is worth doing *anyway* as
-a cheap unit-test home for `inner.rs`, but at 6% it is not an answer to the
-coverage question. (e) is the honest fallback if (a) proves brittle.
+**Recommendation: (a), and it is far cheaper than first estimated.** The
+initial write-up assumed (a) meant reimplementing the serialiser, and costed
+it as "medium, coupled to the profraw version". Measured, it is neither.
+
+`__llvm_profile_write_file()` is the part that needs libc — path munging,
+`FILE*`, locking, `atexit`. `__llvm_profile_write_buffer()` is not, and it
+lives in a different object. Taking the symbol closure of the buffer path out
+of `libclang_rt.profile-x86_64.a`:
+
+```
+InstrProfilingBuffer.c.o   InstrProfilingWriter.c.o
+InstrProfilingPlatformLinux.c.o   InstrProfilingInternal.c.o
+InstrProfilingVersionVar.c.o   InstrProfilingNameVar.c.o
+InstrProfiling.c.o                                    — 52 KB total
+```
+
+`ld -r` over those seven leaves exactly **three** strong undefined symbols:
+
+| symbol | supplied by |
+|---|---|
+| `__ehdr_start` | the linker, in any static link |
+| `memcpy` | **`sash-rt/src/lib.rs:32`, already there** |
+| `memset` | **`sash-rt/src/lib.rs:42`, already there** |
+
+The `__start___llvm_prf_*` / `__stop___llvm_prf_*` section bounds are weak and
+linker-provided. Nothing else is missing. The libc surface of the *full*
+archive is ~42 symbols including a `FILE*` layer and `printf`; the buffer path
+needs two, and we have both.
+
+So the work is: link seven objects behind a feature flag, then
+`__llvm_profile_get_size_for_buffer()` → `sash_alloc` →
+`__llvm_profile_write_buffer()` → `openat`/`write` over rustix before
+`_exit`. **~40 lines of Rust.** compiler-rt does the serialisation, so there
+is **no profraw-version coupling** — the thing that made (a) look risky was an
+artefact of assuming we would write the format ourselves.
+
+(c) is still worth doing on its own merits as a unit-test home for `inner.rs`,
+but at 6% it was never an answer to the coverage question. (b), (d) and (e)
+are now strictly dominated.
 
 ## ══ STATUS (2026-09-14) — coverage: DD#109 landed, uncovered remainder dispositioned ══
 
