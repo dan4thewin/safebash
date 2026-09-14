@@ -292,6 +292,13 @@ fn run_structural_checks(input: &str, program: &crate::ir::Program) {
     // rule, so it runs with the structural checks — crucially BEFORE
     // `desugar_write`, which synthesises exactly that form internally.
     vdiags.extend(validate::check_echo_no_flags(program));
+    // A heredoc leaks its body lines into the token stream as bare commands,
+    // and its own `__HEREDOC__` marker reaches the command-head check, so the
+    // batch carries SB5011s naming an internal sentinel. SB5002 is the real
+    // error; report it alone rather than the cascade it provokes.
+    if vdiags.iter().any(|d| d.code == "SB5002") {
+        vdiags.retain(|d| d.code == "SB5002");
+    }
     if !vdiags.is_empty() {
         print_diags(input, &vdiags);
         std::process::exit(1);

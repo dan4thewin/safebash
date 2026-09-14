@@ -6,7 +6,7 @@
 set -eu
 . common.sh
 setup coverage
-plan=99
+plan=101
 echo "1..$plan" >&3
 
 set +e
@@ -56,6 +56,15 @@ run_sash 'if { echo a; }; then echo hi; fi'
 # cov.14 heredocs are rejected (use a herestring) → SB5002
 run_sash 'cat <<EOF'
 [[ $rc != 0 && -z $out && $err == *SB5002* ]]; chk cov.14
+# cov.101 a heredoc as the whole command (no command name) is also SB5002.
+# This is the `check_heredoc` name arm; cov.14 above covers the args arm.
+run_sash '<<EOF'
+[[ $rc != 0 && -z $out && $err == *SB5002* ]]; chk cov.101
+# cov.102 the SB5002 cascade is suppressed: `__HEREDOC__` is an internal
+# lexer sentinel and must never reach a user-facing message, and the heredoc
+# body lines must not be re-reported as unknown commands (SB5011).
+run_sash '<<EOF'
+[[ $err != *__HEREDOC__* && $err != *SB5011* ]]; chk cov.102
 # cov.15 `$(status)` with no preceding command → SB5012
 run_sash 'echo $(status)'
 [[ $rc != 0 && -z $out && $err == *SB5012* ]]; chk cov.15
