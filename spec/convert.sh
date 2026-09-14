@@ -6,7 +6,7 @@ set -eu
 # Run only in native mode to avoid 3× redundancy.
 [[ ${SASH_MODE:-native} != native ]] && exit 0
 setup convert
-plan=153
+plan=165
 echo "1..$plan" >&3
 
 set +e
@@ -180,10 +180,13 @@ run_convert '#!/bin/bash
 arr=(a b c); echo ${#arr}; s=hi; echo ${#s}; echo ${#arr[@]}'
 [[ $rc = 0 && $out == *'$(strlen ${arr[0]})'* && $out == *'$(strlen $s)'* && $out == *'$(len arr)'* && $out != *'${#'* && -z $err ]]; chk 57.13c
 
-# conv.f1 $@ inside a function is preserved (function-local, DD#46)
+# conv.f1 $@ inside a function is NOT preserved — the DD#46 amendment of
+# 2026-08-26 rejects `$@`/`$*` universally, so a function body needs the
+# `args` forms too. This spec used to pin the unconverted gap. `echo` joins,
+# so the target here is `$(join args)` and not the `@args` splat (SB5030).
 run_convert '#!/bin/bash
 greet() { echo "$@"; }'
-[[ $rc = 0 && $out == *'"$@"'* && $out != *'argv'* && -z $err ]]; chk conv.f1
+[[ $rc = 0 && $out == *'echo "$(join args)"'* && $out != *'"$@"'* && $out != *'argv'* && -z $err ]]; chk conv.f1
 
 # conv.f2 $1 inside a function is preserved
 run_convert '#!/bin/bash
@@ -1029,6 +1032,98 @@ run_convert '#!/bin/bash
 s=abc
 echo "${#s}"'
 [[ $rc = 0 && $out == *'$(strlen $s)'* && $out != *'(( '* ]]; chk 57.128
+
+# ── DD#75 §5 / DD#81: in-function $@ / $* / $# → the `args` array ──
+# Top-level positionals go to $(argv)/$(arg N)/$(argc); inside a function they
+# are the caller's arguments, which sash exposes as `args`.
+
+# 57.129 `$#` needs NO conversion — DD#46 keeps it function-local *and*
+# sash-native (it is scalar, so the `$` sigil is consistent). The braced
+# spelling is the only one that moves: `${#}` is SB4034, because `#` inside
+# `${…}` reads as the length operator. (This task was filed claiming the
+# target was `${#args}`; that is SB4038, retired by DD#75 §4. It is neither.)
+run_convert '#!/bin/bash
+f() { echo $#; echo ${#}; }
+f a b'
+[[ $rc = 0 && $out == *'echo $#'* && $out == *'echo $#'* \
+   && $out != *'len args'* && $out != *'${#'* ]]; chk 57.129
+
+# 57.130 …including inside arithmetic, where it is left exactly as written
+run_convert '#!/bin/bash
+f() { n=$(( $# + 1 )); echo $n; }
+f a'
+[[ $rc = 0 && $out == *'$(( $# + 1 ))'* && $out != *'len args'* ]]; chk 57.130
+
+# 57.131 `$*` is always the joined string
+run_convert '#!/bin/bash
+f() { echo "$*"; }
+f a b'
+[[ $rc = 0 && $out == *'echo "$(join args)"'* ]]; chk 57.131
+
+# 57.132 a for-in source takes the splat, and the quotes must go: sash reads
+# a quoted "@args" as the plain literal.
+run_convert '#!/bin/bash
+f() { for x in "$@"; do echo "$x"; done; }
+f a b'
+[[ $rc = 0 && $out == *'for x in @args;'* && $out != *'"@args"'* ]]; chk 57.132
+
+# 57.133 a command argument takes the splat too
+run_convert '#!/bin/bash
+g() { echo "$1"; }
+f() { g "$@"; }
+f a'
+[[ $rc = 0 && $out == *'g @args'* && $out != *'"@args"'* ]]; chk 57.133
+
+# 57.134 …except echo, which joins its arguments: a splat there is SB5030
+run_convert '#!/bin/bash
+f() { echo "$@"; }
+f a b'
+[[ $rc = 0 && $out == *'echo "$(join args)"'* && $out != *'echo @args'* ]]; chk 57.134
+
+# 57.135 an assignment right-hand side is a value, not an argument list
+run_convert '#!/bin/bash
+f() { j="$@"; echo "$j"; }
+f a b'
+[[ $rc = 0 && $out == *'j="$(join args)"'* && $out != *'@args'* ]]; chk 57.135
+
+# 57.136 `$@` inside a larger string has no sash form — MANUAL, not a silent
+# `"@args"` literal
+run_convert '#!/bin/bash
+g() { echo "$1"; }
+f() { g "pre $@ post"; }
+f a'
+[[ $rc = 0 && $out == *'# MANUAL:'* && $out == *'g "pre $@ post"'* ]]; chk 57.136
+
+# 57.137 unquoted `$@` converts, with a CHECK: bash re-splits on IFS
+run_convert '#!/bin/bash
+g() { echo "$1"; }
+f() { g $@; }
+f a'
+[[ $rc = 0 && $out == *'g @args'* && $out == *'# CHECK: unquoted `$@`'* ]]; chk 57.137
+
+# 57.138 the braced `${@}`/`${*}` take the same treatment as the bare ones
+run_convert '#!/bin/bash
+f() { echo "${*}"; g "${@}"; }
+g() { echo "$1"; }
+f a b'
+[[ $rc = 0 && $out == *'echo "$(join args)"'* && $out == *'g @args'* ]]; chk 57.138
+
+# 57.139 control: at top level the argv trio is still what is emitted
+run_convert '#!/bin/bash
+for x in "$@"; do echo "$x"; done'
+[[ $rc = 0 && $out == *'$(argv 1)'* && $out != *'@args'* ]]; chk 57.139
+
+# 57.140 a function body mixing all three converts to something that compiles
+run_convert '#!/bin/bash
+g() { echo "g:$1"; }
+f() {
+  echo $#
+  for x in "$@"; do echo "$x"; done
+  echo "$*"
+  g "$@"
+}
+f a b'
+[[ $rc = 0 && $out != *'$@'* && $out != *'$*'* && $out == *'echo $#'* && -z $err ]]; chk 57.140
 
 set -e
 tally

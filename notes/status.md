@@ -1,3 +1,59 @@
+## ══ STATUS (2026-09-14) — `$@` in functions, and a gate that rotted twice ══
+
+**Journal 300.** Sweep **4481 passing, 9 skipped, 0 failing, 0 flips** (+16:
+12 converter native-only, 2 glob_splat × 2 modes). Fail-first predicted the
+exact set of 12 and observed it.
+
+`converter-dollar-at-migration` is **done**. In-function `$@`/`$*` were
+entirely unconverted; the top-level half had been done long ago.
+
+## Context decides the target
+
+| bash (in a function) | sash |
+|---|---|
+| `for x in "$@"` | `for x in @args` (quotes must go) |
+| `g "$@"` | `g @args` |
+| `echo "$@"` | `echo "$(join args)"` — `echo` joins; a splat is SB5030 |
+| `j="$@"` | `j="$(join args)"` — a value, not an argument list |
+| `"pre $@ post"` | **MANUAL** — no sash form; `"@args"` is a plain literal |
+| `"$*"` / `${*}` | `$(join args)` |
+
+Unquoted `$@` converts with a CHECK (bash re-splits on IFS; sash catches the
+shape that matters as SB5042, so it is not silent).
+
+## The filing's `$#` gate was wrong in two directions
+
+It read "`$#` → `${#args}` per DD#75 sugar, still valid".
+
+- `${#args}` is **SB4038** — DD#75 §4 retired that sugar after filing.
+- The obvious repair, `$(len args)`, is **also wrong**. DD#46 keeps `$#`
+  function-local *and sash-native*. `fn f { echo $# }` compiles; so does
+  `$(( $# + 1 ))`.
+
+Bare `$#` needs **no conversion**. Only braced `${#}` moves (SB4034 → `$#`).
+
+Caught by three specs failing — `conv.f1`/`conv.f3`/`conv.x8` all pinned
+"in-function positionals pass through untouched". `conv.f1` genuinely was a
+stale pin of the gap this task closed. **`conv.f3` and `conv.x8` were right**,
+about the exact thing I had just got wrong. Reading the DD before overriding a
+spec is the only reason it did not ship.
+
+Third materially-wrong filing in four days. **Re-measure before implementing.**
+
+## SB5030 recommended a form the compiler rejects — second instance
+
+`echo $(join @a)` is SB5062; `join` takes the array by name. DD#100 line 119
+already knew and deferred it into `dd75-len-collection-only-strlen`, which is
+marked **done with that gate unmet** — the bug survived being found, written
+down, and assigned.
+
+Same defect as journal 299's SB4035. Filed
+**`audit-diagnostic-suggested-spellings` (P2)** to compile every suggested
+spelling in every message. `gs.36` pins the message text; `gs.37` **runs** the
+form it recommends — pinning text alone is how this class persists.
+
+---
+
 ## ══ STATUS (2026-09-13) — the overlapping-patch audit, and five bugs under it ══
 
 **Journal 299.** Sweep **4465 passing, 9 skipped, 0 failing, 0 flips** (+14:

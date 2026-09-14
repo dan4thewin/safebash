@@ -10,7 +10,7 @@
 set -eu
 . common.sh
 setup glob_splat
-plan=38
+plan=40
 echo "1..$plan" >&3
 
 set +e
@@ -198,6 +198,17 @@ run_sash 'array a=(x); if [[ -n @a ]] { echo T }'
 # ice.16 a splat as a redirect target is SB5025, not a silent misdirection
 run_sash 'array a=(o1 o2); echo hi > @a'
 [[ $rc != 0 && $err == *SB5025* ]]; chk ice.16
+
+# gs.36 SB5030's own advice must be a form the compiler accepts. It used to
+#       read `echo $(join @a)`, which is SB5062 — a diagnostic recommending a
+#       rejected spelling (DD#100 line 119 flagged it; the cleanup was filed
+#       into a task that closed without it). `join` takes the array by NAME.
+run_sash 'array a=(x y); echo @a'
+[[ $rc != 0 && $err == *SB5030* && $err == *'$(join a)'* && $err != *'join @a'* ]]; chk gs.36
+
+# gs.37 …and the recommended form actually compiles and runs
+run_sash 'array a=(x y); echo $(join a)'
+[[ $rc = 0 && $out = "x y" && -z $err ]]; chk gs.37
 
 set -e
 tally

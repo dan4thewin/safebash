@@ -3822,7 +3822,10 @@ fn is_array_splat_source(expr: &Expr) -> bool {
 /// DD#69 §3: `echo` join-and-prints its arguments, so a named-array splat
 /// there would flatten the array (DD#22) and reintroduce word-splitting
 /// downstream. Reject `echo @a` with SB5030, directing to the explicit
-/// `echo $(join @a)`. External commands keep the structured argv splat.
+/// `echo $(join a)` — the *name*, not the splat: DD#100 removed the splat
+/// spelling from `join`, and `$(join @a)` is now SB5062. This advice still
+/// said `@a` after that change, so following it swapped one error for
+/// another.
 fn check_echo_splat(c: &Command, diags: &mut Vec<Diagnostic>) {
     let ExprKind::Literal(name) = &c.name.kind else {
         return;
@@ -3837,7 +3840,7 @@ fn check_echo_splat(c: &Command, diags: &mut Vec<Diagnostic>) {
                 "SB5030",
                 "`echo` joins its arguments into one output stream, so an array \
                  splat there would flatten the array. Use an explicit \
-                 join: `echo $(join @a)`"
+                 join: `echo $(join a)`"
                     .to_string(),
             ));
         }

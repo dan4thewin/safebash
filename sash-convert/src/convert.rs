@@ -1344,6 +1344,140 @@ fn in_arithmetic(node: Node, source: &[u8]) -> bool {
     false
 }
 
+/// DD#75 §5 / DD#81: in-function `$@` / `$*` / `$#` are the caller's
+/// arguments, which sash exposes as the implicit `args` array.
+///
+/// | bash | sash |
+/// |---|---|
+/// | `$#` | `$(len args)`, or `(len args)` in arithmetic |
+/// | `$*` / `"$*"` | `$(join args)` |
+/// | `"$@"` as a for-in source or command argument | `@args` |
+/// | `"$@"` to `echo` / `write` | `$(join args)` (SB5030 forbids a splat) |
+/// | `"$@"` anywhere else | `$(join args)` |
+///
+/// `${#args}` is **not** a target: DD#75 §4 retired the length sugar and it is
+/// SB4038. The splat has to be unquoted (DD#22) — sash reads `"@args"` as the
+/// plain five-character literal, so a `$@` embedded in a larger string has no
+/// mechanical answer and gets a MANUAL rather than a silent literal.
+fn convert_function_args(
+    node: Node,
+    name: &str,
+    start: usize,
+    end: usize,
+    source: &[u8],
+    patches: &mut Vec<Patch>,
+    prefix_lines: &mut Vec<(usize, String)>,
+) {
+    let join = |patches: &mut Vec<Patch>| {
+        patches.push(Patch::replace_span(
+            start,
+            end,
+            "$(join args)".to_string(),
+            Some(node_text(node, source).to_string()),
+        ));
+    };
+    match name {
+        // DD#46: `$#` is genuinely function-local and *is* sash-native — it is
+        // scalar, so its `$` sigil is consistent and nothing needs rewriting.
+        // Only the braced spelling has to move: `${#}` is SB4034, since `#` in
+        // `${…}` reads as the (absent) length operator.
+        "#" => {
+            if end - start > 2 {
+                patches.push(Patch::replace_span(
+                    start,
+                    end,
+                    "$#".to_string(),
+                    Some(node_text(node, source).to_string()),
+                ));
+            }
+        }
+        "*" => join(patches),
+        "@" if args_splat_context(node, source) => {
+            let target = splat_replace_node(node, start);
+            if target.id() == node.id() && node.parent().is_some_and(|p| p.kind() == "string") {
+                prefix_lines.push((
+                    node.start_position().row,
+                    "# MANUAL: `$@` inside a larger string — bash word-splits it \
+                     into several words there, and sash has no such form (a \
+                     quoted `\"@args\"` is the plain literal). Rewrite as a loop \
+                     over `@args`, or use `$(join args)` if one joined word was \
+                     what you meant"
+                        .into(),
+                ));
+                return;
+            }
+            let from = if target.id() == node.id() {
+                start
+            } else {
+                target.start_byte()
+            };
+            // An *unquoted* bash `$@` re-splits each argument on IFS; `@args`
+            // does not, so `f "a b"` reaching `g $@` passes two arguments in
+            // bash and one here. sash catches the shape that matters (SB5042,
+            // wrong arity) rather than diverging silently, but say so.
+            if target.id() == node.id() {
+                prefix_lines.push((
+                    node.start_position().row,
+                    "# CHECK: unquoted `$@` — bash re-splits each argument on \
+                     IFS, `@args` passes them as they are. Equivalent unless an \
+                     argument contains whitespace; `\"$@\"` was the exact form"
+                        .into(),
+                ));
+            }
+            patches.push(Patch::replace_span(
+                from,
+                target.end_byte(),
+                "@args".to_string(),
+                None,
+            ));
+        }
+        "@" => join(patches),
+        _ => {}
+    }
+}
+
+/// Whether a `$@` here takes the splat (`@args`) rather than the joined form.
+///
+/// A for-in source and a command argument both take a list. `echo`/`write` are
+/// the exception: they join their arguments into one stream, so a splat there
+/// is SB5030 and the joined form is both legal and what bash prints anyway.
+fn args_splat_context(node: Node, source: &[u8]) -> bool {
+    if for_in_header_loop(node).is_some() {
+        return true;
+    }
+    match argument_command_name(node, source).as_deref() {
+        Some("echo") | Some("write") | None => false,
+        Some(_) => true,
+    }
+}
+
+/// The name of the command this node is an *argument* of, looking through the
+/// quoting wrappers only. `None` when the node is the command name itself, or
+/// is not in command-argument position at all.
+///
+/// Stricter than [`enclosing_command_name`], which keeps walking through any
+/// ancestor: a `$@` on an assignment right-hand side has a `command` ancestor
+/// in tree-sitter-bash, and treating that as an argument slot would emit a
+/// splat where a joined string is meant.
+fn argument_command_name(node: Node, source: &[u8]) -> Option<String> {
+    let mut cur = node;
+    while let Some(p) = cur.parent() {
+        if p.kind() == "command" {
+            let name_node = p.child_by_field_name("name")?;
+            if name_node.id() == cur.id() {
+                return None;
+            }
+            return Some(node_text(name_node, source).to_string());
+        }
+        if matches!(p.kind(), "string" | "concatenation" | "raw_string") {
+            cur = p;
+            continue;
+        }
+        return None;
+    }
+    None
+}
+
 fn convert_simple_expansion(
     node: Node,
     source: &[u8],
@@ -1398,6 +1532,7 @@ fn convert_simple_expansion(
                     continue;
                 }
                 if in_function {
+                    convert_function_args(node, name, start, end, source, patches, prefix_lines);
                     continue;
                 }
                 // DD#60: $@/$* → $(argv 1) (array splat); $# → user-arg count
@@ -1583,13 +1718,33 @@ fn convert_expansion(
             return;
         }
         if inner == "@" || inner == "*" {
-            if !in_function {
+            if in_function {
+                convert_function_args(
+                    node,
+                    inner,
+                    node.start_byte(),
+                    node.end_byte(),
+                    source,
+                    patches,
+                    prefix_lines,
+                );
+            } else {
                 convert_splat(node, node.start_byte(), source, patches, prefix_lines);
             }
             return;
         }
         if inner == "#" {
-            if !in_function {
+            if in_function {
+                convert_function_args(
+                    node,
+                    inner,
+                    node.start_byte(),
+                    node.end_byte(),
+                    source,
+                    patches,
+                    prefix_lines,
+                );
+            } else {
                 patches.push(Patch::replace_node(
                     node,
                     "$(( (argc) - 1 ))".to_string(),

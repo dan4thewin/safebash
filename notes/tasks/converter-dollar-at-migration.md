@@ -1,6 +1,6 @@
 ---
 title: "Converter: $@ / $* → @args / $(join args); warn on quoted splat \"$@\""
-status: ready
+status: done
 priority: P3
 kind: converter
 depends: []
@@ -9,6 +9,7 @@ gates:
   - "in-function `\"$@\"` (quoted, join intent) → `$(join args)`; `$*` → `$(join args)`"
   - "when it cannot determine intent, emit a review WARNING pointing at @args vs $(join args) (a bare `\"@args\"` literal is NOT a valid target — see below)"
   - "no regression in sash-convert tests"
+  - "`$#` left alone (DD#46: sash-native); braced `${#}` → `$#` (SB4034)"
 ---
 
 ## Context
@@ -29,7 +30,21 @@ forms so converted scripts compile.
 - **`"$@"` where a single joined string is wanted** (echo/assignment/test) →
   **`$(join args)`**.
 - **`$*` / `"$*"`** → **`$(join args)`** (implicit-join is always explicit now).
-- `$1..$9`, `$#` are unchanged (`$#` → `${#args}` per DD#75 sugar, still valid).
+- `$1..$9`, `$#` are unchanged.
+
+  **Correction (2026-09-14, on implementation).** This line originally read
+  "`$#` → `${#args}` per DD#75 sugar, still valid". Both halves are wrong, and
+  the filing rotted in two separate directions:
+  - `${#args}` is **SB4038** — DD#75 §4 retired the `${#…}` length sugar after
+    this task was filed.
+  - The replacement is not `$(len args)` either. DD#46 keeps `$#` genuinely
+    function-local **and sash-native**: "they are scalar, so their `$` sigil is
+    consistent". `fn f { echo $# }` and `$(( $# + 1 ))` both compile today.
+    Measured, not assumed.
+
+  So bare `$#` needs **no conversion at all**. The only `$#` that moves is the
+  braced `${#}`, which is SB4034 (`#` inside `${…}` reads as the absent length
+  operator) → emit `$#`. Specs 57.129/57.130 pin both halves.
 
 ## The quoted-splat warning (DG 2026-08-25)
 
