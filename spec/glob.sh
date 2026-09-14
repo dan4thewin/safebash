@@ -13,7 +13,7 @@
 set -eu
 . common.sh
 setup glob
-plan=11
+plan=14
 echo "1..$plan" >&3
 
 set +e
@@ -65,23 +65,43 @@ run_sash '/usr/bin/touch g8a.g8x g8b.g8x; array a=(*.g8x); echo $(len a); echo $
 run_sash 'array a=(*.nomatchZZ); echo $(len a)'
 [[ $rc = 0 && $out = "0" && -z $err ]]; chk g.9
 
-# ── DD#73 + readdir regex filter: `array a=(GLOB =~ 'RE')` ───────────
-# The filter form narrows the readdir result by regex. Nothing in the spec
-# corpus reached it; the only coverage was a Rust test that hardcoded an
-# absolute path from a different host, so it could never have passed here.
-# g.10 the regex filter keeps only the entries it matches. The pattern is
-# bare `*` by design: the regex replaces `?` and `[abc]`, which the glob
-# itself does not support (journal 042).
-run_sash "/usr/bin/touch g10a.ff g10b.ff g10c.gg
-array a=(* =~ '\\.ff\$')
-echo \$(len a)"
-[[ $rc = 0 && $out = "2" && -z $err ]]; chk g.10
+# ── SB5075: the `arr=(GLOB =~ 'RE')` regex-filter shorthand is retired (DD#108)
+# It was a list literal whose meaning depended on its own contents: `(* =~ re)`
+# filtered, `(x =~ y)` was a plain 3-element array, and `(* =~ a b)` silently
+# became a 4-element one. Quoting could not disambiguate it either — every
+# quoting of the operator desugared identically — so making quotes the escape
+# would have meant letting quotes change a list's arity. The loop replaces it
+# and names what it matches.
 
-# g.11 a regex matching nothing yields an empty array, not an error
-run_sash "/usr/bin/touch g11a.hh
-array a=(* =~ 'nomatchQQ\$')
+# g.10 the shorthand is rejected rather than silently becoming a literal array
+run_sash "array a=(* =~ '\\.ff\$')
 echo \$(len a)"
-[[ $rc = 0 && $out = "0" && -z $err ]]; chk g.11
+[[ $rc != 0 && -z $out && $err == *SB5075* ]]; chk g.10
+
+# g.11 …including the form that was the original bug: a non-bare glob used to
+# fall through to a 3-element array of un-expanded literal text, no diagnostic
+run_sash "array a=(*.ff =~ '\\.ff\$')
+echo \$(len a)"
+[[ $rc != 0 && -z $out && $err == *SB5075* ]]; chk g.11
+
+# g.12 the rule is uniform — a bare `=~` anywhere in an array literal is out,
+# not just when element 0 happens to hold a glob metacharacter
+run_sash 'array a=(x =~ y)
+echo $(len a)'
+[[ $rc != 0 && -z $out && $err == *SB5075* ]]; chk g.12
+
+# g.13 a QUOTED `=~` is an ordinary string element and stays legal — this is
+# the escape the diagnostic names, and the reason the rule can be uniform
+run_sash "array a=(x '=~' y)
+echo \$(len a)"
+[[ $rc = 0 && $out = "3" && -z $err ]]; chk g.13
+
+# g.14 the replacement the message advises actually compiles and filters
+run_sash "/usr/bin/touch g14a.ff g14b.ff g14c.gg
+array a
+for f in * { if [[ \$f =~ '\\.ff\$' ]] { a += (\$f) } }
+echo \$(len a)"
+[[ $rc = 0 && $out = "2" && -z $err ]]; chk g.14
 
 set -e
 tally

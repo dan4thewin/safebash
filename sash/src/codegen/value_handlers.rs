@@ -26,10 +26,9 @@ pub(super) fn handle_param_expansion(
     externs: &ExternFuncs,
     _exit_status_var: Option<Variable>,
 ) -> (cranelift_codegen::ir::Value, cranelift_codegen::ir::Value) {
-    // arr=(*.sh) / glob_regex bypass the var load and go straight to libc glob.
-    if matches!(operator, "glob" | "glob_regex") {
-        let use_regex = operator == "glob_regex";
-        return emit_glob_expansion(operand, use_regex, builder, module, literals, externs);
+    // arr=(*.sh) bypasses the var load and goes straight to the glob syscall.
+    if operator == "glob" {
+        return emit_glob_expansion(operand, builder, module, literals, externs);
     }
 
     let (s_ptr, s_len) = load_var_or_empty(var, vars, builder);
@@ -84,7 +83,6 @@ fn emit_table_len(
 
 fn emit_glob_expansion(
     operand: &str,
-    use_regex: bool,
     builder: &mut FunctionBuilder,
     module: &mut ObjectModule,
     literals: &HashMap<String, cranelift_module::DataId>,
@@ -99,12 +97,7 @@ fn emit_glob_expansion(
     let pat_gv = module.declare_data_in_func(pat_id, builder.func);
     let pat_ptr = builder.ins().global_value(I64, pat_gv);
     let pat_len = builder.ins().iconst(I64, operand.len() as i64);
-    let func_id = if use_regex {
-        externs.glob_regex
-    } else {
-        externs.glob
-    };
-    let func_ref = module.declare_func_in_func(func_id, builder.func);
+    let func_ref = module.declare_func_in_func(externs.glob, builder.func);
     let call = builder
         .ins()
         .call(func_ref, &[dir_ptr, dir_len, pat_ptr, pat_len]);

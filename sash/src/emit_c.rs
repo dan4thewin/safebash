@@ -346,11 +346,7 @@ fn emit_prologue(out: &mut String) {
         "extern SashTable* sash_glob(const char* d, i64 dl, const char* p, i64 pl);"
     )
     .unwrap();
-    writeln!(
-        out,
-        "extern SashTable* sash_glob_regex(const char* d, i64 dl, const char* p, i64 pl);"
-    )
-    .unwrap();
+    writeln!(out,).unwrap();
     writeln!(
         out,
         "extern const char* sash_table_value(SashTable* t, i64 idx, i64* out_len);"
@@ -2838,7 +2834,7 @@ fn highest_version(name: &str, types: &VarTypes) -> Option<((String, u32), VarTy
 /// (it never appears as a ParamExpansion with empty operator in
 /// SSA — the transform converts it to SsaValue::Var).
 ///
-/// Deferred to later phases: glob / glob_regex (needs `.` dir
+/// Deferred to later phases: glob (needs `.` dir
 /// literal), regex_replace (DD#37), arrkeys / arrvals / arrjoin
 /// (needs table runtime), arrlen, strlen_elem.
 fn emit_param_expansion(
@@ -2858,7 +2854,7 @@ fn emit_param_expansion(
         "arrlen" => emit_arrlen(e, &s_ptr),
         "arrvals" | "arrjoin" => emit_arr_values_joined(e, operator, &s_ptr, operand),
         "arrkeys" => emit_arr_keys_joined(e, operator, &s_ptr, operand),
-        "glob" | "glob_regex" => emit_glob_c(e, operator, operand),
+        "glob" => emit_glob_c(e, operand),
         // DD#65: only `substring` (`:off:len`) survives as a ParamExpansion
         // op here; `:-` is `SsaValue::DefaultValue`, the `:s/` sed op is a
         // `SsaValue::RegexReplace`, and every dropped op is given a distinct
@@ -2875,18 +2871,12 @@ fn emit_param_expansion(
 /// `array a=(*)` glob — mirrors emit_glob_expansion (codegen/value_handlers.rs:119).
 /// Calls sash_glob(".", pattern) which returns a SashTable*; the table
 /// pointer becomes the array var's _ptr (len 0), like the indexed-array path.
-fn emit_glob_c(e: &mut Emit, operator: &str, operand: &str) -> CStr {
-    let func = if operator == "glob_regex" {
-        "sash_glob_regex"
-    } else {
-        "sash_glob"
-    };
+fn emit_glob_c(e: &mut Emit, operand: &str) -> CStr {
     let t = e.fresh();
     writeln!(
         e.out,
-        "    const char* {t}_p = (const char*){func}(\".\", 1, \"{pat}\", {len});",
+        "    const char* {t}_p = (const char*)sash_glob(\".\", 1, \"{pat}\", {len});",
         t = t,
-        func = func,
         pat = c_escape(operand),
         len = operand.len()
     )

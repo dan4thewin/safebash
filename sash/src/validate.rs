@@ -1274,7 +1274,41 @@ fn validate_expr(expr: &Expr, _parent_span: Span, diags: &mut Vec<Diagnostic>) {
                 format!("sash has only `*` globs — `**` is omitted: {}", s),
             ));
         }
+        ExprKind::Array(elems) => check_retired_regex_filter(elems, diags),
         _ => {}
+    }
+}
+
+/// SB5075 (DD#108): the `arr=(GLOB =~ 're')` regex-filter shorthand is retired.
+///
+/// It was a list literal whose meaning depended on its own contents, which is
+/// the one thing a list must never be. `(* =~ re)` filtered; `(x =~ y)` was a
+/// plain three-element array; `(* =~ a b)` silently became a four-element one,
+/// with no diagnostic for the difference. Quoting could not disambiguate it
+/// either — `(* =~ re)`, `(* '=~' re)`, `('*' =~ re)` and `("*" =~ re)` all
+/// desugared identically — so making quotes the escape would have meant
+/// letting quotes change a list's *arity and meaning* rather than a value.
+/// That is precisely the bash misfeature the subset exists to avoid.
+///
+/// The loop expresses it directly and, unlike the shorthand, names what it
+/// matches, so there is no basename-versus-path ambiguity to resolve.
+///
+/// A **quoted** `=~` stays legal: it is an ordinary string element, and the
+/// message names it as the escape.
+fn check_retired_regex_filter(elems: &[Expr], diags: &mut Vec<Diagnostic>) {
+    for e in elems {
+        if !matches!(&e.kind, ExprKind::Literal(s) if s == "=~") {
+            continue;
+        }
+        diags.push(Diagnostic::error_span(
+            e.span,
+            "SB5075",
+            "the `arr=(GLOB =~ 're')` regex-filter shorthand is retired — \
+             build the array with a loop, which also names what it matches: \
+             `array a; for f in GLOB { if [[ $f =~ 're' ]] { a += ($f) } }`. \
+             For a literal `=~` element, quote it: `arr=(x '=~' y)`."
+                .to_string(),
+        ));
     }
 }
 

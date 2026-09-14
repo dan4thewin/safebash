@@ -695,10 +695,6 @@ pub(super) fn declare_runtime_functions(module: &mut ObjectModule) -> ExternFunc
         .declare_function("sash_glob", Linkage::Import, &glob_sig)
         .expect("declare");
 
-    let glob_regex_func = module
-        .declare_function("sash_glob_regex", Linkage::Import, &glob_sig)
-        .expect("declare");
-
     // sash_trap(signum, handler) -> i64
     let mut trap_sig = module.make_signature();
     trap_sig.params.push(AbiParam::new(I64));
@@ -841,7 +837,6 @@ pub(super) fn declare_runtime_functions(module: &mut ObjectModule) -> ExternFunc
         epochseconds: epochseconds_func,
         trap: trap_func,
         glob: glob_func,
-        glob_regex: glob_regex_func,
         capture_start: capture_start_func,
         capture_end: capture_end_func,
         capture_start_buf: capture_start_buf_func,
@@ -970,7 +965,7 @@ impl<'a> Interner<'a> {
 
     fn intern_param_expansion(&mut self, operator: &str, operand: &str) {
         self.intern(operand);
-        if operator == "glob" || operator == "glob_regex" {
+        if operator == "glob" {
             self.intern(".");
         }
         // DD#33: per-element operations on arrvals

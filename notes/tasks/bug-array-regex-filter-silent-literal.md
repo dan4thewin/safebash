@@ -1,7 +1,28 @@
 ---
-status: next
+status: done
 priority: P2
 ---
+
+> **RESOLVED 2026-09-14 — DD#108, journal 305.** Neither of the two fix
+> options this task listed was taken. DG's ruling: the shorthand is retired
+> entirely (**SB5075**), because generalizing element 0 does not survive
+> contact with the rest of the form.
+>
+> The decisive measurement made after filing: **quoting was invisible to the
+> desugar.** `(* =~ re)`, `(* '=~' re)`, `('*' =~ re)` and `("*" =~ re)` all
+> produced identical output. So the escape hatch that would have made the
+> form tractable could not be wired without letting quotes change a list's
+> *arity and meaning* rather than a value — the bash trap the subset exists
+> to avoid. Combined with silent arity-sensitivity (`(* =~ a)` filtered,
+> `(* =~ a b)` did not) and the form's inability to name whether it matched
+> the basename or the DD#73 absolute path, the syntax itself was the defect.
+>
+> The `for` loop was already expressible and needs no new surface, so the
+> replacement costs nothing but verbosity — and it names `$f`, which removes
+> the match-target ambiguity by construction.
+>
+> `sash_glob_regex` is deleted with it.
+
 
 # `array a=(GLOB =~ 'RE')` silently yields literal words when GLOB isn't bare `*`
 

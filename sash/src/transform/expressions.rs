@@ -437,40 +437,19 @@ fn dq_to_value(parts: &[Expr], state: &VersionState) -> SsaValue {
     SsaValue::Concat(concat_parts)
 }
 
-/// `arr=(…)` array literal: detect two sash-native shorthand patterns
-/// (regex filter and single-glob) before falling back to IndexedArray.
+/// `arr=(…)` array literal: detect the single-glob shorthand before falling
+/// back to IndexedArray. The regex-filter shorthand `(GLOB =~ 're')` was
+/// retired by DD#108 and is rejected in `validate` (SB5075), so it never
+/// reaches here.
 fn lower_array_literal(elems: &[Expr], state: &VersionState) -> SsaValue {
     // An array-literal element is an elidable list position like a command
     // argument, so `@a` SPLICES its elements — `(p @a q)` is p,x,y,z, not a
     // 3-element array whose middle entry is the joined string.
     let vals: Vec<SsaValue> = elems.iter().map(|e| arg_to_value(e, state)).collect();
-    if let Some(v) = try_array_regex_filter(&vals) {
-        return v;
-    }
     if let Some(v) = try_array_single_glob(&vals) {
         return v;
     }
     SsaValue::IndexedArray(vals)
-}
-
-/// arr=(* =~ 'pat') → sash_glob(".") | grep -E 'pat' shorthand.
-fn try_array_regex_filter(vals: &[SsaValue]) -> Option<SsaValue> {
-    if vals.len() != 3 {
-        return None;
-    }
-    let (SsaValue::Literal(star), SsaValue::Literal(op), SsaValue::Literal(pat)) =
-        (&vals[0], &vals[1], &vals[2])
-    else {
-        return None;
-    };
-    if star != "*" || op != "=~" {
-        return None;
-    }
-    Some(SsaValue::ParamExpansion {
-        var: VarRef::new(".", 0),
-        operator: "glob_regex".to_string(),
-        operand: pat.clone(),
-    })
 }
 
 /// arr=(*.sh) → sash_glob(".", "*.sh") shorthand.
