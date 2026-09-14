@@ -147,8 +147,10 @@ fn lower_while_stmt(
 
 /// Function definition. Registers the body for inline expansion at call sites,
 /// then emits the body into a dedicated SSA block sequence terminating in Return.
-/// Special cases: `__sash_end__` (DD#56 exit trap),
-/// `-> int` return type tracking, DD#55 non-void detection + SB4017 emission.
+/// Special cases: `-> int` return type tracking, DD#55 non-void detection +
+/// SB4017 emission. (The DD#56 END body is `Program::end_block`, seeded into
+/// `state.exit_trap` by `ir_to_ssa` — it is not a function and never reaches
+/// here.)
 fn lower_function_stmt(
     f: &Function,
     stmt: &Statement,
@@ -156,10 +158,6 @@ fn lower_function_stmt(
     state: &mut VersionState,
     block: BlockId,
 ) -> BlockId {
-    if f.name == "__sash_end__" {
-        state.exit_trap = Some(f.body.clone());
-        return block;
-    }
     // DD#81 Part A: one name, one meaning. If this name was already used as an
     // external command earlier in execution order, defining it as a function
     // now is a command/function shadowing collision.

@@ -28,6 +28,10 @@ pub fn ir_to_ssa_typed(
     let entry = ssa.new_block("entry");
     ssa.entry = entry;
 
+    // DD#56: the END body is its own field on the Program, not a statement, so
+    // it is seeded here rather than recognised by name while lowering.
+    state.exit_trap = program.end_block.clone();
+
     let exit = lower_stmts(&program.statements, &mut ssa, &mut state, entry);
     // Ensure exit block terminates with Return before END rewrite
     ssa.block_mut(exit).terminator = Terminator::Return;

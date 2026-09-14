@@ -1,11 +1,17 @@
 ---
 title: Dead ir::Program::end_block field
-status: blocked
+status: done
 depends: []
 gates: []
 ---
 
 # `ir::Program::end_block` is always `None`
+
+> **DONE** (journal 309). DG chose option 3 — wire it up. `parse()` now
+> assigns the field; SB4054 (nested END) and SB4055 (second END) enforce
+> DD#56's "exactly one, top level". The lost rejection this exposed
+> (`check_dollar_at` blind to END) is fixed. Specs `signals.sh` 56.36-56.38,
+> `misc.sh` 104.5.
 
 ## Evidence
 
@@ -44,8 +50,37 @@ they read `SsaProgram::end_block`, an `Option<BlockId>` that
 ## Why it is not a bug
 
 END bodies *are* validated and *are* resolved — as ordinary functions in
-`statements`. `validate.rs:1992` special-cases `__sash_end__` by name for
-scope purposes. Behaviour is correct; the field is vestigial.
+`statements`. `validate.rs` special-cases `__sash_end__` by name for scope
+purposes, and `transform/statements.rs:159` turns the function straight back
+into `state.exit_trap`. Behaviour is correct.
+
+## Correction: not vestigial — unfinished
+
+This file first called the field vestigial. That is wrong, and the
+distinction matters. The fourteen guarded blocks are a **complete consumer
+side**: every top-level pass (shadowing, predicate returns, elide positions,
+positionals, argv-splat, undeclared reads, command resolution) explicitly
+handles an end block. Nothing built that and then abandoned it — the
+*parser* half was simply never written, and `END { }` went out through the
+`__sash_end__` function encoding instead.
+
+So the field is not dead weight to delete; it is the other half of a design
+that is 90% built.
+
+## The catch, if it is wired up
+
+The guards assume END is **top-level** scope — `check_no_shadow` calls
+`collect_top_level_decls(end, …)`, i.e. a declaration in END becomes a
+global. The `__sash_end__` encoding makes it **function** scope today:
+
+    str x="a"
+    END {
+    str x="b"
+    }
+    -> SB5049 cannot redeclare global `x` inside a function (DD#86)
+
+Wiring the field up therefore changes DD#86 scoping for END bodies. Which
+scope END *should* have is a real question, not an implementation detail.
 
 ## Why it is blocked on DG
 
@@ -59,9 +94,14 @@ Options:
    costs a format version and any consumer that reads `:end-block`.
 2. **Remove the field, keep emitting `:end-block nil`** as a literal.
    Format-stable, but leaves a key that can now never be anything else.
-3. **Keep the field and wire it up** — make the parser actually populate
-   it and drop the `__sash_end__` function encoding. Much larger change;
-   touches transform, validate's `__sash_end__` special case, and codegen.
+3. **Keep the field and wire it up** — make the parser populate it and drop
+   the `__sash_end__` function encoding. Smaller than it first looked (the
+   consumer side exists; `transform/statements.rs:159` already converts the
+   function back into `exit_trap`), but it settles the DD#86 scope question
+   above, and it is the only option that makes `:end-block` *truthful*
+   rather than absent — and that removes the name-based coupling, under
+   which a user function literally named `__sash_end__` is indistinguishable
+   from an exit handler.
 4. **Leave it.** 20 branches stay permanently red.
 
 DG's coverage directive says dead code should be removed, which points at

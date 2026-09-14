@@ -1,7 +1,7 @@
 #!/bin/bash
 # DD#56 — signals and END block
 . common.sh
-plan=25
+plan=28
 setup signals
 
 set +e
@@ -175,6 +175,41 @@ trap "" SIGINT'
 run_convert '#!/bin/bash
 trap - SIGTERM'
 [[ $rc = 0 && $out == *'signal 15 DFL'* && -z $err ]]; chk 57.14b
+
+# --- END is a Program field, not a __sash_end__ function ---------------
+# DD#56. `END { }` parses into `Program::end_block`; it used to be emitted as
+# a function literally named `__sash_end__`, which leaked that name into user
+# diagnostics, let a second END silently win, and left `:end-block nil` in the
+# --emit-ir capture. Journal 309.
+
+# 56.36 an END block is not a statement — it cannot be nested or made
+# conditional. (It used to report SB5071 about `fn __sash_end__`.)
+run_sash 'fn f {
+END {
+/bin/echo a
+}
+}
+f'
+[[ $rc != 0 && -z $out && $err == *SB4054* && $err != *__sash_end__* ]]; chk 56.36
+
+# 56.37 a second END block is rejected. It used to be accepted, with the
+# second silently winning and the first never running.
+run_sash 'END {
+/bin/echo a
+}
+END {
+/bin/echo b
+}'
+[[ $rc != 0 && -z $out && $err == *SB4055* ]]; chk 56.37
+
+# 56.38 the END body is TOP-LEVEL scope, not a function body, so a positional
+# splat is the top-level reject (SB5045) exactly as it is outside END. While
+# END was encoded as a function, `$@` inside it was silently accepted as that
+# function's arguments.
+run_sash 'END {
+/bin/echo $@
+}'
+[[ $rc != 0 && -z $out && $err == *SB5045* ]]; chk 56.38
 
 set -e
 tally

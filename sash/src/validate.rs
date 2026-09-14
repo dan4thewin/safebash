@@ -30,10 +30,37 @@ use std::collections::HashMap;
 
 /// Run all validation rules on a parsed program.
 /// Returns diagnostics for any violations found.
+/// Per-block checks. Split out of `validate` for the complexity gate.
+///
+/// `index` is the position in `program_blocks` order: 0 is the top level,
+/// 1 the DD#56 `END { }` body.
+fn validate_block(
+    block: &[Statement],
+    index: usize,
+    functions: &HashSet<String>,
+    diags: &mut Vec<Diagnostic>,
+) {
+    for stmt in block {
+        validate_stmt(stmt, diags);
+    }
+    check_commands(block, functions, diags); // SB5011: command resolution
+
+    // SB5012: $? availability. DD#56 — the END body is ENTERED because of a
+    // triggering status, so `$?` is available as its first action; the
+    // top-level block starts with no status.
+    let seed = if index == 0 {
+        StatusState::Undefined
+    } else {
+        StatusState::Available
+    };
+    check_dollar_question(block, seed, diags);
+    check_regex_replacements(block, diags); // SB4033: sub/gsub replacement escape
+}
+
 pub fn validate(program: &Program) -> Vec<Diagnostic> {
     let mut diags = Vec::new();
 
-    // Top-level statements, plus any `__END__` block, as a single list of
+    // Top-level statements, plus the DD#56 `END { }` body, as a single list of
     // blocks so every check runs over each.
     let blocks: Vec<&[Statement]> = std::iter::once(program.statements.as_slice())
         .chain(program.end_block.as_deref())
@@ -46,13 +73,8 @@ pub fn validate(program: &Program) -> Vec<Diagnostic> {
         collect_functions(block, &mut functions);
     }
 
-    for &block in &blocks {
-        for stmt in block {
-            validate_stmt(stmt, &mut diags);
-        }
-        check_commands(block, &functions, &mut diags); // SB5011: command resolution
-        check_dollar_question(block, &mut diags); // SB5012: $? availability
-        check_regex_replacements(block, &mut diags); // SB4033: sub/gsub replacement escape
+    for (i, &block) in blocks.iter().enumerate() {
+        validate_block(block, i, &functions, &mut diags);
     }
     // SB4037 (DD#74): a function used as a predicate must `return` on every path
     check_predicate_definite_return(program, &functions, &mut diags);
@@ -1960,8 +1982,8 @@ enum StatusState {
 }
 
 /// Check $? usage across a statement list.
-fn check_dollar_question(stmts: &[Statement], diags: &mut Vec<Diagnostic>) {
-    let mut state = StatusState::Undefined;
+fn check_dollar_question(stmts: &[Statement], seed: StatusState, diags: &mut Vec<Diagnostic>) {
+    let mut state = seed;
     for stmt in stmts {
         check_dq_stmt(stmt, &mut state, diags);
     }
@@ -1993,18 +2015,16 @@ fn check_dq_list(l: &crate::ir::List, state: &mut StatusState, diags: &mut Vec<D
     *state = StatusState::Undefined;
 }
 
-/// A function body is checked in a fresh status context (the caller's $? state
-/// does not flow in) — EXCEPT the `END { }` block (parsed as the `__sash_end__`
-/// function, DD#56), which is ENTERED because of a triggering status (an
-/// abort's exit code, `exit N`, a signal `128+n`, or the last command's status
-/// on normal exit). That status is available as the block's FIRST action, like
-/// a handling branch — so `END { echo "exited $?" }` is valid.
+/// A function body is checked in a fresh status context — the caller's `$?`
+/// state does not flow in.
+///
+/// The DD#56 `END { }` body is *not* a function; it is `Program::end_block`,
+/// seeded with [`StatusState::Available`] by [`validate`], because it is
+/// ENTERED because of a triggering status (an abort's exit code, `exit N`, a
+/// signal `128+n`, or the last command's status on normal exit). That status is
+/// available as the block's FIRST action, so `END { echo "exited $?" }` is valid.
 fn check_dq_function(f: &crate::ir::Function, diags: &mut Vec<Diagnostic>) {
-    let mut fn_state = if f.name == "__sash_end__" {
-        StatusState::Available
-    } else {
-        StatusState::Undefined
-    };
+    let mut fn_state = StatusState::Undefined;
     for s in &f.body {
         check_dq_stmt(s, &mut fn_state, diags);
     }
@@ -3279,7 +3299,10 @@ fn flag_args_toplevel(name: &str, span: Span, diags: &mut Vec<Diagnostic>) {
 /// stay function-local (SB5024) rather than being rejected outright.
 pub fn check_dollar_at(program: &Program) -> Vec<Diagnostic> {
     let mut diags = Vec::new();
-    for stmt in &program.statements {
+    // Both blocks, at `in_fn = false`: the DD#56 END body is top-level scope,
+    // not a function, so `$@` there is the top-level reject and the advice
+    // points at `$(argv 1)` rather than `@args`.
+    for stmt in program_blocks(program).into_iter().flatten() {
         dollar_at_stmt(stmt, false, &mut diags);
     }
     diags

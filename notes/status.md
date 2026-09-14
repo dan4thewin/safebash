@@ -1,41 +1,64 @@
-## ══ STATUS (2026-09-14) — validator was emitting every diagnostic depth+1 times ══
+## ══ STATUS (2026-09-14) — END blocks now populate `Program::end_block` ══
 
-**Journal 308.** Sweep **4578 passing, 9 skipped, 0 failing**.
+**Journal 309.** Sweep **4585 passing, 10 skipped, 0 failing**.
+fmt / clippy clean; `cargo test --release` 77 passing, 0 failing.
 
-**Bug fixed (stop-everything).** `validate_stmt_ctx` recursed into every
-nested statement *and* ran a deep expression walk (`ir::walk_all_exprs`) on
-the whole statement, so an expression N levels down was validated N+1 times
-and every diagnostic raised from `validate_expr` printed N+1 times. `fn f {
-echo $HOME }` gave two SB5018s; adding an `if` gave three. Fix: split
-`ir::walk_own_exprs` (shallow — `direct_exprs` + the `(( ))` arith-expansion
-arm) out of `walk_all_exprs`; `validate_stmt_ctx` uses the shallow one, the
-three deep-scan callers are unchanged.
+`ir::Program::end_block` was never set. `parser.rs` bound it to `None` with a
+non-`mut` `let`; `END { }` became a `Function` named `__sash_end__` on
+`statements`, identified downstream by string comparison. The fourteen
+validator guards on the field were **not vestigial** — they are a complete
+consumer side. The *producer* was never written.
 
-Proved nothing was lost: a 40-program battery over every nesting construct,
-diagnostics captured before and after — **90 lines → 51, set difference
-empty**. Reverse-checked by reverting the one-line call: specs 0.8/0.9 fail,
-the three "nothing lost" guards pass both ways.
+**Wired it up** (DG's call). `parse()` intercepts `Tok::End` at the top level
+and assigns the field. Two new diagnostics enforce the DD#56 sentence "a
+top-level declaration (exactly one per program)", neither previously
+enforced:
 
-Specs `errors.sh` 0.7–0.11 (the `0.x` block that file reserves for walker
-bugs — 0.5/0.6 are the elif-skipping pair). Plan 181 → 186.
+- **SB4054** — an `END { }` block must be at the top level
+- **SB4055** — a second `END { }` block
 
-**How it was found.** Branch coverage, not testing. 20 of the 599 missed
-branches were one construct — `if let Some(ref end) = program.end_block`,
-0 hits against 3632. END blocks *are* tested, so that was a lie worth
-chasing.
+Four defects the name encoding caused, all now fixed: `:end-block nil` lied
+to a `--extract ir` consumer; SB5071 leaked `fn __sash_end__` into user
+diagnostics; two END blocks were silently accepted with the second winning;
+a user function named `__sash_end__` compiled and then died at runtime with
+`sash: bug: bare command passed to sash_exec`.
 
-**`ir::Program::end_block` is dead** — `parser.rs:38` binds it to `None`
-with a non-`mut` `let` and never reassigns; `END { }` is lowered into
-`statements` as a `__sash_end__` function. Harmless (END bodies validate as
-ordinary functions) but 20 permanently-red branches in validate/resolve.
-Removing it changes the DD#104 IR capture, a versioned format → **blocked on
-DG**, `notes/tasks/dead-ir-end-block-field.md`.
+**One lost rejection, found and fixed.** END is now top-level scope (the
+correct DD#56 reading, and what the guards already assumed). A
+top-level-vs-END rejection battery found `$@` **accepted** inside END where
+top level gives SB5045 — `check_dollar_at` walked `program.statements` and
+had no end-block path at all. Audited all 35 program-level passes in
+`validate.rs` mechanically: 17 have no direct reference, 13 of those reach
+END via `program_blocks`/`program_scopes`/`function_bodies`, and
+`check_dollar_at` was the only genuinely blind one. It now uses
+`program_blocks` at `in_fn = false`. Battery is 14 rules, all identical in
+both positions.
 
-**Also done.** `lower_negated_stmt` deleted, its `lower_one` arm now ICEs
-(DG chose ICE). `SsaProgram::end_block` is a *different*, live field — not
-affected.
+Specs: `signals.sh` 56.36–56.38 (SB4054, SB4055, `$@`-in-END), `misc.sh`
+104.5 (`:end-block` populated, `__sash_end__` absent from the capture).
+
+**Note:** AGENTS.md's "Rust tests" section is stale — `sash/tests/` no longer
+exists (the test redux removed it), so `codegen_tests` etc. and the
+"step 1 is not achievable" caveat no longer apply.
 
 ## ══ OPEN FOR DG ══
+
+0. **`:ir-version` bump?** `:end-block` can now be non-nil for the first
+   time. The *shape* is unchanged (the field always documented the body),
+   but DD#104 says the stamp exists so a consumer can refuse a capture it
+   does not understand, and a consumer written against the old compiler had
+   no reason to write a non-`nil` branch. Currently left at 1.
+
+0b. **SB5049 scope (DG's question: forbid all redeclaration regardless of
+   scope?).** Measured: SB5049 fires *only* cross-scope today. At top level
+   `str x` twice, `str x` then `int x` (type change), and `str x` then
+   `const x` (acquiring const) are all **accepted**. Recommend: *a typed
+   declaration (`str`/`int`/`array`/`map`/`const`) of a name already declared
+   **in the same scope** is SB5049, regardless of type match.* Keeps sibling-
+   function locals and repeated `for x` legal — the literal reading of
+   "regardless of scope" would break both. Also closes the one hole the END
+   wiring widened: `str x` at top level plus `str x` in END is now accepted,
+   because END is top-level scope and top level already permits it.
 
 1. **Compound-redirect machinery** (`dead-compound-redirect-machinery.md`) —
    DG chose "discuss". New evidence: `notes/tasks/align-parser-with-decisions.md`

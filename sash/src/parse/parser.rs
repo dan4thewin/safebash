@@ -31,41 +31,70 @@ use crate::ir::*;
 
 /// Parse sash-native source into IR.
 /// Returns the program or a list of diagnostics on failure.
+/// DD#56: consume one `END { }` at the top level into `end_block`.
+///
+/// Split out of `parse` for the complexity gate. `end_span` doubles as the
+/// seen-flag and as the line number SB4055 quotes back.
+fn take_end_block(
+    scanner: &mut Scanner,
+    end_block: &mut Option<Vec<Statement>>,
+    end_span: &mut Option<Span>,
+    diags: &mut Vec<Diagnostic>,
+) {
+    let sp = scanner.peek().span;
+    let span = span_from(scanner, sp.start);
+    let body = match parse_end_block(scanner) {
+        Ok(body) => body,
+        Err(d) => {
+            diags.push(d);
+            recover(scanner);
+            return;
+        }
+    };
+    match *end_span {
+        Some(prev) => diags.push(parse_error(
+            span,
+            "SB4055",
+            format!(
+                "a second `END {{ }}` block — a program has one exit handler, \
+                 and the first (line {}) would never run. Merge the two bodies.",
+                prev.line
+            ),
+        )),
+        None => {
+            *end_span = Some(span);
+            *end_block = Some(body);
+        }
+    }
+}
+
 pub fn parse(source: &str) -> Result<(Program, Vec<Diagnostic>), Vec<Diagnostic>> {
     let mut scanner = Scanner::new(source);
     let mut stmts = Vec::new();
     let mut diags = Vec::new();
-    let end_block: Option<Vec<Statement>> = None;
+    let mut end_block: Option<Vec<Statement>> = None;
+    let mut end_span: Option<Span> = None;
 
     while !scanner.at_eof() {
         skip_terminators(&mut scanner);
         if scanner.at_eof() {
             break;
         }
-
-        match parse_statement(&mut scanner) {
-            Ok(Some(stmt)) => {
-                // Check for rejected constructs that we parsed for error reporting
-                check_rejected(&stmt, &mut diags);
-                stmts.push(stmt);
-            }
-            Ok(None) => {}
-            Err(d) => {
-                diags.push(d);
-                // Try to recover: skip to next line
-                recover(&mut scanner);
-            }
-        }
+        parse_top_level_item(
+            &mut scanner,
+            &mut stmts,
+            &mut end_block,
+            &mut end_span,
+            &mut diags,
+        );
     }
 
-    if !diags.is_empty() {
-        // Check if all diagnostics are deferred — those aren't fatal at parse time
-        let has_errors = diags
-            .iter()
-            .any(|d| d.severity == crate::diagnostic::Severity::Error);
-        if has_errors {
-            return Err(diags);
-        }
+    // A deferred diagnostic is not fatal at parse time; only an Error is.
+    if diags
+        .iter()
+        .any(|d| d.severity == crate::diagnostic::Severity::Error)
+    {
+        return Err(diags);
     }
 
     Ok((
@@ -75,6 +104,38 @@ pub fn parse(source: &str) -> Result<(Program, Vec<Diagnostic>), Vec<Diagnostic>
         },
         diags,
     ))
+}
+
+/// One top-level item: an `END { }` block or a statement. Split out of `parse`
+/// for the complexity gate.
+fn parse_top_level_item(
+    scanner: &mut Scanner,
+    stmts: &mut Vec<Statement>,
+    end_block: &mut Option<Vec<Statement>>,
+    end_span: &mut Option<Span>,
+    diags: &mut Vec<Diagnostic>,
+) {
+    // DD#56: `END { }` is the program's exit handler, not a statement. It is
+    // intercepted here rather than in `dispatch_statement` so that it lands in
+    // `Program::end_block`, and so that an `END` anywhere else is by
+    // construction nested and rejected (SB4054).
+    if matches!(scanner.peek().token, Tok::End) {
+        take_end_block(scanner, end_block, end_span, diags);
+        return;
+    }
+
+    match parse_statement(scanner) {
+        // Constructs parsed only so they can be reported, not accepted.
+        Ok(Some(stmt)) => {
+            check_rejected(&stmt, diags);
+            stmts.push(stmt);
+        }
+        Ok(None) => {}
+        Err(d) => {
+            diags.push(d);
+            recover(scanner); // skip to the next line and keep going
+        }
+    }
 }
 
 fn skip_terminators(scanner: &mut Scanner) {
@@ -140,7 +201,13 @@ fn dispatch_statement(
         Tok::Const => parse_declaration(scanner, "const"),
         Tok::Array => parse_declaration(scanner, "array"),
         Tok::Map => parse_declaration(scanner, "map"),
-        Tok::End => parse_end_block(scanner),
+        Tok::End => Err(parse_error(
+            span,
+            "SB4054",
+            "an `END { }` block must be at the top level — it is the program's \
+             exit handler, not a statement that can be nested or made conditional"
+                .to_string(),
+        )),
         Tok::LBrace => parse_group(scanner),
         Tok::DblParen => parse_arith_stmt(scanner),
         Tok::Bang => parse_negated(scanner),
@@ -777,7 +844,10 @@ fn parse_one_decl_assignment(scanner: &mut Scanner, span: Span) -> Result<Assign
 
 // ── END block ────────────────────────────────────────────────
 
-fn parse_end_block(scanner: &mut Scanner) -> Result<Option<Statement>, Diagnostic> {
+/// Parse the body of an `END { }` block. The caller is [`parse`], which owns
+/// the top-level loop; an `END` reached through [`dispatch_statement`] is by
+/// construction *not* at the top level and is rejected there.
+fn parse_end_block(scanner: &mut Scanner) -> Result<Vec<Statement>, Diagnostic> {
     let sp = scanner.peek().span;
     let span = span_from(scanner, sp.start);
     scanner.next(); // consume 'END'
@@ -786,16 +856,7 @@ fn parse_end_block(scanner: &mut Scanner) -> Result<Option<Statement>, Diagnosti
     expect(scanner, &Tok::LBrace, span, "expected '{' after END")?;
     let body = parse_body_until(scanner, &[Tok::RBrace])?;
     expect(scanner, &Tok::RBrace, span, "expected '}'")?;
-
-    // Emit as __sash_end__ function for backward compatibility with transform
-    Ok(Some(Statement {
-        kind: StmtKind::Function(Function {
-            name: "__sash_end__".to_string(),
-            return_type: VarType::String,
-            body,
-        }),
-        span,
-    }))
+    Ok(body)
 }
 
 // ── group { ... } ────────────────────────────────────────────
