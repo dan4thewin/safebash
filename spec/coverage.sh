@@ -6,7 +6,7 @@
 set -eu
 . common.sh
 setup coverage
-plan=101
+plan=102
 echo "1..$plan" >&3
 
 set +e
@@ -65,6 +65,11 @@ run_sash '<<EOF'
 # body lines must not be re-reported as unknown commands (SB5011).
 run_sash '<<EOF'
 [[ $err != *__HEREDOC__* && $err != *SB5011* ]]; chk cov.102
+# cov.103 an escaped backtick inside a backtick substitution is the `nested`
+# path in scan_backtick_body — it gets its own SB5020 wording, distinct from
+# the generic tainted-cmdsub SB5020 that a plain backtick earns.
+run_sash 'echo `echo \`/bin/echo hi\``'
+[[ $rc != 0 && -z $out && $err == *SB5020* && $err == *nested* ]]; chk cov.103
 # cov.15 `$(status)` with no preceding command → SB5012
 run_sash 'echo $(status)'
 [[ $rc != 0 && -z $out && $err == *SB5012* ]]; chk cov.15

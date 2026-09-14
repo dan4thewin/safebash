@@ -193,32 +193,39 @@ fn check_block_uses(block: &BasicBlock, taint: &HashMap<String, Taint>, errors: 
 /// Phase 2: any instruction reading a tainted VarRef in a position that
 /// would produce output, execute an external, or escape into an index
 /// expression is an ICE.
+/// Every argument in one argument list, reported under a shared context.
+fn check_arg_uses(
+    args: &[SsaValue],
+    taint: &HashMap<String, Taint>,
+    errors: &mut Vec<String>,
+    context: &str,
+) {
+    for arg in args {
+        check_value_use(arg, taint, errors, context);
+    }
+}
+
 fn check_inst_uses(inst: &SsaInst, taint: &HashMap<String, Taint>, errors: &mut Vec<String>) {
     match inst {
         SsaInst::Command { name, args, .. } => {
-            // `attest` is the one operator allowed to receive tainted args.
-            if name == "attest" {
-                return;
-            }
-            for arg in args {
-                check_value_use(
-                    arg,
-                    taint,
-                    errors,
-                    &format!("argument to command '{}'", name),
-                );
-            }
+            // No `attest` exemption here: every `attest` form (bare, `&&`/`||`
+            // operand, `if attest`) is routed through `lower_if_attest`, so it
+            // reaches SSA as branch machinery and never as a Command. The guard
+            // that used to sit here was unreachable — measured 0 hits against
+            // 4724 on its sibling, then confirmed by instrumentation. If attest
+            // is ever lowered as a plain command, the exemption must come back:
+            // receiving tainted arguments is the whole point of the operator.
+            check_arg_uses(
+                args,
+                taint,
+                errors,
+                &format!("argument to command '{}'", name),
+            );
         }
         SsaInst::Pipeline { stages, .. } => {
             for (name, args, _) in stages {
-                for arg in args {
-                    check_value_use(
-                        arg,
-                        taint,
-                        errors,
-                        &format!("argument in pipeline stage '{}'", name),
-                    );
-                }
+                let ctx = format!("argument in pipeline stage '{}'", name);
+                check_arg_uses(args, taint, errors, &ctx);
             }
         }
         SsaInst::SubscriptAssign {

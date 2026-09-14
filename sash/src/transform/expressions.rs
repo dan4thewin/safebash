@@ -169,13 +169,6 @@ pub(super) fn test_to_ssa(test: &TestExpr, state: &VersionState) -> SsaTest {
     }
 }
 fn simple_expansion_to_value(var: &str, state: &VersionState) -> SsaValue {
-    if var == "EPOCHSECONDS" {
-        return SsaValue::CmdSubst {
-            argv: vec![SsaValue::Literal("epochseconds".to_string())],
-            redirects: vec![],
-            suppressed: false,
-        };
-    }
     if let Some(v) = positional_to_value(var, state) {
         return v;
     }
