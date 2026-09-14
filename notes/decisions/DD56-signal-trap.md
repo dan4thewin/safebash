@@ -38,6 +38,16 @@ The converter emits numeric literals directly.
 immediately before process exit — from any cause (normal exit, `exit`
 builtin, or signal-triggered shutdown).
 
+Both halves of that sentence are enforced as of journal 309 — neither was
+before. `END { }` parses into `ir::Program::end_block`; **SB4054** rejects one
+anywhere but the top level, and **SB4055** rejects a second (previously the
+second silently won and the first never ran). The body is **top-level scope**,
+not a function body: it shares the top level's globals, and the same rules
+reject the same things in both places. Until then the block was lowered as a
+function literally named `__sash_end__`, which left `:end-block nil` in the
+DD#104 capture, leaked that name into user diagnostics, and let a user
+function of the same name compile and then die at runtime.
+
 ```bash
 END {
     case $(signum) in
