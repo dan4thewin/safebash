@@ -20,7 +20,7 @@
 set -eu
 . common.sh
 setup exec
-plan=23
+plan=26
 echo "1..$plan" >&3
 
 set +e
@@ -100,6 +100,31 @@ run_sash 'close 1 2'
 # directing to `close N`
 run_sash 'exec 9> foo; exec 9>&-'
 [[ $rc != 0 && -z $out && $err == *SB4048* ]]; chk cl.8
+
+# cl.9-11 BUG (sash_redirect closed the fd it had just installed): `open` hands
+# back the LOWEST free fd, and `dup2(src, fd)` with `src == fd` is a POSIX
+# no-op that closes nothing — so the unconditional `close(src)` that followed
+# destroyed the redirect whenever the target fd WAS the lowest free one. With
+# only 0-2 open that is exactly fd 3: `exec 3> f` left fd 3 closed, `close 3`
+# reported EBADF, and — worst — every later `>&3` silently fell through to the
+# real stdout instead of the file. fd 9 (cl.1) never hit it, which is why it
+# shipped. These pin the target-is-lowest-free case at two different fds.
+# cl.9 exec onto fd 3 installs the redirect and the fd stays open to close
+run_sash 'exec 3> cl_fd3; /bin/echo three >&3; close 3'
+[[ $rc = 0 && -z $out && -z $err ]] && [[ $(cat cl_fd3 2>/dev/null) = three ]]; chk cl.9
+rm -f cl_fd3
+# cl.10 the same hazard one fd up: with 3 already open, `exec 4>` makes 4 the
+# lowest free fd. Both files must get their own write.
+run_sash 'exec 3> cl_fd3; exec 4> cl_fd4; /bin/echo a >&3; /bin/echo b >&4; close 3; close 4'
+[[ $rc = 0 && -z $out && -z $err ]] &&
+  [[ $(cat cl_fd3 2>/dev/null) = a && $(cat cl_fd4 2>/dev/null) = b ]]; chk cl.10
+rm -f cl_fd3 cl_fd4
+# cl.11 an ordinary scoped redirect still closes its temp fd — the guard must
+# not leak the source fd in the src != fd case.
+run_sash '/bin/echo scoped > cl_fd5; exec 3> cl_fd3; /bin/echo t >&3; close 3'
+[[ $rc = 0 && -z $out && -z $err ]] &&
+  [[ $(cat cl_fd5 2>/dev/null) = scoped && $(cat cl_fd3 2>/dev/null) = t ]]; chk cl.11
+rm -f cl_fd3 cl_fd5
 
 
 # ── `<&` and `<>` ────────────────────────────────────────────────────

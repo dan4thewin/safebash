@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup arithmetic
-plan=211
+plan=217
 echo "1..$plan" >&3
 
 set +e
@@ -660,6 +660,36 @@ run_sash 'int array a=(hi 2); echo ${a[0]}'
 # with `int x=5` (see types.sh 30.5/30.8).
 run_sash 'int array a=(10 20 30); a[1]=99; echo ${a[1]}'
 [[ $rc = 0 && $out = "99" && -z $err ]]; chk ivc.10
+
+# ivc.12-17 int cells reaching a POSITIONAL (generic) cell read. DD#76 stores
+# an int cell as {val_ptr: null, val_len: <the i64>}; keyed reads (`${a[0]}`,
+# arithmetic) go through sash_table_get where codegen knows the static type and
+# itoa's. Splat / join / for-in go through sash_table_value, which has no type
+# to consult and handed the null pointer straight out — `for x in @a` faulted
+# (EFAULT) and `$(join a)` SEGFAULTED, with no compile diagnostic. The runtime
+# now renders a null cell as itoa(val_len) at that one accessor.
+# ivc.12 splat an int array into a for-in
+run_sash 'int array a=(1 2); for x in @a; do echo $x; done'
+[[ $rc = 0 && $out = "1
+2" && -z $err ]]; chk ivc.12
+# ivc.13 join an int array
+run_sash 'int array a=(1 2); echo $(join a)'
+[[ $rc = 0 && $out = "1 2" && -z $err ]]; chk ivc.13
+# ivc.14 the same two for an int MAP (values are the int cells)
+run_sash 'int map m=([k]=5); for x in @m; do echo $x; done'
+[[ $rc = 0 && $out = "5" && -z $err ]]; chk ivc.14
+# ivc.15 join an int map
+run_sash 'int map m=([k]=5); echo $(join m)'
+[[ $rc = 0 && $out = "5" && -z $err ]]; chk ivc.15
+# ivc.16 an int cell holding ZERO — val_len 0 is a real value here, not the
+# "absent" reading the same accessor uses for an out-of-range index.
+run_sash 'int array a=(0 5); echo $(join a)'
+[[ $rc = 0 && $out = "0 5" && -z $err ]]; chk ivc.16
+# ivc.17 an EMPTY STRING element is ("", 0) — a real pointer — so it must stay
+# empty and not render as "0". This is what makes null an unambiguous
+# int-cell discriminator.
+run_sash 'array b=("" q); echo "[$(join b)]"'
+[[ $rc = 0 && $out = "[ q]" && -z $err ]]; chk ivc.17
 
 # ── DD#77 A: ${var:OP…} routed through the real param-expansion parser ──
 # BUG (bug-arith-param-expansion-operator-zero): `${s:-N}`/`${s:?…}`/etc inside

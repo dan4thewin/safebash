@@ -476,7 +476,15 @@ pub extern "C" fn sash_redirect(fd: i64, path: *const u8, flags: i64) -> i64 {
             lateout("rcx") _,
             lateout("r11") _,
         );
-        sash_close(src);
+        // `dup2(src, fd)` with `src == fd` is a POSIX no-op that closes
+        // nothing, so an unconditional close here destroys the redirect we
+        // just installed. `open` hands back the LOWEST free fd, so this fires
+        // exactly when the target fd is itself the lowest free one — e.g.
+        // `exec 3> f` with only 0-2 open. fd 3 was left closed and every later
+        // `>&3` silently fell through to the real stdout.
+        if src != fd {
+            sash_close(src);
+        }
         0
     }
 }
@@ -1894,6 +1902,18 @@ pub unsafe extern "C" fn sash_table_value(
             continue;
         }
         if live == index {
+            // DD#76 stores an int cell as {val_ptr: null, val_len: <the i64>}.
+            // Keyed reads (`${a[0]}`, arithmetic) go through sash_table_get,
+            // where codegen knows the static element type and itoa's itself.
+            // This is the POSITIONAL accessor — splat, join, for-in — which
+            // reads cells generically with no type to consult, so it renders
+            // the integer here. Without this the caller receives a null
+            // pointer with a non-zero length and faults on the first write.
+            // An empty string element is stored as ("", 0) — a real pointer —
+            // so a null val_ptr is an unambiguous int-cell discriminator.
+            if e.val_ptr.is_null() {
+                return sash_itoa(e.val_len, out_len) as *const u8;
+            }
             *out_len = e.val_len;
             return e.val_ptr;
         }
