@@ -6,7 +6,7 @@
 set -eu
 . common.sh
 setup coverage
-plan=186
+plan=191
 echo "1..$plan" >&3
 
 set +e
@@ -806,6 +806,37 @@ run_sash 'int x=0; if (( (x=2) ? 1 : 3 )); then echo y; fi'
 # the one and flag the other
 run_sash 's="x"; echo $s $?'
 [[ $rc != 0 && -z $out && $err == *SB5012* ]]; chk cov.187
+
+# cov.188 `$*` inside `(( … ))` — the arith walker has its own `$@`/`$*` arm,
+# separate from the expression one, and the `*` half is a distinct branch
+run_sash 'if (( $* )); then echo y; fi'
+[[ $rc != 0 && -z $out && $err == *SB5045* ]]; chk cov.188
+
+# cov.189 `args` written by a DECLARATION rather than a plain assignment —
+# SB5052 covers both spellings and they are separate arms
+run_sash 'array args=(1 2)'
+[[ $rc != 0 && -z $out && $err == *SB5052* ]]; chk cov.189
+
+# cov.190 DD#78: a `:-` default is part of the expansion's value, so a CLEAN
+# name with a TAINTED default is still tainted. Without this the array would
+# take external data without a `read`.
+run_sash 's=$(getenv HOME)
+c="q"
+array a=("${c:-$s}")
+echo "${a[0]}"'
+[[ $rc != 0 && -z $out && $err == *SB5021* ]]; chk cov.190
+
+# cov.191 a variable written TWICE and never read reports once, not twice —
+# the dead-variable pass dedups by name
+run_sash 'x="a"
+x="b"
+echo hi'
+[[ $rc != 0 && -z $out && $err == *SB5050* && $(grep -c SB5050 <<<"$err") = 1 ]]; chk cov.191
+
+# cov.192 `$(arg)` with no index at all — the arity guard is `is_empty() ||
+# len > 2`, and every existing spec exercises the upper half
+run_sash 'echo $(arg)'
+[[ $rc != 0 && -z $out && $err == *SB5036* ]]; chk cov.192
 
 set -e
 tally
