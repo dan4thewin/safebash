@@ -6,7 +6,7 @@
 set -eu
 . common.sh
 setup coverage
-plan=148
+plan=153
 echo "1..$plan" >&3
 
 set +e
@@ -599,6 +599,30 @@ run_sash 'str s=a; unset s; echo done'
 [[ $rc != 0 && -z $out && $err == *SB4030* ]]; chk cov.148
 run_sash 'unset nosuchvar'
 [[ $rc != 0 && -z $out && $err == *SB4030* ]]; chk cov.149
+
+# cov.150-153 arith_brief's PostIncDec arms (validate.rs) — the text SB5007
+# quotes back at you. A BARE `if (( x++ ))` reports `x = ...` (the Assign
+# arm), so these had to be reached through a BinOp, where the inc/dec node
+# survives into the message. Both directions were cold: neither `++` nor `--`
+# had ever been rendered by this function.
+run_sash 'int x=0; while (( x++ < 3 )); do echo $x; done'
+[[ $rc != 0 && -z $out && $err == *SB5007* && $err == *"x++"* ]]; chk cov.150
+run_sash 'int x=0; if (( 1 + x-- )); then echo y; fi'
+[[ $rc != 0 && -z $out && $err == *SB5007* && $err == *"x--"* ]]; chk cov.151
+# cov.152 a mutation is legal in the STATEMENT form — the decrement half,
+# which is the side every `if *inc` in the tree had been skipping
+run_sash 'int x=0; (( x-- )); echo $x'
+[[ $rc = 0 && $out = "-1" && -z $err ]]; chk cov.152
+# cov.153 a comma expression whose FINAL part is a pure test is accepted:
+# the mutation is hoisted, so validate_arith_comma_in_condition allows it
+run_sash 'int x=0; if (( x++, x < 5 )); then echo y; fi'
+[[ $rc = 0 && $out = y && -z $err ]]; chk cov.153
+
+# cov.154 `$$` as a `[[ ]]` operand — skip_dollar_var's special-character set
+# (`@ * # ? ! $`) after a `$`. `$?`/`$#` are rejected there (SB5012/SB5024),
+# so `$$` is the spelling that actually reaches the scan.
+run_sash 'if [[ $$ == 0 ]]; then echo y; fi'
+[[ $rc = 0 && -z $out && -z $err ]]; chk cov.154
 
 set -e
 tally
