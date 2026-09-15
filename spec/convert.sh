@@ -6,7 +6,7 @@ set -eu
 # Run only in native mode to avoid 3× redundancy.
 [[ ${SASH_MODE:-native} != native ]] && exit 0
 setup convert
-plan=180
+plan=188
 echo "1..$plan" >&3
 
 set +e
@@ -1237,6 +1237,65 @@ run_convert '#!/bin/bash
 i=1
 echo $i'
 [[ $rc = 0 && $out == *'echo $i'* && $out != *':?'* ]]; chk 57.155
+
+# ── DD#31 prefix ++/-- (convert-prefix-incdec) ──────────────────
+# Bash has both prefix and postfix; sash has only postfix. The converter
+# rewrites where the value is discarded (the rewrite is then exact) and
+# annotates where it is read (there is no equivalent spelling).
+
+# 57.156 a bare `(( ++j ))` statement discards the value — `j++` is exact
+run_convert '#!/bin/bash
+declare -i j=0
+(( ++j ))
+echo $j'
+[[ $rc = 0 && $out == *'(( j++ ))'* && $out != *'CHECK: prefix'* ]]; chk 57.156
+
+# 57.157 `--` takes the same path
+run_convert '#!/bin/bash
+declare -i m=5
+(( --m ))
+echo $m'
+[[ $rc = 0 && $out == *'(( m-- ))'* && $out != *'CHECK: prefix'* ]]; chk 57.157
+
+# 57.158 a comma element of a `(( ))` statement is still a discarded value
+run_convert '#!/bin/bash
+declare -i x=0 k=0
+(( x++, ++k ))
+echo $k'
+[[ $rc = 0 && $out == *'(( x++, k++ ))'* && $out != *'CHECK: prefix'* ]]; chk 57.158
+
+# 57.159 the `for` header update slot. tree-sitter hands back the operand as
+#        a bare `word` here, not a `variable_name` as it does inside (( )) —
+#        an earlier cut looked for `variable_name` only and silently emitted
+#        the prefix form verbatim.
+run_convert '#!/bin/bash
+for (( i=0; i < 3; ++i )); do echo $i; done'
+[[ $rc = 0 && $out == *'for (( i=0; i < 3; i++ ))'* && $out != *'CHECK: prefix'* ]]; chk 57.159
+
+# 57.160 the `for` header initializer slot
+run_convert '#!/bin/bash
+for (( ++i; i < 3; i++ )); do echo $i; done'
+[[ $rc = 0 && $out == *'for (( i++; i < 3; i++ ))'* && $out != *'CHECK: prefix'* ]]; chk 57.160
+
+# 57.161 the `for` header CONDITION is read — annotate, never rewrite
+run_convert '#!/bin/bash
+for (( ; ++i < 3; )); do echo $i; done'
+[[ $rc = 0 && $out == *'CHECK: prefix'* && $out == *'++i < 3'* ]]; chk 57.161
+
+# 57.162 a value context: `$(( ++i ))` yields the post-increment value, and
+#        `i++` does not. No rewrite is sound, so it gets a CHECK.
+run_convert '#!/bin/bash
+declare -i i=0
+y=$(( ++i ))
+echo $y'
+[[ $rc = 0 && $out == *'CHECK: prefix'* && $out == *'$(( ++i ))'* ]]; chk 57.162
+
+# 57.163 `(( ++i ))` as an `if` condition is the same compound_statement node
+#        as the bare statement form — only the parent field distinguishes them
+run_convert '#!/bin/bash
+declare -i i=0
+if (( ++i )); then echo hi; fi'
+[[ $rc = 0 && $out == *'CHECK: prefix'* && $out == *'(( ++i ))'* ]]; chk 57.163
 
 set -e
 tally

@@ -246,6 +246,9 @@ fn walk_node(
             }
             convert_backtick_substitution(node, source, patches);
         }
+        "unary_expression" => {
+            convert_prefix_incdec(node, source, patches, prefix_lines);
+        }
         "variable_assignment" => {
             convert_arith_side_effect(node, source, patches, prefix_lines);
         }
@@ -2460,6 +2463,125 @@ fn child_variable_name(node: Node, source: &[u8]) -> Option<String> {
         .children(&mut cursor)
         .find(|n| n.kind() == "variable_name")?;
     Some(node_text(found, source).to_string())
+}
+
+/// DD#31: *"Only postfix `x++` and `x--`. No prefix forms."* Bash has both,
+/// so every prefix form the converter sees must go somewhere.
+///
+/// Rewrite where the rewrite is **sound**, annotate where it is not. The two
+/// are distinguished by one question: is the expression's value used?
+///
+/// - Value discarded — a whole `(( ++i ))` statement, or the initializer or
+///   update slot of a C-style `for` header. `++i` and `i++` differ only in
+///   what they evaluate to, and nothing reads it, so `i++` is exact. DD#31
+///   calls both "syntactic sugar for `x = x + 1`".
+/// - Value used — `$(( ++i ))`, `(( y = ++i ))`, `for (( ; ++i < 3; ))`,
+///   `if (( ++i ))`. Here `i++` would yield the value from *before* the
+///   increment, so a rewrite would silently change the result. There is no
+///   postfix spelling with the same meaning — and sash rejects mutation in a
+///   read context outright — so the honest output is a `CHECK:` for a human.
+fn convert_prefix_incdec(
+    node: Node,
+    source: &[u8],
+    patches: &mut Vec<Patch>,
+    prefix_lines: &mut Vec<(usize, String)>,
+) {
+    let Some(op) = node.child_by_field_name("operator") else {
+        return;
+    };
+    let op_text = node_text(op, source);
+    // `unary_expression` is also `-j` and `!j`; only ++/-- are in scope.
+    if op_text != "++" && op_text != "--" {
+        return;
+    }
+    let line = node.start_position().row;
+    let Some(var) = prefix_incdec_operand(node, source) else {
+        prefix_lines.push((
+            line,
+            format!(
+                "# MANUAL: prefix `{}` on a non-scalar operand — sash has no prefix form (DD#31)",
+                op_text
+            ),
+        ));
+        return;
+    };
+    if prefix_incdec_value_discarded(node) {
+        patches.push(Patch::replace_node(
+            node,
+            format!("{}{}", var, op_text),
+            Some(node_text(node, source).to_string()),
+        ));
+    } else {
+        let verb = if op_text == "++" {
+            "increment"
+        } else {
+            "decrement"
+        };
+        prefix_lines.push((
+            line,
+            format!(
+                "# CHECK: prefix `{}{}` yields the value AFTER the {}; sash has no prefix form (DD#31) \
+                 and rejects mutation in a read context. Hoist it: `(( {}{} ))` on its own line, then use `{}`",
+                op_text, var, verb, var, op_text, var
+            ),
+        ));
+    }
+}
+
+/// The scalar a prefix `++`/`--` mutates.
+///
+/// The operand's CST kind depends on where the expression sits: inside a
+/// `(( … ))` statement it is a `variable_name`, but in a C-style `for`
+/// header tree-sitter-bash hands back a bare `word`. Accept either, and
+/// only when the word is identifier-shaped — `++a[i]` yields a `subscript`
+/// and has no scalar to name.
+fn prefix_incdec_operand(node: Node, source: &[u8]) -> Option<String> {
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        match child.kind() {
+            "variable_name" => return Some(node_text(child, source).to_string()),
+            "word" => {
+                let t = node_text(child, source);
+                let mut bytes = t.bytes();
+                let ok = bytes
+                    .next()
+                    .is_some_and(|b| b.is_ascii_alphabetic() || b == b'_')
+                    && bytes.all(|b| b.is_ascii_alphanumeric() || b == b'_');
+                return ok.then(|| t.to_string());
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// Whether a prefix `++`/`--` sits where nothing reads its value.
+fn prefix_incdec_value_discarded(node: Node) -> bool {
+    let Some(parent) = node.parent() else {
+        return false;
+    };
+    let field = field_name_of(node, parent);
+    match parent.kind() {
+        // `for (( ++i; …; ++i ))` — but NOT the condition, which is read.
+        "c_style_for_statement" => matches!(field, Some("initializer") | Some("update")),
+        // A bare `(( … ))` statement, including a comma element of one. The
+        // same node under `if`/`while` is that statement's `condition` field,
+        // where the value IS read.
+        "compound_statement" => {
+            parent.child(0).is_some_and(|c| c.kind() == "((")
+                && parent
+                    .parent()
+                    .is_none_or(|gp| field_name_of(parent, gp) != Some("condition"))
+        }
+        _ => false,
+    }
+}
+
+/// The field name `child` occupies within `parent`, if any.
+fn field_name_of<'a>(child: Node, parent: Node) -> Option<&'a str> {
+    (0..parent.child_count())
+        .find(|i| parent.child(*i) == Some(child))
+        .and_then(|i| parent.field_name_for_child(i as u32))
 }
 
 fn convert_arith_side_effect(

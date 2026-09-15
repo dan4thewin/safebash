@@ -1,4 +1,40 @@
-## ══ STATUS (2026-09-15) — three cold branches, one silent infinite loop ══
+## ══ STATUS (2026-09-15) — the operand changes kind when you move it ══
+
+**Journal 324.** Sweep **4861 passing, 10 skipped, 0 failing** (+8 specs,
+native-only — `convert.sh` runs in one mode). 27 `sash-convert` tests green.
+
+### `convert-prefix-incdec` — done, DG chose (a)
+
+DD#31 forbids prefix `++`/`--`; `sash-convert` passed it through verbatim in
+every context. DG's ruling: **rewrite where the rewrite is sound, `CHECK:`
+where it is not.** The line is whether anything reads the value.
+
+| context | disposition |
+|---|---|
+| `(( ++j ))`, `(( x++, ++k ))` | rewrite to postfix |
+| `for (( ++i; …; ++i ))` — `initializer`/`update` | rewrite to postfix |
+| `for (( ; ++i < 3; ))` — `condition` | `CHECK:` |
+| `if (( ++i ))`, `while (( --n ))` | `CHECK:` |
+| `$(( ++i ))`, `(( y = ++i ))` | `CHECK:` |
+
+`(( ++i ))` as a statement and as an `if` condition are **the same node with
+the same children** — only the parent's field name tells them apart.
+
+**The bug inside the fix:** the first cut did nothing at all to a `for`
+header. tree-sitter-bash yields the operand as a `variable_name` inside
+`(( … ))` but as a **`word`** inside a `for` header, so the lookup returned
+`None` and the function returned early — no patch, no `CHECK:`, no
+diagnostic. An early `return` on a `None` looks exactly like having handled
+the case. Specs `57.156`–`57.163` pin all of it.
+
+### Next
+
+Back on the branch-coverage loop. Last full baseline **86.35%, 512/3752** at
+`b9ca092` — stale now (the for-header fix removes three branches, and the
+converter work adds none to `sash/`). Fattest remaining target is
+`validate.rs` at 85 cold branches.
+
+## ══ PRIOR (2026-09-15) — three cold branches, one silent infinite loop ══
 
 **Journal 323.** Sweep **4853 passing, 10 skipped, 0 failing** (+16: 8 new
 specs × 2 modes). 36 sash unit tests. DD#25 amendment ratified by DG; back on

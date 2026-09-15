@@ -1,6 +1,6 @@
 ---
 title: "sash-convert emits prefix ++/-- verbatim, which DD#31 forbids"
-status: open
+status: done
 priority: P2
 kind: bug
 depends: []
@@ -50,3 +50,23 @@ where not, (b) `CHECK:` everywhere, (c) abort with a message everywhere.
 Branch-coverage work, 2026-09-15 — chasing `parse/arith.rs` cold branches
 `295|0|1`, `304|0|1`, `314|0|1`, which turned out to be the three discarded
 `Err` arms in `lower_c_style_for`. See journal 323.
+
+## Resolution (2026-09-15)
+
+DG chose **(a)**: rewrite where sound, `CHECK:` where not.
+
+`convert_prefix_incdec` in `sash-convert/src/convert.rs` dispatches on
+`unary_expression` (guarding on the `operator` field, since `-j` and `!j`
+share that kind). `prefix_incdec_value_discarded` decides: rewrite in a bare
+`(( … ))` statement and in the `initializer`/`update` slots of a C-style
+`for` header; `CHECK:` in the header `condition`, in an `if`/`while`
+condition, and in any value position.
+
+The `if`/`while` case is distinguished only by the parent's field name — the
+node itself is identical to the bare statement form.
+
+Operand lookup accepts `variable_name` **or** an identifier-shaped `word`:
+tree-sitter-bash yields the former inside `(( … ))` and the latter inside a
+`for` header. A non-scalar operand (`++a[i]`) gets a `MANUAL:` line.
+
+Specs `57.156`–`57.163`. See journal 324.
