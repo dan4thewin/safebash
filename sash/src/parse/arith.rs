@@ -320,12 +320,20 @@ pub fn lower_c_style_for(
 
     // Condition. An empty slot is the deliberate `for (( ;; ))` spelling and
     // is the ONLY thing that may become `true` here.
+    //
+    // This goes through `lower_arith_command`, not straight to
+    // `lower_arith_test_structured`, so that a DD#31 comma condition decomposes
+    // into a `Group` exactly as it does for `if` / `while` / `until`. Bypassing
+    // it left the mutation embedded in a single `ArithTest`, where
+    // `check_arith_test_placement` rejected it (SB4020) — so
+    // `for (( ; k++, k<3; ))` was the one condition context of four that
+    // refused a form bash accepts, and that the other three compile.
     let cond_trimmed = cond.trim();
     let condition = if cond_trimmed.is_empty() {
         vec![Statement::true_cmd(span)]
     } else {
-        vec![lower_arith_test_structured(
-            &parse_arith_slot(cond_trimmed, span)?,
+        vec![lower_arith_command(
+            parse_arith_slot(cond_trimmed, span)?,
             span,
         )]
     };

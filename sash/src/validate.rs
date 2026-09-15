@@ -1774,13 +1774,24 @@ fn validate_arith_in_condition(expr: &ArithExpr, span: Span, diags: &mut Vec<Dia
     }
 }
 
-/// DD#31 comma expression in condition context: every non-final
-/// part must be a mutation; the final part must be a comparison
-/// (not a mutation). Empty comma lists are no-ops.
+/// DD#31 comma expression in condition context: every non-final part must be
+/// a mutation.
+///
+/// Only a **mutation-free** comma ever arrives here. One that holds a mutation
+/// anywhere classifies as `ArithKind::Mutation` (`classify_arith_expr`) and
+/// `lower_arith_command` splits it into a `Group` of statements before
+/// validation runs — so DD#31's other half, "the final part must be a
+/// comparison", is enforced on the decomposed form by `validate_assignment_stmt`
+/// (SB5007, mutation-in-condition), identically for `if`, `while`, `until`, and
+/// a C-style `for` header. A second check for it here used to be reachable only
+/// from the `for` header, which was the one context that skipped the
+/// decomposition; that was a bug, and closing it left this duplicate cold.
+///
+/// Empty comma lists are no-ops.
 fn validate_arith_comma_in_condition(exprs: &[ArithExpr], span: Span, diags: &mut Vec<Diagnostic>) {
     use crate::parse::{classify_arith_expr, ArithKind};
 
-    let Some((last, init)) = exprs.split_last() else {
+    let Some((_last, init)) = exprs.split_last() else {
         return;
     };
     for e in init {
@@ -1792,17 +1803,6 @@ fn validate_arith_comma_in_condition(exprs: &[ArithExpr], span: Span, diags: &mu
                 format!("non-final comma expression {} must be a mutation", desc),
             ));
         }
-    }
-    if classify_arith_expr(last) == ArithKind::Mutation {
-        let desc = arith_brief(last);
-        diags.push(Diagnostic::error_span(
-            span,
-            "SB5007",
-            format!(
-                "final comma expression {} must be a comparison in condition context",
-                desc
-            ),
-        ));
     }
 }
 

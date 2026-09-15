@@ -1,4 +1,59 @@
-## ══ STATUS (2026-09-15) — the operand changes kind when you move it ══
+## ══ STATUS (2026-09-15) — the slot that skipped the desugaring ══
+
+**Journal 325.** Sweep **4873 passing, 10 skipped, 0 failing**. Bug #6, and
+the sixth time a cold branch was a bug.
+
+### The C-style `for` test slot was the one condition context of four
+
+`validate.rs:1755` block 0 branch 0 — the `Comma` arm of
+`validate_arith_in_condition` — was cold. Only a C-style `for` header reached
+it, and that was the finding: the other three contexts desugar the comma
+before validation, and the `for` header did not.
+
+`lower_c_style_for` lowered its test slot with `lower_arith_test_structured`,
+bypassing `lower_arith_command` and so the `Comma` → `Group` split. The
+mutation stayed embedded in one `ArithTest`, where
+`check_arith_test_placement` rejects it.
+
+| | sash (before) | bash |
+|---|---|---|
+| `while (( k++, k<3 ))` | `1 2` | `1 2` |
+| `if (( k++, k<3 ))` | `1` | `1` |
+| `until (( k++, k>2 ))` | `1 2` | `1 2` |
+| `for (( ; k++, k<3; ))` | **SB4020** | `1 2` |
+
+The header's other slots are not a substitute: `for (( ; k<3; k++ ))` prints
+`0 1 2`, not `1 2`. **Fix: route the slot through `lower_arith_command`.**
+Measured cost, old binary vs patched: one message changes
+(`for (( ; k<3, k++; ))` goes from three diagnostics to one, still SB5007 and
+now the same one `while` gives). Every other shape is byte-identical.
+
+### DG ruled: delete the check the fix made dead
+
+A comma holding a mutation classifies as `Mutation` and decomposes, so the
+comma arm now only sees mutation-free commas — making
+`validate_arith_comma_in_condition`'s final-part check unreachable (verified
+across five spellings post-fix). **The DD#31 clause it enforced is still
+enforced**, by `validate_assignment_stmt` on the decomposed form, for all four
+contexts. It was a `for`-only duplicate that the bug kept warm. The surviving
+half — every non-final part must be a mutation — has no other route, because
+after decomposition there is no comma left to look at.
+
+DD#31 amended: "condition position" names all four contexts, and enforcement
+is explicitly split across the desugaring.
+
+Specs `31.53`–`31.58` pin the whole matrix.
+
+### Next
+
+Still on the branch-coverage loop. Confirmed-and-unresolved from this pass:
+**`validate.rs:1729` — the `ArithExpr::PreIncDec` arm of
+`validate_arith_context` looks dead**; `reject_prefix_incdec` in the parser
+fires first (SB4020) on every spelling tried. Not yet proven, do not delete on
+this evidence alone. Flipped and awaiting specs: `validate.rs:1161` both arms
+(`for x in $@` / `for x in $*` → SB5045).
+
+## ══ PRIOR (2026-09-15) — the operand changes kind when you move it ══
 
 **Journal 324.** Sweep **4861 passing, 10 skipped, 0 failing** (+8 specs,
 native-only — `convert.sh` runs in one mode). 27 `sash-convert` tests green.

@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup arithmetic
-plan=217
+plan=223
 echo "1..$plan" >&3
 
 set +e
@@ -977,6 +977,47 @@ run_sash 'for (( ;; )); do echo hi; break; done'
 run_sash 'int i=0; for (( ; i<2; i++ )); do echo "$i"; done'
 [[ $rc = 0 && $out = "0
 1" && -z $err ]]; chk 31.52
+
+# ── DD#31 comma condition: all four condition contexts ─────────
+# "The comma in `(( ))` is syntactic sugar that splits one `(( ))` into
+# multiple statements. Each non-final expression must be a mutation. In
+# condition position the final expression must be a comparison."
+#
+# The C-style `for` header's test slot is a condition position like any
+# other. It used to be the one of four that refused the form, because
+# `lower_c_style_for` called `lower_arith_test_structured` directly and so
+# skipped the `Comma` → `Group` decomposition — the mutation stayed embedded
+# in one `ArithTest` and `check_arith_test_placement` rejected it (SB4020).
+# Bash compiles all four. Pin the whole matrix, not just the one that broke.
+
+# 31.53 `while` — the spelling DD#31 gives as its example
+run_sash 'int k=0; while (( k++, k<3 )); do echo "$k"; done'
+[[ $rc = 0 && $out = "1
+2" && -z $err ]]; chk 31.53
+
+# 31.54 `if`
+run_sash 'int k=0; if (( k++, k<3 )); then echo "$k"; fi'
+[[ $rc = 0 && $out = "1" && -z $err ]]; chk 31.54
+
+# 31.55 `until`
+run_sash 'int k=0; until (( k++, k>2 )); do echo "$k"; done'
+[[ $rc = 0 && $out = "1
+2" && -z $err ]]; chk 31.55
+
+# 31.56 the C-style `for` header test slot — the divergence
+run_sash 'int k=0; for (( ; k++, k<3; )); do echo "$k"; done'
+[[ $rc = 0 && $out = "1
+2" && -z $err ]]; chk 31.56
+
+# 31.57 the mutation must not be final — a comma condition ending in one is
+# still SB5007, now via the same shared check `while` has always used
+run_sash 'int k=0; for (( ; k<3, k++; )); do echo "$k"; done'
+[[ $rc != 0 && $err == *SB5007* ]]; chk 31.57
+
+# 31.58 a comma condition with no mutation anywhere is still SB5007 — this is
+# the half of the DD#31 comma rule that no other path enforces
+run_sash 'int k=0; for (( ; k<3, k>0; k++ )); do echo "$k"; done'
+[[ $rc != 0 && $err == *"must be a mutation"* ]]; chk 31.58
 
 set -e
 tally

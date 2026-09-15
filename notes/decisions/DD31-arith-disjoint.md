@@ -42,6 +42,21 @@ while (( count = count - 1, count > 0 )); do
 Equivalent to `while` with multiple statements before `do`, using
 the final as the condition.
 
+**"Condition position" is all four of them.** `if`, `while`, `until`, and
+the test slot of a C-style `for` header are one rule, not four. The header's
+other two slots are not a substitute: `for (( ; k<3; k++ ))` tests before it
+increments and prints `0 1 2`, while `for (( ; k++, k<3; ))` increments
+first and prints `1 2`. The equivalent without the comma writes the mutation
+twice, `for (( k++; k<3; k++ ))`.
+
+Enforcement is shared, so the diagnostics are too. A comma holding a mutation
+anywhere classifies as a mutation and is split into statements before
+validation; whether the final part is a comparison is then decided on the
+split form by the ordinary mutation-in-condition rule (SB5007), the same one
+that rejects `while (( k=1 ))`. Only the other half — every non-final part
+must be a mutation — is checked on the comma itself, because nothing else
+can see it.
+
 ## Bash-mode coercion
 
 - `$((x=10))` → `((x=10))` (mutation extracted to statement form)
