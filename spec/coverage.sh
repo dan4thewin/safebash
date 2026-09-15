@@ -6,7 +6,7 @@
 set -eu
 . common.sh
 setup coverage
-plan=166
+plan=175
 echo "1..$plan" >&3
 
 set +e
@@ -694,6 +694,54 @@ run_sash 'for (( i=0, j=10; i < 3; i++, j-- )); do echo "$i $j"; done'
 [[ $rc = 0 && $out = "0 10
 1 9
 2 8" && -z $err ]]; chk cov.167
+
+# ── validate.rs cold-branch batch: for-words and ternary ────────
+
+# cov.168 `$@` in a for-loop word. `check_for_word` rejects every
+# `SimpleExpansion` except `@` and `*`, which get the DD#42 message naming
+# `$(argv 1)` — the two arms of that guard had never both been reached.
+run_sash 'for x in $@; do echo "$x"; done'
+[[ $rc != 0 && -z $out && $err == *SB5045* && $err == *'$@'* ]]; chk cov.168
+
+# cov.169 `$*` takes the other arm of the same guard
+run_sash 'for x in $*; do echo "$x"; done'
+[[ $rc != 0 && -z $out && $err == *SB5045* && $err == *'$*'* ]]; chk cov.169
+
+# cov.170 sash globs are `*`-only: a bracket class is SB5006
+run_sash 'for x in a[bc]d; do echo "$x"; done'
+[[ $rc != 0 && -z $out && $err == *SB5006* ]]; chk cov.170
+
+# cov.171 …and so is `?`
+run_sash 'for x in a?d; do echo "$x"; done'
+[[ $rc != 0 && -z $out && $err == *SB5006* ]]; chk cov.171
+
+# cov.172 an UNBALANCED bracket is not a class and must stay a literal — the
+# check is `contains('[') && contains(']')`, and only this shape reaches the
+# second half with the first already true
+run_sash 'for x in a[bc; do echo "$x"; done'
+[[ $rc = 0 && $out = 'a[bc' && -z $err ]]; chk cov.172
+
+# cov.173 a for-word that CONCATENATES a literal and an expansion: the glob
+# scan has a separate `Concat` arm that walks the parts, and it only sees a
+# non-Literal part in this shape
+run_sash 's="x"; for w in pre$s*post; do echo "$w"; done'
+[[ $rc = 0 && $out = 'prex*post' && -z $err ]]; chk cov.173
+
+# cov.174 a mutation under a ternary in a condition — the TRUE arm. It cannot
+# take effect reliably (the arm may go unevaluated), so SB5007.
+run_sash 'int x=0; if (( 1 ? (x=2) : 3 )); then echo "$x"; fi'
+[[ $rc != 0 && -z $out && $err == *SB5007* ]]; chk cov.174
+
+# cov.175 …and the FALSE arm, which is the other operand of the same `||`
+run_sash 'int x=0; if (( 1 ? 3 : (x=2) )); then echo "$x"; fi'
+[[ $rc != 0 && -z $out && $err == *SB5007* ]]; chk cov.175
+
+# cov.176 prefix `++` in `$(( … ))`. `(( ++x ))` is pinned at cov.23 and the
+# three `for` slots at cov.163-165; this is the fourth and last parse entry
+# point, and together they are the only thing enforcing DD#31's "no prefix
+# forms" — the validator's duplicate of the rule was unreachable and removed.
+run_sash 'int x=0; echo $(( ++x ))'
+[[ $rc != 0 && -z $out && $err == *SB4020* && $err == *"prefix ++x"* ]]; chk cov.176
 
 set -e
 tally

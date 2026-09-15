@@ -1725,19 +1725,13 @@ fn validate_arith_context(
 ) {
     use crate::parse::classify_arith_expr;
 
-    // Prefix ++/-- always rejected
-    if let ArithExpr::PreIncDec { var, .. } = expr {
-        diags.push(Diagnostic::error_span(
-            span,
-            "SB5007",
-            format!(
-                "prefix ++{} is not allowed — use postfix ({}++) or (( {} += 1 )) instead",
-                var, var, var
-            ),
-        ));
-        return;
-    }
-
+    // No prefix `++`/`--` arm here: one cannot arrive. `reject_prefix_incdec`
+    // rejects it (SB4020) in both parse entry points — `parse_arith_slot` for
+    // `(( … ))` and every C-style `for` slot, `parse_arith_expansion` for
+    // `$(( … ))`. And even past that, a top-level `PreIncDec` classifies as a
+    // mutation, so `lower_arith_mutation_structured` turns it into an
+    // `Assignment`, never the `ArithTest` that is this function's only caller.
+    // Specs cov.23 / cov.163-165 / 31.6 pin the parser's rejection.
     let kind = classify_arith_expr(expr);
     check_arith_div_by_zero(expr, span, diags);
     if in_condition {
@@ -2065,9 +2059,10 @@ fn arith_brief(expr: &ArithExpr) -> String {
         ArithExpr::PostIncDec { var, inc } => {
             format!("{}{}", var, if *inc { "++" } else { "--" })
         }
-        ArithExpr::PreIncDec { var, inc } => {
-            format!("{}{}", if *inc { "++" } else { "--" }, var)
-        }
+        // No `PreIncDec` arm: this only recurses through `BinOp` operands, and
+        // `reject_prefix_incdec` recurses there too — so a prefix form is an
+        // SB4020 at parse time and never reaches a diagnostic message here.
+        // Were one to arrive anyway it falls to `_` and reads as `...`.
         ArithExpr::BinOp { left, op, right } => {
             format!(
                 "{} {} {}",

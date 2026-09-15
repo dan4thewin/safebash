@@ -1,4 +1,55 @@
-## ══ STATUS (2026-09-15) — the slot that skipped the desugaring ══
+## ══ STATUS (2026-09-15) — a rule enforced twice is enforced once ══
+
+**Journal 326.** Sweep **4891 passing, 10 skipped, 0 failing** (+18 this pass).
+Branch-coverage loop, continuing.
+
+### Two dead `PreIncDec` arms removed from `validate.rs`
+
+`validate_arith_context`'s SB5007 "prefix ++x is not allowed" and
+`arith_brief`'s prefix spelling. Cold across eight and two spellings, and
+structurally unreachable two independent ways: `reject_prefix_incdec` fires in
+**both** parse entry points (`parse_arith_slot` for `(( … ))` and all three
+`for` slots, `parse_arith_expansion` for `$(( … ))`), and a top-level
+`PreIncDec` classifies as a mutation so it becomes an `Assignment`, never the
+`ArithTest` that is the validator's only caller.
+
+That leaves `reject_prefix_incdec` as the single enforcement point for a DD#31
+clause — which is the right shape. A check no input can reach enforces
+nothing; what defends the rule is a spec. All four parse entry points are now
+pinned: `cov.23`, `cov.163`–`165`, and `cov.176` (new, `$(( ++x ))`).
+
+Nine more `PreIncDec` sites across `ir.rs`, `parse/`, `transform/`,
+`emit_ir.rs` deliberately **untouched** — filed as
+`audit-downstream-preincdec-arms` (P4), one at a time with a probe, not a
+batch purge. Some are certainly live.
+
+### Seven more branches closed, none of them bugs
+
+`for x in $@` / `$*` (SB5045); `for x in a[bc]d` (SB5006) and its two
+half-guards `for x in abc` / `for x in a[bc`; `for w in pre$s*post` (the
+`Concat` arm of the glob scan); and both operands of the ternary check —
+`if (( 1 ? (x=2) : 3 ))` **and** `if (( 1 ? 3 : (x=2) ))`.
+
+The ternary pair is the lesson: the two arms are the two operands of one
+`||`, so a spec that covers "the ternary case" reaches exactly half of it.
+Short-circuit operators hide a branch behind a branch.
+
+Specs `cov.168`–`cov.176`.
+
+### Next
+
+**The branch table is stale.** Three commits have moved `validate.rs` line
+numbers (`7a63e68` and this one), so `coverage.db` offsets no longer line up —
+`contrib/cov-probe.sh` needs current line numbers, looked up by content in
+`.indexnudge-rust.db`. A full `mk cov-branch` re-measure is the next step;
+last authoritative figure was **86.35%, 512/3752** at `b9ca092`.
+
+Still-cold leads carried forward: `splat_collection_name`'s `DoubleQuoted`
+arm (both halves — `"@a"` is not a splat, it is SB5050 dead-variable, so the
+arm may be unreachable); `first_read_span`'s `found.is_none()` false arm;
+`program.end_block` in the predicate-function scan.
+
+## ══ PRIOR (2026-09-15) — the slot that skipped the desugaring ══
 
 **Journal 325.** Sweep **4873 passing, 10 skipped, 0 failing**. Bug #6, and
 the sixth time a cold branch was a bug.
