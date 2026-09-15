@@ -6,7 +6,7 @@
 set -eu
 . common.sh
 setup coverage
-plan=196
+plan=205
 echo "1..$plan" >&3
 
 set +e
@@ -864,6 +864,47 @@ run_sash '/bin/cat <<'
 # the same check with nothing left to escape. Still SB5076.
 run_sash '/bin/echo `\'
 [[ $rc != 0 && -z $out && $err == *SB5076* ]]; chk cov.197
+
+# cov.198 `${#}` — the `#` operator with an empty operand. The length-sugar
+# scanner's `len <= 1` guard; `${#x}` (cov-covered) takes the other path.
+run_sash '/bin/echo ${#}'
+[[ $rc != 0 && -z $out && $err == *SB4034* ]]; chk cov.198
+# cov.199 `${##}` — a doubled `#`, which is the prefix-strip operator, not
+# length sugar. Same scanner, the other early-out.
+run_sash '/bin/echo ${##}'
+[[ $rc != 0 && -z $out && $err == *SB4034* ]]; chk cov.199
+# cov.200 `${s@Uu}` — a two-character `@` transform. `try_at_transform` only
+# recognizes a single letter, so this falls through to the generic
+# unrecognized-content reject rather than SB4015.
+run_sash 's=a
+/bin/echo ${s@Uu}'
+[[ $rc != 0 && -z $out && $err == *SB4047* ]]; chk cov.200
+# cov.201 a bare `${a[@]}` with no trailing operator — the DD#75 §4 retired
+# splat. The operator-bearing form (`${a[@]/x/y}`) takes the other branch.
+run_sash 'array a=(1 2)
+/bin/echo ${a[@]}'
+[[ $rc != 0 && -z $out && $err == *SB4038* ]]; chk cov.201
+# cov.202 a map element word that opens `[` but never closes it.
+run_sash 'map m=([a=1)'
+[[ $rc != 0 && -z $out && $err == *SB4031* ]]; chk cov.202
+# cov.203 an empty map key `[]=` — closes, but there is nothing between the
+# brackets, so it is not the `[key]=value` form either.
+run_sash 'map m=([]=1)'
+[[ $rc != 0 && -z $out && $err == *SB4031* ]]; chk cov.203
+# cov.204 an empty `"$()"` — zero statements, so the `$(status)`/`$(getcpid)`
+# bareword rewrite declines. (It requires exactly one.)
+run_sash '/bin/echo "$()"'
+[[ $rc = 0 && -z $out && -z $err ]]; chk cov.204
+# cov.205 a `$( )` body that is a declaration, not a command: the rewrite's
+# second guard. Quoted, because the unquoted path rewrites while scanning and
+# never reaches this one.
+run_sash '/bin/echo "$(int x=1)"'
+[[ $rc = 0 && -z $out && -z $err ]]; chk cov.205
+# cov.206 a `$( )` whose command name is an expansion rather than a literal —
+# DD#23 rejects it, and the rewrite declines before that.
+run_sash 's=/bin/true
+/bin/echo "$($s)"'
+[[ $rc != 0 && -z $out && $err == *SB5011* ]]; chk cov.206
 
 set -e
 tally
