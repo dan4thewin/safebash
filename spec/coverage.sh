@@ -6,7 +6,7 @@
 set -eu
 . common.sh
 setup coverage
-plan=175
+plan=186
 echo "1..$plan" >&3
 
 set +e
@@ -742,6 +742,70 @@ run_sash 'int x=0; if (( 1 ? 3 : (x=2) )); then echo "$x"; fi'
 # forms" — the validator's duplicate of the rule was unreachable and removed.
 run_sash 'int x=0; echo $(( ++x ))'
 [[ $rc != 0 && -z $out && $err == *SB4020* && $err == *"prefix ++x"* ]]; chk cov.176
+
+# cov.177 the predicate-return scan (SB4037) also walks the END block, so a
+# program needs both a predicate use and an `END { }` for that arm to run
+run_sash 'f() { return 0; }
+if f; then echo y; fi
+END { echo bye; }'
+[[ $rc = 0 && $out == $'y\nbye' && -z $err ]]; chk cov.177
+
+# cov.178 a function that is NOT used as a predicate sits in the same fn_defs
+# list and must be skipped — `g` never returns and that is fine
+run_sash 'g() { echo hi; }
+f() { return 0; }
+if f; then g; fi'
+[[ $rc = 0 && $out = 'hi' && -z $err ]]; chk cov.178
+
+# cov.179 a predicate whose body is an `if` with BOTH arms returning is
+# definite-returning — the else-arm check passes and the then-arm is reached
+run_sash 'f() { if true; then return 0; else return 1; fi }
+if f; then echo y; fi'
+[[ $rc = 0 && $out = 'y' && -z $err ]]; chk cov.179
+
+# cov.180 …and the same shape with a then-arm that does NOT return. The else
+# arm alone is not enough; this is the other half of that `&&`.
+run_sash 'f() { if true; then echo x; else return 1; fi }
+if f; then echo y; fi'
+[[ $rc != 0 && -z $out && $err == *SB4037* ]]; chk cov.180
+
+# cov.181 a predicate whose body is a dispatch with NO default arm: the
+# uncovered subject falls through to no return at all
+run_sash 'f() { s=$(argv 1); [[ $s == a { return 0; } ]]; }
+if f; then echo y; fi'
+[[ $rc != 0 && -z $out && $err == *SB4037* ]]; chk cov.181
+
+# cov.182 SB5069 names the FIRST `read` in the statement, once, even when the
+# condition holds two — the walk latches on the first hit
+run_sash 'while read A | read B; do echo x; done'
+[[ $rc != 0 && -z $out && $err == *SB5069* && $(grep -c SB5069 <<<"$err") = 1 ]]; chk cov.182
+
+# cov.183 an inline `*` glob in COMMAND-argument position (DD#69/SB5029) when
+# the word is a concatenation — the bare-literal form is the common one, this
+# reaches the `Concat` arm of the same scan
+run_sash 's="x"; echo $s*'
+[[ $rc != 0 && -z $out && $err == *SB5029* ]]; chk cov.183
+
+# cov.184 a non-numeric `int` initializer is not an out-of-range literal — the
+# range check must decline it and let the type error stand
+run_sash 'int x=abc'
+[[ $rc != 0 && -z $out && $err == *SB4030* && $err != *SB4026* ]]; chk cov.184
+
+# cov.185 an embedded subscript assignment in a condition `(( … ))` — the
+# array analogue of the embedded `++` case, and a separate check
+run_sash 'array a=(1 2); if (( (a[0]=1) )); then echo y; fi'
+[[ $rc != 0 && -z $out && $err == *SB5007* && $err == *SB4020* ]]; chk cov.185
+
+# cov.186 a mutation in a ternary CONDITION (not either arm) — cov.174/175
+# cover the arms, and the three tests are the three operands of one `||`
+run_sash 'int x=0; if (( (x=2) ? 1 : 3 )); then echo y; fi'
+[[ $rc != 0 && -z $out && $err == *SB5007* ]]; chk cov.186
+
+# cov.187 SB5012 collects spans by walking every expansion in the statement,
+# so a statement mixing an ordinary `$s` with an unavailable `$?` must skip
+# the one and flag the other
+run_sash 's="x"; echo $s $?'
+[[ $rc != 0 && -z $out && $err == *SB5012* ]]; chk cov.187
 
 set -e
 tally
