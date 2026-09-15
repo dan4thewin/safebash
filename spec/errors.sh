@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup errors
-plan=219
+plan=223
 echo "1..$plan" >&3
 
 set +e
@@ -441,6 +441,25 @@ run_sash '[[ a = a ]] && echo hit'
 # e.b70.tor a `[[ … ]] || action` consumes it (runs on false)
 run_sash '[[ a = b ]] || echo miss'
 [[ $rc = 0 && $out = "miss" && -z $err ]]; chk e.b70.tor
+
+# A guard whose test is FALSE skips the action and leaves the test's own
+# status behind, so a program ending in an unfired guard exits non-zero.
+# `[[ ]]` publishes `$?` like every other status producer; the three forms
+# below must agree. Provisional (DG 2026-09-15) — a case can be made for
+# reserving non-zero exits for `exit` and aborts, which would flip all three
+# together.
+# e.b70.tandf an unfired `[[ … ]] &&` guard exits 1, not 0
+run_sash '[[ a = b ]] && echo hit'
+[[ $rc = 1 && -z $out && -z $err ]]; chk e.b70.tandf
+# e.b70.tandfa `(( … )) &&` agrees
+run_sash '(( 1 == 2 )) && echo hit'
+[[ $rc = 1 && -z $out && -z $err ]]; chk e.b70.tandfa
+# e.b70.tandfx an external command's guard agrees
+run_sash 'grep -q zzz /dev/null && echo hit'
+[[ $rc = 1 && -z $out && -z $err ]]; chk e.b70.tandfx
+# e.b70.tandfi the same false test under `if` still exits 0 (no else)
+run_sash 'if [[ a = b ]]; then echo hit; fi'
+[[ $rc = 0 && -z $out && -z $err ]]; chk e.b70.tandfi
 
 # ── `!` precedence + pipeline + suppress (DG 2026-08-19). `!` binds its
 # immediate unit (bash-consistent `(!X) && Y`); it cannot negate a pipeline

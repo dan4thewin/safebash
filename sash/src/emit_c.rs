@@ -1096,6 +1096,7 @@ fn emit_inst(e: &mut Emit, inst: &SsaInst, types: &VarTypes) {
         SsaInst::Test(test_expr) => {
             let val = lower_test_expr(e, test_expr, types);
             writeln!(e.out, "    __test_result = {};", val).unwrap();
+            writeln!(e.out, "    __exit_status = __test_result ? 0 : 1;").unwrap();
         }
         // DD#63: `match S P ARR` out-array form → sash_regex_match_into.
         SsaInst::MatchInto {

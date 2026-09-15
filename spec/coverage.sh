@@ -6,7 +6,7 @@
 set -eu
 . common.sh
 setup coverage
-plan=104
+plan=128
 echo "1..$plan" >&3
 
 set +e
@@ -435,6 +435,92 @@ run_sash 'eval() {
 }
 eval'
 [[ $rc != 0 && -z $out && $err == *SB4001* ]]; chk cov.100
+
+# ── 2026-09-15 branch-coverage batch (journal 321). Each entry names the
+# arm it reaches; all were 0-hit across a full native+c sweep. ──
+
+# cov.106 absorb_text (parse/expr.rs) in OPERAND mode: `&` is NOT a connector
+# inside `[[ ]]`, and unlike an assignment value it is not absorbed either —
+# it terminates the word, so the `]]` never arrives.
+run_sash '[[ a&b == x ]] && echo y'
+[[ $rc != 0 && -z $out && $err == *SB4014* ]]; chk cov.106
+# cov.107 a command substitution holding TWO statements — the `let [stmt]`
+# single-statement bareword shortcut must decline.
+run_sash 'x=$(echo a; echo b); echo "$x"'
+[[ $rc = 0 && $out = "a
+b" && -z $err ]]; chk cov.107
+# cov.108 an EMPTY command substitution (zero statements) — the same shortcut
+# declines from the other side.
+run_sash 'x=$( ); echo "[$x]"'
+[[ $rc = 0 && $out = "[]" && -z $err ]]; chk cov.108
+# cov.109 an unbalanced `${a[0}` — capture_balanced_subscript finds no close.
+run_sash 'int array a=(1 2); echo ${a[0}'
+[[ $rc != 0 && -z $out && $err == *SB4047* ]]; chk cov.109
+# cov.110 a non-identifier dynamic subscript `$a[$i-]` — dynamic_subscript_var
+# declines, so the split-subscript gather backs off and `$a` stands alone.
+run_sash 'int array a=(1 2); int i=1; echo $a[$i-]'
+[[ $rc != 0 && -z $out && $err == *SB5064* ]]; chk cov.110
+# cov.111 a BARE `@` is an ordinary word, not a splat (the `w.len() > 1` guard).
+run_sash 'echo @'
+[[ $rc = 0 && $out = "@" && -z $err ]]; chk cov.111
+# cov.112 `@{…}` splat disposition on a non-identifier name.
+run_sash 'int array a=(1 2); echo @{1bad:-x}'
+[[ $rc != 0 && -z $out && $err == *SB5033* ]]; chk cov.112
+# cov.113 the `[*]` half of the retired splat (the `[@]` half is specced; the
+# `idx == "*"` arm was not).
+run_sash 'int array a=(1 2); echo $a[*]'
+[[ $rc != 0 && -z $out && $err == *SB4038* ]]; chk cov.113
+# cov.114 trailing literal text after an unbraced subscript, unquoted.
+run_sash 'int array a=(1 2); echo $a[0]tail'
+[[ $rc = 0 && $out = "1tail" && -z $err ]]; chk cov.114
+# cov.115 …and the same inside a double-quoted string (a separate scanner arm).
+run_sash 'int array a=(1 2); echo "$a[0]tail"'
+[[ $rc = 0 && $out = "1tail" && -z $err ]]; chk cov.115
+# cov.116 the retired `[*]` splat inside a string.
+run_sash 'int array a=(1 2); echo "$a[*]"'
+[[ $rc != 0 && -z $out && $err == *SB4038* ]]; chk cov.116
+# cov.117 a dynamic subscript whose variable starts with `_`.
+run_sash 'int array a=(1 2); int _i=1; echo $a[$_i]'
+[[ $rc = 0 && $out = "2" && -z $err ]]; chk cov.117
+# cov.118 the retired keys form spelled with `[*]`.
+run_sash 'int array a=(1 2); echo ${!a[*]}'
+[[ $rc != 0 && -z $out && $err == *SB4038* ]]; chk cov.118
+# cov.119 postfix DECREMENT as a statement. Every `if *inc {"++"} else {"--"}`
+# in parse/arith.rs had only ever taken the `++` side.
+run_sash 'int i=5; (( i-- )); echo $i'
+[[ $rc = 0 && $out = "4" && -z $err ]]; chk cov.119
+# cov.120 prefix `--i` is rejected (the `--` spelling of the SB4020 message).
+run_sash 'int i=5; (( --i )); echo $i'
+[[ $rc != 0 && -z $out && $err == *SB4020* ]]; chk cov.120
+# cov.121 a mutation inside `$(( ))` expression context, `--` spelling.
+run_sash 'int i=5; echo $(( i-- ))'
+[[ $rc != 0 && -z $out && $err == *SB4020* ]]; chk cov.121
+# cov.122 an integer literal one past i64::MAX.
+run_sash 'echo $(( 9223372036854775808 ))'
+[[ $rc != 0 && -z $out && $err == *SB4026* ]]; chk cov.122
+# cov.123 a malformed `0x` literal (DD#72 unsigned-prefix digit check).
+run_sash 'echo $(( 0xzz ))'
+[[ $rc != 0 && -z $out && $err == *SB4035* ]]; chk cov.123
+# cov.124 a braced SUBSCRIPT inside arithmetic (try_braced_subscript).
+run_sash 'int array a=(7 8); echo $(( ${a[0]} + 1 ))'
+[[ $rc = 0 && $out = "8" && -z $err ]]; chk cov.124
+# cov.125 …and an empty index there.
+run_sash 'int array a=(7 8); echo $(( ${a[]} ))'
+[[ $rc != 0 && -z $out && $err == *SB4041* ]]; chk cov.125
+# cov.126 a comma sequence in VALUE context folds to its last part.
+run_sash 'int i=1; echo $(( i , 2 ))'
+[[ $rc = 0 && $out = "2" && -z $err ]]; chk cov.126
+# cov.127 a wholly empty `$(( ))` is zero (the all-separators early return).
+run_sash 'echo $(( ))'
+[[ $rc = 0 && $out = "0" && -z $err ]]; chk cov.127
+# cov.128 a C-style for loop that counts DOWN (the `--` update arm).
+run_sash 'for (( j=2; j>0; j-- )); do echo $j; done'
+[[ $rc = 0 && $out = "2
+1" && -z $err ]]; chk cov.128
+# cov.129 an UNQUOTED backtick is rejected (scan_backtick / skip_backtick_body);
+# cov.62 covers the quoted form, which is verbatim text and never scanned.
+run_sash 'echo `echo hi`'
+[[ $rc != 0 && -z $out && $err == *SB5076* ]]; chk cov.129
 
 set -e
 tally

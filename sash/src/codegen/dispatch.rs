@@ -141,6 +141,16 @@ impl SsaInst {
                     Some(exit_status_var),
                 );
                 builder.def_var(test_result_var, result);
+                // A `[[ … ]]` publishes its status like every other producer,
+                // so a guard that does not fire (`[[ a == b ]] && cmd`) leaves
+                // rc 1 rather than whatever status happened to precede it.
+                // `if`/`while` reset to 0 on their own false path, so only the
+                // `&&`/`||` guard forms observe this. Provisional (DG).
+                let passed = builder.ins().icmp_imm(IntCC::NotEqual, result, 0);
+                let zero = builder.ins().iconst(I64, 0);
+                let one = builder.ins().iconst(I64, 1);
+                let status = builder.ins().select(passed, zero, one);
+                builder.def_var(exit_status_var, status);
             }
             SsaInst::ReadLine {
                 target,
