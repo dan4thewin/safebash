@@ -6,7 +6,7 @@
 set -eu
 . common.sh
 setup coverage
-plan=158
+plan=166
 echo "1..$plan" >&3
 
 set +e
@@ -653,6 +653,47 @@ run_sash 'int x=0; if (( x++, x < 5 )); then echo y; fi'
 # so `$$` is the spelling that actually reaches the scan.
 run_sash 'if [[ $$ == 0 ]]; then echo y; fi'
 [[ $rc = 0 && -z $out && -z $err ]]; chk cov.154
+
+# cov.160-167 the C-style `for` header is an arithmetic STATEMENT context and
+# must answer to the same rules as `(( … ))`. It did not: `lower_c_style_for`
+# called `parse_arith_str` for each of the three slots and then DISCARDED the
+# `Err` with `if let Ok(...)`. That did not merely lose a diagnostic — it built
+# a different program. A malformed condition fell back to `true_cmd`, so
+# `for (( i=0; i <* 3; i++ ))` compiled to an INFINITE LOOP; a malformed update
+# was dropped, so the counter never advanced (also infinite); a malformed init
+# was dropped, so the loop silently started from the variable's default. The
+# identical typo in a bare `(( … ))` has always been a hard SB4020 (cov.166).
+# All three discarded-Err branches were cold in the branch-coverage measure at
+# `b9ca092` — the cold branch WAS the bug.
+run_sash 'for (( i=0; i <* 3; i++ )); do echo $i; done'
+[[ $rc != 0 && -z $out && $err == *SB4020* ]]; chk cov.160
+run_sash 'for (( i=0; i < 3; i +*+ )); do echo $i; done'
+[[ $rc != 0 && -z $out && $err == *SB4020* ]]; chk cov.161
+run_sash 'for (( i=*0; i < 3; i++ )); do echo $i; done'
+[[ $rc != 0 && -z $out && $err == *SB4020* ]]; chk cov.162
+# cov.163-165 DD#31 is categorical — "Only postfix `x++` and `x--`. No prefix
+# forms." — and names no exemption for a `for` header. Prefix was nonetheless
+# accepted in the init and step slots (it compiled and even ran correctly),
+# while the SAME spelling in `$(( ))` or `(( ))` was SB4020 and in the
+# condition slot was SB5007 for an unrelated reason. Three slots, three
+# dispositions, one construct. All three are SB4020 now, the same code and the
+# same message as everywhere else.
+run_sash 'for (( i=0; i < 3; ++i )); do echo $i; done'
+[[ $rc != 0 && -z $out && $err == *SB4020* && $err == *"prefix ++i"* ]]; chk cov.163
+run_sash 'for (( ++i; i < 3; i++ )); do echo $i; done'
+[[ $rc != 0 && -z $out && $err == *SB4020* && $err == *"prefix ++i"* ]]; chk cov.164
+run_sash 'for (( i=0; --i < 3; )); do echo $i; done'
+[[ $rc != 0 && -z $out && $err == *SB4020* && $err == *"prefix --i"* ]]; chk cov.165
+# cov.166 the control: the same garbage in a bare `(( … ))` always errored.
+run_sash 'int i=0; (( i <* 3 ))'
+[[ $rc != 0 && -z $out && $err == *SB4020* ]]; chk cov.166
+# cov.167 and the legitimate headers must still lower — an empty slot is the
+# deliberate `for (( ;; ))` spelling and is the ONLY thing that may still
+# become `true`. Comma slots (DD#31) keep working too.
+run_sash 'for (( i=0, j=10; i < 3; i++, j-- )); do echo "$i $j"; done'
+[[ $rc = 0 && $out = "0 10
+1 9
+2 8" && -z $err ]]; chk cov.167
 
 set -e
 tally

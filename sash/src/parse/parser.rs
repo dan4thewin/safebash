@@ -592,7 +592,7 @@ fn parse_c_style_for(scanner: &mut Scanner, span: Span) -> Result<Option<Stateme
     skip_terminators(scanner);
     let body = parse_loop_body(scanner, span)?;
 
-    Ok(Some(lower_c_style_for(init, cond, update, body, span)))
+    Ok(Some(lower_c_style_for(init, cond, update, body, span)?))
 }
 
 // ── function ─────────────────────────────────────────────────

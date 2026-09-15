@@ -99,12 +99,7 @@ pub fn parse_arith_expansion(scanner: &mut Scanner, span: Span) -> Result<Expr, 
 /// Returns a structured ArithExpr for the caller to classify and lower.
 pub fn parse_arith_command(scanner: &mut Scanner, span: Span) -> Result<ArithExpr, Diagnostic> {
     let content = collect_arith_content(scanner, span)?;
-    let expr = parse_arith_str(&content, span)?;
-    // SB5007: reject prefix ++/-- at parse time
-    reject_prefix_incdec(&expr, span)?;
-    // SB5007: reject nested mutations (e.g. x = y++)
-    reject_nested_mutation(&expr, span)?;
-    Ok(expr)
+    parse_arith_slot(&content, span)
 }
 
 /// Reject prefix ++/-- anywhere in an arithmetic expression.
@@ -271,6 +266,22 @@ pub fn classify_arith_expr(expr: &ArithExpr) -> ArithKind {
     }
 }
 
+/// Parse one arithmetic *statement* slot and apply the rules every such
+/// context shares: no prefix `++`/`--` (DD#31 — "Only postfix `x++` and
+/// `x--`. No prefix forms."), and no nested mutation.
+///
+/// `(( … ))` and all three slots of a C-style `for` header are the same kind
+/// of context and must answer to the same rules. They did not: the `for`
+/// header called `parse_arith_str` directly and then **discarded the Err**,
+/// so a typo in a header was not a diagnostic but a silently different
+/// program — see `lower_c_style_for`.
+pub fn parse_arith_slot(text: &str, span: Span) -> Result<ArithExpr, Diagnostic> {
+    let expr = parse_arith_str(text, span)?;
+    reject_prefix_incdec(&expr, span)?;
+    reject_nested_mutation(&expr, span)?;
+    Ok(expr)
+}
+
 /// Lower an arithmetic command (( expr )) to an IR Statement.
 pub fn lower_arith_command(expr: ArithExpr, span: Span) -> Statement {
     let kind = classify_arith_expr(&expr);
@@ -281,39 +292,52 @@ pub fn lower_arith_command(expr: ArithExpr, span: Span) -> Statement {
 }
 
 /// Lower a C-style for loop: for (( init; cond; update )); do body; done
+///
+/// Every slot **propagates** its parse error. It used to swallow all three
+/// with `if let Ok(...)`, which did not merely lose a diagnostic — it built a
+/// different program. A malformed condition fell back to `true_cmd`, so
+/// `for (( i=0; i <* 3; i++ ))` compiled to an infinite loop; a malformed
+/// update was dropped, so the counter never advanced (also an infinite loop);
+/// a malformed init was dropped, so the loop silently started from the
+/// variable's default. The identical typo in a bare `(( … ))` has always been
+/// a hard SB4020.
 pub fn lower_c_style_for(
     init: &str,
     cond: &str,
     update: &str,
     body: Vec<Statement>,
     span: Span,
-) -> Statement {
+) -> Result<Statement, Diagnostic> {
     // Init
     let mut init_stmts = Vec::new();
     let init_trimmed = init.trim();
     if !init_trimmed.is_empty() {
-        if let Ok(expr) = parse_arith_str(init_trimmed, span) {
-            init_stmts.push(lower_arith_command(expr, span));
-        }
+        init_stmts.push(lower_arith_command(
+            parse_arith_slot(init_trimmed, span)?,
+            span,
+        ));
     }
 
-    // Condition
+    // Condition. An empty slot is the deliberate `for (( ;; ))` spelling and
+    // is the ONLY thing that may become `true` here.
     let cond_trimmed = cond.trim();
     let condition = if cond_trimmed.is_empty() {
         vec![Statement::true_cmd(span)]
-    } else if let Ok(expr) = parse_arith_str(cond_trimmed, span) {
-        vec![lower_arith_test_structured(&expr, span)]
     } else {
-        vec![Statement::true_cmd(span)]
+        vec![lower_arith_test_structured(
+            &parse_arith_slot(cond_trimmed, span)?,
+            span,
+        )]
     };
 
     // Update
     let mut loop_body = body;
     let update_trimmed = update.trim();
     if !update_trimmed.is_empty() {
-        if let Ok(expr) = parse_arith_str(update_trimmed, span) {
-            loop_body.push(lower_arith_command(expr, span));
-        }
+        loop_body.push(lower_arith_command(
+            parse_arith_slot(update_trimmed, span)?,
+            span,
+        ));
     }
 
     let while_stmt = Statement {
@@ -327,10 +351,10 @@ pub fn lower_c_style_for(
 
     let mut group_body = init_stmts;
     group_body.push(while_stmt);
-    Statement {
+    Ok(Statement {
         kind: StmtKind::Group(Group { body: group_body }),
         span,
-    }
+    })
 }
 
 #[derive(Debug, Clone, PartialEq)]

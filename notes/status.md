@@ -1,4 +1,74 @@
-## ══ STATUS (2026-09-15) — one fault, two answers ══
+## ══ STATUS (2026-09-15) — three cold branches, one silent infinite loop ══
+
+**Journal 323.** Sweep **4853 passing, 10 skipped, 0 failing** (+16: 8 new
+specs × 2 modes). 36 sash unit tests. DD#25 amendment ratified by DG; back on
+the branch-coverage loop.
+
+Fresh branch baseline at `b9ca092`: **86.35%, 512 uncovered** of 3752 — up
+from 510 only because SB5077 added 40 new branches, most immediately covered.
+
+### `lower_c_style_for` threw away every parse error
+
+Three rows of the branch table — `parse/arith.rs` 295, 304, 314, all the
+`Err` arm — were the three `if let Ok(...)` slots of the C-style `for`
+header. Discarding those errors did not merely lose a diagnostic, it **built a
+different program**:
+
+| source | before | bash |
+|---|---|---|
+| `for (( i=0; i <* 3; i++ ))` | compiled → **infinite loop** | syntax error |
+| `for (( i=0; i < 3; i +*+ ))` | compiled → **infinite loop** | syntax error |
+| `for (( i=*0; i < 3; i++ ))` | compiled → silently wrong start | syntax error |
+| `(( i <* 3 ))` — same garbage | SB4020 | — |
+
+A malformed condition fell back to `true_cmd`. **Fifth time in this campaign
+that the cold branch WAS the bug.**
+
+### DD#31 has no for-header exemption
+
+Reached by the other route — checking whether `ArithExpr::PreIncDec` was dead
+before declaring it so. It is not: `for (( i=0; i < 3; ++i ))` and
+`for (( ++i; ... ))` **compiled and ran**, while the condition slot gave
+SB5007 for an unrelated reason and every other context gives SB4020. Three
+slots, three dispositions, one construct. DD#31 says *"Only postfix `x++` and
+`x--`. No prefix forms."* and names no exemption, so this was not a carve-out
+(checked `notes/decisions/` first, as the rule requires).
+
+Same root cause: `lower_c_style_for` was the one arithmetic entry point that
+skipped the shared checks. Fixed with one `parse_arith_slot` (parse +
+`reject_prefix_incdec` + `reject_nested_mutation`) now used by
+`parse_arith_command` and all three `for` slots; `lower_c_style_for` returns
+`Result`. An empty slot is still `true` — `for (( ;; ))` is deliberate, and is
+now the *only* thing that can become `true`.
+
+Specs `cov.160-167`, plan 158 → 166.
+
+### OPEN FOR DG
+
+- **`sash-convert` emits prefix `++`/`--` verbatim in every context**, so it
+  produces sash that does not compile. **Pre-existing and general, not a
+  regression** — `$(( ++i ))` and `(( ++i ))` have always been SB4020; the
+  for-header case merely used to be accepted by the bug fixed above. Filed as
+  `convert-prefix-incdec` (P2). Not a pure rewrite: prefix in a *value*
+  context has no postfix equivalent in sash, so the options are (a) rewrite
+  where sound + `CHECK:` where not, (b) `CHECK:` everywhere, (c) abort with a
+  message. **Converter policy — DG's call**, same family as DD#57.
+- `janet-arith-divzero` — deferred at DG's word ("TBD much later").
+- Still carried: the `[[ … ]]` exit-status rule is **provisional**. DG floated
+  reserving non-zero exits for `exit` and aborts, which would flip `[[ ]]`,
+  `(( ))` and external-command guards together; the four `e.b70.tandf*` specs
+  are written so that flip must move them as a set.
+
+### Known-but-left-alone
+
+`reject_prefix_incdec` does not recurse into Ternary, UnaryOp, FuncCall or
+Subscript (`_ => Ok(())`). The hole is real but **shadowed** — a second,
+broader check catches embedded mutations first, so `$(( 1 ? ++x : 3 ))` and
+`$(( a[++i] ))` are already errors. Left as-is rather than changing which of
+two correct diagnostics fires.
+
+
+## ══ PRIOR (2026-09-15) — one fault, two answers ══
 
 **Journal 322.** Sweep **4837 passing, 10 skipped, 0 failing** (+20 over
 journal 321: `cov.150-156` from the tail of that cycle, plus 3 new specs × 2
@@ -51,9 +121,9 @@ given gcc's `ud2` mattered. DD#25's "known gap" list was also stale — it named
 `Div` (`i64::MIN / -1`) as not-yet-trap-with-message when that was already
 implemented; verified and struck.
 
-### OPEN FOR DG
+### OPEN FOR DG (resolved)
 
-- **One judgement call to ratify or revert (one line).** The SB5077 walk
+- **RATIFIED by DG.** The SB5077 walk
   descends into ternary arms, so `$(( 1 ? 5 : 10/0 ))` is rejected even though
   that arm never evaluates (bash prints 5). This is the only place the check
   is *stronger* than the folder. I kept it because sash already rejects dead
