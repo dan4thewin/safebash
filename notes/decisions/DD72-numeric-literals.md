@@ -52,7 +52,11 @@ for constants, lenient-decimal for strings. Prefix handling is identical.
 
 - The main scanner lexed `#` as a comment even inside `$(( ))`, truncating
   `16#ff` → `16` before the arith number scanner ran. `#` in arith mode is
-  no longer a comment.
+  no longer a comment. **(Half a fix — see DD#110.)** The same truncation was
+  happening *outside* arith, where `/bin/echo 16#ff` printed `16`; that went
+  unnoticed for two months because the guard written here was scoped to
+  `arith_depth > 0`. DD#110 makes the rule general: `#` opens a comment only
+  after a blank.
 - `tokenize_arith` silently *skipped* unknown bytes, and the parser
   silently recovered an unknown token as `0`. Both now produce a clean
   reject (zero-tolerance: no silent arith miscompiles).

@@ -1,4 +1,63 @@
-## ══ STATUS (2026-09-15) — a rule enforced twice is enforced once ══
+## ══ STATUS (2026-09-16) — half a fix, scoped to the place it was found ══
+
+**Journal 327. DD#110.** Sweep **4953 passing, 10 skipped, 0 failing**
+(+30 this pass). Branch-coverage loop, paused for a bug, now resuming.
+
+### Bug #7 — a `#` truncated every unquoted word, silently
+
+`/bin/echo a#b` printed `a`. `/bin/echo 16#ff` printed `16`.
+`/bin/echo ab#cd ef` ate the rest of the line. No diagnostic.
+
+Found from the coverage loop: `parse/lexer.rs:432` is DD#72's guard, and its
+own comment says it prevents exactly this truncation — but it is scoped to
+`arith_depth > 0`. The 2026-07-05 fix was scoped to the place the bug was
+found, not to the rule it violated. DD#72 now records that.
+
+**DD#110 (DG's rule): a `#` opens a comment only after a blank**, or at the
+start of the source. Simpler than bash's token-boundary rule, and strictly
+narrower — it diverges only in the safe direction. It also needs no scanner
+state (it reads `source[pos-1]`), which is why it gets the expansion-adjacent
+cases right where a bash-faithful emulation does not: `$(…)` closes on an
+`RParen`, so a "previous token was word-like" flag misclassifies `$(p)#z`.
+
+**SB4058** makes the one divergence loud. bash comments after an operator
+(`echo a;# c` → `a`); sash reads the `#` as a word, which would have surfaced
+as a baffling `SB5011 command '#' not found`. The scanner records the first
+`#` glued to `; & | < > (` and `parse` reports it first and alone — same
+precedent as `unterminated`, since once tokenization is wrong every later
+diagnostic is a consequence. `)` and `}` are deliberately out of the set:
+they close an expansion far more often (`${s}#y`, `$(p)#z`).
+
+`spec/comments.sh` cmt.12–cmt.26. DD#72's SB4035 for `(( n = 16#ff ))` is
+unaffected — the arith guard runs first (cmt.26 pins it).
+
+### Found on the way, filed not fixed
+
+`/bin/echo a}b` is a compile error; bash prints `a}b`. No `#` involved — `}`
+is in `scan_word_chars`' break set the same way `#` was. Not silent (it is a
+hard error, so no binary disagrees with bash), so P2 not P1, but `a{b`
+reports "expected `}`" which sends the author looking for a brace that was
+never opened. Three real options and a possible collision with brace
+expansion — **DG's call**: `notes/tasks/bug-brace-breaks-unquoted-word.md`.
+
+### Next
+
+Resume the branch-coverage loop. `coverage.db` is stale as of `6b5b7be`
+(86.76%, 495 cold) — 31 specs have landed since and the lexer edit shifts
+`parse/lexer.rs` line numbers past ~394, so re-measure before probing.
+
+Flipped but never specced, from the last pass — write these first:
+`lexer.rs:285` b1/br2 (line continuation), `510` b1/br2 (`<<-EOF`), `645`
+b0/br1 (unterminated backtick), `664` b0/br1 (backtick then newline).
+
+Also to report: `validate.rs:1788`/`1792` may have been made unreachable by
+bug #6's own fix. Do not delete unilaterally.
+
+---
+
+## PRIOR
+
+## ══ PRIOR (2026-09-15) — a rule enforced twice is enforced once ══
 
 **Journal 326.** Sweep **4891 passing, 10 skipped, 0 failing** (+18 this pass).
 Branch-coverage loop, continuing.

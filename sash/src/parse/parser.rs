@@ -105,6 +105,22 @@ pub fn parse(source: &str) -> Result<(Program, Vec<Diagnostic>), Vec<Diagnostic>
         )]);
     }
 
+    // A `#` glued to an operator (`echo a;# c`) is a comment in bash and a word
+    // here — the rest of the line becomes code, so every later diagnostic is a
+    // consequence. Report it first and alone.
+    if let Some(at) = scanner.attached_hash() {
+        let (line, col) = scanner.line_col(at);
+        return Err(vec![parse_error(
+            Span::new(line, col),
+            "SB4058",
+            "a `#` comment must be preceded by a space — this one is glued to \
+             the operator before it, so sash reads it as a word, not a comment \
+             (bash would comment here; sash requires the space so an interior \
+             `#`, as in `a#b` or `16#ff`, can stay part of the word)"
+                .to_string(),
+        )]);
+    }
+
     // A deferred diagnostic is not fatal at parse time; only an Error is.
     if diags
         .iter()

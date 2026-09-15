@@ -10,7 +10,7 @@ set -eu
 . common.sh
 setup comments
 set +e
-plan=11
+plan=26
 echo "1..$plan" >&3
 
 # cmt.1 trailing comment after a command
@@ -68,6 +68,81 @@ v=$(g # inline comment
 )
 /bin/echo $v'
 [[ $rc = 0 && $out = "hi" && -z $err ]]; chk cmt.11
+
+# ---------------------------------------------------------------------------
+# DD#110 — a `#` opens a comment only after a blank (or at start of input).
+# Before this rule the scanner broke every unquoted word at an interior `#`
+# and ate the rest of the line, so `echo a#b` printed `a`. Silently.
+# ---------------------------------------------------------------------------
+
+# cmt.12 an interior `#` is an ordinary word character
+run_sash '/bin/echo a#b'
+[[ $rc = 0 && $out = "a#b" && -z $err ]]; chk cmt.12
+
+# cmt.13 the shape that named the bug: a bash base-prefix literal as a word.
+# DD#72 rejects `16#ff` inside `$(( ))`; outside it, it is just text.
+run_sash '/bin/echo 16#ff'
+[[ $rc = 0 && $out = "16#ff" && -z $err ]]; chk cmt.13
+
+# cmt.14 the truncation used to swallow every following word too
+run_sash '/bin/echo ab#cd ef'
+[[ $rc = 0 && $out = "ab#cd ef" && -z $err ]]; chk cmt.14
+
+# cmt.15 a `#` after a simple expansion continues the word
+run_sash 's="p"
+/bin/echo $s#y'
+[[ $rc = 0 && $out = "p#y" && -z $err ]]; chk cmt.15
+
+# cmt.16 … and after a braced one. `}` is deliberately not an operator for
+# this rule precisely so that this keeps working.
+run_sash 's="p"
+/bin/echo ${s}#y'
+[[ $rc = 0 && $out = "p#y" && -z $err ]]; chk cmt.16
+
+# cmt.17 … and after arithmetic
+run_sash '/bin/echo $((1+1))#z'
+[[ $rc = 0 && $out = "2#z" && -z $err ]]; chk cmt.17
+
+# cmt.18 … and after a command substitution, which closes on `)`
+run_sash 'fn p { echo p }
+/bin/echo $(p)#z'
+[[ $rc = 0 && $out = "p#z" && -z $err ]]; chk cmt.18
+
+# cmt.19 a `#` right after a blank is still a comment, mid-line
+run_sash '/bin/echo a #b'
+[[ $rc = 0 && $out = "a" && -z $err ]]; chk cmt.19
+
+# cmt.20 a `#` in column 1 is still a comment even with no space after it
+run_sash '#nospace
+/bin/echo ok'
+[[ $rc = 0 && $out = "ok" && -z $err ]]; chk cmt.20
+
+# cmt.21 a `#` after a tab is still a comment
+run_sash $'/bin/echo a\t# c' 
+[[ $rc = 0 && $out = "a" && -z $err ]]; chk cmt.21
+
+# cmt.22 SB4058: bash opens a comment after an operator; sash does not, and
+# says so rather than leaving `#` to surface as "command '#' not found".
+run_sash '/bin/echo a;# c'
+[[ $rc != 0 && -z $out && $err == *'SB4058'* ]]; chk cmt.22
+
+# cmt.23 the same for a pipe — the whole operator set is `; & | < > (`
+run_sash '/bin/echo a|# c'
+[[ $rc != 0 && -z $out && $err == *'SB4058'* ]]; chk cmt.23
+
+# cmt.24 … and for a redirect
+run_sash '/bin/echo a >#c'
+[[ $rc != 0 && -z $out && $err == *'SB4058'* ]]; chk cmt.24
+
+# cmt.25 the spelled-out form of cmt.22 compiles and comments
+run_sash '/bin/echo a ; # c'
+[[ $rc = 0 && $out = "a" && -z $err ]]; chk cmt.25
+
+# cmt.26 DD#72 still rejects the base-prefix literal inside arithmetic — the
+# arith guard runs before this rule, so its SB4035 is unchanged.
+run_sash 'int n=0
+(( n = 16#ff ))'
+[[ $rc != 0 && $err == *'SB4035'* ]]; chk cmt.26
 
 set -e
 tally

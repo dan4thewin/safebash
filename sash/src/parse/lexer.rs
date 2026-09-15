@@ -175,6 +175,11 @@ pub struct Scanner {
     /// closer, so `/bin/echo "hello` and `echo ${x` compiled clean. First one
     /// wins — later ones are consequences of the first.
     unterminated: Option<(usize, &'static str)>,
+    /// Offset of the first `#` that sits immediately after an operator with no
+    /// space. bash would start a comment there; sash does not (see
+    /// [`attached_hash_word`]). Reported as SB4058 so the author is not left
+    /// guessing why the rest of the line became code.
+    attached_hash: Option<usize>,
 }
 
 impl Scanner {
@@ -186,6 +191,7 @@ impl Scanner {
             last_end: 0,
             arith_depth: 0,
             unterminated: None,
+            attached_hash: None,
         }
     }
 
@@ -206,6 +212,12 @@ impl Scanner {
     /// rest of the program, so any other diagnostic is downstream noise.
     pub fn unterminated(&self) -> Option<(usize, &'static str)> {
         self.unterminated
+    }
+
+    /// Offset of the first operator-adjacent `#` (see [`attached_hash_word`]),
+    /// if the scan hit one.
+    pub fn attached_hash(&self) -> Option<usize> {
+        self.attached_hash
     }
 
     /// Enter arithmetic-scanning mode (`(( … ))` body). Must be paired with
@@ -369,6 +381,9 @@ impl Scanner {
         if let Some(tok) = self.arith_hash_word(start) {
             return tok;
         }
+        if let Some(tok) = self.attached_hash_word(start) {
+            return tok;
+        }
         let str_slice = logos_input(&self.source[self.pos..]);
         let mut lex = LogosTok::lexer(str_slice);
         let matched = lex.next();
@@ -388,6 +403,45 @@ impl Scanner {
                 self.source.get(self.pos),
                 other
             ),
+        }
+    }
+
+    /// A `#` that is **not** preceded by whitespace is an ordinary word
+    /// character, not a comment introducer. Without this the scanner truncated
+    /// every unquoted word at an interior `#` and ate the rest of the line as a
+    /// comment — `echo a#b` printed `a`, `echo 16#ff` printed `16`. Silently:
+    /// no diagnostic, a binary that disagrees with bash.
+    ///
+    /// DD#72 fixed exactly this collision inside `$(( ))` (see
+    /// [`arith_hash_word`]) and stopped there; the same hole outside arith
+    /// survived.
+    ///
+    /// **The rule is sash's, not bash's.** A comment opens at start of input or
+    /// after a blank. bash also opens one after an *operator*, so `echo a;# c`
+    /// comments in bash and does not here. That divergence is deliberate —
+    /// requiring the space is the spelling every readable script already uses,
+    /// and one rule covers both the word case and the expansion case
+    /// (`$s#y`, `${s}#y`, `$(p)#z`) that a byte-level bash emulation would not.
+    /// It is recorded as [`attached_hash`] so it is reported (SB4058) rather
+    /// than left to surface as a baffling "command '#' not found".
+    ///
+    /// `)` and `}` are deliberately NOT operators here: they far more often
+    /// close an expansion (`${s}#y`, `$(p)#z`), and bash agrees that a `#`
+    /// after them continues the word.
+    ///
+    /// `None` when the byte is not `#`, or when it opens a genuine comment
+    /// (start of input, or preceded by a blank or a newline).
+    fn attached_hash_word(&mut self, start: usize) -> Option<SpannedToken> {
+        if self.source[self.pos] != b'#' {
+            return None;
+        }
+        match self.source[..self.pos].last() {
+            Some(b' ') | Some(b'\t') | Some(b'\n') | None => None,
+            Some(b';') | Some(b'&') | Some(b'|') | Some(b'<') | Some(b'>') | Some(b'(') => {
+                self.attached_hash.get_or_insert(self.pos);
+                Some(self.scan_word(start))
+            }
+            Some(_) => Some(self.scan_word(start)),
         }
     }
 
@@ -1681,7 +1735,8 @@ impl Scanner {
             let b = self.source[self.pos];
             match b {
                 b' ' | b'\t' | b'\n' | b';' | b'|' | b'&' | b'(' | b')' | b'{' | b'}' | b'<'
-                | b'>' | b'#' | b'"' | b'\'' | b'`' | b'$' => break,
+                | b'>' | b'"' | b'\'' | b'`' | b'$' => break,
+                b'#' if self.arith_depth > 0 => break,
                 // `=` ends the word. A *leading* `=` never reaches here: the
                 // byte dispatcher routes `b'='` to `scan_eq_punct`, and no
                 // caller of `scan_word` advances past its first byte.
