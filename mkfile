@@ -76,6 +76,15 @@ cov-db:V:
 cov-rpt:V:
 	(cd $SASH && cargo llvm-cov report --release)
 
+# Focused remeasure: did THIS snippet flip THAT branch? `mk cov-branch` answers
+# "where are we" in ~40 minutes; this answers "does my candidate spec reach the
+# arm I aimed it at" in under a second, which is the actual inner loop of
+# closing branches one at a time. Run `mk cov-probe-build` once first, and
+# `mk cov-reset` when done.
+#   bash contrib/cov-probe.sh sash/src/validate.rs:1985 'int x=0; (( x-- ))'
+cov-probe-build:V:
+	bash contrib/cov-probe.sh --build
+
 # Runtime coverage. sash-rt is a separate workspace and a separate concern
 # from `mk cov` (which ignores it); contrib/rt-coverage.sh explains why it
 # needs its own driver.
