@@ -1363,6 +1363,27 @@ impl Scanner {
         self.scan_braced_content()
     }
 
+    /// One step of the `"…$((…))…"` scan: consume the `((`/`))` pair or the
+    /// single byte at `self.pos`, adjusting `depth`. Returns `false` when the
+    /// `))` closing the OUTERMOST pair is reached, leaving `self.pos` on it.
+    /// Mirrors [`Self::step_dq_cmd_sub`], which does the same for `$(…)`.
+    fn step_dq_arith_sub(&mut self, depth: &mut i32) -> bool {
+        let rest = &self.source[self.pos..];
+        if rest.starts_with(b"((") {
+            *depth += 1;
+            self.pos += 2;
+        } else if rest.starts_with(b"))") {
+            *depth -= 1;
+            if *depth == 0 {
+                return false;
+            }
+            self.pos += 2;
+        } else {
+            self.pos += 1;
+        }
+        true
+    }
+
     /// `$((…))` — caller has not yet advanced past `((`. Returns the
     /// inner arithmetic text and advances past the closing `))`.
     fn consume_dq_arith_sub(&mut self) -> String {
@@ -1370,22 +1391,20 @@ impl Scanner {
         let inner_start = self.pos;
         let mut depth = 1i32;
         while self.pos + 1 < self.source.len() && depth > 0 {
-            if self.source[self.pos] == b'(' && self.source[self.pos + 1] == b'(' {
-                depth += 1;
-                self.pos += 2;
-            } else if self.source[self.pos] == b')' && self.source[self.pos + 1] == b')' {
-                depth -= 1;
-                if depth == 0 {
-                    break;
-                }
-                self.pos += 2;
-            } else {
-                self.pos += 1;
+            if !self.step_dq_arith_sub(&mut depth) {
+                break;
             }
         }
         let content = String::from_utf8_lossy(&self.source[inner_start..self.pos]).to_string();
-        if self.pos + 1 < self.source.len() {
+        if depth == 0 {
             self.pos += 2; // skip ))
+        } else if self.unterminated.is_none() {
+            // The loop ran off the end with `))` still owed. Every sibling
+            // construct rejects this (`"${ s"` and `"$( cmd"` both raise
+            // SB4057, as does a bare `$(( 1 + 2`); only the in-`"…"` `$((`
+            // scanner used to return its partial text and evaluate it, so
+            // `echo "$(( 1 + 2"` silently printed 3. `open_at` is the `$`.
+            self.unterminated = Some((inner_start - 3, "`$((`"));
         }
         content
     }

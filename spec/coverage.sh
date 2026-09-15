@@ -6,7 +6,7 @@
 set -eu
 . common.sh
 setup coverage
-plan=128
+plan=148
 echo "1..$plan" >&3
 
 set +e
@@ -521,6 +521,84 @@ run_sash 'for (( j=2; j>0; j-- )); do echo $j; done'
 # cov.62 covers the quoted form, which is verbatim text and never scanned.
 run_sash 'echo `echo hi`'
 [[ $rc != 0 && -z $out && $err == *SB5076* ]]; chk cov.129
+
+# cov.130-133 BUG (consume_dq_arith_sub returned its partial text): an
+# UNTERMINATED `$((` inside a double-quoted string ran off the end of the
+# source and was then evaluated anyway — `echo "$(( 1 + 2"` silently printed
+# 3. Every sibling construct already rejected this (bare `$(( 1 + 2`, `"${ s"`
+# and `"$( cmd"` all raise SB4057/SB4020), so the in-`"…"` arith scanner was
+# the one hole. It now records the construct as unterminated; the span points
+# at the `$`. The valid forms below are the no-regression half: the `depth`
+# bookkeeping (not a length test) now decides whether `))` gets skipped.
+# cov.130 the bug: unterminated `$((` inside `"…"` is rejected
+run_sash 'echo "$(( 1 + 2"'
+[[ $rc != 0 && -z $out && $err == *SB4057* ]]; chk cov.130
+# cov.131 a nested `(…)` group inside a quoted `$((…))` still closes correctly
+run_sash 'echo "$(( (1 + 2) * 3 ))"'
+[[ $rc = 0 && $out = 9 && -z $err ]]; chk cov.131
+# cov.132 a nested `((…))` — depth really is counted, not just paired
+run_sash 'echo "$(( ((1)) + 1 ))"'
+[[ $rc = 0 && $out = 2 && -z $err ]]; chk cov.132
+# cov.133 two quoted arith subs in one word — the second must start clean
+run_sash 'echo "$(( 1 + 2 ))x$(( 3 ))"'
+[[ $rc = 0 && $out = "3x3" && -z $err ]]; chk cov.133
+
+# cov.134-139 fold_arith_op's logical and zero-divisor arms. `&&`/`||` over
+# two literals had never been constant-folded at all (both outcomes of both
+# operators were cold), and the div/mod-by-zero guards fold to 0 — matching
+# the runtime's value for cov.68/69, though the fold emits no diagnostic.
+run_sash 'echo $(( 1 && 1 ))'
+[[ $rc = 0 && $out = 1 && -z $err ]]; chk cov.134
+run_sash 'echo $(( 1 && 0 ))'
+[[ $rc = 0 && $out = 0 && -z $err ]]; chk cov.135
+run_sash 'echo $(( 0 || 1 ))'
+[[ $rc = 0 && $out = 1 && -z $err ]]; chk cov.136
+run_sash 'echo $(( 0 || 0 ))'
+[[ $rc = 0 && $out = 0 && -z $err ]]; chk cov.137
+# cov.138-139 a LITERAL zero divisor is folded to 0 (see cov.68/69 for the
+# runtime path, which additionally prints bash's "division by 0" to stderr)
+run_sash 'echo $(( 1 / 0 ))'
+[[ $rc = 0 && $out = 0 ]]; chk cov.138
+run_sash 'echo $(( 1 % 0 ))'
+[[ $rc = 0 && $out = 0 ]]; chk cov.139
+
+# cov.140-142 check_len_operand's rejection arms (type_check.rs)
+# cov.140 `len` with no argument at all → arity, not the operand check
+run_sash 'echo $(len)'
+[[ $rc != 0 && -z $out && $err == *SB4045* ]]; chk cov.140
+# cov.141 `args` is the function-local argument array, absent at top level
+run_sash 'echo $(len args)'
+[[ $rc != 0 && -z $out && $err == *SB5024* ]]; chk cov.141
+# cov.142 a scalar operand is redirected to `strlen`
+run_sash 'str s=abc; echo $(len s)'
+[[ $rc != 0 && -z $out && $err == *SB4030* ]]; chk cov.142
+
+# cov.143-145 join_intrinsic's argument-shape rejections
+# cov.143 the separator is fixed at compile time, so an expansion is refused
+run_sash 'array a=(p q); str s=-; echo $(join a $s)'
+[[ $rc != 0 && -z $out && $err == *SB5074* ]]; chk cov.143
+# cov.144 too many arguments
+run_sash 'array a=(p q); echo $(join a , x)'
+[[ $rc != 0 && -z $out && $err == *SB5040* ]]; chk cov.144
+# cov.145 none at all
+run_sash 'array a=(p q); echo $(join)'
+[[ $rc != 0 && -z $out && $err == *SB5040* ]]; chk cov.145
+
+# cov.146-147 is_identifier_or_subscript's two rejection arms — a malformed
+# assignment target is neither an assignment nor a runnable command (SB5011).
+# cov.146 a name that is not an identifier, with a well-formed subscript
+run_sash '9x[0]=1; echo done'
+[[ $rc != 0 && -z $out && $err == *SB5011* ]]; chk cov.146
+# cov.147 a valid name with an EMPTY subscript
+run_sash 'a[]=1; echo done'
+[[ $rc != 0 && -z $out && $err == *SB5011* ]]; chk cov.147
+
+# cov.148-149 check_unset_args: `unset` is collection-only (DD#30), so a
+# scalar — declared or not — is redirected to `name=""`.
+run_sash 'str s=a; unset s; echo done'
+[[ $rc != 0 && -z $out && $err == *SB4030* ]]; chk cov.148
+run_sash 'unset nosuchvar'
+[[ $rc != 0 && -z $out && $err == *SB4030* ]]; chk cov.149
 
 set -e
 tally
