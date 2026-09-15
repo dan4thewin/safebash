@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup wordsplit
-plan=130
+plan=133
 echo "1..$plan" >&3
 
 set +e
@@ -740,16 +740,27 @@ b'"
 run_sash '/bin/echo a\b'
 [[ $rc = 0 && $out = 'a\b' && -z $err ]]; chk 64.14
 
-# 64.15 a trailing `\` with nothing after it at all is a verbatim byte, not
-# a dangling continuation. Native-only: `_run_sash_c` writes the source with
-# `printf '%s\n'`, so in c mode the `\` gains a newline and *is* a
-# continuation — the case is unreachable through that harness, not different.
-if [[ $SASH_MODE = native ]]; then
-    run_sash '/bin/echo a\'
-    [[ $rc = 0 && $out = 'a\' && -z $err ]]; chk 64.15
-else
-    skip_chk 64.15
-fi
+# 64.15 a trailing `\` with nothing after it at all is still a continuation —
+# it just has no newline to join to, so it vanishes and the word ends. bash
+# discards it the same way (`echo a\` prints `a`). This spec first asserted
+# `a\`, pinning a divergence nobody had checked against bash; see journal 329.
+run_sash '/bin/echo a\'
+[[ $rc = 0 && $out = "a" && -z $err ]]; chk 64.15
+
+# 64.16 the same trailing `\` reached through `skip_whitespace` instead of
+# `scan_word_chars` — a blank in front of it puts the scanner in the other
+# path, which had the identical hole.
+run_sash '/bin/echo a \'
+[[ $rc = 0 && $out = "a" && -z $err ]]; chk 64.16
+
+# 64.17 a word ending in `\` at end-of-input: the backslash goes, the word
+# stays whole.
+run_sash '/bin/echo ab\'
+[[ $rc = 0 && $out = "ab" && -z $err ]]; chk 64.17
+
+# 64.18 quoting still protects it — `'"'"'a\'"'"' is two bytes, continuation or not.
+run_sash "/bin/echo 'a\\'"
+[[ $rc = 0 && $out = 'a\' && -z $err ]]; chk 64.18
 
 set -e
 tally

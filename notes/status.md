@@ -1,4 +1,71 @@
-## ══ STATUS (2026-09-16) — the same bug, one byte over ══
+## ══ STATUS (2026-09-16) — I wrote a spec that pinned a bug ══
+
+**Journal 329. DD#64 amended twice.** Sweep **4983 passing, 10 skipped, 0
+failing**. Branch coverage **87.33% / 475 cold** at the start of this pass
+(was 86.76% / 495). Three lexer bugs closed today.
+
+### Bug #9 — a trailing `\` at end-of-input, and the spec that hid it
+
+`/bin/echo a\` with no final newline: bash prints `a`, sash printed `a\`.
+Same rule as bug #8 with the newline missing — DD#64's "end-of-line" covers
+the last line whether or not it is newline-terminated. Both `scan_word_chars`
+and `skip_whitespace` now treat `\`-then-newline and `\`-then-nothing alike.
+
+**I introduced the spec that would have hidden it.** 64.15, added in the bug
+#8 commit, asserted `out = 'a\'` — written from the implementation, never
+compared to bash, and it passed. Found an hour later while probing
+`lexer.rs:297`, where the same shape one byte over (`/bin/echo a \`) got a
+bash comparison out of habit.
+
+The failure mode is worth naming: **a spec written after the verification,
+from the implementation, asserts what the implementation does.** The 328
+verification table did run bash on a case labelled "trailing at EOF" — but
+that input carried a newline, because the helper appended one. The no-newline
+variant only appeared when I wrote the spec, by which point I had stopped
+comparing.
+
+Dividend: 64.15 no longer needs its native-only guard. It needed one because
+the two harnesses disagreed about the answer, and they disagreed *because* the
+answer was wrong. Skips 11 → 10. A spec that needs a mode guard is sometimes
+telling you the behavior is wrong, not that the harnesses differ.
+
+`spec/wordsplit.sh` 64.9–64.18.
+
+### Coverage, this pass
+
+Six lexer branches closed: `<<-EOF` (cov.193), unterminated backtick and bare
+backtick-before-newline (cov.194/195), `<<` at end-of-input (cov.196), a `\`
+as the last byte of a backtick body (cov.197), and both continuation branches
+via 64.16–64.18. `plan=196` in coverage.sh, `plan=133` in wordsplit.sh.
+
+Cold-branch leaders after the last full measure: `validate.rs` 59 (was 74),
+`parse/lexer.rs` 43, `parse/parser.rs` 37, `parse/expr.rs` 35, `type_check.rs`
+32, `parse/arith.rs` 31, `emit_c.rs` 26.
+
+### Next
+
+**Re-measure before probing** — `coverage.db` predates cov.193–197 and
+64.9–64.18, and two lexer edits shift line numbers.
+
+Probed without success, still open: `lexer.rs:936` (`skip_paren_to_close`
+never ran for `/bin/echo $(abc` — needs a different route in).
+`lexer.rs:272|0|1` suggests `next()` is never called with an empty peek
+buffer; defensive, do not delete.
+
+Also to report: `validate.rs:1788`/`1792` may have been made unreachable by
+bug #6's own fix. Do not delete unilaterally.
+
+### Open for DG
+
+`notes/tasks/bug-brace-breaks-unquoted-word.md` — `/bin/echo a}b` is a compile
+error where bash prints `a}b`. Same shape as bugs #7–#9 but the fix is a
+language question (three options, possible collision with brace expansion).
+
+---
+
+## PRIOR
+
+## ══ PRIOR (2026-09-16) — the same bug, one byte over ══
 
 **Journal 328. DD#64 amended.** Sweep **4966 passing, 11 skipped, 0 failing**.
 Two lexer bugs closed today; branch-coverage loop resuming.

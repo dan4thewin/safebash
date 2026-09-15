@@ -6,7 +6,7 @@
 set -eu
 . common.sh
 setup coverage
-plan=191
+plan=196
 echo "1..$plan" >&3
 
 set +e
@@ -837,6 +837,33 @@ echo hi'
 # len > 2`, and every existing spec exercises the upper half
 run_sash 'echo $(arg)'
 [[ $rc != 0 && -z $out && $err == *SB5036* ]]; chk cov.192
+
+# cov.193 the tab-stripping heredoc `<<-` is a distinct scanner path from
+# `<<` (cov.14) and takes the same SB5002 rejection.
+run_sash '/bin/cat <<-EOF
+	hi
+	EOF'
+[[ $rc != 0 && -z $out && $err == *SB5002* ]]; chk cov.193
+# cov.194 a backtick that is never closed. 67.4/67.5 cover well-formed
+# backticks; this is the scanner's unterminated path, which must still reach
+# the DD#67 rejection rather than swallowing the rest of the source.
+run_sash '/bin/echo `abc'
+[[ $rc != 0 && -z $out && $err == *SB5076* ]]; chk cov.194
+# cov.195 a backtick with nothing after it but a newline — the shortest
+# unterminated form, and a separate arm from cov.194's non-empty body.
+run_sash '/bin/echo `
+'
+[[ $rc != 0 && -z $out && $err == *SB5076* ]]; chk cov.195
+
+# cov.196 `<<` as the very last bytes of the source — the heredoc sentinel
+# scanner's end-of-input guard, reached before it can look for a `-`.
+run_sash '/bin/cat <<'
+[[ $rc != 0 && -z $out && $err == *SB5002* ]]; chk cov.196
+# cov.197 a `\` as the last byte of a backtick body. The body scanner steps
+# over `\`` so an escaped inner backtick does not end the scan early; this is
+# the same check with nothing left to escape. Still SB5076.
+run_sash '/bin/echo `\'
+[[ $rc != 0 && -z $out && $err == *SB5076* ]]; chk cov.197
 
 set -e
 tally

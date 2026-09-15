@@ -294,13 +294,37 @@ impl Scanner {
         while self.pos < self.source.len() {
             match self.source[self.pos] {
                 b' ' | b'\t' => self.pos += 1,
-                b'\\' if self.pos + 1 < self.source.len() && self.source[self.pos + 1] == b'\n' => {
-                    // Line continuation
-                    self.pos += 2;
+                b'\\' => {
+                    if !self.take_line_continuation() {
+                        break;
+                    }
                 }
                 _ => break,
             }
         }
+    }
+
+    /// Consume a line continuation at the cursor, reporting whether there was
+    /// one. Per DD#64 the shell reads a backslash in exactly two places, and
+    /// one of them is `\` at end-of-line — where *both* bytes vanish.
+    ///
+    /// End-of-*input* counts: the last line of a file is at end-of-line
+    /// whether or not it carries a newline, and bash discards a trailing
+    /// backslash the same way (`echo a\` with no final newline prints `a`).
+    ///
+    /// One definition for every context. `skip_whitespace` and
+    /// `scan_word_chars` had separate copies and the second one was missing,
+    /// so a word split across a continuation silently became two statements.
+    fn take_line_continuation(&mut self) -> bool {
+        if self.source[self.pos] != b'\\' {
+            return false;
+        }
+        match self.source.get(self.pos + 1) {
+            None => self.pos += 1,
+            Some(b'\n') => self.pos += 2,
+            Some(_) => return false,
+        }
+        true
     }
 
     // ── Token dispatch ───────────────────────────────────────────────
@@ -1723,6 +1747,28 @@ impl Scanner {
         })
     }
 
+    /// Does the word end at byte `b`? Every break in one place, so the scan
+    /// loop itself stays a loop and not a decision table.
+    ///
+    /// `=` ends a word; a *leading* `=` never reaches here, because the byte
+    /// dispatcher routes `b'='` to `scan_eq_punct` and no caller of
+    /// `scan_word` advances past its first byte. `+=` ends one too
+    /// (compound-assign). A doubled `[[` / `]]` at subscript-depth 0 delimits
+    /// a test/dispatch, so it breaks and the byte dispatcher tokenizes it —
+    /// that is what makes `[[ … ]]` whitespace-optional like `(( … ))`.
+    /// `#` ends a word only inside `$(( ))` (DD#72's base-prefix reject);
+    /// elsewhere DD#110 makes it an ordinary word byte.
+    fn word_ends_here(&self, b: u8, depth: i32) -> bool {
+        match b {
+            b' ' | b'\t' | b'\n' | b';' | b'|' | b'&' | b'(' | b')' | b'{' | b'}' | b'<' | b'>'
+            | b'"' | b'\'' | b'`' | b'$' | b'=' => true,
+            b'#' => self.arith_depth > 0,
+            b'+' => self.source.get(self.pos + 1) == Some(&b'='),
+            b'[' | b']' => depth == 0 && self.source.get(self.pos + 1) == Some(&b),
+            _ => false,
+        }
+    }
+
     /// Scan word body bytes into `word`, stopping at a word break or
     /// end-of-input.
     fn scan_word_chars(&mut self, word: &mut String) {
@@ -1733,44 +1779,27 @@ impl Scanner {
         let mut depth = 0i32;
         while self.pos < self.source.len() {
             let b = self.source[self.pos];
-            match b {
-                b' ' | b'\t' | b'\n' | b';' | b'|' | b'&' | b'(' | b')' | b'{' | b'}' | b'<'
-                | b'>' | b'"' | b'\'' | b'`' | b'$' => break,
-                b'#' if self.arith_depth > 0 => break,
-                // `\<newline>` is a line continuation, unquoted too (DD#64:
-                // end-of-line is one of the two places the shell reads a
-                // backslash, and it is structural). Both bytes vanish and the
-                // word continues onto the next line. `skip_whitespace` and
-                // `scan_dq_escape` already did this; without it here a word
-                // split across lines silently became two statements.
-                b'\\' if self.source.get(self.pos + 1) == Some(&b'\n') => self.pos += 2,
-                // `=` ends the word. A *leading* `=` never reaches here: the
-                // byte dispatcher routes `b'='` to `scan_eq_punct`, and no
-                // caller of `scan_word` advances past its first byte.
-                b'=' => break,
-                // `+=` breaks the word (compound-assign operator).
-                b'+' if self.source.get(self.pos + 1) == Some(&b'=') => break,
-                // A doubled `[[` / `]]` at subscript-depth 0 delimits a
-                // test/dispatch — break so the byte dispatcher tokenizes it
-                // (`scan_lbracket`/`scan_rbracket`), making `[[ … ]]`
-                // whitespace-optional like `(( … ))`.
-                b'[' | b']' if depth == 0 && self.source.get(self.pos + 1) == Some(&b) => break,
-                // Otherwise a bracket is a subscript char: track depth so a
-                // nested subscript's closing `]]` stays within the word.
-                b'[' => {
-                    depth += 1;
-                    word.push('[');
-                    self.pos += 1;
-                }
-                b']' if depth > 0 => {
-                    depth -= 1;
-                    word.push(']');
-                    self.pos += 1;
-                }
-                _ => {
-                    self.push_source_char(word);
-                }
+            if self.word_ends_here(b, depth) {
+                break;
             }
+            // A continuation joins the next line into this word; without it a
+            // word split across lines silently became two statements.
+            if self.take_line_continuation() {
+                continue;
+            }
+            Self::track_subscript_depth(b, &mut depth);
+            self.push_source_char(word);
+        }
+    }
+
+    /// A bracket that did not end the word is a subscript character: track the
+    /// depth so a nested subscript's closing `]]` stays inside the word. A `]`
+    /// at depth 0 is ordinary text, not an unbalanced close.
+    fn track_subscript_depth(b: u8, depth: &mut i32) {
+        match b {
+            b'[' => *depth += 1,
+            b']' if *depth > 0 => *depth -= 1,
+            _ => {}
         }
     }
 }

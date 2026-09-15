@@ -51,10 +51,20 @@ Fixed by adding the arm to `scan_word_chars`. The *non*-EOL divergence is
 unchanged and still deliberate: `a\b` is `a\b` in sash and `ab` in bash,
 because unquoted `\` is a verbatim byte everywhere except end-of-line.
 
-Tests: `spec/wordsplit.sh` 64.9–64.15. 64.15 (a trailing `\` with no newline
-after it) is native-only — `_run_sash_c` writes its source with
-`printf '%s\n'`, so in c mode the backslash gains a newline and becomes a
-continuation. The case is unreachable through that harness, not different.
+### Second amendment (same day) — end-of-input is end-of-line too
+
+The first amendment fixed `\<newline>` and left a trailing `\` with *nothing*
+after it as a verbatim byte. bash discards it — `echo a\` with no final
+newline prints `a`, not `a\` — and "end-of-line" above covers the last line
+whether or not it is newline-terminated. Both `scan_word_chars` and
+`skip_whitespace` now treat `\`-then-newline and `\`-then-nothing the same.
+
+This was caught by a spec that had *asserted the wrong answer*: 64.15 was
+written from the implementation rather than from bash, and passed. See journal
+329.
+
+Tests: `spec/wordsplit.sh` 64.9–64.18. No mode guard is needed — the answer is
+the same with or without a trailing newline, which is what makes it correct.
 
 **Still deferred** to DD#63/DD#65 — the brace-scan `\}` (lexer.rs:660,
 plus the in-`"…"` `${}` skip at ~824 and `skip_balanced_dquote`) and the
