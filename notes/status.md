@@ -224,13 +224,17 @@ lines: `resolve.rs:207`, `resolve.rs:105`, `validate.rs:3985`,
 
 ## ══ OPEN FOR DG ══
 
-1. **`ir::Program::end_block`** — remove + bump `:ir-version`, remove + keep
-   emitting `:end-block nil`, wire it up, or leave it.
+**Nothing.** All four items that stood here are closed.
 
-*(The `sash-rt` coverage item is closed — DG chose (a) and it is implemented;
-see the status block at the top. The compound machinery is deleted, and
-backticks are dropped, which dissolves the `${var:-`cmd`}` question entirely,
-since there is no backtick spelling left to be inconsistent about.)*
+- **`ir::Program::end_block`** — DG said *wire it up*, and `4d7f6d6` did.
+  `:end-block` now carries the body and `:statements` no longer duplicates it
+  as a `__sash_end__` function; `transform/entry.rs:33` reads the field.
+  *(This item was left standing here by mistake after it had already been
+  done — it was stale, not open.)*
+- **`sash-rt` coverage** — DG chose (a); implemented, see the top block.
+- **The compound machinery** is deleted.
+- **Backticks** are dropped, which dissolves the `${var:-`cmd`}` question
+  entirely: there is no backtick spelling left to be inconsistent about.
 
 ## ══ STATUS (2026-09-14) — coverage: DD#109 landed, uncovered remainder dispositioned ══
 
