@@ -336,6 +336,30 @@ pub extern "C" fn sash_attest_fail(
 /// underflows. bug-runtime-arith-overflow-wraps.
 #[no_mangle]
 pub extern "C" fn sash_arith_overflow() -> ! {
+    arith_abort(b"arithmetic overflow\n")
+}
+
+/// DD#25 (amended): division or modulo by zero. Same disposition as
+/// `sash_arith_overflow` — every arithmetic fault aborts with `<argv0>: …`
+/// and exit 2.
+///
+/// This used to write bash's "division by 0 (error token is …)" to stderr,
+/// yield 0, and CONTINUE, which made it the only arithmetic fault in the
+/// tree that produced a value and kept running. Its sibling in the very same
+/// codegen function — `i64::MIN / -1`, the other x86 #DE cause — already
+/// aborted here.
+///
+/// The check that calls this is deliberate, not a fallback: relying on the
+/// hardware #DE instead would report `Floating point exception` with no
+/// argv0 and a misleading "floating point" for an integer divide.
+#[no_mangle]
+pub extern "C" fn sash_arith_divzero() -> ! {
+    arith_abort(b"division by zero\n")
+}
+
+/// `<argv0>: <msg>` to stderr, then exit 2. Shared by the arithmetic traps
+/// so they cannot drift apart in prefix, stream, or exit code.
+fn arith_abort(msg: &[u8]) -> ! {
     let sep: &[u8] = b": ";
     let argv = unsafe { sash_argv };
     if !argv.is_null() {
@@ -346,7 +370,6 @@ pub extern "C" fn sash_arith_overflow() -> ! {
             sash_write(2, sep.as_ptr(), sep.len() as i64);
         }
     }
-    let msg: &[u8] = b"arithmetic overflow\n";
     sash_write(2, msg.as_ptr(), msg.len() as i64);
     sash_exit(2)
 }

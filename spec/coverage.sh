@@ -6,7 +6,7 @@
 set -eu
 . common.sh
 setup coverage
-plan=155
+plan=158
 echo "1..$plan" >&3
 
 set +e
@@ -264,13 +264,17 @@ run_sash 'int a=6; int b=3; echo $(( a | b ))'
 [[ $rc = 0 && $out = 7 && -z $err ]]; chk cov.66
 run_sash 'int a=6; int b=3; echo $(( a ^ b ))'
 [[ $rc = 0 && $out = 5 && -z $err ]]; chk cov.67
-# cov.68-69 runtime divide/modulo by zero (codegen/arithmetic.rs
-# emit_div_by_zero_error) — the FIRING path: bash's "division by 0" to stderr,
-# result 0, rc 0 (cov.57 only tested the ternary-UNTAKEN, non-firing case).
+# cov.68-69 RUNTIME divide/modulo by zero — DD#25 (amended): every arithmetic
+# fault aborts with `<argv0>: <what>` and exit 2. This used to write bash's
+# "division by 0" to stderr, yield 0 and keep going, which made it the only
+# arithmetic fault in the language that produced a value and continued. The
+# divisor is a variable, so the folder cannot prove it and SB5077 does not
+# apply; the check in codegen fires instead. (cov.57 only tested the
+# ternary-UNTAKEN, non-firing case.)
 run_sash 'int x=0; echo $(( 5 / x ))'
-[[ $rc = 0 && $out = 0 && $rerr == *"division by 0"* ]]; chk cov.68
+[[ $rc = 2 && -z $out && $rerr == *"division by zero"* ]]; chk cov.68
 run_sash 'int x=0; echo $(( 5 % x ))'
-[[ $rc = 0 && $out = 0 && $rerr == *"division by 0"* ]]; chk cov.69
+[[ $rc = 2 && -z $out && $rerr == *"division by zero"* ]]; chk cov.69
 # cov.70 non-final comma in a condition that is NOT a mutation → SB5007 via
 # validate_arith_comma_in_condition (a bare name `a` as a non-final comma part).
 # Distinct from cov.2 (`a==1, b=2`) whose final `b=2` mutation trips the earlier
@@ -555,22 +559,38 @@ run_sash 'echo $(( 0 || 1 ))'
 [[ $rc = 0 && $out = 1 && -z $err ]]; chk cov.136
 run_sash 'echo $(( 0 || 0 ))'
 [[ $rc = 0 && $out = 0 && -z $err ]]; chk cov.137
-# cov.138-139 a LITERAL zero divisor now behaves EXACTLY like the runtime one
-# (cov.68/69): value 0, rc 0, and bash's "division by 0" on stderr. DD#25
-# states the rule — constant folding defers a compile-time-known arithmetic
-# fault to the runtime rather than substituting a value, which is already what
-# overflow does (`$(( 9223372036854775807 + 1 ))` traps identically whether the
-# operand is a literal or a variable). fold_arith_op returned Some(0) here, so
-# the literal spelling silently lost the diagnostic; it now returns None.
+# cov.138-139 a divisor the FOLDER can prove is zero is a compile-time error
+# (SB5077), not a runtime abort: the compiler already knows the program cannot
+# run, so it says so before emitting a binary. Reach is exactly what the folder
+# proves — literals and operators over literals, through parens (cov.157) — and
+# NOT const-propagation through variables, which is why cov.68/69 above still
+# reach the runtime. Keeping a literal `/0` out of the emitted C also matters
+# for `--emit-c`: gcc replaces the whole enclosing function with `ud2`.
 run_sash 'echo $(( 1 / 0 ))'
-[[ $rc = 0 && $out = 0 && $rerr == *"division by 0"* ]]; chk cov.138
+[[ $rc != 0 && -z $out && $err == *SB5077* ]]; chk cov.138
 run_sash 'echo $(( 1 % 0 ))'
-[[ $rc = 0 && $out = 0 && $rerr == *"division by 0"* ]]; chk cov.139
+[[ $rc != 0 && -z $out && $err == *SB5077* ]]; chk cov.139
 # cov.139a-b the non-zero divisors still fold normally
 run_sash 'echo $(( 9 / 2 ))'
 [[ $rc = 0 && $out = 4 && -z $err ]]; chk cov.155
 run_sash 'echo $(( 9 % 2 ))'
 [[ $rc = 0 && $out = 1 && -z $err ]]; chk cov.156
+# cov.157 the folder proves through parens and nested operators, so a zero
+# divisor spelled `(2 - 2)` is the same error as one spelled `0`.
+run_sash 'echo $(( 1 + 8 / (4 - 4) ))'
+[[ $rc != 0 && -z $out && $err == *SB5077* ]]; chk cov.157
+# cov.158 the `(( ))` STATEMENT context reaches the check too — it is wired
+# into validate_arith_context as well as the `$(( ))` value path, and a rule
+# that answered to only one of the two spellings would be the same
+# spelling-dependent inconsistency SB5077 exists to remove.
+run_sash 'int x=1; (( x = x / 0 )); echo $x'
+[[ $rc != 0 && -z $out && $err == *SB5077* ]]; chk cov.158
+# cov.159 a modulo by a proven-zero divisor inside a ternary BRANCH. The check
+# descends into both arms, so this is rejected even though the arm is not
+# taken at runtime — a literal fault written in dead code is still a fault
+# (compare SB5050, which rejects a dead variable).
+run_sash 'echo $(( 1 ? 5 : 10 % 0 ))'
+[[ $rc != 0 && -z $out && $err == *SB5077* ]]; chk cov.159
 
 # cov.140-142 check_len_operand's rejection arms (type_check.rs)
 # cov.140 `len` with no argument at all → arity, not the operand check

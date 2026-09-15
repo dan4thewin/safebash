@@ -3,9 +3,9 @@
 //! SECURITY: Overflow traps (DD#25). Division by zero traps.
 
 use cranelift_codegen::ir::types::I64;
-use cranelift_codegen::ir::{instructions::BlockArg, InstBuilder};
+use cranelift_codegen::ir::InstBuilder;
 use cranelift_frontend::{FunctionBuilder, Variable};
-use cranelift_module::{DataDescription, Module};
+use cranelift_module::Module;
 use cranelift_object::ObjectModule;
 
 use super::types::ExternFuncs;
@@ -102,8 +102,11 @@ fn emit_checked_arith(
     result
 }
 
-/// `lhs / rhs` or `lhs % rhs` with bash's division-by-zero semantics:
-/// stderr message, `$? = 1`, result is `0`.
+/// `lhs / rhs` or `lhs % rhs`. DD#25 (amended): a zero divisor ABORTS —
+/// `<argv0>: division by zero`, exit 2 — exactly like overflow and like
+/// `i64::MIN / -1` below. It used to write bash's "division by 0" to stderr,
+/// yield 0 and continue, which made it the only arithmetic fault that
+/// produced a value and kept running.
 fn emit_div_or_mod_with_zero_check(
     op: ArithOp,
     lhs: cranelift_codegen::ir::Value,
@@ -111,23 +114,27 @@ fn emit_div_or_mod_with_zero_check(
     builder: &mut FunctionBuilder,
     module: &mut ObjectModule,
     externs: &ExternFuncs,
-    exit_status_var: Option<Variable>,
+    _exit_status_var: Option<Variable>,
 ) -> cranelift_codegen::ir::Value {
     use cranelift_codegen::ir::condcodes::IntCC;
     let zero = builder.ins().iconst(I64, 0);
     let is_zero = builder.ins().icmp(IntCC::Equal, rhs, zero);
     let safe_block = builder.create_block();
     let zero_block = builder.create_block();
-    let merge_block = builder.create_block();
-    builder.append_block_param(merge_block, I64);
+    // The check is deliberate, not a fallback. Letting the hardware #DE fire
+    // instead would report `Floating point exception` with no argv0 and a
+    // misleading "floating point" for an integer divide.
     builder
         .ins()
         .brif(is_zero, zero_block, &[], safe_block, &[]);
 
     builder.switch_to_block(zero_block);
     builder.seal_block(zero_block);
-    emit_div_by_zero_error(builder, module, externs, exit_status_var);
-    builder.ins().jump(merge_block, &[BlockArg::Value(zero)]);
+    let dz_ref = module.declare_func_in_func(externs.arith_divzero, builder.func);
+    builder.ins().call(dz_ref, &[]);
+    builder
+        .ins()
+        .trap(cranelift_codegen::ir::TrapCode::user(1).unwrap());
 
     builder.switch_to_block(safe_block);
     builder.seal_block(safe_block);
@@ -160,38 +167,9 @@ fn emit_div_or_mod_with_zero_check(
     } else {
         builder.ins().srem(lhs, rhs)
     };
-    builder.ins().jump(merge_block, &[BlockArg::Value(result)]);
-
-    builder.switch_to_block(merge_block);
-    builder.seal_block(merge_block);
-    builder.block_params(merge_block)[0]
-}
-
-/// Write bash's "division by 0" message to stderr and, if `$?` is
-/// tracked in this frame, set it to `1`.
-fn emit_div_by_zero_error(
-    builder: &mut FunctionBuilder,
-    module: &mut ObjectModule,
-    externs: &ExternFuncs,
-    exit_status_var: Option<Variable>,
-) {
-    let err_msg = b"bash: division by 0 (error token is \"0\")\n";
-    let err_data = module.declare_anonymous_data(true, false).unwrap();
-    let mut desc = DataDescription::new();
-    desc.define(err_msg.to_vec().into_boxed_slice());
-    module.define_data(err_data, &desc).unwrap();
-    let err_gv = module.declare_data_in_func(err_data, builder.func);
-    let err_ptr = builder.ins().global_value(I64, err_gv);
-    let err_len = builder.ins().iconst(I64, err_msg.len() as i64);
-    let stderr_fd = builder.ins().iconst(I64, 2);
-    let write_ref = module.declare_func_in_func(externs.write, builder.func);
-    builder
-        .ins()
-        .call(write_ref, &[stderr_fd, err_ptr, err_len]);
-    if let Some(es_var) = exit_status_var {
-        let one = builder.ins().iconst(I64, 1);
-        builder.def_var(es_var, one);
-    }
+    // No merge block: the zero path aborts, so `safe_block` is the only way
+    // out of this construct and its value is the result.
+    result
 }
 
 /// `(lhs <cmp> rhs) → 0/1` as I64. Used for ==, !=, <, <=, >, >=.

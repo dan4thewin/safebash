@@ -693,7 +693,7 @@ fn reconstruct_intrinsic_command(name: &str, args: &[ArithExpr]) -> Option<Comma
 }
 
 /// Convert IR arithmetic op to SSA arithmetic op.
-fn ir_op_to_ssa(op: IrArithOp) -> ArithOp {
+pub(crate) fn ir_op_to_ssa(op: IrArithOp) -> ArithOp {
     match op {
         IrArithOp::Add => ArithOp::Add,
         IrArithOp::Sub => ArithOp::Sub,
@@ -724,7 +724,7 @@ fn ir_op_to_ssa(op: IrArithOp) -> ArithOp {
 /// compile-time-known overflow from silently wrapping
 /// (bug-runtime-arith-overflow-wraps) without introducing a new
 /// compile-time error.
-fn fold_arith_op(l: i64, r: i64, op: ArithOp) -> Option<i64> {
+pub(crate) fn fold_arith_op(l: i64, r: i64, op: ArithOp) -> Option<i64> {
     match op {
         ArithOp::Add => l.checked_add(r),
         ArithOp::Sub => l.checked_sub(r),

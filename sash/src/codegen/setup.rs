@@ -77,6 +77,13 @@ pub(super) fn declare_runtime_functions(module: &mut ObjectModule) -> ExternFunc
         .declare_function("sash_arith_overflow", Linkage::Import, &arith_overflow_sig)
         .expect("declare sash_arith_overflow");
 
+    // sash_arith_divzero() -> ! — DD#25 (amended) zero-divisor trap. Same
+    // shape as the overflow trap: no params, no returns, aborts with exit 2.
+    let arith_divzero_sig = Signature::new(CallConv::SystemV);
+    let arith_divzero_func = module
+        .declare_function("sash_arith_divzero", Linkage::Import, &arith_divzero_sig)
+        .expect("declare sash_arith_divzero");
+
     let mut run_sig = Signature::new(CallConv::SystemV);
     run_sig.params.push(AbiParam::new(I64));
     run_sig.params.push(AbiParam::new(I64));
@@ -779,6 +786,7 @@ pub(super) fn declare_runtime_functions(module: &mut ObjectModule) -> ExternFunc
         emsg_status: emsg_status_func,
         attest_fail: attest_fail_func,
         arith_overflow: arith_overflow_func,
+        arith_divzero: arith_divzero_func,
         run: run_func,
         getenv: getenv_func,
         capture_drain: capture_drain_func,

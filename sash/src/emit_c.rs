@@ -141,6 +141,11 @@ fn emit_prologue(out: &mut String) {
         "extern void sash_arith_overflow(void) __attribute__((noreturn));"
     )
     .unwrap();
+    writeln!(
+        out,
+        "extern void sash_arith_divzero(void) __attribute__((noreturn));"
+    )
+    .unwrap();
     writeln!(out, "extern i64 sash_atoi(const char* p, i64 n);").unwrap();
     writeln!(out, "extern i64 sash_is_int(const char* p, i64 n);").unwrap();
     // DD#93 Part C content-shape validators (`p?` / `g?`).
@@ -1645,13 +1650,13 @@ fn emit_div_or_mod_c(e: &mut Emit, op: ArithOp, lhs: &str, rhs: &str) -> String 
     writeln!(e.out, "    i64 {t}_r = ({});", rhs, t = t).unwrap();
     writeln!(e.out, "    i64 {t}_v;", t = t).unwrap();
     writeln!(e.out, "    if ({t}_r == 0) {{", t = t).unwrap();
-    writeln!(
-        e.out,
-        "        sash_write(2, \"bash: division by 0 (error token is \\\"0\\\")\\n\", 41);"
-    )
-    .unwrap();
-    writeln!(e.out, "        __exit_status = 1;").unwrap();
-    writeln!(e.out, "        {}_v = 0;", t).unwrap();
+    // DD#25 (amended): a zero divisor aborts exactly like overflow. The check
+    // is deliberate, not a fallback — a raw `/` would let gcc's idiv #DE fire,
+    // reporting "Floating point exception" with no argv0 for an INTEGER
+    // divide. (A folder-proven zero never reaches here: it is a compile-time
+    // error, which also keeps a literal `1/0` out of the emitted C, where gcc
+    // would replace the whole enclosing function with `ud2`.)
+    writeln!(e.out, "        sash_arith_divzero();").unwrap();
     // DD#25: INT64_MIN / -1 overflows; in C both `/` and `%` lower to idiv,
     // which #DEs (SIGFPE) for that case. Div traps (sash_arith_overflow);
     // Mod's true result is 0 (matching native srem).

@@ -13,7 +13,7 @@
 mod capture_purity;
 mod cmd_handlers;
 mod control_flow;
-mod expr_handlers;
+pub(crate) mod expr_handlers;
 mod expressions;
 mod functions;
 mod helpers;

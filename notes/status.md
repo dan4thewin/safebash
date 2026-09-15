@@ -1,4 +1,83 @@
-## ══ STATUS (2026-09-15) — three bugs behind three cold branches ══
+## ══ STATUS (2026-09-15) — one fault, two answers ══
+
+**Journal 322.** Sweep **4837 passing, 10 skipped, 0 failing** (+20 over
+journal 321: `cov.150-156` from the tail of that cycle, plus 3 new specs × 2
+modes here). 36 sash unit tests.
+
+DG's standing instruction is unchanged: *"we're targeting 100% branch
+coverage. Add spec tests and remeasure in a loop until we reach full coverage
+modulo unit tested regression guards."* This cycle interrupted that loop to
+close the div-by-zero question that had been sitting in OPEN FOR DG.
+
+### Every arithmetic fault now aborts (DD#25 amended)
+
+`emit_div_or_mod_with_zero_check` disposed of x86's `#DE` **two opposite ways
+fifteen lines apart in one function**: `rhs == 0` wrote bash's `division by 0`
+to stderr, yielded `0` and continued; `i64::MIN / -1` — the other cause of the
+same hardware exception — called `sash_arith_overflow` and exited 2. DG found
+the seam by asking whether we were adding an explicit check. We were, and the
+check was why the trap never fired.
+
+Measured gcc before proposing, since the old behaviour had been justified as
+bash-matching: a literal `1/0` makes gcc emit **`ud2` as the entire body of
+`main`** (SIGILL, rc 132); a runtime zero is a raw `idiv` → SIGFPE (rc 136). C
+never wraps, never guards, never yields a value — **sash was the outlier in
+the opposite direction from the one I assumed.**
+
+DG's call, now implemented in both backends:
+
+- **Runtime** — `sash_arith_divzero` → `<argv0>: division by zero`, exit 2.
+  The explicit check is **deliberate, not a fallback**: bare SIGFPE loses
+  `argv0`, says "floating point" for an integer divide, and would push
+  `i64::MIN / -1` back out of the message path. That reasoning is a comment in
+  both backends.
+- **Compile time** — **SB5077** when the folder can prove the divisor is zero
+  (`$(( 1 / 0 ))`, `$(( 1 + 8 / (4 - 4) ))`).
+
+The two are **complementary, not redundant** — I corrected my own framing on
+this. There is no const-propagation through variables, so `int z = 0;
+$(( 1 / z ))` is not provable and still reaches the runtime. Neither path can
+be removed.
+
+`check_arith_div_by_zero` calls the transform's own `fold_arith_op` rather
+than reimplementing constant evaluation, so the validator cannot drift from
+the folder about what "provable" means; only the tree walk is local, and that
+walk is the weaker half by design. It is wired into **both** the `$(( … ))`
+value path and the `(( … ))` statement path.
+
+Closed on the way past: *"could any `--emit-c` path emit a literal `/0`?"* is
+now closed by construction (SB5077 rejects before the C backend runs), which
+given gcc's `ud2` mattered. DD#25's "known gap" list was also stale — it named
+`Div` (`i64::MIN / -1`) as not-yet-trap-with-message when that was already
+implemented; verified and struck.
+
+### OPEN FOR DG
+
+- **One judgement call to ratify or revert (one line).** The SB5077 walk
+  descends into ternary arms, so `$(( 1 ? 5 : 10/0 ))` is rejected even though
+  that arm never evaluates (bash prints 5). This is the only place the check
+  is *stronger* than the folder. I kept it because sash already rejects dead
+  code as an error — SB5050 refuses a variable assigned and never read — and a
+  literal fault in an unreachable branch is the same family. Pinned at
+  `cov.159`, so a reversal moves one spec.
+- **Janet's disposition for a zero divisor is deferred** at DG's word ("TBD
+  much later") — filed as `janet-arith-divzero`. The SB5077 half already
+  applies to janet (it fires in `validate.rs`, before any backend); only the
+  runtime half is open.
+- Still carried: the `[[ … ]]` exit-status rule from two cycles ago is
+  **provisional**. DG floated reserving non-zero exits for `exit` and aborts,
+  which would flip `[[ ]]`, `(( ))` and external-command guards together; the
+  four `e.b70.tandf*` specs are written so that flip must move them as a set.
+
+### Next
+
+Back to the coverage loop. Branch coverage last measured **86.27%, 510
+uncovered** at `c5df3b7`; `cov.150-159` have landed since and are not yet
+reflected. Use `contrib/cov-probe.sh` (0.47s per miss) for per-miss
+verification before batching a full `mk cov-branch` re-measure.
+
+
+## ══ PRIOR (2026-09-15) — three bugs behind three cold branches ══
 
 **Journal 321.** Sweep **4817 passing, 10 skipped, 0 failing** (+114 over
 journal 320: 38 new specs × 2 modes, plus the 28 from the prior cycle). 36
@@ -62,17 +141,14 @@ list is unchanged: `validate.rs` 89, `parse/expr.rs` 51, `parse/lexer.rs` 49,
 the ~40-minute measurement. Probe with a separate uninstrumented binary
 (`CARGO_TARGET_DIR=/tmp/sashprobe`) while it runs.
 
-### OPEN FOR DG
+### OPEN FOR DG (resolved — see the current block above)
 
-- **Constant folding swallows a diagnostic.** `echo $(( 1 / 0 ))` → `0`,
-  silent. `int x=0; echo $(( 5 / x ))` → `0` **and** bash's "division by 0"
-  on stderr. Same value, same rc; only the warning differs.
-  `fold_arith_op` returns `Some(0)` for a zero divisor where returning `None`
-  would defer to the runtime path and reconcile them in one line. Not changed
-  unilaterally: the runtime side is deliberate and spec-pinned (`cov.68/69`)
-  and the message is hand-written bash-compatible text, so whether folding may
-  discard a diagnostic — and which way the two reconcile — is a
-  language-surface call. Current behaviour pinned at `cov.138/139` either way.
+- ~~**Constant folding swallows a diagnostic.**~~ **CLOSED.** Resolved in two
+  steps: `a39aa18` made `fold_arith_op` return `None` for a zero divisor (the
+  one-line reconciliation described here), and journal 322 then replaced the
+  reconciled behaviour outright — a proven zero divisor is now **SB5077** at
+  compile time and an unprovable one **aborts** at runtime. `cov.68/69` and
+  `cov.138/139` both moved.
 - Still carried: the `[[ … ]]` exit-status rule from the prior cycle is
   **provisional**. DG floated reserving non-zero exits for `exit` and aborts,
   which would flip `[[ ]]`, `(( ))` and external-command guards together; the

@@ -526,11 +526,91 @@ fn check_arith_sexpr_arity(expr: &Expr, diags: &mut Vec<Diagnostic>) {
     let ExprKind::Arithmetic(a) = &expr.kind else {
         return;
     };
+    check_arith_div_by_zero(a, expr.span, diags);
     walk_arith_intrinsic_calls(a, &mut |name, args| {
         if let Some(complaint) = arith_intrinsic_complaint(name, args) {
             diags.push(Diagnostic::error_span(expr.span, "SB4045", complaint));
         }
     });
+}
+
+/// SB5077: a divisor the constant folder can prove is zero.
+///
+/// DD#25 (amended): every arithmetic fault aborts. A zero divisor that only
+/// the *runtime* can see (`int z = 0; $(( 1 / z ))` — there is no
+/// const-propagation through variables) aborts there; one the folder can
+/// prove is a compile-time error instead, because the compiler already knows
+/// the program cannot run. Scope is exactly what the folder proves: literals
+/// and operators over literals, through parens.
+fn check_arith_div_by_zero(a: &ArithExpr, span: Span, diags: &mut Vec<Diagnostic>) {
+    walk_arith_divisors(a, &mut |op_name, divisor| {
+        if const_eval_arith(divisor) == Some(0) {
+            diags.push(Diagnostic::error_span(
+                span,
+                "SB5077",
+                format!("{} by zero — this program cannot run", op_name),
+            ));
+        }
+    });
+}
+
+/// Invoke `f(op_name, divisor)` for each `/` or `%` in an `ArithExpr` tree.
+fn walk_arith_divisors(a: &ArithExpr, f: &mut impl FnMut(&str, &ArithExpr)) {
+    match a {
+        ArithExpr::BinOp { left, op, right } => {
+            match op {
+                IrArithOp::Div => f("division", right),
+                IrArithOp::Mod => f("modulo", right),
+                _ => {}
+            }
+            walk_arith_divisors(left, f);
+            walk_arith_divisors(right, f);
+        }
+        ArithExpr::UnaryOp { operand, .. } | ArithExpr::Paren(operand) => {
+            walk_arith_divisors(operand, f)
+        }
+        ArithExpr::Assign { value, .. } | ArithExpr::CompoundAssign { value, .. } => {
+            walk_arith_divisors(value, f)
+        }
+        ArithExpr::Ternary {
+            cond,
+            true_val,
+            false_val,
+        } => {
+            walk_arith_divisors(cond, f);
+            walk_arith_divisors(true_val, f);
+            walk_arith_divisors(false_val, f);
+        }
+        ArithExpr::Comma(exprs) => {
+            for e in exprs {
+                walk_arith_divisors(e, f);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Evaluate an `ArithExpr` to a constant, or `None` when it is not
+/// compile-time provable.
+///
+/// The operator semantics are the transform's own `fold_arith_op`, not a
+/// second copy — the two must agree about what "the folder proves" means, and
+/// sharing the function is the only way to guarantee that. Only the tree walk
+/// is local, and it is deliberately the weaker half: anything it declines
+/// (variables, expansions, calls) simply reaches the runtime trap, which is
+/// still correct, just later.
+fn const_eval_arith(a: &ArithExpr) -> Option<i64> {
+    use crate::transform::expr_handlers::{fold_arith_op, ir_op_to_ssa};
+    match a {
+        ArithExpr::Literal(n) => Some(*n),
+        ArithExpr::Paren(inner) => const_eval_arith(inner),
+        ArithExpr::BinOp { left, op, right } => {
+            let l = const_eval_arith(left)?;
+            let r = const_eval_arith(right)?;
+            fold_arith_op(l, r, ir_op_to_ssa(*op))
+        }
+        _ => None,
+    }
 }
 
 /// The SB4045 complaint for one arith sexpr call, or `None` if it is fine.
@@ -1659,6 +1739,7 @@ fn validate_arith_context(
     }
 
     let kind = classify_arith_expr(expr);
+    check_arith_div_by_zero(expr, span, diags);
     if in_condition {
         validate_arith_in_condition(expr, span, diags);
     } else {
