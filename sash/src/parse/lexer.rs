@@ -1737,6 +1737,13 @@ impl Scanner {
                 b' ' | b'\t' | b'\n' | b';' | b'|' | b'&' | b'(' | b')' | b'{' | b'}' | b'<'
                 | b'>' | b'"' | b'\'' | b'`' | b'$' => break,
                 b'#' if self.arith_depth > 0 => break,
+                // `\<newline>` is a line continuation, unquoted too (DD#64:
+                // end-of-line is one of the two places the shell reads a
+                // backslash, and it is structural). Both bytes vanish and the
+                // word continues onto the next line. `skip_whitespace` and
+                // `scan_dq_escape` already did this; without it here a word
+                // split across lines silently became two statements.
+                b'\\' if self.source.get(self.pos + 1) == Some(&b'\n') => self.pos += 2,
                 // `=` ends the word. A *leading* `=` never reaches here: the
                 // byte dispatcher routes `b'='` to `scan_eq_punct`, and no
                 // caller of `scan_word` advances past its first byte.

@@ -1,4 +1,60 @@
-## ══ STATUS (2026-09-16) — half a fix, scoped to the place it was found ══
+## ══ STATUS (2026-09-16) — the same bug, one byte over ══
+
+**Journal 328. DD#64 amended.** Sweep **4966 passing, 11 skipped, 0 failing**.
+Two lexer bugs closed today; branch-coverage loop resuming.
+
+### Bug #8 — `\<newline>` did not continue a bare word, silently
+
+```sh
+/bin/echo start\
+/bin/echo second
+```
+
+bash prints `start/bin/echo second`. sash compiled clean and printed two
+lines. Same function as bug #7, same shape: a byte `scan_word_chars` handled
+wrong. It had no `\` arm at all, so the backslash went through as a verbatim
+byte and the newline then ended the statement.
+
+**Not a fork.** DD#64 already says `\` at EOL is a line continuation and
+"Kept (structural)"; `skip_whitespace` and `scan_dq_escape` both implemented
+it. `scan_word_chars` was the one context of three that did not. DD#64's
+"Already compliant (no change needed)" paragraph now records that it was right
+about `a\b` and wrong about `a\<newline>`. The non-EOL divergence stays
+deliberate: `a\b` is `a\b` here, `ab` in bash.
+
+`spec/wordsplit.sh` 64.9–64.15. 64.15 is native-only — `_run_sash_c` writes
+source with `printf '%s\n'`, so a trailing `\` gains a newline and becomes a
+continuation; unreachable through that harness, not different. Skips 10 → 11.
+
+**Method note:** my first probe errored (`command 'b' not found`) and I nearly
+filed this as cosmetic. A divergence is only loud if it is loud for *every*
+input — one more probe found the silent case.
+
+### Next
+
+Resume the branch-coverage loop. `coverage.db` is stale as of `6b5b7be`
+(86.76%, 495 cold): 46 specs have landed since and two lexer edits shift
+`parse/lexer.rs` line numbers. **Re-measure before probing** — a `mk cov-branch`
+was started and killed mid-run for exactly this reason.
+
+Still unspecced from the pass before last: `lexer.rs:510` b1/br2 (`<<-EOF`),
+`645` b0/br1 (unterminated backtick), `664` b0/br1 (backtick then newline).
+`285` b1/br2 (line continuation) is now covered by 64.9–64.11.
+
+Also to report: `validate.rs:1788`/`1792` may have been made unreachable by
+bug #6's own fix. Do not delete unilaterally.
+
+### Open for DG
+
+`notes/tasks/bug-brace-breaks-unquoted-word.md` — `/bin/echo a}b` is a compile
+error where bash prints `a}b`. Same shape as bugs #7/#8 but the fix is a
+language question (three options, possible collision with brace expansion).
+
+---
+
+## PRIOR
+
+## ══ PRIOR (2026-09-16) — half a fix, scoped to the place it was found ══
 
 **Journal 327. DD#110.** Sweep **4953 passing, 10 skipped, 0 failing**
 (+30 this pass). Branch-coverage loop, paused for a bug, now resuming.

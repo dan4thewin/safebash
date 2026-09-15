@@ -29,6 +29,33 @@ pushes `\` verbatim and breaks at spaces, so `a\b`→`a\b`, `a\ b`→two
 words) and regex-within-a-word (`a\.b` tokenises as one `Word`, the `\`
 survives). The DD over-counted these as removals.
 
+## Amendment (2026-09-16) — the EOL half was missing from bare words
+
+"Already compliant" above was right about `a\b` and wrong about `a\<newline>`.
+`scan_word_chars` had no `\` arm at all, so it pushed the backslash verbatim
+and then broke on the newline: a word split across a line continuation became
+**two statements**, silently.
+
+```sh
+/bin/echo start\
+/bin/echo second
+```
+
+bash prints `start/bin/echo second`. sash compiled clean and printed two
+lines. `skip_whitespace` (between tokens) and `scan_dq_escape` (inside `"…"`)
+both implemented the continuation; the bare-word path was the one site that
+did not, so the rule above — "`\` at EOL — line continuation. Kept
+(structural)" — was only enforced in two of its three contexts.
+
+Fixed by adding the arm to `scan_word_chars`. The *non*-EOL divergence is
+unchanged and still deliberate: `a\b` is `a\b` in sash and `ab` in bash,
+because unquoted `\` is a verbatim byte everywhere except end-of-line.
+
+Tests: `spec/wordsplit.sh` 64.9–64.15. 64.15 (a trailing `\` with no newline
+after it) is native-only — `_run_sash_c` writes its source with
+`printf '%s\n'`, so in c mode the backslash gains a newline and becomes a
+continuation. The case is unreachable through that harness, not different.
+
 **Still deferred** to DD#63/DD#65 — the brace-scan `\}` (lexer.rs:660,
 plus the in-`"…"` `${}` skip at ~824 and `skip_balanced_dquote`) and the
 `/`-operator `\/` (`find_unescaped_slash`). These are `${var:OP}`

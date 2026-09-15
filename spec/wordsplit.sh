@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup wordsplit
-plan=123
+plan=130
 echo "1..$plan" >&3
 
 set +e
@@ -701,6 +701,55 @@ run_sash 'u=""
 read ${u:!~} f
 echo "${f[0]}"'
 [[ $rc != 0 && -z $out && $err == *SB5046* ]]; chk nr.20
+
+# ---------------------------------------------------------------------------
+# DD#64, second half — `\<newline>` is a line continuation in an *unquoted*
+# word too. `skip_whitespace` and `scan_dq_escape` had it; `scan_word_chars`
+# did not, so a word split across lines silently became two statements.
+# ---------------------------------------------------------------------------
+
+# 64.9 a word split mid-way across a line continuation is one word
+run_sash '/bin/echo a\
+b'
+[[ $rc = 0 && $out = "ab" && -z $err ]]; chk 64.9
+
+# 64.10 the silent case: both halves happened to be valid on their own, so
+# this compiled clean and printed two lines instead of one.
+run_sash '/bin/echo start\
+/bin/echo second'
+[[ $rc = 0 && $out = "start/bin/echo second" && -z $err ]]; chk 64.10
+
+# 64.11 a continuation *between* words still separates them (skip_whitespace)
+run_sash '/bin/echo a \
+b'
+[[ $rc = 0 && $out = "a b" && -z $err ]]; chk 64.11
+
+# 64.12 a continuation inside `"…"` still joins (scan_dq_escape, unchanged)
+run_sash '/bin/echo "a\
+b"'
+[[ $rc = 0 && $out = "ab" && -z $err ]]; chk 64.12
+
+# 64.13 `'"'"'…'"'"' is verbatim — no continuation, the newline is data
+run_sash "/bin/echo 'a\\
+b'"
+[[ $rc = 0 && $out = $'a\\\nb' && -z $err ]]; chk 64.13
+
+# 64.14 DD#64's deliberate divergence survives: a `\` that is NOT at
+# end-of-line is a verbatim byte in an unquoted word, so `a\b` is `a\b`
+# (bash prints `ab`). Only end-of-line is structural.
+run_sash '/bin/echo a\b'
+[[ $rc = 0 && $out = 'a\b' && -z $err ]]; chk 64.14
+
+# 64.15 a trailing `\` with nothing after it at all is a verbatim byte, not
+# a dangling continuation. Native-only: `_run_sash_c` writes the source with
+# `printf '%s\n'`, so in c mode the `\` gains a newline and *is* a
+# continuation — the case is unreachable through that harness, not different.
+if [[ $SASH_MODE = native ]]; then
+    run_sash '/bin/echo a\'
+    [[ $rc = 0 && $out = 'a\' && -z $err ]]; chk 64.15
+else
+    skip_chk 64.15
+fi
 
 set -e
 tally
