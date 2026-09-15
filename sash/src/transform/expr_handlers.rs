@@ -731,14 +731,20 @@ fn fold_arith_op(l: i64, r: i64, op: ArithOp) -> Option<i64> {
         ArithOp::Mul => l.checked_mul(r),
         ArithOp::Div => {
             if r == 0 {
-                Some(0)
+                // DD#25: folding DEFERS a compile-time-known arithmetic
+                // fault to the runtime rather than substituting a value.
+                // Returning Some(0) here broke that — `$(( 1 / 0 ))` was
+                // silently 0 while `int z=0; $(( 1 / z ))` reached the
+                // runtime and reported "division by 0". Same fault, same
+                // value, but the literal spelling lost the diagnostic.
+                None
             } else {
                 l.checked_div(r)
             }
         }
         ArithOp::Mod => {
             if r == 0 {
-                Some(0)
+                None
             } else {
                 l.checked_rem(r)
             }

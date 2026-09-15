@@ -6,7 +6,7 @@
 set -eu
 . common.sh
 setup coverage
-plan=153
+plan=155
 echo "1..$plan" >&3
 
 set +e
@@ -555,12 +555,22 @@ run_sash 'echo $(( 0 || 1 ))'
 [[ $rc = 0 && $out = 1 && -z $err ]]; chk cov.136
 run_sash 'echo $(( 0 || 0 ))'
 [[ $rc = 0 && $out = 0 && -z $err ]]; chk cov.137
-# cov.138-139 a LITERAL zero divisor is folded to 0 (see cov.68/69 for the
-# runtime path, which additionally prints bash's "division by 0" to stderr)
+# cov.138-139 a LITERAL zero divisor now behaves EXACTLY like the runtime one
+# (cov.68/69): value 0, rc 0, and bash's "division by 0" on stderr. DD#25
+# states the rule — constant folding defers a compile-time-known arithmetic
+# fault to the runtime rather than substituting a value, which is already what
+# overflow does (`$(( 9223372036854775807 + 1 ))` traps identically whether the
+# operand is a literal or a variable). fold_arith_op returned Some(0) here, so
+# the literal spelling silently lost the diagnostic; it now returns None.
 run_sash 'echo $(( 1 / 0 ))'
-[[ $rc = 0 && $out = 0 ]]; chk cov.138
+[[ $rc = 0 && $out = 0 && $rerr == *"division by 0"* ]]; chk cov.138
 run_sash 'echo $(( 1 % 0 ))'
-[[ $rc = 0 && $out = 0 ]]; chk cov.139
+[[ $rc = 0 && $out = 0 && $rerr == *"division by 0"* ]]; chk cov.139
+# cov.139a-b the non-zero divisors still fold normally
+run_sash 'echo $(( 9 / 2 ))'
+[[ $rc = 0 && $out = 4 && -z $err ]]; chk cov.155
+run_sash 'echo $(( 9 % 2 ))'
+[[ $rc = 0 && $out = 1 && -z $err ]]; chk cov.156
 
 # cov.140-142 check_len_operand's rejection arms (type_check.rs)
 # cov.140 `len` with no argument at all → arity, not the operand check
