@@ -1,4 +1,84 @@
-## ══ STATUS (2026-09-14) — sash-rt is measurable, and four arms disposed ══
+## ══ STATUS (2026-09-15) — three bugs behind three cold branches ══
+
+**Journal 321.** Sweep **4817 passing, 10 skipped, 0 failing** (+114 over
+journal 320: 38 new specs × 2 modes, plus the 28 from the prior cycle). 36
+sash unit tests. Pushed through `c5df3b7`.
+
+DG: *"we're targeting 100% branch coverage. Add spec tests and remeasure in a
+loop until we reach full coverage modulo unit tested regression guards."*
+
+The cycle produced **three bugs, and in each case the cold branch WAS the
+bug**. None were diagnosable from the counts — every classification took a
+probe. The working signal is not bash divergence (DG: safebash has **no**
+bash-identity goal) but disagreement between two of sash's *own* spellings of
+one idea.
+
+- **DD#76 int cells faulted on every positional read** (`621cb0c`). An int
+  element is `{val_ptr: null, val_len: <i64>}`. `${a[0]}` worked;
+  `$(join a)` **segfaulted** and `for x in @a` gave EFAULT, int maps too.
+  Keyed reads go through `sash_table_get` (codegen knows the static type);
+  splat/join/`for`-in go through `sash_table_value`, which has none and
+  handed the null out. Fixed at the *found* site only — the not-found
+  fallthrough returns `(null, 0)` for a genuinely absent key and must keep
+  doing so. Cost-free: the pure-number path never reaches that accessor. An
+  empty string element is `("", 0)`, a real pointer, so null is an
+  unambiguous discriminator. Specs `ivc.12-17`.
+- **`sash_redirect` closed the fd it had just installed** (`621cb0c`).
+  `open()` returns the lowest free fd and `dup2(src, fd)` with `src == fd` is
+  a POSIX no-op, so the unconditional `close(src)` destroyed the redirect
+  whenever the target *was* the lowest free fd — i.e. fd 3. `exec 3> f` left
+  fd 3 closed, `close 3` reported EBADF, and every later `>&3` **silently
+  fell through to the real stdout**. `cl.1` uses fd 9, where the close is
+  correct; that one choice is why it shipped. Specs `cl.9-11`.
+- **An unterminated `$((` inside `"…"` was evaluated anyway** (`c5df3b7`).
+  `echo "$(( 1 + 2"` printed **3**. The scan ended on "ran out of source" and
+  then used *another* length test to decide whether to skip the closing `))`
+  — one test doing two jobs, so truncation failed both together and left no
+  evidence. Now gated on `depth == 0`, with the overrun recorded through the
+  Scanner's existing `unterminated` channel (SB4057, span on the `$`). Bare
+  `$(( 1 + 2`, `"${ s"` and `"$( cmd"` always rejected it; this scanner was
+  the one hole. Specs `cov.130-133`.
+
+**The complexity gate fired on the fix and was not bypassed.**
+`consume_dq_arith_sub` hit cog=12 against a ~8.8 bar; extracting
+`step_dq_arith_sub` — matching `consume_dq_cmd_sub`/`step_dq_cmd_sub` next
+door — brought it under in one edit.
+
+**Lead 1 from the previous cycle is closed, and the measurement is
+trustworthy.** `is_identifier_or_subscript`'s unclosed-subscript arm went
+0 → 8 hits after `aw.27`/`aw.28`, so `contrib/covdb.py` is *not*
+mis-attributing branch indices on two-`let`-`else` lines. That was the
+finding that gated the whole 100% target. Its two remaining arms are now
+covered by `cov.146-147`.
+
+### Coverage state
+
+520 missed branches (85.37%) measured at `57c0d53`. **38 specs have landed
+since that measurement** (24 in the prior batch, 20 in this one, minus
+overlap), so `mk cov-branch` needs a re-run to set the new mark. The seam
+list is unchanged: `validate.rs` 89, `parse/expr.rs` 51, `parse/lexer.rs` 49,
+`parse/parser.rs` 41, `parse/arith.rs` 39, then a long tail. Distribution is
+**flat** — max 8 per function — so batches must stay large (20-30) to amortize
+the ~40-minute measurement. Probe with a separate uninstrumented binary
+(`CARGO_TARGET_DIR=/tmp/sashprobe`) while it runs.
+
+### OPEN FOR DG
+
+- **Constant folding swallows a diagnostic.** `echo $(( 1 / 0 ))` → `0`,
+  silent. `int x=0; echo $(( 5 / x ))` → `0` **and** bash's "division by 0"
+  on stderr. Same value, same rc; only the warning differs.
+  `fold_arith_op` returns `Some(0)` for a zero divisor where returning `None`
+  would defer to the runtime path and reconcile them in one line. Not changed
+  unilaterally: the runtime side is deliberate and spec-pinned (`cov.68/69`)
+  and the message is hand-written bash-compatible text, so whether folding may
+  discard a diagnostic — and which way the two reconcile — is a
+  language-surface call. Current behaviour pinned at `cov.138/139` either way.
+- Still carried: the `[[ … ]]` exit-status rule from the prior cycle is
+  **provisional**. DG floated reserving non-zero exits for `exit` and aborts,
+  which would flip `[[ ]]`, `(( ))` and external-command guards together; the
+  four `e.b70.tandf*` specs are written so that flip must move them as a set.
+
+
 
 **Journal 320.** Sweep **4703 passing, 10 skipped, 0 failing** (+4: two new
 specs × two modes). 36 sash unit tests (+1), 27 sash-convert tests.

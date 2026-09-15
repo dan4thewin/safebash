@@ -16,6 +16,25 @@ gates:
   - "native + c + janet (or per-mode guards filed); spec tests; no regression"
 ---
 
+## POSTSCRIPT 2026-09-15 (journal 321) — the gates above missed a segfault
+
+Every gate here is about a **keyed** read or write: `${a[i]}`, `${m[k]}`,
+bare `a[i]` in `(( ))`, element assignment. All of them route through
+`sash_table_get`, where codegen knows the static type and renders the integer.
+
+None of them mention a **positional** read — splat (`for x in @a`), `$(join
+a)`, `$(len a)`'s siblings — which route through `sash_table_value`. That
+accessor has no static type to consult, so it handed the int cell's null
+`val_ptr` straight out: `for x in @a` died with EFAULT and `echo $(join a)`
+**SEGFAULTED**, for int arrays and int maps alike, with no compile
+diagnostic. Fixed in `621cb0c`; regression pins `arithmetic.sh ivc.12-17`.
+
+The feature was complete against its own acceptance criteria and still
+crashed on the second thing anyone would try. The lesson for future gate
+lists: when a representation is introduced, enumerate every **accessor** that
+can reach it, not just the syntax the feature adds.
+
+
 # Staging
 
 Design: DD#76 (int-valued collections, val_len double-duty) + arith-subscript-
