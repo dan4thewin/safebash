@@ -6,7 +6,7 @@
 set -eu
 . common.sh
 setup coverage
-plan=298
+plan=305
 echo "1..$plan" >&3
 
 set +e
@@ -1383,6 +1383,30 @@ run_sash 'str s=ab; s+=cd; echo $s'
 # must still lex: the diagnostic that retires it cannot fire otherwise.
 run_sash 'str s=abc; cat <<< $s'
 [[ $rc != 0 && -z $out && $err == *SB4050* ]]; chk cov.298
+
+# cov.299-304: every reserved word must lower to a literal when used as a bare
+# word. `literal_token_text` carried a duplicate of `keyword_to_str`'s token
+# list and the copy was one short — `Tok::Str` was in neither, so the bare word
+# `str` was an SB4014 parse error in every word context while all 21 of its
+# siblings worked. The list now lives in `keyword_to_str` alone. cov.299-301
+# sweep all 22 spellings so a future omission cannot hide.
+run_sash 'echo if then else elif fi while until do done'
+[[ $rc == 0 && $out == "if then else elif fi while until do done" ]]; chk cov.299
+run_sash 'echo for in case esac fn function str int const'
+[[ $rc == 0 && $out == "for in case esac fn function str int const" ]]; chk cov.300
+run_sash 'echo array map attest END'
+[[ $rc == 0 && $out == "array map attest END" ]]; chk cov.301
+# The three non-argument word contexts the omission also broke.
+run_sash 'str s=str; echo $s'
+[[ $rc == 0 && $out == str ]]; chk cov.302
+run_sash '[[ str == str ]] && echo y'
+[[ $rc == 0 && $out == y ]]; chk cov.303
+run_sash 'for x in str; do echo $x; done'
+[[ $rc == 0 && $out == str ]]; chk cov.304
+# A reserved word being usable as a bare word must not stop it introducing its
+# own construct — the parser decides that before word parsing is reached.
+run_sash 'if (( 1 )); then echo if; fi'
+[[ $rc == 0 && $out == if ]]; chk cov.305
 
 set -e
 tally

@@ -167,32 +167,17 @@ fn parse_word_parts(scanner: &mut Scanner, mode: AbsorbMode) -> Result<Expr, Dia
 /// Text of a token that lowers to a literal word part: `=`, `-`, the
 /// mode-dependent absorbable metacharacters, and reserved words used as
 /// bare arguments. `None` for tokens handled by their own match arm.
+///
+/// The reserved-word set lives in `keyword_to_str` alone. This function
+/// carried a duplicate of it until 2026-09-16, and the copy was one token
+/// short: `Tok::Str` was in neither, so `echo str` failed to parse.
 fn literal_token_text(tok: &Tok, mode: AbsorbMode) -> Option<String> {
     match tok {
         Tok::Eq => Some("=".to_string()),
         Tok::Dash => Some("-".to_string()),
-        Tok::If
-        | Tok::Then
-        | Tok::Else
-        | Tok::Elif
-        | Tok::Fi
-        | Tok::While
-        | Tok::Until
-        | Tok::Do
-        | Tok::Done
-        | Tok::For
-        | Tok::In
-        | Tok::Case
-        | Tok::Esac
-        | Tok::Fn
-        | Tok::Function
-        | Tok::Int
-        | Tok::Const
-        | Tok::Array
-        | Tok::Map
-        | Tok::Attest
-        | Tok::End => Some(keyword_to_str(tok).to_string()),
-        _ => absorb_text(tok, mode).map(str::to_string),
+        _ => keyword_to_str(tok)
+            .or_else(|| absorb_text(tok, mode))
+            .map(str::to_string),
     }
 }
 
@@ -1803,9 +1788,18 @@ pub fn span_from(scanner: &Scanner, offset: usize) -> Span {
     Span { line, col }
 }
 
-/// Convert a keyword token to its string representation.
-fn keyword_to_str(tok: &Tok) -> &'static str {
-    match tok {
+/// The source spelling of a reserved word, or `None` if `tok` is not one.
+///
+/// This is the **only** list of reserved-word tokens in the word parser.
+/// `literal_token_text` consults it rather than repeating the set; it used to
+/// repeat it, and the two drifted. `Tok::Str` was missing from both, so the
+/// bare word `str` was a parse error in *every* word context â command
+/// argument, assignment value, `[[ ]]` operand, `for` list â while all 21 of
+/// its siblings lowered to a literal. Keep this list and
+/// `lexer::classify_word_token`'s promotion table in step; `spec/coverage.sh`
+/// cov.299-305 pin every spelling end-to-end (journal 347).
+fn keyword_to_str(tok: &Tok) -> Option<&'static str> {
+    Some(match tok {
         Tok::If => "if",
         Tok::Then => "then",
         Tok::Else => "else",
@@ -1821,12 +1815,13 @@ fn keyword_to_str(tok: &Tok) -> &'static str {
         Tok::Esac => "esac",
         Tok::Fn => "fn",
         Tok::Function => "function",
+        Tok::Str => "str",
         Tok::Int => "int",
         Tok::Const => "const",
         Tok::Array => "array",
         Tok::Map => "map",
         Tok::Attest => "attest",
         Tok::End => "END",
-        _ => "",
-    }
+        _ => return None,
+    })
 }

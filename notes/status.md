@@ -1,3 +1,53 @@
+## ══ STATUS (2026-09-16) — the word `str` was a parse error ══
+
+**Journal 347.** Sweep **5332 passing, 13 skipped, 0 failing** (+14, predicted
+exactly). Units 83 green.
+
+**BUG FIXED.** `str` is a reserved word, and every reserved word is usable as a
+bare word — except `str`, which was an **SB4014 parse error in every word
+context**: `echo str`, `str s=str`, `[[ str == str ]]`, `for x in str`. Only the
+exact spelling (`echo str2` and `echo strs` were always fine).
+
+`literal_token_text` carried a 21-token alternation duplicating
+`keyword_to_str`'s 21-arm list, while `lexer::classify_word_token` promotes
+**22** spellings. `Tok::Str` was in neither, so it fell through to
+`absorb_text`, which returns `None` for it, and the token terminated the word.
+
+It survived because `str` appears constantly as a *declaration* — handled at
+`parser.rs:231`, long before word parsing — and essentially never as data.
+
+**Fixed at the cause, not the symptom.** `keyword_to_str` is now the only list;
+it returns `Option<&'static str>` and `literal_token_text` chains
+`.or_else(absorb_text)`. The old `_ => ""` sentinel is gone — it was
+unreachable, and had anything reached it, it would have produced a silently
+**empty word** rather than an error.
+
+Specs `cov.299-305` pin all 22 spellings plus the three broken non-argument
+contexts, and guard that a reserved word usable as a bare word still introduces
+its own construct.
+
+**This is the fourth instance this session of one shape**: a canonical answer
+with a narrower duplicate written beside it (344 Ã 2 bugs, 346 dead code, 347
+this bug). It is now the first thing to check on any new target.
+
+**Method note that earned its keep.** 346 proved a cold dispatcher
+*unreachable*; the reflex was to expect the same here. `plan.md` carried an
+explicit warning not to assume symmetry — `Tok` is live where `LogosTok` was
+not — and that is what turned 15 cold lines into a bug instead of a deletion.
+**A cold count cannot distinguish "untested" from "impossible". Only the caller
+can.**
+
+**Coverage baseline refreshed** (four commits stale): **95.85% lines / 89.63%
+branches**, up from 95.52 / 89.53. `coverage.db` rebuilt — but its `expr.rs`
+line numbers predate this fix, so re-measure before picking that file again.
+
+**Next:** `codegen/entry.rs:compile_to_object` (14 cold),
+`codegen/values.rs:lower_value_as_int` (12),
+`transform/expr_handlers.rs:fold_arith_op` (12, cc 27/9 — top non-dispatcher
+hotspot and the only one the complexity gate would bite on). Thinnest *files*
+by branch coverage: `transform/capture_purity.rs` (50.00%),
+`transform/pipelines.rs` (66.67%), `transform/expr_handlers.rs` (74.44%).
+
 ## ══ STATUS (2026-09-16) — twenty-seven tokens that could never match ══
 
 **Journal 346.** Sweep **5318 passing, 13 skipped, 0 failing**. Units 83 green.
