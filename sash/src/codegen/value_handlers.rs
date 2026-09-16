@@ -39,11 +39,7 @@ pub(super) fn handle_param_expansion(
             let arr_len = emit_table_len(s_ptr, builder, module, externs);
             emit_int_to_str(builder, module, externs, arr_len)
         }
-        op if op == "arrkeys"
-            || op == "arrvals"
-            || op == "arrjoin"
-            || op.starts_with("arrvals_") =>
-        {
+        op if op == "arrvals" || op == "arrjoin" || op.starts_with("arrvals_") => {
             emit_array_join_expansion(operator, operand, s_ptr, builder, module, literals, externs)
         }
         _ => emit_string_op_expansion(operator, operand, s_ptr, s_len, builder, module, externs),
@@ -121,11 +117,7 @@ fn emit_array_join_expansion(
     let arr_len = builder.inst_results(call)[0];
 
     let (buf_ptr, pos_slot) = alloc_join_buffer(builder);
-    let item_fn = if operator == "arrkeys" {
-        module.declare_func_in_func(externs.table_key, builder.func)
-    } else {
-        module.declare_func_in_func(externs.table_value, builder.func)
-    };
+    let item_fn = module.declare_func_in_func(externs.table_value, builder.func);
     let (sep_ptr, sep_len) = intern_join_separator(operator, operand, builder, module, literals);
 
     let idx_var = init_loop_var(builder);
@@ -151,7 +143,7 @@ fn emit_array_join_expansion(
     builder.seal_block(item_block);
     // DD#65: per-element modifiers (`${arr[@]OP}`) are dropped — they reject at
     // parse (SB4034), so the operator here is always a plain join
-    // (`arrvals`/`arrkeys`/`arrjoin`) and the item is copied as-is.
+    // (`arrvals`/`arrjoin`) and the item is copied as-is.
     let (item_ptr, item_len) = fetch_item(builder, item_fn, s_ptr, idx_var);
     copy_item_bytes(builder, item_ptr, item_len, buf_ptr, pos_slot);
     advance_loop_index(builder, idx_var, header);
@@ -181,7 +173,7 @@ fn alloc_join_buffer(
 }
 
 /// Resolve the separator string: `arrjoin` uses the operand,
-/// everything else (arrkeys, arrvals, arrvals_*) uses a single space.
+/// everything else (arrvals, arrvals_*) uses a single space.
 fn intern_join_separator(
     operator: &str,
     operand: &str,

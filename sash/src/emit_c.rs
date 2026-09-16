@@ -2800,7 +2800,7 @@ fn highest_version(name: &str, types: &VarTypes) -> Option<((String, u32), VarTy
 /// SSA — the transform converts it to SsaValue::Var).
 ///
 /// Deferred to later phases: glob (needs `.` dir
-/// literal), regex_replace (DD#37), arrkeys / arrvals / arrjoin
+/// literal), regex_replace (DD#37), arrvals / arrjoin
 /// (needs table runtime), arrlen, strlen_elem.
 fn emit_param_expansion(
     e: &mut Emit,
@@ -2814,11 +2814,10 @@ fn emit_param_expansion(
     match operator {
         "" => (s_ptr, s_len),
         "strlen" => emit_itoa_temp(e, &s_len),
-        // Phase 5: arrlen / arrkeys / arrvals — table-based vars.
+        // Phase 5: arrlen / arrvals — table-based vars.
         // The var's _ptr slot holds the table pointer; _len holds 0.
         "arrlen" => emit_arrlen(e, &s_ptr),
         "arrvals" | "arrjoin" => emit_arr_values_joined(e, operator, &s_ptr, operand),
-        "arrkeys" => emit_arr_keys_joined(e, operator, &s_ptr, operand),
         "glob" => emit_glob_c(e, operand),
         // DD#65: only `substring` (`:off:len`) survives as a ParamExpansion
         // op here; `:-` is `SsaValue::DefaultValue`, the `:s/` sed op is a
@@ -4013,17 +4012,11 @@ fn emit_arr_values_joined(
     sep_operand: &str,
 ) -> CStr {
     let sep = arrjoin_separator(operator, sep_operand);
-    emit_arr_join_loop(e, table_expr, sep, /* keys = */ false)
+    emit_arr_join_loop(e, table_expr, sep)
 }
 
-/// `${!arr[@]}` — array keys joined by sep.
-fn emit_arr_keys_joined(e: &mut Emit, operator: &str, table_expr: &str, sep_operand: &str) -> CStr {
-    let sep = arrjoin_separator(operator, sep_operand);
-    emit_arr_join_loop(e, table_expr, sep, /* keys = */ true)
-}
-
-/// The separator for a join: `arrjoin` uses its operand, everything else
-/// (`arrvals`, `arrkeys`) uses a single space. Mirrors the native backend's
+/// The separator for a join: `arrjoin` uses its operand, `arrvals` uses a
+/// single space. Mirrors the native backend's
 /// `intern_join_separator`.
 ///
 /// Dispatching on the *operator* is load-bearing. Keying on "the operand is
@@ -4040,16 +4033,15 @@ fn arrjoin_separator<'a>(operator: &str, operand: &'a str) -> &'a str {
     }
 }
 
-/// Emit a runtime loop that walks the table by index, gathering
-/// values (or keys) into a 4096-byte stack buffer separated by
-/// `sep`. The returned (ptr, len) pair refers to the buffer.
-fn emit_arr_join_loop(e: &mut Emit, table_expr: &str, sep: &str, keys: bool) -> CStr {
+/// Emit a runtime loop that walks the table by index, gathering values into
+/// a 4096-byte stack buffer separated by `sep`. The returned (ptr, len) pair
+/// refers to the buffer.
+///
+/// Values only: key iteration is `$(keys m)`, which is a for-loop form (DD#75
+/// §3), never a joined parameter expansion.
+fn emit_arr_join_loop(e: &mut Emit, table_expr: &str, sep: &str) -> CStr {
     let t = e.fresh();
-    let getter = if keys {
-        "sash_table_key"
-    } else {
-        "sash_table_value"
-    };
+    let getter = "sash_table_value";
     writeln!(e.out, "    char {t}_buf[4096];", t = t).unwrap();
     writeln!(e.out, "    i64 {t}_pos = 0;", t = t).unwrap();
     writeln!(

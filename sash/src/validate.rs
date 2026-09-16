@@ -4142,8 +4142,8 @@ fn is_named_array_splat(expr: &Expr) -> bool {
         if is_arrvals_splat_op(pe.operator.as_deref()))
 }
 
-/// A bare splat form: `$(argv …)`, an `arrvals`/`arrkeys` parameter
-/// expansion (`@a` / `${a[@]}` / `$a[@]`), or `$(keys a)`.
+/// A bare splat form: `$(argv …)`, an `arrvals` parameter expansion
+/// (`@a` / `${a[@]}` / `$a[@]`), or `$(keys a)`.
 fn is_splat_form(expr: &Expr) -> bool {
     match &expr.kind {
         ExprKind::CommandSubstitution(stmts) => {
@@ -4154,15 +4154,14 @@ fn is_splat_form(expr: &Expr) -> bool {
     }
 }
 
-/// A named-array value/key splat operator: `arrvals` / `arrkeys`, or any
-/// dispositioned / per-element `arrvals_*` form — `@{a:?}`, `@{a:-WORD}`,
-/// `@{a^^}`, etc. (the parser encodes all of these as `arrvals_<op>`).
+/// A named-array value splat operator: `arrvals`, or any dispositioned /
+/// per-element `arrvals_*` form — `@{a:?}`, `@{a:-WORD}`, `@{a^^}`, etc.
+/// (the parser encodes all of these as `arrvals_<op>`).
 /// Recognizing the `arrvals_*` family here is what keeps a dispositioned
 /// splat from slipping past the splat guards (SB5030 / SB5026) into a
 /// scalar value lowering (which ICEs).
 fn is_arrvals_splat_op(op: Option<&str>) -> bool {
-    matches!(op, Some("arrvals") | Some("arrkeys"))
-        || matches!(op, Some(s) if s.starts_with("arrvals_"))
+    matches!(op, Some("arrvals")) || matches!(op, Some(s) if s.starts_with("arrvals_"))
 }
 
 /// True if the single-command substitution invokes `name`.
@@ -4310,11 +4309,12 @@ fn reject_tainted_array_iter(w: &Expr, tainted: &HashSet<String>, diags: &mut Ve
     }
 }
 
-/// The named array of a value/key splat for-word (`@a` / `${a[@]}` /
-/// `${!a[@]}`), if the word is one.
+/// The named array of a value-splat for-word (`@a`), if the word is one.
+/// Key iteration is spelled `$(keys m)` (DD#75 §3) and is classified by
+/// `detect_array_iter`'s command-substitution arm, not by an operator.
 fn splat_array_name(w: &Expr) -> Option<&str> {
     if let ExprKind::ParameterExpansion(pe) = &w.kind {
-        if matches!(pe.operator.as_deref(), Some("arrvals") | Some("arrkeys")) {
+        if pe.operator.as_deref() == Some("arrvals") {
             return Some(&pe.name);
         }
     }

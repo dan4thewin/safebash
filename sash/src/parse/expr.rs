@@ -700,7 +700,7 @@ fn bareword_shortcut_expansion(stmts: &[Statement], span: Span) -> Option<Expr> 
 //
 // Parses the content between ${ and }. Handles:
 //   ${#var}         → strlen
-//   ${!var[@]}      → arrkeys
+//   ${!var[@]}      → arrkeys_retired (rejected, SB4038 — use $(keys m))
 //   ${var[idx]}     → subscript
 //   ${var:s/re/r/}  → DD#39 sed expression
 //   ${var:off:len}  → substring

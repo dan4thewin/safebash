@@ -1,3 +1,101 @@
+## ══ STATUS (2026-09-16) — the ghost operator ══
+
+**Journal 335.** Sweep **5139 passing, 10 skipped, 0 failing** — predicted
+exactly (18 specs × 2 modes = +36). Units 83 green. Branch coverage **88.34%,
+431 cold** as measured before this batch.
+
+### `arrkeys` was handled in six places and constructed in none
+
+DD#75 §3 made `$(keys m)` the canonical key splat and retired `${!a[@]}`.
+`arrkeys` was `${!a[@]}`'s operator. The parser now emits `arrkeys_retired`
+(rejected at parse, SB4038) — so retiring the surface deleted the **producer**
+and left every **consumer** in place.
+
+`$(keys m)` never produces an operator at all: it is a command substitution,
+classified structurally by `detect_array_iter`'s cmdsub arm. Two mechanisms,
+one unused.
+
+Purged from four passes: `validate.rs` (×2), `transform/control_flow.rs`,
+`codegen/value_handlers.rs` (×2), `emit_c.rs` (arm + `emit_arr_keys_joined` +
+`emit_arr_join_loop`'s now-constant `keys` parameter). Five doc comments that
+listed `arrkeys` as live were corrected, including `parse/expr.rs`'s expansion
+table, which still claimed `${!var[@]} → arrkeys`.
+
+Covered by DG's existing ruling in `remove-retired-surface-implementations`:
+*"Retired surfaces should not keep working implementations."*
+
+**The extern does NOT die with it.** `codegen/dispatch.rs:615` uses
+`externs.table_key` for the real `$(keys m)` loop, so `sash_table_key` stays.
+Only the selector goes. Verified after: `for k in $(keys m)` → `k=x / k=y`,
+`$(join m)` → `1 2`, `$(join a)` → `p q`.
+
+Coverage confirmed the constant parameter independently: `4048|0|0`=0,
+`4048|0|1`=33 — thirty-three joins emitted, not one of them keys.
+
+### 18 specs — `cov.223`–`cov.240`
+
+Six drive `parse/lexer.rs::skip_dollar_var`, reached only from
+`scan_braceless_operand` (the operand of a brace-less `@{a:-…}`), which had
+never seen anything but a one-character identifier: `@{a:-$xy}` (multi-char),
+`@{a:-$_z}` (`_`-led, the alternative an alphabetic lead short-circuits past),
+`@{a:-$#}` (single-char special — consumed **before** the `#` word-terminator
+check, which is the non-obvious part).
+
+Three drive `detect_array_iter`'s non-splat paths: `for x in "$v"` (quoted, one
+part), `for x in "$v$w"` (two parts → prints `ab`), `for x in ${v:-d}`.
+
+The rest pin one-line rejections no feature spec writes: `$0` → SB5017 (not the
+function-local family), `$@`/`$*` → SB5045 with **different directives at top
+level vs in a function**, `$1`/`$#` → SB5024 likewise, `foo/bar` + `./x` →
+SB5051, `echo*` → SB5011. Plus `${m["k"]}`, `${m['k']}`, `${a[$((1))]}` → `y`.
+
+### Trap: SB5011 is emitted from two passes with identical text
+
+`echo*` reports "command 'echo\*' not found" even though `is_valid_command` has
+`if name.contains('*') { return true; }`. Not a bug — that arm is the same
+deliberate deferral as the `/` arm above it, and the message comes from
+**`resolve.rs:244`**, not `validate.rs:2887`. Two passes, byte-identical
+diagnostic. Makes a trace ambiguous from the outside; know it before chasing it.
+
+### Reported, not acted on
+
+`emit_c.rs::arrjoin_separator` reads `4036|0|0`=33, `4036|0|1`=0 — it is only
+ever called with `operator == "arrjoin"`, so `"arrvals"` never reaches the C
+join despite `emit_c.rs:2820` matching `"arrvals" | "arrjoin"`. Possible second
+ghost. Filed as `notes/tasks/trace-arrvals-c-backend-join.md` (P2) — it wants
+the same trace-before-cutting treatment, not a guess.
+
+### Coverage loop — next
+
+**Re-measure first** (`mk cov-reset` → `mk cov-branch` → `mk cov-db`, ~40 min).
+The 431-cold list predates both this purge and these 18 specs, so it is stale,
+and a stale list makes `cov-probe.sh` answer "no branch records at that line".
+
+`spec/coverage.sh` `plan=239`, next free id **`cov.241`**. `spec/taint.sh`
+`plan=200`.
+
+Next densest cold functions from the 2026-09-16 measure (all pre-purge):
+`codegen/entry.rs::compile_to_object` 4 + `panic_payload_message` 4,
+`codegen/values.rs::maybe_insert_positional` 4, `lib.rs::sysroot_file_exists` 4,
+`parse/expr.rs::parse_status_word` 4, `transform/expr_handlers.rs::fold_arith_op`
+4 + `join_intrinsic` 4, `type_check.rs::check_len_operand` 4 +
+`check_unset_args` 4.
+
+Four probes that did **not** reach their target — trace the caller rather than
+guess the input: `flag_positional`, `dollar_at_pexp`, `is_valid_command`,
+`resolve_on_path` (line numbers all shifted; re-derive from the new measure).
+
+### Environment
+
+**`/tmp` is cleaned aggressively on this host.** Always
+`TMPDIR=~/sashscratch/tmp bash spec/run.sh` — `run.sh` uses `mktemp` under
+`set -eu` with an EXIT trap, so a vanished TSV yields a *green partial* sweep.
+Side build for probing while a coverage run holds `target/release`:
+`cd sash && CARGO_TARGET_DIR=~/sashscratch/side cargo build --release -q`.
+
+`mk cov-reset` leaves `target/release` **deleted**, so the next `mk build` is a
+full from-scratch rebuild (~6 min), not incremental.
+
 ## ══ STATUS (2026-09-16) — dead code purged, one site kept ══
 
 **Journal 334.** Sweep **5103 passing, 10 skipped, 0 failing** — exactly the

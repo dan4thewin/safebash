@@ -2938,7 +2938,7 @@ fn user_facing_operator(op: &str) -> String {
 /// `parse_subscript_operator`) are dropped too, for consistency with the scalar
 /// drop — the replacement is a `for x in @a` loop with `$(sub …)`/`$(gsub …)`.
 /// Kept forms (`substring`/`:off:len`, `:s/`, `strlen`, plain
-/// `arrvals`/`arrkeys`/`arrjoin` join, `glob`) arrive via other parse paths /
+/// `arrvals`/`arrjoin` join, `glob`) arrive via other parse paths /
 /// operators and are not matched here.
 fn is_dropped_param_operator(op: &str) -> bool {
     // Per-element array form: `arrvals_<raw op>` (the array parse path keeps the

@@ -574,9 +574,6 @@ fn detect_array_iter(kind: &ExprKind) -> Option<(String, bool)> {
         ExprKind::ParameterExpansion(pe) if pe.operator.as_deref() == Some("arrvals") => {
             Some((pe.name.clone(), false))
         }
-        ExprKind::ParameterExpansion(pe) if pe.operator.as_deref() == Some("arrkeys") => {
-            Some((pe.name.clone(), true))
-        }
         ExprKind::DoubleQuoted(parts) if parts.len() == 1 => detect_array_iter(&parts[0].kind),
         // Sash-native: $(keys arr) in for-loop → array key iteration (DD#41)
         ExprKind::CommandSubstitution(stmts) if stmts.len() == 1 => {

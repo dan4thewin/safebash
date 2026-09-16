@@ -6,7 +6,7 @@
 set -eu
 . common.sh
 setup coverage
-plan=221
+plan=239
 echo "1..$plan" >&3
 
 set +e
@@ -1026,6 +1026,123 @@ run_sash '/bin/echo a | read ARR
 array b=("${ARR[0]}")
 echo "${b[0]}"'
 [[ $rc != 0 && -z $out && $err == *SB5021* ]]; chk cov.222
+
+# ── brace-less disposition operand: the `$…` scan (parse/lexer.rs
+# `skip_dollar_var`, reached only from `scan_braceless_operand`). Every
+# spec below drives a DIFFERENT arm of that scan; the compile outcome is
+# incidental, the lexer path is the point.
+
+# cov.223 a multi-char identifier after `$` — the scan's inner run loop has
+# to advance past the first byte, which a 1-char name never makes it do.
+run_sash 'array a=()
+str xy=q
+/bin/echo @{a:-$xy}'
+[[ $rc = 0 && $out = "q" && -z $err ]]; chk cov.223
+
+# cov.224 …and a `_`-led identifier, which reaches the scan's second
+# alternative (`c == b'_'`); an alphabetic lead short-circuits past it.
+run_sash 'array a=()
+str _z=q
+/bin/echo @{a:-$_z}'
+[[ $rc = 0 && $out = "q" && -z $err ]]; chk cov.224
+
+# cov.225 a single-char SPECIAL (`$#`) in the same position. The scan
+# consumes it before the `#` word-terminator check ever runs, so the
+# operand is `$#` and not an empty operand plus a comment.
+run_sash 'array a=()
+/bin/echo @{a:-$#}'
+[[ $rc != 0 && -z $out && $err == *SB5024* ]]; chk cov.225
+
+# ── for-loop iterable classification (transform/control_flow.rs
+# `detect_array_iter`). Nothing but a splat had ever been iterated, so the
+# non-splat paths through the classifier were untravelled.
+
+# cov.226 a double-quoted single-part word: the classifier must unwrap the
+# quotes and re-test the inside, then find a plain expansion there.
+run_sash 'str v=a
+for x in "$v"; do echo $x; done'
+[[ $rc = 0 && $out = "a" && -z $err ]]; chk cov.226
+
+# cov.227 …and a double-quoted word with TWO parts, which is not
+# unwrappable — the concatenation is the single iteration item.
+run_sash 'str v=a
+str w=b
+for x in "$v$w"; do echo $x; done'
+[[ $rc = 0 && $out = "ab" && -z $err ]]; chk cov.227
+
+# cov.228 an expansion carrying a non-splat operator (`:-`). It is a
+# parameter expansion, so it reaches the splat tests, and fails both.
+run_sash 'str v=a
+for x in ${v:-d}; do echo $x; done'
+[[ $rc = 0 && $out = "a" && -z $err ]]; chk cov.228
+
+# ── positional / special-variable rejections, each from a distinct rule.
+# These are the one-line programs the feature specs never bother to write.
+
+# cov.229 `$0` is rejected everywhere (SB5017), not folded into the
+# function-local SB5024 family below.
+run_sash 'echo "$0"'
+[[ $rc != 0 && -z $out && $err == *SB5017* ]]; chk cov.229
+
+# cov.230 `$@` at TOP LEVEL — SB5045, and the directive names `$(argv 1)`.
+run_sash 'echo "${@}"'
+[[ $rc != 0 && -z $out && $err == *SB5045* && $err == *'argv 1'* ]]; chk cov.230
+
+# cov.231 the same rule inside a FUNCTION gives a different directive
+# (`@args`), because the fix differs by scope.
+run_sash 'fn f() {
+  echo "${@}"
+}
+f'
+[[ $rc != 0 && -z $out && $err == *SB5045* && $err == *@args* ]]; chk cov.231
+
+# cov.232 `$*` takes the same path as `$@` and names itself correctly.
+run_sash 'echo "${*}"'
+[[ $rc != 0 && -z $out && $err == *SB5045* && $err == *'$*'* ]]; chk cov.232
+
+# cov.233 a numeric positional at top level → SB5024, directing to $(arg N).
+run_sash 'echo "$1"'
+[[ $rc != 0 && -z $out && $err == *SB5024* && $err == *'arg 1'* ]]; chk cov.233
+
+# cov.234 `$#` takes the SAME rule but a different directive ($(argc)).
+run_sash 'echo "$#"'
+[[ $rc != 0 && -z $out && $err == *SB5024* && $err == *argc* ]]; chk cov.234
+
+# ── command-head resolution (validate `is_valid_command` / resolve.rs).
+
+# cov.235 a bare relative path is SB5051, not a generic not-found — the
+# head contains `/`, so `is_valid_command` defers and `resolve` owns it.
+run_sash 'foo/bar'
+[[ $rc != 0 && -z $out && $err == *SB5051* ]]; chk cov.235
+
+# cov.236 …and the `./x` spelling reaches the same rule.
+run_sash './x'
+[[ $rc != 0 && -z $out && $err == *SB5051* ]]; chk cov.236
+
+# cov.237 a head containing `*` is likewise deferred by `is_valid_command`,
+# and then fails PATH resolution with SB5011. Two passes emit this exact
+# message; this one comes from resolve, which is why it is not SB5051.
+run_sash 'echo*'
+[[ $rc != 0 && -z $out && $err == *SB5011* ]]; chk cov.237
+
+# ── subscript spellings that are accepted. Quoting a literal map key is
+# legal both ways, and an arithmetic index is evaluated, not stringified.
+
+# cov.238 a double-quoted literal map key.
+run_sash 'map m=([k]=v)
+echo "${m["k"]}"'
+[[ $rc = 0 && $out = "v" && -z $err ]]; chk cov.238
+
+# cov.239 a single-quoted literal map key reaches the same lookup.
+run_sash 'map m=([k]=v)
+echo "${m['\''k'\'']}"'
+[[ $rc = 0 && $out = "v" && -z $err ]]; chk cov.239
+
+# cov.240 an arithmetic subscript is folded to its value, so `$((1))`
+# selects element 1 rather than being read as the key "$((1))".
+run_sash 'array a=(x y)
+echo "${a[$((1))]}"'
+[[ $rc = 0 && $out = "y" && -z $err ]]; chk cov.240
 
 set -e
 tally
