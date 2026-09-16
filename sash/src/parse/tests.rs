@@ -362,38 +362,6 @@ mod logos_equivalence {
     }
 
     #[test]
-    fn keywords_recognized() {
-        let src = "if then else elif fi while until do done for in case esac fn function int const array map attest END";
-        let toks = tokens_of(src);
-        let mut got: Vec<LogosTok> = toks.into_iter().map(|(_, _, t)| t).collect();
-        let expected = vec![
-            LogosTok::If,
-            LogosTok::Then,
-            LogosTok::Else,
-            LogosTok::Elif,
-            LogosTok::Fi,
-            LogosTok::While,
-            LogosTok::Until,
-            LogosTok::Do,
-            LogosTok::Done,
-            LogosTok::For,
-            LogosTok::In,
-            LogosTok::Case,
-            LogosTok::Esac,
-            LogosTok::Fn,
-            LogosTok::Function,
-            LogosTok::Int,
-            LogosTok::Const,
-            LogosTok::Array,
-            LogosTok::Map,
-            LogosTok::Attest,
-            LogosTok::End,
-        ];
-        got.retain(|t| !matches!(t, LogosTok::Newline));
-        assert_eq!(got, expected);
-    }
-
-    #[test]
     fn operators_longest_match() {
         // `&&` must beat `&`, `||` beats `|`, `>>` beats `>`, etc.
         let cases = [
@@ -411,13 +379,8 @@ mod logos_equivalence {
             (")", LogosTok::RParen),
             ("{", LogosTok::LBrace),
             ("}", LogosTok::RBrace),
-            ("[[", LogosTok::DblBracketOpen),
-            ("]]", LogosTok::DblBracketClose),
             (";;", LogosTok::DblSemi),
             (";", LogosTok::Semi),
-            ("<<<", LogosTok::HereString),
-            ("+=", LogosTok::PlusAssign),
-            ("!", LogosTok::Bang),
         ];
         for (src, want) in cases {
             let toks = tokens_of(src);
@@ -442,64 +405,55 @@ mod logos_equivalence {
     #[test]
     fn whitespace_skipped_continuations_swallowed() {
         // \\<newline> is a line continuation: skipped silently.
-        let src = "if   \\\n then\n";
+        let src = "(   \\\n )\n";
         let toks = tokens_of(src);
         let kinds: Vec<LogosTok> = toks.into_iter().map(|(_, _, t)| t).collect();
-        assert_eq!(kinds, vec![LogosTok::If, LogosTok::Then, LogosTok::Newline]);
+        assert_eq!(
+            kinds,
+            vec![LogosTok::LParen, LogosTok::RParen, LogosTok::Newline]
+        );
     }
 
+    /// `to_tok` is total over every variant that can reach it, and the
+    /// mapping is pinned pair-by-pair. The predecessor of this test only
+    /// asserted `is_some()`, so it would not have caught a variant mapped
+    /// to the wrong `Tok`.
     #[test]
-    fn to_tok_maps_all_variants() {
-        // Walk every variant except Comment and verify to_tok returns Some.
-        let all = [
-            LogosTok::If,
-            LogosTok::Then,
-            LogosTok::Else,
-            LogosTok::Elif,
-            LogosTok::Fi,
-            LogosTok::While,
-            LogosTok::Until,
-            LogosTok::Do,
-            LogosTok::Done,
-            LogosTok::For,
-            LogosTok::In,
-            LogosTok::Case,
-            LogosTok::Esac,
-            LogosTok::Fn,
-            LogosTok::Function,
-            LogosTok::Int,
-            LogosTok::Const,
-            LogosTok::Array,
-            LogosTok::Map,
-            LogosTok::Attest,
-            LogosTok::End,
-            LogosTok::AndAnd,
-            LogosTok::OrOr,
-            LogosTok::AmpGt,
-            LogosTok::DblParen,
-            LogosTok::DblParenClose,
-            LogosTok::DblBracketOpen,
-            LogosTok::DblBracketClose,
-            LogosTok::DblSemi,
-            LogosTok::DblGt,
-            LogosTok::GtAmp,
-            LogosTok::HereString,
-            LogosTok::PlusAssign,
-            LogosTok::Pipe,
-            LogosTok::Amp,
-            LogosTok::Semi,
-            LogosTok::LParen,
-            LogosTok::RParen,
-            LogosTok::LBrace,
-            LogosTok::RBrace,
-            LogosTok::Bang,
-            LogosTok::Gt,
-            LogosTok::Newline,
+    fn to_tok_maps_every_reachable_variant() {
+        use crate::parse::lexer::Tok;
+
+        let pairs = [
+            (LogosTok::AndAnd, Tok::AndAnd),
+            (LogosTok::OrOr, Tok::OrOr),
+            (LogosTok::AmpGt, Tok::AmpGt),
+            (LogosTok::DblParen, Tok::DblParen),
+            (LogosTok::DblParenClose, Tok::DblParenClose),
+            (LogosTok::DblSemi, Tok::DblSemi),
+            (LogosTok::DblGt, Tok::DblGt),
+            (LogosTok::GtAmp, Tok::GtAmp),
+            (LogosTok::Pipe, Tok::Pipe),
+            (LogosTok::Amp, Tok::Amp),
+            (LogosTok::Semi, Tok::Semi),
+            (LogosTok::LParen, Tok::LParen),
+            (LogosTok::RParen, Tok::RParen),
+            (LogosTok::LBrace, Tok::LBrace),
+            (LogosTok::RBrace, Tok::RBrace),
+            (LogosTok::Gt, Tok::Gt),
+            (LogosTok::Newline, Tok::Newline),
         ];
-        for t in all {
-            assert!(to_tok(t).is_some(), "to_tok({:?}) returned None", t);
+        for (lt, want) in pairs {
+            assert_eq!(to_tok(lt), want, "to_tok({:?}) mismapped", lt);
         }
-        assert!(to_tok(LogosTok::Comment).is_none());
+    }
+
+    /// `emit_logos_token` intercepts `Comment` before `to_tok` because it
+    /// needs the matched slice. If that interception is ever removed the
+    /// comment would silently lose its payload, so the arm is a loud ICE.
+    /// Pins it, per the regression-guard carve-out.
+    #[test]
+    #[should_panic(expected = "intercepts LogosTok::Comment")]
+    fn to_tok_comment_is_loud_ice() {
+        let _ = to_tok(LogosTok::Comment);
     }
     /// `Scanner::next()` must be able to pull a token straight from the source
     /// when nothing has been peeked. Every caller in the parser peeks first, so

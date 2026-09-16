@@ -2,22 +2,44 @@
 //!
 //! Integration: `lexer::Scanner::next_token` dispatches on the first byte
 //! and delegates the structural-operator family — `\n`, `#`-comment,
-//! `;`/`;;`/`;&`/`;;&`, `|`/`||`, `&`/`&&`/`&>`, `(`/`((`, `)`/`))`,
-//! `{`, `}`, `>`/`>>`/`>&` — to `scan_via_logos`. Everything else
-//! (strings, expansions, words/keywords, heredoc, dash/punct
-//! disambiguation, `[[`/`]]`, `<<<`, `+=`, `!`) stays hand-rolled
-//! because it needs stateful scanning or word-boundary semantics that
-//! the surrounding tokeniser already owns.
+//! `;`/`;;`, `|`/`||`, `&`/`&&`/`&>`, `(`/`((`, `)`/`))`, `{`, `}`,
+//! `>`/`>>`/`>&` — to `scan_via_logos`.
 //!
-//! The keyword variants below are not reached through the dispatcher
-//! (their first byte is a letter, which routes to `scan_word`'s
-//! keyword promotion table) but are retained because the equivalence
-//! tests pin logos' longest-match behaviour for them — useful guard
-//! rails if we ever move keyword promotion under logos.
+//! `LOGOS_DISPATCH_INVARIANT` states the contract exactly: logos is only
+//! ever handed a slice whose first byte is one of ten, and it matches
+//! from position 0 — so every variant below begins with one of those
+//! bytes, and a pattern beginning with anything else could never fire.
+//! Everything else — strings, expansions, words/keywords, heredoc,
+//! dash/punct disambiguation, `[[`/`]]`, `<<<`, `+=`, `!` — stays
+//! hand-rolled because it needs stateful scanning or word-boundary
+//! semantics the surrounding tokeniser already owns, and so never
+//! reaches this module at all.
+//!
+//! This file once carried 27 further variants: the 22 keywords plus
+//! `[[`, `]]`, `<<<`, `+=` and `!`. They were retained as guard rails
+//! against a possible future migration of keyword promotion under
+//! logos, but none of them could ever match — a keyword starts with a
+//! letter, which the dispatcher routes to `scan_word` and thence to
+//! `classify_word_token`, and the five operators start with bytes that
+//! have their own hand-rolled scanners. That made the keyword list a
+//! second, silent answer to "what is a keyword?" sitting beside
+//! `classify_word_token`'s real one and free to drift out of step with
+//! it. Deleted 2026-09-16 (journal 346); `spec/coverage.sh` cov.284-298
+//! pin that the hand-rolled paths still lex every one of them.
 //!
 //! Equivalence is verified by `logos_equivalence` tests in `tests.rs`.
 
 use logos::Logos;
+
+/// Why every `LogosTok` variant below starts with one of ten bytes.
+///
+/// Cited by `to_tok`'s `Comment` arm, which is unreachable for the
+/// narrower reason recorded there.
+pub const LOGOS_DISPATCH_INVARIANT: &str =
+    "logos is only ever handed a slice beginning with one of the ten bytes \
+     Scanner::next_token dispatches to it (newline # ; | & ( ) { } >), and it \
+     matches from position 0, so a pattern beginning with any other byte can \
+     never fire";
 
 /// Structural tokens recognised by logos. One-to-one with the
 /// payload-free variants of `lexer::Tok`.
@@ -25,52 +47,6 @@ use logos::Logos;
 #[logos(skip r"[ \t]+")]
 #[logos(skip r"\\\n")]
 pub enum LogosTok {
-    // ── Keywords (require word-boundary on the trailing side) ──
-    #[token("if")]
-    If,
-    #[token("then")]
-    Then,
-    #[token("else")]
-    Else,
-    #[token("elif")]
-    Elif,
-    #[token("fi")]
-    Fi,
-    #[token("while")]
-    While,
-    #[token("until")]
-    Until,
-    #[token("do")]
-    Do,
-    #[token("done")]
-    Done,
-    #[token("for")]
-    For,
-    #[token("in")]
-    In,
-    #[token("case")]
-    Case,
-    #[token("esac")]
-    Esac,
-    #[token("fn")]
-    Fn,
-    #[token("function")]
-    Function,
-    #[token("str")]
-    Str,
-    #[token("int")]
-    Int,
-    #[token("const")]
-    Const,
-    #[token("array")]
-    Array,
-    #[token("map")]
-    Map,
-    #[token("attest")]
-    Attest,
-    #[token("END")]
-    End,
-
     // ── Multi-char operators (longest match first via priority) ──
     #[token("&&")]
     AndAnd,
@@ -82,20 +58,12 @@ pub enum LogosTok {
     DblParen,
     #[token("))")]
     DblParenClose,
-    #[token("[[")]
-    DblBracketOpen,
-    #[token("]]")]
-    DblBracketClose,
     #[token(";;")]
     DblSemi,
     #[token(">>")]
     DblGt,
     #[token(">&")]
     GtAmp,
-    #[token("<<<")]
-    HereString,
-    #[token("+=")]
-    PlusAssign,
 
     // ── Single-char operators ──
     #[token("|")]
@@ -112,8 +80,6 @@ pub enum LogosTok {
     LBrace,
     #[token("}")]
     RBrace,
-    #[token("!")]
-    Bang,
     #[token(">")]
     Gt,
 
@@ -127,45 +93,27 @@ pub enum LogosTok {
 }
 
 /// Helper for the integration shim: convert a successfully-matched
-/// `LogosTok` to the corresponding payload-free `lexer::Tok`. Returns
-/// `None` for `Comment` (caller extracts the slice).
-pub fn to_tok(t: LogosTok) -> Option<super::lexer::Tok> {
+/// `LogosTok` to the corresponding payload-free `lexer::Tok`.
+///
+/// Total, because every variant that reaches here carries no payload.
+/// `Comment` is the one variant that does, and `emit_logos_token`
+/// intercepts it *before* calling this — it needs the matched slice, so
+/// it cannot go through a payload-free mapping. This function therefore
+/// never sees one, which is why the arm is an ICE and why the return
+/// type is `Tok` rather than `Option<Tok>`. It returned an `Option` for
+/// exactly that arm until 2026-09-16, and the sole caller answered it
+/// with `.expect()`.
+pub fn to_tok(t: LogosTok) -> super::lexer::Tok {
     use super::lexer::Tok;
-    Some(match t {
-        LogosTok::If => Tok::If,
-        LogosTok::Then => Tok::Then,
-        LogosTok::Else => Tok::Else,
-        LogosTok::Elif => Tok::Elif,
-        LogosTok::Fi => Tok::Fi,
-        LogosTok::While => Tok::While,
-        LogosTok::Until => Tok::Until,
-        LogosTok::Do => Tok::Do,
-        LogosTok::Done => Tok::Done,
-        LogosTok::For => Tok::For,
-        LogosTok::In => Tok::In,
-        LogosTok::Case => Tok::Case,
-        LogosTok::Esac => Tok::Esac,
-        LogosTok::Fn => Tok::Fn,
-        LogosTok::Function => Tok::Function,
-        LogosTok::Str => Tok::Str,
-        LogosTok::Int => Tok::Int,
-        LogosTok::Const => Tok::Const,
-        LogosTok::Array => Tok::Array,
-        LogosTok::Map => Tok::Map,
-        LogosTok::Attest => Tok::Attest,
-        LogosTok::End => Tok::End,
+    match t {
         LogosTok::AndAnd => Tok::AndAnd,
         LogosTok::OrOr => Tok::OrOr,
         LogosTok::AmpGt => Tok::AmpGt,
         LogosTok::DblParen => Tok::DblParen,
         LogosTok::DblParenClose => Tok::DblParenClose,
-        LogosTok::DblBracketOpen => Tok::DblBracketOpen,
-        LogosTok::DblBracketClose => Tok::DblBracketClose,
         LogosTok::DblSemi => Tok::DblSemi,
         LogosTok::DblGt => Tok::DblGt,
         LogosTok::GtAmp => Tok::GtAmp,
-        LogosTok::HereString => Tok::HereString,
-        LogosTok::PlusAssign => Tok::PlusAssign,
         LogosTok::Pipe => Tok::Pipe,
         LogosTok::Amp => Tok::Amp,
         LogosTok::Semi => Tok::Semi,
@@ -173,9 +121,13 @@ pub fn to_tok(t: LogosTok) -> Option<super::lexer::Tok> {
         LogosTok::RParen => Tok::RParen,
         LogosTok::LBrace => Tok::LBrace,
         LogosTok::RBrace => Tok::RBrace,
-        LogosTok::Bang => Tok::Bang,
         LogosTok::Gt => Tok::Gt,
         LogosTok::Newline => Tok::Newline,
-        LogosTok::Comment => return None,
-    })
+        LogosTok::Comment => unreachable!(
+            "emit_logos_token intercepts LogosTok::Comment before to_tok to \
+             extract its slice; reaching here means that interception was \
+             removed and a comment is about to lose its payload ({})",
+            LOGOS_DISPATCH_INVARIANT
+        ),
+    }
 }

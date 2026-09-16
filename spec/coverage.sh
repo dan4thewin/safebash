@@ -6,7 +6,7 @@
 set -eu
 . common.sh
 setup coverage
-plan=283
+plan=298
 echo "1..$plan" >&3
 
 set +e
@@ -1338,6 +1338,51 @@ run_sash 'str s=$(arg 1); int n=$(( ${s:-0} )); int c=0; if attest n (( c = n + 
 # reported undefined now that the predicate goes through the real collector.
 run_sash 'str s=$(arg 1); int n=$(( ${s:-0} )); int c=0; if attest n (( c = n )); then echo $c; fi' 7
 [[ $rc == 0 && $out == 7 && $err != *SB5031* ]]; chk cov.283
+
+# cov.284-297: the lexing that made deleting 27 `LogosTok` variants safe.
+# `Scanner::next_token` hands logos exactly ten bytes (newline # ; | & ( ) { }
+# >), so a pattern starting with any other byte could never fire. The 22
+# keyword variants and `[[`, `]]`, `<<<`, `+=`, `!` were therefore dead — a
+# silent second answer to "what is a keyword?" beside `classify_word_token`'s
+# real one. These pin the hand-rolled paths that actually produce them, so a
+# future migration of keyword promotion under logos cannot quietly lose one.
+run_sash 'if (( 1 )); then echo a; elif (( 1 )); then echo b; else echo c; fi'
+[[ $rc == 0 && $out == a ]]; chk cov.284
+run_sash 'if (( 0 )); then echo a; elif (( 1 )); then echo b; else echo c; fi'
+[[ $rc == 0 && $out == b ]]; chk cov.285
+run_sash 'int i=0; int s=0; while (( i < 3 )); do (( s = s + i )); (( i = i + 1 )); done; echo $s'
+[[ $rc == 0 && $out == 3 ]]; chk cov.286
+run_sash 'int i=0; int s=0; until (( i >= 3 )); do (( s = s + i )); (( i = i + 1 )); done; echo $s'
+[[ $rc == 0 && $out == 3 ]]; chk cov.287
+run_sash 'str r=""; for x in a b c; do r+=$x; done; echo $r'
+[[ $rc == 0 && $out == abc ]]; chk cov.288
+# `case`/`esac` are retired (DD, SB4029) but must still LEX, or the diagnostic
+# that retires them could not fire at all.
+run_sash 'str s=hi; case $s in hi) echo y;; *) echo n;; esac'
+[[ $rc != 0 && -z $out && $err == *SB4029* ]]; chk cov.289
+run_sash 'fn g() { echo AB; }; g'
+[[ $rc == 0 && $out == AB ]]; chk cov.290
+run_sash 'function h() { echo CD; }; h'
+[[ $rc == 0 && $out == CD ]]; chk cov.291
+run_sash 'int n=5; str s=abc; const int K=7; echo $n $s $K'
+[[ $rc == 0 && $out == "5 abc 7" ]]; chk cov.292
+run_sash 'array a=(x y); map m; m[k]=v; echo ${a[1]}${m[k]}'
+[[ $rc == 0 && $out == yv ]]; chk cov.293
+run_sash 'str s=$(arg 1); int n=$(( ${s:-0} )); int c=0; if attest n (( c = n )); then echo $c; fi' 7
+[[ $rc == 0 && $out == 7 ]]; chk cov.294
+# DD#56 `END { }` — the one keyword the parser intercepts before dispatch.
+run_sash 'END { echo bye; }'
+[[ $rc == 0 && $out == bye ]]; chk cov.295
+# `[[` / `]]` (scan_lbracket/scan_rbracket) and `!` (scan_bang_or_neq).
+run_sash '[[ abc == abc ]] && ! [[ x == y ]] && echo ok'
+[[ $rc == 0 && $out == ok ]]; chk cov.296
+# `+=` (scan_plus_or_word).
+run_sash 'str s=ab; s+=cd; echo $s'
+[[ $rc == 0 && $out == abcd ]]; chk cov.297
+# `<<<` (scan_lt). Retired like `case` (SB4050), and for the same reason it
+# must still lex: the diagnostic that retires it cannot fire otherwise.
+run_sash 'str s=abc; cat <<< $s'
+[[ $rc != 0 && -z $out && $err == *SB4050* ]]; chk cov.298
 
 set -e
 tally

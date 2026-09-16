@@ -485,7 +485,7 @@ impl Scanner {
         let token = if matches!(lt, LogosTok::Comment) {
             Tok::Comment(String::from_utf8_lossy(&self.source[self.pos..end]).to_string())
         } else {
-            to_tok(lt).expect("logos token without payload mapping")
+            to_tok(lt)
         };
         self.pos = end;
         SpannedToken {
