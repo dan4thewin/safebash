@@ -1500,32 +1500,69 @@ pub fn parse_command_substitution(scanner: &mut Scanner, span: Span) -> Result<E
     }
 
     let mut stmts = Vec::new();
-    loop {
-        if scanner.at_eof() {
-            break;
-        }
-        let tok = scanner.peek().token.clone();
-        match tok {
-            Tok::RParen => {
-                scanner.next();
-                break;
-            }
-            Tok::Newline | Tok::Semi => {
-                scanner.next();
-            }
-            _ => match parse_cmd_sub_step(scanner, span, &tok, &mut stmts)? {
-                CmdSubStep::Return(e) => return Ok(e),
-                CmdSubStep::Continue => continue,
-                CmdSubStep::Break => break,
-                CmdSubStep::Pushed => {}
-            },
-        }
+    let mut closed = false;
+    if let Some(e) = collect_cmd_sub_body(scanner, span, &mut stmts, &mut closed)? {
+        return Ok(e);
+    }
+
+    if !closed {
+        return Err(unterminated_cmd_sub_diag(span));
     }
 
     Ok(Expr {
         kind: ExprKind::CommandSubstitution(stmts),
         span,
     })
+}
+
+/// Consume the body of a `$( … )`, pushing statements into `stmts`.
+///
+/// `Ok(Some(expr))` when a first-word shortcut (`$(status)`, `$(getcpid)`)
+/// consumed the whole substitution and produced the expression itself.
+/// `Ok(None)` when the body ended — and then `closed` says *how*: `true`
+/// for a `)`, `false` for end of input, which the caller turns into
+/// SB4057. Keeping the two apart is the whole point; the predecessor
+/// broke out of this loop on either and could no longer tell.
+fn collect_cmd_sub_body(
+    scanner: &mut Scanner,
+    span: Span,
+    stmts: &mut Vec<Statement>,
+    closed: &mut bool,
+) -> Result<Option<Expr>, Diagnostic> {
+    while !scanner.at_eof() {
+        let tok = scanner.peek().token.clone();
+        match tok {
+            Tok::RParen => {
+                scanner.next();
+                *closed = true;
+                return Ok(None);
+            }
+            Tok::Newline | Tok::Semi => {
+                scanner.next();
+            }
+            _ => match parse_cmd_sub_step(scanner, span, &tok, stmts)? {
+                CmdSubStep::Return(e) => return Ok(Some(e)),
+                CmdSubStep::Break => return Ok(None),
+                CmdSubStep::Continue | CmdSubStep::Pushed => {}
+            },
+        }
+    }
+    Ok(None)
+}
+
+/// A `$(` that is never closed. The substitution loop used to break at end
+/// of input and hand back a well-formed node, so `echo $(echo hi` compiled
+/// and ran with the missing `)` silently ignored, and `echo $(status`
+/// emitted a bare command name that tripped a runtime assertion. The quoted
+/// path has always reported this as SB4057; the unquoted one now agrees.
+fn unterminated_cmd_sub_diag(span: Span) -> Diagnostic {
+    parse_error(
+        span,
+        "SB4057",
+        "unterminated `$(` — it is never closed before the end of the \
+         source, so everything after it was read as part of it"
+            .to_string(),
+    )
 }
 
 /// Outcome of one normal-token iteration inside parse_command_substitution.

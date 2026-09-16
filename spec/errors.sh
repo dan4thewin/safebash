@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup errors
-plan=223
+plan=229
 echo "1..$plan" >&3
 
 set +e
@@ -1115,6 +1115,34 @@ run_sash 'str ux = ""
 # an empty string is terminated, not unterminated
 run_sash '/bin/echo "" | cat'
 [[ $rc = 0 && -z $err ]]; chk 57u.12
+
+# --- 57u.13-57u.18: the same bug one layer up, in the parser ---------------
+# 57u.1-57u.12 fixed every scan-to-closer helper in the *lexer*.
+# `parse_command_substitution` had the identical hole and was missed:
+# its loop did `if scanner.at_eof() { break; }` and then returned a
+# well-formed `CommandSubstitution`, so an unclosed `$(` was silently
+# discarded. `echo $(echo hi` compiled clean and printed `hi`; worse,
+# `echo $(status` emitted a *bare* command name and the binary died at
+# runtime with "sash: bug: bare command passed to sash_exec". The quoted
+# spelling `"$(status` had always been SB4057 — only the unquoted path
+# was blind. Found from the branch-coverage asymmetry in
+# `parse_status_word`'s argument loop (journal 338).
+run_sash 'echo $(echo hi'
+[[ $rc != 0 && -z $out && $err == *SB4057* ]]; chk 57u.13
+run_sash 'echo $(echo a
+echo b'
+[[ $rc != 0 && -z $out && $err == *SB4057* ]]; chk 57u.14
+# the two that reached the runtime assertion rather than merely misparsing
+run_sash 'echo $(status'
+[[ $rc != 0 && -z $out && $err == *SB4057* && $err != *"sash: bug"* ]]; chk 57u.15
+run_sash 'echo $(getcpid'
+[[ $rc != 0 && -z $out && $err == *SB4057* ]]; chk 57u.16
+# the diagnostic points at the `$(` opener, not at end-of-source
+run_sash 'echo $(echo hi'
+[[ $err == *:1:6:* ]]; chk 57u.17
+# control: the terminated spelling still compiles and runs
+run_sash 'echo $(echo hi)'
+[[ $rc = 0 && $out = "hi" && -z $err ]]; chk 57u.18
 
 # ── SB4046: a redirect on something that produces no output ──────────
 # DG 2026-09-14: no meaningless redirects. bash creates and truncates the

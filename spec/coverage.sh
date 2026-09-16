@@ -6,7 +6,7 @@
 set -eu
 . common.sh
 setup coverage
-plan=245
+plan=248
 echo "1..$plan" >&3
 
 set +e
@@ -1176,6 +1176,23 @@ echo $(( ++5 ))'
 run_sash 'int x=1
 echo $(( --5 ))'
 [[ $rc != 0 && -z $out && $err == *SB4020* && $err == *"after --"* ]]; chk cov.246
+
+# cov.247 the `--` side of the nested-mutation diagnostic. `brief_arith`
+# renders the offending sub-expression; only the `++` spelling was ever
+# exercised, so the `--` arm of its PostIncDec case never ran.
+run_sash 'int x=0
+int y=1
+(( x = y-- ))'
+[[ $rc != 0 && -z $out && $err == *SB4020* && $err == *"mutation y--"* ]]; chk cov.247
+
+# cov.248-249 `$(status …)` where `status` is the first word but `)` does
+# not immediately follow. `parse_status_word` only ever saw the bare
+# `$(status)` spelling, so its whole argument loop was unreached.
+run_sash 'echo $(status /bin/true)'
+[[ $rc != 0 && -z $out && $err == *SB4045* ]]; chk cov.248
+run_sash '/bin/true
+echo $(status; echo b)'
+[[ $rc != 0 && -z $out && $err == *SB5073* ]]; chk cov.249
 
 set -e
 tally
