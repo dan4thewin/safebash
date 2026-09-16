@@ -1,3 +1,46 @@
+## ══ STATUS (2026-09-16) — the redirect target with no slot ══
+
+**Journal 340.** Sweep **5223 passing, 10 skipped, 0 failing** — predicted
+exactly (3 specs × 2 modes = +6). Units 83 green.
+
+### Bug fixed: `> $$` ICEd, `> $!` redirected to the empty filename
+
+Found while probing the cold `continue` guards in `init_positional_params`
+ahead of the purge. Redirect-target codegen is slot-based, but `$$` and `$!`
+are served by intrinsic codegen and have no `VarSlot` — so `> $$` hit the
+guard that deliberately skips `$`, got no slot, and raised the
+unresolved-target ICE, while `> $!` had no guard, got an **empty** slot, and
+silently redirected to `""` (the `bug-redirect-nonsimple-target-empty`
+class, leaking through a predicate that did not name it).
+
+Fix is the mechanism already in place: `target_needs_spill` now returns true
+for the slotless specials, so they bind to a synthetic scalar via
+`expr_to_value` exactly like `${x:-f}` / `$a[i]`. `> $$` now means what
+`str s=$$; > $s` always meant; `> "$$.log"` falls out free (the predicate
+already recurses into `Concat`/`DoubleQuoted`). Both backends.
+
+Specs `cov.250`–`cov.252`.
+
+**Method note: a cold branch is not a dead branch.** It is an unasked
+question. This one was reachable, load-bearing, and wrong.
+
+### Purge status (DG: "purge dead code; only exception would be ICE")
+
+Not yet started — the bug above pre-empted it. Both task files hold full
+evidence:
+
+- `notes/tasks/purge-dead-positional-prescan.md` — the four `values.rs`
+  scanners (~46 lines) plus the `setup.rs` collapse and rename. The
+  `?`/`$` guard is **now** genuinely dead (the spill rewrites the target to
+  `__redir_target_N` before codegen's scan sees it), so it comes out with
+  the rest rather than standing alone.
+- `notes/tasks/purge-preincdec-dead-node.md` — `ArithExpr::PreIncDec` never
+  survives the parser; keep the variant and `parse_pre_incdec`, drop the ~10
+  downstream arms, `unreachable!()` where a match must stay exhaustive.
+
+Coverage last measured at **396 cold branches**, before `vm.bl19`–`23` and
+`cov.250`–`252`. Remeasure after the purge.
+
 ## ══ STATUS (2026-09-16) — a filter that cannot pass ══
 
 **Journal 339.** Sweep **5217 passing, 10 skipped, 0 failing** — predicted

@@ -263,9 +263,21 @@ fn lower_redirected_stmt(
 /// the target to read that scalar (`$__redir_target_N`), which codegen already
 /// handles. Command-substitution / arithmetic targets never reach here — they
 /// are rejected at parse (SB4049).
+///
+/// `$$` and `$!` need the same treatment for the same reason: they are served
+/// by intrinsic codegen (`sash_getpid` / the last-child pid), not by a
+/// `VarSlot`, so the slot-based redirect-target codegen cannot see them. Left
+/// alone, `> $$` raised the unresolved-target ICE and `> $!` took the silent
+/// empty-filename path this function exists to close. Spilling them makes
+/// `> $$` mean exactly what `str s=$$; > $s` already meant.
+fn is_slotless_special(v: &str) -> bool {
+    v == "$" || v == "!"
+}
+
 fn target_needs_spill(kind: &ExprKind) -> bool {
     match kind {
         ExprKind::ParameterExpansion(_) | ExprKind::Subscript { .. } => true,
+        ExprKind::SimpleExpansion(v) => is_slotless_special(v),
         ExprKind::Concat(parts) | ExprKind::DoubleQuoted(parts) => {
             parts.iter().any(|p| target_needs_spill(&p.kind))
         }

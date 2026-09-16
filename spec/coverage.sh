@@ -6,7 +6,7 @@
 set -eu
 . common.sh
 setup coverage
-plan=248
+plan=251
 echo "1..$plan" >&3
 
 set +e
@@ -1193,6 +1193,33 @@ run_sash 'echo $(status /bin/true)'
 run_sash '/bin/true
 echo $(status; echo b)'
 [[ $rc != 0 && -z $out && $err == *SB5073* ]]; chk cov.249
+
+# cov.250-252 a redirect target that is served by intrinsic codegen rather
+# than a VarSlot. `$$` (pid) and `$!` (last background child) are readable
+# first-class values — `str s=$$; /bin/echo hi > $s` always worked — but the
+# slot-based redirect-target lowering could not see them, so using them
+# DIRECTLY as a target went wrong in two different ways: `> $$` was skipped by
+# the `var_name == "$"` guard in init_positional_params, got no slot at all and
+# raised the unresolved-target ICE, while `> $!` had no guard, got an EMPTY
+# slot, and silently redirected to the empty filename that
+# `spill_scalar_redirect_targets` exists to prevent. Both now spill to a
+# synthetic scalar like any other non-slot target.
+run_sash '/bin/echo hi > $$
+/bin/echo "pid=$$"'
+rpid=${out#pid=}
+[[ $rc == 0 && -n $rpid && -f $rpid && $(cat "$rpid") == hi ]]; chk cov.250
+# the same target inside a concatenation — target_needs_spill recurses into
+# DoubleQuoted parts, so `"$$.log"` takes the spill path too
+run_sash '/bin/echo hi > "$$.log"
+/bin/echo "pid=$$"'
+rpid=${out#pid=}
+[[ $rc == 0 && -n $rpid && -f $rpid.log && $(cat "$rpid.log") == hi ]]; chk cov.251
+# `$!` names the background child, matching `str s=$!; > $s`
+run_sash '/bin/sleep 0.2 &
+/bin/echo hi > $!
+/bin/echo "child=$!"'
+rchild=${out#child=}
+[[ $rc == 0 && -n $rchild && -f $rchild && $(cat "$rchild") == hi ]]; chk cov.252
 
 set -e
 tally
