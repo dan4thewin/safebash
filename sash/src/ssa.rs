@@ -92,8 +92,14 @@ pub enum BuiltinCmd {
     TrapSignal,
     /// Cooperative signal-flag check inserted at safe points.
     SignalFlag,
-    /// `unset arr[key]` — codegen-time table deletion.
+    /// `unset arr[key]` on a **map** — the key is the literal string, which is
+    /// how a map keys its entries.
     TableDelete,
+    /// `unset arr[i]` on an **indexed array**. An indexed array keys its
+    /// entries by the 8 raw bytes of an i64 (`lower_subscript_raw`,
+    /// codegen/values.rs), so deleting with a string key finds nothing and
+    /// silently reports success. This variant carries that encoding.
+    TableDeleteIdx,
 
     // ─── Shell builtins recognized by codegen / emit_janet ───
     Echo,
@@ -177,6 +183,7 @@ impl BuiltinCmd {
             "__trap_signal" => Self::TrapSignal,
             "__signal_flag" => Self::SignalFlag,
             "__table_delete" => Self::TableDelete,
+            "__table_delete_idx" => Self::TableDeleteIdx,
             "echo" => Self::Echo,
             // DD#99: `write` is `echo` minus the trailing newline.
             "write" => Self::Write,
@@ -228,6 +235,7 @@ impl BuiltinCmd {
             Self::TrapSignal => "__trap_signal",
             Self::SignalFlag => "__signal_flag",
             Self::TableDelete => "__table_delete",
+            Self::TableDeleteIdx => "__table_delete_idx",
             _ => return None,
         })
     }

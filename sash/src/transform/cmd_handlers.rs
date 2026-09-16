@@ -140,7 +140,72 @@ pub(super) fn handle_signal(
     block
 }
 
-/// Handle `unset` command — clear variable or array.
+/// Split `unset`'s arguments into one string per target.
+///
+/// Flags (`-v`, `-f`, `-n`) are dropped. The parser can split a subscripted
+/// target into `["m", "[b]"]`, so an argument that *starts with* `[`
+/// re-attaches to the previous one. Joining every argument instead made
+/// `unset a[0] a[1]` a single target named `a` with the key `0]a[1`, which
+/// matches nothing — every target after the first was silently discarded.
+fn unset_targets(c: &Command) -> Vec<String> {
+    let mut items: Vec<String> = Vec::new();
+    for arg in c.args.iter().map(expr_to_string) {
+        if arg.starts_with('-') {
+            continue;
+        }
+        match items.last_mut() {
+            Some(prev) if arg.starts_with('[') => prev.push_str(&arg),
+            _ => items.push(arg),
+        }
+    }
+    items
+}
+
+/// `unset arr[key]` → a table delete.
+///
+/// A map keys its entries by the string; an indexed array by the 8 raw bytes
+/// of an i64 (`lower_subscript_raw`, codegen/values.rs). Deleting with the
+/// wrong encoding matches nothing, so the wrong pick here is a silent no-op.
+fn unset_element(
+    full: &str,
+    bracket: usize,
+    ssa: &mut SsaProgram,
+    state: &mut VersionState,
+    block: BlockId,
+) {
+    let arr_name = &full[..bracket];
+    let key = full[bracket + 1..full.len() - 1].to_string();
+    let arr_ref = state.lookup(arr_name);
+    let cmd = if state.assoc_arrays.contains(arr_name) {
+        BuiltinCmd::TableDelete
+    } else {
+        BuiltinCmd::TableDeleteIdx
+    };
+    ssa.block_mut(block).insts.push(SsaInst::sigil(
+        cmd,
+        vec![SsaValue::Var(arr_ref), SsaValue::Literal(key)],
+        true,
+    ));
+}
+
+/// `unset name` → rebind the whole variable: a collection to a fresh empty
+/// table, a scalar to the empty string.
+fn unset_whole(name: &str, ssa: &mut SsaProgram, state: &mut VersionState, block: BlockId) {
+    let value = if state.collections.contains(name) {
+        SsaValue::Literal("__new_table__".to_string())
+    } else {
+        SsaValue::Literal(String::new())
+    };
+    let target = state.define(name);
+    ssa.block_mut(block)
+        .insts
+        .push(SsaInst::Assign { target, value });
+}
+
+/// Handle `unset` — delete an element, or clear a whole variable.
+///
+/// `unset -f func` is not supported; the flag is dropped and the name treated
+/// as a variable.
 pub(super) fn handle_unset(
     _name: &str,
     c: &Command,
@@ -149,56 +214,10 @@ pub(super) fn handle_unset(
     state: &mut VersionState,
     block: BlockId,
 ) -> BlockId {
-    // unset map[key] → sash_table_delete
-    // unset var → assign empty string (simulates unset)
-    // unset -f func → ignore (function unset not supported)
-    // Args may be split: ["m", "[b]"] or single "m[b]"
-    let args_str: Vec<String> = c.args.iter().map(expr_to_string).collect();
-    // Filter out flags like -v, -f, -n
-    let var_args: Vec<String> = args_str
-        .iter()
-        .filter(|a| !a.starts_with('-'))
-        .cloned()
-        .collect();
-    // Join consecutive args to handle split "m" "[b]" → "m[b]"
-    let joined = var_args.join("");
-    // Split on whitespace-before-word boundaries that aren't inside brackets
-    let mut items: Vec<String> = Vec::new();
-    if joined.contains('[') {
-        // Single item with bracket
-        items.push(joined);
-    } else {
-        // Multiple plain vars
-        items = var_args;
-    }
-    for full in &items {
-        if let Some(bracket) = full.find('[') {
-            let arr_name = &full[..bracket];
-            let key = full[bracket + 1..full.len() - 1].to_string();
-            let arr_ref = state.lookup(arr_name);
-            let key_val = SsaValue::Literal(key);
-            ssa.block_mut(block).insts.push(SsaInst::sigil(
-                BuiltinCmd::TableDelete,
-                vec![SsaValue::Var(arr_ref), key_val],
-                true,
-            ));
-        } else {
-            // Plain variable unset
-            if state.collections.contains(full) {
-                // Array/map: assign new empty table
-                let target = state.define(full);
-                ssa.block_mut(block).insts.push(SsaInst::Assign {
-                    target,
-                    value: SsaValue::Literal("__new_table__".to_string()),
-                });
-            } else {
-                // Scalar: assign empty string
-                let target = state.define(full);
-                ssa.block_mut(block).insts.push(SsaInst::Assign {
-                    target,
-                    value: SsaValue::Literal(String::new()),
-                });
-            }
+    for full in unset_targets(c) {
+        match full.find('[') {
+            Some(bracket) => unset_element(&full, bracket, ssa, state, block),
+            None => unset_whole(&full, ssa, state, block),
         }
     }
     block

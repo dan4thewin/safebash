@@ -1960,9 +1960,10 @@ fn emit_command_body(
         BuiltinCmd::LetExit => emit_let_exit(e, args, types),
 
         // ── delegated groups ──────────────────────────────────────────
-        BuiltinCmd::Exec | BuiltinCmd::Close | BuiltinCmd::TableDelete => {
-            emit_process_builtin(e, kind, args, checked, types)
-        }
+        BuiltinCmd::Exec
+        | BuiltinCmd::Close
+        | BuiltinCmd::TableDelete
+        | BuiltinCmd::TableDeleteIdx => emit_process_builtin(e, kind, args, checked, types),
         BuiltinCmd::Match | BuiltinCmd::Cd | BuiltinCmd::TrapSignal | BuiltinCmd::SignalFlag => {
             emit_builtin_extra(e, name, kind, args, checked, types)
         }
@@ -2079,7 +2080,8 @@ fn emit_process_builtin(
     match kind {
         BuiltinCmd::Exec => emit_exec_builtin(e, args, types),
         BuiltinCmd::Close => emit_close_builtin(e, args, checked, types),
-        BuiltinCmd::TableDelete => emit_table_delete_c(e, args, types),
+        BuiltinCmd::TableDelete => emit_table_delete_c(e, args, false, types),
+        BuiltinCmd::TableDeleteIdx => emit_table_delete_c(e, args, true, types),
         _ => panic!("ICE: emit_process_builtin called with {kind:?}"),
     }
 }
@@ -2142,7 +2144,7 @@ fn emit_exec(e: &mut Emit, name: &str, args: &[SsaValue], checked: bool, types: 
 /// `args.len() >= 2` guard. Without this the sigil fell through to the `_ =>`
 /// TODO arm and `unset m[k]` was a silent no-op in the C backend: the key
 /// stayed present, `len` was unchanged, and the value still read back.
-fn emit_table_delete_c(e: &mut Emit, args: &[SsaValue], types: &VarTypes) {
+fn emit_table_delete_c(e: &mut Emit, args: &[SsaValue], is_integer_key: bool, types: &VarTypes) {
     if args.len() < 2 {
         return;
     }
@@ -2150,7 +2152,14 @@ fn emit_table_delete_c(e: &mut Emit, args: &[SsaValue], types: &VarTypes) {
         return;
     };
     let table_expr = lookup_table_var(&name.name, types);
-    let (kp, kl) = lower_value_as_str(e, &args[1], types);
+    let (kp, kl) = if is_integer_key {
+        let t = e.fresh();
+        let idx_int = lower_value_as_int(e, &args[1], types);
+        writeln!(e.out, "    i64 {t}_k = {idx};", t = t, idx = idx_int).unwrap();
+        (format!("(const char*)&{}_k", t), "8".to_string())
+    } else {
+        lower_value_as_str(e, &args[1], types)
+    };
     writeln!(
         e.out,
         "    sash_table_delete((SashTable*){table_expr}, {kp}, {kl});"

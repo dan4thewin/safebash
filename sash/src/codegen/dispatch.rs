@@ -237,7 +237,12 @@ impl SsaInst {
             BuiltinCmd::StoreBgPid => return self.emit_store_bg_pid(args, builder, module, ctx),
             BuiltinCmd::TrapSignal => self.emit_trap_signal(args, builder, module, ctx),
             BuiltinCmd::SignalFlag => self.emit_signal_flag(args, builder, module, ctx),
-            BuiltinCmd::TableDelete => return self.emit_table_delete(args, builder, module, ctx),
+            BuiltinCmd::TableDelete => {
+                return self.emit_table_delete(args, false, builder, module, ctx)
+            }
+            BuiltinCmd::TableDeleteIdx => {
+                return self.emit_table_delete(args, true, builder, module, ctx)
+            }
             BuiltinCmd::Noop => self.emit_noop(builder, ctx),
             BuiltinCmd::Match => self.emit_match(args, builder, module, ctx),
             BuiltinCmd::Exit => return self.emit_exit(args, builder, module, ctx),
@@ -911,6 +916,7 @@ impl SsaInst {
     fn emit_table_delete(
         &self,
         args: &[SsaValue],
+        is_integer_key: bool,
         builder: &mut FunctionBuilder,
         module: &mut ObjectModule,
         ctx: &mut InstCtx,
@@ -930,15 +936,31 @@ impl SsaInst {
                 externs,
                 Some(exit_status_var),
             );
-            let (key_ptr, key_len) = lower_value(
-                &args[1],
-                builder,
-                module,
-                vars,
-                literals,
-                externs,
-                Some(exit_status_var),
-            );
+            let (key_ptr, key_len) = if is_integer_key {
+                let idx_int = super::values::lower_value_as_int(
+                    &args[1],
+                    builder,
+                    module,
+                    vars,
+                    literals,
+                    externs,
+                    Some(exit_status_var),
+                );
+                let (idx_slot, kp) = super::values::alloc_out_slot(builder);
+                builder.ins().stack_store(idx_int, idx_slot, 0);
+                let kl = builder.ins().iconst(I64, 8);
+                (kp, kl)
+            } else {
+                lower_value(
+                    &args[1],
+                    builder,
+                    module,
+                    vars,
+                    literals,
+                    externs,
+                    Some(exit_status_var),
+                )
+            };
             let del_ref = module.declare_func_in_func(externs.table_delete, builder.func);
             builder.ins().call(del_ref, &[tbl_ptr, key_ptr, key_len]);
         }

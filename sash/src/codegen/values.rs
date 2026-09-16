@@ -396,7 +396,9 @@ pub(super) fn lower_value(
 }
 
 /// Stack slot for "out_len" arguments to extern calls returning (ptr, len-by-ref).
-fn alloc_out_slot(builder: &mut FunctionBuilder) -> (StackSlot, cranelift_codegen::ir::Value) {
+pub(super) fn alloc_out_slot(
+    builder: &mut FunctionBuilder,
+) -> (StackSlot, cranelift_codegen::ir::Value) {
     let slot =
         builder.create_sized_stack_slot(StackSlotData::new(StackSlotKind::ExplicitSlot, 8, 3));
     let addr = builder.ins().stack_addr(I64, slot, 0);

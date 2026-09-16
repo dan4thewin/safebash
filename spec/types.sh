@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup types
-plan=212
+plan=216
 echo "1..$plan" >&3
 
 set +e
@@ -351,6 +351,36 @@ run_sash 'x=hello; echo $x; unset "x"'
 # 30.45 a sigilled target is a value, not a binding → rejected
 run_sash 'array a=(x); n=a; echo "$(len a)$n"; unset $n'
 [[ $rc != 0 && $err == *SB5063* ]]; chk 30.45
+
+# 30.46 `unset arr[N]` is not a no-op. 30.41 above asserts only the two
+# *untouched* neighbours, so it passed while the delete matched nothing: an
+# indexed array keys its entries by the 8 raw bytes of an i64, and `unset`
+# deleted with the ASCII key "1". The length and the emptied slot pin it.
+run_sash 'array a=(one two three)
+unset a[1]
+echo "n=$(len a) 0=${a[0]} 1=[${a[1]}] 2=${a[2]}"'
+[[ $rc = 0 && $out = 'n=2 0=one 1=[] 2=three' && -z $err ]]; chk 30.46
+
+# 30.47 index 0 is not special
+run_sash 'array a=(x y z)
+unset a[0]
+echo "n=$(len a) 0=[${a[0]}] 1=${a[1]}"'
+[[ $rc = 0 && $out = 'n=2 0=[] 1=y' && -z $err ]]; chk 30.47
+
+# 30.48 deleting every element empties the array
+run_sash 'array a=(x y)
+unset a[0]
+unset a[1]
+echo "n=$(len a)"'
+[[ $rc = 0 && $out = "n=0" && -z $err ]]; chk 30.48
+
+# 30.49 a deleted index is writable again — the length counts live entries,
+# not a high-water mark
+run_sash 'array a=(x y z)
+unset a[1]
+a[1]=Q
+echo "n=$(len a) 1=${a[1]}"'
+[[ $rc = 0 && $out = "n=3 1=Q" && -z $err ]]; chk 30.49
 
 # --- DD#65: per-element array ops dropped → `for x in @a` loop + sub/gsub ---
 # (the `${arr[@]OP}` forms now reject SB4034; see var_modifiers.sh vm.dr16-18)

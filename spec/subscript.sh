@@ -10,7 +10,7 @@
 set -eu
 . common.sh
 setup subscript
-plan=27
+plan=30
 echo "1..$plan" >&3
 
 set +e
@@ -177,6 +177,29 @@ unset m[b]
 echo "n=$(( (len m) ))"
 for k in $(keys m); do echo "k=$k"; done'
 [[ $rc = 0 && $out = $'n=2\nk=a\nk=c' && -z $err ]]; chk 80.27
+
+# 80.28 multiple subscripted targets in one `unset`. The args were joined
+# into a single string, so `unset a[0] a[1]` became one target named `a` with
+# the key `0]a[1` — every target after the first was silently discarded.
+run_sash 'array a=(x y z)
+unset a[0] a[1]
+echo "n=$(( (len a) )) 2=${a[2]}"'
+[[ $rc = 0 && $out = 'n=1 2=z' && -z $err ]]; chk 80.28
+
+# 80.29 the same for a map, where the joined key matched nothing at all and
+# the whole statement was a no-op
+run_sash 'map m=([a]=1 [b]=2 [c]=3)
+unset m[a] m[b]
+echo "n=$(( (len m) )) c=${m[c]}"'
+[[ $rc = 0 && $out = 'n=1 c=3' && -z $err ]]; chk 80.29
+
+# 80.30 targets of different collection kinds in one `unset` — each is keyed
+# by its own encoding (i64 bytes for the array, the string for the map)
+run_sash 'array a=(x y z)
+map m=([k]=v [j]=w)
+unset a[0] m[k]
+echo "na=$(( (len a) )) nm=$(( (len m) ))"'
+[[ $rc = 0 && $out = 'na=2 nm=1' && -z $err ]]; chk 80.30
 
 set -e
 tally
