@@ -163,17 +163,12 @@ pub fn compile_ssa(program: &SsaProgram, embedded: Embedded, trace: bool) -> Vec
         let saved_end_status_var = fs.saved_end_status_var;
         let end_cl_block = fs.end_cl_block;
 
-        super::setup::init_positional_params(
+        super::setup::init_undeclared_redirect_vars(
             &mut builder,
             &mut module,
             program,
-            &externs,
             &mut vars,
             &mut literals,
-            &reachable,
-            space_id,
-            exit_status_var,
-            test_result_var,
         );
         emit_all_blocks(EmitCtx {
             builder: &mut builder,

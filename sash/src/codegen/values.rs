@@ -1508,71 +1508,6 @@ fn strip_ssa_version(key: &str) -> &str {
     key
 }
 
-/// If `name` is a positional ($1, $2, ...) or special var ($#, $@, $0),
-/// insert it into `refs` for later runtime emission.
-fn maybe_insert_positional(name: &str, refs: &mut std::collections::HashSet<String>) {
-    if name.parse::<u64>().is_ok() || name == "#" || name == "@" || name == "0" {
-        refs.insert(name.to_string());
-    }
-}
-
-/// Scan an SsaValue for variable references that might be positional or env vars
-pub(super) fn scan_value_for_vars(val: &SsaValue, refs: &mut std::collections::HashSet<String>) {
-    match val {
-        SsaValue::Var(vref) if vref.version == 0 => maybe_insert_positional(&vref.name, refs),
-        SsaValue::ParamExpansion { var, .. } if var.version == 0 => {
-            maybe_insert_positional(&var.name, refs)
-        }
-        SsaValue::ArithExpr { var, .. } if var.version == 0 => {
-            maybe_insert_positional(&var.name, refs)
-        }
-        SsaValue::DefaultValue { source, default } => {
-            scan_value_for_vars(source, refs);
-            scan_value_for_vars(default, refs);
-        }
-        other => scan_composite_children(other, refs),
-    }
-}
-
-/// Recurse into the child values of composite SsaValues. Split out of
-/// `scan_value_for_vars` to keep that dispatcher under the complexity gate;
-/// behavior is identical (ArithBinOp/Ternary intentionally not recursed, as
-/// before).
-fn scan_composite_children(val: &SsaValue, refs: &mut std::collections::HashSet<String>) {
-    for child in composite_children(val) {
-        scan_value_for_vars(child, refs);
-    }
-}
-
-/// The owned sub-values `scan_composite_children` recurses into. Naming them
-/// rather than recursing inline flattens the walk to a single loop: every arm
-/// used to carry its own `for` or its own repeated calls, which is nesting
-/// the cognitive metric charges for and which said nothing about the shape.
-///
-/// Deliberately *not* `SsaValue::child_values()`, which is a different set:
-/// it recurses `ArithBinOp`/`Ternary` (never scanned here) and omits
-/// `IntCell` (always scanned here).
-fn composite_children(val: &SsaValue) -> Vec<&SsaValue> {
-    match val {
-        SsaValue::Concat(parts) | SsaValue::IndexedArray(parts) => parts.iter().collect(),
-        SsaValue::CmdSubst { argv, .. } => argv.iter().collect(),
-        SsaValue::AssocArray(pairs) => pairs.iter().map(|(_, v)| v).collect(),
-        // Every single-operand wrapper recurses identically.
-        SsaValue::Subscript { index: inner, .. }
-        | SsaValue::IntCell(inner)
-        | SsaValue::CaseConvert { subject: inner, .. }
-        | SsaValue::StrLen { subject: inner } => vec![inner],
-        SsaValue::RegexReplace {
-            subject,
-            pattern,
-            replacement,
-            ..
-        } => vec![subject, pattern, replacement],
-        SsaValue::RegexMatch { subject, pattern } => vec![subject, pattern],
-        _ => Vec::new(),
-    }
-}
-
 /// Emit Cranelift IR to compute strlen by calling sash-rt's strlen
 pub(super) fn emit_strlen(
     builder: &mut FunctionBuilder,
@@ -1583,25 +1518,4 @@ pub(super) fn emit_strlen(
     let strlen_ref = module.declare_func_in_func(strlen_func, builder.func);
     let call = builder.ins().call(strlen_ref, &[ptr]);
     builder.inst_results(call)[0]
-}
-
-pub(super) fn scan_test_for_vars(test: &SsaTest, refs: &mut std::collections::HashSet<String>) {
-    match test {
-        SsaTest::Binary { left, right, .. } => {
-            scan_value_for_vars(left, refs);
-            if let SsaTestRhs::Value(v) = right {
-                scan_value_for_vars(v, refs);
-            }
-        }
-        SsaTest::Unary { operand, .. } => {
-            scan_value_for_vars(operand, refs);
-        }
-        SsaTest::Not(inner) => {
-            scan_test_for_vars(inner, refs);
-        }
-        SsaTest::And(a, b) | SsaTest::Or(a, b) => {
-            scan_test_for_vars(a, refs);
-            scan_test_for_vars(b, refs);
-        }
-    }
 }

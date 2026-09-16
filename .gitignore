@@ -60,3 +60,4 @@ spec/cl_fd_out
 # Nearly committed by a `git add -A` on 2026-09-13.
 plan.md
 coverage.db
+.commitmsg

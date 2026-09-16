@@ -1,5 +1,5 @@
 ---
-status: open
+status: blocked
 priority: P3
 ---
 
@@ -67,3 +67,30 @@ should-never-run assertion, the kind `mk cov-unit` is deliberately off
 to avoid hiding) while documenting *why* the code cannot run.
 
 Found in journal 338.
+
+## Re-measured 2026-09-16 (journal 341) — the filing is partly wrong
+
+Do not execute this as filed. The ~10 arms are all genuinely unreachable,
+but they are not interchangeable:
+
+**Two are documented keeps.** `validate.rs:1711` argues, in a comment, that
+even past `reject_prefix_incdec` "a top-level `PreIncDec` classifies as a
+mutation, so `lower_arith_mutation_structured` turns it into an
+`Assignment`". That names `classify_arith_expr` (arith.rs:239) and
+arith.rs:1292 as the second line of defence. Deleting them silently
+invalidates a backstop another pass's comment relies on.
+
+**Several trade a compile error for a silent wrong answer.** Removing the
+`PreIncDec` alternative from `has_mutation_inner` (arith.rs:174, `_ => false`)
+or `arith_has_incdec` (validate.rs:2033) does not fail to compile if the
+invariant ever breaks — it answers "not a mutation". `validate.rs:3442` is
+exhaustive with no catch-all, so removing the alternative there *is* a
+compile error, i.e. the good kind of guard, and is worth keeping for that
+reason alone.
+
+**Two are clean deletes** by the codebase's own precedent: `brief_arith`
+(arith.rs:189) and `emit_ir.rs:648` are formatting only, and
+`validate.rs:2081` already documents that exact move for `arith_brief`.
+
+Question for DG: take the two safe deletes and close, or keep all of it and
+close this as "deliberate, documented"?

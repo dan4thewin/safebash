@@ -1363,103 +1363,61 @@ fn declare_capture_slots(
         .collect()
 }
 
-/// Initialize positional parameters ($1-$9, $@, $#, $0, $$, $?, $!) from argv.
-/// Scans the SSA to determine which positionals are referenced.
-#[allow(clippy::too_many_arguments)]
-pub(super) fn init_positional_params(
+/// DD#53: give every *undeclared* variable used as a redirect target the
+/// empty-string default, so `/bin/echo hi > $f` opens "" rather than reading
+/// a slot nothing ever defined.
+///
+/// Redirect targets are the only names that need this. The pre-scan used to
+/// walk assignment values, test expressions, `MatchInto` subjects and command
+/// args too, looking for positional (`$1`) and special (`$#`, `$@`, `$0`)
+/// names — but every one of those forms is rejected long before codegen
+/// (SB5024 for a top-level `$1`/`$#`, SB5045 for `$@`, SB5017 for `$0`), and
+/// in-function positionals resolve through the `args` array (DD#60). That
+/// filter ran 89 times per sweep and inserted exactly nothing, so it and the
+/// four scanners feeding it are gone.
+pub(super) fn init_undeclared_redirect_vars(
     builder: &mut cranelift_frontend::FunctionBuilder,
     module: &mut ObjectModule,
     program: &SsaProgram,
-    _externs: &ExternFuncs,
     vars: &mut std::collections::HashMap<String, super::types::VarSlot>,
     literals: &mut std::collections::HashMap<String, cranelift_module::DataId>,
-    _reachable: &std::collections::HashSet<usize>,
-    _space_id: cranelift_module::DataId,
-    _exit_status_var: cranelift_frontend::Variable,
-    _test_result_var: cranelift_frontend::Variable,
 ) {
-    let positional_refs = collect_positional_refs(program);
-
-    for var_name in &positional_refs {
-        // $? and $$ are served by other mechanisms (exit_status_var
-        // and sash_getpid via codegen of $? and $$ usages) — no
-        // VarSlot needed.
-        if var_name == "?" || var_name == "$" {
-            continue;
-        }
-        let key = format!("{}_0", var_name); // version 0
-        if vars.contains_key(&key) {
-            continue;
-        }
-
-        let sv = init_one_positional(var_name, builder, module, literals);
-        vars.insert(key, sv);
+    for var_name in &collect_redirect_target_vars(program) {
+        // `_0` is this pass's private namespace, so no collected name can
+        // already be present: SSA versions start at 1 (`VersionState::define`
+        // increments before use) and the ref set is a `HashSet`. Everything
+        // else that spells `{name}_0` only ever reads the convention.
+        let sv = init_one_redirect_var(var_name, builder, module, literals);
+        vars.insert(format!("{}_0", var_name), sv);
     }
 }
 
-/// Pre-scan: walk every SsaInst in every block and collect names
-/// that are positional ($1, $2, …) or special ($#, $@, etc.).
-fn collect_positional_refs(program: &SsaProgram) -> std::collections::HashSet<String> {
+/// Pre-scan: every name used as a redirect target, in a plain command or in
+/// any stage of a pipeline.
+fn collect_redirect_target_vars(program: &SsaProgram) -> std::collections::HashSet<String> {
     let mut refs: std::collections::HashSet<String> = std::collections::HashSet::new();
-    for block in program.blocks.values() {
-        for inst in &block.insts {
-            scan_inst_for_vars(inst, &mut refs);
-        }
+    let insts = program.blocks.values().flat_map(|b| b.insts.iter());
+    for r in insts.flat_map(inst_redirects) {
+        super::redirects::scan_redirect_for_vars(&r.target, &mut refs);
     }
     refs
 }
 
-/// Walk a single SsaInst, accumulating every positional / special
-/// var name it references into `refs`.
-fn scan_inst_for_vars(inst: &SsaInst, refs: &mut std::collections::HashSet<String>) {
-    use super::values::{scan_test_for_vars, scan_value_for_vars};
-
+/// The redirects an instruction carries: a plain command's own, or one list
+/// per pipeline stage. Naming them rather than looping inline keeps the walk
+/// above a single flat loop — per-arm `for`s are the nesting the cognitive
+/// metric charges for, and they say nothing about the shape.
+fn inst_redirects(inst: &SsaInst) -> Vec<&crate::ir::Redirect> {
     match inst {
-        SsaInst::Assign { value, .. } => scan_value_for_vars(value, refs),
-        SsaInst::Command {
-            args, redirects, ..
-        } => scan_command_args(args, redirects, refs),
-        SsaInst::Pipeline { stages, .. } => {
-            for (_, args, redirects) in stages {
-                scan_command_args(args, redirects, refs);
-            }
-        }
-        SsaInst::Test(test_expr) => scan_test_for_vars(test_expr, refs),
-        SsaInst::MatchInto {
-            subject, pattern, ..
-        } => {
-            scan_value_for_vars(subject, refs);
-            scan_value_for_vars(pattern, refs);
-        }
-        _ => {}
+        SsaInst::Command { redirects, .. } => redirects.iter().collect(),
+        SsaInst::Pipeline { stages, .. } => stages.iter().flat_map(|(_, _, r)| r.iter()).collect(),
+        _ => Vec::new(),
     }
 }
 
-/// Walk a command's args + redirects, accumulating var refs.
-/// Shared between Command and each Pipeline stage.
-fn scan_command_args(
-    args: &[SsaValue],
-    redirects: &[crate::ir::Redirect],
-    refs: &mut std::collections::HashSet<String>,
-) {
-    use super::redirects::scan_redirect_for_vars;
-    use super::values::scan_value_for_vars;
-
-    for a in args {
-        scan_value_for_vars(a, refs);
-    }
-    for r in redirects {
-        scan_redirect_for_vars(&r.target, refs);
-    }
-}
-
-/// Allocate a VarSlot for a referenced positional/special var and give it the
-/// DD#53 empty-string default. The numeric (`$1`), `$#`, and `$@` init
-/// strategies were retired: top-level positionals are validation-rejected
-/// (SB5024/SB5045) and function positionals resolve through the `args` array
-/// (DD#60), so those forms never reach here — only special names that fall to
-/// the empty default do.
-fn init_one_positional(
+/// Allocate a VarSlot for a redirect-target name and give it the DD#53
+/// empty-string default.
+fn init_one_redirect_var(
     var_name: &str,
     builder: &mut cranelift_frontend::FunctionBuilder,
     module: &mut ObjectModule,

@@ -1,5 +1,5 @@
 ---
-status: open
+status: done
 priority: P2
 ---
 
@@ -109,3 +109,26 @@ the honest spelling of it.
 Redirect-to-variable is the live path and is specced; any change must
 keep the sweep green. Found in the branch-coverage loop, journal 338
 follow-up.
+
+## Outcome (2026-09-16, journal 341)
+
+Done. Deleted the five-function closed subtree from `values.rs` (85 lines:
+`maybe_insert_positional`, `scan_value_for_vars`, `scan_composite_children`,
+`composite_children`, `scan_test_for_vars`), collapsed `setup.rs` to a
+redirect-only walk, dropped five dead parameters and the
+`too_many_arguments` allow, and renamed the survivors
+(`init_undeclared_redirect_vars` / `collect_redirect_target_vars` /
+`init_one_redirect_var`).
+
+Both cold `continue` guards went as well, for different reasons:
+
+- the `?`/`$` guard was **not** dead — probing it found the bug fixed in
+  journal 340 (`> $$` ICEd, `> $!` redirected to the empty filename). Once
+  the spill rewrites those targets to `__redir_target_N`, neither name can
+  reach the scan, so the guard became genuinely dead and came out here.
+- the `vars.contains_key` dedup is provably dead: `VersionState::define`
+  increments before use, so the first SSA version is 1 and `{name}_0` is
+  this pass's private namespace. `types.rs:182` and `dispatch.rs:530` only
+  read the convention.
+
+Sweep 5223 passing / 0 failing, unchanged — a pure deletion.
