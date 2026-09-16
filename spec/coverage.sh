@@ -6,7 +6,7 @@
 set -eu
 . common.sh
 setup coverage
-plan=262
+plan=283
 echo "1..$plan" >&3
 
 set +e
@@ -1263,6 +1263,81 @@ run_sash 'int a=1; (( 1 + (a++) ))'
 [[ $rc != 0 && -z $out && $err == *SB4020*embedded*++* ]]; chk cov.262
 run_sash 'int array v=(1 2 3); (( 1 + (v[0]=9) ))'
 [[ $rc != 0 && -z $out && $err == *SB4020*embedded*'a[i]'* ]]; chk cov.263
+
+# cov.264-270 SB5067: a function may not taint a global. Both paths that
+# raise it — a bulk fill (`read`/`readline`/`argv`/`mapfile`) whose target is
+# a global, and a plain assignment of a taint source to one — had **no spec
+# at all**, so the entire diagnostic was uncovered. Taint is the safety
+# property the language exists to enforce; it should not rest on an untested
+# check.
+run_sash 'str g=""; f() { read g; }; f'
+[[ $rc != 0 && $err == *SB5067*taints\ the\ global* ]]; chk cov.264
+run_sash 'str g=""; f() { readline g; }; f'
+[[ $rc != 0 && $err == *SB5067* ]]; chk cov.265
+run_sash 'argv g; f() { argv g; }; f'
+[[ $rc != 0 && $err == *SB5067* ]]; chk cov.266
+run_sash 'str g=""; f() { mapfile g; }; f'
+[[ $rc != 0 && $err == *SB5067* ]]; chk cov.267
+run_sash 'str g=""; f() { g=$(getenv HOME); }; f'
+[[ $rc != 0 && $err == *SB5067*assignment* ]]; chk cov.268
+run_sash 'str g=""; f() { g=$(/bin/date); }; f'
+[[ $rc != 0 && $err == *SB5067*assignment* ]]; chk cov.269
+# The same taint into a *local* is the allowed shape — attest it and use it.
+run_sash 'f() { str l=$(getenv HOME); attest l [[ -n $l ]]; echo ok; }; f'
+[[ $rc == 0 && $out == ok && $err != *SB5067* ]]; chk cov.270
+
+# cov.271-275 SB4020 through the DD#93 attest carve-out. `validate` exempts an
+# attest's `(( TARGET = EXPR ))` predicate from `check_arith_value_mutation`,
+# and the predicate is an `ExprKind::Arithmetic`, not a `StmtKind::ArithTest`,
+# so `check_arith_test_placement` does not see it either. That leaves the
+# parser's `reject_nested_mutation` as the only gate on a mutation nested in
+# the RHS. It used to ask a local copy of the mutation predicate that stopped
+# at `BinOp`/`Paren` and omitted `SubscriptAssign`, so each shape below parsed
+# clean and then hit the `unreachable!()` in `transform::expr_handlers` — an
+# ICE, not a diagnostic. Every node kind the canonical walker descends into
+# gets a spec so a future partial re-derivation cannot pass.
+run_sash 'str s=$(arg 1); int n=$(( ${s:-0} )); int c=0; int d=1; if attest n (( c = n ? (d++) : 1 )); then echo $c $d; fi'
+[[ $rc != 0 && -z $out && $err == *SB4020*mutation* ]]; chk cov.271
+run_sash 'str s=$(arg 1); int n=$(( ${s:-0} )); int c=0; int d=1; if attest n (( c = n + -(d++) )); then echo $c $d; fi'
+[[ $rc != 0 && -z $out && $err == *SB4020*mutation* ]]; chk cov.272
+run_sash 'str s=$(arg 1); int n=$(( ${s:-0} )); int c=0; int d=1; int array v=(1 2); if attest n (( c = n + v[d++] )); then echo $c $d; fi'
+[[ $rc != 0 && -z $out && $err == *SB4020*mutation* ]]; chk cov.273
+run_sash 'str s=$(arg 1); int n=$(( ${s:-0} )); int c=0; int d=1; int array v=(1 2); if attest n (( c = n + (v[0] = 3) )); then echo $c $d; fi'
+[[ $rc != 0 && -z $out && $err == *SB4020*mutation* ]]; chk cov.274
+# The shape the old local copy did catch — a plain `BinOp` operand. Keeps the
+# regression guard honest: the fix must not narrow what already worked.
+run_sash 'str s=$(arg 1); int n=$(( ${s:-0} )); int c=0; int d=1; if attest n (( c = n + (d++) )); then echo $c $d; fi'
+[[ $rc != 0 && -z $out && $err == *SB4020*mutation* ]]; chk cov.275
+# Widening the walk into `Ternary`/`Subscript`/`UnaryOp` must not turn a
+# mutation-free operand under those nodes into a false positive.
+run_sash 'str s=$(arg 1); int n=$(( ${s:-0} )); int c=0; int d=1; int array v=(5 6); if attest n (( c = n ? v[d] : -d )); then echo $c; fi' 7
+[[ $rc == 0 && $out == 6 && $err != *SB4020* ]]; chk cov.276
+run_sash 'str s=$(arg 1); int n=$(( ${s:-0} )); int c=0; int d=1; if attest n (( c = n + -(d) )); then echo $c; fi' 7
+[[ $rc == 0 && $out == 6 && $err != *SB4020* ]]; chk cov.277
+
+# cov.278-282: reads inside an attest's `(( … ))` predicate. The arm used to
+# collect them with `ir::walk_arith_var_reads`, which answers DD#77 D1's
+# "which bare int operands cross from string?" — not "which names does this
+# read?". It skips a subscript's subject name and a sexpr callee name, and
+# checks no name for definedness. So a predicate that plainly reads `d` or `v`
+# was rejected with a false SB5050 (cov.278-279), an undefined name raised
+# nothing and silently read as 0 (cov.280-281), and an undefined array walked
+# through validate into codegen and ICEd (cov.282). The arm now uses
+# `check_arith_reads`, the same collector a plain `(( … ))` statement uses.
+run_sash 'str s=$(arg 1); int n=$(( ${s:-0} )); int c=0; int d=1; if attest n (( c = n + (d) )); then echo $c; fi' 7
+[[ $rc == 0 && $out == 8 && $err != *SB5050* ]]; chk cov.278
+run_sash 'str s=$(arg 1); int n=$(( ${s:-0} )); int c=0; int d=1; int array v=(5 6); if attest n (( c = n + v[d] )); then echo $c; fi' 7
+[[ $rc == 0 && $out == 13 && $err != *SB5050* ]]; chk cov.279
+run_sash 'str s=$(arg 1); int n=$(( ${s:-0} )); int c=0; if attest n (( c = n + zz )); then echo $c; fi' 7
+[[ $rc != 0 && -z $out && $err == *SB5031* ]]; chk cov.280
+run_sash 'str s=$(arg 1); int n=$(( ${s:-0} )); int c=0; int array v=(5 6); if attest n (( c = n + v[zz] )); then echo $c; fi' 7
+[[ $rc != 0 && -z $out && $err == *SB5031* ]]; chk cov.281
+run_sash 'str s=$(arg 1); int n=$(( ${s:-0} )); int c=0; if attest n (( c = n + vv[0] )); then echo $c; fi' 7
+[[ $rc != 0 && -z $out && $err == *SB5031* && $err != *ICE* ]]; chk cov.282
+# The attest target is introduced by the attest, not read — it must not be
+# reported undefined now that the predicate goes through the real collector.
+run_sash 'str s=$(arg 1); int n=$(( ${s:-0} )); int c=0; if attest n (( c = n )); then echo $c; fi' 7
+[[ $rc == 0 && $out == 7 && $err != *SB5031* ]]; chk cov.283
 
 set -e
 tally

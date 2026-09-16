@@ -141,7 +141,19 @@ fn reject_prefix_incdec(
     }
 }
 
-/// Reject nested mutations: e.g. (( x = y++ )) has y++ inside assignment
+/// Reject nested mutations: e.g. `(( x = y++ ))` has `y++` inside an assignment.
+///
+/// This must ask `ir::arith_has_mutation` — the canonical whole-tree predicate —
+/// rather than re-deriving the walk. A local copy used to stop at `BinOp` and
+/// `Paren` and to omit `SubscriptAssign` from the mutation set entirely, so
+/// `(( c = n ? (d++) : 1 ))`, `(( c = n + v[d++] ))`, `(( c = n + -(d++) ))`
+/// and `(( c = n + (v[0] = 3) ))` all parsed clean. In a plain `(( … ))`
+/// statement `validate::check_arith_test_placement` caught them anyway, but an
+/// `attest`'s predicate is an `ExprKind::Arithmetic` that DD#93 deliberately
+/// exempts from `check_arith_value_mutation`, leaving this the only gate — and
+/// the mutation then reached the value path and hit the `unreachable!()` in
+/// `transform::expr_handlers`. A partial re-derivation of a shared predicate is
+/// how an ICE gets built.
 fn reject_nested_mutation(
     expr: &crate::ir::ArithExpr,
     span: crate::ir::Span,
@@ -149,7 +161,7 @@ fn reject_nested_mutation(
     use crate::ir::ArithExpr;
     match expr {
         ArithExpr::Assign { value, .. } | ArithExpr::CompoundAssign { value, .. } => {
-            if has_mutation_inner(value) {
+            if crate::ir::arith_has_mutation(value) {
                 let desc = brief_arith(value);
                 return Err(arith_error(span, format!(
                     "mutation {} not allowed in statement (( )) expression context — use (( )) statement instead", desc
@@ -164,21 +176,6 @@ fn reject_nested_mutation(
             Ok(())
         }
         _ => Ok(()),
-    }
-}
-
-fn has_mutation_inner(expr: &crate::ir::ArithExpr) -> bool {
-    use crate::ir::ArithExpr;
-    match expr {
-        ArithExpr::PreIncDec { .. } => unreachable!("{}", crate::ir::PREFIX_INCDEC_INVARIANT),
-        ArithExpr::PostIncDec { .. }
-        | ArithExpr::Assign { .. }
-        | ArithExpr::CompoundAssign { .. } => true,
-        ArithExpr::BinOp { left, right, .. } => {
-            has_mutation_inner(left) || has_mutation_inner(right)
-        }
-        ArithExpr::Paren(inner) => has_mutation_inner(inner),
-        _ => false,
     }
 }
 

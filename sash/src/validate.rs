@@ -6973,12 +6973,26 @@ fn try_check_attest_stmt(c: &Command, known: &HashSet<String>, sink: &mut ReadSi
         // DD#93 Part D: the conversion reads the attested source and every other
         // name its RHS mentions (`(( y = x + k ))` reads `k` too, or `k` would
         // look like a dead variable). The target is a definition, introduced by
-        // the attest itself.
+        // the attest itself, and `check_arith_reads` only descends into an
+        // `Assign`'s value, so it never sees the target.
+        //
+        // This must use the same collector as a plain `(( … ))` statement
+        // (`check_stmt_exprs_and_bodies`). It used to hand-roll a collect-only
+        // walk over `ir::walk_arith_var_reads`, which answers a *different*
+        // question — DD#77 D1's "which bare int operands cross from string?" —
+        // and so deliberately skips a subscript's subject name and a sexpr
+        // callee name, and never checks definedness at all. Three defects fell
+        // out of that one substitution: `(( c = n + v[d] ))` and
+        // `(( c = n + (d) ))` reported a false SB5050 against a variable the
+        // predicate plainly reads; an *undefined* name (`(( c = n + zz ))`)
+        // raised nothing and silently read as 0, against DG's rule that an
+        // unrecognized symbol in arithmetic is an error; and an undefined
+        // *array* (`(( c = n + vv[0] ))`) reached codegen and ICEd.
         crate::ir::AttestPredicate::ArithConvert { value, .. } => {
             if let crate::ir::AttestForm::Scalar { var } = form {
                 sink.collect_only(var);
             }
-            crate::ir::walk_arith_var_reads(value, &mut |name| sink.collect_only(name));
+            check_arith_reads(value, c.name.span, &attest_known, sink);
         }
     }
     true
