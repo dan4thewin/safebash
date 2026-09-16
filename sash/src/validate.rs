@@ -2658,21 +2658,67 @@ fn cmdsub_expr_walk_each(exprs: &[Expr], f: &mut dyn FnMut(&[Statement])) {
     }
 }
 
-/// DD#23 head-resolvability inside `$( … )`, and nothing else.
+/// DD#23 head-resolvability inside `$( … )`, plus the one part of the
+/// value-intrinsic rule that survives the exemption below.
 fn check_cmdsub_heads(stmts: &[Statement], diags: &mut Vec<Diagnostic>) {
+    // A value intrinsic is exempt from SB5073 only when it *is* the whole
+    // substitution — that is the exact shape `bareword_shortcut_expansion`
+    // rewrites into the value it produces. One statement among several is not
+    // rewritten, so it used to survive as a bare command no backend
+    // recognises, and aborted at runtime on `sash_exec`'s absolute-path
+    // assertion — printing `sash: bug:` into the program's own output with a
+    // successful exit.
+    let sole = stmts.len() == 1;
     for stmt in stmts {
-        check_cmdsub_heads_in_stmt(stmt, diags);
+        check_cmdsub_heads_in_stmt(stmt, sole, diags);
     }
 }
 
 /// One statement's worth: its own head, its child bodies, and the bodies of
 /// any command substitutions in its expressions.
-fn check_cmdsub_heads_in_stmt(stmt: &Statement, diags: &mut Vec<Diagnostic>) {
+///
+/// `sole` is true only for the lone top-level statement of a substitution
+/// body. A nested body — an `if` arm, a loop body — is never itself the
+/// substitution however short it is, so it passes `false` down.
+fn check_cmdsub_heads_in_stmt(stmt: &Statement, sole: bool, diags: &mut Vec<Diagnostic>) {
     check_cmdsub_head_literal(stmt, diags);
+    if !sole {
+        check_cmdsub_value_intrinsic(stmt, diags);
+    }
     for body in stmt.child_bodies() {
-        check_cmdsub_heads(body, diags);
+        for inner in body {
+            check_cmdsub_heads_in_stmt(inner, false, diags);
+        }
     }
     for_each_cmdsub_shallow(stmt, &mut |inner| check_cmdsub_heads(inner, diags));
+}
+
+/// SB5073 for a value intrinsic that is not the whole substitution.
+///
+/// The statement-position wording ("only valid inside a command substitution")
+/// would be actively misleading here, because this one *is* inside a command
+/// substitution. Same rule, same code, different explanation.
+fn check_cmdsub_value_intrinsic(stmt: &Statement, diags: &mut Vec<Diagnostic>) {
+    let StmtKind::Command(c) = &stmt.kind else {
+        return;
+    };
+    if !matches!(&c.name.kind, ExprKind::Literal(_)) {
+        return;
+    }
+    let name = expr_literal_str(&c.name);
+    if !VALUE_ONLY_INTRINSICS.contains(&name) {
+        return;
+    }
+    diags.push(Diagnostic::error_span(
+        c.name.span,
+        "SB5073",
+        format!(
+            "`{name}` is a value intrinsic — inside `$( … )` it is recognised \
+             only when it is the whole substitution, not one statement among \
+             several. Capture it first (`x=$({name}{})`) and use `$x` here",
+            if c.args.is_empty() { "" } else { " …" }
+        ),
+    ));
 }
 
 /// Reject a non-literal command head (DD#23).
@@ -2699,9 +2745,11 @@ fn check_cmd_in_stmt(stmt: &Statement, funcs: &HashSet<String>, diags: &mut Vec<
     // runtime in native ("bare command passed to sash_exec") and silently
     // captured the empty string in c.
     //
-    // Only the head-must-be-literal rule carries over, NOT the rest of
-    // `check_command_head`: a value intrinsic is SB5073 in statement position
-    // and is exactly the right thing inside `$( )`.
+    // Only the head-must-be-literal rule carries over in full, NOT the rest of
+    // `check_command_head`: a value intrinsic is SB5073 in statement position,
+    // and `$(status)` is exactly the right thing. That exemption is narrow —
+    // it holds only while the intrinsic is the *whole* substitution, which is
+    // the shape the parser rewrites into a value. See `check_cmdsub_heads`.
     for_each_cmdsub_shallow(stmt, &mut |inner| check_cmdsub_heads(inner, diags));
     let StmtKind::Command(c) = &stmt.kind else {
         for body in stmt.child_bodies() {

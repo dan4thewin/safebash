@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup commands
-plan=97
+plan=105
 echo "1..$plan" >&3
 
 set +e
@@ -151,6 +151,56 @@ echo "$x"'
 run_sash 'n=$(argc)
 echo "$n"'
 [[ $rc = 0 && $out = "1" && -z $err ]]; chk 23.24
+
+# --- DD#111 a value intrinsic is exempt from SB5073 only when it IS the
+# substitution. `bareword_shortcut_expansion` rewrites `$(status)` into the
+# value it produces, and that rewrite requires the body to be exactly one
+# statement. One statement among several was not rewritten, survived as a bare
+# command no backend recognises, and aborted at runtime inside `sash_exec` —
+# printing `sash: bug: bare command passed to sash_exec` into the program's
+# OWN output, with a successful exit. ---
+
+# 23.25 the shape that used to leak the internal abort message.
+run_sash 'echo hi; echo "$(echo a; status)"'
+[[ $rc != 0 && -z $out && $err == *SB5073* ]]; chk 23.25
+
+# 23.26 order does not matter — first statement is just as unrewritten.
+run_sash 'echo hi; echo "$(status; echo a)"'
+[[ $rc != 0 && -z $out && $err == *SB5073* ]]; chk 23.26
+
+# 23.27 the UNQUOTED spelling too. A sole `$(status)` is rewritten while the
+# word is scanned (try_special_word) and never reaches the string-content
+# path, so the two spellings take different routes to the same rule.
+run_sash 'echo hi; echo $(echo a; status)'
+[[ $rc != 0 && -z $out && $err == *SB5073* ]]; chk 23.27
+
+# 23.28 not just `status` — every value intrinsic.
+run_sash 'echo hi; x=$(echo a; getcpid)'
+[[ $rc != 0 && -z $out && $err == *SB5073* ]]; chk 23.28
+
+# 23.29 a one-statement body is NOT enough on its own: the intrinsic must be
+# the substitution's own statement. Nested inside an `if` arm the body length
+# is 1 at every level, yet nothing rewrites it.
+run_sash 'echo hi; x=$(if [[ 1 = 1 ]]; then status; fi)'
+[[ $rc != 0 && -z $out && $err == *SB5073* ]]; chk 23.29
+
+# 23.30 the exemption itself still holds — this is what 23.24 protects.
+run_sash 'echo hi; echo "$(status)"'
+[[ $rc = 0 && $out = "hi
+0" && -z $err ]]; chk 23.30
+
+# 23.31 and the spelling the diagnostic steers toward keeps working: `$?` is
+# the punctuation that reads the same intrinsic, and it is legal mid-body.
+run_sash 'echo hi; echo "$(echo a; echo $?)"'
+[[ $rc = 0 && $out = "hi
+a
+0" && -z $err ]]; chk 23.31
+
+# 23.32 a multi-statement body with no intrinsic is untouched.
+run_sash 'echo hi; echo "$(echo a; echo b)"'
+[[ $rc = 0 && $out = "hi
+a
+b" && -z $err ]]; chk 23.32
 
 # --- DD#14 compound redirects ---
 
