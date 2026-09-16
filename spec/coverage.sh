@@ -6,7 +6,7 @@
 set -eu
 . common.sh
 setup coverage
-plan=215
+plan=217
 echo "1..$plan" >&3
 
 set +e
@@ -978,6 +978,21 @@ run_sash 'fn n() foo { return 7 }'
 # direction picks a different arrow for the message and was not.
 run_sash '/bin/cat <& foo'
 [[ $rc != 0 && -z $out && $err == *SB4048* ]]; chk cov.216
+
+# cov.217 a value intrinsic WITH arguments, mid-`$( )` body (DD#111). The
+# diagnostic elides the argument list, so this is a different formatting arm
+# from the no-argument case in 23.25.
+run_sash 'echo hi
+x=$(echo a; getenv HOME)'
+[[ $rc != 0 && -z $out && $err == *SB5073* ]]; chk cov.217
+
+# cov.218 a NON-literal command head in a multi-statement `$( )` body. DD#23
+# rejects it first; the value-intrinsic check has to decline on a head it
+# cannot read as a name.
+run_sash 'v=/bin/true
+echo hi
+x=$(echo a; $v arg)'
+[[ $rc != 0 && -z $out && $err == *SB5011* ]]; chk cov.218
 
 set -e
 tally

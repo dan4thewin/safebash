@@ -1,4 +1,112 @@
-## ══ STATUS (2026-09-16) — an exemption wider than its justification ══
+## ══ STATUS (2026-09-16) — the typo guard that guessed ══
+
+**Journal 331. DD#112 accepted, SB5078 added.** Sweep **5059 passing, 10
+skipped, 0 failing**. Branch coverage **87.71% / 456 cold** at the last
+measure (`5cbe9b7`), before the 23 specs added since.
+
+### Bug #11 — a malformed `arg` index silently read a different argument
+
+The runtime parses `$(arg N)`'s index by taking leading digits and discarding
+the rest, and nothing rejected a literal that was not a number:
+
+| written | actually read | exit |
+|---|---|---|
+| `$(arg abc)` | argument 0 — the **program name** | 0 |
+| `$(arg -)` / `$(arg -x)` | argument 0 | 0 |
+| `$(arg 1x)` | argument 1 | 0 |
+| `$(arg 2abc)` | argument 2 | 0 |
+| `$(arg +1)` | argument 1 | 0 |
+
+`$(arg 1x)` is the dangerous one — it looks like it worked, and a typo in the
+second digit changes which argument you get with no signal at all.
+
+Not a fork: spec `av.t6` already pins the governing intent for the
+neighbouring case — "`$(arg N)` for N >= argc aborts at runtime (no silent
+empty)". An out-of-range index refuses to guess; a malformed one was guessing.
+
+`arg_index_diag` already had a typo guard for *negative* literals (DD#60). It
+had none for "is this a number at all". SB5078 sits beside it, ordered after
+so `-1` keeps SB5038, and restricted to literals so `$(arg $i)` stays a
+runtime concern — the literal/computed split the existing comment already
+draws.
+
+`spec/argv.sh` `av.t8`–`av.t8i` (`plan=57`). `av.t8g` pins the ordering;
+`av.t8h`/`av.t8i` pin what must not change (`01` is a fine index, a computed
+one is untouched).
+
+**Fifth bug this session with the same shape:** a rule implemented for the
+spelling someone reported and left open for the rest of its class, living
+*next to* an existing check that handles the neighbouring case. DD#72 (arith
+context only), DD#64 (two of three scanner contexts, then not at EOF),
+`bareword_shortcut_expansion` (single-statement bodies only), and now an index
+guard that checked the sign but not the digits.
+
+### Filed, not fixed
+
+`notes/tasks/diag-negative-subscript-called-string-key.md` (P2) — `${a[-1]}`
+is rejected correctly but reported as a *string key* with the advice "use an
+integer". `is_string_key` calls a literal a string when it is not all digits,
+so a leading `-` qualifies. Behavior is right and memory-safe (a negative
+subscript is a distinct key, not an offset — `-100000` harms nothing); only
+the explanation is wrong.
+
+### Coverage this pass
+
+`cov.207`–`cov.216` went after `parse/parser.rs` (37 cold, the second-largest
+block); nine are probe-verified flips — empty `elif` condition (486), dispatch
+as a `while` condition (519), `for x in a` at end-of-input (560), a bare word
+where `-> int` would go (705), dispatch with a unary subject (1287) and with
+`!=` (1294), the attest-all binder list (1779), `<&` with a non-fd target
+(2616).
+
+`cov.217`/`cov.218` cover `check_cmdsub_value_intrinsic`, the function added
+for bug #10 — which should have been covered when it was written.
+
+`coverage.sh` `plan=217`.
+
+**For DG — three sites that look genuinely unreachable.** Reported, not
+deleted:
+
+- `validate.rs:1788`/`1792` — may have been made unreachable by bug #6's own
+  fix.
+- `parser.rs:701` — `parse_optional_return_type` accepts both a single `->`
+  word token and the split `-` `>` pair, "depending on how the lexer
+  classified the bytes". Every spelling tried (`-> int`, `->int`, `() ->int`)
+  takes the split path.
+- `parser.rs:1054` — the second operand of `pipeline_operand`, an
+  "already-folded multi-stage pipeline". `!` parses its operand with
+  `dispatch_statement`, which by contract does not fold `|`. The first operand
+  covers every reachable case and is pinned by cov.213.
+
+### Tooling note — a sweep that lost tests and reported green
+
+`run.sh` takes its scratch TSV from `mktemp`. **`/tmp` on this host is being
+cleaned aggressively**, and `set -eu` plus the EXIT trap turns a vanished TSV
+into a partial load with no complaint: one sweep reported 5001 passing / 0
+failing having silently dropped an entire spec file.
+
+Only predicting the total caught it. **Run sweeps as
+`TMPDIR=~/sashscratch/tmp bash spec/run.sh`** until this is addressed, and
+keep predicting the total — AGENTS.md frames that as a collision check, but it
+is also the only thing that catches a sweep which *lost* tests rather than
+failed them.
+
+### Next
+
+Re-measure (`mk cov-reset` → `mk cov-branch` → `mk cov-db`, ~40 min) — 23 new
+specs since the last one. Then continue: `validate.rs` 61 cold,
+`parse/lexer.rs` 35, `type_check.rs` 32, `parse/arith.rs` 31, `emit_c.rs` 26,
+`transform/control_flow.rs` 25.
+
+Unchased `validate.rs` leads: `splat_collection_name` 756/763,
+`stmt_is_external_command` 1018/1021, `attest_arith_near_miss` 1849/1853,
+`mark_predicate_operand` 2578/2582, `resolve_on_path` 3056, `flag_positional`
+3474, `dollar_at_pexp` 3572, `bare_arrvals_splat_name` 3859/3862,
+`check_slot_arity` 6119/6131, `index_is_identifier` 7373.
+
+---
+
+## ══ PRIOR (2026-09-16) — an exemption wider than its justification ══
 
 **Journal 330. DD#111 accepted.** Sweep **5017 passing, 10 skipped, 0
 failing** (was 4983). Bug #10 closed; nine coverage specs landed alongside.
@@ -6579,7 +6687,7 @@ modified: 2026-06-07
 <!-- BEGIN: mk-status (regenerated by contrib/status-update.sh) -->
 ## Current branch: hand-parser
 
-## Spec status: 5017 passing / 0 failing of 5027 (spec.db @ fffc23f)
+## Spec status: 5037 passing / 0 failing of 5047 (spec.db @ fffc23f)
 
 _Regenerated 2026-09-16 by `mk status`. Edits inside this block will be
 overwritten; edit outside the BEGIN/END markers._

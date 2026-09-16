@@ -6,7 +6,7 @@
 set -eu
 . common.sh
 setup argv
-plan=48
+plan=57
 echo "1..$plan" >&3
 
 set +e
@@ -44,6 +44,52 @@ run_sash 'x=$(arg -1); attest x [[ -n $x ]]; echo "$x"'
 # av.t7b the DEFAULT form `$(arg -N D)` also rejects the negative literal
 run_sash 'x=$(arg -1 fallback); attest x [[ -n $x ]]; echo "$x"'
 [[ $rc != 0 && -z $out && $err = *SB5038* ]]; chk av.t7b
+
+# ── DD#60: a literal `arg` index must be a non-negative integer (SB5078) ──
+# The runtime parses the index by taking leading digits, so a malformed
+# literal silently reads a DIFFERENT argument and exits 0. av.t6 already
+# establishes the intent — an out-of-range index aborts rather than yielding
+# empty — and these are the same rule for the same reason.
+
+# av.t8 a non-numeric index read argument 0, the PROGRAM NAME, with exit 0.
+run_sash 'x=$(arg abc); attest x [[ -n $x ]]; echo "$x"'
+[[ $rc != 0 && -z $out && $err = *SB5078* ]]; chk av.t8
+
+# av.t8b trailing junk is the silent one: `1x` read argument 1 and looked
+# entirely successful.
+run_sash 'x=$(arg 1x); attest x [[ -n $x ]]; echo "$x"' alpha
+[[ $rc != 0 && -z $out && $err = *SB5078* ]]; chk av.t8b
+
+# av.t8c a lone `-` is not a negative literal (nothing follows it), so it
+# fell past the SB5038 guard and read argument 0.
+run_sash 'x=$(arg -); attest x [[ -n $x ]]; echo "$x"'
+[[ $rc != 0 && -z $out && $err = *SB5078* ]]; chk av.t8c
+
+# av.t8d `-x` likewise — `-` then a non-digit.
+run_sash 'x=$(arg -x); attest x [[ -n $x ]]; echo "$x"'
+[[ $rc != 0 && -z $out && $err = *SB5078* ]]; chk av.t8d
+
+# av.t8e an explicit `+` is not accepted either; `+1` read argument 1.
+run_sash 'x=$(arg +1); attest x [[ -n $x ]]; echo "$x"' alpha
+[[ $rc != 0 && -z $out && $err = *SB5078* ]]; chk av.t8e
+
+# av.t8f the DEFAULT form rejects a malformed index too.
+run_sash 'x=$(arg abc fallback); attest x [[ -n $x ]]; echo "$x"'
+[[ $rc != 0 && -z $out && $err = *SB5078* ]]; chk av.t8f
+
+# av.t8g a NEGATIVE literal keeps its own DD#60 diagnostic — the new check
+# runs after it, so SB5038 is not swallowed by the broader rule.
+run_sash 'x=$(arg -42); attest x [[ -n $x ]]; echo "$x"'
+[[ $rc != 0 && -z $out && $err = *SB5038* ]]; chk av.t8g
+
+# av.t8h a leading-zero index is a perfectly good integer and still works —
+# the guard tests digits, not spelling.
+run_sash 'x=$(arg 01); attest x [[ -n $x ]]; echo "$x"' alpha
+[[ $rc = 0 && $out = "alpha" && -z $err ]]; chk av.t8h
+
+# av.t8i a COMPUTED index is a runtime concern, not a typo, and is untouched.
+run_sash 'int i=1; x=$(arg $i); attest x [[ -n $x ]]; echo "$x"' alpha
+[[ $rc = 0 && $out = "alpha" && -z $err ]]; chk av.t8i
 
 # ── DD#60 addendum: $(arg N DEFAULT) opt-in default ──────────────
 

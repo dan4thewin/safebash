@@ -7475,6 +7475,25 @@ fn arg_index_diag(e: &Expr, c: &Command) -> Option<Diagnostic> {
                 .to_string(),
         ));
     }
+    // A literal index that is not a plain non-negative integer is a typo, and
+    // a silent one: the runtime parses the index by taking leading digits, so
+    // `$(arg 1x)` reads argument 1 and `$(arg abc)` reads argument 0 — the
+    // program name — with a successful exit. `$(arg 5)` past the end aborts
+    // rather than yielding empty (av.t6); this is the same rule for the same
+    // reason. A dynamic index (`$(arg $i)`) stays a runtime concern.
+    if c.args.first().is_some_and(is_nonnumeric_index_literal) {
+        let s = expr_literal_str(&c.args[0]);
+        return Some(Diagnostic::error_span(
+            c.args[0].span,
+            "SB5078",
+            format!(
+                "`arg` index must be a non-negative integer — `{s}` is not one, and \
+             would be read as an index by taking its leading digits (`$(arg 1x)` \
+             means argument 1, `$(arg abc)` means argument 0). Use a literal \
+             index, or an expansion for a computed one"
+            ),
+        ));
+    }
     None
 }
 
@@ -7483,6 +7502,17 @@ fn arg_index_diag(e: &Expr, c: &Command) -> Option<Diagnostic> {
 fn is_negative_int_literal(e: &Expr) -> bool {
     let s = expr_literal_str(e);
     matches!(s.strip_prefix('-'), Some(rest) if !rest.is_empty() && rest.bytes().all(|b| b.is_ascii_digit()))
+}
+
+/// A literal index that is not a plain non-negative integer (`abc`, `1x`, `-`,
+/// `+1`). Non-literals return `false` — `expr_literal_str` yields `""` for an
+/// expansion, and a computed index is a runtime concern, not a typo.
+///
+/// Runs *after* [`is_negative_int_literal`], so `-1` keeps its own DD#60
+/// diagnostic and only the genuinely malformed spellings land here.
+fn is_nonnumeric_index_literal(e: &Expr) -> bool {
+    let s = expr_literal_str(e);
+    !s.is_empty() && !s.bytes().all(|b| b.is_ascii_digit())
 }
 
 fn random_default_diag(span: Span) -> Diagnostic {
