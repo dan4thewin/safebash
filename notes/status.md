@@ -1,3 +1,51 @@
+## ══ STATUS (2026-09-16) — the front end ran three times ══
+
+**Journal 348.** Sweep **5338 passing, 13 skipped, 0 failing** (+6, predicted
+exactly). Units 83 green. **Native compile time −43%** (0.37s → 0.21s on a
+3000-line program).
+
+Every native compile ran `type_check` + `transform` **three times**:
+`enforce_transform_diags` kept the diags and threw away the SSA,
+`compile_native` kept the SSA and threw away the diags, and
+`codegen::compile_to_object` **re-parsed the source from scratch** and built a
+third — the one codegen actually used.
+
+**Not a correctness bug; I checked the obvious one.** The re-parsed program is
+*unresolved* (DD#23 `resolve_commands` mutates only the caller's copy), so
+codegen could have been exec'ing bare `cat`. It wasn't —
+`transform/resolution.rs` re-resolves idempotently through the same
+`resolve_command_path`.
+
+**Fixed because of the seam, not the speed.** The taint gate and codegen ran on
+*different SSA objects* that nothing forced to agree, and `compile_to_object`
+was a `pub`, re-exported, validate-bypassing entry point whose doc claimed
+"the ONLY entry point from validated source to object code" while accepting raw
+source and calling no validator. That is exactly how the deleted fail-open
+harness looked defensible.
+
+`transform_or_exit` now runs the transform **once** and returns the SSA;
+`cli_main` threads it through `compile_native` into
+`compile_to_object(&Program, &SsaProgram, &str, bool)`. cc 12 → 4. Its only
+remaining failure mode is the `catch_unwind` ICE path. Specs `cov.306-308` pin
+that transform diags still gate `--emit-ir` / `--manifest` / `--emit-c`.
+
+DG ruled "pass the SSA in", which on its face addresses only the third call
+site; sites 1 and 2 are the same duplication one layer up, so all three went.
+
+**Three cold-line diagnoses in three commits, same measurement, three
+meanings** — 346 unreachable by construction (delete the variants), 347
+genuinely untested (and hiding a bug), 348 pre-empted by the caller (delete the
+duplication). **The cold count tells you where to look and nothing more. Every
+one was settled by reading the caller.**
+
+**Next:** `codegen/values.rs:lower_value_as_int` (12 cold, cc 12/7) and
+`transform/expr_handlers.rs:fold_arith_op` (12, cc 27/9 — top non-dispatcher
+hotspot, and the only near-target the complexity gate would bite on). Thinnest
+*files* by branch coverage: `transform/capture_purity.rs` (50.00%),
+`transform/pipelines.rs` (66.67%), `transform/expr_handlers.rs` (74.44%).
+`coverage.db` now predates three commits and its `expr.rs`, `lib.rs` and
+`codegen/entry.rs` line numbers are stale — re-measure before trusting it.
+
 ## ══ STATUS (2026-09-16) — the word `str` was a parse error ══
 
 **Journal 347.** Sweep **5332 passing, 13 skipped, 0 failing** (+14, predicted

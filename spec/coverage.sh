@@ -6,7 +6,7 @@
 set -eu
 . common.sh
 setup coverage
-plan=305
+plan=308
 echo "1..$plan" >&3
 
 set +e
@@ -1407,6 +1407,25 @@ run_sash 'for x in str; do echo $x; done'
 # own construct — the parser decides that before word parsing is reached.
 run_sash 'if (( 1 )); then echo if; fi'
 [[ $rc == 0 && $out == if ]]; chk cov.305
+
+# cov.306-308: transform-time compile errors must gate EVERY backend, not just
+# native. The transform used to run three times per compile — once purely for
+# these diagnostics, once in `compile_native` for the taint gate, and a third
+# time inside `compile_to_object`, which re-parsed the source from scratch.
+# Collapsing that to one run moved the diagnostic gate, so pin that the
+# alt-output flags still reject what native rejects. Invoked directly rather
+# than through run_sash because the flags are the point (journal 348).
+for _f in --emit-ir --manifest --emit-c; do
+    ${SASH:-sash} "$_f" -c 'const int K=1; K=2; echo $K' >/dev/null 2>alt.err
+    _arc=$?
+    _aerr=$(cat alt.err); rm -f alt.err
+    case $_f in
+        --emit-ir)  _id=cov.306 ;;
+        --manifest) _id=cov.307 ;;
+        *)          _id=cov.308 ;;
+    esac
+    [[ $_arc != 0 && $_aerr == *SB4044* ]]; chk $_id
+done
 
 set -e
 tally

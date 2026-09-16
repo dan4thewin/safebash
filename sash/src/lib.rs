@@ -180,7 +180,7 @@ pub fn cli_main(args: Vec<String>) {
     // collision, …). Enforce them for every backend so the c/manifest
     // paths reject exactly what native does — AND so they precede the
     // dead-variable gate below.
-    enforce_transform_diags(input, &program);
+    let ssa = transform_or_exit(input, &program);
 
     // SB5050 (DD#86): the dead-variable gate runs LAST — after taint (SB5020),
     // type (SB4030), and the transform errors above — so a variable that is
@@ -200,6 +200,7 @@ pub fn cli_main(args: Vec<String>) {
         input,
         &source,
         &program,
+        &ssa,
         parsed.output_path,
         parsed.inline_source.is_some(),
         &parsed.flags,
@@ -379,19 +380,29 @@ fn run_semantic_checks(input: &str, program: &crate::ir::Program, flags: &[&str]
     }
 }
 
-/// Run the AST→SSA transform purely for its compile-error diagnostics
-/// (SB4016/17/18/…) and exit if any fired. Mirrors the diag surfacing in
-/// codegen::compile_to_object so the alt-output backends reject the same
-/// programs native does.
-fn enforce_transform_diags(input: &str, program: &crate::ir::Program) {
+/// Run the AST→SSA transform **once** for the whole compile, exit on its
+/// compile-error diagnostics (SB4016/17/18/…), and hand the SSA back for
+/// reuse by the taint gate and codegen.
+///
+/// There used to be three of these per native compile: this one discarded the
+/// SSA and kept the diags, `compile_native` discarded the diags and kept the
+/// SSA, and `codegen::compile_to_object` re-parsed the source and built a
+/// third. That is ~a quarter of native compile time spent recomputing an
+/// identical result, and it meant the taint gate and codegen ran on different
+/// SSA objects with nothing forcing them to agree (journal 348).
+///
+/// Runs before `maybe_emit_alt_output` so the alt-output backends reject
+/// exactly the programs native does.
+fn transform_or_exit(input: &str, program: &crate::ir::Program) -> crate::ssa::SsaProgram {
     let type_map = type_check::infer_types(program);
-    let (_ssa, diags) = transform::ir_to_ssa_typed(program, type_map);
+    let (ssa, diags) = transform::ir_to_ssa_typed(program, type_map);
     if !diags.is_empty() {
         for d in &diags {
             eprintln!("{}:{}", input, d);
         }
         std::process::exit(1);
     }
+    ssa
 }
 
 /// Handle the terminal "emit an alternative output and exit" flags
@@ -676,6 +687,7 @@ fn compile_native(
     input: &str,
     source: &str,
     program: &crate::ir::Program,
+    ssa: &crate::ssa::SsaProgram,
     output_path: Option<&str>,
     is_inline: bool,
     flags: &[&str],
@@ -683,13 +695,10 @@ fn compile_native(
     let output = native_output_path(input, output_path, is_inline);
     let obj_path = format!("{}.o", output);
 
-    let type_map = type_check::infer_types(program);
-
-    let (ssa, _) = transform::ir_to_ssa_typed(program, type_map);
-    run_ssa_taint_gate(input, &ssa, flags);
+    run_ssa_taint_gate(input, ssa, flags);
 
     let trace = flags.contains(&"--trace");
-    let obj_bytes = match codegen::compile_to_object(source, trace) {
+    let obj_bytes = match codegen::compile_to_object(program, ssa, source, trace) {
         Ok(bytes) => bytes,
         Err(diags) => {
             for d in &diags {

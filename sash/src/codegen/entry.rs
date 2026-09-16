@@ -25,57 +25,42 @@ use crate::ssa::*;
 
 use super::types::InstCtx;
 
-/// Compile sash source to a native object file.
+/// Compile an already-built SSA program to a native object file.
 ///
-/// TRUST: This is the ONLY entry point from validated source to object code.
-/// The pipeline is: parse → validate → taint → lower → type_check → transform → codegen.
-/// By the time we reach compile_ssa (called below), the source has passed all gates.
+/// TRUST: this is the only path from SSA to object code, and it is
+/// deliberately **not** a path from *source* to object code. It takes the
+/// program and SSA the caller already parsed, validated, resolved and
+/// transformed, so there is no second front-end run that could disagree with
+/// the one the gates ran on.
 ///
-/// The catch_unwind wrapper ensures ICE panics in codegen produce clean errors
-/// rather than stacktraces — codegen should never panic on validated input.
-pub fn compile_to_object(bash_source: &str, enable_trace: bool) -> Result<Vec<u8>, Vec<String>> {
-    let _trace = enable_trace;
-
-    // New parser: parse source directly to IR
-    let (program, parse_diags) = crate::parse::parse(bash_source).map_err(|diags| {
-        diags
-            .iter()
-            .map(|d| format!("{}:{}: [{}] {}", d.line, d.col, d.code, d.message))
-            .collect::<Vec<_>>()
-    })?;
-
-    if !parse_diags.is_empty() {
-        let errors: Vec<String> = parse_diags
-            .iter()
-            .map(|d| format!("{}:{}: [{}] {}", d.line, d.col, d.code, d.message))
-            .collect();
-        if parse_diags
-            .iter()
-            .any(|d| d.severity == crate::diagnostic::Severity::Error)
-        {
-            return Err(errors);
-        }
-    }
-
-    let type_map = crate::type_check::infer_types(&program);
-    let (ssa, diags): (crate::ssa::SsaProgram, Vec<String>) =
-        crate::transform::ir_to_ssa_typed(&program, type_map);
-
-    if !diags.is_empty() {
-        return Err(diags);
-    }
-
+/// It used to take `&str` and re-parse, re-type-check and re-transform from
+/// scratch — a third full front-end pass per compile, whose result codegen
+/// then used while the taint gate had run on a *different* SSA object built
+/// from the same source. Nothing forced the two to agree. Its doc comment
+/// claimed "the ONLY entry point from validated source to object code" while
+/// accepting raw source and calling no validator; the caller enforced that,
+/// and a `pub` fn asserting a property it does not check is how the old
+/// fail-open test harness looked defensible (journal 348).
+///
+/// The `catch_unwind` wrapper turns an ICE in codegen into a clean error
+/// rather than a stacktrace — codegen should never panic on validated input,
+/// so this is now the only way this function can fail.
+pub fn compile_to_object(
+    program: &crate::ir::Program,
+    ssa: &crate::ssa::SsaProgram,
+    bash_source: &str,
+    enable_trace: bool,
+) -> Result<Vec<u8>, Vec<String>> {
     // DD#109: every native compile carries its own IR and manifest. The IR
     // emitter is exhaustive by construction, so running it on every build
     // turns "a new IR variant does not render" into an immediate failure of
     // every compile rather than a latent gap in a rarely-taken flag.
-    let ir_text = crate::emit_ir::emit_ir(&program);
-    let manifest_text = manifest_text(&ssa);
+    let ir_text = crate::emit_ir::emit_ir(program);
+    let manifest_text = manifest_text(ssa);
 
-    // Catch ICE panics in codegen and convert to clean error messages
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         compile_ssa(
-            &ssa,
+            ssa,
             Embedded {
                 source: Some(bash_source),
                 ir: Some(&ir_text),
