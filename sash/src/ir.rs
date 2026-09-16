@@ -1120,6 +1120,54 @@ pub enum ArithExpr {
     },
 }
 
+/// Why every downstream `PreIncDec` arm is an ICE. The node exists only
+/// between `parse_pre_incdec`, which builds it so the diagnostic can name the
+/// variable, and `reject_prefix_incdec`, which raises SB4020 at both arith
+/// entry points (`parse_arith_expansion`, `parse_arith_slot` — the latter
+/// covering all three C-style `for` slots) and at both `parse_arith_str`
+/// bypass callers. No pass after the parser can receive one.
+///
+/// It gets its own arm rather than riding along with `PostIncDec` because
+/// `x++` is ALLOWED and `++x` is REJECTED: merging them makes a regression in
+/// the parse-time rejection silently *succeed*, lowering `++x` into
+/// `x = x + 1` and emitting working code for a form the language forbids.
+pub(crate) const PREFIX_INCDEC_INVARIANT: &str =
+    "prefix ++/-- never survives the parser: reject_prefix_incdec raises \
+     SB4020 at both arith entry points";
+
+impl ArithExpr {
+    /// The immediate sub-expressions of this node, in source order.
+    ///
+    /// Naming the children in one place rather than re-deriving the shape in
+    /// every walker keeps each walker a single loop: a traversal only has to
+    /// spell out the variants it treats *specially* and can delegate the rest.
+    /// `Expansion` holds an `Expr`, not an `ArithExpr`, so it has no children
+    /// here — a walker that needs to descend into it must say so itself.
+    pub(crate) fn children(&self) -> Vec<&ArithExpr> {
+        match self {
+            ArithExpr::PreIncDec { .. } => unreachable!("{}", PREFIX_INCDEC_INVARIANT),
+            ArithExpr::BinOp { left, right, .. } => vec![&**left, &**right],
+            ArithExpr::SubscriptAssign { index, value, .. } => vec![&**index, &**value],
+            ArithExpr::Ternary {
+                cond,
+                true_val,
+                false_val,
+            } => vec![&**cond, &**true_val, &**false_val],
+            ArithExpr::UnaryOp { operand: e, .. }
+            | ArithExpr::Paren(e)
+            | ArithExpr::Subscript { index: e, .. }
+            | ArithExpr::Assign { value: e, .. }
+            | ArithExpr::CompoundAssign { value: e, .. } => vec![&**e],
+            ArithExpr::Comma(es) | ArithExpr::FuncCall { args: es, .. } => es.iter().collect(),
+            ArithExpr::Literal(_)
+            | ArithExpr::Var(_)
+            | ArithExpr::DollarVar(_)
+            | ArithExpr::Expansion(_)
+            | ArithExpr::PostIncDec { .. } => Vec::new(),
+        }
+    }
+}
+
 /// True if `a` contains an arithmetic mutation (`x = …`, `x += …`, `x++`/`x--`,
 /// `a[i] = …`) anywhere in its tree. Shared by `validate` (to reject a mutation
 /// that can't take effect where it sits — SB4020) and by the transform (to
@@ -1127,32 +1175,12 @@ pub enum ArithExpr {
 /// node short-circuits to `true` without recursing into its rvalue.
 pub(crate) fn arith_has_mutation(a: &ArithExpr) -> bool {
     match a {
+        ArithExpr::PreIncDec { .. } => unreachable!("{}", PREFIX_INCDEC_INVARIANT),
         ArithExpr::Assign { .. }
         | ArithExpr::CompoundAssign { .. }
         | ArithExpr::PostIncDec { .. }
-        | ArithExpr::PreIncDec { .. }
         | ArithExpr::SubscriptAssign { .. } => true,
-        ArithExpr::BinOp { left, right, .. } => {
-            arith_has_mutation(left) || arith_has_mutation(right)
-        }
-        ArithExpr::UnaryOp { operand, .. } => arith_has_mutation(operand),
-        ArithExpr::Ternary {
-            cond,
-            true_val,
-            false_val,
-        } => {
-            arith_has_mutation(cond)
-                || arith_has_mutation(true_val)
-                || arith_has_mutation(false_val)
-        }
-        ArithExpr::Comma(es) => es.iter().any(arith_has_mutation),
-        ArithExpr::Paren(inner) => arith_has_mutation(inner),
-        ArithExpr::FuncCall { args, .. } => args.iter().any(arith_has_mutation),
-        ArithExpr::Subscript { index, .. } => arith_has_mutation(index),
-        ArithExpr::Literal(_)
-        | ArithExpr::Var(_)
-        | ArithExpr::DollarVar(_)
-        | ArithExpr::Expansion(_) => false,
+        _ => a.children().into_iter().any(arith_has_mutation),
     }
 }
 

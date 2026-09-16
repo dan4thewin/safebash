@@ -645,7 +645,7 @@ fn arith(a: &ArithExpr, ind: usize, out: &mut String) {
         ArithExpr::BinOp { left, op, right } => ar_binop(*op, left, right, i, out),
         ArithExpr::UnaryOp { op, operand } => ar_unop(*op, operand, i, out),
         ArithExpr::PostIncDec { var, inc } => ar_incdec(":arith-post-incdec", var, *inc, out),
-        ArithExpr::PreIncDec { var, inc } => ar_incdec(":arith-pre-incdec", var, *inc, out),
+        ArithExpr::PreIncDec { .. } => unreachable!("{}", crate::ir::PREFIX_INCDEC_INVARIANT),
         ArithExpr::Assign { var, value } => ar_assign(var, None, value, i, out),
         ArithExpr::CompoundAssign { var, op, value } => ar_assign(var, Some(*op), value, i, out),
         ArithExpr::Ternary {

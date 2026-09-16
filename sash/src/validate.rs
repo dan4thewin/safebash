@@ -1711,9 +1711,12 @@ fn validate_arith_context(
     // No prefix `++`/`--` arm here: one cannot arrive. `reject_prefix_incdec`
     // rejects it (SB4020) in both parse entry points — `parse_arith_slot` for
     // `(( … ))` and every C-style `for` slot, `parse_arith_expansion` for
-    // `$(( … ))`. And even past that, a top-level `PreIncDec` classifies as a
-    // mutation, so `lower_arith_mutation_structured` turns it into an
-    // `Assignment`, never the `ArithTest` that is this function's only caller.
+    // `$(( … ))`. Past that there is no second line of defence by design:
+    // every downstream `PreIncDec` arm is an `unreachable!`
+    // (`ir::PREFIX_INCDEC_INVARIANT`), because the old arrangement — riding
+    // along in `PostIncDec`'s arm — meant a regression in the rejection would
+    // silently lower `++x` into `x = x + 1` rather than fail. `x++` is
+    // allowed and `++x` is not, so they do not share a fate.
     // Specs cov.23 / cov.163-165 / 31.6 pin the parser's rejection.
     let kind = classify_arith_expr(expr);
     check_arith_div_by_zero(expr, span, diags);
@@ -2028,10 +2031,10 @@ fn arith_children(a: &ArithExpr) -> Vec<&ArithExpr> {
 }
 
 fn arith_has_incdec(a: &ArithExpr) -> bool {
-    matches!(
-        a,
-        ArithExpr::PostIncDec { .. } | ArithExpr::PreIncDec { .. }
-    ) || arith_children(a).into_iter().any(arith_has_incdec)
+    if matches!(a, ArithExpr::PreIncDec { .. }) {
+        unreachable!("{}", crate::ir::PREFIX_INCDEC_INVARIANT);
+    }
+    matches!(a, ArithExpr::PostIncDec { .. }) || arith_children(a).into_iter().any(arith_has_incdec)
 }
 
 fn arith_has_subscript_assign(a: &ArithExpr) -> bool {
@@ -3409,37 +3412,16 @@ fn check_positionals_expr(expr: &Expr, diags: &mut Vec<Diagnostic>) {
 fn check_positionals_arith(a: &crate::ir::ArithExpr, span: Span, diags: &mut Vec<Diagnostic>) {
     use crate::ir::ArithExpr::*;
     match a {
+        PreIncDec { .. } => unreachable!("{}", crate::ir::PREFIX_INCDEC_INVARIANT),
         DollarVar(name) => flag_positional(name, span, diags),
+        // The only child that is an `Expr` rather than an `ArithExpr`, so
+        // `children()` does not yield it and the descent is spelled out here.
         Expansion(inner) => check_positionals_expr(inner, diags),
-        BinOp { left, right, .. } => {
-            check_positionals_arith(left, span, diags);
-            check_positionals_arith(right, span, diags);
-        }
-        UnaryOp { operand, .. } => check_positionals_arith(operand, span, diags),
-        Assign { value, .. } | CompoundAssign { value, .. } => {
-            check_positionals_arith(value, span, diags)
-        }
-        Ternary {
-            cond,
-            true_val,
-            false_val,
-        } => {
-            check_positionals_arith(cond, span, diags);
-            check_positionals_arith(true_val, span, diags);
-            check_positionals_arith(false_val, span, diags);
-        }
-        Comma(exprs) | FuncCall { args: exprs, .. } => {
-            for e in exprs {
-                check_positionals_arith(e, span, diags);
+        _ => {
+            for child in a.children() {
+                check_positionals_arith(child, span, diags);
             }
         }
-        Paren(inner) => check_positionals_arith(inner, span, diags),
-        Subscript { index, .. } => check_positionals_arith(index, span, diags),
-        SubscriptAssign { index, value, .. } => {
-            check_positionals_arith(index, span, diags);
-            check_positionals_arith(value, span, diags);
-        }
-        Literal(_) | Var(_) | PostIncDec { .. } | PreIncDec { .. } => {}
     }
 }
 

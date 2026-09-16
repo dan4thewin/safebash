@@ -479,7 +479,8 @@ fn hoist_mutation_node(
             emit_arith_store(var.clone(), None, full, span, ssa, state, block);
             Some(ArithExpr::Var(var.clone()))
         }
-        ArithExpr::PostIncDec { var, inc } | ArithExpr::PreIncDec { var, inc } => {
+        ArithExpr::PreIncDec { .. } => unreachable!("{}", crate::ir::PREFIX_INCDEC_INVARIANT),
+        ArithExpr::PostIncDec { var, inc } => {
             let op = if *inc { IrArithOp::Add } else { IrArithOp::Sub };
             let full = ArithExpr::BinOp {
                 left: Box::new(ArithExpr::Var(var.clone())),

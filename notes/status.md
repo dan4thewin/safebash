@@ -1,3 +1,73 @@
+## ══ STATUS (2026-09-16) — the invariant that was not ══
+
+**Journal 342.** Sweep **5229 passing, 10 skipped, 0 failing** (+6, predicted
+exactly). Units 83 green.
+
+### DG overruled the PreIncDec recommendation — and it found a bug
+
+I had recommended keeping the eight merged `| PreIncDec` alternatives because
+deleting them buys no coverage. DG:
+
+> deleting a merged alternative would prevent it matching in the future, yes?
+> given a disallowed usage is merged with an allowed usage - that's
+> undesirable. That it cannot be measured doesn't prevent reasoning about it.
+
+`x++` is allowed, `++x` is rejected; merged, the arm is correct only by
+coincidence. Split into its own `unreachable!()` arm at nine sites, citing a
+new `ir::PREFIX_INCDEC_INVARIANT`.
+
+**Two of ten prefix spellings immediately ICEd** — `"$(( ++x ))"` and
+`"${x:-$(( ++x ))}"`. The task file's claim (repeated twice) that the two
+`parse_arith_str` bypass callers "carry their own rejection" was **false**.
+They call it raw; their SB4020 came from `validate`, which caught the prefix
+form *only* because `arith_has_mutation` lumped it in with the mutations. The
+merged alternative was load-bearing — exactly the hazard DG described.
+
+User-visible symptom: the identical construct got the specific `prefix ++x is
+not allowed` message unquoted, and the vague generic mutation message inside
+double quotes.
+
+**Fix:** `reject_prefix_incdec` moved from the two entry points into
+`parse_arith_str`, the one funnel every route passes through — structural
+rather than asserted-where-remembered. Both entry-point calls deleted as
+redundant. `cov.253-255` pin the three formerly-bypassing routes and assert
+the **message**, not just the code.
+
+### Complexity: two grandfathered violators brought down
+
+Nine new arms tripped the gate on three functions, two already over the bar.
+`ArithExpr::children()` names the shape once so each walker is a single loop;
+the lowerer split into `arith_assign_stmt` / `binop_on_var` /
+`subscript_assign_rhs` (four arms had built a byte-identical `Assignment`).
+
+| function | before | after |
+|---|---|---|
+| `arith_has_mutation` | 14 / 2 | **4 / 1** |
+| `check_positionals_arith` | 14 / 3 | **6 / 3** |
+| `lower_arith_mutation_structured` | 12 / 6 | **10 / 4** |
+
+Note the rubric and the enforced gate disagree for wide-shallow walkers: the
+dispatcher exemption needs `cog - cc <= -15`, so at cog 2 a dispatcher only
+escapes at cc 17. A twelve-arm walker with cog 2 is in a dead zone. The
+answer is to stop hand-rolling the walk, not to widen the exemption.
+
+### Method
+
+Journal 341 said a cold branch is not a dead branch. This is the mirror: **a
+hot branch is not a justified branch.** An arm carrying 1305 executions says
+nothing about whether the alternative you care about ever matched. A merged
+alternative is a question coverage is structurally incapable of asking — the
+only way to ask it is to separate the alternatives and see what breaks.
+
+### Next
+
+Resume the coverage loop. Best target remains `hoist_mutation_node`
+(`transform/statements.rs`) — 28 cold lines, a genuine spec gap
+(`CompoundAssign` / `PostIncDec` / `SubscriptAssign` arms all zero). Then
+`fold_arith_op`, `compile_to_object`, `check_len_operand`. Remeasure with
+`mk cov-reset && mk cov-branch && mk cov-db` — `coverage.db` predates
+vm.bl19-23, cov.250-255 and the pre-scan purge.
+
 ## ══ STATUS (2026-09-16) — purging a pre-scan that could not insert ══
 
 **Journal 341.** Sweep **5223 passing, 10 skipped, 0 failing** — unchanged,

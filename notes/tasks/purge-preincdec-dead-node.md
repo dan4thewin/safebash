@@ -1,5 +1,5 @@
 ---
-status: blocked
+status: done
 priority: P3
 ---
 
@@ -123,3 +123,63 @@ Keep the rest and record why. Yield: 2 cold lines.
 dead code: its `Assign` arm runs 10x but `CompoundAssign`, `PostIncDec`, and
 `SubscriptAssign` are all zero — **28 cold lines**. Worth a spec that hoists
 a mutation out of a nested arithmetic position.
+
+
+## Resolved 2026-09-16 (journal 342) — DG overruled the recommendation, and was right
+
+DG rejected the recommendation above:
+
+> deleting a merged alternative would prevent it matching in the future,
+> yes? given a disallowed usage is merged with an allowed usage - that's
+> undesirable. That it cannot be measured doesn't prevent reasoning about
+> it.
+
+`x++` is allowed and `++x` is rejected; merging them means the arm is
+correct only by coincidence. **Option 2 was taken** — `PreIncDec` split into
+its own `unreachable!()` arm at nine sites, citing a new
+`ir::PREFIX_INCDEC_INVARIANT`.
+
+### The split found a real hole on its first run
+
+Two of the ten spellings **ICEd**: `"$(( ++x ))"` and `"${x:-$(( ++x ))}"`.
+
+The claim in the Evidence section above — that the two `parse_arith_str`
+bypass callers "carry their own rejection" — **was false**, and it is
+repeated twice in this file. They call `parse_arith_str` raw. Their SB4020
+came from `validate::check_arith_value_mutation`, which caught the prefix
+form *only* because `ir::arith_has_mutation` lumped it in with the
+mutations. The merged alternative was load-bearing, and the symptom was
+user-visible: the identical construct got the specific "prefix ++x is not
+allowed" message unquoted and the vague generic mutation message inside
+double quotes.
+
+**Fix:** `reject_prefix_incdec` moved out of the two entry points and into
+`parse_arith_str`, the one funnel every route passes through. The invariant
+is now structural rather than asserted-where-remembered, and both
+entry-point calls were deleted as redundant. `cov.253-255` pin the three
+formerly-bypassing routes and assert the *message*, not just the code.
+
+### Corrections to the measurement above
+
+- `statements.rs:482 hoist_mutation_node` — still a spec gap, still spun
+  out, unaffected.
+- The "documented keeps" argument from `validate.rs:1711` is void: that
+  comment described the merged behaviour and has been rewritten.
+- The two "clean deletes" (`brief_arith`, `emit_ir.rs:648`) became
+  `unreachable!()` arms rather than deletions, per option 2.
+
+### Complexity fallout
+
+Three touched functions tripped the gate; two were pre-existing
+grandfathered violators. All three came down via `ArithExpr::children()`
+(one place that names the shape, so each walker is a single loop) and an
+`arith_assign_stmt` / `binop_on_var` / `subscript_assign_rhs` split of the
+lowerer:
+
+| function | before | after |
+|---|---|---|
+| `arith_has_mutation` | 14 / 2 | 4 / 1 |
+| `check_positionals_arith` | 14 / 3 | 6 / 3 |
+| `lower_arith_mutation_structured` | 12 / 6 | 10 / 4 |
+
+Sweep 5229 (+6, predicted exactly), 0 failing, `mk test` 83.

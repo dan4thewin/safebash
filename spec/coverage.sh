@@ -6,7 +6,7 @@
 set -eu
 . common.sh
 setup coverage
-plan=251
+plan=254
 echo "1..$plan" >&3
 
 set +e
@@ -1220,6 +1220,22 @@ run_sash '/bin/sleep 0.2 &
 /bin/echo "child=$!"'
 rchild=${out#child=}
 [[ $rc == 0 && -n $rchild && -f $rchild && $(cat "$rchild") == hi ]]; chk cov.252
+
+# cov.253-255 the prefix `++`/`--` rejection lives in `parse_arith_str`, the one
+# funnel every route into arithmetic passes through. It used to sit in the two
+# entry points instead, which these three routes bypass: a `$(( … ))` inside a
+# double-quoted string, the same nested in `${x:-…}`, and the bare-subscript
+# index re-parse. All three still raised SB4020 — but from `validate`, where the
+# prefix form was caught only by riding along in the *generic* mutation arm, so
+# the identical construct got a vaguer message inside quotes than outside. These
+# assert the specific message, not just the code, so a slide back to the generic
+# one fails here.
+run_sash 'int x=1; /bin/echo "$(( ++x ))"'
+[[ $rc != 0 && -z $out && $err == *SB4020*prefix*++x*not\ allowed* ]]; chk cov.253
+run_sash 'int x=1; /bin/echo "${x:-$(( ++x ))}"'
+[[ $rc != 0 && -z $out && $err == *SB4020*prefix*++x*not\ allowed* ]]; chk cov.254
+run_sash 'int a[3]; int x=1; (( y = a[++x] ))'
+[[ $rc != 0 && -z $out && $err == *SB4020*prefix*++x*not\ allowed* ]]; chk cov.255
 
 set -e
 tally

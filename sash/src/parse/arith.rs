@@ -74,8 +74,8 @@ fn arith_bad_literal_error(span: Span, literal: &str) -> Diagnostic {
 pub fn parse_arith_expansion(scanner: &mut Scanner, span: Span) -> Result<Expr, Diagnostic> {
     let content = collect_arith_content(scanner, span)?;
     let expr = parse_arith_str(&content, span)?;
-    // SB5007: reject mutations inside $(( ))
-    reject_prefix_incdec(&expr, span)?;
+    // SB5007: reject mutations inside $(( )). The prefix form is already gone
+    // — `parse_arith_str` rejects it for every caller.
     if let crate::ir::ArithExpr::Assign { var, .. }
     | crate::ir::ArithExpr::CompoundAssign { var, .. } = &expr
     {
@@ -170,8 +170,8 @@ fn reject_nested_mutation(
 fn has_mutation_inner(expr: &crate::ir::ArithExpr) -> bool {
     use crate::ir::ArithExpr;
     match expr {
+        ArithExpr::PreIncDec { .. } => unreachable!("{}", crate::ir::PREFIX_INCDEC_INVARIANT),
         ArithExpr::PostIncDec { .. }
-        | ArithExpr::PreIncDec { .. }
         | ArithExpr::Assign { .. }
         | ArithExpr::CompoundAssign { .. } => true,
         ArithExpr::BinOp { left, right, .. } => {
@@ -186,7 +186,7 @@ fn brief_arith(expr: &crate::ir::ArithExpr) -> String {
     use crate::ir::ArithExpr;
     match expr {
         ArithExpr::PostIncDec { var, inc } => format!("{}{}", var, if *inc { "++" } else { "--" }),
-        ArithExpr::PreIncDec { var, inc } => format!("{}{}", if *inc { "++" } else { "--" }, var),
+        ArithExpr::PreIncDec { .. } => unreachable!("{}", crate::ir::PREFIX_INCDEC_INVARIANT),
         ArithExpr::Assign { var, .. } => format!("{} = ...", var),
         _ => "...".to_string(),
     }
@@ -214,6 +214,16 @@ pub fn parse_arith_str(input: &str, span: Span) -> Result<ArithExpr, Diagnostic>
     let expr = parser.parse_expr(0)?;
     let result = parser.fold_sequence(expr)?;
     reject_trailing_token(&parser, span)?;
+    // The single funnel. Every route into arithmetic lands here, so rejecting
+    // the prefix form at this one point is what makes
+    // `ir::PREFIX_INCDEC_INVARIANT` true for every pass downstream. It used to
+    // sit in the two *entry points* instead, which two callers bypass
+    // (`emit_string_part` for a `$(( … ))` inside a double-quoted string, and
+    // the bare-subscript index re-parse) — so `"$(( ++x ))"` survived to
+    // validate and was caught only by riding along in the generic
+    // mutation arm, giving a vaguer message than the identical unquoted
+    // construct.
+    reject_prefix_incdec(&result, span)?;
     Ok(result)
 }
 
@@ -234,9 +244,9 @@ fn reject_trailing_token(parser: &ArithParser, span: Span) -> Result<(), Diagnos
 /// Classify an arithmetic expression as mutation vs. comparison/test.
 pub fn classify_arith_expr(expr: &ArithExpr) -> ArithKind {
     match expr {
+        ArithExpr::PreIncDec { .. } => unreachable!("{}", crate::ir::PREFIX_INCDEC_INVARIANT),
         ArithExpr::Assign { .. }
         | ArithExpr::CompoundAssign { .. }
-        | ArithExpr::PreIncDec { .. }
         | ArithExpr::PostIncDec { .. }
         | ArithExpr::SubscriptAssign { .. } => ArithKind::Mutation,
         ArithExpr::Comma(exprs) => {
@@ -277,7 +287,6 @@ pub fn classify_arith_expr(expr: &ArithExpr) -> ArithKind {
 /// program — see `lower_c_style_for`.
 pub fn parse_arith_slot(text: &str, span: Span) -> Result<ArithExpr, Diagnostic> {
     let expr = parse_arith_str(text, span)?;
-    reject_prefix_incdec(&expr, span)?;
     reject_nested_mutation(&expr, span)?;
     Ok(expr)
 }
@@ -1256,58 +1265,66 @@ fn assign_op_for(tok: &ATok) -> Option<Option<IrArithOp>> {
 }
 
 /// Lower a mutation arithmetic expression to a Statement.
+/// The `name[index] = <arith>` statement every mutation form lowers to. All
+/// four spellings — `v = e`, `v op= e`, `v++`, `a[i] op= e` — differ only in
+/// the name, the optional index, and the right-hand expression.
+fn arith_assign_stmt(name: &str, index: Option<Expr>, value: ArithExpr, span: Span) -> Statement {
+    Statement {
+        kind: StmtKind::Assignment(Assignment {
+            name: name.to_string(),
+            index,
+            op: AssignOp::Set,
+            value: Expr {
+                kind: ExprKind::Arithmetic(Box::new(value)),
+                span,
+            },
+        }),
+        span,
+    }
+}
+
+/// `v op= e` and `v++` are both a read of the variable combined with an
+/// operand, so they share one shape.
+fn binop_on_var(var: &str, op: IrArithOp, right: Box<ArithExpr>) -> ArithExpr {
+    ArithExpr::BinOp {
+        left: Box::new(ArithExpr::Var(var.to_string())),
+        op,
+        right,
+    }
+}
+
+/// The right-hand side of a subscript mutation: the bare value for `a[i] = v`,
+/// a read-modify against the `a[i]` cell for `a[i] op= v`.
+fn subscript_assign_rhs(
+    name: &str,
+    index: &ArithExpr,
+    op: Option<IrArithOp>,
+    value: &ArithExpr,
+) -> ArithExpr {
+    match op {
+        None => value.clone(),
+        Some(o) => ArithExpr::BinOp {
+            left: Box::new(ArithExpr::Subscript {
+                name: name.to_string(),
+                index: Box::new(index.clone()),
+            }),
+            op: o,
+            right: Box::new(value.clone()),
+        },
+    }
+}
+
 fn lower_arith_mutation_structured(expr: &ArithExpr, span: Span) -> Statement {
     match expr {
-        ArithExpr::Assign { var, value } => Statement {
-            kind: StmtKind::Assignment(Assignment {
-                name: var.clone(),
-                index: None,
-                op: AssignOp::Set,
-                value: Expr {
-                    kind: ExprKind::Arithmetic(Box::new(*value.clone())),
-                    span,
-                },
-            }),
-            span,
-        },
+        ArithExpr::Assign { var, value } => arith_assign_stmt(var, None, (**value).clone(), span),
         ArithExpr::CompoundAssign { var, op, value } => {
-            let full_expr = ArithExpr::BinOp {
-                left: Box::new(ArithExpr::Var(var.clone())),
-                op: *op,
-                right: value.clone(),
-            };
-            Statement {
-                kind: StmtKind::Assignment(Assignment {
-                    name: var.clone(),
-                    index: None,
-                    op: AssignOp::Set,
-                    value: Expr {
-                        kind: ExprKind::Arithmetic(Box::new(full_expr)),
-                        span,
-                    },
-                }),
-                span,
-            }
+            arith_assign_stmt(var, None, binop_on_var(var, *op, value.clone()), span)
         }
-        ArithExpr::PreIncDec { var, inc } | ArithExpr::PostIncDec { var, inc } => {
+        ArithExpr::PreIncDec { .. } => unreachable!("{}", crate::ir::PREFIX_INCDEC_INVARIANT),
+        ArithExpr::PostIncDec { var, inc } => {
             let op = if *inc { IrArithOp::Add } else { IrArithOp::Sub };
-            let full_expr = ArithExpr::BinOp {
-                left: Box::new(ArithExpr::Var(var.clone())),
-                op,
-                right: Box::new(ArithExpr::Literal(1)),
-            };
-            Statement {
-                kind: StmtKind::Assignment(Assignment {
-                    name: var.clone(),
-                    index: None,
-                    op: AssignOp::Set,
-                    value: Expr {
-                        kind: ExprKind::Arithmetic(Box::new(full_expr)),
-                        span,
-                    },
-                }),
-                span,
-            }
+            let step = Box::new(ArithExpr::Literal(1));
+            arith_assign_stmt(var, None, binop_on_var(var, op, step), span)
         }
         // arith-subscript model B (Stage 2): `a[i] = v`, `a[i] op= v`,
         // `a[i]++`/`--`. Reuse the statement subscript-assign write path — the
@@ -1319,33 +1336,12 @@ fn lower_arith_mutation_structured(expr: &ArithExpr, span: Span) -> Statement {
             op,
             value,
         } => {
-            let rhs = match op {
-                None => (**value).clone(),
-                Some(o) => ArithExpr::BinOp {
-                    left: Box::new(ArithExpr::Subscript {
-                        name: name.clone(),
-                        index: index.clone(),
-                    }),
-                    op: *o,
-                    right: value.clone(),
-                },
-            };
             let index_expr = Expr {
                 kind: ExprKind::Arithmetic(index.clone()),
                 span,
             };
-            Statement {
-                kind: StmtKind::Assignment(Assignment {
-                    name: name.clone(),
-                    index: Some(index_expr),
-                    op: AssignOp::Set,
-                    value: Expr {
-                        kind: ExprKind::Arithmetic(Box::new(rhs)),
-                        span,
-                    },
-                }),
-                span,
-            }
+            let rhs = subscript_assign_rhs(name, index, *op, value);
+            arith_assign_stmt(name, Some(index_expr), rhs, span)
         }
         ArithExpr::Comma(exprs) => {
             let stmts: Vec<Statement> = exprs
