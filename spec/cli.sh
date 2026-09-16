@@ -10,7 +10,7 @@ set -eu
 . common.sh
 setup cli
 set +e
-plan=33
+plan=39
 echo "1..$plan" >&3
 
 SASH=$(command -v "${SASH:-sash}")
@@ -221,6 +221,45 @@ err=$($SASH --extract srcbin bogus 2>&1 >/dev/null); rc=$?
 : > notsash.bin
 $SASH --extract notsash.bin manifest >/dev/null 2>&1; rc=$?
 [[ $rc != 0 ]]; chk 109.7
+
+# cli.27-29 `native_output_path`: with no `-o`, the binary is named from the
+# input. The spec runner always passes `-o`, so all three branches here were
+# never-run. `.sh` and `.bash` are stripped; anything else gains `.out`.
+printf 'echo hi\n' > op1.sh
+$SASH op1.sh >/dev/null 2>op.err; rc=$?
+out=$([[ -x op1 ]] && ./op1)
+[[ $rc = 0 && $out = "hi" && ! -e op1.sh.out ]]; chk cli.27
+
+printf 'echo bee\n' > op2.bash
+$SASH op2.bash >/dev/null 2>op.err; rc=$?
+out=$([[ -x op2 ]] && ./op2)
+[[ $rc = 0 && $out = "bee" ]]; chk cli.28
+
+# no recognised suffix → `<input>.out`, so the input is never overwritten
+printf 'echo enn\n' > op3
+$SASH op3 >/dev/null 2>op.err; rc=$?
+out=$([[ -x op3.out ]] && ./op3.out)
+[[ $rc = 0 && $out = "enn" ]]; chk cli.29
+
+# cli.30 the inline form with no `-o` is the `is_inline` branch → `a.out`
+rm -f a.out
+$SASH -c 'echo inline-out' >/dev/null 2>op.err; rc=$?
+out=$([[ -x a.out ]] && ./a.out)
+[[ $rc = 0 && $out = "inline-out" ]]; chk cli.30
+
+# cli.31-32 `sysroot_file_exists` squashfs branch. cli.6 covers the plain
+# directory sysroot; a `.squashfs` / `.sqsh` root instead shells out to
+# `unsquashfs -l` once and caches the listing. A root that is not a readable
+# image yields an empty listing, so the command simply does not resolve —
+# the point is that the switch handler runs rather than what it finds.
+# Two externals in one compile exercise the second lookup, which reuses the
+# populated cache rather than repopulating it.
+PATH=/bin $SASH --sysroot="$PWD/nosuch.squashfs" -c 'toolA
+toolB' -o sq1 >/dev/null 2>sq.err; rc=$?
+[[ $rc != 0 && $(grep -c SB5011 sq.err) = 2 ]]; chk cli.31
+
+PATH=/bin $SASH --sysroot="$PWD/nosuch.sqsh" -c 'toolA' -o sq2 >/dev/null 2>sq2.err; rc=$?
+[[ $rc != 0 && $(grep -c SB5011 sq2.err) = 1 ]]; chk cli.32
 
 set -e
 tally

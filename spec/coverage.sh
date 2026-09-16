@@ -6,7 +6,7 @@
 set -eu
 . common.sh
 setup coverage
-plan=239
+plan=245
 echo "1..$plan" >&3
 
 set +e
@@ -1143,6 +1143,39 @@ echo "${m['\''k'\'']}"'
 run_sash 'array a=(x y)
 echo "${a[$((1))]}"'
 [[ $rc = 0 && $out = "y" && -z $err ]]; chk cov.240
+
+# cov.241 `$(len args)` inside a function — `check_len_operand`'s slot branch
+# (DD#75 §5: `args` is in scope in every function body).
+run_sash 'f() {
+  echo "n=$(len args)"
+}
+f a b'
+[[ $rc = 0 && $out = "n=2" && -z $err ]]; chk cov.241
+
+# cov.242 `len` with no operand — the arity check, not the operand check
+run_sash 'echo "$(len)"'
+[[ $rc != 0 && -z $out && $err == *SB4045* ]]; chk cov.242
+
+# cov.243 `len` of a literal — it resolves a *variable name*, so a quoted
+# string names nothing
+run_sash 'echo "$(len "abc")"'
+[[ $rc != 0 && -z $out && $err == *SB5062* ]]; chk cov.243
+
+# cov.244 `unset` on an int is the scalar reject (DD#30) — the branch that
+# evaluates the second half of the vtype test
+run_sash 'int i=5
+echo $i
+unset i'
+[[ $rc != 0 && $err == *SB4030* ]]; chk cov.244
+
+# cov.245-246 pre-increment/decrement requires a variable, and the operator
+# named in the diagnostic follows the `inc` flag
+run_sash 'int x=1
+echo $(( ++5 ))'
+[[ $rc != 0 && -z $out && $err == *SB4020* && $err == *"after ++"* ]]; chk cov.245
+run_sash 'int x=1
+echo $(( --5 ))'
+[[ $rc != 0 && -z $out && $err == *SB4020* && $err == *"after --"* ]]; chk cov.246
 
 set -e
 tally
