@@ -1231,15 +1231,8 @@ fn check_attest_convert_names(name: &str, c: &Command, span: Span, diags: &mut V
         classify_attest(&c.args)
     else {
         // Carries a `(( … ))` but does not decode as the form.
-        if let Some(attested) = attest_arith_near_miss(c) {
-            diags.push(Diagnostic::error_span(
-                span,
-                "SB5054",
-                format!(
-                    "attest's `(( … ))` must be `(( TARGET = EXPR ))` where EXPR reads \
-                     ${attested} — otherwise the attest proves nothing about it"
-                ),
-            ));
+        if let Some(miss) = attest_arith_near_miss(c) {
+            diags.push(Diagnostic::error_span(span, "SB5054", miss.message()));
         }
         return;
     };
@@ -1839,9 +1832,34 @@ pub fn attest_convert_target(c: &Command) -> Option<&str> {
     }
 }
 
-/// An `attest NAME (( … ))` whose arithmetic does not decode as the DD#93
-/// Part D form. Returns the attested name, for the diagnostic.
-fn attest_arith_near_miss(c: &Command) -> Option<&str> {
+/// Why an `attest … (( … ))` fails to decode as the DD#93 Part D form.
+enum ArithNearMiss<'a> {
+    /// Scalar lead: the shape is right but the RHS never reads the attested
+    /// name, so the conversion proves nothing about it.
+    Scalar(&'a str),
+    /// A attest-all lead (`attest e in a (( … ))`, `attest k v in m (( … ))`).
+    /// DD#93 Part D is scalar-only — there is no per-element conversion form.
+    AttestAll,
+}
+
+impl ArithNearMiss<'_> {
+    fn message(&self) -> String {
+        match self {
+            Self::Scalar(attested) => format!(
+                "attest's `(( … ))` must be `(( TARGET = EXPR ))` where EXPR reads \
+                 ${attested} — otherwise the attest proves nothing about it"
+            ),
+            Self::AttestAll => "attest-all takes a `[[ … ]]` predicate — the \
+                 `(( TARGET = EXPR ))` conversion form is scalar-only"
+                .to_string(),
+        }
+    }
+}
+
+/// DD#113: an `attest … (( … ))` whose arithmetic does not decode as the DD#93
+/// Part D form. Every lead arity reaches a diagnostic — a attest-all lead used
+/// to fall through to the generic command path and exec a bare `attest`.
+fn attest_arith_near_miss(c: &Command) -> Option<ArithNearMiss<'_>> {
     let last = c.args.last()?;
     if !matches!(&last.kind, ExprKind::Arithmetic(_)) {
         return None;
@@ -1849,13 +1867,17 @@ fn attest_arith_near_miss(c: &Command) -> Option<&str> {
     if classify_attest(&c.args).is_some() {
         return None;
     }
-    // Scalar lead only — `attest x (( … ))`; anything else is a different error.
-    let [only] = &c.args[..c.args.len() - 1] else {
-        return None;
-    };
-    match &only.kind {
-        ExprKind::Literal(s) => Some(s.as_str()),
-        _ => None,
+    match &c.args[..c.args.len() - 1] {
+        // `attest x (( … ))` — the form, with an RHS reading the wrong name.
+        [only] => match &only.kind {
+            ExprKind::Literal(s) => Some(ArithNearMiss::Scalar(s)),
+            _ => None,
+        },
+        // The parser always consumes a name after `attest`, so this is only
+        // reachable from a hand-built IR.
+        [] => None,
+        // Two or more names: a attest-all carrying the scalar-only form.
+        _ => Some(ArithNearMiss::AttestAll),
     }
 }
 

@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup taint
-plan=182
+plan=188
 echo "1..$plan" >&3
 
 set +e
@@ -858,6 +858,39 @@ run_sash 'x=$(printf 123)
 attest x (( x ))
 /bin/echo $x'
 [[ $rc != 0 && -z $out && $err == *SB5054* ]]; chk 93.43
+# DD#113: the `(( … ))` attest predicate is scalar-only. A attest-all lead
+# carrying one used to decode as nothing at all, fall through to the generic
+# command path, and exec a bare `attest` at runtime — the internal
+# `sash: bug: bare command passed to sash_exec` assertion reaching user output.
+# These flip the non-scalar arm of validate.rs::attest_arith_near_miss.
+# 93.49 array attest-all with an arith predicate
+run_sash 'array a=(1 2)
+attest e in a (( 1 ))
+/bin/echo ${a[0]}'
+[[ $rc != 0 && -z $out && $err == *SB5054* ]]; chk 93.49
+# 93.50 …and the message names the real constraint, not the scalar one
+[[ $err == *scalar-only* ]]; chk 93.50
+# 93.51 map attest-all with an arith predicate
+run_sash 'map m=([k]=v)
+attest k v in m (( 1 ))
+/bin/echo ${m[k]}'
+[[ $rc != 0 && -z $out && $err == *SB5054* ]]; chk 93.51
+# 93.52 an over-long lead is the same error, not a parse failure
+run_sash 'array a=(1 2)
+attest x y z w in a (( 1 ))
+/bin/echo ${a[0]}'
+[[ $rc != 0 && -z $out && $err == *SB5054* ]]; chk 93.52
+# 93.53 an assignment shape does not buy its way in either — it was already
+# caught incidentally by SB4020, which said nothing about the real problem.
+run_sash 'array a=(1 2)
+attest e in a (( t = e ))
+/bin/echo ${a[0]}'
+[[ $rc != 0 && -z $out && $err == *SB5054* ]]; chk 93.53
+# 93.54 the scalar form is untouched
+run_sash 'x=$(printf 123)
+attest x (( y = x ))
+echo $(( y ))'
+[[ $rc = 0 && $out = "123" && -z $err ]]; chk 93.54
 # 93.44 a CLEAN extra operand is fine
 run_sash 'int k=10
 x=$(printf 123)
