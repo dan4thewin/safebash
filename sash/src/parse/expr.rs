@@ -826,6 +826,28 @@ fn scan_param_name(content: &str) -> (&str, usize) {
     (&content[..name_end], name_end)
 }
 
+/// DG (2026-09-16, option C): a subscript's collection name has to be a
+/// variable name. `scan_param_name` scans a run of `[A-Za-z0-9_]`, which also
+/// accepts a leading digit and an empty run, so `${1[0]}` and `${[0]}` built a
+/// `Subscript` on a collection nothing can declare and codegen panicked with
+/// "ICE: undefined array". Same principle as the other SB4047 rejects: never
+/// emit code for input the compiler does not fully understand.
+fn bad_subscript_name_diag(content: &str, name: &str, span: Span) -> Diagnostic {
+    let detail = if name.is_empty() {
+        "there is no name before the `[`".to_string()
+    } else {
+        format!("`{name}` is not a variable name")
+    };
+    parse_error(
+        span,
+        "SB4047",
+        format!(
+            "`${{{content}}}` has no collection to subscript — {detail}. A name \
+             is letters, digits and `_`, and cannot start with a digit"
+        ),
+    )
+}
+
 /// `${var[idx]}` — `@`/`*` produce arrvals (or chained operator); literal
 /// index produces a `Subscript` expression.
 fn try_subscript(
@@ -836,6 +858,9 @@ fn try_subscript(
 ) -> Result<Option<Expr>, Diagnostic> {
     if content.as_bytes()[name_end] != b'[' {
         return Ok(None);
+    }
+    if !is_plain_identifier(name) {
+        return Err(bad_subscript_name_diag(content, name, span));
     }
     // DD#80: capture the index balanced across `[] {} ()` and skipping quotes,
     // so a `]` inside a nested `${…}` / `$(( … ))` / quoted key does not close

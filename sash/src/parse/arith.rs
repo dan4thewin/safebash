@@ -698,8 +698,12 @@ fn is_bare_ident(s: &str) -> bool {
 fn try_braced_subscript(body: &str) -> Option<ATok> {
     let open = body.find('[')?;
     let name = &body[..open];
-    let is_ident = !name.is_empty() && name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_');
-    if !is_ident || !body.ends_with(']') {
+    // The name must be a *variable* name, not merely a run of `[A-Za-z0-9_]`:
+    // `${1[0]}` used to become a subscript on a collection called `1`, which
+    // nothing declares, and codegen panicked ("ICE: undefined array: 1").
+    // Falling through here routes the body to the real parser, which rejects
+    // it with SB4047 (`try_subscript`, parse/expr.rs).
+    if !crate::ir::is_plain_identifier(name) || !body.ends_with(']') {
         return None;
     }
     let index = &body[open + 1..body.len() - 1];

@@ -5,7 +5,7 @@
 set -eu
 . common.sh
 setup var_modifiers
-plan=138
+plan=144
 echo "1..$plan" >&3
 
 set +e
@@ -195,6 +195,31 @@ run_sash 'x=5; echo ${x'
 [[ $rc != 0 && -z $out && $err == *SB4057* ]]; chk vm.un5
 run_sash 'x=5; echo "${x"'
 [[ $rc != 0 && -z $out && $err == *SB4057* ]]; chk vm.un6
+
+# un7-11: a subscript's collection name must be a *variable* name. The `${…}`
+# body scanner accepts any run of `[A-Za-z0-9_]`, which also admits a leading
+# digit and an empty run, so `${1[0]}` and `${[0]}` built a Subscript on a
+# collection nothing can declare and codegen panicked ("ICE: undefined array").
+# Found by branch-coverage mining. DG chose the parse-time reject reusing the
+# existing SB4047 body family.
+run_sash 'echo ${[0]}'
+[[ $rc != 0 && -z $out && $err == *SB4047* && $err != *ICE* ]]; chk vm.un7
+run_sash 'echo ${1[0]}'
+[[ $rc != 0 && -z $out && $err == *SB4047* && $err != *ICE* ]]; chk vm.un8
+run_sash 'echo ${12[0]}'
+[[ $rc != 0 && -z $out && $err == *SB4047* && $err != *ICE* ]]; chk vm.un9
+# the same two spellings inside arithmetic, which reaches the subscript by a
+# second path (`try_braced_subscript`, parse/arith.rs)
+run_sash 'echo $(( ${1[0]} ))'
+[[ $rc != 0 && -z $out && $err == *SB4047* && $err != *ICE* ]]; chk vm.un10
+run_sash 'echo $(( ${[0]} ))'
+[[ $rc != 0 && -z $out && $err == *SB4047* && $err != *ICE* ]]; chk vm.un11
+
+# un12: a digit *inside* the name is still a name — the reject is a leading
+# digit, not any digit, so this must keep working
+run_sash 'array a1=(7 8)
+echo ${a1[1]}'
+[[ $rc = 0 && $out = "8" && -z $err ]]; chk vm.un12
 
 # ── Brace-less dispositions (DG 2026-09-04): `$x:-foo` / `$x:?msg` / `$x:~`
 # desugar to the braced form. Only `:-`/`:?`/`:~` immediately after `$name`
