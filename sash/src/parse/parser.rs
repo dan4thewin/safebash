@@ -691,17 +691,14 @@ fn parse_optional_empty_parens(scanner: &mut Scanner, span: Span) -> Result<(), 
     Ok(())
 }
 
-/// Consume an optional `-> int` return-type annotation. Accepts both
-/// the single `->` word token and the split `-` `>` form depending on
-/// how the lexer classified the bytes.
+/// Consume an optional `-> int` return-type annotation. The lexer always emits
+/// `>` as its own token, so the arrow arrives **split** as `-` `>` for every
+/// spelling (`->int`, `-> int`, `()  ->  int`, `  ->  int`); there is no single
+/// `Word("->")` form to accept.
 fn parse_optional_return_type(scanner: &mut Scanner) -> VarType {
     let Tok::Word(w) = &scanner.peek().token else {
         return VarType::String;
     };
-    if w == "->" {
-        scanner.next();
-        return consume_int_token(scanner);
-    }
     if w == "-" && matches!(scanner.peek_n(1).token, Tok::Gt) {
         scanner.next(); // consume -
         scanner.next(); // consume >
@@ -1047,12 +1044,12 @@ fn parse_negated(scanner: &mut Scanner) -> Result<Option<Statement>, Diagnostic>
                 .to_string(),
         ));
     }
-    // Reviewability (SB4040): `!` on a pipeline (`! a | b`) is rejected — a
-    // trailing `|`, or an already-folded multi-stage pipeline. Escape hatch:
-    // wrap the pipeline in a function and negate the function.
-    let pipeline_operand = matches!(scanner.peek().token, Tok::Pipe)
-        || matches!(&stmt.kind, StmtKind::Pipeline(p) if p.commands.len() > 1);
-    if pipeline_operand {
+    // Reviewability (SB4040): `!` on a pipeline (`! a | b`) is rejected. The
+    // operand was parsed by `dispatch_statement`, which never folds `|`, so an
+    // already-multi-stage pipeline cannot arrive here — the rest of the
+    // pipeline is always still ahead as a trailing `|`. Escape hatch: wrap the
+    // pipeline in a function and negate the function.
+    if matches!(scanner.peek().token, Tok::Pipe) {
         return Err(negate_pipeline_error(span));
     }
     // Wrap the single unit in a negated 1-command pipeline.

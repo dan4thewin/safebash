@@ -710,10 +710,9 @@ fn check_cmdsub_splat_operand(expr: &Expr, diags: &mut Vec<Diagnostic>) {
         return;
     }
     for arg in &c.args {
-        if !is_any_arrvals_splat(&arg.kind) {
+        let Some(collection) = splat_collection_name(&arg.kind) else {
             continue;
-        }
-        let collection = splat_collection_name(&arg.kind).unwrap_or("a");
+        };
         diags.push(Diagnostic::error_span(
             arg.span,
             "SB5070",
@@ -736,33 +735,24 @@ fn is_scalar_operand_intrinsic(name: &str) -> bool {
     )
 }
 
-/// Any array splat — bare `@a` or one carrying a disposition (`@{a:-W}`,
-/// `@{a:?W}`). Every splat operator is spelled `arrvals…`.
-fn is_any_arrvals_splat(kind: &ExprKind) -> bool {
-    match kind {
-        ExprKind::ParameterExpansion(pe) => pe
-            .operator
-            .as_deref()
-            .is_some_and(|op| op.starts_with("arrvals")),
-        ExprKind::DoubleQuoted(parts) if parts.len() == 1 => is_any_arrvals_splat(&parts[0].kind),
-        _ => false,
-    }
-}
-
-/// The collection name behind any array splat (bare or with a disposition).
+/// The collection name behind any array splat — bare `@a` or one carrying a
+/// disposition (`@{a:-W}`, `@{a:?W}`). Every splat operator is spelled
+/// `arrvals…`. `None` when the expression is not a splat at all, so a caller
+/// uses this as the test as well as the accessor.
+///
+/// There is deliberately **no `DoubleQuoted` case**: inside double quotes `@a`
+/// and `@{a:-W}` are literal text, and the one splat spelling that survives
+/// quoting is the DD#75 §4 `[@]`/`[*]` form, whose `arrvals_retired` operator
+/// the **parser** rejects (SB4038, `retired_bracket_operator_diag`). A quoted
+/// splat therefore never reaches `validate`.
 fn splat_collection_name(kind: &ExprKind) -> Option<&str> {
-    match kind {
-        ExprKind::ParameterExpansion(pe)
-            if pe
-                .operator
-                .as_deref()
-                .is_some_and(|op| op.starts_with("arrvals")) =>
-        {
-            Some(pe.name.as_str())
-        }
-        ExprKind::DoubleQuoted(parts) if parts.len() == 1 => splat_collection_name(&parts[0].kind),
-        _ => None,
-    }
+    let ExprKind::ParameterExpansion(pe) = kind else {
+        return None;
+    };
+    pe.operator
+        .as_deref()
+        .is_some_and(|op| op.starts_with("arrvals"))
+        .then_some(pe.name.as_str())
 }
 
 /// The single command body of a `$( )` (ignoring comments), or `None` if the
@@ -1772,7 +1762,14 @@ fn validate_arith_in_condition(expr: &ArithExpr, span: Span, diags: &mut Vec<Dia
 /// (SB5007, mutation-in-condition), identically for `if`, `while`, `until`, and
 /// a C-style `for` header. A second check for it here used to be reachable only
 /// from the `for` header, which was the one context that skipped the
-/// decomposition; that was a bug, and closing it left this duplicate cold.
+/// decomposition; that was a bug, and closing it made this the only site that
+/// still reports the *non-final* half.
+///
+/// It is live, and the mutation test below is a tautology given that
+/// precondition: a comma list containing a mutation **anywhere** was already
+/// decomposed, so everything arriving here is mutation-free and every non-final
+/// part is an error. The test is kept because it states the rule DD#31 actually
+/// specifies rather than the shape the current pass ordering happens to deliver.
 ///
 /// Empty comma lists are no-ops.
 fn validate_arith_comma_in_condition(exprs: &[ArithExpr], span: Span, diags: &mut Vec<Diagnostic>) {
@@ -3841,15 +3838,12 @@ fn check_external_splat(c: &Command, diags: &mut Vec<Diagnostic>) {
 /// SB5032 for a bare `@a` splat into an external command, or `None` when the arg
 /// is not such a splat or is the exempt `@args` (DD#92: arity-guaranteed ≥1).
 fn external_splat_diag(arg: &Expr) -> Option<Diagnostic> {
-    if !is_bare_arrvals_splat(&arg.kind) {
-        return None;
-    }
     // A bare `@args` splat is allowed: it implies the function takes ≥1 argument
     // (the arity analysis records a required index 0, so a 0-arg call is SB5042
     // and the splat is provably non-empty). Only `@args` (the function args)
     // earns this; a general `@a` keeps SB5032 — DD#69 has no static-non-empty
     // exemption, and only `args` carries an arity guarantee.
-    if bare_arrvals_splat_name(&arg.kind) == Some("args") {
+    if bare_arrvals_splat_name(&arg.kind)? == "args" {
         return None;
     }
     Some(Diagnostic::error_span(
@@ -3863,29 +3857,18 @@ fn external_splat_diag(arg: &Expr) -> Option<Diagnostic> {
     ))
 }
 
-/// A bare `@a` / single-part `"${a[@]}"` splat (operator `arrvals`), i.e.
-/// WITHOUT a `@{a:-…}` / `@{a:?…}` disposition.
-fn is_bare_arrvals_splat(kind: &ExprKind) -> bool {
-    match kind {
-        ExprKind::ParameterExpansion(pe) => pe.operator.as_deref() == Some("arrvals"),
-        ExprKind::DoubleQuoted(parts) if parts.len() == 1 => is_bare_arrvals_splat(&parts[0].kind),
-        _ => false,
-    }
-}
-
-/// The array name behind a bare `@a` / single-part `"${a[@]}"` splat (operator
-/// `arrvals`), or `None`. Used to single out `@args` (the function args, which
-/// carries an arity guarantee) from a general `@a`.
+/// The array name behind a **bare** `@a` splat — operator exactly `arrvals`,
+/// i.e. WITHOUT a `@{a:-…}` / `@{a:?…}` disposition — or `None`. Doubles as the
+/// "is this a bare splat?" test. Two callers: SB5032 singles out `@args` (the
+/// function args, which carries an arity guarantee) from a general `@a`, and
+/// SB5058 requires `map t = @a` to state its odd-count disposition.
+///
+/// No `DoubleQuoted` case, for the reason given on [`splat_collection_name`].
 fn bare_arrvals_splat_name(kind: &ExprKind) -> Option<&str> {
-    match kind {
-        ExprKind::ParameterExpansion(pe) if pe.operator.as_deref() == Some("arrvals") => {
-            Some(pe.name.as_str())
-        }
-        ExprKind::DoubleQuoted(parts) if parts.len() == 1 => {
-            bare_arrvals_splat_name(&parts[0].kind)
-        }
-        _ => None,
-    }
+    let ExprKind::ParameterExpansion(pe) = kind else {
+        return None;
+    };
+    (pe.operator.as_deref() == Some("arrvals")).then_some(pe.name.as_str())
 }
 
 /// DD#60 revision: `array a=$(argv …)` is no longer a snapshot — a command
@@ -7826,7 +7809,7 @@ fn check_map_decl_splats(d: &Declaration, span: Span, diags: &mut Vec<Diagnostic
 /// (DD#99): a bare `@a` is SB5058.
 fn check_map_target_splats(d: &Declaration, span: Span, diags: &mut Vec<Diagnostic>) {
     for a in &d.assignments {
-        if let Some(source) = bare_splat_source(&a.value) {
+        if let Some(source) = bare_arrvals_splat_name(&a.value.kind) {
             diags.push(map_disposition_diag(span, source, &a.name));
         }
     }
@@ -7871,14 +7854,6 @@ fn array_from_map_diag(span: Span, source: &str, target: &str) -> Diagnostic {
              `for k in $(keys {source})`."
         ),
     )
-}
-
-/// The array named by a BARE `@a` splat (no disposition), else `None`.
-fn bare_splat_source(value: &Expr) -> Option<&str> {
-    let ExprKind::ParameterExpansion(pe) = &value.kind else {
-        return None;
-    };
-    (pe.operator.as_deref() == Some("arrvals")).then_some(pe.name.as_str())
 }
 
 fn map_disposition_diag(span: Span, source: &str, target: &str) -> Diagnostic {

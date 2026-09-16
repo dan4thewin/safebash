@@ -1,3 +1,113 @@
+## ══ STATUS (2026-09-16) — dead code purged, one site kept ══
+
+**Journal 334.** Sweep **5103 passing, 10 skipped, 0 failing** — exactly the
+predicted total. For a purge, "nothing moved" *is* the result. Units 83 green.
+
+### DG's instruction
+
+> we have git, so deleting is reversible. we explicitly want to find and purge
+> dead code. file a task to consider the use-site audit.
+
+Task filed: `notes/tasks/audit-dd24-use-site-list.md` (P1) — the cross product
+of DD#24's use-site list with the amendment's position list. **Filed "to
+consider"; not started.**
+
+### Purged — 5 branch sites, 3 whole functions
+
+| site | why dead |
+|---|---|
+| `validate.rs` `is_any_arrvals_splat` | **function deleted** — merged into `splat_collection_name` at its one caller |
+| `validate.rs` `is_bare_arrvals_splat` | **function deleted** — merged into `bare_arrvals_splat_name` |
+| `splat_collection_name` DoubleQuoted arm | a quoted splat never reaches `validate` (below) |
+| `bare_arrvals_splat_name` DoubleQuoted arm | same |
+| `parser.rs` `parse_optional_return_type` `w == "->"` | the lexer always splits the arrow; `"->"` appears once in `sash/src` and it is this comparison |
+| `parser.rs` `parse_negated` `\|\| …commands.len() > 1` | `dispatch_statement` never folds `\|`, so the guard cannot be true |
+
+| `validate.rs` `bare_splat_source` | **function deleted** — body became byte-identical to `bare_arrvals_splat_name` once the dead arm went |
+
+`cargo build` gave **no unused-function warning** — the check that each merge
+was complete. The duplicate above surfaced only because clippy rejected a
+`.then(|| …)` and a grep for the fixed spelling returned a hit I had not
+written; `block_dupes` deserves a pass over `validate.rs`.
+
+### The near-miss worth remembering
+
+The first reason I had for deleting the four `DoubleQuoted` arms was **wrong**.
+`"${a[@]}"` produces operator `arrvals_retired`, which *does* satisfy
+`starts_with("arrvals")`. They are dead for a different reason: **SB4038 is
+emitted at parse time** (`retired_bracket_operator_diag`, the only SB4038 site),
+so an AST carrying `arrvals_retired` never reaches `validate`. Both facts are
+now in the doc comment.
+
+Two probes settle it: `"@a"` → SB5050 *"variable `a` is assigned but never
+read"* (proves quoted `@a` is inert text); `"${a[@]}"` → SB4038 at line 2
+(proves the parse-time rejection).
+
+### Kept deliberately — `validate_arith_comma_in_condition`
+
+**My earlier status entry calling this unreachable was wrong** — it came from
+**stale line numbers** read against edited source. It is live; it fires SB5007
+four times in the sweep. Its doc comment claiming an earlier fix "left this
+duplicate cold" was false and is corrected.
+
+Its mutation test's false arm *is* unreachable, but only because a comma list
+with a mutation anywhere is decomposed upstream. Collapsing it would encode
+"non-final parts are always wrong" in place of DD#31's "non-final parts must be
+mutations" — a different statement about the language. Left cold, with the
+reason in the source.
+
+**The distinction to carry forward:** a branch dead because of an upstream pass
+is not the same as a branch dead because nothing can construct its input. The
+first kind stays, documented.
+
+### Method correction
+
+**Both-branches-zero does not mean unreachable.** `parse_negated`'s `||` read
+that way and I had it on the purge list; `! ! /bin/true` then flipped
+`1054|0|1`, proving the pattern matches and the guard runs. It was still
+purgeable, but the argument had to change from "never evaluated" to "never
+true, by `dispatch_statement`'s contract".
+
+Verify statically → probe → delete. **A green sweep is not a proof** of
+unreachability: the suite never exercised these paths, so it cannot testify
+about them.
+
+### Coverage loop — next
+
+Branch coverage was **88.17% / 443 cold** at `73693de`. Stale now: `cov.219`–
+`cov.222` landed after it, and this purge removes cold branches directly.
+**Re-measure before mining** (`mk cov-reset` → `mk cov-branch` → `mk cov-db`,
+~40 min) — a stale cold list makes `cov-probe.sh` answer "no branch records at
+that line" and wastes a cycle.
+
+`spec/coverage.sh` `plan=221`, next free id **`cov.223`**. `spec/taint.sh`
+`plan=200`.
+
+Verified-behaviour leads collected but not yet specced: `- /bin/true | /bin/cat`
+compiles; `echo "$0"` → SB5017; `echo "${@}"`/`"${*}"` → SB5045 (different
+message inside a function); `echo "$1"`/`"$#"` → SB5024; `foo/bar` and `./x` →
+SB5051; `@a` → SB5032, `@{a:-x}` accepted; `${m["k"]}`, `${m['k']}`,
+`${a[$((0))]}` accepted.
+
+Four probes that did **not** reach their target — trace the caller rather than
+guess the input: `flag_positional` 3496, `dollar_at_pexp` 3594,
+`is_valid_command` 3066, `resolve_on_path` 3078.
+
+Next files by cold count: `parse/lexer.rs` 35, `type_check.rs` 32,
+`parse/arith.rs` 31, `parse/parser.rs` 28, `parse/expr.rs` 27, `emit_c.rs` 26,
+`transform/control_flow.rs` 25.
+
+### Environment
+
+**`/tmp` is cleaned aggressively on this host.** Always
+`TMPDIR=~/sashscratch/tmp bash spec/run.sh` — `run.sh` uses `mktemp` under
+`set -eu` with an EXIT trap, so a vanished TSV yields a *green partial* sweep.
+Side builds: `cd sash && CARGO_TARGET_DIR=~/sashscratch/side cargo build --release -q`.
+
+`contrib/cov-probe.sh --build` hardcodes `target/release` and leaves the tree
+**instrumented** — `mk cov-reset` + `mk build` before any behavioural test or
+sweep. Confirm with: compile anything and check no `*.profraw` appears.
+
 ## ══ STATUS (2026-09-16) — `..` was the whole bug ══
 
 **Journal 333. DD#114 accepted.** Sweep **5095 passing, 10 skipped, 0
@@ -6944,7 +7054,7 @@ modified: 2026-06-07
 <!-- BEGIN: mk-status (regenerated by contrib/status-update.sh) -->
 ## Current branch: hand-parser
 
-## Spec status: 5095 passing / 0 failing of 5105 (spec.db @ fffc23f)
+## Spec status: 5103 passing / 0 failing of 5113 (spec.db @ fffc23f)
 
 _Regenerated 2026-09-16 by `mk status`. Edits inside this block will be
 overwritten; edit outside the BEGIN/END markers._
