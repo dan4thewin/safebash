@@ -480,43 +480,8 @@ fn hoist_mutation_node(
             Some(ArithExpr::Var(var.clone()))
         }
         ArithExpr::PreIncDec { .. } => unreachable!("{}", crate::ir::PREFIX_INCDEC_INVARIANT),
-        ArithExpr::PostIncDec { var, inc } => {
-            let op = if *inc { IrArithOp::Add } else { IrArithOp::Sub };
-            let full = ArithExpr::BinOp {
-                left: Box::new(ArithExpr::Var(var.clone())),
-                op,
-                right: Box::new(ArithExpr::Literal(1)),
-            };
-            emit_arith_store(var.clone(), None, full, span, ssa, state, block);
-            Some(ArithExpr::Var(var.clone()))
-        }
-        ArithExpr::SubscriptAssign {
-            name,
-            index,
-            op,
-            value,
-        } => {
-            let rhs0 = hoist_arith_mutations(value, span, ssa, state, block);
-            let rhs = match op {
-                None => rhs0,
-                Some(o) => ArithExpr::BinOp {
-                    left: Box::new(ArithExpr::Subscript {
-                        name: name.clone(),
-                        index: index.clone(),
-                    }),
-                    op: *o,
-                    right: Box::new(rhs0),
-                },
-            };
-            let idx = crate::ir::Expr {
-                kind: crate::ir::ExprKind::Arithmetic(index.clone()),
-                span,
-            };
-            emit_arith_store(name.clone(), Some(idx), rhs, span, ssa, state, block);
-            Some(ArithExpr::Subscript {
-                name: name.clone(),
-                index: index.clone(),
-            })
+        ArithExpr::PostIncDec { .. } | ArithExpr::SubscriptAssign { .. } => {
+            unreachable!("{}", crate::ir::ARITH_TEST_HOISTABLE_INVARIANT)
         }
         _ => None,
     }

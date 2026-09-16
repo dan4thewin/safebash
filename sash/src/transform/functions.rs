@@ -689,26 +689,8 @@ fn sig_scan_arith(a: &ArithExpr, sig: &mut ArgSig) {
         }
         _ => {}
     }
-    for child in arith_children(a) {
+    for child in a.children() {
         sig_scan_arith(child, sig);
-    }
-}
-
-/// The sub-expressions of an arith node, for the recursive `args` scan.
-fn arith_children(a: &ArithExpr) -> Vec<&ArithExpr> {
-    match a {
-        ArithExpr::BinOp { left, right, .. } => vec![left, right],
-        ArithExpr::UnaryOp { operand, .. } | ArithExpr::Paren(operand) => vec![operand],
-        ArithExpr::Assign { value, .. } | ArithExpr::CompoundAssign { value, .. } => vec![value],
-        ArithExpr::Ternary {
-            cond,
-            true_val,
-            false_val,
-        } => vec![cond, true_val, false_val],
-        ArithExpr::Comma(parts) | ArithExpr::FuncCall { args: parts, .. } => parts.iter().collect(),
-        ArithExpr::Subscript { index, .. } => vec![index],
-        ArithExpr::SubscriptAssign { index, value, .. } => vec![index, value],
-        _ => vec![],
     }
 }
 

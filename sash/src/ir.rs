@@ -1135,6 +1135,23 @@ pub(crate) const PREFIX_INCDEC_INVARIANT: &str =
     "prefix ++/-- never survives the parser: reject_prefix_incdec raises \
      SB4020 at both arith entry points";
 
+/// Why `transform::statements::hoist_mutation_node` can assume a `(( … ))`
+/// statement or condition holds only plain and compound assignments.
+///
+/// `validate::check_arith_test_placement` (SB4020) runs over every `ArithTest`
+/// statement and rejects the whole tree if `arith_has_incdec`,
+/// `arith_has_subscript_assign`, or `arith_mutation_under_cond` holds. Those
+/// are whole-tree predicates, so by the time the transform hoists an embedded
+/// store there can be no `++`/`--` and no `a[i]` mutation anywhere in it.
+///
+/// Handling them anyway would be worse than ICEing: the hoist would emit a
+/// store for a form the compiler has already told the user it cannot apply,
+/// which is how a rejected construct turns into silently working code.
+pub(crate) const ARITH_TEST_HOISTABLE_INVARIANT: &str =
+    "`++`/`--` and `a[i]` mutations are rejected in a `(( … ))` statement or \
+     condition by validate::check_arith_test_placement (SB4020) before the \
+     transform runs, so only plain and compound assignments can be hoisted";
+
 impl ArithExpr {
     /// The immediate sub-expressions of this node, in source order.
     ///

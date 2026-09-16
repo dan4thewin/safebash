@@ -6,7 +6,7 @@
 set -eu
 . common.sh
 setup coverage
-plan=254
+plan=262
 echo "1..$plan" >&3
 
 set +e
@@ -1236,6 +1236,33 @@ run_sash 'int x=1; /bin/echo "${x:-$(( ++x ))}"'
 [[ $rc != 0 && -z $out && $err == *SB4020*prefix*++x*not\ allowed* ]]; chk cov.254
 run_sash 'int a[3]; int x=1; (( y = a[++x] ))'
 [[ $rc != 0 && -z $out && $err == *SB4020*prefix*++x*not\ allowed* ]]; chk cov.255
+
+# cov.256-261 a `(( … ))` statement whose value embeds a *compound* assignment.
+# `hoist_mutation_node` applies the store and leaves a read of the target
+# behind; only its plain-`Assign` arm had coverage, so every line of the
+# `CompoundAssign` arm was cold despite the form working.
+run_sash 'int a=1; (( (a+=2) )); echo $a'
+[[ $rc == 0 && $out == 3 ]]; chk cov.256
+run_sash 'int a=1; (( 1 + (a+=2) )); echo $a'
+[[ $rc == 0 && $out == 3 ]]; chk cov.257
+run_sash 'int a=10; (( (a-=3) )); echo $a'
+[[ $rc == 0 && $out == 7 ]]; chk cov.258
+run_sash 'int a=1; (( (a+=2), 1 )); echo $a'
+[[ $rc == 0 && $out == 3 ]]; chk cov.259
+run_sash 'int a=1; int b=2; (( (a+=2) + (b+=3) )); echo "$a $b"'
+[[ $rc == 0 && $out == "3 5" ]]; chk cov.260
+run_sash 'int a=1; (( -(a+=2) )); echo $a'
+[[ $rc == 0 && $out == 3 ]]; chk cov.261
+
+# cov.262-263 the two forms the hoist deliberately cannot apply — an embedded
+# `++`/`--` and an embedded `a[i]` assignment — are rejected by
+# `check_arith_test_placement` before the transform sees them. These are what
+# keep `ARITH_TEST_HOISTABLE_INVARIANT` true, i.e. what makes the ICE arm in
+# `hoist_mutation_node` unreachable rather than merely untested.
+run_sash 'int a=1; (( 1 + (a++) ))'
+[[ $rc != 0 && -z $out && $err == *SB4020*embedded*++* ]]; chk cov.262
+run_sash 'int array v=(1 2 3); (( 1 + (v[0]=9) ))'
+[[ $rc != 0 && -z $out && $err == *SB4020*embedded*'a[i]'* ]]; chk cov.263
 
 set -e
 tally

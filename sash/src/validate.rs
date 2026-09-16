@@ -2010,38 +2010,16 @@ fn arith_unhoistable_reason(a: &ArithExpr) -> Option<&'static str> {
     None
 }
 
-/// The directly-nested arith sub-expressions of `a`, for generic recursion.
-fn arith_children(a: &ArithExpr) -> Vec<&ArithExpr> {
-    match a {
-        ArithExpr::BinOp { left, right, .. } => vec![left, right],
-        ArithExpr::UnaryOp { operand, .. } => vec![operand],
-        ArithExpr::Paren(inner) => vec![inner],
-        ArithExpr::Comma(es) => es.iter().collect(),
-        ArithExpr::Ternary {
-            cond,
-            true_val,
-            false_val,
-        } => vec![cond, true_val, false_val],
-        ArithExpr::Assign { value, .. } | ArithExpr::CompoundAssign { value, .. } => vec![value],
-        ArithExpr::SubscriptAssign { index, value, .. } => vec![index, value],
-        ArithExpr::FuncCall { args, .. } => args.iter().collect(),
-        ArithExpr::Subscript { index, .. } => vec![index],
-        _ => vec![],
-    }
-}
-
 fn arith_has_incdec(a: &ArithExpr) -> bool {
     if matches!(a, ArithExpr::PreIncDec { .. }) {
         unreachable!("{}", crate::ir::PREFIX_INCDEC_INVARIANT);
     }
-    matches!(a, ArithExpr::PostIncDec { .. }) || arith_children(a).into_iter().any(arith_has_incdec)
+    matches!(a, ArithExpr::PostIncDec { .. }) || a.children().into_iter().any(arith_has_incdec)
 }
 
 fn arith_has_subscript_assign(a: &ArithExpr) -> bool {
     matches!(a, ArithExpr::SubscriptAssign { .. })
-        || arith_children(a)
-            .into_iter()
-            .any(arith_has_subscript_assign)
+        || a.children().into_iter().any(arith_has_subscript_assign)
 }
 
 /// A mutation located under a short-circuit (`&&` / `||`) or a ternary branch,
@@ -2063,7 +2041,7 @@ fn arith_mutation_under_cond(a: &ArithExpr) -> bool {
                 || arith_has_mutation(false_val)
                 || arith_mutation_under_cond(cond)
         }
-        _ => arith_children(a).into_iter().any(arith_mutation_under_cond),
+        _ => a.children().into_iter().any(arith_mutation_under_cond),
     }
 }
 
@@ -3580,38 +3558,17 @@ fn dollar_at_pexp(span: Span, pe: &ParameterExpansion, in_fn: bool, diags: &mut 
 
 /// `$@` / `$*` reached through `$(( … ))` / `(( … ))` — a bare `$@` operand is
 /// an `ArithExpr::DollarVar`, so the `Expr` walk cannot surface it. Child
-/// operands are gathered by `arith_operands` so this stays a three-way match.
+/// operands are gathered by `ArithExpr::children` so this stays a three-way match.
 fn dollar_at_arith(a: &crate::ir::ArithExpr, span: Span, in_fn: bool, diags: &mut Vec<Diagnostic>) {
     use crate::ir::ArithExpr::*;
     match a {
         DollarVar(name) if name == "@" || name == "*" => dollar_at_diag(span, name, in_fn, diags),
         Expansion(inner) => dollar_at_expr(inner, in_fn, diags),
         _ => {
-            for child in arith_operands(a) {
+            for child in a.children() {
                 dollar_at_arith(child, span, in_fn, diags);
             }
         }
-    }
-}
-
-/// The `ArithExpr` sub-operands of `a` (an `Expansion`'s inner `Expr` is
-/// handled by the caller). A flat dispatcher — mirrors
-/// `transform::functions::arith_children`.
-fn arith_operands(a: &crate::ir::ArithExpr) -> Vec<&crate::ir::ArithExpr> {
-    use crate::ir::ArithExpr::*;
-    match a {
-        BinOp { left, right, .. } => vec![left, right],
-        UnaryOp { operand, .. } | Paren(operand) => vec![operand],
-        Assign { value, .. } | CompoundAssign { value, .. } => vec![value],
-        Ternary {
-            cond,
-            true_val,
-            false_val,
-        } => vec![cond, true_val, false_val],
-        Comma(parts) | FuncCall { args: parts, .. } => parts.iter().collect(),
-        Subscript { index, .. } => vec![index],
-        SubscriptAssign { index, value, .. } => vec![index, value],
-        _ => vec![],
     }
 }
 
