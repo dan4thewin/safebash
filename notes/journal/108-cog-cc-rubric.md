@@ -217,3 +217,67 @@ outside `emit_janet`; let the wave finish first.
 - Current: 44 double-failures (8 janet, 36 non-janet).
 - Means: cc 5.86 → 5.63, cog 4.38 → 4.01 (both pulled down by
   the refactor wave).
+
+
+---
+
+## Amendment (2026-09-16) — the flat-dispatcher exemption
+
+**DG: accept as-is for cog ≤ 2.** The enforced gate now reads:
+
+```
+REJECT if (cognitive - cyclomatic) > -15
+       AND cognitive > 2
+       AND (cyclomatic > 3 × mean_cc OR cognitive > 3 × mean_cog)
+```
+
+### What was wrong
+
+This document has said since it was written that a dispatcher is
+signalled "for free via **cog ≤ 3**" (see the delta ≤ −15 row above,
+and "When the function is a dispatcher"). The hook never implemented
+that. It implemented the *delta* test alone — and the two are not the
+same test.
+
+The delta test catches a **wide** dispatcher: `to_tok` at cc 46 / cog 1
+has delta −45 and sails through. It cannot catch a **flat** one,
+because delta scales with cc. At cog 2, a delta of −15 requires cc 17.
+So every dispatcher with fewer than ~17 arms fell into a **dead zone
+between cc 12 and 16**: rejected by the hook, while the table in
+AGENTS.md told the reader "high cc, low cog — accept as-is".
+
+The rubric and its enforcement disagreed, and the rubric was right.
+
+### The cohort it frees
+
+Seven functions, every one a flat lookup:
+
+| cc | cog | delta | function |
+|---:|----:|------:|----------|
+| 15 | 2 | −13 | `next_token` (parse/lexer.rs) |
+| 13 | 1 | −12 | `child_bodies` (ir.rs) |
+| 13 | 1 | −12 | `child_bodies_mut` (ir.rs) |
+| 13 | 1 | −12 | `assign_op_for` (parse/arith.rs) |
+| 13 | 1 | −12 | `simple_escape` (parse/lexer.rs) |
+| 12 | 1 | −11 | `emit_command_body` (emit_c.rs) |
+| 12 | 2 | −10 | `emit_arith_op` (codegen/arithmetic.rs) |
+
+48 functions remain gated, so this is a correction, not a relaxation of
+the bar.
+
+### Why cog ≤ 2 and not delta
+
+Because cognitive is the metric that measures the thing the gate exists
+to prevent. A function at cog ≤ 2 has no nesting and no compounded
+control flow; it is a table written as code. Arm count does not make it
+harder to read, and splitting it produces a dispatcher plus N one-line
+helpers — strictly more to follow. The delta test was a proxy for this
+that only worked at one end of the range.
+
+### Provenance
+
+Surfaced while refactoring `ArithExpr::children()` out of four
+duplicate walkers (journal 343): the new canonical walker is exactly a
+flat twelve-arm dispatcher, and the gate rejected it on a
+grandfather-on-modify basis while the rubric said to leave it alone.
+Flagged to DG then, ruled 2026-09-16.

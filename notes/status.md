@@ -36,10 +36,21 @@ Back to the branch-coverage loop, targets ranked by uncovered lines:
 (12), `transform/expr_handlers.rs:fold_arith_op` (12 — 27/9, the top
 non-dispatcher hotspot).
 
-**Open for DG:** the complexity rubric says "high cc, low cog — accept as-is",
-but the enforced gate's dispatcher exemption needs `cog − cc ≤ −15`, which at
-cog 2 is unreachable below cc 17. A wide-shallow walker sits in a dead zone
-between cc 12 and 16.
+**Settled — the complexity gate's flat-dispatcher dead zone.** The rubric said
+"high cc, low cog — accept as-is" but the gate's only dispatcher exemption was
+`cog − cc ≤ −15`, unreachable below cc 17 at cog 2 — so every dispatcher with
+fewer than ~17 arms was rejected by the hook and excused by the rubric.
+
+**DG ruled 2026-09-16: accept as-is for cog ≤ 2.** The gate now carries two
+dispatcher exemptions, one per shape: the delta test for *wide* ones
+(`to_tok`, cc 46 / cog 1) and `cognitive > 2` for *flat* ones. Frees 7
+functions (all cc 12–15 / cog 1–2, every one a flat lookup); 48 stay gated,
+so it is a correction rather than a relaxation.
+
+`notes/journal/108-cog-cc-rubric.md` had said since it was written that a
+dispatcher is signalled "for free via cog ≤ 3" — the hook simply never
+implemented that half. Amendment appended there; AGENTS.md and
+`.githooks/pre-commit` updated to match.
 
 ## ══ STATUS (2026-09-16) — four bugs behind an attest ══
 

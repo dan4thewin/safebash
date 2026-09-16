@@ -85,9 +85,19 @@ fi
 # Reject if a function modified in this commit fails the rubric (see
 # notes/journal/108-cog-cc-rubric.md):
 #
-#   (cognitive - cyclomatic) > -15           -- not a pure dispatcher
+#   (cognitive - cyclomatic) > -15           -- not a wide dispatcher
+#   AND cognitive > 2                        -- AND not a flat one
 #   AND (cyclomatic > 3 * mean_cc            -- AND high on either
 #        OR cognitive > 3 * mean_cog)        --   axis
+#
+# Two dispatcher exemptions, because one test could not see both
+# shapes. The delta test catches a *wide* dispatcher (cc 46 / cog 1).
+# It cannot catch a *flat* one: at cog 2 a delta of -15 needs cc 17, so
+# a twelve-arm walker sat in a dead zone between cc 12 and 16 -- gated
+# by this hook while the rubric said "high cc, low cog: accept as-is".
+# DG closed it 2026-09-16: accept as-is for cog <= 2. Cognitive is the
+# metric that measures whether something is actually hard to read, and
+# at cog <= 2 it is not, whatever the arm count.
 #
 # Pre-existing violators (any function NOT touched by this commit's
 # staged hunks) are grandfathered. Scope: all of sash/src/ — no file
@@ -139,6 +149,7 @@ WHERE s.file LIKE 'sash/src/%'
   AND s.kind IN ('function','method')
   AND s.cyclomatic IS NOT NULL
   AND (s.cognitive - s.cyclomatic) > -15
+  AND s.cognitive > 2
   AND (s.cyclomatic > t.cc_t OR s.cognitive > t.cog_t)
   AND EXISTS (
     SELECT 1 FROM ranges r
@@ -152,8 +163,10 @@ ORDER BY MAX(s.cyclomatic, s.cognitive) DESC;" 2>/dev/null)
             red "  FAIL: modified function(s) fail the complexity gate"
             printf '%s\n' "$gate_out" | sed 's/^/    /'
             red "    rubric (notes/journal/108-cog-cc-rubric.md):"
-            red "      reject if (delta > -15) AND (cc > 3×mean OR cog > 3×mean)"
+            red "      reject if (delta > -15) AND (cog > 2)"
+            red "                AND (cc > 3×mean OR cog > 3×mean)"
             red "      delta = cog - cc; mean recalculated per freshen"
+            red "      cog <= 2 is a flat dispatcher — exempt (DG, 2026-09-16)"
             red "    bypass for one commit: SKIP_COMPLEXITY_GATE=1 git commit ..."
             exit 1
         fi

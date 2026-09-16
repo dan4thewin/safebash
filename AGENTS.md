@@ -737,7 +737,7 @@ The pre-commit hook reports both columns side-by-side, ranked by
 
 | pattern               | shape                                     | what to do |
 |-----------------------|-------------------------------------------|-----------|
-| high cc, low cog      | wide dispatcher (match on enum, lex table)| accept as-is — no refactor needed |
+| high cc, low cog      | dispatcher (match on enum, lex table)     | accept as-is — no refactor needed |
 | low cc, high cog      | hidden nesting (cc structurally blind)    | investigate — cc was masking it |
 | high both             | genuine refactor target                   | refactor |
 | double-failure at 2×  | cc > 2×mean AND cog > 2×mean — the gate cohort | priority refactor |
@@ -752,16 +752,29 @@ complexity per cognitive). Do **not** re-introduce the convention.
 
 ```
 REJECT if (cognitive - cyclomatic) > -15
+       AND cognitive > 2
        AND (cyclomatic > 3 × mean_cc OR cognitive > 3 × mean_cog)
        AND file in sash/src/
        AND function is touched by this commit's staged hunks
        (i.e. grandfather-on-modify)
 ```
 
-Reading: "if a function this commit touches is not a pure dispatcher
-AND it's above 3× the codebase mean on either axis, reject." Pure
-dispatchers (delta ≤ −15) are exempted by construction — no manual
-annotation needed.
+Reading: "if a function this commit touches is not a dispatcher AND
+it's above 3× the codebase mean on either axis, reject." Dispatchers
+are exempted by construction — no manual annotation needed.
+
+**There are two dispatcher exemptions, because one test could not see
+both shapes.** The delta test (`≤ −15`) catches a *wide* dispatcher —
+`to_tok` at cc 46 / cog 1. It cannot catch a *flat* one: at cog 2 a
+delta of −15 requires cc 17, so a twelve-arm walker sat in a **dead
+zone between cc 12 and 16**, rejected by the gate while this very table
+said "high cc, low cog — accept as-is". **DG closed it 2026-09-16:
+accept as-is for cog ≤ 2.** Cognitive is the metric that measures
+whether something is actually hard to read, and at cog ≤ 2 it is not,
+whatever the arm count. The exemption freed 7 functions (all cc 12–15,
+cog 1–2: `next_token`, `child_bodies`, `child_bodies_mut`,
+`assign_op_for`, `simple_escape`, `emit_command_body`, `emit_arith_op`)
+and left 48 gated.
 
 The means recalculate per commit (a ratchet: as the codebase
 refactors down, the bar tightens). **Do not hard-code them anywhere** —
