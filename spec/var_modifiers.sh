@@ -5,7 +5,7 @@
 set -eu
 . common.sh
 setup var_modifiers
-plan=144
+plan=149
 echo "1..$plan" >&3
 
 set +e
@@ -290,6 +290,32 @@ run_sash 'str x=""; /bin/echo $x:-$(echo "a)b")'
 # two spellings agreeing — it stays correct if that rule is ever revisited.
 run_sash 'str x=""; str a=$x:-`echo hi`; str b=${x:-`echo hi`}; [[ $a = $b ]] && /bin/echo same'
 [[ $rc = 0 && $out = "same" && -z $err ]]; chk vm.bl18
+# vm.bl19-vm.bl23 the brace-less operand's own `$name` scanner
+# (`lexer.rs::skip_dollar_var`). The whole sweep called it three times,
+# always with a single alphabetic byte followed by a terminator, so seven
+# of its branches had never run: the special/digit arm, the leading
+# underscore, an underscore *inside* a name, the multi-byte name loop, and
+# the run-out-of-source exit. vm.bl16 covers `${…}` in this position, which
+# takes `skip_braced_to_close` instead and left this path untested.
+# vm.bl19 a multi-byte name — and the source ends at its last byte, so the
+# scan loop exits on end-of-input rather than on a terminator
+run_sash 'str abc=Q; str x=""; /bin/echo $x:-$abc'
+[[ $rc = 0 && $out = "Q" && -z $err ]]; chk vm.bl19
+# vm.bl20 an underscore *inside* the name (not alphanumeric, still a name byte)
+run_sash 'str a_b=W; str x=""; /bin/echo $x:-$a_b'
+[[ $rc = 0 && $out = "W" && -z $err ]]; chk vm.bl20
+# vm.bl21 a *leading* underscore — the second alternative of the name-start
+# test, which the alphabetic one had always short-circuited past
+run_sash 'str _v=U; str x=""; /bin/echo $x:-$_v'
+[[ $rc = 0 && $out = "U" && -z $err ]]; chk vm.bl21
+# vm.bl22 `$1` — the special/digit arm. `$@ $* $# $? $! $$` and any digit
+# share it; a positional is the spelling that compiles here.
+run_sash 'fn f { str q=""; /bin/echo $q:-$1 }; f ARG'
+[[ $rc = 0 && $out = "ARG" && -z $err ]]; chk vm.bl22
+# vm.bl23 a `$` that starts no name at all stays a literal `$`, and the
+# operand continues past it
+run_sash 'str x=""; /bin/echo $x:-a$%b'
+[[ $rc = 0 && $out = 'a$%b' && -z $err ]]; chk vm.bl23
 
 # ── DD#96: comma-chained `s///` edits ──
 # DG 2026-09-08: `,` sequences edits, in BOTH the mutating statement form and
