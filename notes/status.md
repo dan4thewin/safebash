@@ -102,10 +102,39 @@ host is cleaned aggressively and `run.sh`'s `mktemp` TSV can vanish mid-sweep,
 producing a *green* partial load. Keep predicting the total; it is the only
 check that catches a sweep which lost tests rather than failed them.
 
+### Coverage this pass
+
+Re-measured at `73693de`: **88.17% branch / 443 cold** (was 87.71% / 456).
+
+`cov.219`–`cov.222` cover `reject_tainted_into_array`'s value walk — a `${x:-D}`
+default holding the tainted read, the mirror where the *name* is clean and the
+default is not, and both arms of the `Subscript` case DD#114 added. All four
+probe-verified. Sweep **5103**, exactly predicted.
+
+**Three more apparently-unreachable sites, reported not deleted** (joining the
+earlier three):
+
+- `validate.rs:756|0|1` and `763` — `splat_collection_name`'s guard-false and
+  `DoubleQuoted` arms. It is only ever called behind `is_any_arrvals_splat`,
+  which has already established the kind is a bare `@a` ParameterExpansion.
+- `validate.rs:3884` — `bare_arrvals_splat_name`'s `DoubleQuoted` arm, same
+  shape.
+
+Note the *sibling* predicates are live: `is_any_arrvals_splat:747` runs
+390/10 and `is_bare_arrvals_splat:3871` runs 318/92 on the same arm. The arm
+appears to have been copied into the two *resolver* functions, where the
+caller has already excluded the case. Their doc comments still advertise
+`single-part "${a[@]}"`, a form DD#75 §4 retired.
+
+Probes that did **not** reach their target (inputs rejected earlier in the
+pipeline, route still unknown): `flag_positional` 3496 via `[[ -n $0 ]]`,
+`dollar_at_pexp` 3594 via `echo "${@}"`, `is_valid_command` 3066 and
+`resolve_on_path` 3078 via `foo/bar`. These need the caller traced rather than
+the input guessed.
+
 ### Next
 
-Continue the coverage loop. Branch coverage last measured **444 cold** at
-`2ce5a5c`; a re-measure is due (18 specs since, plus two fixes).
+Continue the coverage loop.
 
 Verified-behaviour leads already collected for `validate.rs`, not yet specced:
 

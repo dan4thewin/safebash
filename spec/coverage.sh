@@ -6,7 +6,7 @@
 set -eu
 . common.sh
 setup coverage
-plan=217
+plan=221
 echo "1..$plan" >&3
 
 set +e
@@ -993,6 +993,39 @@ run_sash 'v=/bin/true
 echo hi
 x=$(echo a; $v arg)'
 [[ $rc != 0 && -z $out && $err == *SB5011* ]]; chk cov.218
+
+# cov.219–cov.222 cover `reject_tainted_into_array`'s value walk
+# (`expr_uses_tainted`), which nothing reached with a `${…}` default or a
+# subscript. cov.221/cov.222 cover the `Subscript` arm added by DD#114.
+
+# cov.219 a tainted name inside a `${x:-D}` default, as a collection element.
+# DD#78 makes the default part of the value, so the read taints the element.
+run_sash 'x=$(printf 1)
+array b=("${x:-d}")
+echo "${b[0]}"'
+[[ $rc != 0 && -z $out && $err == *SB5021* ]]; chk cov.219
+
+# cov.220 …and the mirror: a CLEAN name whose default holds the tainted read,
+# so the walk has to look past the name it first tests.
+run_sash 'int y=1
+x=$(printf 1)
+array b=("${y:-$x}")
+echo "${b[0]}"'
+[[ $rc != 0 && -z $out && $err == *SB5021* ]]; chk cov.220
+
+# cov.221 a CLEAN subscript read as a collection element — the container is
+# not tainted, so the walk goes on to check the index (DD#114).
+run_sash 'array a=(1 2)
+array b=("${a[0]}")
+echo "${b[0]}"'
+[[ $rc = 0 && $out = "1" && -z $err ]]; chk cov.221
+
+# cov.222 …and a TAINTED container, which stops at the name. `read ARR` is
+# the one bulk external read left after DD#99.
+run_sash '/bin/echo a | read ARR
+array b=("${ARR[0]}")
+echo "${b[0]}"'
+[[ $rc != 0 && -z $out && $err == *SB5021* ]]; chk cov.222
 
 set -e
 tally
