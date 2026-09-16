@@ -4352,6 +4352,11 @@ fn taint_assignment(
     sx: &SlotCx,
     diags: &mut Vec<Diagnostic>,
 ) {
+    // DD#24 lists `arr[$x]=v` as a use-site of `x`: the index is read to
+    // decide which cell to write, whichever assignment form follows.
+    if let Some(idx) = &a.index {
+        check_expr_taint(idx, tainted, diags);
+    }
     if taint_array_literal_assignment(a, tainted, sx, diags) {
         return;
     }
@@ -4398,16 +4403,21 @@ fn reject_scalar_rhs_read(expr: &Expr, tainted: &HashSet<String>, diags: &mut Ve
         ExprKind::ParameterExpansion(pe) => {
             check_param_expansion_taint(pe, expr.span, tainted, diags)
         }
-        ExprKind::Subscript { name, .. } => push_taint_use(
-            tainted,
-            name,
-            expr.span,
-            format!(
-                "tainted array ${{{name}[…]}} can't be copied — DD#24 has no \
-                 taint propagation; attest it first"
-            ),
-            diags,
-        ),
+        // DD#24: the container AND the index are both reads — `arr[$x]` is
+        // listed as a use-site of `x`, position-uniformly.
+        ExprKind::Subscript { name, index } => {
+            push_taint_use(
+                tainted,
+                name,
+                expr.span,
+                format!(
+                    "tainted array ${{{name}[…]}} can't be copied — DD#24 has no \
+                     taint propagation; attest it first"
+                ),
+                diags,
+            );
+            reject_scalar_rhs_read(index, tainted, diags);
+        }
         ExprKind::DoubleQuoted(parts) | ExprKind::Concat(parts) => {
             for p in parts {
                 reject_scalar_rhs_read(p, tainted, diags);
@@ -4858,28 +4868,34 @@ fn cmdsub_is_scalar_taint_source(stmts: &[Statement]) -> bool {
     cmdsub_is_taint_source(stmts)
 }
 
+/// The `${…}` arm of [`expr_uses_tainted`], split out to keep that dispatcher
+/// under the complexity gate.
+fn pexp_uses_tainted(pe: &ParameterExpansion, tainted: &HashSet<String>) -> bool {
+    // DD#91: the `!` modifier is a per-use taint bypass — the value is trusted
+    // clean, so it does NOT propagate taint. It is a flag, not an operator, so
+    // it applies to every combination (`:!`, `:!~`, `:!-W`, `:!?M`) without
+    // enumerating them.
+    if pe.taint_off {
+        return false;
+    }
+    // DD#78: a `:-` default is part of the expansion's value, so a tainted read
+    // inside it taints the result too (correct propagation — without this,
+    // `z=${x:-$tainted}` left `z` clean).
+    tainted.contains(pe.name.as_str())
+        || pe
+            .operand
+            .as_deref()
+            .is_some_and(|o| expr_uses_tainted(o, tainted))
+}
+
 /// Check if an expression uses any tainted variable.
 fn expr_uses_tainted(expr: &Expr, tainted: &HashSet<String>) -> bool {
     match &expr.kind {
         ExprKind::SimpleExpansion(var) => tainted.contains(var.as_str()),
-        ExprKind::ParameterExpansion(pe) => {
-            // DD#91: the `!` modifier is a per-use taint bypass — the value is
-            // trusted clean, so it does NOT propagate taint. It is a flag, not
-            // an operator, so it applies to every combination (`:!`, `:!~`,
-            // `:!-W`, `:!?M`) without enumerating them.
-            if pe.taint_off {
-                return false;
-            }
-            // DD#78: a `:-` default is part of the expansion's value, so a
-            // tainted read inside it taints the result too (correct
-            // propagation — without this, `z=${x:-$tainted}` left `z` clean).
-            tainted.contains(pe.name.as_str())
-                || pe
-                    .operand
-                    .as_deref()
-                    .is_some_and(|o| expr_uses_tainted(o, tainted))
+        ExprKind::ParameterExpansion(pe) => pexp_uses_tainted(pe, tainted),
+        ExprKind::Subscript { name, index } => {
+            tainted.contains(name.as_str()) || expr_uses_tainted(index, tainted)
         }
-        ExprKind::Subscript { name, .. } => tainted.contains(name.as_str()),
         ExprKind::DoubleQuoted(parts) | ExprKind::Concat(parts) | ExprKind::Array(parts) => {
             parts.iter().any(|p| expr_uses_tainted(p, tainted))
         }
@@ -4901,13 +4917,17 @@ fn check_expr_taint(expr: &Expr, tainted: &HashSet<String>, diags: &mut Vec<Diag
         ExprKind::ParameterExpansion(pe) => {
             check_param_expansion_taint(pe, expr.span, tainted, diags)
         }
-        ExprKind::Subscript { name, .. } => push_taint_use(
-            tainted,
-            name,
-            expr.span,
-            format!("tainted array ${{{}[...]}} used without attest", name),
-            diags,
-        ),
+        // DD#24: `arr[$x]` is a use-site of `x` as well as of `arr`.
+        ExprKind::Subscript { name, index } => {
+            push_taint_use(
+                tainted,
+                name,
+                expr.span,
+                format!("tainted array ${{{}[...]}} used without attest", name),
+                diags,
+            );
+            check_expr_taint(index, tainted, diags);
+        }
         ExprKind::DoubleQuoted(parts) | ExprKind::Concat(parts) => {
             for p in parts {
                 check_expr_taint(p, tainted, diags);

@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup taint
-plan=188
+plan=200
 echo "1..$plan" >&3
 
 set +e
@@ -535,6 +535,74 @@ run_sash '/usr/bin/tr "\n=" "\0\0" < d60m.txt | read p
 map m = @{p:~}
 array k=($(keys m)); echo hi'
 [[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk 60.49
+# DD#114: a subscript INDEX is a read of whatever it expands, in every
+# position. DD#24 lists `arr[$x]=v` among the use-sites of `x` and says the
+# list is position-uniform; `validate`'s three taint walkers all matched
+# `Subscript { name, .. }` and dropped the index. Two positions accepted a
+# tainted index outright; the rest were caught only by the SSA backstop,
+# whose message has no SB code and no source location.
+# 60.60 external command argument
+run_sash 'array a=(x y)
+i=$(printf 1)
+/bin/echo "${a[$i]}"'
+[[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk 60.60
+# 60.61 builtin argument
+run_sash 'array a=(x y)
+i=$(printf 1)
+echo "${a[$i]}"'
+[[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk 60.61
+# 60.62 assignment RHS — accepted before the fix, and the value reached
+# `echo` with no diagnostic at all.
+run_sash 'array a=(x y)
+i=$(printf 1)
+s="${a[$i]}"
+echo "$s"'
+[[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk 60.62
+# 60.63 `[[ … ]]` operand — also accepted before the fix.
+run_sash 'array a=(x y)
+i=$(printf 1)
+if [[ -n ${a[$i]} ]]; then echo yes; fi'
+[[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk 60.63
+# 60.64 the write index — DD#24's own canonical example, `arr[$x]=v`.
+run_sash 'array a=(x y)
+i=$(printf 1)
+a[$i]=v
+echo "${a[1]}"'
+[[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk 60.64
+# 60.65 …and the braced spelling of it
+run_sash 'array a=(x y)
+i=$(printf 1)
+a[${i}]=v
+echo "${a[1]}"'
+[[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk 60.65
+# 60.66 a map key is the same read
+run_sash 'map m=([k]=v)
+k=$(printf k)
+echo "${m[$k]}"'
+[[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk 60.66
+# 60.67 the diagnostic names the INDEX variable, not the container — the
+# container is clean here, so blaming it would send the author to the wrong
+# `attest`.
+[[ $err == *'$k'* ]]; chk 60.67
+# 60.68 …and points at the line the index is on. The index sub-parser runs a
+# fresh Scanner over the index text alone, so its spans used to be 1:1
+# relative to that substring: every one of these reported line 1.
+[[ $err == *:3:* ]]; chk 60.68
+# 60.69 a clean index is untouched
+run_sash 'array a=(x y)
+int i=1
+echo "${a[$i]}"'
+[[ $rc = 0 && $out = "y" && -z $err ]]; chk 60.69
+# 60.70 …and an attested one is the documented way through
+run_sash 'array a=(x y)
+i=$(printf 1)
+attest i i?
+echo "${a[$i]}"'
+[[ $rc = 0 && $out = "y" && -z $err ]]; chk 60.70
+# 60.71 a literal index never involved a read
+run_sash 'map m=([k]=v)
+echo "${m[k]}"'
+[[ $rc = 0 && $out = "v" && -z $err ]]; chk 60.71
 # 60.50 bare-name `join a` reader reached through a `[[ ]]` operand
 run_sash 'argv 1 a; [[ $(join a) = x ]] && echo hi' a b
 [[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk 60.50

@@ -938,8 +938,14 @@ fn parse_subscript_index(idx: &str, span: Span) -> Expr {
     // rather than silently reading a cell.
     if !is_bare_dollar_subscript(trimmed) {
         let mut scanner = Scanner::new(trimmed);
-        if let Ok(expr) = parse_expr(&mut scanner) {
+        if let Ok(mut expr) = parse_expr(&mut scanner) {
             if scanner.at_eof() {
+                // The sub-scanner numbers lines and columns from the start of
+                // the index TEXT, so its spans are 1:1-relative. Re-anchor the
+                // expression the caller reports on to the whole `${name[…]}`.
+                // (Exprs nested deeper inside the index keep the relative span
+                // — see notes/tasks/subscript-index-nested-span.md.)
+                expr.span = span;
                 return expr;
             }
         }

@@ -1,4 +1,134 @@
-## ══ STATUS (2026-09-16) — the fifth time the comment was the bug ══
+## ══ STATUS (2026-09-16) — `..` was the whole bug ══
+
+**Journal 333. DD#114 accepted.** Sweep **5095 passing, 10 skipped, 0
+failing** — exactly the predicted total. Units 83 green.
+
+### Bug #13 — a tainted subscript index was not a read
+
+DD#24's use-site list contains `arr[$x]=v` ("index expression"), and its
+2026-08-26 amendment says the list is **position-uniform**. `validate` did not
+implement it. All three taint walkers did this:
+
+```rust
+ExprKind::Subscript { name, .. } => push_taint_use(tainted, name, …)
+```
+
+`..` was the whole bug.
+
+| position, tainted index | before | after |
+|---|---|---|
+| `/bin/echo "${a[$i]}"` | SSA backstop | SB5020 |
+| `echo "${a[$i]}"` | SSA backstop | SB5020 |
+| `a[$i]=v` | SSA backstop | SB5020 |
+| **`s="${a[$i]}"`** | **accepted** | SB5020 |
+| **`[[ -n ${a[$i]} ]]`** | **accepted** | SB5020 |
+
+The last two are a laundering bypass — an attacker-chosen index selects a cell
+and the result is treated as clean, no diagnostic anywhere. The rest were
+rejected only by the SSA backstop, which is documented as defense-in-depth
+behind an authoritative CST gate and whose message has no SB code, no
+line:col, and an SSA-internal name (`i_1`). Reaching it is the symptom.
+
+Fixed in `check_expr_taint`, `reject_scalar_rhs_read`, `expr_uses_tainted` and
+`taint_assignment` (the write form). The diagnostic names the **index**
+variable, not the container — with a clean `m` and tainted `k`, blaming `m`
+sends the author to an `attest` that cannot help.
+
+**Not decided, and not a fork:** whether a tainted index taints the retrieved
+value. DD#24 has no propagation and the index read is rejected first, so the
+question never arises.
+
+### Bug #13b — every subscript index span was 1:1
+
+The new diagnostic pointed at line 1 of a 3-line program.
+`parse_subscript_index` re-parses the captured index text with a **fresh
+`Scanner`**, and `Span` is `{line, col}` rather than a byte offset, so it
+numbers from the start of the index substring. Every index expression the
+compiler has built has carried a relative span — invisible until something
+finally reported on one.
+
+The index expression is re-anchored to the enclosing `${name[…]}` span. Exprs
+nested *deeper* inside an index still carry relative spans; filed as
+`notes/tasks/subscript-index-nested-span.md` (P3) with three options, because
+the real fix is either a deep re-span or a `Scanner` that takes a base
+position and that is worth a look at other substring re-parsers first.
+
+Spec 60.68 pins the line number.
+
+### Bug #12 (this session, earlier) — see journal 332, DD#113
+
+`attest k v in m (( 1 ))` compiled clean and exec'd a bare `attest`. The
+`(( … ))` predicate is scalar-only; a attest-all lead made `classify_attest`
+return `None`, and every attest pass is `let Some(...) else { return }`.
+
+### The pattern, now six for six
+
+| DD | the text described | the code handled |
+|----|--------------------|------------------|
+| #72 | numeric literals are rejected | only in arithmetic context |
+| #64 | line continuations are handled | two of three scanner contexts |
+| #111 | value intrinsics are exempt inside `$( )` | any body, not just the rewritten one |
+| #112 | the `arg` index is checked | the sign, not the digits |
+| #113 | a non-scalar lead is "a different error" | no error at all |
+| #114 | use-sites are **position-uniform** (DD#24) | the positions someone tried |
+
+#114 is the first where the authoritative text is a **decision document**, not
+a code comment. Worth auditing DD#24's use-site list against the code
+directly — the same list names `join @arr`, arithmetic operands and function
+arguments, and only the subscript index was checked this time.
+
+### Method note
+
+The sweep was **unchanged at 5071** by the bug #13 fix — not one existing spec
+used a tainted subscript index. Coverage found this, but not through the
+number: the cold branches being mined (`splat_collection_name`,
+`ambiguous_index_diag`) are not the ones that were wrong. What found it was
+being forced to enumerate the shapes that reach a cold branch and trying one
+nobody had tried. **The cold list is a to-do list, not a detector.**
+
+### Still open for DG (unchanged)
+
+Three apparently-unreachable sites, reported not deleted: `validate.rs:1788`/
+`1792`, `parser.rs:701`, `parser.rs:1054`.
+
+Filed P2/P3s: `bug-brace-breaks-unquoted-word.md`,
+`diag-negative-subscript-called-string-key.md`,
+`subscript-index-nested-span.md`.
+
+### Tooling note
+
+**Run sweeps as `TMPDIR=~/sashscratch/tmp bash spec/run.sh`** — `/tmp` on this
+host is cleaned aggressively and `run.sh`'s `mktemp` TSV can vanish mid-sweep,
+producing a *green* partial load. Keep predicting the total; it is the only
+check that catches a sweep which lost tests rather than failed them.
+
+### Next
+
+Continue the coverage loop. Branch coverage last measured **444 cold** at
+`2ce5a5c`; a re-measure is due (18 specs since, plus two fixes).
+
+Verified-behaviour leads already collected for `validate.rs`, not yet specced:
+
+- `"${a[@]}"` quoted splat → SB4038 (`splat_collection_name` 756/763)
+- `- /bin/true | /bin/cat` compiles (`stmt_is_external_command` 1018/1021)
+- `echo "$0"` → SB5017 (`check_positionals_test` 3474)
+- `echo "${@}"` → SB5045, and a *different* message inside a function
+  (`dollar_at_expr` 3572)
+- `echo "${*}"` → SB5045; `echo "$1"`/`"$#"` → SB5024
+- `foo/bar` and `./x` → SB5051 (`is_valid_command` 3056)
+- `@a` → SB5032, `@{a:-x}` accepted (`external_splat_diag` 3859/3862)
+- `${m["k"]}`, `${m['k']}`, `${a[$((0))]}` accepted (`ambiguous_index_diag`
+  7373)
+
+Then by cold count: `parse/lexer.rs` 35, `type_check.rs` 32, `parse/arith.rs`
+31, `emit_c.rs` 26, `transform/control_flow.rs` 25.
+
+`spec/coverage.sh` `plan=217`, next free id `cov.219`. `spec/taint.sh`
+`plan=200`.
+
+---
+
+## ══ PRIOR (2026-09-16) — the fifth time the comment was the bug ══
 
 **Journal 332. DD#113 accepted, SB5054 widened.** Sweep **5071 passing, 10
 skipped, 0 failing** — exactly the predicted total. Units 83 green. Branch
@@ -6785,7 +6915,7 @@ modified: 2026-06-07
 <!-- BEGIN: mk-status (regenerated by contrib/status-update.sh) -->
 ## Current branch: hand-parser
 
-## Spec status: 5059 passing / 0 failing of 5069 (spec.db @ fffc23f)
+## Spec status: 5095 passing / 0 failing of 5105 (spec.db @ fffc23f)
 
 _Regenerated 2026-09-16 by `mk status`. Edits inside this block will be
 overwritten; edit outside the BEGIN/END markers._
