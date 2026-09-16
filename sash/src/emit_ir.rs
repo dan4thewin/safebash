@@ -644,7 +644,9 @@ fn arith(a: &ArithExpr, ind: usize, out: &mut String) {
         ArithExpr::DollarVar(n) => ex_word(":arith-dollar-var", ":name", n, out),
         ArithExpr::BinOp { left, op, right } => ar_binop(*op, left, right, i, out),
         ArithExpr::UnaryOp { op, operand } => ar_unop(*op, operand, i, out),
-        ArithExpr::PostIncDec { var, inc } => ar_incdec(":arith-post-incdec", var, *inc, out),
+        ArithExpr::PostIncDec { .. } => {
+            unreachable!("{}", crate::ir::ARITH_IR_MUTATION_INVARIANT)
+        }
         ArithExpr::PreIncDec { .. } => unreachable!("{}", crate::ir::PREFIX_INCDEC_INVARIANT),
         ArithExpr::Assign { var, value } => ar_assign(var, None, value, i, out),
         ArithExpr::CompoundAssign { var, op, value } => ar_assign(var, Some(*op), value, i, out),
@@ -658,12 +660,9 @@ fn arith(a: &ArithExpr, ind: usize, out: &mut String) {
         ArithExpr::Paren(inner) => ar_paren(inner, i, out),
         ArithExpr::Expansion(e) => ar_expansion(e, i, out),
         ArithExpr::Subscript { name, index } => ar_subscript(name, index, i, out),
-        ArithExpr::SubscriptAssign {
-            name,
-            index,
-            op,
-            value,
-        } => ar_subscript_assign(name, *op, index, value, i, out),
+        ArithExpr::SubscriptAssign { .. } => {
+            unreachable!("{}", crate::ir::ARITH_IR_MUTATION_INVARIANT)
+        }
     }
 }
 
@@ -683,14 +682,6 @@ fn ar_unop(op: IrUnaryArithOp, operand: &ArithExpr, i: usize, out: &mut String) 
     nl(i, out);
     out.push_str(":operand ");
     arith(operand, i + 9, out);
-    out.push('}');
-}
-
-fn ar_incdec(tag: &str, var: &str, inc: bool, out: &mut String) {
-    let _ = write!(out, "{{:kind {} :var ", tag);
-    jstr(var, out);
-    out.push_str(" :inc ");
-    jbool(inc, out);
     out.push('}');
 }
 
@@ -755,29 +746,5 @@ fn ar_subscript(name: &str, index: &ArithExpr, i: usize, out: &mut String) {
     nl(i, out);
     out.push_str(":index ");
     arith(index, i + 7, out);
-    out.push('}');
-}
-
-fn ar_subscript_assign(
-    name: &str,
-    op: Option<IrArithOp>,
-    index: &ArithExpr,
-    value: &ArithExpr,
-    i: usize,
-    out: &mut String,
-) {
-    out.push_str("{:kind :arith-subscript-assign :name ");
-    jstr(name, out);
-    out.push_str(" :op ");
-    match op {
-        Some(o) => out.push_str(arith_op(o)),
-        None => out.push_str("nil"),
-    }
-    nl(i, out);
-    out.push_str(":index ");
-    arith(index, i + 7, out);
-    nl(i, out);
-    out.push_str(":value ");
-    arith(value, i + 7, out);
     out.push('}');
 }

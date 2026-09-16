@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup misc
-plan=77
+plan=80
 echo "1..$plan" >&3
 
 set +e
@@ -84,6 +84,41 @@ echo bye
        && $out != *"__sash_end__"* && $out != *":end-block nil"* ]]; chk 104.5
 else
     skip_chk 104.5
+fi
+
+# 104.6-104.8 the capture never holds an arithmetic `++`/`--` or `a[i]`
+# mutation node. `emit_ir` renders the post-validate AST, and by then every
+# such form has been lowered away by `parse::lower_arith_command` (a top-level
+# mutation, and a C-style `for` header) or rejected by validate (SB4020) —
+# `ir::ARITH_IR_MUTATION_INVARIANT`. A probe over the whole sweep confirmed
+# the two emitters were never reached, so they are gone and the arms ICE;
+# these pin the lowering that keeps that true. A regression would surface as
+# an ICE here rather than as a silently different capture.
+
+# 104.6 `(( a++ ))` is captured as an assignment of `a + 1`, not an incdec node
+if in_modes native; then
+    run_sash_emit_ir 'int a=1; (( a++ )); echo $a'
+    [[ $rc = 0 && -z $err && $out == *":kind :assignment"* && $out == *":kind :arith-binop"* && $out != *"incdec"* ]]; chk 104.6
+else
+    skip_chk 104.6
+fi
+
+# 104.7 `(( v[0] += 5 ))` likewise — an assignment whose value reads the cell,
+#       never an `:arith-subscript-assign`
+if in_modes native; then
+    run_sash_emit_ir 'int array v=(1 2); (( v[0] += 5 )); echo ${v[0]}'
+    [[ $rc = 0 && -z $err && $out == *":kind :assignment"* && $out == *":kind :arith-subscript"* && $out != *"arith-subscript-assign"* ]]; chk 104.7
+else
+    skip_chk 104.7
+fi
+
+# 104.8 a C-style `for` header is desugared at parse time into a group holding
+#       the init assignment and a while, so its `i++` is an assignment too
+if in_modes native; then
+    run_sash_emit_ir 'int i=0; for (( i=0; i<2; i++ )); do echo $i; done'
+    [[ $rc = 0 && -z $err && $out == *":kind :group"* && $out == *":kind :while"* && $out != *"incdec"* ]]; chk 104.8
+else
+    skip_chk 104.8
 fi
 
 # 104.4 a literal containing a quote and a backslash is escaped for the data

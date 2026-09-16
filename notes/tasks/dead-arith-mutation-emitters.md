@@ -1,6 +1,6 @@
 ---
 title: "Trace the arith-mutation emitters that survive DD#109 uncovered"
-status: ready
+status: done
 priority: P3
 kind: cleanup
 depends: []
@@ -52,3 +52,34 @@ ICE. Note that if `hoist_mutation_node` is dead, `ArithExpr`'s three mutation
 variants may be removable outright, which would also drop the
 `transform/expr_handlers.rs:376` `unreachable!` and several `validate.rs`
 helpers (`arith_has_incdec`, `arith_has_subscript_assign`).
+
+## Resolved (2026-09-16, journals 343-345)
+
+All three gates met.
+
+`hoist_mutation_node` (journal 343) — **not** entirely dead, as this filing
+predicted. Triaged three ways: `CompoundAssign` was reachable, working and
+completely untested (6 specs); `PostIncDec` and `SubscriptAssign` were rejected
+by SB4020 before the transform and now ICE against
+`ir::ARITH_TEST_HOISTABLE_INVARIANT`, with cov.262-263 pinning the rejections.
+The filing's corollary — that the three `ArithExpr` mutation variants might be
+removable outright — is therefore **disproved**.
+
+`ar_incdec` / `ar_subscript_assign` (journal 345) — **dead, removed.** The
+method this filing prescribed is what settled it: `probe_hit()` instrumentation
+plus the whole sweep, not hand-picked probes. Two things had to hold first —
+a control probe in `ar_assign` proved the mechanism could fire, and `emit_ir`
+turned out to run on *every* compile, not only under `--emit-ir`, so the sweep
+is decisive. Across 5259 compiled programs only the control fired. Both
+functions deleted; both arms ICE against a new `ir::ARITH_IR_MUTATION_INVARIANT`.
+Specs 104.6-104.8 pin the parse-time lowering that keeps it true.
+
+The arms ICE rather than being dropped because `emit_ir::arith`'s match is
+exhaustive — there is no permissive catch-all to fall through to, so an arm
+cannot simply be deleted, only replaced.
+
+**The trace also found four bugs** (journal 344), all behind DD#93's attest
+carve-out, which was the one route bypassing the gates that make these arms
+unreachable: an ICE from a fifth hand-rolled copy of `ir::arith_has_mutation`,
+two false SB5050s, a missing SB5031 that let an undefined name read as 0, and
+an ICE on an undefined array. Fixed in `16b5cda`.

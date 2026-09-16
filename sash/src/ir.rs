@@ -1147,6 +1147,28 @@ pub(crate) const PREFIX_INCDEC_INVARIANT: &str =
 /// Handling them anyway would be worse than ICEing: the hoist would emit a
 /// store for a form the compiler has already told the user it cannot apply,
 /// which is how a rejected construct turns into silently working code.
+/// Why `emit_ir` never serialises an arithmetic `++`/`--` or `a[i]` mutation.
+///
+/// `emit_ir` renders the post-validate AST, so three things have already
+/// happened to every such node:
+///
+///   - a top-level `(( a++ ))` / `(( a[i] += 5 ))` was rewritten into a
+///     `Statement::Assignment` by `parse::lower_arith_command`, and a C-style
+///     `for` header was desugared the same way, so no `ArithExpr` survives;
+///   - inside a `$(( … ))` **value**, `validate::check_arith_value_mutation`
+///     (SB4020) rejects any mutation, whole-tree;
+///   - inside a `(( … ))` statement or condition,
+///     `validate::check_arith_test_placement` (SB4020) rejects `++`/`--` and
+///     `a[i]` mutations specifically, whole-tree. Plain and compound assigns
+///     are the exception it allows, which is why `Assign` / `CompoundAssign`
+///     do reach the serialiser and these two do not.
+///
+/// The one route that bypassed all three was DD#93's attest carve-out, closed
+/// in journal 344 by completing `parse::reject_nested_mutation`.
+pub(crate) const ARITH_IR_MUTATION_INVARIANT: &str =
+    "`++`/`--` and `a[i]` mutations are lowered away at parse time or rejected \
+     by validate (SB4020) before emit_ir renders the AST";
+
 pub(crate) const ARITH_TEST_HOISTABLE_INVARIANT: &str =
     "`++`/`--` and `a[i]` mutations are rejected in a `(( … ))` statement or \
      condition by validate::check_arith_test_placement (SB4020) before the \
