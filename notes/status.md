@@ -66,10 +66,20 @@ Caught only by predicting the total first: 4983 + 9×2 + 8×2 = 5017, not 5001.
 Re-running gave exactly 5017. **Keep predicting the total — it is the only
 check that catches a sweep which lost tests rather than failed them.**
 
-### Next
+### Coverage, after the re-measure
 
-Branch coverage loop continues. Last measure: **87.33% / 462 cold** at
-`b0f32eb`, before this change and the 17 new specs. Needs a re-measure
+**87.71% branch / 456 cold** at `5cbe9b7` (was 87.33% / 475 at the start of
+the previous pass). `parse/expr.rs` 35 -> 27.
+
+`cov.207`-`cov.216` then went after `parse/parser.rs`, the second-largest cold
+block (37). Ten specs, nine of which are probe-verified to flip a specific
+cold branch: the empty-`elif` condition (486), the dispatch form used as a
+`while` condition (519), `for x in a` running into end-of-input (560), a bare
+word where `-> int` would go (705), dispatch with a unary subject (1287) and
+with `!=` (1294), the attest-all binder list (1779), and `<&` with a non-fd
+target (2616). The tenth pins SB4040 for `! a | b`.
+
+Needs a re-measure
 (`mk cov-reset` → `mk cov-branch` → `mk cov-db`, ~40 min).
 
 Cold leaders then: `validate.rs` 59, `parse/parser.rs` 37, `parse/expr.rs` 35,
@@ -81,8 +91,20 @@ outside Assign absorb mode), 580 + 591 + 634/635 (`try_split_subscript_arm`,
 `dynamic_subscript_var`), 942, 960|1|2, 1231, 1259/1260, 1390, 1453, 1473,
 1609/1610. `lexer.rs:936` (`skip_paren_to_close`) still needs a route in.
 
-**For DG:** `validate.rs:1788`/`1792` may have been made unreachable by bug
-#6's own fix. Reported, not deleted.
+**For DG — three sites that look genuinely unreachable.** Reported, not
+deleted:
+
+- `validate.rs:1788`/`1792` — may have been made unreachable by bug #6's own
+  fix.
+- `parser.rs:701` — `parse_optional_return_type` accepts both a single `->`
+  word token and the split `-` `>` pair, "depending on how the lexer
+  classified the bytes". Every spelling tried (`-> int`, `->int`, `() ->int`)
+  takes the split path; no input found that produces a single `->` token.
+- `parser.rs:1054` — the second operand of `pipeline_operand`, an
+  "already-folded multi-stage pipeline". `!` parses its operand with
+  `dispatch_statement`, which by contract does not fold `|`, so the statement
+  can never be a multi-command pipeline. The first operand (a trailing `|`)
+  covers every reachable case and is now pinned by cov.213.
 
 ---
 

@@ -6,7 +6,7 @@
 set -eu
 . common.sh
 setup coverage
-plan=205
+plan=215
 echo "1..$plan" >&3
 
 set +e
@@ -905,6 +905,79 @@ run_sash '/bin/echo "$(int x=1)"'
 run_sash 's=/bin/true
 /bin/echo "$($s)"'
 [[ $rc != 0 && -z $out && $err == *SB5011* ]]; chk cov.206
+
+# --- parse/parser.rs cold branches: error arms that the suite never reached.
+# Each was probe-verified with contrib/cov-probe.sh. ---
+
+# cov.207 DD#68 brace form: an `elif` with NO condition at all. The `{ … }`
+# that follows is read as the condition, and a brace group is not one. This is
+# the elif site specifically — the `if` site has its own copy.
+run_sash 'x=1
+if [[ $x == 1 ]] { echo one } elif { echo two }'
+[[ $rc != 0 && -z $out && $err == *SB4027* ]]; chk cov.207
+
+# cov.208 the same shape, well-formed, so the empty-condition arm is the only
+# difference between passing and failing.
+run_sash 'x=2
+if [[ $x == 1 ]] { echo one } elif [[ $x == 2 ]] { echo two }'
+[[ $rc = 0 && $out = "two" && -z $err ]]; chk cov.208
+
+# cov.209 DD#66: the `[[ ]]` dispatch form is a STATEMENT. Used where a
+# boolean is wanted — a `while` condition — it is rejected rather than
+# silently evaluated for its exit status.
+run_sash 'x=hi
+while [[ $x == y { echo a } ]]; do echo z; done'
+[[ $rc != 0 && -z $out && $err == *SB4028* ]]; chk cov.209
+
+# cov.210 dispatch needs `SUBJECT ==|=~ PATTERN`. A unary test is not a
+# subject/pattern pair, so there is nothing to dispatch on.
+run_sash 'x=hi
+[[ -n $x { echo a } ]]'
+[[ $rc != 0 && -z $out && $err == *SB4028* ]]; chk cov.210
+
+# cov.211 and a binary test with the wrong operator. `!=` has no dispatch
+# meaning — the diagnostic names the operator it found.
+run_sash 'x=hi
+[[ $x != y { echo a } ]]'
+[[ $rc != 0 && -z $out && $err == *SB4028* ]]; chk cov.211
+
+# cov.212 DD#61 attest-all lead: every token before `in` must be a binder
+# name. A `;` there ends the statement, so `in` never arrives.
+run_sash 'map m=([a]=1)
+attest k ; in m [[ -n $k ]]'
+[[ $rc != 0 && -z $out && $err == *SB4014* ]]; chk cov.212
+
+# cov.213 `!` binds to the final stage of a pipeline only. Negating the whole
+# pipeline would negate a plumbing status a reviewer cannot trace back to a
+# command, so it is rejected with the predicate-wrapping escape hatch.
+#
+# This reaches SB4040 through the FIRST operand of the `pipeline_operand` test
+# (a trailing `|`). The second operand — an already-folded multi-stage
+# pipeline — short-circuits away and appears unreachable: `!` parses its
+# operand with `dispatch_statement`, which by contract does not fold `|`, so
+# the statement it returns is never a multi-command pipeline. Left in place as
+# a defensive check; see notes/status.md.
+run_sash '! echo hi | /bin/cat'
+[[ $rc != 0 && -z $out && $err == *SB4040* ]]; chk cov.213
+
+# cov.214 a `for … in` word list that runs into end-of-input before any body.
+# The word-collecting loop has an `at_eof()` guard that the suite never
+# reached — every other `for` in the corpus is newline- or `do`-terminated.
+# (Only the native harness reproduces true EOF: the c harness appends a
+# newline. The diagnostic is the same either way.)
+run_sash 'for x in a'
+[[ $rc != 0 && -z $out && $err == *SB4014* ]]; chk cov.214
+
+# cov.215 a bare word where an optional `-> int` return type would go. The
+# annotation parser has to decline on a word that is neither `->` nor `-`,
+# and then the body check reports the real problem.
+run_sash 'fn n() foo { return 7 }'
+[[ $rc != 0 && -z $out && $err == *SB4014* ]]; chk cov.215
+
+# cov.216 `<&` with a non-fd target. `>&foo` was covered; the input-dup
+# direction picks a different arrow for the message and was not.
+run_sash '/bin/cat <& foo'
+[[ $rc != 0 && -z $out && $err == *SB4048* ]]; chk cov.216
 
 set -e
 tally
