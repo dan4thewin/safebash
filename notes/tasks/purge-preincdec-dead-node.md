@@ -68,29 +68,58 @@ to avoid hiding) while documenting *why* the code cannot run.
 
 Found in journal 338.
 
-## Re-measured 2026-09-16 (journal 341) — the filing is partly wrong
+## Measured 2026-09-16 (journal 341) — the filing over-counts by 5x
 
-Do not execute this as filed. The ~10 arms are all genuinely unreachable,
-but they are not interchangeable:
+**Do not execute as filed.** The invariant is real: all ten spellings of a
+prefix `++`/`--` reject with SB4020, covering both arith entry points
+(`parse_arith_expansion`, `parse_arith_slot` incl. all three C-style `for`
+slots) and both `parse_arith_str` bypass callers (`emit_string_part`,
+`parse_expansion_atom`). `PreIncDec` never survives the parser.
 
-**Two are documented keeps.** `validate.rs:1711` argues, in a comment, that
-even past `reject_prefix_incdec` "a top-level `PreIncDec` classifies as a
+But "~10 cold branches" is wrong. Measured against `coverage.db`:
+
+| site | function | catch-all | line count | delete buys |
+|---|---|---|---|---|
+| arith.rs:189 | `brief_arith` | `_ => "..."` | **0** | 1 cold line |
+| emit_ir.rs:648 | `arith` | none (exhaustive) | **0** | 1 cold line |
+| expr_handlers.rs:376 | `arith_to_ssa` | `_ =>` | **0** (body 380) | nothing — already `unreachable!()` |
+| arith.rs:174 | `has_mutation_inner` | `_ => false` | arm hot (176: 4) | nothing |
+| arith.rs:239 | `classify_arith_expr` | `_ =>` | arm hot (241: 468) | nothing |
+| arith.rs:1292 | `lower_arith_mutation_structured` | `_ =>` | arm hot (1293: 119) | nothing |
+| ir.rs:1133 | `arith_has_mutation` | none | arm hot (1134: 63) | nothing |
+| validate.rs:2033 | `arith_has_incdec` | none (`matches!`) | arm hot (2034: 712) | nothing |
+| validate.rs:3442 | `check_positionals_arith` | none | arm hot (**1305**) | nothing |
+| statements.rs:482 | `hoist_mutation_node` | `_ =>` | arm cold (486: 0) | nothing — cold for `PostIncDec` too |
+
+**Why.** Where `PreIncDec` is an *alternative* in a multi-pattern arm, LLVM
+merges it into the arm's single region, which `PostIncDec` / `Assign` /
+`Literal` already cover. There is no separate counter to flip. Only the two
+sites with their own arm are cold.
+
+**And deleting the merged ones is actively worse.** Five sit behind a
+catch-all, so removing the alternative produces no compile error if the
+invariant ever breaks — `has_mutation_inner` and `arith_has_incdec` would
+silently answer "not a mutation". The three exhaustive ones (`ir.rs:1133`,
+`validate.rs:2033`, `validate.rs:3442`) are free compile-time guards: the
+alternative costs nothing and its removal cannot go unnoticed.
+
+Two are also **documented keeps** — `validate.rs:1711` argues in a comment
+that past `reject_prefix_incdec`, "a top-level `PreIncDec` classifies as a
 mutation, so `lower_arith_mutation_structured` turns it into an
-`Assignment`". That names `classify_arith_expr` (arith.rs:239) and
-arith.rs:1292 as the second line of defence. Deleting them silently
-invalidates a backstop another pass's comment relies on.
+`Assignment`", naming arith.rs:239 and arith.rs:1292 as the backstop.
 
-**Several trade a compile error for a silent wrong answer.** Removing the
-`PreIncDec` alternative from `has_mutation_inner` (arith.rs:174, `_ => false`)
-or `arith_has_incdec` (validate.rs:2033) does not fail to compile if the
-invariant ever breaks — it answers "not a mutation". `validate.rs:3442` is
-exhaustive with no catch-all, so removing the alternative there *is* a
-compile error, i.e. the good kind of guard, and is worth keeping for that
-reason alone.
+### Recommendation
 
-**Two are clean deletes** by the codebase's own precedent: `brief_arith`
-(arith.rs:189) and `emit_ir.rs:648` are formatting only, and
-`validate.rs:2081` already documents that exact move for `arith_brief`.
+Take the two clean deletes — `brief_arith` (arith.rs:189) and
+`emit_ir.rs:648` — by the precedent `validate.rs:2081` already sets for
+`arith_brief` ("Were one to arrive anyway it falls to `_` and reads as
+`...`"). `emit_ir.rs:648` is exhaustive, so it needs the DD#104 IR to simply
+stop naming `:arith-pre-incdec` — a node the emitter can never receive.
+Keep the rest and record why. Yield: 2 cold lines.
 
-Question for DG: take the two safe deletes and close, or keep all of it and
-close this as "deliberate, documented"?
+### Spun out
+
+`hoist_mutation_node` (statements.rs:459-522) is a genuine **spec gap**, not
+dead code: its `Assign` arm runs 10x but `CompoundAssign`, `PostIncDec`, and
+`SubscriptAssign` are all zero — **28 cold lines**. Worth a spec that hoists
+a mutation out of a nested arithmetic position.
