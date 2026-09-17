@@ -89,17 +89,30 @@ pub fn validate(program: &Program) -> Vec<Diagnostic> {
     check_fn_placement(&blocks, &mut diags);
     // SB5072 (DD#86): a `const` binding inside a loop body.
     check_const_in_loop(&blocks, &mut diags);
+    // SB5070 speaks only about *collection* splats. A splat of a scalar or of
+    // an unintroduced name is SB5079/SB5031's to report, and SB5070's remedy
+    // (`join s SEP`) is itself rejected for those — so it must not claim
+    // them. Over-approximated program-wide: sash forbids shadowing, so one
+    // name has one meaning everywhere.
+    let mut collections = HashSet::new();
+    for scope in program_scopes(program) {
+        collect_subscriptable_names(scope, &mut collections);
+    }
     for &block in &blocks {
-        check_block_value_rules(block, &mut diags);
+        check_block_value_rules(block, &collections, &mut diags);
     }
     diags
 }
 
 /// SB4045 (a fixed-arity value-intrinsic called via `$( )` with the wrong
 /// number of arguments) and the two SB4020 rules, over one block.
-fn check_block_value_rules(block: &[Statement], diags: &mut Vec<Diagnostic>) {
+fn check_block_value_rules(
+    block: &[Statement],
+    collections: &HashSet<String>,
+    diags: &mut Vec<Diagnostic>,
+) {
     for stmt in block {
-        check_stmt_value_rules(stmt, diags);
+        check_stmt_value_rules(stmt, collections, diags);
         // SB4020 (bug #3): a `(( … ))` statement / condition whose embedded
         // mutation the transform can't hoist (`++`/`--`, `a[i]`, or under
         // `&&`/`||`/`?:`).
@@ -696,7 +709,13 @@ fn walk_arith_intrinsic_calls(a: &ArithExpr, f: &mut impl FnMut(&str, &[ArithExp
 /// `len`, `join` and `keys` are excluded: they take a collection by name, so
 /// `@a` there is not a silent reinterpretation (`keys @a` is already SB5025,
 /// and `len @a` / `join @a` are open questions of their own — DD#75).
-fn check_cmdsub_splat_operand(expr: &Expr, diags: &mut Vec<Diagnostic>) {
+/// `strlen` is **not** in that group — DD#102 made it take a value like
+/// `toupper` — so `strlen @a` was the one silent join left.
+fn check_cmdsub_splat_operand(
+    expr: &Expr,
+    collections: &HashSet<String>,
+    diags: &mut Vec<Diagnostic>,
+) {
     let ExprKind::CommandSubstitution(stmts) = &expr.kind else {
         return;
     };
@@ -713,6 +732,9 @@ fn check_cmdsub_splat_operand(expr: &Expr, diags: &mut Vec<Diagnostic>) {
         let Some(collection) = splat_collection_name(&arg.kind) else {
             continue;
         };
+        if !splat_subject_is_collection(collection, collections) {
+            continue;
+        }
         diags.push(Diagnostic::error_span(
             arg.span,
             "SB5070",
@@ -726,12 +748,25 @@ fn check_cmdsub_splat_operand(expr: &Expr, diags: &mut Vec<Diagnostic>) {
     }
 }
 
+/// Whether a splat subject is a collection, and so SB5070's to claim. The
+/// DD#100 slots and `args` are collections with no declaration in scope, as in
+/// `subscript_subject_is_scalar`.
+fn splat_subject_is_collection(name: &str, collections: &HashSet<String>) -> bool {
+    collections.contains(name) || is_collection_slot(name) || name == "args"
+}
+
 /// The value intrinsics whose operands are scalar strings. `len` / `join` /
 /// `keys` are the collection-by-name intrinsics and are deliberately absent.
+///
+/// `strlen` belongs here and was missing until 2026-09-17. SB5070 predates
+/// DD#102, which moved `strlen` from the name-taking family to the
+/// value-taking one — "strlen should behave like toupper" — and this
+/// list, keyed on the family `strlen` had just left, was not updated with it.
+/// `type_check.rs::string_operand_slots` already grouped it with `toupper`.
 fn is_scalar_operand_intrinsic(name: &str) -> bool {
     matches!(
         name,
-        "sub" | "gsub" | "toupper" | "tolower" | "basename" | "dirname" | "match"
+        "sub" | "gsub" | "toupper" | "tolower" | "strlen" | "basename" | "dirname" | "match"
     )
 }
 
@@ -2031,12 +2066,16 @@ fn collect_attest_arith_predicates(stmt: &Statement, out: &mut Vec<*const Expr>)
 /// emits the store — so it is not a `$(( … ))` rvalue and SB4020 must not see
 /// it. Collected recursively, since `if attest n (( c = n ))` nests one inside
 /// an `If`.
-fn check_stmt_value_rules(stmt: &Statement, diags: &mut Vec<Diagnostic>) {
+fn check_stmt_value_rules(
+    stmt: &Statement,
+    collections: &HashSet<String>,
+    diags: &mut Vec<Diagnostic>,
+) {
     let attest_preds = attest_arith_predicates(stmt);
     walk_all_exprs(stmt, &mut |expr| {
         check_cmdsub_arity(expr, diags);
         check_arith_sexpr_arity(expr, diags);
-        check_cmdsub_splat_operand(expr, diags);
+        check_cmdsub_splat_operand(expr, collections, diags);
         if !attest_preds.contains(&(expr as *const Expr)) {
             check_arith_value_mutation(expr, diags);
         }

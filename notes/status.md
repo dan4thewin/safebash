@@ -1,3 +1,51 @@
+## ══ STATUS (2026-09-17) — the list that kept the old classification ══
+
+**Journal 353.** Sweep **5404 passing, 13 skipped, 0 failing** (+8; predicted
++8). Units 83. **Bug fixed: `strlen @a` silently joined the collection.**
+
+DG, reading the 352 summary: *"strlen should only work on scalars, not
+collections."* I had just landed a spec asserting the opposite — `75.88`
+claimed `strlen @a` gives 6 — because that is what it did and I had checked
+it was *coherent*. Coherent is not intended.
+
+Every sibling rejects a splat there: `toupper @a`/`tolower @a` are SB5070,
+`len @a`/`join @a` are SB5062. `strlen @a` alone returned the byte length of
+the space-joined values — it quietly meant `strlen "$(join a \' \')"`.
+Arity checked out because a splat is one *syntactic* argument, which is the
+exact mechanism SB5070 exists to catch.
+
+**Why it was missed.** SB5070's operand list is keyed on the name-taking
+family, and **DD#102 moved `strlen` out of that family five days earlier**
+("strlen should behave like toupper"). `type_check.rs::string_operand_slots`
+was updated with the decision; `validate.rs::is_scalar_operand_intrinsic` was
+not. The general form now recorded in DD#102: **a decision that moves an
+operator between families has to move it in every list keyed on the old
+family.**
+
+That is journal 352's failure one level up — both are an *incomplete
+application of something already decided*, which is what AGENTS.md warns about
+under Decision authority. Twice in two days, from the leaving-it-unapplied
+side.
+
+**A second defect surfaced with it**, pre-existing and covering all eight
+SB5070 operators: it fired on anything splat-*shaped* without asking what the
+subject was, so `toupper @s` asserted "`@s` is an array splat" about a string
+and advised `join s SEP`, which is itself rejected. Now gated on the subject
+being a real collection (declarations, bulk-fill targets, DD#100 slots,
+`args`), deferring a scalar to SB5079 and an unintroduced name to SB5031 —
+one correct diagnostic each. Specs `75.88`, `75.90`–`75.93`.
+
+**What nothing was going to catch.** The behaviour was self-consistent, the
+spec suite agreed with it, and I had inspected it the day before and called it
+fine. It took DG reading one sentence.
+
+**Coverage directives from DG, in flight:**
+1. The provably-cold `expr_to_string` arms get **unit tests that simulate a
+   regression and assert the ICE** — covering the lines *and* pinning the
+   behaviour. Not exempted, not deleted. **Not yet done.**
+2. Work **entire uncovered functions first** — the lowest-hanging fruit —
+   and expect progress on one queue to move the others.
+
 ## ══ STATUS (2026-09-17) — the survey that named it ══
 
 **Journal 352.** Sweep **5396 passing, 13 skipped, 0 failing** (+18; predicted

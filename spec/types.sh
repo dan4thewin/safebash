@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup types
-plan=225
+plan=229
 echo "1..$plan" >&3
 
 set +e
@@ -1155,10 +1155,15 @@ echo $x
 }'
 [[ $rc = 0 && $out == *"v"* && $out == *"w"* && -z $err ]]; chk 75.87
 
-# 75.88 strlen of a splat is the byte length of the joined value
+# 75.88 strlen of a collection splat is REJECTED (SB5070). DD#102 made strlen
+# take a value like toupper, but SB5070's operand set -- written before that
+# decision -- still classed it with the name-taking `len`/`join`, so `strlen @a`
+# was the one silent join left in the language: it quietly meant
+# `strlen "$(join a ' ')"`. DG: "strlen should only work on scalars, not
+# collections."
 run_sash 'array a=(12 345)
 echo $(strlen @a)'
-[[ $rc = 0 && $out = "6" && -z $err ]]; chk 75.88
+[[ $rc != 0 && -z $out && $err == *SB5070* ]]; chk 75.88
 
 # 75.89 an array splatted into a user function still arrives as args
 run_sash 'fn f {
@@ -1167,6 +1172,34 @@ echo $(len args)
 array a=(1 2)
 f @a'
 [[ $rc = 0 && $out = "2" && -z $err ]]; chk 75.89
+
+# --- SB5070 claims only COLLECTION splats ---
+# Its message asserts "`@x` is an array splat" and advises `join x SEP`. For a
+# scalar or an unintroduced subject both halves are false, and the remedy it
+# names is itself rejected -- so it must defer to SB5079/SB5031.
+
+# 75.90 a scalar subject in a scalar-operand intrinsic is SB5079, not SB5070
+run_sash 'str s=hi
+echo $(toupper @s)'
+[[ $rc != 0 && -z $out && $err == *SB5079* && $err != *SB5070* ]]; chk 75.90
+
+# 75.91 an unintroduced subject is SB5031, not SB5070
+run_sash 'echo $(toupper @nosuch)'
+[[ $rc != 0 && -z $out && $err == *SB5031* && $err != *SB5070* ]]; chk 75.91
+
+# 75.92 a DD#100 collection slot has no declaration in scope but IS a
+# collection, so SB5070 still claims it
+run_sash 'fn f {
+echo $(toupper @A)
+}
+array a=(x)
+f =a'
+[[ $rc != 0 && -z $out && $err == *SB5070* ]]; chk 75.92
+
+# 75.93 the form SB5070 advises actually works
+run_sash 'array a=(12 345)
+echo $(strlen "$(join a ,)")'
+[[ $rc = 0 && $out = "6" && -z $err ]]; chk 75.93
 
 set -e
 tally

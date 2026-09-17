@@ -101,6 +101,39 @@ not be resolved resolved to a plausible constant instead of failing* — and
 the second in this batch to come from one concept having two spellings with a
 guard on only one.
 
+## An unfinished consequence, closed 2026-09-17 (journal 353)
+
+This decision moved `strlen` from the name-taking family (`len`/`join`/`keys`)
+to the value-taking one (`toupper`/`sub`/`match`). **SB5070's operand set was
+not moved with it.**
+
+SB5070 rejects an array splat in a scalar operand slot, and its comment says
+`len`/`join`/`keys` are "deliberately absent: they take a collection by name,
+so `@a` there is not a silent reinterpretation". That reasoning stopped
+applying to `strlen` the moment this DD landed — but the list, keyed on the
+family `strlen` had just left, kept it out. `type_check.rs::string_operand_slots`
+*was* updated and groups `strlen` with `toupper`.
+
+So `strlen @a` remained the one silent join in the language: it quietly meant
+`strlen "$(join a ' ')"`, returning 6 for `array a=(12 345)`. Every sibling
+rejects it — `toupper @a` is SB5070, `len @a` and `join @a` are SB5062.
+
+DG, 2026-09-17: *"strlen should only work on scalars, not collections."*
+`strlen` added to `is_scalar_operand_intrinsic`; `strlen @a` is now SB5070,
+which already names the right remedy (`$(strlen "$(join a SEP)")`).
+
+**A second defect surfaced with it**, pre-existing and affecting all eight
+operators: SB5070 fired on *any* splat-shaped argument, so `toupper @s` on a
+scalar asserted "`@s` is an array splat" and advised `join s SEP` — which is
+itself rejected. It is now gated on the subject actually being a collection
+(declarations, bulk-fill targets, DD#100 slots, `args`), deferring a scalar
+subject to SB5079 and an unintroduced one to SB5031. Specs `75.88`,
+`75.90`–`75.93`.
+
+The general form, worth keeping: **a decision that moves an operator between
+families has to move it in every list keyed on the old family.** One list was
+updated, one was not, and the gap lived five days.
+
 ## See also
 
 - DD#75 §2 — split `len` (elements) from `strlen` (bytes)
@@ -109,3 +142,5 @@ guard on only one.
 - DD#100 Part D — a builtin's *name* operand takes a bare name and no splat;
   still true of `len`/`join`/`keys`
 - `notes/tasks/strlen-cell-operand-spelling.md` — dissolved by this decision
+- SB5079 / `notes/tasks/bug-scalar-splat-segfault.md` — splatting a
+  non-collection; SB5070 now defers to it
