@@ -15,16 +15,6 @@ pub struct TypeError {
     pub span: Span,
 }
 
-impl std::fmt::Display for TypeError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "type error at {}:{}: {}",
-            self.span.line, self.span.col, self.message
-        )
-    }
-}
-
 /// Environment tracking variable and function types.
 struct TypeEnv {
     vars: HashMap<String, VarType>,

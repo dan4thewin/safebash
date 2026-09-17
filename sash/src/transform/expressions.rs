@@ -528,3 +528,108 @@ fn opaque_form_to_string(kind: &ExprKind) -> &'static str {
         _ => unreachable!("not an opaque form"),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn e(kind: ExprKind) -> Expr {
+        Expr {
+            kind,
+            span: Span::new(1, 1),
+        }
+    }
+
+    fn lit(s: &str) -> Expr {
+        e(ExprKind::Literal(s.to_string()))
+    }
+
+    // `expr_to_string` is called 14574 times in a full spec sweep and every
+    // one of them passes a `Literal`: the six other arms are unreachable from
+    // any accepted program, because validate forces a command name literal
+    // (SB5011) and fences the remaining spellings (SB4030/SB5062/SB5064).
+    // Measured, not assumed — all six were instrumented and the entire native
+    // suite produced zero hits.
+    //
+    // They are kept anyway. The match is deliberately exhaustive so a new
+    // `ExprKind` is a compile error *here* first, which is what lets the two
+    // helpers below re-match on a subset and be total over it. A catch-all
+    // would trade that guarantee for nothing.
+    //
+    // So the rendering is pinned here instead. If a future change routes one
+    // of these to the wrong helper, the ICE tests below fire.
+    #[test]
+    fn every_expr_kind_renders() {
+        let pe = ParameterExpansion {
+            name: "v".to_string(),
+            operator: Some(":-x".to_string()),
+            operand: None,
+            index: None,
+            taint_off: false,
+        };
+        let cases: Vec<(ExprKind, &str)> = vec![
+            (ExprKind::Literal("hello".to_string()), "hello"),
+            (ExprKind::SingleQuoted("raw".to_string()), "'raw'"),
+            (ExprKind::SimpleExpansion("v".to_string()), "$v"),
+            (ExprKind::ParameterExpansion(pe), "${v:-x}"),
+            (ExprKind::SlurpFile(Box::new(lit("f"))), "$(<f)"),
+            (
+                ExprKind::Subscript {
+                    name: "a".to_string(),
+                    index: Box::new(lit("0")),
+                },
+                "${a[0]}",
+            ),
+            (ExprKind::Concat(vec![lit("a"), lit("b")]), "ab"),
+            (ExprKind::DoubleQuoted(vec![lit("a")]), "\"a\""),
+            (ExprKind::Array(vec![lit("x"), lit("y")]), "(x y)"),
+            (
+                ExprKind::AssocArray(vec![("k".to_string(), lit("v"))]),
+                "([k]=v)",
+            ),
+            (ExprKind::CommandSubstitution(Vec::new()), "$(...)"),
+            (
+                ExprKind::Arithmetic(Box::new(ArithExpr::Literal(1))),
+                "$(( ... ))",
+            ),
+            (
+                ExprKind::Test(TestExpr::Unary {
+                    op: "-f".to_string(),
+                    operand: Box::new(lit("p")),
+                }),
+                "[[ ... ]]",
+            ),
+        ];
+        for (kind, want) in cases {
+            assert_eq!(expr_to_string(&e(kind)), want);
+        }
+    }
+
+    // The two helpers are total only over the variants `expr_to_string` routes
+    // to them, and each ends in an `unreachable!`. That arm is not defensive
+    // padding — it is the ICE a *regression* would hit, if someone added an
+    // `ExprKind` to one group's arm in `expr_to_string` without adding it to
+    // the helper. No accepted program can reach it, so a unit test calling the
+    // helper directly is the only way to exercise the guard.
+    //
+    // Same shape as `unresolved_redirect_var_is_loud_ice` in codegen/redirects.
+    #[test]
+    fn joined_helper_ices_on_a_form_it_does_not_own() {
+        let kind = ExprKind::Literal("hello".to_string());
+        let caught = std::panic::catch_unwind(|| joined_form_to_string(&kind));
+        assert!(
+            caught.is_err(),
+            "a non-joined form reaching joined_form_to_string must raise a loud ICE"
+        );
+    }
+
+    #[test]
+    fn opaque_helper_ices_on_a_form_it_does_not_own() {
+        let kind = ExprKind::Literal("hello".to_string());
+        let caught = std::panic::catch_unwind(|| opaque_form_to_string(&kind));
+        assert!(
+            caught.is_err(),
+            "a non-opaque form reaching opaque_form_to_string must raise a loud ICE"
+        );
+    }
+}

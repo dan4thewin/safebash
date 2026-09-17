@@ -4271,3 +4271,52 @@ fn emit_read_array_body(e: &mut Emit, array: &str, fd: i64, types: &VarTypes) {
     )
     .unwrap();
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // `ice_unreachable_command` is the c backend's "this variant cannot be a
+    // command by the time codegen runs" guard. Every one of its arms is
+    // unreachable from any accepted program — that is the property it exists to
+    // assert — so the spec suite can never enter it, and a unit test
+    // simulating the regression is the only way to exercise it.
+    //
+    // Each case stands for a different reason the variant cannot arrive, and
+    // the three panic messages say which. A regression that stopped rewriting
+    // `write`, or stopped resolving an expression intrinsic in transform, would
+    // land here; these tests confirm it lands loudly rather than falling
+    // through to a wrong emission.
+    fn ices(kind: BuiltinCmd, name: &str) -> String {
+        let caught = std::panic::catch_unwind(move || ice_unreachable_command(&kind, name));
+        let payload = caught.expect_err("ice_unreachable_command must panic");
+        payload
+            .downcast_ref::<String>()
+            .cloned()
+            .unwrap_or_else(|| "non-string panic payload".to_string())
+    }
+
+    #[test]
+    fn rewritten_before_codegen_is_a_loud_ice() {
+        // DD#99 `write` is rewritten to a newline-suppressed `echo` in
+        // transform/cmd_handlers.rs::rewrite_write_as_echo.
+        let msg = ices(BuiltinCmd::Write, "write");
+        assert!(msg.contains("rewritten before codegen"), "got: {msg}");
+    }
+
+    #[test]
+    fn expression_intrinsic_as_a_command_is_a_loud_ice() {
+        // Resolved to an SsaValue during transform, so it never survives as a
+        // command. `strlen` is the one that moved families in DD#102.
+        let msg = ices(BuiltinCmd::Strlen, "strlen");
+        assert!(msg.contains("expression intrinsic"), "got: {msg}");
+    }
+
+    #[test]
+    fn own_instruction_variant_as_a_command_is_a_loud_ice() {
+        // Carried by its own SsaInst (`read` → SsaInst::ReadLine), so reaching
+        // emit_command_body means the transform stopped lowering it.
+        let msg = ices(BuiltinCmd::Read, "read");
+        assert!(msg.contains("lowered to its own instruction"), "got: {msg}");
+    }
+}

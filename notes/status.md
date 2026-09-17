@@ -1,3 +1,46 @@
+## ══ STATUS (2026-09-17) — three of the five were never cold ══
+
+**Journal 354.** Sweep **5404, 0 failing** (unchanged — nothing here touches
+behaviour). **Units 83 → 89.**
+
+DG, on the arms no accepted program can reach: *"use a unit test simulating a
+regression to produce an ICE."* That dissolves the question I had framed as
+delete-vs-exempt. Both of those accept the lines are uncoverable. They are not
+— just not from a *program*: the compiler is a library, and a unit test can
+hand it the IR that validation makes unconstructible from source. That is
+exactly the regression the guard exists to catch, so the test is the guard's
+own assertion rather than a coverage dodge. `codegen/redirects.rs` already did
+this; I read the file this week and did not connect it.
+
+Applied to `transform/expressions.rs` (3 tests — all 13 `ExprKind` variants
+rendered, plus both helpers' `unreachable!`) and `emit_c.rs` (3 tests, one per
+`ice_unreachable_command` arm, asserting the panic *text* so a regression that
+lands in the wrong arm fails rather than passes). Verified by measurement:
+**every line of `expressions.rs` 475–530 is now covered** and
+`opaque_form_to_string` went from fully cold to 4 hits.
+
+**The unexpected finding.** Of the five functions the data called fully cold,
+**three were never cold**: `panic_payload_message` already had three unit tests
+covering all three branches, `redirect_target_ice` was already covered via its
+caller's test, and `type_check.rs::fmt` was **dead code** (nothing formats a
+`TypeError` — `type_check_or_exit` writes the fields by hand; Rust does not
+warn on an unused trait impl). They read as cold because `mk cov` runs without
+`--with-unit`, which is off by default precisely so should-never-run
+assertions stay visible. Sound rationale, and it produced this: the queue I was
+working down was substantially a **measurement artifact**, and the session's
+first pass investigated functions that were already done.
+
+**Recommendation for DG (no default changed).** Not "switch to `--with-unit`"
+— run **both**. `mk cov` (specs only) answers *what does the language
+surface reach*, which is the bug-finding view that produced 351/352/353 and
+whose value comes from ICE guards appearing in it. `mk cov-unit` answers *what
+is covered at all*, which is what the 100% target is about. **The gap between
+them is exactly the should-never-run set** — watch it as a quantity: it
+should be small, every member deliberate, and a *new* entry appearing in it is
+the interesting event.
+
+**Dead code purged:** `impl Display for TypeError`.
+
 ## ══ STATUS (2026-09-17) — the list that kept the old classification ══
 
 **Journal 353.** Sweep **5404 passing, 13 skipped, 0 failing** (+8; predicted
