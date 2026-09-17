@@ -4,7 +4,7 @@
 
 use cranelift_codegen::ir::types::I64;
 use cranelift_codegen::ir::InstBuilder;
-use cranelift_frontend::{FunctionBuilder, Variable};
+use cranelift_frontend::FunctionBuilder;
 use cranelift_module::Module;
 use cranelift_object::ObjectModule;
 
@@ -18,7 +18,6 @@ pub(super) fn emit_arith_op(
     builder: &mut FunctionBuilder,
     module: &mut ObjectModule,
     externs: &ExternFuncs,
-    exit_status_var: Option<Variable>,
 ) -> cranelift_codegen::ir::Value {
     if let Some(cc) = comparison_intcc(op) {
         return emit_icmp_bool(cc, lhs, rhs, builder);
@@ -31,7 +30,7 @@ pub(super) fn emit_arith_op(
             emit_checked_arith(cop, lhs, rhs, builder, module, externs)
         }
         ArithOp::Div | ArithOp::Mod => {
-            emit_div_or_mod_with_zero_check(op, lhs, rhs, builder, module, externs, exit_status_var)
+            emit_div_or_mod_with_zero_check(op, lhs, rhs, builder, module, externs)
         }
         ArithOp::And | ArithOp::Or => emit_logical_and_or(op, lhs, rhs, builder),
         ArithOp::Shl => builder.ins().ishl(lhs, rhs),
@@ -114,7 +113,6 @@ fn emit_div_or_mod_with_zero_check(
     builder: &mut FunctionBuilder,
     module: &mut ObjectModule,
     externs: &ExternFuncs,
-    _exit_status_var: Option<Variable>,
 ) -> cranelift_codegen::ir::Value {
     use cranelift_codegen::ir::condcodes::IntCC;
     let zero = builder.ins().iconst(I64, 0);

@@ -267,9 +267,13 @@ pub(super) fn lower_value(
             builder.ins().call(req_ref, &[s_len, m_ptr, m_len]);
             (s_ptr, s_len)
         }
-        SsaValue::ArithExpr { var, op, operand } => {
-            let int_val = lower_value_as_int(
-                &SsaValue::Var(var.clone()),
+        SsaValue::ArithExpr { .. } => {
+            // One arithmetic lowering, not two: ask the int path for the value
+            // and stringify it. This arm used to recompute what
+            // `lower_value_as_int` already does, which is why that arm was dead
+            // in the native backend while the c backend hit its equivalent 57×.
+            let result = lower_value_as_int(
+                value,
                 builder,
                 module,
                 vars,
@@ -277,9 +281,6 @@ pub(super) fn lower_value(
                 externs,
                 exit_status_var,
             );
-            let rhs = builder.ins().iconst(I64, *operand);
-            let result =
-                emit_arith_op(*op, int_val, rhs, builder, module, externs, exit_status_var);
             emit_int_to_str(builder, module, externs, result)
         }
         SsaValue::ArithBinOp { left, op, right } => {
@@ -301,7 +302,7 @@ pub(super) fn lower_value(
                 externs,
                 exit_status_var,
             );
-            let result = emit_arith_op(*op, l, r, builder, module, externs, None);
+            let result = emit_arith_op(*op, l, r, builder, module, externs);
             emit_int_to_str(builder, module, externs, result)
         }
         SsaValue::CmdSubst {
@@ -1290,6 +1291,47 @@ fn lower_disposition_as_int(
     }
 }
 
+/// DD#58/Option C: a sexpr nullary int intrinsic reuses the word-form
+/// `CmdSubst` node (`(getppid)` → `CmdSubst{["getppid"]}`). In int context,
+/// compute the i64 DIRECTLY (no string round-trip) rather than
+/// capture-then-atoi. Names without a direct i64 (`epochseconds`) return
+/// `None` and fall through to the string+atoi path here.
+#[allow(clippy::too_many_arguments)]
+fn lower_cmdsubst_as_int(
+    value: &SsaValue,
+    argv: &[SsaValue],
+    builder: &mut FunctionBuilder,
+    module: &mut ObjectModule,
+    vars: &HashMap<String, VarSlot>,
+    literals: &HashMap<String, cranelift_module::DataId>,
+    externs: &ExternFuncs,
+    exit_status_var: Option<Variable>,
+) -> cranelift_codegen::ir::Value {
+    if let Some(SsaValue::Literal(name)) = argv.first() {
+        if let Some(v) = crate::codegen::value_handlers::int_intrinsic_i64(
+            name,
+            builder,
+            module,
+            externs,
+            exit_status_var,
+        ) {
+            return v;
+        }
+    }
+    let (ptr, len) = lower_value(
+        value,
+        builder,
+        module,
+        vars,
+        literals,
+        externs,
+        exit_status_var,
+    );
+    let atoi_ref = module.declare_func_in_func(externs.atoi, builder.func);
+    let call = builder.ins().call(atoi_ref, &[ptr, len]);
+    builder.inst_results(call)[0]
+}
+
 /// Emit Cranelift instructions for lowering an `SsaValue` to an i64 in
 /// arithmetic / comparison context.
 #[allow(clippy::too_many_arguments)]
@@ -1334,7 +1376,7 @@ pub(super) fn lower_value_as_int(
                 exit_status_var,
             );
             let rhs = builder.ins().iconst(I64, *operand);
-            emit_arith_op(*op, var_val, rhs, builder, module, externs, None)
+            emit_arith_op(*op, var_val, rhs, builder, module, externs)
         }
         SsaValue::ArithBinOp { left, op, right } => {
             let l = lower_value_as_int(
@@ -1355,7 +1397,7 @@ pub(super) fn lower_value_as_int(
                 externs,
                 exit_status_var,
             );
-            emit_arith_op(*op, l, r, builder, module, externs, None)
+            emit_arith_op(*op, l, r, builder, module, externs)
         }
         SsaValue::Ternary {
             cond,
@@ -1389,31 +1431,16 @@ pub(super) fn lower_value_as_int(
         // context, compute the i64 DIRECTLY (no string round-trip) rather than
         // capture-then-atoi. Names without a direct i64 (`epochseconds`) return
         // None and fall through to the string+atoi fallback below.
-        SsaValue::CmdSubst { argv, .. } => {
-            if let Some(SsaValue::Literal(name)) = argv.first() {
-                if let Some(v) = crate::codegen::value_handlers::int_intrinsic_i64(
-                    name,
-                    builder,
-                    module,
-                    externs,
-                    exit_status_var,
-                ) {
-                    return v;
-                }
-            }
-            let (ptr, len) = lower_value(
-                value,
-                builder,
-                module,
-                vars,
-                literals,
-                externs,
-                exit_status_var,
-            );
-            let atoi_ref = module.declare_func_in_func(externs.atoi, builder.func);
-            let call = builder.ins().call(atoi_ref, &[ptr, len]);
-            builder.inst_results(call)[0]
-        }
+        SsaValue::CmdSubst { argv, .. } => lower_cmdsubst_as_int(
+            value,
+            argv,
+            builder,
+            module,
+            vars,
+            literals,
+            externs,
+            exit_status_var,
+        ),
         // DD#76: an int-cell subscript read in int context is the i64 directly
         // (`val_len`), skipping the string round-trip and the null-`val_ptr`
         // atoi. A string cell atoi's its stored bytes.
