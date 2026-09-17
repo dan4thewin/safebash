@@ -1,3 +1,47 @@
+## ══ STATUS (2026-09-16) — the same arm, written twice ══
+
+**Journal 350.** Sweep unchanged at **5354 passing, 13 skipped, 0 failing**
+(pure refactor). Units 83. Coverage **96.85% lines / 89.82% branches**
+(from 96.80 / 89.82).
+
+Top coverage target `codegen/values.rs::lower_value_as_int` had 12 cold lines,
+all one arm (`SsaValue::ArithExpr`). **The diagnosis came from the other
+backend, not from the zero:** the c emitter's identical arm was hit **57 times**
+on the same programs. Zero against 57 is not "untested" — it means the two
+backends route the same SSA differently and one route is dead.
+
+Native reached `ArithExpr` via `lower_value` (51 hits), whose arm did the whole
+job itself and then stringified, so `lower_value_as_int`'s arm never ran.
+`lower_value` now delegates instead of recomputing: one arithmetic lowering,
+formerly-dead arm live 51×, **zero** uncovered lines in that function.
+
+**The two copies were not identical** — one passed `exit_status_var` to
+`emit_arith_op`, the other `None`. It made no difference because the parameter
+is dead along its whole length: `emit_div_or_mod_with_zero_check` names it
+`_exit_status_var` and ignores it. A dead parameter is exactly what lets two
+copies of the same code disagree without consequence. Purged from both
+signatures, four call sites, and the `Variable` import.
+
+This is the **third instance this stretch** of a canonical answer with a
+narrower duplicate beside it (344, 347, 348, 350). It is now the first thing to
+check on any new target.
+
+`lower_value_as_int` was a pre-existing gate violator (cc 12/cog 7);
+grandfather-on-modify fired and the `CmdSubst` arm moved out to
+`lower_cmdsubst_as_int`, leaving the dispatcher at cc 10/cog 2. No bypass.
+
+**Note for target picking:** branches did **not** move (89.82% both sides) —
+the arm was straight-line, so it was line-region cold, not branch cold.
+Uncovered *lines* and uncovered *branches* are different queues; this stretch
+has been working the first while quoting the second.
+
+**Next up** (by uncovered lines): `transform/expr_handlers.rs:fold_arith_op`
+(12 cold, **cc 27/cog 9** — the gate will bite, budget a refactor),
+`codegen/value_handlers.rs:emit_cmdsub_exec` (10),
+`codegen/values.rs:intern_or_declare` (10),
+`parse/parser.rs:parse_split_subscript_index` (10),
+`parse/parser.rs:parse_trailing_redirects` (10).
+
 ## ══ STATUS (2026-09-16) — a test in a pipeline died at run time ══
 
 **Journal 349.** Sweep **5354 passing, 13 skipped, 0 failing** (+16, predicted
