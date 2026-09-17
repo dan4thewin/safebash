@@ -1166,6 +1166,61 @@ fn record_bare_collection_value(a: &Assignment, env: &mut TypeEnv) {
 /// `int array a=(…); a[i]=99` matches int-init), mirroring the
 /// declaration-init `is_numeric_literal` exception. The variable keeps its
 /// declared int type (no re-declare).
+/// DD#86: a `for` header BINDS its variable, exactly as an assignment does,
+/// so it is type-checked exactly as an assignment is. Without this, a loop
+/// over string words into an `int` variable was accepted and every iteration
+/// silently bound **0** — while the equivalent bare assignment was SB4030.
+///
+/// An *undeclared* loop variable is introduced by the header as a **string**,
+/// because a word list binds words. That is the same instantiation a bare
+/// assignment performs (`x=5` holds `"5"`, not 5), so it earns the same
+/// treatment in arithmetic: `(( sum += x ))` is SB4030 and must carry a
+/// disposition, `(( sum += ${x:-0} ))`.
+///
+/// This is not a restriction on counting loops — it is a redirection to the
+/// form that means one. `for (( i = 10; i < 40; i += 10 ))` binds a genuine
+/// int and needs no disposition (DG, 2026-09-17). The word-list header is for
+/// words; the arithmetic header is for numbers.
+fn check_for_binding_type(f: &For, env: &mut TypeEnv, errors: &mut Vec<TypeError>) {
+    if !env.vars.contains_key(&f.variable) {
+        env.declare(&f.variable, VarType::String);
+        return;
+    }
+    let ltype = env.var_type(&f.variable);
+    let Some((word, rtype)) = first_binding_mismatch(&f.words, ltype, env) else {
+        return;
+    };
+    errors.push(TypeError {
+        message: format!(
+            "cannot bind {} value to {} loop variable `{}` — a `for` header \
+             binds its variable like an assignment, and a variable does not \
+             change type (DD#86){}",
+            type_name(rtype),
+            type_name(ltype),
+            f.variable,
+            conversion_hint(rtype, ltype),
+        ),
+        // The offending word, not the whole header: with several words only
+        // one may be wrong.
+        span: word.span,
+    });
+}
+
+/// The first header word whose type the loop variable cannot take, with that
+/// type. An `int` variable accepts a numeric literal, exactly as an
+/// assignment does.
+fn first_binding_mismatch<'a>(
+    words: &'a [Expr],
+    ltype: VarType,
+    env: &TypeEnv,
+) -> Option<(&'a Expr, VarType)> {
+    words.iter().find_map(|w| {
+        let rtype = expr_type(w, env);
+        let takes = ltype == rtype || (ltype == VarType::Int && is_numeric_literal(w));
+        (!takes).then_some((w, rtype))
+    })
+}
+
 fn check_assign_type_match(
     a: &Assignment,
     span: Span,
@@ -1435,6 +1490,7 @@ fn check_unset_args(c: &Command, span: Span, env: &TypeEnv, errors: &mut Vec<Typ
 
 fn check_for(f: &For, env: &mut TypeEnv, errors: &mut Vec<TypeError>) {
     env.loop_vars.insert(f.variable.clone());
+    check_for_binding_type(f, env, errors);
     // The for-in header words are expressions, not a child body — visit them so
     // a `$(keys …)` / `$(join …)` splat source (or a bad subscript) in the
     // header is type-checked (DD#75 §3), then descend into the loop body.

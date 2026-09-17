@@ -336,10 +336,26 @@ fn check_redeclaration(program: &Program, diags: &mut Vec<Diagnostic>) {
     // declarations are globals, and `collect_top_level_decls` already pools
     // them, so `str x` in each is the same name declared twice.
     let mut seen: HashMap<String, Span> = HashMap::new();
-    scan_scope_redecl(&program.statements, &mut seen, diags);
+    let mut bound: HashMap<String, Span> = HashMap::new();
+    scan_scope_redecl(&program.statements, &mut seen, &mut bound, diags);
     if let Some(ref end) = program.end_block {
-        scan_scope_redecl(end, &mut seen, diags);
+        scan_scope_redecl(end, &mut seen, &mut bound, diags);
     }
+}
+
+/// DD#86 (SB5082): record a name introduced WITHOUT a declaration — a bare
+/// assignment, an arithmetic assignment, or a `for` header. Only the first
+/// introduction counts, and a name already declared is not an introduction.
+fn note_binding(
+    name: &str,
+    span: Span,
+    seen: &HashMap<String, Span>,
+    bound: &mut HashMap<String, Span>,
+) {
+    if seen.contains_key(name) || bound.contains_key(name) {
+        return;
+    }
+    bound.insert(name.to_string(), span);
 }
 
 /// Walk one scope. Control-flow bodies are part of the enclosing scope (sash
@@ -348,30 +364,47 @@ fn check_redeclaration(program: &Program, diags: &mut Vec<Diagnostic>) {
 fn scan_scope_redecl(
     stmts: &[Statement],
     seen: &mut HashMap<String, Span>,
+    bound: &mut HashMap<String, Span>,
     diags: &mut Vec<Diagnostic>,
 ) {
     for stmt in stmts {
-        scan_stmt_redecl(stmt, seen, diags);
+        scan_stmt_redecl(stmt, seen, bound, diags);
     }
 }
 
 fn scan_stmt_redecl(
     stmt: &Statement,
     seen: &mut HashMap<String, Span>,
+    bound: &mut HashMap<String, Span>,
     diags: &mut Vec<Diagnostic>,
 ) {
     // A function body is a new scope, so it starts from an empty map and its
     // names never reach the caller's.
     if let StmtKind::Function(f) = &stmt.kind {
         let mut inner = HashMap::new();
-        scan_scope_redecl(&f.body, &mut inner, diags);
+        let mut inner_bound = HashMap::new();
+        scan_scope_redecl(&f.body, &mut inner, &mut inner_bound, diags);
         return;
     }
-    if let StmtKind::Declaration(d) = &stmt.kind {
-        flag_redecl(d, stmt.span, seen, diags);
+    match &stmt.kind {
+        StmtKind::Declaration(d) => flag_redecl(d, stmt.span, seen, bound, diags),
+        // The three ways a name is introduced without a declaration. All bind
+        // like an assignment, so all fix the name's type (DD#86).
+        StmtKind::Assignment(a) if a.index.is_none() => {
+            note_binding(&a.name, stmt.span, seen, bound)
+        }
+        StmtKind::For(f) => note_binding(&f.variable, stmt.span, seen, bound),
+        StmtKind::ArithTest(e) => {
+            let mut names = Vec::new();
+            crate::ir::walk_arith_var_writes(e, &mut |n: &str| names.push(n.to_string()));
+            for n in names {
+                note_binding(&n, stmt.span, seen, bound);
+            }
+        }
+        _ => {}
     }
     for body in stmt.child_bodies() {
-        scan_scope_redecl(body, seen, diags);
+        scan_scope_redecl(body, seen, bound, diags);
     }
 }
 
@@ -379,16 +412,37 @@ fn flag_redecl(
     d: &Declaration,
     span: Span,
     seen: &mut HashMap<String, Span>,
+    bound: &mut HashMap<String, Span>,
     diags: &mut Vec<Diagnostic>,
 ) {
     for a in &d.assignments {
-        match seen.get(&a.name) {
-            Some(prev) => diags.push(redecl_diag(span, &a.name, prev.line)),
-            None => {
-                seen.insert(a.name.clone(), span);
-            }
+        if let Some(prev) = seen.get(&a.name) {
+            diags.push(redecl_diag(span, &a.name, prev.line));
+            continue;
         }
+        if let Some(prev) = bound.get(&a.name) {
+            diags.push(late_decl_diag(span, &a.name, prev.line));
+            continue;
+        }
+        seen.insert(a.name.clone(), span);
     }
+}
+
+/// SB5082 (DD#86): a typed declaration of a name that an earlier binding
+/// already introduced. Declarations are collected program-wide, so the
+/// declaration used to reach BACKWARDS and retype every earlier read —
+/// `x=hello; echo "$x"; int x=7` printed `0`, a value the program never wrote.
+fn late_decl_diag(span: Span, name: &str, prev_line: usize) -> Diagnostic {
+    Diagnostic::error_span(
+        span,
+        "SB5082",
+        format!(
+            "`{name}` was already introduced by an earlier binding (line \
+             {prev_line}) — a variable does not change type (DD#86), and this \
+             declaration would retype every read above it. Declare `{name}` \
+             before its first use, or rename this one"
+        ),
+    )
 }
 
 fn redecl_diag(span: Span, name: &str, prev_line: usize) -> Diagnostic {

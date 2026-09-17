@@ -274,5 +274,76 @@ C is the sharpest: `int z=1; int z=7` is SB5049, but interposing a loop as the
 first introduction makes it legal. A is the one with a live hazard — a
 declared, typed variable is silently retyped and overwritten by a loop.
 
-**Open, pending DG.** The scope of the rule is a language-surface change and
-is not settled by anything written down; see `notes/tasks/`.
+**Resolved by DG (2026-09-17), and the resolution is a single principle:**
+
+> *"I don't think a variable should ever change type."*
+
+Plus the mechanism that makes it liveable:
+
+> *"the following should also create an int by assignment: `((x=7))`"*
+
+### What that settles
+
+A name's type is fixed at its **first introduction**, whether that is a
+declaration or a binding. The three ways to bind without declaring — a bare
+assignment, an arithmetic assignment, and a `for` header — all fix the type,
+and all are now treated alike.
+
+| form | introduces | why |
+|------|-----------|-----|
+| `x=5` | **string** holding `"5"` | a word is a word; `$(( x + 1 ))` on it is SB4030 |
+| `(( x = 7 ))` | **int** | the arithmetic context means a number |
+| `for x in a b` | **string** | a word list binds words |
+| `for (( i = 0; … ))` | **int** | the arithmetic header means a number |
+
+Two rules follow, and both were unenforced:
+
+**SB4030 on a `for` binding.** A `for` header binds its variable exactly as an
+assignment does, so it is type-checked exactly as one. `int x=5` then
+`for x in a b` bound **0** each iteration in silence, while the equivalent
+`x=hello` was already SB4030.
+
+**SB5082, declaration after a binding.** Declarations are collected
+program-wide, so a declaration reached *backwards* and retyped every read
+above it:
+
+```sh
+x=hello
+echo "$x"      # printed 0 — a value the program never wrote
+int x=7
+```
+
+`(( x = 7 )); echo "$x"; str x="a"` was the same bug in the other direction
+(`7` then `0`). A typed declaration of a name an earlier binding already
+introduced is now rejected, pointing at declaring before first use.
+
+### What stays legal
+
+DG: *"if I declare a variable and then use that in the for loop, it should
+work using the existing variable. In the same sense, if another loop uses a
+variable from the prior loop, it should work. this seems consistent with the
+way a variable can be instantiated by assignment without being declared."*
+
+All three hold. Declaring then looping writes the existing variable; two loops
+share one variable; instantiation-by-assignment is untouched. None of them
+changes a type, so none is affected.
+
+### The cost, and why it is not a restriction
+
+Typing a word-list loop variable makes `for x in 10 20 30 { (( sum += x )) }`
+SB4030. Measured: **two** sites in sash relied on it — `cf.f5` and one spec
+written the same afternoon. (Eighteen other hits are in `suites/`, which is
+bash's own test corpus, oils, and shellcheck's source — reference material,
+not sash code.)
+
+Both routes out already existed:
+
+```sh
+for x in 10 20 30 { (( sum += ${x:-0} )) }      # the disposition SB4030 names
+for (( i = 10; i < 40; i += 10 )) { … }         # DG: the form that means this
+```
+
+`cf.f5` was rewritten to the second. The word-list header is for words; the
+arithmetic header is for numbers.
+
+Specs `spec/scope.sh` 86.39–86.58; journal 357.

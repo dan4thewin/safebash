@@ -1,5 +1,5 @@
 ---
-status: open
+status: done
 depends: DD86, DD100
 gates: spec/scope.sh
 ---
@@ -26,7 +26,20 @@ is not loop-scoped and "not a declaration" does not describe it.
 | B | `for y in 1 2 {…}` … `for y in 8 9 {…}` | two introductions of one name; harmless in practice |
 | C | `for z in 1 2 {…}` … `int z=7` | `int z=1; int z=7` is SB5049, but interposing a loop as the first introduction makes it legal |
 
-## Open questions for DG
+## RESOLVED (2026-09-17)
+
+DG: *"I don't think a variable should ever change type"*, plus *"`((x=7))`
+should also create an int by assignment"*. Implemented as SB4030 on a `for`
+binding and **SB5082** on a declaration after a binding; see the DD#86
+addendum for the full model and `spec/scope.sh` 86.39-86.58.
+
+Answers to the questions below, in order: (1) yes — a binding fixes the type,
+so a later declaration is rejected, which covers A and C; (2) B stays legal,
+because untyped loop variables are strings either way and no type changes;
+(3) yes — a word list binds strings, an arithmetic header binds ints; (4)
+measured at two sites, both rewritten.
+
+## Original questions
 
 1. Does `for` count as the declaration of its variable for SB5049 purposes
    (making A and C errors)?

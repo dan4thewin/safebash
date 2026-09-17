@@ -124,8 +124,13 @@ run_sash 'array a=(one two three); for x in @a; do echo $x; done'
 run_sash 'for x in $(argv 1); do attest x [[ $x =~ . ]]; echo "$x"; done' alpha beta gamma
 [[ $rc = 0 && $out = $'alpha\nbeta\ngamma' && -z $err ]]; chk cf.f4
 
-# cf.f5 for body references loop variable in arithmetic
-run_sash 'int sum=0; for x in 10 20 30; do (( sum += x )); done; echo $sum'
+# cf.f5 an accumulating loop is written with the ARITHMETIC header, whose
+#       variable is a genuine int. This used to be `for x in 10 20 30` with
+#       `(( sum += x ))`, which only worked because a word-list loop variable
+#       had no type at all; a word list binds words, so that is now SB4030
+#       (DD#86, spec 86.56). The arithmetic header is the form that means a
+#       counting loop.
+run_sash 'int sum=0; for (( i = 10; i < 40; i += 10 )); do (( sum += i )); done; echo $sum'
 [[ $rc = 0 && $out = "60" && -z $err ]]; chk cf.f5
 
 # cf.f6 nested for loops

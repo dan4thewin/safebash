@@ -7,7 +7,7 @@ set -eu
 . common.sh
 setup scope
 set +e
-plan=53
+plan=73
 echo "1..$plan" >&3
 
 # 86.1 `str s` with no initializer declares a string, meaningful-zero ""
@@ -374,6 +374,193 @@ run_sash 'str c="y"
 if [[ $c == y ]] { str x="a" } else { str x="b" }
 echo "$x"'
 [[ $rc != 0 && -z $out && $err == *SB5049* ]]; chk 86.38
+
+# ── DD#86: a binding fixes a variable's type ──────────────────────────────
+# A `for` header BINDS its variable exactly as an assignment does, and a
+# variable does not change type. Both rules were unenforced: `for` was never
+# type-checked at all, and a declaration was collected program-wide so it
+# reached BACKWARDS and retyped reads above it.
+
+# 86.39 the bug: a loop over string words into an `int` variable was accepted
+#       and silently bound 0 each iteration, while the equivalent bare
+#       assignment `x=hello` was SB4030.
+run_sash 'int x=5
+for x in a b {
+  echo "$x"
+}'
+[[ $rc != 0 && -z $out && $err == *SB4030* ]]; chk 86.39
+
+# 86.40 same through a splat: the items come from a string array.
+run_sash 'int x=5
+array a=(p q)
+for x in @a {
+  echo "$x"
+}'
+[[ $rc != 0 && -z $out && $err == *SB4030* ]]; chk 86.40
+
+# 86.41 and inside a function, where the declaration is a local.
+run_sash 'fn f {
+  int n=5
+  for n in a b {
+    echo "$n"
+  }
+}
+f'
+[[ $rc != 0 && -z $out && $err == *SB4030* ]]; chk 86.41
+
+# 86.42 DG: "if I declare a variable and then use that in the for loop, it
+#       should work using the existing variable." Types agree, so it does —
+#       and the binding survives the loop.
+run_sash 'str t="z"
+for t in a b {
+  echo "$t"
+}
+echo "after=$t"'
+[[ $rc = 0 && $out == "a
+b
+after=b" && -z $err ]]; chk 86.42
+
+# 86.43 an `int` loop variable over numeric literals is a type match.
+run_sash 'int x=5
+for x in 1 2 {
+  echo "$x"
+}'
+[[ $rc = 0 && $out == "1
+2" && -z $err ]]; chk 86.43
+
+# 86.44 the common case — an undeclared loop variable — is introduced by the
+#       header as a string, because a word list binds words.
+run_sash 'for i in a b {
+  echo "$i"
+}'
+[[ $rc = 0 && $out == "a
+b" && -z $err ]]; chk 86.44
+
+# 86.45 a `str` loop variable takes numeric words: storing "1" in a string is
+#       not a type change, exactly as `s=42` on a `str` is not.
+run_sash 'str s="q"
+for s in 1 a {
+  echo "$s"
+}'
+[[ $rc = 0 && $out == "1
+a" && -z $err ]]; chk 86.45
+
+# 86.46 DG: "if another loop uses a variable from the prior loop, it should
+#       work." Untyped loop variables are strings, so differing item shapes
+#       are not a type change.
+run_sash 'for y in 1 2 {
+  echo "$y"
+}
+for y in a b {
+  echo "$y"
+}'
+[[ $rc = 0 && $out == "1
+2
+a
+b" && -z $err ]]; chk 86.46
+
+# 86.47 the retroactive-retype bug (SB5082). This printed `0` then `7`: the
+#       declaration below reached back and retyped the read above it, so the
+#       program reported a value it never wrote.
+run_sash 'x=hello
+echo "$x"
+int x=7
+echo "$x"'
+[[ $rc != 0 && -z $out && $err == *SB5082* ]]; chk 86.47
+
+# 86.48 the same with a numerically-valid value, which is why it hid: this
+#       printed `5` then `7` and looked correct.
+run_sash 'x=5
+echo "$x"
+int x=7
+echo "$x"'
+[[ $rc != 0 && -z $out && $err == *SB5082* ]]; chk 86.48
+
+# 86.49 `(( x = 7 ))` introduces an int by assignment, so a later `str`
+#       declaration is the same retype. This printed `7` then `0`.
+run_sash '(( x = 7 ))
+echo "$x"
+str x="a"
+echo "$x"'
+[[ $rc != 0 && -z $out && $err == *SB5082* ]]; chk 86.49
+
+# 86.50 a `for` header binds, so it introduces the name too.
+run_sash 'for z in 1 2 {
+  echo "$z"
+}
+int z=7
+echo "$z"'
+[[ $rc != 0 && -z $out && $err == *SB5082* ]]; chk 86.50
+
+# 86.51 the legal order is unaffected: declare, then assign.
+run_sash 'int x=5
+x=7
+echo "$x"'
+[[ $rc = 0 && $out = "7" && -z $err ]]; chk 86.51
+
+# 86.52 a name introduced by assignment and never declared stays legal — a
+#       variable may still be instantiated by assignment.
+run_sash 'x=hello
+echo "$x"'
+[[ $rc = 0 && $out = "hello" && -z $err ]]; chk 86.52
+
+# 86.53 `(( x = 7 ))` yields a genuine int, usable in arithmetic. This is the
+#       way to introduce an int without a declaration.
+run_sash '(( x = 7 ))
+echo "$(( x + 1 ))"'
+[[ $rc = 0 && $out = "8" && -z $err ]]; chk 86.53
+
+# 86.54 a bare assignment instantiates a STRING, which is why a later `int`
+#       declaration is a type change: arithmetic on it is SB4030.
+run_sash 'x=5
+echo "$(( x + 1 ))"'
+[[ $rc != 0 && -z $out && $err == *SB4030* ]]; chk 86.54
+
+# 86.55 scope still bounds the rule — an assignment in one function does not
+#       stop another function declaring that name.
+run_sash 'fn f {
+  y=1
+  echo "$y"
+}
+fn g {
+  int y=2
+  echo "$y"
+}
+f
+g'
+[[ $rc = 0 && $out == "1
+2" && -z $err ]]; chk 86.55
+
+# 86.56 a word-list loop variable is a STRING, so using it bare in arithmetic
+#       is SB4030 exactly as `x=10; (( sum += x ))` is. This was accepted
+#       before only because such a variable had no type at all — cf.f5 relied
+#       on it, and was rewritten to the arithmetic header (DG, 2026-09-17).
+run_sash 'int sum=0
+for x in 10 20 30 {
+  (( sum += x ))
+}
+echo "$sum"'
+[[ $rc != 0 && -z $out && $err == *SB4030* ]]; chk 86.56
+
+# 86.57 the escape hatch SB4030 names works here like anywhere else: a
+#       string→int conversion carrying a disposition is legal.
+run_sash 'int sum=0
+for x in 10 20 30 {
+  (( sum += ${x:-0} ))
+}
+echo "$sum"'
+[[ $rc = 0 && $out = "60" && -z $err ]]; chk 86.57
+
+# 86.58 and the arithmetic header binds a genuine int, needing no disposition.
+#       Nothing is lost: the word-list header is for words, this one is for
+#       numbers.
+run_sash 'int sum=0
+for (( i = 10; i < 40; i += 10 )) {
+  (( sum += i ))
+}
+echo "$sum"'
+[[ $rc = 0 && $out = "60" && -z $err ]]; chk 86.58
+
 
 set -e
 tally

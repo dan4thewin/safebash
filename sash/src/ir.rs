@@ -749,6 +749,51 @@ fn attest_arith_convert<'a>(a: &'a ArithExpr, attested: &str) -> Option<(&'a str
 }
 
 /// True if `a` reads `name` (`name` or `$name`) anywhere.
+/// The variables an arithmetic expression **writes**: `x=…`, `x op= …`, `x++`,
+/// `++x`. The companion to [`walk_arith_var_reads`], which collects reads.
+///
+/// Subscript writes (`a[i]=…`) are excluded on purpose — they write an element
+/// of a collection that must already exist, so they introduce no new name.
+pub fn walk_arith_var_writes(e: &ArithExpr, f: &mut impl FnMut(&str)) {
+    match e {
+        ArithExpr::Assign { var, value } | ArithExpr::CompoundAssign { var, value, .. } => {
+            f(var);
+            walk_arith_var_writes(value, f);
+        }
+        ArithExpr::PostIncDec { var, .. } | ArithExpr::PreIncDec { var, .. } => f(var),
+        ArithExpr::BinOp { left, right, .. } => {
+            walk_arith_var_writes(left, f);
+            walk_arith_var_writes(right, f);
+        }
+        ArithExpr::UnaryOp { operand, .. } | ArithExpr::Paren(operand) => {
+            walk_arith_var_writes(operand, f)
+        }
+        ArithExpr::Ternary {
+            cond,
+            true_val,
+            false_val,
+        } => {
+            walk_arith_var_writes(cond, f);
+            walk_arith_var_writes(true_val, f);
+            walk_arith_var_writes(false_val, f);
+        }
+        ArithExpr::Comma(parts) | ArithExpr::FuncCall { args: parts, .. } => {
+            for p in parts {
+                walk_arith_var_writes(p, f);
+            }
+        }
+        ArithExpr::SubscriptAssign { index, value, .. } => {
+            walk_arith_var_writes(index, f);
+            walk_arith_var_writes(value, f);
+        }
+        ArithExpr::Subscript { index, .. } => walk_arith_var_writes(index, f),
+        ArithExpr::Literal(_)
+        | ArithExpr::Var(_)
+        | ArithExpr::DollarVar(_)
+        | ArithExpr::Expansion(_) => {}
+    }
+}
+
 pub fn arith_references_var(a: &ArithExpr, name: &str) -> bool {
     let mut found = false;
     walk_arith_var_reads(a, &mut |n| {
