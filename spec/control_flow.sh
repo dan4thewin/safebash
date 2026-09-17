@@ -5,7 +5,7 @@
 set -eu
 . common.sh
 setup control_flow
-plan=48
+plan=66
 echo "1..$plan" >&3
 
 set +e
@@ -245,6 +245,98 @@ done'
 [[ $rc = 0 && $out = "even 0
 even 2
 even 4" && -z $err ]]; chk cf.u3
+
+# --- nested @-splat loops (DD#100/DD#69) ----------------------------
+# Every array-for loop used to share ONE synthesized index variable, so an
+# inner splat loop destroyed the outer loop's index and the outer loop ran
+# exactly once. Each loop now gets its own index, keyed on its header block.
+
+# cf.n1 two different arrays: the outer loop must run to completion
+run_sash 'array b=(1 2 3); array c=(p q); for x in @b; do for y in @c; do echo "$x$y"; done; done'
+[[ $rc = 0 && $out = $'1p\n1q\n2p\n2q\n3p\n3q' && -z $err ]]; chk cf.n1
+
+# cf.n2 the same array nested inside itself
+run_sash 'array b=(1 2 3); for x in @b; do for y in @b; do echo "$x$y"; done; done'
+[[ $rc = 0 && $out = $'11\n12\n13\n21\n22\n23\n31\n32\n33' && -z $err ]]; chk cf.n2
+
+# cf.n3 three deep
+run_sash 'array b=(1 2); array c=(p q); array e=(X Y); for x in @b; do for y in @c; do for z in @e; do echo "$x$y$z"; done; done; done'
+[[ $rc = 0 && $out = $'1pX\n1pY\n1qX\n1qY\n2pX\n2pY\n2qX\n2qY' && -z $err ]]; chk cf.n3
+
+# cf.n4 nested map splat
+run_sash 'map m=([k]=1 [j]=2); map n=([p]=x [q]=y); for a in @m; do for b in @n; do echo "$a$b"; done; done'
+[[ $rc = 0 && $out = $'1x\n1y\n2x\n2y' && -z $err ]]; chk cf.n4
+
+# cf.n5 nested argv splat (a separate lowering, same shared-index defect)
+run_sash 'fn f { for x in @args; do for y in @args; do echo "$x$y"; done; done; }; f a b'
+[[ $rc = 0 && $out = $'aa\nab\nba\nbb' && -z $err ]]; chk cf.n5
+
+# cf.n6 a counter and both loop variables survive the nest
+run_sash 'array b=(1 2 3); array c=(p q); int n=0; for x in @b; do for y in @c; do (( n += 1 )); done; done; echo "$n $x $y"'
+[[ $rc = 0 && $out = "6 3 q" && -z $err ]]; chk cf.n6
+
+# cf.n7 outer splat, inner literal list (the literal form was always correct)
+run_sash 'array b=(1 2); for x in @b; do for y in a b; do echo "$x$y"; done; done'
+[[ $rc = 0 && $out = $'1a\n1b\n2a\n2b' && -z $err ]]; chk cf.n7
+
+# --- break / continue inside @-splat loops --------------------------
+# lower_for_array/lower_for_argv_slice never pushed state.loop_stack, so
+# handle_break_stmt's `depth > 0` guard silently dropped both. The index
+# increment now lives in a latch block that `continue` targets.
+
+# cf.n8 break leaves an array-splat loop
+run_sash 'array b=(1 2 3); for x in @b; do echo "$x"; break; done'
+[[ $rc = 0 && $out = "1" && -z $err ]]; chk cf.n8
+
+# cf.n9 continue skips the rest of the body without hanging
+run_sash 'array b=(1 2 3); for x in @b; do if [[ $x == 2 ]]; then continue; fi; echo "$x"; done'
+[[ $rc = 0 && $out = $'1\n3' && -z $err ]]; chk cf.n9
+
+# cf.n10 break in the inner loop leaves only the inner loop
+run_sash 'array b=(1 2 3); array c=(p q); for x in @b; do for y in @c; do echo "$x$y"; break; done; done'
+[[ $rc = 0 && $out = $'1p\n2p\n3p' && -z $err ]]; chk cf.n10
+
+# cf.n11 break 2 leaves both loops
+run_sash 'array b=(1 2 3); array c=(p q); for x in @b; do for y in @c; do echo "$x$y"; break 2; done; done'
+[[ $rc = 0 && $out = "1p" && -z $err ]]; chk cf.n11
+
+# cf.n12 break in an argv splat loop
+run_sash 'fn f { for x in @args; do echo "$x"; break; done; }; f a b c'
+[[ $rc = 0 && $out = "a" && -z $err ]]; chk cf.n12
+
+# cf.n13 a value assigned before the break escapes the loop
+run_sash 'array b=(1 2 3); int n=0; for x in @b; do (( n += 1 )); if [[ $x == 2 ]]; then break; fi; done; echo "$n"'
+[[ $rc = 0 && $out = "2" && -z $err ]]; chk cf.n13
+
+# --- SB5080: reserved names as a for variable (DD#100 Part B) -------
+# DD#86 exempts a for variable from the shadowing gate ("a for variable is
+# not a declaration"), and SB5052 only gates *writes*, so a loop variable
+# could take a reserved name. Inside a function that gave one name two live
+# meanings: $A read the loop variable, len A / ${A[0]} read the slot.
+
+# cf.n14 a collection-slot letter cannot be a for variable
+run_sash 'fn f { for A in @B; do echo "$A"; done; }; array a=(p q); array b=(x y); f =a =b'
+[[ $rc != 0 && -z $out && $err == *SB5080* ]]; chk cf.n14
+
+# cf.n15 nor can the immutable args array
+run_sash 'fn f { for args in @A; do echo "$args"; done; }; array a=(1 2); f =a'
+[[ $rc != 0 && -z $out && $err == *SB5080* ]]; chk cf.n15
+
+# cf.n16 a lowercase name that merely looks like a slot is fine
+run_sash 'array b=(1 2); for e in @b; do echo "$e"; done'
+[[ $rc = 0 && $out = $'1\n2' && -z $err ]]; chk cf.n16
+
+# --- SB5081: break/continue with no enclosing loop ------------------
+# An empty loop_stack made both a silent no-op that compiled and did nothing.
+
+# cf.n17 break at top level
+run_sash 'echo hi; break'
+[[ $rc != 0 && -z $out && $err == *SB5081* ]]; chk cf.n17
+
+# cf.n18 a function body starts a fresh loop context
+run_sash 'fn f { break; }; f'
+[[ $rc != 0 && -z $out && $err == *SB5081* ]]; chk cf.n18
+
 
 set -e
 tally

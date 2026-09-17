@@ -360,6 +360,8 @@ fn run_semantic_checks(input: &str, program: &crate::ir::Program, flags: &[&str]
     tdiags.extend(validate::check_disposition_defaults(program));
     tdiags.extend(validate::check_elide_positions(program));
     tdiags.extend(validate::check_args_immutable(program));
+    tdiags.extend(validate::check_reserved_loop_var(program));
+    tdiags.extend(validate::check_loop_control_context(program));
     tdiags.extend(validate::check_discard_reads(program));
     tdiags.extend(validate::check_readline_arity(program));
     tdiags.extend(validate::check_match_arity(program));

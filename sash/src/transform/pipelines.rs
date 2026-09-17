@@ -52,10 +52,12 @@ pub(super) fn lower_for_array(
 ) -> BlockId {
     let header = ssa.new_block("for_arr.header");
     let body_block = ssa.new_block("for_arr.body");
+    let latch = ssa.new_block("for_arr.latch");
     let exit_block = ssa.new_block("for_arr.exit");
+    let idx_name = format!("__ai{}", header);
 
     // __ai = 0
-    let idx_var = state.define("__ai");
+    let idx_var = state.define(&idx_name);
     ssa.block_mut(block).insts.push(SsaInst::Assign {
         target: idx_var,
         value: SsaValue::Literal("0".to_string()),
@@ -68,7 +70,7 @@ pub(super) fn lower_for_array(
     // emit_for_bound) — synthesized loop bounds are arithmetic, not [[ ]]
     // tests. Built once, re-emitted per pass.
     let bound_left = Expr {
-        kind: ExprKind::SimpleExpansion("__ai".to_string()),
+        kind: ExprKind::SimpleExpansion(idx_name.clone()),
         span: Span::default(),
     };
     let bound_right = Expr::param(array_name, Some("arrlen"), None, Span::default());
@@ -80,19 +82,22 @@ pub(super) fn lower_for_array(
     };
 
     // x = table_value(arr, __ai)
-    let idx_ref = state.lookup("__ai");
+    let idx_ref = state.lookup(&idx_name);
     let loop_var = state.define(&f.variable);
     ssa.block_mut(body_block).insts.push(SsaInst::Assign {
         target: loop_var,
         value: loop_binding_value(use_keys, array_name, &idx_ref),
     });
 
+    state.loop_stack.push((latch, exit_block));
     let body_exit_1 = lower_stmts(&f.body, ssa, state, body_block);
+    state.loop_stack.pop();
+    ssa.block_mut(body_exit_1).terminator = Terminator::Goto(latch);
 
     // __ai = __ai + 1
-    let idx_cur = state.lookup("__ai");
-    let idx_next = state.define("__ai");
-    ssa.block_mut(body_exit_1).insts.push(SsaInst::Assign {
+    let idx_cur = state.lookup(&idx_name);
+    let idx_next = state.define(&idx_name);
+    ssa.block_mut(latch).insts.push(SsaInst::Assign {
         target: idx_next,
         value: SsaValue::ArithExpr {
             var: idx_cur,
@@ -100,21 +105,15 @@ pub(super) fn lower_for_array(
             operand: 1,
         },
     });
+    ssa.block_mut(latch).terminator = Terminator::Goto(header);
     let body_state_1 = state.snapshot();
 
-    insert_phis_two_branch(
-        state,
-        ssa,
-        header,
-        block,
-        &pre_state,
-        body_exit_1,
-        &body_state_1,
-    );
+    insert_phis_two_branch(state, ssa, header, block, &pre_state, latch, &body_state_1);
 
     // --- Pass 2 ---
     ssa.block_mut(header).insts.clear();
     ssa.block_mut(body_block).insts.clear();
+    ssa.block_mut(latch).insts.clear();
 
     emit_for_bound(ssa, state, header, &bound_left, &bound_right);
     ssa.block_mut(header).terminator = Terminator::Loop {
@@ -123,18 +122,21 @@ pub(super) fn lower_for_array(
         exit_block,
     };
 
-    let idx_ref_2 = state.lookup("__ai");
+    let idx_ref_2 = state.lookup(&idx_name);
     let loop_var_2 = state.define(&f.variable);
     ssa.block_mut(body_block).insts.push(SsaInst::Assign {
         target: loop_var_2,
         value: loop_binding_value(use_keys, array_name, &idx_ref_2),
     });
 
+    state.loop_stack.push((latch, exit_block));
     let body_exit_2 = lower_stmts(&f.body, ssa, state, body_block);
+    state.loop_stack.pop();
+    ssa.block_mut(body_exit_2).terminator = Terminator::Goto(latch);
 
-    let idx_cur_2 = state.lookup("__ai");
-    let idx_next_2 = state.define("__ai");
-    ssa.block_mut(body_exit_2).insts.push(SsaInst::Assign {
+    let idx_cur_2 = state.lookup(&idx_name);
+    let idx_next_2 = state.define(&idx_name);
+    ssa.block_mut(latch).insts.push(SsaInst::Assign {
         target: idx_next_2,
         value: SsaValue::ArithExpr {
             var: idx_cur_2,
@@ -143,7 +145,7 @@ pub(super) fn lower_for_array(
         },
     });
 
-    ssa.block_mut(body_exit_2).terminator = Terminator::Goto(header);
+    ssa.block_mut(latch).terminator = Terminator::Goto(header);
 
     let body_state_2 = state.snapshot();
     for phi in ssa.block_mut(header).phis.iter_mut() {
@@ -170,10 +172,13 @@ pub(super) fn lower_for_argv_slice(
 ) -> BlockId {
     let header = ssa.new_block("for_at.header");
     let body_block = ssa.new_block("for_at.body");
+    let latch = ssa.new_block("for_at.latch");
     let exit_block = ssa.new_block("for_at.exit");
+    let idx_name = format!("__fi{}", header);
+    let argc_name = format!("__argc{}", header);
 
     // Initialize index: __fi = start
-    let idx_var = state.define("__fi");
+    let idx_var = state.define(&idx_name);
     ssa.block_mut(block).insts.push(SsaInst::Assign {
         target: idx_var,
         value: SsaValue::Literal(start.to_string()),
@@ -182,7 +187,7 @@ pub(super) fn lower_for_argv_slice(
     // Capture the loop bound once: __argc = $(argc) (C argc, loop-invariant).
     // Materialising it into a variable keeps the loop condition a simple
     // var-vs-var numeric test that the codegen test handler evaluates.
-    let argc_var = state.define("__argc");
+    let argc_var = state.define(&argc_name);
     ssa.block_mut(block).insts.push(SsaInst::Assign {
         target: argc_var,
         value: SsaValue::CmdSubst {
@@ -200,11 +205,11 @@ pub(super) fn lower_for_argv_slice(
     // Condition: __fi < __argc (C argc — includes the program name), on the
     // (( )) arith path (see emit_for_bound).
     let bound_left = Expr {
-        kind: ExprKind::SimpleExpansion("__fi".to_string()),
+        kind: ExprKind::SimpleExpansion(idx_name.clone()),
         span: Span::default(),
     };
     let bound_right = Expr {
-        kind: ExprKind::SimpleExpansion("__argc".to_string()),
+        kind: ExprKind::SimpleExpansion(argc_name.clone()),
         span: Span::default(),
     };
     emit_for_bound(ssa, state, header, &bound_left, &bound_right);
@@ -215,7 +220,7 @@ pub(super) fn lower_for_argv_slice(
     };
 
     // Assign loop variable: x = argv[__fi]
-    let idx_ref = state.lookup("__fi");
+    let idx_ref = state.lookup(&idx_name);
     let loop_var = state.define(&f.variable);
     ssa.block_mut(body_block).insts.push(SsaInst::Assign {
         target: loop_var,
@@ -223,12 +228,15 @@ pub(super) fn lower_for_argv_slice(
     });
 
     // Lower body
+    state.loop_stack.push((latch, exit_block));
     let body_exit_1 = lower_stmts(&f.body, ssa, state, body_block);
+    state.loop_stack.pop();
+    ssa.block_mut(body_exit_1).terminator = Terminator::Goto(latch);
 
     // Increment index: __fi = __fi + 1
-    let idx_cur = state.lookup("__fi");
-    let idx_next = state.define("__fi");
-    ssa.block_mut(body_exit_1).insts.push(SsaInst::Assign {
+    let idx_cur = state.lookup(&idx_name);
+    let idx_next = state.define(&idx_name);
+    ssa.block_mut(latch).insts.push(SsaInst::Assign {
         target: idx_next,
         value: SsaValue::ArithExpr {
             var: idx_cur,
@@ -236,22 +244,16 @@ pub(super) fn lower_for_argv_slice(
             operand: 1,
         },
     });
+    ssa.block_mut(latch).terminator = Terminator::Goto(header);
     let body_state_1 = state.snapshot();
 
     // Insert phis at header
-    insert_phis_two_branch(
-        state,
-        ssa,
-        header,
-        block,
-        &pre_state,
-        body_exit_1,
-        &body_state_1,
-    );
+    insert_phis_two_branch(state, ssa, header, block, &pre_state, latch, &body_state_1);
 
     // --- Pass 2: re-lower with phi-merged versions ---
     ssa.block_mut(header).insts.clear();
     ssa.block_mut(body_block).insts.clear();
+    ssa.block_mut(latch).insts.clear();
 
     // Re-emit condition
     emit_for_bound(ssa, state, header, &bound_left, &bound_right);
@@ -262,7 +264,7 @@ pub(super) fn lower_for_argv_slice(
     };
 
     // Re-assign loop variable from argv
-    let idx_ref_2 = state.lookup("__fi");
+    let idx_ref_2 = state.lookup(&idx_name);
     let loop_var_2 = state.define(&f.variable);
     ssa.block_mut(body_block).insts.push(SsaInst::Assign {
         target: loop_var_2,
@@ -270,12 +272,15 @@ pub(super) fn lower_for_argv_slice(
     });
 
     // Re-lower body
+    state.loop_stack.push((latch, exit_block));
     let body_exit_2 = lower_stmts(&f.body, ssa, state, body_block);
+    state.loop_stack.pop();
+    ssa.block_mut(body_exit_2).terminator = Terminator::Goto(latch);
 
     // Re-increment
-    let idx_cur_2 = state.lookup("__fi");
-    let idx_next_2 = state.define("__fi");
-    ssa.block_mut(body_exit_2).insts.push(SsaInst::Assign {
+    let idx_cur_2 = state.lookup(&idx_name);
+    let idx_next_2 = state.define(&idx_name);
+    ssa.block_mut(latch).insts.push(SsaInst::Assign {
         target: idx_next_2,
         value: SsaValue::ArithExpr {
             var: idx_cur_2,
@@ -284,7 +289,7 @@ pub(super) fn lower_for_argv_slice(
         },
     });
 
-    ssa.block_mut(body_exit_2).terminator = Terminator::Goto(header);
+    ssa.block_mut(latch).terminator = Terminator::Goto(header);
 
     // Update phi sources
     let body_state_2 = state.snapshot();

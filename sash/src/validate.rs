@@ -8168,3 +8168,112 @@ fn match_arity_diag(name: &str, n: usize, span: Span) -> Option<Diagnostic> {
     };
     Some(Diagnostic::error_span(span, "SB4045", complaint))
 }
+
+/// SB5080 (DD#100 Part B): the collection-slot names `A`–`E` and the
+/// function-argument array `args` are **reserved**, "rejected as user
+/// variables at top level and inside functions". A `for` variable introduces a
+/// user variable, but it is not a *declaration*, so neither the DD#86
+/// shadowing gate (which DD#86 explicitly exempts for-variables from) nor the
+/// SB5052 write gate saw it. Without this, `for A in @B { … }` inside a
+/// function gives one name two simultaneous meanings: `$A` reads the loop
+/// variable while `len A` / `join A` / `${A[0]}` read the slot.
+pub fn check_reserved_loop_var(program: &Program) -> Vec<Diagnostic> {
+    let mut diags = Vec::new();
+    for stmt in program
+        .statements
+        .iter()
+        .chain(program.end_block.iter().flatten())
+    {
+        check_reserved_loop_var_stmt(stmt, &mut diags);
+    }
+    diags
+}
+
+fn check_reserved_loop_var_stmt(stmt: &Statement, diags: &mut Vec<Diagnostic>) {
+    if let StmtKind::For(f) = &stmt.kind {
+        diags.extend(reserved_loop_var_diag(&f.variable, stmt.span));
+    }
+    for body in stmt.child_bodies() {
+        for s in body {
+            check_reserved_loop_var_stmt(s, diags);
+        }
+    }
+}
+
+/// The SB5080 diagnostic for a `for` variable that takes a reserved name, or
+/// `None` when the name is the user's to use.
+fn reserved_loop_var_diag(name: &str, span: Span) -> Option<Diagnostic> {
+    let msg = if is_collection_slot(name) {
+        format!(
+            "`{name}` is a reserved collection-slot name (DD#100) and cannot be a \
+             `for` variable — inside a function `${name}` would read the loop \
+             variable while `len {name}` read the slot. Rename the loop variable"
+        )
+    } else if name == "args" {
+        "`args` is the reserved function-argument array (DD#92) and cannot be a \
+         `for` variable — it is immutable. Rename the loop variable"
+            .to_string()
+    } else {
+        return None;
+    };
+    Some(Diagnostic::error_span(span, "SB5080", msg))
+}
+
+/// SB5081: `break`/`continue` outside any enclosing loop. The transform lowers
+/// both through `state.loop_stack`, and an empty stack makes them a **silent
+/// no-op** — the statement compiles and does nothing. bash warns; sash rejects.
+/// A function body starts a fresh context: a `break` lexically inside a
+/// function is not inside a loop even when the call site is.
+pub fn check_loop_control_context(program: &Program) -> Vec<Diagnostic> {
+    let mut diags = Vec::new();
+    for stmt in program
+        .statements
+        .iter()
+        .chain(program.end_block.iter().flatten())
+    {
+        check_loop_control_stmt(stmt, false, &mut diags);
+    }
+    diags
+}
+
+fn check_loop_control_stmt(stmt: &Statement, in_loop: bool, diags: &mut Vec<Diagnostic>) {
+    match &stmt.kind {
+        StmtKind::Command(c) => {
+            diags.extend(loop_control_diag(c, stmt.span, in_loop));
+            descend_loop_control(stmt, in_loop, diags);
+        }
+        // A loop body is a loop context; a function body resets it.
+        StmtKind::For(_) | StmtKind::While(_) => descend_loop_control(stmt, true, diags),
+        StmtKind::Function(f) => {
+            for s in &f.body {
+                check_loop_control_stmt(s, false, diags);
+            }
+        }
+        _ => descend_loop_control(stmt, in_loop, diags),
+    }
+}
+
+/// Recurse into every child body, carrying the loop context unchanged.
+fn descend_loop_control(stmt: &Statement, in_loop: bool, diags: &mut Vec<Diagnostic>) {
+    for body in stmt.child_bodies() {
+        for s in body {
+            check_loop_control_stmt(s, in_loop, diags);
+        }
+    }
+}
+
+/// The SB5081 diagnostic for a `break`/`continue` with no enclosing loop.
+fn loop_control_diag(c: &Command, span: Span, in_loop: bool) -> Option<Diagnostic> {
+    let name = expr_literal_str(&c.name);
+    if in_loop || (name != "break" && name != "continue") {
+        return None;
+    }
+    Some(Diagnostic::error_span(
+        span,
+        "SB5081",
+        format!(
+            "`{name}` is not inside a loop — it would compile to a silent \
+             no-op. Remove it, or move it into a `for`/`while` body"
+        ),
+    ))
+}

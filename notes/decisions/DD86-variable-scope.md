@@ -204,3 +204,29 @@ so it no longer depends on a bug to happen.
 is entered once per call, not re-executed in place.
 
 Specs `spec/scope.sh` 86.25–86.30.
+
+## Addendum (2026-09-17) — the `for`-variable exemption is deliberate, and it holds
+
+The model section's "A `for` variable is not a declaration and is untouched"
+was tested directly this week and **kept**. Asked to consider extending the
+no-shadowing rule to loop variables generally, an audit of every construct
+that introduces a name without a declaration found that the exemption is
+correct:
+
+| pattern                                   | verdict |
+|-------------------------------------------|---------|
+| loop var reuses a top-level global's name | legal — one variable, overwritten; bash-identical |
+| loop var reuses a function-local's name   | legal — same |
+| inner loop var reuses outer loop var name | legal — same |
+| two sequential loops reuse a name         | legal — same |
+| loop var = reserved slot letter / `args`  | **SB5080** (DD#100 addendum) |
+
+The first four are one name with **one meaning** — the thing DD#86 asks for.
+Rejecting them would reject working, bash-identical programs. Only a
+collision with the *reserved* namespace creates a second simultaneous meaning,
+and that is a DD#100 reservation, not a DD#86 shadowing question.
+
+Unrelated to scope but found in the same pass: `break`/`continue` with no
+enclosing loop compiled to a **silent no-op** (the transform's `loop_stack`
+was empty and `handle_break_stmt` discarded the statement). Now **SB5081**,
+with a function body starting a fresh loop context.

@@ -306,3 +306,28 @@ so the behaviour cannot drift silently in the meantime.
 - A function defined *inside top-level control flow* keeps the old
   definition-point taint walk (`notes/tasks/taint-fn-in-toplevel-control-
   flow.md`).
+
+## Addendum (2026-09-17) — Part B's reservation is now enforced for `for` variables
+
+Part B states that `A`–`E` are "reserved names, on the `args` precedent:
+rejected as user variables at top level and inside functions". That was prose
+only: nothing rejected a **`for` variable** taking a slot name, because a loop
+variable falls between the two gates that would otherwise catch it — DD#86
+explicitly exempts a for variable from the shadowing rule ("a `for` variable
+is not a declaration and is untouched"), and SB5052 gates *writes*
+(assignments, declarations, bulk fills), which a loop variable is not.
+
+Inside a function that gave one name two simultaneous meanings: `$A` read the
+loop variable while `len A`, `join A`, and `${A[0]}` read the slot.
+
+```sh
+fn f { for A in @B { echo "$A -> $(len A)" } }   # was: xx -> 3
+```
+
+**SB5080** now rejects a `for` variable named with a slot letter (`A`–`E`) or
+`args`. At top level the collision was already SB5065. Lowercase names that
+merely resemble a slot (`for e in …`) remain legal — the slot namespace is
+single uppercase letters only.
+
+Specs `spec/control_flow.sh` cf.n14–cf.n16;
+`notes/tasks/bug-reserved-name-as-loop-var.md`.
