@@ -2285,6 +2285,9 @@ fn parse_trailing_pipeline(
     // DD#55 / SB4023: `pipeline && C` / `pipeline || C` is rejected — see
     // reject_pipeline_and_or_postfix.
     reject_pipeline_and_or_postfix(&commands, span)?;
+    if commands.len() > 1 {
+        reject_statement_form_pipeline_stage(&commands)?;
+    }
     Ok(if commands.len() > 1 {
         Statement {
             kind: StmtKind::Pipeline(Pipeline {
@@ -2342,6 +2345,65 @@ fn reject_pipeline_and_or_postfix(commands: &[Statement], span: Span) -> Result<
             "SB4023",
             "`&&` / `||` on a pipeline isn't allowed — use `if pipeline; then …; fi`".to_string(),
         ));
+    }
+    Ok(())
+}
+
+/// Peel the wrappers a pipeline stage may carry (`- stmt`, `! stmt`,
+/// `stmt > f`) to reach the statement that actually runs, so `- [[ … ]] | cat`
+/// cannot smuggle a test past `reject_statement_form_pipeline_stage`.
+fn unwrap_stage_wrappers(stmt: &Statement) -> &Statement {
+    let mut cur = stmt;
+    loop {
+        match &cur.kind {
+            StmtKind::Suppressed(inner) | StmtKind::Negated(inner) => cur = inner,
+            StmtKind::Redirected(r) => cur = &r.body,
+            _ => return cur,
+        }
+    }
+}
+
+/// Name the statement form a stage is, or `None` if it is an ordinary command.
+/// `[[ … ]]` and `attest` parse to a `Command` whose *name* is the literal
+/// `"[["` / `"attest"`, which is exactly why the pipeline path mistook them
+/// for externals.
+fn statement_form_label(stmt: &Statement) -> Option<&'static str> {
+    match &stmt.kind {
+        StmtKind::Command(c) => match &c.name.kind {
+            ExprKind::Literal(n) if n == "[[" => Some("`[[ … ]]`"),
+            ExprKind::Literal(n) if n == "attest" => Some("`attest`"),
+            _ => None,
+        },
+        StmtKind::Assignment(_) | StmtKind::ArithTest(_) => Some("`(( … ))`"),
+        _ => None,
+    }
+}
+
+/// SB4022: `[[ … ]]`, `attest …` and `(( … ))` are statement forms, not
+/// commands, so they may not be pipeline stages. A stage runs in a forked
+/// child: a test's status is discarded and an arithmetic assignment is lost,
+/// which made `(( n = 2 )) | cat` silently do nothing. Worse, `[[` and
+/// `attest` reached codegen as an ordinary command *named* `[[` — the runtime
+/// aborted with its own "bare command passed to sash_exec" assertion, i.e. a
+/// clean compile that could only fail at run time.
+///
+/// Compound commands (`if`, `for`, `match`) are already rejected here by
+/// `compound_postfix_rejection`; these three were the statement forms it did
+/// not classify as compound. `&&`/`||` on a test stays legal — only the pipe
+/// discards the result.
+fn reject_statement_form_pipeline_stage(commands: &[Statement]) -> Result<(), Diagnostic> {
+    for stmt in commands {
+        let stage = unwrap_stage_wrappers(stmt);
+        if let Some(what) = statement_form_label(stage) {
+            return Err(parse_error(
+                stage.span,
+                "SB4022",
+                format!(
+                    "{what} isn't allowed as a pipeline stage — a stage runs in a forked \
+                     child, so its result is discarded; wrap it in a function"
+                ),
+            ));
+        }
     }
     Ok(())
 }

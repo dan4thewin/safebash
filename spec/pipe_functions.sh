@@ -11,7 +11,7 @@
 set -eu
 . common.sh
 setup pipe_functions
-plan=15
+plan=23
 echo "1..$plan" >&3
 
 set +e
@@ -112,6 +112,56 @@ a | b'
 run_sash 'fn mid { /bin/cat }
 /bin/echo m | mid | /bin/cat'
 [[ $rc = 0 && $out = "m" && -z $rerr ]]; chk pf.15
+
+# --- statement forms are not pipeline stages (SB4022) -----------------------
+# A stage runs in a forked child, so a test's status is discarded and an
+# arithmetic assignment is lost. `[[` and `attest` were worse than useless:
+# they reached codegen as a command *named* `[[`, compiled clean, and died at
+# run time on the runtime's own `bare command passed to sash_exec` assertion —
+# the identical failure this file's header records for functions.
+
+# pf.16 `[[ … ]]` as the pipeline producer
+run_sash 'str x=a
+[[ -n $x ]] | /bin/cat'
+[[ $rc != 0 && -z $out && $err == *SB4022* ]]; chk pf.16
+
+# pf.17 `[[ … ]]` as the pipeline consumer
+run_sash 'str x=a
+/bin/echo z | [[ -n $x ]]'
+[[ $rc != 0 && -z $out && $err == *SB4022* ]]; chk pf.17
+
+# pf.18 `(( … ))` assignment as the producer — silently lost the assignment
+run_sash 'int n=1
+(( n = 2 )) | /bin/cat
+echo $n'
+[[ $rc != 0 && -z $out && $err == *SB4022* ]]; chk pf.18
+
+# pf.19 `(( … ))` as the consumer — aborted the producer with SIGPIPE
+run_sash 'int n=1
+/bin/echo z | (( n = 2 ))
+echo $n'
+[[ $rc != 0 && -z $out && $err == *SB4022* ]]; chk pf.19
+
+# pf.20 `attest` as a pipeline stage
+run_sash 'str x=a
+attest x [[ -n $x ]] | /bin/cat'
+[[ $rc != 0 && -z $out && $err == *SB4022* ]]; chk pf.20
+
+# pf.21 the `-` suppression wrapper does not smuggle a test into a stage
+run_sash 'str x=a
+- [[ -n $x ]] | /bin/cat'
+[[ $rc != 0 && -z $out && $err == *SB4022* ]]; chk pf.21
+
+# pf.22 a test in the MIDDLE of a three-stage pipeline
+run_sash 'str x=a
+/bin/echo z | [[ -n $x ]] | /bin/cat'
+[[ $rc != 0 && -z $out && $err == *SB4022* ]]; chk pf.22
+
+# pf.23 guard against over-rejection: `&&`/`||` on a test is still legal —
+# only the pipe discards the result, so only the pipe is rejected.
+run_sash 'str x=a
+[[ -n $x ]] && echo hit'
+[[ $rc = 0 && $out = "hit" && -z $rerr ]]; chk pf.23
 
 set -e
 tally

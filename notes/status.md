@@ -1,3 +1,58 @@
+## ══ STATUS (2026-09-16) — a test in a pipeline died at run time ══
+
+**Journal 349.** Sweep **5354 passing, 13 skipped, 0 failing** (+16, predicted
+exactly). Units 83 green.
+
+**BUG FIXED: `[[ … ]]` as a pipeline stage compiled clean and aborted at run
+time.** A bare test parses to a `Command` *named* `"[["`; every ordinary
+context dispatches that name to test lowering, but the pipeline path lowers
+stages generically, so `build_argv` → `expr_to_value(Test)` fell through `_`
+to a stringified `SsaValue::Expr`. Codegen emitted a command literally named
+`[[` and the runtime's own assertion fired: `sash: bug: bare command passed to
+sash_exec`. DD#23 resolution exempts `[[` from SB5011, so nothing upstream
+objected either.
+
+**DG called for an audit before the fix, and it found a cohort of five.**
+`[[ … ]]` (both positions) and `attest …` aborted at run time; `(( n = 2 )) |
+cat` was quieter still — it compiled, ran, exited 0 and **silently lost the
+assignment**, because a stage is a forked child. `if`/`for`/`match` were
+already rejected, which is the tell: **SB4022 already existed** ("a pipe on a
+compound command isn't allowed") and simply never classified these three as
+compound.
+
+Fix: `reject_statement_form_pipeline_stage` in `parse_trailing_pipeline`,
+unwrapping `Suppressed`/`Negated`/`Redirected` so `- [[ … ]] | cat` cannot
+smuggle a test through. Deliberately narrow — **only the pipe is rejected**;
+`[[ … ]] && …` and `|| …` are legitimate and still work (pf.23 guards the
+over-rejection). Specs `pf.16`–`pf.23` in `spec/pipe_functions.sh`, whose
+header already documented the identical runtime error for functions as stages.
+
+**How it was found — and the honest scorecard.** DG asked whether any tool beats
+rereading. A prototype **sibling-cohort omission detector** flagged three
+functions compiler-wide; I triaged the third as a false positive by reasoning
+from its constructors, then tested it and found this bug. Measured results,
+filed in `notes/tasks/research-structural-defect-detectors.md`:
+
+- the **language-surface matrix** — which I ranked first *on speculation,
+  without running it* — is the worst option: 63% of cells empty, and the one
+  cell that mattered was a false positive from a regex `\s` matching a newline.
+  It would have missed journal 347 and reported green.
+- the **omission detector** gives a 3-line report over the whole compiler and
+  found a real bug, but its decisive threshold (0.80 vs 0.85) rests on a single
+  labelled positive, and regex brace-counting silently gave a false 0 hits.
+- **mutation testing** could not have found 347; the `--emit-c` oracle is blind
+  to front-end bugs by construction (both backends share the parser).
+
+Nothing beat rereading as a *discovery* mechanism. Coverage's value is
+**attention allocation**, and it remains the best allocator tested.
+
+**Next:** resume the branch-coverage loop. `coverage.db` is now four commits
+stale — re-measure (`mk cov-reset && mk cov-branch && mk cov-db`) before
+picking targets. Ranked: `codegen/values.rs:lower_value_as_int` (12 cold),
+`transform/expr_handlers.rs:fold_arith_op` (12 cold, cc 27/9 — budget a
+refactor, the complexity gate bites), then `emit_cmdsub_exec`,
+`intern_or_declare`, `parse_split_subscript_index`, `parse_trailing_redirects`.
+
 ## ══ STATUS (2026-09-16) — the front end ran three times ══
 
 **Journal 348.** Sweep **5338 passing, 13 skipped, 0 failing** (+6, predicted
@@ -7932,7 +7987,7 @@ modified: 2026-06-07
 
 ## Spec status: 5338 passing / 0 failing of 5351 (spec.db @ fffc23f)
 
-_Regenerated 2026-09-16 by `mk status`. Edits inside this block will be
+_Regenerated 2026-09-17 by `mk status`. Edits inside this block will be
 overwritten; edit outside the BEGIN/END markers._
 <!-- END: mk-status -->
 
