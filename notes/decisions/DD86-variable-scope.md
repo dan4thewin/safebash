@@ -205,13 +205,22 @@ is entered once per call, not re-executed in place.
 
 Specs `spec/scope.sh` 86.25–86.30.
 
-## Addendum (2026-09-17) — the `for`-variable exemption is deliberate, and it holds
+## Addendum (2026-09-17) — the `for`-variable "exemption": RETRACTED
 
-The model section's "A `for` variable is not a declaration and is untouched"
-was tested directly this week and **kept**. Asked to consider extending the
-no-shadowing rule to loop variables generally, an audit of every construct
-that introduces a name without a declaration found that the exemption is
-correct:
+**This addendum originally claimed the exemption was deliberate and held. It
+was wrong on the fact that mattered, and the claim is withdrawn.** What
+follows is kept as a record of the error; the live question is in the
+follow-up addendum below.
+
+The argument rested on reading the model section's "A `for` variable is not a
+declaration and is untouched" as a decision. It is not one. `git log -L`
+places it in commit `06912b0` (2026-09-14), an *implementation* commit for
+SB5049, whose own message gives the rationale: "A for variable is its own
+StmtKind, never a Declaration, so repeating one is untouched." That is an
+observation about the AST, written into the model section as though it were a
+design call. DG did not make it.
+
+The original audit table follows:
 
 | pattern                                   | verdict |
 |-------------------------------------------|---------|
@@ -221,12 +230,49 @@ correct:
 | two sequential loops reuse a name         | legal — same |
 | loop var = reserved slot letter / `args`  | **SB5080** (DD#100 addendum) |
 
-The first four are one name with **one meaning** — the thing DD#86 asks for.
-Rejecting them would reject working, bash-identical programs. Only a
-collision with the *reserved* namespace creates a second simultaneous meaning,
-and that is a DD#100 reservation, not a DD#86 shadowing question.
+The reasoning was: the first four are one name with one meaning, and
+rejecting them would reject working, bash-identical programs.
+
+**Why that is not good enough.** "Bash-identical" is not DD#86's standard.
+`int x=1; int x=2` is bash-identical too, and DD#86 rejects it. The DD's
+standard is *one name, one declaration per scope*, which is deliberately
+stricter than bash. The audit quietly swapped in bash-compatibility as the
+test and got the answer that substitution implies.
 
 Unrelated to scope but found in the same pass: `break`/`continue` with no
 enclosing loop compiled to a **silent no-op** (the transform's `loop_stack`
 was empty and `handle_break_stmt` discarded the statement). Now **SB5081**,
 with a function body starting a fresh loop context.
+
+## Addendum (2026-09-17, later) — `for` introduces a name that outlives the loop
+
+DG, on reading the retraction above: *"I never sanctioned a for variable as
+exempt from the no-shadow rule. Rather I recall saying that a for variable
+survives the loop, making the for an implicit declaration, rather than a
+non-declared special var."*
+
+Measured, in sash and in bash:
+
+```sh
+for i in 1 2 3 { echo "$i" }
+echo "after=$i"                  # after=3   (both)
+```
+
+The name outlives the construct. Whatever else it is, it is not scoped to the
+loop — which is the property that makes calling it "not a declaration"
+untenable. The current behaviour is the AST accident, not a model.
+
+Three cases where the accident is visible today, all **currently accepted**:
+
+| # | program | today | under "`for` declares" |
+|---|---------|-------|------------------------|
+| A | `int x=5` … `for x in 1 2 3 { … }` | accepted; `x` becomes 3 | SB5049 (redeclaration) |
+| B | `for y in 1 2 {…}` … `for y in 8 9 {…}` | accepted | SB5049? (two declarations of `y`) |
+| C | `for z in 1 2 {…}` … `int z=7` | accepted | SB5049 (the loop already introduced `z`) |
+
+C is the sharpest: `int z=1; int z=7` is SB5049, but interposing a loop as the
+first introduction makes it legal. A is the one with a live hazard — a
+declared, typed variable is silently retyped and overwritten by a loop.
+
+**Open, pending DG.** The scope of the rule is a language-surface change and
+is not settled by anything written down; see `notes/tasks/`.

@@ -11,13 +11,24 @@ unreachable from any accepted program. **Checked the family in the same pass**
 `keys` has no separate intrinsic, so the family is exactly two.
 
 **Converted to ICE guards rather than deleted** — the dead-code exception DG
-granted. Each arm shadows a fallback that renders the operand as *source text*
-(`"@a"`), so deletion would turn an SB5062 regression into a program that
-silently joins or measures a variable named `@a`. That is the exact failure
-mode the two existing `unreachable!`s in `join_intrinsic` were written
-against. Both guards carry unit tests asserting the panic **text** names
-SB5062. The stale comment claiming the argument "should be `@arr`" was
-rewritten — it had outlived the decision that made it false.
+granted — because the fallback each arm shadows degrades **silently**:
+`expr_to_string` renders `@a` as `"${aarrvals}"`, the collection lookup
+misses, and `len` emits `strlen` of an undefined var (0 where the element
+count belongs). Three unit tests: two assert the panic names SB5062, one pins
+the silent-degradation shape so the guards can be reconsidered if it ever
+fails loudly.
+
+⚠ **Two corrections, both from DG, both to claims I asserted from reading
+instead of running** — see journal 356's postscript:
+1. The fallback does **not** render the literal text `"@a"`, as the first
+   version of this block, the commit message, the DD#100 addendum and the
+   code comments all said. Corrected by execution; conclusion unchanged.
+2. DD#86 does **not** sanction a `for`-variable exemption from no-shadowing.
+   That sentence entered in implementation commit `06912b0` on the mechanical
+   grounds that a for variable is its own `StmtKind` — and I cited it last
+   commit to **reverse an explicit instruction from DG**. Retracted in DD#86.
+   DG's model: the loop variable survives the loop, so `for` is an implicit
+   declaration. **Open — `notes/tasks/dd86-for-is-an-implicit-declaration.md`.**
 
 The `arrvals` arms in `control_flow.rs:574` (for-in splat) and
 `expressions.rs:103` (splat as command arg) are **live** and untouched.

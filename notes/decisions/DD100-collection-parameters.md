@@ -339,12 +339,19 @@ and `join @a SEP` are SB5062 (specs `75.69`/`75.70`). That left the
 `ParameterExpansion(arrvals)` arm in both `try_len_intrinsic` and
 `join_intrinsic` unreachable from any accepted program.
 
-Both arms are kept as `unreachable!` guards rather than deleted. Each one
-shadows a fallback that renders its operand as **source text**, so removing it
-would turn a regression in SB5062 into a compiled program that silently joins
-or measures a variable literally named `@a` — no crash, no diagnostic, wrong
-answer. Unit tests in `transform/expr_handlers.rs` simulate that regression and
-assert the panic message names SB5062.
+Both arms are kept as `unreachable!` guards rather than deleted, because the
+fallback each one shadows degrades **silently**. `expr_to_string` renders a
+parameter expansion as `${NAME}{OP}`, so `@a` becomes the string
+`"${aarrvals}"`; `len` strips the `$` to `"{aarrvals}"`, misses
+`state.collections` (which holds `"a"`), and emits `strlen` of an undefined
+var — **0 where the element count belongs**. `join` joins a name no program can
+declare. A regression in SB5062 would therefore produce a wrong answer, not a
+crash. Unit tests in `transform/expr_handlers.rs` simulate the regression and
+assert the panic names SB5062; a third test pins the silent-degradation shape
+itself, so if the fallback ever fails loudly the guards can be reconsidered.
+
+(An earlier version of this addendum said the fallback yields the literal text
+`"@a"`. That was asserted from reading and is wrong — corrected by execution.)
 
 The splat itself is unaffected: `for x in @a` (`control_flow.rs:574`) and `@a`
 as a command argument (`expressions.rs:103`) are live. Part D scoped the

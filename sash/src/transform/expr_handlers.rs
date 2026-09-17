@@ -283,9 +283,13 @@ fn try_len_intrinsic(c: &Command, state: &VersionState) -> Option<SsaValue> {
     let name = match &arg.kind {
         // INVARIANT: DD#100 Part D removed the splat operand — `len @a` is
         // SB5062 before transform, so this arm is unreachable from any
-        // accepted program. It is kept as a loud guard because the fallback
-        // below would render `@a` as the literal text "@a" and look *that* up:
-        // a wrong answer, not a crash.
+        // accepted program. Kept as a loud guard because the fallback below
+        // does not degrade safely: `expr_to_string` renders a parameter
+        // expansion as `${NAME}{OP}`, so `@a` becomes the string
+        // `"${aarrvals}"`, strips to `"{aarrvals}"`, misses
+        // `state.collections` (which holds `"a"`), and emits **`strlen` of an
+        // undefined var** — a silent 0 where the element count belongs.
+        // Measured, not assumed; see the unit test below.
         ExprKind::ParameterExpansion(pe) if pe.operator.as_deref() == Some("arrvals") => {
             unreachable!("len splat operand guaranteed rejected by validate (SB5062)");
         }
@@ -332,11 +336,13 @@ fn join_intrinsic(c: &Command, state: &VersionState) -> SsaValue {
     };
     // The array arg is a bare NAME. It used to be able to be `@arr`
     // (ParameterExpansion/arrvals), but DD#100 Part D removed the splat
-    // operand as an exact synonym of the bare-name form.
+    // operand as an exact synonym of the bare-name form. The fallback is
+    // therefore correct only for a literal word.
     let arr_name = match &arr_expr.kind {
         // INVARIANT: `join @a SEP` is SB5062 before transform. Guarded loudly
-        // for the same reason as the separator above — falling through would
-        // join the literal text "@a" rather than the array.
+        // for the same reason as the separator above: the fallback renders
+        // the expansion as `"${aarrvals}"` and joins *that* name, which no
+        // program can have declared — a silent empty join, not a crash.
         ExprKind::ParameterExpansion(pe) if pe.operator.as_deref() == Some("arrvals") => {
             unreachable!("join splat operand guaranteed rejected by validate (SB5062)");
         }
@@ -828,11 +834,54 @@ mod tests {
     // DD#100 Part D removed the splat operand from the name-resolving
     // builtins, so `len @a` and `join @a SEP` are SB5062 and the arrvals arms
     // in both intrinsics became unreachable. They are kept as loud guards
-    // rather than deleted: the fallback each one shadows renders the operand
-    // as source text, so a validation regression would silently measure or
-    // join the literal string "@a". These tests simulate that regression —
-    // the only way to reach the arm is to hand the transform IR the parser
-    // can still build but validate now rejects.
+    // rather than deleted because the fallback each one shadows degrades
+    // silently: `expr_to_string` renders a parameter expansion as
+    // `${NAME}{OP}`, so the operand becomes the un-declarable name
+    // `"{aarrvals}"`, the collection lookup misses, and `len` emits `strlen`
+    // of an undefined var (0) while `join` joins nothing. These tests
+    // simulate the regression — the only way to reach the arm is to hand the
+    // transform IR the parser can still build but validate now rejects.
+    /// Pins *why* the guards above are guards rather than deletions. If the
+    /// fallback ever renders a splat operand to something that resolves (or
+    /// fails loudly), this test fails and the guards can be reconsidered.
+    #[test]
+    fn the_fallback_the_guards_shadow_degrades_silently() {
+        let arg = splat_arg("a");
+        assert_eq!(
+            expr_to_string(&arg),
+            "${aarrvals}",
+            "expr_to_string renders a parameter expansion as ${{NAME}}{{OP}}"
+        );
+
+        // Same operand shape, a different operator, so it takes the `_` arm
+        // the guard shadows — with `a` registered as a collection.
+        let other = Expr {
+            kind: ExprKind::ParameterExpansion(ParameterExpansion {
+                name: "a".to_string(),
+                operator: Some("other".to_string()),
+                operand: None,
+                index: None,
+                taint_off: false,
+            }),
+            span: Span::new(1, 1),
+        };
+        let mut st = state();
+        st.collections.insert("a".to_string());
+        let c = Command {
+            name: lit("len"),
+            args: vec![other],
+        };
+        let Some(SsaValue::ParamExpansion { var, operator, .. }) = try_len_intrinsic(&c, &st)
+        else {
+            panic!("len intrinsic must yield a ParamExpansion");
+        };
+        assert_eq!(var.name, "{aother}", "the mangled name reaches lookup");
+        assert_eq!(
+            operator, "strlen",
+            "the collection lookup misses, so a count silently becomes a length"
+        );
+    }
+
     #[test]
     fn len_splat_operand_is_a_loud_ice() {
         let c = Command {

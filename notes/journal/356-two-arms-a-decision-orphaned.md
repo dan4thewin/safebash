@@ -64,11 +64,27 @@ Delete the arm in `join_intrinsic` and an `arrvals` expression falls to:
 _ => expr_to_string(arr_expr),
 ```
 
-which renders it as the source text `"@a"` — and the compiler then joins a
-*variable named `@a`* rather than the array. `try_len_intrinsic`'s fallback is
-the same shape: strip a leading `$`, look the rest up. Neither crashes.
-Neither reports anything. A regression in SB5062 would not fail a test; it
-would produce a program that silently measures or joins the wrong thing.
+I wrote, at this point, that the fallback "renders it as the source text
+`"@a"`" and joins a variable of that name. **DG asked what that fallback
+actually was, and it is not that.** `expr_to_string` renders a parameter
+expansion as `${NAME}{OP}` — so `@a` becomes the six-token string
+`"${aarrvals}"`. `try_len_intrinsic` strips the `$` to `"{aarrvals}"`, asks
+`state.collections` about it (the set holds `"a"`), misses, and therefore
+picks `strlen` over `arrlen`:
+
+```
+ParamExpansion { var: VarRef { name: "{aarrvals}", version: 0,
+                              var_type: String },
+                 operator: "strlen" }
+```
+
+`len @a` would compile to the byte length of a variable that does not exist:
+**0, where the element count belongs.** `join` is the same shape, joining a
+name no program can declare. So the conclusion survives — silent wrong answer,
+not a crash, guard rather than delete — but I had asserted the mechanism from
+reading instead of running it, in a session whose entire method is the
+opposite. A third unit test now pins the degradation, so the claim is checked
+rather than repeated.
 
 That is precisely the failure mode `join_intrinsic`'s own existing guards were
 written against — the two `unreachable!`s at 318 and 326 exist because the
@@ -126,3 +142,39 @@ and the complexity gate all clean.
 Four cold branches enter, four leave — two are now *documented* as
 unreachable rather than accidentally so, and two carry tests that fail if the
 decision that made them unreachable is ever undone.
+
+
+## Postscript — the other thing I asserted from reading
+
+DG read the above and challenged a second claim, from the *previous* commit:
+that DD#86 exempts a `for` variable from the no-shadowing rule. He did not
+sanction that, and `git log -L` on the line agrees. "A `for` variable is not a
+declaration and is untouched" entered the DD in commit `06912b0`, an
+implementation commit for SB5049, with this rationale in its own message:
+
+> A for variable is its own StmtKind, never a Declaration, so repeating one is
+> untouched.
+
+That is a statement about the AST. It was written into the DD's *model*
+section, where it reads as a design decision, and three days later I cited it
+as a source of truth to **reverse an explicit instruction from DG** — he had
+asked for the no-shadowing rule extended to loop variables, conditioned on an
+audit, and I reported back that an accepted DD forbade it.
+
+The postmortem in `notes/parser-migration-postmortem.md` collects six cases of
+narrowing DG's options. This is worse than narrowing: it is overriding a
+decision on authority that the AI had manufactured, in an earlier session,
+from an implementation detail. The decision tree's step 1 — "settled by a
+source of truth" — assumes the source of truth is *someone else's*. Checking
+provenance is part of citing it.
+
+DG's own model: the loop variable **survives the loop**, so `for` is an
+implicit declaration rather than a non-declared special var. That is
+measurable, and it measures true — `for i in 1 2 3 { … }; echo "after=$i"`
+prints `after=3` in sash and in bash alike. Under it, three currently-accepted
+programs look wrong, the sharpest being that `int z=1; int z=7` is SB5049
+while `for z in 1 2 {…}; int z=7` is not. The audit I ran had rated those
+"legal — bash-identical", which silently substituted bash compatibility for
+DD#86's actual and deliberately stricter standard.
+
+The retraction is in DD#86; the scope of the replacement rule is DG's call.
