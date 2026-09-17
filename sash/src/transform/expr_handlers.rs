@@ -281,8 +281,13 @@ fn try_len_intrinsic(c: &Command, state: &VersionState) -> Option<SsaValue> {
     // allowed and does yield its byte length.
     let arg = c.args.first()?;
     let name = match &arg.kind {
+        // INVARIANT: DD#100 Part D removed the splat operand — `len @a` is
+        // SB5062 before transform, so this arm is unreachable from any
+        // accepted program. It is kept as a loud guard because the fallback
+        // below would render `@a` as the literal text "@a" and look *that* up:
+        // a wrong answer, not a crash.
         ExprKind::ParameterExpansion(pe) if pe.operator.as_deref() == Some("arrvals") => {
-            pe.name.clone()
+            unreachable!("len splat operand guaranteed rejected by validate (SB5062)");
         }
         _ => {
             let s = expr_to_string(arg);
@@ -325,10 +330,15 @@ fn join_intrinsic(c: &Command, state: &VersionState) -> SsaValue {
         // >2-arg) `$(join …)` before transform, so this is unreachable.
         unreachable!("join arity guaranteed by validate::check_join_arity");
     };
-    // The array arg should be @arr → ParameterExpansion(arrvals)
+    // The array arg is a bare NAME. It used to be able to be `@arr`
+    // (ParameterExpansion/arrvals), but DD#100 Part D removed the splat
+    // operand as an exact synonym of the bare-name form.
     let arr_name = match &arr_expr.kind {
+        // INVARIANT: `join @a SEP` is SB5062 before transform. Guarded loudly
+        // for the same reason as the separator above — falling through would
+        // join the literal text "@a" rather than the array.
         ExprKind::ParameterExpansion(pe) if pe.operator.as_deref() == Some("arrvals") => {
-            pe.name.clone()
+            unreachable!("join splat operand guaranteed rejected by validate (SB5062)");
         }
         _ => expr_to_string(arr_expr),
     };
@@ -772,5 +782,88 @@ pub(crate) fn fold_arith_op(l: i64, r: i64, op: ArithOp) -> Option<i64> {
         ArithOp::BitOr => Some(l | r),
         ArithOp::BitXor => Some(l ^ r),
         ArithOp::Pow => u32::try_from(r).ok().and_then(|e| l.checked_pow(e)),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ir::{ParameterExpansion, Span};
+
+    fn splat_arg(name: &str) -> Expr {
+        Expr {
+            kind: ExprKind::ParameterExpansion(ParameterExpansion {
+                name: name.to_string(),
+                operator: Some("arrvals".to_string()),
+                operand: None,
+                index: None,
+                taint_off: false,
+            }),
+            span: Span::new(1, 1),
+        }
+    }
+
+    fn lit(s: &str) -> Expr {
+        Expr {
+            kind: ExprKind::Literal(s.to_string()),
+            span: Span::new(1, 1),
+        }
+    }
+
+    fn state() -> VersionState {
+        VersionState::with_types(std::collections::HashMap::new())
+    }
+
+    /// A `panic!`/`unreachable!` with a literal message carries a
+    /// `&'static str` payload; one with format arguments carries a `String`.
+    fn ice_text(err: &Box<dyn std::any::Any + Send>) -> String {
+        if let Some(s) = err.downcast_ref::<&'static str>() {
+            return (*s).to_string();
+        }
+        err.downcast_ref::<String>()
+            .cloned()
+            .expect("ICE payload is a string")
+    }
+
+    // DD#100 Part D removed the splat operand from the name-resolving
+    // builtins, so `len @a` and `join @a SEP` are SB5062 and the arrvals arms
+    // in both intrinsics became unreachable. They are kept as loud guards
+    // rather than deleted: the fallback each one shadows renders the operand
+    // as source text, so a validation regression would silently measure or
+    // join the literal string "@a". These tests simulate that regression —
+    // the only way to reach the arm is to hand the transform IR the parser
+    // can still build but validate now rejects.
+    #[test]
+    fn len_splat_operand_is_a_loud_ice() {
+        let c = Command {
+            name: lit("len"),
+            args: vec![splat_arg("a")],
+        };
+        let st = state();
+        let caught =
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| try_len_intrinsic(&c, &st)));
+        let err = caught.expect_err("a splat operand reaching try_len_intrinsic must ICE");
+        let msg = ice_text(&err);
+        assert!(
+            msg.contains("SB5062"),
+            "the ICE must name the validation rule that guarantees it: {msg}"
+        );
+    }
+
+    #[test]
+    fn join_splat_operand_is_a_loud_ice() {
+        let c = Command {
+            name: lit("join"),
+            args: vec![splat_arg("a"), lit(",")],
+        };
+        let st = state();
+        let caught =
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| join_intrinsic(&c, &st)));
+        let err = caught.expect_err("a splat operand reaching join_intrinsic must ICE");
+        let msg = ice_text(&err);
+        assert!(
+            msg.contains("SB5062"),
+            "the ICE must name the validation rule that guarantees it: {msg}"
+        );
     }
 }

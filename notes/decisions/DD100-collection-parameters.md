@@ -331,3 +331,23 @@ single uppercase letters only.
 
 Specs `spec/control_flow.sh` cf.n14–cf.n16;
 `notes/tasks/bug-reserved-name-as-loop-var.md`.
+
+## Addendum (2026-09-17) — Part D is now backed by ICE guards
+
+Part D removed the splat operand from the name-taking builtins, so `len @a`
+and `join @a SEP` are SB5062 (specs `75.69`/`75.70`). That left the
+`ParameterExpansion(arrvals)` arm in both `try_len_intrinsic` and
+`join_intrinsic` unreachable from any accepted program.
+
+Both arms are kept as `unreachable!` guards rather than deleted. Each one
+shadows a fallback that renders its operand as **source text**, so removing it
+would turn a regression in SB5062 into a compiled program that silently joins
+or measures a variable literally named `@a` — no crash, no diagnostic, wrong
+answer. Unit tests in `transform/expr_handlers.rs` simulate that regression and
+assert the panic message names SB5062.
+
+The splat itself is unaffected: `for x in @a` (`control_flow.rs:574`) and `@a`
+as a command argument (`expressions.rs:103`) are live. Part D scoped the
+removal to the *operand of a name-taking builtin*.
+
+Journal 356.

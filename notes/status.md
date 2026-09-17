@@ -1,3 +1,33 @@
+## ══ STATUS (2026-09-17) — two arms a decision orphaned ══
+
+**Journal 356.** Sweep **5440, 0 failing** (unchanged, as predicted — the
+change is unreachable-code-only). **Units 89 → 91.**
+
+Chasing `join_intrinsic`'s four cold branches found two of them were **dead
+code orphaned by DD#100 Part D**, which removed the splat operand: `join @a ,`
+is SB5062 (specs `75.69`/`75.70`), so the `ParameterExpansion(arrvals)` arm is
+unreachable from any accepted program. **Checked the family in the same pass**
+— `try_len_intrinsic` had the identical dead arm from the identical cause.
+`keys` has no separate intrinsic, so the family is exactly two.
+
+**Converted to ICE guards rather than deleted** — the dead-code exception DG
+granted. Each arm shadows a fallback that renders the operand as *source text*
+(`"@a"`), so deletion would turn an SB5062 regression into a program that
+silently joins or measures a variable named `@a`. That is the exact failure
+mode the two existing `unreachable!`s in `join_intrinsic` were written
+against. Both guards carry unit tests asserting the panic **text** names
+SB5062. The stale comment claiming the argument "should be `@arr`" was
+rewritten — it had outlived the decision that made it false.
+
+The `arrvals` arms in `control_flow.rs:574` (for-in splat) and
+`expressions.rs:103` (splat as command arg) are **live** and untouched.
+
+**Next:** coverage queue — lines 96.85%, functions 98.27%, branches 89.81%.
+Re-probe `check_len_operand:1047/1055/1058` (1058 may be a clean ICE-guard
+candidate now that SB5080 rejects slot-named loop vars), then `fold_arith_op`
+(4 cold, **cc 27/cog 9 — budget a refactor**), `emit_wait`, `base_var_name`,
+`parse_var_base_version`, `absorb_text`, `dynamic_subscript_var`.
+
 ## ══ STATUS (2026-09-17) — the loop that ran once ══
 
 **Journal 355.** Sweep **5404 → 5440, 0 failing** (18 specs `cf.n1`–`cf.n18`,
