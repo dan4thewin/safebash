@@ -3059,6 +3059,22 @@ pub extern "C" fn sash_capture_end(saved_stdout: i64, cap_fd: i64) -> (*mut u8, 
 
 // ── Signal handling (trap) ───────────────────────────────────
 
+/// DD#56: the compiler validates the signal number (SB4060/SB4061) and the
+/// disposition (SB4062) before emitting a registration, so a `rt_sigaction`
+/// the kernel rejects means the program is running without a disposition it
+/// believes it has. Report it rather than carrying on with the wrong one.
+fn signal_registration_failed(signum: i64) -> ! {
+    let mut buf = [0u8; 20];
+    let n = write_i64(&mut buf, signum);
+    unsafe {
+        let fd = BorrowedFd::borrow_raw(2);
+        let _ = rustix::io::write(fd, b"sash: bug: kernel rejected signal ");
+        let _ = rustix::io::write(fd, &buf[..n]);
+        let _ = rustix::io::write(fd, b" registration\n");
+    }
+    sash_shutdown(1)
+}
+
 /// Register a signal handler.  handler_fn is a function pointer:
 ///   extern "C" fn(i32) -> ()
 /// Pass 0 for SIG_DFL, 1 for SIG_IGN.
@@ -3112,10 +3128,9 @@ pub extern "C" fn sash_trap(signum: i64, handler: i64) -> i64 {
         );
     }
     if ret < 0 {
-        -1
-    } else {
-        0
+        signal_registration_failed(signum);
     }
+    0
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -3161,10 +3176,9 @@ pub extern "C" fn sash_signal_flag(signum_val: i64) -> i64 {
         );
     }
     if ret < 0 {
-        -1
-    } else {
-        0
+        signal_registration_failed(signum_val);
     }
+    0
 }
 
 extern "C" fn sash_flag_handler(sig: i32) {

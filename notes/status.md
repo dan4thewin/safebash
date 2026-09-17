@@ -1,3 +1,51 @@
+## ══ STATUS (2026-09-17) — four silent drops in one function ══
+
+**Journal 351.** Sweep **5378 passing, 13 skipped, 0 failing** (+24; predicted
++24). Units 83. **Bug fixed: `signal` was entirely unvalidated.**
+
+Found while probing a *coverage* question — whether a non-literal can reach
+`expr_to_string`'s six cold arms — by executing one probe per call site rather
+than reading twenty-one of them. It could not, but `signal $s …` compiled, and
+so did every other malformed spelling: `signal`, `signal 2`, `signal TERM`,
+`signal 2 BOGUS`, `signal 2 IGN extra`, `signal 9 IGN`, `signal $n EXIT`. All
+compiled clean and did nothing.
+
+`signal` had **no entry in `validate.rs` or `type_check.rs` at all**. The only
+mention of it in the validator was SB4043's message, which tells the user to
+write `signal N IGN|DFL|FLAG|EXIT` — the compiler named a form and then
+accepted every wrong spelling of it in silence. `handle_signal` held four
+silent drops (`args.len() >= 2`, `parse().unwrap_or(0)`, `signum > 0`,
+`_ => {}`) and the runtime a fifth (`rt_sigaction`'s `-1` discarded by both
+backends).
+
+**Note the shape.** This is *not* the missing-arm pattern of 344/347/348/350 —
+these are branches that exist precisely to do nothing, so no omission detector
+would flag them and `_ => {}` reads as ordinary defensive code.
+
+DG settled three open questions: the DD#56 "Supported signals" table is
+**illustrative, not a whitelist** (accept 1-64 less 9/KILL and 19/STOP, the two
+the kernel will not let a process catch); a **non-literal number is rejected
+for all four dispositions**, not just `EXIT` (whose `exiting_signals` set is
+compile-time and has no choice); and the **runtime aborts** on a rejected
+registration rather than leaving a program without a disposition it believes it
+has.
+
+Four rules in `validate.rs` beside `check_trap`: **SB4059** arity, **SB4060**
+non-literal/non-numeric number, **SB4061** uncatchable or out-of-range,
+**SB4062** unknown disposition. All four gates then came out of
+`handle_signal`, which fell from **cc 8 / cog 6 to cc 6 / cog 1** — the nesting
+was essentially all of its apparent complexity. DD#56 records the enforcement
+and both thresholds.
+
+Specs `56.40`-`56.51` (12, dual-mode). `plan=` needed correcting 39→40 before
+the run — I wrote twelve and counted eleven; a wrong `plan` only prints a note,
+so the predicted-total discipline is what caught it. Second time this stretch.
+
+**Still open, and the reason the probe was running at all:** `expr_to_string`
+has six cold arms and `transform/expressions.rs::opaque_form_to_string` is
+entirely cold. Next: finish classifying those, then `type_check.rs::fmt`, then
+the lines and branches queues.
+
 ## ══ STATUS (2026-09-16) — the same arm, written twice ══
 
 **Journal 350.** Sweep unchanged at **5354 passing, 13 skipped, 0 failing**

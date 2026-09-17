@@ -1,7 +1,7 @@
 #!/bin/bash
 # DD#56 — signals and END block
 . common.sh
-plan=28
+plan=40
 setup signals
 
 set +e
@@ -210,6 +210,71 @@ run_sash 'END {
 /bin/echo $@
 }'
 [[ $rc != 0 && -z $out && $err == *SB5045* ]]; chk 56.38
+
+# --- SB4059-SB4062: the shape of a `signal` declaration (DD#56) ---
+# Every one of these used to compile clean and silently do nothing.
+# `handle_signal` gated on `args.len() >= 2`, parsed the number with
+# `unwrap_or(0)`, tested `signum > 0`, and matched the disposition with a bare
+# `_ => {}`. `signal TERM IGN` -- the bash spelling, and the one the SB4043
+# message itself all but invites -- was a no-op.
+
+# 56.40 no arguments at all
+run_sash 'signal'
+[[ $rc != 0 && -z $out && $err == *SB4059* ]]; chk 56.40
+
+# 56.41 a number but no disposition
+run_sash 'signal 2'
+[[ $rc != 0 && -z $out && $err == *SB4059* ]]; chk 56.41
+
+# 56.42 a trailing argument is not quietly dropped
+run_sash 'signal 2 IGN extra'
+[[ $rc != 0 && -z $out && $err == *SB4059* ]]; chk 56.42
+
+# 56.43 a signal NAME is not a signal number -- DD#56: the compiler does not
+# know signal names, users reach for a GPP macro
+run_sash 'signal TERM IGN'
+[[ $rc != 0 && -z $out && $err == *SB4060* ]]; chk 56.43
+
+# 56.44 the number must be a literal: the EXIT check-point set is resolved at
+# compile time, so an expansion cannot be honoured
+run_sash 'int n=2
+signal $n EXIT'
+[[ $rc != 0 && -z $out && $err == *SB4060* ]]; chk 56.44
+
+# 56.45 an unknown disposition
+run_sash 'signal 2 BOGUS'
+[[ $rc != 0 && -z $out && $err == *SB4062* ]]; chk 56.45
+
+# 56.46 the disposition must be a literal too
+run_sash 'str d=IGN
+signal 2 $d'
+[[ $rc != 0 && -z $out && $err == *SB4062* ]]; chk 56.46
+
+# 56.47 SIGKILL cannot be caught or ignored -- the kernel refuses, so the
+# registration would be a promise the program cannot keep
+run_sash 'signal 9 IGN'
+[[ $rc != 0 && -z $out && $err == *SB4061* ]]; chk 56.47
+
+# 56.48 SIGSTOP likewise
+run_sash 'signal 19 IGN'
+[[ $rc != 0 && -z $out && $err == *SB4061* ]]; chk 56.48
+
+# 56.49 out of range
+run_sash 'signal 99 IGN'
+[[ $rc != 0 && -z $out && $err == *SB4061* ]]; chk 56.49
+
+# 56.50 zero and negative are not signals
+run_sash 'signal 0 IGN'
+[[ $rc != 0 && -z $out && $err == *SB4061* ]]; chk 56.50
+
+# 56.51 the four valid dispositions all still compile and run -- guards the
+# rejection above against over-reach
+run_sash 'signal 2 IGN
+signal 2 DFL
+signal 10 FLAG
+signal 15 EXIT
+echo ok'
+[[ $rc = 0 && $out = "ok" && -z $err ]]; chk 56.51
 
 set -e
 tally

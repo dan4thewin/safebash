@@ -32,6 +32,43 @@ signal TERM EXIT
 Sash ships an optional `signals.h` with standard POSIX mappings.
 The converter emits numeric literals directly.
 
+### Shape enforcement (added 2026-09-17, journal 351)
+
+None of the above was enforced until journal 351 — `signal` had no entry in
+`validate.rs` or `type_check.rs` at all, and `handle_signal` carried four
+silent drops: it gated on `args.len() >= 2`, parsed the number with
+`unwrap_or(0)`, tested `signum > 0`, and matched the disposition with a bare
+`_ => {}`. Anything outside the table compiled clean and did nothing.
+`signal TERM IGN` — the bash spelling, and the one **SB4043**'s own message
+all but invites — was a no-op, as were `signal 2`, `signal 2 BOGUS`,
+`signal 2 IGN extra` and `signal $n EXIT`.
+
+Four rules now hold the shape:
+
+| Code | Rejects |
+|------|---------|
+| **SB4059** | any arity but exactly two arguments |
+| **SB4060** | a number that is not an integer literal (a name, or an expansion) |
+| **SB4061** | a number outside 1-64, or 9 (KILL) / 19 (STOP) |
+| **SB4062** | a disposition outside `IGN`/`DFL`/`FLAG`/`EXIT` |
+
+Two of those thresholds are decisions rather than deductions (DG, 2026-09-17):
+
+- **The "Supported signals" table above is illustrative, not a whitelist.**
+  The accepted range is 1-64 less the two the kernel will not let a process
+  catch or ignore. `signal 9 IGN` was previously emitted as a syscall the
+  compiler already knew must fail.
+- **A non-literal number is rejected for all four dispositions**, not just
+  `EXIT`. `EXIT` has no choice — `exiting_signals` is a compile-time set, so
+  the check-point insertion cannot see a runtime number — and allowing
+  expansions for the other three would split the surface for no gain.
+
+The runtime half matches: `rt_sigaction` returning `-1` used to be discarded
+by the caller, leaving a program running without a disposition it believed it
+had. `sash_trap` and `sash_signal_flag` now abort on it. After the four rules
+above that failure should be unreachable, which is exactly why it is worth
+reporting rather than swallowing.
+
 ## END block
 
 `END` is a top-level declaration (exactly one per program). It executes

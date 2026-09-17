@@ -1197,6 +1197,7 @@ fn validate_command(c: &Command, span: Span, diags: &mut Vec<Diagnostic>) {
     }
     check_dynexec(name, span, diags);
     check_trap(name, span, diags);
+    check_signal(name, c, span, diags);
     check_test_constructs(name, c, span, diags);
     check_attest_convert_names(name, c, span, diags);
     check_inline_glob(c, diags);
@@ -1333,6 +1334,103 @@ fn check_trap(name: &str, span: Span, diags: &mut Vec<Diagnostic>) {
                 .to_string(),
         ));
     }
+}
+
+/// The dispositions `signal` accepts (DD#56).
+const SIGNAL_DISPOSITIONS: [&str; 4] = ["IGN", "DFL", "FLAG", "EXIT"];
+
+/// A signal the kernel will actually let a program catch or ignore. 9 (KILL)
+/// and 19 (STOP) are excluded by the kernel itself, so registering a
+/// disposition for either is a promise the program cannot keep.
+fn catchable_signum(n: i64) -> bool {
+    (1..=64).contains(&n) && n != 9 && n != 19
+}
+
+/// SB4059/SB4060/SB4061/SB4062 (DD#56): the shape rules for `signal`.
+///
+/// Every malformed spelling used to compile clean and silently do nothing.
+/// `handle_signal` gated on `args.len() >= 2`, parsed the number with
+/// `unwrap_or(0)`, tested `signum > 0`, and matched the disposition with a
+/// bare `_ => {}` — four silent drops in one function. `signal TERM IGN`, the
+/// bash spelling and the one `check_trap`'s own message all but invites, was a
+/// no-op; so were `signal 2`, `signal 2 BOGUS`, `signal 9 IGN` and
+/// `signal $n EXIT`.
+fn check_signal(name: &str, c: &Command, span: Span, diags: &mut Vec<Diagnostic>) {
+    if name != "signal" {
+        return;
+    }
+    if c.args.len() != 2 {
+        diags.push(Diagnostic::error_span(
+            span,
+            "SB4059",
+            format!(
+                "`signal` takes exactly two arguments, a number and a \
+                 disposition (`signal N IGN|DFL|FLAG|EXIT`, DD#56) — found {}",
+                c.args.len()
+            ),
+        ));
+        return;
+    }
+    check_signum_arg(&c.args[0], diags);
+    check_disposition_arg(&c.args[1], diags);
+}
+
+/// SB4060/SB4061: the number a `signal` declaration names.
+fn check_signum_arg(arg: &Expr, diags: &mut Vec<Diagnostic>) {
+    if !matches!(arg.kind, ExprKind::Literal(_)) {
+        diags.push(Diagnostic::error_span(
+            arg.span,
+            "SB4060",
+            "a `signal` number must be an integer literal, not an expansion — \
+             the compiler resolves the `EXIT` check-point set at compile time, \
+             so it has to know the number then (DD#56)"
+                .to_string(),
+        ));
+        return;
+    }
+    let text = expr_literal_str(arg);
+    match text.parse::<i64>() {
+        Ok(n) if catchable_signum(n) => {}
+        Ok(n) => diags.push(Diagnostic::error_span(
+            arg.span,
+            "SB4061",
+            format!(
+                "signal {n} cannot be caught or ignored — `signal` accepts 1-64 \
+                 apart from 9 (KILL) and 19 (STOP), which the kernel never \
+                 delivers to a handler (DD#56)"
+            ),
+        )),
+        Err(_) => diags.push(Diagnostic::error_span(
+            arg.span,
+            "SB4060",
+            format!(
+                "`{text}` is not a signal number — sash does not know signal \
+                 names (DD#56); write the number, or define a GPP macro for it \
+                 (`#define TERM 15`)"
+            ),
+        )),
+    }
+}
+
+/// SB4062: the disposition a `signal` declaration names.
+fn check_disposition_arg(arg: &Expr, diags: &mut Vec<Diagnostic>) {
+    let text = expr_literal_str(arg);
+    if SIGNAL_DISPOSITIONS.contains(&text) {
+        return;
+    }
+    let shown = if matches!(arg.kind, ExprKind::Literal(_)) {
+        format!("`{text}`")
+    } else {
+        "an expansion".to_string()
+    };
+    diags.push(Diagnostic::error_span(
+        arg.span,
+        "SB4062",
+        format!(
+            "{shown} is not a signal disposition — `signal` takes one of IGN, \
+             DFL, FLAG or EXIT (DD#56)"
+        ),
+    ));
 }
 
 /// SB5019/SB5023: numeric test ops + literal regex validation inside `[[ ]]`.

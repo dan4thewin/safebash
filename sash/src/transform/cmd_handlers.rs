@@ -86,56 +86,54 @@ pub(super) fn handle_signal(
     state: &mut VersionState,
     block: BlockId,
 ) -> BlockId {
-    // signal N DISPOSITION
-    // N is a signal number (int literal)
-    // DISPOSITION: IGN, DFL, FLAG, EXIT
-    if c.args.len() >= 2 {
-        let sig_str = expr_to_string(&c.args[0]);
-        let disposition = expr_to_string(&c.args[1]);
-        let signum: i64 = sig_str.parse().unwrap_or(0);
-        if signum > 0 {
-            match disposition.as_str() {
-                "IGN" => {
-                    // SIG_IGN = 1
-                    ssa.block_mut(block).insts.push(SsaInst::sigil(
-                        BuiltinCmd::TrapSignal,
-                        vec![
-                            SsaValue::Literal(signum.to_string()),
-                            SsaValue::Literal("1".to_string()),
-                        ],
-                        true,
-                    ));
-                }
-                "DFL" => {
-                    // SIG_DFL = 0
-                    ssa.block_mut(block).insts.push(SsaInst::sigil(
-                        BuiltinCmd::TrapSignal,
-                        vec![
-                            SsaValue::Literal(signum.to_string()),
-                            SsaValue::Literal("0".to_string()),
-                        ],
-                        true,
-                    ));
-                }
-                "FLAG" => {
-                    ssa.block_mut(block).insts.push(SsaInst::sigil(
-                        BuiltinCmd::SignalFlag,
-                        vec![SsaValue::Literal(signum.to_string())],
-                        true,
-                    ));
-                }
-                "EXIT" => {
-                    // Register FLAG handler + mark as exiting signal
-                    ssa.block_mut(block).insts.push(SsaInst::sigil(
-                        BuiltinCmd::SignalFlag,
-                        vec![SsaValue::Literal(signum.to_string())],
-                        true,
-                    ));
-                    state.exiting_signals.insert(signum);
-                }
-                _ => {}
-            }
+    // SB4059-SB4062 guarantee the shape: exactly two literal arguments, a
+    // catchable signal number and one of the four known dispositions. The
+    // gates that used to stand here (`args.len() >= 2`, `unwrap_or(0)`,
+    // `signum > 0`, `_ => {}`) each turned a malformed `signal` into a silent
+    // no-op; the validator rejects those spellings now.
+    let signum: i64 = expr_to_string(&c.args[0])
+        .parse()
+        .expect("SB4060/SB4061 validated the signal number");
+    match expr_to_string(&c.args[1]).as_str() {
+        "IGN" => {
+            // SIG_IGN = 1
+            ssa.block_mut(block).insts.push(SsaInst::sigil(
+                BuiltinCmd::TrapSignal,
+                vec![
+                    SsaValue::Literal(signum.to_string()),
+                    SsaValue::Literal("1".to_string()),
+                ],
+                true,
+            ));
         }
+        "DFL" => {
+            // SIG_DFL = 0
+            ssa.block_mut(block).insts.push(SsaInst::sigil(
+                BuiltinCmd::TrapSignal,
+                vec![
+                    SsaValue::Literal(signum.to_string()),
+                    SsaValue::Literal("0".to_string()),
+                ],
+                true,
+            ));
+        }
+        "FLAG" => {
+            ssa.block_mut(block).insts.push(SsaInst::sigil(
+                BuiltinCmd::SignalFlag,
+                vec![SsaValue::Literal(signum.to_string())],
+                true,
+            ));
+        }
+        "EXIT" => {
+            // Register FLAG handler + mark as exiting signal
+            ssa.block_mut(block).insts.push(SsaInst::sigil(
+                BuiltinCmd::SignalFlag,
+                vec![SsaValue::Literal(signum.to_string())],
+                true,
+            ));
+            state.exiting_signals.insert(signum);
+        }
+        d => unreachable!("SB4062 validated the signal disposition: {d}"),
     }
     block
 }
