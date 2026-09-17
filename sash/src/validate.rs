@@ -5986,6 +5986,100 @@ fn scalar_subscript_diag(name: &str, span: Span) -> Diagnostic {
     )
 }
 
+/// SB5079: a splat whose subject is not a collection.
+///
+/// The same type mistake as SB5068, one operation over. `@name` lowers to a
+/// collection traversal, so a scalar subject makes the generated code read a
+/// `char*` as a `SashTable*`. Measured faces: a **segfault** for a string
+/// subject in each of three spellings (`for x in @s`, `strlen @s`, and a splat
+/// argument to a user function) and a **compiler ICE** for an `int` one.
+///
+/// Unlike the subscript case, an unintroduced name is **not** already covered.
+/// SB5031 enumerates scalar *reads*, and a splat is not one, so `@nosuch`
+/// reached codegen and ICE'd there too. It is rejected here under SB5031's own
+/// code, matching `splat_not_subscriptable_diag`, which already reports a
+/// splat misuse that way.
+pub fn check_scalar_splat(program: &Program) -> Vec<Diagnostic> {
+    let mut splattable = HashSet::new();
+    let mut introduced = HashSet::new();
+    for block in program_scopes(program) {
+        collect_subscriptable_names(block, &mut splattable);
+        collect_scope_names(block, &mut introduced);
+    }
+    let mut diags = Vec::new();
+    for block in program_scopes(program) {
+        crate::ir::walk_stmt_tree(block, &mut |stmt| {
+            stmt.direct_exprs(&mut |e| {
+                crate::ir::walk_expr_tree(e, &mut |x| {
+                    flag_scalar_splat(x, &splattable, &introduced, &mut diags);
+                });
+            });
+        });
+    }
+    diags
+}
+
+fn flag_scalar_splat(
+    expr: &Expr,
+    splattable: &HashSet<String>,
+    introduced: &HashSet<String>,
+    diags: &mut Vec<Diagnostic>,
+) {
+    let Some(name) = splat_subject(expr) else {
+        return;
+    };
+    if subscript_subject_is_scalar(name, splattable, introduced) {
+        diags.push(scalar_splat_diag(name, expr.span));
+    } else if splat_subject_is_undefined(name, introduced) {
+        diags.push(undefined_splat_diag(name, expr.span));
+    }
+}
+
+/// The variable a `@name` splat traverses, in any of its dispositions (`@a`,
+/// `@{a:-d}`, `@{a:?m}`). `@`/`*` are the positional splat — a different
+/// construct, with its own rules.
+fn splat_subject(expr: &Expr) -> Option<&str> {
+    let ExprKind::ParameterExpansion(pe) = &expr.kind else {
+        return None;
+    };
+    if !pe.operator.as_deref()?.starts_with("arrvals") {
+        return None;
+    }
+    if pe.name == "@" || pe.name == "*" {
+        return None;
+    }
+    Some(&pe.name)
+}
+
+/// `args` and the DD#100 slots are collections with no declaration in scope,
+/// exactly as for a subscript.
+fn splat_subject_is_undefined(name: &str, introduced: &HashSet<String>) -> bool {
+    !introduced.contains(name) && !is_collection_slot(name) && name != "args"
+}
+
+fn scalar_splat_diag(name: &str, span: Span) -> Diagnostic {
+    Diagnostic::error_span(
+        span,
+        "SB5079",
+        format!(
+            "`{name}` is a scalar, so `@{name}` has nothing to splat — declare \
+             it with `array {name}` / `map {name}` to splat it, or write \
+             `${name}` to use its value"
+        ),
+    )
+}
+
+fn undefined_splat_diag(name: &str, span: Span) -> Diagnostic {
+    Diagnostic::error_span(
+        span,
+        "SB5031",
+        format!(
+            "`@{name}` splats `{name}`, which is introduced nowhere — declare \
+             it with `array {name}` / `map {name}`, or correct the spelling"
+        ),
+    )
+}
+
 /// Every `-a`/`-A` declaration name in the program, including inside function
 /// bodies and control-flow bodies.
 fn collect_collection_names(stmts: &[Statement], set: &mut HashSet<String>) {

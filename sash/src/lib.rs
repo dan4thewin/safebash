@@ -353,6 +353,7 @@ fn run_semantic_checks(input: &str, program: &crate::ir::Program, flags: &[&str]
     tdiags.extend(validate::check_fill_target(program));
     tdiags.extend(validate::check_collection_scalar_read(program));
     tdiags.extend(validate::check_scalar_subscript(program));
+    tdiags.extend(validate::check_scalar_splat(program));
     tdiags.extend(validate::check_collection_slots(program));
     tdiags.extend(validate::check_collection_args(program));
     tdiags.extend(validate::check_fn_taints_global(program));
@@ -368,16 +369,23 @@ fn run_semantic_checks(input: &str, program: &crate::ir::Program, flags: &[&str]
         std::process::exit(1);
     }
 
+    type_check_or_exit(input, program);
+}
+
+/// Type check, reporting every SB4030 before exiting. Split out of
+/// `run_semantic_checks` so that function stays a flat list of passes.
+fn type_check_or_exit(input: &str, program: &crate::ir::Program) {
     let type_errors = type_check::type_check(program);
-    if !type_errors.is_empty() {
-        for te in &type_errors {
-            eprintln!(
-                "{}:{}:{}: error [SB4030] {}",
-                input, te.span.line, te.span.col, te.message
-            );
-        }
-        std::process::exit(1);
+    if type_errors.is_empty() {
+        return;
     }
+    for te in &type_errors {
+        eprintln!(
+            "{}:{}:{}: error [SB4030] {}",
+            input, te.span.line, te.span.col, te.message
+        );
+    }
+    std::process::exit(1);
 }
 
 /// Run the AST→SSA transform **once** for the whole compile, exit on its

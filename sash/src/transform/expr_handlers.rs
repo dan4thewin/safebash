@@ -266,10 +266,19 @@ fn try_strlen_intrinsic(c: &Command, state: &VersionState) -> Option<SsaValue> {
 }
 
 fn try_len_intrinsic(c: &Command, state: &VersionState) -> Option<SsaValue> {
-    // DD#75 §2: dispatch on the operand's TYPE, not the `$` sigil. A
-    // collection (array/map) → element/entry count; anything else (a string
-    // scalar) → byte length. This retires the old `len a` vs `len $a`
-    // syntactic split that made `len <string>` read a non-table (garbage).
+    // DD#75 §2: dispatch on the operand's TYPE, not the `$` sigil. This
+    // retires the old `len a` vs `len $a` syntactic split that made
+    // `len <string>` read a non-table (garbage).
+    //
+    // The `strlen` fallback below does NOT mean "byte length" in general — it
+    // means "read the var slot's length field", and `handle_param_expansion`
+    // emits exactly that. For a collection that field holds the element
+    // count, which is why the branch is correct for the two collection kinds
+    // that are absent from `state.collections`: DD#100 parameter slots and
+    // the implicit `args`. A statement-level `len <scalar>` never arrives
+    // here at all — SB4030 rejects it and points at `strlen`. What remains
+    // is the DD#58 arithmetic sexpr `(len s)`, where a string operand is
+    // allowed and does yield its byte length.
     let arg = c.args.first()?;
     let name = match &arg.kind {
         ExprKind::ParameterExpansion(pe) if pe.operator.as_deref() == Some("arrvals") => {

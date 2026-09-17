@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup types
-plan=216
+plan=225
 echo "1..$plan" >&3
 
 set +e
@@ -1100,6 +1100,73 @@ echo $(len m)
 echo "${m[k1]}${m[k6]}"'
 [[ $rc = 0 && $out = "6
 v1v6" && -z $err ]]; chk 35.11
+
+# --- SB5079: splatting a non-collection (the SB5068 defect, one op over) ---
+# `@name` lowers to a collection traversal, so a scalar subject made the
+# generated code read a `char*` as a `SashTable*`. Three segfaults and two
+# compiler ICEs, all compiling clean beforehand.
+
+# 75.81 a string subject in a for-in splat -- segfaulted
+run_sash 'str s=hi
+for x in @s {
+echo $x
+}'
+[[ $rc != 0 && -z $out && $err == *SB5079* ]]; chk 75.81
+
+# 75.82 a string subject to strlen -- segfaulted
+run_sash 'str s=hi
+echo $(strlen @s)'
+[[ $rc != 0 && -z $out && $err == *SB5079* ]]; chk 75.82
+
+# 75.83 an int subject -- compiler ICE (codegen/types.rs), as in SB5068
+run_sash 'int i=5
+for x in @i {
+echo $x
+}'
+[[ $rc != 0 && -z $out && $err == *SB5079* ]]; chk 75.83
+
+# 75.84 a scalar splatted into a user function -- segfaulted
+run_sash 'fn f {
+echo $(len args)
+}
+str s=hi
+f @s'
+[[ $rc != 0 && -z $out && $err == *SB5079* ]]; chk 75.84
+
+# 75.85 an unintroduced name. SB5031 enumerates scalar READS, and a splat is
+# not one, so unlike the subscript case this was NOT already covered -- it
+# ICE'd. Reported under SB5031 all the same: it is the same mistake.
+run_sash 'for x in @nosuch {
+echo $x
+}'
+[[ $rc != 0 && -z $out && $err == *SB5031* ]]; chk 75.85
+
+# 75.86 an array splat still traverses -- guards against over-rejection
+run_sash 'array a=(1 2)
+for x in @a {
+echo $x
+}'
+[[ $rc = 0 && $out == *"1"* && $out == *"2"* && -z $err ]]; chk 75.86
+
+# 75.87 a map splat still traverses its values
+run_sash 'map m=([k]=v [j]=w)
+for x in @m {
+echo $x
+}'
+[[ $rc = 0 && $out == *"v"* && $out == *"w"* && -z $err ]]; chk 75.87
+
+# 75.88 strlen of a splat is the byte length of the joined value
+run_sash 'array a=(12 345)
+echo $(strlen @a)'
+[[ $rc = 0 && $out = "6" && -z $err ]]; chk 75.88
+
+# 75.89 an array splatted into a user function still arrives as args
+run_sash 'fn f {
+echo $(len args)
+}
+array a=(1 2)
+f @a'
+[[ $rc = 0 && $out = "2" && -z $err ]]; chk 75.89
 
 set -e
 tally
