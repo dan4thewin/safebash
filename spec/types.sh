@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup types
-plan=229
+plan=236
 echo "1..$plan" >&3
 
 set +e
@@ -1200,6 +1200,64 @@ f =a'
 run_sash 'array a=(12 345)
 echo $(strlen "$(join a ,)")'
 [[ $rc = 0 && $out = "6" && -z $err ]]; chk 75.93
+
+# 75.94 `len args` counts the arguments of the enclosing function. `args` is
+# the function-local argv collection, so DD#75's collection-only `len` takes
+# it directly. Reached `check_len_operand`'s `name == "args"` arm, which no
+# spec had exercised.
+run_sash 'fn f {
+echo $(len args)
+}
+f a b c'
+[[ $rc = 0 && $out = "3" && -z $err ]]; chk 75.94
+
+# 75.95 it agrees with $# for the same frame
+run_sash 'fn f {
+echo "$(len args) $#"
+}
+f x y'
+[[ $rc = 0 && $out = "2 2" && -z $err ]]; chk 75.95
+
+# 75.96 zero arguments is 0, not an error
+run_sash 'fn f {
+echo "$(len args) $#"
+}
+f'
+[[ $rc = 0 && $out = "0 0" && -z $err ]]; chk 75.96
+
+# 75.97 an empty string is an argument: counted, not skipped
+run_sash 'fn f {
+echo "$(len args) $#"
+}
+f "" ""'
+[[ $rc = 0 && $out = "2 2" && -z $err ]]; chk 75.97
+
+# 75.98 `args` is per-frame -- a nested call does not disturb the caller's
+run_sash 'fn g {
+echo "g=$(len args)"
+}
+fn f {
+g x y z
+echo "f=$(len args)"
+}
+f a b'
+[[ $rc = 0 && $out = "g=3
+f=2" && -z $err ]]; chk 75.98
+
+# 75.99 `args` exists only inside a function -- at top level it is an
+# undefined collection (SB5024), not an empty one
+run_sash 'echo $(len args)'
+[[ $rc != 0 && -z $out && $err == *SB5024* ]]; chk 75.99
+
+# 75.100 `args` is indexed, not associative, so `keys` refuses it the same
+# way it refuses any array
+run_sash 'fn f {
+for k in $(keys args) {
+echo "$k"
+}
+}
+f m n'
+[[ $rc != 0 && -z $out && $err == *SB4030* ]]; chk 75.100
 
 set -e
 tally

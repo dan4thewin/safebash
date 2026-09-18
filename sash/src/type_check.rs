@@ -31,12 +31,6 @@ struct TypeEnv {
     known_slots: HashSet<String>,
     /// Variables declared as map (associative array) — string keys
     assoc_arrays: HashSet<String>,
-    /// `for v in …` variables. An element of a collection is always a scalar,
-    /// but the inference pass has no `For` arm, so these never reach `vars`.
-    /// Tracked separately rather than declared, so that adding them cannot
-    /// perturb the string/int rules for a name the pass deliberately leaves
-    /// untyped.
-    loop_vars: HashSet<String>,
 }
 
 impl TypeEnv {
@@ -61,7 +55,6 @@ impl TypeEnv {
             slot_kinds: HashMap::new(),
             known_slots: HashSet::new(),
             assoc_arrays: HashSet::new(),
-            loop_vars: HashSet::new(),
         }
     }
 
@@ -1058,14 +1051,13 @@ fn check_len_operand(c: &Command, span: Span, env: &TypeEnv, errors: &mut Vec<Ty
     // report, and answering it here masked the real diagnostic with a
     // misleading one ("`f` is a scalar" when `f` was never declared at all).
     //
-    // There was an `|| env.is_slot(&name)` clause here. A DD#100 slot letter
-    // can no longer be a declared variable (SB5065) or a loop variable
-    // (SB5080), and an unpassed slot is SB5066, so nothing could reach it —
-    // validate rejects every route before type check runs.
-    if !(env.vars.contains_key(&name) || env.loop_vars.contains(&name))
-        || env.collections.contains(&name)
-        || name == "args"
-    {
+    // An `|| env.is_slot(&name)` clause here was unreachable: a DD#100 slot
+    // letter can be neither a declared variable (SB5065) nor a loop variable
+    // (SB5080), and an unpassed slot is SB5066 — validate rejects every route
+    // before type check runs. An `|| env.loop_vars.contains(&name)` clause
+    // went with it: `check_for` types every loop variable into `vars`, so the
+    // first disjunct already answers for them.
+    if !env.vars.contains_key(&name) || env.collections.contains(&name) || name == "args" {
         return;
     }
     errors.push(TypeError {
@@ -1497,7 +1489,6 @@ fn check_unset_args(c: &Command, span: Span, env: &TypeEnv, errors: &mut Vec<Typ
 }
 
 fn check_for(f: &For, env: &mut TypeEnv, errors: &mut Vec<TypeError>) {
-    env.loop_vars.insert(f.variable.clone());
     check_for_binding_type(f, env, errors);
     // The for-in header words are expressions, not a child body — visit them so
     // a `$(keys …)` / `$(join …)` splat source (or a bad subscript) in the
