@@ -328,8 +328,13 @@ fn redirect_expr_simple_expansion(
 }
 
 /// Find the highest-version VarSlot matching `var` as a base name.
-/// Variable keys are encoded as either `name` (version 0) or `name_N`
-/// (version N, where N is all-ASCII-digits).
+/// Every key is `name_N`: they are built by `VarRef::display()`, which is
+/// `format!("{}_{}", name, version)` over a `u32`, so version 0 is spelled
+/// `name_0` and never bare `name`. (Both this and its former twin in
+/// `inst_handlers.rs` documented a bare-`name` spelling that nothing emits.)
+/// A base name may itself end in `_N` — `rfind` takes the last `_`, which is
+/// always the one `display` appended, so `x_2` at v0 keys as `x_2_0` and
+/// stays distinct from `x` at v2.
 fn find_highest_version<'a>(vars: &'a HashMap<String, VarSlot>, var: &str) -> Option<&'a VarSlot> {
     let mut best: Option<(u32, &'a VarSlot)> = None;
     for (k, sv) in vars {

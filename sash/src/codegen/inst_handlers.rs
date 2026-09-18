@@ -510,7 +510,7 @@ pub(super) fn handle_assign(
         handle_new_table_assign(target, builder, module, ctx);
         return false;
     }
-    let base = base_var_name(&target.display());
+    let base = &target.name;
     if base == "?" {
         handle_exit_status_assign(value, builder, module, ctx);
     } else {
@@ -539,18 +539,6 @@ fn handle_new_table_assign(
     builder.def_var(sv.str_ptr(), tbl_ptr);
     let zero_len = builder.ins().iconst(I64, 0);
     builder.def_var(sv.str_len(), zero_len);
-}
-
-/// Strip the SSA version suffix from a key. Keys are `name` (v0) or
-/// `name_N` (vN where N is all-ASCII-digits).
-fn base_var_name(key: &str) -> String {
-    if let Some(idx) = key.rfind('_') {
-        let suffix = &key[idx + 1..];
-        if !suffix.is_empty() && suffix.chars().all(|c| c.is_ascii_digit()) {
-            return key[..idx].to_string();
-        }
-    }
-    key.to_string()
 }
 
 /// Assignment to `$?` — the value goes into the dedicated
