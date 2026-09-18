@@ -1,3 +1,49 @@
+## ══ STATUS (2026-09-18) — the dead code was the symptom ══
+
+**Journal 366.** Sweep **5605, 0 failing** (predicted exactly); units green;
+clippy clean.
+
+**P1 BUG FOUND — a redirect on a user-function call is silently dropped.**
+`fn f { echo hi; }` + `f > out.txt` compiles, prints `hi` to **stdout**, and
+never creates the file. Every operator (`>`, `>>`, `<`, `2>`, with args) is
+accepted and none takes effect. Builtins, externals, bare pipelines, and a
+redirect *inside* the body are all correct — it is specifically the call.
+
+Cause confirmed from `--emit-c` (no `sash_redirect` emitted at all):
+`lower_redirected_stmt` attaches redirects to the last inst of `block` and
+`result_block`, but an inlined function body lands in an **intermediate**
+block (`_blk_2: call_f`) that neither names. The redirect attaches to nothing.
+
+**The five cold lines were the symptom, not over-generality.**
+`attach_redirects_to_result` 327/332 and `attach_redirects_to_last_inst`
+344/353-355/357 are all unreachable *because* the only shape that would
+exercise them is the shape that silently fails. This is the second time the
+coverage grind has pointed straight at a half-wired feature (cf.
+`bug-redirected-function-def-unregistered`).
+
+**FOR DG — fork, not decided:** `notes/tasks/bug-function-call-redirect-
+dropped.md`. The silent drop must go (settled precedent: `x=5 >f` →
+SB4046). But: **(A)** support `f > out.txt` — bash-ordinary, unlike the
+`f(){…} >file` corner you rejected; or **(B)** reject with a spanned
+SB4046-style error — cheap and consistent, but removes a common form from
+the subset. Recommend **A** unless you want the subset narrower.
+
+**Stale comment, third time in four journals.** `lower_redirected_stmt` still
+documents a `__redirect_push`/`__redirect_pop` bracket for function bodies —
+machinery deleted with `lower_redirected_function`. It reads as though the
+case were handled.
+
+**Landed:** `attest_map_form_error`'s "requires a map" diagnostic had never
+once been produced (10 calls, all returned early). Reachable and correct;
+specs `93.55`–`93.58` now cover indexed-array, scalar, int, and a map
+control. The masking trap struck again — if the attest condition does not
+validate *both* binders, an earlier check fires instead.
+
+**Second, smaller question for DG:** against an *undeclared* name that same
+message says "'zz' is a scalar", where every other read site says "assigned
+nowhere (possible typo)" (SB5031/SB5039). False statement, and it misdirects
+a typo'd map name to "use scalar attest". Error-code surface, so not changed.
+
 ## ══ STATUS (2026-09-18) — three cold regions, one covered and two explained ══
 
 **Journal 365.** Sweep **5597, 0 failing** (predicted exactly: +3 specs in a

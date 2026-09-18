@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup taint
-plan=204
+plan=208
 echo "1..$plan" >&3
 
 set +e
@@ -1121,6 +1121,40 @@ run_sash 'fn mk { /bin/cat d82a.txt; }
 str x=$(mk)
 echo $x'
 [[ $rc = 0 && $out = "payload" ]]; chk dd82.4
+
+# ─── the two-binder attest against a NON-map: the shape diagnostic ──────
+# `attest K V in M` requires M to be a map. The message that says so was
+# built by a function whose 10 calls all returned early in a full sweep —
+# the diagnostic itself was never once produced. It is reachable; nothing
+# had asked for it. (The obvious probe misses it: if the condition does
+# not validate BOTH binders, an earlier check fires instead and masks it.)
+
+# 93.55 …against an indexed array: the form is wrong, and the fix is one
+#       binder rather than two, so the message says which
+run_sash 'array a=(1 2 3)
+attest k v in a [[ -n $k && -n $v ]]
+echo done'
+[[ $rc != 0 && -z $out && $err == *SB4030* && $err == *"indexed array"* \
+   && $err == *"one binder"* ]]; chk 93.55
+
+# 93.56 …against a declared scalar: a different remedy, so a different text
+run_sash 'str s=hi
+attest k v in s [[ -n $k && -n $v ]]
+echo done'
+[[ $rc != 0 && -z $out && $err == *SB4030* && $err == *"scalar attest"* ]]; chk 93.56
+
+# 93.57 …an int is a scalar for this purpose too
+run_sash 'int n=1
+attest k v in n [[ -n $k && -n $v ]]
+echo done'
+[[ $rc != 0 && -z $out && $err == *SB4030* && $err == *"scalar attest"* ]]; chk 93.57
+
+# 93.58 positive control: against a real map the form is accepted
+run_sash 'array a=(x y)
+map m = @{a:~}
+attest k v in m [[ -n $k && -n $v ]]
+echo done'
+[[ $rc = 0 && $out = "done" ]]; chk 93.58
 
 set -e
 tally
