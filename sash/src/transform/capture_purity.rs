@@ -84,6 +84,13 @@ fn command_is_pure(
     if name.contains('/') {
         return false;
     }
+    // Measured (journal 365): this lookup never succeeds in a full sweep —
+    // 156 calls reach here and every one falls through to the `true` below.
+    // Function inlining runs before this pass, so a capture of `fn emit {
+    // /bin/cat f; }` arrives with `/bin/cat` already spliced in and is
+    // disqualified by the slash test above, not by walking a body. The walk
+    // is kept because it is what makes the disqualification *correct* for
+    // any call this pass sees before inlining has flattened it.
     if let Some(body) = bodies.get(name) {
         let owned = name.to_string();
         if !visiting.insert(owned.clone()) {

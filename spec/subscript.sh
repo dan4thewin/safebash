@@ -10,7 +10,7 @@
 set -eu
 . common.sh
 setup subscript
-plan=34
+plan=37
 echo "1..$plan" >&3
 
 set +e
@@ -235,6 +235,32 @@ echo $arr[foo'
 run_sash 'fn f { array arr=(p q r); echo $arr[$1] }
 f 2'
 [[ $rc != 0 && -z $out && $err == *SB5064* ]]; chk 80.34
+
+# ─── H. `name[` as a bare word: the two early-outs of the dynamic-subscript
+#        sniffer. `looks_like_dynamic_subscript_assign` only commits to a
+#        `name[$i]=` parse once the *shape* is confirmed; these are the
+#        inputs where it backs out and the word stays an ordinary command
+#        name. Both were cold branches (parser.rs 1851 / 1854).
+
+# 80.35 `a[` followed by a plain word, not a `$`: the lexer only splits
+#       `name[` off when the subscript holds an expansion, so this is not a
+#       subscript assignment at all and `a[` is just a command name.
+run_sash 'array a=(1 2 3)
+a[ x ]=5'
+[[ $rc != 0 && -z $out && $err == *SB5011* ]]; chk 80.35
+
+# 80.36 `a[$i` with nothing after it: the token where `]` would go is the end
+#       of input, so the sniffer backs out rather than reading past the end.
+run_sash 'array a=(1 2 3)
+int i=0
+a[$i'
+[[ $rc != 0 && -z $out && $err == *SB5011* ]]; chk 80.36
+
+# 80.37 …and the same with a statement separator where `]` belongs.
+run_sash 'array a=(1 2 3)
+int i=0
+a[$i; echo hi'
+[[ $rc != 0 && -z $out && $err == *SB5011* ]]; chk 80.37
 
 set -e
 tally

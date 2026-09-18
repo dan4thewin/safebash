@@ -1,3 +1,37 @@
+## ══ STATUS (2026-09-18) — three cold regions, one covered and two explained ══
+
+**Journal 365.** Sweep **5597, 0 failing** (predicted exactly: +3 specs in a
+dual-mode file = +6); units green; clippy clean; no id collisions.
+
+**Covered:** `looks_like_dynamic_subscript_assign` (parse/parser.rs) — both
+cold early-outs reached by ordinary input, specs `80.35`–`80.37`. `a[ x ]=5`
+(token after `[` is a word, not a `$` — the lexer only splits `name[` off when
+the subscript holds an expansion) and `a[$i` truncated (the token where `]`
+belongs is end-of-input). Both reject cleanly with SB5011; no hang, no ICE.
+
+**Explained, not changed:** `command_is_pure` (transform/capture_purity.rs).
+The `visiting` cycle guard cannot fire because SB5037 rejects recursion —
+verified direct, mutual, and a 3-function cycle — and the module header
+already says the set exists so a malformed program cannot hang the compiler.
+The `bodies.get(name)` lookup **succeeds zero times in 156 calls**, which
+looked serious: the doc insists a body that merely wraps an external must be
+disqualified. It is — by inlining, which runs first and splices `/bin/cat`
+into the capture so the slash test catches it. Confirmed by output against
+bash across six shapes (wrap, consume+echo, two levels, echo-then-external,
+redirected away, captured twice) — all SAME. Measurement recorded in the
+source.
+
+**Recurring trap, twice now.** One of the six first read as a divergence
+(SB5020 on consume+echo) but that was the taint rule on an unattested `$t` —
+a different pass. Same shape as journal 364, where validate's SB5020 masked
+the backstop I was actually testing. *A result that looks like it concerns
+the pass you are studying may come from an earlier one.*
+
+**Pattern across 364/365:** cold branches that turn out to be bugs are the
+ones where the code contradicts its own doc comment; the benign ones are
+already explained by theirs. Read the comment first as a filter — then check
+it against execution rather than believing it.
+
 ## ══ STATUS (2026-09-18) — a name collision that laundered an execve ══
 
 **Journal 364.** Sweep **5591, 0 failing** (predicted exactly: +4 specs in a
