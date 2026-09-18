@@ -1,3 +1,56 @@
+## ══ STATUS (2026-09-17) — the guards validate already keeps ══
+
+**Journal 358.** Sweep **5480, 0 failing** (predicted; no spec changes).
+**Units 92.** Coverage queue — **five dead guards purged, no bugs found.**
+
+Resumed at `check_len_operand`'s cold branches. The blocked probes from last
+session were **malformed, not unreachable**: the DD#100 call-site sigil is
+`=name`, not `@name` (`@name` is the splat). Copying the form from
+`spec/collparam.sh` fixed every probe at once.
+
+`env.is_slot(&name)` there guarded against a slot letter arriving as a loop
+variable — a route **SB5080 closed three commits ago**. The branch went cold
+because we fixed what reached it, not because it was always dead.
+
+Checked the whole `is_slot` family rather than the one function. Two of four
+sites live; the other two, plus three neighbouring disjuncts, all **blocked by
+a validate rule that runs before type check** — each proven by execution:
+
+| guard | rejected first by |
+|---|---|
+| `len`/`keys` no args | SB5073, SB4045 |
+| `keys` non-name operand | SB5062 (all six forms tried) |
+| `keys`/`len` slot operand | SB5066 / SB5080 / SB5065 |
+| subscript on a non-collection | SB5068, read **and** write paths |
+
+**Branch counts, not line counts, found this.** Line 999 shows a count of 26
+and looks warm while holding two disjuncts that never fire.
+
+Purged from `type_check.rs`: `check_len_operand` → `is_slot` +
+`name.is_empty()` (the latter redundant *twice over* — `""` is never a key in
+`vars`/`loop_vars`); `check_keys_operand` → the same two (here
+`name.is_empty()` was **not** redundant — it suppressed an empty-name
+message); `check_subscript_key_kind` → `!collections.contains(name)`.
+
+Complexity fell on all three: **8/4→6/4**, **6/4→4/4**, **8/4→6/4**. Every
+probe's diagnostic is byte-identical after the purge.
+
+**No ICE guards** — the standing exception is for a regression that would
+produce a *silent wrong answer*; all five would produce a misleading error
+message instead.
+
+**Reported, not asked:** the `check_subscript_key_kind` removal moves a
+**precondition** to the caller rather than dropping a redundant disjunct.
+Judged reversible and low-consequence; one line to restore.
+
+**Irreducible:** the `let Some(arg) = c.args.first() else` arms in both
+functions stay cold. An `Option` destructure has two arms however it is
+written; neither purge nor ICE removes one.
+
+**Next:** coverage data is **stale** (SB5080/5081/5082, the for-binding check
+and these purges all post-date it). `mk cov-branch` → `mk cov-db` before
+trusting the cold queue again, then `mk cov-reset && mk build`.
+
 ## ══ STATUS (2026-09-17) — a variable should never change type ══
 
 **Journal 357.** Sweep **5476 → 5480, 0 failing** (20 specs `86.39`–`86.58`,
@@ -8360,7 +8413,7 @@ modified: 2026-06-07
 
 ## Spec status: 5480 passing / 0 failing of 5493 (spec.db @ fffc23f)
 
-_Regenerated 2026-09-17 by `mk status`. Edits inside this block will be
+_Regenerated 2026-09-18 by `mk status`. Edits inside this block will be
 overwritten; edit outside the BEGIN/END markers._
 <!-- END: mk-status -->
 

@@ -942,7 +942,9 @@ fn check_subscript_key_kind(
     env: &TypeEnv,
     errors: &mut Vec<TypeError>,
 ) {
-    if !env.collections.contains(name) || env.is_slot(name) {
+    // Subscripting a non-collection is SB5068 (read and write paths alike), so
+    // `name` is always a collection by the time this runs.
+    if env.is_slot(name) {
         return;
     }
     let is_map = env.assoc_arrays.contains(name);
@@ -996,7 +998,10 @@ fn check_keys_operand(c: &Command, span: Span, env: &TypeEnv, errors: &mut Vec<T
         return;
     };
     let name = join_operand_name(arg);
-    if name.is_empty() || env.assoc_arrays.contains(&name) || env.is_slot(&name) {
+    // A non-name operand is SB5062 and an unpassed slot is SB5066, both from
+    // validate, so `name` is always a real name here and a passed slot is
+    // always in `assoc_arrays` or `collections`.
+    if env.assoc_arrays.contains(&name) {
         return;
     }
     let what = if env.collections.contains(&name) {
@@ -1052,10 +1057,13 @@ fn check_len_operand(c: &Command, span: Span, env: &TypeEnv, errors: &mut Vec<Ty
     // is not the same question: an undeclared name is SB5039's or SB5055's to
     // report, and answering it here masked the real diagnostic with a
     // misleading one ("`f` is a scalar" when `f` was never declared at all).
-    if name.is_empty()
-        || !(env.vars.contains_key(&name) || env.loop_vars.contains(&name))
+    //
+    // There was an `|| env.is_slot(&name)` clause here. A DD#100 slot letter
+    // can no longer be a declared variable (SB5065) or a loop variable
+    // (SB5080), and an unpassed slot is SB5066, so nothing could reach it —
+    // validate rejects every route before type check runs.
+    if !(env.vars.contains_key(&name) || env.loop_vars.contains(&name))
         || env.collections.contains(&name)
-        || env.is_slot(&name)
         || name == "args"
     {
         return;
