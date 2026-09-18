@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup taint
-plan=200
+plan=204
 echo "1..$plan" >&3
 
 set +e
@@ -1084,6 +1084,43 @@ run_sash 'array a=($(getenv HOME))
 echo "${a[0]}"'
 [[ $rc != 0 && -z $out && $err == *SB5021* \
    && $err == *"array 'a'"* && $err != *mapfile* ]]; chk 60.59
+
+# ─── DD#82 backstop: a name collision must not launder an execve ─────────
+# The SSA taint backstop classifies a command-substitution head. DD#23
+# rewrites an external head to an absolute path, so only a BARE name can be
+# a user function. The classifier used to fall back to the basename, which
+# made `/bin/cat` match a user function named `cat` and report Clean for a
+# real execve. Measured (journal 363): that fallback was true ONLY in the
+# collision case, and the bare-name test never fired at all, because a
+# user-function capture is lowered elsewhere and never reaches that arm.
+printf 'payload\n' > d82a.txt
+
+# dd82.1 an external capture whose basename collides with a user function is
+#        still TAINTED — unattested use rejects exactly as without collision
+run_sash 'fn cat { echo fromfn; }
+str x=$(/bin/cat d82a.txt)
+echo $x'
+[[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk dd82.1
+
+# dd82.2 …and attesting is what makes it usable: the collision changes
+#        nothing about the handling the value requires
+run_sash 'fn cat { echo fromfn; }
+str x=$(/bin/cat d82a.txt)
+attest x [[ -n $x ]]
+echo $x'
+[[ $rc = 0 && $out = "payload" ]]; chk dd82.2
+
+# dd82.3 control: same program with no colliding function — same outcome
+run_sash 'str x=$(/bin/cat d82a.txt)
+echo $x'
+[[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk dd82.3
+
+# dd82.4 control: a user-function capture is Clean by DD#24 even when the
+#        function itself runs an external. Deliberate, and unchanged here.
+run_sash 'fn mk { /bin/cat d82a.txt; }
+str x=$(mk)
+echo $x'
+[[ $rc = 0 && $out = "payload" ]]; chk dd82.4
 
 set -e
 tally

@@ -24,6 +24,10 @@ round trip recovering `target.name`, deleted in favour of `&target.name`.
 called by `find_highest_version`, which iterates map *keys* — there the
 pair really has been flattened and has to be recovered.
 
+There is also a **third** copy of the same suffix-stripping logic,
+`strip_ssa_version` (`codegen/values.rs`), carrying 2 cold branches of its
+own. Any fix should take all three together.
+
 Its three branches are permanently cold: `rfind('_')` never returns `None`,
 the suffix is never empty, the suffix is always all-digits. Every key
 producer is versioned (audited: `VarRef::display()`, `dispatch.rs`

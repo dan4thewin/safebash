@@ -461,7 +461,18 @@ fn cmd_subst_taint(
         | "getcpid" | "getcwd" | "status" | "signum" => Taint::Clean,
         "echo" => any_tainted(&argv[1..], taint, user_functions),
         _ => {
-            if user_functions.contains(cmd.as_str()) || user_functions.contains(basename) {
+            // Only a BARE name can be a user function: DD#23 resolution
+            // rewrites an external head to an absolute path and nothing else
+            // acquires a slash, so `cmd` is already the name to look up.
+            //
+            // Do NOT fall back to the basename. `/bin/cat` alongside a user
+            // function named `cat` would match and be classified Clean — a
+            // real execve laundered by a name collision, exactly contrary to
+            // "everything else runs via execve/execveat" above. Measured: the
+            // basename test is true only in that collision case, and the
+            // `cmd` test is never true at all, because a user-function
+            // capture is lowered elsewhere and never reaches this arm.
+            if user_functions.contains(cmd.as_str()) {
                 Taint::Clean
             } else {
                 Taint::Tainted
