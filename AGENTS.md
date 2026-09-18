@@ -282,18 +282,35 @@ file is +N; in a dual-mode file it is +2N. A green sweep whose total is not
 what you predicted means specs collided, vanished, or were skipped -- the
 collision above was found only that way.
 
-**Neither `SELECT COUNT(*) FROM test_status` nor `run.sh`'s own summary is a
-reliable total.** `test_status` is `tests LEFT JOIN runs`, and `tests` is a
-permanent registry: a spec you delete keeps its row and its last status
-forever, so the view reports retired tests as passing indefinitely. **`run.sh`
-prints its summary *from that very view*, so it inherits the same inflation.**
-The 2026-09-18 sweep reported 5585 while exactly 5583 checks ran; the two
-ghosts were `c:75.99` / `native:75.99`, deleted one commit earlier and last
-genuinely run at `5cfeb24`. The greppable count agreed with the summary for
-weeks only because every sweep until then had purely *added* specs.
+**`run.sh`'s summary is authoritative again as of 2026-09-18 — but only
+because the sweep now retires what it no longer produces.** The history is
+worth knowing, because the failure mode is silent and it recurred twice.
+`test_status` is `tests LEFT JOIN runs`, and `tests` was a *permanent*
+registry: a spec you deleted kept its row and its last status forever. Since
+`run.sh` prints its summary from that view, the gate's own total drifted
+upward with every retirement. The sweep reported 5585 while exactly 5583
+checks ran; the ghosts were `c:75.99` / `native:75.99`, deleted one commit
+earlier and last genuinely run at `5cfeb24`.
 
-The authoritative executed total is the **sum of every spec file's `plan=`**
-(native runs every file; c-mode skips the two native-only ones):
+`run.sh` now deletes registry rows for ids the sweep did not produce (DG chose
+this over having the summary read the TSV). Three properties to preserve if
+you touch it:
+
+- **Mode-scoped.** Only ids whose mode prefix appears in this sweep are
+  considered, so `SPEC_MODES="native"` cannot purge all 2697 `c:` tests.
+- **Capped** at `SPEC_PURGE_MAX` (default 25). A partial or aborted sweep is
+  indistinguishable from a mass retirement by looking at the TSV, so over the
+  cap it reports the cohort and deletes nothing. Raise it deliberately when a
+  large retirement is real.
+- **`runs` rows are kept.** They are the cross-commit history; dropping the
+  `tests` row is by itself what clears the id from `test_status`.
+
+The purge prints what it retired. **A retirement you did not expect is a
+finding** — it means a spec vanished, not that the bookkeeping tidied itself.
+
+The independent source-derived check is the **sum of every spec file's
+`plan=`** (native runs every file; c-mode skips the two native-only ones).
+It should now equal the summary exactly:
 
 ```sh
 cd spec && nat=0; cm=0
@@ -317,9 +334,9 @@ cd spec && for f in *.sh; do case $f in common.sh|run.sh) continue;; esac
 ids behind a single `chk $_id` token. (`convert.sh` and `trace.sh` are the only
 native-only files -- 191 tests, the exact native-minus-c difference.)
 
-**Retired ids never leave the summary.** After deleting a spec, `run.sh`'s
-total stays high by one per mode *forever*. Subtract them deliberately instead
-of re-deriving the discrepancy on each sweep.
+**When you delete a spec, expect the next sweep to announce the retirement**
+and the total to drop by one per mode. Before 2026-09-18 it did the opposite:
+the id stayed and the total stayed high *forever*.
 
 **A `ran=` you cannot account for is a finding, not a rounding error.**
 `coverage.sh` reported `ran=323` against 321 greppable `chk` tokens. Chasing

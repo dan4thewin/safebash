@@ -5,7 +5,14 @@ cd "$(dirname "$0")/.."
 sha=$(git rev-parse --short HEAD)
 release=${SASH_RELEASE_DIR:-$(pwd)/target/release}
 tsv=$(mktemp)
-trap 'rm -f "$tsv"' EXIT
+retired_f=$(mktemp)
+trap 'rm -f "$tsv" "$retired_f"' EXIT
+
+# A sweep retires any registered id it no longer produces (the purge below).
+# More than this many in one sweep is read as a partial or aborted run rather
+# than a deliberate retirement, and nothing is deleted. Raise it explicitly
+# (SPEC_PURGE_MAX=N) when you really did retire a large cohort.
+purge_cap=${SPEC_PURGE_MAX:-25}
 
 # Bootstrap the database. spec.db is untracked local-derived data, so a
 # fresh clone starts with no file at all; schema.sql and clauses.tsv are
@@ -64,8 +71,58 @@ WHERE test_id NOT IN (SELECT id FROM tests);
 INSERT INTO runs(test_id, status, commit_hash, committed_at)
 SELECT test_id, status, '$sha', ts FROM _import;
 
+-- Retire ids this sweep no longer produces. The tests table is a permanent
+-- registry and test_status LEFT JOINs from it, so a deleted spec kept
+-- reporting its last status forever -- and the summary below reads that view,
+-- so the gate's own total drifted upward with every retirement (journal 361:
+-- 5585 reported against 5583 actually run, the ghosts being a 75.99 pair
+-- deleted a commit earlier).
+--
+-- NOTE: this heredoc is unquoted, so bash expands it. Keep backticks out of
+-- these comments entirely -- a backticked word is command substitution, not
+-- quoting, and 2026-09-18 it printed "tests: command not found" four times
+-- before anyone noticed the SQL was being rewritten on its way in.
+--
+-- Scoped to the modes that actually appear in this sweep, so
+-- SPEC_MODES="native" cannot purge every c: id. Capped in the DELETE below,
+-- because a partial sweep is indistinguishable from a mass retirement by
+-- inspection of the TSV alone.
+--
+-- The runs rows are deliberately left in place: they are the cross-commit
+-- history, and dropping the tests row is by itself what removes the id from
+-- test_status. A re-added spec re-registers on its next sweep.
+CREATE TEMP TABLE _retired AS
+SELECT t.id AS id FROM tests t
+WHERE instr(t.id, ':') > 0
+  AND substr(t.id, 1, instr(t.id, ':') - 1) IN
+      (SELECT DISTINCT substr(test_id, 1, instr(test_id, ':') - 1) FROM _import)
+  AND t.id NOT IN (SELECT test_id FROM _import);
+
+.headers off
+.mode list
+.output $retired_f
+SELECT id FROM _retired ORDER BY id;
+.output stdout
+
+DELETE FROM tests
+WHERE id IN (SELECT id FROM _retired)
+  AND (SELECT COUNT(*) FROM _retired) <= $purge_cap;
+
+DROP TABLE _retired;
 DROP TABLE _import;
 SQL
+
+    nret=$(grep -c . "$retired_f" || true)
+    if (( nret > purge_cap )); then
+        echo "--- REFUSED to retire $nret ids (cap $purge_cap) ---"
+        echo "    A partial sweep looks exactly like a mass retirement, so"
+        echo "    nothing was deleted. Re-run the full suite; if the cohort is"
+        echo "    genuinely retired, set SPEC_PURGE_MAX=$nret."
+        head -20 "$retired_f" | sed 's/^/    /'
+    elif (( nret > 0 )); then
+        echo "--- retired $nret id(s) the suite no longer produces ---"
+        sed 's/^/    /' "$retired_f"
+    fi
 fi
 
 # Summary per mode — read the CURRENT status of each test (latest run per

@@ -1,3 +1,47 @@
+## ══ STATUS (2026-09-18) — the registry stops being permanent ══
+
+**Journal 362.** Sweep **5583, 0 failing** — and the number is now the gate's
+own, matching `sum(plan)` exactly for the first time. **Units 77, clippy
+clean.**
+
+**DG chose option (c)** from the previous block: `run.sh` now retires registry
+ids the sweep no longer produces. Three properties, and two of them are guards
+against a purge that would silently empty the registry:
+
+- **Mode-scoped** — only ids whose mode prefix appears in this sweep. Without
+  it, the documented `SPEC_MODES="native"` fast path reads as a retirement of
+  all 2697 `c:` tests.
+- **Capped** at `SPEC_PURGE_MAX` (default 25) — a partial or aborted sweep is
+  indistinguishable from a mass retirement by inspecting the TSV, so past the
+  cap it reports the cohort and deletes nothing.
+- **`runs` rows kept** — they are the cross-commit history; dropping the
+  `tests` row alone clears the id from `test_status`.
+
+Dry-ran all three against a copy before any DELETE touched the real database:
+full sweep retires exactly the 2 ghosts; native-only retires 1 and leaves 2697
+`c:` rows; partial sweep wants 2788 and deletes 0. The purge announces what it
+retired — **an unexpected retirement is a finding**, not tidy bookkeeping.
+
+**Self-inflicted bug, caught and fixed.** The explanatory comment I wrote
+inside the SQL heredoc used the project's backtick prose style. That heredoc
+is *unquoted*, so bash ran `tests`, `runs` and `75.99` as commands and spliced
+the empty results into the SQL ("tests: command not found", ×4). Harmless here
+— it hit comment text — but everything in that heredoc is rewritten before
+sqlite3 sees it. Backticks are now banned in that file with the reason stated
+in place. The general lesson: a prose convention that is right everywhere else
+in the repo is a defect in this one context.
+
+**Still open (carried):** DD#71's table lists `[[ ]]` comparison operands
+"(both sides)" as operand words, but only the `=~` RHS and dispatch patterns
+use `AbsorbMode::Operand` — doc-vs-implementation, language surface, DG's
+call. And the `check_subscript_key_kind` purge moved a *precondition* to its
+callers (reported, not asked); veto is one line.
+
+**Next:** back to the branch/line queue — `emit_wait`, `base_var_name`,
+`parse_var_base_version`, `cmd_subst_taint`, `command_is_pure`,
+`detect_array_iter`, `insert_case_phis`, `lower_if_attest`. Baseline before
+this stretch: lines 96.93%, functions 98.42%, branches 90.07%.
+
 ## ══ STATUS (2026-09-18) — the gate had been counting ghosts ══
 
 **Journal 361.** Sweep **5583 executed, 0 failing** (16 specs: 10 `ow.14`–
