@@ -1264,6 +1264,11 @@ fn try_substring_op(rest: &str, name: &str, span: Span) -> Option<Expr> {
 }
 
 /// `${var@X}` — parameter transform (rejected SB4015 downstream).
+///
+/// The `[@` guard keeps an unterminated subscript (`${a[@U}`, where the body
+/// scanner leaves `[@U` in `rest`) from reading as an `@U` transform. A
+/// preceding `!rest.contains("[@]")` test was redundant: `"[@]"` contains
+/// `"[@"`, so it could never decide an outcome the `[@` test did not.
 fn try_at_transform(rest: &str, name: &str, span: Span) -> Option<Expr> {
     let at_pos = rest.rfind('@')?;
     let after = &rest[at_pos + 1..];
@@ -1272,7 +1277,6 @@ fn try_at_transform(rest: &str, name: &str, span: Span) -> Option<Expr> {
             .chars()
             .next()
             .is_some_and(|c| c.is_ascii_alphabetic())
-        && !rest.contains("[@]")
         && !rest.contains("[@")
     {
         return Some(Expr::param(name, Some(&format!("@{}", after)), None, span));

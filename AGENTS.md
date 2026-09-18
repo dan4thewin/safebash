@@ -282,29 +282,59 @@ file is +N; in a dual-mode file it is +2N. A green sweep whose total is not
 what you predicted means specs collided, vanished, or were skipped -- the
 collision above was found only that way.
 
-**Predict against `run.sh`'s output, NOT `SELECT COUNT(*) FROM test_status`.**
-`test_status` is `tests LEFT JOIN runs`, and `tests` is a permanent registry:
-a spec you delete keeps its row and its last status forever, so the view
-reports retired tests as passing indefinitely. This matched exactly for weeks
-only because every sweep until then had purely *added* specs. The authoritative
-current total is `run.sh`'s own `passing`/`skipped` lines. The source-derived
-ground truth, which agrees with it, is the weighted `chk` count:
+**Neither `SELECT COUNT(*) FROM test_status` nor `run.sh`'s own summary is a
+reliable total.** `test_status` is `tests LEFT JOIN runs`, and `tests` is a
+permanent registry: a spec you delete keeps its row and its last status
+forever, so the view reports retired tests as passing indefinitely. **`run.sh`
+prints its summary *from that very view*, so it inherits the same inflation.**
+The 2026-09-18 sweep reported 5585 while exactly 5583 checks ran; the two
+ghosts were `c:75.99` / `native:75.99`, deleted one commit earlier and last
+genuinely run at `5cfeb24`. The greppable count agreed with the summary for
+weeks only because every sweep until then had purely *added* specs.
+
+The authoritative executed total is the **sum of every spec file's `plan=`**
+(native runs every file; c-mode skips the two native-only ones):
 
 ```sh
-cd spec && tot=0; for f in *.sh; do case "$f" in common.sh|run.sh) continue;; esac
-  n=$(grep -o '\bchk [A-Za-z0-9._]*' "$f" | wc -l); [ "$n" = 0 ] && continue
-  grep -qE 'SASH_MODE.*!=.*native.*exit' "$f" && m=1 || m=2
-  tot=$((tot + n*m)); done; echo "$tot"
+cd spec && nat=0; cm=0
+for f in *.sh; do case $f in common.sh|run.sh) continue;; esac
+  p=$(grep -m1 '^plan=' $f | sed 's/plan=//'); nat=$((nat+p))
+  case $f in convert.sh|trace.sh) ;; *) cm=$((cm+p));; esac
+done; echo "native=$nat c=$cm total=$((nat+cm))"
 ```
 
-(`convert.sh` and `trace.sh` are the only native-only files -- 191 tests, the
-exact native-minus-c difference.) Note this undercounts a file by one per
-variable-id `chk`, which is the discrepancy that exposed the collision above.
+That is trustworthy only because `plan` is itself verified against each file's
+real `chk` count. Check that first, and treat any mismatch as a finding:
+
+```sh
+cd spec && for f in *.sh; do case $f in common.sh|run.sh) continue;; esac
+  p=$(grep -m1 '^plan=' $f | sed 's/plan=//')
+  n=$(grep -ho '\bchk [A-Za-z0-9._$]\+' $f | grep -v skip_chk | wc -l)
+  [ "$p" != "$n" ] && echo "$f plan=$p chk=$n"; done
+```
+
+`coverage.sh` is the one legitimate mismatch: its variable-id loop runs three
+ids behind a single `chk $_id` token. (`convert.sh` and `trace.sh` are the only
+native-only files -- 191 tests, the exact native-minus-c difference.)
+
+**Retired ids never leave the summary.** After deleting a spec, `run.sh`'s
+total stays high by one per mode *forever*. Subtract them deliberately instead
+of re-deriving the discrepancy on each sweep.
 
 **A `ran=` you cannot account for is a finding, not a rounding error.**
 `coverage.sh` reported `ran=323` against 321 greppable `chk` tokens. Chasing
 that two-count gap is what surfaced both the id collision and the
 `test_status` fault above.
+
+**A spec file run standalone uses whatever `sash` is on `PATH`.** `common.sh`
+invokes `${SASH:-sash}`; only `run.sh` prepends `target/release`. So
+`bash subscript.sh` actually exercises the *installed* `~/.local/bin/sash`,
+which can be days stale -- it will fail (or pass) for reasons that have nothing
+to do with your tree. Always pass the binary explicitly:
+
+```sh
+cd spec && SASH=$(cd .. && pwd)/target/release/sash SASH_MODE=native bash subscript.sh
+```
 
 **`plan=` inside a spec file is per-mode, not per-sweep.** It is +N even in a
 dual-mode file -- the file runs once per mode and `plan` is compared against

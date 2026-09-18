@@ -6,7 +6,7 @@
 set -eu
 . common.sh
 setup coverage
-plan=323
+plan=325
 echo "1..$plan" >&3
 
 set +e
@@ -1478,6 +1478,22 @@ for _f in --emit-ir --manifest --emit-c; do
     esac
     [[ $_arc != 0 && $_aerr == *SB4044* ]]; chk $_id
 done
+
+# cov.325 `${v@1}` — a single-character `@` transform whose character is not a
+# letter. The transform reader requires an ASCII letter, so this falls through
+# to the unrecognized-content reject, exactly as the two-character `${s@Uu}`
+# does in cov.200. Bash calls it a bad substitution too.
+run_sash 'str v=abc
+echo ${v@1}'
+[[ $rc != 0 && -z $out && $err == *SB4047* ]]; chk cov.325
+
+# cov.326 an unterminated subscript in the body. The `${…}` scanner leaves
+# `[@U` as the operator remainder, whose last `@` is followed by a lone
+# letter — so without the `[@` guard it would read as an `@U` transform on a
+# name that never carried one. Bash: bad substitution.
+run_sash 'array arr=(p q)
+echo ${arr[@U}'
+[[ $rc != 0 && -z $out && $err == *SB4047* ]]; chk cov.326
 
 set -e
 tally

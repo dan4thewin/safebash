@@ -10,7 +10,7 @@
 set -eu
 . common.sh
 setup subscript
-plan=30
+plan=34
 echo "1..$plan" >&3
 
 set +e
@@ -200,6 +200,41 @@ map m=([k]=v [j]=w)
 unset a[0] m[k]
 echo "na=$(( (len a) )) nm=$(( (len m) ))"'
 [[ $rc = 0 && $out = 'na=2 nm=1' && -z $err ]]; chk 80.30
+
+# ── F. dynamic `$var` indices the identifier fast path cannot take ──
+
+# 80.31 a positional as the index. The braced-index reader shortcuts an index
+# spelled like an identifier and otherwise falls to the general expansion
+# path; `$1` starts with a digit, so it takes the long way. Bash agrees.
+run_sash 'fn f { array arr=(p q r); echo ${arr[$1]} }
+f 2'
+[[ $rc = 0 && $out = r && -z $err ]]; chk 80.31
+
+# 80.32 `$#` as the index — the same fall-through, a first byte that is
+# neither a letter nor `_`.
+run_sash 'fn f { array arr=(p q r); echo ${arr[$#]} }
+f a b'
+[[ $rc = 0 && $out = r && -z $err ]]; chk 80.32
+
+# ── G. the non-brace `$a[$i]` split-subscript gather (decision B, journal 115) ──
+#
+# `$a[$i]` deliberately reads as `${a[$i]}` rather than bash's `${a[0]}` then
+# literal `[$i]`. The gather is speculative — when it declines, `$arr` is left
+# as a plain scalar read, which SB5064 catches. These pin the two ways it
+# declines, so a decline can never become a silent bash-shaped literal.
+
+# 80.33 the `[` must stand alone as its own token. `$arr[foo` never closes, so
+# the word is `[foo`, the gather declines → SB5064. Bash would print `p[foo`.
+run_sash 'array arr=(p q r)
+echo $arr[foo'
+[[ $rc != 0 && -z $out && $err == *SB5064* ]]; chk 80.33
+
+# 80.34 the bracket shape is right but the index is not identifier-spelled,
+# so the gather declines at the index instead — same reject, not a literal.
+# (`${arr[$1]}` — 80.31 — is how you spell this one.)
+run_sash 'fn f { array arr=(p q r); echo $arr[$1] }
+f 2'
+[[ $rc != 0 && -z $out && $err == *SB5064* ]]; chk 80.34
 
 set -e
 tally
