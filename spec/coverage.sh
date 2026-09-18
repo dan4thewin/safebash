@@ -6,7 +6,7 @@
 set -eu
 . common.sh
 setup coverage
-plan=308
+plan=323
 echo "1..$plan" >&3
 
 set +e
@@ -591,6 +591,58 @@ run_sash 'int x=1; (( x = x / 0 )); echo $x'
 # (compare SB5050, which rejects a dead variable).
 run_sash 'echo $(( 1 ? 5 : 10 % 0 ))'
 [[ $rc != 0 && -z $out && $err == *SB5077* ]]; chk cov.159
+
+# cov.309-313 the folder's reach includes UNARY operators over constants.
+# It did not: `const_eval_arith` had arms for Literal/Paren/BinOp and nothing
+# else, so `$(( 5 / (1 + -1) ))` compiled and faulted at runtime while
+# `$(( 5 / (2 - 2) ))` was SB5077 -- the same fault at two different times,
+# decided by whether a minus sign appeared. That is precisely the
+# spelling-dependent inconsistency cov.158 says SB5077 exists to remove.
+# `UnaryOp` carries no side effect (`x++`/`++x` are separate IR variants), so
+# folding it is safe.
+run_sash 'echo $(( 5 / (1 + -1) ))'
+[[ $rc != 0 && -z $out && $err == *SB5077* ]]; chk cov.309
+# cov.310 a negated zero is still zero
+run_sash 'echo $(( 5 / -0 ))'
+[[ $rc != 0 && -z $out && $err == *SB5077* ]]; chk cov.310
+# cov.311 logical not of a non-zero constant is zero
+run_sash 'echo $(( 5 / !5 ))'
+[[ $rc != 0 && -z $out && $err == *SB5077* ]]; chk cov.311
+# cov.312 bitwise not of -1 is zero
+run_sash 'echo $(( 5 / ~-1 ))'
+[[ $rc != 0 && -z $out && $err == *SB5077* ]]; chk cov.312
+# cov.313 the converse must hold: a unary divisor that is NOT zero still
+# compiles and folds, so the wider reach does not over-reject
+run_sash 'echo $(( 5 / -1 ))'
+[[ $rc = 0 && $out = "-5" && -z $err ]]; chk cov.313
+
+# cov.314-324 constant folding of the comparison, bitwise and power
+# operators. `fold_arith_op` has an arm for each, and not one of them had a
+# literal-operand spec -- the suite exercised these operators only with
+# variable operands, which take the runtime path instead. Values checked
+# against bash.
+run_sash 'echo $(( 1 != 2 ))'
+[[ $rc = 0 && $out = 1 && -z $err ]]; chk cov.314
+run_sash 'echo $(( 1 < 2 ))'
+[[ $rc = 0 && $out = 1 && -z $err ]]; chk cov.315
+run_sash 'echo $(( 2 <= 2 ))'
+[[ $rc = 0 && $out = 1 && -z $err ]]; chk cov.316
+run_sash 'echo $(( 3 > 1 ))'
+[[ $rc = 0 && $out = 1 && -z $err ]]; chk cov.317
+run_sash 'echo $(( 3 >= 4 ))'
+[[ $rc = 0 && $out = 0 && -z $err ]]; chk cov.318
+run_sash 'echo $(( 1 << 3 ))'
+[[ $rc = 0 && $out = 8 && -z $err ]]; chk cov.319
+run_sash 'echo $(( 16 >> 2 ))'
+[[ $rc = 0 && $out = 4 && -z $err ]]; chk cov.320
+run_sash 'echo $(( 12 & 10 ))'
+[[ $rc = 0 && $out = 8 && -z $err ]]; chk cov.321
+run_sash 'echo $(( 12 | 3 ))'
+[[ $rc = 0 && $out = 15 && -z $err ]]; chk cov.322
+run_sash 'echo $(( 12 ^ 10 ))'
+[[ $rc = 0 && $out = 6 && -z $err ]]; chk cov.323
+run_sash 'echo $(( 2 ** 10 ))'
+[[ $rc = 0 && $out = 1024 && -z $err ]]; chk cov.324
 
 # cov.140-142 check_len_operand's rejection arms (type_check.rs)
 # cov.140 `len` with no argument at all → arity, not the operand check

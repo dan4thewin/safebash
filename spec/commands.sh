@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup commands
-plan=105
+plan=112
 echo "1..$plan" >&3
 
 set +e
@@ -683,6 +683,48 @@ attest x [[ -z $x || -n $x ]]
 echo "[$x]"'
 [[ $rc = 0 && $out = "[]" && -z $err ]]; chk rt99.18
 
+# 14.47 a multi-argument `$(echo …)` capture joins with a single space.
+# `echo_concat` builds the SSA Concat for this; the whole multi-arg path had
+# no spec -- `for x in $(echo a b c)` (cov.61) takes the splat/pipeline route
+# instead, so it never reached the value-capture code.
+run_sash 'x=$(echo a b)
+echo "[$x]"'
+[[ $rc = 0 && $out = "[a b]" && -z $err ]]; chk 14.47
+
+# 14.48 three arguments, to pin the separator between every adjacent pair
+run_sash 'x=$(echo a b c)
+echo "[$x]"'
+[[ $rc = 0 && $out = "[a b c]" && -z $err ]]; chk 14.48
+
+# 14.49 `$(echo)` with no arguments captures the empty string, not a newline
+run_sash 'x=$(echo)
+echo "[$x]"'
+[[ $rc = 0 && $out = "[]" && -z $err ]]; chk 14.49
+
+# 14.50 run-together spaces between arguments collapse: they are argument
+# separators in the source, and the capture rejoins with exactly one
+run_sash 'x=$(echo a    b)
+echo "[$x]"'
+[[ $rc = 0 && $out = "[a b]" && -z $err ]]; chk 14.50
+
+# 14.51 spaces *inside* a quoted argument survive -- that is one argument,
+# so no rejoining happens to it
+run_sash 'x=$(echo "a  b")
+echo "[$x]"'
+[[ $rc = 0 && $out = "[a  b]" && -z $err ]]; chk 14.51
+
+# 14.52 the arguments may be variables rather than literals
+run_sash 'y=p
+z=q
+x=$(echo $y $z)
+echo "[$x]"'
+[[ $rc = 0 && $out = "[p q]" && -z $err ]]; chk 14.52
+
+# 14.53 empty-string arguments are still arguments: two of them join to the
+# one separator between them
+run_sash 'x=$(echo "" "")
+echo "[$x]"'
+[[ $rc = 0 && $out = "[ ]" && -z $err ]]; chk 14.53
 
 set -e
 tally

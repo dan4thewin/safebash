@@ -68,6 +68,37 @@ a proven zero divisor does not follow it. The difference is that the
 folder proves overflow only for the operands it was given, whereas a
 zero divisor is a property of the expression as written.
 
+#### Addendum (2026-09-18): the folder's reach now includes unary operators
+
+The reach stated above — "literals and operators over literals, through
+parens" — was not what the code did. `const_eval_arith` had arms for
+`Literal`, `Paren` and `BinOp` and fell through to `None` for everything
+else, so `ArithExpr::UnaryOp` was unevaluable and **any divisor containing
+a unary operator was not provable**. Measured over 18 spellings: every
+binary form was caught (`2 - 2`, `2 * 0`, `1 % 1`, `0 << 2`, …) and every
+unary form escaped (`1 + -1`, `-1 + 1`, `-0`). The same fault, reported at
+compile time or at runtime, decided by whether a minus sign appeared —
+exactly the spelling-dependent inconsistency this amendment exists to
+remove, reintroduced one level down.
+
+This was an oversight, not a scope decision: `const_eval_arith`'s own doc
+declines "variables, expansions, calls", and a negated literal is none of
+those. Folding a `UnaryOp` is safe because it carries no side effect —
+`x++` and `++x` are the separate `PostIncDec`/`PreIncDec` variants and stay
+unevaluable.
+
+The fix follows the rule the section above already states. The binary
+semantics were shared with the transform precisely so the two could not
+drift; the *unary* semantics were not — `try_fold_unop` worked on
+`SsaValue` strings while `const_eval_arith` worked on `i64`, which is how
+they drifted in the first place. The i64 core is now `fold_unary_op`, and
+both call it. `Neg` uses `checked_neg`, so `-i64::MIN` declines to fold and
+defers to the runtime trap, consistent with the constant-folding rule for
+overflow above.
+
+Specs `cov.309`-`cov.313`; the non-zero unary divisor (`5 / -1`) is pinned
+alongside so the wider reach cannot start over-rejecting.
+
 **Known gap (follow-up):** `Pow` saturates rather than traps; `Shl`
 (shift ≥ 64) and unary `Neg` (i64::MIN) are not yet
 trap-with-message. `Div` (i64::MIN / -1) is **no longer a gap** — it

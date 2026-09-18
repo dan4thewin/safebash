@@ -667,7 +667,7 @@ fn walk_arith_divisors(a: &ArithExpr, f: &mut impl FnMut(&str, &ArithExpr)) {
 /// (variables, expansions, calls) simply reaches the runtime trap, which is
 /// still correct, just later.
 fn const_eval_arith(a: &ArithExpr) -> Option<i64> {
-    use crate::transform::expr_handlers::{fold_arith_op, ir_op_to_ssa};
+    use crate::transform::expr_handlers::{fold_arith_op, fold_unary_op, ir_op_to_ssa};
     match a {
         ArithExpr::Literal(n) => Some(*n),
         ArithExpr::Paren(inner) => const_eval_arith(inner),
@@ -675,6 +675,15 @@ fn const_eval_arith(a: &ArithExpr) -> Option<i64> {
             let l = const_eval_arith(left)?;
             let r = const_eval_arith(right)?;
             fold_arith_op(l, r, ir_op_to_ssa(*op))
+        }
+        // `-x`/`+x`/`!x`/`~x` over a constant is still a constant. Omitting
+        // this arm is what let `$(( 5 / (1 + -1) ))` reach the runtime while
+        // `$(( 5 / (2 - 2) ))` was SB5077. `UnaryOp` carries no side effect —
+        // `x++`/`++x` are separate `PostIncDec`/`PreIncDec` variants, which
+        // stay unevaluable here.
+        ArithExpr::UnaryOp { op, operand } => {
+            let v = const_eval_arith(operand)?;
+            fold_unary_op(v, *op)
         }
         _ => None,
     }

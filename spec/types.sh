@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup types
-plan=236
+plan=235
 echo "1..$plan" >&3
 
 set +e
@@ -1243,11 +1243,6 @@ echo "f=$(len args)"
 f a b'
 [[ $rc = 0 && $out = "g=3
 f=2" && -z $err ]]; chk 75.98
-
-# 75.99 `args` exists only inside a function -- at top level it is an
-# undefined collection (SB5024), not an empty one
-run_sash 'echo $(len args)'
-[[ $rc != 0 && -z $out && $err == *SB5024* ]]; chk 75.99
 
 # 75.100 `args` is indexed, not associative, so `keys` refuses it the same
 # way it refuses any array

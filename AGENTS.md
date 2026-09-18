@@ -263,10 +263,48 @@ grep -ho '\bchk [A-Za-z0-9._]*' spec/*.sh | grep -v skip_chk | sort | uniq -d
 Empty means clean. (`skip_chk` is excluded because the `chk`/`skip_chk` pairs
 in `compiler.sh` and `misc.sh` are mode guards -- exactly one branch fires.)
 
+**That check is blind to ids that reach `chk` through a variable.** The loop
+at the end of `coverage.sh` assigns `cov.306`-`cov.308` in a `case` and calls
+`chk $_id`; grepping for `chk <literal>` never sees them, so they look free.
+Numbering a new block at `cov.306` collided with all three, and because the
+loop runs last it silently overwrote the new specs -- both sets passed, so
+nothing reported it. Run the second check too:
+
+```sh
+comm -12 <(grep -hoE '_id=[A-Za-z0-9._]+' spec/*.sh | sed 's/_id=//' | sort -u) \
+         <(grep -ho '\bchk [A-Za-z0-9._]\+' spec/*.sh | sed 's/chk //' | sort -u)
+```
+
+Empty means clean. There is exactly one variable-id site in the suite today.
+
 **Predict the sweep total before running it.** N new specs in a native-only
 file is +N; in a dual-mode file it is +2N. A green sweep whose total is not
 what you predicted means specs collided, vanished, or were skipped -- the
 collision above was found only that way.
+
+**Predict against `run.sh`'s output, NOT `SELECT COUNT(*) FROM test_status`.**
+`test_status` is `tests LEFT JOIN runs`, and `tests` is a permanent registry:
+a spec you delete keeps its row and its last status forever, so the view
+reports retired tests as passing indefinitely. This matched exactly for weeks
+only because every sweep until then had purely *added* specs. The authoritative
+current total is `run.sh`'s own `passing`/`skipped` lines. The source-derived
+ground truth, which agrees with it, is the weighted `chk` count:
+
+```sh
+cd spec && tot=0; for f in *.sh; do case "$f" in common.sh|run.sh) continue;; esac
+  n=$(grep -o '\bchk [A-Za-z0-9._]*' "$f" | wc -l); [ "$n" = 0 ] && continue
+  grep -qE 'SASH_MODE.*!=.*native.*exit' "$f" && m=1 || m=2
+  tot=$((tot + n*m)); done; echo "$tot"
+```
+
+(`convert.sh` and `trace.sh` are the only native-only files -- 191 tests, the
+exact native-minus-c difference.) Note this undercounts a file by one per
+variable-id `chk`, which is the discrepancy that exposed the collision above.
+
+**A `ran=` you cannot account for is a finding, not a rounding error.**
+`coverage.sh` reported `ran=323` against 321 greppable `chk` tokens. Chasing
+that two-count gap is what surfaced both the id collision and the
+`test_status` fault above.
 
 **`plan=` inside a spec file is per-mode, not per-sweep.** It is +N even in a
 dual-mode file -- the file runs once per mode and `plan` is compared against

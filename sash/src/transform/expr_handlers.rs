@@ -577,13 +577,26 @@ fn try_fold_unop(inner: &SsaValue, op: IrUnaryArithOp) -> Option<SsaValue> {
         return None;
     };
     let v = s.parse::<i64>().ok()?;
-    let folded = match op {
-        IrUnaryArithOp::Neg => (-v).to_string(),
-        IrUnaryArithOp::Pos => v.to_string(),
-        IrUnaryArithOp::BitNot => (!v).to_string(),
-        IrUnaryArithOp::Not => (if v == 0 { 1 } else { 0 }).to_string(),
-    };
-    Some(SsaValue::Expr(folded))
+    Some(SsaValue::Expr(fold_unary_op(v, op)?.to_string()))
+}
+
+/// The unary counterpart of [`fold_arith_op`]: the *semantics* of `-x`, `+x`,
+/// `!x` and `~x` on a known operand, shared with `validate::const_eval_arith`
+/// so the two agree about what the folder proves. They did not: validate had
+/// no `UnaryOp` arm at all, so `$(( 5 / (1 + -1) ))` reached the runtime while
+/// `$(( 5 / (2 - 2) ))` was SB5077 — the same fault, reported at two different
+/// times, decided by whether a minus sign appeared.
+///
+/// `Neg` is checked for the same reason the binary ops are: negating
+/// `i64::MIN` overflows, and DD#25 defers an arithmetic fault to the runtime
+/// trap rather than folding to a wrapped value.
+pub(crate) fn fold_unary_op(v: i64, op: IrUnaryArithOp) -> Option<i64> {
+    match op {
+        IrUnaryArithOp::Neg => v.checked_neg(),
+        IrUnaryArithOp::Pos => Some(v),
+        IrUnaryArithOp::BitNot => Some(!v),
+        IrUnaryArithOp::Not => Some((v == 0) as i64),
+    }
 }
 
 fn comma_to_ssa(exprs: &[ArithExpr], expr: &Expr, state: &VersionState) -> SsaValue {
@@ -754,26 +767,16 @@ pub(crate) fn fold_arith_op(l: i64, r: i64, op: ArithOp) -> Option<i64> {
         ArithOp::Add => l.checked_add(r),
         ArithOp::Sub => l.checked_sub(r),
         ArithOp::Mul => l.checked_mul(r),
-        ArithOp::Div => {
-            if r == 0 {
-                // DD#25: folding DEFERS a compile-time-known arithmetic
-                // fault to the runtime rather than substituting a value.
-                // Returning Some(0) here broke that — `$(( 1 / 0 ))` was
-                // silently 0 while `int z=0; $(( 1 / z ))` reached the
-                // runtime and reported "division by 0". Same fault, same
-                // value, but the literal spelling lost the diagnostic.
-                None
-            } else {
-                l.checked_div(r)
-            }
-        }
-        ArithOp::Mod => {
-            if r == 0 {
-                None
-            } else {
-                l.checked_rem(r)
-            }
-        }
+        // DD#25: folding DEFERS a compile-time-known arithmetic fault to the
+        // runtime rather than substituting a value. Returning Some(0) for a
+        // zero divisor broke that — `$(( 1 / 0 ))` was silently 0 while
+        // `int z=0; $(( 1 / z ))` reached the runtime and reported "division
+        // by 0". Same fault, same value, but the literal spelling lost the
+        // diagnostic. `checked_div`/`checked_rem` already answer `None` for a
+        // zero divisor (and for the `i64::MIN / -1` overflow), so an explicit
+        // `r == 0` arm only restated the callee's contract.
+        ArithOp::Div => l.checked_div(r),
+        ArithOp::Mod => l.checked_rem(r),
         ArithOp::Eq => Some((l == r) as i64),
         ArithOp::Ne => Some((l != r) as i64),
         ArithOp::Lt => Some((l < r) as i64),

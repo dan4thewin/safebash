@@ -1,3 +1,55 @@
+## ══ STATUS (2026-09-18) — a minus sign decided when the error arrived ══
+
+**Journal 360.** Sweep **5494 → 5553, 0 failing** (16 specs `cov.309`–`cov.324`
++ 7 `14.47`–`14.53` + 6 `75.94`–`75.100`, less one duplicate, all dual-mode —
+predicted exactly). **Units 77, clippy clean.**
+
+**1. BUG — SB5077 could not prove a unary divisor.** `const_eval_arith` had
+arms for `Literal`/`Paren`/`BinOp` and `_ => None` for the rest, so
+`ArithExpr::UnaryOp` was unevaluable. Measured over 18 spellings of zero:
+every **binary** form was caught (`2 - 2`, `2 * 0`, `0 << 2`, …), every
+**unary** form escaped (`1 + -1`, `-1 + 1`, `-0`). One fault reported at
+compile time or at runtime, decided by a minus sign — the exact
+spelling-dependent inconsistency `cov.158`'s comment says SB5077 exists to
+remove, reintroduced one level down. DD#25 already stated the reach
+("literals and operators over literals, through parens"); the code did not
+match it. Addendum written.
+
+**Why it drifted:** `const_eval_arith`'s doc says it shares `fold_arith_op`
+rather than keeping "a second copy of the semantics." That held for binary
+operators only — `try_fold_unop` worked on `SsaValue` strings, this on `i64`,
+so no sharing was possible and none was written. Fix extracts
+`fold_unary_op` (i64 core) and has **both** call it. `Neg` uses `checked_neg`,
+so `-i64::MIN` defers to the runtime trap per DD#25. `cov.313` pins the
+converse (`5 / -1` still folds) so the wider reach cannot over-reject.
+
+**2. 11 operators had no constant-folded spec.** `fold_arith_op`'s cold arms
+were whole families: `Ne Lt Le Gt Ge`, `Shl Shr BitAnd BitOr BitXor`, `Pow`.
+A 19-op × 6-operand-pair differential (folded vs runtime vs bash, 228
+comparisons) found **all agree with bash**; only div/mod-by-zero diverge, per
+DD#25. Not a bug — `cov.314`–`cov.324`. Also `$(echo …)` captured as a *value*
+with >1 argument was unspecced (`14.47`–`14.53`).
+
+**3. The collision check has a blind spot — and it bit.** `coverage.sh` ends
+with a loop assigning `cov.306`–`cov.308` via `case` and calling `chk $_id`.
+The documented check greps `chk <literal>`, so those ids looked free; my new
+block started at `cov.306` and the loop, running last, **silently overwrote
+three specs written to pin the bug fix**. Both sets passed. Found only by a
+`ran=323` vs 321-greppable-token discrepancy that had no innocent
+explanation. Renumbered to `cov.309`–`cov.324`; second check added to
+AGENTS.md; suite audited — one such site, three ids.
+
+**4. `test_status` counts retired tests forever.** It is `tests LEFT JOIN
+runs`, and `tests` is a permanent registry — the deleted `75.99` still
+reported passing. The prediction discipline matched for weeks only because
+every prior sweep purely *added* specs. Authoritative total is `run.sh`'s
+output; ground truth is the weighted `chk` count (agrees exactly: 5553).
+Also fixed `coverage.sh`'s stale `plan=` (308 → 323, off since before this
+work).
+
+`fold_arith_op` **27/9 → 25/3**; `const_eval_arith` 9/1; both under the
+11.76/5.92 bars. `75.99` dropped — exact duplicate of the older `cov.141`.
+
 ## ══ STATUS (2026-09-17) — a feature with no specs, and state with no readers ══
 
 **Journal 359.** Sweep **5480 → 5494, 0 failing** (7 specs `75.94`–`75.100`,
