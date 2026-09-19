@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup commands
-plan=123
+plan=132
 echo "1..$plan" >&3
 
 set +e
@@ -793,6 +793,84 @@ echo $x'
 [[ $rc != 0 && $err == *SB5011* ]]; chk fd.11
 
 rm -f fdout
+
+# ── csr.*: redirects on a command substitution ────────────────────────────
+# `$(cmd > f)` used to SILENTLY DROP the redirect: the output that belonged in
+# the file was captured instead, and the file was never created. Two separate
+# defects — native's interner never walked a `CmdSubst`'s redirect targets (and
+# `emit_open_redirect` skipped a redirect whose literal was missing rather than
+# failing), while the C backend discarded the redirects outright and called the
+# redirect-less `sash_capture_status`. A redirected capture now declines the
+# single-command fast path and lowers through `CmdSubstBody`, the same path
+# `$(a | b > f)` always took and the only one both backends implement.
+# Every case below was differentially checked against bash.
+
+# csr.1 stdout to a file: capture is EMPTY, file gets the output (builtin head)
+run_sash 'str x=$(echo hi > csr1f)
+attest x [[ -z $x || -n $x ]]
+echo "cap=[$x]"
+cat csr1f'
+[[ $rc = 0 && $out = $'cap=[]\nhi' && -z $err ]]; chk csr.1
+
+# csr.2 same with an EXTERNAL head (the fork/exec capture path)
+run_sash 'str x=$(/bin/echo hi > csr2f)
+attest x [[ -z $x || -n $x ]]
+echo "cap=[$x]"
+cat csr2f'
+[[ $rc = 0 && $out = $'cap=[]\nhi' && -z $err ]]; chk csr.2
+
+# csr.3 append inside a capture does not truncate
+run_sash 'echo a > csr3f
+str x=$(/bin/echo b >> csr3f)
+attest x [[ -z $x || -n $x ]]
+echo "cap=[$x]"
+cat csr3f'
+[[ $rc = 0 && $out = $'cap=[]\na\nb' && -z $err ]]; chk csr.3
+
+# csr.4 stdin redirect feeds the captured command (capture was empty)
+run_sash 'echo fromfile > csr4f
+str x=$(/bin/cat < csr4f)
+attest x [[ -n $x ]]
+echo "cap=[$x]"'
+[[ $rc = 0 && $out = "cap=[fromfile]" && -z $err ]]; chk csr.4
+
+# csr.5 2>&1 folds stderr into the capture (this one always worked on native
+#       and was always dropped by the C backend — a silent mode divergence)
+run_sash 'str x=$(/bin/sh -c "echo e >&2" 2>&1)
+attest x [[ -n $x ]]
+echo "cap=[$x]"'
+[[ $rc = 0 && $out = "cap=[e]" && -z $err ]]; chk csr.5
+
+# csr.6 2>file diverts only stderr; stdout still reaches the capture
+run_sash 'str x=$(/bin/sh -c "echo o; echo e >&2" 2>csr6f)
+attest x [[ -n $x ]]
+echo "cap=[$x]"
+cat csr6f'
+[[ $rc = 0 && $out = $'cap=[o]\ne' && -z $err ]]; chk csr.6
+
+# csr.7 a NON-literal target (the `redirect_s` path, computed ptr+len)
+run_sash 'str f=csr7f
+str x=$(/bin/echo dyn > $f)
+attest x [[ -z $x || -n $x ]]
+echo "cap=[$x]"
+cat csr7f'
+[[ $rc = 0 && $out = $'cap=[]\ndyn' && -z $err ]]; chk csr.7
+
+# csr.8 >/dev/null discards rather than captures
+run_sash 'str x=$(/bin/echo hi > /dev/null)
+attest x [[ -z $x || -n $x ]]
+echo "cap=[$x]"'
+[[ $rc = 0 && $out = "cap=[]" && -z $err ]]; chk csr.8
+
+# csr.9 DD#55: a redirected capture still aborts on a nonzero exit, exactly as
+#       the unredirected form does — routing through the body path must not
+#       have quietly dropped the check.
+run_sash 'str x=$(/bin/false > csr9f)
+attest x [[ -z $x || -n $x ]]
+echo "after=[$x]"'
+[[ $rc != 0 && $out != *after* && $rerr == *"/bin/false"* ]]; chk csr.9
+
+rm -f csr1f csr2f csr3f csr4f csr6f csr7f csr9f
 
 set -e
 tally

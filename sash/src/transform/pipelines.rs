@@ -192,7 +192,6 @@ pub(super) fn lower_for_argv_slice(
         target: argc_var,
         value: SsaValue::CmdSubst {
             argv: vec![SsaValue::Literal("argc".to_string())],
-            redirects: vec![],
             suppressed: false,
         },
     });

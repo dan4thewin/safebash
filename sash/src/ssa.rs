@@ -565,9 +565,14 @@ pub enum SsaValue {
     /// set for `$(- cmd)` (DD#55): the captured command's exit status is
     /// discarded and a nonzero exit does NOT abort (mirrors statement-position
     /// `- cmd`).
+    ///
+    /// Carries **no redirects**: a `$(cmd > f)` is routed to `CmdSubstBody`
+    /// by `single_command_subst`, so every redirected capture is lowered by
+    /// the ordinary statement machinery. This variant once had a `redirects`
+    /// field that only the native backend honoured — the C backend dropped it
+    /// — which is how `$(/bin/echo hi > f)` captured `hi` and never wrote `f`.
     CmdSubst {
         argv: Vec<SsaValue>,
-        redirects: Vec<crate::ir::Redirect>,
         suppressed: bool,
     },
     /// A **multi-statement / pipeline** command substitution body
@@ -576,9 +581,10 @@ pub enum SsaValue {
     /// `lift_int_func_calls` (exactly like `IntFuncCall`), so it must never
     /// reach codegen (ICE if it does). The body captures external output, so
     /// the lifted temp is tainted.
+    /// Any redirects live on the body's own statements, where both backends
+    /// already lower them; this variant carries none of its own.
     CmdSubstBody {
         body: Vec<crate::ir::Statement>,
-        redirects: Vec<crate::ir::Redirect>,
     },
     /// `$(<file)` — slurp a file's contents. The inner value is the **path**.
     ///

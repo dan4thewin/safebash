@@ -164,10 +164,16 @@ fn open_flags_for_op(op: &crate::ir::RedirectOp) -> Option<i64> {
 
 /// `> file` / `>> file` / `< file`. Literal path → fast `redirect`;
 /// dynamic (tilde, var, concat) → `redirect_s` with computed ptr+len.
-/// If a literal isn't in the literals map the redirect is silently
-/// skipped (matches pre-refactor behavior) and `None` is returned.
-/// Otherwise returns `(failed, path_ptr, path_len)`: `failed` is 1 when
-/// the runtime `open(2)` returned < 0 (DD#55 setup-failure), else 0.
+/// Returns `(failed, path_ptr, path_len)`: `failed` is 1 when the runtime
+/// `open(2)` returned < 0 (DD#55 setup-failure), else 0.
+///
+/// A literal target absent from the literals map used to be **silently
+/// skipped** here — the redirect simply did not happen and the program ran on
+/// with its output somewhere else, which turned a missed invariant into wrong
+/// output rather than a crash. It is what made the dropped-capture-redirect
+/// bug silent. Interning every redirect target is a compiler invariant, so a
+/// miss is an ICE, exactly as it already is for a non-literal target
+/// (`redirect_target_ice`).
 #[allow(clippy::too_many_arguments)]
 fn emit_open_redirect(
     fd_val: cranelift_codegen::ir::Value,
@@ -181,7 +187,9 @@ fn emit_open_redirect(
 ) -> Option<(Value, Value, Value)> {
     let flags_val = builder.ins().iconst(I64, flags);
     let (path_ptr, path_len, result) = if let crate::ir::ExprKind::Literal(s) = &target.kind {
-        let &data_id = literals.get(s.as_str())?;
+        let Some(&data_id) = literals.get(s.as_str()) else {
+            redirect_target_ice(&format!("literal {s:?} not interned in the literals map"))
+        };
         let path_gv = module.declare_data_in_func(data_id, builder.func);
         let path_ptr = builder.ins().global_value(I64, path_gv);
         let path_len = builder.ins().iconst(I64, s.len() as i64);

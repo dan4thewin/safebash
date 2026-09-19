@@ -1132,15 +1132,12 @@ fn try_capture_condition(
     match val {
         // Single external `$(cmd)` → a suppressed capture value, then sync
         // test_result from $?.
-        SsaValue::CmdSubst {
-            argv, redirects, ..
-        } => {
+        SsaValue::CmdSubst { argv, .. } => {
             let target = state.define(name);
             ssa.block_mut(block).insts.push(SsaInst::Assign {
                 target,
                 value: SsaValue::CmdSubst {
                     argv: argv.clone(),
-                    redirects: redirects.clone(),
                     suppressed: true,
                 },
             });

@@ -12,10 +12,7 @@ pub(super) fn handle_command_substitution(expr: &Expr, state: &VersionState) -> 
         // placeholder at runtime.
         if let ExprKind::CommandSubstitution(stmts) = &expr.kind {
             let body: Vec<Statement> = stmts.to_vec();
-            return SsaValue::CmdSubstBody {
-                body,
-                redirects: vec![],
-            };
+            return SsaValue::CmdSubstBody { body };
         }
         return SsaValue::Expr(expr_to_string(expr));
     };
@@ -25,19 +22,11 @@ pub(super) fn handle_command_substitution(expr: &Expr, state: &VersionState) -> 
         }
     }
     let argv = build_argv(c, state);
-    let redirects = match &stmt.kind {
-        StmtKind::Redirected(r) => r.redirects.clone(),
-        _ => vec![],
-    };
     // DD#55: `$(- cmd)` suppresses the captured command's exit check (no abort
     // on failure), mirroring statement-position `- cmd`. `single_command_subst`
     // peeled the `Suppressed` wrapper to reach the command, so detect it here.
     let suppressed = subst_is_suppressed(&stmt.kind);
-    SsaValue::CmdSubst {
-        argv,
-        redirects,
-        suppressed,
-    }
+    SsaValue::CmdSubst { argv, suppressed }
 }
 
 /// True when a `$(…)` single-command body carries a `- ` suppression prefix
@@ -105,6 +94,17 @@ fn single_command_subst(expr: &Expr) -> Option<(&Statement, Option<String>, &Com
         return None;
     }
     let stmt = real_stmts[0];
+    // A redirected capture (`$(cmd > f)`) declines the fast path and falls to
+    // `CmdSubstBody`, where the redirect is lowered by the ordinary statement
+    // machinery — the same path `$(a | b > f)` has always taken, and the only
+    // one both backends implement. The fast path carried its redirects in the
+    // SSA node instead, which the C backend discarded outright and native
+    // dropped whenever the target was a literal path (its interner never
+    // walked them), so `$(/bin/echo hi > f)` captured `hi` and left `f`
+    // untouched. Costs no extra fork.
+    if matches!(stmt.kind, StmtKind::Redirected(_)) {
+        return None;
+    }
     let inner = unwrap_subst_wrappers(&stmt.kind);
     let StmtKind::Command(c) = inner else {
         return None;
@@ -662,7 +662,6 @@ fn resolve_nullary_sexpr(name: &str, state: &VersionState) -> Option<SsaValue> {
         "getcpid" => Some(SsaValue::Var(state.lookup("!"))),
         "getppid" | "argc" | "random" | "signum" | "epochseconds" => Some(SsaValue::CmdSubst {
             argv: vec![SsaValue::Literal(name.to_string())],
-            redirects: vec![],
             suppressed: false,
         }),
         // `(x)` on a plain variable is arithmetic GROUPING, not a call: the

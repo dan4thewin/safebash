@@ -8,7 +8,6 @@ use cranelift_module::Module;
 use cranelift_object::ObjectModule;
 use std::collections::HashMap;
 
-use super::redirects::emit_redirects;
 use super::types::{emit_int_to_str, ExternFuncs, VarSlot};
 use super::values::{atoi_call, intern_or_declare, lower_value};
 use crate::ssa::*;
@@ -452,7 +451,6 @@ pub(crate) fn emit_case_conversion(
 #[allow(clippy::too_many_arguments)]
 pub(super) fn handle_cmdsub(
     argv_values: &[SsaValue],
-    redirects: &[crate::ir::Redirect],
     suppressed: bool,
     builder: &mut FunctionBuilder,
     module: &mut ObjectModule,
@@ -477,7 +475,6 @@ pub(super) fn handle_cmdsub(
     }
     emit_cmdsub_exec(
         argv_values,
-        redirects,
         suppressed,
         builder,
         module,
@@ -731,12 +728,14 @@ pub(super) fn int_intrinsic_i64(
 }
 
 /// External `$(cmd ...)`: pipe → fork → (child: redirect stdout to
-/// pipe, apply redirects, exec) ‖ (parent: read loop into a 64 KiB
-/// heap buffer, wait, strip trailing newline, propagate DD#55 exit).
+/// pipe, exec) ‖ (parent: read loop into a 64 KiB heap buffer, wait,
+/// strip trailing newline, propagate DD#55 exit).
+///
+/// The child applies **no** redirects: a redirected capture never reaches
+/// here, having been routed to `CmdSubstBody` by `single_command_subst`.
 #[allow(clippy::too_many_arguments)]
 fn emit_cmdsub_exec(
     argv_values: &[SsaValue],
-    redirects: &[crate::ir::Redirect],
     suppressed: bool,
     builder: &mut FunctionBuilder,
     module: &mut ObjectModule,
@@ -798,19 +797,6 @@ fn emit_cmdsub_exec(
     builder.ins().call(dup2_ref, &[write_fd, one]);
 
     builder.ins().call(close_ref, &[write_fd]);
-
-    // Apply redirects in child (e.g. 2>/dev/null)
-    if !redirects.is_empty() {
-        emit_redirects(
-            redirects,
-            builder,
-            module,
-            externs,
-            literals,
-            vars,
-            exit_status_var,
-        );
-    }
 
     let exec_ref = module.declare_func_in_func(externs.exec, builder.func);
     builder.ins().call(exec_ref, &[argv_addr, envp_val]);
