@@ -143,6 +143,12 @@ pub(super) struct InstCtx<'a> {
     /// by `SsaInst::CaptureStart { site }`. A single shared pair let a nested
     /// capture clobber the enclosing one.
     pub(super) capture_slots: &'a [(cranelift_frontend::Variable, cranelift_frontend::Variable)],
+    /// One saved-fd slot per redirect, per `SsaInst::RedirectPush { site }`
+    /// scope. Indexed by site, then by position in that scope's redirect
+    /// list; the paired `RedirectPop` restores from the same slots. Scopes
+    /// nest, so — as with captures — a single shared set would let an inner
+    /// `f > a` destroy the fds an enclosing one still has to put back.
+    pub(super) redirect_slots: &'a [Vec<cranelift_frontend::Variable>],
     pub(super) end_cl_block: Option<cranelift_codegen::ir::Block>,
     pub(super) program: &'a crate::ssa::SsaProgram,
     pub(super) ssa_id: usize,
@@ -164,6 +170,7 @@ pub(super) struct FuncState {
     pub(super) exit_status_var: cranelift_frontend::Variable,
     pub(super) pipe_read_fd_var: cranelift_frontend::Variable,
     pub(super) capture_slots: Vec<(cranelift_frontend::Variable, cranelift_frontend::Variable)>,
+    pub(super) redirect_slots: Vec<Vec<cranelift_frontend::Variable>>,
     pub(super) saved_end_status_var: cranelift_frontend::Variable,
     pub(super) end_cl_block: Option<cranelift_codegen::ir::Block>,
 }

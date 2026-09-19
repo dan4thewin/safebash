@@ -231,26 +231,59 @@ fn analyze_function_returns(f: &Function, stmt: &Statement, state: &mut VersionS
     }
 }
 
-/// Statement wrapped in a redirect. For compound bodies (while/for/if/case/group/
-/// subshell/function), bracket with __redirect_push/__redirect_pop. For simple
-/// commands, attach the redirects to the last emitted Command/Pipeline/Read inst.
+/// Statement wrapped in a redirect.
 fn lower_redirected_stmt(
     r: &Redirected,
     ssa: &mut SsaProgram,
     state: &mut VersionState,
     block: BlockId,
 ) -> BlockId {
-    // Every body that reaches here attaches its redirects to the inst it
-    // lowers to. A compound body cannot reach here at all — the parser gives
-    // SB4021 for while/if/for/case/`{ }`, and SB4046 for a function
+    // Most bodies that reach here attach their redirects to the single inst
+    // they lower to. A compound body cannot reach here at all — the parser
+    // gives SB4021 for while/if/for/case/`{ }`, and SB4046 for a function
     // definition, declaration, assignment, or a test that produces no output.
     // DD#99 `read` lowers to `ReadArray`, which carries its own redirect list
     // and therefore gets the DD#55 open(2) guard.
+    //
+    // A call to a user function is the exception: SB4021 tells the user to
+    // "wrap the compound in a function" precisely so it can be redirected, so
+    // `f > out.txt` is the sanctioned spelling of a compound redirect. Its
+    // body is inlined across several blocks and has no single inst to carry
+    // the list, so it gets a real scope — parked here and opened by
+    // `inline_function_call`, which holds those blocks. Without it the
+    // redirect attached to nothing and was silently dropped.
     let redirects = spill_scalar_redirect_targets(&r.redirects, ssa, state, block);
+    let bracketed = body_calls_user_function(&r.body, state);
+    if bracketed {
+        state.pending_redirect_scope = Some(redirects.clone());
+    }
 
     let result_block = lower_one(&r.body, ssa, state, block);
-    attach_redirects_to_result(ssa, block, result_block, &redirects);
+    // `Some` still parked ⇒ the call was not inlined after all (a recursive
+    // call, rejected with SB5037, returns before taking it). Drop it rather
+    // than leaking it onto the next call.
+    let unconsumed = state.pending_redirect_scope.take().is_some();
+    if !bracketed || unconsumed {
+        attach_redirects_to_result(ssa, block, result_block, &redirects);
+    }
     result_block
+}
+
+/// Does this redirected body resolve to a call of a user function — the one
+/// shape whose lowering spans blocks and so needs a redirect *scope*?
+///
+/// Deliberately narrow: a bare `Command` whose name is a plain word already
+/// registered as a function. A builtin, an external, or anything wearing a
+/// sigil keeps the per-inst path. `function_bodies` is the same table
+/// `handle_function_call_or_command` consults, so the two agree by
+/// construction.
+fn body_calls_user_function(body: &Statement, state: &VersionState) -> bool {
+    let StmtKind::Command(c) = &body.kind else {
+        return false;
+    };
+    state
+        .function_bodies
+        .contains_key(&crate::transform::expressions::expr_to_string(&c.name))
 }
 
 /// A redirect target that is a scalar *read* — `${x:-f}` (ParameterExpansion)

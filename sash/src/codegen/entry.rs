@@ -145,6 +145,7 @@ pub fn compile_ssa(program: &SsaProgram, embedded: Embedded, trace: bool) -> Vec
         let exit_status_var = fs.exit_status_var;
         let pipe_read_fd_var = fs.pipe_read_fd_var;
         let capture_slots = fs.capture_slots;
+        let redirect_slots = fs.redirect_slots;
         let saved_end_status_var = fs.saved_end_status_var;
         let end_cl_block = fs.end_cl_block;
 
@@ -168,6 +169,7 @@ pub fn compile_ssa(program: &SsaProgram, embedded: Embedded, trace: bool) -> Vec
             exit_status_var,
             pipe_read_fd_var,
             capture_slots: &capture_slots,
+            redirect_slots: &redirect_slots,
             saved_end_status_var,
             end_cl_block,
             space_id,
@@ -207,6 +209,7 @@ struct EmitCtx<'a, 'b> {
     exit_status_var: cranelift_frontend::Variable,
     pipe_read_fd_var: cranelift_frontend::Variable,
     capture_slots: &'a [(cranelift_frontend::Variable, cranelift_frontend::Variable)],
+    redirect_slots: &'a [Vec<cranelift_frontend::Variable>],
     saved_end_status_var: cranelift_frontend::Variable,
     end_cl_block: Option<cranelift_codegen::ir::Block>,
     space_id: cranelift_module::DataId,
@@ -316,6 +319,7 @@ fn emit_block_insts(ctx: &mut EmitCtx, ssa_block: &BasicBlock, ssa_id: BlockId) 
                 exit_status_var: ctx.exit_status_var,
                 pipe_read_fd_var: ctx.pipe_read_fd_var,
                 capture_slots: ctx.capture_slots,
+                redirect_slots: ctx.redirect_slots,
                 end_cl_block: ctx.end_cl_block,
                 program: ctx.program,
                 ssa_id,

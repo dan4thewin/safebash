@@ -268,6 +268,11 @@ fn inline_function_call(
     }
     state.inlining.push(name.to_string());
 
+    // `f > out.txt`: the redirect parked by `lower_redirected_stmt`. Taken
+    // before the body is lowered, so a nested redirected call inside the body
+    // opens its own scope rather than re-opening this one.
+    let scope = state.pending_redirect_scope.take();
+
     // Lower the call arguments ONCE in the caller's scope (before `args` is
     // redefined), so a side-effecting `$( … )` arg is not executed twice and
     // args reading the caller's positionals see the caller's values.
@@ -288,6 +293,23 @@ fn inline_function_call(
     let saved_ro = super::functions::enter_fn_body_scope(state);
     super::functions::setup_callee_args(&arg_values, ssa, state, block);
 
+    // Open the redirect scope last, so everything that only computes values
+    // (the spilled targets, the argument bindings) has already run on the
+    // caller's own fds. `pre_state` is the version map the skip path carries
+    // into the restore block.
+    let bracket = scope.map(|redirects| {
+        let site = state.alloc_redirect_site();
+        let fds: Vec<i64> = redirects.iter().map(|r| r.resolved_fd()).collect();
+        let checked = state.in_condition == 0;
+        ssa.block_mut(block).insts.push(SsaInst::RedirectPush {
+            site,
+            redirects,
+            checked,
+        });
+        (site, fds)
+    });
+    let pre_state = state.snapshot();
+
     // Inline the function body
     let call_block = ssa.new_block(&format!("call_{}", name));
     ssa.block_mut(block).terminator = Terminator::Goto(call_block);
@@ -306,6 +328,38 @@ fn inline_function_call(
 
     // Normal fall-through also goes to restore block
     ssa.block_mut(exit_block).terminator = Terminator::Goto(restore_block);
+
+    if let Some((site, fds)) = bracket {
+        // Close the scope first thing in the restore block, so it also runs
+        // for a `return` out of the body (which targets this block) and for
+        // the skip path below.
+        ssa.block_mut(restore_block)
+            .insts
+            .push(SsaInst::RedirectPop { site, fds });
+        // DD#55: a failed `open(2)` must not run the body on the wrong fds.
+        // The scope sets the test result, so branching on it here skips
+        // straight to the restore — the cross-block equivalent of the
+        // if/else a plain command's redirect guard emits around itself. The
+        // skip edge is only *taken* in condition position (elsewhere the
+        // scope has already aborted), but emitting it unconditionally keeps
+        // the shape independent of the later `checked` rewrites that
+        // `mark_unchecked_in_conditions` and the END-block pass apply.
+        let body_state = state.snapshot();
+        ssa.block_mut(block).terminator = Terminator::Branch {
+            condition: "redirect".to_string(),
+            true_block: call_block,
+            false_block: restore_block,
+        };
+        super::helpers::insert_phis_two_branch(
+            state,
+            ssa,
+            restore_block,
+            exit_block,
+            &body_state,
+            block,
+            &pre_state,
+        );
+    }
 
     super::functions::exit_fn_body_scope(state, saved_ro);
     super::functions::restore_caller_slots(saved_slots, state);

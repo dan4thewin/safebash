@@ -1061,7 +1061,9 @@ impl<'a> Interner<'a> {
                 self.intern_value(subject);
                 self.intern_value(pattern);
             }
-            SsaInst::ReadLine { redirects, .. } | SsaInst::ReadArray { redirects, .. } => {
+            SsaInst::ReadLine { redirects, .. }
+            | SsaInst::ReadArray { redirects, .. }
+            | SsaInst::RedirectPush { redirects, .. } => {
                 self.intern_redirect_targets(redirects);
             }
             SsaInst::Attest { test, source, .. } | SsaInst::AttestAll { test, source, .. } => {
@@ -1157,6 +1159,7 @@ pub(super) fn allocate_variables(
         exit_status_var: ambient.exit_status_var,
         pipe_read_fd_var: ambient.pipe_read_fd_var,
         capture_slots: declare_capture_slots(builder, program),
+        redirect_slots: declare_redirect_slots(builder, program),
         saved_end_status_var: ambient.saved_end_status_var,
         end_cl_block,
     }
@@ -1363,6 +1366,32 @@ fn declare_capture_slots(
         .collect()
 }
 
+/// One saved-fd slot per redirect in each `RedirectPush` scope. Widths come
+/// from the program (a scope saves one fd per redirect it applies), and the
+/// count is the high-water site number — scopes nest, so per-site slots
+/// replace a runtime stack for exactly the reason captures do.
+fn declare_redirect_slots(
+    builder: &mut cranelift_frontend::FunctionBuilder,
+    program: &SsaProgram,
+) -> Vec<Vec<cranelift_frontend::Variable>> {
+    use cranelift_codegen::ir::InstBuilder;
+
+    let zero = builder.ins().iconst(I64, 0);
+    program
+        .redirect_site_widths()
+        .into_iter()
+        .map(|width| {
+            (0..width)
+                .map(|_| {
+                    let v = builder.declare_var(I64);
+                    builder.def_var(v, zero);
+                    v
+                })
+                .collect()
+        })
+        .collect()
+}
+
 /// DD#53: give every *undeclared* variable used as a redirect target the
 /// empty-string default, so `/bin/echo hi > $f` opens "" rather than reading
 /// a slot nothing ever defined.
@@ -1410,6 +1439,7 @@ fn collect_redirect_target_vars(program: &SsaProgram) -> std::collections::HashS
 fn inst_redirects(inst: &SsaInst) -> Vec<&crate::ir::Redirect> {
     match inst {
         SsaInst::Command { redirects, .. } => redirects.iter().collect(),
+        SsaInst::RedirectPush { redirects, .. } => redirects.iter().collect(),
         SsaInst::Pipeline { stages, .. } => stages.iter().flat_map(|(_, _, r)| r.iter()).collect(),
         _ => Vec::new(),
     }

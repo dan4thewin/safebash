@@ -966,6 +966,25 @@ pub struct Redirect {
     pub target: Expr,
 }
 
+impl Redirect {
+    /// The fd this redirect actually affects: the explicit one when written
+    /// (`2> f`), else bash's default for the operator — stdout for the
+    /// write-ish ops, stdin for the read-ish ones (`<>` is a `<` form, so it
+    /// defaults to stdin, not stdout).
+    ///
+    /// Both backends carry their own copy of this rule next to their emitters
+    /// (they are deliberate mirrors of each other); this one exists for the
+    /// transform, which must name the same fds when it builds a redirect
+    /// scope's `RedirectPop`.
+    pub fn resolved_fd(&self) -> i64 {
+        let default = match self.op {
+            RedirectOp::Write | RedirectOp::Append | RedirectOp::DupOutput => 1,
+            RedirectOp::Read | RedirectOp::DupInput | RedirectOp::ReadWrite => 0,
+        };
+        self.fd.map_or(default, |fd| fd as i64)
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum RedirectOp {
     Write,     // >

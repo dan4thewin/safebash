@@ -167,6 +167,8 @@ fn classify_inst_def(
         | SsaInst::ArgvFill { .. } // fills a tainted array (DD#61 bulk-read source); CST pass governs
         | SsaInst::CaptureStart { .. }
         | SsaInst::AttestAll { .. } // validates in place; AttestRetag defines the clean version
+        | SsaInst::RedirectPush { .. } // moves fds around; defines no value
+        | SsaInst::RedirectPop { .. }
         | SsaInst::Pipeline { .. } => {}
     }
 }

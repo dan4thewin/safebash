@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup functions
-plan=102
+plan=114
 echo "1..$plan" >&3
 
 set +e
@@ -655,6 +655,99 @@ fn b -> int { int n=$(($1)); return $(( (a n) )) }
 int r=$(( (a 3) ))
 echo $r'
 [[ $rc != 0 && $err == *SB5037* ]]; chk rec.4
+
+# --- fr.* redirect on a user-function call (`f > out.txt`) ---
+#
+# SB4021 rejects a redirect on a compound command and tells the user to
+# "wrap the compound in a function" — so `f > file` is the *sanctioned*
+# spelling of a compound redirect, and it has to work. The body is a
+# compound, so the scope opens once around the whole call and restores
+# once: `>` must truncate a single time no matter how many commands the
+# body runs (fr.2 is that differential).
+
+frf=/tmp/sash_spec_fr_$$.txt
+frin=/tmp/sash_spec_fr_in_$$.txt
+
+# fr.1 the redirect reaches the body — stdout is empty, the file has it
+run_sash "fn f { echo a }
+f > $frf
+echo done"
+[[ $rc = 0 && $out = "done" && -z $err && $(cat $frf) = "a" ]]; chk fr.1
+
+# fr.2 a multi-command body opens the scope ONCE: both lines land, and
+# `>` truncates a single time (per-command attachment would keep only "b")
+run_sash "fn f { echo a; echo b }
+f > $frf"
+[[ $rc = 0 && -z $out && -z $err && $(cat $frf) = "a
+b" ]]; chk fr.2
+
+# fr.3 `>>` appends across two separate scopes
+rm -f $frf
+run_sash "fn f { echo x }
+f >> $frf
+f >> $frf"
+[[ $rc = 0 && -z $out && $(cat $frf) = "x
+x" ]]; chk fr.3
+
+# fr.4 the scope restores the fd — output after the call goes to stdout
+run_sash "fn f { echo inside }
+f > $frf
+echo outside"
+[[ $rc = 0 && $out = "outside" && $(cat $frf) = "inside" ]]; chk fr.4
+
+# fr.5 `<` feeds the body's read from the file
+printf 'alpha\0' > $frin
+run_sash "fn f { read a; echo \"n=\$(len a)\" }
+f < $frin"
+[[ $rc = 0 && $out = "n=1" && -z $err ]]; chk fr.5
+
+# fr.6 `2>` captures only stderr; stdout is untouched
+run_sash "fn f { /bin/echo oops >&2; echo fine }
+f 2> $frf"
+[[ $rc = 0 && $out = "fine" && $(cat $frf) = "oops" ]]; chk fr.6
+
+# fr.7 args reach the body through the scope
+run_sash "fn f { echo \$1-\$2 }
+f one two > $frf"
+[[ $rc = 0 && -z $out && $(cat $frf) = "one-two" ]]; chk fr.7
+
+# fr.8 scopes nest: the inner scope restores to the OUTER redirect, not
+# to the caller's stdout (per-site slots — one shared slot would clobber)
+run_sash "fn g { echo inner }
+fn f { echo before; g > $frin; echo after }
+f > $frf"
+[[ $rc = 0 && -z $out && $(cat $frf) = "before
+after" && $(cat $frin) = "inner" ]]; chk fr.8
+
+# fr.9 a redirected call inside a loop opens and restores per iteration
+run_sash "fn f { echo tick }
+rm -f $frf
+for i in 1 2 3 { f >> $frf; echo n\$i }"
+[[ $rc = 0 && $out = "n1
+n2
+n3" && $(cat $frf) = "tick
+tick
+tick" ]]; chk fr.9
+
+# fr.10 DD#55: a bare open failure aborts, body never runs (mirrors 55.24)
+run_sash 'fn f { echo hi }
+f > /nonexistent_dir_55/f
+echo after'
+[[ $rc != 0 && -z $out \
+   && $rerr == *"/nonexistent_dir_55/f: No such file or directory"* ]]; chk fr.10
+
+# fr.11 ... and an enclosing if-condition catches it → else branch, no
+# diagnostic and no misroute (mirrors 55.25)
+run_sash 'fn f { echo hi; return 0 }
+if f > /nonexistent_dir_55/f { echo yes } else { echo no }'
+[[ $rc = 0 && $out = "no" && -z $err && -z $rerr ]]; chk fr.11
+
+# fr.12 `||` catches it too (mirrors 55.50)
+run_sash 'fn f { echo hi; return 0 }
+f > /nonexistent_dir_55/f || echo caught'
+[[ $rc = 0 && $out = "caught" && -z $err && -z $rerr ]]; chk fr.12
+
+rm -f $frf $frin
 
 set -e
 tally

@@ -11,7 +11,9 @@ use cranelift_module::Module;
 use cranelift_object::ObjectModule;
 
 use super::commands::{lower_echo, lower_exec};
-use super::redirects::{emit_redirects_guarded, emit_restore, lower_ir_redirect_expr};
+use super::redirects::{
+    emit_redirects_guarded, emit_restore, lower_ir_redirect_expr, RedirectFailure,
+};
 use super::types::{find_array_slot, ExternFuncs, InstCtx, VarSlot};
 use super::values::{atoi_call, lower_value, lower_value_as_int};
 use crate::ssa::*;
@@ -752,6 +754,35 @@ pub(super) fn diag_empty_seg(
 /// instead. On success runs `body` then restores the saved fds. The
 /// `body` emits the actual command (echo write / exec) and its own status
 /// and abort handling.
+/// DD#55: an uncaught redirect `open(2)` failure — report
+/// `<argv0>: <path>: <reason>` and abort. Routes through the END block
+/// (DD#56) when the program has one, so cleanup still runs; otherwise it
+/// exits directly. Shared by the per-command guard and the scope push,
+/// which differ only in *when* they decide the failure is uncaught.
+fn emit_open_failure_abort(
+    rf: &RedirectFailure,
+    builder: &mut FunctionBuilder,
+    module: &mut ObjectModule,
+    ctx: &mut InstCtx,
+) {
+    let emsg_ref = module.declare_func_in_func(ctx.externs.emsg, builder.func);
+    let z = builder.ins().iconst(I64, 0);
+    builder
+        .ins()
+        .call(emsg_ref, &[rf.path_ptr, rf.path_len, z, z]);
+    let one = builder.ins().iconst(I64, 1);
+    if let Some(end_cl) = ctx.end_cl_block {
+        builder.def_var(ctx.exit_status_var, one);
+        builder.ins().jump(end_cl, &[]);
+    } else {
+        let exit_ref = module.declare_func_in_func(ctx.externs.exit, builder.func);
+        builder.ins().call(exit_ref, &[one]);
+        builder
+            .ins()
+            .trap(cranelift_codegen::ir::TrapCode::user(1).unwrap());
+    }
+}
+
 pub(super) fn emit_redirect_guarded_body(
     redirects: &[crate::ir::Redirect],
     in_condition: bool,
@@ -794,22 +825,7 @@ pub(super) fn emit_redirect_guarded_body(
         // Caught by if/|| — the failure decides the branch; do not abort.
         builder.ins().jump(merge_block, &[]);
     } else {
-        // DD#55: `<argv0>: <path>: <reason>` then abort.
-        let emsg_ref = module.declare_func_in_func(ctx.externs.emsg, builder.func);
-        let z = builder.ins().iconst(I64, 0);
-        builder
-            .ins()
-            .call(emsg_ref, &[rf.path_ptr, rf.path_len, z, z]);
-        if let Some(end_cl) = ctx.end_cl_block {
-            builder.def_var(ctx.exit_status_var, one);
-            builder.ins().jump(end_cl, &[]);
-        } else {
-            let exit_ref = module.declare_func_in_func(ctx.externs.exit, builder.func);
-            builder.ins().call(exit_ref, &[one]);
-            builder
-                .ins()
-                .trap(cranelift_codegen::ir::TrapCode::user(1).unwrap());
-        }
+        emit_open_failure_abort(&rf, builder, module, ctx);
     }
 
     // Ok path: open succeeded — run the command body normally.
@@ -821,6 +837,97 @@ pub(super) fn emit_redirect_guarded_body(
 
     builder.switch_to_block(merge_block);
     builder.seal_block(merge_block);
+}
+
+/// `f > out.txt`: open a redirect *scope* around an inlined function body.
+///
+/// Saves each affected fd into this site's slots (so the paired
+/// `RedirectPop` can restore them from another block), applies the
+/// redirects, and leaves the test result set to whether the scope opened.
+/// The SSA block ends in a Branch on that result, so a failed `open(2)`
+/// jumps straight to the pop and the body never runs on the wrong fds —
+/// the cross-block form of the if/else `emit_redirect_guarded_body` builds
+/// around a single command.
+///
+/// `checked` is DD#55: outside condition position a failed open restores
+/// the fds, writes `<argv0>: <path>: <reason>` and aborts, so the skip edge
+/// is never actually taken there.
+pub(super) fn emit_redirect_push(
+    site: u32,
+    redirects: &[crate::ir::Redirect],
+    checked: bool,
+    builder: &mut FunctionBuilder,
+    module: &mut ObjectModule,
+    ctx: &mut InstCtx,
+) {
+    let (saved, failure) = emit_redirects_guarded(
+        redirects,
+        builder,
+        module,
+        ctx.externs,
+        ctx.literals,
+        ctx.vars,
+    );
+    for (slot, s) in ctx.redirect_slots[site as usize].iter().zip(saved.iter()) {
+        builder.def_var(*slot, s.saved_copy);
+    }
+    let one = builder.ins().iconst(I64, 1);
+    let Some(rf) = failure else {
+        // Nothing here can fail (a dup-only scope, or no redirects at all):
+        // the scope is open, so the branch must take the body.
+        builder.def_var(ctx.test_result_var, one);
+        return;
+    };
+
+    let fail_block = builder.create_block();
+    let ok_block = builder.create_block();
+    let merge_block = builder.create_block();
+    builder
+        .ins()
+        .brif(rf.failed, fail_block, &[], ok_block, &[]);
+
+    builder.switch_to_block(fail_block);
+    builder.seal_block(fail_block);
+    let zero = builder.ins().iconst(I64, 0);
+    builder.def_var(ctx.exit_status_var, one);
+    builder.def_var(ctx.test_result_var, zero);
+    if checked {
+        // The pop is on the skip path, which an abort never reaches, so the
+        // fds have to go back here — an END block (DD#56) still runs.
+        emit_restore(saved.clone(), builder, module, ctx.externs);
+        emit_open_failure_abort(&rf, builder, module, ctx);
+    } else {
+        builder.ins().jump(merge_block, &[]);
+    }
+
+    builder.switch_to_block(ok_block);
+    builder.seal_block(ok_block);
+    builder.def_var(ctx.test_result_var, one);
+    builder.ins().jump(merge_block, &[]);
+
+    builder.switch_to_block(merge_block);
+    builder.seal_block(merge_block);
+}
+
+/// Close the scope `RedirectPush { site }` opened: put each saved fd back,
+/// in reverse, and drop the copy. Reached both by falling out of the body
+/// and by the skip edge a failed open takes.
+pub(super) fn emit_redirect_pop(
+    site: u32,
+    fds: &[i64],
+    builder: &mut FunctionBuilder,
+    module: &mut ObjectModule,
+    ctx: &mut InstCtx,
+) {
+    let saved: Vec<super::redirects::SavedFd> = ctx.redirect_slots[site as usize]
+        .iter()
+        .zip(fds.iter())
+        .map(|(slot, fd)| super::redirects::SavedFd {
+            original_fd: *fd,
+            saved_copy: builder.use_var(*slot),
+        })
+        .collect();
+    emit_restore(saved, builder, module, ctx.externs);
 }
 
 /// DD#55 (A)-channel: emit the implicit exit check. When `abort` is true

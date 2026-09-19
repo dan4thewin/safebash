@@ -358,6 +358,38 @@ pub enum SsaInst {
         target: VarRef,
         tainted: bool,
     },
+    /// Open a redirect *scope* around an inlined user-function body
+    /// (`f > out.txt`). Saves each affected fd, applies the redirects, and is
+    /// closed by the paired `RedirectPop` in the call's restore block.
+    ///
+    /// A plain command carries its redirects on the instruction itself, which
+    /// applies and restores them in one place. A function call cannot: the
+    /// body is inlined across several blocks, so there is no single
+    /// instruction to hang them on. Attaching them to each command in the
+    /// body instead would be wrong — `fn f { echo a; echo b }; f > out.txt`
+    /// must open `out.txt` (and truncate it) **once**, not once per command.
+    ///
+    /// `site` numbers the scope so the backends can give each one its own
+    /// saved-fd slots; scopes nest (a redirected call inside a redirected
+    /// call) exactly as captures do, and for the same reason the depth is
+    /// static — sash inlines functions and rejects recursion (SB5037).
+    ///
+    /// `checked` is DD#55: when true an `open(2)` failure writes the
+    /// `<argv0>: <path>: <reason>` diagnostic and aborts. When false the call
+    /// is in condition position, so the failure is *caught* — the scope sets
+    /// a false test result and the block branches past the body to the
+    /// `RedirectPop`, exactly as a failed open on a plain command in the same
+    /// position skips that command.
+    RedirectPush {
+        site: u32,
+        redirects: Vec<crate::ir::Redirect>,
+        checked: bool,
+    },
+    /// Close the redirect scope opened by `RedirectPush { site }`: restore
+    /// each saved fd, in reverse. `fds` mirrors the pushed redirects (the
+    /// resolved fd per saved slot), so the pop needs nothing from the push
+    /// beyond the site number.
+    RedirectPop { site: u32, fds: Vec<i64> },
     /// Multi-stage pipeline: cmd1 | cmd2 | ...
     Pipeline {
         stages: Vec<(String, Vec<SsaValue>, Vec<crate::ir::Redirect>)>,
@@ -407,6 +439,18 @@ pub enum SsaInst {
 }
 
 impl SsaInst {
+    /// `Some((site, slot count))` when this is a redirect-scope push.
+    /// Takes `&Self` by reference so it can be passed to `filter_map`
+    /// directly over an iterator of instruction references.
+    fn redirect_scope_width(inst: &Self) -> Option<(usize, usize)> {
+        match inst {
+            SsaInst::RedirectPush {
+                site, redirects, ..
+            } => Some((*site as usize, redirects.len())),
+            _ => None,
+        }
+    }
+
     /// Construct an `SsaInst::Command` from a raw name, deriving
     /// `kind` via [`BuiltinCmd::from_name`]. Use this everywhere
     /// `SsaInst::Command { ... }` would otherwise be built so the
@@ -885,7 +929,12 @@ pub(crate) fn condition_inst_index(block: &BasicBlock) -> Option<usize> {
         SsaInst::Command { .. }
         | SsaInst::Pipeline { .. }
         | SsaInst::ReadLine { .. }
-        | SsaInst::ReadArray { .. } => true,
+        | SsaInst::ReadArray { .. }
+        // A redirect scope (`f > out.txt`) ends its block with the Branch
+        // that skips the body when the open fails, so the scope — not some
+        // earlier command that happens to share the block — is the
+        // instruction in condition position.
+        | SsaInst::RedirectPush { .. } => true,
         _ => false,
     })
 }
@@ -924,6 +973,25 @@ impl SsaProgram {
             }
         }
         max.map_or(0, |m| m as usize + 1)
+    }
+    /// How many saved-fd slots each `RedirectPush` site needs, indexed by
+    /// site. A backend allocates one slot per redirect in the scope, so the
+    /// width varies per site (unlike a capture's fixed pair). Empty when the
+    /// program opens no redirect scope.
+    pub fn redirect_site_widths(&self) -> Vec<usize> {
+        let scopes = self
+            .blocks
+            .values()
+            .flat_map(|block| &block.insts)
+            .filter_map(SsaInst::redirect_scope_width);
+        let mut widths: Vec<usize> = Vec::new();
+        for (site, width) in scopes {
+            if widths.len() <= site {
+                widths.resize(site + 1, 0);
+            }
+            widths[site] = width;
+        }
+        widths
     }
     pub fn new() -> Self {
         Self {
@@ -1090,6 +1158,17 @@ pub struct VersionState {
     /// once per `$( … )` capture that is lowered, so each capture owns its own
     /// handle slots instead of sharing one program-wide pair.
     pub next_capture_site: u32,
+    /// Next unused `RedirectPush`/`RedirectPop` scope number, handed out by
+    /// `alloc_redirect_site`. Same rationale as `next_capture_site`.
+    pub next_redirect_site: u32,
+    /// A redirect waiting for the user-function call it was written on
+    /// (`f > out.txt`) to be inlined. `lower_redirected_stmt` parks it here
+    /// and `inline_function_call` takes it, because the two are separated by
+    /// the whole command-dispatch path and only the inliner holds the blocks
+    /// the scope has to wrap. Always `None` outside that hand-off: the
+    /// inliner takes it before lowering the body, so a nested call inside the
+    /// body cannot pick it up.
+    pub pending_redirect_scope: Option<Vec<crate::ir::Redirect>>,
 }
 
 /// Fixed argument count for a value-producing intrinsic (`len`, `sub`, …) when
@@ -1144,6 +1223,8 @@ impl VersionState {
             lowering_fn_template: false,
             externally_used: std::cell::RefCell::new(std::collections::HashSet::new()),
             next_capture_site: 0,
+            next_redirect_site: 0,
+            pending_redirect_scope: None,
         }
     }
 
@@ -1151,6 +1232,13 @@ impl VersionState {
     pub fn alloc_capture_site(&mut self) -> u32 {
         let site = self.next_capture_site;
         self.next_capture_site += 1;
+        site
+    }
+
+    /// Reserve a scope number for one `f > file` redirect bracket.
+    pub fn alloc_redirect_site(&mut self) -> u32 {
+        let site = self.next_redirect_site;
+        self.next_redirect_site += 1;
         site
     }
 

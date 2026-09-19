@@ -134,6 +134,14 @@ pub(super) fn uncheck_last_condition_inst(insts: &mut [SsaInst]) {
     for inst in insts.iter_mut().rev() {
         match inst {
             SsaInst::Command { name, .. } if name == "__negate_test_result" => continue,
+            // A redirect scope (`f > out.txt`) always closes its block with
+            // the Branch that skips the body on a failed `open(2)`, so a
+            // Branch here says nothing about whether the *call* is in
+            // condition position — the transform already recorded that on the
+            // scope itself. Stop, so an unrelated command earlier in the same
+            // block is not unchecked on the strength of a branch that is not
+            // its own.
+            SsaInst::RedirectPush { .. } => return,
             SsaInst::Command { checked, .. } | SsaInst::Pipeline { checked, .. } => {
                 *checked = false;
                 return;
@@ -161,7 +169,13 @@ fn mark_unchecked_in_end_blocks(ssa: &mut SsaProgram) {
 fn mark_block_unchecked(block: &mut BasicBlock) {
     for inst in block.insts.iter_mut() {
         match inst {
-            SsaInst::Command { checked, .. } | SsaInst::Pipeline { checked, .. } => {
+            SsaInst::Command { checked, .. }
+            | SsaInst::Pipeline { checked, .. }
+            // A redirect scope must be unchecked here for the same reason,
+            // and doubly so: its abort jumps to the END block, which inside
+            // END is a jump to itself. Unchecked, a failed open skips the
+            // call and the rest of the cleanup still runs.
+            | SsaInst::RedirectPush { checked, .. } => {
                 *checked = false;
             }
             _ => {}

@@ -381,6 +381,39 @@ fn emit_prologue(out: &mut String) {
 
 /// Emit the `main` function: variable declarations, all blocks in
 /// SSA order, terminal `__exit:` label.
+/// The per-site slot variables both bracketing constructs need. Each holds
+/// state across basic blocks — the open and the close run under different
+/// labels — so they are function-scoped in `main` rather than local to the
+/// emitting block. Both are per *site* because both constructs nest, and a
+/// single shared slot lets an inner one clobber the enclosing one.
+fn emit_slot_decls(e: &mut Emit, ssa: &SsaProgram) {
+    // Function/multi-statement stdout capture ($(f), $(a; b)): the saved
+    // stdout fd + capture handle between CaptureStart and CaptureEnd.
+    for site in 0..ssa.capture_site_count() {
+        writeln!(
+            e.out,
+            "    i64 __cap_saved_{site} = 0; i64 __cap_handle_{site} = -1;"
+        )
+        .unwrap();
+        writeln!(
+            e.out,
+            "    (void)__cap_saved_{site}; (void)__cap_handle_{site};"
+        )
+        .unwrap();
+    }
+    // `f > out.txt`: the fds a RedirectPush saved, one slot per redirect in
+    // the scope, so the width varies per site.
+    for (site, width) in ssa.redirect_site_widths().iter().enumerate() {
+        for i in 0..*width {
+            writeln!(
+                e.out,
+                "    i64 __rd_saved_{site}_{i} = -1; (void)__rd_saved_{site}_{i};"
+            )
+            .unwrap();
+        }
+    }
+}
+
 fn emit_main(e: &mut Emit, ssa: &SsaProgram) {
     let types = collect_var_types(ssa);
     e.end_block = ssa.end_block;
@@ -395,22 +428,7 @@ fn emit_main(e: &mut Emit, ssa: &SsaProgram) {
     // an explicit `exit N` in END overrides it via emit_exit).
     writeln!(e.out, "    i64 __end_status = 0;").unwrap();
     writeln!(e.out, "    (void)__end_status;").unwrap();
-    // Function/multi-statement stdout capture ($(f), $(a; b)): the saved
-    // stdout fd + capture handle between CaptureStart and CaptureEnd, one
-    // pair per capture site. Captures nest, and a single shared pair let the
-    // inner one clobber the outer's handles.
-    for site in 0..ssa.capture_site_count() {
-        writeln!(
-            e.out,
-            "    i64 __cap_saved_{site} = 0; i64 __cap_handle_{site} = -1;"
-        )
-        .unwrap();
-        writeln!(
-            e.out,
-            "    (void)__cap_saved_{site}; (void)__cap_handle_{site};"
-        )
-        .unwrap();
-    }
+    emit_slot_decls(e, ssa);
     // DD#20 lastpipe: a capturing pipeline stashes its final stage's
     // read-end here; ReadLine/ReadLineMulti/Mapfile with fd=-1 consume it.
     writeln!(e.out, "    i64 __pipe_read_fd = -1;").unwrap();
@@ -1051,13 +1069,37 @@ fn emit_attest_check(
     }
 }
 
-fn emit_inst(e: &mut Emit, inst: &SsaInst, types: &VarTypes) {
-    // I/O-read and attest families handled in sub-dispatchers to keep this
-    // dispatcher lean (complexity gate).
-    if emit_read_inst(e, inst, types)
+/// A redirect *scope* around an inlined function body (`f > out.txt`).
+/// The push saves the affected fds into this site's `__rd_saved_N_i` slots
+/// and applies the redirects; the pop puts them back. Scopes nest, so the
+/// slots are per-site — see the native pair in `codegen/inst_handlers.rs`.
+fn emit_redirect_inst(e: &mut Emit, inst: &SsaInst, types: &VarTypes) -> bool {
+    match inst {
+        SsaInst::RedirectPush {
+            site,
+            redirects,
+            checked,
+        } => emit_redirect_push(e, *site, redirects, *checked, types),
+        SsaInst::RedirectPop { site, fds } => emit_redirect_pop(e, *site, fds),
+        _ => return false,
+    }
+    true
+}
+
+/// The variant families that live in their own emitters. Returns true when
+/// one of them claimed `inst`, in which case [`emit_inst`] is done. Kept
+/// separate so the `||` chain does not count against the main dispatcher.
+fn emit_family_inst(e: &mut Emit, inst: &SsaInst, types: &VarTypes) -> bool {
+    emit_read_inst(e, inst, types)
         || emit_attest_inst(e, inst, types)
         || emit_capture_inst(e, inst)
-    {
+        || emit_redirect_inst(e, inst, types)
+}
+
+fn emit_inst(e: &mut Emit, inst: &SsaInst, types: &VarTypes) {
+    // The read, attest, capture and redirect-scope families are handled in
+    // sub-dispatchers to keep this dispatcher lean (complexity gate).
+    if emit_family_inst(e, inst, types) {
         return;
     }
     match inst {
@@ -1112,8 +1154,8 @@ fn emit_inst(e: &mut Emit, inst: &SsaInst, types: &VarTypes) {
         } => emit_match_into_c(e, subject, pattern, array, *all, types),
         SsaInst::ArgvFill { array, start } => emit_argv_fill_c(e, array, *start),
 
-        // Exhaustive on purpose — no `_ =>`. These ten are claimed by the
-        // three sub-dispatchers above, which return true when they emit.
+        // Exhaustive on purpose — no `_ =>`. These twelve are claimed by the
+        // four sub-dispatchers above, which return true when they emit.
         // Reaching this arm means one of them returned false for a variant it
         // owns, which is a compiler bug.
         //
@@ -1130,7 +1172,9 @@ fn emit_inst(e: &mut Emit, inst: &SsaInst, types: &VarTypes) {
         | SsaInst::AttestAll { .. }
         | SsaInst::AttestRetag { .. }
         | SsaInst::CaptureStart { .. }
-        | SsaInst::CaptureEnd { .. } => {
+        | SsaInst::CaptureEnd { .. }
+        | SsaInst::RedirectPush { .. }
+        | SsaInst::RedirectPop { .. } => {
             panic!(
                 "ICE: {:?} is owned by a sub-dispatcher that declined it",
                 std::mem::discriminant(inst)
@@ -3487,6 +3531,74 @@ fn emit_restore(e: &mut Emit, saved: &[SavedFdC]) {
         )
         .unwrap();
     }
+}
+
+/// `f > out.txt`: open a redirect *scope* around an inlined function body.
+/// Mirrors native `emit_redirect_push` (codegen/inst_handlers.rs).
+///
+/// The saved fds are copied out of the emitter's own throwaway locals into
+/// this site's `__rd_saved_N_i`, which are declared at the top of main —
+/// the pop runs under a different label and cannot see a local declared
+/// inside the block that pushed.
+///
+/// `__test_result` says whether the scope opened; the block's Branch reads
+/// it, so a failed `open(2)` skips the body instead of running it on the
+/// wrong fds. Outside condition position (`checked`) the failure restores,
+/// reports and aborts first, so that edge is never taken there.
+fn emit_redirect_push(
+    e: &mut Emit,
+    site: u32,
+    redirects: &[crate::ir::Redirect],
+    checked: bool,
+    types: &VarTypes,
+) {
+    let (saved, failure) = emit_redirects_guarded(e, redirects, types);
+    for (i, s) in saved.iter().enumerate() {
+        writeln!(
+            e.out,
+            "    __rd_saved_{site}_{i} = {sv};",
+            site = site,
+            i = i,
+            sv = s.saved_var
+        )
+        .unwrap();
+    }
+    let Some((failed, path_ptr, path_len)) = failure else {
+        writeln!(e.out, "    __test_result = 1;").unwrap();
+        return;
+    };
+    writeln!(e.out, "    if ({failed}) {{", failed = failed).unwrap();
+    writeln!(e.out, "        __exit_status = 1; __test_result = 0;").unwrap();
+    if checked {
+        // The pop sits on the skip path, which an abort never reaches, so
+        // the fds have to go back here — an END block (DD#56) still runs.
+        emit_restore(e, &saved);
+        writeln!(
+            e.out,
+            "        sash_emsg({p}, {l}, 0, 0);",
+            p = path_ptr,
+            l = path_len
+        )
+        .unwrap();
+        writeln!(e.out, "        goto {};", abort_target(e)).unwrap();
+    }
+    writeln!(e.out, "    }} else {{").unwrap();
+    writeln!(e.out, "        __test_result = 1;").unwrap();
+    writeln!(e.out, "    }}").unwrap();
+}
+
+/// Close the scope `RedirectPush { site }` opened. Mirrors native
+/// `emit_redirect_pop`.
+fn emit_redirect_pop(e: &mut Emit, site: u32, fds: &[i64]) {
+    let saved: Vec<SavedFdC> = fds
+        .iter()
+        .enumerate()
+        .map(|(i, fd)| SavedFdC {
+            saved_var: format!("__rd_saved_{}_{}", site, i),
+            original_fd: *fd,
+        })
+        .collect();
+    emit_restore(e, &saved);
 }
 
 // ═══════════════════════════════════════════════════════════════

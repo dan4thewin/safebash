@@ -130,6 +130,18 @@ impl SsaInst {
             } => {
                 return self.emit_capture_end(*site, *buffered, target, builder, module, ctx);
             }
+            SsaInst::RedirectPush {
+                site,
+                redirects,
+                checked,
+            } => {
+                super::inst_handlers::emit_redirect_push(
+                    *site, redirects, *checked, builder, module, ctx,
+                );
+            }
+            SsaInst::RedirectPop { site, fds } => {
+                super::inst_handlers::emit_redirect_pop(*site, fds, builder, module, ctx);
+            }
             SsaInst::Test(test_expr) => {
                 let result = lower_test_expr(
                     test_expr,
