@@ -160,6 +160,12 @@ pub(super) struct InstCtx<'a> {
     /// so a redirect open(2) setup-failure is caught by `if`/`||` but
     /// still aborts under bare/`-`.
     pub(super) in_condition: bool,
+    /// DD#56: true when this instruction is part of the END handler —
+    /// `end_block` or anything reachable from it. An abort from here would
+    /// route *through* END, which from inside END is a jump to the block
+    /// already executing, so a failure diagnoses and lets the rest of the
+    /// cleanup run instead. See `SsaProgram::end_region`.
+    pub(super) in_end_block: bool,
 }
 
 /// Per-function compilation state, built during variable allocation.

@@ -156,13 +156,13 @@ pub(super) fn uncheck_last_condition_inst(insts: &mut [SsaInst]) {
 /// it fails (otherwise a failed cleanup step would skip the rest
 /// of END). Mark them all unchecked.
 fn mark_unchecked_in_end_blocks(ssa: &mut SsaProgram) {
-    for block in ssa.blocks.values_mut() {
-        // `starts_with` implies `contains`, so the old `!starts_with(x) &&
-        // !contains(x)` was exactly `!contains(x)` — the first test could never
-        // change the result, and its arm measured 0 hits against 19624.
-        if block.label.contains("__end__") {
-            mark_block_unchecked(block);
-        }
+    // Reachability, not a label test. Only END's *entry* block is named
+    // `__end__`; the blocks an `if`/`for` inside END creates get ordinary
+    // labels, so the label test marked the first block and left the rest
+    // checked. A failing command inside `END { if … { … } }` then aborted,
+    // and the abort routes through END — from inside END, a jump to itself.
+    for id in ssa.end_region() {
+        mark_block_unchecked(ssa.block_mut(id));
     }
 }
 

@@ -1,9 +1,15 @@
 ---
-status: next
+status: done
 priority: P1
 ---
 
 # Redirect-open failure inside `END { }` never terminates
+
+**Done** — journal 368, specs `56.80`-`56.87`. The fix was wider than
+filed: the unchecked marking's label test only matched END's *entry*
+block, so any failing command in a nested block inside END looped too.
+`SsaProgram::end_region()` (reachability) replaces the label test and is
+now shared by the transform and both backends.
 
 A redirect whose `open(2)` fails, on a plain command inside an `END`
 block, loops forever emitting the diagnostic.

@@ -1,7 +1,7 @@
 #!/bin/bash
 # DD#56 — signals and END block
 . common.sh
-plan=40
+plan=48
 setup signals
 
 set +e
@@ -275,6 +275,108 @@ signal 10 FLAG
 signal 15 EXIT
 echo ok'
 [[ $rc = 0 && $out = "ok" && -z $err ]]; chk 56.51
+
+# --- 56.80+ a failure inside END must not route the abort THROUGH END ---
+#
+# DD#55 aborts route through the END block so cleanup runs. From *inside*
+# END that is a jump to the block already executing: the program looped
+# forever, emitting the diagnostic hundreds of thousands of times (rc=124
+# under timeout). `run_sash` is time-limited, so a regression here shows up
+# as a hang-class failure rather than a wrong-output one.
+#
+# Two separate holes fed it. The unchecked marking used a label test, but
+# `install_end_block` lowers the trap body with `lower_stmts`, so only the
+# *entry* block is named `__end__` and an `if`/`for` inside END produced
+# ordinary labels (56.81/56.82). And the redirect open(2) abort keys on
+# position, never on `checked`, so the marking could not reach it at all
+# (56.80, 56.83, 56.84). DG chose: diagnose, restore, keep cleaning up.
+
+# 56.80 a redirect open failure in END diagnoses and the cleanup continues
+run_sash 'echo main
+END {
+  echo hi > /nonexistent_dir_56/f
+  echo tail
+}'
+[[ $rc = 0 && $out = "main
+tail" && $rerr == *"/nonexistent_dir_56/f: No such file or directory"* ]]; chk 56.80
+
+# 56.81 a failing command inside an `if` inside END: the nested block gets
+# an ordinary label, so the label test left it checked and it aborted
+run_sash 'echo main
+END {
+  if /bin/true {
+    /bin/false
+    echo tail
+  }
+}'
+[[ $rc = 0 && $out = "main
+tail" ]]; chk 56.81
+
+# 56.82 ... and inside a `for`, where the abort re-entered per iteration
+run_sash 'echo main
+END {
+  for i in 1 2 {
+    echo n$i
+    /bin/false
+  }
+  echo tail
+}'
+[[ $rc = 0 && $out = "main
+n1
+n2
+tail" ]]; chk 56.82
+
+# 56.83 the open failure nested inside an `if` inside END — both holes at
+# once (nested block AND the position-keyed redirect abort)
+run_sash 'echo main
+END {
+  if /bin/true {
+    echo hi > /nonexistent_dir_56/f
+    echo tail
+  }
+}'
+[[ $rc = 0 && $out = "main
+tail" && $rerr == *"/nonexistent_dir_56/f: No such file or directory"* ]]; chk 56.83
+
+# 56.84 a redirect *scope* on a function call in END behaves the same, and
+# reports — silence is for a caught failure (55.25), not a cleanup one
+run_sash 'fn f { echo hi }
+echo main
+END {
+  f > /nonexistent_dir_56/f
+  echo tail
+}'
+[[ $rc = 0 && $out = "main
+tail" && $rerr == *"/nonexistent_dir_56/f: No such file or directory"* ]]; chk 56.84
+
+# 56.85 `read` shares the guard, so it gets the same treatment
+run_sash 'echo main
+END {
+  read a < /nonexistent_dir_56/f
+  echo "n=$(len a)"
+}'
+[[ $rc = 0 && $out = "main
+n=0" && $rerr == *"/nonexistent_dir_56/f: No such file or directory"* ]]; chk 56.85
+
+# 56.86 OUTSIDE END the abort is unchanged — it still aborts, and still
+# routes through END so the cleanup runs exactly once (guards the fix
+# against over-reach: `in_end_block` must be the region, not the program)
+run_sash 'echo main
+END {
+  echo cleanup
+}
+echo hi > /nonexistent_dir_56/f
+echo unreachable'
+[[ $rc != 0 && $out = "main
+cleanup" && $rerr == *"/nonexistent_dir_56/f: No such file or directory"* ]]; chk 56.86
+
+# 56.87 an explicit `exit N` inside END still wins over a failed open
+run_sash 'echo main
+END {
+  echo hi > /nonexistent_dir_56/f
+  exit 7
+}'
+[[ $rc = 7 && $out = "main" ]]; chk 56.87
 
 set -e
 tally

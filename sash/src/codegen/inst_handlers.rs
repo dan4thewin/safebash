@@ -755,24 +755,34 @@ pub(super) fn diag_empty_seg(
 /// `body` emits the actual command (echo write / exec) and its own status
 /// and abort handling.
 /// DD#55: an uncaught redirect `open(2)` failure — report
-/// `<argv0>: <path>: <reason>` and abort. Routes through the END block
-/// (DD#56) when the program has one, so cleanup still runs; otherwise it
-/// exits directly. Shared by the per-command guard and the scope push,
-/// which differ only in *when* they decide the failure is uncaught.
+/// `<argv0>: <path>: <reason>`, then abort. Routes the abort through the
+/// END block (DD#56) when the program has one, so cleanup still runs;
+/// otherwise it exits directly. Shared by the per-command guard and the
+/// scope push, which differ only in *when* they decide it is uncaught.
+///
+/// Returns true when it did **not** terminate the block, which happens
+/// inside END itself: there the abort would jump to the block already
+/// executing (an unbounded loop), and END is cleanup that has to finish.
+/// The failure is still reported and still sets a failing status — only
+/// the abort is dropped, matching an exec failure in the same position.
+#[must_use]
 fn emit_open_failure_abort(
     rf: &RedirectFailure,
     builder: &mut FunctionBuilder,
     module: &mut ObjectModule,
     ctx: &mut InstCtx,
-) {
+) -> bool {
     let emsg_ref = module.declare_func_in_func(ctx.externs.emsg, builder.func);
     let z = builder.ins().iconst(I64, 0);
     builder
         .ins()
         .call(emsg_ref, &[rf.path_ptr, rf.path_len, z, z]);
     let one = builder.ins().iconst(I64, 1);
+    builder.def_var(ctx.exit_status_var, one);
+    if ctx.in_end_block {
+        return true;
+    }
     if let Some(end_cl) = ctx.end_cl_block {
-        builder.def_var(ctx.exit_status_var, one);
         builder.ins().jump(end_cl, &[]);
     } else {
         let exit_ref = module.declare_func_in_func(ctx.externs.exit, builder.func);
@@ -781,6 +791,7 @@ fn emit_open_failure_abort(
             .ins()
             .trap(cranelift_codegen::ir::TrapCode::user(1).unwrap());
     }
+    false
 }
 
 pub(super) fn emit_redirect_guarded_body(
@@ -821,11 +832,11 @@ pub(super) fn emit_redirect_guarded_body(
     builder.def_var(ctx.exit_status_var, one);
     builder.def_var(ctx.test_result_var, zero);
     emit_restore(saved.clone(), builder, module, ctx.externs);
-    if in_condition {
-        // Caught by if/|| — the failure decides the branch; do not abort.
+    // Caught by if/|| — the failure decides the branch; no diagnostic
+    // (55.25/55.50) and no abort. Otherwise report it, and fall through to
+    // the merge only when the abort was dropped (inside END).
+    if in_condition || emit_open_failure_abort(&rf, builder, module, ctx) {
         builder.ins().jump(merge_block, &[]);
-    } else {
-        emit_open_failure_abort(&rf, builder, module, ctx);
     }
 
     // Ok path: open succeeded — run the command body normally.
@@ -891,12 +902,18 @@ pub(super) fn emit_redirect_push(
     let zero = builder.ins().iconst(I64, 0);
     builder.def_var(ctx.exit_status_var, one);
     builder.def_var(ctx.test_result_var, zero);
-    if checked {
+    // Inside END the scope is unchecked (DD#56) but the failure is still
+    // reported — silence is for a *caught* failure (55.25), not a cleanup
+    // one, and the plain-command path in END reports too.
+    let report = checked || ctx.in_end_block;
+    let mut terminated = false;
+    if report {
         // The pop is on the skip path, which an abort never reaches, so the
         // fds have to go back here — an END block (DD#56) still runs.
         emit_restore(saved.clone(), builder, module, ctx.externs);
-        emit_open_failure_abort(&rf, builder, module, ctx);
-    } else {
+        terminated = !emit_open_failure_abort(&rf, builder, module, ctx);
+    }
+    if !terminated {
         builder.ins().jump(merge_block, &[]);
     }
 

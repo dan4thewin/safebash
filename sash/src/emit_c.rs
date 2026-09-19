@@ -55,6 +55,12 @@ struct Emit {
     /// there is caught by the if/while, so it must not abort. Mirrors native
     /// `ctx.in_condition`.
     in_condition: bool,
+    /// DD#56: the blocks that make up the END handler. An abort inside END
+    /// would `goto` the block already executing, so a failure there reports
+    /// and lets the rest of the cleanup run. Mirrors native
+    /// `ctx.in_end_block`; the region itself comes from the shared
+    /// `SsaProgram::end_region` so the backends cannot disagree.
+    end_region: std::collections::HashSet<BlockId>,
 }
 
 impl Emit {
@@ -66,6 +72,7 @@ impl Emit {
             has_exiting_signals: false,
             cur_block: 0,
             in_condition: false,
+            end_region: std::collections::HashSet::new(),
         }
     }
     fn fresh(&mut self) -> String {
@@ -417,6 +424,7 @@ fn emit_slot_decls(e: &mut Emit, ssa: &SsaProgram) {
 fn emit_main(e: &mut Emit, ssa: &SsaProgram) {
     let types = collect_var_types(ssa);
     e.end_block = ssa.end_block;
+    e.end_region = ssa.end_region();
     e.has_exiting_signals = !ssa.exiting_signals.is_empty();
     writeln!(e.out, "int main(int argc, char** argv) {{").unwrap();
     writeln!(e.out, "    (void)argc; (void)argv;").unwrap();
@@ -1958,7 +1966,7 @@ fn emit_redirect_guarded_body(
     }
     emit_restore(e, saved);
     if !in_condition {
-        writeln!(e.out, "        goto {};", abort_target(e)).unwrap();
+        emit_open_failure_goto(e);
     }
     writeln!(e.out, "    }} else {{").unwrap();
     emit_command_body(e, name, kind, args, checked, types);
@@ -2319,6 +2327,19 @@ fn abort_target(e: &Emit) -> String {
         Some(id) => format!("_blk_{}", id),
         None => "__exit".to_string(),
     }
+}
+
+/// DD#55/DD#56: write the abort `goto` for an uncaught redirect `open(2)`
+/// failure — unless we are inside END, where [`abort_target`] names the
+/// block already executing and the jump would never terminate. The failure
+/// is still reported and still sets a failing status; only the abort is
+/// dropped, so the rest of the cleanup runs. Mirrors the native
+/// `emit_open_failure_abort` return value.
+fn emit_open_failure_goto(e: &mut Emit) {
+    if e.end_region.contains(&e.cur_block) {
+        return;
+    }
+    writeln!(e.out, "        goto {};", abort_target(e)).unwrap();
 }
 
 /// Build a NUL-terminated `<tN>_argv` for `[name, args…]`, expanding any
@@ -3569,7 +3590,10 @@ fn emit_redirect_push(
     };
     writeln!(e.out, "    if ({failed}) {{", failed = failed).unwrap();
     writeln!(e.out, "        __exit_status = 1; __test_result = 0;").unwrap();
-    if checked {
+    // Inside END the scope is unchecked (DD#56) but the failure is still
+    // reported — silence is for a *caught* failure (55.25), not a cleanup
+    // one. Mirrors the native `checked || ctx.in_end_block`.
+    if checked || e.end_region.contains(&e.cur_block) {
         // The pop sits on the skip path, which an abort never reaches, so
         // the fds have to go back here — an END block (DD#56) still runs.
         emit_restore(e, &saved);
@@ -3580,7 +3604,7 @@ fn emit_redirect_push(
             l = path_len
         )
         .unwrap();
-        writeln!(e.out, "        goto {};", abort_target(e)).unwrap();
+        emit_open_failure_goto(e);
     }
     writeln!(e.out, "    }} else {{").unwrap();
     writeln!(e.out, "        __test_result = 1;").unwrap();
@@ -4282,7 +4306,7 @@ fn emit_guarded_body(
     }
     emit_restore(e, &saved);
     if !in_condition {
-        writeln!(e.out, "        goto {};", abort_target(e)).unwrap();
+        emit_open_failure_goto(e);
     }
     writeln!(e.out, "    }} else {{").unwrap();
     body(e, types);

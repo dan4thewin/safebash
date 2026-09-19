@@ -148,6 +148,7 @@ pub fn compile_ssa(program: &SsaProgram, embedded: Embedded, trace: bool) -> Vec
         let redirect_slots = fs.redirect_slots;
         let saved_end_status_var = fs.saved_end_status_var;
         let end_cl_block = fs.end_cl_block;
+        let end_region = program.end_region();
 
         super::setup::init_undeclared_redirect_vars(
             &mut builder,
@@ -172,6 +173,7 @@ pub fn compile_ssa(program: &SsaProgram, embedded: Embedded, trace: bool) -> Vec
             redirect_slots: &redirect_slots,
             saved_end_status_var,
             end_cl_block,
+            end_region: &end_region,
             space_id,
             nl_id,
             trace,
@@ -212,6 +214,7 @@ struct EmitCtx<'a, 'b> {
     redirect_slots: &'a [Vec<cranelift_frontend::Variable>],
     saved_end_status_var: cranelift_frontend::Variable,
     end_cl_block: Option<cranelift_codegen::ir::Block>,
+    end_region: &'a std::collections::HashSet<BlockId>,
     space_id: cranelift_module::DataId,
     nl_id: cranelift_module::DataId,
     trace: bool,
@@ -306,6 +309,7 @@ fn emit_block_insts(ctx: &mut EmitCtx, ssa_block: &BasicBlock, ssa_id: BlockId) 
             break;
         }
         let in_condition = cond_idx == Some(idx);
+        let in_end_block = ctx.end_region.contains(&ssa_id);
         block_terminated = inst.emit(
             ctx.builder,
             ctx.module,
@@ -326,6 +330,7 @@ fn emit_block_insts(ctx: &mut EmitCtx, ssa_block: &BasicBlock, ssa_id: BlockId) 
                 saved_end_status_var: ctx.saved_end_status_var,
                 cl_blocks: ctx.cl_blocks,
                 in_condition,
+                in_end_block,
             },
         );
     }

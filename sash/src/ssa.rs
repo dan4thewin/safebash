@@ -958,6 +958,26 @@ pub struct SsaProgram {
     next_block_id: usize,
 }
 
+impl Terminator {
+    /// The blocks control can transfer to from this terminator.
+    fn successors(&self) -> Vec<BlockId> {
+        match self {
+            Terminator::Goto(dest) => vec![*dest],
+            Terminator::Branch {
+                true_block,
+                false_block,
+                ..
+            } => vec![*true_block, *false_block],
+            Terminator::Loop {
+                body_block,
+                exit_block,
+                ..
+            } => vec![*body_block, *exit_block],
+            Terminator::Return => Vec::new(),
+        }
+    }
+}
+
 impl SsaProgram {
     /// Highest `CaptureStart`/`CaptureEnd` site number in the program, plus
     /// one — i.e. how many capture slot pairs a backend must allocate. Zero
@@ -1031,42 +1051,47 @@ impl SsaProgram {
 
     /// Return set of block IDs reachable from block 0.
     pub fn reachable(&self) -> std::collections::HashSet<BlockId> {
-        let mut visited = std::collections::HashSet::new();
-        let mut stack = vec![0usize];
+        let mut roots = vec![0usize];
         // Also include compound pipeline blocks as roots
-        for &b in &self.compound_pipeline_blocks {
-            stack.push(b);
+        roots.extend(self.compound_pipeline_blocks.iter().copied());
+        self.reachable_from(&roots)
+    }
+
+    /// The blocks that make up the END handler (DD#56): `end_block` and
+    /// everything reachable from it. Empty when the program has no END.
+    ///
+    /// A label test is *not* equivalent. `install_end_block` lowers the
+    /// trap body with `lower_stmts`, so only the entry block is named
+    /// `__end__` — an `if`/`for` inside END produces ordinary block
+    /// labels. Both the transform's unchecked marking and codegen's abort
+    /// routing need the whole region, and they share this so the two
+    /// cannot disagree about where END ends.
+    pub fn end_region(&self) -> std::collections::HashSet<BlockId> {
+        match self.end_block {
+            Some(b) => self.reachable_from(&[b]),
+            None => std::collections::HashSet::new(),
         }
+    }
+
+    /// Blocks reachable from `roots` by following terminators.
+    pub fn reachable_from(&self, roots: &[BlockId]) -> std::collections::HashSet<BlockId> {
+        let mut visited = std::collections::HashSet::new();
+        let mut stack: Vec<BlockId> = roots.to_vec();
         while let Some(id) = stack.pop() {
             if !visited.insert(id) {
                 continue;
             }
-            if let Some(block) = self.blocks.get(&id) {
-                match &block.terminator {
-                    Terminator::Goto(dest) => {
-                        stack.push(*dest);
-                    }
-                    Terminator::Branch {
-                        true_block,
-                        false_block,
-                        ..
-                    } => {
-                        stack.push(*true_block);
-                        stack.push(*false_block);
-                    }
-                    Terminator::Loop {
-                        body_block,
-                        exit_block,
-                        ..
-                    } => {
-                        stack.push(*body_block);
-                        stack.push(*exit_block);
-                    }
-                    Terminator::Return => {}
-                }
-            }
+            stack.extend(self.successors_of(id));
         }
         visited
+    }
+
+    /// The blocks control can reach from `id`. Empty for an unknown id.
+    fn successors_of(&self, id: BlockId) -> Vec<BlockId> {
+        self.blocks
+            .get(&id)
+            .map(|b| b.terminator.successors())
+            .unwrap_or_default()
     }
 }
 
