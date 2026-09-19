@@ -10,7 +10,7 @@
 set -eu
 . common.sh
 setup glob_splat
-plan=40
+plan=42
 echo "1..$plan" >&3
 
 set +e
@@ -209,6 +209,20 @@ run_sash 'array a=(x y); echo @a'
 # gs.37 …and the recommended form actually compiles and runs
 run_sash 'array a=(x y); echo $(join a)'
 [[ $rc = 0 && $out = "x y" && -z $err ]]; chk gs.37
+
+# gs.38 a DD#69 `@{…}` disposition with NO colon at all → SB5033. cov.17 pins
+#       `@{a:x}` (a colon with a bad operator), which takes a different branch;
+#       the missing-colon arm had no spec.
+run_sash 'array a=(1)
+echo @{a}'
+[[ $rc != 0 && -z $out && $err == *SB5033* ]]; chk gs.38
+
+# gs.39 an UNCLOSED `@{` named the wrong sigil: "unterminated `${`", pointing
+#       the reader at something they had not written. The brace scan is shared
+#       with `${…}`, and it hardcoded the `$` spelling.
+run_sash 'array a=(1)
+echo @{a:-W'
+[[ $rc != 0 && -z $out && $err == *SB4057* && $err == *'`@{`'* ]]; chk gs.39
 
 set -e
 tally

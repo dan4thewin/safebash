@@ -6,7 +6,7 @@
 set -eu
 . common.sh
 setup regex
-plan=84
+plan=91
 echo "1..$plan" >&3
 
 set +e
@@ -566,6 +566,61 @@ if [[ \$s =~ '^((a))\$' ]]; then echo Y; else echo N; fi"
 run_sash 's=abc
 [[ $s =~ ^((a)) { echo HIT } || { echo MISS } ]]'
 [[ $rc != 0 && $err == *'SB4014'* && $err == *'arithmetic opener'* ]]; chk 39.35
+
+# ── 63.fl*: the substitution flags slot ───────────────────────────────────
+# DD#63: "`g` is the `sub`/`gsub` choice, not a flag argument. There are **no
+# other flags**" — the vendored Plan 9 engine has no REG_ICASE. The slot was
+# read as a bare `flags.contains('g')`, so EVERY other flag was silently
+# ignored: `s/a/b/i` promised a case-insensitive substitution and delivered a
+# case-sensitive one, and a typo'd `s/a/b/x` did nothing at all (real `sed`
+# rejects `x`). Same shape as the tail-junk drop DD#96 fixed — junk accepted
+# because no spec pinned the rejection.
+
+# 63.fl1 `i` is the one people will actually reach for, and it was the lie:
+#        silently case-SENSITIVE. Rejected, and the message names the remedy.
+run_sash 'str x=aAaA
+x =~ s/a/b/i
+echo "[$x]"'
+[[ $rc != 0 && -z $out && $err == *SB4032* && $err == *tolower* ]]; chk 63.fl1
+
+# 63.fl2 a typo'd flag is an error, not a no-op
+run_sash 'str x=aAaA
+x =~ s/a/b/x
+echo "[$x]"'
+[[ $rc != 0 && -z $out && $err == *SB4032* && $err == *'`x`'* ]]; chk 63.fl2
+
+# 63.fl3 the `${v:s/…}` expansion form agrees (shared builder)
+run_sash 'str x=aAaA
+str y=${x:s/a/b/i}
+echo "[$y]"'
+[[ $rc != 0 && -z $out && $err == *SB4032* ]]; chk 63.fl3
+
+# 63.fl4 exactly `g` — a doubled `gg` is junk, not emphasis
+run_sash 'str x=aAaA
+x =~ s/a/b/gg
+echo "[$x]"'
+[[ $rc != 0 && -z $out && $err == *SB4032* ]]; chk 63.fl4
+
+# 63.fl5 …and case matters: `G` is not `g`
+run_sash 'str x=aAaA
+x =~ s/a/b/G
+echo "[$x]"'
+[[ $rc != 0 && -z $out && $err == *SB4032* ]]; chk 63.fl5
+
+# 63.fl6 control: bare `g` still selects gsub
+run_sash 'str x=aAaA
+x =~ s/a/b/g
+echo "[$x]"'
+[[ $rc = 0 && $out = "[bAbA]" && -z $err ]]; chk 63.fl6
+
+# 63.fl7 control: no flag still selects sub (first match only), and the DD#96
+#        chain with a per-edit `g` is unaffected by the new validation
+run_sash 'str x=aAaA
+x =~ s/a/b/
+str v=ab
+str w=${v:s/a/1/,s/b/2/g}
+echo "[$x][$w]"'
+[[ $rc = 0 && $out = "[bAaA][12]" && -z $err ]]; chk 63.fl7
 
 set -e
 tally

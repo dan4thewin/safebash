@@ -1213,7 +1213,24 @@ fn build_one_sed_sub(
     subject: Expr,
     span: Span,
 ) -> Result<Expr, Diagnostic> {
-    let cmd_name = if flags.contains('g') { "gsub" } else { "sub" };
+    // DD#63: "`g` is the `sub`/`gsub` choice, not a flag argument. There are
+    // **no other flags**" — the engine has no `REG_ICASE` and takes nothing
+    // else. This slot used to be read with a bare `flags.contains('g')`, so
+    // every other flag was silently ignored: `s/a/b/i` promised a
+    // case-insensitive substitution and delivered a case-sensitive one, and a
+    // typo'd `s/a/b/x` did nothing at all. Real `sed` rejects `x`. Same shape
+    // as the tail-junk drop DD#96 fixed — junk accepted because no spec
+    // pinned the rejection.
+    if !flags.is_empty() && flags != "g" {
+        return Err(parse_error(
+            span,
+            "SB4032",
+            format!(
+                "unsupported substitution flag `{flags}` — `g` (replace every                  match) is the only one; the regex engine has no                  case-insensitive mode, so use `$(tolower …)` on both sides                  for `i`"
+            ),
+        ));
+    }
+    let cmd_name = if flags == "g" { "gsub" } else { "sub" };
     let re_expr = *parse_default_word(re, span)?;
     let sub_expr = *parse_default_word(sub, span)?;
     let cmd = Statement {

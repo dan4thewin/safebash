@@ -1110,20 +1110,37 @@ impl Scanner {
     /// and `\` are ordinary bytes). `self.pos` is just past the opening `{`.
     fn scan_by_brace_depth(&mut self) -> String {
         let inner_start = self.pos;
-        let mut depth = 1i32;
-        while self.pos < self.source.len() && depth > 0 {
-            match self.source[self.pos] {
-                b'{' => depth += 1,
-                b'}' => depth -= 1,
-                _ => {}
-            }
-            if depth > 0 {
-                self.pos += 1;
-            }
-        }
+        self.advance_to_unnested_close();
         let content = String::from_utf8_lossy(&self.source[inner_start..self.pos]).to_string();
-        self.require_closer(inner_start.saturating_sub(2), "`${`");
+        // Shared with the DD#69 `@{a:-WORD}` splat disposition, so name the
+        // opener the source actually used: an unclosed `@{` reported
+        // "unterminated `${`", pointing the reader at a sigil they had not
+        // written.
+        let open_at = inner_start.saturating_sub(2);
+        let what = match self.source.get(open_at) {
+            Some(b'@') => "`@{`",
+            _ => "`${`",
+        };
+        self.require_closer(open_at, what);
         content
+    }
+
+    /// Advance to the `}` that closes the brace opened just before
+    /// `self.pos`, counting nested `{`/`}` pairs. Stops *at* that byte, or at
+    /// end-of-source if it never arrives (the caller diagnoses that).
+    fn advance_to_unnested_close(&mut self) {
+        let mut depth = 1i32;
+        while let Some(&b) = self.source.get(self.pos) {
+            depth += match b {
+                b'{' => 1,
+                b'}' => -1,
+                _ => 0,
+            };
+            if depth == 0 {
+                return;
+            }
+            self.pos += 1;
+        }
     }
 
     /// DD#63 Path B: `${name:s/RE/SUB/flags}` — the three `/`-delimited
