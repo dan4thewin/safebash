@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup commands
-plan=112
+plan=123
 echo "1..$plan" >&3
 
 set +e
@@ -725,6 +725,74 @@ echo "[$x]"'
 run_sash 'x=$(echo "" "")
 echo "[$x]"'
 [[ $rc = 0 && $out = "[ ]" && -z $err ]]; chk 14.53
+
+# ── a file-descriptor prefix must be ADJACENT to the operator ─────────
+# bash binds `N` to a redirect only when the digits touch the operator:
+# `2>f` redirects fd 2, but `2 >f` passes `2` as an argument and redirects
+# stdout. The parser tested only the operator's token kind, so it ate the
+# argument — `echo hi 2 >f` printed `hi` and left the file empty, where
+# bash writes `hi 2` to the file. Silent wrong output, both backends.
+
+# fd.1 a SPACED digit is an argument, and the `>` redirects stdout
+rm -f fdout
+run_sash 'echo hi 2 > fdout'
+[[ $rc = 0 && -z $out && $(cat fdout) = "hi 2" ]]; chk fd.1
+
+# fd.2 …including `1`, which would otherwise have aliased stdout silently
+rm -f fdout
+run_sash 'echo a 1 > fdout'
+[[ $rc = 0 && -z $out && $(cat fdout) = "a 1" ]]; chk fd.2
+
+# fd.3 …and a digit naming an fd the program never opened
+rm -f fdout
+run_sash 'echo a 3 > fdout'
+[[ $rc = 0 && -z $out && $(cat fdout) = "a 3" ]]; chk fd.3
+
+# fd.4 two digits are an argument too (the fd test accepts 1-2 digits)
+rm -f fdout
+run_sash 'echo a b 22 > fdout'
+[[ $rc = 0 && -z $out && $(cat fdout) = "a b 22" ]]; chk fd.4
+
+# fd.5 ADJACENT still binds: `2>` sends stderr, leaving stdout alone
+rm -f fdout
+run_sash 'echo hi 2>fdout'
+[[ $rc = 0 && $out = "hi" && ! -s fdout ]]; chk fd.5
+
+# fd.6 whitespace AFTER the operator is irrelevant — only the prefix side
+rm -f fdout
+run_sash 'echo hi 2> fdout'
+[[ $rc = 0 && $out = "hi" && ! -s fdout ]]; chk fd.6
+
+# fd.7 an adjacent `1>` redirects stdout, and consumes the digit
+rm -f fdout
+run_sash 'echo hi 1>fdout'
+[[ $rc = 0 && -z $out && $(cat fdout) = "hi" ]]; chk fd.7
+
+# fd.8 the append form binds the same way
+rm -f fdout
+run_sash 'echo a 1>fdout
+echo b 1>>fdout'
+[[ $rc = 0 && -z $out && $(cat fdout) = $'a\nb' ]]; chk fd.8
+
+# fd.9 an adjacent fd prefix really does route stderr, not just swallow it
+rm -f fdout
+run_sash 'fn g { echo out; echo err >&2; }
+g 2>fdout'
+[[ $rc = 0 && $out = "out" && $(cat fdout) = "err" ]]; chk fd.9
+
+# fd.10 trailing-redirect position: an ADJACENT fd prefix is still a
+# redirect, so an assignment carrying one is SB4046 (not a stray command)
+run_sash 'x=1 2>fdout
+echo $x'
+[[ $rc != 0 && $err == *SB4046* ]]; chk fd.10
+
+# fd.11 …and a SPACED one is not a redirect at all, so `2` reads as the
+# command it is — which is bash's reading too (`2: command not found`)
+run_sash 'x=1 2 >fdout
+echo $x'
+[[ $rc != 0 && $err == *SB5011* ]]; chk fd.11
+
+rm -f fdout
 
 set -e
 tally

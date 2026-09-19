@@ -1997,18 +1997,12 @@ fn parse_split_subscript_index(scanner: &mut Scanner, span: Span) -> Result<Expr
             ))
         }
     };
-    match &scanner.peek().token {
-        Tok::Word(w) if w == "]" => {
-            scanner.next();
-        }
-        _ => {
-            return Err(parse_error(
-                span,
-                "SB4014",
-                "expected ']' after subscript index".to_string(),
-            ))
-        }
-    }
+    // The `]` needs no test: `looks_like_dynamic_subscript_assign` is the only
+    // route here, and it already required `peek_n(2)` to be exactly `]` (the
+    // other `looks_like_assignment` arm demands a word *ending* in `]`, which
+    // cannot also end in `[`). Same probe-then-consume shape as
+    // `parse_regex_mutation`.
+    scanner.next();
     Ok(idx)
 }
 
@@ -2173,9 +2167,38 @@ fn parse_command_element(
     Ok(true)
 }
 
-/// Handle a leading file-descriptor word (`2` in `2>err`): if a redirect
-/// operator follows, parse an fd-tagged redirect; otherwise it is a plain
-/// argument.
+/// Does a file-descriptor word bind to the redirect operator after it?
+///
+/// bash binds the prefix only when the digits are **adjacent** to the
+/// operator. `2>f` redirects fd 2; `2 >f` passes `2` as an argument and
+/// redirects stdout. Testing only the operator's token kind — which both
+/// call sites did — ate the argument: `echo hi 2 >f` wrote `hi` to stdout
+/// and left the file empty, where bash writes `hi 2` to the file. The
+/// adjacency test is the same one `looks_like_assignment` uses to tell
+/// `x=1` from `x =1`.
+fn fd_prefix_binds(scanner: &mut Scanner) -> bool {
+    let fd_end = scanner.peek().span.end;
+    let next = scanner.peek_n(1);
+    next.span.start == fd_end
+        && matches!(
+            next.token,
+            Tok::Gt | Tok::DblGt | Tok::GtAmp | Tok::LtAmp | Tok::Lt
+        )
+}
+
+/// Consume an fd-tagged redirect whose fd digits are the current token.
+/// Only valid when `fd_prefix_binds` just returned true.
+fn parse_fd_redirect(scanner: &mut Scanner, w: &str, span: Span) -> Result<Redirect, Diagnostic> {
+    let fd: u32 = w.parse().unwrap_or(0);
+    scanner.next(); // consume FD number
+    let mut redir = parse_redirect(scanner, span)?;
+    redir.fd = Some(fd);
+    Ok(redir)
+}
+
+/// Handle a leading file-descriptor word (`2` in `2>err`): if an adjacent
+/// redirect operator follows, parse an fd-tagged redirect; otherwise it is
+/// a plain argument.
 fn parse_fd_prefixed(
     scanner: &mut Scanner,
     w: &str,
@@ -2183,16 +2206,8 @@ fn parse_fd_prefixed(
     args: &mut Vec<Expr>,
     redirects: &mut Vec<Redirect>,
 ) -> Result<(), Diagnostic> {
-    let next = scanner.peek_n(1);
-    if matches!(
-        next.token,
-        Tok::Gt | Tok::DblGt | Tok::GtAmp | Tok::LtAmp | Tok::Lt
-    ) {
-        let fd: u32 = w.parse().unwrap_or(0);
-        scanner.next(); // consume FD number
-        let mut redir = parse_redirect(scanner, span)?;
-        redir.fd = Some(fd);
-        redirects.push(redir);
+    if fd_prefix_binds(scanner) {
+        redirects.push(parse_fd_redirect(scanner, w, span)?);
     } else {
         args.push(parse_expr(scanner)?);
     }
@@ -2215,38 +2230,46 @@ fn parse_trailing_redirects(
     span: Span,
 ) -> Result<Vec<Redirect>, Diagnostic> {
     let mut redirects = Vec::new();
-    loop {
-        let tok = scanner.peek().token.clone();
-        match tok {
-            Tok::Gt
+    while let Some(redir) = next_trailing_redirect(scanner, span)? {
+        redirects.push(redir);
+    }
+    Ok(redirects)
+}
+
+/// A bare redirect operator, with no file-descriptor prefix.
+fn is_redirect_op(tok: &Tok) -> bool {
+    matches!(
+        tok,
+        Tok::Gt
             | Tok::DblGt
             | Tok::Lt
             | Tok::GtAmp
             | Tok::LtAmp
             | Tok::LtGt
             | Tok::AmpGt
-            | Tok::HereString => {
-                redirects.push(parse_redirect(scanner, span)?);
-            }
-            Tok::Word(ref w) if is_fd_number(w) => {
-                let next = scanner.peek_n(1).token.clone();
-                if matches!(
-                    next,
-                    Tok::Gt | Tok::DblGt | Tok::GtAmp | Tok::LtAmp | Tok::Lt
-                ) {
-                    let fd: u32 = w.parse().unwrap_or(0);
-                    scanner.next();
-                    let mut redir = parse_redirect(scanner, span)?;
-                    redir.fd = Some(fd);
-                    redirects.push(redir);
-                } else {
-                    break;
-                }
-            }
-            _ => break,
-        }
+            | Tok::HereString
+    )
+}
+
+/// One step of the trailing-redirect loop: the next redirect, or `None`
+/// once the token stream has moved past them. A digit word that does *not*
+/// bind (`2 >f`) ends the run rather than being consumed — it is an
+/// argument, and belongs to whatever parses next.
+fn next_trailing_redirect(
+    scanner: &mut Scanner,
+    span: Span,
+) -> Result<Option<Redirect>, Diagnostic> {
+    let tok = scanner.peek().token.clone();
+    if is_redirect_op(&tok) {
+        return parse_redirect(scanner, span).map(Some);
     }
-    Ok(redirects)
+    let Tok::Word(ref w) = tok else {
+        return Ok(None);
+    };
+    if !is_fd_number(w) || !fd_prefix_binds(scanner) {
+        return Ok(None);
+    }
+    parse_fd_redirect(scanner, w, span).map(Some)
 }
 
 /// If a `|` follows, consume one more pipeline stage and wrap as a

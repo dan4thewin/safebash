@@ -10,7 +10,7 @@
 set -eu
 . common.sh
 setup subscript
-plan=37
+plan=40
 echo "1..$plan" >&3
 
 set +e
@@ -261,6 +261,33 @@ run_sash 'array a=(1 2 3)
 int i=0
 a[$i; echo hi'
 [[ $rc != 0 && -z $out && $err == *SB5011* ]]; chk 80.37
+
+# ── a dynamic subscript index must be a plain `$var` / `${var}` ───────
+# The lexer splits `m[$k]=` into `m[`, `$k`, `]`, `=`; anything richer than
+# a bare name inside the braces has no lowering, and is rejected rather
+# than silently mis-parsed.
+
+# 80.38 a modifier in the index is rejected, naming the position
+run_sash 'map m
+str k="x"
+m[${k:-z}]=1
+echo $(len m)'
+[[ $rc != 0 && $err == *SB4014* ]]; chk 80.38
+
+# 80.39 …as is a length expansion
+run_sash 'map m
+str k="x"
+m[${#k}]=1
+echo $(len m)'
+[[ $rc != 0 && $err == *SB4014* ]]; chk 80.39
+
+# 80.40 the plain forms both still work and index the same cell
+run_sash 'map m
+str k="x"
+m[$k]=1
+m[${k}]=2
+echo "$(len m) ${m[x]}"'
+[[ $rc = 0 && $out = "1 2" && -z $err ]]; chk 80.40
 
 set -e
 tally
