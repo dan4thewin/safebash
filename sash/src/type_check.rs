@@ -1430,8 +1430,31 @@ fn attest_scalar_form_error(var: &str, env: &TypeEnv) -> Option<String> {
     ))
 }
 
+/// DD#61: the attested name is introduced nowhere at all.
+///
+/// "Absent from `collections`" and "is a scalar" are not the same question.
+/// Answering the first with the second told the user `'zz' is a scalar`
+/// about a name that was never declared, and then advised the scalar form —
+/// which fails too. `check_len_operand` draws the same distinction for the
+/// same reason; the wording matches SB5039's.
+///
+/// Unlike `len`, this cannot simply stay silent and defer: nothing else
+/// rejects an attest-all over an undeclared name, so the program would
+/// compile and iterate a collection that does not exist.
+fn attest_unknown_name_error(name: &str, env: &TypeEnv) -> Option<String> {
+    if env.vars.contains_key(name) || env.collections.contains(name) {
+        return None;
+    }
+    Some(format!(
+        "`attest … in {name}` — `{name}` is introduced nowhere (not a variable, \
+         array, or map); declare it, or fix the typo"
+    ))
+}
+
 fn attest_indexed_form_error(binder: &str, array: &str, env: &TypeEnv) -> Option<String> {
-    if !env.collections.contains(array) {
+    if let Some(unknown) = attest_unknown_name_error(array, env) {
+        Some(unknown)
+    } else if !env.collections.contains(array) {
         Some(format!(
             "`attest {binder} in {array}` requires an array or map — '{array}' is a scalar; \
              use scalar attest `attest {array} [[ … ]]`"
@@ -1448,6 +1471,9 @@ fn attest_indexed_form_error(binder: &str, array: &str, env: &TypeEnv) -> Option
 fn attest_map_form_error(key: &str, val: &str, map: &str, env: &TypeEnv) -> Option<String> {
     if env.assoc_arrays.contains(map) {
         return None;
+    }
+    if let Some(unknown) = attest_unknown_name_error(map, env) {
+        return Some(unknown);
     }
     let what = if env.collections.contains(map) {
         "an indexed array — use one binder"

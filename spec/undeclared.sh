@@ -7,7 +7,7 @@
 set -eu
 . common.sh
 setup undeclared
-plan=29
+plan=37
 echo "1..$plan" >&3
 
 set +e
@@ -141,6 +141,46 @@ run_sash 'array f=(a b c); f=(x y); echo $(len f)'
 # ud.29 …and so does appending to one.
 run_sash 'array f=(a b c); f+=(d); echo $(len f)'
 [[ $rc = 0 && $out = "4" && -z $err ]]; chk ud.29
+
+# ── attest-all over a name introduced nowhere (DD#61 × DD#62) ──────────
+# The kind check asked "is this in `collections`?" and reported the sole
+# other possibility — "is a scalar" — for a name that was never introduced
+# at all, then advised the scalar form, which fails too. Unlike `len`
+# (SB5039) this cannot defer: nothing else rejects an attest-all over an
+# undeclared name, so the program compiled and iterated a missing slot.
+
+# ud.30 one-binder attest-all over a nowhere-introduced name is rejected
+run_sash 'attest x in zz [[ -n $x ]]; echo ok'
+[[ $rc != 0 && -z $out && $err == *SB4030* ]]; chk ud.30
+
+# ud.31 …and says "introduced nowhere", not "is a scalar"
+run_sash 'attest x in zz [[ -n $x ]]; echo ok'
+[[ $err == *"introduced nowhere"* && $err != *"is a scalar"* ]]; chk ud.31
+
+# ud.32 two-binder attest-all over a nowhere-introduced name, same answer
+run_sash 'attest k v in zz [[ -n $k && -n $v ]]; echo ok'
+[[ $rc != 0 && -z $out && $err == *SB4030* && $err == *"introduced nowhere"* ]]; chk ud.32
+
+# ud.33 the diagnostic names the offending word (so a typo is findable)
+run_sash 'array items=(a b); attest x in itmes [[ -n $x ]]; echo ok'
+[[ $rc != 0 && $err == *itmes* && $err == *"introduced nowhere"* ]]; chk ud.33
+
+# ud.34 a DECLARED scalar still gets the scalar-form advice, not the typo one
+run_sash 'str s = "hi"; attest x in s [[ -n $x ]]; echo ok'
+[[ $rc != 0 && $err == *SB4030* && $err == *"is a scalar"* \
+   && $err != *"introduced nowhere"* ]]; chk ud.34
+
+# ud.35 …and so does a declared scalar under the two-binder form
+run_sash 'str s = "hi"; attest k v in s [[ -n $k && -n $v ]]; echo ok'
+[[ $rc != 0 && $err == *"is a scalar"* && $err != *"introduced nowhere"* ]]; chk ud.35
+
+# ud.36 an indexed array under the two-binder form is the array advice
+run_sash 'array a=(x y); attest k v in a [[ -n $k && -n $v ]]; echo ok'
+[[ $rc != 0 && $err == *"indexed array"* && $err != *"introduced nowhere"* ]]; chk ud.36
+
+# ud.37 a declared collection attests normally — the new check is inert
+run_sash 'array a=(x y); attest e in a [[ -n $e ]]; echo "n=$(len a)"'
+[[ $rc = 0 && $out = "n=2" && -z $err ]]; chk ud.37
 
 set -e
 tally
