@@ -68,6 +68,61 @@ fn take_end_block(
     }
 }
 
+/// The scanner's own fatal diagnostics, in report-first order.
+///
+/// Each of these makes the rest of the parse meaningless, so exactly one is
+/// reported and the deferred `diags` are dropped. The order is the order of
+/// consequence, not of severity: an unterminated quote swallows the source
+/// after it, so anything else the parse turned up is downstream of that one
+/// mistake and must not be reported alongside it.
+fn scanner_fatal(scanner: &Scanner) -> Option<Diagnostic> {
+    // An unterminated quote / `${` swallows everything after it, so whatever
+    // else the parse turned up is downstream of that one mistake. Report it
+    // first and alone (SB4057).
+    if let Some((open_at, what)) = scanner.unterminated() {
+        let (line, col) = scanner.line_col(open_at);
+        return Some(parse_error(
+            Span::new(line, col),
+            "SB4057",
+            format!(
+                "unterminated {what} — it is never closed before the end of \
+                 the source, so everything after it was read as part of it"
+            ),
+        ));
+    }
+
+    // A rejected `$'…'` escape (DD#115: an archaic bash spelling is a
+    // loud error, never a silent difference). The escape is resolved in the
+    // lexer, so this is the only channel through which it can surface.
+    if let Some((at, why)) = scanner.bad_escape() {
+        let (line, col) = scanner.line_col(at);
+        let why = why.to_string();
+        return Some(parse_error(
+            Span::new(line, col),
+            "SB4063",
+            format!("unsupported escape in `$'…'` — {why}"),
+        ));
+    }
+
+    // A `#` glued to an operator (`echo a;# c`) is a comment in bash and a word
+    // here — the rest of the line becomes code, so every later diagnostic is a
+    // consequence. Report it first and alone.
+    if let Some(at) = scanner.attached_hash() {
+        let (line, col) = scanner.line_col(at);
+        return Some(parse_error(
+            Span::new(line, col),
+            "SB4058",
+            "a `#` comment must be preceded by a space — this one is glued to \
+             the operator before it, so sash reads it as a word, not a comment \
+             (bash would comment here; sash requires the space so an interior \
+             `#`, as in `a#b` or `16#ff`, can stay part of the word)"
+                .to_string(),
+        ));
+    }
+
+    None
+}
+
 pub fn parse(source: &str) -> Result<(Program, Vec<Diagnostic>), Vec<Diagnostic>> {
     let mut scanner = Scanner::new(source);
     let mut stmts = Vec::new();
@@ -89,36 +144,8 @@ pub fn parse(source: &str) -> Result<(Program, Vec<Diagnostic>), Vec<Diagnostic>
         );
     }
 
-    // An unterminated quote / `${` swallows everything after it, so whatever
-    // else the parse turned up is downstream of that one mistake. Report it
-    // first and alone (SB4057).
-    if let Some((open_at, what)) = scanner.unterminated() {
-        let (line, col) = scanner.line_col(open_at);
-        let span = Span::new(line, col);
-        return Err(vec![parse_error(
-            span,
-            "SB4057",
-            format!(
-                "unterminated {what} — it is never closed before the end of \
-                 the source, so everything after it was read as part of it"
-            ),
-        )]);
-    }
-
-    // A `#` glued to an operator (`echo a;# c`) is a comment in bash and a word
-    // here — the rest of the line becomes code, so every later diagnostic is a
-    // consequence. Report it first and alone.
-    if let Some(at) = scanner.attached_hash() {
-        let (line, col) = scanner.line_col(at);
-        return Err(vec![parse_error(
-            Span::new(line, col),
-            "SB4058",
-            "a `#` comment must be preceded by a space — this one is glued to \
-             the operator before it, so sash reads it as a word, not a comment \
-             (bash would comment here; sash requires the space so an interior \
-             `#`, as in `a#b` or `16#ff`, can stay part of the word)"
-                .to_string(),
-        )]);
+    if let Some(d) = scanner_fatal(&scanner) {
+        return Err(vec![d]);
     }
 
     // A deferred diagnostic is not fatal at parse time; only an Error is.

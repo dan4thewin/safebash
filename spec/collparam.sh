@@ -92,7 +92,7 @@ two =a =a'
 # filled a function-local array named `A` and the caller's collection was left
 # untouched — silently, which is the whole point of Part E.
 run_sash 'fn split_into { read $1 A }
-sep=$'"'"'\0'"'"'
+sep=$'"'"'\x00'"'"'
 str s=a:b:c
 s =~ s/:/$sep/g
 array f=()

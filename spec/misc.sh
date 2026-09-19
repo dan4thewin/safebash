@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup misc
-plan=80
+plan=100
 echo "1..$plan" >&3
 
 set +e
@@ -752,9 +752,11 @@ echo $(strlen $v)'
 # utf8.7 a 3-byte sequence (CJK) and a 4-byte one (emoji)
 run_sash 'echo 日🎉'
 [[ $rc = 0 && $out = "日🎉" && -z $err ]]; chk utf8.7
-# utf8.8 $'...' escapes that spell one UTF-8 character must reassemble. Each
-# escape used to be pushed as its own char, so two bytes became four.
-run_sash "echo \$'caf\\xc3\\xa9'"
+# utf8.8 a non-ASCII character in $'...' is written `\uHHHH`, and must be
+# emitted as its UTF-8 encoding -- two bytes here, not four. This used to be
+# spelled `$'caf\xc3\xa9'`; `\xNN` is now capped at `\x7f` (journal 371) and
+# `\u` is the way to name a character above ASCII.
+run_sash "echo \$'caf\\u00e9'"
 [[ $rc = 0 && $out = "café" && -z $err ]]; chk utf8.8
 # utf8.9 $'...' ASCII escapes still work alongside the byte path
 run_sash "echo \$'a\\tb'"
@@ -772,6 +774,87 @@ if [[ $v = café ]]; then echo ok; else echo no; fi'
 run_sash 'v=é
 if [[ $v =~ ^..$ ]]; then echo two-bytes; else echo no; fi'
 [[ $rc = 0 && $out = "two-bytes" && -z $err ]]; chk utf8.11
+
+# --- esc.1-esc.18: the $'...' escape set (DD#115) --------------------------
+# `simple_escape` was a near-entirely cold table; probing it found `$'\xff'`
+# emitting U+FFFD, and five more silent divergences from bash. The set is now
+# DD#72-shaped: a clean modern spelling is kept, archaic bash creep is a clean
+# SB4063, and anything bash does not read as an escape still passes through.
+
+# esc.1 the named escapes below 0x80 are kept and match bash exactly.
+run_sash "printf '%s' \$'a\\nb\\tc'"
+[[ $rc = 0 && $out = "$(printf 'a\nb\tc')" && -z $err ]]; chk esc.1
+# esc.2 the rarer named escapes -- \a \b \e \f \v \r -- are kept too.
+run_sash "printf '%s' \$'\\a\\b\\e\\f\\v\\r' | /usr/bin/od -An -tx1"
+[[ $rc = 0 && $out = " 07 08 1b 0c 0b 0d" && -z $err ]]; chk esc.2
+# esc.3 the three self-escapes. `\'` is the only way to get a quote inside.
+run_sash "printf '%s' \$'x\\\\y\\'z\\\"w'"
+[[ $rc = 0 && $out = 'x\y'"'"'z"w' && -z $err ]]; chk esc.3
+# esc.4 `\xNN` names a BYTE. One or two hex digits.
+run_sash "printf '%s' \$'\\x41\\x7a'"
+[[ $rc = 0 && $out = "Az" && -z $err ]]; chk esc.4
+# esc.5 `\x7f` is the cap, and is accepted -- the boundary is inclusive.
+run_sash "printf '%s' \$'\\x7f' | /usr/bin/od -An -tx1"
+[[ $rc = 0 && $out = " 7f" && -z $err ]]; chk esc.5
+# esc.6 `\uHHHH` reads UP TO four hex digits, matching bash -- `\u41` is `A`.
+run_sash "printf '%s' \$'\\u41'"
+[[ $rc = 0 && $out = "A" && -z $err ]]; chk esc.6
+# esc.7 ...and stops at four, so the rest is literal text: `\u0041BC` = "ABC".
+run_sash "printf '%s' \$'\\u0041BC'"
+[[ $rc = 0 && $out = "ABC" && -z $err ]]; chk esc.7
+# esc.8 `\UHHHHHHHH` reads up to eight, reaching beyond the BMP.
+run_sash "printf '%s' \$'\\U0001F600'"
+[[ $rc = 0 && $out = "😀" && -z $err ]]; chk esc.8
+# esc.9 a character above ASCII emits its UTF-8 encoding, not one byte each.
+run_sash "printf '%s' \$'\\u00e9' | /usr/bin/od -An -tx1"
+[[ $rc = 0 && $out = " c3 a9" && -z $err ]]; chk esc.9
+# esc.10 what bash does not read as an escape stays literal, byte for byte.
+# No divergence to fix, so no reason to reject.
+run_sash "printf '%s' \$'\\q\\z9'"
+[[ $rc = 0 && $out = '\q\z9' && -z $err ]]; chk esc.10
+# esc.11 bare octal `\101` is REJECTED. sash never read it as bash does (bash
+# takes 1-3 digits total); `\x41` says it exactly.
+run_sash "echo \$'\\101'"
+[[ $rc != 0 && -z $out && $err == *SB4063* ]]; chk esc.11
+# esc.12 `\0101` likewise. This is the `010`/`16#ff` of DD#72 all over again:
+# bash reads `\010` then `1`, sash read all four digits. Ambiguous by nature.
+run_sash "echo \$'\\0101'"
+[[ $rc != 0 && -z $out && $err == *SB4063* ]]; chk esc.12
+# esc.19 `$'\0'` -- the NUL escape, and the most-used member of the octal
+# family -- is rejected too. `\0` IS the octal form, so carving it out would
+# contradict the rule; `\x00` says it exactly and is an exact replacement.
+# Ten spec sites migrated (journal 371).
+run_sash "echo \$'\\0'"
+[[ $rc != 0 && -z $out && $err == *SB4063* ]]; chk esc.19
+# esc.20 ...and `$'\x00'` is that replacement: it still builds the interior
+# NUL, so the DD#55 argv abort still fires rather than truncating.
+run_sash 'nul=$'"'"'\x00'"'"'
+s="abc${nul}HID"
+/usr/bin/printf "[%s]" $s'
+[[ $rc != 0 && -z $out && $rerr == *NUL* ]]; chk esc.20
+# esc.13 `\cX` control notation is REJECTED -- `\x01` says it better.
+run_sash "echo \$'\\cA'"
+[[ $rc != 0 && -z $out && $err == *SB4063* ]]; chk esc.13
+# esc.14 `\x80` -- one past the cap. A lone byte above ASCII is not UTF-8
+# text. This used to emit U+FFFD, silently.
+run_sash "echo \$'\\x80'"
+[[ $rc != 0 && -z $out && $err == *SB4063* ]]; chk esc.14
+# esc.15 `\xff` -- the case that started this. DD#64 promised "any byte via
+# \xNN"; it delivered `ef bf bd`. Now it is a diagnostic. DD#115 amends DD#64.
+run_sash "echo \$'\\xff'"
+[[ $rc != 0 && -z $out && $err == *SB4063* ]]; chk esc.15
+# esc.16 a prefix with no hex digits is REJECTED, as DD#72 rejects a bare
+# `0x`. bash passes `\x` through literally; a loud error beats a silent one.
+run_sash "echo \$'\\x'"
+[[ $rc != 0 && -z $out && $err == *SB4063* ]]; chk esc.16
+# esc.17 a surrogate is not a character. bash encodes `\ud800` anyway and
+# emits `ed a0 80` -- invalid UTF-8 that no conforming reader accepts.
+run_sash "echo \$'\\ud800'"
+[[ $rc != 0 && -z $out && $err == *SB4063* ]]; chk esc.17
+# esc.18 above U+10FFFF is not a character either; bash emits `f4 90 80 80`.
+run_sash "echo \$'\\U00110000'"
+[[ $rc != 0 && -z $out && $err == *SB4063* ]]; chk esc.18
+
 
 set -e
 tally

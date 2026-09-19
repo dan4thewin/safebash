@@ -426,14 +426,14 @@ run_sash '/usr/bin/printf "solo\n" > rd5.txt; /bin/cat < rd5.txt'
 # pass the whole thing). It aborts instead (DD#55).
 
 # an.1 a scalar argument carrying a NUL aborts rather than truncating
-run_sash 'nul=$'"'"'\0'"'"'
+run_sash 'nul=$'"'"'\x00'"'"'
 s="abc${nul}HIDDEN"
 /usr/bin/printf "[%s]" $s'
 [[ $rc != 0 && -z $out && $rerr == *NUL* ]]; chk an.1
 
 # an.2 …and so does a SPLAT ELEMENT. Guarding only scalars would be worse
 # than no guard: it would imply argv NULs abort while `@a` still truncated.
-run_sash 'nul=$'"'"'\0'"'"'
+run_sash 'nul=$'"'"'\x00'"'"'
 s="abc${nul}HID"
 array a=($s x)
 /usr/bin/printf "[%s]" @{a:~}'
@@ -450,7 +450,7 @@ run_sash 'array a=(p q)
 
 # an.5 the NUL is only rejected AT argv — it remains a legitimate value
 # in-process, which is the whole basis of DD#99's split
-run_sash 'nul=$'"'"'\0'"'"'
+run_sash 'nul=$'"'"'\x00'"'"'
 s="a${nul}b"
 read $s f
 echo "$(strlen $s):$(len f):${f[1]}"'

@@ -581,7 +581,7 @@ echo "$(len fresh)"'
 
 # nr.5 the whole pipeline round-trip DD#99 is built on: convert a separator to
 # NUL in-process, then split on it — no external `tr`, no flags
-run_sash 'sep=$'"'"'\0'"'"'
+run_sash 'sep=$'"'"'\x00'"'"'
 s=a:b:c
 s =~ s/:/$sep/g
 echo $s | read f
@@ -610,7 +610,7 @@ echo "${f[0]}"'
 # (sigil), reference out (bare name).
 
 # nr.9 splits a NUL-bearing scalar into an array, no pipeline, no fork
-run_sash 'sep=$'"'"'\0'"'"'
+run_sash 'sep=$'"'"'\x00'"'"'
 s=a:b:c
 s =~ s/:/$sep/g
 read $s f
@@ -624,7 +624,7 @@ echo "$(len f):${f[0]}"'
 [[ $rc = 0 && $out = "1:a b c" && -z $err ]]; chk nr.10
 
 # nr.11 auto-declares the target
-run_sash 'sep=$'"'"'\0'"'"'
+run_sash 'sep=$'"'"'\x00'"'"'
 s=p:q
 s =~ s/:/$sep/g
 read $s brandnew

@@ -91,7 +91,8 @@ the warts and the brittle code.
 ## The rule
 
 - **`$'…'`** — C-escapes (`\n`, `\t`, `\xNN`, …). Kept; the one place the
-  *shell* reads backslash escapes.
+  *shell* reads backslash escapes. **The exact set is DD#115's** — this DD
+  decides only *where* escapes are read, not which ones.
 - **`\` at EOL** — line continuation. Kept (structural).
 - **unquoted / `'…'` / `"…"`** — `\` is a verbatim literal byte. No `\"`,
   no `\$`, no `\\`-collapse, no `\ `, no word-char escaping. `'…'` and
@@ -189,6 +190,27 @@ So the `${var:OP}` family is fully clean under "no shell backslash": the
 only backslash interpreters left anywhere are `$'…'`, `\`-at-EOL, and the
 regex engine.
 
+## Addendum (DG, 2026-09-19): the escape set is narrowed — see DD#115
+
+The "any byte via `\xNN`" and "complete literal-byte control" claims above
+are **narrowed** to *any ASCII byte, and any character via `\uHHHH`*.
+
+They were never true. `\xNN` for `NN` ≥ 0x80 emitted `ef bf bd` (U+FFFD),
+silently — the lexer accumulated bytes and then decoded them lossily at the
+token boundary, and a Rust `String` cannot hold a lone `0xFF`. Rather than
+plumb bytes through 127 `ExprKind::Literal` sites for a capability ruled
+YAGNI, `\xNN` is capped at `\x7f` and `\uHHHH`/`\UHHHHHHHH` were added.
+
+**The surrounding argument is untouched.** Every structural character this
+section lists — `"` `$` `'` `\` — is ASCII, so the escape-hatch table still
+holds exactly as written, and `"…"` + `$'…'` still expresses any *text*
+string with interpolation. What it no longer expresses is a byte that is not
+text; for that the runtime is byte-clean and the data paths (`read`, `arg`,
+`getenv`, capture) carry arbitrary bytes intact.
+
+Also retired from the set: octal (`\101`, `\0101`, **`\0`**) and `\cX`.
+
 ## See also
+- DD#115 — the `$'…'` escape set; narrows the escape-hatch claim above.
 - DD#63 — regex builtins; `\` in regex args follows this DD.
 - DD#62 — `[[ ]]` simplification.

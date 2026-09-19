@@ -246,9 +246,10 @@ run_sash 'for x in $(echo a b c); do attest x [[ -n $x ]]; echo "$x"; done'
 # backticks and their contents render verbatim. Works in both backends.
 run_sash 'echo "x`/bin/echo BOOM`y"'
 [[ $rc = 0 && $out = 'x`/bin/echo BOOM`y' && -z $err ]]; chk cov.62
-# cov.63 ANSI-C `$'\nnn'` octal escapes (lexer scan_ansi_c_octal): each `\ooo`
-# is decoded to its byte. `$'\061\062\063'` → "123". All backends.
-run_sash "echo \$'\\061\\062\\063'"
+# cov.63 ANSI-C octal escapes are REJECTED (DD#72 model, journal 371): bash's
+# `\nnn`/`\0nnn` are archaic and ambiguous, and sash's own `\0NNN` counted
+# digits differently from bash. Hex says it exactly. All backends.
+run_sash "echo \$'\\x31\\x32\\x33'"
 [[ $rc = 0 && $out = "123" && -z $err ]]; chk cov.63
 # cov.64 a parenthesized `[[ ( … ) ]]` grouped test (parser parse_test_group).
 # All backends.

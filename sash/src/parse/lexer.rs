@@ -180,6 +180,11 @@ pub struct Scanner {
     /// [`attached_hash_word`]). Reported as SB4058 so the author is not left
     /// guessing why the rest of the line became code.
     attached_hash: Option<usize>,
+    /// First `$'…'` escape this scan rejected: `(offset of the `\`, why)`.
+    /// The escape is resolved here, so nothing downstream can see it; without
+    /// this channel a dropped bash escape could only fail silently. First one
+    /// wins, as with `unterminated`.
+    bad_escape: Option<(usize, String)>,
 }
 
 impl Scanner {
@@ -192,6 +197,7 @@ impl Scanner {
             arith_depth: 0,
             unterminated: None,
             attached_hash: None,
+            bad_escape: None,
         }
     }
 
@@ -212,6 +218,13 @@ impl Scanner {
     /// rest of the program, so any other diagnostic is downstream noise.
     pub fn unterminated(&self) -> Option<(usize, &'static str)> {
         self.unterminated
+    }
+
+    /// The first `$'…'` escape the scan rejected, if any.
+    pub fn bad_escape(&self) -> Option<(usize, &str)> {
+        self.bad_escape
+            .as_ref()
+            .map(|(at, why)| (*at, why.as_str()))
     }
 
     /// Offset of the first operator-adjacent `#` (see [`attached_hash_word`]),
@@ -1599,10 +1612,14 @@ impl Scanner {
     /// Body of `$'…'` from `self.pos` to the closing `'`, which is left
     /// unconsumed.
     ///
-    /// Accumulates raw bytes rather than `char`s. `\xC3\xA9` is two escapes
-    /// that together spell one UTF-8 character; pushing each as a `char` would
-    /// re-encode them separately (`U+00C3 U+00A9` = four bytes). Decoding the
-    /// finished byte string once is what `scan_single_quoted` does too.
+    /// Accumulates raw bytes rather than `char`s: the body mixes escapes with
+    /// literal source text, which is UTF-8 and may be multi-byte, so a byte
+    /// buffer is the only representation both fit. Decoding the finished byte
+    /// string once is what `scan_single_quoted` does too.
+    ///
+    /// Two escapes can no longer combine into one character — `\xNN` is capped
+    /// at `\x7f`, and `\uHHHH` emits a whole character — so the buffer is
+    /// always valid UTF-8 by construction.
     fn scan_ansi_c_bytes(&mut self) -> Vec<u8> {
         let mut bytes: Vec<u8> = Vec::new();
         while self.pos < self.source.len() && self.source[self.pos] != b'\'' {
@@ -1618,25 +1635,48 @@ impl Scanner {
     }
 
     /// `\…` body inside `$'…'`. `self.pos` points at the byte after `\`.
-    /// Tries `simple_escape` first, then `\0NNN` octal and `\xHH` hex,
-    /// then falls back to literal `\<byte>` passthrough.
+    ///
+    /// The escape set follows DD#72's model for authored constants: a clean
+    /// modern set, and a **loud** rejection of the archaic bash spellings
+    /// rather than a silent difference. Accepted: the named escapes
+    /// (`simple_escape`), `\xNN` for an ASCII byte, and `\uHHHH`/`\UHHHHHHHH`
+    /// for a character. Rejected: bash's octal (`\101`, `\0101`) and `\cX`.
+    /// Anything bash does not read as an escape either (`\q`) stays a literal
+    /// `\<byte>`, exactly as bash leaves it.
     fn consume_ansi_c_escape(&mut self, out: &mut Vec<u8>) {
         let c = self.source[self.pos];
         if let Some(ch) = simple_escape(c) {
-            let mut buf = [0u8; 4];
-            out.extend_from_slice(ch.encode_utf8(&mut buf).as_bytes());
+            push_utf8(out, ch);
             self.pos += 1;
             return;
         }
+        let at = self.pos - 1;
         match c {
-            b'0' => {
-                self.pos += 1;
-                out.push(self.scan_ansi_c_octal());
-            }
             b'x' => {
                 self.pos += 1;
-                out.push(self.scan_ansi_c_hex());
+                self.consume_ansi_c_hex(at, out);
             }
+            b'u' => {
+                self.pos += 1;
+                self.consume_ansi_c_unicode(at, 4, out);
+            }
+            b'U' => {
+                self.pos += 1;
+                self.consume_ansi_c_unicode(at, 8, out);
+            }
+            b'0'..=b'7' => self.reject_escape(
+                at,
+                "octal escapes are not supported (`\\0`, `\\101`, `\\0101`) — write \
+                 the byte as `\\xNN` hex (NUL is `\\x00`), or the character as \
+                 `\\uHHHH`"
+                    .to_string(),
+            ),
+            b'c' => self.reject_escape(
+                at,
+                "`\\cX` control escapes are not supported — write the byte as \
+                 `\\xNN` hex (`\\cA` is `\\x01`)"
+                    .to_string(),
+            ),
             other => {
                 out.push(b'\\');
                 out.push(other);
@@ -1645,42 +1685,76 @@ impl Scanner {
         }
     }
 
-    /// Up to three octal digits after `\0`. Stops at the first non-octal
-    /// byte or EOI.
-    fn scan_ansi_c_octal(&mut self) -> u8 {
-        let mut val = 0u8;
-        for _ in 0..3 {
-            if self.pos >= self.source.len() {
-                break;
-            }
-            let b = self.source[self.pos];
-            if !(b'0'..=b'7').contains(&b) {
-                break;
-            }
-            val = val.wrapping_mul(8).wrapping_add(b - b'0');
-            self.pos += 1;
+    /// Record the first rejected escape. `at` is the offset of its `\`.
+    ///
+    /// Deliberately does **not** move `self.pos`. The digit scanners have
+    /// already consumed what they read, and an extra step there ate the
+    /// closing `'` — which made a rejected `$'\xff'` report SB4057
+    /// *unterminated* instead of the real reason. Where nothing was consumed
+    /// the byte is left for `scan_ansi_c_bytes` to push as a literal, so the
+    /// scan still makes progress and the string still closes; `parse` reports
+    /// before any of that content is used.
+    fn reject_escape(&mut self, at: usize, why: String) {
+        if self.bad_escape.is_none() {
+            self.bad_escape = Some((at, why));
         }
-        val
     }
 
-    /// Up to two hex digits after `\x`. Stops at the first non-hex byte
-    /// or EOI.
-    fn scan_ansi_c_hex(&mut self) -> u8 {
-        let mut val = 0u8;
-        for _ in 0..2 {
-            if self.pos >= self.source.len() {
-                break;
-            }
+    /// Up to `max` hex digits from `self.pos`, as a value. `None` when there
+    /// is not even one — the prefix is then meaningless.
+    fn take_hex_digits(&mut self, max: usize) -> Option<u32> {
+        let mut val: u32 = 0;
+        let mut seen = 0;
+        while seen < max && self.pos < self.source.len() {
             let d = match self.source[self.pos] {
-                b'0'..=b'9' => self.source[self.pos] - b'0',
-                b'a'..=b'f' => self.source[self.pos] - b'a' + 10,
-                b'A'..=b'F' => self.source[self.pos] - b'A' + 10,
+                b @ b'0'..=b'9' => b - b'0',
+                b @ b'a'..=b'f' => b - b'a' + 10,
+                b @ b'A'..=b'F' => b - b'A' + 10,
                 _ => break,
             };
-            val = val.wrapping_mul(16).wrapping_add(d);
+            val = val * 16 + u32::from(d);
             self.pos += 1;
+            seen += 1;
         }
-        val
+        (seen > 0).then_some(val)
+    }
+
+    /// `\xNN` — up to two hex digits, naming one **byte**. Capped at `\x7f`:
+    /// a sash string is UTF-8 text, and a lone byte above ASCII is not text.
+    /// A character above ASCII is `\uHHHH`, which encodes as valid UTF-8.
+    fn consume_ansi_c_hex(&mut self, at: usize, out: &mut Vec<u8>) {
+        let Some(val) = self.take_hex_digits(2) else {
+            return self.reject_escape(at, "`\\x` needs at least one hex digit".to_string());
+        };
+        if val > 0x7f {
+            return self.reject_escape(
+                at,
+                format!(
+                    "`\\x{val:02x}` is above `\\x7f` — a lone byte above ASCII is not \
+                     UTF-8 text; write the character as `\\uHHHH` instead"
+                ),
+            );
+        }
+        out.push(val as u8);
+    }
+
+    /// `\uHHHH` / `\UHHHHHHHH` — up to `max` hex digits naming a **character**,
+    /// emitted as UTF-8. bash encodes surrogates and out-of-range values
+    /// anyway, producing invalid UTF-8; those are rejected here instead.
+    fn consume_ansi_c_unicode(&mut self, at: usize, max: usize, out: &mut Vec<u8>) {
+        let Some(val) = self.take_hex_digits(max) else {
+            return self.reject_escape(at, "`\\u`/`\\U` needs at least one hex digit".to_string());
+        };
+        let Some(ch) = char::from_u32(val) else {
+            return self.reject_escape(
+                at,
+                format!(
+                    "`U+{val:04X}` is not a character — a surrogate \
+                     (`D800`-`DFFF`) or above `10FFFF` has no UTF-8 encoding"
+                ),
+            );
+        };
+        push_utf8(out, ch);
     }
 
     // ── Word scanning ─────────────────────────────────────────────────
@@ -1863,6 +1937,14 @@ fn classify_word_token(word: String) -> Tok {
         "continue" => Tok::Word("continue".to_string()),
         _ => Tok::Word(word),
     }
+}
+
+/// Append `ch`'s UTF-8 encoding. The `$'…'` body is accumulated as bytes so
+/// that `\xC3\xA9` stays one character rather than two (see
+/// `scan_ansi_c_bytes`), so a `char` has to be encoded rather than pushed.
+fn push_utf8(out: &mut Vec<u8>, ch: char) {
+    let mut buf = [0u8; 4];
+    out.extend_from_slice(ch.encode_utf8(&mut buf).as_bytes());
 }
 
 /// Named-escape table for `$'…'`: `\n`, `\t`, `\r`, `\a`, `\b`, `\e`/`\E`,

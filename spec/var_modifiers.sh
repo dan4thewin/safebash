@@ -449,14 +449,14 @@ echo $s'
 # sr.6 `$'\0'` directly in the replacement — DD#64's escape, and the DD#99
 # separator conversion. The result carries an interior NUL, so compare length.
 run_sash 's=a:b:c
-s =~ s/:/$'"'"'\0'"'"'/g
+s =~ s/:/$'"'"'\x00'"'"'/g
 echo $(strlen $s)'
 [[ $rc = 0 && $out = "5" && -z $err ]]; chk sr.6
 
 # sr.7 …and the bytes really are NUL (round-trips through a NUL-split read)
 run_sash 'array f=()
 s=a:b:c
-s =~ s/:/$'"'"'\0'"'"'/g
+s =~ s/:/$'"'"'\x00'"'"'/g
 echo $s | read f
 attest e in f [[ $e = $e ]]
 echo "$(len f):${f[1]}"'
@@ -576,7 +576,7 @@ echo "$(len m)"'
 [[ $rc = 0 && $out = "0" && -z $err ]]; chk mp.7
 
 # mp.8 the whole DD#99 map pipeline, in-process: k=v text → NUL → array → map
-run_sash 'sep=$'"'"'\0'"'"'
+run_sash 'sep=$'"'"'\x00'"'"'
 s=NAME:sash
 s =~ s/:/$sep/g
 read $s a
