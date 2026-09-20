@@ -6,7 +6,7 @@
 set -eu
 . common.sh
 setup coverage
-plan=329
+plan=333
 echo "1..$plan" >&3
 
 set +e
@@ -1540,6 +1540,39 @@ run_sash '__let_exit() { echo "got $1"; return 3; }
 __let_exit hi; echo $?'
 [[ $rc = 0 && $out = "got hi
 3" && -z $err ]]; chk cov.330
+
+# cov.331-334 `$(getppid)` and `$(random)` in STRING context. Both were cold
+# in `try_nullary_intrinsic` while `getpid` and `epochseconds` beside them
+# were hot: the existing specs reach these two only through arithmetic
+# (`$(( (getppid) > 0 ))`, `int n=$(random)`) or through rejection paths, and
+# arithmetic takes a different lowering than the `emit_int_to_str` string one.
+# Assert SEMANTICS, not just "it printed digits" — nondeterminism is why these
+# went unspec'd, and the deterministic properties are what pin a real bug.
+# cov.331 getppid is STABLE within a run, and is not getpid
+run_sash 'a=$(getppid)
+b=$(getppid)
+c=$(getpid)
+[[ $a = $b ]] && echo stable
+[[ $a = $c ]] || echo distinct'
+[[ $rc = 0 && $out = "stable
+distinct" && -z $err ]]; chk cov.331
+# cov.332 getppid is a positive integer (string form round-trips to int)
+run_sash 'a=$(getppid)
+int n=${a:-0}
+(( n > 0 )) && echo positive'
+[[ $rc = 0 && $out = "positive" && -z $err ]]; chk cov.332
+# cov.333 random actually varies — two draws differ. A stuck generator
+# returning a constant is the failure this catches.
+run_sash 'a=$(random)
+b=$(random)
+[[ $a = $b ]] || echo differ'
+[[ $rc = 0 && $out = "differ" && -z $err ]]; chk cov.333
+# cov.334 random is NON-NEGATIVE. Guaranteed, not luck: sash_random masks
+# with `& i64::MAX` to clear the sign bit (DG 2026-07-07, `$(random)` range),
+# so a leading `-` here would be a real regression in the runtime.
+run_sash 'r=$(random)
+[[ $r != -* ]] && echo nonneg'
+[[ $rc = 0 && $out = "nonneg" && -z $err ]]; chk cov.334
 
 set -e
 tally

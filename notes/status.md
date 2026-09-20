@@ -1,3 +1,24 @@
+## ══ STATUS (2026-09-20) — nullary intrinsics in string context ══
+
+**Journal 380.** Sweep **5823** (5810 passing + 13 skipped), 0 failing,
+**0 flips vs `b4f2a01`**. Units 51/27/20. Predicted 5823 before running.
+
+`try_nullary_intrinsic`: `getppid` and `random` were cold while `getpid` /
+`epochseconds` beside them were hot. Both *are* spec'd — but only through
+**arithmetic** (`$(( (getppid) > 0 ))`, `int n=$(random)`), which takes a
+different lowering than the `emit_int_to_str` string path. A value spec'd as a
+number, never as a string. No bug (`$(getppid)` returned the invoking shell's
+exact PID; 200 draws all distinct, none negative, both backends).
+
+`cov.331`–`cov.334` assert **semantics, not shape**: getppid is stable within
+a run *and* differs from getpid; random varies (catches a stuck generator);
+random is non-negative — verified **guaranteed by construction**
+(`sash_random` ends `& i64::MAX`, DG 2026-07-07) before pinning it, since
+200/200 clean draws alone would be a flake waiting to happen.
+
+*Transferable:* when structurally identical match arms split hot/cold, the
+difference is the **context the tests reached them through**, not the code.
+
 ## ══ STATUS (2026-09-20) — the compiler's own names, and a rotted gap list ══
 
 **Journal 379.** Sweep **5815** (5802 passing + 13 skipped), 0 failing,
