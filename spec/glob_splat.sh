@@ -10,7 +10,7 @@
 set -eu
 . common.sh
 setup glob_splat
-plan=47
+plan=54
 echo "1..$plan" >&3
 
 set +e
@@ -259,6 +259,38 @@ run_sash 'array a=(p q)
 str s = "S"
 /usr/bin/printf "[%s]\n" @{a:-$s}'
 [[ $rc = 0 && $out = $'[p]\n[q]' && -z $err ]]; chk gs.45
+
+# ── prefix adjacency (DD#69) ──────────────────────────────────────────────
+# `y@{a:-x}` used to scan `y@` as a word and let the already-breaking `{` open
+# a brace GROUP, so the splat was reported as `SB5011 command 'a:-x' not
+# found`. The prefix spelling collapses exactly as the suffix one does and now
+# reaches the same check.
+
+# gs.46 prefix text glued to a splat is the same collapse as a suffix
+run_sash 'array a=(p q); /usr/bin/printf "[%s]\n" y@{a:-x}'
+[[ $rc != 0 && -z $out && $err == *SB5083* ]]; chk gs.46
+
+# gs.47 the elide disposition too — adjacency is what is rejected, not the op
+run_sash 'array a=(p q); /usr/bin/printf "[%s]\n" y@{a:~}'
+[[ $rc != 0 && -z $out && $err == *SB5083* ]]; chk gs.47
+
+# gs.48 text on BOTH sides
+run_sash 'array a=(p q); /usr/bin/printf "[%s]\n" p@{a:-x}s'
+[[ $rc != 0 && -z $out && $err == *SB5083* ]]; chk gs.48
+
+# gs.49 a prefixed `@{a}` reports the missing disposition (SB5033), exactly as
+#       the bare `@{a}` does — not "command 'a' not found"
+run_sash 'array a=(p q); /usr/bin/printf "[%s]\n" y@{a}'
+[[ $rc != 0 && -z $out && $err == *SB5033* ]]; chk gs.49
+
+# gs.50 CONTROL: `@` is a word break only before `{`, so an address is still
+#       one ordinary word. This is the regression guard for the new break.
+run_sash '/usr/bin/printf "[%s]\n" user@example.com'
+[[ $rc = 0 && $out = '[user@example.com]' && -z $err ]]; chk gs.50
+
+# gs.51 CONTROL: a bare `@` mid-word is untouched (no brace follows)
+run_sash '/usr/bin/printf "[%s]\n" a@b'
+[[ $rc = 0 && $out = '[a@b]' && -z $err ]]; chk gs.51
 
 set -e
 tally

@@ -342,6 +342,115 @@ write
 not
 .RB \[dq] [[\ $a\ \-eq\ $b\ ]] \[dq].
 .
+.SH STRING ESCAPES
+Backslash is interpreted in
+.B exactly two
+places (DD#64): inside
+.RB \[dq] $'\|.\|.\|.' \[dq]
+and as a line continuation at end of line.
+Everywhere else \(em unquoted,
+.RB \[dq] '\|.\|.\|.' \[dq]
+and
+.RB \[dq] \[rs]"\|.\|.\|.\[rs]" \[dq]
+\(em a backslash is a verbatim byte.
+There is no
+.B \[rs]"
+or
+.B \[rs]$
+inside double quotes; escape by quoting and concatenation instead.
+.PP
+.RB \[dq] $'\|.\|.\|.' \[dq]
+works anywhere a
+.B $
+form does, including inside
+.RB \[dq] \[rs]"\|.\|.\|.\[rs]" \[dq].
+The escape set is fixed by DD#115.
+.SS Accepted
+.TP
+.B \[rs]n \[rs]t \[rs]r \[rs]a \[rs]b \[rs]e \[rs]E \[rs]f \[rs]v \[rs]\[rs] \[rs]' \[rs]"
+The named escapes, as in
+.BR bash (1).
+.TP
+.BI \[rs]x NN
+One or two hex digits naming a
+.BR byte ,
+capped at
+.BR \[rs]x7f .
+.TP
+.BI \[rs]u HHHH \fR,\fP \[rs]U HHHHHHHH
+Up to four or eight hex digits naming a
+.BR character ,
+emitted as UTF\-8.
+.TP
+.B \[rs]q \[rs]z \fR\(em anything bash does not read as an escape\fP
+Stays a literal backslash and byte, exactly as bash leaves it.
+.SS Rejected with SB4063
+Never silently \(em each names its replacement.
+.TP
+.B octal
+.BR \[rs]0 ,
+.BR \[rs]012 ,
+.BR \[rs]101 ,
+.BR \[rs]777 .
+bash reads
+.BI \[rs] nnn
+as one to
+.B three digits total,
+so
+.B \[rs]0101
+is
+.B \[rs]010
+then
+.BR 1 ,
+which is easy to misread and which sash got wrong.
+Write the byte as
+.BI \[rs]x NN
+or the character as
+.BI \[rs]u HHHH .
+.B \[rs]0
+is included:
+.B \[rs]0
+.I is
+the octal escape, so a NUL is
+.BR $'\[rs]x00' .
+.TP
+.BI \[rs]c X
+Archaic control notation.
+.B \[rs]cA
+is
+.BR \[rs]x01 .
+.TP
+.BI \[rs]x NN \fP\ above\ \fB\[rs]x7f
+A lone byte above ASCII is not UTF\-8 text.
+Write the character \(em type it in the UTF\-8 source, or use
+.BI \[rs]u HHHH .
+.TP
+.B a prefix with no digits
+.B \[rs]x
+and
+.BR \[rs]u ,
+as DD#72 rejects a bare
+.BR 0x .
+.TP
+.BI \[rs]u HHHH\fP\ that\ is\ not\ a\ character
+A surrogate
+.RB ( D800 \- DFFF )
+or above
+.BR 10FFFF .
+bash encodes these anyway and emits invalid UTF\-8.
+.PP
+The cap is a
+.B source-literal
+constraint only.
+The runtime is byte\-clean:
+.BR read ,
+.BR $(arg\ N) ,
+.BR $(getenv\ NAME) ,
+.RB \[dq] $(\|.\|.\|.) \[dq]
+capture and external passthrough all carry arbitrary bytes intact.
+What is given up is authoring a lone byte \(>= 0x80
+.I inline.
+.
 .SH SPECIAL VALUES
 Three values that bash spells with punctuation have keyword names in sash,
 and the keyword name is the canonical one (DD#75).

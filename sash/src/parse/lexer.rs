@@ -1849,12 +1849,24 @@ impl Scanner {
     /// that is what makes `[[ … ]]` whitespace-optional like `(( … ))`.
     /// `#` ends a word only inside `$(( ))` (DD#72's base-prefix reject);
     /// elsewhere DD#110 makes it an ordinary word byte.
+    ///
+    /// `@` ends a word only when `{` follows, so a *mid*-word `@{…}` splat
+    /// reaches the same diagnostic as a trailing one. Without the break,
+    /// `y@{a:-x}` scanned `y@` as a word and let the already-breaking `{`
+    /// open a brace group, so the splat was reported as `SB5011 command
+    /// 'a:-x' not found` while `@{a:-x}y` correctly said SB5083. Breaking
+    /// here makes the prefix form lex as `y` + `@{a:-x}`, which the adjacency
+    /// pass joins into the same `Concat` the suffix form produces — so both
+    /// spellings reach one check rather than two. A word-*leading* `@{`
+    /// never arrives here: `scan_word` routes it to `try_scan_at_word` first,
+    /// which always claims the braced form.
     fn word_ends_here(&self, b: u8, depth: i32) -> bool {
         match b {
             b' ' | b'\t' | b'\n' | b';' | b'|' | b'&' | b'(' | b')' | b'{' | b'}' | b'<' | b'>'
             | b'"' | b'\'' | b'`' | b'$' | b'=' => true,
             b'#' => self.arith_depth > 0,
             b'+' => self.source.get(self.pos + 1) == Some(&b'='),
+            b'@' => self.source.get(self.pos + 1) == Some(&b'{'),
             b'[' | b']' => depth == 0 && self.source.get(self.pos + 1) == Some(&b),
             _ => false,
         }
