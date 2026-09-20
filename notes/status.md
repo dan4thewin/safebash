@@ -1,3 +1,67 @@
+## ══ STATUS (2026-09-20) — prefix splat, and the $'\0' answer ══
+
+**Journal 377.** Sweep **5795** (5782 passing + 13 skipped), 0 failing,
+**0 flips vs `d64cee0`**. Units 50/27/20.
+
+### `$'\0'` — retired and landed, journal 371. My flag was stale.
+
+I carried "still unanswered: the `$'\0'` retirement flag" in status.md for
+several sessions. Wrong: I raised it at the moment I *implemented* it, and
+never retired it once DD#72-applied-to-escapes settled the question. **A note
+saying "awaiting DG" is a claim about DG and must be retired as carefully as
+it was raised.**
+
+What was actually missing: `sash.1` had **no `$'…'` section at all** — the
+whole escape surface, incl. why a NUL is now `$'\x00'`, was governed by DD#115
+and by good diagnostics but documented in no man page. Added (accepted set,
+rejected set each naming its replacement, and the note that the `\x7f` cap
+binds only the source-literal boundary because the runtime is byte-clean).
+
+### OPEN FOR DG — sash-convert passes retired spellings through
+
+`$'\0'` and DD#72's `16#ff` / `010` convert to *themselves*, so a converted
+script fails to compile on constructs with exact lossless respellings
+(`$'\x00'`, `0xff`, `8`). DD#57's "Mechanical — convert silently" table
+already holds this shape (`` `cmd` ``→`$(cmd)`, `${var-x}`→`${var:-x}`), so
+the *category* is settled; the *scope* is DG's call. Not started.
+
+### `y@{a:-x}` now reports SB5083, like `@{a:-x}y` (DG's instruction)
+
+It had reported `SB5011 command 'a:-x' not found` — a message about a command,
+for a program with no such command. `scan_word` tries the `@`-word scan only
+when the word *starts* at `@`; mid-word `@` was ordinary, and the
+already-breaking `{` opened a brace GROUP.
+
+Fix is one arm in `word_ends_here` (which already had the pattern for `+=`):
+`b'@' => self.source.get(self.pos + 1) == Some(&b'{')`. This does **not** add a
+second diagnostic — it makes `y@{a:-x}` lex as `y` + `@{a:-x}`, joined by the
+adjacency pass into the **same Concat** the suffix form produces, so both reach
+one check. "Reports the same" is structural, not two messages kept in sync.
+
+`y@{a}` follows for free: SB5033, as bare `@{a}`. Word-leading `@{` never
+reaches the new arm (`try_scan_at_word` claims it first), so the empty-word
+assert cannot fire. Controls spec'd and still accepted: `user@example.com`,
+`a@b`, `"x@{a:-y}"`, and brace-less `y@a:-x`.
+
+**Open asymmetry, flagged not decided:** brace-less `y@a:-x` is *currently
+accepted* as literal text, so changing it would break an accepted program, and
+unlike the braced form it collapses nothing (SB5050 catches the unread array).
+
+### Found: a plan drift I introduced in d9b7598
+
+`glob_splat.sh` had `plan=47` against 48 real `chk` tokens — I added 6 specs
+and bumped plan by 5. Nothing caught it because the *sweep total* was right
+(I predicted 5783 and got it) and `common.sh` only *notes* a plan mismatch.
+Fixed; the plan sum now equals the sweep exactly (5795).
+
+**Run the mechanical spec checks AFTER editing specs, not before.** The
+before-run finds someone else's mistake; only the after-run finds your own.
+
+### Next
+
+Resume the cold-line queue against the union numbers in `coverage.db`
+(regions 96.66% · functions 98.80% · lines 97.40% · branches 90.85%).
+
 ## ══ STATUS (2026-09-20) — the OOM that was a fork bomb ══
 
 **Journal 376. The `mk cov-union` blocker was NOT environmental.** Journal 375
