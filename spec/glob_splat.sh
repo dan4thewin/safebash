@@ -10,7 +10,7 @@
 set -eu
 . common.sh
 setup glob_splat
-plan=42
+plan=47
 echo "1..$plan" >&3
 
 set +e
@@ -223,6 +223,42 @@ echo @{a}'
 run_sash 'array a=(1)
 echo @{a:-W'
 [[ $rc != 0 && -z $out && $err == *SB4057* && $err == *'`@{`'* ]]; chk gs.39
+
+
+# gs.40 a splat JOINED to adjacent text was silently collapsed into ONE
+#       argument: `@{a:-x}y` on a=(p q) emitted `p qy`, where bash emits TWO
+#       arguments — `p` and `qy` (the suffix attaches to the last element).
+#       The argv/keys splats were already SB5025 ("it cannot be joined into a
+#       scalar"); the named-array family was the one form still silent. DG
+#       ruled the form out rather than matching bash's attach-to-last shape.
+run_sash 'array a=(p q); /usr/bin/printf "[%s]\n" @{a:-x}y'
+[[ $rc != 0 && -z $out && $err == *SB5083* ]]; chk gs.40
+
+# gs.41 the elide disposition joins no differently
+run_sash 'array a=(p q); /usr/bin/printf "[%s]\n" @{a:~}y'
+[[ $rc != 0 && -z $out && $err == *SB5083* ]]; chk gs.41
+
+# gs.42 …nor the abort disposition
+run_sash 'array a=(p q); /usr/bin/printf "[%s]\n" @{a:?o}y'
+[[ $rc != 0 && -z $out && $err == *SB5083* ]]; chk gs.42
+
+# gs.43 the adjacent text need not be a literal — an expansion glued to the
+#       splat is the same collapse (`p qS`, one argument)
+run_sash 'array a=(p q)
+str s = "S"
+/usr/bin/printf "[%s]\n" @{a:-x}$s'
+[[ $rc != 0 && -z $out && $err == *SB5083* ]]; chk gs.43
+
+# gs.44 CONTROL: the splat alone still splats per-element. The rejection must
+#       key on adjacency, not on the disposition itself.
+run_sash 'array a=(p q); /usr/bin/printf "[%s]\n" @{a:-x}'
+[[ $rc = 0 && $out = $'[p]\n[q]' && -z $err ]]; chk gs.44
+
+# gs.45 CONTROL: an interpolating WORD inside the disposition is not adjacency
+run_sash 'array a=(p q)
+str s = "S"
+/usr/bin/printf "[%s]\n" @{a:-$s}'
+[[ $rc = 0 && $out = $'[p]\n[q]' && -z $err ]]; chk gs.45
 
 set -e
 tally

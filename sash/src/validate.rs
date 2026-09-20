@@ -4153,7 +4153,8 @@ fn check_argv_splat_expr(expr: &Expr, diags: &mut Vec<Diagnostic>) {
         return;
     }
     match &expr.kind {
-        ExprKind::DoubleQuoted(parts) | ExprKind::Concat(parts) | ExprKind::Array(parts) => {
+        ExprKind::Concat(parts) => check_concat_splat_seq(parts, diags),
+        ExprKind::DoubleQuoted(parts) | ExprKind::Array(parts) => {
             check_argv_splat_seq(parts, diags)
         }
         ExprKind::AssocArray(pairs) => check_argv_splat_seq(pairs.iter().map(|(_, v)| v), diags),
@@ -4172,6 +4173,34 @@ fn check_argv_splat_seq<'a>(
     for e in exprs {
         check_argv_splat_expr(e, diags);
     }
+}
+
+/// Every part of a `Concat` is a scalar position: the word has other text glued
+/// to the splat. `$(argv)y` and `$(keys m)y` were already SB5025 ("it cannot be
+/// joined into a scalar"); the named-array family was the one splat form still
+/// silent, and it did not merely mis-report — `@{a:-x}y` on `a=(p q)` emitted a
+/// single `p qy` where bash emits two arguments, `p` and `qy`. DG ruled the
+/// form out rather than implementing bash's attach-to-the-last-element shape.
+fn check_concat_splat_seq(parts: &[Expr], diags: &mut Vec<Diagnostic>) {
+    for p in parts {
+        if is_named_array_splat(p) {
+            diags.push(joined_splat_diag(p.span));
+        } else {
+            check_argv_splat_expr(p, diags);
+        }
+    }
+}
+
+/// The SB5083 "splat joined to adjacent text" diagnostic.
+fn joined_splat_diag(span: Span) -> Diagnostic {
+    Diagnostic::error_span(
+        span,
+        "SB5083",
+        "an array splat cannot be joined to adjacent text — it would collapse \
+         the array into a single argument; give the splat a word of its own, \
+         or use `$(join a)` for a joined string"
+            .to_string(),
+    )
 }
 
 fn check_argv_splat_opt(expr: Option<&Expr>, diags: &mut Vec<Diagnostic>) {

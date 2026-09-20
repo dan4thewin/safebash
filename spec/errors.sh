@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup errors
-plan=229
+plan=232
 echo "1..$plan" >&3
 
 set +e
@@ -1186,6 +1186,26 @@ run_sash '/bin/echo hi > /tmp/sash_rdr_ok'
 run_sash 'if [[ -f /etc/passwd ]] { /bin/echo y > /tmp/sash_rdr_ok }'
 [[ $rc = 0 && -z $err ]]; chk rdr.10
 rm -f /tmp/sash_rdr_ok
+
+
+# dspan.1 every "expected expression" pointed at 1:1 — `parts_to_expr` built
+#         its diagnostic with a HARDCODED `Span { line: 1, col: 1 }`, so the
+#         reader was sent to the first byte of the file no matter which line
+#         the offending token was on. A stray `}` on line 2 must say line 2.
+run_sash '/bin/echo hi
+}'
+[[ $rc != 0 && $err == *SB4014* && $err == *:2:1:* ]]; chk dspan.1
+
+# dspan.2 the column matters too: `}` inside a command argument is at the
+#         brace, not at the start of the line
+run_sash '/bin/echo hi
+/bin/echo a}b'
+[[ $rc != 0 && $err == *SB4014* && $err == *:2:12:* ]]; chk dspan.2
+
+# dspan.3 the form that exposed it: a trailing `}` after a splat disposition
+run_sash 'array a=(p q)
+/bin/echo @{a:-x}}'
+[[ $rc != 0 && $err == *SB4014* && $err == *:2:18:* ]]; chk dspan.3
 
 set -e
 tally

@@ -128,40 +128,59 @@ fn absorb_text(tok: &Tok, mode: AbsorbMode) -> Option<&'static str> {
 
 fn parse_word_parts(scanner: &mut Scanner, mode: AbsorbMode) -> Result<Expr, Diagnostic> {
     let mut parts: Vec<Expr> = Vec::new();
+    // Captured before the loop for the empty-`parts` error: the loop's own
+    // `span` is scoped to an iteration that, in exactly that case, never ran.
+    let word_start = scanner.peek().span.start;
+    let word_span = span_from(scanner, word_start);
 
-    loop {
-        // Only continue concatenating if next token is adjacent (no whitespace)
-        if !parts.is_empty() && !scanner.next_is_adjacent() {
-            break;
-        }
+    // Concatenation continues only while the next token is adjacent (no
+    // whitespace); the first part has nothing to be adjacent to.
+    while parts.is_empty() || scanner.next_is_adjacent() {
         let start = scanner.peek().span.start;
         let tok = scanner.peek().token.clone();
         let span = span_from(scanner, start);
+        if !absorb_one_part(scanner, &tok, span, start, mode, &mut parts)? {
+            break;
+        }
+    }
 
-        match tok {
-            Tok::Word(ref w) => {
-                let w = w.clone();
-                parts.push(parse_word_arm(scanner, w, span)?);
-            }
-            Tok::SingleQuoted(_) | Tok::DoubleQuoted(_) | Tok::AnsiCQuoted(_) => {
-                parse_quoted_arm(scanner, &tok, span, &mut parts)?;
-            }
-            Tok::Dollar(_) | Tok::DollarBrace(_) | Tok::DollarParen | Tok::DollarDblParen => {
-                parse_expansion_arm(scanner, &tok, span, start, &mut parts)?;
-            }
-            _ if literal_token_text(&tok, mode).is_some() => {
-                let text = literal_token_text(&tok, mode).unwrap();
+    parts_to_expr(parts, word_span)
+}
+
+/// Consume the one token `tok` contributes to the word, pushing its part(s)
+/// onto `parts`. Returns `false` when the token does not belong to the word,
+/// which ends the concatenation.
+fn absorb_one_part(
+    scanner: &mut Scanner,
+    tok: &Tok,
+    span: Span,
+    start: usize,
+    mode: AbsorbMode,
+    parts: &mut Vec<Expr>,
+) -> Result<bool, Diagnostic> {
+    match tok {
+        Tok::Word(w) => {
+            let w = w.clone();
+            parts.push(parse_word_arm(scanner, w, span)?);
+        }
+        Tok::SingleQuoted(_) | Tok::DoubleQuoted(_) | Tok::AnsiCQuoted(_) => {
+            parse_quoted_arm(scanner, tok, span, parts)?;
+        }
+        Tok::Dollar(_) | Tok::DollarBrace(_) | Tok::DollarParen | Tok::DollarDblParen => {
+            parse_expansion_arm(scanner, tok, span, start, parts)?;
+        }
+        _ => match literal_token_text(tok, mode) {
+            Some(text) => {
                 scanner.next();
                 parts.push(Expr {
                     kind: ExprKind::Literal(text),
                     span,
                 });
             }
-            _ => break,
-        }
+            None => return Ok(false),
+        },
     }
-
-    parts_to_expr(parts)
+    Ok(true)
 }
 
 /// Text of a token that lowers to a literal word part: `=`, `-`, the
@@ -413,11 +432,13 @@ fn try_subscript_arm(scanner: &mut Scanner, name: &str, span: Span, parts: &mut 
 }
 
 /// Collapse the collected `parts` into a final `Expr`: empty → error,
-/// single → unwrap, multiple → `Concat`.
-fn parts_to_expr(parts: Vec<Expr>) -> Result<Expr, Diagnostic> {
+/// single → unwrap, multiple → `Concat`. `span` is the word's own span — it
+/// used to be a hardcoded `1:1`, so every "expected expression" pointed at the
+/// first byte of the file no matter which line the offending token was on.
+fn parts_to_expr(parts: Vec<Expr>, span: Span) -> Result<Expr, Diagnostic> {
     match parts.len() {
         0 => Err(parse_error(
-            Span { line: 1, col: 1 },
+            span,
             "SB4014",
             "expected expression".to_string(),
         )),
