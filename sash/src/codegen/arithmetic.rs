@@ -33,8 +33,7 @@ pub(super) fn emit_arith_op(
             emit_div_or_mod_with_zero_check(op, lhs, rhs, builder, module, externs)
         }
         ArithOp::And | ArithOp::Or => emit_logical_and_or(op, lhs, rhs, builder),
-        ArithOp::Shl => builder.ins().ishl(lhs, rhs),
-        ArithOp::Shr => builder.ins().sshr(lhs, rhs),
+        ArithOp::Shl | ArithOp::Shr => emit_shift(op, lhs, rhs, builder, module, externs),
         ArithOp::BitAnd => builder.ins().band(lhs, rhs),
         ArithOp::BitOr => builder.ins().bor(lhs, rhs),
         ArithOp::BitXor => builder.ins().bxor(lhs, rhs),
@@ -168,6 +167,68 @@ fn emit_div_or_mod_with_zero_check(
     // No merge block: the zero path aborts, so `safe_block` is the only way
     // out of this construct and its value is the result.
     result
+}
+
+/// Shifts with an **unbounded, non-negative** count (DG, 2026-09-20).
+///
+/// The hardware masks the shift count to 6 bits, which is a property of the
+/// register width rather than of the arithmetic: it makes `1 << 64` yield `1`
+/// and `8 >> -64` yield `8`, wrong answers that look right. That is the same
+/// class of silent-wrong that DD#25 rejects for overflow, so shifts stop
+/// inheriting it. The rule is Go's:
+///
+/// - **count < 0** — abort (`sash_arith_negshift`). Meaningless in any model.
+/// - **count >= 64** — every bit is shifted out. `<<` yields `0`; `>>` fills
+///   with the sign, so it yields `0` for a non-negative value and `-1` for a
+///   negative one.
+/// - otherwise — the ordinary shift.
+///
+/// `>>` keeps filling with the **sign**, not zeros. On a signed type that is
+/// the less representation-dependent choice: `-8 >> 1` is `-4`, which is
+/// `floor(-8 / 2)`, whereas a zero fill would give `9223372036854775804` and
+/// is only meaningful if the sign bit is reinterpreted as a value bit.
+///
+/// The `>= 64` case is branchless: `<<` selects a constant `0`, and `>>`
+/// clamps the count to 63, whose sign fill *is* the saturated answer.
+fn emit_shift(
+    op: ArithOp,
+    lhs: cranelift_codegen::ir::Value,
+    rhs: cranelift_codegen::ir::Value,
+    builder: &mut FunctionBuilder,
+    module: &mut ObjectModule,
+    externs: &ExternFuncs,
+) -> cranelift_codegen::ir::Value {
+    use cranelift_codegen::ir::condcodes::IntCC;
+    let zero = builder.ins().iconst(I64, 0);
+    let is_neg = builder.ins().icmp(IntCC::SignedLessThan, rhs, zero);
+    let neg_block = builder.create_block();
+    let ok_block = builder.create_block();
+    builder.ins().brif(is_neg, neg_block, &[], ok_block, &[]);
+
+    builder.switch_to_block(neg_block);
+    builder.seal_block(neg_block);
+    let ns_ref = module.declare_func_in_func(externs.arith_negshift, builder.func);
+    builder.ins().call(ns_ref, &[]);
+    builder
+        .ins()
+        .trap(cranelift_codegen::ir::TrapCode::user(1).unwrap());
+
+    // No merge block: the negative path aborts, so `ok_block` is the only way
+    // out and its value is the result. Same shape as the zero-divisor check.
+    builder.switch_to_block(ok_block);
+    builder.seal_block(ok_block);
+    let width = builder.ins().iconst(I64, 64);
+    let too_wide = builder
+        .ins()
+        .icmp(IntCC::SignedGreaterThanOrEqual, rhs, width);
+    if matches!(op, ArithOp::Shl) {
+        let shifted = builder.ins().ishl(lhs, rhs);
+        builder.ins().select(too_wide, zero, shifted)
+    } else {
+        let max_shift = builder.ins().iconst(I64, 63);
+        let count = builder.ins().select(too_wide, max_shift, rhs);
+        builder.ins().sshr(lhs, count)
+    }
 }
 
 /// `(lhs <cmp> rhs) → 0/1` as I64. Used for ==, !=, <, <=, >, >=.

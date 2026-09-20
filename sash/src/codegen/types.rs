@@ -46,6 +46,7 @@ pub(super) struct ExternFuncs {
     pub(super) attest_fail: cranelift_module::FuncId,
     pub(super) arith_overflow: cranelift_module::FuncId,
     pub(super) arith_divzero: cranelift_module::FuncId,
+    pub(super) arith_negshift: cranelift_module::FuncId,
     pub(super) run: cranelift_module::FuncId,
     pub(super) getenv: cranelift_module::FuncId,
     pub(super) capture_drain: cranelift_module::FuncId,

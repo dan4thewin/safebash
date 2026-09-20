@@ -84,6 +84,12 @@ pub(super) fn declare_runtime_functions(module: &mut ObjectModule) -> ExternFunc
         .declare_function("sash_arith_divzero", Linkage::Import, &arith_divzero_sig)
         .expect("declare sash_arith_divzero");
 
+    // sash_arith_negshift() -> ! — DD#25 negative-shift-count trap.
+    let arith_negshift_sig = Signature::new(CallConv::SystemV);
+    let arith_negshift_func = module
+        .declare_function("sash_arith_negshift", Linkage::Import, &arith_negshift_sig)
+        .expect("declare sash_arith_negshift");
+
     let mut run_sig = Signature::new(CallConv::SystemV);
     run_sig.params.push(AbiParam::new(I64));
     run_sig.params.push(AbiParam::new(I64));
@@ -787,6 +793,7 @@ pub(super) fn declare_runtime_functions(module: &mut ObjectModule) -> ExternFunc
         attest_fail: attest_fail_func,
         arith_overflow: arith_overflow_func,
         arith_divzero: arith_divzero_func,
+        arith_negshift: arith_negshift_func,
         run: run_func,
         getenv: getenv_func,
         capture_drain: capture_drain_func,

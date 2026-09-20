@@ -122,15 +122,79 @@ Current state, all verified by execution:
 | `%` (i64::MIN % -1) | `0` — not a fault | `25.12` |
 | `<<` | masks the count, **matches bash** | `25.13` |
 
-**`Shl` is the only one left, and it is not obviously a gap.** It does not
-overflow: x86 masks the shift count to 6 bits, so `1 << 64` is `1 << 0`. sash
-already agrees with bash on every spelling measured — `1 << 63` is i64::MIN,
-`1 << 64` is `1`, `1 << 200` is `256`. Making it trap would be a deliberate
-**divergence from bash**, not a bug fix, so it is DG's call rather than a
-follow-up to be picked up silently. `25.13` pins the current answers so that
-adopting a trap has to be a visible decision.
+**`Shl` was the only one left — settled below.**
 
 The janet sentence that used to close this section is also gone: the janet
 backend was removed by DD#104, which takes `bug-janet-int-overflow` and
 `janet-arith-divzero` with it. The overflow specs no longer need
 `in_modes native,c` and do not carry it.
+
+#### Addendum (2026-09-20): shifts take an unbounded, non-negative count
+
+**DG's ruling.** The shift table above listed `Shl` as the last open item.
+DG's framing settled it: a shift is *dependent on the internal representation
+and thus not truly mathematical*, and **shifting in zeroes is what is
+desirable in practice**. Measuring against that framing showed the single word
+"shift" was hiding three separate questions, only two of which were really
+about representation.
+
+**1. Count masking — changed.** The hardware masks the count to 6 bits, a
+property of the register width and not of the arithmetic. It made `1 << 64`
+yield `1`, `1 << 200` yield `256`, and `8 >> 64` yield `8`. Those are wrong
+answers that look right, which is the same class of silent-wrong this DD
+already rejects for overflow — a dynamically computed mask width of 64
+silently returned the unshifted value. The count is now unbounded: **a count
+>= 64 shifts every bit out.**
+
+**2. Negative count — changed, and it was the worst of the three.** Masking
+reinterpreted a negative count as a large positive one, so `8 >> -1` was `0`
+and `8 >> -64` was **`8`, an identity**. A negative shift count is meaningless
+in any model. It now aborts: `sash_arith_negshift` → `<argv0>: negative shift
+count`, exit 2, consistent with "every arithmetic fault aborts".
+
+**3. Sign fill on `>>` — deliberately NOT changed.** This is the one that
+looks like it should follow "zeros in" and does not. On a *signed* type the
+sign fill is the **less** representation-dependent choice: `-8 >> 1` is `-4`,
+which is `floor(-8 / 2)`. A zero fill would give `9223372036854775804`, which
+is meaningful only if the sign bit is reinterpreted as a value bit — it
+*increases* the dependence on the representation rather than removing it.
+Zeros-on-right is the right rule for an unsigned type; sash's `int` is `i64`.
+So a count >= 64 on `>>` **saturates to the sign**: `0` for a non-negative
+value, `-1` for a negative one.
+
+This is exactly Go's rule, arrived at independently: unbounded non-negative
+counts, large counts shift everything out, negative counts are a runtime
+fault.
+
+| expression | was (bash) | now |
+|---|---|---|
+| `1 << 64` | `1` | `0` |
+| `1 << 200` | `256` | `0` |
+| `8 >> 64` | `8` | `0` |
+| `-1 >> 64` | `-1` | `-1` (sign fill, unchanged) |
+| `8 >> -1` | `0` | **abort** |
+| `8 >> -64` | `8` | **abort** |
+| `1 << 3`, `-8 >> 1`, `-9 >> 1` | `8`, `-4`, `-5` | unchanged |
+
+**Deliberate divergence from bash**, on the same grounds as the overflow trap:
+a silent wrong answer loses to a visible one. Ordinary counts — the only ones
+a correct program uses — are untouched and still match bash exactly.
+
+**Four sites had to agree** and are cross-checked by spec `25.17`:
+`codegen/arithmetic.rs::emit_shift` (native), `emit_c.rs::emit_shift_c` (C),
+and `transform/expr_handlers.rs::fold_arith_op`, which `validate.rs`'s
+`const_eval_arith` shares. The folder **declines to fold a negative count**
+and defers to the runtime trap rather than producing a value, following the
+constant-folding rule for overflow stated at the top of this file.
+
+The C guard is not only semantic: in C a shift by >= 64 or by a negative count
+is *undefined behaviour*, so clamping before the shift is also what keeps the
+emitted program well-defined.
+
+Specs `25.13`-`25.17`.
+
+**Open (not decided):** whether a *folder-proven* negative count should be a
+compile-time error, the way a proven zero divisor is SB5077. The argument
+applies — a literal `x << -1` is "a property of the expression as written" by
+this file's own distinction — but it adds a diagnostic and was not part of the
+ruling, so it is deferred rather than assumed.

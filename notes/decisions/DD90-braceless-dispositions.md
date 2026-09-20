@@ -99,6 +99,43 @@ operands: `$( )`, `$(( ))`, taint parity, `${…}` nesting, a quoted `)` inside
 `$( )`, and backtick ≡ braced), `glob_splat.sh` gs.25–gs.30 (array).
 journal 242, 307.
 
+## Addendum (2026-09-20): a brace-less `@` only opens a splat at word start
+
+**DG's ruling: brace-less stays literal.**
+
+The question arose from the mirror case. `@{a:-x}y` and `y@{a:-x}` both now
+report SB5083 (text adjacent to a splat collapses it); journal 377 made the
+prefix spelling reach the same check as the suffix one. That left an
+asymmetry, because the *brace-less* prefix does not:
+
+    y@{a:-x}   → SB5083
+    y@a:-x     → accepted, literal text — prints `y@a:-x`, exactly like bash
+
+The case for closing it was consistency: gs.30 asserts "brace-less ≡ braced",
+and this is the one place they diverge, so a user who forgets the braces
+meaning a splat gets silent literal text instead of a diagnostic. (In small
+programs SB5050 masks this — the array ends up unread — but with the array
+read elsewhere it compiles and prints the literal.)
+
+**What decided it against:** `user@host:~` matches the brace-less trigger
+exactly — `@name` followed by `:~`. That is the scp / rsync / ssh remote-path
+spelling, and it is not a corner case. Measured, all currently accepted and
+bash-identical:
+
+    /bin/echo user@host:~/dir          → user@host:~/dir
+    /usr/bin/printf "[%s]\n" me@box:~/backup  → [me@box:~/backup]
+
+A prefix rule would try to splat an array named `host`. So the brace-less
+form keeps the rule it already had: **`@` opens a splat only at the start of
+a word.** Mid-word it is an ordinary byte, as it is in bash.
+
+The asymmetry is therefore principled rather than an oversight. Braces are an
+*explicit request* for splat machinery, so demanding a clean splat there is
+fair and a typo is recoverable; a bare `@` mid-word is ordinary text in bash
+and has to stay so. The strictness lives on the spelling that asked for it.
+
+Specs: `gs.52`-`gs.55`.
+
 ## See also
 
 - DD#41 — `$a[i]` brace-less subscripts (the precedent).

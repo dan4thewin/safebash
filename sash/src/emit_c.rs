@@ -153,6 +153,11 @@ fn emit_prologue(out: &mut String) {
         "extern void sash_arith_divzero(void) __attribute__((noreturn));"
     )
     .unwrap();
+    writeln!(
+        out,
+        "extern void sash_arith_negshift(void) __attribute__((noreturn));"
+    )
+    .unwrap();
     writeln!(out, "extern i64 sash_atoi(const char* p, i64 n);").unwrap();
     writeln!(out, "extern i64 sash_is_int(const char* p, i64 n);").unwrap();
     // DD#93 Part C content-shape validators (`p?` / `g?`).
@@ -1650,8 +1655,7 @@ fn emit_arith_op_c(e: &mut Emit, op: ArithOp, lhs: &str, rhs: &str) -> String {
         Div | Mod => emit_div_or_mod_c(e, op, lhs, rhs),
         And => format!("({} && {})", lhs, rhs),
         Or => format!("({} || {})", lhs, rhs),
-        Shl => format!("({} << {})", lhs, rhs),
-        Shr => format!("({} >> {})", lhs, rhs),
+        Shl | Shr => emit_shift_c(e, op, lhs, rhs),
         BitAnd => format!("({} & {})", lhs, rhs),
         BitOr => format!("({} | {})", lhs, rhs),
         BitXor => format!("({} ^ {})", lhs, rhs),
@@ -1687,6 +1691,34 @@ fn emit_checked_arith_c(e: &mut Emit, op: CheckedArithOp, lhs: &str, rhs: &str) 
         t = t
     )
     .unwrap();
+    format!("{}_v", t)
+}
+
+/// Shifts with an unbounded, non-negative count — the C mirror of native
+/// `emit_shift` (codegen/arithmetic.rs). See that doc comment for the rule
+/// and the reasoning; the two must agree or `--emit-c` stops being an oracle.
+///
+/// Note the guard is not merely a semantic choice here: in C a shift by >= 64
+/// (or by a negative count) is *undefined behaviour*, so the ternary is also
+/// what keeps the emitted program well-defined. The UB operand never
+/// executes, because the count is clamped before it reaches the shift.
+fn emit_shift_c(e: &mut Emit, op: ArithOp, lhs: &str, rhs: &str) -> String {
+    let t = e.fresh();
+    writeln!(e.out, "    i64 {t}_l = ({});", lhs, t = t).unwrap();
+    writeln!(e.out, "    i64 {t}_c = ({});", rhs, t = t).unwrap();
+    writeln!(
+        e.out,
+        "    if ({t}_c < 0) {{ sash_arith_negshift(); }}",
+        t = t
+    )
+    .unwrap();
+    let expr = if matches!(op, ArithOp::Shl) {
+        format!("({t}_c >= 64 ? 0 : ({t}_l << {t}_c))", t = t)
+    } else {
+        // A count >= 64 clamps to 63, whose sign fill is the saturated answer.
+        format!("({t}_l >> ({t}_c >= 64 ? 63 : {t}_c))", t = t)
+    };
+    writeln!(e.out, "    i64 {t}_v = {};", expr, t = t).unwrap();
     format!("{}_v", t)
 }
 

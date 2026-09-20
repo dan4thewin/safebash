@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup arithmetic
-plan=229
+plan=233
 echo "1..$plan" >&3
 
 set +e
@@ -170,16 +170,42 @@ run_sash 'int x=-9223372036854775808; (( c = -x )); echo $c'
 run_sash 'int x=-9223372036854775808; int y=-1; (( c = x % y )); echo $c'
 [[ $rc = 0 && $out = "0" ]]; chk 25.12
 
-# 25.13 Shl is the ONE arithmetic op that still does not trap, and that is
-# because it does not overflow — x86 masks the shift count to 6 bits, so
-# `1 << 64` is `1 << 0`. sash matches bash EXACTLY here (1<<63 = i64::MIN,
-# 1<<64 = 1, 1<<200 = 256). DD#25 lists Shl as a trap follow-up; pinning the
-# current answers means adopting one would be a visible, decided divergence
-# from bash rather than a silent one.
+# 25.13-25.17 DD#25 amended (DG 2026-09-20): shifts take an UNBOUNDED,
+# NON-NEGATIVE count. The hardware masks the count to 6 bits, which is a
+# property of the register width rather than of the arithmetic — it made
+# `1 << 64` yield `1` and `8 >> -64` yield `8`, wrong answers that look right,
+# the same silent-wrong class DD#25 already rejects for overflow. These
+# DIVERGE from bash deliberately; the ordinary-count cases (25.16) do not.
+# 25.13 a count >= 64 shifts every bit out: `<<` is 0, not a masked re-shift
 run_sash 'int x=1; echo $(( x << 63 )); echo $(( x << 64 )); echo $(( x << 200 ))'
 [[ $rc = 0 && $out = "-9223372036854775808
-1
-256" && -z $err ]]; chk 25.13
+0
+0" && -z $err ]]; chk 25.13
+# 25.14 `>>` fills with the SIGN, so a count >= 64 saturates rather than
+# zeroing: 0 for a non-negative value, -1 for a negative one
+run_sash 'int a=8; int b=-1; echo $(( a >> 64 )); echo $(( b >> 64 )); echo $(( b >> 200 ))'
+[[ $rc = 0 && $out = "0
+-1
+-1" && -z $err ]]; chk 25.14
+# 25.15 a NEGATIVE count aborts. Under masking `8 >> -64` was `8` — an
+# identity — and `8 >> -1` was 0; both are meaningless in any model.
+run_sash 'int x=8; int n=-1; (( c = x >> n )); echo $c'
+[[ $rc = 2 && -z $out && $rerr == *"negative shift count"* ]]; chk 25.15
+# 25.16 ordinary counts are UNCHANGED and still match bash, including the
+# sign fill on `>>`: -8>>1 is -4 (= floor(-8/2)), not a huge positive number.
+# A zero fill here would be the MORE representation-dependent choice on a
+# signed type, so `>>` deliberately keeps filling with the sign.
+run_sash 'int a=1; int b=-8; int c=-9; echo $(( a << 3 )); echo $(( b >> 1 )); echo $(( c >> 1 ))'
+[[ $rc = 0 && $out = "8
+-4
+-5" && -z $err ]]; chk 25.16
+# 25.17 the constant folder agrees with the runtime. A literal `1 << 64` must
+# fold to the same 0 the variable path computes, and a literal negative count
+# must NOT fold to a value — it declines and defers to the runtime trap,
+# exactly as a proven overflow does.
+run_sash 'echo $(( 1 << 64 )); echo $(( -1 >> 70 ))'
+[[ $rc = 0 && $out = "0
+-1" && -z $err ]]; chk 25.17
 
 # 25.8 overflow prints `<argv0>: arithmetic overflow` to stderr, which the
 # harness now captures as $rerr.

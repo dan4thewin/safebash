@@ -357,6 +357,15 @@ pub extern "C" fn sash_arith_divzero() -> ! {
     arith_abort(b"division by zero\n")
 }
 
+/// DD#25: a NEGATIVE shift count aborts. Shifts take an unbounded
+/// non-negative count (see `emit_shift`); a negative one is meaningless in
+/// any model and, left to the hardware, would be silently reinterpreted as a
+/// large positive count by two's-complement masking (`8 >> -64` == `8`).
+#[no_mangle]
+pub extern "C" fn sash_arith_negshift() -> ! {
+    arith_abort(b"negative shift count\n")
+}
+
 /// `<argv0>: <msg>` to stderr, then exit 2. Shared by the arithmetic traps
 /// so they cannot drift apart in prefix, stream, or exit code.
 fn arith_abort(msg: &[u8]) -> ! {

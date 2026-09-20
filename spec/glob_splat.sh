@@ -10,7 +10,7 @@
 set -eu
 . common.sh
 setup glob_splat
-plan=54
+plan=58
 echo "1..$plan" >&3
 
 set +e
@@ -291,6 +291,34 @@ run_sash '/usr/bin/printf "[%s]\n" user@example.com'
 # gs.51 CONTROL: a bare `@` mid-word is untouched (no brace follows)
 run_sash '/usr/bin/printf "[%s]\n" a@b'
 [[ $rc = 0 && $out = '[a@b]' && -z $err ]]; chk gs.51
+
+# gs.52-55 DD#90 addendum (DG 2026-09-20): a BRACE-LESS `@` opens a splat only
+# at the START of a word. Mid-word it is an ordinary byte, as in bash. This is
+# deliberately asymmetric with the braced form (gs.46-51: `y@{a:-x}` is
+# SB5083) — braces are an explicit request for splat machinery, a bare `@` is
+# not. The deciding case is `user@host:~`, which matches the brace-less
+# trigger (`@name` + `:~`) exactly and is the scp/rsync/ssh remote-path
+# spelling; a prefix rule would try to splat an array named `host`.
+# gs.52 a prefixed brace-less disposition is LITERAL text, matching bash
+run_sash 'array a=(p q)
+echo $(join a)
+/usr/bin/printf "[%s]\n" y@a:-z'
+[[ $rc = 0 && $out = "p q
+[y@a:-z]" && -z $err ]]; chk gs.52
+# gs.53 the scp/rsync target spelling survives intact
+run_sash '/usr/bin/printf "[%s]\n" user@host:~/dir me@box:~'
+[[ $rc = 0 && $out = "[user@host:~/dir]
+[me@box:~]" && -z $err ]]; chk gs.53
+# gs.54 CONTRAST: word-leading, the same brace-less disposition DOES splat
+run_sash 'array a=(p q); /usr/bin/printf "[%s]\n" @a:-z'
+[[ $rc = 0 && $out = "[p]
+[q]" && -z $err ]]; chk gs.54
+# gs.55 a prefixed brace-less `@name` with no disposition is literal too
+run_sash 'array a=(p q)
+echo $(join a)
+/usr/bin/printf "[%s]\n" y@a'
+[[ $rc = 0 && $out = "p q
+[y@a]" && -z $err ]]; chk gs.55
 
 set -e
 tally

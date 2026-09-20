@@ -784,8 +784,14 @@ pub(crate) fn fold_arith_op(l: i64, r: i64, op: ArithOp) -> Option<i64> {
         ArithOp::Ge => Some((l >= r) as i64),
         ArithOp::And => Some(((l != 0) && (r != 0)) as i64),
         ArithOp::Or => Some(((l != 0) || (r != 0)) as i64),
-        ArithOp::Shl => (0..64).contains(&r).then(|| l << r),
-        ArithOp::Shr => (0..64).contains(&r).then(|| l >> r),
+        // Unbounded non-negative count (DG 2026-09-20), matching `emit_shift`
+        // in both backends. A count >= 64 shifts every bit out: `<<` is 0,
+        // `>>` saturates to the sign fill (`l >> 63`). A NEGATIVE count
+        // declines to fold and defers to the runtime trap, exactly as a
+        // proven overflow does — the folder never produces a value the
+        // running program would have refused to produce.
+        ArithOp::Shl => (r >= 0).then(|| if r >= 64 { 0 } else { l << r }),
+        ArithOp::Shr => (r >= 0).then(|| if r >= 64 { l >> 63 } else { l >> r }),
         ArithOp::BitAnd => Some(l & r),
         ArithOp::BitOr => Some(l | r),
         ArithOp::BitXor => Some(l ^ r),
