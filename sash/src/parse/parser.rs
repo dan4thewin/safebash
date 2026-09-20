@@ -2049,9 +2049,7 @@ fn parse_regex_mutation(
     let raw = scanner
         .take_sed_stmt_payload()
         .ok_or_else(|| sed_malformed_err(span))?;
-    let body = raw
-        .strip_prefix("s/")
-        .ok_or_else(|| sed_malformed_err(span))?;
+    let body = strip_sed_prefix(&raw);
     validate_static_sed_re(body, span)?;
     let subject = quoted_var_subject(var_name, span);
     let value =
@@ -2076,12 +2074,31 @@ fn sed_malformed_err(span: Span) -> Diagnostic {
     )
 }
 
+/// Strip the `s/` the *scanner* has already required. `take_sed_stmt_payload`
+/// returns `None` unless the payload starts with `s/` — `scan_one_sed_edit`
+/// compares those two bytes literally before scanning anything else — so every
+/// malformed `=~` payload is rejected there, with SB4032, before the parser
+/// sees it. A payload arriving here without the prefix means the scanner and
+/// the parser have drifted apart, which is a compiler bug and not a program
+/// one. Unreachable by construction, so it is a loud ICE rather than a
+/// user-facing diagnostic (DG, 2026-09-19).
+pub(crate) fn strip_sed_prefix(raw: &str) -> &str {
+    raw.strip_prefix("s/").unwrap_or_else(|| {
+        panic!("ICE: sed payload reached the parser without the scanner-required `s/`: {raw:?}")
+    })
+}
+
 /// Preserve the DD#39 compile-time regex check on the `=~` mutation form: a
 /// STATIC (non-interpolating) pattern is validated now; an interpolating one
 /// (`$x` in the pattern) is a runtime regcomp check.
-fn validate_static_sed_re(body: &str, span: Span) -> Result<(), Diagnostic> {
+///
+/// The `None` arm is the same should-never-run ICE as [`strip_sed_prefix`]:
+/// `scan_one_sed_edit` scans the two remaining `/` delimiters before the
+/// payload is handed over, so `split_sed_fields` cannot fail on a payload that
+/// got this far.
+pub(crate) fn validate_static_sed_re(body: &str, span: Span) -> Result<(), Diagnostic> {
     let Some((re, _, _)) = super::expr::split_sed_fields(body) else {
-        return Ok(());
+        panic!("ICE: sed payload reached the parser without the scanner-required `/` delimiters: {body:?}")
     };
     if !re.contains('$') {
         if let Err(msg) = crate::regex_validate::validate_regex(re) {

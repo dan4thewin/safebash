@@ -84,11 +84,11 @@ fn emit_glob_expansion(
     externs: &ExternFuncs,
 ) -> (cranelift_codegen::ir::Value, cranelift_codegen::ir::Value) {
     let dir_str = ".";
-    let dir_id = intern_or_declare(literals, module, dir_str);
+    let dir_id = intern_or_declare(literals, dir_str);
     let dir_gv = module.declare_data_in_func(dir_id, builder.func);
     let dir_ptr = builder.ins().global_value(I64, dir_gv);
     let dir_len = builder.ins().iconst(I64, dir_str.len() as i64);
-    let pat_id = intern_or_declare(literals, module, operand);
+    let pat_id = intern_or_declare(literals, operand);
     let pat_gv = module.declare_data_in_func(pat_id, builder.func);
     let pat_ptr = builder.ins().global_value(I64, pat_gv);
     let pat_len = builder.ins().iconst(I64, operand.len() as i64);
@@ -181,7 +181,7 @@ fn intern_join_separator(
     literals: &HashMap<String, cranelift_module::DataId>,
 ) -> (cranelift_codegen::ir::Value, cranelift_codegen::ir::Value) {
     let sep_str = if operator == "arrjoin" { operand } else { " " };
-    let sep_data_id = intern_or_declare(literals, module, sep_str);
+    let sep_data_id = intern_or_declare(literals, sep_str);
     let sep_gv = module.declare_data_in_func(sep_data_id, builder.func);
     let sep_ptr = builder.ins().global_value(I64, sep_gv);
     let sep_len = builder.ins().iconst(I64, sep_str.len() as i64);

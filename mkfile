@@ -69,6 +69,15 @@ cov-branch:V:
 cov-unit:V:
 	bash contrib/coverage.sh --with-unit --lcov target/coverage/unit.lcov
 
+# The 100% target is the UNION of spec-test and unit-test reachability, across
+# functions, lines AND branches (DG, 2026-09-19). Unit tests are allowed to
+# bypass the layers a spec must go through, which is what makes the
+# should-never-run ICE guards measurable at all — no source text reaches them.
+# `cov` and `cov-branch` are spec-only and will report those guards cold; read
+# this target, not those, when judging progress against the target.
+cov-union:V:
+	bash contrib/coverage.sh --branch --with-unit --lcov target/coverage/union.lcov
+
 # Rank uncovered lines by function, joining the lcov against the indexnudge index.
 cov-db:V:
 	python3 contrib/covdb.py target/coverage/branch.lcov coverage.db

@@ -80,8 +80,21 @@ if [ "$(ls target/*.profraw 2>/dev/null | wc -l)" -eq 0 ]; then
 fi
 
 if [ -n "$with_unit" ]; then
-    (cd sash && cargo $toolchain llvm-cov --no-report --release --lib \
-        --ignore-run-fail) >/dev/null 2>&1
+    # Do NOT suppress this one. It is the memory-hungriest step in the script —
+    # an instrumented release build of the lib *plus* its test harness — and on
+    # a busy host it is the step the OOM killer takes. With output sent to
+    # /dev/null the SIGKILL was invisible and `set -e` aborted the whole run
+    # having printed nothing at all, which looks exactly like success with an
+    # empty report. A step that cannot report its own failure is not a step.
+    unit_log=$(mktemp)
+    if ! (cd sash && cargo $toolchain llvm-cov --no-report --release --lib \
+            --ignore-run-fail) >"$unit_log" 2>&1; then
+        echo "coverage: the unit-test pass failed --- last lines:" >&2
+        tail -5 "$unit_log" >&2
+        rm -f "$unit_log"
+        exit 1
+    fi
+    rm -f "$unit_log"
 fi
 
 bash spec/run.sh >/dev/null 2>&1

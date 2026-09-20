@@ -548,4 +548,64 @@ mod logos_equivalence {
             "a redirect surviving to wrap_pipeline_part on a command must raise a loud ICE"
         );
     }
+
+    // Four should-never-run guards, each unreachable from any source text
+    // because a layer above already enforced the invariant. DG's rule for
+    // these (2026-09-19): 100% coverage is the union of spec-test and
+    // unit-test reachability, unit tests may bypass the other layers, and
+    // anything that should be unreachable must halt with an ICE if it ever
+    // ran. These are the unit half of that — the only way to execute the arm.
+
+    /// `take_sed_stmt_payload` returns `None` unless the payload opens `s/`,
+    /// so the parser's strip can only fail if scanner and parser have drifted.
+    #[test]
+    fn sed_prefix_missing_is_loud_ice() {
+        let caught = std::panic::catch_unwind(|| crate::parse::parser::strip_sed_prefix("x/a/b/"));
+        assert!(
+            caught.is_err(),
+            "a sed payload without the scanner-required `s/` must raise a loud ICE"
+        );
+    }
+
+    /// Likewise the delimiters: `scan_one_sed_edit` scans both remaining `/`
+    /// before handing the payload over, so `split_sed_fields` cannot fail here.
+    #[test]
+    fn sed_missing_delimiters_is_loud_ice() {
+        use crate::ir::Span;
+        let caught = std::panic::catch_unwind(|| {
+            crate::parse::parser::validate_static_sed_re("no-delimiters", Span::new(1, 1))
+        });
+        assert!(
+            caught.is_err(),
+            "a sed payload without the scanner-required `/` delimiters must raise a loud ICE"
+        );
+    }
+
+    /// `parse_word_arm` only routes words that `starts_with("@{")`, so the
+    /// prefix strip cannot fail.
+    #[test]
+    fn at_brace_without_opener_is_loud_ice() {
+        use crate::ir::Span;
+        let caught = std::panic::catch_unwind(|| {
+            crate::parse::expr::parse_at_brace_disposition("a:-x}", Span::new(1, 1))
+        });
+        assert!(
+            caught.is_err(),
+            "a word that does not open `@{{` must raise a loud ICE, not SB5033"
+        );
+    }
+
+    /// The lexer's `@{…}` scan consumes through the matching `}` or fatals
+    /// with SB4057, so a word that opens `@{` always closes.
+    #[test]
+    fn at_brace_without_closer_is_loud_ice() {
+        use crate::ir::Span;
+        let caught = std::panic::catch_unwind(|| {
+            crate::parse::expr::parse_at_brace_disposition("@{a:-x", Span::new(1, 1))
+        });
+        assert!(
+            caught.is_err(),
+            "a word that opens `@{{` without closing must raise a loud ICE, not SB5033"
+        );
+    }
 }

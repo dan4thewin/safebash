@@ -32,29 +32,22 @@ pub(super) fn atoi_call(
     builder.inst_results(call)[0]
 }
 
-/// The `DataId` for the interned string `s`, or a freshly declared+defined data
-/// object for it. The literal pre-pass (`setup::intern_literals`) interns every
-/// string the SSA references, so a miss here means a codegen path drifted from
-/// that pre-pass — previously a `panic!("ICE: missing literal")`. Declaring on
-/// the fly keeps the lookup total (no ICE); the un-deduplicated data on that
-/// rare drift path is harmless. `module` is already `&mut` at every call site.
+/// The `DataId` for the interned string `s`. The literal pre-pass
+/// (`setup::intern_literals`) interns every string the SSA references, so a
+/// miss here means a codegen path has drifted from that pre-pass. It was once
+/// a `panic!`, then a declare-on-the-fly fallback; the fallback produced
+/// *correct* (merely un-deduplicated) data, which is exactly what made it
+/// useless — it papered over the drift instead of reporting it. Instrumenting
+/// the miss and running the whole spec suite recorded **zero** misses across
+/// 5747 tests, so the branch is a should-never-run ICE (DG, 2026-09-19: "any
+/// code that should be unreachable should halt with an ICE if it ever ran").
 pub(super) fn intern_or_declare(
     literals: &HashMap<String, cranelift_module::DataId>,
-    module: &mut ObjectModule,
     s: &str,
 ) -> cranelift_module::DataId {
-    if let Some(&id) = literals.get(s) {
-        return id;
-    }
-    let data_id = module
-        .declare_anonymous_data(false, false)
-        .expect("declare data");
-    let mut desc = cranelift_module::DataDescription::new();
-    let mut bytes = s.as_bytes().to_vec();
-    bytes.push(0);
-    desc.define(bytes.into_boxed_slice());
-    module.define_data(data_id, &desc).expect("define data");
-    data_id
+    *literals.get(s).unwrap_or_else(|| {
+        panic!("ICE: codegen referenced a string the literal pre-pass did not intern: {s:?}")
+    })
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -628,7 +621,7 @@ fn lower_assoc_array_value(
 
     let set_ref = module.declare_func_in_func(externs.table_set, builder.func);
     for (key, val_ssa) in pairs.iter() {
-        let key_data = intern_or_declare(literals, module, key.as_str());
+        let key_data = intern_or_declare(literals, key.as_str());
         let key_gv = module.declare_data_in_func(key_data, builder.func);
         let key_ptr = builder.ins().global_value(I64, key_gv);
         let key_len = builder.ins().iconst(I64, key.len() as i64);
@@ -1543,4 +1536,25 @@ pub(super) fn emit_strlen(
     let strlen_ref = module.declare_func_in_func(strlen_func, builder.func);
     let call = builder.ins().call(strlen_ref, &[ptr]);
     builder.inst_results(call)[0]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `setup::intern_literals` interns every string the SSA references, so no
+    /// program can reach the miss — instrumenting it and running the whole
+    /// spec suite recorded zero hits across 5747 tests. Calling the lookup
+    /// directly with an empty map is the only way to execute the guard.
+    /// Same shape as `unresolved_redirect_var_is_loud_ice` in
+    /// `codegen::redirects`.
+    #[test]
+    fn missing_literal_is_loud_ice() {
+        let literals: HashMap<String, cranelift_module::DataId> = HashMap::new();
+        let caught = std::panic::catch_unwind(|| intern_or_declare(&literals, "never-interned"));
+        assert!(
+            caught.is_err(),
+            "a string the literal pre-pass did not intern must raise a loud ICE"
+        );
+    }
 }

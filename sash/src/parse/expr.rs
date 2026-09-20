@@ -239,11 +239,19 @@ fn parse_word_arm(scanner: &mut Scanner, w: String, span: Span) -> Result<Expr, 
 /// word. `:=`/`:+` are invalid. Encoded as a `ParameterExpansion` with operator
 /// `arrvals_default` / `arrvals_abort` and the WORD as its operand (`:~` ≡ a
 /// wordless `arrvals_default`).
-fn parse_at_brace_disposition(w: &str, span: Span) -> Result<Expr, Diagnostic> {
+pub(crate) fn parse_at_brace_disposition(w: &str, span: Span) -> Result<Expr, Diagnostic> {
+    // Both halves are guaranteed by the layers above: `parse_word_arm` only
+    // calls this on a word that `starts_with("@{")`, and the lexer's `@{…}`
+    // scan consumes through the matching `}` or fatals with SB4057 — so a word
+    // that opens `@{` and reaches the parser always closes. A miss means those
+    // layers have drifted, which is a compiler bug, so it is a loud ICE rather
+    // than the SB5033 a malformed *program* gets (DG, 2026-09-19).
     let inner = w
         .strip_prefix("@{")
         .and_then(|s| s.strip_suffix('}'))
-        .ok_or_else(|| splat_disposition_malformed(span))?;
+        .unwrap_or_else(|| {
+            panic!("ICE: parse_at_brace_disposition on a word that is not a closed `@{{…}}`: {w:?}")
+        });
     let colon = inner
         .find(':')
         .ok_or_else(|| splat_disposition_malformed(span))?;

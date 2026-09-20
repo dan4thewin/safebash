@@ -1,3 +1,59 @@
+## ══ STATUS (2026-09-20) — the guards that only a unit test can reach ══
+
+**Journal 375.** Sweep **5783, 0 failing, 0 flips**, zero ICE panics. Units
+**50** (up 5).
+
+**DG's backstop ruling, applied.** "100% would be the union of reachability
+from spec tests and unit tests. Unit tests should be able to bypass other
+layers. Any code that should be unreachable should halt with an ICE if it ever
+ran." Four guards converted, five `*_is_loud_ice` unit tests added:
+
+- `codegen/values.rs::intern_or_declare` — declare-on-the-fly fallback gone.
+  It produced *correct* (un-deduplicated) data, which is what made it useless:
+  it papered over pre-pass/codegen drift instead of reporting it. Dropping it
+  also dropped `&mut ObjectModule` from four call sites.
+- `parser.rs::strip_sed_prefix` / `validate_static_sed_re` — `scan_one_sed_edit`
+  checks `s/` and both `/` delimiters before the parser sees the payload.
+- `expr::parse_at_brace_disposition` — caller guarantees `@{` and the lexer
+  guarantees the closer. `find(':')` below stays a real SB5033 (`@{a}`).
+
+**The sweep is the proof**: convert first, sweep second. Reachable guards
+would have announced themselves loudly, which is the wanted behaviour anyway.
+
+**Two corrections to my own earlier reporting.** (1) The cold list was
+measured spec-only, so `joined_form_to_string` / `opaque_form_to_string` sat
+on the queue while already having ICE tests. (2) `expr.rs:230` was NOT
+unreachable — `@{a}` reaches it; it was a spec gap, now `gs.38`. Reporting a
+line unreachable without probing *that line* is the same error as reading a
+call site instead of running it.
+
+**New `mk cov-union`** (`--branch --with-unit`) — no target ran that
+combination, and it is what DG's definition requires.
+
+### BLOCKED — union baseline not yet measured
+
+`mk cov-union` is OOM-killed on this host: an instrumented release build of
+the lib plus its test harness, with 113 of 125 GB held by another tenant.
+`-j4` and `-j1` do not help; the peak is one rustc. **Environmental — retry
+when the host has memory.**
+
+Underneath it was a real defect, now fixed: the unit-test pass ran with
+`>/dev/null 2>&1` under `set -e`, so the SIGKILL was **completely silent** —
+no message, no partial report, indistinguishable from a clean no-op run. Same
+shape as the script's own canary rule ("a gate that cannot fail is not a
+gate"). It now prints the tail of the failure before exiting.
+
+Spec-only numbers stand and are known to UNDERSTATE the union by at least the
+seven ICE guards: regions 96.42% · functions 98.45% · lines 97.19% ·
+branches 90.70%.
+
+### Next
+
+Re-measure `mk cov-union` when memory frees, then resume the cold-line queue
+against the union numbers rather than the spec-only ones.
+
+Still unanswered: the `$'\0'` retirement flag from journal 371.
+
 ## ══ STATUS (2026-09-19) — the splat that collapsed into one argument ══
 
 **Journal 374.** Sweep **5783, 0 failing, 0 flips** (5765 + 9×2, predicted
