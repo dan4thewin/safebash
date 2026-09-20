@@ -1,3 +1,72 @@
+## ══ STATUS (2026-09-20) — the OOM that was a fork bomb ══
+
+**Journal 376. The `mk cov-union` blocker was NOT environmental.** Journal 375
+recorded it as an OOM on a busy shared host. Wrong — and every fact supporting
+that story was true: signal 9, 7-11 GB free, the heaviest step in the script,
+and no improvement from `-j4`/`-j1`.
+
+**The fact that did not fit:** retrying with **115 GB free** produced the same
+instant SIGKILL. An OOM kill that lands as readily with 115 GB free as with
+400 MB is not an OOM kill. `ps` aggregated by command showed **259,142
+`cargo-llvm-cov` processes** and a load average of **13,167**. The "other
+tenant" eating the machine was me, once per attempt.
+
+**Cause.** `contrib/coverage.sh` evals `llvm-cov show-env` (which exports
+`RUSTC_WRAPPER=cargo-llvm-cov`) and then ran the `llvm-cov` *subcommand*
+inside that environment, so it re-entered itself once per rustc invocation.
+cargo-llvm-cov printed the warning naming this on every run; I read it as
+boilerplate because the `error:` two lines below said SIGKILL and matched the
+story I already had. **I was reading the log for confirmation, not for
+information.**
+
+**Fix:** a plain `cargo test --release --lib` inside the show-env environment,
+as the warning instructs. `LLVM_PROFILE_FILE` is already exported into
+`target/`. `--ignore-run-fail` dropped deliberately — a failing unit test
+should fail the coverage run, not be measured and discarded. Only `--with-unit`
+was ever affected (`mk cov`/`mk cov-branch` use `cargo build`; `report` is
+exempt), which is why DG's union definition is what finally exposed it.
+
+**What made it findable:** the silent-failure fix from 375. The warning I
+eventually acted on was text that fix had newly put on screen. Second time in
+three journals that a no-evidence failure path was the last thing standing
+between us and a bug.
+
+### UNION BASELINE — measured, use this from now on
+
+`mk cov-union`. Sweep 5770 passing + 13 skipped = **5783**, 0 failing.
+
+| metric    | spec-only | union  | cold |
+|-----------|-----------|--------|-----:|
+| regions   | 96.42%    | 96.66% |  999 |
+| functions | 98.45%    | 98.80% | **26** |
+| lines     | 97.19%    | 97.40% | **698** |
+| branches  | 90.70%    | 90.85% | **349** |
+
+Modest, and that is the finding: the union is the correct denominator for the
+100% target but does not move the number much. The 698 cold lines are real
+work. `coverage.db` now holds union data. All six ICE-guarded functions read
+fully covered — the mechanism works end to end.
+
+### capture_purity.rs — probed hard, NO BUG
+
+Redirect and pipeline buried inside every nesting construct (`if`, `for`,
+group, `&&`-list, function body), checking captured value and file both. All
+correct. `child_bodies()` is an exhaustive match over `StmtKind` with no `_`
+arm, so no kind can hide a disqualifying statement. Two cold regions left:
+
+- non-literal-head arm is **unreachable** (SB5011 rejects variable, quoted,
+  concat and single-quoted heads; probed in 6 positions) — ICE candidate.
+- the `bodies.get(name)` walk is *measured* never-taken but **not proven**
+  unreachable; it depends on whether every user-fn call is inlined before this
+  pass. Left alone — "never observed" is not "cannot happen", and an ICE there
+  would crash a legal program.
+
+### Next
+
+Resume the cold-line queue against the union numbers in `coverage.db`.
+
+Still unanswered: the `$'\0'` retirement flag from journal 371.
+
 ## ══ STATUS (2026-09-20) — the guards that only a unit test can reach ══
 
 **Journal 375.** Sweep **5783, 0 failing, 0 flips**, zero ICE panics. Units

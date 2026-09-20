@@ -80,15 +80,34 @@ if [ "$(ls target/*.profraw 2>/dev/null | wc -l)" -eq 0 ]; then
 fi
 
 if [ -n "$with_unit" ]; then
-    # Do NOT suppress this one. It is the memory-hungriest step in the script —
-    # an instrumented release build of the lib *plus* its test harness — and on
-    # a busy host it is the step the OOM killer takes. With output sent to
-    # /dev/null the SIGKILL was invisible and `set -e` aborted the whole run
-    # having printed nothing at all, which looks exactly like success with an
-    # empty report. A step that cannot report its own failure is not a step.
+    # This MUST be a plain `cargo test`, not `cargo llvm-cov`.
+    #
+    # `show-env` above exported RUSTC_WRAPPER=cargo-llvm-cov. Running the
+    # `llvm-cov` *subcommand* inside that environment makes it re-enter itself
+    # once per rustc invocation, and cargo-llvm-cov says so itself:
+    #
+    #   cargo-llvm-cov subcommands other than report and clean may not work
+    #   correctly in context where environment variables are set by show-env;
+    #   consider using normal cargo commands
+    #
+    # It does not "not work correctly" — it forks without bound. Measured here:
+    # 259,142 cargo-llvm-cov processes and a load average of 13,167, which
+    # starves the box until the OOM killer takes the build. That read exactly
+    # like an out-of-memory failure on a busy shared host, and was misdiagnosed
+    # as one twice; the tell was that the SIGKILL landed just as readily with
+    # 115 GB free as with 400 MB.
+    #
+    # show-env has already exported LLVM_PROFILE_FILE into target/, so a normal
+    # cargo command produces exactly the profraws the report step wants. There
+    # is no --ignore-run-fail here deliberately: a failing unit test should fail
+    # the coverage run, not be measured and discarded.
+    #
+    # Do NOT suppress this step's output. With it on /dev/null the failure was
+    # invisible and `set -e` aborted the whole run having printed nothing at
+    # all, which looks exactly like success with an empty report. A step that
+    # cannot report its own failure is not a step.
     unit_log=$(mktemp)
-    if ! (cd sash && cargo $toolchain llvm-cov --no-report --release --lib \
-            --ignore-run-fail) >"$unit_log" 2>&1; then
+    if ! (cd sash && cargo $toolchain test --release --lib) >"$unit_log" 2>&1; then
         echo "coverage: the unit-test pass failed --- last lines:" >&2
         tail -5 "$unit_log" >&2
         rm -f "$unit_log"
