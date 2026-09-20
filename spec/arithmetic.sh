@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup arithmetic
-plan=223
+plan=228
 echo "1..$plan" >&3
 
 set +e
@@ -690,6 +690,27 @@ run_sash 'int array a=(0 5); echo $(join a)'
 # int-cell discriminator.
 run_sash 'array b=("" q); echo "[$(join b)]"'
 [[ $rc = 0 && $out = "[ q]" && -z $err ]]; chk ivc.17
+
+# ivc.18-22 `a[i] += n` on an int collection. The read-modify-write arm that
+# builds these (`IntCell(ArithBinOp{current, Add, rhs})`) had no spec at all:
+# every ivc case above uses plain `=`. It is an ARITHMETIC add for an int cell
+# and a string concat otherwise, so the two must be pinned together or the
+# wrong one is silently correct-looking on single-digit values (1+2 vs "12").
+# ivc.18 int array element +=
+run_sash 'int array a=(10 20 30); a[1]+=5; echo ${a[1]}'
+[[ $rc = 0 && $out = "25" && -z $err ]]; chk ivc.18
+# ivc.19 int map element +=
+run_sash 'int map m=([k]=5); m[k]+=3; echo ${m[k]}'
+[[ $rc = 0 && $out = "8" && -z $err ]]; chk ivc.19
+# ivc.20 CONTRAST: a non-int collection concatenates, it does not add
+run_sash 'array a=(1 2); a[0]+=3; echo ${a[0]}'
+[[ $rc = 0 && $out = "13" && -z $err ]]; chk ivc.20
+# ivc.21 the += RHS may read another int cell
+run_sash 'int array a=(10 20); a[0]+=${a[1]}; echo ${a[0]}'
+[[ $rc = 0 && $out = "30" && -z $err ]]; chk ivc.21
+# ivc.22 a negative addend subtracts (the arith path, not a concat of "-3")
+run_sash 'int array a=(10); a[0]+=-3; echo ${a[0]}'
+[[ $rc = 0 && $out = "7" && -z $err ]]; chk ivc.22
 
 # ── DD#77 A: ${var:OP…} routed through the real param-expansion parser ──
 # BUG (bug-arith-param-expansion-operator-zero): `${s:-N}`/`${s:?…}`/etc inside

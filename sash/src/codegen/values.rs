@@ -1221,15 +1221,7 @@ fn lower_disposition_as_int(
             externs,
             exit_status_var,
         )),
-        SsaValue::IntCell(inner) => Some(lower_value_as_int(
-            inner,
-            builder,
-            module,
-            vars,
-            literals,
-            externs,
-            exit_status_var,
-        )),
+        SsaValue::IntCell(_) => crate::ssa::int_cell_in_int_context("native codegen"),
         SsaValue::DefaultValue { source, default } => {
             let (s_ptr, s_len) = lower_value(
                 source,

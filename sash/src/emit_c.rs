@@ -1541,8 +1541,8 @@ fn lower_var_as_int_c(vref: &VarRef) -> String {
 /// value (handled by `lower_value_as_int`'s main match). Split for the gate.
 fn lower_disposition_as_int_c(e: &mut Emit, value: &SsaValue, types: &VarTypes) -> Option<String> {
     match value {
-        // DD#76: an int cell in int context is the inner i64 directly.
-        SsaValue::IntCell(inner) => Some(lower_value_as_int(e, inner, types)),
+        // DD#76: an int cell is a storage annotation — it cannot arrive here.
+        SsaValue::IntCell(_) => crate::ssa::int_cell_in_int_context("the C backend"),
         SsaValue::DefaultValue { source, default } => {
             let (s_ptr, s_len) = disposition_source_c(e, source, types);
             let d = lower_value_as_int(e, default, types);

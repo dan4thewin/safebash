@@ -1321,3 +1321,43 @@ impl VersionState {
         self.current = snap.clone();
     }
 }
+
+/// `IntCell` is a **storage** annotation, never an expression.
+///
+/// It is built at exactly four sites — the two `int`-collection literal
+/// wrappers and the two `int`-cell subscript-assignment RHS arms — and each
+/// produces a value on its way *into* a table cell. Both string-context
+/// lowerers (`codegen::values::lower_value`, `emit_c::lower_value`) strip the
+/// wrapper and recurse on the inner value, and no site wraps a value that is
+/// already an `IntCell`, so nesting cannot occur either. An `IntCell` can
+/// therefore never arrive in **int** context.
+///
+/// The arms that used to handle it there simply unwrapped and recursed, which
+/// is the right answer and is exactly what made them worth removing: a correct
+/// silent unwrap would paper over a new construction site putting a storage
+/// annotation in an expression position, rather than reporting it. Same shape
+/// as the `intern_or_declare` fallback (journal 375).
+pub(crate) fn int_cell_in_int_context(backend: &str) -> ! {
+    panic!(
+        "ICE: {backend} reached int context with an SsaValue::IntCell still \
+         wrapped. IntCell is a storage annotation applied on the way into a \
+         table cell; every consumer strips it first. A new construction site \
+         has put one in an expression position."
+    )
+}
+
+#[cfg(test)]
+mod int_cell_tests {
+    /// The guard must be loud. Unit tests reach what the spec suite cannot:
+    /// this state is unreachable from source, which is the point of the ICE.
+    #[test]
+    fn int_cell_in_int_context_is_loud_ice() {
+        let err = std::panic::catch_unwind(|| super::int_cell_in_int_context("native"))
+            .expect_err("must panic");
+        let msg = err
+            .downcast_ref::<String>()
+            .expect("ICE panics carry a formatted String");
+        assert!(msg.starts_with("ICE: native reached int context"), "{msg}");
+        assert!(msg.contains("storage annotation"), "{msg}");
+    }
+}
