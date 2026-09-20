@@ -1,3 +1,42 @@
+## ══ STATUS (2026-09-20) — the compiler's own names, and a rotted gap list ══
+
+**Journal 379.** Sweep **5815** (5802 passing + 13 skipped), 0 failing,
+**0 flips vs `c1370ce`**. Units 51/27/20. Predicted 5815 before running.
+
+### `from_name`'s nine sigil arms: reachable only from source. No bug, no spec.
+
+`sigil_str` (enum→string) is hot; `from_name` (string→enum) was cold for all
+nine `__`-prefixed opcodes, because the compiler builds them by **enum** and
+never parses them back. The only way in is **a user writing the name** — a
+namespace-collision surface. Probed all nine in five positions across
+bash/native/C: the user's function wins every time, a bare sigil is an
+ordinary SB5011. Correct, and now spec'd (`cov.327`–`cov.330`; `cov.327`
+closes all nine arms in one program).
+
+### FINDING — DD#25's "Known gap" paragraph was stale in three places
+
+It claimed `Pow` saturates and unary `Neg` doesn't trap. **Both false** — and
+the specs that pin the fixes say so in their own comments (`25.9`: *"was:
+saturated to i64::MAX silently"*; `25.11`: *"regression: -x → 0 - x"*). The
+fixes landed with self-documenting specs; the DD was never updated. It also
+still described the **janet** backend, removed by DD#104.
+
+Rewritten as a measured table, one row per op, each citing its spec. *A
+"follow-up" that is already done is worse than no note — someone picks it up
+and finds it finished.* Same rot the native backlog review named, one level up.
+
+### OPEN FOR DG — `Shl` is the only remainder, and may not be a gap
+
+It doesn't overflow: x86 masks the count to 6 bits. sash matches bash
+**exactly** (`1<<63`=i64::MIN, `1<<64`=1, `1<<200`=256). Trapping would be a
+deliberate **divergence from bash**, not a bug fix — your call, not a
+follow-up to pick up silently. `25.13` pins the current answers so adopting a
+trap must be a visible decision.
+
+`CheckedArithOp::from_arith`'s cold `_ => None` was left alone: both callers
+guard on `Add|Sub|Mul` then `.expect(…)`, so it is unreachable *and already
+loud*. Not every cold line wants an edit.
+
 ## ══ STATUS (2026-09-20) — an int cell can't reach int context ══
 
 **Journal 378.** Sweep **5805** (5792 passing + 13 skipped), 0 failing,

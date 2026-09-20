@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup arithmetic
-plan=228
+plan=229
 echo "1..$plan" >&3
 
 set +e
@@ -169,6 +169,17 @@ run_sash 'int x=-9223372036854775808; (( c = -x )); echo $c'
 # 25.12 Mod i64::MIN % -1 is 0 (NOT an overflow — srem doesn't trap)
 run_sash 'int x=-9223372036854775808; int y=-1; (( c = x % y )); echo $c'
 [[ $rc = 0 && $out = "0" ]]; chk 25.12
+
+# 25.13 Shl is the ONE arithmetic op that still does not trap, and that is
+# because it does not overflow — x86 masks the shift count to 6 bits, so
+# `1 << 64` is `1 << 0`. sash matches bash EXACTLY here (1<<63 = i64::MIN,
+# 1<<64 = 1, 1<<200 = 256). DD#25 lists Shl as a trap follow-up; pinning the
+# current answers means adopting one would be a visible, decided divergence
+# from bash rather than a silent one.
+run_sash 'int x=1; echo $(( x << 63 )); echo $(( x << 64 )); echo $(( x << 200 ))'
+[[ $rc = 0 && $out = "-9223372036854775808
+1
+256" && -z $err ]]; chk 25.13
 
 # 25.8 overflow prints `<argv0>: arithmetic overflow` to stderr, which the
 # harness now captures as $rerr.

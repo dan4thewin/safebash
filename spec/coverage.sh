@@ -6,7 +6,7 @@
 set -eu
 . common.sh
 setup coverage
-plan=325
+plan=329
 echo "1..$plan" >&3
 
 set +e
@@ -1495,6 +1495,51 @@ echo ${v@1}'
 run_sash 'array arr=(p q)
 echo ${arr[@U}'
 [[ $rc != 0 && -z $out && $err == *SB4047* ]]; chk cov.326
+
+# cov.327-330 the compiler-internal SIGIL namespace vs. user names.
+# `BuiltinCmd::from_name` maps nine `__`-prefixed names to internal opcodes
+# (`__negate_test_result` for `!`, `__table_delete` for `unset m[k]`, …). The
+# compiler BUILDS those by enum and spells them with `sigil_str`, so those nine
+# match arms were reachable only from SOURCE — a user writing the name — and no
+# spec did. That is a namespace-collision surface: if the classification won
+# over the user's own definition, `__table_delete() { … }` would lower to a
+# table delete. It does not; the function wins. Pin it.
+# cov.327 all nine sigil names are usable as ordinary function names
+run_sash '__negate_test_result() { echo a; }
+__set_test_from_status() { echo b; }
+__let_exit() { echo c; }
+__subshell() { echo d; }
+__store_bg_pid() { echo e; }
+__trap_signal() { echo f; }
+__signal_flag() { echo g; }
+__table_delete() { echo h; }
+__table_delete_idx() { echo i; }
+__negate_test_result; __set_test_from_status; __let_exit
+__subshell; __store_bg_pid; __trap_signal
+__signal_flag; __table_delete; __table_delete_idx'
+[[ $rc = 0 && $out = "a
+b
+c
+d
+e
+f
+g
+h
+i" && -z $err ]]; chk cov.327
+# cov.328 a sigil name with NO definition is an ordinary unknown command
+# (SB5011) — the classification never makes one callable by itself
+run_sash '__table_delete x'
+[[ $rc != 0 && -z $out && $err == *SB5011* ]]; chk cov.328
+# cov.329 a sigil-named function survives a pipeline stage, where the C
+# backend re-classifies the name on its own path (emit_pipeline_stage)
+run_sash '__subshell() { echo s; }
+__subshell | /usr/bin/tr s S'
+[[ $rc = 0 && $out = "S" && -z $err ]]; chk cov.329
+# cov.330 args and exit status propagate normally through a sigil-named fn
+run_sash '__let_exit() { echo "got $1"; return 3; }
+__let_exit hi; echo $?'
+[[ $rc = 0 && $out = "got hi
+3" && -z $err ]]; chk cov.330
 
 set -e
 tally

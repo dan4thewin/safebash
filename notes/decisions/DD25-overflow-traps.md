@@ -99,10 +99,38 @@ overflow above.
 Specs `cov.309`-`cov.313`; the non-zero unary divisor (`5 / -1`) is pinned
 alongside so the wider reach cannot start over-rejecting.
 
-**Known gap (follow-up):** `Pow` saturates rather than traps; `Shl`
-(shift ≥ 64) and unary `Neg` (i64::MIN) are not yet
-trap-with-message. `Div` (i64::MIN / -1) is **no longer a gap** — it
-traps with a message, verified. The janet backend uses float/bignum and
-does not trap (`bug-janet-int-overflow`, wontfix), so overflow specs are
-`in_modes native,c`; janet's disposition for the zero divisor is
-deferred (`janet-arith-divzero`, DG: "TBD much later").
+#### Addendum (2026-09-20): the gap list was stale; only `Shl` is left
+
+The paragraph here used to read "`Pow` saturates rather than traps; `Shl`
+(shift ≥ 64) and unary `Neg` (i64::MIN) are not yet trap-with-message."
+Measured against the live binary, two of those three were already fixed, and
+the specs recording the fixes say so in their own comments — `25.9` is
+annotated *"(was: saturated to i64::MAX silently)"* and `25.11` *"(regression:
+-x → 0 - x → ssub_overflow)"*. The DD was never updated to match. A
+"follow-up" that is already done is worse than no note: it is a work item
+someone picks up and finds finished.
+
+Current state, all verified by execution:
+
+| op | behaviour | spec |
+|---|---|---|
+| `+` `-` `*` | trap, exit 2 | `25.8` |
+| `/` (i64::MIN / -1) | trap, exit 2 | `25.10` |
+| `/` `%` (zero divisor) | trap, exit 2 | see amendment above |
+| `**` | **traps**, exit 2 | `25.9` |
+| unary `-` (i64::MIN) | **traps**, exit 2 | `25.11` |
+| `%` (i64::MIN % -1) | `0` — not a fault | `25.12` |
+| `<<` | masks the count, **matches bash** | `25.13` |
+
+**`Shl` is the only one left, and it is not obviously a gap.** It does not
+overflow: x86 masks the shift count to 6 bits, so `1 << 64` is `1 << 0`. sash
+already agrees with bash on every spelling measured — `1 << 63` is i64::MIN,
+`1 << 64` is `1`, `1 << 200` is `256`. Making it trap would be a deliberate
+**divergence from bash**, not a bug fix, so it is DG's call rather than a
+follow-up to be picked up silently. `25.13` pins the current answers so that
+adopting a trap has to be a visible decision.
+
+The janet sentence that used to close this section is also gone: the janet
+backend was removed by DD#104, which takes `bug-janet-int-overflow` and
+`janet-arith-divzero` with it. The overflow specs no longer need
+`in_modes native,c` and do not carry it.
