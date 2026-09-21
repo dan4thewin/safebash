@@ -1848,7 +1848,7 @@ pub fn span_from(scanner: &Scanner, offset: usize) -> Span {
 /// its siblings lowered to a literal. Keep this list and
 /// `lexer::classify_word_token`'s promotion table in step; `spec/coverage.sh`
 /// cov.299-305 pin every spelling end-to-end (journal 347).
-fn keyword_to_str(tok: &Tok) -> Option<&'static str> {
+pub(super) fn keyword_to_str(tok: &Tok) -> Option<&'static str> {
     Some(match tok {
         Tok::If => "if",
         Tok::Then => "then",

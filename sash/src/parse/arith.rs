@@ -15,6 +15,7 @@
 //!   - `reject_nested_mutation` — e.g. `x = y++` rejected
 //!   - Mutation in expression context ($(())) rejected at parse time
 
+use super::expr::keyword_to_str;
 use super::lexer::{Scanner, Tok};
 use crate::diagnostic::Diagnostic;
 use crate::ir::*;
@@ -1531,31 +1532,36 @@ fn needs_separator_space(next: &Tok, prev_text: &str) -> bool {
 /// trivia, and `Eof` has no source text.
 fn tok_to_text(tok: &Tok) -> String {
     match tok {
-        // Keywords. Reachable inside `(( ))` because the scanner promotes
-        // these words before the arithmetic collector runs; rendering them
-        // faithfully is what lets the re-lexer reject them.
-        Tok::If => "if".to_string(),
-        Tok::Then => "then".to_string(),
-        Tok::Else => "else".to_string(),
-        Tok::Elif => "elif".to_string(),
-        Tok::Fi => "fi".to_string(),
-        Tok::While => "while".to_string(),
-        Tok::Until => "until".to_string(),
-        Tok::Do => "do".to_string(),
-        Tok::Done => "done".to_string(),
-        Tok::For => "for".to_string(),
-        Tok::In => "in".to_string(),
-        Tok::Case => "case".to_string(),
-        Tok::Esac => "esac".to_string(),
-        Tok::Fn => "fn".to_string(),
-        Tok::Function => "function".to_string(),
-        Tok::Str => "str".to_string(),
-        Tok::Int => "int".to_string(),
-        Tok::Const => "const".to_string(),
-        Tok::Array => "array".to_string(),
-        Tok::Map => "map".to_string(),
-        Tok::Attest => "attest".to_string(),
-        Tok::End => "END".to_string(),
+        // Keywords. The spellings live in `keyword_to_str`, the single
+        // reserved-word list. This arm enumerates the variants so a new
+        // keyword is still a compile error here, but it must not restate the
+        // text: the one time that list was duplicated the two copies drifted,
+        // `Tok::Str` went missing from both, and the bare word `str` failed to
+        // lower in every word context (journal 347).
+        Tok::If
+        | Tok::Then
+        | Tok::Else
+        | Tok::Elif
+        | Tok::Fi
+        | Tok::While
+        | Tok::Until
+        | Tok::Do
+        | Tok::Done
+        | Tok::For
+        | Tok::In
+        | Tok::Case
+        | Tok::Esac
+        | Tok::Fn
+        | Tok::Function
+        | Tok::Str
+        | Tok::Int
+        | Tok::Const
+        | Tok::Array
+        | Tok::Map
+        | Tok::Attest
+        | Tok::End => keyword_to_str(tok)
+            .expect("every variant in this arm is in keyword_to_str's domain")
+            .to_string(),
         // Operators and punctuation.
         Tok::Pipe => "|".to_string(),
         Tok::AndAnd => "&&".to_string(),

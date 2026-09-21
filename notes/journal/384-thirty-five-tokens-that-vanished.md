@@ -132,3 +132,45 @@ in is right.**
 
 Sweep **5883** (5870 passing + 13 skipped), 0 failing, **0 flips vs
 `6dd9e90`**, no retirements. Predicted 5883. Units 51/27/20.
+
+---
+
+## Addendum 1 — the fix shipped a rival
+
+DG asked whether `case`/`esac`, heredocs and here-strings are purged from
+sash. They are, each with its own diagnostic: SB4029 for `case`, SB4050 for
+`<<<`, SB5002 for heredocs. The tokens survive only so the compiler can say
+that rather than fail generically — `Tok::Case` exists to reach
+`case_removed_error`, `Tok::HereString` to reach `here_string_diag`. Heredocs
+went further: there is no `Tok` variant for `<<` at all, and the rejection
+lives in the structural checks.
+
+So rendering them in `tok_to_text` is still right — inside `(( ))` they are
+garbage, and they have to reach the re-lexer to be called garbage.
+
+But checking that turned up `keyword_to_str` (`parse/expr.rs:1851`), whose
+doc comment reads: *"This is the **only** list of reserved-word tokens in the
+word parser. `literal_token_text` consults it rather than repeating the set;
+it used to repeat it, and the two drifted. `Tok::Str` was missing from both,
+so the bare word `str` was a parse error in every word context."*
+
+The fix I had just committed added a **second copy of that list** — all 22
+spellings, `END` included. A textbook DD#116 rival, in code written to apply
+DD#116, against the one list in the tree with a documented drift history.
+
+Delegated: the keyword arm still enumerates all 22 variants, so a new keyword
+remains a compile error here, but the text now comes from `keyword_to_str`.
+The `|`-alternation counts as one decision, so `tok_to_text` fell from cc 60
+to cc 39 as a side effect.
+
+`absorb_text` is *not* a rival, though it looks like one. It answers a
+different question — what a token contributes to a word under an absorb mode
+— and deliberately returns `None` for tokens that terminate a word, which is
+the opposite of what a source-text renderer needs.
+
+The lesson generalises the one above. Applying a convention is exactly when
+you are most likely to violate it, because attention is on the rule rather
+than on the code being written. **Check new code against the convention it was
+written to satisfy.**
+
+Sweep **5883**, 0 failing, **0 flips vs `8617e11`**, no retirements.
