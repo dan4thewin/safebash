@@ -593,7 +593,7 @@ fn check_arith_sexpr_arity(expr: &Expr, diags: &mut Vec<Diagnostic>) {
     let ExprKind::Arithmetic(a) = &expr.kind else {
         return;
     };
-    check_arith_div_by_zero(a, expr.span, diags);
+    check_arith_const_faults(a, expr.span, diags);
     walk_arith_intrinsic_calls(a, &mut |name, args| {
         if let Some(complaint) = arith_intrinsic_complaint(name, args) {
             diags.push(Diagnostic::error_span(expr.span, "SB4045", complaint));
@@ -601,56 +601,80 @@ fn check_arith_sexpr_arity(expr: &Expr, diags: &mut Vec<Diagnostic>) {
     });
 }
 
-/// SB5077: a divisor the constant folder can prove is zero.
+/// SB5077 / SB5084: an arithmetic fault the constant folder can prove.
 ///
-/// DD#25 (amended): every arithmetic fault aborts. A zero divisor that only
-/// the *runtime* can see (`int z = 0; $(( 1 / z ))` — there is no
+/// DD#25 (amended): every arithmetic fault aborts. One that only the
+/// *runtime* can see (`int z = 0; $(( 1 / z ))` — there is no
 /// const-propagation through variables) aborts there; one the folder can
 /// prove is a compile-time error instead, because the compiler already knows
 /// the program cannot run. Scope is exactly what the folder proves: literals
 /// and operators over literals, through parens.
-fn check_arith_div_by_zero(a: &ArithExpr, span: Span, diags: &mut Vec<Diagnostic>) {
-    walk_arith_divisors(a, &mut |op_name, divisor| {
-        if const_eval_arith(divisor) == Some(0) {
-            diags.push(Diagnostic::error_span(
-                span,
-                "SB5077",
-                format!("{} by zero — this program cannot run", op_name),
-            ));
+///
+/// Both faults are properties of **the expression as written**, so a proven
+/// fault in a ternary branch that would never be taken is still an error —
+/// this is not reachability analysis. That was already SB5077's behaviour
+/// (`(( x ? 1 : 5 / 0 ))`); the shift check inherits it rather than choosing
+/// it, which is the point of sharing one walk.
+fn check_arith_const_faults(a: &ArithExpr, span: Span, diags: &mut Vec<Diagnostic>) {
+    walk_arith_binops(a, &mut |op, right| {
+        if let Some((code, msg)) = const_arith_fault(op, right) {
+            diags.push(Diagnostic::error_span(span, code, msg));
         }
     });
 }
 
-/// Invoke `f(op_name, divisor)` for each `/` or `%` in an `ArithExpr` tree.
-fn walk_arith_divisors(a: &ArithExpr, f: &mut impl FnMut(&str, &ArithExpr)) {
+/// The `(code, message)` for a binary operator whose right operand the folder
+/// proves is a fault, or `None` when the operator cannot fault this way or the
+/// operand is not provable.
+///
+/// A compound assignment needs no arm of its own: the parser desugars
+/// `x <<= -1` into `Assign { value: BinOp { op: Shl, … } }`, so it arrives
+/// here as an ordinary `BinOp`.
+fn const_arith_fault(op: IrArithOp, right: &ArithExpr) -> Option<(&'static str, String)> {
+    let n = const_eval_arith(right)?;
+    let by_zero = |what: &str| {
+        Some((
+            "SB5077",
+            format!("{what} by zero — this program cannot run"),
+        ))
+    };
+    match op {
+        IrArithOp::Div if n == 0 => by_zero("division"),
+        IrArithOp::Mod if n == 0 => by_zero("modulo"),
+        IrArithOp::Shl | IrArithOp::Shr if n < 0 => Some((
+            "SB5084",
+            format!("negative shift count {n} — this program cannot run"),
+        )),
+        _ => None,
+    }
+}
+
+/// Invoke `f(op, right)` for each binary operator in an `ArithExpr` tree.
+fn walk_arith_binops(a: &ArithExpr, f: &mut impl FnMut(IrArithOp, &ArithExpr)) {
     match a {
         ArithExpr::BinOp { left, op, right } => {
-            match op {
-                IrArithOp::Div => f("division", right),
-                IrArithOp::Mod => f("modulo", right),
-                _ => {}
-            }
-            walk_arith_divisors(left, f);
-            walk_arith_divisors(right, f);
+            f(*op, right);
+            walk_arith_binops(left, f);
+            walk_arith_binops(right, f);
         }
         ArithExpr::UnaryOp { operand, .. } | ArithExpr::Paren(operand) => {
-            walk_arith_divisors(operand, f)
+            walk_arith_binops(operand, f)
         }
         ArithExpr::Assign { value, .. } | ArithExpr::CompoundAssign { value, .. } => {
-            walk_arith_divisors(value, f)
+            walk_arith_binops(value, f)
         }
         ArithExpr::Ternary {
             cond,
             true_val,
             false_val,
         } => {
-            walk_arith_divisors(cond, f);
-            walk_arith_divisors(true_val, f);
-            walk_arith_divisors(false_val, f);
+            walk_arith_binops(cond, f);
+            walk_arith_binops(true_val, f);
+            walk_arith_binops(false_val, f);
         }
         ArithExpr::Comma(exprs) => {
             for e in exprs {
-                walk_arith_divisors(e, f);
+                walk_arith_binops(e, f);
             }
         }
         _ => {}
@@ -1915,7 +1939,7 @@ fn validate_arith_context(
     // allowed and `++x` is not, so they do not share a fate.
     // Specs cov.23 / cov.163-165 / 31.6 pin the parser's rejection.
     let kind = classify_arith_expr(expr);
-    check_arith_div_by_zero(expr, span, diags);
+    check_arith_const_faults(expr, span, diags);
     if in_condition {
         validate_arith_in_condition(expr, span, diags);
     } else {

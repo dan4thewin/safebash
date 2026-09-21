@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup arithmetic
-plan=233
+plan=237
 echo "1..$plan" >&3
 
 set +e
@@ -188,7 +188,9 @@ run_sash 'int a=8; int b=-1; echo $(( a >> 64 )); echo $(( b >> 64 )); echo $(( 
 -1
 -1" && -z $err ]]; chk 25.14
 # 25.15 a NEGATIVE count aborts. Under masking `8 >> -64` was `8` — an
-# identity — and `8 >> -1` was 0; both are meaningless in any model.
+# identity — and `8 >> -1` was 0; both are meaningless in any model. The count
+# here is a VARIABLE, so the folder cannot prove it and this is the runtime
+# trap; a count it can prove is SB5084 at compile time instead (25.18-25.21).
 run_sash 'int x=8; int n=-1; (( c = x >> n )); echo $c'
 [[ $rc = 2 && -z $out && $rerr == *"negative shift count"* ]]; chk 25.15
 # 25.16 ordinary counts are UNCHANGED and still match bash, including the
@@ -200,12 +202,30 @@ run_sash 'int a=1; int b=-8; int c=-9; echo $(( a << 3 )); echo $(( b >> 1 )); e
 -4
 -5" && -z $err ]]; chk 25.16
 # 25.17 the constant folder agrees with the runtime. A literal `1 << 64` must
-# fold to the same 0 the variable path computes, and a literal negative count
-# must NOT fold to a value — it declines and defers to the runtime trap,
-# exactly as a proven overflow does.
+# fold to the same 0 the variable path computes.
 run_sash 'echo $(( 1 << 64 )); echo $(( -1 >> 70 ))'
 [[ $rc = 0 && $out = "0
 -1" && -z $err ]]; chk 25.17
+# 25.18-25.21 DD#25 amended (DG 2026-09-21): a negative shift count the FOLDER
+# can PROVE is a compile-time error (SB5084), not a runtime abort — exactly the
+# SB5077 rule for a proven zero divisor, and for the same reason: the compiler
+# already knows the program cannot run, so it says so before emitting a binary.
+# 25.18 a literal negative count, both directions
+run_sash 'echo $(( 8 >> -1 ))'
+[[ $rc != 0 && -z $out && $err == *SB5084* ]]; chk 25.18
+run_sash 'echo $(( 8 << -1 ))'
+[[ $rc != 0 && -z $out && $err == *SB5084* ]]; chk 25.19
+# 25.20 reach is what the folder proves: operators over literals, through
+# parens — and a COMPOUND assignment, which the parser desugars to an ordinary
+# BinOp (`x <<= -1` becomes `x = x << -1`), so it needs no rule of its own.
+run_sash 'int x=8; (( x >>= (1 - 2) )); echo $x'
+[[ $rc != 0 && -z $out && $err == *SB5084* ]]; chk 25.20
+# 25.21 the fault is a property of the expression AS WRITTEN, not reachability:
+# a proven negative count in a ternary branch that is never taken is still an
+# error. This is inherited from SB5077 (same walk), not chosen separately --
+# `(( x ? 1 : 5 / 0 ))` has always been rejected the same way.
+run_sash 'int x=1; echo $(( x ? 1 : 8 >> -1 ))'
+[[ $rc != 0 && -z $out && $err == *SB5084* ]]; chk 25.21
 
 # 25.8 overflow prints `<argv0>: arithmetic overflow` to stderr, which the
 # harness now captures as $rerr.

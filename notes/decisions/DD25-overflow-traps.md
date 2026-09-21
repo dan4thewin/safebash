@@ -193,8 +193,37 @@ emitted program well-defined.
 
 Specs `25.13`-`25.17`.
 
-**Open (not decided):** whether a *folder-proven* negative count should be a
-compile-time error, the way a proven zero divisor is SB5077. The argument
-applies — a literal `x << -1` is "a property of the expression as written" by
-this file's own distinction — but it adds a diagnostic and was not part of the
-ruling, so it is deferred rather than assumed.
+**Settled (DG, 2026-09-21): a folder-proven negative count is SB5084**, a
+compile-time error, exactly as a proven zero divisor is SB5077. The argument
+that carried it is this file's own distinction: a literal `x << -1` is "a
+property of the expression as written", and the compiler already knows the
+program cannot run, so it should say so rather than emit a binary that aborts.
+
+The two faults now share **one walk** (`walk_arith_binops`) and one
+classifier (`const_arith_fault`) in `validate.rs`. That is not tidiness — it
+is what makes the reach of the two checks identical by construction rather
+than by review:
+
+| case | fault |
+|---|---|
+| literal count (`8 >> -1`) | SB5084 |
+| folded count (`8 >> (1 - 2)`) | SB5084 |
+| compound assign (`x >>= (1 - 2)`) | SB5084 |
+| ternary branch never taken | SB5084 |
+| count via a variable (`int n=-1; x >> n`) | runtime trap |
+
+Two consequences worth naming, because both were inherited rather than
+chosen:
+
+- **Compound assignment needs no rule of its own.** The parser desugars
+  `x <<= -1` into `x = x << -1`, so it arrives at the walk as an ordinary
+  `BinOp`. (Verified with `--emit-ir`, not assumed.)
+- **It is not reachability analysis.** A proven fault in a ternary branch
+  that can never be taken is still an error — which is what SB5077 has
+  always done for `(( x ? 1 : 5 / 0 ))`. Sharing the walk means the shift
+  check could not have diverged from that precedent even by accident.
+
+Reach remains exactly what the folder proves: literals and operators over
+literals, through parens. A count the folder cannot see is still the runtime
+trap, which is correct, just later. Specs `25.18`–`25.21`; `25.15` pins the
+unprovable half.
