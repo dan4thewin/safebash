@@ -6267,21 +6267,64 @@ fn flag_collection_scalar_read(
     collections: &HashSet<String>,
     diags: &mut Vec<Diagnostic>,
 ) {
-    let ExprKind::SimpleExpansion(name) = &expr.kind else {
-        return;
-    };
-    if !collections.contains(name) {
-        return;
+    match &expr.kind {
+        ExprKind::SimpleExpansion(name) if collections.contains(name) => {
+            diags.push(collection_scalar_read_diag(name, expr.span));
+        }
+        ExprKind::Arithmetic(a) => {
+            flag_collection_arith_args(a, expr.span, collections, diags);
+        }
+        _ => {}
     }
-    diags.push(Diagnostic::error_span(
-        expr.span,
+}
+
+/// SB5064 applies inside a DD#58 arith sexpr operand too: `(strlen $a)` reads
+/// the collection `a` through the scalar sigil exactly as `$(strlen $a)` does.
+/// `walk_all_exprs` reaches the `Arithmetic` node but not the `ArithExpr` tree
+/// inside it, so the sexpr operand slot was the one place left where `$a` on a
+/// collection was neither rejected nor meaningful — `(strlen $a)` silently
+/// answered `0`, and `(f $a)` on a user int function ran the call with a
+/// missing operand. Ordinary arithmetic already rejects a collection operand
+/// (SB4030); only the call-argument slot escaped.
+fn flag_collection_arith_args(
+    a: &ArithExpr,
+    span: Span,
+    collections: &HashSet<String>,
+    diags: &mut Vec<Diagnostic>,
+) {
+    walk_arith_funccall_args(a, &mut |arg| {
+        if let ArithExpr::DollarVar(name) = arg {
+            if collections.contains(name) {
+                diags.push(collection_scalar_read_diag(name, span));
+            }
+        }
+    });
+}
+
+/// Invoke `f(arg)` for every argument of every `FuncCall` in an arith tree.
+/// Shape comes from `ArithExpr::children()`, so a new variant cannot silently
+/// fall out of this traversal.
+fn walk_arith_funccall_args(a: &ArithExpr, f: &mut impl FnMut(&ArithExpr)) {
+    if let ArithExpr::FuncCall { args, .. } = a {
+        for arg in args {
+            f(arg);
+        }
+    }
+    for child in a.children() {
+        walk_arith_funccall_args(child, f);
+    }
+}
+
+fn collection_scalar_read_diag(name: &str, span: Span) -> Diagnostic {
+    Diagnostic::error_span(
+        span,
         "SB5064",
         format!(
             "`${name}` reads the collection `{name}` with the scalar sigil, which \
              is neither the collection nor element 0 — use `@{name}` for its values, \
              `${{{name}[i]}}` for one element, or `$(len {name})` / `$(join {name} SEP)`"
         ),
-    ));
+    )
 }
 
 /// SB5066: the call-site rules for collection arguments (DD#100).

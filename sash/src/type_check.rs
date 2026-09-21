@@ -281,7 +281,7 @@ fn bare_map_subscript_error(name: &str, span: Span) -> TypeError {
 /// Walk an `ArithExpr` tree; for every sexpr `FuncCall` whose callee produces a
 /// string, emit a type error.
 fn check_arith_sexpr(a: &ArithExpr, span: Span, env: &TypeEnv, errors: &mut Vec<TypeError>) {
-    walk_arith_funccalls(a, &mut |name, _args| {
+    walk_arith_funccalls(a, &mut |name, args| {
         if is_sexpr_string_producer(name, env) {
             errors.push(TypeError {
                 message: format!(
@@ -292,7 +292,42 @@ fn check_arith_sexpr(a: &ArithExpr, span: Span, env: &TypeEnv, errors: &mut Vec<
                 span,
             });
         }
+        check_sexpr_intrinsic_operands(name, args, span, env, errors);
     });
+}
+
+/// DD#75 §2 / DD#102: the `len` / `strlen` operand rules apply to the DD#58
+/// sexpr spelling too.
+///
+/// `check_len_operand` and `check_string_intrinsic_operands` both take a
+/// `Command`, so they only ever saw the `$(len …)` form. The transform
+/// reconstructs the very same `Command` for `(len …)` — but that runs *after*
+/// type check, which left the sexpr operand slot as the one place in the
+/// language where these rules did not apply: `(len s)` on a scalar returned
+/// the byte length `$(len s)` rejects, `(strlen $n)` measured an int's decimal
+/// rendering, and `(len n)` on an int reached codegen and ICEd
+/// ("expected string var, got int").
+///
+/// Reusing the transform's own `reconstruct_intrinsic_command` — rather than
+/// re-deriving the operand shapes here — is what makes the two spellings
+/// answer to one rule by construction instead of by review. Same reason
+/// `validate::const_eval_arith` shares `fold_arith_op`.
+fn check_sexpr_intrinsic_operands(
+    name: &str,
+    args: &[ArithExpr],
+    span: Span,
+    env: &TypeEnv,
+    errors: &mut Vec<TypeError>,
+) {
+    if !crate::transform::expr_handlers::is_arith_int_intrinsic(name) {
+        return;
+    }
+    let Some(cmd) = crate::transform::expr_handlers::reconstruct_intrinsic_command(name, args)
+    else {
+        return;
+    };
+    check_len_operand(&cmd, span, env, errors);
+    check_string_intrinsic_operands(&cmd, span, env, errors);
 }
 
 /// Invoke `f(name, args)` for each `FuncCall` in an `ArithExpr` tree.

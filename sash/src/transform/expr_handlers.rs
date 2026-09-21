@@ -679,7 +679,7 @@ fn resolve_nullary_sexpr(name: &str, state: &VersionState) -> Option<SsaValue> {
 /// (element/entry count) and `strlen` (byte length) are the ones in
 /// `try_native_intrinsic`; the string intrinsics (join/keys/toupper/…) are
 /// not int and are excluded.
-fn is_arith_int_intrinsic(name: &str) -> bool {
+pub(crate) fn is_arith_int_intrinsic(name: &str) -> bool {
     name == "len" || name == "strlen"
 }
 
@@ -712,7 +712,7 @@ fn intrinsic_operand_kind(a: &ArithExpr) -> Option<ExprKind> {
 /// `strlen` a value operand, where `s` is a one-character string and `$s` is
 /// the variable's contents. Flattening made `$(( (strlen $s) ))` measure the
 /// name.
-fn reconstruct_intrinsic_command(name: &str, args: &[ArithExpr]) -> Option<Command> {
+pub(crate) fn reconstruct_intrinsic_command(name: &str, args: &[ArithExpr]) -> Option<Command> {
     let mut cmd_args = Vec::with_capacity(args.len());
     for a in args {
         cmd_args.push(Expr {

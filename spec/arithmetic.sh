@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup arithmetic
-plan=237
+plan=241
 echo "1..$plan" >&3
 
 set +e
@@ -320,23 +320,34 @@ run_sash 'array a=(x y z); int n=$(( (len a) + 1 )); echo $n'
 # 58.11 bare (len a) in arith (no +1)
 run_sash 'array a=(a b c d); echo $(( (len a) ))'
 [[ $rc = 0 && $out = "4" && -z $err ]]; chk 58.11
-# 58.12 (len s) on a string in arith → byte length
-run_sash 's=hello; int n=$(( (len s) * 2 )); echo $n'
+# 58.12 byte length in arith is `(strlen $s)`. This used to read `(len s)`,
+# pinning the polymorphic `len` that DD#75 stage 2 retired — the command form
+# `$(len s)` had reported SB4030 since then, but the sexpr operand slot was
+# never type-checked, so the two spellings disagreed. See 58.14-58.16.
+run_sash 's=hello; int n=$(( (strlen $s) * 2 )); echo $n'
 [[ $rc = 0 && $out = "10" && -z $err ]]; chk 58.12
 # 58.13 (len m) on a map in arith → entry count
 run_sash 'map m=([a]=1 [b]=2 [c]=3); echo $(( (len m) ))'
 [[ $rc = 0 && $out = "3" && -z $err ]]; chk 58.13
 # DD#75 §4 (amended): the `${#x}` braced-length sugar is retired; the
 # canonical arithmetic length is the `(len x)` sexpr (58.11-58.13 above).
-# 58.14 (len a) array count in arith
-run_sash 'array a=(x y z); int n=$(( (len a) + 1 )); echo $n'
-[[ $rc = 0 && $out = "4" && -z $err ]]; chk 58.14
-# 58.15 (len s) string byte length in arith
-run_sash 's=hello; int n=$(( (len s) * 2 )); echo $n'
-[[ $rc = 0 && $out = "10" && -z $err ]]; chk 58.15
-# 58.16 (len m) map entry count in arith (int-typed)
-run_sash 'map m=([a]=1 [b]=2 [c]=3); int n=$(( (len m) + 1 )); echo $n'
-[[ $rc = 0 && $out = "4" && -z $err ]]; chk 58.16
+# 58.14-58.16 were byte-identical restatements of 58.10/58.12/58.13. Repurposed
+# (DG 2026-09-21) to pin the rules the sexpr operand slot did not enforce: the
+# transform reconstructs a `Command` for `(len …)` and reuses the ordinary
+# intrinsic builder, but that runs AFTER type_check, so every operand rule the
+# `$(len …)` form applies was absent inside `$(( … ))`.
+# 58.14 `(len <scalar>)` is SB4030, exactly as `$(len s)` is (DD#75 stage 2).
+# It used to return the byte length — the polymorphic `len` that stage 2 retired.
+run_sash 'str s=hello; int n=$(( (len s) * 2 )); echo $n'
+[[ $rc != 0 && -z $out && $err == *SB4030* ]]; chk 58.14
+# 58.15 `(strlen $<collection>)` is SB5064. It used to answer **0** silently —
+# verbatim the defect the len/strlen split was made to remove.
+run_sash 'array a=(x y z); echo $(( (strlen $a) ))'
+[[ $rc != 0 && -z $out && $err == *SB5064* ]]; chk 58.15
+# 58.16 `(len <int>)` was an ICE ("expected string var, got int") in the native
+# backend and uncompilable C in the other — a crash, not a diagnostic.
+run_sash 'int n=42; echo $(( (len n) ))'
+[[ $rc != 0 && -z $out && $err == *SB4030* ]]; chk 58.16
 
 # DD#24/DD#31 — the clean special vars ($$ pid, $? status, $# argc) are valid
 # `$(( ))` operands, including inside a *compound* expression (not just
@@ -497,6 +508,27 @@ run_sash 'echo $(( (strlen) ))'
 # sx.31 an operand the transform cannot rebuild is rejected, not silently 0
 run_sash 'echo $(( (strlen (getpid)) ))'
 [[ $rc != 0 && -z $out && $err == *SB4045* ]]; chk sx.31
+# sx.32-sx.35 the remaining sexpr operand rules, each the exact answer the
+# `$(…)` command spelling gives. Before these the slot was unchecked and the
+# two spellings disagreed on every row.
+# sx.32 `(len $<collection>)` — the collection read through the scalar sigil
+run_sash 'array a=(p q r); echo $(( (len $a) ))'
+[[ $rc != 0 && -z $out && $err == *SB5064* ]]; chk sx.32
+# sx.33 `(strlen $<int>)` — measuring an int's decimal rendering
+run_sash 'int n=42; echo $(( (strlen $n) ))'
+[[ $rc != 0 && -z $out && $err == *SB4030* ]]; chk sx.33
+# sx.34 the rule is not limited to intrinsics: a USER int function's sexpr
+# argument is an operand slot too, and `(f $a)` ran the call rather than
+# reporting what `$(f $a)` reports.
+run_sash 'array a=(1 2 3)
+fn f -> int { return 7; }
+echo $(( (f $a) ))'
+[[ $rc != 0 && -z $out && $err == *SB5064* ]]; chk sx.34
+# sx.35 the valid spellings are untouched: a cell operand and a `$`-scalar
+run_sash 'array a=(10 200 3)
+str s=abcde
+echo $(( (strlen ${a[1]}) + (strlen $s) + (len a) ))'
+[[ $rc = 0 && $out = 11 && -z $err ]]; chk sx.35
 
 # ── array/map subscripts as an rvalue in arithmetic (`${…}` value-import) ──
 # BUG: `${a[i]}` in `(( ))` read a bogus variable named "a[i]" → 0. `${…}` is a
