@@ -172,3 +172,90 @@ path and through the int path must print the same number. The value is
 unpredictable; the *agreement* is not. An int/string split is exactly the
 shape that invites two implementations to drift, and that is a deterministic
 assertion over a nondeterministic value.
+
+---
+
+## Addendum 2 — `arith_brief`, and the same mistake caught twice in one day
+
+Next target on the fresh ranking: `arith_brief` (validate.rs:2272), 9 cold
+lines. It renders the description embedded in SB5007 messages — `mutation
+x = ... not allowed`, `comparison a > b as bare statement has no effect`.
+
+Cold: the `Assign` arm, the whole `CompoundAssign` arm, and the `==` / `!=` /
+`>=` operator arms. Hot beside them: `>`, `<`, `<=`, `PostIncDec`.
+
+The operator half was a plain gap — the suite has plenty of SB5007 specs and
+simply never spells those three comparisons. `(( a == b ))` as a bare statement
+produces `comparison a == b …` correctly. Four specs, done.
+
+The assignment half was not.
+
+### The desugar, re-examined
+
+`x += 1` in a condition reports `mutation x = ...` — the *`Assign`* wording,
+not `x +=`. Yesterday (journal 382) I attributed that to the parser desugaring
+compound assignment, and used it to justify giving `walk_arith_binops` no
+`CompoundAssign` arm. Today `ArithParser::try_assignment` (arith.rs:959) turned
+out to construct `CompoundAssign` after all, which made yesterday's claim look
+wrong — and it is load-bearing for SB5084.
+
+It holds, but not for the reason I wrote. The rewrite is in
+`lower_arith_mutation_structured` (arith.rs:1314), reached from
+`lower_arith_command` — still parse-time, still before validation, so SB5084's
+reach is what I verified it to be. Re-checked by execution: `x <<= -1`,
+`x >>= -1`, `x /= 0`, `x %= 0` all still report. The conclusion was right and
+the stated mechanism was wrong, which is the more dangerous combination,
+because nothing fails.
+
+### Two dead arms, proved rather than inferred
+
+Cold is a hint. I replaced each arm body with a `panic!` and ran the whole
+sweep plus targeted probes:
+
+- `CompoundAssign` — 0 hits in 5863 specs + 8 aimed programs.
+- `Assign` — 0 hits in 5873 specs + 6 aimed programs.
+
+Both are unreachable. Every caller is excluded by classification
+(`validate_arith_as_statement` wants a `Comparison`,
+`validate_arith_comma_in_condition` wants a non-mutation), and the one that
+could deliver them — `validate_arith_in_condition` — never gets the chance,
+because a mutation condition is decomposed first and reported by
+`validate_assignment_stmt`.
+
+### The trap, and why I nearly fell in it again
+
+I wrote spec `31.59` asserting `mutation x = ...` for `if (( x = 5 ))`, with a
+comment saying it pinned `arith_brief`'s `Assign` arm. Then I measured: the arm
+had **zero** hits. The identical text comes from a hard-coded `format!` in
+`validate_assignment_stmt` (validate.rs:1050).
+
+That is precisely the cov.331-334 error from this morning — a spec aimed at a
+cold line, passing, asserting something true, and not touching the line. I
+caught it only because I had just made measurement the rule. Had I trusted the
+message text, I would have committed the same defect on the same day, having
+written the warning about it a few hours earlier.
+
+`"{} = ..."` is in fact rendered in **three** independent places: `arith_brief`
+(dead), `brief_arith` in parse/arith.rs:187, and the hard-coded one. Identical
+output, three sources — which is exactly why reading the message could not
+distinguish them, and why the dead arm survived. That duplication matters more
+than the seven dead lines, since two of the three are live and a wording change
+to one desynchronises the others silently.
+
+`31.59` is kept — it pins a real message — but its comment now names the actual
+producer. A spec that names the wrong file sends the next reader to the wrong
+place, which is worse than saying nothing.
+
+Filed `arith-brief-dead-arms`, sibling to `tok-to-text-dead-arms`. Same class,
+found the same way: an arm handling a shape some earlier pass has already
+eliminated. Whether such arms come out or stay as defensive documentation is a
+convention question, so both are DG's call, together.
+
+Sweep 5873, 0 failing, 0 flips. Specs `31.59`-`31.63`.
+
+### What this pair of addenda is really about
+
+Three things were cold today. One was a compiler bug, one was a spec that
+missed, one was dead code. They are indistinguishable from the coverage report
+— all three read as "this line is not covered". The only thing that separated
+them was running something and looking at what actually happened.

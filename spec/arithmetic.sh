@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup arithmetic
-plan=241
+plan=246
 echo "1..$plan" >&3
 
 set +e
@@ -1128,6 +1128,48 @@ run_sash 'int k=0; for (( ; k<3, k++; )); do echo "$k"; done'
 # the half of the DD#31 comma rule that no other path enforces
 run_sash 'int k=0; for (( ; k<3, k>0; k++ )); do echo "$k"; done'
 [[ $rc != 0 && $err == *"must be a mutation"* ]]; chk 31.58
+
+# 31.59-31.63 pin the TEXT of the SB5007 briefs, not just the code. Found by
+# coverage: `arith_brief`'s `==` / `!=` / `>=` operator arms were cold while
+# `>` / `<` / `<=` beside them were hot — the existing SB5007 specs simply
+# never spell those three.
+# 31.59 top-level assignment in a condition renders as `x = ...` (the RHS is
+# deliberately elided — the brief names the shape, not the value). MEASURED:
+# this text comes from `validate_assignment_stmt` (validate.rs:1050), NOT from
+# `arith_brief` — a mutation condition is decomposed before it could reach the
+# latter. Said plainly because the obvious reading of the message is wrong, and
+# a spec that names the wrong producer sends the next reader to the wrong file.
+run_sash 'int x=0
+if (( x = 5 )) { echo a }
+echo $x'
+[[ $rc != 0 && -z $out && $err == *SB5007* && $err == *"mutation x = ..."* ]]; chk 31.59
+# 31.60 `==` as a bare statement
+run_sash 'int a=1
+int b=2
+(( a == b ))
+echo $a $b'
+[[ $rc != 0 && -z $out && $err == *SB5007* && $err == *"comparison a == b"* ]]; chk 31.60
+# 31.61 `!=` as a bare statement
+run_sash 'int a=1
+int b=2
+(( a != b ))
+echo $a $b'
+[[ $rc != 0 && -z $out && $err == *SB5007* && $err == *"comparison a != b"* ]]; chk 31.61
+# 31.62 `>=` as a bare statement
+run_sash 'int a=1
+int b=2
+(( a >= b ))
+echo $a $b'
+[[ $rc != 0 && -z $out && $err == *SB5007* && $err == *"comparison a >= b"* ]]; chk 31.62
+# 31.63 an operator with no arm of its own falls to `?`, and an embedded
+# mutation under a paren falls to `...`. Both are the catch-alls, and pinning
+# them is what makes a future arm addition a visible change rather than a
+# silent one.
+run_sash 'int x=1
+int y=1
+if (( y + (x *= 2) )) { echo a }
+echo $x $y'
+[[ $rc != 0 && -z $out && $err == *SB5007* && $err == *"mutation y ? ..."* ]]; chk 31.63
 
 set -e
 tally
