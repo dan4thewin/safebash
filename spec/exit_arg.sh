@@ -5,7 +5,7 @@
 # (the c backend's main-body `exit N` skips
 # END — bug-emit-c-exit-skips-end).
 . common.sh
-plan=8
+plan=11
 setup exit_arg
 
 set +e
@@ -49,6 +49,20 @@ END { int c=$?
 /bin/echo "END c=$c" }
 exit $code'
 [[ $rc = 44 && $out == *"END c=300"* && -z $err ]]; chk 89.8
+
+# 89.9 a non-numeric exit status is rejected (SB4030). It was lowered as an
+# integer constant with a fallback of 0, so `exit 1x` reported SUCCESS for a
+# script that meant to fail. bash refuses with "numeric argument required".
+run_sash 'exit 1x'
+[[ $rc != 0 && $err == *SB4030* ]]; chk 89.9
+
+# 89.10 ... and a wholly non-numeric one
+run_sash 'exit abc'
+[[ $rc != 0 && $err == *SB4030* ]]; chk 89.10
+
+# 89.11 a negative literal still works: bash masks -1 to 255
+run_sash 'exit -1'
+[[ $rc = 255 && -z $err ]]; chk 89.11
 
 set -e
 tally

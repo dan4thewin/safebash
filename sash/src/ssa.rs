@@ -1346,6 +1346,21 @@ pub(crate) fn int_cell_in_int_context(backend: &str) -> ! {
     )
 }
 
+/// One part of a substring operand, as an integer constant.
+///
+/// An empty part is the omitted length of `${s:1:}`, which bash also reads as
+/// 0. Anything else non-numeric is rejected by `type_check` (SB4030) — it used
+/// to become 0 here, so `${s:1x}` silently yielded the whole string. A silent
+/// 0 would hide a missed check, so this is loud (DD#116, property 1).
+pub fn substring_part_int(part: &str) -> i64 {
+    if part.is_empty() {
+        return 0;
+    }
+    part.parse::<i64>().unwrap_or_else(|_| {
+        panic!("non-integer substring part `{part}` reached codegen; type_check (SB4030) should have rejected it")
+    })
+}
+
 #[cfg(test)]
 mod int_cell_tests {
     /// The guard must be loud. Unit tests reach what the spec suite cannot:

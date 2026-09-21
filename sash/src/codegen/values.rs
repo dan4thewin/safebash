@@ -1318,6 +1318,26 @@ fn lower_cmdsubst_as_int(
 /// Emit Cranelift instructions for lowering an `SsaValue` to an i64 in
 /// arithmetic / comparison context.
 #[allow(clippy::too_many_arguments)]
+/// The integer value of a literal in an int context.
+///
+/// An **empty** literal is a bare `int n` declaration's zero-init — that is
+/// what makes `int n; echo $n` print `0` (specs `86.5`, `ud.6`, `94.1`-`94.7`),
+/// so it is a value, not a failure.
+///
+/// A **non-empty** literal that does not parse is a different thing entirely:
+/// it used to become 0 too, which is how `exit 1x` reported success. SB4030
+/// rejects those in `type_check`, so reaching the panic means a check was
+/// missed — and a silent 0 is exactly what would hide that (DD#116,
+/// property 1: the fallback degrades silently wrong).
+pub(super) fn int_literal_or_zero_init(s: &str) -> i64 {
+    if s.is_empty() {
+        return 0;
+    }
+    s.parse::<i64>().unwrap_or_else(|_| {
+        panic!("non-integer literal `{s}` reached int lowering; type_check (SB4030) should have rejected it")
+    })
+}
+
 pub(super) fn lower_value_as_int(
     value: &SsaValue,
     builder: &mut FunctionBuilder,
@@ -1342,7 +1362,7 @@ pub(super) fn lower_value_as_int(
     }
     match value {
         SsaValue::Literal(s) | SsaValue::Expr(s) => {
-            let n = s.parse::<i64>().unwrap_or(0);
+            let n = int_literal_or_zero_init(s);
             builder.ins().iconst(I64, n)
         }
         SsaValue::Var(vref) => {

@@ -2233,7 +2233,11 @@ fn fd_prefix_binds(scanner: &mut Scanner) -> bool {
 /// Consume an fd-tagged redirect whose fd digits are the current token.
 /// Only valid when `fd_prefix_binds` just returned true.
 fn parse_fd_redirect(scanner: &mut Scanner, w: &str, span: Span) -> Result<Redirect, Diagnostic> {
-    let fd: u32 = w.parse().unwrap_or(0);
+    // `is_fd_number` guarantees 1-2 ASCII digits at both call sites, so this
+    // parse cannot fail; a silent 0 would mean redirecting stdin by accident.
+    let fd: u32 = w
+        .parse()
+        .expect("is_fd_number guarantees a 1-2 digit decimal");
     scanner.next(); // consume FD number
     let mut redir = parse_redirect(scanner, span)?;
     redir.fd = Some(fd);

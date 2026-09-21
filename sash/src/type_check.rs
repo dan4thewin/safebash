@@ -832,6 +832,65 @@ fn check_int_string_ops(stmt: &Statement, env: &TypeEnv, errors: &mut Vec<TypeEr
         }
     });
     check_int_redirect_target(stmt, env, errors);
+    check_substring_operand(stmt, errors);
+}
+
+/// A substring's offset and length are lowered as integer constants, so a part
+/// that is not a decimal integer silently became **0**: `${s:1 2}`, `${s:1x}`
+/// and `${s:1+1}` all yielded the whole string, and `${s:0:3x}` the empty one,
+/// where bash reports a syntax error. Reject them instead (SB4030).
+///
+/// Two spellings are legitimate and must keep working: the parenthesised form
+/// carries a negative offset (`${s:(-2)}` — the bare `${s:-2}` is the `:-`
+/// disposition, so parens are the only way to write it), and an empty length
+/// (`${s:1:}`) is 0 in bash too. `try_substring_op` strips the parens, so the
+/// operand seen here is already `-2`.
+fn check_substring_operand(stmt: &Statement, errors: &mut Vec<TypeError>) {
+    crate::ir::walk_all_exprs(stmt, &mut |e| {
+        let ExprKind::ParameterExpansion(pe) = &e.kind else {
+            return;
+        };
+        if pe.operator.as_deref() != Some("substring") {
+            return;
+        }
+        let Some(operand) = pe.operand.as_deref() else {
+            return;
+        };
+        let ExprKind::Literal(text) = &operand.kind else {
+            return;
+        };
+        if let Some(bad) = bad_substring_part(text) {
+            errors.push(TypeError {
+                message: format!(
+                    "substring offset/length must be a decimal integer — `{bad}` is not. \
+                     A substring is lowered as an integer constant, so it evaluates no \
+                     arithmetic: write `${{{0}:2}}`, not `${{{0}:1+1}}`. Use `${{{0}:(-2)}}` \
+                     for an offset from the end.",
+                    pe.name
+                ),
+                span: e.span,
+            });
+        }
+    });
+}
+
+/// The first part of a substring operand that is not a decimal integer, or
+/// `None` if every part is fine. An empty *length* is allowed (bash reads it
+/// as 0); an empty offset cannot occur, since `try_substring_op` only accepts
+/// an operand starting with a digit, `-` or `(`. A third part was silently
+/// ignored, so the whole operand is reported for it.
+fn bad_substring_part(text: &str) -> Option<String> {
+    let parts: Vec<&str> = text.split(':').collect();
+    match parts.as_slice() {
+        [offset] | [offset, ""] => not_an_int(offset),
+        [offset, length] => not_an_int(offset).or_else(|| not_an_int(length)),
+        _ => Some(text.to_string()),
+    }
+}
+
+/// `Some(part)` when `part` is not a decimal integer.
+fn not_an_int(part: &str) -> Option<String> {
+    part.parse::<i64>().err().map(|_| part.to_string())
 }
 
 /// How many **leading** arguments of a string intrinsic are string operands.
@@ -1401,6 +1460,7 @@ fn check_command(c: &Command, span: Span, env: &mut TypeEnv, errors: &mut Vec<Ty
         // DD#63: `match S P ARR` / `matchall S P ARR` fill (and auto-declare)
         // the trailing array; the two-arg `match S P` binds nothing.
         "match" | "matchall" if c.args.len() == 3 => register_newread_target(c, env),
+        "exit" => check_exit_status_arg(c, errors),
         _ => {}
     }
 
@@ -1410,6 +1470,32 @@ fn check_command(c: &Command, span: Span, env: &mut TypeEnv, errors: &mut Vec<Ty
     check_string_intrinsic_operands(c, span, env, errors);
     for arg in &c.args {
         check_subscript_types(arg, env, errors);
+    }
+}
+
+/// `exit N` lowers `N` as an integer constant, so a non-numeric argument
+/// silently became **0** — `exit 1x` reported *success*, where bash refuses
+/// with "numeric argument required" and exits 2. A script that meant to fail
+/// would have claimed to succeed, so reject it (SB4030).
+///
+/// Only a bare literal is checked. `exit $x` and `exit $(f)` are lowered
+/// through the runtime's atoi, not this constant path.
+fn check_exit_status_arg(c: &Command, errors: &mut Vec<TypeError>) {
+    for arg in &c.args {
+        let ExprKind::Literal(text) = &arg.kind else {
+            continue;
+        };
+        if text.is_empty() || text.parse::<i64>().is_ok() {
+            continue;
+        }
+        errors.push(TypeError {
+            message: format!(
+                "exit status `{text}` is not a decimal integer — `exit` takes a \
+                 number, and a non-numeric argument would otherwise be lowered as 0, \
+                 reporting success for a script that meant to fail."
+            ),
+            span: arg.span,
+        });
     }
 }
 

@@ -400,10 +400,10 @@ pub(crate) fn emit_substring(
     externs: &ExternFuncs,
 ) -> (cranelift_codegen::ir::Value, cranelift_codegen::ir::Value) {
     let parts: Vec<&str> = operand.split(':').collect();
-    let offset_val = parts[0].parse::<i64>().unwrap_or(0);
+    let offset_val = substring_part_int(parts[0]);
     let offset = builder.ins().iconst(I64, offset_val);
     let (length, has_length) = if parts.len() > 1 {
-        let l = parts[1].parse::<i64>().unwrap_or(0);
+        let l = substring_part_int(parts[1]);
         (builder.ins().iconst(I64, l), builder.ins().iconst(I64, 1))
     } else {
         (builder.ins().iconst(I64, 0), builder.ins().iconst(I64, 0))

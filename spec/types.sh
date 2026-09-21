@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup types
-plan=235
+plan=245
 echo "1..$plan" >&3
 
 set +e
@@ -1253,6 +1253,68 @@ echo "$k"
 }
 f m n'
 [[ $rc != 0 && -z $out && $err == *SB4030* ]]; chk 75.100
+
+# ---------------------------------------------------------------------------
+# Substring operands must be decimal integers (SB4030).
+#
+# A substring is lowered as an integer CONSTANT, and the parse used to fall
+# back to 0 on anything it could not read. So `${s:1x}` silently yielded the
+# whole string, and `${s:1+1}` — which bash evaluates, printing `cdef` —
+# yielded `abcdef` here. Unparseable now means reject.
+# ---------------------------------------------------------------------------
+
+# sub.1 the working forms are untouched: plain offset
+run_sash 'str s="abcdef"
+echo ${s:1}'
+[[ $rc = 0 && $out = "bcdef" && -z $err ]]; chk sub.1
+
+# sub.2 offset and length
+run_sash 'str s="abcdef"
+echo ${s:2:3}'
+[[ $rc = 0 && $out = "cde" && -z $err ]]; chk sub.2
+
+# sub.3 the parenthesised form is the ONLY way to write a negative offset —
+# bare `${s:-2}` is the `:-` disposition, not a substring.
+run_sash 'str s="abcdef"
+echo ${s:(-2)}'
+[[ $rc = 0 && $out = "ef" && -z $err ]]; chk sub.3
+
+# sub.4 an omitted length is 0, as in bash
+run_sash 'str s="abcdef"
+echo "[${s:1:}]"'
+[[ $rc = 0 && $out = "[]" && -z $err ]]; chk sub.4
+
+# sub.5 trailing garbage in the offset
+run_sash 'str s="abcdef"
+echo ${s:1x}'
+[[ $rc != 0 && $err == *SB4030* ]]; chk sub.5
+
+# sub.6 trailing garbage in the length
+run_sash 'str s="abcdef"
+echo ${s:0:3x}'
+[[ $rc != 0 && $err == *SB4030* ]]; chk sub.6
+
+# sub.7 a space is not a separator — bash calls this a syntax error
+run_sash 'str s="abcdef"
+echo ${s:1 2}'
+[[ $rc != 0 && $err == *SB4030* ]]; chk sub.7
+
+# sub.8 no arithmetic is evaluated. bash prints `cdef`; this used to print the
+# whole string, which is the divergence that made the silent 0 a bug.
+run_sash 'str s="abcdef"
+echo ${s:1+1}'
+[[ $rc != 0 && $err == *SB4030* ]]; chk sub.8
+
+# sub.9 ... including the parenthesised spelling, which reaches the same check
+# because `try_substring_op` strips the parens
+run_sash 'str s="abcdef"
+echo ${s:(1+1)}'
+[[ $rc != 0 && $err == *SB4030* ]]; chk sub.9
+
+# sub.10 a third part was silently ignored
+run_sash 'str s="abcdef"
+echo ${s:1:2:3}'
+[[ $rc != 0 && $err == *SB4030* ]]; chk sub.10
 
 set -e
 tally

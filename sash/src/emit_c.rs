@@ -3181,9 +3181,9 @@ fn emit_match_into_c(
 /// return value and the new length to *out_len.
 fn emit_substring_c(e: &mut Emit, s_ptr: &str, s_len: &str, operand: &str) -> CStr {
     let parts: Vec<&str> = operand.split(':').collect();
-    let off: i64 = parts.first().and_then(|s| s.parse().ok()).unwrap_or(0);
+    let off: i64 = parts.first().map_or(0, |s| substring_part_int(s));
     let (length, has_length) = if parts.len() > 1 {
-        (parts[1].parse::<i64>().unwrap_or(0), 1i64)
+        (substring_part_int(parts[1]), 1i64)
     } else {
         (0, 0)
     };
