@@ -6,7 +6,7 @@
 set -eu
 . common.sh
 setup coverage
-plan=333
+plan=337
 echo "1..$plan" >&3
 
 set +e
@@ -1541,11 +1541,17 @@ __let_exit hi; echo $?'
 [[ $rc = 0 && $out = "got hi
 3" && -z $err ]]; chk cov.330
 
-# cov.331-334 `$(getppid)` and `$(random)` in STRING context. Both were cold
-# in `try_nullary_intrinsic` while `getpid` and `epochseconds` beside them
-# were hot: the existing specs reach these two only through arithmetic
-# (`$(( (getppid) > 0 ))`, `int n=$(random)`) or through rejection paths, and
-# arithmetic takes a different lowering than the `emit_int_to_str` string one.
+# cov.331-334 `$(getppid)` and `$(random)` captured to a variable. NOTE: these
+# were written to close the cold `getppid`/`random` arms of
+# `try_nullary_intrinsic`, and they do NOT reach them — measured 2026-09-21.
+# An assignment `a=$(getppid)` is int-lowered exactly like the arithmetic
+# spellings, so it lands in `int_intrinsic_i64`, not in the `emit_int_to_str`
+# string path. The hypothesis in the original comment was right about *which*
+# two lowerings exist and wrong about which one this spelling picks. The
+# spelling that actually reaches the string arm is the UNASSIGNED one —
+# `echo $(getppid)` / `"$(getppid)"` — which is cov.335-338 below.
+# They are kept because the semantics they pin (stability, positivity,
+# variation, non-negativity) are worth pinning on the int path too.
 # Assert SEMANTICS, not just "it printed digits" — nondeterminism is why these
 # went unspec'd, and the deterministic properties are what pin a real bug.
 # cov.331 getppid is STABLE within a run, and is not getpid
@@ -1573,6 +1579,36 @@ b=$(random)
 run_sash 'r=$(random)
 [[ $r != -* ]] && echo nonneg'
 [[ $rc = 0 && $out = "nonneg" && -z $err ]]; chk cov.334
+
+# cov.335-338 the SAME two intrinsics in true string context — an unassigned
+# `$(getppid)` / `$(random)`, which is the spelling that reaches the
+# `emit_int_to_str` arms of `try_nullary_intrinsic` (measured: cov.331-334
+# above reach `int_intrinsic_i64` instead). `getpid` and `epochseconds` were
+# hot here only because other specs spell them this way.
+# cov.335 the two lowerings must AGREE. `$(getppid)` through the string path
+# and through the int path are the same syscall; a divergence here would be a
+# backend bug of exactly the shape that the int/string split invites, and it
+# is deterministic despite the value being unpredictable.
+run_sash 'a=$(getppid)
+echo $(getppid)
+echo $a'
+[[ $rc = 0 && -z $err ]] && [[ $(echo "$out"|sed -n 1p) = $(echo "$out"|sed -n 2p) ]] \
+  && [[ $out =~ ^[0-9]+$'\n'[0-9]+$ ]]; chk cov.335
+# cov.336 same agreement inside an interpolation, where the capture is spliced
+# into a larger string rather than being the whole word.
+run_sash 'a=$(getppid)
+echo "p=$a"
+echo "q=$(getppid)"'
+[[ $rc = 0 && -z $err && $out =~ ^p=([0-9]+)$'\n'q=([0-9]+)$ ]] \
+  && [[ ${BASH_REMATCH[1]} = ${BASH_REMATCH[2]} ]]; chk cov.336
+# cov.337 string-path random is NON-NEGATIVE — same `& i64::MAX` guarantee as
+# cov.334, asserted on the other lowering.
+run_sash 'echo "r=$(random)"'
+[[ $rc = 0 && -z $err && $out =~ ^r=[0-9]+$ ]]; chk cov.337
+# cov.338 string-path random varies between draws (stuck-generator guard).
+run_sash 'echo $(random)
+echo $(random)'
+[[ $rc = 0 && -z $err ]] && [[ $(echo "$out"|sed -n 1p) != $(echo "$out"|sed -n 2p) ]]; chk cov.338
 
 set -e
 tally

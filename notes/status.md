@@ -1,3 +1,48 @@
+## ══ STATUS (2026-09-21) — union coverage refreshed; a spec that missed its target ══
+
+**Journal 383 (addendum).** Sweep **5863** (5850 passing + 13 skipped),
+0 failing, **0 flips vs `5a571bb`**, no retirements. Predicted 5863.
+
+Fresh `mk cov-union` baseline (spec + unit, branch-enabled):
+**functions 98.80% · lines 97.49% · branches 90.85%.** `coverage.db` rebuilt
+from `target/coverage/union.lcov`; the old one predated four spec files and
+was mis-ranking targets.
+
+Re-ranking put `try_nullary_intrinsic` near the top: the `getppid` and
+`random` arms cold, `getpid` and `epochseconds` beside them hot. Looked like
+the morning's bug; it was not one.
+
+**`cov.331-334` were written to close those exact two arms and never reached
+them.** Measured per program via one profraw per compile:
+
+| program | reaches |
+|---|---|
+| `a=$(getppid)` / `a=$(random)` | `int_intrinsic_i64` |
+| `echo $(getppid)` / `echo $(random)` | `try_nullary_intrinsic` |
+
+An **assignment** is int-lowered exactly like the arithmetic spellings. The
+string path needs the **unassigned** spelling. `getpid`/`epochseconds` were
+hot only because unrelated specs happen to spell them `echo $(…)`.
+
+Added **`cov.335-338`** with the spelling that works, then **re-measured**:
+558-561 went 0 → 2, 570-573 went 0 → 3. Confirmed, not assumed. Rewrote the
+`cov.331-334` comment to state what they actually reach; ids kept, since the
+semantics they pin are worth pinning on the int path too.
+
+`cov.335` is the one worth keeping: `$(getppid)` via the string path and via
+the int path must print the **same** number. The value is unpredictable, the
+agreement is not — an int/string split is precisely the shape that invites two
+implementations to drift.
+
+**Lesson (third confident-comment failure this week):** a green spec is no
+evidence it tested what you meant. For a coverage-motivated spec that claim is
+mechanical, so measure it.
+
+**Next:** cold-line queue on fresh data — `arith_brief` (9), `tok_to_text` (8,
+4 of them the filed dead arms), `build_expr_from_parts`, `parse_one_decl_
+assignment`, `command_is_pure`, `handle_attest_stmt`, `check_condition_type`,
+`check_scalar_assignment`.
+
 ## ══ STATUS (2026-09-21) — the DD#58 sexpr operand slot was never type-checked ══
 
 **Journal 383.** Sweep **5855** (5842 passing + 13 skipped), 0 failing,

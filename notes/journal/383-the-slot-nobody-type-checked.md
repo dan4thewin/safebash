@@ -115,3 +115,60 @@ Second time this week the shape of the fix was "one rule, two consumers"
 rather than "two rules that ought to match" — SB5084 yesterday, this today.
 When a check and its subject live in different passes, the question to ask is
 which pass owns the rule, not which pass can see the data.
+
+---
+
+## Addendum — a spec that aimed at a cold line and missed
+
+Refreshed the union coverage afterwards (spec + unit, branch-enabled):
+**functions 98.80%, lines 97.49%, branches 90.85%.**
+
+Re-ranking on fresh data put `try_nullary_intrinsic` near the top with 8 cold
+lines — the `getppid` and `random` arms — while `getpid` and `epochseconds`
+either side of them were hot. The same-shaped specs exist for all four, so
+that asymmetry looked exactly like this morning's bug.
+
+It was not a bug, and finding that out was the useful part.
+
+`coverage.sh` already carries `cov.331-334`, written in an earlier session
+**specifically to close these two arms**. Its comment states the hypothesis:
+the existing specs reach these intrinsics "only through arithmetic … and
+arithmetic takes a different lowering than the `emit_int_to_str` string one."
+Right about the two lowerings. Wrong about which one its own spelling picks.
+
+Measured, per program, by draining one profraw per compile and reading `DA:`
+records out of the lcov:
+
+| program | reaches |
+|---|---|
+| `a=$(getppid)` | `int_intrinsic_i64` |
+| `a=$(random)` | `int_intrinsic_i64` |
+| `echo $(getppid)` | `try_nullary_intrinsic` |
+| `echo $(random)` | `try_nullary_intrinsic` |
+
+An **assignment** is int-lowered just like the arithmetic spellings. The
+spelling that reaches the string path is the **unassigned** one. `getpid` and
+`epochseconds` were hot only because unrelated specs happen to spell them
+`echo $(…)`.
+
+So four specs were written to close a cold line, they pass, they assert true
+things — and they never touched the line. Nothing reported it, because a spec
+has no way to say what it was *aiming* at.
+
+The general lesson, and it is the same one as the main entry: **a green spec
+is not evidence that it tested what you meant.** For a coverage-motivated
+spec the claim is mechanical and therefore checkable, so check it. I added
+`cov.335-338` using the unassigned spelling and then re-measured: lines
+558-561 went 0 → 2 and 570-573 went 0 → 3. Confirmed, not assumed.
+
+I also rewrote the `cov.331-334` comment to say what those specs actually
+reach. They keep their ids — the semantics they pin (stability, positivity,
+variation, non-negativity) are worth pinning on the int path — but the
+comment no longer claims a path they do not take. Third time this week the
+wrong thing in the tree was a confident comment.
+
+The strongest of the new specs is `cov.335`: `$(getppid)` through the string
+path and through the int path must print the same number. The value is
+unpredictable; the *agreement* is not. An int/string split is exactly the
+shape that invites two implementations to drift, and that is a deterministic
+assertion over a nondeterministic value.
