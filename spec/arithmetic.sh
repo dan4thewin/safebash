@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup arithmetic
-plan=246
+plan=251
 echo "1..$plan" >&3
 
 set +e
@@ -1171,6 +1171,35 @@ if (( y + (x *= 2) )) { echo a }
 echo $x $y'
 [[ $rc != 0 && -z $out && $err == *SB5007* && $err == *"mutation y ? ..."* ]]; chk 31.63
 
+# 31.64-31.68 DD#116: `tok_to_text` is a total renderer. It used to end in
+# `_ => String::new()`, which deleted 35 of the 59 token kinds from the
+# collected arithmetic text before the re-lexer ever saw them, so trailing
+# garbage vanished and the expression compiled. bash reports a syntax error
+# for every one of these.
+# 31.64 a keyword after a complete expression, statement form
+run_sash 'int x=1
+(( x = 1 done ))
+echo $x'
+[[ $rc != 0 && -z $out && $err == *SB4020* ]]; chk 31.64
+# 31.65 the same, expansion form
+run_sash 'int x=$(( 1 esac ))
+echo $x'
+[[ $rc != 0 && -z $out && $err == *SB4020* ]]; chk 31.65
+# 31.66 a redirect operator is not arithmetic either
+run_sash 'int x=1
+(( x = 1 <<< ))
+echo $x'
+[[ $rc != 0 && -z $out && $err == *SB4020* ]]; chk 31.66
+# 31.67 an ANSI-C quote now reaches the re-lexer instead of vanishing
+run_sash "int x=1
+(( x = 1 \$'a' ))
+echo \$x"
+[[ $rc != 0 && -z $out && $err == *SB4020* ]]; chk 31.67
+# 31.68 the regression shield for the one token that legitimately reaches the
+# renderer as a separator: `for (( ;; ))` collects as `;;` and must stay a
+# legitimately empty expression, not a parse error.
+run_sash 'for (( ;; )); do echo hi; break; done'
+[[ $rc == 0 && $out == hi ]]; chk 31.68
+
 set -e
 tally
-

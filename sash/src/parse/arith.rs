@@ -1520,34 +1520,89 @@ fn needs_separator_space(next: &Tok, prev_text: &str) -> bool {
 }
 
 /// Convert a token back to source text for arithmetic content collection.
+///
+/// The match is deliberately exhaustive (DD#116, totality). It used to end in
+/// `_ => String::new()`, which silently *deleted* 35 of the 59 token kinds
+/// from the collected text: the re-lexer never saw them, so `(( x = 1 done ))`
+/// collapsed to `x = 1` and compiled, where bash reports a syntax error. A new
+/// `Tok` variant must be a compile error here, not another silent drop.
+///
+/// Only two renderings are empty, and both are deliberate: a comment is
+/// trivia, and `Eof` has no source text.
 fn tok_to_text(tok: &Tok) -> String {
     match tok {
-        Tok::Word(w) => w.clone(),
-        Tok::Dollar(v) => format!("${}", v),
-        Tok::DollarBrace(c) => format!("${{{}}}", c),
-        Tok::DollarParen => "$(".to_string(),
-        Tok::Eq => "=".to_string(),
-        Tok::PlusAssign => "+=".to_string(),
-        Tok::Bang => "!".to_string(),
-        Tok::Dash => "-".to_string(),
+        // Keywords. Reachable inside `(( ))` because the scanner promotes
+        // these words before the arithmetic collector runs; rendering them
+        // faithfully is what lets the re-lexer reject them.
+        Tok::If => "if".to_string(),
+        Tok::Then => "then".to_string(),
+        Tok::Else => "else".to_string(),
+        Tok::Elif => "elif".to_string(),
+        Tok::Fi => "fi".to_string(),
+        Tok::While => "while".to_string(),
+        Tok::Until => "until".to_string(),
+        Tok::Do => "do".to_string(),
+        Tok::Done => "done".to_string(),
+        Tok::For => "for".to_string(),
+        Tok::In => "in".to_string(),
+        Tok::Case => "case".to_string(),
+        Tok::Esac => "esac".to_string(),
+        Tok::Fn => "fn".to_string(),
+        Tok::Function => "function".to_string(),
+        Tok::Str => "str".to_string(),
+        Tok::Int => "int".to_string(),
+        Tok::Const => "const".to_string(),
+        Tok::Array => "array".to_string(),
+        Tok::Map => "map".to_string(),
+        Tok::Attest => "attest".to_string(),
+        Tok::End => "END".to_string(),
+        // Operators and punctuation.
         Tok::Pipe => "|".to_string(),
-        Tok::Amp => "&".to_string(),
         Tok::AndAnd => "&&".to_string(),
         Tok::OrOr => "||".to_string(),
-        Tok::Lt => "<".to_string(),
-        Tok::Gt => ">".to_string(),
-        Tok::DblGt => ">>".to_string(),
+        Tok::Amp => "&".to_string(),
         Tok::Semi => ";".to_string(),
         // DD#94: newlines are separators inside `(( ))`, so the raw
         // collector must preserve them for the arith re-lexer.
         Tok::Newline => "\n".to_string(),
-        Tok::SingleQuoted(s) => format!("'{}'", s),
-        Tok::DoubleQuoted(_) => "\"...\"".to_string(),
         Tok::LParen => "(".to_string(),
         Tok::RParen => ")".to_string(),
+        Tok::LBrace => "{".to_string(),
+        Tok::RBrace => "}".to_string(),
+        Tok::Bang => "!".to_string(),
+        Tok::Dash => "-".to_string(),
+        Tok::DblBracketOpen => "[[".to_string(),
+        Tok::DblBracketClose => "]]".to_string(),
+        // Arithmetic delimiters.
+        Tok::DollarDblParen => "$((".to_string(),
         Tok::DblParen => "((".to_string(),
         Tok::DblParenClose => "))".to_string(),
+        // Assignment.
+        Tok::Eq => "=".to_string(),
+        Tok::PlusAssign => "+=".to_string(),
+        // Redirects.
+        Tok::HereString => "<<<".to_string(),
+        Tok::DblGt => ">>".to_string(),
+        Tok::GtAmp => ">&".to_string(),
+        Tok::LtAmp => "<&".to_string(),
+        Tok::LtGt => "<>".to_string(),
+        Tok::AmpGt => "&>".to_string(),
+        Tok::Gt => ">".to_string(),
+        Tok::Lt => "<".to_string(),
+        // Terminators. `for (( ;; ))` reaches the arith parser through this
+        // arm, as a run of bare separators.
+        Tok::DblSemi => ";;".to_string(),
+        // Literals and values.
+        Tok::Word(w) => w.clone(),
+        Tok::SingleQuoted(s) => format!("'{}'", s),
+        Tok::DoubleQuoted(_) => "\"...\"".to_string(),
+        Tok::AnsiCQuoted(s) => format!("$'{}'", s),
+        // Expansions.
+        Tok::Dollar(v) => format!("${}", v),
+        Tok::DollarBrace(c) => format!("${{{}}}", c),
+        Tok::DollarParen => "$(".to_string(),
+        // Deliberately empty: trivia, and end-of-input.
         Tok::Comment(_) => String::new(),
-        _ => String::new(),
+        Tok::Eof => String::new(),
     }
 }
