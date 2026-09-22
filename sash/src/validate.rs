@@ -8529,9 +8529,13 @@ fn argv_form_diag(c: &Command, span: Span) -> Option<Diagnostic> {
 /// The index of `argv N a` must be a **bare** non-negative decimal literal
 /// that fits `i64`. `ArgvFill` carries a constant start, so a quoted (`"1"`),
 /// sigilled (`$n`) or bracketed (`[1]`) spelling names no index at all — the
-/// same rule, and the same reason, as SB5063 for the target. A variable index
-/// is not "unsupported spelling" but an unimplemented feature; it is rejected
-/// here rather than silently mislowered (notes/tasks/argv-dynamic-index.md).
+/// same rule, and the same reason, as SB5063 for the target.
+///
+/// A compile-time-constant start is the **rule**, not a gap awaiting a fix
+/// (DG, 2026-09-22): both alternatives the message names were measured to
+/// compile and run, and between them they cover what a runtime start would
+/// buy. The advice is deliberately generic — it reads correctly both for the
+/// user who merely over-quoted a literal and for the user who wanted `$n`.
 fn argv_index_diag(index: &Expr, span: Span) -> Option<Diagnostic> {
     let text = expr_literal_str(index);
     let bare_non_negative =
@@ -8543,8 +8547,10 @@ fn argv_index_diag(index: &Expr, span: Span) -> Option<Diagnostic> {
         span,
         "SB5085",
         "`argv N a`'s index must be a bare non-negative integer literal that \
-         fits a 64-bit integer — a quoted, sigilled or bracketed index names \
-         no index, and the fill would be silently discarded"
+         fits a 64-bit integer — the fill start is fixed at compile time. For \
+         a start that varies at run time, fill the whole array (`argv a`) and \
+         index it (`${a[$n]}`), or loop over `for x in $(argv)` and skip the \
+         ones you do not want"
             .to_string(),
     ))
 }

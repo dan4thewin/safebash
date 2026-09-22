@@ -1,3 +1,35 @@
+## ══ STATUS (2026-09-22) — a narrowing-by-default becomes a rule ══
+
+**Just completed.** DG ruled on the one question 389 left open. `argv $n a`
+(a runtime slice start) is **not** in the subset — a compile-time-constant
+fill start is the rule, not a gap. `notes/tasks/argv-dynamic-index.md` closes
+`wontfix`.
+
+SB5085 now states the rule *and* names the alternatives. DG's call was that
+the advice **can be generic**: I had begun splitting the message in two
+(quoted index → "drop the quotes"; sigilled → "restructure"), and had moved
+`expr_is_dynamic` from `transform/expressions.rs` to `ir.rs` to get the
+predicate into `validate`. Both edits reverted. 389's lesson was advice being
+*wrong for an input*; advice being *general across inputs* is not that bug.
+
+Both alternatives in the message were measured against the live binary first
+— the first draft did not compile, because everything `argv` fills is tainted
+and the advice omitted the required `attest`. Advice that does not compile is
+the same defect as advice that is wrong.
+
+Also: `struct Case` in `ir.rs` now says in a doc comment that it is the DD#66
+dispatch form, not bash `case`/`esac`.
+
+**Gates.** `mk test` 51/27/20. Sweep **6011**, 0 failing (predicted — no specs
+added). Three id checks clean.
+
+**Next up.** The cold-line queue, from `coverage.db` — which is now **two**
+commits stale; regenerate (`mk cov-branch` → `mk cov-db` → `mk cov-reset` →
+`mk build`) before trusting line-level data. Ranked: `tok_to_text` (18),
+`arith_op_str` (10), `joined_form_to_string` (8), `check_condition_type` (8),
+`check_scalar_assignment` (8), `emit_attest` (7), `panic_payload_message` (7),
+`emit_capture_end_c` (7), `read_arg_value` (7), `opaque_form_to_string` (7).
+
 ## ══ STATUS (2026-09-22) — a shadowed diagnostic and eight runtime ICEs ══
 
 **Just completed.** Coverage regenerated after `b4549aa` (the Sep-21 database

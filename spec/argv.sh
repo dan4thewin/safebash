@@ -333,8 +333,9 @@ run_sash 'argv 1.5 a; echo $(len a)' x y z
 run_sash 'argv 9999999999999999999999 a; echo $(len a)' x y z
 [[ $rc != 0 && -z $out && $err == *SB5085* ]]; chk av.f8
 
-# av.f9 a sigilled index is rejected too — a dynamic start is not
-# implemented (ArgvFill carries a constant), so it must not mislower
+# av.f9 a sigilled index is rejected too. DG ruled 2026-09-22 that a
+# compile-time-constant fill start is the RULE, not a gap: the message
+# names the two alternatives (whole-array index, or loop-and-skip).
 run_sash 'int n=1; argv $n a; echo "$n$(len a)"' x y z
 [[ $rc != 0 && -z $out && $err == *SB5085* ]]; chk av.f9
 

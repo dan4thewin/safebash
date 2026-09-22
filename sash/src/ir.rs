@@ -985,6 +985,12 @@ pub struct For {
     pub body: Vec<Statement>,
 }
 
+/// The **DD#66 dispatch form** `[[ value { pat) … } ]]` — *not* bash
+/// `case`/`esac`, which is not in the subset and has no parser production.
+/// The name is a holdover from when it was lowered from bash `case`; the sole
+/// producer today is `parse::parser::parse_dispatch`, and `stmt_is_dispatch`
+/// is `matches!(kind, StmtKind::Case(_))`. Do not read a surviving `case`
+/// statement into it.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Case {
     pub value: Expr,
