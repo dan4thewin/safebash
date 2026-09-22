@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup arithmetic
-plan=251
+plan=257
 echo "1..$plan" >&3
 
 set +e
@@ -1161,15 +1161,16 @@ int b=2
 (( a >= b ))
 echo $a $b'
 [[ $rc != 0 && -z $out && $err == *SB5007* && $err == *"comparison a >= b"* ]]; chk 31.62
-# 31.63 an operator with no arm of its own falls to `?`, and an embedded
-# mutation under a paren falls to `...`. Both are the catch-alls, and pinning
-# them is what makes a future arm addition a visible change rather than a
-# silent one.
+# 31.63 the operator is quoted as the author wrote it. This used to read
+# `mutation y ? ...` — `arith_brief` had arms for six of nineteen `IrArithOp`
+# variants and rendered the rest `?`, so the brief showed an operator that was
+# never in the source. An embedded mutation under a paren still falls to `...`,
+# which is honest: it says less, it does not say something else.
 run_sash 'int x=1
 int y=1
 if (( y + (x *= 2) )) { echo a }
 echo $x $y'
-[[ $rc != 0 && -z $out && $err == *SB5007* && $err == *"mutation y ? ..."* ]]; chk 31.63
+[[ $rc != 0 && -z $out && $err == *SB5007* && $err == *"mutation y + ..."* ]]; chk 31.63
 
 # 31.64-31.68 DD#116: `tok_to_text` is a total renderer. It used to end in
 # `_ => String::new()`, which deleted 35 of the 59 token kinds from the
@@ -1200,6 +1201,60 @@ echo \$x"
 # legitimately empty expression, not a parse error.
 run_sash 'for (( ;; )); do echo hi; break; done'
 [[ $rc == 0 && $out == hi ]]; chk 31.68
+
+# ---------------------------------------------------------------------------
+# 31.69-31.74 `arith_brief`'s mutation arms are LIVE, and these are what reach
+# them. Twice they were measured "provably dead" — by panic instrumentation
+# plus the full sweep plus fourteen hand-written probes — because every probe
+# put the mutation either at top level (decomposed into statements before
+# validation, so the message comes from `validate_assignment_stmt`) or inside
+# parens (wrapped in `ArithExpr::Paren`, so it falls to the `_` arm).
+#
+# The shape that reaches them is a mutation as the unparenthesised RIGHT
+# operand of a binary operator. Nobody writes it: bash binds `=` loosest and
+# rejects `1 > x = 2` as an assignment to a non-variable, while sash's parser
+# groups it as `1 > (x = 2)`. Every context still refuses the program, so the
+# precedence difference is not observable — but these arms run.
+# ---------------------------------------------------------------------------
+
+# 31.69 reaches the `Assign` arm
+run_sash 'int x=0
+if (( 1 > x = 2 )) { echo a }
+echo $x'
+[[ $rc != 0 && -z $out && $err == *SB5007* && $err == *"mutation 1 > x = ..."* ]]; chk 31.69
+
+# 31.70 reaches the `CompoundAssign` arm
+run_sash 'int x=0
+if (( 1 > x += 2 )) { echo a }
+echo $x'
+[[ $rc != 0 && -z $out && $err == *SB5007* && $err == *"mutation 1 > x += ..."* ]]; chk 31.70
+
+# 31.71 a compound operator outside the old two-arm set. This read `x ?=`
+# before the renderer was made total — `?=` is not a spelling sash has.
+run_sash 'int x=1
+if (( 1 > x *= 2 )) { echo a }
+echo $x'
+[[ $rc != 0 && -z $out && $err == *SB5007* && $err == *"mutation 1 > x *= ..."* ]]; chk 31.71
+
+# 31.72 reaches the `PostIncDec` arm, the one that was always live — kept
+# beside its siblings because the asymmetry is the surprising part.
+run_sash 'int x=0
+if (( x++ > 0 )) { echo a }
+echo $x'
+[[ $rc != 0 && -z $out && $err == *SB5007* && $err == *"mutation x++ > 0"* ]]; chk 31.72
+
+# 31.73 the $(( )) site rendered BOTH kinds of mutation as `x = ...`, so a
+# compound assignment was reported with an operator the author never wrote.
+run_sash 'int x=1
+echo $(( x *= 2 ))
+echo $x'
+[[ $rc != 0 && -z $out && $err == *SB4020* && $err == *"mutation x *= ..."* ]]; chk 31.73
+
+# 31.74 ... and a shifted one, which has no dedicated arm anywhere
+run_sash 'int x=1
+echo $(( x <<= 1 ))
+echo $x'
+[[ $rc != 0 && -z $out && $err == *SB4020* && $err == *"mutation x <<= ..."* ]]; chk 31.74
 
 set -e
 tally

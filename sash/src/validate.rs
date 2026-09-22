@@ -1047,9 +1047,9 @@ fn validate_assignment_stmt(
             span,
             "SB5007",
             format!(
-                "mutation {} = ... not allowed in condition (( )) expression context — \
+                "mutation {} not allowed in condition (( )) expression context — \
                  use (( )) statement instead",
-                a.name
+                crate::ir::assign_brief(&a.name)
             ),
         ));
     } else if in_condition && !is_capture_condition_rhs(&a.value) {
@@ -2269,20 +2269,31 @@ fn arith_mutation_under_cond(a: &ArithExpr) -> bool {
     }
 }
 
+/// Quote an arithmetic expression back to the user inside an SB5007 message.
+///
+/// **These mutation arms are live**, which is not obvious and has been
+/// mis-measured twice. A *top-level* mutation (`if (( x = 5 ))`) is decomposed
+/// into statements before validation, so it never arrives here — its message
+/// comes from `validate_assignment_stmt`. A *parenthesised* one arrives
+/// wrapped in `ArithExpr::Paren` and falls to the `_` arm as `...`. What
+/// reaches these arms is a mutation embedded as the **unparenthesised right
+/// operand** of a binary operator:
+///
+/// ```text
+/// if (( 1 > x = 2 ))    → Assign           if (( x++ > 0 ))  → PostIncDec
+/// if (( 1 > x += 2 ))   → CompoundAssign
+/// ```
+///
+/// Nobody writes those, because bash binds `=` loosest and rejects them as an
+/// assignment to a non-variable; sash's parser groups them as `1 > (x = 2)`
+/// instead. Every context still refuses the program (SB5007/SB4020/SB4041), so
+/// the precedence difference is not observable — but the arms run, and specs
+/// `31.69`-`31.71` keep them honest.
 fn arith_brief(expr: &ArithExpr) -> String {
     match expr {
-        ArithExpr::Assign { var, .. } => format!("{} = ...", var),
-        ArithExpr::CompoundAssign { var, op, .. } => {
-            let op_s = match op {
-                IrArithOp::Add => "+=",
-                IrArithOp::Sub => "-=",
-                _ => "?=",
-            };
-            format!("{} {}", var, op_s)
-        }
-        ArithExpr::PostIncDec { var, inc } => {
-            format!("{}{}", var, if *inc { "++" } else { "--" })
-        }
+        ArithExpr::Assign { var, .. } => crate::ir::assign_brief(var),
+        ArithExpr::CompoundAssign { var, op, .. } => crate::ir::compound_assign_brief(var, *op),
+        ArithExpr::PostIncDec { var, inc } => crate::ir::incdec_brief(var, *inc),
         // No `PreIncDec` arm: this only recurses through `BinOp` operands, and
         // `reject_prefix_incdec` recurses there too — so a prefix form is an
         // SB4020 at parse time and never reaches a diagnostic message here.
@@ -2291,15 +2302,7 @@ fn arith_brief(expr: &ArithExpr) -> String {
             format!(
                 "{} {} {}",
                 arith_brief(left),
-                match op {
-                    IrArithOp::Gt => ">",
-                    IrArithOp::Lt => "<",
-                    IrArithOp::Eq => "==",
-                    IrArithOp::Ne => "!=",
-                    IrArithOp::Ge => ">=",
-                    IrArithOp::Le => "<=",
-                    _ => "?",
-                },
+                crate::ir::arith_op_str(*op),
                 arith_brief(right)
             )
         }

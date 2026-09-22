@@ -1,76 +1,97 @@
 ---
-title: "`arith_brief` has two dead arms, and \"x = ...\" is rendered in three places"
-status: next
+title: "`arith_brief`'s \"dead\" arms are live, and \"x = ...\" was rendered in four places"
+status: done
 priority: P3
 kind: cleanup
 depends: []
 gates:
   - "the `Assign` and `CompoundAssign` arms of `arith_brief` are removed, or a comment records why they are kept"
-  - "the three independent renderings of the `x = ...` brief are reconciled to one, or each is documented as deliberate"
-  - "spec suite unchanged (the arms are unreachable, so no behaviour moves)"
+  - "the independent renderings of the `x = ...` brief are reconciled to one, or each is documented as deliberate"
+  - "the arms are reached by specs, so a third mis-measurement costs a red sweep"
 ---
 
-# `arith_brief`: two unreachable arms
+# `arith_brief`: the arms are **live**
 
-`sash/src/validate.rs::arith_brief` (2272-2310) renders the description
-embedded in SB5007 messages. Two of its arms cannot be reached:
+**This filing was wrong.** It claimed the `Assign` (validate.rs:2274) and
+`CompoundAssign` (2275-2282) arms were unreachable, and said so with the
+strongest evidence the project has: cold in union coverage, then *proved* by
+replacing each arm body with a `panic!` and running the full sweep plus
+fourteen hand-written probes aimed directly at them.
 
-- `ArithExpr::Assign` (2274)
-- `ArithExpr::CompoundAssign` (2275-2282)
+They are reachable. Measured 2026-09-21 with the same instrument:
 
-Both were cold in the union coverage (spec + unit, 5863 tests). Cold is only a
-hint, so each was **proved** by replacing the arm body with a `panic!` and
-running the full sweep plus targeted probes: **zero hits** in either case, from
-5863 specs and 14 hand-written programs aimed directly at them
-(`if (( x = 5 ))`, `while`/`until`/`for` headers, `if (( (x += 1) ))`,
-`if (( y + (x *= 2) ))`, a comma condition, a ternary, `(( x <<= -1 ))`).
+```
+if (( 1 > x = 2 ))     → Assign arm
+if (( 1 > x += 2 ))    → CompoundAssign arm
+if (( x++ > 0 ))       → PostIncDec arm   (already known live)
+```
 
-## Why they are unreachable
+## Why fourteen targeted probes all missed
 
-`arith_brief` has three callers, and none can deliver either shape:
+Every probe in the original set put the mutation in one of two positions, and
+both of them route around these arms:
 
-- `validate_arith_as_statement` fires only for `ArithKind::Comparison`; an
-  assignment classifies as `Mutation`.
-- `validate_arith_comma_in_condition` fires only for a non-final part that is
-  **not** a mutation; both shapes are mutations.
-- `validate_arith_in_condition` is the one that could — but a mutation
-  condition is decomposed first, and the message is emitted by
-  `validate_assignment_stmt` (validate.rs:1050) instead.
+- **Top level** (`if (( x = 5 ))`, `while`/`until`/`for` headers) — classifies
+  as `ArithKind::Mutation`, so `lower_arith_command` decomposes it into
+  statements *before* validation. The message comes from
+  `validate_assignment_stmt` (validate.rs:1050).
+- **Parenthesised** (`if (( (x += 1) ))`, `if (( y + (x *= 2) ))`) — arrives
+  wrapped in `ArithExpr::Paren`, for which `arith_brief` has no arm, so it
+  falls to `_` and reads `...`.
 
-`CompoundAssign` additionally never survives parse: `lower_arith_command`
-(`parse/arith.rs:295`) routes through `lower_arith_mutation_structured`
-(1314-1319), which rewrites `x op= v` into `Assign { value: BinOp }` via
-`binop_on_var`. Embedded forms such as `(x += 1)` arrive wrapped in a `Paren`
-and render through the `_` catch-all as `...`.
+The reaching shape is a mutation as the **unparenthesised right operand** of a
+binary operator. Nobody writes it, which is why it was never probed: bash binds
+`=` loosest and refuses `1 > x = 2` with *"attempted assignment to
+non-variable"*, whereas sash's parser groups it as `1 > (x = 2)`.
 
-`PostIncDec` is **not** in the same position — `if (( x++ ))` does reach
-`arith_brief`, and that arm is hot. The asymmetry between `x++` and `x = 5`
-here is the surprising part and worth preserving in whatever comment replaces
-the arms.
+That precedence difference is **not observable**. All eleven contexts probed —
+condition, bare statement, both comma positions, all three `for`-header slots,
+`$(( ))`, a ternary arm, an array subscript — reject the program
+(SB5007/SB4020/SB4041). sash refuses everything bash refuses, by a different
+route. No bug, so nothing to fix there.
 
-## The larger finding: three renderings of one brief
+## The methodology finding
 
-`"{} = ..."` is produced independently in three places:
+Panic instrumentation plus a green full sweep proves **"not reached by these
+inputs"**. It does not prove "unreachable". The sweep is 5900-odd programs
+written by people who write ordinary sash; it says nothing about a grammar
+corner nobody would author. The filing wrote "proved", and the second reader
+(me) believed it and nearly deleted live code on that authority.
 
-| site | form |
-|---|---|
-| `sash/src/validate.rs:2274` | `arith_brief`, `Assign` arm — **dead** |
-| `sash/src/parse/arith.rs:187` | `brief_arith`, `Assign` arm |
-| `sash/src/validate.rs:1050` | hard-coded inside the `format!` of `validate_assignment_stmt` |
+Where a reachability claim actually matters, the honest form is *"not reached
+by the suite plus these N probes"*, with the probe set enumerated — which this
+filing did do, and which is exactly what let the gap be spotted: every listed
+probe shared one shape.
 
-This is why the dead arm was not obvious: the message a user sees for
-`if (( x = 5 ))` is character-identical to the one the dead arm would have
-produced. Reading the output tells you nothing about which site produced it —
-it took instrumentation to tell them apart.
+## What was done instead of deleting
 
-That duplication is the part worth fixing, more than the seven dead lines. Two
-of the three are live, so a change to the wording of one silently desynchronises
-the others.
+1. **The arms stay**, with a doc comment on `arith_brief` recording the
+   reaching shape and why top-level and parenthesised forms do not arrive.
+2. **Specs 31.69-31.72** reach `Assign`, `CompoundAssign`, a non-`Add`/`Sub`
+   compound operator, and `PostIncDec`, pinning the brief text in each case.
+   A third mis-measurement now costs a red sweep.
+3. **The four renderings are one** (DD#116). `crate::ir::assign_brief(var)` is
+   the single source for `x = ...`; the four sites that built it independently
+   were `validate.rs:2274`, `validate.rs:1050`, `parse/arith.rs:188` and
+   `parse/arith.rs:84`.
+4. **`arith_brief` is total over `IrArithOp`** via the new
+   `crate::ir::arith_op_str`. DG's call (option A). It had arms for six of
+   nineteen binary operators and two of nineteen compound ones, rendering the
+   rest `?` / `?=` — so `(( y + (x *= 2) ))` reported `y ? ...`, quoting an
+   operator the author never wrote. Spec 31.63 had *pinned* that `?`, with a
+   comment noting the pin existed so a future arm addition would be visible;
+   it is rewritten to pin the real operator.
+5. **`$(( x *= 2 ))` reported `x = ...`** — the expansion site rendered both
+   mutation kinds through one `Assign`-shaped message. Now
+   `compound_assign_brief`. Specs 31.73-31.74.
+
+`emit_ir::arith_op` is **not** a rival of `arith_op_str`: it renders Janet
+keywords (`:add`) for the DD#104 IR seam, a different output language.
 
 ## Note
 
-Filed from journal 383. Sibling of `tok-to-text-dead-arms` — same class (arms
-kept for shapes an earlier pass has already eliminated), found the same way.
-Worth deciding the two together as a convention rather than case by case: DG's
-call whether provably-dead match arms come out or stay as defensive
-documentation.
+Filed from journal 383, corrected in journal 386. Sibling of
+`tok-to-text-dead-arms`, which was the same class and went the other way —
+there the `_` arm really was wrong, and making the renderer total fixed a bug
+in what the compiler *accepted*. Here totality only improves message text; the
+verdict was already correct.

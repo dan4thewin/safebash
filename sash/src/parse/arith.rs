@@ -77,23 +77,37 @@ pub fn parse_arith_expansion(scanner: &mut Scanner, span: Span) -> Result<Expr, 
     let expr = parse_arith_str(&content, span)?;
     // SB5007: reject mutations inside $(( )). The prefix form is already gone
     // — `parse_arith_str` rejects it for every caller.
-    if let crate::ir::ArithExpr::Assign { var, .. }
-    | crate::ir::ArithExpr::CompoundAssign { var, .. } = &expr
-    {
-        return Err(arith_error(span, format!(
-            "mutation {} = ... not allowed in $(( )) expression context — use (( )) statement instead", var
-        )));
-    }
-    if let crate::ir::ArithExpr::PostIncDec { var, inc } = &expr {
-        let op = if *inc { "++" } else { "--" };
-        return Err(arith_error(span, format!(
-            "mutation {}{} not allowed in $(( )) expression context — use (( )) statement instead", var, op
-        )));
+    if let Some(brief) = expansion_mutation_brief(&expr) {
+        return Err(arith_error(
+            span,
+            format!(
+                "mutation {brief} not allowed in $(( )) expression context — \
+                 use (( )) statement instead"
+            ),
+        ));
     }
     Ok(Expr {
         kind: ExprKind::Arithmetic(Box::new(expr)),
         span,
     })
+}
+
+/// How a top-level `$(( … ))` mutation is quoted back, or `None` when the
+/// expression is not a mutation.
+///
+/// Each kind is spelled by its own operator. `Assign` and `CompoundAssign`
+/// were once matched in a single pattern that printed `x = ...` for both, so
+/// `$(( x *= 2 ))` was reported with an operator the author never wrote.
+fn expansion_mutation_brief(expr: &crate::ir::ArithExpr) -> Option<String> {
+    use crate::ir::ArithExpr;
+    match expr {
+        ArithExpr::Assign { var, .. } => Some(crate::ir::assign_brief(var)),
+        ArithExpr::CompoundAssign { var, op, .. } => {
+            Some(crate::ir::compound_assign_brief(var, *op))
+        }
+        ArithExpr::PostIncDec { var, inc } => Some(crate::ir::incdec_brief(var, *inc)),
+        _ => None,
+    }
 }
 
 /// Parse an arithmetic command: (( expr )) as a statement.
@@ -183,9 +197,9 @@ fn reject_nested_mutation(
 fn brief_arith(expr: &crate::ir::ArithExpr) -> String {
     use crate::ir::ArithExpr;
     match expr {
-        ArithExpr::PostIncDec { var, inc } => format!("{}{}", var, if *inc { "++" } else { "--" }),
+        ArithExpr::PostIncDec { var, inc } => crate::ir::incdec_brief(var, *inc),
         ArithExpr::PreIncDec { .. } => unreachable!("{}", crate::ir::PREFIX_INCDEC_INVARIANT),
-        ArithExpr::Assign { var, .. } => format!("{} = ...", var),
+        ArithExpr::Assign { var, .. } => crate::ir::assign_brief(var),
         _ => "...".to_string(),
     }
 }

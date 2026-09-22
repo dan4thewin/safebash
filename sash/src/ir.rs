@@ -1312,6 +1312,65 @@ pub enum IrArithOp {
     BitXor,
 }
 
+/// The **source spelling** of an arithmetic operator — `Add` → `"+"`.
+///
+/// Total over `IrArithOp` on purpose. The renderers that quote an expression
+/// back to the user used to cover a handful of operators and fall to `"?"`
+/// for the rest, so `(( y + (x *= 2) ))` was reported as `y ? ...` — an
+/// operator the author never wrote. A brief is read as a quotation; showing
+/// a different operator than the source is worse than showing less.
+///
+/// `emit_ir::arith_op` is **not** a rival (DD#116): it renders Janet keywords
+/// (`:add`) for the DD#104 IR seam, which is a different output language.
+pub fn arith_op_str(op: IrArithOp) -> &'static str {
+    match op {
+        IrArithOp::Add => "+",
+        IrArithOp::Sub => "-",
+        IrArithOp::Mul => "*",
+        IrArithOp::Div => "/",
+        IrArithOp::Mod => "%",
+        IrArithOp::Pow => "**",
+        IrArithOp::Eq => "==",
+        IrArithOp::Ne => "!=",
+        IrArithOp::Lt => "<",
+        IrArithOp::Le => "<=",
+        IrArithOp::Gt => ">",
+        IrArithOp::Ge => ">=",
+        IrArithOp::And => "&&",
+        IrArithOp::Or => "||",
+        IrArithOp::Shl => "<<",
+        IrArithOp::Shr => ">>",
+        IrArithOp::BitAnd => "&",
+        IrArithOp::BitOr => "|",
+        IrArithOp::BitXor => "^",
+    }
+}
+
+/// How an assignment is quoted in a diagnostic: `x = ...`.
+///
+/// The RHS is deliberately elided — the brief names the *shape*, not the
+/// value. This is the **only** place that string is built. It was previously
+/// written out at four independent sites, which is why `if (( x = 5 ))` and
+/// the arm that looked like it produced that message were indistinguishable
+/// from the output alone; telling them apart took instrumentation.
+pub fn assign_brief(var: &str) -> String {
+    format!("{var} = ...")
+}
+
+/// How a compound assignment is quoted in a diagnostic: `x *= ...`.
+///
+/// Derived from [`arith_op_str`], so a new operator cannot be spelled `?=`
+/// here by omission. (Comparison variants cannot reach this — `x === ...`
+/// is not a thing a parser can build — but the mapping is total anyway.)
+pub fn compound_assign_brief(var: &str, op: IrArithOp) -> String {
+    format!("{var} {}= ...", arith_op_str(op))
+}
+
+/// How a post-increment is quoted in a diagnostic: `x++`.
+pub fn incdec_brief(var: &str, inc: bool) -> String {
+    format!("{var}{}", if inc { "++" } else { "--" })
+}
+
 /// Unary arithmetic operators.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum IrUnaryArithOp {
