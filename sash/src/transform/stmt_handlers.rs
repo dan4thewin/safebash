@@ -59,12 +59,12 @@ fn try_builtin(
     block: &mut BlockId,
 ) -> Option<BlockId> {
     match kind {
-        BuiltinCmd::Attest => Some(handle_attest_stmt(name, c, ssa, state, *block)),
+        BuiltinCmd::Attest => Some(handle_attest_stmt(c, ssa, state, *block)),
         BuiltinCmd::Test => try_test_arg_capture(c, ssa, state, *block),
         BuiltinCmd::Break => Some(handle_break_stmt(c, state, ssa, *block)),
         BuiltinCmd::Continue => Some(handle_continue_stmt(c, state, ssa, *block)),
         BuiltinCmd::Return => Some(handle_return_stmt(c, ssa, state, block)),
-        BuiltinCmd::Argv => try_handle_argv(c, ssa, state, *block),
+        BuiltinCmd::Argv => Some(handle_argv(c, ssa, state, *block)),
         BuiltinCmd::Signal => Some(super::cmd_handlers::handle_signal(
             name, c, stmt, ssa, state, *block,
         )),
@@ -244,14 +244,22 @@ pub(super) fn push_attest_convert_bind(
 }
 
 fn handle_attest_stmt(
-    name: &str,
     c: &Command,
     ssa: &mut SsaProgram,
     state: &mut VersionState,
-    mut block: BlockId,
+    block: BlockId,
 ) -> BlockId {
     // DD#24 scalar / DD#61 array & map attest forms.
-    if let Some((form, pred)) = classify_attest(&c.args) {
+    //
+    // `attest` is a reserved word (`Tok::Attest`), so every occurrence in
+    // statement position goes through `parse_attest`, which fixes the shape
+    // before lowering — a malformed one is SB4014 at parse time, and quoting
+    // the name (`"attest" x`) makes it an ordinary command instead. There is
+    // no path by which an unclassifiable `attest` Command reaches here.
+    let Some((form, pred)) = classify_attest(&c.args) else {
+        unreachable!("`attest` shape is fixed by parse_attest before lowering (SB4014)")
+    };
+    {
         // DD#93 Part D: `attest SOURCE (( TARGET = SOURCE ))`.
         if let (AttestForm::Scalar { var }, AttestPredicate::ArithConvert { target, value }) =
             (&form, &pred)
@@ -262,8 +270,16 @@ fn handle_attest_stmt(
             push_attest_arith_convert(ssa, state, block, &var, &target, &value, span);
             return block;
         }
-        let AttestPredicate::Test(test) = pred else {
-            return block;
+        // Total over `AttestPredicate` (DD#116 property 2): a new predicate
+        // variant is a compile error here rather than a silently dropped
+        // `attest`. `ArithConvert` is unreachable in this position because
+        // `classify_attest_convert` only ever pairs it with a single-name
+        // lead, which the arm above has already consumed.
+        let test = match pred {
+            AttestPredicate::Test(test) => test,
+            AttestPredicate::ArithConvert { .. } => {
+                unreachable!("ArithConvert is only produced with AttestForm::Scalar")
+            }
         };
         let test = test.clone();
         match form {
@@ -298,15 +314,8 @@ fn handle_attest_stmt(
                 push_attest_all(ssa, state, block, map, binders, test, true);
             }
         }
-        return block;
+        block
     }
-    // Fallback: no TestExpr — emit as regular command (caught by taint checker)
-    let raw: Vec<SsaValue> = c.args.iter().map(|a| expr_to_value(a, state)).collect();
-    let args = lift_int_func_args(raw, ssa, state, &mut block);
-    ssa.block_mut(block)
-        .insts
-        .push(SsaInst::command(name.to_string(), args, vec![], true));
-    block
 }
 
 /// DD#61: emit a statement-form attest-all — `AttestAll` (exits on a failing
@@ -445,18 +454,35 @@ fn try_int_tail_call(
 /// slice start (`argv a` = whole argv, `argv N a` = argv[N:]). Emits an
 /// `ArgvFill` instruction (auto-declares + taints the array, like `read`).
 /// Returns `None` for any other shape.
-fn try_handle_argv(
+/// `argv [N] a` (DD#60).
+///
+/// `validate::check_argv_form` (SB4045/SB5085) has already fixed the shape:
+/// one or two arguments, and a bare non-negative integer literal index that
+/// fits `i64`. Lowering therefore cannot fail, and says so.
+///
+/// This used to return `Option` and yield `None` for any shape it could not
+/// lower. `None` in `try_builtin` means "not a builtin", so the statement
+/// became an ordinary command named `argv`: it compiled clean and the binary
+/// died with `sash: bug: bare command passed to sash_exec`. Eight spellings
+/// reached that, `argv "1" a` among them.
+fn handle_argv(
     c: &Command,
     ssa: &mut SsaProgram,
     state: &mut VersionState,
     block: BlockId,
-) -> Option<BlockId> {
+) -> BlockId {
     let args: Vec<String> = c.args.iter().map(expr_to_string).collect();
-    let array = super::expressions::resolve_args_name(args.last()?, state);
+    let Some(target) = args.last() else {
+        unreachable!("SB4045 rejects a zero-argument `argv`")
+    };
+    let array = super::expressions::resolve_args_name(target, state);
     let start = match args.len() {
         1 => 0,
-        2 => args[0].parse::<i64>().ok().filter(|n| *n >= 0)?,
-        _ => return None,
+        2 => match args[0].parse::<i64>() {
+            Ok(n) => n,
+            Err(_) => unreachable!("SB5085 rejects a non-integer `argv` index"),
+        },
+        _ => unreachable!("SB4045 rejects `argv` with more than two arguments"),
     };
     // Auto-declare (DG 2026-07-08): if `a` isn't already an array, create
     // the versioned slot the same way `array a=()` does, so the fill and later
@@ -465,7 +491,7 @@ fn try_handle_argv(
     ssa.block_mut(block)
         .insts
         .push(SsaInst::ArgvFill { array, start });
-    Some(block)
+    block
 }
 
 /// Auto-declare a bulk-read target array (mirrors argv, DG 2026-07-08): if

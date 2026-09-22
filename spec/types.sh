@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup types
-plan=265
+plan=268
 echo "1..$plan" >&3
 
 set +e
@@ -1377,6 +1377,25 @@ run_sash 'array a=(x); a+=(y); echo "${a[1]}"'
 [[ $rc = 0 && $out = "y" && -z $err ]]; chk decl.19
 run_sash 'int n=1; n+=2; echo "$n"'
 [[ $rc = 0 && $out = "3" && -z $err ]]; chk decl.20
+
+# ── SB4064 must not shadow SB5025 (DD#117 follow-up) ─────────────────
+# `array a=$(argv …)` is a scalar into a collection, so DD#117's SB4064
+# matched it — and SB4064 runs in an earlier phase that exits before
+# SB5025's, which made the better diagnostic unreachable. SB4064's own
+# advice ("write `a=(…)`") is wrong here: `array a=($(argv 1))` is
+# rejected in turn. SB4064 defers to SB5025 for this one shape.
+
+# decl.21 an argv splat in an array declaration keeps SB5025's advice
+run_sash 'array a=$(argv 1); echo "${a[0]}"' x y z
+[[ $rc != 0 && -z $out && $err == *SB5025* ]]; chk decl.21
+
+# decl.22 likewise for a map declaration
+run_sash 'map m=$(argv 1); echo "${m[k]}"' x y z
+[[ $rc != 0 && -z $out && $err == *SB5025* ]]; chk decl.22
+
+# decl.23 control: a NON-argv command substitution still gets SB4064
+run_sash 'array a=$(echo x); echo "${a[0]}"' x y z
+[[ $rc != 0 && -z $out && $err == *SB4064* ]]; chk decl.23
 
 set -e
 tally

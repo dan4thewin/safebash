@@ -6,7 +6,7 @@
 set -eu
 . common.sh
 setup argv
-plan=57
+plan=67
 echo "1..$plan" >&3
 
 set +e
@@ -289,6 +289,59 @@ run_sash 'str t=a; array a=(old); argv 1 $t; echo "$(len a)$t"' x y z
 # av.rej6 control: the bare target still binds, taints, and needs an attest
 run_sash 'array a=(old); argv 1 a; attest x in a [[ -n $x ]]; echo $(len a)' x y z
 [[ $rc = 0 && $out = "3" && -z $err ]]; chk av.rej6
+
+# ── The FORM is checked at compile time (SB4045 / SB5085) ────────────
+# av.rej4/5 fixed the quoted *target*. The index and the arity had no
+# check at all: `try_handle_argv` returned None for any shape it could
+# not lower, and None in `try_builtin` means "not a builtin", so the
+# statement became an ordinary command named `argv`. It compiled clean
+# and the binary died with `sash: bug: bare command passed to
+# sash_exec`. Eight spellings reached that. The index is read with
+# `expr_to_string`, a *display* renderer that keeps quotes, so `"1"`
+# never parsed as 1.
+
+# av.f1 a zero-argument `argv` has no target (was: runtime ICE)
+run_sash 'argv; echo hi' x y z
+[[ $rc != 0 && -z $out && $err == *SB4045* ]]; chk av.f1
+
+# av.f2 three arguments is neither `a` nor `N a` (was: runtime ICE)
+run_sash 'argv 1 2 a; echo $(len a)' x y z
+[[ $rc != 0 && -z $out && $err == *SB4045* ]]; chk av.f2
+
+# av.f3 the brackets in the docs mean "optional", not literal — taking
+# SB5025's own advice verbatim used to produce a binary that ICEd
+run_sash 'argv [1] a; echo $(len a)' x y z
+[[ $rc != 0 && -z $out && $err == *SB5085* ]]; chk av.f3
+
+# av.f4 a double-quoted index names no index (was: runtime ICE)
+run_sash 'argv "1" a; echo $(len a)' x y z
+[[ $rc != 0 && -z $out && $err == *SB5085* ]]; chk av.f4
+
+# av.f5 likewise single-quoted
+run_sash "argv '1' a; echo \$(len a)" x y z
+[[ $rc != 0 && -z $out && $err == *SB5085* ]]; chk av.f5
+
+# av.f6 a negative index is rejected, not clamped (was: runtime ICE)
+run_sash 'argv -1 a; echo $(len a)' x y z
+[[ $rc != 0 && -z $out && $err == *SB5085* ]]; chk av.f6
+
+# av.f7 a non-integer index (was: runtime ICE)
+run_sash 'argv 1.5 a; echo $(len a)' x y z
+[[ $rc != 0 && -z $out && $err == *SB5085* ]]; chk av.f7
+
+# av.f8 an index too large for i64 is rejected, not wrapped
+run_sash 'argv 9999999999999999999999 a; echo $(len a)' x y z
+[[ $rc != 0 && -z $out && $err == *SB5085* ]]; chk av.f8
+
+# av.f9 a sigilled index is rejected too — a dynamic start is not
+# implemented (ArgvFill carries a constant), so it must not mislower
+run_sash 'int n=1; argv $n a; echo "$n$(len a)"' x y z
+[[ $rc != 0 && -z $out && $err == *SB5085* ]]; chk av.f9
+
+# av.f10 control: index 0 still lowers, and is the same as bare `argv a`
+# (argv[0] included) — `argv 1 a` is the one that drops the program name
+run_sash 'argv 0 a; echo $(len a)' x y z
+[[ $rc = 0 && $out = "4" && -z $err ]]; chk av.f10
 
 set -e
 tally

@@ -1644,6 +1644,15 @@ fn init_shape(value: &Expr) -> InitShape {
 /// `Some(diag)` when the initializer's shape contradicts the declared kind.
 fn decl_shape_diag(a: &DeclAssignment, is_collection: bool) -> Option<Diagnostic> {
     let value = a.value.as_ref()?;
+    // `array a=$(argv …)` is a scalar into a collection, but SB5025 says
+    // something SB4064 cannot: use the out-param form `argv N a`. SB4064's
+    // own advice — "write `a=(…)`" — is actively wrong there, because
+    // `array a=($(argv 1))` is rejected in turn (SB5021/SB5025). SB4064 runs
+    // in an earlier phase that exits before SB5025's, so deferring is what
+    // keeps the better diagnostic reachable at all.
+    if is_collection && is_argv_splat_expr(value) {
+        return None;
+    }
     match (is_collection, init_shape(value)) {
         (true, InitShape::Scalar) => Some(scalar_into_collection_diag(&a.name, value)),
         (false, InitShape::Collection) => Some(collection_into_scalar_diag(&a.name, value)),
@@ -8459,6 +8468,84 @@ fn retired_bulk_read_diag(name: &str, span: Span) -> Option<Diagnostic> {
              NUL-separated fields with `tr '\\n' '\\0' < f | read ARR`; \
              for a map, pair the array with `map m = @{{ARR:DISP}}`."
         ),
+    ))
+}
+
+// ── SB4045/SB5085: the `argv [N] a` out-param form (DD#60) ───────────
+//
+// `argv` was the one fill builtin with no shape check. Its lowering
+// (`transform::stmt_handlers::handle_argv`) returned `None` for any shape it
+// could not lower, and `None` there means "not a builtin" — so the statement
+// became an ordinary command named `argv`, compiled clean, and died at
+// runtime with `sash: bug: bare command passed to sash_exec`. Eight spellings
+// reached it, including `argv "1" a`: the index is read with `expr_to_string`,
+// a *display* renderer that keeps the quotes, so `"1"` never parses as 1.
+//
+// The target is `flag_fill_target`'s (SB5063); this covers arity and index.
+
+/// SB4045/SB5085: every `argv` statement has a lowerable shape.
+pub fn check_argv_form(program: &Program) -> Vec<Diagnostic> {
+    let mut diags = Vec::new();
+    for block in program_blocks(program) {
+        check_argv_form_in(block, &mut diags);
+    }
+    diags
+}
+
+fn check_argv_form_in(stmts: &[Statement], diags: &mut Vec<Diagnostic>) {
+    for stmt in stmts {
+        check_argv_form_stmt(stmt, diags);
+    }
+}
+
+fn check_argv_form_stmt(stmt: &Statement, diags: &mut Vec<Diagnostic>) {
+    if let StmtKind::Command(c) = &stmt.kind {
+        diags.extend(argv_form_diag(c, stmt.span));
+    }
+    for body in stmt.child_bodies() {
+        check_argv_form_in(body, diags);
+    }
+}
+
+/// The complaint for one `argv` command, or `None` if its shape is lowerable.
+fn argv_form_diag(c: &Command, span: Span) -> Option<Diagnostic> {
+    if expr_literal_str(&c.name) != "argv" {
+        return None;
+    }
+    match c.args.len() {
+        1 => None,
+        2 => argv_index_diag(&c.args[0], span),
+        n => Some(Diagnostic::error_span(
+            span,
+            "SB4045",
+            format!(
+                "`argv` takes `a` (every argument) or `N a` (arguments from \
+                 N) — got {n} argument(s)"
+            ),
+        )),
+    }
+}
+
+/// The index of `argv N a` must be a **bare** non-negative decimal literal
+/// that fits `i64`. `ArgvFill` carries a constant start, so a quoted (`"1"`),
+/// sigilled (`$n`) or bracketed (`[1]`) spelling names no index at all — the
+/// same rule, and the same reason, as SB5063 for the target. A variable index
+/// is not "unsupported spelling" but an unimplemented feature; it is rejected
+/// here rather than silently mislowered (notes/tasks/argv-dynamic-index.md).
+fn argv_index_diag(index: &Expr, span: Span) -> Option<Diagnostic> {
+    let text = expr_literal_str(index);
+    let bare_non_negative =
+        !text.is_empty() && text.bytes().all(|b| b.is_ascii_digit()) && text.parse::<i64>().is_ok();
+    if bare_non_negative {
+        return None;
+    }
+    Some(Diagnostic::error_span(
+        span,
+        "SB5085",
+        "`argv N a`'s index must be a bare non-negative integer literal that \
+         fits a 64-bit integer — a quoted, sigilled or bracketed index names \
+         no index, and the fill would be silently discarded"
+            .to_string(),
     ))
 }
 
