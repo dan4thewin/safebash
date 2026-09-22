@@ -816,7 +816,7 @@ fn declaration_axes(scanner: &mut Scanner, keyword: &str) -> (DeclKeyword, VarTy
 fn parse_declaration_assignments(
     scanner: &mut Scanner,
     span: Span,
-) -> Result<Vec<Assignment>, Diagnostic> {
+) -> Result<Vec<DeclAssignment>, Diagnostic> {
     let mut assignments = Vec::new();
 
     loop {
@@ -857,10 +857,18 @@ fn parse_declaration_assignments(
     Ok(assignments)
 }
 
-/// Parse one `name`, `name=value`, `name=(array)`, or `name+=value` within a
-/// declaration list. A scalar value uses `parse_assignment_value` (DD#71
-/// value-word absorb); `=(…)` stays an array literal.
-fn parse_one_decl_assignment(scanner: &mut Scanner, span: Span) -> Result<Assignment, Diagnostic> {
+/// Parse one `name`, `name=value`, or `name=(array)` within a declaration
+/// list. A scalar value uses `parse_assignment_value` (DD#71 value-word
+/// absorb); `=(…)` stays an array literal.
+///
+/// `name+=value` is rejected (SB4065): a declaration creates a binding, so
+/// there is nothing to append to. Before 2026-09-22 it parsed, and for a
+/// collection it fed a *scalar* into an array slot — `array a+=(x)` became
+/// the string `"(x)"` and segfaulted on the first read.
+fn parse_one_decl_assignment(
+    scanner: &mut Scanner,
+    span: Span,
+) -> Result<DeclAssignment, Diagnostic> {
     let name = expect_word(scanner, span, "expected variable name in declaration")?;
 
     if matches!(scanner.peek().token, Tok::Eq) {
@@ -868,43 +876,31 @@ fn parse_one_decl_assignment(scanner: &mut Scanner, span: Span) -> Result<Assign
         if matches!(scanner.peek().token, Tok::LParen) {
             scanner.next();
             let arr = parse_array_literal(scanner, span)?;
-            return Ok(Assignment {
+            return Ok(DeclAssignment {
                 name,
-                index: None,
-                op: AssignOp::Set,
-                value: arr,
+                value: Some(arr),
             });
         }
         let value = parse_assignment_value(scanner)?;
-        return Ok(Assignment {
+        return Ok(DeclAssignment {
             name,
-            index: None,
-            op: AssignOp::Set,
-            value,
+            value: Some(value),
         });
     }
 
     if matches!(scanner.peek().token, Tok::PlusAssign) {
-        scanner.next(); // consume +=
-        let value = parse_assignment_value(scanner)?;
-        return Ok(Assignment {
-            name,
-            index: None,
-            op: AssignOp::Append,
-            value,
-        });
+        return Err(parse_error(
+            span,
+            "SB4065",
+            format!(
+                "cannot append with `+=` in a declaration: `{name}` is created here, \
+                 so there is no previous value. Declare it first, then append."
+            ),
+        ));
     }
 
-    // Bare declaration: int x
-    Ok(Assignment {
-        name,
-        index: None,
-        op: AssignOp::Set,
-        value: Expr {
-            kind: ExprKind::Literal(String::new()),
-            span: Span { line: 0, col: 0 },
-        },
-    })
+    // Bare declaration: `int x` — no initializer at all.
+    Ok(DeclAssignment { name, value: None })
 }
 
 // ── END block ────────────────────────────────────────────────

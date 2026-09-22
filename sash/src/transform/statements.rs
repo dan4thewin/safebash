@@ -597,7 +597,7 @@ fn lower_declaration_stmt(
 }
 
 fn lower_one_declaration(
-    a: &Assignment,
+    a: &DeclAssignment,
     d: &Declaration,
     is_array: bool,
     is_assoc: bool,
@@ -628,14 +628,14 @@ fn shape_declared_value(val: SsaValue, d: &Declaration, is_collection: bool) -> 
     }
 }
 
-fn note_readonly(a: &Assignment, d: &Declaration, state: &mut VersionState) {
+fn note_readonly(a: &DeclAssignment, d: &Declaration, state: &mut VersionState) {
     if d.keyword == crate::ir::DeclKeyword::Readonly {
         state.readonly_vars.insert(a.name.clone());
     }
 }
 
 fn compute_declaration_value(
-    a: &Assignment,
+    a: &DeclAssignment,
     is_array: bool,
     is_assoc: bool,
     ssa: &mut SsaProgram,
@@ -647,18 +647,18 @@ fn compute_declaration_value(
     // value. A glob literal (`array a=(*)`) lowers to a `glob` ParamExpansion,
     // not an IndexedArray, so shape-inference alone missed it — `join` saw
     // every element while `len` read the table as a string and answered 0.
-    if is_array || is_assoc {
-        state.collections.insert(a.name.clone());
-        if is_assoc {
-            state.assoc_arrays.insert(a.name.clone());
-        }
-    }
-    // Empty init like `array arr` / `array arr=()` / `map m` / `map m=()`
-    // — an empty table of the declared kind.
-    if is_empty_collection_init(a, is_array, is_assoc) {
+    register_collection_name(&a.name, is_array, is_assoc, state);
+    // No initializer at all (`array arr`, `int x`). Previously this arrived
+    // as an in-band `Literal("")`, indistinguishable from the explicit
+    // `array a=""` that stored a SCALAR into a collection slot and segfaulted.
+    let Some(value) = &a.value else {
+        return uninitialized_value(&a.name, is_array, is_assoc, state);
+    };
+    // `array arr=()` / `map m=()` — an empty table of the declared kind.
+    if is_empty_collection_init(value, is_array, is_assoc) {
         return empty_collection_value(&a.name, is_assoc, state);
     }
-    let val = expr_to_value(&a.value, state);
+    let val = expr_to_value(value, state);
     // Option C: `$(f)` on an `-> int` function is an IntFuncCall (the return
     // value); lift_int_func_calls materializes it here, exactly like `$((f))`.
     let val = lift_int_func_calls(val, ssa, state, block);
@@ -666,11 +666,44 @@ fn compute_declaration_value(
     val
 }
 
-/// True for `array arr` / `array arr=()` / `map m` / `map m=()`.
-fn is_empty_collection_init(a: &Assignment, is_array: bool, is_assoc: bool) -> bool {
-    let is_empty = a.value.kind == ExprKind::Literal(String::new())
-        || matches!(&a.value.kind, ExprKind::Array(e) if e.is_empty());
-    is_empty && (is_array || is_assoc)
+/// DD#41: the `array`/`map` KEYWORD is what makes a name a collection, so
+/// register it from the declaration rather than inferring from the lowered
+/// value.
+fn register_collection_name(name: &str, is_array: bool, is_assoc: bool, state: &mut VersionState) {
+    if is_array || is_assoc {
+        state.collections.insert(name.to_string());
+    }
+    if is_assoc {
+        state.assoc_arrays.insert(name.to_string());
+    }
+}
+
+/// The value a declaration with no initializer binds: an empty table of the
+/// declared kind, or the empty string for a scalar.
+fn uninitialized_value(
+    name: &str,
+    is_array: bool,
+    is_assoc: bool,
+    state: &mut VersionState,
+) -> SsaValue {
+    if is_array || is_assoc {
+        return empty_collection_value(name, is_assoc, state);
+    }
+    expr_to_value(&empty_literal(), state)
+}
+
+/// The empty-string initializer a bare scalar declaration (`str s`, `int n`)
+/// lowers to. `int` turns it into a zero via `int_literal_or_zero_init`.
+fn empty_literal() -> Expr {
+    Expr {
+        kind: ExprKind::Literal(String::new()),
+        span: Span { line: 0, col: 0 },
+    }
+}
+
+/// True for an explicit empty collection literal: `array arr=()` / `map m=()`.
+fn is_empty_collection_init(value: &Expr, is_array: bool, is_assoc: bool) -> bool {
+    matches!(&value.kind, ExprKind::Array(e) if e.is_empty()) && (is_array || is_assoc)
 }
 
 /// Empty table of the declared kind. (`()` parses as an empty indexed
@@ -880,7 +913,7 @@ fn lower_list_stmt(
 /// Emit the empty map plus its pairwise fill. `false` when the declaration's
 /// value is not an array splat, so ordinary map literals fall through.
 fn lower_map_from_array(
-    a: &Assignment,
+    a: &DeclAssignment,
     ssa: &mut SsaProgram,
     state: &mut VersionState,
     block: BlockId,
@@ -903,23 +936,28 @@ fn lower_map_from_array(
 /// disposition. `None` when the declaration's value is not an array splat, so
 /// ordinary map literals fall through. A BARE `@a` is rejected in validate,
 /// not here (the diagnostic belongs with the other splat-position rules).
-fn map_from_array_inst(a: &Assignment, state: &mut VersionState) -> Option<SsaInst> {
-    let ExprKind::ParameterExpansion(pe) = &a.value.kind else {
-        return None;
-    };
-    let (mode, message) = match pe.operator.as_deref()? {
-        // `:~` is a wordless `arrvals_default`; `:-WORD` carries the key.
-        "arrvals_default" if pe.operand.is_none() => (2u8, String::new()),
-        "arrvals_default" => (0u8, String::new()),
-        "arrvals_abort" => (
+/// DD#99 fill mode for `map m=@{a:DISP}`: `:-` carries a key (0), `:?` an
+/// abort message (1), `:~` is wordless (2). Any other operator is not a fill.
+fn arrvals_fill_mode(pe: &ParameterExpansion) -> Option<(u8, String)> {
+    match pe.operator.as_deref()? {
+        "arrvals_default" if pe.operand.is_none() => Some((2u8, String::new())),
+        "arrvals_default" => Some((0u8, String::new())),
+        "arrvals_abort" => Some((
             1u8,
             pe.operand
                 .as_deref()
                 .map(expr_to_string)
                 .unwrap_or_default(),
-        ),
-        _ => return None,
+        )),
+        _ => None,
+    }
+}
+
+fn map_from_array_inst(a: &DeclAssignment, state: &mut VersionState) -> Option<SsaInst> {
+    let ExprKind::ParameterExpansion(pe) = &a.value.as_ref()?.kind else {
+        return None;
     };
+    let (mode, message) = arrvals_fill_mode(pe)?;
     // For `:?` the abort MESSAGE rides in the key slot (the runtime prints it);
     // for `:-` it is the supplied KEY. Neither is used by `:~`/`:!~`.
     let key = match pe.operand.as_deref() {

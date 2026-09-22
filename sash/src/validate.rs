@@ -976,7 +976,10 @@ fn validate_declaration_stmt(
     diags: &mut Vec<Diagnostic>,
 ) {
     if in_condition {
-        let is_capture = d.assignments.iter().any(|a| value_is_capture(&a.value));
+        let is_capture = d
+            .assignments
+            .iter()
+            .any(|a| a.value.as_ref().is_some_and(value_is_capture));
         diags.push(nonstatus_in_condition_diag(
             span,
             "a declaration",
@@ -1574,6 +1577,8 @@ fn check_test_constructs(name: &str, c: &Command, span: Span, diags: &mut Vec<Di
 }
 
 fn validate_declaration(d: &Declaration, diags: &mut Vec<Diagnostic>) {
+    // SB4064: the initializer's shape must match the declared kind.
+    check_decl_value_shape(d, diags);
     // SB4031 (DD#33): a map literal must use the `[key]=value` form.
     if d.flags.iter().any(|f| f == "-A") {
         for a in &d.assignments {
@@ -1589,15 +1594,111 @@ fn validate_declaration(d: &Declaration, diags: &mut Vec<Diagnostic>) {
     }
 }
 
+/// SB4064: a declaration's initializer must have the shape of the kind being
+/// declared — a collection literal for `array`/`map`, and anything but one for
+/// a scalar.
+///
+/// Nothing checked this before 2026-09-22, in either direction, and both
+/// directions were broken:
+///
+/// * `array a=x` (and `array a=""`, `map m=v`, `array a=$(echo x)`) stored a
+///   *scalar* into a collection slot. It compiled clean and **segfaulted** on
+///   the first read; `len a` returned uninitialised memory rather than
+///   faulting. bash reads `declare -a a=x` as `a[0]=x`, but sash has no
+///   implicit one-element promotion, so the value simply never matched the
+///   slot.
+/// * `str s=(x)` accepted an array literal into a scalar and silently produced
+///   the empty string (bash yields `x`).
+///
+/// A `ParameterExpansion` is allowed on a collection because that is the
+/// DD#99 splat form (`map m=@{a:-}`); its own rules are enforced by
+/// `check_map_decl_splats` and SB5025.
+fn check_decl_value_shape(d: &Declaration, diags: &mut Vec<Diagnostic>) {
+    let is_collection = d.flags.iter().any(|f| f == "-a" || f == "-A");
+    for a in &d.assignments {
+        if let Some(diag) = decl_shape_diag(a, is_collection) {
+            diags.push(diag);
+        }
+    }
+}
+
+/// What kind of thing an initializer denotes.
+///
+/// `Splat` is neither: `map m=@{a:-}` is the DD#99 fill-from-array form, whose
+/// own rules live in `check_map_decl_splats` and SB5025, and a plain `$x` on a
+/// scalar is the ordinary case. Both must pass through here untouched.
+enum InitShape {
+    Collection,
+    Scalar,
+    Splat,
+}
+
+fn init_shape(value: &Expr) -> InitShape {
+    match &value.kind {
+        ExprKind::Array(_) | ExprKind::AssocArray(_) => InitShape::Collection,
+        ExprKind::ParameterExpansion(_) => InitShape::Splat,
+        _ => InitShape::Scalar,
+    }
+}
+
+/// `Some(diag)` when the initializer's shape contradicts the declared kind.
+fn decl_shape_diag(a: &DeclAssignment, is_collection: bool) -> Option<Diagnostic> {
+    let value = a.value.as_ref()?;
+    match (is_collection, init_shape(value)) {
+        (true, InitShape::Scalar) => Some(scalar_into_collection_diag(&a.name, value)),
+        (false, InitShape::Collection) => Some(collection_into_scalar_diag(&a.name, value)),
+        _ => None,
+    }
+}
+
+fn scalar_into_collection_diag(name: &str, value: &Expr) -> Diagnostic {
+    Diagnostic::error_span(
+        value.span,
+        "SB4064",
+        format!(
+            "`{name}` is declared as a collection, so its initializer must be a \
+             `( … )` literal — a scalar value does not become a one-element \
+             collection in sash; write `{name}=({})` if that is what you meant",
+            decl_value_brief(value),
+        ),
+    )
+}
+
+fn collection_into_scalar_diag(name: &str, value: &Expr) -> Diagnostic {
+    Diagnostic::error_span(
+        value.span,
+        "SB4064",
+        format!(
+            "`{name}` is declared as a scalar, so its initializer cannot be a \
+             `( … )` collection literal — declare it with `array` or `map` to \
+             hold several values"
+        ),
+    )
+}
+
+/// How to echo a rejected scalar initializer back in the SB4064 hint. A plain
+/// literal is quoted as written; anything else is named by shape, since
+/// splicing a command substitution into the hint would suggest it is valid
+/// inside the parentheses when its own rules still apply.
+fn decl_value_brief(value: &Expr) -> String {
+    match &value.kind {
+        ExprKind::Literal(s) if !s.is_empty() => s.clone(),
+        _ => "…".to_string(),
+    }
+}
+
 /// SB4026: reject an out-of-range decimal literal assigned to an int var.
 fn check_int_literal_range(d: &Declaration, diags: &mut Vec<Diagnostic>) {
     for a in &d.assignments {
-        let ExprKind::Literal(s) = &a.value.kind else {
+        let Some(value) = &a.value else {
+            continue;
+        };
+        let ExprKind::Literal(s) = &value.kind else {
             continue;
         };
         if int_literal_out_of_range(s) {
             diags.push(Diagnostic::error_span(
-                a.value.span,
+                value.span,
                 "SB4026",
                 format!("integer literal out of range: {s}"),
             ));
@@ -1617,15 +1718,18 @@ fn int_literal_out_of_range(s: &str) -> bool {
 /// literal, silently building an N-element array instead of a map — so a
 /// `map` whose initializer is a non-empty plain `Array` is rejected. The
 /// `[key]=value` form parses as `AssocArray` and an empty `()` is allowed.
-fn reject_flat_map_literal(a: &Assignment, diags: &mut Vec<Diagnostic>) {
-    let ExprKind::Array(elems) = &a.value.kind else {
+fn reject_flat_map_literal(a: &DeclAssignment, diags: &mut Vec<Diagnostic>) {
+    let Some(value) = &a.value else {
+        return;
+    };
+    let ExprKind::Array(elems) = &value.kind else {
         return;
     };
     if elems.is_empty() {
         return;
     }
     diags.push(Diagnostic::error_span(
-        a.value.span,
+        value.span,
         "SB4031",
         format!(
             "map `{}` must use the [key]=value form \
@@ -4044,9 +4148,12 @@ fn bare_arrvals_splat_name(kind: &ExprKind) -> Option<&str> {
 fn check_argv_splat_decl(d: &Declaration, diags: &mut Vec<Diagnostic>) {
     let is_array_decl = d.flags.iter().any(|fl| fl == "-a" || fl == "-A");
     for a in &d.assignments {
-        if is_array_decl && is_argv_splat_expr(&a.value) {
+        let Some(value) = &a.value else {
+            continue;
+        };
+        if is_array_decl && is_argv_splat_expr(value) {
             diags.push(Diagnostic::error_span(
-                a.value.span,
+                value.span,
                 "SB5025",
                 "`array a=$(argv …)` is not an array snapshot — a command \
                  substitution does not yield an array; use the out-param form \
@@ -4055,8 +4162,7 @@ fn check_argv_splat_decl(d: &Declaration, diags: &mut Vec<Diagnostic>) {
             ));
             continue;
         }
-        check_argv_splat_expr(&a.value, diags);
-        check_argv_splat_opt(a.index.as_ref(), diags);
+        check_argv_splat_expr(value, diags);
     }
 }
 
@@ -4427,11 +4533,7 @@ fn taint_stmt(
 ) {
     match &stmt.kind {
         StmtKind::Assignment(a) => taint_assignment(a, tainted, sx, diags),
-        StmtKind::Declaration(d) => {
-            for a in &d.assignments {
-                taint_assignment(a, tainted, sx, diags);
-            }
-        }
+        StmtKind::Declaration(d) => taint_declaration(d, tainted, sx, diags),
         StmtKind::Command(c) => taint_command(c, stmt.span, tainted, sx, diags),
         StmtKind::Function(f) => taint_function_body(f, tainted, sx, diags),
         StmtKind::Pipeline(p) => taint_pipeline(p, tainted, sx, diags),
@@ -4524,6 +4626,21 @@ fn splat_array_name(w: &Expr) -> Option<&str> {
 /// tainted arrays come only from bulk external reads (read -a / mapfile).
 /// Scalar assignment from a tainted source follows the normal flow:
 /// the scalar becomes tainted.
+/// A declaration's initializers taint exactly as the equivalent plain
+/// assignments do; a bare declaration binds no value and taints nothing.
+fn taint_declaration(
+    d: &Declaration,
+    tainted: &mut HashSet<String>,
+    sx: &SlotCx,
+    diags: &mut Vec<Diagnostic>,
+) {
+    for a in &d.assignments {
+        if let Some(eq) = a.as_assignment() {
+            taint_assignment(&eq, tainted, sx, diags);
+        }
+    }
+}
+
 fn taint_assignment(
     a: &Assignment,
     tainted: &mut HashSet<String>,
@@ -6789,6 +6906,21 @@ fn check_body_global_taint(
     });
 }
 
+/// Each initializer of a declaration, checked as the plain assignment it is.
+fn decl_global_taint(
+    d: &Declaration,
+    span: Span,
+    fname: &str,
+    globals: &HashSet<String>,
+    diags: &mut Vec<Diagnostic>,
+) {
+    for a in &d.assignments {
+        if let Some(eq) = a.as_assignment() {
+            check_assign_global_taint(&eq, span, fname, globals, diags);
+        }
+    }
+}
+
 fn check_stmt_global_taint(
     stmt: &Statement,
     fname: &str,
@@ -6799,9 +6931,7 @@ fn check_stmt_global_taint(
         StmtKind::Command(c) => check_cmd_global_taint(c, stmt.span, fname, globals, diags),
         StmtKind::Assignment(a) => check_assign_global_taint(a, stmt.span, fname, globals, diags),
         StmtKind::Declaration(d) => {
-            for a in &d.assignments {
-                check_assign_global_taint(a, stmt.span, fname, globals, diags);
-            }
+            decl_global_taint(d, stmt.span, fname, globals, diags);
         }
         _ => {}
     }
@@ -6898,15 +7028,27 @@ pub fn check_collection_slots(program: &Program) -> Vec<Diagnostic> {
 /// A declaration or whole-name assignment of a slot name. `A[0]=v` carries an
 /// index and is a *mutation through* the slot, which Part E allows.
 fn slot_rebind(stmt: &Statement, diags: &mut Vec<Diagnostic>) {
-    let assigns: &[Assignment] = match &stmt.kind {
-        StmtKind::Assignment(a) => std::slice::from_ref(a),
-        StmtKind::Declaration(d) => &d.assignments,
-        _ => return,
-    };
-    for a in assigns {
-        if a.index.is_none() && is_collection_slot(&a.name) {
-            diags.push(slot_rebind_diag(&a.name, stmt.span));
+    match &stmt.kind {
+        StmtKind::Assignment(a) => {
+            flag_slot_rebind(a.index.is_none(), &a.name, stmt.span, diags);
         }
+        // A declaration never carries an index, so every name it binds is a
+        // whole-name rebind of the slot.
+        StmtKind::Declaration(d) => {
+            for a in &d.assignments {
+                flag_slot_rebind(true, &a.name, stmt.span, diags);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Push the Part E rebind diagnostic when a whole-name write lands on a
+/// collection slot. `A[0]=v` carries an index and is a mutation *through* the
+/// slot, which is allowed.
+fn flag_slot_rebind(whole_name: bool, name: &str, span: Span, diags: &mut Vec<Diagnostic>) {
+    if whole_name && is_collection_slot(name) {
+        diags.push(slot_rebind_diag(name, span));
     }
 }
 
@@ -8155,7 +8297,10 @@ fn check_map_decl_splats(d: &Declaration, span: Span, diags: &mut Vec<Diagnostic
 /// (DD#99): a bare `@a` is SB5058.
 fn check_map_target_splats(d: &Declaration, span: Span, diags: &mut Vec<Diagnostic>) {
     for a in &d.assignments {
-        if let Some(source) = bare_arrvals_splat_name(&a.value.kind) {
+        let Some(value) = &a.value else {
+            continue;
+        };
+        if let Some(source) = bare_arrvals_splat_name(&value.kind) {
             diags.push(map_disposition_diag(span, source, &a.name));
         }
     }
@@ -8169,9 +8314,10 @@ fn check_map_target_splats(d: &Declaration, span: Span, diags: &mut Vec<Diagnost
 /// state a disposition to avoid.
 fn check_array_target_splats(d: &Declaration, span: Span, diags: &mut Vec<Diagnostic>) {
     for a in &d.assignments {
-        if let Some(source) = any_splat_source(&a.value) {
-            diags.push(array_from_map_diag(span, source, &a.name));
-        }
+        let Some(source) = a.value.as_ref().and_then(any_splat_source) else {
+            continue;
+        };
+        diags.push(array_from_map_diag(span, source, &a.name));
     }
 }
 

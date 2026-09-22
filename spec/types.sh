@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup types
-plan=245
+plan=265
 echo "1..$plan" >&3
 
 set +e
@@ -1315,6 +1315,68 @@ echo ${s:(1+1)}'
 run_sash 'str s="abcdef"
 echo ${s:1:2:3}'
 [[ $rc != 0 && $err == *SB4030* ]]; chk sub.10
+
+# ── decl.*  declaration initializer shape (SB4064) and `+=` (SB4065) ──
+# Before 2026-09-22 NOTHING checked that a declaration's initializer matched
+# the kind being declared, in either direction. A scalar into a collection
+# slot compiled clean and SEGFAULTED on the first read (`len a` returned
+# uninitialised memory rather than faulting); an array literal into a scalar
+# silently produced "". bash reads `declare -a a=x` as `a[0]=x`, but sash has
+# no implicit one-element promotion — DG chose to reject the mismatch.
+
+# decl.1-decl.4 scalar value into a collection slot — every one segfaulted
+run_sash 'array a=x; echo "${a[0]}"'
+[[ $rc != 0 && -z $out && $err == *SB4064* ]]; chk decl.1
+run_sash 'array a=""; echo "${a[0]}"'
+[[ $rc != 0 && -z $out && $err == *SB4064* ]]; chk decl.2
+run_sash 'map m=v; echo "${m[k]}"'
+[[ $rc != 0 && -z $out && $err == *SB4064* ]]; chk decl.3
+run_sash 'array a=$(echo x); echo "${a[0]}"'
+[[ $rc != 0 && -z $out && $err == *SB4064* ]]; chk decl.4
+
+# decl.5-decl.7 the mirror: a `( … )` literal into a scalar slot
+run_sash 'str s=(x); echo "$s"'
+[[ $rc != 0 && -z $out && $err == *SB4064* ]]; chk decl.5
+run_sash 'int n=(1); echo "$n"'
+[[ $rc != 0 && -z $out && $err == *SB4064* ]]; chk decl.6
+run_sash 'const c=(1); echo "$c"'
+[[ $rc != 0 && -z $out && $err == *SB4064* ]]; chk decl.7
+
+# decl.8-decl.11 `+=` in a declaration: it creates, so there is nothing to
+# append to. `array a+=(x)` was the worst of these -- the `=` branch checked
+# for `(` and the `+=` branch did not, so `(x)` parsed as the STRING "(x)".
+run_sash 'array a+=(x); echo "${a[0]}"'
+[[ $rc != 0 && -z $out && $err == *SB4065* ]]; chk decl.8
+run_sash 'array a+=x; echo "${a[0]}"'
+[[ $rc != 0 && -z $out && $err == *SB4065* ]]; chk decl.9
+run_sash 'str s+="a"; echo "$s"'
+[[ $rc != 0 && -z $out && $err == *SB4065* ]]; chk decl.10
+run_sash 'int n+=1; echo "$n"'
+[[ $rc != 0 && -z $out && $err == *SB4065* ]]; chk decl.11
+
+# decl.12-decl.17 the valid forms still work. decl.12/decl.15 matter most:
+# a BARE declaration used to be an in-band `Literal("")`, indistinguishable
+# from the explicit `array a=""` of decl.2 -- it is now `value: None`.
+run_sash 'array a; a[0]=z; echo "${a[0]}"'
+[[ $rc = 0 && $out = "z" && -z $err ]]; chk decl.12
+run_sash 'array a=(); echo "$(len a)"'
+[[ $rc = 0 && $out = "0" && -z $err ]]; chk decl.13
+run_sash 'map m=(); echo "$(len m)"'
+[[ $rc = 0 && $out = "0" && -z $err ]]; chk decl.14
+run_sash 'map m; m[k]=v; echo "${m[k]}"'
+[[ $rc = 0 && $out = "v" && -z $err ]]; chk decl.15
+run_sash 'int n; echo "$n"'
+[[ $rc = 0 && $out = "0" && -z $err ]]; chk decl.16
+run_sash 'str s; echo "[$s]"'
+[[ $rc = 0 && $out = "[]" && -z $err ]]; chk decl.17
+
+# decl.18-decl.20 append is still fine as a STATEMENT, once declared
+run_sash 'str s="a"; s+="b"; echo "$s"'
+[[ $rc = 0 && $out = "ab" && -z $err ]]; chk decl.18
+run_sash 'array a=(x); a+=(y); echo "${a[1]}"'
+[[ $rc = 0 && $out = "y" && -z $err ]]; chk decl.19
+run_sash 'int n=1; n+=2; echo "$n"'
+[[ $rc = 0 && $out = "3" && -z $err ]]; chk decl.20
 
 set -e
 tally

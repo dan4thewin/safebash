@@ -1362,16 +1362,20 @@ fn is_collection_decl(d: &Declaration) -> bool {
 /// unconstrained strings.
 fn check_one_decl_assignment(
     d: &Declaration,
-    a: &crate::ir::Assignment,
+    a: &crate::ir::DeclAssignment,
     is_collection: bool,
     span: Span,
     env: &TypeEnv,
     errors: &mut Vec<TypeError>,
 ) {
+    // A bare declaration has no initializer, so there is nothing to type.
+    let Some(value) = &a.value else {
+        return;
+    };
     if !is_collection {
-        check_scalar_assignment(d, a, span, env, errors);
+        check_scalar_assignment(d, &a.name, value, span, env, errors);
     } else if d.var_type == VarType::Int {
-        check_int_collection_elements(&a.value, &a.name, span, env, errors);
+        check_int_collection_elements(value, &a.name, span, env, errors);
     }
 }
 
@@ -1389,20 +1393,21 @@ fn track_collection_names(d: &Declaration, env: &mut TypeEnv) {
 /// Scalar `int x=…` / `string x=…` type check (string↔int mismatch).
 fn check_scalar_assignment(
     d: &Declaration,
-    a: &crate::ir::Assignment,
+    name: &str,
+    value: &Expr,
     span: Span,
     env: &TypeEnv,
     errors: &mut Vec<TypeError>,
 ) {
-    let rtype = expr_type(&a.value, env);
+    let rtype = expr_type(value, env);
     if d.var_type == VarType::Int && rtype == VarType::String {
         // String assigned to int variable — need conversion.
         // Exception: literal numbers in quotes are OK (common pattern).
-        if !is_numeric_literal(&a.value) {
+        if !is_numeric_literal(value) {
             errors.push(TypeError {
                 message: format!(
                     "cannot assign string value to int variable `{}`{}",
-                    a.name,
+                    name,
                     conversion_hint(VarType::String, VarType::Int),
                 ),
                 span,
@@ -1412,7 +1417,7 @@ fn check_scalar_assignment(
         errors.push(TypeError {
             message: format!(
                 "cannot assign int value to string variable `{}`{}",
-                a.name,
+                name,
                 conversion_hint(VarType::Int, VarType::String),
             ),
             span,
@@ -1831,15 +1836,25 @@ fn infer_stmt(stmt: &Statement, env: &mut TypeEnv) {
 
 /// `int x=…` declares with the explicit type; otherwise the RHS
 /// expression is type-inferred per-assignment.
+/// A non-`int` declaration takes each name's type from its initializer. A
+/// bare `str s` has none to infer from and is a string by declaration —
+/// exactly as the old in-band `Literal("")` sentinel typed it.
+fn infer_from_initializers(d: &crate::ir::Declaration, env: &mut TypeEnv) {
+    for a in &d.assignments {
+        let t = a
+            .value
+            .as_ref()
+            .map_or(VarType::String, |v| expr_type(v, env));
+        env.declare(&a.name, t);
+    }
+}
+
 fn infer_declaration_types(d: &crate::ir::Declaration, env: &mut TypeEnv) {
     if d.var_type == VarType::Int {
         for a in &d.assignments {
             env.declare(&a.name, VarType::Int);
         }
     } else {
-        for a in &d.assignments {
-            let t = expr_type(&a.value, env);
-            env.declare(&a.name, t);
-        }
+        infer_from_initializers(d, env);
     }
 }

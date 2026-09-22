@@ -166,11 +166,7 @@ fn resolve_stmt_exprs(stmt: &mut Statement, funcs: &HashSet<String>, diags: &mut
     match &mut stmt.kind {
         StmtKind::Command(c) => resolve_command(c, funcs, diags),
         StmtKind::Assignment(a) => resolve_assignment(a, funcs, diags),
-        StmtKind::Declaration(d) => {
-            for a in &mut d.assignments {
-                resolve_assignment(a, funcs, diags);
-            }
-        }
+        StmtKind::Declaration(d) => resolve_declaration(d, funcs, diags),
         StmtKind::For(f) => {
             for w in &mut f.words {
                 resolve_expr(w, funcs, diags);
@@ -191,6 +187,15 @@ fn resolve_case_exprs(c: &mut Case, funcs: &HashSet<String>, diags: &mut Vec<Dia
     for item in &mut c.items {
         for p in &mut item.patterns {
             resolve_expr(p, funcs, diags);
+        }
+    }
+}
+
+/// Resolve command substitutions inside each initializer of a declaration.
+fn resolve_declaration(d: &mut Declaration, funcs: &HashSet<String>, diags: &mut Vec<Diagnostic>) {
+    for a in &mut d.assignments {
+        if let Some(v) = &mut a.value {
+            resolve_expr(v, funcs, diags);
         }
     }
 }

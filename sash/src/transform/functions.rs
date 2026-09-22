@@ -480,7 +480,9 @@ fn sig_scan_exprs(exprs: &[Expr], sig: &mut ArgSig) {
 
 fn sig_scan_decl(d: &Declaration, sig: &mut ArgSig) {
     for a in &d.assignments {
-        sig_scan_expr(&a.value, sig);
+        if let Some(ref v) = a.value {
+            sig_scan_expr(v, sig);
+        }
     }
 }
 

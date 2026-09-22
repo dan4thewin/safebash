@@ -282,7 +282,7 @@ fn st_declaration(d: &Declaration, ln: usize, i: usize, out: &mut String) {
     out.push(']');
     nl(i, out);
     out.push_str(":assignments ");
-    seq_of(&d.assignments, i + 14, out, assignment);
+    seq_of(&d.assignments, i + 14, out, decl_assignment);
     out.push('}');
 }
 
@@ -447,6 +447,18 @@ fn assignment(a: &Assignment, ind: usize, out: &mut String) {
     nl(ind + 1, out);
     out.push_str(":value ");
     expr(&a.value, ind + 8, out);
+    out.push('}');
+}
+
+/// A declaration's `name` / `name=value`. No `:op` or `:index`: a declaration
+/// creates a binding, so `+=` is rejected (SB4065) and an index never parses.
+/// `:value nil` is a bare declaration (`int x`) — distinct from `:value ""`.
+fn decl_assignment(a: &DeclAssignment, ind: usize, out: &mut String) {
+    out.push_str("{:name ");
+    jstr(&a.name, out);
+    nl(ind + 1, out);
+    out.push_str(":value ");
+    opt_expr(a.value.as_ref(), ind + 8, out);
     out.push('}');
 }
 

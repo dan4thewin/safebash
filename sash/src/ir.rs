@@ -164,43 +164,51 @@ impl Statement {
     /// for-loop words, case value/patterns, redirect targets.
     pub fn direct_exprs(&self, f: &mut impl FnMut(&Expr)) {
         match &self.kind {
-            StmtKind::Assignment(a) => {
-                f(&a.value);
-                if let Some(ref idx) = a.index {
-                    f(idx);
-                }
-            }
-            StmtKind::Declaration(d) => {
-                for a in &d.assignments {
-                    f(&a.value);
-                }
-            }
-            StmtKind::Command(c) => {
-                f(&c.name);
-                for arg in &c.args {
-                    f(arg);
-                }
-            }
-            StmtKind::For(fo) => {
-                for w in &fo.words {
-                    f(w);
-                }
-            }
-            StmtKind::Case(c) => {
-                f(&c.value);
-                for item in &c.items {
-                    for p in &item.patterns {
-                        f(p);
-                    }
-                }
-            }
-            StmtKind::Redirected(r) => {
-                for redir in &r.redirects {
-                    f(&redir.target);
-                }
-            }
+            StmtKind::Assignment(a) => assignment_exprs(a, f),
+            StmtKind::Declaration(d) => decl_exprs(d, f),
+            StmtKind::Command(c) => command_exprs(c, f),
+            StmtKind::For(fo) => visit_each(&fo.words, f),
+            StmtKind::Case(c) => case_exprs(c, f),
+            StmtKind::Redirected(r) => redirect_target_exprs(&r.redirects, f),
             _ => {}
         }
+    }
+}
+
+/// Call `f` on each expression in turn.
+///
+/// Not [`walk_each`], which recurses through [`walk_expr_tree`]. Everything
+/// reached from [`Statement::direct_exprs`] is deliberately one level deep —
+/// combining the two visits each nested expression once per enclosing level
+/// (journal 308).
+fn visit_each(items: &[Expr], f: &mut impl FnMut(&Expr)) {
+    for it in items {
+        f(it);
+    }
+}
+
+fn assignment_exprs(a: &Assignment, f: &mut impl FnMut(&Expr)) {
+    f(&a.value);
+    if let Some(idx) = &a.index {
+        f(idx);
+    }
+}
+
+fn command_exprs(c: &Command, f: &mut impl FnMut(&Expr)) {
+    f(&c.name);
+    visit_each(&c.args, f);
+}
+
+fn case_exprs(c: &Case, f: &mut impl FnMut(&Expr)) {
+    f(&c.value);
+    for item in &c.items {
+        visit_each(&item.patterns, f);
+    }
+}
+
+fn redirect_target_exprs(redirects: &[Redirect], f: &mut impl FnMut(&Expr)) {
+    for r in redirects {
+        f(&r.target);
     }
 }
 
@@ -574,7 +582,56 @@ pub struct Declaration {
     pub keyword: DeclKeyword,
     pub var_type: VarType,
     pub flags: Vec<String>,
-    pub assignments: Vec<Assignment>,
+    pub assignments: Vec<DeclAssignment>,
+}
+
+/// Every initializer a declaration owns. A bare declaration contributes none.
+fn decl_exprs(d: &Declaration, f: &mut impl FnMut(&Expr)) {
+    for a in &d.assignments {
+        if let Some(v) = &a.value {
+            f(v);
+        }
+    }
+}
+
+/// One `name` or `name=value` within a declaration list.
+///
+/// Deliberately *not* an [`Assignment`]. A declaration creates a binding, so
+/// three of `Assignment`'s shapes are meaningless here and are made
+/// unrepresentable rather than merely unused:
+///
+/// * **no initializer** is `value: None`, not an in-band `Literal("")`. The
+///   sentinel made `array a` (bare, works) and `array a=""` (a scalar into a
+///   collection, segfaulted) indistinguishable to every reader that did not
+///   also know the trick.
+/// * **`+=`** is rejected by the parser (SB4065): a declaration creates, it
+///   cannot append.
+/// * **an index** (`array a[0]=x`) never parsed in the first place.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DeclAssignment {
+    pub name: String,
+    /// `None` for a bare declaration (`int x`), which has no initializer at
+    /// all — as distinct from `Some(Literal(""))`, an explicit empty string.
+    pub value: Option<Expr>,
+}
+
+impl DeclAssignment {
+    /// View a declaration's initializer as the equivalent plain `Set`
+    /// assignment, for the passes that treat `int x=1` and `x=1` identically
+    /// (taint, slot rebinding). `None` for a bare declaration, which assigns
+    /// nothing and so has nothing for those passes to look at.
+    ///
+    /// One adapter rather than a parallel code path per pass: the equivalence
+    /// is stated once here instead of being re-derived at each call site,
+    /// where the two could drift apart silently.
+    pub fn as_assignment(&self) -> Option<Assignment> {
+        self.value.as_ref().map(|v| Assignment {
+            name: self.name.clone(),
+            index: None,
+            op: AssignOp::Set,
+            value: v.clone(),
+        })
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
