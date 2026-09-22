@@ -1497,20 +1497,23 @@ fn match_operator(s: &str) -> Option<String> {
     }
 }
 
-/// Build an Expr from a slice of Expr parts.
+/// Rejoin one side of a compact operator from a slice of `Concat` parts. A
+/// single part is returned as-is; several parts (`$x$y==ab`, `ab==a$x`) are
+/// re-wrapped in a `Concat`.
+///
+/// The empty slice cannot occur: both call sites slice a `Concat` around a
+/// *middle* index `i` drawn from `1..len-1`, so `parts[..i]` holds at least
+/// `parts[0]` and `parts[i+1..]` at least `parts[len-1]`. Returning
+/// `Literal("")` here would make an empty subject or pattern out of a program
+/// that has neither — a plausible wrong answer rather than a loud one.
 fn build_expr_from_parts(parts: &[Expr], span: Span) -> Expr {
-    if parts.is_empty() {
-        Expr {
-            kind: ExprKind::Literal(String::new()),
-            span,
-        }
-    } else if parts.len() == 1 {
-        parts[0].clone()
-    } else {
-        Expr {
+    match parts {
+        [] => unreachable!("compact operator is a middle part, so neither side is empty"),
+        [single] => single.clone(),
+        _ => Expr {
             kind: ExprKind::Concat(parts.to_vec()),
             span,
-        }
+        },
     }
 }
 

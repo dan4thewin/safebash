@@ -6,7 +6,7 @@
 set -eu
 . common.sh
 setup dispatch
-plan=58
+plan=70
 echo "1..$plan" >&3
 
 set +e
@@ -221,6 +221,50 @@ run_sash 'x=a; y=b
 if [[ -n $x &&   # host set
       -n $y ]]; then echo yes; fi'
 [[ $rc = 0 && $out = "yes" && -z $err ]]; chk 94.28
+
+# ── MP. compact operator with a MULTI-PART subject or pattern ────────
+# `$x$y==ab` and `ab==$x$y` reach the rejoin path in
+# `parse/parser.rs::build_expr_from_parts` (and the non-literal /
+# not-an-operator middle-part skips in `extract_from_concat`). Every case
+# below was verified to agree with bash's non-compact spelling
+# (`[[ "$x$y" == ab ]]`). All were uncovered before 2026-09-21.
+
+# MP1-MP3 multi-part SUBJECT (skips a non-Literal middle part first)
+run_sash 'x=a; y=b; [[ $x$y==ab { echo hit } || { echo no } ]]'
+[[ $rc = 0 && $out = "hit" && -z $err ]]; chk dp.mp1
+run_sash 'x=a; y=z; [[ $x$y==ab { echo hit } || { echo no } ]]'
+[[ $rc = 0 && $out = "no" && -z $err ]]; chk dp.mp2
+run_sash 'x=b; [[ a$x==ab { echo hit } || { echo no } ]]'
+[[ $rc = 0 && $out = "hit" && -z $err ]]; chk dp.mp3
+
+# MP4-MP6 multi-part PATTERN (the Concat rejoin itself)
+run_sash 'x=a; y=b; [[ ab==$x$y { echo hit } || { echo no } ]]'
+[[ $rc = 0 && $out = "hit" && -z $err ]]; chk dp.mp4
+run_sash 'x=a; y=z; [[ ab==$x$y { echo hit } || { echo no } ]]'
+[[ $rc = 0 && $out = "no" && -z $err ]]; chk dp.mp5
+run_sash 'x=b; [[ ab==a$x { echo hit } || { echo no } ]]'
+[[ $rc = 0 && $out = "hit" && -z $err ]]; chk dp.mp6
+
+# MP7 both sides multi-part
+run_sash 'a=x; b=y; c=x; d=y; [[ $a$b==$c$d { echo hit } || { echo no } ]]'
+[[ $rc = 0 && $out = "hit" && -z $err ]]; chk dp.mp7
+
+# MP8-MP9 a middle Literal that is NOT an operator is skipped, and the real
+# operator further right is still found
+run_sash 'x=a; y=b; [[ $x:$y==a:b { echo hit } || { echo no } ]]'
+[[ $rc = 0 && $out = "hit" && -z $err ]]; chk dp.mp8
+run_sash 'x=a; y=b; [[ $x-$y==a-b { echo hit } || { echo no } ]]'
+[[ $rc = 0 && $out = "hit" && -z $err ]]; chk dp.mp9
+
+# MP10 regex side, multi-part pattern
+run_sash 'x=a; y=b; [[ ab=~$x$y { echo hit } || { echo no } ]]'
+[[ $rc = 0 && $out = "hit" && -z $err ]]; chk dp.mp10
+
+# MP11-MP12 boolean [[ ]] parity for both sides
+run_sash 'x=a; y=b; if [[ $x$y==ab ]]; then echo y; else echo n; fi'
+[[ $rc = 0 && $out = "y" && -z $err ]]; chk dp.mp11
+run_sash 'x=a; y=b; if [[ ab==$x$y ]]; then echo y; else echo n; fi'
+[[ $rc = 0 && $out = "y" && -z $err ]]; chk dp.mp12
 
 set -e
 tally

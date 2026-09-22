@@ -1,3 +1,44 @@
+## ══ STATUS (2026-09-21) — three cold branches that were never dead ══
+
+**Just completed.** `build_expr_from_parts` (`parse/parser.rs`) had two of
+three branches at zero coverage, and a tidy call-site argument said both were
+unreachable. Instrumented all four cold regions in one build instead. Three
+fired immediately: a compact dispatch operator whose **subject or pattern
+spans more than one part** — `[[ $x$y==ab … ]]`, `[[ ab==$x$y … ]]`,
+`[[ $x-$y==a-b … ]]` — is ordinary sash that the suite had simply never
+written. Every existing compact-operator spec put a single part on each side.
+
+Not a bug: all twelve shapes agree with bash's non-compact spelling
+(`[[ "$x$y" == ab ]]`) on match, miss, both-sides, `:`/`-` middle literals,
+the `=~` side, and boolean-`[[ ]]` parity. A **coverage gap**, now
+`dp.mp1`-`dp.mp12` (`spec/dispatch.sh` plan 58 → 70).
+
+The fourth (`parts.is_empty()`) never fired, and here the argument is closed:
+two call sites, both slicing around a middle `i ∈ 1..len-1`. DD#116 says it is
+not a rival and has none of the three backstop properties — it is the wrong
+side of property 1, since `Literal("")` would manufacture an empty subject out
+of a program that has neither. Now a slice `match` with an `unreachable!` `[]`
+arm naming the bound (same move as the `is_fd_number` parse in 385).
+
+Sweep **5945** (predicted), 0 failing, **0 flips** vs `ae26dc4`. Units
+51/27/20. `build_expr_from_parts` cc 4 / cog 1. Journal 387.
+
+**Carry forward.** Two commits running, a zero count plus a call-site argument
+has been wrong about liveness. A zero count means "no input in the suite
+reached this". Upgrading that to "no input can" needs an execution probe that
+fails to reach it, or a closed argument over *all* call sites — and when the
+closed argument holds, DD#116 decides whether the code stays, not the absence
+of coverage.
+
+**Next.** Cold-line queue continues: `parse_one_decl_assignment`,
+`command_is_pure` (documented measured-cold, a property-3 keep),
+`handle_attest_stmt`, `check_condition_type`, `check_scalar_assignment`,
+`emit_attest`, `emit_capture_end_c`, `read_arg_value`, `handle_close`,
+`emit_redirects_guarded`.
+
+**Open for DG.** Whether `sash-convert` should translate retired spellings
+(`$'\0'`→`$'\x00'`, `16#ff`→`0xff`, `010`→`8`).
+
 ## ══ STATUS (2026-09-21) — "proved dead", and live ══
 
 **Journal 386.** Sweep **5921** (5908 passing + 13 skipped), 0 failing,
