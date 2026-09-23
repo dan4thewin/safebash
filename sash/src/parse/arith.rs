@@ -81,7 +81,7 @@ pub fn parse_arith_expansion(scanner: &mut Scanner, span: Span) -> Result<Expr, 
         return Err(arith_error(
             span,
             format!(
-                "mutation {brief} not allowed in $(( )) expression context — \
+                "mutation of {brief} not allowed in $(( )) expression context — \
                  use (( )) statement instead"
             ),
         ));
@@ -92,25 +92,27 @@ pub fn parse_arith_expansion(scanner: &mut Scanner, span: Span) -> Result<Expr, 
     })
 }
 
-/// How a top-level `$(( … ))` mutation is quoted back, or `None` when the
-/// expression is not a mutation.
+/// The target of a **top-level** `$(( … ))` mutation, or `None`.
 ///
-/// This answers *whether* — the rendering is `ir::arith_brief`'s job. The two
-/// were fused, which is how `$(( x *= 2 ))` came to be reported with an
-/// operator the author never wrote: a renderer that had grown a
-/// `CompoundAssign` arm elsewhere had not grown one here.
+/// Names the target rather than quoting the expression, matching every other
+/// mutation diagnostic (DG, 2026-09-23). Quoting is what let `$(( x *= 2 ))`
+/// be reported with an operator the author never wrote: a renderer that had
+/// grown a `CompoundAssign` arm elsewhere had not grown one here.
 ///
-/// `SubscriptAssign` is deliberately **not** a mutation for this gate.
-/// `ir::arith_brief` elides it to `...`, so claiming it here would replace the
-/// specific "an assignment or `++`/`--` inside `$(( … ))` can't take effect"
-/// that `check_arith_value_mutation` raises for `$(( a[0] -= 2 ))` with a
-/// vaguer one. Saying nothing lets the better message through.
+/// Top-level only, so **not** `ir::mutation_target_in` — that one descends.
+/// A nested mutation is `reject_nested_mutation`'s to report, and it has more
+/// to say.
+///
+/// `SubscriptAssign` is deliberately **not** a mutation for this gate: saying
+/// nothing lets through the specific "an assignment or `++`/`--` inside
+/// `$(( … ))` can't take effect" that `check_arith_value_mutation` raises for
+/// `$(( a[0] -= 2 ))`.
 fn expansion_mutation_brief(expr: &crate::ir::ArithExpr) -> Option<String> {
     use crate::ir::ArithExpr;
     match expr {
-        ArithExpr::Assign { .. }
-        | ArithExpr::CompoundAssign { .. }
-        | ArithExpr::PostIncDec { .. } => Some(crate::ir::arith_brief(expr)),
+        ArithExpr::Assign { var, .. }
+        | ArithExpr::CompoundAssign { var, .. }
+        | ArithExpr::PostIncDec { var, .. } => Some(crate::ir::mutation_target_brief(var, false)),
         _ => None,
     }
 }
@@ -174,8 +176,9 @@ fn prefix_incdec_error(var: &str, inc: bool, span: crate::ir::Span) -> Diagnosti
 
 /// Reject nested mutations: e.g. `(( x = y++ ))` has `y++` inside an assignment.
 ///
-/// This must ask `ir::arith_has_mutation` — the canonical whole-tree predicate —
-/// rather than re-deriving the walk. A local copy used to stop at `BinOp` and
+/// This must ask `ir::mutation_target_in` — the canonical whole-tree predicate,
+/// which answers both "is there one" and "which" — rather than re-deriving the
+/// walk. A local copy used to stop at `BinOp` and
 /// `Paren` and to omit `SubscriptAssign` from the mutation set entirely, so
 /// `(( c = n ? (d++) : 1 ))`, `(( c = n + v[d++] ))`, `(( c = n + -(d++) ))`
 /// and `(( c = n + (v[0] = 3) ))` all parsed clean. In a plain `(( … ))`
@@ -185,20 +188,31 @@ fn prefix_incdec_error(var: &str, inc: bool, span: crate::ir::Span) -> Diagnosti
 /// the mutation then reached the value path and hit the `unreachable!()` in
 /// `transform::expr_handlers`. A partial re-derivation of a shared predicate is
 /// how an ICE gets built.
+///
+/// The **outer** match stays selective on purpose — it names the nodes that
+/// evaluate a sub-expression as an rvalue, which is not the same as "every
+/// node". Descending blindly would reject `(( (a=2) ))`, a form the transform
+/// hoists and DD#31 allows. But it must list *all* of them: `SubscriptAssign`
+/// was missing, so `(( a[0] = y++ ))` fell past this gate to
+/// `check_arith_value_mutation` and was told to look inside a `$(( … ))` its
+/// author never wrote. Scalar `(( x = y++ ))` named the culprit correctly; the
+/// two halves of one construct disagreeing is the same tell as the prefix-`++`
+/// index/value split above.
 fn reject_nested_mutation(
     expr: &crate::ir::ArithExpr,
     span: crate::ir::Span,
 ) -> Result<(), Diagnostic> {
     use crate::ir::ArithExpr;
     match expr {
-        ArithExpr::Assign { value, .. } | ArithExpr::CompoundAssign { value, .. } => {
-            if crate::ir::arith_has_mutation(value) {
-                let desc = crate::ir::arith_brief(value);
-                return Err(arith_error(span, format!(
-                    "mutation {} not allowed in statement (( )) expression context — use (( )) statement instead", desc
-                )));
+        ArithExpr::Assign { value, .. }
+        | ArithExpr::CompoundAssign { value, .. }
+        | ArithExpr::SubscriptAssign { value, .. } => {
+            match crate::ir::mutation_target_in(value) {
+                Some(target) => Err(arith_error(span, format!(
+                    "mutation of {target} not allowed in statement (( )) expression context — use (( )) statement instead"
+                ))),
+                None => Ok(()),
             }
-            Ok(())
         }
         ArithExpr::Comma(exprs) => {
             for e in exprs {

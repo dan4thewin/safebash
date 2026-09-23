@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup arithmetic
-plan=303
+plan=314
 echo "1..$plan" >&3
 
 set +e
@@ -1164,16 +1164,17 @@ int b=2
 (( a >= b ))
 echo $a $b'
 [[ $rc != 0 && -z $out && $err == *SB5007* && $err == *"comparison a >= b"* ]]; chk 31.62
-# 31.63 the operator is quoted as the author wrote it. This used to read
-# `mutation y ? ...` — `arith_brief` had arms for six of nineteen `IrArithOp`
-# variants and rendered the rest `?`, so the brief showed an operator that was
-# never in the source. An embedded mutation under a paren still falls to `...`,
-# which is honest: it says less, it does not say something else.
+# 31.63 a mutation diagnostic names its TARGET (DG, 2026-09-23). This spec has
+# recorded three answers to the same program. It first read `mutation y ? ...`
+# — the renderer knew six of nineteen operators and printed the rest as `?`.
+# Made total, it read `mutation y + ...`: true, but it elided the parenthesised
+# `x *= 2`, which is the entire thing being rejected. Naming the target ends
+# both failure modes — there is no operator to get wrong and nothing to elide.
 run_sash 'int x=1
 int y=1
 if (( y + (x *= 2) )) { echo a }
 echo $x $y'
-[[ $rc != 0 && -z $out && $err == *SB5007* && $err == *"mutation y + ..."* ]]; chk 31.63
+[[ $rc != 0 && -z $out && $err == *SB5007* && $err == *"mutation of x"* ]]; chk 31.63
 
 # 31.64-31.68 DD#116: `tok_to_text` is a total renderer. It used to end in
 # `_ => String::new()`, which deleted 35 of the 59 token kinds from the
@@ -1218,46 +1219,55 @@ run_sash 'for (( ;; )); do echo hi; break; done'
 # rejects `1 > x = 2` as an assignment to a non-variable, while sash's parser
 # groups it as `1 > (x = 2)`. Every context still refuses the program, so the
 # precedence difference is not observable — but these arms run.
+#
+# They reach it through the **non-final comma** site. These used to use a plain
+# `if (( … ))`, which stopped working the moment the mutation-in-condition
+# message began naming its target instead of quoting the expression — a third
+# measurement of the same arms, and the same answer each time: live, but only
+# from the one caller that still quotes. `arith_brief` now has exactly two
+# callers and both ask about a **non**-mutation, so a mutation reaches it only
+# as an operand of the thing being quoted.
 # ---------------------------------------------------------------------------
 
 # 31.69 reaches the `Assign` arm
 run_sash 'int x=0
-if (( 1 > x = 2 )) { echo a }
+if (( 1 > x = 2, x > 0 )) { echo a }
 echo $x'
-[[ $rc != 0 && -z $out && $err == *SB5007* && $err == *"mutation 1 > x = ..."* ]]; chk 31.69
+[[ $rc != 0 && -z $out && $err == *SB5007* && $err == *"non-final comma expression 1 > x = ..."* ]]; chk 31.69
 
 # 31.70 reaches the `CompoundAssign` arm
 run_sash 'int x=0
-if (( 1 > x += 2 )) { echo a }
+if (( 1 > x += 2, x > 0 )) { echo a }
 echo $x'
-[[ $rc != 0 && -z $out && $err == *SB5007* && $err == *"mutation 1 > x += ..."* ]]; chk 31.70
+[[ $rc != 0 && -z $out && $err == *SB5007* && $err == *"non-final comma expression 1 > x += ..."* ]]; chk 31.70
 
 # 31.71 a compound operator outside the old two-arm set. This read `x ?=`
 # before the renderer was made total — `?=` is not a spelling sash has.
 run_sash 'int x=1
-if (( 1 > x *= 2 )) { echo a }
+if (( 1 > x *= 2, x > 0 )) { echo a }
 echo $x'
-[[ $rc != 0 && -z $out && $err == *SB5007* && $err == *"mutation 1 > x *= ..."* ]]; chk 31.71
+[[ $rc != 0 && -z $out && $err == *SB5007* && $err == *"non-final comma expression 1 > x *= ..."* ]]; chk 31.71
 
-# 31.72 reaches the `PostIncDec` arm, the one that was always live — kept
-# beside its siblings because the asymmetry is the surprising part.
+# 31.72 reaches the `PostIncDec` arm, `++` direction.
 run_sash 'int x=0
-if (( x++ > 0 )) { echo a }
+if (( x++ > 0, x > 0 )) { echo a }
 echo $x'
-[[ $rc != 0 && -z $out && $err == *SB5007* && $err == *"mutation x++ > 0"* ]]; chk 31.72
+[[ $rc != 0 && -z $out && $err == *SB5007* && $err == *"non-final comma expression x++ > 0"* ]]; chk 31.72
 
-# 31.73 the $(( )) site rendered BOTH kinds of mutation as `x = ...`, so a
+# 31.73 the $(( )) site once rendered BOTH kinds of mutation as `x = ...`, so a
 # compound assignment was reported with an operator the author never wrote.
+# It now names the target, so there is no operator to get wrong — and the
+# second clause is the actual assertion: the `*=` must not reappear.
 run_sash 'int x=1
 echo $(( x *= 2 ))
 echo $x'
-[[ $rc != 0 && -z $out && $err == *SB4020* && $err == *"mutation x *= ..."* ]]; chk 31.73
+[[ $rc != 0 && -z $out && $err == *SB4020* && $err == *"mutation of x"* && $err != *"x *="* ]]; chk 31.73
 
-# 31.74 ... and a shifted one, which has no dedicated arm anywhere
+# 31.74 ... and a shifted one, which had no dedicated arm anywhere
 run_sash 'int x=1
 echo $(( x <<= 1 ))
 echo $x'
-[[ $rc != 0 && -z $out && $err == *SB4020* && $err == *"mutation x <<= ..."* ]]; chk 31.74
+[[ $rc != 0 && -z $out && $err == *SB4020* && $err == *"mutation of x"* && $err != *"x <<="* ]]; chk 31.74
 
 # ── tok_to_text: no token is silently dropped from collected `(( ))` ──
 # The raw collector re-renders every token it consumes. It once ended in
@@ -1447,87 +1457,92 @@ echo $x'
 # can come back as `?` (31.63 records the regression that motivated it), but
 # ten of the nineteen arms had never been rendered by any test. One spec per
 # arm, because one spec per arm is what proves the arm.
+#
+# The non-final comma part is the shape that reaches it for EVERY operator.
+# The bare-statement site reaches only the comparison-classified ones — a
+# plain `(( 1 - x = 2 ))` is a legitimate hoisted store and compiles — so
+# using it here would have silently covered four arms out of ten.
 
 # 31.95 `-`
 run_sash 'int x=4
-if (( 1 - x = 2 )); then echo y; fi
+if (( 1 - x = 2, x > 0 )); then echo y; fi
 echo $x'
-[[ $rc != 0 && -z $out && $err == *SB5007* && $err == *"mutation 1 - x = ..."* ]]; chk 31.95
+[[ $rc != 0 && -z $out && $err == *SB5007* && $err == *"non-final comma expression 1 - x = ..."* ]]; chk 31.95
 
 # 31.96 `/`
 run_sash 'int x=4
-if (( 1 / x = 2 )); then echo y; fi
+if (( 1 / x = 2, x > 0 )); then echo y; fi
 echo $x'
-[[ $rc != 0 && -z $out && $err == *SB5007* && $err == *"mutation 1 / x = ..."* ]]; chk 31.96
+[[ $rc != 0 && -z $out && $err == *SB5007* && $err == *"non-final comma expression 1 / x = ..."* ]]; chk 31.96
 
 # 31.97 `%`
 run_sash 'int x=4
-if (( 1 % x = 2 )); then echo y; fi
+if (( 1 % x = 2, x > 0 )); then echo y; fi
 echo $x'
-[[ $rc != 0 && -z $out && $err == *SB5007* && $err == *"mutation 1 % x = ..."* ]]; chk 31.97
+[[ $rc != 0 && -z $out && $err == *SB5007* && $err == *"non-final comma expression 1 % x = ..."* ]]; chk 31.97
 
 # 31.98 `**`
 run_sash 'int x=4
-if (( 1 ** x = 2 )); then echo y; fi
+if (( 1 ** x = 2, x > 0 )); then echo y; fi
 echo $x'
-[[ $rc != 0 && -z $out && $err == *SB5007* && $err == *"mutation 1 ** x = ..."* ]]; chk 31.98
+[[ $rc != 0 && -z $out && $err == *SB5007* && $err == *"non-final comma expression 1 ** x = ..."* ]]; chk 31.98
 
 # 31.99 `&&`
 run_sash 'int x=4
-if (( 1 && x = 2 )); then echo y; fi
+if (( 1 && x = 2, x > 0 )); then echo y; fi
 echo $x'
-[[ $rc != 0 && -z $out && $err == *SB5007* && $err == *"mutation 1 && x = ..."* ]]; chk 31.99
+[[ $rc != 0 && -z $out && $err == *SB5007* && $err == *"non-final comma expression 1 && x = ..."* ]]; chk 31.99
 
 # 31.100 `||`
 run_sash 'int x=4
-if (( 1 || x = 2 )); then echo y; fi
+if (( 1 || x = 2, x > 0 )); then echo y; fi
 echo $x'
-[[ $rc != 0 && -z $out && $err == *SB5007* && $err == *"mutation 1 || x = ..."* ]]; chk 31.100
+[[ $rc != 0 && -z $out && $err == *SB5007* && $err == *"non-final comma expression 1 || x = ..."* ]]; chk 31.100
 
 # 31.101 `>>`
 run_sash 'int x=4
-if (( 1 >> x = 2 )); then echo y; fi
+if (( 1 >> x = 2, x > 0 )); then echo y; fi
 echo $x'
-[[ $rc != 0 && -z $out && $err == *SB5007* && $err == *"mutation 1 >> x = ..."* ]]; chk 31.101
+[[ $rc != 0 && -z $out && $err == *SB5007* && $err == *"non-final comma expression 1 >> x = ..."* ]]; chk 31.101
 
 # 31.102 `&`
 run_sash 'int x=4
-if (( 1 & x = 2 )); then echo y; fi
+if (( 1 & x = 2, x > 0 )); then echo y; fi
 echo $x'
-[[ $rc != 0 && -z $out && $err == *SB5007* && $err == *"mutation 1 & x = ..."* ]]; chk 31.102
+[[ $rc != 0 && -z $out && $err == *SB5007* && $err == *"non-final comma expression 1 & x = ..."* ]]; chk 31.102
 
 # 31.103 `|`
 run_sash 'int x=4
-if (( 1 | x = 2 )); then echo y; fi
+if (( 1 | x = 2, x > 0 )); then echo y; fi
 echo $x'
-[[ $rc != 0 && -z $out && $err == *SB5007* && $err == *"mutation 1 | x = ..."* ]]; chk 31.103
+[[ $rc != 0 && -z $out && $err == *SB5007* && $err == *"non-final comma expression 1 | x = ..."* ]]; chk 31.103
 
 # 31.104 `^`
 run_sash 'int x=4
-if (( 1 ^ x = 2 )); then echo y; fi
+if (( 1 ^ x = 2, x > 0 )); then echo y; fi
 echo $x'
-[[ $rc != 0 && -z $out && $err == *SB5007* && $err == *"mutation 1 ^ x = ..."* ]]; chk 31.104
+[[ $rc != 0 && -z $out && $err == *SB5007* && $err == *"non-final comma expression 1 ^ x = ..."* ]]; chk 31.104
 
-# ── 31.105-31.106: the other two mutation-brief renderers ──
-# There are three, and they do not agree. Audited alongside the fix above.
+# ── 31.105-31.106: the other two mutation-brief sites ──
+# There were three renderers and they did not agree. Both of these used to
+# quote the expression; both now name the target, which is what made the
+# disagreement unrepresentable rather than merely fixed.
 
-# 31.105 `expansion_mutation_brief` ($(( )) path) is faithful — its doc records
-# that it once printed `x = ...` for a compound assign and was fixed. 31.73 and
-# 31.74 pin the compound arms; this pins the inc/dec arm.
+# 31.105 the $(( )) site, inc/dec spelling. 31.73 and 31.74 do the compound
+# spellings; all three now produce the same sentence, which is the point.
 run_sash 'int x=4
 echo $(( x++ ))'
-[[ $rc != 0 && -z $out && $err == *SB4020* && $err == *"mutation x++"* ]]; chk 31.105
+[[ $rc != 0 && -z $out && $err == *SB4020* && $err == *"mutation of x"* ]]; chk 31.105
 
-# 31.106 `brief_arith` (reject_nested_mutation) has NO CompoundAssign arm, so a
-# nested compound mutation falls to `...` and the message names nothing. That
-# is vague, not false — it says less rather than something else — so it is
-# pinned as-is rather than worked around. Consolidating the three renderers is
-# filed as `arith-mutation-brief-rivals`.
+# 31.106 the nested-mutation site, PARENTHESISED. This said `mutation ...` —
+# the renderer it used had no `CompoundAssign` arm and fell through to the
+# elision, naming nothing at all. It must now agree exactly with 31.117, the
+# same program without the parens: a paren changes the tree, not the culprit.
 run_sash 'int x=4
 int y=9
 (( x = (y -= 2) ))
 echo $x $y'
-[[ $rc != 0 && -z $out && $err == *SB4020* && $err == *"mutation ..."* ]]; chk 31.106
+[[ $rc != 0 && -z $out && $err == *SB4020* && $err == *"mutation of y"* ]]; chk 31.106
 
 
 # ── 31.107-31.117: `++x` is rejected in EVERY position, not most of them ──
@@ -1612,14 +1627,112 @@ echo $x $y'
 [[ $rc != 0 && -z $out && $err == *SB4020* && $err == *"prefix --x is not allowed"* ]]; chk 31.116
 
 # 31.117 the rival consolidation itself: `reject_nested_mutation` used a
-# renderer with no `CompoundAssign` arm, so this said `mutation ...`. All
-# three renderers now share `ir::arith_brief`, so it names the operator the
-# author wrote. (The parenthesised form still elides — see 31.106.)
+# renderer with no `CompoundAssign` arm, so this said `mutation ...`, naming
+# nothing. It now names `y`, and 31.106 — the same program with the mutation
+# parenthesised — must produce the identical sentence.
 run_sash 'int x=4
 int y=9
 (( x = y -= 2 ))
 echo $x $y'
-[[ $rc != 0 && -z $out && $err == *SB4020* && $err == *"mutation y -= ..."* ]]; chk 31.117
+[[ $rc != 0 && -z $out && $err == *SB4020* && $err == *"mutation of y"* ]]; chk 31.117
+
+
+# ── 31.118-31.128: DG's rule — a mutation diagnostic names its target ──
+# Five sites reported a mutation and four of them quoted the surrounding
+# expression instead of naming what was mutated. Quoting is what let two of
+# them print an operator the author never wrote, and what made `mutation ...`
+# — naming nothing — an acceptable answer. They all say `mutation of <target>`
+# now, so the same program reports the same sentence wherever it is caught.
+
+# 31.118 the `--` direction of the inc/dec arm. cov.150/cov.151 used to be the
+# `++`/`--` pair here; under target naming those two report identically, so the
+# direction is only observable at the site that still quotes.
+run_sash 'int x=0
+if (( x-- > 0, x > 0 )) { echo a }
+echo $x'
+[[ $rc != 0 && -z $out && $err == *SB5007* && $err == *"non-final comma expression x-- > 0"* ]]; chk 31.118
+
+# 31.119 BUG (fixed 2026-09-23): `(( a[0] = y++ ))` was told to look inside a
+# `$(( … ))` that does not appear anywhere in the program. `reject_nested_mutation`
+# dispatches on the nodes that evaluate a sub-expression as an rvalue and its
+# list omitted `SubscriptAssign`, so the statement fell past that gate to
+# `check_arith_value_mutation` — which exists for the `$(( … ))` value path and
+# says so. The scalar form one line below always answered correctly; two halves
+# of one construct disagreeing is the tell. The negative clause is the actual
+# shield: "inside" appears only in the borrowed `$(( … ))` message.
+run_sash 'int array a=(1)
+int y=2
+(( a[0] = y++ ))
+echo $a[0] $y'
+[[ $rc != 0 && -z $out && $err == *SB4020* && $err == *"mutation of y"* && $err != *"inside"* ]]; chk 31.119
+
+# 31.120 the control: same shape, scalar target. This is what 31.119 had to
+# match and did not.
+run_sash 'int x=1
+int y=2
+(( x = y++ ))
+echo $x $y'
+[[ $rc != 0 && -z $out && $err == *SB4020* && $err == *"mutation of y"* ]]; chk 31.120
+
+# 31.121 the compound spelling of 31.119.
+run_sash 'int array a=(1)
+int y=2
+(( a[0] += y++ ))
+echo $a[0] $y'
+[[ $rc != 0 && -z $out && $err == *SB4020* && $err == *"mutation of y"* ]]; chk 31.121
+
+# 31.122 a cell as the *culprit* rather than the target — `b[…]`, eliding the
+# index, which is how six other diagnostics name a cell.
+run_sash 'int array a=(1)
+int array b=(1 2)
+(( a[0] = b[1] = 3 ))
+echo $a[0] $b[1]'
+[[ $rc != 0 && -z $out && $err == *SB4020* && $err == *"mutation of b[…]"* ]]; chk 31.122
+
+# 31.123 the regression shield for 31.119: a cell assignment whose value is
+# clean is a legitimate statement and must still compile and run.
+run_sash 'int array a=(1)
+int y=2
+(( a[0] = y ))
+echo $a[0]'
+[[ $rc == 0 && $out == 2 ]]; chk 31.123
+
+# 31.124 ... and the message 31.119 was wrongly borrowing still belongs to the
+# construct that earned it: a real `$(( … ))` value. Deleting a wrong caller
+# must not delete the message.
+run_sash 'int array a=(1)
+int z=$(( a[0] = 1 ))
+echo $z'
+[[ $rc != 0 && -z $out && $err == *SB4020* && $err == *"can't take effect"* ]]; chk 31.124
+
+# 31.125 the nested condition site names a cell too.
+run_sash 'int array a=(1 2)
+if (( (a[0] = 3) )) { echo y }
+echo $a[0]'
+[[ $rc != 0 && -z $out && $err == *SB5007* && $err == *"mutation of a[…]"* ]]; chk 31.125
+
+# 31.126 a mutation in a ternary branch of a condition. Under expression
+# quoting this was `mutation ...` — the elision covered the one sub-expression
+# that mattered.
+run_sash 'int x=1
+if (( 1 ? (x = 2) : 0 )) { echo y }
+echo $x'
+[[ $rc != 0 && -z $out && $err == *SB5007* && $err == *"mutation of x"* ]]; chk 31.126
+
+# 31.127 the loop-increment idiom, the one shape a person actually writes.
+# It reported `mutation ...` for years.
+run_sash 'int i=0
+while (( (i = i + 1) < 3 )); do echo $i; done'
+[[ $rc != 0 && -z $out && $err == *SB5007* && $err == *"mutation of i"* ]]; chk 31.127
+
+# 31.128 the decomposed and nested paths agree on one program. `if (( x = 5 ))`
+# is split into statements before validation and answered by
+# `validate_assignment_stmt`; `if (( (x = 5) ))` stays an expression and is
+# answered by `validate_arith_in_condition`. Two sites, one sentence.
+run_sash 'int x=1
+if (( (x = 5) )) { echo a }
+echo $x'
+[[ $rc != 0 && -z $out && $err == *SB5007* && $err == *"mutation of x not allowed in condition"* ]]; chk 31.128
 
 
 set -e

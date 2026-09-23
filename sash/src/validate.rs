@@ -1046,11 +1046,11 @@ fn validate_assignment_stmt(
     // SB5007: arithmetic assignment in condition context.
     // The DD#31 comma pattern is handled at the Group level.
     //
-    // Only the *decomposed* form arrives here, so the mutation's spelling is
-    // already gone — hence `mutation_target_brief`, which names the target and
-    // claims no operator, rather than `assign_brief`, which claimed `=` for
-    // `x++` and dropped the subscript from `a[0] -= 2`. The nested form goes
-    // through `arith_brief` instead and can still quote faithfully.
+    // Names the target and claims no operator: only the *decomposed* form
+    // arrives here, so the mutation's spelling is already gone. (This used to
+    // call `assign_brief`, which claimed `=` for `x++` and dropped the
+    // subscript from `a[0] -= 2`.) The nested form reports identically, via
+    // `mutation_target_in` — same message for `if (( x = 5 ))` either way.
     if in_condition && matches!(&a.value.kind, ExprKind::Arithmetic(_)) {
         diags.push(Diagnostic::error_span(
             span,
@@ -1058,7 +1058,7 @@ fn validate_assignment_stmt(
             format!(
                 "mutation of {} not allowed in condition (( )) expression context — \
                  use (( )) statement instead",
-                crate::ir::mutation_target_brief(&a.name, a.index.as_ref())
+                crate::ir::mutation_target_brief(&a.name, a.index.is_some())
             ),
         ));
     } else if in_condition && !is_capture_condition_rhs(&a.value) {
@@ -2079,15 +2079,21 @@ fn validate_arith_in_condition(expr: &ArithExpr, span: Span, diags: &mut Vec<Dia
     // `if (( x++ ))`) or one embedded under a paren / operator
     // (`if (( (a=2) ))`, `while (( (i=i+1) <= 3 ))`) — is rejected. The statement
     // form `(( … ))` is where an assignment belongs (there it is hoisted; bug #3).
-    if arith_has_mutation(expr) {
-        let desc = crate::ir::arith_brief(expr);
+    //
+    // The message names the mutation's *target*, not the expression around it
+    // (DG, 2026-09-23). Quoting the expression said `mutation ...` for
+    // `while (( (i=i+1) <= 3 ))` — eliding the very thing being rejected — and
+    // made the parenthesised and decomposed forms of one program report
+    // differently. `mutation_target_in` answers "is there one" and "which" at
+    // once, so the two cannot disagree.
+    if let Some(target) = crate::ir::mutation_target_in(expr) {
         diags.push(Diagnostic::error_span(
             span,
             "SB5007",
             format!(
-                "mutation {} not allowed in condition (( )) expression context — \
+                "mutation of {} not allowed in condition (( )) expression context — \
                  use (( )) statement instead",
-                desc
+                target
             ),
         ));
     }

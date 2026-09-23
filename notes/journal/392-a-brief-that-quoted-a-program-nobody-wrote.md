@@ -189,3 +189,129 @@ half-fixed, and finally an invariant the compiler believed and did not check.
 
 None of that came from reading the cold line. It came from reading what the
 probes printed on the way past.
+
+---
+
+## Addendum — DG collapses the family
+
+I ended the above by reporting one loose end: `arith_brief` still elided
+`Paren`, so `if (( y + (x *= 2) ))` read `mutation y + ...`. I framed it as a
+narrow choice — render the parens or don't — and offered three options.
+
+DG's answer went past the frame: **report the target of the mutation, e.g.
+`x`; like the other error messages.**
+
+That is the ruling he had already given for the decomposed site, applied where
+it belongs: to all of it. I had treated `mutation of x` as a workaround for one
+site that could not reconstruct its operator, and kept faithful quoting
+everywhere else because those sites *could*. But capability was never the
+question. A quotation invites the reader to compare it against their source,
+and four of the five mutation sites could not produce one that matched:
+
+| site | said | source |
+|---|---|---|
+| decomposed condition | `mutation of x` | anything |
+| nested condition | `mutation y + ...` | `y + (x *= 2)` |
+| `$(( )) `expansion | `mutation x *= ...` | `x *= 2` |
+| nested in statement | `mutation ...` | `x = (y -= 2)` |
+| non-final comma | `1 > x = ...` | `1 > x = 2` |
+
+Three of those are wrong in different directions — one elides the culprit, one
+quotes an operator the parser synthesised, one names nothing at all. Naming the
+target makes all three unrepresentable rather than merely fixed. It also makes
+two spellings of one program agree: `(( x = y -= 2 ))` and `(( x = (y -= 2) ))`
+now report identically, which they never did.
+
+The split that falls out is clean, and I had not seen it. `arith_brief`'s two
+surviving callers both quote a **non**-mutation — a bare comparison, and a
+comma part that was required to be a mutation and isn't. There the expression
+*is* the complaint, so quoting it is the message. Mutation sites name;
+non-mutation sites quote. One question, asked once, decided both.
+
+## The fifth site, and a fifth bug
+
+Applying it exhaustively meant touching `reject_nested_mutation`, which I had
+edited an hour earlier without noticing it was a mutation reporter at all. Its
+body asked `arith_has_mutation` and then rendered with `arith_brief` — a
+predicate and a renderer, derived separately, which is the exact shape of every
+bug in this journal. Collapsing them into `mutation_target_in` (whether and
+which, one traversal; `arith_has_mutation` is now `is_some()` on it) is what
+put the outer `match` under my eyes:
+
+```rust
+ArithExpr::Assign { value, .. } | ArithExpr::CompoundAssign { value, .. } => …
+```
+
+`SubscriptAssign` is not in that list. So `(( a[0] = y++ ))` fell past this
+gate to `check_arith_value_mutation` — which exists for the `$(( … ))` value
+path, and says so:
+
+```
+$ sash -c '(( a[0] = y++ ))'
+[SB4020] an assignment or `++`/`--` inside `$(( … ))` can't take effect
+```
+
+There is no `$((` in that program. The scalar form one line away —
+`(( x = y++ ))` — named `y` correctly the whole time. **Two halves of one
+construct disagreeing is the tell**, and it is the *second* time in two days
+the subscript half was the one missing: the prefix-`++` walk covered a
+subscript assignment's index and not its value.
+
+Verified pre-existing by rebuilding the stashed tree, as before.
+
+This is the **third** partial re-derivation of a tree walk in `parse/arith.rs`,
+and `reject_nested_mutation`'s own doc comment — thirty lines above the hole —
+prescribes the remedy for the second. Writing down the lesson does not apply
+it.
+
+One nuance worth keeping: the outer `match` stays *selective*. It names the
+nodes that evaluate a sub-expression as an rvalue, which is not "every node" —
+descending blindly would reject `(( (a=2) ))`, a form the transform hoists and
+DD#31 allows. Totality is the goal for a *renderer*; for a *gate* the goal is
+that the list be complete for the property it names.
+
+## What the ruling cost, and what it found
+
+23 spec ids × 2 modes went red, all of them mine from the previous batch, all
+pinning text that quoted an expression. Rewriting them surfaced something the
+green sweep had hidden: with the condition site retargeted, `arith_brief`'s
+three mutation arms dropped to **zero hits across all 6107 tests**.
+
+That is the third time these arms have been measured, and the third time the
+answer was "live, but only from one caller". The first two measurements called
+them dead. This time I had the discipline to distrust a zero — a full green
+sweep proves *not reached by these inputs*, not *unreachable* — and went
+looking for a shape. `classify_arith_expr` recurses only into `Comma`, so a
+comparison `BinOp` can still hold a mutation operand; the **non-final comma**
+part reaches all three arms, for every operator. The bare-statement site
+reaches only the comparison-classified ones, so `(( 1 - x = 2 ))` compiles
+clean — had I rewritten the ten operator specs to use it, four would have
+silently stopped testing anything.
+
+**A shape that reaches a cold arm is not a property of the arm. It is a
+property of its callers**, and it expires when a caller changes.
+
+## Shields
+
+11 more specs, `31.118`-`31.128`: the `--` direction at the site that still
+quotes; the `SubscriptAssign` bug with its scalar control, its compound
+spelling, a cell named as the culprit (`b[…]`), a regression shield that a
+clean cell assignment still compiles and runs, and the borrowed message still
+belonging to the construct that earned it; then the ternary, the loop-increment
+idiom, and the two-paths-one-sentence case. `31.63`, `31.69`-`31.74`,
+`31.95`-`31.106`, `31.117`, `cov.150`, `cov.151` and `cov.247` rewritten.
+
+`mk test` 51/27/20. Sweep **6129** (predicted, +2×11), 0 failing, 0 flips
+against the `d4d13e3` baseline. Three id checks clean; source-derived total
+agrees exactly.
+
+## The shape of the addendum
+
+I asked a narrow question about parentheses. The answer was a rule, and the
+rule had four more consequences than my question did. Applying it end-to-end
+found a fifth mutation site I had edited without recognising, a fifth bug
+underneath it, and a set of arms that a green sweep had quietly stopped
+covering.
+
+Asking the narrow version of a question gets the narrow version of an answer.
+DG gave the general one anyway.

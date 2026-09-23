@@ -683,19 +683,24 @@ run_sash 'str s=a; unset s; echo done'
 run_sash 'unset nosuchvar'
 [[ $rc != 0 && -z $out && $err == *SB4030* ]]; chk cov.149
 
-# cov.150-153 arith_brief's PostIncDec arms (validate.rs) — the text SB5007
-# quotes back at you. A BARE `if (( x++ ))` cannot reach them: the mutation is
-# decomposed first, so `validate_assignment_stmt` answers instead. These reach
-# them through a BinOp, where the inc/dec node survives into the message. Both
-# directions were cold: neither `++` nor `--` had ever been rendered here.
+# cov.150-153 a mutation embedded under a binary operator in a condition.
+# A BARE `if (( x++ ))` is decomposed into statements before validation, so
+# `validate_assignment_stmt` answers it; these stay an expression and are
+# answered by `validate_arith_in_condition`. Both sites now name the target
+# (DG, 2026-09-23), which is the property worth pinning: the two paths through
+# one program must not produce two different sentences.
 #
-# The bare form used to report `mutation x = ...` — an assignment the author
+# These once distinguished the `++` and `--` arms of the renderer, which target
+# naming deliberately collapses — the direction is not the complaint. That
+# distinction moved to spec 31.72/31.118, at the site that still quotes.
+#
+# The bare form used to report `mutation x = ...`, an assignment the author
 # never wrote. This comment said so and treated it as an obstacle to route
 # around rather than a bug; it is now `mutation of x` (31.90-31.94).
 run_sash 'int x=0; while (( x++ < 3 )); do echo $x; done'
-[[ $rc != 0 && -z $out && $err == *SB5007* && $err == *"x++"* ]]; chk cov.150
+[[ $rc != 0 && -z $out && $err == *SB5007* && $err == *"mutation of x"* ]]; chk cov.150
 run_sash 'int x=0; if (( 1 + x-- )); then echo y; fi'
-[[ $rc != 0 && -z $out && $err == *SB5007* && $err == *"x--"* ]]; chk cov.151
+[[ $rc != 0 && -z $out && $err == *SB5007* && $err == *"mutation of x"* ]]; chk cov.151
 # cov.152 a mutation is legal in the STATEMENT form — the decrement half,
 # which is the side every `if *inc` in the tree had been skipping
 run_sash 'int x=0; (( x-- )); echo $x'
@@ -1234,13 +1239,14 @@ run_sash 'int x=1
 echo $(( --5 ))'
 [[ $rc != 0 && -z $out && $err == *SB4020* && $err == *"after --"* ]]; chk cov.246
 
-# cov.247 the `--` side of the nested-mutation diagnostic. `brief_arith`
-# renders the offending sub-expression; only the `++` spelling was ever
-# exercised, so the `--` arm of its PostIncDec case never ran.
+# cov.247 the `--` side of the nested-mutation diagnostic. This used a renderer
+# that quoted the offending sub-expression, and only the `++` spelling had ever
+# been exercised. The site now names the target, so what this pins is that a
+# `--` culprit is found at all — the walk reaches it, and says which variable.
 run_sash 'int x=0
 int y=1
 (( x = y-- ))'
-[[ $rc != 0 && -z $out && $err == *SB4020* && $err == *"mutation y--"* ]]; chk cov.247
+[[ $rc != 0 && -z $out && $err == *SB4020* && $err == *"mutation of y"* ]]; chk cov.247
 
 # cov.248-249 `$(status …)` where `status` is the first word but `)` does
 # not immediately follow. `parse_status_word` only ever saw the bare

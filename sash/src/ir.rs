@@ -1352,14 +1352,7 @@ impl ArithExpr {
 /// decide whether a `(( … ))` needs its embedded stores hoisted). A mutation
 /// node short-circuits to `true` without recursing into its rvalue.
 pub(crate) fn arith_has_mutation(a: &ArithExpr) -> bool {
-    match a {
-        ArithExpr::PreIncDec { .. } => unreachable!("{}", PREFIX_INCDEC_INVARIANT),
-        ArithExpr::Assign { .. }
-        | ArithExpr::CompoundAssign { .. }
-        | ArithExpr::PostIncDec { .. }
-        | ArithExpr::SubscriptAssign { .. } => true,
-        _ => a.children().into_iter().any(arith_has_mutation),
-    }
+    mutation_target_in(a).is_some()
 }
 
 /// Binary arithmetic operators (IR level).
@@ -1467,13 +1460,38 @@ pub fn incdec_brief(var: &str, inc: bool) -> String {
 ///
 /// The index is elided as `a[…]` rather than rendered, matching how every
 /// other diagnostic names a cell (`bare_string_cell_error`,
-/// `scalar_subscript_diag`, `reject_scalar_rhs_read`, SB5006). The index here
-/// is an arithmetic expression, not a literal, so there is nothing to print
-/// that would not itself need a renderer.
-pub fn mutation_target_brief(name: &str, index: Option<&Expr>) -> String {
-    match index {
-        None => name.to_string(),
-        Some(_) => format!("{name}[…]"),
+/// `scalar_subscript_diag`, `reject_scalar_rhs_read`, SB5006). Since it is
+/// never printed, `subscripted` carries only its *presence* — which lets the
+/// two callers pass indices of different types (an `Expr` on the decomposed
+/// path, an `ArithExpr` on the nested one) without a second renderer.
+pub fn mutation_target_brief(name: &str, subscripted: bool) -> String {
+    if subscripted {
+        format!("{name}[…]")
+    } else {
+        name.to_string()
+    }
+}
+
+/// The target of the first mutation inside `a`, or `None` if it holds none.
+///
+/// **The *whether* and the *which* are one traversal.** DG's rule is that a
+/// mutation diagnostic names its target (`mutation of x`) rather than quoting
+/// the surrounding expression, so every such site needs both answers; deriving
+/// them separately is how a predicate and its renderer drift apart, which is
+/// the defect this whole family already had three times over. `arith_has_mutation`
+/// is therefore defined as `is_some()` on this, not as a parallel match.
+///
+/// Order is "first found, depth-first". An expression with two mutations is
+/// rejected on either name — the diagnostic says *that* a mutation is here,
+/// and one target is enough to point at it.
+pub(crate) fn mutation_target_in(a: &ArithExpr) -> Option<String> {
+    match a {
+        ArithExpr::PreIncDec { .. } => unreachable!("{}", PREFIX_INCDEC_INVARIANT),
+        ArithExpr::Assign { var, .. }
+        | ArithExpr::CompoundAssign { var, .. }
+        | ArithExpr::PostIncDec { var, .. } => Some(mutation_target_brief(var, false)),
+        ArithExpr::SubscriptAssign { name, .. } => Some(mutation_target_brief(name, true)),
+        _ => a.children().into_iter().find_map(mutation_target_in),
     }
 }
 
@@ -1491,31 +1509,41 @@ pub fn mutation_target_brief(name: &str, index: Option<&Expr>) -> String {
 /// years later. A shared vocabulary with duplicated dispatch gets repaired one
 /// copy per bug report, forever.
 ///
+/// **This does not report mutations.** Every site that rejects a *mutation*
+/// names its target instead ([`mutation_target_in`], DG 2026-09-23), because a
+/// quotation invites the reader to compare it with their source and four of
+/// the five sites could not produce one that matched. What is left here are
+/// the two sites that quote a **non**-mutation: a bare-statement comparison,
+/// and a non-final comma part that was required to be a mutation and is not.
+/// For those the expression *is* the complaint, so quoting it is the message.
+///
 /// **Total over `ArithExpr` on purpose.** A new variant must decide how it is
 /// quoted instead of inheriting `...` from a `_` arm — that is how the `?`
 /// regression above happened. The variants that do render `...` are listed
-/// explicitly: eliding is honest, because it says *less* rather than something
-/// *else*. Rendering them faithfully is possible (`Paren` especially) but is a
-/// change to diagnostic text, not a consolidation, so it is left alone here.
+/// explicitly: eliding is honest here, because it says *less* rather than
+/// something *else*, and the elided sub-expression is no longer ever the thing
+/// being rejected — that was the `Paren` complaint, and naming the target
+/// answered it.
 ///
 /// **Which mutation arms are live is not obvious, and has been mis-measured
-/// twice.** A *top-level* mutation (`if (( x = 5 ))`) is decomposed into
-/// statements before validation, so it never arrives here — its message comes
-/// from `validate_assignment_stmt` via [`mutation_target_brief`]. A
-/// *parenthesised* one arrives wrapped in `Paren` and elides to `...`. What
-/// reaches the mutation arms is a mutation embedded as the **unparenthesised
-/// right operand** of a binary operator:
+/// three times.** They are reached only as an operand of the non-mutation
+/// being quoted, and only via the **unparenthesised right operand** of a
+/// binary operator — a parenthesised one arrives wrapped in `Paren` and elides:
 ///
 /// ```text
-/// if (( 1 > x = 2 ))    → Assign           if (( x++ > 0 ))  → PostIncDec
-/// if (( 1 > x += 2 ))   → CompoundAssign
+/// if (( 1 > x = 2,  x > 0 ))   → Assign
+/// if (( 1 > x += 2, x > 0 ))   → CompoundAssign
+/// if (( x++ > 0,    x > 0 ))   → PostIncDec
 /// ```
 ///
 /// Nobody writes those, because bash binds `=` loosest and rejects them as an
 /// assignment to a non-variable; sash's parser groups them as `1 > (x = 2)`
 /// instead. Every context still refuses the program (SB5007/SB4020/SB4041), so
 /// the precedence difference is not observable — but the arms run, and specs
-/// `31.69`-`31.71` keep them honest.
+/// `31.69`-`31.72` keep them honest. The two earlier measurements used a plain
+/// `if (( … ))`, which stopped reaching them the moment that site began naming
+/// its target: a shape that reaches a cold arm today is not a property of the
+/// arm, it is a property of its callers.
 pub fn arith_brief(expr: &ArithExpr) -> String {
     match expr {
         // Rendered faithfully.
