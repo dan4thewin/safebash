@@ -6,7 +6,7 @@
 set -eu
 . common.sh
 setup dispatch
-plan=70
+plan=72
 echo "1..$plan" >&3
 
 set +e
@@ -265,6 +265,30 @@ run_sash 'x=a; y=b; if [[ $x$y==ab ]]; then echo y; else echo n; fi'
 [[ $rc = 0 && $out = "y" && -z $err ]]; chk dp.mp11
 run_sash 'x=a; y=b; if [[ ab==$x$y ]]; then echo y; else echo n; fi'
 [[ $rc = 0 && $out = "y" && -z $err ]]; chk dp.mp12
+
+# ── DD#94: a comment must not share a line with `]]` either ──
+# The same end-of-line rule applies inside `[[ ]]`. Unlike the arithmetic
+# collector, the message here does not yet explain the cause
+# (notes/tasks/dd94-bracket-close-hint.md) — these pin the behaviour so a
+# future hint cannot change it by accident.
+
+# 94.29 a comment eats the closing `]]` of a test
+run_sash 'str s=a
+if [[ $s == a # hi ]]
+then
+  echo yes
+fi'
+[[ $rc != 0 && -z $out && $err == *SB4014* ]]; chk 94.29
+
+# 94.30 control: with `]]` on the next line the comment is trivia (DD#94)
+run_sash 'str s=a
+if [[ $s == a # hi
+]]
+then
+  echo yes
+fi'
+[[ $rc = 0 && $out = "yes" && -z $err ]]; chk 94.30
+
 
 set -e
 tally

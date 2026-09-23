@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup arithmetic
-plan=272
+plan=275
 echo "1..$plan" >&3
 
 set +e
@@ -1366,6 +1366,31 @@ b" && -z $err ]]; chk 31.88
 run_sash 'int x=$(( (1 + 2) * 3 ))
 echo $x'
 [[ $rc = 0 && $out = "9" && -z $err ]]; chk 31.89
+
+
+# ── DD#94: the closing delimiter must not share a commented line ──
+# "a comment runs to end of line, so a `))` on a commented line is part of the
+# comment. `(( a = 1 # x ))` is therefore *unterminated*" (DD#94). The prose in
+# journal 391 originally wrote these examples inline and claimed they ran;
+# DG corrected it. These pin the rule so the next reader cannot repeat it.
+
+# 94.11 DD#94's own worked example: inline `))` after a comment is unterminated
+run_sash 'int a=0
+(( a = 1 # x ))
+echo $a'
+[[ $rc != 0 && -z $out && $err == *SB4020* && $err == *"part of the comment"* ]]; chk 94.11
+
+# 94.12 …and in an `$(( ))` rvalue. DD#94 records that `$((5 # 3))` used to
+# print 5 — a silent truncation of the delimiter, the exact DD#72 failure.
+run_sash 'echo $(( 5 # 3 ))'
+[[ $rc != 0 && -z $out && $err == *SB4020* && $err == *"part of the comment"* ]]; chk 94.12
+
+# 94.13 control: with `))` on its own line the same comment is fine
+run_sash 'int a=0
+(( a = 1 # x
+))
+echo $a'
+[[ $rc = 0 && $out = "1" && -z $err ]]; chk 94.13
 
 
 set -e

@@ -35,13 +35,30 @@ comment become inside arithmetic?" — and `Comment => String::new()` states
 DD#94's rule (comments are trivia inside `(( ))`) rather than the accident
 that the scanner currently strips them. Property 3, keep.
 
-**DD#94 also stopped a false positive.** `(( x = 2 # hi ))` gives 2 in sash
+**DD#94 also stopped a false positive.** `(( x = 2 # hi`⏎`))` gives 2 in sash
 and a syntax error in bash, which has exactly the shape of the silent-drop bug
 the function's own doc comment describes. It is not one: DD#94 makes comments
 and newlines trivia inside `(( ))` and `[[ ]]`, and records that bash rejects
 these cases too, "so this is a **deliberate divergence**". Checking
 `notes/decisions/` before believing a divergence is a bug is the rule that
 earned its keep here.
+
+**The newline is load-bearing** (DG, correcting an earlier draft of this
+entry, which wrote the example inline). A comment runs to end of line *inside*
+the brackets too, so the closing delimiter must not share the commented line:
+`(( a = 1 # x ))` is **unterminated**, and DD#94 says so in as many words. The
+arith diagnostic explains it; the `[[ ]]` one does not yet.
+
+Both halves are now pinned — `94.11`-`94.13` for `(( ))` and `$(( ))`,
+`94.29`-`94.30` for `[[ ]]`, each with the working newline form as a control.
+A rule that a draft of this very entry got wrong is a rule that wants a test.
+
+The asymmetry is filed rather than fixed (`dd94-bracket-close-hint`). Appending
+the hint unconditionally to `expected ']]'` would attach comment advice to every
+ordinary missing bracket, which is the SB4064 failure mode from journal 389 —
+advice that is wrong for the input it is shown to. Doing it honestly needs the
+scanner to report whether a comment was consumed on the current line, which it
+does not expose today.
 
 ## Bug 1 — SB4020 named a Rust variant
 

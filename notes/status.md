@@ -29,13 +29,24 @@ rival to `keyword_to_str` (the documented *only* reserved-word list) that
 agreed solely because all eight variants are single lowercase words. Now calls
 `keyword_to_str`; behaviour verified unchanged.
 
-**Deliberately left.** DD#94 makes `(( x = 2 # hi ))` a *deliberate*
+**Deliberately left.** DD#94 makes a comment inside `(( ))` a *deliberate*
 divergence from bash, not the silent-drop bug it resembles — checking
-`notes/decisions/` first is what stopped a false positive. The `[` → `$a[i]`
-hint misfires on `[[` but is a documented heuristic for the common case.
+`notes/decisions/` first is what stopped a false positive. Note the closing
+`))` must be on its own line: a comment runs to end of line inside the
+brackets too, so `(( a = 1 # x ))` is **unterminated** (DD#94 says so
+explicitly; an earlier draft of journal 391 got this wrong — DG caught it).
+Now pinned: `94.11`-`94.13` for `(( ))`/`$(( ))`, `94.29`-`94.30` for `[[ ]]`,
+each with the working newline form as a control. The `[` → `$a[i]` hint
+misfires on `[[` but is a documented heuristic for the common case.
 
-**Gates.** `mk test` 51/27/20. Sweep **6041** (predicted, +2×15), 0 failing,
-0 flips. Three id checks clean; source-derived total agrees exactly.
+**Filed, not fixed.** `dd94-bracket-close-hint` — the arith message explains
+the comment-ate-your-delimiter cause, `expected ']]'` does not. Unconditional
+advice there would misfire on every ordinary missing bracket (the SB4064 trap,
+journal 389); an honest fix needs the scanner to report a comment on the line.
+
+**Gates.** `mk test` 51/27/20. Sweep **6051** (predicted, +2×5 shields on top
+of +2×15), 0 failing, 0 flips. Three id checks clean; source-derived total
+agrees exactly.
 
 **Next up.** Cold-line queue: `arith_op_str` (10), then the
 `transform/expressions.rs` cluster (`joined_form_to_string` 8,
