@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup arithmetic
-plan=275
+plan=303
 echo "1..$plan" >&3
 
 set +e
@@ -1133,16 +1133,19 @@ run_sash 'int k=0; for (( ; k<3, k>0; k++ )); do echo "$k"; done'
 # coverage: `arith_brief`'s `==` / `!=` / `>=` operator arms were cold while
 # `>` / `<` / `<=` beside them were hot — the existing SB5007 specs simply
 # never spell those three.
-# 31.59 top-level assignment in a condition renders as `x = ...` (the RHS is
-# deliberately elided — the brief names the shape, not the value). MEASURED:
-# this text comes from `validate_assignment_stmt` (validate.rs:1050), NOT from
-# `arith_brief` — a mutation condition is decomposed before it could reach the
-# latter. Said plainly because the obvious reading of the message is wrong, and
-# a spec that names the wrong producer sends the next reader to the wrong file.
+# 31.59 a top-level mutation in a condition names its TARGET and claims no
+# operator. MEASURED: this text comes from `validate_assignment_stmt`
+# (validate.rs:1048), NOT from `arith_brief` — a mutation condition is
+# decomposed before it could reach the latter. Said plainly because the obvious
+# reading of the message is wrong, and a spec that names the wrong producer
+# sends the next reader to the wrong file.
+#
+# It used to render `mutation x = ...` here, which was true only for this one
+# spelling; see 31.90-31.94.
 run_sash 'int x=0
 if (( x = 5 )) { echo a }
 echo $x'
-[[ $rc != 0 && -z $out && $err == *SB5007* && $err == *"mutation x = ..."* ]]; chk 31.59
+[[ $rc != 0 && -z $out && $err == *SB5007* && $err == *"mutation of x"* ]]; chk 31.59
 # 31.60 `==` as a bare statement
 run_sash 'int a=1
 int b=2
@@ -1391,6 +1394,232 @@ run_sash 'int a=0
 ))
 echo $a'
 [[ $rc = 0 && $out = "1" && -z $err ]]; chk 94.13
+
+
+# ── 31.90-31.94: the decomposed SB5007 names the TARGET, not a spelling ──
+# `lower_arith_mutation_structured` collapses all four mutation spellings into
+# `Assignment { op: Set, value: BinOp }` on purpose, so by the time
+# `validate_assignment_stmt` builds this message the operator is gone. It used
+# to call `assign_brief` regardless and quote `x = ...` for every one of them —
+# an assignment the author never wrote for `x++`, and for `a[0] -= 2` it named
+# the whole array. Reconstructing the operator from the BinOp is not possible
+# either: `(( x = x - 2 ))` decomposes identically to `(( x -= 2 ))`.
+# So it names the target and claims no operator. Each spelling gets a spec
+# because each is a separate way in.
+
+# 31.90 compound assignment: no `=` claimed
+run_sash 'int x=4
+if (( x -= 2 )); then echo y; fi
+echo $x'
+[[ $rc != 0 && -z $out && $err == *SB5007* && $err == *"mutation of x"* ]]; chk 31.90
+
+# 31.91 post-increment is not an assignment at all
+run_sash 'int x=4
+if (( x++ )); then echo y; fi
+echo $x'
+[[ $rc != 0 && -z $out && $err == *SB5007* && $err == *"mutation of x"* ]]; chk 31.91
+
+# 31.92 …and the decrement half
+run_sash 'int x=4
+if (( x-- )); then echo y; fi
+echo $x'
+[[ $rc != 0 && -z $out && $err == *SB5007* && $err == *"mutation of x"* ]]; chk 31.92
+
+# 31.93 a cell mutation names the CELL. This reported `mutation a = ...` —
+# the whole array — which reads as a different program than the one written.
+# The index is elided as `a[…]`, matching how every other diagnostic names a
+# cell (bare_string_cell_error, scalar_subscript_diag, SB5006).
+run_sash 'array a=(4 5)
+if (( a[0] -= 2 )); then echo y; fi
+echo ${a[0]}'
+[[ $rc != 0 && -z $out && $err == *SB5007* && $err == *"mutation of a[…]"* ]]; chk 31.93
+
+# 31.94 `while` reaches the same site as `if`
+run_sash 'int x=4
+while (( x /= 2 )); do echo y; done
+echo $x'
+[[ $rc != 0 && -z $out && $err == *SB5007* && $err == *"mutation of x"* ]]; chk 31.94
+
+# ── 31.95-31.104: arith_op_str renders every operator the author wrote ──
+# A mutation nested under a binary operator keeps its shape, so `arith_brief`
+# answers instead of the decomposed site and the operator survives into the
+# message. `arith_op_str` is total over `IrArithOp` precisely so none of these
+# can come back as `?` (31.63 records the regression that motivated it), but
+# ten of the nineteen arms had never been rendered by any test. One spec per
+# arm, because one spec per arm is what proves the arm.
+
+# 31.95 `-`
+run_sash 'int x=4
+if (( 1 - x = 2 )); then echo y; fi
+echo $x'
+[[ $rc != 0 && -z $out && $err == *SB5007* && $err == *"mutation 1 - x = ..."* ]]; chk 31.95
+
+# 31.96 `/`
+run_sash 'int x=4
+if (( 1 / x = 2 )); then echo y; fi
+echo $x'
+[[ $rc != 0 && -z $out && $err == *SB5007* && $err == *"mutation 1 / x = ..."* ]]; chk 31.96
+
+# 31.97 `%`
+run_sash 'int x=4
+if (( 1 % x = 2 )); then echo y; fi
+echo $x'
+[[ $rc != 0 && -z $out && $err == *SB5007* && $err == *"mutation 1 % x = ..."* ]]; chk 31.97
+
+# 31.98 `**`
+run_sash 'int x=4
+if (( 1 ** x = 2 )); then echo y; fi
+echo $x'
+[[ $rc != 0 && -z $out && $err == *SB5007* && $err == *"mutation 1 ** x = ..."* ]]; chk 31.98
+
+# 31.99 `&&`
+run_sash 'int x=4
+if (( 1 && x = 2 )); then echo y; fi
+echo $x'
+[[ $rc != 0 && -z $out && $err == *SB5007* && $err == *"mutation 1 && x = ..."* ]]; chk 31.99
+
+# 31.100 `||`
+run_sash 'int x=4
+if (( 1 || x = 2 )); then echo y; fi
+echo $x'
+[[ $rc != 0 && -z $out && $err == *SB5007* && $err == *"mutation 1 || x = ..."* ]]; chk 31.100
+
+# 31.101 `>>`
+run_sash 'int x=4
+if (( 1 >> x = 2 )); then echo y; fi
+echo $x'
+[[ $rc != 0 && -z $out && $err == *SB5007* && $err == *"mutation 1 >> x = ..."* ]]; chk 31.101
+
+# 31.102 `&`
+run_sash 'int x=4
+if (( 1 & x = 2 )); then echo y; fi
+echo $x'
+[[ $rc != 0 && -z $out && $err == *SB5007* && $err == *"mutation 1 & x = ..."* ]]; chk 31.102
+
+# 31.103 `|`
+run_sash 'int x=4
+if (( 1 | x = 2 )); then echo y; fi
+echo $x'
+[[ $rc != 0 && -z $out && $err == *SB5007* && $err == *"mutation 1 | x = ..."* ]]; chk 31.103
+
+# 31.104 `^`
+run_sash 'int x=4
+if (( 1 ^ x = 2 )); then echo y; fi
+echo $x'
+[[ $rc != 0 && -z $out && $err == *SB5007* && $err == *"mutation 1 ^ x = ..."* ]]; chk 31.104
+
+# ── 31.105-31.106: the other two mutation-brief renderers ──
+# There are three, and they do not agree. Audited alongside the fix above.
+
+# 31.105 `expansion_mutation_brief` ($(( )) path) is faithful — its doc records
+# that it once printed `x = ...` for a compound assign and was fixed. 31.73 and
+# 31.74 pin the compound arms; this pins the inc/dec arm.
+run_sash 'int x=4
+echo $(( x++ ))'
+[[ $rc != 0 && -z $out && $err == *SB4020* && $err == *"mutation x++"* ]]; chk 31.105
+
+# 31.106 `brief_arith` (reject_nested_mutation) has NO CompoundAssign arm, so a
+# nested compound mutation falls to `...` and the message names nothing. That
+# is vague, not false — it says less rather than something else — so it is
+# pinned as-is rather than worked around. Consolidating the three renderers is
+# filed as `arith-mutation-brief-rivals`.
+run_sash 'int x=4
+int y=9
+(( x = (y -= 2) ))
+echo $x $y'
+[[ $rc != 0 && -z $out && $err == *SB4020* && $err == *"mutation ..."* ]]; chk 31.106
+
+
+# ── 31.107-31.117: `++x` is rejected in EVERY position, not most of them ──
+# `PREFIX_INCDEC_INVARIANT` promises no pass after the parser can receive a
+# `PreIncDec`, and every downstream arm is an `unreachable!()` on that basis.
+# The promise was false. `reject_prefix_incdec` recursed through `BinOp`,
+# `Assign`, `CompoundAssign`, `Comma` and `Paren` and ended in `_ => Ok(())`,
+# so a prefix form inside a ternary branch, a unary operand, or the value of a
+# subscript assignment sailed past and hit one of those ICEs — a compiler
+# crash for a form the language plainly forbids. Found by consolidating the
+# three mutation-brief renderers: the unified one has a `PreIncDec` arm, and
+# it fired. Ten shapes, ten specs; the walk now delegates to
+# `ArithExpr::children()`, which is total.
+
+# 31.107 ternary, true slot, statement context
+run_sash 'int x=1
+(( 1 ? ++x : 0 ))
+echo $x'
+[[ $rc != 0 && -z $out && $err == *SB4020* && $err == *"prefix ++x is not allowed"* ]]; chk 31.107
+
+# 31.108 ternary, condition slot
+run_sash 'int x=1
+int y=0
+(( y = ++x ? 1 : 0 ))
+echo $x $y'
+[[ $rc != 0 && -z $out && $err == *SB4020* && $err == *"prefix ++x is not allowed"* ]]; chk 31.108
+
+# 31.109 ternary, false slot
+run_sash 'int x=1
+int y=0
+(( y = 0 ? 1 : ++x ))
+echo $x $y'
+[[ $rc != 0 && -z $out && $err == *SB4020* && $err == *"prefix ++x is not allowed"* ]]; chk 31.109
+
+# 31.110 …and in a `$(( ))` value, which is a different entry point
+run_sash 'int x=1
+echo $(( 1 ? ++x : 0 ))'
+[[ $rc != 0 && -z $out && $err == *SB4020* && $err == *"prefix ++x is not allowed"* ]]; chk 31.110
+
+# 31.111 …and in a condition
+run_sash 'int x=1
+if (( 1 ? ++x : 0 )); then echo y; fi
+echo $x'
+[[ $rc != 0 && -z $out && $err == *SB4020* && $err == *"prefix ++x is not allowed"* ]]; chk 31.111
+
+# 31.112 unary minus operand
+run_sash 'int x=1
+int y=0
+(( y = -(++x) ))
+echo $x $y'
+[[ $rc != 0 && -z $out && $err == *SB4020* && $err == *"prefix ++x is not allowed"* ]]; chk 31.112
+
+# 31.113 logical-not operand
+run_sash 'int x=1
+int y=0
+(( y = !++x ))
+echo $x $y'
+[[ $rc != 0 && -z $out && $err == *SB4020* && $err == *"prefix ++x is not allowed"* ]]; chk 31.113
+
+# 31.114 bitwise-not operand
+run_sash 'int x=1
+int y=0
+(( y = ~++x ))
+echo $x $y'
+[[ $rc != 0 && -z $out && $err == *SB4020* && $err == *"prefix ++x is not allowed"* ]]; chk 31.114
+
+# 31.115 the VALUE of a subscript assignment. The index half was already
+# rejected — it is re-parsed through `parse_arith_str` on its own — so only
+# this side was exposed, which is exactly the kind of asymmetry a partial
+# hand-rolled walk produces.
+run_sash 'array a=(1 2 3)
+int i=0
+(( a[0] = ++i ))
+echo ${a[0]} $i'
+[[ $rc != 0 && -z $out && $err == *SB4020* && $err == *"prefix ++i is not allowed"* ]]; chk 31.115
+
+# 31.116 the decrement half takes the same path and gets its own advice
+run_sash 'int x=1
+int y=0
+(( y = 0 ? 1 : --x ))
+echo $x $y'
+[[ $rc != 0 && -z $out && $err == *SB4020* && $err == *"prefix --x is not allowed"* ]]; chk 31.116
+
+# 31.117 the rival consolidation itself: `reject_nested_mutation` used a
+# renderer with no `CompoundAssign` arm, so this said `mutation ...`. All
+# three renderers now share `ir::arith_brief`, so it names the operator the
+# author wrote. (The parenthesised form still elides — see 31.106.)
+run_sash 'int x=4
+int y=9
+(( x = y -= 2 ))
+echo $x $y'
+[[ $rc != 0 && -z $out && $err == *SB4020* && $err == *"mutation y -= ..."* ]]; chk 31.117
 
 
 set -e

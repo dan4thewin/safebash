@@ -95,17 +95,22 @@ pub fn parse_arith_expansion(scanner: &mut Scanner, span: Span) -> Result<Expr, 
 /// How a top-level `$(( … ))` mutation is quoted back, or `None` when the
 /// expression is not a mutation.
 ///
-/// Each kind is spelled by its own operator. `Assign` and `CompoundAssign`
-/// were once matched in a single pattern that printed `x = ...` for both, so
-/// `$(( x *= 2 ))` was reported with an operator the author never wrote.
+/// This answers *whether* — the rendering is `ir::arith_brief`'s job. The two
+/// were fused, which is how `$(( x *= 2 ))` came to be reported with an
+/// operator the author never wrote: a renderer that had grown a
+/// `CompoundAssign` arm elsewhere had not grown one here.
+///
+/// `SubscriptAssign` is deliberately **not** a mutation for this gate.
+/// `ir::arith_brief` elides it to `...`, so claiming it here would replace the
+/// specific "an assignment or `++`/`--` inside `$(( … ))` can't take effect"
+/// that `check_arith_value_mutation` raises for `$(( a[0] -= 2 ))` with a
+/// vaguer one. Saying nothing lets the better message through.
 fn expansion_mutation_brief(expr: &crate::ir::ArithExpr) -> Option<String> {
     use crate::ir::ArithExpr;
     match expr {
-        ArithExpr::Assign { var, .. } => Some(crate::ir::assign_brief(var)),
-        ArithExpr::CompoundAssign { var, op, .. } => {
-            Some(crate::ir::compound_assign_brief(var, *op))
-        }
-        ArithExpr::PostIncDec { var, inc } => Some(crate::ir::incdec_brief(var, *inc)),
+        ArithExpr::Assign { .. }
+        | ArithExpr::CompoundAssign { .. }
+        | ArithExpr::PostIncDec { .. } => Some(crate::ir::arith_brief(expr)),
         _ => None,
     }
 }
@@ -118,42 +123,53 @@ pub fn parse_arith_command(scanner: &mut Scanner, span: Span) -> Result<ArithExp
 }
 
 /// Reject prefix ++/-- anywhere in an arithmetic expression.
+///
+/// Delegates the descent to `ArithExpr::children()` rather than re-deriving
+/// the shape. The hand-rolled walk this replaces recursed through `BinOp`,
+/// `Assign`, `CompoundAssign`, `Comma` and `Paren` and ended in `_ => Ok(())`,
+/// so a prefix form inside a **ternary branch**, a **unary operand**, or the
+/// **value of a subscript assignment** was never seen:
+///
+/// ```text
+/// (( 1 ? ++x : 0 ))     (( y = -(++x) ))     (( a[0] = ++i ))
+/// ```
+///
+/// All ten such shapes survived parsing and then hit one of the downstream
+/// `PREFIX_INCDEC_INVARIANT` ICEs — an internal-error crash for a form the
+/// language simply forbids. The invariant says no pass after the parser can
+/// receive a `PreIncDec`; this function is what has to make that true, and a
+/// partial walk cannot.
+///
+/// This is the *third* partial re-derivation of a tree walk found in this
+/// file. `reject_nested_mutation` directly below documents the second, with
+/// the same remedy: ask the canonical whole-tree helper. `children()` is total
+/// over `ArithExpr`, so a new variant forces a decision here instead of
+/// silently defaulting to "contains nothing".
 fn reject_prefix_incdec(
     expr: &crate::ir::ArithExpr,
     span: crate::ir::Span,
 ) -> Result<(), Diagnostic> {
     use crate::ir::ArithExpr;
-    match expr {
-        ArithExpr::PreIncDec { var, inc } => {
-            let op = if *inc { "++" } else { "--" };
-            let inc_dec_str = if *inc {
-                " += 1 )) instead"
-            } else {
-                " -= 1 )) instead"
-            };
-            Err(arith_error(
-                span,
-                format!(
-                    "prefix {}{} is not allowed — use postfix ({}{}) or (( {}{}",
-                    op, var, var, op, var, inc_dec_str
-                ),
-            ))
-        }
-        ArithExpr::BinOp { left, right, .. } => {
-            reject_prefix_incdec(left, span)?;
-            reject_prefix_incdec(right, span)
-        }
-        ArithExpr::Assign { value, .. } => reject_prefix_incdec(value, span),
-        ArithExpr::CompoundAssign { value, .. } => reject_prefix_incdec(value, span),
-        ArithExpr::Comma(exprs) => {
-            for e in exprs {
-                reject_prefix_incdec(e, span)?;
-            }
-            Ok(())
-        }
-        ArithExpr::Paren(inner) => reject_prefix_incdec(inner, span),
-        _ => Ok(()),
+    if let ArithExpr::PreIncDec { var, inc } = expr {
+        return Err(prefix_incdec_error(var, *inc, span));
     }
+    for child in expr.children() {
+        reject_prefix_incdec(child, span)?;
+    }
+    Ok(())
+}
+
+/// SB4020 for `++x` / `--x`, naming the variable and both allowed rewrites.
+fn prefix_incdec_error(var: &str, inc: bool, span: crate::ir::Span) -> Diagnostic {
+    let op = if inc { "++" } else { "--" };
+    let compound = if inc { "+=" } else { "-=" };
+    arith_error(
+        span,
+        format!(
+            "prefix {op}{var} is not allowed — use postfix ({var}{op}) or \
+             (( {var} {compound} 1 )) instead"
+        ),
+    )
 }
 
 /// Reject nested mutations: e.g. `(( x = y++ ))` has `y++` inside an assignment.
@@ -177,7 +193,7 @@ fn reject_nested_mutation(
     match expr {
         ArithExpr::Assign { value, .. } | ArithExpr::CompoundAssign { value, .. } => {
             if crate::ir::arith_has_mutation(value) {
-                let desc = brief_arith(value);
+                let desc = crate::ir::arith_brief(value);
                 return Err(arith_error(span, format!(
                     "mutation {} not allowed in statement (( )) expression context — use (( )) statement instead", desc
                 )));
@@ -191,16 +207,6 @@ fn reject_nested_mutation(
             Ok(())
         }
         _ => Ok(()),
-    }
-}
-
-fn brief_arith(expr: &crate::ir::ArithExpr) -> String {
-    use crate::ir::ArithExpr;
-    match expr {
-        ArithExpr::PostIncDec { var, inc } => crate::ir::incdec_brief(var, *inc),
-        ArithExpr::PreIncDec { .. } => unreachable!("{}", crate::ir::PREFIX_INCDEC_INVARIANT),
-        ArithExpr::Assign { var, .. } => crate::ir::assign_brief(var),
-        _ => "...".to_string(),
     }
 }
 

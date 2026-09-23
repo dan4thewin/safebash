@@ -1045,14 +1045,20 @@ fn validate_assignment_stmt(
     validate_assignment(a, span, diags);
     // SB5007: arithmetic assignment in condition context.
     // The DD#31 comma pattern is handled at the Group level.
+    //
+    // Only the *decomposed* form arrives here, so the mutation's spelling is
+    // already gone — hence `mutation_target_brief`, which names the target and
+    // claims no operator, rather than `assign_brief`, which claimed `=` for
+    // `x++` and dropped the subscript from `a[0] -= 2`. The nested form goes
+    // through `arith_brief` instead and can still quote faithfully.
     if in_condition && matches!(&a.value.kind, ExprKind::Arithmetic(_)) {
         diags.push(Diagnostic::error_span(
             span,
             "SB5007",
             format!(
-                "mutation {} not allowed in condition (( )) expression context — \
+                "mutation of {} not allowed in condition (( )) expression context — \
                  use (( )) statement instead",
-                crate::ir::assign_brief(&a.name)
+                crate::ir::mutation_target_brief(&a.name, a.index.as_ref())
             ),
         ));
     } else if in_condition && !is_capture_condition_rhs(&a.value) {
@@ -2074,7 +2080,7 @@ fn validate_arith_in_condition(expr: &ArithExpr, span: Span, diags: &mut Vec<Dia
     // (`if (( (a=2) ))`, `while (( (i=i+1) <= 3 ))`) — is rejected. The statement
     // form `(( … ))` is where an assignment belongs (there it is hoisted; bug #3).
     if arith_has_mutation(expr) {
-        let desc = arith_brief(expr);
+        let desc = crate::ir::arith_brief(expr);
         diags.push(Diagnostic::error_span(
             span,
             "SB5007",
@@ -2116,7 +2122,7 @@ fn validate_arith_comma_in_condition(exprs: &[ArithExpr], span: Span, diags: &mu
     };
     for e in init {
         if classify_arith_expr(e) != ArithKind::Mutation {
-            let desc = arith_brief(e);
+            let desc = crate::ir::arith_brief(e);
             diags.push(Diagnostic::error_span(
                 span,
                 "SB5007",
@@ -2139,7 +2145,7 @@ fn validate_arith_as_statement(
     use crate::parse::ArithKind;
 
     if kind == ArithKind::Comparison {
-        let desc = arith_brief(expr);
+        let desc = crate::ir::arith_brief(expr);
         diags.push(Diagnostic::error_span(
             span,
             "SB5007",
@@ -2379,49 +2385,6 @@ fn arith_mutation_under_cond(a: &ArithExpr) -> bool {
                 || arith_mutation_under_cond(cond)
         }
         _ => a.children().into_iter().any(arith_mutation_under_cond),
-    }
-}
-
-/// Quote an arithmetic expression back to the user inside an SB5007 message.
-///
-/// **These mutation arms are live**, which is not obvious and has been
-/// mis-measured twice. A *top-level* mutation (`if (( x = 5 ))`) is decomposed
-/// into statements before validation, so it never arrives here — its message
-/// comes from `validate_assignment_stmt`. A *parenthesised* one arrives
-/// wrapped in `ArithExpr::Paren` and falls to the `_` arm as `...`. What
-/// reaches these arms is a mutation embedded as the **unparenthesised right
-/// operand** of a binary operator:
-///
-/// ```text
-/// if (( 1 > x = 2 ))    → Assign           if (( x++ > 0 ))  → PostIncDec
-/// if (( 1 > x += 2 ))   → CompoundAssign
-/// ```
-///
-/// Nobody writes those, because bash binds `=` loosest and rejects them as an
-/// assignment to a non-variable; sash's parser groups them as `1 > (x = 2)`
-/// instead. Every context still refuses the program (SB5007/SB4020/SB4041), so
-/// the precedence difference is not observable — but the arms run, and specs
-/// `31.69`-`31.71` keep them honest.
-fn arith_brief(expr: &ArithExpr) -> String {
-    match expr {
-        ArithExpr::Assign { var, .. } => crate::ir::assign_brief(var),
-        ArithExpr::CompoundAssign { var, op, .. } => crate::ir::compound_assign_brief(var, *op),
-        ArithExpr::PostIncDec { var, inc } => crate::ir::incdec_brief(var, *inc),
-        // No `PreIncDec` arm: this only recurses through `BinOp` operands, and
-        // `reject_prefix_incdec` recurses there too — so a prefix form is an
-        // SB4020 at parse time and never reaches a diagnostic message here.
-        // Were one to arrive anyway it falls to `_` and reads as `...`.
-        ArithExpr::BinOp { left, op, right } => {
-            format!(
-                "{} {} {}",
-                arith_brief(left),
-                crate::ir::arith_op_str(*op),
-                arith_brief(right)
-            )
-        }
-        ArithExpr::Var(name) => name.clone(),
-        ArithExpr::Literal(n) => n.to_string(),
-        _ => "...".to_string(),
     }
 }
 

@@ -684,10 +684,14 @@ run_sash 'unset nosuchvar'
 [[ $rc != 0 && -z $out && $err == *SB4030* ]]; chk cov.149
 
 # cov.150-153 arith_brief's PostIncDec arms (validate.rs) — the text SB5007
-# quotes back at you. A BARE `if (( x++ ))` reports `x = ...` (the Assign
-# arm), so these had to be reached through a BinOp, where the inc/dec node
-# survives into the message. Both directions were cold: neither `++` nor `--`
-# had ever been rendered by this function.
+# quotes back at you. A BARE `if (( x++ ))` cannot reach them: the mutation is
+# decomposed first, so `validate_assignment_stmt` answers instead. These reach
+# them through a BinOp, where the inc/dec node survives into the message. Both
+# directions were cold: neither `++` nor `--` had ever been rendered here.
+#
+# The bare form used to report `mutation x = ...` — an assignment the author
+# never wrote. This comment said so and treated it as an obstacle to route
+# around rather than a bug; it is now `mutation of x` (31.90-31.94).
 run_sash 'int x=0; while (( x++ < 3 )); do echo $x; done'
 [[ $rc != 0 && -z $out && $err == *SB5007* && $err == *"x++"* ]]; chk cov.150
 run_sash 'int x=0; if (( 1 + x-- )); then echo y; fi'

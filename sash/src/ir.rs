@@ -1254,6 +1254,18 @@ pub enum ArithExpr {
 /// covering all three C-style `for` slots) and at both `parse_arith_str`
 /// bypass callers. No pass after the parser can receive one.
 ///
+/// That last sentence was **false for ten shapes** until 2026-09-19.
+/// `reject_prefix_incdec` walked the tree by hand and ended in `_ => Ok(())`,
+/// so it never entered a ternary branch, a unary operand, or the value of a
+/// subscript assignment — `(( 1 ? ++x : 0 ))`, `(( y = -(++x) ))` and
+/// `(( a[0] = ++i ))` all reached a downstream arm and crashed the compiler.
+/// It now delegates to `ArithExpr::children()`, which is total, so a new
+/// variant cannot silently reopen the hole. Specs `31.107`-`31.116`.
+///
+/// An invariant asserted in a doc comment and enforced by a partial walk is
+/// not an invariant. If you add a `PreIncDec` arm anywhere, keep it an ICE —
+/// but know that what makes it unreachable is one function, and check it.
+///
 /// It gets its own arm rather than riding along with `PostIncDec` because
 /// `x++` is ALLOWED and `++x` is REJECTED: merging them makes a regression in
 /// the parse-time rejection silently *succeed*, lowering `++x` into
@@ -1432,6 +1444,111 @@ pub fn compound_assign_brief(var: &str, op: IrArithOp) -> String {
 /// How a post-increment is quoted in a diagnostic: `x++`.
 pub fn incdec_brief(var: &str, inc: bool) -> String {
     format!("{var}{}", if inc { "++" } else { "--" })
+}
+
+/// The *target* of a mutation, named without claiming how it was spelled.
+///
+/// For the sites that only ever see the **decomposed** form. Every mutation
+/// spelling — `x = e`, `x op= e`, `x++`, `a[i] op= e` — reaches
+/// `validate_assignment_stmt` as `Assignment { op: Set, value: BinOp }`,
+/// because `lower_arith_mutation_structured` collapses all four on purpose.
+/// The operator is therefore *gone* before the diagnostic is built.
+///
+/// That site used to call [`assign_brief`] regardless, so SB5007 reported
+/// `mutation x = ...` for `if (( x++ ))` — which is not an assignment at all —
+/// and `mutation a = ...` for `if (( a[0] -= 2 ))`, naming the whole array
+/// rather than the element. A brief is read as a quotation, and showing a
+/// different operator than the source is worse than showing less
+/// (see [`arith_op_str`]), so this names the target and claims no operator.
+///
+/// Reconstructing the spelling from the decomposed `BinOp` is deliberately
+/// *not* done: `(( x = x - 2 ))` decomposes identically to `(( x -= 2 ))`, so
+/// any such guess misquotes one of the two.
+///
+/// The index is elided as `a[…]` rather than rendered, matching how every
+/// other diagnostic names a cell (`bare_string_cell_error`,
+/// `scalar_subscript_diag`, `reject_scalar_rhs_read`, SB5006). The index here
+/// is an arithmetic expression, not a literal, so there is nothing to print
+/// that would not itself need a renderer.
+pub fn mutation_target_brief(name: &str, index: Option<&Expr>) -> String {
+    match index {
+        None => name.to_string(),
+        Some(_) => format!("{name}[…]"),
+    }
+}
+
+/// Quote an arithmetic expression back to the user inside a diagnostic.
+///
+/// **The only renderer.** There were three — `validate::arith_brief`,
+/// `parse::arith::brief_arith`, and the dispatch half of
+/// `expansion_mutation_brief` — all built on the same four primitives above
+/// and all dispatching separately, so each knew a different subset of
+/// `ArithExpr`. The same defect was then found and fixed *twice*,
+/// independently, in two of them: `expansion_mutation_brief` once printed
+/// `x = ...` for a compound assign (its own doc records the fix), and this
+/// function once rendered fourteen of nineteen operators as `?` (spec 31.63).
+/// Neither fix reached `brief_arith`, which still had no `CompoundAssign` arm
+/// years later. A shared vocabulary with duplicated dispatch gets repaired one
+/// copy per bug report, forever.
+///
+/// **Total over `ArithExpr` on purpose.** A new variant must decide how it is
+/// quoted instead of inheriting `...` from a `_` arm — that is how the `?`
+/// regression above happened. The variants that do render `...` are listed
+/// explicitly: eliding is honest, because it says *less* rather than something
+/// *else*. Rendering them faithfully is possible (`Paren` especially) but is a
+/// change to diagnostic text, not a consolidation, so it is left alone here.
+///
+/// **Which mutation arms are live is not obvious, and has been mis-measured
+/// twice.** A *top-level* mutation (`if (( x = 5 ))`) is decomposed into
+/// statements before validation, so it never arrives here — its message comes
+/// from `validate_assignment_stmt` via [`mutation_target_brief`]. A
+/// *parenthesised* one arrives wrapped in `Paren` and elides to `...`. What
+/// reaches the mutation arms is a mutation embedded as the **unparenthesised
+/// right operand** of a binary operator:
+///
+/// ```text
+/// if (( 1 > x = 2 ))    → Assign           if (( x++ > 0 ))  → PostIncDec
+/// if (( 1 > x += 2 ))   → CompoundAssign
+/// ```
+///
+/// Nobody writes those, because bash binds `=` loosest and rejects them as an
+/// assignment to a non-variable; sash's parser groups them as `1 > (x = 2)`
+/// instead. Every context still refuses the program (SB5007/SB4020/SB4041), so
+/// the precedence difference is not observable — but the arms run, and specs
+/// `31.69`-`31.71` keep them honest.
+pub fn arith_brief(expr: &ArithExpr) -> String {
+    match expr {
+        // Rendered faithfully.
+        ArithExpr::Literal(n) => n.to_string(),
+        ArithExpr::Var(name) => name.clone(),
+        ArithExpr::Assign { var, .. } => assign_brief(var),
+        ArithExpr::CompoundAssign { var, op, .. } => compound_assign_brief(var, *op),
+        ArithExpr::PostIncDec { var, inc } => incdec_brief(var, *inc),
+        ArithExpr::BinOp { left, op, right } => format!(
+            "{} {} {}",
+            arith_brief(left),
+            arith_op_str(*op),
+            arith_brief(right)
+        ),
+
+        // `++x` never survives the parser; see `PREFIX_INCDEC_INVARIANT`. The
+        // two other renderers already ICEd here and this one alone fell
+        // through to `...`; the invariant says every downstream arm is an ICE,
+        // so the disagreement resolves that way rather than by softening it.
+        ArithExpr::PreIncDec { .. } => unreachable!("{}", PREFIX_INCDEC_INVARIANT),
+
+        // Elided on purpose — see the note on totality above. `Paren` is what
+        // makes `if (( y + (x *= 2) ))` read `mutation y + ...` (spec 31.63).
+        ArithExpr::DollarVar(_)
+        | ArithExpr::UnaryOp { .. }
+        | ArithExpr::Ternary { .. }
+        | ArithExpr::Comma(_)
+        | ArithExpr::FuncCall { .. }
+        | ArithExpr::Paren(_)
+        | ArithExpr::Expansion(_)
+        | ArithExpr::Subscript { .. }
+        | ArithExpr::SubscriptAssign { .. } => "...".to_string(),
+    }
 }
 
 /// Unary arithmetic operators.
