@@ -14,7 +14,7 @@ mod capture_purity;
 mod cmd_handlers;
 mod control_flow;
 pub(crate) mod expr_handlers;
-pub(crate) mod expressions;
+mod expressions;
 mod functions;
 mod helpers;
 mod pipelines;

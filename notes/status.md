@@ -1,3 +1,41 @@
+## ══ STATUS (2026-09-23) — correction: a faithful quote, impossible advice ══
+
+**DG caught a bug in the commit below.** `$(keys "config")` can never work —
+`"config"` is a string, and `keys` takes only a bare map name. So rendering
+the operand as the user spelled it produced a message that names their program
+accurately and then advises `for k in $(keys "config")`, which SB5062 rejects.
+I fixed the quotation and broke the advice.
+
+**The distinction that settles it.** SB5025 is a *context* rule (this splat is
+in the wrong place); SB5062 is an *operand* rule (this is not a map name).
+When both are violated the operand rule is more fundamental, and reporting the
+context rule *while paraphrasing the bad operand into a suggestion* is worse
+than either alone. Since a `Literal` is the only operand spelling that can ever
+be valid, it is the only one this diagnostic may quote — it quotes it back **as
+advice**. `keys_splat_diag` now returns `Option` and defers everything else.
+
+**It closed a positional inconsistency too.** The same operand error reported
+two codes depending on position — `for k in $(keys "config")` said SB5062,
+`echo $(keys "config")` said SB5025. Both now say SB5062. Verified by execution
+that nothing slips past to the transform: the deferral hands off to a check
+that really fires.
+
+**And it reverted the visibility widening.** With the operand restricted to a
+`Literal`, `validate.rs` needs no renderer — `ExprKind::Literal(name) =>
+Some(name)`. `pub(crate) mod expressions` and `pub(crate) fn expr_to_string`
+are both back as they were. The previous commit widened module surface to
+reuse a renderer for a job that, correctly understood, needed no rendering.
+
+**Gates.** `mk test` 51/27/20. Sweep **6135** (predicted, +2×1), 0 failing,
+0 flips. `33.48` rewritten to pin SB5062 instead of the quoted render;
+`33.49` added for the for-in position.
+
+**The lesson.** The entry below credits reading what a probe printed on the way
+past. This is the sequel: I read it, fixed what it showed, and never asked
+whether the *fixed* output described a program that could exist. A diagnostic
+that quotes the user's code makes a claim; one that suggests a replacement
+makes a promise. I checked the claim and not the promise.
+
 ## ══ STATUS (2026-09-23) — a diagnostic that named the wrong map ══
 
 **Where it came from.** The coverage queue, not a bug report. The cold-line

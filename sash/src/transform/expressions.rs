@@ -472,7 +472,7 @@ fn try_array_single_glob(vals: &[SsaValue]) -> Option<SsaValue> {
 /// construct stands in. The two helpers re-match on the kind and are total
 /// only over the variants routed to them — safe because *this* match stays
 /// exhaustive, so a new `ExprKind` is a compile error here first.
-pub(crate) fn expr_to_string(expr: &Expr) -> String {
+pub(super) fn expr_to_string(expr: &Expr) -> String {
     match &expr.kind {
         ExprKind::Literal(s) => s.clone(),
         ExprKind::SimpleExpansion(var) => format!("${}", var),

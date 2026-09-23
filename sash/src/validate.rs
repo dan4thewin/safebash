@@ -4261,16 +4261,17 @@ fn argv_splat_self_diag(expr: &Expr) -> Option<Diagnostic> {
         return Some(argv_splat_diag(expr.span));
     }
     if is_keys_splat_expr(expr) {
-        return Some(keys_splat_diag(expr));
+        return keys_splat_diag(expr);
     }
     None
 }
 
-/// The `keys` operand as the user wrote it — `config` in `$(keys config)`,
-/// `"config"` in `$(keys "config")`. Rendered, not fabricated: a fixed
-/// exemplar names a map the program does not contain. `None` only when `keys`
-/// has no operand, which SB4045 rejects before this runs.
-fn keys_splat_operand(expr: &Expr) -> Option<String> {
+/// The map name in `$(keys config)`. `keys` resolves its operand as a bare
+/// map name (DD#75 §3), so a literal is the only spelling that can ever be
+/// valid — and the only one this diagnostic may quote, because it quotes it
+/// back as *advice*. Every other spelling is SB5062's to report; paraphrasing
+/// one here would suggest a `for` line that is itself rejected.
+fn keys_splat_map_name(expr: &Expr) -> Option<&str> {
     let ExprKind::CommandSubstitution(stmts) = &expr.kind else {
         return None;
     };
@@ -4282,27 +4283,26 @@ fn keys_splat_operand(expr: &Expr) -> Option<String> {
     let StmtKind::Command(c) = inner else {
         return None;
     };
-    c.args
-        .first()
-        .map(crate::transform::expressions::expr_to_string)
+    match &c.args.first()?.kind {
+        ExprKind::Literal(name) => Some(name),
+        _ => None,
+    }
 }
 
-/// SB5025 for a `$(keys …)` splat outside a for-in source. The splat is quoted
-/// back as written, so the suggested `for` line is one the user can paste.
-fn keys_splat_diag(expr: &Expr) -> Diagnostic {
-    let splat = match keys_splat_operand(expr) {
-        Some(operand) => format!("$(keys {operand})"),
-        None => "$(keys)".to_string(),
-    };
-    Diagnostic::error_span(
+/// SB5025 for a `$(keys m)` splat outside a for-in source. `None` when the
+/// operand is not a bare map name — that program has a more fundamental
+/// error, and SB5062 names it.
+fn keys_splat_diag(expr: &Expr) -> Option<Diagnostic> {
+    let map = keys_splat_map_name(expr)?;
+    Some(Diagnostic::error_span(
         expr.span,
         "SB5025",
         format!(
-            "`{splat}` is an array splat — it is valid only as the sole source \
-             of a for-in loop (`for k in {splat}`); it cannot be joined into a \
-             scalar or passed as a command argument"
+            "`$(keys {map})` is an array splat — it is valid only as the sole \
+             source of a for-in loop (`for k in $(keys {map})`); it cannot be \
+             joined into a scalar or passed as a command argument"
         ),
-    )
+    ))
 }
 
 /// Walk an expression, flagging quoted splats (SB5026) and bare argv splats

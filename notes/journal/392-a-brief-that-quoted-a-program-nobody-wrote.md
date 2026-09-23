@@ -399,3 +399,68 @@ A cold line is a question, not a verdict. This one answered "covered by a
 unit test, nothing to do" — and the bug was three feet away, in the control
 case of the probe I wrote to investigate it. Both bugs in this file were found
 by **reading what the probe printed on the way past the thing I was probing.**
+
+---
+
+## Addendum 3: correction — a faithful quote that was impossible advice
+
+DG, on reading the commit above: **`$(keys "config")` can never work —
+`"config"` is a string.** And: **`keys` only takes a map name.**
+
+He is right, and it invalidates the part of addendum 2 I was most pleased
+with. I had written that rendering the operand as the user spelled it made the
+suggested `for` line "one that can be pasted". For a bare name it does. For
+`$(keys "config")` the message became
+
+> `` `$(keys "config")` `` is an array splat — it is valid only as the sole
+> source of a for-in loop (`for k in $(keys "config")`) …
+
+and that `for` line is **itself rejected**, by SB5062: `keys` resolves its
+operand as a variable name, and a quoted string is not one. I fixed the
+quotation and broke the advice. The message now names the user's program
+accurately and then tells them to write a program that does not compile.
+
+The error underneath is subtler than the misquote it replaced. SB5025 is a
+**context** rule — this splat is in the wrong place. SB5062 is an **operand**
+rule — this is not a map name. When both are violated the operand rule is the
+more fundamental one, and reporting the context rule *and paraphrasing the bad
+operand into advice* is worse than either alone.
+
+`keys` taking only a bare map name is what settles it: a `Literal` is the only
+operand spelling that can ever be valid, so it is the only one this diagnostic
+may quote — because it quotes it back **as advice**. `keys_splat_diag` now
+returns `Option` and yields `None` for every other spelling, deferring to
+SB5062.
+
+### It also closed a positional inconsistency I had not noticed
+
+The same operand error reported two different codes depending on where it sat:
+
+```
+for k in $(keys "config")   →  SB5062   (operand rule)
+echo     $(keys "config")   →  SB5025   (context rule)
+```
+
+One program, one mistake, two diagnostics. Both now say SB5062. Verified by
+execution that nothing slips past to the transform in any position — the
+deferral hands off to a check that really does fire, rather than to silence.
+
+### And it reverted the visibility widening
+
+With the operand restricted to a `Literal`, `validate.rs` no longer needs a
+renderer at all — `ExprKind::Literal(name) => Some(name)`. So
+`pub(crate) mod expressions` and `pub(crate) fn expr_to_string` are both back
+to what they were. The commit above widened module surface to reuse a renderer
+for a job that, correctly understood, needed no rendering.
+
+`33.48` rewritten to pin SB5062 rather than the quoted render it used to
+assert; `33.49` added for the for-in position. Sweep **6135**, 0 failing,
+0 flips.
+
+### The lesson
+
+Addendum 2 ended by congratulating me for reading what a probe printed on the
+way past. This one is the sequel: I read the output, fixed what it showed, and
+did not ask whether the *fixed* output described a program that could exist.
+**A diagnostic that quotes the user's code is making a claim; one that suggests
+a replacement is making a promise.** I checked the first and not the second.
