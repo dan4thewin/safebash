@@ -4225,35 +4225,84 @@ fn disposition_position_diag(span: Span) -> Diagnostic {
     )
 }
 
+/// SB5026 for a quoted splat leaf — `"@a"` / `"$(argv)"`. Split out of
+/// [`argv_splat_self_diag`] to keep that dispatch flat.
+fn quoted_splat_self_diag(expr: &Expr) -> Option<Diagnostic> {
+    let ExprKind::DoubleQuoted(parts) = &expr.kind else {
+        return None;
+    };
+    if parts.len() == 1 && is_splat_form(&parts[0]) {
+        return Some(quoted_splat_diag(expr.span));
+    }
+    None
+}
+
+/// SB5025 for a bare `$(argv)` splat outside a for-in source. Unlike the
+/// `keys` sibling this needs no rendering: `argv` takes no operand, so the
+/// fixed text is accurate for every program that reaches it.
+fn argv_splat_diag(span: Span) -> Diagnostic {
+    Diagnostic::error_span(
+        span,
+        "SB5025",
+        "$(argv) is an array splat — it is valid only as the sole source of \
+         a for-in loop; snapshot into an array with `argv [N] a`, or use \
+         $(arg N) for a single argument"
+            .to_string(),
+    )
+}
+
 /// SB5026 (quoted splat) or SB5025 (bare argv splat in a non-splat context)
 /// for `expr` itself — `None` if `expr` is not a splat leaf.
 fn argv_splat_self_diag(expr: &Expr) -> Option<Diagnostic> {
-    if let ExprKind::DoubleQuoted(parts) = &expr.kind {
-        if parts.len() == 1 && is_splat_form(&parts[0]) {
-            return Some(quoted_splat_diag(expr.span));
-        }
+    if let Some(diag) = quoted_splat_self_diag(expr) {
+        return Some(diag);
     }
     if is_argv_splat_expr(expr) {
-        return Some(Diagnostic::error_span(
-            expr.span,
-            "SB5025",
-            "$(argv) is an array splat — it is valid only as the sole source of \
-             a for-in loop; snapshot into an array with `argv [N] a`, or use \
-             $(arg N) for a single argument"
-                .to_string(),
-        ));
+        return Some(argv_splat_diag(expr.span));
     }
     if is_keys_splat_expr(expr) {
-        return Some(Diagnostic::error_span(
-            expr.span,
-            "SB5025",
-            "`$(keys m)` is an array splat — it is valid only as the sole source \
-             of a for-in loop (`for k in $(keys m)`); it cannot be joined into a \
-             scalar or passed as a command argument"
-                .to_string(),
-        ));
+        return Some(keys_splat_diag(expr));
     }
     None
+}
+
+/// The `keys` operand as the user wrote it — `config` in `$(keys config)`,
+/// `"config"` in `$(keys "config")`. Rendered, not fabricated: a fixed
+/// exemplar names a map the program does not contain. `None` only when `keys`
+/// has no operand, which SB4045 rejects before this runs.
+fn keys_splat_operand(expr: &Expr) -> Option<String> {
+    let ExprKind::CommandSubstitution(stmts) = &expr.kind else {
+        return None;
+    };
+    let inner = match stmts.first().map(|s| &s.kind) {
+        Some(StmtKind::Redirected(r)) => &r.body.kind,
+        Some(other) => other,
+        None => return None,
+    };
+    let StmtKind::Command(c) = inner else {
+        return None;
+    };
+    c.args
+        .first()
+        .map(crate::transform::expressions::expr_to_string)
+}
+
+/// SB5025 for a `$(keys …)` splat outside a for-in source. The splat is quoted
+/// back as written, so the suggested `for` line is one the user can paste.
+fn keys_splat_diag(expr: &Expr) -> Diagnostic {
+    let splat = match keys_splat_operand(expr) {
+        Some(operand) => format!("$(keys {operand})"),
+        None => "$(keys)".to_string(),
+    };
+    Diagnostic::error_span(
+        expr.span,
+        "SB5025",
+        format!(
+            "`{splat}` is an array splat — it is valid only as the sole source \
+             of a for-in loop (`for k in {splat}`); it cannot be joined into a \
+             scalar or passed as a command argument"
+        ),
+    )
 }
 
 /// Walk an expression, flagging quoted splats (SB5026) and bare argv splats

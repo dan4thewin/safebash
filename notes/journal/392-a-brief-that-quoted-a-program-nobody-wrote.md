@@ -315,3 +315,87 @@ covering.
 
 Asking the narrow version of a question gets the narrow version of an answer.
 DG gave the general one anyway.
+
+---
+
+## Addendum 2: the same bug, in a validator I had not looked at
+
+Back on the coverage queue. The ranking put `transform/expressions.rs` near
+the top — `expr_to_string`, `joined_form_to_string`, `opaque_form_to_string`,
+21 cold lines between them — so I opened the family expecting a gap.
+
+There isn't one. `every_expr_kind_renders` asserts all thirteen `ExprKind`
+spellings, and each helper's `unreachable!` has its own catch-unwind test.
+The lines are cold because **`mk cov` excludes the unit tests by design**.
+Structural coldness, not a hole. Nothing to shield.
+
+So the cold lines were not the finding. The finding came from asking the
+second question: this is a *display* renderer, and twenty-four call sites use
+it — several to make **semantic** decisions. `is_array_read_last` compares
+`expr_to_string(&c.name) == "read"`. `body_calls_user_function` looks the
+rendered name up in `function_bodies`. `is_attest_left` matches `"attest"`.
+A `DoubleQuoted` renders *with its quotes*, so `"read"` is six characters and
+never equals four. Write the command name quoted and the detection silently
+fails.
+
+It doesn't, and that is worth recording: **SB5011 rejects a quoted command
+name outright** — "a command name must be a literal path". The gate is
+upstream of every one of those comparisons. `keys`' operand is not a command
+name and so not covered by it, but SB5062 ("`keys` resolves its operand as a
+variable name"), SB4045 (arity) and SB4030 (type) between them reject every
+operand shape that isn't a bare literal. The display-renderer hazard is real
+in principle and closed in practice, at four separate gates.
+
+### What the probe printed on the way past
+
+The last line of that probe was a control I did not expect to read twice:
+
+```
+$ echo $(keys config)
+error [SB5025] `$(keys m)` is an array splat — it is valid only as the
+sole source of a for-in loop (`for k in $(keys m)`); …
+```
+
+The program has no `m` in it. The span is correct — the caret sits on the
+user's expression — and the backticked text beside it names a map that does
+not exist. It is not a rendering that lost information, like SB5007 above. It
+is a **fixed exemplar written into the message**, accurate only for the reader
+who happened to call their map `m`. I had, in the probe two lines earlier,
+which is why it took a second program to see it.
+
+Its `$(argv)` sibling, four lines up in the same function, is fine for the
+opposite reason: `argv` takes no operand, so its fixed text is accurate for
+every program that can reach it. One of the pair needed rendering and one
+never did, and they were written as though the question had not come up.
+
+`keys_splat_diag` now renders the operand the user wrote, through
+`expr_to_string` — the display renderer from the top of this addendum, doing
+the one job it is unambiguously right for. `$(keys config)` quotes `config`;
+`$(keys "config")` keeps the quotes. The suggested `for` line is now one that
+can be pasted.
+
+That required `pub(crate)` on `transform::expressions` — following
+`expr_handlers`, already `pub(crate)` for the same reason, already imported by
+`validate.rs`. Reusing the one renderer rather than growing a fourth rival was
+the whole point of the commit above it.
+
+### The gate caught the refactor, correctly
+
+`argv_splat_self_diag` sat at cc 6 / cog 6 against a 5.7 bar, and I had
+touched it — grandfather-on-modify. The cost was nesting: an `if` with an
+`&&` inside an `if let`. Splitting out `quoted_splat_self_diag` and
+`argv_splat_diag` took it to **4 / 3**, and left the function a flat list of
+three named cases, which is what it always was underneath.
+
+### Shields
+
+`33.47` — the message names the map the program declares, and does *not*
+contain `$(keys m)`. `33.48` — a quoted operand is rendered as written.
+Sweep **6133** (predicted, +2×2), 0 failing, 0 flips. `mk test` 51/27/20.
+
+### The lesson, again
+
+A cold line is a question, not a verdict. This one answered "covered by a
+unit test, nothing to do" — and the bug was three feet away, in the control
+case of the probe I wrote to investigate it. Both bugs in this file were found
+by **reading what the probe printed on the way past the thing I was probing.**

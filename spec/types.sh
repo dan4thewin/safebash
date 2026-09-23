@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup types
-plan=268
+plan=270
 echo "1..$plan" >&3
 
 set +e
@@ -464,6 +464,16 @@ run_sash 'map m=([a]=1 [b]=2); printf "%s\n" $(keys m)'
 # 33.46 $(keys m) in scalar-assignment context → SB5025 (array splat in scalar)
 run_sash 'map m=([a]=1 [b]=2); x=$(keys m); echo $x'
 [[ $rc != 0 && -z $out && $err == *SB5025* ]]; chk 33.46
+
+# 33.47 the SB5025 splat message names the map the program actually declares.
+# It used to quote a fixed exemplar `$(keys m)` whatever the map was called,
+# so the backticked "your expression" named a map nobody had written.
+run_sash 'map config=([a]=1 [b]=2); echo $(keys config)'
+[[ $rc != 0 && -z $out && $err == *'`$(keys config)`'* && $err != *'$(keys m)'* ]]; chk 33.47
+# 33.48 the operand is rendered as written, quotes and all — the suggested
+# `for` line has to be one the user can paste.
+run_sash 'map config=([a]=1 [b]=2); echo $(keys "config")'
+[[ $rc != 0 && -z $out && $err == *'`$(keys "config")`'* ]]; chk 33.48
 
 # 33.19–33.21 join arr SEP — DD#75: array first, separator second.
 run_sash 'array a=(x y z); echo $(join a ",")'
