@@ -22,8 +22,8 @@ use super::arith::{
 };
 use super::error::parse_error;
 use super::expr::{
-    is_identifier, parse_array_literal, parse_assignment_value, parse_expr, parse_operand_word,
-    span_from,
+    is_identifier, keyword_to_str, parse_array_literal, parse_assignment_value, parse_expr,
+    parse_operand_word, span_from,
 };
 use super::lexer::{Scanner, Tok};
 use crate::diagnostic::Diagnostic;
@@ -2841,9 +2841,17 @@ fn expect_word(scanner: &mut Scanner, span: Span, msg: &str) -> Result<String, D
             scanner.next();
             Ok(w)
         }
-        // Some keywords can also be used as identifiers in certain contexts
+        // Some keywords can also be used as identifiers in certain contexts.
+        // The spelling comes from `keyword_to_str`, the single reserved-word
+        // list — never from the variant's `Debug` name. Deriving it as
+        // `format!("{:?}", tok).to_lowercase()` is a second, silent answer to
+        // "how is this keyword spelled?" that happens to agree only because
+        // every variant here is a single lowercase word; it would have
+        // produced `dblbracketopen` for a variant whose name is not its text.
         Tok::In | Tok::Do | Tok::Done | Tok::Then | Tok::Fi | Tok::Else | Tok::Elif | Tok::Esac => {
-            let name = format!("{:?}", scanner.peek().token).to_lowercase();
+            let name = keyword_to_str(&scanner.peek().token)
+                .expect("every variant in this arm is in keyword_to_str's domain")
+                .to_string();
             scanner.next();
             Ok(name)
         }

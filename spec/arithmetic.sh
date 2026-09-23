@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup arithmetic
-plan=257
+plan=272
 echo "1..$plan" >&3
 
 set +e
@@ -1255,6 +1255,118 @@ run_sash 'int x=1
 echo $(( x <<= 1 ))
 echo $x'
 [[ $rc != 0 && -z $out && $err == *SB4020* && $err == *"mutation x <<= ..."* ]]; chk 31.74
+
+# ── tok_to_text: no token is silently dropped from collected `(( ))` ──
+# The raw collector re-renders every token it consumes. It once ended in
+# `_ => String::new()`, which DELETED 35 of 59 token kinds: `(( x = 1 done ))`
+# collapsed to `x = 1` and compiled clean, where bash reports a syntax error.
+# Each of the following reaches one arm of that match; the shield is that the
+# token survives into the re-lexed text and produces a hard error rather than
+# vanishing. (Measured: these eleven are the arms the suite never reached.)
+
+# 31.75 `{` survives collection
+run_sash 'int x=1
+(( x = 1 + { ))
+echo $x'
+[[ $rc != 0 && -z $out && $err == *SB4035* ]]; chk 31.75
+
+# 31.76 `}` survives collection
+run_sash 'int x=1
+(( x = 1 } 2 ))
+echo $x'
+[[ $rc != 0 && -z $out && $err == *SB4035* ]]; chk 31.76
+
+# 31.77 `[[` survives collection
+run_sash 'int x=1
+(( x = 1 [[ 2 ))
+echo $x'
+[[ $rc != 0 && -z $out && $err == *SB4035* ]]; chk 31.77
+
+# 31.78 `]]` survives collection
+run_sash 'int x=1
+(( x = 1 ]] 2 ))
+echo $x'
+[[ $rc != 0 && -z $out && $err == *SB4035* ]]; chk 31.78
+
+# 31.79 `>&` survives collection
+run_sash 'int x=1
+(( x = 1 >& 2 ))
+echo $x'
+[[ $rc != 0 && -z $out && $err == *SB4020* ]]; chk 31.79
+
+# 31.80 `<&` survives collection
+run_sash 'int x=1
+(( x = 1 <& 2 ))
+echo $x'
+[[ $rc != 0 && -z $out && $err == *SB4020* ]]; chk 31.80
+
+# 31.81 `<>` survives collection
+run_sash 'int x=1
+(( x = 1 <> 2 ))
+echo $x'
+[[ $rc != 0 && -z $out && $err == *SB4020* ]]; chk 31.81
+
+# 31.82 `&>` survives collection
+run_sash 'int x=1
+(( x = 1 &> 2 ))
+echo $x'
+[[ $rc != 0 && -z $out && $err == *SB4020* ]]; chk 31.82
+
+# 31.83 a single-quoted operand survives collection
+run_sash 'int x=1
+(( x = '\''abc'\'' + 1 ))
+echo $x'
+[[ $rc != 0 && -z $out && $err == *SB4035* ]]; chk 31.83
+
+# 31.84 a double-quoted operand survives collection. It is rendered as the
+# placeholder `"..."`, which is lossy but always invalid, so the reject is
+# guaranteed and SB4035 still names the real `"` the user typed.
+run_sash 'int x=1
+(( x = "abc" + 1 ))
+echo $x'
+[[ $rc != 0 && -z $out && $err == *SB4035* ]]; chk 31.84
+
+# 31.85 `$(` survives collection
+run_sash 'int x=1
+(( x = $(echo 2) + 1 ))
+echo $x'
+[[ $rc != 0 && -z $out && $err == *SB4020* ]]; chk 31.85
+
+# ── arith diagnostics name the source text, never a Rust variant ──
+# SB4020 used to format the token with `{:?}`, so `>&` reported
+# `found Amp` — an internal enum name for a character the user typed as `&`.
+# `atok_to_text` is the single spelling list; the `!= *Amp*` half is the real
+# shield, since a regression to `{:?}` would still contain "found".
+
+# 31.86 the operand complaint shows `&`, not `Amp`
+run_sash 'int x=1
+(( x = 1 >& 2 ))
+echo $x'
+[[ $rc != 0 && $err == *SB4020* && $err == *'found `&`'* && $err != *Amp* ]]; chk 31.86
+
+# 31.87 the expect() complaint shows `:`, not `Colon`
+run_sash 'int x
+x=$(( 1 ? 2 ))
+echo $x'
+[[ $rc != 0 && $err == *SB4020* && $err == *'expected `:`'* && $err != *Colon* ]]; chk 31.87
+
+# 31.88 a keyword used as an identifier takes its spelling from
+# `keyword_to_str`, not from the variant's Debug name (which agreed only by
+# accident of every such variant being a single lowercase word)
+run_sash 'for in in a b
+do
+  echo $in
+done'
+[[ $rc = 0 && $out = "a
+b" && -z $err ]]; chk 31.88
+
+# 31.89 control: parens are intercepted by step_arith_collect before
+# tok_to_text (whose paren arms are unreachable, DD#116), so grouping and
+# nesting must still evaluate normally
+run_sash 'int x=$(( (1 + 2) * 3 ))
+echo $x'
+[[ $rc = 0 && $out = "9" && -z $err ]]; chk 31.89
+
 
 set -e
 tally

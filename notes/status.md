@@ -1,3 +1,49 @@
+## ══ STATUS (2026-09-23) — two diagnostics that named Rust, not sash ══
+
+**Just completed.** Worked `tok_to_text` (18 cold arms, top of the queue). It
+looked like pure test debt; two of three findings were bugs, and neither was
+in a cold line.
+
+Settled the 18 by **instrumenting once** (`eprintln!` at the head of the
+function) rather than per-arm `panic!`s — one edit answers all of them, and
+the panic-per-arm method does not scale past two or three.
+
+- **5 paren arms** (`(`, `)`, `((`, `))`, `$((`) are intercepted by
+  `step_arith_collect` before the sole caller. A DD#116 **rival**, and one
+  already *out of step* — the interceptor is depth-sensitive, these were
+  unconditional. Now `unreachable!()`, keeping totality.
+- **`Comment` / `Eof`** keep: property 3. `Comment => ""` states DD#94's rule
+  (comments are trivia inside `(( ))`), not the accident that the scanner
+  strips them.
+- **11 reachable, untested** → shields `31.75`-`31.85`.
+
+**Bug 1 — SB4020 named a Rust variant.** `(( 1 >& 2 ))` reported
+`found Amp` for a character the user typed as `&`; `expect()` said
+`expected Colon`. Both built messages with `{:?}`. Fixed with `atok_to_text`,
+a total match over all 45 `ATok` variants. Found by reading the output of the
+shields I was adding, not by looking at a cold line.
+
+**Bug 2 — a third copy of the keyword spellings.** `expect_word` derived a
+keyword-as-identifier's text with `format!("{:?}", tok).to_lowercase()`, a
+rival to `keyword_to_str` (the documented *only* reserved-word list) that
+agreed solely because all eight variants are single lowercase words. Now calls
+`keyword_to_str`; behaviour verified unchanged.
+
+**Deliberately left.** DD#94 makes `(( x = 2 # hi ))` a *deliberate*
+divergence from bash, not the silent-drop bug it resembles — checking
+`notes/decisions/` first is what stopped a false positive. The `[` → `$a[i]`
+hint misfires on `[[` but is a documented heuristic for the common case.
+
+**Gates.** `mk test` 51/27/20. Sweep **6041** (predicted, +2×15), 0 failing,
+0 flips. Three id checks clean; source-derived total agrees exactly.
+
+**Next up.** Cold-line queue: `arith_op_str` (10), then the
+`transform/expressions.rs` cluster (`joined_form_to_string` 8,
+`opaque_form_to_string` 7, `expr_to_string` 6 — probe together, that is the
+display renderer behind the `argv` ICE), `check_condition_type` (8),
+`check_scalar_assignment` (8). `coverage.db` is current as of `1ec7f8d`, so
+one commit stale after this one.
+
 ## ══ STATUS (2026-09-22) — a narrowing-by-default becomes a rule ══
 
 **Just completed.** DG ruled on the one question 389 left open. `argv $n a`
@@ -10060,7 +10106,7 @@ modified: 2026-06-07
 
 ## Spec status: 5998 passing / 0 failing of 6011 (spec.db @ fffc23f)
 
-_Regenerated 2026-09-22 by `mk status`. Edits inside this block will be
+_Regenerated 2026-09-23 by `mk status`. Edits inside this block will be
 overwritten; edit outside the BEGIN/END markers._
 <!-- END: mk-status -->
 

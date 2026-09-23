@@ -470,6 +470,66 @@ enum ATok {
     RParen,
 }
 
+/// The source spelling of an arith token, for diagnostics.
+///
+/// User-facing messages must name what the user *wrote*. Before this existed,
+/// SB4020 formatted the token with `{:?}` and told people
+/// `expected an operand in arithmetic expression, found Amp` — an internal
+/// variant name for a character they had typed as `&`. The match is total so
+/// a new `ATok` is a compile error here rather than another leaked name.
+fn atok_to_text(tok: &ATok) -> String {
+    match tok {
+        ATok::Num(n) => n.to_string(),
+        ATok::BadNum(s) | ATok::BadLit(s) | ATok::Var(s) => s.clone(),
+        ATok::DollarVar(name) => format!("${name}"),
+        ATok::Subscript(name, index) => format!("${{{name}[{index}]}}"),
+        ATok::BareSubscript(name, index) => format!("{name}[{index}]"),
+        ATok::ParamExpansion(body) => format!("${{{body}}}"),
+        ATok::PlusPlus => "++".to_string(),
+        ATok::MinusMinus => "--".to_string(),
+        ATok::StarStar => "**".to_string(),
+        ATok::LtLt => "<<".to_string(),
+        ATok::GtGt => ">>".to_string(),
+        ATok::LtEq => "<=".to_string(),
+        ATok::GtEq => ">=".to_string(),
+        ATok::EqEq => "==".to_string(),
+        ATok::BangEq => "!=".to_string(),
+        ATok::AmpAmp => "&&".to_string(),
+        ATok::PipePipe => "||".to_string(),
+        ATok::PlusEq => "+=".to_string(),
+        ATok::MinusEq => "-=".to_string(),
+        ATok::StarEq => "*=".to_string(),
+        ATok::SlashEq => "/=".to_string(),
+        ATok::PercentEq => "%=".to_string(),
+        ATok::AmpEq => "&=".to_string(),
+        ATok::PipeEq => "|=".to_string(),
+        ATok::CaretEq => "^=".to_string(),
+        ATok::LtLtEq => "<<=".to_string(),
+        ATok::GtGtEq => ">>=".to_string(),
+        ATok::Plus => "+".to_string(),
+        ATok::Minus => "-".to_string(),
+        ATok::Star => "*".to_string(),
+        ATok::Slash => "/".to_string(),
+        ATok::Percent => "%".to_string(),
+        ATok::Lt => "<".to_string(),
+        ATok::Gt => ">".to_string(),
+        ATok::Amp => "&".to_string(),
+        ATok::Pipe => "|".to_string(),
+        ATok::Caret => "^".to_string(),
+        ATok::Tilde => "~".to_string(),
+        ATok::Bang => "!".to_string(),
+        ATok::Eq => "=".to_string(),
+        ATok::Question => "?".to_string(),
+        ATok::Colon => ":".to_string(),
+        ATok::Comma => ",".to_string(),
+        // DD#94: a newline or `;`. Both spell the same role; `;` is the one
+        // that can be shown inline without mangling the message.
+        ATok::Sep => ";".to_string(),
+        ATok::LParen => "(".to_string(),
+        ATok::RParen => ")".to_string(),
+    }
+}
+
 fn tokenize_arith(input: &str) -> Vec<ATok> {
     let bytes = input.as_bytes();
     let mut tokens = Vec::new();
@@ -865,7 +925,10 @@ impl ArithParser {
         } else {
             Err(arith_error(
                 self.span,
-                format!("expected {:?} in arithmetic expression", expected),
+                format!(
+                    "expected `{}` in arithmetic expression",
+                    atok_to_text(expected)
+                ),
             ))
         }
     }
@@ -1122,7 +1185,10 @@ impl ArithParser {
             // bash rejects outright. Both cases are now a hard SB4020.
             Some(tok) => Err(arith_error(
                 self.span,
-                format!("expected an operand in arithmetic expression, found {tok:?}"),
+                format!(
+                    "expected an operand in arithmetic expression, found `{}`",
+                    atok_to_text(&tok)
+                ),
             )),
             None => Err(arith_error(
                 self.span,
@@ -1543,7 +1609,17 @@ fn needs_separator_space(next: &Tok, prev_text: &str) -> bool {
 /// `Tok` variant must be a compile error here, not another silent drop.
 ///
 /// Only two renderings are empty, and both are deliberate: a comment is
-/// trivia, and `Eof` has no source text.
+/// trivia (DD#94 — comments are trivia inside `(( ))`, a deliberate
+/// divergence from bash), and `Eof` has no source text. Neither token
+/// actually reaches here today — the scanner strips comments and the collect
+/// loop stops at EOF — but both arms state the *specified* rule rather than
+/// the shape the current scanner happens to deliver (DD#116, property 3).
+///
+/// `DoubleQuoted` is rendered as the placeholder `"..."` rather than its
+/// parts. That is lossy but safe: `"` is never valid in sash arithmetic, so
+/// the shape is always rejected, and SB4035 names the real `"` the user typed
+/// rather than the fabricated ellipsis. Rendering the parts faithfully would
+/// mean re-entering the display-vs-semantic trap that made `argv "1" a` ICE.
 fn tok_to_text(tok: &Tok) -> String {
     match tok {
         // Keywords. The spellings live in `keyword_to_str`, the single
@@ -1585,18 +1661,22 @@ fn tok_to_text(tok: &Tok) -> String {
         // DD#94: newlines are separators inside `(( ))`, so the raw
         // collector must preserve them for the arith re-lexer.
         Tok::Newline => "\n".to_string(),
-        Tok::LParen => "(".to_string(),
-        Tok::RParen => ")".to_string(),
         Tok::LBrace => "{".to_string(),
         Tok::RBrace => "}".to_string(),
+        // Parens never arrive here. `step_arith_collect` intercepts all five
+        // *before* `step_default_token` (the sole caller of this function),
+        // because rendering them is depth-sensitive: `))` emits nothing when
+        // it closes the expression, and a lone `)` may terminate collection
+        // instead of being content. A plain spelling here would be a second,
+        // already-disagreeing answer to that question (DD#116, rival). The
+        // arms stay so a new token is still a compile error (property 2).
+        Tok::LParen | Tok::RParen | Tok::DollarDblParen | Tok::DblParen | Tok::DblParenClose => {
+            unreachable!("paren tokens are handled by step_arith_collect, not tok_to_text")
+        }
         Tok::Bang => "!".to_string(),
         Tok::Dash => "-".to_string(),
         Tok::DblBracketOpen => "[[".to_string(),
         Tok::DblBracketClose => "]]".to_string(),
-        // Arithmetic delimiters.
-        Tok::DollarDblParen => "$((".to_string(),
-        Tok::DblParen => "((".to_string(),
-        Tok::DblParenClose => "))".to_string(),
         // Assignment.
         Tok::Eq => "=".to_string(),
         Tok::PlusAssign => "+=".to_string(),
