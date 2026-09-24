@@ -232,10 +232,12 @@ pub fn parse_arith_str(input: &str, span: Span) -> Result<ArithExpr, Diagnostic>
         return Ok(ArithExpr::Literal(0));
     }
     let tokens = tokenize_arith(trimmed);
-    // A run of nothing but separators is a legitimately empty expression — the
-    // C-style `for (( ;; ))` header reaches here as `;;`. Returning 0 for it
-    // here is what lets an EOF in *operand* position below be a hard error.
-    if tokens.iter().all(|t| matches!(t, ATok::Sep | ATok::Comma)) {
+    // A run of nothing but *terminators* is a legitimately empty expression —
+    // the C-style `for (( ;; ))` header reaches here as `;;`. Returning 0 for
+    // it here is what lets an EOF in *operand* position below be a hard error.
+    // A `,` is a separator and owes an expression on each side, so `,,` is an
+    // error rather than an empty expression (DD#94).
+    if tokens.iter().all(|t| matches!(t, ATok::Sep)) {
         return Ok(ArithExpr::Literal(0));
     }
     let mut parser = ArithParser {
@@ -483,8 +485,9 @@ enum ATok {
     Question,
     Colon,
     Comma,
-    /// DD#94: a sequence separator — a newline (after a complete
-    /// sub-expression) or a `;`. Equivalent to `,` at the top level.
+    /// DD#94: a sequence *terminator* — a newline (after a complete
+    /// sub-expression) or a `;`. Unlike `,` it tolerates emptiness: a run of
+    /// them is trivia, and one may be swallowed by a pending operator.
     Sep,
     LParen,
     RParen,
@@ -1077,10 +1080,15 @@ impl ArithParser {
         }
     }
 
-    /// Parse prefix expressions and atoms.
-    /// DD#94: consume a run of sequence separators (`,` / `;` / newline).
-    fn skip_separators(&mut self) {
-        while matches!(self.peek(), Some(ATok::Sep) | Some(ATok::Comma)) {
+    /// DD#94: consume a run of *terminators* (`;` / newline).
+    ///
+    /// A terminator says "that one is done", so repeating it terminates
+    /// nothing twice and a run of them is trivia — blank lines, and a
+    /// newline swallowed by a pending operator. `,` is deliberately **not**
+    /// included: it is a separator, which asserts an expression on each
+    /// side, and an empty side is a contradiction (see `fold_sequence`).
+    fn skip_terminators(&mut self) {
+        while matches!(self.peek(), Some(ATok::Sep)) {
             self.advance();
         }
     }
@@ -1089,16 +1097,35 @@ impl ArithParser {
     /// (value = last), generalising the old comma-only fold. A separator is
     /// *required* between expressions, so `(( 1 2 ))` stays the "unexpected
     /// token" error it is today rather than silently becoming a sequence. A
-    /// trailing separator (`(( a=1 ⏎ ))`) simply ends the block.
-    fn fold_sequence(&mut self, first: ArithExpr) -> Result<ArithExpr, Diagnostic> {
-        if !matches!(self.peek(), Some(ATok::Sep) | Some(ATok::Comma)) {
-            return Ok(first);
+    /// trailing terminator (`(( a=1 ⏎ ))`) simply ends the block.
+    ///
+    /// `,` separates and `;` / newline terminate, and the two differ in how
+    /// they treat emptiness: a run of terminators is trivia, while a comma
+    /// owes a non-empty expression on its far side. So `(( a=1 ⏎ , b=2 ))`
+    /// is fine — the newline is trivia and both sides of the comma are real
+    /// — but `(( 1 ,, 2 ))` and `(( 1, ))` are errors, as in bash.
+    /// Consume one element boundary, and report whether an expression follows.
+    ///
+    /// A run of terminators is trivia, so it ends the sequence if nothing
+    /// comes after it. A comma is a separator and owes an expression on its
+    /// far side even at the end of the block: `(( 1, ))` is not a trailing
+    /// terminator, it is a missing operand, so this says an expression
+    /// follows and lets the operand parser produce the diagnostic.
+    fn take_separator(&mut self) -> bool {
+        self.skip_terminators();
+        if matches!(self.peek(), Some(ATok::Comma)) {
+            self.advance();
+            self.skip_terminators();
+            return true;
         }
+        self.peek().is_some()
+    }
+
+    fn fold_sequence(&mut self, first: ArithExpr) -> Result<ArithExpr, Diagnostic> {
         let mut exprs = vec![first];
         while matches!(self.peek(), Some(ATok::Sep) | Some(ATok::Comma)) {
-            self.skip_separators();
-            if self.peek().is_none() {
-                break; // trailing separator
+            if !self.take_separator() {
+                break; // trailing terminator
             }
             exprs.push(self.parse_expr(0)?);
         }
@@ -1111,8 +1138,9 @@ impl ArithParser {
 
     fn parse_prefix(&mut self) -> Result<ArithExpr, Diagnostic> {
         // DD#94: an operand is still owed here — a binary operator or `=` is
-        // pending — so a separator is a line continuation, not a break.
-        self.skip_separators();
+        // pending — so a *terminator* is a line continuation, not a break.
+        // A `,` is not: it separates, and `1 + , 2` is a missing operand.
+        self.skip_terminators();
         match self.peek().cloned() {
             Some(ATok::PlusPlus) => self.parse_pre_incdec(true),
             Some(ATok::MinusMinus) => self.parse_pre_incdec(false),
@@ -1724,5 +1752,89 @@ fn tok_to_text(tok: &Tok) -> String {
         // Deliberately empty: trivia, and end-of-input.
         Tok::Comment(_) => String::new(),
         Tok::Eof => String::new(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Every `ATok` spelling, in declaration order.
+    ///
+    /// `atok_to_text` exists to name what the user *wrote*, and most of its
+    /// arms cannot be reached from either caller: the operand parser consumes
+    /// those variants (they *are* operands, or unary prefixes) before a
+    /// diagnostic can ask for their spelling, and `expect` is only ever
+    /// called with `Colon` and `RParen`. The arms are kept anyway so that a
+    /// new `ATok` is a compile error rather than the next leaked variant
+    /// name — but totality only proves an arm *exists*, not that it says the
+    /// right thing. This table is what holds them to the right text.
+    #[test]
+    fn atok_to_text_spells_every_token() {
+        let cases: Vec<(ATok, &str)> = vec![
+            (ATok::Num(42), "42"),
+            (ATok::Num(-7), "-7"),
+            (
+                ATok::BadNum("99999999999999999999".into()),
+                "99999999999999999999",
+            ),
+            (ATok::BadLit("16#ff".into()), "16#ff"),
+            (ATok::Var("count".into()), "count"),
+            (ATok::DollarVar("count".into()), "$count"),
+            (ATok::Subscript("a".into(), "key".into()), "${a[key]}"),
+            (ATok::BareSubscript("a".into(), "i + 1".into()), "a[i + 1]"),
+            (ATok::ParamExpansion("v:-0".into()), "${v:-0}"),
+            (ATok::PlusPlus, "++"),
+            (ATok::MinusMinus, "--"),
+            (ATok::StarStar, "**"),
+            (ATok::LtLt, "<<"),
+            (ATok::GtGt, ">>"),
+            (ATok::LtEq, "<="),
+            (ATok::GtEq, ">="),
+            (ATok::EqEq, "=="),
+            (ATok::BangEq, "!="),
+            (ATok::AmpAmp, "&&"),
+            (ATok::PipePipe, "||"),
+            (ATok::PlusEq, "+="),
+            (ATok::MinusEq, "-="),
+            (ATok::StarEq, "*="),
+            (ATok::SlashEq, "/="),
+            (ATok::PercentEq, "%="),
+            (ATok::AmpEq, "&="),
+            (ATok::PipeEq, "|="),
+            (ATok::CaretEq, "^="),
+            (ATok::LtLtEq, "<<="),
+            (ATok::GtGtEq, ">>="),
+            (ATok::Plus, "+"),
+            (ATok::Minus, "-"),
+            (ATok::Star, "*"),
+            (ATok::Slash, "/"),
+            (ATok::Percent, "%"),
+            (ATok::Lt, "<"),
+            (ATok::Gt, ">"),
+            (ATok::Amp, "&"),
+            (ATok::Pipe, "|"),
+            (ATok::Caret, "^"),
+            (ATok::Tilde, "~"),
+            (ATok::Bang, "!"),
+            (ATok::Eq, "="),
+            (ATok::Question, "?"),
+            (ATok::Colon, ":"),
+            (ATok::Comma, ","),
+            (ATok::Sep, ";"),
+            (ATok::LParen, "("),
+            (ATok::RParen, ")"),
+        ];
+        for (tok, want) in &cases {
+            assert_eq!(
+                &atok_to_text(tok).as_str(),
+                want,
+                "wrong spelling for {tok:?}"
+            );
+        }
+        // One case per variant, plus the second `Num`. A new variant that
+        // compiles (because its arm was added) but is never spelled here
+        // trips this rather than reaching a user unnoticed.
+        assert_eq!(cases.len(), 49, "a new ATok variant needs a spelling case");
     }
 }

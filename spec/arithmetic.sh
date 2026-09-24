@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup arithmetic
-plan=314
+plan=324
 echo "1..$plan" >&3
 
 set +e
@@ -1734,6 +1734,60 @@ if (( (x = 5) )) { echo a }
 echo $x'
 [[ $rc != 0 && -z $out && $err == *SB5007* && $err == *"mutation of x not allowed in condition"* ]]; chk 31.128
 
+
+# ── DD#94 revised: `,` separates, `;`/newline terminate ──
+# DG (2026-09-24): DD#94's "`,`, `;` and newline are interchangeable" overreached.
+# A terminator says "that one is done", so repeating it terminates nothing twice
+# and a run of them is trivia; a separator asserts an expression on EACH side, so
+# an empty side is a contradiction. Letting `,` inherit the terminator privileges
+# (run-collapsing, and being swallowed by a pending operator) made malformed
+# arithmetic a *wrong answer*: `$(( 1 + , 2 ))` silently dropped the comma and
+# printed 3. Found while chasing atok_to_text's cold arms (journal 398).
+# 94.31 the wrong-answer case: this printed 3 before the fix.
+run_sash 'echo "$(( 1 + , 2 ))"'
+[[ $rc != 0 && -z $out && $err == *SB4020* && $err == *'found `,`'* ]]; chk 94.31
+# 94.32 a leading comma is an empty element, not trivia (printed 1 before).
+run_sash 'echo "$(( , 1 ))"'
+[[ $rc != 0 && -z $out && $err == *SB4020* && $err == *'found `,`'* ]]; chk 94.32
+# 94.33 an interior empty element (printed 2 before — the run collapsed).
+run_sash 'echo "$(( 1 ,, 2 ))"'
+[[ $rc != 0 && -z $out && $err == *SB4020* && $err == *'found `,`'* ]]; chk 94.33
+# 94.34 all-commas took the "a run of nothing but separators is a legitimately
+# empty expression" escape and printed 0. That escape is for `;;` in a C-style
+# for-header — terminators — so it no longer admits a comma.
+run_sash 'echo "$(( ,, ))"'
+[[ $rc != 0 && -z $out && $err == *SB4020* && $err == *'found `,`'* ]]; chk 94.34
+# 94.35 a trailing comma still owes an operand, where a trailing newline (94.6)
+# simply ends the block.
+run_sash 'echo "$(( 1, ))"'
+[[ $rc != 0 && -z $out && $err == *SB4020* && $err == *"ends where an operand is expected"* ]]; chk 94.35
+# 94.36 the block form answers the same way — one rule, both sites.
+run_sash 'int x=0
+(( x = 1 + , 2 ))
+echo $x'
+[[ $rc != 0 && -z $out && $err == *SB4020* && $err == *'found `,`'* ]]; chk 94.36
+# 94.37 a comma with real expressions on both sides still sequences (value=last).
+run_sash 'echo "$(( 1, 2 ))"'
+[[ $rc = 0 && $out = "2" && -z $err ]]; chk 94.37
+# 94.38 a newline before the comma is trivia, and both sides of the comma are
+# real — so this is accepted, not an empty element.
+run_sash 'int a; int b
+(( a = 1
+   , b = 2 ))
+echo "$a$b"'
+[[ $rc = 0 && $out = "12" && -z $err ]]; chk 94.38
+# 94.39 …and the natural formatting, comma then newline.
+run_sash 'int a; int b
+(( a = 1,
+   b = 2 ))
+echo "$a$b"'
+[[ $rc = 0 && $out = "12" && -z $err ]]; chk 94.39
+# 94.40 the for-header's empty slots are `;`-delimited, so they are untouched —
+# this is what the all-terminators escape is actually for.
+run_sash 'int n=0
+for ((;;)); do n=$((n+1)); if (( n > 2 )); then break; fi; done
+echo $n'
+[[ $rc = 0 && $out = "3" && -z $err ]]; chk 94.40
 
 set -e
 tally

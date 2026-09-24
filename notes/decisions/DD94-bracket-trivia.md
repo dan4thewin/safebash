@@ -46,10 +46,12 @@ A standalone `(( ))` is a sequence block; the value is the last expression.
        tax   = total * 7 / 100
        grand = total + tax ))
 
-`,`, `;` and newline are interchangeable there. **Exception:** the C-style
-for-header reserves `;` to delimit its three slots — `parse_c_style_for` splits
-the raw header on `;` *before* the arith parser runs — so within a slot only
-`,` and newline sequence.
+`,`, `;` and newline all sequence there, but they are **not**
+interchangeable — see the amendment below. `,` *separates* (an expression is
+owed on each side); `;` and newline *terminate* (a run of them is trivia).
+**Exception:** the C-style for-header reserves `;` to delimit its three slots
+— `parse_c_style_for` splits the raw header on `;` *before* the arith parser
+runs — so within a slot only `,` and newline sequence.
 
 **The continuation rule.** A newline separates only after a **complete**
 sub-expression. With an operand still owed (a binary operator or `=` pending)
@@ -61,8 +63,9 @@ it is a line continuation:
        b = 2 ))    # → two, newline separates
 
 This is the standard significant-newline treatment (Go / JS ASI). It falls out
-of one rule in the parser: the operand position skips separators, so a pending
-operator swallows them, while a completed expression ends at one.
+of one rule in the parser: the operand position skips *terminators*, so a
+pending operator swallows them, while a completed expression ends at one. A
+`,` is not swallowed — `1 + , 2` is a missing operand.
 
 A separator is **required** between expressions, so `(( 1 2 ))` remains the
 error it always was rather than silently becoming a sequence.
@@ -139,3 +142,50 @@ continuation, `16#ff`, for-header) and `spec/dispatch.sh` 94.20–94.28 (arm
 layout, comments, spanned tests, and the guards: pattern-list-ends-at-newline,
 arm bodies still statement-separated). 94.10 is gated `native,c` for a
 pre-existing janet gap (`janet-for-init-comma-sequence`).
+
+## Amendment (DG, 2026-09-24): `,` separates, `;` and newline terminate
+
+"`,`, `;` and newline are interchangeable" overreached. DG: *"I see `,` as an
+expression separator and `;` and newline as a statement terminator. However,
+there doesn't seem to be much difference between a statement and an expression,
+if any. The bounding `((` and `))` means that all intervening
+statements/expressions must be arithmetic."*
+
+That last point is right, and the distinction survives it anyway — because the
+difference is not *what they join* but **how they treat emptiness**:
+
+- A **terminator** says "that one is done". Repeating it terminates nothing
+  twice, so a run of them is harmless — blank lines, `;;`, an empty statement.
+- A **separator** asserts an expression on *each* side. An empty side is a
+  contradiction. `f(a,,b)` and `1 + , 2` are legal in no language.
+
+A second asymmetry follows: a pending operator may swallow a *terminator*
+(Go/JS ASI — "clearly not over"), but swallowing a *separator* is incoherent,
+since `1 +` is missing an operand by definition.
+
+The original rule generalised the comma-fold to `;` and newline — which was the
+point — and then, for symmetry, let `,` inherit the *terminator* privileges
+(run-collapsing, and being swallowed in operand position) it never had. The
+cost was real: malformed arithmetic became a **wrong answer** rather than an
+error, the exact failure mode SB4020 was hardened against.
+
+| input | before | now | bash |
+|---|---|---|---|
+| `$(( 1 + , 2 ))` | **3** | SB4020 | error |
+| `$(( , 1 ))` | **1** | SB4020 | error |
+| `$(( 1 ,, 2 ))` | **2** | SB4020 | error |
+| `$(( ,, ))` | **0** | SB4020 | error |
+| `$(( 1, ))` | **1** | SB4020 | error |
+
+Every readability feature the DD was taken for is unaffected: newline
+continuation, blank lines between expressions, blank lines mid-continuation,
+mixed `,`/`;`/newline blocks, and the trailing-terminator form `(( a=1 ⏎ ))`.
+`(( a = 1 ⏎ , b = 2 ))` is still accepted — the newline is trivia and both
+sides of the comma are real expressions.
+
+The all-separators escape in `parse_arith_str` (which returns 0, and exists so
+a C-style `for (( ;; ))` header parses) now admits **terminators only**; that
+is what had made `$(( ,, ))` an empty expression.
+
+Specs `94.31`–`94.40` in `spec/arithmetic.sh`. Found while chasing
+`atok_to_text`'s cold arms for coverage — journal 398.
