@@ -5,7 +5,7 @@
 set -eu
 . common.sh
 setup control_flow
-plan=66
+plan=70
 echo "1..$plan" >&3
 
 set +e
@@ -250,6 +250,62 @@ done'
 [[ $rc = 0 && $out = "even 0
 even 2
 even 4" && -z $err ]]; chk cf.u3
+
+# --- `until` with a condition that does not finish in the header ----
+# cf.u1/u2 only ever used `(( ))`, where the condition is evaluated and
+# branched on in the SAME block. `until` was desugared by appending a
+# NegateTestResult sigil to the loop *header*, which is only the right
+# block for that shape. A user-function condition is inlined into fresh
+# blocks, so the header ended in a `Goto` into the callee and the negate
+# ran on the PREVIOUS iteration's value, which the callee then overwrote:
+# `until f` silently behaved exactly like `while f`.
+
+# cf.u4 a predicate that succeeds ends an `until` loop before it starts.
+run_sash 'fn p { return 0 }
+int n=0
+until p; do
+    (( n = n + 1 ))
+    if (( n > 2 )); then break; fi
+done
+echo "n=$n"'
+[[ $rc = 0 && $out = "n=0" && -z $err ]]; chk cf.u4
+
+# cf.u5 ...and one that fails keeps it running. Together with cf.u4 this
+# pins both rows: swapping them is exactly the old inverted behaviour.
+run_sash 'fn p { return 1 }
+int n=0
+until p; do
+    (( n = n + 1 ))
+    if (( n > 2 )); then break; fi
+done
+echo "n=$n"'
+[[ $rc = 0 && $out = "n=3" && -z $err ]]; chk cf.u5
+
+# cf.u6 the same bug by a second route: a piped `until` reaches lowering
+# through lower_pipe_while_read, which never applied the header patch at
+# all, so the negation was not merely misplaced but absent. A successful
+# read must end the loop immediately.
+run_sash '/bin/printf "a\nb\n" | until readline v; do
+    attest v [[ -n $v ]]
+    echo "got-$v"
+done
+echo done'
+[[ $rc = 0 && $out = "done" && -z $err ]]; chk cf.u6
+
+# cf.u7 the external-command condition, which was always correct — a
+# regression shield for the forms the fix moved the sigil away from.
+run_sash 'int k=0
+until /bin/true; do
+    (( k = k + 1 ))
+    if (( k > 5 )); then break; fi
+done
+int j=0
+until /bin/false; do
+    (( j = j + 1 ))
+    if (( j > 2 )); then break; fi
+done
+echo "$k $j"'
+[[ $rc = 0 && $out = "0 3" && -z $err ]]; chk cf.u7
 
 # --- nested @-splat loops (DD#100/DD#69) ----------------------------
 # Every array-for loop used to share ONE synthesized index variable, so an

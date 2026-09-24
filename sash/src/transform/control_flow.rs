@@ -421,6 +421,26 @@ pub(super) fn lower_while(
     let cond_exit = lower_stmts(&w.condition, ssa, state, header);
     state.in_condition -= 1;
 
+    // `until` = `while ! cond`: negate the condition's result once, in the
+    // block where the condition FINISHES. That is `cond_exit`, not `header`.
+    // For `[[ ]]`, `(( ))` and a plain command the two are the same block,
+    // which is why those forms were correct; a user-function condition is
+    // inlined into fresh blocks, so `header` ends with a `Goto` into the
+    // callee and the negate landed *before* the condition ran — on the
+    // previous iteration's value, which the callee then overwrote. `until f`
+    // silently behaved exactly like `while f`.
+    //
+    // Placing it here also fixes `cmd | until readline v { }`, which reaches
+    // `lower_while` through `pipelines::lower_pipe_while_read` and so never
+    // saw the old patch at all.
+    if w.until {
+        ssa.block_mut(cond_exit).insts.push(SsaInst::sigil(
+            BuiltinCmd::NegateTestResult,
+            vec![],
+            true,
+        ));
+    }
+
     // Set loop terminator
     ssa.block_mut(cond_exit).terminator = Terminator::Loop {
         condition: "condition".to_string(),

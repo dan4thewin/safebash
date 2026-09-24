@@ -114,35 +114,16 @@ fn try_producer_tail_call(
     ))
 }
 
-/// `while`/`until`. For `until`, desugar to `while ! cond` by lowering as
-/// `while` then patching the header block's last Test instruction with `Not`.
+/// `while`/`until`. Both forms lower through `lower_while`, which applies the
+/// `until` negation itself — it is the only place that knows which block the
+/// condition actually finishes in (see the comment there).
 fn lower_while_stmt(
     w: &While,
     ssa: &mut SsaProgram,
     state: &mut VersionState,
     block: BlockId,
 ) -> BlockId {
-    if !w.until {
-        return lower_while(w, ssa, state, block);
-    }
-    let mut desugared = w.clone();
-    desugared.until = false;
-    let exit = lower_while(&desugared, ssa, state, block);
-    // `until` = `while ! cond`: negate the condition's result in the loop
-    // header, after the condition and before the loop branch. Appending the
-    // NegateTestResult sigil (the same `!`-prefix primitive) works for ANY
-    // condition form — [[ ]], (( )) (a LetExit), or a plain command — and
-    // negates the whole condition once (the old per-Test `SsaTest::Not`
-    // patch missed (( ))/command conditions and mis-negated compound ones).
-    if let Terminator::Goto(header_id) = &ssa.block(block).terminator {
-        let header_id = *header_id;
-        ssa.block_mut(header_id).insts.push(SsaInst::sigil(
-            BuiltinCmd::NegateTestResult,
-            vec![],
-            true,
-        ));
-    }
-    exit
+    lower_while(w, ssa, state, block)
 }
 
 /// Function definition. Registers the body for inline expansion at call sites,
