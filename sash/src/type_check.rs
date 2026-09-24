@@ -1327,13 +1327,34 @@ fn check_assign_type_match(
     env: &mut TypeEnv,
     errors: &mut Vec<TypeError>,
 ) {
-    let rtype = expr_type(&a.value, env);
-    let ltype = env.var_type(&a.name);
     if !env.vars.contains_key(&a.name) {
+        let rtype = expr_type(&a.value, env);
         env.declare(&a.name, rtype);
         return;
     }
-    if ltype == rtype || (ltype == VarType::Int && is_numeric_literal(&a.value)) {
+    let ltype = env.var_type(&a.name);
+    check_type_match(ltype, &a.value, &a.name, span, env, errors);
+}
+
+/// The single place a scalar string↔int mismatch is diagnosed.
+///
+/// Declarations (`str s = $n`) and assignments (`s=$v`) both land here. They
+/// used to reach the same sentence through two independent `format!`s — one
+/// parameterised over `type_name()`, one spelling each direction out in full —
+/// so grepping the finished message found only one copy, and the declaration
+/// side was reached by no spec at all. `VarType` has two variants, so the
+/// specialised pair was never more than this. See journal 397.
+fn check_type_match(
+    ltype: VarType,
+    value: &Expr,
+    name: &str,
+    span: Span,
+    env: &TypeEnv,
+    errors: &mut Vec<TypeError>,
+) {
+    let rtype = expr_type(value, env);
+    // A bare numeral is not an int *value*: `str s = 5` declares a string.
+    if ltype == rtype || (ltype == VarType::Int && is_numeric_literal(value)) {
         return;
     }
     errors.push(TypeError {
@@ -1341,7 +1362,7 @@ fn check_assign_type_match(
             "cannot assign {} value to {} variable `{}`{}",
             type_name(rtype),
             type_name(ltype),
-            a.name,
+            name,
             conversion_hint(rtype, ltype),
         ),
         span,
@@ -1379,7 +1400,7 @@ fn check_one_decl_assignment(
         return;
     };
     if !is_collection {
-        check_scalar_assignment(d, &a.name, value, span, env, errors);
+        check_type_match(d.var_type, value, &a.name, span, env, errors);
     } else if d.var_type == VarType::Int {
         check_int_collection_elements(value, &a.name, span, env, errors);
     }
@@ -1393,41 +1414,6 @@ fn track_collection_names(d: &Declaration, env: &mut TypeEnv) {
         if is_assoc {
             env.assoc_arrays.insert(a.name.clone());
         }
-    }
-}
-
-/// Scalar `int x=…` / `string x=…` type check (string↔int mismatch).
-fn check_scalar_assignment(
-    d: &Declaration,
-    name: &str,
-    value: &Expr,
-    span: Span,
-    env: &TypeEnv,
-    errors: &mut Vec<TypeError>,
-) {
-    let rtype = expr_type(value, env);
-    if d.var_type == VarType::Int && rtype == VarType::String {
-        // String assigned to int variable — need conversion.
-        // Exception: literal numbers in quotes are OK (common pattern).
-        if !is_numeric_literal(value) {
-            errors.push(TypeError {
-                message: format!(
-                    "cannot assign string value to int variable `{}`{}",
-                    name,
-                    conversion_hint(VarType::String, VarType::Int),
-                ),
-                span,
-            });
-        }
-    } else if d.var_type == VarType::String && rtype == VarType::Int {
-        errors.push(TypeError {
-            message: format!(
-                "cannot assign int value to string variable `{}`{}",
-                name,
-                conversion_hint(VarType::Int, VarType::String),
-            ),
-            span,
-        });
     }
 }
 

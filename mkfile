@@ -78,9 +78,13 @@ cov-unit:V:
 cov-union:V:
 	bash contrib/coverage.sh --branch --with-unit --lcov target/coverage/union.lcov
 
-# Rank uncovered lines by function, joining the lcov against the indexnudge index.
+# Rank uncovered lines by function, joining the lcov against the indexnudge
+# index. Reads the UNION lcov deliberately: the 100% target is the union of
+# spec- and unit-test reachability, so ranking a queue off the spec-only run
+# lists ICE guards that no source text can reach as if they were work.
+# Run `mk cov-union` first — `mk cov-branch` does not write union.lcov.
 cov-db:V:
-	python3 contrib/covdb.py target/coverage/branch.lcov coverage.db
+	python3 contrib/covdb.py target/coverage/union.lcov coverage.db
 
 cov-rpt:V:
 	(cd $SASH && cargo llvm-cov report --release)

@@ -490,12 +490,24 @@ is slower and drops `default_*.profraw` wherever it runs. Use `mk cov-reset`.
 `coverage.db` (repo root, **untracked and gitignored**, same status as
 `spec.db`) holds lcov line/function/branch data so uncovered lines can be
 joined against the indexnudge `symbols` table and ranked **by function**.
-Build it with `mk cov-db` after a `mk cov-branch`; it reads the lcov that
-`contrib/coverage.sh --lcov` writes to `target/coverage/`. That directory
-survives `mk cov-reset` (which removes only `target/release`) — **the lcov
-cannot be regenerated afterwards**, because `cov-reset` drops the covmap
-along with the instrumented binary. The summary table names thin *files*;
-only the lcov names thin *lines*.
+Build it with `mk cov-db` after a **`mk cov-union`** — it reads
+`target/coverage/union.lcov`, not the spec-only `branch.lcov`, because the
+100% target is the union of spec- and unit-test reachability and a spec-only
+ranking lists the should-never-run ICE guards as if they were work. That
+directory survives `mk cov-reset` (which removes only `target/release`) —
+**the lcov cannot be regenerated afterwards**, because `cov-reset` drops the
+covmap along with the instrumented binary. The summary table names thin
+*files*; only the lcov names thin *lines*.
+
+**A cold line is a hypothesis, not a finding.** Confirm it by execution before
+building any work on it. `mk cov-probe-build` once, then
+`contrib/cov-probe.sh FILE:LINE 'snippet'` answers "does this snippet reach
+that arm" in under a second — note it reports *branch* records, so aim it at
+the condition, not at a statement in the body. Grepping a diagnostic's text is
+**not** a substitute: a message built with `format!("… {} …", type_name(t))`
+renders the same sentence a literal grep will never find, so a passing spec
+that asserts the message can belong to an entirely different renderer. That is
+exactly what hid `check_scalar_assignment`'s cold arm (journal 397).
 
 ```sql
 ATTACH 'coverage.db' AS cov;

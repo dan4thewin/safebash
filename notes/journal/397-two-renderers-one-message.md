@@ -100,3 +100,48 @@ The two renderers remain. `VarType` is `{String, Int}`, so
 earns nothing that I can see, and it is one edit away from disagreeing with
 the generic one in wording or in the `is_numeric_literal` exemption. Whether
 to collapse it is a call I have not made.
+
+## Addendum — DG's call
+
+DG took all three: collapse to a shared checker, rebuild the queue from the
+**union** run, and fix the loader.
+
+**One checker.** `check_type_match(ltype, value, name, …)` is now the only
+place a scalar string↔int mismatch is diagnosed; `check_scalar_assignment` is
+gone and `check_one_decl_assignment` calls the shared one directly. Both entry
+points survive — declaration via `check_one_decl_assignment`, assignment via
+`check_assign_type_match` — but there is one `format!` between them, so the
+wording and the `is_numeric_literal` exemption can no longer drift apart.
+`VarType` is `{String, Int}`, so the deleted pair was exhaustive over exactly
+the ground the generic one already covered. Messages verified byte-identical
+on both paths in both directions; sweep 6181, **0 flips**.
+
+**The queue was ranked off the wrong file.** The `mkfile` already said the
+100% target is the union of spec- and unit-test reachability, and that the
+spec-only runs report the should-never-run ICE guards cold — but `mk cov-db`
+hard-coded `branch.lcov`, so every queue I have worked from was spec-only.
+Now `union.lcov`, with the reason written next to the recipe.
+
+**The loader could erase a hit.** `covdb.py` keyed `cov_lines` on
+`(file,line)` and wrote it with `INSERT OR REPLACE`. lcov may carry several
+entries for one line — one source compiled into several objects, or repeated
+`SF:` records — and the merge lcov defines is a *sum*. Last-wins instead, so a
+trailing `0` overwrote a real count and the line then read as dead code. Same
+flaw in `fn_hits`; `cov_branches` had the opposite one, no key at all, so
+duplicates inflated the row count. All three now accumulate.
+
+It did not cause today's confusion — the current data has no duplicates, which
+I checked before blaming it — but it is precisely the failure that would have.
+Demonstrated on a synthetic lcov whose second record trails a `0`:
+
+```
+OLD  line 10 → 0   (reads as dead code)
+NEW  line 10 → 3   (3 + 0)
+```
+
+**What I want to remember.** I had a passing spec asserting the message, one
+grep hit for the message, and a zero counter, and I went looking for which of
+the three was broken — I suspected the counter, because two agreed. Cheap
+checks agreeing is not corroboration when they share an assumption: both of
+mine assumed the sentence had one source. The line counter was the only
+instrument that could see otherwise, and it was right.

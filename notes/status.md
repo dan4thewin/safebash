@@ -30,13 +30,22 @@ declares; `str s = "$n"`, the advised form, runs). Non-vacuity by **mutation**
 
 Sweep 6171 → **6181** as predicted, 0 failing, 0 flips. `mk test` 51/27/20.
 
-**Next:** DG's call on collapsing the specialised renderer into the generic
-one — `VarType` is `{String, Int}`, so the two arms are exhaustive over ground
-`check_assign_type_match` already covers. No bug today; they agree exactly.
-Then resume the queue (`joined_form_to_string`, `emit_attest`,
-`panic_payload_message`, `emit_capture_end_c`, `read_arg_value`,
-`opaque_form_to_string`, `atok_to_text`) — **re-derive it from a fresh lcov**,
-the current `coverage.db` predates three commits.
+**Follow-ups taken (DG):** the duplicate renderer is collapsed —
+`check_type_match` is now the only place a scalar string↔int mismatch is
+diagnosed, `check_scalar_assignment` is gone, both entry points kept; messages
+byte-identical, sweep 6181, **0 flips**. `mk cov-db` now reads
+`target/coverage/union.lcov` (the stated 100% target is the union; it had been
+hard-coded to the spec-only `branch.lcov`, so every queue so far was ranked off
+the wrong file). `covdb.py` now **accumulates** — it keyed `cov_lines` on
+`(file,line)` with `INSERT OR REPLACE`, so a repeated lcov entry ending in `0`
+silently erased a real hit count and the line read as dead code.
+
+**Next:** rebuild the queue from a fresh **`mk cov-union`** + `mk cov-db`,
+then work it (`joined_form_to_string`, `emit_attest`, `panic_payload_message`,
+`emit_capture_end_c`, `read_arg_value`, `opaque_form_to_string`,
+`atok_to_text`). Expect it to differ from the old one in both directions: it
+is three commits fresher, it now includes unit-test reachability, and the
+loader no longer drops hits.
 
 ## ══ STATUS (2026-09-24) — one of six ══
 
