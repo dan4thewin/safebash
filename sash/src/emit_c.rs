@@ -1781,10 +1781,9 @@ fn c_escape(s: &str) -> String {
 /// with the DD#55 errno diagnostic. A no-arg `cd` succeeds silently (no $HOME
 /// magic under DD#53). Mirrors native handle_cd.
 fn emit_cd_c(e: &mut Emit, args: &[SsaValue], checked: bool, types: &VarTypes) {
-    let Some(arg) = args.first() else {
-        writeln!(e.out, "    __exit_status = 0; __test_result = 1;").unwrap();
-        return;
-    };
+    let arg = args
+        .first()
+        .expect("SB4066 validated `cd` as taking exactly one argument");
     let (ptr, len) = lower_value_as_str(e, arg, types);
     let t = e.fresh();
     writeln!(
@@ -2251,14 +2250,13 @@ fn emit_table_delete_c(e: &mut Emit, args: &[SsaValue], is_integer_key: bool, ty
 /// DD#14 `close N` — `close(2)` the fd. Void; sets `$?` from the result
 /// (0 ok / 1 fail) and, per DD#55, a *bare* failed close aborts while a caught
 /// (`if` / `||`) or `-`-suppressed one does not. Mirrors native `handle_close`
-/// (inst_handlers.rs:979), including its defensive empty-args branch — the
-/// validator guarantees exactly one literal fd, but neither backend relies on
-/// that. Diagnostic: `<argv0>: close: <fd>: <reason>`.
+/// (inst_handlers.rs:979). SB4052 guarantees exactly one literal fd, and both
+/// backends now rely on that rather than answering a misuse silently.
+/// Diagnostic: `<argv0>: close: <fd>: <reason>`.
 fn emit_close_builtin(e: &mut Emit, args: &[SsaValue], checked: bool, types: &VarTypes) {
-    let Some(arg) = args.first() else {
-        writeln!(e.out, "    __exit_status = 0; __test_result = 1;").unwrap();
-        return;
-    };
+    let arg = args
+        .first()
+        .expect("SB4052 validated `close` as taking exactly one argument");
     let fd = lower_value_as_int(e, arg, types);
     let t = e.fresh();
     writeln!(e.out, "    i64 {t}_r = sash_close({fd});").unwrap();
@@ -2270,12 +2268,13 @@ fn emit_close_builtin(e: &mut Emit, args: &[SsaValue], checked: bool, types: &Va
     if !checked {
         return;
     }
-    // Second diagnostic segment is the fd as written; only a literal has a
-    // spelling to quote, matching native's `SsaValue::Literal` arm.
-    let (p2, l2) = match arg {
-        SsaValue::Literal(lit) => (format!("\"{}\"", c_escape(lit)), lit.len().to_string()),
-        _ => ("0".to_string(), "0".to_string()),
+    // Second diagnostic segment is the fd as written. SB4052 requires a
+    // literal, so there is always a spelling to quote; the wildcard that stood
+    // here handed the diagnostic a null segment, as native's did.
+    let SsaValue::Literal(lit) = arg else {
+        panic!("SB4052 validated `close`'s argument as a literal fd number")
     };
+    let (p2, l2) = (format!("\"{}\"", c_escape(lit)), lit.len().to_string());
     writeln!(
         e.out,
         "    if ({t}_r < 0) {{ sash_emsg(\"close\", 5, {p2}, {l2}); goto {abort}; }}",
@@ -4509,5 +4508,36 @@ mod tests {
             .or_else(|| payload.downcast_ref::<String>().cloned())
             .unwrap_or_default();
         assert!(msg.contains("DD#58"), "got: {msg}");
+    }
+
+    // SB4052 (`close`) and SB4066 (`cd`) both require exactly one argument, so
+    // neither builtin can reach codegen empty-handed. The branches these
+    // assertions replaced answered the misuse silently — `$? = 0` and
+    // `__test_result = 1`, i.e. *success* for a `close` that closed nothing and
+    // a `cd` that never moved. A unit test is the only way to reach them.
+    fn empty_args_ice(f: fn(&mut Emit, &[SsaValue], bool, &VarTypes)) -> String {
+        let caught = std::panic::catch_unwind(move || {
+            let mut e = Emit::new();
+            let types: VarTypes = HashMap::new();
+            f(&mut e, &[], false, &types);
+        });
+        let payload = caught.expect_err("builtin must panic on empty args");
+        payload
+            .downcast_ref::<&str>()
+            .map(|s| (*s).to_string())
+            .or_else(|| payload.downcast_ref::<String>().cloned())
+            .unwrap_or_default()
+    }
+
+    #[test]
+    fn cd_with_no_directory_is_a_loud_ice() {
+        let msg = empty_args_ice(emit_cd_c);
+        assert!(msg.contains("SB4066"), "got: {msg}");
+    }
+
+    #[test]
+    fn close_with_no_fd_is_a_loud_ice() {
+        let msg = empty_args_ice(emit_close_builtin);
+        assert!(msg.contains("SB4052"), "got: {msg}");
     }
 }

@@ -3151,6 +3151,9 @@ fn check_command_head(
         // argument must be a literal non-negative fd number — the same
         // discipline as a `N>&M` dup target (no dynamic/variable fd).
         "close" => return check_close_arg(c, diags),
+        // DD#53: `cd DIR` takes exactly one directory. The environment is a
+        // separate namespace, so there is no `$HOME` to fall back on.
+        "cd" => return check_cd_arg(c, diags),
         // A value-producing intrinsic (`$(getenv NAME)`, `$(status)`, …) is
         // legal only as a command-substitution head. In statement position its
         // value has nowhere to go, and it used to fall through to `sash_exec`
@@ -3208,6 +3211,23 @@ fn check_close_arg(c: &Command, diags: &mut Vec<Diagnostic>) {
             "`close` needs a literal file-descriptor number (e.g. `close 3`) — \
              not a variable or expression"
                 .to_string(),
+        ));
+    }
+}
+
+/// DD#53: `cd DIR` — exactly one argument. Sash variables and the environment
+/// are separate namespaces, so there is no `$HOME` for a bare `cd` to fall back
+/// on. Both backends used to answer the misuse silently: a bare `cd` set
+/// `$? = 0` without moving (bash goes to `$HOME`), and a second argument was
+/// dropped without a word. The fd sibling `close` has always been strict here.
+/// Unlike `close`, the argument need not be a literal — `cd $dir` is a path,
+/// not a runtime-chosen descriptor. SB4066.
+fn check_cd_arg(c: &Command, diags: &mut Vec<Diagnostic>) {
+    if c.args.len() != 1 {
+        diags.push(Diagnostic::error_span(
+            c.name.span,
+            "SB4066",
+            "`cd` takes exactly one argument: a directory (e.g. `cd /tmp`)".to_string(),
         ));
     }
 }

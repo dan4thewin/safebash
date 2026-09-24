@@ -1029,14 +1029,9 @@ pub(super) fn handle_cd(
     module: &mut ObjectModule,
     ctx: &mut InstCtx,
 ) -> bool {
-    let Some(arg) = args.first() else {
-        // `cd` with no arg — no $HOME magic under DD#53; succeed silently.
-        let zero = builder.ins().iconst(I64, 0);
-        builder.def_var(ctx.exit_status_var, zero);
-        let one = builder.ins().iconst(I64, 1);
-        builder.def_var(ctx.test_result_var, one);
-        return false;
-    };
+    let arg = args
+        .first()
+        .expect("SB4066 validated `cd` as taking exactly one argument");
     let (ptr, len) = lower_value(
         arg,
         builder,
@@ -1095,14 +1090,9 @@ pub(super) fn handle_close(
     module: &mut ObjectModule,
     ctx: &mut InstCtx,
 ) -> bool {
-    // Validation guarantees exactly one literal-fd arg; be defensive anyway.
-    let Some(arg) = args.first() else {
-        let zero = builder.ins().iconst(I64, 0);
-        builder.def_var(ctx.exit_status_var, zero);
-        let one = builder.ins().iconst(I64, 1);
-        builder.def_var(ctx.test_result_var, one);
-        return false;
-    };
+    let arg = args
+        .first()
+        .expect("SB4052 validated `close` as taking exactly one argument");
     let fd_val = lower_value_as_int(
         arg,
         builder,
@@ -1127,10 +1117,12 @@ pub(super) fn handle_close(
     builder.def_var(ctx.test_result_var, tr);
     // DD#55: diagnostic segments are "close" + the fd number.
     let (s1p, s1l) = diag_static_seg("close", ctx.literals, module, builder);
-    let (s2p, s2l) = match arg {
-        SsaValue::Literal(s) => diag_static_seg(s, ctx.literals, module, builder),
-        _ => (zero, zero),
+    // SB4052 requires a literal fd, so there is always a spelling to quote.
+    // The wildcard that stood here handed the diagnostic a null segment.
+    let SsaValue::Literal(fd_spelling) = arg else {
+        panic!("SB4052 validated `close`'s argument as a literal fd number")
     };
+    let (s2p, s2l) = diag_static_seg(fd_spelling, ctx.literals, module, builder);
     let msg = AbortMsg::Errno {
         seg1_ptr: s1p,
         seg1_len: s1l,

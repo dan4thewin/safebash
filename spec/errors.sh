@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup errors
-plan=232
+plan=235
 echo "1..$plan" >&3
 
 set +e
@@ -304,6 +304,28 @@ run_sash 'if cd /nonexistent_xyz_55; then echo yes; else echo no; fi'
 run_sash '- cd /nonexistent_xyz_55
 echo after'
 [[ $rc = 0 && $out = "after" && -z $err && -z $rerr ]]; chk 55.23
+
+# --- DD#53: `cd` arity (SB4066). The environment is a separate namespace, so
+# there is no $HOME for a bare `cd` to fall back on. Both backends used to
+# answer the misuse silently: a bare `cd` set $? = 0 without moving (bash goes
+# to $HOME) and a second argument was dropped without a word.
+
+# cd.1 bare `cd` is rejected — it has nowhere to go
+run_sash 'cd
+echo after'
+[[ $rc != 0 && -z $out && $err == *SB4066* ]]; chk cd.1
+
+# cd.2 a second argument is rejected, not silently dropped
+run_sash 'cd /tmp /var
+echo after'
+[[ $rc != 0 && -z $out && $err == *SB4066* ]]; chk cd.2
+
+# cd.3 unlike `close`'s fd (SB4052), the directory need not be a literal —
+# a path is not a runtime-chosen descriptor
+run_sash 'str d=/tmp
+cd $d
+echo after'
+[[ $rc = 0 && $out = "after" && -z $err && -z $rerr ]]; chk cd.3
 
 # 55.27 bare echo write(2) failure aborts (/dev/full → ENOSPC) + diagnostic
 run_sash 'echo hi > /dev/full

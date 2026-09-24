@@ -73,3 +73,32 @@ distinguishable, which they were not before. Uncaught is allowed; the value is
 [DD#101](DD101-getenv-lookup-status.md).
 
 Note the examples above use `bless`, which DD#93 renamed to **`attest`**.
+
+## Addendum 2026-09-25 — `cd` requires its directory (SB4066)
+
+Env isolation has a consequence for `cd` that was never written down: with no
+implicit `$HOME`, a bare `cd` has nowhere to go. Both backends answered that
+silently — `$? = 0` and `test_result = 1`, i.e. **success**, with the working
+directory unchanged, where bash goes to `$HOME`. A second argument was dropped
+just as quietly (`cd /tmp /var` chdir'd to `/tmp`). Neither form had a spec.
+
+`cd` now takes **exactly one argument**; zero or more than one is **SB4066**.
+Unlike `close`'s fd (SB4052), the argument need **not** be a literal — a path
+is not a runtime-chosen descriptor, so `cd $dir` stays legal. A script that
+wants the home directory must say so under the usual rules:
+
+```bash
+h=$(getenv HOME)
+attest h [[ -d $h ]]
+cd $h
+```
+
+This closes the last of the "defensive" silent-no-op branches in the two
+filesystem/fd builtins: the guards in `handle_cd`, `handle_close`, `emit_cd_c`
+and `emit_close_builtin` are now assertions naming the validator code that
+makes them unreachable.
+
+Impl: `validate.rs` (`check_cd_arg` → SB4066, dispatched from
+`check_command_head` beside `check_close_arg`), `codegen/inst_handlers.rs`,
+`emit_c.rs`. Specs `spec/errors.sh` cd.1–cd.3 (both backends). SB4066 is a new
+code.
