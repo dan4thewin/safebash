@@ -3444,19 +3444,44 @@ fn emit_redirects_guarded(
             saved_var: format!("{}_saved", t),
             original_fd: fd,
         });
-        if let Some((f, pp, pl)) = emit_one_redirect(e, r, fd, types) {
-            fail = Some(match fail {
-                None => (f, pp, pl),
-                Some((prev_f, prev_pp, prev_pl)) => {
-                    let ot = e.fresh();
-                    writeln!(e.out, "    i64 {ot} = {prev_f} | {f};", ot = ot).unwrap();
-                    // Keep the first failing-candidate path for the message.
-                    (ot, prev_pp, prev_pl)
-                }
-            });
+        // Bash performs redirects left to right and STOPS at the first failed
+        // open(2). Everything after it — including a dup — must not run, or an
+        // eager `open` creates/truncates a file bash never touches
+        // (`cmd > /bad > keep.txt` used to clobber `keep.txt`). The guard is
+        // the accumulated failure flag; C's `?:` short-circuits, so a guarded
+        // open is simply never called. Mirrors native emit_guarded_redirect.
+        let guard = fail.as_ref().map(|(f, _, _)| f.clone());
+        if let Some(new) = emit_one_redirect(e, r, fd, types, guard.as_deref()) {
+            fail = Some(fold_redirect_failure(e, fail, new));
         }
     }
     (saved, fail)
+}
+
+/// Fold a new failure triple into the accumulated one.
+///
+/// `new`'s flag is 0 whenever the accumulated flag is set (the open was
+/// skipped), so the fold keeps the FIRST failing redirect's path — the one
+/// DD#70's `<argv0>: <path>: <reason>` wants. Keeping the accumulated path
+/// unconditionally used to name a file that had opened fine.
+fn fold_redirect_failure(
+    e: &mut Emit,
+    prev: Option<RedirectFailC>,
+    new: RedirectFailC,
+) -> RedirectFailC {
+    let Some((prev_f, prev_pp, prev_pl)) = prev else {
+        return new;
+    };
+    let (f, pp, pl) = new;
+    let ot = e.fresh();
+    writeln!(
+        e.out,
+        "    i64 {ot}_f = {prev_f} | {f};\n    \
+         const char* {ot}_p = {prev_f} ? {prev_pp} : {pp};\n    \
+         i64 {ot}_l = {prev_f} ? {prev_pl} : {pl};",
+    )
+    .unwrap();
+    (format!("{ot}_f"), format!("{ot}_p"), format!("{ot}_l"))
 }
 
 /// Bash default fd: stdout for write-ish ops, stdin for read-ish ops.
@@ -3492,15 +3517,25 @@ fn emit_one_redirect(
     r: &crate::ir::Redirect,
     fd: i64,
     types: &VarTypes,
+    guard: Option<&str>,
 ) -> Option<RedirectFailC> {
     use crate::ir::RedirectOp;
     if let Some(flags) = open_flags_for_op(&r.op) {
-        return emit_open_redirect(e, fd, &r.target, flags, types);
+        return emit_open_redirect(e, fd, &r.target, flags, types, guard);
     }
     match r.op {
         // `>&N` and `<&N` are the same dup2(N, fd); they differ only in the fd
         // they default to, which `default_fd_for_op` already decides.
-        RedirectOp::DupOutput | RedirectOp::DupInput => emit_dup_fd(e, fd, &r.target),
+        RedirectOp::DupOutput | RedirectOp::DupInput => match guard {
+            // Bash abandons the whole redirect list at the first failed open,
+            // so a later dup must not run either.
+            Some(g) => {
+                writeln!(e.out, "    if (!({g})) {{").unwrap();
+                emit_dup_fd(e, fd, &r.target);
+                writeln!(e.out, "    }}").unwrap();
+            }
+            None => emit_dup_fd(e, fd, &r.target),
+        },
         // Write/Append/Read/ReadWrite were taken by open_flags_for_op above, so
         // every variant is now accounted for and this is a compiler bug. It used
         // to emit a comment, which silently dropped the redirect and left the
@@ -3525,15 +3560,23 @@ fn emit_open_redirect(
     target: &crate::ir::Expr,
     flags: i64,
     types: &VarTypes,
+    guard: Option<&str>,
 ) -> Option<RedirectFailC> {
     let t = e.fresh();
+    // `guard` is nonzero once an earlier open has failed. C's `?:` does not
+    // evaluate the untaken arm, so the `open(2)` genuinely does not happen —
+    // this is the short-circuit, not merely a suppressed result.
+    let (pre, post) = match guard {
+        Some(g) => (format!("({g}) ? 0 : ("), ")"),
+        None => (String::new(), ""),
+    };
     if let crate::ir::ExprKind::Literal(s) = &target.kind {
         // Static path — emit a NUL-terminated string literal and
         // call sash_redirect.
         let path = format!("\"{}\"", c_escape(s));
         writeln!(
             e.out,
-            "    i64 {t}_rf = (sash_redirect({fd}, {path}, {flags}) < 0);",
+            "    i64 {t}_rf = {pre}(sash_redirect({fd}, {path}, {flags}) < 0){post};",
             t = t,
             fd = fd,
             path = path,
@@ -3546,7 +3589,7 @@ fn emit_open_redirect(
     let (ptr, len) = ir_expr_as_str(e, target, types);
     writeln!(
         e.out,
-        "    i64 {t}_rf = (sash_redirect_s({fd}, {p}, {l}, {flags}) < 0);",
+        "    i64 {t}_rf = {pre}(sash_redirect_s({fd}, {p}, {l}, {flags}) < 0){post};",
         t = t,
         p = ptr,
         l = len,

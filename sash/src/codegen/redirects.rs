@@ -20,9 +20,10 @@ pub(super) struct SavedFd {
 }
 
 /// DD#55: a redirect `open(2)` setup-failure surfaced to the command
-/// handler. `failed` is 1 when any open redirect failed (else 0);
-/// `path_ptr`/`path_len` name the first open-redirect target (for the
-/// `<argv0>: <path>: <reason>` diagnostic).
+/// handler. `failed` is 1 when an open redirect failed (else 0);
+/// `path_ptr`/`path_len` name the **first redirect that actually failed**,
+/// which is the path DD#70's `<argv0>: <path>: <reason>` contract wants.
+#[derive(Clone, Copy)]
 pub(super) struct RedirectFailure {
     pub(super) failed: Value,
     pub(super) path_ptr: Value,
@@ -63,25 +64,114 @@ pub(super) fn emit_redirects_guarded(
         let fd = redir.fd.unwrap_or(default_fd_for_op(&redir.op)) as i64;
         let fd_val = builder.ins().iconst(I64, fd);
         saved.push(emit_save_fd(fd, fd_val, builder, module, externs));
-        if let Some((failed, p_ptr, p_len)) =
-            emit_one_redirect(redir, fd_val, builder, module, externs, literals, vars)
-        {
-            acc = Some(match acc {
-                None => RedirectFailure {
-                    failed,
-                    path_ptr: p_ptr,
-                    path_len: p_len,
-                },
-                Some(prev) => RedirectFailure {
-                    failed: builder.ins().bor(prev.failed, failed),
-                    // Keep the first failing-candidate path for the message.
-                    path_ptr: prev.path_ptr,
-                    path_len: prev.path_len,
-                },
-            });
-        }
+        // Bash performs redirects left to right and STOPS at the first failed
+        // open(2). Once one has failed, a later redirect must not run: an
+        // eager `open` creates or truncates a file bash never touches, so
+        // `cmd > /bad > keep.txt` used to clobber `keep.txt`. Guarding with
+        // real control flow (the `native-ternary-eager-eval` precedent) also
+        // makes the reported path right *by construction* — only the first
+        // failure survives, so there is no "which path?" left to get wrong.
+        acc = emit_next_redirect(acc, redir, fd_val, builder, module, externs, literals, vars);
     }
     (saved, acc)
+}
+
+/// Emit the next redirect in the list, guarded by any failure before it.
+///
+/// With no prior failure this is a plain `emit_one_redirect`; with one, the
+/// redirect is wrapped in the skip/do branch so it never runs. Returns the
+/// failure that survives — `None` only while nothing that can fail has been
+/// emitted yet (a leading run of dups).
+#[allow(clippy::too_many_arguments)]
+fn emit_next_redirect(
+    prev: Option<RedirectFailure>,
+    redir: &crate::ir::Redirect,
+    fd_val: Value,
+    builder: &mut FunctionBuilder,
+    module: &mut ObjectModule,
+    externs: &ExternFuncs,
+    literals: &HashMap<String, cranelift_module::DataId>,
+    vars: &HashMap<String, VarSlot>,
+) -> Option<RedirectFailure> {
+    if let Some(prev) = prev {
+        return Some(emit_guarded_redirect(
+            prev, redir, fd_val, builder, module, externs, literals, vars,
+        ));
+    }
+    let (failed, path_ptr, path_len) =
+        emit_one_redirect(redir, fd_val, builder, module, externs, literals, vars)?;
+    Some(RedirectFailure {
+        failed,
+        path_ptr,
+        path_len,
+    })
+}
+
+/// Emit `redir` only when no earlier open has failed.
+///
+/// `brif` on `prev.failed` into a do-block (which performs the redirect) or a
+/// skip-block (which performs nothing), merging the outcome through a
+/// three-wide block-param phi. Taking the skip path carries `prev`'s triple
+/// through unchanged, so the surviving `path_ptr`/`path_len` always name the
+/// **first** redirect that failed.
+///
+/// A dup (`>&N`) yields no failure triple of its own; it is still guarded,
+/// because bash abandons the whole redirect list at the first failure.
+#[allow(clippy::too_many_arguments)]
+fn emit_guarded_redirect(
+    prev: RedirectFailure,
+    redir: &crate::ir::Redirect,
+    fd_val: Value,
+    builder: &mut FunctionBuilder,
+    module: &mut ObjectModule,
+    externs: &ExternFuncs,
+    literals: &HashMap<String, cranelift_module::DataId>,
+    vars: &HashMap<String, VarSlot>,
+) -> RedirectFailure {
+    use cranelift_codegen::ir::BlockArg;
+
+    let do_blk = builder.create_block();
+    let skip_blk = builder.create_block();
+    let merge = builder.create_block();
+    let m_failed = builder.append_block_param(merge, I64);
+    let m_ptr = builder.append_block_param(merge, I64);
+    let m_len = builder.append_block_param(merge, I64);
+
+    builder.ins().brif(prev.failed, skip_blk, &[], do_blk, &[]);
+
+    builder.switch_to_block(do_blk);
+    builder.seal_block(do_blk);
+    let (failed, path_ptr, path_len) = emit_one_redirect(
+        redir, fd_val, builder, module, externs, literals, vars,
+    )
+    .unwrap_or((prev.failed, prev.path_ptr, prev.path_len));
+    builder.ins().jump(
+        merge,
+        &[
+            BlockArg::Value(failed),
+            BlockArg::Value(path_ptr),
+            BlockArg::Value(path_len),
+        ],
+    );
+
+    builder.switch_to_block(skip_blk);
+    builder.seal_block(skip_blk);
+    builder.ins().jump(
+        merge,
+        &[
+            BlockArg::Value(prev.failed),
+            BlockArg::Value(prev.path_ptr),
+            BlockArg::Value(prev.path_len),
+        ],
+    );
+
+    builder.switch_to_block(merge);
+    builder.seal_block(merge);
+    RedirectFailure {
+        failed: m_failed,
+        path_ptr: m_ptr,
+        path_len: m_len,
+    }
 }
 
 /// Bash default fd: stdout for write-ish ops, stdin for read-ish ops.

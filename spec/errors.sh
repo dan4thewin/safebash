@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup errors
-plan=235
+plan=239
 echo "1..$plan" >&3
 
 set +e
@@ -372,6 +372,42 @@ echo after'
 # 55.50 open failure is catchable with || too (symmetry with if), no diag
 run_sash 'echo hi > /nonexistent_dir_55/f || echo caught'
 [[ $rc = 0 && $out = "caught" && -z $err && -z $rerr ]]; chk 55.50
+
+# --- DD#70: multiple redirects are performed left to right and processing
+# STOPS at the first failed open(2). Both backends used to open every redirect
+# eagerly and then OR-fold the failures, which cost two bash divergences: a
+# later redirect still created/truncated its file, and the diagnostic named
+# the FIRST open candidate rather than the one that actually failed.
+
+# rd.1 the diagnostic names the redirect that actually failed, not the first
+# one attempted (was: "rd1_ok.txt", a file that opened fine)
+run_sash 'echo hi > rd1_ok.txt 2> /nonexistent_dir_55/f
+echo after'
+[[ $rc != 0 && -z $out && -z $err \
+   && $rerr == *"test_bin: /nonexistent_dir_55/f: No such file or directory"* ]]; chk rd.1
+
+# rd.2 a redirect AFTER a failed open does not run, so its file is never
+# created (bash stops at the first failure; sash used to clobber it)
+rm -f rd2_made.txt
+run_sash 'echo hi > /nonexistent_dir_55/f 2> rd2_made.txt
+echo after'
+[[ $rc != 0 && ! -f rd2_made.txt \
+   && $rerr == *"test_bin: /nonexistent_dir_55/f: No such file or directory"* ]]; chk rd.2
+
+# rd.3 when the FIRST redirect is the one that fails, it is still the one
+# reported — the ordering guard cuts both ways
+run_sash 'echo hi > /nonexistent_dir_55/f 2> rd3_ok.txt
+echo after'
+[[ $rc != 0 && -z $out \
+   && $rerr == *"test_bin: /nonexistent_dir_55/f: No such file or directory"* ]]; chk rd.3
+
+# rd.4 two good redirects still both apply (the guard must not suppress a
+# later open when nothing has failed)
+rm -f rd4_a.txt rd4_b.txt
+run_sash '/bin/sh -c "echo out; echo err 1>&2" > rd4_a.txt 2> rd4_b.txt
+echo after'
+[[ $rc = 0 && $out = "after" && -z $err \
+   && "$(cat rd4_a.txt)" = "out" && "$(cat rd4_b.txt)" = "err" ]]; chk rd.4
 
 # --- DD#46 top-level positional rejection: directed error text (DD#60) ---
 

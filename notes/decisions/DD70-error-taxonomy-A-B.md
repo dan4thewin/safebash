@@ -338,3 +338,37 @@ Line 82's *"`if` / `||` / `|| :`"* should be read as `$(( f ))` / `-` for an
 `-> int` function.
 
 Specs: `e.b70.fndisc` (the rejection), `74.47`/`74.48` (the two replacements).
+
+## Addendum 2026-09-25 — multiple redirects are left-to-right, stop-at-first-failure
+
+The setup-failure contract above (`<argv0>: <path>: <reason>`, command fails
+without writing) was written for *a* redirect. It said nothing about a command
+carrying several, and both backends got that case wrong in the same two ways.
+
+**Ratified (DG):**
+
+1. **Redirects are performed left to right, and processing stops at the first
+   failed `open(2)`.** A redirect after a failed one is not attempted. This
+   matters beyond tidiness: an eager `open` *creates or truncates* a file bash
+   never touches, so `cmd > /nonexistent/x > keep.txt` was clobbering
+   `keep.txt`. The redirect list is a sequence with side effects, not a set.
+
+2. **The reported path is the redirect that actually failed** — necessarily the
+   first one, given (1). Previously the accumulator kept the first
+   *open-candidate* path, so `> good.txt 2> /nonexistent_d/bad` reported
+   `good.txt: No such file or directory` about a file that had opened fine.
+
+(2) falls out of (1) by construction: once only one redirect can fail, there is
+no "which path?" left to get wrong. That is why the fix is a short-circuit in
+both backends rather than a smarter choice of path — native branches on the
+accumulated failure flag (`emit_guarded_redirect`), C guards each call with
+`?:`, which short-circuits natively.
+
+Specs: `rd.1` (the path named is the one that failed), `rd.2` (a redirect after
+a failure creates no file), `rd.3` (a first-redirect failure is still reported),
+`rd.4` (two good redirects both apply).
+
+**Not settled here:** *where* the diagnostic is written when the redirections
+applied so far include stderr. bash writes it through them; the C backend
+matches bash; native restores the fds first and does not. Filed as
+`notes/tasks/native-redirect-diag-after-restore.md`.
