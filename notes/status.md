@@ -1,3 +1,42 @@
+## ══ STATUS (2026-09-24) — a conversion the language forbids, in both backends ══
+
+**Coverage item 2: both backends carried an unreachable `CaptureEnd` arm that
+ran `sash_atoi` on captured stdout — a string→int conversion with no
+disposition, exactly what SB4030 rejects and what journal 400 closed in the
+front end.**
+
+DD#58's Option C amendment (`a8ac707`) settles it: `$(…)` is
+return-type-polymorphic, and `CaptureEnd` is its *stdout* half, so the target
+is always a string — a `-> int` return takes the `__intret_` path. Both Int
+arms are pre-amendment residue. Proven by execution as well as argument: a
+`panic!` in each, full sweep, 6237 green.
+
+**The native fix was already written.** `VarSlot::str_ptr`/`str_len` exist for
+exactly this class of caller — their INVARIANT comment already lists "read/
+capture targets" — and the `match` in `dispatch.rs` was re-implementing the
+dispatch they centralise. Swapping to the accessors removed four cold lines
+and consolidated onto two existing guards which were *also* cold and are pure
+`&self` functions, so unit tests reach them trivially. **The cheapest way to
+close a cold guard is often to notice it is the third copy of one that already
+exists somewhere unit-testable.**
+
+Closed 13 lines: `emit_capture_end_c` 7→0 · `emit_capture_end` 4→0 ·
+`VarSlot::str_ptr`/`str_len` 2→0.
+
+**A masked diagnostic nearly sent me after a bug that was not there.**
+`int n=$(f | cat)` reports SB5020, which looks like it passed type check; it
+had not — `attest n i?` removes the taint error and SB4030 appears underneath.
+Third instance of first-diagnostic masking (cf. journal 389, 257).
+
+Gates: sweep **6237**, predicted 6237, **0 failing, 0 flips** vs `37c790b`.
+`mk test` **57**/27/20. Capture behaviour byte-identical across backends.
+
+**Next:** queue continues — `handle_close` (6) · `emit_redirects_guarded` (6) ·
+`lower_value_as_str_aggregate` (6) · `parse_test_binary_tail` (6) ·
+`emit_match` (5) · `handle_cd` (5) · `lower_value` (5). Re-run `mk cov-union`
+before trusting those counts again — they are from this session's run, so
+still current. Also open: `audit-validate-wildcard-escapes` (P1).
+
 ## ══ STATUS (2026-09-24) — the type was the retired surface ══
 
 **Coverage, resumed. The queue was four commits stale and its line numbers

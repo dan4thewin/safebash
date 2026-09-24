@@ -226,3 +226,36 @@ pub(super) fn emit_int_to_str(
     let len = builder.ins().stack_load(I64, out_slot, 0);
     (ptr, len)
 }
+
+/// The two `VarSlot::Int` arms above are the shared guard for every caller
+/// that has already established its slot is a string — positionals, arrays,
+/// read targets and capture targets (DD#58: a capture is the stdout half of
+/// `$(…)`, so a `-> int` return takes the `__intret_` path and never lands
+/// here). No accepted program can reach them, so per DG's rule for the
+/// coverage campaign a unit test proves they catch what they claim. Same
+/// shape as `codegen::redirects::unresolved_redirect_var_is_loud_ice`.
+#[cfg(test)]
+mod tests {
+    use super::VarSlot;
+    use cranelift_frontend::Variable;
+
+    #[test]
+    fn str_ptr_on_an_int_slot_is_a_loud_ice() {
+        let slot = VarSlot::Int(Variable::from_u32(0));
+        let caught = std::panic::catch_unwind(|| slot.str_ptr());
+        assert!(
+            caught.is_err(),
+            "reading the string pointer of an int slot must raise a loud ICE"
+        );
+    }
+
+    #[test]
+    fn str_len_on_an_int_slot_is_a_loud_ice() {
+        let slot = VarSlot::Int(Variable::from_u32(0));
+        let caught = std::panic::catch_unwind(|| slot.str_len());
+        assert!(
+            caught.is_err(),
+            "reading the string length of an int slot must raise a loud ICE"
+        );
+    }
+}

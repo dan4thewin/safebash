@@ -888,26 +888,23 @@ fn emit_capture_end_c(e: &mut Emit, site: u32, buffered: bool, target: &VarRef) 
         .unwrap();
     }
     let base = c_var_name(&target.name, target.version);
-    match target.var_type {
-        VarType::Int => {
-            writeln!(
-                e.out,
-                "    {base} = sash_atoi({t}.ptr, {t}.len);",
-                base = base,
-                t = t
-            )
-            .unwrap();
-        }
-        VarType::String => {
-            writeln!(
-                e.out,
-                "    {base}_ptr = {t}.ptr; {base}_len = {t}.len;",
-                base = base,
-                t = t
-            )
-            .unwrap();
-        }
-    }
+    // DD#58 Option C: `$(…)` is return-type-polymorphic, and a `CaptureEnd`
+    // is the *stdout* half of it — a `-> int` function's return value goes
+    // through the `__intret_` path and never reaches here. So the target is
+    // always a string. The `VarType::Int` arm this replaces ran `sash_atoi`
+    // on captured stdout, which is exactly the undispositioned string→int
+    // conversion SB4030 exists to reject; it predates the 2026-08-15
+    // amendment (`a8ac707`) that introduced `__intret_`.
+    let VarType::String = target.var_type else {
+        panic!("DD#58: a capture yields stdout, so its target is a string")
+    };
+    writeln!(
+        e.out,
+        "    {base}_ptr = {t}.ptr; {base}_len = {t}.len;",
+        base = base,
+        t = t
+    )
+    .unwrap();
 }
 
 /// Attest family sub-dispatcher for `emit_inst` (Attest / AttestAll / AttestRetag).
@@ -4486,5 +4483,31 @@ mod tests {
         // emit_command_body means the transform stopped lowering it.
         let msg = ices(BuiltinCmd::Read, "read");
         assert!(msg.contains("lowered to its own instruction"), "got: {msg}");
+    }
+
+    // DD#58 Option C routes a `-> int` function's return through the
+    // `__intret_` path, so a `CaptureEnd` — the *stdout* half of `$(…)` —
+    // always targets a string. The arm this replaced ran `sash_atoi` on
+    // captured stdout, the undispositioned string→int conversion SB4030
+    // rejects. No accepted program can reach the assertion, so a unit test
+    // is the only way to prove it catches what it claims.
+    #[test]
+    fn capturing_stdout_into_an_int_is_a_loud_ice() {
+        let caught = std::panic::catch_unwind(|| {
+            let mut e = Emit::new();
+            let target = crate::ssa::VarRef {
+                name: "n".to_string(),
+                version: 1,
+                var_type: VarType::Int,
+            };
+            emit_capture_end_c(&mut e, 0, true, &target);
+        });
+        let payload = caught.expect_err("emit_capture_end_c must panic on an int target");
+        let msg = payload
+            .downcast_ref::<&str>()
+            .map(|s| (*s).to_string())
+            .or_else(|| payload.downcast_ref::<String>().cloned())
+            .unwrap_or_default();
+        assert!(msg.contains("DD#58"), "got: {msg}");
     }
 }

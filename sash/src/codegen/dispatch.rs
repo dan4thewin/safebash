@@ -1154,22 +1154,13 @@ impl SsaInst {
         let ptr = builder.inst_results(call)[0];
         let len = builder.inst_results(call)[1];
         let sv = vars[&target.display()];
-        match sv {
-            VarSlot::Int(v) => {
-                // Int var: atoi the captured string
-                let atoi_ref = module.declare_func_in_func(externs.atoi, builder.func);
-                let atoi_call = builder.ins().call(atoi_ref, &[ptr, len]);
-                let int_val = builder.inst_results(atoi_call)[0];
-                builder.def_var(v, int_val);
-            }
-            VarSlot::Str {
-                ptr: dst_ptr,
-                len: dst_len,
-            } => {
-                builder.def_var(dst_ptr, ptr);
-                builder.def_var(dst_len, len);
-            }
-        }
+        // DD#58 Option C: see the note in `emit_c::emit_capture_end_c`. A
+        // capture is the stdout half of `$(…)`, so its target is always a
+        // string; a `-> int` function's return takes the `__intret_` path.
+        // `str_ptr`/`str_len` are the shared guard for exactly this class of
+        // caller — their INVARIANT note already lists capture targets.
+        builder.def_var(sv.str_ptr(), ptr);
+        builder.def_var(sv.str_len(), len);
         false
     }
 }
