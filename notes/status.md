@@ -1,3 +1,40 @@
+## ══ STATUS (2026-09-24) — the two backends disagreed about an int ══
+
+**Coverage queue item `emit_attest` (7 cold lines) was an untested feature —
+and writing the test found a backend divergence.** All seven cold lines were
+the **int** paths: every `attest` spec in the suite attests a *string*.
+
+**The shape is non-obvious.** `int n=$(arg 1)` is SB4030, so a tainted int
+arrives through a disposition: `x=$(arg 1); int n=$(( ${x:-0} )); attest n
+[[ -n $n ]]`. Drop the attest and the taint backstop rejects it — the feature
+works and had no gate. Markers in both arms confirmed by execution.
+
+**The divergence.** On a failing gate, native printed `attest: n failed the
+gate`; the C backend printed `attest: n = '9' failed the gate`. Native only
+pulled a value out of a `VarSlot::Str` and passed nulls otherwise. Three
+sources agree against native: the string path prints `x = 'bad'`, the C
+backend prints the int, and `emit_attest`'s own comment says *"Name + value
+tell the user which gate failed and why."* Fixed with the existing
+`codegen/types.rs::emit_int_to_str` (the same `sash_itoa` the C backend
+reaches). Revert proof: native fails exactly `atint.5`, c stays green — the
+signature of a one-backend bug.
+
+**Residual:** the fix moved the int case out of `_ =>`, so those 2 lines are
+still cold, now meaning "source variable with no slot at all" (`VarSlot` has
+exactly two variants, so `_` is `None`). No route found — SB5031, SB5020,
+SB5064 and SB5021 each block one. Filed as a residual, **not** deleted: a
+green sweep proves "not reached by these inputs", never "unreachable"
+(checkpoint 031). 5 of 7 lines now covered.
+
+**Gates:** `mk test` 52/27/20. Sweep 6201 → **6217**, exactly as predicted,
+0 failing, 0 flips vs `0bbf67c`. Specs `atint.1`–`atint.8` in `taint.sh`,
+journal 399.
+
+**Next:** `emit_capture_end_c` (7), `read_arg_value` (7 of only 11 lines —
+densest), `handle_close` (6), `emit_redirects_guarded` (6),
+`lower_value_as_str_aggregate` (6), `parse_test_binary_tail` (6), `emit_match`
+(5), `handle_cd` (5), `lower_value` (5).
+
 ## ══ STATUS (2026-09-24) — a comma is not a newline ══
 
 **The coverage queue found a wrong-answer bug in arithmetic.** `atok_to_text`

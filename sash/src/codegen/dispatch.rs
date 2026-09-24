@@ -474,12 +474,20 @@ impl SsaInst {
         let name_gv = module.declare_data_in_func(name_id, builder.func);
         let name_ptr = builder.ins().global_value(I64, name_gv);
         let name_len = builder.ins().iconst(I64, source.name.len() as i64);
-        // The source value (for `= '<val>'`) if it is a string slot.
+        // The source value, for `= '<val>'`. An int slot is rendered with
+        // `sash_itoa` rather than dropped: the C backend already names the
+        // value for an int (`emit_var_value` → `emit_itoa_temp`), so passing
+        // zeros here made the two backends print different diagnostics for
+        // the same program. Only a variable with no slot at all falls back.
         let src_key = format!("{}_{}", source.name, source.version);
         let (val_ptr, val_len) = match vars.get(src_key.as_str()) {
             Some(VarSlot::Str { ptr, len }) => {
                 let (p, l) = (*ptr, *len);
                 (builder.use_var(p), builder.use_var(l))
+            }
+            Some(VarSlot::Int(v)) => {
+                let val = builder.use_var(*v);
+                super::types::emit_int_to_str(builder, module, externs, val)
             }
             _ => {
                 let z = builder.ins().iconst(I64, 0);

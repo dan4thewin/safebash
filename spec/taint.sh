@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup taint
-plan=208
+plan=216
 echo "1..$plan" >&3
 
 set +e
@@ -1155,6 +1155,44 @@ map m = @{a:~}
 attest k v in m [[ -n $k && -n $v ]]
 echo done'
 [[ $rc = 0 && $out = "done" ]]; chk 93.58
+
+# ── attest on an INT variable (codegen/dispatch.rs::emit_attest) ──
+# Every attest spec in the suite attested a *string*. The int paths in
+# emit_attest — the `_ =>` value fallback and the `VarSlot::Int` copy arm —
+# had never executed, so a working feature had no gate at all. Found via
+# coverage (journal 399). The shape matters: `int n=$(arg 1)` is SB4030, so a
+# tainted int arrives through an arithmetic disposition.
+# atint.1 the taint backstop still demands the attest — without it this is
+# rejected, which is what makes the rest of the block meaningful.
+run_sash 'x=$(arg 1); int n=$(( ${x:-0} )); echo "$n"' 7
+[[ $rc != 0 && -z $out && $err == *"tainted variable"* ]]; chk atint.1
+# atint.2 a tainted int declassified by attest, gate passing.
+run_sash 'x=$(arg 1); int n=$(( ${x:-0} )); attest n [[ -n $n ]]; echo "$n"' 7
+[[ $rc = 0 && $out = "7" && -z $err ]]; chk atint.2
+# atint.3 …and the value really is the converted one, not a constant.
+run_sash 'x=$(arg 1); int n=$(( ${x:-0} )); attest n [[ -n $n ]]; echo "$(( n * 2 ))"' 21
+[[ $rc = 0 && $out = "42" && -z $err ]]; chk atint.3
+# atint.4 the disposition's default survives the attest too.
+run_sash 'x=$(arg 1); int n=$(( ${x:-99} )); attest n [[ -n $n ]]; echo "$n"' notanint
+[[ $rc = 0 && $out = "99" && -z $err ]]; chk atint.4
+# atint.5 a failing gate aborts with exit 1 and names BOTH the variable and
+# the value. This is the divergence that broke the tie: the C backend printed
+# `n = '9'` (emit_var_value → sash_itoa) while native passed zeros for a
+# non-Str slot and printed only `n`. Same program, two diagnostics — native
+# was wrong, and the differential oracle is what caught it.
+run_sash 'x=$(arg 1); int n=$(( ${x:-0} )); attest n [[ $n == 5 ]]; echo "$n"' 9
+[[ $rc = 1 && -z $out && $rerr == *"attest: n = '9' failed the gate"* ]]; chk atint.5
+# atint.6 …and the same gate passes on the value it is gating for.
+run_sash 'x=$(arg 1); int n=$(( ${x:-0} )); attest n [[ $n == 5 ]]; echo "$n"' 5
+[[ $rc = 0 && $out = "5" && -z $err ]]; chk atint.6
+# atint.7 the string form names its value the same way — one sentence shape
+# for both types, which is what the int case now agrees with.
+run_sash 'x=$(arg 1); attest x [[ $x == good ]]; echo "$x"' bad
+[[ $rc = 1 && -z $out && $rerr == *"attest: x = 'bad' failed the gate"* ]]; chk atint.7
+# atint.8 attest on a CLEAN int is accepted and is a plain copy — it proves
+# nothing about taint but must not miscompile.
+run_sash 'int n=5; attest n [[ -n $n ]]; echo "$n"'
+[[ $rc = 0 && $out = "5" && -z $err ]]; chk atint.8
 
 set -e
 tally
