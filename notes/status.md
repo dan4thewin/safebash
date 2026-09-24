@@ -40,12 +40,23 @@ the wrong file). `covdb.py` now **accumulates** — it keyed `cov_lines` on
 `(file,line)` with `INSERT OR REPLACE`, so a repeated lcov entry ending in `0`
 silently erased a real hit count and the line read as dead code.
 
-**Next:** rebuild the queue from a fresh **`mk cov-union`** + `mk cov-db`,
-then work it (`joined_form_to_string`, `emit_attest`, `panic_payload_message`,
-`emit_capture_end_c`, `read_arg_value`, `opaque_form_to_string`,
-`atok_to_text`). Expect it to differ from the old one in both directions: it
-is three commits fresher, it now includes unit-test reachability, and the
-loader no longer drops hits.
+**Queue rebuilt from the union run.** `mk cov-union` + `mk cov-db` done;
+binary reset and verified uninstrumented. Union totals: **96.90% lines,
+98.79% functions, 97.61% regions, 90.99% branches**.
+
+**Three of the seven queued items were phantom** — `panic_payload_message`,
+`joined_form_to_string` and `opaque_form_to_string` are at **0 uncovered**
+under the union. They were never cold; the spec-only ranking just could not
+see the unit tests that reach them. That is the switch paying for itself
+immediately, and a caution about every queue derived before it.
+
+**Next:** `atok_to_text` (41 — read checkpoint 035 on the rival brief
+renderers first), then `emit_attest` (7), `emit_capture_end_c` (7),
+`read_arg_value` (7 uncovered of 11 lines — the densest), `handle_close` (6),
+`emit_redirects_guarded` (6), `lower_value_as_str_aggregate` (6),
+`parse_test_binary_tail` (6). Same method: a cold line is a hypothesis, and
+`contrib/cov-probe.sh` settles it in a second — aim it at the *condition*,
+since it reports branch records.
 
 ## ══ STATUS (2026-09-24) — one of six ══
 
