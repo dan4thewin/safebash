@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup types
-plan=271
+plan=276
 echo "1..$plan" >&3
 
 set +e
@@ -1412,6 +1412,34 @@ run_sash 'map m=$(argv 1); echo "${m[k]}"' x y z
 # decl.23 control: a NON-argv command substitution still gets SB4064
 run_sash 'array a=$(echo x); echo "${a[0]}"' x y z
 [[ $rc != 0 && -z $out && $err == *SB4064* ]]; chk decl.23
+
+# decl.24-decl.28 the int→string mismatch on a DECLARATION.
+# hint.4/hint.5 cover the same mismatch on an *assignment* (`s=$v`), which is a
+# different renderer: an assignment goes through check_assign_type_match, which
+# builds the message from type_name()/type_name(), while a declaration goes
+# through check_scalar_assignment's hard-coded String←Int arm. The two produce
+# byte-identical text, so hint.4 passing said nothing about this arm — it was
+# reached by no spec at all until these.
+
+# decl.24 declaring a str from an int variable
+run_sash 'int n = 5; str s = $n; echo "$s"'
+[[ $rc != 0 && -z $out && $err == *SB4030* && $err == *'quote it'* ]]; chk decl.24
+
+# decl.25 …from an arithmetic expansion
+run_sash 'str s = $(( 1 + 2 )); echo "$s"'
+[[ $rc != 0 && -z $out && $err == *SB4030* ]]; chk decl.25
+
+# decl.26 …and from a capture of an `-> int` function
+run_sash 'fn f -> int { return 7 }; str s = $(f); echo "$s"'
+[[ $rc != 0 && -z $out && $err == *SB4030* ]]; chk decl.26
+
+# decl.27 control: a bare numeric literal is NOT an int value — it still declares
+run_sash 'str s = 5; echo "$s"'
+[[ $rc = 0 && $out = 5 && -z $err ]]; chk decl.27
+
+# decl.28 control: the form the hint recommends compiles and runs
+run_sash 'int n = 5; str s = "$n"; echo "$s"'
+[[ $rc = 0 && $out = 5 && -z $err ]]; chk decl.28
 
 set -e
 tally
