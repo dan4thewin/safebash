@@ -1,3 +1,44 @@
+## ══ STATUS (2026-09-24) — AGENTS.md was quoting a dead compiler ══
+
+**DG: "correct it; drop numbers from AGENTS.md that are prone to go stale."**
+The residuals table claimed three `sash/src/transform/` functions under-report
+against Mozilla by 2–9 points due to a tree-sitter grammar skew. It cost me a
+7× over-estimate when costing the `for k v in m` task.
+
+**Re-measured, the table was wrong twice over.** `rust-code-analysis-cli` vs.
+the index across all of `sash/src` — 1901 functions, 45 files, 1620 agreeing
+exactly. All three named functions agree with Mozilla **exactly** (`lower_one`
+17/1, `lower_case` 2/1, `lower_for` 5/4): the magnitudes were stale because
+commit `1c0e64a` deleted the CST those giant matches walked, and the skew
+rationale does not apply to them either.
+
+**The real residual is one-sided and small.** Cyclomatic: 119 low, **0 high**
+— indexnudge never reports a cc above Mozilla's, so an indexnudge cc is a
+floor. Cognitive: 158 low, 16 high, the high tail being deeply nested parser
+code. All within a few points. None of it touches the enforced gate, which
+compares indexnudge against indexnudge.
+
+**Install gotcha now recorded:** `cargo install rust-code-analysis-cli` fails
+with E0308 (two incompatible `tree_sitter::Language` types). **`--locked` is
+required.** AGENTS.md tells readers to run this tool; the obvious invocation
+does not work.
+
+**The general fix.** Table replaced by the direction, the remaining structural
+cause, and the re-measure command. Same treatment applied to every
+current-state number in the file: DD count, journal file count, `transform/`
+and `codegen/` file counts, clause rows, the `c:` cohort size, native-only
+test count, `runs` row count and index size, `sash-rt` coverage percentages,
+the unit-test breakdown, "4611 tests against 77 units", the cc/cog means (the
+re-measure query was already underneath them), and `main.rs`'s "4-line".
+
+**Historical numbers stayed** — the ghost-test incident, `ran=323` vs 321, the
+546-test redux breakdown, the 9.0 GB pack. A historical number cannot go
+stale; a current-state number always will. Where a number is useful, the file
+now carries the query, not the answer.
+
+Journal 393. `notes/tasks/for-map-two-binder-form.md` incidental finding
+closed out.
+
 ## ══ STATUS (2026-09-23) — correction: a faithful quote, impossible advice ══
 
 **DG caught a bug in the commit below.** `$(keys "config")` can never work —

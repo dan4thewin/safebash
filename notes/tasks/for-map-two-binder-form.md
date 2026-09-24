@@ -186,3 +186,17 @@ Filed here rather than acted on: AGENTS.md is DG's operating document, and
 whether the skew *rationale* still applies anywhere (vs. the numbers simply
 being stale) needs a re-measure against `rust-code-analysis-cli`, not a
 find-and-replace.
+
+**Resolved 2026-09-24.** DG asked for the correction, and the re-measure was
+run: `rust-code-analysis-cli` (installed with `--locked`, which is required —
+the plain install dies with E0308 on two incompatible `tree_sitter::Language`
+types) compared per-function `cyclomatic.sum`/`cognitive.sum` against the index
+across all of `sash/src` — 1901 functions in 45 files, 1620 agreeing exactly.
+
+**All three named functions agree with Mozilla exactly** (`lower_one` 17/1,
+`lower_case` 2/1, `lower_for` 5/4). The skew *rationale* did not survive
+either: cyclomatic never over-reports in indexnudge (119 low, 0 high) and
+cognitive is mostly low as well (158 low, 16 high), all within a few points.
+AGENTS.md now records the direction and the re-measure command instead of a
+table, and the stale-prone current-state numbers throughout the file were
+dropped in the same commit.

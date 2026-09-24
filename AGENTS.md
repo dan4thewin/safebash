@@ -102,8 +102,10 @@ on a consequential fork violates Decision authority.
 - **exp/** — git submodule → safebash-exp (historical experiments, not needed for build)
 - **spec.db** — SQLite database of all spec test results (repo root,
   **untracked and gitignored** — a local development artifact, not in git)
-- **97 design decisions** in `notes/decisions/` (one file per DD, numbered up to DD#109)
-- **1 adversarial audit** completed (5 models, 3 passes, remediation done)
+- design decisions in `notes/decisions/`, one file per DD — `ls notes/decisions/`
+  for the count and the highest number in use
+- adversarial audits in `audit/run-N/` (run-1: 5 models, 3 passes, remediation
+  done)
 - **tree-sitter**: not used by the main compiler (hand-written parser). The
   `sash-convert` crate uses **stock** `tree-sitter-bash 0.25` on bash input.
   (The old `~/src/tree-sitter-bash-safebash` fork drove the deleted
@@ -111,7 +113,7 @@ on a consequential fork violates Decision authority.
 
 ### Crate structure
 
-`main.rs` is a thin 4-line wrapper calling `sash::cli_main()`.
+`main.rs` is a thin wrapper calling `sash::cli_main()`.
 All compiler logic lives in `lib.rs`. Internal modules use
 `pub(crate)` — Rust warns on dead code. Modules used by
 integration tests are `pub`.
@@ -148,7 +150,7 @@ preprocessor and global `ARITH_MAP` are gone.)
   - `tests.rs` — parser unit tests
 - `ir.rs` — IR definitions
 - `type_check.rs` — type checking pass
-- `transform/` — IR → SSA transformation (9 files)
+- `transform/` — IR → SSA transformation
   - `entry.rs` — ir_to_ssa, ir_to_ssa_typed
   - `statements.rs` — lower_one dispatch
   - `control_flow.rs` — if/while/for/case → SSA blocks
@@ -162,7 +164,7 @@ preprocessor and global `ARITH_MAP` are gone.)
   - `capture_purity.rs` — picks the buffer vs memfd capture path per site
 - `resolve.rs` — DD#23 command resolution (absolute paths, manifest)
 - `ssa.rs` — SSA representation (and printing)
-- `codegen/` — Cranelift code generation (12 files)
+- `codegen/` — Cranelift code generation
   - `entry.rs` — compile_to_object, compile_ssa, lower_inst dispatch,
     `embed_sash_source` (the `.sash_source` ELF section)
   - `types.rs` — VarSlot, ExternFuncs, InstCtx
@@ -197,7 +199,7 @@ backend, removed by DD#104 in favour of the `--emit-ir` seam),
 
 - `notes/status.md` — current priority, just completed, next up
 - `notes/decisions/` — one file per DD#, bare frontmatter with status
-- `notes/journal/` — full journal (310 files and counting)
+- `notes/journal/` — full journal, one numbered file per session
 - `notes/tasks/` — backlog with bare frontmatter (status, depends, gates)
 - `docs/GUIDE.md` — architecture overview (public-facing)
 - the safe subset is defined by the DDs in `notes/decisions/` (SUBSET.md was
@@ -232,7 +234,7 @@ per test per run, so cross-commit comparison is a plain SQL query (below).
 `spec/schema.sql` (tables, views, indexes) and loads `spec/clauses.tsv`
 before recording anything, both idempotently, so a fresh clone with no
 `spec.db` at all builds one correctly. `clauses` is the one part that is
-**not** derived from a test run — 231 rows of curated DD clause text — which
+**not** derived from a test run — curated DD clause text — which
 is why it lives in a tracked TSV rather than being regenerated. If you add or
 edit a clause, re-export it:
 
@@ -297,7 +299,7 @@ this over having the summary read the TSV). Three properties to preserve if
 you touch it:
 
 - **Mode-scoped.** Only ids whose mode prefix appears in this sweep are
-  considered, so `SPEC_MODES="native"` cannot purge all 2697 `c:` tests.
+  considered, so `SPEC_MODES="native"` cannot purge the whole `c:` cohort.
 - **Capped** at `SPEC_PURGE_MAX` (default 25). A partial or aborted sweep is
   indistinguishable from a mass retirement by looking at the TSV, so over the
   cap it reports the cohort and deletes nothing. Raise it deliberately when a
@@ -332,7 +334,8 @@ cd spec && for f in *.sh; do case $f in common.sh|run.sh) continue;; esac
 
 `coverage.sh` is the one legitimate mismatch: its variable-id loop runs three
 ids behind a single `chk $_id` token. (`convert.sh` and `trace.sh` are the only
-native-only files -- 191 tests, the exact native-minus-c difference.)
+native-only files -- their combined `plan` is the exact native-minus-c
+difference.)
 
 **When you delete a spec, expect the next sweep to announce the retirement**
 and the total to drop by one per mode. Before 2026-09-18 it did the opposite:
@@ -399,9 +402,9 @@ real `sqlite3`. Do **not** reach for `/home/linuxbrew/.linuxbrew/bin/sqlite3`
 to "bypass" it — that advice was wrong, and copying it onto
 `.indexnudge-rust.db` silently serves stale line numbers.
 
-`runs` is append-only and past 1.4M rows, so both queries above depend on
+`runs` is append-only and grows without bound, so both queries above depend on
 the indexes in `schema.sql`. Without them the regression query takes about
-four minutes; with them, milliseconds. They cost ~95 MB of local disk.
+four minutes; with them, milliseconds. They cost tens of MB of local disk.
 
 ### Runtime coverage (sash-rt)
 
@@ -425,7 +428,7 @@ deliberately not `LLVM_PROFILE_FILE`, which cargo-llvm-cov uses for the
 compiler. Run `mk rt-cov-reset` afterwards: until you do, every binary `sash`
 produces links an instrumented runtime.
 
-Baseline (journal 320): **81.51% lines, 67.83% branches, 89.58% functions**.
+`mk rt-cov` prints the current baseline; journal 320 recorded the first one.
 
 ### Rust tests
 
@@ -445,9 +448,9 @@ for so long. **If you build a new harness, drive the real CLI binary — never
 `compile_to_object`.** A test that skips a pass tests a compiler we do not
 ship.
 
-What remains is 77 in-crate unit tests, run by `mk test`:
-- `sash` (30) — parser and codegen units, in `#[cfg(test)]` modules
-- `sash-convert` (27) · `sash-expand` (20)
+What remains is the in-crate unit tests, run by `mk test`:
+- `sash` — parser and codegen units, in `#[cfg(test)]` modules
+- `sash-convert` · `sash-expand`
 
 **The spec suite in `spec/` is the authoritative gate**, and now the only
 one for end-to-end behaviour. Add coverage there, not in a new Rust suite.
@@ -863,9 +866,8 @@ and left 48 gated.
 
 The means recalculate per commit (a ratchet: as the codebase
 refactors down, the bar tightens). **Do not hard-code them anywhere** —
-measured 2026-09-13 over `sash/src` they are **cc 4.04 / cog 2.05** across
-1735 functions, so the 3× bar sits at **12.1 / 6.2**, materially tighter
-than the numbers older notes quote. Re-measure rather than quote:
+they drift down as the codebase refactors, so any figure written here is
+wrong by the time it is read. Re-measure rather than quote:
 
 ```sh
 sqlite3 .indexnudge-rust.db "SELECT AVG(cyclomatic), AVG(cognitive)
@@ -893,27 +895,42 @@ Bypass for one commit: `SKIP_COMPLEXITY_GATE=1 git commit ...`
 (prefer fixing the function or amending the surrounding code if at
 all possible; bypass should be rare and never routine).
 
-**Cyclomatic residuals.** Numbers match Mozilla exactly for 11 of 14
-spot-checked hotspots. Three functions in `sash/src/transform/`
-under-report due to a tree-sitter-rust grammar version skew vs.
-Mozilla's pinned grammar (MatchArm/MatchArm2 split):
+**Residuals vs. Mozilla.** Both metrics are close to
+`rust-code-analysis-cli` but not identical. The large majority of functions
+agree exactly. Of those that do not, the divergence is a few points and has a
+consistent direction: **indexnudge never reports a cyclomatic score above
+Mozilla's** — it is low or equal, always — and cognitive is usually low too,
+occasionally high on deeply nested parsers. Treat an indexnudge number as a
+floor for cyclomatic.
 
-| function                                  | indexnudge | Mozilla | delta |
-|-------------------------------------------|-----------:|--------:|------:|
-| `transform/statements::lower_one`         |         55 |      57 |    −2 |
-| `transform/control_flow::lower_case`      |         40 |      44 |    −4 |
-| `transform/control_flow::lower_for`       |         35 |      44 |    −9 |
+**Do not quote a residual table — re-measure.** An earlier version of this
+section named three `sash/src/transform/` functions as under-reporting by
+2-9 points against a "big match on CST kind" shape. That is obsolete: the CST
+was deleted in the parser migration (commit `1c0e64a`), those functions are a
+fraction of their former size, and re-measured 2026-09-24 all three agree with
+Mozilla **exactly**. The stale numbers caused a real over-estimate of 3-20x
+when costing work in that directory.
 
-When setting absolute thresholds, allow ~10 slop on big-match-on-
-CST-kind functions in `sash/src/transform/`, or run
-`rust-code-analysis-cli -m -p sash/src -O json` and read
-`metrics.cyclomatic.sum` for those three specifically.
+The known structural cause that remains: an inner `function_item` nested
+inside an outer one reports `depth = 0` in indexnudge and `depth = 1` in
+Mozilla, so cognitive can differ by a point or two. Item-level nested fns are
+rare in Rust.
 
-**Cognitive residuals.** Inner `function_item` nested inside outer
-`function_item` reports `depth = 0` in indexnudge but `depth = 1` in
-Mozilla — per-fn divergence of +1/+2 at most, and item-level nested
-fns are rare in Rust. No known residuals beyond that and the same
-tree-sitter grammar skew that affects cyclomatic.
+To re-measure:
+
+```sh
+cargo install rust-code-analysis-cli --locked   # --locked is REQUIRED
+rust-code-analysis-cli -m -p sash/src/<file>.rs -O json
+```
+
+and read `metrics.cyclomatic.sum` / `metrics.cognitive.sum` from each
+`"kind": "function"` space. **Without `--locked` the install fails** — the
+unpinned resolve pulls two incompatible `tree_sitter::Language` types and dies
+with E0308.
+
+When setting an absolute threshold, allow a few points of slop rather than
+trusting either tool to the unit. The enforced gate uses the indexnudge
+numbers on both sides of its comparison, so the residual does not affect it.
 
 ## Completion checklist
 
@@ -937,9 +954,10 @@ doctest was a 4-space-indented code block in `validate::check_taint`'s doc
 comment holding *sash* source, which rustdoc dutifully compiled as Rust.
 
 Steps 1 and 2 are **both** gates now. Step 2 (the spec suite) is still the
-one that carries the behavioural weight — 4611 tests against 77 units — so
-when the two disagree about whether something is covered, believe the specs.
-Keep running anything long under `timeout`.
+one that carries the behavioural weight — it outnumbers the unit tests by
+roughly two orders of magnitude — so when the two disagree about whether
+something is covered, believe the specs. Keep running anything long under
+`timeout`.
 
 ## Bug policy
 
