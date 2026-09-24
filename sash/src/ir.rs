@@ -879,38 +879,29 @@ pub fn arith_references_var(a: &ArithExpr, name: &str) -> bool {
 ///
 /// DD#99 retired the whole flag surface (`-a`, `-d`, `-f`, `-r`) and the
 /// multi-target form; SB5057 rejects every one of them at validation, so by
-/// the time a program reaches lowering a `readline` is exactly one bare
-/// target name. This struct is what is left of `ReadFlags`.
-#[derive(Debug, Default)]
-pub struct ReadTarget {
-    pub var_names: Vec<String>,
-}
-
-/// The literal VALUE of a `read` argument word (unwrapping one layer of
-/// quotes; an empty `''`/`""` is the empty string). Non-literal words
-/// (`$x`, `$( )`, …) — never valid read targets or delimiters — yield "".
-fn read_arg_value(e: &Expr) -> String {
-    match &e.kind {
-        ExprKind::Literal(s) | ExprKind::SingleQuoted(s) => s.clone(),
-        ExprKind::DoubleQuoted(parts) => match parts.as_slice() {
-            [] => String::new(),
-            [p] => match &p.kind {
-                ExprKind::Literal(s) => s.clone(),
-                _ => String::new(),
-            },
-            _ => String::new(),
-        },
-        _ => String::new(),
-    }
-}
-
-/// Collect a `readline` command's target names. See [`ReadTarget`].
-/// SB5057 has already guaranteed there is exactly one and that it is a bare
-/// identifier, so every word is a target.
-pub fn readline_targets(args: &[Expr]) -> ReadTarget {
-    ReadTarget {
-        var_names: args.iter().map(read_arg_value).collect(),
-    }
+/// the time a program reaches lowering a `readline` is exactly ONE bare
+/// target name. The return type says so.
+///
+/// It used to be a `ReadTarget { var_names: Vec<String> }` — the shape of the
+/// retired multi-target form — fed by a private `read_arg_value` that was a
+/// copy of [`literal_word_text`] with `None` collapsed to `""`. That cost
+/// three things: the quote-unwrapping arms were unreachable (SB5057 admits
+/// only `ExprKind::Literal`, because it gates on `expr_literal_str`, which is
+/// non-empty for no other variant); a non-constant word would have been
+/// *invented* as the empty name, the exact failure [`literal_word_text`]'s
+/// doc comment exists to forbid; and because the vec could hold any count,
+/// both call sites carried a `let [name] = … else { return }` that silently
+/// dropped a `readline` no input can produce.
+///
+/// # Panics
+/// If SB5057 did not run, or stopped rejecting a shape it rejects today.
+/// That is the intent: the alternative is emitting no `ReadLine` at all, so
+/// the program would read nothing and say nothing about why.
+pub fn readline_target(args: &[Expr]) -> String {
+    let [target] = args else {
+        panic!("SB5057 validated `readline` takes exactly one target");
+    };
+    literal_word_text(target).expect("SB5057 validated the target is a bare name")
 }
 
 /// Decode the args of a `attest` command into a [`AttestForm`] plus the
@@ -1598,4 +1589,44 @@ pub enum IrUnaryArithOp {
     Pos,    // +
     Not,    // !
     BitNot, // ~
+}
+
+/// The two invariant panics in [`readline_target`] guard shapes that SB5057
+/// makes unreachable. DG's rule for the coverage campaign: an unreachable
+/// should-never-run assertion earns a unit test proving it catches what it
+/// claims. These call the lowering accessor directly with the arguments the
+/// validator would never let through.
+#[cfg(test)]
+mod invariant_tests {
+    use super::{readline_target, Expr, ExprKind, Span};
+
+    fn word(kind: ExprKind) -> Expr {
+        Expr {
+            kind,
+            span: Span::new(1, 1),
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "exactly one target")]
+    fn readline_target_rejects_the_retired_multi_target_form() {
+        // `readline a b` — the DD#99-retired multi-target form. SB5057's
+        // arity check rejects it; reaching past that, the arity is 2.
+        let args = [
+            word(ExprKind::Literal("a".into())),
+            word(ExprKind::Literal("b".into())),
+        ];
+        let _ = readline_target(&args);
+    }
+
+    #[test]
+    #[should_panic(expected = "a bare name")]
+    fn readline_target_rejects_a_non_constant_target() {
+        // `readline $x` — a value, not a binding. SB5057's sigil check
+        // rejects it because `expr_literal_str` is empty for every variant
+        // but `Literal`. Reaching past that, there is no name to define,
+        // and inventing `""` is what this replaced.
+        let args = [word(ExprKind::SimpleExpansion("x".into()))];
+        let _ = readline_target(&args);
+    }
 }

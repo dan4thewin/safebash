@@ -1,3 +1,50 @@
+## ══ STATUS (2026-09-24) — the type was the retired surface ══
+
+**Coverage, resumed. The queue was four commits stale and its line numbers
+pointed at doc comments — a coverage row naming a non-executable line means
+the database is stale, not that the line is cold.** Re-ran `mk cov-union`.
+Fresh baseline: **functions 98.80%** (27 missed) · **lines 97.79%** (607) ·
+**regions 97.11%** (885) · **branches 91.04%** (349).
+
+Top of the re-ranked queue was `ir.rs::read_arg_value` — 7 cold lines of 11.
+It turned out to be DD#99 retired-surface residue, three layers deep:
+
+- **A rival renderer.** `read_arg_value` was a near-exact copy of
+  `literal_word_text` with `None` collapsed to `""` — the third rival-renderer
+  of this campaign. `literal_word_text`'s doc comment, twenty lines away,
+  already names that as the defect it exists to prevent: "a slot that requires
+  a compile-time constant must be able to say 'this is not one' rather than
+  invent a plausible string."
+- **Dead arms hidden inside a live line.** SB5057 admits only
+  `ExprKind::Literal` (it gates on `expr_literal_str`, empty for every other
+  variant), so the quote-unwrapping arms were unreachable — including the
+  `SingleQuoted` half of the *covered* arm, which line coverage cannot see
+  because `|`-alternatives share a line.
+- **The type was the root cause.** `ReadTarget { var_names: Vec<String> }` is
+  the shape of the multi-target form DD#99 retired. Because it could hold any
+  count, both call sites carried a silent `else { return }` for a count SB5057
+  forbids — a malformed `readline` would have emitted no `ReadLine` at all.
+
+Replaced by `readline_target(args) -> String`, which says what the validator
+guarantees. `ReadTarget` and `read_arg_value` deleted; both dead guards gone.
+Ten uncovered lines removed by deletion rather than by writing specs for input
+that cannot exist. The two residual should-never-run assertions earn unit
+tests, per DG's rule for the campaign.
+
+**SB5057 was proven total by execution, not by reading**: `readline "x"`
+rejected in all sixteen nesting contexts (function, if/else, while, until,
+for, pipeline, &&, ||, brace group, negation, all three DD#66 dispatch bodies,
+nested forms).
+
+Gates: sweep **6237**, predicted 6237, **0 failing, 0 flips** vs `8b63c77`.
+`mk test` **54**/27/20 (up 2 — the new invariant tests).
+
+**Next:** the re-ranked coverage queue — `emit_capture_end_c` (7) ·
+`handle_close` (6) · `emit_redirects_guarded` (6) ·
+`lower_value_as_str_aggregate` (6) · `parse_test_binary_tail` (6) ·
+`emit_match` (5) · `handle_cd` (5) · `lower_value` (5). Also open:
+`audit-validate-wildcard-escapes` (P1, filed in journal 400).
+
 ## ══ STATUS (2026-09-24) — a disposition converts; it does not declassify ══
 
 **DG read journal 399's spec block and asked "this doesn't seem right — you

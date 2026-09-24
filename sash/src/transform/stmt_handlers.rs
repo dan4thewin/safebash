@@ -754,16 +754,13 @@ fn handle_lastpipe_read(
     // An array read is peeled off earlier by `is_array_read_last`, so only
     // `readline` reaches here — one target, no flags (DD#99/SB5057).
     if let StmtKind::Command(c) = &last.kind {
-        let flags = crate::ir::readline_targets(&c.args);
-        if let [name] = flags.var_names.as_slice() {
-            let target = state.define(name);
-            ssa.block_mut(block).insts.push(SsaInst::ReadLine {
-                target,
-                fd: -1,
-                redirects: vec![],
-                clean_pipe,
-            });
-        }
+        let target = state.define(&crate::ir::readline_target(&c.args));
+        ssa.block_mut(block).insts.push(SsaInst::ReadLine {
+            target,
+            fd: -1,
+            redirects: vec![],
+            clean_pipe,
+        });
     }
 }
 

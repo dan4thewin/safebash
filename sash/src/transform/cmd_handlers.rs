@@ -21,7 +21,7 @@ pub(super) fn handle_read(
     if expr_to_string(&c.name) == "read" {
         return lower_newread(c, ssa, state, block);
     }
-    emit_readline_inst(&crate::ir::readline_targets(&c.args), ssa, state, block);
+    emit_readline_inst(&crate::ir::readline_target(&c.args), ssa, state, block);
     block
 }
 
@@ -59,15 +59,7 @@ fn lower_newread(
 
 /// Emit the `ReadLine` SSA instruction for a `readline`. DD#99: exactly one
 /// target, no flags, newline-terminated — SB5057 has already enforced that.
-fn emit_readline_inst(
-    flags: &crate::ir::ReadTarget,
-    ssa: &mut SsaProgram,
-    state: &mut VersionState,
-    block: BlockId,
-) {
-    let [name] = flags.var_names.as_slice() else {
-        return;
-    };
+fn emit_readline_inst(name: &str, ssa: &mut SsaProgram, state: &mut VersionState, block: BlockId) {
     let target = state.define(name);
     ssa.block_mut(block).insts.push(SsaInst::ReadLine {
         target,
