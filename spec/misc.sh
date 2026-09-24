@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup misc
-plan=100
+plan=103
 echo "1..$plan" >&3
 
 set +e
@@ -26,7 +26,15 @@ run_sash 'x=HOME; echo ${!x}'
 run_sash_emit_ir() {
     rc=-1 out="" err=""
     echo "$1" > .input.sash
-    sash --emit-ir .input.sash > out 2> err
+    # `${SASH:-sash}`, not a bare `sash`: every other helper honours the
+    # override, and this one silently did not. Standalone (`bash misc.sh`)
+    # that meant these eight tests ran the *installed* binary rather than the
+    # tree's, so a stale ~/.local/bin/sash failed 104.5 with the very
+    # `:end-block nil` regression the test exists to catch — a failure with
+    # nothing to do with the working tree. Under run.sh it happened to work,
+    # because run.sh prepends target/release to PATH.
+    timeout "$SPEC_TIMEOUT" ${SASH:-sash} --emit-ir .input.sash \
+        </dev/null > out 2> err
     rc=$?
     out=$(<out)
     err=$(<err)
@@ -616,6 +624,67 @@ str o=$(outer)
 attest o [[ -n $o ]]
 echo "[$o]"'
   [[ $rc = 0 && $out = "[outer-inner-payload]" && -z $rerr ]]; chk cap.18
+
+  # cap.19 a capture of a function that BARE-CALLS another function. The
+  # purity walk has to recurse through `outer`'s body into `inner`'s to
+  # decide, and it can: the capture path looks the callee's body up and
+  # hands it to the analysis UNLOWERED, before inlining has flattened it.
+  # `inner` writes in-process, so the site is buffered.
+  #
+  # No spec reached that recursion before these three — the walk sat at 0
+  # executions in a full sweep, and the comment on it read "this lookup
+  # never succeeds", which is a true statement about the suite and a
+  # misleading one about the code.
+  run_sash 'fn inner {
+  echo hi
+}
+fn outer {
+  inner
+}
+str t=$(outer)
+echo "[$t]"'
+  [[ $rc = 0 && $out = "[hi]" && -z $rerr ]]; chk cap.19
+
+  # cap.20 the same shape, disqualified — and the load-bearing one, because
+  # cap.19 passes whichever way the analysis answers. Here `inner` wraps an
+  # EXTERNAL, whose child inherits our stdout, so the buffer cannot see its
+  # bytes. If the walk stopped at `outer`'s body instead of recursing, the
+  # site would be judged pure, `/bin/echo`'s output would leak straight to
+  # the real fd 1, and `$t` would come back empty.
+  #
+  # Verified rather than assumed: hand-patching the emitted C onto the
+  # buffered path prints "hi\n[]" where this prints "[hi]".
+  #
+  # The bracketed form is what makes that visible. With a bare `echo "$t"`
+  # the wrong answer prints "hi\n\n" and the harness's $( ) strips both
+  # trailing newlines back to "hi" — a vacuous pass. (cap.18 documents the
+  # same trap from the other direction.)
+  run_sash 'fn inner {
+  /bin/echo hi
+}
+fn outer {
+  inner
+}
+str t=$(outer)
+echo "[$t]"'
+  [[ $rc = 0 && $out = "[hi]" && -z $rerr ]]; chk cap.20
+
+  # cap.21 the module doc's headline case, reached through a bare call: a
+  # body that CONSUMES external output and yields it with `echo` stays pure,
+  # because the inner $( ) hands its child a pipe of its own and nothing but
+  # our own `echo` ever reaches our stdout. Nested captures disqualify
+  # nothing in either direction.
+  run_sash 'fn wrap {
+  str u=$(/bin/echo inner)
+  attest u [[ -n $u ]]
+  echo "got-$u"
+}
+fn outer {
+  wrap
+}
+str t=$(outer)
+echo "[$t]"'
+  [[ $rc = 0 && $out = "[got-inner]" && -z $rerr ]]; chk cap.21
 # ── `$(<file)` — the slurp form (DD-less; see dollar-lt-file-forks) ──
 # It used to be desugared at PARSE time into `$(cat file)`, so a supposedly
 # self-contained static binary acquired a runtime dependency on /usr/bin/cat

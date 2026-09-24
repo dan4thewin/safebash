@@ -75,7 +75,11 @@ fn command_is_pure(
     let name = match &cmd.name.kind {
         crate::ir::ExprKind::Literal(s) => s.as_str(),
         // A head this pass cannot read as a literal is a head it cannot prove
-        // anything about.
+        // anything about. Unreachable in practice — SB5011 ("a command name
+        // must be a literal path") rejects every non-literal head, verified
+        // against a quoted name, a bare variable and a braced expansion — so
+        // this is a backstop, kept because guessing here would silently
+        // mis-buffer a capture rather than fail.
         _ => return false,
     };
     // DD#23: `resolve` rewrites an external head to an absolute path, and
@@ -84,13 +88,22 @@ fn command_is_pure(
     if name.contains('/') {
         return false;
     }
-    // Measured (journal 365): this lookup never succeeds in a full sweep —
-    // 156 calls reach here and every one falls through to the `true` below.
-    // Function inlining runs before this pass, so a capture of `fn emit {
-    // /bin/cat f; }` arrives with `/bin/cat` already spliced in and is
-    // disqualified by the slash test above, not by walking a body. The walk
-    // is kept because it is what makes the disqualification *correct* for
-    // any call this pass sees before inlining has flattened it.
+    // This lookup succeeds only for a capture whose body *bare-calls* another
+    // user function — `$(outer)` where `fn outer { inner }`. It cannot fire
+    // for the captured function's own body, because a capture of
+    // `fn emit { /bin/cat f; }` is disqualified by the slash test above
+    // before any walk. But the capture path hands this pass the callee's body
+    // **unlowered**, before inlining has flattened the calls inside it, so
+    // the walk is what makes the disqualification correct for the nested
+    // case: without it `fn inner { /bin/echo hi }` would fall through to the
+    // `true` below, the site would be judged pure, and the child's output
+    // would leak to the real fd 1 while the capture came back empty.
+    //
+    // Journal 365 measured 156 calls reaching here with none succeeding and
+    // recorded that as "this lookup never succeeds". That was a true
+    // statement about the suite and a misleading one about the code — the
+    // shape simply had no spec. Specs cap.19-cap.21 cover it now, cap.20
+    // being the one that fails if this walk is removed.
     if let Some(body) = bodies.get(name) {
         let owned = name.to_string();
         if !visiting.insert(owned.clone()) {
