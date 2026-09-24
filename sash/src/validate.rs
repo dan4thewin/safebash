@@ -4567,6 +4567,12 @@ fn taint_stmt(
         StmtKind::Redirected(r) => taint_redirected(r, tainted, sx, diags),
         StmtKind::Case(c) => taint_case_arms(c, tainted, sx, diags),
         StmtKind::For(f) => taint_for(f, tainted, sx, diags),
+        // `(( … ))` as a statement or an `if`/`while` condition. It has no
+        // child bodies, so the `_` arm below walked nothing and every read
+        // inside the condition went unchecked — `if (( ${x:-0} > 5 ))` reached
+        // the SSA backstop (an ICE-shaped message naming `__arith_test_1`)
+        // instead of a located SB5020. Same omission as the `$(( … ))` rvalue.
+        StmtKind::ArithTest(a) => check_arith_taint(a, tainted, diags),
         _ => taint_child_bodies(stmt, tainted, sx, diags),
     }
 }
@@ -4751,7 +4757,35 @@ fn reject_scalar_rhs_read(expr: &Expr, tainted: &HashSet<String>, diags: &mut Ve
         // But a *read* of already-tainted data inside it (`$(join @a)`,
         // `$(echo $t)`) is still a use-site (DD#24) — check the inner reads.
         ExprKind::CommandSubstitution(stmts) => check_cmdsub_inner_reads(stmts, tainted, diags),
-        _ => {}
+        // `int n=$(( ${x:-0} ))` — an arithmetic RHS is a copy like any other.
+        // Missing here, the read was not rejected and the *target* silently
+        // became tainted instead, so `attest n [[ … ]]` then declassified a
+        // value that was never vouched for: laundering with a receipt. The
+        // arithmetic disposition converts (DD#77); only `attest s (( n = s ))`
+        // converts *and* declassifies (DD#93 Part D).
+        ExprKind::Arithmetic(a) => {
+            crate::ir::walk_arith_expansion_roots(a, &mut |e| {
+                reject_scalar_rhs_read(e, tainted, diags)
+            });
+        }
+        // Nothing to reject, for four different reasons:
+        //   `Literal`/`SingleQuoted` — no expansion, so no read.
+        //   `Array`/`AssocArray` — never reach here;
+        //     `taint_array_literal_assignment` handles them (SB5021) and
+        //     returns before this call.
+        //   `SlurpFile` — `x=$(<file)` in value position IS
+        //     assignment-from-source, exactly like `$(cat file)`, so
+        //     `is_taint_source` taints the target rather than rejecting it.
+        //   `Test` — not a value-producing RHS form; reads inside a test are
+        //     checked by `check_test_taint` where tests actually occur.
+        // Grouped rather than split one-per-variant only to keep the arm count
+        // under the complexity gate — the guard is the absence of a wildcard.
+        ExprKind::Literal(_)
+        | ExprKind::SingleQuoted(_)
+        | ExprKind::Array(_)
+        | ExprKind::AssocArray(_)
+        | ExprKind::SlurpFile(_)
+        | ExprKind::Test(_) => {}
     }
 }
 
@@ -5227,6 +5261,13 @@ fn expr_uses_tainted(expr: &Expr, tainted: &HashSet<String>) -> bool {
 }
 
 /// Check an expression for tainted variable use, emitting diagnostics.
+/// Check one expression for reads of tainted variables (DD#24).
+///
+/// **Total over `ExprKind` on purpose.** This match had a `_ => {}` and it
+/// leaked three times: `[[ … ]]` operands, `$(<file)`, and `$(( … ))` — each
+/// a silent escape rather than a compile error, and the last one a taint
+/// bypass that shipped. A new variant must now be classified here explicitly,
+/// even if the classification is "no reads". Do not reintroduce the wildcard.
 fn check_expr_taint(expr: &Expr, tainted: &HashSet<String>, diags: &mut Vec<Diagnostic>) {
     match &expr.kind {
         ExprKind::SimpleExpansion(var) => push_taint_use(
@@ -5281,8 +5322,43 @@ fn check_expr_taint(expr: &Expr, tainted: &HashSet<String>, diags: &mut Vec<Diag
              to a variable and attest before use"
                 .to_string(),
         )),
-        _ => {}
+        // DD#24 §Quarantine names `${x:op}` "in any expression" as a read, and
+        // `$(( … ))` is an expression. Without this arm a tainted variable was
+        // laundered outright: `echo "$(( ${x:-0} ))"` compiled clean — no
+        // SB5020, and no SSA backstop either, because the lone-leaf value never
+        // became a tainted int. A disposition *converts*; it does not
+        // declassify. DD#93 Part D is the form that does both, and it is
+        // spelled `attest s (( n = s ))` precisely so the declassification
+        // stays greppable. The same DD's addendum already rejects this exact
+        // laundering *inside* an attest predicate ("z would be laundered into
+        // clean y", SB5020) — it cannot be legal outside one.
+        ExprKind::Arithmetic(a) => check_arith_taint(a, tainted, diags),
+        // Nothing to check, for two different reasons. `Literal`/`SingleQuoted`
+        // have no expansion at all — text is text. `Array`/`AssocArray` *are*
+        // read positions, but a tainted element is rejected at the
+        // *assignment* by `reject_tainted_into_array` (SB5021), which names the
+        // collection and is the better diagnostic; recursing here would
+        // double-report. An `${…}` subscript *index* still arrives through the
+        // `Subscript` arm above. Grouped rather than split one-per-variant only
+        // to keep the arm count under the complexity gate — the guard is the
+        // absence of a wildcard, not the number of arms.
+        ExprKind::Literal(_)
+        | ExprKind::SingleQuoted(_)
+        | ExprKind::Array(_)
+        | ExprKind::AssocArray(_) => {}
     }
+}
+
+/// DD#24: reads inside `$(( … ))` / `(( … ))` are use-sites like any other.
+///
+/// A bare name in arithmetic needs no arm: a *string* one is SB4030 (DD#77
+/// requires a disposition, which lands in the `Expansion` leaf this does
+/// visit), and an *int* one cannot be tainted — every construction route is
+/// refused first (`int n=$(getenv X)`/`$(arg N)`/`$(cmd)` are SB4030, and
+/// `read` targets an array, DD#99). If a tainted int ever becomes
+/// constructible, this is the function that needs the extra arm.
+fn check_arith_taint(arith: &ArithExpr, tainted: &HashSet<String>, diags: &mut Vec<Diagnostic>) {
+    crate::ir::walk_arith_expansion_roots(arith, &mut |e| check_expr_taint(e, tainted, diags));
 }
 
 /// Taint-check the operands of a `[[ … ]]` test — each is a read position.

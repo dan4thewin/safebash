@@ -425,39 +425,51 @@ pub(crate) fn is_plain_identifier(s: &str) -> bool {
 /// Walk the `${…}` expansions embedded in an `ArithExpr` tree, applying `f` to
 /// each imported `Expr` (via `walk_expr_tree`).
 pub(crate) fn walk_arith_expansions(arith: &ArithExpr, f: &mut impl FnMut(&Expr)) {
+    walk_arith_expansion_roots(arith, &mut |e| walk_expr_tree(e, f));
+}
+
+/// The same traversal as [`walk_arith_expansions`], but visiting each embedded
+/// `${…}` **once at its root** instead of descending into it.
+///
+/// For a caller that recurses itself — `validate::check_expr_taint` does —
+/// the descending form visits every node twice and reports each nested read
+/// twice (`$(( ${a[$x]} ))` would name `$x` once from the callback's own
+/// recursion and again from `walk_expr_tree`'s). Two entry points into one
+/// traversal, rather than a second copy of the structure that can drift.
+pub(crate) fn walk_arith_expansion_roots(arith: &ArithExpr, f: &mut impl FnMut(&Expr)) {
     match arith {
-        ArithExpr::Expansion(inner) => walk_expr_tree(inner, f),
+        ArithExpr::Expansion(inner) => f(inner),
         ArithExpr::BinOp { left, right, .. } => {
-            walk_arith_expansions(left, f);
-            walk_arith_expansions(right, f);
+            walk_arith_expansion_roots(left, f);
+            walk_arith_expansion_roots(right, f);
         }
         ArithExpr::UnaryOp { operand, .. } | ArithExpr::Paren(operand) => {
-            walk_arith_expansions(operand, f)
+            walk_arith_expansion_roots(operand, f)
         }
         ArithExpr::Assign { value, .. } | ArithExpr::CompoundAssign { value, .. } => {
-            walk_arith_expansions(value, f)
+            walk_arith_expansion_roots(value, f)
         }
         ArithExpr::Ternary {
             cond,
             true_val,
             false_val,
         } => {
-            walk_arith_expansions(cond, f);
-            walk_arith_expansions(true_val, f);
-            walk_arith_expansions(false_val, f);
+            walk_arith_expansion_roots(cond, f);
+            walk_arith_expansion_roots(true_val, f);
+            walk_arith_expansion_roots(false_val, f);
         }
         ArithExpr::Comma(items) | ArithExpr::FuncCall { args: items, .. } => {
             for it in items {
-                walk_arith_expansions(it, f);
+                walk_arith_expansion_roots(it, f);
             }
         }
         // A subscript's index (and an assignment's value) are arithmetic
         // subtrees too — skipping them let every expr-level check inside
         // `a[…]` go unrun, e.g. `(( y = a[${x:~}] ))`.
-        ArithExpr::Subscript { index, .. } => walk_arith_expansions(index, f),
+        ArithExpr::Subscript { index, .. } => walk_arith_expansion_roots(index, f),
         ArithExpr::SubscriptAssign { index, value, .. } => {
-            walk_arith_expansions(index, f);
-            walk_arith_expansions(value, f);
+            walk_arith_expansion_roots(index, f);
+            walk_arith_expansion_roots(value, f);
         }
         _ => {}
     }

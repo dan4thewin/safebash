@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup arithmetic
-plan=324
+plan=330
 echo "1..$plan" >&3
 
 set +e
@@ -1788,6 +1788,36 @@ run_sash 'int n=0
 for ((;;)); do n=$((n+1)); if (( n > 2 )); then break; fi; done
 echo $n'
 [[ $rc = 0 && $out = "3" && -z $err ]]; chk 94.40
+
+# ── DD#77: a lone disposition is still ARITHMETIC (journal 400) ──
+# `arith_leaf_to_ssa` hands a `${…}` import back as the string it is, and every
+# other position forced the conversion afterwards — an operator lowers its
+# operands as ints, an int assignment types the destination. A lone leaf in
+# *value* position had neither, so the string reached the sink verbatim: the
+# conversion silently did not happen. Found while gating the taint bypass these
+# same expansions were slipping through (spec/taint.sh atint.*).
+# adisp.1 `${x:-N}` alone: a non-integer takes the default, it does not pass
+# through. This printed `abc`.
+run_sash 'x=abc; echo "$(( ${x:-7} ))"'
+[[ $rc = 0 && $out = "7" && -z $err ]]; chk adisp.1
+# adisp.2 redundant grouping is the same lone leaf — `(${x:-7})` printed `abc`
+# too, so a fix that only looked at the top node would have missed it.
+run_sash 'x=abc; echo "$(( (${x:-7}) ))"'
+[[ $rc = 0 && $out = "7" && -z $err ]]; chk adisp.2
+# adisp.3 an integer is unaffected — the default is a default, not a coercion.
+run_sash 'x=5; echo "$(( ${x:-7} ))"'
+[[ $rc = 0 && $out = "5" && -z $err ]]; chk adisp.3
+# adisp.4 `${x:?msg}` is defined to ABORT on a non-integer. Passing the string
+# through meant the one disposition whose whole job is to fail, didn't.
+run_sash 'x=abc; echo "$(( ${x:?not an int} ))"'
+[[ $rc != 0 && -z $out && $rerr == *"not an int"* ]]; chk adisp.4
+# adisp.5 the same lone leaf as a command argument, not just inside echo.
+run_sash 'x=abc; /bin/echo "$(( ${x:-7} ))"'
+[[ $rc = 0 && $out = "7" && -z $err ]]; chk adisp.5
+# adisp.6 an operator always forced the conversion — the shape that worked,
+# kept so a regression that re-breaks only the lone leaf is still visible here.
+run_sash 'x=abc; echo "$(( ${x:-7} + 0 ))"'
+[[ $rc = 0 && $out = "7" && -z $err ]]; chk adisp.6
 
 set -e
 tally

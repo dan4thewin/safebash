@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup taint
-plan=216
+plan=220
 echo "1..$plan" >&3
 
 set +e
@@ -1160,39 +1160,64 @@ echo done'
 # Every attest spec in the suite attested a *string*. The int paths in
 # emit_attest — the `_ =>` value fallback and the `VarSlot::Int` copy arm —
 # had never executed, so a working feature had no gate at all. Found via
-# coverage (journal 399). The shape matters: `int n=$(arg 1)` is SB4030, so a
-# tainted int arrives through an arithmetic disposition.
-# atint.1 the taint backstop still demands the attest — without it this is
-# rejected, which is what makes the rest of the block meaningful.
-run_sash 'x=$(arg 1); int n=$(( ${x:-0} )); echo "$n"' 7
-[[ $rc != 0 && -z $out && $err == *"tainted variable"* ]]; chk atint.1
-# atint.2 a tainted int declassified by attest, gate passing.
+# coverage (journal 399/400).
+#
+# Writing the block turned up a taint-quarantine bypass, so it now gates both.
+# DD#24 §Quarantine lists `${x:op}` "in any expression" as a rejected read, and
+# `$(( … ))` is an expression: the arithmetic disposition *converts* (DD#77),
+# it does not declassify. Only `attest s (( n = s ))` does both (DD#93 Part D).
+# atint.1 the laundering shape is SB5020 at the READ, with a location — it used
+# to reach the SSA backstop (or nothing at all, atint.11) and `attest n` then
+# declassified a value nothing had vouched for.
 run_sash 'x=$(arg 1); int n=$(( ${x:-0} )); attest n [[ -n $n ]]; echo "$n"' 7
-[[ $rc = 0 && $out = "7" && -z $err ]]; chk atint.2
-# atint.3 …and the value really is the converted one, not a constant.
-run_sash 'x=$(arg 1); int n=$(( ${x:-0} )); attest n [[ -n $n ]]; echo "$(( n * 2 ))"' 21
-[[ $rc = 0 && $out = "42" && -z $err ]]; chk atint.3
-# atint.4 the disposition's default survives the attest too.
-run_sash 'x=$(arg 1); int n=$(( ${x:-99} )); attest n [[ -n $n ]]; echo "$n"' notanint
-[[ $rc = 0 && $out = "99" && -z $err ]]; chk atint.4
-# atint.5 a failing gate aborts with exit 1 and names BOTH the variable and
-# the value. This is the divergence that broke the tie: the C backend printed
+[[ $rc != 0 && -z $out && $err == *"SB5020"* ]]; chk atint.1
+# atint.2 the same read inside a `(( … ))` mutation statement.
+run_sash 'x=$(arg 1); int n=0; (( n = ${x:-0} )); attest n [[ -n $n ]]; echo "$n"' 7
+[[ $rc != 0 && -z $out && $err == *"SB5020"* ]]; chk atint.2
+# atint.3 DD#24's sanctioned route: attest the SOURCE, then convert. The
+# disposition is now a plain conversion of a vouched-for value.
+run_sash 'x=$(arg 1); attest x i?; int n=$(( ${x:-0} )); echo "$n"' 7
+[[ $rc = 0 && $out = "7" && -z $err ]]; chk atint.3
+# atint.4 DD#93 Part D: the conversion IS the validation, and declassifies both.
+run_sash 'x=$(arg 1); attest x (( n = x )); echo "$n"' 7
+[[ $rc = 0 && $out = "7" && -z $err ]]; chk atint.4
+# atint.5 attest on an int as a runtime gate — the passing case. After the
+# SB5020 fix no int can be tainted (every route is SB4030 or SB5020), so the
+# int form is validation-only, like DD#93's map 2-binder form and for the same
+# reason: attest is the only assert-with-diagnostic in the language.
+run_sash 'int n=5; attest n [[ -n $n ]]; echo "$n"'
+[[ $rc = 0 && $out = "5" && -z $err ]]; chk atint.5
+# atint.6 a failing gate aborts with exit 1 and names BOTH the variable and the
+# value. This is the divergence that broke the tie: the C backend printed
 # `n = '9'` (emit_var_value → sash_itoa) while native passed zeros for a
-# non-Str slot and printed only `n`. Same program, two diagnostics — native
-# was wrong, and the differential oracle is what caught it.
-run_sash 'x=$(arg 1); int n=$(( ${x:-0} )); attest n [[ $n == 5 ]]; echo "$n"' 9
-[[ $rc = 1 && -z $out && $rerr == *"attest: n = '9' failed the gate"* ]]; chk atint.5
-# atint.6 …and the same gate passes on the value it is gating for.
-run_sash 'x=$(arg 1); int n=$(( ${x:-0} )); attest n [[ $n == 5 ]]; echo "$n"' 5
-[[ $rc = 0 && $out = "5" && -z $err ]]; chk atint.6
-# atint.7 the string form names its value the same way — one sentence shape
-# for both types, which is what the int case now agrees with.
+# non-Str slot and printed only `n`. Same program, two diagnostics — native was
+# wrong, and the differential oracle is what caught it. With the int form now
+# validation-only, this message is the whole point of it.
+run_sash 'int n=9; attest n [[ $n == 5 ]]; echo "$n"'
+[[ $rc = 1 && -z $out && $rerr == *"attest: n = '9' failed the gate"* ]]; chk atint.6
+# atint.7 the string form names its value the same way — one sentence shape for
+# both types, which is what the int case now agrees with.
 run_sash 'x=$(arg 1); attest x [[ $x == good ]]; echo "$x"' bad
 [[ $rc = 1 && -z $out && $rerr == *"attest: x = 'bad' failed the gate"* ]]; chk atint.7
-# atint.8 attest on a CLEAN int is accepted and is a plain copy — it proves
-# nothing about taint but must not miscompile.
-run_sash 'int n=5; attest n [[ -n $n ]]; echo "$n"'
-[[ $rc = 0 && $out = "5" && -z $err ]]; chk atint.8
+# atint.8 the attested int is a real value, not a constant folded past.
+run_sash 'int n=21; attest n [[ -n $n ]]; echo "$(( n * 2 ))"'
+[[ $rc = 0 && $out = "42" && -z $err ]]; chk atint.8
+# atint.9 an arithmetic CONDITION is a read position too. `taint_stmt` sent
+# StmtKind::ArithTest to a walker that only visits child bodies — of which an
+# arith test has none — so the condition itself went unchecked.
+run_sash 'x=$(arg 1); if (( ${x:-0} > 5 )); then echo hi; fi' 7
+[[ $rc != 0 && -z $out && $err == *"SB5020"* ]]; chk atint.9
+# atint.10 …and in a `while` condition.
+run_sash 'x=$(arg 1); while (( ${x:-0} > 5 )); do echo hi; done' 7
+[[ $rc != 0 && -z $out && $err == *"SB5020"* ]]; chk atint.10
+# atint.11 the shape that compiled CLEAN before the fix — no SB5020, and no SSA
+# backstop either, because a lone leaf never became a tainted int. It printed
+# attacker-controlled bytes verbatim.
+run_sash 'x=$(arg 1); echo "$(( ${x:-0} ))"' 7
+[[ $rc != 0 && -z $out && $err == *"SB5020"* ]]; chk atint.11
+# atint.12 a tainted read in a subscript index inside arithmetic.
+run_sash 'x=$(arg 1); array a=(1 2); echo "${a[${x:-0}]}"' 1
+[[ $rc != 0 && -z $out && $err == *"SB5020"* ]]; chk atint.12
 
 set -e
 tally

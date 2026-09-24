@@ -379,7 +379,33 @@ pub(super) fn handle_structured_arithmetic(
     expr: &Expr,
     state: &VersionState,
 ) -> SsaValue {
-    arith_to_ssa(arith, expr, state)
+    let v = arith_to_ssa(arith, expr, state);
+    // A `${…}` import is the one arith leaf whose value is a *string*
+    // (`${x:-0}`/`${x:?msg}` — DD#77's conversion-with-disposition). Every
+    // other position forces the conversion: an operator lowers its operands as
+    // ints, and an int assignment types the destination. A lone leaf used as a
+    // *value* had neither, so `echo "$(( ${x:-7} ))"` emitted the raw string —
+    // `abc` where the disposition says 7, and no abort at all for `:?`, which
+    // is defined to abort on a non-integer. Re-entering through the operator
+    // path is what "evaluate this as arithmetic" means here; `+ 0` is the
+    // identity that says it with the machinery that already exists.
+    if matches!(strip_arith_parens(arith), ArithExpr::Expansion(_)) {
+        return SsaValue::ArithBinOp {
+            left: Box::new(v),
+            op: ArithOp::Add,
+            right: Box::new(SsaValue::Expr("0".to_string())),
+        };
+    }
+    v
+}
+
+/// The arithmetic expression inside any redundant grouping — `(${x:-7})` is
+/// the same lone leaf as `${x:-7}` and skipped the conversion identically.
+fn strip_arith_parens(arith: &ArithExpr) -> &ArithExpr {
+    match arith {
+        ArithExpr::Paren(inner) => strip_arith_parens(inner),
+        other => other,
+    }
 }
 
 #[allow(clippy::only_used_in_recursion)]
