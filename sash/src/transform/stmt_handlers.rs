@@ -149,8 +149,14 @@ fn check_non_void_bare_call(name: &str, stmt: &Statement, state: &mut VersionSta
         return;
     }
     if state.function_non_void.contains(name) && state.in_condition == 0 {
+        // DD#74: an `-> int` function is rejected in *every* boolean context
+        // (SB4030), so `if`/`||` was not advice the author could act on — it
+        // sent them from SB4016 straight into SB4030. This is unconditional,
+        // not a special case: `function_non_void` is populated only by
+        // `analyze_function_returns`, which returns early for anything that
+        // is not `-> int`, so every name reaching here is int-typed.
         state.diagnostics.push(format!(
-            "{}:{}: error [SB4016] function '{}' returns a status — handle with if/||, discard with `-`, or capture with $(({}))",
+            "{}:{}: error [SB4016] function '{}' returns an int — capture with $(({})) or discard with `-`",
             stmt.span.line, stmt.span.col, name, name
         ));
     }

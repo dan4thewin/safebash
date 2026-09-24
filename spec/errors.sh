@@ -515,11 +515,16 @@ run_sash 'f() { return ! /bin/echo abc | /bin/grep -q z }
 if f; then echo T; fi'
 [[ $rc != 0 && -z $out && $err == *SB4040* ]]; chk bng.12
 
-# e.b70.fndisc `f || :` discards a `-> int` function's return → ok.
+# e.b70.fndisc `f || :` does NOT discard a `-> int` function's return.
+# DD#70 offered `|| :` as the discard for an `-> int` function, but by DD#74
+# that is `f` as a `||` operand — a boolean context, and an int function's
+# `return N` is a value, not a status. DG (2026-09-24) took the rejection:
+# one consistent rule, and `- f` (DD#70 addendum) is both available and the
+# spelling DG preferred anyway. `- f` is pinned by 74.48.
 run_sash 'fn f -> int { return 3 }
 f || :
 echo done'
-[[ $rc = 0 && $out = "done" && -z $err ]]; chk e.b70.fndisc
+[[ $rc != 0 && -z $out && $err == *SB4030* ]]; chk e.b70.fndisc
 
 # (A) abort channel: a CAUGHT failure prints NOTHING to stderr (the
 # `<argv0>: …` diagnostic is only for an *uncaught* abort).

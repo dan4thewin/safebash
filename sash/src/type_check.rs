@@ -795,6 +795,12 @@ pub fn type_check(program: &Program) -> Vec<TypeError> {
     // whose comment asserts that arm is "not user-reachable input" — it was.
     run_stmt_pass(program, &env, &mut errors, check_int_string_ops);
 
+    // Sixth pass (DD#74): an `-> int` function used as a predicate. Its own
+    // pass rather than a hook in `check_if`, because the six boolean contexts
+    // are spread across If/While/List/Pipeline and a single traversal is the
+    // only way to apply the tail rule consistently.
+    check_int_fn_predicates(program, &env, &mut errors);
+
     errors
 }
 
@@ -1701,8 +1707,6 @@ fn enter_slot_kinds(fname: &str, env: &mut TypeEnv) -> Vec<String> {
 }
 
 fn check_if(if_stmt: &If, env: &mut TypeEnv, errors: &mut Vec<TypeError>) {
-    // Check condition for int-function-in-boolean-context
-    check_condition_type(&if_stmt.condition, env, errors);
     for s in &if_stmt.condition {
         check_stmt(s, env, errors);
     }
@@ -1724,23 +1728,118 @@ fn check_if(if_stmt: &If, env: &mut TypeEnv, errors: &mut Vec<TypeError>) {
     }
 }
 
-/// Check if a condition block uses an int function in boolean context.
-fn check_condition_type(condition: &[Statement], env: &TypeEnv, errors: &mut Vec<TypeError>) {
-    for stmt in condition {
-        if let StmtKind::Command(c) = &stmt.kind {
-            let name = expr_to_name(&c.name);
-            if env.func_type(&name) == VarType::Int {
-                errors.push(TypeError {
-                    message: format!(
-                        "int function `{}` used in boolean context — \
-                         int functions return values, not success/failure",
-                        name,
-                    ),
-                    span: stmt.span,
-                });
-            }
+/// DD#74 enumerates the boolean contexts: `if f`, `elif`, `while f`,
+/// `until f`, `! f`, and `f` as an operand of `&&`/`||`. A predicate is a
+/// function whose *status* something branches on; an `-> int` function's
+/// `return N` is a **value**, and a nonzero value is a **false** status — so
+/// `while f` never loops and `if ! f` takes the true branch, the opposite of
+/// what the integer suggests.
+///
+/// This used to run from a single caller (`check_if`, direct condition only),
+/// so five of the six contexts accepted an int function silently.
+///
+/// Collect-then-emit, because a statement inside a condition is reached both
+/// as a condition operand and again by the descent, and both visits are
+/// correct — they would simply report it twice.
+fn check_int_fn_predicates(program: &Program, env: &TypeEnv, errors: &mut Vec<TypeError>) {
+    let mut found: Vec<(Span, String)> = Vec::new();
+    walk_int_fn_predicates(&program.statements, env, &mut found);
+    for (span, name) in found {
+        errors.push(TypeError {
+            message: format!(
+                "int function `{}` used in boolean context — \
+                 int functions return values, not success/failure",
+                name,
+            ),
+            span,
+        });
+    }
+}
+
+fn walk_int_fn_predicates(stmts: &[Statement], env: &TypeEnv, found: &mut Vec<(Span, String)>) {
+    for stmt in stmts {
+        stmt_predicate_positions(stmt, env, found);
+        for body in stmt.child_bodies() {
+            walk_int_fn_predicates(body, env, found);
         }
     }
+}
+
+/// The predicate positions *this* statement introduces.
+fn stmt_predicate_positions(stmt: &Statement, env: &TypeEnv, found: &mut Vec<(Span, String)>) {
+    match &stmt.kind {
+        StmtKind::If(i) => if_predicate_positions(i, env, found),
+        // Covers `until` too — it is a `While` with `until: true`.
+        StmtKind::While(w) => condition_predicate(&w.condition, env, found),
+        // DD#74 addendum: the TAIL of a bare `&&`/`||` *statement* is not a
+        // predicate — nothing branches on it, it is the statement's own
+        // status. The left operand is, and by left-associativity so is every
+        // middle clause (`a && b && c` is `(a && b) && c`, so recursing into
+        // the left operand reaches both `a` and `b`).
+        StmtKind::List(l) if matches!(l.op, ListOp::And | ListOp::Or) => {
+            predicate_operand(&l.left, env, found);
+        }
+        StmtKind::Pipeline(p) if p.negated && p.commands.len() == 1 => {
+            predicate_operand(&p.commands[0], env, found);
+        }
+        _ => {}
+    }
+}
+
+fn if_predicate_positions(i: &If, env: &TypeEnv, found: &mut Vec<(Span, String)>) {
+    condition_predicate(&i.condition, env, found);
+    for elif in &i.elif_clauses {
+        condition_predicate(&elif.condition, env, found);
+    }
+}
+
+/// The last statement of a condition supplies its truth value. Inside a
+/// condition the whole list is a predicate, **last clause included** (DD#74):
+/// a condition is consumed as a boolean, so its final status decides the
+/// branch. That is the one place the tail rule above does not apply.
+fn condition_predicate(cond: &[Statement], env: &TypeEnv, found: &mut Vec<(Span, String)>) {
+    if let Some(last) = cond.last() {
+        predicate_operand(last, env, found);
+    }
+}
+
+/// Record `stmt` if it is (or resolves through negation / `&&` / `||` to) a
+/// bare call of an `-> int` function. Mirrors `validate::mark_predicate_operand`,
+/// which is the same DD#74 traversal for the definite-return rule.
+fn predicate_operand(stmt: &Statement, env: &TypeEnv, found: &mut Vec<(Span, String)>) {
+    match &stmt.kind {
+        StmtKind::Command(c) => record_int_fn_predicate(c, stmt.span, env, found),
+        StmtKind::Pipeline(p) if p.negated && p.commands.len() == 1 => {
+            predicate_operand(&p.commands[0], env, found);
+        }
+        StmtKind::List(l) if matches!(l.op, ListOp::And | ListOp::Or) => {
+            predicate_operand(&l.left, env, found);
+            predicate_operand(&l.right, env, found);
+        }
+        _ => {}
+    }
+}
+
+fn record_int_fn_predicate(
+    c: &Command,
+    span: Span,
+    env: &TypeEnv,
+    found: &mut Vec<(Span, String)>,
+) {
+    let name = expr_to_name(&c.name);
+    if env.func_type(&name) != VarType::Int {
+        return;
+    }
+    if already_recorded(found, span, &name) {
+        return;
+    }
+    found.push((span, name));
+}
+
+fn already_recorded(found: &[(Span, String)], span: Span, name: &str) -> bool {
+    found
+        .iter()
+        .any(|(s, n)| s.line == span.line && s.col == span.col && n == name)
 }
 
 fn is_numeric_literal(expr: &Expr) -> bool {

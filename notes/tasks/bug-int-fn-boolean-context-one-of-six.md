@@ -1,7 +1,8 @@
 title: bug: int-function boolean-context check covers 1 of DD#74's 6 contexts
-status: next
+status: done
 priority: P2
 kind: bug
+completed: 2026-09-24
 depends: []
 gates:
   - "an `-> int` function is rejected in every boolean context DD#74 names"
@@ -75,3 +76,25 @@ The same probe surfaced the `until`-inversion miscompile, fixed there.
 Reaching SB4030 at all required a program nobody had written, which is why
 there are **zero** specs for it — that hole should be closed by the same
 change.
+
+## Resolved 2026-09-24
+
+DG's call: **all six contexts**, SB4016 made type-aware, specs in the same
+change. Implemented as a sixth `type_check` pass (`collect_int_fn_predicates`)
+rather than a hook in `check_if` — the six contexts span If/While/List/
+Pipeline, and a single traversal is the only way to apply DD#74's tail rule
+consistently. It collects-then-emits because a statement inside a condition is
+legitimately reached twice (as a condition operand and by the descent).
+
+SB4016's fix turned out to be **unconditional**, not type-aware: its gate is
+`function_non_void`, populated only by `analyze_function_returns`, which
+returns early for anything not `-> int`. Every name it has ever named was
+int-typed, so `if`/`||` was wrong 100% of the time, not sometimes.
+
+**One collision, escalated and settled.** `f || :` is DD#70's documented
+discard for an `-> int` function and is, by DD#74, a `||` operand. DG took the
+rejection; see the DD#70 addendum (2026-09-24). `- f` and `$(( f ))` are the
+replacements, both already legal.
+
+Specs `74.38`-`74.48` (functions.sh, plan 114->125) and a rewritten
+`e.b70.fndisc`. Sweep 6149 -> 6171, 0 failing, 0 flips.

@@ -300,3 +300,41 @@ implement the runtime negation. Implemented in `parse/parser.rs`
 (`append_pipeline_stage`, `parse_negated`, `parse_return_producer_head`),
 `transform/stmt_handlers.rs::handle_regular_pipeline`, codegen + emit_c +
 emit_janet. spec errors.sh bng.7-12. Journal 220.
+
+## Addendum (2026-09-24) — `|| :` is not a discard for an `-> int` function
+
+Implementing DD#74's boolean contexts in full surfaced a collision with this
+DD. DD#74 enumerates *"`if f`, `elif`, `while f`, `until f`, `! f`, and `f` as
+an operand of `&&`/`||`"* as the positions where a function is a **predicate**
+— something branches on its status. An `-> int` function's `return N` is a
+**value**, and a nonzero value is a **false** status, so using one as a
+predicate is a category error (SB4030).
+
+That makes `f || :` — offered above as the discard — a boolean context.
+
+Two things were already true before this was noticed:
+
+1. **The distinguishing principle above (line 82) was already partly dead.**
+   It tells the author to restructure in-process logic, *"your own `-> int`
+   function"* included, with *"`if` / `||` / `|| :`"*. SB4030 has rejected
+   `if f` for as long as it has existed, so that advice could not be followed
+   for the very case it names.
+2. **The 2026-09-09 addendum already preferred the alternative.** `-` was
+   added because *"`cmd || :` expresses discard as a side effect of
+   short-circuit control flow; `- cmd` says it directly"*, and it explicitly
+   legalised *"`- f` for an `-> int` function"*.
+
+**DG's call (2026-09-24): take the rejection.** `f || :` is now SB4030 when
+`f` is `-> int`. The replacement already existed and is the direct spelling:
+
+    - f            # run f, discard the int
+    int n=$(( f )) # run f, keep the int
+
+**Scope: `-> int` functions only.** `|| :` is unchanged as a discard for the
+other (B) members — a bare `match` / `matchall` / `[[ … ]]` — and for opaque
+externals. Those produce a *status*, which is exactly what `||` consumes.
+
+Line 82's *"`if` / `||` / `|| :`"* should be read as `$(( f ))` / `-` for an
+`-> int` function.
+
+Specs: `e.b70.fndisc` (the rejection), `74.47`/`74.48` (the two replacements).

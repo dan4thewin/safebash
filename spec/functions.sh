@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup functions
-plan=114
+plan=125
 echo "1..$plan" >&3
 
 set +e
@@ -746,6 +746,81 @@ if f > /nonexistent_dir_55/f { echo yes } else { echo no }'
 run_sash 'fn f { echo hi; return 0 }
 f > /nonexistent_dir_55/f || echo caught'
 [[ $rc = 0 && $out = "caught" && -z $err && -z $rerr ]]; chk fr.12
+
+# ---------------------------------- DD#74 boolean contexts for an `-> int` fn
+# `check_condition_type` had exactly ONE caller — the direct `if` condition —
+# so five of the six contexts DD#74 names accepted an int function silently.
+# The hazard is not loud: `return 7` sets status 7, which is FALSY, so
+# `while f` never looped and `if ! f` took the true branch.
+
+# 74.38 `if f` — the context that was always checked
+run_sash 'fn f -> int { return 7 }
+if f; then echo a; fi'
+[[ $rc != 0 && -z $out && $err == *SB4030* ]]; chk 74.38
+
+# 74.39 `elif` — a second condition on the same statement
+run_sash 'fn f -> int { return 7 }
+if [[ 1 = 2 ]]; then echo a; elif f; then echo b; fi'
+[[ $rc != 0 && -z $out && $err == *SB4030* ]]; chk 74.39
+
+# 74.40 `while f`
+run_sash 'fn f -> int { return 7 }
+while f; do break; done'
+[[ $rc != 0 && -z $out && $err == *SB4030* ]]; chk 74.40
+
+# 74.41 `until f`
+run_sash 'fn f -> int { return 7 }
+until f; do break; done'
+[[ $rc != 0 && -z $out && $err == *SB4030* ]]; chk 74.41
+
+# 74.42 `! f`
+run_sash 'fn f -> int { return 7 }
+if ! f; then echo a; fi'
+[[ $rc != 0 && -z $out && $err == *SB4030* ]]; chk 74.42
+
+# 74.43 `f` as the LEFT operand of a bare `&&` — its status decides whether
+# the right side runs, so it is a predicate (DD#74 addendum).
+run_sash 'fn f -> int { return 7 }
+f && echo a'
+[[ $rc != 0 && -z $out && $err == *SB4030* ]]; chk 74.43
+
+# 74.44 a MIDDLE clause. `&&`/`||` are left-associative, so `a && f && c` is
+# `(a && f) && c` — `f`'s status decides whether `c` runs. Reaching it needs
+# the traversal to recurse into the left operand's own list.
+run_sash 'fn f -> int { return 7 }
+[[ 1 = 1 ]] && f && echo c'
+[[ $rc != 0 && -z $out && $err == *SB4030* ]]; chk 74.44
+
+# 74.45 the TAIL of a bare `||` is NOT a boolean context (DD#74 addendum):
+# nothing branches on it, it is the statement's own status. It must not draw
+# SB4030 — the bare-call rule (SB4016) is what applies there.
+run_sash 'fn f -> int { return 7 }
+[[ 1 = 2 ]] || f'
+[[ $rc != 0 && -z $out && $err == *SB4016* && $err != *SB4030* ]]; chk 74.45
+
+# --------------------------------------------- SB4016 advises what compiles
+# SB4016 used to say "handle with if/||", and following that advice landed on
+# SB4030. `function_non_void` is populated only by `analyze_function_returns`,
+# which returns early for anything not `-> int`, so every name it names is
+# int-typed and `if`/`||` was unconditionally wrong there.
+
+# 74.46 the advice no longer names the forms that SB4030 rejects
+run_sash 'fn f -> int { return 7 }
+f'
+[[ $rc != 0 && $err == *SB4016* && $err != *"if/||"* ]]; chk 74.46
+
+# 74.47 ...and names `$((f))`, which compiles and yields the value
+run_sash 'fn f -> int { return 7 }
+int n=$(( f ))
+echo "$n"'
+[[ $rc = 0 && $out = "7" && -z $err ]]; chk 74.47
+
+# 74.48 ...and `-`, which discards it
+run_sash 'fn f -> int { return 7 }
+- f
+echo ok'
+[[ $rc = 0 && $out = "ok" && -z $err ]]; chk 74.48
+
 
 rm -f $frf $frin
 
