@@ -78,7 +78,7 @@ run_sash 'x=hi; n=${x:~}; echo $n'
 [[ $rc != 0 && $err == *SB5046* ]]; chk 84.14
 
 # 84.15 `:~` in a `[[ ]]` operand (value required) → SB5046
-run_sash 'x=hi; [[ ${x:~} = y ]] && echo z'
+run_sash 'x=hi; [[ ${x:~} == y ]] && echo z'
 [[ $rc != 0 && $err == *SB5046* ]]; chk 84.15
 
 # 84.16 `:~` nested inside a concatenation (not a standalone token) → SB5046

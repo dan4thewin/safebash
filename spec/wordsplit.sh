@@ -196,19 +196,19 @@ run_sash 'echo "it'\''s"'
 [[ $rc = 0 && $out = "it's" && -z $err ]]; chk 64.8
 
 # 62.1 DD#62: == is exact equality (regression)
-run_sash 'if [[ abc == abc ]]; then echo y; fi'
+run_sash 'v=abc; if [[ $v == abc ]]; then echo y; fi'
 [[ $rc = 0 && $out = y && -z $err ]]; chk 62.1
 
 # 62.2 DD#62: unquoted RHS of == is NO LONGER a glob — literal
-run_sash 'if [[ abc == ab* ]]; then echo glob; else echo exact; fi'
+run_sash 'v=abc; if [[ $v == ab* ]]; then echo glob; else echo exact; fi'
 [[ $rc = 0 && $out = exact && -z $err ]]; chk 62.2
 
 # 62.3 DD#62: literal star matches literal star
-run_sash 'if [[ "ab*" == ab* ]]; then echo y; fi'
+run_sash 'v="ab*"; if [[ $v == ab* ]]; then echo y; fi'
 [[ $rc = 0 && $out = y && -z $err ]]; chk 62.3
 
 # 62.4 DD#62: != is exact too (abc != literal ab*)
-run_sash 'if [[ abc != ab* ]]; then echo y; fi'
+run_sash 'v=abc; if [[ $v != ab* ]]; then echo y; fi'
 [[ $rc = 0 && $out = y && -z $err ]]; chk 62.4
 
 # 62.5 DD#62: -v is removed (rejected, not silently -n)
@@ -237,7 +237,7 @@ run_sash 'false && echo A || echo B'
 # 62.8-62.10 nested && / || chains. Branch on exit status, not language
 # value-truthiness, and every command sets the status var.
 # 62.9/62.10 are likewise superseded by DD#95 — both mix the two operators.
-run_sash 'if [[ 1 = 1 ]] { echo A } else { echo B }'
+run_sash 's=y; if [[ $s == y ]] { echo A } else { echo B }'
 [[ $rc = 0 && $out = A && -z $err ]]; chk 62.8
 run_sash 'false && echo A || echo B && echo C'
 [[ $rc != 0 && -z $out && $err == *SB4053* ]]; chk 62.9
@@ -427,7 +427,7 @@ run_sash 'printf "x\0y\0" | read arr; attest e in arr [[ -n $e ]]; echo "$(len a
 
 # 22.27 interior empty records are KEPT under terminator semantics; only the
 # single trailing empty from a final delimiter is dropped (`a::b:` → a,"",b).
-run_sash 'array arr=(); printf "a::b:" | read -a arr -d :; attest e in arr [[ $e = $e ]]; echo "$(len arr):[${arr[1]}]"'
+run_sash 'array arr=(); printf "a::b:" | read -a arr -d :; attest e in arr [[ $e == $e ]]; echo "$(len arr):[${arr[1]}]"'
 [[ $rc != 0 && -z $out && $err == *SB5057* ]]; chk 22.27
 
 # ── read -a / builtin-echo elide bug fixes (DG 2026-09-04, journal 244) ──
@@ -466,25 +466,25 @@ run_sash 'fn f { x=hi; write $x:! | read norm; /bin/echo "$(len norm):${norm[0]}
 
 # 22.40 an element passed to an EXTERNAL command is the element, not a suffix
 run_sash '/usr/bin/printf "a\0b\0c" | read x
-attest e in x [[ $e = $e ]]
+attest e in x [[ $e == $e ]]
 /usr/bin/printf "[%s]" ${x[0]}'
 [[ $rc = 0 && $out = "[a]" && -z $err ]]; chk 22.40
 
 # 22.41 …for every element, via a for-in splat
 run_sash '/usr/bin/printf "a\0b\0c" | read x
-attest e in x [[ $e = $e ]]
+attest e in x [[ $e == $e ]]
 for v in @x { /usr/bin/printf "[%s]" $v }'
 [[ $rc = 0 && $out = "[a][b][c]" && -z $err ]]; chk 22.41
 
 # 22.42 whitespace-split elements likewise
 run_sash '/usr/bin/printf "a\0b\0c" | read x
-attest e in x [[ $e = $e ]]
+attest e in x [[ $e == $e ]]
 /usr/bin/printf "[%s]" ${x[1]}'
 [[ $rc = 0 && $out = "[b]" && -z $err ]]; chk 22.42
 
 # 22.43 the length-based consumers stay correct (no regression from the copy)
 run_sash '/usr/bin/printf "a\0b\0c" | read x
-attest e in x [[ $e = $e ]]
+attest e in x [[ $e == $e ]]
 echo "$(len x)|$(join x)|${x[2]}"'
 [[ $rc = 0 && $out = "3|a b c|c" && -z $err ]]; chk 22.43
 
@@ -557,25 +557,25 @@ run_sash 'echo hi | readline'
 
 # nr.1 splits a NUL-separated stream into an array
 run_sash '/usr/bin/printf "a\0b\0c" | read f
-attest e in f [[ $e = $e ]]
+attest e in f [[ $e == $e ]]
 echo "$(len f):${f[0]}:${f[2]}"'
 [[ $rc = 0 && $out = "3:a:c" && -z $err ]]; chk nr.1
 
 # nr.2 does NOT split on whitespace — NUL is the only separator (DD#22)
 run_sash 'echo "a b c" | read f
-attest e in f [[ $e = $e ]]
+attest e in f [[ $e == $e ]]
 echo "$(len f):${f[0]}"'
 [[ $rc = 0 && $out = "1:a b c" && -z $err ]]; chk nr.2
 
 # nr.3 …nor on newlines
 run_sash '/usr/bin/printf "x\ny\n" | read f
-attest e in f [[ $e = $e ]]
+attest e in f [[ $e == $e ]]
 echo "$(len f)"'
 [[ $rc = 0 && $out = "1" && -z $err ]]; chk nr.3
 
 # nr.4 auto-declares its target (no prior `array f=()`)
 run_sash '/usr/bin/printf "p\0q" | read fresh
-attest e in fresh [[ $e = $e ]]
+attest e in fresh [[ $e == $e ]]
 echo "$(len fresh)"'
 [[ $rc = 0 && $out = "2" && -z $err ]]; chk nr.4
 
@@ -585,7 +585,7 @@ run_sash 'sep=$'"'"'\x00'"'"'
 s=a:b:c
 s =~ s/:/$sep/g
 echo $s | read f
-attest e in f [[ $e = $e ]]
+attest e in f [[ $e == $e ]]
 echo "$(len f):${f[1]}"'
 [[ $rc = 0 && $out = "3:b" && -z $err ]]; chk nr.5
 
@@ -628,7 +628,7 @@ run_sash 'sep=$'"'"'\x00'"'"'
 s=p:q
 s =~ s/:/$sep/g
 read $s brandnew
-attest e in brandnew [[ $e = $e ]]
+attest e in brandnew [[ $e == $e ]]
 echo "$(len brandnew)"'
 [[ $rc = 0 && $out = "2" && -z $err ]]; chk nr.11
 

@@ -955,6 +955,10 @@ fn validate_stmt_ctx(stmt: &Statement, diags: &mut Vec<Diagnostic>, in_condition
             // SB5007: check arithmetic in context
             validate_arith_context(expr, stmt.span, in_condition, diags);
         }
+        StmtKind::Case(c) => {
+            check_vacuous_dispatch(c, diags);
+            validate_nested(stmt, in_condition, diags);
+        }
         // Wrappers (List, Pipeline, Subshell, Suppressed, Redirected) and
         // reset-context constructs (Function, Case) — see `validate_nested`.
         _ => validate_nested(stmt, in_condition, diags),
@@ -1577,6 +1581,7 @@ fn check_test_constructs(name: &str, c: &Command, span: Span, diags: &mut Vec<Di
     for arg in &c.args {
         if let ExprKind::Test(ref test) = arg.kind {
             check_unsupported_test_ops(test, diags);
+            check_vacuous_test(test, diags);
             check_regex_literal(test, span, diags);
         }
     }
@@ -2028,6 +2033,130 @@ fn check_unsupported_test_ops(test: &TestExpr, diags: &mut Vec<Diagnostic>) {
             check_unsupported_test_ops(r, diags);
         }
     }
+}
+
+/// Whether a word can be empty, decided from the source text alone.
+///
+/// This is deliberately **syntactic**: it does not const-propagate, so
+/// `str s=foo` followed by `[[ -n $s ]]` is `Unknown`. That is what makes the
+/// rewrite out of a vacuous test — `[[ -n foo ]]` → `str s=foo; [[ -n $s ]]` —
+/// a legal one, and it keeps the rule predictable: whether a test is vacuous
+/// depends only on how the test itself is written (DD#118).
+#[derive(PartialEq, Clone, Copy)]
+enum Emptiness {
+    Always,
+    Never,
+    Unknown,
+}
+
+fn word_emptiness(e: &Expr) -> Emptiness {
+    match &e.kind {
+        ExprKind::Literal(s) | ExprKind::SingleQuoted(s) => {
+            if s.is_empty() {
+                Emptiness::Always
+            } else {
+                Emptiness::Never
+            }
+        }
+        // `$(( … ))` always renders at least one digit.
+        ExprKind::Arithmetic(_) => Emptiness::Never,
+        ExprKind::DoubleQuoted(parts) | ExprKind::Concat(parts) => parts_emptiness(parts),
+        _ => Emptiness::Unknown,
+    }
+}
+
+fn parts_emptiness(parts: &[Expr]) -> Emptiness {
+    if parts.iter().any(|p| word_emptiness(p) == Emptiness::Never) {
+        Emptiness::Never
+    } else if parts.iter().all(|p| word_emptiness(p) == Emptiness::Always) {
+        Emptiness::Always
+    } else {
+        Emptiness::Unknown
+    }
+}
+
+/// Whether a word's whole value is fixed by the source text.
+fn is_static_word(e: &Expr) -> bool {
+    match &e.kind {
+        ExprKind::Literal(_) | ExprKind::SingleQuoted(_) => true,
+        ExprKind::DoubleQuoted(parts) | ExprKind::Concat(parts) => parts.iter().all(is_static_word),
+        _ => false,
+    }
+}
+
+/// `Some(answer)` when `-n`/`-z` on this operand can only ever give one answer.
+fn vacuous_emptiness_answer(op: &str, operand: &Expr) -> Option<bool> {
+    match (op, word_emptiness(operand)) {
+        ("-n", Emptiness::Never) | ("-z", Emptiness::Always) => Some(true),
+        ("-n", Emptiness::Always) | ("-z", Emptiness::Never) => Some(false),
+        _ => None,
+    }
+}
+
+/// SB5086 (DD#118): reject a test whose result is fixed at compile time.
+///
+/// Two shapes qualify. `-n`/`-z` on a word whose emptiness the source text
+/// already settles (`[[ -n foo ]]`, and the glued `[[ $x=y ]]` that reads as
+/// one never-empty word). And a comparison whose operands are both fixed by
+/// the source text (`[[ foo == foo ]]`). File tests are excluded: their answer
+/// depends on the filesystem, not the source.
+fn check_vacuous_test(test: &TestExpr, diags: &mut Vec<Diagnostic>) {
+    match test {
+        TestExpr::Unary { op, operand } => check_vacuous_unary(op, operand, diags),
+        TestExpr::Binary { left, op, right } => check_vacuous_binary(left, op, right, diags),
+        TestExpr::Not(inner) => check_vacuous_test(inner, diags),
+        TestExpr::And(l, r) | TestExpr::Or(l, r) => {
+            check_vacuous_test(l, diags);
+            check_vacuous_test(r, diags);
+        }
+    }
+}
+
+fn check_vacuous_unary(op: &str, operand: &Expr, diags: &mut Vec<Diagnostic>) {
+    if let Some(answer) = vacuous_emptiness_answer(op, operand) {
+        diags.push(Diagnostic::error_span(
+            operand.span,
+            "SB5086",
+            format!(
+                "this test is always {answer} — the source text already settles \
+                 whether the word is empty; test a variable instead"
+            ),
+        ));
+    }
+}
+
+fn check_vacuous_binary(left: &Expr, op: &str, right: &Expr, diags: &mut Vec<Diagnostic>) {
+    const STATIC_OPS: &[&str] = &["==", "!=", "=~", "<", ">"];
+    if STATIC_OPS.contains(&op) && is_static_word(left) && is_static_word(right) {
+        diags.push(Diagnostic::error_span(
+            left.span,
+            "SB5086",
+            format!(
+                "this comparison is decided at compile time — both operands of \
+                 `{op}` are fixed by the source text; compare a variable instead"
+            ),
+        ));
+    }
+}
+
+/// SB5086 (DD#118): the DD#66 dispatch form is a test too, so the same rule
+/// applies — a dispatch whose subject and every pattern are fixed by the
+/// source text picks its arm at compile time.
+fn check_vacuous_dispatch(c: &Case, diags: &mut Vec<Diagnostic>) {
+    let patterns_static = c
+        .items
+        .iter()
+        .all(|it| it.patterns.iter().all(is_static_word));
+    if !is_static_word(&c.value) || !patterns_static {
+        return;
+    }
+    diags.push(Diagnostic::error_span(
+        c.value.span,
+        "SB5086",
+        "this dispatch is decided at compile time — its subject and every pattern \
+         are fixed by the source text; dispatch on a variable instead"
+            .to_string(),
+    ));
 }
 
 // ── SB5007: arithmetic context validation ───────────────────────

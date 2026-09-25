@@ -7,7 +7,7 @@
 set -eu
 . common.sh
 setup operand_words
-plan=23
+plan=46
 echo "1..$plan" >&3
 
 set +e
@@ -78,13 +78,13 @@ run_sash 'suf=xyz; x=running; if [[ $x == run$suf ]] { echo Y } else { echo N }'
 
 # ow.14 an adjacent `&&` in the `=~` RHS terminates the pattern, so this is
 # `[[ $x =~ a ]] && [[ b ]]` -- not the pattern `a&&b`. Matches bash.
-run_sash 'x=q; [[ $x =~ a&&b ]] || echo N'
+run_sash 'x=q; y=b; [[ $x =~ a&&-n $y ]] || echo N'
 [[ $rc = 0 && $out = "N" && -z $err ]]; chk ow.14
 # ow.15 the same shape when the first half matches
-run_sash 'x=a; [[ $x =~ a&&a ]] && echo Y'
+run_sash 'x=a; y=a; [[ $x =~ a&&-n $y ]] && echo Y'
 [[ $rc = 0 && $out = "Y" && -z $err ]]; chk ow.15
 # ow.16 `||` is structural too, so the true right operand carries it
-run_sash 'x=q; [[ $x =~ a||b ]] && echo Y'
+run_sash 'x=q; y=b; [[ $x =~ a||-n $y ]] && echo Y'
 [[ $rc = 0 && $out = "Y" && -z $err ]]; chk ow.16
 # ow.17 a lone `&` is neither absorbed nor a valid connector here
 run_sash 'x=q; [[ $x =~ a&b ]] && echo Y'
@@ -111,6 +111,121 @@ run_sash 'a=x; a=foo&&bar; echo $a'
 # ow.23 a leading `!` in a value (this one agrees with bash)
 run_sash 'a=!foo; echo $a'
 [[ $rc = 0 && $out = "!foo" && -z $err ]]; chk ow.23
+
+# ---- DD#118: `==` is the only equality, `-n` is explicit, no vacuous tests ----
+
+# 118.1 a single `=` in a test operator slot is rejected (it always assigns)
+run_sash 'str x=a
+[[ $x = a ]] && echo y'
+[[ $rc != 0 && -z $out && $err == *SB4067* ]]; chk 118.1
+
+# 118.2 a bare `!` after an operand directs to `!=`
+run_sash 'str x=a
+[[ $x ! a ]] && echo y'
+[[ $rc != 0 && -z $out && $err == *SB4067* ]]; chk 118.2
+
+# 118.3 `==` is accepted (the only spelling)
+run_sash 'str x=a
+[[ $x == a ]] && echo y'
+[[ $rc = 0 && $out = "y" && -z $err ]]; chk 118.3
+
+# 118.4 DD#86 frictionless write is untouched — `=` still assigns in statement
+#       position, which is precisely why it cannot also compare
+run_sash 'msg = hi
+echo $msg'
+[[ $rc = 0 && $out = "hi" && -z $err ]]; chk 118.4
+
+# 118.5 a bare word is no longer an implicit `-n`
+run_sash 'str x=a
+[[ $x ]] && echo y'
+[[ $rc != 0 && -z $out && $err == *SB4068* ]]; chk 118.5
+
+# 118.6 …nor is a negated one
+run_sash 'str x=a
+[[ ! $x ]] && echo y'
+[[ $rc != 0 && -z $out && $err == *SB4068* ]]; chk 118.6
+
+# 118.7 the explicit form is what to write
+run_sash 'str x=a
+[[ -n $x ]] && echo y'
+[[ $rc = 0 && $out = "y" && -z $err ]]; chk 118.7
+
+# 118.8 the glued shape that motivated all this: `[[ $x=y ]]` was silently and
+#       unconditionally TRUE (one word, always containing "=y"). Now rejected.
+run_sash 'str x=a
+[[ $x=y ]] && echo y'
+[[ $rc != 0 && -z $out && $err == *SB4068* ]]; chk 118.8
+
+# 118.9 a word broken by some OTHER token is a missing `]]`, not a bare word —
+#       `&` is the real fault, so SB4068 must not claim it
+run_sash 'str x=a
+[[ a&b == x ]] && echo y'
+[[ $rc != 0 && -z $out && $err == *SB4014* ]]; chk 118.9
+
+# 118.10 vacuous: `-n` on a literal can never be false
+run_sash '[[ -n foo ]] && echo y'
+[[ $rc != 0 && -z $out && $err == *SB5086* ]]; chk 118.10
+
+# 118.11 vacuous: `-z` on an empty literal can never be true
+run_sash '[[ -z "" ]] && echo y'
+[[ $rc != 0 && -z $out && $err == *SB5086* ]]; chk 118.11
+
+# 118.12 vacuous: two static operands compared
+run_sash '[[ foo == foo ]] && echo y'
+[[ $rc != 0 && -z $out && $err == *SB5086* ]]; chk 118.12
+
+# 118.13 vacuous the other way (a constant FALSE is just as useless)
+run_sash '[[ 1 == 2 ]] && echo y'
+[[ $rc != 0 && -z $out && $err == *SB5086* ]]; chk 118.13
+
+# 118.14 vacuous `=~` — a static subject against a static pattern
+run_sash '[[ abc =~ b ]] && echo y'
+[[ $rc != 0 && -z $out && $err == *SB5086* ]]; chk 118.14
+
+# 118.15 `$(( ))` always renders at least one digit, so it is never empty
+run_sash '[[ -n $((1+1)) ]] && echo y'
+[[ $rc != 0 && -z $out && $err == *SB5086* ]]; chk 118.15
+
+# 118.16 the rule is SYNTACTIC, not const-propagating: DG's escape rewrite has
+#        to keep working, so one variable is enough to make a test honest
+run_sash 'str s=foo
+[[ -n $s ]] && echo y'
+[[ $rc = 0 && $out = "y" && -z $err ]]; chk 118.16
+
+# 118.17 …and the same for the comparison form
+run_sash 'str s=foo
+[[ $s == foo ]] && echo y'
+[[ $rc = 0 && $out = "y" && -z $err ]]; chk 118.17
+
+# 118.18 a concat is Unknown when any part is dynamic
+run_sash 'str a=x
+str b=y
+[[ -n "$a$b" ]] && echo y'
+[[ $rc = 0 && $out = "y" && -z $err ]]; chk 118.18
+
+# 118.19 file tests are EXEMPT — a static operand, a runtime answer
+run_sash '[[ -f /etc/passwd ]] && echo y'
+[[ $rc = 0 && $out = "y" && -z $err ]]; chk 118.19
+
+# 118.20 numeric operators are exempt too, so SB5086 cannot shadow SB5019's
+#        more specific diagnosis of the very same source
+run_sash '[[ 1 -eq 2 ]] && echo y'
+[[ $rc != 0 && -z $out && $err == *SB5019* ]]; chk 118.20
+
+# 118.21 DD#66 dispatch is a separate node and needs its own vacuity check:
+#        a literal subject against literal patterns picks the arm at compile time
+run_sash '[[ a==a { echo yes } || { echo no } ]]'
+[[ $rc != 0 && -z $out && $err == *SB5086* ]]; chk 118.21
+
+# 118.22 a dispatch with a real subject is fine (the `|| { }` arm carries no
+#        patterns, which must not by itself count as static)
+run_sash 'str x=a
+[[ $x == a { echo yes } || { echo no } ]]'
+[[ $rc = 0 && $out = "yes" && -z $err ]]; chk 118.22
+
+# 118.23 SB5086 does not mask a later diagnostic on the same test
+run_sash '[[ abc =~ ( ]] && echo y'
+[[ $rc != 0 && -z $out && $err == *SB5086* && $err == *SB5023* ]]; chk 118.23
 
 set -e
 tally

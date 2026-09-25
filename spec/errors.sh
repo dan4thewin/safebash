@@ -480,24 +480,25 @@ run_sash 'false || x=set; : $x; echo done'
 
 # e.b70.tbare a bare `[[ … ]]` result is unused → SB4018
 # e.b70.tdash `-` on a `[[ … ]]` discards the result — legal
-run_sash '[[ a = a ]]'
+run_sash 'v=a; [[ $v == a ]]'
 [[ $rc != 0 && -z $out && $err == *SB4018* ]]; chk e.b70.tbare
 
-run_sash '- [[ a = a ]]
+run_sash 'v=a
+- [[ $v == a ]]
 echo after'
 [[ $rc = 0 && $out = "after" && -z $err ]]; chk e.b70.tdash
 
 # e.b70.tdisc `[[ … ]] || :` explicitly discards the boolean → ok
-run_sash '[[ a = a ]] || :
+run_sash 'v=a; [[ $v == a ]] || :
 echo done'
 [[ $rc = 0 && $out = "done" && -z $err ]]; chk e.b70.tdisc
 
 # e.b70.tand a `[[ … ]] && action` consumes it (runs on true)
-run_sash '[[ a = a ]] && echo hit'
+run_sash 'v=a; [[ $v == a ]] && echo hit'
 [[ $rc = 0 && $out = "hit" && -z $err ]]; chk e.b70.tand
 
 # e.b70.tor a `[[ … ]] || action` consumes it (runs on false)
-run_sash '[[ a = b ]] || echo miss'
+run_sash 'v=a; [[ $v == b ]] || echo miss'
 [[ $rc = 0 && $out = "miss" && -z $err ]]; chk e.b70.tor
 
 # A guard whose test is FALSE skips the action and leaves the test's own
@@ -507,7 +508,7 @@ run_sash '[[ a = b ]] || echo miss'
 # reserving non-zero exits for `exit` and aborts, which would flip all three
 # together.
 # e.b70.tandf an unfired `[[ … ]] &&` guard exits 1, not 0
-run_sash '[[ a = b ]] && echo hit'
+run_sash 'v=a; [[ $v == b ]] && echo hit'
 [[ $rc = 1 && -z $out && -z $err ]]; chk e.b70.tandf
 # e.b70.tandfa `(( … )) &&` agrees
 run_sash '(( 1 == 2 )) && echo hit'
@@ -516,7 +517,7 @@ run_sash '(( 1 == 2 )) && echo hit'
 run_sash 'grep -q zzz /dev/null && echo hit'
 [[ $rc = 1 && -z $out && -z $err ]]; chk e.b70.tandfx
 # e.b70.tandfi the same false test under `if` still exits 0 (no else)
-run_sash 'if [[ a = b ]]; then echo hit; fi'
+run_sash 'v=a; if [[ $v == b ]]; then echo hit; fi'
 [[ $rc = 0 && -z $out && -z $err ]]; chk e.b70.tandfi
 
 # ── `!` precedence + pipeline + suppress (DG 2026-08-19). `!` binds its

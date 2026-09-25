@@ -188,7 +188,7 @@ run_sash 'fn f { /usr/bin/printf "%s" @{args:-} }; f'
 # worse: `[[ @a = x ]]` was ALWAYS false, and `> @a` wrote to neither file.
 
 # ice.14 a splat as a test operand is SB5025, not a silent false
-run_sash 'array a=(x y); if [[ @a = x ]] { echo T } else { echo F }'
+run_sash 'array a=(x y); if [[ @a == x ]] { echo T } else { echo F }'
 [[ $rc != 0 && -z $out && $err == *SB5025* ]]; chk ice.14
 
 # ice.15 …including in a unary test

@@ -415,8 +415,8 @@ run_sash 'map m=([a]=1 [b]=2); k=b; if [[ ${m[$k]} == 2 ]]; then echo yes; fi'
 run_sash 'map m=([a]=1 [b]=2); k=b; if [[ ${m[$k]} != 1 ]]; then echo yes; fi'
 [[ $rc = 0 && $out = "yes" && -z $err ]]; chk 62.13
 
-# 62.15 bare ${m[$k]} truthiness (implicit -n) in [[ ]]
-run_sash 'map m=([a]=x); k=a; if [[ ${m[$k]} ]]; then echo yes; fi'
+# 62.15 DD#118: -n on a map element (the implicit form is retired)
+run_sash 'map m=([a]=x); k=a; if [[ -n ${m[$k]} ]]; then echo yes; fi'
 [[ $rc = 0 && $out = "yes" && -z $err ]]; chk 62.15
 
 # 62.14 indexed dynamic key ${a[$i]} stays integer-keyed in [[ ]].

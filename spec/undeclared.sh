@@ -30,7 +30,7 @@ run_sash 'echo ${x:-def}'
 
 # ud.5 Model B: a KNOWN but maybe-unassigned read COMPILES (meaningful zero
 #      on the else path) — NOT rejected. `x` is introduced by the then-branch.
-run_sash 'if [[ -z zzz ]]; then x=1; fi; echo [$x]'
+run_sash 'v=zzz; if [[ -z $v ]]; then x=1; fi; echo [$x]'
 [[ $rc = 0 && $out = "[]" && -z $err ]]; chk ud.5
 
 # ud.6 a typed declaration introduces the name (and zero-inits).

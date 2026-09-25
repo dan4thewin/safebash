@@ -157,19 +157,19 @@ run_sash 'if [[ g? "hi" ]]; then echo yes; else echo no; fi'
 
 # D1-D3 string ordering is a BYTE compare (the runtime is locale-free,
 # so this is LC_ALL=C bash), via the same sash_strcmp native uses.
-run_sash 'if [[ abc < abd ]]; then echo yes; else echo no; fi'
+run_sash 'v=abc; if [[ $v < abd ]]; then echo yes; else echo no; fi'
 [[ $rc = 0 && $out = "yes" && -z $err ]]; chk ft.37
 
-run_sash 'if [[ abd < abc ]]; then echo yes; else echo no; fi'
+run_sash 'v=abd; if [[ $v < abc ]]; then echo yes; else echo no; fi'
 [[ $rc = 0 && $out = "no" && -z $err ]]; chk ft.38
 
-run_sash 'if [[ abd > abc ]]; then echo yes; else echo no; fi'
+run_sash 'v=abd; if [[ $v > abc ]]; then echo yes; else echo no; fi'
 [[ $rc = 0 && $out = "yes" && -z $err ]]; chk ft.39
 
 # D4 uppercase sorts before lowercase on bytes ('Z' 0x5A < 'a' 0x61).
 # Under a collating locale bash would answer the other way; this pins
 # that sash is byte-ordered.
-run_sash 'if [[ Z < a ]]; then echo yes; else echo no; fi'
+run_sash 'v=Z; if [[ $v < a ]]; then echo yes; else echo no; fi'
 [[ $rc = 0 && $out = "yes" && -z $err ]]; chk ft.40
 
 # D5-D6 -nt / -ot on mtime.

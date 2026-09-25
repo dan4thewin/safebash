@@ -57,7 +57,7 @@ echo $x'
 
 # 24.11 attest requires $VAR on LHS
 run_sash 'x=$(getenv HOME)
-attest x [[ "foo" = $x ]]
+attest x [[ "foo" == $x ]]
 echo $x'
 [[ $rc != 0 && -z $out && -n $err ]]; chk 24.11
 
@@ -88,7 +88,7 @@ run_sash 'x="hello"; echo $x'
 
 # 24.16 attest test SHALL NOT allow external commands or arithmetic
 run_sash 'x=$(getenv HOME)
-attest x [[ $(echo yes) = yes ]]
+attest x [[ $(echo yes) == yes ]]
 echo $x'
 [[ $rc != 0 && -z $out && -n $err ]]; chk 24.16
 
@@ -235,7 +235,7 @@ echo ${m[NAME]}'
 
 # 60.19 attest-all binder must be on the LHS (anti-tautology)
 run_sash '/usr/bin/tr "\n" "\0" < d60b.txt | read a
-attest x in a [[ "foo" = $x ]]
+attest x in a [[ "foo" == $x ]]
 echo ${a[0]}'
 [[ $rc != 0 && -z $out && -n $err ]]; chk 60.19
 
@@ -502,7 +502,7 @@ run_sash 'argv 1 a; array b=(); b[0]=$(join a); echo ${b[0]}' a b
 [[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk 60.38
 run_sash 'argv 1 a; array c=($(join a)); echo hi' a b
 [[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk 60.39
-run_sash 'argv 1 a; [[ $(join a) = x ]] && echo hi' a b
+run_sash 'argv 1 a; [[ $(join a) == x ]] && echo hi' a b
 [[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk 60.40
 run_sash 'argv 1 a; x=$(join a); echo z > $x' a b
 [[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk 60.41
@@ -513,7 +513,7 @@ run_sash 'argv 1 a; x=$(join a); echo $x' a b
 [[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk 60.43
 # 60.44/60.45 a direct tainted scalar in a `[[ ]]` operand / redirect target
 # is a read too — these positions were entirely unchecked before.
-run_sash 'x=$(getenv HOME); [[ $x = y ]] && echo z'
+run_sash 'x=$(getenv HOME); [[ $x == y ]] && echo z'
 [[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk 60.44
 run_sash 'x=$(getenv HOME); echo hi > $x'
 [[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk 60.45
@@ -604,10 +604,10 @@ run_sash 'map m=([k]=v)
 echo "${m[k]}"'
 [[ $rc = 0 && $out = "v" && -z $err ]]; chk 60.71
 # 60.50 bare-name `join a` reader reached through a `[[ ]]` operand
-run_sash 'argv 1 a; [[ $(join a) = x ]] && echo hi' a b
+run_sash 'argv 1 a; [[ $(join a) == x ]] && echo hi' a b
 [[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk 60.50
 # 60.51 a tainted array subscript `${a[0]}` (value-flow, not cmdsub) in a test
-run_sash '/usr/bin/tr "\n" "\0" < d60b.txt | read a; [[ ${a[0]} = x ]] && echo hi'
+run_sash '/usr/bin/tr "\n" "\0" < d60b.txt | read a; [[ ${a[0]} == x ]] && echo hi'
 [[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk 60.51
 # 60.52 bare-name `join a` reader as a redirect target (routed through a
 # scalar — a direct `$(…)` redirect *target* is now rejected structurally at
@@ -615,7 +615,7 @@ run_sash '/usr/bin/tr "\n" "\0" < d60b.txt | read a; [[ ${a[0]} = x ]] && echo h
 run_sash 'argv 1 a; x=$(join a); echo hi > $x' a b
 [[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk 60.52
 # 60.53 `echo $t` (tainted scalar) through a cmdsub in a `[[ ]]` operand
-run_sash 'x=$(getenv HOME); [[ $(echo $x) = y ]] && echo z'
+run_sash 'x=$(getenv HOME); [[ $(echo $x) == y ]] && echo z'
 [[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk 60.53
 # 60.54 control (positive): a CLEAN `$(echo …)` capture still compiles & runs
 # — guards the assignment-RHS cmdsub read-check against over-rejection.
@@ -623,7 +623,7 @@ run_sash 'y=$(echo hello); echo $y'
 [[ $rc = 0 && $out = "hello" && -z $err ]]; chk 60.54
 # 60.55 control (positive): a CLEAN var in a `[[ ]]` operand still runs — guards
 # the new Test-operand read-check against over-rejecting clean values.
-run_sash 'x=hello; [[ $x = hello ]] && echo yes'
+run_sash 'x=hello; [[ $x == hello ]] && echo yes'
 [[ $rc = 0 && $out = "yes" && -z $err ]]; chk 60.55
 
 # ── attest-fallback: `attest V [[t]] || V=DEFAULT` (DG 2026-09-01) ──────────

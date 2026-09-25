@@ -109,7 +109,7 @@ run_sash 'x=b; if [[ $x == a ]]; then echo t; else echo f; fi'
 # `[[` / `]]` tokenize even when glued to adjacent words or their contents
 # (a single `[`/`]` stays a subscript char). See DD#59.
 # H1 boolean test, compact interior
-run_sash 'if [[a==a]]; then echo y; fi'
+run_sash 'v=a; if [[$v==a]]; then echo y; fi'
 [[ $rc = 0 && $out = "y" && -z $err ]]; chk dp.ws1
 # H2 no space after `if` before `[[`
 run_sash 'x=a; if[[ $x == a ]]; then echo y; fi'
@@ -127,7 +127,7 @@ run_sash 'x=b; if ![[ $x == a ]]; then echo neg; fi'
 run_sash 'x=a; [[$x == a { echo hit } || { echo no }]]'
 [[ $rc = 0 && $out = "hit" && -z $err ]]; chk dp.ws6
 # H7 DD#74 `return[[ … ]]` predicate, compact
-run_sash 'fn f{return[[a==a]]}; if f; then echo yes; else echo no; fi'
+run_sash 'fn f{v=a; return[[$v==a]]}; if f; then echo yes; else echo no; fi'
 [[ $rc = 0 && $out = "yes" && -z $err ]]; chk dp.ws7
 # H8 regression: a single `[` is still a subscript char
 run_sash 'array a=(5 6 7); a[0]=9; echo ${a[0]}'
@@ -138,19 +138,19 @@ run_sash 'if((1==1)); then echo p; fi'
 
 # I1–I8: dispatch compact operator parity (symmetric with boolean test)
 # I1 dispatch form with compact `==`
-run_sash '[[ a==a { echo yes } || { echo no } ]]'
+run_sash 'v=a; [[ $v==a { echo yes } || { echo no } ]]'
 [[ $rc = 0 && $out = "yes" && -z $err ]]; chk dp.co1
 # I2 dispatch form with compact `==`, non-matching
-run_sash '[[ a==b { echo no } || { echo yes } ]]'
+run_sash 'v=a; [[ $v==b { echo no } || { echo yes } ]]'
 [[ $rc = 0 && $out = "yes" && -z $err ]]; chk dp.co2
 # I3 dispatch form with compact `=~`
-run_sash '[[ a=~a { echo yes } || { echo no } ]]'
+run_sash 'v=a; [[ $v=~a { echo yes } || { echo no } ]]'
 [[ $rc = 0 && $out = "yes" && -z $err ]]; chk dp.co3
 # I4 dispatch form with compact operator on variable
 run_sash 'x=a; [[ $x==a { echo yes } || { echo no } ]]'
 [[ $rc = 0 && $out = "yes" && -z $err ]]; chk dp.co4
 # I5 dispatch form with compact operator, multiple patterns
-run_sash '[[ a==a b c { echo a } || { echo no } ]]'
+run_sash 'v=a; [[ $v==a b c { echo a } || { echo no } ]]'
 [[ $rc = 0 && $out = "a" && -z $err ]]; chk dp.co5
 # I6 dispatch compact as a statement inside an if body (dispatch is a
 # statement, not a boolean condition — SB4028 guards the condition slot)

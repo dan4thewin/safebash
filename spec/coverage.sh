@@ -22,7 +22,7 @@ run_sash 'int a=0; int b=0; while (( a==1, b=2 )); do echo x; done'
 run_sash 'int a=0; while (( a=1, a=2 )); do echo x; done'
 [[ $rc != 0 && -z $out && $err == *SB5007* ]]; chk cov.3
 # cov.4 a static (compile-constant) invalid regex in `=~` → SB5023
-run_sash '[[ abc =~ ( ]] && echo y'
+run_sash 'v=abc; [[ $v =~ ( ]] && echo y'
 [[ $rc != 0 && -z $out && $err == *SB5023* ]]; chk cov.4
 # cov.5 a numeric test op with a non-numeric operand → SB5019
 run_sash '[[ 5 -lt abc ]] && echo y'
@@ -115,7 +115,7 @@ run_sash 'export A=1'
 [[ $rc != 0 && -z $out && $err == *SB5011* ]]; chk cov.24
 # cov.25 compact dispatch with the `=~` operator (no spaces) — existing specs
 # only exercise compact `==`; this covers the `=~` compact-parse path
-run_sash '[[abc=~b]] && echo match'
+run_sash 'v=abc; [[$v=~b]] && echo match'
 [[ $rc = 0 && $out = match && -z $err ]]; chk cov.25
 # cov.26 `>&N` dup redirect (emit_dup_output) — only the harness/converter use
 # it; no spec exercises the compiled codegen path. `echo hi >&2` → stderr.
@@ -253,7 +253,7 @@ run_sash "echo \$'\\x31\\x32\\x33'"
 [[ $rc = 0 && $out = "123" && -z $err ]]; chk cov.63
 # cov.64 a parenthesized `[[ ( … ) ]]` grouped test (parser parse_test_group).
 # All backends.
-run_sash '[[ ( -n x ) ]] && echo y'
+run_sash 'v=x; [[ ( -n $v ) ]] && echo y'
 [[ $rc = 0 && $out = y && -z $err ]]; chk cov.64
 # cov.65-67 binary bitwise operators in $(( )) with runtime operands
 # (codegen/arithmetic.rs emit_arith_op BitAnd/BitOr/BitXor → band/bor/bxor).
@@ -1443,7 +1443,7 @@ run_sash 'str s=$(arg 1); attest s i?; int n=$(( ${s:-0} )); int c=0; if attest 
 run_sash 'END { echo bye; }'
 [[ $rc == 0 && $out == bye ]]; chk cov.295
 # `[[` / `]]` (scan_lbracket/scan_rbracket) and `!` (scan_bang_or_neq).
-run_sash '[[ abc == abc ]] && ! [[ x == y ]] && echo ok'
+run_sash 'v=abc; w=x; [[ $v == abc ]] && ! [[ $w == y ]] && echo ok'
 [[ $rc == 0 && $out == ok ]]; chk cov.296
 # `+=` (scan_plus_or_word).
 run_sash 'str s=ab; s+=cd; echo $s'
@@ -1468,7 +1468,7 @@ run_sash 'echo array map attest END'
 # The three non-argument word contexts the omission also broke.
 run_sash 'str s=str; echo $s'
 [[ $rc == 0 && $out == str ]]; chk cov.302
-run_sash '[[ str == str ]] && echo y'
+run_sash 'v=str; [[ $v == str ]] && echo y'
 [[ $rc == 0 && $out == y ]]; chk cov.303
 run_sash 'for x in str; do echo $x; done'
 [[ $rc == 0 && $out == str ]]; chk cov.304
@@ -1574,8 +1574,8 @@ __let_exit hi; echo $?'
 run_sash 'a=$(getppid)
 b=$(getppid)
 c=$(getpid)
-[[ $a = $b ]] && echo stable
-[[ $a = $c ]] || echo distinct'
+[[ $a == $b ]] && echo stable
+[[ $a == $c ]] || echo distinct'
 [[ $rc = 0 && $out = "stable
 distinct" && -z $err ]]; chk cov.331
 # cov.332 getppid is a positive integer (string form round-trips to int)
@@ -1587,7 +1587,7 @@ int n=${a:-0}
 # returning a constant is the failure this catches.
 run_sash 'a=$(random)
 b=$(random)
-[[ $a = $b ]] || echo differ'
+[[ $a == $b ]] || echo differ'
 [[ $rc = 0 && $out = "differ" && -z $err ]]; chk cov.333
 # cov.334 random is NON-NEGATIVE. Guaranteed, not luck: sash_random masks
 # with `& i64::MAX` to clear the sign bit (DG 2026-07-07, `$(random)` range),

@@ -6,7 +6,7 @@ set -eu
 # Run only in native mode to avoid 3× redundancy.
 [[ ${SASH_MODE:-native} != native ]] && exit 0
 setup convert
-plan=188
+plan=197
 echo "1..$plan" >&3
 
 set +e
@@ -955,10 +955,10 @@ f() { /bin/true; echo $?; }'
 # inner one re-emits source the outer one already consumed. The output was
 # silently corrupt, not an error.
 
-# 57.116 `[ "$HOME" = x ]` — was `if [[ $HOME = x ]]$home" = x ]`
+# 57.116 `[ "$HOME" = x ]` — was `if [[ $HOME == x ]]$home" = x ]`
 run_convert '#!/bin/bash
 if [ "$HOME" = x ]; then echo y; fi'
-[[ $rc = 0 && $out == *'if [[ $home = x ]]; then echo y; fi'* && -z $err ]]; chk 57.116
+[[ $rc = 0 && $out == *'if [[ $home == x ]]; then echo y; fi'* && -z $err ]]; chk 57.116
 
 # 57.117 …and the hoisted getenv+attest survives the splice
 run_convert '#!/bin/bash
@@ -968,7 +968,7 @@ if [ "$HOME" = x ]; then echo y; fi'
 # 57.118 `[ "$1" = x ]` — the commonest shape of the bug
 run_convert '#!/bin/bash
 if [ "$1" = x ]; then echo y; fi'
-[[ $rc = 0 && $out == *'if [[ $arg1 = x ]]; then echo y; fi'* && -z $err ]]; chk 57.118
+[[ $rc = 0 && $out == *'if [[ $arg1 == x ]]; then echo y; fi'* && -z $err ]]; chk 57.118
 
 # 57.119 `${#s}` inside a test converts to $(strlen …) exactly once
 run_convert '#!/bin/bash
@@ -979,7 +979,7 @@ if [ "${#s}" -gt 0 ]; then echo y; fi'
 # 57.120 a test with nothing to splice is untouched by the composition
 run_convert '#!/bin/bash
 if [ x = y ]; then echo y; fi'
-[[ $rc = 0 && $out == *'if [[ x = y ]]; then echo y; fi'* && -z $err ]]; chk 57.120
+[[ $rc = 0 && $out == *'if [[ x == y ]]; then echo y; fi'* && -z $err ]]; chk 57.120
 
 # ── Every other whole-node replacement, audited after 57.116 (DD#83 note) ──
 # A handler that replaces its whole node must splice its children's patches
@@ -1296,6 +1296,53 @@ run_convert '#!/bin/bash
 declare -i i=0
 if (( ++i )); then echo hi; fi'
 [[ $rc = 0 && $out == *'CHECK: prefix'* && $out == *'(( ++i ))'* ]]; chk 57.163
+
+# ---- DD#118: the converter must emit the explicit test spellings ----
+
+# 57.164 bash's single `=` becomes `==` on the way through [ ] → [[ ]]
+run_convert 'x=a
+if [ "$x" = y ]; then echo m; fi'
+[[ $rc = 0 && $out == *'[[ $x == y ]]'* ]]; chk 57.164
+
+# 57.165 …and in input that was already [[ ]], which skips the bracket rewrite
+run_convert 'x=a
+if [[ $x = y ]]; then echo m; fi'
+[[ $rc = 0 && $out == *'[[ $x == y ]]'* ]]; chk 57.165
+
+# 57.166 bash's implicit `-n` is made explicit
+run_convert 'x=a
+if [ "$x" ]; then echo m; fi'
+[[ $rc = 0 && $out == *'[[ -n $x ]]'* ]]; chk 57.166
+
+# 57.167 …including the already-[[ ]] form
+run_convert 'x=a
+if [[ $x ]]; then echo m; fi'
+[[ $rc = 0 && $out == *'[[ -n $x ]]'* ]]; chk 57.167
+
+# 57.168 a negated bare word keeps the `!` and gains the `-n`
+run_convert 'x=a
+if [ ! "$x" ]; then echo m; fi'
+[[ $rc = 0 && $out == *'[[ ! -n $x ]]'* ]]; chk 57.168
+
+# 57.169 every conjunct is rewritten, and the connectors survive verbatim
+run_convert 'x=a
+y=b
+if [[ $x = a && $y = b ]]; then echo m; fi'
+[[ $rc = 0 && $out == *'[[ $x == a && $y == b ]]'* ]]; chk 57.169
+
+# 57.170 an operator that was already right is left alone (no double-rewrite)
+run_convert 'x=a
+if [[ $x == y ]]; then echo m; fi'
+[[ $rc = 0 && $out == *'[[ $x == y ]]'* && $out != *'==='* ]]; chk 57.170
+
+# 57.171 a two-operand file test is not a bare word
+run_convert 'if [ -f /etc/passwd ]; then echo m; fi'
+[[ $rc = 0 && $out == *'[[ -f /etc/passwd ]]'* ]]; chk 57.171
+
+# 57.172 `=~` is untouched — its RHS is a pattern, not an operand
+run_convert 'x=a
+if [[ $x =~ [a-z] ]]; then echo m; fi'
+[[ $rc = 0 && $out == *'=~ [a-z]'* ]]; chk 57.172
 
 set -e
 tally

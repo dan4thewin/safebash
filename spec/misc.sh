@@ -755,7 +755,7 @@ echo "$s"'
 # sl.8 ...and in a `[[ ]]` operand too, which is a read position. This one
 # regressed during the rewrite (the taint dispatcher has a `_` fall-through,
 # so the new node was silently LEGAL there) and is the reason the test exists.
-run_sash 'if [[ $(<sf.txt) = "one" ]]; then echo y; else echo n; fi'
+run_sash 'if [[ $(<sf.txt) == "one" ]]; then echo y; else echo n; fi'
 [[ $rc != 0 && $err == *"SB5020"* ]]; chk sl.8
 
 # sl.9 a missing file ABORTS rather than yielding an empty string. bash warns
@@ -833,7 +833,7 @@ run_sash "echo \$'a\\tb'"
 # utf8.10 equality still holds -- it did even while both sides were corrupt,
 # which is exactly why this went unnoticed
 run_sash 'v=café
-if [[ $v = café ]]; then echo ok; else echo no; fi'
+if [[ $v == café ]]; then echo ok; else echo no; fi'
 [[ $rc = 0 && $out = "ok" && -z $err ]]; chk utf8.10
 # utf8.11 the regex engine is BYTE-oriented (lib9.h's chartorune is an
 # ASCII-only stub), so `.` matches one byte, not one character. bash in a

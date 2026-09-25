@@ -288,7 +288,7 @@ run_sash 'str x=""; /bin/echo $x:-$(echo "a)b")'
 # braced rather than against a literal: the default word is a `"…"` body, where
 # a backtick is a literal character (DG 2026-08-28), and this test is about the
 # two spellings agreeing — it stays correct if that rule is ever revisited.
-run_sash 'str x=""; str a=$x:-`echo hi`; str b=${x:-`echo hi`}; [[ $a = $b ]] && /bin/echo same'
+run_sash 'str x=""; str a=$x:-`echo hi`; str b=${x:-`echo hi`}; [[ $a == $b ]] && /bin/echo same'
 [[ $rc = 0 && $out = "same" && -z $err ]]; chk vm.bl18
 # vm.bl19-vm.bl23 the brace-less operand's own `$name` scanner
 # (`lexer.rs::skip_dollar_var`). The whole sweep called it three times,
@@ -458,7 +458,7 @@ run_sash 'array f=()
 s=a:b:c
 s =~ s/:/$'"'"'\x00'"'"'/g
 echo $s | read f
-attest e in f [[ $e = $e ]]
+attest e in f [[ $e == $e ]]
 echo "$(len f):${f[1]}"'
 [[ $rc = 0 && $out = "3:b" && -z $err ]]; chk sr.7
 
@@ -580,7 +580,7 @@ run_sash 'sep=$'"'"'\x00'"'"'
 s=NAME:sash
 s =~ s/:/$sep/g
 read $s a
-attest e in a [[ $e = $e ]]
+attest e in a [[ $e == $e ]]
 map m = @{a:?uneven}
 echo "${m[NAME]}"'
 [[ $rc = 0 && $out = "sash" && -z $err ]]; chk mp.8

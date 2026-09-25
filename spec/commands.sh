@@ -181,7 +181,7 @@ run_sash 'echo hi; x=$(echo a; getcpid)'
 # 23.29 a one-statement body is NOT enough on its own: the intrinsic must be
 # the substitution's own statement. Nested inside an `if` arm the body length
 # is 1 at every level, yet nothing rewrites it.
-run_sash 'echo hi; x=$(if [[ 1 = 1 ]]; then status; fi)'
+run_sash 'echo hi; x=$(if [[ 1 == 1 ]]; then status; fi)'
 [[ $rc != 0 && -z $out && $err == *SB5073* ]]; chk 23.29
 
 # 23.30 the exemption itself still holds — this is what 23.24 protects.
@@ -213,7 +213,7 @@ run_sash 'int i=0; while (( i < 3 )); do echo $i; (( i++ )); done | /usr/bin/wc 
 [[ $rc != 0 && -z $out && -n $err ]]; chk 14.5
 
 # 14.6 if...fi > file → rejected (SB4021)
-run_sash 'if [[ "yes" = "yes" ]]; then echo hello; fi > /tmp/sash_test_redir2'
+run_sash 'if [[ "yes" == "yes" ]]; then echo hello; fi > /tmp/sash_test_redir2'
 [[ $rc != 0 && -z $out && -n $err ]]; chk 14.6
 
 # 14.17 a BARE (unquoted) nested command substitution as a command argument.
@@ -403,7 +403,7 @@ run_sash '/usr/bin/printf "m\n" > rd2.txt; - echo ignored | /bin/cat < rd2.txt |
 # 14.34 the DD#99 idiom: turn a separator into NUL upstream, then split
 run_sash '/usr/bin/printf "a\nb\nc\n" > rd3.txt
 /usr/bin/tr "\n" "\0" < rd3.txt | read arr
-attest e in arr [[ $e = $e ]]
+attest e in arr [[ $e == $e ]]
 echo "$(len arr):${arr[1]}"'
 [[ $rc = 0 && $out = "3:b" && -z $err ]]; chk 14.34
 

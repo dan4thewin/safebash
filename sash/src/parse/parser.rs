@@ -1525,20 +1525,24 @@ fn parse_test_binary_tail(
             parse_binary_rhs(left, op, scanner, span)
         }
         Tok::Eq => {
-            scanner.next();
-            if matches!(scanner.peek().token, Tok::Eq) {
-                scanner.next();
-            }
-            parse_binary_rhs(left, "==".to_string(), scanner, span)
+            let at = scanner.peek().span.start;
+            Err(parse_error(
+                span_from(scanner, at),
+                "SB4067",
+                "`=` is not a comparison operator; write `==` for string equality \
+                 (a single `=` always assigns)"
+                    .to_string(),
+            ))
         }
         Tok::Bang => {
-            scanner.next();
-            if matches!(scanner.peek().token, Tok::Eq) {
-                scanner.next();
-                parse_binary_rhs(left, "!=".to_string(), scanner, span)
-            } else {
-                Ok(implicit_nonempty(left))
-            }
+            let at = scanner.peek().span.start;
+            Err(parse_error(
+                span_from(scanner, at),
+                "SB4067",
+                "`!` is not valid after a test operand; write `!=` for string \
+                 inequality, or `!` before the whole test to negate it"
+                    .to_string(),
+            ))
         }
         Tok::Lt => {
             scanner.next();
@@ -1558,9 +1562,36 @@ fn parse_test_binary_tail(
                     right: Box::new(right_expr),
                 });
             }
-            Ok(implicit_nonempty(left))
+            // A word with no operator after it is a "bare word test" only when
+            // the test is otherwise complete. If some other token interrupted
+            // it, that token is the real fault and "expected `]]`" is the
+            // better diagnosis (e.g. `[[ a&b == x ]]`, where `&` ends the word).
+            if !at_test_end(scanner) {
+                return Err(parse_error(span, "SB4014", "expected ']]'".to_string()));
+            }
+            Err(parse_error(
+                left.span,
+                "SB4068",
+                "a bare word is not a test; write `-n WORD` to test that it is \
+                 non-empty, or `-z WORD` that it is empty"
+                    .to_string(),
+            ))
         }
     }
+}
+
+/// The tokens that can legally follow a complete test operand.
+fn at_test_end(scanner: &mut Scanner) -> bool {
+    matches!(
+        scanner.peek().token,
+        Tok::DblBracketClose
+            | Tok::AndAnd
+            | Tok::OrOr
+            | Tok::RParen
+            | Tok::LBrace
+            | Tok::Semi
+            | Tok::Newline
+    )
 }
 
 fn parse_binary_rhs(
@@ -1602,13 +1633,6 @@ fn parse_binary_rhs(
         op,
         right: Box::new(right),
     })
-}
-
-fn implicit_nonempty(operand: Expr) -> TestExpr {
-    TestExpr::Unary {
-        op: "-n".to_string(),
-        operand: Box::new(operand),
-    }
 }
 
 fn parse_test_operand(scanner: &mut Scanner, span: Span) -> Result<Expr, Diagnostic> {

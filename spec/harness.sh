@@ -20,7 +20,7 @@ set +e
 # ht.1 a program that reads stdin sees EOF, not the runner's stdin. Without
 # the guard this blocks whenever run.sh is invoked from a terminal.
 run_sash 'readline x
-attest x [[ $x = "" ]]
+attest x [[ $x == "" ]]
 echo "got=[$x]"'
 [[ $rc = 0 && $out = "got=[]" ]]; chk ht.1
 

@@ -63,7 +63,7 @@ outer'
 # 18.5 a `fn` inside control flow is rejected. This is the case that made the
 # rule necessary: the branch is FALSE, never runs, and sash still defined `f`
 # and printed A — where bash reports `f: command not found`.
-run_sash 'if [[ 1 = 2 ]] { fn f { echo A } }
+run_sash 's=y; if [[ $s == n ]] { fn f { echo A } }
 f'
 [[ $rc != 0 && -z $out && $err == *SB5071* ]]; chk 18.5
 
@@ -88,7 +88,7 @@ f'
 # the functions it finds in the top-level statement list, so one hidden inside
 # control flow kept the definition-point walk and could read a global tainted
 # afterwards. It compiled and leaked raw argv before SB5071.
-run_sash 'if [[ 1 = 1 ]] { fn f { for v in @g { echo "$v" } } }
+run_sash 's=y; if [[ $s == y ]] { fn f { for v in @g { echo "$v" } } }
 argv g
 f'
 [[ $rc != 0 && -z $out && $err == *SB5071* ]]; chk 18.9
@@ -266,12 +266,12 @@ while lt3; do echo $i; (( i++ )); done'
 # --- DD#74 phase 2: `return <producer>` (command / [[ ]] / (( )) ) ---
 
 # 74.7 `return [[ … ]]` returns the test's boolean
-run_sash 'has() { return [[ ok == ok ]] }
+run_sash 'has() { v=ok; return [[ $v == ok ]] }
 if has; then echo yes; else echo no; fi'
 [[ $rc = 0 && $out = "yes" && -z $err ]]; chk 74.7
 
 # 74.8 `return [[ … ]]` — false test → else
-run_sash 'has() { return [[ ok == no ]] }
+run_sash 'has() { v=ok; return [[ $v == no ]] }
 if has; then echo yes; else echo no; fi'
 [[ $rc = 0 && $out = "no" && -z $err ]]; chk 74.8
 
@@ -312,12 +312,12 @@ if ok; then echo y; fi'
 [[ $rc = 0 && $out = "y" && -z $err ]]; chk 74.14
 
 # 74.15 a fall-through path (if without else) in a predicate → compile error
-run_sash 'p() { if [[ ok == ok ]]; then return 0; fi }
+run_sash 'p() { v=ok; if [[ $v == ok ]]; then return 0; fi }
 if p; then echo y; fi'
 [[ $rc != 0 && -z $out && -n $err ]]; chk 74.15
 
 # 74.16 if/else where both branches return → accepted
-run_sash 'p() { if [[ ok == ok ]]; then return 0; else return 1; fi }
+run_sash 'p() { v=ok; if [[ $v == ok ]]; then return 0; else return 1; fi }
 if p; then echo y; fi'
 [[ $rc = 0 && $out = "y" && -z $err ]]; chk 74.16
 
@@ -350,17 +350,17 @@ if has; then echo yes; else echo no; fi'
 [[ $rc = 0 && $out = "no" && -z $err ]]; chk 74.20
 
 # 74.21 `return A && B` — an and-list producer (both true → true).
-run_sash 'both() { return [[ 1 = 1 ]] && [[ 2 = 2 ]] }
+run_sash 'both() { a=y; b=y; return [[ $a == y ]] && [[ $b == y ]] }
 if both; then echo yes; else echo no; fi'
 [[ $rc = 0 && $out = "yes" && -z $err ]]; chk 74.21
 
 # 74.22 `return A && B` — second false → false
-run_sash 'both() { return [[ 1 = 1 ]] && [[ 2 = 3 ]] }
+run_sash 'both() { a=y; b=y; return [[ $a == y ]] && [[ $b == n ]] }
 if both; then echo yes; else echo no; fi'
 [[ $rc = 0 && $out = "no" && -z $err ]]; chk 74.22
 
 # 74.23 `return A || B` — an or-list producer (first false, second true → true)
-run_sash 'either() { return [[ 1 = 2 ]] || [[ 3 = 3 ]] }
+run_sash 'either() { a=y; b=y; return [[ $a == n ]] || [[ $b == y ]] }
 if either; then echo yes; else echo no; fi'
 [[ $rc = 0 && $out = "yes" && -z $err ]]; chk 74.23
 
@@ -514,35 +514,35 @@ x=
 
 # ice.1 a string function's capture as a test operand
 run_sash 'fn f() { echo x }
-if [[ $(f) = x ]] { echo T } else { echo F }'
+if [[ $(f) == x ]] { echo T } else { echo F }'
 [[ $rc = 0 && $out = "T" && -z $err ]]; chk ice.1
 
 # ice.2 …and it really compares the captured value, not a constant
 run_sash 'fn f() { echo x }
-if [[ $(f) = q ]] { echo T } else { echo F }'
+if [[ $(f) == q ]] { echo T } else { echo F }'
 [[ $rc = 0 && $out = "F" && -z $err ]]; chk ice.2
 
 # ice.3 an `-> int` function's capture (the values.rs:84 sibling arm)
 run_sash 'fn n() -> int { return 7 }
-if [[ $(n) = 7 ]] { echo T } else { echo F }'
+if [[ $(n) == 7 ]] { echo T } else { echo F }'
 [[ $rc = 0 && $out = "T" && -z $err ]]; chk ice.3
 
 # ice.4 a multi-statement `$(…)` body as an operand (the values.rs:90 arm);
 # `v=$(echo a; echo b)` already worked, so the test position must agree
-run_sash 'if [[ $(echo a; echo b) = "a
+run_sash 'if [[ $(echo a; echo b) == "a
 b" ]] { echo T } else { echo F }'
 [[ $rc = 0 && $out = "T" && -z $err ]]; chk ice.4
 
 # ice.5 a capture in a unary operand, and nested inside `&&`
 run_sash 'fn f() { echo x }
-if [[ -n $(f) && $(f) = x ]] { echo T } else { echo F }'
+if [[ -n $(f) && $(f) == x ]] { echo T } else { echo F }'
 [[ $rc = 0 && $out = "T" && -z $err ]]; chk ice.5
 
 # ice.6 the same in a `while` condition (a different lowering site), and the
 # capture is re-evaluated each iteration because it sits in the condition block
 run_sash 'fn f() { echo x }
 int i=0
-while [[ $(f) = x ]] { echo L; (( i = i + 1 )); if (( i > 1 )) { break } }'
+while [[ $(f) == x ]] { echo L; (( i = i + 1 )); if (( i > 1 )) { break } }'
 [[ $rc = 0 && $out = "L
 L" && -z $err ]]; chk ice.6
 
@@ -760,7 +760,8 @@ if f; then echo a; fi'
 
 # 74.39 `elif` — a second condition on the same statement
 run_sash 'fn f -> int { return 7 }
-if [[ 1 = 2 ]]; then echo a; elif f; then echo b; fi'
+s=y
+if [[ $s == n ]]; then echo a; elif f; then echo b; fi'
 [[ $rc != 0 && -z $out && $err == *SB4030* ]]; chk 74.39
 
 # 74.40 `while f`
@@ -788,14 +789,16 @@ f && echo a'
 # `(a && f) && c` — `f`'s status decides whether `c` runs. Reaching it needs
 # the traversal to recurse into the left operand's own list.
 run_sash 'fn f -> int { return 7 }
-[[ 1 = 1 ]] && f && echo c'
+s=y
+[[ $s == y ]] && f && echo c'
 [[ $rc != 0 && -z $out && $err == *SB4030* ]]; chk 74.44
 
 # 74.45 the TAIL of a bare `||` is NOT a boolean context (DD#74 addendum):
 # nothing branches on it, it is the statement's own status. It must not draw
 # SB4030 — the bare-call rule (SB4016) is what applies there.
 run_sash 'fn f -> int { return 7 }
-[[ 1 = 2 ]] || f'
+s=y
+[[ $s == n ]] || f'
 [[ $rc != 0 && -z $out && $err == *SB4016* && $err != *SB4030* ]]; chk 74.45
 
 # --------------------------------------------- SB4016 advises what compiles

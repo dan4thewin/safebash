@@ -1146,6 +1146,7 @@ fn convert_test_command(
         // In [[ ]], quoting around simple $var is unnecessary — strip it
         // to produce idiomatic [[ ]] syntax.
         let inner = strip_unnecessary_quotes(inner);
+        let inner = fix_test_operators(&inner);
         let replacement = format!("[[ {} ]]", inner);
         patches.push(Patch::replace_node(
             node,
@@ -1170,6 +1171,22 @@ fn convert_test_command(
             }
         }
     }
+    // An input that was ALREADY `[[ ]]` skips the branch above, so the DD#118
+    // operator rewrites have to be applied to it here too.
+    if text.starts_with("[[ ") && text.ends_with(" ]]") {
+        let inner = &text[3..text.len() - 3];
+        let fixed = fix_test_operators(inner);
+        if fixed != inner {
+            patches.push(Patch::replace_node(
+                node,
+                format!("[[ {} ]]", fixed),
+                Some(raw.to_string()),
+            ));
+            prefix_lines.append(&mut sub_prefix);
+            return true;
+        }
+    }
+
     false
 }
 
@@ -1216,6 +1233,58 @@ fn fix_regex_dashes(pattern: &str) -> String {
         }
     }
     String::from_utf8(result).unwrap_or_else(|_| pattern.to_string())
+}
+
+/// DD#118: sash rejects both of bash's loose test spellings — a single `=`
+/// (which always assigns) and the implicit `-n` of a bare word. Rewrite them
+/// to the explicit forms so converted output actually compiles.
+fn fix_test_operators(inner: &str) -> String {
+    let toks: Vec<&str> = inner.split_whitespace().collect();
+    if toks.is_empty() {
+        return inner.to_string();
+    }
+    let mut out: Vec<String> = Vec::new();
+    let mut seg: Vec<&str> = Vec::new();
+    for t in toks {
+        if t == "&&" || t == "||" {
+            out.push(fix_test_segment(&seg));
+            out.push(t.to_string());
+            seg.clear();
+        } else {
+            seg.push(t);
+        }
+    }
+    out.push(fix_test_segment(&seg));
+    out.join(" ")
+}
+
+/// One conjunct of a test. A leading `!` is held aside so the operand rules
+/// below see the same shape either way.
+fn fix_test_segment(toks: &[&str]) -> String {
+    if toks.is_empty() {
+        return String::new();
+    }
+    let negated = toks[0] == "!";
+    let body = if negated { &toks[1..] } else { toks };
+    if body.is_empty() {
+        return toks.join(" ");
+    }
+    let mut v: Vec<String> = body.iter().map(|s| (*s).to_string()).collect();
+    if body.len() == 1 {
+        // A lone operand was bash's implicit `-n`.
+        v.insert(0, "-n".to_string());
+    } else if let Some(i) = body.iter().skip(1).position(|t| *t == "=") {
+        // Only the first standalone `=` can be the operator; a later one is
+        // inside a quoted operand.
+        v[i + 1] = "==".to_string();
+    }
+    if negated {
+        let mut r = vec!["!".to_string()];
+        r.extend(v);
+        r.join(" ")
+    } else {
+        v.join(" ")
+    }
 }
 
 enum NumericResult {
