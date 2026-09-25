@@ -400,6 +400,31 @@ numeric operators, so that
 cannot shadow
 .BR SB5019 .
 .
+.SS Glued operators need a \[dq]$\[dq] (DD#118)
+A comparison written without spaces is recognised only when the left operand
+.B starts with an expansion
+\(em
+.RB \[dq] $x==a \[dq],
+.RB \[dq] $x$y==ab \[dq],
+.RB \[dq] ${m[$k]}==a \[dq].
+A word beginning with static text
+.RB ( \[dq] ab==$x \[dq],
+.RB \[dq] a$x==ab \[dq],
+.RB \[dq] [[a==a]] \[dq])
+is
+.B rejected
+.RB ( SB4069 ).
+Bash reads such a word as a bare word, so accepting a glued operator there
+answered differently from bash without saying so.
+Since
+.B ==
+commutes, the diagnostic offers both the spaced form
+.RB ( \[dq] ab\ ==\ $x \[dq])
+and the swap
+.RB ( \[dq] $x==ab \[dq]);
+.B =~
+is offered only the spaced form, because its subject must stay on the left.
+.
 .SH STRING ESCAPES
 Backslash is interpreted in
 .B exactly two

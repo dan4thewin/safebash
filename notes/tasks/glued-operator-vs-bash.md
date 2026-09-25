@@ -1,5 +1,5 @@
 ---
-status: open
+status: done
 priority: P3
 kind: question
 ---
@@ -99,3 +99,21 @@ DG's call.
 - `sash/src/parse/parser.rs::extract_compact_operator`
 - `spec/dispatch.sh` — 28 no-space specs that constrain any change
 - `notes/decisions/DD118-explicit-tests.md` — "Not settled here"
+
+## Resolved — DD#118 Part D (2026-09-26)
+
+DG settled it: **the glued spelling is recognised only on a `$`-initial
+word.** `$foo==abc` and `$foo==$bar` are the template; every other shape is
+SB4069, with a diagnostic that offers the spaced form and — for `==` only,
+since `=~` does not commute — the swap.
+
+That does not remove the divergence this task names; the template *is* the
+shape bash reads as a bare word. It confines it to a marked form, so every
+unmarked shape is an error rather than a quiet disagreement. Narrowing
+further would cost the no-space dispatch extension, which bash cannot parse
+at all and which `dispatch.sh` specs 28 times. Kept, and marked.
+
+The lexical principle below is what motivated the marker: word operands
+*can* contain `==`, so `[[ ]]` cannot infer the split from the operand class
+the way `(( ))` can. It needs a marker, and `$` is the one bash already
+supplies.

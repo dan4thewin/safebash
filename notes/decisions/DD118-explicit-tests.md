@@ -140,9 +140,75 @@ DG's variable rewrite. Three sites in `operand_words.sh` are worth noting —
 their own comments explained the result using the implicit form. They now
 read `[[ $x =~ a&&-n $y ]]`, which pins the same structural claim without it.
 
-## Not settled here
+## Part D — the glued operator needs a `$` on the left
 
-`[[ $x==a ]]` answers F in sash and T in bash (`extract_compact_operator`
-splits the glued operator). That divergence predates this DD and is separate
-from the deliberate no-space extension `[[a==a]]`, which bash cannot parse at
-all and which `dispatch.sh` specs 28 times. Raised with DG; open.
+Parts A-C left one silent divergence standing. `[[ ab==$x ]]` answers a
+comparison in sash and `-n "ab==$x"` — always true — in bash, because
+`extract_compact_operator` splits the glued operator wherever it finds one.
+Part B made bash's reading an *error*, which removed the competing parse but
+not the divergence: sash still answers, and still answers differently.
+
+**DG's rule: the glued spelling is recognised only on a word that starts
+with the `$` sigil.** `$foo==abc` and `$foo==$bar` are the template; anything
+else is SB4069.
+
+### Why the sigil is the right marker
+
+Every non-vacuous binary test *has* one. A test with two static operands is
+decided at compile time, so Part C already rejects it; `@a` is not a legal
+scalar test operand (SB5025), so the sigil is always `$` and never `@`. The
+rule therefore costs nothing that Part C had not already taken, and it gives
+the glued form a **recognisable left edge** — the reader sees `$` and knows
+an operator may follow, instead of having to know sash's split rule to tell
+`ab==$x` (a comparison) from `a==b` in an argument (a word).
+
+This is the lexical principle from `notes/tasks/glued-operator-vs-bash.md`
+applied deliberately: glue splits into operators exactly where the operand's
+lexical class cannot contain the operator's characters. Word operands *can*
+contain `==`, so `[[ ]]` cannot infer the split from the operand class the
+way `(( ))` can — it needs a marker, and `$` is the marker bash already
+gives it.
+
+### The guard
+
+One condition in `parse/parser.rs::extract_from_concat`: `parts[0]` must not
+be `Literal` / `SingleQuoted` / `DoubleQuoted`. Every other `ExprKind` is an
+expansion and spells a leading `$` — including `${m[$k]}`, which qualifies.
+The check is on the *first part*, not on whether the word is wholly static,
+so `a$x==ab` is rejected too.
+
+### The diagnostic offers both fixes
+
+SB4069 names the spaced form and, for `==`, the swap:
+
+> a glued `==` needs the left operand to start with `$`; either space the
+> operator (`WORD == $var`) or swap the operands (`$var==WORD`)
+
+**`=~` gets only the spacing.** It does not commute — its subject must stay
+on the left — so suggesting a swap there would be wrong advice:
+
+> a glued `=~` needs the left operand to start with `$`; space the operator
+> (`WORD =~ $var`). The operands cannot be swapped — `=~` takes the subject
+> on the left.
+
+### Cost
+
+Six spec sites, all in `dispatch.sh`'s `dp.mp` block. `dp.mp4`, `dp.mp5`,
+`dp.mp10` and `dp.mp12` were respelled to a `$`-initial subject, preserving
+exactly the multi-part rejoin they pin; `dp.mp3` and `dp.mp6` — the two that
+*were* the literal-initial case — were inverted into rejection specs.
+`dp.mp7` (`$a$b==$c$d`) keeps the right-side multi-part rejoin covered, so
+no coverage was lost. `118.21` moved to the spaced spelling, since SB4069
+(parse) now precedes SB5086 (validate) on `[[ a==a { … } ]]`.
+
+`sash-convert` needed no change: it emits the explicit `-n` for a bash bare
+word, which is bash's reading and never a glued comparison.
+
+### What Part D does not close
+
+`[[ $x==a ]]` still answers F where bash answers T — the template is exactly
+the shape bash reads as a bare word. Part D does not remove that; it confines
+it to a marked form, so every *unmarked* shape is now an error rather than a
+quiet disagreement. Narrowing it further would mean giving up the no-space
+dispatch extension (`dispatch.sh` specs it 28 times), which bash cannot parse
+at all. DG's call: keep the extension, mark it.

@@ -1450,17 +1450,29 @@ fn try_parse_leading_unary(
     Ok(None)
 }
 
+/// The outcome of looking for a glued (`$x==a`) operator in a test operand.
+pub(crate) enum CompactOp {
+    /// A glued operator on a `$`-initial word: a real comparison.
+    Found(Expr, String, Expr),
+    /// A glued operator on a word that starts with static text (`ab==$x`).
+    /// DD#118 reserves the glued spelling for the `$`-initial template, so
+    /// this is an error rather than a different answer than bash gives.
+    LiteralInitial(String),
+    /// No glued operator here.
+    None,
+}
+
 /// Try to extract a compact `==` or `=~` operator from an Expr. The `[[ ]]`
 /// lexer always splits `==`/`=~` into its own token, so a compact dispatch
-/// subject (`$x==a`, `a==a`) always arrives as a `Concat` whose operator is a
+/// subject (`$x==a`) always arrives as a `Concat` whose operator is a
 /// *middle* part (`Concat([$x, "==", a])`) — never a single glued
 /// `Literal("a==b")` and never an operator glued to the subject/pattern. So
 /// only the `Concat` middle-part case is reachable; every other shape is a
 /// non-compact operand (`_ => None`).
-fn extract_compact_operator(expr: &Expr) -> Option<(Expr, String, Expr)> {
+fn extract_compact_operator(expr: &Expr) -> CompactOp {
     match &expr.kind {
         ExprKind::Concat(parts) => extract_from_concat(parts, expr.span),
-        _ => None,
+        _ => CompactOp::None,
     }
 }
 
@@ -1469,17 +1481,54 @@ fn extract_compact_operator(expr: &Expr) -> Option<(Expr, String, Expr)> {
 /// produce for a compact dispatch operator (it splits `==`/`=~` into their own
 /// token). A subject/pattern spanning several parts is rejoined via
 /// `build_expr_from_parts`.
-fn extract_from_concat(parts: &[Expr], span: Span) -> Option<(Expr, String, Expr)> {
-    // The operator is a middle part: Concat([a…, Literal("=="), …b]).
-    (1..parts.len().saturating_sub(1)).find_map(|i| {
+///
+/// DD#118: the glued spelling is recognised only when the word **starts with
+/// an expansion**. A word beginning with static text reads as data, and
+/// accepting a glued operator there is what let `[[ ab==$x ]]` answer
+/// differently from bash without saying so.
+fn extract_from_concat(parts: &[Expr], span: Span) -> CompactOp {
+    let found = (1..parts.len().saturating_sub(1)).find_map(|i| {
         let ExprKind::Literal(s) = &parts[i].kind else {
             return None;
         };
         let op = match_operator(s)?;
-        let left = build_expr_from_parts(&parts[..i], span);
-        let right = build_expr_from_parts(&parts[i + 1..], span);
-        Some((left, op, right))
-    })
+        Some((i, op))
+    });
+    let Some((i, op)) = found else {
+        return CompactOp::None;
+    };
+    if !starts_with_expansion(parts) {
+        return CompactOp::LiteralInitial(op);
+    }
+    let left = build_expr_from_parts(&parts[..i], span);
+    let right = build_expr_from_parts(&parts[i + 1..], span);
+    CompactOp::Found(left, op, right)
+}
+
+/// Whether the word carries the `$` sigil that marks the glued template.
+/// `Literal`, `SingleQuoted` and `DoubleQuoted` are the static-text kinds;
+/// everything else is an expansion and spells a leading `$`.
+fn starts_with_expansion(parts: &[Expr]) -> bool {
+    !matches!(
+        parts[0].kind,
+        ExprKind::Literal(_) | ExprKind::SingleQuoted(_) | ExprKind::DoubleQuoted(_)
+    )
+}
+
+/// The fix-it text for a glued operator on a static-initial word. `==`
+/// commutes, so swapping the operands is a real second option; `=~` does not
+/// — its subject must stay on the left — so it is only offered the spacing.
+fn glued_operator_hint(op: &str) -> String {
+    if op == "==" {
+        "a glued `==` needs the left operand to start with `$`; either space the \
+         operator (`WORD == $var`) or swap the operands (`$var==WORD`)"
+            .to_string()
+    } else {
+        "a glued `=~` needs the left operand to start with `$`; space the operator \
+         (`WORD =~ $var`). The operands cannot be swapped — `=~` takes the subject \
+         on the left."
+            .to_string()
+    }
 }
 
 /// Match if a literal is exactly an operator ("==" or "=~").
@@ -1555,12 +1604,18 @@ fn parse_test_binary_tail(
         _ => {
             // Try to extract a compact `==` or `=~` operator from the left operand
             // (e.g., `$x==a` in `[[ $x==a { ... } ]]`)
-            if let Some((left_expr, op, right_expr)) = extract_compact_operator(&left) {
-                return Ok(TestExpr::Binary {
-                    left: Box::new(left_expr),
-                    op,
-                    right: Box::new(right_expr),
-                });
+            match extract_compact_operator(&left) {
+                CompactOp::Found(left_expr, op, right_expr) => {
+                    return Ok(TestExpr::Binary {
+                        left: Box::new(left_expr),
+                        op,
+                        right: Box::new(right_expr),
+                    });
+                }
+                CompactOp::LiteralInitial(op) => {
+                    return Err(parse_error(left.span, "SB4069", glued_operator_hint(&op)));
+                }
+                CompactOp::None => {}
             }
             // A word with no operator after it is a "bare word test" only when
             // the test is otherwise complete. If some other token interrupted

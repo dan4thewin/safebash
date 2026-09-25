@@ -7,7 +7,7 @@
 set -eu
 . common.sh
 setup operand_words
-plan=46
+plan=53
 echo "1..$plan" >&3
 
 set +e
@@ -214,7 +214,7 @@ run_sash '[[ 1 -eq 2 ]] && echo y'
 
 # 118.21 DD#66 dispatch is a separate node and needs its own vacuity check:
 #        a literal subject against literal patterns picks the arm at compile time
-run_sash '[[ a==a { echo yes } || { echo no } ]]'
+run_sash '[[ a == a { echo yes } || { echo no } ]]'
 [[ $rc != 0 && -z $out && $err == *SB5086* ]]; chk 118.21
 
 # 118.22 a dispatch with a real subject is fine (the `|| { }` arm carries no
@@ -226,6 +226,52 @@ run_sash 'str x=a
 # 118.23 SB5086 does not mask a later diagnostic on the same test
 run_sash '[[ abc =~ ( ]] && echo y'
 [[ $rc != 0 && -z $out && $err == *SB5086* && $err == *SB5023* ]]; chk 118.23
+
+# ── DD#118 Part D: the glued operator needs the `$` sigil on the left ──
+# `[[ ab==$x ]]` parses as a comparison in sash but as a bare word (implicit
+# -n, always true) in bash. Part B made the bash reading an error, which left
+# the glued spelling answering differently from bash with nothing said. Part D
+# reserves the glued form for the `$`-initial template, so every other shape
+# is rejected rather than quietly reinterpreted.
+
+# 118.24 the template itself: a `$`-initial glued `==`
+run_sash 'str x=a
+if [[ $x==a ]]; then echo T; else echo F; fi'
+[[ $rc = 0 && $out = "T" && -z $err ]]; chk 118.24
+
+# 118.25 a literal-initial subject is SB4069, and because `==` commutes the
+#        diagnostic offers the swap as well as the spacing
+run_sash 'str x=ab
+[[ ab==$x { echo hit } || { echo no } ]]'
+[[ $rc != 0 && -z $out && $err == *SB4069* && $err == *swap* ]]; chk 118.25
+
+# 118.26 `=~` does NOT commute — its subject must stay on the left — so the
+#        same shape is rejected without the swap suggestion
+run_sash 'str x=ab
+[[ ab=~$x { echo hit } || { echo no } ]]'
+[[ $rc != 0 && -z $out && $err == *SB4069* && $err == *"cannot be swapped"* ]]; chk 118.26
+
+# 118.27 a MULTI-part literal-initial subject is rejected too: the guard is on
+#        the first part, not on whether the word is wholly static
+run_sash 'str x=b
+[[ a$x==ab { echo hit } || { echo no } ]]'
+[[ $rc != 0 && -z $out && $err == *SB4069* ]]; chk 118.27
+
+# 118.28 the wholly-glued literal form: SB4069 now precedes the vacuity check,
+#        since parsing runs before validation
+run_sash 'if [[a==a]]; then echo T; else echo F; fi'
+[[ $rc != 0 && -z $out && $err == *SB4069* ]]; chk 118.28
+
+# 118.29 the spaced spelling is untouched — that is the fix the hint names
+run_sash 'str x=ab
+if [[ ab == $x ]]; then echo T; else echo F; fi'
+[[ $rc = 0 && $out = "T" && -z $err ]]; chk 118.29
+
+# 118.30 a braced/subscripted expansion carries the sigil just as `$x` does
+run_sash 'map m=([k]=a)
+str k=k
+if [[ ${m[$k]}==a ]]; then echo T; else echo F; fi'
+[[ $rc = 0 && $out = "T" && -z $err ]]; chk 118.30
 
 set -e
 tally
