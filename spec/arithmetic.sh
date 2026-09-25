@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup arithmetic
-plan=330
+plan=338
 echo "1..$plan" >&3
 
 set +e
@@ -1818,6 +1818,47 @@ run_sash 'x=abc; /bin/echo "$(( ${x:-7} ))"'
 # kept so a regression that re-breaks only the lone leaf is still visible here.
 run_sash 'x=abc; echo "$(( ${x:-7} + 0 ))"'
 [[ $rc = 0 && $out = "7" && -z $err ]]; chk adisp.6
+
+# ── Lazy `&&` / `||` inside (( )) — bash short-circuits, so the right operand
+# and ITS guards (div/mod-by-zero, overflow trap) must not run when the left
+# already decides the result. The same eager-evaluation class as the ternary
+# bug fixed in journal 193; missed for years because `emit_logical_and_or`
+# ran exactly once in the whole suite, always with `&&`.
+# `(argc)` keeps the operand runtime-valued so nothing folds it away.
+
+# 31.129 the classic divide-guard: with d=0 the division must never happen
+run_sash 'int d=$(( (argc) - 1 ))
+echo $(( d != 0 && 10 / d > 1 ))'
+[[ $rc = 0 && $out = 0 && -z $rerr ]]; chk 31.129
+# 31.130 the `||` mirror: a true left operand skips the divide
+run_sash 'int d=$(( (argc) - 1 ))
+echo $(( d == 0 || 10 / d > 1 ))'
+[[ $rc = 0 && $out = 1 && -z $rerr ]]; chk 31.130
+# 31.131 modulo guard — `%` carries the same zero check as `/`
+run_sash 'int d=$(( (argc) - 1 ))
+echo $(( d != 0 && 10 % d ))'
+[[ $rc = 0 && $out = 0 && -z $rerr ]]; chk 31.131
+# 31.132 statement form `(( ))` as an if-condition, not just `$(( ))`
+run_sash 'int d=$(( (argc) - 1 ))
+if (( d != 0 && 10 / d > 1 )); then echo yes; else echo no; fi'
+[[ $rc = 0 && $out = no && -z $rerr ]]; chk 31.132
+# 31.133 the guard still EVALUATES the right operand when the left permits it
+# (a lazy implementation that never ran the RHS would also pass 31.129-31.132)
+run_sash 'int d=$(( (argc) - 1 ))
+echo $(( d != 0 && 10 / d > 1 ))' 5
+[[ $rc = 0 && $out = 1 && -z $rerr ]]; chk 31.133
+# 31.134 and short-circuit on `||` does not suppress a needed RHS
+run_sash 'int d=$(( (argc) - 1 ))
+echo $(( d == 0 || 10 / d > 1 ))' 5
+[[ $rc = 0 && $out = 1 && -z $rerr ]]; chk 31.134
+# 31.135 truth table, both operands runtime-valued: bash yields 1/0
+run_sash 'int n=$(( (argc) - 1 ))
+echo "$(( n && 1 )) $(( n && 0 )) $(( n || 0 )) $(( n || 1 ))"' x
+[[ $rc = 0 && $out = "1 0 1 1" && -z $rerr ]]; chk 31.135
+# 31.136 same truth table with a false left operand
+run_sash 'int n=$(( (argc) - 1 ))
+echo "$(( n && 1 )) $(( n && 0 )) $(( n || 0 )) $(( n || 1 ))"'
+[[ $rc = 0 && $out = "0 0 0 1" && -z $rerr ]]; chk 31.136
 
 set -e
 tally

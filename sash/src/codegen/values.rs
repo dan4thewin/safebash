@@ -276,6 +276,24 @@ pub(super) fn lower_value(
             );
             emit_int_to_str(builder, module, externs, result)
         }
+        SsaValue::ArithBinOp {
+            op: ArithOp::And | ArithOp::Or,
+            ..
+        } => {
+            // Same delegation as the `ArithExpr` arm above: one arithmetic
+            // lowering, not two. Routing through the int path is also what
+            // keeps `&&`/`||` short-circuiting in a string context.
+            let result = lower_value_as_int(
+                value,
+                builder,
+                module,
+                vars,
+                literals,
+                externs,
+                exit_status_var,
+            );
+            emit_int_to_str(builder, module, externs, result)
+        }
         SsaValue::ArithBinOp { left, op, right } => {
             let l = lower_value_as_int(
                 left,
@@ -880,6 +898,83 @@ fn index_var_to_int(
     }
 }
 
+/// DD#25/bash parity: lazy `&&` / `||` inside `(( … ))`. bash evaluates the
+/// right operand only when the left does not already decide the result, so a
+/// guard idiom like `(( d != 0 && 10 / d > 1 ))` must not run the division
+/// when `d` is 0. Lowering both operands up front and combining them (the old
+/// `emit_logical_and_or`) ran the right operand's div-by-zero check and
+/// overflow trap unconditionally — the same eager-evaluation class as the
+/// ternary bug fixed in journal 193. Result is 1 or 0, as in bash.
+#[allow(clippy::too_many_arguments)]
+fn lower_logical_short_circuit(
+    op: ArithOp,
+    left: &SsaValue,
+    right: &SsaValue,
+    builder: &mut FunctionBuilder,
+    module: &mut ObjectModule,
+    vars: &HashMap<String, VarSlot>,
+    literals: &HashMap<String, cranelift_module::DataId>,
+    externs: &ExternFuncs,
+    exit_status_var: Option<Variable>,
+) -> cranelift_codegen::ir::Value {
+    let l = lower_value_as_int(
+        left,
+        builder,
+        module,
+        vars,
+        literals,
+        externs,
+        exit_status_var,
+    );
+    let zero = builder.ins().iconst(I64, 0);
+    let l_true = builder.ins().icmp(IntCC::NotEqual, l, zero);
+
+    let rhs_block = builder.create_block();
+    let merge_block = builder.create_block();
+    let result = builder.append_block_param(merge_block, I64);
+
+    // `&&` short-circuits to 0 on a false left; `||` to 1 on a true left.
+    let is_and = matches!(op, ArithOp::And);
+    let short = builder.ins().iconst(I64, if is_and { 0 } else { 1 });
+    if is_and {
+        builder.ins().brif(
+            l_true,
+            rhs_block,
+            &[],
+            merge_block,
+            &[BlockArg::Value(short)],
+        );
+    } else {
+        builder.ins().brif(
+            l_true,
+            merge_block,
+            &[BlockArg::Value(short)],
+            rhs_block,
+            &[],
+        );
+    }
+
+    builder.switch_to_block(rhs_block);
+    builder.seal_block(rhs_block);
+    let r = lower_value_as_int(
+        right,
+        builder,
+        module,
+        vars,
+        literals,
+        externs,
+        exit_status_var,
+    );
+    let r_zero = builder.ins().iconst(I64, 0);
+    let r_true = builder.ins().icmp(IntCC::NotEqual, r, r_zero);
+    let r_i64 = builder.ins().uextend(I64, r_true);
+    builder.ins().jump(merge_block, &[BlockArg::Value(r_i64)]);
+
+    builder.switch_to_block(merge_block);
+    builder.seal_block(merge_block);
+    result
+}
+
 /// Lazy int-valued ternary: brif on the condition into then/else blocks, each
 /// lowering only its own branch, merging the chosen i64 via a block param. Like
 /// `lower_ternary_value` but for a single int result (side effects stay lazy).
@@ -1382,6 +1477,23 @@ pub(super) fn lower_value_as_int(
             emit_arith_op(*op, var_val, rhs, builder, module, externs)
         }
         SsaValue::ArithBinOp { left, op, right } => {
+            // `&&` / `||` short-circuit (bash): the right operand is not
+            // evaluated when the left already decides the result, so its
+            // guards (div/mod-by-zero, overflow trap) must not run either.
+            // Same class as the eager-ternary bug fixed in journal 193.
+            if matches!(op, ArithOp::And | ArithOp::Or) {
+                return lower_logical_short_circuit(
+                    *op,
+                    left,
+                    right,
+                    builder,
+                    module,
+                    vars,
+                    literals,
+                    externs,
+                    exit_status_var,
+                );
+            }
             let l = lower_value_as_int(
                 left,
                 builder,

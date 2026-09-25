@@ -1582,6 +1582,15 @@ fn lower_value_as_int(e: &mut Emit, value: &SsaValue, types: &VarTypes) -> Strin
         // codegen/values.rs:356+ for ArithBinOp: lower_value_as_int(left/right)
         // then emit_arith_op(op, l, r).
         SsaValue::ArithBinOp { left, op, right } => {
+            // `&&` / `||` must not evaluate the right operand when the left
+            // already decides the result. C's `&&` short-circuits, but the
+            // operand *statements* `lower_value_as_int` emits (div-by-zero
+            // guard, overflow trap) would sit before the expression and run
+            // unconditionally — so route them through an if/else, exactly as
+            // the ternary does.
+            if matches!(op, ArithOp::And | ArithOp::Or) {
+                return emit_logical_as_int_c(e, *op, left, right, types);
+            }
             let l = lower_value_as_int(e, left, types);
             let r = lower_value_as_int(e, right, types);
             emit_arith_op_c(e, *op, &l, &r)
@@ -1605,6 +1614,35 @@ fn lower_value_as_int(e: &mut Emit, value: &SsaValue, types: &VarTypes) -> Strin
             format!("sash_atoi({}, {})", ptr, len)
         }
     }
+}
+
+/// Lazy `&&` / `||`: evaluate the left operand, then emit the right operand's
+/// statements *inside* the branch that needs it, so its div-by-zero guard and
+/// overflow trap stay lazy. Mirrors native `lower_logical_short_circuit`.
+/// Yields 1 or 0, as bash does.
+fn emit_logical_as_int_c(
+    e: &mut Emit,
+    op: ArithOp,
+    left: &SsaValue,
+    right: &SsaValue,
+    types: &VarTypes,
+) -> String {
+    let l = lower_value_as_int(e, left, types);
+    let t = e.fresh();
+    writeln!(e.out, "    i64 {t};").unwrap();
+    // `&&` evaluates the right operand when the left is true; `||` when false.
+    let (cond, short) = if matches!(op, ArithOp::And) {
+        (format!("({})", l), 0)
+    } else {
+        (format!("!({})", l), 1)
+    };
+    writeln!(e.out, "    if ({}) {{", cond).unwrap();
+    let r = lower_value_as_int(e, right, types);
+    writeln!(e.out, "        {t} = (({}) != 0) ? 1 : 0;", r).unwrap();
+    writeln!(e.out, "    }} else {{").unwrap();
+    writeln!(e.out, "        {t} = {short};").unwrap();
+    writeln!(e.out, "    }}").unwrap();
+    t
 }
 
 /// Lower an int-valued ternary to an if/else that assigns the selected branch
@@ -1650,8 +1688,12 @@ fn emit_arith_op_c(e: &mut Emit, op: ArithOp, lhs: &str, rhs: &str) -> String {
             emit_checked_arith_c(e, cop, lhs, rhs)
         }
         Div | Mod => emit_div_or_mod_c(e, op, lhs, rhs),
-        And => format!("({} && {})", lhs, rhs),
-        Or => format!("({} || {})", lhs, rhs),
+        // Unreachable for the same reason as native `emit_arith_op`: the
+        // `ArithBinOp` arm of `lower_value_as_int` routes And/Or to
+        // `emit_logical_as_int_c` first. A C `&&`/`||` here would still
+        // short-circuit the *expression*, but the guard **statements** the
+        // operands emit run before it — journal 409.
+        And | Or => unreachable!("logical ops handled by emit_logical_as_int_c"),
         Shl | Shr => emit_shift_c(e, op, lhs, rhs),
         BitAnd => format!("({} & {})", lhs, rhs),
         BitOr => format!("({} | {})", lhs, rhs),

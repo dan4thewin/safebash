@@ -32,7 +32,17 @@ pub(super) fn emit_arith_op(
         ArithOp::Div | ArithOp::Mod => {
             emit_div_or_mod_with_zero_check(op, lhs, rhs, builder, module, externs)
         }
-        ArithOp::And | ArithOp::Or => emit_logical_and_or(op, lhs, rhs, builder),
+        // Every caller intercepts these before we get here: the `ArithBinOp`
+        // arm of `lower_value_as_int` routes them to
+        // `lower_logical_short_circuit`, and the two `ArithExpr` callers can
+        // only pass `Add` — that node is built at four sites in
+        // `transform/pipelines.rs`, all of them `i = i + 1`. Emitting them
+        // here at all would be *eager*, which is the bash divergence fixed in
+        // journal 409: the right operand's div-by-zero and overflow guards
+        // must not run when the left operand already decides the result.
+        ArithOp::And | ArithOp::Or => {
+            unreachable!("logical ops handled by lower_logical_short_circuit")
+        }
         ArithOp::Shl | ArithOp::Shr => emit_shift(op, lhs, rhs, builder, module, externs),
         ArithOp::BitAnd => builder.ins().band(lhs, rhs),
         ArithOp::BitOr => builder.ins().bor(lhs, rhs),
@@ -240,25 +250,6 @@ fn emit_icmp_bool(
 ) -> cranelift_codegen::ir::Value {
     let c = builder.ins().icmp(cc, lhs, rhs);
     builder.ins().uextend(I64, c)
-}
-
-/// Short-circuit-free `&&` / `||` (operands are already evaluated):
-/// nonzero-truthify each side, then bitwise combine, then widen.
-fn emit_logical_and_or(
-    op: ArithOp,
-    lhs: cranelift_codegen::ir::Value,
-    rhs: cranelift_codegen::ir::Value,
-    builder: &mut FunctionBuilder,
-) -> cranelift_codegen::ir::Value {
-    use cranelift_codegen::ir::condcodes::IntCC;
-    let l = builder.ins().icmp_imm(IntCC::NotEqual, lhs, 0);
-    let r = builder.ins().icmp_imm(IntCC::NotEqual, rhs, 0);
-    let b = if matches!(op, ArithOp::And) {
-        builder.ins().band(l, r)
-    } else {
-        builder.ins().bor(l, r)
-    };
-    builder.ins().uextend(I64, b)
 }
 
 /// `lhs ** rhs` — delegates to the runtime `pow` helper.

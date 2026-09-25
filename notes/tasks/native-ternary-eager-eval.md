@@ -62,3 +62,26 @@ separately *broken* (empty output — no `lower_value_as_str` arm) and fixed in
 the same session; this native laziness gap is the remaining half. spec
 coverage.sh cov.49-56 deliberately use side-effect-free branches so they pass
 on both backends until this is fixed.
+
+## Sibling found and fixed (2026-09-25, journal 409)
+
+Arithmetic `&&` / `||` had the **identical bug** and survived this task by
+sitting in a different function. `emit_arith_op` dispatched them to
+`emit_logical_and_or`, whose own doc comment said "Short-circuit-free
+(operands are already evaluated)" — so `(( d != 0 && 10 / d > 1 ))` with
+`d=0` aborted where bash prints `0`, in both backends.
+
+Fixed the same way and at the same layer: intercept in the `ArithBinOp` arm
+of `lower_value_as_int` and lower the right operand inside a branch
+(`lower_logical_short_circuit` native, `emit_logical_as_int_c` for c).
+Specs `31.129`-`31.136`.
+
+**The lesson for anything else of this class**: C short-circuiting the
+*expression* is not enough, because `lower_value_as_int` emits the guards as
+**statements** ahead of it. Any future lazy construct has to lower the operand
+inside the block, not just guard the operator.
+
+Both backends' eager emitters were then unreachable and were deleted in favour
+of `unreachable!` (DG's call). `lift_int_func_calls` still hoists function
+calls out of both `Ternary` and `ArithBinOp` — that is **correct**, because
+bash's command substitution inside arithmetic is eager too (verified).
