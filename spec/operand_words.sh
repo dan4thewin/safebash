@@ -7,7 +7,7 @@
 set -eu
 . common.sh
 setup operand_words
-plan=53
+plan=56
 echo "1..$plan" >&3
 
 set +e
@@ -272,6 +272,23 @@ run_sash 'map m=([k]=a)
 str k=k
 if [[ ${m[$k]}==a ]]; then echo T; else echo F; fi'
 [[ $rc = 0 && $out = "T" && -z $err ]]; chk 118.30
+
+# ── a missing test operand is its own SB4014 (parse_test_operand) ──
+# Distinct from the "expected ']]'" SB4014 that DD#118's `_` arm emits: this
+# one fires where an operand was REQUIRED and the token stream ran out.
+
+# ow.24 a unary operator with nothing after it
+run_sash 'if [[ -n ]]; then echo T; fi'
+[[ $rc != 0 && -z $out && $err == *SB4014* && $err == *"expected operand"* ]]; chk ow.24
+
+# ow.25 an empty test
+run_sash 'if [[ ]]; then echo T; fi'
+[[ $rc != 0 && -z $out && $err == *SB4014* && $err == *"expected operand"* ]]; chk ow.25
+
+# ow.26 a binary operator with no right operand
+run_sash 'str x=a
+if [[ $x == ]]; then echo T; fi'
+[[ $rc != 0 && -z $out && $err == *SB4014* && $err == *"expected operand"* ]]; chk ow.26
 
 set -e
 tally

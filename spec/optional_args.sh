@@ -7,7 +7,7 @@ set -eu
 . common.sh
 setup optional_args
 set +e
-plan=32
+plan=36
 echo "1..$plan" >&3
 
 # ── Optional trailing args via `:-` (a trailing `${args[i]:-D}` is optional) ──
@@ -166,6 +166,37 @@ run_sash 'fn f { attest w in args [[ -n $w ]]; /bin/echo z }; f'
 # reserved) — reading `@args` is never a write, so it stays valid.
 run_sash 'fn f { echo hi | read norm; /bin/echo @{norm:?} }; f'
 [[ $rc = 0 && $out = "hi" && -z $err ]]; chk 84.30
+
+# ── DD#91 addendum: SB5046 keys on the ELIDE, and must say so accurately ──
+# `!` is a modifier, not a disposition, so `${x:!~}` is elide-plus-trust.
+# The diagnostic used to render only `pe.operator`, quoting `${x:~}` back at
+# an author who wrote `${x:!~}` and advising `${x:-DEFAULT}` — which drops the
+# taint-off, so following it traded SB5046 for SB5020.
+
+# 84.33 `:!~` in a value position is SB5046, quoted as written
+run_sash 'str x=a
+str y=${x:!~}
+echo $y'
+[[ $rc != 0 && $err == *SB5046* && $err == *'`${x:!~}`'* ]]; chk 84.33
+
+# 84.34 the advice keeps the `!` — `${x:!-DEFAULT}`, not `${x:-DEFAULT}`
+run_sash 'str x=a
+str y=${x:!~}
+echo $y'
+[[ $rc != 0 && $err == *'`${x:!-DEFAULT}`'* && $err != *'`${x:-DEFAULT}`'* ]]; chk 84.34
+
+# 84.35 and the advised form actually compiles on a TAINTED subject, which is
+#       the case the old advice broke
+run_sash 'str x=$(getenv HOME)
+str y=${x:!-D}
+if [[ -n $y ]]; then echo done; fi'
+[[ $rc = 0 && $out = "done" && -z $err ]]; chk 84.35
+
+# 84.36 plain `:~` is unchanged — no `!` leaks into its message or advice
+run_sash 'str x=a
+str y=${x:~}
+echo $y'
+[[ $rc != 0 && $err == *SB5046* && $err == *'`${x:~}`'* && $err != *':!'* ]]; chk 84.36
 
 set -e
 tally

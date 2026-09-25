@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup errors
-plan=239
+plan=242
 echo "1..$plan" >&3
 
 set +e
@@ -487,6 +487,24 @@ run_sash 'v=a
 - [[ $v == a ]]
 echo after'
 [[ $rc = 0 && $out = "after" && -z $err ]]; chk e.b70.tdash
+
+# DD#70 (B) applies to `!` too, via a DIFFERENT function
+# (`check_negation_must_consume`) than the `[[ ]]`/match cases above
+# (`check_boolean_must_consume`). Every SB4018 spec covered the latter.
+
+# e.b70.nbare a bare `! X` result is unused → SB4018
+run_sash '! true
+echo after'
+[[ $rc != 0 && -z $out && $err == *SB4018* ]]; chk e.b70.nbare
+
+# e.b70.nif a consuming position takes it
+run_sash 'if ! true; then echo T; else echo F; fi'
+[[ $rc = 0 && $out = "F" && -z $err ]]; chk e.b70.nif
+
+# e.b70.ndash `-` discards the negation's result — legal
+run_sash '- ! true
+echo after'
+[[ $rc = 0 && $out = "after" && -z $err ]]; chk e.b70.ndash
 
 # e.b70.tdisc `[[ … ]] || :` explicitly discards the boolean → ok
 run_sash 'v=a; [[ $v == a ]] || :

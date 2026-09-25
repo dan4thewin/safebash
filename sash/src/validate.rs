@@ -3707,17 +3707,30 @@ fn check_elide_stmt_seq(stmts: &[Statement], diags: &mut Vec<Diagnostic>) {
     }
 }
 
-/// What to suggest to an author whose `:~`/`:!` landed in a value position.
+/// Render the expansion the way the author wrote it.
 ///
-/// The advice tracks the operator: `:~` is reaching for a default, so `:-` is
-/// the answer. `:!` is reaching for taint-off (DD#91), which `:-` does not
-/// provide at all — pointing there would send the author in a circle.
-fn elide_advice(sigil: &str, name: &str) -> String {
-    if sigil == ":!" {
+/// DD#91's 2026-09-09 addendum split `!` out of the operator into its own
+/// flag, so `pe.operator` alone spells `${x:~}` for someone who actually
+/// wrote `${x:!~}` — quoting a different expansion back at them.
+fn elide_sigil(pe: &ParameterExpansion) -> String {
+    let op = pe.operator.as_deref().unwrap_or(":~");
+    if pe.taint_off {
+        format!(":!{}", op.trim_start_matches(':'))
+    } else {
+        op.to_string()
+    }
+}
+
+/// What to suggest to an author whose `:~`/`:!~` landed in a value position.
+///
+/// The `!` has to survive the rewrite. Advising plain `${x:-DEFAULT}` for a
+/// `:!~` drops the taint-off, so an author who follows it trades SB5046 for
+/// SB5020 — the trust they asked for is exactly what the advice removed.
+fn elide_advice(taint_off: bool, name: &str) -> String {
+    if taint_off {
         return format!(
-            "for a trusted value here, vouch for the subject first \
-             (`attest {name} [[ … ]]`) — `:!` is elide-plus-taint-off, and the \
-             elide half has nowhere to go in this position"
+            "use `${{{name}:!-DEFAULT}}` for an empty/default value — keep the \
+             `!`, or the subject's taint comes back"
         );
     }
     format!("use `${{{name}:-DEFAULT}}` for an empty/default value")
@@ -3729,14 +3742,17 @@ fn check_elide_pexp(
     elidable: bool,
     diags: &mut Vec<Diagnostic>,
 ) {
-    if matches!(pe.operator.as_deref(), Some(":~") | Some(":!")) && !elidable {
-        let sigil = pe.operator.as_deref().unwrap_or(":~");
+    if pe.operator.as_deref() == Some(":~") && !elidable {
+        // `:!` alone never reaches here: the addendum made it a flag, so its
+        // operator is `None` and it is legal in every position a bare
+        // expansion is. Only the elide (`:~`, `:!~`) is position-restricted.
+        let sigil = elide_sigil(pe);
         // Say VARIADIC, not "a command argument". A fixed-arity builtin's
         // argument is a command argument too, and saying otherwise told an
-        // author whose `read ${x:!} f` was rejected that the very position
+        // author whose `read ${x:!~} f` was rejected that the very position
         // they had used was the valid one.
         //
-        let advice = elide_advice(sigil, &pe.name);
+        let advice = elide_advice(pe.taint_off, &pe.name);
         diags.push(Diagnostic::error_span(
             span,
             "SB5046",

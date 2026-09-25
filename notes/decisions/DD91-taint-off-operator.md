@@ -124,6 +124,13 @@ emptiness policy they never wrote. The split surfaces it. DD#99's
   orthogonal to the operator, so the two cannot be conflated again.
 - SB5046 (elide in a value position) now keys on the *elide*, so it fires for
   `:~` and `:!~` and not for `:!`.
+- **The diagnostic has to render the `!` back.** Splitting `!` out of the
+  operator means `pe.operator` alone spells `${x:~}` for an author who wrote
+  `${x:!~}`, and the advice derived from it (`${x:-DEFAULT}`) *drops the
+  taint-off* — so following it trades SB5046 for SB5020, removing the very
+  trust the author asked for. The sigil is built from operator **plus**
+  `taint_off` (`elide_sigil`), and the advice keeps the `!`
+  (`${x:!-DEFAULT}`). Fixed 2026-09-26; specs `optional_args.sh` 84.33-84.36.
 
 
 ## Audit surface
