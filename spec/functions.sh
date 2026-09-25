@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup functions
-plan=133
+plan=138
 echo "1..$plan" >&3
 
 set +e
@@ -903,6 +903,58 @@ g
 echo "b=$?"'
 [[ $rc = 0 && $out = "a=2
 b=5" && -z $err ]]; chk 74.56
+
+# 74.57 DD#77: `return`'s status is an INT sink, so a string operand's
+# disposition uses the arith trigger ("not a valid integer"), not the word
+# trigger (unset-or-empty, DD#65). s is set and non-empty but not numeric, so
+# `:-` must supply the default. Native lowered the value as a *string* and then
+# leniently atoi'd it, silently yielding 0 while the c backend yielded 7.
+run_sash 'f() {
+str s=abc
+return ${s:-7}
+}
+f
+echo "rc=$?"'
+[[ $rc = 0 && $out = "rc=7" && -z $err ]]; chk 74.57
+
+# 74.58 ...and `:?` must ABORT rather than silently return 0. This is the
+# safety-relevant half: the author wrote an explicit "not an integer" guard.
+run_sash 'f() {
+str s=abc
+return ${s:?not an int}
+}
+f
+echo "rc=$?"'
+[[ $rc = 1 && $rerr == *"not an int"* && $out != *rc=* ]]; chk 74.58
+
+# 74.59 a VALID integer string converts to its own value, not to the default
+run_sash 'f() {
+str s=5
+return ${s:-7}
+}
+f
+echo "rc=$?"'
+[[ $rc = 0 && $out = "rc=5" && -z $err ]]; chk 74.59
+
+# 74.60 ...and passes the `:?` gate without aborting
+run_sash 'f() {
+str s=5
+return ${s:?not an int}
+}
+f
+echo "rc=$?"'
+[[ $rc = 0 && $out = "rc=5" && -z $err ]]; chk 74.60
+
+# 74.61 the disposition reaches the caller's control flow, not just `$?`
+# (DD#74 keeps test_result in sync). The default is 1, not 0, so the two
+# answers differ: converted -> 1 -> "no"; the old lenient atoi("abc") -> 0 ->
+# "yes". A `:-0` here would have been vacuous.
+run_sash 'f() {
+str s=abc
+return ${s:-1}
+}
+if f; then echo yes; else echo no; fi'
+[[ $rc = 0 && $out = "no" && -z $err ]]; chk 74.61
 
 set -e
 tally

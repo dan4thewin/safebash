@@ -15,7 +15,7 @@ use super::redirects::{
     emit_redirects_guarded, emit_restore, lower_ir_redirect_expr, RedirectFailure,
 };
 use super::types::{find_array_slot, ExternFuncs, InstCtx, VarSlot};
-use super::values::{atoi_call, lower_value, lower_value_as_int};
+use super::values::{lower_value, lower_value_as_int};
 use crate::ssa::*;
 
 /// Handle SsaInst::Pipeline — fork/exec multiple stages connected by pipes.
@@ -545,30 +545,32 @@ fn handle_new_table_assign(
 
 /// Assignment to `$?` — the value goes into the dedicated
 /// exit_status_var (an i64), not into a regular var slot.
+///
+/// The value is lowered **as an int**, not as a string-then-`atoi`. The
+/// distinction is not cosmetic: `lower_value_as_int` is type-directed and
+/// routes a DD#77 disposition to `sash_atoi_or`/`sash_atoi_or_abort`, whereas
+/// string lowering evaluates `${s:-7}` in *word* context — where the trigger is
+/// unset-or-empty (DD#65), not "not a valid integer" — and then leniently
+/// `atoi`s the result. For a set-but-non-numeric `s` that silently produced
+/// **0**, so `return ${s:?msg}` returned 0 instead of aborting: an explicit
+/// guard that did nothing. `emit_exit` (DD#89) and the c backend's `$?` arm
+/// (`emit_c.rs::emit_assign`) already lowered as int; this is native catching
+/// up, and the two backends now agree.
 fn handle_exit_status_assign(
     value: &SsaValue,
     builder: &mut FunctionBuilder,
     module: &mut ObjectModule,
     ctx: &mut InstCtx,
 ) {
-    let int_val = match value {
-        SsaValue::Literal(s) => {
-            let n = s.parse::<i64>().unwrap_or(0);
-            builder.ins().iconst(I64, n)
-        }
-        _ => {
-            let (ptr, len) = lower_value(
-                value,
-                builder,
-                module,
-                ctx.vars,
-                ctx.literals,
-                ctx.externs,
-                Some(ctx.exit_status_var),
-            );
-            atoi_call(builder, module, ctx.externs, ptr, len)
-        }
-    };
+    let int_val = lower_value_as_int(
+        value,
+        builder,
+        module,
+        ctx.vars,
+        ctx.literals,
+        ctx.externs,
+        Some(ctx.exit_status_var),
+    );
     builder.def_var(ctx.exit_status_var, int_val);
     // DD#74: keep test_result_var in sync with $? so a function's `return N`
     // drives an enclosing if/while/!/&&/|| condition (test_result = 1 iff the
