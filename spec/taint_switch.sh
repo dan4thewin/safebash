@@ -5,7 +5,7 @@
 set -eu
 . common.sh
 setup taint_switch
-plan=9
+plan=11
 echo "1..$plan" >&3
 
 set +e
@@ -49,6 +49,21 @@ run_sash 'y=$(getenv HOME); x=$(toupper $y); echo $x'
 run_sash 'echo ig | /bin/cat /etc/hostname | readline x
 echo "$x"'
 [[ $rc != 0 && -z $out ]]; chk sw.9
+# sw.10 the SSA backstop rejects a tainted ARRAY at a subscript read. This is
+# the one tainted-array origin the backstop classifies: the array literal is
+# an `Assign` whose value carries the cmdsub's taint. (The bulk-read origins
+# DD#61 names — `read`/`mapfile`/`argv` fills — define no SSA VarRef and stay
+# CST-only; see notes/tasks/ssa-taint-full-backstop.md, deferred by DG
+# 2026-09-12.) Assert the message so this cannot pass on the scalar backstop.
+run_sash 'array a=($(getenv HOME))
+echo ${a[0]}'
+[[ $rc != 0 && -z $out && $err == *"tainted array a[...]"* ]]; chk sw.10
+# sw.11 control: a CLEAN array subscript is not false-positived by the
+# backstop with the CST pass off — the reject above is about taint, not about
+# arrays being unclassifiable at SSA.
+run_sash 'array a=(x y)
+echo ${a[0]}'
+[[ $rc = 0 && $out = x && -z $err ]]; chk sw.11
 unset SASH_CFLAGS
 
 set -e

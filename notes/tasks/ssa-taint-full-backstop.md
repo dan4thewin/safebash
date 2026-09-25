@@ -78,3 +78,27 @@ Worth noting for whoever picks it up: `run_ssa_taint_gate` skips only on
 `--no-taint`, so the SSA gate **does** run during ordinary compilation. This is
 a live second gate with a collection-shaped hole, not merely a `--no-taint-cst`
 debugging aid.
+
+## Re-measured 2026-09-25 (journal 408) — the boundary is sharper than "arrays"
+
+Gap 2 above says "array taint is not classified at SSA". That is true of the
+*bulk-read* origins and **not** of the literal, which matters when picking up
+this task:
+
+| origin | SSA inst | backstop under `--no-taint-cst` |
+|---|---|---|
+| `array a=($(getenv HOME))` | `Assign` | **rejects** — value carries the cmdsub's taint |
+| `read a < f` | `ReadArray` | compiles, leaks |
+| `mapfile a < f` | `ReadArray` | compiles, leaks |
+| `argv 1 a` | `ArgvFill` | compiles, leaks |
+
+So `check_tainted_array` is reachable today, by the literal only; it is now
+pinned by spec `sw.10` (with `sw.11` as the clean-array control). The three
+leaking rows are all SB5020 in a normal compile — re-verified 2026-09-25, so
+**DG's deferral condition still holds**.
+
+The shared cause of the three is `classify_inst_def`: `ReadArray` / `ArgvFill`
+/ `SplitValue` / `MapFromArray` define no `VarRef`, so they sit in the no-def
+group and never enter the taint map. Gap 2's note about versioned keys is the
+real obstacle — `taint_of_name`'s max-version lookup is what a naive insert
+fails against.

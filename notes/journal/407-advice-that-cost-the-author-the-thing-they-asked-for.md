@@ -85,6 +85,14 @@ forward-compatible correctness; the CST gate enforces the bypass today."* A
 defence-in-depth check that the authoritative gate shadows is supposed to be
 cold. Not a finding.
 
+> **Correction (journal 408, same day).** This is wrong, and the citation is
+> misapplied. DD#91:50-53 is about `ElideEmpty`/`ArraySplat` **dispositions**,
+> not the subscript check — a real quote attached to the wrong subject, which
+> is why grepping for it "confirmed" it. The arm is reachable in one line
+> under `--no-taint-cst`, and the sibling scalar backstop was firing 8 times
+> in the same report. It was an untested arm, not a shadowed one. Specs
+> `sw.10`/`sw.11` now cover it.
+
 ## Gates
 
 6340 specs, zero failures, exactly the predicted total (6320 + 10×2). Zero
