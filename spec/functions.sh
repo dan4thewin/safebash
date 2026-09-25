@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup functions
-plan=125
+plan=133
 echo "1..$plan" >&3
 
 set +e
@@ -826,6 +826,83 @@ echo ok'
 
 
 rm -f $frf $frin
+
+# ── DD#74: `return` must be given a producer or a status VALUE ──────────
+# A reserved word, a bare `-`, or `=` is neither. They used to fall through
+# to the simple-command path, which absorbed them as an *argument* of a
+# `return` command and silently dropped them: the function returned 0 where
+# bash reports "numeric argument required" (rc 2). Found via coverage —
+# the SB4014 below was unreachable, which is why nothing caught it.
+#
+# Each check asserts the MESSAGE, not just SB4014: error recovery emits a
+# follow-on `SB4014 expected expression` on the orphaned `}`, so asserting
+# the code alone would pass without the guard ever firing.
+
+# 74.49 a reserved word after `return`
+run_sash 'f() {
+return if
+}
+f'
+[[ $rc != 0 && $err == *"return: expected a status producer"* ]]; chk 74.49
+
+# 74.50 ...including one that is also a type keyword
+run_sash 'f() {
+return str
+}
+f'
+[[ $rc != 0 && $err == *"return: expected a status producer"* ]]; chk 74.50
+
+# 74.51 a bare `-` — `-` discards a status, `return` consumes one (cf. SB4019
+# for the same clash between `!` and `-`)
+run_sash 'f() {
+return -
+}
+f'
+[[ $rc != 0 && $err == *"return: expected a status producer"* ]]; chk 74.51
+
+# 74.52 `return - CMD` additionally threw the command away WITHOUT running it
+run_sash 'f() {
+return - /bin/echo hi
+}
+f'
+[[ $rc != 0 && -z $out && $err == *"return: expected a status producer"* ]]; chk 74.52
+
+# 74.53 a bare `=`
+run_sash 'f() {
+return =
+}
+f'
+[[ $rc != 0 && $err == *"return: expected a status producer"* ]]; chk 74.53
+
+# 74.54 the guard must not over-reach: a non-keyword word is still a COMMAND
+# producer, so it reports the command, not the producer error
+run_sash 'f() {
+return abc
+}
+f'
+[[ $rc != 0 && $err == *SB5011* && $err != *"status producer"* ]]; chk 74.54
+
+# 74.55 a literal status still works
+run_sash 'f() {
+return 7
+}
+f
+echo "rc=$?"'
+[[ $rc = 0 && $out = "rc=7" && -z $err ]]; chk 74.55
+
+# 74.56 ...and so do the quoted / arithmetic status VALUE forms
+run_sash 'f() {
+return $(( 1 + 1 ))
+}
+f
+echo "a=$?"
+g() {
+return "5"
+}
+g
+echo "b=$?"'
+[[ $rc = 0 && $out = "a=2
+b=5" && -z $err ]]; chk 74.56
 
 set -e
 tally

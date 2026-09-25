@@ -998,12 +998,44 @@ fn parse_return_producer_head(scanner: &mut Scanner) -> Result<Option<Statement>
     }
 }
 
+/// SB4014 — `return` was given something that is neither a status *producer*
+/// (DD#74) nor a status *value*. Shared by the guard in `parse_return` and the
+/// `None` arm below so the sentence exists once.
+fn return_producer_error(span: Span) -> Diagnostic {
+    parse_error(
+        span,
+        "SB4014",
+        "return: expected a status producer (a command, `[[ … ]]`, or `(( … ))`)".to_string(),
+    )
+}
+
+/// The non-producer path: `return`, `return 7`, `return $?`, `return "5"` —
+/// a status *value*, parsed as a plain `return` command.
+///
+/// A reserved word, a bare `-`, or `=` is neither a producer nor a value, and
+/// this is where they used to be absorbed as an *argument* and dropped:
+/// `return if` compiled and yielded 0 where bash reports "numeric argument
+/// required" (rc 2), and `return - echo hi` additionally threw the command
+/// away without running it. `keyword_to_str` is the canonical reserved-word
+/// list (parse/expr.rs), so a keyword added later is covered here without a
+/// second list to keep in step.
+fn parse_return_value_form(
+    scanner: &mut Scanner,
+    after: &Tok,
+) -> Result<Option<Statement>, Diagnostic> {
+    if super::expr::keyword_to_str(after).is_some() || matches!(after, Tok::Dash | Tok::Eq) {
+        let bad = scanner.peek_n(1).span;
+        return Err(return_producer_error(span_from(scanner, bad.start)));
+    }
+    parse_simple_or_assignment(scanner)
+}
+
 fn parse_return(scanner: &mut Scanner) -> Result<Option<Statement>, Diagnostic> {
     let after = scanner.peek_n(1).token.clone();
     let is_producer = matches!(after, Tok::DblBracketOpen | Tok::DblParen | Tok::Bang)
         || matches!(&after, Tok::Word(w) if !w.chars().all(|c| c.is_ascii_digit()));
     if !is_producer {
-        return parse_simple_or_assignment(scanner);
+        return parse_return_value_form(scanner, &after);
     }
     let sp = scanner.peek().span;
     let span = span_from(scanner, sp.start);
@@ -1024,11 +1056,7 @@ fn parse_return(scanner: &mut Scanner) -> Result<Option<Statement>, Diagnostic> 
                 span,
             }))
         }
-        None => Err(parse_error(
-            span,
-            "SB4014",
-            "return: expected a status producer (a command, `[[ … ]]`, or `(( … ))`)".to_string(),
-        )),
+        None => Err(return_producer_error(span)),
     }
 }
 
