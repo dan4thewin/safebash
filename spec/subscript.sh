@@ -10,7 +10,7 @@
 set -eu
 . common.sh
 setup subscript
-plan=50
+plan=58
 echo "1..$plan" >&3
 
 set +e
@@ -236,18 +236,22 @@ run_sash 'fn f { array arr=(p q r); echo $arr[$1] }
 f 2'
 [[ $rc != 0 && -z $out && $err == *SB5064* ]]; chk 80.34
 
-# ─── H. `name[` as a bare word: the two early-outs of the dynamic-subscript
+# ─── H. `name[` as a bare word: the early-outs of the dynamic-subscript
 #        sniffer. `looks_like_dynamic_subscript_assign` only commits to a
-#        `name[$i]=` parse once the *shape* is confirmed; these are the
+#        `name[…]=` parse once the *shape* is confirmed; these are the
 #        inputs where it backs out and the word stays an ordinary command
-#        name. Both were cold branches (parser.rs 1851 / 1854).
+#        name.
 
-# 80.35 `a[` followed by a plain word, not a `$`: the lexer only splits
-#       `name[` off when the subscript holds an expansion, so this is not a
-#       subscript assignment at all and `a[` is just a command name.
+# 80.35 `a[ x ]=5` IS a subscript assignment now. It did not used to be: the
+#       sniffer required the index to be a single `$`-token, so a bareword
+#       index made `a[` an ordinary command name and the error was SB5011
+#       ("command not found"). The LHS index is now parsed by the same
+#       `parse_subscript_index` the read side uses, which trims, so the
+#       whitespace is immaterial and the real fault is reported instead:
+#       `x` is a string key on an array.
 run_sash 'array a=(1 2 3)
 a[ x ]=5'
-[[ $rc != 0 && -z $out && $err == *SB5011* ]]; chk 80.35
+[[ $rc != 0 && -z $out && $err == *SB4030* ]]; chk 80.35
 
 # 80.36 `a[$i` with nothing after it: the token where `]` would go is the end
 #       of input, so the sniffer backs out rather than reading past the end.
@@ -262,24 +266,29 @@ int i=0
 a[$i; echo hi'
 [[ $rc != 0 && -z $out && $err == *SB5011* ]]; chk 80.37
 
-# ── a dynamic subscript index must be a plain `$var` / `${var}` ───────
-# The lexer splits `m[$k]=` into `m[`, `$k`, `]`, `=`; anything richer than
-# a bare name inside the braces has no lowering, and is rejected rather
-# than silently mis-parsed.
+# ── an assignment-LHS subscript index accepts what the read side accepts ──
+# The LHS used to be a strictly narrower surface: the lexer splits `m[$k]=`
+# into `m[`, `$k`, `]`, `=`, and the parser accepted only that single
+# `$var`/`${var}` token, so every richer index was SB4014 — including
+# `$(( … ))`, the conversion DD#80 itself names. Both surfaces now route
+# through `parse_subscript_index`, so neither can drift from the other.
 
-# 80.38 a modifier in the index is rejected, naming the position
+# 80.38 a disposition in the index is honoured, not rejected: `k` is set, so
+#       the default is not taken and the key is `x`.
 run_sash 'map m
 str k="x"
 m[${k:-z}]=1
-echo $(len m)'
-[[ $rc != 0 && $err == *SB4014* ]]; chk 80.38
+echo "$(len m) ${m[x]}"'
+[[ $rc = 0 && $out = "1 1" && -z $err ]]; chk 80.38
 
-# 80.39 …as is a length expansion
+# 80.39 a retired construct in the index reports what it *is* (SB4038, the
+#       `${#…}` retirement) rather than the blanket SB4014 the LHS used to
+#       give — the same diagnostic the read side gives for the same text.
 run_sash 'map m
 str k="x"
 m[${#k}]=1
 echo $(len m)'
-[[ $rc != 0 && $err == *SB4014* ]]; chk 80.39
+[[ $rc != 0 && $err == *SB4038* ]]; chk 80.39
 
 # 80.40 the plain forms both still work and index the same cell
 run_sash 'map m
@@ -362,6 +371,74 @@ int i=$(( ${s:-2} ))
 a[$i]=99
 echo "${a[2]}"'
 [[ $rc = 0 && $out = "99" && -z $err ]]; chk 80.50
+
+# ─── J. assignment-LHS / read parity (the surfaces accept the same index) ──
+# Before this, the LHS took only a bare `$var`/`${var}` token. Everything
+# below read fine inside `${a[…]}` and was a parse error on the left of an
+# `=`, which left DD#80's own remedy — convert the string with `$(( … ))` —
+# unusable at exactly the point an author needs it.
+
+# 80.51 `$(( … ))` as an assignment index. This was SB5011: the sniffer never
+#       recognised the statement as an assignment at all, so `a[` became a
+#       command name and the message named neither the array nor the index.
+run_sash 'int array a=(10 20 30)
+a[$((1+1))]=99
+echo "${a[0]} ${a[1]} ${a[2]}"'
+[[ $rc = 0 && $out = "10 20 99" && -z $err ]]; chk 80.51
+
+# 80.52 …carrying a disposition, which is the whole point: a string that has
+#       been converted is a legal index on both sides. `s` is unset, so the
+#       default is taken.
+run_sash 'int array a=(10 20 30)
+str s
+a[$(( ${s:-2} ))]=99
+echo "${a[2]}"'
+[[ $rc = 0 && $out = "99" && -z $err ]]; chk 80.52
+
+# 80.53 …and brace-less inside the parens, which the read side also takes.
+run_sash 'int array a=(10 20 30)
+str s
+a[$(( $s:-2 ))]=99
+echo "${a[2]}"'
+[[ $rc = 0 && $out = "99" && -z $err ]]; chk 80.53
+
+# 80.54 a quoted map key on the LHS. This was SB4014 — `m["$i"]=v` could not
+#       be written even though `${m["$i"]}` could be read.
+run_sash 'map m
+int i=7
+m["$i"]=v
+echo "$(len m) ${m["7"]}"'
+[[ $rc = 0 && $out = "1 v" && -z $err ]]; chk 80.54
+
+# 80.55 a bare disposition as an array index, matching the read side.
+run_sash 'int array a=(10 20 30)
+str s
+a[${s:-2}]=99
+echo "${a[2]}"'
+[[ $rc = 0 && $out = "99" && -z $err ]]; chk 80.55
+
+# 80.56 `+=` takes the widened index too — the sniffer accepts both operators,
+#       so the parity is not accidentally `=`-only.
+run_sash 'array a=(x y z)
+a[$((1+1))]+=Q
+echo "${a[2]}"'
+[[ $rc = 0 && $out = "zQ" && -z $err ]]; chk 80.56
+
+# 80.57 whitespace inside the brackets is immaterial on the LHS, as it already
+#       was on the read side: `parse_subscript_index` trims.
+run_sash 'array a=(p q r)
+a[ 1 ]=Z
+echo "${a[1]}"'
+[[ $rc = 0 && $out = "Z" && -z $err ]]; chk 80.57
+
+# 80.58 the look-ahead is bounded, and an unclosed index is still not an
+#       assignment: `a[` stays a command name rather than swallowing the file.
+run_sash 'array a=(1 2 3)
+int i=0
+a[$i=5
+echo done'
+[[ $rc != 0 && -z $out && $err == *SB5011* ]]; chk 80.58
+
 
 set -e
 tally

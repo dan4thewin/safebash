@@ -23,7 +23,7 @@ use super::arith::{
 use super::error::parse_error;
 use super::expr::{
     is_identifier, keyword_to_str, parse_array_literal, parse_assignment_value, parse_expr,
-    parse_operand_word, span_from,
+    parse_operand_word, parse_subscript_index, span_from,
 };
 use super::lexer::{Scanner, Tok};
 use crate::diagnostic::Diagnostic;
@@ -1977,16 +1977,15 @@ fn looks_like_dynamic_subscript_assign(scanner: &mut Scanner, w: &str) -> bool {
     if !is_identifier(name) {
         return false;
     }
-    if !matches!(
-        scanner.peek_n(1).token,
-        Tok::Dollar(_) | Tok::DollarBrace(_)
-    ) {
-        return false;
-    }
-    let Tok::Word(rb) = &scanner.peek_n(2).token else {
-        return false;
-    };
-    rb == "]" && matches!(scanner.peek_n(3).token, Tok::Eq | Tok::PlusAssign)
+    // The index is no longer a single token (it may be `$(( … ))`, a
+    // disposition, or a quoted key), so look ahead for the `]` that closes it
+    // and require an assignment operator immediately after. The `name[` word is
+    // still unconsumed here, so the index starts one token later than it does
+    // in `parse_split_subscript_index`.
+    (1..=MAX_LHS_INDEX_TOKENS).any(|i| {
+        matches!(&scanner.peek_n(i).token, Tok::Word(rb) if rb == "]")
+            && matches!(scanner.peek_n(i + 1).token, Tok::Eq | Tok::PlusAssign)
+    })
 }
 
 /// `var =~ s/pat/rep/` shape probe. Returns the var name (cloned) if
@@ -2108,36 +2107,48 @@ fn parse_assignment_lhs(
     ))
 }
 
-/// Consume a dynamic subscript index that the lexer split into its own
-/// tokens — `$var` (`Tok::Dollar`) or `${var}` (`Tok::DollarBrace` with a
-/// bare identifier) — followed by the closing `]` word. Used for
-/// `name[$var]=value` assignments (DD#33).
+/// Consume a dynamic subscript index that the lexer split into its own tokens,
+/// followed by the closing `]` word. Used for `name[IDX]=value` assignments
+/// (DD#33).
+///
+/// This used to accept only `$var`/`${var}`, which made the assignment LHS a
+/// strictly narrower surface than the read side: `${a[$(( … ))]}` read fine but
+/// `a[$(( … ))]=` was SB4014, even though `$(( … ))` is the conversion DD#80
+/// itself names. The two surfaces must accept the same index forms, so the raw
+/// index text is recovered from the token spans and handed to the *same*
+/// [`parse_subscript_index`] the read path uses — uniformity is then structural
+/// rather than two lists kept in step by hand.
+///
+/// Re-parsing the text, rather than running `parse_expr` on the live scanner,
+/// is what keeps the closing `]` out of the index: with no space before it the
+/// word parser glues it onto the last operand, so `a[$i]=` yielded `1]`.
 fn parse_split_subscript_index(scanner: &mut Scanner, span: Span) -> Result<Expr, Diagnostic> {
-    let idx = match scanner.next().token {
-        Tok::Dollar(v) => Expr {
-            kind: ExprKind::SimpleExpansion(v),
+    let Some(close) = lhs_index_close(scanner) else {
+        return Err(parse_error(
             span,
-        },
-        Tok::DollarBrace(content) if is_identifier(&content) => Expr {
-            kind: ExprKind::SimpleExpansion(content),
-            span,
-        },
-        _ => {
-            return Err(parse_error(
-                span,
-                "SB4014",
-                "unsupported dynamic subscript index in assignment".to_string(),
-            ))
-        }
+            "SB4014",
+            "unsupported dynamic subscript index in assignment".to_string(),
+        ));
     };
-    // The `]` needs no test: `looks_like_dynamic_subscript_assign` is the only
-    // route here, and it already required `peek_n(2)` to be exactly `]` (the
-    // other `looks_like_assignment` arm demands a word *ending* in `]`, which
-    // cannot also end in `[`). Same probe-then-consume shape as
-    // `parse_regex_mutation`.
-    scanner.next();
-    Ok(idx)
+    let start = scanner.peek().span.start;
+    let end = scanner.peek_n(close).span.start;
+    let text = scanner.source_slice(start, end).to_string();
+    for _ in 0..=close {
+        scanner.next();
+    }
+    Ok(parse_subscript_index(&text, span))
 }
+
+/// Offset of the `]` token that closes an assignment-LHS subscript, or `None`
+/// if there is none within [`MAX_LHS_INDEX_TOKENS`].
+fn lhs_index_close(scanner: &mut Scanner) -> Option<usize> {
+    (0..MAX_LHS_INDEX_TOKENS)
+        .find(|&i| matches!(&scanner.peek_n(i).token, Tok::Word(w) if w == "]"))
+}
+
+/// How far the assignment-LHS subscript parser looks ahead for the `]` that
+/// closes the index. Bounded so a bare `name[` cannot walk the rest of the file.
+const MAX_LHS_INDEX_TOKENS: usize = 32;
 
 /// Parse regex mutation: `var =~ s/RE/SUB/[flags]`. Desugars to
 /// `var = $(sub|gsub "$var" RE SUB)` (DD#63) — RE/SUB are re-parsed as

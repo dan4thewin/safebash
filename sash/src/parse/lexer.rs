@@ -262,6 +262,13 @@ impl Scanner {
         (line, col)
     }
 
+    /// Source text between two byte offsets. Used by the assignment-LHS
+    /// subscript parser to recover the raw index text from the token spans, so
+    /// it can re-parse it exactly as the read path does.
+    pub fn source_slice(&self, start: usize, end: usize) -> &str {
+        std::str::from_utf8(&self.source[start..end]).unwrap_or("")
+    }
+
     /// Peek at the next token without consuming it.
     pub fn peek(&mut self) -> &SpannedToken {
         if self.peeked.is_empty() {

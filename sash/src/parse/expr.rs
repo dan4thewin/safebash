@@ -969,30 +969,40 @@ fn step_close_depth(depth: &mut i32) -> bool {
 /// nested contexts survive. A parse failure or a leftover tail (a mixed/bare
 /// form the value parser cannot consume whole) falls back to a `Literal` — which
 /// `validate::check_subscript_index` then rejects as ambiguous (SB4041).
-fn parse_subscript_index(idx: &str, span: Span) -> Expr {
+pub(super) fn parse_subscript_index(idx: &str, span: Span) -> Expr {
     let trimmed = idx.trim();
-    // A bare dollar-subscript `$name[…]` is ambiguous as an index (DD#80): it
-    // parses as a clean cell read, but the explicit cell-read index form is the
-    // braced `${name[…]}`. Keep it a `Literal` so validate rejects it (SB4041)
-    // rather than silently reading a cell.
-    if !is_bare_dollar_subscript(trimmed) {
-        let mut scanner = Scanner::new(trimmed);
-        if let Ok(mut expr) = parse_expr(&mut scanner) {
-            if scanner.at_eof() {
-                // The sub-scanner numbers lines and columns from the start of
-                // the index TEXT, so its spans are 1:1-relative. Re-anchor the
-                // expression the caller reports on to the whole `${name[…]}`.
-                // (Exprs nested deeper inside the index keep the relative span
-                // — see notes/tasks/subscript-index-nested-span.md.)
-                expr.span = span;
-                return expr;
-            }
+    match parse_whole_index(trimmed) {
+        // The sub-scanner numbers lines and columns from the start of the index
+        // TEXT, so its spans are 1:1-relative. Re-anchor the expression the
+        // caller reports on to the whole `${name[…]}`. (Exprs nested deeper
+        // inside the index keep the relative span — see
+        // notes/tasks/subscript-index-nested-span.md.)
+        Some(mut expr) => {
+            expr.span = span;
+            expr
         }
+        None => Expr {
+            kind: ExprKind::Literal(trimmed.to_string()),
+            span,
+        },
     }
-    Expr {
-        kind: ExprKind::Literal(trimmed.to_string()),
-        span,
+}
+
+/// The index text as a value expression, or `None` if it is not one the value
+/// parser can consume *whole* — a leftover tail means a mixed or bare form.
+///
+/// A bare dollar-subscript `$name[…]` is excluded even though it parses: it is
+/// ambiguous as an index (DD#80), because the explicit cell-read index form is
+/// the braced `${name[…]}`. Returning `None` for both cases leaves the caller
+/// holding a `Literal`, which `validate::check_subscript_index` then rejects as
+/// ambiguous (SB4041).
+fn parse_whole_index(trimmed: &str) -> Option<Expr> {
+    if is_bare_dollar_subscript(trimmed) {
+        return None;
     }
+    let mut scanner = Scanner::new(trimmed);
+    let expr = parse_expr(&mut scanner).ok()?;
+    scanner.at_eof().then_some(expr)
 }
 
 /// `$name[…]` — a `$`-sigil identifier immediately followed by a `[` subscript,
