@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup commands
-plan=142
+plan=146
 echo "1..$plan" >&3
 
 set +e
@@ -920,6 +920,56 @@ run_sash '/bin/echo hi > $(/bin/echo d119f)'
 [[ $rc != 0 && $err == *SB4049* ]]; chk 14.63
 
 rm -f d119a d119c 119.d119
+
+# --- DD#119's int exemption, dispositioned (bug: c backend only) ---
+# DD#119 exempts ints from the non-empty proof ("exempt but still needs
+# quotes to make a string") -- so `> "${n:?msg}"` is the spelling the rule
+# directs authors to. It did not work: the c backend emitted `n_ptr`/`n_len`,
+# which are the string slots of a VarSlot, and an int has neither. That is a
+# hard COMPILE error in the generated C, not a wrong answer. Native was fine,
+# so only the differential oracle could see it.
+#
+# `load_var_or_empty_c` built `{base}_ptr`/`{base}_len` without consulting the
+# var's type -- the same fault as `latest_var_as_str` (fixed in 006fce2), in
+# the second of the two functions that render a slot as text. They now share
+# `var_slot_as_str_c` so they cannot disagree about an int again.
+#
+# These assert FILE CONTENTS, not just rc: the native failure mode for a
+# broken redirect is to write to stdout, which a status-only check misses.
+
+run_sash 'int n=5
+/bin/echo hi > "${n:?no n}"
+/bin/echo "wrote=$n"'
+w=${out#wrote=}
+[[ $rc == 0 && $w == 5 && -f $w && $(cat "$w") == hi ]]; chk 14.64
+rm -f 5
+# 14.65/14.66 are NOT proofs of this fix: neutering the type consultation
+# leaves both green. `:-` on an int is a ternary (DD#62 meaningful zero), and
+# an int cell goes through lower_value_as_str, so neither reaches
+# load_var_or_empty_c. Kept as true assertions of the int exemption, labelled
+# so they are not mistaken for coverage of the renderer. 14.64 and 14.67 are
+# the proofs; 14.59 above fails under the same neuter, which is what confirms
+# the two renderers really do share var_slot_as_str_c now.
+# the same via `:-`, whose int arm is a ternary (DD#62 meaningful zero)
+run_sash 'int n=6
+/bin/echo hi > "${n:-9}"
+/bin/echo "wrote=$n"'
+w=${out#wrote=}
+[[ $rc == 0 && $w == 6 && -f $w && $(cat "$w") == hi ]]; chk 14.65
+rm -f 6
+# an int cell carries the same obligation and the same rendering
+run_sash 'int array a=(4 8)
+/bin/echo hi > "${a[1]:?no cell}"
+/bin/echo "wrote=${a[1]}"'
+w=${out#wrote=}
+[[ $rc == 0 && $w == 8 && -f $w && $(cat "$w") == hi ]]; chk 14.66
+rm -f 8
+# and the plain read path (emit_param_expansion), the other caller of the
+# function that was broken -- not a redirect, so it pins the fix rather than
+# the rule
+run_sash 'int n=5
+/bin/echo "v=${n:?no n}"'
+[[ $rc == 0 && $out == "v=5" && -z $err ]]; chk 14.67
 
 set -e
 tally

@@ -2900,26 +2900,14 @@ fn ir_expr_as_str(e: &mut Emit, expr: &crate::ir::Expr, types: &VarTypes) -> CSt
 }
 
 /// Look up the highest-version slot for `name` and return its
-/// (ptr, len) C expression pair. For Int vars: route through
-/// sash_itoa via emit_itoa_temp (which requires `e` to emit setup).
-/// For unknown vars: empty string. NB: this signature doesn't
-/// thread `e` for the Int path — caller must use a String-typed
-/// var. Phase 2 acknowledges this limitation; Phase 3 will widen.
+/// (ptr, len) C expression pair. A String var yields its slots directly;
+/// an Int renders through `sash_itoa` via `emit_itoa_temp`, which is why
+/// `e` is threaded. An unknown var is the empty string.
 fn latest_var_as_str(e: &mut Emit, name: &str, types: &VarTypes) -> CStr {
     let Some(((n, v), vtype)) = highest_version(name, types) else {
         return ("\"\"".to_string(), "0".to_string());
     };
-    let base = c_var_name(&n, v);
-    match vtype {
-        VarType::String => (format!("{}_ptr", base), format!("{}_len", base)),
-        // An int in a string context renders through sash_itoa, matching the
-        // native backend's `emit_int_to_str`. This used to return `""` with a
-        // comment deferring the case as rare — a *silent* wrong answer, which
-        // is the one outcome the differential oracle exists to prevent. It was
-        // reachable from `/bin/echo hi > "$n".log`, found when the native side
-        // of that spec passed and the c side did not.
-        VarType::Int => emit_itoa_temp(e, &base),
-    }
+    var_slot_as_str_c(e, &c_var_name(&n, v), vtype)
 }
 
 /// Find the highest-version (name, version) entry for `name` in
@@ -2956,7 +2944,7 @@ fn emit_param_expansion(
     operand: &str,
     types: &VarTypes,
 ) -> CStr {
-    let (s_ptr, s_len) = load_var_or_empty_c(var, types);
+    let (s_ptr, s_len) = load_var_or_empty_c(e, var, types);
 
     match operator {
         "" => (s_ptr, s_len),
@@ -3000,20 +2988,35 @@ fn emit_glob_c(e: &mut Emit, operand: &str) -> CStr {
 /// ("\"\"", "0") as the empty-string sentinel. emit_c carries the
 /// version directly on VarRef so we can prefer the exact version
 /// when present.
-fn load_var_or_empty_c(var: &VarRef, types: &VarTypes) -> CStr {
+///
+/// An Int var renders through `sash_itoa` like everywhere else in this
+/// backend. Emitting `{base}_ptr`/`{base}_len` unconditionally was a **hard
+/// compile error** for an int — only `{base}`, an `i64`, is declared — and it
+/// was reachable from DD#119's own recommended spelling,
+/// `int n=5; /bin/echo hi > "${n:?msg}"`. Native handled it; only the C
+/// backend broke, so the differential oracle is what surfaced it.
+fn load_var_or_empty_c(e: &mut Emit, var: &VarRef, types: &VarTypes) -> CStr {
     let key = (var.name.clone(), var.version);
-    let known = types.contains_key(&key);
-    if known {
-        let base = c_var_name(&var.name, var.version);
-        return (format!("{}_ptr", base), format!("{}_len", base));
+    if let Some(vtype) = types.get(&key) {
+        return var_slot_as_str_c(e, &c_var_name(&var.name, var.version), *vtype);
     }
     // Fall back to highest-version lookup, mirroring codegen's
     // find_var_slot path (codegen/types.rs:189) for back-compat.
-    if let Some(((_, v), _)) = highest_version(&var.name, types) {
-        let base = c_var_name(&var.name, v);
-        return (format!("{}_ptr", base), format!("{}_len", base));
+    if let Some(((n, v), vtype)) = highest_version(&var.name, types) {
+        return var_slot_as_str_c(e, &c_var_name(&n, v), vtype);
     }
     ("\"\"".to_string(), "0".to_string())
+}
+
+/// One slot rendered as a C `(ptr, len)` pair, converting an Int through
+/// `sash_itoa`. The single place that decides how a typed slot becomes text,
+/// shared by `latest_var_as_str` and `load_var_or_empty_c` so the two cannot
+/// disagree about an int again.
+fn var_slot_as_str_c(e: &mut Emit, base: &str, vtype: VarType) -> CStr {
+    match vtype {
+        VarType::String => (format!("{}_ptr", base), format!("{}_len", base)),
+        VarType::Int => emit_itoa_temp(e, base),
+    }
 }
 
 /// DD#77: `${var:?MESSAGE}` — abort via `sash_require_value` (`<prog>: MESSAGE`,
@@ -3040,7 +3043,7 @@ fn emit_require_value_c(
 /// for a cell read `${a[i]:OP}` (DG: a cell behaves like a string variable).
 fn disposition_source_c(e: &mut Emit, source: &SsaValue, types: &VarTypes) -> CStr {
     match source {
-        SsaValue::Var(v) => load_var_or_empty_c(v, types),
+        SsaValue::Var(v) => load_var_or_empty_c(e, v, types),
         other => lower_value_as_str(e, other, types),
     }
 }
