@@ -10,7 +10,7 @@
 set -eu
 . common.sh
 setup subscript
-plan=40
+plan=50
 echo "1..$plan" >&3
 
 set +e
@@ -288,6 +288,80 @@ m[$k]=1
 m[${k}]=2
 echo "$(len m) ${m[x]}"'
 [[ $rc = 0 && $out = "1 2" && -z $err ]]; chk 80.40
+
+# ── G. a `str`-declared scalar as an array index (DD#80 type-aware + DD#77) ──
+# `var_type` ends in `unwrap_or(String)`, so "declared a string" and "never
+# recorded" are one answer. Only the *declared* case is rejected; see 80.47.
+
+# 80.41 read: a str scalar does not index an int array
+run_sash 'int array a=(10 20 30)
+str s=abc
+echo "${a[$s]}"'
+[[ $rc != 0 && -z $out && $err == *"string-typed"* ]]; chk 80.41
+
+# 80.42 …braced `${s}` is the same expansion, same answer
+run_sash 'int array a=(10 20 30)
+str s=abc
+echo "${a[${s}]}"'
+[[ $rc != 0 && -z $out && $err == *"string-typed"* ]]; chk 80.42
+
+# 80.43 write: enforced on assignment as on read (the surfaces share the check)
+run_sash 'int array a=(10 20 30)
+str s=abc
+a[$s]=99'
+[[ $rc != 0 && -z $out && $err == *"string-typed"* ]]; chk 80.43
+
+# 80.44 append `a[$s]+=` is the same write surface
+run_sash 'array a=(x y)
+str s=abc
+a[$s]+=z'
+[[ $rc != 0 && -z $out && $err == *"string-typed"* ]]; chk 80.44
+
+# 80.45 a string *array* is still int-indexed — element type is not the point
+run_sash 'array a=(x y z)
+str s=abc
+echo "${a[$s]}"'
+[[ $rc != 0 && -z $out && $err == *"string-typed"* ]]; chk 80.45
+
+# 80.46 the DD#77 disposition is the way through, and the diagnostic says so.
+# `:-2` not `:-0`: a lenient atoi would index 0 and print 10, so this would
+# pass either way with a 0 default.
+run_sash 'int array a=(10 20 30)
+str s=abc
+echo "${a[${s:-2}]}"'
+[[ $rc = 0 && $out = "30" && -z $err ]]; chk 80.46
+
+# 80.47 an *undeclared* `i=1` is deliberately NOT rejected. It records String
+# exactly like `str s=abc` (sash types a bare numeric literal as a string, per
+# bash), so the compiler cannot tell them apart. Rejecting it would also break
+# `attest i i?` (60.70) and a positional index (80.31), which have no declared
+# type at all. This is the backstop for that deliberate silence.
+run_sash 'int array a=(10 20 30)
+i=1
+echo "${a[$i]}"'
+[[ $rc = 0 && $out = "20" && -z $err ]]; chk 80.47
+
+# 80.48 a declared str is still a perfectly good *map* key (DD#80: any string)
+run_sash 'map m=([abc]=1)
+str s=abc
+echo "${m[$s]}"'
+[[ $rc = 0 && $out = "1" && -z $err ]]; chk 80.48
+
+# 80.49 the write diagnostic must not recommend a spelling that cannot parse.
+# An assignment LHS still takes only a bare `$var` index (DD#33/SB4014), so
+# `a[${s:?m}]=…` would send the author from SB4030 straight into SB4014.
+run_sash 'int array a=(10 20 30)
+str s=abc
+a[$s]=99'
+[[ $rc != 0 && $err == *"assignment index"* && $err != *"a[\${s:?msg}]}"* ]]; chk 80.49
+
+# 80.50 …and the route it does name compiles: convert first, then index.
+run_sash 'int array a=(10 20 30)
+str s=abc
+int i=$(( ${s:-2} ))
+a[$i]=99
+echo "${a[2]}"'
+[[ $rc = 0 && $out = "99" && -z $err ]]; chk 80.50
 
 set -e
 tally

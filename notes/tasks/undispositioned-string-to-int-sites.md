@@ -25,14 +25,43 @@ diverging from the c backend). The rest are open pending DG's scope decision.
 |---|---|---|---|
 | `exit $s` | 0 | rc 2 + error | yes — `exit ${s:?m}` works |
 | `wait $s` | rc 0, silent | rc 1 + error | yes — `wait ${s:-0}` works |
-| `${a[$s]}` read | index 0 | index 0 | yes — `${a[$(($s:?))]}` works |
-| `a[$s]=` write | index 0 | index 0 | **no — see below** |
+| `${a[$s]}` read | ✅ SB4030 when `s` is *declared* `str` (journal 412) | index 0 | yes — `${a[${s:?m}]}`, braced or brace-less |
+| `a[$s]=` write | ✅ SB4030, same check (journal 412) | index 0 | same |
 | `[[ -t $s ]]` | fd 0 | false | parses but is ignored |
 | `$(arg $s)` | index 0 | n/a | parses |
 
 Measured 2026-09-25 against `4578aed`+fix. Contrast — already rejected:
 `int x=$s`, `(( n = s ))`, `x=${a[0]}` (string element), `${t:1:$s}` (SB4030),
 `${t:$s:2}` (SB4047), `${a[s]}` / `${a[i]}` (SB4030), `${a[i+1]}` (SB4041).
+
+## PARTLY RESOLVED (journal 412)
+
+`a[$s]=Q` is now **rejected** (SB4030) when `s` is a declared `str`: read and
+write share `check_subscript_key_kind`, so one fix closed both surfaces.
+
+**The blocker below is still real for the fix side.** Measured 2026-09-25 —
+none of the accountable LHS spellings parse:
+
+| spelling | result |
+|---|---|
+| `a[${s:?m}]=Q` | SB4014 |
+| `a[${s:-2}]=Q` | SB4014 |
+| `a[$s:-2]=Q` | SB5011 |
+| `a[$((1+1))]=Q` | SB5011 |
+
+So the *tightening* shipped without the spelling, and the write diagnostic had
+to be split from the read one: recommending `a[${s:?m}]=…` would have sent the
+author from SB4030 straight into SB4014. The write message names what compiles
+instead — an integer literal, an `int` variable, or converting first
+(`int i=$(( ${s:-2} )); a[$i]=…`). Specs 80.49/80.50 pin that.
+
+Lifting the DD#33 LHS restriction so `a[${s:?m}]=Q` parses remains open, and
+is the only thing that would make the two surfaces symmetric.
+
+Still open for the *undeclared* cases — see
+`array-index-string-by-value-flow.md`.
+
+### Original analysis
 
 ## The blocker: no accountable subscript-LHS spelling
 

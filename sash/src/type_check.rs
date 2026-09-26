@@ -31,6 +31,9 @@ struct TypeEnv {
     known_slots: HashSet<String>,
     /// Variables declared as map (associative array) — string keys
     assoc_arrays: HashSet<String>,
+    /// Scalars the author explicitly declared `str`. Distinct from
+    /// `vars[name] == String`, which is also what an unrecorded name returns.
+    declared_str: HashSet<String>,
 }
 
 impl TypeEnv {
@@ -55,6 +58,7 @@ impl TypeEnv {
             slot_kinds: HashMap::new(),
             known_slots: HashSet::new(),
             assoc_arrays: HashSet::new(),
+            declared_str: HashSet::new(),
         }
     }
 
@@ -63,6 +67,30 @@ impl TypeEnv {
             VarType::Int
         } else {
             self.vars.get(name).copied().unwrap_or(VarType::String)
+        }
+    }
+
+    /// Is `name` a scalar the author *declared* `str`?
+    ///
+    /// `var_type` cannot answer this: it ends in `unwrap_or(VarType::String)`,
+    /// so "declared a string" and "never recorded" are the same answer. That
+    /// conflation is why the subscript check below can only trust a positive
+    /// declaration — a bare `i=1` records `String` exactly like `str s=abc`,
+    /// because sash follows bash in typing a bare numeric literal as a string
+    /// (only `int` or `$(( ))` makes a value int).
+    fn is_declared_str(&self, name: &str) -> bool {
+        self.declared_str.contains(name)
+    }
+
+    /// Record a `str` *scalar* declaration. `type_check` and `infer_types` are
+    /// separate passes that each build their own env, so both call this — the
+    /// condition lives here rather than being restated at either site.
+    fn note_declared_str(&mut self, d: &Declaration) {
+        if d.var_type == VarType::Int || is_collection_decl(d) {
+            return;
+        }
+        for a in &d.assignments {
+            self.declared_str.insert(a.name.clone());
         }
     }
 
@@ -1005,7 +1033,7 @@ fn check_one_redirect_target(target: &Expr, env: &TypeEnv, errors: &mut Vec<Type
 fn check_subscript_types(expr: &Expr, env: &TypeEnv, errors: &mut Vec<TypeError>) {
     match &expr.kind {
         ExprKind::Subscript { name, index } => {
-            check_subscript_key_kind(name, index, expr.span, env, errors);
+            check_subscript_key_kind(name, index, expr.span, KeySurface::Read, env, errors);
             check_subscript_types(index, env, errors);
         }
         ExprKind::DoubleQuoted(parts) | ExprKind::Concat(parts) => {
@@ -1026,12 +1054,24 @@ fn check_subscripts_in_parts(parts: &[Expr], env: &TypeEnv, errors: &mut Vec<Typ
     }
 }
 
+/// Which surface a subscript was written on. The two give different advice:
+/// the read path can direct to a DD#77 disposition, but an assignment LHS
+/// still only parses a bare `$var`/`${var}` index (DD#33 —
+/// `parse_split_subscript_index`, SB4014), so recommending `a[${s:?m}]=…`
+/// there would send the author from SB4030 straight into SB4014.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum KeySurface {
+    Read,
+    Write,
+}
+
 /// Reject integer keys on maps (looks like indexed access) and string
 /// keys on indexed arrays.
 fn check_subscript_key_kind(
     name: &str,
     index: &Expr,
     span: Span,
+    surface: KeySurface,
     env: &TypeEnv,
     errors: &mut Vec<TypeError>,
 ) {
@@ -1049,15 +1089,51 @@ fn check_subscript_key_kind(
             ),
             span,
         });
-    } else if !is_map && is_string_key(index) {
+    } else if !is_map && is_string_key(index, env) {
         errors.push(TypeError {
-            message: format!(
-                "string key on indexed array '{name}' — an int-indexed array is indexed by \
-                 number (DD#80). Use an integer, `${{{name}[$i]}}`, or `$(( … ))`; declare \
-                 `map {name}` for string keys",
-            ),
+            message: string_key_on_array_message(name, index, surface),
             span,
         });
+    }
+}
+
+/// The SB4030 text for a string key on an int-indexed array.
+///
+/// A *variable* index gets different advice from a literal one. `conversion_hint`
+/// learned this lesson already: recommending `${a[$i]}` to someone who wrote
+/// `${a[$s]}` sends them from one SB4030 to the same SB4030, because the
+/// spelling was never the problem — the operand's type was. A string variable
+/// needs the DD#77 disposition, so name it.
+fn string_key_on_array_message(name: &str, index: &Expr, surface: KeySurface) -> String {
+    let var = match &index.kind {
+        ExprKind::SimpleExpansion(v) => Some(v.as_str()),
+        ExprKind::ParameterExpansion(pe) if pe.operator.is_none() => Some(pe.name.as_str()),
+        _ => None,
+    };
+    match (var, surface) {
+        // An assignment LHS parses only a bare `$var` index (DD#33/SB4014), so
+        // the disposition spellings the read path recommends do not compile
+        // here. Name what does.
+        (Some(v), KeySurface::Write) => format!(
+            "string key on indexed array '{name}' — `${v}` is string-typed, and an \
+             int-indexed array is indexed by number (DD#80). An assignment index must \
+             already be a number: use an integer literal, or an `int` variable \
+             (`int i=…; {name}[$i]=…`). A disposition (`${{{v}:?msg}}`) is not yet \
+             accepted on an assignment index; convert first. Declare `map {name}` for \
+             string keys"
+        ),
+        (Some(v), KeySurface::Read) => format!(
+            "string key on indexed array '{name}' — `${v}` is string-typed, and an \
+             int-indexed array is indexed by number (DD#80). A string→int crossing must \
+             carry a disposition: `${{{name}[${{{v}:-0}}]}}` (0 if it isn't an integer) or \
+             `${{{name}[${{{v}:?msg}}]}}` (abort if it isn't); declare `map {name}` for \
+             string keys"
+        ),
+        (None, _) => format!(
+            "string key on indexed array '{name}' — an int-indexed array is indexed by \
+             number (DD#80). Use an integer, `${{{name}[$i]}}` with an int `i`, or \
+             `$(( … ))`; declare `map {name}` for string keys"
+        ),
     }
 }
 
@@ -1189,15 +1265,37 @@ pub(crate) fn join_operand_name(expr: &Expr) -> String {
     }
 }
 
-/// Check if an expression is a plain string literal (non-numeric)
-fn is_string_key(expr: &Expr) -> bool {
+/// Check if an expression is a string key — i.e. a key that does **not** index
+/// an int-indexed array.
+///
+/// DD#80 enumerates the valid `${a[K]}` index forms, and its type-aware clause
+/// names a "string key" as "a clean bareword or a quoted string"; its SB4030
+/// bullet adds "a non-numeric expansion result". For a `$var` that last one is
+/// a **runtime** property, which is why the variable arms here long read
+/// `SimpleExpansion(_) => false, // could be either`.
+///
+/// It is not always "either". A scalar the author declared `str` is a string by
+/// construction, and `${a[$s]}` / `a[$s]=…` on it silently indexed 0 — the same
+/// string→int crossing DD#77 requires a disposition for, and which the bareword
+/// `${a[s]}`, the quoted `${a["abc"]}` and the arithmetic `(( a[s] ))` all
+/// already reject. Only that positively-declared case is caught here: a bare
+/// `i=1` is indistinguishable from `str s=abc` in `vars` (both `String`), and
+/// rejecting it would break the documented `attest i i?` and `${arr[$1]}`
+/// idioms, which have no declared type at all.
+fn is_string_key(expr: &Expr, env: &TypeEnv) -> bool {
     match &expr.kind {
         // a non-numeric bareword literal is a string key
         ExprKind::Literal(s) => !s.is_empty() && !s.chars().all(|c| c.is_ascii_digit()),
         // an explicitly quoted key is a string — even a quoted numeric `"5"`
         // (DD#80: use the unquoted integer `${a[5]}` to index an int array)
         ExprKind::DoubleQuoted(_) | ExprKind::SingleQuoted(_) => true,
-        ExprKind::SimpleExpansion(_) => false, // variable — could be either
+        // `$s` where `s` was declared `str` (DD#80 case 2, type-aware).
+        ExprKind::SimpleExpansion(v) => env.is_declared_str(v),
+        // `${s}` is `$s`. A DD#77 disposition (`:-`/`:?`) is the sanctioned
+        // string→int crossing — it converts under a strict "is it an integer"
+        // trigger — so it is never a string key. It is what the diagnostic
+        // directs the author to.
+        ExprKind::ParameterExpansion(pe) if pe.operator.is_none() => env.is_declared_str(&pe.name),
         _ => false,
     }
 }
@@ -1244,7 +1342,7 @@ fn check_assignment(a: &Assignment, span: Span, env: &mut TypeEnv, errors: &mut 
     // path as on the read path (check_subscript_key_kind), so `a[i]=…` on an
     // indexed array is SB4030 just like the read `${a[i]}`.
     if let Some(idx) = &a.index {
-        check_subscript_key_kind(&a.name, idx, span, env, errors);
+        check_subscript_key_kind(&a.name, idx, span, KeySurface::Write, env, errors);
     }
     check_assign_type_match(a, span, env, errors);
 }
@@ -1371,6 +1469,7 @@ fn check_type_match(
 
 fn check_declaration(d: &Declaration, span: Span, env: &mut TypeEnv, errors: &mut Vec<TypeError>) {
     let is_collection = is_collection_decl(d);
+    env.note_declared_str(d);
     for a in &d.assignments {
         check_one_decl_assignment(d, a, is_collection, span, env, errors);
         env.declare(&a.name, d.var_type);
@@ -1940,6 +2039,10 @@ fn infer_declaration_types(d: &crate::ir::Declaration, env: &mut TypeEnv) {
             env.declare(&a.name, VarType::Int);
         }
     } else {
+        // A `str` *scalar* declaration is the one positive signal that a
+        // variable holds a string — record it so the subscript check can tell
+        // it apart from a bare `i=1` (see `is_declared_str`).
+        env.note_declared_str(d);
         infer_from_initializers(d, env);
     }
 }
