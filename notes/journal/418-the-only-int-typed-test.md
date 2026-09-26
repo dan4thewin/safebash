@@ -88,3 +88,39 @@ the purge naming exactly those two ids. It did.
 - both `chk` collision checks clean; `cargo fmt` / `clippy` clean
 - `coverage.sh` plan 339 → 338 keeps its known `plan − 2` offset (the
   variable-id loop), so the one legitimate mismatch stayed legitimate
+
+## Addendum — DD#89 closes
+
+With `-t` retired, DD#89's "Left open" section had nothing left open. It
+asked whether `exit $s` / `return $s` *should* reject, and tracked four sites:
+`exit`, `return`, `wait`, `[[ -t ]]`. All five (counting `$(arg $s)`, which it
+listed separately as "untested rather than settled") are now closed, and the
+uniformity is the point: **every one closed by rejection, none by coercion.**
+
+| sink | was | now | closed by |
+|---|---|---|---|
+| `exit $s` | atoi → 0 | SB4030 | `a875d58` |
+| `return $s` | atoi → 0 | SB4030 | journal 411 |
+| `wait $s` | accepted | SB4030 | `a875d58` |
+| `$(arg $s)` | **argv[0]**, silently | SB4030 | `a875d58` |
+| `[[ -t $s ]]` | accepted | SB5028 | this commit |
+
+Two of those entries are worth re-reading against what the DD predicted.
+
+`$(arg $s)` was recorded as "masked by SB5020 — taint fires first — so it is
+untested rather than settled". That was the honest reading, and refusing to
+mark it closed is exactly what left it to be measured properly later. It did
+not coerce to 0 like its neighbours; it silently returned **argv[0]** — a
+real, plausible-looking value with no diagnostic. The most dangerous of the
+five, recorded as the least known.
+
+`[[ -t ]]` was the site the DD itself floated removing rather than tightening
+("DG has also raised whether `-t` should stop being a test operator at all …
+Not decided"). That is what happened, and it is the only one of the five that
+needed no rule.
+
+Also corrected: the rule list still said `exit $s` "does still coerce today",
+true when written and false since `a875d58`; and `docs/sash.1`'s `-d`/`-f`
+collision table still listed `-t` as "is a terminal" in the `[[ ]]` column.
+The man page's "table wider than line width" warning is pre-existing and
+untouched.

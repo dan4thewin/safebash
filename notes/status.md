@@ -40,6 +40,14 @@ the sharp prediction rather than the total.
 Sweep **6510** (native 3355, c 3142, skipped 13) — predicted exactly. Zero
 failing, zero flips vs `a875d58`. `mk test` exit 0. Journal 418.
 
+**DD#89 is closed** (same commit batch): its "Left open" section asked whether
+`exit $s` / `return $s` should reject, and all five tracked sites now do —
+**every one by rejection, none by coercion**. `$(arg $s)` was the most
+dangerous and was recorded as the least known ("untested rather than
+settled"): it did not coerce to 0 like its neighbours, it silently returned
+**argv[0]**. `docs/sash.1`'s `-d`/`-f` collision table also still listed `-t`
+as "is a terminal"; fixed.
+
 **Next:** the parked magic-variable directive (`$$`→`$(getpid)`,
 `$!`→`$(getcpid)`, `$?`→`$(status)`); amend DD#89's "Left open" (`exit $s`
 now rejects); rebuild `coverage.db` before resuming the coverage queue.

@@ -18,9 +18,12 @@ function — is a valid `exit` argument**, with no compile-time range restrictio
 - No argument → `exit 0`.
 - ~~A string argument coerces to int (atoi), as in every other int context;
   `exit` imposes no extra type restriction.~~ **Struck 2026-09-26 — the
-  "every other int context" claim is false; see the amendment below.** `exit
-  $s` does still coerce today, but that is a measured fact about the
-  implementation, not a rule this DD settled.
+  "every other int context" claim is false, and the coercion it described is
+  now gone: `exit` takes int-type only. See the amendment and its resolution
+  below.**
+- **A string argument is rejected** (SB4030). `exit $(( ${s:?msg} ))` is the
+  accountable spelling. Quoting is the int→string conversion everywhere else
+  in sash, so `exit "1"` is rejected too.
 
 The prior type-check reject of `exit $intvar` ("value may exceed 0-255; use
 `exit $((v<256?v:1))`") is **removed** — clamping is the programmer's choice,
@@ -118,21 +121,7 @@ when written and is less true now.
 a valid `exit` argument, no compile-time range restriction, full i64 to END,
 8-bit at the process boundary. None of that depended on the struck clause.
 
-**Left open:** whether `exit $s` / `return $s` *should* reject. That is a
-behaviour change, not a correction, and it is DG's call. The direction is
-already set — DG (2026-09-25): *"Rather than prioritize bash consistency, I
-want to prioritize sash self-consistency"* — which means bash agreeing with
-the coercion at `wait` and `[[ -t ]]` is not by itself a reason to keep it.
-The open sites are tracked in
-`notes/tasks/undispositioned-string-to-int-sites.md`; `${a[$s]}` and `a[$s]=`
-were closed by DD#80's 2026-09-26 amendment, leaving `exit`, `return`, `wait`
-and `[[ -t ]]`. (`$(arg $s)` is masked by SB5020 — taint fires first — so it
-is untested rather than settled.)
-
-DG has also raised whether **`-t` should stop being a test operator at all**
-and become a distinct predicate (`if $(terminal? $fd)`), following SB5019
-having already moved the `-eq` family into `(( ))`. That would retire one of
-the four sites by removing the surface rather than tightening it. Not decided.
+**~~Left open:~~ Resolved 2026-09-26 — they reject.** See below.
 
 ### Related
 
@@ -142,4 +131,46 @@ consulting the type, so `return ${s:?bad}` — the spelling SB4030 itself
 recommends — compiled to nothing and yielded 0 on native while the c backend
 aborted correctly. An explicit "abort if this is not an integer" guard that
 does nothing is worse than the coercion it was meant to replace. Fixed there;
-the surface question above is what remains.
+the surface question it left is resolved below.
+
+## Resolution (2026-09-26) — every site closed, none by coercion
+
+DG settled the question the amendment left open, and settled it the same way
+in every case: **by rejection**. Nothing was made to coerce.
+
+| sink | was | now | closed by |
+|---|---|---|---|
+| `exit $s` | atoi → 0 | **SB4030** | int-only sink (`a875d58`) |
+| `return $s` | atoi → 0 | **SB4030** | journal 411 |
+| `wait $s` | accepted | **SB4030** | int-only sink (`a875d58`) |
+| `$(arg $s)` | **argv[0]**, silently | **SB4030** | int-only sink (`a875d58`) |
+| `[[ -t $s ]]` | accepted | **SB5028** | the operator is retired (journal 418) |
+
+Three things are worth keeping from how this closed.
+
+**`$(arg $s)` was the worst of them, and the amendment could not see it.**
+The table above recorded it as "masked by SB5020 — untested rather than
+settled", which was the honest reading at the time. Measured properly it did
+not coerce to 0 like its neighbours; it silently yielded **argv[0]** — a real
+value, plausibly correct-looking, with no diagnostic. Declining to record it
+as closed is what left it open to be measured later.
+
+**`-t` needed no rule at all.** It was the sole int-typed unary test in a
+`[[ ]]` family that is otherwise entirely string and file predicates, and the
+only unary arm whose codegen had to `atoi` its operand first. DG retired the
+operator, which removed the sink along with it — the surface-removal option
+this section had recorded as "not decided". The `terminal?` predicate
+replacement was considered and **dropped as YAGNI**: sash arithmetic has no
+unary predicates at all, so it would have been the first of its kind, in a
+language whose predicate context (`[[ ]]`) it would have been declining to
+use.
+
+**A traversal bug had to be fixed first.** `check_command` was reachable only
+from `check_stmt`, so operand checks ran on a command substitution in a
+command's *arguments* but never on an *assignment RHS*: `echo $(arg $s)` was
+checked, `str t=$(arg $s)` was not. Any rule written here before `6013848`
+would have been vacuous in half its cases.
+
+The direction DG set — *"prioritize sash self-consistency"* — is what the
+outcome reflects: bash agrees with the coercion at `wait`, and that was
+correctly treated as no reason to keep it.
