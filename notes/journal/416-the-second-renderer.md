@@ -93,3 +93,79 @@ Unstash the int-sink work — `exit`/`wait`/`arg` int-only — and land it on
 this. Then retire `-t` as a `[[ ]]` test in its own commit. `terminal?` is
 dropped as YAGNI (DG), the supporting fact being that sash arithmetic has no
 unary predicates at all, so it would have been the first of its kind.
+
+---
+
+# 417 — exit, wait and arg take a number
+
+DG's directive: `exit`, `wait` and `arg` accept **int-type only**. One shared
+check rather than three, modelled on `check_string_intrinsic_operands`, which
+is its exact mirror — that one rejects an int where a string is required.
+
+`arg` was the worst of the three by a distance. `exit $s` and `wait $s` on a
+string coerced through the runtime's atoi to 0, which is at least a
+*defensible* wrong answer. `$(arg $s)` silently yielded **argv[0]** — not the
+argument you asked for, no diagnostic, no trace.
+
+Three calls from DG:
+
+- **`exit ''` is rejected.** It read as 0, i.e. *success*, for a script that
+  by writing `exit` meant to fail.
+- **A quoted number is a string**, so `exit "1"` is rejected. Quoting is the
+  int→string conversion everywhere else in sash — DD#80 map keys, the string
+  intrinsics, DD#119 redirect targets — and it cannot mean the opposite here.
+- **Signed decimal literals stay legal**, so `exit -1` compiles and exits 255,
+  as in bash.
+
+`$(( … ))` is the accountable conversion, and it is strictly better than the
+atoi it replaces: `exit $(( ${s:?bad} ))` aborts on a non-numeric value with
+the author's own message instead of quietly reporting success.
+
+## Only slot 0
+
+`arg N default` takes a *string* default in slot 1. The check takes one slot,
+not all args, so `$(arg 9 fallback)` is untouched. isink.10 pins that.
+
+## The dependency that justified the sequencing
+
+`arg` is only ever written as `$(arg …)` — a command substitution, which is an
+*expression*. Wired the way the operand checks were wired before commit
+6013848, this check would have caught `echo $(arg $s)` and missed
+`str t=$(arg $s)`, which is the only spelling that keeps the result. The
+silent-argv[0] case the directive exists to close would have stayed open
+behind a green spec.
+
+That is why DG had the traversal fixed first, in its own commit, rather than
+folded in here. The sequencing was his call and it was the right one: this
+change is small and verifiable precisely because it sits on a sound
+traversal.
+
+## `$!` had to become an int
+
+`wait $!` is *the* idiom, and it broke — `$!` typed as String while
+`$(getcpid)`, which `$!` is the sugar for, was already int-returning.
+`intrinsic_int` seeded `?` but not `!`. So `wait $(getcpid)` would have passed
+a rule that `wait $!` failed, for two spellings of one value. The asymmetry
+was the bug, not the rule, and the seed is also a step toward the parked
+magic-variable directive.
+
+That change is what exposed the C renderer bug in journal 416 above: `$!`
+becoming int made `cov.252b` the first spec anywhere to put an int, a
+disposition and a redirect in the same line.
+
+## Specs
+
+Twelve, `isink.1`–`isink.12`. Non-vacuity proved twice over: neutering the
+check fails the five rejection specs and leaves all seven positives green;
+neutering the `$!` seed alone fails three specs across two files.
+
+## Result
+
+Sweep **6510** (native 3355, c 3142, skipped 13) = 6486 + 12 × 2 modes, the
+predicted total exactly. Zero failing, zero flips vs `b251d75`.
+
+## Still owed
+
+`-t` retires as a `[[ ]]` test in its own commit (DG). `terminal?` is dropped
+as YAGNI — sash arithmetic has no unary predicates at all, so it would have
+been the first of its kind, and `[[ ]]` is already the predicate context.

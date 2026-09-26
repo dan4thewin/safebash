@@ -1,3 +1,59 @@
+## ══ STATUS (2026-09-26) — exit, wait and arg take a number ══
+
+**DG's int-only directive is in.** `exit`, `wait` and `arg` accept int-type
+only, via one shared check that is the exact mirror of
+`check_string_intrinsic_operands` (that one rejects an int where a string is
+required).
+
+`arg` was the worst by a distance: `$(arg $s)` on a string silently yielded
+**argv[0]** — no diagnostic, no trace. `exit $s` / `wait $s` coerced through
+atoi to 0, a defensible wrong answer by comparison.
+
+DG's three calls: **`exit ''''''` is rejected** (it read as 0, i.e. *success*, for a
+script that meant to fail); **a quoted number is a string**, so `exit "1"` is
+rejected — quoting is the int→string conversion everywhere else in sash and
+cannot mean the opposite here; **signed literals stay legal**, `exit -1` → 255.
+`$(( ${s:?bad} ))` is the accountable conversion and is strictly better than
+the atoi it replaces: it aborts with the author'''s message instead of quietly
+reporting success. Only slot 0 is a sink — `arg N default` keeps its string
+default (isink.10).
+
+**`$!` is now int-typed.** `wait $!` is *the* idiom and it broke: `$!` was
+String while `$(getcpid)`, which `$!` is sugar for, was already int-returning.
+`intrinsic_int` seeded `?` but not `!`, so `wait $(getcpid)` would have passed
+a rule `wait $!` failed — two spellings of one value. The asymmetry was the
+bug. It is also a step toward the parked magic-variable directive, and it is
+what exposed the C renderer bug fixed in `b251d75`.
+
+**The sequencing was DG'''s call and it mattered.** `arg` is only ever written
+as `$(arg …)`, an expression — so wired the old way this check would have
+caught `echo $(arg $s)` and missed `str t=$(arg $s)`, leaving the exact case
+the directive exists to close open behind a green spec. Fixing the traversal
+first, in its own commit (`6013848`), is why this change is small.
+
+Sweep **6510** (native 3355, c 3142, skipped 13) = predicted exactly. Zero
+failing, zero flips vs `b251d75`. Non-vacuity proved twice: neutering the
+check fails the 5 rejection specs and leaves all 7 positives green; neutering
+the `$!` seed alone fails 3 specs across two files.
+
+**Next:**
+
+1. **Retire `-t`** as a `[[ ]]` test, its own commit (DG). Add the arm to
+   `validate.rs::unsupported_unary_test_hint` (SB5028), **keep** `-t` in
+   `is_unary_test_op` so the code is SB5028 not SB4014, drop
+   `emit_isatty_test` and the emit_c arm, migrate `cov.89`, fix the stale doc
+   at `validate.rs:1993`.
+2. **`terminal?` is dropped** as YAGNI (DG). For the record: sash arithmetic
+   has no unary predicates at all, so it would have been the first of its
+   kind, and `[[ ]]` is already the predicate context.
+3. The parked **magic-variable** directive: `$$` → `$(getpid)`,
+   `$!` → `$(getcpid)`, `$?` → `$(status)`. Only those three are magic.
+4. **Amend DD#89** — its "Left open" section asked whether `exit $s` should
+   reject. It now does; the section is owed an update.
+
+Also owed: rebuild `coverage.db` (`mk cov-union` → `mk cov-db`) before the
+coverage queue resumes; `plan.md` at repo root is stale.
+
 ## ══ STATUS (2026-09-26) — the second renderer ══
 
 **DD#119's own recommended spelling did not work in the C backend.**

@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup errors
-plan=249
+plan=261
 echo "1..$plan" >&3
 
 set +e
@@ -1336,6 +1336,65 @@ echo $t'
 run_sash 'fn f { echo $(join args ,) }
 f a b c'
 [[ $rc = 0 && $out = "a,b,c" && -z $err ]]; chk sint.26
+
+# --- exit / wait / arg take an int, not a string (DG 2026-09-26) ---
+# All three silently coerced a string operand through the runtime's atoi.
+# `arg` was the worst: `$(arg $s)` on a string yielded argv[0] -- a wrong
+# answer rather than a diagnostic. `exit $s` reported SUCCESS for a script
+# that meant to fail. Front-end -- all modes.
+
+run_sash 'exit 0'
+[[ $rc = 0 && -z $err ]]; chk isink.1
+# a signed decimal literal stays legal -- bash truncates to 255
+run_sash 'exit -1'
+[[ $rc = 255 && -z $err ]]; chk isink.2
+# the empty operand is rejected (DG): it read as 0, i.e. success
+run_sash "exit ''"
+[[ $rc != 0 && $err == *SB4030* ]]; chk isink.3
+# a QUOTED number is a string -- quoting is the int->string conversion
+# everywhere else in sash, so it must not be the int spelling here
+run_sash 'exit "1"'
+[[ $rc != 0 && $err == *SB4030* ]]; chk isink.4
+run_sash 'str s=0
+exit $s'
+[[ $rc != 0 && $err == *SB4030* ]]; chk isink.5
+run_sash 'str s=1
+wait $s'
+[[ $rc != 0 && $err == *SB4030* ]]; chk isink.6
+# `$(( ))` is the accountable conversion: a non-numeric value aborts
+# rather than reading as 0
+run_sash 'str s=3
+exit $(( ${s:?bad} ))'
+[[ $rc = 3 && -z $err ]]; chk isink.7
+# `arg` -- the silent argv[0] case. This is only reached because the
+# operand checks now walk expressions; on the old statement-only
+# traversal an assignment RHS was never looked at.
+run_sash 'str s=x
+str t=$(arg $s)
+attest t [[ -n $t ]]
+echo $t'
+[[ $rc != 0 && $err == *SB4030* ]]; chk isink.8
+run_sash 'int i=1
+str t=$(arg $i)
+attest t [[ -n $t ]]
+echo $t' alpha
+[[ $rc = 0 && $out = "alpha" && -z $err ]]; chk isink.9
+# slot 1 of `arg` is a string default and is NOT an int sink
+run_sash 'str t=$(arg 9 fallback)
+attest t [[ -n $t ]]
+echo $t'
+[[ $rc = 0 && $out = "fallback" && -z $err ]]; chk isink.10
+# $! is sugar for $(getcpid), which is int-returning -- the punctuation
+# form must type the same as the intrinsic, or `wait $!` fails a rule
+# that `wait $(getcpid)` passes
+run_sash '/bin/sleep 0 &
+p=$!
+wait $p
+echo done'
+[[ $rc = 0 && $out = "done" && -z $err ]]; chk isink.11
+run_sash 'int n=7
+exit $n'
+[[ $rc = 7 && -z $err ]]; chk isink.12
 
 set -e
 tally

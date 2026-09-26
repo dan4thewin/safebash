@@ -1285,8 +1285,8 @@ run_sash 'str s=$$
 rpid=${out#pid=}
 [[ $rc == 0 && -n $rpid && -f $rpid && $(cat "$rpid") == hi ]]; chk cov.252a
 run_sash '/bin/sleep 0.2 &
-str c=$!
-/bin/echo hi > ${c:?no child}
+int c=$!
+/bin/echo hi > "${c:?no child}"
 /bin/echo "child=$c"'
 rchild=${out#child=}
 [[ $rc == 0 && -n $rchild && -f $rchild && $(cat "$rchild") == hi ]]; chk cov.252b

@@ -41,6 +41,12 @@ impl TypeEnv {
         let mut intrinsic_int = HashSet::new();
         intrinsic_int.insert("#".to_string()); // $#
         intrinsic_int.insert("?".to_string()); // $?
+                                               // $! — a pid, and `$(getcpid)` (which `$!` is the sugar for) is
+                                               // already int-returning. Seeding `?` but not `!` made the punctuation
+                                               // form String while the intrinsic form was Int, so the canonical
+                                               // `p=$!; wait $p` failed the int-only rule for `wait` while
+                                               // `wait $(getcpid)` passed. The asymmetry was the bug, not the rule.
+        intrinsic_int.insert("!".to_string()); // $!
                                                // DD#100: `A`..`E` are the collection-parameter slots. They are always
                                                // collections, but their *kind* is per-call-site (Part B: array and
                                                // map are both usable), and this pass runs before inlining — so they
@@ -1057,11 +1063,88 @@ fn check_substituted_operands_in_stmt(
         // correctly; the vacuity was only ever in the type checks, which are
         // pure and need no scope.
         check_string_intrinsic_operands(c, stmt.span, env, errors);
+        check_int_sink_operands(c, stmt.span, env, errors);
     }
     for body in stmt.child_bodies() {
         for s in body {
             check_substituted_operands_in_stmt(s, env, errors);
         }
+    }
+}
+
+/// `exit`, `wait` and `arg` take a *number*: a status, a pid, a positional
+/// index. Each silently coerced a string operand through the runtime's atoi,
+/// and `arg` was the worst of the three — `$(arg $s)` on a string yielded
+/// **argv[0]**, a wrong answer rather than a diagnostic.
+///
+/// Only the first operand is an int sink. `arg N default` takes a string
+/// default in slot 1, which is left alone.
+fn int_sink_slots(name: &str) -> Option<usize> {
+    match name {
+        "exit" | "wait" | "arg" => Some(1),
+        _ => None,
+    }
+}
+
+/// Does this operand satisfy an int sink? An unquoted decimal literal does
+/// (`exit 1`, `arg 2`, and signed forms like `exit -1`), as does anything the
+/// type system already calls Int. A quoted number does **not**: quoting is the
+/// int→string conversion everywhere else in sash, so `"1"` is a string here
+/// for the same reason it is a string in a map key.
+fn operand_satisfies_int_sink(arg: &Expr, env: &TypeEnv) -> bool {
+    if let ExprKind::Literal(text) = &arg.kind {
+        return text.parse::<i64>().is_ok();
+    }
+    expr_type(arg, env) == VarType::Int
+}
+
+/// Reject a non-int operand to `exit` / `wait` / `arg` (SB4030).
+fn check_int_sink_operands(c: &Command, span: Span, env: &TypeEnv, errors: &mut Vec<TypeError>) {
+    let name = expr_to_name(&c.name);
+    let Some(slots) = int_sink_slots(&name) else {
+        return;
+    };
+    for arg in c.args.iter().take(slots) {
+        if operand_satisfies_int_sink(arg, env) {
+            continue;
+        }
+        errors.push(TypeError {
+            message: int_sink_message(&name, arg),
+            span,
+        });
+    }
+}
+
+/// The SB4030 message for a non-int operand of an int sink, naming what the
+/// operand actually is and the conversion that makes it accountable.
+fn int_sink_message(name: &str, arg: &Expr) -> String {
+    let (what, role) = (int_sink_operand_desc(arg), int_sink_role(name));
+    format!(
+        "`{name}` takes {role}, but {what} — a string is not implicitly a \
+         number, and coercing one silently would answer a question the source \
+         never asked. Convert explicitly with `$(( … ))`, which makes a \
+         non-numeric value abort rather than read as 0."
+    )
+}
+
+fn int_sink_role(name: &str) -> &'static str {
+    match name {
+        "exit" => "an exit status",
+        "wait" => "a process id",
+        _ => "a positional index",
+    }
+}
+
+fn int_sink_operand_desc(arg: &Expr) -> String {
+    match &arg.kind {
+        ExprKind::Literal(text) if text.is_empty() => "the operand is empty".to_string(),
+        ExprKind::Literal(text) => format!("`{text}` is not a decimal integer"),
+        ExprKind::SimpleExpansion(v) => format!("`{v}` is a string variable"),
+        ExprKind::SingleQuoted(_) | ExprKind::DoubleQuoted(_) => {
+            "a quoted operand is string-typed".to_string()
+        }
+        ExprKind::CommandSubstitution(_) => "a command substitution is string-typed".to_string(),
+        _ => "that operand is string-typed".to_string(),
     }
 }
 
@@ -1784,7 +1867,6 @@ fn check_command(c: &Command, span: Span, env: &mut TypeEnv, errors: &mut Vec<Ty
         // DD#63: `match S P ARR` / `matchall S P ARR` fill (and auto-declare)
         // the trailing array; the two-arg `match S P` binds nothing.
         "match" | "matchall" if c.args.len() == 3 => register_newread_target(c, env),
-        "exit" => check_exit_status_arg(c, errors),
         _ => {}
     }
 
@@ -1792,34 +1874,9 @@ fn check_command(c: &Command, span: Span, env: &mut TypeEnv, errors: &mut Vec<Ty
     check_join_operand(c, span, env, errors);
     check_keys_operand(c, span, env, errors);
     check_string_intrinsic_operands(c, span, env, errors);
+    check_int_sink_operands(c, span, env, errors);
     for arg in &c.args {
         check_subscript_types(arg, env, errors);
-    }
-}
-
-/// `exit N` lowers `N` as an integer constant, so a non-numeric argument
-/// silently became **0** — `exit 1x` reported *success*, where bash refuses
-/// with "numeric argument required" and exits 2. A script that meant to fail
-/// would have claimed to succeed, so reject it (SB4030).
-///
-/// Only a bare literal is checked. `exit $x` and `exit $(f)` are lowered
-/// through the runtime's atoi, not this constant path.
-fn check_exit_status_arg(c: &Command, errors: &mut Vec<TypeError>) {
-    for arg in &c.args {
-        let ExprKind::Literal(text) = &arg.kind else {
-            continue;
-        };
-        if text.is_empty() || text.parse::<i64>().is_ok() {
-            continue;
-        }
-        errors.push(TypeError {
-            message: format!(
-                "exit status `{text}` is not a decimal integer — `exit` takes a \
-                 number, and a non-numeric argument would otherwise be lowered as 0, \
-                 reporting success for a script that meant to fail."
-            ),
-            span: arg.span,
-        });
     }
 }
 
