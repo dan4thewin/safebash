@@ -2868,8 +2868,8 @@ fn ir_expr_as_str(e: &mut Emit, expr: &crate::ir::Expr, types: &VarTypes) -> CSt
         ExprKind::Literal(s) | ExprKind::SingleQuoted(s) => {
             (format!("\"{}\"", c_escape(s)), format!("{}", s.len()))
         }
-        ExprKind::SimpleExpansion(name) => latest_var_as_str(name, types),
-        ExprKind::DoubleQuoted(parts) => {
+        ExprKind::SimpleExpansion(name) => latest_var_as_str(e, name, types),
+        ExprKind::DoubleQuoted(parts) | ExprKind::Concat(parts) => {
             if parts.is_empty() {
                 return ("\"\"".to_string(), "0".to_string());
             }
@@ -2905,17 +2905,20 @@ fn ir_expr_as_str(e: &mut Emit, expr: &crate::ir::Expr, types: &VarTypes) -> CSt
 /// For unknown vars: empty string. NB: this signature doesn't
 /// thread `e` for the Int path — caller must use a String-typed
 /// var. Phase 2 acknowledges this limitation; Phase 3 will widen.
-fn latest_var_as_str(name: &str, types: &VarTypes) -> CStr {
+fn latest_var_as_str(e: &mut Emit, name: &str, types: &VarTypes) -> CStr {
     let Some(((n, v), vtype)) = highest_version(name, types) else {
         return ("\"\"".to_string(), "0".to_string());
     };
     let base = c_var_name(&n, v);
     match vtype {
         VarType::String => (format!("{}_ptr", base), format!("{}_len", base)),
-        // Int var in string context inside a test op: we'd need
-        // sash_itoa. Currently the test ops requiring this (e.g.
-        // [[ "$intvar" = "5" ]]) are rare enough to defer.
-        VarType::Int => ("\"\"".to_string(), "0".to_string()),
+        // An int in a string context renders through sash_itoa, matching the
+        // native backend's `emit_int_to_str`. This used to return `""` with a
+        // comment deferring the case as rare — a *silent* wrong answer, which
+        // is the one outcome the differential oracle exists to prevent. It was
+        // reachable from `/bin/echo hi > "$n".log`, found when the native side
+        // of that spec passed and the c side did not.
+        VarType::Int => emit_itoa_temp(e, &base),
     }
 }
 

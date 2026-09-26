@@ -11,7 +11,7 @@ use cranelift_module::Module;
 use cranelift_object::ObjectModule;
 use std::collections::HashMap;
 
-use super::types::{ExternFuncs, VarSlot};
+use super::types::{emit_int_to_str, ExternFuncs, VarSlot};
 
 #[derive(Clone)]
 pub(super) struct SavedFd {
@@ -374,7 +374,7 @@ pub(super) fn lower_ir_redirect_expr(
             redirect_expr_literal(s, builder, module, literals)
         }
         crate::ir::ExprKind::SimpleExpansion(var) => {
-            redirect_expr_simple_expansion(var, builder, vars)
+            redirect_expr_simple_expansion(var, builder, module, vars, externs)
         }
         crate::ir::ExprKind::Concat(parts) | crate::ir::ExprKind::DoubleQuoted(parts) => {
             redirect_expr_concat(parts, builder, module, vars, literals, externs)
@@ -416,12 +416,36 @@ fn redirect_expr_literal(
 fn redirect_expr_simple_expansion(
     var: &str,
     builder: &mut FunctionBuilder,
+    module: &mut ObjectModule,
     vars: &HashMap<String, VarSlot>,
+    externs: &ExternFuncs,
 ) -> (cranelift_codegen::ir::Value, cranelift_codegen::ir::Value) {
-    if let Some(sv) = find_highest_version(vars, var) {
-        (builder.use_var(sv.str_ptr()), builder.use_var(sv.str_len()))
-    } else {
-        redirect_target_ice(&format!("variable ${var} has no slot"))
+    match redirect_slot_or_ice(var, vars) {
+        VarSlot::Str { .. } => {
+            let sv = redirect_slot_or_ice(var, vars);
+            (builder.use_var(sv.str_ptr()), builder.use_var(sv.str_len()))
+        }
+        // An int variable in a target is a path *component*, not a number:
+        // `> "$p".log`. The braced spelling `${p}` is spilled to a scalar temp
+        // by the transform and so has always worked; the brace-less one arrives
+        // here raw and used to panic on `str_ptr`. Render it, matching both the
+        // braced form and `echo $p`. DD#119 rejects the *unquoted* int target
+        // upstream, so what reaches here is the converted form.
+        VarSlot::Int(v) => {
+            let n = builder.use_var(*v);
+            emit_int_to_str(builder, module, externs, n)
+        }
+    }
+}
+
+/// The slot behind a redirect-target variable. Absent is a loud ICE, not a
+/// silent `(0, 0)` empty target (bug-redirect-nonsimple-target-empty class).
+/// Split out of `redirect_expr_simple_expansion` so the guard stays unit
+/// testable without standing up an `ObjectModule`.
+fn redirect_slot_or_ice<'a>(var: &str, vars: &'a HashMap<String, VarSlot>) -> &'a VarSlot {
+    match find_highest_version(vars, var) {
+        Some(sv) => sv,
+        None => redirect_target_ice(&format!("variable ${var} has no slot")),
     }
 }
 
@@ -487,24 +511,17 @@ fn redirect_expr_concat(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use cranelift_codegen::ir::Function;
-    use cranelift_frontend::FunctionBuilderContext;
 
-    // `redirect_expr_simple_expansion` on an absent variable takes the
+    // `redirect_slot_or_ice` on an absent variable takes the
     // find_highest_version → None branch, which is a loud ICE (not a silent
     // empty target). The condition is unreachable in real compiles — validate
     // rejects an undeclared `$f` with SB5031 — so a unit test is the only way to
     // exercise the guard. Confirms it panics rather than returning (0, 0).
     #[test]
     fn unresolved_redirect_var_is_loud_ice() {
-        let mut fbctx = FunctionBuilderContext::new();
-        let mut func = Function::new();
-        let mut builder = FunctionBuilder::new(&mut func, &mut fbctx);
-        let entry = builder.create_block();
-        builder.switch_to_block(entry);
         let vars: HashMap<String, VarSlot> = HashMap::new();
         let caught = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            redirect_expr_simple_expansion("nonexistent_var", &mut builder, &vars)
+            redirect_slot_or_ice("nonexistent_var", &vars)
         }));
         assert!(
             caught.is_err(),

@@ -1010,23 +1010,163 @@ fn check_int_redirect_target(stmt: &Statement, env: &TypeEnv, errors: &mut Vec<T
     }
 }
 
-/// One redirect target: an int-typed variable is a type error rather than the
-/// codegen panic it used to be.
+/// DD#119: a redirect target must be **provably non-empty** and string-typed.
+///
+/// The old rule asked "is this a scalar?", which is a syntactic proxy for the
+/// property actually wanted and leaks both ways — it admitted an empty `$p`
+/// (which reached runtime as `: No such file or directory`) and excluded a
+/// `$(getpid)` that cannot possibly be empty. A disposition is the proof
+/// mechanism: it is the one construct that makes emptiness accountable at the
+/// point of use. `:?` proves non-empty by aborting otherwise; `:-X` proves it
+/// when `X` is a non-empty constant. `${p:-}` and `${p:~}` are dispositions
+/// that prove *nothing*, so the test is "does the result prove non-empty", not
+/// "did you write a disposition".
+///
+/// An int needs no disposition — it is non-empty by type, always at least one
+/// digit — but still needs double quotes, because that is how an int becomes a
+/// string everywhere else in sash (DD#80 map keys, string-intrinsic operands).
 fn check_one_redirect_target(target: &Expr, env: &TypeEnv, errors: &mut Vec<TypeError>) {
-    let ExprKind::SimpleExpansion(name) = &target.kind else {
-        return;
-    };
-    if env.var_type(name) != VarType::Int {
-        return;
+    if let ExprKind::SimpleExpansion(name) = &target.kind {
+        if env.var_type(name) == VarType::Int {
+            errors.push(TypeError {
+                message: format!(
+                    "redirect target `${0}` is an int variable — a target is a path \
+                     (string). Convert with `\"${{{0}}}\"`",
+                    name
+                ),
+                span: target.span,
+            });
+            return;
+        }
     }
-    errors.push(TypeError {
-        message: format!(
-            "redirect target `${0}` is an int variable — a target is a path \
-             (string). Convert with `\"${{{0}}}\"`",
-            name
-        ),
-        span: target.span,
-    });
+    match redirect_target_proof(target, env, false) {
+        Ok(true) => {}
+        Ok(false) => errors.push(TypeError {
+            message: "redirect target is empty — a redirect needs a filename \
+                      (DD#119: a target must be provably non-empty)"
+                .to_string(),
+            span: target.span,
+        }),
+        Err(message) => errors.push(TypeError {
+            message,
+            span: target.span,
+        }),
+    }
+}
+
+/// One part of a redirect target. `Ok(true)` means this part proves the target
+/// non-empty, `Ok(false)` means it is well-formed but proves nothing (an empty
+/// literal), and `Err` means the part is not admissible at all.
+///
+/// `quoted` tracks whether we are inside a `"…"`, which is what licenses an int
+/// read. A `Concat` does not set it; a `DoubleQuoted` does, and nesting keeps
+/// it, so `"$p".log` has its `$p` quoted while `$p.log` does not.
+fn redirect_target_proof(e: &Expr, env: &TypeEnv, quoted: bool) -> Result<bool, String> {
+    match &e.kind {
+        ExprKind::Literal(s) | ExprKind::SingleQuoted(s) => Ok(!s.is_empty()),
+        ExprKind::DoubleQuoted(parts) | ExprKind::Concat(parts) => {
+            let inner = quoted || matches!(e.kind, ExprKind::DoubleQuoted(_));
+            let mut proven = false;
+            for p in parts {
+                // Strict (DG, 2026-09-26): every variable part carries its own
+                // obligation regardless of its literal neighbours. Under the
+                // lenient reading `> $p.log` with an empty `p` writes to `.log`
+                // — not the empty-filename bug, but a silent hidden file.
+                proven |= redirect_target_proof(p, env, inner)?;
+            }
+            Ok(proven)
+        }
+        ExprKind::SimpleExpansion(name) => plain_read_proof(name, None, env, quoted),
+        ExprKind::ParameterExpansion(pe) => disposition_proof(pe, env, quoted),
+        ExprKind::Subscript { name, .. } => Err(cell_read_message(name)),
+        // A command substitution, arithmetic or array literal never reaches
+        // here: SB4049 rejects it at parse, and DD#119 does not weaken that.
+        _ => Ok(false),
+    }
+}
+
+/// `${name:OP…}` as a redirect target. Only a disposition that *guarantees* a
+/// non-empty result discharges the obligation, which is why `:-` with an empty
+/// default and `:~` are rejected despite being dispositions: the test is
+/// "does the result prove non-empty", not "did you write a disposition".
+fn disposition_proof(pe: &ParameterExpansion, env: &TypeEnv, quoted: bool) -> Result<bool, String> {
+    match pe.operator.as_deref() {
+        None => plain_read_proof(&pe.name, pe.index.as_deref(), env, quoted),
+        Some(":?") => Ok(true),
+        Some(":-") => match pe.operand.as_deref() {
+            Some(d) if operand_is_nonempty_const(d) => Ok(true),
+            _ => Err(format!(
+                "redirect target `${{{0}:-…}}` has an empty default, so it \
+                 proves nothing — a target must be provably non-empty. Use \
+                 `${{{0}:?message}}` to abort when it is unset, or give the \
+                 default a filename",
+                pe.name
+            )),
+        },
+        Some(":~") => Err(format!(
+            "redirect target `${{{0}:~}}` elides to nothing — that is the \
+             empty filename itself. Use `${{{0}:?message}}`",
+            pe.name
+        )),
+        Some(op) => Err(format!(
+            "redirect target `${{{0}{1}…}}` may be empty — `{1}` does not \
+             prove a filename. Use `${{{0}:?message}}` or `${{{0}:-default}}`",
+            pe.name, op
+        )),
+    }
+}
+
+/// The one message for an undispositioned cell read, shared by the bare
+/// `$a[i]` and braced `${a[i]}` spellings so they cannot drift apart.
+fn cell_read_message(name: &str) -> String {
+    format!(
+        "redirect target `${0}[…]` is an undispositioned cell read — a cell \
+         behaves like a string variable and may be empty. Use \
+         `${{{0}[…]:?message}}`",
+        name
+    )
+}
+
+/// A brace-less `$x` or an operator-less `${x}` / `${a[i]}` — a plain read with
+/// no disposition. Admissible only for an int, and only double-quoted.
+fn plain_read_proof(
+    name: &str,
+    index: Option<&Expr>,
+    env: &TypeEnv,
+    quoted: bool,
+) -> Result<bool, String> {
+    if index.is_some() {
+        return Err(cell_read_message(name));
+    }
+    if env.var_type(name) == VarType::Int {
+        return if quoted {
+            Ok(true)
+        } else {
+            Err(format!(
+                "redirect target `${0}` is an int — it is non-empty by type but \
+                 is not text. Double-quote it to convert: `\"${{{0}}}\"`",
+                name
+            ))
+        };
+    }
+    Err(format!(
+        "redirect target `${0}` may be empty — a redirect to an empty filename \
+         fails at runtime. Say what happens when it is absent: `${{{0}:?message}}` \
+         to abort, or `${{{0}:-default}}`",
+        name
+    ))
+}
+
+/// Is this `:-` default itself a non-empty constant? A default that is another
+/// variable read only moves the obligation, so it does not discharge it.
+fn operand_is_nonempty_const(d: &Expr) -> bool {
+    match &d.kind {
+        ExprKind::Literal(s) | ExprKind::SingleQuoted(s) => !s.is_empty(),
+        ExprKind::DoubleQuoted(parts) | ExprKind::Concat(parts) => {
+            parts.iter().any(operand_is_nonempty_const)
+        }
+        _ => false,
+    }
 }
 
 /// DD#33: Check expressions for subscript key type mismatches.

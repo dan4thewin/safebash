@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup commands
-plan=132
+plan=142
 echo "1..$plan" >&3
 
 set +e
@@ -283,11 +283,11 @@ run_sash 'f=r14set; echo s > ${f:-r14fallback}; cat r14set'
 [[ $rc = 0 && $out = "s" && -z $err ]]; chk 14.22
 
 # 14.23 support: `$a[i]` subscript redirect target opens the element's filename
-run_sash 'array a=(r14zero r14one); echo sub > $a[1]; cat r14one'
+run_sash 'array a=(r14zero r14one); echo sub > ${a[1]:?empty}; cat r14one'
 [[ $rc = 0 && $out = "sub" && -z $err ]]; chk 14.23
 
 # 14.24 support: append `>> $a[i]` accumulates to the element's filename
-run_sash 'array a=(x r14ap); echo l1 > $a[1]; echo l2 >> $a[1]; cat r14ap'
+run_sash 'array a=(x r14ap); echo l1 > ${a[1]:?empty}; echo l2 >> ${a[1]:?empty}; cat r14ap'
 [[ $rc = 0 && $out == *l1* && $out == *l2* && -z $err ]]; chk 14.24
 
 # 14.25 reject: here-strings are dropped (DD#83) → SB4050 (all modes: parse).
@@ -307,14 +307,14 @@ run_sash "echo sq > 'r14sq'; cat r14sq"
 [[ $rc = 0 && $out = "sq" && -z $err ]]; chk 14.27
 
 # 14.28 support: double-quoted concat target `> "$x.txt"` (redirect_expr_concat)
-run_sash 'x=r14dq; echo dq > "$x.txt"; cat r14dq.txt'
+run_sash 'x=r14dq; echo dq > "${x:?empty}.txt"; cat r14dq.txt'
 [[ $rc = 0 && $out = "dq" && -z $err ]]; chk 14.28
 
 # 14.29 BUG FIX: a pipeline-stage redirect with a `$var` target was silently
 # DROPPED (the stage went to the pipe instead of the file) — the stage path had
 # its own ad-hoc target lowering (ir_expr_to_ssa_value) that hardcoded SSA
 # version 0. Now it reuses the top-level lower_ir_redirect_expr.
-run_sash 'f=r14st; echo hi > $f | cat; cat r14st'
+run_sash 'f=r14st; echo hi > ${f:?empty} | cat; cat r14st'
 [[ $rc = 0 && $out = "hi" && -z $err ]]; chk 14.29
 
 # 14.30 BUG FIX: a pipeline-stage redirect with a `${x:-f}` target (spilled)
@@ -322,7 +322,7 @@ run_sash 'echo hi > ${miss:-r14sd} | cat; cat r14sd'
 [[ $rc = 0 && $out = "hi" && -z $err ]]; chk 14.30
 
 # 14.31 BUG FIX: a pipeline-stage redirect with a `$a[i]` target (spilled)
-run_sash 'array a=(x r14se); echo hi > $a[1] | cat; cat r14se'
+run_sash 'array a=(x r14se); echo hi > ${a[1]:?empty} | cat; cat r14se'
 [[ $rc = 0 && $out = "hi" && -z $err ]]; chk 14.31
 
 
@@ -850,7 +850,7 @@ cat csr6f'
 
 # csr.7 a NON-literal target (the `redirect_s` path, computed ptr+len)
 run_sash 'str f=csr7f
-str x=$(/bin/echo dyn > $f)
+str x=$(/bin/echo dyn > ${f:?empty})
 attest x [[ -z $x || -n $x ]]
 echo "cap=[$x]"
 cat csr7f'
@@ -871,6 +871,55 @@ echo "after=[$x]"'
 [[ $rc != 0 && $out != *after* && $rerr == *"/bin/false"* ]]; chk csr.9
 
 rm -f csr1f csr2f csr3f csr4f csr6f csr7f csr9f
+
+# ── DD#119: a redirect target must be provably non-empty ───────────────
+# The old rule asked "is this a scalar?", a syntactic proxy that admitted an
+# empty `$p` (which reached runtime as `: No such file or directory`). A
+# disposition is the proof mechanism, so an undispositioned read is rejected.
+run_sash 'str p=d119a
+/bin/echo hi > ${p:?empty}
+/bin/cat d119a'
+[[ $rc = 0 && $out = hi && -z $err ]]; chk 14.54
+# a bare string read proves nothing, even though it is perfectly non-empty here
+run_sash 'str p=d119b
+/bin/echo hi > $p'
+[[ $rc != 0 && $err == *"may be empty"* ]]; chk 14.55
+# `:-` with a non-empty constant default proves it; an EMPTY default does not.
+# This is the hole a "did you write a disposition" rule would leave open.
+run_sash 'str p=""
+/bin/echo hi > ${p:-d119c}
+/bin/cat d119c'
+[[ $rc = 0 && $out = hi && -z $err ]]; chk 14.56
+run_sash 'str p=""
+/bin/echo hi > ${p:-}'
+[[ $rc != 0 && $err == *"empty default"* ]]; chk 14.57
+# an empty constant target is observably the bug
+run_sash '/bin/echo hi > ""'
+[[ $rc != 0 && $err == *"is empty"* ]]; chk 14.58
+# an int is non-empty BY TYPE, so it needs no disposition — but it still needs
+# quotes to be text (DG: "exempt but still needs quotes to make a string")
+run_sash 'int n=119
+/bin/echo hi > "$n".d119
+/bin/cat 119.d119'
+[[ $rc = 0 && $out = hi && -z $err ]]; chk 14.59
+run_sash 'int n=119
+/bin/echo hi > $n.d119'
+[[ $rc != 0 && $err == *"not text"* ]]; chk 14.60
+# strict concatenation: a literal neighbour does NOT discharge the obligation.
+# Lenient would write to `.d119` here — a silent hidden file, its own surprise.
+run_sash 'str p=d119d
+/bin/echo hi > $p.d119'
+[[ $rc != 0 && $err == *"may be empty"* ]]; chk 14.61
+# a cell read behaves like a string variable, so it carries the same obligation
+run_sash 'array a=(d119e)
+/bin/echo hi > $a[0]'
+[[ $rc != 0 && $err == *"cell read"* ]]; chk 14.62
+# a command substitution target is still rejected at parse by SB4049 — DD#119
+# does not weaken that rule, it explains it
+run_sash '/bin/echo hi > $(/bin/echo d119f)'
+[[ $rc != 0 && $err == *SB4049* ]]; chk 14.63
+
+rm -f d119a d119c 119.d119
 
 set -e
 tally

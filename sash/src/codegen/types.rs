@@ -19,10 +19,15 @@ impl VarSlot {
     // INVARIANT: str_ptr/str_len are called only on slots the caller has
     // already established are strings — positionals, arrays, read/capture
     // targets, and the `VarSlot::Str` arm of a `match` on this enum (values.rs,
-    // setup.rs, dispatch.rs). The Int arm is unreachable from those sites; a hit
-    // means a codegen path built a slot of the wrong shape (a compiler bug, not
-    // user-reachable input). Int-valued reads dispatch via `match *sv` instead,
-    // so no `is_int()`-then-panicking-accessor dance survives.
+    // setup.rs, dispatch.rs, redirects.rs). The Int arm is unreachable from
+    // those sites; a hit means a codegen path built a slot of the wrong shape.
+    // This comment used to add "not user-reachable input", and that was false:
+    // `redirect_expr_simple_expansion` called `str_ptr` unconditionally, so
+    // `int p=5; echo hi > $p.log` (and `> "$p"`, `> "$p".log`) reached the
+    // panic from ordinary source. It matches on the enum now. Do not restate
+    // the unreachability claim for a caller that is not in the list above.
+    // Int-valued reads dispatch via `match *sv` instead, so no
+    // `is_int()`-then-panicking-accessor dance survives.
     pub(super) fn str_ptr(&self) -> Variable {
         match self {
             VarSlot::Str { ptr, .. } => *ptr,

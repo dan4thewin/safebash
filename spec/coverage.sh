@@ -6,7 +6,7 @@
 set -eu
 . common.sh
 setup coverage
-plan=337
+plan=339
 echo "1..$plan" >&3
 
 set +e
@@ -133,10 +133,10 @@ run_sash 'echo hi >&-'
 # cov.27 a file redirect whose TARGET is a variable expansion (`> $f`) — the
 # only `> $var` specs are taint rejections, so this clean codegen path (redirect
 # target as a runtime expr) is untested.
-run_sash 'f=rvfile; echo hi > $f; cat $f'
+run_sash 'f=rvfile; echo hi > ${f:?empty}; cat $f'
 [[ $rc = 0 && $out = hi && -z $err ]]; chk cov.27
 # cov.28 append (`>>`) to a variable-expansion target
-run_sash 'f=rvfile2; echo a > $f; echo b >> $f; cat $f'
+run_sash 'f=rvfile2; echo a > ${f:?empty}; echo b >> ${f:?empty}; cat $f'
 [[ $rc = 0 && $out = $'a\nb' && -z $err ]]; chk cov.28
 # cov.29-48 arithmetic-operator coverage: no feature spec exercises these
 # operators with a variable operand, leaving transform/expr_handlers.rs
@@ -1257,32 +1257,39 @@ run_sash '/bin/true
 echo $(status; echo b)'
 [[ $rc != 0 && -z $out && $err == *SB5073* ]]; chk cov.249
 
-# cov.250-252 a redirect target that is served by intrinsic codegen rather
-# than a VarSlot. `$$` (pid) and `$!` (last background child) are readable
-# first-class values — `str s=$$; /bin/echo hi > $s` always worked — but the
-# slot-based redirect-target lowering could not see them, so using them
-# DIRECTLY as a target went wrong in two different ways: `> $$` was skipped by
-# the `var_name == "$"` guard in init_positional_params, got no slot at all and
-# raised the unresolved-target ICE, while `> $!` had no guard, got an EMPTY
-# slot, and silently redirected to the empty filename that
-# `spill_scalar_redirect_targets` exists to prevent. Both now spill to a
-# synthetic scalar like any other non-slot target.
-run_sash '/bin/echo hi > $$
-/bin/echo "pid=$$"'
-rpid=${out#pid=}
-[[ $rc == 0 && -n $rpid && -f $rpid && $(cat "$rpid") == hi ]]; chk cov.250
-# the same target inside a concatenation — target_needs_spill recurses into
-# DoubleQuoted parts, so `"$$.log"` takes the spill path too
-run_sash '/bin/echo hi > "$$.log"
-/bin/echo "pid=$$"'
-rpid=${out#pid=}
-[[ $rc == 0 && -n $rpid && -f $rpid.log && $(cat "$rpid.log") == hi ]]; chk cov.251
-# `$!` names the background child, matching `str s=$!; > $s`
+# cov.250-252 DD#119: a redirect target must be provably non-empty, so an
+# undispositioned variable read is rejected — and that now includes `$$` and
+# `$!`. These three specs used to assert the opposite. The history is worth
+# keeping: `> $$` once raised the unresolved-target ICE (no slot at all) and
+# `> $!` once got an EMPTY slot and silently redirected to the empty filename,
+# which is precisely the class `bug-redirect-nonsimple-target-empty` names.
+# The 2026-08-30 fix made both spill to a synthetic scalar so they worked;
+# DD#119 observes that "works" was never the question — the target still could
+# not be shown non-empty — and rejects the whole undispositioned shape instead.
+# The remedy is the one the rule's own comment always prescribed: bind it to a
+# variable, then dispose of the empty case.
+run_sash '/bin/echo hi > $$'
+[[ $rc != 0 && -n $err ]]; chk cov.250
+# the concatenated form `"$$.log"` is rejected for the same reason — strict
+# concatenation (DG): a literal neighbour does not discharge the obligation
+run_sash '/bin/echo hi > "$$.log"'
+[[ $rc != 0 && -n $err ]]; chk cov.251
+# `$!` likewise, and the legal spelling alongside it: bind, then dispose
 run_sash '/bin/sleep 0.2 &
-/bin/echo hi > $!
-/bin/echo "child=$!"'
+/bin/echo hi > $!'
+[[ $rc != 0 && -n $err ]]; chk cov.252
+# cov.252a-b the dispositioned remedy for both, which is what authors write now
+run_sash 'str s=$$
+/bin/echo hi > ${s:?no pid}
+/bin/echo "pid=$s"'
+rpid=${out#pid=}
+[[ $rc == 0 && -n $rpid && -f $rpid && $(cat "$rpid") == hi ]]; chk cov.252a
+run_sash '/bin/sleep 0.2 &
+str c=$!
+/bin/echo hi > ${c:?no child}
+/bin/echo "child=$c"'
 rchild=${out#child=}
-[[ $rc == 0 && -n $rchild && -f $rchild && $(cat "$rchild") == hi ]]; chk cov.252
+[[ $rc == 0 && -n $rchild && -f $rchild && $(cat "$rchild") == hi ]]; chk cov.252b
 
 # cov.253-255 the prefix `++`/`--` rejection lives in `parse_arith_str`, the one
 # funnel every route into arithmetic passes through. It used to sit in the two
