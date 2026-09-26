@@ -1,3 +1,64 @@
+## ══ STATUS (2026-09-26) — `$!` desugared; the regression check can fail again ══
+
+**`$!` → `$(getcpid)` is in** — the second of DD#111's three, and unlike `$$`
+it is **behavior-preserving by construction**. There was no bug to fix,
+because `a875d58` had already fixed the symptom by hand: it seeded
+`intrinsic_int` with `!` so the punctuation form would agree with the
+intrinsic it is sugar for. That worked and left two encodings of one fact.
+This removes the second rather than maintaining it.
+
+Two folds ran in the wrong direction and are gone —
+`bareword_shortcut_expansion`'s `getcpid` arm and `parse_getcpid_word`'s
+`SimpleExpansion("!")`. Both used to reach `SsaValue::Var("!")` via the parser
+fold; both now reach it via `resolve_single_cmdsubst` → `nullary_magic_var`.
+
+**The `intrinsic_int` `!` seed is deleted**, and the argument is structural,
+not "I looked and found no callers": `var_type` is only reached for a magic
+name through `SimpleExpansion`, which `assert_no_magic_sugar` now forbids; and
+the only other spelling, `${!}`, is rejected by SB4003 before typing runs.
+Checked the second half by running it.
+
+**Neuter: 4 specs across 3 files** — `cov.252b`, `55.19`, `isink.11`, `spv.4`.
+The informative result is the one that did *not* fail: `sx.25` in
+`arithmetic.sh` passes with the desugar neutered, because inside `$(( ))` a
+string operand coerces anyway. It reads like a guard on the two spellings
+agreeing and it is not one. Left alone, but recorded.
+
+**No new specs, deliberately.** The four above already pin everything this
+change could break and it adds no observable behavior; mirroring the `$$`
+block would have inflated the total with ids no neuter can distinguish.
+
+**AGENTS.md's regression check can fail again** (the vacuity found in journal
+419). `commit_hash` is not a sweep identity — `runs` stores the git HEAD sha,
+so every sweep against a dirty tree records the same one and
+`MAX(rowid) … WHERE commit_hash='BASE'` hands you the run you just did. The
+replacement compares by **row order**: the baseline is `rowid < cur.rid`,
+strictly earlier, so it cannot self-compare however dirty the tree is. Added
+the cheap tell to run first (a hash with more rows than distinct ids covers
+several sweeps — keep the `* 1.0`, integer division called four sweeps `3`)
+and a **non-vacuity probe** that must report hundreds (231 today). Every SQL
+block was executed against `spec.db` before committing, and the new check was
+then used as this commit's gate.
+
+Sweep **6518**, unchanged and predicted; `flips=0 new=0 total=6518`.
+`mk test` and clippy clean. Journals 419, 420.
+
+**Next: `$?` → `$(status)`**, the last and largest. The trap is the whole
+risk: `validate::find_dollar_question` (2744) and `stmt_uses_status` (2754)
+match `SimpleExpansion("?")` and nothing else. Their doc comment claims to
+cover `$(status)` — true only because `bareword_shortcut_expansion` folds it
+into that node, and that fold is now the **only arm left** in that function.
+Reverse the direction without moving them and SB5012's availability state
+machine goes silently vacuous. Same commit, with a neuter proving SB5012 still
+fires. Confirm first what `$(status args…)` means — `nullary_magic_var`
+declines it on `args.is_empty()`, but nobody has established what the
+non-empty form does. Then `intrinsic_int`'s `?` seed goes the way of `!`; `#`
+stays.
+
+Also owed: rebuild `coverage.db` (`mk cov-union` → `mk cov-db` → `mk cov-reset`
+→ `mk build`) before resuming the coverage queue; `plan.md` at repo root is
+stale.
+
 ## ══ STATUS (2026-09-26) — `$$` is punctuation sugar ══
 
 **The magic-variable directive has started, `$$` first.** DD#111 §Why already

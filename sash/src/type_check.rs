@@ -38,15 +38,19 @@ struct TypeEnv {
 
 impl TypeEnv {
     fn new() -> Self {
+        // `$!` is **not** seeded here any more. It was, between a875d58 and the
+        // DD#111 desugar, because the punctuation form was a String
+        // `SimpleExpansion` while `$(getcpid)` — the intrinsic it is sugar for
+        // — was already int-returning, so `wait $!` failed a rule
+        // `wait $(getcpid)` passed. `$!` now *is* `$(getcpid)` by the time this
+        // pass runs, typed by `is_int_returning_intrinsic`, and
+        // `assert_no_magic_sugar` guarantees no `SimpleExpansion("!")` survives
+        // parse — so the seed could never be consulted again. (`${!}` is the
+        // only other way to name it and SB4003 rejects that as an indirect
+        // expansion.) `?` stays until `$?` takes the same route.
         let mut intrinsic_int = HashSet::new();
         intrinsic_int.insert("#".to_string()); // $#
         intrinsic_int.insert("?".to_string()); // $?
-                                               // $! — a pid, and `$(getcpid)` (which `$!` is the sugar for) is
-                                               // already int-returning. Seeding `?` but not `!` made the punctuation
-                                               // form String while the intrinsic form was Int, so the canonical
-                                               // `p=$!; wait $p` failed the int-only rule for `wait` while
-                                               // `wait $(getcpid)` passed. The asymmetry was the bug, not the rule.
-        intrinsic_int.insert("!".to_string()); // $!
                                                // DD#100: `A`..`E` are the collection-parameter slots. They are always
                                                // collections, but their *kind* is per-call-site (Part B: array and
                                                // map are both usable), and this pass runs before inlining — so they

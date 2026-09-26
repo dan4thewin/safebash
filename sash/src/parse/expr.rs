@@ -406,7 +406,7 @@ fn parse_dollar_arm(
 /// DD#111: variables are not magic in sash. Every `$X` punctuation form is
 /// **sugar** for the intrinsic that is the real thing, and the front end is
 /// the only place that knows it — downstream sees the intrinsic and nothing
-/// else. This is the desugar: `$$` → `$(getpid)`.
+/// else. This is the desugar: `$$` → `$(getpid)`, `$!` → `$(getcpid)`.
 ///
 /// Returns `None` for an ordinary variable name, so a caller can use it as a
 /// filter. **Every `SimpleExpansion` construction site that can receive one of
@@ -415,11 +415,14 @@ fn parse_dollar_arm(
 /// of silent. A missed site would keep a magic variable in that one context,
 /// and the SB5012 `$?` state machine would stop seeing reads there.
 ///
-/// `$?` and `$!` are not desugared yet — they land in their own commits, since
-/// `$?` carries the SB5012 state machine with it.
+/// `$?` is not desugared yet — it lands in its own commit, because it carries
+/// the SB5012 state machine with it (`validate::find_dollar_question` and
+/// `stmt_uses_status` match `SimpleExpansion("?")` and nothing else, so they
+/// must move to the intrinsic form in the same change or go silently vacuous).
 pub(crate) fn magic_sugar_expansion(name: &str, span: Span) -> Option<Expr> {
     let intrinsic = match name {
         "$" => "getpid",
+        "!" => "getcpid",
         _ => return None,
     };
     Some(intrinsic_expansion(intrinsic, span))
@@ -745,7 +748,6 @@ fn bareword_shortcut_expansion(stmts: &[Statement], span: Span) -> Option<Expr> 
     };
     let var = match name.as_str() {
         "status" => "?",
-        "getcpid" => "!",
         _ => return None,
     };
     Some(Expr {
@@ -1784,16 +1786,15 @@ fn parse_status_word(scanner: &mut Scanner, span: Span) -> Result<SpecialWord, D
     }))
 }
 
-/// `$(getcpid)` returns the `$!` expansion; anything else with the
-/// `getcpid` head reconstructs as a no-arg `getcpid` command.
+/// `$(getcpid)` yields the intrinsic itself (DD#111 — `$!` is the sugar, this
+/// is the real thing, so the fold that used to collapse it into
+/// `SimpleExpansion("!")` is gone); anything else with the `getcpid` head
+/// reconstructs as a no-arg `getcpid` command.
 fn parse_getcpid_word(scanner: &mut Scanner, span: Span) -> Result<SpecialWord, Diagnostic> {
     scanner.next();
     if matches!(scanner.peek().token, Tok::RParen) {
         scanner.next();
-        return Ok(SpecialWord::Returned(Expr {
-            kind: ExprKind::SimpleExpansion("!".to_string()),
-            span,
-        }));
+        return Ok(SpecialWord::Returned(intrinsic_expansion("getcpid", span)));
     }
     Ok(SpecialWord::Continued(Statement {
         kind: StmtKind::Command(Command {
