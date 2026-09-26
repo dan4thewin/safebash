@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup misc
-plan=103
+plan=107
 echo "1..$plan" >&3
 
 set +e
@@ -260,6 +260,29 @@ run_sash '(( 0 )); echo $(status)'
 # spv.4 $! and $(getcpid) are the same value (empty with no background job)
 run_sash 'x=$!; y=$(getcpid); [[ $x == $y ]] && echo Y'
 [[ $rc = 0 && $out = "Y" && -z $err ]]; chk spv.4
+
+# spv.5-spv.8 DD#111: the sugar is desugared in the FRONT END, so `$$` and
+# `$(getpid)` are one node downstream and cannot disagree about type. They
+# used to: `$(getpid)` was Int while `$$` was a String SimpleExpansion, so
+# `int b=$$` was SB4030 "cannot assign string value to int variable" for a
+# value that is a number. Same fault `$!` had before a875d58.
+# spv.5 `int b=$$` compiles — this was the bug
+run_sash 'int b=$$; echo "[$b]"'
+[[ $rc = 0 && $out =~ ^\[[0-9]+\]$ && -z $err ]]; chk spv.5
+# spv.6 and the converse now holds too: `$$` is int, so a string sink needs
+# the quote conversion, exactly as for any other int.
+run_sash 'str c=$$; echo "[$c]"'
+[[ $rc != 0 && -z $out && $err == *SB4030* ]]; chk spv.6
+# spv.7 quoting is that conversion. NOTE: this one does NOT prove the desugar
+# — it passes with `magic_sugar_expansion` neutered too, because a String
+# SimpleExpansion inside "..." is a string either way. It is a regression guard
+# on the conversion, not evidence for DD#111. spv.5/6/8 are the proof (all
+# three fail under that neuter).
+run_sash 'str d="$$"; echo "[$d]"'
+[[ $rc = 0 && $out =~ ^\[[0-9]+\]$ && -z $err ]]; chk spv.7
+# spv.8 both spellings agree in an int context (spv.1 pins the string context)
+run_sash 'int e=$(getpid); int f=$$; if (( e == f )) { echo Y }'
+[[ $rc = 0 && $out = "Y" && -z $err ]]; chk spv.8
 
 # ── Heap exhaustion and slurp limits (bug-heap-exhaustion-silent-segv) ──
 # The runtime heap is a fixed region and heap_4 returns NULL when it is

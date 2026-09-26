@@ -47,24 +47,44 @@ fn resolve_single_cmdsubst(name: String, c: &Command, state: &VersionState) -> O
     if state.function_bodies.contains_key(name.as_str()) {
         return Some(func_call_capture(name, c, state));
     }
+    if let Some(var) = nullary_magic_var(&name, c) {
+        return Some(SsaValue::Var(state.lookup(var)));
+    }
     if let Some(v) = try_native_intrinsic(&name, c, state) {
         return Some(v);
     }
-    // Backstop (fork B): a fixed-arity value-intrinsic that didn't lower is a
-    // malformed (wrong-arity) call. It must NOT fall through to a bare external
-    // command — that reaches `sash_exec` and aborts at runtime ("bare command
-    // passed to sash_exec"). Yield an empty capture instead; validate (SB4045)
-    // reports the arity error under normal compilation, and this keeps the SSA
-    // well-formed even when validation is bypassed.
-    if let Some(arity) = crate::ssa::value_intrinsic_arity(&name) {
-        if c.args.len() != arity {
-            return Some(SsaValue::Literal(String::new()));
-        }
+    if let Some(v) = wrong_arity_backstop(&name, c) {
+        return Some(v);
     }
     if !state.lowering_fn_template {
         state.externally_used.borrow_mut().insert(name);
     }
     None
+}
+
+/// The magic-variable intrinsics (`$(getpid)`, `$(status)`, `$(getcpid)`)
+/// resolve to a compiler-managed SSA var — but **only** when written with no
+/// arguments. `$(status …)` with arguments is an ordinary command and must
+/// fall through to the external path.
+fn nullary_magic_var(name: &str, c: &Command) -> Option<&'static str> {
+    if !c.args.is_empty() {
+        return None;
+    }
+    magic_intrinsic_var(name)
+}
+
+/// Backstop (fork B): a fixed-arity value-intrinsic that didn't lower is a
+/// malformed (wrong-arity) call. It must NOT fall through to a bare external
+/// command — that reaches `sash_exec` and aborts at runtime ("bare command
+/// passed to sash_exec"). Yield an empty capture instead; validate (SB4045)
+/// reports the arity error under normal compilation, and this keeps the SSA
+/// well-formed even when validation is bypassed.
+fn wrong_arity_backstop(name: &str, c: &Command) -> Option<SsaValue> {
+    let arity = crate::ssa::value_intrinsic_arity(name)?;
+    if c.args.len() == arity {
+        return None;
+    }
+    Some(SsaValue::Literal(String::new()))
 }
 
 /// `$(f …)` on a known user function. Option C: an `-> int` function
@@ -666,6 +686,31 @@ fn try_arith_int_intrinsic(
     try_native_intrinsic(name, &cmd, state)
 }
 
+/// The three nullary intrinsics that **read a compiler-managed SSA slot**
+/// rather than computing anything: `getpid`/`status`/`getcpid` → the `$`/`?`/`!`
+/// variables.
+///
+/// DD#111: variables are not magic in sash. These keyword forms are the real
+/// thing and `$$`/`$?`/`$!` are punctuation sugar the *parser* desugars into
+/// them, so both spellings arrive here as the same node. This is the single
+/// table both callers share — the word form (`$(getpid)`) via
+/// `resolve_single_cmdsubst` and the arith sexpr (`$(( (getpid) ))`) via
+/// `resolve_nullary_sexpr`.
+///
+/// They used to reach the same slot by two unrelated routes: the sexpr through
+/// this mapping, the word form through a *parser fold* that rewrote
+/// `$(status)` back into `$?`. That is how `$$` came to be String-typed while
+/// `$(getpid)` was Int — two spellings of one value that disagreed about its
+/// type, the same fault `$!` had before `a875d58`.
+pub(crate) fn magic_intrinsic_var(name: &str) -> Option<&'static str> {
+    match name {
+        "getpid" => Some("$"),
+        "status" => Some("?"),
+        "getcpid" => Some("!"),
+        _ => None,
+    }
+}
+
 /// Resolve a nullary sexpr atom `(name)`. Returns `None` for a known user
 /// `-> int` function (the caller inlines it via `IntFuncCall`).
 ///
@@ -682,10 +727,10 @@ fn try_arith_int_intrinsic(
 /// an unset slot: a silent 0. A string intrinsic here is category B (rejected
 /// in type_check); see bug-arith-sexpr-intrinsics-zero.
 fn resolve_nullary_sexpr(name: &str, state: &VersionState) -> Option<SsaValue> {
+    if let Some(var) = magic_intrinsic_var(name) {
+        return Some(SsaValue::Var(state.lookup(var)));
+    }
     match name {
-        "getpid" => Some(SsaValue::Var(state.lookup("$"))),
-        "status" => Some(SsaValue::Var(state.lookup("?"))),
-        "getcpid" => Some(SsaValue::Var(state.lookup("!"))),
         "getppid" | "argc" | "random" | "signum" | "epochseconds" => Some(SsaValue::CmdSubst {
             argv: vec![SsaValue::Literal(name.to_string())],
             suppressed: false,

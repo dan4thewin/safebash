@@ -393,10 +393,54 @@ fn parse_dollar_arm(
     if try_subscript_arm(scanner, &name, span, parts) {
         return;
     }
+    if let Some(e) = magic_sugar_expansion(&name, span) {
+        parts.push(e);
+        return;
+    }
     parts.push(Expr {
         kind: ExprKind::SimpleExpansion(name),
         span,
     });
+}
+
+/// DD#111: variables are not magic in sash. Every `$X` punctuation form is
+/// **sugar** for the intrinsic that is the real thing, and the front end is
+/// the only place that knows it — downstream sees the intrinsic and nothing
+/// else. This is the desugar: `$$` → `$(getpid)`.
+///
+/// Returns `None` for an ordinary variable name, so a caller can use it as a
+/// filter. **Every `SimpleExpansion` construction site that can receive one of
+/// these names must route through here**; `assert_no_magic_sugar` proves after
+/// the fact that none survived, which is what makes a missed site loud instead
+/// of silent. A missed site would keep a magic variable in that one context,
+/// and the SB5012 `$?` state machine would stop seeing reads there.
+///
+/// `$?` and `$!` are not desugared yet — they land in their own commits, since
+/// `$?` carries the SB5012 state machine with it.
+pub(crate) fn magic_sugar_expansion(name: &str, span: Span) -> Option<Expr> {
+    let intrinsic = match name {
+        "$" => "getpid",
+        _ => return None,
+    };
+    Some(intrinsic_expansion(intrinsic, span))
+}
+
+/// Build `$(name)` — a single-command substitution with a bare literal head
+/// and no arguments. The shape `transform::resolve_single_cmdsubst` recognises.
+pub(crate) fn intrinsic_expansion(name: &str, span: Span) -> Expr {
+    Expr {
+        kind: ExprKind::CommandSubstitution(vec![Statement {
+            kind: StmtKind::Command(Command {
+                name: Expr {
+                    kind: ExprKind::Literal(name.to_string()),
+                    span,
+                },
+                args: vec![],
+            }),
+            span,
+        }]),
+        span,
+    }
 }
 
 /// Probe for `$arr[i]` / `$arr[@]` / `$arr[*]` subscript form. The
@@ -501,10 +545,10 @@ fn emit_string_part(
             {
                 return Ok(advance);
             }
-            result.push(Expr {
+            result.push(magic_sugar_expansion(name, span).unwrap_or_else(|| Expr {
                 kind: ExprKind::SimpleExpansion(name.clone()),
                 span,
-            });
+            }));
             1
         }
         StringPart::Expansion(content) => {
@@ -1169,11 +1213,12 @@ fn quoted_cell_expr(name: &str, index: Box<Expr>, span: Span) -> Expr {
 
 /// `"$var"` as a single interpolating argument (the substitution subject).
 fn quoted_var_expr(name: &str, span: Span) -> Expr {
+    let inner = magic_sugar_expansion(name, span).unwrap_or_else(|| Expr {
+        kind: ExprKind::SimpleExpansion(name.to_string()),
+        span,
+    });
     Expr {
-        kind: ExprKind::DoubleQuoted(vec![Expr {
-            kind: ExprKind::SimpleExpansion(name.to_string()),
-            span,
-        }]),
+        kind: ExprKind::DoubleQuoted(vec![inner]),
         span,
     }
 }

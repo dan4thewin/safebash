@@ -1274,9 +1274,11 @@ run_sash '/bin/echo hi > "$$.log"'
 run_sash '/bin/sleep 0.2 &
 /bin/echo hi > $!'
 [[ $rc != 0 && -n $err ]]; chk cov.252
-# cov.252a-b the dispositioned remedy for both, which is what authors write now
-run_sash 'str s=$$
-/bin/echo hi > ${s:?no pid}
+# cov.252a-b the dispositioned remedy for both, which is what authors write now.
+# Both are `int`, not `str`: DD#111 desugars `$$`/`$!` to `$(getpid)`/`$(getcpid)`,
+# which are int-typed, so `str s=$$` is SB4030 ("quote it to convert").
+run_sash 'int s=$$
+/bin/echo hi > "${s:?no pid}"
 /bin/echo "pid=$s"'
 rpid=${out#pid=}
 [[ $rc == 0 && -n $rpid && -f $rpid && $(cat "$rpid") == hi ]]; chk cov.252a

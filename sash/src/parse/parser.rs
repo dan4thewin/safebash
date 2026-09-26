@@ -156,13 +156,43 @@ pub fn parse(source: &str) -> Result<(Program, Vec<Diagnostic>), Vec<Diagnostic>
         return Err(diags);
     }
 
-    Ok((
-        Program {
-            statements: stmts,
-            end_block,
-        },
-        diags,
-    ))
+    let program = Program {
+        statements: stmts,
+        end_block,
+    };
+    assert_no_magic_sugar(&program);
+    Ok((program, diags))
+}
+
+/// DD#111 invariant: **no magic variable survives parse.** Every `$X`
+/// punctuation form is sugar the front end desugars into its intrinsic
+/// (`magic_sugar_expansion`), so a `SimpleExpansion` bearing one of those
+/// names downstream means a construction site was missed.
+///
+/// This exists because a missed site is otherwise *silent*: that one context
+/// would keep a magic variable, every spec would still pass, and the checks
+/// that look for the intrinsic form — SB5012's `$?` state machine above all —
+/// would simply stop seeing reads there. An invariant worth stating is worth
+/// failing on, so this panics rather than warns. It cannot fire on user input;
+/// only on a compiler bug.
+fn assert_no_magic_sugar(program: &Program) {
+    let check = |stmt: &Statement| {
+        crate::ir::walk_all_exprs(stmt, &mut |e| {
+            if let ExprKind::SimpleExpansion(n) = &e.kind {
+                assert!(
+                    super::expr::magic_sugar_expansion(n, e.span).is_none(),
+                    "ICE: `${}` survived parse as a SimpleExpansion; a construction site is not routed through magic_sugar_expansion (DD#111)",
+                    n
+                );
+            }
+        });
+    };
+    for stmt in &program.statements {
+        check(stmt);
+    }
+    for stmt in program.end_block.iter().flatten() {
+        check(stmt);
+    }
 }
 
 /// One top-level item: an `END { }` block or a statement. Split out of `parse`
@@ -2231,11 +2261,12 @@ pub(crate) fn validate_static_sed_re(body: &str, span: Span) -> Result<(), Diagn
 
 /// `"$var"` as a single interpolating substitution subject.
 fn quoted_var_subject(var_name: &str, span: Span) -> Expr {
+    let inner = super::expr::magic_sugar_expansion(var_name, span).unwrap_or_else(|| Expr {
+        kind: ExprKind::SimpleExpansion(var_name.to_string()),
+        span,
+    });
     Expr {
-        kind: ExprKind::DoubleQuoted(vec![Expr {
-            kind: ExprKind::SimpleExpansion(var_name.to_string()),
-            span,
-        }]),
+        kind: ExprKind::DoubleQuoted(vec![inner]),
         span,
     }
 }
