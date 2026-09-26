@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup errors
-plan=242
+plan=249
 echo "1..$plan" >&3
 
 set +e
@@ -1288,6 +1288,54 @@ run_sash '/bin/echo hi
 run_sash 'array a=(p q)
 /bin/echo @{a:-x}}'
 [[ $rc != 0 && $err == *SB4014* && $err == *:2:18:* ]]; chk dspan.3
+
+# --- the operand checks reach every context, not just `echo $(…)` ---
+# The string-intrinsic check ran from `check_stmt`, which only ever sees a
+# statement-level command. A command substitution is an EXPRESSION, so
+# `$(toupper $n)` was checked in `echo $(toupper $n)` and silently skipped on
+# an assignment RHS — the only spelling that does anything with the result.
+# Every sint.N spec above used the `echo` form, so the cohort was green over a
+# check that was vacuous in its useful case. Front-end — all modes.
+
+run_sash 'int n=42
+str t=$(toupper $n)
+echo $t'
+[[ $rc != 0 && -z $out && $err == *SB4030* ]]; chk sint.20
+# sint.21 is NOT a proof of this pass: neutering the pass leaves it green,
+# because `strlen` on an int is also caught by check_int_string_ops. Kept as a
+# true assertion, labelled so it is not mistaken for coverage of the traversal.
+run_sash 'int n=42
+str t=$(strlen $n)
+echo $t'
+[[ $rc != 0 && -z $out && $err == *SB4030* ]]; chk sint.21
+run_sash 'int n=42
+str t=$(basename $n)
+echo $t'
+[[ $rc != 0 && -z $out && $err == *SB4030* ]]; chk sint.22
+# nested one level deeper: inside a double-quoted assignment RHS
+run_sash 'int n=42
+str t="$(tolower $n)"
+echo $t'
+[[ $rc != 0 && -z $out && $err == *SB4030* ]]; chk sint.23
+# and inside a function body, where the enclosing statement is not top level
+run_sash 'fn f { int n=42
+str t=$(toupper $n)
+echo $t }
+f'
+[[ $rc != 0 && -z $out && $err == *SB4030* ]]; chk sint.24
+# the legitimate string operand still compiles in the same spelling — the
+# widened reach must not reject what the `echo` form always accepted
+run_sash 'str s=hi
+str t=$(toupper $s)
+echo $t'
+[[ $rc = 0 && $out = "HI" && -z $err ]]; chk sint.25
+# `$(join args)` / `$(keys M)` are scope-sensitive, not type-sensitive: they
+# ask whether the operand is a known collection, and the implicit `args` is
+# registered as check_stmt descends. Re-running them over the finished
+# top-level env rejected these four. They stay on their own path.
+run_sash 'fn f { echo $(join args ,) }
+f a b c'
+[[ $rc = 0 && $out = "a,b,c" && -z $err ]]; chk sint.26
 
 set -e
 tally

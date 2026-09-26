@@ -823,6 +823,16 @@ pub fn type_check(program: &Program) -> Vec<TypeError> {
     // whose comment asserts that arm is "not user-reachable input" — it was.
     run_stmt_pass(program, &env, &mut errors, check_int_string_ops);
 
+    // Sixth pass: the operand checks above only ever saw statement-level
+    // commands, so `$(toupper $n)` was checked in `echo $(…)` and skipped on
+    // an assignment RHS — see check_substituted_command_operands.
+    run_stmt_pass(
+        program,
+        &env,
+        &mut errors,
+        check_substituted_command_operands,
+    );
+
     // Sixth pass (DD#74): an `-> int` function used as a predicate. Its own
     // pass rather than a hook in `check_if`, because the six boolean contexts
     // are spread across If/While/List/Pipeline and a single traversal is the
@@ -993,6 +1003,66 @@ fn int_operand_message(name: &str, arg: &Expr) -> String {
          implicitly text. Convert explicitly by double-quoting the operand, \
          e.g. `$({name} \"${{…}}\" …)`"
     )
+}
+
+/// The operand checks above run from `check_stmt`, which only ever reaches a
+/// **statement-level** command. A command substitution is an *expression*, so
+/// `$(toupper $n)` was checked when it sat in a command's arguments
+/// (`echo $(toupper $n)` → SB4030) and silently skipped when it sat anywhere
+/// else — most importantly on an assignment RHS, which is the only spelling
+/// that actually does anything with the result:
+///
+/// ```text
+/// echo $(toupper $n)      # SB4030
+/// str t=$(toupper $n)     # compiled — same expression, same int operand
+/// ```
+///
+/// Every spec for this family used the `echo $(…)` spelling, so the whole
+/// cohort was green over a check that was vacuous in its useful case. This
+/// pass closes that by walking *expressions* rather than statements: for each
+/// command substitution anywhere in the program, re-run the operand checks on
+/// the commands inside it.
+fn check_substituted_command_operands(
+    stmt: &Statement,
+    env: &TypeEnv,
+    errors: &mut Vec<TypeError>,
+) {
+    let mut subs: Vec<Statement> = Vec::new();
+    walk_all_exprs(stmt, &mut |e| {
+        if let ExprKind::CommandSubstitution(stmts) = &e.kind {
+            subs.extend(stmts.iter().cloned());
+        }
+    });
+    for s in &subs {
+        check_substituted_operands_in_stmt(s, env, errors);
+    }
+}
+
+/// Run the operand checks on one statement inside a command substitution,
+/// descending through any grouping/pipeline wrapper so `$( { toupper $n; } )`
+/// is checked like the bare form.
+fn check_substituted_operands_in_stmt(
+    stmt: &Statement,
+    env: &TypeEnv,
+    errors: &mut Vec<TypeError>,
+) {
+    if let StmtKind::Command(c) = &stmt.kind {
+        // Only the *type-based* checks belong here. `check_join_operand` and
+        // `check_keys_operand` ask whether the operand is a known collection,
+        // which is a question about scope: inside a function the implicit
+        // `args` is registered as `check_stmt` descends, and this pass runs
+        // over the finished top-level env, where it is not. Re-running them
+        // here rejected the legitimate `$(join args)` and `$(keys A)`
+        // (cf.f11, xa.6, 75.24, 100.12). Their own path already reaches them
+        // correctly; the vacuity was only ever in the type checks, which are
+        // pure and need no scope.
+        check_string_intrinsic_operands(c, stmt.span, env, errors);
+    }
+    for body in stmt.child_bodies() {
+        for s in body {
+            check_substituted_operands_in_stmt(s, env, errors);
+        }
+    }
 }
 
 /// A redirect target is a filesystem path, so an int variable there is a type
