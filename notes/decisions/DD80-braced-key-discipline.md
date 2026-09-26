@@ -48,6 +48,11 @@ Anything else — a bareword carrying `[`/`]`, arithmetic operators, an embedded
 
 ### Type-aware (array vs map)
 
+> **Superseded in part, 2026-09-26.** The lists below enumerate accepted
+> *spellings*; the rule is now decided by **type** and applies to `a[K]=v` as
+> well as `${a[K]}`. See the amendment at the end of this file. The intent is
+> unchanged — the mechanism and the edge cases are not.
+
 Resolved at type-check, where the collection type is known:
 
 - **int-indexed array** `${a[K]}` — `K` must be an **integer literal**, a
@@ -118,3 +123,105 @@ is filed as a follow-up (`converter-braced-subscript-index`).
   here rejected at the braced surface (SB4030) rather than coerced.
 - notes/tasks/bug-braced-nested-subscript-index.md — the bug that surfaced this
   (superseded by this DD's rule: `${a[a[0]]}` rejects, `${a[${a[0]}]}` works).
+
+## Amendment (2026-09-26) — the key is a *type*, not a spelling; and both surfaces enforce it
+
+Two changes, implemented in `761b3f4` and `0e23874`. The original rule was
+written as a list of accepted **spellings** and was enforced on the read
+surface only. Both of those turned out to be the wrong shape.
+
+### 1. The assignment LHS accepts the same index grammar as a read
+
+DD#80 was written about `${a[K]}` and said nothing about `a[K]=v`. Measured
+**before either change** (both columns are the old state), the write surface
+was strictly narrower — it took a bare `$var` and nothing else:
+
+| index | `${a[K]}` (then) | `a[K]=v` (then) |
+|---|---|---|
+| `$(( i+1 ))` | ok | **SB5011** (`a[` became a command name) |
+| `${s:-2}` | ok | **SB4014** |
+| `"$i"` | ok | **SB4014** |
+
+So `$(( … ))` — *the conversion this DD names as the remedy for a string
+index* — could not be written on the left of an `=`. An author told to convert
+had nowhere to put the conversion, and the two failures did not even agree on
+a diagnostic.
+
+`parse_split_subscript_index` now recovers the raw index text from the token
+spans and hands it to **`expr::parse_subscript_index`, the same function the
+read path calls**. There is one list of accepted index forms and both surfaces
+call it, so the parity is structural rather than two lists kept in step by
+hand. **Every rule in this DD now reads "in `${a[K]}` and in `a[K]=v` alike."**
+
+Parity is the point, not permissiveness: it is what makes section 2 below
+enforceable on the write side at all, and section 2 then *narrows* the read
+column too — `${a[${s:-2}]}` on a string `s` is now SB4030 on **both**
+surfaces. What survives on both is the accountable form,
+`a[$(( ${s:?msg} ))]=Q`, which aborts at runtime with the author's own message
+when the value is not an integer.
+
+### 2. "must yield a number" is decided by type, not by spelling
+
+The type-aware section above enumerates spellings — "an **integer literal**, a
+**`$var`**, or an **expansion** (which must yield a number)". A `$var` is not
+inherently a number and an expansion does not inherently yield one, so the
+list both over- and under-accepts. It is replaced by a single question:
+
+> **An indexed array's index must be int-typed. A map's key must not be.**
+
+"Int-typed" means an integer literal, or an expression `expr_type` types as
+`Int`. That one delegation inherits every typing rule already written
+elsewhere, rather than restating any of them:
+
+- `$(( … ))` is `Int` — the conversion this DD names, still the remedy.
+- a cell of an `int array` is `Int` (DD#76) — so the nested `${a[${a[0]}]}`
+  blessed in the table above keeps working, **and a cell of a *string* array
+  does not**. Same spelling, different element type, different answer. An
+  enumerated whitelist lost this case.
+- a `:-` / `:?` disposition keeps its **subject's** type — so
+  `${a[${i:-0}]}` on an `int i` indexes, while `${a[${s:-2}]}` on a string
+  `s` does not. **A bare disposition is not the conversion**; that is the whole
+  reason `$(( … ))` is required, and it now falls out instead of being listed.
+
+Only the bare integer literal is stated separately, because `expr_type` types
+`2` as String (bash does, and nothing else in the language wants a bare
+literal to be an int by itself).
+
+The predicate this replaces asked the **negative** question — "is this a
+*string* key?" — and could only name forms it already knew were strings,
+defaulting everything else to accepted. That is not a fixable list:
+`TypeEnv::var_type` ends in `unwrap_or(String)`, so **"declared a string" and
+"never recorded at all" are the same answer** and no negative test can
+separate them. The visible symptom was that an undeclared `i=1` indexed an
+array while `str s=abc` did not, though neither is int-typed. Asking for `Int`
+is a fact rather than an absence, so the ambiguity stops mattering.
+
+### The map side, likewise
+
+"Any string is a valid key" stands, and so does the DD#33 integer-literal
+rule. What is added: **an int-*typed* key is rejected too, not merely an
+integer literal.** `${m[$i]}` on an `int i`, `${m[$((1+1))]}`, and a cell of
+an `int array` are all the same crossing — int→string, which DD#105 requires
+to be written rather than inferred. Narrowing the rule to bare variables would
+have left `${m[$((1+1))]}` crossing in silence while `${m[$i]}` was told to
+quote.
+
+**Quoting is the conversion**, and it compiles for every one of them on both
+surfaces — `m["$i"]`, `m["$(( 1+1 ))"]`, `m["${n[0]}"]` — so the rule leaves
+no form without a way to say what it means. This is the same convention as a
+redirect target and `$(strlen "$n")`.
+
+### Consequence: an ICE closed by construction
+
+`${a[${s:-hello}]}` used to panic at `codegen/values.rs:1432`. The braced
+subscript was the only int sink lacking a DD#77 D4 default-literal check.
+Rejecting every bare disposition on a string subject makes that sink
+unreachable, so no widening of `check_int_value_defaults` is owed.
+
+### Specs
+
+`spec/subscript.sh` 80.51–80.66 (LHS parity, the type rules, and both
+remedies); the accept-side specs 80.60/80.62/80.63/80.65 are deliberate
+regression guards proving the recommended remedy actually compiles — a rule
+that rejects a form without a working alternative is worse than no rule.
+Journals 413 and 414.

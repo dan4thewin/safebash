@@ -256,3 +256,35 @@ deliberate.
 "attest" reads as vouching for untrusted data, which is precisely what the
 map form no longer does. No rename is proposed — recorded so the mismatch is
 understood rather than rediscovered.
+
+## Addendum (2026-09-26) — Part D's target is an int, and now the compiler knows it
+
+Part D says the target is "**bound clean** to the i64 value of `numstr`". The
+*clean* half was implemented. The **int** half was not: nothing ever entered
+the target in the type environment at all.
+
+`--emit-ir` shows why. A plain `(( n = s ))` lowers to an `:assignment`, so
+`check_assignment` declares the target. Wrapped in `attest`, the identical
+text stays a `:command` named `attest` whose argument holds the
+`:arith-assign` — and no pass declared `n`. It therefore fell to
+`TypeEnv::var_type`'s `unwrap_or(String)` default:
+
+```sh
+i=$(printf 5)
+attest i (( n = i ))
+echo $(strlen $n)     # ACCEPTED — a string intrinsic on an int
+int q=$n              # REJECTED — SB4030, though n is an int
+```
+
+Both answers are backwards, and the first is a **DD#105 hole in the one
+construct whose entire job is to make the string↔int crossing accountable**.
+An author who did the conversion properly got a target the compiler believed
+was a string.
+
+Fixed in `761b3f4`: `check_attest_form` declares `AttestPredicate::ArithConvert`'s
+target as `VarType::Int`. No rule in Part D changes — this addendum records
+that the stated rule is now enforced, and that it was not before.
+
+The `if` form and the `[[ ]]` predicates are unaffected; they bind no value.
+
+Spec `60.72`. Journal 414.

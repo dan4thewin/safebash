@@ -35,15 +35,38 @@ Sweep 6440 (predicted exactly), zero failing, zero flips vs `0e23874`;
 `is_int_index` feeds only the array path — one pass would have reported a
 clean proof over half the work.
 
-**Next up:** the DD amendments are still waiting on a conversation with DG
-about how they should be drafted — he asked to discuss the scope before
-anything is written, rather than have me draft and him edit. DD#80 (index must be int-typed, LHS parity), DD#33, DD#89's "coerces"
-line and DD#93 Part D (the attest target *is* an int) all now describe
-something the compiler does differently. Also owed: rebuild `coverage.db`
-(`mk cov-union` → `mk cov-db`) before the coverage queue resumes, and revise
-`notes/tasks/undispositioned-string-to-int-sites.md` and
-`notes/tasks/array-index-string-by-value-flow.md`, which both still describe
-the superseded narrow state.
+**The DD amendments are written** — DG, 2026-09-26: *"amend the DDs so long
+as the edits are well understood."*
+
+- **DD#80** — the type-aware section is superseded in place. The rule is
+  decided by *type*, not by an enumerated list of spellings, and it applies to
+  `a[K]=v` as well as `${a[K]}`.
+- **DD#33** — records the *second* mismatch (int key on a map). DD#80 had been
+  citing this DD for a rule its text never stated.
+- **DD#93** — addendum: Part D always said the target is bound to an i64; the
+  *clean* half was implemented and the *int* half was not.
+- **DD#89** — the "coerces… as in every other int context" clause is struck,
+  with the measured table in its place. It deliberately does **not** decide
+  whether `exit $s` should reject; that is a behaviour change and DG's call.
+
+Every factual claim was re-measured against `761b3f4` rather than carried over
+from the notes, and **two tables I drafted from memory were wrong**: I had
+recorded `a[${s:?m}]=Q` as working when it parses and is then correctly
+SB4030 (a bare disposition keeps its *subject's* type — `$(( … ))` is the
+conversion, which is the whole point), and DD#80's before/after table had a
+column that was also pre-change, so the amendment contradicted its own second
+section. Both corrected. The accountable LHS spelling is
+`a[$(( ${s:?msg} ))]=Q`, verified to abort at runtime with the author's
+message.
+
+Both stale task files are revised: `array-index-string-by-value-flow` is
+**done** — its "string by evidence" route was abandoned because the negative
+test cannot be completed, and the positive rule dissolved the question — and
+`undispositioned-string-to-int-sites` is down to four sites (`exit`, `wait`,
+`[[ -t ]]`, plus `arg` masked by taint).
+
+Also owed: rebuild `coverage.db` (`mk cov-union` → `mk cov-db`) before the
+coverage queue resumes.
 
 ## ══ STATUS (2026-09-25) — the left side that could not say it ══
 
