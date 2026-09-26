@@ -599,14 +599,6 @@ pub(super) fn declare_runtime_functions(module: &mut ObjectModule) -> ExternFunc
         .declare_function("sash_substring", Linkage::Import, &substring_sig)
         .expect("declare sash_substring");
 
-    // sash_isatty(fd) -> i64
-    let mut isatty_sig = module.make_signature();
-    isatty_sig.params.push(AbiParam::new(I64));
-    isatty_sig.returns.push(AbiParam::new(I64));
-    let isatty_func = module
-        .declare_function("sash_isatty", Linkage::Import, &isatty_sig)
-        .expect("declare sash_isatty");
-
     // sash_file_newer(p1_ptr, p1_len, p2_ptr, p2_len) -> i64
     let mut file_newer_sig = module.make_signature();
     file_newer_sig.params.push(AbiParam::new(I64));
@@ -838,7 +830,6 @@ pub(super) fn declare_runtime_functions(module: &mut ObjectModule) -> ExternFunc
         file_test: file_test_func,
         pow: pow_func,
         substring: substring_func,
-        isatty: isatty_func,
         file_newer: file_newer_func,
         file_same_dev: file_same_dev_func,
         chdir: chdir_func,

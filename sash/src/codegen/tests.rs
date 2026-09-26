@@ -12,7 +12,7 @@ use cranelift_object::ObjectModule;
 use std::collections::HashMap;
 
 use super::types::{ExternFuncs, VarSlot};
-use super::values::{atoi_call, lower_literal_value, lower_value};
+use super::values::{lower_literal_value, lower_value};
 use crate::ssa::{SsaTest, SsaTestRhs, SsaValue};
 
 pub(super) fn emit_string_eq(
@@ -184,7 +184,6 @@ fn lower_test_unary(
         "i?" => emit_shape_test(builder, module, externs.is_int, ptr, len),
         "p?" => emit_shape_test(builder, module, externs.is_print, ptr, len),
         "g?" => emit_shape_test(builder, module, externs.is_graph, ptr, len),
-        "-t" => emit_isatty_test(builder, module, externs, ptr, len),
         // INVARIANT: the parser's is_unary_test_op gates which operators reach
         // here; each one it accepts is either handled above (-n/-z/i?/p?/g?/-t)
         // or is a file test below, except -v/-o/-R which validate rejects
@@ -264,20 +263,6 @@ fn emit_file_test(
     let ft_ref = module.declare_func_in_func(externs.file_test, builder.func);
     let call = builder.ins().call(ft_ref, &[ptr, len, op_val]);
     builder.inst_results(call)[0]
-}
-
-/// `-t fd`: atoi(ptr,len) → isatty → 1/0.
-fn emit_isatty_test(
-    builder: &mut FunctionBuilder,
-    module: &mut ObjectModule,
-    externs: &ExternFuncs,
-    ptr: cranelift_codegen::ir::Value,
-    len: cranelift_codegen::ir::Value,
-) -> cranelift_codegen::ir::Value {
-    let fd_val = atoi_call(builder, module, externs, ptr, len);
-    let isatty_ref = module.declare_func_in_func(externs.isatty, builder.func);
-    let call2 = builder.ins().call(isatty_ref, &[fd_val]);
-    builder.inst_results(call2)[0]
 }
 
 /// Lower a Binary test's operands to `(l_ptr, l_len, r_ptr, r_len)`.

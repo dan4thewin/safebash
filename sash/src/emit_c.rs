@@ -201,7 +201,6 @@ fn emit_prologue(out: &mut String) {
         "extern i64 sash_file_test(const char* p, i64 l, i64 op);"
     )
     .unwrap();
-    writeln!(out, "extern i64 sash_isatty(i64 fd);").unwrap();
     // Phase 3 — parameter expansion
     writeln!(out, "extern i64 sash_default_value(i64 s_len);").unwrap();
     writeln!(
@@ -2845,7 +2844,6 @@ fn lower_test_unary(e: &mut Emit, op: &str, operand: &SsaValue, types: &VarTypes
         "i?" => format!("sash_is_int({}, {})", ptr, len),
         "p?" => format!("sash_is_print({}, {})", ptr, len),
         "g?" => format!("sash_is_graph({}, {})", ptr, len),
-        "-t" => format!("sash_isatty(sash_atoi({}, {}))", ptr, len),
         // INVARIANT: mirrors codegen/tests.rs::lower_unary. The parser's
         // is_unary_test_op gates which operators reach here; each one is
         // either handled above or is a file test, except -v/-o/-R which

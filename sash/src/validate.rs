@@ -1990,17 +1990,24 @@ fn static_regex_pattern(expr: &Expr) -> Option<String> {
 }
 
 /// A `[[ ]]` unary operator the parser accepts (is_unary_test_op) but sash does
-/// not implement — codegen (tests.rs) handles only -n/-z/-i/-t and the file
-/// tests. These three must be rejected here (SB5028) before codegen ICEs on
+/// not implement — codegen (tests.rs) handles only -n/-z/-i and the file
+/// tests. These must be rejected here (SB5028) before codegen ICEs on
 /// them. Returns the user-facing hint for the operator, or None if supported.
 ///   -v  DD#62: an unset/empty variable is just the empty string
 ///   -o  shell-option state — sash has no shell options
 ///   -R  nameref state — sash has no namerefs
+///   -t  DG 2026-09-26: retired. It was the sole *int*-typed unary test, so it
+///       sat alone against a family of string and file predicates, and it is an
+///       interactivity question a compiled static binary has little business
+///       asking. A `terminal?` predicate was considered and dropped as YAGNI:
+///       sash arithmetic has no unary predicates at all, so it would have been
+///       the first of its kind, and `[[ ]]` is already the predicate context.
 fn unsupported_unary_test_hint(op: &str) -> Option<&'static str> {
     match op {
         "-v" => Some("use -n to test for a non-empty value"),
         "-o" => Some("shell-option tests are unsupported"),
         "-R" => Some("namerefs are unsupported"),
+        "-t" => Some("terminal tests are unsupported"),
         _ => None,
     }
 }

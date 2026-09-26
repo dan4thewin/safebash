@@ -98,7 +98,6 @@ pub(super) struct ExternFuncs {
     pub(super) file_test: cranelift_module::FuncId,
     pub(super) pow: cranelift_module::FuncId,
     pub(super) substring: cranelift_module::FuncId,
-    pub(super) isatty: cranelift_module::FuncId,
     pub(super) file_newer: cranelift_module::FuncId,
     pub(super) file_same_dev: cranelift_module::FuncId,
     pub(super) chdir: cranelift_module::FuncId,

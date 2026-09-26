@@ -488,7 +488,7 @@ becomes a loop rather than a nested frame. Everything else is SB5037. (See
 [Functions, inlining, and recursion](#functions-inlining-and-recursion-dd27).)
 
 One consequence is deliberately observable: a pure body probing its own
-stdout (`[[ -p /dev/stdout ]]`, `-t 1`) sees the caller's real stdout, while
+stdout (`[[ -p /dev/stdout ]]`) sees the caller's real stdout, while
 an impure one sees a regular file. Specs `cap.12` and `cap.17` pin both
 halves. See journal 277.
 

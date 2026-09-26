@@ -6,7 +6,7 @@
 set -eu
 . common.sh
 setup coverage
-plan=339
+plan=338
 echo "1..$plan" >&3
 
 set +e
@@ -362,10 +362,6 @@ run_sash 'int array a=(1 2 3); echo ${a[0]:-0}'
 run_sash 'echo $(( 16#ff ))'
 [[ $rc != 0 && -z $out && $err == *SB4035* ]]; chk cov.79
 
-# cov.89 `[[ -t N ]]` isatty test (native emit_isatty_test).
-# Captured stdout in the harness is not a tty → notty.
-run_sash 'if [[ -t 1 ]] { echo tty } else { echo notty }'
-[[ $rc = 0 && $out = notty && -z $err ]]; chk cov.89
 # cov.90 a full-line comment inside a compiled program — comments are lexical
 # trivia dropped by the Scanner (see spec/comments.sh); this pins that a
 # standalone comment line still compiles and runs the following statement.

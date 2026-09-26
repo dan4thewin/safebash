@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup wordsplit
-plan=133
+plan=134
 echo "1..$plan" >&3
 
 set +e
@@ -222,6 +222,12 @@ run_sash 'if [[ -o errexit ]]; then echo y; fi'
 # 62.21 -R (nameref test) is unsupported — reject at validate, not codegen ICE
 run_sash 'if [[ -R x ]]; then echo y; fi'
 [[ $rc != 0 && -z $out && $err == *SB5028* ]]; chk 62.21
+
+# 62.22 -t (terminal test) is retired (DG 2026-09-26) — it was the sole
+# int-typed unary test among string/file predicates, and a compiled static
+# binary has little business asking about interactivity.
+run_sash 'if [[ -t 1 ]]; then echo y; fi'
+[[ $rc != 0 && -z $out && $err == *SB5028* ]]; chk 62.22
 
 # 62.6 DD#62: -n is the way to test a non-empty value
 run_sash 'x=5; if [[ -n $x ]]; then echo y; fi'

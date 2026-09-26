@@ -2780,14 +2780,6 @@ pub extern "C" fn sash_substring(
     (out as *const u8, len as i64)
 }
 
-/// Test if fd is a terminal (isatty equivalent)
-#[unsafe(no_mangle)]
-pub extern "C" fn sash_isatty(fd: i64) -> i64 {
-    let raw_fd = fd as core::ffi::c_int;
-    let fd = unsafe { rustix::fd::BorrowedFd::borrow_raw(raw_fd) };
-    rustix::termios::isatty(fd) as i64
-}
-
 /// Compare file modification times: returns 1 if file1 is newer than file2.
 #[unsafe(no_mangle)]
 pub extern "C" fn sash_file_newer(

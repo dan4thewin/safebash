@@ -1,8 +1,8 @@
 ---
-status: open
+status: done
 priority: P2
 depends: []
-gates: DG decision on scope
+gates: none — DG decided 2026-09-26
 ---
 
 # Undispositioned string→int sites outside assignment and arithmetic
@@ -16,7 +16,9 @@ DD#77 enforces it inside `(( ))`/`$(( ))`, and `check_assignment` enforces it
 for `int x = $s`. Everywhere else a string silently becomes an int through the
 **lenient** `sash_atoi` (DD#72: non-numeric → 0).
 
-**Four of the original seven sites are closed.** `return` (journal 411, which
+**All seven sites are now closed.** See "Closing" at the end.
+
+**Four of the original seven sites were closed first.** `return` (journal 411, which
 was also a native/c divergence), and the two subscript surfaces plus their
 missing spelling (journals 413/414). The rest await DG's scope decision.
 
@@ -109,3 +111,25 @@ closed both surfaces.
 
 Also: `return`'s fix was a **native/c divergence** that no spec caught. Check
 both backends at each site before assuming they agree.
+
+## Closing (2026-09-26)
+
+DG scoped the remaining four, and all four are now closed — by rejection in
+every case, never by adding a coercion.
+
+| site | closed by | how |
+|---|---|---|
+| `exit $s` | `a875d58` | int-only sink (`check_int_sink_operands`); `exit $(( ${s:?m} ))` is the accountable spelling |
+| `wait $s` | `a875d58` | same check; `$!` also became int-typed so `wait $!` still works |
+| `$(arg $s)` | `a875d58` | same check — and it was the worst of the three: it silently yielded **argv[0]** |
+| `[[ -t $s ]]` | journal 418 | the operator is **retired** (SB5028), so the site no longer exists |
+
+`-t` is worth noting as the one that did not need a rule. It was the sole
+int-typed unary test in a `[[ ]]` family that is otherwise entirely string and
+file predicates, and the only unary arm whose codegen had to `atoi` its
+operand. Retiring the operator removed the int sink along with it. DG also
+declined a `terminal?` predicate replacement as YAGNI.
+
+The traversal fix in `6013848` matters here too: before it, these operand
+checks never ran on an assignment RHS, so `str t=$(arg $s)` would have slipped
+past any rule written for them.
