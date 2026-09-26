@@ -362,6 +362,34 @@ that one run's index. Setting it to +2N gives a *passing* file that prints
 `[plan=217, ran=211]`; `common.sh` notes the mismatch rather than failing on
 it, so only the predicted total catches it.
 
+**`commit_hash` is not a sweep identity, and selecting a baseline by it is how
+the regression check went vacuous.** `runs` records the git HEAD sha, so every
+sweep run against an uncommitted working tree records the *same* hash. Pick the
+baseline with `MAX(rowid) … WHERE commit_hash = 'BASE'` and, the moment BASE is
+the hash you are still sitting on, that selects **the run you just did** and
+compares it against itself. It reports zero flips and it cannot report anything
+else. On 2026-09-26 three sweeps shared `cc0b7a9` — 19538 rows at one hash,
+which is 6510 + 6510 + 6518 — and the check passed without looking at anything.
+
+The tell is cheap, so look before you compare. Any hash with more rows than
+distinct ids covers multiple sweeps:
+
+```sql
+SELECT commit_hash, COUNT(*) AS rows, COUNT(DISTINCT test_id) AS ids,
+       ROUND(COUNT(*) * 1.0 / COUNT(DISTINCT test_id), 2) AS sweeps_at_this_hash
+FROM runs GROUP BY commit_hash ORDER BY MAX(rowid) DESC LIMIT 5;
+```
+
+More rows than distinct ids means more than one sweep at that hash. Keep the
+`* 1.0` — integer division reported 26056 rows over 6522 ids as `3` when it is
+very nearly four sweeps.
+
+**Compare by row order, not by hash.** Sweeps are never run in parallel, so
+each one is a contiguous block of `runs` rowids and a test's previous result is
+simply its previous row. The query below is the one to use: its baseline is
+`rowid < c.rid`, **strictly** earlier, so it is structurally incapable of
+self-comparing no matter how dirty the tree is.
+
 Query with:
 
 ```sql
@@ -371,22 +399,42 @@ SELECT status, COUNT(*) FROM test_status GROUP BY status;
 -- Failing gates
 SELECT id, status FROM test_status WHERE status='failing' ORDER BY id;
 
--- Flips between commits
-SELECT t.id, r1.status AS was, r2.status AS now
-FROM tests t
-JOIN runs r1 ON r1.test_id=t.id AND r1.commit_hash='OLD'
-JOIN runs r2 ON r2.test_id=t.id AND r2.commit_hash='NEW'
-WHERE r1.status != r2.status;
+-- Regression check: this sweep vs the one before it.
+-- `cur` joins `tests`, so ids the purge retired cannot raise a phantom flip
+-- out of two stale historical rows; `prev` is strictly earlier by rowid, so
+-- this can never compare a run against itself.
+WITH cur AS (
+  SELECT r.test_id, r.status, r.rowid AS rid
+  FROM runs r JOIN tests t ON t.id = r.test_id
+  WHERE r.rowid = (SELECT MAX(rowid) FROM runs WHERE test_id = r.test_id)
+),
+prev AS (
+  SELECT c.test_id, c.status AS now,
+         (SELECT status FROM runs
+          WHERE test_id = c.test_id AND rowid < c.rid
+          ORDER BY rowid DESC LIMIT 1) AS was
+  FROM cur c
+)
+SELECT test_id, was, now FROM prev
+WHERE was IS NOT NULL AND was <> now ORDER BY test_id;
 
--- Regression check: current state vs a baseline commit.
--- This replaces the old `git show HEAD:spec.db` + ATTACH recipe.
--- Find candidate baselines first:
---   SELECT DISTINCT commit_hash, MAX(committed_at) FROM runs
---   GROUP BY commit_hash ORDER BY 2 DESC LIMIT 5;
+-- Companion: ids with no earlier row at all are new this sweep. Predict this
+-- number before you run it; an id you did not add is a finding.
+WITH cur AS (
+  SELECT r.test_id, r.rowid AS rid
+  FROM runs r JOIN tests t ON t.id = r.test_id
+  WHERE r.rowid = (SELECT MAX(rowid) FROM runs WHERE test_id = r.test_id)
+)
+SELECT test_id FROM cur c
+WHERE NOT EXISTS (SELECT 1 FROM runs WHERE test_id = c.test_id AND rowid < c.rid)
+ORDER BY test_id;
+
+-- Against a named earlier commit, when you do want one: take the FIRST sweep
+-- at that hash, never the last, or a shared hash hands you your own run.
 WITH base AS (
   SELECT test_id, status FROM runs r
   WHERE commit_hash = 'BASE'
-    AND rowid = (SELECT MAX(rowid) FROM runs
+    AND rowid = (SELECT MIN(rowid) FROM runs
                  WHERE test_id = r.test_id AND commit_hash = 'BASE')
 )
 SELECT b.test_id, b.status AS was, t.status AS now
@@ -394,6 +442,30 @@ FROM base b JOIN test_status t ON t.id = b.test_id
 WHERE b.status != t.status
 ORDER BY b.test_id;
 ```
+
+**The regression check is a gate, so prove it can fail.** A zero-flip result
+is only meaningful if the query is capable of a non-zero one. This costs one
+query — comparing each test's *first* recorded status against its current one
+should report hundreds:
+
+```sql
+WITH cur AS (
+  SELECT r.test_id, r.status FROM runs r JOIN tests t ON t.id = r.test_id
+  WHERE r.rowid = (SELECT MAX(rowid) FROM runs WHERE test_id = r.test_id)
+)
+SELECT COUNT(*) FROM cur c
+WHERE (SELECT status FROM runs WHERE test_id = c.test_id
+       ORDER BY rowid ASC LIMIT 1) <> c.status;
+```
+
+It returned 231 on 2026-09-26. **A zero here means the comparison machinery is
+broken, not that the tree is clean.**
+
+One caveat on the row-order query: with `SPEC_MODES="native"` the `c:` ids are
+neither produced nor purged, so their "current" row is from an older sweep and
+their "previous" is older still. Run full sweeps for the gate, or filter by
+mode prefix.
+
 
 Use plain `sqlite3` for **every** database, including `spec.db`. The
 indexnudge shim only re-parses the source index when the database it is
