@@ -35,8 +35,9 @@ Sweep 6440 (predicted exactly), zero failing, zero flips vs `0e23874`;
 `is_int_index` feeds only the array path — one pass would have reported a
 clean proof over half the work.
 
-**Next up:** the DD amendments are still blocked on DG's `who_writes_dd`
-call. DD#80 (index must be int-typed, LHS parity), DD#33, DD#89's "coerces"
+**Next up:** the DD amendments are still waiting on a conversation with DG
+about how they should be drafted — he asked to discuss the scope before
+anything is written, rather than have me draft and him edit. DD#80 (index must be int-typed, LHS parity), DD#33, DD#89's "coerces"
 line and DD#93 Part D (the attest target *is* an int) all now describe
 something the compiler does differently. Also owed: rebuild `coverage.db`
 (`mk cov-union` → `mk cov-db`) before the coverage queue resumes, and revise
@@ -138,7 +139,8 @@ the deliberate silence.
 - `-t` as a distinct predicate (`if $(terminal? $fd)`), following SB5019
   having already moved the whole `-eq` family to `(( ))`
 
-DG said `who_writes_dd=discuss more` — do not draft these unprompted.
+DG asked to discuss the scope of these amendments before any drafting —
+do not write them unprompted.
 
 ## ══ STATUS (2026-09-25) — the guard that did nothing ══
 
