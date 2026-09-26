@@ -121,7 +121,7 @@ run_sash 'map m=([a]=1); echo ${m[0]}'
 [[ $rc != 0 && -z $out && -n $err ]]; chk 33.4
 
 # 33.5 dynamic integer index ${a[$i]} expands the variable (read)
-run_sash 'array a=(x y z); i=1; echo ${a[$i]}'
+run_sash 'array a=(x y z); int i=1; echo ${a[$i]}'
 [[ $rc = 0 && $out = "y" && -z $err ]]; chk 33.5
 
 # 33.6 dynamic string key ${m[$k]} expands the variable (read)
@@ -131,7 +131,7 @@ run_sash 'map m=([a]=1 [b]=2); k=b; echo ${m[$k]}'
 # 33.14 non-brace dynamic integer index $a[$i] reads like ${a[$i]} (decision B,
 # 2026-06-21 — deliberately diverging from bash, where $a[$i] is ${a[0]} plus
 # literal "[$i]").
-run_sash 'array a=(x y z); i=2; echo $a[$i]'
+run_sash 'array a=(x y z); int i=2; echo $a[$i]'
 [[ $rc = 0 && $out = "z" && -z $err ]]; chk 33.14
 
 # 33.15 non-brace dynamic string key $m[$k] reads like ${m[$k]}
@@ -139,7 +139,7 @@ run_sash 'map m=([a]=1 [b]=2); k=b; echo $m[$k]'
 [[ $rc = 0 && $out = "2" && -z $err ]]; chk 33.15
 
 # 33.7 dynamic index assignment a[$i]=v (write, indexed)
-run_sash 'array a=(x y z); i=1; a[$i]=ZZ; echo ${a[1]}'
+run_sash 'array a=(x y z); int i=1; a[$i]=ZZ; echo ${a[1]}'
 [[ $rc = 0 && $out = "ZZ" && -z $err ]]; chk 33.7
 
 # 33.8 dynamic key assignment m[$k]=v (write, map)
@@ -151,7 +151,7 @@ run_sash 'map m=([a]=1); k=b; m[$k]=2; echo ${m[b]}'
 run_sash 'array a=(x y z); a[i]=Q; echo ${a[0]}'
 [[ $rc != 0 && -z $out && -n $err ]]; chk 33.11
 # 33.12 literal + sigilled index assignments still work (not over-rejected)
-run_sash 'array a=(x y z); i=1; a[$i]=P; a[2]=Q; echo ${a[$i]}${a[2]}'
+run_sash 'array a=(x y z); int i=1; a[$i]=P; a[2]=Q; echo ${a[$i]}${a[2]}'
 [[ $rc = 0 && $out = "PQ" && -z $err ]]; chk 33.12
 
 # 33.9 flat map literal map m=(a 1 b 2) → reject; require [k]=v form
@@ -420,7 +420,7 @@ run_sash 'map m=([a]=x); k=a; if [[ -n ${m[$k]} ]]; then echo yes; fi'
 [[ $rc = 0 && $out = "yes" && -z $err ]]; chk 62.15
 
 # 62.14 indexed dynamic key ${a[$i]} stays integer-keyed in [[ ]].
-run_sash 'array a=(10 20 30); i=2; if [[ ${a[$i]} == 30 ]]; then echo yes; fi'
+run_sash 'array a=(10 20 30); int i=2; if [[ ${a[$i]} == 30 ]]; then echo yes; fi'
 [[ $rc = 0 && $out = "yes" && -z $err ]]; chk 62.14
 
 # --- subscript append a[i]+=v (read-modify-write).
@@ -429,7 +429,7 @@ run_sash 'array a=(1 2 3); a[0]+=9; echo ${a[0]}'
 [[ $rc = 0 && $out = "19" && -z $err ]]; chk 33.40
 
 # 33.41 indexed dynamic-index append
-run_sash 'array a=(x y); i=1; a[$i]+=z; echo ${a[1]}'
+run_sash 'array a=(x y); int i=1; a[$i]+=z; echo ${a[1]}'
 [[ $rc = 0 && $out = "yz" && -z $err ]]; chk 33.41
 
 # 33.13 map subscript append
@@ -548,7 +548,7 @@ run_sash 'array a=(x y z); for k in ${!a[@]}; do echo "$k"; done'
 run_sash 'array a=(x y z); for w in @a; do echo "$w"; done'
 [[ $rc = 0 && $out = $'x\ny\nz' && -z $err ]]; chk 75.15
 # 75.16 indexed element access ${a[$i]} / ${a[1]} unaffected
-run_sash 'array a=(x y z); i=2; echo ${a[$i]}${a[1]}'
+run_sash 'array a=(x y z); int i=2; echo ${a[$i]}${a[1]}'
 [[ $rc = 0 && $out = "zy" && -z $err ]]; chk 75.16
 
 # DD#75 §5 — positional parameters are the implicit 0-indexed `args` array

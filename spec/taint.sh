@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup taint
-plan=220
+plan=221
 echo "1..$plan" >&3
 
 set +e
@@ -593,11 +593,25 @@ run_sash 'array a=(x y)
 int i=1
 echo "${a[$i]}"'
 [[ $rc = 0 && $out = "y" && -z $err ]]; chk 60.69
-# 60.70 …and an attested one is the documented way through
+# 60.72 the arith attest's target is an int, and the compiler knows it. It did
+# not: `(( n = s ))` on its own parses as an assignment, so `check_assignment`
+# declared the target, but wrapped in `attest` the statement stays a Command
+# and nothing entered `n` in the type environment at all. It defaulted to
+# String, which let a string intrinsic run on an int — the silent int→string
+# render DD#105 exists to reject.
+run_sash 'i=$(printf 5)
+attest i (( n = i ))
+echo $(strlen $n)'
+[[ $rc != 0 && -z $out && $err == *SB4030* ]]; chk 60.72
+
+# 60.70 …and an attested one is the documented way through. `attest i i?`
+# alone is not enough any more: it declassifies but leaves `i` a string, and
+# an array index must be int-typed (DD#80). DD#93 Part D's arith form is the
+# one that converts, and `n` is the int it converted to.
 run_sash 'array a=(x y)
 i=$(printf 1)
-attest i i?
-echo "${a[$i]}"'
+attest i (( n = i ))
+echo "${a[$n]}"'
 [[ $rc = 0 && $out = "y" && -z $err ]]; chk 60.70
 # 60.71 a literal index never involved a read
 run_sash 'map m=([k]=v)

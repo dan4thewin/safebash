@@ -10,7 +10,7 @@
 set -eu
 . common.sh
 setup subscript
-plan=58
+plan=66
 echo "1..$plan" >&3
 
 set +e
@@ -205,8 +205,11 @@ echo "na=$(( (len a) )) nm=$(( (len m) ))"'
 
 # 80.31 a positional as the index. The braced-index reader shortcuts an index
 # spelled like an identifier and otherwise falls to the general expansion
-# path; `$1` starts with a digit, so it takes the long way. Bash agrees.
-run_sash 'fn f { array arr=(p q r); echo ${arr[$1]} }
+# path; `$1` starts with a digit, so it takes the long way. A positional is a
+# string with no declared type, so it needs the same conversion any other
+# string index needs — and `:?` is the honest one, since an argument that is
+# not a number is a caller error rather than something to default away.
+run_sash 'fn f { array arr=(p q r); echo ${arr[$(( ${1:?not a number} ))]} }
 f 2'
 [[ $rc = 0 && $out = r && -z $err ]]; chk 80.31
 
@@ -332,23 +335,25 @@ str s=abc
 echo "${a[$s]}"'
 [[ $rc != 0 && -z $out && $err == *"string-typed"* ]]; chk 80.45
 
-# 80.46 the DD#77 disposition is the way through, and the diagnostic says so.
-# `:-2` not `:-0`: a lenient atoi would index 0 and print 10, so this would
-# pass either way with a 0 default.
+# 80.46 a BARE disposition is not the way through. It defaults, but it does
+# not convert: `${s:-2}` keeps its subject's type (DD#77), so the result is
+# still a string and an array index must be a number. The disposition has to
+# sit inside `$(( … ))`, which is what actually crosses.
 run_sash 'int array a=(10 20 30)
 str s=abc
 echo "${a[${s:-2}]}"'
-[[ $rc = 0 && $out = "30" && -z $err ]]; chk 80.46
+[[ $rc != 0 && -z $out && $err == *SB4030* ]]; chk 80.46
 
-# 80.47 an *undeclared* `i=1` is deliberately NOT rejected. It records String
-# exactly like `str s=abc` (sash types a bare numeric literal as a string, per
-# bash), so the compiler cannot tell them apart. Rejecting it would also break
-# `attest i i?` (60.70) and a positional index (80.31), which have no declared
-# type at all. This is the backstop for that deliberate silence.
+# 80.47 an *undeclared* `i=1` is rejected, and this is the spec that reversed.
+# It used to pass, on the ground that `i=1` records String exactly like
+# `str s=abc` so the two could not be told apart. That was an argument about a
+# *negative* test. The rule now asks whether the index is Int, which `i=1` is
+# not — sash types a bare numeric literal as a string, per bash — so the
+# ambiguity stops mattering and the fix is to say `int i=1`.
 run_sash 'int array a=(10 20 30)
 i=1
 echo "${a[$i]}"'
-[[ $rc = 0 && $out = "20" && -z $err ]]; chk 80.47
+[[ $rc != 0 && -z $out && $err == *"not int-typed"* ]]; chk 80.47
 
 # 80.48 a declared str is still a perfectly good *map* key (DD#80: any string)
 run_sash 'map m=([abc]=1)
@@ -356,13 +361,20 @@ str s=abc
 echo "${m[$s]}"'
 [[ $rc = 0 && $out = "1" && -z $err ]]; chk 80.48
 
-# 80.49 the write diagnostic must not recommend a spelling that cannot parse.
-# An assignment LHS still takes only a bare `$var` index (DD#33/SB4014), so
-# `a[${s:?m}]=…` would send the author from SB4030 straight into SB4014.
+# 80.49 the write diagnostic is now the SAME sentence as the read one, because
+# the LHS accepts the conversion it recommends. It used to have to say
+# something different — an assignment index took only a bare `$var`, so the
+# read path's `$(( ${s:?m} ))` advice would have sent the author from SB4030
+# straight into SB4014. This pins the parity: same input, same message.
 run_sash 'int array a=(10 20 30)
 str s=abc
 a[$s]=99'
-[[ $rc != 0 && $err == *"assignment index"* && $err != *"a[\${s:?msg}]}"* ]]; chk 80.49
+w_err=${err#*SB4030}
+run_sash 'int array a=(10 20 30)
+str s=abc
+echo "${a[$s]}"'
+r_err=${err#*SB4030}
+[[ -n $w_err && $w_err = "$r_err" && $r_err == *'$(( ${s:?'* ]]; chk 80.49
 
 # 80.50 …and the route it does name compiles: convert first, then index.
 run_sash 'int array a=(10 20 30)
@@ -410,12 +422,13 @@ m["$i"]=v
 echo "$(len m) ${m["7"]}"'
 [[ $rc = 0 && $out = "1 v" && -z $err ]]; chk 80.54
 
-# 80.55 a bare disposition as an array index, matching the read side.
+# 80.55 a bare disposition is rejected on the LHS exactly as on the read side
+# (80.46) — the parity has to hold for the rejections too, not just for what
+# is accepted.
 run_sash 'int array a=(10 20 30)
 str s
-a[${s:-2}]=99
-echo "${a[2]}"'
-[[ $rc = 0 && $out = "99" && -z $err ]]; chk 80.55
+a[${s:-2}]=99'
+[[ $rc != 0 && $err == *SB4030* ]]; chk 80.55
 
 # 80.56 `+=` takes the widened index too — the sniffer accepts both operators,
 #       so the parity is not accidentally `=`-only.
@@ -438,6 +451,64 @@ int i=0
 a[$i=5
 echo done'
 [[ $rc != 0 && -z $out && $err == *SB5011* ]]; chk 80.58
+
+
+# ─── K. the key's TYPE, not its spelling (DG: array indexes must be
+#        integers, maps must have strings; both surfaces alike) ───────────
+
+# 80.59 a bare int variable is not a map key. A map is keyed by string and
+#       int→string does not happen silently (DD#105) — the same rule that
+#       makes `$(strlen $n)` an error on an int.
+run_sash 'map m=([7]=v)
+int i=7
+echo "${m[$i]}"'
+[[ $rc != 0 && -z $out && $err == *SB4030* ]]; chk 80.59
+
+# 80.60 …and quoting it is the conversion, exactly as the message says.
+run_sash 'map m=([7]=v)
+int i=7
+echo "${m["$i"]}"'
+[[ $rc = 0 && $out = "v" && -z $err ]]; chk 80.60
+
+# 80.61 the map rule is about the key's type, not about it being a variable:
+#       an arithmetic key is int-typed too, and would otherwise cross in
+#       silence while `${m[$i]}` was told to quote.
+run_sash 'map m=([2]=v)
+echo "${m[$((1+1))]}"'
+[[ $rc != 0 && -z $out && $err == *SB4030* ]]; chk 80.61
+
+# 80.62 …and the same quoting works for it, so the rule leaves no form
+#       without a remedy.
+run_sash 'map m=([2]=v)
+echo "${m["$(( 1+1 ))"]}"'
+[[ $rc = 0 && $out = "v" && -z $err ]]; chk 80.62
+
+# 80.63 a cell of an `int array` is int-typed (DD#76), so it is an array index
+#       — this is the nested form DD#80 blesses, and a whitelist that named
+#       only literals, `$var` and `$(( … ))` would have lost it.
+run_sash 'int array a=(2 0 9)
+echo "${a[${a[0]}]}"'
+[[ $rc = 0 && $out = "9" && -z $err ]]; chk 80.63
+
+# 80.64 …while a cell of a *string* array is not. Same spelling, different
+#       element type, different answer.
+run_sash 'array a=(2 0 9)
+echo "${a[${a[0]}]}"'
+[[ $rc != 0 && -z $out && $err == *SB4030* ]]; chk 80.64
+
+# 80.65 a disposition keeps its subject's type, so on an int subject it is
+#       still an index. This is why the array rule can reject a bare
+#       disposition (80.46) without rejecting dispositions as such.
+run_sash 'int array a=(10 20 30)
+int i=2
+echo "${a[${i:-0}]}"'
+[[ $rc = 0 && $out = "30" && -z $err ]]; chk 80.65
+
+# 80.66 the map write surface takes an int key no more than the read one does.
+run_sash 'map m
+int i=7
+m[$i]=v'
+[[ $rc != 0 && $err == *SB4030* ]]; chk 80.66
 
 
 set -e
