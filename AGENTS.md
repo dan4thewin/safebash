@@ -356,6 +356,23 @@ to do with your tree. Always pass the binary explicitly:
 cd spec && SASH=$(cd .. && pwd)/target/release/sash SASH_MODE=native bash subscript.sh
 ```
 
+**`SASH=` is not enough for the sister tools, and this one produces a false
+FAILURE.** `common.sh` *appends* `target/release` to `PATH`
+(`PATH="$PATH:$regular_release"`), so `sash-convert` and `sash-expand` still
+resolve to the installed copy, which `SASH=` does not override. On 2026-09-26
+a standalone `convert.sh` reported **62 failures** against a tree whose only
+change was in `sash` -- every one of them an artifact of an installed
+`sash-convert` twelve days old. The same 62 appeared under a neuter, where they
+read as signal. Prepend for any file that shells out to a helper:
+
+```sh
+cd spec && PATH=$(cd .. && pwd)/target/release:$PATH \
+  SASH=$(cd .. && pwd)/target/release/sash SASH_MODE=native bash convert.sh
+```
+
+Prepending is harmless for every other file, so just do it always. **A
+standalone failure count is not a finding until it survives that.**
+
 **`plan=` inside a spec file is per-mode, not per-sweep.** It is +N even in a
 dual-mode file -- the file runs once per mode and `plan` is compared against
 that one run's index. Setting it to +2N gives a *passing* file that prints

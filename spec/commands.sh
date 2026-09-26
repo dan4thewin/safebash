@@ -152,13 +152,17 @@ run_sash 'n=$(argc)
 echo "$n"'
 [[ $rc = 0 && $out = "1" && -z $err ]]; chk 23.24
 
-# --- DD#111 a value intrinsic is exempt from SB5073 only when it IS the
-# substitution. `bareword_shortcut_expansion` rewrites `$(status)` into the
-# value it produces, and that rewrite requires the body to be exactly one
-# statement. One statement among several was not rewritten, survived as a bare
-# command no backend recognises, and aborted at runtime inside `sash_exec` —
-# printing `sash: bug: bare command passed to sash_exec` into the program's
-# OWN output, with a successful exit. ---
+# ——— DD#111 a value intrinsic is exempt from SB5073 only when it IS the
+# substitution. `transform::expr_handlers::nullary_magic_var` resolves a bare
+# `$(status)` to the value it produces, and that requires the body to be
+# exactly one statement with no arguments. One statement among several was not
+# resolved, survived as a bare command no backend recognises, and aborted at
+# runtime inside `sash_exec` — printing `sash: bug: bare command passed to
+# sash_exec` into the program's OWN output, with a successful exit.
+#
+# (The parse-time `bareword_shortcut_expansion` that used to do this is gone:
+# DD#111 reversed the direction, so `$?` desugars INTO `$(status)` rather than
+# `$(status)` folding into `$?`.) ———
 
 # 23.25 the shape that used to leak the internal abort message.
 run_sash 'echo hi; echo "$(echo a; status)"'
@@ -170,7 +174,9 @@ run_sash 'echo hi; echo "$(status; echo a)"'
 
 # 23.27 the UNQUOTED spelling too. A sole `$(status)` is rewritten while the
 # word is scanned (try_special_word) and never reaches the string-content
-# path, so the two spellings take different routes to the same rule.
+# path, so the two spellings take different routes to the same rule. Since
+# DD#111 both routes build the identical `$(status)` node, which is why one
+# rule can cover them.
 run_sash 'echo hi; echo $(echo a; status)'
 [[ $rc != 0 && -z $out && $err == *SB5073* ]]; chk 23.27
 

@@ -74,3 +74,20 @@ change; it was found by checking whether the defect was specific to `status`.
 Specs: `errors.sh` 55.51-55.56. 55.56 pins the *shape* of the old failure
 (no "bare command" / "sash: bug" text in the output) so a regression cannot be
 silent again.
+
+## Mechanism changed 2026-09-26 (DD#111) — still fixed, by something else
+
+`bareword_shortcut_expansion` is **gone**. DD#111 reversed the direction of the
+fold: `$?` now desugars *into* `$(status)` at parse, rather than `$(status)`
+folding into `$?`, so a function whose whole job was the latter had no arms
+left.
+
+The bug above cannot come back, but the thing preventing it has moved.
+`transform::expr_handlers::nullary_magic_var` resolves a bare, argument-less
+`$(status)` to the value it produces, and it sits on the *shared* path — both
+the quoted and unquoted spellings now build the identical `$(status)` node, so
+there is no longer a second route that could miss the rewrite. That
+convergence, not a second probe, is what makes the quoted context safe.
+
+The specs are unchanged and still pin it (`errors.sh` 55.51-55.56, plus
+`commands.sh` 23.30). Journal 421.

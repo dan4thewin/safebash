@@ -64,8 +64,21 @@ fn resolve_single_cmdsubst(name: String, c: &Command, state: &VersionState) -> O
 
 /// The magic-variable intrinsics (`$(getpid)`, `$(status)`, `$(getcpid)`)
 /// resolve to a compiler-managed SSA var — but **only** when written with no
-/// arguments. `$(status …)` with arguments is an ordinary command and must
-/// fall through to the external path.
+/// arguments. `$(status …)` with arguments is a different thing (SB4045
+/// rejects it: `status` is a value intrinsic of arity 0) and must not be
+/// mistaken for a status read.
+///
+/// **This is what keeps a bare `$(status)` off the external-command path.**
+/// `parse::expr::bareword_shortcut_expansion` used to do it, by folding the
+/// intrinsic into `SimpleExpansion("?")` at parse. DD#111 reversed that
+/// direction, so the job lands here — and it matters, because the quoted form
+/// reaches the parser as a content *string* and never passes the unquoted
+/// `try_special_word` probe. Before either mechanism existed, `p="$(status)"`
+/// survived as a `Command` no backend recognises as a builtin, was dispatched
+/// as an external, and the runtime's "bare command passed to sash_exec"
+/// complaint was substituted into the program's output with a **0 exit**.
+/// Every compile-time check passed, because `status` really is a registered
+/// builtin. Spec `55.55` is the guard.
 fn nullary_magic_var(name: &str, c: &Command) -> Option<&'static str> {
     if !c.args.is_empty() {
         return None;

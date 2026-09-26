@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup errors
-plan=261
+plan=264
 echo "1..$plan" >&3
 
 set +e
@@ -1395,6 +1395,28 @@ echo done'
 run_sash 'int n=7
 exit $n'
 [[ $rc = 7 && -z $err ]]; chk isink.12
+
+# DD#111: `$?` is sugar for `$(status)`, which is int-returning. These pin the
+# int-ness at the sinks. Nothing caught it before: neutering `status` out of
+# `is_int_returning_intrinsic` broke `int x=$?` / `exit $?` / `wait $?` with a
+# FULLY GREEN sweep. `(( 0 ))` is the non-aborting way to set a failing status.
+run_sash '(( 0 ))
+int n=$?
+echo "[$n]"'
+[[ $rc = 0 && $out = "[1]" && -z $err ]]; chk isink.13
+
+run_sash '(( 0 ))
+exit $?'
+[[ $rc = 1 && -z $err ]]; chk isink.14
+
+# ...and the intrinsic spelling must type identically to the punctuation. This
+# is the DD#111 invariant itself: after the desugar they are the same node, so
+# a divergence here means a construction site was not routed through
+# `magic_sugar_expansion`.
+run_sash '(( 0 ))
+int n=$(status)
+echo "[$n]"'
+[[ $rc = 0 && $out = "[1]" && -z $err ]]; chk isink.15
 
 set -e
 tally

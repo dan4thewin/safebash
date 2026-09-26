@@ -406,7 +406,8 @@ fn parse_dollar_arm(
 /// DD#111: variables are not magic in sash. Every `$X` punctuation form is
 /// **sugar** for the intrinsic that is the real thing, and the front end is
 /// the only place that knows it — downstream sees the intrinsic and nothing
-/// else. This is the desugar: `$$` → `$(getpid)`, `$!` → `$(getcpid)`.
+/// else. This is the whole desugar: `$$` → `$(getpid)`, `$!` → `$(getcpid)`,
+/// `$?` → `$(status)`.
 ///
 /// Returns `None` for an ordinary variable name, so a caller can use it as a
 /// filter. **Every `SimpleExpansion` construction site that can receive one of
@@ -415,14 +416,17 @@ fn parse_dollar_arm(
 /// of silent. A missed site would keep a magic variable in that one context,
 /// and the SB5012 `$?` state machine would stop seeing reads there.
 ///
-/// `$?` is not desugared yet — it lands in its own commit, because it carries
-/// the SB5012 state machine with it (`validate::find_dollar_question` and
-/// `stmt_uses_status` match `SimpleExpansion("?")` and nothing else, so they
-/// must move to the intrinsic form in the same change or go silently vacuous).
+/// `$?` went last, because it carried the SB5012 state machine with it:
+/// `validate::find_status_reads` matched `SimpleExpansion("?")` and nothing
+/// else, so reversing the fold without moving it would have left the
+/// availability check finding nothing — every spec still green, and SB5012
+/// never raised again. It now recognises `ir::intrinsic_call_name`, pinned to
+/// this constructor by `intrinsic_expansion_round_trips`.
 pub(crate) fn magic_sugar_expansion(name: &str, span: Span) -> Option<Expr> {
     let intrinsic = match name {
         "$" => "getpid",
         "!" => "getcpid",
+        "?" => "status",
         _ => return None,
     };
     Some(intrinsic_expansion(intrinsic, span))
@@ -712,48 +716,10 @@ fn dynamic_subscript_var(idx: &str) -> Option<&str> {
 /// inner script is re-lexed here like any other and the sentinel surfaces.
 fn command_sub_to_expr(content: &str, span: Span) -> Expr {
     let stmts = parse_sub_script(content, span);
-    if let Some(e) = bareword_shortcut_expansion(&stmts, span) {
-        return e;
-    }
     Expr {
         kind: ExprKind::CommandSubstitution(stmts),
         span,
     }
-}
-
-/// `$(status)` is sugar for `$?` and `$(getcpid)` for `$!` (and DG: `$?` is
-/// *the* sugar, so the two spellings must agree everywhere).
-///
-/// The unquoted `$( )` path rewrites them while scanning, via
-/// `try_special_word`. This path parses a content STRING instead, so it never
-/// reached that probe: the substitution survived as a `Command` no backend
-/// recognises as a builtin, was dispatched as an external, and the runtime's
-/// "bare command passed to sash_exec" complaint was substituted into the
-/// program's output with a 0 exit. Every compile-time check passed, because
-/// `status` really is a registered builtin.
-///
-/// Applied to the parsed result rather than the raw text so the two paths
-/// agree on what counts as the bare form (whitespace, `;`, a trailing
-/// newline) instead of re-deciding it with a string compare.
-fn bareword_shortcut_expansion(stmts: &[Statement], span: Span) -> Option<Expr> {
-    let [stmt] = stmts else { return None };
-    let StmtKind::Command(c) = &stmt.kind else {
-        return None;
-    };
-    if !c.args.is_empty() {
-        return None;
-    }
-    let ExprKind::Literal(name) = &c.name.kind else {
-        return None;
-    };
-    let var = match name.as_str() {
-        "status" => "?",
-        _ => return None,
-    };
-    Some(Expr {
-        kind: ExprKind::SimpleExpansion(var.to_string()),
-        span,
-    })
 }
 
 // ── Parameter expansion (${...}) ─────────────────────────────────
@@ -1753,17 +1719,16 @@ fn try_special_word(
     }
 }
 
-/// `$(status)` returns the `$?` expansion; `$(status args…)`
-/// reconstructs as a regular `status` command (args parsed until
-/// the next pipeline / list / close-paren terminator).
+/// `$(status)` yields the intrinsic itself (DD#111 — `$?` is the sugar, this
+/// is the real thing); `$(status args…)` reconstructs as a regular `status`
+/// command (args parsed until the next pipeline / list / close-paren
+/// terminator), which SB4045 then rejects, `status` being a value intrinsic of
+/// arity 0.
 fn parse_status_word(scanner: &mut Scanner, span: Span) -> Result<SpecialWord, Diagnostic> {
     scanner.next();
     if matches!(scanner.peek().token, Tok::RParen) {
         scanner.next();
-        return Ok(SpecialWord::Returned(Expr {
-            kind: ExprKind::SimpleExpansion("?".to_string()),
-            span,
-        }));
+        return Ok(SpecialWord::Returned(intrinsic_expansion("status", span)));
     }
     let mut args = Vec::new();
     while !scanner.at_eof()

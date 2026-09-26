@@ -337,6 +337,23 @@ mod test {
             );
         }
     }
+
+    /// `ir::intrinsic_call_name` is the inverse of `expr::intrinsic_expansion`,
+    /// and the two live in different modules — the recogniser has to re-derive
+    /// the shape the constructor builds. SB5012 goes silently vacuous if they
+    /// ever disagree, so pin them together.
+    #[test]
+    fn intrinsic_expansion_round_trips() {
+        use crate::ir::Span;
+        for name in ["getpid", "getcpid", "status"] {
+            let expr = crate::parse::expr::intrinsic_expansion(name, Span::new(1, 1));
+            assert_eq!(
+                crate::ir::intrinsic_call_name(&expr),
+                Some(name),
+                "intrinsic_call_name must recognise what intrinsic_expansion builds for `{name}`"
+            );
+        }
+    }
 }
 
 // ── Logos prototype equivalence tests ────────────────────────────────

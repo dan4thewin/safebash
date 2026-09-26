@@ -245,6 +245,39 @@ pub fn walk_all_exprs(stmt: &Statement, f: &mut impl FnMut(&Expr)) {
     }
 }
 
+/// Recognise a nullary intrinsic call — the `$(name)` shape that
+/// `parse::expr::intrinsic_expansion` builds. Returns the intrinsic's name.
+///
+/// **This is the inverse of `parse::expr::intrinsic_expansion` and the two
+/// must change together**; `parse::tests::intrinsic_expansion_round_trips`
+/// fails if they drift. That pairing is the point: DD#111 makes the intrinsic
+/// the real thing and the punctuation (`$?`, `$$`, `$!`) mere sugar, so every
+/// pass that used to look for `SimpleExpansion("?")` now has to recognise this
+/// shape instead. A recogniser that silently stopped matching would not fail a
+/// spec — it would just make its caller see nothing, which is exactly how
+/// SB5012's availability state machine could have gone vacuous.
+///
+/// Requires no arguments: `$(status 5)` is a different thing (SB4045 rejects
+/// it — `status` is a value intrinsic of arity 0), not a status read.
+pub fn intrinsic_call_name(expr: &Expr) -> Option<&str> {
+    let ExprKind::CommandSubstitution(stmts) = &expr.kind else {
+        return None;
+    };
+    let [stmt] = stmts.as_slice() else {
+        return None;
+    };
+    let StmtKind::Command(c) = &stmt.kind else {
+        return None;
+    };
+    if !c.args.is_empty() {
+        return None;
+    }
+    match &c.name.kind {
+        ExprKind::Literal(n) => Some(n),
+        _ => None,
+    }
+}
+
 /// The literal text of a word, or `None` when the word is not a compile-time
 /// literal.
 ///

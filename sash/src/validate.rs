@@ -2729,7 +2729,7 @@ fn is_capture_condition_stmt(stmt: &Statement) -> bool {
 /// consumed with no preceding command to have set it.
 fn emit_status_unavailable(stmt: &Statement, diags: &mut Vec<Diagnostic>) {
     let mut spans = Vec::new();
-    find_dollar_question(stmt, &mut spans);
+    find_status_reads(stmt, &mut spans);
     for span in spans {
         diags.push(Diagnostic::error_span(
             span,
@@ -2741,26 +2741,29 @@ fn emit_status_unavailable(stmt: &Statement, diags: &mut Vec<Diagnostic>) {
     }
 }
 
-fn find_dollar_question(stmt: &Statement, spans: &mut Vec<Span>) {
+/// Collect the span of every status read in `stmt` — `$(status)`, and the `$?`
+/// punctuation that DD#111 desugars into it at parse.
+///
+/// **This is the AST-level half of SB5012 and it is load-bearing.** Until the
+/// DD#111 desugar this matched `SimpleExpansion("?")`, which covered
+/// `$(status)` only because the parser folded the intrinsic into that node.
+/// Reversing that fold without moving this would leave the walk finding
+/// nothing, and the availability state machine below would go **silently
+/// vacuous** — every spec still passing, and SB5012 simply never raised again.
+/// `crate::ir::intrinsic_call_name` is the recogniser; its round-trip test
+/// pins it to the constructor.
+fn find_status_reads(stmt: &Statement, spans: &mut Vec<Span>) {
     walk_exprs_in_stmt(stmt, &mut |expr, _| {
-        if let ExprKind::SimpleExpansion(var) = &expr.kind {
-            if var == "?" {
-                spans.push(expr.span);
-            }
+        if crate::ir::intrinsic_call_name(expr) == Some("status") {
+            spans.push(expr.span);
         }
     });
 }
 
 fn stmt_uses_status(stmt: &Statement) -> bool {
-    let mut found = false;
-    walk_exprs_in_stmt(stmt, &mut |expr, _| {
-        if let ExprKind::SimpleExpansion(var) = &expr.kind {
-            if var == "?" {
-                found = true;
-            }
-        }
-    });
-    found
+    let mut spans = Vec::new();
+    find_status_reads(stmt, &mut spans);
+    !spans.is_empty()
 }
 
 fn is_suppressed(stmt: &Statement) -> bool {
@@ -3107,12 +3110,12 @@ fn cmdsub_expr_walk_each(exprs: &[Expr], f: &mut dyn FnMut(&[Statement])) {
 /// value-intrinsic rule that survives the exemption below.
 fn check_cmdsub_heads(stmts: &[Statement], diags: &mut Vec<Diagnostic>) {
     // A value intrinsic is exempt from SB5073 only when it *is* the whole
-    // substitution — that is the exact shape `bareword_shortcut_expansion`
-    // rewrites into the value it produces. One statement among several is not
-    // rewritten, so it used to survive as a bare command no backend
-    // recognises, and aborted at runtime on `sash_exec`'s absolute-path
-    // assertion — printing `sash: bug:` into the program's own output with a
-    // successful exit.
+    // substitution — that is the exact shape `transform::expr_handlers::
+    // nullary_magic_var` resolves into the value it produces. One statement
+    // among several is not resolved, so it used to survive as a bare command
+    // no backend recognises, and aborted at runtime on `sash_exec`'s
+    // absolute-path assertion — printing `sash: bug:` into the program's own
+    // output with a successful exit.
     let sole = stmts.len() == 1;
     for stmt in stmts {
         check_cmdsub_heads_in_stmt(stmt, sole, diags);
