@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup taint
-plan=230
+plan=242
 echo "1..$plan" >&3
 
 set +e
@@ -1297,6 +1297,105 @@ run_sash 'int n=$(getenv SASH_SPEC_NOPE); echo "$(( n ))"'
 # array, which makes this the route an attacker would actually try.)
 run_sash 'read arr; int n=${arr[0]}; echo "$(( n ))"'
 [[ $rc != 0 && -z $out && $err == *"SB5020"* ]]; chk atint.21
+
+# ── DD#61: a taint SOURCE inside a `:-` default, flowing into a collection ──
+# The value-position twin of dd78.1-dd78.3, which only ever pinned the
+# *command-argument* read position (`echo ${x:-$(getenv HOME)}`). SB5021 is
+# decided by `is_taint_source(e) || expr_uses_tainted(e, tainted)` — a PAIR of
+# walkers that must jointly cover the tree. `expr_uses_tainted` was made total
+# after three leaks; `is_taint_source` kept its `_ => false` and never
+# descended into a parameter expansion, so a source in a `:-` default was
+# invisible to both: the first never arrived, the second arrived asking a
+# different question. A tainted *variable* in the identical position
+# (`${x:-$t}`) was SB5021 throughout, which made this a hole, not a policy.
+
+# 61.1 source in a :- default, subscript assignment → SB5021
+#      (compiled clean AND printed the env var before the fix — no backstop)
+run_sash 'str x=""
+array a=(q)
+a[0]=${x:-$(getenv HOME)}
+echo "${a[0]}"'
+[[ $rc != 0 && -z $out && $err == *SB5021* ]]; chk 61.1
+
+# 61.2 same source, array-literal element → SB5021
+run_sash 'str x=""
+array a=( ${x:-$(getenv HOME)} )
+echo "${a[0]}"'
+[[ $rc != 0 && -z $out && $err == *SB5021* ]]; chk 61.2
+
+# 61.3 same source, map value → SB5021
+run_sash 'str x=""
+map m=( [k]=${x:-$(getenv HOME)} )
+echo "${m[k]}"'
+[[ $rc != 0 && -z $out && $err == *SB5021* ]]; chk 61.3
+
+# 61.4 `$(<file)` in a :- default → SB5021. Rejected at COMPILE time, so the
+#      path is never opened; a deliberately absent one proves that.
+run_sash 'str x=""
+array a=(q)
+a[0]=${x:-$(</no/such/file/at/all)}
+echo "${a[0]}"'
+[[ $rc != 0 && -z $out && $err == *SB5021* ]]; chk 61.4
+
+# 61.5 external command capture in a :- default → SB5021
+run_sash 'str x=""
+array a=( ${x:-$(/bin/date)} )
+echo "${a[0]}"'
+[[ $rc != 0 && -z $out && $err == *SB5021* ]]; chk 61.5
+
+# 61.6 nested inside a quoted concat — the container walk must still reach it
+run_sash 'str x=""
+array a=( "pre${x:-$(getenv HOME)}" )
+echo "${a[0]}"'
+[[ $rc != 0 && -z $out && $err == *SB5021* ]]; chk 61.6
+
+# 61.7 the full escape: read back through a `[[ ]]` operand, which is not a
+#      command argument and so never reached the SSA backstop either. Before
+#      the fix this compiled silently and compared the file contents.
+run_sash 'str x=""
+array a=( ${x:-$(</no/such/file/at/all)} )
+if [[ ${a[0]} == 4242 ]] { echo "leaked" }'
+[[ $rc != 0 && -z $out && $err == *SB5021* ]]; chk 61.7
+
+# 61.8 CONTROL: a clean default in the same position must still WORK, so 61.1
+#      pins "a source may not enter" and not "`:-` is banned here".
+run_sash 'str x=""
+array a=(q)
+a[0]=${x:-fallback}
+echo "${a[0]}"'
+[[ $rc = 0 && $out = "fallback" && -z $err ]]; chk 61.8
+
+# 61.9 CONTROL: DD#91's `!` still vouches — `is_taint_source` honours
+#      `taint_off` exactly as `pexp_uses_tainted` does.
+run_sash 'str t=$(getenv HOME)
+array a=( ${t:!} )
+echo "ok:${a[0]}"'
+[[ $rc = 0 && $out == ok:* && -z $err ]]; chk 61.9
+
+# 61.10 a source in a subscript INDEX is a read (SB5020), not a source of the
+#       stored value: `z=${b[$(getenv N)]}` stores b's element, but reads the
+#       env var to choose which. `reject_scalar_rhs_read` checked the index
+#       with the *value* walker, which treats a bare source as sanctioned
+#       assignment-from-source — right for the RHS, wrong for an index.
+run_sash 'array b=(one two)
+str z=${b[$(getenv HOME)]}
+echo "$z"'
+[[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk 61.10
+
+# 61.11 the same index read inside a collection element
+run_sash 'array b=(one two)
+array a=(q)
+a[0]=${b[$(getenv HOME)]}
+echo "${a[0]}"'
+[[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk 61.11
+
+# 61.12 CONTROL: a clean index must still work, in both positions
+run_sash 'array b=(zero one two)
+int i=2
+array a=(q)
+a[0]=${b[$i]}
+echo "${a[0]}"'
+[[ $rc = 0 && $out = "two" && -z $err ]]; chk 61.12
 
 set -e
 tally

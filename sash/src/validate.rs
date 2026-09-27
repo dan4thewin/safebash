@@ -4919,7 +4919,13 @@ fn reject_scalar_rhs_read(expr: &Expr, tainted: &HashSet<String>, diags: &mut Ve
                 ),
                 diags,
             );
-            reject_scalar_rhs_read(index, tainted, diags);
+            // A read position, not a value position — so it is checked with
+            // the read walker. `reject_scalar_rhs_read` is the *value* walker:
+            // it treats a bare `$(getenv X)` as sanctioned assignment-from-
+            // source, which is right for the RHS itself and wrong for an
+            // index. That left `z=${b[$(getenv N)]}` clean while the same
+            // expression as a command argument was SB5020.
+            check_expr_taint(index, tainted, diags);
         }
         ExprKind::DoubleQuoted(parts) | ExprKind::Concat(parts) => {
             for p in parts {
@@ -5331,6 +5337,25 @@ fn taint_attest(
 /// Recurses into string concatenation, double-quoted parts, and array /
 /// map literals so an embedded `$(getenv …)` / `$(argv …)` / external
 /// command substitution is detected wherever it appears (DD#61).
+///
+/// **Total over `ExprKind` on purpose — do not add a wildcard.** This is read
+/// as a *pair* with [`expr_uses_tainted`]: `reject_tainted_into_array` asks
+/// `is_taint_source(e) || expr_uses_tainted(e, tainted)`, so between them the
+/// two must cover the whole tree. They did not. `expr_uses_tainted` was made
+/// total after three leaks; this one kept its `_ => false`, and wherever the
+/// twin descended and this did not, a *source* was invisible to both — this
+/// never arrived, and the twin arrives asking a different question (its
+/// `CommandSubstitution` arm deliberately answers `false`).
+///
+/// ```text
+/// str x=""
+/// array a=(q)
+/// a[0]=${x:-$(</etc/passwd)}      # compiled clean — no SB5021, no backstop
+/// echo "${a[0]}"                  # …and printed the file
+/// ```
+///
+/// A tainted *variable* in that identical position (`${x:-$t}`) was SB5021
+/// throughout, which is what made this a hole rather than a policy.
 fn is_taint_source(expr: &Expr) -> bool {
     match &expr.kind {
         ExprKind::CommandSubstitution(stmts) => cmdsub_is_taint_source(stmts),
@@ -5344,8 +5369,41 @@ fn is_taint_source(expr: &Expr) -> bool {
         // fires) but only as an unspanned "SSA taint backstop" message, which
         // is a worse diagnostic for the same program.
         ExprKind::SlurpFile(_) => true,
-        _ => false,
+        // DD#78: a `:-` default is part of the expansion's *value*, so a source
+        // there is a source here. `!` (DD#91) vouches for the whole expansion,
+        // exactly as in `pexp_uses_tainted` — these two walkers are read as a
+        // pair by `reject_tainted_into_array` and must agree about what they
+        // descend into.
+        ExprKind::ParameterExpansion(pe) => {
+            !pe.taint_off && pe.operand.as_deref().is_some_and(is_taint_source)
+        }
+        // `$(( … ))` reaches its operands through expansion leaves, like
+        // [`arith_uses_tainted`]. No source can reach one today (a bare
+        // `$(( $(getenv X) ))` is SB4020 at parse), but see the note above
+        // about wildcards staying harmless.
+        ExprKind::Arithmetic(a) => arith_is_taint_source(a),
+        // A subscript's *index* is a read position, not part of the value that
+        // flows in: `z=${b[$(getenv N)]}` stores `b`'s element, never the env
+        // var. Answering `true` would taint `z` with data it does not receive.
+        // The index read is `check_expr_taint`'s question (SB5020).
+        ExprKind::Subscript { .. } => false,
+        // `[[ … ]]` yields a status, never external data. Not reachable in a
+        // value position today (SB4014 at parse); spelled out for totality.
+        ExprKind::Test(_) => false,
+        // Whether a *variable* holds tainted data is `expr_uses_tainted`'s
+        // question, not this one; text is text.
+        ExprKind::SimpleExpansion(_) | ExprKind::Literal(_) | ExprKind::SingleQuoted(_) => false,
     }
+}
+
+/// `$(( … ))` reaches its operands through expansion leaves; the source-side
+/// twin of [`arith_uses_tainted`].
+fn arith_is_taint_source(arith: &ArithExpr) -> bool {
+    let mut found = false;
+    crate::ir::walk_arith_expansion_roots(arith, &mut |e| {
+        found = found || is_taint_source(e);
+    });
+    found
 }
 
 /// A command substitution is a taint source when it runs `getenv`/`argv`/
@@ -5702,8 +5760,56 @@ fn check_value_cmdsub_reads(expr: &Expr, tainted: &HashSet<String>, diags: &mut 
                 check_value_cmdsub_reads(v, tainted, diags);
             }
         }
-        _ => {}
+        // A subscript *index* is a read position sitting inside a value
+        // position, so it gets the read walker: `a[0]=${b[$(getenv N)]}`
+        // stores `b`'s element, but it reads the env var to choose which.
+        // `reject_scalar_rhs_read` makes the same call for the scalar form.
+        ExprKind::Subscript { index, .. } => check_expr_taint(index, tainted, diags),
+        // `${x:-…}` — the default is a value position (DD#78), the index is a
+        // read position, and `!` vouches for neither of the *inner* reads.
+        ExprKind::ParameterExpansion(pe) => pexp_value_cmdsub_reads(pe, tainted, diags),
+        // `$(( … ))` reaches its operands through expansion leaves.
+        ExprKind::Arithmetic(a) => arith_value_cmdsub_reads(a, tainted, diags),
+        // Nothing to descend: a bare variable read is `expr_uses_tainted`'s
+        // question, `$(<f)` has no inner command, `[[ … ]]` cannot appear in a
+        // value position (SB4014 at parse), and text is text. Spelled out
+        // rather than left to a wildcard — this walker is read as one of the
+        // three that must jointly cover a value expression, and the other two
+        // both leaked through exactly such a wildcard.
+        ExprKind::SimpleExpansion(_)
+        | ExprKind::SlurpFile(_)
+        | ExprKind::Test(_)
+        | ExprKind::Literal(_)
+        | ExprKind::SingleQuoted(_) => {}
     }
+}
+
+/// The `${…}` arm of [`check_value_cmdsub_reads`], split out to keep that
+/// dispatcher under the complexity gate — as [`pexp_uses_tainted`] is for
+/// [`expr_uses_tainted`].
+fn pexp_value_cmdsub_reads(
+    pe: &ParameterExpansion,
+    tainted: &HashSet<String>,
+    diags: &mut Vec<Diagnostic>,
+) {
+    if let Some(idx) = pe.index.as_deref() {
+        check_expr_taint(idx, tainted, diags);
+    }
+    if let Some(operand) = pe.operand.as_deref() {
+        check_value_cmdsub_reads(operand, tainted, diags);
+    }
+}
+
+/// The `$(( … ))` arm of [`check_value_cmdsub_reads`]; the read-checking
+/// sibling of [`arith_uses_tainted`] and [`arith_is_taint_source`].
+fn arith_value_cmdsub_reads(
+    arith: &ArithExpr,
+    tainted: &HashSet<String>,
+    diags: &mut Vec<Diagnostic>,
+) {
+    crate::ir::walk_arith_expansion_roots(arith, &mut |e| {
+        check_value_cmdsub_reads(e, tainted, diags);
+    });
 }
 
 /// A collection reader that exposes tainted *element data* via a bare
