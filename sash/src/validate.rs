@@ -5420,6 +5420,27 @@ fn pexp_uses_tainted(pe: &ParameterExpansion, tainted: &HashSet<String>) -> bool
 }
 
 /// Check if an expression uses any tainted variable.
+///
+/// **Total over `ExprKind` on purpose — do not add a wildcard.** This is the
+/// predicate behind SB5021, and it had a `_ => false` that swallowed
+/// `ExprKind::Arithmetic`. The consequence was a working taint oracle:
+///
+/// ```text
+/// str h=$(getenv SECRET)
+/// array z=($(( ${h:-0} )))            # compiled clean — no SB5021, no SB5020
+/// if [[ ${z[0]} == 4242 ]] { … }      # …and read the secret back out
+/// ```
+///
+/// `z` was never entered into the tainted set, so every later check saw a
+/// clean array. `echo "${z[0]}"` was caught by the SSA backstop (a bare
+/// message, no code, no span); a `[[ ]]` operand is not a command argument,
+/// so that route ran. A genuinely tainted array — `read arr` — is SB5020 in
+/// the same position, which is what made this a hole rather than a policy.
+///
+/// This is the *same enum variant* journal 400 fixed in `check_expr_taint`.
+/// Making one walker total does nothing for its siblings, which is the whole
+/// argument for spelling every variant out here rather than trusting a
+/// wildcard to stay harmless.
 fn expr_uses_tainted(expr: &Expr, tainted: &HashSet<String>) -> bool {
     match &expr.kind {
         ExprKind::SimpleExpansion(var) => tainted.contains(var.as_str()),
@@ -5431,7 +5452,44 @@ fn expr_uses_tainted(expr: &Expr, tainted: &HashSet<String>) -> bool {
             parts.iter().any(|p| expr_uses_tainted(p, tainted))
         }
         ExprKind::AssocArray(pairs) => pairs.iter().any(|(_, v)| expr_uses_tainted(v, tainted)),
-        _ => false,
+        // A disposition *converts*; it does not declassify (DD#24 §Quarantine,
+        // DD#93 Part D). `$(( ${h:-0} ))` reads `h`.
+        ExprKind::Arithmetic(a) => arith_uses_tainted(a, tainted),
+        // The *filename* is a read. The slurped contents are handled by
+        // `is_taint_source`, which the sole caller checks first.
+        ExprKind::SlurpFile(f) => expr_uses_tainted(f, tainted),
+        ExprKind::Test(t) => test_uses_tainted(t, tainted),
+        // No reads by construction — text is text.
+        ExprKind::Literal(_) | ExprKind::SingleQuoted(_) => false,
+        // Deliberately not descended: a read inside a `$( )` is a *use site*
+        // (SB5020), not a value flowing into a collection (SB5021), and the
+        // caller runs `check_value_cmdsub_reads` for exactly that. Answering
+        // `true` here would report the wrong diagnostic.
+        ExprKind::CommandSubstitution(_) => false,
+    }
+}
+
+/// `$(( … ))` reaches its reads through expansion leaves; mirrors
+/// [`check_arith_taint`], which is the diagnostic-emitting twin of this.
+fn arith_uses_tainted(arith: &ArithExpr, tainted: &HashSet<String>) -> bool {
+    let mut found = false;
+    crate::ir::walk_arith_expansion_roots(arith, &mut |e| {
+        found = found || expr_uses_tainted(e, tainted);
+    });
+    found
+}
+
+/// Every `[[ … ]]` operand is a read position; mirrors [`check_test_taint`].
+fn test_uses_tainted(t: &TestExpr, tainted: &HashSet<String>) -> bool {
+    match t {
+        TestExpr::Unary { operand, .. } => expr_uses_tainted(operand, tainted),
+        TestExpr::Binary { left, right, .. } => {
+            expr_uses_tainted(left, tainted) || expr_uses_tainted(right, tainted)
+        }
+        TestExpr::Not(inner) => test_uses_tainted(inner, tainted),
+        TestExpr::And(a, b) | TestExpr::Or(a, b) => {
+            test_uses_tainted(a, tainted) || test_uses_tainted(b, tainted)
+        }
     }
 }
 

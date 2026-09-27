@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup taint
-plan=221
+plan=225
 echo "1..$plan" >&3
 
 set +e
@@ -1232,6 +1232,32 @@ run_sash 'x=$(arg 1); echo "$(( ${x:-0} ))"' 7
 # atint.12 a tainted read in a subscript index inside arithmetic.
 run_sash 'x=$(arg 1); array a=(1 2); echo "${a[${x:-0}]}"' 1
 [[ $rc != 0 && -z $out && $err == *"SB5020"* ]]; chk atint.12
+# atint.13 THE SAME ENUM VARIANT, A DIFFERENT WALKER. atint.11 made
+# `check_expr_taint` total over ExprKind. `expr_uses_tainted` — the predicate
+# behind SB5021 — kept its own `_ => false`, and it swallowed
+# ExprKind::Arithmetic in exactly the same way. An arithmetic disposition
+# placed into a COLLECTION was laundered outright: `z` never entered the
+# tainted set, so every later check saw a clean array.
+run_sash 'x=$(arg 1); array z=($(( ${x:-0} ))); echo "${z[0]}"' 7
+[[ $rc != 0 && -z $out && $err == *"SB5021"* ]]; chk atint.13
+# atint.14 ...and the map spelling, which reaches the element through the
+# other arm of taint_array_literal_assignment.
+run_sash 'x=$(arg 1); map m=([k]=$(( ${x:-0} ))); echo "${m[k]}"' 7
+[[ $rc != 0 && -z $out && $err == *"SB5021"* ]]; chk atint.14
+# atint.15 WHY IT WAS A BYPASS AND NOT MERELY A LATE CATCH. `echo "${z[0]}"`
+# was stopped by the SSA backstop — a bare sentence with no SB code and no
+# span, but stopped. A `[[ ]]` operand is not a command argument, so nothing
+# stopped THIS one: it compiled, it ran, and it reported whether the tainted
+# value matched. That is an oracle. A genuinely tainted array (`read arr`) is
+# SB5020 in the identical position, which is what makes this a hole in the
+# validator rather than a decision about the language.
+run_sash 'x=$(arg 1); array z=($(( ${x:-0} ))); if [[ ${z[0]} == 7 ]]; then echo MATCH; else echo NO; fi' 7
+[[ $rc != 0 && $out != "MATCH" && $err == *"SB5021"* ]]; chk atint.15
+# atint.16 the new arm must not OVER-reject: clean arithmetic into a
+# collection is still legal, and still computes. A taint arm that rejects
+# everything passes atint.13-15 and is useless.
+run_sash 'int n=5; array z=($(( n + 1 ))); echo "${z[0]}"'
+[[ $rc = 0 && $out = "6" && -z $err ]]; chk atint.16
 
 set -e
 tally

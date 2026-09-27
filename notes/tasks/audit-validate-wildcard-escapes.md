@@ -26,7 +26,7 @@ A wildcard that returns a *diagnostic* is fine; a wildcard that returns
 `{}` on a node type that can contain reads is the bug shape.
 
 Two known ones deliberately left alone by journal 400, both needing a
-verdict rather than a reflex:
+verdict rather than a reflex (STILL OPEN — see the verdicts section below):
 
 - `ir::walk_arith_expansion_roots`'s `_ => {}`. Its remaining variants
   (`Literal`, `Var`, `DollarVar`, …) genuinely have no `Expr` children, but
@@ -65,8 +65,24 @@ suppression, `&&` list, `[[ … { … } ]]` dispatch). `scan_const_stmt`
 `check_subscript_in_stmt` (SB4030, both array-string and map-int), and a
 `check_expr_taint` control (SB5020) all fired in every container.
 
-**Expression-level cohort: not yet swept.** This is where the remaining
-risk is. `SlurpFile` and `Arithmetic` are the recurring blind spots:
+**Expression-level cohort: SWEPT, one bug found and fixed (journal 423).**
+13 containers x 7 violating expressions = 91 squares; **one** was a live
+taint bypass and the other 90 were clean.
+
+The find: `expr_uses_tainted`'s `_ => false` swallowed
+`ExprKind::Arithmetic`, so `array z=($(( ${h:-0} )))` never entered `z` into
+the tainted set. `echo "${z[0]}"` hit the SSA backstop (no SB code, no
+span); a `[[ ]]` operand is not a command argument, so
+`if [[ ${z[0]} == 4242 ]]` compiled, ran, and reported whether the secret
+matched. **The same enum variant journal 400 fixed in `check_expr_taint`** —
+that fix made one walker total and did nothing for its sibling.
+`expr_uses_tainted` is now total (specs `atint.13`-`atint.16`).
+
+Verified NOT a second bug: a genuinely tainted array (`read arr`) is SB5020
+in the identical `[[ ]]` position, so the validator covers that position
+fine. One root cause.
+
+The original list of suspects, for the record — the prediction was good: `SlurpFile` and `Arithmetic` are the recurring blind spots:
 
 - skipping `SlurpFile`: `check_elide_expr`, `check_positionals_expr`,
   `dollar_at_expr`, `check_argv_splat_expr`, `check_value_cmdsub_reads`,
@@ -109,3 +125,36 @@ its cause.
 - Validation phases exit on the first non-empty batch, so a malformed
   *wrapper* masks the diagnostic you are probing for. Validate every wrapper
   with a trivial body first.
+
+
+## Remaining, after journal 423
+
+**`check_value_cmdsub_reads` still has `_ => {}`**, covering 5 of 13
+`ExprKind` variants. Probed, every uncovered variant that could carry a
+`$( )` read into a collection element is closed by an earlier rule:
+
+| shape | result |
+|---|---|
+| `array z=($(( $(strlen $h) )))` | SB4020 — cmdsub in arithmetic rejected outright |
+| `array z=($(<$(echo $h)))` | SB5021 |
+| `array z=(${q[$h]})` | SB5021 |
+| `array z=(${x:-$h})` | SB5021 |
+| `array z=($(<$h))` | SB5021 |
+
+So it is not currently exploitable. It is still the bug shape, and the
+argument journal 423 makes about sibling walkers applies to it verbatim.
+Making it total is cheap in code and awkward against the complexity gate
+(cc 7 / **cog 5**, so it gets no dispatcher exemption and the 3x cog bar is
+5.58). That is the reason it is filed rather than done, and it should be
+done as its own change where the refactor can be shaped properly rather
+than bolted onto a bug fix.
+
+**Still owed a verdict** (unchanged from the original filing):
+`ir::walk_arith_expansion_roots`'s `_ => {}`, and bare
+`ArithExpr::Var`/`DollarVar` taint, which wants a spec pinning the SB4030
+shield rather than relying on a code comment. Note journal 423 made
+`arith_uses_tainted` a *second* caller of `walk_arith_expansion_roots`, so
+a gap there now has two ways to matter.
+
+**Also still owed:** is `StmtKind::Case` dead, now that `case` is removed
+from the language (SB4029)?
