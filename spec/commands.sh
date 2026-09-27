@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup commands
-plan=146
+plan=150
 echo "1..$plan" >&3
 
 set +e
@@ -976,6 +976,37 @@ rm -f 8
 run_sash 'int n=5
 /bin/echo "v=${n:?no n}"'
 [[ $rc == 0 && $out == "v=5" && -z $err ]]; chk 14.67
+
+# --- DD#119: the paths the proof takes that 14.54-14.63 never exercised ---
+# 14.55 rejects a BARE `$p`, which the type checker sees as a SimpleExpansion
+# and never routes through `disposition_proof`. The braced spelling is a
+# ParameterExpansion with no operator and takes a different arm; before this
+# spec nothing in the suite reached it, so the two spellings were free to
+# drift apart.
+run_sash 'str p=d119g
+/bin/echo hi > ${p}'
+[[ $rc != 0 && $err == *"may be empty"* ]]; chk 14.68
+# An operator the parser stores under an INTERNAL name. `${p:0:2}` is recorded
+# as the operator "substring", and the diagnostic used to interpolate that
+# straight into the subject, rendering `${psubstring…}` — syntax no author
+# wrote and none could. Assert the absence, not just the rejection: a test
+# that only checked `rc != 0` passed throughout the bug.
+run_sash 'str p=d119hxx
+/bin/echo hi > ${p:0:2}'
+[[ $rc != 0 && $err != *'${psubstring'* && $err == *"substring"*"does not prove a filename"* ]]; chk 14.69
+# Control: the same substring is perfectly legal away from a redirect target,
+# so 14.69 pins the non-empty OBLIGATION, not a ban on the operator.
+run_sash 'str p=d119hxx
+/bin/echo "${p:0:2}"'
+[[ $rc == 0 && $out == d1 && -z $err ]]; chk 14.70
+# `:~` as a redirect target is SB5046 (an elide is legal only where a token may
+# disappear), one pass before DD#119's proof ever sees it. That ordering is
+# what makes the proof's `:~` arm a should-never-run ICE, so this spec pins the
+# precondition: if SB5046 ever stops firing here, this fails rather than the
+# compiler crashing on a user's program.
+run_sash 'str p=d119i
+/bin/echo hi > ${p:~}'
+[[ $rc != 0 && $err == *SB5046* ]]; chk 14.71
 
 set -e
 tally

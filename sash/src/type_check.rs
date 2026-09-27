@@ -1263,16 +1263,39 @@ fn disposition_proof(pe: &ParameterExpansion, env: &TypeEnv, quoted: bool) -> Re
                 pe.name
             )),
         },
-        Some(":~") => Err(format!(
-            "redirect target `${{{0}:~}}` elides to nothing — that is the \
-             empty filename itself. Use `${{{0}:?message}}`",
+        // `:~` cannot arrive here. An elide is legal only where a token may
+        // disappear (DD#91), and a redirect target is never a variadic list
+        // position, so SB5046 in `validate` rejects every spelling of it —
+        // braced, brace-less, quoted, cell-subject, `>`/`>>`/`<`/`2>`/`exec`
+        // — one pass earlier. Reaching this arm would mean that rule silently
+        // stopped applying, which is a compiler bug and not a user error, so
+        // it halts rather than explaining itself politely.
+        Some(":~") => panic!(
+            "ICE: `${{{}:~}}` reached DD#119's redirect-target proof; SB5046 \
+             should have rejected the elide in validate",
             pe.name
-        )),
+        ),
+        // `op` may be an INTERNAL name (`substring`, `glob_replace`, …) rather
+        // than anything the author typed, so it must never be pasted into
+        // `${…}` as though it were syntax.
         Some(op) => Err(format!(
-            "redirect target `${{{0}{1}…}}` may be empty — `{1}` does not \
-             prove a filename. Use `${{{0}:?message}}` or `${{{0}:-default}}`",
-            pe.name, op
+            "redirect target `${{{0}…}}` may be empty — {1} does not prove a \
+             filename. Use `${{{0}:?message}}` or `${{{0}:-default}}`",
+            pe.name,
+            operator_noun(op)
         )),
+    }
+}
+
+/// How to name a parameter operator to a user. The parser stores some
+/// operators under an internal name (`${s:0:2}` is `"substring"`), so echoing
+/// `pe.operator` into a diagnostic invents a spelling nobody wrote. Anything
+/// unmapped is quoted rather than inlined, which keeps the worst case a
+/// puzzling noun instead of fabricated syntax.
+fn operator_noun(op: &str) -> String {
+    match op {
+        "substring" => "a substring `:off:len`".to_string(),
+        _ => format!("`{op}`"),
     }
 }
 
@@ -2347,5 +2370,58 @@ fn infer_declaration_types(d: &crate::ir::Declaration, env: &mut TypeEnv) {
         // it apart from a bare `i=1` (see `is_declared_str`).
         env.note_declared_str(d);
         infer_from_initializers(d, env);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ir::ParameterExpansion;
+
+    /// DD#119's redirect-target proof has no `:~` case to explain, because an
+    /// elide in a non-variadic position never survives `validate` (SB5046).
+    /// Eight spellings were probed — braced, brace-less, quoted, cell-subject,
+    /// `>`, `>>`, `<`, `2>`, `exec >` — and every one is rejected a pass
+    /// earlier. The arm is therefore a should-never-run ICE, and only a direct
+    /// call can reach it. Confirms it halts instead of returning a message a
+    /// user would have to be given a way to see.
+    #[test]
+    fn elide_redirect_target_is_loud_ice() {
+        let pe = ParameterExpansion {
+            name: "p".to_string(),
+            operator: Some(":~".to_string()),
+            operand: None,
+            index: None,
+            taint_off: false,
+        };
+        let env = TypeEnv::new();
+        let caught = std::panic::catch_unwind(|| disposition_proof(&pe, &env, false));
+        assert!(
+            caught.is_err(),
+            "`:~` reaching DD#119's proof means SB5046 stopped rejecting the \
+             elide — a compiler bug, which must be loud"
+        );
+    }
+
+    /// The parser stores `${s:0:2}` under the internal name `substring`, so a
+    /// diagnostic that interpolates `pe.operator` renders `${psubstring…}` —
+    /// syntax no author wrote and none could. Pins that the operator name
+    /// never reaches the user as though it were a spelling.
+    #[test]
+    fn substring_redirect_target_names_no_internal_operator() {
+        let pe = ParameterExpansion {
+            name: "p".to_string(),
+            operator: Some("substring".to_string()),
+            operand: None,
+            index: None,
+            taint_off: false,
+        };
+        let msg = disposition_proof(&pe, &TypeEnv::new(), false).unwrap_err();
+        assert!(!msg.contains("${psubstring"), "fabricated syntax in: {msg}");
+        assert!(msg.contains("`${p…}`"), "lost the subject in: {msg}");
+        assert!(
+            msg.contains("a substring `:off:len`"),
+            "unnamed op in: {msg}"
+        );
     }
 }
