@@ -68,6 +68,33 @@ Validated the normalization doesn't over-merge in the other direction: no
 normalized key absorbs more than two distinct crate hashes, i.e. exactly the
 two builds and never a third symbol.
 
+## Why it is only visible now
+
+Every function-coverage figure this project has ever reported — 98.45%,
+98.42%, 98.28%, 97.25%, back to 95.03% — came from `cargo llvm-cov report`'s
+own summary table, which `mk cov` prints. llvm-cov computes that from the
+covmap directly; it never sees an lcov, never sees a mangled name, and was
+never affected. The db's number and the report's number have no common code
+path, which is why one could be wrong for days while the other stayed right.
+
+And `coverage.db`'s number was correct until **2026-09-24**. `covdb.py` was
+introduced at `be36208` defaulting to `/tmp/covdata/branch.lcov` — the
+**spec-only** run. One build, one crate hash, no duplicate rows. Verified
+directly: `branch.lcov` contains exactly 1 distinct sash crate disambiguator,
+`union.lcov` contains 2.
+
+`b4981d7` switched the default to `union.lcov`, for a good reason recorded in
+the docstring: the 100% target is spec ∪ unit reachability, and a spec-only
+ranking lists the should-never-run ICE guards as if they were work. That
+commit did not touch the keying logic, or the function summary, or anything
+that looks like counting. It changed *what the loader is fed*, and a key that
+had been unique became a key that was per-build.
+
+That is the shape worth remembering: **the bug was introduced by a commit
+whose diff contains no trace of it.** Searching the history of the broken
+line finds `be36208` and my own fix — never `b4981d7`, which is the one that
+did it.
+
 ## Why it survived
 
 Nothing reads `cov_fns`. The documented triage query in AGENTS.md and in

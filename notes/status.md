@@ -14,6 +14,15 @@ by stripping the build hashes before keying. **Deliberately not** keyed on
 wrong, because closures share a start line with their parent and ~574 symbols
 would merge — the same class of error, in the flattering direction.
 
+**Only wrong since 2026-09-24, and by a commit that never touched the
+counting.** `covdb.py` was introduced defaulting to the *spec-only*
+`branch.lcov` — one build, one crate hash, correct. `b4981d7` switched the
+default to `union.lcov` for a good reason (the 100% target is spec ∪ unit),
+did not touch the keying, and thereby broke it. A key that had been unique
+became per-build. Every figure we have ever *quoted* — 98.45% back to
+95.03% — came from `cargo llvm-cov report`'s own summary via `mk cov`, which
+reads the covmap and never an lcov, so the two numbers share no code path.
+
 It survived because nothing consumes `cov_fns`; the documented triage query
 ranks uncovered *lines* by function and was always correct. A number with no
 consumer is a number with no test.
