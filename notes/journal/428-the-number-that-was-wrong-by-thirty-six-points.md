@@ -124,3 +124,32 @@ These are two days stale — sixteen measured files have changed since, and
 `coverage.db` records no commit, so the per-line detail is invalidated even
 where the aggregate is roughly right. The aggregates are reported as the
 last honest measurement, not as today's.
+
+## Postscript: the two sources reconcile exactly
+
+A fresh `mk cov-union` at `9b6e28c` (3m32s) let the db's function number be
+compared against llvm-cov's for the first time on identical data. They
+disagree, and the disagreement is the good kind:
+
+| source | functions | cold | covered |
+|---|---|---|---|
+| `cargo llvm-cov report` | 2322 | 31 | 98.66% |
+| `coverage.db` | 2987 | 109 | 96.35% |
+
+Collapsing `cov_fns` by `(file, line)` gives **2319 sites, 31 cold** — the
+same 31, and within three of llvm-cov's 2322. So llvm-cov's summary counts
+**definition sites**, merging a generic's instantiations and a closure sharing
+its parent's start line; the lcov splits them. Neither is wrong; they answer
+different questions.
+
+That is independent confirmation of the fix, and of the fix I declined. Keying
+`cov_fns` by `(file, line)` would have reproduced llvm-cov's 2319/31 to the
+unit — a db whose function column is a worse copy of a number `mk cov` already
+prints, having discarded the 78 additional cold symbols that make it worth
+having. 37 of those 78 are closures, each an uncovered branch of real code
+sitting inside a function the site-level view reports as covered.
+
+Lines and branches agree to within 0.1-0.3% (27808/556 vs 28072/584;
+3944/340 vs 3958/351) — llvm-cov counts some expansion regions the lcov
+exporter does not emit. Only the function column has a granularity split, and
+only because a mangled name is finer than a source position.
