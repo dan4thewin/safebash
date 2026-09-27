@@ -953,11 +953,22 @@ run_sash 'map m=([]=1)'
 # bareword rewrite declines. (It requires exactly one.)
 run_sash '/bin/echo "$()"'
 [[ $rc = 0 && -z $out && -z $err ]]; chk cov.204
-# cov.205 a `$( )` body that is a declaration, not a command: the rewrite's
-# second guard. Quoted, because the unquoted path rewrites while scanning and
-# never reaches this one.
-run_sash '/bin/echo "$(int x=1)"'
-[[ $rc = 0 && -z $out && -z $err ]]; chk cov.205
+# cov.205 a `$( )` body whose FIRST TOKEN is not a `Tok::Word`, so the
+# bareword-shortcut probe (`status` / `getcpid`) declines and falls through to
+# parse_statement. `if` lexes to `Tok::If`, so this reaches that guard
+# structurally.
+#
+# It used to read `/bin/echo "$(int x=1)"` and assert a clean compile, on the
+# stated grounds that the QUOTED path reached the guard where the unquoted one
+# did not. That was vacuous in both directions: the quoted path had a separate
+# parser with no shortcut probe at all, so it never reached the guard, and it
+# also swallowed the parse error, which is the only reason `$(int x=1)` looked
+# like it compiled. The two paths are one now; the unquoted spelling was
+# always SB4057.
+run_sash 'str s="$(if [[ -e /proc ]] { /bin/echo hi })"
+attest s [[ -n $s ]]
+echo "[$s]"'
+[[ $rc = 0 && $out = "[hi]" && -z $err ]]; chk cov.205
 # cov.206 a `$( )` whose command name is an expansion rather than a literal —
 # DD#23 rejects it, and the rewrite declines before that.
 run_sash 's=/bin/true

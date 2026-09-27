@@ -563,7 +563,7 @@ fn emit_string_part(
             1
         }
         StringPart::CommandSub(content) => {
-            result.push(command_sub_to_expr(content, span));
+            result.push(command_sub_to_expr(content, span)?);
             1
         }
         StringPart::ArithSub(content) => {
@@ -705,21 +705,42 @@ fn dynamic_subscript_var(idx: &str) -> Option<&str> {
     }
 }
 
-/// `$(…)` content lowers to CommandSubstitution.
+/// `$(…)` content inside a double-quoted string.
 ///
-/// This used to carve out content starting with a backtick and keep it as a
-/// verbatim `Literal` — a holdover from when backticks were their own token.
-/// It outlived that, and the consequence was a hole: `"$(`cmd`)"` took the
-/// carve-out, so the whole substitution became a literal string. That dodged
-/// the backtick rejection *and* the taint check, and diverged from bash, which
-/// runs the command. Backticks are rejected everywhere now (SB5076), so the
-/// inner script is re-lexed here like any other and the sentinel surfaces.
-fn command_sub_to_expr(content: &str, span: Span) -> Expr {
-    let stmts = parse_sub_script(content, span);
-    Expr {
-        kind: ExprKind::CommandSubstitution(stmts),
-        span,
-    }
+/// **This delegates to `parse_command_substitution` — the same entry the
+/// unquoted path uses — and that is the whole point.** The two used to be
+/// separate implementations, and they diverged in the two ways separate
+/// implementations always do:
+///
+/// - The unquoted path probes `Tok::Lt` first and yields a real
+///   `ExprKind::SlurpFile`. This one did not, so `"$(<f)"` parsed as a
+///   command substitution whose body was *empty* — `echo "$(</etc/hostname)"`
+///   printed nothing where bash prints the file, and `str v="$(<f)"` laundered
+///   tainted file contents into a clean-looking variable while the unquoted
+///   spelling was SB5020.
+/// - The old `parse_sub_script` was declared `-> Vec<Statement>`, so it could
+///   not carry a diagnostic. `parse_statement` *did* report the error;
+///   `Err(_) => break` threw it away and returned an empty body. `"$(if)"` and
+///   `"$(echo a; if)"` compiled silently (the latter dropping its tail) while
+///   the identical unquoted text was SB4014.
+///
+/// The `ArithSub` arm beside the caller carries the same story for `$(( … ))`.
+/// Reusing one parser is what stops this recurring a third time.
+///
+/// The lexer consumed the closing `)` while extracting `content`, so it is
+/// re-appended: the sub-scanner then sees exactly the token stream the
+/// unquoted path sees after `$(`.
+///
+/// A third divergence was closed here earlier and is worth not re-introducing:
+/// this used to carve out content starting with a backtick and keep it as a
+/// verbatim `Literal`, so `"$(`cmd`)"` became a literal string that dodged
+/// both the backtick rejection and the taint check. Backticks are rejected
+/// everywhere now (SB5076), and re-lexing the inner script is what surfaces
+/// the sentinel.
+fn command_sub_to_expr(content: &str, span: Span) -> Result<Expr, Diagnostic> {
+    let src = format!("{})", content);
+    let mut sub = Scanner::new(&src);
+    parse_command_substitution(&mut sub, span)
 }
 
 // ── Parameter expansion (${...}) ─────────────────────────────────
@@ -1530,26 +1551,6 @@ fn match_leading_operator(s: &str, ops: &[&str]) -> Option<(Option<String>, Opti
 }
 
 // ── Command substitution ───────────────────────────────────────────
-
-/// Parse a sub-script (for command substitution or subshell contents).
-pub fn parse_sub_script(content: &str, _span: Span) -> Vec<Statement> {
-    let mut sub_scanner = Scanner::new(content);
-    let mut stmts = Vec::new();
-    while !sub_scanner.at_eof() {
-        while matches!(sub_scanner.peek().token, Tok::Newline | Tok::Semi) {
-            sub_scanner.next();
-        }
-        if sub_scanner.at_eof() {
-            break;
-        }
-        match super::parser::parse_statement(&mut sub_scanner) {
-            Ok(Some(stmt)) => stmts.push(stmt),
-            Ok(None) => break,
-            Err(_) => break,
-        }
-    }
-    stmts
-}
 
 /// Parse a command substitution after the opening $(
 pub fn parse_command_substitution(scanner: &mut Scanner, span: Span) -> Result<Expr, Diagnostic> {

@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup misc
-plan=107
+plan=111
 echo "1..$plan" >&3
 
 set +e
@@ -708,6 +708,23 @@ fn outer {
 str t=$(outer)
 echo "[$t]"'
   [[ $rc = 0 && $out = "[got-inner]" && -z $rerr ]]; chk cap.21
+
+# cap.22 A MALFORMED `$( )` BODY INSIDE DOUBLE QUOTES IS A DIAGNOSTIC. The
+# quoted path's parser was declared `-> Vec<Statement>`, so it had no way to
+# carry one: `parse_statement` DID report the error and the caller answered
+# `Err(_) => break` and returned the statements it already had. The recursion
+# was never at fault — the error channel was severed at the caller. The
+# identical unquoted text was SB4014 the whole time.
+run_sash 'echo "[$(if)]"'
+[[ $rc != 0 && $err == *"SB4014"* ]]; chk cap.22
+
+# cap.23 ...and the sharper face of the same break: a body that starts well
+# and then goes wrong was silently TRUNCATED at the error. This one compiled
+# clean, exited 0, and printed `[a]` — half the program discarded without a
+# word. A parse error that costs you statements and says nothing is worse
+# than one that costs you the build.
+run_sash 'echo "[$(echo a; if)]"'
+[[ $rc != 0 && $err == *"SB4014"* ]]; chk cap.23
 # ── `$(<file)` — the slurp form (DD-less; see dollar-lt-file-forks) ──
 # It used to be desugared at PARSE time into `$(cat file)`, so a supposedly
 # self-contained static binary acquired a runtime dependency on /usr/bin/cat
@@ -808,6 +825,27 @@ run_sash 's=$(<-n)
 attest s [[ -n $s ]]
 echo "[$s]"'
 [[ $rc = 0 && $out = "[SECRET]" && -z $err ]]; chk sl.11
+
+# sl.12 THE SAME SLURP, INSIDE DOUBLE QUOTES. `"$(<f)"` is the spelling most
+# people actually write, and it was not a slurp at all: the double-quoted
+# string carried its OWN command-substitution parser, which had no `<` probe,
+# so the node became a CommandSubstitution with an EMPTY body. `echo "$(<f)"`
+# printed nothing where bash prints the file. The value asserted here is
+# byte-identical to sl.1's, because there is now one parser and one answer.
+run_sash 's="$(<sf.txt)"
+attest s [[ -n $s ]]
+echo "[$s]"'
+[[ $rc = 0 && $out = "[one
+two]" && -z $err ]]; chk sl.12
+
+# sl.13 ...and the taint gate reaches it, which is why sl.12 is more than a
+# cosmetic fix. With an empty body there was nothing to taint, so
+# `s="$(<f)"` laundered file contents into a clean-looking variable while the
+# identical UNQUOTED spelling was SB5020 (sl.7). That is a hole straight
+# through the taint model, opened by adding two quote characters.
+run_sash 's="$(<sf.txt)"
+echo "$s"'
+[[ $rc != 0 && $err == *"SB5020"* ]]; chk sl.13
 
 # ---- non-ASCII source bytes round-trip (mojibake bug) ----------------------
 # Every byte-at-a-time literal scanner built its String with
