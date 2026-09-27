@@ -1,12 +1,12 @@
 ---
 title: "DD#91: does `!` vouch for a taint SOURCE materialised in the `:-` default?"
-status: open
+status: done
 priority: P2
 kind: question
 depends: []
 gates:
-  - "DG decides whether `${x:!-$(getenv HOME)}` is legal"
-  - "whichever way: the answer is a spanned diagnostic or a clean compile, never the bare SSA backstop"
+  - "DG decides whether `${x:!-$(getenv HOME)}` is legal"       # DONE — reading 2
+  - "whichever way: the answer is a spanned diagnostic or a clean compile, never the bare SSA backstop"  # DONE — SB5020
 ---
 
 # The question
@@ -61,3 +61,28 @@ Whichever reading DG picks, the outcome should not be the bare backstop:
 
 - reading 1 → compiles clean; spec asserts `rc = 0` and the value
 - reading 2 → a spanned SB5020/SB5021 naming the source, not the backstop
+
+# RESOLVED — DG, 2026-09-27: reading 2
+
+> "x=$(getenv A); y=$(getenv B); z=$x:!-$y:! ; the `!` should only apply to the
+> read of the variable's stored value"
+
+`!` is scoped to the read of its own subject, in both directions. Both gates
+met: `${x:!-$(getenv HOME)}` is rejected, and with a **spanned SB5020** rather
+than the bare backstop.
+
+The question turned out to be sitting on a bug. The `!` of *every* `${x:!-…}`
+was dropped in `parameter_expansion_to_value`, which wrapped the subject in
+`SsaValue::Trusted` only when there was no operator — so even the
+fully-vouched `${x:!-${y:!}}` failed to compile. Three validate sites had the
+mirror-image fault (`taint_off` treated as covering the whole expansion), and
+`source_is_int` needed to see through the new wrapper so `!` stayed a taint
+annotation rather than a change of type.
+
+Separately, DG declined to extend brace-less dispositions into a disposition's
+operand (DD#90 rule 5), so his `$x:!-$y:!` spelling remains invalid and
+`${x:!-${y:!}}` / `$x:!-${y:!}` are the working ones: *"I'd actually use
+attest, so avoid over-indexing on taint-bypass ergonomics."* That behaviour is
+now pinned by `var_modifiers.sh` vm.bl24-bl25.
+
+DD#91 addendum (2026-09-27), specs `taint.sh` 91.24-91.33, journal 431.

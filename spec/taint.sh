@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup taint
-plan=242
+plan=252
 echo "1..$plan" >&3
 
 set +e
@@ -1396,6 +1396,99 @@ array a=(q)
 a[0]=${b[$i]}
 echo "${a[0]}"'
 [[ $rc = 0 && $out = "two" && -z $err ]]; chk 61.12
+
+# ── DD#91 scoping: `!` vouches for the read of THIS variable's stored value ──
+# DG, 2026-09-27: "the ! should only apply to the read of the variable's stored
+# value". Before this, `parameter_expansion_to_value` wrapped the subject in
+# `SsaValue::Trusted` ONLY when `pe.operator` was `None`, so the `!` of every
+# `${x:!-…}` was dropped on the floor: the subject stayed tainted, the whole
+# `DefaultValue` was tainted, and even the fully-vouched spelling died on the
+# unspanned SSA backstop. Three validate sites had the mirror-image fault,
+# treating `taint_off` as covering the entire expansion including the default.
+
+# 91.24 both halves vouched, subject present → the subject's value
+run_sash 'str h=$(getenv HOME)
+str u=$(getenv NOSUCHVAR_9124)
+str z=${h:!-${u:!}}
+echo "ok:$z"'
+[[ $rc = 0 && $out == ok:/* && -z $err ]]; chk 91.24
+
+# 91.25 both halves vouched, subject empty → the default fires and is clean
+run_sash 'str u=$(getenv NOSUCHVAR_9125)
+str h=$(getenv HOME)
+str z=${u:!-${h:!}}
+echo "ok:$z"'
+[[ $rc = 0 && $out == ok:/* && -z $err ]]; chk 91.25
+
+# 91.26 brace-less subject + braced default is the same program (DD#90 rule 5
+#       keeps the INNER brace-less `$h:!` literal, so braces are required there
+#       — DG 2026-09-27 chose this reading; see vm.bl24).
+run_sash 'str u=$(getenv NOSUCHVAR_9126)
+str h=$(getenv HOME)
+str z=$u:!-${h:!}
+echo "ok:$z"'
+[[ $rc = 0 && $out == ok:/* && -z $err ]]; chk 91.26
+
+# 91.27 NEGATIVE: the subject's `!` does NOT vouch for a read in the default
+run_sash 'str h=$(getenv HOME)
+str p=$(getenv PATH)
+str z=${h:!-$p}
+echo "$z"'
+[[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk 91.27
+
+# 91.28 NEGATIVE: nor for a taint SOURCE materialised in the default
+run_sash 'str h=$(getenv HOME)
+str z=${h:!-$(getenv PATH)}
+echo "$z"'
+[[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk 91.28
+
+# 91.29 NEGATIVE: the converse — a `!` in the default does not vouch for the
+#       subject. Each `!` is scoped to its own read, in both directions.
+run_sash 'str h=$(getenv HOME)
+str p=$(getenv PATH)
+str z=${h:-${p:!}}
+echo "$z"'
+[[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk 91.29
+
+# 91.30 the vouched value reaches a collection: the SSA backstop must see the
+#       `Trusted` node. This is the shape that died on the bare backstop.
+run_sash 'str h=$(getenv HOME)
+str u=$(getenv NOSUCHVAR_9130)
+array a=( ${h:!-${u:!}} )
+echo "ok:${a[0]}"'
+[[ $rc = 0 && $out == ok:/* && -z $err ]]; chk 91.30
+
+# 91.31 `!` is a taint annotation, not a change of type: an int subject read
+#       through `:!-` must take the SAME path as without it. Wrapping the
+#       subject in `Trusted` hid it from `source_is_int`, which matches
+#       `Var`/`Subscript` structurally, until that learned to see through the
+#       wrapper. A set, non-zero int cannot show this — both paths return it —
+#       so the probe is the identity element: at 0 the int ternary yields the
+#       default, while the string path atoi's "0" and yields 0.
+run_sash 'int n=$(( 0 ))
+int a=${n:-7}
+int b=${n:!-7}
+echo "$a:$b"'
+[[ $rc = 0 && $out = "7:7" && -z $rerr ]]; chk 91.31
+
+# 91.32 NEGATIVE, collection position: `reject_tainted_into_array` decides with
+#       a DIFFERENT walker pair than the scalar path, and `pexp_uses_tainted`
+#       returned false for the whole expansion whenever `taint_off` was set —
+#       so a tainted read in the default entered the array unchallenged.
+run_sash 'str h=$(getenv HOME)
+str p=$(getenv PATH)
+array a=( ${h:!-$p} )
+echo "${a[0]}"'
+[[ $rc != 0 && -z $out && $err == *SB502* ]]; chk 91.32
+
+# 91.33 NEGATIVE, collection position, taint SOURCE in the default — the
+#       `is_taint_source` half of that same pair, which had its own
+#       `!pe.taint_off &&` gate. 91.32 cannot cover this: a top-level source
+#       short-circuits the `||` before the second walker ever runs.
+run_sash 'str h=$(getenv HOME)
+array a=( ${h:!-$(getenv PATH)} )
+echo "${a[0]}"'
+[[ $rc != 0 && -z $out && $err == *SB502* ]]; chk 91.33
 
 set -e
 tally

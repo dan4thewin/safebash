@@ -5,7 +5,7 @@
 set -eu
 . common.sh
 setup var_modifiers
-plan=149
+plan=151
 echo "1..$plan" >&3
 
 set +e
@@ -755,6 +755,26 @@ echo "[$t]"'
 run_sash 'array a=(x y z)
 echo "$(len a):$(join a)"'
 [[ $rc = 0 && $out = "3:x y z" && -z $rerr ]]; chk 96.22
+
+# vm.bl24 DD#90 rule 5 reaches a DISPOSITION'S OPERAND, not just `"…"` (DG,
+#         2026-09-27). The operand is parsed as an interpolating parts list, so
+#         a brace-less disposition inside it stays a literal colon-run: the
+#         `:!` here is text appended to the default, NOT a taint-off modifier.
+#         DG chose this over extending brace-less into the operand — he would
+#         reach for `attest` rather than lean on bypass ergonomics.
+run_sash 'str y=abc
+str x=""
+str z=$x:-$y:!
+echo "[$z]"'
+[[ $rc = 0 && $out = "[abc:!]" && -z $err ]]; chk vm.bl24
+
+# vm.bl25 …and the braced spelling is the one that actually dispositions.
+#         Paired with vm.bl24 so the two readings cannot both drift.
+run_sash 'str y=abc
+str x=""
+str z=$x:-${y:!}
+echo "[$z]"'
+[[ $rc = 0 && $out = "[abc]" && -z $err ]]; chk vm.bl25
 
 set -e
 tally

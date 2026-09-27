@@ -240,16 +240,21 @@ fn positional_arg_index(var: &str) -> Option<usize> {
 fn parameter_expansion_to_value(pe: &ParameterExpansion, state: &VersionState) -> SsaValue {
     // The disposition subject is a plain var for a scalar `${s:OP}`, or the cell
     // read for `${a[i]:OP}` (DG: a cell behaves like a string variable).
-    let source = pe_source_value(pe, state);
+    // DD#91 (DG, 2026-09-27): `!` vouches for the read of *this* variable's
+    // stored value and nothing else. In `${x:!-$y}` it covers `x`; `$y` is a
+    // separate read that needs its own `!` (`${x:!-${y:!}}` is the vouched-both
+    // spelling — the inner braces are required, DD#90 rule 5). So the modifier
+    // wraps the SUBJECT, whatever disposition
+    // follows, and the default keeps whatever taint its own expression has.
+    // This used to apply only when there was no operator, which dropped the
+    // `!` entirely from every `${x:!-…}`.
+    let mut source = pe_source_value(pe, state);
+    if pe.taint_off {
+        source = SsaValue::Trusted {
+            source: Box::new(source),
+        };
+    }
     let Some(op) = pe.operator.as_ref() else {
-        // DD#91: `${x:!}` — no disposition, just the `!` modifier. Wrap so the
-        // SSA taint backstop can see the sanctioned bypass; without a node the
-        // backstop sees a bare tainted read and rejects what the CST allowed.
-        if pe.taint_off {
-            return SsaValue::Trusted {
-                source: Box::new(source),
-            };
-        }
         return source;
     };
     // `:-`/`:?` (default/require) and substring-on-a-cell carry the subject as a
@@ -339,6 +344,10 @@ fn source_carrying_value(
 /// emptiness — see the `:-` arm.
 fn source_is_int(source: &SsaValue, pe: &ParameterExpansion, state: &VersionState) -> bool {
     match source {
+        // DD#91: `!` wraps the subject in `Trusted`. That is a taint
+        // annotation, not a change of type — an `int` read through `${i:!-d}`
+        // is still an int, and must still take the identity-element ternary.
+        SsaValue::Trusted { source } => source_is_int(source, pe, state),
         SsaValue::Var(_) => {
             pe.index.is_none() && state.type_map.get(&pe.name) == Some(&crate::ir::VarType::Int)
         }

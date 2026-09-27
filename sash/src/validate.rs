@@ -5375,7 +5375,11 @@ fn is_taint_source(expr: &Expr) -> bool {
         // pair by `reject_tainted_into_array` and must agree about what they
         // descend into.
         ExprKind::ParameterExpansion(pe) => {
-            !pe.taint_off && pe.operand.as_deref().is_some_and(is_taint_source)
+            // `!` (DD#91) vouches for the read of `pe.name`'s stored value, not
+            // for a *source* materialised in the default: in
+            // `${x:!-$(getenv HOME)}` nobody asked to bypass the getenv. So
+            // `taint_off` is deliberately not consulted here.
+            pe.operand.as_deref().is_some_and(is_taint_source)
         }
         // `$(( … ))` reaches its operands through expansion leaves, like
         // [`arith_uses_tainted`]. No source can reach one today (a bare
@@ -5464,13 +5468,14 @@ fn pexp_uses_tainted(pe: &ParameterExpansion, tainted: &HashSet<String>) -> bool
     // clean, so it does NOT propagate taint. It is a flag, not an operator, so
     // it applies to every combination (`:!`, `:!~`, `:!-W`, `:!?M`) without
     // enumerating them.
-    if pe.taint_off {
-        return false;
-    }
     // DD#78: a `:-` default is part of the expansion's value, so a tainted read
     // inside it taints the result too (correct propagation — without this,
     // `z=${x:-$tainted}` left `z` clean).
-    tainted.contains(pe.name.as_str())
+    //
+    // `taint_off` scopes to the subject only, so it gates the name and NOT the
+    // operand walk: each nested expansion carries its own flag, which is what
+    // makes `${x:!-${y:!}}` the spelling that vouches for both reads.
+    (!pe.taint_off && tainted.contains(pe.name.as_str()))
         || pe
             .operand
             .as_deref()
@@ -5693,16 +5698,17 @@ fn check_param_expansion_taint(
     // DD#91: the `!` modifier is a sanctioned per-use taint bypass — the
     // subject is trusted clean (a predicate-less attest), so its read is not a
     // violation. Keyed on the flag, so every combination is covered.
-    if pe.taint_off {
-        return;
+    if !pe.taint_off {
+        push_taint_use(
+            tainted,
+            &pe.name,
+            span,
+            format!("tainted variable ${{{} ...}} used without attest", pe.name),
+            diags,
+        );
     }
-    push_taint_use(
-        tainted,
-        &pe.name,
-        span,
-        format!("tainted variable ${{{} ...}} used without attest", pe.name),
-        diags,
-    );
+    // Not gated on `taint_off`: the `!` covers the subject's read, never the
+    // default's. `${x:!-$y}` still owes an attest for `y`.
     if pe.operator.as_deref() == Some(":-") {
         if let Some(operand) = &pe.operand {
             check_expr_taint(operand, tainted, diags);

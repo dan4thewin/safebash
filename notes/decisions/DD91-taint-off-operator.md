@@ -133,6 +133,53 @@ emptiness policy they never wrote. The split surfaces it. DD#99's
   (`${x:!-DEFAULT}`). Fixed 2026-09-26; specs `optional_args.sh` 84.33-84.36.
 
 
+## Addendum (2026-09-27) — `!` vouches for the subject's read, and nothing else
+
+The 2026-09-09 split defined `${x:!-W}` as "trusted, `W` when empty" but never
+said what taint `W` itself carries. DG settled it:
+
+> "x=$(getenv A); y=$(getenv B); z=$x:!-$y:! ; the `!` should only apply to the
+> read of the variable's stored value"
+
+So `!` is scoped to **the read of its own subject**. It is not a trust claim
+about the expansion's result. In `${x:!-$y}` the `!` covers `x`; `$y` is a
+separate read that owes its own `!` (or an `attest`). The rule runs in both
+directions — a `!` in the default does not vouch for the subject either, so
+`${x:-${y:!}}` is still SB5020 on `x`.
+
+| spelling | verdict |
+|---|---|
+| `${x:!-${y:!}}` | clean — each read vouched by its own `!` |
+| `${x:!-$y}` | SB5020 on `y` |
+| `${x:!-$(getenv C)}` | SB5020 — nobody asked to bypass the `getenv` |
+| `${x:-${y:!}}` | SB5020 on `x` |
+
+This also answers the question filed as `dd91-bang-vouches-for-source-in-default`:
+reading 2, and the outcome is a **spanned** diagnostic rather than the bare SSA
+backstop.
+
+### It was a bug, not just an unsettled question
+
+`parameter_expansion_to_value` wrapped the subject in `SsaValue::Trusted` only
+when `pe.operator` was `None`. The moment there was an operator, control passed
+to `source_carrying_value` and the `taint_off` flag was **dropped on the floor**
+— so the `!` of every `${x:!-…}` reached neither backend nor backstop. The
+fully-vouched spelling DG asked for did not compile; it died on the unspanned
+backstop. The wrap now happens once, before the operator dispatch, because the
+subject *is* "the read of the variable's stored value".
+
+Three validate sites had the mirror-image fault, treating `taint_off` as
+covering the whole expansion including its default: `is_taint_source` (a
+`!pe.taint_off &&` gate), `pexp_uses_tainted` and `check_param_expansion_taint`
+(early returns that skipped the `:-` operand walk as well as the subject).
+
+A fourth, subtler one: `source_is_int` matches `Var`/`Subscript` structurally,
+so wrapping the subject hid an `int` subject from it and silently moved
+`${n:!-7}` off the int identity-element path onto the string `atoi` path. `!` is
+a taint annotation, not a change of type, so it now sees through `Trusted`.
+
+Specs: `taint.sh` 91.24-91.33. journal 431.
+
 ## Audit surface
 
 `:!` is a deliberate validator bypass — the adversarial audit's highest-priority

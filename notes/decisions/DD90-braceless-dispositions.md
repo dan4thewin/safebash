@@ -73,6 +73,19 @@ available as `${x}:-foo` or by quoting.
    a bare `"$x:-foo"` is `$x` + the literal `:-foo`, NOT a disposition. Inside
    double quotes the disposition must be braced (`"${x:-foo}"`).
 
+   **Extended — DG, 2026-09-27.** Rule 5 also covers a **disposition's own
+   operand**, which is parsed as an interpolating parts list and so inherits the
+   exclusion "by construction". In `$x:!-$y:!` the inner `$y:!` is `$y` plus the
+   literal text `:!`; the working spellings are `$x:!-${y:!}` and
+   `${x:!-${y:!}}`. Asked whether to extend brace-less into the operand instead,
+   DG chose to leave it: *"I'd actually use attest, so avoid over-indexing on
+   taint-bypass ergonomics."*
+
+   The consequence to know is that the literal reading is **silent** when the
+   operand is clean: `str x=""; str y=abc; z=$x:-$y:!` yields `abc:!`. Pinned by
+   `var_modifiers.sh` vm.bl24, paired with vm.bl25 for the braced spelling so
+   the two readings cannot drift apart.
+
 ## Semantics = the braced form, exactly
 
 Brace-less is pure sugar: the lexer desugars `$x:-foo` → `DollarBrace("x:-foo")`
