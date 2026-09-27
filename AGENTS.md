@@ -588,6 +588,29 @@ directory survives `mk cov-reset` (which removes only `target/release`) —
 covmap along with the instrumented binary. The summary table names thin
 *files*; only the lcov names thin *lines*.
 
+**Run `mk cov-stale` before you rank.** Every row in `coverage.db` is keyed
+by `(file, line)`, so a single commit that renumbers a measured file silently
+re-points every cold line onto whatever now occupies it. Measured once, after
+18 such commits: **184 of 519 cold lines (35%) landed on a blank line, a
+comment, or a bare brace** — text that cannot carry a DA record at all, and
+`validate.rs:2056` read as cold code when it is the enum variant `Unknown,`.
+The loader records the HEAD commit and each measured file's worktree blob, so
+the check is mechanical and exits nonzero when the data has moved. It also
+refuses to attribute an lcov older than the commit it is loaded at, because a
+confident wrong provenance is worse than none.
+
+**Aggregates survive staleness; rankings do not.** `519/27538` does not care
+which line is which, so quoting overall coverage from a stale db is fine. The
+cold-line ranking is the only reason to have the db, and it is exactly the
+part that rots. This replaced a prose "do not read it" warning that failed the
+way prose warnings fail (journal 428).
+
+**Function coverage has two independent sources and they share no code path.**
+The headline figure is `cargo llvm-cov report`'s, printed by `mk cov`,
+computed from the covmap. `coverage.db`'s is the lcov's, and was wrong by 36
+points for three days without anything noticing. Quote the former; use the
+latter only for ranking.
+
 **A cold line is a hypothesis, not a finding.** Confirm it by execution before
 building any work on it. `mk cov-probe-build` once, then
 `contrib/cov-probe.sh FILE:LINE 'snippet'` answers "does this snippet reach

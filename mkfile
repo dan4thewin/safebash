@@ -86,6 +86,13 @@ cov-union:V:
 cov-db:V:
 	python3 contrib/covdb.py target/coverage/union.lcov coverage.db
 
+# Is coverage.db's per-line data still about THIS tree?  Every row is keyed by
+# (file, line), so one commit that renumbers a measured file makes the cold-line
+# ranking point at the wrong code while the aggregate percentages stay right.
+# Run this before ranking; nonzero exit means rebuild.
+cov-stale:V:
+	python3 contrib/covdb.py --check coverage.db
+
 cov-rpt:V:
 	(cd $SASH && cargo llvm-cov report --release)
 

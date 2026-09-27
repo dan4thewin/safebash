@@ -38,11 +38,36 @@ distinct symbols legitimately share a start line -- a closure and the
 function containing it, most often -- and merging them hides an uncovered
 closure inside a covered parent.
 
+Staleness is recorded, not remembered.  Every row is keyed by (file, line)
+and nothing in an lcov says which revision it measured, so one commit that
+renumbers a measured file turns "line 2056 is cold" into a line that today
+holds an enum variant.  Measured after 18 such commits: 184 of 519 cold lines
+-- 35% -- pointed at a blank line, a comment or a bare brace, text that cannot
+carry a DA record at all.  The aggregate percentages survive that (519/27538
+does not care which line is which); the per-line attribution does not, and the
+per-line attribution is the entire reason to rank.
+
+So the loader stores the HEAD commit and the WORKTREE blob hash of every
+measured file in `cov_meta` / `cov_blobs`, and
+
+    python3 contrib/covdb.py --check      # or: mk cov-stale
+
+re-hashes them and reports the ones that have moved, exiting nonzero if any
+have.  Clean means the per-line data still describes the tree in front of you.
+This replaces a prose warning in plan.md that said "do not read it", which
+failed exactly the way prose warnings fail.
+
+A VIEW cannot do this job: staleness is a fact about the working tree, which
+SQLite cannot see.  Hashing is deliberately of the worktree rather than the
+index or HEAD, so an uncommitted edit counts -- coverage is measured against
+whatever was on disk.
+
 lcov hit counts can exceed int64, so they are clamped to 2**62 after summing.
 """
 import os
 import re
 import sqlite3
+import subprocess
 import sys
 
 CLAMP = 2**62
@@ -60,6 +85,57 @@ def demangle_key(m):
 lcov = sys.argv[1] if len(sys.argv) > 1 else "target/coverage/union.lcov"
 db = sys.argv[2] if len(sys.argv) > 2 else "coverage.db"
 
+def git(*a):
+    """git output, or "" if git is unavailable or the call fails."""
+    try:
+        return subprocess.run(("git",) + a, capture_output=True, text=True,
+                              check=True).stdout
+    except (OSError, subprocess.CalledProcessError):
+        return ""
+
+
+def hash_worktree(files):
+    """blob hash of each file AS IT IS ON DISK (not the index, not HEAD)."""
+    out = git("hash-object", "--", *files).split()
+    return dict(zip(files, out)) if len(out) == len(files) else {}
+
+
+def check(db):
+    """Report measured files whose content has moved since the lcov was taken."""
+    if not os.path.exists(db):
+        sys.exit(f"{db}: absent -- run `mk cov-union && mk cov-db`")
+    con = sqlite3.connect(db)
+    try:
+        was = dict(con.execute("SELECT file, blob FROM cov_blobs"))
+        meta = dict(con.execute("SELECT key, value FROM cov_meta"))
+    except sqlite3.OperationalError:
+        sys.exit(f"{db}: predates provenance tracking -- rebuild with `mk cov-db`")
+    if not meta.get("commit"):
+        print(f"{db}: provenance UNKNOWN -- built from an lcov older than the "
+              "commit it was loaded at.")
+        print("  Per-line data is unusable. Rebuild: `mk cov-union && mk cov-db`.")
+        sys.exit(1)
+    now = hash_worktree(sorted(was))
+    moved = sorted(f for f, b in was.items() if now.get(f, b) != b)
+    print(f"{db}: measured at {meta.get('commit', '?')[:12]} "
+          f"({meta.get('built_at', '?')}), {len(was)} files")
+    if not moved:
+        print("  current -- per-line data describes the working tree")
+        return
+    print(f"  STALE: {len(moved)} of {len(was)} measured files have changed.")
+    print("  Aggregate percentages still hold; per-line attribution does NOT.")
+    for f in moved[:20]:
+        print(f"    {f}")
+    if len(moved) > 20:
+        print(f"    ... and {len(moved) - 20} more")
+    sys.exit(1)
+
+
+if "--check" in sys.argv:
+    check(sys.argv[sys.argv.index("--check") + 1]
+          if len(sys.argv) > sys.argv.index("--check") + 1 else "coverage.db")
+    sys.exit(0)
+
 if os.path.exists(db):
     os.remove(db)
 c = sqlite3.connect(db)
@@ -67,6 +143,8 @@ c.executescript("""
 CREATE TABLE cov_lines(file TEXT, line INT, count INT, PRIMARY KEY(file,line));
 CREATE TABLE cov_fns(file TEXT, line INT, mangled TEXT, count INT);
 CREATE TABLE cov_branches(file TEXT, line INT, block INT, branch TEXT, count INT);
+CREATE TABLE cov_meta(key TEXT PRIMARY KEY, value TEXT);
+CREATE TABLE cov_blobs(file TEXT PRIMARY KEY, blob TEXT);
 CREATE INDEX idx_cl ON cov_lines(file, count);
 CREATE INDEX idx_cb ON cov_branches(file, count);
 """)
@@ -102,6 +180,27 @@ c.executemany("INSERT INTO cov_fns VALUES(?,?,?,?)",
 c.executemany("INSERT INTO cov_branches VALUES(?,?,?,?,?)",
               [(f, n, b, br, min(v, CLAMP))
                for (f, n, b, br), v in branch_hits.items()])
+
+# The lcov does not record what it measured, so HEAD is only the right answer
+# when the lcov was produced from it -- the documented flow is
+# `mk cov-union && mk cov-db`.  Rebuilding the db from an OLD lcov would
+# otherwise stamp stale data with today's commit, which is worse than no
+# provenance at all: a confident wrong answer.  Detect it by clock.
+measured = sorted({f for f, _ in line_hits})
+head = git("rev-parse", "HEAD").strip()
+head_at = git("log", "-1", "--format=%ct").strip()
+lcov_at = int(os.path.getmtime(lcov))
+attributable = head_at.isdigit() and lcov_at >= int(head_at)
+if not attributable:
+    print(f"warning: {lcov} predates HEAD -- provenance recorded as unknown.")
+    print("         Rebuild with `mk cov-union && mk cov-db` to restore it.")
+c.executemany("INSERT INTO cov_meta VALUES(?,?)", [
+    ("commit", head if attributable else ""),
+    ("built_at", git("log", "-1", "--format=%cI").strip() if attributable else ""),
+    ("lcov", lcov),
+    ("lcov_mtime", str(lcov_at)),
+])
+c.executemany("INSERT INTO cov_blobs VALUES(?,?)", hash_worktree(measured).items())
 c.commit()
 
 for label, q in (
