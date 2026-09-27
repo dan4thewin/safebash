@@ -112,6 +112,108 @@ include!("inner.rs");
 // sash_write
 // ═══════════════════════════════════════════════════════════════
 
+/// DD#120: the invoker's own standard fds.
+///
+/// A redirect written on a command (`cmd > f`) establishes a channel for
+/// *that command's* output. It is not the invoking program's channel, and
+/// nothing the program itself emits may land in it — neither a diagnostic
+/// about the command (if the command could not be set up or exec'd, it
+/// produced no output at all) nor the output of an END block that runs after
+/// the command aborted.
+///
+/// Index `i` holds a high-numbered `F_DUPFD_CLOEXEC` copy of fd `i`, or `-1`
+/// if it could not be taken — in which case the affected fd falls back to its
+/// pre-DD#120 behaviour, which is never worse.
+static mut SASH_SCOPE_SAVE: [i64; 3] = [-1, -1, -1];
+
+/// `F_DUPFD_CLOEXEC` targets start high to stay clear of anything a program
+/// redirects by hand.
+const SCOPE_MIN_FD: i64 = 100;
+
+/// Bind the invoker's scope fds to whatever 0/1/2 mean *right now*.
+///
+/// Called twice, for the two moments at which 0/1/2 are by definition the
+/// program's own: from the prologue before any user code runs, and after a
+/// persistent (`exec`-scope) redirect is applied. `exec 2> f` rebinds the
+/// **invoker's own** stderr so the scope follows it; `cmd 2> f` does not, and
+/// must not. The two are therefore in lockstep in the invoker, diverging only
+/// for the window in which fd 2 does not mean "the invoker's stderr".
+///
+/// `F_DUPFD_CLOEXEC` is load-bearing rather than hygiene: it is exactly what
+/// makes the forked child's exec-failure diagnostic land on the invoker's
+/// channel. The fd is **still open when `execve` fails**, so the child can
+/// report through it, and is **closed automatically when `execve` succeeds**,
+/// so a real command never inherits a stray descriptor.
+#[no_mangle]
+pub extern "C" fn sash_scope_bind() {
+    for (idx, slot) in unsafe { (&raw mut SASH_SCOPE_SAVE).as_mut() }
+        .expect("scope save table")
+        .iter_mut()
+        .enumerate()
+    {
+        // The index IS the fd number: slot 0 saves fd 0, and so on.
+        let fd = sash_fcntl_dupfd_cloexec(idx as i64, SCOPE_MIN_FD);
+        let old = *slot;
+        *slot = if fd >= 0 { fd } else { -1 };
+        if old >= 0 {
+            sash_close(old);
+        }
+    }
+}
+
+/// Put the invoker's fds back (DD#120). Called on entry to the END block.
+///
+/// An abort inside a redirected command terminates the block before its
+/// restore can run, so without this END would inherit the failed command's
+/// redirects and write `END { echo cleanup }` into that command's output
+/// file. Restoring here makes END's channel correct by construction rather
+/// than by remembering to restore at each abort site.
+///
+/// The saves stay open: END may itself abort, and the process exit closes
+/// them.
+#[no_mangle]
+pub extern "C" fn sash_scope_restore() {
+    for (idx, &slot) in unsafe { (&raw const SASH_SCOPE_SAVE).as_ref() }
+        .expect("scope save table")
+        .iter()
+        .enumerate()
+    {
+        if slot >= 0 {
+            sash_dup2(slot, idx as i64);
+        }
+    }
+}
+
+/// `fcntl(fd, F_DUPFD_CLOEXEC, min)`. Raw syscall, matching [`sash_dup`] —
+/// rustix is used where it reads well, but the fd-plumbing helpers in this
+/// file are deliberately syscall-level.
+fn sash_fcntl_dupfd_cloexec(fd: i64, min: i64) -> i64 {
+    const SYS_FCNTL: i64 = 72;
+    const F_DUPFD_CLOEXEC: i64 = 1030;
+    unsafe {
+        let result: i64;
+        core::arch::asm!(
+            "syscall",
+            in("rax") SYS_FCNTL,
+            in("rdi") fd,
+            in("rsi") F_DUPFD_CLOEXEC,
+            in("rdx") min,
+            lateout("rax") result,
+            lateout("rcx") _,
+            lateout("r11") _,
+        );
+        result
+    }
+}
+
+/// Write one diagnostic segment to the invoker's channel (DD#120).
+/// Every `sash_write(2, …)` in this file used to do this directly; routing
+/// them through one helper is what makes the channel a single object.
+fn diag_write(buf: *const u8, len: i64) -> i64 {
+    let fd = unsafe { SASH_SCOPE_SAVE[2] };
+    sash_write(if fd >= 0 { fd } else { 2 }, buf, len)
+}
+
 #[no_mangle]
 pub extern "C" fn sash_write(fd: i64, buf: *const u8, len: i64) -> i64 {
     // A *pure* `$( … )` captures into memory, not a kernel object. Every
@@ -204,36 +306,36 @@ pub extern "C" fn sash_emsg(
         let a0 = unsafe { *argv };
         if !a0.is_null() {
             let l = unsafe { strlen(a0) };
-            sash_write(2, a0, l as i64);
+            diag_write(a0, l as i64);
         }
     }
-    sash_write(2, sep.as_ptr(), sep.len() as i64);
+    diag_write(sep.as_ptr(), sep.len() as i64);
     // <seg1>
     if !seg1_ptr.is_null() && seg1_len > 0 {
-        sash_write(2, seg1_ptr, seg1_len);
+        diag_write(seg1_ptr, seg1_len);
     }
     // [: <seg2>]
     if !seg2_ptr.is_null() && seg2_len > 0 {
-        sash_write(2, sep.as_ptr(), sep.len() as i64);
-        sash_write(2, seg2_ptr, seg2_len);
+        diag_write(sep.as_ptr(), sep.len() as i64);
+        diag_write(seg2_ptr, seg2_len);
     }
-    sash_write(2, sep.as_ptr(), sep.len() as i64);
+    diag_write(sep.as_ptr(), sep.len() as i64);
     // <reason>
     let errno = unsafe { SASH_LAST_ERRNO };
     match errno_str(errno) {
         Some(s) => {
-            sash_write(2, s.as_ptr(), s.len() as i64);
+            diag_write(s.as_ptr(), s.len() as i64);
         }
         None => {
             let prefix: &[u8] = b"error ";
-            sash_write(2, prefix.as_ptr(), prefix.len() as i64);
+            diag_write(prefix.as_ptr(), prefix.len() as i64);
             let mut buf = [0u8; 24];
             let n = write_i64(&mut buf, errno);
-            sash_write(2, buf.as_ptr(), n as i64);
+            diag_write(buf.as_ptr(), n as i64);
         }
     }
     let nl: &[u8] = b"\n";
-    sash_write(2, nl.as_ptr(), nl.len() as i64);
+    diag_write(nl.as_ptr(), nl.len() as i64);
 }
 
 /// Write a DD#55 status-based abort diagnostic to stderr (no exit):
@@ -249,21 +351,21 @@ pub extern "C" fn sash_emsg_status(name_ptr: *const u8, name_len: i64, status: i
         let a0 = unsafe { *argv };
         if !a0.is_null() {
             let l = unsafe { strlen(a0) };
-            sash_write(2, a0, l as i64);
+            diag_write(a0, l as i64);
         }
     }
-    sash_write(2, sep.as_ptr(), sep.len() as i64);
+    diag_write(sep.as_ptr(), sep.len() as i64);
     if !name_ptr.is_null() && name_len > 0 {
-        sash_write(2, name_ptr, name_len);
-        sash_write(2, sep.as_ptr(), sep.len() as i64);
+        diag_write(name_ptr, name_len);
+        diag_write(sep.as_ptr(), sep.len() as i64);
     }
     let head: &[u8] = b"command failed (exit ";
-    sash_write(2, head.as_ptr(), head.len() as i64);
+    diag_write(head.as_ptr(), head.len() as i64);
     let mut buf = [0u8; 24];
     let n = write_i64(&mut buf, status);
-    sash_write(2, buf.as_ptr(), n as i64);
+    diag_write(buf.as_ptr(), n as i64);
     let tail: &[u8] = b")\n";
-    sash_write(2, tail.as_ptr(), tail.len() as i64);
+    diag_write(tail.as_ptr(), tail.len() as i64);
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -310,23 +412,23 @@ pub extern "C" fn sash_attest_fail(
         let a0 = unsafe { *argv };
         if !a0.is_null() {
             let l = unsafe { strlen(a0) };
-            sash_write(2, a0, l as i64);
+            diag_write(a0, l as i64);
         }
     }
     let head: &[u8] = b": attest: ";
-    sash_write(2, head.as_ptr(), head.len() as i64);
+    diag_write(head.as_ptr(), head.len() as i64);
     if !name_ptr.is_null() && name_len > 0 {
-        sash_write(2, name_ptr, name_len);
+        diag_write(name_ptr, name_len);
     }
     if !val_ptr.is_null() && val_len > 0 {
         let open: &[u8] = b" = '";
-        sash_write(2, open.as_ptr(), open.len() as i64);
-        sash_write(2, val_ptr, val_len);
+        diag_write(open.as_ptr(), open.len() as i64);
+        diag_write(val_ptr, val_len);
         let close: &[u8] = b"'";
-        sash_write(2, close.as_ptr(), close.len() as i64);
+        diag_write(close.as_ptr(), close.len() as i64);
     }
     let tail: &[u8] = b" failed the gate\n";
-    sash_write(2, tail.as_ptr(), tail.len() as i64);
+    diag_write(tail.as_ptr(), tail.len() as i64);
     sash_exit(1)
 }
 
@@ -375,11 +477,11 @@ fn arith_abort(msg: &[u8]) -> ! {
         let a0 = unsafe { *argv };
         if !a0.is_null() {
             let l = unsafe { strlen(a0) };
-            sash_write(2, a0, l as i64);
-            sash_write(2, sep.as_ptr(), sep.len() as i64);
+            diag_write(a0, l as i64);
+            diag_write(sep.as_ptr(), sep.len() as i64);
         }
     }
-    sash_write(2, msg.as_ptr(), msg.len() as i64);
+    diag_write(msg.as_ptr(), msg.len() as i64);
     sash_exit(2)
 }
 
@@ -746,14 +848,14 @@ pub unsafe extern "C" fn sash_splat_disposition(
         if !argv.is_null() {
             let a0 = *argv;
             if !a0.is_null() {
-                sash_write(2, a0, strlen(a0) as i64);
+                diag_write(a0, strlen(a0) as i64);
             }
         }
-        sash_write(2, b": ".as_ptr(), 2);
+        diag_write(b": ".as_ptr(), 2);
         if !word_ptr.is_null() && word_len > 0 {
-            sash_write(2, word_ptr, word_len);
+            diag_write(word_ptr, word_len);
         }
-        sash_write(2, b"\n".as_ptr(), 1);
+        diag_write(b"\n".as_ptr(), 1);
         sash_exit(1);
     }
     if has_word != 0 {
@@ -792,8 +894,8 @@ pub unsafe extern "C" fn sash_argv_guard(ptr: *const u8, len: i64) {
     if !argv.is_null() {
         let a0 = *argv;
         if !a0.is_null() {
-            sash_write(2, a0, strlen(a0) as i64);
-            sash_write(2, b": ".as_ptr(), 2);
+            diag_write(a0, strlen(a0) as i64);
+            diag_write(b": ".as_ptr(), 2);
         }
     }
     sash_write(
@@ -817,14 +919,14 @@ pub unsafe extern "C" fn sash_require_value(s_len: i64, msg_ptr: *const u8, msg_
     if !argv.is_null() {
         let a0 = *argv;
         if !a0.is_null() {
-            sash_write(2, a0, strlen(a0) as i64);
+            diag_write(a0, strlen(a0) as i64);
         }
     }
-    sash_write(2, b": ".as_ptr(), 2);
+    diag_write(b": ".as_ptr(), 2);
     if !msg_ptr.is_null() && msg_len > 0 {
-        sash_write(2, msg_ptr, msg_len);
+        diag_write(msg_ptr, msg_len);
     }
-    sash_write(2, b"\n".as_ptr(), 1);
+    diag_write(b"\n".as_ptr(), 1);
     sash_exit(1);
 }
 
@@ -846,7 +948,7 @@ fn sash_panic_argv(idx: i64, argc: i64) -> ! {
     pos += 1;
     buf[pos] = b'\n';
     pos += 1;
-    sash_write(2, buf.as_ptr(), pos as i64);
+    diag_write(buf.as_ptr(), pos as i64);
     sash_exit(1);
 }
 
@@ -1193,7 +1295,7 @@ fn sash_panic_oom(n: usize) -> ! {
     let tail = b" bytes)\n";
     buf[pos..pos + tail.len()].copy_from_slice(tail);
     pos += tail.len();
-    sash_write(2, buf.as_ptr(), pos as i64);
+    diag_write(buf.as_ptr(), pos as i64);
     sash_exit(1);
 }
 
@@ -1244,6 +1346,10 @@ extern "C" {
 pub unsafe extern "C" fn sash_startup() {
     unsafe { sash_init_heap() };
     sash_trace_init();
+    // DD#120: bind the invoker's own 0/1/2 before any user code can redirect
+    // them. Both backends reach this through `_start`, so neither has to
+    // emit the call.
+    sash_scope_bind();
 }
 
 #[cfg(target_arch = "x86_64")]
@@ -1989,17 +2095,17 @@ pub unsafe extern "C" fn regerror9(s: *const u8) {
         let a0 = *argv;
         if !a0.is_null() {
             let l = strlen(a0);
-            sash_write(2, a0, l as i64);
+            diag_write(a0, l as i64);
         }
     }
-    sash_write(2, sep.as_ptr(), sep.len() as i64);
+    diag_write(sep.as_ptr(), sep.len() as i64);
     let prefix = b"regexp error: ";
-    sash_write(2, prefix.as_ptr(), prefix.len() as i64);
+    diag_write(prefix.as_ptr(), prefix.len() as i64);
     if !s.is_null() {
         let len = strlen(s);
-        sash_write(2, s, len as i64);
+        diag_write(s, len as i64);
     }
-    sash_write(2, b"\n".as_ptr(), 1);
+    diag_write(b"\n".as_ptr(), 1);
 }
 
 // ── Regex match wrapper ────────────────────────────────────────────────
@@ -3543,14 +3649,14 @@ pub unsafe extern "C" fn sash_map_from_array(
             if !argv.is_null() {
                 let a0 = *argv;
                 if !a0.is_null() {
-                    sash_write(2, a0, strlen(a0) as i64);
+                    diag_write(a0, strlen(a0) as i64);
                 }
             }
-            sash_write(2, b": ".as_ptr(), 2);
+            diag_write(b": ".as_ptr(), 2);
             if !key_ptr.is_null() && key_len > 0 {
-                sash_write(2, key_ptr, key_len);
+                diag_write(key_ptr, key_len);
             }
-            sash_write(2, b"\n".as_ptr(), 1);
+            diag_write(b"\n".as_ptr(), 1);
             sash_exit(1);
         }
         2 => {} // `:~` / `:!` — discard the trailing element
@@ -3701,6 +3807,6 @@ fn sash_panic_slurp(path_ptr: *const u8, path_len: i64) -> ! {
 #[inline(never)]
 fn sash_panic_read() -> ! {
     let msg = b"sash: read failed\n";
-    sash_write(2, msg.as_ptr(), msg.len() as i64);
+    diag_write(msg.as_ptr(), msg.len() as i64);
     sash_exit(1);
 }

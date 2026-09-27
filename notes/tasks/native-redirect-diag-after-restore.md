@@ -94,3 +94,26 @@ which independently confirms C's command path was already correct.
 Not a bug, checked before chasing: `cmd 2> capt > /bad || echo x` is silent
 under sash where bash reports. DD#55 makes a caught failure silent
 (55.25/55.50).
+
+## Superseded in direction 2026-09-27 (DD#120, journal 426)
+
+The fix above made sash match bash. DG then asked whether the bash behaviour
+was genuinely defensible, and ruled it a category error: a redirect written
+on a command is a channel for *that command's* output, and a command that
+could not be set up or exec'd produced none. **DD#120 routes every diagnostic
+to the invoker's own channel instead**, so a per-command redirect can no
+longer capture one.
+
+What survives: the split of `emit_open_failure_abort` into
+`emit_open_failure_msg` / `emit_open_failure_terminate`. The restore still
+sits between them, but for a different reason — the caught (`in_condition`)
+path falls through to the merge and needs the fds back.
+
+What was inverted: the ordering rationale. It no longer decides *where* the
+message lands, because `sash_emsg` writes to the scope fd. The doc comments
+in both backends that asserted the bash model have been rewritten.
+
+Specs `rd.5`/`rd.7`/`rd.8` were rewritten accordingly; `rd.6` stands. The new
+assertions are sharper than the old ones: the capture file must be **present
+but empty**, which proves the `2>` really was applied and the diagnostic
+still did not go into it.

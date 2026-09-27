@@ -48,6 +48,10 @@ pub(super) struct ExternFuncs {
     pub(super) exit: cranelift_module::FuncId,
     pub(super) emsg: cranelift_module::FuncId,
     pub(super) emsg_status: cranelift_module::FuncId,
+    /// DD#120: re-bind the invoker's own 0/1/2 after an `exec`-scope redirect.
+    pub(super) scope_bind: cranelift_module::FuncId,
+    /// DD#120: restore the invoker's own 0/1/2 on entry to END.
+    pub(super) scope_restore: cranelift_module::FuncId,
     pub(super) attest_fail: cranelift_module::FuncId,
     pub(super) arith_overflow: cranelift_module::FuncId,
     pub(super) arith_divzero: cranelift_module::FuncId,

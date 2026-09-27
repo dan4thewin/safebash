@@ -279,6 +279,14 @@ fn emit_block_entry_hooks(ctx: &mut EmitCtx, label: &str) {
     if label == "__end__" {
         let es = ctx.builder.use_var(ctx.exit_status_var);
         ctx.builder.def_var(ctx.saved_end_status_var, es);
+        // DD#120: END is the invoker's code, so it runs on the invoker's
+        // fds. An abort inside a redirected command jumps straight here,
+        // leaving that command's redirects applied — the restore that would
+        // have undone them sits on an unreachable edge behind the abort.
+        let sr = ctx
+            .module
+            .declare_func_in_func(ctx.externs.scope_restore, ctx.builder.func);
+        ctx.builder.ins().call(sr, &[]);
     }
     // Caught/uncaught $? model: if/while/for/case CATCH the
     // statuses they contain. On exit from a catching construct,

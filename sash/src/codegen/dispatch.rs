@@ -1183,6 +1183,12 @@ fn emit_exec_redirects_only(
             ctx.vars,
             Some(ctx.exit_status_var),
         );
+        // DD#120: this is the ONE redirect form that rebinds the invoker's own
+        // stderr, so the diagnostic channel follows it. A per-command redirect
+        // (`cmd 2>…`) deliberately does not — it is a channel for the command's
+        // output, not for the program's diagnostics about it.
+        let rebind = module.declare_func_in_func(ctx.externs.scope_bind, builder.func);
+        builder.ins().call(rebind, &[]);
     }
     let zero = builder.ins().iconst(I64, 0);
     builder.def_var(ctx.exit_status_var, zero);

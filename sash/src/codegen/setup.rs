@@ -63,6 +63,23 @@ pub(super) fn declare_runtime_functions(module: &mut ObjectModule) -> ExternFunc
         .declare_function("sash_emsg_status", Linkage::Import, &emsg_status_sig)
         .expect("declare sash_emsg_status");
 
+    // sash_scope_restore() -> () — DD#120. Put the invoker's 0/1/2 back on
+    // entry to END, which an abort inside a redirected command reaches
+    // without ever running that command's restore.
+    let mut scope_restore_sig = Signature::new(CallConv::SystemV);
+    push_i64s(&mut scope_restore_sig, 0, 0);
+    let scope_restore_func = module
+        .declare_function("sash_scope_restore", Linkage::Import, &scope_restore_sig)
+        .expect("declare sash_scope_restore");
+
+    // sash_scope_bind() -> () — DD#120. `exec 2>…` rebinds the INVOKER's own
+    // stderr, so the diagnostic channel must follow it; `cmd 2>…` must not.
+    let mut scope_bind_sig = Signature::new(CallConv::SystemV);
+    push_i64s(&mut scope_bind_sig, 0, 0);
+    let scope_bind_func = module
+        .declare_function("sash_scope_bind", Linkage::Import, &scope_bind_sig)
+        .expect("declare sash_scope_bind");
+
     // sash_attest_fail(name_ptr, name_len, val_ptr, val_len) -> ! — attest
     // gate failure diagnostic (`<argv0>: attest: <name> = '<val>' failed …`).
     let mut attest_fail_sig = Signature::new(CallConv::SystemV);
@@ -782,6 +799,8 @@ pub(super) fn declare_runtime_functions(module: &mut ObjectModule) -> ExternFunc
         exit: exit_func,
         emsg: emsg_func,
         emsg_status: emsg_status_func,
+        scope_bind: scope_bind_func,
+        scope_restore: scope_restore_func,
         attest_fail: attest_fail_func,
         arith_overflow: arith_overflow_func,
         arith_divzero: arith_divzero_func,

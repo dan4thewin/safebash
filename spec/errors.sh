@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup errors
-plan=268
+plan=277
 echo "1..$plan" >&3
 
 set +e
@@ -409,24 +409,28 @@ echo after'
 [[ $rc = 0 && $out = "after" && -z $err \
    && "$(cat rd4_a.txt)" = "out" && "$(cat rd4_b.txt)" = "err" ]]; chk rd.4
 
-# --- DD#55: the setup-failure diagnostic goes through the redirects that
-# ALREADY succeeded (journal 425). Bash performs redirections left to right
-# and writes the failure message using the fds in effect at that point, so a
-# succeeding `2>` before the failing open captures it. native wrote the
-# message AFTER restoring the fds, so it went to the terminal instead; the C
-# scope path had the same inversion. Both backends were wrong TOGETHER on the
-# function-scope form, which is why the differential oracle stayed green.
+# --- DD#120: the setup-failure diagnostic is the INVOKER's, so a redirect
+# written on the command never captures it. A redirect establishes a channel
+# for *that command's* output, and a command whose redirect could not be set
+# up produced none.
 #
-# Read the assertions carefully: `$rerr` being EMPTY is the whole point, and
-# an empty $rerr is also what the BUG produced for the file. Asserting only
-# `-z $rerr` would pass either way — the file's contents is the discriminator,
-# so every check below pins BOTH.
+# This is a deliberate divergence from bash, dash and busybox alike, all of
+# which write the message through the redirects that already succeeded.
+#
+# Read the assertions carefully. `$rerr` holding the message is NOT on its own
+# a discriminator: the pre-DD#120 code ALSO left `$rerr` empty only in the
+# cases where the capture succeeded, so a half-right implementation can pass
+# one half. Each check below pins BOTH sides — the message on the invoker's
+# stderr AND the capture file present but EMPTY. Present-but-empty is the
+# sharp edge: it proves the `2>` really was applied (so the message could have
+# landed there) and that the diagnostic still did not go into it.
 
-# rd.5 a succeeding `2>` before the failing open captures the diagnostic
+# rd.5 a succeeding `2>` before the failing open does NOT capture the
+# diagnostic — it goes to the invoker's stderr
 rm -f rd5_cap.txt
 run_sash '/bin/echo hi 2> rd5_cap.txt > /nonexistent_dir_55/f
 echo after'
-[[ $rc != 0 && -z $out && -z $err && -z $rerr    && "$(cat rd5_cap.txt)" == *"/nonexistent_dir_55/f: No such file or directory"* ]]
+[[ $rc != 0 && -z $out && -z $err    && $rerr == *"/nonexistent_dir_55/f: No such file or directory"*    && -f rd5_cap.txt && ! -s rd5_cap.txt ]]
 chk rd.5
 
 # rd.6 the control for rd.5: with the failing open FIRST the `2>` never runs
@@ -439,22 +443,21 @@ echo after'
 [[ $rc != 0 && ! -f rd6_cap.txt    && $rerr == *"/nonexistent_dir_55/f: No such file or directory"* ]]; chk rd.6
 
 # rd.7 the same rule for a function redirect SCOPE, which is a different
-# emitter in both backends (native emit_redirect_push / c emit_redirect_push)
-# and the one where native and c agreed on the wrong answer.
+# emitter in both backends (native emit_redirect_push / c emit_redirect_push).
 rm -f rd7_cap.txt
 run_sash 'f() { echo hi; }
 f 2> rd7_cap.txt > /nonexistent_dir_55/f
 echo after'
-[[ $rc != 0 && -z $out && -z $err && -z $rerr    && "$(cat rd7_cap.txt)" == *"/nonexistent_dir_55/f: No such file or directory"* ]]
+[[ $rc != 0 && -z $out && -z $err    && $rerr == *"/nonexistent_dir_55/f: No such file or directory"*    && -f rd7_cap.txt && ! -s rd7_cap.txt ]]
 chk rd.7
 
-# rd.8 a redirect that DUPS rather than opens also carries the message:
-# `2>&1 1> /bad` points stderr at the original stdout, which the harness
-# captures as $out. Pins that the rule is about "the fds in effect", not
-# about files specifically.
+# rd.8 a redirect that DUPS rather than opens is equally powerless to capture
+# it: `2>&1 1> /bad` points fd 2 at the original stdout, which the harness
+# reads as $out. Pins that the rule is about the invoker's channel, not about
+# files specifically — $out must stay clean and the message must be on $rerr.
 run_sash '/bin/echo hi 2>&1 1> /nonexistent_dir_55/f
 echo after'
-[[ $rc != 0 && -z $err && -z $rerr    && $out == *"/nonexistent_dir_55/f: No such file or directory"* ]]; chk rd.8
+[[ $rc != 0 && -z $err && -z $out    && $rerr == *"/nonexistent_dir_55/f: No such file or directory"* ]]; chk rd.8
 
 # --- DD#46 top-level positional rejection: directed error text (DD#60) ---
 
@@ -1464,6 +1467,88 @@ run_sash '(( 0 ))
 int n=$(status)
 echo "[$n]"'
 [[ $rc = 0 && $out = "[1]" && -z $err ]]; chk isink.15
+
+# --- DD#120: the invoker's channel -------------------------------------
+# Every diagnostic sash emits is the INVOKER speaking about its own failure,
+# so none of them can be captured by a redirect written on the command. The
+# rd.5-rd.8 block above covers setup failure; these cover the other three
+# emitters, the lockstep rule that makes `exec 2>` different from `cmd 2>`,
+# and the END-block consequence.
+#
+# The controls matter more than the checks here. "The file is empty" is
+# satisfied by a compiler that never writes to redirects at all, so iv.3
+# pins that a RUNNING command's own stderr still lands there, and iv.9 pins
+# that a persistent `exec >` is still honoured by END.
+
+# iv.1 exec failure — emitted by the forked CHILD after execve fails, which
+# is the case that only works because the scope fd is F_DUPFD_CLOEXEC: still
+# open when execve fails, gone when it succeeds.
+rm -f iv1_cap.txt
+run_sash '/nonexistent_dir_120/nocmd 2> iv1_cap.txt
+echo after'
+[[ $rc = 127 && -z $out    && $rerr == *"/nonexistent_dir_120/nocmd: No such file or directory"*    && -f iv1_cap.txt && ! -s iv1_cap.txt ]]; chk iv.1
+
+# iv.2 the DD#55 implicit-check abort, emitted by the parent after wait
+rm -f iv2_cap.txt
+run_sash '/bin/false 2> iv2_cap.txt
+echo after'
+[[ $rc = 1 && -z $out    && $rerr == *"command failed (exit 1)"*    && -f iv2_cap.txt && ! -s iv2_cap.txt ]]; chk iv.2
+
+# iv.3 CONTROL for iv.1/iv.2: a running command's own stderr is not a
+# diagnostic and must still go through the redirect. Without this, a
+# compiler that simply stopped writing to `2>` files would pass both above.
+rm -f iv3_cap.txt
+run_sash '/bin/sh -c "echo real 1>&2" 2> iv3_cap.txt'
+[[ $rc = 0 && -z $out && -z $rerr && "$(cat iv3_cap.txt)" = "real" ]]; chk iv.3
+
+# iv.4 lockstep: `exec 2>` rebinds the INVOKER's own stderr, so the channel
+# follows it and the diagnostic DOES land in the file.
+rm -f iv4_log.txt
+run_sash 'exec 2> iv4_log.txt
+/bin/false'
+[[ $rc = 1 && -z $out && -z $rerr    && "$(cat iv4_log.txt)" == *"command failed (exit 1)"* ]]; chk iv.4
+
+# iv.5 the paired control: the same diagnostic, the same fd, the same file —
+# only the redirect's scope differs. iv.4 without iv.5 would pass a compiler
+# that always wrote diagnostics to fd 2.
+rm -f iv5_log.txt
+run_sash '/bin/false 2> iv5_log.txt'
+[[ $rc = 1 && -z $out && $rerr == *"command failed (exit 1)"*    && -f iv5_log.txt && ! -s iv5_log.txt ]]; chk iv.5
+
+# iv.6 END is the invoker's code, so it runs on the invoker's fds. The abort
+# terminates the block before the command's restore can run, so without
+# sash_scope_restore() at END entry `cleanup` is written INTO iv6_log.txt.
+# Both backends had this wrong together, so the oracle could not see it.
+rm -f iv6_log.txt
+run_sash 'END { echo cleanup }
+/bin/false > iv6_log.txt'
+[[ $rc = 1 && $out = "cleanup" && -f iv6_log.txt && ! -s iv6_log.txt ]]; chk iv.6
+
+# iv.7 the same leak by the exec-failure route, which aborts from a
+# different place
+rm -f iv7_log.txt
+run_sash 'END { echo cleanup }
+/nonexistent_dir_120/nocmd > iv7_log.txt'
+[[ $rc = 127 && $out = "cleanup" && -f iv7_log.txt && ! -s iv7_log.txt ]]; chk iv.7
+
+# iv.8 and by the echo write-failure route — a third abort site, which is
+# why the fix belongs at END entry rather than at each of them
+run_sash 'END { echo cleanup }
+echo hi > /dev/full'
+[[ $rc = 1 && $out = "cleanup" && $rerr == *"write error"* ]]; chk iv.8
+
+# iv.9 CONTROL for iv.6-iv.8: restoring at END entry must restore the
+# invoker's CURRENT fds, not the ones it started with. A persistent
+# `exec >` is the invoker rebinding its own stdout, so END follows it —
+# exactly as bash's EXIT trap does. A `sash_scope_restore` that reset to
+# the startup fds would put "cleanup" on the terminal and fail here.
+rm -f iv9_log.txt
+run_sash 'END { echo cleanup }
+exec > iv9_log.txt
+echo body'
+[[ $rc = 0 && -z $out && "$(cat iv9_log.txt)" = "body
+cleanup" ]]; chk iv.9
+
 
 set -e
 tally

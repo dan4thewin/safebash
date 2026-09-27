@@ -759,18 +759,17 @@ pub(super) fn diag_empty_seg(
 /// DD#55: *report* an uncaught redirect `open(2)` failure —
 /// `<argv0>: <path>: <reason>` — and set the failing status.
 ///
-/// **Must be emitted before the fds are restored.** Bash performs
-/// redirections left to right and writes the setup-failure diagnostic
-/// through the ones that already succeeded, so
-/// `cmd 2> capt.txt > /bad` puts the message in `capt.txt`, not on the
-/// terminal. `emit_redirects_guarded` stops at the first failed open, so
-/// at this point every earlier redirect is in effect and the message lands
-/// where bash puts it by construction. Emitting it after `emit_restore`
-/// sent it to the *original* stderr instead — an oracle divergence, since
-/// the C backend has always had the order right.
+/// **Ordering against `emit_restore` no longer decides where this lands.**
+/// It used to: bash performs redirections left to right and writes the
+/// setup-failure diagnostic through the ones that already succeeded, so
+/// `cmd 2> capt.txt > /bad` puts the message in `capt.txt`. DD#120 rejects
+/// that model — the redirect is a channel for *the command's* output, and a
+/// command that could not be set up produced none — so `sash_emsg` writes to
+/// the invoker's scope fd and a per-command redirect cannot reach it.
 ///
-/// Split from [`emit_open_failure_terminate`] for exactly that reason: the
-/// restore has to sit *between* the two.
+/// Kept split from [`emit_open_failure_terminate`] so the restore can still
+/// sit *between* the two: on the caught (`in_condition`) path control falls
+/// through to the merge, and the fds must be back by then.
 fn emit_open_failure_msg(
     rf: &RedirectFailure,
     builder: &mut FunctionBuilder,
@@ -857,11 +856,11 @@ pub(super) fn emit_redirect_guarded_body(
     builder.def_var(ctx.exit_status_var, one);
     builder.def_var(ctx.test_result_var, zero);
     // Caught by if/|| — the failure decides the branch; no diagnostic
-    // (55.25/55.50) and no abort. Otherwise report it *through the
-    // redirects that already succeeded* (bash writes the diagnostic there,
-    // not to the original stderr), then put the fds back, then abort —
-    // falling through to the merge only when the abort was dropped (inside
-    // END). The restore must stay between the two calls.
+    // (55.25/55.50) and no abort. Otherwise report it on the invoker's scope
+    // fd (DD#120 — the redirect belongs to the command, which never ran),
+    // then put the fds back, then abort — falling through to the merge only
+    // when the abort was dropped (inside END), which is why the restore
+    // stays between the two calls.
     if !in_condition {
         emit_open_failure_msg(&rf, builder, module, ctx);
     }

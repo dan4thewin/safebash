@@ -286,7 +286,9 @@ fn emit_prologue(out: &mut String) {
     .unwrap();
     writeln!(
         out,
-        "extern void sash_emsg_status(const char* np, i64 nl, i64 status);"
+        "extern void sash_emsg_status(const char* np, i64 nl, i64 status);\n\
+         extern void sash_scope_bind(void);\n\
+         extern void sash_scope_restore(void);"
     )
     .unwrap();
     writeln!(
@@ -694,6 +696,8 @@ fn emit_block(e: &mut Emit, id: BlockId, block: &BasicBlock, types: &VarTypes) {
     // its body runs (a cleanup `echo` must not clobber the final status).
     if block.label == "__end__" {
         writeln!(e.out, "    __end_status = __exit_status;").unwrap();
+        // DD#120: see the native counterpart in codegen/entry.rs.
+        writeln!(e.out, "    sash_scope_restore();").unwrap();
     }
     // Caught/uncaught $? model: mirror codegen/entry.rs — at the
     // start of a catching construct's exit block, reset __exit_status
@@ -1975,6 +1979,17 @@ fn is_persistent_exec(kind: &BuiltinCmd, args: &[SsaValue]) -> bool {
     matches!(kind, BuiltinCmd::Exec) && args.is_empty()
 }
 
+/// DD#120: `exec 2>…` is the one redirect form that rebinds the INVOKER's own
+/// stderr, so the diagnostic channel follows it. A per-command redirect
+/// (`cmd 2>…`) deliberately does not — it is a channel for that command's
+/// output, not for the program's diagnostics about it. Mirrors the native call
+/// in `emit_exec_redirects_only`.
+fn emit_scope_bind_if_persistent(e: &mut Emit, kind: &BuiltinCmd, args: &[SsaValue]) {
+    if is_persistent_exec(kind, args) {
+        writeln!(e.out, "    sash_scope_bind();").unwrap();
+    }
+}
+
 fn emit_command(
     e: &mut Emit,
     name: &str,
@@ -1999,6 +2014,7 @@ fn emit_command(
         if !saved.is_empty() && !persistent {
             emit_restore(e, &saved);
         }
+        emit_scope_bind_if_persistent(e, kind, args);
         return;
     };
     emit_redirect_guarded_body(e, name, kind, args, checked, types, &saved, &rf);
@@ -2042,6 +2058,7 @@ fn emit_redirect_guarded_body(
     if !saved.is_empty() && !is_persistent_exec(kind, args) {
         emit_restore(e, saved);
     }
+    emit_scope_bind_if_persistent(e, kind, args);
     writeln!(e.out, "    }}").unwrap();
 }
 
@@ -3711,15 +3728,13 @@ fn emit_redirect_push(
     // reported — silence is for a *caught* failure (55.25), not a cleanup
     // one. Mirrors the native `checked || ctx.in_end_block`.
     if checked || e.end_region.contains(&e.cur_block) {
-        // Report first, while the scope's successful redirects are still in
-        // effect — bash writes the diagnostic through them, so
-        // `f 2> capt > /bad` puts it in `capt`. Only then restore: the pop
-        // sits on the skip path, which an abort never reaches, so the fds
-        // have to go back here — an END block (DD#56) still runs. This order
-        // matches `emit_redirect_guarded_body` above and the native
-        // `emit_open_failure_msg` / `emit_open_failure_terminate` pair;
-        // having it backwards here was a silent bash divergence that the
-        // oracle could not see, because native had it backwards too.
+        // DD#120: `sash_emsg` writes to the invoker's scope fd, so the
+        // scope's own redirects cannot capture it and this order no longer
+        // decides where the message lands. Restore still has to happen here
+        // rather than on the skip path, which an abort never reaches: an END
+        // block (DD#56) runs afterwards. Matches `emit_redirect_guarded_body`
+        // above and the native `emit_open_failure_msg` /
+        // `emit_open_failure_terminate` pair.
         writeln!(
             e.out,
             "        sash_emsg({p}, {l}, 0, 0);",
