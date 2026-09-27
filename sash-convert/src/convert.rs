@@ -298,6 +298,35 @@ fn walk_node(
                     return;
                 }
             }
+            // Any other ERROR is a construct the grammar could not parse, so
+            // no conversion arm ever sees it and the text is emitted verbatim.
+            // That is not harmless silence: `[ a=b ]` parses as an assignment
+            // prefix plus a command named `]`, so it survives conversion and
+            // then *compiles*, with DD#23 resolving `[` to the external
+            // /usr/bin/[. The user asked for a conversion and got a fork.
+            // Nothing is unsound — the manifest discloses the external and
+            // coreutils `[` is what bash's builtin implements — but a
+            // downgrade has to be disclosed rather than inferred.
+            //
+            // Only the OUTERMOST ERROR is reported. tree-sitter fragments a
+            // malformed region into nested ERRORs — `if [ a=b ]; then …`
+            // yields one for the whole statement and another for the stray
+            // `; then` inside it — and the inner spans are artefacts of the
+            // failed parse, not separate things the user has to fix.
+            //
+            // The guard suppresses only the note: recursion continues, so a
+            // recognisable construct nested deeper inside the bad span (a
+            // DD#80 subscript, say) is still rewritten.
+            if !has_ancestor_kind(node, "ERROR") {
+                let line = node.start_position().row;
+                prefix_lines.push((
+                    line,
+                    format!(
+                        "# MANUAL: could not parse `{}` — passed through unconverted",
+                        summarize_span(text)
+                    ),
+                ));
+            }
         }
         _ => {}
     }
@@ -307,6 +336,21 @@ fn walk_node(
     for child in node.children(&mut cursor) {
         walk_node(child, source, patches, prefix_lines, annotate, collections);
     }
+}
+
+/// One-line, bounded rendering of an unparsed span for a `# MANUAL:` note.
+///
+/// The span can be long or multi-line, and the note has to stay a single
+/// comment line. Collapsing to the first line keeps it readable while still
+/// naming the construct the user has to look at.
+fn summarize_span(text: &str) -> String {
+    const MAX: usize = 48;
+    let first = text.lines().next().unwrap_or("").trim();
+    if first.chars().count() <= MAX {
+        return first.to_string();
+    }
+    let head: String = first.chars().take(MAX).collect();
+    format!("{}…", head)
 }
 
 // ── Declaration conversions ───────────────────────────────────

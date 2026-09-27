@@ -6,7 +6,7 @@ set -eu
 # Run only in native mode to avoid 3× redundancy.
 [[ ${SASH_MODE:-native} != native ]] && exit 0
 setup convert
-plan=197
+plan=202
 echo "1..$plan" >&3
 
 set +e
@@ -1343,6 +1343,53 @@ run_convert 'if [ -f /etc/passwd ]; then echo m; fi'
 run_convert 'x=a
 if [[ $x =~ [a-z] ]]; then echo m; fi'
 [[ $rc = 0 && $out == *'=~ [a-z]'* ]]; chk 57.172
+
+# ── An ERROR the converter does not recognise is now DISCLOSED ──────────
+# tree-sitter-bash 0.25 cannot parse a glued `=` inside single brackets:
+# `[ a=b ]` reads as an assignment prefix plus a command named `]`, so no
+# `test_command` node exists and `convert_test_command` never runs. The text
+# was emitted verbatim and then COMPILED, with DD#23 resolving `[` to the
+# external /usr/bin/[ — a bash test silently became a forked coreutils
+# invocation. Nothing unsound (the manifest discloses the external), but a
+# downgrade the user did not ask for and was not told about.
+
+# 57.173 the unparseable test is reported, and still passed through
+run_convert '#!/bin/bash
+[ a=b ]'
+[[ $rc = 0 && $out == *'# MANUAL: could not parse'*'[ a=b ]'*    && $out == *'[ a=b ]'* && -z $err ]]; chk 57.173
+
+# 57.174 CONTROL for 57.173: the same test WITHOUT the glued `=` parses, so
+# it converts and must NOT be reported. Without this pair 57.173 is satisfied
+# by a converter that flags every line it sees.
+run_convert '#!/bin/bash
+[ a = b ]'
+[[ $rc = 0 && $out == *'[[ a == b ]]'* && $out != *'# MANUAL: could not parse'*    && -z $err ]]; chk 57.174
+
+# 57.175 only the OUTERMOST ERROR is reported. tree-sitter fragments a bad
+# region into nested ERROR nodes — this input also yields one for the stray
+# `; then` — and those are artefacts of the failed parse, not separate
+# things to fix. Counting is the whole check: asserting mere presence passes
+# with the duplicates still there.
+run_convert '#!/bin/bash
+if [ a=b ]; then echo hi; fi'
+n=$(printf '%s\n' "$out" | grep -c '# MANUAL: could not parse')
+[[ $rc = 0 && $n = 1 && -z $err ]]; chk 57.175
+
+# 57.176 CONTROL for the recognised-ERROR arm: `${a[a[0]]}` is also an ERROR
+# node (DD#80, a different grammar hole) but IS handled, so it must convert
+# and stay unreported. Pins that the generic note did not swallow the
+# specific handler that runs before it.
+run_convert '#!/bin/bash
+declare -a a
+echo ${a[a[0]]}'
+[[ $rc = 0 && $out == *'${a[${a[0]}]}'* && $out != *'# MANUAL: could not parse'*    && -z $err ]]; chk 57.176
+
+# 57.177 a long span is truncated to one bounded line — the note has to stay
+# a single comment, and the span can be arbitrarily long
+run_convert '#!/bin/bash
+[ aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa=b ]'
+[[ $rc = 0 && $out == *'# MANUAL: could not parse'*'…'* && -z $err ]]; chk 57.177
+
 
 set -e
 tally

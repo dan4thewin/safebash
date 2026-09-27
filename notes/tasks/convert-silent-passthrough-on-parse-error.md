@@ -1,5 +1,5 @@
 ---
-status: next
+status: done
 priority: P2
 ---
 
@@ -64,3 +64,35 @@ Small. One arm in `walk_node`, plus specs in `convert.sh` (`57.x`).
 Expect a handful of existing convert specs to gain a `# MANUAL:` line
 if any of their inputs contain an unrecognised `ERROR` — check before
 assuming none do.
+
+## Resolved 2026-09-27 (journal 427)
+
+The generic half is done: an `ERROR` node the arm does not recognise now
+emits `# MANUAL: could not parse \`<span>\` — passed through unconverted`.
+
+Two details beyond the one-line fix:
+
+- **Only the outermost ERROR is reported.** tree-sitter fragments a bad
+  region into nested ERRORs (`if [ a=b ]; then …` also yields one for the
+  stray `; then`), and the inner spans are artefacts of the failed parse.
+- **The guard suppresses the note, not the recursion**, so a recognisable
+  construct nested deeper inside a bad span is still rewritten.
+
+Specs `57.173`-`57.177`, each paired with a control: `57.174` (the same test
+without the glued `=` converts and is NOT reported) and `57.176` (the DD#80
+`${a[a[0]]}` ERROR is still recognised, converted, and unreported — pinning
+that the generic note did not swallow the specific handler that runs first).
+`57.175` **counts** the notes rather than asserting presence, which is the
+only form that can detect the nested duplicate.
+
+No existing convert spec gained a note: 197/197 still passed before the five
+new ones were added.
+
+**The `[ a=b ]`-specific rewrite was deliberately NOT done.** The task said it
+was worth doing only if the generic warning proved too noisy, and it did not —
+the whole suite produced zero new notes.
+
+**A pre-existing limitation the warning now discloses**, left alone: a DD#80
+`${a[a[0]]}` nested inside a larger unparseable span is not rewritten, because
+there it is not its own ERROR node. Confirmed against a stashed tree to
+predate this change.
