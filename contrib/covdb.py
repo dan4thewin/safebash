@@ -24,14 +24,38 @@ sum.  This loader keyed cov_lines on (file,line) and wrote it with INSERT OR
 REPLACE, so whichever entry happened to come last won; a trailing 0 erased a
 real hit count silently and the line then read as dead code.
 
+The same merge problem bit cov_fns separately and for longer, because its
+key LOOKED unique.  A union lcov splices two builds -- the spec sweep's
+binary and the unit-test harness -- and a Rust mangled name embeds the crate
+DISAMBIGUATOR HASH, which differs between them.  So every function appeared
+under two keys, one per build, and accumulating by mangled name could never
+merge them: the build that did not reach a function contributed a second row
+reading 0.  Function coverage printed 5135 recorded / 2076 uncovered (59.6%)
+where the truth was 2928 / 113 (96.1%).  The hash is stripped before keying.
+
+Do NOT "simplify" that to keying on (file, line) like cov_lines.  Several
+distinct symbols legitimately share a start line -- a closure and the
+function containing it, most often -- and merging them hides an uncovered
+closure inside a covered parent.
+
 lcov hit counts can exceed int64, so they are clamped to 2**62 after summing.
 """
 import os
+import re
 import sqlite3
 import sys
 
 CLAMP = 2**62
 ROOT = "/mnt/dg/src/safebash/"
+
+# v0 crate disambiguator, then the legacy-mangling trailing hash.
+_CS = re.compile(r"Cs[0-9A-Za-z]+_")
+_LEGACY = re.compile(r"17h[0-9a-f]{16}E$")
+
+
+def demangle_key(m):
+    """Mangled name with every build-specific hash removed."""
+    return _LEGACY.sub("", _CS.sub("", m))
 
 lcov = sys.argv[1] if len(sys.argv) > 1 else "target/coverage/union.lcov"
 db = sys.argv[2] if len(sys.argv) > 2 else "coverage.db"
@@ -56,10 +80,11 @@ for ln in open(lcov):
         sf = ln[3:].replace(ROOT, "")
     elif ln.startswith("FN:"):
         n, m = ln[3:].split(",", 1)
-        fn_line[m] = int(n)
+        fn_line[demangle_key(m)] = int(n)
     elif ln.startswith("FNDA:"):
         n, m = ln[5:].split(",", 1)
-        fn_hits[(sf, m)] = fn_hits.get((sf, m), 0) + int(n)
+        k = (sf, demangle_key(m))
+        fn_hits[k] = fn_hits.get(k, 0) + int(n)
     elif ln.startswith("DA:"):
         n, cnt = ln[3:].split(",")[:2]
         k = (sf, int(n))

@@ -1,3 +1,34 @@
+## ══ STATUS (2026-09-27) — coverage: function number was wrong by 36 points ══
+
+Answering "what is current coverage" surfaced a bug in `contrib/covdb.py`.
+`cov_lines` and `cov_branches` are keyed on things that mean the same in every
+build, so they merge correctly across the two builds spliced into
+`union.lcov`. `cov_fns` was keyed on `(file, mangled)` — and a Rust v0 mangled
+name embeds the **crate disambiguator hash**, which differs between the spec
+binary and the unit-test harness. Every function got two rows, one per build,
+and the build that did not reach it contributed a permanent zero.
+
+`emit_arith_op` read `count=0` while its own lines were 21/23 covered. Fixed
+by stripping the build hashes before keying. **Deliberately not** keyed on
+`(file, line)` like `cov_lines`: that gives a better-looking 98.7% and is
+wrong, because closures share a start line with their parent and ~574 symbols
+would merge — the same class of error, in the flattering direction.
+
+It survived because nothing consumes `cov_fns`; the documented triage query
+ranks uncovered *lines* by function and was always correct. A number with no
+consumer is a number with no test.
+
+Union coverage of `sash/src` (Sep-25 lcov, **two days stale** — 16 measured
+files have changed and `coverage.db` records no commit):
+
+| metric | recorded | uncovered | covered |
+|---|---|---|---|
+| lines | 27538 | 519 | 98.12% |
+| branches | 3912 | 333 | 91.49% |
+| functions | 2928 | 113 | **96.14%** (was reported 59.57%) |
+
+Journal 428.
+
 ## ══ STATUS (2026-09-27) — sash-convert no longer passes bad input silently ══
 
 **A conversion downgrade the user was never told about.** tree-sitter-bash
