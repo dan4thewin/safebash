@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup taint
-plan=225
+plan=230
 echo "1..$plan" >&3
 
 set +e
@@ -1258,6 +1258,45 @@ run_sash 'x=$(arg 1); array z=($(( ${x:-0} ))); if [[ ${z[0]} == 7 ]]; then echo
 # everything passes atint.13-15 and is useless.
 run_sash 'int n=5; array z=($(( n + 1 ))); echo "${z[0]}"'
 [[ $rc = 0 && $out = "6" && -z $err ]]; chk atint.16
+# ── The SB4030 shield ────────────────────────────────────────────────
+# `check_arith_taint` has no arm for a BARE name in arithmetic
+# (`ArithExpr::Var` / `DollarVar`), and `walk_arith_expansion_roots` hands it
+# none, because neither variant carries an `Expr`. Both rely on the same
+# claim: **a tainted int is not constructible**, so a bare name in arithmetic
+# is either clean or not an int. That claim lived only in a doc comment.
+# These pin it. If any of atint.17-atint.21 starts COMPILING, the comment is
+# wrong and both walkers need the arm they currently do without.
+
+# atint.17 THE FIRST HALF: no string reaches a bare arithmetic name at all.
+# Read this one honestly — it is NOT a taint discriminator. A clean `x=7`
+# produces the identical SB4030, and that is exactly the property being
+# pinned: DD#77 requires a disposition, so `ArithExpr::Var` never holds a
+# string, tainted or otherwise. If DD#77 were relaxed, a tainted string WOULD
+# reach the variant both walkers decline to visit. Nothing else in the suite
+# asserts the bare-name case; the neighbouring dsp.*/pex.* specs all exercise
+# the disposition, which is the permitted spelling.
+run_sash 'x=$(arg 1); echo "$(( x ))"' 7
+[[ $rc != 0 && -z $out && $err == *"SB4030"* ]]; chk atint.17
+# atint.18 ...and `$x`, which parses to the OTHER bare variant (DollarVar).
+# Two variants, one answer — a divergence here would give the shield a seam.
+run_sash 'x=$(arg 1); echo "$(( $x ))"' 7
+[[ $rc != 0 && -z $out && $err == *"SB4030"* ]]; chk atint.18
+# atint.19 THE SECOND HALF, and this one IS a discriminator: the clean
+# counterpart `int n=7` compiles and prints 7. A tainted int cannot be
+# DECLARED from argv...
+run_sash 'int n=$(arg 1); echo "$(( n ))"' 7
+[[ $rc != 0 && -z $out && $err == *"SB4030"* ]]; chk atint.19
+# atint.20 ...nor from the environment.
+run_sash 'int n=$(getenv SASH_SPEC_NOPE); echo "$(( n ))"'
+[[ $rc != 0 && -z $out && $err == *"SB4030"* ]]; chk atint.20
+# atint.21 ...nor by copying a tainted array element. This is the sharpest
+# of the five: the clean counterpart `array arr=(7); int n=${arr[0]}` is
+# SB4030, and the tainted one is SB5020 — two different codes for the same
+# shape, so the assertion cannot be satisfied by the type rule alone. (DD#99
+# `read` is how external data legitimately arrives, and it arrives in an
+# array, which makes this the route an attacker would actually try.)
+run_sash 'read arr; int n=${arr[0]}; echo "$(( n ))"'
+[[ $rc != 0 && -z $out && $err == *"SB5020"* ]]; chk atint.21
 
 set -e
 tally

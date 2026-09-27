@@ -149,12 +149,66 @@ Making it total is cheap in code and awkward against the complexity gate
 done as its own change where the refactor can be shaped properly rather
 than bolted onto a bug fix.
 
-**Still owed a verdict** (unchanged from the original filing):
-`ir::walk_arith_expansion_roots`'s `_ => {}`, and bare
-`ArithExpr::Var`/`DollarVar` taint, which wants a spec pinning the SB4030
-shield rather than relying on a code comment. Note journal 423 made
-`arith_uses_tainted` a *second* caller of `walk_arith_expansion_roots`, so
-a gap there now has two ways to matter.
+## The three owed verdicts — all given (journal 424)
 
-**Also still owed:** is `StmtKind::Case` dead, now that `case` is removed
-from the language (SB4029)?
+**1. `ir::walk_arith_expansion_roots`'s `_ => {}` — sound, and removed
+anyway.** `ArithExpr` has 16 variants; the wildcard swallowed five
+(`Literal`, `Var`, `DollarVar`, `PostIncDec`, `PreIncDec`) and **not one of
+them carries an `Expr`**, checked against `ArithExpr::children()`, which is
+total and is the ground truth for the enum. A walker whose contract is
+"hand `f` each embedded `Expr`" has nothing to give for any of them, so this
+was never the `expr_uses_tainted` bug.
+
+It is spelled out regardless, because the cost of being wrong went up: there
+are now **three** callers and all three are taint checks
+(`check_arith_taint`, `arith_uses_tainted` — added by journal 423 — and
+`reject_scalar_rhs_read`). A variant added later with an `Expr` inside it
+would silently skip taint in three places at once. Cost of the change: zero.
+One `|`-group replaces one wildcard, so cc and cog are unchanged at 11/3.
+
+`PreIncDec` stays a no-op rather than an ICE. It genuinely cannot arrive —
+`reject_prefix_incdec` raises SB4020 in the *parser* — but the assertion
+belongs where the invariant is load-bearing, and `children()` already has
+it.
+
+**2. Bare `ArithExpr::Var`/`DollarVar` taint — the shield is real, and is
+now pinned by specs instead of a comment.** Probed every construction route
+for a tainted int:
+
+| route | result |
+|---|---|
+| `x=$(arg 1); $(( x ))` | SB4030 — DD#77 wants a disposition |
+| `x=$(arg 1); $(( $x ))` | SB4030 |
+| `int n=$(arg 1)` | SB4030 |
+| `int n=$(getenv …)` | SB4030 |
+| `read arr; int n=${arr[0]}` | SB5020 |
+
+No tainted int is constructible, so neither walker needs the arm.
+`atint.17`-`atint.21`.
+
+**One of those five nearly went in vacuous, and the check that caught it is
+worth copying.** After writing them I ran each program's *clean*
+counterpart. `x=7; echo "$(( x ))"` is **also** SB4030 — so `atint.17` and
+`atint.18` would pass with an untainted `x` and prove nothing about taint.
+They are kept, because nothing else in the suite asserts the bare-name case
+at all and it is genuinely the shield's first half, but their comments now
+say plainly that they are not taint discriminators. `atint.21` is the sharp
+one: clean gives SB4030, tainted gives SB5020 — two codes for one shape.
+
+**3. `StmtKind::Case` is NOT dead — do not delete it.** It is the **DD#66
+dispatch form** `[[ value { pat { … } } ]]`. `case`/`esac` the bash keyword
+is what SB4029 rejects, and it has no parser production at all; the node
+name is a holdover. The sole producer is `parse::parser::parse_dispatch`,
+`stmt_is_dispatch` is literally `matches!(kind, StmtKind::Case(_))`, and
+`--emit-ir` on `[[ $x == bar { echo bar } || { echo other } ]]` emits
+`:kind :case`. The struct's own doc comment already says all of this
+("Do not read a surviving `case` statement into it") — the suspicion in this
+charter was mine, and it was wrong.
+
+## Still open
+
+**`check_value_cmdsub_reads` still has `_ => {}`**, covering 5 of 13
+`ExprKind` variants — the one remaining instance of the shape in this
+cohort. See the probe table above: not currently exploitable, and awkward
+against the complexity gate (cc 7 / **cog 5**, so no dispatcher exemption
+and the 3x cog bar is 5.58). It wants its own change, shaped properly.

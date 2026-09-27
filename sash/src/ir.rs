@@ -504,7 +504,28 @@ pub(crate) fn walk_arith_expansion_roots(arith: &ArithExpr, f: &mut impl FnMut(&
             walk_arith_expansion_roots(index, f);
             walk_arith_expansion_roots(value, f);
         }
-        _ => {}
+        // Total on purpose — these five are spelled out rather than left to a
+        // wildcard. Every one carries a `String` or an `i64`, never an `Expr`,
+        // so this walker (whose whole contract is "hand `f` each embedded
+        // `Expr`") has nothing to give. Checked against `ArithExpr::children()`
+        // below, which is total and is the ground truth for this enum.
+        //
+        // The wildcard was sound. It is gone anyway because the cost of being
+        // wrong went up: there are now *three* callers, all taint checks
+        // (`check_arith_taint`, `arith_uses_tainted`, `reject_scalar_rhs_read`),
+        // so an `ArithExpr` variant added later with an `Expr` inside it would
+        // silently skip taint in three places at once and compile. That is the
+        // exact shape that produced the SB5021 oracle in journal 423.
+        //
+        // `PreIncDec` cannot arrive at all — `reject_prefix_incdec` raises
+        // SB4020 in the *parser* (PREFIX_INCDEC_INVARIANT). It stays a no-op
+        // rather than an ICE because the assertion belongs where the invariant
+        // is load-bearing, and that is `children()`, which already has it.
+        ArithExpr::Literal(_)
+        | ArithExpr::Var(_)
+        | ArithExpr::DollarVar(_)
+        | ArithExpr::PostIncDec { .. }
+        | ArithExpr::PreIncDec { .. } => {}
     }
 }
 
