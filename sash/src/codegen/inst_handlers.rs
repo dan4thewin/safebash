@@ -756,24 +756,27 @@ pub(super) fn diag_empty_seg(
 /// instead. On success runs `body` then restores the saved fds. The
 /// `body` emits the actual command (echo write / exec) and its own status
 /// and abort handling.
-/// DD#55: an uncaught redirect `open(2)` failure — report
-/// `<argv0>: <path>: <reason>`, then abort. Routes the abort through the
-/// END block (DD#56) when the program has one, so cleanup still runs;
-/// otherwise it exits directly. Shared by the per-command guard and the
-/// scope push, which differ only in *when* they decide it is uncaught.
+/// DD#55: *report* an uncaught redirect `open(2)` failure —
+/// `<argv0>: <path>: <reason>` — and set the failing status.
 ///
-/// Returns true when it did **not** terminate the block, which happens
-/// inside END itself: there the abort would jump to the block already
-/// executing (an unbounded loop), and END is cleanup that has to finish.
-/// The failure is still reported and still sets a failing status — only
-/// the abort is dropped, matching an exec failure in the same position.
-#[must_use]
-fn emit_open_failure_abort(
+/// **Must be emitted before the fds are restored.** Bash performs
+/// redirections left to right and writes the setup-failure diagnostic
+/// through the ones that already succeeded, so
+/// `cmd 2> capt.txt > /bad` puts the message in `capt.txt`, not on the
+/// terminal. `emit_redirects_guarded` stops at the first failed open, so
+/// at this point every earlier redirect is in effect and the message lands
+/// where bash puts it by construction. Emitting it after `emit_restore`
+/// sent it to the *original* stderr instead — an oracle divergence, since
+/// the C backend has always had the order right.
+///
+/// Split from [`emit_open_failure_terminate`] for exactly that reason: the
+/// restore has to sit *between* the two.
+fn emit_open_failure_msg(
     rf: &RedirectFailure,
     builder: &mut FunctionBuilder,
     module: &mut ObjectModule,
     ctx: &mut InstCtx,
-) -> bool {
+) {
     let emsg_ref = module.declare_func_in_func(ctx.externs.emsg, builder.func);
     let z = builder.ins().iconst(I64, 0);
     builder
@@ -781,12 +784,32 @@ fn emit_open_failure_abort(
         .call(emsg_ref, &[rf.path_ptr, rf.path_len, z, z]);
     let one = builder.ins().iconst(I64, 1);
     builder.def_var(ctx.exit_status_var, one);
+}
+
+/// DD#55: abort after [`emit_open_failure_msg`] reported the failure.
+/// Routes the abort through the END block (DD#56) when the program has
+/// one, so cleanup still runs; otherwise it exits directly. Shared by the
+/// per-command guard and the scope push, which differ only in *when* they
+/// decide a failure is uncaught.
+///
+/// Returns true when it did **not** terminate the block, which happens
+/// inside END itself: there the abort would jump to the block already
+/// executing (an unbounded loop), and END is cleanup that has to finish.
+/// The failure is still reported and still sets a failing status — only
+/// the abort is dropped, matching an exec failure in the same position.
+#[must_use]
+fn emit_open_failure_terminate(
+    builder: &mut FunctionBuilder,
+    module: &mut ObjectModule,
+    ctx: &mut InstCtx,
+) -> bool {
     if ctx.in_end_block {
         return true;
     }
     if let Some(end_cl) = ctx.end_cl_block {
         builder.ins().jump(end_cl, &[]);
     } else {
+        let one = builder.ins().iconst(I64, 1);
         let exit_ref = module.declare_func_in_func(ctx.externs.exit, builder.func);
         builder.ins().call(exit_ref, &[one]);
         builder
@@ -833,11 +856,17 @@ pub(super) fn emit_redirect_guarded_body(
     let zero = builder.ins().iconst(I64, 0);
     builder.def_var(ctx.exit_status_var, one);
     builder.def_var(ctx.test_result_var, zero);
-    emit_restore(saved.clone(), builder, module, ctx.externs);
     // Caught by if/|| — the failure decides the branch; no diagnostic
-    // (55.25/55.50) and no abort. Otherwise report it, and fall through to
-    // the merge only when the abort was dropped (inside END).
-    if in_condition || emit_open_failure_abort(&rf, builder, module, ctx) {
+    // (55.25/55.50) and no abort. Otherwise report it *through the
+    // redirects that already succeeded* (bash writes the diagnostic there,
+    // not to the original stderr), then put the fds back, then abort —
+    // falling through to the merge only when the abort was dropped (inside
+    // END). The restore must stay between the two calls.
+    if !in_condition {
+        emit_open_failure_msg(&rf, builder, module, ctx);
+    }
+    emit_restore(saved.clone(), builder, module, ctx.externs);
+    if in_condition || emit_open_failure_terminate(builder, module, ctx) {
         builder.ins().jump(merge_block, &[]);
     }
 
@@ -910,10 +939,14 @@ pub(super) fn emit_redirect_push(
     let report = checked || ctx.in_end_block;
     let mut terminated = false;
     if report {
-        // The pop is on the skip path, which an abort never reaches, so the
-        // fds have to go back here — an END block (DD#56) still runs.
+        // Report first, while the scope's successful redirects are still in
+        // effect — bash writes the diagnostic through them (`f 2> capt > /bad`
+        // puts it in `capt`). Only then put the fds back: the pop is on the
+        // skip path, which an abort never reaches, so the restore has to
+        // happen here — an END block (DD#56) still runs.
+        emit_open_failure_msg(&rf, builder, module, ctx);
         emit_restore(saved.clone(), builder, module, ctx.externs);
-        terminated = !emit_open_failure_abort(&rf, builder, module, ctx);
+        terminated = !emit_open_failure_terminate(builder, module, ctx);
     }
     if !terminated {
         builder.ins().jump(merge_block, &[]);

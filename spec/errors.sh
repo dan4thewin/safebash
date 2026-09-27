@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup errors
-plan=264
+plan=268
 echo "1..$plan" >&3
 
 set +e
@@ -408,6 +408,53 @@ run_sash '/bin/sh -c "echo out; echo err 1>&2" > rd4_a.txt 2> rd4_b.txt
 echo after'
 [[ $rc = 0 && $out = "after" && -z $err \
    && "$(cat rd4_a.txt)" = "out" && "$(cat rd4_b.txt)" = "err" ]]; chk rd.4
+
+# --- DD#55: the setup-failure diagnostic goes through the redirects that
+# ALREADY succeeded (journal 425). Bash performs redirections left to right
+# and writes the failure message using the fds in effect at that point, so a
+# succeeding `2>` before the failing open captures it. native wrote the
+# message AFTER restoring the fds, so it went to the terminal instead; the C
+# scope path had the same inversion. Both backends were wrong TOGETHER on the
+# function-scope form, which is why the differential oracle stayed green.
+#
+# Read the assertions carefully: `$rerr` being EMPTY is the whole point, and
+# an empty $rerr is also what the BUG produced for the file. Asserting only
+# `-z $rerr` would pass either way — the file's contents is the discriminator,
+# so every check below pins BOTH.
+
+# rd.5 a succeeding `2>` before the failing open captures the diagnostic
+rm -f rd5_cap.txt
+run_sash '/bin/echo hi 2> rd5_cap.txt > /nonexistent_dir_55/f
+echo after'
+[[ $rc != 0 && -z $out && -z $err && -z $rerr    && "$(cat rd5_cap.txt)" == *"/nonexistent_dir_55/f: No such file or directory"* ]]
+chk rd.5
+
+# rd.6 the control for rd.5: with the failing open FIRST the `2>` never runs
+# (rd.2's ordering guard), so the message goes to the real stderr and the
+# capture file is never created. Without this pair rd.5 could be satisfied by
+# a compiler that simply always wrote to the last-named file.
+rm -f rd6_cap.txt
+run_sash '/bin/echo hi > /nonexistent_dir_55/f 2> rd6_cap.txt
+echo after'
+[[ $rc != 0 && ! -f rd6_cap.txt    && $rerr == *"/nonexistent_dir_55/f: No such file or directory"* ]]; chk rd.6
+
+# rd.7 the same rule for a function redirect SCOPE, which is a different
+# emitter in both backends (native emit_redirect_push / c emit_redirect_push)
+# and the one where native and c agreed on the wrong answer.
+rm -f rd7_cap.txt
+run_sash 'f() { echo hi; }
+f 2> rd7_cap.txt > /nonexistent_dir_55/f
+echo after'
+[[ $rc != 0 && -z $out && -z $err && -z $rerr    && "$(cat rd7_cap.txt)" == *"/nonexistent_dir_55/f: No such file or directory"* ]]
+chk rd.7
+
+# rd.8 a redirect that DUPS rather than opens also carries the message:
+# `2>&1 1> /bad` points stderr at the original stdout, which the harness
+# captures as $out. Pins that the rule is about "the fds in effect", not
+# about files specifically.
+run_sash '/bin/echo hi 2>&1 1> /nonexistent_dir_55/f
+echo after'
+[[ $rc != 0 && -z $err && -z $rerr    && $out == *"/nonexistent_dir_55/f: No such file or directory"* ]]; chk rd.8
 
 # --- DD#46 top-level positional rejection: directed error text (DD#60) ---
 

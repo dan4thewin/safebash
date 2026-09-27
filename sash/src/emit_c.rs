@@ -3711,9 +3711,15 @@ fn emit_redirect_push(
     // reported — silence is for a *caught* failure (55.25), not a cleanup
     // one. Mirrors the native `checked || ctx.in_end_block`.
     if checked || e.end_region.contains(&e.cur_block) {
-        // The pop sits on the skip path, which an abort never reaches, so
-        // the fds have to go back here — an END block (DD#56) still runs.
-        emit_restore(e, &saved);
+        // Report first, while the scope's successful redirects are still in
+        // effect — bash writes the diagnostic through them, so
+        // `f 2> capt > /bad` puts it in `capt`. Only then restore: the pop
+        // sits on the skip path, which an abort never reaches, so the fds
+        // have to go back here — an END block (DD#56) still runs. This order
+        // matches `emit_redirect_guarded_body` above and the native
+        // `emit_open_failure_msg` / `emit_open_failure_terminate` pair;
+        // having it backwards here was a silent bash divergence that the
+        // oracle could not see, because native had it backwards too.
         writeln!(
             e.out,
             "        sash_emsg({p}, {l}, 0, 0);",
@@ -3721,6 +3727,7 @@ fn emit_redirect_push(
             l = path_len
         )
         .unwrap();
+        emit_restore(e, &saved);
         emit_open_failure_goto(e);
     }
     writeln!(e.out, "    }} else {{").unwrap();
