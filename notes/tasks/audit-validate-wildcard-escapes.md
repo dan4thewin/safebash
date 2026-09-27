@@ -1,5 +1,5 @@
 title: audit: sweep validate.rs for wildcard arms that silently skip checks
-status: next
+status: done
 priority: P1
 kind: audit
 depends: []
