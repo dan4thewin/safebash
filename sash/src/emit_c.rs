@@ -2346,9 +2346,15 @@ fn emit_close_builtin(e: &mut Emit, args: &[SsaValue], checked: bool, types: &Va
 ///
 /// With a command, `args` is the **whole** argv — `args[0]` is the program,
 /// not a separate `name` (the `name` here is the literal string "exec").
-/// That is why this cannot reuse `emit_argv`, which prepends a `name` literal
-/// as argv[0]. Native's `build_argv_on_stack` lowers every element the same
-/// way, and neither backend expands an `@a` splat here.
+/// It therefore lowers `args[0]` itself and hands the result to the SHARED
+/// argv builders as element 0, rather than going through `emit_argv`, which
+/// prepends a *literal* name.
+///
+/// It used to hand-roll a fixed C array literal instead, so `@a` and
+/// `${x:~}` reached `lower_value_as_str` and ICEd. Native had the identical
+/// gap in its own copy, and the doc comment here recorded that as parity —
+/// the two backends agreed because each was a second implementation of an
+/// argv builder that already handled these.
 ///
 /// `sash_exec` is declared `noreturn`; the `sash_exit(127)` after it is the
 /// execve-failed path, matching native's `finalize_exec`.
@@ -2361,19 +2367,19 @@ fn emit_exec_builtin(e: &mut Emit, args: &[SsaValue], types: &VarTypes) {
     }
     let t = e.fresh();
     let argv = format!("{}_argv", t);
-    let mut ptrs: Vec<String> = Vec::with_capacity(args.len());
-    for arg in args {
-        let (ptr, len) = lower_value_as_str(e, arg, types);
-        // DD#99 stage 7: the length is known here but lost at execve.
-        writeln!(e.out, "    sash_argv_guard({ptr}, {len});").unwrap();
-        ptrs.push(ptr);
+    // argv[0] is a value, not a literal: lower and guard it exactly as the
+    // builders guard every other entry.
+    let (cmd_ptr, cmd_len) = lower_value_as_str(e, &args[0], types);
+    writeln!(e.out, "    sash_argv_guard({cmd_ptr}, {cmd_len});").unwrap();
+    let rest = &args[1..];
+    if rest
+        .iter()
+        .any(|a| matches!(a, SsaValue::ArraySplat { .. } | SsaValue::ElideEmpty { .. }))
+    {
+        emit_argv_splat(e, &cmd_ptr, rest, types, "    ", &t, &argv);
+    } else {
+        emit_argv_fixed(e, &cmd_ptr, rest, types, "    ", &argv);
     }
-    writeln!(
-        e.out,
-        "    const char* {argv}[] = {{ {}, (const char*)0 }};",
-        ptrs.join(", ")
-    )
-    .unwrap();
     writeln!(
         e.out,
         "    sash_exec((const char* const*){argv}, sash_envp);"
@@ -2437,28 +2443,31 @@ fn emit_open_failure_goto(e: &mut Emit) {
 fn emit_argv(e: &mut Emit, name: &str, args: &[SsaValue], types: &VarTypes, ind: &str) -> String {
     let t = e.fresh();
     let argv = format!("{}_argv", t);
+    let argv0 = format!("\"{}\"", c_escape(name));
     if args
         .iter()
         .any(|a| matches!(a, SsaValue::ArraySplat { .. } | SsaValue::ElideEmpty { .. }))
     {
-        emit_argv_splat(e, name, args, types, ind, &t, &argv);
+        emit_argv_splat(e, &argv0, args, types, ind, &t, &argv);
     } else {
-        emit_argv_fixed(e, name, args, types, ind, &argv);
+        emit_argv_fixed(e, &argv0, args, types, ind, &argv);
     }
     argv
 }
 
-/// Fixed argv: a C array literal `{ "name", a0, a1, …, NULL }`.
+/// Fixed argv: a C array literal `{ argv0, a0, a1, …, NULL }`. `argv0` is a
+/// C *expression* for element 0 — a quoted literal for an external command,
+/// a lowered pointer for `exec CMD …`.
 fn emit_argv_fixed(
     e: &mut Emit,
-    name: &str,
+    argv0: &str,
     args: &[SsaValue],
     types: &VarTypes,
     ind: &str,
     argv: &str,
 ) {
     let mut arg_ptrs: Vec<String> = Vec::with_capacity(args.len() + 1);
-    arg_ptrs.push(format!("\"{}\"", c_escape(name)));
+    arg_ptrs.push(argv0.to_string());
     for arg in args {
         let (ptr, len) = lower_value_as_str(e, arg, types);
         // DD#99 stage 7: the length is known here but lost at execve.
@@ -2474,10 +2483,11 @@ fn emit_argv_fixed(
 }
 
 /// Runtime VLA argv: count = 1 + #scalars + Σ sash_table_len(splat); each
-/// splat contributes one entry per element.
+/// splat contributes one entry per element. `argv0` is a C *expression* for
+/// element 0 (see [`emit_argv_fixed`]).
 fn emit_argv_splat(
     e: &mut Emit,
-    name: &str,
+    argv0: &str,
     args: &[SsaValue],
     types: &VarTypes,
     ind: &str,
@@ -2505,7 +2515,7 @@ fn emit_argv_splat(
     )
     .unwrap();
     writeln!(e.out, "{ind}i64 {t}_w = 0;").unwrap();
-    writeln!(e.out, "{ind}{argv}[{t}_w++] = \"{}\";", c_escape(name)).unwrap();
+    writeln!(e.out, "{ind}{argv}[{t}_w++] = {argv0};").unwrap();
 
     let mut si = 0;
     for arg in args {

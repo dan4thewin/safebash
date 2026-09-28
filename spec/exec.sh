@@ -20,7 +20,7 @@
 set -eu
 . common.sh
 setup exec
-plan=26
+plan=33
 echo "1..$plan" >&3
 
 set +e
@@ -160,6 +160,59 @@ run_sash 'echo xy <> rwk'
 rm -f rwnew
 run_sash 'echo made <> rwnew'
 [[ $rc = 0 && -f rwnew && -z $err ]]; chk ex.15
+
+
+# ── `exec CMD …` builds argv with the SHARED builder ──────────────────────
+# Both backends had their own copy of the argv builder behind `exec`, each a
+# stale fork of the one every other command used. Three faults followed from
+# the duplication, all of them here:
+#   - `@a` reached the scalar lowering and ICEd the COMPILER (both backends);
+#   - `${x:~}` did the same (both backends);
+#   - native's copy never called the DD#99 stage-7 NUL guard, so a NUL-bearing
+#     argument was TRUNCATED at execve and the program exited 0 — the callee
+#     received a shorter argument than the program computed and checked.
+# The c backend did guard, so a differential spec would have caught the third
+# the moment one existed. There was none: `exec` had no splat, elide, or NUL
+# coverage at all.
+
+# ex.16 a splat expands to one argv entry per element
+run_sash 'array a=(x y)
+exec /bin/echo A @{a:~}'
+[[ $rc = 0 && $out = "A x y" && -z $err ]]; chk ex.16
+
+# ex.17 an empty array contributes zero entries
+run_sash 'array a=()
+exec /bin/echo A @{a:~} B'
+[[ $rc = 0 && $out = "A B" && -z $err ]]; chk ex.17
+
+# ex.18 DD#84: an empty scalar is elided
+run_sash 'str p=""
+exec /bin/echo A ${p:~} B'
+[[ $rc = 0 && $out = "A B" && -z $err ]]; chk ex.18
+
+# ex.19 …and a non-empty one is kept
+run_sash 'str p=Q
+exec /bin/echo A ${p:~} B'
+[[ $rc = 0 && $out = "A Q B" && -z $err ]]; chk ex.19
+
+# ex.20 DD#99 stage 7: a NUL-bearing argument ABORTS rather than truncating.
+# This is the one that was silently wrong on native: it printed `[abc]` and
+# exited 0, dropping everything past the NUL.
+run_sash 'nul=$'"'"'\x00'"'"'
+s="abc${nul}HIDDEN"
+exec /usr/bin/printf "[%s]" $s'
+[[ $rc != 0 && -z $out && $rerr == *NUL* ]]; chk ex.20
+
+# ex.21 …and so does a NUL inside a splat ELEMENT (mirrors an.2 for exec)
+run_sash 'nul=$'"'"'\x00'"'"'
+s="abc${nul}HID"
+array a=($s x)
+exec /usr/bin/printf "[%s]" @{a:~}'
+[[ $rc != 0 && $rerr == *NUL* ]]; chk ex.21
+
+# ex.22 control: the guard does not fire on a clean argument
+run_sash 'exec /usr/bin/printf "[%s]" ok'
+[[ $rc = 0 && $out = "[ok]" && -z $rerr ]]; chk ex.22
 
 set -e
 tally

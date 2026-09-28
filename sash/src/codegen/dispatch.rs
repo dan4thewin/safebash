@@ -1196,48 +1196,33 @@ fn emit_exec_redirects_only(
     builder.def_var(ctx.exit_status_var, zero);
 }
 
+/// `exec CMD ARGS…` — `args[0]` is the command, exactly the shape
+/// [`build_argv_values`] takes.
+///
+/// This goes through the SHARED argv builder on purpose. It used to have its
+/// own stack-slot copy, which had drifted into a strictly worse version of
+/// `build_argv_fixed`: it lowered every argument as a scalar, so `@a` and
+/// `${x:~}` reached `lower_value` and panicked, and it never called
+/// `emit_argv_guard`, so `exec cmd "$s"` with an interior NUL in `s`
+/// truncated silently at execve and exited 0 — the precise outcome DD#99
+/// stage 7 exists to prevent. Three faults, one cause: a second
+/// implementation of a thing that already existed.
 fn emit_exec_static_argv(
     args: &[SsaValue],
     builder: &mut FunctionBuilder,
     module: &mut ObjectModule,
     ctx: &mut InstCtx,
 ) {
-    let arg_refs: Vec<&SsaValue> = args.iter().collect();
-    let argv_addr = build_argv_on_stack(&arg_refs, builder, module, ctx);
+    let argv_addr = super::commands::build_argv_values(
+        args,
+        builder,
+        module,
+        ctx.vars,
+        ctx.literals,
+        ctx.externs,
+        Some(ctx.exit_status_var),
+    );
     finalize_exec(argv_addr, builder, module, ctx.externs);
-}
-
-/// Allocate a stack-resident argv (lower each arg, store pointers,
-/// null-terminate) and return its base address.
-fn build_argv_on_stack(
-    args: &[&SsaValue],
-    builder: &mut FunctionBuilder,
-    module: &mut ObjectModule,
-    ctx: &mut InstCtx,
-) -> cranelift_codegen::ir::Value {
-    let argv_size = ((args.len() + 1) * 8) as u32;
-    let argv_slot = builder.create_sized_stack_slot(StackSlotData::new(
-        StackSlotKind::ExplicitSlot,
-        argv_size,
-        3,
-    ));
-    for (i, arg_val) in args.iter().enumerate() {
-        let (ptr, _len) = lower_value(
-            arg_val,
-            builder,
-            module,
-            ctx.vars,
-            ctx.literals,
-            ctx.externs,
-            Some(ctx.exit_status_var),
-        );
-        builder.ins().stack_store(ptr, argv_slot, (i * 8) as i32);
-    }
-    let null = builder.ins().iconst(I64, 0);
-    builder
-        .ins()
-        .stack_store(null, argv_slot, (args.len() * 8) as i32);
-    builder.ins().stack_addr(I64, argv_slot, 0)
 }
 
 /// Common tail for both exec paths: call exec(argv, envp); if it returns,
