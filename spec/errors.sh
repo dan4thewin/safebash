@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup errors
-plan=277
+plan=287
 echo "1..$plan" >&3
 
 set +e
@@ -1548,6 +1548,52 @@ exec > iv9_log.txt
 echo body'
 [[ $rc = 0 && -z $out && "$(cat iv9_log.txt)" = "body
 cleanup" ]]; chk iv.9
+
+
+# ── csc.1-csc.10: a `$( )` closer beats DD#71 absorb ────────────────
+# `$(int x=1)` was reported as SB4057 "unterminated `$(`" with the `)`
+# plainly there. DD#71 makes `)` an absorbable literal in an assignment
+# value, so the value word ate the substitution's own terminator and the
+# body ran to end of input. DD#71 scopes absorb "to whitespace / closer",
+# and `]]` already beats absorb for a `[[ ]]` operand (csc.9) — `)` inside
+# a `$( )` body is the same rule. Scanner now carries `cmd_sub_depth`,
+# mirroring `arith_depth`.
+run_sash 'echo $(int x=1)'
+[[ $rc = 0 && -z $out && -z $err ]]; chk csc.1
+# the spaced spelling took `)` as the next declarator name and reported
+# SB4014 "expected variable name" on a declaration that was complete
+run_sash 'echo $(int x=1 )'
+[[ $rc = 0 && -z $out && -z $err ]]; chk csc.2
+run_sash 'echo $(str s=a)'
+[[ $rc = 0 && -z $out && -z $err ]]; chk csc.3
+# the quoted spelling had the same fault (journal 422's convergence)
+run_sash 'echo "$(int x=1)"'
+[[ $rc = 0 && -z $out && -z $err ]]; chk csc.4
+# a declaration that is NOT last always worked — the `;` stopped the
+# declaration loop before the `)` was reached
+run_sash 'echo $(int x=1; echo $x)'
+[[ $rc = 0 && $out = "1" && -z $err ]]; chk csc.5
+# an array literal inside a body still finds its own `)`
+run_sash 'echo $(array a=(1 2); echo ${a[1]})'
+[[ $rc = 0 && $out = "2" && -z $err ]]; chk csc.6
+# the body is a subshell: an assignment inside it does not escape (bash)
+run_sash 'int x=1
+echo $(x=2)
+echo $x'
+[[ $rc = 0 && $out = $'\n1' && -z $err ]]; chk csc.7
+# DD#71 absorb is UNCHANGED outside a body — `)` is still a literal there
+run_sash 'str s=a)b
+echo "[$s]"'
+[[ $rc = 0 && $out = "[a)b]" && -z $err ]]; chk csc.8
+# …and a `[[ ]]` operand still absorbs its parens, which is the precedent
+# the cmd-sub rule is modelled on
+run_sash 'str x=ab
+if [[ $x =~ ^(a|b)+$ ]] { echo yes }'
+[[ $rc = 0 && $out = "yes" && -z $err ]]; chk csc.9
+# a genuinely unterminated `$(` is still SB4057 — the fix must not make
+# the real diagnostic unreachable
+run_sash 'echo $(echo hi'
+[[ $rc != 0 && -z $out && $err == *SB4057* ]]; chk csc.10
 
 
 set -e

@@ -4310,7 +4310,7 @@ fn check_argv_splat_decl(d: &Declaration, diags: &mut Vec<Diagnostic>) {
                 "SB5025",
                 "`array a=$(argv …)` is not an array snapshot — a command \
                  substitution does not yield an array; use the out-param form \
-                 `argv [N] a`"
+                 `argv a`, or `argv N a` to start at argument N"
                     .to_string(),
             ));
             continue;
@@ -4420,8 +4420,8 @@ fn argv_splat_diag(span: Span) -> Diagnostic {
         span,
         "SB5025",
         "$(argv) is an array splat — it is valid only as the sole source of \
-         a for-in loop; snapshot into an array with `argv [N] a`, or use \
-         $(arg N) for a single argument"
+         a for-in loop; snapshot into an array with `argv a` (or `argv N a` \
+         to start at argument N), or use $(arg N) for a single argument"
             .to_string(),
     )
 }

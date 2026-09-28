@@ -169,6 +169,13 @@ fn absorb_one_part(
         Tok::Dollar(_) | Tok::DollarBrace(_) | Tok::DollarParen | Tok::DollarDblParen => {
             parse_expansion_arm(scanner, tok, span, start, parts)?;
         }
+        // A `$( )` closer beats DD#71 absorb, exactly as `]]` does for a
+        // `[[ ]]` operand. DD#71 scopes absorb "to whitespace / closer", and
+        // inside a substitution body `)` *is* the closer. Without this
+        // `$(int x=1)` absorbed its own terminator into the value word and
+        // the body ran to end of input, reported as SB4057 "unterminated `$(`"
+        // with the `)` plainly there.
+        Tok::RParen if scanner.in_cmd_sub() => return Ok(false),
         _ => match literal_token_text(tok, mode) {
             Some(text) => {
                 scanner.next();
@@ -1560,7 +1567,10 @@ pub fn parse_command_substitution(scanner: &mut Scanner, span: Span) -> Result<E
 
     let mut stmts = Vec::new();
     let mut closed = false;
-    if let Some(e) = collect_cmd_sub_body(scanner, span, &mut stmts, &mut closed)? {
+    scanner.enter_cmd_sub();
+    let shortcut = collect_cmd_sub_body(scanner, span, &mut stmts, &mut closed);
+    scanner.exit_cmd_sub();
+    if let Some(e) = shortcut? {
         return Ok(e);
     }
 

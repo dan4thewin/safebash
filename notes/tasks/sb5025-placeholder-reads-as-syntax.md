@@ -1,6 +1,7 @@
 ---
 title: "SB5025 renders placeholder `[N]` as code, inviting a literal reading"
-status: next
+status: done
+completed: 2026-09-28
 priority: P4
 kind: bug
 depends: []
@@ -58,3 +59,33 @@ it should be a compile-time rejection.
 `harness-diagnostic-advice-compiles` (P3) — the general "a diagnostic's advice
 must compile" gate. This is an instance where the advice *does* compile once
 read correctly but is written so it invites an uncompilable reading.
+
+
+## DONE 2026-09-28 — in two parts, months apart
+
+**The second defect (the ICE) was already fixed.** `argv [2] a` is now SB5085
+("`argv N a`'s index must be a bare non-negative integer literal…") rather than
+a binary that dies on `sash: bug: bare command passed to sash_exec`. Pinned by
+`av.f3`-`av.f7` in `spec/argv.sh`, whose comment records the same reading:
+"the brackets in the docs mean 'optional', not literal — taking SB5025's own
+advice verbatim used to produce a binary that ICEd". That filing
+(`bug-getenv-status-unvalidated`) turned out to cover eleven intrinsics, not
+two.
+
+**The wording defect was still live**, which is the sharper half: the advice
+kept inviting the reading that av.f3 rejects. Both user-facing sites now lead
+with a form that compiles as written and spell the optional start bare, so the
+sentence is internally consistent with the `$(arg N)` beside it:
+
+- `argv_splat_diag` — "snapshot into an array with `argv a` (or `argv N a` to
+  start at argument N), or use $(arg N) for a single argument"
+- the `array a=$(argv …)` rejection — "use the out-param form `argv a`, or
+  `argv N a` to start at argument N"
+
+A sweep of every non-comment line under `sash/src/` for a `[N]`-style
+metavariable found no third site. The internal doc comments still write
+`argv [N] a` with brackets-mean-optional, which is fine — the gate is about
+diagnostics.
+
+Pinned by `av.f11`, which asserts both directions: the message contains
+`argv a` and does **not** contain `argv [N] a`.

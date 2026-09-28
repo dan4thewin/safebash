@@ -1,8 +1,9 @@
 ---
 title: "BUG: a redirect on a user-function CALL is silently dropped (`f > out.txt`)"
-status: open
+status: done
 priority: P1
 kind: bug
+completed: 2026-09-19
 depends: []
 gates:
   - "`fn f { echo hi; }; f > out.txt` either writes out.txt or is a clean compile error — never silently writes to stdout"
@@ -101,3 +102,31 @@ bigger subset change than the corner case that established the rule.
 Whichever is chosen, fix the stale `lower_redirected_stmt` comment and
 re-check the five cold lines above: under **A** several become live;
 under **B** they should be deleted as unreachable.
+
+
+## DONE 2026-09-19 in `ad6be39` — filing left open by mistake
+
+Closed on review 2026-09-28: the fix landed nine days ago and the filing was
+never updated. Re-measured against the live binary, every gate holds — `>`,
+`>>`, `2>`, `<`, `> f 2>&1`, with args, compound (`if`/`while`) bodies,
+external-command bodies, a nested call, and a second unredirected call after
+a redirected one. All match bash, in both backends.
+
+DG took **option A (support it)**, and the commit records the reason the fork
+did not need weighing: SB4021 already tells the user "a redirect on a compound
+command isn't allowed — wrap the compound in a function", so `f > file` is the
+*sanctioned spelling* of a compound redirect. Rejecting it would have made
+that advice a dead end.
+
+The implementation is a **scope**, not a per-command attachment — a new
+`RedirectPush`/`RedirectPop` pair bracketing the inlined body, modelled on the
+`CaptureStart`/`CaptureEnd` pair that already brackets an inlined body for
+`$(f)`. Per-site saved-fd slots, because scopes nest. Attaching per command
+would have truncated: `fn f { echo a; echo b }; f > out.txt` must write both
+lines.
+
+The stale `lower_redirected_stmt` doc comment this filing flagged is fixed too
+(statements.rs:222-235) and now explains the exception rather than describing
+the deleted push/pop machinery.
+
+Pinned by `fr.1`-`fr.12` in `spec/functions.sh` (dual-mode).

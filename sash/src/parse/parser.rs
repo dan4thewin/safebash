@@ -865,6 +865,11 @@ fn parse_declaration_assignments(
                     // only when the declaration was the LAST statement in the block,
                     // since otherwise a `;` stopped the loop first.
                     | Tok::RBrace
+                    // A `$( )` closer ends the statement for the same reason
+                    // `}` does. Without this `$( int x=1 )` took the `)` as
+                    // the next declarator name and reported SB4014 "expected
+                    // variable name" on a declaration that was complete.
+                    | Tok::RParen
                     // Stop at a trailing redirect so `int x=5 > f` returns a clean
                     // Declaration; `wrap_pipeline_part` then rejects the redirect
                     // (SB4046) instead of the misleading SB4014 that greedy

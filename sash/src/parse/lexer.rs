@@ -169,6 +169,12 @@ pub struct Scanner {
     /// `<<` is the left-shift operator, not a heredoc
     /// (bug-arith-left-shift-heredoc).
     arith_depth: usize,
+    /// Nonzero while parsing the statements inside a `$( … )` body. There an
+    /// unquoted `)` is the substitution's own closer, so it must terminate a
+    /// DD#71 absorb-mode word rather than join it — the same rule `]]`
+    /// already enforces for a `[[ ]]` operand. Without it `$(int x=1)` ate
+    /// its own `)` and was reported as an unterminated `$(`.
+    cmd_sub_depth: usize,
     /// First construct whose closing delimiter ran off the end of the source:
     /// `(offset of the opener, what it was)`. The scan-to-closer helpers all
     /// stopped at end-of-input and silently pretended they had found the
@@ -195,6 +201,7 @@ impl Scanner {
             peeked: Vec::new(),
             last_end: 0,
             arith_depth: 0,
+            cmd_sub_depth: 0,
             unterminated: None,
             attached_hash: None,
             bad_escape: None,
@@ -242,6 +249,22 @@ impl Scanner {
     /// Leave arithmetic-scanning mode (see [`enter_arith`]).
     pub fn exit_arith(&mut self) {
         self.arith_depth = self.arith_depth.saturating_sub(1);
+    }
+
+    /// Enter a `$( … )` body. Must be paired with [`exit_cmd_sub`].
+    pub fn enter_cmd_sub(&mut self) {
+        self.cmd_sub_depth += 1;
+    }
+
+    /// Leave a `$( … )` body (see [`enter_cmd_sub`]).
+    pub fn exit_cmd_sub(&mut self) {
+        self.cmd_sub_depth = self.cmd_sub_depth.saturating_sub(1);
+    }
+
+    /// Whether the cursor is inside a `$( … )` body, where `)` is a closer
+    /// rather than an absorbable metacharacter.
+    pub fn in_cmd_sub(&self) -> bool {
+        self.cmd_sub_depth > 0
     }
 
     /// Compute (line, col) from byte offset. Both 1-based.

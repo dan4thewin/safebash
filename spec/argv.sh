@@ -6,7 +6,7 @@
 set -eu
 . common.sh
 setup argv
-plan=67
+plan=68
 echo "1..$plan" >&3
 
 set +e
@@ -343,6 +343,17 @@ run_sash 'int n=1; argv $n a; echo "$n$(len a)"' x y z
 # (argv[0] included) — `argv 1 a` is the one that drops the program name
 run_sash 'argv 0 a; echo $(len a)' x y z
 [[ $rc = 0 && $out = "4" && -z $err ]]; chk av.f10
+
+# av.f11 the advice must not render a metavariable as literal syntax.
+# SB5025 said "snapshot into an array with `argv [N] a`"; `[N]` is a
+# placeholder for a number but sits inside a code span, so it reads as
+# literal brackets — and taking it literally is av.f3, which is rejected.
+# DG: "are you putting literal brackets in the argv? I just did argv 2 a
+# and it works". The advice now leads with `argv a`, which compiles as
+# written, and spells the optional start bare, matching `$(arg N)`.
+run_sash 'echo $(argv)' x y z
+[[ $rc != 0 && $err == *SB5025* && $err != *"argv [N] a"* && $err == *"argv a"* ]]; chk av.f11
+
 
 set -e
 tally
