@@ -21,6 +21,10 @@
 # Usage:
 #   contrib/cov-probe.sh --build                 # once: instrument target/release
 #   contrib/cov-probe.sh FILE:LINE SNIPPET...    # run snippets, report that line
+#
+# Reports the BRANCH records at that line, or — when the line is a branch
+# BODY rather than a condition, which is what the cold-LINE queue ranks — its
+# line count instead.
 #   contrib/cov-probe.sh --spec FILE SNIPPET...  # ...or name a whole spec file
 #
 # Example:
@@ -107,6 +111,21 @@ awk -v f="$file" -v l="$line" '
                (hit == 0 ? "   <- STILL COLD" : "")
         seen = 1
     }
-    END { if (!seen) print "  (no branch records at that line — wrong line, or not instrumented)" }
+    # Line fallback. A branch BODY (the arm of a match, the `then` of an `if`)
+    # carries no BRDA of its own, and the coverage queue is ranked by cold
+    # LINES, so aiming at one and being told "no branch records" reads exactly
+    # like "not instrumented". The DA record answers it directly.
+    /^DA:/      {
+        if (sf !~ f "$") next
+        split(substr($0, 4), d, ",")
+        if (d[1] != l) next
+        da = 1; dacount = d[2]
+    }
+    END {
+        if (seen) exit
+        if (da) printf "  line count %s%s\n", dacount,
+                       (dacount == 0 ? "   <- STILL COLD" : "")
+        else print "  (no branch or line records at that line — wrong line, or not instrumented)"
+    }
 ' "$out"
 rm -f "$out" /tmp/cov-probe.bin
