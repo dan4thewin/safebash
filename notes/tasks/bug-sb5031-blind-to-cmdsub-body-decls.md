@@ -1,6 +1,6 @@
 ---
 title: "SB5031 reports a `$( )`-body array declaration as 'introduced nowhere'"
-status: next
+status: done
 priority: P2
 kind: bug
 depends: []
@@ -10,6 +10,17 @@ gates:
   - "`fn f { array a=(1 2); … }; f; /bin/echo @{a:-z}` is SB5031 — a fn-local name is not readable outside"
   - "`check_scalar_splat` reads the scope-aware `known`, not a flat program-wide union"
 ---
+
+> **Fixed 2026-09-28 (journal 437).** The splat read is recorded through
+> `ReadSink::record_splat` against the current scope's `known`, like every
+> other read; `check_scalar_splat` keeps only SB5079 and its flat
+> `program_scopes` union no longer decides existence. Both directions verified:
+> the in-body splat compiles, the function-local splat at top level is SB5031.
+> Specs 75.108-75.111. Sweep 6732 passing / 13 skipped / zero failing (6745,
+> predicted). No `direct_exprs` lifetime change was needed — the scope-aware
+> traversal already descends into `$( )` bodies, which is why the scalar and
+> subscript spellings were right all along.
+
 
 # The reporting side descends into a `$( )` body; the introduction side does not
 

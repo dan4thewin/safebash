@@ -6761,8 +6761,6 @@ fn flag_scalar_splat(
     };
     if subscript_subject_is_scalar(name, splattable, introduced) {
         diags.push(scalar_splat_diag(name, expr.span));
-    } else if splat_subject_is_undefined(name, introduced) {
-        diags.push(undefined_splat_diag(name, expr.span));
     }
 }
 
@@ -6773,19 +6771,17 @@ fn splat_subject(expr: &Expr) -> Option<&str> {
     let ExprKind::ParameterExpansion(pe) = &expr.kind else {
         return None;
     };
-    if !pe.operator.as_deref()?.starts_with("arrvals") {
-        return None;
-    }
-    if pe.name == "@" || pe.name == "*" {
-        return None;
-    }
-    Some(&pe.name)
+    is_splat_expansion(pe).then_some(pe.name.as_str())
 }
 
-/// `args` and the DD#100 slots are collections with no declaration in scope,
-/// exactly as for a subscript.
-fn splat_subject_is_undefined(name: &str, introduced: &HashSet<String>) -> bool {
-    !introduced.contains(name) && !is_collection_slot(name) && name != "args"
+/// Is this expansion an `@name` splat (in any disposition)? `@`/`*` are the
+/// positional splat — a different construct, with its own rules.
+fn is_splat_expansion(pe: &ParameterExpansion) -> bool {
+    pe.operator
+        .as_deref()
+        .is_some_and(|op| op.starts_with("arrvals"))
+        && pe.name != "@"
+        && pe.name != "*"
 }
 
 fn scalar_splat_diag(name: &str, span: Span) -> Diagnostic {
@@ -7962,6 +7958,40 @@ impl ReadSink<'_> {
     /// operator (`${x:-…}`, `@a`, `${x:s/…/…/}`): SB5031 treats it as the
     /// explicit "intentional default / transform" opt-out and does NOT flag it,
     /// but dead-var still counts it as a read of the variable.
+    /// Record an `@name` splat read.
+    ///
+    /// DD#69: a splat's disposition covers the **empty** case, not the
+    /// **undeclared** one — `@{a:-z}` still requires `a` to be a collection in
+    /// scope. So unlike `${x:-…}`, a splat's operator is not SB5031's opt-out,
+    /// and it reports with the splat's own wording: "write `${a:-DEFAULT}`" is
+    /// not advice that makes sense for an array.
+    ///
+    /// This lives here, on the one scope-aware traversal, rather than in the
+    /// program-wide union `check_scalar_splat` used to carry. That union was
+    /// wrong in both directions: it rejected an array declared and splatted
+    /// inside the same `$( )` body, and it accepted a function-local array
+    /// splatted at top level, which then ran (DD#86 makes that name local).
+    ///
+    /// `args` is bound by the caller and introduced nowhere;
+    /// `handled_elsewhere` already covers the DD#100 slots.
+    fn record_splat(&mut self, name: &str, span: Span, known: &HashSet<String>) {
+        match &mut self.mode {
+            SinkMode::Collect(set) => {
+                set.insert(name.to_string());
+            }
+            SinkMode::Flag(diags) => {
+                if !is_plain_identifier(name)
+                    || handled_elsewhere(name)
+                    || name == "args"
+                    || known.contains(name)
+                {
+                    return;
+                }
+                diags.push(undefined_splat_diag(name, span));
+            }
+        }
+    }
+
     fn record_param(&mut self, name: &str, span: Span, known: &HashSet<String>, opt_out: bool) {
         match &mut self.mode {
             SinkMode::Collect(set) => {
@@ -8237,7 +8267,11 @@ fn check_param_expansion_reads(
 ) {
     // Bare `${x}` is a read SB5031 flags; `${x:-…}`/`@a`/`${x:s/…/…/}` carry an
     // operator — SB5031's opt-out, but a real read for dead-var.
-    sink.record_param(&pe.name, span, known, pe.operator.is_some());
+    if is_splat_expansion(pe) {
+        sink.record_splat(&pe.name, span, known);
+    } else {
+        sink.record_param(&pe.name, span, known, pe.operator.is_some());
+    }
     if let Some(ref operand) = pe.operand {
         check_expr_reads(operand, known, sink);
     }

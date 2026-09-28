@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup types
-plan=283
+plan=287
 echo "1..$plan" >&3
 
 set +e
@@ -1500,6 +1500,36 @@ run_sash 'str s = 5; echo "$s"'
 # decl.28 control: the form the hint recommends compiles and runs
 run_sash 'int n = 5; str s = "$n"; echo "$s"'
 [[ $rc = 0 && $out = 5 && -z $err ]]; chk decl.28
+
+# 75.108 a splat of an array declared in the SAME `$( )` body. `check_scalar_splat`
+# built its `introduced` set from a program-wide `program_scopes` union, which
+# walks `child_bodies()` -- total over StmtKind, so a body hanging off an
+# EXPRESSION can never appear. `a` is declared one statement earlier and was
+# reported "introduced nowhere".
+run_sash '/bin/echo $(array a=( ); array b=( @{a:-z} ); echo $b[0])'
+[[ $rc = 0 && $out = "z" && -z $err ]]; chk 75.108
+
+# 75.109 the same flat union in the other direction, and this one RAN: a
+# function-local array splatted at top level printed its elements. DD#86 makes
+# a name first assigned in a function body local, and the `$y` / `$a[0]`
+# spellings of that read both reject -- only the splat leaked.
+run_sash 'fn f { array a=(1 2); /bin/echo @{a:-z}; }
+f
+/bin/echo @{a:-z}'
+[[ $rc != 0 && -z $out && $err == *SB5031* ]]; chk 75.109
+
+# 75.110 DD#86 rule 2 for a `$( )` body: a name first introduced inside is
+# local to it, so splatting it outside is SB5031. The fix must not widen the
+# scope, only place the check in it.
+run_sash '/bin/echo $(array a=(1 2); echo $a[0])
+/bin/echo @{a:-z}'
+[[ $rc != 0 && -z $out && $err == *SB5031* ]]; chk 75.110
+
+# 75.111 a splat inside the function that declares the array still traverses --
+# guards the scope-aware check against rejecting the in-scope case.
+run_sash 'fn f { array a=(1 2); /bin/echo @{a:-z}; }
+f'
+[[ $rc = 0 && $out = "1 2" && -z $err ]]; chk 75.111
 
 set -e
 tally
