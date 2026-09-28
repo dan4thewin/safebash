@@ -375,11 +375,6 @@ fn contains_capture(v: &SsaValue) -> bool {
         SsaValue::FuncCall { .. }
         | SsaValue::IntFuncCall { .. }
         | SsaValue::CmdSubstBody { .. } => true,
-        // `child_values` does not descend into either of these.
-        SsaValue::IntCell(inner) => contains_capture(inner),
-        SsaValue::ArraySplat { disposition, .. } => disposition
-            .as_ref()
-            .is_some_and(|d| contains_capture(&d.word)),
         other => other.child_values().into_iter().any(contains_capture),
     }
 }

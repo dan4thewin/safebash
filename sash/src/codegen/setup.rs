@@ -961,8 +961,10 @@ impl<'a> Interner<'a> {
 
     fn intern_value(&mut self, v: &SsaValue) {
         // Leaf interning: literal strings, the param-expansion operand, and
-        // associative-array keys are interned here; every nested SsaValue
-        // is recursed into uniformly via `child_values`.
+        // associative-array keys are the string-keyed halves that
+        // `child_values` deliberately does not yield; every nested SsaValue
+        // (the splat disposition word included) is recursed into uniformly
+        // via `child_values`.
         match v {
             SsaValue::Literal(s) | SsaValue::Expr(s) => {
                 self.intern(s);
@@ -975,12 +977,6 @@ impl<'a> Interner<'a> {
                     self.intern(k);
                 }
             }
-            // DD#69: the `@{a:…}` splat disposition's WORD is nested outside
-            // `child_values` (kept lean) — intern it here.
-            SsaValue::ArraySplat {
-                disposition: Some(d),
-                ..
-            } => self.intern_value(&d.word),
             _ => {}
         }
         for child in v.child_values() {

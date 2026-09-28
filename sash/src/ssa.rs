@@ -965,50 +965,58 @@ pub struct ArraySplatDisposition {
 }
 
 impl SsaValue {
-    /// The nested `SsaValue` operands directly owned by this value, for
-    /// passes that recurse uniformly into sub-values (literal interning,
-    /// positional scanning). Leaf values (`Literal`, `Var`, …) and the
-    /// string-keyed parts of `AssocArray` are returned empty / handled by
-    /// the caller. Mirrors the `Statement::child_bodies` pattern.
+    /// The nested `SsaValue` operands directly owned by this value, for passes
+    /// that recurse uniformly into sub-values (literal interning, capture
+    /// detection, positional scanning). Mirrors the `Statement::child_bodies`
+    /// pattern.
+    ///
+    /// **Total over `SsaValue` on purpose — do not add a wildcard.** Every
+    /// leaf spells out its own empty arm so a new variant is a compile error
+    /// here rather than a silently dropped child. The wildcard this replaced
+    /// dropped four children, and one of them was a live taint bug:
+    /// `ArraySplat`'s `:-WORD` never reached `value_is_tainted`, so
+    /// `array b=( @{a:-$tainted} )` derived `b` CLEAN.
+    ///
+    /// Note what is NOT a child: the string-keyed halves of `AssocArray` and
+    /// `ParamExpansion`'s `operator`/`operand` are `String`s, not values, and
+    /// are interned by their own callers; `CmdSubstBody`'s body is a
+    /// statement list, walked as IR.
     pub(crate) fn child_values(&self) -> Vec<&SsaValue> {
         match self {
+            // Leaves: nothing nested to recurse into.
+            SsaValue::Literal(_)
+            | SsaValue::Var(_)
+            | SsaValue::Expr(_)
+            | SsaValue::CmdSubstBody { .. }
+            | SsaValue::ArithExpr { .. }
+            | SsaValue::ParamExpansion { .. }
+            | SsaValue::ArgvIndex(_)
+            | SsaValue::TableValue { .. }
+            | SsaValue::TableKey { .. } => Vec::new(),
+
+            // Sequences.
             SsaValue::Concat(parts) | SsaValue::IndexedArray(parts) => parts.iter().collect(),
             SsaValue::CmdSubst { argv, .. } => argv.iter().collect(),
+            SsaValue::FuncCall { args, .. } | SsaValue::IntFuncCall { args, .. } => {
+                args.iter().collect()
+            }
             SsaValue::AssocArray(pairs) => pairs.iter().map(|(_, v)| v).collect(),
-            other => other.operand_child_values(),
-        }
-    }
 
-    /// The non-collection owned sub-values (regex/case/default/require operands,
-    /// subscript index, arith operands, ternary). Split from `child_values` to
-    /// keep each dispatcher under the complexity gate.
-    fn operand_child_values(&self) -> Vec<&SsaValue> {
-        self.subject_child_values()
-            .or_else(|| self.operator_child_values())
-            .unwrap_or_default()
-    }
-
-    /// Values that wrap a single subject (a disposition, a case fold, a slice).
-    fn subject_child_values(&self) -> Option<Vec<&SsaValue>> {
-        Some(match self {
+            // Single-subject wrappers.
             SsaValue::Subscript { index, .. } => vec![index],
             SsaValue::CaseConvert { subject, .. } => vec![subject],
             SsaValue::StrLen { subject } => vec![subject],
             SsaValue::ElideEmpty { source, .. } => vec![source],
             SsaValue::Trusted { source } => vec![source],
             SsaValue::Substring { source, .. } => vec![source],
+            SsaValue::IntCell(inner) => vec![inner],
             // The child is the *path*. It must be reachable here so the literal
             // interner sees it (a `$(<f.txt)` path that is never interned
             // panics in codegen), even though taint deliberately does NOT
             // inherit from it — see `ssa_taint.rs`.
             SsaValue::SlurpFile(path) => vec![path],
-            _ => return None,
-        })
-    }
 
-    /// Values built from several operands.
-    fn operator_child_values(&self) -> Option<Vec<&SsaValue>> {
-        Some(match self {
+            // Multi-operand.
             SsaValue::RegexReplace {
                 subject,
                 pattern,
@@ -1024,8 +1032,13 @@ impl SsaValue {
                 true_val,
                 false_val,
             } => vec![cond, true_val, false_val],
-            _ => return None,
-        })
+
+            // DD#69: the splat's `:-WORD` / `:?WORD` default.
+            SsaValue::ArraySplat { disposition, .. } => disposition
+                .as_ref()
+                .map(|d| vec![&*d.word])
+                .unwrap_or_default(),
+        }
     }
 }
 

@@ -329,7 +329,9 @@ fn value_is_tainted(
         // DD#91: `@{a:!DISP}` (disposition.taint_off) is a sanctioned
         // per-use attest-all bypass → Clean; any other splat inherits the array's
         // taint.
-        SsaValue::ArraySplat { array, disposition } => splat_taint(array, disposition, taint),
+        SsaValue::ArraySplat { array, disposition } => {
+            splat_taint(array, disposition, taint, user_functions)
+        }
 
         // Always-tainted: program argv is external input by construction; a
         // multi-statement/pipeline `$(…)` body captures external output; and
@@ -401,17 +403,45 @@ fn elide_taint(
 }
 
 /// DD#61/#91: taint of an `@array` splat. `@a:!` (`disposition.taint_off`) is a
-/// sanctioned per-use attest-all bypass → Clean; any other splat inherits the
-/// array's taint.
+/// sanctioned per-use attest-all bypass for the ARRAY's own read; any other
+/// splat inherits the array's taint.
+///
+/// The `:-WORD` default is a value the splat can yield, so its taint counts
+/// too. `!` does not vouch for it: DD#91 scopes `!` to its own subject's read,
+/// and the word is an unrelated expression. Ignoring it meant
+/// `array b=( @{a:-$tainted} )` classified `b` CLEAN — measured, and masked
+/// only by the front-end pass (SB5021).
+///
+/// A `:?` word is an abort MESSAGE, not a value. The abort path exits, so it
+/// yields nothing and contributes no taint — exactly as `RequireValue`'s
+/// message does not.
 fn splat_taint(
     array: &str,
     disposition: &Option<crate::ssa::ArraySplatDisposition>,
     taint: &HashMap<String, Taint>,
+    user_functions: &std::collections::HashSet<String>,
 ) -> Taint {
-    if disposition.as_ref().is_some_and(|d| d.taint_off) {
-        Taint::Clean
+    let vouched = disposition.as_ref().is_some_and(|d| d.taint_off);
+    if !vouched && taint_of_name(taint, array) == Taint::Tainted {
+        return Taint::Tainted;
+    }
+    disposition
+        .as_ref()
+        .map_or(Taint::Clean, |d| splat_word_taint(d, taint, user_functions))
+}
+
+/// The taint a splat inherits from its own `:-WORD` default. A `:?` word is an
+/// abort MESSAGE and a wordless `@{a:-}` has only a placeholder, so neither
+/// yields a value and neither contributes taint.
+fn splat_word_taint(
+    d: &crate::ssa::ArraySplatDisposition,
+    taint: &HashMap<String, Taint>,
+    user_functions: &std::collections::HashSet<String>,
+) -> Taint {
+    if d.has_word && !d.abort {
+        value_is_tainted(&d.word, taint, user_functions)
     } else {
-        taint_of_name(taint, array)
+        Taint::Clean
     }
 }
 
@@ -638,7 +668,10 @@ fn check_splat_use(
     if !disposition.as_ref().is_some_and(|d| d.taint_off) {
         check_tainted_array(array, context, taint, errors);
     }
-    if let Some(d) = disposition {
+    // `has_word` false means `@{a:-}` / `@{a:~}` — the `word` field is a
+    // placeholder, not something the program wrote. A `:?` message IS read
+    // (it reaches stderr on the abort path), so `abort` is not excluded here.
+    if let Some(d) = disposition.as_ref().filter(|d| d.has_word) {
         check_value_use(&d.word, taint, errors, context);
     }
 }

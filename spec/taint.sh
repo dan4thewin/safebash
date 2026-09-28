@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup taint
-plan=256
+plan=260
 echo "1..$plan" >&3
 
 set +e
@@ -1527,6 +1527,37 @@ attest v [[ $v =~ ^[a-z/]+$ ]]
 /bin/echo pwned > ${v:?no}
 /bin/echo done' /dev/null
 [[ $rc = 0 && $out = "done" && -z $rerr ]]; chk bkstp.4
+
+# bkstp.5 NEGATIVE — a tainted `@{a:-WORD}` splat DEFAULT. `splat_taint`
+#         consulted only the array name and `taint_off`, never the word, so
+#         `b` was derived CLEAN and every later read of it passed. The array
+#         is declared outside the body on purpose: a body-declared array
+#         false-positives SB5031, which would mask this.
+run_sash 'array a=( )
+/bin/echo $(str t=$(getenv T); array b=( @{a:-$t} ); echo $b[0])'
+[[ $rc != 0 && -z $out && $err == *"taint backstop"* ]]; chk bkstp.5
+
+# bkstp.6 POSITIVE — a CLEAN splat default still derives clean. Guards the
+#         fix against the lazy over-approximation of tainting every splat
+#         that carries any word at all.
+run_sash 'array a=( )
+/bin/echo $(array b=( @{a:-ok} ); echo $b[0])'
+[[ $rc = 0 && $out = "ok" && -z $rerr ]]; chk bkstp.6
+
+# bkstp.7 NEGATIVE — DD#91 scopes `!` to its own subject's read. `@{a:!-$t}`
+#         vouches for the ARRAY, not for an unrelated variable spliced into
+#         the default, so the word's taint still counts.
+run_sash 'array a=( )
+/bin/echo $(str t=$(getenv T); array b=( @{a:!-$t} ); echo $b[0])'
+[[ $rc != 0 && -z $out && $err == *"taint backstop"* ]]; chk bkstp.7
+
+# bkstp.8 POSITIVE — `@{a:-}` has `has_word` false and its `word` field is a
+#         placeholder the program never wrote. Examining it would reject
+#         valid programs for a value that does not exist.
+run_sash 'array a=( x )
+array b=( @{a:-} )
+/bin/echo $b[0]'
+[[ $rc = 0 && $out = "x" && -z $rerr ]]; chk bkstp.8
 
 set -e
 tally

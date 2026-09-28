@@ -1,6 +1,6 @@
 ---
 title: "The two structural getters that still end in a wildcard"
-status: open
+status: next
 priority: P2
 kind: hardening
 depends: []
@@ -10,6 +10,22 @@ gates:
   - "both carry the `do not add a wildcard` marker, so `contrib/totality-check.py` holds them"
   - "every behaviour change from newly-yielded children is read, not silenced"
 ---
+
+> **Half done, 2026-09-29 (journal 436).** `SsaValue::child_values()` is now
+> total over all 30 variants with the `do not add a wildcard` marker; the
+> three hand-compensations in `intern_value`, `contains_capture` and (via
+> `splat_taint`) `value_is_tainted` are gone. One of the four dropped children
+> was a **live taint bug**: `ArraySplat`'s `:-WORD` never reached
+> `value_is_tainted`, so `array b=( @{a:-$tainted} )` derived `b` CLEAN. Fixed,
+> with specs `bkstp.5`-`bkstp.8`. The other three were real gaps but
+> unreachable — probed, no panic, correct output.
+>
+> **`Statement::direct_exprs()` is still open**, and is now blocked on more
+> than totality: it needs an explicit lifetime
+> (`fn direct_exprs<'a>(&'a self, f: &mut impl FnMut(&'a Expr))`) before a
+> borrowed `$( )` body can escape its callback. See
+> `bug-sb5031-blind-to-cmdsub-body-decls`, which needs exactly that.
+
 
 # Two getters still hand out an incomplete answer
 
