@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup types
-plan=287
+plan=292
 echo "1..$plan" >&3
 
 set +e
@@ -1530,6 +1530,48 @@ run_sash '/bin/echo $(array a=(1 2); echo $a[0])
 run_sash 'fn f { array a=(1 2); /bin/echo @{a:-z}; }
 f'
 [[ $rc = 0 && $out = "1 2" && -z $err ]]; chk 75.111
+
+# --- SB5070 must be keyed on the COMMAND, not on `$( )` syntax ---
+# `match` is legal in two positions: a `$( )` value and a DD#70 must-consume
+# boolean statement. The operand scan ran only over the first, so a splat in
+# statement position reached `lower_value` as a scalar and ICEd the compiler
+# ("ArraySplat (@a) must be expanded by the argv builder"). `cd` is
+# statement-only and so was never scanned at all.
+
+# 75.112 a splat in the PATTERN operand of a statement-position `match`
+run_sash 'array a=(b)
+str s=abc
+if match "$s" @a; then echo y; else echo n; fi'
+[[ $rc != 0 && -z $out && $err == *SB5070* ]]; chk 75.112
+
+# 75.113 ... and in the SUBJECT operand
+run_sash 'array a=(b)
+if match @a xyz; then echo y; else echo n; fi'
+[[ $rc != 0 && -z $out && $err == *SB5070* ]]; chk 75.113
+
+# 75.114 `cd` takes a scalar path; a splat there ICEd
+run_sash 'array a=(/tmp)
+cd @a
+echo ok'
+[[ $rc != 0 && -z $out && $err == *SB5070* ]]; chk 75.114
+
+# 75.115 the statement scan must reach nested bodies and if-conditions --
+# `child_bodies()` is what carries it into the function and the condition
+run_sash 'array a=(b)
+fn f {
+str s=abc
+if match "$s" @a; then echo y; fi
+}
+f'
+[[ $rc != 0 && -z $out && $err == *SB5070* ]]; chk 75.115
+
+# 75.116 the `$( )` half must still report EXACTLY once -- the statement walk
+# does not descend into command-substitution bodies, so nothing is doubled
+run_sash 'array a=(b)
+str s=abc
+str r=$(match "$s" @a)
+echo "$r"'
+[[ $rc != 0 && -z $out && $(grep -c SB5070 <<< "$err") = 1 ]]; chk 75.116
 
 set -e
 tally

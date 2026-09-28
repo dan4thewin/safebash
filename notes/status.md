@@ -1,3 +1,43 @@
+## ══ STATUS (2026-09-29) — a splat ICE, found by auditing a cold line ══
+
+Sweep **6750 passing, 13 skipped, zero failing** (6763 total — the predicted
++10: 5 specs × 2 modes). Zero flips. `mk test` **71** unchanged. All gates
+clean. Journals 439 (coda) and 440.
+
+Two landed, one open.
+
+**1. Four copies of the `TestExpr` recursion collapsed to one.** Deleting
+`test_uses_tainted` left three; there were actually four, because
+`walk_test_operands` already existed in validate.rs — I had told DG a shared
+walker would need *adding*. It did not. Moved to `ir.rs`; `walk_test_exprs`
+and `check_test_taint` are both one-liners over it now. Closed three cold
+lines by **deleting** code: the helper's `Not`/`And`/`Or` arms were cold
+because an `attest` predicate is never a compound test, and `check_test_taint`
+drives all three.
+
+**2. `cd @a` and `if match S @a` ICEd the compiler.** Found while testing —
+not believing — `emit_match`'s comment that "arity is validated up front" (it
+is, airtight). SB5070's operand list **already named `match`**; the check was
+keyed on `$( )` *syntax* rather than on the command, and `match` is legal in
+two positions. `cd` is statement-only and was never scanned. One scan, both
+positions. Specs 75.112–75.116.
+
+> A guard that knows the right rule still only fires where it is invoked
+> from. Key it on the thing it guards, not on the syntax you found it in.
+
+**3. Open for DG — DD#84 elision ICEs in eleven commands.** Same seam, wider:
+`${p:~}` panics in `cd`, `match`, `sub`, `gsub`, `toupper`, `tolower`,
+`strlen`, `basename`, `dirname`, `return`, `exec`. `validate.rs:3706` reads
+
+```rust
+let elidable = !matches!(expr_literal_str(&c.name), "readline" | "read");
+```
+
+allow-by-default, two exceptions, both added reactively after they ICEd.
+Patch the denylist, or invert to an allowlist of genuinely variadic commands?
+`exec` is the sharp edge: it *is* variadic, so DD#84's own words make
+`exec cmd ${p:~}` legal — and it ICEs. Details in journal 440.
+
 ## ══ STATUS (2026-09-29) — cold-by-construction taint arms now ICE ══
 
 Sweep **6740 passing, 13 skipped, zero failing** (6753 total, unchanged — no

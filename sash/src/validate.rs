@@ -113,6 +113,10 @@ fn check_block_value_rules(
 ) {
     for stmt in block {
         check_stmt_value_rules(stmt, collections, diags);
+        // SB5070: an array splat in a scalar operand of a *statement* command
+        // (`cd @a`, `if match S @a`). The `$( )` half runs inside
+        // `check_stmt_value_rules`'s expression walk.
+        check_stmt_splat_operand(stmt, collections, diags);
         // SB4020 (bug #3): a `(( … ))` statement / condition whose embedded
         // mutation the transform can't hoist (`++`/`--`, `a[i]`, or under
         // `&&`/`||`/`?:`).
@@ -809,6 +813,23 @@ fn check_cmdsub_splat_operand(
     let Some(c) = single_cmdsub_command(stmts) else {
         return;
     };
+    check_command_splat_operand(c, collections, true, diags);
+}
+
+/// The operand scan shared by both positions a scalar-operand command can
+/// occupy. `in_cmdsub` only picks the syntax the remedy is written in.
+///
+/// Keying this on the `$( )` *syntax* rather than on the command is what let
+/// `if match S @a` through: `match` is legal both as a `$( )` value and as a
+/// DD#70 must-consume boolean statement, and only the first was scanned. The
+/// splat then reached `lower_value` as a scalar and ICEd. `cd` is
+/// statement-only and so was never scanned at all.
+fn check_command_splat_operand(
+    c: &Command,
+    collections: &HashSet<String>,
+    in_cmdsub: bool,
+    diags: &mut Vec<Diagnostic>,
+) {
     let ExprKind::Literal(name) = &c.name.kind else {
         return;
     };
@@ -822,16 +843,52 @@ fn check_cmdsub_splat_operand(
         if !splat_subject_is_collection(collection, collections) {
             continue;
         }
+        let remedy = splat_join_remedy(name, collection, c.args.len(), in_cmdsub);
         diags.push(Diagnostic::error_span(
             arg.span,
             "SB5070",
             format!(
                 "`{name}` takes a string, but `@{collection}` is an array splat — one \
                  argument per element (DD#69), not a joined string. To operate on the \
-                 joined text write `$({name} \"$(join {collection} SEP)\" …)`; to operate \
+                 joined text write `{remedy}`; to operate \
                  on each element, loop over `@{collection}`"
             ),
         ));
+    }
+}
+
+/// The `join` rewrite SB5070 advises, spelled in the caller's syntax: wrapped
+/// in `$( )` for the value form, bare for the statement form, and with the
+/// trailing `…` only when the command actually takes further arguments (`cd`
+/// does not).
+fn splat_join_remedy(name: &str, collection: &str, nargs: usize, in_cmdsub: bool) -> String {
+    let rest = if nargs > 1 { " …" } else { "" };
+    let joined = format!("{name} \"$(join {collection} SEP)\"{rest}");
+    if in_cmdsub {
+        format!("$({joined})")
+    } else {
+        joined
+    }
+}
+
+/// Every command statement in a block, recursively, for the statement half of
+/// [`check_command_splat_operand`]. `child_bodies()` is total, so this reaches
+/// the if/while conditions and `&&`/`||` sides where a `match` must live.
+/// It does **not** descend into `$( )` bodies — those are expressions, and
+/// [`check_cmdsub_splat_operand`] already scans them, so nothing is reported
+/// twice.
+fn check_stmt_splat_operand(
+    stmt: &Statement,
+    collections: &HashSet<String>,
+    diags: &mut Vec<Diagnostic>,
+) {
+    if let StmtKind::Command(c) = &stmt.kind {
+        check_command_splat_operand(c, collections, false, diags);
+    }
+    for body in stmt.child_bodies() {
+        for inner in body {
+            check_stmt_splat_operand(inner, collections, diags);
+        }
     }
 }
 
@@ -842,8 +899,13 @@ fn splat_subject_is_collection(name: &str, collections: &HashSet<String>) -> boo
     collections.contains(name) || is_collection_slot(name) || name == "args"
 }
 
-/// The value intrinsics whose operands are scalar strings. `len` / `join` /
-/// `keys` are the collection-by-name intrinsics and are deliberately absent.
+/// The commands whose operands are lowered as **scalar values**, so an array
+/// splat in one is never right. `len` / `join` / `keys` are the
+/// collection-by-name intrinsics and are deliberately absent.
+///
+/// This is one list for both positions on purpose. `match` is legal as a
+/// `$( )` value *and* as a DD#70 boolean statement; `cd` is statement-only.
+/// Keeping a second list for the statement half is exactly how the two drift.
 ///
 /// `strlen` belongs here and was missing until 2026-09-17. SB5070 predates
 /// DD#102, which moved `strlen` from the name-taking family to the
@@ -853,7 +915,7 @@ fn splat_subject_is_collection(name: &str, collections: &HashSet<String>) -> boo
 fn is_scalar_operand_intrinsic(name: &str) -> bool {
     matches!(
         name,
-        "sub" | "gsub" | "toupper" | "tolower" | "strlen" | "basename" | "dirname" | "match"
+        "sub" | "gsub" | "toupper" | "tolower" | "strlen" | "basename" | "dirname" | "match" | "cd"
     )
 }
 
