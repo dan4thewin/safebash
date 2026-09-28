@@ -129,3 +129,46 @@ A sweep that does not panic is *not* proof of unreachability — that is the
 "merely unexercised" case by definition. It is corroboration. The proof is the
 construction-site enumeration above, and it is why three candidates were
 dropped despite the sweep being equally silent about them.
+
+## Coda: the fourth copy, and the helper that already existed
+
+Deleting `test_uses_tainted` left the `TestExpr` recursion hand-written three
+times. I told DG a shared shallow walker would have to be *added* to dedup
+them. That was wrong, and wrong in the most ordinary way: one already existed,
+`walk_test_operands`, in the same file four hundred lines above
+`check_test_taint`. It was written for `check_attest_predicate_reads` and never
+looked at again. So the count was four, not three, and the dedup needed no new
+code at all — only the recognition that the helper was there.
+
+The four:
+
+| copy | shape | status |
+|---|---|---|
+| `ir::walk_test_exprs` | deep — `walk_expr_tree` per operand | hot (27688) |
+| `validate::walk_test_operands` | shallow — operand roots only | hot, but `Not`/`And`/`Or` arms **cold** |
+| `validate::check_test_taint` | shallow, hand-rolled | hot (550) |
+| `validate::test_uses_tainted` | shallow, hand-rolled | deleted earlier today |
+
+Collapsed to one. `walk_test_operands` moved to `ir.rs` as the single shared
+shape; `walk_test_exprs` became a one-liner over it, and so did
+`check_test_taint`. All four had been letter-identical, so there was no latent
+divergence to find — the risk here was prospective, not realised.
+
+The pleasing part is the coverage arithmetic. `walk_test_operands`' own
+`Not`/`And`/`Or` lines were cold, because an `attest` predicate is never a
+compound test. `check_test_taint` exercises all three. Routing the second
+through the first closed three cold lines **by deleting code** — the opposite
+of the usual move, which is to write a spec that reaches them. A cold line can
+mean "nothing calls this", and sometimes the right answer is to give it the
+caller that was sitting next door reimplementing it.
+
+One hazard worth the doc comment it now carries: `check_test_taint` must use
+the *shallow* walker. `check_expr_taint` descends into composites itself, so
+routing it through the deep `walk_test_exprs` would report every nested taint
+violation twice.
+
+### Verification
+
+Sweep **6740 passing, 13 skipped, zero failing** (6753 rows, unchanged).
+**Zero flips.** `mk test` **71** — unchanged, as a pure refactor should be.
+fmt, clippy, totality, complexity clean.

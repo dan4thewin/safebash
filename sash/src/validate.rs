@@ -5249,22 +5249,6 @@ fn check_attest_predicate_reads(
     }
 }
 
-/// Visit every operand expression of a test tree.
-fn walk_test_operands(test: &TestExpr, f: &mut impl FnMut(&Expr)) {
-    match test {
-        TestExpr::Unary { operand, .. } => f(operand),
-        TestExpr::Binary { left, right, .. } => {
-            f(left);
-            f(right);
-        }
-        TestExpr::Not(inner) => walk_test_operands(inner, f),
-        TestExpr::And(l, r) | TestExpr::Or(l, r) => {
-            walk_test_operands(l, f);
-            walk_test_operands(r, f);
-        }
-    }
-}
-
 /// `attest` taint handling for all three forms (DD#24 scalar, DD#61
 /// indexed array and map). Removes taint from the attested entity if the
 /// predicate validates the required name(s); otherwise emits SB5020.
@@ -5659,19 +5643,13 @@ fn check_arith_taint(arith: &ArithExpr, tainted: &HashSet<String>, diags: &mut V
 }
 
 /// Taint-check the operands of a `[[ … ]]` test — each is a read position.
+///
+/// Mirrors [`check_arith_taint`] exactly: the shared walker visits each
+/// operand *root* and `check_expr_taint` does its own descent, so nothing is
+/// reported twice. Do not reach for `ir::walk_test_exprs` here — that one
+/// visits every node of every operand, which would double-report.
 fn check_test_taint(t: &TestExpr, tainted: &HashSet<String>, diags: &mut Vec<Diagnostic>) {
-    match t {
-        TestExpr::Unary { operand, .. } => check_expr_taint(operand, tainted, diags),
-        TestExpr::Binary { left, right, .. } => {
-            check_expr_taint(left, tainted, diags);
-            check_expr_taint(right, tainted, diags);
-        }
-        TestExpr::Not(inner) => check_test_taint(inner, tainted, diags),
-        TestExpr::And(a, b) | TestExpr::Or(a, b) => {
-            check_test_taint(a, tainted, diags);
-            check_test_taint(b, tainted, diags);
-        }
-    }
+    crate::ir::walk_test_operands(t, &mut |e| check_expr_taint(e, tainted, diags));
 }
 
 fn push_taint_use(

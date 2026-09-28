@@ -529,20 +529,28 @@ pub(crate) fn walk_arith_expansion_roots(arith: &ArithExpr, f: &mut impl FnMut(&
     }
 }
 
-/// Walk expressions inside a TestExpr.
-fn walk_test_exprs(t: &TestExpr, f: &mut impl FnMut(&Expr)) {
+/// Visit every operand expression of a test tree, without descending into the
+/// operands themselves. The single shared shape of the `TestExpr` recursion:
+/// callers supply what an operand *means* (a read position, a name to resolve,
+/// a subtree to walk). It was hand-written four separate times before this.
+pub(crate) fn walk_test_operands(t: &TestExpr, f: &mut impl FnMut(&Expr)) {
     match t {
-        TestExpr::Unary { operand, .. } => walk_expr_tree(operand, f),
+        TestExpr::Unary { operand, .. } => f(operand),
         TestExpr::Binary { left, right, .. } => {
-            walk_expr_tree(left, f);
-            walk_expr_tree(right, f);
+            f(left);
+            f(right);
         }
-        TestExpr::Not(inner) => walk_test_exprs(inner, f),
+        TestExpr::Not(inner) => walk_test_operands(inner, f),
         TestExpr::And(l, r) | TestExpr::Or(l, r) => {
-            walk_test_exprs(l, f);
-            walk_test_exprs(r, f);
+            walk_test_operands(l, f);
+            walk_test_operands(r, f);
         }
     }
+}
+
+/// Walk expressions inside a TestExpr.
+fn walk_test_exprs(t: &TestExpr, f: &mut impl FnMut(&Expr)) {
+    walk_test_operands(t, &mut |e| walk_expr_tree(e, f));
 }
 
 /// A complete script — a sequence of statements.
