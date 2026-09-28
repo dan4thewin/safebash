@@ -184,13 +184,13 @@ pub(super) fn lift_int_func_calls(
 ) -> SsaValue {
     match val {
         // ── the captures this pass exists to materialize ──────────────
-        SsaValue::IntFuncCall { name, args } => {
+        SsaValue::IntFuncCall { name, args, colls } => {
             let lifted = lift_each(args, ssa, state, block);
-            inline_int_func(&name, &lifted, ssa, state, block)
+            inline_int_func(&name, &lifted, &colls, ssa, state, block)
         }
-        SsaValue::FuncCall { name, args } => {
+        SsaValue::FuncCall { name, args, colls } => {
             let lifted = lift_each(args, ssa, state, block);
-            lift_str_func_call(name, lifted, ssa, state, block)
+            lift_str_func_call(name, lifted, colls, ssa, state, block)
         }
         SsaValue::CmdSubstBody { body, .. } => {
             // A multi-statement/pipeline `$(…)` body: capture its stdout into a
@@ -353,17 +353,18 @@ fn lift_boxed(
 fn lift_str_func_call(
     name: String,
     args: Vec<SsaValue>,
+    colls: Vec<String>,
     ssa: &mut SsaProgram,
     state: &mut VersionState,
     block: &mut BlockId,
 ) -> SsaValue {
     let temp = format!("__strcap_{name}");
-    match super::stmt_handlers::capture_func_into(&temp, &name, &args, state, ssa, *block) {
+    match super::stmt_handlers::capture_func_into(&temp, &name, &args, &colls, state, ssa, *block) {
         Some(new_block) => {
             *block = new_block;
             SsaValue::Var(state.lookup(&temp))
         }
-        None => SsaValue::FuncCall { name, args },
+        None => SsaValue::FuncCall { name, args, colls },
     }
 }
 
@@ -508,6 +509,7 @@ pub(super) fn emit_tail_call(
 pub(super) fn inline_int_func(
     name: &str,
     args: &[SsaValue],
+    colls: &[String],
     ssa: &mut SsaProgram,
     state: &mut VersionState,
     block: &mut BlockId,
@@ -528,6 +530,7 @@ pub(super) fn inline_int_func(
     // DD#75 §5: positionals are backed by the `args` array (below), not scalar
     // "1".."9"/"#" vars — save/restore just `args`.
     let saved_args = save_caller_args(state);
+    let saved_slots = setup_callee_slots(colls, state);
     let saved_ro = enter_fn_body_scope(state);
 
     // DD#75 §5: materialize the implicit `args` array (0-indexed).
@@ -561,6 +564,7 @@ pub(super) fn inline_int_func(
     });
 
     restore_caller_args(saved_args, state);
+    restore_caller_slots(saved_slots, state);
     exit_fn_body_scope(state, saved_ro);
 
     // Restore exit status
@@ -624,15 +628,30 @@ pub(super) fn analyze_arity(body: &[Statement]) -> (Arity, Vec<ArityDefect>) {
         sig_scan_stmt(s, &mut sig);
     }
     if sig.variadic {
-        let floor = sig
-            .required
-            .iter()
-            .chain(sig.optional.iter())
-            .max()
-            .map(|m| m + 1)
-            .unwrap_or(0);
-        return (Arity::Variadic { floor }, vec![]);
+        return (
+            Arity::Variadic {
+                floor: variadic_floor(&sig),
+            },
+            vec![],
+        );
     }
+    fixed_arity(&sig)
+}
+
+/// DD#84: only *required* indices set a variadic function's floor.
+///
+/// An index read solely through a `:-`/`:~` disposition is optional, and stays
+/// optional when the function is also variadic. Chaining `optional` in here
+/// made `: @args` silently promote it back to required, so DD#81's documented
+/// way to accept a variable number rejected a call that the same body without
+/// `: @args` accepted.
+fn variadic_floor(sig: &ArgSig) -> usize {
+    sig.required.iter().max().map(|m| m + 1).unwrap_or(0)
+}
+
+/// The fixed-arity half: the `[min, max]` range plus DD#81 rule (a)
+/// contiguity and DD#84 mixing defects.
+fn fixed_arity(sig: &ArgSig) -> (Arity, Vec<ArityDefect>) {
     let mut defects = Vec::new();
     // SB5047 — an index read both bare and via a disposition.
     for &i in sig.required.intersection(&sig.optional) {
@@ -645,21 +664,23 @@ pub(super) fn analyze_arity(body: &[Statement]) -> (Arity, Vec<ArityDefect>) {
     if let Some(hole) = (0..max).find(|i| !all.contains(i)) {
         defects.push(ArityDefect::Hole(hole));
     }
-    // DD#84 — optional args are trailing: `min` is the first optional-only
-    // index; every required index must be below it. (A mixed index counts as
-    // required for the range math — it errors via SB5047 regardless.)
+    let min = fixed_min(sig, max, &mut defects);
+    (Arity::Fixed { min, max }, defects)
+}
+
+/// DD#84 — optional args are trailing: `min` is the first optional-only index,
+/// and every required index must be below it. (A mixed index counts as
+/// required for the range math — it errors via SB5047 regardless.)
+fn fixed_min(sig: &ArgSig, max: usize, defects: &mut Vec<ArityDefect>) -> usize {
     let opt_only: std::collections::BTreeSet<usize> =
         sig.optional.difference(&sig.required).copied().collect();
-    let min = match opt_only.iter().next() {
-        Some(&lowest_opt) => {
-            if let Some(&bad) = sig.required.iter().find(|&&r| r > lowest_opt) {
-                defects.push(ArityDefect::RequiredAfterOptional(bad));
-            }
-            lowest_opt
-        }
-        None => max,
+    let Some(&lowest_opt) = opt_only.iter().next() else {
+        return max;
     };
-    (Arity::Fixed { min, max }, defects)
+    if let Some(&bad) = sig.required.iter().find(|&&r| r > lowest_opt) {
+        defects.push(ArityDefect::RequiredAfterOptional(bad));
+    }
+    lowest_opt
 }
 
 fn sig_scan_stmts(stmts: &[Statement], sig: &mut ArgSig) {

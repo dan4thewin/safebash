@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup functions
-plan=163
+plan=166
 echo "1..$plan" >&3
 
 set +e
@@ -666,9 +666,11 @@ f @a'
 [[ $rc = 0 && $out = $'<x>\n<y>\n<z>' && -z $err ]]; chk sp.2
 
 # sp.3 element boundaries survive: two DIFFERENT arrays must not collapse to
-# the same thing (this is the lossy half of the bug)
+# the same thing (this is the lossy half of the bug).
+# DD#84 (2026-09-28): a bare `@two` can be empty, so an index read must be
+# optional (`:-`) for the callee's floor to admit it — see 84.53-84.66.
 run_sash 'array two=("a b" "c")
-fn f { echo "n=$(len args) first=[${args[0]}]" }
+fn f { : @args; echo "n=$(len args) first=[${args[0]:-}]" }
 f @two'
 [[ $rc = 0 && $out = "n=2 first=[a b]" && -z $err ]]; chk sp.3
 
@@ -699,6 +701,29 @@ run_sash 'array a=(x y z)
 run_sash 'fn f { : @args; echo "n=$(len args)" }
 f x y z'
 [[ $rc = 0 && $out = "n=3" && -z $err ]]; chk sp.8
+
+# ── The same call in a PIPELINE (2026-09-28) ────────────────────────
+# The 2026-09-10 fix moved `inline_function_call` and `lower_array_literal` to
+# `arg_to_value`; the pipeline-stage path kept `expr_to_value`, so `f @a | g`
+# still joined. Same bug, third position — these gate it.
+
+# sp.9 a pipelined function receives one argument per ELEMENT
+run_sash 'array a=(x y z)
+fn f { : @args; echo "n=$(len args)" }
+f @a | /bin/cat'
+[[ $rc = 0 && $out = "n=3" && -z $err ]]; chk sp.9
+
+# sp.10 …and element boundaries survive there too (the lossy half)
+run_sash 'array two=("a b" "c")
+fn f { : @args; echo "n=$(len args) first=[${args[0]:-}]" }
+f @two | /bin/cat'
+[[ $rc = 0 && $out = "n=2 first=[a b]" && -z $err ]]; chk sp.10
+
+# sp.11 the elements arrive in order through a pipeline
+run_sash 'array a=(x y z)
+fn f { for v in @args; do echo "<$v>"; done }
+f @a | /bin/cat'
+[[ $rc = 0 && $out = $'<x>\n<y>\n<z>' && -z $err ]]; chk sp.11
 
 # ── DD#27: recursion, and the one shape that is allowed ──
 # These pin the examples in docs/GUIDE.md ("Functions, inlining, and

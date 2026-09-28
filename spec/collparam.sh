@@ -17,7 +17,7 @@ set -eu
 . common.sh
 setup collparam
 set +e
-plan=37
+plan=45
 echo "1..$plan" >&3
 
 # ── Part A: binding and reading ───────────────────────────────────
@@ -290,6 +290,72 @@ show =a'
 run_sash 'show() { echo "arg1=${args[0]}"; }
 show hello'
 [[ $rc = 0 && $out = "arg1=hello" && -z $err ]]; chk 100.37
+
+# ── A call is a call, wherever it appears (2026-09-28) ──────────────
+# `split_call_args` had exactly ONE call site — the plain-statement path — so
+# `=name` was treated as an ordinary scalar argument everywhere else: the slot
+# was never bound and argc was off by one. The symptoms were not subtle: an
+# `-> int` callee ICEd in codegen ("undefined arrlen: A") and a string callee
+# compiled to a binary that SEGFAULTED.
+
+# 100.38 a pipeline stage binds the slot (was: len A = 0, argc = 1)
+run_sash 'fn f { : @args; echo "len=$(len A) n=$(len args)" }
+array q=(x y z)
+f =q | /bin/cat'
+[[ $rc = 0 && $out = "len=3 n=0" && -z $err ]]; chk 100.38
+
+# 100.39 a declaration capture binds the slot
+run_sash 'fn f { : @args; echo "$(join A ,)" }
+array q=(3 1 4)
+str t=$(f =q)
+echo "t=$t"'
+[[ $rc = 0 && $out = "t=3,1,4" && -z $err ]]; chk 100.39
+
+# 100.40 a re-assignment capture binds the slot (a distinct lowering path)
+run_sash 'fn f { : @args; echo "$(join A ,)" }
+array q=(3 1 4)
+str t=x
+t=$(f =q)
+echo "t=$t"'
+[[ $rc = 0 && $out = "t=3,1,4" && -z $err ]]; chk 100.40
+
+# 100.41 an argument-position capture binds the slot (was: SEGFAULT)
+run_sash 'fn f { : @args; echo "$(join A ,)" }
+array q=(3 1 4)
+echo "[$(f =q)]"'
+[[ $rc = 0 && $out = "[3,1,4]" && -z $err ]]; chk 100.41
+
+# 100.42 an `-> int` callee captures through a slot (was: ICE in codegen)
+run_sash 'fn total -> int { int s=0; for v in @A; do s=$(( s + ${v:-0} )); done; return $s }
+array q=(3 1 4)
+int t=$(total =q)
+echo "t=$t"'
+[[ $rc = 0 && $out = "t=8" && -z $err ]]; chk 100.42
+
+# 100.43 Part C (scalars first) is enforced inside `$( )` too — this was
+# silently ACCEPTED, because the checks never descended into a capture
+run_sash 'fn f { : @args; echo "$(join A ,)${args[0]:-}" }
+array q=(3 1 4)
+str t=$(f =q "x")
+echo "t=$t"'
+[[ $rc != 0 && $err == *SB5066* ]]; chk 100.43
+
+# 100.44 …and `=scalar` inside `$( )` reports SB5066, not a misleading arity
+# error about an argument the author never passed
+run_sash 'fn f { : @args; echo "$(join A ,)" }
+str sc=z
+echo "s=$sc"
+str t=$(f =sc)
+echo "t=$t"'
+[[ $rc != 0 && $err == *SB5066* ]]; chk 100.44
+
+# 100.45 `=foo` in capture position counts as a READ of foo (DD#100 Part F) —
+# the dead-variable gate must not fire on it
+run_sash 'fn f { : @args; echo "$(join A ,)" }
+array q=(3 1 4)
+str t=$(f =q)
+echo "t=$t"'
+[[ $rc = 0 && $err != *SB5050* ]]; chk 100.45
 
 set -e
 tally

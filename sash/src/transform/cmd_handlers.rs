@@ -279,7 +279,7 @@ fn inline_function_call(
     let (scalar_args, coll_args) = super::functions::split_call_args(&c.args);
     let arg_values: Vec<SsaValue> = scalar_args.iter().map(|a| arg_to_value(a, state)).collect();
 
-    check_callee_arity(name, body, arg_values.len(), state);
+    check_callee_arity(name, body, &arg_values, state);
     let saved_args = super::functions::save_caller_args(state);
     let saved_slots = super::functions::setup_callee_slots(&coll_args, state);
     let saved_ro = super::functions::enter_fn_body_scope(state);
@@ -364,25 +364,131 @@ fn inline_function_call(
 /// DD#46/#48: emit a diagnostic if the callee reads `$K` (accounting for
 /// `shift`) where K exceeds the number of arguments actually passed. The
 /// positional values themselves live in the `args` array (setup_callee_args).
+///
+/// DD#84 (DG, 2026-09-28): a splat and an elide each contribute a number of
+/// arguments that is only known at RUNTIME, so they are meaningful only where
+/// the callee accepts any number. A fixed-arity callee cannot be satisfied by a
+/// count that does not exist yet, and a variadic callee whose floor is above
+/// the call's minimum can be starved by an empty one.
 pub(super) fn check_callee_arity(
     name: &str,
     body: &[Statement],
-    call_argc: usize,
+    arg_values: &[SsaValue],
     state: &mut VersionState,
 ) {
-    let (min, max) = match super::functions::analyze_arity(body).0 {
-        super::functions::Arity::Fixed { min, max } => (min, Some(max)),
-        super::functions::Arity::Variadic { floor } => (floor, None),
+    let bounds = call_arg_bounds(arg_values);
+    let complaint = match super::functions::analyze_arity(body).0 {
+        super::functions::Arity::Fixed { min, max } => fixed_arity_msg(name, min, max, &bounds),
+        super::functions::Arity::Variadic { floor } => variadic_arity_msg(name, floor, &bounds),
     };
-    if call_argc < min {
-        state
-            .diagnostics
-            .push(arity_too_few_msg(name, min, max.is_none(), call_argc));
-    } else if max.is_some_and(|m| call_argc > m) {
-        state
-            .diagnostics
-            .push(arity_too_many_msg(name, min, call_argc));
+    if let Some(msg) = complaint {
+        state.diagnostics.push(msg);
     }
+}
+
+/// What a call site can deliver, as the arity check needs to see it.
+struct CallBounds {
+    /// The fewest `args` entries any run of this call can deliver.
+    min: usize,
+    /// The number of argument *values* written at the call site. Meaningful
+    /// only when `dynamic` is false — a splat is one value and any number of
+    /// arguments, which is the miscount this whole check exists to avoid.
+    written: usize,
+    /// Any argument's token count is decided at run time.
+    dynamic: bool,
+}
+
+/// DD#84 (2026-09-28): a fixed-arity callee cannot take a runtime-variable
+/// count at all. A static call keeps the pre-existing SB5042/SB5043 messages.
+fn fixed_arity_msg(name: &str, min: usize, max: usize, b: &CallBounds) -> Option<String> {
+    if b.dynamic {
+        return Some(arity_dynamic_msg(name, min, max));
+    }
+    if b.written < min {
+        return Some(arity_too_few_msg(name, min, false, b.written));
+    }
+    if b.written > max {
+        return Some(arity_too_many_msg(name, min, b.written));
+    }
+    None
+}
+
+/// A variadic callee takes any number at or above its floor — so a dynamic
+/// count is fine, provided its *minimum* still reaches that floor.
+fn variadic_arity_msg(name: &str, floor: usize, b: &CallBounds) -> Option<String> {
+    if b.dynamic && b.min < floor {
+        return Some(arity_floor_msg(name, floor, b.min));
+    }
+    if !b.dynamic && b.written < floor {
+        return Some(arity_too_few_msg(name, floor, true, b.written));
+    }
+    None
+}
+
+fn call_arg_bounds(arg_values: &[SsaValue]) -> CallBounds {
+    let mut min = 0usize;
+    let mut dynamic = false;
+    for v in arg_values {
+        let (least, varies) = arg_min_tokens(v);
+        min += least;
+        dynamic |= varies;
+    }
+    CallBounds {
+        min,
+        written: arg_values.len(),
+        dynamic,
+    }
+}
+
+/// The least number of `args` entries one argument can deliver, and whether
+/// its contribution is decided at run time.
+///
+/// The catch-all counts exactly one token, which is right for every value
+/// shape that is not a splat or an elide. A new `SsaValue` that expands to a
+/// *variable* number of tokens has to be given its own arm here, or it
+/// silently counts as one and this check stops seeing it.
+fn arg_min_tokens(v: &SsaValue) -> (usize, bool) {
+    match v {
+        // `${x:~}` — zero tokens when the source is empty, one otherwise.
+        SsaValue::ElideEmpty { .. } => (0, true),
+        // DD#69/#84: `@{a:-W}` substitutes one element when the array is empty
+        // and `@{a:?}` aborts, so on any path that continues both deliver at
+        // least one. Bare `@a` and `@{a:~}` yield zero.
+        SsaValue::ArraySplat { disposition, .. } => {
+            let guaranteed = disposition.as_ref().is_some_and(|d| d.has_word || d.abort);
+            (usize::from(guaranteed), true)
+        }
+        _ => (1, false),
+    }
+}
+
+fn arity_range(min: usize, max: usize) -> String {
+    if min == max {
+        format!("exactly {} argument{}", min, arity_plural(min))
+    } else {
+        format!("{} to {} arguments", min, max)
+    }
+}
+
+/// SB5087: a runtime-variable argument count passed to a fixed-arity callee.
+fn arity_dynamic_msg(name: &str, min: usize, max: usize) -> String {
+    format!(
+        "1:1: error [SB5087] function '{}' takes {} — it cannot be called with a splat or a `:~` elide, whose argument count is only known at run time. Pass the arguments individually, or let '{}' accept a variable number with `: @args`",
+        name,
+        arity_range(min, max),
+        name
+    )
+}
+
+/// SB5087: a call whose minimum falls below a variadic callee's floor.
+fn arity_floor_msg(name: &str, floor: usize, min: usize) -> String {
+    format!(
+        "1:1: error [SB5087] function '{}' always reads {} argument{}, but this call can pass as few as {} — a bare `@a` splat or a `:~` elide contributes nothing when empty. Use `@{{a:-…}}` to guarantee one, or pass the required arguments individually",
+        name,
+        floor,
+        arity_plural(floor),
+        min
+    )
 }
 
 fn arity_plural(n: usize) -> &'static str {

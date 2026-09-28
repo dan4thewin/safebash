@@ -6292,6 +6292,12 @@ fn collect_slot_arg_reads(
         if let StmtKind::Command(c) = &stmt.kind {
             push_slot_arg_reads(c, usage, reads);
         }
+        // DD#100: a call inside `$( … )` is still a call, so `s=$(f =q)` is a
+        // read of `q` on exactly the same terms. A command-substitution body is
+        // an *expression* child, not a `child_bodies()` statement list, so
+        // without this descent the gate reported every collection argument
+        // passed in capture position as never-read.
+        for_each_cmdsub_shallow(stmt, &mut |body| collect_slot_arg_reads(body, usage, reads));
         for body in stmt.child_bodies() {
             collect_slot_arg_reads(body, usage, reads);
         }
@@ -7176,6 +7182,11 @@ fn check_call_args_in(stmts: &[Statement], cx: &CallArgCx, diags: &mut Vec<Diagn
         if let StmtKind::Command(c) = &stmt.kind {
             check_one_call_args(c, stmt.span, cx, diags);
         }
+        // DD#100: a call inside `$( … )` is still a call. Without this descent
+        // `s=$(f =q "x")` was accepted outright (a silent Part C violation) and
+        // `s=$(f =scalar)` reported a misleading SB5042 arity error instead of
+        // SB5066 — the `=name` token was counted as an ordinary argument.
+        for_each_cmdsub_shallow(stmt, &mut |body| check_call_args_in(body, cx, diags));
         for body in stmt.child_bodies() {
             check_call_args_in(body, cx, diags);
         }

@@ -105,11 +105,15 @@ fn wrong_arity_backstop(name: &str, c: &Command) -> Option<SsaValue> {
 /// lifted into a temp downstream); any other function's result is its stdout
 /// (`FuncCall`).
 fn func_call_capture(name: String, c: &Command, state: &VersionState) -> SsaValue {
-    let args = c.args.iter().map(|a| arg_to_value(a, state)).collect();
+    // DD#100: split the `=name` collection arguments out before lowering, as
+    // `inline_function_call` does — they bind slots rather than contributing to
+    // `args`. They ride on the value because the capture is materialized later.
+    let (scalar_args, colls) = super::functions::split_call_args(&c.args);
+    let args = scalar_args.iter().map(|a| arg_to_value(a, state)).collect();
     if state.function_int_typed.contains(name.as_str()) {
-        SsaValue::IntFuncCall { name, args }
+        SsaValue::IntFuncCall { name, args, colls }
     } else {
-        SsaValue::FuncCall { name, args }
+        SsaValue::FuncCall { name, args, colls }
     }
 }
 
@@ -562,6 +566,7 @@ fn var_to_ssa(name: &str, state: &VersionState) -> SsaValue {
         return SsaValue::IntFuncCall {
             name: name.to_string(),
             args: vec![],
+            colls: vec![],
         };
     }
     SsaValue::Var(state.lookup(name))
@@ -675,9 +680,12 @@ fn funccall_to_ssa(name: &str, args: &[ArithExpr], expr: &Expr, state: &VersionS
         }
     }
     let ssa_args: Vec<SsaValue> = args.iter().map(|a| arith_to_ssa(a, expr, state)).collect();
+    // DD#100: the arith lexer owns `=`, so `$(( (f =a) ))` is SB4020 — an
+    // arith-sexpr call can never carry a collection argument.
     SsaValue::IntFuncCall {
         name: name.to_string(),
         args: ssa_args,
+        colls: vec![],
     }
 }
 

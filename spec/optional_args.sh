@@ -7,7 +7,7 @@ set -eu
 . common.sh
 setup optional_args
 set +e
-plan=52
+plan=67
 echo "1..$plan" >&3
 
 # ── Optional trailing args via `:-` (a trailing `${args[i]:-D}` is optional) ──
@@ -320,6 +320,104 @@ f A ${p:~} B'
 run_sash 'str p=""
 /bin/echo A ${p:~} B'
 [[ $rc = 0 && $out = "A B" && -z $err ]]; chk 84.52
+
+# ── DD#84 (DG, 2026-09-28): a runtime-variable argument count is meaningful
+# only where the callee accepts any number. A splat and a `:~` elide each
+# expand to 0..n tokens at run time, so a FIXED-arity callee — whose argc must
+# be known at compile time — cannot be called with one, and a VARIADIC callee
+# cannot have its floor starved by an empty one. SB5087.
+#
+# Before this rule both directions were wrong: an elide silently
+# under-delivered into a fixed callee, and a splat was counted as the constant
+# 1, so a 3-element array was rejected as "called with 1".
+
+# 84.53 a `:~` elide into a fixed-arity callee (was: silent under-delivery)
+run_sash 'fn f { str a=${args[0]}; str b=${args[1]}; echo "a=[$a] b=[$b]" }
+str x=""
+f one ${x:~}'
+[[ $rc != 0 && $err == *SB5087* ]]; chk 84.53
+
+# 84.54 a bare splat into a fixed-arity callee (was: false "called with 1")
+run_sash 'fn f { str a=${args[0]}; str b=${args[1]}; echo "[$a][$b]" }
+array q=(p d)
+f @q'
+[[ $rc != 0 && $err == *SB5087* ]]; chk 84.54
+
+# 84.55 …and a splat that provably yields one is still an unknown count
+run_sash 'fn f { str a=${args[0]}; str b=${args[1]}; echo "[$a][$b]" }
+array q=(p d)
+f @{q:-}'
+[[ $rc != 0 && $err == *SB5087* ]]; chk 84.55
+
+# 84.56 the count is not "1": a three-element array is rejected the same way
+run_sash 'fn f { str a=${args[0]}; str b=${args[1]}; echo "[$a][$b]" }
+array q=(p d x)
+f @q'
+[[ $rc != 0 && $err == *SB5087* ]]; chk 84.56
+
+# 84.57 an empty bare splat cannot satisfy a variadic callee's floor
+run_sash 'fn f { : @args; str a=${args[0]}; echo "a=[$a]" }
+array q=()
+f @{q:~}'
+[[ $rc != 0 && $err == *SB5087* ]]; chk 84.57
+
+# 84.58 …nor can a `:~` elide
+run_sash 'fn f { : @args; str a=${args[0]}; echo "a=[$a]" }
+str x=""
+f ${x:~}'
+[[ $rc != 0 && $err == *SB5087* ]]; chk 84.58
+
+# 84.59 `@{a:-}` guarantees one element (2026-09-04 addendum), so it satisfies
+run_sash 'fn f { : @args; str a=${args[0]}; echo "a=[$a]" }
+array q=()
+f @{q:-}'
+[[ $rc = 0 && $out = "a=[]" && -z $err ]]; chk 84.59
+
+# 84.60 `@{a:?}` aborts on empty, so any path that continues delivers one
+run_sash 'fn f { : @args; str a=${args[0]}; echo "a=[$a]" }
+array q=(z)
+f @{q:?empty}'
+[[ $rc = 0 && $out = "a=[z]" && -z $err ]]; chk 84.60
+
+# 84.61 a fixed argument ahead of the splat satisfies the floor on its own
+run_sash 'fn f { : @args; str a=${args[0]}; echo "a=[$a]" }
+array q=(z)
+f one @{q:~}'
+[[ $rc = 0 && $out = "a=[one]" && -z $err ]]; chk 84.61
+
+# 84.62 floor 0 (no required index) accepts an empty splat — zero arguments
+run_sash 'fn f { for y in @args; do echo "<$y>"; done }
+array q=()
+f @{q:~}'
+[[ $rc = 0 && -z $out && -z $err ]]; chk 84.62
+
+# 84.63 the rule is about USER functions: an external still elides
+run_sash 'str x=""
+/usr/bin/printf "[%s]" ${x:~}
+echo ""'
+[[ $rc = 0 && $out = "[]" && -z $err ]]; chk 84.63
+
+# 84.64 …a varargs builtin still elides
+run_sash 'str x=""
+echo A ${x:~} B'
+[[ $rc = 0 && $out = "A B" && -z $err ]]; chk 84.64
+
+# 84.65 …and an array literal element still elides
+run_sash 'str x=""
+array b=(p ${x:~} q)
+echo "n=$(len b)"'
+[[ $rc = 0 && $out = "n=2" && -z $err ]]; chk 84.65
+
+# 84.66 `: @args` must not promote a DD#84 optional index back to required —
+# the same body without it accepts a zero-argument call, so this must too
+run_sash 'fn f { : @args; echo "[${args[0]:-}]" }
+f'
+[[ $rc = 0 && $out = "[]" && -z $err ]]; chk 84.66
+
+# 84.67 …and the optional index still reads when it IS supplied
+run_sash 'fn f { : @args; echo "[${args[0]:-}]" }
+f hi'
+[[ $rc = 0 && $out = "[hi]" && -z $err ]]; chk 84.67
 
 set -e
 tally

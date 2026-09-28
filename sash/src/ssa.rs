@@ -737,15 +737,26 @@ pub enum SsaValue {
     /// DD#81: call a user function in `$( )`, capturing its stdout as a
     /// string. Carries its argument values so the capture sets up the callee's
     /// `args` array (like `IntFuncCall`).
+    ///
+    /// DD#100: `colls` are the `=name` collection arguments, which bind slots
+    /// (`A`..`E`) rather than contributing to `args`. They must ride on the
+    /// value because the capture is materialized later, by `lift_str_func_call`
+    /// — which has no access to the original `Expr` list. Dropping them left
+    /// the slot unbound, which segfaulted at runtime (`$(f =q)`).
     FuncCall {
         name: String,
         args: Vec<SsaValue>,
+        colls: Vec<String>,
     },
     /// DD#58: Call a -> int function in arithmetic context.
     /// Produces an integer return value, not stdout.
+    ///
+    /// DD#100: `colls` as for `FuncCall` — an unbound slot here ICEd in
+    /// codegen ("undefined arrlen: A").
     IntFuncCall {
         name: String,
         args: Vec<SsaValue>,
+        colls: Vec<String>,
     },
     /// Runtime command substitution: fork/exec, capture stdout.
     /// Carries the command name and arguments as expressions. `suppressed` is
@@ -951,8 +962,13 @@ pub struct ArraySplatDisposition {
     /// The WORD (interpolating): the single substituted arg on `:-`, or the
     /// abort message on `:?`.
     pub word: Box<SsaValue>,
-    /// `@{a:-WORD}` has a WORD → empty array yields the one arg WORD; bare
-    /// `@{a:-}` has none → empty array yields zero args.
+    /// `has_word = operand.is_some()`, which is what distinguishes `:-` from
+    /// `:~`. Per DD#84's 2026-09-04 addendum `:-` ALWAYS carries an operand —
+    /// bare `@{a:-}` parses as `Some("")` — so an empty array yields exactly
+    /// one arg (WORD, or the empty string), matching scalar `${x:-}`. Only
+    /// `@{a:~}` has none, and only it yields zero args. Do not read this as
+    /// "bare `:-` elides"; that was true before 2026-09-04 and is the reason
+    /// `call_arg_bounds` gives `@{a:-}` a minimum of 1, not 0.
     pub has_word: bool,
     /// `:?` — on empty, abort (exit 1, `<progname>: WORD`) instead of
     /// substituting.

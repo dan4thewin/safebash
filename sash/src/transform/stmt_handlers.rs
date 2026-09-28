@@ -444,9 +444,16 @@ fn try_int_tail_call(
     state: &mut VersionState,
     block: &mut BlockId,
 ) -> Option<BlockId> {
-    let SsaValue::IntFuncCall { name, args } = val else {
+    let SsaValue::IntFuncCall { name, args, colls } = val else {
         return None;
     };
+    // DD#100: the tail loop rebinds only `args`, not the collection slots, so a
+    // tail self-call that passes `=name` is not a tail call here. Falling
+    // through routes it to `inline_int_func`, which rejects it as recursion
+    // rather than silently reusing the caller's slot bindings.
+    if !colls.is_empty() {
+        return None;
+    }
     let (tf, header, aname) = state.tail_loop.clone()?;
     if *name != tf {
         return None;
@@ -893,8 +900,17 @@ fn build_function_pipeline_stage(
     let saved_ro = super::functions::enter_fn_body_scope(state);
 
     let entry = ssa.new_block(&format!("pipe_fn_{}_{}", name, idx));
-    let arg_values: Vec<SsaValue> = c.args.iter().map(|a| expr_to_value(a, state)).collect();
-    check_callee_arity(name, &body, arg_values.len(), state);
+    // `split_call_args` + `arg_to_value`, exactly as `inline_function_call`: a
+    // pipeline stage is still a call, so `@a` is a COMMAND-ARG position and
+    // splats one value per element (DD#20/#22), and `=name` binds a slot rather
+    // than contributing to `args` (DD#100). This path kept `expr_to_value` when
+    // the plain-call and array-literal paths were corrected, so `f @a | g`
+    // silently passed the whole array as one joined argument — losing an
+    // element that contains a space — and `f =q | g` left the slot unbound.
+    let (scalar_args, coll_args) = super::functions::split_call_args(&c.args);
+    let arg_values: Vec<SsaValue> = scalar_args.iter().map(|a| arg_to_value(a, state)).collect();
+    check_callee_arity(name, &body, &arg_values, state);
+    let saved_slots = super::functions::setup_callee_slots(&coll_args, state);
     super::functions::setup_callee_args(&arg_values, ssa, state, entry);
 
     // `return` inside the body jumps to ret_block, which ends the forked child.
@@ -907,6 +923,7 @@ fn build_function_pipeline_stage(
     state.return_target = saved_return;
     super::functions::exit_fn_body_scope(state, saved_ro);
     state.restore(&saved);
+    super::functions::restore_caller_slots(saved_slots, state);
     super::functions::restore_caller_args(saved_args, state);
     state.inlining.pop();
 
@@ -1236,8 +1253,13 @@ fn try_capture_inline(
     block: BlockId,
 ) -> Option<BlockId> {
     let func_args = extract_func_args(&a.value);
-    let arg_values: Vec<SsaValue> = func_args.iter().map(|e| expr_to_value(e, state)).collect();
-    capture_func_into(&a.name, fname, &arg_values, state, ssa, block)
+    // Same COMMAND-ARG lowering as `inline_function_call`: `@a` splats per
+    // element (DD#20/#22) and `=name` binds a slot (DD#100). This path kept
+    // `expr_to_value` and no split, so `s=$(f @a)` joined the array into one
+    // argument and `s=$(f =q)` left the slot unbound.
+    let (scalar_args, coll_args) = super::functions::split_call_args(&func_args);
+    let arg_values: Vec<SsaValue> = scalar_args.iter().map(|e| arg_to_value(e, state)).collect();
+    capture_func_into(&a.name, fname, &arg_values, &coll_args, state, ssa, block)
 }
 
 /// Inline the body of function `fname` (with `func_args` bound to its
@@ -1250,6 +1272,7 @@ pub(super) fn capture_func_into(
     target_name: &str,
     fname: &str,
     arg_values: &[SsaValue],
+    coll_args: &[String],
     state: &mut VersionState,
     ssa: &mut SsaProgram,
     block: BlockId,
@@ -1257,7 +1280,7 @@ pub(super) fn capture_func_into(
     let body = state.function_bodies.get(fname).cloned()?;
     // DD#81 Part B: arity-check the `$( )` capture path too (it now carries the
     // call's args), matching the plain-call and pipeline-stage paths.
-    super::cmd_handlers::check_callee_arity(fname, &body, arg_values.len(), state);
+    super::cmd_handlers::check_callee_arity(fname, &body, arg_values, state);
 
     // One site number per capture, reserved before the body is lowered so a
     // nested capture inside the body gets a different one.
@@ -1272,6 +1295,7 @@ pub(super) fn capture_func_into(
     // args (previously the args were dropped and `${args[…]}` hit an
     // undefined array).
     let saved_args = super::functions::save_caller_args(state);
+    let saved_slots = super::functions::setup_callee_slots(coll_args, state);
     let saved_ro = super::functions::enter_fn_body_scope(state);
 
     super::functions::setup_callee_args(arg_values, ssa, state, block);
@@ -1296,6 +1320,7 @@ pub(super) fn capture_func_into(
         });
 
     super::functions::exit_fn_body_scope(state, saved_ro);
+    super::functions::restore_caller_slots(saved_slots, state);
     super::functions::restore_caller_args(saved_args, state);
     Some(restore_block)
 }
