@@ -1,3 +1,64 @@
+## ══ STATUS (2026-09-28) — the taint read path is total; two escapes closed ══
+
+Sweep **6716 passing, 13 skipped, zero failing** (6729 total, predicted before
+running). `mk test`, clippy, fmt clean. Journal 435.
+
+**Two live taint escapes are closed.** Both compiled before today:
+
+```sh
+/bin/echo $(str h=$(getenv TARGET); echo pwned > $h)     # wrote an env-named file
+/bin/echo $(str h=$(getenv TARGET); if [[ -n $h ]] { echo yes })  # branched on input
+```
+
+**The finding DG's question produced.** Every taint escape this project has
+recorded sits behind a wildcard match arm; **not one has been found behind an
+exhaustive one**. The A/B is inside one file: `classify_inst_def` (the write
+side) lists all 19 `SsaInst` variants and has never produced an escape;
+`check_inst_uses` (the read side) ended in `_ => {}` at 4 of 19 and produced
+both of the above. `Test` and `RedirectPush` are named in the exhaustive half
+twenty lines above the wildcard that omitted them.
+
+**What changed.** Read positions are enumerated once now, by
+`SsaInst::taint_reads()` in `ssa.rs` — total over the enum, no wildcard, with
+the doc comment saying so. `check_inst_uses` is a loop over it.
+`check_value_use` is total over all 30 `SsaValue` variants; it had 8.
+
+Redirects were the structural half: a `Redirect`'s target is an unlowered
+`ir::Expr` and never becomes an `SsaValue`, so no value-oriented walk could
+ever have reached it. The getter yields a sum type and the redirect half
+resolves by bare name.
+
+**`SsaInst::Test` gained a `TestOrigin`.** The first sweep after the change
+failed 14 specs, all `attest` (`24.13`, `bfb.1`-`6`). The caught-attest forms
+reach SSA as a bare `Test` in a condition block, indistinguishable from a user
+`[[ ]]`, and reading the tainted subject is the point of the form. `Plain` vs
+`AttestPredicate`; two of seven construction sites are attest.
+
+**New gate: `contrib/totality-check.py`**, wired into `.githooks/pre-commit`.
+Any function whose doc comment says `do not add a wildcard` must have none.
+Seven opt in today. Verified it can fail before trusting it. Whole-tree, not
+grandfather-on-modify — there is no backlog.
+
+Four new specs, `bkstp.1`-`bkstp.4` in `taint.sh`: two for the escapes, two for
+the `TestOrigin` exemption, since those were what the first sweep broke.
+
+**Bookkeeping.** `bug-taint-escape-in-cmdsub-body` P1 → P2: the escape is gone,
+what remains is that the rejection has no SB code and no span. Its fix sketch
+was corrected — it said a `$( )` body is a subshell, which the DD#86 addendum
+retired. `ssa-taint-full-backstop` deferred → next, with a measured table and a
+diagnosis.
+
+**Awaiting DG.** The fourth part of the approved plan — routing the front-end
+taint pass through `Statement::direct_exprs()` instead of its 20 hand-written
+call sites — is filed rather than started. Measuring changed the case for doing
+it now: `check_expr_taint` is *already* total over `ExprKind`, so that work
+buys call-site completeness, not variant completeness, and it moves diagnostic
+ordering across the whole front end. Different size, different risk, and not
+what was closing the escapes. See `getters-still-ending-in-a-wildcard`, which
+also carries the two structural getters that still end in a wildcard
+(`SsaValue::child_values()`, `Statement::direct_exprs()`) and the four
+`SsaValue` variants whose children `child_values()` silently drops.
+
 ## ══ STATUS (2026-09-28) — P0 fixed; a `$( )` body is an anonymous function ══
 
 Three changes, all green. Sweep **6708 passing, 13 skipped, zero failing**

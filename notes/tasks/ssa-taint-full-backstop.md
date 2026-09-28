@@ -1,6 +1,6 @@
 ---
 title: "SSA taint backstop: make it a complete gate (capture path + arrays + positions)"
-status: deferred
+status: next
 priority: P2
 kind: hardening
 depends: []
@@ -9,6 +9,50 @@ gates:
   - "0 spec regressions native/c/janet with the CST pass ON (blessed/clean arrays must not false-positive at SSA)"
   - "spec taint_switch.sh gains sw.* cases proving each newly-caught position under `--no-taint-cst`"
 ---
+
+## Done 2026-09-28 (journal 435) — the enumeration is total
+
+`check_inst_uses` enumerated 4 of 19 `SsaInst` variants and ended in `_ => {}`;
+`check_value_use` covered 8 of 30 `SsaValue` variants and ended in `_ => {}`.
+Both are gone. Read positions are now enumerated once, by
+`SsaInst::taint_reads` (ssa.rs), total over the enum with no wildcard, and
+`check_value_use` is total over `SsaValue`.
+
+Measured under `--no-taint-cst` against this task's own gate list:
+
+| position | before | after |
+|---|---|---|
+| `[[ ]]` operands | COMPILES | reject |
+| redirect targets | COMPILES | reject |
+| `$(join a)` | reject | reject |
+| subscript index | reject | reject |
+| `$(<$h)` slurp path | — | reject |
+| pipeline stage argument | — | reject |
+| inline `$(getenv)` as an argument | COMPILES | **COMPILES** |
+| `${a[0]}` of an argv-filled array | COMPILES | **COMPILES** |
+
+The first two were live escapes with the front-end pass ON, because it does not
+descend into a `$( )` body. Closed, spec `bkstp.1`/`bkstp.2`.
+
+**The last two rows are what is left of this task**, and neither is an escape:
+with the front-end pass on — the shipped configuration — both are SB5020,
+inside a `$( )` body as well as at top level. Measured, not assumed.
+
+Their cause is one shape: `check_value_use` reports tainted *reads* it finds
+inside a value, and never asks whether the value is tainted **as a whole**.
+`SsaValue::CmdSubst { argv: ["getenv", "T"] }` holds only literals, so the walk
+finds nothing, even though `value_is_tainted` calls the same value Tainted. The
+derivation half already knows the answer; the reporting half does not consult
+it. Fixing it is probably `if value_is_tainted(value, …) == Tainted` at the top
+of `check_value_use` — which needs `user_functions` threaded down from
+`verify_ssa_taint`, and needs a careful read of every new rejection, since it
+widens the backstop considerably.
+
+Also still true: redirect targets resolve by bare NAME via `taint_of_name`
+(highest classified version), because a `Redirect`'s target is an unlowered
+`ir::Expr` and never becomes an `SsaValue`. That is imprecise in the permissive
+direction — a variable attested *after* the redirect reads clean at SSA. The
+front-end is the precise one.
 
 ## Done so far (DD#82, journal 187)
 

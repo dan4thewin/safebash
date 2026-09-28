@@ -1,16 +1,29 @@
 ---
-title: "TAINT ESCAPE: `check_taint` does not walk statements inside a `$( )` body"
+title: "`check_taint` does not walk statements inside a `$( )` body"
 status: open
-priority: P1
+priority: P2
 kind: bug
 depends: []
 gates:
-  - "`$(str h=$(getenv T); echo x > $h)` is SB5020, not an accepted program"
-  - "`$(str h=$(getenv T); if [[ -n $h ]] { … })` is SB5020"
+  - "`$(str h=$(getenv T); echo x > $h)` is SB5020 with a span, not a bare backstop ICE"
+  - "`$(str h=$(getenv T); if [[ -n $h ]] { … })` is SB5020 with a span"
   - "a declaration inside a `$( )` body extends the tainted set for the rest of that body"
-  - "a body-local definition does NOT leak taint out to the enclosing scope (the body is a subshell)"
   - "the walk over a `$( )` body is total over `StmtKind` — no `if let StmtKind::Command`"
 ---
+
+> **2026-09-28 — the escape is closed; this is now a diagnostic-quality bug.**
+> Both programs below are rejected at compile time (spec `bkstp.1`, `bkstp.2`).
+> What closed them was the *backstop*, not this pass: `SsaInst::taint_reads`
+> is now total over the enum, so `SsaInst::Test` and `SsaInst::RedirectPush`
+> are checked. They are rejected with no SB code and no span, which is what
+> keeps this filing open — and dropped it from P1 to P2.
+>
+> **The fix sketch below is wrong** where it says a `$( )` body is a subshell.
+> Per the DD#86 addendum (2026-09-28) a body is an *anonymous function*: writes
+> to existing globals persist, and names first introduced inside are local. So
+> taint must persist OUT of a body for a name the outer scope already binds,
+> and must not leak for one the body introduces. Do not clone the set
+> wholesale.
 
 # A tainted value reaches a redirect target with no diagnostic
 
@@ -80,20 +93,27 @@ The two that compile are the two positions journal 400 already recorded as
 escaping the SSA backstop — `[[ ]]` read-back and redirect targets. So the
 backstop is masking most of this gap and cannot mask those two.
 
+**Superseded 2026-09-28.** Both now reject. `check_inst_uses` enumerated 4 of
+19 `SsaInst` variants and ended in `_ => {}`; `Test` and `RedirectPush` were in
+the wildcard. Redirects were the harder half: a `Redirect`'s target is an
+unlowered `ir::Expr`, never an `SsaValue`, so no value-oriented walk could
+reach it however total it was. Every row in the table above is now a rejection;
+only the SB-code-and-span quality differs.
+
 Note the asymmetry in the middle rows: builtin `echo` falls to the backstop
 while `/bin/echo` gets a proper SB5020. Worth understanding as part of the fix
 — it suggests the argument check is reached by one path and not the other.
 
 ## Fix sketch
 
-Run the real walker over the body: `taint_stmt` for each statement, against a
-**clone** of the tainted set. The clone matters both ways —
+Run the real walker over the body: `taint_stmt` for each statement. Scoping
+follows DD#86's anonymous-function model, not a subshell's —
 
-- definitions inside the body must be visible to later statements *in* that body
-  (that is hole 2), and
-- they must not leak outward, because a `$( )` body is a subshell: `$(str h=…)`
-  does not define `h` for the enclosing program, and treating it as if it did
-  would taint a name the outer scope never bound.
+- definitions inside the body must be visible to later statements *in* that
+  body (that is hole 2);
+- a name the body introduces is body-LOCAL, so its taint must not leak outward;
+- a write to a name the enclosing scope already binds DOES persist, taint and
+  all, because the assignment itself persists.
 
 `check_cmdsub_inner_reads` has no `cx: &SlotCx`, so that has to be threaded to
 the call sites (validate.rs:4940, 5758) or the body walk hoisted to somewhere
@@ -105,7 +125,10 @@ it is "fixed" — a new SB5020 there is most likely correct.
 
 ## Related, but not this
 
-- `ssa-taint-full-backstop` (P2, deferred) is about the *backstop*. This is the
-  primary pass, and the two positions above prove the backstop cannot be the
-  answer on its own.
+- `ssa-taint-full-backstop` (P2, deferred) is about the *backstop*, and is
+  **done** as of 2026-09-28: `SsaInst::taint_reads` and `check_value_use` are
+  both total. That is what closed the two escapes. It is not a substitute for
+  this pass — a backstop ICE has no SB code and no span — but the claim above
+  that "the backstop cannot be the answer on its own" was about coverage, and
+  on coverage it now is.
 - `audit-taint-bypass-report` (P2, blocked) — this belongs in that report.

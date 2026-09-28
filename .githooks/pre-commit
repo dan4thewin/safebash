@@ -4,6 +4,7 @@
 # Enforced gates (block on failure):
 #   - cargo fmt --check (sash, sash-convert, sash-expand)
 #   - cargo clippy --tests -D warnings (sash, sash-convert, sash-expand)
+#   - totality gate (self-declared wildcard-free walkers stay wildcard-free)
 #   - complexity gate (grandfather-on-modify, 3× current means)
 #
 # Report-only gates (printed, never block):
@@ -12,6 +13,7 @@
 # Bypass: SKIP_HOOKS=1 git commit ...     (skips all)
 #         git commit --no-verify ...      (skips all, hard escape)
 #
+# Set SKIP_TOTALITY=1 to skip the totality gate.
 # Set SKIP_COMPLEXITY=1 to skip the report (still runs the gate).
 # Set SKIP_COMPLEXITY_GATE=1 to skip the gate (still prints report).
 
@@ -63,6 +65,22 @@ for crate in sash sash-convert sash-expand; do
 done
 [ "$lint_failed" -eq 0 ] && green "  ok"
 [ "$lint_failed" -eq 0 ] || exit 1
+
+# --- totality gate (enforced) ----------------------------------------
+# Every taint escape this project has found sat behind a wildcard match
+# arm; none has been found behind an exhaustive one. A walk that must see
+# every variant says so in its doc comment and leans on rustc's
+# exhaustiveness check; a wildcard silently disarms that. Unlike the
+# complexity gate this is a whole-tree check, not grandfather-on-modify —
+# there is no backlog to burn down, the tree is clean today.
+if [ "${SKIP_TOTALITY:-0}" != "1" ]; then
+    gray "pre-commit: totality gate (declared-total walkers are wildcard-free)"
+    if ! python3 contrib/totality-check.py; then
+        red "    bypass for one commit: SKIP_TOTALITY=1 git commit ..."
+        exit 1
+    fi
+    green "  ok"
+fi
 
 # --- complexity report (info only) -----------------------------------
 # Reports top 5 by max(cyclomatic, cognitive). Both columns shown so a
