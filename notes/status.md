@@ -1,3 +1,60 @@
+## ══ STATUS (2026-09-29) — cold-by-construction taint arms now ICE ══
+
+Sweep **6740 passing, 13 skipped, zero failing** (6753 total, unchanged — no
+specs added). Zero flips. `mk test` **71 passed** (was 67). clippy, fmt,
+totality and complexity gates clean. Journal 439.
+
+DG's question undid the previous entry's conclusion: **"How is ICE a worse
+alternative to a silent unintended change going live?"** It isn't. Every route
+to those arms needs a change to the compiler's *own source*, so an ICE can
+only fire in the tree of whoever opened the route — the cost I had invoked
+does not exist, while the benefit (detection) is real. A "correct" arm nothing
+exercises is an unverified claim, the same shape as the `_ => {}` that let
+`SsaInst::Test` escape this pass for its whole life.
+
+**The operative line, replacing "is the shape nonsense":**
+
+> **Unreachable by construction → ICE. Merely unexercised → correct arm.**
+
+Coverage cannot tell the two apart, which is what the previous entry's work of
+*explaining* each cold arm was for.
+
+**Converted (5 arms, proof by construction-site enumeration):**
+`check_value_use`'s `ArithExpr`/`ArgvIndex`/`TableValue`/`TableKey` (all 8
+sites are `SsaInst::Assign { value }` in `transform/pipelines.rs`) and
+`AssocArray` (`ExprKind::AssocArray` is built only by `parse_array_literal`,
+called only from the two assignment parsers); `expr_uses_tainted`'s `Test` arm
+(`ExprKind::Test` is built only by `parse_test_command`/`parse_attest`, both
+statement-yielding). `check_assoc_use` and `test_uses_tainted` are deleted.
+
+**Rejected by the same test (3 arms, still correct arms):**
+
+- `collect_expr_var_name`'s `${…}`/`$a[i]` — **the previous entry's
+  by-construction story for these was wrong.** `cmd_handlers.rs:296` builds an
+  `SsaInst::RedirectPush` that bypasses both `spill_scalar_redirect_targets`
+  call sites, so an inlined function call's redirect is not spilled.
+  Converting would have shipped a crash on a valid program.
+- `check_value_use`'s `CmdSubstBody` — the lift's callers are the
+  assignment/return/test paths only, not command arguments.
+- `cmd_subst_taint`'s user-function head — a set lookup, not a structural
+  invariant.
+
+Deleting `test_uses_tainted` also dissolved a pending question: the `TestExpr`
+recursion was hand-written three times and the copy nothing ran is now gone.
+`check_test_taint` stays — it is the hot diagnostic twin and is what enforces
+that a `[[ ]]` operand is a read position.
+
+**Correction to the previous entry:** `check_assoc_use`'s coldness is a
+*symptom* of the split `notes/tasks/ssa-taint-full-backstop.md` diagnoses, not
+something that task's fix would cure. Its fix is a whole-value check at the
+top of `check_value_use`; entry is still gated on `taint_reads`, which it does
+not touch. `value_is_tainted` keeps hot arms for all five shapes (2592
+executions for `AssocArray`) because it is the derivation half.
+
+**Next:** `coverage.db` is invalidated again by this commit (it renumbers
+`ssa_taint.rs` and `validate.rs`) — re-run `mk cov-union` → `mk cov-db` →
+`mk cov-reset` before any further line-level ranking.
+
 ## ══ STATUS (2026-09-29) — the coverage queue's two cold taint checks ══
 
 Sweep **6740 passing, 13 skipped, zero failing** (6753 total, predicted before

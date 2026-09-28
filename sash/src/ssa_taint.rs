@@ -518,6 +518,27 @@ fn cmd_subst_taint(
     }
 }
 
+/// Five `SsaValue` shapes are built *only* as the value of an `SsaInst::Assign`
+/// — `ArithExpr`/`ArgvIndex`/`TableValue`/`TableKey` at the eight loop-lowering
+/// sites in `transform/pipelines.rs`, and `AssocArray` from
+/// `parse::parse_array_literal`, which only the two assignment parsers call.
+/// `Assign` reports no `taint_reads` (see `SsaInst::taint_reads` in `ssa.rs`,
+/// "Propagation and definition sites"), so none of them can reach this walk.
+///
+/// They are therefore unreachable *by construction*, not merely unexercised:
+/// opening a route needs a change to the compiler's own source, so this can
+/// only ever fire in the tree of whoever opened it. An untested "correct"
+/// recursion arm would instead let that route open in silence — the same shape
+/// as the `_ => {}` that let `SsaInst::Test` and `RedirectPush` escape this
+/// pass for its whole life, and silence is the one failure mode a taint
+/// reporter cannot afford.
+///
+/// `value_is_tainted` keeps real arms for all five: it is the *derivation*
+/// half and is reached for `Assign` values. That asymmetry is the subject of
+/// `notes/tasks/ssa-taint-full-backstop.md`.
+const ASSIGN_ONLY_VALUE: &str = "ICE: an Assign-only SsaValue reached check_value_use — \
+     a new read route was opened without extending the taint reporter";
+
 /// Report every tainted read inside one value used at a sink.
 ///
 /// **Total over `SsaValue` on purpose — do not add a wildcard.** The `_ => {}`
@@ -527,8 +548,11 @@ fn cmd_subst_taint(
 /// the reporting half of one model and should be read side by side.
 ///
 /// The recursion is written out rather than delegated to
-/// `SsaValue::child_values()`, because that getter still ends in a wildcard;
-/// borrowing it here would reintroduce the same hole one level down.
+/// `SsaValue::child_values()`. That getter is now total too, so the original
+/// reason (it ended in a wildcard) is gone — but the arms here are not a
+/// uniform "visit every child": `Trusted` and `StrLen` stop, `ElideEmpty`
+/// descends only when the author has not vouched, and five shapes are an ICE.
+/// Delegating would flatten those decisions into one.
 fn check_value_use(
     value: &SsaValue,
     taint: &HashMap<String, Taint>,
@@ -538,20 +562,18 @@ fn check_value_use(
     match value {
         // ── Var-rooted reads ────────────────────────────────────────────
         SsaValue::Var(vref) => check_tainted_var(vref, "", context, taint, errors),
-        SsaValue::ArithExpr { var, .. } => {
-            check_tainted_var(var, " in arithmetic", context, taint, errors)
-        }
-        SsaValue::ArgvIndex(vref) => {
-            check_tainted_var(vref, " as an argv index", context, taint, errors)
-        }
         SsaValue::ParamExpansion { var, operator, .. } => {
             check_param_expansion_use(var, operator, taint, errors, context)
         }
 
+        // ── Unreachable by construction (see `ASSIGN_ONLY_VALUE`) ───────
+        SsaValue::ArithExpr { .. }
+        | SsaValue::ArgvIndex(_)
+        | SsaValue::TableValue { .. }
+        | SsaValue::TableKey { .. }
+        | SsaValue::AssocArray(_) => unreachable!("{ASSIGN_ONLY_VALUE}"),
+
         // ── Collection reads, resolved by bare name (DD#61) ─────────────
-        SsaValue::TableValue { array, .. } | SsaValue::TableKey { array, .. } => {
-            check_tainted_array(array, context, taint, errors)
-        }
         SsaValue::Subscript { array, index, .. } => {
             check_tainted_array(array, context, taint, errors);
             check_value_use(index, taint, errors, context);
@@ -597,7 +619,6 @@ fn check_value_use(
         SsaValue::Concat(parts) | SsaValue::IndexedArray(parts) => {
             check_each(parts, taint, errors, context)
         }
-        SsaValue::AssocArray(pairs) => check_assoc_use(pairs, taint, errors, context),
         SsaValue::CmdSubst { argv: args, .. }
         | SsaValue::FuncCall { args, .. }
         | SsaValue::IntFuncCall { args, .. } => check_each(args, taint, errors, context),
@@ -673,19 +694,6 @@ fn check_splat_use(
     // (it reaches stderr on the abort path), so `abort` is not excluded here.
     if let Some(d) = disposition.as_ref().filter(|d| d.has_word) {
         check_value_use(&d.word, taint, errors, context);
-    }
-}
-
-/// Every value half of an assoc-array literal. The keys are literal strings
-/// in SSA, so only the values can carry a read.
-fn check_assoc_use(
-    pairs: &[(String, SsaValue)],
-    taint: &HashMap<String, Taint>,
-    errors: &mut Vec<String>,
-    context: &str,
-) {
-    for (_, v) in pairs {
-        check_value_use(v, taint, errors, context);
     }
 }
 
@@ -816,60 +824,61 @@ mod tests {
     // `ArithExpr` by a hoisted `$(( … ))`. `SsaInst::taint_reads` returns no
     // reads for `Assign` (a value there propagates into its target, where
     // `classify_inst_def` owns it), so none of them can reach `check_value_use`
-    // from source. Measured: `/bin/echo $(( x + 1 ))` and its test-operand and
-    // redirect-target spellings all leave the `ArithExpr` arm cold.
+    // from source.
     //
-    // The arms are still the right answer, and `check_value_use` is total on
-    // purpose, so they are pinned here rather than removed.
+    // Each test asserts the ICE, and the ICE *is* the claim: this shape is
+    // still unreachable. The day one stops panicking, a read route was opened
+    // in another file and the reporter needs an arm written deliberately, with
+    // specs — which is the whole reason these are not silent recursion arms.
     #[test]
-    fn assign_only_value_shapes_still_report_a_tainted_read() {
-        let t = tainted("v");
-        let arr = HashMap::from([("m_1".to_string(), Taint::Tainted)]);
+    #[should_panic(expected = "Assign-only SsaValue")]
+    fn arith_expr_cannot_reach_the_value_walk() {
+        errors_for(
+            &SsaValue::ArithExpr {
+                var: vref("v"),
+                op: ArithOp::Add,
+                operand: 1,
+            },
+            &tainted("v"),
+        );
+    }
 
-        assert_eq!(
-            errors_for(
-                &SsaValue::ArithExpr {
-                    var: vref("v"),
-                    op: ArithOp::Add,
-                    operand: 1,
-                },
-                &t
-            )
-            .len(),
-            1
+    #[test]
+    #[should_panic(expected = "Assign-only SsaValue")]
+    fn argv_index_cannot_reach_the_value_walk() {
+        errors_for(&SsaValue::ArgvIndex(vref("v")), &tainted("v"));
+    }
+
+    #[test]
+    #[should_panic(expected = "Assign-only SsaValue")]
+    fn table_value_cannot_reach_the_value_walk() {
+        errors_for(
+            &SsaValue::TableValue {
+                array: "m".into(),
+                index: vref("i"),
+            },
+            &tainted("m_1"),
         );
-        assert_eq!(errors_for(&SsaValue::ArgvIndex(vref("v")), &t).len(), 1);
-        assert_eq!(
-            errors_for(
-                &SsaValue::TableValue {
-                    array: "m".into(),
-                    index: vref("i"),
-                },
-                &arr
-            )
-            .len(),
-            1
+    }
+
+    #[test]
+    #[should_panic(expected = "Assign-only SsaValue")]
+    fn table_key_cannot_reach_the_value_walk() {
+        errors_for(
+            &SsaValue::TableKey {
+                array: "m".into(),
+                index: vref("i"),
+            },
+            &tainted("m_1"),
         );
-        assert_eq!(
-            errors_for(
-                &SsaValue::TableKey {
-                    array: "m".into(),
-                    index: vref("i"),
-                },
-                &arr
-            )
-            .len(),
-            1
-        );
-        // The whole of `check_assoc_use`: the keys are literal strings in SSA,
-        // so only the value half can carry a read.
-        assert_eq!(
-            errors_for(
-                &SsaValue::AssocArray(vec![("k".into(), SsaValue::Var(vref("v")))]),
-                &t
-            )
-            .len(),
-            1
+    }
+
+    #[test]
+    #[should_panic(expected = "Assign-only SsaValue")]
+    fn assoc_array_cannot_reach_the_value_walk() {
+        errors_for(
+            &SsaValue::AssocArray(vec![("k".into(), SsaValue::Var(vref("v")))]),
+            &tainted("v"),
         );
     }
 

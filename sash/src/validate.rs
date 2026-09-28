@@ -5521,7 +5521,7 @@ fn expr_uses_tainted(expr: &Expr, tainted: &HashSet<String>) -> bool {
         // The *filename* is a read. The slurped contents are handled by
         // `is_taint_source`, which the sole caller checks first.
         ExprKind::SlurpFile(f) => expr_uses_tainted(f, tainted),
-        ExprKind::Test(t) => test_uses_tainted(t, tainted),
+        ExprKind::Test(_) => unreachable!("{TEST_IS_STATEMENT_ONLY}"),
         // No reads by construction — text is text.
         ExprKind::Literal(_) | ExprKind::SingleQuoted(_) => false,
         // Deliberately not descended: a read inside a `$( )` is a *use site*
@@ -5542,19 +5542,20 @@ fn arith_uses_tainted(arith: &ArithExpr, tainted: &HashSet<String>) -> bool {
     found
 }
 
-/// Every `[[ … ]]` operand is a read position; mirrors [`check_test_taint`].
-fn test_uses_tainted(t: &TestExpr, tainted: &HashSet<String>) -> bool {
-    match t {
-        TestExpr::Unary { operand, .. } => expr_uses_tainted(operand, tainted),
-        TestExpr::Binary { left, right, .. } => {
-            expr_uses_tainted(left, tainted) || expr_uses_tainted(right, tainted)
-        }
-        TestExpr::Not(inner) => test_uses_tainted(inner, tainted),
-        TestExpr::And(a, b) | TestExpr::Or(a, b) => {
-            test_uses_tainted(a, tainted) || test_uses_tainted(b, tainted)
-        }
-    }
-}
+/// `ExprKind::Test` is built only by `parse_test_command` and `parse_attest`,
+/// both of which yield a *statement*. It can therefore never occupy any
+/// position this predicate is asked about: a collection element
+/// (`array a=( [[ -n $t ]] )` is SB4014 at parse), a disposition operand
+/// (`${h:-[[ -n x ]]}` is literal text, DD#90 rule 5), a quoted/concat part,
+/// a subscript index, a slurp filename, or an arithmetic expansion root.
+///
+/// Unreachable *by construction*, so it ICEs rather than answering silently —
+/// opening a route needs a language change, which cannot happen without
+/// someone editing the parser and seeing this fire in their own sweep.
+/// [`check_test_taint`] is the hot, diagnostic-emitting twin, reached from
+/// [`check_expr_taint`] on the `[[ … ]]` statement itself; it stays.
+const TEST_IS_STATEMENT_ONLY: &str = "ICE: an ExprKind::Test reached expr_uses_tainted — \
+     `[[ … ]]` became an expression without extending the SB5021 predicate";
 
 /// Check an expression for tainted variable use, emitting diagnostics.
 /// Check one expression for reads of tainted variables (DD#24).
@@ -9265,58 +9266,27 @@ mod tests {
         }
     }
 
-    fn uses(t: &TestExpr) -> bool {
-        test_uses_tainted(t, &HashSet::from(["t".to_string()]))
-    }
-
     // `expr_uses_tainted` must stay total over `ExprKind` — a `_ => {}` there
     // leaked three times, once as a taint bypass that shipped — so it has a
-    // `Test` arm, and that arm calls this. But its caller asks "does this value
-    // flowing INTO A COLLECTION read a tainted name", and an `ExprKind::Test`
-    // is never such a value: `array a=( [[ -n $t ]] )` is SB4014 at parse, and
-    // `array a=( $([[ -n $t ]]) )` is a `CommandSubstitution`, which the arm
-    // above deliberately does not descend into. Measured: the whole function is
-    // cold across a union coverage run.
+    // `Test` arm. That arm is unreachable *by construction*: `ExprKind::Test`
+    // is built only by `parse_test_command` and `parse_attest`, both of which
+    // yield a *statement*, while every position this predicate is asked about
+    // is an operand. `array a=( [[ -n $t ]] )` is SB4014 at parse,
+    // `${h:-[[ -n x ]]}` is literal text (DD#90 rule 5), and
+    // `array a=( $([[ -n $t ]]) )` is a `CommandSubstitution` the walker
+    // deliberately does not descend into.
     //
-    // Unreachable is not the same as wrong. `[[ ]]` operands ARE read
-    // positions — `check_test_taint`, this function's diagnostic-emitting
-    // twin, is what enforces that — so if a future form does put a test in
-    // value position, the answer has to be right the first time. Pinned here,
-    // including the recursion through the connectives, which is where a
-    // hand-written twin would most plausibly drop an operand.
+    // The ICE is the claim, and asserting it is what keeps the claim honest.
+    // `[[ ]]` operands ARE read positions — that is `check_test_taint`'s job,
+    // and it stays hot — so if `[[ ]]` ever becomes an expression, whoever
+    // makes it one has to write this arm knowingly, with specs, rather than
+    // inherit an answer nothing ever ran.
     #[test]
-    fn every_test_shape_sees_a_tainted_operand() {
-        let clean = unary("c");
-        let dirty = unary("t");
-
-        assert!(uses(&dirty));
-        assert!(!uses(&clean));
-
-        for (left, right) in [(&clean, &dirty), (&dirty, &clean)] {
-            assert!(uses(&TestExpr::And(
-                Box::new(left.clone()),
-                Box::new(right.clone())
-            )));
-            assert!(uses(&TestExpr::Or(
-                Box::new(left.clone()),
-                Box::new(right.clone())
-            )));
-        }
-        assert!(!uses(&TestExpr::And(
-            Box::new(clean.clone()),
-            Box::new(clean.clone())
-        )));
-
-        assert!(uses(&TestExpr::Not(Box::new(dirty.clone()))));
-        assert!(!uses(&TestExpr::Not(Box::new(clean.clone()))));
-
-        // Both sides of a binary operand, not just the left.
-        for (l, r) in [("c", "t"), ("t", "c")] {
-            assert!(uses(&TestExpr::Binary {
-                left: Box::new(e(ExprKind::SimpleExpansion(l.to_string()))),
-                op: "=".to_string(),
-                right: Box::new(e(ExprKind::SimpleExpansion(r.to_string()))),
-            }));
-        }
+    #[should_panic(expected = "ExprKind::Test reached expr_uses_tainted")]
+    fn a_test_cannot_reach_the_collection_predicate() {
+        expr_uses_tainted(
+            &e(ExprKind::Test(unary("t"))),
+            &HashSet::from(["t".to_string()]),
+        );
     }
 }
