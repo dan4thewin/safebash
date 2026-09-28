@@ -378,14 +378,16 @@ impl SsaInst {
         module: &mut ObjectModule,
         ctx: &mut InstCtx,
     ) {
-        // Arity is validated up front; defensively treat a malformed call
-        // as a non-match rather than indexing out of bounds.
+        // Unreachable by construction. SB4045 (`match_arity_diag`) rejects any
+        // count but 2 or 3, and `check_match_arity_stmt` recurses through
+        // `child_bodies()` — total, and covering the if/elif/while conditions
+        // and both `&&`/`||` sides that are the only positions DD#70's
+        // must-consume rule leaves for a `match`. The 3-arg out-array form is
+        // taken earlier by `try_handle_match_into`, so exactly two args reach
+        // here. Silently answering "no match" instead would report a result it
+        // had not checked — the same fault SB4045 was added to fix.
         let (Some(subject), Some(pattern)) = (args.first(), args.get(1)) else {
-            let zero = builder.ins().iconst(I64, 0);
-            builder.def_var(ctx.test_result_var, zero);
-            let one = builder.ins().iconst(I64, 1);
-            builder.def_var(ctx.exit_status_var, one);
-            return;
+            panic!("ICE: `match` reached codegen with {} args; SB4045 accepts only 2 or 3, and the 3-arg form is lowered by try_handle_match_into", args.len())
         };
         let (s_ptr, s_len) = lower_value(
             subject,

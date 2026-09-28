@@ -99,6 +99,18 @@ Specs 75.112–75.116: a splat in either operand of a statement `match`, `cd @a`
 the nested fn+if case that exercises the `child_bodies()` recursion, and the
 no-double-report count for the `$( )` form.
 
+## And the arm itself
+
+With the claim verified, `emit_match`'s fallback converts under yesterday's
+rule. It was never an ICE guard — it silently set `test_result = 0` and
+`$? = 1`, reporting a *non-match* it had not checked. That is precisely the
+fault SB4045 exists to fix: the journal entry for SB4045 records that the
+2-arg lowering "ignored the surplus, and the command reported a SUCCESS it had
+not checked". The fallback was the same bug wearing a comment.
+
+Sweep after conversion: 6750 passing, zero failing, **zero flips** — across
+6763 executions the panic never fires.
+
 ## Still open
 
 The same probe found a second, wider hole of the same class, which is a
