@@ -1576,11 +1576,12 @@ run_sash 'echo $(int x=1; echo $x)'
 # an array literal inside a body still finds its own `)`
 run_sash 'echo $(array a=(1 2); echo ${a[1]})'
 [[ $rc = 0 && $out = "2" && -z $err ]]; chk csc.6
-# the body is a subshell: an assignment inside it does not escape (bash)
+# the body is an anonymous function, not a subshell — a write to the
+# existing global `x` persists (DD#86 addendum, DG 2026-09-28). Bash prints 1.
 run_sash 'int x=1
 echo $(x=2)
 echo $x'
-[[ $rc = 0 && $out = $'\n1' && -z $err ]]; chk csc.7
+[[ $rc = 0 && $out = $'\n2' && -z $err ]]; chk csc.7
 # DD#71 absorb is UNCHANGED outside a body — `)` is still a literal there
 run_sash 'str s=a)b
 echo "[$s]"'

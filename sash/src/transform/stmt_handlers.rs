@@ -1302,8 +1302,23 @@ pub(super) fn capture_func_into(
 /// `target_name`. Mirrors `capture_func_into` but for a raw statement list
 /// (no positional/func-arg setup — a cmdsub inherits the caller's positionals).
 /// `CaptureEnd` is marked `tainted` (external output). Returns the block to
-/// continue lowering from. Variable-assignment isolation (subshell semantics)
-/// is handled by save/restore of the vars the body assigns.
+/// continue lowering from.
+///
+/// The body is an **anonymous function** (DG, 2026-09-28): sash has no
+/// subshells, so a write to a global inside the body persists, and only names
+/// first introduced *in* the body are local to it. Both properties come free
+/// from lowering the statements inline here — the scope rules are DD#86's, and
+/// DD#86 gives control flow and grouping no scope of their own.
+///
+/// This used to snapshot every variable the body assigned and restore it
+/// afterwards, described as "subshell isolation". Three things were wrong with
+/// that. It contradicted DD#86, which makes a write to a global frictionless
+/// from anywhere. It contradicted *itself*: `$(f)` where `f` does `x=two`
+/// already let the write survive, because the function path never snapshotted
+/// — so the same effect persisted or vanished depending on whether it was
+/// spelled inline or behind a call. And the snapshot was not total, so a
+/// subscript assignment (`a[0]=v`) or a builtin write escaped it anyway; what
+/// survived a capture was decided by which statement form you used.
 pub(super) fn capture_body_into(
     target_name: &str,
     body: &[Statement],
@@ -1316,10 +1331,6 @@ pub(super) fn capture_body_into(
     ssa.block_mut(block)
         .insts
         .push(SsaInst::CaptureStart { site, buffered });
-
-    // Subshell isolation: snapshot every var the body assigns, restore after.
-    let assigned = collect_assigned_vars(body);
-    let saved_vars = snapshot_assigned("bodycap", &assigned, state, ssa, block);
 
     let call_block = ssa.new_block("cap_body");
     ssa.block_mut(block).terminator = Terminator::Goto(call_block);
@@ -1343,83 +1354,7 @@ pub(super) fn capture_body_into(
             tainted: crate::validate::cmdsub_is_taint_source(body),
         });
 
-    restore_snapshot(&saved_vars, state, ssa, restore_block);
     restore_block
-}
-
-/// Collect every variable a statement sequence assigns (plain `x=…`,
-/// `int x=…`/`local x=…` declarations) — recursively through nested bodies.
-/// Used to snapshot+restore for cmdsub subshell isolation.
-fn collect_assigned_vars(stmts: &[Statement]) -> Vec<String> {
-    let mut vars = Vec::new();
-    collect_assigned_into(stmts, &mut vars);
-    vars
-}
-
-fn collect_assigned_into(stmts: &[Statement], vars: &mut Vec<String>) {
-    for stmt in stmts {
-        match &stmt.kind {
-            StmtKind::Assignment(a) => push_unique(vars, &a.name),
-            StmtKind::Declaration(d) => d
-                .assignments
-                .iter()
-                .for_each(|a| push_unique(vars, &a.name)),
-            _ => {}
-        }
-        stmt.child_bodies()
-            .iter()
-            .for_each(|b| collect_assigned_into(b, vars));
-    }
-}
-
-fn push_unique(vars: &mut Vec<String>, name: &str) {
-    if !vars.iter().any(|v| v == name) {
-        vars.push(name.to_string());
-    }
-}
-
-/// Restore the variables captured by [`snapshot_assigned`] to their
-/// pre-capture versions — the `$(f)` subshell-isolation half.
-fn restore_snapshot(
-    saved: &[(String, VarRef)],
-    state: &mut VersionState,
-    ssa: &mut SsaProgram,
-    block: BlockId,
-) {
-    for (name, save_ref) in saved {
-        let target = state.define(name);
-        ssa.block_mut(block).insts.push(SsaInst::Assign {
-            target,
-            value: SsaValue::Var(save_ref.clone()),
-        });
-    }
-}
-
-/// Snapshot each variable a body capture ASSIGNS into a fresh
-/// `__save_<fname>_<name>` variable in `block`, so the capture's writes can be
-/// undone afterwards (`$(f)` runs in a subshell and must not leak). Returns the
-/// (name, save-ref) pairs for the later restore. Nothing to do with the
-/// DD#86-removed `local` keyword, which this was named for.
-fn snapshot_assigned(
-    fname: &str,
-    locals: &[String],
-    state: &mut VersionState,
-    ssa: &mut SsaProgram,
-    block: BlockId,
-) -> Vec<(String, VarRef)> {
-    locals
-        .iter()
-        .map(|lname| {
-            let save_name = format!("__save_{}_{}", fname, lname);
-            let src = state.lookup(lname);
-            let save_ref = state.define(&save_name);
-            ssa.block_mut(block).insts.push(SsaInst::Assign {
-                target: save_ref.clone(),
-                value: SsaValue::Var(src),
-            });
-            (lname.clone(), save_ref)
-        })
-        .collect()
 }
 
 /// Re-extract the call args from the original `$(…)` expression. The

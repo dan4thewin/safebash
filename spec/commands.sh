@@ -31,9 +31,13 @@ run_sash 'x=$(printf hi); attest x [[ -n $x ]]; echo "$x"'
 # 14.3a a clean multi-statement body captures its full stdout
 run_sash 'x=$(echo a; echo b); echo "[$x]"'
 [[ $rc = 0 && $out == $'[a\nb]' && -z $err ]]; chk 14.3a
-# 14.3b subshell isolation — an assignment inside the body does NOT leak
+# 14.3b a `$( )` body is an anonymous function, not a subshell (DD#86
+#       addendum, DG 2026-09-28). sash has no subshells, so a write to an
+#       existing global inside the body PERSISTS. Deliberate bash divergence
+#       — bash prints `x=outer`. It also makes the inline body agree with
+#       `y=$(f)`, where the write to a global has always survived.
 run_sash 'x=outer; y=$(x=inner; echo $x); echo "y=$y x=$x"'
-[[ $rc = 0 && $out = "y=inner x=outer" && -z $err ]]; chk 14.3b
+[[ $rc = 0 && $out = "y=inner x=inner" && -z $err ]]; chk 14.3b
 # 14.3c a pipeline body with an external stage captures TAINTED output — using
 #       it without a attest is SB5020 (compile-time, all modes). Closes the
 #       silent `$(...)` placeholder bug.

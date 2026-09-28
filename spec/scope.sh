@@ -7,7 +7,7 @@ set -eu
 . common.sh
 setup scope
 set +e
-plan=73
+plan=85
 echo "1..$plan" >&3
 
 # 86.1 `str s` with no initializer declares a string, meaningful-zero ""
@@ -560,6 +560,102 @@ for (( i = 10; i < 40; i += 10 )) {
 }
 echo "$sum"'
 [[ $rc = 0 && $out = "60" && -z $err ]]; chk 86.58
+
+# ── A name does not change type, and the bulk binders are bound by that ──
+# DD#86: "a name's type is fixed at its first introduction, whether that is a
+# declaration or a binding." `read`/`argv`/3-arg `match`|`matchall` introduce
+# a collection, so pointing one at a name already bound as a scalar is a
+# rebinding and must be refused. It used to be accepted, which is how a
+# `SashTable*` ended up in a scalar slot (see types.sh 75.101); over an `int`
+# target it was a compiler ICE.
+
+# 86.59 a declared `str` cannot be refilled as a collection
+run_sash 'str x=hi
+/bin/echo $x
+read x'
+[[ $rc != 0 && -z $out && $err == *SB4030* ]]; chk 86.59
+
+# 86.60 an `int` target — this one ICEd ("expected string var, got int")
+run_sash 'int x=1
+/bin/echo $x
+read x'
+[[ $rc != 0 && -z $out && $err == *SB4030* && $err != *ICE* ]]; chk 86.60
+
+# 86.61 a bare assignment binds the type just as a declaration does
+run_sash 'x=hi
+/bin/echo $x
+argv x'
+[[ $rc != 0 && -z $out && $err == *SB4030* ]]; chk 86.61
+
+# 86.62 so does a `for` header (the third non-declaring binder)
+run_sash 'for x in a b { /bin/echo $x }
+read x'
+[[ $rc != 0 && -z $out && $err == *SB4030* ]]; chk 86.62
+
+# 86.63 the 3-argument `match` capture target is bound by the same rule
+run_sash 'str x=hi
+/bin/echo $x
+match "abc" "b" x'
+[[ $rc != 0 && -z $out && $err == *SB4030* ]]; chk 86.63
+
+# 86.64 control: filling a name already declared a collection is not a
+# rebinding — the type does not change
+run_sash 'array x=(a)
+argv x
+attest e in x [[ -n $e ]]
+echo "${x[1]}"' p q
+[[ $rc = 0 && $out = "p" && -z $err ]]; chk 86.64
+
+# 86.65 control: two bulk binders on one name agree on the type
+run_sash 'argv x
+argv x
+attest e in x [[ -n $e ]]
+echo "${x[1]}"' p q
+[[ $rc = 0 && $out = "p" && -z $err ]]; chk 86.65
+
+# ── A `$( )` body is an anonymous function, not a subshell ──
+# DG, 2026-09-28: "sash doesn't have subshells - so changes to globals, for
+# example, survive unless a fork is required […] a `$( )` capture could be
+# modeled as an anonymous function; all new variables would be local."
+# The compiler used to synthesise a save/restore around a capture body. That
+# contradicted DD#86 (a global is frictionlessly writable from anywhere), it
+# contradicted *itself* (`$(f)` where `f` writes a global always let the write
+# survive), and the save set was not total, so a subscript write escaped it
+# anyway. These are deliberate bash divergences.
+
+# 86.66 a write to an existing global inside the body persists
+run_sash 'str x=one
+str s=$(x=two; echo hi)
+echo "$s $x"'
+[[ $rc = 0 && $out = "hi two" && -z $err ]]; chk 86.66
+
+# 86.67 the inline body and the function call now agree — this was the
+# self-contradiction: same effect, two spellings, two answers
+run_sash 'str x=one
+fn f { x=fn; echo A }
+str p=$(f)
+str q=$(x=inline; echo B)
+echo "$p$q $x"'
+[[ $rc = 0 && $out = "AB inline" && -z $err ]]; chk 86.67
+
+# 86.68 a subscript write persists too — the old save set only ever collected
+# whole-variable assignments and declarations, so this escaped regardless
+run_sash 'array a=(one)
+str s=$(a[0]=two; echo hi)
+echo "$s ${a[0]}"'
+[[ $rc = 0 && $out = "hi two" && -z $err ]]; chk 86.68
+
+# 86.69 a name first introduced inside the body is LOCAL to it — that is the
+# other half of the anonymous-function model
+run_sash 'str s=$(int y=5; echo hi)
+echo "$s $y"'
+[[ $rc != 0 && -z $out && $err == *SB5031* ]]; chk 86.69
+
+# 86.70 a write nested inside a block in the body persists as well
+run_sash 'str x=one
+str s=$(if [[ 1 == 1 ]] { x=two }; echo hi)
+echo "$s $x"'
+[[ $rc = 0 && $out = "hi two" && -z $err ]]; chk 86.70
 
 
 set -e

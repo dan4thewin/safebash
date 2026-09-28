@@ -347,3 +347,67 @@ for (( i = 10; i < 40; i += 10 )) { … }         # DG: the form that means this
 arithmetic header is for numbers.
 
 Specs `spec/scope.sh` 86.39–86.58; journal 357.
+
+## Addendum (2026-09-28) — a `$( )` body is an anonymous function
+
+DG: *"sash doesn't have subshells - so changes to globals, for example,
+survive unless a fork is required. […] no shadowing and no rebinding. […] The
+variable snapshot/restore seems unnecessary - a `$( )` capture could be
+modeled as an anonymous function; all new variables would be local."*
+
+Two rules, both of them this DD's existing rules applied to a context that had
+quietly exempted itself.
+
+### 1. A capture body writes globals like any other code
+
+The compiler used to synthesise an explicit save/restore around a capture body
+— `collect_assigned_vars` / `snapshot_assigned` / `restore_snapshot` in
+`transform/stmt_handlers.rs` — to emulate bash's subshell isolation. It is
+gone. A `$( )` body is lowered inline into the enclosing SSA function (it
+always was; the isolation was a separate, deliberate copy), and a write to an
+existing global persists.
+
+Three independent reasons, any one of which is sufficient:
+
+- **It contradicted this DD.** A global is read *and written* with no friction
+  from any scope. A capture body is not a scope boundary; nothing in the model
+  said it was.
+- **It contradicted itself.** Measured before the change:
+
+  ```sh
+  str x=one; fn f { x=two; echo hi }; str s=$(f)   # x is two — survives
+  str x=one; str s=$(x=two; echo hi)               # x is one — restored
+  ```
+
+  The same effect persisted or vanished according to spelling. The function
+  path was the one consistent with this DD, so the inline path was the bug.
+- **The save set was not total.** `collect_assigned_into` handled only
+  `Assignment` and `Declaration`, so `a[0]=v` and a `read` inside a body
+  escaped the restore regardless. An isolation you cannot rely on is worse
+  than none.
+
+### 2. A name first introduced in the body is local to it
+
+That is the other half of "anonymous function", and it is this DD's existing
+rule for function bodies verbatim: a name first assigned inside a function
+that is not a top-level global is automatically local. `str s=$(int y=5; echo
+hi); echo $y` is SB5031.
+
+### A deliberate bash divergence
+
+This is one of the few places sash does not match bash. Bash forks a subshell
+for `$( )` and the write is discarded; sash has no subshells, so it does not.
+Two specs asserted the bash behaviour and were rewritten, not silenced:
+`commands.sh` 14.3b and `errors.sh` csc.7.
+
+### No rebinding, including by the bulk binders
+
+"A name's type is fixed at its first introduction" binds `read`, `argv` and the
+3-argument `match`/`matchall` as much as anything else: each *introduces a
+collection*, so aiming one at a name already bound as a scalar is a rebinding
+and is now SB4030. It used to be accepted, and accepting it is how a
+`SashTable*` reached a scalar pointer slot — see
+`notes/tasks/bug-autodeclared-collection-scalar-read-leaks-pointer.md`. Over an
+`int` target it was a compiler ICE.
+
+Specs `spec/scope.sh` 86.59–86.70, `spec/types.sh` 75.101–75.107; journal 434.
