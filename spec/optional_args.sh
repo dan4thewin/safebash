@@ -298,6 +298,7 @@ echo ""'
 
 # 84.50 a user function call is a command argument list: argc really drops
 run_sash 'fn f {
+  : @args
   int n=$(len args)
   echo "argc=$n"
 }
@@ -307,6 +308,7 @@ f A ${p:~} B'
 
 # 84.51 …and does not drop when the value is non-empty
 run_sash 'fn f {
+  : @args
   int n=$(len args)
   echo "argc=$n"
 }

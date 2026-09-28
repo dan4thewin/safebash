@@ -165,7 +165,7 @@ run_sash 'fn each { for x in @args; do echo "$x"; done }; each a b c'
 [[ $rc = 0 && $out = $'a\nb\nc' && -z $err ]]; chk cf.f12
 
 # cf.f13 $# inside a function is the caller's arg count
-run_sash 'fn n { echo "$#"; }; n a b'
+run_sash 'fn n { : @args; echo "$#"; }; n a b'
 [[ $rc = 0 && $out = "2" && -z $err ]]; chk cf.f13
 
 # cf.f14 $1 inside a function is the caller's first arg

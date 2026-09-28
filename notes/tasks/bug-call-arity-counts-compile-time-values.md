@@ -4,7 +4,7 @@ status: blocked
 priority: P1
 kind: bug
 depends: []
-blocked_on: "DG — (1) whether a runtime arity shortfall stays unchecked; (2) separately, whether observing argc (`$(len args)`/`$#`) should keep implying variadic (DD#81 Part B says yes)"
+blocked_on: "DG — whether a runtime arity shortfall stays unchecked (options A/B/C below)"
 gates:
   - "`f @q` where `q` has enough elements for a fixed-arity `f` is not rejected"
   - "`f one ${x:~}` cannot silently deliver fewer arguments than the callee's `min`"
@@ -149,47 +149,30 @@ not be unreasonable if the runtime check proves noisy in practice.
 This is DG's call: it decides whether a compile-time arity guarantee survives
 contact with dynamic argument counts, and B changes generated code.
 
-# Adjacent, and NOT part of this bug — "observing argc ⇒ variadic"
+# Adjacent, and NOT part of this bug — "observing argc ⇒ variadic" (now fixed)
 
 The first draft of this file used `int n=$(len args)` in both callees. DG
 caught it (2026-09-28): *"the example functions in the task file are not
 variadic (the use of len alone shouldn't qualify)."*
 
-He is right that it spoiled the reproducers — the examples above are rewritten
-without it — and the draft compounded the error by calling that callee
-`Fixed{min:2}` while quoting an error that said "expects **at least** 2",
-which is the *variadic* message. The quoted evidence contradicted the
-sentence it was supporting.
+That spoiled the reproducers — the examples above are rewritten without it —
+and the draft compounded the error by calling that callee `Fixed{min:2}`
+while quoting an error that said "expects **at least** 2", which is the
+*variadic* message. The quoted evidence contradicted the sentence it was
+supporting.
 
-The underlying rule is real and measurable. `$(len args)` alone erases the
-arity ceiling:
+DG then settled the underlying rule: *"`$(len args)` is how a function would
+loop over variadic args; but accessing an arg via a loop or branch is what
+would make it variadic. Without the loop/branch the len is vacuous."*
 
-```sash
-fn f { str a=${args[0]}; str b=${args[1]}; echo "$(len args) [$a][$b]" }
-f p d x y      # → "4 [p][d]"        (accepted; two arguments discarded)
-```
+**Implemented** as the DD#81 addendum of 2026-09-28: `$(len args)` and `$#`
+contribute nothing to the inferred signature. `@args`, `$(join args)`,
+`$(keys args)` and a dynamic index still imply variadic — they *access*
+elements. A body that only counts is fixed-arity at its literal indices, and
+declares variadic intent with DD#81's no-op, `: @args`. Specs 81.17–81.29.
 
-Delete the `$(len args)` and the same call is `SB5043 ... takes 2 arguments
-but was called with 4`. `$#` behaves identically — the rule is *observing the
-count*, not anything about `len`.
-
-**This is deliberate.** DD#81 Part B states it three times — under "Signature
-inference" (whole-args access is "`@args`, `$(len args)` (the count; ≡ sugar
-`${#args}` / `$#`), or a dynamic index"), again under "Edge rules", and again
-in its "Implemented" section. Accepted, settled with DG 2026-08-25.
-
-Measured cost of changing it (experimental two-line patch to
-`cmdsub_reads_whole_args` + `sig_record_name`, built and run, then reverted —
-nothing committed): **17 native spec failures across 8 files**, roughly 34 rows
-dual-mode. `types.sh` 120/125/235/240/241/243/244, `functions.sh` 91/98,
-`optional_args.sh` 50/51, `argv.sh` 48/50, `arithmetic.sh` 76,
-`control_flow.sh` 35, `subscript.sh` 32, `coverage.sh` 255. The specified
-idiom that breaks is the plain arg-counter — `fn f { echo $(len args) }`
-called with arguments (75.23, 75.94, 75.98) becomes `Fixed{0,0}`, so `len` can
-only ever report 0.
-
-Changing it is a **DD#81 amendment and DG's call** — not folded into this bug,
-which reproduces without it.
+This bug is **unaffected**: both reproducers above are fixed-arity without any
+count, and they behaved identically before and after that change.
 
 # Where
 

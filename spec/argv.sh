@@ -235,7 +235,7 @@ run_sash 'array a=(x y); for x in @a $(argv); do echo "$x"; done'
 # must still reject them at top level (bug-dollar-hash-in-arith).
 
 # av.h1 $# is readable inside $(( )) within a function
-run_sash 'fn f { x=$(( $# + 10 )); echo $x; }
+run_sash 'fn f { : @args; x=$(( $# + 10 )); echo $x; }
 f a b'
 [[ $rc = 0 && $out = "12" && -z $err ]]; chk av.h1
 
@@ -247,6 +247,7 @@ echo $x'
 
 # av.h3 $# drives a (( )) comparison condition inside a function.
 run_sash 'fn f {
+  : @args
   if (( $# < 2 )); then echo few; else echo many; fi
 }
 f a

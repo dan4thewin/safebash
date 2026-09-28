@@ -367,7 +367,7 @@ run_sash '(( 0 )); echo $(( $? + 7 ))'
 run_sash '(( 1 )); echo $(( $? + 7 ))'
 [[ $rc = 0 && $out = "7" && -z $err ]]; chk 31.23
 # 31.24 $# (arg count) as a compound operand (already worked — pin it)
-run_sash 'f() { echo $(( $# * 2 )); }; f a b c'
+run_sash 'f() { : @args; echo $(( $# * 2 )); }; f a b c'
 [[ $rc = 0 && $out = "6" && -z $err ]]; chk 31.24
 
 # ── DD#58/Option C — sash-native intrinsics in an arithmetic sexpr $(( (f) )) ──

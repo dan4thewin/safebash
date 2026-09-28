@@ -771,10 +771,10 @@ fn sig_scan_expr(expr: &Expr, sig: &mut ArgSig) {
     }
 }
 
-/// `${args[k]:OP}` is an indexed cell; `@args` / `${#args}` (no cell index) is
-/// whole-args → variadic. `${N}`/`${#}` behave like `$N`/`$#` — and a positional
-/// `${N:-}`/`${N:~}` reads index N-1 *optionally* (DD#84), exactly like
-/// `${args[N-1]:-}`.
+/// `${args[k]:OP}` is an indexed cell; `@args` (no cell index) is whole-args
+/// → variadic. `${N}` behaves like `$N` — and a positional `${N:-}`/`${N:~}`
+/// reads index N-1 *optionally* (DD#84), exactly like `${args[N-1]:-}`.
+/// (`${#args}`/`${#}` are retired surfaces — SB4038/SB4034.)
 fn sig_scan_pexp(pe: &ParameterExpansion, sig: &mut ArgSig) {
     sig_record_pexp_subject(pe, sig);
     if let Some(op) = &pe.operand {
@@ -830,14 +830,18 @@ fn sig_scan_test(test: &TestExpr, sig: &mut ArgSig) {
     }
 }
 
-/// `$N` / `${N}` (1..9) → 0-based index; `$#`/`$@` → whole-args (variadic).
+/// `$N` / `${N}` (1..9) → 0-based index; `$@` → whole-args (variadic).
 /// A bare `$N` is a *required* read.
+///
+/// `$#` is deliberately **not** here (DD#81 addendum 2026-09-28). It observes
+/// the argument *count* without accessing an argument, so it says nothing
+/// about arity — see `cmdsub_reads_whole_args`.
 fn sig_record_name(name: &str, sig: &mut ArgSig) {
     if let Ok(n) = name.parse::<usize>() {
         if (1..=9).contains(&n) {
             sig.required.insert(n - 1);
         }
-    } else if name == "#" || name == "@" {
+    } else if name == "@" {
         sig.variadic = true;
     }
 }
@@ -860,12 +864,22 @@ fn sig_record_index(idx: &Expr, sig: &mut ArgSig, optional: bool) {
     }
 }
 
-/// `$(len args)` / `$(join args)` / `$(keys args)` — a whole-args count/fold.
+/// `$(join args)` / `$(keys args)` — a whole-args *fold*: both read every
+/// element, so the callee can use any number and is variadic.
+///
+/// `$(len args)` is deliberately **absent** (DD#81 addendum 2026-09-28, DG):
+/// it reads the argument *count*, not any argument. In a real variadic
+/// function it is only the loop bound — the access inside the loop
+/// (`${args[$i]}`, a dynamic index) is what marks the function variadic.
+/// Without such an access the count is vacuous, so it must not silently
+/// erase the arity ceiling. `$#` is the same rule, in `sig_record_name`.
+/// A function that genuinely wants its own count declares it with the DD#81
+/// no-op: `fn n { : @args; echo $# }`.
 fn cmdsub_reads_whole_args(stmts: &[Statement]) -> bool {
     stmts.iter().any(|s| match &s.kind {
         StmtKind::Command(c) => {
             matches!(&c.name.kind, ExprKind::Literal(n)
-                if matches!(n.as_str(), "len" | "join" | "keys"))
+                if matches!(n.as_str(), "join" | "keys"))
                 && c.args
                     .iter()
                     .any(|a| matches!(&a.kind, ExprKind::Literal(x) if x == "args"))

@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup functions
-plan=150
+plan=163
 echo "1..$plan" >&3
 
 set +e
@@ -459,6 +459,104 @@ run_sash 'fn f { echo "${*}"; }
 f a b'
 [[ $rc != 0 && -z $out && $err == *SB5045* ]]; chk 81.16
 
+# DD#81 addendum (2026-09-28, DG): counting the arguments is not accessing
+# them. `$(len args)` / `$#` read the argument *count*, never an argument, so
+# they contribute NOTHING to the inferred signature. Previously either one put
+# the function in the whole-args set and silently erased its arity ceiling.
+
+# 81.17 a body that only counts accesses no argument → Fixed{0,0}. SB5043, and
+# the message already names the escape hatch.
+run_sash 'fn n { echo "$#" }
+n a b'
+[[ $rc != 0 && -z $out && $err == *SB5043* && $err == *"@args"* ]]; chk 81.17
+
+# 81.18 the `$(len args)` spelling is the same rule
+run_sash 'fn n { echo "n=$(len args)" }
+n a b'
+[[ $rc != 0 && -z $out && $err == *SB5043* ]]; chk 81.18
+
+# 81.19 ... and so is `$#` inside `$(( ))` (sig_scan_arith reaches it)
+run_sash 'fn n { echo $(( $# * 2 )) }
+n a b'
+[[ $rc != 0 && -z $out && $err == *SB5043* ]]; chk 81.19
+
+# 81.20 branching on the count is still not an access
+run_sash 'fn n {
+  if (( $# < 2 )); then echo few; else echo many; fi
+}
+n a'
+[[ $rc != 0 && -z $out && $err == *SB5043* ]]; chk 81.20
+
+# 81.21 zero arguments is a legal call to such a function — it really is
+# Fixed{0,0}, not an error in itself, and the count it reports is 0.
+run_sash 'fn n { echo "$#" }
+n'
+[[ $rc = 0 && $out = "0" && -z $err ]]; chk 81.21
+
+# 81.22 DD#81's no-op idiom declares the variadic intent and restores the count
+run_sash 'fn n { : @args; echo "$#" }
+n a b'
+[[ $rc = 0 && $out = "2" && -z $err ]]; chk 81.22
+
+# 81.23 the same for `$(len args)`
+run_sash 'fn n { : @args; echo "n=$(len args)" }
+n a b c'
+[[ $rc = 0 && $out = "n=3" && -z $err ]]; chk 81.23
+
+# 81.24 and for the branch form
+run_sash 'fn n {
+  : @args
+  if (( $# < 2 )); then echo few; else echo many; fi
+}
+n a
+n a b c'
+[[ $rc = 0 && $out = $'few\nmany' && -z $err ]]; chk 81.24
+
+# 81.25 THE REGRESSION THIS RULE FIXES: a counted fixed-arity function keeps
+# its ceiling. Before the addendum this compiled and silently discarded two
+# arguments, printing "4 [p][d]".
+run_sash 'fn f {
+  str a=${args[0]}
+  str b=${args[1]}
+  echo "$(len args) [$a][$b]"
+}
+f p d x y'
+[[ $rc != 0 && -z $out && $err == *SB5043* ]]; chk 81.25
+
+# 81.26 the same body called correctly still counts at runtime — `len` works,
+# it just does not decide the signature
+run_sash 'fn f {
+  str a=${args[0]}
+  str b=${args[1]}
+  echo "$(len args) [$a][$b]"
+}
+f p d'
+[[ $rc = 0 && $out = "2 [p][d]" && -z $err ]]; chk 81.26
+
+# 81.27 the canonical variadic loop is unaffected: `len` is the loop BOUND, and
+# the dynamic index `${args[$i]}` inside the loop is what marks it variadic.
+run_sash 'fn f {
+  int n=$(len args)
+  int i=0
+  while (( i < n )); do
+    echo "[${args[$i]}]"
+    i=$(( i + 1 ))
+  done
+}
+f a b c'
+[[ $rc = 0 && $out = $'[a]\n[b]\n[c]' && -z $err ]]; chk 81.27
+
+# 81.28 a `@args` splat marks variadic on its own, with no `len` anywhere
+run_sash 'fn f { for x in @args; do echo "[$x]"; done }
+f a b c'
+[[ $rc = 0 && $out = $'[a]\n[b]\n[c]' && -z $err ]]; chk 81.28
+
+# 81.29 `$(join args)` is a whole-args FOLD — it reads every element, so unlike
+# `len` it does still imply variadic
+run_sash 'fn f { echo "j=$(join args ,)" }
+f a b c'
+[[ $rc = 0 && $out = "j=a,b,c" && -z $err ]]; chk 81.29
+
 # ── DD#74 addendum (DG 2026-09-07): the TAIL of an `&&`/`||` statement is not
 # a predicate ──
 # A function is a predicate when something branches on its status. In a bare
@@ -557,7 +655,7 @@ L" && -z $err ]]; chk ice.6
 
 # sp.1 a function receives one argument per ELEMENT
 run_sash 'array a=(x y z)
-fn f { echo "n=$(len args)" }
+fn f { : @args; echo "n=$(len args)" }
 f @a'
 [[ $rc = 0 && $out = "n=3" && -z $err ]]; chk sp.1
 
@@ -598,7 +696,7 @@ run_sash 'array a=(x y z)
 [[ $rc = 0 && $out = "<x><y><z>" && -z $err ]]; chk sp.7
 
 # sp.8 an explicit argument list is unchanged (control)
-run_sash 'fn f { echo "n=$(len args)" }
+run_sash 'fn f { : @args; echo "n=$(len args)" }
 f x y z'
 [[ $rc = 0 && $out = "n=3" && -z $err ]]; chk sp.8
 

@@ -560,7 +560,7 @@ run_sash 'fn f { echo $1; }
 f hello'
 [[ $rc = 0 && $out = "hello" && -z $err ]]; chk 75.17
 # 75.18 $# is the argument count (= $(len args))
-run_sash 'fn f { echo $#; }
+run_sash 'fn f { : @args; echo $#; }
 f a b c'
 [[ $rc = 0 && $out = "3" && -z $err ]]; chk 75.18
 # 75.19 a nested function call does NOT clobber the caller's positionals
@@ -585,7 +585,7 @@ f a b c d e f g h i j k'
 [[ $rc = 0 && $out = "k" && -z $err ]]; chk 75.22
 # 75.23 `$(len args)` is the arg count (= $#), reading the implicit array — the
 # intrinsic must resolve `args`.
-run_sash 'fn f { echo $(len args); }
+run_sash 'fn f { : @args; echo $(len args); }
 f a b c'
 [[ $rc = 0 && $out = "3" && -z $err ]]; chk 75.23
 # 75.24 `$(join args SEP)` joins the implicit array.
@@ -1243,6 +1243,7 @@ echo $(strlen @a)'
 
 # 75.89 an array splatted into a user function still arrives as args
 run_sash 'fn f {
+: @args
 echo $(len args)
 }
 array a=(1 2)
@@ -1282,6 +1283,7 @@ echo $(strlen "$(join a ,)")'
 # it directly. Reached `check_len_operand`'s `name == "args"` arm, which no
 # spec had exercised.
 run_sash 'fn f {
+: @args
 echo $(len args)
 }
 f a b c'
@@ -1289,6 +1291,7 @@ f a b c'
 
 # 75.95 it agrees with $# for the same frame
 run_sash 'fn f {
+: @args
 echo "$(len args) $#"
 }
 f x y'
@@ -1303,6 +1306,7 @@ f'
 
 # 75.97 an empty string is an argument: counted, not skipped
 run_sash 'fn f {
+: @args
 echo "$(len args) $#"
 }
 f "" ""'
@@ -1310,9 +1314,11 @@ f "" ""'
 
 # 75.98 `args` is per-frame -- a nested call does not disturb the caller's
 run_sash 'fn g {
+: @args
 echo "g=$(len args)"
 }
 fn f {
+: @args
 g x y z
 echo "f=$(len args)"
 }

@@ -110,10 +110,11 @@ makes the surface a checked signature over `@args`/`${args[i]}`/`$N`.
   is the contiguous set `{0..max}`; a gap is a **hole** (**SB5044**). A function
   with only literal indices and no whole-args access has **fixed arity =
   max+1**.
-- **Whole-args access** — `@args`, `$(len args)` (the count; ≡ sugar
-  `${#args}` / `$#`), or a **dynamic** index `${args[$i]}` — makes the function
-  **variadic** (any count; floor = highest literal index + 1 if any is also
-  present).
+- **Whole-args access** — `@args`, `$(join args)` / `$(keys args)`, or a
+  **dynamic** index `${args[$i]}` — makes the function **variadic** (any
+  count; floor = highest literal index + 1 if any is also present).
+  *Amended 2026-09-28 (see the addendum): `$(len args)` / `$#` are **not**
+  whole-args access — they read the count, not an argument.*
 
 ### Checking — at *every* call site
 
@@ -128,7 +129,8 @@ signature is always known):
 
 - `@args` **and** a literal index → variadic **with a floor** (the "first arg
   special, rest variadic" pattern).
-- `$(len args)` (the arg count; sugar `${#args}` / `$#`) → variadic.
+- `$(len args)` / `$#` (the arg count) → **nothing**; the count is not an
+  access (amended 2026-09-28 — was "→ variadic").
 - dynamic index `${args[$i]}` → variadic (a runtime index can't be a static
   slot).
 - `shift` → variadic (moot today; `shift` is unimplemented, SB5011).
@@ -187,15 +189,115 @@ should controlled dynamic behaviour ever be wanted back).
   (56e4c17), `$(f arg)` capture args (50474e9).
 - **Part B** — `transform/functions.rs::analyze_arity` infers `Arity`
   (`Fixed(n)` / `Variadic{floor}`) by walking the body's `args` reads
-  (`$N`/`${args[k]}` literal → fixed index; `@args`/`$(len args)`/`${#args}`/
-  `$#`/`$@`/dynamic index → variadic; **including inside `$(( ))`** — arith is
-  scanned via `sig_scan_arith`, else `$#` in a condition is missed). Checked on
+  (`$N`/`${args[k]}` literal → fixed index; `@args`/`$(join args)`/
+  `$(keys args)`/`$@`/dynamic index → variadic; **including inside `$(( ))`** —
+  arith is scanned via `sig_scan_arith`, else a positional in a condition is
+  missed). Checked on
   all three call paths (plain, pipeline, `$( )` capture): fixed → exactly N
   (**SB5042** too-few / **SB5043** too-many); variadic → ≥ floor (SB5042). A
   fixed signature must read `{0..max}` contiguously — a gap is **SB5044**
-  (rule (a)).
+  (rule (a)). *(`$(len args)`/`$#` were in the variadic set until the
+  2026-09-28 addendum below.)*
 - **The no-op idiom** (DG 2026-08-25): to acknowledge an argument a fixed-arity
   function *takes* but does not otherwise use, reference it in a no-op — `fn f
   { : $1; echo $2; }` (reads index 0, no hole). To take a *variable* number (or
   reach a high index without the lower ones), mark the function variadic with
   `@args` — `fn f { : @args; echo ${args[10]}; }`. specs functions.sh 81.9–81.13.
+
+## Addendum (2026-09-28) — counting the arguments is not accessing them
+
+**DG:** *"`$(len args)` is how a function would loop over variadic args; but
+accessing an arg via a loop or branch is what would make it variadic. Without
+the loop/branch the len is vacuous."*
+
+The original Part B put `$(len args)` / `$#` in the whole-args set, so
+**observing the argument count erased the arity ceiling**:
+
+```sash
+fn f { str a=${args[0]}; str b=${args[1]}; echo "$(len args) [$a][$b]" }
+f p d x y     # → "4 [p][d]"   — accepted, two arguments silently discarded
+```
+
+Delete the `$(len args)` and the same call is SB5043. One `len` anywhere in
+the body turned `Fixed{2,2}` into "any count".
+
+### The rule
+
+Arity is inferred from how a body **accesses** its arguments, never from
+whether it counts them:
+
+| in the body | contributes |
+|---|---|
+| `${args[k]}` / `$N` literal | fixed index `k` (required) |
+| `${args[k]:-}` / `${args[k]:~}` | fixed index `k` (optional, DD#84) |
+| `${args[$i]}` dynamic index | **variadic** |
+| `@args` splat | **variadic** |
+| `$(join args)` / `$(keys args)` | **variadic** (both read every element) |
+| `$(len args)` / `$#` | **nothing** |
+
+`len` earns its place in a variadic function as the *loop bound*, and the
+access inside that loop is already a dynamic index — so the canonical form
+stays variadic without `len` contributing anything:
+
+```sash
+fn f {
+  int n=$(len args)
+  int i=0
+  while (( i < n )); do echo "[${args[$i]}]"; i=$(( i + 1 )); done
+}
+f a b c        # → [a] [b] [c]      (variadic via ${args[$i]})
+```
+
+`for x in @args` and `$(join args)` likewise keep working on their own
+access. **No variadic idiom depends on the old rule.**
+
+### What this rejects, and the escape hatch
+
+A body that counts but never accesses is now fixed-arity at whatever its
+literal indices say — `{0,0}` if there are none:
+
+```sash
+fn n { echo "$#" }
+n a b
+→ error [SB5043] function 'n' takes 0 arguments but was called with 2
+  — use @args to accept a variable number
+```
+
+That is DD#81's **no-op idiom**, unchanged since 2026-08-25, and SB5043 was
+already worded to point at it. A function that genuinely wants its own count
+declares that it takes any number:
+
+```sash
+fn n { : @args; echo "$#" }
+n a b          # → 2
+```
+
+This is a **breaking change** — a bare `$#`/`len args` counter now needs
+`: @args` — and it is fail-closed: it rejects programs, never accepts new
+ones. Migration is one token per function.
+
+### Why it is the right default
+
+sash checks arity at compile time (SB5042/SB5043), so a hand-written runtime
+`if (( $# != 2 ))` guard is redundant with a guarantee the compiler already
+makes. Under the old rule *writing that guard silently removed the
+guarantee it was imitating*. Making the count contribute nothing means the
+only way to opt out of the compile-time check is to say so — `: @args` —
+rather than to mention `$#` in passing.
+
+### Cost, measured
+
+17 specs asserted the old behaviour, every one of them a count-without-access
+body: types.sh 75.18/75.23/75.89/75.94/75.95/75.97/75.98, functions.sh
+sp.1/sp.8, optional_args.sh 84.50/84.51, argv.sh av.h1/av.h3, arithmetic.sh
+31.24, control_flow.sh cf.f13, subscript.sh 80.32, coverage.sh cov.241. All
+were migrated by adding `: @args`. No spec exercising a real variadic access
+moved.
+
+### Not changed — "branch"
+
+DG's phrasing was "a loop **or branch**". A *conditionally* read literal index
+(`if …; then str b=${args[1]}; fi`) still contributes a required fixed index
+rather than making the function variadic, because DD#84 already gives that
+shape a tighter spelling — `${args[1]:-}` → `Fixed{1,2}`, which states the
+optionality instead of discarding the ceiling. Left as-is pending DG.

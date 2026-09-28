@@ -215,7 +215,7 @@ f 2'
 
 # 80.32 `$#` as the index — the same fall-through, a first byte that is
 # neither a letter nor `_`.
-run_sash 'fn f { array arr=(p q r); echo ${arr[$#]} }
+run_sash 'fn f { : @args; array arr=(p q r); echo ${arr[$#]} }
 f a b'
 [[ $rc = 0 && $out = r && -z $err ]]; chk 80.32
 
