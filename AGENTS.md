@@ -1089,6 +1089,39 @@ Zero tolerance. Finding a bug is a stop-everything event. Never work
 around it. If you notice yourself routing around a behavior, STOP.
 Investigate whether it's a bug.
 
+## Cold arms: ICE or answer?
+
+Declared-total walkers (`do not add a wildcard`, enforced by
+`contrib/totality-check.py`) need an arm per variant, including shapes no
+source can currently produce. Those arms show up as cold lines every time the
+coverage queue is ranked. The test for what the body should say is:
+
+> **Unreachable by construction → `unreachable!()`. Merely unexercised →
+> the correct arm.**
+
+An arm cold because a *compiler invariant* forbids it can only be reached by
+breaking that invariant — which requires editing the compiler's own source, so
+the ICE fires in the opener's spec sweep and never reaches a user. A correct
+recursion there is an **unverified claim**: nothing exercises it, so the route
+opens in silence. That is the same failure shape as the `_ => {}` that let
+`SsaInst::Test` and `RedirectPush` escape the SSA taint pass for its whole
+life. For a taint walker, silent-and-maybe-wrong is the worst option.
+
+An arm cold merely because no spec hits it would crash a real user. Leave it,
+and pin the answer with a unit test.
+
+**Coverage cannot tell the two apart** — only enumerating construction sites
+can, and the enumeration must be of the *producer*, not the transform you
+think removes it. Journal 439: `collect_expr_var_name`'s redirect arms looked
+dead via `spill_scalar_redirect_targets`, and the spill has two call sites —
+but `cmd_handlers.rs:296` builds an `SsaInst::RedirectPush` that goes through
+neither. Checking the spill's callers said "unreachable"; checking
+`RedirectPush`'s said "reachable". Three of eight candidates failed that way.
+
+A green sweep is **corroboration, not proof** — "merely unexercised" is silent
+by definition. Pin a converted arm with `#[should_panic(expected = …)]`: the
+panic *is* the claim that the shape is still unreachable.
+
 ## Taint system
 
 Taint is definition-based, not name-based. There is no "clean list"
