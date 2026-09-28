@@ -9246,3 +9246,77 @@ fn loop_control_diag(c: &Command, span: Span, in_loop: bool) -> Option<Diagnosti
         ),
     ))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn e(kind: ExprKind) -> Expr {
+        Expr {
+            kind,
+            span: Span::new(1, 1),
+        }
+    }
+
+    fn unary(var: &str) -> TestExpr {
+        TestExpr::Unary {
+            op: "-n".to_string(),
+            operand: Box::new(e(ExprKind::SimpleExpansion(var.to_string()))),
+        }
+    }
+
+    fn uses(t: &TestExpr) -> bool {
+        test_uses_tainted(t, &HashSet::from(["t".to_string()]))
+    }
+
+    // `expr_uses_tainted` must stay total over `ExprKind` — a `_ => {}` there
+    // leaked three times, once as a taint bypass that shipped — so it has a
+    // `Test` arm, and that arm calls this. But its caller asks "does this value
+    // flowing INTO A COLLECTION read a tainted name", and an `ExprKind::Test`
+    // is never such a value: `array a=( [[ -n $t ]] )` is SB4014 at parse, and
+    // `array a=( $([[ -n $t ]]) )` is a `CommandSubstitution`, which the arm
+    // above deliberately does not descend into. Measured: the whole function is
+    // cold across a union coverage run.
+    //
+    // Unreachable is not the same as wrong. `[[ ]]` operands ARE read
+    // positions — `check_test_taint`, this function's diagnostic-emitting
+    // twin, is what enforces that — so if a future form does put a test in
+    // value position, the answer has to be right the first time. Pinned here,
+    // including the recursion through the connectives, which is where a
+    // hand-written twin would most plausibly drop an operand.
+    #[test]
+    fn every_test_shape_sees_a_tainted_operand() {
+        let clean = unary("c");
+        let dirty = unary("t");
+
+        assert!(uses(&dirty));
+        assert!(!uses(&clean));
+
+        for (left, right) in [(&clean, &dirty), (&dirty, &clean)] {
+            assert!(uses(&TestExpr::And(
+                Box::new(left.clone()),
+                Box::new(right.clone())
+            )));
+            assert!(uses(&TestExpr::Or(
+                Box::new(left.clone()),
+                Box::new(right.clone())
+            )));
+        }
+        assert!(!uses(&TestExpr::And(
+            Box::new(clean.clone()),
+            Box::new(clean.clone())
+        )));
+
+        assert!(uses(&TestExpr::Not(Box::new(dirty.clone()))));
+        assert!(!uses(&TestExpr::Not(Box::new(clean.clone()))));
+
+        // Both sides of a binary operand, not just the left.
+        for (l, r) in [("c", "t"), ("t", "c")] {
+            assert!(uses(&TestExpr::Binary {
+                left: Box::new(e(ExprKind::SimpleExpansion(l.to_string()))),
+                op: "=".to_string(),
+                right: Box::new(e(ExprKind::SimpleExpansion(r.to_string()))),
+            }));
+        }
+    }
+}

@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup taint
-plan=260
+plan=264
 echo "1..$plan" >&3
 
 set +e
@@ -1558,6 +1558,36 @@ run_sash 'array a=( x )
 array b=( @{a:-} )
 /bin/echo $b[0]'
 [[ $rc = 0 && $out = "x" && -z $rerr ]]; chk bkstp.8
+
+# bkstp.9 POSITIVE — DD#91 `${t:!~}`. `elide_taint` reads the flag and answers
+#         Clean, so the array derives clean and the later read is allowed.
+#         In a `$( )` body so the front end is not what decides it, and so the
+#         pair below differs by exactly one character.
+run_sash '/bin/echo $(str t=$(getenv HOME); array a=( ${t:!~} ); echo $a[0])'
+[[ $rc = 0 && $out = "$HOME" && -z $rerr ]]; chk bkstp.9
+
+# bkstp.10 NEGATIVE — the same elide WITHOUT the `!`. `:~` says what to do
+#          when the value is absent; it vouches for nothing, so the array is
+#          tainted and reading it is caught.
+run_sash '/bin/echo $(str t=$(getenv HOME); array a=( ${t:~} ); echo $a[0])'
+[[ $rc != 0 && -z $out && $err == *"taint backstop"* ]]; chk bkstp.10
+
+# bkstp.11 NEGATIVE — a tainted ARRAY at a splat. `b` is tainted through its
+#          own `:-` default (bkstp.5's mechanism), and splatting it into `c`
+#          must carry that across. The splat's word here is the CLEAN literal
+#          `z`, so `splat_taint` can only reach the right answer via the array
+#          itself — the one read this spec isolates.
+run_sash 'array a=( )
+/bin/echo $(str t=$(getenv HOME); array b=( @{a:-$t} ); array c=( @{b:-z} ); echo $c[0])'
+[[ $rc != 0 && -z $out && $err == *"taint backstop"* ]]; chk bkstp.11
+
+# bkstp.12 POSITIVE — the same splat with DD#91 `@{b:!-z}`. `!` is a per-use
+#          attest-all for the splat's own read, so `c` derives clean and keeps
+#          `b`'s elements. The counterpart to bkstp.7: there `!` did NOT cover
+#          an unrelated word, here it DOES cover the subject it names.
+run_sash 'array a=( )
+/bin/echo $(str t=$(getenv HOME); array b=( @{a:-$t} ); array c=( @{b:!-z} ); echo $c[0])'
+[[ $rc = 0 && $out = "$HOME" && -z $rerr ]]; chk bkstp.12
 
 set -e
 tally

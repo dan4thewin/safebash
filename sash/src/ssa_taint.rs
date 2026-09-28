@@ -732,3 +732,183 @@ fn check_tainted_array(
         ));
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ir::{Expr, ExprKind, ParameterExpansion, Span, VarType};
+
+    fn vref(name: &str) -> VarRef {
+        VarRef {
+            name: name.to_string(),
+            version: 1,
+            var_type: VarType::String,
+        }
+    }
+
+    fn tainted(name: &str) -> HashMap<String, Taint> {
+        HashMap::from([(format!("{}_1", name), Taint::Tainted)])
+    }
+
+    fn e(kind: ExprKind) -> Expr {
+        Expr {
+            kind,
+            span: Span::new(1, 1),
+        }
+    }
+
+    fn names_read_by(kind: ExprKind) -> Vec<String> {
+        let mut out = Vec::new();
+        collect_expr_var_name(&e(kind), &mut out);
+        out
+    }
+
+    fn errors_for(value: &SsaValue, taint: &HashMap<String, Taint>) -> Vec<String> {
+        let mut errors = Vec::new();
+        check_value_use(value, taint, &mut errors, "a sink");
+        errors
+    }
+
+    fn pexp(name: &str, taint_off: bool) -> ExprKind {
+        ExprKind::ParameterExpansion(ParameterExpansion {
+            name: name.to_string(),
+            operator: Some(":?".to_string()),
+            operand: Some(Box::new(e(ExprKind::Literal("no".to_string())))),
+            index: None,
+            taint_off,
+        })
+    }
+
+    // `collect_expr_var_name` is total over `ExprKind`, but its only caller
+    // walks a REDIRECT TARGET, and `spill_scalar_redirect_targets` rewrites
+    // every `${…}` and `$a[i]` target into a synthetic scalar plus a bare
+    // `SimpleExpansion` before the SSA exists. Measured: one instrumented
+    // compile of `/bin/echo hi > ${f:?no}` reaches the `SimpleExpansion` arm
+    // and no other, and `> ${a[0]:?no}` does the same.
+    //
+    // Nothing is lost by the spill — the temp's own taint is derived from the
+    // spilled value by `classify_inst_def`, so a tainted `${f:?no}` is still
+    // rejected, via the temp's name. That makes these two arms correct and
+    // unreachable from any source text, which is exactly the case a unit test
+    // exists for (same shape as `every_expr_kind_renders` in
+    // `transform/expressions.rs`). Pinned, not deleted: the match is total on
+    // purpose, and a future target form that skips the spill must find the
+    // right answer already here.
+    #[test]
+    fn redirect_target_forms_resolve_the_name_they_read() {
+        assert_eq!(names_read_by(ExprKind::SimpleExpansion("f".into())), ["f"]);
+        assert_eq!(
+            names_read_by(ExprKind::Subscript {
+                name: "a".into(),
+                index: Box::new(e(ExprKind::Literal("0".into()))),
+            }),
+            ["a"]
+        );
+        assert_eq!(names_read_by(pexp("f", false)), ["f"]);
+        // DD#91: `${f:!?no}` has vouched for this read. Naming it here would
+        // make the backstop reject a program the front end deliberately allows.
+        assert!(names_read_by(pexp("f", true)).is_empty());
+    }
+
+    // These five `SsaValue` shapes are built **only** as the value of an
+    // `SsaInst::Assign` — `ArgvIndex` and `TableValue`/`TableKey` by the
+    // for-loop binding lowerings, `AssocArray` by a map literal, and
+    // `ArithExpr` by a hoisted `$(( … ))`. `SsaInst::taint_reads` returns no
+    // reads for `Assign` (a value there propagates into its target, where
+    // `classify_inst_def` owns it), so none of them can reach `check_value_use`
+    // from source. Measured: `/bin/echo $(( x + 1 ))` and its test-operand and
+    // redirect-target spellings all leave the `ArithExpr` arm cold.
+    //
+    // The arms are still the right answer, and `check_value_use` is total on
+    // purpose, so they are pinned here rather than removed.
+    #[test]
+    fn assign_only_value_shapes_still_report_a_tainted_read() {
+        let t = tainted("v");
+        let arr = HashMap::from([("m_1".to_string(), Taint::Tainted)]);
+
+        assert_eq!(
+            errors_for(
+                &SsaValue::ArithExpr {
+                    var: vref("v"),
+                    op: ArithOp::Add,
+                    operand: 1,
+                },
+                &t
+            )
+            .len(),
+            1
+        );
+        assert_eq!(errors_for(&SsaValue::ArgvIndex(vref("v")), &t).len(), 1);
+        assert_eq!(
+            errors_for(
+                &SsaValue::TableValue {
+                    array: "m".into(),
+                    index: vref("i"),
+                },
+                &arr
+            )
+            .len(),
+            1
+        );
+        assert_eq!(
+            errors_for(
+                &SsaValue::TableKey {
+                    array: "m".into(),
+                    index: vref("i"),
+                },
+                &arr
+            )
+            .len(),
+            1
+        );
+        // The whole of `check_assoc_use`: the keys are literal strings in SSA,
+        // so only the value half can carry a read.
+        assert_eq!(
+            errors_for(
+                &SsaValue::AssocArray(vec![("k".into(), SsaValue::Var(vref("v")))]),
+                &t
+            )
+            .len(),
+            1
+        );
+    }
+
+    // `CmdSubstBody`'s reads are an open FRONT-END gap
+    // (`notes/tasks/bug-taint-escape-in-cmdsub-body.md`), not something this
+    // value-oriented walk can see: `body` is `Vec<ir::Statement>` and is never
+    // lowered to SSA. It is also lifted out of value position by
+    // `lift_int_func_calls` before codegen. Pinned so that "reports nothing"
+    // stays a deliberate answer rather than an accident of the lift ordering.
+    #[test]
+    fn a_cmdsub_body_reports_nothing_from_the_value_walk() {
+        assert!(errors_for(&SsaValue::CmdSubstBody { body: Vec::new() }, &tainted("v")).is_empty());
+    }
+
+    // Both guards in `cmd_subst_taint`'s head resolution. DD#23 rewrites an
+    // external head to an absolute-path `Literal` and a user-function capture
+    // is lowered elsewhere, so neither is reachable from source — the comment
+    // on the `user_functions` lookup already records that measurement. The
+    // conservative direction is what matters and it is asserted here: an
+    // unrecognisable head is TAINTED, never clean.
+    #[test]
+    fn cmd_subst_head_resolution_fails_closed() {
+        let taint = HashMap::new();
+        let fns = std::collections::HashSet::from(["f".to_string()]);
+
+        // No head at all, and a non-literal head: tainted.
+        assert_eq!(cmd_subst_taint(&[], &taint, &fns), Taint::Tainted);
+        assert_eq!(
+            cmd_subst_taint(&[SsaValue::Var(vref("c"))], &taint, &fns),
+            Taint::Tainted
+        );
+        // A bare user-function name is clean (DD#24); an external is not.
+        assert_eq!(
+            cmd_subst_taint(&[SsaValue::Literal("f".into())], &taint, &fns),
+            Taint::Clean
+        );
+        assert_eq!(
+            cmd_subst_taint(&[SsaValue::Literal("/bin/cat".into())], &taint, &fns),
+            Taint::Tainted
+        );
+    }
+}
