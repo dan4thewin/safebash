@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup functions
-plan=138
+plan=150
 echo "1..$plan" >&3
 
 set +e
@@ -955,6 +955,102 @@ return ${s:-1}
 }
 if f; then echo yes; else echo no; fi'
 [[ $rc = 0 && $out = "no" && -z $err ]]; chk 74.61
+
+# ── lift: a capture nested in a value must be materialized ──────────────
+# `lift_int_func_calls` walks a value and captures every `$(f)` into a temp.
+# It used to end in `other => other`, so it never descended into most of
+# `SsaValue` — an unlifted FuncCall/IntFuncCall then reached codegen and
+# panicked ("ICE: FuncCall should have been lifted during transform"). The
+# walk is now total over `SsaValue`. Every program below is valid bash and
+# crashed the compiler before that; the expected values match bash exactly.
+
+# lift.1 a capture as an array element
+run_sash 'f() { echo hi; }
+array a=( $(f) )
+echo "[${a[0]}]"'
+[[ $rc = 0 && $out = "[hi]" && -z $err ]]; chk lift.1
+
+# lift.2 a capture as a map value in the initializer
+run_sash 'f() { echo hi; }
+map m=([k]=$(f))
+echo "[${m[k]}]"'
+[[ $rc = 0 && $out = "[hi]" && -z $err ]]; chk lift.2
+
+# lift.3 a capture as a subscript index (`q`, not `p` — a vacuous index would
+# collapse to 0 and still print the first element)
+run_sash 'f() { echo 1; }
+array arr=(p q)
+str z=${arr[$(f)]}
+echo "[$z]"'
+[[ $rc = 0 && $out = "[q]" && -z $err ]]; chk lift.3
+
+# lift.4 a capture in a `:-` operand, default taken
+run_sash 'f() { echo hi; }
+str y=""
+str z=${y:-$(f)}
+echo "[$z]"'
+[[ $rc = 0 && $out = "[hi]" && -z $err ]]; chk lift.4
+
+# lift.5 ...and not taken
+run_sash 'f() { echo hi; }
+str y=set
+str z=${y:-$(f)}
+echo "[$z]"'
+[[ $rc = 0 && $out = "[set]" && -z $err ]]; chk lift.5
+
+# lift.6 `:-` is LAZY: the operand is evaluated only when the default fires,
+# so an untaken capture must not run. Hoisting it into the enclosing block
+# would still print "[set]" — the side effect on stderr is what catches it.
+run_sash 'f() { echo RAN >&2; echo hi; }
+str y=set
+str z=${y:-$(f)}
+echo "[$z]"'
+[[ $rc = 0 && $out = "[set]" && -z $rerr ]]; chk lift.6
+
+# lift.7 ...and it does run when the default fires (lift.6 alone would pass
+# against a compiler that never evaluated the operand at all)
+run_sash 'f() { echo RAN >&2; echo hi; }
+str y=""
+str z=${y:-$(f)}
+echo "[$z]"'
+[[ $rc = 0 && $out = "[hi]" && $rerr = "RAN" ]]; chk lift.7
+
+# lift.8 a `:-` capture stored through a subscript assignment
+run_sash 'f() { echo hi; }
+str y=""
+array a=(x)
+a[0]=${y:-$(f)}
+echo "[${a[0]}]"'
+[[ $rc = 0 && $out = "[hi]" && -z $err ]]; chk lift.8
+
+# lift.9 nested dispositions — the inner operand is two levels down
+run_sash 'f() { echo hi; }
+str y=""
+str w=""
+str z=${y:-${w:-$(f)}}
+echo "[$z]"'
+[[ $rc = 0 && $out = "[hi]" && -z $err ]]; chk lift.9
+
+# lift.10 a `:-` capture inside a double-quoted concatenation
+run_sash 'f() { echo hi; }
+str y=""
+str z="pre-${y:-$(f)}-post"
+echo "[$z]"'
+[[ $rc = 0 && $out = "[pre-hi-post]" && -z $err ]]; chk lift.10
+
+# lift.11 a capture assigned into a map cell
+run_sash 'f() { echo hi; }
+map m=([k]=old)
+m[k]=$(f)
+echo "[${m[k]}]"'
+[[ $rc = 0 && $out = "[hi]" && -z $err ]]; chk lift.11
+
+# lift.12 a capture appended to an array
+run_sash 'f() { echo hi; }
+array a=(p)
+a+=( $(f) )
+echo "[${a[1]}]"'
+[[ $rc = 0 && $out = "[hi]" && -z $err ]]; chk lift.12
 
 set -e
 tally

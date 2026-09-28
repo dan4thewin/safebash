@@ -165,6 +165,17 @@ pub(super) fn lift_test_captures(
     }
 }
 
+/// Materialize every nested function call / command-substitution capture in a
+/// value into the current block, replacing it with a read of the temp it was
+/// captured into.
+///
+/// **Total over `SsaValue` on purpose — do not add a wildcard.** A `FuncCall`,
+/// `IntFuncCall` or `CmdSubstBody` that reaches codegen unlifted is an ICE
+/// (`codegen/values.rs`, `emit_c.rs`), so every variant owning a sub-value has
+/// to be walked. The `other => other` arm this replaced skipped `IndexedArray`,
+/// `AssocArray`, `Subscript`, `DefaultValue` and a dozen more, so
+/// `array a=( $(f) )`, `map m=([k]=$(f))`, `${arr[$(g)]}` and `${y:-$(f)}` —
+/// every one a valid bash program — crashed the compiler instead of compiling.
 pub(super) fn lift_int_func_calls(
     val: SsaValue,
     ssa: &mut SsaProgram,
@@ -172,44 +183,14 @@ pub(super) fn lift_int_func_calls(
     block: &mut BlockId,
 ) -> SsaValue {
     match val {
+        // ── the captures this pass exists to materialize ──────────────
         SsaValue::IntFuncCall { name, args } => {
-            // Inline the function and capture return value
-            let lifted_args: Vec<SsaValue> = args
-                .into_iter()
-                .map(|a| lift_int_func_calls(a, ssa, state, block))
-                .collect();
-            inline_int_func(&name, &lifted_args, ssa, state, block)
+            let lifted = lift_each(args, ssa, state, block);
+            inline_int_func(&name, &lifted, ssa, state, block)
         }
         SsaValue::FuncCall { name, args } => {
-            // Option A (string-func-capture-in-arg-ice): a non-int function's
-            // `$(f …)` stdout capture in argument position. Reuse the assignment
-            // path's capture-inline machinery (CaptureStart/End) to inline the
-            // body and capture its stdout into a temp, then use the temp — so it
-            // works for runtime output too, not just const-foldable stdout.
-            // DD#81: the call's args are carried on FuncCall and threaded into
-            // the capture so the callee's `args` array is set up (was dropped).
-            let lifted_args: Vec<SsaValue> = args
-                .into_iter()
-                .map(|a| lift_int_func_calls(a, ssa, state, block))
-                .collect();
-            let temp = format!("__strcap_{name}");
-            match super::stmt_handlers::capture_func_into(
-                &temp,
-                &name,
-                &lifted_args,
-                state,
-                ssa,
-                *block,
-            ) {
-                Some(new_block) => {
-                    *block = new_block;
-                    SsaValue::Var(state.lookup(&temp))
-                }
-                None => SsaValue::FuncCall {
-                    name,
-                    args: lifted_args,
-                },
-            }
+            let lifted = lift_each(args, ssa, state, block);
+            lift_str_func_call(name, lifted, ssa, state, block)
         }
         SsaValue::CmdSubstBody { body, .. } => {
             // A multi-statement/pipeline `$(…)` body: capture its stdout into a
@@ -219,40 +200,259 @@ pub(super) fn lift_int_func_calls(
             *block = super::stmt_handlers::capture_body_into(&temp, &body, state, ssa, *block);
             SsaValue::Var(state.lookup(&temp))
         }
+
+        // ── `:-` is LAZY: its operand runs only when the default fires ─
+        SsaValue::DefaultValue { source, default } => {
+            lift_default_value(*source, *default, ssa, state, block)
+        }
+
+        // ── collections ───────────────────────────────────────────────
+        SsaValue::Concat(parts) => SsaValue::Concat(lift_each(parts, ssa, state, block)),
+        SsaValue::IndexedArray(parts) => {
+            SsaValue::IndexedArray(lift_each(parts, ssa, state, block))
+        }
+        SsaValue::CmdSubst { argv, suppressed } => SsaValue::CmdSubst {
+            argv: lift_each(argv, ssa, state, block),
+            suppressed,
+        },
+        SsaValue::AssocArray(pairs) => SsaValue::AssocArray(
+            pairs
+                .into_iter()
+                .map(|(k, v)| (k, lift_int_func_calls(v, ssa, state, block)))
+                .collect(),
+        ),
+
+        // ── single-subject wrappers ───────────────────────────────────
+        SsaValue::SlurpFile(path) => SsaValue::SlurpFile(lift_boxed(*path, ssa, state, block)),
+        SsaValue::CaseConvert { subject, upper } => SsaValue::CaseConvert {
+            subject: lift_boxed(*subject, ssa, state, block),
+            upper,
+        },
+        SsaValue::StrLen { subject } => SsaValue::StrLen {
+            subject: lift_boxed(*subject, ssa, state, block),
+        },
+        SsaValue::ElideEmpty { source, taint_off } => SsaValue::ElideEmpty {
+            source: lift_boxed(*source, ssa, state, block),
+            taint_off,
+        },
+        SsaValue::Trusted { source } => SsaValue::Trusted {
+            source: lift_boxed(*source, ssa, state, block),
+        },
+        SsaValue::Substring { source, spec } => SsaValue::Substring {
+            source: lift_boxed(*source, ssa, state, block),
+            spec,
+        },
+        SsaValue::IntCell(inner) => SsaValue::IntCell(lift_boxed(*inner, ssa, state, block)),
+        SsaValue::Subscript {
+            array,
+            index,
+            is_integer_key,
+            is_integer_value,
+        } => SsaValue::Subscript {
+            array,
+            index: lift_boxed(*index, ssa, state, block),
+            is_integer_key,
+            is_integer_value,
+        },
+        SsaValue::ArraySplat { array, disposition } => SsaValue::ArraySplat {
+            array,
+            disposition: disposition.map(|d| ArraySplatDisposition {
+                word: lift_boxed(*d.word, ssa, state, block),
+                has_word: d.has_word,
+                abort: d.abort,
+                taint_off: d.taint_off,
+            }),
+        },
+
+        // ── multi-operand values ──────────────────────────────────────
         SsaValue::ArithBinOp { left, op, right } => {
-            let l = lift_int_func_calls(*left, ssa, state, block);
-            let r = lift_int_func_calls(*right, ssa, state, block);
-            SsaValue::ArithBinOp {
-                left: Box::new(l),
-                op,
-                right: Box::new(r),
-            }
+            let left = lift_boxed(*left, ssa, state, block);
+            let right = lift_boxed(*right, ssa, state, block);
+            SsaValue::ArithBinOp { left, op, right }
         }
         SsaValue::Ternary {
             cond,
             true_val,
             false_val,
         } => {
-            let c = lift_int_func_calls(*cond, ssa, state, block);
-            let t = lift_int_func_calls(*true_val, ssa, state, block);
-            let f = lift_int_func_calls(*false_val, ssa, state, block);
+            let cond = lift_boxed(*cond, ssa, state, block);
+            let true_val = lift_boxed(*true_val, ssa, state, block);
+            let false_val = lift_boxed(*false_val, ssa, state, block);
             SsaValue::Ternary {
-                cond: Box::new(c),
-                true_val: Box::new(t),
-                false_val: Box::new(f),
+                cond,
+                true_val,
+                false_val,
             }
         }
-        SsaValue::Concat(parts) => {
-            // A double-quoted string with an embedded `$(f)` / `$((f))` lowers
-            // to a Concat; lift each part so a nested IntFuncCall materializes.
-            let lifted = parts
-                .into_iter()
-                .map(|p| lift_int_func_calls(p, ssa, state, block))
-                .collect();
-            SsaValue::Concat(lifted)
+        SsaValue::RegexMatch { subject, pattern } => {
+            let subject = lift_boxed(*subject, ssa, state, block);
+            let pattern = lift_boxed(*pattern, ssa, state, block);
+            SsaValue::RegexMatch { subject, pattern }
         }
-        other => other, // no IntFuncCall inside
+        SsaValue::RegexReplace {
+            subject,
+            pattern,
+            replacement,
+            global,
+        } => {
+            let subject = lift_boxed(*subject, ssa, state, block);
+            let pattern = lift_boxed(*pattern, ssa, state, block);
+            let replacement = lift_boxed(*replacement, ssa, state, block);
+            SsaValue::RegexReplace {
+                subject,
+                pattern,
+                replacement,
+                global,
+            }
+        }
+        SsaValue::RequireValue { source, message } => {
+            let source = lift_boxed(*source, ssa, state, block);
+            let message = lift_boxed(*message, ssa, state, block);
+            SsaValue::RequireValue { source, message }
+        }
+
+        // ── leaves: nothing below them to walk ────────────────────────
+        v @ (SsaValue::Literal(_)
+        | SsaValue::Var(_)
+        | SsaValue::Expr(_)
+        | SsaValue::ArithExpr { .. }
+        | SsaValue::ParamExpansion { .. }
+        | SsaValue::ArgvIndex(_)
+        | SsaValue::TableValue { .. }
+        | SsaValue::TableKey { .. }) => v,
     }
+}
+
+fn lift_each(
+    vals: Vec<SsaValue>,
+    ssa: &mut SsaProgram,
+    state: &mut VersionState,
+    block: &mut BlockId,
+) -> Vec<SsaValue> {
+    vals.into_iter()
+        .map(|v| lift_int_func_calls(v, ssa, state, block))
+        .collect()
+}
+
+fn lift_boxed(
+    val: SsaValue,
+    ssa: &mut SsaProgram,
+    state: &mut VersionState,
+    block: &mut BlockId,
+) -> Box<SsaValue> {
+    Box::new(lift_int_func_calls(val, ssa, state, block))
+}
+
+/// Option A (string-func-capture-in-arg-ice): a non-int function's `$(f …)`
+/// stdout capture in argument position. Reuse the assignment path's
+/// capture-inline machinery (CaptureStart/End) to inline the body and capture
+/// its stdout into a temp, then use the temp — so it works for runtime output
+/// too, not just const-foldable stdout. DD#81: the call's args are carried on
+/// `FuncCall` and threaded into the capture so the callee's `args` array is set
+/// up (was dropped).
+fn lift_str_func_call(
+    name: String,
+    args: Vec<SsaValue>,
+    ssa: &mut SsaProgram,
+    state: &mut VersionState,
+    block: &mut BlockId,
+) -> SsaValue {
+    let temp = format!("__strcap_{name}");
+    match super::stmt_handlers::capture_func_into(&temp, &name, &args, state, ssa, *block) {
+        Some(new_block) => {
+            *block = new_block;
+            SsaValue::Var(state.lookup(&temp))
+        }
+        None => SsaValue::FuncCall { name, args },
+    }
+}
+
+/// True when `v` holds a capture that [`lift_int_func_calls`] would materialize
+/// into the current block — i.e. something whose evaluation has side effects and
+/// so must not be hoisted out of a lazily-evaluated position.
+fn contains_capture(v: &SsaValue) -> bool {
+    match v {
+        SsaValue::FuncCall { .. }
+        | SsaValue::IntFuncCall { .. }
+        | SsaValue::CmdSubstBody { .. } => true,
+        // `child_values` does not descend into either of these.
+        SsaValue::IntCell(inner) => contains_capture(inner),
+        SsaValue::ArraySplat { disposition, .. } => disposition
+            .as_ref()
+            .is_some_and(|d| contains_capture(&d.word)),
+        other => other.child_values().into_iter().any(contains_capture),
+    }
+}
+
+/// `${x:-WORD}` evaluates WORD **only** when `x` is unset or empty, so a capture
+/// in the operand has to run under that guard. bash agrees: `y=set;
+/// z=${y:-$(f)}` never runs `f`.
+///
+/// A WORD with no capture is side-effect-free and keeps the cheap eager form —
+/// codegen lowers both sides and selects between them. One *with* a capture is
+/// lowered as real control flow instead: bind the source to a temp, test it, and
+/// re-bind the temp from the lifted WORD in the taken block only, merging
+/// through a phi. That also keeps the capture off the `DefaultValue` operand,
+/// which codegen has no way to lower (it ICEd).
+fn lift_default_value(
+    source: SsaValue,
+    default: SsaValue,
+    ssa: &mut SsaProgram,
+    state: &mut VersionState,
+    block: &mut BlockId,
+) -> SsaValue {
+    let source = lift_int_func_calls(source, ssa, state, block);
+    if !contains_capture(&default) {
+        let default = lift_int_func_calls(default, ssa, state, block);
+        return SsaValue::DefaultValue {
+            source: Box::new(source),
+            default: Box::new(default),
+        };
+    }
+
+    let temp = format!("__dflt_{}", ssa.blocks.len());
+    let bound = state.define(&temp);
+    ssa.block_mut(*block).insts.push(SsaInst::Assign {
+        target: bound.clone(),
+        value: source,
+    });
+    ssa.block_mut(*block)
+        .insts
+        .push(SsaInst::Test(SsaTest::Unary {
+            op: "-z".to_string(),
+            operand: SsaValue::Var(bound),
+        }));
+
+    let word_block = ssa.new_block("default.word");
+    let merge_block = ssa.new_block("default.merge");
+    let pre_state = state.snapshot();
+    ssa.block_mut(*block).terminator = Terminator::Branch {
+        condition: "default".to_string(),
+        true_block: word_block,
+        false_block: merge_block,
+    };
+
+    let mut word_exit = word_block;
+    let lifted = lift_int_func_calls(default, ssa, state, &mut word_exit);
+    let target = state.define(&temp);
+    ssa.block_mut(word_exit).insts.push(SsaInst::Assign {
+        target,
+        value: lifted,
+    });
+    ssa.block_mut(word_exit).terminator = Terminator::Goto(merge_block);
+    let word_state = state.snapshot();
+
+    super::helpers::insert_phis_two_branch(
+        state,
+        ssa,
+        merge_block,
+        word_exit,
+        &word_state,
+        *block,
+        &pre_state,
+    );
+    *block = merge_block;
+    SsaValue::Var(state.lookup(&temp))
 }
 
 /// Option C (DD#55): materialize any `IntFuncCall` (produced by `$(f)` /

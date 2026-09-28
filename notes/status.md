@@ -1,3 +1,69 @@
+## ══ STATUS (2026-09-28) — the lift was not total; `:-` is now lazy ══
+
+Working the coverage queue head (`lower_value_as_str_aggregate` — six cold
+lines, all deliberate ICE guards) into the useful question, "is any of these
+arms actually reachable", turned up a live one.
+
+`lift_int_func_calls` materializes every nested `$(f)` capture into a temp,
+because an unlifted `FuncCall` reaching codegen is an ICE by construction. It
+covered six of `SsaValue`'s thirty-one variants and ended `other => other,
+// no IntFuncCall inside`. That comment was the bug: `other` was fifteen more
+variants, most of which own sub-values.
+
+```sh
+array a=( $(f) )        map m=([k]=$(f))        str z=${arr[$(f)]}
+str z=${y:-$(f)}        a[0]=${y:-$(f)}
+```
+
+All valid bash; all crashed the compiler. `str z=$(f)` — the same capture not
+nested inside anything — worked, which is why it survived. The walk is now
+**total over `SsaValue` with no wildcard** (cc 26 / cog 1, dispatcher
+exemption), and `handle_subscript_assign` — which never called the lift at all
+— now lifts both operands.
+
+**The third non-total match in three sessions** (journal 430's walker pair,
+431's `Trusted` wrap, this). The convention holds: make it total, say so in the
+doc comment, let the compiler enforce it.
+
+### DG's call: `:-` lowers lazily
+
+`DefaultValue` was not mechanical, because `:-` is lazy — bash evaluates the
+operand only when the fallback fires. Recursing eagerly hoists the capture and
+runs `f` unconditionally. DG chose **lower lazily** over lift-eagerly or
+reject.
+
+**DD#78 had already chosen eager, and its premise was wrong.** It argues eager
+is safe because every legal default is side-effect-free — then lists **user
+functions** among the allowed defaults. A user function is not side-effect-free
+in any enforced sense. Nobody noticed because the compiler *ICEd* on exactly
+that construct: the allowance was dead letter, and no spec in the suite
+exercised it. Amended, not reversed — captureless defaults stay eager (every
+operand the original reasoning contemplated), only a capture-bearing one gets
+control flow. Built in transform, so neither backend grew a special case and
+DD#78's "avoids per-backend branching" cost is not paid.
+
+### Gates
+
+Sweep predicted 6661, returned 6661 — zero failing, zero flips. `lift.1`-`.12`
+in `spec/functions.sh`, each verified against bash first, each landed by one of
+six disjoint neuters. `lift.6` is the sole laziness witness and must be: with
+the operand hoisted it still prints `[set]`, so only the untaken `f`'s stderr
+catches it.
+
+### Filed, not fixed
+
+`${x:?MESSAGE}` is emitted as **literal source text** — sash prints `$(f)`,
+bash prints `hi`. DD#78 names the message as a checked read position; it is not
+one (`${y:?$h}` with `h` tainted gives **SB5050 dead-variable**, not SB5020 —
+the operand is not in the value graph at all). Not a taint leak, since nothing
+is expanded and so nothing escapes. → `notes/tasks/bug-require-message-not-interpolated.md`
+
+Also checked and **correct, leave alone**: the many `DD#77` comments on
+`RequireValue`. DD#77 §"`:?` un-prune scope" re-added scalar `:?` after DD#65
+pruned it; DD#65's "rejected for SCALAR" line is the stale one.
+
+Journal 432.
+
 ## ══ STATUS (2026-09-27) — DD#91: `!` is scoped to its own read ══
 
 DG answered the question journal 430 filed rather than prejudged:
@@ -12229,7 +12295,7 @@ modified: 2026-06-07
 
 ## Spec status: 6624 passing / 0 failing of 6637 (spec.db @ fffc23f)
 
-_Regenerated 2026-09-27 by `mk status`. Edits inside this block will be
+_Regenerated 2026-09-28 by `mk status`. Edits inside this block will be
 overwritten; edit outside the BEGIN/END markers._
 <!-- END: mk-status -->
 

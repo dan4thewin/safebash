@@ -970,7 +970,7 @@ fn handle_subscript_assign(
     idx: &Expr,
     state: &mut VersionState,
     ssa: &mut SsaProgram,
-    block: BlockId,
+    mut block: BlockId,
 ) -> BlockId {
     let rhs = expr_to_value(&a.value, state);
     // DD#100: `A[i]=v` writes through a collection-parameter slot, so resolve
@@ -982,6 +982,10 @@ fn handle_subscript_assign(
     let is_int_val = state.type_map.get(&name).copied() == Some(crate::ir::VarType::Int);
     let val = build_subscript_rhs(&name, a, idx, rhs, is_int_val, state);
     let idx_val = expr_to_value(idx, state);
+    // A `$(f)` capture in either operand has to be materialized into a temp
+    // first, in source order — an unlifted call reaching codegen is an ICE.
+    let idx_val = lift_int_func_calls(idx_val, ssa, state, &mut block);
+    let val = lift_int_func_calls(val, ssa, state, &mut block);
     ssa.block_mut(block).insts.push(SsaInst::SubscriptAssign {
         array: name,
         index: idx_val,

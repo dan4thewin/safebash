@@ -88,3 +88,43 @@ Applies uniformly to every disposition default:
 - DD#65 — `${x:-WORD}` default word (the operand this constrains).
 - DD#69 — splat disposition `@{a:-WORD}` / `@{a:?WORD}` (same operator family).
 - DD#77 — arith string→int disposition (its `:-` default is literal-only).
+
+## Amendment (DG, 2026-09-28) — a capture-bearing default is lowered lazily
+
+The "Eager evaluation" section above rests on a premise that does not hold for
+one of the operands it allows. Its argument is: eager is safe *because* every
+legal default is side-effect-free, so "eager == lazy for every legal default".
+But the allowed list ends with **user functions**, and a user function is not
+side-effect-free in any enforced sense — `f() { echo RAN >&2; echo hi; }` is a
+legal default whose effect is plainly observable when the fallback is *not*
+taken.
+
+The contradiction was never observable, because the compiler **ICEd** on
+`${x:-$(userfunc)}`: `lift_int_func_calls` ended in `other => other` and never
+descended into a `DefaultValue`, so the capture reached codegen unlifted and
+panicked. The allowance was dead letter — no spec in the suite exercised it.
+Fixing the ICE (journal 432) made the question live, and DG ruled for bash
+parity:
+
+> **b** — lower lazily.
+
+So the rule is now split by whether the operand can have an effect:
+
+- **No capture in the operand** (literals, clean variable/subscript reads,
+  `$(( … ))`, stateless intrinsics) — **unchanged, still eager**. These are
+  exactly the operands the original reasoning contemplated, `emit_default_value`
+  still computes both arms and selects, and no backend branches.
+- **A capture in the operand** (`$(userfunc)`, a multi-statement `$( … )` body)
+  — lowered as real control flow in *transform*: bind the source to a temp,
+  test it, re-bind from the lifted operand in the taken block only, merge
+  through a phi. bash parity in both backends, and it also keeps the capture
+  off the `DefaultValue` operand that codegen cannot lower.
+
+Because the laziness is built during transform, neither backend grew a special
+case — the cost the original section wanted to avoid ("keeping eager avoids
+per-backend branching") is not incurred. The clean/non-`random` rule is
+untouched: `$(random)` stays rejected, and its justification no longer needs to
+lean on eagerness.
+
+Pinned by `spec/functions.sh` `lift.4`-`lift.10`; `lift.6` is the one that
+fails if the operand is hoisted (the untaken `f`'s stderr appears).
