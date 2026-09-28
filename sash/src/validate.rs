@@ -3704,14 +3704,7 @@ fn check_elide_stmt(stmt: &Statement, diags: &mut Vec<Diagnostic>) {
     // A command's direct args are elidable; its name is not.
     if let StmtKind::Command(c) = &stmt.kind {
         check_elide_expr(&c.name, false, diags);
-        // DD#91's elidable positions are the VARIADIC ones — argv, an array
-        // literal — where dropping a token just shortens a list. `readline`
-        // and `read` take fixed positional ROLES, so eliding an argument
-        // does not shorten anything: `read ${u:~} f` would become
-        // `read f` and read STDIN instead, a different input source
-        // entirely. That silent switch is the DD#69 hazard, so the slot is
-        // non-elidable. (Before this it reached codegen and panicked.)
-        let elidable = !matches!(expr_literal_str(&c.name), "readline" | "read");
+        let elidable = command_args_elidable(expr_literal_str(&c.name));
         for a in &c.args {
             check_elide_expr(a, elidable, diags);
         }
@@ -3724,6 +3717,99 @@ fn check_elide_stmt(stmt: &Statement, diags: &mut Vec<Diagnostic>) {
         check_elide_arith(a, diags);
     }
     check_elide_children(stmt, diags);
+}
+
+/// DD#84: is this command's argument list an **elidable** position — one
+/// where `${x:~}` may contribute zero tokens?
+///
+/// The DD names three elidable positions, "a position where a token is one
+/// of a *sequence* and dropping it is well-defined":
+///
+///   1. an external / command argument list (`ls ${args[0]:~} rest`);
+///   2. a `sash`-**varargs** builtin arg list (`echo ${x:~}`);
+///   3. an array literal element — not a command, handled by the expression
+///      walk rather than here.
+///
+/// So for a command the question is exactly "is this a fixed-arity builtin?",
+/// and [`crate::ssa::BuiltinCmd::from_name`] is the canonical answer. A name
+/// it does not recognise is an external program or a user function call —
+/// both are (1).
+///
+/// **This is an allowlist, and it is total on purpose — do not add a
+/// wildcard.** It used to read `!matches!(name, "readline" | "read")`, which
+/// was never a design: those two were the exceptions that had been
+/// *reported*, each appended after it panicked codegen. Eleven more were
+/// still open (`cd`, `match`, `sub`, `gsub`, `toupper`, `tolower`, `strlen`,
+/// `basename`, `dirname`, `return`, `exec`), and the same list had already
+/// been patched twice before — once for arithmetic, once for `read`. Under a
+/// denylist a newly added builtin is elidable by default and its failure mode
+/// is an ICE; under this one it is non-elidable until someone decides
+/// otherwise, and the arms below make that a decision the compiler will not
+/// let anyone skip.
+fn command_args_elidable(name: &str) -> bool {
+    use crate::ssa::BuiltinCmd as B;
+    match B::from_name(name) {
+        // (1) An external program or a user function call: `from_name` knows
+        // neither, so both arrive as `Other`.
+        B::Other => true,
+
+        // (2) The varargs builtins. `echo ${x:~}` is the DD's own worked
+        // example; `write` IS `echo` minus the newline (DD#99); `exec CMD …`
+        // builds an external command's argv, which is (1) wearing a builtin's
+        // name; `:` discards a list it never evaluates.
+        B::Echo | B::Write | B::Exec | B::Noop => true,
+
+        // Fixed-arity builtins. Dropping an argument here does not shorten a
+        // list, it SHIFTS the roles — `read ${u:~} f` becomes `read f` and
+        // reads stdin instead, a different input source chosen silently. That
+        // is the DD#69 hazard, so the slot is non-elidable and SB5046 says so.
+        B::Cd
+        | B::Read
+        | B::Mapfile
+        | B::Argv
+        | B::Unset
+        | B::Wait
+        | B::Close
+        | B::Signal
+        | B::Exit
+        | B::Return
+        | B::Break
+        | B::Continue => false,
+
+        // Value-producing intrinsics: every one has a fixed arity in
+        // `ssa::value_intrinsic_arity`, or (`join`, `matchall`) a fixed first
+        // role followed by a collection, which is not a free-form list either.
+        B::Len
+        | B::Strlen
+        | B::Keys
+        | B::Join
+        | B::Sub
+        | B::Gsub
+        | B::Match
+        | B::MatchAll
+        | B::Toupper
+        | B::Tolower
+        | B::Basename
+        | B::Dirname => false,
+
+        // `[[ … ]]` and its attest form. DD#84 lists a `[[ … ]]` operand
+        // among the NON-elidable positions by name: an operand that vanished
+        // would change which test is being run, not shorten a list.
+        B::Test | B::Attest => false,
+
+        // Compiler-internal sigils. The transform synthesises these; a user
+        // cannot write one, so no `:~` can reach their arguments. `false` is
+        // the answer that stays correct if that ever changes.
+        B::NegateTestResult
+        | B::SetTestFromStatus
+        | B::LetExit
+        | B::SubshellStart
+        | B::StoreBgPid
+        | B::TrapSignal
+        | B::SignalFlag
+        | B::TableDelete
+        | B::TableDeleteIdx => false,
+    }
 }
 
 /// Recurse into a statement's nested bodies.
@@ -3819,20 +3905,24 @@ fn check_elide_pexp(
         // operator is `None` and it is legal in every position a bare
         // expansion is. Only the elide (`:~`, `:!~`) is position-restricted.
         let sigil = elide_sigil(pe);
-        // Say VARIADIC, not "a command argument". A fixed-arity builtin's
-        // argument is a command argument too, and saying otherwise told an
-        // author whose `read ${x:!~} f` was rejected that the very position
+        // Name the three positions DD#84 actually lists. Saying just "an
+        // argument list" is the loose reading that put the allow-by-default
+        // bug in `command_args_elidable` in the first place: a fixed-arity
+        // builtin's argument is a command argument too, so an author whose
+        // `read ${x:!~} f` was rejected was being told that the very position
         // they had used was the valid one.
-        //
         let advice = elide_advice(pe.taint_off, &pe.name);
         diags.push(Diagnostic::error_span(
             span,
             "SB5046",
             format!(
                 "`${{{}{}}}` (elide) is only valid in a VARIADIC list position — \
-                 an argument list or an array literal element — where dropping \
-                 the token merely shortens the list. Here a value is required; \
-                 {}.",
+                 the argument list of an external command, a user function, or \
+                 `echo`/`write`/`exec`, or an array literal element — where \
+                 dropping the token merely shortens the list. A fixed-arity \
+                 builtin takes a value in each slot, not one of a list, so \
+                 eliding would shift the remaining arguments into the wrong \
+                 roles. Here a value is required; {}.",
                 pe.name, sigil, advice
             ),
         ));

@@ -7,7 +7,7 @@ set -eu
 . common.sh
 setup optional_args
 set +e
-plan=36
+plan=52
 echo "1..$plan" >&3
 
 # ── Optional trailing args via `:-` (a trailing `${args[i]:-D}` is optional) ──
@@ -197,6 +197,127 @@ run_sash 'str x=a
 str y=${x:~}
 echo $y'
 [[ $rc != 0 && $err == *SB5046* && $err == *'`${x:~}`'* && $err != *':!'* ]]; chk 84.36
+
+
+# ── Which COMMANDS take an elidable argument list ─────────────────────────
+# DD#84 names three elidable positions: an external / command argument list,
+# a sash-VARARGS builtin arg list (`echo ${x:~}`), and an array literal
+# element. A fixed-arity builtin is none of them — its arguments are values
+# in fixed ROLES, so eliding one does not shorten a list, it shifts the rest
+# into the wrong slots.
+#
+# The check enforcing this was an allow-by-default denylist naming exactly
+# the two exceptions that had been reported (`read`, `readline`), each added
+# after it panicked codegen. The list had already been patched twice — see
+# ice.7-ice.10 (arithmetic) and nr.18/nr.20 (read) — and eleven commands were
+# still open, every one of them an ICE rather than a diagnostic. It is now an
+# allowlist over `BuiltinCmd`, total, so a new builtin is non-elidable until
+# someone decides otherwise.
+
+# 84.37 `cd` — a path is a value, not one of a list
+run_sash 'str p=""
+cd ${p:~}'
+[[ $rc != 0 && $err == *SB5046* && $err != *ICE* ]]; chk 84.37
+
+# 84.38 `match` in statement position (DD#70). The pattern slot is a role:
+# eliding it would make `match "$s"` a one-argument match, not a shorter one.
+run_sash 'str s=abc
+str p=""
+if match "$s" ${p:~} { echo y }'
+[[ $rc != 0 && $err == *SB5046* && $err != *ICE* ]]; chk 84.38
+
+# 84.39 `sub` — three fixed roles (subject, pattern, replacement)
+run_sash 'str s=abc
+str p=""
+str r=$(sub "$s" ${p:~} X)
+echo "$r"'
+[[ $rc != 0 && $err == *SB5046* && $err != *ICE* ]]; chk 84.39
+
+# 84.40 `gsub` — same shape as sub
+run_sash 'str s=abc
+str p=""
+str r=$(gsub "$s" ${p:~} X)
+echo "$r"'
+[[ $rc != 0 && $err == *SB5046* && $err != *ICE* ]]; chk 84.40
+
+# 84.41 `toupper` — unary
+run_sash 'str p=""
+str r=$(toupper ${p:~})
+echo "$r"'
+[[ $rc != 0 && $err == *SB5046* && $err != *ICE* ]]; chk 84.41
+
+# 84.42 `tolower` — unary
+run_sash 'str p=""
+str r=$(tolower ${p:~})
+echo "$r"'
+[[ $rc != 0 && $err == *SB5046* && $err != *ICE* ]]; chk 84.42
+
+# 84.43 `strlen` — unary
+run_sash 'str p=""
+int r=$(strlen ${p:~})
+echo "$r"'
+[[ $rc != 0 && $err == *SB5046* && $err != *ICE* ]]; chk 84.43
+
+# 84.44 `basename` — unary
+run_sash 'str p=""
+str r=$(basename ${p:~})
+echo "$r"'
+[[ $rc != 0 && $err == *SB5046* && $err != *ICE* ]]; chk 84.44
+
+# 84.45 `dirname` — unary
+run_sash 'str p=""
+str r=$(dirname ${p:~})
+echo "$r"'
+[[ $rc != 0 && $err == *SB5046* && $err != *ICE* ]]; chk 84.45
+
+# 84.46 `return` — an exit status is a value
+run_sash 'fn f {
+  str p=""
+  return ${p:~}
+}
+f'
+[[ $rc != 0 && $err == *SB5046* && $err != *ICE* ]]; chk 84.46
+
+# ── …and which ones DO. None of these had any coverage before. ────────────
+
+# 84.47 builtin `echo` is DD#84's own worked example: empty elides
+run_sash 'str p=""
+echo A ${p:~} B'
+[[ $rc = 0 && $out = "A B" && -z $err ]]; chk 84.47
+
+# 84.48 …and non-empty is kept
+run_sash 'str p=Q
+echo A ${p:~} B'
+[[ $rc = 0 && $out = "A Q B" && -z $err ]]; chk 84.48
+
+# 84.49 `write` IS `echo` minus the newline (DD#99), so it elides identically
+run_sash 'str p=""
+write A ${p:~} B
+echo ""'
+[[ $rc = 0 && $out = "A B" && -z $err ]]; chk 84.49
+
+# 84.50 a user function call is a command argument list: argc really drops
+run_sash 'fn f {
+  int n=$(len args)
+  echo "argc=$n"
+}
+str p=""
+f A ${p:~} B'
+[[ $rc = 0 && $out = "argc=2" && -z $err ]]; chk 84.50
+
+# 84.51 …and does not drop when the value is non-empty
+run_sash 'fn f {
+  int n=$(len args)
+  echo "argc=$n"
+}
+str p=Q
+f A ${p:~} B'
+[[ $rc = 0 && $out = "argc=3" && -z $err ]]; chk 84.51
+
+# 84.52 an external command's argument list (the DD's first bullet)
+run_sash 'str p=""
+/bin/echo A ${p:~} B'
+[[ $rc = 0 && $out = "A B" && -z $err ]]; chk 84.52
 
 set -e
 tally
