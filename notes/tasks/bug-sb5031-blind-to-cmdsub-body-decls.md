@@ -7,7 +7,8 @@ depends: []
 gates:
   - "`/bin/echo $(array a=( ); array b=( @{a:-z} ); echo $b[0])` compiles and prints `z`"
   - "`@nosuch` is still SB5031 everywhere it is genuinely undeclared"
-  - "the false-rejection/false-acceptance tradeoff below is DG's call, not the implementer's"
+  - "`fn f { array a=(1 2); … }; f; /bin/echo @{a:-z}` is SB5031 — a fn-local name is not readable outside"
+  - "`check_scalar_splat` reads the scope-aware `known`, not a flat program-wide union"
 ---
 
 # The reporting side descends into a `$( )` body; the introduction side does not
@@ -48,26 +49,74 @@ function bodies. A `$( )` body is a statement list reached through an
 This is the same asymmetry as the SSA taint bug: one walk total, its partner
 not, and the gap is where the wrong answer lives.
 
-## Why this was not just fixed
+## There is no semantic decision here — DD#86 already settles it
 
-Widening `program_scopes` to include `$( )` bodies trades a false **rejection**
-for a false **acceptance**, and which one sash wants is a scoping decision:
+The first filing of this bug said the fix traded a false **rejection** for a
+false **acceptance**, and called that DG's call. That was wrong, and it was
+wrong because only one direction had been measured.
 
-- DD#86's addendum says a `$( )` body is an anonymous function, so names first
-  introduced inside are **local**. Unioning them program-wide would make `@a`
-  legal *outside* the body that declared it.
-- `program_scopes` already does exactly that for function bodies, and says so:
-  *"a program-wide union covers names introduced inside functions too. Sound
-  because sash forbids shadowing: one name, one meaning, program-wide."* So the
-  imprecision would not be a new class, only a wider instance of an accepted
-  one.
+`check_scalar_splat`'s flat program-wide union is not a conservative choice.
+It is wrong in **both** directions, and the other direction is the worse one:
 
-Either answer is defensible. It is DG's call.
+```sh
+fn f { array a=(1 2); /bin/echo @{a:-z}; }
+f
+/bin/echo @{a:-z}          # ACCEPTS, and prints `1 2`
+```
 
-## Implementation note, once the semantics are settled
+DD#86: *"a name first assigned inside a function that is not a top-level global
+is automatically local."* So that top-level read must be SB5031. The scalar and
+subscript spellings of the same read both reject, correctly:
 
-`program_scopes` needs a **lifetime-preserving** shallow cmdsub-body accessor,
-and there isn't one. `Statement::child_bodies(&self) -> Vec<&[Statement]>`
+| read of a fn-local name, at top level | result |
+|---|---|
+| `/bin/echo $y` | SB5031 ✓ |
+| `/bin/echo $a[0]` | SB5031 ✓ |
+| `/bin/echo @{a:-z}` | **accepts, and runs** ✗ |
+
+So the splat check leaks a function-local array to top level at runtime, and
+separately rejects a body-local one inside its own body. One root cause, both
+signs.
+
+## The correct model is already implemented next door
+
+DD#86 draws the line by scope, not by program:
+
+- a body-introduced name read **inside** that body → legal
+- the same name read **outside** it → SB5031 (the DD's own worked example,
+  `str s=$(int y=5; echo hi); echo $y`)
+
+Both halves already behave correctly for scalars and subscripts, because the
+main SB5031 check is **scope-aware**: `check_reads_in_scope` threads a `known`
+set per scope, and `SinkMode::Flag` is documented as *"flag a read whose name
+is not in the **current scope's** `known`"* (`validate.rs:7903`). That file
+also states the design intent — *"the one traversal below drives a single
+`record` per variable read; the sink decides what to do — so the two passes can
+never diverge on 'what counts as a read'."*
+
+`check_scalar_splat` was bolted on later (its own comment explains why: a splat
+is not a scalar read, so `@nosuch` was reaching codegen and ICE'ing) and it did
+**not** join that traversal. It built its own flat union instead. It is the one
+read-check that diverged, which is exactly what the shared-sink design was
+written to prevent.
+
+## The fix
+
+Fold the splat read into `check_reads_in_scope` / `ReadSink` so it is recorded
+against the current scope's `known`, like every other read. `splattable` is
+still needed to keep SB5079 (`@x` on a scalar) distinct from SB5031 (`@x` on
+nothing), so the sink needs that set threaded alongside.
+
+Then delete `check_scalar_splat`'s `program_scopes` union. Nothing else should
+need widening: the scope-aware traversal already descends into `$( )` bodies,
+which is why the scalar and subscript cases were right all along.
+
+## Implementation note
+
+The `program_scopes`-widening approach below was the **wrong** fix and is kept
+only to record why. If it is ever revisited, note that `program_scopes` would
+need a **lifetime-preserving** shallow cmdsub-body accessor, and there isn't
+one. `Statement::child_bodies(&self) -> Vec<&[Statement]>`
 preserves the lifetime; `direct_exprs(&self, f: &mut impl FnMut(&Expr))` and
 `walk_expr_tree` do not — their callbacks take an anonymous lifetime, so a
 borrowed body cannot escape the closure (the same wall hit in journal 435).

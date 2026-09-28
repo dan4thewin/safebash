@@ -48,11 +48,24 @@ array is rejected as undeclared:
 expression, so it structurally cannot appear. The same asymmetry as the taint
 bug, in a different subsystem.
 
-It is not fixed because widening `program_scopes` trades a false **rejection**
-for a false **acceptance** (DD#86 makes a `$( )` body an anonymous function, so
-its names are local), and that is a scoping decision. `program_scopes` already
-unions function-local names program-wide and says so, so the imprecision would
-not be a new class — but the call is DG's. Filed as
+**Correction, same day.** I first filed this as needing a scoping decision from
+DG — a false rejection traded against a false acceptance. That was wrong: only
+one direction had been measured. The flat union false-**accepts** too, with a
+runtime consequence:
+
+```sh
+fn f { array a=(1 2); /bin/echo @{a:-z}; }
+f
+/bin/echo @{a:-z}          # accepts, and prints `1 2`
+```
+
+DD#86 makes a name first assigned in a function body local, so that must be
+SB5031 — and `$y` and `$a[0]` spellings of the same read both reject correctly.
+Only the splat leaks. DD#86 settles the semantics in both directions, and the
+scope-aware `check_reads_in_scope` / `ReadSink` traversal already implements
+them; `check_scalar_splat` was bolted on later with its own flat union and is
+the one read-check that diverged from the shared sink the file was designed
+around. No decision, mandatory fix. Filed as
 `bug-sb5031-blind-to-cmdsub-body-decls`.
 
 **45 walks in `validate.rs` recurse via `child_bodies()`**; a separate
