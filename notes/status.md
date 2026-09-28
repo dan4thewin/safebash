@@ -1,3 +1,71 @@
+## ══ STATUS (2026-09-28) — P0: a heap pointer reaches argv ══
+
+Found while answering DG's question about how a `$( )` body is validated. It
+has nothing to do with command substitution — that was only the path that
+removed the masking.
+
+```sh
+argv x
+attest e in x [[ -n $e ]]
+/bin/echo $x        # 0x7f3ce6cc2040 — a live mmap address, fresh each run
+```
+
+`read x` is the same. **Both backends produce it identically**, so it is the
+shared model, not a codegen divergence. The emitted C is four lines:
+`x_ptr = (const char*)__t0_tbl; x_len = 0;` puts the table in the *scalar*
+slot, then `sash_argv_guard(x_ptr, x_len)` is handed length 0 and validates
+nothing while `execve` reads to the first NUL — through the table header,
+whose first field is a pointer. It also propagates: `str y=$x` carries it into
+an ordinary scalar.
+
+**Two collection sets that disagree.** `type_check.rs` registers auto-declared
+targets in `env.collections` (`register_argv_target`, `register_newread_target`
+— the DD#60/DD#61 auto-declare). `validate.rs::collect_collection_names` walks
+only `StmtKind::Declaration` with `-a`/`-A`. SB5064 — the guard written for
+exactly this spelling — consults the incomplete one, so `array x=(a);
+/bin/echo $x` is correctly rejected and `argv x; … /bin/echo $x` is not.
+
+Second fault, independent: auto-declare never checks for a conflicting
+declaration, though the explicit form does. `str x=safe; array x=(a)` is
+SB5049; `str x=safe; read x` silently retypes, and `int x=1; read x` is
+`ICE: expected string var, got int`. The `map` case is caught only by accident,
+via attest-all's binder arity.
+
+Masked all along by the guards that fire first — SB5020 on the untainted
+spelling, SB5050 on the short ones, SB4018 on `matchall`. The leak is reachable
+only *after* you satisfy them, which is why no spec found it.
+
+**Not fixed — two questions for DG.** Where the single collection set should
+live (the recomputed-worse-view is the cause), and whether `str x=…; read x`
+should be SB5049 like `array x=(a)`, or a sanctioned rebind. The `int` ICE must
+stop either way.
+→ `notes/tasks/bug-autodeclared-collection-scalar-read-leaks-pointer.md`
+
+### What the question actually was: how is a `$( )` body compiled?
+
+Answered, and worth recording because the model is not what the code comments
+say. **Codegen does exactly the recursive lowering DG expected** — the body's
+statements go through `lower_stmts` into ordinary blocks of the *same* SSA
+function (`_blk_1: /* cap_body */`), with no fork when the body is pure.
+Isolation is then re-imposed deliberately: `capture_body_into`
+(`transform/stmt_handlers.rs:1307`) snapshots every variable the body assigns
+and restores it after (`__save_bodycap_x`). So there is no subshell — there is
+a compiler-synthesized save/restore, and the comments calling it "subshell
+isolation" are describing the effect, not the mechanism.
+
+**Validate is the one layer that does not recurse.** Positionals (SB5024),
+elide (SB5046), argv-splat (SB5025), resolve and type-check all walk the body.
+Taint alone substitutes `check_cmdsub_inner_reads` — four lines, `if let
+StmtKind::Command`, only `c.args` and collection readers, and it never records
+a definition. That is the whole of the P1 escape filed earlier.
+
+And the save/restore is itself not total: `collect_assigned_into`
+(`stmt_handlers.rs:1359`) handles `Assignment` and `Declaration` only, so a
+subscript assignment leaks out of the body (`a[0]=leaked` survives) and so does
+a builtin write. Against DG's model — no subshells, writes survive unless a
+fork is required — the open question is whether the leak or the restore is the
+part that is wrong.
+
 ## ══ STATUS (2026-09-28) — a closer beats absorb; P1 TAINT ESCAPE found ══
 
 ### ⚠ Open P1 for DG — `check_taint` never walks a `$( )` body
