@@ -358,3 +358,41 @@ as a command argument (`expressions.rs:103`) are live. Part D scoped the
 removal to the *operand of a name-taking builtin*.
 
 Journal 356.
+
+## Addendum (2026-09-28) — `=name` reached the slot on one call path in four
+
+Part F ends with "Substitution has to cover every write path". The same is true
+of *call* paths, and it was not: `split_call_args` — the function that peels
+`=name` arguments off a call and binds them to `A`–`E` — had exactly **one**
+call site, the plain-statement path. The other three lowerings treated `=q` as
+an ordinary scalar argument, so the slot was never bound and argc was off by
+one.
+
+| call position | before |
+|---|---|
+| `f =q` | correct |
+| `f =q \| g` | `len A=0`, `len args=1` — a silent wrong answer |
+| `str t=$(f =q)` | **SIGSEGV** at run time |
+| `t=$(f =q)`, `echo "$(f =q)"` | **SIGSEGV** at run time |
+| `int t=$(total =q)` | **ICE: undefined arrlen: A** |
+
+The capture paths additionally reported a spurious SB5050 on `q`. Per the
+repo's own standing note that the dead-variable gate runs last and masks the
+real diagnostic, that is exactly what happened here — it cost two rounds of
+misreading before an independent read of `q` exposed the `len A=0` underneath.
+Part F's "`=foo` **is** a read when the callee reads the slot" already settled
+that SB5050 must not fire; validate's `collect_slot_arg_reads` simply never
+descended into `$( )`.
+
+`check_call_args_in` had the same gap, and it was the worse one: Part C
+(scalars first), the slot-count limit and the slot-operand rules were **not
+checked at all** inside a capture, so `str t=$(f =q "x")` compiled silently.
+Both now descend with the existing `for_each_cmdsub_shallow` helper.
+
+Because a capture is materialised after lowering, the slot names have to ride
+on the value: `SsaValue::FuncCall` and `IntFuncCall` gained a `colls` field.
+`try_int_tail_call` refuses to take the tail-call path when `colls` is
+non-empty — that loop rebinds `args` only, so it would drop the slots; failing
+closed to the general path is correct and costs nothing measurable.
+
+Specs `collparam.sh` 100.38-100.45. journal 443.

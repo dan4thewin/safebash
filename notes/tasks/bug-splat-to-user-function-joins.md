@@ -8,6 +8,7 @@ gates:
   - "`fn f { … }; array a=(x y z); f @a` gives `$(len args)` == 3, not 1"
   - "each element is its own argument (`for v in @args` yields x, y, z separately)"
   - "an element containing a space stays one argument"
+  - "all of the above hold in a PIPELINE stage, not only a plain statement"
 ---
 
 ## What
@@ -72,3 +73,36 @@ sp.8 demonstrates is unrelated to splatting.
 
 Sweep: 4616 passing / 39 failing / 459 skipped, 0 regressions, no new
 failures.
+
+## Reopened and closed again 2026-09-28 — a third position
+
+The 2026-09-10 fix was still incomplete. It named "two argument lowerings"
+and converted the two call sites it knew about; **`build_function_pipeline_stage`
+(`stmt_handlers.rs:896`) was a third**, and it kept `expr_to_value`. So the
+identical bug survived one pipe away from the specs that gated it:
+
+```sash
+array two=("a b" "c")
+fn f { : @args; echo "n=$(len args)" }
+f @two            # n=2   -- correct, gated by sp.2/sp.5
+f @two | /bin/cat # n=1   -- the SAME bug, ungated
+```
+
+Lossy in exactly the way this file describes: `<a b c>` for `for v in @args`,
+with the element boundary destroyed and no diagnostic.
+
+**Why the original fix missed it.** It was scoped by *symptom* — it fixed the
+sites the reproducer reached, then generalised to "call args and array
+literals" and stopped. The complete statement is per-position and mechanical:
+**every position that lowers a call's arguments must use `arg_to_value` and
+`split_call_args`**; `expr_to_value` there means the splat silently reverts to
+its joined meaning and `=name` silently reverts to a scalar. Grepping for the
+*wrong* function across all call-lowering paths finds this in one step;
+re-running the reproducer does not.
+
+There were four such positions. All four are now correct, and the same audit
+found `=name` broken on three of them (DD#100 addendum, 2026-09-28) — a
+collection parameter is lowered by the same code, so it had the same hole.
+
+Specs `functions.sh` sp.9-sp.11 gate the pipeline position directly: arity,
+the lossy space-bearing element, and order. journal 443.

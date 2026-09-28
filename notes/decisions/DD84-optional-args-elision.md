@@ -209,3 +209,75 @@ changed. The "drop-if-empty" idiom migrates from `@{a:-}` to `@{a:~}` (e.g.
 
 Impl: `parse/expr.rs::parse_splat_op`. Specs `glob_splat.sh` gs.4 (now one empty
 arg), gs.20–24; `wordsplit.sh` 22.18 (migrated to `:~`). journal 241.
+
+## Addendum (2026-09-28) — a runtime-variable count needs a variadic context
+
+DG:
+
+> to my mind, an elision, given it could remove an argument, can only work for
+> a variadic context and not a fixed one. similarly, a splat should only work
+> for variadic given it could be empty (could try to track provably present
+> elements of the array, but edge cases make that a non-starter, I think)
+
+This closes the hole that §(A) "Absent optional args at the call site" already
+named without noticing: that section rests on a call passing fewer than `max`
+args being **"known at compile time"**. A splat and a `:~` elide are each *one*
+value at compile time that expands to 0..n tokens at run time, so a call
+carrying one has no compile-time argc at all. Both directions were wrong:
+
+- **Silent under-delivery.** `f one ${x:~}` into a `Fixed{2,2}` callee
+  compiled and ran, with `${args[1]}` reading empty. The equivalent `f one`
+  was correctly SB5042.
+- **False rejection.** A splat lowered to a single `SsaValue`, so
+  `arg_values.len()` counted it as **1** regardless of the array's size:
+  `f @q` on a two-element `q` was rejected as "called with 1", and a
+  three-element `q` said "called with 1" too.
+
+### The rule
+
+A splat or a `:~` elide may be passed to a user function only where the callee
+accepts any number of arguments, and only when the call's **minimum** meets
+that callee's floor. Otherwise **SB5087**.
+
+Per-argument minimum, used to compute the call's floor:
+
+| argument | contributes at least |
+|---|---|
+| an ordinary value | 1 |
+| `${x:~}` | **0** |
+| bare `@a` | **0** |
+| `@{a:~}` | **0** |
+| `@{a:-}` / `@{a:-W}` | 1 (2026-09-04 addendum: empty → one empty element) |
+| `@{a:?W}` | 1 (empty aborts, so any continuing path has one) |
+
+DG pre-rejected tracking provably-present elements, so `array q=(p d); f @q`
+into a fixed-arity callee is rejected even though the size is visible one line
+above. The author writes the arguments out, or makes the callee variadic.
+
+### This makes the elidable-position list uniform
+
+§(B)'s three elidable positions are all **variadic contexts** — an external
+command's argv (`execve` takes any argc), a sash varargs builtin, an array
+literal element. A user-function call is the fourth, and is elidable exactly
+when the callee is variadic. That is now the whole rule, rather than a
+closed list that happened to omit the one position with a fixed arity.
+
+### Consequence — `: @args` must not promote an optional index
+
+Found while applying the above. `analyze_arity` computed a variadic function's
+floor from `required ∪ optional`, so adding `: @args` — DD#81's documented way
+to accept a variable number — turned a DD#84 *optional* argument back into a
+required one:
+
+```sash
+fn f {           echo "[${args[0]:-}]" };  f    # accepted  (Fixed{0,1})
+fn f { : @args;  echo "[${args[0]:-}]" };  f    # SB5042    -- wrong
+```
+
+The floor is now `required` only, matching the fixed path's `min`, which
+already excluded optional-only indices. Specs 84.66/84.67.
+
+Impl: `transform/cmd_handlers.rs::check_callee_arity` + `call_arg_bounds`
+(which is why the check now takes the argument *values*, not their count);
+`transform/functions.rs::analyze_arity`. Specs `optional_args.sh` 84.53-84.67;
+`functions.sh` sp.3 migrated. journal 443.

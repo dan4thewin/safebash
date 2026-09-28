@@ -1,14 +1,14 @@
 ---
 title: "SB5042/SB5043 count compile-time SsaValues, so a splat or elide at a call site is miscounted in BOTH directions"
-status: blocked
+status: done
 priority: P1
 kind: bug
 depends: []
-blocked_on: "DG — whether a runtime arity shortfall stays unchecked (options A/B/C below)"
 gates:
-  - "`f @q` where `q` has enough elements for a fixed-arity `f` is not rejected"
+  - "`f @q` into a fixed-arity `f` is rejected as SB5087, whatever `q` holds"
   - "`f one ${x:~}` cannot silently deliver fewer arguments than the callee's `min`"
   - "no diagnostic states an argument count that is not the count"
+  - "a splat or elide into a VARIADIC callee is accepted and delivers per-element"
   - "specs for both directions, in both modes"
 ---
 
@@ -26,164 +26,95 @@ compile time that expands to 0..n tokens at runtime. So the number handed
 to the arity check is neither the runtime count nor a bound on it, and the
 check is wrong in both directions.
 
-This is the third instance this session of one class: **a compile-time count
-taken over a value that expands at runtime.** The other two were the `exec`
-argv builder and the DD#84 elidability gate (both fixed, journal 441).
-
-Both reproducers below use a callee that is **fixed-arity by every reading** —
-it reads `args[0]` and `args[1]` and nothing else. No `len`, no `$#`, no
-splat: `analyze_arity` returns `Fixed{min:2,max:2}`, and the diagnostics quoted
-are the *fixed* ones ("expects 2 arguments"), not the variadic "at least".
+This is the third instance of one class: **a compile-time count taken over a
+value that expands at runtime.** The other two were the `exec` argv builder
+and the DD#84 elidability gate (both fixed, journal 441).
 
 ## Direction A — accepts a call it has itself proven invalid
 
-```sash
-fn f {
-  str a=${args[0]}
-  str b=${args[1]}
-  echo "a=[$a] b=[$b]"
-}
-str x=""
-f one ${x:~}
-```
-
-compiles, and prints `a=[one] b=[]` — one argument delivered to a callee the
-compiler has typed `Fixed{2,2}`. Writing the *same runtime shape* literally is
-rejected:
-
-```
-f one
-→ error [SB5042] function 'f' expects 2 arguments but was called with 1
-```
-
-So elision reaches exactly the state SB5042 exists to prevent, silently, and
-`${args[1]}` reads out of range as empty.
+`f one ${x:~}` into a `Fixed{2,2}` callee compiled and printed `a=[one] b=[]`.
+Writing the same runtime shape literally (`f one`) is correctly SB5042.
 
 ## Direction B — rejects a valid call, with a false count
 
-```sash
-fn f {
-  str a=${args[0]}
-  str b=${args[1]}
-  echo "[$a][$b]"
-}
-array q=(p d)
-f @{q:-}
-```
+`f @{q:-}` on a two-element `q` was rejected as "called with 1" — the constant
+1 for any splat, regardless of the array's size.
 
-```
-→ error [SB5042] function 'f' expects 2 arguments but was called with 1
-```
+# Resolved 2026-09-28 — DG's rule
 
-`q` has two elements, so the call delivers exactly the two the callee wants.
-It is rejected anyway, and the message asserts "called with 1", which is not
-true of any execution. Bare `f @q` behaves identically, and a *three*-element
-`q` — genuinely too many — gets the same "called with 1" rather than SB5043.
-The count is not merely imprecise; it is the constant 1 for any splat.
+DG settled it, and the answer was simpler than any of the options this file
+had drafted:
 
-The splat does expand at runtime — a variadic callee sees all three:
+> to my mind, an elision, given it could remove an argument, can only work for
+> a variadic context and not a fixed one. similarly, a splat should only work
+> for variadic given it could be empty (could try to track provably present
+> elements of the array, but edge cases make that a non-starter, I think)
 
-```sash
-fn f { for x in @args; do echo "[$x]"; done }
-array q=(p d e)
-f @{q:-}        # → [p] [d] [e]
-```
+A dynamic count is legal only where the callee accepts any number. Recorded as
+the DD#84 addendum of 2026-09-28, with the per-argument minimum table;
+implemented as **SB5087** in `check_callee_arity` + the new `call_arg_bounds`
+(which is why the check now takes the argument *values*, not their count).
 
-(`@args` is what makes that callee variadic here — deliberately not `$(len
-args)`, so the evidence does not lean on the rule questioned below.)
+Both directions fall out: direction A is now rejected outright, and direction
+B never reaches a count — a splat into a variadic callee is accepted without
+one, and into a fixed-arity callee it is SB5087, whose message does not claim
+an argc. Every count still printed belongs to a statically-countable call.
 
-# Why option "reject dynamic counts into fixed-arity callees" is wrong
+**Measured cost: one spec** out of 6865 (`functions.sh` sp.3, migrated).
 
-It is the obvious fail-closed move and it kills DD#84's own motivating case.
-A function with an optional trailing parameter is `Fixed{1,2}`, and
+## What this file got wrong
 
-```sash
-f a ${maybe:~}
-```
+Two sections argued against the answer, and both were unfounded:
 
-— "pass a second argument if I have one" — has runtime range `[1,2]`, which
-is entirely inside `[1,2]`. That is the feature DD#84 §(A) exists for. Any
-fix has to keep it.
+- **"Why option 'reject dynamic counts into fixed-arity callees' is wrong"**
+  claimed the rule kills DD#84's motivating case, `f a ${maybe:~}` into a
+  `Fixed{1,2}` callee. It does reject that — but DD#84 §(A) never promised it.
+  The DD says an absent optional arg is one "known at compile time", which a
+  `:~` elide by construction is not. The objection was invented here, not read
+  from the DD. The motivating case is written `f a` or `f a "$maybe"`, or the
+  callee declares `: @args`.
+- **"The honest check"** proposed diagnosing only on disjoint ranges. It also
+  asserted that bare `@a` "is rejected earlier (SB5030/SB5032 — DD#69 requires
+  a disposition), so it does not arise". False: bare `@a` is legal at a call
+  site and is the common spelling (specs sp.1, sp.9). DD#69's disposition
+  requirement is about *empty*-array behaviour, not about splatting at all.
 
-# The honest check
+Both were asserted from reading rather than execution — the same failure mode
+the DD#100 addendum of 2026-09-17 records against itself. The options A/B/C
+this file offered DG were therefore a choice among three answers to a question
+that did not need asking.
 
-Compute the runtime range of the call's argument count:
+## Found while implementing — three further bugs
 
-- a plain value contributes exactly 1;
-- `${x:~}` contributes 0 or 1;
-- `@{a:~}` contributes 0..∞ (the array length is not known at compile time);
-- `@{a:-}` contributes 1..∞ (DD#84 addendum: an empty array still yields one
-  empty element);
-- `@a` bare is rejected earlier (SB5030/SB5032 — DD#69 requires a
-  disposition), so it does not arise.
+1. **`: @args` promoted an optional arg to required.** `analyze_arity`'s
+   variadic floor chained `required ∪ optional`, unlike the fixed branch.
+   Adding DD#81's variadic marker turned an accepted `f` into SB5042. Fixed;
+   specs 84.66/84.67; DD#84 addendum.
+2. **A splat joined in a pipeline stage** — the same bug
+   `bug-splat-to-user-function-joins` closed on 2026-09-10, in a third
+   position its fix missed. See that file.
+3. **`=name` reached the slot on one call path in four** (SIGSEGV and an ICE).
+   See the DD#100 addendum of 2026-09-28.
 
-giving `[lo, hi]` with `hi` possibly unbounded. Then diagnose only when
-`[lo,hi]` and the callee's `[min,max]` are **disjoint** — that alone fixes
-direction B and makes every emitted count true.
+Numbers 2 and 3 were found by probing the *consequences* of this rule across
+every call position, not by the rule itself — the rule needed to know what a
+splat lowers to on each path, and three of the four paths turned out not to
+lower it at all.
 
-# The decision — what happens when the ranges OVERLAP but the runtime lands outside
+## Left open, deliberately
 
-Direction A is still reachable after the range check: `[1,2]` overlaps
-`[2,2]`, so `f one ${x:~}` compiles, and with `x` empty it delivers 1.
-
-- **A — accept, and let `${args[K]}` read empty.** Zero runtime cost. This
-  is today's behaviour for the accept case, just with B's false rejection
-  gone. Cost: SB5042 becomes a check that a program can walk past, and "the
-  callee's `args` array is materialized short" (DD#84 §(A)) becomes a
-  *runtime* fact where the DD describes it as a compile-time one.
-- **B — accept, plus emit a runtime arity check** on a fixed-arity callee
-  whenever the range is not a single point; abort per DD#55 on a shortfall.
-  Fail-closed. Costs one compare per such call, and only for calls that
-  actually have a dynamic count.
-- **C — accept, and define the short read.** Say explicitly that a call may
-  deliver fewer than `min` and that `${args[K]}` out of range is the empty
-  string, making SB5042 a *statically-decidable-cases-only* check rather
-  than an invariant. Honest, zero cost, and the largest language change.
-
-I lean **B**: `min` is derived from what the body reads *unconditionally*, so
-a shortfall means the callee is about to read a positional that was never
-passed — which is the failure SB5042 names, and DD#55 already has an abort
-for "a thing the program cannot proceed past". A is the cheapest and would
-not be unreasonable if the runtime check proves noisy in practice.
-
-This is DG's call: it decides whether a compile-time arity guarantee survives
-contact with dynamic argument counts, and B changes generated code.
-
-# Adjacent, and NOT part of this bug — "observing argc ⇒ variadic" (now fixed)
-
-The first draft of this file used `int n=$(len args)` in both callees. DG
-caught it (2026-09-28): *"the example functions in the task file are not
-variadic (the use of len alone shouldn't qualify)."*
-
-That spoiled the reproducers — the examples above are rewritten without it —
-and the draft compounded the error by calling that callee `Fixed{min:2}`
-while quoting an error that said "expects **at least** 2", which is the
-*variadic* message. The quoted evidence contradicted the sentence it was
-supporting.
-
-DG then settled the underlying rule: *"`$(len args)` is how a function would
-loop over variadic args; but accessing an arg via a loop or branch is what
-would make it variadic. Without the loop/branch the len is vacuous."*
-
-**Implemented** as the DD#81 addendum of 2026-09-28: `$(len args)` and `$#`
-contribute nothing to the inferred signature. `@args`, `$(join args)`,
-`$(keys args)` and a dynamic index still imply variadic — they *access*
-elements. A body that only counts is fixed-arity at its literal indices, and
-declares variadic intent with DD#81's no-op, `: @args`. Specs 81.17–81.29.
-
-This bug is **unaffected**: both reproducers above are fixed-arity without any
-count, and they behaved identically before and after that change.
+- `arity_too_many_msg` is called with `min`, not `max`: a `Fixed{1,2}` callee
+  called with 3 prints "takes 1 arguments". Message-only, pre-existing,
+  untouched here to keep the regression signal clean. Worth its own filing.
+- `collect_bulk_targets` / `collect_collection_names` (`validate.rs` ~7169,
+  ~7144) look to share the missing `$( )` descent that
+  `collect_slot_arg_reads` and `check_call_args_in` had. Not probed.
 
 # Where
 
-- `sash/src/transform/cmd_handlers.rs:282` — `inline_function_call`
-- `sash/src/transform/stmt_handlers.rs:897` — `build_function_pipeline_stage`
-- `sash/src/transform/stmt_handlers.rs:1260` — `capture_func_into`
+- `sash/src/transform/cmd_handlers.rs` — `check_callee_arity`,
+  `call_arg_bounds`, `arity_dynamic_msg`, `arity_floor_msg`
+- `sash/src/transform/functions.rs` — `analyze_arity`
+- Specs `optional_args.sh` 84.53–84.67; `functions.sh` sp.3
 
-All three pass a `.len()`. `check_callee_arity`
-(`cmd_handlers.rs:367`) takes `call_argc: usize` and would take a range
-instead; `analyze_arity` already yields the callee side as
-`Fixed{min,max}` / `Variadic{floor}`.
-
-`arity_too_few_msg` / `arity_too_many_msg` print the count, so they need the
-range too — "called with 1" must not be said about a call that may pass 3.
+journal 443.
