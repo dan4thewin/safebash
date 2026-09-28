@@ -157,7 +157,7 @@ fn classify_inst_def(
         // CST pass; the SSA backstop does not yet re-derive them (see task
         // ssa-taint-cmdsub-operand-propagation for the capture/array work).
         SsaInst::Command { .. }
-        | SsaInst::Test(_)
+        | SsaInst::Test(..)
         | SsaInst::SubscriptAssign { .. }
         | SsaInst::ArrayAppend { .. }
         | SsaInst::ReadArray { .. }
@@ -192,74 +192,79 @@ fn check_block_uses(block: &BasicBlock, taint: &HashMap<String, Taint>, errors: 
     }
 }
 
-/// Phase 2: any instruction reading a tainted VarRef in a position that
-/// would produce output, execute an external, or escape into an index
-/// expression is an ICE.
-/// Every argument in one argument list, reported under a shared context.
-fn check_arg_uses(
-    args: &[SsaValue],
+/// Phase 2: any instruction reading a tainted value in a position that
+/// would produce output, execute an external, escape to a file descriptor,
+/// or enter an index expression is an ICE.
+///
+/// The enumeration of read positions is **not** here: it is
+/// [`SsaInst::taint_reads`], which is total over `SsaInst` with no wildcard.
+/// This function only decides what to do with each one. The hand-written
+/// four-arm match that used to live here ended in `_ => {}` and is how
+/// `SsaInst::Test` and `SsaInst::RedirectPush` escaped the backstop for the
+/// whole life of the pass.
+fn check_inst_uses(inst: &SsaInst, taint: &HashMap<String, Taint>, errors: &mut Vec<String>) {
+    for (read, context) in inst.taint_reads() {
+        match read {
+            TaintRead::Value(v) => check_value_use(v, taint, errors, &context),
+            TaintRead::RedirectTarget(e) => check_redirect_target(e, taint, errors, &context),
+        }
+    }
+}
+
+/// A redirect target rides through SSA as an unlowered `ir::Expr` — there is
+/// no `SsaValue` to check — so its variable reads are resolved by NAME.
+///
+/// `taint_of_name` takes the highest classified version, so this is
+/// deliberately imprecise in the permissive direction: a variable attested
+/// *after* the redirect reads clean here. The front-end pass is the precise
+/// one and reports with a span; this is the backstop that makes the position
+/// non-silent rather than a second opinion.
+fn check_redirect_target(
+    target: &crate::ir::Expr,
     taint: &HashMap<String, Taint>,
     errors: &mut Vec<String>,
     context: &str,
 ) {
-    for arg in args {
-        check_value_use(arg, taint, errors, context);
+    let mut names: Vec<String> = Vec::new();
+    crate::ir::walk_expr_tree(target, &mut |e| collect_expr_var_name(e, &mut names));
+    for name in names {
+        if taint_of_name(taint, &name) == Taint::Tainted {
+            errors.push(format!(
+                "tainted variable ${} used as {} without attest (SSA taint backstop)",
+                name, context
+            ));
+        }
     }
 }
 
-fn check_inst_uses(inst: &SsaInst, taint: &HashMap<String, Taint>, errors: &mut Vec<String>) {
-    match inst {
-        SsaInst::Command { name, args, .. } => {
-            // No `attest` exemption here: every `attest` form (bare, `&&`/`||`
-            // operand, `if attest`) is routed through `lower_if_attest`, so it
-            // reaches SSA as branch machinery and never as a Command. The guard
-            // that used to sit here was unreachable — measured 0 hits against
-            // 4724 on its sibling, then confirmed by instrumentation. If attest
-            // is ever lowered as a plain command, the exemption must come back:
-            // receiving tainted arguments is the whole point of the operator.
-            check_arg_uses(
-                args,
-                taint,
-                errors,
-                &format!("argument to command '{}'", name),
-            );
-        }
-        SsaInst::Pipeline { stages, .. } => {
-            for (name, args, _) in stages {
-                let ctx = format!("argument in pipeline stage '{}'", name);
-                check_arg_uses(args, taint, errors, &ctx);
+/// The variable this expression node names, if any. Called once per node by
+/// `walk_expr_tree`, so it must not recurse itself. Names are cloned because
+/// `walk_expr_tree`'s callback takes its node under an anonymous lifetime.
+///
+/// **Total over `ExprKind` on purpose — do not add a wildcard.**
+fn collect_expr_var_name(e: &crate::ir::Expr, out: &mut Vec<String>) {
+    use crate::ir::ExprKind;
+    match &e.kind {
+        ExprKind::SimpleExpansion(name) => out.push(name.clone()),
+        ExprKind::ParameterExpansion(pe) => {
+            // DD#91: `${x:!}` is a sanctioned per-use bypass. The author has
+            // vouched for this read; do not second-guess it here.
+            if !pe.taint_off {
+                out.push(pe.name.clone());
             }
         }
-        SsaInst::SubscriptAssign {
-            index,
-            value,
-            array,
-            ..
-        } => {
-            check_value_use(
-                index,
-                taint,
-                errors,
-                &format!("subscript index of '{}'", array),
-            );
-            check_value_use(
-                value,
-                taint,
-                errors,
-                &format!("subscript value of '{}'", array),
-            );
-        }
-        SsaInst::ArrayAppend { value, array, .. } => {
-            check_value_use(
-                value,
-                taint,
-                errors,
-                &format!("array append to '{}'", array),
-            );
-        }
-
-        // Assign, Attest, ReadLine, etc. — definitions, not uses
-        _ => {}
+        ExprKind::Subscript { name, .. } => out.push(name.clone()),
+        // Composites: `walk_expr_tree` visits their children for us.
+        ExprKind::DoubleQuoted(_)
+        | ExprKind::Concat(_)
+        | ExprKind::Array(_)
+        | ExprKind::AssocArray(_)
+        | ExprKind::SlurpFile(_)
+        | ExprKind::Arithmetic(_)
+        | ExprKind::Test(_)
+        | ExprKind::CommandSubstitution(_) => {}
+        // Leaves with no variable read.
+        ExprKind::Literal(_) | ExprKind::SingleQuoted(_) => {}
     }
 }
 
@@ -483,6 +488,17 @@ fn cmd_subst_taint(
     }
 }
 
+/// Report every tainted read inside one value used at a sink.
+///
+/// **Total over `SsaValue` on purpose — do not add a wildcard.** The `_ => {}`
+/// this replaced covered 8 of the 30 variants; the other 22 read as clean
+/// whatever they held. The arms are grouped to mirror `value_is_tainted`
+/// above, which has always been exhaustive — the two are the derivation and
+/// the reporting half of one model and should be read side by side.
+///
+/// The recursion is written out rather than delegated to
+/// `SsaValue::child_values()`, because that getter still ends in a wildcard;
+/// borrowing it here would reintroduce the same hole one level down.
 fn check_value_use(
     value: &SsaValue,
     taint: &HashMap<String, Taint>,
@@ -490,37 +506,165 @@ fn check_value_use(
     context: &str,
 ) {
     match value {
+        // ── Var-rooted reads ────────────────────────────────────────────
         SsaValue::Var(vref) => check_tainted_var(vref, "", context, taint, errors),
         SsaValue::ArithExpr { var, .. } => {
             check_tainted_var(var, " in arithmetic", context, taint, errors)
         }
+        SsaValue::ArgvIndex(vref) => {
+            check_tainted_var(vref, " as an argv index", context, taint, errors)
+        }
         SsaValue::ParamExpansion { var, operator, .. } => {
-            // DD#60: a length/count operator (`${#a[@]}` / `len a`,
-            // `${#s}`) exposes only the element count or byte length, not
-            // any tainted element data — clean even on a tainted array.
-            if operator != "arrlen" && operator != "strlen" {
-                check_tainted_var(var, " in param expansion", context, taint, errors)
-            }
+            check_param_expansion_use(var, operator, taint, errors, context)
         }
-        SsaValue::Concat(parts) | SsaValue::IndexedArray(parts) => {
-            for p in parts {
-                check_value_use(p, taint, errors, context);
-            }
-        }
-        SsaValue::CmdSubst { argv, .. } => {
-            for a in argv {
-                check_value_use(a, taint, errors, context);
-            }
-        }
-        SsaValue::ArithBinOp { left, right, .. } => {
-            check_value_use(left, taint, errors, context);
-            check_value_use(right, taint, errors, context);
+
+        // ── Collection reads, resolved by bare name (DD#61) ─────────────
+        SsaValue::TableValue { array, .. } | SsaValue::TableKey { array, .. } => {
+            check_tainted_array(array, context, taint, errors)
         }
         SsaValue::Subscript { array, index, .. } => {
             check_tainted_array(array, context, taint, errors);
             check_value_use(index, taint, errors, context);
         }
-        _ => {} // Literal, Expr, FuncCall — no tainted reads
+        SsaValue::ArraySplat { array, disposition } => {
+            check_splat_use(array, disposition, taint, errors, context)
+        }
+
+        // ── DD#91 sanctioned bypasses: the author has vouched ───────────
+        SsaValue::Trusted { .. } => {}
+        SsaValue::ElideEmpty { source, taint_off } => {
+            if !taint_off {
+                check_value_use(source, taint, errors, context);
+            }
+        }
+
+        // ── DD#60: length exposes no element data ───────────────────────
+        // Asymmetric with `value_is_tainted`, which treats `StrLen` as
+        // tainted-if-subject-is. That direction is conservative (it over-taints
+        // a derived value); rejecting here would contradict DD#60 and the
+        // front-end pass, and a backstop false positive is a user-facing ICE.
+        SsaValue::StrLen { .. } => {}
+
+        // ── Leaves with no read ─────────────────────────────────────────
+        SsaValue::Literal(_) | SsaValue::Expr(_) => {}
+
+        // The body's own reads are an open front-end gap
+        // (`notes/tasks/bug-taint-escape-in-cmdsub-body.md`), not something
+        // this value-oriented walk can see: `body` is `Vec<ir::Statement>`,
+        // never lowered to SSA. Listed explicitly so it stays visible.
+        SsaValue::CmdSubstBody { .. } => {}
+
+        // ── Composites: every child is a read at the same sink ──────────
+        // `SlurpFile`'s child is the PATH — `$(<$h)` reads a tainted filename,
+        // which is an escape even though the slurp's own taint is asserted
+        // rather than inherited (see `value_is_tainted`).
+        SsaValue::SlurpFile(inner)
+        | SsaValue::IntCell(inner)
+        | SsaValue::CaseConvert { subject: inner, .. }
+        | SsaValue::Substring { source: inner, .. } => {
+            check_value_use(inner, taint, errors, context)
+        }
+        SsaValue::Concat(parts) | SsaValue::IndexedArray(parts) => {
+            check_each(parts, taint, errors, context)
+        }
+        SsaValue::AssocArray(pairs) => check_assoc_use(pairs, taint, errors, context),
+        SsaValue::CmdSubst { argv: args, .. }
+        | SsaValue::FuncCall { args, .. }
+        | SsaValue::IntFuncCall { args, .. } => check_each(args, taint, errors, context),
+        SsaValue::ArithBinOp { left, right, .. }
+        | SsaValue::RegexMatch {
+            subject: left,
+            pattern: right,
+        }
+        | SsaValue::DefaultValue {
+            source: left,
+            default: right,
+        }
+        | SsaValue::RequireValue {
+            source: left,
+            message: right,
+        } => {
+            check_value_use(left, taint, errors, context);
+            check_value_use(right, taint, errors, context);
+        }
+        SsaValue::RegexReplace {
+            subject,
+            pattern,
+            replacement,
+            ..
+        } => {
+            check_value_use(subject, taint, errors, context);
+            check_value_use(pattern, taint, errors, context);
+            check_value_use(replacement, taint, errors, context);
+        }
+        SsaValue::Ternary {
+            cond,
+            true_val,
+            false_val,
+        } => {
+            check_value_use(cond, taint, errors, context);
+            check_value_use(true_val, taint, errors, context);
+            check_value_use(false_val, taint, errors, context);
+        }
+    }
+}
+
+/// DD#60: a length/count operator (`${#a[@]}` / `len a`, `${#s}`) exposes
+/// only the element count or byte length, not any tainted element data — so
+/// it is clean even on a tainted array.
+fn check_param_expansion_use(
+    var: &VarRef,
+    operator: &str,
+    taint: &HashMap<String, Taint>,
+    errors: &mut Vec<String>,
+    context: &str,
+) {
+    if operator != "arrlen" && operator != "strlen" {
+        check_tainted_var(var, " in param expansion", context, taint, errors);
+    }
+}
+
+/// DD#91: `@{a:!DISP}` is a sanctioned per-use attest-all bypass, matching
+/// `splat_taint`. The disposition WORD is still checked either way — `!`
+/// vouches for the splat's own read, not for an unrelated variable spliced
+/// into the default.
+fn check_splat_use(
+    array: &str,
+    disposition: &Option<crate::ssa::ArraySplatDisposition>,
+    taint: &HashMap<String, Taint>,
+    errors: &mut Vec<String>,
+    context: &str,
+) {
+    if !disposition.as_ref().is_some_and(|d| d.taint_off) {
+        check_tainted_array(array, context, taint, errors);
+    }
+    if let Some(d) = disposition {
+        check_value_use(&d.word, taint, errors, context);
+    }
+}
+
+/// Every value half of an assoc-array literal. The keys are literal strings
+/// in SSA, so only the values can carry a read.
+fn check_assoc_use(
+    pairs: &[(String, SsaValue)],
+    taint: &HashMap<String, Taint>,
+    errors: &mut Vec<String>,
+    context: &str,
+) {
+    for (_, v) in pairs {
+        check_value_use(v, taint, errors, context);
+    }
+}
+
+/// Every value in one list, reported under a shared context.
+fn check_each(
+    values: &[SsaValue],
+    taint: &HashMap<String, Taint>,
+    errors: &mut Vec<String>,
+    context: &str,
+) {
+    for v in values {
+        check_value_use(v, taint, errors, context);
     }
 }
 

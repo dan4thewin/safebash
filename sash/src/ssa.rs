@@ -263,8 +263,10 @@ pub enum SsaInst {
         checked: bool,
     },
     /// Test expression from [[ ]]. Preserved through SSA so codegen
-    /// can emit inline comparisons instead of shelling out.
-    Test(SsaTest),
+    /// can emit inline comparisons instead of shelling out. The
+    /// [`TestOrigin`] distinguishes a user-written test from an `attest`
+    /// predicate, which the taint backstop must not treat as a sink.
+    Test(SsaTest, TestOrigin),
 
     /// `readline VAR`: read one newline-terminated record from `fd` into
     /// `target` and set `__test_result` (0 at EOF). DD#99 retired the
@@ -438,7 +440,192 @@ pub enum SsaInst {
     AttestRetag { target: VarRef, source: VarRef },
 }
 
+/// Why a [`SsaInst::Test`] exists in SSA.
+///
+/// The `if attest` / `attest &&` / `attest ||` forms reach SSA as branch
+/// machinery — a bare `SsaInst::Test` in a condition block — which is
+/// structurally identical to a user-written `[[ ]]`. They are not the same
+/// thing to the taint backstop: reading the tainted subject is the entire
+/// point of an attest, and is exactly the exemption `SsaInst::Attest` gets on
+/// the bare form. Without this tag, turning `Test` into a sink rejects every
+/// caught-attest program.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TestOrigin {
+    /// A user-written `[[ ]]`, a `case`/dispatch pattern test, or compiler
+    /// machinery implementing a disposition.
+    Plain,
+    /// The predicate of an `attest`.
+    AttestPredicate,
+}
+
+/// One operand read by an instruction, as seen by the taint backstop.
+///
+/// Two shapes, because redirects ride through SSA **unlowered**: a
+/// [`crate::ir::Redirect`]'s target is still an `ir::Expr` and never becomes
+/// an [`SsaValue`]. That is the structural reason a value-oriented walk could
+/// not see `echo pwned > $h` — there was no SSA value to look at.
+pub(crate) enum TaintRead<'a> {
+    Value(&'a SsaValue),
+    RedirectTarget(&'a crate::ir::Expr),
+}
+
+fn value_reads<'a>(values: &'a [SsaValue], ctx: String) -> Vec<(TaintRead<'a>, String)> {
+    values
+        .iter()
+        .map(|v| (TaintRead::Value(v), ctx.clone()))
+        .collect()
+}
+
+fn redirect_reads<'a>(
+    redirects: &'a [crate::ir::Redirect],
+    ctx: String,
+) -> Vec<(TaintRead<'a>, String)> {
+    redirects
+        .iter()
+        .map(|r| (TaintRead::RedirectTarget(&r.target), ctx.clone()))
+        .collect()
+}
+
+/// **Total over [`SsaTest`] on purpose — do not add a wildcard.**
+fn push_test_reads<'a>(t: &'a SsaTest, out: &mut Vec<(TaintRead<'a>, String)>) {
+    let ctx = || "a test operand".to_string();
+    match t {
+        SsaTest::Unary { operand, .. } => out.push((TaintRead::Value(operand), ctx())),
+        SsaTest::Binary { left, right, .. } => {
+            out.push((TaintRead::Value(left), ctx()));
+            match right {
+                SsaTestRhs::Value(v) => out.push((TaintRead::Value(v), ctx())),
+                SsaTestRhs::Pattern(_) => {}
+            }
+        }
+        SsaTest::Not(inner) => push_test_reads(inner, out),
+        SsaTest::And(a, b) | SsaTest::Or(a, b) => {
+            push_test_reads(a, out);
+            push_test_reads(b, out);
+        }
+    }
+}
+
 impl SsaInst {
+    /// Every operand this instruction reads in a position where a tainted
+    /// value would **escape** — to an external process, to output, to a file
+    /// descriptor, to a subscript index, or into a collection whose taint the
+    /// backstop does not re-derive — paired with a description of the sink
+    /// for the diagnostic.
+    ///
+    /// **Total over [`SsaInst`] on purpose — do not add a wildcard.** This is
+    /// the one place that enumerates read positions, so rustc's exhaustiveness
+    /// check is the enforcement: adding a variant has to be a compile error
+    /// here rather than a silent gap in `ssa_taint`. The four-arm match with a
+    /// `_ => {}` that this replaced is exactly how `Test` and `RedirectPush`
+    /// escaped — both are listed in `classify_inst_def` (the write side, which
+    /// has always been exhaustive) and neither was listed on the read side.
+    ///
+    /// The positions deliberately absent are *propagation*, not escape:
+    /// `Assign`'s value flows into its target, `Attest`/`AttestAll` read their
+    /// source because validating it is the entire point of the form, and
+    /// `CaptureEnd` defines rather than reads. `classify_inst_def` owns those.
+    pub(crate) fn taint_reads(&self) -> Vec<(TaintRead<'_>, String)> {
+        match self {
+            SsaInst::Command {
+                name,
+                args,
+                redirects,
+                ..
+            } => {
+                let mut v = value_reads(args, format!("an argument to '{}'", name));
+                v.extend(redirect_reads(
+                    redirects,
+                    format!("a redirect target of '{}'", name),
+                ));
+                v
+            }
+            SsaInst::Pipeline { stages, .. } => stages
+                .iter()
+                .flat_map(|(name, args, redirects)| {
+                    let mut v =
+                        value_reads(args, format!("an argument to '{}' in a pipeline", name));
+                    v.extend(redirect_reads(
+                        redirects,
+                        format!("a redirect target of '{}' in a pipeline", name),
+                    ));
+                    v
+                })
+                .collect(),
+            // An attest predicate reads its tainted subject by design; see
+            // `TestOrigin`. The same exemption the bare form gets below.
+            SsaInst::Test(_, TestOrigin::AttestPredicate) => vec![],
+            SsaInst::Test(t, TestOrigin::Plain) => {
+                let mut v = Vec::new();
+                push_test_reads(t, &mut v);
+                v
+            }
+            SsaInst::ReadLine { redirects, .. } => {
+                redirect_reads(redirects, "a redirect target of `readline`".to_string())
+            }
+            SsaInst::ReadArray { redirects, .. } => {
+                redirect_reads(redirects, "a redirect target of `read`".to_string())
+            }
+            SsaInst::RedirectPush { redirects, .. } => {
+                redirect_reads(redirects, "a redirect target".to_string())
+            }
+            SsaInst::SubscriptAssign {
+                array,
+                index,
+                value,
+                ..
+            } => vec![
+                (
+                    TaintRead::Value(index),
+                    format!("a subscript index of '{}'", array),
+                ),
+                (
+                    TaintRead::Value(value),
+                    format!("a subscript value of '{}'", array),
+                ),
+            ],
+            SsaInst::ArrayAppend { array, value } => vec![(
+                TaintRead::Value(value),
+                format!("an appended element of '{}'", array),
+            )],
+            SsaInst::MapFromArray { target, key, .. } => vec![(
+                TaintRead::Value(key),
+                format!("a map key filling '{}'", target),
+            )],
+            SsaInst::SplitValue { source, array } => vec![(
+                TaintRead::Value(source),
+                format!("the split source for '{}'", array),
+            )],
+            SsaInst::MatchInto {
+                subject,
+                pattern,
+                array,
+                ..
+            } => vec![
+                (
+                    TaintRead::Value(subject),
+                    format!("the match subject for '{}'", array),
+                ),
+                (
+                    TaintRead::Value(pattern),
+                    format!("the match pattern for '{}'", array),
+                ),
+            ],
+            // Propagation and definition sites. A tainted value here flows
+            // into a target whose own taint is derived from it by
+            // `classify_inst_def`; it does not escape. The last three read no
+            // `SsaValue` at all.
+            SsaInst::Assign { .. }
+            | SsaInst::Attest { .. }
+            | SsaInst::AttestAll { .. }
+            | SsaInst::AttestRetag { .. }
+            | SsaInst::CaptureEnd { .. }
+            | SsaInst::ArgvFill { .. }
+            | SsaInst::CaptureStart { .. }
+            | SsaInst::RedirectPop { .. } => vec![],
+        }
+    }
+
     /// `Some((site, slot count))` when this is a redirect-scope push.
     /// Takes `&Self` by reference so it can be passed to `filter_map`
     /// directly over an iterator of instruction references.

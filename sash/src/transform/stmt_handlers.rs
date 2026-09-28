@@ -128,7 +128,9 @@ fn try_test_arg_capture(
             // the capture may open a new block, so continue in whichever the
             // lift leaves us in.
             let ssa_test = super::functions::lift_test_captures(ssa_test, ssa, state, &mut block);
-            ssa.block_mut(block).insts.push(SsaInst::Test(ssa_test));
+            ssa.block_mut(block)
+                .insts
+                .push(SsaInst::Test(ssa_test, TestOrigin::Plain));
             return Some(block);
         }
     }

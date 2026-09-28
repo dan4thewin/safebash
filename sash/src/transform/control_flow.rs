@@ -98,12 +98,13 @@ fn lower_if_attest_convert(
     });
 
     let source = state.lookup(source_name);
-    ssa.block_mut(block)
-        .insts
-        .push(SsaInst::Test(SsaTest::Unary {
+    ssa.block_mut(block).insts.push(SsaInst::Test(
+        SsaTest::Unary {
             op: "i?".to_string(),
             operand: SsaValue::Var(source.clone()),
-        }));
+        },
+        TestOrigin::AttestPredicate,
+    ));
 
     let then_block = ssa.new_block("if_attest_convert.then");
     let merge_block = ssa.new_block("if_attest_convert.merge");
@@ -161,9 +162,10 @@ fn push_if_attest_condition(
 ) {
     match kind {
         AttestKind::Scalar(_) => {
-            ssa.block_mut(block)
-                .insts
-                .push(SsaInst::Test(test_to_ssa(test, state)));
+            ssa.block_mut(block).insts.push(SsaInst::Test(
+                test_to_ssa(test, state),
+                TestOrigin::AttestPredicate,
+            ));
         }
         AttestKind::Coll {
             array,
@@ -944,9 +946,10 @@ fn emit_single_pattern_branch(
     op: &str,
     state: &VersionState,
 ) {
-    ssa.block_mut(current)
-        .insts
-        .push(SsaInst::Test(dispatch_test(value, pattern, op, state)));
+    ssa.block_mut(current).insts.push(SsaInst::Test(
+        dispatch_test(value, pattern, op, state),
+        TestOrigin::Plain,
+    ));
     ssa.block_mut(current).terminator = Terminator::Branch {
         condition: "__test".to_string(),
         true_block,
@@ -968,25 +971,51 @@ fn emit_multi_pattern_chain(
 ) {
     let mut pat_current = current;
     for (pi, pat) in patterns.iter().enumerate() {
-        ssa.block_mut(pat_current)
-            .insts
-            .push(SsaInst::Test(dispatch_test(value, pat, op, state)));
-
-        let (true_block, false_block) = if pi + 1 < patterns.len() {
-            let next_pat = ssa.new_block(&format!("case.{}.pat.{}", arm_idx, pi + 1));
-            (case_block, next_pat)
+        // Every pattern but the last falls through to a fresh block for the
+        // next one; the last one's false edge leaves the arm. Advancing
+        // `pat_current` unconditionally is safe — on the last iteration the
+        // loop ends before it is read again.
+        let false_block = if pi + 1 < patterns.len() {
+            ssa.new_block(&format!("case.{}.pat.{}", arm_idx, pi + 1))
         } else {
-            (case_block, next_check)
+            next_check
         };
-        ssa.block_mut(pat_current).terminator = Terminator::Branch {
-            condition: "__test".to_string(),
-            true_block,
+        emit_pattern_link(
+            ssa,
+            pat_current,
+            value,
+            pat,
+            op,
+            state,
+            case_block,
             false_block,
-        };
-        if pi + 1 < patterns.len() {
-            pat_current = false_block;
-        }
+        );
+        pat_current = false_block;
     }
+}
+
+/// One link of a multi-pattern arm: test `pat` against the subject, branch to
+/// the arm body on a match and to `false_block` otherwise.
+#[allow(clippy::too_many_arguments)]
+fn emit_pattern_link(
+    ssa: &mut SsaProgram,
+    block: BlockId,
+    value: &SsaValue,
+    pat: &Expr,
+    op: &str,
+    state: &VersionState,
+    case_block: BlockId,
+    false_block: BlockId,
+) {
+    ssa.block_mut(block).insts.push(SsaInst::Test(
+        dispatch_test(value, pat, op, state),
+        TestOrigin::Plain,
+    ));
+    ssa.block_mut(block).terminator = Terminator::Branch {
+        condition: "__test".to_string(),
+        true_block: case_block,
+        false_block,
+    };
 }
 
 /// If no arm is a wildcard, a no-match path exists. Build a dedicated

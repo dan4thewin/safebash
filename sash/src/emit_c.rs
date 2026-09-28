@@ -1153,7 +1153,7 @@ fn emit_inst(e: &mut Emit, inst: &SsaInst, types: &VarTypes) {
         // (dispatch.rs:108-118): result = lower_test_expr(...);
         // builder.def_var(test_result_var, result). Branch terminator
         // then reads it.
-        SsaInst::Test(test_expr) => {
+        SsaInst::Test(test_expr, _) => {
             let val = lower_test_expr(e, test_expr, types);
             writeln!(e.out, "    __test_result = {};", val).unwrap();
             writeln!(e.out, "    __exit_status = __test_result ? 0 : 1;").unwrap();

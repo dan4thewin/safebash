@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup taint
-plan=252
+plan=256
 echo "1..$plan" >&3
 
 set +e
@@ -1489,6 +1489,44 @@ run_sash 'str h=$(getenv HOME)
 array a=( ${h:!-$(getenv PATH)} )
 echo "${a[0]}"'
 [[ $rc != 0 && -z $out && $err == *SB502* ]]; chk 91.33
+
+# ── SSA taint backstop: the read positions the four-arm match never saw ────
+# `check_inst_uses` enumerated 4 of 19 `SsaInst` variants and ended in
+# `_ => {}`, so `SsaInst::Test` and `SsaInst::RedirectPush` were never checked
+# at all — both are listed in `classify_inst_def`, the write side, which has
+# been exhaustive since it was written. The front-end pass does not descend
+# into a `$( )` body (notes/tasks/bug-taint-escape-in-cmdsub-body.md), which is
+# what made the gap reachable. Enumeration now lives in
+# `SsaInst::taint_reads`, total over the enum with no wildcard.
+
+# bkstp.1 NEGATIVE — a tainted REDIRECT TARGET inside a `$( )` body. This
+#         compiled, and the binary wrote a file named by the environment.
+run_sash '/bin/echo $(str h=$(getenv TARGET); echo pwned > $h)'
+[[ $rc != 0 && -z $out && $err == *"taint backstop"* ]]; chk bkstp.1
+
+# bkstp.2 NEGATIVE — a tainted TEST OPERAND inside a `$( )` body. This
+#         compiled, and the binary branched on external input.
+run_sash '/bin/echo $(str h=$(getenv TARGET); if [[ -n $h ]] { echo yes })'
+[[ $rc != 0 && -z $out && $err == *"taint backstop"* ]]; chk bkstp.2
+
+# bkstp.3 POSITIVE — an `attest` predicate reads its tainted subject by
+#         design, and the caught forms reach SSA as a bare `SsaInst::Test`,
+#         structurally identical to a user-written `[[ ]]`. Without
+#         `TestOrigin` marking it, making `Test` a sink rejects every
+#         caught-attest program — it took out 24.13 and bfb.1-6 in one sweep.
+run_sash 'str v=$(arg 1)
+if attest v [[ $v =~ ^[0-9]+$ ]] { /bin/echo "ok $v" }' 42
+[[ $rc = 0 && $out = "ok 42" && -z $rerr ]]; chk bkstp.3
+
+# bkstp.4 POSITIVE — an attested value is still usable as a redirect target.
+#         A `Redirect`'s target is an unlowered `ir::Expr`, never an
+#         `SsaValue`, so the check resolves by bare NAME via `taint_of_name`;
+#         an over-broad name match would reject this.
+run_sash 'str v=$(arg 1)
+attest v [[ $v =~ ^[a-z/]+$ ]]
+/bin/echo pwned > ${v:?no}
+/bin/echo done' /dev/null
+[[ $rc = 0 && $out = "done" && -z $rerr ]]; chk bkstp.4
 
 set -e
 tally

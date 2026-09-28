@@ -142,7 +142,7 @@ impl SsaInst {
             SsaInst::RedirectPop { site, fds } => {
                 super::inst_handlers::emit_redirect_pop(*site, fds, builder, module, ctx);
             }
-            SsaInst::Test(test_expr) => {
+            SsaInst::Test(test_expr, _) => {
                 let result = lower_test_expr(
                     test_expr,
                     builder,

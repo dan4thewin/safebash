@@ -416,12 +416,13 @@ fn lift_default_value(
         target: bound.clone(),
         value: source,
     });
-    ssa.block_mut(*block)
-        .insts
-        .push(SsaInst::Test(SsaTest::Unary {
+    ssa.block_mut(*block).insts.push(SsaInst::Test(
+        SsaTest::Unary {
             op: "-z".to_string(),
             operand: SsaValue::Var(bound),
-        }));
+        },
+        TestOrigin::Plain,
+    ));
 
     let word_block = ssa.new_block("default.word");
     let merge_block = ssa.new_block("default.merge");

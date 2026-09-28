@@ -1049,7 +1049,7 @@ impl<'a> Interner<'a> {
                 redirects,
                 ..
             } => self.intern_command_parts(name, args, redirects, true),
-            SsaInst::Test(test_expr) => self.intern_test_expr(test_expr),
+            SsaInst::Test(test_expr, _) => self.intern_test_expr(test_expr),
             SsaInst::Pipeline { stages, .. } => {
                 for (name, args, redirects) in stages {
                     self.intern_command_parts(name, args, redirects, false);
