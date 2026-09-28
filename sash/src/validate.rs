@@ -6559,10 +6559,18 @@ fn classify_operand(expr: &Expr) -> OperandForm {
 /// `$(len a)` / `$(join a SEP)`.
 pub fn check_collection_scalar_read(program: &Program) -> Vec<Diagnostic> {
     let mut collections = HashSet::new();
-    collect_collection_names(&program.statements, &mut collections);
-    if let Some(end) = &program.end_block {
-        collect_collection_names(end, &mut collections);
+    let mut auto = HashSet::new();
+    let mut scalars = HashSet::new();
+    for block in program_blocks(program) {
+        collect_collection_names(block, &mut collections);
+        collect_auto_collection_targets(block, &mut auto);
+        collect_scalar_bindings(block, &mut scalars);
     }
+    // An auto-declared collection counts, unless the same name is also bound
+    // as a scalar — that program is a DD#86 type change, and type-checking
+    // reports it against the offending `read`/`argv` rather than against an
+    // earlier read that is correct as written.
+    collections.extend(auto.into_iter().filter(|n| !scalars.contains(n)));
     let mut diags = Vec::new();
     for stmt in program
         .statements
@@ -6811,6 +6819,93 @@ fn collect_collection_names(stmts: &[Statement], set: &mut HashSet<String>) {
         for body in stmt.child_bodies() {
             collect_collection_names(body, set);
         }
+    }
+}
+
+/// The collection a builtin **auto-declares**, for the callers that need to
+/// know a name is a collection rather than that it is merely introduced.
+///
+/// `type_check.rs` registers exactly these into `env.collections`
+/// (`register_collection_target`) per DD#60/DD#61/DD#63, but
+/// [`collect_collection_names`] walks only `-a`/`-A` declarations. Two
+/// collection sets that disagreed, and SB5064 — the guard written for `$a` on
+/// a collection — consulted the incomplete one. `argv x` followed by
+/// `/bin/echo $x` therefore passed a `SashTable*` to `execve` as a C string,
+/// which printed a live heap address (`sash_argv_guard` is handed the scalar
+/// length 0, so it validated nothing).
+///
+/// Deliberately *narrower* than [`collect_read_targets`], which answers "what
+/// names does this command introduce" and so includes `readline` — that one
+/// binds a **scalar**, and listing it here would make `$x` after `readline x`
+/// a spurious SB5064.
+fn collect_auto_collection_targets(stmts: &[Statement], set: &mut HashSet<String>) {
+    for stmt in stmts {
+        insert_auto_collection_target(&stmt.kind, set);
+        for body in stmt.child_bodies() {
+            collect_auto_collection_targets(body, set);
+        }
+    }
+}
+
+fn insert_auto_collection_target(kind: &StmtKind, set: &mut HashSet<String>) {
+    let StmtKind::Command(c) = kind else {
+        return;
+    };
+    match expr_literal_str(&c.name) {
+        // DD#99: `read [SRC] ARRAY` — the target is always the last arg.
+        "read" => insert_last_target_arg(&c.args, set),
+        // DD#63: `match S P ARR` / `matchall S P ARR` fill the trailing array.
+        // Two-arg `match S P` is the boolean form and binds nothing.
+        "match" | "matchall" if c.args.len() == 3 => insert_last_target_arg(&c.args, set),
+        // DD#60: `argv [N] ARR` snapshots into the array named last.
+        "argv" => insert_last_literal_arg(&c.args, set),
+        _ => {}
+    }
+}
+
+/// Names bound as **scalars** — a non-collection declaration, a bare
+/// assignment, or a `for` header (DD#86: all three fix the name's type at its
+/// first introduction).
+///
+/// Used only to keep an auto-declared collection from retroactively turning an
+/// earlier, legitimate scalar read into SB5064. `x=safe; /bin/echo $x; read x`
+/// is rejected either way — it rebinds `x`'s type, which DD#86 forbids — but
+/// the fault is the `read`, and blaming line 2 sends the reader to a line that
+/// is correct as written. Type-checking owns that message
+/// (`register_collection_target`); this only declines to preempt it with a
+/// worse one.
+///
+/// An explicit `-a`/`-A` declaration is deliberately NOT filtered this way:
+/// there the keyword is authoritative, so `array a=(1); a=x; echo $a` must
+/// keep reporting SB5064 as it always has.
+fn collect_scalar_bindings(stmts: &[Statement], set: &mut HashSet<String>) {
+    for stmt in stmts {
+        insert_scalar_binding(&stmt.kind, set);
+        for body in stmt.child_bodies() {
+            collect_scalar_bindings(body, set);
+        }
+    }
+}
+
+fn insert_scalar_binding(kind: &StmtKind, set: &mut HashSet<String>) {
+    match kind {
+        StmtKind::Declaration(d) if !is_collection_flags(&d.flags) => {
+            for a in &d.assignments {
+                set.insert(a.name.clone());
+            }
+        }
+        // `a[i]=v` writes an element, so it binds nothing.
+        StmtKind::Assignment(a) if a.index.is_none() => {
+            set.insert(a.name.clone());
+        }
+        StmtKind::For(f) => {
+            set.insert(f.variable.clone());
+        }
+        // DD#99: `readline` binds a scalar; `read` does not.
+        StmtKind::Command(c) if expr_literal_str(&c.name) == "readline" => {
+            insert_last_target_arg(&c.args, set);
+        }
+        _ => {}
     }
 }
 

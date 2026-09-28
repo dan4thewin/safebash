@@ -1,6 +1,6 @@
 ---
 title: "MEMORY DISCLOSURE: an auto-declared collection read with `$name` leaks a heap pointer to argv"
-status: open
+status: done
 priority: P0
 kind: bug
 depends: []
@@ -141,3 +141,49 @@ the conflicting cases" is not true today.
 inside a `$( )` body, which is what removed the SB5020 masker and exposed this.
 They are separate bugs with a shared theme — a pass that computes its own
 partial view of the program instead of using the one that already exists.
+
+## Resolved 2026-09-28
+
+DG settled both faults in one message: *"no shadowing and no rebinding. `$x`
+should be an error after `argv x` (SB5064?)."* Both gates met.
+
+**Fault 1 — SB5064's set.** `validate.rs` gained
+`collect_auto_collection_targets` (the last argument of `read`, of a
+3-argument `match`/`matchall`, and the literal target of `argv`) and
+`collect_scalar_bindings`. `check_collection_scalar_read` now consults
+`explicit ∪ (auto − scalars)`.
+
+The question the filing raised — where the single source of truth should live —
+was answered by keeping the sets separate but making the *disagreement* the
+thing that is checked. `validate` runs **before** `type_check`, and a validate
+diagnostic aborts, so simply importing `env.collections` was not available:
+the set has to be computable from the AST alone. The `− scalars` term exists
+for the same ordering reason. Without it, `x=safe; /bin/echo $x; read x`
+reported SB5064 against line 2 — a *correct* line — and the user never saw the
+real fault on line 3. Subtracting scalar bindings makes validate decline the
+case, and type_check owns the better message. An explicit `array`/`map`
+declaration deliberately still wins, so `array a=(1); a=x; echo $a` stays
+SB5064.
+
+**Fault 2 — the retype.** `register_argv_target` and
+`register_newread_target` merged into one `register_collection_target` that
+refuses a name already in `env.vars` but not in `env.collections`:
+
+```
+SB4030: cannot fill the collection `x` with `read` — `x` is already a string
+variable, and a variable does not change type (DD#86); fill a new name, or
+declare `array x` instead
+```
+
+The `int` ICE is gone by the same route — it now reports SB4030 at the right
+line. The `map` case, which the filing noted was caught only by accident, is
+now caught on purpose.
+
+**Specs.** `types.sh` 75.101–75.107 (the four auto-declaring binders, the
+assignment sink, and two controls: `readline` still binds a scalar, and the
+correct `${x[1]}` spellings still run). `scope.sh` 86.59–86.65 (the rebinding
+rule across all three non-declaring binders, plus the former ICE, plus two
+controls). Sweep 6708 passing, zero failing.
+
+Not done here: the filing's "Related" note still stands —
+`bug-taint-escape-in-cmdsub-body` is open.

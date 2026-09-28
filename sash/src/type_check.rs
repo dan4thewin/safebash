@@ -1891,12 +1891,14 @@ fn check_command(c: &Command, span: Span, env: &mut TypeEnv, errors: &mut Vec<Ty
     match expr_to_name(&c.name).as_str() {
         "unset" => check_unset_args(c, span, env, errors),
         "attest" => check_attest_form(c, span, env, errors),
-        "argv" => register_argv_target(c, env),
+        "argv" => register_collection_target(c, span, env, errors),
         // DD#99: `read [SRC] ARRAY` — the target is always the last arg.
-        "read" => register_newread_target(c, env),
+        "read" => register_collection_target(c, span, env, errors),
         // DD#63: `match S P ARR` / `matchall S P ARR` fill (and auto-declare)
         // the trailing array; the two-arg `match S P` binds nothing.
-        "match" | "matchall" if c.args.len() == 3 => register_newread_target(c, env),
+        "match" | "matchall" if c.args.len() == 3 => {
+            register_collection_target(c, span, env, errors)
+        }
         _ => {}
     }
 
@@ -1910,19 +1912,50 @@ fn check_command(c: &Command, span: Span, env: &mut TypeEnv, errors: &mut Vec<Ty
     }
 }
 
-/// DD#60: `argv [N] a` fills (and auto-declares) the trailing array.
-fn register_argv_target(c: &Command, env: &mut TypeEnv) {
-    if let Some(arr) = c.args.last() {
-        env.collections.insert(expr_to_name(arr));
+/// DD#60 `argv [N] ARR`, DD#99 `read [SRC] ARR`, DD#63 `match`/`matchall
+/// S P ARR` — each fills, and auto-declares, the array named by its LAST
+/// argument.
+///
+/// DD#86 governs the auto-declare: *"a variable should never change type"*.
+/// Binding a collection onto a name already introduced as a scalar is
+/// therefore an error, exactly as `int x=5; for x in a b` is. It used to be
+/// silent, and the consequences were severe — the transform put a `SashTable*`
+/// into the scalar's slot while the type environment still said `str`, so
+/// `/bin/echo $x` handed `execve` a pointer to the table and printed a live
+/// heap address; the `int` spelling reached codegen and panicked with
+/// `expected string var, got int`.
+fn register_collection_target(
+    c: &Command,
+    span: Span,
+    env: &mut TypeEnv,
+    errors: &mut Vec<TypeError>,
+) {
+    let Some(last) = c.args.last() else {
+        return;
+    };
+    let name = expr_to_name(last);
+    // A DD#100 collection slot (`A`..`E`) is a collection by construction, and
+    // is bound by the caller rather than introduced here.
+    if name.is_empty() || crate::ir::is_collection_slot(&name) {
+        return;
     }
-}
-
-/// DD#99: `read [SRC] ARRAY` fills an indexed array named by its LAST
-/// argument (the optional first one is the scalar VALUE being split).
-fn register_newread_target(c: &Command, env: &mut TypeEnv) {
-    if let Some(last) = c.args.last() {
-        env.collections.insert(expr_to_name(last));
+    if env.vars.contains_key(&name) && !env.collections.contains(&name) {
+        errors.push(TypeError {
+            message: format!(
+                "cannot fill the collection `{}` with `{}` — `{}` is already a \
+                 {} variable, and a variable does not change type (DD#86); \
+                 fill a new name, or declare `array {}` instead",
+                name,
+                expr_to_name(&c.name),
+                name,
+                type_name(env.var_type(&name)),
+                name
+            ),
+            span,
+        });
+        return;
     }
+    env.collections.insert(name);
 }
 
 /// DD#61: the attest form must match the attested entity's kind.

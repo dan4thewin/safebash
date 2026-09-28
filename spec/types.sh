@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup types
-plan=276
+plan=283
 echo "1..$plan" >&3
 
 set +e
@@ -677,6 +677,66 @@ run_sash 'array a=(x y z); echo $(len $a)'
 run_sash 'array a=(x y z); str s=hi
 echo "${a[1]} $(len a) $(join a ",") $s $(strlen $s)"'
 [[ $rc = 0 && $out = "y 3 x,y,z hi 2" && -z $err ]]; chk 75.43
+
+# ── SB5064 must see AUTO-declared collections too (P0, 2026-09-28) ──
+# `read`, `argv` and the 3-argument `match`/`matchall` auto-declare their
+# target (DD#99, DD#60, DD#63) — but SB5064 consulted a collection set built
+# only from explicit `array`/`map` declarations, so `$x` on an auto-declared
+# target sailed straight past the guard written for exactly that spelling.
+# What it sailed into was a memory disclosure: codegen stores the `SashTable*`
+# in the SCALAR pointer slot with length 0, `sash_argv_guard` validates
+# nothing at length 0, and `execve` then read that raw heap pointer to the
+# first NUL — printing a live address. Identical on both backends.
+# Was: bug-autodeclared-collection-scalar-read-leaks-pointer.
+
+# 75.101 `argv` — the disclosure repro itself
+run_sash 'argv x
+attest e in x [[ -n $e ]]
+/bin/echo $x'
+[[ $rc != 0 && -z $out && $err == *SB5064* ]]; chk 75.101
+
+# 75.102 `read` auto-declares the same way
+run_sash 'read x
+attest e in x [[ -n $e ]]
+/bin/echo $x'
+[[ $rc != 0 && -z $out && $err == *SB5064* ]]; chk 75.102
+
+# 75.103 the 3-argument `match` captures into a collection
+run_sash 'str s=abc
+match "$s" "b" x
+attest e in x [[ -n $e ]]
+/bin/echo $x'
+[[ $rc != 0 && -z $out && $err == *SB5064* ]]; chk 75.103
+
+# 75.104 …and so does `matchall`
+run_sash 'str s=abc
+matchall "$s" "b" x
+attest e in x [[ -n $e ]]
+/bin/echo $x'
+[[ $rc != 0 && -z $out && $err == *SB5064* ]]; chk 75.104
+
+# 75.105 the assignment context is caught too — this is how the pointer got
+# laundered into a second variable
+run_sash 'argv x
+attest e in x [[ -n $e ]]
+str y=$x
+echo "$y"'
+[[ $rc != 0 && -z $out && $err == *SB5064* ]]; chk 75.105
+
+# 75.106 control: `readline` binds a SCALAR (DD#99), so `$x` stays legal —
+# the new set must not over-collect it
+printf 'one\n' > t75.lines
+run_sash 'readline x < t75.lines
+attest x [[ -n $x ]]
+echo "[$x]"'
+[[ $rc = 0 && $out = "[one]" && -z $err ]]; chk 75.106
+
+# 75.107 control: the correct spellings on an auto-declared collection still
+# compile and run
+run_sash 'argv x
+attest e in x [[ -n $e ]]
+echo "${x[1]} ${x[2]} $(len x)"' p q
+[[ $rc = 0 && $out = "p q 3" && -z $err ]]; chk 75.107
 
 # ── SB5068: a subscript on a scalar is an error (2026-09-12) ──
 # The exact dual of SB5064. `${s[0]}` was neither supported nor rejected: it
