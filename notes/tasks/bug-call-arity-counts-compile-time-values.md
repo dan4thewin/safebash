@@ -4,7 +4,7 @@ status: blocked
 priority: P1
 kind: bug
 depends: []
-blocked_on: "DG — the fix is a range check, but whether a runtime shortfall stays unchecked is a language decision"
+blocked_on: "DG — (1) whether a runtime arity shortfall stays unchecked; (2) separately, whether observing argc (`$(len args)`/`$#`) should keep implying variadic (DD#81 Part B says yes)"
 gates:
   - "`f @q` where `q` has enough elements for a fixed-arity `f` is not rejected"
   - "`f one ${x:~}` cannot silently deliver fewer arguments than the callee's `min`"
@@ -30,26 +30,30 @@ This is the third instance this session of one class: **a compile-time count
 taken over a value that expands at runtime.** The other two were the `exec`
 argv builder and the DD#84 elidability gate (both fixed, journal 441).
 
+Both reproducers below use a callee that is **fixed-arity by every reading** —
+it reads `args[0]` and `args[1]` and nothing else. No `len`, no `$#`, no
+splat: `analyze_arity` returns `Fixed{min:2,max:2}`, and the diagnostics quoted
+are the *fixed* ones ("expects 2 arguments"), not the variadic "at least".
+
 ## Direction A — accepts a call it has itself proven invalid
 
 ```sash
 fn f {
   str a=${args[0]}
   str b=${args[1]}
-  int n=$(len args)
-  echo "argc=$n a=[$a] b=[$b]"
+  echo "a=[$a] b=[$b]"
 }
 str x=""
 f one ${x:~}
 ```
 
-compiles, and prints `argc=1 a=[one] b=[]`. The callee is `Fixed{min:2}` —
-the compiler says so itself, because writing the *same runtime shape*
-literally is rejected:
+compiles, and prints `a=[one] b=[]` — one argument delivered to a callee the
+compiler has typed `Fixed{2,2}`. Writing the *same runtime shape* literally is
+rejected:
 
 ```
 f one
-→ error [SB5042] function 'f' expects at least 2 arguments but was called with 1
+→ error [SB5042] function 'f' expects 2 arguments but was called with 1
 ```
 
 So elision reaches exactly the state SB5042 exists to prevent, silently, and
@@ -64,7 +68,7 @@ fn f {
   echo "[$a][$b]"
 }
 array q=(p d)
-f @q
+f @{q:-}
 ```
 
 ```
@@ -73,9 +77,20 @@ f @q
 
 `q` has two elements, so the call delivers exactly the two the callee wants.
 It is rejected anyway, and the message asserts "called with 1", which is not
-true of any execution. (A *variadic* callee is fine — `@q` into `$(len args)`
-correctly reports 3 for a 3-element array — so the splat does expand into
-`args`; only the static count is wrong.)
+true of any execution. Bare `f @q` behaves identically, and a *three*-element
+`q` — genuinely too many — gets the same "called with 1" rather than SB5043.
+The count is not merely imprecise; it is the constant 1 for any splat.
+
+The splat does expand at runtime — a variadic callee sees all three:
+
+```sash
+fn f { for x in @args; do echo "[$x]"; done }
+array q=(p d e)
+f @{q:-}        # → [p] [d] [e]
+```
+
+(`@args` is what makes that callee variadic here — deliberately not `$(len
+args)`, so the evidence does not lean on the rule questioned below.)
 
 # Why option "reject dynamic counts into fixed-arity callees" is wrong
 
@@ -133,6 +148,48 @@ not be unreasonable if the runtime check proves noisy in practice.
 
 This is DG's call: it decides whether a compile-time arity guarantee survives
 contact with dynamic argument counts, and B changes generated code.
+
+# Adjacent, and NOT part of this bug — "observing argc ⇒ variadic"
+
+The first draft of this file used `int n=$(len args)` in both callees. DG
+caught it (2026-09-28): *"the example functions in the task file are not
+variadic (the use of len alone shouldn't qualify)."*
+
+He is right that it spoiled the reproducers — the examples above are rewritten
+without it — and the draft compounded the error by calling that callee
+`Fixed{min:2}` while quoting an error that said "expects **at least** 2",
+which is the *variadic* message. The quoted evidence contradicted the
+sentence it was supporting.
+
+The underlying rule is real and measurable. `$(len args)` alone erases the
+arity ceiling:
+
+```sash
+fn f { str a=${args[0]}; str b=${args[1]}; echo "$(len args) [$a][$b]" }
+f p d x y      # → "4 [p][d]"        (accepted; two arguments discarded)
+```
+
+Delete the `$(len args)` and the same call is `SB5043 ... takes 2 arguments
+but was called with 4`. `$#` behaves identically — the rule is *observing the
+count*, not anything about `len`.
+
+**This is deliberate.** DD#81 Part B states it three times — under "Signature
+inference" (whole-args access is "`@args`, `$(len args)` (the count; ≡ sugar
+`${#args}` / `$#`), or a dynamic index"), again under "Edge rules", and again
+in its "Implemented" section. Accepted, settled with DG 2026-08-25.
+
+Measured cost of changing it (experimental two-line patch to
+`cmdsub_reads_whole_args` + `sig_record_name`, built and run, then reverted —
+nothing committed): **17 native spec failures across 8 files**, roughly 34 rows
+dual-mode. `types.sh` 120/125/235/240/241/243/244, `functions.sh` 91/98,
+`optional_args.sh` 50/51, `argv.sh` 48/50, `arithmetic.sh` 76,
+`control_flow.sh` 35, `subscript.sh` 32, `coverage.sh` 255. The specified
+idiom that breaks is the plain arg-counter — `fn f { echo $(len args) }`
+called with arguments (75.23, 75.94, 75.98) becomes `Fixed{0,0}`, so `len` can
+only ever report 0.
+
+Changing it is a **DD#81 amendment and DG's call** — not folded into this bug,
+which reproduces without it.
 
 # Where
 
