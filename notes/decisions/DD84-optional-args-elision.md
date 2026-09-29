@@ -315,7 +315,12 @@ one, so it covers position 0 — while rejecting `f @e x`, and it rejects
 only position 0 and `y`'s position moves with `e`.
 
 The required arguments therefore come **before** the splat, which is the
-ordinary shape anyway: `f a b @e`.
+ordinary shape anyway: `f a b @e`. That is the rule an author needs, and it is
+stated as such — with the reasoning, the escape hatches and a worked example
+— in **DD#81's addendum of 2026-09-28** (call discipline is where someone
+writing a call will look). What lives here is the mechanism it rests on: the
+per-argument minimum table above, which decides how many positions a splat or
+an elide can pin down.
 
 Cost against the existing suite: **zero specs**. Specs 84.68-84.72.
 

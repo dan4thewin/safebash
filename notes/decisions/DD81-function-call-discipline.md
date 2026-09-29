@@ -124,6 +124,10 @@ signature is always known):
 - **fixed arity N** → the call must pass **exactly N** (too few → **SB5042**;
   too many → **SB5043**).
 - **variadic, floor M** → the call must pass **≥ M** (fewer → SB5042).
+- **a splat or a `:~` elide** → legal only into a variadic callee, and only
+  where every position below the floor is still fixed — in practice,
+  **required arguments go before the splat** (otherwise **SB5087**). See the
+  addendum of 2026-09-28 below; the mechanism is DD#84.
 
 ### Edge rules
 
@@ -151,6 +155,10 @@ unused slot — chosen against for clarity; DG 2026-08-25.)
   `function 'f' reads $N but called with only M` diagnostic).
 - **SB5043** — function called with too many arguments (fixed-arity function).
 - **SB5044** — function signature has a hole (non-contiguous `args` indices).
+- **SB5087** — a call whose argument count is only known at run time (a splat
+  or a `:~` elide) into a callee that cannot take one: a fixed-arity function,
+  or a variadic one whose fixed positions the call does not pin down
+  (2026-09-28).
 
 ## Implementation plan (staged, each a green commit)
 
@@ -178,7 +186,10 @@ unused slot — chosen against for clarity; DG 2026-08-25.)
 ## Relates
 
 DD#23 (compile-time command resolution), DD#60 (caller's `$@`/`$*`), DD#75
-(uniform collections / the `args` array), DD#18 (local functions — the natural
+(uniform collections / the `args` array), DD#84 (optional trailing args and
+the `:~` elide — the minimum-token table the 2026-09-28 addendum below rests
+on), DD#69 (splat dispositions — `@{a:-W}`/`@{a:?W}` are what let a splat fill
+a fixed argument position), DD#18 (local functions — the natural
 home for an *explicit* unshadow mechanism, e.g. `unset -f` / scoped functions,
 should controlled dynamic behaviour ever be wanted back).
 
@@ -301,3 +312,88 @@ DG's phrasing was "a loop **or branch**". A *conditionally* read literal index
 rather than making the function variadic, because DD#84 already gives that
 shape a tighter spelling — `${args[1]:-}` → `Fixed{1,2}`, which states the
 optionality instead of discarding the ceiling. Left as-is pending DG.
+
+## Addendum (2026-09-28) — required arguments go before the splat
+
+Part B above checks a call by **counting** its arguments. That works only when
+the count is knowable, and two argument forms are not: an array splat (`@a`,
+`@{a:…}`) and a `:~` elide, each of which is *one* thing written at the call
+site and 0..n arguments at run time.
+
+DG settled what they may be passed to:
+
+> an elision, given it could remove an argument, can only work for a variadic
+> context and not a fixed one. similarly, a splat should only work for
+> variadic given it could be empty
+
+and then, on how that interacts with a floor:
+
+> in my mental model, a function can have both a fixed portion and a variadic
+> one with the fixed met by discrete arguments as though there were no
+> variadic component. I grant that `@{e:-fallback}` can be guaranteed to
+> provide 1 argument.
+
+### The rule, as an author sees it
+
+**Write the required arguments first, then the splat.**
+
+```sash
+fn f { : @args; str host=${args[0]}; str port=${args[1]}; … }   # floor 2
+
+f "$h" "$p" @rest      # correct
+f @rest "$h" "$p"      # SB5087
+```
+
+This is the shape almost everyone writes by reflex; the rule mostly matters
+because the *other* order used to compile.
+
+### Why — it is not a count, it is a position
+
+A function's fixed portion is met by discrete arguments as though the variadic
+part were not there. So the question at each of positions `0..floor-1` is not
+"are there enough arguments" but "**is the thing the author wrote at this
+position the thing that will be here at run time**".
+
+A splat breaks that for everything behind it. `@rest` with two elements pushes
+`"$h"` to position 2; with none, it leaves it at 0. The compiler cannot know
+which, so nothing after a splat can satisfy a fixed read.
+
+Counting hides this, and the failure is silent rather than loud:
+
+```sash
+fn f { : @args; echo "first=[${args[0]}]" }
+array e=(q r)
+f @e x
+```
+
+The floor is 1 and the call passes at least one argument, so a count-based
+check accepts it. At run time `${args[0]}` is `x` when `e` is empty and `q`
+when it is not — a named parameter silently taking a *different variable's*
+value depending on an array's length, with nothing reported at compile time.
+That is the bug this rule exists to prevent, and it is worse than the arity
+error it superficially resembles.
+
+### What still counts as pinning a position down
+
+Walking the argument list left to right:
+
+- a plain argument fixes exactly its own position;
+- a splat or elide fixes the positions its **minimum** guarantees (DD#84's
+  table: `@{a:-W}` and `@{a:?W}` guarantee one; bare `@a` and `@{a:~}`
+  guarantee none), and **ends the walk** — no position after it is knowable.
+
+So DG's grant holds: `@{e:-fallback}` guarantees an element, so it can fill
+position 0 of a floor-1 callee. It cannot fill position 1 of a floor-2 one,
+because it may also deliver three elements and move whatever follows.
+
+### The escape hatches
+
+- put the required arguments before the splat (the ordinary fix);
+- guarantee the element with DD#69's `@{a:-WORD}` when the splat genuinely is
+  the required argument;
+- drop the floor — read the index through a DD#84 disposition
+  (`${args[0]:-}`), which makes it optional and the floor 0, at which point
+  order is irrelevant because nothing is read positionally.
+
+Impl `transform/cmd_handlers.rs::call_arg_bounds`. Specs `optional_args.sh`
+84.53-84.72. journal 443.

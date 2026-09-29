@@ -207,3 +207,33 @@ resolved to a path is an **external program**, *not* part of the language.
 The value functions are legal only inside `$( )` (rejected as a command —
 SB5011). This addendum's wording (and the §Scope / §3 edits above) use
 "sash-language construct" and "external program" throughout.
+
+## Addendum (2026-09-28) — the disposition is now load-bearing at a call site
+
+This DD chose the dispositions to settle what an *external* command sees when
+an array is empty. They acquired a second job on 2026-09-28: they are what
+lets a splat occupy a **fixed** argument position of a user function.
+
+DD#81's rule is that a splat has a run-time length, so nothing written after
+one lands at a position the compiler can count on — required arguments go
+before the splat, or SB5087. The exception is a splat that is *guaranteed* to
+deliver an element, and that guarantee is exactly this DD's disposition:
+
+| form | guarantees | can fill a fixed position? |
+|---|---|---|
+| bare `@a` | nothing (empty → zero args) | no |
+| `@{a:~}` | nothing (the elide) | no |
+| `@{a:-WORD}` | one element (DD#84, 2026-09-04) | **yes**, the first one |
+| `@{a:?WORD}` | one, or the program aborts | **yes**, the first one |
+
+Only the *first* such position: `@{a:-W}` guarantees one element but may
+deliver twenty, so it pins position `p` and nothing after it.
+
+DG (2026-09-28): "I grant that `@{e:-fallback}` can be guaranteed to provide
+1 argument."
+
+Consequence for this DD: the `has_word` / `abort` distinction is no longer
+only a run-time behaviour, it is read by the arity check
+(`transform/cmd_handlers.rs::arg_min_tokens`). Changing what an empty array
+yields for any of these four forms changes which calls compile. Specs
+`optional_args.sh` 84.59, 84.60, 84.70.
