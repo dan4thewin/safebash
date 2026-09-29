@@ -120,6 +120,37 @@ flagged it to him as applied-rather-than-asked, since it is his rule carried
 to its consequence rather than a second decision. It is the one point here
 still awaiting a veto.
 
+## The half I got wrong anyway
+
+I flagged the floor as my extension and invited a veto. DG did not veto it —
+he tightened it:
+
+> a function can have both a fixed portion and a variadic one with the fixed
+> met by discrete arguments as though there were no variadic component
+
+I had implemented the floor by summing per-argument minimums, which sounds
+like the same thing and is not. `f @e x` against a callee reading
+`${args[0]}` sums to `0 + 1`, reaches the floor of 1, and is accepted — and
+then `${args[0]}` is `x` when `e` is empty and `e[0]` when it is not.
+
+That is not a missing diagnostic. It is a fixed read silently taking a
+different variable's value depending on an array's length, which is the same
+class as every other bug in this session, sitting inside the fix for them.
+
+The floor is about *positions*. A statically-one argument covers its own; a
+variable-length one covers what its minimum guarantees and then nothing
+after it is knowable, because a run-time length shifts everything behind it.
+His grant survives — `@{e:-fallback}` has a minimum of one, so it covers
+position 0 — and `f @{e:-fallback} y` against a floor of 2 does not, because
+`y`'s position moves with `e`.
+
+Cost against the suite: zero specs. The required arguments go before the
+splat, which is how anyone would write it anyway.
+
+Twice in one session I reached for a count where the thing being counted was
+positional. The first time it was `arg_values.len()`. The second time it was
+my own replacement for it.
+
 There is a tidiness to how it lands. DD#84 listed three positions where `:~`
 is legal — an external command's argv, a varargs builtin, an array literal
 element — as a closed list. All three are variadic contexts. A user-function

@@ -388,8 +388,17 @@ pub(super) fn check_callee_arity(
 
 /// What a call site can deliver, as the arity check needs to see it.
 struct CallBounds {
-    /// The fewest `args` entries any run of this call can deliver.
-    min: usize,
+    /// How many *leading* `args` positions are guaranteed to hold what the
+    /// author wrote there. Not a count of arguments: once a variable-length
+    /// argument appears, every position after the ones its minimum guarantees
+    /// is decided at run time, so this stops there.
+    ///
+    /// The distinction is not academic. Summing per-argument minimums instead
+    /// accepts `f @e x` against a callee that reads `${args[0]}`, because
+    /// 0 + 1 reaches the floor — and then `${args[0]}` is `x` when `e` is
+    /// empty and `e[0]` when it is not. A fixed read silently picks up a
+    /// different variable's value depending on an array's length.
+    covered: usize,
     /// The number of argument *values* written at the call site. Meaningful
     /// only when `dynamic` is false — a splat is one value and any number of
     /// arguments, which is the miscount this whole check exists to avoid.
@@ -416,8 +425,8 @@ fn fixed_arity_msg(name: &str, min: usize, max: usize, b: &CallBounds) -> Option
 /// A variadic callee takes any number at or above its floor — so a dynamic
 /// count is fine, provided its *minimum* still reaches that floor.
 fn variadic_arity_msg(name: &str, floor: usize, b: &CallBounds) -> Option<String> {
-    if b.dynamic && b.min < floor {
-        return Some(arity_floor_msg(name, floor, b.min));
+    if b.dynamic && b.covered < floor {
+        return Some(arity_floor_msg(name, floor, b.covered));
     }
     if !b.dynamic && b.written < floor {
         return Some(arity_too_few_msg(name, floor, true, b.written));
@@ -426,15 +435,23 @@ fn variadic_arity_msg(name: &str, floor: usize, b: &CallBounds) -> Option<String
 }
 
 fn call_arg_bounds(arg_values: &[SsaValue]) -> CallBounds {
-    let mut min = 0usize;
+    let mut covered = 0usize;
     let mut dynamic = false;
     for v in arg_values {
         let (least, varies) = arg_min_tokens(v);
-        min += least;
-        dynamic |= varies;
+        covered += least;
+        if varies {
+            // DG (2026-09-28): a function's fixed portion is met by discrete
+            // arguments "as though there were no variadic component". A
+            // variable-length argument guarantees only the positions its
+            // minimum covers; everything past them shifts with the array, so
+            // no later position can satisfy a fixed read.
+            dynamic = true;
+            break;
+        }
     }
     CallBounds {
-        min,
+        covered,
         written: arg_values.len(),
         dynamic,
     }
@@ -480,14 +497,19 @@ fn arity_dynamic_msg(name: &str, min: usize, max: usize) -> String {
     )
 }
 
-/// SB5087: a call whose minimum falls below a variadic callee's floor.
-fn arity_floor_msg(name: &str, floor: usize, min: usize) -> String {
+/// SB5087: a call that does not fix every position a variadic callee reads.
+fn arity_floor_msg(name: &str, floor: usize, covered: usize) -> String {
+    let fixed = if covered == 0 {
+        "none of them are at a known position in this call".to_string()
+    } else {
+        format!("this call fixes only the first {}", covered)
+    };
     format!(
-        "1:1: error [SB5087] function '{}' always reads {} argument{}, but this call can pass as few as {} — a bare `@a` splat or a `:~` elide contributes nothing when empty. Use `@{{a:-…}}` to guarantee one, or pass the required arguments individually",
+        "1:1: error [SB5087] function '{}' always reads {} argument{}, but {} — a splat or a `:~` elide has a run-time length, so nothing written after one lands at a position you can count on. Put the required arguments before it, or use `@{{a:-…}}` to guarantee an element",
         name,
         floor,
         arity_plural(floor),
-        min
+        fixed
     )
 }
 

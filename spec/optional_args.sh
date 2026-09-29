@@ -7,7 +7,7 @@ set -eu
 . common.sh
 setup optional_args
 set +e
-plan=67
+plan=72
 echo "1..$plan" >&3
 
 # ── Optional trailing args via `:-` (a trailing `${args[i]:-D}` is optional) ──
@@ -418,6 +418,47 @@ f'
 run_sash 'fn f { : @args; echo "[${args[0]:-}]" }
 f hi'
 [[ $rc = 0 && $out = "[hi]" && -z $err ]]; chk 84.67
+
+# ── The fixed portion is POSITIONAL (DG, 2026-09-28) ───────────────
+# "a function can have both a fixed portion and a variadic one with the fixed
+# met by discrete arguments as though there were no variadic component."
+# Summing per-argument minimums is not enough: it accepts `f @e x` because
+# 0 + 1 reaches a floor of 1, and then `${args[0]}` is `x` on an empty array
+# and `e[0]` otherwise — a fixed read silently taking a different variable's
+# value depending on an array length.
+
+# 84.68 a splat BEFORE a fixed position is rejected, however many elements it
+# has — nothing after a run-time length lands at a position you can count on
+run_sash 'fn f { : @args; echo "first=[${args[0]}]" }
+array e=(q r)
+f @e x'
+[[ $rc != 0 && $err == *SB5087* ]]; chk 84.68
+
+# 84.69 …and a `:~` elide before one, for the same reason
+run_sash 'fn f { : @args; echo "first=[${args[0]}]" }
+str m=""
+f ${m:~} x'
+[[ $rc != 0 && $err == *SB5087* ]]; chk 84.69
+
+# 84.70 a guaranteed splat covers only the positions its MINIMUM guarantees:
+# `@{e:-W}` fixes position 0, so a floor of 2 is still unmet
+run_sash 'fn f { : @args; echo "[${args[0]}][${args[1]}]" }
+array e=()
+f @{e:-fallback} y'
+[[ $rc != 0 && $err == *SB5087* ]]; chk 84.70
+
+# 84.71 …and discrete arguments ahead of the splat satisfy the whole fixed
+# portion, which then reads correctly whatever the array holds
+run_sash 'fn f { : @args; echo "[${args[0]}][${args[1]}] n=$(len args)" }
+array e=(q r)
+f a b @e'
+[[ $rc = 0 && $out = "[a][b] n=4" && -z $err ]]; chk 84.71
+
+# 84.72 a floor of 0 reads no fixed position, so order is irrelevant
+run_sash 'fn f { : @args; for v in @args; do echo "<$v>"; done }
+array e=(q)
+f @e x'
+[[ $rc = 0 && $out = $'<q>\n<x>' && -z $err ]]; chk 84.72
 
 set -e
 tally

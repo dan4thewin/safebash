@@ -60,7 +60,23 @@ B never reaches a count — a splat into a variadic callee is accepted without
 one, and into a fixed-arity callee it is SB5087, whose message does not claim
 an argc. Every count still printed belongs to a statically-countable call.
 
-**Measured cost: one spec** out of 6865 (`functions.sh` sp.3, migrated).
+**Measured cost: one spec** out of 6865 (`functions.sh` sp.3, migrated) — and
+that one fell to DG's sentence directly, not to the variadic-floor extension
+below, which cost nothing.
+
+## The floor is positional (DG, 2026-09-28)
+
+DG's sentence covers fixed vs variadic. A variadic callee can still read some
+index *bare*, giving it a non-zero floor, and I first checked that by summing
+the per-argument minimums. DG then stated the model:
+
+> a function can have both a fixed portion and a variadic one with the fixed
+> met by discrete arguments as though there were no variadic component
+
+Summing is weaker than that, and the gap was a silent wrong answer: `f @e x`
+reached a floor of 1 as `0 + 1`, and `${args[0]}` then read `x` on an empty
+`e` and `e[0]` otherwise. The check now walks positions and stops at the
+first variable-length argument. Zero existing specs affected; 84.68-84.72.
 
 ## What this file got wrong
 

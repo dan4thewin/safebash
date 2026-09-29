@@ -277,6 +277,48 @@ fn f { : @args;  echo "[${args[0]:-}]" };  f    # SB5042    -- wrong
 The floor is now `required` only, matching the fixed path's `min`, which
 already excluded optional-only indices. Specs 84.66/84.67.
 
+### The fixed portion is POSITIONAL
+
+DG, on reading the above:
+
+> in my mental model, a function can have both a fixed portion and a variadic
+> one with the fixed met by discrete arguments as though there were no
+> variadic component. I grant that `@{e:-fallback}` can be guaranteed to
+> provide 1 argument.
+
+The first implementation summed the per-argument minimums above and compared
+the sum to the floor. That is not enough, and the gap is a silent wrong
+answer rather than a missing diagnostic:
+
+```sash
+fn f { : @args; echo "first=[${args[0]}]" }
+array e=(q r)
+f @e x            # accepted: 0 + 1 reaches the floor of 1
+```
+
+`${args[0]}` is `x` when `e` is empty and `q` when it is not — a fixed read
+taking a different variable's value depending on an array's length, with
+nothing said at compile time.
+
+So the floor is about **positions**, not a count. Walking the argument list
+left to right:
+
+- a statically-one argument covers exactly its own position;
+- a variable-length argument covers the positions its **minimum** guarantees
+  (the table above), and after those **no later position is statically
+  known** — a run-time length shifts everything behind it.
+
+The call satisfies the callee iff positions `0..floor-1` are all covered
+before that cutoff. This keeps DG's grant — `@{e:-fallback}` has a minimum of
+one, so it covers position 0 — while rejecting `f @e x`, and it rejects
+`f @{e:-fallback} y` against a floor of 2, since the guaranteed splat covers
+only position 0 and `y`'s position moves with `e`.
+
+The required arguments therefore come **before** the splat, which is the
+ordinary shape anyway: `f a b @e`.
+
+Cost against the existing suite: **zero specs**. Specs 84.68-84.72.
+
 Impl: `transform/cmd_handlers.rs::check_callee_arity` + `call_arg_bounds`
 (which is why the check now takes the argument *values*, not their count);
 `transform/functions.rs::analyze_arity`. Specs `optional_args.sh` 84.53-84.67;
