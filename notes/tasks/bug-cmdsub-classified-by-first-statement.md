@@ -1,10 +1,10 @@
 ---
 title: "`$( )` classified by its FIRST statement: `argv` silently drops the rest, and the `argv N a` fill form is rejected as a splat"
-status: open
+status: done
 priority: P1
 kind: bug
 depends: []
-blocked_on: "DG — whether `argv N a` (the DD#60 out-param fill) is legal inside `$( )`"
+blocked_on: ""
 gates:
   - "a statement after `$(argv …)` in a for-in source cannot be silently discarded"
   - "no diagnostic names the splat form when the author wrote the fill form"
@@ -118,3 +118,18 @@ Found 2026-09-28 while probing whether `collect_bulk_targets` /
 **They do not** — `array`/`map` declared inside `$( )` are found correctly,
 and `@zz` for a name introduced nowhere still reports SB5031 inside a
 capture. That question is closed; this is what the probe turned up instead.
+
+
+# Resolved 2026-09-29 — journal 444
+
+**DG chose (a):** `argv N a` is legal inside `$( )`. It is a statement, and
+DD#86 makes a body a function body.
+
+Both directions are closed, and closing them exposed two deeper bugs — a
+statement-builtin cohort that compiled to `sash: bug: bare command passed to
+sash_exec`, and the finding that **42 of the 45 statement walkers in
+`validate.rs` never entered a `$( )` body at all**. DG chose the structural
+fix: bodies moved from the expression side of the IR to the statement side.
+See the DD#86 addendum of the same date for the contract that establishes.
+
+Specs: `spec/errors.sh` csc.11–csc.34, `spec/argv.sh` av.c1–av.c8.

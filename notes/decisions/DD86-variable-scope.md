@@ -411,3 +411,50 @@ and is now SB4030. It used to be accepted, and accepting it is how a
 `int` target it was a compiler ICE.
 
 Specs `spec/scope.sh` 86.59–86.70, `spec/types.sh` 75.101–75.107; journal 434.
+
+## Addendum (2026-09-29) — the body is validated as a function body
+
+"A `$( … )` body is an anonymous function" was settled above for *scope*. It
+has a second consequence, and leaving it unstated cost three nested bugs
+(journal 444): **every statement legal in a function body is legal in a `$( )`
+body, and gets the same validation.**
+
+Both halves were false in the implementation.
+
+**Legal.** Statement builtins with no value lowering — `:`, `write`, `cd`,
+`wait`, `close`, `attest`, `unset`, DD#60's `argv N a` fill — resolved to
+nothing as the sole body, and the backend built an exec argv whose head was a
+bare builtin name. The program printed `sash: bug: bare command passed to
+sash_exec` into its own stdout and exited 0.
+
+**Validated.** Forty-two of the forty-five statement walkers in `validate.rs`
+never entered a body, so `$(signal INT ignore)` panicked the compiler,
+`$(mapfile -m q)` ICEd at runtime, and `$(break)`, `$(read -a "q")` and
+`$(for args in …)` were accepted in silence.
+
+### The IR contract this establishes
+
+`Statement::child_bodies()` yields `structural_bodies()` ++ `cmdsub_bodies()`,
+and the expression walker `walk_expr_tree` **stops** at `CommandSubstitution`.
+A body belongs to exactly one side of the recursion, so a pass cannot visit it
+twice and double its diagnostics.
+
+For a new pass:
+
+- no `ExprKind::CommandSubstitution` handling of its own → use
+  `child_bodies()` and get the body for free;
+- its own handling already → use `structural_bodies()` and keep it.
+
+A walk that **mutates** scope state is the exception and must say
+`structural_bodies()` regardless, until it opens a child scope for the body the
+way `check_function` does — otherwise the body's local names leak outward,
+which is precisely the rule this DD establishes. `type_check.rs` is pinned for
+that reason, and `$(unset zz)` of a whole variable remains silently accepted
+because of it.
+
+### Condition context does not cross the boundary
+
+`in_condition` resets to `false` entering a body. A body is a function body;
+DD#70/#71's boolean contexts stop at it, exactly as they stop at `fn`.
+
+Specs `spec/errors.sh` csc.11–csc.34; journal 444.
