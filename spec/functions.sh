@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup functions
-plan=166
+plan=169
 echo "1..$plan" >&3
 
 set +e
@@ -1174,6 +1174,41 @@ array a=(p)
 a+=( $(f) )
 echo "[${a[1]}]"'
 [[ $rc = 0 && $out = "[hi]" && -z $err ]]; chk lift.12
+
+# 81.30 SB5043 names the whole accepted range, not its floor. `f` reads
+# `${args[0]}` bare and `${args[1]:-d}` through a disposition, so DD#84 gives
+# it Fixed{min=1,max=2} — one argument or two. The message used to be built
+# from `min`, so a 3-argument call was told "takes 1 argument", which denies
+# that `f a b` is legal. A diagnostic that states a false number is worse than
+# one that states none.
+run_sash 'fn f {
+    /bin/echo ${args[0]} ${args[1]:-d}
+}
+f a b c'
+[[ $rc != 0 && -z $out && $err == *SB5043* && $err == *"takes 1 to 2 arguments"* ]]; chk 81.30
+
+# 81.31 the min == max case still reads as one number, via the same
+# `arity_range` the SB5087 dynamic-count message already used
+run_sash 'fn g {
+    /bin/echo ${args[0]}
+}
+g a b'
+[[ $rc != 0 && -z $out && $err == *SB5043* && $err == *"takes exactly 1 argument"* ]]; chk 81.31
+
+
+# 81.32 a `$( … )` body shares the ENCLOSING function's arguments. This is the
+# fact that makes `walk_scoped_stmts` right to carry the enclosing function's
+# name into a body: `${args[0]}` inside the substitution really is `g`'s first
+# argument, so a slot or an argument attributed to `g` is attributed truly. It
+# is only the "am I at the top level" test that a body invalidates.
+run_sash 'fn g {
+    str s=$(/bin/echo ${args[0]})
+    attest s [[ -n $s ]]
+    echo "[$s]"
+}
+g hello'
+[[ $rc = 0 && $out = "[hello]" && -z $err ]]; chk 81.32
+
 
 set -e
 tally

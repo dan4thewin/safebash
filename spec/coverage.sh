@@ -6,7 +6,7 @@
 set -eu
 . common.sh
 setup coverage
-plan=338
+plan=342
 echo "1..$plan" >&3
 
 set +e
@@ -1642,6 +1642,60 @@ run_sash 'echo "r=$(random)"'
 run_sash 'echo $(random)
 echo $(random)'
 [[ $rc = 0 && -z $err ]] && [[ $(echo "$out"|sed -n 1p) != $(echo "$out"|sed -n 2p) ]]; chk cov.338
+
+# cov.340-343 DD#86: who is a global, and who is merely spelled like one.
+#
+# Once `$( … )` bodies joined the statement recursion, `walk_scoped_stmts`
+# began entering them — and `collect_global_names` tests `in_fn.is_empty()`,
+# which is true for a body written at the top level. So a name introduced
+# ONLY inside a body was recorded as a global, and an unrelated function's own
+# local of the same spelling was reported as tainting it. The global did not
+# exist. That walker is now structural: a body-introduced name is local to the
+# body (DD#86) and joins no scope above it.
+
+# cov.340 the regression itself — `y` exists only inside the body, so `f`'s
+#         own `y` taints nothing
+run_sash 'str s=$(str y=v; /bin/echo "$y")
+attest s [[ -n $s ]]
+echo "[$s]"
+fn f {
+    str y=$(getenv HOME)
+    attest y [[ -n $y ]]
+}
+f'
+[[ $rc = 0 && $out = "[v]" && -z $err ]]; chk cov.340
+
+# cov.341 control: a real top-level global still earns SB5067
+run_sash 'str y=v
+/bin/echo "$y"
+fn f {
+    y=$(getenv HOME)
+}
+f'
+[[ $rc != 0 && -z $out && $err == *SB5067* ]]; chk cov.341
+
+# cov.342 control: the same shape with a named function body instead of a
+#         substitution — `y` is h-local and was never a global either
+run_sash 'fn h {
+    str y=v
+    /bin/echo "$y"
+}
+h
+fn f {
+    str y=$(getenv HOME)
+    attest y [[ -n $y ]]
+}
+f'
+[[ $rc = 0 && $out = "v" && -z $err ]]; chk cov.342
+
+# cov.343 the other side of the same widening, which IS correct: a `fn`
+#         written inside a `$( )` body is not at the top level, so SB5071
+#         applies exactly as it does inside an `if`
+run_sash 'str s=$(fn g { echo gg; }; g)
+attest s [[ -n $s ]]
+echo "[$s]"'
+[[ $rc != 0 && -z $out && $err == *SB5071* ]]; chk cov.343
+
 
 set -e
 tally

@@ -430,6 +430,36 @@ pub fn walk_scoped_stmts<F: FnMut(&Statement, &str)>(stmts: &[Statement], in_fn:
     }
 }
 
+/// [`walk_scoped_stmts`] restricted to [`Statement::structural_bodies`] — it
+/// does **not** enter a `$( … )` body.
+///
+/// For a visitor that only reads, entering one is right: a body shares the
+/// enclosing function's `args`, so `${args[0]}` inside `$( … )` in `fn g` is
+/// `g`'s first argument, and `in_fn` naming `g` is the true answer.
+///
+/// For a visitor that is building a set of names *in scope*, it is wrong. A
+/// name first introduced inside a body is local to that body (DD#86), so
+/// collecting it as though it were declared in the enclosing scope invents a
+/// binding. `collect_global_names` did exactly that once bodies joined the
+/// statement recursion, and an unrelated function's own local was reported as
+/// tainting a global that does not exist.
+pub fn walk_scoped_structural_stmts<F: FnMut(&Statement, &str)>(
+    stmts: &[Statement],
+    in_fn: &str,
+    f: &mut F,
+) {
+    for stmt in stmts {
+        f(stmt, in_fn);
+        let inner = match &stmt.kind {
+            StmtKind::Function(fun) => fun.name.as_str(),
+            _ => in_fn,
+        };
+        for body in stmt.structural_bodies() {
+            walk_scoped_structural_stmts(body, inner, f);
+        }
+    }
+}
+
 /// DD#98: `_` is the don't-care binder. In any binding position (assignment
 /// LHS, declaration, `for` variable, `read`/`mapfile`/`argv` target, attest
 /// binder) it means "bind this and discard it": exempt from the DD#86

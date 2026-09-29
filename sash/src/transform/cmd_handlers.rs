@@ -417,7 +417,7 @@ fn fixed_arity_msg(name: &str, min: usize, max: usize, b: &CallBounds) -> Option
         return Some(arity_too_few_msg(name, min, false, b.written));
     }
     if b.written > max {
-        return Some(arity_too_many_msg(name, min, b.written));
+        return Some(arity_too_many_msg(name, min, max, b.written));
     }
     None
 }
@@ -533,10 +533,17 @@ fn arity_too_few_msg(name: &str, min: usize, variadic: bool, got: usize) -> Stri
     )
 }
 
-fn arity_too_many_msg(name: &str, n: usize, got: usize) -> String {
+/// SB5043: more arguments than the callee can take. Reports the whole range,
+/// not the minimum — a DD#84 callee with trailing optionals accepts a span, and
+/// naming only its floor states something false. `f` reading `${args[0]}` and
+/// `${args[1]:-d}` takes one argument or two; called with three it used to be
+/// told "takes 1 argument", which denies that `f a b` is legal.
+fn arity_too_many_msg(name: &str, min: usize, max: usize, got: usize) -> String {
     format!(
-        "1:1: error [SB5043] function '{}' takes {} argument{} but was called with {} — use @args to accept a variable number",
-        name, n, arity_plural(n), got
+        "1:1: error [SB5043] function '{}' takes {} but was called with {} — use @args to accept a variable number",
+        name,
+        arity_range(min, max),
+        got
     )
 }
 

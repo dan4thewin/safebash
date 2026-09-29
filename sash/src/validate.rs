@@ -7537,8 +7537,12 @@ pub fn check_fn_taints_global(program: &Program) -> Vec<Diagnostic> {
 /// Names declared at the top level — everything a function must not taint.
 /// Descends into top-level control flow but **not** into function bodies,
 /// whose declarations are local.
+/// The names bound at the top level. Structural on purpose: a name first
+/// introduced inside a `$( … )` body is local to that body (DD#86), so it is
+/// not a global and must not join this set — otherwise an unrelated function's
+/// own local of the same spelling is reported as tainting a global.
 fn collect_global_names(stmts: &[Statement], out: &mut HashSet<String>) {
-    crate::ir::walk_scoped_stmts(stmts, "", &mut |stmt, in_fn| {
+    crate::ir::walk_scoped_structural_stmts(stmts, "", &mut |stmt, in_fn| {
         if in_fn.is_empty() {
             record_global_name(stmt, out);
         }
