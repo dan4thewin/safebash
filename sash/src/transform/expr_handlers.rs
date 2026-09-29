@@ -10,13 +10,12 @@ pub(super) fn handle_command_substitution(expr: &Expr, state: &VersionState) -> 
         // carry the body as a `CmdSubstBody` to be lifted into a capture temp
         // by `lift_int_func_calls` (like `IntFuncCall`). Was a silent `$(...)`
         // placeholder at runtime.
-        if let ExprKind::CommandSubstitution(stmts) = &expr.kind {
-            let body: Vec<Statement> = stmts.to_vec();
-            return SsaValue::CmdSubstBody { body };
-        }
-        return SsaValue::Expr(expr_to_string(expr));
+        return cmdsub_body_value(expr);
     };
     if let Some(name) = name_opt {
+        if is_statement_builtin(BuiltinCmd::from_name(&name)) {
+            return cmdsub_body_value(expr);
+        }
         if let Some(v) = resolve_single_cmdsubst(name, c, state) {
             return v;
         }
@@ -27,6 +26,94 @@ pub(super) fn handle_command_substitution(expr: &Expr, state: &VersionState) -> 
     // peeled the `Suppressed` wrapper to reach the command, so detect it here.
     let suppressed = subst_is_suppressed(&stmt.kind);
     SsaValue::CmdSubst { argv, suppressed }
+}
+
+/// The general `$( … )` lowering: carry the body for `lift_int_func_calls` to
+/// materialize into a capture temp.
+fn cmdsub_body_value(expr: &Expr) -> SsaValue {
+    match &expr.kind {
+        ExprKind::CommandSubstitution(stmts) => SsaValue::CmdSubstBody {
+            body: stmts.to_vec(),
+        },
+        _ => SsaValue::Expr(expr_to_string(expr)),
+    }
+}
+
+/// A `BuiltinCmd` that is a **statement**: it has no value shape, so a
+/// single-command `$( … )` around it must be lowered as a *body*, not as an
+/// exec argv.
+///
+/// `resolve_single_cmdsubst` returning `None` meant "external", and the caller
+/// then built an argv whose head was a bare builtin name. Every such program
+/// compiled clean and printed `sash: bug: bare command passed to sash_exec`
+/// into its own output at run time, with the capture exiting 127: `$(:)`,
+/// `$(write hi)`, `$(cd /tmp)`, `$(close 9)`, `$(attest x [[ … ]])`,
+/// `$(argv 0 b)`, `$(wait)`, `$(exit 0)`, `$(exec …)`, `$([[ -n x ]])`,
+/// `$(readline q)`, `$(matchall S P a)`, `$(signal INT ignore)`, `$(return)`.
+/// The *multi*-statement path always did the right thing, so `$(:; :)` worked
+/// where `$(:)` did not — and `single_command_subst` already declines the fast
+/// path for a redirected body, for the same reason and with the same remedy.
+///
+/// DD#86's 2026-09-28 addendum settles that these are legal rather than
+/// something to reject: a `$( )` body is an anonymous function body, so any
+/// statement legal in a function body is legal as its sole statement.
+///
+/// **Total over `BuiltinCmd` on purpose — do not add a wildcard.** Which half
+/// a builtin belongs to is not guessable from its name, and the cost of
+/// landing a new one on the wrong side is a runtime ICE printed into the
+/// program's own output.
+fn is_statement_builtin(kind: BuiltinCmd) -> bool {
+    match kind {
+        // Value intrinsics: `resolve_single_cmdsubst` produces a value for
+        // these, which is the whole reason the single-command path exists.
+        // `match` is here for its two-argument value form; the DD#63
+        // three-argument capture statement is SB4045 inside a `$( )` today.
+        BuiltinCmd::Echo
+        | BuiltinCmd::Len
+        | BuiltinCmd::Strlen
+        | BuiltinCmd::Join
+        | BuiltinCmd::Sub
+        | BuiltinCmd::Gsub
+        | BuiltinCmd::Match
+        | BuiltinCmd::Toupper
+        | BuiltinCmd::Tolower
+        | BuiltinCmd::Basename
+        | BuiltinCmd::Dirname => false,
+        // Not a builtin at all — an external command or a user function, which
+        // is exactly what the argv path is for.
+        BuiltinCmd::Other => false,
+        // `keys` has no value lowering (a value-context `$(keys m)` is SB5025
+        // and the for-in splat never reaches here), so it belongs on this side
+        // rather than falling through to a bare external named `keys`.
+        BuiltinCmd::Keys
+        | BuiltinCmd::MatchAll
+        | BuiltinCmd::Write
+        | BuiltinCmd::Test
+        | BuiltinCmd::Noop
+        | BuiltinCmd::Exit
+        | BuiltinCmd::Exec
+        | BuiltinCmd::Cd
+        | BuiltinCmd::Wait
+        | BuiltinCmd::Close
+        | BuiltinCmd::Attest
+        | BuiltinCmd::Read
+        | BuiltinCmd::Mapfile
+        | BuiltinCmd::Argv
+        | BuiltinCmd::Break
+        | BuiltinCmd::Continue
+        | BuiltinCmd::Return
+        | BuiltinCmd::Signal
+        | BuiltinCmd::Unset
+        | BuiltinCmd::NegateTestResult
+        | BuiltinCmd::SetTestFromStatus
+        | BuiltinCmd::LetExit
+        | BuiltinCmd::SubshellStart
+        | BuiltinCmd::StoreBgPid
+        | BuiltinCmd::TrapSignal
+        | BuiltinCmd::SignalFlag
+        | BuiltinCmd::TableDelete
+        | BuiltinCmd::TableDeleteIdx => true,
+    }
 }
 
 /// True when a `$(…)` single-command body carries a `- ` suppression prefix

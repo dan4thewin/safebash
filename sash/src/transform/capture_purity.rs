@@ -61,7 +61,7 @@ fn stmt_is_pure(
         StmtKind::Redirected(_) => false,
         StmtKind::Command(c) => command_is_pure(c, bodies, visiting),
         _ => stmt
-            .child_bodies()
+            .structural_bodies()
             .iter()
             .all(|b| stmts_are_pure(b, bodies, visiting)),
     }

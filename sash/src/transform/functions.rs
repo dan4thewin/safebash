@@ -711,7 +711,7 @@ fn sig_scan_case(c: &Case, sig: &mut ArgSig) {
 }
 
 fn sig_scan_child_bodies(stmt: &Statement, sig: &mut ArgSig) {
-    for body in stmt.child_bodies() {
+    for body in stmt.structural_bodies() {
         sig_scan_stmts(body, sig);
     }
 }
@@ -950,16 +950,21 @@ fn collect_returns_inner(stmts: &[Statement], returns: &mut Vec<Option<String>>)
             // Nested function definitions have their own returns.
             StmtKind::Function(_) => {}
             // Default: descend into every nested statement body via
-            // child_bodies(). Covers If (incl. elif_clauses), While,
+            // structural_bodies(). Covers If (incl. elif_clauses), While,
             // For, Case, Group, Pipeline, List, Redirected, Suppressed.
             // Leaf StmtKinds (Assignment, Declaration, Comment,
             // ArithTest) return empty bodies.
-            _ => {
-                for body in stmt.child_bodies() {
-                    collect_returns_inner(body, returns);
-                }
-            }
+            _ => collect_returns_bodies(stmt, returns),
         }
+    }
+}
+
+/// The nested-body half of [`collect_returns_inner`]. `structural_bodies`, not
+/// `child_bodies`: a `$( … )` body is an anonymous function body (DD#86), so a
+/// `return` inside it belongs to that body, not to the enclosing function.
+fn collect_returns_bodies(stmt: &Statement, returns: &mut Vec<Option<String>>) {
+    for body in stmt.structural_bodies() {
+        collect_returns_inner(body, returns);
     }
 }
 

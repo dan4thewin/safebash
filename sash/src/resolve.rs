@@ -140,7 +140,7 @@ fn collect_functions(stmts: &[Statement], funcs: &mut HashSet<String>) {
         if let StmtKind::Function(f) = &stmt.kind {
             funcs.insert(f.name.clone());
         }
-        for body in stmt.child_bodies() {
+        for body in stmt.structural_bodies() {
             collect_functions(body, funcs);
         }
     }
@@ -157,7 +157,7 @@ fn resolve_stmt(stmt: &mut Statement, funcs: &HashSet<String>, diags: &mut Vec<D
     // heads/args, assignment values, for-words, case patterns, redirect
     // targets); nested statement bodies are handled by the recursion below.
     resolve_stmt_exprs(stmt, funcs, diags);
-    for body in stmt.child_bodies_mut() {
+    for body in stmt.structural_bodies_mut() {
         resolve_stmts(body, funcs, diags);
     }
 }

@@ -247,7 +247,7 @@ fn check_sexpr_string_producers(stmt: &Statement, env: &TypeEnv, errors: &mut Ve
     if let StmtKind::Assignment(a) = &stmt.kind {
         check_arith_indexed_map_assign(a, stmt.span, env, errors);
     }
-    for body in stmt.child_bodies() {
+    for body in stmt.structural_bodies() {
         for s in body {
             check_sexpr_string_producers(s, env, errors);
         }
@@ -533,7 +533,7 @@ fn default_is_arith_literal(operand: Option<&Expr>) -> bool {
 /// walk treats `$(( … ))` as opaque (no duplicate diagnostic).
 fn check_int_value_defaults(stmt: &Statement, env: &TypeEnv, errors: &mut Vec<TypeError>) {
     stmt.direct_exprs(&mut |e| walk_value_default(e, env, errors));
-    for body in stmt.child_bodies() {
+    for body in stmt.structural_bodies() {
         for s in body {
             check_int_value_defaults(s, env, errors);
         }
@@ -1072,7 +1072,7 @@ fn check_substituted_operands_in_stmt(
         check_string_intrinsic_operands(c, stmt.span, env, errors);
         check_int_sink_operands(c, stmt.span, env, errors);
     }
-    for body in stmt.child_bodies() {
+    for body in stmt.structural_bodies() {
         for s in body {
             check_substituted_operands_in_stmt(s, env, errors);
         }
@@ -1163,10 +1163,8 @@ fn check_int_redirect_target(stmt: &Statement, env: &TypeEnv, errors: &mut Vec<T
             check_one_redirect_target(&redir.target, env, errors);
         }
     }
-    for body in stmt.child_bodies() {
-        for s in body {
-            check_int_redirect_target(s, env, errors);
-        }
+    for s in stmt.structural_bodies().into_iter().flatten() {
+        check_int_redirect_target(s, env, errors);
     }
 }
 
@@ -1658,21 +1656,25 @@ fn check_stmt(stmt: &Statement, env: &mut TypeEnv, errors: &mut Vec<TypeError>) 
         StmtKind::For(f) => check_for(f, env, errors),
         StmtKind::Function(f) => check_function(f, env, errors),
         // Default: descend into every nested statement body via
-        // child_bodies(). Covers For, While, Function, Case (no
+        // structural_bodies(). Covers For, While, Function, Case (no
         // per-arm pre-work) and the wrapping StmtKinds Pipeline,
         // Group, List, Subshell, Redirected, Suppressed — so
         // wrapping a statement in grouping syntax doesn't silently
-        // bypass type checking (journal 056). child_bodies()
+        // bypass type checking (journal 056). structural_bodies()
         // returns empty for leaf StmtKinds (Assignment,
         // Declaration, Command, Comment, ArithTest), which all
         // have their own arm above.
-        _ => {
-            for body in stmt.child_bodies() {
-                for s in body {
-                    check_stmt(s, env, errors);
-                }
-            }
-        }
+        _ => check_stmt_bodies(stmt, env, errors),
+    }
+}
+
+/// The nested-body half of [`check_stmt`]. Deliberately `structural_bodies`:
+/// this walk MUTATES `env`, so descending into a `$( … )` body would leak the
+/// body's local names into the enclosing scope (DD#86) unless it opened a
+/// child scope the way `check_function` does.
+fn check_stmt_bodies(stmt: &Statement, env: &mut TypeEnv, errors: &mut Vec<TypeError>) {
+    for s in stmt.structural_bodies().into_iter().flatten() {
+        check_stmt(s, env, errors);
     }
 }
 
@@ -2203,7 +2205,7 @@ fn check_int_fn_predicates(program: &Program, env: &TypeEnv, errors: &mut Vec<Ty
 fn walk_int_fn_predicates(stmts: &[Statement], env: &TypeEnv, found: &mut Vec<(Span, String)>) {
     for stmt in stmts {
         stmt_predicate_positions(stmt, env, found);
-        for body in stmt.child_bodies() {
+        for body in stmt.structural_bodies() {
             walk_int_fn_predicates(body, env, found);
         }
     }
@@ -2358,22 +2360,24 @@ fn infer_stmt(stmt: &Statement, env: &mut TypeEnv) {
             env.declare(&a.name, infer_assignment_type(a, env));
         }
         StmtKind::Declaration(d) => infer_declaration_types(d, env),
-        // Default: walk all child bodies. Covers For, While, Function
+        // Default: walk all structural bodies. Covers For, While, Function
         // (no per-arm pre-work in this pass), plus every wrapping
         // StmtKind (Pipeline, Group, List, Subshell, Redirected,
         // Suppressed, If, Case) so a `int x=5` declared inside any
         // of them gets type-tracked. Bug parallel to journal 056 for
         // check_stmt: the original `_ => {}` silently dropped them.
-        // child_bodies() returns empty for the leaves (Assignment,
+        // structural_bodies() returns empty for the leaves (Assignment,
         // Declaration, Command, Comment, ArithTest) which all have
         // explicit arms or no-effect semantics.
-        _ => {
-            for body in stmt.child_bodies() {
-                for s in body {
-                    infer_stmt(s, env);
-                }
-            }
-        }
+        _ => infer_stmt_bodies(stmt, env),
+    }
+}
+
+/// The nested-body half of [`infer_stmt`]. `structural_bodies` for the same
+/// reason as [`check_stmt_bodies`] — this walk mutates `env`.
+fn infer_stmt_bodies(stmt: &Statement, env: &mut TypeEnv) {
+    for s in stmt.structural_bodies().into_iter().flatten() {
+        infer_stmt(s, env);
     }
 }
 

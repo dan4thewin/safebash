@@ -885,7 +885,11 @@ fn check_stmt_splat_operand(
     if let StmtKind::Command(c) = &stmt.kind {
         check_command_splat_operand(c, collections, false, diags);
     }
-    for body in stmt.child_bodies() {
+    // `structural_bodies`: `check_cmdsub_splat_operand` handles a `$( … )`
+    // body itself, and passes `in_cmdsub = true` — a scalar-operand intrinsic
+    // is legal there and nowhere else, so reaching the same command through
+    // the plain recursion would reject it.
+    for body in stmt.structural_bodies() {
         for inner in body {
             check_stmt_splat_operand(inner, collections, diags);
         }
@@ -1031,6 +1035,16 @@ fn validate_stmt_ctx(stmt: &Statement, diags: &mut Vec<Diagnostic>, in_condition
     // here would re-validate every nested expression once per enclosing level
     // and emit each diagnostic depth+1 times (journal 308).
     walk_own_exprs_in_stmt(stmt, &mut |expr, span| validate_expr(expr, span, diags));
+    // A `$( … )` body is an anonymous function body (DD#86), so every statement
+    // in it gets the same validation as one written at top level. This has to
+    // live here rather than in `validate_nested`, because the arms that do NOT
+    // reach `validate_nested` — `Command`, `Declaration`, `Assignment`,
+    // `ArithTest` — are exactly the ones that most often carry a substitution.
+    // `in_condition` resets to false: a body is a function body, and the
+    // condition context does not cross that boundary.
+    for body in stmt.cmdsub_bodies() {
+        validate_children(body, false, diags);
+    }
 }
 
 /// DD#70/#71: a typed declaration is a value binding, not a boolean/exit
@@ -1072,7 +1086,11 @@ fn validate_nested(stmt: &Statement, in_condition: bool, diags: &mut Vec<Diagnos
         StmtKind::ReturnProducer(inner) => validate_stmt_ctx(inner, diags, true),
         _ => {
             let inner = forwards_condition(stmt) && in_condition;
-            for body in stmt.child_bodies() {
+            // `structural_bodies`, not `child_bodies`: `validate_stmt_ctx`
+            // walks the `$( … )` bodies of EVERY statement, wrapper or not.
+            // Taking them here too would validate a wrapper's substitution
+            // twice and print each of its diagnostics twice.
+            for body in stmt.structural_bodies() {
                 validate_children(body, inner, diags);
             }
         }
@@ -3140,129 +3158,100 @@ fn check_commands(stmts: &[Statement], funcs: &HashSet<String>, diags: &mut Vec<
     }
 }
 
-/// Visit the command substitutions in a statement's own expressions, WITHOUT
-/// descending into their bodies.
+/// A `$( … )` body, checked like any other block.
 ///
-/// `walk_all_exprs` would descend, and `check_commands` recursion descends too,
-/// so using that here would report a nested `$( $( … ) )` twice. A shallow walk
-/// plus the existing recursion visits each body exactly once.
-fn for_each_cmdsub_shallow(stmt: &Statement, f: &mut dyn FnMut(&[Statement])) {
-    stmt.direct_exprs(&mut |e| cmdsub_expr_walk(e, f));
-}
-
-/// The expression half of `for_each_cmdsub_shallow`: hand a command
-/// substitution's body to `f` without walking into it.
-fn cmdsub_expr_walk(expr: &Expr, f: &mut dyn FnMut(&[Statement])) {
-    match &expr.kind {
-        ExprKind::CommandSubstitution(stmts) => f(stmts),
-        ExprKind::DoubleQuoted(parts) | ExprKind::Concat(parts) => cmdsub_expr_walk_each(parts, f),
-        ExprKind::Array(elems) => cmdsub_expr_walk_each(elems, f),
-        ExprKind::Subscript { index, .. } => cmdsub_expr_walk(index, f),
-        _ => {}
-    }
-}
-
-fn cmdsub_expr_walk_each(exprs: &[Expr], f: &mut dyn FnMut(&[Statement])) {
-    for e in exprs {
-        cmdsub_expr_walk(e, f);
-    }
-}
-
-/// DD#23 head-resolvability inside `$( … )`, plus the one part of the
-/// value-intrinsic rule that survives the exemption below.
-fn check_cmdsub_heads(stmts: &[Statement], diags: &mut Vec<Diagnostic>) {
-    // A value intrinsic is exempt from SB5073 only when it *is* the whole
-    // substitution — that is the exact shape `transform::expr_handlers::
-    // nullary_magic_var` resolves into the value it produces. One statement
-    // among several is not resolved, so it used to survive as a bare command
-    // no backend recognises, and aborted at runtime on `sash_exec`'s
-    // absolute-path assertion — printing `sash: bug:` into the program's own
-    // output with a successful exit.
-    let sole = stmts.len() == 1;
-    for stmt in stmts {
-        check_cmdsub_heads_in_stmt(stmt, sole, diags);
-    }
-}
-
-/// One statement's worth: its own head, its child bodies, and the bodies of
-/// any command substitutions in its expressions.
+/// DD#86's 2026-09-28 addendum makes the body an anonymous function body, so
+/// every rule that governs a statement governs a statement here. It used to
+/// get `check_cmdsub_heads`, which carried over the head-must-be-literal rule
+/// and **nothing else**: everything keyed on *which* command it is stayed
+/// behind. `$(cd /tmp /var)` and `$(unset zz)` and `$(break)` were accepted in
+/// silence, `$(mapfile -m q)` slipped past its DD#99 retirement, and
+/// `$(close abc)` / `$(signal INT ignore)` reached a transform that had been
+/// promised a validated argument and panicked on it.
 ///
-/// `sole` is true only for the lone top-level statement of a substitution
-/// body. A nested body — an `if` arm, a loop body — is never itself the
-/// substitution however short it is, so it passes `false` down.
-fn check_cmdsub_heads_in_stmt(stmt: &Statement, sole: bool, diags: &mut Vec<Diagnostic>) {
-    check_cmdsub_head_literal(stmt, diags);
-    if !sole {
-        check_cmdsub_value_intrinsic(stmt, diags);
-    }
-    for body in stmt.child_bodies() {
-        for inner in body {
-            check_cmdsub_heads_in_stmt(inner, false, diags);
-        }
-    }
-    for_each_cmdsub_shallow(stmt, &mut |inner| check_cmdsub_heads(inner, diags));
-}
-
-/// SB5073 for a value intrinsic that is not the whole substitution.
-///
-/// The statement-position wording ("only valid inside a command substitution")
-/// would be actively misleading here, because this one *is* inside a command
-/// substitution. Same rule, same code, different explanation.
-fn check_cmdsub_value_intrinsic(stmt: &Statement, diags: &mut Vec<Diagnostic>) {
-    let StmtKind::Command(c) = &stmt.kind else {
-        return;
+/// One exemption, carried by [`CmdPos`]: a value intrinsic is legal when it
+/// *is* the whole substitution, because that is the shape `transform`
+/// resolves into the value it produces.
+fn check_cmdsub_body(stmts: &[Statement], funcs: &HashSet<String>, diags: &mut Vec<Diagnostic>) {
+    let pos = if stmts.len() == 1 {
+        CmdPos::CmdsubSole
+    } else {
+        CmdPos::CmdsubOther
     };
-    if !matches!(&c.name.kind, ExprKind::Literal(_)) {
-        return;
+    for stmt in stmts {
+        check_cmd_at(stmt, funcs, pos, diags);
     }
-    let name = expr_literal_str(&c.name);
-    if !VALUE_ONLY_INTRINSICS.contains(&name) {
-        return;
-    }
-    diags.push(Diagnostic::error_span(
-        c.name.span,
-        "SB5073",
-        format!(
+}
+
+/// Where a command sits, for the one rule that depends on it: a value
+/// intrinsic (`getenv`, `status`, `argc`, …) produces a value and is legal
+/// only where something takes it.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum CmdPos {
+    /// An ordinary statement — top level, a function body, a loop body. A
+    /// value intrinsic here would discard its value.
+    Statement,
+    /// The sole statement of a `$( … )` body. A value intrinsic is exactly
+    /// right here; this is the shape that resolves into a value.
+    CmdsubSole,
+    /// One statement among several in a `$( … )` body — not the shape that
+    /// resolves, so a value intrinsic would survive as a bare command no
+    /// backend recognises and abort at runtime on `sash_exec`'s absolute-path
+    /// assertion, printing `sash: bug:` into the program's own output with a
+    /// successful exit.
+    CmdsubOther,
+}
+
+/// SB5073 for a value intrinsic outside the one position that takes its value.
+///
+/// The two wordings are not interchangeable. The statement-position sentence
+/// ("only valid inside a command substitution") would be actively misleading
+/// for a body statement, because that one *is* inside a command substitution.
+/// Same rule, same code, different explanation.
+fn value_intrinsic_diag(name: &str, c: &Command, pos: CmdPos) -> Option<Diagnostic> {
+    let ellipsis = if c.args.is_empty() { "" } else { " …" };
+    let complaint = match pos {
+        CmdPos::CmdsubSole => return None,
+        CmdPos::Statement => format!(
+            "`{name}` is a value intrinsic — it produces a value and is only \
+             valid inside a command substitution, e.g. `x=$({name}{ellipsis})`. \
+             A bare statement would discard the value"
+        ),
+        CmdPos::CmdsubOther => format!(
             "`{name}` is a value intrinsic — inside `$( … )` it is recognised \
              only when it is the whole substitution, not one statement among \
-             several. Capture it first (`x=$({name}{})`) and use `$x` here",
-            if c.args.is_empty() { "" } else { " …" }
+             several. Capture it first (`x=$({name}{ellipsis})`) and use `$x` here"
         ),
-    ));
-}
-
-/// Reject a non-literal command head (DD#23).
-fn check_cmdsub_head_literal(stmt: &Statement, diags: &mut Vec<Diagnostic>) {
-    let StmtKind::Command(c) = &stmt.kind else {
-        return;
     };
-    if matches!(&c.name.kind, ExprKind::Literal(_)) {
-        return;
-    }
-    diags.push(Diagnostic::error_span(
-        c.name.span,
-        "SB5011",
-        "a command name must be a literal path — a variable or expansion \
-         can't be resolved at compile time; use the literal path, or \
-         `/usr/bin/env` for a runtime tool"
-            .to_string(),
-    ));
+    Some(Diagnostic::error_span(c.name.span, "SB5073", complaint))
 }
 
 fn check_cmd_in_stmt(stmt: &Statement, funcs: &HashSet<String>, diags: &mut Vec<Diagnostic>) {
-    // DD#23 applies to a command substitution's head too. `$c hi` in statement
-    // position was rejected while `$($c hi)` was accepted, then aborted at
-    // runtime in native ("bare command passed to sash_exec") and silently
-    // captured the empty string in c.
-    //
-    // Only the head-must-be-literal rule carries over in full, NOT the rest of
-    // `check_command_head`: a value intrinsic is SB5073 in statement position,
-    // and `$(status)` is exactly the right thing. That exemption is narrow —
-    // it holds only while the intrinsic is the *whole* substitution, which is
-    // the shape the parser rewrites into a value. See `check_cmdsub_heads`.
-    for_each_cmdsub_shallow(stmt, &mut |inner| check_cmdsub_heads(inner, diags));
+    check_cmd_at(stmt, funcs, CmdPos::Statement, diags);
+}
+
+/// One statement's worth of command checking: the bodies of any command
+/// substitutions in its expressions, its own head, and its child bodies.
+///
+/// DD#23 applies to a command substitution's head too. `$c hi` in statement
+/// position was rejected while `$($c hi)` was accepted, then aborted at
+/// runtime in native ("bare command passed to sash_exec") and silently
+/// captured the empty string in c.
+///
+/// `pos` is the *statement's own* position. A nested body — an `if` arm, a
+/// loop body — is never itself a substitution however short it is, so it
+/// passes `CmdPos::Statement` down.
+fn check_cmd_at(
+    stmt: &Statement,
+    funcs: &HashSet<String>,
+    pos: CmdPos,
+    diags: &mut Vec<Diagnostic>,
+) {
+    for body in stmt.cmdsub_bodies() {
+        check_cmdsub_body(body, funcs, diags);
+    }
     let StmtKind::Command(c) = &stmt.kind else {
-        for body in stmt.child_bodies() {
+        for body in stmt.structural_bodies() {
             check_commands(body, funcs, diags);
         }
         return;
@@ -3274,7 +3263,7 @@ fn check_cmd_in_stmt(stmt: &Statement, funcs: &HashSet<String>, diags: &mut Vec<
         diags.push(bad_command_head_diag(&c.name));
         return;
     }
-    check_command_head(expr_literal_str(&c.name), c, stmt, funcs, diags);
+    check_command_head(expr_literal_str(&c.name), c, stmt, funcs, pos, diags);
 }
 
 /// SB5011 for a command head that is not a literal. Two very different words
@@ -3339,6 +3328,7 @@ fn check_command_head(
     c: &Command,
     stmt: &Statement,
     funcs: &HashSet<String>,
+    pos: CmdPos,
     diags: &mut Vec<Diagnostic>,
 ) {
     match name {
@@ -3360,16 +3350,7 @@ fn check_command_head(
         // value has nowhere to go, and it used to fall through to `sash_exec`
         // and abort at runtime on an internal assertion.
         n if VALUE_ONLY_INTRINSICS.contains(&n) => {
-            diags.push(Diagnostic::error_span(
-                c.name.span,
-                "SB5073",
-                format!(
-                    "`{name}` is a value intrinsic — it produces a value and is only \
-                     valid inside a command substitution, e.g. `x=$({name}{})`. A bare \
-                     statement would discard the value",
-                    if c.args.is_empty() { "" } else { " …" }
-                ),
-            ));
+            diags.extend(value_intrinsic_diag(name, c, pos));
             return;
         }
         "" => return,
@@ -3840,7 +3821,6 @@ fn check_elide_expr(expr: &Expr, elidable: bool, diags: &mut Vec<Diagnostic>) {
         // A `[[ … ]]` test arrives as a command arg (elidable=true above), but
         // its operands are value positions — reset to non-elidable.
         ExprKind::Test(t) => check_elide_test(t, diags),
-        ExprKind::CommandSubstitution(stmts) => check_elide_stmt_seq(stmts, diags),
         // `$(( … ))` in value position — its operands are value positions too.
         ExprKind::Arithmetic(a) => check_elide_arith(a, diags),
         _ => {}
@@ -4015,7 +3995,6 @@ fn check_positionals_expr(expr: &Expr, diags: &mut Vec<Diagnostic>) {
         }
         ExprKind::Test(t) => check_positionals_test(t, diags),
         ExprKind::Arithmetic(a) => check_positionals_arith(a, expr.span, diags),
-        ExprKind::CommandSubstitution(stmts) => check_positionals_stmt_seq(stmts, diags),
         _ => {}
     }
 }
@@ -4051,14 +4030,6 @@ fn check_positionals_seq<'a>(
 fn check_positionals_opt(expr: Option<&Expr>, diags: &mut Vec<Diagnostic>) {
     if let Some(e) = expr {
         check_positionals_expr(e, diags);
-    }
-}
-
-/// A command substitution at top level runs in top-level context; recurse
-/// at the statement level so nested function bodies are correctly scoped.
-fn check_positionals_stmt_seq(stmts: &[Statement], diags: &mut Vec<Diagnostic>) {
-    for s in stmts {
-        check_positionals_stmt(s, false, diags);
     }
 }
 
@@ -4165,12 +4136,6 @@ fn dollar_at_expr(expr: &Expr, in_fn: bool, diags: &mut Vec<Diagnostic>) {
             }
         }
         ExprKind::Subscript { index, .. } => dollar_at_expr(index, in_fn, diags),
-        // A `$( … )` runs in the enclosing arg scope — inherit `in_fn`.
-        ExprKind::CommandSubstitution(stmts) => {
-            for s in stmts {
-                dollar_at_stmt(s, in_fn, diags);
-            }
-        }
         ExprKind::Arithmetic(a) => dollar_at_arith(a, expr.span, in_fn, diags),
         ExprKind::Test(t) => dollar_at_test(t, in_fn, diags),
         _ => {}
@@ -4648,7 +4613,6 @@ fn check_argv_splat_expr(expr: &Expr, diags: &mut Vec<Diagnostic>) {
         ExprKind::Subscript { index, .. } => check_argv_splat_expr(index, diags),
         ExprKind::ParameterExpansion(pe) => check_argv_splat_opt(pe.operand.as_deref(), diags),
         ExprKind::Test(t) => check_argv_splat_test(t, diags),
-        ExprKind::CommandSubstitution(stmts) => check_argv_splat_stmt_seq(stmts, diags),
         _ => {}
     }
 }
@@ -4696,12 +4660,6 @@ fn check_argv_splat_opt(expr: Option<&Expr>, diags: &mut Vec<Diagnostic>) {
     }
 }
 
-fn check_argv_splat_stmt_seq(stmts: &[Statement], diags: &mut Vec<Diagnostic>) {
-    for s in stmts {
-        check_argv_splat_stmt(s, diags);
-    }
-}
-
 /// A scalar position (a `[[ ]]` operand, a redirect target): a named-array
 /// splat there is SB5025, exactly as it is on an assignment RHS. Only the
 /// assignment path used to check this, so the others accepted `@a` and then
@@ -4740,8 +4698,29 @@ fn quoted_splat_diag(span: Span) -> Diagnostic {
 }
 
 /// `$(argv)` / `$(argv N)` — the array-splat command substitution.
+///
+/// DD#60 gives `argv` two shapes and they collide at one argument: the splat
+/// `$(argv 1)` and the out-param fill `argv a`. An index is a bare
+/// non-negative decimal literal (SB5085) and a fill target is a bare *name*
+/// (SB5063 rejects `argv 1`), so the argument itself discriminates; two
+/// arguments is always the fill. Matching on the command *name* alone read
+/// `$(argv 0 b; …)` — a legal fill statement — as a misplaced splat and
+/// answered SB5025, whose advice is to write `argv N a`: the form the author
+/// had already written.
 fn is_argv_splat_expr(expr: &Expr) -> bool {
-    matches!(&expr.kind, ExprKind::CommandSubstitution(stmts) if cmdsub_command_is(stmts, "argv"))
+    matches!(&expr.kind, ExprKind::CommandSubstitution(stmts)
+        if sole_cmdsub_command(stmts, "argv").is_some_and(argv_command_is_splat))
+}
+
+/// `argv` / `argv N` — the splat spelling, as opposed to DD#60's out-param
+/// fill `argv a` / `argv N a`. See [`is_argv_splat_expr`] for why the
+/// argument is what tells them apart.
+fn argv_command_is_splat(c: &Command) -> bool {
+    match c.args.as_slice() {
+        [] => true,
+        [index] => is_bare_index_literal(index),
+        _ => false,
+    }
 }
 
 /// `$(keys m)` — the map-keys array-splat command substitution. Like
@@ -4749,7 +4728,8 @@ fn is_argv_splat_expr(expr: &Expr) -> bool {
 /// (DD#75 §3 — closes the memory-unsafe silent-join / garbage bypass where
 /// keys slipped past the argv-only context guard).
 fn is_keys_splat_expr(expr: &Expr) -> bool {
-    matches!(&expr.kind, ExprKind::CommandSubstitution(stmts) if cmdsub_command_is(stmts, "keys"))
+    matches!(&expr.kind, ExprKind::CommandSubstitution(stmts)
+        if sole_cmdsub_command(stmts, "keys").is_some())
 }
 
 /// An array-returning command-sub splat legal as a for-in source:
@@ -4800,13 +4780,7 @@ fn is_named_array_splat(expr: &Expr) -> bool {
 /// A bare splat form: `$(argv …)`, an `arrvals` parameter expansion
 /// (`@a` / `${a[@]}` / `$a[@]`), or `$(keys a)`.
 fn is_splat_form(expr: &Expr) -> bool {
-    match &expr.kind {
-        ExprKind::CommandSubstitution(stmts) => {
-            cmdsub_command_is(stmts, "argv") || cmdsub_command_is(stmts, "keys")
-        }
-        ExprKind::ParameterExpansion(pe) => is_arrvals_splat_op(pe.operator.as_deref()),
-        _ => false,
-    }
+    is_array_splat_source(expr) || is_named_array_splat(expr)
 }
 
 /// A named-array value splat operator: `arrvals`, or any dispositioned /
@@ -4819,14 +4793,36 @@ fn is_arrvals_splat_op(op: Option<&str>) -> bool {
     matches!(op, Some("arrvals")) || matches!(op, Some(s) if s.starts_with("arrvals_"))
 }
 
-/// True if the single-command substitution invokes `name`.
-fn cmdsub_command_is(stmts: &[Statement], name: &str) -> bool {
-    let inner = match stmts.first().map(|s| &s.kind) {
-        Some(StmtKind::Redirected(r)) => &r.body.kind,
-        Some(other) => other,
-        None => return false,
+/// The command a `$( … )` body consists of, when the body is **exactly one**
+/// statement invoking `name`.
+///
+/// One statement, not the first of several. `stmts.first()` was the test, and
+/// `transform` resolves a splat substitution only when it *is* the whole body,
+/// so `for x in $(argv; /usr/bin/touch f)` compiled clean, iterated the
+/// program arguments, and never ran the `touch`: every statement after the
+/// first was discarded with nothing reported. `keys` escaped the same defect
+/// only because SB5073 catches it one pass earlier.
+fn sole_cmdsub_command<'a>(stmts: &'a [Statement], name: &str) -> Option<&'a Command> {
+    let [stmt] = stmts else {
+        return None;
     };
-    matches!(inner, StmtKind::Command(c) if expr_literal_str(&c.name) == name)
+    let c = stmt_command(stmt)?;
+    (expr_literal_str(&c.name) == name).then_some(c)
+}
+
+/// The `Command` a statement runs, looking through a redirection wrapper.
+/// Shared so that every `argv`-shape test sees the same statement — a second
+/// unwrap that forgot `Redirected` would let `$(argv >f; CMD)` back past the
+/// check that `$(argv; CMD)` fails.
+fn stmt_command(stmt: &Statement) -> Option<&Command> {
+    let inner = match &stmt.kind {
+        StmtKind::Redirected(r) => &r.body.kind,
+        other => other,
+    };
+    match inner {
+        StmtKind::Command(c) => Some(c),
+        _ => None,
+    }
 }
 
 /// Like taint_stmt but doesn't mark read/mapfile as tainted
@@ -4910,7 +4906,11 @@ fn taint_child_bodies(
     sx: &SlotCx,
     diags: &mut Vec<Diagnostic>,
 ) {
-    for body in stmt.child_bodies() {
+    // `structural_bodies`, not `child_bodies`: `check_expr_taint`'s
+    // `CommandSubstitution` arm already checks a body as a use site
+    // (`check_cmdsub_use_taint`). Taking it here too would check every use in
+    // the body twice.
+    for body in stmt.structural_bodies() {
         for s in body {
             taint_stmt(s, tainted, sx, diags);
         }
@@ -5565,7 +5565,9 @@ fn stmt_runs_taint_source(stmt: &Statement) -> bool {
             return true;
         }
     }
-    stmt.child_bodies()
+    // `structural_bodies`: the taint pass reaches a `$( … )` body through
+    // `check_expr_taint`, not through the statement recursion.
+    stmt.structural_bodies()
         .iter()
         .any(|body| body.iter().any(stmt_runs_taint_source))
 }
@@ -5587,11 +5589,14 @@ fn command_name_is_taint_source(name_expr: &Expr) -> bool {
 /// external `$(/abs …)`. `$(argv …)` is deliberately excluded: it is an
 /// array splat governed by the splat-context check (SB5025), not a scalar.
 fn cmdsub_is_scalar_taint_source(stmts: &[Statement]) -> bool {
-    // A lone `$(argv …)` is an array splat (SB5025 elsewhere), not a scalar
-    // source — don't double-diagnose it. Any other body is a scalar source iff
+    // A splat-spelled `argv` is an array splat (SB5025 elsewhere), not a
+    // scalar source — don't double-diagnose it. `cmdsub_command_is(.., "argv")`
+    // was the test and it matched the *name* on `stmts.first()`, so it also
+    // swallowed the out-param fill: `$(argv 0 b; …)` was silently exempted
+    // from a taint check it should get. Any other body is a scalar source iff
     // it runs an external / getenv / arg / argv anywhere (recursive scan, so a
     // multi-statement / pipeline body is covered — was `stmts.first()` only).
-    if cmdsub_command_is(stmts, "argv") {
+    if stmts.iter().any(is_argv_splat_stmt) {
         return false;
     }
     cmdsub_is_taint_source(stmts)
@@ -6293,11 +6298,8 @@ fn collect_slot_arg_reads(
             push_slot_arg_reads(c, usage, reads);
         }
         // DD#100: a call inside `$( … )` is still a call, so `s=$(f =q)` is a
-        // read of `q` on exactly the same terms. A command-substitution body is
-        // an *expression* child, not a `child_bodies()` statement list, so
-        // without this descent the gate reported every collection argument
-        // passed in capture position as never-read.
-        for_each_cmdsub_shallow(stmt, &mut |body| collect_slot_arg_reads(body, usage, reads));
+        // read of `q` on exactly the same terms. `child_bodies()` yields a
+        // substitution body, so the ordinary recursion reaches it.
         for body in stmt.child_bodies() {
             collect_slot_arg_reads(body, usage, reads);
         }
@@ -7182,11 +7184,8 @@ fn check_call_args_in(stmts: &[Statement], cx: &CallArgCx, diags: &mut Vec<Diagn
         if let StmtKind::Command(c) = &stmt.kind {
             check_one_call_args(c, stmt.span, cx, diags);
         }
-        // DD#100: a call inside `$( … )` is still a call. Without this descent
-        // `s=$(f =q "x")` was accepted outright (a silent Part C violation) and
-        // `s=$(f =scalar)` reported a misleading SB5042 arity error instead of
-        // SB5066 — the `=name` token was counted as an ordinary argument.
-        for_each_cmdsub_shallow(stmt, &mut |body| check_call_args_in(body, cx, diags));
+        // DD#100: a call inside `$( … )` is still a call — `child_bodies()`
+        // yields a substitution body, so the ordinary recursion reaches it.
         for body in stmt.child_bodies() {
             check_call_args_in(body, cx, diags);
         }
@@ -7867,12 +7866,31 @@ pub fn check_fill_target(program: &Program) -> Vec<Diagnostic> {
 
 fn check_fill_target_in(stmts: &[Statement], diags: &mut Vec<Diagnostic>) {
     for stmt in stmts {
-        if let StmtKind::Command(c) = &stmt.kind {
-            flag_fill_target(c, stmt.span, diags);
-        }
-        for body in stmt.child_bodies() {
-            check_fill_target_in(body, diags);
-        }
+        check_fill_target_stmt(stmt, diags);
+    }
+}
+
+/// One statement's worth of [`check_fill_target_in`].
+fn check_fill_target_stmt(stmt: &Statement, diags: &mut Vec<Diagnostic>) {
+    if let StmtKind::Command(c) = &stmt.kind {
+        flag_fill_target(c, stmt.span, diags);
+    }
+    for body in stmt.structural_bodies() {
+        check_fill_target_in(body, diags);
+    }
+    for body in stmt.cmdsub_bodies() {
+        check_fill_target_body(body, diags);
+    }
+}
+
+/// DD#60 gives `argv` two shapes that collide at one argument: the splat
+/// EXPRESSION `$(argv N)`, whose `N` is an index, and the fill STATEMENT
+/// `argv N name`, whose second word is an out-param. A body that is the splat
+/// is not walked, or its index reads as a fill target and earns a spurious
+/// SB5063 on the canonical `for x in $(argv 1)`.
+fn check_fill_target_body(body: &[Statement], diags: &mut Vec<Diagnostic>) {
+    if !cmdsub_is_argv_splat(body) {
+        check_fill_target_in(body, diags);
     }
 }
 
@@ -8258,7 +8276,13 @@ fn check_stmt_exprs_and_bodies(stmt: &Statement, known: &HashSet<String>, sink: 
     if let StmtKind::ArithTest(a) = &stmt.kind {
         check_arith_reads(a, stmt.span, known, sink);
     }
-    for body in stmt.child_bodies() {
+    // `structural_bodies`, not `child_bodies`: a `$( … )` body is reached from
+    // `check_expr_reads`, which opens a child scope for it (DD#86 — a name
+    // first introduced inside the body is local to it). Taking it here as well
+    // would check every read in the body twice, and the second pass would use
+    // the *enclosing* scope, so `s=$(argv 0 b; echo @b)` reported `b` as
+    // introduced nowhere.
+    for body in stmt.structural_bodies() {
         check_reads_in_scope(body, known, sink);
     }
 }
@@ -9212,9 +9236,80 @@ fn check_argv_form_stmt(stmt: &Statement, diags: &mut Vec<Diagnostic>) {
     if let StmtKind::Command(c) = &stmt.kind {
         diags.extend(argv_form_diag(c, stmt.span));
     }
-    for body in stmt.child_bodies() {
+    for body in stmt.structural_bodies() {
         check_argv_form_in(body, diags);
     }
+    // A substitution body takes the `$(argv)` splat exemption, so it needs
+    // `check_argv_form_cmdsub` rather than the plain recursion.
+    for body in stmt.cmdsub_bodies() {
+        check_argv_form_cmdsub(body, diags);
+    }
+}
+
+/// `argv` inside a `$( … )` body.
+///
+/// The splat `$(argv)` / `$(argv N)` is an **expression**, and `transform`
+/// resolves it only when it is the whole substitution. As the sole statement
+/// it is that expression, so it is exempt from the statement shape check;
+/// anywhere else the splat spelling names no array and every statement around
+/// it was being dropped, so it is SB5025.
+///
+/// `argv` cannot simply join `VALUE_ONLY_INTRINSICS` the way `keys` did —
+/// statement position is exactly where DD#60's out-param fill lives, in a
+/// `$( )` body as much as anywhere else. It is the splat *spelling* that is
+/// not a statement.
+fn check_argv_form_cmdsub(stmts: &[Statement], diags: &mut Vec<Diagnostic>) {
+    let sole = cmdsub_is_argv_splat(stmts);
+    for stmt in stmts {
+        check_argv_form_cmdsub_stmt(stmt, sole, diags);
+    }
+}
+
+/// One statement's worth of [`check_argv_form_cmdsub`]. `sole` is a property of
+/// the whole body, so it is computed once and passed down.
+fn check_argv_form_cmdsub_stmt(stmt: &Statement, sole: bool, diags: &mut Vec<Diagnostic>) {
+    if !is_argv_splat_stmt(stmt) {
+        check_argv_form_stmt(stmt, diags);
+        return;
+    }
+    if !sole {
+        diags.push(argv_splat_not_sole_diag(stmt.span));
+    }
+}
+
+/// The sole statement of this `$( … )` body is the splat spelling
+/// `argv` / `argv N`, so the body is an *expression* and the body's statements
+/// are not statements at all.
+///
+/// Shared, because two passes need the same exemption and they disagreed once
+/// already: `check_fill_target_in` read the `N` of `$(argv 1)` as a fill
+/// target and rejected the canonical `for x in $(argv 1)` with SB5063. DD#60
+/// gives the splat and the out-param fill the same spelling at one argument —
+/// `is_argv_splat_stmt` is the discriminator, and every pass that walks into a
+/// body has to consult it rather than re-deciding.
+fn cmdsub_is_argv_splat(stmts: &[Statement]) -> bool {
+    matches!(stmts, [stmt] if is_argv_splat_stmt(stmt))
+}
+
+/// A statement that is the splat spelling `argv` / `argv N`.
+fn is_argv_splat_stmt(stmt: &Statement) -> bool {
+    let Some(c) = stmt_command(stmt) else {
+        return false;
+    };
+    expr_literal_str(&c.name) == "argv" && argv_command_is_splat(c)
+}
+
+/// SB5025 for an `argv` splat that is one statement among several.
+fn argv_splat_not_sole_diag(span: Span) -> Diagnostic {
+    Diagnostic::error_span(
+        span,
+        "SB5025",
+        "the `$(argv)` / `$(argv N)` splat is an expression — it is \
+         recognised only when it is the whole command substitution, not one \
+         statement among several (the others would be silently discarded). \
+         `argv a` / `argv N a` fills an array and is a statement anywhere"
+            .to_string(),
+    )
 }
 
 /// The complaint for one `argv` command, or `None` if its shape is lowerable.
@@ -9247,10 +9342,7 @@ fn argv_form_diag(c: &Command, span: Span) -> Option<Diagnostic> {
 /// buy. The advice is deliberately generic — it reads correctly both for the
 /// user who merely over-quoted a literal and for the user who wanted `$n`.
 fn argv_index_diag(index: &Expr, span: Span) -> Option<Diagnostic> {
-    let text = expr_literal_str(index);
-    let bare_non_negative =
-        !text.is_empty() && text.bytes().all(|b| b.is_ascii_digit()) && text.parse::<i64>().is_ok();
-    if bare_non_negative {
+    if is_bare_index_literal(index) {
         return None;
     }
     Some(Diagnostic::error_span(
@@ -9263,6 +9355,16 @@ fn argv_index_diag(index: &Expr, span: Span) -> Option<Diagnostic> {
          ones you do not want"
             .to_string(),
     ))
+}
+
+/// A bare non-negative decimal literal that fits `i64` — the only spelling of
+/// an `argv` start index. Shared by [`argv_index_diag`] (which rejects every
+/// other spelling of the fill start) and [`argv_command_is_splat`] (which uses
+/// it to tell `$(argv 1)` from `argv a`); they must agree, or a spelling one
+/// rejects becomes an array name to the other.
+fn is_bare_index_literal(index: &Expr) -> bool {
+    let text = expr_literal_str(index);
+    !text.is_empty() && text.bytes().all(|b| b.is_ascii_digit()) && text.parse::<i64>().is_ok()
 }
 
 fn match_arity_diag(name: &str, n: usize, span: Span) -> Option<Diagnostic> {

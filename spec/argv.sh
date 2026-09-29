@@ -6,7 +6,7 @@
 set -eu
 . common.sh
 setup argv
-plan=68
+plan=76
 echo "1..$plan" >&3
 
 set +e
@@ -354,6 +354,67 @@ run_sash 'argv 0 a; echo $(len a)' x y z
 # written, and spells the optional start bare, matching `$(arg N)`.
 run_sash 'echo $(argv)' x y z
 [[ $rc != 0 && $err == *SB5025* && $err != *"argv [N] a"* && $err == *"argv a"* ]]; chk av.f11
+
+
+# ── The BODY of a `$( )` is the whole body (2026-09-29) ──────────────
+# `validate::cmdsub_command_is` classified a substitution from
+# `stmts.first()` and from the command *name* alone. Two consequences,
+# pointing opposite ways.
+#
+# The splat is an expression: `transform::argv_splat_start` lowers the
+# slice, not the body, so `for x in $(argv; CMD)` compiled clean,
+# iterated the arguments, and silently discarded `CMD` — a side effect
+# written there simply did not happen, with no diagnostic. `keys`
+# escaped the identical defect only because SB5073 catches it first.
+#
+# And `argv` has two DD#60 shapes that the name alone cannot separate:
+# the splat `$(argv N)` and the out-param fill `argv N a`. The fill was
+# read as a misplaced splat and answered with SB5025, whose advice is
+# "snapshot into an array with `argv a` (or `argv N a`)" — telling the
+# author to write the form they had just written. It is a statement
+# everywhere else (top level, a function body, an `if` body); DG ruled
+# 2026-09-29 that a `$( )` body is no exception.
+
+# av.c1 a statement after the splat cannot be silently dropped
+run_sash 'for x in $(argv; /usr/bin/touch /tmp/sash-spec-avc1); do attest x [[ -n $x ]]; echo "$x"; done' p q
+[[ $rc != 0 && -z $out && $err == *SB5025* && $err == *"whole command substitution"* ]]; chk av.c1
+
+# av.c2 same for the sliced spelling
+run_sash 'for x in $(argv 1; /bin/echo extra); do attest x [[ -n $x ]]; echo "$x"; done' p q
+[[ $rc != 0 && -z $out && $err == *SB5025* ]]; chk av.c2
+
+# av.c3 a redirection wrapper must not smuggle it past the check —
+# `sole_cmdsub_command` looks through `Redirected`, so every `argv`
+# shape test shares one unwrap rather than each writing its own
+run_sash 'for x in $(argv 2>/dev/null; /bin/echo extra); do attest x [[ -n $x ]]; echo "$x"; done' p q
+[[ $rc != 0 && -z $out && $err == *SB5025* ]]; chk av.c3
+
+# av.c4 and in a capture, where the splat is not legal at all: the
+# rejection must not be the only thing standing between the author and
+# a silently-dropped `/bin/echo`
+run_sash 'str s=$(argv; /bin/echo hi); attest s [[ -n $s ]]; echo "$s"' p q
+[[ $rc != 0 && $out != "hi" && $err == *SB5025* ]]; chk av.c4
+
+# av.c5 the DD#60 out-param fill is a statement inside `$( )` too —
+# DD#86's addendum makes the body an anonymous function, so `b` is
+# local to it and the substitution yields what the body prints
+run_sash 'str s=$(argv 0 b; /bin/echo @{b:-none}); attest s [[ -n $s ]]; echo "$s"' p q
+[[ $rc = 0 && $out = *" p q" && -z $err ]]; chk av.c5
+
+# av.c6 with a start index, same as anywhere else (argv[0] dropped)
+run_sash 'str s=$(argv 1 b; /bin/echo @{b:-none}); attest s [[ -n $s ]]; echo "$s"' p q
+[[ $rc = 0 && $out = "p q" && -z $err ]]; chk av.c6
+
+# av.c7 the two shapes collide at ONE argument: `argv b` is the fill
+# (an array name), `$(argv 1)` is the splat (a bare index literal).
+# SB5063 rejects a digit target and SB5085 rejects a non-literal index,
+# so the argument itself discriminates and neither can be the other.
+run_sash 'str s=$(argv b); attest s [[ -z $s ]]; echo "[$s]"' p q
+[[ $rc = 0 && $out = "[]" && -z $err ]]; chk av.c7
+
+# av.c8 control: the splat spelling is untouched
+run_sash 'for x in $(argv 1); do attest x [[ -n $x ]]; echo "$x"; done' p q
+[[ $rc = 0 && $out = $'p\nq' && -z $err ]]; chk av.c8
 
 
 set -e

@@ -72,7 +72,51 @@ impl Statement {
     /// This returns slices of child statements — NOT the statement itself.
     /// Use this as a default recursion mechanism in analyses that only need
     /// custom handling for specific StmtKind variants.
+    ///
+    /// **A `$( … )` body is one of these.** DD#86 makes it an anonymous
+    /// function body, so its statements are statements and every statement
+    /// rule applies to them. They used to be reachable only from the
+    /// *expression* side ([`walk_expr_tree`] descended through
+    /// `CommandSubstitution`), which left 42 of the 45 statement walkers in
+    /// `validate.rs` blind to them: `$(unset zz)` and `$(break)` and
+    /// `$(for args in …)` were accepted in silence, `$(mapfile -m q)` slipped
+    /// past its DD#99 retirement, and `$(signal INT ignore)` reached a
+    /// transform that had been promised a validated signal number and
+    /// panicked on it.
+    ///
+    /// The two sides are exclusive on purpose. `walk_expr_tree` now stops at
+    /// the substitution node, so a body's expressions are reached exactly once
+    /// — through this recursion — and a diagnostic raised from an expression
+    /// callback is emitted once, not depth+1 times (journal 308).
     pub fn child_bodies(&self) -> Vec<&[Statement]> {
+        let mut bodies = self.structural_bodies();
+        bodies.extend(self.cmdsub_bodies());
+        bodies
+    }
+
+    /// The command-substitution bodies this statement owns directly.
+    ///
+    /// Split out of [`Self::child_bodies`] for the one analysis that must tell
+    /// the two apart: a value intrinsic is legal as the whole of a `$( … )`
+    /// and nowhere else, so `validate` needs to know which body a statement
+    /// came from. Everything else wants `child_bodies`.
+    ///
+    /// A `$( … $( … ) … )` yields only the outer body: the inner substitution
+    /// belongs to a statement *inside* that body, and is reached when the
+    /// recursion gets there.
+    pub fn cmdsub_bodies(&self) -> Vec<&[Statement]> {
+        let mut bodies = Vec::new();
+        walk_own_exprs(self, &mut |e| {
+            if let ExprKind::CommandSubstitution(stmts) = &e.kind {
+                bodies.push(stmts.as_slice());
+            }
+        });
+        bodies
+    }
+
+    /// The bodies named by this statement's own syntax — an `if` arm, a loop
+    /// body, a function body. The other half of [`Self::child_bodies`].
+    pub fn structural_bodies(&self) -> Vec<&[Statement]> {
         match &self.kind {
             StmtKind::If(i) => Self::if_child_bodies(i),
             StmtKind::While(w) => vec![&w.condition, &w.body],
@@ -98,9 +142,12 @@ impl Statement {
         }
     }
 
-    /// Mutable mirror of [`Self::child_bodies`]: the child statement bodies
-    /// of this statement, for passes that rewrite nested statements in place.
-    pub fn child_bodies_mut(&mut self) -> Vec<&mut [Statement]> {
+    /// Mutable mirror of [`Self::structural_bodies`] — deliberately not of
+    /// [`Self::child_bodies`], which also yields `$( … )` bodies. A rewriting
+    /// pass that wants those has to say so, because a substitution body is a
+    /// *value* and rewriting it in place is not the same operation as
+    /// rewriting a loop body.
+    pub fn structural_bodies_mut(&mut self) -> Vec<&mut [Statement]> {
         match &mut self.kind {
             StmtKind::If(i) => Self::if_child_bodies_mut(i),
             StmtKind::While(w) => vec![&mut w.condition, &mut w.body],
@@ -131,8 +178,8 @@ impl Statement {
     }
 
     /// The child statement bodies of an `if` (condition, then, each elif's
-    /// condition + body, and else), mutable. Factored out of
-    /// [`Self::child_bodies_mut`] to keep that dispatcher simple.
+    /// condition + body, and else). Factored out of
+    /// [`Self::structural_bodies`] to keep that dispatcher simple.
     fn if_child_bodies(i: &If) -> Vec<&[Statement]> {
         let mut bodies: Vec<&[Statement]> = vec![&i.condition, &i.then_body];
         for elif in &i.elif_clauses {
@@ -162,7 +209,7 @@ impl Statement {
     /// Does NOT descend into child statements — use `child_bodies()` for that.
     /// Visits: command names/args, assignment values/indices, declaration values,
     /// for-loop words, case value/patterns, redirect targets.
-    pub fn direct_exprs(&self, f: &mut impl FnMut(&Expr)) {
+    pub fn direct_exprs<'a>(&'a self, f: &mut impl FnMut(&'a Expr)) {
         match &self.kind {
             StmtKind::Assignment(a) => assignment_exprs(a, f),
             StmtKind::Declaration(d) => decl_exprs(d, f),
@@ -181,32 +228,32 @@ impl Statement {
 /// reached from [`Statement::direct_exprs`] is deliberately one level deep —
 /// combining the two visits each nested expression once per enclosing level
 /// (journal 308).
-fn visit_each(items: &[Expr], f: &mut impl FnMut(&Expr)) {
+fn visit_each<'a>(items: &'a [Expr], f: &mut impl FnMut(&'a Expr)) {
     for it in items {
         f(it);
     }
 }
 
-fn assignment_exprs(a: &Assignment, f: &mut impl FnMut(&Expr)) {
+fn assignment_exprs<'a>(a: &'a Assignment, f: &mut impl FnMut(&'a Expr)) {
     f(&a.value);
     if let Some(idx) = &a.index {
         f(idx);
     }
 }
 
-fn command_exprs(c: &Command, f: &mut impl FnMut(&Expr)) {
+fn command_exprs<'a>(c: &'a Command, f: &mut impl FnMut(&'a Expr)) {
     f(&c.name);
     visit_each(&c.args, f);
 }
 
-fn case_exprs(c: &Case, f: &mut impl FnMut(&Expr)) {
+fn case_exprs<'a>(c: &'a Case, f: &mut impl FnMut(&'a Expr)) {
     f(&c.value);
     for item in &c.items {
         visit_each(&item.patterns, f);
     }
 }
 
-fn redirect_target_exprs(redirects: &[Redirect], f: &mut impl FnMut(&Expr)) {
+fn redirect_target_exprs<'a>(redirects: &'a [Redirect], f: &mut impl FnMut(&'a Expr)) {
     for r in redirects {
         f(&r.target);
     }
@@ -221,7 +268,7 @@ fn redirect_target_exprs(redirects: &[Redirect], f: &mut impl FnMut(&Expr)) {
 /// than [`walk_all_exprs`]. Combining the two visits every nested expression
 /// once per enclosing level, so a diagnostic raised from the callback is emitted
 /// depth+1 times (journal 308).
-pub fn walk_own_exprs(stmt: &Statement, f: &mut impl FnMut(&Expr)) {
+pub fn walk_own_exprs<'a>(stmt: &'a Statement, f: &mut impl FnMut(&'a Expr)) {
     stmt.direct_exprs(&mut |expr| walk_expr_tree(expr, f));
     // `(( … ))` statement / `if`/`while` condition — its `${…}` expansions live
     // in an `ArithExpr` tree, not a direct `Expr`, so surface them here (mirrors
@@ -236,7 +283,7 @@ pub fn walk_own_exprs(stmt: &Statement, f: &mut impl FnMut(&Expr)) {
 /// Visits every `Expr` node in the statement and all nested statements.
 /// The callback receives each expression (including sub-expressions
 /// inside DoubleQuoted, Concat, CommandSubstitution, etc.).
-pub fn walk_all_exprs(stmt: &Statement, f: &mut impl FnMut(&Expr)) {
+pub fn walk_all_exprs<'a>(stmt: &'a Statement, f: &mut impl FnMut(&'a Expr)) {
     walk_own_exprs(stmt, f);
     for body in stmt.child_bodies() {
         for s in body {
@@ -307,13 +354,19 @@ pub fn literal_word_text(expr: &Expr) -> Option<String> {
 }
 
 /// Walk an expression tree, visiting the node and all sub-expressions.
-pub fn walk_expr_tree(expr: &Expr, f: &mut impl FnMut(&Expr)) {
+///
+/// **Stops at a `$( … )`**: the node is visited, its body is not. DD#86 makes
+/// the body an anonymous function body, so its statements belong to the
+/// statement recursion — [`Statement::child_bodies`] yields it, and that is
+/// where its expressions are reached. Descending here as well would visit
+/// every expression in a body once per enclosing level and emit each
+/// diagnostic depth+1 times (journal 308).
+pub fn walk_expr_tree<'a>(expr: &'a Expr, f: &mut impl FnMut(&'a Expr)) {
     f(expr);
     match &expr.kind {
         ExprKind::DoubleQuoted(parts) | ExprKind::Concat(parts) => walk_each(parts, f),
         ExprKind::Array(elems) => walk_each(elems, f),
         ExprKind::AssocArray(pairs) => walk_each_pair(pairs, f),
-        ExprKind::CommandSubstitution(stmts) => walk_each_stmt(stmts, f),
         ExprKind::ParameterExpansion(pe) => walk_opt(pe.operand.as_deref(), f),
         ExprKind::Test(t) => walk_test_exprs(t, f),
         ExprKind::Subscript { index, .. } => walk_expr_tree(index, f),
@@ -332,28 +385,21 @@ pub fn walk_expr_tree(expr: &Expr, f: &mut impl FnMut(&Expr)) {
 }
 
 /// Walk each expr in a slice via `walk_expr_tree`.
-fn walk_each(items: &[Expr], f: &mut impl FnMut(&Expr)) {
+fn walk_each<'a>(items: &'a [Expr], f: &mut impl FnMut(&'a Expr)) {
     for it in items {
         walk_expr_tree(it, f);
     }
 }
 
 /// Walk the value of each `(key, value)` pair (assoc-array literal).
-fn walk_each_pair(pairs: &[(String, Expr)], f: &mut impl FnMut(&Expr)) {
+fn walk_each_pair<'a>(pairs: &'a [(String, Expr)], f: &mut impl FnMut(&'a Expr)) {
     for (_, v) in pairs {
         walk_expr_tree(v, f);
     }
 }
 
-/// Walk every expr in each statement of a command substitution.
-fn walk_each_stmt(stmts: &[Statement], f: &mut impl FnMut(&Expr)) {
-    for s in stmts {
-        walk_all_exprs(s, f);
-    }
-}
-
 /// Walk an optional operand expr.
-fn walk_opt(operand: Option<&Expr>, f: &mut impl FnMut(&Expr)) {
+fn walk_opt<'a>(operand: Option<&'a Expr>, f: &mut impl FnMut(&'a Expr)) {
     if let Some(e) = operand {
         walk_expr_tree(e, f);
     }
@@ -457,7 +503,7 @@ pub(crate) fn is_plain_identifier(s: &str) -> bool {
 
 /// Walk the `${…}` expansions embedded in an `ArithExpr` tree, applying `f` to
 /// each imported `Expr` (via `walk_expr_tree`).
-pub(crate) fn walk_arith_expansions(arith: &ArithExpr, f: &mut impl FnMut(&Expr)) {
+pub(crate) fn walk_arith_expansions<'a>(arith: &'a ArithExpr, f: &mut impl FnMut(&'a Expr)) {
     walk_arith_expansion_roots(arith, &mut |e| walk_expr_tree(e, f));
 }
 
@@ -469,7 +515,7 @@ pub(crate) fn walk_arith_expansions(arith: &ArithExpr, f: &mut impl FnMut(&Expr)
 /// twice (`$(( ${a[$x]} ))` would name `$x` once from the callback's own
 /// recursion and again from `walk_expr_tree`'s). Two entry points into one
 /// traversal, rather than a second copy of the structure that can drift.
-pub(crate) fn walk_arith_expansion_roots(arith: &ArithExpr, f: &mut impl FnMut(&Expr)) {
+pub(crate) fn walk_arith_expansion_roots<'a>(arith: &'a ArithExpr, f: &mut impl FnMut(&'a Expr)) {
     match arith {
         ArithExpr::Expansion(inner) => f(inner),
         ArithExpr::BinOp { left, right, .. } => {
@@ -533,7 +579,7 @@ pub(crate) fn walk_arith_expansion_roots(arith: &ArithExpr, f: &mut impl FnMut(&
 /// operands themselves. The single shared shape of the `TestExpr` recursion:
 /// callers supply what an operand *means* (a read position, a name to resolve,
 /// a subtree to walk). It was hand-written four separate times before this.
-pub(crate) fn walk_test_operands(t: &TestExpr, f: &mut impl FnMut(&Expr)) {
+pub(crate) fn walk_test_operands<'a>(t: &'a TestExpr, f: &mut impl FnMut(&'a Expr)) {
     match t {
         TestExpr::Unary { operand, .. } => f(operand),
         TestExpr::Binary { left, right, .. } => {
@@ -549,7 +595,7 @@ pub(crate) fn walk_test_operands(t: &TestExpr, f: &mut impl FnMut(&Expr)) {
 }
 
 /// Walk expressions inside a TestExpr.
-fn walk_test_exprs(t: &TestExpr, f: &mut impl FnMut(&Expr)) {
+fn walk_test_exprs<'a>(t: &'a TestExpr, f: &mut impl FnMut(&'a Expr)) {
     walk_test_operands(t, &mut |e| walk_expr_tree(e, f));
 }
 
@@ -660,7 +706,7 @@ pub struct Declaration {
 }
 
 /// Every initializer a declaration owns. A bare declaration contributes none.
-fn decl_exprs(d: &Declaration, f: &mut impl FnMut(&Expr)) {
+fn decl_exprs<'a>(d: &'a Declaration, f: &mut impl FnMut(&'a Expr)) {
     for a in &d.assignments {
         if let Some(v) = &a.value {
             f(v);

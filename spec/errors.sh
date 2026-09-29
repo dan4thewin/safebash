@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup errors
-plan=287
+plan=311
 echo "1..$plan" >&3
 
 set +e
@@ -1595,6 +1595,192 @@ if [[ $x =~ ^(a|b)+$ ]] { echo yes }'
 # the real diagnostic unreachable
 run_sash 'echo $(echo hi'
 [[ $rc != 0 && -z $out && $err == *SB4057* ]]; chk csc.10
+
+
+# --- DD#86: a `$( … )` body is an anonymous function body ------------
+#
+# Two bugs, one shape. A statement builtin as the sole body resolved to
+# nothing, so the backend built an exec argv whose head was a bare builtin
+# name and the program printed `sash: bug: bare command passed to sash_exec`
+# into its own output with a successful exit. And the statement passes never
+# entered a body at all — 42 of the 45 walkers in validate.rs recursed
+# `child_bodies()`, which did not yield one — so what should have been a
+# diagnostic was a silent acceptance, or a compiler panic where `transform`
+# had been promised a validated argument.
+
+# csc.11 `:` as the sole body captures nothing and does not ICE
+run_sash 'str s=$(:)
+attest s [[ -z $s ]]
+echo "[$s]"'
+[[ $rc = 0 && $out = "[]" && -z $err ]]; chk csc.11
+
+# csc.12 `write` as the sole body — it has no value lowering, so it is the
+#        body path that makes it work at all
+run_sash 'str s=$(write hi)
+attest s [[ -n $s ]]
+echo "[$s]"'
+[[ $rc = 0 && $out = "[hi]" && -z $err ]]; chk csc.12
+
+# csc.13 `cd` as the sole body
+run_sash 'str s=$(cd /tmp)
+attest s [[ -z $s ]]
+echo "[$s]"'
+[[ $rc = 0 && $out = "[]" && -z $err ]]; chk csc.13
+
+# csc.14 `wait` as the sole body
+run_sash 'str s=$(wait)
+attest s [[ -z $s ]]
+echo "[$s]"'
+[[ $rc = 0 && $out = "[]" && -z $err ]]; chk csc.14
+
+# csc.15 `attest` as the sole body — and its declassification persists,
+#        because a body is a function body, not a subshell (DD#86)
+run_sash 'str v=abc
+str s=$(attest v [[ -n $v ]])
+attest s [[ -z $s ]]
+echo "[$s][$v]"'
+[[ $rc = 0 && $out = "[][abc]" && -z $err ]]; chk csc.15
+
+# csc.16 DD#60's out-param fill is a statement, and a statement is legal in a
+#        body — `argv N a` fills, `$(argv N)` splats, and one argument
+#        discriminates them
+run_sash 'str s=$(argv 1 b; /bin/echo @{b:-none})
+attest s [[ -n $s ]]
+echo "[$s]"' a b
+[[ $rc = 0 && $out = "[a b]" && -z $err ]]; chk csc.16
+
+# csc.17 `unset` of an element as the sole body
+run_sash 'array q=(1 2)
+str s=$(unset q[0])
+attest s [[ -z $s ]]
+echo "[$s]$(len q)"'
+[[ $rc = 0 && $out = "[]1" && -z $err ]]; chk csc.17
+
+# csc.18 a `[[ … ]]` body is a clean SB4018 reject, not the `sash: bug:` ICE.
+#        The operand is a variable on purpose: with a literal, SB5086 (constant
+#        test) fires first — which is itself the descent working.
+run_sash 'str v=x
+str s=$([[ -n $v ]])
+attest s [[ -z $s ]]
+echo "[$s]"'
+[[ $rc != 0 && -z $out && $err == *SB4018* ]]; chk csc.18
+
+# csc.19 SB4060: `transform` is promised a validated signal number. Before the
+#        body joined the statement recursion this panicked the compiler.
+run_sash 'str s=$(signal INT ignore)
+attest s [[ -z $s ]]
+echo "[$s]"'
+[[ $rc != 0 && -z $out && $err == *SB4060* ]]; chk csc.19
+
+# csc.20 the same, nested inside an `if` in the body — the descent is
+#        recursive, not just one level
+run_sash 'str s=$(if [[ -n a ]]; then signal INT ignore; fi)
+attest s [[ -z $s ]]
+echo "[$s]"'
+[[ $rc != 0 && -z $out && $err == *SB4060* ]]; chk csc.20
+
+# csc.21 SB5060: DD#99 retired `mapfile`. In a body it was a runtime ICE.
+run_sash 'str s=$(mapfile -m q)
+attest s [[ -z $s ]]
+echo "[$s]"'
+[[ $rc != 0 && -z $out && $err == *SB5060* ]]; chk csc.21
+
+# csc.22 SB4066: `cd` arity, silently accepted in a body
+run_sash 'str s=$(cd /tmp /var)
+attest s [[ -z $s ]]
+echo "[$s]"'
+[[ $rc != 0 && -z $out && $err == *SB4066* ]]; chk csc.22
+
+# csc.23 SB4052: `close` wants a file descriptor
+run_sash 'str s=$(close abc)
+attest s [[ -z $s ]]
+echo "[$s]"'
+[[ $rc != 0 && -z $out && $err == *SB4052* ]]; chk csc.23
+
+# csc.24 SB5081: `break` with no enclosing loop. A body is a function body, so
+#        an enclosing loop OUTSIDE the substitution does not supply one either.
+run_sash 'str s=$(break)
+attest s [[ -z $s ]]
+echo "[$s]"'
+[[ $rc != 0 && -z $out && $err == *SB5081* ]]; chk csc.24
+
+# csc.25 SB5057: a quoted `read` target names nothing
+run_sash 'str s=$(read -a "q")
+attest s [[ -z $s ]]
+echo "[$s]"'
+[[ $rc != 0 && -z $out && $err == *SB5057* ]]; chk csc.25
+
+# csc.26 SB5080: `args` is reserved as a loop variable in a body too
+run_sash 'str s=$(for args in a b; do /bin/echo $args; done)
+attest s [[ -z $s ]]
+echo "[$s]"'
+[[ $rc != 0 && -z $out && $err == *SB5080* ]]; chk csc.26
+
+# csc.27 SB5011: DD#23 command resolution reaches a body
+run_sash 'str s=$(nosuchcmd)
+attest s [[ -z $s ]]
+echo "[$s]"'
+[[ $rc != 0 && -z $out && $err == *SB5011* ]]; chk csc.27
+
+# csc.28 a body reached through a `[[ … ]]` operand. The walker this replaced
+#        had arms for Concat/DoubleQuoted/Array/Subscript and nothing else, so
+#        a substitution inside a test operand was never visited at all.
+run_sash 'if [[ -n $(cd /tmp /var) ]]; then echo y; fi'
+[[ $rc != 0 && -z $out && $err == *SB4066* ]]; chk csc.28
+
+# csc.29 control: a value intrinsic IS the right thing when it is the whole
+#        substitution — the descent must not reject what it now walks into
+run_sash '/bin/true
+int n=$(status)
+echo "[$n]"'
+[[ $rc = 0 && $out = "[0]" && -z $err ]]; chk csc.29
+
+# csc.30 control: one statement among several is still SB5073, and the wording
+#        is the body one — the statement-position sentence ("only valid inside
+#        a command substitution") would be absurd here
+run_sash 'str s=$(getenv HOME; /bin/true)
+attest s [[ -z $s ]]
+echo "[$s]"'
+[[ $rc != 0 && -z $out && $err == *"not one statement among several"* ]]; chk csc.30
+
+
+# csc.31 `validate_expr` reaches a body. Pre-(c) it did, by accident: the
+#        expression walker descended THROUGH the substitution node into the
+#        body's statements. Moving bodies to the statement side took that away
+#        and nothing in the suite noticed — `$RANDOM` inside a body compiled
+#        clean for one build.
+run_sash 'str s=$(/bin/echo $RANDOM)
+attest s [[ -n $s ]]
+echo "[$s]"'
+[[ $rc != 0 && -z $out && $err == *SB5017* ]]; chk csc.31
+
+# csc.32 the same for an environment variable (SB5018 → use `$(getenv NAME)`)
+run_sash 'str s=$(/bin/echo $HOME)
+attest s [[ -n $s ]]
+echo "[$s]"'
+[[ $rc != 0 && -z $out && $err == *SB5018* ]]; chk csc.32
+
+# csc.33 and for `**` (SB5006), which is a Literal arm — a different shape
+#        again, so the descent is not special-casing expansions
+run_sash 'str s=$(/bin/echo "a**b")
+attest s [[ -n $s ]]
+echo "[$s]"'
+[[ $rc != 0 && -z $out && $err == *SB5006* ]]; chk csc.33
+
+# csc.34 the duplication guard. Bodies belong to exactly one side of the
+#        recursion now; if a wrapper statement took them BOTH from
+#        `validate_nested` and from the unconditional descent, this prints
+#        SB5017 twice. Journal 308 is the precedent — that failure mode
+#        multiplies with nesting depth, so an `if` inside a `while` is the
+#        cheapest shape that catches it.
+run_sash 'while [[ -n $(getenv HOME) ]]; do
+    if [[ -n a ]]; then
+        str s=$(/bin/echo $RANDOM)
+        echo "[$s]"
+    fi
+    break
+done'
+[[ $rc != 0 && -z $out && $(grep -c SB5017 <<< "$err") = 1 ]]; chk csc.34
 
 
 set -e

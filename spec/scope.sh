@@ -651,9 +651,14 @@ run_sash 'str s=$(int y=5; echo hi)
 echo "$s $y"'
 [[ $rc != 0 && -z $out && $err == *SB5031* ]]; chk 86.69
 
-# 86.70 a write nested inside a block in the body persists as well
+# 86.70 a write nested inside a block in the body persists as well.
+# The condition compares a variable, not `1 == 1`: SB5086 rejects a comparison
+# the source text already decides, and once `$( … )` bodies joined the
+# statement recursion that rule reaches inside one. The tautology here only
+# ever compiled because nothing walked in.
 run_sash 'str x=one
-str s=$(if [[ 1 == 1 ]] { x=two }; echo hi)
+str g=1
+str s=$(if [[ $g == 1 ]] { x=two }; echo hi)
 echo "$s $x"'
 [[ $rc = 0 && $out = "hi two" && -z $err ]]; chk 86.70
 
