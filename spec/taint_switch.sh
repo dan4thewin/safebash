@@ -5,7 +5,7 @@
 set -eu
 . common.sh
 setup taint_switch
-plan=23
+plan=25
 echo "1..$plan" >&3
 
 set +e
@@ -28,6 +28,39 @@ run_sash 'x=$(arg 1); echo $x' hello
 # sw.3 a tainted join compiles & runs under full bypass
 run_sash 'argv 1 a; echo $(join a)' one two
 [[ $rc = 0 && $out = "one two" && -z $err ]]; chk sw.3
+
+# sw.12 the failing path of a *caught* attest-all, joined back with a later
+# read of the subject, must still see a valid array
+# (`bug-caught-attest-all-fail-path-undefined-handle`, SIGSEGV in
+# `sash_table_len`). DD#121 rejects this source outright, so `--no-taint` is
+# the only way it is still reachable — which is exactly why it is pinned here.
+#
+# The read must be a splat (`for v in @a`), not `len`/`join`: only the splat's
+# `arrlen` lowering goes through `codegen::types::find_array_slot`, the
+# name-keyed lookup that used to be able to select a version defined solely in
+# the passing block.
+#
+# REPEATED ON PURPOSE. The defect was decided by `HashMap` iteration order at
+# *compile* time, so one source produced two different binaries and a single
+# compile missed it ~40% of the time. Six compiles take it under 1%. Re-running
+# one binary proves nothing — each iteration must compile afresh.
+_ok=1
+for _ in 1 2 3 4 5 6; do
+    run_sash 'argv 1 a
+if attest v in a [[ $v == IMPOSSIBLE ]]; then echo p; else echo f; fi
+for v in @a; do echo "$v"; done' one
+    [[ $rc = 0 && $out = "f
+one" && -z $err ]] || _ok=0
+done
+[[ $_ok = 1 ]]; chk sw.12
+# sw.13 the passing path of the same form still retags and reads correctly —
+# guards the fix (an alias, not a fresh copy) against breaking the clean case
+run_sash 'argv 1 a
+if attest v in a [[ -n $v ]]; then echo p; else echo f; fi
+for v in @a; do echo "$v"; done' one two
+[[ $rc = 0 && $out = "p
+one
+two" && -z $err ]]; chk sw.13
 unset SASH_CFLAGS
 
 # ── --no-taint-cst: CST off, SSA backstop remains (native only) ──

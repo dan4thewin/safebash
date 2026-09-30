@@ -1,4 +1,51 @@
-## ══ STATUS (2026-09-30, latest) — DD#121: attest must be adjacent ══
+## ══ STATUS (2026-09-30, latest) — P1 SIGSEGV fixed; the crash was non-reproducible codegen ══
+
+Sweep **7034** (3626 native, 3408 c, 13 skipped) — predicted exactly, zero
+failures. `mk test`, fmt, clippy green. Journal 449.
+
+**`bug-caught-attest-all-fail-path-undefined-handle` is closed**, and the
+filing's own diagnosis was wrong in a way worth remembering. It recorded the
+crash as depending on "process memory layout" and prescribed reproducing under
+`env P=x`. The ritual worked, which is why nobody questioned it.
+
+It was **compile-time** nondeterminism. One unchanged source compiled to two
+different binaries — `7c6a03c9` faulted, `131fb478` did not. `env` never
+perturbed anything; it rode along with whichever binary that compile produced.
+The tell was that `then/fi` crashed and `{ }` did not, for a program where the
+two spellings parse identically.
+
+**Root cause.** `codegen::types::find_array_slot` resolved a collection by name
+via `vars.keys().find(…)` — an arbitrary `HashMap` key. The only producer of a
+second `a_*` key is `emit_attest_retag`, which materialised DD#61's
+clean-retag as fresh Cranelift vars defined in the **pass block only**. On the
+failing path that key existed with no definition, and a coin-flip decided
+whether `sash_table_len` got it. `--emit-c` never faulted — c has always
+treated `AttestRetag` as a no-op — which localised it to native in one step.
+
+The filing's "undefined phi edge" guess was wrong in mechanism: there is no
+phi, and `lower_if_attest`'s pre-state restore at the merge is correct.
+
+**Fixed both halves.** `emit_attest_retag` now *aliases* the target version to
+the same `VarSlot` (a compile-time relabelling must not create a runtime
+value); `find_array_slot`'s fallback is deterministic — the lowest version,
+generalising the `_0`-first rule already above it. Reproducible output restored.
+
+**The pin took three tries.** `join`/`len` never reproduce it (they do not use
+`find_array_slot`); only a splat read does. And one compile caught it ~60% of
+the time, so `sw.12` compiles **six times** on purpose. Verified it fails 3/3
+against the original code — a gate that cannot fail is not a gate.
+
+**Open for DG: SB5067.** Still in place, and measurement sharpened the picture.
+Dropping it wholesale is unsound, but today's rule over-rejects: it fires on
+the taint *unconditionally*, so it also rejects
+`fn f { g=$(getenv X); attest g [[ … ]] }`, which DD#121 makes provably safe.
+The only genuine hole left is a bulk-filled global **collection** read without
+an attest — scalars are already caught by SB5020 / the SSA backstop.
+Recommended replacement: a body-exit rule ("a function may not *leave* a global
+tainted"), a strict relaxation that keeps all 7 existing specs and needs no
+fixpoint. Not actioned — DG's call.
+
+## ══ STATUS (2026-09-30) — DD#121: attest must be adjacent ══
 
 Sweep **7030** (3624 native, 3406 c, 13 skipped) — predicted exactly, zero
 failures. `mk test` green. Journal 448.

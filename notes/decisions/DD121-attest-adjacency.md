@@ -123,7 +123,7 @@ honour: *"Taint is definition-based, not name-based."*
 | `bug-attest-in-branch-leaks-past-merge` | **fixed** — verified rejected; pinned by `bfb.15`/`bfb.16` |
 | `bug-slot-inward-taint-reads-final-set` | **fixed** — the trailing attest is now SB5088; verified rejected |
 | SB5067 | becomes unnecessary; **left in place**, re-decided separately with DG |
-| `bug-caught-attest-all-fail-path-undefined-handle` | **not fixed** — a codegen defect, reachable via `--no-taint` regardless |
+| `bug-caught-attest-all-fail-path-undefined-handle` | **fixed separately** (journal 449) — a native-codegen defect, not a taint one; DD#121 made it unreachable from safe source, `--no-taint` kept it reachable |
 
 ## Measured cost
 

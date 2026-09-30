@@ -205,9 +205,32 @@ pub(super) fn find_array_slot<'a>(
     if let Some(sv) = vars.get(&primary) {
         return sv;
     }
+    // Deterministic fallback: the LOWEST version present.
+    //
+    // This used to be `vars.keys().find(…)`, which takes an arbitrary
+    // `HashMap` key. That made codegen non-reproducible — one source compiled
+    // to two different binaries — and on the failing path of a caught
+    // `if attest … in a` it could select a version defined only in the passing
+    // block, handing `sash_table_len` an undefined pointer
+    // (`bug-caught-attest-all-fail-path-undefined-handle`).
+    //
+    // Lowest generalises the `_0`-first rule above: the base version is the
+    // one defined on every path by construction, so a version introduced on
+    // only *some* path can never shadow it.
+    //
+    // The suffix must parse as a version number, so a variable literally named
+    // `a_b` cannot masquerade as a version of `a`.
     let prefix = format!("{}_", name);
-    vars.keys()
-        .find(|k| k.starts_with(&prefix))
+    let lowest = vars
+        .keys()
+        .filter_map(|k| {
+            let n: u32 = k.strip_prefix(&prefix)?.parse().ok()?;
+            Some((n, k))
+        })
+        .min_by_key(|(n, _)| *n)
+        .map(|(_, k)| k.clone());
+    lowest
+        .as_ref()
         .and_then(|k| vars.get(k))
         .unwrap_or_else(|| panic!("ICE: undefined {}: {}", context, name))
 }

@@ -209,7 +209,7 @@ impl SsaInst {
                 );
             }
             SsaInst::AttestRetag { source, target } => {
-                return self.emit_attest_retag(source, target, builder, module, ctx);
+                return self.emit_attest_retag(source, target, ctx);
             }
         }
         false // block not terminated
@@ -533,16 +533,29 @@ impl SsaInst {
     }
 
     /// DD#61: retag an array/map clean after a successful `AttestAll`.
-    /// Copies the source slot (the collection's backing table pointer)
-    /// to a new clean SSA version. No runtime validation.
-    fn emit_attest_retag(
-        &self,
-        source: &VarRef,
-        target: &VarRef,
-        builder: &mut FunctionBuilder,
-        _module: &mut ObjectModule,
-        ctx: &mut InstCtx,
-    ) -> bool {
+    ///
+    /// The retag is a **compile-time** relabelling: it marks the collection
+    /// clean for the taint pass and changes nothing at runtime. So the target
+    /// version must *alias* the source slot — the same Cranelift variables,
+    /// not copies of them.
+    ///
+    /// It used to `declare_var`/`def_var` a fresh pair. Those definitions were
+    /// emitted **only in the pass block**, because that is the one place this
+    /// instruction appears (`transform/control_flow.rs`, `AttestKind::Coll`).
+    /// `find_array_slot` resolves a collection by *name*, scanning
+    /// `vars.keys()` for any `a_*`, so on the failing path of a caught
+    /// `if attest … in a` it could pick the pass-block-only `a_2` and hand
+    /// `sash_table_len` an undefined pointer — a SIGSEGV from safe source.
+    ///
+    /// Because that scan walks a `HashMap`, which key it found varied *per
+    /// compile*: one source produced two different binaries, one of which
+    /// faulted. Aliasing makes every version of the name the same entity, so
+    /// the choice cannot matter and the output is reproducible again.
+    ///
+    /// The c backend has always treated this as a no-op ("versions collapse to
+    /// one slot", `emit_c.rs`), which is why the differential oracle showed the
+    /// fault only in the native backend.
+    fn emit_attest_retag(&self, source: &VarRef, target: &VarRef, ctx: &mut InstCtx) -> bool {
         let vars = &mut *ctx.vars;
         let src_key = format!("{}_{}", source.name, source.version);
         // Tables live in `_0`; fall back to that if the exact version slot
@@ -552,24 +565,7 @@ impl SsaInst {
             .or_else(|| vars.get(format!("{}_0", source.name).as_str()))
             .cloned();
         if let Some(slot) = slot {
-            let tgt_key = format!("{}_{}", target.name, target.version);
-            match slot {
-                VarSlot::Str { ptr, len } => {
-                    let p = builder.use_var(ptr);
-                    let l = builder.use_var(len);
-                    let tp = builder.declare_var(I64);
-                    let tl = builder.declare_var(I64);
-                    builder.def_var(tp, p);
-                    builder.def_var(tl, l);
-                    vars.insert(tgt_key, VarSlot::Str { ptr: tp, len: tl });
-                }
-                VarSlot::Int(v) => {
-                    let val = builder.use_var(v);
-                    let tv = builder.declare_var(I64);
-                    builder.def_var(tv, val);
-                    vars.insert(tgt_key, VarSlot::Int(tv));
-                }
-            }
+            vars.insert(format!("{}_{}", target.name, target.version), slot);
         }
         false
     }

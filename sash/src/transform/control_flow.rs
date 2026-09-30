@@ -191,6 +191,44 @@ fn push_if_attest_condition(
     }
 }
 
+/// Emit the clean-retag instruction into the pass block of an `if attest`.
+///
+/// Both arms define a *new version* of the subject, valid only on the passing
+/// path. Codegen must therefore treat that version as an alias of the source
+/// rather than a separately-defined value — see
+/// `codegen/dispatch.rs::emit_attest_retag`.
+fn push_attest_retag(
+    kind: &AttestKind,
+    test: &crate::ir::TestExpr,
+    ssa: &mut SsaProgram,
+    state: &mut VersionState,
+    then_block: BlockId,
+) {
+    match kind {
+        AttestKind::Scalar(var) => {
+            let source_ref = state.lookup(var);
+            // Resolve the predicate before defining the target version so
+            // `$var` binds to the source (emit_attest evaluates the test
+            // before the target slot exists). See dispatch.rs::emit_attest.
+            let ssa_test = test_to_ssa(test, state);
+            let target_ref = state.define(var);
+            ssa.block_mut(then_block).insts.push(SsaInst::Attest {
+                target: target_ref,
+                source: source_ref,
+                test: ssa_test,
+            });
+        }
+        AttestKind::Coll { array, .. } => {
+            let source_ref = state.lookup(array);
+            let target_ref = state.define(array);
+            ssa.block_mut(then_block).insts.push(SsaInst::AttestRetag {
+                target: target_ref,
+                source: source_ref,
+            });
+        }
+    }
+}
+
 fn lower_if_attest(
     i: &If,
     c: &crate::ir::Command,
@@ -235,32 +273,9 @@ fn lower_if_attest(
     };
 
     // Then branch: retag the attested entity clean (only reached on pass).
-    match &kind {
-        AttestKind::Scalar(var) => {
-            let source_ref = state.lookup(var);
-            // Resolve the predicate before defining the target version so
-            // `$var` binds to the source (emit_attest evaluates the test
-            // before the target slot exists). See dispatch.rs::emit_attest.
-            let ssa_test = test_to_ssa(&test, state);
-            let target_ref = state.define(var);
-            ssa.block_mut(then_block).insts.push(SsaInst::Attest {
-                target: target_ref,
-                source: source_ref,
-                test: ssa_test,
-            });
-        }
-        AttestKind::Coll { array, .. } => {
-            let source_ref = state.lookup(array);
-            let target_ref = state.define(array);
-            ssa.block_mut(then_block).insts.push(SsaInst::AttestRetag {
-                target: target_ref,
-                source: source_ref,
-            });
-        }
-    }
+    push_attest_retag(&kind, &test, ssa, state, then_block);
     let then_exit = lower_stmts(&i.then_body, ssa, state, then_block);
     ssa.block_mut(then_exit).terminator = Terminator::Goto(merge_block);
-    let _then_snap = state.snapshot();
 
     if let Some(else_body) = &i.else_body {
         let else_block = ssa.new_block("if_attest.else");
@@ -274,8 +289,18 @@ fn lower_if_attest(
         state.restore(&pre_state);
     }
 
-    // Merge: use then_state versions for variables modified in then
-    // (simplified: just restore to pre-state, let Cranelift SSA handle merge)
+    // Merge: restore to the pre-state, so code after the `if` reads the
+    // *pre-attest* version. That is deliberate, not a simplification — the
+    // retag is a compile-time clean-tag that holds only on the passing path,
+    // and DD#121 requires the subject to be resolved on every falling-through
+    // path anyway (SB5089), so there is no clean version to merge to.
+    //
+    // It also means no phi is needed: the attested version is confined to the
+    // then-body, and codegen aliases it to the same slot
+    // (`codegen/dispatch.rs::emit_attest_retag`). An earlier `state.snapshot()`
+    // here was dead — it fed nothing — and the one-sided *codegen* definition
+    // it hinted at was the SIGSEGV in
+    // `bug-caught-attest-all-fail-path-undefined-handle`.
 
     merge_block
 }
