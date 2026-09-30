@@ -209,6 +209,21 @@ impl Statement {
     /// Does NOT descend into child statements — use `child_bodies()` for that.
     /// Visits: command names/args, assignment values/indices, declaration values,
     /// for-loop words, case value/patterns, redirect targets.
+    ///
+    /// **Total over `StmtKind` on purpose — do not add a wildcard.** The point
+    /// of this getter is that adding a statement kind which owns an `Expr` is a
+    /// compile error here rather than a check that silently stops running. A
+    /// wildcard put ten variants beyond anyone's notice; the nine that own only
+    /// `Statement`s are spelled out below so that fact is asserted, not assumed.
+    ///
+    /// `ArithTest` is the one variant that owns `Expr`s and still yields
+    /// nothing. Its children hang off an `ArithExpr`, reachable only through
+    /// `ArithExpr::Expansion`, and the passes that want them also want
+    /// `ArithExpr` nodes that are not `Expr`s at all (`DollarVar`), so they walk
+    /// the arith tree themselves via `walk_arith_expansion_roots`. Surfacing the
+    /// `Expansion` payloads here would double-report for those callers. That is
+    /// a deliberate seam, not an oversight — see
+    /// `notes/tasks/getters-still-ending-in-a-wildcard.md`.
     pub fn direct_exprs<'a>(&'a self, f: &mut impl FnMut(&'a Expr)) {
         match &self.kind {
             StmtKind::Assignment(a) => assignment_exprs(a, f),
@@ -217,7 +232,18 @@ impl Statement {
             StmtKind::For(fo) => visit_each(&fo.words, f),
             StmtKind::Case(c) => case_exprs(c, f),
             StmtKind::Redirected(r) => redirect_target_exprs(&r.redirects, f),
-            _ => {}
+            // Own only `Statement`s — their exprs belong to `child_bodies()`.
+            StmtKind::Pipeline(_)
+            | StmtKind::If(_)
+            | StmtKind::While(_)
+            | StmtKind::Function(_)
+            | StmtKind::List(_)
+            | StmtKind::Group(_)
+            | StmtKind::Suppressed(_)
+            | StmtKind::Negated(_)
+            | StmtKind::ReturnProducer(_) => {}
+            // Owns `Expr`s under an `ArithExpr`; see the note above.
+            StmtKind::ArithTest(_) => {}
         }
     }
 }

@@ -1,6 +1,6 @@
 ---
 title: "The two structural getters that still end in a wildcard"
-status: next
+status: done
 priority: P2
 kind: hardening
 depends: []
@@ -20,11 +20,39 @@ gates:
 > with specs `bkstp.5`-`bkstp.8`. The other three were real gaps but
 > unreachable — probed, no panic, correct output.
 >
-> **`Statement::direct_exprs()` is still open**, and is now blocked on more
-> than totality: it needs an explicit lifetime
-> (`fn direct_exprs<'a>(&'a self, f: &mut impl FnMut(&'a Expr))`) before a
-> borrowed `$( )` body can escape its callback. See
-> `bug-sb5031-blind-to-cmdsub-body-decls`, which needs exactly that.
+> **`Statement::direct_exprs()` is now total too, 2026-10-01 (journal 456)** —
+> the nine `Statement`-only variants spelled out, `ArithTest` given its own arm
+> and a documented reason, and the marker added. Verified the gate fires on it
+> by putting a wildcard back.
+>
+> **Two claims in the body below are stale and were corrected by measurement:**
+>
+> - The explicit lifetime it names as a blocker **is already present**; it was
+>   added when `child_values()` was done. Not a blocker.
+> - "exactly one consumer" is wrong — there are **thirteen**: `ir::walk_own_exprs`,
+>   `type_check::check_int_value_defaults`, and eleven in `validate.rs`.
+>
+> **`ArithTest` still yields nothing, deliberately.** Of the ten unlisted
+> variants, nine own only `Statement`s; `ArithTest(Box<ArithExpr>)` is the only
+> one that can own an `Expr` (via `ArithExpr::Expansion`), and that is reachable
+> — confirmed through `--emit-ir`. It is not a live gap today because **eight of
+> the thirteen callers carry a hand-written `if let StmtKind::ArithTest`
+> compensation right beside the call** (the shape journal 436 removed for
+> `child_values`), and the other four are covered by separate arith passes.
+>
+> **The remaining fork, for DG.** Making `ArithTest` yield its `Expansion`
+> payloads would let those eight compensations be audited and trimmed — but two
+> of them (`check_positionals_arith`, `dollar_at_arith`) also inspect
+> `ArithExpr::DollarVar`, which is **not an `Expr`**, so they cannot simply be
+> deleted; and both already handle `Expansion` themselves, so yielding it here
+> would make them **double-report**. That is a refactor across eight validators,
+> the same character as the taint-routing piece below, and not a getter change.
+>
+> **Working this task found a P1.** Reading those eight compensations surfaced a
+> *private duplicate* of `walk_arith_expansions` in `type_check.rs` whose
+> `_ => {}` dropped `Subscript`/`SubscriptAssign` — an ICE natively and a silent
+> `sash_atoi("abc")` under `--emit-c`. See
+> `bug-arith-default-blind-under-subscript`.
 
 
 # Two getters still hand out an incomplete answer
@@ -99,6 +127,6 @@ So there are two pieces here, and the second is the consequential one:
 ## Guard already in place
 
 `contrib/totality-check.py`, run by `.githooks/pre-commit`: any function whose
-doc comment says `do not add a wildcard` must have no wildcard arm. Seven
-functions opt in today. Neither getter above does — adding the marker is the
-last step of fixing each, not the first.
+doc comment says `do not add a wildcard` must have no wildcard arm. **Both
+getters above now opt in** — adding the marker is the last step of fixing each,
+not the first.
