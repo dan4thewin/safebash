@@ -77,3 +77,58 @@ is a smaller step than extending the old syntactic one was.
 Status quo is preserved for now and deliberately: the addendum's rewrite moved
 site collection to `walk_scoped_structural_stmts`, which does not descend into
 `$( )` bodies, so this question is exactly where it was. Still DG's call.
+
+## Measured 2026-10-01, after the net-effect rule landed
+
+The filed example used a *clean* write (`t=modified`), which understates the
+question. Re-probed with a real taint, and with `q` read so SB5050 does not
+mask the result:
+
+| # | shape | today |
+|---|---|---|
+| A | body writes a CLEAN value to an outer global | compiles, prints `modified` — no taint involved |
+| B | body taints an outer global, global read outside | **SSA backstop only** — spanless, no SB code, off under `--no-taint` |
+| C | same, read outside with `:!` | compiles, leaks the value |
+| D | body taints + **adjacent in-body attest** | **compiles and works** |
+| E | global read BEFORE, tainted in body, never read after | **compiles silently, nothing says so** |
+| F | the function equivalent of E | located **`[SB5067]`** |
+
+E and F are the whole question in two lines. Identical semantics — sash's
+`$( )` body is inlined, not a subshell, so the write escapes either way — and
+one is diagnosed while the other is silent.
+
+### What this does to the cost of (a)
+
+D is the finding. The stated cost of (a) was that it "would newly reject
+programs that taint inside a body and attest after it"; under the net-effect
+rule the in-body adjacent attest is already accepted, so that cost is gone.
+
+B is already rejected today, just badly. So the only shape (a) would *newly*
+reject is **E** — and E is exactly what SB5067 already rejects for a function.
+(a) is therefore close to a no-op on accepted programs: it converts B from a
+spanless backstop reject into a located diagnosis, and closes E.
+
+### C is not an exception — corrected 2026-10-01
+
+An earlier draft of this section listed C (`:!` on a global a `$( )` body
+tainted) as something the anonymous-function model leaves open. That was
+wrong, and DG caught it.
+
+SB5067 under the net-effect rule fires at **body exit** and never examines the
+read site. Measured on the function form: a body that taints a global with no
+attest is SB5067 *even when the global's only read is `:!`*. The bypass is at a
+later statement; the rule has already failed by then.
+
+So under (a) case C becomes SB5067 for the same reason, before the `:!` read is
+reached. The model settles the whole question.
+
+This also retires the exception DG raised during the DD#121 discussion — "the
+sole exception being a missing attest and a global only accessed by `:!` (an
+exception we could disallow...)". The relaxation closed it as a side effect; no
+separate decision is needed.
+
+`:!` remains live exactly where SB5067 has no jurisdiction, neither of which is
+a body exporting taint:
+
+- a **top-level** taint read with `:!` (DD#91's sanctioned bypass)
+- a function's **own local** read with `:!`
