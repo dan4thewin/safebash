@@ -1,6 +1,6 @@
 ---
 title: "SSA taint backstop: make it a complete gate (capture path + arrays + positions)"
-status: next
+status: done
 priority: P2
 kind: hardening
 depends: []
