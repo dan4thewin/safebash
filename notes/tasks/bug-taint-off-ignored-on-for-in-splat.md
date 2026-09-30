@@ -131,5 +131,8 @@ building one), so `vouched: false` there is unreachable by construction.
 
 Specs `91.34`-`91.38` in `spec/taint.sh`. Sweep 7093, zero failing. Journal 452.
 
-Found as a control while fixing this, unrelated and pre-existing:
-`bug-quoted-array-splat-not-a-read`.
+A control probe here led me to file `bug-quoted-array-splat-not-a-read`, which
+was **wrong and has been retracted** — `"@g"` is literal text, not a splat, so
+the SB5050 it reports is correct. See `q-quoted-at-splat-is-silently-literal`
+for the real (and much narrower) question that remains. The fix recorded above
+is unaffected: it was verified by running the binaries.

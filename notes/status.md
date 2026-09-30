@@ -30,18 +30,30 @@ passes — `@{g:!-none}` is accepted while `@{g:-none}` is SB5020.
 (**active**) still read as live work against it. The other 28 were deferred at
 the time; these were missed. Status only.
 
-**Filed, not fixed — `bug-quoted-array-splat-not-a-read` (P2).** Found as a
-control: `for v in "@g"` on a **clean** array is SB5050 dead-variable,
-identical on the pre-fix binary. Add any other read of `g` and it compiles and
-runs, so the splat works — the dead-variable pass just does not count a
-quoted splat as a read, while `detect_array_iter` deliberately recurses
-through `DoubleQuoted`. Two passes disagree about the same word. Whether
-`"@g"` should be a spelling at all is yours; the task lists three options.
+**RETRACTED — I filed a bug that was not one.** I reported
+`bug-quoted-array-splat-not-a-read`, claiming `for v in "@g"` on a clean array
+was a wrong SB5050. DG caught it immediately: "`@g` is already a error saying
+to use join?" I had checked only that it **compiled** and then wrote that it
+"runs correctly, printing `[a]` `[b]`" — I never ran it. It prints `[@g]`:
+one iteration over a literal string, exactly as bash does. `"@g"` parses as
+`DoubleQuoted([Literal "@g"])` and is not a splat at all, so SB5050 is
+**correct** and there is no bug. A compile check asserted as a behavioural one
+— the postmortem failure mode, three paragraphs after I had congratulated
+myself for measuring carefully.
 
-**Open bugs after this: two.** `bug-brace-breaks-unquoted-word` (P2, marked
+**What is actually there, refiled as `q-quoted-at-splat-is-silently-literal`
+(P3, question).** Every quoted-splat spelling is diagnosed — `"${g[@]}"`
+is SB4038 naming `join`, `"$(keys m)"` and `"$(argv)"` are SB5025/SB5026 —
+**except** `"@g"` and `"@{g:-x}"`, which are silently literal text. SB5026
+exists for exactly this mistake and its own advice names `@arr` as the remedy,
+yet `"@arr"` is the one spelling it cannot see. Closing that gap means
+diverging from bash deliberately, so the task lists three options and leaves
+it to you. Nothing is broken today.
+
+**Open bugs after this: one.** `bug-brace-breaks-unquoted-word` (P2, marked
 "DG decides" — three real options, and option 1 may collide with brace
-expansion) and the new quoted-splat one. `bug-match-3arg-in-cmdsub-rejected`
-(P4) is diagnostic wording only.
+expansion). `bug-match-3arg-in-cmdsub-rejected` (P4) is diagnostic wording
+only, and the quoted-splat filing was retracted above.
 
 ## ══ STATUS (2026-09-30, latest) — SB5067 extended to `$( … )` bodies ══
 

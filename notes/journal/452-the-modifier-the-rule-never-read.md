@@ -82,22 +82,53 @@ bare `@{g:-x}` is still SB5020. Nested vouched loops work. A tainted map
 cannot reach the `keys` path at all — SB5021 rejects building one — so
 `vouched: false` there is correct and unreachable by construction.
 
-## A separate bug, found as a control
+## A separate bug, found as a control — RETRACTED
+
+I filed `bug-quoted-array-splat-not-a-read`, claiming SB5050's read-tracking
+failed to count a quoted splat as a read:
 
 ```sh
 array g=(a b)
 for v in "@g" { /bin/echo "[$v]" }   # SB5050 dead variable
 ```
 
-Clean array, no taint, and **identical on the pre-fix binary** — not a
-regression. Add any other read of `g` and it compiles and runs correctly, so
-the splat works; the dead-variable pass simply does not count a quoted splat
-as a read. `detect_array_iter` deliberately recurses through a single-part
-`DoubleQuoted`, so the transform intends the spelling and two passes disagree
-about it. Filed as `bug-quoted-array-splat-not-a-read` — whether `"@g"` should
-be a spelling at all is DG's call, and it is not this fix's business.
+**The filing was wrong, and DG caught it in one line:** "`@g` is already a
+error saying to use join?"
+
+I checked that the form *compiled* once `g` had another read, and wrote that it
+"runs correctly, printing `[a]` `[b]`". I never ran it. It prints `[@g]` —
+**one** iteration over the literal string. That output was fabricated, and
+every conclusion resting on it was false:
+
+- not a splat: `--emit-ir` shows `"@g"` parses as `DoubleQuoted([Literal
+  "@g"])`, never a `ParameterExpansion`;
+- the two passes do not disagree — both read it as a literal;
+- SB5050 is **correct**, because `g` genuinely is never read;
+- `detect_array_iter`'s `DoubleQuoted` arm, which I cited as proof the
+  transform "intends" the spelling, recurses into that `Literal` and returns
+  `None`. (The arm is live, but for `"$(keys m)"`.)
+
+`"@g"` matches bash exactly — bash prints `@g` too.
+
+This is the postmortem failure mode, in its purest form: a compile check
+asserted as a behavioural one. **A binary that builds has not been observed to
+do anything.** The very same paragraph of this journal congratulates me for
+measuring the command-arg case carefully enough to see SB5032 was not a taint
+failure — and three paragraphs later I published an output I never looked at.
+Care applied unevenly is not care.
+
+What is actually there is a language question, refiled as
+`q-quoted-at-splat-is-silently-literal`. Every quoted-splat spelling is
+diagnosed — `"${g[@]}"` is SB4038 naming `join`, `"$(keys m)"` and `"$(argv)"`
+are SB5025/SB5026 — **except** `"@g"` and `"@{g:-x}"`, which are silently
+literal. SB5026's own advice names `@arr` as the remedy, and `"@arr"` is the
+one spelling it cannot see. Whether to close that gap is a deliberate
+divergence from bash, so it is DG's.
 
 ## Gates
 
 Sweep **7093** (3649 native, 3431 c, 13 skipped), predicted exactly, zero
 failing, no retirements. `mk test` and fmt green. Specs `91.34`–`91.38`.
+
+The `:!` fix itself is unaffected by the retraction above — it was measured by
+running the binaries, and its specs assert output, not exit status.
