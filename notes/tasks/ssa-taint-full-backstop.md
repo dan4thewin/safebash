@@ -147,7 +147,7 @@ group and never enter the taint map. Gap 2's note about versioned keys is the
 real obstacle — `taint_of_name`'s max-version lookup is what a naive insert
 fails against.
 
-## Done 2026-10-01 — gap 2 is closed: the bulk fills carry taint
+## Done 2026-09-30 — gap 2 is closed: the bulk fills carry taint
 
 The three leaking rows in the table above now reject under `--no-taint-cst`,
 and so does the fourth fill (`map m = @{a:…}`) that the table never listed.

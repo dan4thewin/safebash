@@ -6,7 +6,7 @@ kind: question
 depends: []
 gates:
   - "DG has chosen between extending SB5067 to bodies and merging taint outward"
-  - "DONE 2026-10-01: DG chose (a); implemented, specs bfb.23-bfb.28"
+  - "DONE 2026-09-30: DG chose (a); implemented, specs bfb.23-bfb.28"
 ---
 
 # A `$( )` body can taint an outer global and nothing says so
@@ -55,7 +55,7 @@ Recommendation: (a), because it keeps one rule for one construct and the
 architecture it protects is load-bearing. But it is a behaviour change that
 rejects currently-valid programs, so it is DG's call.
 
-## Update 2026-10-01 — (a) got much cheaper
+## Update 2026-09-30 — (a) got much cheaper
 
 DD#121's addendum relaxed SB5067 from "may not taint a global" to "may not
 *leave* a global tainted" (no net insert at body exit). That changes this
@@ -79,7 +79,7 @@ Status quo is preserved for now and deliberately: the addendum's rewrite moved
 site collection to `walk_scoped_structural_stmts`, which does not descend into
 `$( )` bodies, so this question is exactly where it was. Still DG's call.
 
-## Measured 2026-10-01, after the net-effect rule landed
+## Measured 2026-09-30, after the net-effect rule landed
 
 The filed example used a *clean* write (`t=modified`), which understates the
 question. Re-probed with a real taint, and with `q` read so SB5050 does not
@@ -109,7 +109,7 @@ reject is **E** — and E is exactly what SB5067 already rejects for a function.
 (a) is therefore close to a no-op on accepted programs: it converts B from a
 spanless backstop reject into a located diagnosis, and closes E.
 
-### C is not an exception — corrected 2026-10-01
+### C is not an exception — corrected 2026-09-30
 
 An earlier draft of this section listed C (`:!` on a global a `$( )` body
 tainted) as something the anonymous-function model leaves open. That was
@@ -134,7 +134,7 @@ a body exporting taint:
 - a **top-level** taint read with `:!` (DD#91's sanctioned bypass)
 - a function's **own local** read with `:!`
 
-## Resolved 2026-10-01 — DG chose (a)
+## Resolved 2026-09-30 — DG chose (a)
 
 > ":! no longer can happen, since a function can't leave a global tainted, yes?"
 > … "having :! work within the same scope preserves the intent sufficiently.

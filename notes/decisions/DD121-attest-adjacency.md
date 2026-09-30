@@ -65,7 +65,7 @@ found:
   `while`; and a **zero-trip `for`** all printed unattested argv.
 - **It breaks the call-graph fixpoint.** A fixpoint converges on a grow-only
   lattice; a set with removals can oscillate. SB5067 — which had **no DD**
-  until this one's 2026-10-01 addendum — exists only to dodge that.
+  until this one's 2026-09-30 addendum — exists only to dodge that.
 - **It creates "at which program point do I read the set?"** —
   `tainted_slots_on_entry` reads the *completed* top-level set, so a trailing
   attest retroactively cleans a slot that was tainted at the call.
@@ -122,7 +122,7 @@ honour: *"Taint is definition-based, not name-based."*
 |---|---|
 | `bug-attest-in-branch-leaks-past-merge` | **fixed** — verified rejected; pinned by `bfb.15`/`bfb.16` |
 | `bug-slot-inward-taint-reads-final-set` | **fixed** — the trailing attest is now SB5088; verified rejected |
-| SB5067 | **re-decided 2026-10-01** — relaxed to a net-effect rule; see the addendum below |
+| SB5067 | **re-decided 2026-09-30** — relaxed to a net-effect rule; see the addendum below |
 | `bug-caught-attest-all-fail-path-undefined-handle` | **fixed separately** (journal 449) — a native-codegen defect, not a taint one; DD#121 made it unreachable from safe source, `--no-taint` kept it reachable |
 
 ## Measured cost
@@ -182,7 +182,7 @@ DD#24's *"`if bless VAR [[ test ]]` → False branch taken, VAR remains
 tainted"* stands for the **written** else: the subject is tainted inside that
 branch, and R2 requires the branch to resolve it before falling through.
 
-## Addendum 2026-10-01 — SB5067 re-decided: a net-effect rule
+## Addendum 2026-09-30 — SB5067 re-decided: a net-effect rule
 
 The table above left SB5067 "in place, re-decided separately with DG". DG chose
 **(a) relax it to a net-effect body-exit rule**, paired with **(ii) close the
@@ -236,7 +236,7 @@ only sites whose name is still dirty at exit, deduped to the last site per name
 `else` branch, not the `if`.
 
 **The number SB5067 is kept** — my call at the time, ratified by DG
-2026-10-01 ("we already reused SB5067? if so, let it stand"). The diagnostic is
+2026-09-30 ("we already reused SB5067? if so, let it stand"). The diagnostic is
 the same rule loosened, not a new one, and reuse keeps every existing spec
 assertion structurally valid.
 
@@ -258,7 +258,7 @@ definition, `taint_of_name` is flow-insensitive in the permissive direction, it
 honours `:!`, and `--no-taint` disables it. (ii) upgrades the collection failure
 mode from a silent leak to an ICE at the use site; it does not diagnose.
 
-**(ii) landed 2026-10-01.** The four fills now carry `target: VarRef` and call
+**(ii) landed 2026-09-30.** The four fills now carry `target: VarRef` and call
 `state.define()` *after* the autodeclare, giving a monotone layering — clean
 empty declaration, tainted fill, clean attest — that `taint_of_name`'s
 max-version rule reads correctly with no special-casing. That is also why the
@@ -272,7 +272,7 @@ SB5067 with a span at the taint site, and by the backstop at the use site — an
 only the first of those is a diagnosis. Detail and the two bugs it exposed:
 `notes/tasks/ssa-taint-full-backstop.md`, journal 450.
 
-### Extended to `$( … )` bodies — DG, 2026-10-01
+### Extended to `$( … )` bodies — DG, 2026-09-30
 
 The net-effect rule now applies to anonymous bodies as well, closing
 `q-cmdsub-body-taints-outer-global`. DD#86 already calls a `$( … )` body an

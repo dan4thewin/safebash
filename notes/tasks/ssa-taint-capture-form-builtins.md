@@ -10,7 +10,7 @@ gates:
   - "spec `taint_switch.sh` gains sw.* cases for the capture form"
 ---
 
-Split out of `ssa-taint-full-backstop.md` on 2026-10-01, when that task's other
+Split out of `ssa-taint-full-backstop.md` on 2026-09-30, when that task's other
 two gaps closed. This is the last one.
 
 `$(join @a)` / `$(echo …)` lower via `CaptureStart` / `CaptureEnd { target,

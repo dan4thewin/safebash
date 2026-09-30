@@ -86,7 +86,7 @@ echo "$x"'
 # one of several tainted-array origins the backstop classifies: the array
 # literal is an `Assign` whose value carries the cmdsub's taint. (The bulk-fill
 # origins DD#61 names — `read`/`argv`/split/map fills — were CST-only until
-# 2026-10-01, when they were given real SSA versions; sw.14-sw.19 below.)
+# 2026-09-30, when they were given real SSA versions; sw.14-sw.19 below.)
 # Assert the message so this cannot pass on the scalar backstop.
 run_sash 'array a=($(getenv HOME))
 echo ${a[0]}'
@@ -98,7 +98,7 @@ run_sash 'array a=(x y)
 echo ${a[0]}'
 [[ $rc = 0 && $out = x && -z $err ]]; chk sw.11
 # sw.14-sw.19 the four bulk fills. Each fills a collection IN PLACE, so before
-# 2026-10-01 none defined an SSA version and `taint_of_name` never saw the
+# 2026-09-30 none defined an SSA version and `taint_of_name` never saw the
 # taint: the backstop was inert for every one. They now define a version after
 # the autodeclare, so the fill's version strictly exceeds the (clean) empty
 # declaration and a later `AttestRetag` strictly exceeds the fill.
