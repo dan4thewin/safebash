@@ -310,3 +310,67 @@ Sweep **6975** — 3590 native, 3372 c, 13 skipped — the predicted total.
 Left open: `bug-unset-whole-var-in-cmdsub-unvalidated`, the one filing that
 survived contact. It needs `type_check` to open a child scope per body, and
 its blast radius wants measuring before it is attempted.
+
+---
+
+## 444c — the type pass had the same fault, and the blast radius was zero
+
+The last filing from this thread was `bug-unset-whole-var-in-cmdsub-unvalidated`:
+`unset zz` is SB4030 at top level, in a function body and in an `if` body, and
+silently accepted inside `$( )`. I had filed it with a predicted cost —
+`check_unset_args` lives in `type_check.rs`, whose `check_stmt`/`infer_stmt`
+mutate `env`, so both were pinned to `structural_bodies()` and the fix "needs a
+child `TypeEnv` per body, copying `check_function`". The risk I recorded was
+blast radius: descending would turn on every type diagnostic inside bodies at
+once.
+
+Both halves of that filing were wrong, and measuring rather than implementing
+is what showed it.
+
+**`check_function` does not open a child scope.** It saves and restores exactly
+two things — the implicit `args` collection (DD#75 §5) and the DD#100 slot
+kinds — and then calls `check_stmt` on the body with the *shared* `env`.
+Ordinary names declared in a function body land in the enclosing environment
+and stay there. So the scoping I was going to build for `$( )` bodies does not
+exist for function bodies either; building it would have made bodies stricter
+than the construct DD#86 says they behave like.
+
+**The pin was not the reason the bug survived.** I widened the two
+`*_bodies` helpers to `child_bodies()` as an experiment, rebuilt, and
+`str s=$(unset zz)` still compiled. The helpers are reached from `check_stmt`'s
+`_` arm, and a capture is not a `_` — it is a `Declaration`. This is the same
+shape as the `validate_stmt_ctx` bug earlier in this session, for the same
+reason: **the arms that carry a substitution are the leaf arms.** `Command`,
+`Declaration` and `Assignment` are where a `$( )` actually appears, and none of
+them recursed.
+
+The fix is therefore the fix that already worked once — an unconditional
+`cmdsub_bodies()` descent at the end of `check_stmt` and `infer_stmt`, with the
+`_` arm left on `structural_bodies()` so a wrapper statement is not visited
+twice. Verified to fire exactly once at depth 1, 2 and 3, and for a body nested
+inside another body.
+
+**The blast radius was zero.** The sweep came back at 6975 — the baseline, to
+the test. Not one existing spec moved. A pass that had never run over an entire
+class of statements was switched on and the suite did not notice, which is
+worth stating plainly: the 6975 rows did not cover type-checking inside a
+capture body at all. That is why the six new specs matter more than the
+one-line diagnostic they assert.
+
+`csc.35`-`csc.40` mirror `csc.31`-`csc.34` on the type side deliberately.
+`validate` reaching a body says nothing about `type_check` reaching it; they
+are separate passes over the same statements, and this session found the
+identical fault in both. `csc.38` is the duplication guard and `csc.40` the
+top-level control, so a future change that moves the diagnostic instead of
+keeping the descent shows up as a failure rather than a silent pass. `csc.39`
+pins DD#30's subscript carve-out, which had to keep working.
+
+Sweep 6987, predicted 6987.
+
+### What I would keep
+
+A filing is a claim about a tree that has moved since. That is now the second
+time in two days — four filings measured, one materially false; then this one,
+false in both its diagnosis and its risk. The measurement that settled it took
+one build and one probe. **Measure the filing before you cost the work**, not
+after.

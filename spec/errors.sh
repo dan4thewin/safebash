@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup errors
-plan=311
+plan=317
 echo "1..$plan" >&3
 
 set +e
@@ -1781,6 +1781,61 @@ run_sash 'while [[ -n $(getenv HOME) ]]; do
     break
 done'
 [[ $rc != 0 && -z $out && $(grep -c SB5017 <<< "$err") = 1 ]]; chk csc.34
+
+# csc.35-csc.40 the TYPE side of the same descent. `validate` reaching a body
+#        (csc.31-csc.34 above) says nothing about `type_check`, which is a
+#        separate pass over the same statements — and its `check_stmt` had the
+#        identical fault: the arms that carry a substitution (`Command`,
+#        `Declaration`, `Assignment`) are leaves that never recursed, so a
+#        capture's body was never type-checked at all. DD#30's `unset`-on-a-
+#        scalar is the witness: rejected everywhere else, silently accepted
+#        inside `$( )`.
+
+# csc.35 the base case
+run_sash 'str s=$(unset zz)
+attest s [[ -z $s ]]
+echo "[$s]"'
+[[ $rc != 0 && -z $out && $err == *SB4030* ]]; chk csc.35
+
+# csc.36 through a wrapper statement inside the body — the body's own
+#        statements recurse like any others once the descent is in
+run_sash 'str v=a
+str s=$(if [[ $v == a ]]; then unset zz; fi)
+attest s [[ -z $s ]]
+echo "[$s]"'
+[[ $rc != 0 && -z $out && $err == *SB4030* ]]; chk csc.36
+
+# csc.37 a body nested inside another body reaches it too
+run_sash 'str s=$(/bin/echo "$(unset zz)")
+attest s [[ -n $s ]] || :
+echo "[$s]"'
+[[ $rc != 0 && -z $out && $err == *SB4030* ]]; chk csc.37
+
+# csc.38 the duplication guard for the type pass, matching csc.34. `check_stmt`
+#        descends unconditionally while its `_` arm still walks
+#        `structural_bodies()`; take the body twice and this prints SB4030
+#        once per path.
+run_sash 'str v=a
+int i=0
+str s=$(while (( i < 1 )); do if [[ $v == a ]]; then unset zz; fi; i=$(( i + 1 )); done)
+attest s [[ -z $s ]]
+echo "[$s]"'
+[[ $rc != 0 && -z $out && $(grep -c SB4030 <<< "$err") = 1 ]]; chk csc.38
+
+# csc.39 DD#30's carve-out survives the descent: the subscript form is still
+#        allowed inside a body, exactly as it is outside one
+run_sash 'array q=(1 2)
+str s=$(unset q[0])
+attest s [[ -z $s ]]
+echo "[$s]($(len q))"'
+[[ $rc = 0 && $out == "[](1)" ]]; chk csc.39
+
+# csc.40 and the control: a scalar `unset` at top level was always rejected.
+#        If this ever passes, the diagnostic moved rather than the descent
+#        working.
+run_sash 'unset zz
+echo done'
+[[ $rc != 0 && -z $out && $err == *SB4030* ]]; chk csc.40
 
 
 set -e

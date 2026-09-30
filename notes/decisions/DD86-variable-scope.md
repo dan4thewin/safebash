@@ -458,3 +458,27 @@ because of it.
 DD#70/#71's boolean contexts stop at it, exactly as they stop at `fn`.
 
 Specs `spec/errors.sh` csc.11–csc.34; journal 444.
+
+### Addendum (2026-09-29, later) — the type pass descends too
+
+The walker-classification rule above is stated for passes in general, but the
+pin it describes ("a walk that **mutates** scope state is the exception") was
+read too broadly for `type_check.rs`. Two corrections:
+
+- **`check_function` does not open a child scope.** It saves and restores the
+  implicit `args` collection and the DD#100 slot kinds, and nothing else.
+  Ordinary names declared in a function body are written into the shared
+  `TypeEnv`. A `$( )` body is treated the same way, which is what "an anonymous
+  function body" already implied — giving bodies their own name scope here
+  would make them *stricter* than the construct they are defined in terms of.
+
+- **The pin was never what blocked the descent.** `check_stmt` and
+  `infer_stmt` now take `cmdsub_bodies()` unconditionally, after their `match`,
+  with the `_` arm still on `structural_bodies()`. The arms that carry a
+  substitution — `Command`, `Declaration`, `Assignment` — are leaves, so a pass
+  that only widens its default arm still never enters a body. Any pass added
+  here must descend unconditionally or it will have the same hole.
+
+DD#30's `unset`-on-a-scalar is the witness: rejected at top level, in a
+function body and in an `if` body, silently accepted inside `$( )` until this
+change. Specs `csc.35`-`csc.40`.

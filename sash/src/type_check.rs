@@ -1666,6 +1666,21 @@ fn check_stmt(stmt: &Statement, env: &mut TypeEnv, errors: &mut Vec<TypeError>) 
         // have their own arm above.
         _ => check_stmt_bodies(stmt, env, errors),
     }
+    // A `$( … )` body is an anonymous function body (DD#86), so every
+    // statement in it is type-checked like one written outside. This is
+    // unconditional rather than part of the `_` arm because the arms that do
+    // NOT reach `check_stmt_bodies` — `Command`, `Declaration`, `Assignment`
+    // — are exactly the ones that carry a substitution. `str s=$(unset zz)`
+    // is a Declaration, and `unset` on a scalar went unchecked because of it.
+    //
+    // `env` is shared with the body, not scoped to it. That matches how
+    // function bodies are already treated here: `check_function` saves and
+    // restores only `args` and the DD#100 slot kinds, never ordinary names.
+    for body in stmt.cmdsub_bodies() {
+        for s in body {
+            check_stmt(s, env, errors);
+        }
+    }
 }
 
 /// The nested-body half of [`check_stmt`]. Deliberately `structural_bodies`:
@@ -2370,6 +2385,12 @@ fn infer_stmt(stmt: &Statement, env: &mut TypeEnv) {
         // Declaration, Command, Comment, ArithTest) which all have
         // explicit arms or no-effect semantics.
         _ => infer_stmt_bodies(stmt, env),
+    }
+    // Same reason as `check_stmt`: the leaf arms carry the substitutions.
+    for body in stmt.cmdsub_bodies() {
+        for s in body {
+            infer_stmt(s, env);
+        }
     }
 }
 
