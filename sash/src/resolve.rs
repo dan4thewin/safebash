@@ -52,6 +52,18 @@ pub(crate) fn is_intrinsic(name: &str) -> bool {
     BuiltinCmd::from_name(name) != BuiltinCmd::Other || INTRINSICS.contains(&name)
 }
 
+/// True for an intrinsic whose `$( )` value is a **single scalar** — every
+/// name in [`INTRINSICS`] except the two that produce a collection (`argv`
+/// yields the positional list, `keys` a map's keys).
+///
+/// Derived from [`INTRINSICS`] rather than restated, so a name added there
+/// cannot silently acquire the wrong shape. A `BuiltinCmd` (`echo`, `printf`,
+/// …) is deliberately not included: those write to a pipe, and
+/// `for x in $(echo a b c)` iterates that output by line.
+pub(crate) fn is_scalar_value_intrinsic(name: &str) -> bool {
+    INTRINSICS.contains(&name) && name != "argv" && name != "keys"
+}
+
 /// Resolve every external command head in `program` to an absolute path.
 /// Returns fatal diagnostics for any command that cannot be resolved.
 pub(crate) fn resolve_commands(program: &mut Program) -> Vec<Diagnostic> {

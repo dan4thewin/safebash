@@ -5,7 +5,7 @@
 set -eu
 . common.sh
 setup control_flow
-plan=70
+plan=79
 echo "1..$plan" >&3
 
 set +e
@@ -397,6 +397,60 @@ run_sash 'echo hi; break'
 # cf.n18 a function body starts a fresh loop context
 run_sash 'fn f { break; }; f'
 [[ $rc != 0 && -z $out && $err == *SB5081* ]]; chk cf.n18
+
+# --- SB5009: a for-in source must denote a COLLECTION ----------------
+# DD#28 eliminates word splitting, so a source holding ONE scalar could only
+# ever run a single iteration. The rule used to be keyed on the bare `$v`
+# shape alone; every other spelling of a scalar fell through it, and a value
+# intrinsic fell all the way past lowering. `resolve` exempts an intrinsic
+# name from the DD#23 path check, so `for v in $(getcwd)` COMPILED CLEAN and
+# then aborted the program at runtime — "bare command passed to sash_exec",
+# exit 127 — which is verbatim the failure DD#111 fixed in the other
+# direction. fs.1 is that bug's guard.
+
+# fs.1 a nullary value intrinsic as a for-in source
+run_sash 'for v in $(getcwd) { echo "$v" }'
+[[ $rc != 0 && -z $out && $err == *SB5009* ]]; chk fs.1
+
+# fs.2 …and it is the whole family, not one name
+run_sash 'for v in $(getpid) { echo "$v" }'
+[[ $rc != 0 && -z $out && $err == *SB5009* ]]; chk fs.2
+
+# fs.3 quoting does not make a scalar a collection — the reverse of the
+# quoted-SPLAT rule (SB5026), which denies what quoting here used to grant.
+run_sash 'for v in "$(getcwd)" { echo "$v" }'
+[[ $rc != 0 && -z $out && $err == *SB5009* ]]; chk fs.3
+
+# fs.4 an intrinsic taking arguments is still a scalar. This one used to be
+# SB5020 (getenv is tainted); the source-shape rule is the more specific
+# complaint and now fires first.
+run_sash 'for v in $(getenv HOME) { echo "$v" }'
+[[ $rc != 0 && -z $out && $err == *SB5009* ]]; chk fs.4
+
+# fs.5 `$(join a)` returns ONE joined string, so it is a scalar even though
+# its argument is a collection.
+run_sash 'array a=(x y)
+for v in $(join a) { echo "$v" }'
+[[ $rc != 0 && -z $out && $err == *SB5009* ]]; chk fs.5
+
+# fs.6 one element of an array is a scalar
+run_sash 'array a=(x y)
+for v in ${a[0]} { echo "$v" }'
+[[ $rc != 0 && -z $out && $err == *SB5009* ]]; chk fs.6
+
+# fs.7 an arithmetic expansion is a number
+run_sash 'for v in $(( 1 + 1 )) { echo "$v" }'
+[[ $rc != 0 && -z $out && $err == *SB5009* ]]; chk fs.7
+
+# fs.8 the rule must NOT over-reach: a BUILTIN command writes to a pipe, and
+# its output is iterated by line (DD#28/#40). `echo` is deliberately outside
+# the scalar-intrinsic set for exactly this reason.
+run_sash 'for x in $(echo a b c) { attest x [[ -n $x ]]; echo "[$x]" }'
+[[ $rc = 0 && $out = "[a b c]" && -z $err ]]; chk fs.8
+
+# fs.9 …and a one-element LITERAL list is still a list, not a scalar
+run_sash 'for v in solo { echo "$v" }'
+[[ $rc = 0 && $out = "solo" && -z $err ]]; chk fs.9
 
 
 set -e

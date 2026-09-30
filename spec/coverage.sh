@@ -780,9 +780,12 @@ run_sash 'for x in a[bc; do echo "$x"; done'
 
 # cov.173 a for-word that CONCATENATES a literal and an expansion: the glob
 # scan has a separate `Concat` arm that walks the parts, and it only sees a
-# non-Literal part in this shape
+# non-Literal part in this shape. That arm still runs — it is checked ahead of
+# the scalar rule — but the word itself is a single scalar, because sash globs
+# only a bare `Literal` (`try_dispatch_glob`) and never a concatenation. So a
+# for-loop over it could run exactly one iteration: SB5009.
 run_sash 's="x"; for w in pre$s*post; do echo "$w"; done'
-[[ $rc = 0 && $out = 'prex*post' && -z $err ]]; chk cov.173
+[[ $rc != 0 && -z $out && $err == *SB5009* ]]; chk cov.173
 
 # cov.174 a mutation under a ternary in a condition — the TRUE arm. It cannot
 # take effect reliably (the arm may go unevaluated), so SB5007.
@@ -1117,28 +1120,33 @@ str v=${x:s/$#/Z/}
 echo "[$v]"'
 [[ $rc != 0 && -z $out && $err == *SB5024* ]]; chk cov.225
 
-# ── for-loop iterable classification (transform/control_flow.rs
-# `detect_array_iter`). Nothing but a splat had ever been iterated, so the
-# non-splat paths through the classifier were untravelled.
+# ── for-loop iterable classification. A for-in source must denote a
+# COLLECTION; a single scalar could only ever run one iteration, so it is
+# SB5009 whatever spelling carries it. These three pin the spellings that used
+# to slip past a rule keyed on the bare `$v` shape alone.
 
-# cov.226 a double-quoted single-part word: the classifier must unwrap the
-# quotes and re-test the inside, then find a plain expansion there.
+# cov.226 a double-quoted single-part word. **Quoting is not the
+# discriminator** — `"$v"` is the same one scalar as `$v`. This used to be
+# ACCEPTED while bare `$v` was rejected, so quoting a scalar granted the
+# iteration that quoting a collection (`"${a[@]}"`, SB5026) denies.
 run_sash 'str v=a
 for x in "$v"; do echo $x; done'
-[[ $rc = 0 && $out = "a" && -z $err ]]; chk cov.226
+[[ $rc != 0 && -z $out && $err == *SB5009* ]]; chk cov.226
 
-# cov.227 …and a double-quoted word with TWO parts, which is not
-# unwrappable — the concatenation is the single iteration item.
+# cov.227 …and a double-quoted word with TWO parts, which is not unwrappable:
+# the concatenation is one value however many parts build it.
 run_sash 'str v=a
 str w=b
 for x in "$v$w"; do echo $x; done'
-[[ $rc = 0 && $out = "ab" && -z $err ]]; chk cov.227
+[[ $rc != 0 && -z $out && $err == *SB5009* ]]; chk cov.227
 
-# cov.228 an expansion carrying a non-splat operator (`:-`). It is a
-# parameter expansion, so it reaches the splat tests, and fails both.
+# cov.228 an expansion carrying a non-splat operator (`:-`). It is a parameter
+# expansion, so it reaches the splat tests and fails both — and a parameter
+# expansion that is not a splat yields a scalar. Only an `arrvals*` operator
+# (the `@a` family) makes one a collection.
 run_sash 'str v=a
 for x in ${v:-d}; do echo $x; done'
-[[ $rc = 0 && $out = "a" && -z $err ]]; chk cov.228
+[[ $rc != 0 && -z $out && $err == *SB5009* ]]; chk cov.228
 
 # ── positional / special-variable rejections, each from a distinct rule.
 # These are the one-line programs the feature specs never bother to write.

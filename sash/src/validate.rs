@@ -1356,26 +1356,126 @@ fn validate_for(f: &For, diags: &mut Vec<Diagnostic>) {
     }
 }
 
-/// Check one for-in source word: glob metacharacters (SB5006) and an
-/// unquoted scalar expansion that would imply word splitting (SB5009).
+/// Check one for-in source word: glob metacharacters (SB5006) and a source
+/// that denotes a single scalar rather than a collection (SB5009).
 /// `$@` / `$*` are array splats (handled by the positional/splat passes),
-/// not word-splitting scalars, so they are exempt.
+/// not scalars, so they are exempt.
 fn check_for_word(w: &Expr, diags: &mut Vec<Diagnostic>) {
     check_unquoted_glob(w, diags);
-    if let ExprKind::SimpleExpansion(var) = &w.kind {
-        if var != "@" && var != "*" {
-            diags.push(Diagnostic::error_span(
-                w.span,
-                "SB5009",
-                format!(
-                    "`${}` in a for-loop does not word-split — word splitting \
-                     is eliminated by design; iterate an array instead: \
-                     `for x in @arr`",
-                    var
-                ),
-            ));
-        }
+    if let Some(spelling) = for_source_scalar(w) {
+        diags.push(Diagnostic::error_span(
+            w.span,
+            "SB5009",
+            format!(
+                "{spelling} in a for-loop is a single scalar, not a collection \
+                 — word splitting is eliminated by design, so this could only \
+                 ever run one iteration; iterate an array instead \
+                 (`for x in @arr`), or use the value directly without a loop"
+            ),
+        ));
     }
+}
+
+/// Does this for-in source word denote a **single scalar value** rather than a
+/// collection? Returns the spelling to name in the diagnostic.
+///
+/// DD#28 eliminates word splitting, so a scalar source could only ever run one
+/// iteration — the loop is a wrapper around a value the author already holds.
+/// **Quoting is not the discriminator.** `"$v"` is as much a scalar as `$v`,
+/// yet only the bare form was rejected, so quoting a scalar *granted* the
+/// iteration that quoting a collection (`"${a[@]}"`, SB5026) denies.
+///
+/// Literal words are not scalars in this sense: `for v in a b` is a list, and
+/// the one-element `for v in a` is its legitimate degenerate case.
+///
+/// **Total over `ExprKind` on purpose — do not add a wildcard.** The rule this
+/// replaces was keyed on `SimpleExpansion` alone; every other spelling of a
+/// scalar fell through, and `$(getcwd)` fell all the way past lowering to a
+/// bare `sash_exec` that aborted the compiled program at runtime.
+fn for_source_scalar(w: &Expr) -> Option<String> {
+    match &w.kind {
+        // A word list, of any length — not a scalar.
+        ExprKind::Literal(_) | ExprKind::SingleQuoted(_) => None,
+        ExprKind::SimpleExpansion(v) => for_source_scalar_simple(v),
+        ExprKind::DoubleQuoted(parts) => for_source_scalar_parts(parts, "a quoted concatenation"),
+        ExprKind::Concat(parts) => for_source_scalar_parts(parts, "a concatenation"),
+        ExprKind::ParameterExpansion(pe) => for_source_scalar_param(pe),
+        // One element of an array is a scalar.
+        ExprKind::Subscript { name, .. } => Some(format!("`${{{name}[…]}}`")),
+        // `$(( … ))` is a number.
+        ExprKind::Arithmetic(_) => Some("an arithmetic expansion".to_string()),
+        ExprKind::CommandSubstitution(stmts) => for_source_scalar_cmdsubst(stmts),
+        // `$(<file)` is a stream of lines, like an external command.
+        ExprKind::SlurpFile(_) => None,
+        // Collection literals and a test are not scalar sources; neither is a
+        // legal for-in word, and each is rejected by its own rule.
+        ExprKind::Array(_) | ExprKind::AssocArray(_) | ExprKind::Test(_) => None,
+    }
+}
+
+/// `$@` / `$*` are the positional splat; any other name is a scalar variable.
+fn for_source_scalar_simple(var: &str) -> Option<String> {
+    match var {
+        "@" | "*" => None,
+        _ => Some(format!("`${var}`")),
+    }
+}
+
+/// A parameter expansion is a collection only when it carries a splat
+/// operator — the `arrvals*` family is the `@a` splat and its dispositions.
+/// Every other operator (`:-`, `:?`, `#`, `%`, …) yields one string.
+fn for_source_scalar_param(pe: &ParameterExpansion) -> Option<String> {
+    let splat = pe
+        .operator
+        .as_deref()
+        .is_some_and(|op| op.starts_with("arrvals") || op.starts_with("arrkeys"));
+    match (splat, pe.name.as_str()) {
+        (true, _) | (_, "@") | (_, "*") => None,
+        _ => Some(format!("`${{{}}}`", pe.name)),
+    }
+}
+
+/// A quoted or concatenated word is one value built from parts. All-literal
+/// parts are a literal word (`"@g"` is the text `@g`); anything else is a
+/// scalar. A single part delegates, so `"$@"` and `"${a[@]}"` stay collections
+/// — the quoted splat is SB5026's to report, not this rule's.
+fn for_source_scalar_parts(parts: &[Expr], joined: &str) -> Option<String> {
+    if parts
+        .iter()
+        .all(|p| matches!(p.kind, ExprKind::Literal(_) | ExprKind::SingleQuoted(_)))
+    {
+        return None;
+    }
+    match parts {
+        [one] => for_source_scalar(one),
+        _ => Some(joined.to_string()),
+    }
+}
+
+/// A `$( )` for-in source is a collection when it runs a command — DD#28/DD#40
+/// iterate that command's output by line. A **value** intrinsic runs nothing:
+/// `$(getcwd)` is a scalar, and `$(argv)` / `$(keys m)` are the two that do
+/// yield a collection.
+///
+/// This is the hole DD#111 found in the other direction: `resolve`'s intrinsic
+/// exemption skips the DD#23 path check, so without this test the name reached
+/// codegen as a bare external and the program aborted with "bare command
+/// passed to sash_exec".
+fn for_source_scalar_cmdsubst(stmts: &[Statement]) -> Option<String> {
+    let [stmt] = stmts else {
+        return None;
+    };
+    let inner = match &stmt.kind {
+        StmtKind::Redirected(r) => &r.body.kind,
+        other => other,
+    };
+    let StmtKind::Command(c) = inner else {
+        return None;
+    };
+    let ExprKind::Literal(name) = &c.name.kind else {
+        return None;
+    };
+    crate::resolve::is_scalar_value_intrinsic(name).then(|| format!("`$({name})`"))
 }
 
 /// DD#31: a comma expression like `(a=1, x<5)` desugars to a

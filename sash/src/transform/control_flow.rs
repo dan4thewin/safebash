@@ -695,8 +695,17 @@ fn try_dispatch_cmdsubst(
     let ExprKind::CommandSubstitution(stmts) = &f.words[0].kind else {
         return None;
     };
-    // DD#28/DD#40: silently transform `for x in $(cmd args)` to
-    // `cmd args | while read -r x; do body; done`.
+    // DD#28/DD#40: transform `for x in $(cmd args)` into the pipeline
+    // `cmd args | …`, whose output is consumed one line at a time by
+    // `SsaInst::ReadLine` — DD#99 `readline`, which binds a scalar per line.
+    // Neither `read` nor `readline` takes flags; this comment used to say
+    // `while read -r x`, naming a bash spelling sash does not have and the
+    // wrong half of the read/readline pair besides.
+    //
+    // Only a *command* reaches here. A value intrinsic (`$(getcwd)`) is a
+    // scalar, not a line stream, and validate rejects it as a for-in source
+    // (SB5009) — without that check it arrived as a bare external and the
+    // compiled program aborted in `sash_exec`.
     let stages = build_pipeline_stages_from_cmdsubst(stmts, state);
     Some(emit_cmdsubst_pipe_while_read(f, stages, ssa, state, block))
 }
