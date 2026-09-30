@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup errors
-plan=318
+plan=324
 echo "1..$plan" >&3
 
 set +e
@@ -809,6 +809,59 @@ echo $b'
 run_sash 'str d=$(dirname /a/b)
 echo $d'
 [[ $rc = 0 && $out = /a && -z $err ]]; chk via.20
+
+# ── via.21-26: `match` is the one value intrinsic that is ALSO a statement ──
+# The table above says "none is a statement". `match` is the exception:
+# `$(match S P)` captures the matched text, while `match S P ARR` fills ARR and
+# yields a status. They are one token apart and their results are INVERTED —
+# via.23 gives `[b][]`, via.26 gives `[][b]`.
+#
+# SB4045's generic "exact arity" sentence denied the second form existed, and
+# the repair a reader infers from it — consume the status with `|| :` — is
+# precisely the spelling that captures nothing (via.26). `match` is the only
+# name needing this: every other name in both tables (`sub`, `gsub`, `len`,
+# `strlen`, `keys`) is value-only and draws SB5073 as a statement (via.6-9).
+# Front-end — all modes.
+
+# via.21 the bare 3-arg form stays rejected, but names the statement form
+run_sash 'array m=()
+s=abc
+r=$(match "$s" b m)
+echo "$r"
+echo "${m[0]}"'
+[[ $rc != 0 && -z $out && $err == *SB4045* && $err == *"statement form"* ]]; chk via.21
+# via.22 ...and drops the sentence that denied that form exists, warning about
+# the empty capture instead of inviting it
+[[ $err != *"exact arity"* && $err == *"capture the empty string"* ]]; chk via.22
+
+# via.23 the first repair it offers: drop ARR and capture the matched text
+run_sash 'array m=()
+s=abc
+r=$(match "$s" b)
+echo "[$r][${m[0]}]"'
+[[ $rc = 0 && $out = "[b][]" && -z $err ]]; chk via.23
+
+# via.24 the second: use the statement form outside `$( )`
+run_sash 'array m=()
+s=abc
+if match "$s" b m; then echo "hit=${m[0]}"; fi'
+[[ $rc = 0 && $out = "hit=b" && -z $err ]]; chk via.24
+
+# via.25 any OTHER wrong arity for `match` keeps the generic sentence
+run_sash 'r=$(match a b c d)
+echo "$r"'
+[[ $rc != 0 && -z $out && $err == *SB4045* && $err == *"exact arity"* ]]; chk via.25
+
+# via.26 the `|| :` spelling the old text invited: it COMPILES, and captures
+# the empty string while filling ARR — via.23 inverted. This is the footgun
+# the new wording steers away from, so pin it: if it ever becomes an error,
+# that is a deliberate change and this spec must be updated with it.
+run_sash 'array m=()
+s=abc
+r=$(match "$s" b m || :)
+echo "[$r][${m[0]}]"'
+[[ $rc = 0 && $out = "[][b]" && -z $err ]]; chk via.26
+
 
 # ── `join`'s separator is fixed at compile time (SB5074) ──
 # The SSA operand is a compile-time String, so a non-literal separator had

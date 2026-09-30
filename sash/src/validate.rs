@@ -571,17 +571,44 @@ fn check_cmdsub_arity(expr: &Expr, diags: &mut Vec<Diagnostic>) {
         return;
     };
     if c.args.len() != arity {
-        diags.push(Diagnostic::error_span(
-            c.name.span,
-            "SB4045",
-            format!(
-                "`{name}` expects {arity} argument{} but got {} — a value intrinsic \
-                 must be called with its exact arity",
-                if arity == 1 { "" } else { "s" },
-                c.args.len()
-            ),
-        ));
+        diags.push(cmdsub_arity_diag(name, arity, c.args.len(), c.name.span));
     }
+}
+
+/// The SB4045 text for a value intrinsic called inside `$( )`.
+///
+/// `match` is the **only** name that is both a value intrinsic and a legal
+/// statement: `$(match S P)` captures the matched text, while `match S P ARR`
+/// fills `ARR` and yields a status. Every other name in both tables (`sub`,
+/// `gsub`, `len`, `strlen`, `keys`) is value-only — a bare statement draws
+/// SB5073 — so the generic "exact arity" sentence is accurate for them.
+///
+/// It is not accurate for `match`: it denies the second form exists. Worse,
+/// the repair a reader infers from it is to consume the status (`|| :`), which
+/// **compiles** — `single_cmdsub_command` sees a list, not a command, so this
+/// check never runs — and captures the empty string silently. So the text
+/// steers to the two repairs that are actually right.
+fn cmdsub_arity_diag(name: &str, arity: usize, got: usize, span: Span) -> Diagnostic {
+    if name == "match" && got == 3 {
+        return Diagnostic::error_span(
+            span,
+            "SB4045",
+            "`match` in `$( )` is the capturing form and takes `S P` — got 3 \
+             arguments. `match S P ARR` is the statement form: it fills `ARR` and \
+             yields a status, so `$( )` would capture the empty string. Drop `ARR` \
+             to capture the matched text, or use the statement form outside `$( )`"
+                .to_string(),
+        );
+    }
+    Diagnostic::error_span(
+        span,
+        "SB4045",
+        format!(
+            "`{name}` expects {arity} argument{} but got {got} — a value intrinsic \
+             must be called with its exact arity",
+            if arity == 1 { "" } else { "s" },
+        ),
+    )
 }
 
 /// SB4045 for the sexpr spelling: `(len a)` / `(strlen $s)` inside `$(( … ))`

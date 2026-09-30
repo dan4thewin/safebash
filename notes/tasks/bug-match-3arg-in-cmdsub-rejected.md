@@ -1,6 +1,6 @@
 ---
 title: "`$(match S P arr)` bare reports SB4045 (\"expects 2 arguments\") when the 3-arg statement form is meant"
-status: open
+status: done
 priority: P4
 kind: diagnostic
 depends: []
@@ -58,3 +58,47 @@ question is only which diagnostic.
   `ExprKind::CommandSubstitution` + a single-number arity
 - `sash/src/ssa.rs:1426` — `value_intrinsic_arity`, which has no way to say
   "this name also has a statement form"
+
+# Fixed 2026-09-30
+
+`sash/src/validate.rs` — `check_cmdsub_arity`'s `diags.push` moved into a new
+`cmdsub_arity_diag`, which special-cases `match` at 3 arguments. Specs
+`via.21`-`via.26` in `spec/errors.sh` (`plan=318`→`324`).
+
+## What the measuring changed about the fix
+
+The filing proposed SB4018 ("result is unused — consume it with if/`&&`/`||`")
+on the grounds that every other position reports it. **That advice would have
+been actively wrong here**, and only running it showed why:
+
+| spelling | captures | fills ARR |
+|---|---|---|
+| `r=$(match S P)` | `b` | — |
+| `r=$(match S P ARR \|\| :)` | **empty** | `b` |
+
+The results are *inverted*, one token apart. Telling the author to consume the
+status routes them straight into the empty capture — and it compiles silently,
+because `single_cmdsub_command` sees a list rather than a command, so
+`check_cmdsub_arity` never runs on it. So the new text names both forms and
+offers the two repairs that actually work (`via.23`, `via.24` compile and run
+them, so the advice cannot rot).
+
+## Scope, measured rather than assumed
+
+`match` is the **only** name that is both in `value_intrinsic_arity` and legal
+as a statement. Probed every candidate in both tables: `sub`, `gsub`, `len`,
+`strlen` and `keys` all draw SB5073 as a bare statement (value-only), and
+`matchall` is not in `value_intrinsic_arity` at all, so the check returns early
+for it. The special case is therefore exhaustive, not a patch on one symptom.
+
+Also checked the guard's reach, since validate.rs guards are keyed on syntax:
+all seven positions a `$( )` is legal in (assignment RHS, command arg, `[[ ]]`
+operand, array-literal element, subscript index, inside `"…"`, user-fn
+argument) report SB4045 identically. No positional gap.
+
+## Left open — not this task
+
+`$(match S P ARR || :)` compiles and captures the empty string. That is
+consistent with the semantics (the statement form prints nothing), so it is a
+footgun rather than a bug, and making it an error is a behaviour change.
+`via.26` pins the current result so a future change to it has to be deliberate.
