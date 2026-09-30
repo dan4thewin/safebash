@@ -84,13 +84,17 @@ the arithmetic half of the machine fixed an hour earlier.
 Sweep **7183** (3694 native, 3476 c, 13 skipped), predicted exactly at every
 step, zero failures, no retirements.
 
-**For DG — `==` vs bash globs.** `cov.345` first failed because I wrote
-`[[ $p == /* ]]`, i.e. bash. DD#66 makes `==` strict exact equality with no
-pattern language, so that compares against a literal asterisk. Decided, not a
-bug. But it is a *silent* divergence for anyone porting: `[[ $p == ab* ]]` with
-`p=abcd` is true in bash, false in sash, `!=` inverts likewise, no diagnostic.
-Unquoted `?` and `[…]` already draw SB5006 for exactly this reason. Worth a
-diagnostic on an unquoted `*` in a `==` operand? Not acting unasked.
+**`==` vs bash globs — asked and declined (DG, 2026-09-30).** `cov.345` first
+failed because I wrote `[[ $p == /* ]]`, i.e. bash. DD#66 makes `==` strict
+exact equality with no pattern language, so that compares against a literal
+asterisk — decided, not a bug, but a *silent* divergence for anyone porting
+(`[[ $p == ab* ]]` with `p=abcd` is true in bash, false here; `!=` inverts
+likewise; no diagnostic), where unquoted `?` and `[…]` already draw SB5006.
+DG declined: the project carries no warnings or lint messages, so the only
+mechanism available is rejecting an entirely legal expression solely because
+bash reads it differently — he agreed with the intent but judged this
+application too aggressive, reserving the right to revisit on user feedback.
+Recorded as *considered and declined* in DD#66 so it is not re-proposed.
 
 Remaining cold-function queue: `lower_value_as_str_aggregate`,
 `try_lower_attest_list`, `check_list_caught_resolution`, `lower_value`,

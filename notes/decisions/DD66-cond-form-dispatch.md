@@ -162,3 +162,25 @@ construct to the comment path anyway.
   the "dispatch `[[ … ]]` used as a condition" (statement-only) diagnostic.
 
 See task `dd66-cond-form-dispatch` for the spec-first implementation.
+
+## Considered and declined — no glob-in-`==` diagnostic (DG, 2026-09-30)
+
+Raised after `cov.345` was first written as `[[ $p == /* ]]`, i.e. bash. Under
+this DD `==` is strict exact equality, so that compares `$p` against a literal
+two-character string. The divergence is silent: with `p=abcd`,
+`[[ $p == ab* ]]` is true in bash and false in sash, `!=` inverts the same way,
+and nothing is emitted. SB5006 already rejects an unquoted `?` or `[…]` in the
+same position for precisely this porting hazard, so the asymmetry was the
+argument for extending it to `*`.
+
+**DG declined.** Two reasons, in his words: the project does not carry warnings
+or lint messages, so the only available mechanism is *rejection* — and that
+would reject an entirely legal expression solely because bash reads it
+differently. He agreed with the intent (avoid our own footguns) but judged this
+application too aggressive. He reserves the right to revisit on user feedback.
+
+The asymmetry with SB5006 therefore stands, and it is deliberate. Note that
+SB5006's cases are not the same shape: `?` and `[…]` in an unquoted word are
+diagnosed for reasons of their own, whereas a literal `*` is a perfectly
+ordinary string to compare against. **Do not re-propose this without new
+evidence that a real user was bitten.**
