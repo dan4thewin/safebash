@@ -103,9 +103,22 @@ the lazy path. The stated premise no longer holds. Filed as
 simplified" and this is the concrete lead, but it needs measuring before it is
 a proposal.
 
-Also unasked, deliberately: a backtick has the identical silent-degrade
-property, but DG specified `$`, and widening a rule he just drew is not mine
-to do.
+I also flagged a backtick as having "the identical silent-degrade property",
+left unasked because DG had specified `$`. DG: "backtick? we don't use
+backtick, yes?" — and measuring says the flag was wrong. DD#67 **dropped**
+backticks; SB5076 rejects one in any position where bash would have
+substituted, and everywhere a literal is expected — inside `"…"`, inside
+`'…'`, and now in a `:?` message — a backtick already is just a character.
+
+There is nothing to degrade *from*. `$` degrades because interpolation is a
+real feature everywhere else, so `${y:?$m}` reads as something the language
+does. A backtick reads as nothing, anywhere, so the message accepting it is
+consistent with the quoted-string forms rather than an exception to them.
+
+Filed here because reaching for symmetry ("`$` and backtick are both command
+substitution in bash") is what produced the flag, and it is the same move as
+the DD#78 error at the top of this entry: a grouping that holds in bash does
+not carry into a language that dropped one of the two.
 
 ## Gates
 
