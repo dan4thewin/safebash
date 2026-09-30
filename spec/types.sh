@@ -13,10 +13,12 @@ set +e
 # still fire when the same statement is wrapped in a Group, List
 # (&&/||), Pipeline, etc. Regression for journal 056.
 
-# 0.1 type-check descends into Group { ... }
+# 0.1 type-check descends into Group { ... }. Asserts the specific code:
+# this read `-n $err`, which would keep passing on an unrelated *parse*
+# error, and briefly did while the group surface was being reworked.
 run_sash 'int x=5
 { x=hello; }'
-[[ $rc != 0 && -z $out && -n $err ]]; chk 0.1
+[[ $rc != 0 && -z $out && $err == *SB4030* ]]; chk 0.1
 
 # 0.2 type-check descends into left side of `&&`
 run_sash 'int x=5

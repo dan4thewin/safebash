@@ -9,7 +9,7 @@ setup brace
 # backend had a control-flow gap (until / `(( ))`) that these forms hit; all
 # eight constructs were later measured byte-identical between the backends, so
 # the guard was stale and is gone. Running both modes keeps it that way.
-plan=32
+plan=42
 echo "1..$plan" >&3
 
 set +e
@@ -155,6 +155,66 @@ f'
 run_sash 'int x=5 > /dev/null
 echo "$x"'
 [[ $rc != 0 && -z $out && $err == *SB4046* ]]; chk bc.f5
+
+# --- bc.g*: a `{` glued to a word is SB4071 --------------------------------
+# Was a P1: `{` unconditionally ended a command's word list, so
+# `echo a{echo z}` became TWO statements — it printed "a" then "z" where bash
+# prints the literal `a{echo z}`. Adjacency is the discriminator: a brace
+# glued to the previous word is the bug, a spaced one is a deliberate block.
+# The `{ … }` group itself is kept — it is the only way to put more than one
+# statement on the right of `||`/`&&` (see bc.g4).
+
+# bc.g1 the bug itself.
+run_sash 'echo a{echo z}'
+[[ $rc != 0 && -z $out && $err == *SB4071* ]]; chk bc.g1
+
+# bc.g2 a builtin body was the quietest case: this printed just "a".
+run_sash 'echo a{:}'
+[[ $rc != 0 && -z $out && $err == *SB4071* ]]; chk bc.g2
+
+# bc.g3 the advice SB4071 gives must work, and must agree with bash:
+#       quoting yields the literal word.
+run_sash "echo 'a{echo z}'"
+[[ $rc = 0 && $out = 'a{echo z}' && -z $err ]]; chk bc.g3
+
+# bc.g4 the group survives where it does real work — a multi-statement `||`
+#       right-hand side has no other spelling. Removing the surface to fix
+#       bc.g1 would have cost this.
+run_sash '/bin/false || { echo a; echo b; }'
+[[ $rc = 0 && $out = $'a\nb' && -z $rerr ]]; chk bc.g4
+
+# bc.g5 a bare statement-position group still parses and runs.
+run_sash '{ echo z }'
+[[ $rc = 0 && $out = "z" && -z $rerr ]]; chk bc.g5
+
+# bc.g6 a SPACED brace after a command word is still a block, not an error.
+#       This is the documented residual: bash reads `a { echo z }` as three
+#       literal words, sash as a command plus a block. Pinned so the
+#       divergence is a decision on record rather than an accident.
+run_sash 'echo a { echo z }'
+[[ $rc = 0 && $out = $'a\nz' && -z $rerr ]]; chk bc.g6
+
+# bc.g7 adjacency must NOT fire inside a control-flow header, where `{` opens
+#       the body (DD#68) — here `a` is an argument of the condition command
+#       and the brace is glued to it. This is why the fix could not simply be
+#       "a brace in an argument position is an error".
+run_sash 'if /bin/true a{echo y}'
+[[ $rc = 0 && $out = "y" && -z $rerr ]]; chk bc.g7
+
+# bc.g8 ...and the same for a `while` header.
+run_sash 'int i=0
+while ((i < 2)){ echo w; ((i=i+1)) }'
+[[ $rc = 0 && $out = $'w\nw' && -z $rerr ]]; chk bc.g8
+
+# bc.g9 the sibling gate: a stray `}` was a bare "expected expression"
+#       (SB4014), which said nothing about the brace. It closes nothing here,
+#       and bash keeps it literal — SB4072 says so.
+run_sash 'echo a}b'
+[[ $rc != 0 && -z $out && $err == *SB4072* ]]; chk bc.g9
+
+# bc.g10 and SB4072's advice works, agreeing with bash.
+run_sash "echo 'a}b'"
+[[ $rc = 0 && $out = 'a}b' && -z $err ]]; chk bc.g10
 
 set -e
 tally

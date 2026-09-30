@@ -298,6 +298,17 @@ fn dispatch_statement(
                 .to_string(),
         )),
         Tok::LBrace => parse_group(scanner),
+        // A `}` only reaches here when no enclosing block's stop set claimed
+        // it (a block body breaks on `}` before parsing a statement), so it
+        // closes nothing. bash would have kept it literal — say so, rather
+        // than falling through to a bare "expected expression".
+        Tok::RBrace => Err(parse_error(
+            span,
+            "SB4072",
+            "a `}` here closes nothing — no block is open. bash would keep it \
+             literal; quote it for a literal brace (`'a}b'`)"
+                .to_string(),
+        )),
         Tok::DblParen => parse_arith_stmt(scanner),
         Tok::Bang => parse_negated(scanner),
         Tok::Dash => parse_suppressed(scanner),
@@ -407,8 +418,16 @@ fn tok_eq(a: &Tok, b: &Tok) -> bool {
 }
 
 /// Parse a compound list (condition) — one or more statements.
+///
+/// Every caller is a control-flow *header* (`if`/`elif`/`while`/`until`),
+/// so this is also where the header region is marked: inside it a `{`
+/// terminates a command's word list unconditionally, because it opens the
+/// block body (DD#68). See [`Scanner::enter_header`].
 fn parse_compound_list(scanner: &mut Scanner, stop: &[Tok]) -> Result<Vec<Statement>, Diagnostic> {
-    parse_body_until(scanner, stop)
+    scanner.enter_header();
+    let result = parse_body_until(scanner, stop);
+    scanner.exit_header();
+    result
 }
 
 // ── if/elif/else/fi ──────────────────────────────────────────
@@ -2316,6 +2335,31 @@ fn parse_command(scanner: &mut Scanner, span: Span) -> Result<Option<Statement>,
     Ok(Some(stmt))
 }
 
+/// A `{` has been reached while collecting a command's word list. Decide
+/// whether it terminates the list or is an error.
+///
+/// Adjacency is the discriminator. `echo a{echo z}` glues the brace to the
+/// word, which in bash is a literal `a{echo z}`; sash used to end the command
+/// there and open an anonymous group, so it silently printed `a` then `z`.
+/// That is SB4071. A *spaced* `{` (`cmd || { a; b; }`) reads as a deliberate
+/// group and still terminates the list, as does any `{` inside a control-flow
+/// header, where it opens the block body (DD#68) — `if /bin/true a{echo y}`
+/// stays legal even though the brace is adjacent.
+fn brace_after_word(scanner: &mut Scanner) -> Result<bool, Diagnostic> {
+    if scanner.in_header() || !scanner.next_is_adjacent() {
+        return Ok(false);
+    }
+    let sp = scanner.peek().span;
+    Err(parse_error(
+        span_from(scanner, sp.start),
+        "SB4071",
+        "a `{` here is glued to the preceding word — bash would keep it \
+         literal, but sash would read it as a block. Quote it for a literal \
+         brace (`'a{b}'`), or put a space before it for a block"
+            .to_string(),
+    ))
+}
+
 /// Parse one element of a command's argument/redirect list. Returns
 /// `false` at a terminator (`;`, newline, pipe, `{`, `]]`, …) so the
 /// caller stops the loop; `true` after consuming an arg or redirect.
@@ -2325,6 +2369,9 @@ fn parse_command_element(
     args: &mut Vec<Expr>,
     redirects: &mut Vec<Redirect>,
 ) -> Result<bool, Diagnostic> {
+    if matches!(scanner.peek().token, Tok::LBrace) {
+        return brace_after_word(scanner);
+    }
     match &scanner.peek().token {
         Tok::Newline
         | Tok::Semi
@@ -2334,7 +2381,6 @@ fn parse_command_element(
         | Tok::Amp
         | Tok::RParen
         | Tok::RBrace
-        | Tok::LBrace
         | Tok::DblSemi
         | Tok::DblBracketClose
         | Tok::Eof => return Ok(false),

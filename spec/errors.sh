@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup errors
-plan=317
+plan=318
 echo "1..$plan" >&3
 
 set +e
@@ -1324,20 +1324,31 @@ rm -f /tmp/sash_rdr_ok
 #         its diagnostic with a HARDCODED `Span { line: 1, col: 1 }`, so the
 #         reader was sent to the first byte of the file no matter which line
 #         the offending token was on. A stray `}` on line 2 must say line 2.
+#         The code is now SB4072 (a stray `}` is diagnosed directly rather
+#         than falling through to a bare "expected expression"); these three
+#         are about the SPAN, which is what must not regress.
 run_sash '/bin/echo hi
 }'
-[[ $rc != 0 && $err == *SB4014* && $err == *:2:1:* ]]; chk dspan.1
+[[ $rc != 0 && $err == *SB4072* && $err == *:2:1:* ]]; chk dspan.1
 
 # dspan.2 the column matters too: `}` inside a command argument is at the
 #         brace, not at the start of the line
 run_sash '/bin/echo hi
 /bin/echo a}b'
-[[ $rc != 0 && $err == *SB4014* && $err == *:2:12:* ]]; chk dspan.2
+[[ $rc != 0 && $err == *SB4072* && $err == *:2:12:* ]]; chk dspan.2
 
 # dspan.3 the form that exposed it: a trailing `}` after a splat disposition
 run_sash 'array a=(p q)
 /bin/echo @{a:-x}}'
-[[ $rc != 0 && $err == *SB4014* && $err == *:2:18:* ]]; chk dspan.3
+[[ $rc != 0 && $err == *SB4072* && $err == *:2:18:* ]]; chk dspan.3
+
+# dspan.4 keeps `parts_to_expr` itself guarded. dspan.1-3 used a stray `}`,
+#         which SB4072 now intercepts before that code is reached — so
+#         without this the hardcoded-1:1 regression would be unguarded. A
+#         stray `)` still lands there, and must also name its own column.
+run_sash '/bin/echo hi
+/bin/echo a)b'
+[[ $rc != 0 && $err == *SB4014* && $err == *:2:12:* ]]; chk dspan.4
 
 # --- the operand checks reach every context, not just `echo $(…)` ---
 # The string-intrinsic check ran from `check_stmt`, which only ever sees a

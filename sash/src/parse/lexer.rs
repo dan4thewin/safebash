@@ -5,13 +5,17 @@
 //!
 //! Design:
 //!   - Tokens are designed for sash-native (not bash): int, const, array, map,
-//!     attest, signal, END, fn, local fn are first-class keywords.
+//!     attest, signal, END, fn are first-class keywords. (`local fn` was
+//!     abandoned by DD#86 — `local` is not a token, so it lexes as an
+//!     ordinary word and resolution reports it as an unknown command.)
 //!   - Heredocs are rejected at the scanner level (emits __HEREDOC__ sentinel).
 //!   - Backticks are rejected (emits `backtick` sentinel; parser raises SB5076).
 //!   - Single brackets `[` are NOT operators — they appear only inside words
 //!     (array subscripts, case patterns). Only `[[` is a token.
 //!   - Adjacency tracking: `next_is_adjacent()` lets the parser decide whether
 //!     to concatenate tokens (e.g., `$foo"bar"` → single Concat expression).
+//!     It also decides `{`: a brace glued to the previous word is SB4071
+//!     (bash would keep it literal), a spaced one opens a block.
 //!
 //! SECURITY: The scanner never silently drops input. Every byte becomes part
 //! of a token. Unknown sequences become Word tokens for the parser to reject.
@@ -175,6 +179,14 @@ pub struct Scanner {
     /// already enforces for a `[[ ]]` operand. Without it `$(int x=1)` ate
     /// its own `)` and was reported as an unterminated `$(`.
     cmd_sub_depth: usize,
+    /// Nonzero while parsing a control-flow **header condition** (`if`,
+    /// `elif`, `while`, `until`). There a `{` closes the condition and opens
+    /// the body (DD#68), so it must terminate a command's word list even when
+    /// it is glued to the previous word — `if /bin/true a{echo y}` is legal.
+    /// Outside a header an adjacent `{` is instead SB4071, because it means
+    /// the author wrote a brace *inside a word* and bash would have kept it
+    /// literal (`echo a{echo z}`).
+    header_depth: usize,
     /// First construct whose closing delimiter ran off the end of the source:
     /// `(offset of the opener, what it was)`. The scan-to-closer helpers all
     /// stopped at end-of-input and silently pretended they had found the
@@ -202,6 +214,7 @@ impl Scanner {
             last_end: 0,
             arith_depth: 0,
             cmd_sub_depth: 0,
+            header_depth: 0,
             unterminated: None,
             attached_hash: None,
             bad_escape: None,
@@ -249,6 +262,24 @@ impl Scanner {
     /// Leave arithmetic-scanning mode (see [`enter_arith`]).
     pub fn exit_arith(&mut self) {
         self.arith_depth = self.arith_depth.saturating_sub(1);
+    }
+
+    /// Enter a control-flow header condition (`if`/`elif`/`while`/`until`).
+    /// Must be paired with [`exit_header`]. While active, a `{` terminates a
+    /// command's word list even when adjacent to the previous word, because
+    /// there it opens the block body (DD#68).
+    pub fn enter_header(&mut self) {
+        self.header_depth += 1;
+    }
+
+    /// Leave a control-flow header condition (see [`enter_header`]).
+    pub fn exit_header(&mut self) {
+        self.header_depth = self.header_depth.saturating_sub(1);
+    }
+
+    /// True while parsing a control-flow header condition.
+    pub fn in_header(&self) -> bool {
+        self.header_depth > 0
     }
 
     /// Enter a `$( … )` body. Must be paired with [`exit_cmd_sub`].
