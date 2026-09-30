@@ -32,10 +32,6 @@ invariant behind `taint_top_level`'s "no fixpoint". That now holds for bodies
 too: the verdict makes the discarded set provably equal to the one the
 enclosing scope keeps. Option (b) is closed with it.
 
-**Open for DG.** Reusing the number SB5067 for the relaxed rule was my call
-(it keeps all existing spec assertions structurally valid) — reported, not
-ruled on.
-
 ## ══ STATUS (2026-10-01, latest) — SB5067 relaxed to a net-effect rule; SSA backstop now sees bulk fills ══
 
 Sweep **7071** (3638 native, 3420 c, 13 skipped) — predicted exactly, zero
@@ -87,6 +83,10 @@ condition still holds: every shape there is SB5020 under a normal compile.
 (it keeps all seven existing spec assertions structurally valid) — reported,
 not ruled on. `q-cmdsub-body-taints-outer-global` remains yours; its option (a)
 got materially cheaper and the task file records the new calculus.
+
+> **Both answered later the same day** — DG took option (a) (see the entry
+> above) and ratified the number: "we already reused SB5067? if so, let it
+> stand". Nothing here is still open.
 
 ## ══ STATUS (2026-09-30, latest) — P1 SIGSEGV fixed; the crash was non-reproducible codegen ══
 

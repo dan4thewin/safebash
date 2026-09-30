@@ -235,14 +235,17 @@ only sites whose name is still dirty at exit, deduped to the last site per name
 (the one actually responsible). `bfb.20` demonstrates it: the blame lands on the
 `else` branch, not the `if`.
 
-**The number SB5067 is kept.** The diagnostic is the same rule loosened, not a
-new one, and reuse keeps all seven existing spec assertions structurally valid.
+**The number SB5067 is kept** — my call at the time, ratified by DG
+2026-10-01 ("we already reused SB5067? if so, let it stand"). The diagnostic is
+the same rule loosened, not a new one, and reuse keeps every existing spec
+assertion structurally valid.
 
 **Scope change worth knowing:** site collection moved from `walk_stmt_tree` to
 `walk_scoped_structural_stmts` filtered on `in_fn.is_empty()`, so a nested
-function's sites are no longer attributed to its parent (the nested body gets
-its own verdict), and the walk no longer descends into `$( )` bodies. That
-leaves `q-cmdsub-body-taints-outer-global` exactly where it was.
+function's sites are no longer attributed to its parent — the nested body gets
+its own verdict. The walk does not descend into `$( )` bodies either, and for
+the same reason: as of the extension below, each body gathers and reports its
+own sites, so descending here would report one leak twice.
 
 ### Why (a) alone, and what (ii) is for
 

@@ -3606,11 +3606,14 @@ use std::collections::HashSet;
 ///
 /// Phase 1 walks the whole top level, deferring function definitions; phase 2
 /// then walks each body against the completed set. That is sound with no
-/// fixpoint **because SB5067 forbids a function from leaving a global tainted
+/// fixpoint **because SB5067 forbids a body from leaving a global tainted
 /// that it did not inherit**: a body's net effect on the global taint set is
 /// insert-nothing, and SB5088 separately forbids it cleaning an inherited
 /// taint, so the net effect is exactly nil and phase 1's set is final before
-/// any body is read. It also costs nothing in precision —
+/// any body is read. "Body" covers a `$( … )` as well as a function, which is
+/// what lets `taint_cmdsub_bodies` clone-and-discard soundly (DG, 2026-10-01).
+/// A `$( … )` body is inlined rather than forked, so its writes really do
+/// escape; the verdict is what makes the discarded set equal to the kept one. It also costs nothing in precision —
 /// top-level flow order is preserved exactly, so `argv a` followed by an
 /// attest-all still leaves `a` clean for every body.
 ///
@@ -3639,9 +3642,10 @@ pub fn check_taint(program: &Program) -> Vec<Diagnostic> {
 
 /// Phase 1: walk the top level, deferring every function definition.
 ///
-/// SB5067 keeps a body's net effect on the global taint set at nil, so the
-/// set this leaves behind is final — the deferred bodies can then be
-/// checked against it in one pass, with no fixpoint.
+/// SB5067 keeps a body's net effect on the global taint set at nil — for a
+/// `$( … )` body as much as a function's — so the set this leaves behind is
+/// final, and the deferred bodies can then be checked against it in one pass,
+/// with no fixpoint.
 fn taint_top_level<'a>(
     program: &'a Program,
     tainted: &mut HashSet<String>,
@@ -8066,7 +8070,7 @@ fn taint_out_params(c: &Command, cx: &SlotCx, tainted: &mut HashSet<String>) {
     }
 }
 
-// ── SB5067: a function may not LEAVE a global tainted ─────────────
+// ── SB5067: a body may not LEAVE a global tainted ────────────────
 //
 // The taint pass walks a function body **once**, with the tainted set known
 // at that point. That was sound only because taint could not arrive later —
