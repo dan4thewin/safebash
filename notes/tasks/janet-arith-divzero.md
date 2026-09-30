@@ -1,6 +1,6 @@
 ---
 title: "janet backend: disposition for a zero divisor (DD#25 amendment)"
-status: open
+status: deferred
 priority: P4
 kind: feature
 depends: []
@@ -28,3 +28,15 @@ question, not an implementation detail.
 
 No spec cost either way at present: arithmetic-fault specs are
 `in_modes native,c` and janet is not in the sweep.
+
+## Deferred to post-beta (DD#104, 2026-09-30)
+
+The in-tree janet backend is removed; `--emit-ir` replaces it with an
+inert IR capture that an out-of-tree oracle can consume. This gap is
+**not fixed** -- it is recorded here as part of the diagnosis a restart
+should read. The code it describes lives at tag `janet-babel`.
+
+This file was still marked live (`open`/`pending`/`active`) long after the
+backend it targets was deleted; the other 28 janet tasks were deferred at the
+time and these four were missed. Deferred 2026-09-30 for consistency -- no
+assessment of the underlying gap has changed.

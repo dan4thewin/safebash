@@ -1,6 +1,6 @@
 ---
 title: "janet: int arrays miscompile (scan-number on the array literal); int-cell `:-` too"
-status: pending
+status: deferred
 priority: P3
 kind: bug
 depends: []
@@ -46,3 +46,15 @@ unset-int) and compare `(= cell 0)` rather than `(= (length cell) 0)`.
 2026-08-29, finishing `bug-cjanet-default-on-int-var` (int `:-` identity-element
 default). The scalar int `:-` fix landed in all three backends; the int-cell
 case exposed this broader pre-existing janet int-array gap.
+
+## Deferred to post-beta (DD#104, 2026-09-30)
+
+The in-tree janet backend is removed; `--emit-ir` replaces it with an
+inert IR capture that an out-of-tree oracle can consume. This gap is
+**not fixed** -- it is recorded here as part of the diagnosis a restart
+should read. The code it describes lives at tag `janet-babel`.
+
+This file was still marked live (`open`/`pending`/`active`) long after the
+backend it targets was deleted; the other 28 janet tasks were deferred at the
+time and these four were missed. Deferred 2026-09-30 for consistency -- no
+assessment of the underlying gap has changed.

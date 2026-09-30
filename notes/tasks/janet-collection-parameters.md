@@ -1,6 +1,6 @@
 ---
 title: "janet backend has no DD#100 collection parameters"
-status: open
+status: deferred
 priority: P2
 kind: feature
 depends: []
@@ -44,3 +44,15 @@ which is a backend design question, not a port of the existing code.
 - `notes/tasks/janet-join-intrinsic-gaps.md`
 - `notes/tasks/janet-map-from-array.md`
 - `notes/decisions/DD100-collection-parameters.md`
+
+## Deferred to post-beta (DD#104, 2026-09-30)
+
+The in-tree janet backend is removed; `--emit-ir` replaces it with an
+inert IR capture that an out-of-tree oracle can consume. This gap is
+**not fixed** -- it is recorded here as part of the diagnosis a restart
+should read. The code it describes lives at tag `janet-babel`.
+
+This file was still marked live (`open`/`pending`/`active`) long after the
+backend it targets was deleted; the other 28 janet tasks were deferred at the
+time and these four were missed. Deferred 2026-09-30 for consistency -- no
+assessment of the underlying gap has changed.

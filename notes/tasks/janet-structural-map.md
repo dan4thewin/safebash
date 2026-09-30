@@ -1,6 +1,6 @@
 ---
 title: "EFFORT: janet structural parse-map (--janet-map) — staged rewrite"
-status: active
+status: deferred
 priority: P2
 kind: effort
 depends: []
@@ -101,3 +101,15 @@ scope `(var)`/`(set)` deferred (candidate S3/S5).
 - `$name` as `($ x)` vs bare `x` — currently `($ x)` (explicit sigil).
 - assignment as `(set x …)` with pre-declared `(var x nil)` vs `(var/set)` —
   currently pre-declare + `set`.
+
+## Deferred to post-beta (DD#104, 2026-09-30)
+
+The in-tree janet backend is removed; `--emit-ir` replaces it with an
+inert IR capture that an out-of-tree oracle can consume. This gap is
+**not fixed** -- it is recorded here as part of the diagnosis a restart
+should read. The code it describes lives at tag `janet-babel`.
+
+This file was still marked live (`open`/`pending`/`active`) long after the
+backend it targets was deleted; the other 28 janet tasks were deferred at the
+time and these four were missed. Deferred 2026-09-30 for consistency -- no
+assessment of the underlying gap has changed.
