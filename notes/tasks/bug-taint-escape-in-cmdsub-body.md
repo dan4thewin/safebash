@@ -1,6 +1,6 @@
 ---
 title: "`check_taint` does not walk statements inside a `$( )` body"
-status: open
+status: done
 priority: P2
 kind: bug
 depends: []
@@ -10,6 +10,26 @@ gates:
   - "a declaration inside a `$( )` body extends the tainted set for the rest of that body"
   - "the walk over a `$( )` body is total over `StmtKind` — no `if let StmtKind::Command`"
 ---
+
+> **2026-09-29 — DONE (journal 445, specs `cbt.1`-`cbt.10`).** `taint_stmt`
+> now descends unconditionally into `cmdsub_bodies()` via `taint_cmdsub_bodies`,
+> with the set cloned per body as `taint_function_body` does. All five gates
+> above hold, and the diagnostics are located (`:LINE:COL:` + SB code) rather
+> than the backstop's bare message.
+>
+> Two corrections to what is written below. The claim that `/bin/echo "$h"`
+> already gave a proper SB5020 was an artefact of probing in **argument**
+> position, where `check_bare_cmdsub_taint` rejects the capture before anything
+> looks inside; in value position it was the backstop too. And the fourth gate
+> was met by descending through `taint_stmt`, which is total over `StmtKind`,
+> rather than by widening `check_cmdsub_inner_reads` — that function was
+> measured (stub + sweep: 12 specs x 2 modes fail without it) to be
+> load-bearing for expression-walk positions and was kept.
+>
+> What is NOT modelled: a body tainting a name the enclosing scope already
+> binds. The write persists at runtime (DD#86) but the cloned set discards the
+> taint. Strictly better than before (which walked nothing) and no new hole,
+> but unfinished -- see `q-cmdsub-body-taints-outer-global.md`.
 
 > **2026-09-28 — the escape is closed; this is now a diagnostic-quality bug.**
 > Both programs below are rejected at compile time (spec `bkstp.1`, `bkstp.2`).

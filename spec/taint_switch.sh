@@ -5,7 +5,7 @@
 set -eu
 . common.sh
 setup taint_switch
-plan=11
+plan=23
 echo "1..$plan" >&3
 
 set +e
@@ -64,6 +64,115 @@ echo ${a[0]}'
 run_sash 'array a=(x y)
 echo ${a[0]}'
 [[ $rc = 0 && $out = x && -z $err ]]; chk sw.11
+
+# ── SSA taint backstop: the read positions the four-arm match never saw ────
+# Moved here from taint.sh 2026-09-30. These ran under a normal compile and
+# reached the backstop only because the front-end taint pass did not descend
+# into a `$( … )` body — the vehicle every negative below used. That gap is
+# closed (bug-taint-escape-in-cmdsub-body), so under a normal compile validate
+# now rejects them FIRST, with a located SB code, and the backstop message
+# never appears. Testing the backstop therefore requires turning the front end
+# off explicitly, which is what `--no-taint-cst` is for.
+#
+# The front-end behaviour these used to assert incidentally is covered by
+# `cbt.*` in taint.sh.
+# `check_inst_uses` enumerated 4 of 19 `SsaInst` variants and ended in
+# `_ => {}`, so `SsaInst::Test` and `SsaInst::RedirectPush` were never checked
+# at all — both are listed in `classify_inst_def`, the write side, which has
+# been exhaustive since it was written. The front-end pass does not descend
+# into a `$( )` body (notes/tasks/bug-taint-escape-in-cmdsub-body.md), which is
+# what made the gap reachable. Enumeration now lives in
+# `SsaInst::taint_reads`, total over the enum with no wildcard.
+
+# bkstp.1 NEGATIVE — a tainted REDIRECT TARGET inside a `$( )` body. This
+#         compiled, and the binary wrote a file named by the environment.
+run_sash '/bin/echo $(str h=$(getenv TARGET); echo pwned > $h)'
+[[ $rc != 0 && -z $out && $err == *"taint backstop"* ]]; chk bkstp.1
+
+# bkstp.2 NEGATIVE — a tainted TEST OPERAND inside a `$( )` body. This
+#         compiled, and the binary branched on external input.
+run_sash '/bin/echo $(str h=$(getenv TARGET); if [[ -n $h ]] { echo yes })'
+[[ $rc != 0 && -z $out && $err == *"taint backstop"* ]]; chk bkstp.2
+
+# bkstp.3 POSITIVE — an `attest` predicate reads its tainted subject by
+#         design, and the caught forms reach SSA as a bare `SsaInst::Test`,
+#         structurally identical to a user-written `[[ ]]`. Without
+#         `TestOrigin` marking it, making `Test` a sink rejects every
+#         caught-attest program — it took out 24.13 and bfb.1-6 in one sweep.
+run_sash 'str v=$(arg 1)
+if attest v [[ $v =~ ^[0-9]+$ ]] { /bin/echo "ok $v" }' 42
+[[ $rc = 0 && $out = "ok 42" && -z $rerr ]]; chk bkstp.3
+
+# bkstp.4 POSITIVE — an attested value is still usable as a redirect target.
+#         A `Redirect`'s target is an unlowered `ir::Expr`, never an
+#         `SsaValue`, so the check resolves by bare NAME via `taint_of_name`;
+#         an over-broad name match would reject this.
+run_sash 'str v=$(arg 1)
+attest v [[ $v =~ ^[a-z/]+$ ]]
+/bin/echo pwned > ${v:?no}
+/bin/echo done' /dev/null
+[[ $rc = 0 && $out = "done" && -z $rerr ]]; chk bkstp.4
+
+# bkstp.5 NEGATIVE — a tainted `@{a:-WORD}` splat DEFAULT. `splat_taint`
+#         consulted only the array name and `taint_off`, never the word, so
+#         `b` was derived CLEAN and every later read of it passed. The array
+#         is declared outside the body on purpose: a body-declared array
+#         false-positives SB5031, which would mask this.
+run_sash 'array a=( )
+/bin/echo $(str t=$(getenv T); array b=( @{a:-$t} ); echo $b[0])'
+[[ $rc != 0 && -z $out && $err == *"taint backstop"* ]]; chk bkstp.5
+
+# bkstp.6 POSITIVE — a CLEAN splat default still derives clean. Guards the
+#         fix against the lazy over-approximation of tainting every splat
+#         that carries any word at all.
+run_sash 'array a=( )
+/bin/echo $(array b=( @{a:-ok} ); echo $b[0])'
+[[ $rc = 0 && $out = "ok" && -z $rerr ]]; chk bkstp.6
+
+# bkstp.7 NEGATIVE — DD#91 scopes `!` to its own subject's read. `@{a:!-$t}`
+#         vouches for the ARRAY, not for an unrelated variable spliced into
+#         the default, so the word's taint still counts.
+run_sash 'array a=( )
+/bin/echo $(str t=$(getenv T); array b=( @{a:!-$t} ); echo $b[0])'
+[[ $rc != 0 && -z $out && $err == *"taint backstop"* ]]; chk bkstp.7
+
+# bkstp.8 POSITIVE — `@{a:-}` has `has_word` false and its `word` field is a
+#         placeholder the program never wrote. Examining it would reject
+#         valid programs for a value that does not exist.
+run_sash 'array a=( x )
+array b=( @{a:-} )
+/bin/echo $b[0]'
+[[ $rc = 0 && $out = "x" && -z $rerr ]]; chk bkstp.8
+
+# bkstp.9 POSITIVE — DD#91 `${t:!~}`. `elide_taint` reads the flag and answers
+#         Clean, so the array derives clean and the later read is allowed.
+#         In a `$( )` body so the front end is not what decides it, and so the
+#         pair below differs by exactly one character.
+run_sash '/bin/echo $(str t=$(getenv HOME); array a=( ${t:!~} ); echo $a[0])'
+[[ $rc = 0 && $out = "$HOME" && -z $rerr ]]; chk bkstp.9
+
+# bkstp.10 NEGATIVE — the same elide WITHOUT the `!`. `:~` says what to do
+#          when the value is absent; it vouches for nothing, so the array is
+#          tainted and reading it is caught.
+run_sash '/bin/echo $(str t=$(getenv HOME); array a=( ${t:~} ); echo $a[0])'
+[[ $rc != 0 && -z $out && $err == *"taint backstop"* ]]; chk bkstp.10
+
+# bkstp.11 NEGATIVE — a tainted ARRAY at a splat. `b` is tainted through its
+#          own `:-` default (bkstp.5's mechanism), and splatting it into `c`
+#          must carry that across. The splat's word here is the CLEAN literal
+#          `z`, so `splat_taint` can only reach the right answer via the array
+#          itself — the one read this spec isolates.
+run_sash 'array a=( )
+/bin/echo $(str t=$(getenv HOME); array b=( @{a:-$t} ); array c=( @{b:-z} ); echo $c[0])'
+[[ $rc != 0 && -z $out && $err == *"taint backstop"* ]]; chk bkstp.11
+
+# bkstp.12 POSITIVE — the same splat with DD#91 `@{b:!-z}`. `!` is a per-use
+#          attest-all for the splat's own read, so `c` derives clean and keeps
+#          `b`'s elements. The counterpart to bkstp.7: there `!` did NOT cover
+#          an unrelated word, here it DOES cover the subject it names.
+run_sash 'array a=( )
+/bin/echo $(str t=$(getenv HOME); array b=( @{a:-$t} ); array c=( @{b:!-z} ); echo $c[0])'
+[[ $rc = 0 && $out = "$HOME" && -z $rerr ]]; chk bkstp.12
 unset SASH_CFLAGS
 
 set -e

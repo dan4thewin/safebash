@@ -1644,7 +1644,7 @@ echo "[$s][$v]"'
 # csc.16 DD#60's out-param fill is a statement, and a statement is legal in a
 #        body — `argv N a` fills, `$(argv N)` splats, and one argument
 #        discriminates them
-run_sash 'str s=$(argv 1 b; /bin/echo @{b:-none})
+run_sash 'str s=$(argv 1 b; attest x in b [[ -n $x ]]; /bin/echo @{b:-none})
 attest s [[ -n $s ]]
 echo "[$s]"' a b
 [[ $rc = 0 && $out = "[a b]" && -z $err ]]; chk csc.16

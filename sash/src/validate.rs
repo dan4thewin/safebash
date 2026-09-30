@@ -4898,6 +4898,34 @@ fn taint_stmt(
         StmtKind::ArithTest(a) => check_arith_taint(a, tainted, diags),
         _ => taint_child_bodies(stmt, tainted, sx, diags),
     }
+    taint_cmdsub_bodies(stmt, tainted, sx, diags);
+}
+
+/// Taint-check the statements of every `$( … )` body hanging off `stmt`.
+///
+/// DD#86: a `$( … )` body is an anonymous function body, so its statements are
+/// taint-checked like any others. `taint_stmt` calls this unconditionally,
+/// rather than folding it into the `_` arm, because the arms that carry a
+/// substitution — Command, Declaration, Assignment — are *leaves*; widening
+/// `_` reaches none of them. `taint_child_bodies` stays pinned to
+/// `structural_bodies()` so a wrapper statement is not visited twice.
+///
+/// The set is CLONED per body, matching `taint_function_body`: a name the body
+/// introduces is body-local and must not leak outward. A write to a name the
+/// enclosing scope already binds does persist at runtime (DD#86), and that is
+/// deliberately NOT modelled here — see `notes/tasks/`.
+fn taint_cmdsub_bodies(
+    stmt: &Statement,
+    tainted: &HashSet<String>,
+    sx: &SlotCx,
+    diags: &mut Vec<Diagnostic>,
+) {
+    for body in stmt.cmdsub_bodies() {
+        let mut body_tainted = tainted.clone();
+        for s in body {
+            taint_stmt(s, &mut body_tainted, sx, diags);
+        }
+    }
 }
 
 fn taint_child_bodies(

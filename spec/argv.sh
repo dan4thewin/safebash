@@ -398,11 +398,11 @@ run_sash 'str s=$(argv; /bin/echo hi); attest s [[ -n $s ]]; echo "$s"' p q
 # av.c5 the DD#60 out-param fill is a statement inside `$( )` too —
 # DD#86's addendum makes the body an anonymous function, so `b` is
 # local to it and the substitution yields what the body prints
-run_sash 'str s=$(argv 0 b; /bin/echo @{b:-none}); attest s [[ -n $s ]]; echo "$s"' p q
+run_sash 'str s=$(argv 0 b; attest x in b [[ -n $x ]]; /bin/echo @{b:-none}); attest s [[ -n $s ]]; echo "$s"' p q
 [[ $rc = 0 && $out = *" p q" && -z $err ]]; chk av.c5
 
 # av.c6 with a start index, same as anywhere else (argv[0] dropped)
-run_sash 'str s=$(argv 1 b; /bin/echo @{b:-none}); attest s [[ -n $s ]]; echo "$s"' p q
+run_sash 'str s=$(argv 1 b; attest x in b [[ -n $x ]]; /bin/echo @{b:-none}); attest s [[ -n $s ]]; echo "$s"' p q
 [[ $rc = 0 && $out = "p q" && -z $err ]]; chk av.c6
 
 # av.c7 the two shapes collide at ONE argument: `argv b` is the fill
