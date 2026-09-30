@@ -227,3 +227,59 @@ not silently ignore it"). Two-layer model: SB4034 = a *known* dropped operator
 The kept forms (`:-`/`:?`/`:off:len`/`:s/`, subscripts, `@`-transform SB4015,
 `!`-indirect SB4003, strlen) are all recognised earlier, so only real garbage
 reaches the reject. Specs `spec/var_modifiers.sh` vm.un1-4.
+
+### Follow-on (2026-09-30) — `$` in a `:?` abort message is SB4070
+
+The `:?` abort **message** is a literal, and a `$` in it is now rejected
+(**SB4070**) unless the *whole* message is wrapped in `'…'`, in which case the
+quotes are stripped and the `$` is kept as an ordinary byte:
+
+```
+str z=${y:?$m}           # SB4070
+str z=${y:?pre $m post}  # SB4070 — anywhere in the message, not just leading
+str z=${y:?plain text}   # ok
+str z=${y:?'costs $5'}   # ok — aborts with:  ./prog: costs $5
+echo @{a:?$(g)}          # SB4070 — the array form obeys the same rule
+```
+
+**Why the message is not an interpolating word.** It was, briefly, and that was
+a mistake worth recording. DD#78 groups `:-` and `:?` operands together, but it
+groups them by *purpose* — a purity constraint on what the operand may contain.
+The **parse** belongs to this DD, and the interpolating-word parse above is
+defined for `:-` alone. Reading DD#78's grouping as settling the parse made
+`${y:?$(g)}` a live user-function call site. Two consequences, the second
+worse than the first:
+
+- an abort message could run arbitrary user code on its way out, and `$(( … ))`
+  is a call site too (DD#58's arith sexpr resolves `(g …)` to a user function),
+  so "only pure reads" is not a rule that can be stated, let alone checked;
+- because the message is materialized **eagerly**, `str y=val; str z=${y:?$(g)}`
+  forked and exec'd `g` on the path where `y` was set and **no abort happened**.
+  Exit 0, no output, and user code ran.
+
+DG: "`:?` is an abort. The code is exiting. Treating MESSAGE as an
+interpolating word means more code can run. Naming it a disposition default
+doesn't equate it to `:-` but rather groups it by purpose." And on the remedy:
+"a `:?` is a failsafe, so a literal is probably adequate. If I anticipate an
+empty array, I can use a conditional to get whatever behavior I desire,
+including verbose messages."
+
+**Why the plain revert was not enough.** A literal message degrades *silently*:
+`${y:?$m}` is valid bash, reads as an interpolation, and quietly emits the two
+characters `$m`. That is exactly the failure SB4047 exists to prevent, so the
+same doctrine applies — reject rather than silently degrade. `'…'` is the
+explicit way to say "I meant the character".
+
+**Both spellings, one helper.** `parse_abort_message` serves the scalar
+`${x:?MSG}` and the splat `@{a:?WORD}`. The array form had been the *more*
+permissive of the two the whole time — `optional_splat_word` called
+`parse_default_word`, so `@{a:?$(g)}` ran `g` and printed its return value as
+the message, and it kept doing so after the scalar form was reverted. A fix
+that touches one spelling of a shared rule is half a fix.
+
+Scope is `$` only, as DG specified. Note the brace scanner is pure
+depth-matching (above), so quotes do not protect a `}`: `${y:?'a}b'}` still
+terminates at the first `}`.
+
+Specs: `vm.req4`-`vm.req10` (var_modifiers.sh), `dd78.8`-`dd78.12` (taint.sh),
+`gs.56`-`gs.58` (glob_splat.sh, plan 58 -> 61).

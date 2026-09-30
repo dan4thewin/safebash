@@ -10,7 +10,7 @@
 set -eu
 . common.sh
 setup glob_splat
-plan=58
+plan=61
 echo "1..$plan" >&3
 
 set +e
@@ -319,6 +319,29 @@ echo $(join a)
 /usr/bin/printf "[%s]\n" y@a'
 [[ $rc = 0 && $out = "p q
 [y@a]" && -z $err ]]; chk gs.55
+
+# gs.56-gs.58 use `/bin/echo`, not the `echo` builtin: a splat into `echo` is
+# SB5030 whatever the message says, so the builtin would let these pass for the
+# wrong reason.
+# DD#69's `@{a:?WORD}` message obeys the same rule as the scalar
+# `${x:?MESSAGE}` (SB4070). It did NOT: `optional_splat_word` called
+# `parse_default_word`, so the array form was a full interpolating word — and
+# therefore a live user-function call site — for as long as the scalar form was
+# a literal. `@{a:?$(g)}` ran `g` and used its return value as the message.
+# gs.56 a `$name` in a splat abort message is SB4070
+run_sash 'array a=()
+/bin/echo @{a:?$m}'
+[[ $rc != 0 && -z $out && $err == *SB4070* ]]; chk gs.56
+# gs.57 and `$( )` — the call site that made this worth fixing. `g` is
+#       undefined, so a word parse could not compile at all.
+run_sash 'array a=()
+/bin/echo @{a:?$(g)}'
+[[ $rc != 0 && -z $out && $err == *SB4070* ]]; chk gs.57
+# gs.58 the single-quote escape works here too, quotes stripped
+run_sash 'array a=()
+/bin/echo @{a:?'"'"'costs $5'"'"'}'
+[[ $rc != 0 && -z $out ]] \
+  && { ! in_modes native || [[ $rerr == *": costs \$5" ]]; }; chk gs.58
 
 set -e
 tally

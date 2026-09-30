@@ -445,39 +445,43 @@ run_sash 'echo ${x:-$(random)}'
 # propagation): the `:-` default is a read, so the assignment itself rejects.
 run_sash 'y=$(getenv HOME); z=${x:-$y}; echo $z'
 [[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk dd78.7
-# dd78.8-dd78.12 the same discipline for the `:?` MESSAGE, which DD#78 names
-# alongside the `:-` default. Until the message became an interpolating word it
-# was a Literal, so the operand was not in the value graph at all: a tainted
-# one was reported SB5050 (dead variable — `h` written and never read), which
-# is the tell that it was never walked as a read rather than a taint check
-# passing.
-# dd78.8 tainted var in a :? message → SB5020, not SB5050
+# dd78.8-dd78.12 DD#78's read discipline does not reach the `:?` MESSAGE,
+# because the message is never read. It is a literal, and a `$` in it is SB4070
+# (see vm.req4-vm.req10). These specs pin the taint consequence: a tainted
+# value cannot escape through an abort message by any route — the interpolating
+# spellings are rejected outright, and the one spelling that IS allowed, a
+# single-quoted message, is literal text and still reads nothing.
+# dd78.8 a tainted var in a message is SB4070 — rejected before taint is even
+#        a question (it used to be SB5050: `h` really was dead)
 run_sash 'str h=$(getenv HOME)
 str y=""
 str z=${y:?$h}
 echo "[$z]"'
-[[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk dd78.8
-# dd78.9 a tainted source used inline in the message → SB5020
+[[ $rc != 0 && -z $out && $err == *SB4070* ]]; chk dd78.8
+# dd78.9 an inline tainted source is likewise SB4070, so there is no route by
+#        which `$(getenv …)` reaches stderr through a message
 run_sash 'str y=""
 str z=${y:?$(getenv HOME)}
 echo "[$z]"'
-[[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk dd78.9
-# dd78.10 attesting the value first is accepted, and the message carries it
+[[ $rc != 0 && -z $out && $err == *SB4070* ]]; chk dd78.9
+# dd78.10 the `:!?` vouching form does not buy an exemption — `!` covers the
+#        subject read, and the message is still parsed as a message
 run_sash 'str h=$(getenv HOME)
 attest h [[ -n $h ]]
 str y=""
-str z=${y:?$h}
-echo "[$z]"'
-[[ $rc != 0 && -z $out ]] \
-  && { ! in_modes native || [[ $rerr == *": "* ]]; }; chk dd78.10
-# dd78.11 DD#91 `!` vouches for the SUBJECT's read, never the operand's —
-#       `${y:!?$h}` still owes an attest for `h`, matching `${x:!-$y}`
-run_sash 'str h=$(getenv HOME)
-str y=""
 str z=${y:!?$h}
-echo "[$z]"'
-[[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk dd78.11
-# dd78.12 a literal message is still clean by construction
+echo "[$z][$h]"'
+[[ $rc != 0 && -z $out && $err == *SB4070* ]]; chk dd78.10
+# dd78.11 the quoted escape is NOT a taint hole: `$h` inside `'…'` is two
+#        literal characters, so a tainted `h` is not read and nothing escapes
+run_sash 'str h=$(getenv HOME)
+attest h [[ -n $h ]]
+str y=""
+str z=${y:?'"'"'$h'"'"'}
+echo "[$z][$h]"'
+[[ $rc != 0 && -z $out ]] \
+  && { ! in_modes native || [[ $rerr == *': $h' ]]; }; chk dd78.11
+# dd78.12 a plain message is unchanged
 run_sash 'str y=""
 str z=${y:?plain}
 echo "[$z]"'

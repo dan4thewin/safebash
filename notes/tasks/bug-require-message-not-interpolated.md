@@ -62,7 +62,7 @@ re-added scalar `:?` everywhere after DD#65 pruned it, so the many `DD#77`
 comments on `RequireValue` should be left alone. (DD#65's "`:?` is rejected for
 SCALAR `${var:?…}` only" line is the stale one; it predates DD#77.)
 
-## Resolved 2026-09-30
+## Resolved 2026-09-30 — SUPERSEDED, see below
 
 Two one-line changes, in two passes, and the second was mandatory — fixing
 only the first turned a wrong rejection into a **taint escape**.
@@ -94,3 +94,47 @@ by the SSA backstop with no SB code — that is
 
 Specs `vm.req4`-`vm.req8` (var_modifiers.sh, plan 151 -> 156) and
 `dd78.8`-`dd78.12` (taint.sh, plan 264 -> 269). Sweep 7007.
+
+## The 2026-09-30 fix was WRONG and has been reverted (same day)
+
+Everything above the previous section's heading stands as a description of the
+symptom. The fix does not. DG, on being shown the diff:
+
+> `:?` is an abort. The code is exiting. Treating MESSAGE as an interpolating
+> word means more code can run. Naming it a disposition default doesn't equate
+> it to `:-` but rather groups it by purpose.
+
+He is right, and the filing above helped mislead me: it frames the literal
+message as "an unimplemented DD#78 clause", when DD#78 Stage 1 had said the
+opposite ("`:?` … carr[ies] a literal operand (DD#65), nothing to check"). The
+"Not a taint leak" section is also more load-bearing than it reads — it is the
+record that nothing was broken and nothing needed fixing here.
+
+**What the fix actually did.** Measured after the fact, with a filesystem side
+effect because a `$( )` capture swallows stdout:
+
+| form | `y` | abort? | did the message's `$(g)` run? |
+|---|---|---|---|
+| `${y:-$(g)}` | `val` | n/a | no — `:-` is lazy for captures |
+| `${y:?$(g)}` | `""` | yes | ran |
+| `${y:?$(g)}` | `val` | **no** | **RAN** |
+
+The last row is the damage: a program that exits 0 and prints nothing still
+forked and exec'd, because the message is materialized eagerly. And the
+commit's claim that the non-abort path was unaffected was simply false —
+`vm.req7` did not test it.
+
+Worse, it did not even fix what it set out to. `@{a:?WORD}` was never made
+consistent: `optional_splat_word` had *always* called `parse_default_word`, so
+the array form remained a call site after the scalar revert.
+
+**Resolution.** Reverted, then closed properly: `$` in a `:?` message is
+**SB4070** unless the whole message is `'…'`-wrapped, at both spellings,
+through one shared `parse_abort_message`. A literal alone would have degraded
+silently (`${y:?$m}` quietly emitting `$m`), which is the SB4047 failure. See
+DD#65 follow-on 2026-09-30 and DD#78 addendum 2026-09-30.
+
+The original gate list at the top of this file is **void** — gate 1 asks for
+the interpolation that is now rejected, gate 2 asks for SB5020 where SB4070 now
+fires first, and gate 3 asks for bash parity that is a deliberate divergence.
+The real gates are `vm.req4`-`vm.req10`, `dd78.8`-`dd78.12`, `gs.56`-`gs.58`.

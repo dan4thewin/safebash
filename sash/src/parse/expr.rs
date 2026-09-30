@@ -328,13 +328,65 @@ fn parse_splat_op(
     Err(splat_disposition_malformed(span))
 }
 
+/// The `:?` abort MESSAGE — a plain literal, never an interpolating word.
+///
+/// `:?` is a failsafe: it fires while the program is on its way out. An
+/// interpolating message admits `$( )` and `$(( … ))`, and both are
+/// user-function call sites (DD#58's arith sexpr calls a `-> int` fn), so
+/// `${y:?$(g)}` forked and exec'd — and did so even when the subject was set
+/// and NO abort occurred, because the message is materialized eagerly. That is
+/// arbitrary user code on the success path of a construct whose entire job is
+/// to be a failsafe.
+///
+/// A literal alone is not enough, though, because it degrades *silently*:
+/// `${y:?$m}` looks like bash and quietly yields the two characters `$m`. That
+/// is the failure DD#65's SB4047 machinery exists to prevent. So a `$` in a
+/// message is **SB4070** unless the whole message is single-quoted, which is
+/// the explicit way to ask for a literal `$`:
+///
+/// ```text
+/// ${y:?costs $5}      SB4070
+/// ${y:?'costs $5'}    → costs $5
+/// ```
+///
+/// DG (2026-09-30): "a `:?` is a failsafe, so a literal is probably adequate.
+/// If I anticipate an empty array, I can use a conditional to get whatever
+/// behavior I desire, including verbose messages."
+fn parse_abort_message(text: &str, span: Span) -> Result<Box<Expr>, Diagnostic> {
+    let quoted = text.len() >= 2 && text.starts_with('\'') && text.ends_with('\'');
+    let literal = if quoted {
+        text[1..text.len() - 1].to_string()
+    } else if text.contains('$') {
+        return Err(abort_message_expansion(span));
+    } else {
+        text.to_string()
+    };
+    Ok(Box::new(Expr {
+        kind: ExprKind::Literal(literal),
+        span,
+    }))
+}
+
+fn abort_message_expansion(span: Span) -> Diagnostic {
+    parse_error(
+        span,
+        "SB4070",
+        "a `:?` abort message is a literal, so a `$` expansion in it would be \
+         silently emitted as text rather than expanded. Single-quote the \
+         message to mean a literal `$` (`${x:?'costs $5'}`), or, if you want \
+         the value in the message, test for the condition explicitly and write \
+         the message yourself"
+            .to_string(),
+    )
+}
+
 /// `@{a:?[WORD]}` operand: the WORD if present, else `None` (bare `@{a:?}`
 /// aborts with no message word).
 fn optional_splat_word(rest: &str, span: Span) -> Result<Option<Box<Expr>>, Diagnostic> {
     if rest.is_empty() {
         Ok(None)
     } else {
-        Ok(Some(parse_default_word(rest, span)?))
+        Ok(Some(parse_abort_message(rest, span)?))
     }
 }
 
@@ -1455,17 +1507,33 @@ fn parse_disposition_operator(
             span,
         }));
     }
-    // DD#65/DD#78: the `${var:-WORD}` default is a full interpolating word, and
-    // DD#78 scopes the same rule to `${var:?MESSAGE}` — the message is a
-    // disposition default like any other, "constrained for uniformity and
-    // because it is eagerly materialized". Parsing it as a Literal made it
-    // invisible to every pass: bash expands `${y:?$m}` to the value of `m`
-    // while sash printed `$m`, and because the operand was not in the value
-    // graph at all, `m` was reported SB5050 (dead variable) instead of having
-    // its taint checked (SB5020).
-    let operand = if op_str == ":-" || op_str == ":?" {
+    // DD#65: the `${var:-WORD}` default is a full interpolating word.
+    //
+    // `${var:?MESSAGE}` is deliberately NOT one — the message is a plain
+    // literal. This was briefly changed to interpolate (DD#78 groups the two
+    // operands as "disposition defaults" and lists user functions among the
+    // legal ones) and reverted the same day by DG: that grouping is by
+    // *purpose*, a purity/taint constraint on what the operand may be, and it
+    // does not make the two parse alike. DD#65 defines the interpolating-word
+    // parse for `:-` alone.
+    //
+    // The concrete harm, measured: an interpolating message admits `$( )` and
+    // `$(( … ))`, and both are user-function call sites (DD#58's arith sexpr
+    // calls a `-> int` fn). `${y:?$(g)}` therefore forked and exec'd — and did
+    // so even when `y` was set and NO abort occurred, because the `:?` message
+    // is materialized eagerly. That put arbitrary user code on the success
+    // path of a construct whose whole job is to be a failsafe.
+    //
+    // DG: "a `:?` is a failsafe, so a literal is probably adequate. If I
+    // anticipate an empty array, I can use a conditional to get whatever
+    // behavior I desire, including verbose messages."
+    let operand = if op_str == ":-" {
         operand_str
             .map(|s| parse_default_word(&s, span))
+            .transpose()?
+    } else if op_str == ":?" {
+        operand_str
+            .map(|s| parse_abort_message(&s, span))
             .transpose()?
     } else {
         operand_str.map(|s| {

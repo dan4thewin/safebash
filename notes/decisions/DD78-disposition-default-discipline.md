@@ -128,3 +128,32 @@ lean on eagerness.
 
 Pinned by `spec/functions.sh` `lift.4`-`lift.10`; `lift.6` is the one that
 fails if the operand is hoisted (the untaken `f`'s stderr appears).
+
+### Addendum (2026-09-30) — the `${x:?MESSAGE}` scope clause is withdrawn
+
+The Scope section above names the `:?` abort message as a disposition default,
+"constrained for uniformity and because it is eagerly materialized". That
+clause is withdrawn. The message is a **literal**, and a `$` in it is SB4070
+(DD#65, follow-on 2026-09-30); a single-quoted message is literal text. Either
+way the operand is never read, so there is nothing for this DD's read
+discipline to check and no route by which a tainted value escapes through an
+abort message.
+
+This is a *withdrawal*, not a gap left open. Stage 1 of this DD said so
+originally — "`:?`/pattern operators carry a literal operand (DD#65), nothing
+to check" — and the uniformity argument in Scope was added on top of it without
+noticing the two disagreed.
+
+The clause was acted on once, in the belief that this DD settled the parse. It
+does not: this DD constrains what an operand may *contain*, DD#65 defines how
+it is *spelled*, and the interpolating-word spelling is `:-`'s. Making `:?`
+interpolate turned a documented-safe literal into a user-function call site on
+both the abort and the **success** path. See DD#65 for the full account.
+
+The lesson generalises past this operator: grouping two forms by purpose in a
+DD does not make every rule stated about one of them apply to the other. When a
+DD appears to settle a question about a form it merely *mentions*, check which
+DD actually owns that question.
+
+The rest of this DD — the clean/non-`random` read discipline on `:-`,
+`arg N DEFAULT`, and the laziness amendment — is unaffected.

@@ -5,7 +5,7 @@
 set -eu
 . common.sh
 setup var_modifiers
-plan=156
+plan=158
 echo "1..$plan" >&3
 
 set +e
@@ -125,45 +125,64 @@ run_sash 'echo "${foo:?must be set}"'
 run_sash 'foo=; echo "${foo:?empty}"'
 [[ $rc != 0 && -z $out ]] \
   && { ! in_modes native || [[ $rerr == *": empty"* ]]; }; chk vm.req3
-# vm.req4-vm.req8 DD#78: the `:?` MESSAGE is a full interpolating word, exactly
-#       like the `:-` default. It was parsed as an ExprKind::Literal, so sash
-#       printed `$m` where bash prints the value — an oracle divergence, and
-#       the reason the operand was invisible to every other pass.
-# vm.req4 a variable in the message expands
-run_sash 'str m=boom
-str y=""
+# vm.req4-vm.req10 the `:?` abort MESSAGE is a LITERAL, and a `$` in it is
+#       SB4070 unless the whole message is single-quoted.
+#
+#       `:?` is a failsafe — it fires on the way out. An interpolating message
+#       admits `$( )` and `$(( … ))`, and BOTH are user-function call sites
+#       (DD#58's arith sexpr calls a `-> int` fn). While the message briefly
+#       interpolated, `${y:?$(g)}` forked and exec'd — and did so even when `y`
+#       was SET and no abort happened, because the message is materialized
+#       eagerly. Arbitrary user code on the success path of a failsafe.
+#
+#       Reverting to a literal fixed that but degraded silently: `${y:?$m}`
+#       looks like bash and quietly yields the two characters `$m`, which is
+#       the failure SB4047 exists to prevent. Hence SB4070, with `'…'` as the
+#       explicit way to mean a literal `$`.
+#
+#       DG: "a `:?` is a failsafe, so a literal is probably adequate… I think
+#       ${y:?MESSAGE} should reject any $ unless wrapped in single quotes."
+# vm.req4 a `$name` in the message is SB4070, not a silent literal
+run_sash 'str y=""
 str z=${y:?$m}
 echo "[$z]"'
-[[ $rc != 0 && -z $out ]] \
-  && { ! in_modes native || [[ $rerr == *": boom" ]]; }; chk vm.req4
-# vm.req5 so does an arithmetic expansion — a different interpolation form, so
-#       this is not just testing the `$name` case twice
+[[ $rc != 0 && -z $out && $err == *SB4070* ]]; chk vm.req4
+# vm.req5 an arithmetic expansion too — a second expansion form, and one that
+#       can call a user fn via the DD#58 sexpr
 run_sash 'str y=""
 str z=${y:?count $(( 2 + 3 ))}
 echo "[$z]"'
-[[ $rc != 0 && -z $out ]] \
-  && { ! in_modes native || [[ $rerr == *": count 5" ]]; }; chk vm.req5
-# vm.req6 literal text and an expansion mix in one message
-run_sash 'str m=boom
-str y=""
+[[ $rc != 0 && -z $out && $err == *SB4070* ]]; chk vm.req5
+# vm.req6 a `$` anywhere in the message is enough — not just a leading one
+run_sash 'str y=""
 str z=${y:?pre $m post}
 echo "[$z]"'
-[[ $rc != 0 && -z $out ]] \
-  && { ! in_modes native || [[ $rerr == *": pre boom post" ]]; }; chk vm.req6
-# vm.req7 the message is only materialized on the abort path — a set value
-#       yields the value and never evaluates it
-run_sash 'str m=boom
-str y=ok
-str z=${y:?$m}
+[[ $rc != 0 && -z $out && $err == *SB4070* ]]; chk vm.req6
+# vm.req7 THE hazard guard: `$( )` in a message must never become a call site.
+#       `g` is undefined, so if this ever parses as a word it cannot compile —
+#       the spec fails on the parse, not on catching a side effect.
+run_sash 'str y=""
+str z=${y:?$(g)}
 echo "[$z]"'
-[[ $rc = 0 && $out = "[ok]" && -z $err ]]; chk vm.req7
-# vm.req8 a message with no expansion in it is unchanged — the guard that the
-#       interpolating parse did not break plain text
+[[ $rc != 0 && -z $out && $err == *SB4070* ]]; chk vm.req7
+# vm.req8 a plain message is unaffected
 run_sash 'str y=""
 str z=${y:?plain text}
 echo "[$z]"'
 [[ $rc != 0 && -z $out ]] \
   && { ! in_modes native || [[ $rerr == *": plain text" ]]; }; chk vm.req8
+# vm.req9 single quotes are the escape: the quotes are stripped and the `$`
+#       survives as a literal byte
+run_sash 'str y=""
+str z=${y:?'"'"'costs $5'"'"'}
+echo "[$z]"'
+[[ $rc != 0 && -z $out ]] \
+  && { ! in_modes native || [[ $rerr == *": costs \$5" ]]; }; chk vm.req9
+# vm.req10 the non-abort path yields the value and prints no message
+run_sash 'str y=ok
+str z=${y:?must be set}
+echo "[$z]"'
+[[ $rc = 0 && $out = "[ok]" && -z $err ]]; chk vm.req10
 # dr4-5: prefix strip (#, ##) → basename / sub
 run_sash 'x=abc; echo "${x#a}"'
 [[ $rc != 0 && -z $out && $err == *SB4034* ]]; chk vm.dr4
