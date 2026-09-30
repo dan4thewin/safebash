@@ -59,15 +59,19 @@ pub fn verify_ssa_taint(program: &SsaProgram) -> Vec<String> {
 /// surviving sugar specials.
 ///
 /// Special variables are inherently clean — they aren't external data.
-/// In sash, there are no magic variables. PID/status/etc are builtins.
-/// Only $? and $! survive as sugar — and $? is scoped per DD#55.
-/// $$ (PID), $# (argc), $0 (argv 0) are process metadata — clean.
-/// These will eventually be desugared to builtins in the lowerer.
+/// In sash there are no magic variables: PID and friends are intrinsics.
+/// Only `?` (status) and `!` (getcpid) survive as slots, and only because
+/// both are compiler-managed *state* that the intrinsic reads — `?` is
+/// scoped per DD#55. `#` (argc) and `0` (argv 0) are process metadata — clean.
+///
+/// `$` is deliberately absent. `getpid` is stateless, so it lowers as an
+/// intrinsic and no slot by that name is ever created; seeding one would be
+/// seeding a variable that cannot exist.
 ///
 /// Positional params at version 0 are clean — either program argv
 /// (which the CST pass gates) or function args (clean by DD#24).
 fn seed_clean_specials(taint: &mut HashMap<String, Taint>) {
-    for sv in &["?", "!", "$", "#", "0"] {
+    for sv in &["?", "!", "#", "0"] {
         taint.insert(format!("{}_0", sv), Taint::Clean);
     }
     for i in 1..=9 {

@@ -499,13 +499,29 @@ fn parse_dollar_arm(
 /// never raised again. It now recognises `ir::intrinsic_call_name`, pinned to
 /// this constructor by `intrinsic_expansion_round_trips`.
 pub(crate) fn magic_sugar_expansion(name: &str, span: Span) -> Option<Expr> {
-    let intrinsic = match name {
-        "$" => "getpid",
-        "!" => "getcpid",
-        "?" => "status",
-        _ => return None,
-    };
-    Some(intrinsic_expansion(intrinsic, span))
+    Some(intrinsic_expansion(magic_sugar_intrinsic(name)?, span))
+}
+
+/// The name half of [`magic_sugar_expansion`]: `$X` punctuation → the
+/// intrinsic it is sugar for, with no `Expr` built. The **single table** both
+/// front-end paths share.
+///
+/// The word path wants an `Expr` (`magic_sugar_expansion`); the arithmetic
+/// path cannot use one, because inside `$(( ))` the sugar has to become an
+/// `ArithExpr::FuncCall` — the same node `(getpid)` produces — not a
+/// `CommandSubstitution`. Before this split, `parse::arith::scan_arith_dollar`
+/// had its **own** scan for `$$`/`$?`/`$!` that produced
+/// `ArithExpr::DollarVar("$")` and never consulted this table at all. That is
+/// a magic variable surviving parse, which DD#111 forbids, and
+/// `assert_no_magic_sugar` could not see it: the guard walks `ExprKind`, and
+/// an `ArithExpr` is a different type.
+pub(crate) fn magic_sugar_intrinsic(name: &str) -> Option<&'static str> {
+    match name {
+        "$" => Some("getpid"),
+        "!" => Some("getcpid"),
+        "?" => Some("status"),
+        _ => None,
+    }
 }
 
 /// Build `$(name)` — a single-command substitution with a bare literal head

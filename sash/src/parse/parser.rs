@@ -166,8 +166,8 @@ pub fn parse(source: &str) -> Result<(Program, Vec<Diagnostic>), Vec<Diagnostic>
 
 /// DD#111 invariant: **no magic variable survives parse.** Every `$X`
 /// punctuation form is sugar the front end desugars into its intrinsic
-/// (`magic_sugar_expansion`), so a `SimpleExpansion` bearing one of those
-/// names downstream means a construction site was missed.
+/// (`magic_sugar_expansion` / `magic_sugar_intrinsic`), so one of those names
+/// surviving downstream means a construction site was missed.
 ///
 /// This exists because a missed site is otherwise *silent*: that one context
 /// would keep a magic variable, every spec would still pass, and the checks
@@ -175,23 +175,40 @@ pub fn parse(source: &str) -> Result<(Program, Vec<Diagnostic>), Vec<Diagnostic>
 /// would simply stop seeing reads there. An invariant worth stating is worth
 /// failing on, so this panics rather than warns. It cannot fire on user input;
 /// only on a compiler bug.
+///
+/// **Both node types are checked, and that is the point.** The guard once
+/// walked `ExprKind` alone, so it proved the property for the word path while
+/// the arithmetic lexer kept its own `$$`/`$?`/`$!` scan that produced
+/// `ArithExpr::DollarVar` — a different type, structurally invisible here.
+/// The miss was exactly the one the paragraph above predicts: `$(( $? ))` read
+/// a status SB5012 never saw.
 fn assert_no_magic_sugar(program: &Program) {
-    let check = |stmt: &Statement| {
-        crate::ir::walk_all_exprs(stmt, &mut |e| {
-            if let ExprKind::SimpleExpansion(n) = &e.kind {
-                assert!(
-                    super::expr::magic_sugar_expansion(n, e.span).is_none(),
-                    "ICE: `${}` survived parse as a SimpleExpansion; a construction site is not routed through magic_sugar_expansion (DD#111)",
-                    n
-                );
-            }
-        });
-    };
+    let check = |stmt: &Statement| crate::ir::walk_all_exprs(stmt, &mut assert_expr_no_magic_sugar);
     for stmt in &program.statements {
         check(stmt);
     }
     for stmt in program.end_block.iter().flatten() {
         check(stmt);
+    }
+}
+
+/// The per-expression half of [`assert_no_magic_sugar`] — one arm per node
+/// type that can carry a magic name.
+fn assert_expr_no_magic_sugar(e: &Expr) {
+    match &e.kind {
+        ExprKind::SimpleExpansion(n) => assert!(
+            super::expr::magic_sugar_expansion(n, e.span).is_none(),
+            "ICE: `${}` survived parse as a SimpleExpansion; a construction site is not routed through magic_sugar_expansion (DD#111)",
+            n
+        ),
+        ExprKind::Arithmetic(a) => crate::ir::walk_arith_var_reads(a, &mut |n| {
+            assert!(
+                super::expr::magic_sugar_intrinsic(n).is_none(),
+                "ICE: `${}` survived parse as an ArithExpr::DollarVar; a construction site is not routed through magic_sugar_intrinsic (DD#111)",
+                n
+            );
+        }),
+        _ => {}
     }
 }
 

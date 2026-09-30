@@ -544,12 +544,6 @@ fn lower_var_value(
             return emit_int_to_str(builder, module, externs, status);
         }
     }
-    if base == "$" {
-        let getpid_ref = module.declare_func_in_func(externs.getpid, builder.func);
-        let call = builder.ins().call(getpid_ref, &[]);
-        let pid = builder.inst_results(call)[0];
-        return emit_int_to_str(builder, module, externs, pid);
-    }
     lower_slot_as_str_value(&key, builder, module, vars, externs)
 }
 
@@ -1594,7 +1588,7 @@ fn lower_var_as_int(
     // materialized slot — mirror the string path (lower_var_value) so a special
     // read as an int OPERAND computes its value instead of the undefined-var 0.
     // ($# is a real slot, so it falls through below.)
-    if let Some(v) = special_var_as_int(&key, builder, module, externs, exit_status_var) {
+    if let Some(v) = special_var_as_int(&key, builder, exit_status_var) {
         return v;
     }
     let Some(sv) = vars.get(&key) else {
@@ -1614,25 +1608,20 @@ fn lower_var_as_int(
     }
 }
 
-/// The computed special vars that have no materialized slot: `$$` → getpid,
-/// `$?` → the exit-status var. Mirrors the string path (`lower_var_value`) so a
-/// special var read as an int operand computes its value rather than the
-/// undefined-var 0. Returns `None` for an ordinary variable (`$#` included — it
-/// is a real slot handled by the normal path). DD#24/DD#31: these are clean
-/// arithmetic operands. (`$!` / getcpid is a materialized slot, not here.)
+/// The one computed special var with no materialized slot: `$?` → the
+/// exit-status var. Mirrors the string path (`lower_var_value`) so it is read
+/// as an int operand by computing its value rather than the undefined-var 0.
+/// Returns `None` for an ordinary variable (`$#` included — it is a real slot
+/// handled by the normal path). DD#24/DD#31: this is a clean arithmetic
+/// operand. (`$!` / getcpid is a materialized slot, not here. `getpid` is a
+/// stateless *intrinsic* and never reaches this path — `int_intrinsic_i64`
+/// lowers it by name.)
 fn special_var_as_int(
     key: &str,
     builder: &mut FunctionBuilder,
-    module: &mut ObjectModule,
-    externs: &ExternFuncs,
     exit_status_var: Option<Variable>,
 ) -> Option<cranelift_codegen::ir::Value> {
     match strip_ssa_version(key) {
-        "$" => {
-            let getpid_ref = module.declare_func_in_func(externs.getpid, builder.func);
-            let call = builder.ins().call(getpid_ref, &[]);
-            Some(builder.inst_results(call)[0])
-        }
         "?" => exit_status_var.map(|esv| builder.use_var(esv)),
         _ => None,
     }

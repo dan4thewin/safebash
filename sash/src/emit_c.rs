@@ -1456,16 +1456,12 @@ fn lower_value_as_str_aggregate(e: &mut Emit, value: &SsaValue, types: &VarTypes
     }
 }
 
-/// Lower an `SsaValue::Var` to a (ptr, len) pair. `$?`/`$$` route through
-/// `sash_itoa` on the live int value (codegen/values.rs:514-525).
+/// Lower an `SsaValue::Var` to a (ptr, len) pair. `$?` routes through
+/// `sash_itoa` on the live int value (codegen/values.rs). `getpid` is a
+/// stateless intrinsic and never arrives as a Var.
 fn emit_var_value(e: &mut Emit, vref: &VarRef, types: &VarTypes) -> CStr {
     if vref.name == "?" {
         return emit_itoa_temp(e, "__exit_status");
-    }
-    if vref.name == "$" {
-        let t = e.fresh();
-        writeln!(e.out, "    i64 {t}_pid = sash_getpid();", t = t).unwrap();
-        return emit_itoa_temp(e, &format!("{}_pid", t));
     }
     let base = c_var_name(&vref.name, vref.version);
     // An int-valued collection has var_type Int but is stored as a table, so
@@ -1525,14 +1521,12 @@ fn emit_itoa_temp(e: &mut Emit, int_expr: &str) -> CStr {
 /// String vars go through `sash_atoi`; int vars pass through;
 /// literals parse as i64 if numeric, else `sash_atoi` over the bytes.
 /// ArithExpr / ArithBinOp recurse through `arith_op_c`.
-/// A `Var` in C int context: `$?`/`$$` computed; an int var passes through; a
-/// string var goes through `sash_atoi`.
+/// A `Var` in C int context: `$?` computed; an int var passes through; a
+/// string var goes through `sash_atoi`. (`getpid` is a stateless intrinsic
+/// and never arrives as a Var.)
 fn lower_var_as_int_c(vref: &VarRef) -> String {
     if vref.name == "?" {
         return "__exit_status".to_string();
-    }
-    if vref.name == "$" {
-        return "sash_getpid()".to_string();
     }
     match vref.var_type {
         VarType::Int => c_var_name(&vref.name, vref.version),

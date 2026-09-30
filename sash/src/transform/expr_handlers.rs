@@ -134,7 +134,7 @@ fn resolve_single_cmdsubst(name: String, c: &Command, state: &VersionState) -> O
     if state.function_bodies.contains_key(name.as_str()) {
         return Some(func_call_capture(name, c, state));
     }
-    if let Some(var) = nullary_magic_var(&name, c) {
+    if let Some(var) = nullary_stateful_slot(&name, c) {
         return Some(SsaValue::Var(state.lookup(var)));
     }
     if let Some(v) = try_native_intrinsic(&name, c, state) {
@@ -149,11 +149,11 @@ fn resolve_single_cmdsubst(name: String, c: &Command, state: &VersionState) -> O
     None
 }
 
-/// The magic-variable intrinsics (`$(getpid)`, `$(status)`, `$(getcpid)`)
-/// resolve to a compiler-managed SSA var — but **only** when written with no
-/// arguments. `$(status …)` with arguments is a different thing (SB4045
-/// rejects it: `status` is a value intrinsic of arity 0) and must not be
-/// mistaken for a status read.
+/// The stateful-slot intrinsics (`$(status)`, `$(getcpid)`) resolve to a
+/// compiler-managed SSA var — but **only** when written with no arguments.
+/// `$(status …)` with arguments is a different thing (SB4045 rejects it:
+/// `status` is a value intrinsic of arity 0) and must not be mistaken for a
+/// status read.
 ///
 /// **This is what keeps a bare `$(status)` off the external-command path.**
 /// `parse::expr::bareword_shortcut_expansion` used to do it, by folding the
@@ -166,11 +166,15 @@ fn resolve_single_cmdsubst(name: String, c: &Command, state: &VersionState) -> O
 /// complaint was substituted into the program's output with a **0 exit**.
 /// Every compile-time check passed, because `status` really is a registered
 /// builtin. Spec `55.55` is the guard.
-fn nullary_magic_var(name: &str, c: &Command) -> Option<&'static str> {
+///
+/// `getpid` does not need this: being stateless it keeps its own name all the
+/// way to the intrinsic tables, so `try_nullary_intrinsic` claims it before
+/// anything can mistake it for an external.
+fn nullary_stateful_slot(name: &str, c: &Command) -> Option<&'static str> {
     if !c.args.is_empty() {
         return None;
     }
-    magic_intrinsic_var(name)
+    stateful_intrinsic_slot(name)
 }
 
 /// Backstop (fork B): a fixed-arity value-intrinsic that didn't lower is a
@@ -794,25 +798,35 @@ fn try_arith_int_intrinsic(
     try_native_intrinsic(name, &cmd, state)
 }
 
-/// The three nullary intrinsics that **read a compiler-managed SSA slot**
-/// rather than computing anything: `getpid`/`status`/`getcpid` → the `$`/`?`/`!`
-/// variables.
+/// The two nullary intrinsics that **read a compiler-managed SSA slot**:
+/// `status` → `?` and `getcpid` → `!`. Both are *stateful* — the compiler
+/// writes the slot (`?` at every statement boundary, a `return`, a `case`
+/// no-match and an inlined int function; `!` when a list statement backgrounds
+/// a job) and the intrinsic reads whatever is current. There is no way to
+/// compute either from scratch, so the slot read **is** the lowering.
+///
+/// `getpid` is deliberately **not** here. It is stateless — a `getpid(2)` call
+/// — so nothing ever defines a `$` slot for it to read. Mapping it to one was
+/// a rename, not a lowering: it carried the intrinsic through SSA under a
+/// magic-variable name that four codegen special-cases then had to intercept,
+/// which is precisely the direction DD#111 forbids. It now flows as
+/// `CmdSubst { argv: ["getpid"] }` like its five stateless peers
+/// (`getppid`/`random`/`argc`/`signum`/`epochseconds`), and the intrinsic
+/// tables lower it by name.
 ///
 /// DD#111: variables are not magic in sash. These keyword forms are the real
-/// thing and `$$`/`$?`/`$!` are punctuation sugar the *parser* desugars into
-/// them, so both spellings arrive here as the same node. This is the single
-/// table both callers share — the word form (`$(getpid)`) via
-/// `resolve_single_cmdsubst` and the arith sexpr (`$(( (getpid) ))`) via
-/// `resolve_nullary_sexpr`.
+/// thing and `$?`/`$!` are punctuation sugar the *parser* desugars into them,
+/// so both spellings arrive here as the same node. This is the single table
+/// both callers share — the word form via `resolve_single_cmdsubst` and the
+/// arith sexpr (`$(( (status) ))`) via `resolve_nullary_sexpr`.
 ///
 /// They used to reach the same slot by two unrelated routes: the sexpr through
 /// this mapping, the word form through a *parser fold* that rewrote
 /// `$(status)` back into `$?`. That is how `$$` came to be String-typed while
 /// `$(getpid)` was Int — two spellings of one value that disagreed about its
 /// type, the same fault `$!` had before `a875d58`.
-pub(crate) fn magic_intrinsic_var(name: &str) -> Option<&'static str> {
+pub(crate) fn stateful_intrinsic_slot(name: &str) -> Option<&'static str> {
     match name {
-        "getpid" => Some("$"),
         "status" => Some("?"),
         "getcpid" => Some("!"),
         _ => None,
@@ -825,24 +839,29 @@ pub(crate) fn magic_intrinsic_var(name: &str) -> Option<&'static str> {
 /// DD#58/Option C: a NULLARY int intrinsic — `(getpid)`, `(argc)`, … — must
 /// EVALUATE (it was silently 0 via the empty-int-func path); an int producer
 /// works in both `$(f)` capture and the `$(( (f) ))` sexpr, and intrinsics
-/// must not differ from `len`/user int fns. `getpid`/`status` reuse the
-/// `$$`/`$?` specials (native + c lower them directly); the rest reuse the
-/// word-form `CmdSubst` node (codegen computes the i64: native direct via
-/// `int_intrinsic_i64`, c via its atoi fallback). `getcpid` reuses `$!` the
-/// same way — it was once excluded, and because `validate` exempts every
-/// intrinsic name from the SB5031 typo check, the exclusion did not surface
-/// as "unknown name" but fell through to the variable branch below and read
-/// an unset slot: a silent 0. A string intrinsic here is category B (rejected
-/// in type_check); see bug-arith-sexpr-intrinsics-zero.
+/// must not differ from `len`/user int fns. `status`/`getcpid` are *stateful*
+/// and reuse the `?`/`!` slots the compiler writes (native + c lower them
+/// directly); every stateless one — `getpid` included — reuses the word-form
+/// `CmdSubst` node and codegen computes the i64 (native direct via
+/// `int_intrinsic_i64`, c via its atoi fallback).
+///
+/// **A stateless intrinsic missing from that list does not fail loudly.** It
+/// falls through to the variable branch below and reads an unset slot: a
+/// silent 0. `getcpid` was once excluded and did exactly that, invisibly,
+/// because `validate` exempts every intrinsic name from the SB5031 typo check.
+/// A string intrinsic here is category B (rejected in type_check); see
+/// bug-arith-sexpr-intrinsics-zero.
 fn resolve_nullary_sexpr(name: &str, state: &VersionState) -> Option<SsaValue> {
-    if let Some(var) = magic_intrinsic_var(name) {
+    if let Some(var) = stateful_intrinsic_slot(name) {
         return Some(SsaValue::Var(state.lookup(var)));
     }
     match name {
-        "getppid" | "argc" | "random" | "signum" | "epochseconds" => Some(SsaValue::CmdSubst {
-            argv: vec![SsaValue::Literal(name.to_string())],
-            suppressed: false,
-        }),
+        "getpid" | "getppid" | "argc" | "random" | "signum" | "epochseconds" => {
+            Some(SsaValue::CmdSubst {
+                argv: vec![SsaValue::Literal(name.to_string())],
+                suppressed: false,
+            })
+        }
         // `(x)` on a plain variable is arithmetic GROUPING, not a call: the
         // arith parser emits `FuncCall` for every `(name)` and defers the
         // decision here (DD#58). A nullary name that is neither an intrinsic

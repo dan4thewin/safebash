@@ -25,6 +25,20 @@ fn arith_error(span: Span, message: String) -> Diagnostic {
     Diagnostic::error_at(span.line, span.col, "SB4020", message)
 }
 
+/// DD#111: `$$`/`$?`/`$!` are sugar, not variables. Inside `$(( ))` the
+/// intrinsic's arith spelling is the sexpr call, so they desugar to exactly
+/// what `(getpid)` parses to — `resolve_nullary_sexpr` then routes each to its
+/// lowering. Anything else is a real `$name` operand and stays one.
+fn dollar_var_atom(name: String) -> ArithExpr {
+    match crate::parse::expr::magic_sugar_intrinsic(&name) {
+        Some(intrinsic) => ArithExpr::FuncCall {
+            name: intrinsic.to_string(),
+            args: vec![],
+        },
+        None => ArithExpr::DollarVar(name),
+    }
+}
+
 /// Create a parse error for an out-of-range integer literal (SB4026).
 /// Decimal magnitude > i64::MAX, or a hex/octal bit-pattern wider than
 /// 64 bits, is rejected at compile time (Policy A / DD#25).
@@ -1216,7 +1230,7 @@ impl ArithParser {
             }
             Some(ATok::DollarVar(name)) => {
                 self.advance();
-                Ok(ArithExpr::DollarVar(name))
+                Ok(dollar_var_atom(name))
             }
             Some(ATok::LParen) => self.parse_lparen_form(),
             Some(ATok::BadNum(s)) => {
