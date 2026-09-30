@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup taint
-plan=283
+plan=289
 echo "1..$plan" >&3
 
 set +e
@@ -881,6 +881,60 @@ argv 1 g
 attest v in g [[ -n $v ]]
 for v in @g { /bin/echo $v }' one
 [[ $rc = 0 && $out = $'hi\none' && -z $rerr ]]; chk bfb.22
+
+# ── SB5067 extended to `$( … )` bodies (DG, 2026-10-01) ──────────────────
+# DD#86 calls a `$( … )` body an anonymous function body, and sash inlines it
+# rather than forking a subshell, so a write to an enclosing name PERSISTS.
+# The same net-effect rule therefore applies: a body may not LEAVE a global
+# tainted that it did not inherit. Before this, the function form was a located
+# SB5067 and the identical `$( )` form was silent.
+# bfb.23 the shape that was silent: global read before, tainted inside a
+# body, never read after — so neither SB5050 nor the SSA backstop sees it
+run_sash 'str t=clean
+/bin/echo $t
+str q=$(t=$(getenv HOME); echo x)
+/bin/echo $q'
+[[ $rc != 0 && -z $out && $err == *SB5067*leaves\ the\ global* ]]; chk bfb.23
+# bfb.24 `:!` at the read does NOT rescue it. SB5067 is a BODY-EXIT rule and
+# never examines the read site, so the bypass is evaluated too late to matter
+# — which is what closes the `:!` exception for anonymous bodies too.
+run_sash 'str t=clean
+str q=$(t=$(getenv HOME); echo x)
+/bin/echo $q
+/bin/echo $t:!'
+[[ $rc != 0 && -z $out && $err == *SB5067* ]]; chk bfb.24
+# bfb.25 the repair is the same one a function body gets: an ADJACENT in-body
+# attest. The write still escapes (DD#86), and the attest is a real runtime
+# gate, not a compile-time waiver.
+run_sash 'str t=clean
+str q=$(t=$(getenv HOME); attest t [[ -n $t ]]; echo x)
+/bin/echo $q
+/bin/echo $t'
+[[ $rc = 0 && $out == x* && -z $err ]]; chk bfb.25
+# bfb.26 a NON-adjacent in-body attest is R1 (SB5088), not SB5067 — the two
+# rules stay distinct inside a body exactly as they do inside a function
+run_sash 'str t=clean
+str q=$(t=$(getenv HOME); echo mid; attest t [[ -n $t ]]; echo x)
+/bin/echo $q
+/bin/echo $t'
+[[ $rc != 0 && -z $out && $err == *SB5088* ]]; chk bfb.26
+# bfb.27 control: a name the body INTRODUCES is body-local (DD#86), so
+# tainting it is not a global leak and must stay quiet
+run_sash 'str q=$(str L=$(getenv HOME); attest L [[ -n $L ]]; echo $L)
+/bin/echo $q'
+[[ $rc = 0 && -n $out && -z $err ]]; chk bfb.27
+# bfb.28 a `$( )` inside a FUNCTION body reports exactly once, attributed to
+# the body. `collect_global_taint_sites` is structural, so the enclosing
+# function does not gather the same site, and the cmdsub's clone-and-discard
+# keeps it out of the function's exit set.
+run_sash 'str t=clean
+/bin/echo $t
+fn f {
+    str q=$(t=$(getenv HOME); echo x)
+    /bin/echo $q
+}
+f'
+[[ $rc != 0 && -z $out && $(grep -c SB5067 <<<"$err") = 1 ]]; chk bfb.28
 
 # ── DD#91: the `:!` taint-off MODIFIER (orthogonal to the dispositions) ──
 # A sanctioned per-use bypass — use a tainted value without a attest predicate

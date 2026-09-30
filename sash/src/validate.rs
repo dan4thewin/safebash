@@ -5048,9 +5048,15 @@ fn taint_stmt(
 /// `structural_bodies()` so a wrapper statement is not visited twice.
 ///
 /// The set is CLONED per body, matching `taint_function_body`: a name the body
-/// introduces is body-local and must not leak outward. A write to a name the
-/// enclosing scope already binds does persist at runtime (DD#86), and that is
-/// deliberately NOT modelled here — see `notes/tasks/`.
+/// introduces is body-local and must not leak outward.
+///
+/// A write to a name the enclosing scope already binds *does* persist at
+/// runtime (DD#86) — the body is inlined, not a subshell. That is why SB5067's
+/// net-effect verdict is passed here too, on DG's 2026-10-01 ruling: "a body is
+/// an anonymous function" means the same rule, applied to the same construct.
+/// Clone-and-discard is sound only because of it — the verdict is what makes
+/// the discarded set provably equal to the one the enclosing scope keeps, which
+/// is the no-fixpoint invariant `taint_top_level` relies on.
 fn taint_cmdsub_bodies(
     stmt: &Statement,
     tainted: &HashSet<String>,
@@ -5059,7 +5065,10 @@ fn taint_cmdsub_bodies(
 ) {
     for body in stmt.cmdsub_bodies() {
         let mut body_tainted = tainted.clone();
+        let sites = collect_global_taint_sites(body, sx.globals);
+        let entry_set = body_tainted.clone();
         taint_block(body, &mut body_tainted, &JustTainted::new(), sx, diags);
+        report_exit_tainted_globals(CMDSUB_SUBJECT, &sites, &entry_set, &body_tainted, diags);
     }
 }
 
@@ -8147,8 +8156,9 @@ fn report_exit_tainted_globals(
 ///
 /// Structural on purpose, and scoped: a nested function's body is walked by
 /// its own `taint_function_body`, so sites inside one are not attributed to
-/// the enclosing function. A `$( )` body is likewise not descended into —
-/// it is its own scope (DD#86); see `q-cmdsub-body-taints-outer-global`.
+/// the enclosing function. A nested `$( )` body is likewise not descended
+/// into — `taint_cmdsub_bodies` gathers and reports its sites separately, so
+/// descending here would report the same leak twice.
 fn collect_global_taint_sites(
     body: &[Statement],
     globals: &HashSet<String>,
@@ -8272,16 +8282,21 @@ fn collect_assign_global_taint(
     });
 }
 
+/// The subject `report_exit_tainted_globals` names for an anonymous body.
+/// A function passes its own name; a `$( … )` has none, and the diagnostic's
+/// span already points inside the body, so the construct is the subject.
+const CMDSUB_SUBJECT: &str = "$( … )";
+
 fn global_taint_diag(span: Span, fname: &str, target: &str, via: &str) -> Diagnostic {
     Diagnostic::error_span(
         span,
         "SB5067",
         format!(
-            "`{fname}` leaves the global `{target}` tainted via {via} — a \
-             function may not export taint to its caller, so that a caller \
-             can see where external data enters. Attest it here, in the \
-             statement immediately below (`attest … [[ … ]]`), or fill a \
-             local, attest that, and assign the clean value to `{target}`"
+            "`{fname}` leaves the global `{target}` tainted via {via} — taint \
+             may not escape the body that creates it, so that a reader can see \
+             where external data enters. Attest it here, in the statement \
+             immediately below (`attest … [[ … ]]`), or fill a local, attest \
+             that, and assign the clean value to `{target}`"
         ),
     )
 }

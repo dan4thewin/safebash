@@ -269,6 +269,41 @@ SB5067 with a span at the taint site, and by the backstop at the use site — an
 only the first of those is a diagnosis. Detail and the two bugs it exposed:
 `notes/tasks/ssa-taint-full-backstop.md`, journal 450.
 
+### Extended to `$( … )` bodies — DG, 2026-10-01
+
+The net-effect rule now applies to anonymous bodies as well, closing
+`q-cmdsub-body-taints-outer-global`. DD#86 already calls a `$( … )` body an
+anonymous function body, and sash **inlines** it rather than forking a
+subshell, so a write to an enclosing name persists. Before this, a function
+leaving a global tainted was a located SB5067 and the identical `$( )` form was
+silent — or, where the global happened to be read afterwards, a spanless SSA
+backstop reject that `--no-taint` turns off.
+
+The relaxation is what made this affordable. The old objection to extending
+SB5067 was that it "would newly reject programs that taint inside a body and
+attest after it"; under the net-effect rule an **adjacent in-body attest is the
+repair**, and it works — so the only newly-rejected shape is the genuinely
+leaky one the function rule already rejected. Measured: the sweep went
+7071 -> 7083, the entire +12 being the new specs. No existing spec changed
+verdict.
+
+**DG's `:!` observation is why this is complete rather than partial.** An
+earlier draft flagged `:!` on a body-tainted global as an exception the
+"anonymous function" model left open. It is not one: SB5067 fires at **body
+exit** and never examines the read site, so the bypass is evaluated too late to
+matter. That also retires the exception raised during this DD's own discussion
+— "the sole exception being a missing attest and a global only accessed by `:!`
+(an exception we could disallow...)". The relaxation closed it as a side
+effect. `:!` keeps working where the intent is local: a top-level taint, and a
+body's own locals.
+
+Clone-and-discard in `taint_cmdsub_bodies` is now sound rather than merely
+convenient — the verdict is what makes the discarded set provably equal to the
+one the enclosing scope keeps, which is the no-fixpoint invariant
+`taint_top_level` relies on.
+
+Specs `bfb.23`-`bfb.28`. Journal 451.
+
 ## See also
 
 - DD#24 taint model · DD#91 `:!` · DD#82 `--no-taint` · DD#100 collection
