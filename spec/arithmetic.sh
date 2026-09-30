@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup arithmetic
-plan=346
+plan=352
 echo "1..$plan" >&3
 
 set +e
@@ -892,6 +892,55 @@ run_sash 's=x; echo $(( ${s:-010} + 0 ))'
 [[ $rc != 0 && -z $out && $err == *SB4030* ]]; chk d4.7
 run_sash 's=x; echo $(( ${s:-16#ff} + 0 ))'
 [[ $rc != 0 && -z $out && $err == *SB4030* ]]; chk d4.7b
+
+# ── d4.8-d4.13: the check must reach a default nested in a SUBSCRIPT index ──
+# `check_arith_default_literals` walked the arith tree with a private copy of
+# `walk_arith_expansions` whose `_ => {}` dropped `Subscript` and
+# `SubscriptAssign`. So `${n:-abc}` was checked as a plain operand (d4.1) but
+# NOT as a subscript index — `abc` reached int lowering, which is an ICE
+# natively ("non-integer literal `abc` reached int lowering; type_check
+# (SB4030) should have rejected it") and `sash_atoi("abc")` in the C backend:
+# the two backends disagreed, silently, on a program neither should accept.
+# The fix deletes the copy and calls the canonical `ir::walk_arith_expansion_roots`,
+# which is total and already handled both variants. Front-end — all modes.
+
+# d4.8 subscript index, read position — was an ICE
+run_sash 'int n=1
+int array a=(1 2 3)
+y=$(( a[${n:-abc}] + 1 ))
+echo "$y"'
+[[ $rc != 0 && -z $out && $err == *SB4030* && $err != *panicked* ]]; chk d4.8
+# d4.9 the same index inside an `(( … ))` CONDITION (StmtKind::ArithTest)
+run_sash 'int n=1
+int array a=(1 2 3)
+if (( a[${n:-abc}] > 2 )); then echo y; fi'
+[[ $rc != 0 && -z $out && $err == *SB4030* && $err != *panicked* ]]; chk d4.9
+# d4.10 SubscriptAssign — index and value are both arith subtrees
+run_sash 'int n=1
+int array a=(1 2 3)
+(( a[${n:-abc}] = 5 ))
+echo "${a[0]}"'
+[[ $rc != 0 && -z $out && $err == *SB4030* && $err != *panicked* ]]; chk d4.10
+# d4.11 a LEGAL literal default in the same position still compiles and runs
+run_sash 'int n=1
+int array a=(7 8 9)
+y=$(( a[${n:-0}] + 1 ))
+echo "$y"'
+[[ $rc = 0 && $out = "9" && -z $err ]]; chk d4.11
+# d4.12 one diagnostic per offending default, not one per walker that sees it
+run_sash 'int n=1
+int array a=(1 2 3)
+y=$(( a[${n:-abc}] + ${n:-xyz} ))
+echo "$y"'
+[[ $rc != 0 && $(printf '%s' "$err" | grep -c SB4030) = 2 ]]; chk d4.12
+# d4.13 the plain-operand case d4.1 covers, but with an int array in scope —
+# pins that deleting the private walker did not narrow the original coverage
+run_sash 'int n=1
+int array a=(1 2 3)
+y=$(( a[0] + ${n:-abc} ))
+echo "$y"'
+[[ $rc != 0 && -z $out && $err == *SB4030* ]]; chk d4.13
+
 
 
 # --- bug #3: a nested / parenthesized arith assignment applies its store ---

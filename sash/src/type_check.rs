@@ -433,53 +433,21 @@ fn check_arith_string_operands(
     });
 }
 
-/// DD#77 D4: invoke `f(inner)` for every `${…}` expansion (`ArithExpr::
-/// Expansion`) in an `ArithExpr` tree. Complements `walk_arith_var_reads`,
-/// which deliberately skips these — here we want them, to validate a `:-`
-/// disposition's default.
-fn walk_arith_expansions(a: &ArithExpr, f: &mut impl FnMut(&Expr)) {
-    match a {
-        ArithExpr::Expansion(inner) => f(inner),
-        ArithExpr::FuncCall { args, .. } => {
-            for arg in args {
-                walk_arith_expansions(arg, f);
-            }
-        }
-        ArithExpr::BinOp { left, right, .. } => {
-            walk_arith_expansions(left, f);
-            walk_arith_expansions(right, f);
-        }
-        ArithExpr::UnaryOp { operand, .. } | ArithExpr::Paren(operand) => {
-            walk_arith_expansions(operand, f)
-        }
-        ArithExpr::Assign { value, .. } | ArithExpr::CompoundAssign { value, .. } => {
-            walk_arith_expansions(value, f)
-        }
-        ArithExpr::Ternary {
-            cond,
-            true_val,
-            false_val,
-        } => {
-            walk_arith_expansions(cond, f);
-            walk_arith_expansions(true_val, f);
-            walk_arith_expansions(false_val, f);
-        }
-        ArithExpr::Comma(exprs) => {
-            for e in exprs {
-                walk_arith_expansions(e, f);
-            }
-        }
-        _ => {}
-    }
-}
-
 /// DD#77 D4: in arithmetic, a `${s:-DEFAULT}` disposition's DEFAULT must be a
 /// decimal integer literal. The default is lowered by a plain decimal atoi, so
 /// a non-decimal default (`hello`, `0xff`, `5+3`, an interpolation, or empty)
 /// silently became `0` — reject it instead (SB4030). `:?` carries a message,
 /// not a numeric default, so it is never checked here.
 fn check_arith_default_literals(a: &ArithExpr, errors: &mut Vec<TypeError>) {
-    walk_arith_expansions(a, &mut |inner| {
+    // The canonical walker, not a local copy. This pass had its own, and that
+    // copy's `_ => {}` dropped `Subscript`/`SubscriptAssign` — so a `:-`
+    // default inside a subscript index (`$(( a[${n:-abc}] ))`) was never
+    // checked, and `abc` reached int lowering: an ICE natively, and
+    // `sash_atoi("abc")` in the C backend. `walk_arith_expansion_roots` is
+    // total and already carries the fix; `_roots` (not `walk_arith_expansions`)
+    // because this callback does not recurse, which is the semantics the local
+    // copy had.
+    crate::ir::walk_arith_expansion_roots(a, &mut |inner| {
         let ExprKind::ParameterExpansion(pe) = &inner.kind else {
             return;
         };
