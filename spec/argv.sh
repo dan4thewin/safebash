@@ -104,10 +104,10 @@ run_sash 'x=$(arg 1 fallback); attest x [[ -n $x ]]; echo "$x"'
 # av.d3 the default fires for a high OOB index too (no abort, unlike bare arg)
 run_sash 'x=$(arg 5 mydef); attest x [[ -n $x ]]; echo "$x"' one two
 [[ $rc = 0 && $out = "mydef" && -z $err ]]; chk av.d3
-
-# av.d4 a clean intrinsic default (quoted) is accepted and used on OOB.
+# av.d4 an `$(arg N DEFAULT)` default is a literal too -- the third disposition
+# default, held to the same rule (SB4070). A clean intrinsic is no exception.
 run_sash 'x=$(arg 9 "$(getcwd)"); attest x [[ -n $x ]]; echo "$x"'
-[[ $rc = 0 && -n $out && -z $err ]]; chk av.d4
+[[ $rc != 0 && -z $out && $err == *SB4070* ]]; chk av.d4
 
 # av.d5 DD#78: a tainted default is rejected (a read must not sneak through)
 run_sash 'y=$(getenv HOME); x=$(arg 1 $y); attest x [[ -n $x ]]; echo "$x"'
@@ -116,10 +116,10 @@ run_sash 'y=$(getenv HOME); x=$(arg 1 $y); attest x [[ -n $x ]]; echo "$x"'
 # av.d6 arity: more than an index + default is a compile error
 run_sash 'x=$(arg 1 2 3); attest x [[ -n $x ]]; echo "$x"'
 [[ $rc != 0 && -z $out && $err == *SB5036* ]]; chk av.d6
-
-# av.d7 DD#78: a $(random) default is a side effect under eager eval → reject
+# av.d7 `$(random)` had its own code here (SB5035) for a side effect under
+# eager evaluation. The literal rule subsumes it; SB5035 has been deleted.
 run_sash 'x=$(arg 1 "$(random)"); attest x [[ -n $x ]]; echo "$x"'
-[[ $rc != 0 && -z $out && $err == *SB5035* ]]; chk av.d7
+[[ $rc != 0 && -z $out && $err == *SB4070* ]]; chk av.d7
 
 # ── Slice / splat semantics ──────────────────────────────────────
 

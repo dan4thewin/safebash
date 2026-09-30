@@ -49,39 +49,46 @@ run_sash 'echo $(basename /x/y/z)'
 # V1 plain literal default
 run_sash 'echo "${foo:-abc}"'
 [[ $rc = 0 && $out = "abc" && -z $err ]]; chk vm.dv1
-# V2 a literal `}` in the default via a $'...' C-string (the any-byte hatch;
-# `:- ≡ "…"`, so quotes no longer strip — the C-string is how you get a `}`)
+# V2 the `$'…'` C-string hatch is gone with the interpolating word. It was how
+# you embedded a literal `}` (the brace scanner is pure depth-matching, so
+# quotes do not protect one either) — so a `}` in a default is now
+# unrepresentable. Use a conditional if you need one.
 run_sash $'echo "${foo:-$\'a\\x7db\'}"'
-[[ $rc = 0 && $out = "a}b" && -z $err ]]; chk vm.dv2
-# V3 interpolation: an unset default interpolates a variable
+[[ $rc != 0 && -z $out && $err == *SB4070* ]]; chk vm.dv2
+# V3 a variable in the default is SB4070, not an interpolation
 run_sash 'bar=hi; echo "${foo:-$bar}"'
-[[ $rc = 0 && $out = "hi" && -z $err ]]; chk vm.dv3
-# V4 concatenation in the default
+[[ $rc != 0 && -z $out && $err == *SB4070* ]]; chk vm.dv3
+# V4 concatenation of two expansions likewise
 run_sash 'x=a; y=b; echo "${foo:-$x$y}"'
-[[ $rc = 0 && $out = "ab" && -z $err ]]; chk vm.dv4
+[[ $rc != 0 && -z $out && $err == *SB4070* ]]; chk vm.dv4
 # V5 an unquoted `}` closes the expansion; trailing text concatenates
 run_sash 'echo "${foo:-a}b"'
 [[ $rc = 0 && $out = "ab" && -z $err ]]; chk vm.dv5
-# V6 arithmetic (clean) is allowed in the default
+# V6 arithmetic too — and this is the form that made the rule necessary
+# rather than merely tidy: DD#58's sexpr makes `$(( ))` a user-function call
+# site, so an interpolating default could run arbitrary code
 run_sash 'echo "${foo:-$((1+2))}"'
-[[ $rc = 0 && $out = "3" && -z $err ]]; chk vm.dv6
+[[ $rc != 0 && -z $out && $err == *SB4070* ]]; chk vm.dv6
 # V7 a set variable ignores the default entirely
 run_sash 'foo=hi; echo "${foo:-x}"'
 [[ $rc = 0 && $out = "hi" && -z $err ]]; chk vm.dv7
-# V8 `:- ≡ "…"`: single-quotes are ordinary literal bytes (they no longer strip)
+# V8 single quotes around the WHOLE default are the escape hatch: they strip,
+# and the contents are literal (this used to yield `'x'`, quotes included)
 run_sash 'echo "${foo:-'\''x'\''}"'
-[[ $rc = 0 && $out = "'x'" && -z $err ]]; chk vm.dv8
+[[ $rc = 0 && $out = "x" && -z $err ]]; chk vm.dv8
 # V9 whitespace is part of the value and kept verbatim (no run-collapsing)
 run_sash 'echo "${foo:-a  b}"'
 [[ $rc = 0 && $out = "a  b" && -z $err ]]; chk vm.dv9
-# V10 `'` is plain, so the first literal `}` closes the expansion: `${foo:-'a}`
-# (default `'a`) then `b'}` is ordinary trailing text (embed `}` via dv2's hatch)
+# V10 `'` is plain when it does not wrap the whole operand, so the first
+# literal `}` still closes the expansion: `${foo:-'a}` (default `'a`) then
+# `b'}` is ordinary trailing text
 run_sash 'echo "${foo:-'\''a}b'\''}"'
 [[ $rc = 0 && $out = "'ab'}" && -z $err ]]; chk vm.dv10
-# V11 (negative of dv3) the default is a real interpolation context, so a bare
-# env var is rejected (SB5018) exactly as elsewhere — must use $(getenv HOME)
+# V11 a bare env var used to be SB5018 ("use $(getenv HOME)") because the
+# default was a read position. It is SB4070 now — the rule fires in the parser,
+# before any read is attributed. Both reject; the reason changed.
 run_sash 'echo "${foo:-$HOME}"'
-[[ $rc != 0 && -z $out && $err == *SB5018* ]]; chk vm.dv11
+[[ $rc != 0 && -z $out && $err == *SB4070* ]]; chk vm.dv11
 
 # ── Braced rejected/env vars reject like the unbraced form (was a silent
 # bypass: `${RANDOM}`/`${HOME}` compiled to empty — validate_expr only checked
@@ -301,9 +308,9 @@ run_sash 'str x=hi; /bin/echo $x:~'
 # vm.bl6 brace-less `:?` present → the value (no abort)
 run_sash 'str x=hi; /bin/echo $x:?boom'
 [[ $rc = 0 && $out = "hi" && -z $err ]]; chk vm.bl6
-# vm.bl7 operand interpolation: `$1:-$y` uses `$y` as the default
+# vm.bl7 the brace-less operand obeys the same literal rule as the braced one
 run_sash 'fn f { str y=YY; /bin/echo $1:-$y }; f'
-[[ $rc = 0 && $out = "YY" && -z $err ]]; chk vm.bl7
+[[ $rc != 0 && -z $out && $err == *SB4070* ]]; chk vm.bl7
 # vm.bl8 brace-less ≡ braced (same result side by side)
 run_sash 'str x=hi; /bin/echo $x:-foo ${x:-foo}'
 [[ $rc = 0 && $out = "hi hi" && -z $err ]]; chk vm.bl8
@@ -321,59 +328,51 @@ run_sash 'str x=hi; /bin/echo "$x:-foo"'
 # default `a` then a separate word `b` (use braces for a spaced default).
 run_sash 'str x=""; /bin/echo $x:-a b'
 [[ $rc = 0 && $out = "a b" && -z $err ]]; chk vm.bl12
-# vm.bl13 DD#91 follow-up: a `$( )` command substitution IS a valid brace-less
-# operand now (DG 2026-09-04) — a clean builtin cmdsub default.
+# vm.bl13 a `$( )` operand was made legal brace-less (DG 2026-09-04) back when
+# the operand was an interpolating word. It is SB4070 now -- clean or not, a
+# capture in a conditionally-taken operand is what the literal rule removes.
 run_sash 'fn f { /bin/echo $1:-$(getpid) }; f RUN'
-[[ $rc = 0 && $out = "RUN" && -z $err ]]; chk vm.bl13
+[[ $rc != 0 && -z $out && $err == *SB4070* ]]; chk vm.bl13
 # vm.bl14 `$(( ))` arithmetic operand brace-less
 run_sash 'fn f { /bin/echo $1:-$((2 + 3)) }; f'
-[[ $rc = 0 && $out = "5" && -z $err ]]; chk vm.bl14
-# vm.bl15 a `$( )` operand with an EXTERNAL capture is tainted → SB5020, exactly
-# like the braced `${1:-$(ext)}` (the sugar changes only the spelling).
+[[ $rc != 0 && -z $out && $err == *SB4070* ]]; chk vm.bl14
+# vm.bl15 an EXTERNAL capture used to be SB5020 (a tainted read in a default).
+# SB4070 fires first now, in the parser -- the taint gate for this position has
+# been deleted, because a literal operand cannot read anything.
 run_sash 'fn f { /bin/echo $1:-$(/bin/echo Z) }; f'
-[[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk vm.bl15
-# vm.bl16 `${…}` interpolation inside a brace-less operand. The operand scan
-# must follow the braces to their match rather than stopping at the first `}`
-# (lexer.rs:skip_braced_to_close) — without it the operand would end mid-word.
+[[ $rc != 0 && -z $out && $err == *SB4070* ]]; chk vm.bl15
+# vm.bl16 `${...}` brace-less is rejected like any other expansion
 run_sash 'str y=inner; str x=""; /bin/echo $x:-${y}'
-[[ $rc = 0 && $out = "inner" && -z $err ]]; chk vm.bl16
-# vm.bl17 a `)` inside quotes inside a `$( )` brace-less operand. The paren
-# scan counts depth, so it must skip quoted regions or this `)` closes the
-# substitution early and the operand is truncated to `$(echo "a`.
-run_sash 'str x=""; /bin/echo $x:-$(echo "a)b")'
-[[ $rc = 0 && $out = "a)b" && -z $err ]]; chk vm.bl17
+[[ $rc != 0 && -z $out && $err == *SB4070* ]]; chk vm.bl16
+# vm.bl17 the brace-less scan still has to track nesting to find where the
+# operand ENDS, and the literal rule does not relieve it of that. Quoting makes
+# the extent observable again: if the scan stopped at the first `)` the operand
+# would be an unterminated quote (SB4057) rather than this whole literal.
+run_sash 'str x=""; /bin/echo $x:-'\''$(echo "a)b")'\'''
+[[ $rc = 0 && $out = '$(echo "a)b")' && -z $err ]]; chk vm.bl17
 # vm.bl18 a `` `…` `` run inside a brace-less operand. Asserted as brace-less ≡
 # braced rather than against a literal: the default word is a `"…"` body, where
 # a backtick is a literal character (DG 2026-08-28), and this test is about the
 # two spellings agreeing — it stays correct if that rule is ever revisited.
 run_sash 'str x=""; str a=$x:-`echo hi`; str b=${x:-`echo hi`}; [[ $a == $b ]] && /bin/echo same'
 [[ $rc = 0 && $out = "same" && -z $err ]]; chk vm.bl18
-# vm.bl19-vm.bl23 the brace-less operand's own `$name` scanner
-# (`lexer.rs::skip_dollar_var`). The whole sweep called it three times,
-# always with a single alphabetic byte followed by a terminator, so seven
-# of its branches had never run: the special/digit arm, the leading
-# underscore, an underscore *inside* a name, the multi-byte name loop, and
-# the run-out-of-source exit. vm.bl16 covers `${…}` in this position, which
-# takes `skip_braced_to_close` instead and left this path untested.
-# vm.bl19 a multi-byte name — and the source ends at its last byte, so the
-# scan loop exits on end-of-input rather than on a terminator
+# vm.bl19-vm.bl23 every brace-less `$`-spelling is SB4070. These used to assert
+# one lexer name-scan arm each (multi-byte name, interior `_`, leading `_`, the
+# digit/special arm, and a `$` that starts no name). The scan still runs to find
+# the operand's extent -- vm.bl17 pins that -- but its per-arm result is no
+# longer observable, so what these pin now is that no spelling slips through.
 run_sash 'str abc=Q; str x=""; /bin/echo $x:-$abc'
-[[ $rc = 0 && $out = "Q" && -z $err ]]; chk vm.bl19
-# vm.bl20 an underscore *inside* the name (not alphanumeric, still a name byte)
+[[ $rc != 0 && -z $out && $err == *SB4070* ]]; chk vm.bl19
 run_sash 'str a_b=W; str x=""; /bin/echo $x:-$a_b'
-[[ $rc = 0 && $out = "W" && -z $err ]]; chk vm.bl20
-# vm.bl21 a *leading* underscore — the second alternative of the name-start
-# test, which the alphabetic one had always short-circuited past
+[[ $rc != 0 && -z $out && $err == *SB4070* ]]; chk vm.bl20
 run_sash 'str _v=U; str x=""; /bin/echo $x:-$_v'
-[[ $rc = 0 && $out = "U" && -z $err ]]; chk vm.bl21
-# vm.bl22 `$1` — the special/digit arm. `$@ $* $# $? $! $$` and any digit
-# share it; a positional is the spelling that compiles here.
+[[ $rc != 0 && -z $out && $err == *SB4070* ]]; chk vm.bl21
 run_sash 'fn f { str q=""; /bin/echo $q:-$1 }; f ARG'
-[[ $rc = 0 && $out = "ARG" && -z $err ]]; chk vm.bl22
-# vm.bl23 a `$` that starts no name at all stays a literal `$`, and the
-# operand continues past it
+[[ $rc != 0 && -z $out && $err == *SB4070* ]]; chk vm.bl22
+# vm.bl23 the rule is textual: a `$` that starts no name is still a `$`, so
+# `a$%b` is rejected even though it would have expanded to nothing. Quote it.
 run_sash 'str x=""; /bin/echo $x:-a$%b'
-[[ $rc = 0 && $out = 'a$%b' && -z $err ]]; chk vm.bl23
+[[ $rc != 0 && -z $out && $err == *SB4070* ]]; chk vm.bl23
 
 # ── DD#96: comma-chained `s///` edits ──
 # DG 2026-09-08: `,` sequences edits, in BOTH the mutating statement form and
@@ -813,26 +812,19 @@ echo "[$t]"'
 run_sash 'array a=(x y z)
 echo "$(len a):$(join a)"'
 [[ $rc = 0 && $out = "3:x y z" && -z $rerr ]]; chk 96.22
-
-# vm.bl24 DD#90 rule 5 reaches a DISPOSITION'S OPERAND, not just `"…"` (DG,
-#         2026-09-27). The operand is parsed as an interpolating parts list, so
-#         a brace-less disposition inside it stays a literal colon-run: the
-#         `:!` here is text appended to the default, NOT a taint-off modifier.
-#         DG chose this over extending brace-less into the operand — he would
-#         reach for `attest` rather than lean on bypass ergonomics.
+# vm.bl24 a `:!`-modified operand is still an operand -- `!` vouches for a read,
+# and a literal operand has no read to vouch for
 run_sash 'str y=abc
 str x=""
 str z=$x:-$y:!
 echo "[$z]"'
-[[ $rc = 0 && $out = "[abc:!]" && -z $err ]]; chk vm.bl24
-
-# vm.bl25 …and the braced spelling is the one that actually dispositions.
-#         Paired with vm.bl24 so the two readings cannot both drift.
+[[ $rc != 0 && -z $out && $err == *SB4070* ]]; chk vm.bl24
+# vm.bl25 same in the braced spelling
 run_sash 'str y=abc
 str x=""
 str z=$x:-${y:!}
 echo "[$z]"'
-[[ $rc = 0 && $out = "[abc]" && -z $err ]]; chk vm.bl25
+[[ $rc != 0 && -z $out && $err == *SB4070* ]]; chk vm.bl25
 
 set -e
 tally

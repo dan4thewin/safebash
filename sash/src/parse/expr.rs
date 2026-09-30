@@ -310,7 +310,10 @@ fn parse_splat_op(
     span: Span,
 ) -> Result<(&'static str, Option<Box<Expr>>), Diagnostic> {
     if let Some(rest) = after.strip_prefix('-') {
-        return Ok(("arrvals_default", Some(parse_default_word(rest, span)?)));
+        return Ok((
+            "arrvals_default",
+            Some(parse_disposition_literal(rest, span)?),
+        ));
     }
     if let Some(rest) = after.strip_prefix('?') {
         return Ok(("arrvals_abort", optional_splat_word(rest, span)?));
@@ -328,36 +331,50 @@ fn parse_splat_op(
     Err(splat_disposition_malformed(span))
 }
 
-/// The `:?` abort MESSAGE — a plain literal, never an interpolating word.
+/// A **disposition default** operand — `${x:-D}`, `${x:?MSG}`, `@{a:-D}`,
+/// `@{a:?MSG}` — is a plain literal, never an interpolating word.
 ///
-/// `:?` is a failsafe: it fires while the program is on its way out. An
-/// interpolating message admits `$( )` and `$(( … ))`, and both are
-/// user-function call sites (DD#58's arith sexpr calls a `-> int` fn), so
-/// `${y:?$(g)}` forked and exec'd — and did so even when the subject was set
-/// and NO abort occurred, because the message is materialized eagerly. That is
-/// arbitrary user code on the success path of a construct whose entire job is
-/// to be a failsafe.
+/// DD#78 calls these operands disposition defaults and constrains them to be
+/// clean and side-effect-free. That constraint used to be *checked*: the
+/// operand was a full interpolating word, and a pass had to establish that
+/// whatever it expanded to was safe. It is now established **by construction**
+/// — there is nothing to expand.
 ///
-/// A literal alone is not enough, though, because it degrades *silently*:
-/// `${y:?$m}` looks like bash and quietly yields the two characters `$m`. That
-/// is the failure DD#65's SB4047 machinery exists to prevent. So a `$` in a
-/// message is **SB4070** unless the whole message is single-quoted, which is
-/// the explicit way to ask for a literal `$`:
+/// The `:?` half came first (2026-09-30). An interpolating message admits
+/// `$( )` and `$(( … ))`, and both are user-function call sites (DD#58's arith
+/// sexpr calls a `-> int` fn), so `${y:?$(g)}` forked and exec'd — and did so
+/// even when the subject was set and NO abort occurred, because the operand is
+/// materialized eagerly. Arbitrary user code on the success path of a failsafe.
+///
+/// DG then extended it to `:-`: "the `:-` default, let's change it to match the
+/// `:?` so eager/side-effects are a non-issue." That is the whole argument. A
+/// conditionally-taken operand raises the question of *when* it is evaluated
+/// and *what* it may do; a literal cannot raise either. It retires the
+/// eager/lazy hybrid, SB5035's `$(random)` ban, and DD#78's read discipline for
+/// `:-` — the taint hole DD#78 Stage 1 closed with a checker is now unreachable
+/// by construction, which is the stronger form of the same guarantee.
+///
+/// A literal alone is not enough, because it degrades *silently*: `${y:-$m}`
+/// looks like bash and quietly yields the two characters `$m`. That is the
+/// failure DD#65's SB4047 machinery exists to prevent. So a `$` in the operand
+/// is **SB4070** unless the whole operand is single-quoted, which is the
+/// explicit way to ask for a literal `$`:
 ///
 /// ```text
-/// ${y:?costs $5}      SB4070
-/// ${y:?'costs $5'}    → costs $5
+/// ${y:-costs $5}      SB4070
+/// ${y:-'costs $5'}    → costs $5
+/// ${y:?'costs $5'}    → aborts with:  prog: costs $5
 /// ```
 ///
-/// DG (2026-09-30): "a `:?` is a failsafe, so a literal is probably adequate.
-/// If I anticipate an empty array, I can use a conditional to get whatever
-/// behavior I desire, including verbose messages."
-fn parse_abort_message(text: &str, span: Span) -> Result<Box<Expr>, Diagnostic> {
+/// Anything computed goes in a conditional, where it is lazy by construction
+/// and its side effects are visible. DG: "If I anticipate an empty array, I can
+/// use a conditional to get whatever behavior I desire."
+fn parse_disposition_literal(text: &str, span: Span) -> Result<Box<Expr>, Diagnostic> {
     let quoted = text.len() >= 2 && text.starts_with('\'') && text.ends_with('\'');
     let literal = if quoted {
         text[1..text.len() - 1].to_string()
     } else if text.contains('$') {
-        return Err(abort_message_expansion(span));
+        return Err(disposition_default_expansion(span));
     } else {
         text.to_string()
     };
@@ -367,15 +384,15 @@ fn parse_abort_message(text: &str, span: Span) -> Result<Box<Expr>, Diagnostic> 
     }))
 }
 
-fn abort_message_expansion(span: Span) -> Diagnostic {
+fn disposition_default_expansion(span: Span) -> Diagnostic {
     parse_error(
         span,
         "SB4070",
-        "a `:?` abort message is a literal, so a `$` expansion in it would be \
-         silently emitted as text rather than expanded. Single-quote the \
-         message to mean a literal `$` (`${x:?'costs $5'}`), or, if you want \
-         the value in the message, test for the condition explicitly and write \
-         the message yourself"
+        "a `:-` default and a `:?` abort message are literals, so a `$` \
+         expansion in one would be silently emitted as text rather than \
+         expanded. Single-quote the operand to mean a literal `$` \
+         (`${x:-'costs $5'}`), or, if you want a computed value, test for the \
+         condition explicitly: `str v=$x; if [[ -z $v ]]; then v=$y; fi`"
             .to_string(),
     )
 }
@@ -386,7 +403,7 @@ fn optional_splat_word(rest: &str, span: Span) -> Result<Option<Box<Expr>>, Diag
     if rest.is_empty() {
         Ok(None)
     } else {
-        Ok(Some(parse_abort_message(rest, span)?))
+        Ok(Some(parse_disposition_literal(rest, span)?))
     }
 }
 
@@ -1363,8 +1380,8 @@ fn build_one_sed_sub(
         ));
     }
     let cmd_name = if flags == "g" { "gsub" } else { "sub" };
-    let re_expr = *parse_default_word(re, span)?;
-    let sub_expr = *parse_default_word(sub, span)?;
+    let re_expr = *parse_interpolating_word(re, span)?;
+    let sub_expr = *parse_interpolating_word(sub, span)?;
     let cmd = Statement {
         kind: StmtKind::Command(Command {
             name: Expr {
@@ -1507,33 +1524,15 @@ fn parse_disposition_operator(
             span,
         }));
     }
-    // DD#65: the `${var:-WORD}` default is a full interpolating word.
-    //
-    // `${var:?MESSAGE}` is deliberately NOT one — the message is a plain
-    // literal. This was briefly changed to interpolate (DD#78 groups the two
-    // operands as "disposition defaults" and lists user functions among the
-    // legal ones) and reverted the same day by DG: that grouping is by
-    // *purpose*, a purity/taint constraint on what the operand may be, and it
-    // does not make the two parse alike. DD#65 defines the interpolating-word
-    // parse for `:-` alone.
-    //
-    // The concrete harm, measured: an interpolating message admits `$( )` and
-    // `$(( … ))`, and both are user-function call sites (DD#58's arith sexpr
-    // calls a `-> int` fn). `${y:?$(g)}` therefore forked and exec'd — and did
-    // so even when `y` was set and NO abort occurred, because the `:?` message
-    // is materialized eagerly. That put arbitrary user code on the success
-    // path of a construct whose whole job is to be a failsafe.
-    //
-    // DG: "a `:?` is a failsafe, so a literal is probably adequate. If I
-    // anticipate an empty array, I can use a conditional to get whatever
-    // behavior I desire, including verbose messages."
-    let operand = if op_str == ":-" {
+    // DD#65 + DD#78 (DG, 2026-09-30): the `:-` default and the `:?` abort
+    // message are both plain LITERALS. See `parse_disposition_literal` for the
+    // argument; the short form is that a conditionally-taken operand raises
+    // "when is this evaluated" and "what may it do", and a literal raises
+    // neither. Every other operator here (`:off:len`, `glob_replace`, …) was
+    // already literal.
+    let operand = if matches!(op_str.as_str(), ":-" | ":?") {
         operand_str
-            .map(|s| parse_default_word(&s, span))
-            .transpose()?
-    } else if op_str == ":?" {
-        operand_str
-            .map(|s| parse_abort_message(&s, span))
+            .map(|s| parse_disposition_literal(&s, span))
             .transpose()?
     } else {
         operand_str.map(|s| {
@@ -1555,18 +1554,24 @@ fn parse_disposition_operator(
     }))
 }
 
-/// DD#65: the `${var:-WORD}` default is a double-quoted-string body whose
-/// terminator is the closing `}` (the brace scanner already stripped it), so
-/// the default is *exactly* a `"…"`: `$var`/`${…}`/`$(…)`/`$((…))`/`$'…'`
-/// interpolate; every other byte — including whitespace (kept verbatim) and
-/// quotes (`'`/`"` are literal) — is literal text. A `` `…` `` is literal
-/// too, for the same reason: backticks are top-level `$( )` sugar with no
-/// meaning inside quotes (DG 2026-08-28), and this body is a quotes body, so
-/// `` ${x:-`cmd`} `` yields the backticks verbatim rather than running `cmd`.
-/// Any byte can still be encoded via a `$'…'` C-string (e.g. `$'a\x7db'` →
-/// `a}b`). The result is an `ExprKind::DoubleQuoted`, identical to a real
-/// double-quoted word. Empty → empty literal.
-fn parse_default_word(s: &str, span: Span) -> Result<Box<Expr>, Diagnostic> {
+/// A `"…"`-body word: `$var`/`${…}`/`$(…)`/`$((…))`/`$'…'` interpolate; every
+/// other byte — including whitespace (kept verbatim) and quotes (`'`/`"` are
+/// literal) — is literal text. A `` `…` `` is literal too: backticks are
+/// top-level `$( )` sugar with no meaning inside quotes (DG 2026-08-28), and
+/// this is a quotes body. Any byte can be encoded via a `$'…'` C-string (e.g.
+/// `$'a\x7db'` → `a}b`). Yields an `ExprKind::DoubleQuoted`, identical to a
+/// real double-quoted word. Empty → empty literal.
+///
+/// This used to parse the `${var:-WORD}` default as well, which is where the
+/// name came from. It no longer does — a disposition default is a literal
+/// (see [`parse_disposition_literal`]) — so the only caller left is the `:s/`
+/// sed operator's pattern and substitution.
+///
+/// `:s/` is deliberately **not** in scope for the literal rule. The question
+/// that rule answers is "when is a conditionally-taken operand evaluated, and
+/// what may it do"; a sed pattern is evaluated unconditionally, every time, so
+/// it never raises it.
+fn parse_interpolating_word(s: &str, span: Span) -> Result<Box<Expr>, Diagnostic> {
     let mut scanner = Scanner::new(s);
     let parts = scanner.scan_default_body();
     let exprs = string_parts_to_exprs(&parts, span, &scanner)?;

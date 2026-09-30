@@ -112,14 +112,16 @@ attest v [[ $v =~ ^[a-z/]+$ ]]
 /bin/echo pwned > ${v:?no}
 /bin/echo done' /dev/null
 [[ $rc = 0 && $out = "done" && -z $rerr ]]; chk bkstp.4
-
-# bkstp.5 NEGATIVE — a tainted `@{a:-WORD}` splat DEFAULT. `splat_taint`
-#         consulted only the array name and `taint_off`, never the word, so
-#         `b` was derived CLEAN and every later read of it passed. The array
-#         is declared outside the body on purpose: a body-declared array
-#         false-positives SB5031, which would mask this.
+# bkstp.5-bkstp.12 build a tainted array inside a `$( )` body so only the SSA
+#         backstop can see it. The vehicle used to be `@{a:-$t}` -- a tainted
+#         scalar spliced through a splat default. That spelling is SB4070 since
+#         2026-09-30 (a disposition default is a literal), so the tainted
+#         element is now spliced directly and the splat carries a literal `z`.
+#         The array is declared outside the body on purpose: a body-declared
+#         array false-positives SB5031, which would mask this.
+# bkstp.5 NEGATIVE -- an unvouched tainted element reaches `echo`.
 run_sash 'array a=( )
-/bin/echo $(str t=$(getenv T); array b=( @{a:-$t} ); echo $b[0])'
+/bin/echo $(str t=$(getenv T); array b=( $t @{a:-z} ); echo $b[0])'
 [[ $rc != 0 && -z $out && $err == *"taint backstop"* ]]; chk bkstp.5
 
 # bkstp.6 POSITIVE — a CLEAN splat default still derives clean. Guards the
@@ -128,12 +130,11 @@ run_sash 'array a=( )
 run_sash 'array a=( )
 /bin/echo $(array b=( @{a:-ok} ); echo $b[0])'
 [[ $rc = 0 && $out = "ok" && -z $rerr ]]; chk bkstp.6
-
-# bkstp.7 NEGATIVE — DD#91 scopes `!` to its own subject's read. `@{a:!-$t}`
-#         vouches for the ARRAY, not for an unrelated variable spliced into
-#         the default, so the word's taint still counts.
+# bkstp.7 NEGATIVE -- DD#91 scopes `!` to its own subject's read. `@{a:!-z}`
+#         vouches for the ARRAY, not for the unrelated `$t` beside it, so the
+#         element's taint still counts.
 run_sash 'array a=( )
-/bin/echo $(str t=$(getenv T); array b=( @{a:!-$t} ); echo $b[0])'
+/bin/echo $(str t=$(getenv T); array b=( $t @{a:!-z} ); echo $b[0])'
 [[ $rc != 0 && -z $out && $err == *"taint backstop"* ]]; chk bkstp.7
 
 # bkstp.8 POSITIVE — `@{a:-}` has `has_word` false and its `word` field is a
@@ -156,22 +157,18 @@ run_sash '/bin/echo $(str t=$(getenv HOME); array a=( ${t:!~} ); echo $a[0])'
 #          tainted and reading it is caught.
 run_sash '/bin/echo $(str t=$(getenv HOME); array a=( ${t:~} ); echo $a[0])'
 [[ $rc != 0 && -z $out && $err == *"taint backstop"* ]]; chk bkstp.10
-
-# bkstp.11 NEGATIVE — a tainted ARRAY at a splat. `b` is tainted through its
-#          own `:-` default (bkstp.5's mechanism), and splatting it into `c`
-#          must carry that across. The splat's word here is the CLEAN literal
-#          `z`, so `splat_taint` can only reach the right answer via the array
-#          itself — the one read this spec isolates.
+# bkstp.11 NEGATIVE -- taint carried across a second splat. `c`'s own word is
+#          the clean literal `z`, so `splat_taint` can only reach the right
+#          answer via `b` itself, which is the one read this spec isolates.
 run_sash 'array a=( )
-/bin/echo $(str t=$(getenv HOME); array b=( @{a:-$t} ); array c=( @{b:-z} ); echo $c[0])'
+/bin/echo $(str t=$(getenv HOME); array b=( $t @{a:-z} ); array c=( @{b:-z} ); echo $c[0])'
 [[ $rc != 0 && -z $out && $err == *"taint backstop"* ]]; chk bkstp.11
-
-# bkstp.12 POSITIVE — the same splat with DD#91 `@{b:!-z}`. `!` is a per-use
-#          attest-all for the splat's own read, so `c` derives clean and keeps
-#          `b`'s elements. The counterpart to bkstp.7: there `!` did NOT cover
-#          an unrelated word, here it DOES cover the subject it names.
+# bkstp.12 POSITIVE -- `@{b:!-z}` is an attest-all for the splat's own read, so
+#          `c` derives clean and keeps `b`'s elements. The counterpart to
+#          bkstp.7: there `!` did NOT cover an unrelated word, here it DOES
+#          cover the subject it names.
 run_sash 'array a=( )
-/bin/echo $(str t=$(getenv HOME); array b=( @{a:-$t} ); array c=( @{b:!-z} ); echo $c[0])'
+/bin/echo $(str t=$(getenv HOME); array b=( $t @{a:-z} ); array c=( @{b:!-z} ); echo $c[0])'
 [[ $rc = 0 && $out = "$HOME" && -z $rerr ]]; chk bkstp.12
 unset SASH_CFLAGS
 

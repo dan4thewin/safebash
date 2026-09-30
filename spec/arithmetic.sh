@@ -1057,11 +1057,11 @@ run_sash 'int x=$(( @@@ )); echo "$x"'
 # and this one used to be a silent 0 instead of joining them.
 run_sash 'echo "$(( $(getpid) > 0 ))"'
 [[ $rc != 0 && -z $out && $err == *SB4020* ]]; chk 31.46
-
-# 31.47 a malformed arith inside a `${var:-WORD}` default word (the default is
-# a full interpolating word, so it reaches the same parser)
+# 31.47 a malformed arith inside a `${var:-WORD}` default no longer reaches the
+# arithmetic parser at all: the default is a literal, so SB4070 fires first.
+# The direct spelling still covers SB4020.
 run_sash 'x=abc; echo "${x:-$(( 1 + ))}"'
-[[ $rc != 0 && -z $out && $err == *SB4020* ]]; chk 31.47
+[[ $rc != 0 && -z $out && $err == *SB4070* ]]; chk 31.47
 
 # 31.48 ... and inside a `${var:s/RE/SUB/}` replacement word
 run_sash 'x=abcd; echo "${x:s/b/$(( 1 + ))/}"'

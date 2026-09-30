@@ -373,11 +373,10 @@ echo hi'
 # (find_dollar_question) — no feature spec reads status at program start.
 run_sash 'echo $?'
 [[ $rc != 0 && -z $out && $err == *SB5012* ]]; chk cov.91
-
-# cov.92 a `$(random)` disposition default → SB5035 (expr_invokes_random,
-# DD#78) — the PRNG side effect under eager default eval is rejected.
+# cov.92 a `$(random)` disposition default was SB5035 (expr_invokes_random).
+# Both the helper and the code are gone -- a literal default cannot hold one.
 run_sash 'echo ${y:-$(random)}'
-[[ $rc != 0 && -z $out && $err == *SB5035* ]]; chk cov.92
+[[ $rc != 0 && -z $out && $err == *SB4070* ]]; chk cov.92
 
 # cov.93 a tainted `$(arg N DEFAULT)` default in an assignment RHS → SB5020
 # (check_arg_default_taint, DD#60/78). The `$(arg …)` source assignment is
@@ -874,15 +873,13 @@ run_sash 'if (( $* )); then echo y; fi'
 # SB5052 covers both spellings and they are separate arms
 run_sash 'array args=(1 2)'
 [[ $rc != 0 && -z $out && $err == *SB5052* ]]; chk cov.189
-
-# cov.190 DD#78: a `:-` default is part of the expansion's value, so a CLEAN
-# name with a TAINTED default is still tainted. Without this the array would
-# take external data without a `read`.
+# cov.190 a tainted `:-` default into an array element. Was SB5021 via the
+# read discipline; SB4070 now, in the parser.
 run_sash 's=$(getenv HOME)
 c="q"
 array a=("${c:-$s}")
 echo "${a[0]}"'
-[[ $rc != 0 && -z $out && $err == *SB5021* ]]; chk cov.190
+[[ $rc != 0 && -z $out && $err == *SB4070* ]]; chk cov.190
 
 # cov.191 a variable written TWICE and never read reports once, not twice —
 # the dead-variable pass dedups by name
@@ -1073,14 +1070,12 @@ run_sash 'x=$(printf 1)
 array b=("${x:-d}")
 echo "${b[0]}"'
 [[ $rc != 0 && -z $out && $err == *SB5021* ]]; chk cov.219
-
-# cov.220 …and the mirror: a CLEAN name whose default holds the tainted read,
-# so the walk has to look past the name it first tests.
+# cov.220 same, with the taint reached past the first name tested.
 run_sash 'int y=1
 x=$(printf 1)
 array b=("${y:-$x}")
 echo "${b[0]}"'
-[[ $rc != 0 && -z $out && $err == *SB5021* ]]; chk cov.220
+[[ $rc != 0 && -z $out && $err == *SB4070* ]]; chk cov.220
 
 # cov.221 a CLEAN subscript read as a collection element — the container is
 # not tainted, so the walk goes on to check the index (DD#114).
@@ -1095,31 +1090,31 @@ run_sash '/bin/echo a | read ARR
 array b=("${ARR[0]}")
 echo "${b[0]}"'
 [[ $rc != 0 && -z $out && $err == *SB5021* ]]; chk cov.222
-
-# ── brace-less disposition operand: the `$…` scan (parse/lexer.rs
-# `skip_dollar_var`, reached only from `scan_braceless_operand`). Every
-# spec below drives a DIFFERENT arm of that scan; the compile outcome is
-# incidental, the lexer path is the point.
-
-# cov.223 a multi-char identifier after `$` — the scan's inner run loop has
-# to advance past the first byte, which a 1-char name never makes it do.
-run_sash 'array a=()
-str xy=q
-/bin/echo @{a:-$xy}'
-[[ $rc = 0 && $out = "q" && -z $err ]]; chk cov.223
-
-# cov.224 …and a `_`-led identifier, which reaches the scan's second
-# alternative (`c == b'_'`); an alphabetic lead short-circuits past it.
-run_sash 'array a=()
-str _z=q
-/bin/echo @{a:-$_z}'
-[[ $rc = 0 && $out = "q" && -z $err ]]; chk cov.224
-
-# cov.225 a single-char SPECIAL (`$#`) in the same position. The scan
-# consumes it before the `#` word-terminator check ever runs, so the
-# operand is `$#` and not an empty operand plus a comment.
-run_sash 'array a=()
-/bin/echo @{a:-$#}'
+# cov.223-cov.225 reach the interpolating-word scanner's identifier arms. They
+# used to do it through a `:-` default; that operand is a literal now, so the
+# vehicle moved to `:s/`, which is still a full interpolating word (a pattern is
+# evaluated unconditionally, so the literal rule does not apply to it). Same
+# scanner, same arms.
+# cov.223 a multi-char identifier -- the inner run loop must advance past the
+# first byte, which a 1-char name never makes it do.
+run_sash 'str x=aQb
+str xy=Q
+str v=${x:s/$xy/Z/}
+echo "[$v]"'
+[[ $rc = 0 && $out = "[aZb]" && -z $err ]]; chk cov.223
+# cov.224 a `_`-led identifier, reaching the scan's second alternative
+# (`c == b'_'`); an alphabetic lead short-circuits past it.
+run_sash 'str x=aQb
+str _z=Q
+str v=${x:s/$_z/Z/}
+echo "[$v]"'
+[[ $rc = 0 && $out = "[aZb]" && -z $err ]]; chk cov.224
+# cov.225 a single-char SPECIAL (`$#`) in the same position: the scan consumes
+# it before the `#` word-terminator check runs, so the operand is `$#` and not
+# an empty operand plus a comment.
+run_sash 'str x=a0b
+str v=${x:s/$#/Z/}
+echo "[$v]"'
 [[ $rc != 0 && -z $out && $err == *SB5024* ]]; chk cov.225
 
 # ── for-loop iterable classification (transform/control_flow.rs
@@ -1312,8 +1307,10 @@ rchild=${out#child=}
 # one fails here.
 run_sash 'int x=1; /bin/echo "$(( ++x ))"'
 [[ $rc != 0 && -z $out && $err == *SB4020*prefix*++x*not\ allowed* ]]; chk cov.253
+# cov.254 the arith parser is no longer reachable through a `:-` default
+# (literal), so this asserts SB4070; cov.253 keeps the SB4020 coverage.
 run_sash 'int x=1; /bin/echo "${x:-$(( ++x ))}"'
-[[ $rc != 0 && -z $out && $err == *SB4020*prefix*++x*not\ allowed* ]]; chk cov.254
+[[ $rc != 0 && -z $out && $err == *SB4070* ]]; chk cov.254
 run_sash 'int a[3]; int x=1; (( y = a[++x] ))'
 [[ $rc != 0 && -z $out && $err == *SB4020*prefix*++x*not\ allowed* ]]; chk cov.255
 

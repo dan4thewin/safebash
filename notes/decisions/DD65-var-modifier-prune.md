@@ -283,3 +283,65 @@ terminates at the first `}`.
 
 Specs: `vm.req4`-`vm.req10` (var_modifiers.sh), `dd78.8`-`dd78.12` (taint.sh),
 `gs.56`-`gs.58` (glob_splat.sh, plan 58 -> 61).
+
+## Follow-on (2026-09-30) — `:-` is a literal too, and so is `arg N DEFAULT`
+
+The rule above is no longer `:?`-specific. DG, on reading the `:?` account:
+
+> the `:-` default, let's change it to match the `:?` so eager/side-effects are
+> a non-issue.
+
+So **all three disposition defaults take a literal operand**, and a `$` in one
+is SB4070 unless the whole operand is single-quoted:
+
+```sh
+str v=${x:-plain}          # ok
+str v=${x:-'costs $5'}     # ok — the value is:  costs $5
+str v=${x:-$y}             # SB4070
+str v=${x:-$(f)}           # SB4070
+echo @{a:-$t}              # SB4070 — the array form, same rule
+x=$(arg 5 $t)              # SB4070 — the `arg` form, same rule
+```
+
+**The `arg` form is checked structurally, not textually.** The `${ }` and
+brace-less spellings are rejected in the parser, on the operand's raw text.
+Nothing knows a word belongs to `arg` until validate, so that form is rejected
+there instead, by walking the parsed expression for any expansion
+(`first_expansion`). The single-quote escape falls out for free: a
+`SingleQuoted` carries no expansion to find. The code is the same, SB4070,
+because the rule is the same rule.
+
+**What this retires.** The interpolating-word operand was the *only* reason
+these existed, and all of them are now deleted:
+
+- the eager/lazy hybrid lowering of `:-` (`lift_default_value`'s capture
+  detection, and the phi-merged control flow added for bash parity), and its
+  specs `lift.4`-`lift.10`;
+- **SB5035** — the `$(random)` ban. It existed because an eagerly-materialized
+  default advanced the PRNG on the path where the default was not used. A
+  literal cannot invoke `random`, so the ban is unreachable by construction;
+- DD#78's read discipline for `:-` (see that DD's final amendment). The taint
+  hole it closed with a *checker* is now closed by the grammar.
+
+DG named the underlying cause: "I think the eager business came as a way to
+avoid a taint bypass." Close — the eagerness was pre-existing branchless-select
+codegen, and SB5035 and the read discipline were both consequences of it. Once
+the operand cannot contain an expansion, "when is it evaluated" and "what may
+it do" both stop being questions.
+
+**What is deliberately *not* in scope.** `${x:s/RE/SUB/}` remains a full
+interpolating word. It is a *pattern*, not a disposition default: it is
+evaluated unconditionally, so neither the laziness question nor the
+conditionally-taken-side-effect question arises. `parse_interpolating_word` (the
+old `parse_default_word`) survives for it alone.
+
+**Known expressiveness loss: a literal `}` in a default is unrepresentable.**
+The `$'a\x7db'` C-string hatch contains a `$`, so it is SB4070; and the brace
+scanner is pure depth-matching, so quoting does not protect a `}` either
+(`${y:-'a}b'}` terminates at the first `}`). This was already true of `:?` and
+now extends to `:-`. Use a conditional. Pinned by `vm.dv2`.
+
+Specs: `vm.dv*`/`vm.bl*` (var_modifiers.sh), `61.1`-`61.7` / `dd78.1`-`dd78.7` /
+`91.24`-`91.33` (taint.sh), `bkstp.5`/`7`/`11`/`12` (taint_switch.sh), `gs.11`,
+`gs.45`, `av.d4`, `av.d7`, `ud.13`, `31.47`, and `cov.92`/`190`/`220`/`223`/
+`224`/`225`/`254`.

@@ -61,10 +61,11 @@ run_sash 'echo [$x]; x=5; echo [$x]'
 # ud.12 a typo inside a double-quoted interpolation is caught
 run_sash 'name=world; echo "hello $naem"'
 [[ $rc != 0 && -z $out && $err == *SB5031* ]]; chk ud.12
-
-# ud.13 a read inside a ${x:-$y} default is still checked (y is a typo here)
+# ud.13 a `${x:-$y}` default used to be a checked read position, so a typo'd
+# name was SB5031. There are no reads in a default now -- SB4070 rejects the
+# expansion itself, before any name is resolved.
 run_sash 'echo ${x:-$undef_y}'
-[[ $rc != 0 && -z $out && $err == *SB5031* ]]; chk ud.13
+[[ $rc != 0 && -z $out && $err == *SB4070* ]]; chk ud.13
 
 # ud.14 specials are not flagged ($? after a command)
 run_sash '/bin/true; echo $?'

@@ -5853,13 +5853,18 @@ fn push_taint_use(
 /// default's operand, which is a read position — a tainted read there is a use
 /// without attest, like `echo $tainted`.
 ///
-/// `:?` and the pattern operators carry a *literal* operand (DD#65), so they
-/// are clean by construction and are not walked. That is a property of the
-/// parse, not an assumption: if `${var:?MESSAGE}` is ever made to interpolate,
-/// this gate must grow a `:?` arm in the same commit. It briefly did
-/// interpolate, and the missing arm turned a wrong-but-safe SB5050 into a live
-/// taint escape — the message goes to stderr, so the value leaves the program.
-/// See the note in `parse_disposition_operator` for why it is literal.
+/// **No operator's operand is walked**, because none of them can be tainted:
+/// every parameter-expansion operand is now a literal. The disposition
+/// defaults (`:-`, `:?`) became literals on 2026-09-30 (SB4070); the pattern
+/// operators always were (DD#65).
+///
+/// That is a property of the *parse*, not an assumption, and it is the whole
+/// reason this function is short. It has been wrong once: `${var:?MESSAGE}`
+/// briefly interpolated, and the missing arm turned a wrong-but-safe SB5050
+/// into a live taint escape — an abort message goes to stderr, so the value
+/// left the program. If any operand is ever made to interpolate again, this
+/// gate must grow an arm for it **in the same commit**. See
+/// `parse_disposition_literal` for why they are literal.
 fn check_param_expansion_taint(
     pe: &ParameterExpansion,
     span: Span,
@@ -5877,13 +5882,6 @@ fn check_param_expansion_taint(
             format!("tainted variable ${{{} ...}} used without attest", pe.name),
             diags,
         );
-    }
-    // Not gated on `taint_off`: the `!` covers the subject's read, never the
-    // default's. `${x:!-$y}` still owes an attest for `y`.
-    if pe.operator.as_deref() == Some(":-") {
-        if let Some(operand) = &pe.operand {
-            check_expr_taint(operand, tainted, diags);
-        }
     }
 }
 
@@ -8681,14 +8679,14 @@ fn ambiguous_index_error(span: Span, idx: &str) -> Diagnostic {
     )
 }
 
-/// DD#78: a disposition default is evaluated **eagerly** (`emit_default_value`
-/// selects between both arms), so it must be side-effect-free. `$(random)` is
-/// *clean* (a compiler intrinsic) but **stateful** — it advances the PRNG
-/// whether or not the fallback is taken. Reject it in a `:-` default or an
-/// `$(arg N DEFAULT)` default (SB5035). Also enforce `arg`'s arity here (index +
-/// optional default). Tainted / forking defaults are caught as read-position
-/// uses by `check_taint`; `random` is the only clean-but-stateful intrinsic, so
-/// it needs this dedicated structural check.
+/// Enforce `arg`'s arity (index + optional default) and the literal-operand
+/// rule on its default.
+///
+/// This used to also host SB5035, which rejected `$(random)` in a `:-` default
+/// because the default was evaluated eagerly and `random` advances the PRNG
+/// whether or not the fallback is taken. Both halves of that are gone: `:-` now
+/// carries a literal, so no substitution of any kind can appear in one, and the
+/// ban has nothing left to reject. The general rule subsumes the special case.
 pub fn check_disposition_defaults(program: &Program) -> Vec<Diagnostic> {
     let mut diags = Vec::new();
     for stmt in program
@@ -8697,32 +8695,25 @@ pub fn check_disposition_defaults(program: &Program) -> Vec<Diagnostic> {
         .chain(program.end_block.iter().flatten())
     {
         crate::ir::walk_all_exprs(stmt, &mut |e| {
-            flag_random_default(e, &mut diags);
             flag_arg_builtin(e, &mut diags);
         });
     }
     diags
 }
 
-fn flag_random_default(e: &Expr, diags: &mut Vec<Diagnostic>) {
-    let ExprKind::ParameterExpansion(pe) = &e.kind else {
-        return;
-    };
-    if pe.operator.as_deref() != Some(":-") {
-        return;
-    }
-    let Some(operand) = &pe.operand else {
-        return;
-    };
-    if expr_invokes_random(operand) {
-        diags.push(random_default_diag(e.span));
-    }
-}
-
 /// DD#60 addendum: `$(arg …)` takes an index and an optional default
-/// (`$(arg N)` or `$(arg N DEFAULT)`) — reject other arities. The default, if
-/// present, is DD#78-constrained: reject a `$(random)` default (side effect
-/// under eager eval; a tainted default is caught by `check_taint`).
+/// (`$(arg N)` or `$(arg N DEFAULT)`) — reject other arities.
+///
+/// The default, if present, must be a **literal** — the third disposition
+/// default, held to the same rule as `${x:-D}` and `${x:?MSG}` (SB4070, DG
+/// 2026-09-30). Those two are literals by *parse*; this one cannot be, because
+/// it is an ordinary command argument and nothing knows it belongs to `arg`
+/// until validate. So the rule is enforced structurally here instead, on the
+/// parsed expression.
+///
+/// A single-quoted default needs no special case: `$(arg 5 'costs $5')` is a
+/// `SingleQuoted`, which carries no expansion and so passes. The escape comes
+/// out of the existing quoting rules for free.
 fn flag_arg_builtin(e: &Expr, diags: &mut Vec<Diagnostic>) {
     let ExprKind::CommandSubstitution(stmts) = &e.kind else {
         return;
@@ -8738,8 +8729,8 @@ fn flag_arg_builtin(e: &Expr, diags: &mut Vec<Diagnostic>) {
         return;
     }
     if let Some(default) = c.args.get(1) {
-        if expr_invokes_random(default) {
-            diags.push(random_default_diag(default.span));
+        if let Some(bad) = first_expansion(default) {
+            diags.push(disposition_default_expansion(bad));
         }
     }
 }
@@ -8810,37 +8801,46 @@ fn is_nonnumeric_index_literal(e: &Expr) -> bool {
     !s.is_empty() && !s.bytes().all(|b| b.is_ascii_digit())
 }
 
-fn random_default_diag(span: Span) -> Diagnostic {
+/// The span of the first expansion inside `expr`, or `None` if it is all
+/// literal text.
+///
+/// **Total over `ExprKind` on purpose — do not add a wildcard.** The whole
+/// point is to answer "can any of this be substituted at runtime", so a new
+/// variant must be classified deliberately. A wildcard would silently answer
+/// "no" for it and reopen the hole this rule closes.
+fn first_expansion(expr: &Expr) -> Option<Span> {
+    match &expr.kind {
+        // Inert text.
+        ExprKind::Literal(_) | ExprKind::SingleQuoted(_) => None,
+        // Substituted at runtime — the whole point of the rule.
+        ExprKind::SimpleExpansion(_)
+        | ExprKind::ParameterExpansion(_)
+        | ExprKind::Subscript { .. }
+        | ExprKind::CommandSubstitution(_)
+        | ExprKind::SlurpFile(_)
+        | ExprKind::Arithmetic(_) => Some(expr.span),
+        // Containers: inert in themselves, so recurse.
+        ExprKind::DoubleQuoted(parts) | ExprKind::Concat(parts) | ExprKind::Array(parts) => {
+            parts.iter().find_map(first_expansion)
+        }
+        ExprKind::AssocArray(pairs) => pairs.iter().find_map(|(_, v)| first_expansion(v)),
+        // A test is a statement-level construct and cannot be an `arg` default;
+        // treat it as substituted rather than inventing a traversal for it.
+        ExprKind::Test(_) => Some(expr.span),
+    }
+}
+
+fn disposition_default_expansion(span: Span) -> Diagnostic {
     Diagnostic::error_span(
         span,
-        "SB5035",
-        "a disposition default must be side-effect-free — `$(random)` advances \
-         the PRNG and the default is evaluated eagerly; capture it into a \
-         variable first and use the clean value"
+        "SB4070",
+        "an `$(arg N DEFAULT)` default is a literal, so a `$` expansion in it \
+         would be silently used as text rather than expanded — the same rule as \
+         `${x:-D}` and `${x:?MSG}`. Single-quote it to mean a literal `$` \
+         (`$(arg 5 'costs $5')`), or, if you want a computed value, capture the \
+         argument and test it explicitly"
             .to_string(),
     )
-}
-
-/// Does `expr` contain a `$(random)` command substitution?
-fn expr_invokes_random(expr: &Expr) -> bool {
-    let mut found = false;
-    crate::ir::walk_expr_tree(expr, &mut |e| {
-        if cmdsub_head_is(e, "random") {
-            found = true;
-        }
-    });
-    found
-}
-
-/// True if `e` is a `$(NAME …)` command substitution whose head literal is `name`.
-fn cmdsub_head_is(e: &Expr, name: &str) -> bool {
-    let ExprKind::CommandSubstitution(stmts) = &e.kind else {
-        return false;
-    };
-    let Some(StmtKind::Command(c)) = stmts.first().map(|s| &s.kind) else {
-        return false;
-    };
-    expr_literal_str(&c.name) == name
 }
 
 // ── SB5056 (DD#98): `_` is write-only — every read of it is rejected ──

@@ -157,3 +157,49 @@ DD actually owns that question.
 
 The rest of this DD — the clean/non-`random` read discipline on `:-`,
 `arg N DEFAULT`, and the laziness amendment — is unaffected.
+
+### Amendment (2026-09-30) — the read discipline dissolves; this DD is spent
+
+The withdrawal above was the first half. DG took the second:
+
+> the `:-` default, let's change it to match the `:?` so eager/side-effects are
+> a non-issue.
+
+A disposition default is now a **literal** in all three spellings — `${x:-D}`,
+`@{a:-D}`, `$(arg N D)` — and a `$` in one is SB4070 (DD#65, follow-on
+2026-09-30). Everything this DD constrains is therefore unreachable by
+construction, and the machinery is deleted:
+
+- **The read discipline is gone.** It required an operand to be a clean read.
+  An operand cannot be a read at all now, so `check_param_expansion_taint` no
+  longer walks one. The real taint hole Stage 1 closed — a tainted value
+  reaching a clean sink through a default, with no `read` — is closed by the
+  grammar instead of by a checker.
+- **SB5035 is gone**, along with `flag_random_default`, `random_default_diag`,
+  `expr_invokes_random`, and `cmdsub_head_is`. The `$(random)` ban existed
+  because an eagerly-materialized default advanced the PRNG on the untaken
+  path; a literal cannot invoke it.
+- **The laziness amendment is moot.** `lift_default_value` is a branchless
+  select again and `contains_capture` is deleted. This retires DG's own call
+  from journal 432 ("**b** — lower lazily"), which was the right answer to the
+  question as it stood then: given an interpolating operand, bash parity was
+  the correct tiebreak. Removing the operand removes the question.
+
+So Scope's premise — that a default "may contain arbitrary expansions" and must
+therefore be constrained — no longer holds for any of the three forms. **This
+DD retains no live rule.** It is kept for the account of the taint hole and for
+the two errors recorded against it, both of which generalise:
+
+1. **Uniformity written into a Scope section outlived the Stage that
+   contradicted it.** Stage 1 said `:?` had "nothing to check"; Scope claimed
+   it as a constrained default anyway. The contradiction sat unread until
+   someone acted on the wrong half.
+2. **Grouping two forms by purpose is not a statement about their grammar.**
+   See the withdrawal above.
+
+A third is worth adding now that the arc has closed: the eagerness these rules
+were built on was never a safety decision. It was pre-existing
+branchless-select codegen, and SB5035 and the read discipline were both
+*consequences* of it that then had to be defended on their own terms. When a
+rule exists to contain an implementation artifact, the cheaper fix is often to
+remove the artifact's reach rather than to keep checking its blast radius.

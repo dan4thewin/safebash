@@ -62,10 +62,9 @@ run_sash 'array a=(x); /bin/echo @{a:+w}'
 # gs.10 `:=` is likewise rejected (DD#65 scalar prune parity)
 run_sash 'array a=(x); /bin/echo @{a:=w}'
 [[ $rc != 0 && -z $out && -n $err ]]; chk gs.10
-
-# gs.11 WORD is a full interpolating word: `$p` expands
+# gs.11 WORD is a literal, so an expansion in it is SB4070
 run_sash 'p=hi; array a=(); /bin/echo @{a:-$p}'
-[[ $rc = 0 && $out = "hi" && -z $err ]]; chk gs.11
+[[ $rc != 0 && -z $out && $err == *SB4070* ]]; chk gs.11
 
 # gs.12 WORD substitutes as a SINGLE element (not re-split): a space in the
 #       WORD stays one argument. WORD is a `${x:-WORD}`-style body (quotes
@@ -253,11 +252,10 @@ str s = "S"
 #       key on adjacency, not on the disposition itself.
 run_sash 'array a=(p q); /usr/bin/printf "[%s]\n" @{a:-x}'
 [[ $rc = 0 && $out = $'[p]\n[q]' && -z $err ]]; chk gs.44
-
-# gs.45 CONTROL: an interpolating WORD inside the disposition is not adjacency
+# gs.45 a non-empty array ignores the WORD entirely (literal now, but the
+# point is that it is not used at all)
 run_sash 'array a=(p q)
-str s = "S"
-/usr/bin/printf "[%s]\n" @{a:-$s}'
+/usr/bin/printf "[%s]\n" @{a:-S}'
 [[ $rc = 0 && $out = $'[p]\n[q]' && -z $err ]]; chk gs.45
 
 # ── prefix adjacency (DD#69) ──────────────────────────────────────────────

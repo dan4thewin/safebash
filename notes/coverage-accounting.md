@@ -422,6 +422,11 @@ spilling stage targets in `push_command_stage`; deleted `ir_expr_to_ssa_value`.
   by RAW per-function count** (validate.rs: 18 / 163 / 1672), not the aggregated
   never-run list.
 
+  > **Stale as of 2026-09-30:** `expr_invokes_random` and SB5035 are **deleted**.
+  > A disposition default is a literal now (DD#65 follow-on), so `$(random)`
+  > cannot appear in one and the ban is unreachable by construction. `cov.92`
+  > survives, asserting SB4070. The other two entries are unaffected.
+
 **⚠ DEMANGLE ARTIFACT (measurement caveat):** the JSON has count-0 entries whose
 demangled short name collides with a covered function but which live in a
 DIFFERENT file — they are monomorphized closures passed to the generic `ir.rs`

@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup functions
-plan=169
+plan=162
 echo "1..$plan" >&3
 
 set +e
@@ -1106,60 +1106,6 @@ array arr=(p q)
 str z=${arr[$(f)]}
 echo "[$z]"'
 [[ $rc = 0 && $out = "[q]" && -z $err ]]; chk lift.3
-
-# lift.4 a capture in a `:-` operand, default taken
-run_sash 'f() { echo hi; }
-str y=""
-str z=${y:-$(f)}
-echo "[$z]"'
-[[ $rc = 0 && $out = "[hi]" && -z $err ]]; chk lift.4
-
-# lift.5 ...and not taken
-run_sash 'f() { echo hi; }
-str y=set
-str z=${y:-$(f)}
-echo "[$z]"'
-[[ $rc = 0 && $out = "[set]" && -z $err ]]; chk lift.5
-
-# lift.6 `:-` is LAZY: the operand is evaluated only when the default fires,
-# so an untaken capture must not run. Hoisting it into the enclosing block
-# would still print "[set]" — the side effect on stderr is what catches it.
-run_sash 'f() { echo RAN >&2; echo hi; }
-str y=set
-str z=${y:-$(f)}
-echo "[$z]"'
-[[ $rc = 0 && $out = "[set]" && -z $rerr ]]; chk lift.6
-
-# lift.7 ...and it does run when the default fires (lift.6 alone would pass
-# against a compiler that never evaluated the operand at all)
-run_sash 'f() { echo RAN >&2; echo hi; }
-str y=""
-str z=${y:-$(f)}
-echo "[$z]"'
-[[ $rc = 0 && $out = "[hi]" && $rerr = "RAN" ]]; chk lift.7
-
-# lift.8 a `:-` capture stored through a subscript assignment
-run_sash 'f() { echo hi; }
-str y=""
-array a=(x)
-a[0]=${y:-$(f)}
-echo "[${a[0]}]"'
-[[ $rc = 0 && $out = "[hi]" && -z $err ]]; chk lift.8
-
-# lift.9 nested dispositions — the inner operand is two levels down
-run_sash 'f() { echo hi; }
-str y=""
-str w=""
-str z=${y:-${w:-$(f)}}
-echo "[$z]"'
-[[ $rc = 0 && $out = "[hi]" && -z $err ]]; chk lift.9
-
-# lift.10 a `:-` capture inside a double-quoted concatenation
-run_sash 'f() { echo hi; }
-str y=""
-str z="pre-${y:-$(f)}-post"
-echo "[$z]"'
-[[ $rc = 0 && $out = "[pre-hi-post]" && -z $err ]]; chk lift.10
 
 # lift.11 a capture assigned into a map cell
 run_sash 'f() { echo hi; }

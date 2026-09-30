@@ -1,11 +1,10 @@
 ---
 title: "SB5035 (`$(random)` in a `:-` default) justifies itself by eagerness that no longer applies"
-status: open
+status: resolved
 priority: P3
 kind: question
 depends: []
-gates:
-  - "DG rules on whether SB5035 still earns its place"
+gates: []
 ---
 
 ## The premise, and why it may have expired
@@ -44,3 +43,27 @@ under the question.
 ## Found by
 
 Journal 446, doing the archaeology DG asked for on the `:?` message arc.
+
+## Resolved 2026-09-30 — SB5035 is deleted, and so is the seam under it
+
+DG ruled past the question: "the `:-` default, let's change it to match the
+`:?` so eager/side-effects are a non-issue." A disposition default is a
+**literal** in all three spellings now, so `$(random)` cannot appear in one and
+the ban has nothing left to reject. SB5035, `flag_random_default`,
+`random_default_diag`, `expr_invokes_random`, and `cmdsub_head_is` are gone.
+
+Each measurement this filing asked for was answered by the change rather than
+by an experiment:
+
+- *does the PRNG advance when `x` is set?* — moot; the operand cannot invoke it.
+- *the side-effecting user function DD#78 allows* — moot; the operand cannot
+  call one. DD#78's read discipline is withdrawn entirely.
+- *what breaks if the eager path is deleted* — the hybrid is gone in the other
+  direction: `lift_default_value` is a branchless select again and
+  `contains_capture` is deleted. The "two lowerings for one operator, with the
+  seam invisible in the source" is one lowering.
+
+The filing's instinct was right and undersold: the premise had not merely
+expired, the *artifact the premise described* (eager materialization) was never
+a safety decision to begin with. See DD#65's follow-on and DD#78's final
+amendment.

@@ -368,28 +368,22 @@ fn lift_str_func_call(
     }
 }
 
-/// True when `v` holds a capture that [`lift_int_func_calls`] would materialize
-/// into the current block — i.e. something whose evaluation has side effects and
-/// so must not be hoisted out of a lazily-evaluated position.
-fn contains_capture(v: &SsaValue) -> bool {
-    match v {
-        SsaValue::FuncCall { .. }
-        | SsaValue::IntFuncCall { .. }
-        | SsaValue::CmdSubstBody { .. } => true,
-        other => other.child_values().into_iter().any(contains_capture),
-    }
-}
-
-/// `${x:-WORD}` evaluates WORD **only** when `x` is unset or empty, so a capture
-/// in the operand has to run under that guard. bash agrees: `y=set;
-/// z=${y:-$(f)}` never runs `f`.
+/// `${x:-WORD}` / `@{a:-WORD}`: lower to the branchless `DefaultValue` select,
+/// which evaluates both arms and picks one.
 ///
-/// A WORD with no capture is side-effect-free and keeps the cheap eager form —
-/// codegen lowers both sides and selects between them. One *with* a capture is
-/// lowered as real control flow instead: bind the source to a temp, test it, and
-/// re-bind the temp from the lifted WORD in the taken block only, merging
-/// through a phi. That also keeps the capture off the `DefaultValue` operand,
-/// which codegen has no way to lower (it ICEd).
+/// Evaluating an untaken arm is only sound because WORD is a **literal**
+/// (SB4070, DG 2026-09-30) — it cannot read, call, fork, or advance the PRNG,
+/// so "was it taken" is unobservable.
+///
+/// This function used to be twice this size. When WORD was a full
+/// interpolating word it could hold a capture, which must not run on the
+/// untaken path, so a capture-bearing default was lowered as real control flow
+/// — bind the source to a temp, test it, re-bind from the lifted WORD in the
+/// taken block, merge through a phi — while a captureless one kept the cheap
+/// select. Two lowerings for one operator, chosen by a predicate on the
+/// operand, with the seam invisible in the source. DG dissolved it by making
+/// the operand literal: "let's change it to match the `:?` so
+/// eager/side-effects are a non-issue."
 fn lift_default_value(
     source: SsaValue,
     default: SsaValue,
@@ -398,58 +392,11 @@ fn lift_default_value(
     block: &mut BlockId,
 ) -> SsaValue {
     let source = lift_int_func_calls(source, ssa, state, block);
-    if !contains_capture(&default) {
-        let default = lift_int_func_calls(default, ssa, state, block);
-        return SsaValue::DefaultValue {
-            source: Box::new(source),
-            default: Box::new(default),
-        };
+    let default = lift_int_func_calls(default, ssa, state, block);
+    SsaValue::DefaultValue {
+        source: Box::new(source),
+        default: Box::new(default),
     }
-
-    let temp = format!("__dflt_{}", ssa.blocks.len());
-    let bound = state.define(&temp);
-    ssa.block_mut(*block).insts.push(SsaInst::Assign {
-        target: bound.clone(),
-        value: source,
-    });
-    ssa.block_mut(*block).insts.push(SsaInst::Test(
-        SsaTest::Unary {
-            op: "-z".to_string(),
-            operand: SsaValue::Var(bound),
-        },
-        TestOrigin::Plain,
-    ));
-
-    let word_block = ssa.new_block("default.word");
-    let merge_block = ssa.new_block("default.merge");
-    let pre_state = state.snapshot();
-    ssa.block_mut(*block).terminator = Terminator::Branch {
-        condition: "default".to_string(),
-        true_block: word_block,
-        false_block: merge_block,
-    };
-
-    let mut word_exit = word_block;
-    let lifted = lift_int_func_calls(default, ssa, state, &mut word_exit);
-    let target = state.define(&temp);
-    ssa.block_mut(word_exit).insts.push(SsaInst::Assign {
-        target,
-        value: lifted,
-    });
-    ssa.block_mut(word_exit).terminator = Terminator::Goto(merge_block);
-    let word_state = state.snapshot();
-
-    super::helpers::insert_phis_two_branch(
-        state,
-        ssa,
-        merge_block,
-        word_exit,
-        &word_state,
-        *block,
-        &pre_state,
-    );
-    *block = merge_block;
-    SsaValue::Var(state.lookup(&temp))
 }
 
 /// Option C (DD#55): materialize any `IntFuncCall` (produced by `$(f)` /

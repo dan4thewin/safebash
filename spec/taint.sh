@@ -419,32 +419,40 @@ run_sash 'x=$(getenv HOME)
 attest x [[ $x =~ ^NEVER$ ]]
 echo $x'
 [[ $rc = 1 && $rerr == *"attest: x = '"* && $rerr == *"failed the gate" ]]; chk 24.20
-
-# ── DD#78 disposition-default discipline: a `:-` default is a read position,
-# so a tainted value may not sneak through it, and it must be side-effect-free.
-# Closes a taint hole (tainted defaults were silently accepted). ──
-# dd78.1 tainted var in a :- default (direct use) → SB5020
+# dd78.1-dd78.7 DD#78 closed the `:-` taint hole with a read discipline: the
+# default was an interpolating word, so the checker had to walk it and prove
+# whatever it expanded to was clean. DG retired that on 2026-09-30 -- "let's
+# change it to match the `:?` so eager/side-effects are a non-issue" -- and the
+# operand is a literal. Every program below is still rejected; the code moved
+# from SB5020/SB5035 to SB4070, and the read discipline it needed is gone.
+# dd78.1 a tainted variable in a `:-` default
 run_sash 'y=$(getenv HOME); echo ${x:-$y}'
-[[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk dd78.1
-# dd78.2 tainted source ($(getenv)) in a :- default → SB5020
+[[ $rc != 0 && -z $out && $err == *SB4070* ]]; chk dd78.1
+# dd78.2 a tainted source inline
 run_sash 'echo ${x:-$(getenv HOME)}'
-[[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk dd78.2
-# dd78.3 tainted source ($(arg N)) in a :- default → SB5020
+[[ $rc != 0 && -z $out && $err == *SB4070* ]]; chk dd78.2
+# dd78.3 the argv source
 run_sash 'echo ${x:-$(arg 1)}'
-[[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk dd78.3
-# dd78.4 a clean intrinsic default is accepted ($(getcwd))
+[[ $rc != 0 && -z $out && $err == *SB4070* ]]; chk dd78.3
+# dd78.4 a CLEAN intrinsic default used to be the accepted case -- the whole
+# point of a read discipline is that it lets safe expansions through. There is
+# no such category now: the operand is literal, so `$(getcwd)` is rejected
+# exactly like `$(getenv HOME)`. What you write instead is a conditional.
 run_sash 'x=hi; echo ${x:-$(getcwd)}'
-[[ $rc = 0 && $out = "hi" && -z $err ]]; chk dd78.4
+[[ $rc != 0 && -z $out && $err == *SB4070* ]]; chk dd78.4
 # dd78.5 a literal default is accepted (x unset → the default)
 run_sash 'echo ${x:-plain}'
 [[ $rc = 0 && $out = "plain" && -z $err ]]; chk dd78.5
-# dd78.6 $(random) default is a side-effect under eager eval → SB5035
+# dd78.6 `$(random)` had its own code (SB5035) because it is clean but
+# STATEFUL -- eager evaluation advanced the PRNG on the untaken path. The
+# general rule subsumes it and SB5035 has been deleted.
 run_sash 'echo ${x:-$(random)}'
-[[ $rc != 0 && -z $out && $err == *SB5035* ]]; chk dd78.6
-# dd78.7 a tainted default cannot sneak through a store either — DD#24 (no
-# propagation): the `:-` default is a read, so the assignment itself rejects.
+[[ $rc != 0 && -z $out && $err == *SB4070* ]]; chk dd78.6
+# dd78.7 a tainted default cannot sneak through a store either. This used to
+# depend on DD#24 (the default is a read, so the assignment rejects); it now
+# needs no taint reasoning at all.
 run_sash 'y=$(getenv HOME); z=${x:-$y}; echo $z'
-[[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk dd78.7
+[[ $rc != 0 && -z $out && $err == *SB4070* ]]; chk dd78.7
 # dd78.8-dd78.12 DD#78's read discipline does not reach the `:?` MESSAGE,
 # because the message is never read. It is a literal, and a `$` in it is SB4070
 # (see vm.req4-vm.req10). These specs pin the taint consequence: a tainted
@@ -1339,65 +1347,49 @@ run_sash 'int n=$(getenv SASH_SPEC_NOPE); echo "$(( n ))"'
 # array, which makes this the route an attacker would actually try.)
 run_sash 'read arr; int n=${arr[0]}; echo "$(( n ))"'
 [[ $rc != 0 && -z $out && $err == *"SB5020"* ]]; chk atint.21
-
-# ── DD#61: a taint SOURCE inside a `:-` default, flowing into a collection ──
-# The value-position twin of dd78.1-dd78.3, which only ever pinned the
-# *command-argument* read position (`echo ${x:-$(getenv HOME)}`). SB5021 is
-# decided by `is_taint_source(e) || expr_uses_tainted(e, tainted)` — a PAIR of
-# walkers that must jointly cover the tree. `expr_uses_tainted` was made total
-# after three leaks; `is_taint_source` kept its `_ => false` and never
-# descended into a parameter expansion, so a source in a `:-` default was
-# invisible to both: the first never arrived, the second arrived asking a
-# different question. A tainted *variable* in the identical position
-# (`${x:-$t}`) was SB5021 throughout, which made this a hole, not a policy.
-
-# 61.1 source in a :- default, subscript assignment → SB5021
-#      (compiled clean AND printed the env var before the fix — no backstop)
+# 61.1-61.7 DD#61: a tainted value must not reach an array/map element through
+# a `:-` default. These were the specs that closed a real hole, and they still
+# pin the same programs -- but the mechanism under them changed on 2026-09-30.
+# A `:-` default is a LITERAL now (SB4070), so none of these can express a
+# tainted default at all. The hole is shut by construction rather than by
+# SB5021 catching it, which is the stronger form of the same guarantee.
+# 61.1 subscript assignment
 run_sash 'str x=""
 array a=(q)
 a[0]=${x:-$(getenv HOME)}
 echo "${a[0]}"'
-[[ $rc != 0 && -z $out && $err == *SB5021* ]]; chk 61.1
-
-# 61.2 same source, array-literal element → SB5021
+[[ $rc != 0 && -z $out && $err == *SB4070* ]]; chk 61.1
+# 61.2 array-literal element
 run_sash 'str x=""
 array a=( ${x:-$(getenv HOME)} )
 echo "${a[0]}"'
-[[ $rc != 0 && -z $out && $err == *SB5021* ]]; chk 61.2
-
-# 61.3 same source, map value → SB5021
+[[ $rc != 0 && -z $out && $err == *SB4070* ]]; chk 61.2
+# 61.3 map value
 run_sash 'str x=""
 map m=( [k]=${x:-$(getenv HOME)} )
 echo "${m[k]}"'
-[[ $rc != 0 && -z $out && $err == *SB5021* ]]; chk 61.3
-
-# 61.4 `$(<file)` in a :- default → SB5021. Rejected at COMPILE time, so the
-#      path is never opened; a deliberately absent one proves that.
+[[ $rc != 0 && -z $out && $err == *SB4070* ]]; chk 61.3
+# 61.4 a file slurp
 run_sash 'str x=""
-array a=(q)
-a[0]=${x:-$(</no/such/file/at/all)}
+array a=( ${x:-$(</no/such/file/at/all)} )
 echo "${a[0]}"'
-[[ $rc != 0 && -z $out && $err == *SB5021* ]]; chk 61.4
-
-# 61.5 external command capture in a :- default → SB5021
+[[ $rc != 0 && -z $out && $err == *SB4070* ]]; chk 61.4
+# 61.5 an external command capture
 run_sash 'str x=""
 array a=( ${x:-$(/bin/date)} )
 echo "${a[0]}"'
-[[ $rc != 0 && -z $out && $err == *SB5021* ]]; chk 61.5
-
-# 61.6 nested inside a quoted concat — the container walk must still reach it
+[[ $rc != 0 && -z $out && $err == *SB4070* ]]; chk 61.5
+# 61.6 nested inside a quoted concat
 run_sash 'str x=""
 array a=( "pre${x:-$(getenv HOME)}" )
 echo "${a[0]}"'
-[[ $rc != 0 && -z $out && $err == *SB5021* ]]; chk 61.6
-
-# 61.7 the full escape: read back through a `[[ ]]` operand, which is not a
-#      command argument and so never reached the SSA backstop either. Before
-#      the fix this compiled silently and compared the file contents.
+[[ $rc != 0 && -z $out && $err == *SB4070* ]]; chk 61.6
+# 61.7 the slurp form, read back through a test. Before DD#61 this compiled
+#      silently and compared the file contents.
 run_sash 'str x=""
 array a=( ${x:-$(</no/such/file/at/all)} )
 if [[ ${a[0]} == 4242 ]] { echo "leaked" }'
-[[ $rc != 0 && -z $out && $err == *SB5021* ]]; chk 61.7
+[[ $rc != 0 && -z $out && $err == *SB4070* ]]; chk 61.7
 
 # 61.8 CONTROL: a clean default in the same position must still WORK, so 61.1
 #      pins "a source may not enter" and not "`:-` is banned here".
@@ -1438,67 +1430,51 @@ array a=(q)
 a[0]=${b[$i]}
 echo "${a[0]}"'
 [[ $rc = 0 && $out = "two" && -z $err ]]; chk 61.12
-
-# ── DD#91 scoping: `!` vouches for the read of THIS variable's stored value ──
-# DG, 2026-09-27: "the ! should only apply to the read of the variable's stored
-# value". Before this, `parameter_expansion_to_value` wrapped the subject in
-# `SsaValue::Trusted` ONLY when `pe.operator` was `None`, so the `!` of every
-# `${x:!-…}` was dropped on the floor: the subject stayed tainted, the whole
-# `DefaultValue` was tainted, and even the fully-vouched spelling died on the
-# unspanned SSA backstop. Three validate sites had the mirror-image fault,
-# treating `taint_off` as covering the entire expansion including the default.
-
-# 91.24 both halves vouched, subject present → the subject's value
+# 91.24-91.33 DD#91's `:!` vouches for a READ. With a literal operand there is
+# no read in the default to vouch for, so `:!-EXPANSION` is SB4070 in every
+# spelling -- including the four that used to be ACCEPTED here because `!`
+# covered both subject and operand.
+# 91.24 `${h:!-${u:!}}`, formerly accepted
 run_sash 'str h=$(getenv HOME)
 str u=$(getenv NOSUCHVAR_9124)
 str z=${h:!-${u:!}}
 echo "ok:$z"'
-[[ $rc = 0 && $out == ok:/* && -z $err ]]; chk 91.24
-
-# 91.25 both halves vouched, subject empty → the default fires and is clean
+[[ $rc != 0 && -z $out && $err == *SB4070* ]]; chk 91.24
+# 91.25 the operands the other way round, formerly accepted
 run_sash 'str u=$(getenv NOSUCHVAR_9125)
 str h=$(getenv HOME)
 str z=${u:!-${h:!}}
 echo "ok:$z"'
-[[ $rc = 0 && $out == ok:/* && -z $err ]]; chk 91.25
-
-# 91.26 brace-less subject + braced default is the same program (DD#90 rule 5
-#       keeps the INNER brace-less `$h:!` literal, so braces are required there
-#       — DG 2026-09-27 chose this reading; see vm.bl24).
+[[ $rc != 0 && -z $out && $err == *SB4070* ]]; chk 91.25
+# 91.26 the brace-less spelling, formerly accepted
 run_sash 'str u=$(getenv NOSUCHVAR_9126)
 str h=$(getenv HOME)
 str z=$u:!-${h:!}
 echo "ok:$z"'
-[[ $rc = 0 && $out == ok:/* && -z $err ]]; chk 91.26
-
-# 91.27 NEGATIVE: the subject's `!` does NOT vouch for a read in the default
+[[ $rc != 0 && -z $out && $err == *SB4070* ]]; chk 91.26
+# 91.27 an unvouched tainted operand (was SB5020)
 run_sash 'str h=$(getenv HOME)
 str p=$(getenv PATH)
 str z=${h:!-$p}
 echo "$z"'
-[[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk 91.27
-
-# 91.28 NEGATIVE: nor for a taint SOURCE materialised in the default
+[[ $rc != 0 && -z $out && $err == *SB4070* ]]; chk 91.27
+# 91.28 a taint SOURCE materialised in the default (was SB5020)
 run_sash 'str h=$(getenv HOME)
 str z=${h:!-$(getenv PATH)}
 echo "$z"'
-[[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk 91.28
-
-# 91.29 NEGATIVE: the converse — a `!` in the default does not vouch for the
-#       subject. Each `!` is scoped to its own read, in both directions.
+[[ $rc != 0 && -z $out && $err == *SB4070* ]]; chk 91.28
+# 91.29 `!` on the operand but not the subject (was SB5020)
 run_sash 'str h=$(getenv HOME)
 str p=$(getenv PATH)
 str z=${h:-${p:!}}
 echo "$z"'
-[[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk 91.29
-
-# 91.30 the vouched value reaches a collection: the SSA backstop must see the
-#       `Trusted` node. This is the shape that died on the bare backstop.
+[[ $rc != 0 && -z $out && $err == *SB4070* ]]; chk 91.29
+# 91.30 into an array literal, formerly accepted
 run_sash 'str h=$(getenv HOME)
 str u=$(getenv NOSUCHVAR_9130)
 array a=( ${h:!-${u:!}} )
 echo "ok:${a[0]}"'
-[[ $rc = 0 && $out == ok:/* && -z $err ]]; chk 91.30
+[[ $rc != 0 && -z $out && $err == *SB4070* ]]; chk 91.30
 
 # 91.31 `!` is a taint annotation, not a change of type: an int subject read
 #       through `:!-` must take the SAME path as without it. Wrapping the
@@ -1512,25 +1488,17 @@ int a=${n:-7}
 int b=${n:!-7}
 echo "$a:$b"'
 [[ $rc = 0 && $out = "7:7" && -z $rerr ]]; chk 91.31
-
-# 91.32 NEGATIVE, collection position: `reject_tainted_into_array` decides with
-#       a DIFFERENT walker pair than the scalar path, and `pexp_uses_tainted`
-#       returned false for the whole expansion whenever `taint_off` was set —
-#       so a tainted read in the default entered the array unchallenged.
+# 91.32 an unvouched operand into an array literal (was SB502x)
 run_sash 'str h=$(getenv HOME)
 str p=$(getenv PATH)
 array a=( ${h:!-$p} )
 echo "${a[0]}"'
-[[ $rc != 0 && -z $out && $err == *SB502* ]]; chk 91.32
-
-# 91.33 NEGATIVE, collection position, taint SOURCE in the default — the
-#       `is_taint_source` half of that same pair, which had its own
-#       `!pe.taint_off &&` gate. 91.32 cannot cover this: a top-level source
-#       short-circuits the `||` before the second walker ever runs.
+[[ $rc != 0 && -z $out && $err == *SB4070* ]]; chk 91.32
+# 91.33 a taint source into an array literal (was SB502x)
 run_sash 'str h=$(getenv HOME)
 array a=( ${h:!-$(getenv PATH)} )
 echo "${a[0]}"'
-[[ $rc != 0 && -z $out && $err == *SB502* ]]; chk 91.33
+[[ $rc != 0 && -z $out && $err == *SB4070* ]]; chk 91.33
 
 # ── DD#86: the front end taint-checks a `$( … )` body ──────────────────────
 # `check_cmdsub_inner_reads` was the only thing that looked inside a body: it
