@@ -5,7 +5,7 @@
 set -eu
 . common.sh
 setup var_modifiers
-plan=151
+plan=156
 echo "1..$plan" >&3
 
 set +e
@@ -125,6 +125,45 @@ run_sash 'echo "${foo:?must be set}"'
 run_sash 'foo=; echo "${foo:?empty}"'
 [[ $rc != 0 && -z $out ]] \
   && { ! in_modes native || [[ $rerr == *": empty"* ]]; }; chk vm.req3
+# vm.req4-vm.req8 DD#78: the `:?` MESSAGE is a full interpolating word, exactly
+#       like the `:-` default. It was parsed as an ExprKind::Literal, so sash
+#       printed `$m` where bash prints the value — an oracle divergence, and
+#       the reason the operand was invisible to every other pass.
+# vm.req4 a variable in the message expands
+run_sash 'str m=boom
+str y=""
+str z=${y:?$m}
+echo "[$z]"'
+[[ $rc != 0 && -z $out ]] \
+  && { ! in_modes native || [[ $rerr == *": boom" ]]; }; chk vm.req4
+# vm.req5 so does an arithmetic expansion — a different interpolation form, so
+#       this is not just testing the `$name` case twice
+run_sash 'str y=""
+str z=${y:?count $(( 2 + 3 ))}
+echo "[$z]"'
+[[ $rc != 0 && -z $out ]] \
+  && { ! in_modes native || [[ $rerr == *": count 5" ]]; }; chk vm.req5
+# vm.req6 literal text and an expansion mix in one message
+run_sash 'str m=boom
+str y=""
+str z=${y:?pre $m post}
+echo "[$z]"'
+[[ $rc != 0 && -z $out ]] \
+  && { ! in_modes native || [[ $rerr == *": pre boom post" ]]; }; chk vm.req6
+# vm.req7 the message is only materialized on the abort path — a set value
+#       yields the value and never evaluates it
+run_sash 'str m=boom
+str y=ok
+str z=${y:?$m}
+echo "[$z]"'
+[[ $rc = 0 && $out = "[ok]" && -z $err ]]; chk vm.req7
+# vm.req8 a message with no expansion in it is unchanged — the guard that the
+#       interpolating parse did not break plain text
+run_sash 'str y=""
+str z=${y:?plain text}
+echo "[$z]"'
+[[ $rc != 0 && -z $out ]] \
+  && { ! in_modes native || [[ $rerr == *": plain text" ]]; }; chk vm.req8
 # dr4-5: prefix strip (#, ##) → basename / sub
 run_sash 'x=abc; echo "${x#a}"'
 [[ $rc != 0 && -z $out && $err == *SB4034* ]]; chk vm.dr4

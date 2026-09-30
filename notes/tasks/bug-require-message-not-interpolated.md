@@ -1,6 +1,6 @@
 ---
 title: "`${x:?MESSAGE}` — the message is literal text, not an interpolating context"
-status: open
+status: done
 priority: P2
 kind: bug
 depends: []
@@ -61,3 +61,36 @@ Journal 432, while checking whether `emit_c.rs`'s "DD#77" citation on
 re-added scalar `:?` everywhere after DD#65 pruned it, so the many `DD#77`
 comments on `RequireValue` should be left alone. (DD#65's "`:?` is rejected for
 SCALAR `${var:?…}` only" line is the stale one; it predates DD#77.)
+
+## Resolved 2026-09-30
+
+Two one-line changes, in two passes, and the second was mandatory — fixing
+only the first turned a wrong rejection into a **taint escape**.
+
+**Parse.** `parse_disposition_operator` (`parse/expr.rs`) ran
+`parse_default_word` for `:-` and built an `ExprKind::Literal` for everything
+else, `:?` included. Now `:-` and `:?` share the interpolating branch, which is
+what DD#78 says: the message is a disposition default like any other.
+
+**Taint.** `check_param_expansion_taint` gated its operand walk on `:-`, with a
+doc comment asserting that "`:?` … carr[ies] a *literal* operand, DD#65, which
+is clean by construction". True before the parse change, false after — so on
+the first build `${y:?$h}` with tainted `h` **compiled clean**. Before the fix
+it was rejected SB5050 (dead variable); a fix that made it compile would have
+been a regression, and a confidentiality hole, since the message is written to
+stderr. The gate is now `matches!(…, Some(":-") | Some(":?"))` and the doc
+records why.
+
+`pexp_uses_tainted` (propagation) needed no change — it already walked
+`pe.operand` unconditionally.
+
+Verified against bash: `boom`, `count 5`, `pre boom post` all match. `:!?`
+vouches for the subject only and still owes an attest for the operand, exactly
+as `${x:!-$y}` does.
+
+The array form `@{a:?MSG}` already interpolated. Its tainted case is rejected
+by the SSA backstop with no SB code — that is
+`bug-taint-escape-in-cmdsub-body`'s territory, not a separate gap.
+
+Specs `vm.req4`-`vm.req8` (var_modifiers.sh, plan 151 -> 156) and
+`dd78.8`-`dd78.12` (taint.sh, plan 264 -> 269). Sweep 7007.

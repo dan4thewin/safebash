@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup taint
-plan=264
+plan=269
 echo "1..$plan" >&3
 
 set +e
@@ -445,6 +445,44 @@ run_sash 'echo ${x:-$(random)}'
 # propagation): the `:-` default is a read, so the assignment itself rejects.
 run_sash 'y=$(getenv HOME); z=${x:-$y}; echo $z'
 [[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk dd78.7
+# dd78.8-dd78.12 the same discipline for the `:?` MESSAGE, which DD#78 names
+# alongside the `:-` default. Until the message became an interpolating word it
+# was a Literal, so the operand was not in the value graph at all: a tainted
+# one was reported SB5050 (dead variable — `h` written and never read), which
+# is the tell that it was never walked as a read rather than a taint check
+# passing.
+# dd78.8 tainted var in a :? message → SB5020, not SB5050
+run_sash 'str h=$(getenv HOME)
+str y=""
+str z=${y:?$h}
+echo "[$z]"'
+[[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk dd78.8
+# dd78.9 a tainted source used inline in the message → SB5020
+run_sash 'str y=""
+str z=${y:?$(getenv HOME)}
+echo "[$z]"'
+[[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk dd78.9
+# dd78.10 attesting the value first is accepted, and the message carries it
+run_sash 'str h=$(getenv HOME)
+attest h [[ -n $h ]]
+str y=""
+str z=${y:?$h}
+echo "[$z]"'
+[[ $rc != 0 && -z $out ]] \
+  && { ! in_modes native || [[ $rerr == *": "* ]]; }; chk dd78.10
+# dd78.11 DD#91 `!` vouches for the SUBJECT's read, never the operand's —
+#       `${y:!?$h}` still owes an attest for `h`, matching `${x:!-$y}`
+run_sash 'str h=$(getenv HOME)
+str y=""
+str z=${y:!?$h}
+echo "[$z]"'
+[[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk dd78.11
+# dd78.12 a literal message is still clean by construction
+run_sash 'str y=""
+str z=${y:?plain}
+echo "[$z]"'
+[[ $rc != 0 && -z $out ]] \
+  && { ! in_modes native || [[ $rerr == *": plain" ]]; }; chk dd78.12
 
 # ── DD#24 no propagation (journal 036 `x=$1` is a compile error): reading a
 # stored tainted variable in a scalar assignment RHS is a rejected read, uniform

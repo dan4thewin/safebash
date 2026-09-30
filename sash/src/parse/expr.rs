@@ -1455,8 +1455,15 @@ fn parse_disposition_operator(
             span,
         }));
     }
-    // DD#65: the `${var:-WORD}` default is a full interpolating word.
-    let operand = if op_str == ":-" {
+    // DD#65/DD#78: the `${var:-WORD}` default is a full interpolating word, and
+    // DD#78 scopes the same rule to `${var:?MESSAGE}` — the message is a
+    // disposition default like any other, "constrained for uniformity and
+    // because it is eagerly materialized". Parsing it as a Literal made it
+    // invisible to every pass: bash expands `${y:?$m}` to the value of `m`
+    // while sash printed `$m`, and because the operand was not in the value
+    // graph at all, `m` was reported SB5050 (dead variable) instead of having
+    // its taint checked (SB5020).
+    let operand = if op_str == ":-" || op_str == ":?" {
         operand_str
             .map(|s| parse_default_word(&s, span))
             .transpose()?

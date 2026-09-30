@@ -5823,8 +5823,13 @@ fn push_taint_use(
 
 /// Taint-check a parameter expansion: the var itself, plus (DD#78) a `:-`
 /// default's operand, which is a read position — a tainted read there is a use
-/// without attest, like `echo $tainted`. (`:?` and the pattern operators carry a
-/// *literal* operand, DD#65, which is clean by construction.)
+/// without attest, like `echo $tainted`.
+///
+/// DD#78 scopes the same rule to the `:?` message, and since it is now parsed
+/// as an interpolating word rather than a Literal, it is a real read position
+/// too: the message is eagerly materialized and written to stderr, so a
+/// tainted one escapes exactly as `echo $tainted` would. (The pattern
+/// operators still carry a *literal* operand, DD#65, clean by construction.)
 fn check_param_expansion_taint(
     pe: &ParameterExpansion,
     span: Span,
@@ -5844,8 +5849,8 @@ fn check_param_expansion_taint(
         );
     }
     // Not gated on `taint_off`: the `!` covers the subject's read, never the
-    // default's. `${x:!-$y}` still owes an attest for `y`.
-    if pe.operator.as_deref() == Some(":-") {
+    // default's. `${x:!-$y}` and `${x:!?$y}` still owe an attest for `y`.
+    if matches!(pe.operator.as_deref(), Some(":-") | Some(":?")) {
         if let Some(operand) = &pe.operand {
             check_expr_taint(operand, tainted, diags);
         }
