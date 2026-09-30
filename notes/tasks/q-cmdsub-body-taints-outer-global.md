@@ -53,3 +53,27 @@ the no-fixpoint invariant that `taint_top_level` currently relies on.
 Recommendation: (a), because it keeps one rule for one construct and the
 architecture it protects is load-bearing. But it is a behaviour change that
 rejects currently-valid programs, so it is DG's call.
+
+## Update 2026-10-01 — (a) got much cheaper
+
+DD#121's addendum relaxed SB5067 from "may not taint a global" to "may not
+*leave* a global tainted" (no net insert at body exit). That changes this
+question's arithmetic.
+
+The stated cost of (a) was that it "would newly reject programs that taint
+inside a body and attest after it". Under the net-effect rule an **in-body
+attest is the repair** — a `$( )` body could taint an outer global and attest
+it adjacently, exactly as a function body now can, and be accepted. What (a)
+would still reject is the genuinely leaky shape: a body that taints an outer
+global and leaves it that way.
+
+The rationale for (a) also got stronger. The task's own argument is that
+clone-and-discard is sound for functions "precisely because SB5067 makes the
+top level the only place a global's taint can arrive" — and the net-effect
+rule is what now carries that invariant, in the form
+`entry ⊇ exit` for globals. Extending the *same* predicate to `$( )` bodies
+is a smaller step than extending the old syntactic one was.
+
+Status quo is preserved for now and deliberately: the addendum's rewrite moved
+site collection to `walk_scoped_structural_stmts`, which does not descend into
+`$( )` bodies, so this question is exactly where it was. Still DG's call.

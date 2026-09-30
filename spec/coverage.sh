@@ -1341,17 +1341,21 @@ run_sash 'int a=1; (( 1 + (a++) ))'
 run_sash 'int array v=(1 2 3); (( 1 + (v[0]=9) ))'
 [[ $rc != 0 && -z $out && $err == *SB4020*embedded*'a[i]'* ]]; chk cov.263
 
-# cov.264-270 SB5067: a function may not taint a global. Both paths that
-# raise it — a bulk fill (`read`/`readline`/`argv`/`mapfile`) whose target is
-# a global, and a plain assignment of a taint source to one — had **no spec
-# at all**, so the entire diagnostic was uncovered. Taint is the safety
-# property the language exists to enforce; it should not rest on an untested
-# check.
+# cov.264-270 SB5067: a function may not *leave* a global tainted at body
+# exit (net-effect rule; DD#121 R1 adjacency makes the in-body attest the
+# repair). Both paths that raise it — a bulk fill (`read`/`readline`/`argv`/
+# `mapfile`) whose target is a global, and a plain assignment of a taint
+# source to one — had **no spec at all**, so the entire diagnostic was
+# uncovered. Taint is the safety property the language exists to enforce;
+# it should not rest on an untested check.
 run_sash 'str g=""; f() { read g; }; f'
-[[ $rc != 0 && $err == *SB5067*taints\ the\ global* ]]; chk cov.264
+[[ $rc != 0 && $err == *SB5067*leaves\ the\ global* ]]; chk cov.264
 run_sash 'str g=""; f() { readline g; }; f'
 [[ $rc != 0 && $err == *SB5067* ]]; chk cov.265
-run_sash 'argv g; f() { argv g; }; f'
+# The global must not be pre-tainted at top level: under the net-effect rule
+# the body would then *inherit* the taint and add nothing, and the program
+# would fall through to SB5050 (dead variable) instead.
+run_sash 'array g=(); f() { argv g; }; f; for v in @g { /bin/echo $v }'
 [[ $rc != 0 && $err == *SB5067* ]]; chk cov.266
 run_sash 'str g=""; f() { mapfile g; }; f'
 [[ $rc != 0 && $err == *SB5067* ]]; chk cov.267

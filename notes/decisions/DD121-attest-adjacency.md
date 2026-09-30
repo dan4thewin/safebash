@@ -64,8 +64,8 @@ found:
   afterwards. Measured: `if`/`then`-attest read from `else`; a never-true
   `while`; and a **zero-trip `for`** all printed unattested argv.
 - **It breaks the call-graph fixpoint.** A fixpoint converges on a grow-only
-  lattice; a set with removals can oscillate. SB5067 — which has **no DD** —
-  exists only to dodge that.
+  lattice; a set with removals can oscillate. SB5067 — which had **no DD**
+  until this one's 2026-10-01 addendum — exists only to dodge that.
 - **It creates "at which program point do I read the set?"** —
   `tainted_slots_on_entry` reads the *completed* top-level set, so a trailing
   attest retroactively cleans a slot that was tainted at the call.
@@ -122,7 +122,7 @@ honour: *"Taint is definition-based, not name-based."*
 |---|---|
 | `bug-attest-in-branch-leaks-past-merge` | **fixed** — verified rejected; pinned by `bfb.15`/`bfb.16` |
 | `bug-slot-inward-taint-reads-final-set` | **fixed** — the trailing attest is now SB5088; verified rejected |
-| SB5067 | becomes unnecessary; **left in place**, re-decided separately with DG |
+| SB5067 | **re-decided 2026-10-01** — relaxed to a net-effect rule; see the addendum below |
 | `bug-caught-attest-all-fail-path-undefined-handle` | **fixed separately** (journal 449) — a native-codegen defect, not a taint one; DD#121 made it unreachable from safe source, `--no-taint` kept it reachable |
 
 ## Measured cost
@@ -181,6 +181,79 @@ continue-on-failure path left to specify. The `|| DEFAULT` row stands unchanged
 DD#24's *"`if bless VAR [[ test ]]` → False branch taken, VAR remains
 tainted"* stands for the **written** else: the subject is tainted inside that
 branch, and R2 requires the branch to resolve it before falling through.
+
+## Addendum 2026-10-01 — SB5067 re-decided: a net-effect rule
+
+The table above left SB5067 "in place, re-decided separately with DG". DG chose
+**(a) relax it to a net-effect body-exit rule**, paired with **(ii) close the
+SSA backstop's collection gap** (a separate piece of work, below).
+
+**The rule is now: a function body may not *leave* a global tainted that it did
+not inherit.** The old rule was syntactic — *any* taint of a global anywhere in
+a body was rejected, regardless of what happened next.
+
+The predicate is deliberately **not** "the global is clean at body exit". That
+is unsatisfiable: a body inherits the caller's tainted set, and R1 forbids
+cleaning an inherited taint (the attest would not be adjacent to anything), so
+the moment any global is tainted at top level *every* function in the program
+would be in permanent violation — including ones that never mention it.
+Measured before choosing the wording.
+
+So the predicate is **no net insert**: the exit set may not contain a global
+absent from the entry set. Paired with R1 — which cannot remove an inherited
+taint — a body's net effect on the caller's set is exactly nil, which is what
+preserves `check_taint`'s fixpoint-free two-phase design. That design's own doc
+comments named SB5067 as the soundness premise; they now name this rule.
+
+**R1 is what makes the relaxation safe, and it is why the ordering objection
+does not apply.** The worry about relaxing SB5067 was always that intervening
+code between the taint and its repair reintroduces order-dependence. R1 forbids
+intervening code outright — the attest must be the statement immediately below —
+and it is **name-agnostic**: measured firing identically for a local and for a
+global. There is no order to depend on.
+
+Consequences, each pinned by a spec:
+
+| shape | verdict | spec |
+|---|---|---|
+| taint a global, attest adjacently | **now compiles**; caller reads it clean | `bfb.17` |
+| the same body without the attest | SB5067 | `bfb.18` |
+| the in-body attest | a real runtime gate, not a compile-time waiver | `bfb.19` |
+| one branch attests, another does not | SB5067, reported at the *leaking* branch | `bfb.20` |
+| re-taint a global the top level attested clean | SB5067 — it is a net insert | `bfb.21` |
+| a body that never touches an already-tainted global | not blamed | `bfb.22` |
+
+`bfb.21` is the case that matters most: if the top level attests a global clean
+and a callee re-taints it, the entry set no longer contains it, so the re-taint
+*is* a net insert and is rejected. The caller's clean view cannot be silently
+falsified.
+
+**Diagnosis keeps its span.** Rather than report at body exit — which would
+blame the function and lose the location — the pass gathers syntactic taint
+sites with their spans *before* the walk and passes verdict *after*, reporting
+only sites whose name is still dirty at exit, deduped to the last site per name
+(the one actually responsible). `bfb.20` demonstrates it: the blame lands on the
+`else` branch, not the `if`.
+
+**The number SB5067 is kept.** The diagnostic is the same rule loosened, not a
+new one, and reuse keeps all seven existing spec assertions structurally valid.
+
+**Scope change worth knowing:** site collection moved from `walk_stmt_tree` to
+`walk_scoped_structural_stmts` filtered on `in_fn.is_empty()`, so a nested
+function's sites are no longer attributed to its parent (the nested body gets
+its own verdict), and the walk no longer descends into `$( )` bodies. That
+leaves `q-cmdsub-body-taints-outer-global` exactly where it was.
+
+### Why (a) alone, and what (ii) is for
+
+(ii) — giving `ArgvFill`/`ReadArray`/`SplitValue`/`MapFromArray` real SSA
+versions so the SSA taint backstop can see bulk fills — does **not** make
+SB5067 redundant, which is why DG took both. The backstop cannot be the
+authority: **SSA is spanless** (the readonly backstop at `ssa.rs:1492` hardcodes
+`"1:1:"` for want of a location), it reports at the *use* site rather than the
+definition, `taint_of_name` is flow-insensitive in the permissive direction, it
+honours `:!`, and `--no-taint` disables it. (ii) upgrades the collection failure
+mode from a silent leak to an ICE at the use site; it does not diagnose.
 
 ## See also
 

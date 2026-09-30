@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup taint
-plan=277
+plan=283
 echo "1..$plan" >&3
 
 set +e
@@ -809,6 +809,78 @@ while [[ $c == yes ]]; do
 done
 for v in @a; do /bin/echo "$v"; done'
 [[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk bfb.16
+
+# ── SB5067 under DD#121 R1: a function may not LEAVE a global tainted ──
+# The rule is net-effect, not "clean at exit": a body inherits the top-level
+# tainted set and R1 forbids cleaning an inherited taint, so the predicate is
+# "the exit set may not contain a global the body did not inherit". Because R1
+# pins the attest to the statement immediately below the taint, there is no
+# ordering question about where in the body the repair may sit.
+# bfb.17 taint a global and attest it adjacently — the caller reads it clean
+run_sash 'array g=()
+fn f {
+    argv 1 g
+    attest v in g [[ -n $v ]]
+}
+f
+for v in @g { /bin/echo $v }' one two
+[[ $rc = 0 && $out = $'one\ntwo' && -z $rerr ]]; chk bfb.17
+
+# bfb.18 …and the same body without the attest is SB5067
+run_sash 'array g=()
+fn f {
+    argv 1 g
+}
+f
+for v in @g { /bin/echo $v }'
+[[ $rc != 0 && -z $out && $err == *SB5067*leaves\ the\ global* ]]; chk bfb.18
+
+# bfb.19 the in-body attest is a real runtime gate, not a compile-time waiver
+run_sash 'array g=()
+fn f {
+    argv 1 g
+    attest v in g [[ -n $v ]]
+}
+f
+for v in @g { /bin/echo $v }' "" two
+[[ $rc != 0 && $rerr == *"attest: g failed the gate"* ]]; chk bfb.19
+
+# bfb.20 one branch attesting does not excuse another that leaves it tainted
+run_sash 'array g=()
+fn f {
+    if (( 1 == 1 )) {
+        argv 1 g
+        attest v in g [[ -n $v ]]
+    } else {
+        argv 1 g
+    }
+}
+f
+for v in @g { /bin/echo $v }'
+[[ $rc != 0 && -z $out && $err == *SB5067* ]]; chk bfb.20
+
+# bfb.21 re-tainting a global the top level already attested clean is a net
+# insert — the caller's clean view would otherwise be silently falsified
+run_sash 'array g=()
+argv 1 g
+attest v in g [[ -n $v ]]
+fn f {
+    argv 1 g
+}
+f
+for v in @g { /bin/echo $v }'
+[[ $rc != 0 && -z $out && $err == *SB5067* ]]; chk bfb.21
+
+# bfb.22 a body that never touches an already-tainted global is not blamed
+run_sash 'array g=()
+fn f {
+    /bin/echo hi
+}
+f
+argv 1 g
+attest v in g [[ -n $v ]]
+for v in @g { /bin/echo $v }' one
+[[ $rc = 0 && $out = $'hi\none' && -z $rerr ]]; chk bfb.22
 
 # ── DD#91: the `:!` taint-off MODIFIER (orthogonal to the dispositions) ──
 # A sanctioned per-use bypass — use a tainted value without a attest predicate

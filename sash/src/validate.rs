@@ -3606,9 +3606,11 @@ use std::collections::HashSet;
 ///
 /// Phase 1 walks the whole top level, deferring function definitions; phase 2
 /// then walks each body against the completed set. That is sound with no
-/// fixpoint **because SB5067 forbids a function from tainting a global**: the
-/// top level is the only place a global's taint can arrive, so phase 1's set
-/// is final before any body is read. It also costs nothing in precision —
+/// fixpoint **because SB5067 forbids a function from leaving a global tainted
+/// that it did not inherit**: a body's net effect on the global taint set is
+/// insert-nothing, and SB5088 separately forbids it cleaning an inherited
+/// taint, so the net effect is exactly nil and phase 1's set is final before
+/// any body is read. It also costs nothing in precision —
 /// top-level flow order is preserved exactly, so `argv a` followed by an
 /// attest-all still leaves `a` clean for every body.
 ///
@@ -3619,10 +3621,15 @@ pub fn check_taint(program: &Program) -> Vec<Diagnostic> {
     let mut diags = Vec::new();
     let info = analyze_slots(program);
     let map_names = collect_map_names(program);
+    let mut globals = HashSet::new();
+    for block in program_blocks(program) {
+        collect_global_names(block, &mut globals);
+    }
     let cx = SlotCx {
         probing: false,
         info: &info,
         map_names: &map_names,
+        globals: &globals,
     };
     for f in taint_top_level(program, &mut tainted, &cx, &mut diags) {
         taint_function_body(f, &tainted, &cx, &mut diags);
@@ -3632,8 +3639,8 @@ pub fn check_taint(program: &Program) -> Vec<Diagnostic> {
 
 /// Phase 1: walk the top level, deferring every function definition.
 ///
-/// SB5067 makes the top level the only place a global's taint can arrive, so
-/// the set this leaves behind is final — the deferred bodies can then be
+/// SB5067 keeps a body's net effect on the global taint set at nil, so the
+/// set this leaves behind is final — the deferred bodies can then be
 /// checked against it in one pass, with no fixpoint.
 fn taint_top_level<'a>(
     program: &'a Program,
@@ -3710,6 +3717,7 @@ fn stmt_taints(stmt: &Statement, cx: &SlotCx) -> JustTainted {
     let probe_cx = SlotCx {
         info: cx.info,
         map_names: cx.map_names,
+        globals: cx.globals,
         probing: true,
     };
     let mut probe = HashSet::new();
@@ -5739,8 +5747,14 @@ fn taint_function_body(
         probing: false,
         info: sx.info,
         map_names: sx.map_names,
+        globals: sx.globals,
     };
+    // SB5067 is a net-effect rule, so the sites are gathered BEFORE the walk
+    // and the verdict is passed afterwards, against the exit set.
+    let sites = collect_global_taint_sites(&f.body, sx.globals);
+    let entry_set = fn_tainted.clone();
     taint_block(&f.body, &mut fn_tainted, &entry_just, &inner, diags);
+    report_exit_tainted_globals(&f.name, &sites, &entry_set, &fn_tainted, diags);
 }
 
 /// Taint a pipeline: a `read`/`mapfile` stage is exempt from tainting its
@@ -7866,6 +7880,11 @@ pub(crate) struct SlotInfo {
 struct SlotCx<'a> {
     info: &'a SlotInfo,
     map_names: &'a HashSet<String>,
+    /// Names bound at the top level — what SB5067's body-exit rule measures
+    /// against. Carried here so both `taint_function_body` call sites (the
+    /// deferred phase-2 walk and the definition-point walk for a function
+    /// nested in top-level control flow) check the same rule.
+    globals: &'a HashSet<String>,
     /// Set while `stmt_taints` is measuring one statement's taint effect. It
     /// suppresses the nested measurement, which would otherwise double the
     /// walk at every level of nesting.
@@ -8038,7 +8057,7 @@ fn taint_out_params(c: &Command, cx: &SlotCx, tainted: &mut HashSet<String>) {
     }
 }
 
-// ── SB5067: a function may not taint a global ─────────────────────
+// ── SB5067: a function may not LEAVE a global tainted ─────────────
 //
 // The taint pass walks a function body **once**, with the tainted set known
 // at that point. That was sound only because taint could not arrive later —
@@ -8051,14 +8070,34 @@ fn taint_out_params(c: &Command, cx: &SlotCx, tainted: &mut HashSet<String>) {
 //     user                 # printed unattested argv
 //
 // `g[0]=$(arg 1)` was already SB5021 ("tainted value cannot be placed in
-// array 'g'"); the **bulk-fill** path simply escaped the same rule. Closing
-// it makes the top level the only place a global can become tainted, which is
-// what lets `check_taint` finish the whole top level before it walks any body
-// — no fixpoint, and no conservative rejection of a call that ran before the
-// filler.
+// array 'g'"); the **bulk-fill** path simply escaped the same rule.
 //
-// The escape hatch is the ordinary one: fill a local, attest it, assign the
-// clean value out.
+// The rule is a **net effect** one (DG, 2026-09-30). It is not "a function
+// may not taint a global" — that rejected a shape DD#121 makes provably
+// safe, because the diagnostic fired on the taint itself and never looked
+// for the attest below it:
+//
+//     fn f { argv g; attest v in g [[ … ]] }      # clean at exit — allowed
+//
+// What is rejected is a body whose EXIT set contains a global it did not
+// inherit. Combined with SB5088 (a body may not attest an inherited taint,
+// so it can never *remove* one), a body's net effect on the global taint set
+// is exactly nil. That is what lets `check_taint` finish the whole top level
+// before it walks any body — no fixpoint, and no conservative rejection of a
+// call that ran before the filler.
+//
+// Why the net-effect form needs no ordering analysis: R1 (SB5088) requires
+// the attest to be the statement immediately following the one that taints
+// its subject, so there is no window in which the global is tainted and
+// observable, and no interleaving of calls can expose one.
+//
+// Note "did not inherit". The predicate is emphatically NOT "clean at exit":
+// a body inherits the top-level tainted set, and SB5088 forbids it cleaning
+// an inherited taint, so once any global is tainted at the top level a
+// clean-at-exit rule would be unsatisfiable for every function in the
+// program — including ones that never mention the global.
+//
+// The other escape hatch remains: fill a local, attest it, assign out.
 //
 //     fn f { array t=(); argv t; attest v in t [[ … ]]; g[0]=${t[1]} }
 //
@@ -8066,16 +8105,61 @@ fn taint_out_params(c: &Command, cx: &SlotCx, tainted: &mut HashSet<String>) {
 // deliberately, and DD#100 lets a callee fill one as an out-parameter. That
 // taint propagates back to the caller (`slot_taint_summary`), so it is
 // tracked rather than banned.
-pub fn check_fn_taints_global(program: &Program) -> Vec<Diagnostic> {
-    let mut globals = HashSet::new();
-    for block in program_blocks(program) {
-        collect_global_names(block, &mut globals);
+
+/// One syntactic site in a body that introduces taint into a global.
+///
+/// Gathered before the body's taint walk; whether it is actually a fault is
+/// decided afterwards, by whether the name is still tainted at exit.
+struct GlobalTaintSite {
+    name: String,
+    span: Span,
+    via: String,
+}
+
+/// Report the gathered sites whose target is still tainted when the body
+/// ends — the net-effect verdict.
+///
+/// `entry` is the set on entry (top-level taint plus any tainted slots), so
+/// a global the body merely inherited is not attributed to it. A name is
+/// reported at most once, at its LAST site: with several taints of one name
+/// it is the last that left it dirty at exit.
+/// A site leaked if its global is tainted at exit and was not inherited.
+fn leaked_global(site: &GlobalTaintSite, entry: &HashSet<String>, exit: &HashSet<String>) -> bool {
+    exit.contains(&site.name) && !entry.contains(&site.name)
+}
+
+fn report_exit_tainted_globals(
+    fname: &str,
+    sites: &[GlobalTaintSite],
+    entry: &HashSet<String>,
+    exit: &HashSet<String>,
+    diags: &mut Vec<Diagnostic>,
+) {
+    let mut seen: HashSet<&str> = HashSet::new();
+    for site in sites.iter().rev() {
+        if leaked_global(site, entry, exit) && seen.insert(site.name.as_str()) {
+            diags.push(global_taint_diag(site.span, fname, &site.name, &site.via));
+        }
     }
-    let mut diags = Vec::new();
-    for block in program_blocks(program) {
-        walk_fns_for_global_taint(block, &globals, &mut diags);
-    }
-    diags
+}
+
+/// Every site in THIS body that introduces taint into a global.
+///
+/// Structural on purpose, and scoped: a nested function's body is walked by
+/// its own `taint_function_body`, so sites inside one are not attributed to
+/// the enclosing function. A `$( )` body is likewise not descended into —
+/// it is its own scope (DD#86); see `q-cmdsub-body-taints-outer-global`.
+fn collect_global_taint_sites(
+    body: &[Statement],
+    globals: &HashSet<String>,
+) -> Vec<GlobalTaintSite> {
+    let mut sites = Vec::new();
+    crate::ir::walk_scoped_structural_stmts(body, "", &mut |stmt, in_fn| {
+        if in_fn.is_empty() {
+            collect_stmt_global_taint(stmt, globals, &mut sites);
+        }
+    });
+    sites
 }
 
 /// Names declared at the top level — everything a function must not taint.
@@ -8108,58 +8192,30 @@ fn record_global_name(stmt: &Statement, out: &mut HashSet<String>) {
     }
 }
 
-fn walk_fns_for_global_taint(
-    stmts: &[Statement],
-    globals: &HashSet<String>,
-    diags: &mut Vec<Diagnostic>,
-) {
-    for stmt in stmts {
-        if let StmtKind::Function(f) = &stmt.kind {
-            check_body_global_taint(&f.body, &f.name, globals, diags);
-        }
-        for body in stmt.child_bodies() {
-            walk_fns_for_global_taint(body, globals, diags);
-        }
-    }
-}
-
-fn check_body_global_taint(
-    body: &[Statement],
-    fname: &str,
-    globals: &HashSet<String>,
-    diags: &mut Vec<Diagnostic>,
-) {
-    crate::ir::walk_stmt_tree(body, &mut |stmt| {
-        check_stmt_global_taint(stmt, fname, globals, diags);
-    });
-}
-
 /// Each initializer of a declaration, checked as the plain assignment it is.
 fn decl_global_taint(
     d: &Declaration,
     span: Span,
-    fname: &str,
     globals: &HashSet<String>,
-    diags: &mut Vec<Diagnostic>,
+    sites: &mut Vec<GlobalTaintSite>,
 ) {
     for a in &d.assignments {
         if let Some(eq) = a.as_assignment() {
-            check_assign_global_taint(&eq, span, fname, globals, diags);
+            collect_assign_global_taint(&eq, span, globals, sites);
         }
     }
 }
 
-fn check_stmt_global_taint(
+fn collect_stmt_global_taint(
     stmt: &Statement,
-    fname: &str,
     globals: &HashSet<String>,
-    diags: &mut Vec<Diagnostic>,
+    sites: &mut Vec<GlobalTaintSite>,
 ) {
     match &stmt.kind {
-        StmtKind::Command(c) => check_cmd_global_taint(c, stmt.span, fname, globals, diags),
-        StmtKind::Assignment(a) => check_assign_global_taint(a, stmt.span, fname, globals, diags),
+        StmtKind::Command(c) => collect_cmd_global_taint(c, stmt.span, globals, sites),
+        StmtKind::Assignment(a) => collect_assign_global_taint(a, stmt.span, globals, sites),
         StmtKind::Declaration(d) => {
-            decl_global_taint(d, stmt.span, fname, globals, diags);
+            decl_global_taint(d, stmt.span, globals, sites);
         }
         _ => {}
     }
@@ -8167,17 +8223,20 @@ fn check_stmt_global_taint(
 
 /// A bulk fill (`argv g`, `read g`, `mapfile g`) draws from outside the
 /// program, so its target becomes tainted.
-fn check_cmd_global_taint(
+fn collect_cmd_global_taint(
     c: &Command,
     span: Span,
-    fname: &str,
     globals: &HashSet<String>,
-    diags: &mut Vec<Diagnostic>,
+    sites: &mut Vec<GlobalTaintSite>,
 ) {
     let name = expr_literal_str(&c.name);
     for t in bulk_fill_targets(c) {
         if globals.contains(&t) {
-            diags.push(global_taint_diag(span, fname, &t, name));
+            sites.push(GlobalTaintSite {
+                name: t,
+                span,
+                via: name.to_string(),
+            });
         }
     }
 }
@@ -8195,19 +8254,22 @@ fn bulk_fill_targets(c: &Command) -> HashSet<String> {
     targets
 }
 
-fn check_assign_global_taint(
+fn collect_assign_global_taint(
     a: &Assignment,
     span: Span,
-    fname: &str,
     globals: &HashSet<String>,
-    diags: &mut Vec<Diagnostic>,
+    sites: &mut Vec<GlobalTaintSite>,
 ) {
     // A tainted *element* write is already SB5021; only the whole-name
     // assignment reaches here, so the two never double-report.
     if a.index.is_some() || !globals.contains(&a.name) || !is_taint_source(&a.value) {
         return;
     }
-    diags.push(global_taint_diag(span, fname, &a.name, "assignment"));
+    sites.push(GlobalTaintSite {
+        name: a.name.clone(),
+        span,
+        via: "assignment".to_string(),
+    });
 }
 
 fn global_taint_diag(span: Span, fname: &str, target: &str, via: &str) -> Diagnostic {
@@ -8215,10 +8277,11 @@ fn global_taint_diag(span: Span, fname: &str, target: &str, via: &str) -> Diagno
         span,
         "SB5067",
         format!(
-            "`{fname}` taints the global `{target}` via {via} — a function may \
-             only taint its own locals, so that a caller can see where external \
-             data enters. Fill a local, attest it, then assign the clean value \
-             to `{target}`"
+            "`{fname}` leaves the global `{target}` tainted via {via} — a \
+             function may not export taint to its caller, so that a caller \
+             can see where external data enters. Attest it here, in the \
+             statement immediately below (`attest … [[ … ]]`), or fill a \
+             local, attest that, and assign the clean value to `{target}`"
         ),
     )
 }
