@@ -293,7 +293,7 @@ pub enum SsaInst {
     /// (discard). An empty array is a valid empty map.
     MapFromArray {
         source: String,
-        target: String,
+        target: VarRef,
         mode: u8,
         key: SsaValue,
         message: String,
@@ -301,7 +301,7 @@ pub enum SsaInst {
     /// DD#99: `read $SRC ARRAY` — split a scalar VALUE on NUL into an
     /// indexed array. The stdin form is `ReadArray`; this is the same split
     /// with the bytes coming from a value rather than a fd.
-    SplitValue { source: SsaValue, array: String },
+    SplitValue { source: SsaValue, target: VarRef },
     /// DD#99 `read ARRAY`: slurp `fd` and split it on NUL into an indexed
     /// array. NUL is the only separator — there is no delimiter flag.
     ///
@@ -310,9 +310,15 @@ pub enum SsaInst {
     /// `__redirect_push`/`__redirect_pop` instead would apply the fds but
     /// leave a failed open unchecked — a missing file read as an empty array.
     ReadArray {
-        array: String,
+        target: VarRef,
         fd: i64,
         redirects: Vec<crate::ir::Redirect>,
+        /// As `ReadLine`'s: true when every producer of the pipe that feeds
+        /// this read is compiler-computed, so the bytes never came from
+        /// outside. Governs the SSA taint backstop's classification, and is
+        /// computed by the same `validate::is_external_source` the front-end
+        /// taint pass uses — a divergence here is a laundering hole.
+        clean_pipe: bool,
     },
     /// DD#63: `match S P ARR` out-array form. Fills `array` with
     /// `[whole, g1..gN]` (bash-parity length = group count + 1), clears it
@@ -332,7 +338,7 @@ pub enum SsaInst {
     /// DD#60: `argv [N] a` — fill `array` with the program argv slice
     /// argv[start..argc] (0-indexed). Auto-declares and taints the array
     /// (a bulk-read source, like `read`; DD#61).
-    ArgvFill { array: String, start: i64 },
+    ArgvFill { target: VarRef, start: i64 },
     /// Start capturing stdout (for $(func) capture). `site` identifies this
     /// capture uniquely within the program, so a `CaptureEnd` pairs with its
     /// own start rather than with whichever start ran most recently. Captures
@@ -590,11 +596,11 @@ impl SsaInst {
             )],
             SsaInst::MapFromArray { target, key, .. } => vec![(
                 TaintRead::Value(key),
-                format!("a map key filling '{}'", target),
+                format!("a map key filling '{}'", target.name),
             )],
-            SsaInst::SplitValue { source, array } => vec![(
+            SsaInst::SplitValue { source, target } => vec![(
                 TaintRead::Value(source),
-                format!("the split source for '{}'", array),
+                format!("the split source for '{}'", target.name),
             )],
             SsaInst::MatchInto {
                 subject,

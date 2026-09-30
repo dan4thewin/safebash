@@ -42,15 +42,17 @@ fn lower_newread(
         _ => return block,
     };
     super::stmt_handlers::autodeclare_bulk_target(&target, false, ssa, state, block);
+    // Define a LATER version than the autodeclare's empty-array Assign, so the
+    // SSA taint backstop's max-version lookup resolves to the fill rather than
+    // to the clean empty array (a naive `{name}_0` insert loses that race).
+    let target = state.define(&target);
     let inst = match source {
-        Some(source) => SsaInst::SplitValue {
-            source,
-            array: target,
-        },
+        Some(source) => SsaInst::SplitValue { source, target },
         None => SsaInst::ReadArray {
-            array: target,
+            target,
             fd: 0,
             redirects: vec![],
+            clean_pipe: false,
         },
     };
     ssa.block_mut(block).insts.push(inst);

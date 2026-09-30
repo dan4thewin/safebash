@@ -899,7 +899,7 @@ fn lower_map_from_array(
     state: &mut VersionState,
     block: BlockId,
 ) -> bool {
-    let Some(inst) = map_from_array_inst(a, state) else {
+    let Some((source, mode, key, message)) = map_from_array_parts(a, state) else {
         return false;
     };
     state.collections.insert(a.name.clone());
@@ -909,7 +909,17 @@ fn lower_map_from_array(
         target,
         value: SsaValue::AssocArray(vec![]),
     });
-    ssa.block_mut(block).insts.push(inst);
+    // The fill defines a LATER version than the empty-map Assign above, so the
+    // SSA taint backstop's max-version lookup sees the fill's taint rather than
+    // the declaration's clean empty map.
+    let target = state.define(&a.name);
+    ssa.block_mut(block).insts.push(SsaInst::MapFromArray {
+        source,
+        target,
+        mode,
+        key,
+        message,
+    });
     true
 }
 
@@ -934,7 +944,10 @@ fn arrvals_fill_mode(pe: &ParameterExpansion) -> Option<(u8, String)> {
     }
 }
 
-fn map_from_array_inst(a: &DeclAssignment, state: &mut VersionState) -> Option<SsaInst> {
+fn map_from_array_parts(
+    a: &DeclAssignment,
+    state: &mut VersionState,
+) -> Option<(String, u8, SsaValue, String)> {
     let ExprKind::ParameterExpansion(pe) = &a.value.as_ref()?.kind else {
         return None;
     };
@@ -949,11 +962,5 @@ fn map_from_array_inst(a: &DeclAssignment, state: &mut VersionState) -> Option<S
             String::new()
         }),
     };
-    Some(SsaInst::MapFromArray {
-        source: pe.name.clone(),
-        target: a.name.clone(),
-        mode,
-        key,
-        message,
-    })
+    Some((pe.name.clone(), mode, key, message))
 }

@@ -144,27 +144,40 @@ fn classify_inst_def(
             // and is Tainted. The upstream CST taint pass
             // (`cmdsub_is_taint_source`) is the authoritative gate; this keeps
             // the SSA taint view correct (defense-in-depth).
-            let t = if *tainted {
-                Taint::Tainted
-            } else {
-                Taint::Clean
-            };
+            taint.insert(var_key(target), taint_of_flag(*tainted));
+        }
+
+        SsaInst::ArgvFill { target, .. } => {
+            // DD#60/#61: argv is a bulk-read source — always tainted.
+            taint.insert(var_key(target), Taint::Tainted);
+        }
+        SsaInst::ReadArray {
+            target, clean_pipe, ..
+        } => {
+            // Same rule as `ReadLine`: clean only from a compiler-computed pipe.
+            taint.insert(var_key(target), read_line_taint(*clean_pipe));
+        }
+        SsaInst::SplitValue { source, target } => {
+            // DD#99 `read $SRC ARR` — the array is as tainted as the scalar
+            // whose bytes it splits.
+            let t = value_is_tainted(source, taint, user_functions);
+            taint.insert(var_key(target), t);
+        }
+        SsaInst::MapFromArray { source, target, .. } => {
+            // DD#99 `map m = @{a:DISP}` — the map is as tainted as its source
+            // array, resolved by name (arrays read at their latest version).
+            let t = taint_of_name(taint, source);
             taint.insert(var_key(target), t);
         }
 
-        // Instructions that don't define a VarRef. Array taint (`read` /
-        // argv fills) and capture-form builtins are governed by the
-        // CST pass; the SSA backstop does not yet re-derive them (see task
-        // ssa-taint-cmdsub-operand-propagation for the capture/array work).
+        // Instructions that don't define a VarRef. Capture-form builtins are
+        // governed by the CST pass; the SSA backstop does not yet re-derive
+        // them (see task ssa-taint-cmdsub-operand-propagation).
         SsaInst::Command { .. }
         | SsaInst::Test(..)
         | SsaInst::SubscriptAssign { .. }
         | SsaInst::ArrayAppend { .. }
-        | SsaInst::ReadArray { .. }
-        | SsaInst::SplitValue { .. } // DD#99: array taint governed by the CST pass, like ReadArray
-        | SsaInst::MapFromArray { .. } // DD#99: ditto — the map is as tainted as its source array
         | SsaInst::MatchInto { .. } // fills a clean array (subject is clean); CST pass governs array taint
-        | SsaInst::ArgvFill { .. } // fills a tainted array (DD#61 bulk-read source); CST pass governs
         | SsaInst::CaptureStart { .. }
         | SsaInst::AttestAll { .. } // validates in place; AttestRetag defines the clean version
         | SsaInst::RedirectPush { .. } // moves fds around; defines no value
@@ -351,9 +364,19 @@ fn value_is_tainted(
         }
 
         // Var-rooted: taint inherited from the named variable's status.
-        SsaValue::Var(vref)
-        | SsaValue::ArithExpr { var: vref, .. }
-        | SsaValue::ParamExpansion { var: vref, .. } => taint_of_var(taint, vref),
+        SsaValue::Var(vref) | SsaValue::ArithExpr { var: vref, .. } => taint_of_var(taint, vref),
+
+        // DD#60: a length/count operator measures the variable rather than
+        // reading it, so it is clean even on a tainted one — the same rule
+        // `check_param_expansion_use` applies at a sink, and the same verdict
+        // `cmd_subst_taint` gives `len`/`strlen` spelled as a capture. Before
+        // the bulk fills carried taint this arm was unreachable for a
+        // collection, which is how the two sides came to disagree.
+        SsaValue::ParamExpansion {
+            var: vref,
+            operator,
+            ..
+        } => param_expansion_taint(vref, operator, taint),
 
         // Any-tainted composites: tainted iff any owned sub-value is tainted.
         // `child_values()` yields exactly the taint-carrying operands, so the
@@ -663,6 +686,35 @@ fn check_value_use(
 /// DD#60: a length/count operator (`${#a[@]}` / `len a`, `${#s}`) exposes
 /// only the element count or byte length, not any tainted element data — so
 /// it is clean even on a tainted array.
+///
+/// Shared by both taint sides on purpose. `check_param_expansion_use` gates a
+/// sink and `value_is_tainted` gates propagation; when only the former knew
+/// the rule, `n=$(len a)` on a tainted array made `n` tainted while the
+/// direct `echo $(len a)` passed.
+fn is_measurement_op(operator: &str) -> bool {
+    operator == "arrlen" || operator == "strlen"
+}
+
+/// The propagation half of the DD#60 rule above: a measurement yields a count,
+/// not the measured bytes, so it is Clean regardless of the variable's status.
+fn param_expansion_taint(var: &VarRef, operator: &str, taint: &HashMap<String, Taint>) -> Taint {
+    if is_measurement_op(operator) {
+        Taint::Clean
+    } else {
+        taint_of_var(taint, var)
+    }
+}
+
+/// `CaptureEnd.tainted` is decided at transform time (external -> true,
+/// builtin -> false); this is only the bool-to-`Taint` lift.
+fn taint_of_flag(tainted: bool) -> Taint {
+    if tainted {
+        Taint::Tainted
+    } else {
+        Taint::Clean
+    }
+}
+
 fn check_param_expansion_use(
     var: &VarRef,
     operator: &str,
@@ -670,7 +722,7 @@ fn check_param_expansion_use(
     errors: &mut Vec<String>,
     context: &str,
 ) {
-    if operator != "arrlen" && operator != "strlen" {
+    if !is_measurement_op(operator) {
         check_tainted_var(var, " in param expansion", context, taint, errors);
     }
 }

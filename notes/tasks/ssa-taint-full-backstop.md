@@ -146,3 +146,76 @@ The shared cause of the three is `classify_inst_def`: `ReadArray` / `ArgvFill`
 group and never enter the taint map. Gap 2's note about versioned keys is the
 real obstacle — `taint_of_name`'s max-version lookup is what a naive insert
 fails against.
+
+## Done 2026-10-01 — gap 2 is closed: the bulk fills carry taint
+
+The three leaking rows in the table above now reject under `--no-taint-cst`,
+and so does the fourth fill (`map m = @{a:…}`) that the table never listed.
+
+The obstacle both earlier passes named — "a naive `taint.insert("{array}_0",
+Tainted)` did NOT work" — was diagnosed rather than worked around. The reason
+it cannot work: `autodeclare_bulk_target` emits `Assign { target: a_N, value:
+IndexedArray([]) }` for the implicit declaration, `classify_inst_def` marks
+that **Clean**, and `taint_of_name` takes the **max** version. A `_0` insert is
+therefore always outranked by the empty declaration that necessarily precedes
+the fill.
+
+The fix is to stop fighting the versioning and use it. `ArgvFill`, `ReadArray`,
+`SplitValue` and `MapFromArray` now carry `target: VarRef` instead of a bare
+`String`, and each construction site calls `state.define()` *after* the
+autodeclare. That yields a monotone layering which needs no special-casing
+anywhere:
+
+```
+a_1  Assign(IndexedArray [])   Clean     the autodeclare
+a_2  ArgvFill                  Tainted   the fill
+a_3  AttestRetag               Clean     an attest, if present
+```
+
+`taint_of_name`'s max-version rule then gives exactly the right answer at every
+point, and **the "`AttestRetag`-clears check to avoid false-positives on
+blessed arrays" that gap 2 asks for is unnecessary** — the attest already
+defines a strictly higher clean version. Verified, spec `sw.18`.
+
+`classify_inst_def` gained the four arms: `ArgvFill` → Tainted; `ReadArray` →
+`read_line_taint(clean_pipe)`; `SplitValue` → the source value's taint;
+`MapFromArray` → the source array's taint.
+
+`ReadArray` needed a new `clean_pipe: bool` to get that right. It participates
+in lastpipe (`repoint_stdin_to_pipe_sentinel` rewrites fd 0 → −1) but, unlike
+`ReadLine`, carried no flag — so classifying it unconditionally Tainted would
+have rejected `echo a b | read g`, where the producer is a builtin. The flag is
+computed the same way `ReadLine`'s is, from `is_external_source`.
+
+Specs `sw.14`-`sw.19` in `taint_switch.sh`.
+
+### Two bugs this exposed, both fixed here
+
+**A null-pointer segfault in native codegen.** Giving the fills a real version
+made `load_var_or_empty` (`codegen/value_handlers.rs`) look up `vars["a_2"]`,
+which `map_inst_versioned` never mapped — it enumerated only `Assign`,
+`ReadLine` and `CaptureEnd`. The miss is **silent**: the function returns a
+null pointer and zero length by design, for genuinely out-of-scope vars. So
+`$(len a)` reached `sash_table_len(NULL)` and segfaulted, in 53 specs at once.
+`for`-in and subscript survived because they resolve by *name* through
+`find_array_slot`. The four fills are now mapped there, aliased to the one base
+slot — the same rule `emit_attest_retag` already follows: never create a
+version defined on only one path.
+
+**A taint asymmetry, live but unreachable until now.** DD#60 says a
+length/count operator measures a variable rather than reading it, so it is
+clean even on a tainted one. `check_param_expansion_use` implemented that at
+the sink; `value_is_tainted` did not implement it for propagation. The two
+disagreed, and `cmd_subst_taint` — in this same file — separately classifies
+`len`/`strlen` Clean, so the verdict depended on which internal node the
+transform happened to pick. Unreachable while no collection could be tainted;
+immediately live once they could (`n=$(len a)` wrongly tainted `n`, spec
+`via.12`). Both sides now share `is_measurement_op`. Spec `sw.19`.
+
+### What remains
+
+Gap 1 only — capture-form builtins (`CaptureEnd.tainted` is decided at
+transform time, before taint analysis runs). Split out to
+`notes/tasks/ssa-taint-capture-form-builtins.md`. Gap 3 was closed in journal
+435. DG's deferral condition continues to hold: every shape here is SB5020
+under a normal compile.

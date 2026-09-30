@@ -1235,9 +1235,14 @@ fn declare_inst_bases(
     base_vars: &mut HashMap<String, super::types::VarSlot>,
 ) {
     match inst {
-        SsaInst::ReadArray { array, .. } | SsaInst::MatchInto { array, .. } => {
+        SsaInst::MatchInto { array, .. } => {
             base_vars
                 .entry(array.clone())
+                .or_insert_with(|| make_str_slot(builder));
+        }
+        SsaInst::ReadArray { target, .. } => {
+            base_vars
+                .entry(target.name.clone())
                 .or_insert_with(|| make_str_slot(builder));
         }
         SsaInst::Command { name, args, .. } if name == "__store_bg_pid" => {
@@ -1314,7 +1319,15 @@ fn map_inst_versioned(
     match inst {
         SsaInst::Assign { target, .. }
         | SsaInst::ReadLine { target, .. }
-        | SsaInst::CaptureEnd { target, .. } => {
+        | SsaInst::CaptureEnd { target, .. }
+        // The bulk fills define a real SSA version so the taint backstop can
+        // see them (they fill a collection in place). Every version must ALIAS
+        // the one base slot: an unmapped version makes `load_var_or_empty`
+        // miss, hand back a null pointer, and segfault in `sash_table_len`.
+        | SsaInst::ArgvFill { target, .. }
+        | SsaInst::ReadArray { target, .. }
+        | SsaInst::SplitValue { target, .. }
+        | SsaInst::MapFromArray { target, .. } => {
             vars.entry(target.display())
                 .or_insert_with(|| base_vars[&target.name]);
         }

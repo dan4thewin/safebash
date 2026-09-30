@@ -5,7 +5,7 @@
 set -eu
 . common.sh
 setup taint_switch
-plan=25
+plan=31
 echo "1..$plan" >&3
 
 set +e
@@ -83,11 +83,11 @@ run_sash 'echo ig | /bin/cat /etc/hostname | readline x
 echo "$x"'
 [[ $rc != 0 && -z $out ]]; chk sw.9
 # sw.10 the SSA backstop rejects a tainted ARRAY at a subscript read. This is
-# the one tainted-array origin the backstop classifies: the array literal is
-# an `Assign` whose value carries the cmdsub's taint. (The bulk-read origins
-# DD#61 names — `read`/`mapfile`/`argv` fills — define no SSA VarRef and stay
-# CST-only; see notes/tasks/ssa-taint-full-backstop.md, deferred by DG
-# 2026-09-12.) Assert the message so this cannot pass on the scalar backstop.
+# one of several tainted-array origins the backstop classifies: the array
+# literal is an `Assign` whose value carries the cmdsub's taint. (The bulk-fill
+# origins DD#61 names — `read`/`argv`/split/map fills — were CST-only until
+# 2026-10-01, when they were given real SSA versions; sw.14-sw.19 below.)
+# Assert the message so this cannot pass on the scalar backstop.
 run_sash 'array a=($(getenv HOME))
 echo ${a[0]}'
 [[ $rc != 0 && -z $out && $err == *"tainted array a[...]"* ]]; chk sw.10
@@ -97,6 +97,48 @@ echo ${a[0]}'
 run_sash 'array a=(x y)
 echo ${a[0]}'
 [[ $rc = 0 && $out = x && -z $err ]]; chk sw.11
+# sw.14-sw.19 the four bulk fills. Each fills a collection IN PLACE, so before
+# 2026-10-01 none defined an SSA version and `taint_of_name` never saw the
+# taint: the backstop was inert for every one. They now define a version after
+# the autodeclare, so the fill's version strictly exceeds the (clean) empty
+# declaration and a later `AttestRetag` strictly exceeds the fill.
+# sw.14 ArgvFill
+run_sash 'argv 1 a
+for v in @a { /bin/echo $v }' one two
+[[ $rc != 0 && -z $out ]]; chk sw.14
+# sw.15 ReadArray
+run_sash 'array g=()
+read g
+for v in @g { /bin/echo $v }'
+[[ $rc != 0 && -z $out ]]; chk sw.15
+# sw.16 SplitValue — the taint follows the SOURCE being split
+run_sash 'array g=()
+read $(getenv HOME) g
+for v in @g { /bin/echo $v }'
+[[ $rc != 0 && -z $out ]]; chk sw.16
+# sw.17 MapFromArray — the taint follows the source array
+run_sash 'array a=()
+argv 1 a
+map m = @{a:-X}
+/bin/echo ${m[k1]}' k1 v1
+[[ $rc != 0 && -z $out ]]; chk sw.17
+# sw.18 control: an attest clears a bulk fill. No separate attest-clears check
+# is needed — `AttestRetag` defines a still-higher CLEAN version and
+# `taint_of_name` takes the max.
+run_sash 'argv 1 a
+attest v in a [[ -n $v ]]
+for v in @a { /bin/echo $v }' one two
+[[ $rc = 0 && $out = "one
+two" && -z $err ]]; chk sw.18
+# sw.19 control: DD#60 — a length/count MEASURES a tainted collection rather
+# than reading it, so it stays clean. The sink side knew this; the propagation
+# side did not, and `n=$(len a)` on a tainted array wrongly tainted `n` the
+# moment the fills above started carrying taint.
+run_sash 'array a
+argv a
+n=$(len a)
+echo "n=$n"' x y
+[[ $rc = 0 && $out == n=* && -z $err ]]; chk sw.19
 
 # ── SSA taint backstop: the read positions the four-arm match never saw ────
 # Moved here from taint.sh 2026-09-30. These ran under a normal compile and

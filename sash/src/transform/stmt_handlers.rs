@@ -503,9 +503,13 @@ fn handle_argv(
     // the versioned slot the same way `array a=()` does, so the fill and later
     // len/iteration/element reads agree with no prior `array a=()`.
     autodeclare_bulk_target(&array, false, ssa, state, block);
+    // Define a LATER version than the autodeclare's empty-array Assign, so the
+    // SSA taint backstop resolves this array to the fill's taint, not to the
+    // clean empty array the declaration produced.
+    let target = state.define(&array);
     ssa.block_mut(block)
         .insts
-        .push(SsaInst::ArgvFill { array, start });
+        .push(SsaInst::ArgvFill { target, start });
     block
 }
 
@@ -710,7 +714,13 @@ fn handle_pipe_while_or_array_read(
     });
     if is_array_read {
         block = lower_one(last, ssa, state, block);
-        rewrite_lastpipe_consumer_fds(ssa);
+        // DD#24: the read is clean only if every producer is compiler-computed.
+        // Same predicate `handle_lastpipe_read` uses for `readline`, and the
+        // same `validate::is_external_source` the front-end taint pass uses.
+        let clean_pipe = !p.commands[..p.commands.len() - 1]
+            .iter()
+            .any(crate::validate::is_external_source);
+        rewrite_lastpipe_consumer_fds(ssa, clean_pipe);
     } else {
         block = lower_pipe_while_read(last, ssa, state, block);
     }
@@ -719,19 +729,21 @@ fn handle_pipe_while_or_array_read(
 
 /// After lowering an array-read lastpipe consumer, repoint its read fd
 /// (currently 0 = stdin) to -1 (pipe sentinel) so codegen reads from
-/// the captured pipe fd instead of the inherited stdin.
-fn rewrite_lastpipe_consumer_fds(ssa: &mut SsaProgram) {
+/// the captured pipe fd instead of the inherited stdin, and record whether
+/// that pipe is clean so the SSA taint backstop classifies it correctly.
+fn rewrite_lastpipe_consumer_fds(ssa: &mut SsaProgram, clean: bool) {
     for bid in ssa.blocks.keys().cloned().collect::<Vec<_>>() {
         for inst in &mut ssa.block_mut(bid).insts {
-            repoint_stdin_to_pipe_sentinel(inst);
+            repoint_stdin_to_pipe_sentinel(inst, clean);
         }
     }
 }
 
-fn repoint_stdin_to_pipe_sentinel(inst: &mut SsaInst) {
-    if let SsaInst::ReadArray { fd, .. } = inst {
+fn repoint_stdin_to_pipe_sentinel(inst: &mut SsaInst, clean: bool) {
+    if let SsaInst::ReadArray { fd, clean_pipe, .. } = inst {
         if *fd == 0 {
             *fd = -1;
+            *clean_pipe = clean;
         }
     }
 }

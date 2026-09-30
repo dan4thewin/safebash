@@ -255,6 +255,20 @@ definition, `taint_of_name` is flow-insensitive in the permissive direction, it
 honours `:!`, and `--no-taint` disables it. (ii) upgrades the collection failure
 mode from a silent leak to an ICE at the use site; it does not diagnose.
 
+**(ii) landed 2026-10-01.** The four fills now carry `target: VarRef` and call
+`state.define()` *after* the autodeclare, giving a monotone layering — clean
+empty declaration, tainted fill, clean attest — that `taint_of_name`'s
+max-version rule reads correctly with no special-casing. That is also why the
+"attest-clears check" the backstop task asked for turned out to be unnecessary:
+the attest already defines a strictly higher clean version.
+
+It changed nothing about SB5067, exactly as predicted above. What it did change
+is the relationship between the two layers, in the direction this section
+argues for: a function that bulk-fills a global is now caught twice — by
+SB5067 with a span at the taint site, and by the backstop at the use site — and
+only the first of those is a diagnosis. Detail and the two bugs it exposed:
+`notes/tasks/ssa-taint-full-backstop.md`, journal 450.
+
 ## See also
 
 - DD#24 taint model · DD#91 `:!` · DD#82 `--no-taint` · DD#100 collection

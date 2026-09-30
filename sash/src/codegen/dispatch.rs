@@ -68,14 +68,15 @@ impl SsaInst {
                 return self.emit_array_append(array, value, builder, module, ctx);
             }
             SsaInst::ReadArray {
-                array,
+                target,
                 fd,
                 redirects,
+                ..
             } => {
-                return self.emit_read_array(array, fd, redirects, builder, module, ctx);
+                return self.emit_read_array(&target.name, fd, redirects, builder, module, ctx);
             }
-            SsaInst::SplitValue { source, array } => {
-                return self.emit_split_value(source, array, builder, module, ctx);
+            SsaInst::SplitValue { source, target } => {
+                return self.emit_split_value(source, &target.name, builder, module, ctx);
             }
             SsaInst::MapFromArray {
                 source,
@@ -84,7 +85,15 @@ impl SsaInst {
                 key,
                 ..
             } => {
-                return self.emit_map_from_array(source, target, *mode, key, builder, module, ctx);
+                return self.emit_map_from_array(
+                    source,
+                    &target.name,
+                    *mode,
+                    key,
+                    builder,
+                    module,
+                    ctx,
+                );
             }
             SsaInst::MatchInto {
                 subject,
@@ -96,8 +105,14 @@ impl SsaInst {
                     subject, pattern, array, *all, builder, module, ctx,
                 );
             }
-            SsaInst::ArgvFill { array, start } => {
-                return super::inst_handlers::handle_argv_fill(array, *start, builder, module, ctx);
+            SsaInst::ArgvFill { target, start } => {
+                return super::inst_handlers::handle_argv_fill(
+                    &target.name,
+                    *start,
+                    builder,
+                    module,
+                    ctx,
+                );
             }
             SsaInst::CaptureStart {
                 site,

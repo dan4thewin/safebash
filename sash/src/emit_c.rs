@@ -749,13 +749,14 @@ fn emit_read_inst(e: &mut Emit, inst: &SsaInst, types: &VarTypes) -> bool {
         } => emit_readline(e, target, *fd, redirects, types),
         // DD#99 `read ARRAY` — split the fd's bytes on NUL into an array.
         SsaInst::ReadArray {
-            array,
+            target,
             fd,
             redirects,
-        } => emit_read_array(e, array, *fd, redirects, types),
+            ..
+        } => emit_read_array(e, &target.name, *fd, redirects, types),
         // DD#99 `read $SRC ARRAY` — the same split with the bytes coming
         // from a value rather than a fd.
-        SsaInst::SplitValue { source, array } => emit_split_value(e, source, array, types),
+        SsaInst::SplitValue { source, target } => emit_split_value(e, source, &target.name, types),
         // DD#99 `map m = @{a:DISP}` — fill the map from the array, pairwise.
         SsaInst::MapFromArray {
             source,
@@ -763,7 +764,7 @@ fn emit_read_inst(e: &mut Emit, inst: &SsaInst, types: &VarTypes) -> bool {
             mode,
             key,
             ..
-        } => emit_map_from_array(e, source, target, *mode, key, types),
+        } => emit_map_from_array(e, source, &target.name, *mode, key, types),
         // a+=( … ) — append at the next integer index (len). Mirrors native
         // emit_array_append (dispatch.rs:69).
         SsaInst::ArrayAppend { array, value } => emit_array_append_c(e, array, value, types),
@@ -1165,7 +1166,7 @@ fn emit_inst(e: &mut Emit, inst: &SsaInst, types: &VarTypes) {
             array,
             all,
         } => emit_match_into_c(e, subject, pattern, array, *all, types),
-        SsaInst::ArgvFill { array, start } => emit_argv_fill_c(e, array, *start),
+        SsaInst::ArgvFill { target, start } => emit_argv_fill_c(e, &target.name, *start),
 
         // Exhaustive on purpose — no `_ =>`. These twelve are claimed by the
         // four sub-dispatchers above, which return true when they emit.
