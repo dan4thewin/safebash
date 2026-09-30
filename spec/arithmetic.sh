@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup arithmetic
-plan=338
+plan=346
 echo "1..$plan" >&3
 
 set +e
@@ -1859,6 +1859,49 @@ echo "$(( n && 1 )) $(( n && 0 )) $(( n || 0 )) $(( n || 1 ))"' x
 run_sash 'int n=$(( (argc) - 1 ))
 echo "$(( n && 1 )) $(( n && 0 )) $(( n || 0 )) $(( n || 1 ))"'
 [[ $rc = 0 && $out = "0 0 0 1" && -z $rerr ]]; chk 31.136
+
+# ── SB5012 reaches into arithmetic (DD#111) ──────────────────────────────
+# The status-availability state machine walks `Expr` nodes, but an arithmetic
+# `(status)` is an `ArithExpr::FuncCall` — a different type, structurally
+# invisible to an `Expr` walk however thorough. So `$(( $? ))` and
+# `$(( (status) ))` with no preceding command were ACCEPTED (yielding 0) while
+# the exact same read spelled `"$?"` or `"$(status)"` was correctly rejected.
+# The diagnostic is carried by the enclosing `$(( … ))`, since the arithmetic
+# tree has no per-node span.
+# as.1 the punctuation sugar inside arithmetic, no preceding command
+run_sash 'echo $(( $? ))'
+[[ $rc != 0 && $err == *SB5012* ]]; chk as.1
+# as.2 the DD#58 sexpr spelling of the same read
+run_sash 'echo $(( (status) ))'
+[[ $rc != 0 && $err == *SB5012* ]]; chk as.2
+# as.3 an assignment rvalue is the same read in a different statement kind
+run_sash 'int n=$(( (status) ))
+echo $n'
+[[ $rc != 0 && $err == *SB5012* ]]; chk as.3
+# as.4 REGRESSION GUARD for the walker wildcard. A subscript INDEX carries
+#      `ArithExpr` children that `walk_arith_intrinsic_calls` used to drop on
+#      its `_ => {}` arm, so this one stayed blind even after the `Expr`-level
+#      half was fixed. Descent now delegates to the total `ArithExpr::children`.
+run_sash 'int array a=(2 0 9)
+echo $(( a[(status)] ))'
+[[ $rc != 0 && $err == *SB5012* ]]; chk as.4
+# as.5 one `$(( … ))` holding two reads reports ONE diagnostic, not the same
+#      span twice — the enclosing expansion is the unit, not the read
+run_sash 'echo $(( (status) + (status) ))'
+[[ $rc != 0 && $(grep -c SB5012 <<< "$err") = 1 ]]; chk as.5
+# as.6 the availability rule is unchanged where it was already right: a
+#      preceding command makes the arithmetic read legal
+run_sash '/bin/true
+echo $(( $? ))'
+[[ $rc = 0 && $out = "0" && -z $err ]]; chk as.6
+# as.7 …and the sexpr spelling agrees with the sugar
+run_sash '/bin/true
+echo $(( (status) ))'
+[[ $rc = 0 && $out = "0" && -z $err ]]; chk as.7
+# as.8 the three spellings of the same read agree on the same value
+run_sash '(( 0 ))
+echo "$(( $? )) $(( (status) ))"'
+[[ $rc = 0 && $out = "1 1" && -z $err ]]; chk as.8
 
 set -e
 tally

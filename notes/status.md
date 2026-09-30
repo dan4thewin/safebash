@@ -1,4 +1,64 @@
-## ══ STATUS (2026-09-30, latest) — a for-in source must denote a collection ══
+## ══ STATUS (2026-09-30, latest) — the second desugar path; SB5012 reaches into arithmetic ══
+
+Sweep **7163** (3684 native, 3466 c, 13 skipped) — predicted exactly, twice,
+zero failures, no retirements. `mk test` rc=0. Journal 455.
+
+**DG corrected the direction of the desugar.** I had found the transform
+rewriting `getpid`/`status`/`getcpid` into `$`/`?`/`!`, noticed the codegen
+arms for those intrinsics were cold, and concluded the arms were dead by
+construction. Backwards: DD#111 says *"the intrinsic is the real thing"*, so
+the rewrite is the violation and the arms are what it starves.
+
+Splitting the three by whether anything *writes* the slot separated them
+cleanly. `status`→`?` has four `define` sites and `getcpid`→`!` has one —
+those are **stateful**, and reading the slot *is* the lowering. `getpid`→`$`
+had **zero**: a pure rename, and exactly the one whose arms were cold. It is
+gone, along with the four `"$"` special-cases in `codegen/values.rs`,
+`emit_c.rs` and `ssa_taint.rs`. `magic_intrinsic_var` is now
+`stateful_intrinsic_slot` and holds only what the name claims.
+
+**"Provably dead by grep" is not proof — twice, on the same code.** I deleted
+those special-cases on the strength of a grep for `define("$")`, rebuilt, and
+`echo $(( $$ > 0 ))` printed 0. There was a **second, independent desugar
+path**: `parse/arith.rs::scan_arith_dollar` has its own single-character scan
+for `$#`/`$?`/`$$`/`$!` and never consulted the word path's table. The grep
+could not have found it — the arith lexer assembles the name a character at a
+time. Both paths now share `magic_sugar_intrinsic`.
+
+**The invariant guard was blind by type.** `assert_no_magic_sugar` exists to
+make a missed construction site loud instead of silent, and its doc *predicts*
+that a miss would leave "SB5012's `$?` state machine" not seeing reads. It
+walks `ExprKind`; `ArithExpr::DollarVar` is a different type. The prediction
+was not hypothetical — it had already come true.
+
+**So: SB5012 was blind to arithmetic status reads** (P2, pre-existing at HEAD,
+confirmed by `git stash`). With no preceding command, `echo "$?"` and
+`echo "$(status)"` were correctly rejected while `echo $(( $? ))`,
+`echo $(( (status) ))` and `int n=$(( (status) ))` were **accepted**, yielding
+0. Same root cause one layer down: `find_status_reads` walks `Expr` nodes and
+an arithmetic `(status)` is an `ArithExpr::FuncCall`.
+
+**And the walker it wanted to reuse had a wildcard.**
+`walk_arith_intrinsic_calls` spelled out its own recursion behind `_ => {}`,
+swallowing `Subscript` and `SubscriptAssign` — both carry `ArithExpr` children,
+so `$(( a[(status)] ))` stayed blind even after the `Expr` half was fixed. Its
+one other caller is the sexpr **arity** check, blind under a subscript index
+for exactly as long. Descent now delegates to the already-total
+`ArithExpr::children()`. Fourth non-total IR walk to be the bug in recent
+sessions; this one was hiding two variants that had been there all along.
+
+`spec/arithmetic.sh` `as.1`-`as.8` (`plan=338`→`346`). None of the five
+pre-existing specs that read status inside arithmetic needed touching — every
+one has a preceding command, which is the point of the rule.
+
+Three functions tripped the complexity gate on the way in; extracting
+`dollar_var_atom`, `assert_expr_no_magic_sugar` and `expr_reads_status` took
+them under. The gate was right — each had grown a second job.
+
+**Housekeeping:** `notes/status.md` carried **five** "latest" markers, stale
+back to 2026-09-29. Demoted to this one.
+
+## ══ STATUS (2026-09-30) — a for-in source must denote a collection ══
 
 Sweep **7147** (3676 native, 3458 c, 13 skipped) — predicted exactly, zero
 failures, no retirements. `mk test` rc=0. Journal 454.
@@ -179,7 +239,7 @@ here (DD#91).
 expansion). `bug-match-3arg-in-cmdsub-rejected` (P4) is diagnostic wording
 only, and the quoted-splat filing was retracted above.
 
-## ══ STATUS (2026-09-30, latest) — SB5067 extended to `$( … )` bodies ══
+## ══ STATUS (2026-09-30) — SB5067 extended to `$( … )` bodies ══
 
 Sweep **7083** (3644 native, 3426 c, 13 skipped) — predicted exactly, zero
 failures. `mk test`, fmt, clippy green. Journal 451.
@@ -213,7 +273,7 @@ invariant behind `taint_top_level`'s "no fixpoint". That now holds for bodies
 too: the verdict makes the discarded set provably equal to the one the
 enclosing scope keeps. Option (b) is closed with it.
 
-## ══ STATUS (2026-09-30, latest) — SB5067 relaxed to a net-effect rule; SSA backstop now sees bulk fills ══
+## ══ STATUS (2026-09-30) — SB5067 relaxed to a net-effect rule; SSA backstop now sees bulk fills ══
 
 Sweep **7071** (3638 native, 3420 c, 13 skipped) — predicted exactly, zero
 failures. `mk test` and fmt green. Journal 450.
@@ -269,7 +329,7 @@ got materially cheaper and the task file records the new calculus.
 > above) and ratified the number: "we already reused SB5067? if so, let it
 > stand". Nothing here is still open.
 
-## ══ STATUS (2026-09-30, latest) — P1 SIGSEGV fixed; the crash was non-reproducible codegen ══
+## ══ STATUS (2026-09-30) — P1 SIGSEGV fixed; the crash was non-reproducible codegen ══
 
 Sweep **7034** (3626 native, 3408 c, 13 skipped) — predicted exactly, zero
 failures. `mk test`, fmt, clippy green. Journal 449.
@@ -447,7 +507,7 @@ was wrong and voids its gates.
 `q-sb5035-random-ban-vestigial` — **resolved the next day** by making every
 disposition default a literal; SB5035 is deleted outright. See the entry above.
 
-## ══ STATUS (2026-09-29, latest) — taint walks substitution bodies ══
+## ══ STATUS (2026-09-29) — taint walks substitution bodies ══
 
 Sweep **7027** (3616 native, 3411 c, 13 skipped) — predicted exactly.
 `mk test`, fmt, clippy, totality green. Journal 445.
@@ -13642,7 +13702,7 @@ modified: 2026-06-07
 <!-- BEGIN: mk-status (regenerated by contrib/status-update.sh) -->
 ## Current branch: hand-parser
 
-## Spec status: 7134 passing / 0 failing of 7147 (spec.db @ fffc23f)
+## Spec status: 7150 passing / 0 failing of 7163 (spec.db @ fffc23f)
 
 _Regenerated 2026-09-30 by `mk status`. Edits inside this block will be
 overwritten; edit outside the BEGIN/END markers._

@@ -752,38 +752,19 @@ fn arith_intrinsic_operand_ok(a: &ArithExpr) -> bool {
 }
 
 /// Invoke `f(name, args)` for each sexpr `FuncCall` in an `ArithExpr` tree.
+///
+/// Descent is delegated to [`ArithExpr::children`], which is itself total over
+/// the enum. That matters: this walker used to spell out its own recursion
+/// behind a `_ => {}`, and the wildcard swallowed `Subscript`/`SubscriptAssign`
+/// — both of which carry `ArithExpr` children. A call under a subscript index
+/// (`$(( a[(status)] ))`) was therefore invisible to every caller. Delegating
+/// makes the omission unrepresentable rather than merely fixed.
 fn walk_arith_intrinsic_calls(a: &ArithExpr, f: &mut impl FnMut(&str, &[ArithExpr])) {
-    match a {
-        ArithExpr::FuncCall { name, args } => {
-            f(name, args);
-            for arg in args {
-                walk_arith_intrinsic_calls(arg, f);
-            }
-        }
-        ArithExpr::BinOp { left, right, .. } => {
-            walk_arith_intrinsic_calls(left, f);
-            walk_arith_intrinsic_calls(right, f);
-        }
-        ArithExpr::UnaryOp { operand, .. } => walk_arith_intrinsic_calls(operand, f),
-        ArithExpr::Assign { value, .. } | ArithExpr::CompoundAssign { value, .. } => {
-            walk_arith_intrinsic_calls(value, f)
-        }
-        ArithExpr::Ternary {
-            cond,
-            true_val,
-            false_val,
-        } => {
-            walk_arith_intrinsic_calls(cond, f);
-            walk_arith_intrinsic_calls(true_val, f);
-            walk_arith_intrinsic_calls(false_val, f);
-        }
-        ArithExpr::Comma(exprs) => {
-            for e in exprs {
-                walk_arith_intrinsic_calls(e, f);
-            }
-        }
-        ArithExpr::Paren(inner) => walk_arith_intrinsic_calls(inner, f),
-        _ => {}
+    if let ArithExpr::FuncCall { name, args } = a {
+        f(name, args);
+    }
+    for child in a.children() {
+        walk_arith_intrinsic_calls(child, f);
     }
 }
 
@@ -2921,8 +2902,8 @@ fn emit_status_unavailable(stmt: &Statement, diags: &mut Vec<Diagnostic>) {
     }
 }
 
-/// Collect the span of every status read in `stmt` — `$(status)`, and the `$?`
-/// punctuation that DD#111 desugars into it at parse.
+/// Collect the span of every status read in `stmt` — `$(status)`, `$?`, and
+/// the arithmetic sexpr `(status)`.
 ///
 /// **This is the AST-level half of SB5012 and it is load-bearing.** Until the
 /// DD#111 desugar this matched `SimpleExpansion("?")`, which covered
@@ -2932,9 +2913,30 @@ fn emit_status_unavailable(stmt: &Statement, diags: &mut Vec<Diagnostic>) {
 /// vacuous** — every spec still passing, and SB5012 simply never raised again.
 /// `crate::ir::intrinsic_call_name` is the recogniser; its round-trip test
 /// pins it to the constructor.
+///
+/// **Two node types carry a status read, not one.** `walk_all_exprs` visits
+/// `Expr`s, and an arithmetic `(status)` is an `ArithExpr::FuncCall` — a
+/// different type, structurally invisible to an `Expr` walk however thorough.
+/// `$(( $? ))` and `$(( (status) ))` were both accepted with no preceding
+/// command while `"$?"` and `"$(status)"` were correctly rejected. The
+/// arithmetic tree has no per-node span, so the enclosing `$(( … ))` carries
+/// the diagnostic — and carries it **once**, however many reads it holds,
+/// because repeating one span would print the same line twice.
+fn expr_reads_status(expr: &Expr) -> bool {
+    if crate::ir::intrinsic_call_name(expr) == Some("status") {
+        return true;
+    }
+    let ExprKind::Arithmetic(a) = &expr.kind else {
+        return false;
+    };
+    let mut found = false;
+    walk_arith_intrinsic_calls(a, &mut |name, _| found |= name == "status");
+    found
+}
+
 fn find_status_reads(stmt: &Statement, spans: &mut Vec<Span>) {
     walk_exprs_in_stmt(stmt, &mut |expr, _| {
-        if crate::ir::intrinsic_call_name(expr) == Some("status") {
+        if expr_reads_status(expr) {
             spans.push(expr.span);
         }
     });
