@@ -156,3 +156,62 @@ A search over source text proves a property of the text. Executing the program
 proves a property of the program. The probe found both in about a minute each,
 and the sweep would have found the first one anyway — spec `31.20` had been
 pinning `$(( $$ > 0 ))` the entire time.
+
+---
+
+## Coda: back to the coverage queue
+
+The whole session started as coverage triage, so I went back to it after the
+fix landed. Fresh `mk cov-union` + `mk cov-db` (this work renumbered seven
+measured files, which invalidates the old `coverage.db` silently).
+
+**`getpid` is now warm** — that was the point of removing the rename, and it
+is the first thing this session claimed about coverage that was actually
+measured rather than asserted. `try_nullary_intrinsic` went 15 cold lines → 11
+and `try_process_intrinsic_c` 11 → 8.
+
+Everything still cold in *both* of those is the **`getcwd`** arm, and it was
+cold for an interesting reason: no spec executed it at all. `argv.sh:109` uses
+`$(getcwd)` as an `arg` default, which is literal since DD#65/#78 and so never
+evaluated; `taint.sh:446` is a rejection spec; and `control_flow.sh` 406–421
+*became* rejection specs earlier this session. Before that they compiled and
+aborted at runtime, so they had never reached codegen either. The intrinsic
+worked perfectly in every position — nothing had ever asked.
+
+`cov.344`–`cov.349` close it, asserting semantics rather than "it printed a
+slash": a differential against `pwd -P` (the physical path, which is what
+`getcwd(2)` returns — `$PWD` would be the wrong oracle), the length loaded
+back by the arm's second return value, stability across calls, agreement
+between the assigned and unassigned spellings, and cleanliness under the taint
+model. Measured with `cov-probe`: all four spellings reach the arm, unlike the
+`getppid` case at `cov.331` where the assigned form goes to `int_intrinsic_i64`
+instead — `getcwd` has only the string lowering.
+
+**`int_intrinsic_i64`'s last cold line was its `"status"` arm, and I nearly
+called it dead.** The reasoning was tidy: `status` is deliberately kept as a
+stateful slot mapping to `?`, so the name should never arrive here. Having
+been wrong twice already this session on exactly that move, I checked instead
+— `--emit-ir` on `int n=$(status)` shows the assignment keeping a command
+substitution with the literal name, which is precisely the shape
+`lower_cmdsubst_as_int` hands to this function. Not dead. Just never spelled:
+every existing status spec uses a word (`"$?"`) or an arith operand
+(`$(( (status) ))`), and both go elsewhere. `cov.350`–`cov.353`.
+
+`cov.353` is the pleasing one. `int n=$(status)` consumes the status like any
+other reader, so a second read with no intervening command is SB5012 — through
+the arithmetic half of the availability machine, which was blind until about
+an hour earlier.
+
+### A spec bug of my own, worth recording
+
+`cov.345` first read `[[ $p == /* ]] && echo absolute` and failed. I had
+written bash. **DD#66 makes `==` strict exact equality in sash, with no
+pattern language at all** — so that compares against a literal asterisk. It is
+decided, not a bug (`case` is gone; `=~` is the pattern form, and SB4029 says
+so). But it is a silent divergence from bash for anyone porting: `[[ $p == ab* ]]`
+with `p=abcd` is true in bash and false in sash, and `!=` inverts the same way,
+with no diagnostic. Unquoted `?` and `[…]` in a word already draw SB5006 for
+exactly this reason. Flagged to DG; not acting on it unasked.
+
+Sweep **7183** (3694 native, 3476 c, 13 skipped) — predicted exactly at every
+step.

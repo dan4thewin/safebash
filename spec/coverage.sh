@@ -6,7 +6,7 @@
 set -eu
 . common.sh
 setup coverage
-plan=342
+plan=352
 echo "1..$plan" >&3
 
 set +e
@@ -1705,6 +1705,102 @@ attest s [[ -n $s ]]
 echo "[$s]"'
 [[ $rc != 0 && -z $out && $err == *SB5071* ]]; chk cov.343
 
+# cov.344-349 `$(getcwd)` — the last cold arm of `try_nullary_intrinsic` and of
+# its C twin `try_process_intrinsic_c`. It was cold because NO spec executed
+# it: `argv.sh:109` uses it as an `arg` default (literal since DD#65/#78, so
+# never evaluated), `taint.sh:446` is a rejection spec, and `control_flow.sh`
+# 406-421 became SB5009 rejections when a for-in source was required to denote
+# a collection. Before that fix those two COMPILED and then aborted at runtime,
+# so they never reached codegen either. Measured 2026-09-30: all four spellings
+# below reach the arm, unlike the `getppid` case at cov.331 above — there the
+# assigned form went to `int_intrinsic_i64` instead, because `getppid` has an
+# int lowering and `getcwd` has only the string one.
+#
+# Assert SEMANTICS. "It printed a slash" would pass against a stub.
+# cov.344 the differential: getcwd is the process's ACTUAL cwd. `pwd -P` is
+# the physical path, which is what getcwd(2) returns — a logical `$PWD`
+# comparison would be the wrong oracle.
+here=$(pwd -P)
+run_sash 'echo $(getcwd)'
+[[ $rc = 0 && $out = "$here" && -z $err ]]; chk cov.344
+# cov.345 the LENGTH the arm loads back is right. The cold code returns a
+# pointer and separately stack-loads a length; a truncated or over-long length
+# would still print something plausible, and cov.344 would still pass if the
+# extra bytes happened to be NUL. Asking sash for `strlen` of its own capture
+# and comparing to the byte count of the real path pins the second return
+# value independently of the first. The absolute-path check is asserted on
+# the harness side, because `==` in sash is strict exact equality with no
+# pattern language (DD#66) — `[[ $p == /* ]]` there compares against a
+# literal asterisk.
+run_sash 'str p=$(getcwd)
+int n=$(( (strlen $p) ))
+echo "$p"
+echo "$n"'
+[[ $rc = 0 && -z $err && $out = "$here
+${#here}" && $here == /* ]]; chk cov.345
+# cov.346 it is a syscall, not a cached variable — two reads in one program
+# agree, and they agree with a captured first read.
+run_sash 'str a=$(getcwd)
+str b=$(getcwd)
+[[ $a == $b ]] && echo stable
+[[ $a == $(getcwd) ]] && echo agrees'
+[[ $rc = 0 && $out = "stable
+agrees" && -z $err ]]; chk cov.346
+# cov.347 the assigned and unassigned spellings agree. For `getppid` these are
+# two different lowerings (cov.335); `getcwd` has only the string one, so this
+# pins that there is no second path quietly disagreeing.
+run_sash 'str a=$(getcwd)
+echo "$a"
+echo $(getcwd)'
+[[ $rc = 0 && -z $err && $out = "$here
+$here" ]]; chk cov.347
+# cov.348 spliced into a larger word rather than being the whole word — the
+# capture has to carry its length correctly for the concat to come out right.
+run_sash 'echo "[$(getcwd)]"'
+[[ $rc = 0 && $out = "[$here]" && -z $err ]]; chk cov.348
+# cov.349 `$(getcwd)` is CLEAN. It is a syscall reporting process state, like
+# `$(getpid)` — not `getenv`/`argv`/a read/an external capture, which are the
+# four taint sources. So it may be used without a gate. This is a taint-model
+# statement, and the only thing pinning it.
+run_sash 'str p=$(getcwd)
+echo "cwd=$p"'
+[[ $rc = 0 && $out = "cwd=$here" && -z $err ]]; chk cov.349
+# cov.350-353 `int n=$(status)` — the last cold line of `int_intrinsic_i64`,
+# its `"status"` arm. It was cold, NOT dead: `--emit-ir` shows the assignment
+# keeps `$(status)` as a command substitution with the literal name, which is
+# exactly the shape `lower_cmdsubst_as_int` hands to `int_intrinsic_i64`. No
+# spec had ever spelled the int-typed capture; every existing status spec uses
+# a word (`"$?"`) or an arith operand (`$(( (status) ))`), and those go
+# elsewhere. Checked before assuming — the twin mistake at cov.331 above was
+# to declare which lowering a spelling reaches without measuring it.
+#
+# `(( … ))` is the status source because an uncaught `/bin/false` aborts the
+# program (DD#55), so it cannot be used to produce a non-zero status to read.
+# cov.350 arith-false sets status 1, captured as an int
+run_sash '(( 0 ))
+int n=$(status)
+echo $n'
+[[ $rc = 0 && $out = "1" && -z $err ]]; chk cov.350
+# cov.351 …and arith-true sets 0. Both directions, so a stuck arm returning a
+# constant fails one of the two.
+run_sash '(( 1 ))
+int n=$(status)
+echo $n'
+[[ $rc = 0 && $out = "0" && -z $err ]]; chk cov.351
+# cov.352 the captured value is a real int, not a string that prints like one
+# — it composes arithmetically.
+run_sash '(( 0 ))
+int n=$(status)
+echo $(( n + 10 ))'
+[[ $rc = 0 && $out = "11" && -z $err ]]; chk cov.352
+# cov.353 the int-typed capture CONSUMES the status, like every other reader.
+# This pins that the SB5012 availability machine sees this spelling too: a
+# second read with no intervening command is rejected. It also exercises the
+# arithmetic half of that machine, which was blind until 2026-09-30.
+run_sash '(( 0 ))
+int n=$(status)
+echo "$n $(( $? ))"'
+[[ $rc != 0 && $err == *SB5012* ]]; chk cov.353
 
 set -e
 tally

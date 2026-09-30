@@ -58,6 +58,45 @@ them under. The gate was right — each had grown a second job.
 **Housekeeping:** `notes/status.md` carried **five** "latest" markers, stale
 back to 2026-09-29. Demoted to this one.
 
+**Back to coverage.** Fresh `mk cov-union` + `mk cov-db`. `getpid` is now
+**warm** — measured, which is the first coverage claim this session that was
+not merely asserted. `try_nullary_intrinsic` 15 cold lines → 11,
+`try_process_intrinsic_c` 11 → 8.
+
+What remained in both was the **`getcwd`** arm, cold because *no spec executed
+it*: `argv.sh:109` uses it as an `arg` default (literal since DD#65/#78, never
+evaluated), `taint.sh:446` is a rejection spec, and `control_flow.sh` 406-421
+became rejection specs earlier this session — and before that they compiled
+and aborted at runtime, so they never reached codegen either. `cov.344`-`349`
+close it against semantics: a differential against `pwd -P` (the physical
+path, which is what `getcwd(2)` returns), the length the arm loads back,
+stability, both spellings agreeing, and cleanliness under the taint model.
+
+**`int_intrinsic_i64`'s `"status"` arm I nearly called dead** — `status` is
+deliberately a stateful slot, so the name "should never" arrive there. Having
+been wrong twice already on that exact move, I checked: `--emit-ir` on
+`int n=$(status)` keeps a command substitution with the literal name, which is
+the shape `lower_cmdsubst_as_int` passes in. A gap, not dead code — every
+existing status spec spells a word or an arith operand, and both go elsewhere.
+`cov.350`-`353`; `cov.353` pins that the int capture consumes the status, via
+the arithmetic half of the machine fixed an hour earlier.
+
+Sweep **7183** (3694 native, 3476 c, 13 skipped), predicted exactly at every
+step, zero failures, no retirements.
+
+**For DG — `==` vs bash globs.** `cov.345` first failed because I wrote
+`[[ $p == /* ]]`, i.e. bash. DD#66 makes `==` strict exact equality with no
+pattern language, so that compares against a literal asterisk. Decided, not a
+bug. But it is a *silent* divergence for anyone porting: `[[ $p == ab* ]]` with
+`p=abcd` is true in bash, false in sash, `!=` inverts likewise, no diagnostic.
+Unquoted `?` and `[…]` already draw SB5006 for exactly this reason. Worth a
+diagnostic on an unquoted `*` in a `==` operand? Not acting unasked.
+
+Remaining cold-function queue: `lower_value_as_str_aggregate`,
+`try_lower_attest_list`, `check_list_caught_resolution`, `lower_value`,
+`emit_degenerate_pipeline`, `lower_arith_mutation_structured`,
+`parse_assignment`, `parse_split_subscript_index`.
+
 ## ══ STATUS (2026-09-30) — a for-in source must denote a collection ══
 
 Sweep **7147** (3676 native, 3458 c, 13 skipped) — predicted exactly, zero
