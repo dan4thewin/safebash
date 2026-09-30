@@ -5433,6 +5433,9 @@ fn reject_tainted_array_iter(w: &Expr, tainted: &HashSet<String>, diags: &mut Ve
     let Some(arr) = splat_array_name(w) else {
         return;
     };
+    if splat_vouched(w) {
+        return;
+    }
     if tainted.contains(arr) {
         diags.push(Diagnostic::error_span(
             w.span,
@@ -5443,6 +5446,21 @@ fn reject_tainted_array_iter(w: &Expr, tainted: &HashSet<String>, diags: &mut Ve
             ),
         ));
     }
+}
+
+/// DD#91 (2026-09-09 addendum): does this splat carry the `!` taint-off
+/// MODIFIER (`@{a:!}`)?
+///
+/// Deliberately separate from `splat_array_name`, which answers a purely
+/// structural question ("is this word a value splat, and of what?"). Folding
+/// the check in there would make a *policy* answer look structural, and the
+/// addendum exists precisely because `!` was once conflated with a
+/// disposition: the retired `arrvals_trust` operator meant "elide AND trust",
+/// which forced the trust to inherit the elide's position restriction. `!` is
+/// a modifier, so a vouched splat is legal wherever a bare one is — including
+/// here, as a `for`-in source.
+fn splat_vouched(w: &Expr) -> bool {
+    matches!(&w.kind, ExprKind::ParameterExpansion(pe) if pe.taint_off)
 }
 
 /// The named array of a value-splat for-word (`@a`), if the word is one.

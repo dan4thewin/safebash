@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup taint
-plan=289
+plan=294
 echo "1..$plan" >&3
 
 set +e
@@ -882,7 +882,7 @@ attest v in g [[ -n $v ]]
 for v in @g { /bin/echo $v }' one
 [[ $rc = 0 && $out = $'hi\none' && -z $rerr ]]; chk bfb.22
 
-# ── SB5067 extended to `$( … )` bodies (DG, 2026-10-01) ──────────────────
+# ── SB5067 extended to `$( … )` bodies (DG, 2026-09-30) ──────────────────
 # DD#86 calls a `$( … )` body an anonymous function body, and sash inlines it
 # rather than forking a subshell, so a write to an enclosing name PERSISTS.
 # The same net-effect rule therefore applies: a body may not LEAVE a global
@@ -1703,6 +1703,41 @@ run_sash 'str h=$(getenv HOME)
 array a=( ${h:!-$(getenv PATH)} )
 echo "${a[0]}"'
 [[ $rc != 0 && -z $out && $err == *SB4070* ]]; chk 91.33
+# ── DD#91 addendum: `!` is a MODIFIER, so a vouched splat is legal in every
+#    position a bare one is — including a `for`-in source. Before 2026-09-30
+#    `reject_tainted_array_iter` resolved the splat without ever consulting
+#    `pe.taint_off`, so 91.34 was SB5020: the modifier was silently ignored,
+#    re-imposing exactly the position restriction the addendum removed.
+# 91.34 a vouched splat iterates a tainted array
+run_sash 'array g=()
+argv 1 g
+for v in @{g:!} { echo "[$v]" }' one two
+[[ $rc = 0 && $out == "[one]
+[two]" && -z $rerr ]]; chk 91.34
+# 91.35 control: the same loop, unvouched, is still rejected
+run_sash 'array g=()
+argv 1 g
+for v in @g { echo "[$v]" }' one
+[[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk 91.35
+# 91.36 `:!` is per-USE, not a declassification — a later bare read still fails
+run_sash 'array g=()
+argv 1 g
+for v in @{g:!} { echo "$v" }
+echo @{g:-x}' one
+[[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk 91.36
+# 91.37 nested vouched loops over the same tainted array
+run_sash 'array g=()
+argv 1 g
+for a in @{g:!} { for b in @{g:!} { echo "$a$b" } }' x y
+[[ $rc = 0 && $out == "xx
+xy
+yx
+yy" && -z $rerr ]]; chk 91.37
+# 91.38 a clean array is unaffected by the modifier
+run_sash 'array g=(a b)
+for v in @{g:!} { echo "[$v]" }'
+[[ $rc = 0 && $out == "[a]
+[b]" && -z $rerr ]]; chk 91.38
 
 # ── DD#86: the front end taint-checks a `$( … )` body ──────────────────────
 # `check_cmdsub_inner_reads` was the only thing that looked inside a body: it

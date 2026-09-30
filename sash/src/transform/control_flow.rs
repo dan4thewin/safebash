@@ -586,9 +586,17 @@ fn try_dispatch_array(
     if !is_dynamic_single_word(f) {
         return None;
     }
-    let (name, use_keys) = detect_array_iter(&f.words[0].kind)?;
-    let name = super::expressions::resolve_args_name(&name, state);
-    Some(lower_for_array(f, &name, use_keys, ssa, state, block))
+    let it = detect_array_iter(&f.words[0].kind)?;
+    let name = super::expressions::resolve_args_name(&it.name, state);
+    Some(lower_for_array(
+        f,
+        &name,
+        it.use_keys,
+        it.vouched,
+        ssa,
+        state,
+        block,
+    ))
 }
 
 /// DD#20/DD#69: `for f in *` is sugar for `array tmp=(*); for f in @tmp`.
@@ -621,13 +629,32 @@ fn try_dispatch_glob(
         target,
         value: glob_val,
     });
-    Some(lower_for_array(f, &tmp_name, false, ssa, state, block))
+    // A glob materialises into a fresh temp array; nothing to vouch for.
+    Some(lower_for_array(
+        f, &tmp_name, false, false, ssa, state, block,
+    ))
 }
 
-fn detect_array_iter(kind: &ExprKind) -> Option<(String, bool)> {
+/// What a `for`-in source word iterates, if it iterates a collection.
+///
+/// A struct rather than a tuple because `use_keys` and `vouched` are adjacent
+/// booleans with unrelated meanings — the call site should have to name them.
+pub(super) struct ArrayIter {
+    pub name: String,
+    /// `for k in $(keys m)` binds the key; `for v in @a` the value.
+    pub use_keys: bool,
+    /// DD#91: the `!` taint-off modifier, `for v in @{a:!}`.
+    pub vouched: bool,
+}
+
+fn detect_array_iter(kind: &ExprKind) -> Option<ArrayIter> {
     match kind {
         ExprKind::ParameterExpansion(pe) if pe.operator.as_deref() == Some("arrvals") => {
-            Some((pe.name.clone(), false))
+            Some(ArrayIter {
+                name: pe.name.clone(),
+                use_keys: false,
+                vouched: pe.taint_off,
+            })
         }
         ExprKind::DoubleQuoted(parts) if parts.len() == 1 => detect_array_iter(&parts[0].kind),
         // Sash-native: $(keys arr) in for-loop → array key iteration (DD#41)
@@ -645,7 +672,12 @@ fn detect_array_iter(kind: &ExprKind) -> Option<(String, bool)> {
             if cmd_name != "keys" {
                 return None;
             }
-            c.args.first().map(|a| (expr_to_string(a), true))
+            // `$(keys m)` has no splat to carry a modifier, so never vouched.
+            c.args.first().map(|a| ArrayIter {
+                name: expr_to_string(a),
+                use_keys: true,
+                vouched: false,
+            })
         }
         _ => None,
     }

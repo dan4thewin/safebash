@@ -1,6 +1,6 @@
 ---
 title: "`:!` is silently ignored on a for-in splat — `for v in @{a:!}` is rejected SB5020 despite DD#91"
-status: open
+status: done
 priority: P2
 kind: bug
 depends: []
@@ -103,3 +103,33 @@ loop variable inside the body, or half the fix will look complete.
 DD#91's "Implementation" section still describes the retired `arrvals_trust`
 operator and its position restriction. It predates the 2026-09-09 addendum
 recorded in `ir.rs` and should be corrected when this is fixed.
+
+## Fixed 2026-09-30
+
+Two layers, not the one the filing named.
+
+1. **validate** — `reject_tainted_array_iter` now early-returns on
+   `splat_vouched(w)`, a new helper kept deliberately separate from
+   `splat_array_name` (structural question vs policy question; conflating them
+   is what `arrvals_trust` did).
+2. **transform** — fixing validate alone moved the rejection to the SSA
+   backstop, because the loop variable binds `SsaValue::TableValue { array, .. }`
+   and its taint is `taint_of_name(array)`. `taint_off` was never plumbed past
+   the CST. `detect_array_iter` now returns an `ArrayIter` struct carrying
+   `vouched`, and `loop_binding_value` wraps the binding in `SsaValue::Trusted`
+   — the node that exists for exactly this, lowered by codegen as its source
+   (emitted C verified byte-identical).
+
+Measured: the modifier already worked in every other splat position. The
+command-arg case reads as a failure but is SB5032 (an empty splat needs a
+disposition), which only fires *after* the taint check passes — `@{g:!-none}`
+is accepted while `@{g:-none}` is SB5020.
+
+Controls: `:!` stays per-use (a later bare read is still SB5020); nested
+vouched loops work; the `keys` path cannot have a tainted map (SB5021 rejects
+building one), so `vouched: false` there is unreachable by construction.
+
+Specs `91.34`-`91.38` in `spec/taint.sh`. Sweep 7093, zero failing. Journal 452.
+
+Found as a control while fixing this, unrelated and pre-existing:
+`bug-quoted-array-splat-not-a-read`.

@@ -32,13 +32,27 @@ fn emit_for_bound(
 
 /// `for k in @m` binds the KEY, `for v in @a` the VALUE. Hoisted out of
 /// `lower_for_array`, which emits it once per SSA pass.
-fn loop_binding_value(use_keys: bool, array_name: &str, index: &VarRef) -> SsaValue {
+///
+/// DD#91: `vouched` is the `!` taint-off modifier from `for v in @{a:!}`. The
+/// binding is wrapped in `Trusted`, which codegen lowers as its source — the
+/// emitted code is identical and only the taint passes read it. Without the
+/// node the SSA backstop sees the element read inherit the array's taint and
+/// rejects a bypass the author explicitly asked for, which is the whole
+/// reason `Trusted` exists.
+fn loop_binding_value(use_keys: bool, array_name: &str, index: &VarRef, vouched: bool) -> SsaValue {
     let array = array_name.to_string();
     let index = index.clone();
-    if use_keys {
+    let bind = if use_keys {
         SsaValue::TableKey { array, index }
     } else {
         SsaValue::TableValue { array, index }
+    };
+    if vouched {
+        SsaValue::Trusted {
+            source: Box::new(bind),
+        }
+    } else {
+        bind
     }
 }
 
@@ -46,6 +60,7 @@ pub(super) fn lower_for_array(
     f: &For,
     array_name: &str,
     use_keys: bool,
+    vouched: bool,
     ssa: &mut SsaProgram,
     state: &mut VersionState,
     block: BlockId,
@@ -86,7 +101,7 @@ pub(super) fn lower_for_array(
     let loop_var = state.define(&f.variable);
     ssa.block_mut(body_block).insts.push(SsaInst::Assign {
         target: loop_var,
-        value: loop_binding_value(use_keys, array_name, &idx_ref),
+        value: loop_binding_value(use_keys, array_name, &idx_ref, vouched),
     });
 
     state.loop_stack.push((latch, exit_block));
@@ -126,7 +141,7 @@ pub(super) fn lower_for_array(
     let loop_var_2 = state.define(&f.variable);
     ssa.block_mut(body_block).insts.push(SsaInst::Assign {
         target: loop_var_2,
-        value: loop_binding_value(use_keys, array_name, &idx_ref_2),
+        value: loop_binding_value(use_keys, array_name, &idx_ref_2, vouched),
     });
 
     state.loop_stack.push((latch, exit_block));
