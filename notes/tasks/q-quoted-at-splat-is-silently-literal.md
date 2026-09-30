@@ -1,6 +1,6 @@
 ---
 title: "`\"@g\"` is silently literal text, while every other quoted-splat spelling is an error"
-status: open
+status: done
 priority: P3
 kind: question
 depends: []
@@ -77,3 +77,43 @@ is still literal.
 
 DG decides. Nothing is broken today; this is about whether a likely mistake
 should be caught.
+
+## Resolved 2026-09-30 — DG's call
+
+> "seems like the diagnostic should include the single quoted form to get a
+> literal, i.e., '@g'; then we could at least throw an error where a splat is
+> obviously wanted like a for loop"
+
+Both halves implemented. Option 2 of the three above, scoped to the for-in
+source — which is the narrowest form of it, and the one DG named.
+
+**The escape hatch is real**: `'@g'` single-quoted yields the literal text,
+verified by running it. So the rejection always has somewhere to send the
+author.
+
+**The rejection is purely syntactic.** `check_for_header_splat` has no symbol
+table, so `g` is not required to resolve — and in this position that is the
+right call anyway: it is the POSITION that makes the intent obvious, not the
+name. A loop over the single constant string `@g` is not something anyone
+writes on purpose.
+
+**Scoped to the for-in source only.** As a command argument, `"@g"` remains
+ordinary literal text and matches bash exactly. Widening further would be a
+much larger divergence with no comparable signal.
+
+**SB5026 reused**, not a new code — the rule is the same one its existing
+message already states ("quoting an array splat is not allowed"). That message
+now also names `$(join arr SEP)` and the `'@arr'` literal form.
+
+### The advice had to be checked against the compiler
+
+The first version advised writing `@{g:-x}` back for `"@{g:-x}"` — which is
+**SB5034**, because a for-in source rejects the empty-disposition (DD#69
+addendum). That would have handed the author a form that fails on the next
+compile. The advice now strips a disposition (`@g`) but carries over `:!`,
+which is a taint MODIFIER and legal here (DD#91). Every advised spelling was
+then run: all five compile and produce the right output (spec `gs.61` asserts
+the `@{g:-x}` case specifically, including that the bad advice is *absent*).
+
+Specs `gs.59`-`gs.65` in `spec/glob_splat.sh`. Sweep 7107, zero failing.
+Journal 452.

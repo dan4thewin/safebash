@@ -10,7 +10,7 @@
 set -eu
 . common.sh
 setup glob_splat
-plan=61
+plan=68
 echo "1..$plan" >&3
 
 set +e
@@ -340,6 +340,56 @@ run_sash 'array a=()
 /bin/echo @{a:?'"'"'costs $5'"'"'}'
 [[ $rc != 0 && -z $out ]] \
   && { ! in_modes native || [[ $rerr == *": costs \$5" ]]; }; chk gs.58
+
+# ── A DOUBLE-QUOTED `@a` is literal text, not a splat: inside `"…"` the `@` is
+#    not an expansion sigil, so the parser yields a plain literal and no splat
+#    node ever exists. Every other way of quoting a splat was already caught
+#    (`"${a[@]}"` SB4038, `"$(keys m)"`/`"$(argv)"` SB5025/SB5026) — this
+#    spelling was the silent hole, and the most natural one to write. Rejected
+#    only in a for-in SOURCE, where a one-iteration loop over a constant string
+#    is obviously not what was meant (DG, 2026-09-30). As a command argument it
+#    stays legal literal text, matching bash.
+# gs.59 a quoted splat as a for-in source is rejected
+run_sash 'array g=(a b)
+echo $(len g)
+for v in "@g" { echo "[$v]" }'
+[[ $rc != 0 && -z $out && $err == *SB5026* ]]; chk gs.59
+# gs.60 the message names BOTH remedies — the bare splat and the literal form
+run_sash 'array g=(a b)
+echo $(len g)
+for v in "@g" { echo "[$v]" }'
+[[ $rc != 0 && $err == *'`@g`'* && $err == *"'@g'"* ]]; chk gs.60
+# gs.61 the advice must itself be LEGAL here: a for-in source rejects the
+#       empty-disposition (SB5034), so `"@{g:-x}"` is advised back as `@g`,
+#       never as `@{g:-x}`
+run_sash 'array g=(a b)
+echo $(len g)
+for v in "@{g:-x}" { echo "[$v]" }'
+[[ $rc != 0 && $err == *'`@g`'* && $err != *'`@{g:-x}`'* ]]; chk gs.61
+# gs.62 `:!` is a MODIFIER, legal in this position (DD#91), so it is carried
+#       over into the advice instead of being stripped
+run_sash 'array g=(a b)
+echo $(len g)
+for v in "@{g:!}" { echo "[$v]" }'
+[[ $rc != 0 && $err == *'`@{g:!}`'* ]]; chk gs.62
+# gs.63 single quotes are the documented escape — one literal iteration
+run_sash 'array g=(a b)
+echo $(len g)
+for v in '"'"'@g'"'"' { echo "[$v]" }'
+[[ $rc = 0 && $out == "2
+[@g]" && -z $rerr ]]; chk gs.63
+# gs.64 a quoted `@a` as a command ARGUMENT is untouched literal text (bash
+#       prints `@g` too) — the rejection is scoped to the for-in source
+run_sash 'array g=(a b)
+echo $(len g)
+echo "[@g]"'
+[[ $rc = 0 && $out == "2
+[@g]" && -z $rerr ]]; chk gs.64
+# gs.65 words that merely contain `@` are unaffected
+run_sash 'for v in "a@b" "@" "@{}" { echo "[$v]" }'
+[[ $rc = 0 && $out == "[a@b]
+[@]
+[@{}]" && -z $rerr ]]; chk gs.65
 
 set -e
 tally

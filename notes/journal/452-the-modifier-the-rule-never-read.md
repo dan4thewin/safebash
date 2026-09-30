@@ -125,10 +125,50 @@ literal. SB5026's own advice names `@arr` as the remedy, and `"@arr"` is the
 one spelling it cannot see. Whether to close that gap is a deliberate
 divergence from bash, so it is DG's.
 
+## The sequel — DG closes the hole he spotted
+
+> "seems like the diagnostic should include the single quoted form to get a
+> literal, i.e., '@g'; then we could at least throw an error where a splat is
+> obviously wanted like a for loop"
+
+That is the fix my retracted filing was groping at and got backwards. `'@g'`
+single-quoted really does yield the literal, so the rejection has somewhere to
+send the author — and with an escape hatch in hand, the for-in position can be
+made strict.
+
+Implemented: a for-in source word that is a double-quoted literal shaped like
+`@name` / `@{name…}` is SB5026 (reused — the rule is the one its existing
+message already states). That message now names `$(join arr SEP)` and `'@arr'`
+too.
+
+Purely syntactic. `check_for_header_splat` has no symbol table, so `g` need
+not resolve — and that is right: it is the **position** that makes the intent
+obvious, not the name. Scoped to the for-in source; as a command argument
+`"@g"` stays literal and bash-identical.
+
+### The advice was wrong before it was right
+
+The first version advised `@{g:-x}` back for `"@{g:-x}"`. That is **SB5034** —
+a for-in source rejects the empty-disposition (DD#69 addendum). I would have
+shipped a diagnostic whose remedy fails on the next compile: the same class of
+error as the retraction above, an assertion never executed.
+
+Caught it by making the check mechanical instead of reading the string —
+extract the suggestion from the message, compile *that*, confirm it runs. All
+five spellings now pass that loop, and `gs.61` pins the `@{g:-x}` case
+including that the bad advice is absent from the text.
+
+The rule that fell out: a disposition is stripped (`@g`), but `:!` is carried
+over, because it is a MODIFIER and legal in this position (DD#91) — the same
+distinction this whole journal entry is about.
+
 ## Gates
 
 Sweep **7093** (3649 native, 3431 c, 13 skipped), predicted exactly, zero
 failing, no retirements. `mk test` and fmt green. Specs `91.34`–`91.38`.
+
+Second sweep after the SB5026 work: **7107**, again predicted exactly, zero
+failing. Specs `gs.59`–`gs.65`.
 
 The `:!` fix itself is unaffected by the retraction above — it was measured by
 running the binaries, and its specs assert output, not exit status.

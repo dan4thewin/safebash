@@ -4575,16 +4575,7 @@ fn check_argv_splat_decl(d: &Declaration, diags: &mut Vec<Diagnostic>) {
 fn check_for_header_splat(f: &For, diags: &mut Vec<Diagnostic>) {
     let mut argv_splats = 0;
     for w in &f.words {
-        if is_array_splat_source(w) {
-            argv_splats += 1;
-        } else if is_disposition_splat(w) {
-            // DD#69 addendum: the empty-disposition is command-argument-only;
-            // a for-in source is the bare `@a` (its own zero-match handling).
-            diags.push(disposition_position_diag(w.span));
-        } else {
-            // Catches a quoted splat word (SB5026) and any nested misuse.
-            check_argv_splat_expr(w, diags);
-        }
+        argv_splats += usize::from(check_for_source_word(w, diags));
     }
     if argv_splats > 0 && f.words.len() > 1 {
         diags.push(Diagnostic::error_span(
@@ -4595,6 +4586,25 @@ fn check_for_header_splat(f: &For, diags: &mut Vec<Diagnostic>) {
                 .to_string(),
         ));
     }
+}
+
+/// Validate one for-in source word, reporting whether it is an argv splat so
+/// the caller can enforce the sole-source rule (SB5027).
+fn check_for_source_word(w: &Expr, diags: &mut Vec<Diagnostic>) -> bool {
+    if is_array_splat_source(w) {
+        return true;
+    }
+    if is_disposition_splat(w) {
+        // DD#69 addendum: the empty-disposition is command-argument-only;
+        // a for-in source is the bare `@a` (its own zero-match handling).
+        diags.push(disposition_position_diag(w.span));
+    } else if let Some((text, advice)) = quoted_at_splat_text(w) {
+        diags.push(quoted_at_splat_diag(w.span, &text, &advice));
+    } else {
+        // Catches a quoted splat word (SB5026) and any nested misuse.
+        check_argv_splat_expr(w, diags);
+    }
+    false
 }
 
 /// DD#69 addendum: a named-array splat (`@a` / `@{a:?}`) is not a scalar —
@@ -4825,8 +4835,89 @@ fn quoted_splat_diag(span: Span) -> Diagnostic {
         span,
         "SB5026",
         "quoting an array splat is not allowed — quotes yield a single string; \
-         use the bare form (@arr or $(argv))"
+         use the bare form (@arr or $(argv)), `$(join arr SEP)` for a joined \
+         string, or single quotes ('@arr') if you really meant the literal text"
             .to_string(),
+    )
+}
+
+/// The `@…` text of a for-in source word that is a DOUBLE-QUOTED literal
+/// looking like a splat — `"@g"` or `"@{g:-x}"`.
+///
+/// Inside double quotes `@` is not an expansion sigil, so the parser yields a
+/// plain `Literal` and no splat node ever exists (`--emit-ir` shows
+/// `DoubleQuoted([Literal "@g"])`). Every other way of quoting a splat is
+/// already diagnosed — `"${g[@]}"` is SB4038, `"$(keys m)"` and `"$(argv)"`
+/// are SB5025/SB5026 — so this spelling was the one silent hole, and it is the
+/// most natural one to write.
+///
+/// Purely syntactic: no symbol table is consulted, so `g` need not resolve. In
+/// a for-in source that is the right call — a loop over the single constant
+/// string `@g` is not something anyone writes on purpose, and it is the
+/// POSITION that makes the intent obvious (DG, 2026-09-30). Elsewhere (a
+/// command argument, say) `"@g"` is ordinary literal text, matches bash, and
+/// stays legal.
+fn quoted_at_splat_text(w: &Expr) -> Option<(String, String)> {
+    let text = double_quoted_literal(w)?;
+    let (name, vouched) = split_at_splat(text.strip_prefix('@')?)?;
+    Some((text.to_string(), advised_splat(name, vouched)))
+}
+
+/// The text of a word that is a double-quoted string of exactly one literal
+/// part, i.e. `"…"` containing no expansion at all.
+fn double_quoted_literal(w: &Expr) -> Option<&str> {
+    let ExprKind::DoubleQuoted(parts) = &w.kind else {
+        return None;
+    };
+    let [part] = parts.as_slice() else {
+        return None;
+    };
+    match &part.kind {
+        ExprKind::Literal(text) => Some(text.as_str()),
+        _ => None,
+    }
+}
+
+/// Split the text after a leading `@` into its collection name and whether a
+/// `:!` taint-off modifier follows. `None` if the name is not an identifier,
+/// which keeps `"@"`, `"@{}"`, `"a@b"` and `"@g h"` out of the diagnostic.
+fn split_at_splat(rest: &str) -> Option<(&str, bool)> {
+    let (name, ops) = match rest.strip_prefix('{').and_then(|b| b.strip_suffix('}')) {
+        Some(braced) => match braced.find(':') {
+            Some(i) => (&braced[..i], &braced[i + 1..]),
+            None => (braced, ""),
+        },
+        None => (rest, ""),
+    };
+    let is_name = !name.is_empty() && name.chars().all(|c| c.is_alphanumeric() || c == '_');
+    is_name.then(|| (name, ops.starts_with('!')))
+}
+
+/// The splat spelling to advise, which must itself be legal in a for-in
+/// source. That source rejects the empty-disposition outright (SB5034, DD#69
+/// addendum), so advising `@{g:-x}` back would hand the author a form that
+/// fails on the next compile. The bare `@name` is always valid; `:!` is a
+/// taint MODIFIER rather than a disposition (DD#91) and is legal here, so it
+/// is the one operator worth carrying over.
+fn advised_splat(name: &str, vouched: bool) -> String {
+    if vouched {
+        format!("@{{{name}:!}}")
+    } else {
+        format!("@{name}")
+    }
+}
+
+/// SB5026 for a double-quoted `"@a"` in a for-in source.
+fn quoted_at_splat_diag(span: Span, text: &str, advice: &str) -> Diagnostic {
+    Diagnostic::error_span(
+        span,
+        "SB5026",
+        format!(
+            "`\"{text}\"` is quoted, so it is the literal text {text} — not an \
+             array splat, and this loop would run exactly once. Inside double \
+             quotes `@` is not an expansion. Write `{advice}` for the splat, or \
+             '{text}' if you really meant the literal"
+        ),
     )
 }
 
