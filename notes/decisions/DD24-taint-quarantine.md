@@ -122,7 +122,7 @@ fall out of the existing control-flow model, with no new operator:
 | Form | On failure |
 |---|---|
 | `bless VAR [[ t ]] \|\| VAR=DEFAULT` | run the fallback; VAR := DEFAULT (clean) |
-| `bless VAR [[ t ]] && CMD` | short-circuit; CMD skipped; execution continues |
+| ~~`bless VAR [[ t ]] && CMD`~~ | **superseded by DD#121** — see below |
 
 `bless port [[ $port =~ ^[0-9]+$ ]] || port=8080` yields `port` when it validates
 (clean, blessed) and `8080` otherwise (clean literal) — usable either way. The
@@ -130,6 +130,16 @@ fallback is **trusted, not re-validated** (DG: caveat programmer — a default
 that wouldn't pass the gate is the author's responsibility). This supersedes the
 earlier unbuilt `${var:~DEFAULT}` sketch (journal 036); `:~` stays the DD#84
 elide operator.
+
+**Superseded in part by DD#121 (2026-09-30).** A *caught* attest must now leave
+its subject clean on every path that falls through to the merge, so the `&&`
+row above is rejected outright (SB5089): `&&` has no failure branch, and its
+implicit fall-through resolves nothing. The `||` row stands unchanged — the
+fallback assignment is exactly the resolution DD#121 R2 asks for. The
+`if bless VAR [[ test ]]` row above likewise stands for the **written** else:
+VAR is tainted inside that branch, and the branch must resolve it (or `exit` /
+`return` / `break` / `continue`) before falling through. A caught attest with
+no `else` at all is SB5089.
 
 Lowering (`transform/statements.rs::lower_list_stmt`): a bless left operand of
 `&&`/`||` is rewritten to the if-bless form (`bless … || X` → `if bless {} else

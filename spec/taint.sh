@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup taint
-plan=267
+plan=277
 echo "1..$plan" >&3
 
 set +e
@@ -68,12 +68,16 @@ echo $x'
 # attest fails at runtime → exits 1, no stdout
 [[ $rc != 0 && -z $out ]]; chk 24.12
 
-# 24.13 if attest failure → takes false branch, var still tainted
+# 24.13 if attest failure → takes false branch, no abort. DD#121 R2: the else
+# must leave the subject clean, so it reassigns from a literal.
 run_sash 'x=$(getenv HOME)
 if attest x [[ $x =~ ^NEVER$ ]]; then
-  echo $x
-fi'
-[[ $rc = 0 && -z $err ]]; chk 24.13
+  echo "$x"
+else
+  x=no
+fi
+echo "$x"'
+[[ $rc = 0 && $out = "no" && -z $err ]]; chk 24.13
 
 # 24.14 re-assignment from tainted source re-taints
 run_sash 'x=$(getenv HOME)
@@ -324,9 +328,10 @@ attest x in a [[ $x =~ ^[a-z]+$ ]]
 echo ${a[0]}'
 [[ $rc != 0 && -z $out ]]; chk 60.17
 
-# 60.18 if-form attest-all failure → false branch, no abort
+# 60.18 if-form attest-all failure → false branch, no abort. DD#121 R2: the
+# else resolves the array with a clean literal.
 run_sash '/usr/bin/tr "\n" "\0" < d60c.txt | read a
-if attest x in a [[ $x =~ ^[a-z]+$ ]]; then echo ${a[0]}; fi
+if attest x in a [[ $x =~ ^[a-z]+$ ]]; then echo ${a[0]}; else a=(dflt); fi
 echo done'
 [[ $rc = 0 && $out = "done" && -z $err ]]; chk 60.18
 
@@ -720,17 +725,90 @@ attest v [[ $v =~ ^[0-9]+$ ]] || v=8080
 /bin/echo "$v $v"' abc
 [[ $rc = 0 && $out = "8080 8080" && -z $rerr ]]; chk bfb.4
 
-# bfb.5 `attest && X` runs X only on pass
+# DD#121 R2 superseded the `attest … && CMD` spelling: `&&` has no failure
+# branch, so it can never leave the subject clean. bfb.5/6 now use the `if`
+# form with a resolving `else`; bfb.7 pins the rejection of the old spelling.
+# bfb.5 the guarded command runs only on pass
 run_sash 'v=$(arg 1)
-attest v [[ $v =~ ^[0-9]+$ ]] && /bin/echo "valid $v"
+if attest v [[ $v =~ ^[0-9]+$ ]]; then /bin/echo "valid $v"; else v=none; fi
 /bin/echo done' 42
 [[ $rc = 0 && $out = $'valid 42\ndone' && -z $rerr ]]; chk bfb.5
 
-# bfb.6 `attest && X` on fail: X skipped, execution continues (caught, no abort)
+# bfb.6 on fail: the guarded command is skipped, execution continues (no abort)
 run_sash 'v=$(arg 1)
-attest v [[ $v =~ ^[0-9]+$ ]] && /bin/echo "valid $v"
+if attest v [[ $v =~ ^[0-9]+$ ]]; then /bin/echo "valid $v"; else v=none; fi
 /bin/echo reached' abc
 [[ $rc = 0 && $out = "reached" && -z $rerr ]]; chk bfb.6
+
+# bfb.7 DD#121 R2: `attest … && CMD` is rejected — no failure branch exists
+run_sash 'v=$(arg 1)
+attest v [[ $v =~ ^[0-9]+$ ]] && /bin/echo "valid $v"
+/bin/echo done'
+[[ $rc != 0 && -z $out && $err == *SB5089* ]]; chk bfb.7
+
+# bfb.8 …and so is a caught `if attest` with no `else` at all
+run_sash 'v=$(arg 1)
+if attest v [[ $v =~ ^[0-9]+$ ]]; then /bin/echo "valid $v"; fi'
+[[ $rc != 0 && -z $out && $err == *SB5089* ]]; chk bfb.8
+
+# bfb.9 …and an `else` that falls through without resolving the subject
+run_sash 'v=$(arg 1)
+if attest v [[ $v =~ ^[0-9]+$ ]]; then /bin/echo "valid $v"; else /bin/echo bad; fi'
+[[ $rc != 0 && -z $out && $err == *SB5089* ]]; chk bfb.9
+
+# bfb.10 leaving the branch resolves it — nothing reaches the merge
+run_sash 'v=$(arg 1)
+if attest v [[ $v =~ ^[0-9]+$ ]]; then /bin/echo "valid $v"; else exit 3; fi' 42
+[[ $rc = 0 && $out = "valid 42" && -z $rerr ]]; chk bfb.10
+
+# ── DD#121 R1: an attest must be adjacent to the operation that taints ──
+# bfb.11 a statement between the taint source and its attest is rejected
+run_sash 'v=$(arg 1)
+str u=x
+attest v [[ -n $v ]]
+/bin/echo "$v$u"'
+[[ $rc != 0 && -z $out && $err == *SB5088* ]]; chk bfb.11
+
+# bfb.12 …and the same program with the attest moved up compiles
+run_sash 'v=$(arg 1)
+attest v [[ -n $v ]]
+str u=x
+/bin/echo "$v$u"' 42
+[[ $rc = 0 && $out = "42x" && -z $rerr ]]; chk bfb.12
+
+# bfb.13 R3 (unchanged): `:!` is still the way to read without attesting
+run_sash 'v=$(arg 1)
+str u=x
+/bin/echo "${v:!}$u"' 42
+[[ $rc = 0 && $out = "42x" && -z $rerr ]]; chk bfb.13
+
+# bfb.14 attesting a name that is already clean stays a harmless no-op
+run_sash 'str v=hello
+attest v [[ -n $v ]]
+/bin/echo "$v"'
+[[ $rc = 0 && $out = "hello" && -z $rerr ]]; chk bfb.14
+
+# ── DD#121: a branch no longer leaks a removal past the merge ──
+# bfb.15 the attest inside the `if` cleans `a` only on that path
+run_sash 'argv a
+str c=maybe
+if [[ $c == yes ]]; then
+  argv a
+  attest v in a [[ -n $v ]]
+fi
+for v in @a; do /bin/echo "$v"; done'
+[[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk bfb.15
+
+# bfb.16 …and a zero-trip loop body leaks nothing either
+run_sash 'argv a
+str c=maybe
+while [[ $c == yes ]]; do
+  argv a
+  attest v in a [[ -n $v ]]
+  break
+done
+for v in @a; do /bin/echo "$v"; done'
+[[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk bfb.16
 
 # ── DD#91: the `:!` taint-off MODIFIER (orthogonal to the dispositions) ──
 # A sanctioned per-use bypass — use a tainted value without a attest predicate

@@ -1379,23 +1379,23 @@ run_sash 'f() { str l=$(getenv HOME); attest l [[ -n $l ]]; echo ok; }; f'
 # unattested `s` is SB5020 (DD#24: a disposition converts, it does not
 # declassify — journal 400). Attesting the source first is the sanctioned
 # route. Do not strip it to shorten the line.
-run_sash 'str s=$(arg 1); attest s i?; int n=$(( ${s:-0} )); int c=0; int d=1; if attest n (( c = n ? (d++) : 1 )); then echo $c $d; fi'
+run_sash 'str s=$(arg 1); attest s i?; int n=$(( ${s:-0} )); int c=0; int d=1; if attest n (( c = n ? (d++) : 1 )); then echo $c $d; else exit 1; fi'
 [[ $rc != 0 && -z $out && $err == *SB4020*mutation* ]]; chk cov.271
-run_sash 'str s=$(arg 1); attest s i?; int n=$(( ${s:-0} )); int c=0; int d=1; if attest n (( c = n + -(d++) )); then echo $c $d; fi'
+run_sash 'str s=$(arg 1); attest s i?; int n=$(( ${s:-0} )); int c=0; int d=1; if attest n (( c = n + -(d++) )); then echo $c $d; else exit 1; fi'
 [[ $rc != 0 && -z $out && $err == *SB4020*mutation* ]]; chk cov.272
-run_sash 'str s=$(arg 1); attest s i?; int n=$(( ${s:-0} )); int c=0; int d=1; int array v=(1 2); if attest n (( c = n + v[d++] )); then echo $c $d; fi'
+run_sash 'str s=$(arg 1); attest s i?; int n=$(( ${s:-0} )); int c=0; int d=1; int array v=(1 2); if attest n (( c = n + v[d++] )); then echo $c $d; else exit 1; fi'
 [[ $rc != 0 && -z $out && $err == *SB4020*mutation* ]]; chk cov.273
-run_sash 'str s=$(arg 1); attest s i?; int n=$(( ${s:-0} )); int c=0; int d=1; int array v=(1 2); if attest n (( c = n + (v[0] = 3) )); then echo $c $d; fi'
+run_sash 'str s=$(arg 1); attest s i?; int n=$(( ${s:-0} )); int c=0; int d=1; int array v=(1 2); if attest n (( c = n + (v[0] = 3) )); then echo $c $d; else exit 1; fi'
 [[ $rc != 0 && -z $out && $err == *SB4020*mutation* ]]; chk cov.274
 # The shape the old local copy did catch — a plain `BinOp` operand. Keeps the
 # regression guard honest: the fix must not narrow what already worked.
-run_sash 'str s=$(arg 1); attest s i?; int n=$(( ${s:-0} )); int c=0; int d=1; if attest n (( c = n + (d++) )); then echo $c $d; fi'
+run_sash 'str s=$(arg 1); attest s i?; int n=$(( ${s:-0} )); int c=0; int d=1; if attest n (( c = n + (d++) )); then echo $c $d; else exit 1; fi'
 [[ $rc != 0 && -z $out && $err == *SB4020*mutation* ]]; chk cov.275
 # Widening the walk into `Ternary`/`Subscript`/`UnaryOp` must not turn a
 # mutation-free operand under those nodes into a false positive.
-run_sash 'str s=$(arg 1); attest s i?; int n=$(( ${s:-0} )); int c=0; int d=1; int array v=(5 6); if attest n (( c = n ? v[d] : -d )); then echo $c; fi' 7
+run_sash 'str s=$(arg 1); attest s i?; int n=$(( ${s:-0} )); int c=0; int d=1; int array v=(5 6); if attest n (( c = n ? v[d] : -d )); then echo $c; else exit 1; fi' 7
 [[ $rc == 0 && $out == 6 && $err != *SB4020* ]]; chk cov.276
-run_sash 'str s=$(arg 1); attest s i?; int n=$(( ${s:-0} )); int c=0; int d=1; if attest n (( c = n + -(d) )); then echo $c; fi' 7
+run_sash 'str s=$(arg 1); attest s i?; int n=$(( ${s:-0} )); int c=0; int d=1; if attest n (( c = n + -(d) )); then echo $c; else exit 1; fi' 7
 [[ $rc == 0 && $out == 6 && $err != *SB4020* ]]; chk cov.277
 
 # cov.278-282: reads inside an attest's `(( … ))` predicate. The arm used to
@@ -1407,19 +1407,19 @@ run_sash 'str s=$(arg 1); attest s i?; int n=$(( ${s:-0} )); int c=0; int d=1; i
 # nothing and silently read as 0 (cov.280-281), and an undefined array walked
 # through validate into codegen and ICEd (cov.282). The arm now uses
 # `check_arith_reads`, the same collector a plain `(( … ))` statement uses.
-run_sash 'str s=$(arg 1); attest s i?; int n=$(( ${s:-0} )); int c=0; int d=1; if attest n (( c = n + (d) )); then echo $c; fi' 7
+run_sash 'str s=$(arg 1); attest s i?; int n=$(( ${s:-0} )); int c=0; int d=1; if attest n (( c = n + (d) )); then echo $c; else exit 1; fi' 7
 [[ $rc == 0 && $out == 8 && $err != *SB5050* ]]; chk cov.278
-run_sash 'str s=$(arg 1); attest s i?; int n=$(( ${s:-0} )); int c=0; int d=1; int array v=(5 6); if attest n (( c = n + v[d] )); then echo $c; fi' 7
+run_sash 'str s=$(arg 1); attest s i?; int n=$(( ${s:-0} )); int c=0; int d=1; int array v=(5 6); if attest n (( c = n + v[d] )); then echo $c; else exit 1; fi' 7
 [[ $rc == 0 && $out == 13 && $err != *SB5050* ]]; chk cov.279
-run_sash 'str s=$(arg 1); attest s i?; int n=$(( ${s:-0} )); int c=0; if attest n (( c = n + zz )); then echo $c; fi' 7
+run_sash 'str s=$(arg 1); attest s i?; int n=$(( ${s:-0} )); int c=0; if attest n (( c = n + zz )); then echo $c; else exit 1; fi' 7
 [[ $rc != 0 && -z $out && $err == *SB5031* ]]; chk cov.280
-run_sash 'str s=$(arg 1); attest s i?; int n=$(( ${s:-0} )); int c=0; int array v=(5 6); if attest n (( c = n + v[zz] )); then echo $c; fi' 7
+run_sash 'str s=$(arg 1); attest s i?; int n=$(( ${s:-0} )); int c=0; int array v=(5 6); if attest n (( c = n + v[zz] )); then echo $c; else exit 1; fi' 7
 [[ $rc != 0 && -z $out && $err == *SB5031* ]]; chk cov.281
-run_sash 'str s=$(arg 1); attest s i?; int n=$(( ${s:-0} )); int c=0; if attest n (( c = n + vv[0] )); then echo $c; fi' 7
+run_sash 'str s=$(arg 1); attest s i?; int n=$(( ${s:-0} )); int c=0; if attest n (( c = n + vv[0] )); then echo $c; else exit 1; fi' 7
 [[ $rc != 0 && -z $out && $err == *SB5031* && $err != *ICE* ]]; chk cov.282
 # The attest target is introduced by the attest, not read — it must not be
 # reported undefined now that the predicate goes through the real collector.
-run_sash 'str s=$(arg 1); attest s i?; int n=$(( ${s:-0} )); int c=0; if attest n (( c = n )); then echo $c; fi' 7
+run_sash 'str s=$(arg 1); attest s i?; int n=$(( ${s:-0} )); int c=0; if attest n (( c = n )); then echo $c; else exit 1; fi' 7
 [[ $rc == 0 && $out == 7 && $err != *SB5031* ]]; chk cov.283
 
 # cov.284-297: the lexing that made deleting 27 `LogosTok` variants safe.
@@ -1451,7 +1451,7 @@ run_sash 'int n=5; str s=abc; const int K=7; echo $n $s $K'
 [[ $rc == 0 && $out == "5 abc 7" ]]; chk cov.292
 run_sash 'array a=(x y); map m; m[k]=v; echo ${a[1]}${m[k]}'
 [[ $rc == 0 && $out == yv ]]; chk cov.293
-run_sash 'str s=$(arg 1); attest s i?; int n=$(( ${s:-0} )); int c=0; if attest n (( c = n )); then echo $c; fi' 7
+run_sash 'str s=$(arg 1); attest s i?; int n=$(( ${s:-0} )); int c=0; if attest n (( c = n )); then echo $c; else exit 1; fi' 7
 [[ $rc == 0 && $out == 7 ]]; chk cov.294
 # DD#56 `END { }` — the one keyword the parser intercepts before dispatch.
 run_sash 'END { echo bye; }'

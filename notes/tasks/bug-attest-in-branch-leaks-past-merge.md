@@ -1,6 +1,6 @@
 ---
 title: "Taint bypass: an `attest` inside conditional control flow cleans the name for everything after it"
-status: open
+status: done
 priority: P1
 kind: bug
 depends: []
@@ -119,3 +119,21 @@ places the read after the `if`, or in the sibling branch.
 
 DG: "this seems to use the order of calls while the other avoided using the
 order. what if the order of calls depends on a runtime branch".
+
+---
+
+## Resolved 2026-09-30 by DD#121
+
+Fixed. The cause was the one DD#121 names: `attest` was a statement that
+*removed* a name from a single mutable `HashSet<String>`, and `validate.rs`
+walked every sibling body with one `&mut` set, so a removal inside a branch
+outlived the branch.
+
+`taint_if` / `taint_while` / `taint_list` / `taint_case_arms` / `taint_for` now
+clone the set per path and union **only the paths that fall through** at the
+merge, so a removal on one path is invisible to its siblings and to everything
+after the construct. The loop forms drive their entry state to a fixpoint first
+— a name tainted late in a body is tainted at the top of the next iteration.
+
+The reproducer here, the `while` variant, and the zero-trip `for` variant are
+all rejected now. Pinned by `spec/taint.sh` `bfb.15` (if) and `bfb.16` (loop).

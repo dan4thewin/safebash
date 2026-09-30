@@ -100,7 +100,7 @@ run_sash '/bin/echo $(str h=$(getenv TARGET); if [[ -n $h ]] { echo yes })'
 #         `TestOrigin` marking it, making `Test` a sink rejects every
 #         caught-attest program — it took out 24.13 and bfb.1-6 in one sweep.
 run_sash 'str v=$(arg 1)
-if attest v [[ $v =~ ^[0-9]+$ ]] { /bin/echo "ok $v" }' 42
+if attest v [[ $v =~ ^[0-9]+$ ]] { /bin/echo "ok $v" } else { v=none }' 42
 [[ $rc = 0 && $out = "ok 42" && -z $rerr ]]; chk bkstp.3
 
 # bkstp.4 POSITIVE — an attested value is still usable as a redirect target.

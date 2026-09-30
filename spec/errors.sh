@@ -1807,7 +1807,7 @@ echo "[$s]"'
 
 # csc.37 a body nested inside another body reaches it too
 run_sash 'str s=$(/bin/echo "$(unset zz)")
-attest s [[ -n $s ]] || :
+attest s [[ -n $s ]] || s=x
 echo "[$s]"'
 [[ $rc != 0 && -z $out && $err == *SB4030* ]]; chk csc.37
 

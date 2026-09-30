@@ -1,6 +1,6 @@
 ---
 title: "Taint bypass: inward slot taint consults the FINAL top-level set, so a later attest cleans an earlier read"
-status: open
+status: done
 priority: P1
 kind: bug
 depends: []
@@ -113,3 +113,21 @@ correctly-named attest after the call, which is the only shape that triggers it.
 
 Answering DG's question "concretely, how does the slot approach address this?"
 — measuring the two directions separately is what exposed the asymmetry.
+
+---
+
+## Resolved 2026-09-30 by DD#121
+
+Fixed, by dissolution rather than by patching `tainted_slots_on_entry`.
+
+DD#121 R1 requires an `attest` to be the immediately following statement of the
+one that taints its subject. The reproducer's trailing `attest v in a` is three
+statements below `argv a`, so it is now **SB5088** and the program never
+compiles — the question of which program point the slot analysis reads the set
+at no longer has an answer that matters, because the set no longer shrinks
+anywhere a caller could observe.
+
+Verified: the reproducer is rejected with SB5088. DD#100 Part E (the attest
+deferred *into* the callee) still works — the slot's arrival at the function
+body counts as the tainting operation for R1, so the body's first statement is
+adjacent to it. Pinned by `spec/collparam.sh` `100.28`.

@@ -3620,6 +3620,7 @@ pub fn check_taint(program: &Program) -> Vec<Diagnostic> {
     let info = analyze_slots(program);
     let map_names = collect_map_names(program);
     let cx = SlotCx {
+        probing: false,
         info: &info,
         map_names: &map_names,
     };
@@ -3641,15 +3642,135 @@ fn taint_top_level<'a>(
     diags: &mut Vec<Diagnostic>,
 ) -> Vec<&'a Function> {
     let mut deferred = Vec::new();
-    for stmt in program_blocks(program).into_iter().flatten() {
-        if let StmtKind::Function(f) = &stmt.kind {
-            deferred.push(f);
-        } else {
-            taint_stmt(stmt, tainted, cx, diags);
-        }
+    for block in program_blocks(program) {
+        taint_top_block(block, tainted, cx, diags, &mut deferred);
     }
     deferred
 }
+
+/// One top-level block. A function definition is deferred to the second pass
+/// and breaks the DD#121 adjacency chain: the statement after it is adjacent
+/// to a definition, which taints nothing.
+fn taint_top_block<'a>(
+    block: &'a [Statement],
+    tainted: &mut HashSet<String>,
+    cx: &SlotCx,
+    diags: &mut Vec<Diagnostic>,
+    deferred: &mut Vec<&'a Function>,
+) {
+    let mut just = JustTainted::new();
+    for stmt in block {
+        match &stmt.kind {
+            StmtKind::Function(f) => {
+                deferred.push(f);
+                just = JustTainted::new();
+            }
+            _ => just = taint_step(stmt, tainted, &just, cx, diags),
+        }
+    }
+}
+
+/// DD#121 R1: the names the *immediately preceding* sibling statement tainted.
+///
+/// An `attest` clears taint only for a subject in this set, which is what makes
+/// the whole set grow-only: an insert and its matching removal are always one
+/// statement apart in one block, so nothing observes the taint in between and
+/// no removal can cross a block boundary or a branch merge.
+type JustTainted = HashSet<String>;
+
+/// One step of a DD#121 block walk: run `stmt`, then report the names it taints
+/// — the `just` set the *next* statement's attest is allowed to clear.
+fn taint_step(
+    stmt: &Statement,
+    tainted: &mut HashSet<String>,
+    just: &JustTainted,
+    cx: &SlotCx,
+    diags: &mut Vec<Diagnostic>,
+) -> JustTainted {
+    taint_stmt(stmt, tainted, just, cx, diags);
+    if cx.probing {
+        return JustTainted::new();
+    }
+    stmt_taints(stmt, cx)
+}
+
+/// DD#121: the names `stmt` itself taints.
+///
+/// Deliberately NOT the difference the statement made to the incoming set. A
+/// name that is already tainted makes no difference to it, yet a second
+/// `argv a` is still the operation that taints `a` and the attest below it is
+/// still adjacent. So the effect is measured against an empty set.
+///
+/// Every statement kind is measured, not just the leaves. R1 is a locality
+/// rule, not the soundness mechanism — the per-path merge is what makes a
+/// removal unobservable elsewhere — so "the statement above taints it" is the
+/// whole test, whatever shape that statement has. `h=$(getenv X) || h=DEF` is
+/// one statement and does taint `h`.
+fn stmt_taints(stmt: &Statement, cx: &SlotCx) -> JustTainted {
+    let probe_cx = SlotCx {
+        info: cx.info,
+        map_names: cx.map_names,
+        probing: true,
+    };
+    let mut probe = HashSet::new();
+    let mut discard = Vec::new();
+    taint_stmt(
+        stmt,
+        &mut probe,
+        &JustTainted::new(),
+        &probe_cx,
+        &mut discard,
+    );
+    probe
+}
+
+/// Walk a block of statements in order, threading DD#121's adjacency set.
+///
+/// `initial_just` is empty for a nested body — a body cannot attest something
+/// tainted outside it — and the caller's `just` for the two positions that are
+/// syntactically adjacent to the preceding statement: an `if` condition and the
+/// left operand of `&&`/`||`. That is what lets `argv a` be followed by
+/// `if attest v in a [[ … ]]`.
+fn taint_block(
+    stmts: &[Statement],
+    tainted: &mut HashSet<String>,
+    initial_just: &JustTainted,
+    cx: &SlotCx,
+    diags: &mut Vec<Diagnostic>,
+) {
+    let mut just = initial_just.clone();
+    for stmt in stmts {
+        just = taint_step(stmt, tainted, &just, cx, diags);
+    }
+}
+
+/// DD#121: a loop body runs 0..n times, so a name tainted late in the body is
+/// tainted at the *top* of the next iteration. One pass would miss that, so the
+/// entry state is driven to a fixpoint before the real walk.
+///
+/// It converges because R1 makes the set grow-only: every removal is confined
+/// to an adjacent pair inside one block, so unioning a pass's output back into
+/// its input is monotone. Probe diagnostics are discarded — the caller emits
+/// them once, walking against the stable set.
+fn loop_entry_fixpoint(bodies: &[&[Statement]], entry: &mut HashSet<String>, cx: &SlotCx) {
+    // Bounded by the number of distinct names, which cannot grow during the
+    // loop; the cap is a belt-and-braces guard against a future non-monotone
+    // edit turning this into a hang.
+    for _ in 0..MAX_TAINT_FIXPOINT_PASSES {
+        let mut probe = entry.clone();
+        let mut sink = Vec::new();
+        for b in bodies {
+            taint_block(b, &mut probe, &JustTainted::new(), cx, &mut sink);
+        }
+        let before = entry.len();
+        entry.extend(probe);
+        if entry.len() == before {
+            return;
+        }
+    }
+}
+
+const MAX_TAINT_FIXPOINT_PASSES: usize = 64;
 
 // ── DD#46 / DD#60: top-level positional rejection (SB5024) ────────
 //
@@ -4830,6 +4951,7 @@ fn stmt_command(stmt: &Statement) -> Option<&Command> {
 fn taint_stmt_no_read_taint(
     stmt: &Statement,
     tainted: &mut HashSet<String>,
+    just: &JustTainted,
     sx: &SlotCx,
     diags: &mut Vec<Diagnostic>,
 ) {
@@ -4841,7 +4963,7 @@ fn taint_stmt_no_read_taint(
             return;
         }
     }
-    taint_stmt(stmt, tainted, sx, diags);
+    taint_stmt(stmt, tainted, just, sx, diags);
 }
 
 /// `read`/`mapfile` from a clean pipe source: check the name+args for taint but
@@ -4878,25 +5000,32 @@ pub(crate) fn is_external_source(stmt: &Statement) -> bool {
 fn taint_stmt(
     stmt: &Statement,
     tainted: &mut HashSet<String>,
+    just: &JustTainted,
     sx: &SlotCx,
     diags: &mut Vec<Diagnostic>,
 ) {
     match &stmt.kind {
         StmtKind::Assignment(a) => taint_assignment(a, tainted, sx, diags),
         StmtKind::Declaration(d) => taint_declaration(d, tainted, sx, diags),
-        StmtKind::Command(c) => taint_command(c, stmt.span, tainted, sx, diags),
+        StmtKind::Command(c) => taint_command(c, stmt.span, tainted, just, sx, diags),
         StmtKind::Function(f) => taint_function_body(f, tainted, sx, diags),
         StmtKind::Pipeline(p) => taint_pipeline(p, tainted, sx, diags),
-        StmtKind::Redirected(r) => taint_redirected(r, tainted, sx, diags),
+        StmtKind::Redirected(r) => taint_redirected(r, tainted, just, sx, diags),
         StmtKind::Case(c) => taint_case_arms(c, tainted, sx, diags),
         StmtKind::For(f) => taint_for(f, tainted, sx, diags),
+        // DD#121: the three shapes with alternative paths. Each clones the set
+        // per path and unions at the merge, so a removal on one path cannot be
+        // seen by a sibling path or by anything after the construct.
+        StmtKind::If(i) => taint_if(i, stmt.span, tainted, just, sx, diags),
+        StmtKind::While(w) => taint_while(w, tainted, sx, diags),
+        StmtKind::List(l) => taint_list(l, stmt.span, tainted, just, sx, diags),
         // `(( … ))` as a statement or an `if`/`while` condition. It has no
         // child bodies, so the `_` arm below walked nothing and every read
         // inside the condition went unchecked — `if (( ${x:-0} > 5 ))` reached
         // the SSA backstop (an ICE-shaped message naming `__arith_test_1`)
         // instead of a located SB5020. Same omission as the `$(( … ))` rvalue.
         StmtKind::ArithTest(a) => check_arith_taint(a, tainted, diags),
-        _ => taint_child_bodies(stmt, tainted, sx, diags),
+        _ => taint_child_bodies(stmt, tainted, just, sx, diags),
     }
     taint_cmdsub_bodies(stmt, tainted, sx, diags);
 }
@@ -4922,15 +5051,14 @@ fn taint_cmdsub_bodies(
 ) {
     for body in stmt.cmdsub_bodies() {
         let mut body_tainted = tainted.clone();
-        for s in body {
-            taint_stmt(s, &mut body_tainted, sx, diags);
-        }
+        taint_block(body, &mut body_tainted, &JustTainted::new(), sx, diags);
     }
 }
 
 fn taint_child_bodies(
     stmt: &Statement,
     tainted: &mut HashSet<String>,
+    just: &JustTainted,
     sx: &SlotCx,
     diags: &mut Vec<Diagnostic>,
 ) {
@@ -4938,11 +5066,296 @@ fn taint_child_bodies(
     // `CommandSubstitution` arm already checks a body as a use site
     // (`check_cmdsub_use_taint`). Taking it here too would check every use in
     // the body twice.
+    //
+    // DD#121: the branching shapes have their own arms in `taint_stmt`, so
+    // everything reaching here is a transparent single-statement wrapper
+    // (`Group`, `Suppressed`, `Negated`, `ReturnProducer`) — the wrapped
+    // statement sits in the caller's sequence, so the adjacency set passes
+    // straight through rather than resetting.
     for body in stmt.structural_bodies() {
-        for s in body {
-            taint_stmt(s, tainted, sx, diags);
+        taint_block(body, tainted, just, sx, diags);
+    }
+}
+
+/// DD#121: `if` / `elif` / `else`, with the branch-scoped cleanliness DD#24's
+/// 2026-09-01 amendment specified and the validator never implemented.
+///
+/// Each guarded body is walked against a *clone* taken after its own condition
+/// ran, so a caught attest's removal is visible only inside the branch it
+/// guards. The fall-through state carries the *union* of the pre-condition set
+/// and the condition's output, which re-establishes the subject's taint on the
+/// failing path — the attest did not pass, so it vouched for nothing.
+/// The merge is the union of every path, which is monotone and therefore safe
+/// under loops and nesting.
+fn taint_if(
+    i: &If,
+    span: Span,
+    tainted: &mut HashSet<String>,
+    just: &JustTainted,
+    sx: &SlotCx,
+    diags: &mut Vec<Diagnostic>,
+) {
+    let mut fall = tainted.clone();
+    // (out-state, does this path reach the merge?)
+    let mut paths: Vec<(HashSet<String>, bool)> = Vec::new();
+    let mut lead = just.clone();
+
+    let arms = std::iter::once((&i.condition, &i.then_body))
+        .chain(i.elif_clauses.iter().map(|e| (&e.condition, &e.body)));
+    for (cond, body) in arms {
+        let mut cond_out = fall.clone();
+        taint_block(cond, &mut cond_out, &lead, sx, diags);
+        let mut body_out = cond_out.clone();
+        // DD#88 `if x=$(cmd) { attest x … }`: the condition taints `x` and the
+        // body's first statement is immediately below it.
+        let body_lead = block_taints(cond, sx);
+        taint_block(body, &mut body_out, &body_lead, sx, diags);
+        paths.push((body_out, block_falls_through(body)));
+        // The failing path keeps everything tainted before the condition plus
+        // anything the condition itself tainted — a gate that did not pass
+        // vouched for nothing.
+        fall.extend(cond_out);
+        // Only the leading condition is adjacent to the preceding statement.
+        lead = JustTainted::new();
+    }
+
+    match &i.else_body {
+        Some(eb) => {
+            let mut else_out = fall.clone();
+            taint_block(eb, &mut else_out, &JustTainted::new(), sx, diags);
+            paths.push((else_out, block_falls_through(eb)));
+        }
+        None => paths.push((fall, true)),
+    }
+
+    if let Some(c) = condition_attest(&i.condition) {
+        check_caught_resolution(
+            &attest_clear_names(c),
+            span,
+            &paths,
+            i.else_body.is_some(),
+            diags,
+        );
+    }
+
+    merge_paths(&paths, tainted);
+}
+
+/// DD#121: the merge of a branching construct is the union of the out-states of
+/// the paths that reach it. A path that diverts (`exit` / `return` / `break` /
+/// `continue`) contributes nothing, because its state never arrives.
+fn merge_paths(paths: &[(HashSet<String>, bool)], tainted: &mut HashSet<String>) {
+    let mut merged: Option<HashSet<String>> = None;
+    for (out, _) in paths.iter().filter(|(_, f)| *f) {
+        match merged {
+            None => merged = Some(out.clone()),
+            Some(ref mut m) => m.extend(out.iter().cloned()),
         }
     }
+    if let Some(m) = merged {
+        *tainted = m;
+    }
+}
+
+/// DD#121 R2: does this block reach the merge?
+///
+/// Deliberately conservative — anything it cannot prove diverts is treated as
+/// falling through, which rejects rather than admits.
+fn block_falls_through(stmts: &[Statement]) -> bool {
+    match stmts.last().map(|s| &s.kind) {
+        Some(StmtKind::Command(c)) => !matches!(
+            expr_literal_str(&c.name),
+            "exit" | "return" | "break" | "continue"
+        ),
+        _ => true,
+    }
+}
+
+/// DD#121: the caught attest at the head of an `if` condition, if the condition
+/// is exactly that one command. A multi-statement condition is not a caught
+/// gate — the attest in it is not the thing being branched on.
+fn condition_attest(cond: &[Statement]) -> Option<&Command> {
+    let [only] = cond else {
+        return None;
+    };
+    match &only.kind {
+        StmtKind::Command(c) if expr_literal_str(&c.name) == "attest" => Some(c),
+        _ => None,
+    }
+}
+
+/// DD#121: every name an `attest` clears, across the DD#24 scalar, DD#61
+/// indexed/map and DD#93 Part D arith-convert forms. Empty for a command that
+/// is not a well-formed attest.
+fn attest_clear_names(c: &Command) -> Vec<&str> {
+    if expr_literal_str(&c.name) != "attest" {
+        return Vec::new();
+    }
+    let Some((form, pred)) = classify_attest(&c.args) else {
+        return Vec::new();
+    };
+    // DD#93 Part D declassifies the source string *and* the int it binds.
+    let arith_target = match (&form, &pred) {
+        (AttestForm::Scalar { .. }, AttestPredicate::ArithConvert { target, .. }) => Some(*target),
+        _ => None,
+    };
+    let mut names = match form {
+        AttestForm::Scalar { var } => vec![var],
+        AttestForm::Indexed { array, .. } => vec![array],
+        AttestForm::Map { map, .. } => vec![map],
+    };
+    names.extend(arith_target);
+    names
+}
+
+/// DD#121 R2: a caught attest must leave its subject clean on every path that
+/// falls through to the merge.
+///
+/// `else :` does not qualify — it falls through and resolves nothing. The two
+/// things that do: reassign the subject from something clean (`else v=0`,
+/// `|| v=8080`), or leave the branch (`else exit 1`).
+fn check_caught_resolution(
+    names: &[&str],
+    span: Span,
+    paths: &[(HashSet<String>, bool)],
+    has_else: bool,
+    diags: &mut Vec<Diagnostic>,
+) {
+    let Some(subject) = names.first() else {
+        return;
+    };
+    if !has_else {
+        diags.push(Diagnostic::error_span(
+            span,
+            "SB5089",
+            format!(
+                "caught attest of '{subject}' has no failure branch — on failure it falls \
+                 through with '{subject}' still tainted. Add `else {subject}=DEFAULT`, \
+                 `else exit 1`, or drop the catch and write a bare `attest` (which aborts)"
+            ),
+        ));
+        return;
+    }
+    for n in names {
+        if paths.iter().any(|(out, falls)| *falls && out.contains(*n)) {
+            diags.push(Diagnostic::error_span(span, "SB5089", unresolved_msg(n)));
+            return;
+        }
+    }
+}
+
+fn unresolved_msg(n: &str) -> String {
+    format!(
+        "caught attest of '{n}': a branch falls through to the merge with '{n}' still \
+         tainted. Resolve it there (`{n}=DEFAULT`) or leave the branch \
+         (`exit` / `return` / `break` / `continue`)"
+    )
+}
+
+/// DD#121 R2 for `&&` / `||`. `&&` has no failure branch at all, so it can
+/// never resolve the subject; `||`'s right operand is the failure branch and is
+/// held to the same rule as an `else`.
+fn check_list_caught_resolution(
+    l: &List,
+    span: Span,
+    right_out: &HashSet<String>,
+    diags: &mut Vec<Diagnostic>,
+) {
+    let StmtKind::Command(c) = &l.left.kind else {
+        return;
+    };
+    let names = attest_clear_names(c);
+    let Some(subject) = names.first() else {
+        return;
+    };
+    match l.op {
+        ListOp::And => diags.push(Diagnostic::error_span(
+            span,
+            "SB5089",
+            format!(
+                "caught attest of '{subject}': `&&` has no failure branch, so on failure it \
+                 falls through with '{subject}' still tainted. Use \
+                 `attest … || {subject}=DEFAULT`, an `if attest` with an `else`, or a bare \
+                 `attest` followed by the command"
+            ),
+        )),
+        ListOp::Or => {
+            let falls = block_falls_through(std::slice::from_ref(l.right.as_ref()));
+            if falls && names.iter().any(|n| right_out.contains(*n)) {
+                diags.push(Diagnostic::error_span(
+                    span,
+                    "SB5089",
+                    unresolved_msg(subject),
+                ));
+            }
+        }
+        ListOp::Background => {}
+    }
+}
+
+/// DD#121: a `while` condition and body both run 0..n times, so the entry state
+/// is driven to a fixpoint and the merge unions the pre-loop set back in (the
+/// zero-trip path).
+fn taint_while(w: &While, tainted: &mut HashSet<String>, sx: &SlotCx, diags: &mut Vec<Diagnostic>) {
+    let mut entry = tainted.clone();
+    loop_entry_fixpoint(&[&w.condition, &w.body], &mut entry, sx);
+    let mut out = entry.clone();
+    taint_block(&w.condition, &mut out, &JustTainted::new(), sx, diags);
+    // `while readline v { attest v … }`: the condition is the statement
+    // immediately above the body, so what it taints is adjacent to the body's
+    // first statement.
+    let lead = block_taints(&w.condition, sx);
+    taint_block(&w.body, &mut out, &lead, sx, diags);
+    tainted.extend(out);
+}
+
+/// The union of what every statement in a block taints — the `just` set a
+/// nested body inherits from the condition that heads it.
+fn block_taints(stmts: &[Statement], cx: &SlotCx) -> JustTainted {
+    let mut out = JustTainted::new();
+    for s in stmts {
+        out.extend(stmt_taints(s, cx));
+    }
+    out
+}
+
+/// DD#121: `&&` / `||`. The right operand runs on only one outcome of the left,
+/// so it is walked against a clone and unioned at the merge. For `||` the left
+/// is a *failing* gate, so the right starts from the pre-attest state.
+fn taint_list(
+    l: &List,
+    span: Span,
+    tainted: &mut HashSet<String>,
+    just: &JustTainted,
+    sx: &SlotCx,
+    diags: &mut Vec<Diagnostic>,
+) {
+    let before = tainted.clone();
+    taint_block(
+        std::slice::from_ref(l.left.as_ref()),
+        tainted,
+        just,
+        sx,
+        diags,
+    );
+    // `&&` runs the right on success (the attest's removal stands); `||` runs
+    // it on failure (the subject is still tainted).
+    let mut right = if matches!(l.op, ListOp::Or) {
+        let mut s = before.clone();
+        s.extend(tainted.iter().cloned());
+        s
+    } else {
+        tainted.clone()
+    };
+    taint_block(
+        std::slice::from_ref(l.right.as_ref()),
+        &mut right,
+        &JustTainted::new(),
+        sx,
+        diags,
+    );
+    check_list_caught_resolution(l, span, &right, diags);
+    tainted.extend(right);
 }
 
 /// DD#60/DD#61: track the taint of a for-loop variable.
@@ -4958,21 +5371,38 @@ fn taint_child_bodies(
 /// - A clean source rebinds the loop var to clean values (it is removed
 ///   from the tainted set, e.g. `for x in a b c`).
 fn taint_for(f: &For, tainted: &mut HashSet<String>, sx: &SlotCx, diags: &mut Vec<Diagnostic>) {
-    for w in &f.words {
-        reject_tainted_array_iter(w, tainted, diags);
-        // `for k in $(keys m)` etc.: a tainted read *inside* the iterated
-        // command substitution is a use site (e.g. keys of an unattested map).
-        if let ExprKind::CommandSubstitution(stmts) = &w.kind {
-            check_cmdsub_use_taint(stmts, w.span, tainted, diags);
-        }
-    }
-    if f.words.iter().any(is_taint_source) {
+    check_for_words(&f.words, tainted, diags);
+    // The binder is rebound by the loop, so it takes the in-source's taint and
+    // loses whatever it carried before.
+    let from_source = f.words.iter().any(is_taint_source);
+    if from_source {
         tainted.insert(f.variable.clone());
     } else {
         tainted.remove(&f.variable);
     }
-    for s in &f.body {
-        taint_stmt(s, tainted, sx, diags);
+    // DD#121: the body runs 0..n times, so its entry state is a fixpoint and
+    // the merge unions the pre-loop set back in (the zero-trip path). And
+    // `for x in $(argv 1) { attest x … }`: the in-source taints the binder, so
+    // the body's first statement is adjacent to it.
+    let mut entry = tainted.clone();
+    loop_entry_fixpoint(&[&f.body], &mut entry, sx);
+    let mut out = entry.clone();
+    let mut lead = JustTainted::new();
+    if from_source {
+        lead.insert(f.variable.clone());
+    }
+    taint_block(&f.body, &mut out, &lead, sx, diags);
+    tainted.extend(out);
+}
+
+/// The iterated words of a `for`: a stored tainted array is a rejected read,
+/// and `for k in $(keys m)` reads inside the substitution too.
+fn check_for_words(words: &[Expr], tainted: &HashSet<String>, diags: &mut Vec<Diagnostic>) {
+    for w in words {
+        reject_tainted_array_iter(w, tainted, diags);
+        if let ExprKind::CommandSubstitution(stmts) = &w.kind {
+            check_cmdsub_use_taint(stmts, w.span, tainted, diags);
+        }
     }
 }
 
@@ -5048,13 +5478,23 @@ fn taint_assignment(
         reject_tainted_into_array(&a.value, &a.name, sx.is_map(&a.name), tainted, diags);
         return;
     }
-    // Scalar (or string `+=`) assignment.
-    // DD#24 (journal 036 "No propagation"): there is NO taint flow inside the
-    // program. Reading a stored tainted variable in the RHS is a rejected read
-    // (`x=$1` is a compile error), uniform with every other read site. The
-    // sanctioned way to obtain external data is assignment *from a source*
-    // (`z=$(getenv X)`), which taints the target instead of being rejected.
-    if is_taint_source(&a.value) {
+    taint_scalar_assignment(a, tainted, diags);
+}
+
+/// The scalar (or string `+=`) case of an assignment.
+///
+/// DD#24 (journal 036 "No propagation"): there is NO taint flow inside the
+/// program. Reading a stored tainted variable in the RHS is a rejected read
+/// (`x=$1` is a compile error), uniform with every other read site. The
+/// sanctioned way to obtain external data is assignment *from a source*
+/// (`z=$(getenv X)`), which taints the target instead of being rejected.
+fn taint_scalar_assignment(
+    a: &Assignment,
+    tainted: &mut HashSet<String>,
+    diags: &mut Vec<Diagnostic>,
+) {
+    let from_source = is_taint_source(&a.value);
+    if from_source {
         tainted.insert(a.name.clone());
     }
     reject_scalar_rhs_read(&a.value, tainted, diags);
@@ -5062,6 +5502,17 @@ fn taint_assignment(
     // the RHS is checked for a tainted read — the surrounding source assignment
     // is allowed, so this walk finds the nested default the value walk skips.
     check_arg_default_taint(&a.value, tainted, diags);
+    // DD#121: a whole-variable assignment from a clean RHS KILLS the taint —
+    // the name now holds a value that came from nowhere external. This is what
+    // makes DD#24's sanctioned fallback (`attest v [[ … ]] || v=8080`) leave a
+    // clean, usable value on both paths; the old flat walk got the same answer
+    // by accident, because `attest` removed the name unconditionally.
+    //
+    // `+=` appends to whatever is already there, and an indexed write replaces
+    // one cell of a container. Neither kills; the latter returned above.
+    if a.op == AssignOp::Set && !from_source {
+        tainted.remove(&a.name);
+    }
 }
 
 /// DD#24: reject every read of a stored tainted variable in a scalar assignment
@@ -5155,25 +5606,40 @@ fn reject_scalar_rhs_read(expr: &Expr, tainted: &HashSet<String>, diags: &mut Ve
 /// a literal (and was handled).
 fn taint_array_literal_assignment(
     a: &Assignment,
-    tainted: &HashSet<String>,
+    tainted: &mut HashSet<String>,
     sx: &SlotCx,
     diags: &mut Vec<Diagnostic>,
 ) -> bool {
     match &a.value.kind {
         ExprKind::Array(elems) => {
             let is_map = sx.is_map(&a.name);
-            for e in elems {
-                reject_tainted_into_array(e, &a.name, is_map, tainted, diags);
-            }
-            true
+            reject_tainted_elements(elems.iter(), &a.name, is_map, tainted, diags);
         }
         ExprKind::AssocArray(pairs) => {
-            for (_k, v) in pairs {
-                reject_tainted_into_array(v, &a.name, true, tainted, diags);
-            }
-            true
+            reject_tainted_elements(pairs.iter().map(|(_k, v)| v), &a.name, true, tainted, diags);
         }
-        _ => false,
+        _ => return false,
+    }
+    // DD#121: every element was just rejected if tainted, so a whole-container
+    // literal assignment leaves nothing external behind — it kills the taint
+    // exactly as a scalar assignment from a clean RHS does. `+=` appends to
+    // what is already there and must not.
+    if a.index.is_none() && a.op == AssignOp::Set {
+        tainted.remove(&a.name);
+    }
+    true
+}
+
+/// Reject every tainted element of a container literal, for either shape.
+fn reject_tainted_elements<'a>(
+    elems: impl Iterator<Item = &'a Expr>,
+    name: &str,
+    is_map: bool,
+    tainted: &HashSet<String>,
+    diags: &mut Vec<Diagnostic>,
+) {
+    for e in elems {
+        reject_tainted_into_array(e, name, is_map, tainted, diags);
     }
 }
 
@@ -5260,16 +5726,21 @@ fn taint_function_body(
     // DD#100: a slot is the caller's collection, so it enters tainted when any
     // call site passes a tainted one. Attesting it here is the deferral Part E
     // describes — the callee, not the caller, states the gate.
+    //
+    // DD#121: that arrival IS the tainting operation as far as the body can
+    // see, so the body's first statement is adjacent to it. Without this the
+    // Part E deferral would be unwritable.
+    let mut entry_just = JustTainted::new();
     for slot in tainted_slots_on_entry(&f.name, sx.info, tainted) {
-        fn_tainted.insert(slot);
+        fn_tainted.insert(slot.clone());
+        entry_just.insert(slot);
     }
     let inner = SlotCx {
+        probing: false,
         info: sx.info,
         map_names: sx.map_names,
     };
-    for s in &f.body {
-        taint_stmt(s, &mut fn_tainted, &inner, diags);
-    }
+    taint_block(&f.body, &mut fn_tainted, &entry_just, &inner, diags);
 }
 
 /// Taint a pipeline: a `read`/`mapfile` stage is exempt from tainting its
@@ -5290,9 +5761,9 @@ fn taint_pipeline(
     let mut upstream_external = false;
     for (i, s) in p.commands.iter().enumerate() {
         if i > 0 && !upstream_external {
-            taint_stmt_no_read_taint(s, tainted, sx, diags);
+            taint_stmt_no_read_taint(s, tainted, &JustTainted::new(), sx, diags);
         } else {
-            taint_stmt(s, tainted, sx, diags);
+            taint_stmt(s, tainted, &JustTainted::new(), sx, diags);
         }
         upstream_external |= is_external_source(s);
     }
@@ -5303,13 +5774,14 @@ fn taint_pipeline(
 fn taint_redirected(
     r: &crate::ir::Redirected,
     tainted: &mut HashSet<String>,
+    just: &JustTainted,
     sx: &SlotCx,
     diags: &mut Vec<Diagnostic>,
 ) {
     for rd in &r.redirects {
         check_expr_taint(&rd.target, tainted, diags);
     }
-    taint_stmt(&r.body, tainted, sx, diags);
+    taint_stmt(&r.body, tainted, just, sx, diags);
 }
 
 /// Taint a case statement's discriminant and each arm body.
@@ -5320,11 +5792,15 @@ fn taint_case_arms(
     diags: &mut Vec<Diagnostic>,
 ) {
     check_expr_taint(&c.value, tainted, diags);
+    // DD#121: the arms are alternative paths. No arm need match, so the
+    // pre-state is itself a path to the merge.
+    let mut paths: Vec<(HashSet<String>, bool)> = vec![(tainted.clone(), true)];
     for item in &c.items {
-        for s in &item.body {
-            taint_stmt(s, tainted, sx, diags);
-        }
+        let mut out = tainted.clone();
+        taint_block(&item.body, &mut out, &JustTainted::new(), sx, diags);
+        paths.push((out, block_falls_through(&item.body)));
     }
+    merge_paths(&paths, tainted);
 }
 
 /// Taint analysis for a command statement: read/mapfile/attest + general taint checking.
@@ -5332,6 +5808,7 @@ fn taint_command(
     c: &Command,
     span: Span,
     tainted: &mut HashSet<String>,
+    just: &JustTainted,
     sx: &SlotCx,
     diags: &mut Vec<Diagnostic>,
 ) {
@@ -5341,7 +5818,7 @@ fn taint_command(
     if matches!(name, "read" | "readline" | "mapfile" | "argv") && !is_value_split(name, c) {
         taint_read_target(c, tainted);
     } else if name == "attest" {
-        taint_attest(c, span, tainted, diags);
+        taint_attest(c, span, tainted, just, diags);
         return; // Don't check args of attest for taint
     }
 
@@ -5429,6 +5906,34 @@ fn check_attest_predicate_reads(
     }
 }
 
+/// DD#121 R1: an `attest` must immediately follow the statement that tainted
+/// its subject.
+///
+/// Attesting a name that is already clean stays harmless — that is a no-op, not
+/// a bypass. The gate fires only when the subject is tainted *and* the taint
+/// came from somewhere other than the statement directly above.
+fn check_adjacency(
+    names: &[&str],
+    span: Span,
+    tainted: &HashSet<String>,
+    just: &JustTainted,
+    diags: &mut Vec<Diagnostic>,
+) {
+    for n in names {
+        if tainted.contains(*n) && !just.contains(*n) {
+            diags.push(Diagnostic::error_span(
+                span,
+                "SB5088",
+                format!(
+                    "attest of '{n}' is not adjacent to the operation that tainted it. \
+                     Move it to immediately after the statement that taints '{n}', or read \
+                     the value with ${{{n}:!}} to take it on trust"
+                ),
+            ));
+        }
+    }
+}
+
 /// `attest` taint handling for all three forms (DD#24 scalar, DD#61
 /// indexed array and map). Removes taint from the attested entity if the
 /// predicate validates the required name(s); otherwise emits SB5020.
@@ -5443,11 +5948,13 @@ fn taint_attest(
     c: &Command,
     span: Span,
     tainted: &mut HashSet<String>,
+    just: &JustTainted,
     diags: &mut Vec<Diagnostic>,
 ) {
     let Some((form, pred)) = classify_attest(&c.args) else {
         return;
     };
+    check_adjacency(&attest_clear_names(c), span, tainted, just, diags);
     // The attested name(s) are tainted by definition — vouching for them is the
     // point — but any OTHER tainted read in the predicate is rejected.
     check_attest_predicate_reads(&form, &pred, span, tainted, diags);
@@ -7359,6 +7866,10 @@ pub(crate) struct SlotInfo {
 struct SlotCx<'a> {
     info: &'a SlotInfo,
     map_names: &'a HashSet<String>,
+    /// Set while `stmt_taints` is measuring one statement's taint effect. It
+    /// suppresses the nested measurement, which would otherwise double the
+    /// walk at every level of nesting.
+    probing: bool,
 }
 
 impl SlotCx<'_> {
