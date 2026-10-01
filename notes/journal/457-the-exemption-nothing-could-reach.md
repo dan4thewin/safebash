@@ -204,3 +204,58 @@ The lesson is not about attest. Three times now the finding has been a
 comment asserting intent that the code did not carry out, and each time I
 treated the comment as evidence. A comment is a claim about the code. The
 dump is the code.
+
+## Addendum 2 — the same question, asked about spellings
+
+DG: *"why isn't `attest s g? || { exit 1; }` handled identically to
+`if ! attest s g? { exit 1 }`?"*
+
+Two programs that mean the same thing. I had filed the first as a P3 nicety
+— "conservative rather than unsound, so it only rejects legal programs".
+Framed as *these should be identical*, it stops being a nicety: a difference
+between two spellings of one program is a defect, and the P3 label was me
+grading the bug by how comfortable it was to leave.
+
+Measuring all four spellings found more than either of us had named:
+
+| spelling | before |
+|---|---|
+| `attest x … \|\| exit 1` | compiles |
+| `attest x … \|\| { exit 1; }` | false SB5089 |
+| `if attest x …; then :; else { exit 1; }; fi` | false SB5089 |
+| `if ! attest x … { exit 1 }` | **SB5088** |
+
+The `else { … }` row was in neither the filing nor the question. It came for
+free from the fix, because `block_falls_through` is shared between
+`merge_paths` and `taint_list` — the sharing I had done that morning for a
+different reason paid out the same day. A copy would have fixed the `||`
+spelling and left the `else` one broken, and nothing would have reported it.
+
+And the fourth row is a *different bug*. `condition_attest` matches only
+`StmtKind::Command`, so a `Negated` wrapper means the `if` is never seen as a
+caught attest at all; the attest is then walked as a nested body, where
+`JustTainted` starts empty by construction, and R1 fires SB5088 — "not
+adjacent to the operation that tainted it" — about an attest that is
+adjacent. The diagnostic states something untrue about the program and sends
+the author to `${x:!}`, which is the one thing they should not reach for
+here.
+
+That is the third guard this week keyed on **one spelling** of a construct
+rather than on its meaning: the `Group`, the `Negated`, and the SB5067 case
+before them. The peel idiom for exactly this already lives two thousand lines
+up the same file. The lesson that generalises is not "handle `Negated`" — it
+is that when a guard matches a `StmtKind`, the question to ask is which other
+`StmtKind`s spell the same program.
+
+I fixed the `Group` half and filed the negated half rather than doing it,
+because it is not a repair: DD#121 names three caught forms and the negated
+spelling is not among them, so supporting it adds a form and the DD has to
+say so. The polarity also has to travel into `lower_if_attest` — the
+negated form swaps which body is the success path, so `push_attest_retag`
+moves and the branch terminator's blocks swap. Getting that wrong is a
+miscompile, in the function whose merge I had just finished repairing. Not a
+place to guess.
+
+div.17-div.23, seven specs, with the three guard rails that must keep
+rejecting and a runtime check that a braced divert actually diverts. Sweep
+7257 — predicted exactly — zero failing, `mk test` green.

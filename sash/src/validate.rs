@@ -5410,15 +5410,23 @@ fn merge_paths(paths: &[(HashSet<String>, bool)], tainted: &mut HashSet<String>)
 /// fork it** — a private duplicate of a shared walker has already cost this
 /// project a P1 (journal 456).
 ///
-/// Conservative: only a trailing literal `Command` counts, so `|| { exit 1; }`
-/// reads as falling through. See
-/// `notes/tasks/block-falls-through-blind-to-group.md`.
+/// Looks through a trailing `{ … }`: the group is not a scope (journal 453),
+/// it is only a way to put several statements where one is expected, so
+/// `|| { echo bad >&2; exit 1; }` diverts exactly as `|| exit 1` does. DG
+/// (2026-10-02) raised this as the two spellings not being handled
+/// identically, which they now are — on the `||` right operand *and* on an
+/// `else { … }` body, both of which route through here.
+///
+/// Still syntactic beyond that: a trailing `if` that diverts on every arm
+/// reads as falling through. Widening it means deciding divergence for
+/// arbitrary control flow, which is a different question.
 pub(crate) fn block_falls_through(stmts: &[Statement]) -> bool {
     match stmts.last().map(|s| &s.kind) {
         Some(StmtKind::Command(c)) => !matches!(
             expr_literal_str(&c.name),
             "exit" | "return" | "break" | "continue"
         ),
+        Some(StmtKind::Group(g)) => block_falls_through(&g.body),
         _ => true,
     }
 }

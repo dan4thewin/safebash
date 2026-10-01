@@ -1,6 +1,7 @@
 ---
-status: open
+status: done
 priority: P3
+resolved: 2026-10-02
 depends:
 gates:
 ---
@@ -27,6 +28,46 @@ attest v in a [[ -n $v ]] || { echo "bad input" >&2; exit 1; }
 
 That second shape is the common one, and `{ … }` is the only multi-statement
 `||` right operand the language has, so this closes off the idiom entirely.
+
+## Resolved
+
+DG raised it as a consistency question — *"why isn't `attest s g? || { exit
+1; }` handled identically to `if ! attest s g? { exit 1 }`?"* — which is the
+right frame: the two are the same program, so a difference is a defect, not a
+missing nicety. Asking it that way also turned up more surface than the
+filing had:
+
+| spelling | before |
+|---|---|
+| `attest x … \|\| exit 1` | compiles |
+| `attest x … \|\| { exit 1; }` | **false SB5089** |
+| `if attest x …; then :; else { exit 1; }; fi` | **false SB5089** |
+| `if ! attest x … { exit 1 }` | **SB5088** — a different bug, see below |
+
+The `else { … }` case was not in the filing. Because `block_falls_through` is
+shared between `merge_paths` and `taint_list`, one recursion into a trailing
+`Group` fixed both — which is the payoff for having made it `pub(crate)` and
+shared rather than copied.
+
+Fixed; `spec/taint.sh` div.17-div.23, including the three guard rails that
+must keep rejecting (`|| { echo no; }`, `else { :; }`, `&& { … }`) and the
+runtime check that a braced divert really diverts.
+
+Still syntactic beyond the group: a trailing `if` that diverts on every arm
+reads as falling through. Widening that means deciding divergence for
+arbitrary control flow, which is a different question and is not filed.
+
+## Not fixed: `if ! attest …`
+
+DG's other spelling is a **separate** defect with a separate cause, filed as
+`notes/tasks/negated-attest-not-a-caught-form.md`. `condition_attest` matches
+only `StmtKind::Command`, so a `StmtKind::Negated` wrapper means the `if` is
+never recognised as a caught attest at all; the attest is then walked as a
+nested body, `JustTainted` resets, and R1 reports SB5088 "not adjacent" for
+an attest that is adjacent. It needs DG's call because it adds a spelling
+DD#121 does not name.
+
+## Original analysis
 
 ## Scope
 

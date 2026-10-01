@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup taint
-plan=310
+plan=317
 echo "1..$plan" >&3
 
 set +e
@@ -1945,6 +1945,56 @@ if attest v in a [[ $v == y ]]; then echo t; else a=(d); fi
 for v in @a; do echo "$v"; done' y
 [[ $rc = 0 && $out = "t
 y" && -z $err ]]; chk div.16
+
+# div.17-div.23 — a `{ … }` diverts exactly as a bare `exit` does.
+# DG (2026-10-02): "why isn't `attest s g? || { exit 1; }` handled identically
+# to `if ! attest s g? { exit 1 }`?" — the two spellings are the same program,
+# so a difference is a defect. `block_falls_through` only inspected a trailing
+# literal Command, and a group is not one, so every braced divert read as
+# falling through and got a false SB5089. That closed off
+# `|| { echo "bad input" >&2; exit 1; }` — the shape people actually write,
+# and the only way to say anything before diverting, since the group is the
+# language's sole multi-statement `||` right operand.
+#
+# The predicate is shared, so the same blindness hit an `else { … }` body.
+# Both are fixed by one recursion; div.19/div.22 are the else-side pins.
+
+# div.17 the minimal braced divert
+run_sash 'str x=$(getenv HOME)
+attest x [[ $x =~ ^/ ]] || { exit 1; }
+echo "$x"'
+[[ $rc = 0 && -n $out && -z $err ]]; chk div.17
+# div.18 the shape that motivated it: say something, then divert
+run_sash 'str x=$(arg 1)
+attest x [[ -n $x ]] || { echo "bad input" >&2; exit 7; }
+echo "got=$x"' val
+[[ $rc = 0 && $out = "got=val" && -z $err ]]; chk div.18
+# div.19 the same blindness on an `else` body
+run_sash 'str x=$(getenv HOME)
+if attest x [[ $x =~ ^/ ]]; then :; else { exit 1; }; fi
+echo "$x"'
+[[ $rc = 0 && -n $out && -z $err ]]; chk div.19
+# div.20 the braced divert really diverts when the attest fails
+run_sash 'str x=$(arg 1)
+attest x [[ -n $x ]] || { echo "bad input" >&2; exit 7; }
+echo "got=$x"' ""
+[[ $rc = 7 && -z $out && $rerr == *"bad input"* ]]; chk div.20
+# div.21 a braced right that FALLS THROUGH is still SB5089 — looking through
+# the group must not weaken R2
+run_sash 'str x=$(getenv HOME)
+attest x [[ $x =~ ^/ ]] || { echo no; }
+echo "$x"'
+[[ $rc != 0 && $err == *SB5089* ]]; chk div.21
+# div.22 and the else-side guard rail
+run_sash 'str x=$(getenv HOME)
+if attest x [[ $x =~ ^/ ]]; then :; else { :; }; fi
+echo "$x"'
+[[ $rc != 0 && $err == *SB5089* ]]; chk div.22
+# div.23 `&&` has no failure branch, braced or not
+run_sash 'str x=$(getenv HOME)
+attest x [[ $x =~ ^/ ]] && { echo ok; }
+echo "$x"'
+[[ $rc != 0 && $err == *SB5089* ]]; chk div.23
 
 set -e
 tally
