@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup arithmetic
-plan=352
+plan=354
 echo "1..$plan" >&3
 
 set +e
@@ -940,6 +940,18 @@ int array a=(1 2 3)
 y=$(( a[0] + ${n:-abc} ))
 echo "$y"'
 [[ $rc != 0 && -z $out && $err == *SB4030* ]]; chk d4.13
+
+# d4.14-d4.15 — the quoting model for an arith default is DD#65's, not bash's.
+# `parse_disposition_literal` strips a fully single-quoted operand and leaves
+# every other byte literal, so `'7'` reaches the arith checker as `7` and
+# `"7"` reaches it as the three bytes `"7"` — the opposite of bash on both.
+# DD#65 accepts that divergence explicitly. These pin it, because the arith
+# default checker was simplified on the strength of it: there is no
+# `DoubleQuoted` operand to inspect, by construction.
+run_sash "s=5; echo \$(( \${s:-'7'} ))"
+[[ $rc = 0 && $out = "5" && -z $err ]]; chk d4.14
+run_sash 's=5; echo $(( ${s:-"7"} ))'
+[[ $rc != 0 && -z $out && $err == *SB4030* ]]; chk d4.15
 
 
 

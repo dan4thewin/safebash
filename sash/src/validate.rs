@@ -5596,7 +5596,18 @@ fn taint_list(
         diags,
     );
     check_list_caught_resolution(l, span, &right, diags);
-    tainted.extend(right);
+    // DD#121 R2: the right operand is a branch like any other, so if it diverts
+    // (`exit` / `return` / `break` / `continue`) its out-state never arrives at
+    // the merge — the same rule `merge_paths` applies to a diverting `else`.
+    //
+    // Merging it unconditionally undid the exemption R2 explicitly grants ("A
+    // path that does not fall through … is exempt"). `check_list_caught_resolution`
+    // honoured it, correctly staying silent, and then this line put the subject
+    // back in the set, so the next read was SB5020. That rejected
+    // `attest x [[ … ]] || exit 1` — the very form the SB5089 text recommends.
+    if block_falls_through(std::slice::from_ref(l.right.as_ref())) {
+        tainted.extend(right);
+    }
 }
 
 /// DD#60/DD#61: track the taint of a for-loop variable.

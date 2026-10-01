@@ -131,6 +131,11 @@ double-quoted-string body** (`${var:-X}` ≡ `"X"`).
 - **Quotes are ordinary literal bytes.** `'` and `"` do not strip or group
   (`${x:-'a'}` → `'a'`). This collapses the rule to one sentence and
   preserves whitespace verbatim (`${x:-a  b}` → `a  b`).
+  **Superseded in part (2026-09-30 follow-on, below): a *fully*
+  single-quoted operand now strips**, as the hatch for a literal `$` —
+  `${x:-'a'}` → `a`, `${x:-'costs $5'}` → `costs $5`. A `'` anywhere
+  else, and `"` everywhere, remain ordinary bytes, so `${x:-"7"}` is
+  still the three bytes `"7"`.
 - **The C-string is the any-byte hatch.** Because `$'…'` decodes
   `\xNN`/octal/`\n` and is recognised inside `"…"` (DD#64 addendum), any
   byte is expressible: `${x:-$'a\x7db'}` → `a}b`. This is *why* stripping
@@ -146,9 +151,12 @@ double-quoted-string body** (`${var:-X}` ≡ `"X"`).
 - **Divergence from bash** (accepted): bash strips quotes in `:-` and
   quote-protects a `}`; sash does neither. The C-string replaces both.
 
-Lowering: the operand parses to an `ExprKind::DoubleQuoted` and lowers to
-`SsaValue::DefaultValue { var, default }` (native + c select var-or-default
-over the interpolated default; janet interpolates it at the IR level).
+Lowering: the operand lowers to `SsaValue::DefaultValue { var, default }`
+and both backends select var-or-default. (Stale as written: the operand
+parsed to an `ExprKind::DoubleQuoted` only until the 2026-09-30 follow-on
+retired the interpolating operand — `parse_disposition_literal` now yields
+an `ExprKind::Literal` unconditionally. The janet backend named here was
+removed by DD#104.)
 
 ## See also
 - DD#63 — regex/string builtin family (`match`/`sub`/`gsub`, +`toupper`/`tolower`).

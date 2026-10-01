@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup taint
-plan=294
+plan=303
 echo "1..$plan" >&3
 
 set +e
@@ -1815,6 +1815,87 @@ run_sash 'str q=$(str h=ok; /bin/echo "$h")
 attest q [[ -n $q ]]
 /bin/echo "$q"'
 [[ $rc = 0 && $out = "ok" && -z $err ]]; chk cbt.10
+
+# ── div.1-div.9 — DD#121 R2: the "don't fall through" exemption ──
+# R2 exempts a path that diverts: "A path that does not fall through (`exit` /
+# `return` / `break` / `continue`) is exempt."  Two independent faults made
+# that exemption unreachable; these pin both fixes and their guard rails.
+#
+#  (1) `taint_list` merged the `||` right operand's out-state unconditionally,
+#      undoing the exemption `check_list_caught_resolution` had just honoured.
+#      So `attest … || exit 1` left the subject tainted and the next read was
+#      SB5020 — rejecting the very form the SB5089 text recommends. The `if`
+#      path already filtered on `block_falls_through` via `merge_paths`; the
+#      list path now mirrors it.
+#  (2) the SSA backstop unioned every phi source, including sources from a
+#      block that exits and so never reaches the merge. A backstop false
+#      positive is a user-facing ICE (ssa_taint.rs), so it filters diverging
+#      predecessors out of the phi rule.
+#
+# The SCALAR caught-attest forms (`attest x … || exit 1`, `if attest x …;
+# then :; else exit 1; fi`) are still rejected: the transform deliberately
+# restores the pre-attest version at an attest merge and emits no phi
+# (control_flow.rs "deliberate, not a simplification"), whose stated premise
+# — that SB5089 leaves no clean version to merge to — is exactly what this
+# exemption breaks. See notes/tasks/bug-attest-merge-drops-diverted-path.md.
+
+# div.1 collection subject, `|| exit 1`, read after the merge — fault (1).
+# This was SB5020 before the fix.
+run_sash 'argv a
+attest v in a [[ -n $v ]] || exit 1
+for v in @a; do echo "$v"; done' one two
+[[ $rc = 0 && $out == *$'\none\ntwo' && -z $err ]]; chk div.1
+# div.2 `|| return` inside a function is the same exemption
+run_sash 'f() {
+argv 1 a
+attest v in a [[ -n $v ]] || return 1
+echo "$(len a)"
+}
+f' one two
+[[ $rc = 0 && $out = 2 && -z $err ]]; chk div.2
+# div.3 the resolve arm of R2 still works — the fix must not disturb it
+run_sash 'str x=$(getenv HOME)
+attest x [[ $x =~ ^/ ]] || x=d
+echo "$x"'
+[[ $rc = 0 && -n $out && -z $err ]]; chk div.3
+# div.4 a `||` right that FALLS THROUGH still rejects: the fix stops the
+# exemption being undone, it does not widen it
+run_sash 'str x=$(getenv HOME)
+attest x [[ $x =~ ^/ ]] || echo no
+echo "$x"'
+[[ $rc != 0 && $err == *SB5089* ]]; chk div.4
+# div.5 `&&` has no failure branch at all — still SB5089
+run_sash 'str x=$(getenv HOME)
+attest x [[ $x =~ ^/ ]] && echo "$x"'
+[[ $rc != 0 && $err == *SB5089* ]]; chk div.5
+# div.6 a diverting right operand does not launder an UNATTESTED read — the
+# exemption concerns resolution at the merge, not the taint itself
+run_sash 'str x=$(getenv HOME)
+/bin/true || exit 1
+echo "$x"'
+[[ $rc != 0 && $err == *SB5020* ]]; chk div.6
+# div.7 the collection guard rail: a falling-through right still rejects
+run_sash 'argv a
+attest v in a [[ -n $v ]] || echo no
+for v in @a; do echo "$v"; done' one
+[[ $rc != 0 && $err == *SB5089* ]]; chk div.7
+# div.8 fault (2) standing alone, no attest at the merge: a clean value on the
+# surviving path, the other path exits. The phi unioned the diverting path's
+# tainted version, so the backstop rejected what the front end allows.
+run_sash 'str c=$(arg 1)
+attest c [[ -n $c ]]
+str x=$(arg 2)
+if [[ $c == y ]]; then x=safe; else exit 1; fi
+echo "$x"' y tainted
+[[ $rc = 0 && $out = "safe" && -z $err && $err != *backstop* ]]; chk div.8
+# div.9 the converse: when the other path FALLS THROUGH the tainted version
+# does reach the merge, and must still be caught
+run_sash 'str c=$(arg 1)
+attest c [[ -n $c ]]
+str x=$(arg 2)
+if [[ $c == y ]]; then x=safe; fi
+echo "$x"' y tainted
+[[ $rc != 0 && $err == *SB5020* ]]; chk div.9
 
 set -e
 tally

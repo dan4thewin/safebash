@@ -469,25 +469,26 @@ fn check_arith_default_literals(a: &ArithExpr, errors: &mut Vec<TypeError>) {
     });
 }
 
-/// The `${var:-DEFAULT}` default word (a `DoubleQuoted`, per DD#65) is a
-/// decimal integer literal iff it is a single literal part matching an optional
-/// `-` then a canonical decimal (`0`, or a non-zero leading digit). Rejects
-/// leading zeros (DD#72), radix prefixes, interpolations, and empty.
+/// Is a `${var:-DEFAULT}` default a DD#72 integer literal (decimal, or an
+/// `0x`/`0o`/`0b` radix prefix)? Rejects leading-zero octal, `base#digits`,
+/// interpolations and empty.
+///
+/// The operand is always an `ExprKind::Literal`. DD#65's original 2026-07-04
+/// model made it an interpolating `DoubleQuoted`, and this function still
+/// carried an arm for that shape — dead since the **2026-09-30 follow-on**
+/// ("all three disposition defaults take a literal operand"), which routed
+/// `:-`/`:?` through `parse_disposition_literal`. That function returns
+/// `ExprKind::Literal` unconditionally, and every other branch of
+/// `parse_disposition_operator` builds one directly, so no other kind can
+/// reach here. Confirmed cold by the coverage sweep before removal.
 fn default_is_arith_literal(operand: Option<&Expr>) -> bool {
     let Some(op) = operand else {
         return false;
     };
-    let lit = match &op.kind {
-        ExprKind::Literal(s) => Some(s.as_str()),
-        ExprKind::DoubleQuoted(parts) if parts.len() == 1 => match &parts[0].kind {
-            ExprKind::Literal(s) => Some(s.as_str()),
-            _ => None,
-        },
-        _ => None,
+    let ExprKind::Literal(s) = &op.kind else {
+        return false;
     };
-    // DD#72: accept the full arith literal grammar (decimal + 0x/0o/0b), shared
-    // with the lowerer via `parse_dd72_literal`, not just decimal.
-    lit.and_then(crate::parse::parse_dd72_literal).is_some()
+    crate::parse::parse_dd72_literal(s).is_some()
 }
 
 /// DG (2026-08-29): a `${x:-D}` default in *value* context, where the subject

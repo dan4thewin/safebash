@@ -41,10 +41,11 @@ pub fn verify_ssa_taint(program: &SsaProgram) -> Vec<String> {
 
     seed_clean_specials(&mut taint);
     let user_functions = collect_user_functions(program);
+    let diverging = collect_diverging_blocks(program);
 
     // Phase 1: classify every defined VarRef.
     for block in program.blocks.values() {
-        classify_block_defs(block, &mut taint, &user_functions);
+        classify_block_defs(block, &mut taint, &user_functions, &diverging);
     }
 
     // Phase 2: report tainted uses in output/external/index positions.
@@ -53,6 +54,38 @@ pub fn verify_ssa_taint(program: &SsaProgram) -> Vec<String> {
     }
 
     errors
+}
+
+/// DD#121 R2: blocks whose state never arrives anywhere, because they exit.
+///
+/// The front end's `merge_paths` already drops a diverting path's out-state —
+/// "A path that does not fall through (`exit` / `return` / `break` /
+/// `continue`) is exempt". The SSA CFG does not model `exit` as a terminator,
+/// so the block still appears as a phi predecessor and its (still-tainted)
+/// version was unioned in. That made the backstop reject
+/// `if attest x …; then :; else exit 1; fi` — a form DD#121's own table names
+/// as legal — and **a backstop false positive is a user-facing ICE**.
+///
+/// Conservative in the same direction as `block_falls_through`: only an
+/// `exit` as the block's final instruction counts. `return`/`break`/`continue`
+/// are already structural in the SSA CFG and need nothing here.
+fn collect_diverging_blocks(
+    program: &SsaProgram,
+) -> std::collections::HashSet<crate::ssa::BlockId> {
+    program
+        .blocks
+        .values()
+        .filter(|b| {
+            matches!(
+                b.insts.last(),
+                Some(SsaInst::Command {
+                    kind: crate::ssa::BuiltinCmd::Exit,
+                    ..
+                })
+            )
+        })
+        .map(|b| b.id)
+        .collect()
 }
 
 /// Seed the taint map with clean entries for positional params and the
@@ -97,16 +130,21 @@ fn classify_block_defs(
     block: &BasicBlock,
     taint: &mut HashMap<String, Taint>,
     user_functions: &std::collections::HashSet<String>,
+    diverging: &std::collections::HashSet<crate::ssa::BlockId>,
 ) {
     // Phi nodes — optimistic: default to clean, will be corrected by
     // iteration if any incoming is tainted. Since the CST pass is the
     // authority, false-clean here just means we don't catch a CST bug
     // involving loops — acceptable for a backstop.
+    //
+    // A source from a diverging predecessor is skipped: that path exits, so its
+    // version never reaches this merge. See `collect_diverging_blocks`.
     for phi in &block.phis {
         let key = var_key(&phi.target);
         let t = phi
             .sources
             .iter()
+            .filter(|(bid, _)| !diverging.contains(bid))
             .any(|(_bid, vref)| matches!(taint.get(&var_key(vref)), Some(&Taint::Tainted)));
         taint.insert(key, if t { Taint::Tainted } else { Taint::Clean });
     }
