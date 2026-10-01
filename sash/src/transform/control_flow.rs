@@ -276,33 +276,92 @@ fn lower_if_attest(
     push_attest_retag(&kind, &test, ssa, state, then_block);
     let then_exit = lower_stmts(&i.then_body, ssa, state, then_block);
     ssa.block_mut(then_exit).terminator = Terminator::Goto(merge_block);
+    let then_state = state.snapshot();
 
-    if let Some(else_body) = &i.else_body {
-        let else_block = ssa.new_block("if_attest.else");
-        if let Terminator::Branch { false_block, .. } = &mut ssa.block_mut(block).terminator {
-            *false_block = else_block;
-        }
-        state.restore(&pre_state);
-        let else_exit = lower_stmts(else_body, ssa, state, else_block);
-        ssa.block_mut(else_exit).terminator = Terminator::Goto(merge_block);
-    } else {
-        state.restore(&pre_state);
-    }
-
-    // Merge: restore to the pre-state, so code after the `if` reads the
-    // *pre-attest* version. That is deliberate, not a simplification — the
-    // retag is a compile-time clean-tag that holds only on the passing path,
-    // and DD#121 requires the subject to be resolved on every falling-through
-    // path anyway (SB5089), so there is no clean version to merge to.
+    // Merge like any other two-branch construct. DD#121 R2 is what makes this
+    // safe *and* necessary: a caught attest "must leave its subject clean on
+    // every path that falls through to the merge", so a clean version always
+    // reaches here — from the then-branch's retag, from the else-branch's
+    // resolution, or from the one surviving path when the other diverts.
     //
-    // It also means no phi is needed: the attested version is confined to the
-    // then-body, and codegen aliases it to the same slot
-    // (`codegen/dispatch.rs::emit_attest_retag`). An earlier `state.snapshot()`
-    // here was dead — it fed nothing — and the one-sided *codegen* definition
-    // it hinted at was the SIGSEGV in
-    // `bug-caught-attest-all-fail-path-undefined-handle`.
+    // An earlier version restored `pre_state` instead, on the stated premise
+    // that SB5089 left "no clean version to merge to". That reads R2 backwards:
+    // R2 is precisely the guarantee that there *is* one. It also did not do
+    // what it said — the restore only ran in the no-else case, so an `else`
+    // leaked its own version to the merge and code after the `if` read a
+    // version defined on exactly one path.
+    merge_attest_branches(
+        i.else_body.as_deref(),
+        ssa,
+        state,
+        block,
+        merge_block,
+        then_exit,
+        &then_state,
+        &pre_state,
+    );
 
     merge_block
+}
+
+/// Lower a caught attest's else path and merge it with the then path.
+///
+/// Split out of `lower_if_attest` to keep that function under the complexity
+/// gate; the nesting here is the decision, not incidental.
+#[allow(clippy::too_many_arguments)]
+fn merge_attest_branches(
+    else_body: Option<&[Statement]>,
+    ssa: &mut SsaProgram,
+    state: &mut VersionState,
+    block: BlockId,
+    merge_block: BlockId,
+    then_exit: BlockId,
+    then_state: &std::collections::HashMap<String, u32>,
+    pre_state: &std::collections::HashMap<String, u32>,
+) {
+    let Some(else_body) = else_body else {
+        // SB5089 rejects this shape, but `--no-taint` reaches it: merge the
+        // then-branch against the untaken fall-through edge from `block`.
+        insert_phis_two_branch(
+            state,
+            ssa,
+            merge_block,
+            then_exit,
+            then_state,
+            block,
+            pre_state,
+        );
+        return;
+    };
+
+    let else_block = ssa.new_block("if_attest.else");
+    if let Terminator::Branch { false_block, .. } = &mut ssa.block_mut(block).terminator {
+        *false_block = else_block;
+    }
+    state.restore(pre_state);
+    let else_exit = lower_stmts(else_body, ssa, state, else_block);
+    ssa.block_mut(else_exit).terminator = Terminator::Goto(merge_block);
+    let else_state = state.snapshot();
+
+    if !crate::validate::block_falls_through(else_body) {
+        // R2's exemption: the else path exits/returns/breaks/continues, so it
+        // is not a predecessor of the merge in any sense that matters. The
+        // then-branch's state is the merge's state outright, and no phi is
+        // emitted — which keeps the attested version off any path where it is
+        // not defined.
+        state.restore(then_state);
+        return;
+    }
+
+    insert_phis_two_branch(
+        state,
+        ssa,
+        merge_block,
+        then_exit,
+        then_state,
+        else_exit,
+        &else_state,
+    );
 }
 
 pub(super) fn lower_if(

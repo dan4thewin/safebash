@@ -5402,7 +5402,18 @@ fn merge_paths(paths: &[(HashSet<String>, bool)], tainted: &mut HashSet<String>)
 ///
 /// Deliberately conservative — anything it cannot prove diverts is treated as
 /// falling through, which rejects rather than admits.
-fn block_falls_through(stmts: &[Statement]) -> bool {
+/// Does this block reach the statement after it? DD#121 R2: "A path that does
+/// not fall through — `exit`, `return`, `break`, `continue` — is exempt."
+///
+/// Shared with `transform::control_flow`, which needs the same answer to decide
+/// whether a diverting `else` is a predecessor of the attest merge. **Do not
+/// fork it** — a private duplicate of a shared walker has already cost this
+/// project a P1 (journal 456).
+///
+/// Conservative: only a trailing literal `Command` counts, so `|| { exit 1; }`
+/// reads as falling through. See
+/// `notes/tasks/block-falls-through-blind-to-group.md`.
+pub(crate) fn block_falls_through(stmts: &[Statement]) -> bool {
     match stmts.last().map(|s| &s.kind) {
         Some(StmtKind::Command(c)) => !matches!(
             expr_literal_str(&c.name),

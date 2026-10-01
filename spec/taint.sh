@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup taint
-plan=303
+plan=310
 echo "1..$plan" >&3
 
 set +e
@@ -1896,6 +1896,55 @@ str x=$(arg 2)
 if [[ $c == y ]]; then x=safe; fi
 echo "$x"' y tainted
 [[ $rc != 0 && $err == *SB5020* ]]; chk div.9
+
+# div.10-div.16 — the scalar forms, and the merge that makes them work.
+# `lower_if_attest` was the only two-branch construct in the transform that
+# never merged: it emitted no phi and leaked whatever version the else path
+# left, so code after the `if` read a version defined on exactly one path.
+# R2 is what makes a real merge both safe and necessary — "clean on every
+# path that falls through" means a clean version always reaches the merge.
+
+# div.10 scalar `|| exit 1`, read after the merge. The merge now reads the
+# attested version; the diverting else is not a predecessor and gets no phi.
+run_sash 'str x=$(getenv HOME)
+attest x [[ $x =~ ^/ ]] || exit 1
+echo "$x"'
+[[ $rc = 0 && -n $out && -z $err ]]; chk div.10
+# div.11 the form named in DD#121's own table
+run_sash 'str x=$(getenv HOME)
+if attest x [[ $x =~ ^/ ]]; then :; else exit 1; fi
+echo "$x"'
+[[ $rc = 0 && -n $out && -z $err ]]; chk div.11
+# div.12 the diverting path still diverts when the attest FAILS
+run_sash 'str x=$(arg 1)
+attest x [[ -n $x ]] || exit 1
+echo "reached"' ""
+[[ $rc = 1 && -z $out ]]; chk div.12
+# div.13 resolve, attest passes: the merge takes the THEN version, not the
+# else version it used to leak
+run_sash 'str x=$(arg 1)
+if attest x [[ -n $x ]]; then echo t; else x=d; fi
+echo "$x"' keep
+[[ $rc = 0 && $out = "t
+keep" && -z $err ]]; chk div.13
+# div.14 resolve, attest fails: the merge takes the ELSE version
+run_sash 'str x=$(arg 1)
+if attest x [[ -n $x ]]; then echo t; else x=d; fi
+echo "$x"' ""
+[[ $rc = 0 && $out = "d" && -z $err ]]; chk div.14
+# div.15 the same for a collection subject on the failing path — this is the
+# shape of bug-caught-attest-all-fail-path-undefined-handle, which was a
+# SIGSEGV when the attested version was defined on one path only
+run_sash 'argv 1 a
+if attest v in a [[ $v == y ]]; then echo t; else a=(d); fi
+for v in @a; do echo "$v"; done' n
+[[ $rc = 0 && $out = "d" && -z $err ]]; chk div.15
+# div.16 and on its passing path
+run_sash 'argv 1 a
+if attest v in a [[ $v == y ]]; then echo t; else a=(d); fi
+for v in @a; do echo "$v"; done' y
+[[ $rc = 0 && $out = "t
+y" && -z $err ]]; chk div.16
 
 set -e
 tally

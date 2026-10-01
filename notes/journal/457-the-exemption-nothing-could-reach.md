@@ -138,3 +138,69 @@ dual-mode arithmetic specs. The sweep returned 7229 exactly: 3717 native,
 `mk build` first, so the sweep did not run against an instrumented binary.
 
 Coverage before this work: 97.50% lines, 98.82% functions.
+
+## Addendum — the rule settled it, and found a bigger fault
+
+DG, reading the report: *"don't we have a rule that a caught attest must
+leave a clean variable/container?"*
+
+Yes — R2, in those words: **"clean on every path that falls through to the
+merge."** That is not a side condition, it is the merge's postcondition, and
+it makes the required merge state a matter of record rather than a design
+fork. I had framed layer three as "should we extend the exemption into
+deliberate code". The correct framing was "the SSA merge contradicts R2", and
+DG's one-line question is what turned it over.
+
+With that framing, two things became obvious that I had looked straight past.
+
+**`lower_if_attest` was the only merge in the transform that did not merge.**
+`insert_phis_two_branch` has six call sites — `lower_if`, `case`, `while`,
+two in `pipelines`, one in `cmd_handlers`. The attest `if` was the sole
+exception, and I had accepted its comment's account of why rather than ask
+why it was alone.
+
+**And the comment did not describe the code.** It said the merge "restores to
+the pre-state, so code after the `if` reads the *pre-attest* version". The
+restore ran only in the **no-else** case. With an `else`, nothing merged and
+nothing restored — the version state simply leaked out of the else branch. So
+
+```sash
+if attest x [[ $x =~ ^/ ]]; then echo t; else x=d; fi
+echo "$x"
+```
+
+lowered to a merge reading `x_3`: the else-branch's version, **defined on
+exactly one path**. That is the precise hazard of journal 449/450, sitting in
+the code that cites journal 449 as the reason not to touch it. It never
+surfaced because codegen collapses a scalar's versions to one slot, so the
+value was right and nothing observable went wrong. A latent wrong-SSA that
+the backend happened to paper over.
+
+I had dumped that exact SSA the day before, for the divert case, and read
+`x_1` at the merge as confirmation of the comment. The resolve case — one
+character of difference in the script — shows `x_3`, and the comment is
+falsified. I did not dump it, because I had already accepted the explanation.
+
+The fix is the ordinary one: snapshot the then-state, snapshot the
+else-state, call the shared helper. The exemption arm is the only special
+case, and it is special by *omission* — when the else diverts it is not a
+predecessor, so the then-state is the merge state outright and no phi is
+emitted. That keeps the attested version off every path where it is
+undefined, which is the invariant journal 449 was defending. The two concerns
+turn out to agree; they only looked opposed while the rule was being read
+backwards.
+
+`block_falls_through` is now `pub(crate)` and shared rather than copied. The
+predicate deciding "is this else a predecessor of the merge" has to be the
+same one `validate` uses to decide "is this path exempt" — and forking a
+shared walker is the P1 from the session before this one.
+
+Verified on every form, both backends, both the passing and the failing path,
+including the collection attest-all failure that was once
+`bug-caught-attest-all-fail-path-undefined-handle`. div.10-div.16, seven
+specs. Sweep 7243 — predicted exactly — zero failing, `mk test` green.
+
+The lesson is not about attest. Three times now the finding has been a
+comment asserting intent that the code did not carry out, and each time I
+treated the comment as evidence. A comment is a claim about the code. The
+dump is the code.
