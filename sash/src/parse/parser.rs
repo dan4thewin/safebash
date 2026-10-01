@@ -495,6 +495,124 @@ fn parse_if(scanner: &mut Scanner) -> Result<Option<Statement>, Diagnostic> {
     }
 }
 
+/// Build the `If` statement both spellings of `if` share, applying the
+/// DD#121 negated-attest normalisation on the way through.
+///
+/// Both `parse_if_keyword` and `parse_if_brace` must go through here: the
+/// normalisation is what makes a negated caught attest *unrepresentable*, and
+/// a form that is unrepresentable in one spelling but not the other is not
+/// normalised at all.
+fn make_if(
+    span: Span,
+    condition: Vec<Statement>,
+    then_body: Vec<Statement>,
+    elif_clauses: Vec<ElifClause>,
+    else_body: Option<Vec<Statement>>,
+) -> Statement {
+    let mut inner = If {
+        condition,
+        then_body,
+        elif_clauses,
+        else_body,
+    };
+    flip_negated_attest(&mut inner, span);
+    Statement {
+        kind: StmtKind::If(inner),
+        span,
+    }
+}
+
+/// The single `attest` command a condition consists of, when that condition is
+/// a negated one — `if ! attest …`.
+///
+/// A standalone `! cmd` is a `Pipeline` carrying `negated: true`, *not* a
+/// `StmtKind::Negated`, which only ever appears as a stage inside a
+/// multi-stage pipeline. Requiring exactly one command is what keeps
+/// `! attest … | cmd` (not a caught attest, and SB4022 anyway) out.
+fn negated_attest_condition(condition: &[Statement]) -> bool {
+    let [only] = condition else {
+        return false;
+    };
+    let StmtKind::Pipeline(p) = &only.kind else {
+        return false;
+    };
+    if !p.negated {
+        return false;
+    }
+    let [stage] = p.commands.as_slice() else {
+        return false;
+    };
+    matches!(&stage.kind,
+        StmtKind::Command(c) if matches!(&c.name.kind, ExprKind::Literal(n) if n == "attest"))
+}
+
+/// DD#121: rewrite `if ! attest … { A } else { B }` into the equivalent
+/// `if attest … { B } else { A }`.
+///
+/// DD#121 names three caught forms — `if attest`, `attest && CMD`,
+/// `attest || CMD` — and the negated spelling is none of them. Rather than
+/// teach the R2 resolution check and the SSA merge to carry a polarity (two
+/// places whose "resolve" and "divert" arms would have to invert in step, and
+/// silently disagree if they ever drifted), the polarity is removed here and
+/// no negated caught attest ever reaches the analysis.
+///
+/// The swap is only valid once the elif chain is accounted for: the chain
+/// hangs off the *unnegated* condition's false arm, so
+/// `if !C {A} elif C2 {B} else {D}` is `if C { if C2 {B} else {D} } else {A}`,
+/// a nesting rather than a swap. With no `elif` and no `else`, the then-body
+/// becomes empty — the attest passing is then simply a no-op, which is what
+/// the source says.
+fn flip_negated_attest(inner: &mut If, span: Span) {
+    if !negated_attest_condition(&inner.condition) {
+        return;
+    }
+    strip_condition_negation(&mut inner.condition);
+    let fall_through = negated_fall_through(inner, span);
+    inner.else_body = Some(std::mem::replace(&mut inner.then_body, fall_through));
+}
+
+/// Replace the negated single-stage pipeline wrapping the `attest` with the
+/// bare `attest` command. The shape is already established by
+/// [`negated_attest_condition`], so each `else` here is unreachable.
+fn strip_condition_negation(condition: &mut [Statement]) {
+    let [stmt] = condition else {
+        return;
+    };
+    let StmtKind::Pipeline(p) = &mut stmt.kind else {
+        return;
+    };
+    let Some(only) = p.commands.pop() else {
+        return;
+    };
+    *stmt = only;
+}
+
+/// The body the rewritten `if` falls through to when the attest *passes* —
+/// the source's `elif`/`else` chain.
+///
+/// With no `elif`, that is just the `else` body (empty when there was none).
+/// With one, the chain has to *nest* rather than move across: it hangs off
+/// the unnegated condition being false, so `if !C {A} elif C2 {B} else {D}`
+/// is `if C { if C2 {B} else {D} } else {A}`.
+fn negated_fall_through(inner: &mut If, span: Span) -> Vec<Statement> {
+    if inner.elif_clauses.is_empty() {
+        return inner.else_body.take().unwrap_or_default();
+    }
+    let mut rest = std::mem::take(&mut inner.elif_clauses).into_iter();
+    let Some(first) = rest.next() else {
+        return Vec::new();
+    };
+    vec![Statement {
+        kind: StmtKind::If(If {
+            condition: first.condition,
+            then_body: first.body,
+            elif_clauses: rest.collect(),
+            else_body: inner.else_body.take(),
+        }),
+        span,
+    }]
+}
+
 /// The `then … [elif …] [else …] fi` sugar form of `if`.
 fn parse_if_keyword(
     scanner: &mut Scanner,
@@ -525,15 +643,13 @@ fn parse_if_keyword(
 
     expect(scanner, &Tok::Fi, span, "expected 'fi'")?;
 
-    Ok(Some(Statement {
-        kind: StmtKind::If(If {
-            condition,
-            then_body,
-            elif_clauses,
-            else_body,
-        }),
+    Ok(Some(make_if(
         span,
-    }))
+        condition,
+        then_body,
+        elif_clauses,
+        else_body,
+    )))
 }
 
 /// DD#68: the brace form of `if` — `if COND { … } [elif COND { … }]…
@@ -561,15 +677,13 @@ fn parse_if_brace(
             _ => break,
         }
     }
-    Ok(Some(Statement {
-        kind: StmtKind::If(If {
-            condition,
-            then_body,
-            elif_clauses,
-            else_body,
-        }),
+    Ok(Some(make_if(
         span,
-    }))
+        condition,
+        then_body,
+        elif_clauses,
+        else_body,
+    )))
 }
 
 /// DD#68: one `elif COND { … }` clause of a brace `if` (the `elif` is

@@ -1,4 +1,72 @@
-## ══ STATUS (2026-10-02, latest) — two spellings, one program ══
+## ══ STATUS (2026-10-02, latest) — the polarity that never had to exist ══
+
+Sweep **7275** (3740 native, 3522 c, 13 skipped) — predicted exactly, zero
+failures. `mk test` rc=0. Journal 457 addendum 3. DD#121 addendum.
+
+**DG: "the `if ! attest` can be understood as `if attest { } else {...}`; if
+the unmodified form is too vexing, why not translate?"** I had filed that
+defect with two options — support the negated form and pay for a polarity flag
+in both R2's resolution check and the SSA merge, or reject it with an honest
+diagnostic. The translation is a third option that makes the expensive one
+cheap:
+
+```
+if ! attest C { A } else { B }   ==>   if attest C { B } else { A }
+```
+
+No negated caught attest reaches the analysis at all, so the two places that
+would have carried a polarity never learn the form exists. Their "resolve" and
+"divert" arms cannot drift out of step, which is the failure mode that made
+option (a) expensive — and which has produced three separate bugs this week.
+
+**`if ! attest` now behaves identically to the canonical spelling** on both
+backends, pass path and divert path, matching bash.
+
+**The filing's stated cause was wrong.** It named
+`StmtKind::Negated(Box<Statement>)`; that variant only ever appears as a stage
+inside a multi-stage pipeline. A standalone `! cmd` is
+`StmtKind::Pipeline { negated: true }`. I had matched on the variant's name
+without checking what constructs it. Corrected in the task file.
+
+**Where it lives was the real decision.** A post-parse pass would need a
+mutable cmdsub walker, which does not exist — `structural_bodies_mut`
+deliberately excludes `$( … )` bodies and says a rewriting pass "has to say
+so". Writing one means mirroring `walk_own_exprs` over ~31 `ExprKind`
+variants: a second implementation of a shared walker. Instead the rewrite sits
+in `parse/parser.rs::make_if`, the constructor **both** spellings of `if` now
+build through, so the form is unrepresentable rather than unhandled and every
+`if` anywhere is covered — including inside a `$( … )` — with no walker at
+all. Precedent was next door: `parse_if_brace` already desugars `else if`.
+
+Two things a naive translation gets wrong, both pinned:
+
+- **`elif` nests rather than swaps** — the chain hangs off the *unnegated*
+  condition being false, so `if !C {A} elif C2 {B} else {D}` is
+  `if C { if C2 {B} else {D} } else {A}`. A swap here would be a miscompile.
+  Verified against bash on all three outcomes (`div.30`, `div.31`).
+- **Scope is attest-only** — `if ! /bin/true` works today and `--emit-ir`
+  faithfully reports `:negated true`. A blanket rewrite would change a
+  documented DD#104 seam for programs unrelated to attest (`div.32`).
+
+**DD#121 is not amended in substance.** No new form reaches the analysis, only
+a spelling that is normalised away before validate runs; the three caught
+forms are still the three it knows. A pointer was added so a reader knows the
+spelling is accepted.
+
+**Left alone deliberately:** bare `! attest …` and `while ! attest …` still
+report SB5088. I checked whether that was a ragged edge from my fix — it is
+not. **`while attest` is rejected unnegated too, with the same message**, so
+the objection is not about `!` but about the position not being a caught form,
+and the wording is equally wrong in the unnegated spelling. Filed as
+`sb5088-wording-for-non-caught-attest-positions` (P3) rather than smuggled in
+because it was nearby.
+
+Complexity gate rejected `flip_negated_attest` at cc 6 / cog 9; extracted two
+helpers rather than bypassing. All five new functions cc ≤ 2, cog ≤ 1.
+
+Specs `div.24`-`div.32` in `spec/taint.sh` (`plan=326`).
+
+## ══ STATUS (2026-10-02) — two spellings, one program ══
 
 Sweep **7257** (3731 native, 3513 c, 13 skipped) — predicted exactly, zero
 failures. `mk test` rc=0. Journal 457 + two addenda.

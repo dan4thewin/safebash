@@ -259,3 +259,81 @@ place to guess.
 div.17-div.23, seven specs, with the three guard rails that must keep
 rejecting and a runtime check that a braced divert actually diverts. Sweep
 7257 — predicted exactly — zero failing, `mk test` green.
+
+---
+
+## Addendum 3 — the polarity that never had to exist
+
+DG, after the `Group` fix landed: *"the `if ! attest` can be understood as
+`if attest { } else {...}`; if the unmodified form is too vexing, why not
+translate?"*
+
+I had filed that defect with two options: support the negated form (and pay
+for a polarity flag in R2's resolution check and in `lower_if_attest`), or
+reject it with an honest diagnostic. DG's question is a third option that
+makes the expensive one cheap. The translation is sound for a two-armed `if`,
+and once it is applied **no negated caught attest reaches the analysis at
+all** — so the two places that would have had to carry a polarity never learn
+the form exists.
+
+That matters more than the line count. The two places are
+`check_caught_resolution` and the SSA merge. Their "resolve" and "divert" arms
+would have had to invert *in step*, and this week has produced three separate
+bugs where two halves of one invariant drifted apart with nothing to notice.
+A translation has one place to be wrong in.
+
+### My filed diagnosis was wrong
+
+The task said the condition is `StmtKind::Negated(Box<Statement>)`. It is not.
+`ir.rs` documents that variant as appearing only as a stage inside a
+multi-stage pipeline; a standalone `! cmd` is
+`StmtKind::Pipeline { negated: true, commands: [cmd] }`. `--emit-ir` on
+`if ! /bin/true { … }` settles it. I had pattern-matched on the variant's
+*name* without checking what constructs it — the same mistake, in miniature,
+as the guards that keep turning out to be keyed on one spelling.
+
+### Where the rewrite lives, and why that was the real decision
+
+My first instinct was a normalisation pass between parse and validate. That
+runs into something good: `structural_bodies_mut` **deliberately** excludes
+`$( … )` bodies, and its doc says a rewriting pass that wants them has to say
+so. There is no mutable cmdsub walker, and writing one means mirroring
+`walk_own_exprs` across ~31 `ExprKind` variants — a second implementation of a
+shared walker, which is on the short list of things that have actually bitten
+this project.
+
+So: the parser, in a constructor both spellings of `if` build through. The
+form becomes *unrepresentable* rather than merely unhandled, which reaches
+every `if` anywhere — including inside a command substitution — with no walker
+written at all. The precedent was already there in the same function's
+neighbour: `parse_if_brace`'s doc says "`else if` desugars to `else` + a
+nested `if`".
+
+### Two things the naive translation gets wrong
+
+**`elif` nests, it does not swap.** The chain hangs off the *unnegated*
+condition being false, so `if !C {A} elif C2 {B} else {D}` is
+`if C { if C2 {B} else {D} } else {A}`. A then/else swap that ignored the
+chain would be a miscompile, not a rejection. Verified against bash on all
+three outcomes.
+
+**Scope has to be attest-only.** I checked before assuming: `if ! /bin/true`
+works correctly today, and `--emit-ir` faithfully reports `:negated true` for
+it. A blanket rewrite would change a documented external seam (DD#104) for
+programs that have nothing to do with attest. `div.32` pins that it does not.
+
+### What I left alone
+
+A bare `! attest …` and `while ! attest …` still report SB5088. I checked
+whether that was my fix leaving a ragged edge, and it is not: **`while attest`
+is rejected unnegated too**, with the same message. So the objection is not
+about `!` — it is that neither position is a caught form — and the wording is
+equally wrong in the unnegated spelling. That is a separate defect and it is
+filed as one, rather than smuggled into this change because it was nearby.
+
+The complexity gate rejected `flip_negated_attest` at cc 6 / cog 9. Extracted
+`strip_condition_negation` and `negated_fall_through`; all five new functions
+now sit at cc ≤ 2, cog ≤ 1.
+
+Specs `div.24`-`div.32`. Sweep 7257 -> **7275**, predicted exactly, zero
+failing. Both backends agree with bash on every path.

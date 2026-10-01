@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup taint
-plan=317
+plan=326
 echo "1..$plan" >&3
 
 set +e
@@ -1995,6 +1995,68 @@ run_sash 'str x=$(getenv HOME)
 attest x [[ $x =~ ^/ ]] && { echo ok; }
 echo "$x"'
 [[ $rc != 0 && $err == *SB5089* ]]; chk div.23
+
+# DD#121 — the negated spelling of a caught `if attest` (div.24-div.32).
+#
+# DD#121 names three caught forms; `if ! attest … { … }` is none of them, so
+# the attest was walked as an ordinary nested body and reported SB5088 — "not
+# adjacent" about an attest that is adjacent. DG's fix is a translation, not a
+# new form: `if ! attest C { A } else { B }` is the same program as
+# `if attest C { B } else { A }`, and the parser now rewrites it at
+# construction. No polarity reaches the R2 resolution check or the SSA merge,
+# whose "resolve" and "divert" arms would otherwise have to invert in step.
+#
+# Both spellings of `if` build the `If` through one constructor: a form that
+# is unrepresentable in one spelling but not the other is not normalised.
+
+# div.24 the brace form, pass path — the subject is clean afterwards
+run_sash 'str x=$(arg 1)
+if ! attest x [[ -n $x ]] { exit 7 }
+echo "got=$x"' val
+[[ $rc = 0 && $out = "got=val" && -z $err ]]; chk div.24
+# div.25 ... and the fail path really diverts
+run_sash 'str x=$(arg 1)
+if ! attest x [[ -n $x ]] { echo "bad input" >&2; exit 7 }
+echo "got=$x"' ""
+[[ $rc = 7 && -z $out && $rerr == *"bad input"* ]]; chk div.25
+# div.26 the then/fi spelling goes through the same constructor
+run_sash 'str x=$(arg 1)
+if ! attest x [[ -n $x ]]; then exit 7; fi
+echo "got=$x"' val
+[[ $rc = 0 && $out = "got=val" && -z $err ]]; chk div.26
+# div.27 with an `else`, the user's else body is the pass path
+run_sash 'str x=$(arg 1)
+if ! attest x [[ -n $x ]] { exit 7 } else { echo pass }
+echo "got=$x"' val
+[[ $rc = 0 && $out == *pass* && $out == *got=val* && -z $err ]]; chk div.27
+# div.28 guard rail: a negated form whose divert branch FALLS THROUGH leaves
+# the subject tainted at the merge — still SB5089, exactly as unnegated
+run_sash 'str x=$(arg 1)
+if ! attest x [[ -n $x ]] { echo no }
+echo "got=$x"'
+[[ $rc != 0 && $err == *SB5089* ]]; chk div.28
+# div.29 guard rail: neither arm resolving is SB5089 too
+run_sash 'str x=$(arg 1)
+if ! attest x [[ -n $x ]] { echo no } else { echo yes }
+echo "got=$x"'
+[[ $rc != 0 && $err == *SB5089* ]]; chk div.29
+# div.30 an `elif` chain NESTS rather than swaps — it hangs off the unnegated
+# condition being false, so `if !C {A} elif C2 {B} else {D}` is
+# `if C { if C2 {B} else {D} } else {A}`. Here the attest passes and the
+# elif is taken; the subject is clean inside it.
+run_sash 'str x=$(arg 1)
+if ! attest x [[ -n $x ]] { exit 7 } elif [[ $x == hi ]] { echo mid } else { echo other }
+echo "got=$x"' hi
+[[ $rc = 0 && $out == *mid* && $out == *got=hi* && -z $err ]]; chk div.30
+# div.31 ... the same chain's else arm
+run_sash 'str x=$(arg 1)
+if ! attest x [[ -n $x ]] { exit 7 } elif [[ $x == hi ]] { echo mid } else { echo other }
+echo "got=$x"' val
+[[ $rc = 0 && $out == *other* && $out == *got=val* && -z $err ]]; chk div.31
+# div.32 the rewrite is attest-only: an ordinary negated condition keeps its
+# polarity, and `--emit-ir` keeps showing it
+run_sash 'if ! /bin/false { echo taken } else { echo not }'
+[[ $rc = 0 && $out = "taken" && -z $err ]]; chk div.32
 
 set -e
 tally

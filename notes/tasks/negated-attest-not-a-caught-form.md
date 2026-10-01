@@ -1,5 +1,5 @@
 ---
-status: open
+status: done
 priority: P2
 depends:
 gates:
@@ -34,16 +34,17 @@ match &only.kind {
 }
 ```
 
-`! cmd` is `StmtKind::Negated(Box<Statement>)`, so the `if` is never
-recognised as a caught attest at all. DD#121's whole R2 machinery is then
+`! cmd` never matches. **This filing originally named the wrong node.** It
+said `StmtKind::Negated(Box<Statement>)`; that variant is documented in
+`ir.rs` as appearing *only* as a stage inside a multi-stage pipeline. A
+standalone `! cmd` is `StmtKind::Pipeline { negated: true, commands: [cmd] }`,
+confirmed with `--emit-ir`. The consequence is the same — the `if` is never
+recognised as a caught attest at all — DD#121's whole R2 machinery is then
 skipped, the attest is walked as a *nested body* (where `JustTainted` starts
 empty by construction), and R1 fires.
 
 This is the same shape as the `Group` bug and the same shape as the SB5067
-guard before it: **a guard keyed on one spelling of a construct**. The
-peel idiom already exists two thousand lines up the same file —
-`stmt_is_external_command` does `while let StmtKind::Suppressed(inner) |
-StmtKind::Negated(inner)`.
+guard before it: **a guard keyed on one spelling of a construct**.
 
 ## Why it is not a one-line fix
 
@@ -91,3 +92,75 @@ A bare `! attest x [[ … ]]` (not in a condition) is also SB5088 today. It is
 nonsense in any case — an uncaught attest aborts on failure, so negating its
 status cannot mean anything — but it should say that rather than claim
 non-adjacency. Covered by (b) either way.
+
+---
+
+## Resolution (2026-10-02) — DG chose a third option: translate
+
+DG: *"the `if ! attest` can be understood as `if attest { } else {...}`; if
+the unmodified form is too vexing, why not translate?"*
+
+Neither (a) nor (b). The polarity is **removed** rather than carried:
+
+```
+if ! attest C { A } else { B }   ==>   if attest C { B } else { A }
+```
+
+That makes the whole "three places need the polarity" section above moot.
+`check_caught_resolution` and `lower_if_attest` never see a negated condition,
+so their "resolve" and "divert" arms cannot drift out of step — the failure
+mode that made (a) expensive.
+
+### Where it lives
+
+`parse/parser.rs::make_if`, the constructor both spellings of `if` now build
+through. At construction, not in a later pass, for two reasons:
+
+- **Totality.** A post-parse walk would need a *mutable* cmdsub walker, which
+  does not exist — `structural_bodies_mut` deliberately excludes `$( … )`
+  bodies and its doc says a rewriting pass that wants them "has to say so".
+  Writing a mutable mirror of `walk_own_exprs` over ~31 `ExprKind` variants is
+  precisely the fork-a-shared-walker hazard this project keeps getting bitten
+  by. Normalising at construction reaches every `if` anywhere — including
+  inside a command substitution — with no walker at all.
+- **Precedent.** The parser already does this: `parse_if_brace`'s doc says
+  "`else if` desugars to `else` + a nested `if`". It is also already
+  attest-aware (`Tok::Attest`, and `statement_form_label` matches the name).
+
+### Scope: attest-only
+
+A blanket rewrite of every negated `if` was rejected. `if ! /bin/true { … }`
+works correctly today and `--emit-ir` faithfully reports `:negated true` for
+it; desugaring it would change a documented external seam (DD#104) for
+programs that have nothing to do with attest. Pinned by `div.32`.
+
+### The `elif` chain nests, it does not swap
+
+The chain hangs off the *unnegated* condition being false:
+
+```
+if !C {A} elif C2 {B} else {D}   ==   if C { if C2 {B} else {D} } else {A}
+```
+
+A naive then/else swap would be a miscompile here. `negated_fall_through`
+builds the nested `if`. Verified against bash on all three outcomes
+(`div.30`, `div.31`).
+
+### Not a new form, so DD#121 is not amended in substance
+
+No negated caught attest reaches the analysis — only a new *spelling* that is
+normalised away before validate runs. DD#121's three caught forms are still
+exactly the three forms the analysis knows. A pointer was added to the DD so a
+reader knows the spelling is accepted.
+
+### Left alone, deliberately
+
+`! attest x [[ … ]]` as a bare statement, and `while ! attest …`, still report
+SB5088. Both are correctly *rejected* — a bare attest is uncaught, so negating
+its aborting status is meaningless, and `while attest` is rejected unnegated
+too, so the negated spelling is consistent. Only the **wording** is poor, and
+it is poor for the unnegated `while attest` in exactly the same way, so it is
+not a negation defect. Filed separately as
+`sb5088-wording-for-non-caught-attest-positions`.
+
+Specs: `div.24`-`div.32` in `spec/taint.sh`. Sweep 7257 -> 7275, zero failing.

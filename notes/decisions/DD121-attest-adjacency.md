@@ -307,9 +307,34 @@ one the enclosing scope keeps, which is the no-fixpoint invariant
 
 Specs `bfb.23`-`bfb.28`. Journal 451.
 
+## Addendum 2026-10-02 — the negated spelling
+
+`if ! attest C { A }` is accepted, and means what it reads as: divert if the
+attest fails. It is **not a fourth caught form**. The parser rewrites it at
+construction into the first one —
+
+```
+if ! attest C { A } else { B }   ==>   if attest C { B } else { A }
+```
+
+— so the three caught forms above are still exactly the three the analysis
+knows, and R2 applies to the rewritten shape unchanged. DG's reasoning: a
+negated spelling could instead have been supported by carrying a polarity into
+R2's resolution check and the SSA merge, but those are two places whose
+"resolve" and "divert" arms would have to invert in step, and a silent
+disagreement between them is a miscompile rather than a diagnostic.
+
+With an `elif` chain the rewrite nests rather than swaps, since the chain
+hangs off the unnegated condition being false. The rewrite is attest-only:
+an ordinary `if ! cmd` keeps its polarity, and `--emit-ir` keeps reporting it.
+
+A bare `! attest …`, and `while ! attest …`, remain rejected — see
+`notes/tasks/sb5088-wording-for-non-caught-attest-positions.md`, which is
+about their wording, not their legality.
+
 ## See also
 
 - DD#24 taint model · DD#91 `:!` · DD#82 `--no-taint` · DD#100 collection
   parameters (the slot machinery whose call-site injection is the pattern this
   generalises)
-- Specs: `taint.sh`, `coverage.sh`. journal 448.
+- Specs: `taint.sh` (`div.1`-`div.32`), `coverage.sh`. journal 448, 457.
