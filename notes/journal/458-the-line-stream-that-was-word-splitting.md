@@ -144,3 +144,71 @@ And the comment that justified the behaviour was the best available evidence
 that the behaviour was wrong. "A deliberate divergence from bash" in a project
 whose stated goal is byte-identical output is not an explanation, it is an
 unanswered question someone wrote down and moved past.
+
+## Addendum 2 — the advice that was rejected by another rule
+
+DG, reading SB5073: *"SB5073 disagrees with SB5025, advises capture (to a
+scalar???)"*
+
+Both true, and they are the same defect. SB5073's wording for a `$( … )` body
+statement is:
+
+> Capture it first (`x=$(keys m)`) and use `$x` here
+
+and SB5025's wording for `$(keys m)` outside a for-in is:
+
+> it is valid only as the sole source of a for-in loop … it **cannot be joined
+> into a scalar** or passed as a command argument
+
+The repair one rule prescribes is the thing the other rule exists to forbid.
+An author doing as they were told moved from SB5073 to SB5025 and learned
+nothing. I had been looking at both of these within the hour — I quoted
+SB5073's "recognised only when it is the whole substitution" as proof it was
+the sibling rule to SB5025 — and never read the sentence after it.
+
+The structural cause is one line in a list. `VALUE_ONLY_INTRINSICS` holds 21
+names; 20 of them produce one value, and `keys` splats a collection. The list's
+own comment says `argv` is **deliberately absent** because it has an out-param
+statement form — so the question "is this name collection-valued?" had already
+been asked about the other collection intrinsic, answered, and written down,
+one screen above `keys` sitting in the list anyway. A diagnostic generated from
+a list is only as true as the list's premise, and nothing checks that premise.
+
+Fixed by giving the collection case its own pair of wordings, keyed on
+`is_collection_intrinsic` rather than on the literal name, so the branch states
+what it is for. `errors.sh` via.27-30 pin both wordings, asserting positively
+that the for-in form is named *and* negatively that `x=$(keys` is not — the
+negative is the one that would have caught this.
+
+### What the agreement exposed
+
+Making the two rules agree made it obvious that they agree on a prohibition and
+offer no way to do the thing. `$(keys m)` is for-in-only: no array literal, no
+assignment, no out-param. Meanwhile DD#75 §3 promises exactly that snapshot —
+"legal as the sole source of a for-in header (**or snapshotted into an
+array**)" — and closes by calling keys and values symmetric. Measured:
+
+| position              | `@m` (values) | `$(keys m)` (keys) |
+|-----------------------|---------------|--------------------|
+| sole for-in source    | accepted      | accepted           |
+| array literal `( … )` | accepted      | **SB5025**         |
+| command argument      | SB5032        | SB5025             |
+
+Symmetric in two positions, divergent in the third — the snapshot, the one the
+DD names. `argv` has its snapshot (`argv a`, pinned by via.12); `keys` has
+none.
+
+That is a language gap, not a bug: the compiler is self-consistent and the
+diagnostics are now honest. Whether to close it, and how, is DG's call —
+filed as `notes/tasks/keys-has-no-array-snapshot.md` with three options. The
+honest note is that I do not have a recommendation I would defend, because the
+workaround covers the common case: iteration is what keys are usually for, and
+`for k in $(keys m)` has always worked.
+
+### The lesson that generalises
+
+Two rules that reject the same program should be read **together**, as the
+author meets them — in sequence, following the first one's advice. I checked
+that SB5073 and SB5025 covered the same shapes and stopped there. Coverage
+agreement is not advice agreement, and only the latter is what the author
+experiences.

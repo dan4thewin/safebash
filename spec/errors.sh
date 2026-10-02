@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup errors
-plan=324
+plan=328
 echo "1..$plan" >&3
 
 set +e
@@ -861,6 +861,42 @@ s=abc
 r=$(match "$s" b m || :)
 echo "[$r][${m[0]}]"'
 [[ $rc = 0 && $out = "[][b]" && -z $err ]]; chk via.26
+
+# ── via.27-30: SB5073 must not contradict SB5025 ──────────────────────────
+# `keys` is the ONLY collection-valued name in VALUE_ONLY_INTRINSICS (`argv` is
+# deliberately absent — it has the DD#60 out-param statement form, via.12). It
+# inherited the generic value-intrinsic wording, which advises capturing to a
+# scalar: "Capture it first (`x=$(keys m)`) and use `$x` here". That form is
+# itself rejected, by SB5025, whose message says in as many words that
+# `$(keys m)` "cannot be joined into a scalar". An author following SB5073
+# landed on a rule that contradicted it.
+#
+# `$(keys m)` has exactly one legal position: the sole source of a for-in loop.
+# Both SB5073 wordings must name that form. Front-end — all modes.
+MAPH='map m
+m[a]=1
+m[b]=2
+echo ${m[a]} ${m[b]}'
+
+# via.27 statement position names the for-in form, not a scalar capture
+run_sash "$MAPH
+keys m"
+[[ $rc != 0 && -z $out && $err == *SB5073* ]]; chk via.27
+# via.28 ...and does not advise the spelling SB5025 forbids
+[[ $err == *'for k in $(keys m)'* && $err != *'x=$(keys'* ]]; chk via.28
+
+# via.29 one statement among several: same correction
+run_sash "$MAPH
+for k in \$(keys m; /bin/echo e) { echo \"\$k\" }"
+[[ $rc != 0 && $err == *SB5073* && $err == *'for k in $(keys m)'* && $err != *'x=$(keys'* ]]; chk via.29
+
+# via.30 the operand is named, so the suggestion is copy-pasteable
+run_sash 'map tbl
+tbl[a]=1
+echo ${tbl[a]}
+keys tbl'
+[[ $rc != 0 && -z $out && $err == *'for k in $(keys tbl)'* ]]; chk via.30
+
 
 
 # ── `join`'s separator is fixed at compile time (SB5074) ──

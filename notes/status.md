@@ -1,4 +1,44 @@
-## ══ STATUS (2026-10-02, latest) — the line stream that was word splitting ══
+## ══ STATUS (2026-10-02, latest) — the advice that another rule rejected ══
+
+Sweep **7303** (3754 native, 3536 c, 13 skipped), zero failures, predicted two
+independent ways. `mk test` rc=0. Journal 458 addendum 2.
+
+DG, reading the diagnostic I had just cited as correct: *"SB5073 disagrees with
+SB5025, advises capture (to a scalar???)"*. Both true, one defect. SB5073 told
+the author to *"Capture it first (`x=$(keys m)`)"*; SB5025 says `$(keys m)`
+**"cannot be joined into a scalar"**. The repair one rule prescribed was the
+thing the other exists to forbid.
+
+Cause: `keys` is the only collection-valued name among the 21 in
+`VALUE_ONLY_INTRINSICS`, so it inherited a wording true of the other 20. The
+list's own comment says `argv` is *deliberately absent* because it has an
+out-param statement form — the question had been asked about the other
+collection intrinsic, answered, and written down one screen above `keys`
+sitting in the list anyway.
+
+Fixed with a collection-specific pair of wordings keyed on
+`is_collection_intrinsic`, both naming the only legal position (`for k in
+$(keys m)`), with the operand interpolated so the suggestion is copy-pasteable.
+`errors.sh` via.27-30 pin them, including the **negative** assertion that
+`x=$(keys` is not advised — the one that would have caught this.
+
+**The agreement exposed a gap.** The two rules now agree on a prohibition and
+offer no way to do the thing: `$(keys m)` is for-in-only — no array literal, no
+assignment, no out-param. DD#75 §3 promises exactly that snapshot ("or
+snapshotted into an array") and calls keys and values symmetric. Measured, they
+are symmetric in two positions and diverge in the third — the snapshot, the one
+the DD names. `argv` has it (`argv a`, via.12); `keys` has none. Not a bug (the
+compiler is self-consistent, the diagnostics now honest) but a language gap,
+and DG's call: `notes/tasks/keys-has-no-array-snapshot.md`, three options, no
+recommendation I would defend.
+
+Earlier the same day, DG: *"I thinking there is no sane way to combine argv or
+keys with subsequent commands…"* — right, and it showed my new SB5009 deferral
+was asymmetric on the false belief that `keys` had no sibling rule. It has
+SB5073. `$(keys m; CMD)` had been drawing a noisy SB5009+SB5073 double; the
+deferral is now symmetric (`stmt_is_collection_intrinsic`), pinned by `fs.14`.
+
+## ══ (2026-10-02) — the line stream that was word splitting ══
 
 Sweep **7293** (3749 native, 3531 c, 13 skipped) — predicted two independent
 ways before running, zero failures. `mk test` rc=0. Journal 458. DD#28

@@ -3373,10 +3373,38 @@ enum CmdPos {
 /// ("only valid inside a command substitution") would be actively misleading
 /// for a body statement, because that one *is* inside a command substitution.
 /// Same rule, same code, different explanation.
+///
+/// A **collection**-valued intrinsic gets its own pair, because the generic
+/// advice — capture it with `x=$(name …)` — names a form that is itself
+/// rejected. `keys` is the only such name here (`argv` is deliberately absent
+/// from `VALUE_ONLY_INTRINSICS`; see that list's comment), and `$(keys m)` is
+/// legal in exactly one position: the sole source of a for-in loop. SB5025's
+/// own wording says so in as many words — "it cannot be joined into a scalar"
+/// — so the generic sentence sent the author straight into a rule that
+/// contradicted it. Keep these two in agreement.
 fn value_intrinsic_diag(name: &str, c: &Command, pos: CmdPos) -> Option<Diagnostic> {
     let ellipsis = if c.args.is_empty() { "" } else { " …" };
+    let operand = || match c.args.first().map(expr_literal_str) {
+        Some(m) if !m.is_empty() => m.to_string(),
+        _ => "m".to_string(),
+    };
     let complaint = match pos {
         CmdPos::CmdsubSole => return None,
+        CmdPos::Statement if crate::resolve::is_collection_intrinsic(name) => format!(
+            "`{name}` splats a collection — it produces a sequence of values, \
+             not a statement, and a bare statement would discard them. The one \
+             position that takes it is the source of a for-in loop: \
+             `for k in $({name} {})`",
+            operand()
+        ),
+        CmdPos::CmdsubOther if crate::resolve::is_collection_intrinsic(name) => format!(
+            "`{name}` splats a collection — inside `$( … )` it is recognised \
+             only when it is the whole substitution, not one statement among \
+             several, and that substitution must be the source of a for-in \
+             loop: `for k in $({name} {})`. It cannot be captured into a \
+             scalar and used here",
+            operand()
+        ),
         CmdPos::Statement => format!(
             "`{name}` is a value intrinsic — it produces a value and is only \
              valid inside a command substitution, e.g. `x=$({name}{ellipsis})`. \
