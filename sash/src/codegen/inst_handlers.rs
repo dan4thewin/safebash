@@ -1254,6 +1254,28 @@ pub(super) fn handle_argv_fill(
     false
 }
 
+/// Handle SsaInst::KeysFill — DD#75 `keys m k`. Calls
+/// `sash_keys_snapshot(map)` (builds a fresh indexed table holding the map's
+/// string keys, in iteration order) and stores it into the destination
+/// array's slot, exactly as [`handle_argv_fill`] does with its snapshot.
+/// Auto-declared by the transform; the array is clean (DD#93).
+pub(super) fn handle_keys_fill(
+    source: &str,
+    array: &str,
+    builder: &mut FunctionBuilder,
+    module: &mut ObjectModule,
+    ctx: &mut InstCtx,
+) -> bool {
+    let src = find_array_slot(ctx.vars, source, "map");
+    let src_ptr = builder.use_var(src.str_ptr());
+    let snap_ref = module.declare_func_in_func(ctx.externs.keys_snapshot, builder.func);
+    let call = builder.ins().call(snap_ref, &[src_ptr]);
+    let table_ptr = builder.inst_results(call)[0];
+    let sv = find_array_slot(ctx.vars, array, "array");
+    builder.def_var(sv.str_ptr(), table_ptr);
+    false
+}
+
 /// Handle SsaInst::SubscriptAssign.
 pub(super) fn handle_subscript_assign(
     array: &str,

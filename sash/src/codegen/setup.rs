@@ -164,6 +164,14 @@ pub(super) fn declare_runtime_functions(module: &mut ObjectModule) -> ExternFunc
         .declare_function("sash_argv_snapshot", Linkage::Import, &argv_snapshot_sig)
         .expect("declare sash_argv_snapshot");
 
+    // sash_keys_snapshot(map) -> *mut SashTable  (DD#75 `keys m k`)
+    let mut keys_snapshot_sig = Signature::new(CallConv::SystemV);
+    keys_snapshot_sig.params.push(AbiParam::new(I64)); // source map
+    keys_snapshot_sig.returns.push(AbiParam::new(I64)); // table ptr
+    let keys_snapshot_func = module
+        .declare_function("sash_keys_snapshot", Linkage::Import, &keys_snapshot_sig)
+        .expect("declare sash_keys_snapshot");
+
     // sash_splat_disposition(tbl, word_ptr, word_len, has_word, abort) -> tbl
     // (DD#69 external `@{a:-WORD}` / `@{a:?WORD}` empty-disposition)
     let mut splat_disposition_sig = Signature::new(CallConv::SystemV);
@@ -876,6 +884,7 @@ pub(super) fn declare_runtime_functions(module: &mut ObjectModule) -> ExternFunc
         argv_get: argv_get_func,
         argv_get_or: argv_get_or_func,
         argv_snapshot: argv_snapshot_func,
+        keys_snapshot: keys_snapshot_func,
         splat_disposition: splat_disposition_func,
         require_value: require_value_func,
         signal_flag: signal_flag_func,
@@ -1325,6 +1334,7 @@ fn map_inst_versioned(
         // the one base slot: an unmapped version makes `load_var_or_empty`
         // miss, hand back a null pointer, and segfault in `sash_table_len`.
         | SsaInst::ArgvFill { target, .. }
+        | SsaInst::KeysFill { target, .. }
         | SsaInst::ReadArray { target, .. }
         | SsaInst::SplitValue { target, .. }
         | SsaInst::MapFromArray { target, .. } => {

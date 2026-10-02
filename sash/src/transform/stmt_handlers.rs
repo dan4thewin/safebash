@@ -65,6 +65,7 @@ fn try_builtin(
         BuiltinCmd::Continue => Some(handle_continue_stmt(c, state, ssa, *block)),
         BuiltinCmd::Return => Some(handle_return_stmt(c, ssa, state, block)),
         BuiltinCmd::Argv => Some(handle_argv(c, ssa, state, *block)),
+        BuiltinCmd::Keys => Some(handle_keys(c, ssa, state, *block)),
         BuiltinCmd::Signal => Some(super::cmd_handlers::handle_signal(
             name, c, stmt, ssa, state, *block,
         )),
@@ -510,6 +511,44 @@ fn handle_argv(
     ssa.block_mut(block)
         .insts
         .push(SsaInst::ArgvFill { target, start });
+    block
+}
+
+/// DD#75 §3: `keys m k` out-param builtin — snapshot map `m`'s string keys
+/// into array `k`. Emits a `KeysFill`, which auto-declares the target exactly
+/// as `ArgvFill` does.
+///
+/// `validate::check_keys_form` (SB5073/SB4045) has already fixed the shape to
+/// exactly two arguments, so lowering cannot fail and says so rather than
+/// returning `None`. That is not caution for its own sake: `None` here means
+/// "not a builtin", which would turn the statement into an ordinary command
+/// named `keys` that compiles clean and dies with `sash: bug: bare command
+/// passed to sash_exec` — the failure eight `argv` spellings reached before
+/// `handle_argv` was given the same treatment.
+///
+/// The one-argument `$(keys m)` splat never arrives here: it is an
+/// *expression*, resolved by `detect_array_iter` in the for-in header.
+fn handle_keys(
+    c: &Command,
+    ssa: &mut SsaProgram,
+    state: &mut VersionState,
+    block: BlockId,
+) -> BlockId {
+    let [map, dest] = &c.args[..] else {
+        unreachable!("SB5073/SB4045 reject every `keys` statement but `keys m k`")
+    };
+    let source = super::expressions::resolve_args_name(&expr_to_string(map), state);
+    let array = super::expressions::resolve_args_name(&expr_to_string(dest), state);
+    autodeclare_bulk_target(&array, false, ssa, state, block);
+    // A LATER version than the autodeclare's empty-array Assign, so the SSA
+    // taint backstop resolves the array to this fill rather than to the clean
+    // empty array the declaration produced. (Both are clean here — see
+    // `SsaInst::KeysFill` — but the versioning rule is the same for every
+    // bulk fill and diverging from it would be a trap for the next one.)
+    let target = state.define(&array);
+    ssa.block_mut(block)
+        .insts
+        .push(SsaInst::KeysFill { source, target });
     block
 }
 

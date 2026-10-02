@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup types
-plan=307
+plan=323
 echo "1..$plan" >&3
 
 set +e
@@ -1684,6 +1684,141 @@ run_sash 'argv 1 a
 str j=$(join a)
 echo "$j"' x y
 [[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk 75.131
+
+# ── 75.132-75.147: DD#75 `keys m k`, the key snapshot ─────────────────────
+# DD#75 §3 promised "or snapshotted into an array" and had no such form: the
+# only legal position for `$(keys m)` was a for-in header. `keys m k` is that
+# form (DG's option (b)), mirroring DD#60's `argv [N] a`.
+
+MAPKV='map m
+m[alpha]=1
+m[beta]=2
+m[gamma]=3'
+
+# 75.132 the fill, and that its ORDER is the order the splat iterates — the
+# snapshot and the live walk must not disagree about what "the keys" are.
+run_sash "$MAPKV
+array k
+keys m k
+for kk in \$(keys m) { echo \"live=\$kk\" }
+for (( i=0; i < (len k); i++ )) { echo \"snap=\${k[\$i]}\" }"
+[[ $rc = 0 && -z $err ]] && [[ $out == *"live=alpha"*"live=beta"*"live=gamma"* ]] &&
+  [[ $out == *"snap=alpha"*"snap=beta"*"snap=gamma"* ]]; chk 75.132
+# 75.133 an undeclared target auto-declares to an array, exactly as `argv a`
+# does (there is no `array k` here).
+run_sash "$MAPKV
+keys m k
+echo \"n=\$(len k) first=\${k[0]}\""
+[[ $rc = 0 && $out = "n=3 first=alpha" && -z $err ]]; chk 75.133
+# 75.134 the snapshot is CLEAN. This is the one place `keys` deliberately
+# diverges from `argv a`, which is tainted (DD#61): argv's bytes come from
+# outside the program, a map's keys were put there by it. The key here began
+# as a tainted `$(getenv …)` and was attested, so no route to a tainted key
+# survives (DD#93) — and `${k[0]}` needs no second attest.
+run_sash 'map m
+h=$(getenv HOME)
+attest h [[ -n "$h" ]]
+m["$h"]="v"
+array k
+keys m k
+echo "n=$(len k) hit=${m[${k[0]}]}"'
+[[ $rc = 0 && $out = "n=1 hit=v" && -z $err ]]; chk 75.134
+# 75.135 it is a SNAPSHOT, not a live view: deleting a key afterwards leaves
+# the array alone. (`$(keys m)` walks the live map; this does not.)
+run_sash "$MAPKV
+array k
+keys m k
+unset m[alpha]
+echo \"snap=\$(len k) live=\$(len m)\""
+[[ $rc = 0 && $out = "snap=3 live=2" && -z $err ]]; chk 75.135
+# 75.136 an empty map yields an empty array, not an error and not one empty
+# element.
+run_sash 'map m
+array k
+keys m k
+echo "n=$(len k)"'
+[[ $rc = 0 && $out = "n=0" && -z $err ]]; chk 75.136
+# 75.137 the fill REPLACES the target. A prior three-element array does not
+# survive underneath a one-key snapshot.
+run_sash 'map m
+m[only]=1
+echo "${m[only]}" > /dev/null
+array k=(x y z)
+keys m k
+echo "n=$(len k) first=${k[0]}"'
+[[ $rc = 0 && $out = "n=1 first=only" && -z $err ]]; chk 75.137
+# 75.138 DD#100: the source may be a collection-parameter slot, so a function
+# can snapshot the keys of a map it was passed.
+run_sash "$MAPKV
+echo \"\${m[alpha]}\" > /dev/null
+fn f {
+  array k
+  keys A k
+  echo \"n=\$(len k)\"
+}
+f =m"
+[[ $rc = 0 && $out = "n=3" && -z $err ]]; chk 75.138
+
+# 75.139 the one-argument form is still not a statement — SB5073, as it was
+# when `keys` was in VALUE_ONLY_INTRINSICS. It left that list (the list keys
+# off the NAME, and `keys` now has a spelling that IS a statement), so this
+# pins that the form check took the rule over rather than dropping it.
+run_sash "$MAPKV
+echo \"\${m[alpha]}\" > /dev/null
+keys m"
+[[ $rc != 0 && -z $out && $err == *SB5073* ]]; chk 75.139
+# 75.140 ...and now names BOTH repairs, not just the for-in one. Before
+# `keys m k` existed there was nothing else to suggest.
+[[ $err == *'keys m k'* && $err == *'for k in $(keys m)'* ]]; chk 75.140
+# 75.141 zero arguments is an arity error, not a value-position error.
+run_sash 'keys'
+[[ $rc != 0 && -z $out && $err == *SB4045* ]]; chk 75.141
+# 75.142 three arguments likewise. (The two forms are told apart by arity
+# alone, so a third argument belongs to neither.)
+run_sash "$MAPKV
+echo \"\${m[alpha]}\" > /dev/null
+array k
+keys m k j"
+[[ $rc != 0 && -z $out && $err == *SB4045* ]]; chk 75.142
+# 75.143 the fill inside `$( )` is rejected, and the message says why rather
+# than reciting an arity: it produces no output, so the capture would be the
+# empty string. `match` is the only other name needing this.
+run_sash "$MAPKV
+echo \"\${m[alpha]}\" > /dev/null
+array k
+for x in \$(keys m k) { echo \"\$x\" }"
+[[ $rc != 0 && -z $out && $err == *SB4045* && $err == *'statement form'* ]]; chk 75.143
+# 75.144 a map target is SB4030 — the fill writes DD#33 integer keys, so the
+# same rule the other bulk fills get (75.117-75.122).
+run_sash "$MAPKV
+echo \"\${m[alpha]}\" > /dev/null
+map k
+keys m k"
+[[ $rc != 0 && -z $out && $err == *SB4030* ]]; chk 75.144
+# 75.145 an indexed-array SOURCE is still a type error: only maps have keys.
+# The fill arity must not route around `check_keys_operand`.
+run_sash 'array a=(x y)
+echo "${a[0]}" > /dev/null
+array k
+keys a k'
+[[ $rc != 0 && -z $out && $err == *SB4030* ]]; chk 75.145
+# 75.146 the target is a binding, so it is a bare name — the same SB5063 the
+# other fills enforce. A quoted target named no array at all.
+run_sash "$MAPKV
+echo \"\${m[alpha]}\" > /dev/null
+keys m \"k\""
+[[ $rc != 0 && -z $out && $err == *SB5063* ]]; chk 75.146
+# 75.147 `args` is immutable (DD#92) whatever the source of the bytes. Every
+# other out-param form is rejected here; this one was accepted until the
+# `keys` arm was added to `command_writes_args`.
+run_sash 'fn f {
+  map m
+  m[a]=1
+  echo "${m[a]}" > /dev/null
+  keys m args
+}
+f'
+[[ $rc != 0 && -z $out && $err == *SB5052* ]]; chk 75.147
 
 set -e
 tally

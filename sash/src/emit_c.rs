@@ -248,6 +248,7 @@ fn emit_prologue(out: &mut String) {
     )
     .unwrap();
     writeln!(out, "extern void* sash_argv_snapshot(i64 start);").unwrap();
+    writeln!(out, "extern void* sash_keys_snapshot(const void* m);").unwrap();
     writeln!(
         out,
         "extern void* sash_splat_disposition(void* tbl, const char* w, \
@@ -1167,6 +1168,7 @@ fn emit_inst(e: &mut Emit, inst: &SsaInst, types: &VarTypes) {
             all,
         } => emit_match_into_c(e, subject, pattern, array, *all, types),
         SsaInst::ArgvFill { target, start } => emit_argv_fill_c(e, &target.name, *start),
+        SsaInst::KeysFill { source, target } => emit_keys_fill_c(e, source, &target.name),
 
         // Exhaustive on purpose — no `_ =>`. These twelve are claimed by the
         // four sub-dispatchers above, which return true when they emit.
@@ -3199,6 +3201,24 @@ fn emit_argv_fill_c(e: &mut Emit, array: &str, start: i64) {
          {base}_ptr = (const char*){t}; {base}_len = 0;",
         t = t,
         start = start,
+        base = base
+    )
+    .unwrap();
+}
+
+/// DD#75: `keys m k` → `sash_keys_snapshot(m)` builds a fresh indexed table
+/// holding the map's string keys; store it into the destination array exactly
+/// as the argv snapshot above does. Mirrors codegen's `handle_keys_fill`.
+fn emit_keys_fill_c(e: &mut Emit, source: &str, array: &str) {
+    let src = c_var_name(source, 0);
+    let base = c_var_name(array, 0);
+    let t = e.fresh();
+    writeln!(
+        e.out,
+        "    void* {t} = sash_keys_snapshot({src}_ptr); \
+         {base}_ptr = (const char*){t}; {base}_len = 0;",
+        t = t,
+        src = src,
         base = base
     )
     .unwrap();

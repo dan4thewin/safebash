@@ -91,9 +91,12 @@ handler — which silently returned 0 — be deleted.)
 
 - `$(keys <map>)` → a **splat of the map's string keys** (each key a string).
   Like `$(argv)`, it is an array splat subject to the DD#60 context rule: legal
-  as the **sole source of a for-in header** (or snapshotted into an array),
-  and **SB5025** anywhere else (command-arg / scalar position). Today it wrongly
-  bypasses that guard — see §7.
+  as the **sole source of a for-in header**, and **SB5025** anywhere else
+  (command-arg / scalar position). Today it wrongly bypasses that guard — see
+  §7.
+- `keys <map> <array>` → **snapshot** the keys into the array. See the
+  addendum below: the parenthetical "(or snapshotted into an array)" that used
+  to sit in the line above described a form that did not exist.
 - `keys <indexed array>` / `keys <scalar>` → **compile error**. An indexed
   array's keys are trivially `0..len-1`; iterate positions with a C-style
   `for (( i=0; i < $(len a); i++ ))` (supported) or values with `@a`.
@@ -320,3 +323,73 @@ The capability is not lost: `keys m` gives the indices, `join m SEP` the values.
 
 Specs `spec/var_modifiers.sh` af.5–af.10 (af.10 demonstrates the broken round
 trip through the spellings that are legal).
+
+
+## Addendum 2026-10-02 — `keys m k`, the snapshot this DD already promised
+
+§3 above said `$(keys m)` was legal "as the **sole source of a for-in header**
+(or snapshotted into an array)", and closed by calling map access **symmetric**:
+`$(keys m)` splats the keys, `@m` splats the values.
+
+Measured, the symmetry held in two positions and broke in exactly the one the
+DD named. `array k=( $(keys m) )` was SB5025, `array k=$(keys m)` was SB4064,
+and there was no out-param form — `keys m k` was SB5073. `$(keys m)` was
+for-in-only, full stop. The parenthetical described something unimplemented.
+
+This surfaced as a **diagnostic contradiction**, which is how DG found it:
+`keys` was the only collection-valued name in `VALUE_ONLY_INTRINSICS`, so
+SB5073 handed out that list's generic advice — *"Capture it first
+(`x=$(keys m)`)"* — and SB5025 says in as many words that `$(keys m)` "cannot
+be joined into a scalar". One rule prescribed the repair the other exists to
+forbid. Fixing the wording made the two rules agree **on a prohibition**, with
+no way left to do the thing: `notes/tasks/keys-has-no-array-snapshot.md`.
+
+**DG chose the out-param form**, mirroring DD#60's `argv [N] a`:
+
+```sh
+map m
+m[alpha]=1
+m[beta]=2
+
+array k
+keys m k            # k = (alpha beta), in iteration order
+```
+
+### What it is
+
+- **Arity alone tells the two forms apart.** One argument is the splat
+  expression, two is the fill statement. `argv` needs a splat/fill
+  discriminator (`argv a` and `argv 1` are both arity 1); `keys` does not.
+- **The array is a snapshot, not a view.** Deleting a key afterwards leaves it
+  alone. `$(keys m)` walks the live map; this copies out of it.
+- **Order is the map's iteration order**, the same order `$(keys m)` yields.
+- The target **auto-declares** and is **replaced**, as every bulk fill is.
+- The source may be a DD#100 collection-parameter slot, so a function can
+  snapshot the keys of a map it was passed.
+
+### The result is clean
+
+This is the one place `keys m k` deliberately diverges from `argv a`, which is
+**tainted** as a bulk read (DD#61). Argv's bytes come from outside the program;
+a map's keys were put there by the program itself. DD#93 closes every route to
+a tainted map at construction, and a tainted value reaches a subscript only
+through `attest`, which cleans it — so there is no tainted key to carry over.
+
+(DD#93's claim was briefly false: `map m = @{a:!~}` dropped the DD#91 `:!`
+vouch, and that was fixed as its own P1 before this form was built. See journal
+459.)
+
+### Consequences in the compiler
+
+`keys` **leaves `VALUE_ONLY_INTRINSICS`**, exactly as `argv` is absent from it,
+because that list keys off the *name* and `keys` now has a spelling that is a
+legal statement. The rule it was carrying does not go away — `keys_form_diag`
+takes it over and still reports SB5073 for a one-argument `keys` in statement
+or non-sole-substitution position. Both wordings now name **both** repairs;
+before, there was nothing to suggest but the for-in form.
+
+`$(keys m k)` — the fill inside a capture — is SB4045, with text explaining
+that it produces no output so the capture would be empty, rather than reciting
+an arity. `match` is the only other name that needed that, for the same reason.
+
+Specs: `types.sh` 75.132-75.147, `errors.sh` via.27-30.

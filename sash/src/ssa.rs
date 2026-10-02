@@ -346,6 +346,21 @@ pub enum SsaInst {
     /// argv[start..argc] (0-indexed). Auto-declares and taints the array
     /// (a bulk-read source, like `read`; DD#61).
     ArgvFill { target: VarRef, start: i64 },
+    /// DD#75 §3: `keys m k` — snapshot map `source`'s string keys into the
+    /// indexed array `target`. Auto-declares the array, exactly as `ArgvFill`
+    /// does.
+    ///
+    /// Unlike `ArgvFill` the result is **clean**, and that is not an oversight.
+    /// `argv` is a bulk read of bytes from outside the program (DD#61); a map's
+    /// keys were all put there by the program itself, and DD#93 closes every
+    /// route to a tainted map at construction — a tainted key reaches a
+    /// subscript only through `attest`, which cleans it. So there is no
+    /// tainted key to carry over.
+    ///
+    /// `source` is a bare name rather than a `VarRef` because codegen resolves
+    /// a collection by name (`find_array_slot`), as every other
+    /// collection-operand instruction here does.
+    KeysFill { source: String, target: VarRef },
     /// Start capturing stdout (for $(func) capture). `site` identifies this
     /// capture uniquely within the program, so a `CaptureEnd` pairs with its
     /// own start rather than with whichever start ran most recently. Captures
@@ -634,6 +649,7 @@ impl SsaInst {
             | SsaInst::AttestRetag { .. }
             | SsaInst::CaptureEnd { .. }
             | SsaInst::ArgvFill { .. }
+            | SsaInst::KeysFill { .. }
             | SsaInst::CaptureStart { .. }
             | SsaInst::RedirectPop { .. } => vec![],
         }

@@ -114,6 +114,15 @@ impl SsaInst {
                     ctx,
                 );
             }
+            SsaInst::KeysFill { source, target } => {
+                return super::inst_handlers::handle_keys_fill(
+                    source,
+                    &target.name,
+                    builder,
+                    module,
+                    ctx,
+                );
+            }
             SsaInst::CaptureStart {
                 site,
                 buffered: true,

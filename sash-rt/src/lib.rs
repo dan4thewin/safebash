@@ -827,6 +827,38 @@ pub unsafe extern "C" fn sash_argv_snapshot(start: i64) -> *mut SashTable {
     t
 }
 
+// ═══════════════════════════════════════════════════════════════
+// sash_keys_snapshot — DD#75: keys m k
+// ═══════════════════════════════════════════════════════════════
+
+/// Snapshot a map's string keys into a fresh indexed table (DD#75 `keys m k`),
+/// the keys counterpart of [`sash_argv_snapshot`]. Element `i` is the key of
+/// the map's `i`th live entry, so the snapshot is in the same insertion order
+/// `$(keys m)` iterates and `sash_table_key` reports.
+///
+/// Both the keys and the values of the result are heap-copied by
+/// `sash_table_set`, so the array outlives any later `unset`/overwrite of the
+/// source map. That is the point of a *snapshot*: `$(keys m)` iterates the
+/// live map, this does not.
+///
+/// `sash_table_key` is itself O(live entries), so this is O(n²) in the map
+/// size — the same cost the `$(keys m)` for-in loop already pays per
+/// iteration, and not a new one.
+#[no_mangle]
+pub unsafe extern "C" fn sash_keys_snapshot(src: *const SashTable) -> *mut SashTable {
+    let n = sash_table_len(src);
+    let t = sash_table_new(if n < 4 { 4 } else { n });
+    let mut i: i64 = 0;
+    while i < n {
+        let mut klen: i64 = 0;
+        let kptr = sash_table_key(src, i, &mut klen);
+        let idx = i.to_ne_bytes();
+        sash_table_set(t, idx.as_ptr(), 8, kptr, klen);
+        i += 1;
+    }
+    t
+}
+
 /// DD#69: resolve an external `@{a:…}` splat to the table to expand.
 /// Non-empty array → the array itself. Empty array: `:?` (abort=1) aborts
 /// (exit 1, `<argv0>: WORD` on stderr); `:-` with a WORD (has_word=1) → a

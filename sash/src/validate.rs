@@ -577,18 +577,33 @@ fn check_cmdsub_arity(expr: &Expr, diags: &mut Vec<Diagnostic>) {
 
 /// The SB4045 text for a value intrinsic called inside `$( )`.
 ///
-/// `match` is the **only** name that is both a value intrinsic and a legal
-/// statement: `$(match S P)` captures the matched text, while `match S P ARR`
-/// fills `ARR` and yields a status. Every other name in both tables (`sub`,
-/// `gsub`, `len`, `strlen`, `keys`) is value-only — a bare statement draws
-/// SB5073 — so the generic "exact arity" sentence is accurate for them.
+/// Two names are both a value intrinsic and a legal statement, and the generic
+/// "exact arity" sentence denies the second form exists for either:
 ///
-/// It is not accurate for `match`: it denies the second form exists. Worse,
-/// the repair a reader infers from it is to consume the status (`|| :`), which
-/// **compiles** — `single_cmdsub_command` sees a list, not a command, so this
-/// check never runs — and captures the empty string silently. So the text
-/// steers to the two repairs that are actually right.
+/// - `$(match S P)` captures the matched text; `match S P ARR` fills `ARR`.
+/// - `$(keys m)` splats the keys; `keys m k` snapshots them into `k` (DD#75).
+///
+/// For `match` the misdirection was costly: the repair a reader infers from
+/// the generic text is to consume the status (`|| :`), which **compiles** —
+/// `single_cmdsub_command` sees a list, not a command, so this check never
+/// runs — and captures the empty string silently. So each gets text steering
+/// to the repair that is actually right.
+///
+/// The rest (`sub`, `gsub`, `len`, `strlen`) are value-only — a bare statement
+/// draws SB5073 — so the generic sentence is accurate for them.
 fn cmdsub_arity_diag(name: &str, arity: usize, got: usize, span: Span) -> Diagnostic {
+    if name == "keys" && got == 2 {
+        return Diagnostic::error_span(
+            span,
+            "SB4045",
+            "`keys` in `$( )` is the splat form and takes `m` — got 2 \
+             arguments. `keys m k` is the statement form: it snapshots the \
+             keys into array `k` and produces no output, so `$( )` would \
+             capture the empty string. Run it as its own statement, then use \
+             `k`"
+            .to_string(),
+        );
+    }
     if name == "match" && got == 3 {
         return Diagnostic::error_span(
             span,
@@ -3135,9 +3150,12 @@ const BUILTINS: &[&str] = &[
 /// (SB5073) instead of falling through to `sash_exec` and aborting at runtime
 /// with `sash: bug: bare command passed to sash_exec`.
 ///
-/// `argv` is deliberately absent — DD#60's `argv [N] a` out-param form is a
-/// legal statement. So are `match`/`matchall`, which are boolean commands with
-/// out-array forms.
+/// `argv` and `keys` are deliberately absent — DD#60's `argv [N] a` and
+/// DD#75's `keys m k` are out-param forms, and an out-param form is a legal
+/// statement. So are `match`/`matchall`, which are boolean commands with
+/// out-array forms. Each of the three has its own form check instead
+/// (`check_keys_form`, `argv_form_diag`, `match_arity_diag`), because for them
+/// it is the *spelling* that is or is not a statement, not the name.
 ///
 /// The remaining value intrinsics (`len`, `keys`, `join`, `toupper`, `random`,
 /// …) used to be absent from `BUILTINS` on the theory that they "already get
@@ -3158,7 +3176,6 @@ const VALUE_ONLY_INTRINSICS: &[&str] = &[
     "signum",
     "len",
     "strlen",
-    "keys",
     "join",
     "sub",
     "gsub",
@@ -3374,37 +3391,16 @@ enum CmdPos {
 /// for a body statement, because that one *is* inside a command substitution.
 /// Same rule, same code, different explanation.
 ///
-/// A **collection**-valued intrinsic gets its own pair, because the generic
-/// advice — capture it with `x=$(name …)` — names a form that is itself
-/// rejected. `keys` is the only such name here (`argv` is deliberately absent
-/// from `VALUE_ONLY_INTRINSICS`; see that list's comment), and `$(keys m)` is
-/// legal in exactly one position: the sole source of a for-in loop. SB5025's
-/// own wording says so in as many words — "it cannot be joined into a scalar"
-/// — so the generic sentence sent the author straight into a rule that
-/// contradicted it. Keep these two in agreement.
+/// Every name here is scalar-valued, so the generic advice — capture it with
+/// `x=$(name …)` — always names a form that works. The two **collection**
+/// intrinsics are not in `VALUE_ONLY_INTRINSICS` and do not reach this
+/// function; `keys` once was, and inherited a suggestion SB5025 rejects in as
+/// many words. If a collection-valued name is ever added to that list, it
+/// needs its own wording, not this one.
 fn value_intrinsic_diag(name: &str, c: &Command, pos: CmdPos) -> Option<Diagnostic> {
     let ellipsis = if c.args.is_empty() { "" } else { " …" };
-    let operand = || match c.args.first().map(expr_literal_str) {
-        Some(m) if !m.is_empty() => m.to_string(),
-        _ => "m".to_string(),
-    };
     let complaint = match pos {
         CmdPos::CmdsubSole => return None,
-        CmdPos::Statement if crate::resolve::is_collection_intrinsic(name) => format!(
-            "`{name}` splats a collection — it produces a sequence of values, \
-             not a statement, and a bare statement would discard them. The one \
-             position that takes it is the source of a for-in loop: \
-             `for k in $({name} {})`",
-            operand()
-        ),
-        CmdPos::CmdsubOther if crate::resolve::is_collection_intrinsic(name) => format!(
-            "`{name}` splats a collection — inside `$( … )` it is recognised \
-             only when it is the whole substitution, not one statement among \
-             several, and that substitution must be the source of a for-in \
-             loop: `for k in $({name} {})`. It cannot be captured into a \
-             scalar and used here",
-            operand()
-        ),
         CmdPos::Statement => format!(
             "`{name}` is a value intrinsic — it produces a value and is only \
              valid inside a command substitution, e.g. `x=$({name}{ellipsis})`. \
@@ -3538,6 +3534,11 @@ fn check_command_head(
         // DD#53: `cd DIR` takes exactly one directory. The environment is a
         // separate namespace, so there is no `$HOME` to fall back on.
         "cd" => return check_cd_arg(c, diags),
+        // DD#75 §3: `keys` has two forms — the `$(keys m)` splat and the
+        // `keys m k` out-param fill — so which position is legal depends on
+        // the spelling, not on the name. It cannot be in
+        // `VALUE_ONLY_INTRINSICS` for the same reason `argv` cannot.
+        "keys" => return diags.extend(keys_form_diag(c, pos)),
         // A value-producing intrinsic (`$(getenv NAME)`, `$(status)`, …) is
         // legal only as a command-substitution head. In statement position its
         // value has nowhere to go, and it used to fall through to `sash_exec`
@@ -4640,8 +4641,12 @@ fn check_args_immutable_stmt(stmt: &Statement, diags: &mut Vec<Diagnostic>) {
 }
 
 /// True if `c` is a builtin that writes the `args` array: `read -a args`,
-/// `read [SRC] args`, `readline args`, `argv … args`, `mapfile/readarray
-/// args`, or `attest … in args`.
+/// `read [SRC] args`, `readline args`, `argv … args`, `keys m args`,
+/// `mapfile/readarray args`, or `attest … in args`.
+///
+/// Every out-param form belongs here. `args` is immutable (DD#92) whatever the
+/// *source* of the bytes — DD#75's `keys m args` writes keys the program put
+/// there itself rather than anything external, and is rejected all the same.
 fn command_writes_args(c: &Command) -> bool {
     match expr_literal_str(&c.name) {
         // DD#99: the target is the last argument for both arities
@@ -4653,6 +4658,9 @@ fn command_writes_args(c: &Command) -> bool {
             c.args.len() == 3 && c.args.last().map(expr_literal_str) == Some("args")
         }
         "argv" => argv_target_name(&c.args) == Some("args"),
+        // DD#75: `keys m k` — the target is the second argument. One argument
+        // is the `$(keys m)` splat, which writes nothing.
+        "keys" => c.args.len() == 2 && c.args.last().map(expr_literal_str) == Some("args"),
         "attest" => attest_array_target(&c.args) == Some("args"),
         _ => false,
     }
@@ -5144,9 +5152,13 @@ fn argv_command_is_splat(c: &Command) -> bool {
 /// `$(argv)`, it is legal only as a for-in sole source; SB5025 elsewhere
 /// (DD#75 §3 — closes the memory-unsafe silent-join / garbage bypass where
 /// keys slipped past the argv-only context guard).
+///
+/// **One argument.** The two-argument `keys m k` is the DD#75 out-param fill,
+/// a statement; reading it as a splat here would make `for x in $(keys m k)`
+/// iterate a fill that produces no value.
 fn is_keys_splat_expr(expr: &Expr) -> bool {
     matches!(&expr.kind, ExprKind::CommandSubstitution(stmts)
-        if sole_cmdsub_command(stmts, "keys").is_some())
+        if sole_cmdsub_command(stmts, "keys").is_some_and(|c| c.args.len() == 1))
 }
 
 /// An array-returning command-sub splat legal as a for-in source:
@@ -5218,7 +5230,9 @@ fn is_arrvals_splat_op(op: Option<&str>) -> bool {
 /// so `for x in $(argv; /usr/bin/touch f)` compiled clean, iterated the
 /// program arguments, and never ran the `touch`: every statement after the
 /// first was discarded with nothing reported. `keys` escaped the same defect
-/// only because SB5073 catches it one pass earlier.
+/// because SB5073 catches it one pass earlier — now from `keys_form_diag`
+/// rather than from `VALUE_ONLY_INTRINSICS`, which it left when DD#75's
+/// `keys m k` made it a legal statement.
 fn sole_cmdsub_command<'a>(stmts: &'a [Statement], name: &str) -> Option<&'a Command> {
     let [stmt] = stmts else {
         return None;
@@ -6969,6 +6983,9 @@ fn collect_read_targets(c: &Command, set: &mut HashSet<String>) {
         // two-arg `match S P` is the boolean form and binds nothing.
         "matchall" | "match" if c.args.len() == 3 => insert_last_target_arg(&c.args, set),
         "argv" => insert_last_literal_arg(&c.args, set),
+        // DD#75: `keys m k` snapshots the map's keys into the array named
+        // last. One argument is the `$(keys m)` splat, which binds nothing.
+        "keys" if c.args.len() == 2 => insert_last_literal_arg(&c.args, set),
         _ => {}
     }
 }
@@ -7898,6 +7915,8 @@ fn insert_auto_collection_target(kind: &StmtKind, set: &mut HashSet<String>) {
         "match" | "matchall" if c.args.len() == 3 => insert_last_target_arg(&c.args, set),
         // DD#60: `argv [N] ARR` snapshots into the array named last.
         "argv" => insert_last_literal_arg(&c.args, set),
+        // DD#75: `keys m k` likewise. One argument is the splat form.
+        "keys" if c.args.len() == 2 => insert_last_literal_arg(&c.args, set),
         _ => {}
     }
 }
@@ -8595,6 +8614,10 @@ fn collect_cmd_global_taint(
 /// The names a bulk fill (`argv g`, `read g`, `mapfile g`) writes from outside
 /// the program. Empty for anything that is not a bulk fill, so SB5067 and the
 /// DD#100 slot analysis can never disagree about what counts as one.
+///
+/// DD#75's `keys m k` is deliberately absent. It is a fill, but not one from
+/// *outside*: the keys it copies were put in the map by this program, so the
+/// snapshot is clean (DD#93) and SB5067 has nothing to say about it.
 fn bulk_fill_targets(c: &Command) -> HashSet<String> {
     let name = expr_literal_str(&c.name);
     if !matches!(name, "read" | "readline" | "mapfile" | "argv") || is_value_split(name, c) {
@@ -8861,27 +8884,47 @@ fn check_fill_target_body(body: &[Statement], diags: &mut Vec<Diagnostic>) {
     }
 }
 
-fn flag_fill_target(c: &Command, span: Span, diags: &mut Vec<Diagnostic>) {
-    let builtin = expr_literal_str(&c.name);
-    // `unset` takes several targets and permits the subscript form `a[i]`;
-    // the fill builtins take one, and a bare name only.
-    let (targets, allow_subscript): (Vec<&str>, bool) = match builtin {
+/// Which words of `c` are out-params, and whether `a[i]` is allowed among
+/// them. `None` for a command that fills nothing.
+///
+/// `unset` takes several targets and permits the subscript form `a[i]`; the
+/// fill builtins take one, and a bare name only.
+fn fill_target_spec(c: &Command) -> Option<(Vec<&str>, bool)> {
+    let spec = match expr_literal_str(&c.name) {
         "argv" => (argv_target_name(&c.args).into_iter().collect(), false),
+        // DD#75: `keys m k` — the out-array is the second argument. One
+        // argument is the splat and has no target.
+        "keys" if c.args.len() == 2 => (last_arg_target(c), false),
         // DD#63: the out-array is the third argument. `match S P` is the
         // two-arg boolean form and has no target at all, and a wrong arity
         // is SB4045's to report — do not preempt it.
-        "match" | "matchall" if c.args.len() == 3 => (
-            c.args.last().map(expr_literal_str).into_iter().collect(),
-            false,
-        ),
+        "match" | "matchall" if c.args.len() == 3 => (last_arg_target(c), false),
         "unset" => (c.args.iter().map(expr_literal_str).collect(), true),
-        _ => return,
+        _ => return None,
     };
+    Some(spec)
+}
+
+/// The trailing word, as the sole target.
+fn last_arg_target(c: &Command) -> Vec<&str> {
+    c.args.last().map(expr_literal_str).into_iter().collect()
+}
+
+/// A target is a binding, so it must be a bare name; `unset` additionally
+/// accepts `a[i]`.
+fn is_valid_fill_target(word: &str, allow_subscript: bool) -> bool {
+    is_plain_identifier(word) || (allow_subscript && is_subscripted_name(word))
+}
+
+fn flag_fill_target(c: &Command, span: Span, diags: &mut Vec<Diagnostic>) {
+    let Some((targets, allow_subscript)) = fill_target_spec(c) else {
+        return;
+    };
+    let builtin = expr_literal_str(&c.name);
     for target in targets {
-        if is_plain_identifier(target) || (allow_subscript && is_subscripted_name(target)) {
-            continue;
+        if !is_valid_fill_target(target, allow_subscript) {
+            diags.push(fill_target_diag(builtin, span));
         }
-        diags.push(fill_target_diag(builtin, span));
     }
 }
 
@@ -10334,6 +10377,64 @@ fn argv_index_diag(index: &Expr, span: Span) -> Option<Diagnostic> {
 fn is_bare_index_literal(index: &Expr) -> bool {
     let text = expr_literal_str(index);
     !text.is_empty() && text.bytes().all(|b| b.is_ascii_digit()) && text.parse::<i64>().is_ok()
+}
+
+/// The complaint for one `keys` command, or `None` if its shape is legal here.
+///
+/// DD#75 §3 gives `keys` two forms, and unlike `argv`'s they are told apart by
+/// **arity alone** — no splat/fill discriminator is needed:
+///
+/// - `keys m k` (two arguments) is the out-param fill. It is a statement, and
+///   legal wherever a statement is.
+/// - `$(keys m)` (one argument) is the array splat. It is an *expression*, and
+///   `transform` resolves it only as the whole of a `$( … )` that sources a
+///   for-in loop.
+///
+/// The one-argument form in any other position is SB5073, with the same
+/// meaning it had when `keys` was in `VALUE_ONLY_INTRINSICS`: a value form
+/// where its value has nowhere to go. It left that list because the list keys
+/// off the *name*, and `keys` now has a spelling that is a legal statement.
+///
+/// Both wordings name **both** repairs. The earlier pair named only the for-in
+/// form, because at the time that was the only thing an author could do with a
+/// map's keys; `keys m k` is usually what someone writing `keys m` as a
+/// statement actually meant.
+fn keys_form_diag(c: &Command, pos: CmdPos) -> Option<Diagnostic> {
+    let operand = match c.args.first().map(expr_literal_str) {
+        Some(m) if !m.is_empty() => m.to_string(),
+        _ => "m".to_string(),
+    };
+    let complaint = match (c.args.len(), pos) {
+        // The out-param fill: a statement, legal in any statement position.
+        (2, _) => return None,
+        (1, CmdPos::CmdsubSole) => return None,
+        (1, CmdPos::Statement) => format!(
+            "`keys` splats a collection — it produces a sequence of values, \
+             not a statement, and a bare statement would discard them. To \
+             snapshot the keys into an array, name it: `keys {operand} k`. To \
+             iterate them, `for k in $(keys {operand})`"
+        ),
+        (1, CmdPos::CmdsubOther) => format!(
+            "`keys` splats a collection — inside `$( … )` it is recognised \
+             only when it is the whole substitution, not one statement among \
+             several, and that substitution must be the source of a for-in \
+             loop: `for k in $(keys {operand})`. It cannot be captured into a \
+             scalar and used here; to get the keys as an array, use the \
+             out-param form `keys {operand} k`"
+        ),
+        (n, _) => {
+            return Some(Diagnostic::error_span(
+                c.name.span,
+                "SB4045",
+                format!(
+                    "`keys` takes `m` (splat the keys of map m, as the source \
+                     of a for-in loop) or `m k` (snapshot them into array k) \
+                     — got {n} argument(s)"
+                ),
+            ))
+        }
+    };
+    Some(Diagnostic::error_span(c.name.span, "SB5073", complaint))
 }
 
 fn match_arity_diag(name: &str, n: usize, span: Span) -> Option<Diagnostic> {

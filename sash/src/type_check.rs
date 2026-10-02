@@ -1885,6 +1885,9 @@ fn check_command(c: &Command, span: Span, env: &mut TypeEnv, errors: &mut Vec<Ty
         "match" | "matchall" if c.args.len() == 3 => {
             register_collection_target(c, span, env, errors)
         }
+        // DD#75 §3: `keys m k` snapshots a map's keys into the trailing
+        // array. One argument is the `$(keys m)` splat, which fills nothing.
+        "keys" if c.args.len() == 2 => register_collection_target(c, span, env, errors),
         // DD#99: `readline` is the scalar half of the family (SB5057 pins it to
         // exactly one bare target), so its target type wants the opposite check.
         "readline" => check_scalar_fill_target(c, span, env, errors),

@@ -1,5 +1,5 @@
 ---
-status: open
+status: done
 priority: P3
 depends:
 gates:
@@ -86,3 +86,28 @@ which is what keys are usually for.
 - `notes/decisions/DD60-argv-trio.md` (the out-param precedent)
 - `sash/src/validate.rs::value_intrinsic_diag`, `keys_splat_diag`
 - `spec/errors.sh` via.12, via.27-30
+
+## Done
+
+DG chose **(b)**, the `keys m k` out-param. Implemented 2026-10-02; the DD#75
+addendum is the public record and journal 459 the narrative.
+
+Two things worth keeping from the build:
+
+**The two forms are told apart by arity alone** — one argument is the splat,
+two is the fill — so `keys` needed none of the splat/fill discriminator
+machinery `argv` carries (`argv a` and `argv 1` are both arity 1, which is why
+`is_bare_index_literal` has to arbitrate). `keys_form_diag` is one function
+hung off `check_command_head`'s existing `CmdPos`, with no new walker.
+
+**The snapshot is clean**, where `argv a` is tainted. That is the DD#93
+consequence, not an oversight: argv's bytes come from outside the program, a
+map's keys were put there by it. Checked the premise first rather than citing
+it — the previous session's version of that claim turned out to rest on a bug.
+
+### The gap found while building it
+
+`keys m args` was accepted. Every other out-param form (`argv args`,
+`read args`, `match … args`, `attest … in args`) is SB5052, and `args` is
+immutable whatever the source of the bytes. `command_writes_args` needed the
+`keys` arm. Pinned by `types.sh` 75.147.

@@ -193,6 +193,15 @@ fn classify_inst_def(
             // DD#60/#61: argv is a bulk-read source — always tainted.
             taint.insert(var_key(target), Taint::Tainted);
         }
+        SsaInst::KeysFill { target, .. } => {
+            // DD#75 §3 / DD#93: the keys of a map are always clean. Every
+            // route to a tainted map is closed at construction, and a tainted
+            // value reaches a subscript only through `attest`, which cleans
+            // it — so the source map has no tainted key to hand over. This is
+            // deliberately NOT the `ArgvFill` rule above: argv's bytes come
+            // from outside the program, a map's keys were put there by it.
+            taint.insert(var_key(target), Taint::Clean);
+        }
         SsaInst::ReadArray {
             target, clean_pipe, ..
         } => {
