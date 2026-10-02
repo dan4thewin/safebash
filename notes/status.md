@@ -1,4 +1,51 @@
-## ══ STATUS (2026-10-02, latest) — the advice that another rule rejected ══
+## ══ STATUS (2026-10-02, latest) — the counter-example that was a bug ══
+
+Sweep **7345** (3775 native, 3557 c, 13 skipped), zero failures, predicted
+exactly (7303 + 2×(15+6)). `mk test` rc=0. Journal 459.
+
+DG, on a claim I had just made with more confidence than evidence: *"your
+counter-example to make a tainted map?"* I had none, and should have. Hunting
+for one found **three defects**, all now fixed.
+
+**1. `map m = @{a:!~}` dropped the DD#91 vouch** (P1). The DD says the bypass
+*"is applied in both taint passes so they agree"*. They did not: this compiled
+past `validate` and died at the **use** on the SSA backstop — no SB code, no
+span, an internal version name. `SsaInst::MapFromArray`'s `mode` collapses
+`:~` and `:!` to one value and had **no field** for the vouch; the transform
+dropped `pe.taint_off` on the floor. The same `:!` in a command-arg position
+was correct throughout.
+
+**2. Every bulk fill accepted a map target** (P1). `map m; read m` compiled
+clean and wrote DD#33 raw-i64 keys into a string-keyed table — a key of eight
+NUL bytes, a DD#87 breach from ordinary safe code, surfacing far downstream as
+a runtime abort about NUL truncation. DD#99 states the rule in as many words;
+nothing enforced it. `check_command` **already** dispatched all four fills at
+the right arities — the single guard in `register_collection_target` tested for
+a *scalar* target, and a map is in `collections` too. `readline` is the mirror
+and was silently discarding the line into a collection (`len=0`).
+
+**3. `check_collection_reader_taint`'s `keys` arm reported a map that cannot
+exist.** It called a tainted *array* a map, advised an `attest k v in a` that
+is itself rejected, and **masked defect 2** (validate runs before type_check).
+Deleted; `join` stays, with a spec control so deleting both cannot pass.
+
+**DD#93 is restored, not falsified.** Its table of routes to a tainted map
+predates `:!`, so the fourth route was real — but a vouched map is **clean**.
+Re-checked all four by hand post-fix: `@{a:~}`/`@{a:-X}` → SB5020,
+`m[k]=$tainted` → SB5021, `read m`/`argv m`/`match … m` → SB4030, `@{a:!~}` →
+clean by the author's vouch. `keys` is unconditionally clean, as claimed.
+
+Deleting the bogus arm uncovered a **duplicate SB4030** in for-in headers: two
+overlapping walkers, `check_for`'s words loop and `check_stmt`'s unconditional
+`cmdsub_bodies()` walk. Not fixed — the walkers are **not equivalent**, so
+"delete one" is unavailable and merging would widen where `check_len_operand`
+fires. DG's call: `notes/tasks/duplicate-type-error-in-for-header-cmdsub.md`,
+three options, no recommendation.
+
+**Next up:** the `keys m k` out-param form DG chose in
+`keys-has-no-array-snapshot.md` — the feature this whole detour interrupted.
+
+## ══ STATUS (2026-10-02) — the advice that another rule rejected ══
 
 Sweep **7303** (3754 native, 3536 c, 13 skipped), zero failures, predicted two
 independent ways. `mk test` rc=0. Journal 458 addendum 2.
