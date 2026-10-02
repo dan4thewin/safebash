@@ -899,7 +899,7 @@ fn lower_map_from_array(
     state: &mut VersionState,
     block: BlockId,
 ) -> bool {
-    let Some((source, mode, key, message)) = map_from_array_parts(a, state) else {
+    let Some((source, mode, key, message, taint_off)) = map_from_array_parts(a, state) else {
         return false;
     };
     state.collections.insert(a.name.clone());
@@ -919,6 +919,7 @@ fn lower_map_from_array(
         mode,
         key,
         message,
+        taint_off,
     });
     true
 }
@@ -947,7 +948,7 @@ fn arrvals_fill_mode(pe: &ParameterExpansion) -> Option<(u8, String)> {
 fn map_from_array_parts(
     a: &DeclAssignment,
     state: &mut VersionState,
-) -> Option<(String, u8, SsaValue, String)> {
+) -> Option<(String, u8, SsaValue, String, bool)> {
     let ExprKind::ParameterExpansion(pe) = &a.value.as_ref()?.kind else {
         return None;
     };
@@ -962,5 +963,5 @@ fn map_from_array_parts(
             String::new()
         }),
     };
-    Some((pe.name.clone(), mode, key, message))
+    Some((pe.name.clone(), mode, key, message, pe.taint_off))
 }

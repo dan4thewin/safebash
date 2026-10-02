@@ -5,7 +5,7 @@
 set -eu
 . common.sh
 setup taint_switch
-plan=37
+plan=43
 echo "1..$plan" >&3
 
 set +e
@@ -309,6 +309,60 @@ run_sash 'array a=( )
 run_sash 'array a=( )
 /bin/echo $(str t=$(getenv HOME); array b=( $t @{a:-z} ); array c=( @{b:!-z} ); echo $c[0])'
 [[ $rc = 0 && $out = "$HOME" && -z $rerr ]]; chk bkstp.12
+
+# bkstp.13-bkstp.18 cover the vouch through a MAP construction (DD#99
+#         `map m = @{a:DISP}`). `SsaInst::MapFromArray` originally had no field
+#         for the `!`, because its `mode` collapses `:~` and `:!` into one
+#         value -- they share the ODD-COUNT behaviour, which is orthogonal to
+#         the taint bypass. So the vouch was dropped at lowering and the
+#         backstop disagreed with the front end, which DD#91 forbids: the
+#         program compiled past `validate` and then died at the *use* with an
+#         internal message naming an SSA version and carrying no SB code.
+#         These need no `$( )` vehicle -- `--no-taint-cst` already leaves the
+#         backstop as the only judge.
+# bkstp.13 POSITIVE -- `@{a:!~}` vouches, so the map derives clean and its
+#          VALUE is readable.
+run_sash 'str t=$(getenv HOME)
+array a=( k $t )
+map m = @{a:!~}
+/bin/echo ${m[k]}'
+[[ $rc = 0 && $out = "$HOME" && -z $rerr ]]; chk bkstp.13
+# bkstp.14 NEGATIVE -- the same construction one character apart. `:~` says
+#          what to do with an odd trailing element; it vouches for nothing.
+run_sash 'str t=$(getenv HOME)
+array a=( k $t )
+map m = @{a:~}
+/bin/echo ${m[k]}'
+[[ $rc != 0 && -z $out && $err == *"taint backstop"* ]]; chk bkstp.14
+# bkstp.15 POSITIVE -- the KEY side of the same map. A map taints as one unit,
+#          but keys and values reach the use site by different routes
+#          (`SsaValue::TableKey` vs a subscript), so both are pinned.
+run_sash 'str t=$(getenv HOME)
+array a=( $t v )
+map m = @{a:!~}
+for k in $(keys m) { /bin/echo $k }'
+[[ $rc = 0 && $out = "$HOME" && -z $rerr ]]; chk bkstp.15
+# bkstp.16 NEGATIVE -- the key route without the vouch.
+run_sash 'str t=$(getenv HOME)
+array a=( $t v )
+map m = @{a:~}
+for k in $(keys m) { /bin/echo $k }'
+[[ $rc != 0 && -z $out && $err == *"taint backstop"* ]]; chk bkstp.16
+# bkstp.17 POSITIVE -- mode 0 (`:-KEY`). The vouch is carried in its own field
+#          rather than a third `mode`, so it must hold for every disposition,
+#          not just the `:~` that shares mode 2 with it.
+run_sash 'str t=$(getenv HOME)
+array a=( k $t )
+map m = @{a:!-z}
+/bin/echo ${m[k]}'
+[[ $rc = 0 && $out = "$HOME" && -z $rerr ]]; chk bkstp.17
+# bkstp.18 POSITIVE -- mode 1 (`:?MSG`), the other half of that argument. The
+#          count is even, so the abort path is not taken and the map is built.
+run_sash 'str t=$(getenv HOME)
+array a=( k $t )
+map m = @{a:!?e}
+/bin/echo ${m[k]}'
+[[ $rc = 0 && $out = "$HOME" && -z $rerr ]]; chk bkstp.18
 unset SASH_CFLAGS
 
 set -e

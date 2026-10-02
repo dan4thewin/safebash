@@ -291,12 +291,19 @@ pub enum SsaInst {
     /// PAIRWISE. `mode` is the odd-count disposition: 0 `:-KEY` (the trailing
     /// element becomes the value of `key`), 1 `:?` (abort), 2 `:~`/`:!`
     /// (discard). An empty array is a valid empty map.
+    ///
+    /// DD#91: `taint_off` is the `!` vouch, and it needs its own field because
+    /// `mode` cannot carry it — `:~` and `:!` share mode 2 precisely because
+    /// they share the *odd-count* behaviour, which is orthogonal to the taint
+    /// bypass. Dropping it here made the SSA taint pass disagree with
+    /// `validate` about `map m = @{a:!~}`, which DD#91 forbids.
     MapFromArray {
         source: String,
         target: VarRef,
         mode: u8,
         key: SsaValue,
         message: String,
+        taint_off: bool,
     },
     /// DD#99: `read $SRC ARRAY` — split a scalar VALUE on NUL into an
     /// indexed array. The stdin form is `ReadArray`; this is the same split

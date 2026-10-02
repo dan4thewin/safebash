@@ -205,10 +205,13 @@ fn classify_inst_def(
             let t = value_is_tainted(source, taint, user_functions);
             taint.insert(var_key(target), t);
         }
-        SsaInst::MapFromArray { source, target, .. } => {
-            // DD#99 `map m = @{a:DISP}` — the map is as tainted as its source
-            // array, resolved by name (arrays read at their latest version).
-            let t = taint_of_name(taint, source);
+        SsaInst::MapFromArray {
+            source,
+            target,
+            taint_off,
+            ..
+        } => {
+            let t = map_fill_taint(source, *taint_off, taint);
             taint.insert(var_key(target), t);
         }
 
@@ -464,6 +467,23 @@ fn elide_taint(
         Taint::Clean
     } else {
         value_is_tainted(source, taint, user_functions)
+    }
+}
+
+/// DD#99/#91: taint of `map m = @{a:DISP}`. The map is as tainted as its
+/// source array (resolved by name — arrays read at their latest version),
+/// unless the `!` spelling vouched for the read, which answers Clean exactly
+/// as `splat_taint` does for `@a:!`.
+///
+/// Unlike `splat_taint` this needs no word carve-out. A splat's `:-WORD` is a
+/// value the splat can yield, so `!` must not vouch for it; a map fill's
+/// `:-KEY` and `:?MSG` are literals (SB4070), so neither can carry taint in
+/// the first place.
+fn map_fill_taint(source: &str, taint_off: bool, taint: &HashMap<String, Taint>) -> Taint {
+    if taint_off {
+        Taint::Clean
+    } else {
+        taint_of_name(taint, source)
     }
 }
 
