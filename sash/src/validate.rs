@@ -1378,7 +1378,10 @@ fn check_for_word(w: &Expr, diags: &mut Vec<Diagnostic>) {
                 "{spelling} in a for-loop is a single scalar, not a collection \
                  — word splitting is eliminated by design, so this could only \
                  ever run one iteration; iterate an array instead \
-                 (`for x in @arr`), or use the value directly without a loop"
+                 (`for x in @arr`), stream a command's output a line at a time \
+                 with `cmd | while readline x {{ … }}`, split a value into an \
+                 array with `read -a arr`, or use the value directly without a \
+                 loop"
             ),
         ));
     }
@@ -1413,8 +1416,11 @@ fn for_source_scalar(w: &Expr) -> Option<String> {
         // `$(( … ))` is a number.
         ExprKind::Arithmetic(_) => Some("an arithmetic expansion".to_string()),
         ExprKind::CommandSubstitution(stmts) => for_source_scalar_cmdsubst(stmts),
-        // `$(<file)` is a stream of lines, like an external command.
-        ExprKind::SlurpFile(_) => None,
+        // `$(<file)` is a capture too — the whole file as one value. It used to
+        // be exempted as "a stream of lines, like an external command", which
+        // was the same line-stream mistake: it already ran exactly one
+        // iteration binding the entire file, newlines and all.
+        ExprKind::SlurpFile(_) => Some("`$(< …)`".to_string()),
         // Collection literals and a test are not scalar sources; neither is a
         // legal for-in word, and each is rejected by its own rule.
         ExprKind::Array(_) | ExprKind::AssocArray(_) | ExprKind::Test(_) => None,
@@ -1460,30 +1466,52 @@ fn for_source_scalar_parts(parts: &[Expr], joined: &str) -> Option<String> {
     }
 }
 
-/// A `$( )` for-in source is a collection when it runs a command — DD#28/DD#40
-/// iterate that command's output by line. A **value** intrinsic runs nothing:
-/// `$(getcwd)` is a scalar, and `$(argv)` / `$(keys m)` are the two that do
-/// yield a collection.
+/// A `$( )` for-in source is a **capture** — one scalar value, exactly as
+/// `v=$( … )` binds one — so it is a scalar source unless it denotes a
+/// collection. Only two intrinsics do: `$(argv …)` and `$(keys m)`.
 ///
-/// This is the hole DD#111 found in the other direction: `resolve`'s intrinsic
-/// exemption skips the DD#23 path check, so without this test the name reached
-/// codegen as a bare external and the program aborted with "bare command
-/// passed to sash_exec".
+/// **Deny-by-default on purpose.** This rule used to allow by default and
+/// reject only [`crate::resolve::is_scalar_value_intrinsic`], so everything
+/// else — every external command, builtin, pipeline, statement sequence and
+/// user function — fell through the bottom and was lowered as an iterable
+/// "line stream". There is no line stream in sash's value model: splitting a
+/// capture on newlines is word splitting by another name, which DD#28
+/// eliminates. The old lowering also miscompiled three ways (2026-10-02):
+/// `$(a; b)` became the pipeline `a | b` so only `b`'s output survived,
+/// a `$(a | b)` stage was silently dropped and the loop ran zero times, and
+/// `$(f)` on a user function reached `sash_exec` as a bare name and aborted
+/// the compiled program at runtime.
+///
+/// This is the same hole DD#111 found from the other side, and the reason the
+/// polarity is now stated as an exception list rather than a rejection list.
 fn for_source_scalar_cmdsubst(stmts: &[Statement]) -> Option<String> {
-    let [stmt] = stmts else {
+    // An `$(argv …)` splat among several statements is SB5025's to report: that
+    // the *other* statements would be silently discarded is a more specific
+    // complaint than this rule's, and DG settled the form 2026-09-29. Defer
+    // rather than preempt — this rule would otherwise answer "iterate an array
+    // instead", which is not the author's problem. `keys` has no such sibling
+    // rule, so a multi-statement `$(keys m; …)` is left to the general case.
+    if stmts.iter().any(is_argv_splat_stmt) {
         return None;
+    }
+    let capture = || Some("a command substitution".to_string());
+    let [stmt] = stmts else {
+        return capture();
     };
     let inner = match &stmt.kind {
         StmtKind::Redirected(r) => &r.body.kind,
         other => other,
     };
     let StmtKind::Command(c) = inner else {
-        return None;
+        return capture();
     };
     let ExprKind::Literal(name) = &c.name.kind else {
-        return None;
+        return capture();
     };
-    crate::resolve::is_scalar_value_intrinsic(name).then(|| format!("`$({name})`"))
+    if crate::resolve::is_collection_intrinsic(name) {
+        return None;
+    }
+    Some(format!("`$({name})`"))
 }
 
 /// DD#31: a comma expression like `(a=1, x<5)` desugars to a

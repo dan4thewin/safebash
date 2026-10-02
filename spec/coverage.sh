@@ -6,7 +6,7 @@
 set -eu
 . common.sh
 setup coverage
-plan=352
+plan=351
 echo "1..$plan" >&3
 
 set +e
@@ -232,14 +232,11 @@ run_sash 'command /bin/echo hi'
 # other `$(<…)` in the tree are bash harness code, not sash source).
 run_sash 'echo $(< /etc/hostname)'
 [[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk cov.59
-# cov.61 `for x in $(cmd)` → the DD#28/#40 pipe-while-read transform
-# (control_flow.rs emit_cmdsubst_pipe_while_read / build_cmdsubst_stage /
-# build_pipeline_stages_from_cmdsubst). `read` is line-based (one iteration for
-# `echo a b c`, no word-split — a deliberate divergence from bash), and the
-# tainted loop var is attested with a predicate. Native-only: the c backend does
-# an extra empty EOF iteration here (task c-pipe-while-read-eof-extra-iter).
-run_sash 'for x in $(echo a b c); do attest x [[ -n $x ]]; echo "$x"; done'
-[[ $rc = 0 && $out = "a b c" && -z $err ]]; chk cov.61
+# cov.61 RETIRED 2026-10-02: it covered emit_cmdsubst_pipe_while_read /
+# build_cmdsubst_stage / build_pipeline_stages_from_cmdsubst, all deleted when
+# a `$( )` for-in source became SB5009 (a capture is one value — DD#28). The
+# same program is now pinned as a rejection by control_flow.sh fs.8, and the
+# c-backend EOF divergence this spec carried went with the lowering.
 # cov.62 a backtick inside "…" is a LITERAL char (lexer scan_dq_backtick emits a
 # Literal, not a CommandSub): backticks are only top-level `$( )` sugar and have
 # no special meaning in quotes (DG 2026-08-28). The command is never run — the

@@ -5,7 +5,7 @@
 set -eu
 . common.sh
 setup control_flow
-plan=79
+plan=83
 echo "1..$plan" >&3
 
 set +e
@@ -442,15 +442,50 @@ for v in ${a[0]} { echo "$v" }'
 run_sash 'for v in $(( 1 + 1 )) { echo "$v" }'
 [[ $rc != 0 && -z $out && $err == *SB5009* ]]; chk fs.7
 
-# fs.8 the rule must NOT over-reach: a BUILTIN command writes to a pipe, and
-# its output is iterated by line (DD#28/#40). `echo` is deliberately outside
-# the scalar-intrinsic set for exactly this reason.
+# fs.8 a `$( )` capture is ONE value however many lines it holds, so a command
+# substitution is a scalar source like any other. This used to be accepted and
+# lowered to a pipe-and-read loop that split the capture on newlines — word
+# splitting by another name, which DD#28 eliminates. It never matched bash
+# either: bash word-splits `a b c` into three iterations, sash ran exactly one
+# binding the whole string (the old spec pinned `out = "[a b c]"` and called the
+# divergence deliberate).
 run_sash 'for x in $(echo a b c) { attest x [[ -n $x ]]; echo "[$x]" }'
-[[ $rc = 0 && $out = "[a b c]" && -z $err ]]; chk fs.8
+[[ $rc != 0 && -z $out && $err == *SB5009* ]]; chk fs.8
 
 # fs.9 …and a one-element LITERAL list is still a list, not a scalar
 run_sash 'for v in solo { echo "$v" }'
 [[ $rc = 0 && $out = "solo" && -z $err ]]; chk fs.9
+
+# ── fs.10–fs.13: the four shapes the old line-stream lowering miscompiled ──
+# Each compiled clean and produced a wrong answer; all are now SB5009. The
+# rule is deny-by-default, so these are rejected by the general case rather
+# than by four special cases. (`cmd | while readline v` — spec 14.46 in
+# commands.sh — is the streaming replacement the diagnostic names.)
+
+# fs.10 a statement SEQUENCE was lowered as a PIPELINE: `$(echo a; echo b)`
+# became `echo a | echo b`, so only `b` survived. bash prints both.
+run_sash 'for k in $(echo a; echo b) { attest k [[ -n $k ]]; echo "[$k]" }'
+[[ $rc != 0 && -z $out && $err == *SB5009* ]]; chk fs.10
+
+# fs.11 a real PIPELINE inside the capture is not a `StmtKind::Command`, so the
+# stage builder returned None and the loop silently dropped it — zero
+# iterations, no diagnostic. bash prints `[a]`.
+run_sash 'for k in $(echo a | cat) { attest k [[ -n $k ]]; echo "[$k]" }'
+[[ $rc != 0 && -z $out && $err == *SB5009* ]]; chk fs.11
+
+# fs.12 a USER FUNCTION capture took the raw name with no DD#23 resolution and
+# reached `sash_exec` bare: the compiled program aborted at runtime with
+# "sash: bug: bare command passed to sash_exec". Same class as the test-operand
+# ICE (bug-fn-capture-in-test-operand-ice), a third position missing the lift.
+run_sash 'fn g { echo a }
+for k in $(g) { attest k [[ -n $k ]]; echo "[$k]" }'
+[[ $rc != 0 && -z $out && $err == *SB5009* ]]; chk fs.12
+
+# fs.13 `$(< file)` was exempted as "a stream of lines, like an external
+# command" — the same mistake. It already ran exactly one iteration binding the
+# entire file, embedded newlines and all.
+run_sash 'for k in $(< /etc/hostname) { attest k [[ -n $k ]]; echo "[$k]" }'
+[[ $rc != 0 && -z $out && $err == *SB5009* ]]; chk fs.13
 
 
 set -e

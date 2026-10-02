@@ -1,15 +1,11 @@
 //! Control flow: if/while/for/case → SSA blocks with branches.
 
-use super::expressions::{
-    arg_to_value, expr_to_string, expr_to_value, resolve_args_name, test_to_ssa,
-};
+use super::expressions::{expr_to_string, expr_to_value, resolve_args_name, test_to_ssa};
 use super::helpers::insert_phis_two_branch;
 use super::pipelines::{lower_for_argv_slice, lower_for_array};
 use super::statements::lower_stmts;
 use crate::ir::*;
 use crate::ssa::*;
-
-use super::resolution::resolve_pipeline_command;
 
 pub(super) fn flatten_elif(i: &If) -> If {
     if i.elif_clauses.is_empty() {
@@ -572,9 +568,6 @@ pub(super) fn lower_for(
     if let Some(b) = try_dispatch_array(f, ssa, state, block) {
         return b;
     }
-    if let Some(b) = try_dispatch_cmdsubst(f, ssa, state, block) {
-        return b;
-    }
     if let Some(b) = try_dispatch_glob(f, ssa, state, block) {
         return b;
     }
@@ -740,111 +733,6 @@ fn detect_array_iter(kind: &ExprKind) -> Option<ArrayIter> {
         }
         _ => None,
     }
-}
-
-fn try_dispatch_cmdsubst(
-    f: &For,
-    ssa: &mut SsaProgram,
-    state: &mut VersionState,
-    block: BlockId,
-) -> Option<BlockId> {
-    if !is_dynamic_single_word(f) {
-        return None;
-    }
-    let ExprKind::CommandSubstitution(stmts) = &f.words[0].kind else {
-        return None;
-    };
-    // DD#28/DD#40: transform `for x in $(cmd args)` into the pipeline
-    // `cmd args | …`, whose output is consumed one line at a time by
-    // `SsaInst::ReadLine` — DD#99 `readline`, which binds a scalar per line.
-    // Neither `read` nor `readline` takes flags; this comment used to say
-    // `while read -r x`, naming a bash spelling sash does not have and the
-    // wrong half of the read/readline pair besides.
-    //
-    // Only a *command* reaches here. A value intrinsic (`$(getcwd)`) is a
-    // scalar, not a line stream, and validate rejects it as a for-in source
-    // (SB5009) — without that check it arrived as a bare external and the
-    // compiled program aborted in `sash_exec`.
-    let stages = build_pipeline_stages_from_cmdsubst(stmts, state);
-    Some(emit_cmdsubst_pipe_while_read(f, stages, ssa, state, block))
-}
-
-fn build_pipeline_stages_from_cmdsubst(
-    stmts: &[Statement],
-    state: &mut VersionState,
-) -> Vec<(String, Vec<SsaValue>, Vec<crate::ir::Redirect>)> {
-    let mut stages = vec![];
-    for stmt in stmts {
-        if let Some(stage) = build_cmdsubst_stage(stmt, state) {
-            stages.push(stage);
-        }
-    }
-    stages
-}
-
-/// Lower one `$( … )` pipeline stage statement to `(resolved_name, args,
-/// redirects)`. Returns `None` for a non-command statement.
-fn build_cmdsubst_stage(
-    stmt: &Statement,
-    state: &mut VersionState,
-) -> Option<(String, Vec<SsaValue>, Vec<crate::ir::Redirect>)> {
-    let cmd_stmt = match &stmt.kind {
-        StmtKind::Redirected(r) => &r.body,
-        _ => stmt,
-    };
-    let StmtKind::Command(c) = &cmd_stmt.kind else {
-        return None;
-    };
-    let name = expr_to_string(&c.name);
-    let args: Vec<SsaValue> = c.args.iter().map(|a| arg_to_value(a, state)).collect();
-    let redirs = match &stmt.kind {
-        StmtKind::Redirected(r) => r.redirects.clone(),
-        _ => vec![],
-    };
-    Some((resolve_pipeline_command(&name, state), args, redirs))
-}
-
-fn emit_cmdsubst_pipe_while_read(
-    f: &For,
-    stages: Vec<(String, Vec<SsaValue>, Vec<crate::ir::Redirect>)>,
-    ssa: &mut SsaProgram,
-    state: &mut VersionState,
-    block: BlockId,
-) -> BlockId {
-    ssa.block_mut(block).insts.push(SsaInst::Pipeline {
-        stages,
-        capture_read_fd: true,
-        checked: true,
-        suppressed: vec![],
-        negated: vec![],
-    });
-
-    let loop_var = &f.variable;
-    let header = ssa.new_block("for_cmd.hdr");
-    let body_block = ssa.new_block("for_cmd.body");
-    let exit = ssa.new_block("for_cmd.exit");
-
-    ssa.block_mut(block).terminator = Terminator::Goto(header);
-
-    let target = state.define(loop_var);
-    ssa.block_mut(header).insts.push(SsaInst::ReadLine {
-        target,
-        fd: -1,
-        redirects: vec![],
-        clean_pipe: false,
-    });
-    ssa.block_mut(header).terminator = Terminator::Branch {
-        condition: "__test_result".to_string(),
-        true_block: body_block,
-        false_block: exit,
-    };
-
-    state.loop_stack.push((header, exit));
-    let body_end = lower_stmts(&f.body, ssa, state, body_block);
-    state.loop_stack.pop();
-    ssa.block_mut(body_end).terminator = Terminator::Goto(header);
-
-    exit
 }
 
 fn lower_for_static(

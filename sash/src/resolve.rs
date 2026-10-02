@@ -52,16 +52,19 @@ pub(crate) fn is_intrinsic(name: &str) -> bool {
     BuiltinCmd::from_name(name) != BuiltinCmd::Other || INTRINSICS.contains(&name)
 }
 
-/// True for an intrinsic whose `$( )` value is a **single scalar** — every
-/// name in [`INTRINSICS`] except the two that produce a collection (`argv`
-/// yields the positional list, `keys` a map's keys).
+/// True for the two intrinsics whose `$( )` denotes a **collection**: `argv`
+/// yields the positional list, `keys` a map's keys. Every other name in
+/// [`INTRINSICS`] — and every real command — yields a single value.
 ///
-/// Derived from [`INTRINSICS`] rather than restated, so a name added there
-/// cannot silently acquire the wrong shape. A `BuiltinCmd` (`echo`, `printf`,
-/// …) is deliberately not included: those write to a pipe, and
-/// `for x in $(echo a b c)` iterates that output by line.
-pub(crate) fn is_scalar_value_intrinsic(name: &str) -> bool {
-    INTRINSICS.contains(&name) && name != "argv" && name != "keys"
+/// Stated in the positive because that is the exception set. The predicate
+/// used to be spelled the other way round (`is_scalar_value_intrinsic`), which
+/// made the `$( )` for-in rule allow-by-default: a name that was not a scalar
+/// intrinsic fell through as a collection, so every external command, builtin,
+/// pipeline and user function was treated as an iterable "line stream". There
+/// is no such thing in sash's value model — DD#28 eliminates word splitting,
+/// so a capture is one value however many lines it holds.
+pub(crate) fn is_collection_intrinsic(name: &str) -> bool {
+    INTRINSICS.contains(&name) && (name == "argv" || name == "keys")
 }
 
 /// Resolve every external command head in `program` to an absolute path.
