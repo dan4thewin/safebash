@@ -748,7 +748,7 @@ fn repoint_stdin_to_pipe_sentinel(inst: &mut SsaInst, clean: bool) {
     }
 }
 
-/// DD#20: lastpipe — `cmd | read -r var` runs `read` in the main shell.
+/// DD#20: lastpipe — `cmd | read var` runs `read` in the main shell.
 /// Emit producer stages with captured pipe fd, then emit a ReadLine that
 /// consumes from that pipe in the main process.
 fn handle_lastpipe_read(

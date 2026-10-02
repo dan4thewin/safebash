@@ -5,7 +5,7 @@
 set -eu
 . common.sh
 setup taint_switch
-plan=31
+plan=37
 echo "1..$plan" >&3
 
 set +e
@@ -61,6 +61,70 @@ for v in @a; do echo "$v"; done' one two
 [[ $rc = 0 && $out = "p
 one
 two" && -z $err ]]; chk sw.13
+
+# sw.20-sw.23 the NO-ELSE caught attest. DD#121 R2 rejects it outright
+# (SB5089: it falls through with the subject still tainted), so `--no-taint`
+# is the only way `merge_attest_branches`'s no-else arm is reachable at all —
+# it merges the then-branch against the untaken fall-through edge from the
+# condition block. Found cold by the union coverage ranking, in code added
+# two commits earlier; the arm compiles and runs correctly, it simply had no
+# spec. Same reason sw.12/sw.13 live here.
+
+# sw.20 scalar, attest passes: then-branch runs and the subject reads back
+run_sash 'str x=$(arg 1)
+if attest x [[ -n $x ]]; then echo "then-taken"; fi
+echo "got=$x"' val
+[[ $rc = 0 && $out = "then-taken
+got=val" && -z $err ]]; chk sw.20
+# sw.21 scalar, attest fails: nothing catches it, so it falls through the
+# merge and the subject still reads back
+run_sash 'str x=$(arg 1)
+if attest x [[ -n $x ]]; then echo "then-taken"; fi
+echo "got=$x"' ""
+[[ $rc = 0 && $out = "got=" && -z $err ]]; chk sw.21
+# sw.22 collection, attest-all passes: the splat read after the merge sees a
+# valid array
+run_sash 'argv 1 a
+if attest v in a [[ -n $v ]]; then echo p; fi
+for v in @a; do echo "$v"; done' one two
+[[ $rc = 0 && $out = "p
+one
+two" && -z $err ]]; chk sw.22
+# sw.23 collection, attest-all FAILS with no else — the shape that was a
+# SIGSEGV in `sash_table_len` when a version defined solely in the passing
+# block could be selected by the name-keyed `find_array_slot` lookup.
+#
+# REPEATED ON PURPOSE, for the reason sw.12 gives: that defect was decided by
+# compile-time `HashMap` iteration order, so one source produced two different
+# binaries and a single compile missed it ~40% of the time. Each iteration
+# must compile afresh.
+_ok=1
+for _ in 1 2 3 4 5 6; do
+    run_sash 'argv 1 a
+if attest v in a [[ $v == IMPOSSIBLE ]]; then echo p; fi
+for v in @a; do echo "$v"; done' one
+    [[ $rc = 0 && $out = "one" && -z $err ]] || _ok=0
+done
+[[ $_ok = 1 ]]; chk sw.23
+# sw.24-sw.25 `attest … && CMD`. DD#121 rejects it (SB5089: `&&` has no
+# failure branch), so this is the only way `try_lower_attest_list`'s `And`
+# arm runs — it synthesises `if attest V [[t]] { CMD }`, a no-else `If`, and
+# so reaches the same merge arm as sw.20-sw.23 by a different route. Also
+# found cold by the union ranking.
+
+# sw.24 attest passes: the right side runs, and the subject reads back
+run_sash 'str x=$(arg 1)
+attest x [[ -n $x ]] && echo "ok=$x"
+echo "got=$x"' val
+[[ $rc = 0 && $out = "ok=val
+got=val" && -z $err ]]; chk sw.24
+# sw.25 attest fails: `&&` short-circuits, the right side is skipped, and
+# control falls through the merge
+run_sash 'str x=$(arg 1)
+attest x [[ -n $x ]] && echo "ok=$x"
+echo "got=$x"' ""
+[[ $rc = 0 && $out = "got=" && -z $err ]]; chk sw.25
+
 unset SASH_CFLAGS
 
 # ── --no-taint-cst: CST off, SSA backstop remains (native only) ──

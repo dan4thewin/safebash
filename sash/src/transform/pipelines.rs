@@ -319,7 +319,7 @@ pub(super) fn lower_for_argv_slice(
 
 // ── Pipe-while-read lowering ──────────────────────────────────
 
-/// Lower `cmd | while read -r var; do body; done`
+/// Lower `cmd | while readline var { body }`.
 /// The Pipeline instruction with capture_read_fd=true precedes this.
 /// This lowers the while-read loop with fd=-1 (sentinel for pipe fd).
 pub(super) fn lower_pipe_while_read(
