@@ -101,8 +101,31 @@ One thing I had to not break. `$(argv; CMD)` is already rejected by **SB5025**,
 whose complaint — the other statements would be silently discarded — is more
 specific than the source-shape rule's, and DG settled that form on 2026-09-29.
 SB5009 preempted it and six specs went red. The fix is a deferral: if any
-statement in the body is an argv splat, this rule stays quiet. `keys` has no
-sibling rule, so `$(keys m; …)` takes the general case.
+statement in the body is an argv splat, this rule stays quiet.
+
+## Addendum — the asymmetry I wrote into the deferral
+
+I wrote that `keys` had no sibling rule and so could take the general case. DG,
+reading it back: *"I thinking there is no sane way to combine argv or keys with
+subsequent commands…"*
+
+He is right, and checking it showed my claim was simply false. `keys` is a
+value intrinsic, and **SB5073** already covers it with almost the same sentence
+SB5025 uses — "recognised only when it is the whole substitution, not one
+statement among several". So the shape was rejected in every position I could
+construct, in both the for-in and assignment and argument cases, by a rule that
+had been there all along. What my asymmetric deferral actually bought was a
+*noisier* answer for `keys`: SB5009 and SB5073 both firing where argv got a
+clean single diagnostic.
+
+The deferral is now symmetric — `stmt_is_collection_intrinsic` covers both
+names — and `fs.14` pins it, asserting SB5073 fires and SB5009 does **not**.
+
+Worth noticing how the error got in. I had just finished arguing that
+allow-by-default guards hide things, and then wrote "keys has no sibling rule"
+without looking, in a comment justifying a special case. The claim was load-
+bearing: it was the reason the code was asymmetric. A sentence in a comment
+that explains *why* a branch exists deserves the same check as the branch.
 
 ## Gate
 

@@ -69,10 +69,18 @@ rejects. See the DD#28 addendum.
   `build_pipeline_stages_from_cmdsubst`, `build_cmdsubst_stage` and
   `emit_cmdsubst_pipe_while_read` deleted (104 lines), with the `lower_for` arm.
 
-An `$(argv …)` splat among several statements is left to **SB5025**, whose
-complaint (the other statements would be silently discarded) is the specific
-one and which DG settled 2026-09-29. `keys` has no sibling rule, so a
-multi-statement `$(keys m; …)` takes the general SB5009 case.
+A collection intrinsic among several statements is left to the rule that
+already owns it. There is no sane way to combine `argv` or `keys` with another
+command (DG 2026-10-02), and each says so in the author's terms: **SB5025** for
+the `argv` splat (settled 2026-09-29) and **SB5073** for `keys` as a value
+intrinsic — both "recognised only when it is the whole substitution". The
+source-shape rule defers to both, or it would answer "iterate an array
+instead", which is not the problem the author has.
+
+My first cut deferred only to SB5025, on the wrong belief that `keys` had no
+such rule; that left `$(keys m; …)` reporting SB5009 *and* SB5073. Corrected
+the same day — `stmt_is_collection_intrinsic` now covers both, pinned by
+`control_flow.sh` fs.14.
 
 Specs: `control_flow.sh` fs.8 flipped from pass to rejection, fs.10–fs.13 added
 for the four shapes. `coverage.sh` cov.61 retired — it covered the three

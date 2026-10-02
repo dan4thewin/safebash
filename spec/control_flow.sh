@@ -5,7 +5,7 @@
 set -eu
 . common.sh
 setup control_flow
-plan=83
+plan=84
 echo "1..$plan" >&3
 
 set +e
@@ -486,6 +486,19 @@ for k in $(g) { attest k [[ -n $k ]]; echo "[$k]" }'
 # entire file, embedded newlines and all.
 run_sash 'for k in $(< /etc/hostname) { attest k [[ -n $k ]]; echo "[$k]" }'
 [[ $rc != 0 && -z $out && $err == *SB5009* ]]; chk fs.13
+
+# fs.14 the two collection captures keep their OWN diagnostics when combined
+# with another command — there is no sane way to write that, and each already
+# says so in the author's terms. `keys` is SB5073 ("recognised only when it is
+# the whole substitution"); the `argv` splat is SB5025 (argv.sh av.c1–av.c3).
+# The source-shape rule must stay quiet for both, or it answers "iterate an
+# array instead", which is not the problem. Pins the deferral, including that
+# SB5009 does NOT also fire.
+run_sash 'map m
+m[k]=1
+echo ${m[k]}
+for k in $(keys m; /bin/echo e) { echo "[$k]" }'
+[[ $rc != 0 && $err == *SB5073* && $err != *SB5009* ]]; chk fs.14
 
 
 set -e

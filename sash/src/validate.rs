@@ -1485,13 +1485,16 @@ fn for_source_scalar_parts(parts: &[Expr], joined: &str) -> Option<String> {
 /// This is the same hole DD#111 found from the other side, and the reason the
 /// polarity is now stated as an exception list rather than a rejection list.
 fn for_source_scalar_cmdsubst(stmts: &[Statement]) -> Option<String> {
-    // An `$(argv …)` splat among several statements is SB5025's to report: that
-    // the *other* statements would be silently discarded is a more specific
-    // complaint than this rule's, and DG settled the form 2026-09-29. Defer
-    // rather than preempt — this rule would otherwise answer "iterate an array
-    // instead", which is not the author's problem. `keys` has no such sibling
-    // rule, so a multi-statement `$(keys m; …)` is left to the general case.
-    if stmts.iter().any(is_argv_splat_stmt) {
+    // `$(argv …)` and `$(keys m)` are the only captures that denote a
+    // collection. When one is the whole body it is a legitimate for-in source.
+    // When it is one statement among several the body is incoherent — there is
+    // no sane way to combine either with another command (DG 2026-10-02) — and
+    // each already has a rule that says so in the author's own terms: SB5025
+    // for the `argv` splat, SB5073 for `keys` as a value intrinsic, both
+    // "recognised only when it is the whole substitution". Either way this rule
+    // stays quiet, because its answer ("iterate an array instead") would not be
+    // the problem the author has.
+    if stmts.iter().any(stmt_is_collection_intrinsic) {
         return None;
     }
     let capture = || Some("a command substitution".to_string());
@@ -1508,10 +1511,15 @@ fn for_source_scalar_cmdsubst(stmts: &[Statement]) -> Option<String> {
     let ExprKind::Literal(name) = &c.name.kind else {
         return capture();
     };
-    if crate::resolve::is_collection_intrinsic(name) {
-        return None;
-    }
     Some(format!("`$({name})`"))
+}
+
+/// A `$( … )` body statement that is a bare `argv` / `keys` command — the two
+/// intrinsics whose capture denotes a collection rather than one value.
+/// Peels a redirect, so `$(argv 2>/dev/null; …)` is recognised.
+fn stmt_is_collection_intrinsic(stmt: &Statement) -> bool {
+    stmt_command(stmt)
+        .is_some_and(|c| crate::resolve::is_collection_intrinsic(expr_literal_str(&c.name)))
 }
 
 /// DD#31: a comma expression like `(a=1, x<5)` desugars to a
