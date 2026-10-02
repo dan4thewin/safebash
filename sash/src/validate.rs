@@ -6854,13 +6854,22 @@ fn arith_value_cmdsub_reads(
 }
 
 /// A collection reader that exposes tainted *element data* via a bare
-/// argument literal: `keys m` (a map's keys) or `join a` (the joined element
-/// values). Per DD#24 these are reads of tainted elements — if the collection
-/// is tainted (e.g. an `argv`/`mapfile` snapshot without attest-all) this is a
-/// use without attest (SB5020). The name is a bare literal, so the generic
-/// `check_expr_taint` path (which only flags variable-expansion reads like
-/// `@a`/`${a[i]}`) doesn't catch it. `len` is exempt — it exposes only
-/// cardinality, not element data.
+/// argument literal: `join a` (the joined element values). Per DD#24 that is a
+/// read of tainted elements — if the array is tainted (e.g. an `argv` snapshot
+/// without attest-all) this is a use without attest (SB5020). The name is a
+/// bare literal, so the generic `check_expr_taint` path (which only flags
+/// variable-expansion reads like `@a`/`${a[i]}`) doesn't catch it. `len` is
+/// exempt — it exposes only cardinality, not element data.
+///
+/// **`keys` is deliberately absent.** It had an arm here, and that arm was
+/// wrong in every program that could reach it. DD#93 closed every route to a
+/// tainted map at *construction* ("there is no program in which the 2-binder
+/// form clears taint"), so no map reaching `keys` is ever tainted. What the
+/// arm actually caught was a tainted **array** — where `keys` is already a
+/// DD#75 §3 type error — and it reported "keys of tainted map 'a'", calling an
+/// indexed array a map, preempting the correct SB4030, and advising an
+/// `attest k v in a` that is itself rejected. It also masked the SB4030 for a
+/// bulk fill into a map, because this pass runs before `type_check`.
 fn check_collection_reader_taint(
     c: &Command,
     tainted: &HashSet<String>,
@@ -6869,23 +6878,19 @@ fn check_collection_reader_taint(
     let ExprKind::Literal(cmd) = &c.name.kind else {
         return;
     };
+    if cmd != "join" {
+        return;
+    }
     let Some(arg) = c.args.first() else {
         return;
     };
     let ExprKind::Literal(name) = &arg.kind else {
         return;
     };
-    let msg = match cmd.as_str() {
-        "join" => format!(
-            "join of tainted collection '{name}' without attest — attest-all \
-             it first: `attest … in {name} [[ … ]]`"
-        ),
-        "keys" => format!(
-            "keys of tainted map '{name}' without attest — attest-all \
-             it first: `attest k v in {name} [[ … ]]`"
-        ),
-        _ => return,
-    };
+    let msg = format!(
+        "join of tainted collection '{name}' without attest — attest-all \
+         it first: `attest … in {name} [[ … ]]`"
+    );
     push_taint_use(tainted, name, arg.span, msg, diags);
 }
 

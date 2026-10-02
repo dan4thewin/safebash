@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup types
-plan=292
+plan=307
 echo "1..$plan" >&3
 
 set +e
@@ -1580,6 +1580,110 @@ str s=abc
 str r=$(match "$s" @a)
 echo "$r"'
 [[ $rc != 0 && -z $out && $(grep -c SB5070 <<< "$err") = 1 ]]; chk 75.116
+
+# 75.117-75.127 the bulk-fill TARGET TYPE. A fill writes the DD#33 raw-8-byte
+# i64 keys 0, 1, 2 …; a map is string-keyed, so filling one wrote a key of
+# eight NUL bytes — a DD#87 breach reachable from ordinary safe code, which
+# surfaced far downstream as `argument contains a NUL byte` at exec. DD#99
+# settles the rule ("maps are built by assignment, not by `read`"); nothing
+# enforced it, because `register_collection_target` only guarded against a
+# SCALAR target and a map is in `collections` too.
+#
+# All six spellings reach the one check, so the cohort is really pinning the
+# DISPATCH: which commands fill, and at which arity.
+# 75.117 `read ARRAY` — the stdin form, target is the only arg
+run_sash 'map m
+read m
+echo "k=$(len m)"'
+[[ $rc != 0 && -z $out && $err == *SB4030* ]]; chk 75.117
+# 75.118 `read SRC ARRAY` — the split form, target is the SECOND arg
+run_sash 'map m
+str ln="a b"
+read $ln m
+echo "k=$(len m)"'
+[[ $rc != 0 && -z $out && $err == *SB4030* ]]; chk 75.118
+# 75.119 `argv ARRAY` (DD#60)
+run_sash 'map m
+argv m
+echo "k=$(len m)"'
+[[ $rc != 0 && -z $out && $err == *SB4030* ]]; chk 75.119
+# 75.120 `argv N ARRAY` — the two-arg spelling, target last
+run_sash 'map m
+argv 1 m
+echo "k=$(len m)"'
+[[ $rc != 0 && -z $out && $err == *SB4030* ]]; chk 75.120
+# 75.121 `matchall S P ARRAY` (DD#63) — only the 3-arg form fills
+run_sash 'map m
+str s="abc"
+matchall "$s" "." m || :
+echo "k=$(len m)"'
+[[ $rc != 0 && -z $out && $err == *SB4030* ]]; chk 75.121
+# 75.122 `match S P ARRAY` — singular match fills too
+run_sash 'map m
+str s="abc"
+match "$s" "." m || :
+echo "k=$(len m)"'
+[[ $rc != 0 && -z $out && $err == *SB4030* ]]; chk 75.122
+# 75.123 POSITIVE control — a declared ARRAY target is the whole point of the
+# form and must not be caught by the new check.
+run_sash 'array a
+read a
+echo "n=$(len a)"'
+[[ $rc = 0 && $out = "n=0" && -z $err ]]; chk 75.123
+# 75.124 POSITIVE control — an UNDECLARED target still auto-declares to an
+# array (DG 2026-07-08), so the check must key on the map declaration, not on
+# the absence of one.
+run_sash 'read u
+echo "n=$(len u)"'
+[[ $rc = 0 && $out = "n=0" && -z $err ]]; chk 75.124
+# 75.125 the mirror: `readline` fills a SCALAR, and given an array it compiled
+# and silently discarded the line, leaving len=0.
+run_sash 'array a
+readline a
+echo "k=$(len a)"'
+[[ $rc != 0 && -z $out && $err == *SB4030* ]]; chk 75.125
+# 75.126 …and given a map.
+run_sash 'map m
+readline m
+echo "k=$(len m)"'
+[[ $rc != 0 && -z $out && $err == *SB4030* ]]; chk 75.126
+# 75.127 POSITIVE control — `readline` into a DECLARED scalar, the shape the
+# new check must not catch. Fed by a clean pipe so the value is clean (DD#20)
+# and the assertion is about the type check, not about taint.
+run_sash 'str s
+echo hi | readline s
+echo "[$s]"'
+[[ $rc = 0 && $out = "[hi]" && -z $err ]]; chk 75.127
+
+# 75.128-75.131 `keys` on a non-map used to be answered by a TAINT rule before
+# the type rule could speak. `check_collection_reader_taint` had a `keys` arm
+# that said "keys of tainted map 'a'" — but DD#93 closed every route to a
+# tainted map at construction, so the only collection that could reach it was a
+# tainted ARRAY. It therefore called an indexed array a map, preempted SB4030,
+# and advised an `attest k v in a` that is itself rejected. It also hid the
+# SB4030 above, since the taint pass runs before type_check. The arm is gone;
+# the `join` one stays, because arrays genuinely can be tainted (taint.sh
+# 60.37-60.41 pin that half).
+# 75.128 a TAINTED indexed array — the only shape the deleted arm could reach.
+# The useful complaint is the type error, and SB5020 must not appear.
+run_sash 'argv 1 a
+for k in $(keys a) { echo "$k" }' x y
+[[ $rc != 0 && -z $out && $err == *SB4030* && $err != *SB5020* ]]; chk 75.128
+# 75.129 a CLEAN indexed array — same answer, which is the point: `keys` on an
+# array is a type error whatever its taint, so taint was never the right axis.
+run_sash 'array a=(x)
+for k in $(keys a) { echo "$k" }'
+[[ $rc != 0 && -z $out && $err == *SB4030* && $err != *SB5020* ]]; chk 75.129
+# 75.130 the legitimate use is untouched: a clean map still iterates.
+run_sash 'map m=([k1]=v1)
+for k in $(keys m) { echo "$k" }'
+[[ $rc = 0 && $out = "k1" && -z $err ]]; chk 75.130
+# 75.131 control for the surviving arm in the same file, so deleting both at
+# once cannot pass: `join` on a tainted array is still SB5020, not a type error.
+run_sash 'argv 1 a
+str j=$(join a)
+echo "$j"' x y
+[[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk 75.131
 
 set -e
 tally

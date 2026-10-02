@@ -1,5 +1,5 @@
 ---
-status: open
+status: done
 priority: P1
 depends:
 gates:
@@ -151,3 +151,35 @@ DD#99's rejection:
 - `notes/decisions/DD33-unified-hash.md` — the raw-8-byte-i64 key encoding
 - `notes/decisions/DD87-string-nul-invariant.md` — the invariant breached
 - `notes/decisions/DD60-argv-trio.md` — `argv [N] a`
+
+## Done
+
+The check landed in `type_check.rs::register_collection_target`, which turned
+out to be where `check_command` already dispatches all four fills with exactly
+the arities derived above (`read`, `argv`, and `match`/`matchall` at arity 3,
+target always the LAST arg). Nothing new had to learn the dispatch table.
+
+The bug was visible in that function's shape: its only guard was against a
+*scalar* target. A map is in `collections` too, so a map target sailed through
+that guard and `assoc_arrays` was never consulted.
+
+`readline` was folded in as the mirror (`check_scalar_fill_target`): it fills a
+scalar, and given a collection it compiled and silently discarded the line.
+Silent data loss, same missing check, opposite direction.
+
+Specs: `types.sh` 75.117-75.127 — the six map-target spellings (which really
+pin the *dispatch*: which commands fill, at which arity), two positive controls
+that a declared array and an undeclared name still fill, the two `readline`
+rejections, and a positive control that `readline` into a declared scalar still
+works.
+
+### The `keys` taint arm
+
+Deleted as filed. Removing it exposed a duplicate-diagnostic defect, now filed
+as `duplicate-type-error-in-for-header-cmdsub.md` — the real SB4030 had been
+masked by the bogus SB5020, and it reports twice. Deliberately left for DG: the
+two overlapping walkers are not equivalent, so it is a structural fork rather
+than a deletion.
+
+Specs: `types.sh` 75.128-75.131, including a control that the surviving `join`
+arm still fires, so deleting both at once cannot pass.

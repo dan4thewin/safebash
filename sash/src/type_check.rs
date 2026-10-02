@@ -1885,6 +1885,9 @@ fn check_command(c: &Command, span: Span, env: &mut TypeEnv, errors: &mut Vec<Ty
         "match" | "matchall" if c.args.len() == 3 => {
             register_collection_target(c, span, env, errors)
         }
+        // DD#99: `readline` is the scalar half of the family (SB5057 pins it to
+        // exactly one bare target), so its target type wants the opposite check.
+        "readline" => check_scalar_fill_target(c, span, env, errors),
         _ => {}
     }
 
@@ -1896,6 +1899,40 @@ fn check_command(c: &Command, span: Span, env: &mut TypeEnv, errors: &mut Vec<Ty
     for arg in &c.args {
         check_subscript_types(arg, env, errors);
     }
+}
+
+/// DD#99 `readline NAME` — the mirror of `register_collection_target`.
+/// `readline` reads one line into a **scalar**; given a collection it used to
+/// compile and silently do nothing, leaving the target at `len=0` and
+/// discarding the line. Silent data loss, so it is rejected here.
+///
+/// An undeclared target stays legal — it becomes a scalar, which is the point.
+fn check_scalar_fill_target(c: &Command, span: Span, env: &TypeEnv, errors: &mut Vec<TypeError>) {
+    let Some(first) = c.args.first() else {
+        return;
+    };
+    let name = expr_to_name(first);
+    if name.is_empty() || !env.collections.contains(&name) {
+        return;
+    }
+    let (what, fix) = if env.assoc_arrays.contains(&name) {
+        (
+            "a map",
+            "read an array and convert it: `read a` then `map m = @{a:-EXTRA}`",
+        )
+    } else {
+        (
+            "an indexed array",
+            "use `read` to split NUL-separated fields into it",
+        )
+    };
+    errors.push(TypeError {
+        message: format!(
+            "cannot fill the collection `{name}` with `readline` — `readline` \
+             reads one line into a scalar and `{name}` is {what}; {fix}"
+        ),
+        span,
+    });
 }
 
 /// DD#60 `argv [N] ARR`, DD#99 `read [SRC] ARR`, DD#63 `match`/`matchall
@@ -1935,6 +1972,26 @@ fn register_collection_target(
                 expr_to_name(&c.name),
                 name,
                 type_name(env.var_type(&name)),
+                name
+            ),
+            span,
+        });
+        return;
+    }
+    // A map is in `collections` too, so the guard above waves it through. DD#99
+    // settles that it must not be: a bulk fill writes the DD#33 raw-8-byte-i64
+    // keys 0, 1, 2 …, and writing those into a string-keyed table yields a key
+    // of eight NUL bytes — a DD#87 breach reachable from ordinary safe code.
+    if env.assoc_arrays.contains(&name) {
+        errors.push(TypeError {
+            message: format!(
+                "cannot fill the map `{}` with `{}` — a bulk fill writes the \
+                 indexed keys 0, 1, 2 …, not the string keys a map holds; \
+                 DD#99: maps are built by assignment, not by `{}`. Fill an \
+                 indexed array and convert it pairwise: `map {} = @{{a:-EXTRA}}`",
+                name,
+                expr_to_name(&c.name),
+                expr_to_name(&c.name),
                 name
             ),
             span,
