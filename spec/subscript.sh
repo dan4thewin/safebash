@@ -10,7 +10,7 @@
 set -eu
 . common.sh
 setup subscript
-plan=66
+plan=94
 echo "1..$plan" >&3
 
 set +e
@@ -219,25 +219,31 @@ run_sash 'fn f { : @args; array arr=(p q r); echo ${arr[$#]} }
 f a b'
 [[ $rc = 0 && $out = r && -z $err ]]; chk 80.32
 
-# ── G. the non-brace `$a[$i]` split-subscript gather (decision B, journal 115) ──
+# ── G. the non-brace `$a[$i]` read (decision B, journal 115) ──
 #
 # `$a[$i]` deliberately reads as `${a[$i]}` rather than bash's `${a[0]}` then
-# literal `[$i]`. The gather is speculative — when it declines, `$arr` is left
-# as a plain scalar read, which SB5064 catches. These pin the two ways it
-# declines, so a decline can never become a silent bash-shaped literal.
+# literal `[$i]`. The lexer desugars the brace-less spelling to the braced one
+# (DG 2026-10-03, "all paths must agree"), so there is one index grammar and
+# the only way to decline is for the brackets not to balance.
 
-# 80.33 the `[` must stand alone as its own token. `$arr[foo` never closes, so
-# the word is `[foo`, the gather declines → SB5064. Bash would print `p[foo`.
+# 80.33 the subscript must close. `$arr[foo` never does, so no subscript is
+# recognised and `$arr` is left as a plain scalar read → SB5064. Bash would
+# print `p[foo`. This is the ONE decline that remains.
 run_sash 'array arr=(p q r)
 echo $arr[foo'
 [[ $rc != 0 && -z $out && $err == *SB5064* ]]; chk 80.33
 
-# 80.34 the bracket shape is right but the index is not identifier-spelled,
-# so the gather declines at the index instead — same reject, not a literal.
-# (`${arr[$1]}` — 80.31 — is how you spell this one.)
+# 80.34 an index that is not identifier-spelled is no longer a decline: the
+# old token-level gather required `[`,`$ident`,`]` exactly, so `$arr[$1]` fell
+# out as SB5064 while `${arr[$1]}` reported the real problem. Both spellings
+# now reach the same rule (a positional is a string — see 80.31 for the fix).
 run_sash 'fn f { array arr=(p q r); echo $arr[$1] }
 f 2'
-[[ $rc != 0 && -z $out && $err == *SB5064* ]]; chk 80.34
+[[ $rc != 0 && -z $out && $err == *SB4030* ]]; chk 80.34
+# 80.34b the braced twin, same diagnostic — the pair is the agreement itself.
+run_sash 'fn f { array arr=(p q r); echo ${arr[$1]} }
+f 2'
+[[ $rc != 0 && -z $out && $err == *SB4030* ]]; chk 80.34b
 
 # ─── H. `name[` as a bare word: the early-outs of the dynamic-subscript
 #        sniffer. `looks_like_dynamic_subscript_assign` only commits to a
@@ -509,6 +515,170 @@ run_sash 'map m
 int i=7
 m[$i]=v'
 [[ $rc != 0 && $err == *SB4030* ]]; chk 80.66
+
+# ─── N. ALL THREE SPELLINGS AGREE (DG, 2026-10-03) ───────────────────────
+#
+# A subscript can be written three ways: braced `${a[K]}`, brace-less
+# `$a[K]` (DD#33 decision B), and interpolated `"$a[K]"`. Each used to be a
+# separate parse path with its own idea of what `K` may be, and they did not
+# agree: the braced one took the full DD#80 grammar, the brace-less one took
+# a fixed three-token shape (`[`, `$ident`, `]`), and the in-string one was
+# narrower still — only an integer literal. So `echo $a[$i]` printed an
+# element while `echo "$a[$i]"` was SB5064, and `$a[$(( i ))]` was SB5064
+# where `${a[$(( i ))]}` worked.
+#
+# DG ruled all paths must agree. The lexer now desugars the brace-less and
+# interpolated spellings into the braced one, so there is exactly ONE index
+# grammar and the spellings cannot drift apart again. These specs are that
+# agreement: each index form is pinned in the two spellings that used to
+# diverge (the braced column is sections A–M above).
+
+# 80.70/80.71 an integer literal — the one form every path already took.
+run_sash 'int array a=(10 20 30)
+echo $a[1]'
+[[ $rc = 0 && $out = "20" && -z $err ]]; chk 80.70
+run_sash 'int array a=(10 20 30)
+echo "$a[1]"'
+[[ $rc = 0 && $out = "20" && -z $err ]]; chk 80.71
+
+# 80.72/80.73 a `$var` index. The brace-less spelling took this one; the
+# interpolated spelling did NOT, and was SB5064.
+run_sash 'int array a=(10 20 30)
+int i=1
+echo $a[$i]'
+[[ $rc = 0 && $out = "20" && -z $err ]]; chk 80.72
+run_sash 'int array a=(10 20 30)
+int i=1
+echo "$a[$i]"'
+[[ $rc = 0 && $out = "20" && -z $err ]]; chk 80.73
+
+# 80.74/80.75 a `${var}` index — same story.
+run_sash 'int array a=(10 20 30)
+int i=1
+echo $a[${i}]'
+[[ $rc = 0 && $out = "20" && -z $err ]]; chk 80.74
+run_sash 'int array a=(10 20 30)
+int i=1
+echo "$a[${i}]"'
+[[ $rc = 0 && $out = "20" && -z $err ]]; chk 80.75
+
+# 80.76/80.77 an arithmetic index. Neither spelling took this before — the
+# three-token gather saw `$((` and declined, so both were SB5064 while the
+# braced form (80.9) computed the index.
+run_sash 'int array a=(10 20 30)
+int i=1
+echo $a[$(( i ))]'
+[[ $rc = 0 && $out = "20" && -z $err ]]; chk 80.76
+run_sash 'int array a=(10 20 30)
+int i=1
+echo "$a[$(( i ))]"'
+[[ $rc = 0 && $out = "20" && -z $err ]]; chk 80.77
+
+# 80.78/80.79 a DD#58 sexpr call inside the arithmetic index. This is the
+# deepest nesting the grammar allows, and it reaches the brace-less spelling
+# intact — the desugar hands the whole balanced `[…]` over verbatim.
+run_sash 'int array a=(10 20 30)
+fn g -> int { return 2 }
+echo $a[$(( (g) ))]'
+[[ $rc = 0 && $out = "30" && -z $err ]]; chk 80.78
+run_sash 'int array a=(10 20 30)
+fn g -> int { return 2 }
+echo "$a[$(( (g) ))]"'
+[[ $rc = 0 && $out = "30" && -z $err ]]; chk 80.79
+
+# 80.80/80.81 a nested subscript as the index. Balanced brackets inside the
+# index are what the old byte-level gather could not do at all.
+run_sash 'int array a=(10 20 30)
+int array b=(2 0)
+echo $a[${b[0]}]'
+[[ $rc = 0 && $out = "30" && -z $err ]]; chk 80.80
+run_sash 'int array a=(10 20 30)
+int array b=(2 0)
+echo "$a[${b[0]}]"'
+[[ $rc = 0 && $out = "30" && -z $err ]]; chk 80.81
+
+# 80.82/80.83 a map read with a `$var` key, both spellings.
+run_sash 'map m=([k]=v [kk]=w)
+str s=kk
+echo $m[$s]'
+[[ $rc = 0 && $out = "w" && -z $err ]]; chk 80.82
+run_sash 'map m=([k]=v [kk]=w)
+str s=kk
+echo "$m[$s]"'
+[[ $rc = 0 && $out = "w" && -z $err ]]; chk 80.83
+
+# ── the agreement has to hold for REJECTS too, or a spelling becomes an
+#    escape hatch from a rule the other spellings enforce. ──
+
+# 80.84/80.85 a capture as an index is SB4030 (DD#80) — not SB5064, which is
+# what both spellings reported when they declined to see a subscript at all.
+run_sash 'int array a=(10 20 30)
+echo $a[$( echo 1 )]'
+[[ $rc != 0 && -z $out && $err == *SB4030* ]]; chk 80.84
+run_sash 'int array a=(10 20 30)
+echo "$a[$( echo 1 )]"'
+[[ $rc != 0 && -z $out && $err == *SB4030* ]]; chk 80.85
+
+# 80.86/80.87 a quoted string index on an int array is the string→int
+# discipline, in every spelling.
+run_sash 'int array a=(10 20 30)
+echo $a["1"]'
+[[ $rc != 0 && -z $out && $err == *SB4030* ]]; chk 80.86
+run_sash 'int array a=(10 20 30)
+echo "$a["1"]"'
+[[ $rc != 0 && -z $out && $err == *SB4030* ]]; chk 80.87
+
+# 80.88 a subscript on a SCALAR is SB5068 — the diagnostic added after
+# `${s[0]}` segfaulted. The brace-less spelling was a hole in exactly that
+# fix: it only reached SB5068 for the index forms its gather understood, so
+# `$s[$(( 0 ))]` compiled and printed `z[0]`.
+run_sash 'str s=z
+echo $s[$(( 0 ))]'
+[[ $rc != 0 && -z $out && $err == *SB5068* ]]; chk 80.88
+run_sash 'str s=z
+echo "$s[$(( 0 ))]"'
+[[ $rc != 0 && -z $out && $err == *SB5068* ]]; chk 80.89
+
+# 80.90 the BRACED splat subscript. `$@[0]` / `$*[0]` are SB5031 (80.20,
+# 80.21); the braced twins must say the same thing, since the desugar routes
+# the brace-less spelling through this very path.
+run_sash 'fn f { : @args; echo ${@[0]} }
+f a'
+[[ $rc != 0 && -z $out && $err == *SB5031* ]]; chk 80.90
+run_sash 'fn f { : @args; echo ${*[0]} }
+f a'
+[[ $rc != 0 && -z $out && $err == *SB5031* ]]; chk 80.91
+
+# ── O. subscripting a special parameter: five ICEs, closed by construction ──
+#
+# `$#[0]`, `$?[0]`, `$$[0]`, `$![0]` and `$1[0]` each built a subscript on a
+# collection named `#`/`?`/`$`/`!`/`1`, which no pass rejected and codegen
+# then panicked on ("ICE: undefined array"). Every braced counterpart was
+# already a clean diagnostic — the brace-less path simply never reached it.
+# SB5031 (80.20/80.21) was a point-fix for the `@`/`*` members of this same
+# family; these are the rest of it.
+
+# 80.92 `$#` — the retired length sugar.
+run_sash 'fn f { : @args; echo $#[0] }
+f a'
+[[ $rc != 0 && -z $out && $err == *SB4038* ]]; chk 80.92
+
+# 80.93 `$?` — the status parameter is not a collection.
+run_sash 'echo $?[0]'
+[[ $rc != 0 && -z $out && $err == *SB4034* ]]; chk 80.93
+
+# 80.94 `$$` — unrecognized content, same as `${$[0]}`.
+run_sash 'echo $$[0]'
+[[ $rc != 0 && -z $out && $err == *SB4047* ]]; chk 80.94
+
+# 80.95 `$!` — reads as indirect expansion, which sash rejects outright.
+run_sash 'echo $![0]'
+[[ $rc != 0 && -z $out && $err == *SB4003* ]]; chk 80.95
+
+# 80.96 `$1` — a positional is a scalar, so there is nothing to subscript.
+run_sash 'fn f { echo $1[0] }
+f a'
+[[ $rc != 0 && -z $out && $err == *SB4047* ]]; chk 80.96
 
 
 set -e

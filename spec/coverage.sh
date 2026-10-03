@@ -453,10 +453,13 @@ run_sash 'x=$( ); echo "[$x]"'
 # cov.109 an unbalanced `${a[0}` — capture_balanced_subscript finds no close.
 run_sash 'int array a=(1 2); echo ${a[0}'
 [[ $rc != 0 && -z $out && $err == *SB4047* ]]; chk cov.109
-# cov.110 a non-identifier dynamic subscript `$a[$i-]` — dynamic_subscript_var
-# declines, so the split-subscript gather backs off and `$a` stands alone.
+# cov.110 a non-identifier dynamic subscript `$a[$i-]`. The read side no longer
+# has its own gather to back off from — the lexer desugars `$a[…]` to `${a[…]}`
+# — so this reaches the braced index reader and reports the ambiguous index
+# rather than falling out as a bare `$a`. (dynamic_subscript_var's own decline
+# arm is still exercised from the write side, `a[1]=…` — see assign.sh.)
 run_sash 'int array a=(1 2); int i=1; echo $a[$i-]'
-[[ $rc != 0 && -z $out && $err == *SB5064* ]]; chk cov.110
+[[ $rc != 0 && -z $out && $err == *SB4041* ]]; chk cov.110
 # cov.111 a BARE `@` is an ordinary word, not a splat (the `w.len() > 1` guard).
 run_sash 'echo @'
 [[ $rc = 0 && $out = "@" && -z $err ]]; chk cov.111

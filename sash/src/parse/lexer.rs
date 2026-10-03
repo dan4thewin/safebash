@@ -865,19 +865,19 @@ impl Scanner {
             b'@' | b'*' | b'#' | b'?' | b'!' | b'$' | b'0' => {
                 let var = (self.source[self.pos] as char).to_string();
                 self.pos += 1;
-                self.plain_dollar(start, var)
+                self.dollar_name_token(start, var, false)
             }
             b'1'..=b'9' => {
                 // Positional param — could be multi-digit in rare cases but bash only does single
                 let var = (self.source[self.pos] as char).to_string();
                 self.pos += 1;
-                self.dollar_or_braceless_disposition(start, var)
+                self.dollar_name_token(start, var, true)
             }
             c if c.is_ascii_alphabetic() || c == b'_' => {
                 let name_end = scan_ident_end(&self.source, self.pos).unwrap_or(self.pos);
                 let name = String::from_utf8_lossy(&self.source[self.pos..name_end]).to_string();
                 self.pos = name_end;
-                self.dollar_or_braceless_disposition(start, name)
+                self.dollar_name_token(start, name, true)
             }
             _ => {
                 // Bare $ — treat as literal
@@ -920,6 +920,65 @@ impl Scanner {
                 end: self.pos,
             },
         }
+    }
+
+    /// Finish a `$name` whose name is already scanned (`self.pos` is just past
+    /// it). A following `[` makes it a brace-less subscript; otherwise the
+    /// spelling falls through to a plain `$name`, taking a brace-less
+    /// disposition (DD#90) only where one is in scope — `$@` and friends are
+    /// not, which is the whole of `dispositions`.
+    fn dollar_name_token(
+        &mut self,
+        start: usize,
+        name: String,
+        dispositions: bool,
+    ) -> SpannedToken {
+        if let Some(tok) = self.braceless_subscript(start, &name) {
+            return tok;
+        }
+        if dispositions {
+            self.dollar_or_braceless_disposition(start, name)
+        } else {
+            self.plain_dollar(start, name)
+        }
+    }
+
+    /// After a bare `$name` / `$N` / `$#` (with `self.pos` just past the name),
+    /// a `[` opens a **brace-less subscript**: synthesize the braced spelling
+    /// `DollarBrace("name[idx]")` and consume through the matching `]`.
+    ///
+    /// This is the same desugar [`dollar_or_braceless_disposition`] performs for
+    /// `$x:-foo`, and it exists for the same reason: downstream there is then
+    /// exactly **one** subscript grammar — the braced one — and the brace-less
+    /// spelling cannot drift away from it (DG, 2026-10-03: "all paths must
+    /// agree"). What the three hand-rolled token-level paths this replaces got
+    /// wrong was not one rule but five crashes and a whole index grammar:
+    /// `$a[$(( i + 1 ))]` / `$a[$(f)]` / `$a["k"]` never parsed as subscripts at
+    /// all, and `$#[0]`, `$?[0]`, `$$[0]`, `$![0]`, `$1[0]` each reached codegen
+    /// as a subscript on an array named `#` and panicked (`ICE: undefined
+    /// array`) — the braced forms rejecting all of them cleanly the whole time.
+    ///
+    /// **Not inside `(( … ))`.** There `$a[i]` is deliberately *not* a subscript
+    /// (`a[i]` is — DD#79 model B), and SB4035 says so with a hint; the arith
+    /// body is re-serialised through [`tok_to_text`], so desugaring here would
+    /// silently turn that reject into an accept. Specs `dsx.1`/`dsx.2`.
+    ///
+    /// Returns `None` when no `[` follows or the brackets are unbalanced, so
+    /// `echo $a[` keeps its literal reading.
+    fn braceless_subscript(&mut self, start: usize, name: &str) -> Option<SpannedToken> {
+        if self.arith_depth > 0 {
+            return None;
+        }
+        let close = super::expr::balanced_subscript_close(&self.source, self.pos)?;
+        let text = String::from_utf8_lossy(&self.source[self.pos..=close]).to_string();
+        self.pos = close + 1;
+        Some(SpannedToken {
+            token: Tok::DollarBrace(format!("{name}{text}")),
+            span: LexSpan {
+                start,
+                end: self.pos,
+            },
+        })
     }
 
     /// After a bare `$name` / `$N` (with `self.pos` just past the name), emit
@@ -1486,18 +1545,38 @@ impl Scanner {
             b'\'' => self.scan_dq_cstring(literal),
             c if c.is_ascii_alphabetic() || c == b'_' => {
                 let name = self.consume_dq_var_name();
-                parts.push(StringPart::Variable(name));
+                parts.push(self.dq_subscript_or_variable(name));
             }
             b'@' | b'*' | b'#' | b'?' | b'!' | b'$' | b'0'..=b'9' => {
                 let var = (self.source[self.pos] as char).to_string();
                 self.pos += 1;
-                parts.push(StringPart::Variable(var));
+                parts.push(self.dq_subscript_or_variable(var));
             }
             _ => {
                 // Bare `$` followed by something unexpected — keep as
                 // literal; don't consume the next byte.
                 literal.push('$');
             }
+        }
+    }
+
+    /// The in-string half of [`braceless_subscript`]: `"$a[K]"` becomes the
+    /// `Expansion("a[K]")` part that `${a[K]}` would have produced, so the
+    /// quoted and unquoted spellings meet the same grammar.
+    ///
+    /// Before this, the in-string reader required the index to arrive as a
+    /// single trailing literal, which only an int literal or a bare key ever
+    /// does. `echo $a[$i]` printed the element and `echo "$a[$i]"` was SB5064 —
+    /// a hole inside the brace-less read's own stated scope, not a narrowing
+    /// anyone chose (DD#33 read side, decision B, DG 2026-06-21).
+    fn dq_subscript_or_variable(&mut self, name: String) -> StringPart {
+        match super::expr::balanced_subscript_close(&self.source, self.pos) {
+            Some(close) => {
+                let text = String::from_utf8_lossy(&self.source[self.pos..=close]).to_string();
+                self.pos = close + 1;
+                StringPart::Expansion(format!("{name}{text}"))
+            }
+            None => StringPart::Variable(name),
         }
     }
 

@@ -451,13 +451,13 @@ pub(crate) fn is_identifier(s: &str) -> bool {
         && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
 }
 
-/// `Tok::Dollar(name)` arm — checks for `$arr[i]` subscript syntax
-/// (DD#41), then falls back to a simple variable expansion. Consumes
-/// the `$name` token (and the `[i]rest` word when subscript is
-/// recognised), and pushes one or two parts onto `parts`. `$LINENO`
-/// gets no special handling — it flows through as an ordinary
-/// expansion, so an unassigned `$LINENO` is rejected as an undefined
-/// variable like any other (no magic vars).
+/// `Tok::Dollar(name)` arm — a simple variable expansion. Consumes the
+/// `$name` token and pushes one part. A following `[idx]` never reaches here:
+/// the lexer desugars `$a[K]` to the braced `${a[K]}` spelling
+/// ([`Scanner::braceless_subscript`]), so there is one subscript grammar and
+/// this arm does not need a second one. `$LINENO` gets no special handling —
+/// it flows through as an ordinary expansion, so an unassigned `$LINENO` is
+/// rejected as an undefined variable like any other (no magic vars).
 fn parse_dollar_arm(
     scanner: &mut Scanner,
     name: String,
@@ -466,9 +466,6 @@ fn parse_dollar_arm(
     parts: &mut Vec<Expr>,
 ) {
     scanner.next();
-    if try_subscript_arm(scanner, &name, span, parts) {
-        return;
-    }
     if let Some(e) = magic_sugar_expansion(&name, span) {
         parts.push(e);
         return;
@@ -542,46 +539,6 @@ pub(crate) fn intrinsic_expansion(name: &str, span: Span) -> Expr {
     }
 }
 
-/// Probe for `$arr[i]` / `$arr[@]` / `$arr[*]` subscript form. The
-/// caller has already consumed `$name`. Returns true (and pushes the
-/// subscript part plus any trailing literal text) if the next token
-/// is a word beginning with `[` and containing `]`.
-fn try_subscript_arm(scanner: &mut Scanner, name: &str, span: Span, parts: &mut Vec<Expr>) -> bool {
-    let Tok::Word(ref w) = scanner.peek().token.clone() else {
-        return false;
-    };
-    if !w.starts_with('[') {
-        return false;
-    }
-    let Some(close) = w.find(']') else {
-        // The lexer split a dynamic subscript `[`, `$idx`, `]` into separate
-        // tokens (DD#33 read side, decision B 2026-06-21). Gather them into a
-        // Subscript read so `$a[$i]` matches `${a[$i]}`.
-        return try_split_subscript_arm(scanner, name, span, parts);
-    };
-    let idx = w[1..close].to_string();
-    let rest = w[close + 1..].to_string();
-    scanner.next();
-    if idx == "@" || idx == "*" {
-        parts.push(Expr::param(name, Some("arrvals_retired"), None, span));
-    } else {
-        parts.push(Expr {
-            kind: ExprKind::Subscript {
-                name: name.to_string(),
-                index: Box::new(subscript_index_expr(&idx, span)),
-            },
-            span,
-        });
-    }
-    if !rest.is_empty() {
-        parts.push(Expr {
-            kind: ExprKind::Literal(rest),
-            span,
-        });
-    }
-    true
-}
-
 /// Collapse the collected `parts` into a final `Expr`: empty → error,
 /// single → unwrap, multiple → `Concat`. `span` is the word's own span — it
 /// used to be a hardcoded `1:1`, so every "expected expression" pointed at the
@@ -620,9 +577,13 @@ pub fn string_parts_to_exprs(
     Ok(result)
 }
 
-/// Convert the next [StringPart] (and possibly the one after it,
-/// for $arr[idx] lookahead) into one or more Exprs appended to
-/// `result`. Returns the number of input parts consumed (1 or 2).
+/// Convert the next [StringPart] into one or more Exprs appended to `result`.
+/// Returns the number of input parts consumed.
+///
+/// A `"$a[K]"` subscript never arrives as a `Variable` + literal pair: the
+/// lexer desugars it to the braced `Expansion("a[K]")`
+/// ([`Scanner::dq_subscript_or_variable`]), so it lands on the
+/// `StringPart::Expansion` arm with the one subscript grammar behind it.
 fn emit_string_part(
     parts_from_here: &[StringPart],
     span: Span,
@@ -637,13 +598,6 @@ fn emit_string_part(
             1
         }
         StringPart::Variable(name) => {
-            // DD#41: detect $arr[i] / $arr[@] inside double quotes
-            // by peeking at the next part for a [idx]suffix literal.
-            if let Some(advance) =
-                try_emit_array_subscript_in_string(parts_from_here, name, span, result)
-            {
-                return Ok(advance);
-            }
             result.push(magic_sugar_expansion(name, span).unwrap_or_else(|| Expr {
                 kind: ExprKind::SimpleExpansion(name.clone()),
                 span,
@@ -672,99 +626,11 @@ fn emit_string_part(
     })
 }
 
-/// If `parts_from_here` starts with `$name` followed by a literal
-/// of the shape `[idx]rest…`, push the corresponding subscript /
-/// arrvals expansion (plus a literal for `rest…` if non-empty)
-/// and return `Some(2)`. Otherwise return `None` and the caller
-/// falls back to a plain `$name` expansion.
-fn try_emit_array_subscript_in_string(
-    parts_from_here: &[StringPart],
-    name: &str,
-    span: Span,
-    result: &mut Vec<Expr>,
-) -> Option<usize> {
-    let StringPart::Literal(lit) = parts_from_here.get(1)? else {
-        return None;
-    };
-    if !lit.starts_with('[') {
-        return None;
-    }
-    let close = lit.find(']')?;
-    let idx = &lit[1..close];
-    let rest = &lit[close + 1..];
-    result.push(subscript_expr(name, idx, span));
-    if !rest.is_empty() {
-        result.push(Expr {
-            kind: ExprKind::Literal(rest.to_string()),
-            span,
-        });
-    }
-    Some(2)
-}
-
-/// Build the subscript / arrvals expansion for `$name[idx]`.
-/// `idx` of `@` or `*` becomes arrvals; anything else becomes a
-/// subscript whose index is parsed by `subscript_index_expr`.
-fn subscript_expr(name: &str, idx: &str, span: Span) -> Expr {
-    if idx == "@" || idx == "*" {
-        Expr::param(name.to_string(), Some("arrvals_retired"), None, span)
-    } else {
-        Expr {
-            kind: ExprKind::Subscript {
-                name: name.to_string(),
-                index: Box::new(subscript_index_expr(idx, span)),
-            },
-            span,
-        }
-    }
-}
-
 /// Build the index expression for a subscript `name[idx]`. A `$var` or
 /// `${var}` index expands the variable at runtime (dynamic subscript,
 /// DD#33): for an indexed array it yields the integer index, for a map
 /// the string key. Any other text is a literal key (a bare integer for
 /// indexed arrays, a bare string for maps).
-/// Gather a lexer-split dynamic subscript read `name[$idx]` into a
-/// `Subscript`. The current token is a bare `[` (the index `$var`/`${var}`
-/// and the closing `]` were split into following tokens by the lexer).
-/// Speculative: consumes nothing unless the full `[ $idx ]` shape is present.
-fn try_split_subscript_arm(
-    scanner: &mut Scanner,
-    name: &str,
-    span: Span,
-    parts: &mut Vec<Expr>,
-) -> bool {
-    if !matches!(&scanner.peek().token, Tok::Word(w) if w == "[") {
-        return false;
-    }
-    let idx_str = match &scanner.peek_n(1).token {
-        Tok::Dollar(v) => format!("${}", v),
-        Tok::DollarBrace(content) => format!("${{{}}}", content),
-        _ => return false,
-    };
-    if !matches!(&scanner.peek_n(2).token, Tok::Word(w) if w == "]") {
-        return false;
-    }
-    let Some(var) = dynamic_subscript_var(&idx_str) else {
-        return false;
-    };
-    let index = Expr {
-        kind: ExprKind::SimpleExpansion(var.to_string()),
-        span,
-    };
-    scanner.next(); // [
-    scanner.next(); // $idx
-    scanner.next(); // ]
-    parts.push(Expr {
-        kind: ExprKind::Subscript {
-            name: name.to_string(),
-            index: Box::new(index),
-        },
-        span,
-    });
-    true
-}
-
 pub(crate) fn subscript_index_expr(idx: &str, span: Span) -> Expr {
     if let Some(var) = dynamic_subscript_var(idx) {
         return Expr {
@@ -915,14 +781,35 @@ fn parse_cell_operator(rest: &str, name: &str, span: Span) -> Result<Option<Expr
 /// SB5045 "sash has no `$@`/`$*`" reject (`validate::check_dollar_at`) sees it;
 /// a dropped modifier is immaterial — the whole form is rejected. Array
 /// `[@]`/`[*]` forms are unaffected (their content starts with the array name).
+///
+/// A **subscript** on the splat (`${@[0]}`) is the one modifier that is not
+/// immaterial: it has its own diagnostic, SB5031 "the positional splat isn't
+/// subscriptable", which names `$1`..`$N` and `${args[i]}` instead of the
+/// generic "sash has no `$@`". Keep the `Subscript` shape so
+/// `validate::splat_not_subscriptable_diag` can see it — the brace-less
+/// `$a[K]` desugar routes `$@[0]` through here, and the two spellings must
+/// land on the same diagnostic (DG, 2026-10-03). Specs 80.20/80.21.
 fn try_braced_splat(content: &str, span: Span) -> Option<Expr> {
-    match content.as_bytes().first() {
-        Some(b'@') | Some(b'*') => Some(Expr {
-            kind: ExprKind::SimpleExpansion(content[..1].to_string()),
+    let sigil = match content.as_bytes().first() {
+        Some(b'@') => "@",
+        Some(b'*') => "*",
+        _ => return None,
+    };
+    if content.as_bytes().get(1) == Some(&b'[') {
+        let index = capture_balanced_subscript(content, 1)
+            .map(|(idx, _)| parse_subscript_index(&idx, span))?;
+        return Some(Expr {
+            kind: ExprKind::Subscript {
+                name: sigil.to_string(),
+                index: Box::new(index),
+            },
             span,
-        }),
-        _ => None,
+        });
     }
+    Some(Expr {
+        kind: ExprKind::SimpleExpansion(sigil.to_string()),
+        span,
+    })
 }
 
 /// `${#…}` length sugar — retired entirely (DD#75 §4, amended 2026-08-27).
@@ -1050,25 +937,48 @@ fn try_subscript(
 /// subscript early (DD#80). Returns `(index text, byte index of the matching
 /// `]`)`, or `None` if unbalanced.
 fn capture_balanced_subscript(content: &str, open: usize) -> Option<(String, usize)> {
-    let bytes = content.as_bytes();
+    let close = balanced_subscript_close(content.as_bytes(), open)?;
+    Some((content[open + 1..close].to_string(), close))
+}
+
+/// Byte index of the `]` that closes the subscript opening at `bytes[open]`,
+/// or `None` if the brackets are unbalanced (or `open` is not a `[`).
+///
+/// The lexer calls this too, so that the brace-less `$a[K]` captures **exactly**
+/// the span the braced `${a[K]}` does. It is one function on purpose: the two
+/// spellings disagreeing about where a subscript ends is precisely the class of
+/// bug this seam was introduced to remove (DG, 2026-10-03 — "all paths must
+/// agree"). Do not grow a second scanner for either caller.
+pub(super) fn balanced_subscript_close(bytes: &[u8], open: usize) -> Option<usize> {
+    if bytes.get(open) != Some(&b'[') {
+        return None;
+    }
     let mut depth = 0i32;
     let mut quote: Option<u8> = None;
     for (i, &b) in bytes.iter().enumerate().skip(open) {
-        if advance_in_quote(&mut quote, b) {
-            continue;
-        }
-        match b {
-            b'"' | b'\'' => quote = Some(b),
-            b'[' | b'{' | b'(' => depth += 1,
-            b']' | b'}' | b')' if step_close_depth(&mut depth) => {
-                // A balanced subscript closes on `]`; another closer at depth 0
-                // means the brackets were mismatched.
-                return (b == b']').then_some((content[open + 1..i].to_string(), i));
-            }
-            _ => {}
+        if subscript_scan_step(&mut quote, &mut depth, b) {
+            // A balanced subscript closes on `]`; another closer at depth 0
+            // means the brackets were mismatched.
+            return (b == b']').then_some(i);
         }
     }
     None
+}
+
+/// One byte of `balanced_subscript_close`'s scan: track quoting and bracket
+/// depth, reporting `true` when `b` is the closer that balances the opening
+/// `[` (which the caller then checks is actually a `]`).
+fn subscript_scan_step(quote: &mut Option<u8>, depth: &mut i32, b: u8) -> bool {
+    if advance_in_quote(quote, b) {
+        return false;
+    }
+    match b {
+        b'"' | b'\'' => *quote = Some(b),
+        b'[' | b'{' | b'(' => *depth += 1,
+        b']' | b'}' | b')' => return step_close_depth(depth),
+        _ => {}
+    }
+    false
 }
 
 /// While inside a `"`/`'` quote, consume the byte (closing the quote on its

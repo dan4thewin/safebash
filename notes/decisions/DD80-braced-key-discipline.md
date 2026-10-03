@@ -259,3 +259,68 @@ is **SB4030**. An author holding a string-returning function has exactly one
 migration — declare it `fn f -> int` — so the message names that form
 directly, per `array_index_error`'s own standing rule that a diagnostic must
 not send its reader from one SB4030 to the same SB4030.
+
+## Amendment (2026-10-03) — one grammar, three spellings
+
+> **DG:** I thought braceless array access was supported...
+>
+> **DG:** all paths must agree.
+
+It was supported — but not with *this* grammar. A subscript can be written
+three ways, and each was a separate parse path with its own idea of what `K`
+may be:
+
+| spelling | path | index grammar it accepted |
+|---|---|---|
+| `${a[K]}` | `try_subscript` (byte-level, balanced) | the full rule above |
+| `$a[K]` | `try_subscript_arm` (token-level) | a fixed shape: `[`, `$ident`, `]` |
+| `"$a[K]"` | `try_emit_array_subscript_in_string` | an integer literal, nothing else |
+
+So `echo $a[$i]` printed an element while `echo "$a[$i]"` was **SB5064**, and
+`$a[$(( i ))]` was SB5064 where the braced form computed the index. The
+narrow paths did not *reject* a richer index — they declined to see a
+subscript at all, leaving a bare `$a`, which is why the complaint that
+surfaced was "you read the collection with the scalar sigil."
+
+**The resolution is a desugar, not a third implementation.** The lexer now
+rewrites `$a[K]` to `${a[K]}` (and the in-string form likewise) before
+anything downstream sees it, so this DD's grammar is the *only* subscript
+grammar in the compiler and the spellings cannot drift apart again. This is
+the mechanism DD#90 already uses for `$x:-foo`, and it is the project's
+standing "never fork a shared walker" convention applied to a parser.
+
+### What the divergence was hiding
+
+Not a style difference — **five ICEs and a hole in a safety diagnostic.**
+
+`$#[0]`, `$?[0]`, `$$[0]`, `$![0]` and `$1[0]` each built a subscript on a
+collection named `#`/`?`/`$`/`!`/`1`. No pass rejected it and codegen panicked
+with *"ICE: undefined array"*. Every braced counterpart was already a clean
+diagnostic (SB4038 / SB4034 / SB4047 / SB4003 / SB4047); the brace-less path
+simply never reached one. SB5031 — `$@[0]` isn't subscriptable — was a
+point-fix for the `@`/`*` members of this same family, and its own doc
+describes the crash.
+
+Worse, SB5068 (`s` is a scalar, so `s[…]` has no element) exists because
+`${s[0]}` once **segfaulted**. The brace-less spelling only reached that fix
+for the index forms its gather understood: `str s=z; echo $s[$(( 0 ))]`
+compiled and printed `z[0]`. A safety diagnostic that one spelling can walk
+around is not a fix, and that is the argument for agreement over codifying
+the narrowing.
+
+Pinned by `spec/subscript.sh` sections N and O (`80.70`–`80.96`), which spec
+each index form in the two spellings that used to diverge, plus the five
+closed ICEs.
+
+### One decline remains, and it is the right one
+
+`$arr[foo` — brackets that never close. No subscript is recognised, `$arr`
+stands alone, and SB5064 is accurate (`80.33`). Bash would print `p[foo`.
+
+### Carve-out: inside `(( ))` the desugar does not fire
+
+`$(( $a[1] ))` stays **SB4035** by design (DD#79 model B: inside arithmetic
+the subscript spelling is the bare `a[i]`). `collect_arith_content`
+re-serialises the main lexer's tokens through `tok_to_text`, so an un-gated
+desugar would have flipped that deliberate rejection to an accept silently.
+The desugar is gated on `Scanner::arith_depth == 0`.
