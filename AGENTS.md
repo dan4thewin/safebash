@@ -621,6 +621,34 @@ renders the same sentence a literal grep will never find, so a passing spec
 that asserts the message can belong to an entirely different renderer. That is
 exactly what hid `check_scalar_assignment`'s cold arm (journal 397).
 
+**For many candidates at once, use `contrib/cov-batch.sh DIR` instead** — it
+runs a whole corpus of candidate programs once, renders one lcov, and reports
+every line that is cold in `coverage.db` and warm now. Per-line probing costs
+an lcov render *per line* and re-runs the corpus each time; this is one cycle
+for twenty spellings. `contrib/cov-batch.sh --spec DIR` runs spec **files**
+under the harness instead, which is the check that closes the loop: the
+snippet that warmed the line and the spec you actually wrote are different
+programs, and only the second one counts. Both need `mk cov-probe-build`
+first and `mk cov-reset` after.
+
+**A cold non-ICE line is one of four things, and only the first is work**
+(DG's rule, 2026-10-04: *every line warm by spec except ICEs first, then a
+unit test for the final ICE lines*):
+
+1. a genuine spec gap — write the spec;
+2. a **validate-shadowed** arm in a later pass, for a form the first gate
+   already rejects (`detect_array_iter`'s five arms are all SB5026 / SB5073 /
+   SB5009; the compound-pipeline stage is SB4022; the pipeline recursion
+   diagnostic is SB5037). No spec can warm these;
+3. a **totality** arm, present only because the no-wildcard convention
+   requires it (`is_taint_source`'s `AssocArray`/`Test`, and friends). Do not
+   delete these — the convention has caught three bugs in three sessions;
+4. an **ICE** arm — a unit test, and only after (1) is done for that function.
+
+Classify before mining. Ranking raw cold-line counts puts (2)-(4) at the head,
+because rustfmt spreads a `panic!(…)` or an `Err(…)` across five lines while a
+real gap is often one.
+
 ```sql
 ATTACH 'coverage.db' AS cov;
 SELECT s.file, s.name, COUNT(*) AS uncov

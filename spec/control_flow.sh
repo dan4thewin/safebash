@@ -5,7 +5,7 @@
 set -eu
 . common.sh
 setup control_flow
-plan=84
+plan=85
 echo "1..$plan" >&3
 
 set +e
@@ -499,6 +499,14 @@ m[k]=1
 echo ${m[k]}
 for k in $(keys m; /bin/echo e) { echo "[$k]" }'
 [[ $rc != 0 && $err == *SB5073* && $err != *SB5009* ]]; chk fs.14
+
+# fs.15 a REDIRECT on the captured command does not change what the capture
+# is. The source-shape rule has to see through `StmtKind::Redirected` to the
+# command underneath, or `$(cmd 2>/dev/null)` reads as "not a command" and
+# falls out of the rule entirely — the same silent single-iteration bind that
+# fs.11-fs.13 each pinned for a different wrapper.
+run_sash 'for k in $(/bin/echo a 2>/dev/null) { attest k [[ -n $k ]]; echo "[$k]" }'
+[[ $rc != 0 && -z $out && $err == *SB5009* ]]; chk fs.15
 
 
 set -e

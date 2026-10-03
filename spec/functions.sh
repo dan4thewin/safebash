@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup functions
-plan=164
+plan=167
 echo "1..$plan" >&3
 
 set +e
@@ -1078,6 +1078,34 @@ return ${s:-1}
 }
 if f; then echo yes; else echo no; fi'
 [[ $rc = 0 && $out = "no" && -z $err ]]; chk 74.61
+
+# 74.62 a predicate whose body is a `{ }` GROUP ending in `return`. The
+# "does every path return?" walk has to descend into the group, or the group
+# reads as a non-returning statement and the predicate is rejected (74.15).
+run_sash 'p() {
+{ return 0; }
+}
+if p; then echo y; else echo n; fi'
+[[ $rc = 0 && $out = "y" && -z $err ]]; chk 74.62
+
+# 74.63 …and through a REDIRECT on the `return` itself. Same walk, the other
+# wrapper: `return 0 2>/dev/null` is a `Redirected` whose body returns.
+run_sash 'p() {
+return 0 2>/dev/null
+}
+if p; then echo y; else echo n; fi'
+[[ $rc = 0 && $out = "y" && -z $err ]]; chk 74.63
+
+# 74.64 the redirected `return` still carries its VALUE out to `$?`. The
+# redirect has no inst of its own to attach to — `return` lowers to a
+# terminator, not a command — so the attach step has to leave it alone rather
+# than bind it to whatever inst happened to be last in the block.
+run_sash 'f() {
+return 3 2>/dev/null
+}
+f
+echo "rc=$?"'
+[[ $rc = 0 && $out = "rc=3" && -z $err ]]; chk 74.64
 
 # ── lift: a capture nested in a value must be materialized ──────────────
 # `lift_int_func_calls` walks a value and captures every `$(f)` into a temp.

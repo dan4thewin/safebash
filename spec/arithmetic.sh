@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup arithmetic
-plan=354
+plan=358
 echo "1..$plan" >&3
 
 set +e
@@ -1013,6 +1013,30 @@ run_sash 'int a=0; (( 1 + a++ ))'
 # 31.36 an assignment under `?:` (conditionally evaluated) → SB4020
 run_sash 'int a=1; int b=0; (( a ? (b=2) : 0 ))'
 [[ $rc != 0 && -z $out && $err == *SB4020* ]]; chk 31.36
+
+# 31.137 a mutation-free `?:` BESIDE a hoisted mutation. 31.36 rejects a
+# mutation *under* `?:`; this is the legal neighbour, and it is the only way
+# the hoist recursion ever descends through a ternary — the whole expression
+# is only walked when it contains a mutation somewhere, and the ternary that
+# does not hold one still has to come out unchanged.
+run_sash 'int a=0; int b=1; (( (a=2) + (b > 0 ? 1 : 0) )); echo $a'
+[[ $rc = 0 && $out = "2" && -z $err ]]; chk 31.137
+
+# 31.138 the same through the FALSE arm — both sides of the ternary are
+# rebuilt by the recursion, so one arm passing proves nothing about the other
+run_sash 'int a=0; int b=0; (( (a=2) + (b > 0 ? 1 : 9) )); echo $a'
+[[ $rc = 0 && $out = "2" && -z $err ]]; chk 31.138
+
+# 31.139 the ternary CONDITION reads the variable the hoisted store just
+# wrote. bash evaluates left to right, so the store is visible: `a > 1` is
+# true. A hoist that moved the store after the ternary would read 0 and take
+# the other arm — silently, since the value is discarded.
+run_sash 'int a=0; (( (a=2) + (a > 1 ? 10 : 20) )); echo $a'
+[[ $rc = 0 && $out = "2" && -z $err ]]; chk 31.139
+
+# 31.140 the residual still drives the exit status: a zero sum is false
+run_sash 'int a=1; int b=0; (( (a=0) + (b > 0 ? 1 : 0) )); echo "$a $?"'
+[[ $rc = 0 && $out = "0 1" && -z $err ]]; chk 31.140
 
 # ── DD#94: newlines / `;` / comments inside `(( ))` ──
 # Package A (DG 2026-09-07): a standalone `(( ))` is a sequence block — newline

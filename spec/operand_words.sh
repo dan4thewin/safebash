@@ -7,7 +7,7 @@
 set -eu
 . common.sh
 setup operand_words
-plan=56
+plan=59
 echo "1..$plan" >&3
 
 set +e
@@ -185,6 +185,23 @@ run_sash '[[ abc =~ b ]] && echo y'
 # 118.15 `$(( ))` always renders at least one digit, so it is never empty
 run_sash '[[ -n $((1+1)) ]] && echo y'
 [[ $rc != 0 && -z $out && $err == *SB5086* ]]; chk 118.15
+
+# 118.31 the SINGLE-quoted empty word is a different IR node from `""` — a
+#        `SingleQuoted` literal, not an empty `DoubleQuoted` part list — so it
+#        reaches `word_emptiness` by its own arm. 118.11 covers the `""` half;
+#        this covers the `''` half, and the `-n`/Always answer (always FALSE),
+#        which no `""` spelling here reaches.
+run_sash "[[ -n '' ]] && echo y"
+[[ $rc != 0 && -z $out && $err == *SB5086* ]]; chk 118.31
+
+# 118.32 …and `-z ''` is the always-TRUE answer on the same node
+run_sash "[[ -z '' ]] && echo y"
+[[ $rc != 0 && -z $out && $err == *SB5086* ]]; chk 118.32
+
+# 118.33 `-z` on a word that can never be empty is the other always-FALSE
+#        spelling — the mirror of 118.10's `-n foo`
+run_sash '[[ -z foo ]] && echo y'
+[[ $rc != 0 && -z $out && $err == *SB5086* ]]; chk 118.33
 
 # 118.16 the rule is SYNTACTIC, not const-propagating: DG's escape rewrite has
 #        to keep working, so one variable is enough to make a test honest

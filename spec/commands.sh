@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup commands
-plan=150
+plan=152
 echo "1..$plan" >&3
 
 set +e
@@ -692,6 +692,19 @@ run_sash 'readline x < rt99.blank
 attest x [[ -z $x || -n $x ]]
 echo "[$x]"'
 [[ $rc = 0 && $out = "[]" && -z $err ]]; chk rt99.18
+
+# rt99.19 `read` with NO target. rt99.1-rt99.6 all pin a rejected *flag*; the
+# arity half of the same message had no spec, so the two-arity shape ("a
+# target name, optionally preceded by a source value") was never rendered.
+run_sash 'read'
+[[ $rc != 0 && $err = *SB5057* ]]; chk rt99.19
+
+# rt99.20 …and the other side of the same bound: three words is one too many.
+# DD#99 retired the multi-target split, so `read x y z` is an arity error, not
+# a field-splitting request.
+run_sash 'array a=()
+read x y z'
+[[ $rc != 0 && $err = *SB5057* ]]; chk rt99.20
 
 # 14.47 a multi-argument `$(echo …)` capture joins with a single space.
 # `echo_concat` builds the SSA Concat for this; the whole multi-arg path had
