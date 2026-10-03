@@ -1329,11 +1329,11 @@ fn check_subscript_types(expr: &Expr, env: &TypeEnv, errors: &mut Vec<TypeError>
         ExprKind::DoubleQuoted(parts) | ExprKind::Concat(parts) => {
             check_subscripts_in_parts(parts, env, errors);
         }
-        ExprKind::CommandSubstitution(stmts) => {
-            for s in stmts {
-                check_subscript_in_stmt(s, env, errors);
-            }
-        }
+        // Deliberately does NOT descend into `$( … )`. `check_stmt` walks
+        // `cmdsub_bodies()` unconditionally and runs the FULL per-statement
+        // check on each inner statement; descending here as well checked every
+        // substitution in a command argument twice, so a bad operand reported
+        // its diagnostic twice (and two bad arguments, four times).
         _ => {}
     }
 }
@@ -1477,25 +1477,6 @@ fn index_var_name(index: &Expr) -> Option<&str> {
         ExprKind::SimpleExpansion(v) => Some(v.as_str()),
         ExprKind::ParameterExpansion(pe) if pe.operator.is_none() => Some(pe.name.as_str()),
         _ => None,
-    }
-}
-
-fn check_subscript_in_stmt(stmt: &Statement, env: &TypeEnv, errors: &mut Vec<TypeError>) {
-    match &stmt.kind {
-        StmtKind::Command(c) => {
-            check_subscript_types(&c.name, env, errors);
-            check_join_operand(c, stmt.span, env, errors);
-            check_keys_operand(c, stmt.span, env, errors);
-            check_len_operand(c, stmt.span, env, errors);
-            check_string_intrinsic_operands(c, stmt.span, env, errors);
-            for arg in &c.args {
-                check_subscript_types(arg, env, errors);
-            }
-        }
-        StmtKind::Assignment(a) => {
-            check_subscript_types(&a.value, env, errors);
-        }
-        _ => {}
     }
 }
 
@@ -1895,8 +1876,10 @@ fn check_command(c: &Command, span: Span, env: &mut TypeEnv, errors: &mut Vec<Ty
     }
 
     // DD#33: check subscript key types in command args
+    check_subscript_types(&c.name, env, errors);
     check_join_operand(c, span, env, errors);
     check_keys_operand(c, span, env, errors);
+    check_len_operand(c, span, env, errors);
     check_string_intrinsic_operands(c, span, env, errors);
     check_int_sink_operands(c, span, env, errors);
     for arg in &c.args {

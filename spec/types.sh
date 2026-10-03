@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup types
-plan=323
+plan=332
 echo "1..$plan" >&3
 
 set +e
@@ -1668,12 +1668,12 @@ echo "[$s]"'
 # The useful complaint is the type error, and SB5020 must not appear.
 run_sash 'argv 1 a
 for k in $(keys a) { echo "$k" }' x y
-[[ $rc != 0 && -z $out && $err == *SB4030* && $err != *SB5020* ]]; chk 75.128
+[[ $rc != 0 && -z $out && $(grep -c SB4030 <<< "$err") = 1 && $err != *SB5020* ]]; chk 75.128
 # 75.129 a CLEAN indexed array — same answer, which is the point: `keys` on an
 # array is a type error whatever its taint, so taint was never the right axis.
 run_sash 'array a=(x)
 for k in $(keys a) { echo "$k" }'
-[[ $rc != 0 && -z $out && $err == *SB4030* && $err != *SB5020* ]]; chk 75.129
+[[ $rc != 0 && -z $out && $(grep -c SB4030 <<< "$err") = 1 && $err != *SB5020* ]]; chk 75.129
 # 75.130 the legitimate use is untouched: a clean map still iterates.
 run_sash 'map m=([k1]=v1)
 for k in $(keys m) { echo "$k" }'
@@ -1819,6 +1819,66 @@ run_sash 'fn f {
 }
 f'
 [[ $rc != 0 && -z $out && $err == *SB5052* ]]; chk 75.147
+
+# ── 75.148-75.156: one diagnostic per error, and the hole that hid ────────
+# `check_subscript_in_stmt` was a private fork of `check_command`'s operand
+# -check tail that ALSO descended into `$( … )`. `check_stmt` already walks
+# `cmdsub_bodies()` unconditionally and runs the full check on each inner
+# statement, so every substitution in a command argument was checked twice and
+# every operand error was reported twice. The fork is gone; its two unique
+# checks moved into `check_command`.
+# 75.148 the shape the defect was filed against — a for-in header.
+run_sash 'array a=(x)
+for k in $(keys a) { echo "$k" }'
+[[ $rc != 0 && -z $out && $(grep -c SB4030 <<< "$err") = 1 ]]; chk 75.148
+# 75.149 it was never specific to for-in: a plain command argument doubled too.
+# `keys` only looked special because validate rejects it everywhere else.
+run_sash 'str s="ab"
+echo "$(join s X)"'
+[[ $rc != 0 && -z $out && $(grep -c SB4030 <<< "$err") = 1 ]]; chk 75.149
+# 75.150 two bad arguments are two errors, not four — the count must track the
+# number of mistakes, not the number of walkers that found them.
+run_sash 'str s="ab"
+echo "$(join s X)" "$(join s X)"'
+[[ $rc != 0 && -z $out && $(grep -c SB4030 <<< "$err") = 2 ]]; chk 75.150
+# 75.151 a nested substitution is still reached (the inner `$( )` is a body of
+# the outer one), and still reported once.
+run_sash 'str s="ab"
+echo "$(echo "$(join s X)")"'
+[[ $rc != 0 && -z $out && $(grep -c SB4030 <<< "$err") = 1 ]]; chk 75.151
+# 75.152 a user function argument — the same walk, a different command head.
+run_sash 'str s="ab"
+f() { echo "$1" }
+f "$(join s X)"'
+[[ $rc != 0 && -z $out && $(grep -c SB4030 <<< "$err") = 1 ]]; chk 75.152
+
+# 75.153-75.156 the drift the fork was hiding. `check_len_operand` lived ONLY
+# in the fork, so `len` on a scalar was caught in the positions the fork
+# reached and nowhere else. `dd75-len-collection-only-strlen` is `done` and its
+# gate reads "`len <scalar>` → compile error naming `strlen`"; in a declaration
+# it compiled and returned the BYTE LENGTH, which is the exact overload the
+# amendment removed.
+# 75.153 the position that always worked.
+run_sash 'str s="ab"
+echo "$(len s)"'
+[[ $rc != 0 && -z $out && $err == *SB4030* && $err == *strlen* ]]; chk 75.153
+# 75.154 a `str` declaration — accepted before, and `j` was "2".
+run_sash 'str s="ab"
+str j="$(len s)"
+echo "$j"'
+[[ $rc != 0 && -z $out && $err == *SB4030* && $err == *strlen* ]]; chk 75.154
+# 75.155 an `int` declaration — the same hole, and the one with no incidental
+# type error to catch it by accident.
+run_sash 'str s="ab"
+int n=$(len s)
+echo "$n"'
+[[ $rc != 0 && -z $out && $err == *SB4030* && $err == *strlen* ]]; chk 75.155
+# 75.156 the control: `len` on a collection in that same declaration position
+# is still perfectly legal. The fix must close the hole, not the door.
+run_sash 'array a=(x y z)
+int n=$(len a)
+echo "n=$n"'
+[[ $rc = 0 && $out = "n=3" && -z $err ]]; chk 75.156
 
 set -e
 tally
