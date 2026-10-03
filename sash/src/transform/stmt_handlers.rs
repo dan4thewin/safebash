@@ -634,6 +634,11 @@ fn dispatch_multistage_pipeline(
     block: BlockId,
 ) -> BlockId {
     let last = &p.commands[p.commands.len() - 1];
+    // Structural on purpose: DD#122/SB4073 has already rejected a `while` final
+    // stage with no reader in it, so reaching here means the loop really does
+    // consume the pipe. This predicate used to be the *only* thing deciding it,
+    // which is how `cmd | while (( n < 1 )); do /bin/cat; done` compiled and
+    // silently discarded the pipeline's output.
     let is_while_read = matches!(&last.kind, StmtKind::While(_));
     let is_array_read = is_array_read_last(last);
     if is_while_read || is_array_read {
@@ -752,6 +757,7 @@ fn handle_pipe_while_or_array_read(
         negated: vec![],
     });
     if is_array_read {
+        let mark = super::pipelines::mark_ssa(ssa);
         block = lower_one(last, ssa, state, block);
         // DD#24: the read is clean only if every producer is compiler-computed.
         // Same predicate `handle_lastpipe_read` uses for `readline`, and the
@@ -759,7 +765,7 @@ fn handle_pipe_while_or_array_read(
         let clean_pipe = !p.commands[..p.commands.len() - 1]
             .iter()
             .any(crate::validate::is_external_source);
-        rewrite_lastpipe_consumer_fds(ssa, clean_pipe);
+        rewrite_lastpipe_consumer_fds(ssa, &mark, clean_pipe);
     } else {
         block = lower_pipe_while_read(last, ssa, state, block);
     }
@@ -770,12 +776,19 @@ fn handle_pipe_while_or_array_read(
 /// (currently 0 = stdin) to -1 (pipe sentinel) so codegen reads from
 /// the captured pipe fd instead of the inherited stdin, and record whether
 /// that pipe is clean so the SSA taint backstop classifies it correctly.
-fn rewrite_lastpipe_consumer_fds(ssa: &mut SsaProgram, clean: bool) {
-    for bid in ssa.blocks.keys().cloned().collect::<Vec<_>>() {
-        for inst in &mut ssa.block_mut(bid).insts {
-            repoint_stdin_to_pipe_sentinel(inst, clean);
-        }
-    }
+///
+/// DD#122: scoped to the instructions the consumer's own lowering produced.
+/// This walked every block in the program, so a `read arr` reading fd 0 with no
+/// pipe at all was silently re-aimed at a later pipeline's pipe — the same
+/// defect `repoint_readlines_to_pipe` had, in the array half of the read family.
+fn rewrite_lastpipe_consumer_fds(
+    ssa: &mut SsaProgram,
+    mark: &std::collections::HashMap<BlockId, usize>,
+    clean: bool,
+) {
+    super::pipelines::for_each_new_inst(ssa, mark, &mut |inst| {
+        repoint_stdin_to_pipe_sentinel(inst, clean);
+    });
 }
 
 fn repoint_stdin_to_pipe_sentinel(inst: &mut SsaInst, clean: bool) {
@@ -940,6 +953,12 @@ fn build_function_pipeline_stage(
     let saved_args = super::functions::save_caller_args(state);
 
     // DD#27/§5: reject recursion into a function already being inlined.
+    // DD#116: a *specification fidelity* backstop. SB5037 rejects recursion in
+    // `validate`, so this cannot fire on a program that gets this far — but
+    // inlining is the pass whose termination depends on it, and the rule is
+    // "no function is inlined into itself", which is a statement this site is
+    // the only one able to make. Deleting it would make the pass's termination
+    // an unstated consequence of a check two passes away.
     if state.inlining.iter().any(|n| n == &resolved) {
         state
             .diagnostics

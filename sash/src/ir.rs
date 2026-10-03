@@ -142,6 +142,45 @@ impl Statement {
         }
     }
 
+    /// DD#122: does this pipeline final stage contain a reader the pipe binds
+    /// to?
+    ///
+    /// A pipeline delivers its data to the final stage one of two ways: a
+    /// *forked* stage inherits the pipe as fd 0, or a reader running in the
+    /// *parent* is pointed at the pipe's read end. A `while` final stage runs
+    /// in the parent on purpose — `cmd | while readline v; do (( n = n + 1 ));
+    /// done` leaves `n` set where bash loses it — so the pipe reaches such a
+    /// stage only through a `readline` or a `read`.
+    ///
+    /// Deliberately does NOT descend into a nested `Pipeline`, a `Function`
+    /// definition, or a `Redirected` body: a reader in any of those binds to
+    /// something else (that pipeline's own pipe, a later call, the redirect).
+    /// `transform::pipelines`' repoint scopes itself to match, by rewriting
+    /// only the instructions the final stage's own lowering just produced.
+    pub fn binds_a_pipe_reader(&self) -> bool {
+        if self.is_pipe_reader() {
+            return true;
+        }
+        if matches!(
+            self.kind,
+            StmtKind::Pipeline(_) | StmtKind::Function(_) | StmtKind::Redirected(_)
+        ) {
+            return false;
+        }
+        self.structural_bodies()
+            .iter()
+            .any(|body| body.iter().any(Statement::binds_a_pipe_reader))
+    }
+
+    /// The two DD#99 readers that consume a pipe in the parent process:
+    /// `readline NAME` (one line → scalar) and `read ARRAY` (NUL-split).
+    fn is_pipe_reader(&self) -> bool {
+        let StmtKind::Command(c) = &self.kind else {
+            return false;
+        };
+        matches!(&c.name.kind, ExprKind::Literal(n) if n == "readline" || n == "read")
+    }
+
     /// Mutable mirror of [`Self::structural_bodies`] — deliberately not of
     /// [`Self::child_bodies`], which also yields `$( … )` bodies. A rewriting
     /// pass that wants those has to say so, because a substitution body is a

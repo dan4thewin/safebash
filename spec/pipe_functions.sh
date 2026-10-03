@@ -11,7 +11,7 @@
 set -eu
 . common.sh
 setup pipe_functions
-plan=23
+plan=34
 echo "1..$plan" >&3
 
 set +e
@@ -162,6 +162,97 @@ run_sash 'str x=a
 run_sash 'str x=a
 [[ -n $x ]] && echo hit'
 [[ $rc = 0 && $out = "hit" && -z $rerr ]]; chk pf.23
+
+# --- DD#122: a pipe binds to the READER, not to fd 0 ------------------------
+# `readline`/`read` with no leading pipe reads fd 0; `cmd | while readline v`
+# points that `readline` at the pipe; a command inside the loop body still
+# reads fd 0, because the loop runs in the PARENT (which is the whole point —
+# see pf.26). The pipe therefore attaches by rewriting a reader's fd to the
+# -1 sentinel, and the two rewrites used to walk EVERY block lowered so far.
+
+# pf.24 a `readline` with no pipe is not captured by a later pipeline.
+# The first pipeline's consumer reads one line and leaves `LEFT` in the pipe,
+# so a mis-aimed `readline mid` succeeds and reads it; correctly aimed at fd 0
+# (the harness runs binaries on /dev/null) it hits EOF. The bug needed BOTH
+# pipelines: delete the third line and the identical statement read fd 0.
+run_sash '/bin/printf "x\nLEFT\n" | readline a
+attest a [[ -n $a ]]
+if readline mid; then echo "MID-READ"; else echo "MID-EOF"; fi
+attest mid [[ -z $mid ]]
+echo "MID=[$mid]"
+/bin/printf "y\n" | while readline b; do attest b [[ -n $b ]]; echo "B=$b"; done'
+[[ $rc = 0 && $out = "MID-EOF
+MID=[]
+B=y" && -z $rerr ]]; chk pf.24
+
+# pf.25 the same for the ARRAY half of the read family — `rewrite_lastpipe_
+# consumer_fds` had the identical whole-program walk.
+run_sash '/bin/printf "x\nLEFT\n" | readline a
+attest a [[ -n $a ]]
+read arr
+echo "N=$(len arr)"
+/bin/printf "y\0" | read brr
+echo "M=$(len brr)"'
+[[ $rc = 0 && $out = "N=0
+M=1" && -z $rerr ]]; chk pf.25
+
+# pf.26 the property the whole design protects: the loop runs in the PARENT,
+# so assignments survive it. bash prints 0 here — this is its most notorious
+# pipeline gotcha, and safebash deliberately does not reproduce it.
+run_sash 'int n=0
+/bin/printf "a\nb\nc\n" | while readline v; do attest v [[ -n $v ]]; (( n = n + 1 )); done
+echo "n=$n"'
+[[ $rc = 0 && $out == *"n=3" && -z $rerr ]]; chk pf.26
+
+# pf.27 the reader may be in the loop BODY rather than the condition — what
+# binds the pipe is the reader, not the `while` header.
+run_sash 'int n=0
+/bin/printf "a\nb\n" | while (( n < 1 )); do readline v; attest v [[ -n $v ]]; echo "v=$v"; (( n = n + 1 )); done'
+[[ $rc = 0 && $out = "v=a" && -z $rerr ]]; chk pf.27
+
+# --- the final stage must consume the pipe (SB4022 / SB4073) ----------------
+# A compound final stage is FORKED, so it reads the pipe and then throws away
+# everything it assigned — the bundling DD#38 rejects `( … )` for, arriving
+# through a different syntactic door. `cmd | { readline g; }` ran, read a
+# line, and left `g` unset with no diagnostic.
+
+# pf.28 a `{ }` group as the final stage
+run_sash '/bin/printf "a\n" | { readline g; attest g [[ -n $g ]]; echo "g=$g" }'
+[[ $rc != 0 && -z $out && $err == *SB4022* ]]; chk pf.28
+
+# pf.29 an `if` as the final stage — took the right branch, still lost `g`
+run_sash '/bin/printf "a\n" | if readline g; then echo br; fi'
+[[ $rc != 0 && -z $out && $err == *SB4022* ]]; chk pf.29
+
+# pf.30 a `for` as the final stage
+run_sash '/bin/printf "a\n" | for x in 1 2; do echo $x; done'
+[[ $rc != 0 && -z $out && $err == *SB4022* ]]; chk pf.30
+
+# pf.31 a `while` that never reads the pipe — the loop runs in the parent and
+# nothing binds the pipe, so the producer's output went nowhere, silently.
+run_sash 'int n=0
+/bin/printf "a\n" | while (( n < 1 )); do /bin/cat; (( n = n + 1 )); done'
+[[ $rc != 0 && -z $out && $err == *SB4073* ]]; chk pf.31
+
+# pf.32 a reader nested in an inner PIPELINE does not count as the outer
+# stage's reader — it binds to its own pipe. SB4073, not a silent discard.
+run_sash 'int n=0
+/bin/printf "a\n" | while (( n < 1 )); do /bin/echo z | readline w; (( n = n + 1 )); done'
+[[ $rc != 0 && -z $out && $err == *SB4073* ]]; chk pf.32
+
+# pf.33 guard against over-rejection: the SB4022 advice is "wrap it in a
+# function", so the function form must stay legal. It is also exactly what
+# bash does with the `{ }` — both print only `a`, `head` having consumed the
+# buffer.
+run_sash 'fn f { /bin/head -n1; /bin/cat }
+/bin/printf "a\nb\nc\n" | f'
+[[ $rc = 0 && $out = "a" && -z $rerr ]]; chk pf.33
+
+# pf.34 guard against over-rejection: the two DD#99 lastpipe readers are
+# ordinary commands and stay legal as the final stage.
+run_sash '/bin/printf "a\0b\0" | read arr
+echo "n=$(len arr)"'
+[[ $rc = 0 && $out = "n=2" && -z $rerr ]]; chk pf.34
 
 set -e
 tally

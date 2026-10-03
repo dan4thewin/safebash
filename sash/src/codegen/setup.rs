@@ -1367,6 +1367,17 @@ fn declare_ambient_vars(builder: &mut cranelift_frontend::FunctionBuilder) -> Am
         v.def_var(var, zero);
         var
     };
+    // DD#122: "no pipe captured" is -1, not 0. `emit_c` has always written -1
+    // here; native wrote 0, which is a *valid* fd — so when the pipe-fd sentinel
+    // leaked to a `readline` that had no pipe, native read stdin and looked
+    // correct while the C build aborted in `rustix`. One sentinel, one spelling.
+    // After the repoint scoping this is unobservable: an instruction only
+    // carries fd -1 if the pipeline instruction that defines this variable was
+    // emitted immediately before it.
+    let minus_one = builder.ins().iconst(I64, -1);
+    let pipe_read_fd_var = builder.declare_var(I64);
+    builder.def_var(pipe_read_fd_var, minus_one);
+
     AmbientVars {
         // [[ ]] last test result
         test_result_var: decl(builder),
@@ -1375,7 +1386,7 @@ fn declare_ambient_vars(builder: &mut cranelift_frontend::FunctionBuilder) -> Am
         // DD#56: saved exit status for END block (preserves triggering status)
         saved_end_status_var: decl(builder),
         // Pipe read fd for pipe-while-read pattern (fd from captured pipeline)
-        pipe_read_fd_var: decl(builder),
+        pipe_read_fd_var,
     }
 }
 

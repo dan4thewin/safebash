@@ -2723,6 +2723,7 @@ fn parse_trailing_pipeline(
     reject_pipeline_and_or_postfix(&commands, span)?;
     if commands.len() > 1 {
         reject_statement_form_pipeline_stage(&commands)?;
+        reject_nonconsuming_final_stage(&commands)?;
     }
     Ok(if commands.len() > 1 {
         Statement {
@@ -2823,10 +2824,12 @@ fn statement_form_label(stmt: &Statement) -> Option<&'static str> {
 /// aborted with its own "bare command passed to sash_exec" assertion, i.e. a
 /// clean compile that could only fail at run time.
 ///
-/// Compound commands (`if`, `for`, `match`) are already rejected here by
-/// `compound_postfix_rejection`; these three were the statement forms it did
-/// not classify as compound. `&&`/`||` on a test stays legal — only the pipe
-/// discards the result.
+/// Compound commands (`if`, `for`, `match`) in a *non-final* stage are already
+/// rejected by `compound_postfix_rejection` (the `|` follows the compound, so
+/// the parser sees it as a postfix); in the *final* stage they are rejected by
+/// `reject_nonconsuming_final_stage`. These three were the statement forms
+/// neither classified as compound. `&&`/`||` on a test stays legal — only the
+/// pipe discards the result.
 fn reject_statement_form_pipeline_stage(commands: &[Statement]) -> Result<(), Diagnostic> {
     for stmt in commands {
         let stage = unwrap_stage_wrappers(stmt);
@@ -2842,6 +2845,51 @@ fn reject_statement_form_pipeline_stage(commands: &[Statement]) -> Result<(), Di
         }
     }
     Ok(())
+}
+
+/// DD#122: the final stage of a pipeline must *consume* the pipe.
+///
+/// A pipeline delivers its data one of two ways. An ordinary command stage is
+/// forked and inherits the pipe as fd 0. A `while` final stage runs in the
+/// **parent** — that is the whole point of the shape, since
+/// `cmd | while readline v; do (( n = n + 1 )); done` leaves `n` set where
+/// bash, which subshells the loop, loses it — so the pipe reaches it only
+/// through a `readline`/`read`.
+///
+/// Every other compound is forked like bash's `( … )`: it reads the pipe and
+/// then throws away everything it assigned. `cmd | { readline g; }` ran, read
+/// a line into `g`, and left `g` unset with no diagnostic; `cmd | if readline
+/// g; then …; fi` took the right branch and still lost `g`. That is exactly
+/// the bundling DD#38 rejects `( … )` for, arriving through a different
+/// syntactic door — so it gets DD#38's answer, and SB4022's existing advice:
+/// wrap it in a function, which *is* a legal stage.
+///
+/// Runs after [`reject_statement_form_pipeline_stage`], which has specific
+/// wording for `[[ … ]]`/`attest`/`(( … ))`. The default here is to reject, so
+/// a new `StmtKind` fails closed.
+fn reject_nonconsuming_final_stage(commands: &[Statement]) -> Result<(), Diagnostic> {
+    let last = unwrap_stage_wrappers(&commands[commands.len() - 1]);
+    match &last.kind {
+        StmtKind::Command(_) => Ok(()),
+        StmtKind::While(_) if last.binds_a_pipe_reader() => Ok(()),
+        StmtKind::While(_) => Err(parse_error(
+            last.span,
+            "SB4073",
+            "this `while` is a pipeline's last stage but never reads it — the \
+             loop runs in the parent, so the pipe reaches it only through \
+             `readline` or `read`; add one, or drop the `|`"
+                .to_string(),
+        )),
+        _ => Err(parse_error(
+            last.span,
+            "SB4022",
+            "a compound command isn't allowed as a pipeline's last stage — it \
+             runs in a forked child, so everything it assigns is discarded; \
+             consume the pipe with `while readline NAME` or `read ARRAY`, or \
+             wrap the compound in a function"
+                .to_string(),
+        )),
+    }
 }
 
 /// SB4053 (DD#95): `&&` and `||` mixed in one command list. The advice differs
