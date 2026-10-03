@@ -3479,3 +3479,19 @@ fn is_dropped_param_operator(op: &str) -> bool {
 fn walk_exprs(stmt: &Statement, f: &mut impl FnMut(&Expr)) {
     crate::ir::walk_all_exprs(stmt, f);
 }
+
+/// The `unreachable!` in [`build_expr_from_parts`] rests on an arithmetic
+/// argument about its two call sites, not on a gate any program can trip:
+/// both slice a `Concat` around a *middle* index, so neither side can be
+/// empty. A unit test calling it with the empty slice is the only way to
+/// prove the guard is loud rather than silently returning `Literal("")`.
+#[cfg(test)]
+mod invariant_tests {
+    use super::*;
+
+    #[test]
+    #[should_panic(expected = "neither side is empty")]
+    fn build_expr_from_parts_rejects_the_empty_slice() {
+        let _ = build_expr_from_parts(&[], Span::new(1, 1));
+    }
+}

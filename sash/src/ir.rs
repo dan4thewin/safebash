@@ -1755,20 +1755,51 @@ pub enum IrUnaryArithOp {
     BitNot, // ~
 }
 
-/// The two invariant panics in [`readline_target`] guard shapes that SB5057
-/// makes unreachable. DG's rule for the coverage campaign: an unreachable
-/// should-never-run assertion earns a unit test proving it catches what it
-/// claims. These call the lowering accessor directly with the arguments the
-/// validator would never let through.
+/// The should-never-run assertions in this file guard shapes that an earlier
+/// pass makes unreachable: SB5057 for [`readline_target`]'s two, and the
+/// parser's `reject_prefix_incdec` for every `ArithExpr::PreIncDec` arm. DG's
+/// rule for the coverage campaign: an unreachable should-never-run assertion
+/// earns a unit test proving it catches what it claims. These call each
+/// accessor directly with the arguments the earlier pass would never let
+/// through. A test that stops panicking means that pass has a hole.
 #[cfg(test)]
 mod invariant_tests {
-    use super::{readline_target, Expr, ExprKind, Span};
+    use super::{
+        arith_brief, mutation_target_in, readline_target, ArithExpr, Expr, ExprKind, Span,
+    };
 
     fn word(kind: ExprKind) -> Expr {
         Expr {
             kind,
             span: Span::new(1, 1),
         }
+    }
+
+    /// `++x`. The parser raises SB4020 at both arith entry points, so no
+    /// walker can meet one — which is the claim each test below asserts.
+    fn prefix_incdec() -> ArithExpr {
+        ArithExpr::PreIncDec {
+            var: "x".into(),
+            inc: true,
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "prefix ++/-- never survives the parser")]
+    fn children_rejects_prefix_incdec() {
+        let _ = prefix_incdec().children();
+    }
+
+    #[test]
+    #[should_panic(expected = "prefix ++/-- never survives the parser")]
+    fn mutation_target_in_rejects_prefix_incdec() {
+        let _ = mutation_target_in(&prefix_incdec());
+    }
+
+    #[test]
+    #[should_panic(expected = "prefix ++/-- never survives the parser")]
+    fn arith_brief_rejects_prefix_incdec() {
+        let _ = arith_brief(&prefix_incdec());
     }
 
     #[test]

@@ -1455,3 +1455,88 @@ fn extract_func_args(value: &Expr) -> Vec<Expr> {
         vec![]
     }
 }
+
+/// `attest`, `argv` and `keys` each reach lowering with their shape already
+/// fixed — `attest` by `parse_attest` (SB4014), `argv` by SB4045/SB5085,
+/// `keys` by SB5073/SB4045 — so each lowering says so loudly rather than
+/// returning `None`. `None` is the dangerous answer here: it means "not a
+/// builtin", which compiles the statement into an ordinary command and dies
+/// at runtime with `sash: bug: bare command passed to sash_exec`. DG's rule
+/// for the coverage campaign: an unreachable assertion earns a unit test
+/// proving it catches what it claims.
+///
+/// `handle_attest_stmt`'s second guard — the `AttestPredicate::ArithConvert`
+/// arm after the scalar form is consumed — is deliberately *not* tested: it
+/// is a DD#116 property-2 totality arm, unreachable by construction in the
+/// same function rather than by an earlier pass, so nothing can call it.
+#[cfg(test)]
+mod invariant_tests {
+    use super::*;
+    use std::collections::HashMap;
+
+    fn lit(s: &str) -> Expr {
+        Expr {
+            kind: ExprKind::Literal(s.to_string()),
+            span: Span::new(1, 1),
+        }
+    }
+
+    fn fixtures() -> (SsaProgram, VersionState, BlockId) {
+        let mut ssa = SsaProgram::new();
+        let block = ssa.new_block("entry");
+        ssa.entry = block;
+        (ssa, VersionState::with_types(HashMap::new()), block)
+    }
+
+    fn ice_on(name: &str, args: Vec<Expr>, want: &str) {
+        let c = Command {
+            name: lit(name),
+            args,
+        };
+        let caught = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let (mut ssa, mut state, block) = fixtures();
+            match name {
+                "attest" => handle_attest_stmt(&c, &mut ssa, &mut state, block),
+                "argv" => handle_argv(&c, &mut ssa, &mut state, block),
+                "keys" => handle_keys(&c, &mut ssa, &mut state, block),
+                other => unreachable!("no such lowering under test: {other}"),
+            }
+        }));
+        let err = caught.expect_err("this shape must ICE");
+        let msg = err
+            .downcast_ref::<&'static str>()
+            .map(|s| (*s).to_string())
+            .or_else(|| err.downcast_ref::<String>().cloned())
+            .expect("ICE payload is a string");
+        assert!(
+            msg.contains(want),
+            "the ICE must name what guarantees it: wanted {want:?}, got {msg:?}"
+        );
+    }
+
+    #[test]
+    fn an_unclassifiable_attest_is_a_loud_ice() {
+        ice_on("attest", vec![], "SB4014");
+    }
+
+    #[test]
+    fn a_zero_argument_argv_is_a_loud_ice() {
+        ice_on("argv", vec![], "SB4045");
+    }
+
+    #[test]
+    fn a_non_integer_argv_index_is_a_loud_ice() {
+        ice_on("argv", vec![lit("x"), lit("a")], "SB5085");
+    }
+
+    #[test]
+    fn a_three_argument_argv_is_a_loud_ice() {
+        ice_on("argv", vec![lit("1"), lit("2"), lit("a")], "SB4045");
+    }
+
+    #[test]
+    fn a_keys_statement_of_the_wrong_arity_is_a_loud_ice() {
+        ice_on("keys", vec![lit("m")], "SB5073");
+        ice_on("keys", vec![lit("m"), lit("k"), lit("x")], "SB5073");
+    }
+}

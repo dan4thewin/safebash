@@ -760,3 +760,79 @@ fn ar_subscript(name: &str, index: &ArithExpr, i: usize, out: &mut String) {
     arith(index, i + 7, out);
     out.push('}');
 }
+
+/// The should-never-run assertions in this file guard shapes an earlier pass
+/// makes unreachable: `expr()` splits the word forms off before
+/// `expr_composite` sees them, and `ARITH_IR_MUTATION_INVARIANT` /
+/// `PREFIX_INCDEC_INVARIANT` name the parse-time lowering and the SB4020 gate
+/// that between them keep every mutation node out of the serialiser. DG's
+/// rule for the coverage campaign: an unreachable assertion earns a unit test
+/// proving it catches what it claims. A test that stops panicking means the
+/// earlier pass has a hole.
+#[cfg(test)]
+mod invariant_tests {
+    use super::*;
+
+    #[test]
+    fn expr_composite_rejects_every_word_form() {
+        let forms = [
+            ExprKind::Literal("a".into()),
+            ExprKind::SingleQuoted("a".into()),
+            ExprKind::SimpleExpansion("a".into()),
+            ExprKind::DoubleQuoted(vec![]),
+            ExprKind::Concat(vec![]),
+            ExprKind::Array(vec![]),
+        ];
+        for k in forms {
+            let caught = std::panic::catch_unwind(|| {
+                let mut out = String::new();
+                expr_composite(&k, 0, &mut out);
+            });
+            assert!(caught.is_err(), "{k:?} should be handled by expr()");
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "lowered away at parse time")]
+    fn arith_rejects_post_incdec() {
+        let mut out = String::new();
+        arith(
+            &ArithExpr::PostIncDec {
+                var: "x".into(),
+                inc: true,
+            },
+            0,
+            &mut out,
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "lowered away at parse time")]
+    fn arith_rejects_subscript_assign() {
+        let mut out = String::new();
+        arith(
+            &ArithExpr::SubscriptAssign {
+                name: "a".into(),
+                index: Box::new(ArithExpr::Literal(0)),
+                op: None,
+                value: Box::new(ArithExpr::Literal(1)),
+            },
+            0,
+            &mut out,
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "prefix ++/-- never survives the parser")]
+    fn arith_rejects_prefix_incdec() {
+        let mut out = String::new();
+        arith(
+            &ArithExpr::PreIncDec {
+                var: "x".into(),
+                inc: true,
+            },
+            0,
+            &mut out,
+        );
+    }
+}

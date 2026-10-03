@@ -577,8 +577,18 @@ fn arith_to_ssa(arith: &ArithExpr, expr: &Expr, state: &VersionState) -> SsaValu
         // the integer key (lower_subscript_raw's is_integer_key path calls
         // lower_value_as_int on the index).
         ArithExpr::Subscript { name, index } => subscript_read_to_ssa(name, index, expr, state),
-        // Value leaves are handled by `arith_leaf_to_ssa` above.
-        _ => unreachable!("arith value leaf not handled by arith_leaf_to_ssa"),
+        // Value leaves are handled by `arith_leaf_to_ssa` above, which returns
+        // `Some` for all four of them unconditionally — so this arm is
+        // unreachable by construction, not by an earlier pass, and no test
+        // can call it. Naming the four rather than writing `_` is what earns
+        // it: a new `ArithExpr` variant is now a compile error here instead
+        // of silently landing on an ICE at runtime.
+        ArithExpr::Literal(_)
+        | ArithExpr::Var(_)
+        | ArithExpr::DollarVar(_)
+        | ArithExpr::Expansion(_) => {
+            unreachable!("arith value leaf not handled by arith_leaf_to_ssa")
+        }
     }
 }
 
@@ -1120,5 +1130,98 @@ mod tests {
             msg.contains("SB5062"),
             "the ICE must name the validation rule that guarantees it: {msg}"
         );
+    }
+
+    /// `$(join a "$sep")`. SB5074 rejects a non-literal separator; the
+    /// predecessor of this guard fell back to the argument's *source text*
+    /// and silently joined with the five characters `"$sep"`.
+    #[test]
+    fn join_non_literal_separator_is_a_loud_ice() {
+        let c = Command {
+            name: lit("join"),
+            args: vec![
+                lit("a"),
+                Expr {
+                    kind: ExprKind::SimpleExpansion("sep".to_string()),
+                    span: Span::new(1, 1),
+                },
+            ],
+        };
+        let st = state();
+        let caught =
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| join_intrinsic(&c, &st)));
+        let err = caught.expect_err("a non-literal separator reaching join_intrinsic must ICE");
+        let msg = ice_text(&err);
+        assert!(
+            msg.contains("flag_join_separator"),
+            "the ICE must name the validation rule that guarantees it: {msg}"
+        );
+    }
+
+    /// `$(join)`. SB5040 rejects a 0-arg (and >2-arg) join.
+    #[test]
+    fn join_zero_arity_is_a_loud_ice() {
+        let c = Command {
+            name: lit("join"),
+            args: vec![],
+        };
+        let st = state();
+        let caught =
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| join_intrinsic(&c, &st)));
+        let err = caught.expect_err("a zero-arg join reaching join_intrinsic must ICE");
+        let msg = ice_text(&err);
+        assert!(
+            msg.contains("check_join_arity"),
+            "the ICE must name the validation rule that guarantees it: {msg}"
+        );
+    }
+
+    /// Bug #3 fork A: a mutation in a *value* context is either rejected by
+    /// SB4020 or hoisted into a preceding store, so the value path never
+    /// meets one. The half-wired path this replaced silently dropped the
+    /// store — the assignment simply did not happen.
+    #[test]
+    fn an_arith_mutation_cannot_reach_the_value_path() {
+        let cases = [
+            ArithExpr::PreIncDec {
+                var: "x".to_string(),
+                inc: true,
+            },
+            ArithExpr::PostIncDec {
+                var: "x".to_string(),
+                inc: true,
+            },
+            ArithExpr::Assign {
+                var: "x".to_string(),
+                value: Box::new(ArithExpr::Literal(1)),
+            },
+            ArithExpr::CompoundAssign {
+                var: "x".to_string(),
+                op: crate::ir::IrArithOp::Add,
+                value: Box::new(ArithExpr::Literal(1)),
+            },
+            ArithExpr::SubscriptAssign {
+                name: "a".to_string(),
+                index: Box::new(ArithExpr::Literal(0)),
+                op: None,
+                value: Box::new(ArithExpr::Literal(1)),
+            },
+        ];
+        let st = state();
+        for a in &cases {
+            let host = Expr {
+                kind: ExprKind::Arithmetic(Box::new(a.clone())),
+                span: Span::new(1, 1),
+            };
+            let caught = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                arith_to_ssa(a, &host, &st)
+            }));
+            let err = caught.expect_err("a mutation reaching the value path must ICE");
+            let msg = ice_text(&err);
+            assert!(
+                msg.contains("SB4020") || msg.contains("prefix ++/--"),
+                "the ICE must name what guarantees it: {msg}"
+            );
+        }
     }
 }

@@ -641,4 +641,21 @@ mod tests {
             "a non-opaque form reaching opaque_form_to_string must raise a loud ICE"
         );
     }
+
+    /// Same shape on the value side: `composite_to_value` is total only over
+    /// the four variants `expr_to_value` routes to it, and a new `ExprKind`
+    /// reaches the command-substitution fallback there rather than here. The
+    /// ICE is what a regression in that routing would hit.
+    #[test]
+    fn composite_helper_ices_on_a_form_it_does_not_own() {
+        let kind = ExprKind::Literal("hello".to_string());
+        let state = VersionState::with_types(std::collections::HashMap::new());
+        let caught = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            composite_to_value(&kind, &state)
+        }));
+        assert!(
+            caught.is_err(),
+            "a non-composite form reaching composite_to_value must raise a loud ICE"
+        );
+    }
 }

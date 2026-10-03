@@ -1851,4 +1851,46 @@ mod tests {
         // trips this rather than reaching a user unnoticed.
         assert_eq!(cases.len(), 49, "a new ATok variant needs a spelling case");
     }
+
+    /// `++x`. `reject_prefix_incdec` raises SB4020 at both arith entry
+    /// points, so `ArithExpr::PreIncDec` never reaches a later pass. These
+    /// call the two accessors in this file directly with the node the parser
+    /// would never hand them. A test that stops panicking means the parser
+    /// has a hole.
+    fn prefix_incdec() -> ArithExpr {
+        ArithExpr::PreIncDec {
+            var: "x".into(),
+            inc: true,
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "prefix ++/-- never survives the parser")]
+    fn classify_arith_expr_rejects_prefix_incdec() {
+        let _ = classify_arith_expr(&prefix_incdec());
+    }
+
+    #[test]
+    #[should_panic(expected = "prefix ++/-- never survives the parser")]
+    fn lower_arith_mutation_structured_rejects_prefix_incdec() {
+        let _ = lower_arith_mutation_structured(&prefix_incdec(), Span::new(1, 1));
+    }
+
+    /// `step_arith_collect` intercepts all five paren tokens before
+    /// `step_default_token` — the sole caller of `tok_to_text` — because
+    /// rendering them is depth-sensitive. A spelling here would be a second,
+    /// already-disagreeing answer (DD#116, rival).
+    #[test]
+    fn tok_to_text_rejects_every_paren_token() {
+        for tok in [
+            Tok::LParen,
+            Tok::RParen,
+            Tok::DollarDblParen,
+            Tok::DblParen,
+            Tok::DblParenClose,
+        ] {
+            let caught = std::panic::catch_unwind(|| tok_to_text(&tok));
+            assert!(caught.is_err(), "{tok:?} should be unreachable here");
+        }
+    }
 }

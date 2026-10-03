@@ -649,6 +649,28 @@ Classify before mining. Ranking raw cold-line counts puts (2)-(4) at the head,
 because rustfmt spreads a `panic!(…)` or an `Err(…)` across five lines while a
 real gap is often one.
 
+**Writing an ICE test (category 4).** The ICE *is* the claim:
+`unreachable!("SB4045 rejects a zero-argument argv")` asserts something about
+a *different* pass, and nothing in the type system holds it. The spec suite
+can never test it, because the spec suite can only write programs the
+validator accepts. So call the function **directly** with the shape the
+earlier pass rejects, and assert the ICE text names the rule that guarantees
+it. A test that stops panicking is the finding, not a cleanup.
+
+Put the module in the **same file** (`#[cfg(test)] mod invariant_tests`) —
+most of these functions are private. Use `#[should_panic(expected = …)]` for a
+single site; `std::panic::catch_unwind(AssertUnwindSafe(…))` plus a payload
+downcast when you want to loop over several shapes or assert on the message.
+`sash/src/transform/stmt_handlers.rs` and `sash/src/ir.rs` are the two worked
+examples.
+
+**Some ICE arms cannot be reached by a unit test either**, because the
+*same function* already covers the case — `arith_to_ssa`'s trailing arm is
+unreachable because the match names twelve `ArithExpr` variants and the leaf
+helper called first returns `Some` for the other four. Do not chase these.
+Make the arm name its variants instead of `_` (so a new variant is a compile
+error rather than a runtime ICE) and say so in the doc comment.
+
 ```sql
 ATTACH 'coverage.db' AS cov;
 SELECT s.file, s.name, COUNT(*) AS uncov

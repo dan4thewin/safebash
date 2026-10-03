@@ -613,3 +613,41 @@ pub(super) fn rewrite_write_as_echo(name: &str, args: Vec<SsaValue>) -> (String,
     out.extend(args);
     ("echo".to_string(), out)
 }
+
+/// SB4059-SB4062 fix the `signal` shape before the transform runs: exactly
+/// two literal arguments, a catchable signal number, and one of the four
+/// known dispositions. The `unreachable!` on the disposition is the claim
+/// that SB4062's table and this match agree; the gate it replaced turned a
+/// typo'd disposition into a silent no-op. DG's rule for the coverage
+/// campaign: an unreachable assertion earns a unit test proving it catches
+/// what it claims.
+#[cfg(test)]
+mod invariant_tests {
+    use super::*;
+    use std::collections::HashMap;
+
+    fn lit(s: &str) -> Expr {
+        Expr {
+            kind: ExprKind::Literal(s.to_string()),
+            span: Span::new(1, 1),
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "SB4062 validated the signal disposition")]
+    fn handle_signal_rejects_an_unknown_disposition() {
+        let c = Command {
+            name: lit("signal"),
+            args: vec![lit("15"), lit("BOGUS")],
+        };
+        let stmt = Statement {
+            kind: StmtKind::Command(c.clone()),
+            span: Span::new(1, 1),
+        };
+        let mut ssa = SsaProgram::new();
+        let block = ssa.new_block("entry");
+        ssa.entry = block;
+        let mut state = VersionState::with_types(HashMap::new());
+        handle_signal("signal", &c, &stmt, &mut ssa, &mut state, block);
+    }
+}

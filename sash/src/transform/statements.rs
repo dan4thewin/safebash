@@ -965,3 +965,83 @@ fn map_from_array_parts(
     };
     Some((pe.name.clone(), mode, key, message, pe.taint_off))
 }
+
+/// The should-never-run assertions in this file guard shapes an earlier pass
+/// makes unreachable: the parser only builds `StmtKind::Negated` for a
+/// non-leading pipeline stage, `reject_prefix_incdec` raises SB4020 on every
+/// `PreIncDec`, and `check_arith_test_placement` (SB4020) rejects `++`/`--`
+/// and `a[i]` mutations in a `(( … ))` statement or condition before the
+/// transform runs. DG's rule for the coverage campaign: an unreachable
+/// assertion earns a unit test proving it catches what it claims. A test
+/// that stops panicking means the earlier pass has a hole.
+#[cfg(test)]
+mod invariant_tests {
+    use super::*;
+    use std::collections::HashMap;
+
+    fn fixtures() -> (SsaProgram, VersionState, BlockId) {
+        let mut ssa = SsaProgram::new();
+        let block = ssa.new_block("entry");
+        ssa.entry = block;
+        (ssa, VersionState::with_types(HashMap::new()), block)
+    }
+
+    fn stmt(kind: StmtKind) -> Statement {
+        Statement {
+            kind,
+            span: Span::new(1, 1),
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "never reaches statement dispatch")]
+    fn lower_one_rejects_a_per_segment_negation() {
+        // `! cmd` standing alone is `Pipeline { negated: true, .. }`;
+        // `StmtKind::Negated` is only ever a non-leading pipeline *stage*,
+        // and `push_pipeline_stage` peels it there.
+        let inner = stmt(StmtKind::Command(Command {
+            name: Expr {
+                kind: ExprKind::Literal("true".to_string()),
+                span: Span::new(1, 1),
+            },
+            args: vec![],
+        }));
+        let (mut ssa, mut state, block) = fixtures();
+        let negated = stmt(StmtKind::Negated(Box::new(inner)));
+        lower_one(&negated, &mut ssa, &mut state, block);
+    }
+
+    #[test]
+    #[should_panic(expected = "prefix ++/-- never survives the parser")]
+    fn hoist_mutation_node_rejects_prefix_incdec() {
+        let (mut ssa, mut state, mut block) = fixtures();
+        let a = ArithExpr::PreIncDec {
+            var: "x".to_string(),
+            inc: true,
+        };
+        hoist_mutation_node(&a, Span::new(1, 1), &mut ssa, &mut state, &mut block);
+    }
+
+    #[test]
+    fn hoist_mutation_node_rejects_the_non_hoistable_mutations() {
+        let cases = [
+            ArithExpr::PostIncDec {
+                var: "x".to_string(),
+                inc: true,
+            },
+            ArithExpr::SubscriptAssign {
+                name: "a".to_string(),
+                index: Box::new(ArithExpr::Literal(0)),
+                op: None,
+                value: Box::new(ArithExpr::Literal(1)),
+            },
+        ];
+        for a in cases {
+            let caught = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                let (mut ssa, mut state, mut block) = fixtures();
+                hoist_mutation_node(&a, Span::new(1, 1), &mut ssa, &mut state, &mut block)
+            }));
+            assert!(caught.is_err(), "SB4020 rejects {a:?} before the transform");
+        }
+    }
+}

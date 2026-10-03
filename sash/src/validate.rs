@@ -10633,4 +10633,28 @@ mod tests {
             &HashSet::from(["t".to_string()]),
         );
     }
+
+    /// `++x`. `parse::reject_prefix_incdec` raises SB4020 at both arith entry
+    /// points, so no validator walker can meet one. These call the two
+    /// arith walkers in this file directly with the node the parser would
+    /// never hand them.
+    fn prefix_incdec() -> crate::ir::ArithExpr {
+        crate::ir::ArithExpr::PreIncDec {
+            var: "x".into(),
+            inc: true,
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "prefix ++/-- never survives the parser")]
+    fn arith_has_incdec_rejects_prefix_incdec() {
+        let _ = arith_has_incdec(&prefix_incdec());
+    }
+
+    #[test]
+    #[should_panic(expected = "prefix ++/-- never survives the parser")]
+    fn check_positionals_arith_rejects_prefix_incdec() {
+        let mut diags = Vec::new();
+        check_positionals_arith(&prefix_incdec(), Span::new(1, 1), &mut diags);
+    }
 }

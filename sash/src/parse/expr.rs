@@ -1913,3 +1913,41 @@ pub(super) fn keyword_to_str(tok: &Tok) -> Option<&'static str> {
         _ => return None,
     })
 }
+
+/// Both arms below are dispatched *by token* from `parse_expr`'s word loop,
+/// which names the tokens it routes to each one. The `unreachable!` is the
+/// claim that the loop and the helper agree about that set; a unit test is
+/// the only thing that can hold them to it, because no source text can ever
+/// put a mismatched token here. DG's rule for the coverage campaign: an
+/// unreachable assertion earns a unit test proving it catches what it claims.
+#[cfg(test)]
+mod invariant_tests {
+    use super::*;
+
+    #[test]
+    #[should_panic(expected = "parse_quoted_arm called with non-quoted token")]
+    fn parse_quoted_arm_rejects_a_token_it_is_not_routed() {
+        let mut scanner = Scanner::new("x");
+        let mut parts = Vec::new();
+        let _ = parse_quoted_arm(
+            &mut scanner,
+            &Tok::Word("x".to_string()),
+            Span::new(1, 1),
+            &mut parts,
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "parse_expansion_arm called with non-expansion token")]
+    fn parse_expansion_arm_rejects_a_token_it_is_not_routed() {
+        let mut scanner = Scanner::new("x");
+        let mut parts = Vec::new();
+        let _ = parse_expansion_arm(
+            &mut scanner,
+            &Tok::Word("x".to_string()),
+            Span::new(1, 1),
+            0,
+            &mut parts,
+        );
+    }
+}
