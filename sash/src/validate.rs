@@ -9548,7 +9548,7 @@ fn flag_malformed_sed(e: &Expr, diags: &mut Vec<Diagnostic>) {
     }
 }
 
-/// DD#80: a braced subscript index/key `${a[K]}` must be a DIRECT, unambiguous
+/// DD#80: a subscript index/key must be a DIRECT, unambiguous
 /// value — an integer literal, a `$var`, an expansion (`${…}`/`$(…)`/`$(( … ))`),
 /// a quoted string, or a clean-identifier bareword. An implicit/ambiguous bare
 /// form (brackets, operators, whitespace, or a mixed literal+expansion) is
@@ -9557,6 +9557,12 @@ fn flag_malformed_sed(e: &Expr, diags: &mut Vec<Diagnostic>) {
 /// ambiguous bare form falls through to a `Literal` (with stray chars) or a
 /// `Concat`, which this check rejects. Type-level "string key on an int array"
 /// is a separate rule (SB4042, type_check).
+///
+/// The rule is the index's, not the position's: it is enforced on reads
+/// (`${a[K]}` and its two brace-less spellings, which the lexer desugars to it)
+/// by `flag_subscript_index`, and on writes (`a[K]=v`) by
+/// `flag_assignment_index`. Those are different IR shapes, which is why it
+/// takes two visitors to state one rule.
 pub fn check_subscript_index(program: &Program) -> Vec<Diagnostic> {
     let mut diags = Vec::new();
     for stmt in program
@@ -9565,8 +9571,31 @@ pub fn check_subscript_index(program: &Program) -> Vec<Diagnostic> {
         .chain(program.end_block.iter().flatten())
     {
         crate::ir::walk_all_exprs(stmt, &mut |e| flag_subscript_index(e, &mut diags));
+        crate::ir::walk_stmt_tree(std::slice::from_ref(stmt), &mut |s| {
+            flag_assignment_index(s, &mut diags)
+        });
     }
     diags
+}
+
+/// The same rule on the WRITE side (`m[K]=v`).
+///
+/// An assignment's LHS index is a bare `Expr` in the `Assignment.index` struct
+/// field — it is never wrapped in an `ExprKind::Subscript`, so the expression
+/// walk above reaches it but cannot tell it is an index and sees only a
+/// `Literal`. The rule belongs to the index, not to the spelling, so it is
+/// applied here too: `m[ a b ]=9` must reject exactly as `${m[ a b ]}` does.
+///
+/// Before this existed the write side accepted every ambiguous form the read
+/// side rejected, and `m[ $s x ]=9` silently stored the UNEXPANDED text `$s x`
+/// as the key.
+fn flag_assignment_index(stmt: &Statement, diags: &mut Vec<Diagnostic>) {
+    let StmtKind::Assignment(a) = &stmt.kind else {
+        return;
+    };
+    if let Some(d) = a.index.as_ref().and_then(ambiguous_index_diag) {
+        diags.push(d);
+    }
 }
 
 fn flag_subscript_index(e: &Expr, diags: &mut Vec<Diagnostic>) {
@@ -9604,11 +9633,13 @@ fn splat_not_subscriptable_diag(e: &Expr) -> Option<Diagnostic> {
     ))
 }
 
-/// The SB4041 diagnostic for an ambiguous braced index, or `None` for an
+/// The SB4041 diagnostic for an ambiguous index, or `None` for an
 /// unambiguous one. Explicit expansions and quoted strings are always fine; a
 /// bare `Literal` is fine only when it is an integer literal or a clean
 /// identifier; anything else (a `Literal` carrying `[`/operators, or a `Concat`
 /// of mixed parts) is ambiguous.
+///
+/// Position-neutral on purpose — both the read and the write visitor call it.
 fn ambiguous_index_diag(index: &Expr) -> Option<Diagnostic> {
     match &index.kind {
         ExprKind::SimpleExpansion(_)
@@ -9645,7 +9676,7 @@ fn ambiguous_index_error(span: Span, idx: &str) -> Diagnostic {
         span,
         "SB4041",
         format!(
-            "ambiguous braced index `[{idx}]` — `${{ }}` takes a direct key, not a computed \
+            "ambiguous index `[{idx}]` — a subscript takes a direct key, not a computed \
              one. Quote a literal key (`[\"…\"]`), use a variable (`[$name]`), or open \
              arithmetic explicitly (`[$(( … ))]`)"
         ),

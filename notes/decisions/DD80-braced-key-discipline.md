@@ -324,3 +324,64 @@ the subscript spelling is the bare `a[i]`). `collect_arith_content`
 re-serialises the main lexer's tokens through `tok_to_text`, so an un-gated
 desugar would have flipped that deliberate rejection to an accept silently.
 The desugar is gated on `Scanner::arith_depth == 0`.
+
+## Amendment 2026-10-04 — the rule is the index's, not the position's
+
+The desugar above made the three *read* spellings agree. It did nothing for
+the **write** side, and the write side was enforcing nothing at all: every
+form section A of `spec/subscript.sh` rejects when read was accepted when
+written.
+
+| | read | write (before) |
+|---|---|---|
+| `m[ a b ]` | SB4041 | accepted, key `a b` |
+| `m[ $s x ]` | SB4041 | accepted, key **literal `$s x`** — `$s` never expanded |
+| `m[a-b]` | SB4041 | accepted |
+| `m[a.b]` | SB4041 | accepted |
+
+The cause is a shape, not an oversight in the rule: an assignment's LHS index
+lives in the `Assignment.index: Option<Expr>` struct field as a **bare
+`Expr`**, never wrapped in an `ExprKind::Subscript`. `flag_subscript_index`
+keys on that wrapper, so the expression walk *reached* the index and could
+not tell it was one — it saw a `Literal` like any other. It takes two
+visitors to state one rule, because there are two IR shapes; `validate.rs`
+now has `flag_assignment_index` beside it, both calling the same
+`ambiguous_index_diag`.
+
+**This is the third time DD#80's enforcement has proved position-dependent
+rather than rule-dependent** — after the write surface (2026-09-26) and the
+assignment/declaration *value*, which was never walked at all (journal 462).
+The pattern is the standing one: a guard keyed on syntax rather than on the
+thing being guarded. When a rule is added here, the question to ask is not
+"does the check fire on `${a[K]}`" but "what are all the IR shapes an index
+can inhabit".
+
+SB4041's wording lost the word "braced" and its `${ }` reference with this
+change; it is one rule for all positions, so it no longer names one.
+
+### What the gap was hiding
+
+A silent miscompile, not just a missing error. `m[$s ] x ]=9` **compiled
+clean and discarded source**: it assigned the literal string `]=9` to key
+`zz`, with ` x ` dropped without a word.
+
+Two coupled parser defects, neither harmful alone. The shape probe
+(`looks_like_dynamic_subscript_assign`) searched for a `]` *followed by*
+`=`/`+=`; the consumer (`lhs_index_close`) searched for the *first* `]`. Two
+searches, two predicates, one bracket. And `parse_assignment` then did
+`scanner.next(); // consume =` **unconditionally**, consuming whatever token
+stood there as if it were the operator. On a map — where a string key makes
+the extra text legal to the lexer — the first `]` closed the index, ` x ` was
+eaten as the `=`, and `]=9` became the value.
+
+Both halves are closed: `lhs_index_close_from(scanner, base)` is now the one
+search with the one predicate (the callers differ only by whether `name[` is
+still unconsumed), and the operator is consumed by an explicit `match` that
+returns SB4014 on anything else. That arm is unreachable while the probe and
+the parser agree, which is now structural rather than a coincidence of two
+hand-matched lookahead windows — it is checked instead of assumed precisely
+because the previous version assumed and was wrong.
+
+Pinned by `spec/subscript.sh` sections P (`80.97`–`80.106`, the rejections
+and their read twins) and Q (`80.107`–`80.113`, the legal write forms that
+must not move).

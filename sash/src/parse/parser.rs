@@ -2166,11 +2166,8 @@ fn looks_like_dynamic_subscript_assign(scanner: &mut Scanner, w: &str) -> bool {
     // disposition, or a quoted key), so look ahead for the `]` that closes it
     // and require an assignment operator immediately after. The `name[` word is
     // still unconsumed here, so the index starts one token later than it does
-    // in `parse_split_subscript_index`.
-    (1..=MAX_LHS_INDEX_TOKENS).any(|i| {
-        matches!(&scanner.peek_n(i).token, Tok::Word(rb) if rb == "]")
-            && matches!(scanner.peek_n(i + 1).token, Tok::Eq | Tok::PlusAssign)
-    })
+    // in `parse_split_subscript_index` — hence the `base` of 1.
+    lhs_index_close_from(scanner, 1).is_some()
 }
 
 /// `var =~ s/pat/rep/` shape probe. Returns the var name (cloned) if
@@ -2208,13 +2205,7 @@ fn parse_assignment(scanner: &mut Scanner, span: Span) -> Result<Option<Statemen
 
     let (name, index) = parse_assignment_lhs(scanner, raw_name, span)?;
 
-    let op = if matches!(scanner.peek().token, Tok::PlusAssign) {
-        scanner.next();
-        AssignOp::Append
-    } else {
-        scanner.next(); // consume =
-        AssignOp::Set
-    };
+    let op = parse_assign_op(scanner, span)?;
 
     // Check for array literal: =(...)
     if matches!(scanner.peek().token, Tok::LParen) {
@@ -2308,7 +2299,7 @@ fn parse_assignment_lhs(
 /// is what keeps the closing `]` out of the index: with no space before it the
 /// word parser glues it onto the last operand, so `a[$i]=` yielded `1]`.
 fn parse_split_subscript_index(scanner: &mut Scanner, span: Span) -> Result<Expr, Diagnostic> {
-    let Some(close) = lhs_index_close(scanner) else {
+    let Some(close) = lhs_index_close_from(scanner, 0) else {
         return Err(parse_error(
             span,
             "SB4014",
@@ -2324,11 +2315,55 @@ fn parse_split_subscript_index(scanner: &mut Scanner, span: Span) -> Result<Expr
     Ok(parse_subscript_index(&text, span))
 }
 
+/// Consume the assignment operator, which is the token immediately after the
+/// LHS.
+///
+/// Checked rather than assumed. This used to be a bare `scanner.next();
+/// // consume =` on the non-`+=` path — it did not consume the `=`, it
+/// consumed whatever stood there and called it the `=`. The comment stated an
+/// invariant the code never tested, and when the shape probe and
+/// `parse_split_subscript_index` disagreed about which `]` closed the index,
+/// `m[$s ] x ]=9` swallowed the ` x ` as the operator and assigned the literal
+/// `]=9`.
+///
+/// The error arm is unreachable while the probe and the LHS parser agree,
+/// which [`lhs_index_close_from`] now makes structural rather than a
+/// coincidence of two hand-matched lookahead windows.
+fn parse_assign_op(scanner: &mut Scanner, span: Span) -> Result<AssignOp, Diagnostic> {
+    match scanner.peek().token {
+        Tok::PlusAssign => {
+            scanner.next();
+            Ok(AssignOp::Append)
+        }
+        Tok::Eq => {
+            scanner.next();
+            Ok(AssignOp::Set)
+        }
+        _ => Err(parse_error(
+            span,
+            "SB4014",
+            "expected `=` or `+=` in assignment".to_string(),
+        )),
+    }
+}
+
 /// Offset of the `]` token that closes an assignment-LHS subscript, or `None`
 /// if there is none within [`MAX_LHS_INDEX_TOKENS`].
-fn lhs_index_close(scanner: &mut Scanner) -> Option<usize> {
-    (0..MAX_LHS_INDEX_TOKENS)
-        .find(|&i| matches!(&scanner.peek_n(i).token, Tok::Word(w) if w == "]"))
+///
+/// `base` is the offset of the first index token, which differs by one between
+/// the two callers: the shape probe runs with the `name[` word still
+/// unconsumed, the parser after it. **Both must call this**, because the `]`
+/// they pick has to be the same one — the probe commits to the parse on the
+/// strength of a `]` followed by `=`/`+=`, so a parser that closed on a
+/// *different* `]` would leave the scanner somewhere the probe never checked.
+/// That is not hypothetical: when this was two searches with two predicates,
+/// `m[$s ] x ]=9` closed on the first `]` and the ` x ` was then consumed as
+/// if it were the `=`, silently assigning the literal `]=9`.
+fn lhs_index_close_from(scanner: &mut Scanner, base: usize) -> Option<usize> {
+    (base..base + MAX_LHS_INDEX_TOKENS).find(|&i| {
+        matches!(&scanner.peek_n(i).token, Tok::Word(rb) if rb == "]")
+            && matches!(scanner.peek_n(i + 1).token, Tok::Eq | Tok::PlusAssign)
+    })
 }
 
 /// How far the assignment-LHS subscript parser looks ahead for the `]` that

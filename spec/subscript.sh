@@ -10,7 +10,7 @@
 set -eu
 . common.sh
 setup subscript
-plan=94
+plan=111
 echo "1..$plan" >&3
 
 set +e
@@ -679,6 +679,97 @@ run_sash 'echo $![0]'
 run_sash 'fn f { echo $1[0] }
 f a'
 [[ $rc != 0 && -z $out && $err == *SB4047* ]]; chk 80.96
+
+# ── P. the index rule holds on the WRITE side too (SB4041) ──
+#
+# DD#80's "all paths must agree" applied to `a[K]=v`. Section A rejects an
+# ambiguous index when it is READ; every one of those forms used to be
+# accepted when it was WRITTEN, because an assignment's LHS index is a bare
+# `Expr` in `Assignment.index` and is never wrapped in a `Subscript` node —
+# the expression walk reached it but could not tell it was an index.
+#
+# This was not merely a missing error. `m[ $s x ]=9` stored the UNEXPANDED
+# text `$s x` as the key (80.99), and `m[$s ] x ]=9` silently discarded the
+# ` x ` entirely (80.103): the shape probe committed to the parse on a `]`
+# followed by `=`, the LHS parser closed on the FIRST `]`, and the leftover
+# ` x ` was then consumed as if it were the `=`.
+
+# 80.97 whitespace in a bare write index — the canonical form
+run_sash 'map m=( ); m[ a b ]="z"; echo ${m["a b"]}'
+[[ $rc != 0 && -z $out && $err == *SB4041* ]]; chk 80.97
+
+# 80.98 ... and its read twin, which has always rejected. They must agree.
+run_sash 'map m=( ); m["a b"]="z"; echo ${m[ a b ]}'
+[[ $rc != 0 && -z $out && $err == *SB4041* ]]; chk 80.98
+
+# 80.99 a `$var` mixed with a bareword — this used to store the literal
+# text `$s x` as the key, with no expansion and no diagnostic.
+run_sash 'map m=( ); s="k"; m[ $s x ]="z"; echo ${m["$s x"]}'
+[[ $rc != 0 && -z $out && $err == *SB4041* ]]; chk 80.99
+
+# 80.100 an operator in a bare write index (the 80.3 footgun, writing)
+run_sash 'map m=( ); m[a-b]="z"; echo ${m["a-b"]}'
+[[ $rc != 0 && -z $out && $err == *SB4041* ]]; chk 80.100
+
+# 80.101 any non-identifier punctuation, not just arithmetic operators
+run_sash 'map m=( ); m[a.b]="z"; echo ${m["a.b"]}'
+[[ $rc != 0 && -z $out && $err == *SB4041* ]]; chk 80.101
+
+# 80.102 the read twin of 80.100 — agreement again
+run_sash 'map m=( ); m["a-b"]="z"; echo ${m[a-b]}'
+[[ $rc != 0 && -z $out && $err == *SB4041* ]]; chk 80.102
+
+# 80.103 the silent-discard shape: two `]` in the index, the second one
+# carrying the `=`. Before the fix this compiled clean and assigned the
+# literal string `]=9` to key `zz`, dropping ` x ` without a word.
+run_sash 'map m=( ); s="k"; m[$s ] x ]="z"; echo ${m[$s]}'
+[[ $rc != 0 && -z $out && $err == *SB4041* ]]; chk 80.103
+
+# 80.104 a bare `]` as the whole index
+run_sash 'map m=( ); m[ ] ]="z"; echo ${m["]"]}'
+[[ $rc != 0 && -z $out && $err == *SB4041* ]]; chk 80.104
+
+# 80.105 ... and with trailing text after it
+run_sash 'map m=( ); m[ ] x ]="z"; echo ${m["]"]}'
+[[ $rc != 0 && -z $out && $err == *SB4041* ]]; chk 80.105
+
+# 80.106 the check recurses into nested bodies, not just top-level statements
+run_sash 'array a=( p q ); fn f { a[ x y ]="z" }; f; echo ${a[0]}'
+[[ $rc != 0 && -z $out && $err == *SB4041* ]]; chk 80.106
+
+# ── Q. the legal write forms are untouched ──
+#
+# The rule rejects an ambiguous index, not a computed one — every spelling
+# that states its index directly still works.
+
+# 80.107 an integer literal
+run_sash 'array a=( p q ); a[0]="z"; echo ${a[0]}'
+[[ $rc == 0 && $out == "z" ]]; chk 80.107
+
+# 80.108 a plain `$var`
+run_sash 'array a=( p q ); int i=1; a[$i]="z"; echo ${a[$i]}'
+[[ $rc == 0 && $out == "z" ]]; chk 80.108
+
+# 80.109 explicit arithmetic — the escape hatch the diagnostic advises
+run_sash 'array a=( p q r ); int i=1; a[$(( i + 1 ))]="z"; echo ${a[2]}'
+[[ $rc == 0 && $out == "z" ]]; chk 80.109
+
+# 80.110 a clean-identifier bareword key on a map
+run_sash 'map m=( ); m[key]="z"; echo ${m[key]}'
+[[ $rc == 0 && $out == "z" ]]; chk 80.110
+
+# 80.111 a quoted key — the other escape hatch, and the one that makes the
+# whitespace of 80.97 expressible
+run_sash 'map m=( ); m["a b"]="z"; echo ${m["a b"]}'
+[[ $rc == 0 && $out == "z" ]]; chk 80.111
+
+# 80.112 `$var` and `${var}` key a map identically
+run_sash 'map m=( ); s="k"; m[$s]="1"; m[${s}]="2"; echo ${m[$s]}'
+[[ $rc == 0 && $out == "2" ]]; chk 80.112
+
+# 80.113 append through a subscript still parses its index the same way
+run_sash 'array a=( p q ); a[0]+="z"; echo ${a[0]}'
+[[ $rc == 0 && $out == "pz" ]]; chk 80.113
 
 
 set -e
