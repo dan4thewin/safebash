@@ -1,4 +1,58 @@
-## ══ STATUS (2026-10-04, latest) — the second half of the rule ══
+## ══ STATUS (2026-10-04, latest) — the pipe binds to the reader ══
+
+`mk test` rc=0. Sweep **7543 → 7565**, the predicted +22 (11 specs,
+dual-mode), zero failures. Journal 468. **DD#122 added.**
+
+**The rule, now written down.** DG: *"`readline` or `while readline` without
+a leading pipe would read fd 0; `cmd | while readline v` would read the
+output of `cmd`; a `/bin/cat` within that `cmd | while` would read fd 0."*
+A pipe binds to the **reader**, never to fd 0 — which follows from the loop
+running in the **parent**, the thing that makes `cmd | while readline v; do
+(( n = n + 1 )); done` leave `n` set where bash prints `0`. It had never been
+recorded; I inferred the opposite from the code twice.
+
+**The bug.** `repoint_readlines_to_pipe` walked every block lowered so far,
+so a `readline` with **no pipe at all** was captured by a later pipeline and
+aimed at its exhausted pipe — `MID=[]`, exit 0, no diagnostic, both backends.
+Delete the unrelated pipeline above it and the identical statement is
+correct. Now scoped to the instructions the final stage's own lowering
+produced (`mark_ssa` / `for_each_new_inst`). **The array half
+(`rewrite_lastpipe_consumer_fds`) had the identical defect** — and my first
+spec for it asserted nothing, passing against the unfixed compiler, which the
+verify-it-fails-first check caught.
+
+**One sentinel, one spelling.** Native initialised `pipe_read_fd_var` to `0`
+(a *valid* fd, so a stray sentinel silently read stdin and looked correct);
+`--emit-c` wrote `-1` and aborted rc=99 in rustix. Both `-1` now.
+
+**Two new rejections, DD#122 §3.** SB4022 extended to the final stage —
+`cmd | { … }` / `| if` / `| for` fork and discard everything they assign,
+which is what DD#38 rejects `( … )` for, through a different syntactic door;
+the advice stays "wrap it in a function", verified byte-identical to bash.
+SB4073 is new: a `while` final stage with no `readline`/`read` in it had the
+producer's output go nowhere. `is_while_read` stays structural and is now
+*correct*, because SB4073 guarantees what it assumed — a rival became a
+backstop.
+
+**DD#116 closed out.** Three rivals deleted (`detect_array_iter`'s
+`DoubleQuoted` and `Redirected` arms, which stated the opposite of SB5026 /
+SB5073; `attest_arith_near_miss`'s re-ask of its caller's own
+`classify_attest`). Four keeps now name their property in a comment — two
+specification-fidelity, two loud-vs-silent.
+
+**Still open for DG:** the cell brace-less disposition
+(`notes/tasks/cell-braceless-disposition.md`), the arithmetic `$(( $a[1] ))`
+carve-out, and SB5067's re-decision — four choices were presented 2026-09-30
+and never filed, which is why DG could not find them; now
+`notes/tasks/decide-sb5067-grow-only-set.md`. `coverage.db` is stale by 46
+lines plus this session's changes; `mk cov-union` + `mk cov-db` is the next
+housekeeping run.
+
+*(The "Architecture (current)" list at the very bottom of this file is a
+2026-05 banner and names `emit_janet.rs` / `taint.rs`, both since removed.
+It is history, left as written; the current layout is in `AGENTS.md`.)*
+
+## ══ STATUS (2026-10-04) — the second half of the rule ══
 
 `mk test` rc=0, **99 lib tests** (was 71). Journal 467. Sweep unchanged at
 **7543**, zero failures — these are unit tests, so no spec moved.
