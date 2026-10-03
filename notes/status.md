@@ -1,3 +1,52 @@
+## ══ STATUS (2026-10-03, latest) — a capture is not an index ══
+
+Sweep **7417** (3811 native, 3593 c, 13 skipped), zero failures, predicted
+exactly. `mk test` rc=0. Journal 462. Commit `5ac1b2b`.
+
+DG ruled on the fork left open at the end of 461: *"I don't think `arr[$(f)]`
+is legal, but `arr[$((f))]` where `f` is an int returning fn seems fine."*
+
+**The rule never moved.** DD#80 §2 already says an indexed array's index must
+be int-typed, and `is_int_index` is one line — `is_integer_literal(expr) ||
+expr_type(expr, env) == VarType::Int`. A capture types as String, so it had
+been answering DG's question correctly all along. It was not being asked:
+`check_assignment` and `check_declaration` walked their **target's** subscript
+and never their **value**. So `echo "${arr[$(f)]}"` was SB4030 while
+`str z=${arr[$(f)]}` compiled and printed `q`.
+
+**`functions.sh` lift.3 was pinning the hole** — it asserted the acceptance,
+which is why I reverted this fix in 461 rather than deciding for DG. It is now
+a rejection, with lift.3b/lift.3c pinning the legal form.
+
+**The ICE was the same missing walk.** `str v="${a[foo]}"` panicked at
+`codegen/values.rs:1426` — *"non-integer literal `foo` reached int lowering;
+type_check (SB4030) should have rejected it"*, the compiler naming the pass
+that never ran. I had filed it as a separate defect. Same four lines close it.
+
+**The capture gets its own diagnostic**, because the generic advice is a dead
+end: `${a[$(( $(f) ))]}` is SB4041 and `int i=$(f)` is SB4030. Declaring
+`fn f -> int` is the only migration, so the message names it.
+
+DD#80 gained an addendum — notable mainly because this is the **second** time
+its enforcement proved position-dependent rather than rule-dependent (the
+first was the write surface, 2026-09-26). Both times the rule was fine and a
+walk was missing.
+
+Specs: `functions.sh` lift.3/3b/3c, `types.sh` 75.157-75.165.
+
+### Next
+
+The interrupted coverage thread. `coverage.db` is stale — `type_check.rs` has
+been renumbered three times in two sessions and that db is keyed by
+`(file, line)` with no commit — so `mk cov-union` + `mk cov-db` first.
+
+### Awaiting DG
+
+`suppress-rewalk-of-errored-subtree` (his wider question from 461),
+`taint-sb5067` (four options, (a) recommended), and honest re-estimation of
+`r47-validate-rs-per-rule-tests`, `audit-string-keyed-builtin-dispatch`,
+`eliminate-ice-arms-via-types`.
+
 ## ══ STATUS (2026-10-03, latest) — why walk that portion again? ══
 
 Sweep **7395** (3800 native, 3582 c, 13 skipped), zero failures, predicted
