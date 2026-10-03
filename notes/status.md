@@ -41,11 +41,13 @@ SB5073; `attest_arith_near_miss`'s re-ask of its caller's own
 specification-fidelity, two loud-vs-silent.
 
 **Still open for DG:** the cell brace-less disposition
-(`notes/tasks/cell-braceless-disposition.md`), the arithmetic `$(( $a[1] ))`
-carve-out, and SB5067's re-decision — four choices were presented 2026-09-30
-and never filed, which is why DG could not find them; now
-`notes/tasks/decide-sb5067-grow-only-set.md`. `coverage.db` is stale by 46
-lines plus this session's changes; `mk cov-union` + `mk cov-db` is the next
+(`notes/tasks/cell-braceless-disposition.md`) and the arithmetic `$(( $a[1] ))`
+carve-out. (SB5067 was listed here in error — DG pointed out it had already
+been settled, and he is right: DD#121's addendum of 2026-09-30 records the
+re-decision to a **net-effect body-exit rule**, `validate.rs:8449` implements
+it and credits the date. The stale session todo outlived the decision it was
+tracking; the filing it produced has been deleted.) `coverage.db` is stale by
+46 lines plus this session's changes; `mk cov-union` + `mk cov-db` is the next
 housekeeping run.
 
 *(The "Architecture (current)" list at the very bottom of this file is a

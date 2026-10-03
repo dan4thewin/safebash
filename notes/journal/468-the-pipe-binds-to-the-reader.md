@@ -173,6 +173,26 @@ Kept, each with a comment naming which of DD#116's three properties it holds:
 `mk test` rc=0. Sweep **7543 → 7565**, the predicted +22 (11 specs,
 dual-mode), zero failures. Four spec-integrity checks clean.
 
+## A stale todo outlived its decision
+
+Listing what was still open, I named SB5067's re-decision as blocked on DG,
+sourced from a session todo saying *"BLOCKED ON DG. Four choices presented
+2026-09-30."* DG: *"I think the SB5067 question was already decided and
+implemented."* He is right. DD#121 carries an addendum **dated that same
+day** — *"SB5067 re-decided: a net-effect rule"* — and `validate.rs:8449`
+implements it, crediting `(DG, 2026-09-30)` in the comment.
+
+So the todo was written the day the question was answered, and never
+updated. I then compounded it by filing a task whose stated rationale was
+that the rule's comment *"argues from a property the compiler no longer
+has"* — when that comment is precisely the record of the new decision. I had
+grepped for `SB5067` in `notes/` and taken the absence of a task file as
+evidence the question was open, without reading the one DD the grep did hit.
+
+The check that would have caught it is the one AGENTS.md already prescribes:
+**read `notes/decisions/` before believing anything about what is
+intentional.** A todo is a note-to-self, not a source of truth; the DDs are.
+
 ## What I'd take from this
 
 Three times now I have inferred a design rule from the code that implements
@@ -181,4 +201,6 @@ intended*, and the gap between them is exactly where a bug hides — here, the
 fd-0 behaviour I called a defect and the whole-program walk I nearly
 justified as "it needs to find readers in the body". DG settled both with one
 sentence about what reads what. The lesson is not "ask more"; it is that an
-unwritten load-bearing rule costs more than the DD would have.
+unwritten load-bearing rule costs more than the DD would have — and the
+SB5067 slip is the same failure from the other side: a rule that *was*
+written down, in the right place, that I did not read.
