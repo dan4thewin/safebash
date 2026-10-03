@@ -1411,6 +1411,19 @@ fn is_int_index(expr: &Expr, env: &TypeEnv) -> bool {
 /// `${a[$s]}` sends them from one SB4030 to the same SB4030, because the
 /// spelling was never the problem — the operand's type was.
 fn array_index_error(name: &str, index: &Expr, env: &TypeEnv) -> String {
+    // A capture needs its own advice. The generic text below offers
+    // `$(( … ))`, and `${a[$(( $(f) ))]}` is SB4041 — a capture is not an
+    // arithmetic operand either. The only route is an int-returning function
+    // (DD#74), so name that rather than send the author to a second error.
+    if matches!(index.kind, ExprKind::CommandSubstitution(_)) {
+        return format!(
+            "capture as an index on indexed array '{name}' — `$( … )` yields a \
+             string, and an int-indexed array is indexed by number (DD#80). \
+             Declare the command as an int-returning function and call it in \
+             arithmetic: `fn f -> int {{ … }}` then `${{{name}[$(( (f) ))]}}`; \
+             declare `map {name}` for string keys"
+        );
+    }
     let Some(v) = index_var_name(index) else {
         return format!(
             "non-integer index on indexed array '{name}' — an int-indexed array is \
@@ -1645,6 +1658,11 @@ fn check_stmt_bodies(stmt: &Statement, env: &mut TypeEnv, errors: &mut Vec<TypeE
 
 fn check_assignment(a: &Assignment, span: Span, env: &mut TypeEnv, errors: &mut Vec<TypeError>) {
     record_bare_collection_value(a, env);
+    // The VALUE, not just the target's index. A command walks its arguments
+    // with `check_subscript_types` and an assignment walked nothing, so the
+    // same `${a[foo]}` was a clean SB4030 as `echo "${a[foo]}"` and an ICE in
+    // codegen as `v="${a[foo]}"`.
+    check_subscript_types(&a.value, env, errors);
     // DD#75 §4: a subscript index is a numeric literal or a `$`-sigilled
     // value; a bare word is a string key (map-only). Enforce on the write
     // path as on the read path (check_subscript_key_kind), so `a[i]=…` on an
@@ -1779,6 +1797,9 @@ fn check_declaration(d: &Declaration, span: Span, env: &mut TypeEnv, errors: &mu
     let is_collection = is_collection_decl(d);
     env.note_declared_str(d);
     for a in &d.assignments {
+        if let Some(v) = &a.value {
+            check_subscript_types(v, env, errors);
+        }
         check_one_decl_assignment(d, a, is_collection, span, env, errors);
         env.declare(&a.name, d.var_type);
     }

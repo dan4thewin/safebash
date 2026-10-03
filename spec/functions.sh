@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup functions
-plan=162
+plan=164
 echo "1..$plan" >&3
 
 set +e
@@ -1099,13 +1099,33 @@ map m=([k]=$(f))
 echo "[${m[k]}]"'
 [[ $rc = 0 && $out = "[hi]" && -z $err ]]; chk lift.2
 
-# lift.3 a capture as a subscript index (`q`, not `p` — a vacuous index would
-# collapse to 0 and still print the first element)
+# lift.3 a capture is NOT a subscript index (DG, 2026-10-03: "I don't think
+# arr[$(f)] is legal, but arr[$((f))] where f is an int returning fn seems
+# fine"). This spec used to assert the opposite, and passed only because an
+# assignment's VALUE was never walked by the subscript rules — the identical
+# `echo "${arr[$(f)]}"` was SB4030 throughout. DD#80 requires the index to
+# yield a number; a capture yields a string that happens to parse as one, at
+# runtime, which is the guarantee DD#80 exists to make statically.
 run_sash 'f() { echo 1; }
 array arr=(p q)
 str z=${arr[$(f)]}
 echo "[$z]"'
-[[ $rc = 0 && $out = "[q]" && -z $err ]]; chk lift.3
+[[ $rc != 0 && -z $out && $err == *SB4030* && $err == *"capture as an index"* ]]; chk lift.3
+# lift.3b the legal form DG named. The advice in lift.3's diagnostic has to be
+# a form that actually works: `${arr[$(( $(f) ))]}` is SB4041 (a capture is not
+# an arithmetic operand either) and `int i=$(f)` is SB4030, so an int-returning
+# function is the only route and the message says so.
+run_sash 'fn f -> int { return 1 }
+array arr=(p q)
+str z=${arr[$(( (f) ))]}
+echo "[$z]"'
+[[ $rc = 0 && $out = "[q]" && -z $err ]]; chk lift.3b
+# lift.3c the same index in an argument — the point of the fix is that the
+# three positions now agree.
+run_sash 'fn f -> int { return 1 }
+array arr=(p q)
+echo "[${arr[$(( (f) ))]}]"'
+[[ $rc = 0 && $out = "[q]" && -z $err ]]; chk lift.3c
 
 # lift.11 a capture assigned into a map cell
 run_sash 'f() { echo hi; }

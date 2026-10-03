@@ -225,3 +225,37 @@ remedies); the accept-side specs 80.60/80.62/80.63/80.65 are deliberate
 regression guards proving the recommended remedy actually compiles — a rule
 that rejects a form without a working alternative is worse than no rule.
 Journals 413 and 414.
+
+## Addendum (2026-10-03) — a capture is not an index, in every position
+
+DG, on the last position where this DD was not enforced:
+
+> I don't think `arr[$(f)]` is legal, but `arr[$((f))]` where `f` is an int
+> returning fn seems fine.
+
+This changes nothing in the rule above — it is section 2 applied. A `$( … )`
+types as String, so `expr_type` already answered "not `Int`" and
+`is_int_index` already returned false. The capture-as-index was accepted in
+exactly one place, and for a reason that had nothing to do with indices:
+**an assignment's and a declaration's VALUE were never walked by the subscript
+rules.** `echo "${arr[$(f)]}"` was SB4030 throughout; `str z=${arr[$(f)]}`
+was accepted and printed `q`. Walking the value makes the three positions
+agree, and incidentally closes an ICE — `str v="${a[foo]}"` reached int
+lowering and panicked with *"type_check (SB4030) should have rejected it"*,
+the compiler naming the pass that never ran.
+
+Worth recording because it is the second time this DD's enforcement has been
+found to be **position-dependent rather than rule-dependent** (the first was
+the write surface, in the 2026-09-26 amendment, fixed by making both surfaces
+call one parser). The rule was never in doubt either time. What was missing
+was a walk.
+
+### Why the capture gets its own diagnostic
+
+The generic index message advises "use an integer literal, an `int` variable,
+or `$(( … ))`". For a capture that advice is a dead end: `${a[$(( $(f) ))]}`
+is **SB4041** (a capture is not an arithmetic operand either) and `int i=$(f)`
+is **SB4030**. An author holding a string-returning function has exactly one
+migration — declare it `fn f -> int` — so the message names that form
+directly, per `array_index_error`'s own standing rule that a diagnostic must
+not send its reader from one SB4030 to the same SB4030.

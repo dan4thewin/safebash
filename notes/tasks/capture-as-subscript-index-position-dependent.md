@@ -1,6 +1,6 @@
 ---
 title: "A capture as a subscript index: accepted in a declaration, SB4030 in an argument"
-status: open
+status: done
 priority: P1
 kind: bug
 depends: []
@@ -92,3 +92,30 @@ Found while fixing `duplicate-type-error-in-cmdsub.md`; the forked walker
 there was masking this one too — the deleted fork had an
 `Assignment => check_subscript_types(&a.value, …)` arm that only ever ran
 inside a `$( … )`.
+
+## Done (2026-10-03) — DG ruled; option (b)
+
+> I don't think `arr[$(f)]` is legal, but `arr[$((f))]` where `f` is an int
+> returning fn seems fine.
+
+The capture-as-index is rejected in all three positions. `lift.3` was pinning
+a hole, and is now a rejection spec; `lift.3b`/`lift.3c` pin the legal form.
+
+**`is_int_index` needed no change.** It is
+`is_integer_literal(expr) || expr_type(expr, env) == VarType::Int`, and a
+capture types as String, so it already answered correctly everywhere it was
+asked. The entire defect was that it was not asked: `check_assignment` and
+`check_declaration` walked their target's subscript and never their **value**.
+Adding `check_subscript_types` on the value enforces DD#80 §2 in every
+position at once, and closes the `str v="${a[foo]}"` ICE as a side effect.
+
+**The capture gets a dedicated message** (new first arm in
+`array_index_error`). The generic advice — "use an integer literal, an `int`
+variable, or `$(( … ))`" — is a dead end for a capture: `${a[$(( $(f) ))]}`
+is SB4041 and `int i=$(f)` is SB4030, so the only migration is declaring
+`fn f -> int`, and the message says that. This is `array_index_error`'s own
+standing rule applied: never send a reader from one SB4030 to the same SB4030.
+
+Specs: `functions.sh` lift.3/lift.3b/lift.3c, `types.sh` 75.157-75.165.
+DD#80 gained a 2026-10-03 addendum recording the ruling and why the rule
+itself did not move.

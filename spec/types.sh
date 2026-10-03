@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup types
-plan=332
+plan=341
 echo "1..$plan" >&3
 
 set +e
@@ -1879,6 +1879,70 @@ run_sash 'array a=(x y z)
 int n=$(len a)
 echo "n=$n"'
 [[ $rc = 0 && $out = "n=3" && -z $err ]]; chk 75.156
+
+# ── 75.157-75.165: an assignment's VALUE is an expression too ─────────────
+# A command walks its arguments with `check_subscript_types`; an assignment
+# and a declaration walked their TARGET's index and nothing else. So the very
+# same expression was a clean SB4030 in `echo "${a[foo]}"` and an ICE in
+# `str v="${a[foo]}"` — "non-integer literal `foo` reached int lowering;
+# type_check (SB4030) should have rejected it", which is the compiler saying
+# out loud that a pass it relies on never ran.
+# 75.157 the declaration form.
+run_sash 'array a=(x)
+str v="${a[foo]}"
+echo "$v"'
+[[ $rc != 0 && -z $out && $(grep -c SB4030 <<< "$err") = 1 ]]; chk 75.157
+# 75.158 the bare-assignment form — same expression, same single diagnostic.
+run_sash 'array a=(x)
+str v=""
+v="${a[foo]}"
+echo "$v"'
+[[ $rc != 0 && -z $out && $(grep -c SB4030 <<< "$err") = 1 ]]; chk 75.158
+# 75.159 the position that always worked, as the control for the message.
+run_sash 'array a=(x)
+echo "${a[foo]}"'
+[[ $rc != 0 && -z $out && $(grep -c SB4030 <<< "$err") = 1 ]]; chk 75.159
+# 75.160 a numeric index on an indexed array is still fine — the fix rejects
+# the bare WORD, not the subscript.
+run_sash 'array a=(x y)
+str v="${a[1]}"
+echo "$v"'
+[[ $rc = 0 && $out = "y" && -z $err ]]; chk 75.160
+# 75.161 a bare word on a MAP is its whole point (DD#75 §4) and must survive.
+run_sash 'map m=([foo]=bar)
+str v="${m[foo]}"
+echo "$v"'
+[[ $rc = 0 && $out = "bar" && -z $err ]]; chk 75.161
+# 75.162 a collection literal's elements are values in a declaration too.
+run_sash 'array a=(x y)
+array b=( "${a[1]}" )
+echo "${b[0]}"'
+[[ $rc = 0 && $out = "y" && -z $err ]]; chk 75.162
+
+# 75.163-75.165 DG, 2026-10-03: "I don't think arr[$(f)] is legal, but
+# arr[$((f))] where f is an int returning fn seems fine." The capture form was
+# accepted in a declaration and SB4030 everywhere else; walking the value is
+# what makes the three positions agree. `functions.sh` lift.3/lift.3b/lift.3c
+# pin the ruling itself — these pin that the DIAGNOSTIC names a form that
+# works, which the generic index message did not.
+# 75.163 the capture-specific message, not the generic "use `$(( … ))`" — that
+# advice is a dead end here, because `${a[$(( $(f) ))]}` is SB4041.
+run_sash 'f() { echo 1; }
+array arr=(p q)
+str z=${arr[$(f)]}
+echo "[$z]"'
+[[ $rc != 0 && -z $out && $err == *"capture as an index"* && $err == *"fn f -> int"* ]]; chk 75.163
+# 75.164 the dead end the message avoids sending anyone to.
+run_sash 'f() { echo 1; }
+array arr=(p q)
+echo "[${arr[$(( $(f) ))]}]"'
+[[ $rc != 0 && -z $out && $err == *SB4041* ]]; chk 75.164
+# 75.165 and the form it does name.
+run_sash 'fn f -> int { return 1 }
+array arr=(p q)
+str z=${arr[$(( (f) ))]}
+echo "[$z]"'
+[[ $rc = 0 && $out = "[q]" && -z $err ]]; chk 75.165
 
 set -e
 tally
