@@ -2579,12 +2579,15 @@ impl ArithNearMiss<'_> {
 /// DD#113: an `attest … (( … ))` whose arithmetic does not decode as the DD#93
 /// Part D form. Every lead arity reaches a diagnostic — a attest-all lead used
 /// to fall through to the generic command path and exec a bare `attest`.
+///
+/// DD#116: a `if classify_attest(&c.args).is_some() { return None }` guard was
+/// deleted here (2026-10-03) as a *rival* — the sole caller reaches this only
+/// on the `else` of its own `classify_attest`, so re-asking could only ever
+/// answer `None`, and an execution probe over the whole spec suite confirmed it
+/// never fired.
 fn attest_arith_near_miss(c: &Command) -> Option<ArithNearMiss<'_>> {
     let last = c.args.last()?;
     if !matches!(&last.kind, ExprKind::Arithmetic(_)) {
-        return None;
-    }
-    if classify_attest(&c.args).is_some() {
         return None;
     }
     match &c.args[..c.args.len() - 1] {
@@ -2594,7 +2597,9 @@ fn attest_arith_near_miss(c: &Command) -> Option<ArithNearMiss<'_>> {
             _ => None,
         },
         // The parser always consumes a name after `attest`, so this is only
-        // reachable from a hand-built IR.
+        // reachable from a hand-built IR. DD#116: kept as a *loud-vs-silent*
+        // backstop — without it a zero-name lead falls into the `_` arm below
+        // and gets the attest-all message, advising a form it does not have.
         [] => None,
         // Two or more names: a attest-all carrying the scalar-only form.
         _ => Some(ArithNearMiss::AttestAll),

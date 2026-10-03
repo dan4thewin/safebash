@@ -699,6 +699,20 @@ pub(super) struct ArrayIter {
     pub vouched: bool,
 }
 
+/// Recognise the two for-in sources that iterate a collection: `@a` (the
+/// `arrvals` splat) and `$(keys m)`.
+///
+/// DD#116: the `return None` guards below are a *backstop* with specification
+/// fidelity — "only `$(keys NAME)` iterates" is the rule itself, not a second
+/// opinion about it. Everything else in `$( … )` is one value (DD#28, SB5009),
+/// so falling through to `None` is this function stating the spec, and the
+/// shape of the guard is what makes that readable.
+///
+/// Two arms were deleted here (2026-10-03) as DD#116 *rivals*: a
+/// `DoubleQuoted` arm that recursed, so `for v in "@a"` would have iterated,
+/// and a `Redirected` arm, so `$(keys m < f)` would have. Both contradicted an
+/// authoritative rejection upstream — SB5026 and SB5073 — and an execution
+/// probe over the whole spec suite confirmed neither could run.
 fn detect_array_iter(kind: &ExprKind) -> Option<ArrayIter> {
     match kind {
         ExprKind::ParameterExpansion(pe) if pe.operator.as_deref() == Some("arrvals") => {
@@ -708,14 +722,9 @@ fn detect_array_iter(kind: &ExprKind) -> Option<ArrayIter> {
                 vouched: pe.taint_off,
             })
         }
-        ExprKind::DoubleQuoted(parts) if parts.len() == 1 => detect_array_iter(&parts[0].kind),
         // Sash-native: $(keys arr) in for-loop → array key iteration (DD#41)
         ExprKind::CommandSubstitution(stmts) if stmts.len() == 1 => {
-            let inner = match &stmts[0].kind {
-                StmtKind::Redirected(r) => &r.body.kind,
-                other => other,
-            };
-            let StmtKind::Command(c) = inner else {
+            let StmtKind::Command(c) = &stmts[0].kind else {
                 return None;
             };
             let ExprKind::Literal(cmd_name) = &c.name.kind else {

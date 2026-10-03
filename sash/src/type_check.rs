@@ -2042,6 +2042,13 @@ fn attest_form_error(form: &AttestForm, env: &TypeEnv) -> Option<String> {
     }
 }
 
+/// DD#61: a scalar `attest NAME` whose NAME is a collection.
+///
+/// DD#116: the map/array split is a *loud-vs-silent* backstop. Without it a
+/// scalar attest on a map would advise `attest x in m`, the array binder form,
+/// which is itself an error — so the user follows the advice and gets a second
+/// diagnostic. The arm is cold because `type_check` sees few map attests, not
+/// because it cannot run.
 fn attest_scalar_form_error(var: &str, env: &TypeEnv) -> Option<String> {
     if !env.collections.contains(var) {
         return None;
