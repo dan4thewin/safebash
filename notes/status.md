@@ -43,11 +43,15 @@ Specs: `subscript.sh` sections N and O, `80.70`-`80.96` (+28 ids).
    preserve a `$`/variable index cleanly, it would silently read `a[0]`" — is
    dissolved by the desugar. Keep the reject as a choice, or let it through?
 2. **Cell dispositions.** `$a[0]:-z` is literal concat; `${a[0]:-z}` is the
-   disposition. DD#90's scope list names `$name` / `$N` / `@name` and omits
-   cells, but the standing principle "a string cell behaves like a string
-   variable" points the other way. Unspecced either way. (The in-string path
-   correctly takes no brace-less disposition — braces required in
-   interpolation.)
+   disposition. Filed as `notes/tasks/cell-braceless-disposition.md` — and it
+   is not merely ergonomic: `$a[9]:?m` **does not abort**, it yields the string
+   `":?m"` with rc 0, so a brace-less guard on a cell is a check that cannot
+   fail. `$a[9]:~` likewise emits a literal argument instead of eliding one.
+   DD#90's scope list names `$name` / `$N` / `@name` and omits cells, but
+   `spec/arithmetic.sh`'s own header for the braced cell dispositions cites
+   "a string cell behaves like a string variable" as their basis. (The in-string
+   path correctly takes no brace-less disposition — braces required in
+   interpolation, already settled.)
 
 ### Next
 
