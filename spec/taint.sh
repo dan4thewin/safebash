@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup taint
-plan=326
+plan=331
 echo "1..$plan" >&3
 
 set +e
@@ -2057,6 +2057,60 @@ echo "got=$x"' val
 # polarity, and `--emit-ir` keeps showing it
 run_sash 'if ! /bin/false { echo taken } else { echo not }'
 [[ $rc = 0 && $out = "taken" && -z $err ]]; chk div.32
+
+# div.33-div.37 — the MAP form of `if attest`, which was specced nowhere.
+#
+# `AttestKind::of` has exactly one caller (`lower_if_attest`) and its three
+# arms map 1:1 onto `AttestForm`. Seven specs used `if attest v in a` (the
+# array arm); none used `if attest k v in m`, so the `AttestForm::Map` arm
+# was cold — found by ranking `coverage.db`.
+#
+# That matters because div.15/div.16 exist for the array arm specifically to
+# pin bug-caught-attest-all-fail-path-undefined-handle, a SIGSEGV from an
+# attested version defined on only one path. The map form reaches the same
+# `AttestKind::Coll` lowering with two binders instead of one and had no
+# equivalent. These are its twins.
+
+# div.33 map form, passing path: the then-branch runs and the map is clean
+# afterwards (the retag landed).
+run_sash 'argv 1 a
+attest e in a [[ -n $e ]]
+map m = @{a:~}
+if attest k v in m [[ $k =~ ^[A-Z]+$ && $v =~ ^[a-z]+$ ]]; then echo t; else m=([K]=d); fi
+echo ${m[K]}' K v
+[[ $rc = 0 && $out = "t
+v" && -z $err ]]; chk div.33
+
+# div.34 ... and the failing path takes the ELSE version at the merge. This
+# is div.15's shape: the attested version exists on one path only.
+run_sash 'argv 1 a
+attest e in a [[ -n $e ]]
+map m = @{a:~}
+if attest k v in m [[ $k =~ ^[A-Z]+$ && $v =~ ^[a-z]+$ ]]; then echo t; else m=([K]=d); fi
+echo ${m[K]}' k v
+[[ $rc = 0 && $out = "d" && -z $err ]]; chk div.34
+
+# div.35 the key binder decides the branch, not just the value
+run_sash 'argv 1 a
+attest e in a [[ -n $e ]]
+map m = @{a:~}
+if attest k v in m [[ $k =~ ^[A-Z]+$ && $v =~ ^[a-z]+$ ]]; then echo t; else echo f; fi' k v
+[[ $rc = 0 && $out = "f" && -z $err ]]; chk div.35
+
+# div.36 ... and so does the value binder
+run_sash 'argv 1 a
+attest e in a [[ -n $e ]]
+map m = @{a:~}
+if attest k v in m [[ $k =~ ^[A-Z]+$ && $v =~ ^[a-z]+$ ]]; then echo t; else echo f; fi' K V
+[[ $rc = 0 && $out = "f" && -z $err ]]; chk div.36
+
+# div.37 the both-binders rule (60.30) holds in the `if` position too — a
+# predicate that validates only the key is rejected, not silently accepted.
+run_sash 'argv 1 a
+attest e in a [[ -n $e ]]
+map m = @{a:~}
+if attest k v in m [[ $k =~ ^[A-Z]+$ ]]; then echo t; else echo f; fi' K v
+[[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk div.37
 
 set -e
 tally

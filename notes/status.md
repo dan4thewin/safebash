@@ -1,7 +1,8 @@
 ## ══ STATUS (2026-10-04, latest) — the index that was never an index ══
 
-Sweep **7507** (3856 native, 3638 c + 13 skipped), zero failures, predicted
-exactly. `mk test` rc=0. Journal 464. Two bugs, found from the coverage queue.
+Sweep **7517** (3861 native, 3643 c + 13 skipped), zero failures, predicted
+exactly. `mk test` rc=0. Journals 464 and 465. Two bugs, found from the
+coverage queue, plus the queue itself.
 
 **A silent miscompile.** `m[$s ] x ]="z"` compiled clean and **discarded
 source** — it assigned the literal `]=9` to key `zz`, dropping ` x ` without a
@@ -34,14 +35,35 @@ before and after and are untouched. SB4041 lost the word "braced" — it is one
 rule for all positions now. Specs: `subscript.sh` sections P and Q,
 `80.97`-`80.113` (+17 ids).
 
-**Coverage, resumed.** Union at `7798c74`: **97.55% lines, 98.78% functions,
-98.12% regions, 91.27% branches**. `coverage.db` is now **stale** (this commit
-renumbers `parser.rs` and `validate.rs`) — re-run `mk cov-union` + `mk cov-db`
-before mining further. Next in the ranking:
-`emit_c.rs::lower_value_as_str_aggregate` (6 cold), then
-`codegen/values.rs::lower_value`, `emit_c.rs::emit_degenerate_pipeline`,
-`parse/arith.rs::lower_arith_mutation_structured`,
-`transform/control_flow.rs::detect_array_iter` (5 each).
+**Coverage, resumed — the ranking was mostly ICEs.** Union at `aab5868`:
+**97.55% lines, 98.78% functions, 98.12% regions, 91.27% branches**, 518
+uncovered lines. The long-standing head of the by-function ranking,
+`emit_c.rs::lower_value_as_str_aggregate` (6 cold), is **six `panic!` ICE
+arms** — correctly cold, and they must stay cold. Classifying the whole
+cohort by contiguous cold run: **64 runs are ICE arms (1 line each), 368 runs
+/ 454 lines are not**. Ranking by raw cold-line count over-weights multi-line
+`Err(…)` expressions — the top three non-ICE runs are documented-unreachable
+arms from the commit above, 5 lines each only because rustfmt spreads them.
+
+**The one real gap: `if attest k v in m` was specced nowhere.**
+`AttestKind::of` has one caller and three arms mapping 1:1 onto `AttestForm`;
+the array arm had 7 specs, the map arm **0**. That matters because
+`div.15`/`div.16` exist for the array arm specifically to pin
+`bug-caught-attest-all-fail-path-undefined-handle`, a **SIGSEGV** from an
+attested version defined on one path only — and the map form reaches the same
+`AttestKind::Coll` lowering. It works: both merge paths correct, the retag
+lands, and 60.30's both-binders rule holds in the `if` position too. Five
+specs, `div.33`-`div.37` (taint.sh), both backends. Verified warm afterwards
+(count 0 → 12; uncovered 518 → 513). Journal 465.
+
+**Next in the queue**, with the ICE arms excluded:
+`transform/statements.rs:449` (`hoist_arith_mutations`, `ArithExpr::Ternary`),
+`transform/stmt_handlers.rs:912`/`944` (compound and function pipeline
+stages), `emit_c.rs:3865` (`emit_degenerate_pipeline`),
+`transform/control_flow.rs:1143` (`insert_case_phis`, `all_paths.len() == 1`),
+`transform/stmt_handlers.rs:1124` (`handle_append_assign`, `ArrayAppend`).
+`coverage.db` is current at `aab5868` **but this commit renumbers taint.sh
+only** — source lines are unchanged, so it stays valid.
 
 ## ══ STATUS (2026-10-03, latest) — all paths must agree ══
 
