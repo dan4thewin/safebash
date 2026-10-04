@@ -233,6 +233,10 @@ fn opt_stmt_list(l: Option<&[Statement]>, ind: usize, out: &mut String) {
 
 /// Pure dispatch. Every arm hands off to a per-variant helper, so this stays
 /// a flat table: adding an IR statement variant is a compile error right here.
+///
+/// **Total over the IR statement variants on purpose — do not add a
+/// wildcard.** The hand-written list above is the whole reason a new variant
+/// stops the build here instead of rendering as nothing.
 fn stmt(s: &Statement, ind: usize, out: &mut String) {
     let (ln, i) = (s.span.line, ind + 1);
     match &s.kind {
@@ -485,6 +489,8 @@ fn redirect(r: &Redirect, ind: usize, out: &mut String) {
 /// structure) keeps both halves flat. Note the second half lists the word
 /// variants explicitly rather than using `_`, so a new variant is still a
 /// compile error in BOTH functions, not a silent fallthrough.
+///
+/// **Total over `ExprKind` on purpose — do not add a wildcard.**
 fn expr(e: &Expr, ind: usize, out: &mut String) {
     let i = ind + 1;
     match &e.kind {

@@ -103,6 +103,8 @@ pub enum LogosTok {
 /// type is `Tok` rather than `Option<Tok>`. It returned an `Option` for
 /// exactly that arm until 2026-09-16, and the sole caller answered it
 /// with `.expect()`.
+///
+/// **Total over `LogosTok` on purpose — do not add a wildcard.**
 pub fn to_tok(t: LogosTok) -> super::lexer::Tok {
     use super::lexer::Tok;
     match t {

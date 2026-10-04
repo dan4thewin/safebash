@@ -582,8 +582,17 @@ fn cmd_subst_taint(
     taint: &HashMap<String, Taint>,
     user_functions: &std::collections::HashSet<String>,
 ) -> Taint {
+    // INVARIANT: the head is always a `Literal`, and argv is never empty.
+    // SB5011 rejects a non-literal command name ("a command name must be a
+    // literal path") in every position, and SB4045 rejects a zero-argument
+    // argv; the two producers that don't go through `build_argv`
+    // (`resolve_nullary_sexpr`, `lower_for_argv_slice`) hard-code a
+    // `Literal` head. This returned `Taint::Tainted` until 2026-10-04 —
+    // fail-closed, and the right *value* if it were ever reached, but an
+    // unverified claim about a pass that is the actual defense. Probed
+    // 2026-10-04: `$($c)` and `$("$c")` are both SB5011.
     let Some(SsaValue::Literal(cmd)) = argv.first() else {
-        return Taint::Tainted;
+        unreachable!("SB5011 guarantees a literal command head, SB4045 a non-empty argv");
     };
     let basename = cmd.rsplit('/').next().unwrap_or(cmd);
     match basename {
@@ -599,15 +608,23 @@ fn cmd_subst_taint(
             // Do NOT fall back to the basename. `/bin/cat` alongside a user
             // function named `cat` would match and be classified Clean — a
             // real execve laundered by a name collision, exactly contrary to
-            // "everything else runs via execve/execveat" above. Measured: the
-            // basename test is true only in that collision case, and the
-            // `cmd` test is never true at all, because a user-function
-            // capture is lowered elsewhere and never reaches this arm.
+            // "everything else runs via execve/execveat" above.
+            //
+            // The `cmd` test is never true: a user-function capture is
+            // lowered elsewhere and never reaches this arm, so the `Clean`
+            // this used to return was an answer nothing could ask for. It
+            // became an ICE on 2026-10-04. Measured, not assumed — the arm
+            // was made to panic and eight capture spellings were run against
+            // it: `$(f)`, `$(- f)`, `$(f 2>&1)` and `$(strlen "$(f)")` all
+            // compile without reaching it, and `$(f x)`, `$(f | cat)`,
+            // `if o=$(f)` and `for x in $(f)` are rejected upstream
+            // (SB5043 / SB5020 / SB4025 / SB5009).
             if user_functions.contains(cmd.as_str()) {
-                Taint::Clean
-            } else {
-                Taint::Tainted
+                unreachable!(
+                    "a user-function capture is lowered before SSA taint, not as CmdSubst"
+                );
             }
+            Taint::Tainted
         }
     }
 }
@@ -1016,28 +1033,30 @@ mod tests {
         assert!(errors_for(&SsaValue::CmdSubstBody { body: Vec::new() }, &tainted("v")).is_empty());
     }
 
-    // Both guards in `cmd_subst_taint`'s head resolution. DD#23 rewrites an
-    // external head to an absolute-path `Literal` and a user-function capture
-    // is lowered elsewhere, so neither is reachable from source — the comment
-    // on the `user_functions` lookup already records that measurement. The
-    // conservative direction is what matters and it is asserted here: an
-    // unrecognisable head is TAINTED, never clean.
+    // Both guards in `cmd_subst_taint`'s head resolution. SB5011 rewrites or
+    // rejects every non-literal head and a user-function capture is lowered
+    // before SSA taint, so neither is reachable from source — both were made
+    // to panic and probed in 2026-10-04 to confirm it. They answered
+    // `Tainted` and `Clean` until then; per DG's ruling an ICE is a
+    // regression guard, never the sole defense, so the answer became the
+    // panic and the pass that enforces the invariant stayed the defense.
     #[test]
-    fn cmd_subst_head_resolution_fails_closed() {
+    fn cmd_subst_head_resolution_ices() {
         let taint = HashMap::new();
         let fns = std::collections::HashSet::from(["f".to_string()]);
 
-        // No head at all, and a non-literal head: tainted.
-        assert_eq!(cmd_subst_taint(&[], &taint, &fns), Taint::Tainted);
-        assert_eq!(
-            cmd_subst_taint(&[SsaValue::Var(vref("c"))], &taint, &fns),
-            Taint::Tainted
-        );
-        // A bare user-function name is clean (DD#24); an external is not.
-        assert_eq!(
-            cmd_subst_taint(&[SsaValue::Literal("f".into())], &taint, &fns),
-            Taint::Clean
-        );
+        for (what, argv) in [
+            ("no head at all", Vec::new()),
+            ("a non-literal head", vec![SsaValue::Var(vref("c"))]),
+            ("a user-function head", vec![SsaValue::Literal("f".into())]),
+        ] {
+            let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                cmd_subst_taint(&argv, &taint, &fns)
+            }));
+            assert!(r.is_err(), "{what} must ICE, not return a taint");
+        }
+
+        // The live arm is unchanged: a resolved external is tainted.
         assert_eq!(
             cmd_subst_taint(&[SsaValue::Literal("/bin/cat".into())], &taint, &fns),
             Taint::Tainted

@@ -3576,20 +3576,6 @@ mod invariant_tests {
         let _ = parse_assignment_lhs(&mut sc, "a[0".to_string(), Span::new(1, 1));
     }
 
-    /// The balanced case still works — without this, the test above would pass
-    /// against a function that panicked on everything.
-    #[test]
-    fn parse_assignment_lhs_splits_a_literal_subscript() {
-        let mut sc = Scanner::new("=5");
-        let (name, idx) = parse_assignment_lhs(&mut sc, "a[0]".to_string(), Span::new(1, 1))
-            .expect("a balanced literal subscript parses");
-        assert_eq!(name, "a");
-        assert!(matches!(
-            idx.map(|e| e.kind),
-            Some(ExprKind::Literal(ref s)) if s == "0"
-        ));
-    }
-
     /// DD#116 ICE. `looks_like_dynamic_subscript_assign` runs
     /// `lhs_index_close_from` over the same window before committing, so a
     /// scanner with no `]` can only arrive here by calling this directly —

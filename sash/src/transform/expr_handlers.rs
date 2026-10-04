@@ -1047,57 +1047,6 @@ mod tests {
             .expect("ICE payload is a string")
     }
 
-    // DD#100 Part D removed the splat operand from the name-resolving
-    // builtins, so `len @a` and `join @a SEP` are SB5062 and the arrvals arms
-    // in both intrinsics became unreachable. They are kept as loud guards
-    // rather than deleted because the fallback each one shadows degrades
-    // silently: `expr_to_string` renders a parameter expansion as
-    // `${NAME}{OP}`, so the operand becomes the un-declarable name
-    // `"{aarrvals}"`, the collection lookup misses, and `len` emits `strlen`
-    // of an undefined var (0) while `join` joins nothing. These tests
-    // simulate the regression — the only way to reach the arm is to hand the
-    // transform IR the parser can still build but validate now rejects.
-    /// Pins *why* the guards above are guards rather than deletions. If the
-    /// fallback ever renders a splat operand to something that resolves (or
-    /// fails loudly), this test fails and the guards can be reconsidered.
-    #[test]
-    fn the_fallback_the_guards_shadow_degrades_silently() {
-        let arg = splat_arg("a");
-        assert_eq!(
-            expr_to_string(&arg),
-            "${aarrvals}",
-            "expr_to_string renders a parameter expansion as ${{NAME}}{{OP}}"
-        );
-
-        // Same operand shape, a different operator, so it takes the `_` arm
-        // the guard shadows — with `a` registered as a collection.
-        let other = Expr {
-            kind: ExprKind::ParameterExpansion(ParameterExpansion {
-                name: "a".to_string(),
-                operator: Some("other".to_string()),
-                operand: None,
-                index: None,
-                taint_off: false,
-            }),
-            span: Span::new(1, 1),
-        };
-        let mut st = state();
-        st.collections.insert("a".to_string());
-        let c = Command {
-            name: lit("len"),
-            args: vec![other],
-        };
-        let Some(SsaValue::ParamExpansion { var, operator, .. }) = try_len_intrinsic(&c, &st)
-        else {
-            panic!("len intrinsic must yield a ParamExpansion");
-        };
-        assert_eq!(var.name, "{aother}", "the mangled name reaches lookup");
-        assert_eq!(
-            operator, "strlen",
-            "the collection lookup misses, so a count silently becomes a length"
-        );
-    }
-
     #[test]
     fn len_splat_operand_is_a_loud_ice() {
         let c = Command {

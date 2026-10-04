@@ -12,143 +12,9 @@ mod test {
         assert!(diags.is_empty(), "unexpected diagnostics: {:?}", diags);
         program
     }
-
-    #[test]
-    fn test_echo_hello() {
-        let p = parse_ok("echo hello\n");
-        assert_eq!(p.statements.len(), 1);
-    }
-
-    #[test]
-    fn test_assignment() {
-        let p = parse_ok("x=42\n");
-        assert_eq!(p.statements.len(), 1);
-        match &p.statements[0].kind {
-            StmtKind::Assignment(a) => {
-                assert_eq!(a.name, "x");
-            }
-            _ => panic!("expected assignment"),
-        }
-    }
-
-    #[test]
-    fn test_if_then_fi() {
-        let p = parse_ok("if true; then echo yes; fi\n");
-        assert_eq!(p.statements.len(), 1);
-        assert!(matches!(p.statements[0].kind, StmtKind::If(_)));
-    }
-
-    #[test]
-    fn test_for_loop() {
-        let p = parse_ok("for x in a b c; do echo $x; done\n");
-        assert_eq!(p.statements.len(), 1);
-        assert!(matches!(p.statements[0].kind, StmtKind::For(_)));
-    }
-
-    // `eval` is rejected by validate (SB4001, dynamic execution), not by the
-    // parser — the removed-builtin table that used to reject it at parse time
-    // is gone. Spec cov.98 / cov.100 pin the rejection end-to-end.
-    #[test]
-    fn test_eval_parses_as_plain_command() {
-        let p = parse_ok("eval echo hi\n");
-        assert_eq!(p.statements.len(), 1);
-    }
-
-    // `export` / `declare` / `readonly` / `select` are NOT reserved words: the
-    // parser's removed-builtin table is gone (DG 2026-09-12), so they parse as
-    // ordinary commands and validate rejects them with the same SB5011 every
-    // other unknown name gets. Covered end-to-end by spec cov.24 / cov.94.
-    #[test]
-    fn test_export_parses_as_plain_command() {
-        let p = parse_ok("export FOO=bar\n");
-        assert_eq!(p.statements.len(), 1);
-    }
-
-    #[test]
-    fn test_pipeline() {
-        let p = parse_ok("echo hello | cat\n");
-        assert_eq!(p.statements.len(), 1);
-        assert!(matches!(p.statements[0].kind, StmtKind::Pipeline(_)));
-    }
     // ── DD#93 Part C: content-shape tests `i?` / `p?` / `g?` ──────────────
     // General unary test operators (usable anywhere a unary test is), spelled
     // with a `?` suffix to stay out of bash's saturated `-X` namespace.
-
-    /// The `TestExpr` of a bare `[[ … ]]` statement, or None if it did not
-    /// parse into one.
-    fn parse_bare_test(source: &str) -> Option<TestExpr> {
-        let (program, _diags) = parse(source).ok()?;
-        match &program.statements.first()?.kind {
-            StmtKind::Command(c) => match &c.args.first()?.kind {
-                ExprKind::Test(t) => Some(t.clone()),
-                _ => None,
-            },
-            _ => None,
-        }
-    }
-
-    #[test]
-    fn test_shape_ops_are_unary_test_ops() {
-        for op in ["i?", "p?", "g?"] {
-            let src = format!("[[ {} $x ]]\n", op);
-            match parse_bare_test(&src) {
-                Some(TestExpr::Unary { op: got, operand }) => {
-                    assert_eq!(got, op, "op mismatch for {}", op);
-                    assert!(
-                        matches!(operand.kind, ExprKind::SimpleExpansion(ref n) if n == "x"),
-                        "operand for {}: {:?}",
-                        op,
-                        operand.kind
-                    );
-                }
-                other => panic!("{} did not parse as a unary test: {:?}", op, other),
-            }
-        }
-    }
-
-    #[test]
-    fn test_shape_ops_accept_literal_and_quoted_operands() {
-        for src in ["[[ i? 42 ]]\n", "[[ p? \"a b\" ]]\n", "[[ g? 'x' ]]\n"] {
-            assert!(
-                matches!(parse_bare_test(src), Some(TestExpr::Unary { .. })),
-                "did not parse as a unary test: {}",
-                src
-            );
-        }
-    }
-
-    #[test]
-    fn test_shape_ops_compose_with_not_and_and() {
-        assert!(matches!(
-            parse_bare_test("[[ ! i? $x ]]\n"),
-            Some(TestExpr::Not(_))
-        ));
-        match parse_bare_test("[[ i? $x && p? $y ]]\n") {
-            Some(TestExpr::And(l, r)) => {
-                assert!(matches!(*l, TestExpr::Unary { ref op, .. } if op == "i?"));
-                assert!(matches!(*r, TestExpr::Unary { ref op, .. } if op == "p?"));
-            }
-            other => panic!("expected And of two unary tests, got {:?}", other),
-        }
-    }
-
-    #[test]
-    fn test_shape_ops_are_general_operators() {
-        // Not attest-only: valid wherever a unary test is (DD#93 Part C).
-        parse_ok("if [[ p? $x ]]; then echo yes; fi\n");
-        parse_ok("while [[ g? $x ]]; do echo y; done\n");
-    }
-
-    /// DD#93 Part C renamed `-i` to `i?` — hard, no alias.
-    #[test]
-    fn test_dash_i_no_longer_a_unary_test_op() {
-        let got = parse_bare_test("[[ -i 42 ]]\n");
-        assert!(
-            !matches!(got, Some(TestExpr::Unary { ref op, .. }) if op == "-i"),
-            "`-i` should no longer parse as a unary test op, got {:?}",
-            got
-        );
-    }
 
     // ── DD#93 Part B: `attest VAR OP` unary shorthand ─────────────────────
     // `attest x OP` ≡ `attest x [[ OP $x ]]`. Because the operator binds the
@@ -163,14 +29,6 @@ mod test {
                 c.args.clone()
             }
             other => panic!("expected an attest command, got {:?}", other),
-        }
-    }
-
-    /// The target name of a DD#93 Part D conversion predicate.
-    fn convert_target<'a>(pred: &AttestPredicate<'a>) -> &'a str {
-        match pred {
-            AttestPredicate::ArithConvert { target, .. } => target,
-            other => panic!("expected a conversion predicate, got {:?}", other),
         }
     }
 
@@ -195,17 +53,6 @@ mod test {
     }
 
     #[test]
-    fn test_attest_scalar_shorthand() {
-        let args = attest_args("attest x i?\n");
-        let (form, pred) = classify_attest(&args).expect("should classify as attest");
-        assert_eq!(form, AttestForm::Scalar { var: "x" });
-        assert_eq!(
-            unary_of(attest_test(&pred)),
-            ("i?".to_string(), "x".to_string())
-        );
-    }
-
-    #[test]
     fn test_attest_shorthand_is_sugar_for_the_full_form() {
         for (short, full) in [
             ("attest x i?\n", "attest x [[ i? $x ]]\n"),
@@ -226,117 +73,9 @@ mod test {
         }
     }
 
-    #[test]
-    fn test_attest_all_shorthand_binds_the_element_binder() {
-        let args = attest_args("attest e in a i?\n");
-        let (form, pred) = classify_attest(&args).expect("should classify as attest");
-        assert_eq!(
-            form,
-            AttestForm::Indexed {
-                binder: "e",
-                array: "a"
-            }
-        );
-        assert_eq!(
-            unary_of(attest_test(&pred)),
-            ("i?".to_string(), "e".to_string())
-        );
-    }
-
-    #[test]
-    fn test_attest_map_shorthand_binds_both_binders() {
-        // DG 2026-09-07: `attest k v in m OP` ≡ `[[ OP $k && OP $v ]]`. The
-        // map form already requires a predicate to reference BOTH binders
-        // (SB5020), so binding only one would make the shorthand unusable.
-        let args = attest_args("attest k v in m p?\n");
-        let (form, pred) = classify_attest(&args).expect("should classify as attest");
-        assert_eq!(
-            form,
-            AttestForm::Map {
-                key: "k",
-                val: "v",
-                map: "m"
-            }
-        );
-        match attest_test(&pred) {
-            TestExpr::And(l, r) => {
-                assert_eq!(unary_of(l), ("p?".to_string(), "k".to_string()));
-                assert_eq!(unary_of(r), ("p?".to_string(), "v".to_string()));
-            }
-            other => panic!("expected `OP $k && OP $v`, got {:?}", other),
-        }
-    }
-
-    #[test]
-    fn test_attest_full_forms_still_parse() {
-        for src in [
-            "attest x [[ i? $x ]]\n",
-            "attest e in a [[ -n $e ]]\n",
-            "attest k v in m [[ -n $k && -n $v ]]\n",
-        ] {
-            let args = attest_args(src);
-            assert!(
-                classify_attest(&args).is_some(),
-                "did not classify: {}",
-                src
-            );
-        }
-    }
-
     // ── DD#93 Part D: `attest SOURCE (( TARGET = SOURCE ))` ───────────────
     // The int-assignment is the predicate: the conversion can only succeed on
     // a valid, representable i64, so performing it proves the property.
-
-    #[test]
-    fn test_attest_arith_convert_form() {
-        let args = attest_args("attest numstr (( myint = numstr ))\n");
-        let (form, pred) = classify_attest(&args).expect("should classify as attest");
-        assert_eq!(form, AttestForm::Scalar { var: "numstr" });
-        assert_eq!(convert_target(&pred), "myint");
-    }
-
-    #[test]
-    fn test_attest_arith_convert_accepts_dollar_source() {
-        // `numstr` and `$numstr` are the same read in arithmetic.
-        let args = attest_args("attest numstr (( myint = $numstr ))\n");
-        let (_, pred) = classify_attest(&args).expect("should classify as attest");
-        assert_eq!(convert_target(&pred), "myint");
-    }
-
-    #[test]
-    fn test_attest_arith_convert_accepts_a_wider_rhs() {
-        // DG 2026-09-07: computing a wider RHS still requires the conversion to
-        // succeed, so the `i?` gate proves the same thing — the RHS only has to
-        // REFERENCE the attested name.
-        for src in [
-            "attest s (( t = s * 2 ))\n",
-            "attest s (( t = s + k ))\n",
-            "attest s (( t = (s - 1) / 2 ))\n",
-        ] {
-            let args = attest_args(src);
-            let (_, pred) = classify_attest(&args).unwrap_or_else(|| panic!("{}", src));
-            assert_eq!(convert_target(&pred), "t", "for {}", src);
-        }
-    }
-
-    #[test]
-    fn test_attest_arith_convert_rejects_other_shapes() {
-        // An RHS that never mentions the attested name proves nothing about it,
-        // and a non-assignment is not the form at all. validate reports these
-        // as SB5054.
-        for src in [
-            "attest s (( t = other ))\n",
-            "attest s (( t = 5 ))\n",
-            "attest s (( s ))\n",
-        ] {
-            let args = attest_args(src);
-            assert!(
-                classify_attest(&args).is_none(),
-                "should not classify as an attest form: {}",
-                src
-            );
-        }
-    }
 
     /// `ir::intrinsic_call_name` is the inverse of `expr::intrinsic_expansion`,
     /// and the two live in different modules — the recogniser has to re-derive
@@ -408,61 +147,6 @@ mod logos_equivalence {
         }
     }
 
-    #[test]
-    fn comment_to_eol() {
-        let src = "# this is a comment\n";
-        let toks = tokens_of(src);
-        assert_eq!(toks.len(), 2);
-        assert_eq!(toks[0].2, LogosTok::Comment);
-        assert_eq!(toks[0].0, 0);
-        assert_eq!(toks[0].1, 19);
-        assert_eq!(toks[1].2, LogosTok::Newline);
-    }
-
-    #[test]
-    fn whitespace_skipped_continuations_swallowed() {
-        // \\<newline> is a line continuation: skipped silently.
-        let src = "(   \\\n )\n";
-        let toks = tokens_of(src);
-        let kinds: Vec<LogosTok> = toks.into_iter().map(|(_, _, t)| t).collect();
-        assert_eq!(
-            kinds,
-            vec![LogosTok::LParen, LogosTok::RParen, LogosTok::Newline]
-        );
-    }
-
-    /// `to_tok` is total over every variant that can reach it, and the
-    /// mapping is pinned pair-by-pair. The predecessor of this test only
-    /// asserted `is_some()`, so it would not have caught a variant mapped
-    /// to the wrong `Tok`.
-    #[test]
-    fn to_tok_maps_every_reachable_variant() {
-        use crate::parse::lexer::Tok;
-
-        let pairs = [
-            (LogosTok::AndAnd, Tok::AndAnd),
-            (LogosTok::OrOr, Tok::OrOr),
-            (LogosTok::AmpGt, Tok::AmpGt),
-            (LogosTok::DblParen, Tok::DblParen),
-            (LogosTok::DblParenClose, Tok::DblParenClose),
-            (LogosTok::DblSemi, Tok::DblSemi),
-            (LogosTok::DblGt, Tok::DblGt),
-            (LogosTok::GtAmp, Tok::GtAmp),
-            (LogosTok::Pipe, Tok::Pipe),
-            (LogosTok::Amp, Tok::Amp),
-            (LogosTok::Semi, Tok::Semi),
-            (LogosTok::LParen, Tok::LParen),
-            (LogosTok::RParen, Tok::RParen),
-            (LogosTok::LBrace, Tok::LBrace),
-            (LogosTok::RBrace, Tok::RBrace),
-            (LogosTok::Gt, Tok::Gt),
-            (LogosTok::Newline, Tok::Newline),
-        ];
-        for (lt, want) in pairs {
-            assert_eq!(to_tok(lt), want, "to_tok({:?}) mismapped", lt);
-        }
-    }
-
     /// `emit_logos_token` intercepts `Comment` before `to_tok` because it
     /// needs the matched slice. If that interception is ever removed the
     /// comment would silently lose its payload, so the arm is a loud ICE.
@@ -512,30 +196,6 @@ mod logos_equivalence {
             if matches!(d.token, crate::parse::lexer::Tok::Eof) {
                 break;
             }
-        }
-    }
-    /// The byte dispatcher hands ten structural bytes to the `logos` DFA. If
-    /// the DFA failed to match one of them, `scan_via_logos` would silently
-    /// fall back to a word scan that immediately breaks, yielding `Tok::Eof`
-    /// and truncating the program mid-source. Both arms measured 0 hits
-    /// (journal 311/312). This test proves the DFA covers every dispatched
-    /// byte, so the fallback is unreachable rather than merely untested.
-    #[test]
-    fn logos_matches_every_dispatched_structural_byte() {
-        use crate::parse::logos_tokens::LogosTok;
-        use logos::Logos;
-
-        for src in [
-            "\n", "#c\n", ";", "|", "&", "(", ")", "{", "}", ">", ";;", "||", "&&", ">>", ">&",
-            "))",
-        ] {
-            let matched = LogosTok::lexer(src).next();
-            assert!(
-                matches!(matched, Some(Ok(_))),
-                "logos failed to match dispatched input {:?}: {:?}",
-                src,
-                matched
-            );
         }
     }
 

@@ -6612,7 +6612,7 @@ const TEST_IS_STATEMENT_ONLY: &str = "ICE: an ExprKind::Test reached expr_uses_t
 /// Check an expression for tainted variable use, emitting diagnostics.
 /// Check one expression for reads of tainted variables (DD#24).
 ///
-/// **Total over `ExprKind` on purpose.** This match had a `_ => {}` and it
+/// **Total over `ExprKind` on purpose — do not add a wildcard.** This match had a `_ => {}` and it
 /// leaked three times: `[[ … ]]` operands, `$(<file)`, and `$(( … ))` — each
 /// a silent escape rather than a compile error, and the last one a taint
 /// bypass that shipped. A new variant must now be classified here explicitly,

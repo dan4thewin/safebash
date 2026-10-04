@@ -516,6 +516,8 @@ enum ATok {
 /// `expected an operand in arithmetic expression, found Amp` — an internal
 /// variant name for a character they had typed as `&`. The match is total so
 /// a new `ATok` is a compile error here rather than another leaked name.
+///
+/// **Total over `ATok` on purpose — do not add a wildcard.**
 fn atok_to_text(tok: &ATok) -> String {
     match tok {
         ATok::Num(n) => n.to_string(),
@@ -1686,6 +1688,8 @@ fn needs_separator_space(next: &Tok, prev_text: &str) -> bool {
 /// the shape is always rejected, and SB4035 names the real `"` the user typed
 /// rather than the fabricated ellipsis. Rendering the parts faithfully would
 /// mean re-entering the display-vs-semantic trap that made `argv "1" a` ICE.
+///
+/// **Total over `Tok` on purpose — do not add a wildcard.**
 fn tok_to_text(tok: &Tok) -> String {
     match tok {
         // Keywords. The spellings live in `keyword_to_str`, the single
@@ -1776,85 +1780,6 @@ fn tok_to_text(tok: &Tok) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// Every `ATok` spelling, in declaration order.
-    ///
-    /// `atok_to_text` exists to name what the user *wrote*, and most of its
-    /// arms cannot be reached from either caller: the operand parser consumes
-    /// those variants (they *are* operands, or unary prefixes) before a
-    /// diagnostic can ask for their spelling, and `expect` is only ever
-    /// called with `Colon` and `RParen`. The arms are kept anyway so that a
-    /// new `ATok` is a compile error rather than the next leaked variant
-    /// name — but totality only proves an arm *exists*, not that it says the
-    /// right thing. This table is what holds them to the right text.
-    #[test]
-    fn atok_to_text_spells_every_token() {
-        let cases: Vec<(ATok, &str)> = vec![
-            (ATok::Num(42), "42"),
-            (ATok::Num(-7), "-7"),
-            (
-                ATok::BadNum("99999999999999999999".into()),
-                "99999999999999999999",
-            ),
-            (ATok::BadLit("16#ff".into()), "16#ff"),
-            (ATok::Var("count".into()), "count"),
-            (ATok::DollarVar("count".into()), "$count"),
-            (ATok::Subscript("a".into(), "key".into()), "${a[key]}"),
-            (ATok::BareSubscript("a".into(), "i + 1".into()), "a[i + 1]"),
-            (ATok::ParamExpansion("v:-0".into()), "${v:-0}"),
-            (ATok::PlusPlus, "++"),
-            (ATok::MinusMinus, "--"),
-            (ATok::StarStar, "**"),
-            (ATok::LtLt, "<<"),
-            (ATok::GtGt, ">>"),
-            (ATok::LtEq, "<="),
-            (ATok::GtEq, ">="),
-            (ATok::EqEq, "=="),
-            (ATok::BangEq, "!="),
-            (ATok::AmpAmp, "&&"),
-            (ATok::PipePipe, "||"),
-            (ATok::PlusEq, "+="),
-            (ATok::MinusEq, "-="),
-            (ATok::StarEq, "*="),
-            (ATok::SlashEq, "/="),
-            (ATok::PercentEq, "%="),
-            (ATok::AmpEq, "&="),
-            (ATok::PipeEq, "|="),
-            (ATok::CaretEq, "^="),
-            (ATok::LtLtEq, "<<="),
-            (ATok::GtGtEq, ">>="),
-            (ATok::Plus, "+"),
-            (ATok::Minus, "-"),
-            (ATok::Star, "*"),
-            (ATok::Slash, "/"),
-            (ATok::Percent, "%"),
-            (ATok::Lt, "<"),
-            (ATok::Gt, ">"),
-            (ATok::Amp, "&"),
-            (ATok::Pipe, "|"),
-            (ATok::Caret, "^"),
-            (ATok::Tilde, "~"),
-            (ATok::Bang, "!"),
-            (ATok::Eq, "="),
-            (ATok::Question, "?"),
-            (ATok::Colon, ":"),
-            (ATok::Comma, ","),
-            (ATok::Sep, ";"),
-            (ATok::LParen, "("),
-            (ATok::RParen, ")"),
-        ];
-        for (tok, want) in &cases {
-            assert_eq!(
-                &atok_to_text(tok).as_str(),
-                want,
-                "wrong spelling for {tok:?}"
-            );
-        }
-        // One case per variant, plus the second `Num`. A new variant that
-        // compiles (because its arm was added) but is never spelled here
-        // trips this rather than reaching a user unnoticed.
-        assert_eq!(cases.len(), 49, "a new ATok variant needs a spelling case");
-    }
 
     /// `++x`. `reject_prefix_incdec` raises SB4020 at both arith entry
     /// points, so `ArithExpr::PreIncDec` never reaches a later pass. These

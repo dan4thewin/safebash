@@ -742,15 +742,45 @@ pub enum CheckedArithOp {
 }
 
 impl CheckedArithOp {
-    /// The overflow-checked ops (`+`/`-`/`*`); `None` for every other `ArithOp`.
-    /// A total mapping so the emitters take a `CheckedArithOp` and never need an
-    /// "only handles Add/Sub/Mul" ICE arm.
+    /// The overflow-checked ops (`+`/`-`/`*`), `None` for the rest.
+    ///
+    /// **Total over `ArithOp` on purpose — do not add a wildcard.** This read
+    /// `_ => None` until 2026-10-04, which meant a new `ArithOp` would be
+    /// silently *unchecked*: it would compile, run, and wrap, and nothing in
+    /// the tree would say so. DG's rule is that a new op must stop the build
+    /// until someone has explicitly given it a check or an exemption, so every
+    /// variant is named and the exemption for each is on the record below.
+    ///
+    /// The `None` arms are not "not yet done" — each is overflow-free, or is
+    /// checked somewhere other than `CheckedArithOp` (verified by probe
+    /// 2026-10-04):
+    ///
+    /// - `Div` traps on `i64::MIN / -1` in `emit_div_or_mod_with_zero_check`,
+    ///   which also carries bash's div-by-zero semantics; `Mod` cannot
+    ///   overflow (`i64::MIN % -1` is 0).
+    /// - `Pow` routes through the `sash_pow` runtime helper, which does its
+    ///   own check — `2 ** 70` aborts.
+    /// - `Shl`/`Shr` have no overflow to detect: DD#25's 2026-09-20 addendum
+    ///   made the count unbounded, so a count >= 64 shifts every bit out.
+    /// - `Eq`/`Ne`/`Lt`/`Le`/`Gt`/`Ge`/`And`/`Or` yield 0 or 1.
+    /// - `BitAnd`/`BitOr`/`BitXor` are bitwise and cannot leave the range.
     pub fn from_arith(op: ArithOp) -> Option<Self> {
         match op {
             ArithOp::Add => Some(Self::Add),
             ArithOp::Sub => Some(Self::Sub),
             ArithOp::Mul => Some(Self::Mul),
-            _ => None,
+            ArithOp::Div | ArithOp::Mod => None,
+            ArithOp::Pow => None,
+            ArithOp::Shl | ArithOp::Shr => None,
+            ArithOp::Eq
+            | ArithOp::Ne
+            | ArithOp::Lt
+            | ArithOp::Le
+            | ArithOp::Gt
+            | ArithOp::Ge
+            | ArithOp::And
+            | ArithOp::Or => None,
+            ArithOp::BitAnd | ArithOp::BitOr | ArithOp::BitXor => None,
         }
     }
 }

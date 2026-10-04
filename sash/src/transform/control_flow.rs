@@ -724,17 +724,32 @@ fn detect_array_iter(kind: &ExprKind) -> Option<ArrayIter> {
         }
         // Sash-native: $(keys arr) in for-loop → array key iteration (DD#41)
         ExprKind::CommandSubstitution(stmts) if stmts.len() == 1 => {
+            // The three shapes below are unreachable from any accepted
+            // program: SB5009 restricts a single-statement `$( … )` in a
+            // for-loop head to exactly `$(keys NAME)`, so a non-command
+            // statement, a non-literal command name, and any literal other
+            // than `keys` are all rejected before transform (probed
+            // 2026-10-04: `$(if …)`, `$($c)`, `$(cat f)` — all SB5009).
+            //
+            // They were `return None` until 2026-10-04, which answered
+            // "this is not an array iteration" — a *classification*, and
+            // a silently wrong one if SB5009 ever narrows: the head would
+            // fall through to the word-list path and iterate the capture's
+            // bytes instead. An ICE is the regression guard for that.
             let StmtKind::Command(c) = &stmts[0].kind else {
-                return None;
+                unreachable!("SB5009 restricts a for-head cmdsub to `$(keys NAME)`");
             };
             let ExprKind::Literal(cmd_name) = &c.name.kind else {
-                return None;
+                unreachable!("SB5009 restricts a for-head cmdsub to a literal `keys`");
             };
             if cmd_name != "keys" {
-                return None;
+                unreachable!("SB5009 rejects `$({cmd_name} …)` in a for-loop head");
             }
             // `$(keys m)` has no splat to carry a modifier, so never vouched.
-            c.args.first().map(|a| ArrayIter {
+            let Some(a) = c.args.first() else {
+                unreachable!("SB4045 rejects a zero-argument `keys`");
+            };
+            Some(ArrayIter {
                 name: expr_to_string(a),
                 use_keys: true,
                 vouched: false,
@@ -1152,5 +1167,81 @@ fn insert_case_phis(
     } else if all_paths.len() == 1 {
         let (_, ref path_state) = all_paths[0];
         state.restore(path_state);
+    }
+}
+
+#[cfg(test)]
+mod invariant_tests {
+    use super::*;
+
+    fn sp() -> Span {
+        Span::new(1, 1)
+    }
+
+    /// Hand `detect_array_iter` the four for-head shapes SB5009 and SB4045
+    /// reject, and assert each one ICEs.
+    ///
+    /// These were `return None` — "this is not an array iteration" — until
+    /// 2026-10-04. That answer is only correct while the validator still
+    /// rejects the shape: if SB5009 ever narrowed, a `$(cat f)` head would
+    /// take the word-list path and iterate the capture's bytes instead of
+    /// failing. The panic is the regression guard for that; the validator
+    /// remains the defense. A test that stops panicking is the finding.
+    #[test]
+    fn a_for_head_cmdsub_that_is_not_keys_ices() {
+        let non_command = ExprKind::CommandSubstitution(vec![Statement {
+            kind: StmtKind::Suppressed(Box::new(Statement::true_cmd(sp()))),
+            span: sp(),
+        }]);
+        let non_literal_head = ExprKind::CommandSubstitution(vec![Statement::command(
+            Expr {
+                kind: ExprKind::SingleQuoted("keys".to_string()),
+                span: sp(),
+            },
+            vec![Expr::literal("m", sp())],
+            sp(),
+        )]);
+        let not_keys = ExprKind::CommandSubstitution(vec![Statement::command(
+            Expr::literal("cat", sp()),
+            vec![Expr::literal("f", sp())],
+            sp(),
+        )]);
+        let keys_no_args = ExprKind::CommandSubstitution(vec![Statement::command(
+            Expr::literal("keys", sp()),
+            vec![],
+            sp(),
+        )]);
+
+        for (what, kind) in [
+            ("a non-command statement (SB5009)", non_command),
+            ("a non-literal command name (SB5009)", non_literal_head),
+            ("a literal that is not `keys` (SB5009)", not_keys),
+            ("a zero-argument `keys` (SB4045)", keys_no_args),
+        ] {
+            let r =
+                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| detect_array_iter(&kind)));
+            assert!(
+                r.is_err(),
+                "{what} must ICE, not classify as `not an array iteration`"
+            );
+        }
+    }
+
+    /// The companion: the arm these guards shadow is *warm*, so it must keep
+    /// answering. `for x in a b c` has an ordinary word-list head and reaches
+    /// `_ => None` (measured count 3 in the spec suite), and `$(keys m)` is
+    /// the live array-key iteration this function exists to detect.
+    #[test]
+    fn the_live_arms_still_answer() {
+        assert!(detect_array_iter(&ExprKind::Literal("a".to_string())).is_none());
+
+        let keys = ExprKind::CommandSubstitution(vec![Statement::command(
+            Expr::literal("keys", sp()),
+            vec![Expr::literal("m", sp())],
+            sp(),
+        )]);
+        let it = detect_array_iter(&keys).expect("$(keys m) is an array iteration");
+        assert_eq!(it.name, "m");
+        assert!(it.use_keys);
     }
 }

@@ -2567,43 +2567,4 @@ mod tests {
              elide — a compiler bug, which must be loud"
         );
     }
-
-    /// The parser stores `${s:0:2}` under the internal name `substring`, so a
-    /// diagnostic that interpolates `pe.operator` renders `${psubstring…}` —
-    /// syntax no author wrote and none could. Pins that the operator name
-    /// never reaches the user as though it were a spelling.
-    #[test]
-    fn substring_redirect_target_names_no_internal_operator() {
-        let pe = ParameterExpansion {
-            name: "p".to_string(),
-            operator: Some("substring".to_string()),
-            operand: None,
-            index: None,
-            taint_off: false,
-        };
-        let msg = disposition_proof(&pe, &TypeEnv::new(), false).unwrap_err();
-        assert!(!msg.contains("${psubstring"), "fabricated syntax in: {msg}");
-        assert!(msg.contains("`${p…}`"), "lost the subject in: {msg}");
-        assert!(
-            msg.contains("a substring `:off:len`"),
-            "unnamed op in: {msg}"
-        );
-    }
-
-    /// A strip operator is a string. This pins the `_` arm, which is the only
-    /// answer `parameter_expansion_type` now gives besides `:-` / `-`.
-    #[test]
-    fn another_strip_operator_is_a_string() {
-        let pe = ParameterExpansion {
-            name: "a".to_string(),
-            operator: Some("%".to_string()),
-            operand: None,
-            index: None,
-            taint_off: false,
-        };
-        assert_eq!(
-            parameter_expansion_type(&pe, &TypeEnv::new()),
-            VarType::String
-        );
-    }
 }

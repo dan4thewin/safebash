@@ -1615,6 +1615,11 @@ impl ArithExpr {
     /// spell out the variants it treats *specially* and can delegate the rest.
     /// `Expansion` holds an `Expr`, not an `ArithExpr`, so it has no children
     /// here — a walker that needs to descend into it must say so itself.
+    ///
+    /// **Total over `ArithExpr` on purpose — do not add a wildcard.**
+    /// `reject_prefix_incdec` and `validate::walk_arith_intrinsic_calls` both
+    /// delegate their own totality claim to this function, so the no-wildcard
+    /// rule has to be enforced *here* or it is enforced nowhere.
     pub(crate) fn children(&self) -> Vec<&ArithExpr> {
         match self {
             ArithExpr::PreIncDec { .. } => unreachable!("{}", PREFIX_INCDEC_INVARIANT),
@@ -1684,6 +1689,8 @@ pub enum IrArithOp {
 ///
 /// `emit_ir::arith_op` is **not** a rival (DD#116): it renders Janet keywords
 /// (`:add`) for the DD#104 IR seam, which is a different output language.
+///
+/// **Total over `IrArithOp` on purpose — do not add a wildcard.**
 pub fn arith_op_str(op: IrArithOp) -> &'static str {
     match op {
         IrArithOp::Add => "+",
@@ -1811,7 +1818,7 @@ pub(crate) fn mutation_target_in(a: &ArithExpr) -> Option<String> {
 /// and a non-final comma part that was required to be a mutation and is not.
 /// For those the expression *is* the complaint, so quoting it is the message.
 ///
-/// **Total over `ArithExpr` on purpose.** A new variant must decide how it is
+/// **Total over `ArithExpr` on purpose — do not add a wildcard.** A new variant must decide how it is
 /// quoted instead of inheriting `...` from a `_` arm — that is how the `?`
 /// regression above happened. The variants that do render `...` are listed
 /// explicitly: eliding is honest here, because it says *less* rather than
