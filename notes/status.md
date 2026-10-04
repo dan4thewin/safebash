@@ -1,4 +1,37 @@
-## ══ STATUS (2026-10-04, latest) — the keeps that did not earn it ══
+## ══ STATUS (2026-10-04, latest) — the pin that could not pin ══
+
+**The totality gate had a hole, and it was load-bearing.**
+`contrib/totality-check.py` opted functions in with a *per-line* marker search;
+rustfmt had wrapped the marker inside `command_args_elidable`, so the DD#84
+elidable-position allowlist has been ungated since it was written. 15 opt in,
+14 were visible. Fixed by joining the doc-comment run, and the gate now
+**self-tests every invocation** (exit 2 if it cannot flag two crafted
+wildcards) — it could not fail for that case for its whole life and reported
+clean throughout. Journal 473, commit `cffd833`.
+
+Found by following DG's question *"why do exhaustiveness pins not ICE?"*. The
+answer is that they are not pins: all four are hand-written lists, and adding a
+variant breaks the build at the total match, not at the test, which passes on
+unchanged still calling itself *every*. Real enforcement is rustc plus the
+gate — so the four join the rival column, and the keep column fell 10 → 6.
+
+DG also killed my one remaining exception: *"crashing is strictly worse than
+being conservative" is essentially "an uncaught regression is ok"*. Correct —
+`cmd_subst_head_resolution_fails_closed` resolves two validate-shadowed shapes
+to `Tainted`, which describes the value and not the silence. It converts.
+
+**Open for DG:** `CheckedArithOp::from_arith` answers "is this op overflow-
+checked" with `_ => None`, so a new `ArithOp` is silently *unchecked* rather
+than a compile error — inside a function whose doc says "total". And 16 further
+functions claim totality in prose without the marker; adding it is free.
+
+**Pending scope decision:** the 108 in-crate unit tests have never been through
+the redux (journal 304 did `sash/tests/` and left "77 units"). Classified all
+42 non-ICE ones with per-test evidence: 24 rivals, 6 keeps, 2 ICE conversions,
+6 to review. Separately, 290 of 413 cold lines deliver an answer rather than an
+ICE — categories (1)-(3), unclassified. Nothing deleted yet.
+
+## ══ STATUS (2026-10-04) — the keeps that did not earn it ══
 
 `mk test` rc=0 (**108** + 27 + 20), fmt/clippy/totality/complexity clean.
 Sweep **7687**, zero failures, zero flips, zero new ids (gate self-test 248).
