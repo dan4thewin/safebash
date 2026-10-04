@@ -708,12 +708,31 @@ validator accepts. So call the function **directly** with the shape the
 earlier pass rejects, and assert the ICE text names the rule that guarantees
 it. A test that stops panicking is the finding, not a cleanup.
 
+**An ICE is a regression guard, not a defense** (DG, 2026-10-04: *"the panics
+are guards against regression — they never need to be the sole defense, as a
+regression would be something we fix"*). This kills the objection that keeps
+resurfacing — "but a parser/validator conventionally errs rather than panics,
+and a future change that forgets the invariant will now crash." The invariant's
+*enforcer* is the defense; the ICE only has to notice when the enforcer stops
+being one. A regression is not a condition to degrade gracefully under, so the
+ICE's quality as a user-facing message is not a consideration. And the
+"conventionally errs" rule is about **user** input — an arm unreachable by user
+input is outside its scope. Do not re-litigate this when converting a loud
+`Err` that guards a compiler invariant; convert it.
+
 Put the module in the **same file** (`#[cfg(test)] mod invariant_tests`) —
 most of these functions are private. Use `#[should_panic(expected = …)]` for a
 single site; `std::panic::catch_unwind(AssertUnwindSafe(…))` plus a payload
 downcast when you want to loop over several shapes or assert on the message.
 `sash/src/transform/stmt_handlers.rs` and `sash/src/ir.rs` are the two worked
 examples.
+
+**Counting ICE tests: grep undercounts.** Measured 2026-10-04, `sash` has 108
+unit tests of which **66 are ICE assertions** (33 `#[should_panic]`, 33
+`catch_unwind`) and 42 are ordinary. A grep for `catch_unwind` inside test
+bodies finds only 23 — the other ten reach it through a shared helper
+(`stmt_handlers::ice_on`, `emit_c::ices`), so any census has to resolve
+same-file helpers before it means anything.
 
 **Some ICE arms cannot be reached by a unit test either**, because the
 *same function* already covers the case — `arith_to_ssa`'s trailing arm is

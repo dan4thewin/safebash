@@ -234,11 +234,22 @@ The adversarial probes, all shadowed: `a[=9`, `a[]=9`, `a[$i][0]=9`,
 returns false and `parse_assignment` is never entered at all — SB5011, as a
 command name.
 
-**Tradeoff, stated rather than buried.** A parser conventionally errs rather
-than panics, and a future grammar extension that forgets to update the probe
-now crashes instead of diagnosing. Against that: it crashes in the opener's own
-spec sweep, visibly, at the commit that introduced the divergence — rather than
-shipping a sentence that contradicts the user's source.
+**Tradeoff, stated rather than buried** — and settled by DG in one sentence:
+*"the panics are guards against regression — they never need to be the sole
+defense, as a regression would be something we fix."*
+
+I had framed it as a defense-in-depth question: if a future grammar extension
+forgets to update the probe, is a panic worse than a diagnostic? That framing
+was wrong, and the error is instructive. It treats the ICE as the thing
+standing between a user and a bad outcome, which would make its quality as a
+*message* matter. It is not. The probe is the defense; the ICE only has to
+notice when the probe stops being one. A regression is not a condition to
+degrade gracefully under — it is a condition to fix, and the ICE's whole job is
+to make sure someone is told to fix it.
+
+Which also disposes of "a parser conventionally errs rather than panics". The
+convention is about *user* input. Neither of these arms can be reached by user
+input, so the convention does not reach them.
 
 Sweep: 7687 (3946 native + 3728 c + 13 skipped), zero flips, zero new ids, gate
 self-test 248. `mk test` 108 + 27 + 20. Both messages were asserted by no spec.
