@@ -14,10 +14,22 @@ guarding — so each SB4014 would have been a **lie** told about correct source.
 `parse_assignment_lhs`'s `rest.find(']')`, in the same family behind the same
 probe, had been an `unreachable!` all along. Both `Result` wrappers dropped;
 both unit tests converted to `#[should_panic]` (they had been asserting the
-message, not the invariant). **Tradeoff for DG to veto:** a parser
-conventionally errs rather than panics, and a grammar extension that forgets
-the probe now crashes — but it crashes in the opener's own sweep, not in a
-user's hands with a contradictory message.
+message, not the invariant).
+
+**DG settled the tradeoff I had left open:** *"the panics are guards against
+regression — they never need to be the sole defense, as a regression would be
+something we fix."* I had asked it as defense-in-depth, which treats the ICE as
+what stands between a user and a bad outcome; it is not — the probe is the
+defense, the ICE only notices when the probe stops being one. That also
+disposes of "a parser conventionally errs rather than panics": that convention
+is about *user* input, and neither arm can be reached by user input. Recorded
+in AGENTS.md so it is not re-litigated.
+
+**ICE census** (also in AGENTS.md, because a grep undercounts it): `sash` has
+108 unit tests, **66 of them ICE assertions** — 33 `#[should_panic]`, 33
+`catch_unwind` — and 42 ordinary. Ten of the `catch_unwind` ones reach it via a
+shared helper (`stmt_handlers::ice_on`, `emit_c::ices`), so a body grep finds
+only 23. `sash-convert` (27) and `sash-expand` (20) have no ICE tests.
 
 **DG: "why are we keeping lines that are unreachable and not a backstop?"**
 Reviewing my own DD#116 verdicts against the rubric instead of defending them,
