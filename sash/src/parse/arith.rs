@@ -56,19 +56,19 @@ fn arith_range_error(span: Span, literal: &str) -> Diagnostic {
 /// bash arbitrary-base literal `base#digits` (use `0x`/`0o`/`0b`), or an
 /// invalid prefix digit (`0o8`). Distinct from SB4026 (out of range).
 fn arith_bad_literal_error(span: Span, literal: &str) -> Diagnostic {
-    // A stray `[` / `]` in arithmetic is a `$a[i]` dollar-subscript attempt,
-    // which isn't a subscript read here (the reconstructed `$(( ))` content
-    // splits `$a` from `[i]`). Point at the two working spellings instead of
-    // the generic numeric-literal message. (arith-bare-subscript-followups
-    // edge 1: `$a[i]` → SB4035 with a clear hint.)
+    // A stray `[` / `]` reaching the numeric-literal path means a subscript
+    // did not form — an unbalanced `$a[1`, a misplaced `1[2]`. All three cell
+    // spellings read here now (DG 2026-10-04), so name them rather than emit a
+    // generic numeric-literal message about a bracket.
     if literal == "[" || literal == "]" {
         return Diagnostic::error_at(
             span.line,
             span.col,
             "SB4035",
-            "`$a[i]` isn't a subscript read in arithmetic — use the bare cell \
-             form `a[i]` or the braced value form `${a[i]}`"
-                .to_string(),
+            format!(
+                "stray `{literal}` in arithmetic — a cell read needs a balanced \
+                 subscript: `a[i]` (bare), `$a[i]`, or `${{a[i]}}`"
+            ),
         );
     }
     Diagnostic::error_at(

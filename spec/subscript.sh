@@ -10,7 +10,7 @@
 set -eu
 . common.sh
 setup subscript
-plan=111
+plan=120
 echo "1..$plan" >&3
 
 set +e
@@ -770,6 +770,55 @@ run_sash 'map m=( ); s="k"; m[$s]="1"; m[${s}]="2"; echo ${m[$s]}'
 # 80.113 append through a subscript still parses its index the same way
 run_sash 'array a=( p q ); a[0]+="z"; echo ${a[0]}'
 [[ $rc == 0 && $out == "pz" ]]; chk 80.113
+
+# ── R. a cell takes a brace-less disposition (DD#90 scope, DG 2026-10-04) ──
+# "A string cell behaves like a string variable" settles every operator, so the
+# DD#90 scope list (scalar, positional, splat) takes a fourth entry rather than
+# a cell-shaped exception. Before this, `$a[9]:?m` silently was NOT a guard —
+# it read empty, concatenated `:?m` as literal bytes, and continued with a
+# truthy string. No new legibility limit was needed: the `:` must be tight
+# against the `]` exactly as it must be tight against a scalar's name, and the
+# operand ends at the same word boundary.
+
+# 80.114 `:-` on a present cell yields the cell
+run_sash 'array a=( p q ); echo $a[0]:-z'
+[[ $rc == 0 && $out == "p" ]]; chk 80.114
+
+# 80.115 `:-` on an absent cell yields the default (was `:-z` literal)
+run_sash 'array a=( p q ); echo $a[9]:-z'
+[[ $rc == 0 && $out == "z" ]]; chk 80.115
+
+# 80.116 `:?` is a GUARD — the row that made this a correctness fix, not an
+# ergonomic one. It used to print `:?m` and exit 0.
+run_sash 'array a=( p q ); echo $a[9]:?m; echo reached'
+[[ $rc != 0 && $out != *reached* ]]; chk 80.116
+
+# 80.117 `:~` elides the argument rather than passing a literal `:~`
+run_sash 'array a=( p q ); echo x $a[9]:~ y'
+[[ $rc == 0 && $out == "x y" ]]; chk 80.117
+
+# 80.118 a map cell disposes the same way
+run_sash 'map m=( [k]=v ); echo $m[no]:-z'
+[[ $rc == 0 && $out == "z" ]]; chk 80.118
+
+# 80.119 brace-less and braced agree — the whole point of the desugar
+run_sash 'array a=( p q ); echo $a[9]:-z ${a[9]:-z}'
+[[ $rc == 0 && $out == "z z" ]]; chk 80.119
+
+# 80.120 interpolation still requires braces (DG: "err on the side of
+# clarity"), so inside `"…"` the tail stays literal
+run_sash 'array a=( p q ); echo "$a[9]:-z"'
+[[ $rc == 0 && $out == ":-z" ]]; chk 80.120
+
+# 80.121 a non-disposition `:X` after a cell is still literal concatenation,
+# exactly as after a scalar — only `:-`, `:?`, `:~` open a disposition
+run_sash 'array a=( p q ); echo $a[0]:/bin'
+[[ $rc == 0 && $out == "p:/bin" ]]; chk 80.121
+
+# 80.122 the `:` must be tight: a space makes it a separate word, so the
+# "where would the braces go" question never arises
+run_sash 'array a=( p q ); echo $a[0] :-z'
+[[ $rc == 0 && $out == "p :-z" ]]; chk 80.122
 
 
 set -e

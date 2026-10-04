@@ -893,59 +893,139 @@ fn attest_lit(e: &Expr) -> Option<&str> {
     }
 }
 
-/// DD#77 D1: invoke `f(name)` for each bare variable *read* (`x` / `$x`) in an
-/// `ArithExpr` tree. Does NOT descend into `Expansion` (a `${…}` disposition or
-/// subscript is not a bare operand) and does NOT visit assignment/inc-dec
-/// targets (those are mutation lvalues, tracked as arith-native ints).
-pub fn walk_arith_var_reads(a: &ArithExpr, f: &mut impl FnMut(&str)) {
+/// An operand position in an arithmetic tree that is **evaluated as an
+/// integer** — the positions DD#77 D1 governs.
+pub(crate) enum ArithOperand<'a> {
+    /// A bare name read: `x` / `$x`.
+    Bare(&'a str),
+    /// A `${…}` value-import: `${a[i]}`, `${m[k]}`, `${s:-5}`.
+    Imported(&'a Expr),
+}
+
+/// What [`walk_arith_int_operands`] does at a single node: either this node
+/// **is** an int operand, or these are the sub-expressions that hold its int
+/// operands (empty for the nodes that have none).
+enum ArithStep<'a> {
+    Leaf(ArithOperand<'a>),
+    Children(Vec<&'a ArithExpr>),
+}
+
+/// Classify one `ArithExpr` node for [`walk_arith_int_operands`].
+///
+/// Every variant is listed here exactly once, which is the point: the question
+/// "is this position evaluated as an integer?" has one answer site, and adding
+/// a variant forces an answer rather than inheriting a default.
+///
+/// **Total over `ArithExpr` on purpose — do not add a wildcard.**
+fn arith_int_operand_step(a: &ArithExpr) -> ArithStep<'_> {
     match a {
-        ArithExpr::Var(name) | ArithExpr::DollarVar(name) => f(name),
-        ArithExpr::BinOp { left, right, .. } => {
-            walk_arith_var_reads(left, f);
-            walk_arith_var_reads(right, f);
+        ArithExpr::Var(name) | ArithExpr::DollarVar(name) => {
+            ArithStep::Leaf(ArithOperand::Bare(name))
         }
+        ArithExpr::Expansion(inner) => ArithStep::Leaf(ArithOperand::Imported(inner)),
+        ArithExpr::BinOp { left, right, .. } => ArithStep::Children(vec![left, right]),
         ArithExpr::UnaryOp { operand, .. } | ArithExpr::Paren(operand) => {
-            walk_arith_var_reads(operand, f)
+            ArithStep::Children(vec![operand])
         }
         ArithExpr::Assign { value, .. } | ArithExpr::CompoundAssign { value, .. } => {
-            walk_arith_var_reads(value, f)
+            ArithStep::Children(vec![value])
         }
         ArithExpr::Ternary {
             cond,
             true_val,
             false_val,
-        } => {
-            walk_arith_var_reads(cond, f);
-            walk_arith_var_reads(true_val, f);
-            walk_arith_var_reads(false_val, f);
-        }
-        ArithExpr::Comma(exprs) => {
-            for e in exprs {
-                walk_arith_var_reads(e, f);
+        } => ArithStep::Children(vec![cond, true_val, false_val]),
+        ArithExpr::Comma(exprs) => ArithStep::Children(exprs.iter().collect()),
+        // A bare subscript's *index* is itself an arithmetic operand, so a bare
+        // string used there (`a[s]`) is the same string→int crossing (DD#77 D1).
+        // The array *name* is handled by the bare-subscript cell check, not here.
+        ArithExpr::Subscript { index, .. } => ArithStep::Children(vec![index]),
+        ArithExpr::SubscriptAssign { index, value, .. } => ArithStep::Children(vec![index, value]),
+        // NOT descended: a sexpr argument is not an int operand. `(strlen
+        // ${a[1]})` and `${#s}` = `len(s)` pass a *string*, and the intrinsic's
+        // own signature is what types it — flagging either would be a false
+        // positive. Verified by specs `sx.26`/`sx.28`/`sx.35`, which are exactly
+        // the shape that regressed when the imported view first descended here.
+        //
+        // Nothing to report either for a literal (no name) or an inc/dec target
+        // (a mutation lvalue, tracked as an arith-native int).
+        ArithExpr::FuncCall { .. }
+        | ArithExpr::Literal(_)
+        | ArithExpr::PostIncDec { .. }
+        | ArithExpr::PreIncDec { .. } => ArithStep::Children(Vec::new()),
+    }
+}
+
+/// The one traversal of the int-operand positions of an `ArithExpr`.
+///
+/// [`walk_arith_var_reads`] and [`walk_arith_imported_operands`] are two views
+/// of this, in the same "two entry points into one traversal, rather than a
+/// second copy of the structure that can drift" shape as
+/// [`walk_arith_expansions`] / [`walk_arith_expansion_roots`]. The two views
+/// must agree about *which positions are int operands* — they are halves of
+/// one rule (a bare string and an imported string cell are the same crossing),
+/// so a position reached by one and not the other is a hole by construction.
+/// That is not hypothetical: `${s[0]}` evaded DD#77 D1 for six weeks because
+/// the imported half had no walker at all.
+///
+/// The per-variant decisions live in [`arith_int_operand_step`]; this is only
+/// the driver.
+fn walk_arith_int_operands<'a>(a: &'a ArithExpr, f: &mut impl FnMut(ArithOperand<'a>)) {
+    match arith_int_operand_step(a) {
+        ArithStep::Leaf(op) => f(op),
+        ArithStep::Children(kids) => {
+            for kid in kids {
+                walk_arith_int_operands(kid, f);
             }
         }
-        // Descend into a bare subscript's *index* (and a subscript-assign's
-        // index/value): the index is itself an arithmetic operand, so a bare
-        // string used there (`a[s]`) is the same string→int crossing (DD#77 D1).
-        // The array *name* is handled by the bare-subscript cell check, not
-        // here.
-        ArithExpr::Subscript { index, .. } => walk_arith_var_reads(index, f),
-        ArithExpr::SubscriptAssign { index, value, .. } => {
-            walk_arith_var_reads(index, f);
-            walk_arith_var_reads(value, f);
-        }
-        // NOT descended: `FuncCall` args (e.g. `${#s}` = `len(s)` passes the
-        // *name*, not an int operand — flagging it would be a false positive);
-        // `Expansion` (a `${…}` disposition/subscript); `Literal` /
-        // Pre/PostIncDec (no bare read to flag).
-        _ => {}
     }
+}
+
+/// DD#77 D1: invoke `f(name)` for each bare variable *read* (`x` / `$x`) in an
+/// `ArithExpr` tree. Does NOT descend into `Expansion` (a `${…}` disposition or
+/// subscript is not a bare operand) and does NOT visit assignment/inc-dec
+/// targets (those are mutation lvalues, tracked as arith-native ints).
+pub fn walk_arith_var_reads(a: &ArithExpr, f: &mut impl FnMut(&str)) {
+    walk_arith_int_operands(a, &mut |op| {
+        if let ArithOperand::Bare(name) = op {
+            f(name);
+        }
+    });
+}
+
+/// The companion view of [`walk_arith_var_reads`]: invoke `f` on each `${…}`
+/// **value-import sitting in an int-operand position**, at its root.
+///
+/// Distinct from [`walk_arith_expansion_roots`], which visits every embedded
+/// `${…}` anywhere in the tree *including* sexpr arguments. The difference is
+/// the whole point: `(strlen ${a[1]})` contains an expansion but not an
+/// integer operand.
+pub(crate) fn walk_arith_imported_operands<'a>(a: &'a ArithExpr, f: &mut impl FnMut(&'a Expr)) {
+    walk_arith_int_operands(a, &mut |op| {
+        if let ArithOperand::Imported(e) = op {
+            f(e);
+        }
+    });
 }
 
 /// Invoke `f(name)` for every bare subscript (`ArithExpr::Subscript` /
 /// `SubscriptAssign`) *subject* name in an arith tree, descending into every
 /// sub-expr. The complement of [`walk_arith_var_reads`], which descends into a
 /// subscript's index but deliberately skips its subject.
+/// Visit the **bare** subscript cells (`a[i]`) in an arithmetic tree, handing
+/// `f` each collection name.
+///
+/// Deliberately does **not** descend into [`ArithExpr::Expansion`]: a `${a[i]}`
+/// is the braced value-import, and its callers (the model-B bare-map reject,
+/// the bare string-cell reject) are about the *bare* spelling specifically. The
+/// imported spelling is checked by `type_check::check_arith_expansion_string_cell`.
+///
+/// **Total over `ArithExpr` on purpose — do not add a wildcard.** The `_ => {}`
+/// this replaces is what let `${s[0]}` evade DD#77 D1 for six weeks: the arm
+/// that swallowed `Expansion` read exactly like the arms that swallow
+/// `Literal`, so nothing distinguished "carries no cell" from "carries a cell
+/// we are not looking at". Spelling them out makes that distinction a comment
+/// rather than a silence.
 pub fn walk_arith_subscripts(a: &ArithExpr, f: &mut impl FnMut(&str)) {
     match a {
         ArithExpr::Subscript { name, index } => {
@@ -983,7 +1063,15 @@ pub fn walk_arith_subscripts(a: &ArithExpr, f: &mut impl FnMut(&str)) {
                 walk_arith_subscripts(e, f);
             }
         }
-        _ => {}
+        // Carries a cell, skipped on purpose — see the doc comment. `${a[i]}`
+        // is the value-import, not a bare cell.
+        ArithExpr::Expansion(_) => {}
+        // Carry a `String` or an `i64`, never a subscript.
+        ArithExpr::Literal(_)
+        | ArithExpr::Var(_)
+        | ArithExpr::DollarVar(_)
+        | ArithExpr::PostIncDec { .. }
+        | ArithExpr::PreIncDec { .. } => {}
     }
 }
 

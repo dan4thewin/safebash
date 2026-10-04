@@ -230,6 +230,7 @@ fn check_arith_expr_rules(
     }
     check_arith_default_literals(a, errors);
     check_arith_bare_map_subscript(a, span, env, errors);
+    check_arith_expansion_string_cell(a, span, env, errors);
 }
 
 fn check_sexpr_string_producers(stmt: &Statement, env: &TypeEnv, errors: &mut Vec<TypeError>) {
@@ -268,7 +269,11 @@ fn check_arith_indexed_map_assign(
         return;
     }
     if matches!(idx.kind, ExprKind::Arithmetic(_)) && env.assoc_arrays.contains(&a.name) {
-        errors.push(bare_map_subscript_error(&a.name, span));
+        errors.push(bare_map_subscript_error(
+            &a.name,
+            span,
+            env.var_type(&a.name) == VarType::String,
+        ));
     }
 }
 
@@ -285,22 +290,69 @@ fn check_arith_bare_map_subscript(
 ) {
     crate::ir::walk_arith_subscripts(a, &mut |name| {
         if env.assoc_arrays.contains(name) {
-            errors.push(bare_map_subscript_error(name, span));
+            errors.push(bare_map_subscript_error(
+                name,
+                span,
+                env.var_type(name) == VarType::String,
+            ));
         } else if env.is_collection(name) && env.var_type(name) == VarType::String {
-            errors.push(bare_string_cell_error(name, span));
+            errors.push(string_cell_error(name, span));
         }
     });
 }
 
-/// DD#77 D1 for a string-array cell: the same discipline as a bare string
-/// scalar — the cell value is a string, so its use as an arithmetic operand
-/// must carry a disposition. The `${a[i]}` read + `:-`/`:?` disposition already
-/// works, so this directs there.
-fn bare_string_cell_error(name: &str, span: Span) -> TypeError {
+/// DD#77 D1 for a cell read through the `${…}` **value-import** — the other
+/// half of [`check_arith_bare_map_subscript`], and the reason that one is not
+/// enough on its own.
+///
+/// "A string cell behaves like a string variable" (DG), so a cell whose
+/// elements are strings owes the same disposition a bare string scalar does.
+/// The *bare* form `a[i]` has been checked since 2026-08-19; the braced form
+/// never was, because it arrives as an [`ArithExpr::Expansion`] and
+/// `walk_arith_subscripts` only yields bare cells. So `$(( ${s[0]} ))` on
+/// `array s=( hi )` silently evaluated to **0** — precisely the string→int
+/// crossing DD#77 exists to stop, reached through the one spelling that
+/// skipped the check, while `s[0]` and `$s` both rejected.
+///
+/// This is also the only place a string **map** cell can be caught at all: a
+/// bare `m[k]` is inexpressible under arith rules (model B), so `${m[k]}` is
+/// the sole spelling, and before this it was unchecked.
+///
+/// A disposition-carrying cell (`${s[0]:-7}`, `${s[0]:?msg}`) parses as a
+/// `ParameterExpansion` rather than a `Subscript` and so never matches — that
+/// is the DD#77 escape hatch, and it keeps working. A cell passed to a sexpr
+/// (`(strlen ${a[1]})`) is not an int operand and is not visited at all.
+fn check_arith_expansion_string_cell(
+    a: &ArithExpr,
+    span: Span,
+    env: &TypeEnv,
+    errors: &mut Vec<TypeError>,
+) {
+    crate::ir::walk_arith_imported_operands(a, &mut |e| {
+        let ExprKind::Subscript { name, .. } = &e.kind else {
+            return;
+        };
+        // A collection-parameter slot's element kind is whatever the call site
+        // passed and this pass runs before inlining (DD#100 Part B), so there
+        // is no program-wide answer to give.
+        if env.is_slot(name) {
+            return;
+        }
+        if env.is_collection(name) && env.var_type(name) == VarType::String {
+            errors.push(string_cell_error(name, span));
+        }
+    });
+}
+
+/// DD#77 D1 for a string-valued cell: the same discipline as a string scalar —
+/// the cell value is a string, so its use as an arithmetic operand must carry a
+/// disposition. Raised for both spellings (`a[i]` bare and `${a[i]}` imported),
+/// which is why the text names neither.
+fn string_cell_error(name: &str, span: Span) -> TypeError {
     TypeError {
         message: format!(
-            "bare string cell `{name}[…]` in arithmetic — `{name}` holds strings, so \
-             (like a bare string variable, DD#77) the string→int conversion must carry \
+            "string cell `{name}[…]` in arithmetic — `{name}` holds strings, so \
+             (like a string variable, DD#77) the string→int conversion must carry \
              a disposition: `${{{name}[i]:-N}}` (default N if not an integer) or \
              `${{{name}[i]:?msg}}` (abort if not an integer)."
         ),
@@ -308,12 +360,21 @@ fn bare_string_cell_error(name: &str, span: Span) -> TypeError {
     }
 }
 
-fn bare_map_subscript_error(name: &str, span: Span) -> TypeError {
+/// `string_valued` picks the read hint. A map's cells are strings unless it was
+/// declared `int map`, and for a string map `${m[k]}` alone is *not* a legal
+/// read — it owes a disposition like any other string cell. Sending the author
+/// there would just cost them a second compile.
+fn bare_map_subscript_error(name: &str, span: Span, string_valued: bool) -> TypeError {
+    let read = if string_valued {
+        format!("`${{{name}[k]:-N}}` (a string cell owes a disposition, DD#77)")
+    } else {
+        format!("`${{{name}[k]}}` (imports the value)")
+    };
     TypeError {
         message: format!(
             "bare `{name}[…]` in arithmetic — `{name}` is a map, and a string key \
-             isn't expressible under arithmetic rules. Read with `${{{name}[k]}}` \
-             (imports the value) and write with `{name}[k]=…` (statement form)."
+             isn't expressible under arithmetic rules. Read with {read} \
+             and write with `{name}[k]=…` (statement form)."
         ),
         span,
     }

@@ -933,7 +933,7 @@ impl Scanner {
         name: String,
         dispositions: bool,
     ) -> SpannedToken {
-        if let Some(tok) = self.braceless_subscript(start, &name) {
+        if let Some(tok) = self.braceless_subscript(start, &name, dispositions) {
             return tok;
         }
         if dispositions {
@@ -958,20 +958,46 @@ impl Scanner {
     /// as a subscript on an array named `#` and panicked (`ICE: undefined
     /// array`) — the braced forms rejecting all of them cleanly the whole time.
     ///
-    /// **Not inside `(( … ))`.** There `$a[i]` is deliberately *not* a subscript
-    /// (`a[i]` is — DD#79 model B), and SB4035 says so with a hint; the arith
-    /// body is re-serialised through [`tok_to_text`], so desugaring here would
-    /// silently turn that reject into an accept. Specs `dsx.1`/`dsx.2`.
+    /// **Inside `(( … ))` too** (DG, 2026-10-04). It did not used to be: the
+    /// arith body is re-serialised through [`tok_to_text`] and re-lexed, and
+    /// when `$a[$i]` reached that round trip as *separate* tokens the index was
+    /// re-spaced to `$a[ $i ]` and silently re-read as `a[0]` — so SB4035
+    /// rejected the whole spelling rather than risk a wrong answer. Fusing the
+    /// subscript into one token here is what removed that hazard: the index now
+    /// survives the round trip verbatim, and every spelling lands on the braced
+    /// grammar with the braced rejects (`$a[i+1]` is SB4041 exactly as
+    /// `${a[i+1]}` is). The old carve-out was a workaround for a defect this
+    /// function had already fixed. Specs `dsx.1`-`dsx.5`.
+    ///
+    /// A trailing disposition is folded in as well, so `$a[0]:-z` desugars to
+    /// `${a[0]:-z}` — "a string cell behaves like a string variable" (DG), and
+    /// that settles every operator rather than just the one that was asked
+    /// about. It needs no cell-specific legibility limit: the operand boundary
+    /// is [`scan_braceless_operand`]'s word boundary, the same one a scalar
+    /// uses, and the `:` must be tight against the `]` exactly as it must be
+    /// tight against a scalar's name. Where that adjacency collides with the
+    /// arithmetic ternary the result is a loud SB4020, never a silent
+    /// reinterpretation. `dispositions` is false for `$@` and friends, and the
+    /// double-quote scanner never reaches here at all, so interpolation keeps
+    /// its mandatory braces (DD#90, DG: "err on the side of clarity").
     ///
     /// Returns `None` when no `[` follows or the brackets are unbalanced, so
     /// `echo $a[` keeps its literal reading.
-    fn braceless_subscript(&mut self, start: usize, name: &str) -> Option<SpannedToken> {
-        if self.arith_depth > 0 {
-            return None;
-        }
+    fn braceless_subscript(
+        &mut self,
+        start: usize,
+        name: &str,
+        dispositions: bool,
+    ) -> Option<SpannedToken> {
         let close = super::expr::balanced_subscript_close(&self.source, self.pos)?;
-        let text = String::from_utf8_lossy(&self.source[self.pos..=close]).to_string();
+        let mut text = String::from_utf8_lossy(&self.source[self.pos..=close]).to_string();
         self.pos = close + 1;
+        if dispositions {
+            if let Some((op, operand, end)) = self.try_braceless_disposition(self.pos) {
+                self.pos = end;
+                text.push_str(&format!(":{op}{operand}"));
+            }
+        }
         Some(SpannedToken {
             token: Tok::DollarBrace(format!("{name}{text}")),
             span: LexSpan {

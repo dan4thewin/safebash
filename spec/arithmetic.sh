@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup arithmetic
-plan=358
+plan=371
 echo "1..$plan" >&3
 
 set +e
@@ -533,24 +533,28 @@ echo $(( (strlen ${a[1]}) + (strlen $s) + (len a) ))'
 # ── array/map subscripts as an rvalue in arithmetic (`${…}` value-import) ──
 # BUG: `${a[i]}` in `(( ))` read a bogus variable named "a[i]" → 0. `${…}` is a
 # normal-parse rvalue value-import into arith; fixes the silent-0.
+# The collections here are `int`-valued on purpose: a STRING cell imported into
+# arithmetic owes a disposition like any string variable (DD#77 D1 — see the
+# `icx.*` block below), so an untyped `array a=(10 20 30)` would reject.
 # asx.1 ${a[0]} literal index read
-run_sash 'array a=(10 20 30); echo $(( ${a[0]} + 1 ))'
+run_sash 'int array a=(10 20 30); echo $(( ${a[0]} + 1 ))'
 [[ $rc = 0 && $out = "11" && -z $err ]]; chk asx.1
 # asx.2 ${a[$i]} dynamic index read
-run_sash 'array a=(10 20 30); i=1; echo $(( ${a[$i]} + 1 ))'
+run_sash 'int array a=(10 20 30); i=1; echo $(( ${a[$i]} + 1 ))'
 [[ $rc = 0 && $out = "21" && -z $err ]]; chk asx.2
 # asx.3 ${m[k]} map read (string key)
-run_sash 'map m=([k]=5); echo $(( ${m[k]} + 1 ))'
+run_sash 'int map m=([k]=5); echo $(( ${m[k]} + 1 ))'
 [[ $rc = 0 && $out = "6" && -z $err ]]; chk asx.3
 # asx.4 subscript rvalue in a (( )) statement
-run_sash 'array a=(10 20 30); (( x = ${a[1]} + 5 )); echo $x'
+run_sash 'int array a=(10 20 30); (( x = ${a[1]} + 5 )); echo $x'
 [[ $rc = 0 && $out = "25" && -z $err ]]; chk asx.4
 # asx.6 map arith-mutation via the statement form (${m[k]} read + m[k]= write);
-# the cell is string-typed so the int result needs DD#30 `"…"` conversion.
-run_sash 'map m=([k]=5); m[k]="$(( ${m[k]} + 1 ))"; echo ${m[k]}'
+# the cell is string-typed so the read carries a DD#77 disposition and the int
+# result needs DD#30 `"…"` conversion.
+run_sash 'map m=([k]=5); m[k]="$(( ${m[k]:-0} + 1 ))"; echo ${m[k]}'
 [[ $rc = 0 && $out = "6" && -z $err ]]; chk asx.6
 # asx.5 subscript rvalue in a condition
-run_sash 'array a=(10 20 30); if (( ${a[0]} > 5 )); then echo yes; else echo no; fi'
+run_sash 'int array a=(10 20 30); if (( ${a[0]} > 5 )); then echo yes; else echo no; fi'
 [[ $rc = 0 && $out = "yes" && -z $err ]]; chk asx.5
 
 # ── arith-subscript model B Stage 2: BARE `a[i]` (int-array cell, rvalue +
@@ -593,17 +597,28 @@ run_sash 'int map m=([k]=5); (( m[0]++ ))'
 run_sash 'echo $(( args[0] ))'
 [[ $rc != 0 && -z $out && $err == *SB5031* ]]; chk bsx.10
 
-# ── arith-bare-subscript-followups edge 1: `$a[i]` (dollar, non-brace) isn't a
-# subscript read in arith. The `$(( ))` content is rebuilt token→string→re-lexed
-# and can't preserve a `$`/variable index cleanly (it would silently read a[0]),
-# so it rejects with a clear hint pointing at the bare `a[i]` / braced `${a[i]}`
-# forms. Mode-independent (compile-time). ──
-# dsx.1 literal index → SB4035 carrying the `a[i]`/`${a[i]}` hint
+# ── `$a[i]` (dollar, non-brace) IS a subscript read in arith (DG, 2026-10-04).
+# It did not used to be: the `$(( ))` body is rebuilt token→string→re-lexed, and
+# while `$a` and `[i]` were separate tokens the index came back re-spaced and
+# silently read `a[0]`, so the whole spelling rejected. The braceless desugar
+# fuses the subscript into one token, so the index survives verbatim and every
+# spelling lands on the braced grammar — including its rejects. ──
+# dsx.1 literal index reads the cell
 run_sash 'int array a=(7 13 21); echo $(( $a[1] ))'
-[[ $rc != 0 && -z $out && $err == *SB4035* && $err == *'${a[i]}'* ]]; chk dsx.1
-# dsx.2 variable index rejects too (crucially NOT a silent a[0] read)
-run_sash 'int array a=(7 13 21); int i=1; echo $(( $a[$i] ))'
-[[ $rc != 0 && -z $out && $err == *SB4035* ]]; chk dsx.2
+[[ $rc = 0 && $out = "13" && -z $err ]]; chk dsx.1
+# dsx.2 variable index reads the cell — the case that used to silently read a[0]
+run_sash 'int array a=(7 13 21); int i=2; echo $(( $a[$i] ))'
+[[ $rc = 0 && $out = "21" && -z $err ]]; chk dsx.2
+# dsx.3 a stray bracket still rejects, and names all three spellings
+run_sash 'int array a=(7 13 21); echo $(( $a[1 ))'
+[[ $rc != 0 && -z $out && $err == *SB4035* && $err == *'${a[i]}'* ]]; chk dsx.3
+# dsx.4 the braceless spelling inherits the BRACED index grammar exactly:
+# `i+1` is rejected by `${a[i+1]}` too, so the two agree rather than diverge
+run_sash 'int array a=(7 13 21); echo $(( $a[i+1] ))'
+[[ $rc != 0 && -z $out && $err == *SB4041* ]]; chk dsx.4
+# dsx.5 `${…}` is never an lvalue (model B), and `$a[i]` is not either
+run_sash 'int array a=(7 13 21); (( $a[0] = 5 )); echo $a[0]'
+[[ $rc != 0 && -z $out && -n $err ]]; chk dsx.5
 
 # ── arith-bare-subscript-followups edge 2: a bare nested cell read `a[a[0]]`
 # ends in `]]`; the lexer now tracks subscript depth so that `]]` closes two
@@ -708,6 +723,48 @@ run_sash 'array a=(hi 13 21); echo ${a[0]:s/h}'
 # scx.22 a `:`-op with no cell lowering (`:+`) still rejects explicitly → SB4039
 run_sash 'array a=(hi 13 21); echo ${a[0]:+x}'
 [[ $rc != 0 && -z $out && $err == *SB4039* ]]; chk scx.22
+
+# ── DD#77 D1, the IMPORTED half: a string cell reaching arithmetic through the
+# `${…}` value-import owes the same disposition a bare one does — "a string
+# cell behaves like a string variable" (DG, 2026-10-04). It did not, for six
+# weeks: `walk_arith_subscripts` yields only BARE cells, so `$(( ${s[0]} ))`
+# silently evaluated to 0 while `s[0]` and `$s` both rejected. A map is only
+# ever read this way (model B), so this is the sole place a string map cell can
+# be caught at all. Compile-time, so mode-independent. ──
+# icx.1 imported string-array cell → SB4030
+run_sash 'array s=(hi); echo $(( ${s[0]} ))'
+[[ $rc != 0 && -z $out && $err == *SB4030* ]]; chk icx.1
+# icx.2 the same through the braceless spelling — all paths agree
+run_sash 'array s=(hi); echo $(( $s[0] ))'
+[[ $rc != 0 && -z $out && $err == *SB4030* ]]; chk icx.2
+# icx.3 a string MAP cell, the spelling that has no bare form
+run_sash 'map m=([k]=5); echo $(( ${m[k]} + 1 ))'
+[[ $rc != 0 && -z $out && $err == *SB4030* ]]; chk icx.3
+# icx.4 a numeric-looking string cell rejects too — the crossing is the type,
+# not the contents (this is what asx.1 used to assert the other way)
+run_sash 'array a=(10 20 30); echo $(( ${a[0]} + 1 ))'
+[[ $rc != 0 && -z $out && $err == *SB4030* ]]; chk icx.4
+# icx.5 escape hatch: the disposition parses as a ParameterExpansion, not a
+# Subscript, so it is never flagged — and it defaults a non-numeric cell
+run_sash 'array s=(hi); echo $(( ${s[0]:-7} ))'
+[[ $rc = 0 && $out = "7" && -z $err ]]; chk icx.5
+# icx.6 escape hatch on a string map cell
+run_sash 'map m=([k]=hi); echo $(( ${m[k]:-7} ))'
+[[ $rc = 0 && $out = "7" && -z $err ]]; chk icx.6
+# icx.7 an int collection is unaffected — it is not a string cell
+run_sash 'int array n=(5); echo $(( ${n[0]} + 1 ))'
+[[ $rc = 0 && $out = "6" && -z $err ]]; chk icx.7
+# icx.8 a cell passed to a string-taking sexpr is NOT an int operand and must
+# not be flagged — the false positive this check had on first implementation
+run_sash 'array a=(hello); echo $(( (strlen ${a[0]}) ))'
+[[ $rc = 0 && $out = "5" && -z $err ]]; chk icx.8
+# icx.9 the bare-map hint names the disposition for a STRING map, so the
+# author is not sent to a spelling that rejects in turn
+run_sash 'map m=([k]=5); int k=0; echo $(( m[k] )); echo $k'
+[[ $rc != 0 && -z $out && $err == *'${m[k]:-N}'* ]]; chk icx.9
+# icx.10 …and keeps the plain read hint for an INT map, where it is correct
+run_sash 'int map m=([k]=5); int k=0; echo $(( m[k] )); echo $k'
+[[ $rc != 0 && -z $out && $err == *'${m[k]}'* && $err != *':-N'* ]]; chk icx.10
 
 # ── DD#76 int-valued collections (`int array` / `int map`) ──
 # An int collection stores each element as an int cell (val_len double-duty);
