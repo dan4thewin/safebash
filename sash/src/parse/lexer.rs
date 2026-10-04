@@ -1489,6 +1489,13 @@ impl Scanner {
     /// code point and re-encodes it (`0xC3` -> `U+00C3` -> `C3 83`), which
     /// double-encodes every non-ASCII literal in the source. Slicing the whole
     /// sequence and decoding it once matches `scan_single_quoted`.
+    ///
+    /// Source is always valid UTF-8 — a file goes through `read_to_string` and
+    /// `-c` arrives as a `String` — and every scanner step advances by whole
+    /// characters, so `self.pos` is always a lead byte. A continuation byte
+    /// (`0x80..=0xBF`) or an invalid lead (`0xF8..=0xFF`) can only appear if
+    /// that invariant is broken, and the old `_ => 1` answered it by splitting
+    /// the character silently.
     fn push_source_char(&mut self, out: &mut String) {
         let b = self.source[self.pos];
         let len = match b {
@@ -1496,7 +1503,10 @@ impl Scanner {
             0xC0..=0xDF => 2,
             0xE0..=0xEF => 3,
             0xF0..=0xF7 => 4,
-            _ => 1,
+            0x80..=0xBF | 0xF8..=0xFF => unreachable!(
+                "source is valid UTF-8 and the scanner stands on a lead byte, \
+                 so {b:#04x} cannot start a character here"
+            ),
         };
         let end = (self.pos + len).min(self.source.len());
         out.push_str(&String::from_utf8_lossy(&self.source[self.pos..end]));
@@ -2074,17 +2084,18 @@ impl Scanner {
 }
 
 /// Decode `bytes` to `&str` for the `logos` DFA (which needs `&str`, while the
-/// scanner holds bytes). The dispatched structural byte is ASCII, but a trailing
-/// comment may contain UTF-8; on invalid UTF-8 we hand logos the valid prefix
-/// (enough to match the leading operator) and the remainder is re-dispatched
-/// (likely `scan_word`). The matched byte length is what the caller uses.
+/// scanner holds bytes).
+///
+/// Source is always valid UTF-8 (a file goes through `read_to_string`, `-c`
+/// arrives as a `String`) and the scanner only ever stands at a character
+/// boundary, so the decode cannot fail. It used to fall back to the valid
+/// prefix on error, which is the *silent* answer to a broken invariant: logos
+/// would match against truncated input and the tail would be re-dispatched as
+/// if it were a separate token. DD#116 — that is not a backstop, it is a
+/// second answer to a question `read_to_string` already settled.
 fn logos_input(bytes: &[u8]) -> &str {
-    match std::str::from_utf8(bytes) {
-        Ok(s) => s,
-        Err(e) => {
-            std::str::from_utf8(&bytes[..e.valid_up_to()]).expect("checked prefix is valid UTF-8")
-        }
-    }
+    std::str::from_utf8(bytes)
+        .expect("source is valid UTF-8 and the scanner stands at a character boundary")
 }
 
 /// Byte index just past the `[A-Za-z_][A-Za-z0-9_]*` identifier at `start`,
@@ -2170,7 +2181,7 @@ fn simple_escape(b: u8) -> Option<char> {
 /// hand them.
 #[cfg(test)]
 mod invariant_tests {
-    use super::Scanner;
+    use super::{logos_input, Scanner};
 
     #[test]
     #[should_panic(expected = "the byte dispatcher owns")]
@@ -2188,5 +2199,23 @@ mod invariant_tests {
         // it, so the invariant fires instead of silently truncating.
         let mut sc = Scanner::new("\\");
         let _ = sc.scan_via_logos(0);
+    }
+
+    /// DD#116: `logos_input` used to fall back to the valid UTF-8 prefix,
+    /// which handed logos truncated input and re-dispatched the tail as if it
+    /// were a separate token. Source is valid UTF-8 by construction
+    /// (`read_to_string` for a file, a `String` for `-c`), so the fallback
+    /// answered a question already settled — and answered it silently. Only a
+    /// direct call can reach the decode failure, because `Scanner::new` takes
+    /// a `&str`.
+    #[test]
+    #[should_panic(expected = "source is valid UTF-8")]
+    fn logos_input_rejects_invalid_utf8() {
+        let _ = logos_input(&[0xC3]);
+    }
+
+    #[test]
+    fn logos_input_decodes_valid_utf8() {
+        assert_eq!(logos_input("if é".as_bytes()), "if é");
     }
 }

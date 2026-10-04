@@ -148,11 +148,9 @@ pub fn parse(source: &str) -> Result<(Program, Vec<Diagnostic>), Vec<Diagnostic>
         return Err(vec![d]);
     }
 
-    // A deferred diagnostic is not fatal at parse time; only an Error is.
-    if diags
-        .iter()
-        .any(|d| d.severity == crate::diagnostic::Severity::Error)
-    {
+    // Every diagnostic is a hard error (see `diagnostic::Diagnostic`), so any
+    // at all ends the parse.
+    if !diags.is_empty() {
         return Err(diags);
     }
 
@@ -2270,10 +2268,16 @@ fn parse_assignment_lhs(
     };
     let name = raw_name[..bracket_pos].to_string();
     let rest = &raw_name[bracket_pos + 1..];
-    let idx = match rest.find(']') {
-        Some(close) => rest[..close].to_string(),
-        None => rest.to_string(),
-    };
+    // The lexer's `braceless_subscript` returns `None` on unbalanced brackets,
+    // so `a[0=5` never becomes an assignment LHS at all — it stays a word and
+    // SB5011 rejects it. A `[` here therefore always has its `]`.
+    let close = rest.find(']').unwrap_or_else(|| {
+        unreachable!(
+            "an assignment LHS reaches here only through the lexer's balanced \
+             subscript scan, so `{raw_name}` must close its `[`"
+        )
+    });
+    let idx = rest[..close].to_string();
     Ok((
         name,
         Some(Expr {
@@ -2298,6 +2302,14 @@ fn parse_assignment_lhs(
 /// Re-parsing the text, rather than running `parse_expr` on the live scanner,
 /// is what keeps the closing `]` out of the index: with no space before it the
 /// word parser glues it onto the last operand, so `a[$i]=` yielded `1]`.
+///
+/// DD#116: the error arm is a *backstop* with specification fidelity. Every
+/// index long enough to exhaust [`MAX_LHS_INDEX_TOKENS`] is rejected earlier
+/// today — by SB4020 in the arithmetic parser, or SB4041, or SB5011 — but that
+/// is three other passes happening to reject first, not a guarantee this one
+/// holds. The rule is "an index this parser cannot split is unsupported", and
+/// saying so here is cheaper than depending on the coincidence. Pinned by a
+/// unit test.
 fn parse_split_subscript_index(scanner: &mut Scanner, span: Span) -> Result<Expr, Diagnostic> {
     let Some(close) = lhs_index_close_from(scanner, 0) else {
         return Err(parse_error(
@@ -3541,5 +3553,50 @@ mod invariant_tests {
     #[should_panic(expected = "neither side is empty")]
     fn build_expr_from_parts_rejects_the_empty_slice() {
         let _ = build_expr_from_parts(&[], Span::new(1, 1));
+    }
+
+    /// DD#116: `parse_assignment_lhs` reaches its `[` branch only through the
+    /// lexer's *balanced* subscript scan, which returns `None` on `a[0` and
+    /// leaves it a plain word for SB5011. The old `None => rest.to_string()`
+    /// answered the impossible case by silently reading `a[0=5` as index
+    /// `0=5`. Only a direct call can reach it.
+    #[test]
+    #[should_panic(expected = "must close its `[`")]
+    fn parse_assignment_lhs_rejects_an_unclosed_subscript() {
+        let mut sc = Scanner::new("=5");
+        let _ = parse_assignment_lhs(&mut sc, "a[0".to_string(), Span::new(1, 1));
+    }
+
+    /// The balanced case still works — without this, the test above would pass
+    /// against a function that panicked on everything.
+    #[test]
+    fn parse_assignment_lhs_splits_a_literal_subscript() {
+        let mut sc = Scanner::new("=5");
+        let (name, idx) = parse_assignment_lhs(&mut sc, "a[0]".to_string(), Span::new(1, 1))
+            .expect("a balanced literal subscript parses");
+        assert_eq!(name, "a");
+        assert!(matches!(
+            idx.map(|e| e.kind),
+            Some(ExprKind::Literal(ref s)) if s == "0"
+        ));
+    }
+
+    /// DD#116 keep, specification fidelity: an index longer than
+    /// `MAX_LHS_INDEX_TOKENS` is rejected by SB4020/SB4041/SB5011 before this
+    /// parser sees it, but that is three other passes happening to reject
+    /// first. The rule is "an index this parser cannot split is unsupported",
+    /// and this pins that it is stated here rather than borrowed.
+    #[test]
+    fn parse_split_subscript_index_rejects_an_index_it_cannot_span() {
+        let long = "$i + ".repeat(MAX_LHS_INDEX_TOKENS + 4);
+        let mut sc = Scanner::new(&long);
+        let err = parse_split_subscript_index(&mut sc, Span::new(1, 1))
+            .expect_err("no `]` within the lookahead window");
+        assert_eq!(err.code, "SB4014");
+        assert!(
+            err.message.contains("unsupported dynamic subscript index"),
+            "unexpected message: {}",
+            err.message
+        );
     }
 }

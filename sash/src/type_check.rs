@@ -682,6 +682,13 @@ fn is_sexpr_string_producer(name: &str, env: &TypeEnv) -> bool {
 
 /// `${var:-default}` / `${var-default}` preserve the variable's type;
 /// all other strip ops (`#`, `%`, `/`, etc.) produce strings.
+///
+/// DD#116: the `strlen`/`arrlen` arm is a *backstop* with specification
+/// fidelity. The `${#x}` sugar that used to spell it is retired (SB4038), but
+/// the operator itself is live — `transform/pipelines.rs` builds an AST
+/// `${arr arrlen}` for a synthesized for-loop bound, and `arrlen` *is* an int.
+/// The arm is cold only because this pass runs before that one, which is the
+/// current pass ordering rather than the rule. Pinned by a unit test.
 fn parameter_expansion_type(pe: &ParameterExpansion, env: &TypeEnv) -> VarType {
     let Some(op) = pe.operator.as_deref() else {
         return env.var_type(&pe.name);
@@ -2581,6 +2588,49 @@ mod tests {
         assert!(
             msg.contains("a substring `:off:len`"),
             "unnamed op in: {msg}"
+        );
+    }
+
+    /// DD#116 keep, specification fidelity. `${#x}` is retired (SB4038), so no
+    /// *parsed* program carries a `strlen`/`arrlen` operator and the arm is
+    /// cold. The operator is still live, though: `transform/pipelines.rs`
+    /// builds an AST `${arr arrlen}` for a synthesized for-loop bound. That
+    /// pass runs after this one, which is the only reason the arm never fires
+    /// — pass ordering, not the rule. The rule is that a length is an int, and
+    /// this pins it so a future reordering cannot quietly make it a string.
+    #[test]
+    fn a_length_operator_is_an_int_whoever_built_it() {
+        for op in ["strlen", "arrlen"] {
+            let pe = ParameterExpansion {
+                name: "a".to_string(),
+                operator: Some(op.to_string()),
+                operand: None,
+                index: None,
+                taint_off: false,
+            };
+            assert_eq!(
+                parameter_expansion_type(&pe, &TypeEnv::new()),
+                VarType::Int,
+                "`{op}` must type as an int"
+            );
+        }
+    }
+
+    /// The companion claim: an operator this function does *not* name is a
+    /// string. Without it the test above would pass against a function that
+    /// returned `Int` for everything.
+    #[test]
+    fn another_strip_operator_is_a_string() {
+        let pe = ParameterExpansion {
+            name: "a".to_string(),
+            operator: Some("%".to_string()),
+            operand: None,
+            index: None,
+            taint_off: false,
+        };
+        assert_eq!(
+            parameter_expansion_type(&pe, &TypeEnv::new()),
+            VarType::String
         );
     }
 }

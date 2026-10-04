@@ -1,19 +1,15 @@
-/// Severity of a diagnostic.
-#[derive(Debug, Clone, PartialEq)]
-pub enum Severity {
-    /// Hard error — script cannot compile.
-    Error,
-    /// Deferred — must be resolved by SSA in phase 4; error if unresolved.
-    Deferred,
-}
-
 /// A diagnostic emitted by a validation rule.
+///
+/// Every diagnostic is a hard error. There is no severity axis: a `Deferred`
+/// variant existed until 2026-10-04 for SB4004 (variable-as-command, to be
+/// resolved by SSA), but SB4004 was retired and nothing ever constructed
+/// `Deferred` again. DD#116 — it answered no question the pass ordering had
+/// not already settled, so it was a rival, not a backstop.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Diagnostic {
     pub line: usize, // 1-based
     pub col: usize,  // 1-based
     pub code: &'static str,
-    pub severity: Severity,
     pub message: String,
 }
 
@@ -23,7 +19,6 @@ impl Diagnostic {
             line,
             col,
             code,
-            severity: Severity::Error,
             message,
         }
     }

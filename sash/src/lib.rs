@@ -613,13 +613,9 @@ fn read_source(input: &str, inline_source: Option<&str>) -> String {
 
 fn print_diags(input: &str, diags: &[diagnostic::Diagnostic]) {
     for d in diags {
-        let prefix = match d.severity {
-            diagnostic::Severity::Error => "error",
-            diagnostic::Severity::Deferred => "deferred",
-        };
         eprintln!(
-            "{}:{}:{}: {} [{}] {}",
-            input, d.line, d.col, prefix, d.code, d.message
+            "{}:{}:{}: error [{}] {}",
+            input, d.line, d.col, d.code, d.message
         );
     }
 }

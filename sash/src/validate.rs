@@ -3552,7 +3552,6 @@ fn check_command_head(
             diags.extend(value_intrinsic_diag(name, c, pos));
             return;
         }
-        "" => return,
         _ => {}
     }
     if is_valid_command(name, funcs) {
@@ -3635,9 +3634,6 @@ fn check_exec_target(c: &Command, diags: &mut Vec<Diagnostic>) {
         return;
     }
     let tname = expr_literal_str(target);
-    if tname.is_empty() {
-        return;
-    }
     // exec replaces the process with an EXTERNAL program: an absolute path or a
     // PATH-resolvable name (not the inline `echo`/`:` shortcut — the transform
     // resolves the target to its real path).
@@ -9352,13 +9348,14 @@ fn check_arith_reads(
             sink.record(name, span, known);
             check_arith_reads(index, span, known, sink);
         }
-        SubscriptAssign {
-            name, index, value, ..
-        } => {
-            sink.record(name, span, known);
-            check_arith_reads(index, span, known, sink);
-            check_arith_reads(value, span, known, sink);
-        }
+        SubscriptAssign { .. } => unreachable!(
+            "SB4020 rejects an assignment inside `$(( … ))`, and the statement \
+             form `(( a[i] = 7 ))` is read by check_arith_compound — so no \
+             SubscriptAssign reaches the read walker. A correct-looking \
+             recursion here would be an unverified claim: nothing exercises \
+             it, so if the route ever opened it would open in silence, which \
+             for a read walker is the worst outcome."
+        ),
         // DD#58 sexpr: a bare `(name …)` parses as a `FuncCall`; the name may be
         // a variable read (`$(( (x) ))`), a user function (`$((f))`), or an
         // intrinsic (`(random)`, `(len m)`).
@@ -10661,5 +10658,32 @@ mod tests {
     fn check_positionals_arith_rejects_prefix_incdec() {
         let mut diags = Vec::new();
         check_positionals_arith(&prefix_incdec(), Span::new(1, 1), &mut diags);
+    }
+
+    /// DD#116: `check_arith_reads`'s `SubscriptAssign` arm is unreachable by
+    /// construction — SB4020 rejects an assignment inside `$(( … ))`, and the
+    /// statement form `(( a[i] = 7 ))` is read by `check_arith_compound`. It
+    /// held a correct-looking recursion, which in a *read* walker is the worst
+    /// shape to leave cold: nothing exercises it, so if the route ever opened
+    /// it would open in silence. That is how `SsaInst::Test` and `RedirectPush`
+    /// escaped the SSA taint pass for their whole lives. The panic is the
+    /// claim; a test that stops panicking is the finding.
+    #[test]
+    #[should_panic(expected = "SB4020 rejects an assignment")]
+    fn check_arith_reads_rejects_a_subscript_assign() {
+        use crate::ir::ArithExpr;
+        let funcs = HashSet::new();
+        let mut diags = Vec::new();
+        let mut sink = ReadSink {
+            mode: SinkMode::Flag(&mut diags),
+            funcs: &funcs,
+        };
+        let a = ArithExpr::SubscriptAssign {
+            name: "a".to_string(),
+            index: Box::new(ArithExpr::Literal(0)),
+            value: Box::new(ArithExpr::Literal(7)),
+            op: None,
+        };
+        check_arith_reads(&a, Span::new(1, 1), &HashSet::new(), &mut sink);
     }
 }
