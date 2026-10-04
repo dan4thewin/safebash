@@ -631,6 +631,37 @@ snippet that warmed the line and the spec you actually wrote are different
 programs, and only the second one counts. Both need `mk cov-probe-build`
 first and `mk cov-reset` after.
 
+**A cold line can also be a measurement fault, and merging more profraws is
+what causes it.** LLVM does not give every region a physical counter — it
+keeps the minimum and derives the rest as *expressions*, and a loop body's
+count is routinely derived from the back-edge. A process that calls
+`std::process::exit` from inside a loop increments the counters on the way in
+and never the one on the way round, so its contribution to the expression is
+inconsistent. Summed over a sweep's profraws the error accumulates, and once
+it exceeds the true count the line reports **zero**. Measured 2026-10-06:
+`lib.rs:216` is executed by `cli.6`, reads 1 from that run's own profraw, and
+reads 0 from the 45-profraw merge — passing through `18446744073709551614`,
+which is −2, on the way.
+
+So when a cold line contradicts a spec you can show exercises it, **believe
+the spec and export one profraw**. A single process cannot underflow:
+
+```sh
+LP=$(rustc +nightly --print sysroot)/lib/rustlib/x86_64-unknown-linux-gnu/bin
+$LP/llvm-profdata merge -sparse -o /tmp/one.profdata target/safebash-<pid>-*.profraw
+$LP/llvm-cov export -format=lcov -instr-profile=/tmp/one.profdata \
+    target/release/sash | grep -A99999 '^SF:.*lib.rs$' | grep '^DA:216,'
+```
+
+Scanning an lcov for counts above `9000000000000000000` finds the cases that
+underflowed without landing back on a plausible number; a clean scan does not
+clear the file, because the arithmetic can pass through zero. The whole
+470-line cold cohort was checked this way and exactly one line was wrong, so
+this is rare — but it is silent, and it costs an hour if you do not know the
+shape. All 22 `process::exit` sites are in `lib.rs`; nearly all fire at top
+level after a pass returns, which is why it is rare. `parse_heap_size` is the
+one that exits mid-loop with a caller's frame live.
+
 **A cold non-ICE line is one of four things, and only the first is work**
 (DG's rule, 2026-10-04: *every line warm by spec except ICEs first, then a
 unit test for the final ICE lines*):

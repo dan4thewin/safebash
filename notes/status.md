@@ -1,4 +1,46 @@
-## ══ STATUS (2026-10-04, latest) — a cell is a variable ══
+## ══ STATUS (2026-10-06, latest) — the counter that went negative ══
+
+`mk test` rc=0 (99 + 27 + 20), fmt/clippy/totality/complexity clean. Sweep
+**7609 → 7665**, the predicted +28 per mode, zero failures, zero flips (gate
+self-test 248, so it can report one). 56 new ids = 28 specs × 2 modes, no
+retirements. Journal 470.
+
+**28 specs, 33 cold lines.** `cov.354`-`cov.374` and `cli.33`-`cli.39`: unary
+`+` through all three stages, the double-quote nested-command-substitution
+scanner, four unterminated-operand scanners, DD#94's three terminator
+outcomes, the `<=`/`<<` entries of the SB5007 renderer, both remaining SB4030
+operand descriptions, the K and G heap-size multipliers, and four CLI paths
+that report an unreadable path or a usage error. Each assertion names the
+rendered text, not just the code — a multiplier stuck at 1 still accepts `4K`,
+so both size specs pair a bare operand that compiles with a suffixed one that
+overflows *only after* scaling.
+
+**A cold line can be a measurement fault.** `lib.rs:216` was in the queue, and
+`cli.6` provably executes it. Exporting that run's own profraw reads 1;
+merging the sweep's 45 reads 0, having passed through `18446744073709551614`
+(= −2) on the way. LLVM derives a loop body's count from the back-edge, and a
+`std::process::exit` from inside the loop increments one side and never the
+other; the error accumulates across profraws until it swamps the true count.
+Checked across the whole 470-line cohort, **exactly one line was wrong** — so
+it is rare, but silent. The detection (export one profraw; a single process
+cannot underflow) is now in AGENTS.md.
+
+**A comment that was wrong from the start.** `parse_arith_str`'s
+all-separators arm said `for (( ;; ))` reaches it, and spec `31.51` asserted
+the same reading for its whole life. It does not: the header splits into three
+*empty* slots, which return one branch earlier. `cov.362` was written on that
+authority, passed, and warmed nothing — the `--spec` verification step is what
+caught it. `$(( ; ))` is the real spelling. A spec pins behaviour; it does not
+pin the explanation attached to it.
+
+**Open, for DG.** Two items carried from journal 466/467, unchanged: the ~19
+**validate-shadowed** arms (ICE / delete / annotate — a behaviour-adjacent
+call), and `Severity::Deferred`, which has no producer anywhere in `sash/src`
+— the only mention is the print site in `print_diags`. Next up otherwise: the
+16 `emit_c.rs` ICE sites, now known to be cheap (`Emit::new()` plus
+`HashMap::new()`, contrary to 467's estimate).
+
+## ══ STATUS (2026-10-04) — a cell is a variable ══
 
 `mk test` rc=0, fmt/clippy clean. Sweep **7565 → 7609**, the predicted +44
 (22 specs, dual-mode), zero failures. Journal 469. **DD#123 added.**
