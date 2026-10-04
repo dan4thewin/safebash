@@ -688,9 +688,22 @@ unit test for the final ICE lines*):
 
 1. a genuine spec gap — write the spec;
 2. a **validate-shadowed** arm in a later pass, for a form the first gate
-   already rejects (`detect_array_iter`'s five arms are all SB5026 / SB5073 /
-   SB5009; the compound-pipeline stage is SB4022; the pipeline recursion
-   diagnostic is SB5037). No spec can warm these;
+   already rejects (the compound-pipeline stage is SB4022; the pipeline
+   recursion diagnostic is SB5037). No spec can warm these;
+
+   **Measure the shadow; do not assume it.** This bullet used to claim
+   "`detect_array_iter`'s five arms are all SB5026 / SB5073 / SB5009".
+   Probed 2026-10-04, that is **false**: its `_ => None` is warm — `for x in
+   a b c` compiles and runs — and only two of the arms are genuinely shadowed
+   (a non-`keys` command substitution is SB5009, a zero-argument `keys` is
+   SB4045). A function does not land in this category wholesale; each arm
+   earns it separately, by a probe.
+
+   Note also what a shadowed arm here *returns*: `None`, meaning "not an array
+   iteration". That is a classification, not a refusal, so if SB5009 were ever
+   relaxed the form would compile down the wrong path in silence. Whether an
+   arm like that should stay an answer or become an ICE is the open question
+   below;
 3. a **totality** arm, present only because the no-wildcard convention
    requires it (`is_taint_source`'s `AssocArray`/`Test`, and friends). Do not
    delete these — the convention has caught three bugs in three sessions;
@@ -699,6 +712,18 @@ unit test for the final ICE lines*):
 Classify before mining. Ranking raw cold-line counts puts (2)-(4) at the head,
 because rustfmt spreads a `panic!(…)` or an `Err(…)` across five lines while a
 real gap is often one.
+
+**The cohort, measured 2026-10-04** at 98.39% line / 98.90% function coverage —
+which is the point, because the aggregate looks finished and the cohort is not.
+Of 413 cold lines: **79** are punctuation or comment (text that cannot carry a
+DA record), **44** are already an ICE, and **290 deliver an answer**. Those 290
+are the whole of categories (1)-(3), unclassified. By file: `validate.rs` 37,
+`parse/parser.rs` 30, `emit_c.rs` 29, `transform/stmt_handlers.rs` 25,
+`type_check.rs` 24, `transform/expr_handlers.rs` 19,
+`transform/control_flow.rs` 14. Reproduce with `contrib/`-free SQL over
+`coverage.db` joined to the index, looking back six lines for an open
+`unreachable!(`/`panic!(` so rustfmt's continuation lines are not miscounted as
+answers.
 
 **Writing an ICE test (category 4).** The ICE *is* the claim:
 `unreachable!("SB4045 rejects a zero-argument argv")` asserts something about
