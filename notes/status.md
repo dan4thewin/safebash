@@ -1,8 +1,23 @@
 ## ══ STATUS (2026-10-04, latest) — the keeps that did not earn it ══
 
-`mk test` rc=0 (**107** + 27 + 20), fmt/clippy/totality/complexity clean.
-Sweep **7681 → 7687**, the predicted +3 per mode, zero failures, zero flips
-(gate self-test 248). Six new ids = 3 specs × 2 modes. Journal 472.
+`mk test` rc=0 (**108** + 27 + 20), fmt/clippy/totality/complexity clean.
+Sweep **7687**, zero failures, zero flips, zero new ids (gate self-test 248).
+Journal 472.
+
+**The last two keeps are now ICEs.** DG: *"the 2 keeps deliver errors, that
+makes them backstops, yes? but they aren't ICE?"* — two orthogonal axes, and I
+had answered only DD#116's ("does it earn its place" — an `Err` is loud, so
+yes). AGENTS.md's is the other: *unreachable by construction → `unreachable!()`*.
+Both `parse_split_subscript_index`'s `None` arm and `parse_assign_op`'s `_` arm
+are guaranteed by `looks_like_assignment`, which pins the very token each was
+guarding — so each SB4014 would have been a **lie** told about correct source.
+`parse_assignment_lhs`'s `rest.find(']')`, in the same family behind the same
+probe, had been an `unreachable!` all along. Both `Result` wrappers dropped;
+both unit tests converted to `#[should_panic]` (they had been asserting the
+message, not the invariant). **Tradeoff for DG to veto:** a parser
+conventionally errs rather than panics, and a grammar extension that forgets
+the probe now crashes — but it crashes in the opener's own sweep, not in a
+user's hands with a contradictory message.
 
 **DG: "why are we keeping lines that are unreachable and not a backstop?"**
 Reviewing my own DD#116 verdicts against the rubric instead of defending them,

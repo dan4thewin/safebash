@@ -2203,7 +2203,7 @@ fn parse_assignment(scanner: &mut Scanner, span: Span) -> Result<Option<Statemen
 
     let (name, index) = parse_assignment_lhs(scanner, raw_name, span)?;
 
-    let op = parse_assign_op(scanner, span)?;
+    let op = parse_assign_op(scanner);
 
     // Check for array literal: =(...)
     if matches!(scanner.peek().token, Tok::LParen) {
@@ -2260,7 +2260,7 @@ fn parse_assignment_lhs(
     span: Span,
 ) -> Result<(String, Option<Expr>), Diagnostic> {
     if let Some(base) = raw_name.strip_suffix('[') {
-        let idx = parse_split_subscript_index(scanner, span)?;
+        let idx = parse_split_subscript_index(scanner, span);
         return Ok((base.to_string(), Some(idx)));
     }
     let Some(bracket_pos) = raw_name.find('[') else {
@@ -2303,20 +2303,21 @@ fn parse_assignment_lhs(
 /// is what keeps the closing `]` out of the index: with no space before it the
 /// word parser glues it onto the last operand, so `a[$i]=` yielded `1]`.
 ///
-/// DD#116: the error arm is a *backstop* with specification fidelity. Every
-/// index long enough to exhaust [`MAX_LHS_INDEX_TOKENS`] is rejected earlier
-/// today — by SB4020 in the arithmetic parser, or SB4041, or SB5011 — but that
-/// is three other passes happening to reject first, not a guarantee this one
-/// holds. The rule is "an index this parser cannot split is unsupported", and
-/// saying so here is cheaper than depending on the coincidence. Pinned by a
-/// unit test.
-fn parse_split_subscript_index(scanner: &mut Scanner, span: Span) -> Result<Expr, Diagnostic> {
+/// DD#116: unreachable by construction, so it ICEs rather than returning a
+/// diagnostic. This is reached only from `parse_assignment_lhs`'s
+/// `strip_suffix('[')` branch, and `looks_like_assignment` commits to that
+/// branch only via [`looks_like_dynamic_subscript_assign`], which has already
+/// run [`lhs_index_close_from`] over the same absolute token window and found
+/// a `]`. When the probe's window comes up empty the statement is never an
+/// assignment at all — a 40-token index is SB5011 as a command name, not
+/// SB4014 — so an error here could only describe a *supported* index as
+/// unsupported, pointing the user at source that is fine.
+fn parse_split_subscript_index(scanner: &mut Scanner, span: Span) -> Expr {
     let Some(close) = lhs_index_close_from(scanner, 0) else {
-        return Err(parse_error(
-            span,
-            "SB4014",
-            "unsupported dynamic subscript index in assignment".to_string(),
-        ));
+        unreachable!(
+            "looks_like_dynamic_subscript_assign already found this `]` with \
+             lhs_index_close_from over the same window"
+        )
     };
     let start = scanner.peek().span.start;
     let end = scanner.peek_n(close).span.start;
@@ -2324,7 +2325,7 @@ fn parse_split_subscript_index(scanner: &mut Scanner, span: Span) -> Result<Expr
     for _ in 0..=close {
         scanner.next();
     }
-    Ok(parse_subscript_index(&text, span))
+    parse_subscript_index(&text, span)
 }
 
 /// Consume the assignment operator, which is the token immediately after the
@@ -2342,24 +2343,28 @@ fn parse_split_subscript_index(scanner: &mut Scanner, span: Span) -> Result<Expr
 /// which [`lhs_index_close_from`] now makes structural rather than a
 /// coincidence of two hand-matched lookahead windows.
 ///
-/// DD#116: kept as a *loud-vs-silent* backstop and pinned by a unit test.
-/// Probed 2026-10-04 — `m[$s ] x ]=9` is SB4041 before this arm can run — so
-/// the keep rests on an execution result, not on the comment above it.
-fn parse_assign_op(scanner: &mut Scanner, span: Span) -> Result<AssignOp, Diagnostic> {
+/// DD#116: unreachable by construction, so it ICEs. Both of
+/// [`looks_like_assignment`]'s branches guarantee the operator token.
+/// `is_identifier_or_subscript` requires a `]` suffix, so a bare `name[` can
+/// never take the first branch — which means the plain and `name[lit]` shapes
+/// consume nothing past the name and land on the very token the probe checked
+/// at `peek_n(1)`; and the dynamic-subscript branch consumes through the `]`
+/// that [`lhs_index_close_from`] found *because it was followed by* `=`/`+=`.
+/// A diagnostic here could only tell a user their assignment lacks the `=` it
+/// visibly has.
+fn parse_assign_op(scanner: &mut Scanner) -> AssignOp {
     match scanner.peek().token {
         Tok::PlusAssign => {
             scanner.next();
-            Ok(AssignOp::Append)
+            AssignOp::Append
         }
         Tok::Eq => {
             scanner.next();
-            Ok(AssignOp::Set)
+            AssignOp::Set
         }
-        _ => Err(parse_error(
-            span,
-            "SB4014",
-            "expected `=` or `+=` in assignment".to_string(),
-        )),
+        ref other => unreachable!(
+            "looks_like_assignment commits only on a following `=`/`+=`, got {other:?}"
+        ),
     }
 }
 
@@ -3585,42 +3590,25 @@ mod invariant_tests {
         ));
     }
 
-    /// DD#116 keep, specification fidelity: an index longer than
-    /// `MAX_LHS_INDEX_TOKENS` is rejected by SB4020/SB4041/SB5011 before this
-    /// parser sees it, but that is three other passes happening to reject
-    /// first. The rule is "an index this parser cannot split is unsupported",
-    /// and this pins that it is stated here rather than borrowed.
+    /// DD#116 ICE. `looks_like_dynamic_subscript_assign` runs
+    /// `lhs_index_close_from` over the same window before committing, so a
+    /// scanner with no `]` can only arrive here by calling this directly —
+    /// which is what makes the panic the claim rather than a prediction.
     #[test]
+    #[should_panic(expected = "already found this `]`")]
     fn parse_split_subscript_index_rejects_an_index_it_cannot_span() {
         let long = "$i + ".repeat(MAX_LHS_INDEX_TOKENS + 4);
         let mut sc = Scanner::new(&long);
-        let err = parse_split_subscript_index(&mut sc, Span::new(1, 1))
-            .expect_err("no `]` within the lookahead window");
-        assert_eq!(err.code, "SB4014");
-        assert!(
-            err.message.contains("unsupported dynamic subscript index"),
-            "unexpected message: {}",
-            err.message
-        );
+        let _ = parse_split_subscript_index(&mut sc, Span::new(1, 1));
     }
 
-    /// DD#116 keep, *loud-vs-silent*. The error arm is unreachable while the
-    /// shape probe and the LHS parser agree on which `]` closes the index,
-    /// which `lhs_index_close_from` makes structural — probed 2026-10-04,
-    /// `m[$s ] x ]=9` is SB4041 now, where it once silently assigned the
-    /// literal `]=9`. The arm is what makes a future disagreement loud rather
-    /// than a return to that silence, so the claim is worth executing.
+    /// DD#116 ICE. Both of `looks_like_assignment`'s branches land this
+    /// function on a `=`/`+=`; anything else means the probe and the parser
+    /// disagreed, which is a compiler bug and not the user's.
     #[test]
+    #[should_panic(expected = "commits only on a following")]
     fn parse_assign_op_rejects_a_token_that_is_not_an_assignment() {
-        for text in ["x", "]", "-eq", "9"] {
-            let mut sc = Scanner::new(text);
-            let err = parse_assign_op(&mut sc, Span::new(1, 1)).expect_err("neither `=` nor `+=`");
-            assert_eq!(err.code, "SB4014", "for `{text}`");
-            assert!(
-                err.message.contains("expected `=` or `+=`"),
-                "unexpected message: {}",
-                err.message
-            );
-        }
+        let mut sc = Scanner::new("x");
+        let _ = parse_assign_op(&mut sc);
     }
 }

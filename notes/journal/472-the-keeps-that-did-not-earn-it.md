@@ -185,3 +185,60 @@ ids, one expected retirement (the three stale `61.1x` pairs).
 
 The audit addendum added one unit test (108) and two doc comments; no compiled
 behaviour changed, so the sweep was not re-run for it.
+
+## The two keeps were not on the axis I thought
+
+DG, reading the two surviving parser keeps: *"the 2 keeps deliver errors, that
+makes them backstops, yes? but they aren't ICE?"*
+
+Both halves are right, and together they name an incoherence I had walked past
+twice. There are **two axes**, and I had been answering only the first:
+
+1. **DD#116 — does the line earn its place?** A cold line stays only if it is
+   *loud-vs-silent*, *totality*, or *specification fidelity*. An `Err` return
+   is loud. So yes: on this axis both are backstops, and both keeps stand.
+2. **AGENTS.md — can it run?** *Unreachable by construction → `unreachable!()`.
+   Merely unexercised → the correct arm.* I never asked this one.
+
+Answering the second cost one probe apiece, and both came back **unreachable
+by construction**. `parse_simple_or_assignment` only enters `parse_assignment`
+through `looks_like_assignment`, and both of that probe's branches pin the very
+token each keep was guarding:
+
+- Branch A requires `peek_n(1)` to be `Eq | PlusAssign` *and*
+  `is_identifier_or_subscript(w)` — which, for a word containing `[`, demands a
+  `strip_suffix(']')`. `parse_assignment` then consumes exactly the one Word,
+  so `parse_assign_op`'s `peek()` **is** the probe's `peek_n(1)`.
+- Branch B is `lhs_index_close_from(scanner, 1).is_some()`.
+  `parse_split_subscript_index` calls the *same function* at `base = 0` after
+  the `name[` word is consumed — the same absolute tokens, the same window.
+
+So a diagnostic guarding a *compiler* invariant. If the invariant ever broke,
+the message would be a **lie**: "expected `=` or `+=` in assignment" about a
+program that visibly has one, "unsupported dynamic subscript index" about a
+perfectly supported index. It would point the user at their own correct source.
+
+The internal-consistency argument is sharper still. Site #9 —
+`parse_assignment_lhs`'s `rest.find(']')` — is in the *same function family*,
+guarded by the *same probe*, and has been an `unreachable!` all along. Three
+sites, one invariant, two different answers.
+
+Both are now ICEs naming the probe that guarantees them, the `Result` wrappers
+are gone (`-> Expr`, `-> AssignOp`), and the two unit tests became
+`#[should_panic]`. The tests had asserted `err.code == "SB4014"` — they were
+executing the *wrong claim*, confirming a message rather than the invariant.
+
+The adversarial probes, all shadowed: `a[=9`, `a[]=9`, `a[$i][0]=9`,
+`a[$i] x=9` → SB5011; `m[$s ] x ]=9`, `a[$i ] x ]=9` → SB4041. The tell is the
+40-token index: when the probe's lookahead *fails*, `looks_like_assignment`
+returns false and `parse_assignment` is never entered at all — SB5011, as a
+command name.
+
+**Tradeoff, stated rather than buried.** A parser conventionally errs rather
+than panics, and a future grammar extension that forgets to update the probe
+now crashes instead of diagnosing. Against that: it crashes in the opener's own
+spec sweep, visibly, at the commit that introduced the divergence — rather than
+shipping a sentence that contradicts the user's source.
+
+Sweep: 7687 (3946 native + 3728 c + 13 skipped), zero flips, zero new ids, gate
+self-test 248. `mk test` 108 + 27 + 20. Both messages were asserted by no spec.
