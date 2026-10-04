@@ -776,16 +776,18 @@ fn scan_arith_dollar(input: &str, bytes: &[u8], i: usize) -> (ATok, usize) {
 }
 
 /// Scan a braced `${name}` body starting just past the `{`.
+///
+/// The end of the body comes from the *shared* balanced scanner, not from the
+/// first `}`: a body may contain a nested `${ … }` of its own (`${a[${i}]}`),
+/// and stopping early truncated it to `a[${i`, so the trailing `]` lexed as a
+/// stray and the read died with SB4035 — while the three other spellings of
+/// that same read all accepted it. An unbalanced `${` keeps the scan-to-end
+/// behaviour, so the real parser still reports it.
 fn scan_arith_braced_var(input: &str, bytes: &[u8], start: usize) -> (ATok, usize) {
-    let mut j = start;
-    while j < bytes.len() && bytes[j] != b'}' {
-        j += 1;
+    match crate::parse::expr::balanced_close(bytes, start - 1) {
+        Some(close) => (braced_body_token(&input[start..close]), close + 1),
+        None => (braced_body_token(&input[start..]), bytes.len()),
     }
-    let body = &input[start..j];
-    if j < bytes.len() {
-        j += 1; // skip '}'
-    }
-    (braced_body_token(body), j)
 }
 
 /// Classify a `${…}` body inside `$(( ))`. A `${#…}` length body is retired

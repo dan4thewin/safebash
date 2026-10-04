@@ -953,13 +953,33 @@ pub(super) fn balanced_subscript_close(bytes: &[u8], open: usize) -> Option<usiz
     if bytes.get(open) != Some(&b'[') {
         return None;
     }
+    balanced_close(bytes, open)
+}
+
+/// Byte index of the closer that balances the `[`, `{` or `(` at `bytes[open]`,
+/// or `None` if unbalanced (or `open` is not one of those three openers).
+///
+/// The scan is the subscript scan — it was always generic over `[] {} ()` and
+/// quoted spans, and only its *entry* was pinned to `[`. The arithmetic lexer
+/// needs the `${ … }` entry: it used to stop a braced body at the first `}`,
+/// so `$(( ${a[${i}]} ))` truncated to `a[${i` and died on the stray `]`
+/// (SB4035) while the three other spellings of that same read — `${a[${i}]}`
+/// in a word, `$(( a[${i}] ))`, and the lexer-desugared `$(( $a[${i}] ))` —
+/// all accepted it. One scanner, every opener; do not grow a second.
+pub(super) fn balanced_close(bytes: &[u8], open: usize) -> Option<usize> {
+    let want = match bytes.get(open)? {
+        b'[' => b']',
+        b'{' => b'}',
+        b'(' => b')',
+        _ => return None,
+    };
     let mut depth = 0i32;
     let mut quote: Option<u8> = None;
     for (i, &b) in bytes.iter().enumerate().skip(open) {
         if subscript_scan_step(&mut quote, &mut depth, b) {
-            // A balanced subscript closes on `]`; another closer at depth 0
-            // means the brackets were mismatched.
-            return (b == b']').then_some(i);
+            // A balanced run closes on its own closer; a different closer at
+            // depth 0 means the brackets were mismatched.
+            return (b == want).then_some(i);
         }
     }
     None

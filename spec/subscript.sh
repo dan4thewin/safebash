@@ -10,7 +10,7 @@
 set -eu
 . common.sh
 setup subscript
-plan=120
+plan=128
 echo "1..$plan" >&3
 
 set +e
@@ -819,6 +819,49 @@ run_sash 'array a=( p q ); echo $a[0]:/bin'
 # "where would the braces go" question never arises
 run_sash 'array a=( p q ); echo $a[0] :-z'
 [[ $rc == 0 && $out == "p :-z" ]]; chk 80.122
+
+# ── Section R. a `${ … }` index reads the same in every spelling ──────────
+# The arithmetic lexer used to end a braced body at the *first* `}`, so a
+# nested `${ … }` index truncated (`${a[${i}]}` -> `a[${i`) and the trailing
+# `]` lexed as a stray: SB4035. The three spellings that did not route
+# through that scanner accepted it, so one read had two answers.
+
+# 80.123 braced cell, braced index, in arithmetic
+run_sash 'int array a=(2 0 9); int i=1; echo $(( ${a[${i}]} ))'
+[[ $rc == 0 && $out == "0" ]]; chk 80.123
+
+# 80.124 sigil cell, braced index, in arithmetic (the lexer desugars this to
+# the 80.123 spelling, so it used to fail the same way)
+run_sash 'int array a=(2 0 9); int i=1; echo $(( $a[${i}] ))'
+[[ $rc == 0 && $out == "0" ]]; chk 80.124
+
+# 80.125 bare cell, braced index — this one always worked, and is the reason
+# the divergence was a bug rather than a restriction
+run_sash 'int array a=(2 0 9); int i=1; echo $(( a[${i}] ))'
+[[ $rc == 0 && $out == "0" ]]; chk 80.125
+
+# 80.126 the same index outside arithmetic
+run_sash 'int array a=(2 0 9); int i=1; echo ${a[${i}]}'
+[[ $rc == 0 && $out == "0" ]]; chk 80.126
+
+# 80.127 all four spellings in one program agree
+run_sash 'int array a=(2 0 9); int i=2; echo $(( ${a[${i}]} )) $(( $a[${i}] )) $(( a[${i}] )) ${a[${i}]}'
+[[ $rc == 0 && $out == "9 9 9 9" ]]; chk 80.127
+
+# 80.128 a braced index that is not a plain identifier is a literal key, so
+# an int-indexed array rejects it as ambiguous rather than reading it
+run_sash 'int array a=(2 0 9); echo $(( ${a[${1}]} ))'
+[[ $rc != 0 && $err == *"SB4041"* ]]; chk 80.128
+
+# 80.129 a map's string key reads the same through a braced index in both
+# contexts — the arithmetic one is the spelling that used to truncate
+run_sash 'int map m=([a]=5); str k=a; echo $(( ${m[${k}]} + 1 )) ${m[${k}]}'
+[[ $rc == 0 && $out == "6 5" ]]; chk 80.129
+
+# 80.130 an unbalanced `${` inside arithmetic is still reported, not scanned
+# to the end of the program in silence
+run_sash 'int i=1; echo $(( ${i ))'
+[[ $rc != 0 ]]; chk 80.130
 
 
 set -e
