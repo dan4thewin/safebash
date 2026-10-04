@@ -33,12 +33,18 @@ authority, passed, and warmed nothing — the `--spec` verification step is what
 caught it. `$(( ; ))` is the real spelling. A spec pins behaviour; it does not
 pin the explanation attached to it.
 
-**Open, for DG.** Two items carried from journal 466/467, unchanged: the ~19
-**validate-shadowed** arms (ICE / delete / annotate — a behaviour-adjacent
-call), and `Severity::Deferred`, which has no producer anywhere in `sash/src`
-— the only mention is the print site in `print_diags`. Next up otherwise: the
-16 `emit_c.rs` ICE sites, now known to be cheap (`Emit::new()` plus
-`HashMap::new()`, contrary to 467's estimate).
+**Open, for DG.** Two items. **(1)** Eleven newly-probed unreachable sites,
+found while clearing this queue and **not yet run through DD#116** — the
+journal-466 cohort was closed by `a2967a4` (three rivals deleted, four keeps
+annotated), so this is a fresh batch, and about five of the eleven are not yet
+proven unreachable. **(2)** `Severity::Deferred`, which has **no constructor
+anywhere**: only `Severity::Error` is ever built. Its producer was SB4004
+(variable-as-command, resolved in SSA), which no longer exists outside
+`docs/TIMELINE.md`. It fails all three DD#116 backstop properties, so the
+rubric says delete — but that retires an enum variant and turns `parse()`'s
+"a deferred diagnostic is not fatal" filter into `!diags.is_empty()`, which is
+a surface call. Next up otherwise: the 16 `emit_c.rs` ICE sites, now known to
+be cheap (`Emit::new()` plus `HashMap::new()`, contrary to 467's estimate).
 
 ## ══ STATUS (2026-10-04) — a cell is a variable ══
 
