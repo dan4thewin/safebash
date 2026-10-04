@@ -641,6 +641,20 @@ renders the same sentence a literal grep will never find, so a passing spec
 that asserts the message can belong to an entirely different renderer. That is
 exactly what hid `check_scalar_assignment`'s cold arm (journal 397).
 
+**The fastest reachability probe is to make the arm `panic!` and rebuild — but
+a negative result needs a positive control.** `cargo build` can no-op, a patch
+can fail to apply, and a `grep` for the marker can swallow it; all three look
+identical to "the arm was not reached". Run something that *must* reach the arm
+first (its unit test, usually) and confirm the panic fires, then run the real
+source. Journal 474: the first run of exactly this experiment produced silence
+from an unverified binary and was worth nothing.
+
+**Surface behaviour agreeing with your hypothesis is not evidence for the
+mechanism.** `$(f)` compiling clean and "`cmd_subst_taint`'s `user_functions`
+arm returns Clean" are different claims; the first is true and the second is
+false, and ICE-ing on the strength of the first would have crashed every
+program using `$(f)`. Probe the arm, not the outcome.
+
 **For many candidates at once, use `contrib/cov-batch.sh DIR` instead** — it
 runs a whole corpus of candidate programs once, renders one lcov, and reports
 every line that is cold in `coverage.db` and warm now. Per-line probing costs
@@ -752,12 +766,22 @@ downcast when you want to loop over several shapes or assert on the message.
 `sash/src/transform/stmt_handlers.rs` and `sash/src/ir.rs` are the two worked
 examples.
 
-**Counting ICE tests: grep undercounts.** Measured 2026-10-04, `sash` has 108
-unit tests of which **66 are ICE assertions** (33 `#[should_panic]`, 33
-`catch_unwind`) and 42 are ordinary. A grep for `catch_unwind` inside test
-bodies finds only 23 — the other ten reach it through a shared helper
-(`stmt_handlers::ice_on`, `emit_c::ices`), so any census has to resolve
-same-file helpers before it means anything.
+**Counting ICE tests: grep undercounts.** Measured 2026-10-04, `sash` has
+**80** unit tests of which **68 are ICE assertions** and 12 are ordinary —
+the 2026-10-04 redux deleted 30 rivals (every one of them already covered by a
+concrete spec id) and added two. A grep for `catch_unwind` inside test bodies
+undercounts, because some tests reach it through a shared helper
+(`stmt_handlers::ice_on`, `emit_c::ices`, `emit_c::empty_args_ice`), so any
+census has to resolve same-file helpers before it means anything — a census
+written for this entry missed `empty_args_ice` and reported 66/14.
+
+**A unit test asserting behaviour a spec already pins is a rival — delete it.**
+The in-crate `#[cfg(test)]` modules were never covered by journal 304's redux
+(that did `sash/tests/`), so they accumulated 30 of them. Before writing one,
+check whether the spec suite already asserts the claim; before keeping one,
+check the same. The survivors pin things a spec structurally cannot see:
+cross-API invariants (peek-then-next == next), pass separation, desugaring
+AST-equality, ICE-message rendering, and the ICEs themselves.
 
 **Some ICE arms cannot be reached by a unit test either**, because the
 *same function* already covers the case — `arith_to_ssa`'s trailing arm is

@@ -1,4 +1,46 @@
-## ══ STATUS (2026-10-04, latest) — the pin that could not pin ══
+## ══ STATUS (2026-10-04, latest) — the arm that looked live ══
+
+`mk test` rc=0 (**80** + 27 + 20), fmt/totality/complexity clean. Sweep
+**7687** (3946 native + 3728 c + 13 skipped), zero failures, zero flips, zero
+new ids, gate self-test 248. Journal 474.
+
+**Enacted DG's go-ahead on the whole re-evaluation program.** Six arms became
+ICEs, 30 unit tests were deleted, 10 functions gained the totality marker, and
+`CheckedArithOp::from_arith` is total.
+
+**A new `ArithOp` is now a compile error, not an ICE** — stronger than DG
+asked for, because the build stops before runtime (five sites break if a
+variant is added). Each exemption is probed and recorded: `Div` traps on
+`i64::MIN / -1`, `Mod` cannot overflow, `Pow` is checked by `sash_pow` not by
+`CheckedArithOp`, shifts have no overflow to detect per DD#25's addendum.
+
+**The near-miss worth reading.** `$(f)` compiles clean while `$(cat …)` is
+SB5020, which looks like proof that `cmd_subst_taint`'s `user_functions` arm
+is live — ICE it and every `$(f)` program crashes. The in-source comment said
+the opposite. The comment was right: with the arm made to `panic!` and a
+**positive control** proving the binary was instrumented, eight capture
+spellings never reach it. Surface behaviour agreeing with a hypothesis is not
+evidence for the mechanism.
+
+**`ArithExpr::children` was the marker that mattered.** Two functions delegate
+their own totality claim to it in prose; neither can enforce what it delegates.
+It had no marker. 26 functions are gated now, up from 15.
+
+**Zero new specs were needed.** All four tests filed as "spec/verify first"
+were already covered — `cmt.9`, 64.11/64.16, chk 14.69, types.sh 910/998 and
+93.19 — so the predicted sweep delta went from +4 to 0 on inspection.
+
+**Not a bug, checked first:** `1 << 70` is 64 in bash and 0 in sash. DD#25's
+2026-09-20 addendum is DG's own ruling (a count ≥ 64 shifts every bit out),
+spec'd at 25.13/25.14 with "these DIVERGE from bash deliberately".
+
+**Still open:** the 290 cold lines that deliver an answer rather than an ICE
+(of 413 total; 79 punctuation, 44 already ICE) — unclassified, and the largest
+remaining block of this kind of work. `validate.rs` has 37, `parse/parser.rs`
+30, `emit_c.rs` 29. Also still unwritten: unit tests for the 16 `emit_c.rs`
+ICE sites.
+
+## ══ STATUS (2026-10-04) — the pin that could not pin ══
 
 **The totality gate had a hole, and it was load-bearing.**
 `contrib/totality-check.py` opted functions in with a *per-line* marker search;
