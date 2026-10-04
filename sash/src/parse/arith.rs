@@ -247,8 +247,10 @@ pub fn parse_arith_str(input: &str, span: Span) -> Result<ArithExpr, Diagnostic>
     }
     let tokens = tokenize_arith(trimmed);
     // A run of nothing but *terminators* is a legitimately empty expression —
-    // the C-style `for (( ;; ))` header reaches here as `;;`. Returning 0 for
-    // it here is what lets an EOF in *operand* position below be a hard error.
+    // `$(( ; ))` is the spelling that reaches here. (The C-style `for (( ;; ))`
+    // header does *not*: it splits into three empty slots, each of which takes
+    // the `trimmed.is_empty()` return above.) Returning 0 for it here is what
+    // lets an EOF in *operand* position below be a hard error.
     // A `,` is a separator and owes an expression on each side, so `,,` is an
     // error rather than an empty expression (DD#94).
     if tokens.iter().all(|t| matches!(t, ATok::Sep)) {

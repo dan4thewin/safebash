@@ -10,7 +10,7 @@ set -eu
 . common.sh
 setup cli
 set +e
-plan=39
+plan=46
 echo "1..$plan" >&3
 
 SASH=$(command -v "${SASH:-sash}")
@@ -260,6 +260,44 @@ toolB' -o sq1 >/dev/null 2>sq.err; rc=$?
 
 PATH=/bin $SASH --sysroot="$PWD/nosuch.sqsh" -c 'toolA' -o sq2 >/dev/null 2>sq2.err; rc=$?
 [[ $rc != 0 && $(grep -c SB5011 sq2.err) = 1 ]]; chk cli.32
+
+# cli.33-36 the `K` and `G` multipliers. cli.23 covers `M`, which is the only
+# suffix any spec had ever spelled. Accepting the suffix is not the claim
+# worth making — that a stuck multiplier of 1 would also satisfy — so each
+# size is paired with an operand that overflows `usize` *only after* scaling:
+# the bare number compiles, the suffixed one is rejected. That is the
+# multiplication itself, observed.
+$SASH --heap-size=4K u.sash -o h5 >/dev/null 2>&1; rc=$?
+[[ $rc = 0 && -e h5 ]]; chk cli.33
+$SASH --heap-size=99999999999999999 u.sash -o h6 >/dev/null 2>&1; rc=$?
+err=$($SASH --heap-size=99999999999999999K u.sash -o h7 2>&1 >/dev/null); rc2=$?
+[[ $rc = 0 && $rc2 != 0 && $err == *"expected a positive size"* && ! -e h7 ]]; chk cli.34
+
+$SASH --heap-size=1G u.sash -o h8 >/dev/null 2>&1; rc=$?
+[[ $rc = 0 && -e h8 ]]; chk cli.35
+$SASH --heap-size=99999999999 u.sash -o h9 >/dev/null 2>&1; rc=$?
+err=$($SASH --heap-size=99999999999G u.sash -o h10 2>&1 >/dev/null); rc2=$?
+[[ $rc = 0 && $rc2 != 0 && $err == *"expected a positive size"* && ! -e h10 ]]; chk cli.36
+
+# cli.37 --extract of a path that cannot be read at all. cli.4 covers a file
+# that exists but carries no section; this is the earlier failure, where the
+# read itself fails, and it has to name the path and the OS reason rather
+# than report the file as sectionless.
+err=$($SASH --extract ./no-such-binary source 2>&1 >/dev/null); rc=$?
+[[ $rc != 0 && $err == *"./no-such-binary"* && $err == *"No such file"* ]]; chk cli.37
+
+# cli.38 a flag with neither a script operand nor `-c` is a usage error.
+# cli.11-12 cover the no-argument and --extract-misuse spellings; this is the
+# third caller of USAGE, reached only when flags parsed cleanly and left
+# nothing to compile.
+err=$($SASH --no-taint 2>&1 >/dev/null); rc=$?
+[[ $rc != 0 && $err == *"Usage: sash"* ]]; chk cli.38
+
+# cli.39 a named script that cannot be read. The diagnostic is the compiler's
+# own, not a panic: an unreadable input is an ordinary user mistake and has to
+# name the path and the reason.
+err=$($SASH ./no-such-script.sash -o ns.out 2>&1 >/dev/null); rc=$?
+[[ $rc != 0 && $err == *"./no-such-script.sash"* && $err == *"No such file"* && ! -e ns.out ]]; chk cli.39
 
 set -e
 tally

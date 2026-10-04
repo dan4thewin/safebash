@@ -6,7 +6,7 @@
 set -eu
 . common.sh
 setup coverage
-plan=351
+plan=372
 echo "1..$plan" >&3
 
 set +e
@@ -1801,6 +1801,135 @@ run_sash '(( 0 ))
 int n=$(status)
 echo "$n $(( $? ))"'
 [[ $rc != 0 && $err == *SB5012* ]]; chk cov.353
+
+# cov.354-355 unary `+` in arithmetic (`parse_prefix`'s `ATok::Plus` arm, and
+# the `IrUnaryArithOp::Pos` arms it feeds in the SSA transform and the IR
+# printer). Every existing arith spec spells `-`, `!` or `~`; none had ever
+# written a `+` prefix, so the whole three-stage path was cold. Both signs are
+# checked because `Pos` lowers to its operand unchanged — an arm that returned
+# a constant, or folded to the absolute value, passes cov.354 alone.
+run_sash 'int x=1
+echo $(( +x ))'
+[[ $rc = 0 && $out = "1" && -z $err ]]; chk cov.354
+run_sash 'int x=-5
+echo $(( +x ))'
+[[ $rc = 0 && $out = "-5" && -z $err ]]; chk cov.355
+
+# cov.356 a `$((` *inside* an arithmetic context. The arith collector sees the
+# token and opens a nested group rather than treating it as a new expansion;
+# the result is a doubled close that the parser rejects. Nesting arithmetic is
+# pointless — `$(( … ))` already yields a number — so the point of the spec is
+# that it is rejected cleanly instead of mis-nesting into silent garbage.
+run_sash 'echo $(( $((1)) + 2 ))'
+[[ $rc != 0 && -z $out && $err == *SB4020* ]]; chk cov.356
+
+# cov.357 `$( … )` nested inside another `$( … )`, inside a double-quoted
+# string. The double-quote scanner tracks command-substitution depth with its
+# own counter; one level never exercises the increment, so only a nested pair
+# proves the scanner closes the *outer* substitution at the right paren.
+run_sash 'echo "$( echo $( echo hi ) )"'
+[[ $rc = 0 && $out = "hi" && -z $err ]]; chk cov.357
+
+# cov.358 `$'\u'` with no hex digits at all. The escape scanner requires at
+# least one; truncating to U+0000 instead would smuggle a NUL into a string.
+run_sash "echo \$'\\u'"
+[[ $rc != 0 && -z $out && $err == *SB4063* ]]; chk cov.358
+
+# cov.359 a `{ … }` group as a `while` condition. `if` has had this spec since
+# SB4027 was written; `while` has its own call site and had never been spelled.
+run_sash 'while { echo hi }'
+[[ $rc != 0 && -z $out && $err == *SB4027* ]]; chk cov.359
+
+# cov.360-362 DD#94 terminator handling in arithmetic, the three outcomes.
+# A *trailing* terminator ends the sequence and yields the last value …
+run_sash 'echo $(( 1; ))'
+[[ $rc = 0 && $out = "1" && -z $err ]]; chk cov.360
+# … a trailing `,` is a separator that still owes an operand, so it is an
+# error rather than the same thing …
+run_sash 'echo $(( 1, ))'
+[[ $rc != 0 && -z $out && $err == *SB4020* ]]; chk cov.361
+# … and a run that is *nothing but* terminators is a legitimately empty
+# expression worth 0, the same as `$(( ))`. Note this is NOT the `for (( ;; ))`
+# header: that splits into three empty slots, which take the empty-string
+# early return one branch earlier. Reaching this arm needs a terminator that
+# actually survives tokenisation, and no spec had ever written one.
+run_sash 'echo $(( ; ))'
+[[ $rc = 0 && $out = "0" && -z $err ]]; chk cov.362
+
+# cov.363-365 the three unterminated-operand scanners behind a brace-less
+# disposition (`$x:-OPERAND`). The operand scan has to find the end of a `$(`,
+# a backtick or a `${` before it can tell where the default ends; each has its
+# own "ran off the end of the source" return and none had a spec.
+run_sash 'str x=a
+echo $x:-$(abc'
+[[ $rc != 0 && -z $out && $err == *SB4057* && $err == *'unterminated `$(`'* ]]; chk cov.363
+run_sash 'str x=a
+echo $x:-`abc'
+[[ $rc != 0 && -z $out && $err == *SB5076* ]]; chk cov.364
+run_sash 'str x=a
+echo $x:-${abc'
+[[ $rc != 0 && -z $out && $err == *SB4057* && $err == *'unterminated `${`'* ]]; chk cov.365
+
+# cov.366 the DD#63 statement form `v =~ s/…/…/` rejects a payload that does
+# not open with `s/`. Existing specs all misspell the *fields*; none had ever
+# got the operator letter wrong, so the earliest rejection was cold.
+run_sash 'str v=abc
+v =~ x/a/b/
+echo $v'
+[[ $rc != 0 && -z $out && $err == *SB4032* ]]; chk cov.366
+
+# cov.367 a command substitution as the source of a for-in loop. SB5009 names
+# it as a scalar; the capture path that builds that diagnostic was never run
+# because every prior SB5009 spec uses a variable or a literal.
+run_sash 'str y=ls
+for x in $( $y ) { echo $x }'
+[[ $rc != 0 && -z $out && $err == *SB5009* ]]; chk cov.367
+
+# cov.368-369 SB5007 renders the offending comparison back into source text,
+# which is the only caller of the IR operator table for `<=` and `<<`. The
+# assertions name the rendered text: a table whose entries were wrong (or a
+# renderer that printed the variant name) still produces SB5007, so asserting
+# the code alone would not notice.
+run_sash 'int a=1
+int b=2
+(( a <= b ))'
+[[ $rc != 0 && -z $out && $err == *SB5007* && $err == *"a <= b"* ]]; chk cov.368
+run_sash 'int a=1
+int b=2
+(( a << 1 <= b ))'
+[[ $rc != 0 && -z $out && $err == *SB5007* && $err == *"a << 1 <= b"* ]]; chk cov.369
+
+# cov.370 a `sub` replacement whose final byte is a lone backslash. The escape
+# validator reaches the end of the replacement with an escape still open and
+# has to name that position; single quotes are required because `"x\\"` is the
+# legal `\\` escape, not a dangling one.
+run_sash 'str s=abc
+str r=$(sub $s a '"'"'x\'"'"')
+echo $r'
+[[ $rc != 0 && -z $out && $err == *SB4033* && $err == *"end of replacement"* ]]; chk cov.370
+
+# cov.371-372 SB4030 describes *which* string-typed thing was handed to an int
+# sink. The two remaining descriptions had no spec: a command substitution …
+run_sash 'exit $(basename /a/b)'
+[[ $rc != 0 && -z $out && $err == *SB4030* && $err == *"a command substitution is string-typed"* ]]; chk cov.371
+# … and the catch-all for everything else, here an array splat.
+run_sash 'array a=( x y )
+exit @a'
+[[ $rc != 0 && -z $out && $err == *SB4030* && $err == *"that operand is string-typed"* ]]; chk cov.372
+
+# cov.373-374 end-of-source arriving mid-token. `run_sash` passes the program
+# with `-c`, so the last byte of the source really is the last byte of the
+# string — there is no trailing newline to stop the scan first, which is the
+# only way to reach these two arms.
+# A `$` as the final byte inside a double-quoted string is a literal `$`, not
+# the start of an expansion …
+run_sash 'echo "abc$'
+[[ $rc != 0 && -z $out && $err == *SB4057* ]]; chk cov.373
+# … and a `${…:s/…}` edit whose fields run off the end is malformed rather
+# than silently taking the rest of the file as a replacement.
+run_sash 'str s=abc
+echo ${s:s/a/b'
+[[ $rc != 0 && -z $out && $err == *SB4032* ]]; chk cov.374
 
 set -e
 tally

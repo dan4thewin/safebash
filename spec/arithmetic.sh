@@ -1220,8 +1220,10 @@ run_sash 'echo "$(( 1 + 2 ))"'
 run_sash 'echo "$(( ))"'
 [[ $rc = 0 && $out = "0" && -z $err ]]; chk 31.50
 
-# 31.51 `for (( ;; ))` reaches the arith parser as a run of bare separators;
-# it must stay a legitimately empty expression, not an owed operand
+# 31.51 `for (( ;; ))` splits into three *empty* slots, so each one takes the
+# empty-expression early return above — it must stay a legitimately empty
+# expression, not an owed operand. (A slot that is non-empty but all
+# separators is a different arm; cov.362 covers that one.)
 run_sash 'for (( ;; )); do echo hi; break; done'
 [[ $rc = 0 && $out = "hi" && -z $err ]]; chk 31.51
 
