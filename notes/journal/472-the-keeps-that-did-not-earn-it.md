@@ -141,8 +141,47 @@ This is the third time a spec-suite fault has been caught by predicting a number
 before running, and the second time the symptom was a count that looked
 *reassuring* — zero new ids reads like "nothing unexpected happened".
 
+## The eleven, audited
+
+DG followed up: *"have all the 11 shadowed items been handled now?"* Audited
+against the tree rather than from memory, and one gap turned up — the same
+shape as the three above.
+
+| # | site | verdict | evidence |
+|---|---|---|---|
+| 1-2 | `dynamic_subscript_var`'s `${name}` arms | **bug** | warm by specs 80.123-130 |
+| 3 | `parameter_expansion_type` `strlen\|arrlen` | rival, deleted | all four `${#…}` → SB4038 |
+| 4 | `push_source_char` `_ => 1` | ICE | `Scanner::new(&str)` — untestable by construction, ranges named instead |
+| 5 | `logos_input` Err arm | rival, deleted | 2 unit tests |
+| 6 | `"" => return` on a command name | rival, deleted | `$c hi` / `${c} hi` → SB5011 |
+| 7 | empty `exec` target | rival, deleted | `exec ''` → SB5011 |
+| 8 | `check_arith_reads` `SubscriptAssign` | ICE | `$(( a[i] = 7 ))` → SB4020, `#[should_panic]` |
+| 9 | `parse_assignment_lhs` unclosed subscript | ICE | `a[0=5` → SB5011, `#[should_panic]` |
+| 10 | `parse_split_subscript_index` SB4014 | keep | 40-token index → SB5011; unit test |
+| 11 | `parse_assign_op` `_ => Err` | keep | **had no test** |
+
+Ten were concluded. **#11 was not** — and the way it slipped is instructive. My
+own summary said it was "already annotated by `a2967a4`", so I treated it as
+reviewed. It was annotated by `aab5868`, a different commit with a different
+purpose, and nothing had ever executed the claim.
+
+Probed now: the shape that originally broke it, `m[$s ] x ]=9`, is SB4041
+today — so the keep is sound, and `lhs_index_close_from` being shared by both
+the probe and the parser is what makes it structural. But "sound" was an
+inference until the probe, and the arm is specifically the thing that makes a
+future disagreement *loud* instead of a return to silently assigning the
+literal `]=9`. That is worth executing. One unit test, 107 → 108.
+
+Site 4 is the documented exception: `Scanner::new` takes a `&str`, so no unit
+test can hand it an invalid byte. AGENTS.md's rule for that case is to make the
+arm name its variants rather than chase it, and it does — `0x80..=0xBF |
+0xF8..=0xFF`.
+
 ## Gates
 
 `mk test` 107 + 27 + 20. Sweep native 3946 + c 3728 + 13 skipped = **7687**,
 predicted exactly. Zero flips, self-test 248, zero failing, exactly six new
 ids, one expected retirement (the three stale `61.1x` pairs).
+
+The audit addendum added one unit test (108) and two doc comments; no compiled
+behaviour changed, so the sweep was not re-run for it.

@@ -2341,6 +2341,10 @@ fn parse_split_subscript_index(scanner: &mut Scanner, span: Span) -> Result<Expr
 /// The error arm is unreachable while the probe and the LHS parser agree,
 /// which [`lhs_index_close_from`] now makes structural rather than a
 /// coincidence of two hand-matched lookahead windows.
+///
+/// DD#116: kept as a *loud-vs-silent* backstop and pinned by a unit test.
+/// Probed 2026-10-04 — `m[$s ] x ]=9` is SB4041 before this arm can run — so
+/// the keep rests on an execution result, not on the comment above it.
 fn parse_assign_op(scanner: &mut Scanner, span: Span) -> Result<AssignOp, Diagnostic> {
     match scanner.peek().token {
         Tok::PlusAssign => {
@@ -3598,5 +3602,25 @@ mod invariant_tests {
             "unexpected message: {}",
             err.message
         );
+    }
+
+    /// DD#116 keep, *loud-vs-silent*. The error arm is unreachable while the
+    /// shape probe and the LHS parser agree on which `]` closes the index,
+    /// which `lhs_index_close_from` makes structural — probed 2026-10-04,
+    /// `m[$s ] x ]=9` is SB4041 now, where it once silently assigned the
+    /// literal `]=9`. The arm is what makes a future disagreement loud rather
+    /// than a return to that silence, so the claim is worth executing.
+    #[test]
+    fn parse_assign_op_rejects_a_token_that_is_not_an_assignment() {
+        for text in ["x", "]", "-eq", "9"] {
+            let mut sc = Scanner::new(text);
+            let err = parse_assign_op(&mut sc, Span::new(1, 1)).expect_err("neither `=` nor `+=`");
+            assert_eq!(err.code, "SB4014", "for `{text}`");
+            assert!(
+                err.message.contains("expected `=` or `+=`"),
+                "unexpected message: {}",
+                err.message
+            );
+        }
     }
 }
