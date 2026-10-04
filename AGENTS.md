@@ -279,6 +279,26 @@ comm -12 <(grep -hoE '_id=[A-Za-z0-9._]+' spec/*.sh | sed 's/_id=//' | sort -u) 
 
 Empty means clean. There is exactly one variable-id site in the suite today.
 
+**Both checks read the source, so neither sees a *retired* id — and reusing one
+makes the regression gate compare your new spec against a stranger.** `runs` is
+append-only by design, so a deleted spec keeps its history forever. Numbering a
+new block at the greppable high-water mark is how three specs landed on
+`61.13`-`61.15`, ids last run on 2026-09-27 at `deb8a26`: the collision checks
+were clean (nothing current used them), but the sweep's companion query reported
+**zero new ids** against a prediction of six, because each "new" id already had
+a week-old row. The flips query was comparing a brand-new spec to an unrelated
+retired one. Both happened to pass, so it was silent. Take the mark from the
+database, not from `grep`:
+
+```sh
+sqlite3 spec.db "SELECT MAX(CAST(substr(test_id, instr(test_id,'.')+1) AS INTEGER))
+                 FROM runs WHERE test_id LIKE 'native:<PREFIX>.%';"
+```
+
+For `61.x` that answered **22** where the source showed 12 — ten retired ids in
+between. **Predicting the new-id count and getting zero is the tell**; it is a
+finding, not bookkeeping.
+
 **Predict the sweep total before running it.** N new specs in a native-only
 file is +N; in a dual-mode file it is +2N. A green sweep whose total is not
 what you predicted means specs collided, vanished, or were skipped -- the

@@ -265,17 +265,15 @@ fn parameter_expansion_to_value(pe: &ParameterExpansion, state: &VersionState) -
     let resolved = resolve_args_name(&pe.name, state);
     let var = state.lookup(&resolved);
     let operand = pe_operand_string(pe);
-    // DD#75 §2: `${#x}` is the length of x dispatched on type — for a
-    // collection it is the element/entry count (`arrlen`), not the byte length
-    // of a scalar slot (`strlen`, which would read 0). `${#s}` stays strlen.
-    let operator = if op == "strlen" && state.collections.contains(&resolved) {
-        "arrlen".to_string()
-    } else {
-        op.clone()
-    };
+    // DD#116: a `if op == "strlen" && state.collections.contains(…)` promotion
+    // to `arrlen` was deleted here (2026-10-04) as a *rival* of
+    // `expr_handlers::try_len_intrinsic`, which carries DD#75 §2's
+    // dispatch-on-type for the live `$(len x)` spelling. This one was keyed on
+    // `${#x}`, retired by DD#75 §4 — the parser emits `len_retired` for every
+    // such form, so `op` can never be `"strlen"` here.
     SsaValue::ParamExpansion {
         var,
-        operator,
+        operator: op.clone(),
         operand,
     }
 }

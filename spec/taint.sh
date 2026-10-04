@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup taint
-plan=331
+plan=334
 echo "1..$plan" >&3
 
 set +e
@@ -1634,6 +1634,29 @@ array a=(q)
 a[0]=${b[$i]}
 echo "${a[0]}"'
 [[ $rc = 0 && $out = "two" && -z $err ]]; chk 61.12
+
+# 61.23-61.25 DD#61: a SCALAR attest whose name is a collection. The advice has
+# to name the binders the collection actually has, or the user follows it into a
+# second error. Both arms were cold until 2026-10-04 and were kept on a
+# loud-vs-silent argument that nothing executed; these warm them.
+# 61.23 scalar attest on a map advises the two-binder form
+run_sash 'map m=([k]=v)
+attest m [[ -n ${m[k]} ]]
+echo "${m[k]}"'
+[[ $rc != 0 && -z $out && $err == *SB4030* && $err == *"attest k v in m"* ]]; chk 61.23
+
+# 61.24 scalar attest on an array advises the one-binder form
+run_sash 'array a=(one)
+attest a [[ -n ${a[0]} ]]
+echo "${a[0]}"'
+[[ $rc != 0 && -z $out && $err == *SB4030* && $err == *"attest x in a"* ]]; chk 61.24
+
+# 61.25 CONTROL: the same scalar attest on an actual scalar is accepted, so the
+# two above fail on the collection-ness and not on the form.
+run_sash 'str s="one"
+attest s [[ -n $s ]]
+echo "$s"'
+[[ $rc = 0 && $out = "one" && -z $err ]]; chk 61.25
 # 91.24-91.33 DD#91's `:!` vouches for a READ. With a literal operand there is
 # no read in the default to vouch for, so `:!-EXPANSION` is SB4070 in every
 # spelling -- including the four that used to be ACCEPTED here because `!`

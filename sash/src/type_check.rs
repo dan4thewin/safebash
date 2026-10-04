@@ -683,12 +683,13 @@ fn is_sexpr_string_producer(name: &str, env: &TypeEnv) -> bool {
 /// `${var:-default}` / `${var-default}` preserve the variable's type;
 /// all other strip ops (`#`, `%`, `/`, etc.) produce strings.
 ///
-/// DD#116: the `strlen`/`arrlen` arm is a *backstop* with specification
-/// fidelity. The `${#x}` sugar that used to spell it is retired (SB4038), but
-/// the operator itself is live — `transform/pipelines.rs` builds an AST
-/// `${arr arrlen}` for a synthesized for-loop bound, and `arrlen` *is* an int.
-/// The arm is cold only because this pass runs before that one, which is the
-/// current pass ordering rather than the rule. Pinned by a unit test.
+/// DD#116: a `"strlen" | "arrlen" => VarType::Int` arm was deleted here
+/// (2026-10-04) as a *rival*. It answered "a length is an int" a second time,
+/// keyed on the `${#x}` sugar that DD#75 §4 retired; the live spellings
+/// `$(len x)` / `$(strlen s)` are intrinsics, and `is_int_returning_intrinsic`
+/// is where that rule lives. No *parsed* program can carry either operator —
+/// `try_strlen_or_arrlen` emits `len_retired`, and the only AST producer of
+/// `arrlen` is `transform/pipelines.rs`, downstream of this pass.
 fn parameter_expansion_type(pe: &ParameterExpansion, env: &TypeEnv) -> VarType {
     let Some(op) = pe.operator.as_deref() else {
         return env.var_type(&pe.name);
@@ -696,8 +697,6 @@ fn parameter_expansion_type(pe: &ParameterExpansion, env: &TypeEnv) -> VarType {
     match op {
         // `${var:-default}` / `${var-default}` preserve the variable's type.
         ":-" | "-" => env.var_type(&pe.name),
-        // DD#75 §2: a length (`${#x}` → strlen/arrlen) is an int.
-        "strlen" | "arrlen" => VarType::Int,
         // All other strip ops (`%`, `#`, `/`, …) produce strings.
         _ => VarType::String,
     }
@@ -2591,34 +2590,8 @@ mod tests {
         );
     }
 
-    /// DD#116 keep, specification fidelity. `${#x}` is retired (SB4038), so no
-    /// *parsed* program carries a `strlen`/`arrlen` operator and the arm is
-    /// cold. The operator is still live, though: `transform/pipelines.rs`
-    /// builds an AST `${arr arrlen}` for a synthesized for-loop bound. That
-    /// pass runs after this one, which is the only reason the arm never fires
-    /// — pass ordering, not the rule. The rule is that a length is an int, and
-    /// this pins it so a future reordering cannot quietly make it a string.
-    #[test]
-    fn a_length_operator_is_an_int_whoever_built_it() {
-        for op in ["strlen", "arrlen"] {
-            let pe = ParameterExpansion {
-                name: "a".to_string(),
-                operator: Some(op.to_string()),
-                operand: None,
-                index: None,
-                taint_off: false,
-            };
-            assert_eq!(
-                parameter_expansion_type(&pe, &TypeEnv::new()),
-                VarType::Int,
-                "`{op}` must type as an int"
-            );
-        }
-    }
-
-    /// The companion claim: an operator this function does *not* name is a
-    /// string. Without it the test above would pass against a function that
-    /// returned `Int` for everything.
+    /// A strip operator is a string. This pins the `_` arm, which is the only
+    /// answer `parameter_expansion_type` now gives besides `:-` / `-`.
     #[test]
     fn another_strip_operator_is_a_string() {
         let pe = ParameterExpansion {

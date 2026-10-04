@@ -1,0 +1,148 @@
+# 472 — the keeps that did not earn it
+
+DG, reading the previous session's summary: *"why are we keeping lines that
+are unreachable and not a backstop?"*
+
+The honest answer is that we shouldn't be, and we were. Reviewing my own DD#116
+verdicts against the rubric rather than defending them, **three of the keeps
+failed**, and in two different ways.
+
+## The rubric, restated
+
+DD#116 lets a cold line stay only if it earns the place with at least one of:
+
+- **loud-vs-silent** — it turns a wrong answer into an error;
+- **totality** — the arm must exist, so only its *body* is a choice;
+- **specification fidelity** — the line *is* the rule, not a second opinion.
+
+Anything else is a **rival**: a second, contradicting answer to a question some
+other code already settles. Rivals get deleted. And AGENTS.md draws the
+orthogonal line: *unreachable by construction → `unreachable!()`; merely
+unexercised → the correct arm*.
+
+Four of the eleven sites I closed yesterday were "keeps". The test is cheap and
+I did not apply it properly.
+
+## Keep 1 — `"strlen" | "arrlen" => VarType::Int`
+
+I wrote that this was specification fidelity: `transform/pipelines.rs` builds
+an AST `${arr arrlen}`, so the operator is live and the arm is cold only
+because type-check runs first. That reads well and is wrong on every clause.
+
+- **Not totality.** The match ends in `_ => VarType::String`. The arm is
+  optional; deleting it changes nothing that can run.
+- **Not specification fidelity.** DD#75 §2 / DD#102 say a length is an int, and
+  `is_int_returning_intrinsic` is where that lives — keyed on `len` and
+  `strlen` as *intrinsics*, which is the live spelling. This arm was keyed on
+  `${#x}`, retired by DD#75 §4. Two answers to one question.
+- **Unreachable, and not marginally.** `parameter_expansion_type` has one
+  non-test caller. The only AST producer of operator `arrlen` is
+  `transform/pipelines.rs:91`, downstream of it. Nothing in the tree produces
+  operator `strlen` in an AST at all — the parser function still *named*
+  `try_strlen_or_arrlen` emits `len_retired`, and every `${#…}` spelling is
+  SB4038 at parse. I probed all four.
+
+So: a rival. Deleted.
+
+The part worth sitting with is the unit test I wrote to "pin" it. It built the
+node by hand and asserted `Int`. It passed. It will always pass. What it
+actually pinned was *my claim about pass ordering*, and it made a dead arm look
+verified — which is worse than leaving it cold, because a cold line still shows
+up in the queue and a green test does not. AGENTS.md warns about manufacturing
+a node to warm a line; I did it to *bless* one.
+
+### The twin
+
+Chasing the producer turned up the same relic downstream.
+`transform/expressions.rs` read `if op == "strlen" && state.collections.contains(…)`
+and promoted to `arrlen` — DD#75 §2's dispatch-on-type, keyed on the retired
+spelling, unreachable for exactly the same reason. The live implementation of
+that same dispatch is `expr_handlers::try_len_intrinsic`, for `$(len x)`.
+A second rival of a second function. Deleted.
+
+Two stale copies of one rule, in two passes, both surviving the surface's
+retirement because nothing fails when a dead branch is wrong.
+
+## Keep 2 — `attest_arith_near_miss`'s `[] => None`
+
+Yesterday's comment: *"The parser always consumes a name after `attest`, so
+this is only reachable from a hand-built IR. Kept as a loud-vs-silent
+backstop."*
+
+Those two sentences contradict each other. "Only reachable from a hand-built
+IR" **is** the definition of unreachable-by-construction, and the body was
+`None` — the silent answer. Probed: `attest (( x = 1 ))` is SB4014 "expected
+variable name after 'attest'", in both spacings.
+
+Now an `unreachable!` naming SB4014, pinned by `#[should_panic]`. The panic is
+the claim. If the parser's guarantee ever breaks, it breaks loudly in the
+opener's own sweep instead of waving a nameless `attest` onto the generic
+command path — which is how a bare `attest` came to *exec* in the first place.
+
+## Keep 3 — `attest_scalar_form_error`'s map/array split
+
+This one I had already flagged, because its own comment convicts it: *"The arm
+is cold because `type_check` sees few map attests, **not because it cannot
+run**."* Under DG's standing rule — every line warm by spec except ICEs — that
+sentence is a spec gap wearing a backstop's coat.
+
+Finding the shape took four probes, and the first three were all shadowed by a
+different diagnostic:
+
+| probe | result |
+|---|---|
+| `attest m` | SB4014 — not a complete form |
+| `attest m [[ -n $m ]]` | SB5064 — scalar sigil on a collection |
+| `attest m [[ -n "z" ]]` | SB5086 — always-true test |
+| `attest m [[ -n ${m[k]} ]]` | **SB4030**, the arm |
+
+Three gates stand in front of it, which is why it stayed cold and why "few map
+attests" was a plausible-sounding story. It is genuinely reachable, and the
+backstop claim is genuinely correct: without the split, a scalar attest on a
+map advises `attest x in m` — the *array* binder form — and the user who
+follows that advice earns a second diagnostic. Specs 61.23-61.25 warm both
+arms and a control.
+
+## Keep 4 — `detect_array_iter`'s `return None` guards
+
+This one survives review. "Only `$(keys NAME)` iterates" is the rule itself,
+and the `None` is the function stating it rather than a second opinion about
+it. No change.
+
+## The score
+
+Four keeps, three wrong: one rival (plus its downstream twin), one ICE
+mislabelled as a backstop, one real backstop that needed a spec instead of a
+comment. The common thread is that **naming a property is not testing one.**
+`a2967a4` and my own follow-up both added prose that asserted reachability, and
+in two of three cases the prose was false — provably so, in under a minute,
+with the binary sitting right there.
+
+A keep should cost a probe. If you cannot produce the shape that reaches the
+line, you do not know it is a backstop; you know you have a story about one.
+
+## A gate fault, found by predicting
+
+Adding three specs should produce six new ids. The sweep's companion query
+reported **zero**.
+
+`61.13`-`61.15` already existed in `runs` — real specs on 2026-09-27 at
+`deb8a26`, later deleted. The purge drops the `tests` row and keeps the history
+by design, so the ids looked free to both mechanical collision checks (nothing
+*current* used them) while each still carried a week-old row. The regression
+query therefore compared three brand-new specs against three unrelated retired
+ones. Both sets passed, so it said nothing.
+
+The source's high-water mark for `61.x` was 12. The database's was **22** — ten
+retired ids in the gap. Renumbered to `61.23`-`61.25`; the companion now reports
+exactly the six I added. AGENTS.md gains the query and the tell.
+
+This is the third time a spec-suite fault has been caught by predicting a number
+before running, and the second time the symptom was a count that looked
+*reassuring* — zero new ids reads like "nothing unexpected happened".
+
+## Gates
+
+`mk test` 107 + 27 + 20. Sweep native 3946 + c 3728 + 13 skipped = **7687**,
+predicted exactly. Zero flips, self-test 248, zero failing, exactly six new
+ids, one expected retirement (the three stale `61.1x` pairs).

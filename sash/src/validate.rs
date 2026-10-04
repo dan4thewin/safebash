@@ -2596,11 +2596,13 @@ fn attest_arith_near_miss(c: &Command) -> Option<ArithNearMiss<'_>> {
             ExprKind::Literal(s) => Some(ArithNearMiss::Scalar(s)),
             _ => None,
         },
-        // The parser always consumes a name after `attest`, so this is only
-        // reachable from a hand-built IR. DD#116: kept as a *loud-vs-silent*
-        // backstop — without it a zero-name lead falls into the `_` arm below
-        // and gets the attest-all message, advising a form it does not have.
-        [] => None,
+        // DD#116: unreachable by construction. `parse_attest` raises SB4014
+        // ("expected variable name after 'attest'") before an `attest (( … ))`
+        // with no name can be built, so reaching here means the parser's
+        // guarantee broke. The old `None` was the *silent* answer to that —
+        // it waved the command on to the generic path, which is how a bare
+        // `attest` came to exec in the first place.
+        [] => unreachable!("SB4014 rejects an `attest` with no name before its predicate"),
         // Two or more names: a attest-all carrying the scalar-only form.
         _ => Some(ArithNearMiss::AttestAll),
     }
@@ -10645,6 +10647,21 @@ mod tests {
             var: "x".into(),
             inc: true,
         }
+    }
+
+    #[test]
+    #[should_panic(expected = "SB4014 rejects an `attest` with no name")]
+    fn attest_arith_near_miss_rejects_a_nameless_lead() {
+        // `attest (( x = 1 ))`. The parser cannot build this — it raises
+        // SB4014 on the missing name — so the only way in is to hand the
+        // walker the node directly.
+        let c = crate::ir::Command {
+            name: e(ExprKind::Literal("attest".to_string())),
+            args: vec![e(ExprKind::Arithmetic(Box::new(
+                crate::ir::ArithExpr::Literal(1),
+            )))],
+        };
+        let _ = attest_arith_near_miss(&c);
     }
 
     #[test]
