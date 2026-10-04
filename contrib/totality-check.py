@@ -56,13 +56,42 @@ def function_body(lines: list[str], fn_line: int) -> tuple[int, int]:
     return fn_line, len(lines) - 1
 
 
+def marker_sites(lines: list[str]) -> list[tuple[int, int]]:
+    """`(marker_line, end_of_doc_run)` for every doc comment carrying the
+    marker.
+
+    The marker is matched against the *joined* doc-comment run, not against
+    single lines. rustfmt wraps a doc comment at the column limit wherever the
+    text happens to fall, so `command_args_elidable` opted in across a line
+    break — `do not add a` / `/// wildcard.` — and a per-line search did not
+    see it. The function was ungated from the day it was written, and the
+    phrasing that hid it is the phrasing this file's own docstring recommends.
+    """
+    sites = []
+    i = 0
+    while i < len(lines):
+        if not lines[i].strip().startswith("///"):
+            i += 1
+            continue
+        j = i
+        while j < len(lines) and (
+            lines[j].strip().startswith("///") or lines[j].strip().startswith("#[")
+        ):
+            j += 1
+        doc = " ".join(l.strip().lstrip("/").strip() for l in lines[i:j])
+        if MARKER in re.sub(r"\s+", " ", doc):
+            sites.append((i, j))
+        i = j
+    return sites
+
+
 def check(path: Path) -> list[str]:
     lines = path.read_text().splitlines()
     problems = []
-    for n, line in enumerate(lines):
-        if MARKER not in line:
-            continue
-        fn = next((i for i in range(n, len(lines)) if FN_START.match(lines[i])), None)
+    for n, end_doc in marker_sites(lines):
+        fn = next(
+            (i for i in range(end_doc, len(lines)) if FN_START.match(lines[i])), None
+        )
         if fn is None:
             problems.append(f"{path}:{n + 1}: marker with no following `fn`")
             continue
@@ -78,7 +107,64 @@ def check(path: Path) -> list[str]:
     return problems
 
 
+SELF_TEST = {
+    "wrapped-marker": (
+        "/// **Total over `Thing` on purpose — do not add a\n"
+        "/// wildcard.**\n"
+        "fn classify(t: &Thing) -> u8 {\n"
+        "    match t {\n"
+        "        Thing::A => 1,\n"
+        "        _ => 0,\n"
+        "    }\n"
+        "}\n"
+    ),
+    "one-line-marker": (
+        "/// **Total on purpose — do not add a wildcard.**\n"
+        "fn classify2(t: &Thing) -> u8 {\n"
+        "    match t {\n"
+        "        Thing::A => 1,\n"
+        "        other => 0,\n"
+        "    }\n"
+        "}\n"
+    ),
+}
+
+
+def self_test() -> list[str]:
+    """Prove the gate can fail before trusting it to pass.
+
+    A gate that cannot fail is not a gate, and this one could not for the
+    wrapped-marker case from the day it was written — rustfmt put a line break
+    inside the marker in `command_args_elidable` and a per-line search went
+    blind. Both spellings must be caught, so the cheapest guard against a
+    repeat is to run them on every invocation.
+    """
+    import tempfile
+
+    failures = []
+    with tempfile.TemporaryDirectory() as d:
+        for name, text in SELF_TEST.items():
+            p = Path(d) / f"{name}.rs"
+            p.write_text(text)
+            if not check(p):
+                failures.append(
+                    f"self-test `{name}`: the gate did not flag a wildcard in a "
+                    f"function that declares itself total"
+                )
+    return failures
+
+
 def main() -> int:
+    broken = self_test()
+    if broken:
+        print("totality gate: THE GATE ITSELF IS BROKEN\n")
+        for b in broken:
+            print(f"  {b}")
+        print(
+            "\n  It would have reported every file as clean. Fix the gate\n"
+            "  before trusting this run."
+        )
+        return 2
     args = [Path(a) for a in sys.argv[1:]]
     if not args:
         args = sorted(
