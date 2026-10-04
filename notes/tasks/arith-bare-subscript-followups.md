@@ -5,7 +5,7 @@ priority: P3
 kind: bug
 depends: []
 gates:
-  - "DONE (edge 1, DG chose the diagnostic route): `$(( $a[i] ))` rejects with a clear `use a[i] / ${a[i]}` hint instead of `invalid numeric literal '['` (a silent-read fix was reverted — reconstruction can't preserve a `$`-index)"
+  - "DONE (edge 1, 2026-10-04, DD#123): `$(( $a[i] ))` **reads the cell**. The 2026-08-21 diagnostic route was an interim measure; the lexer-level fix this section asked for landed for an unrelated reason (the 2026-10-03 brace-less desugar), so the carve-out was removed rather than re-implemented"
   - "DONE (edge 2): nested index `$(( a[a[0]] ))` parses (lexer subscript-depth tracking; the `]]` closes two subscripts, not a `[[ ]]` dispatch)"
   - "DONE (edge 4): substring `${a[i]:o:l}` and sed `${a[i]:s/…/}` on a cell reach scalar parity — sed desugars to `$(sub|gsub \"${a[i]}\" …)`; substring lowers via a new source-carrying `SsaValue::Substring` (native/c/janet)"
   - "no regression"
@@ -17,7 +17,21 @@ arith-subscript model B Stage 2 shipped bare `a[i]` (int-array cell,
 rvalue+lvalue) via a `BareSubscript` lexer token + `ArithExpr::Subscript` /
 `SubscriptAssign`. Three edges remain:
 
-### 1. `$a[i]` dollar form in arith → SB4035
+### 1. `$a[i]` dollar form in arith → SB4035 — RESOLVED (2026-10-04, DD#123)
+
+**`$(( $a[1] ))` now reads the cell**, identically to `${a[1]}` — including
+where the braced form *rejects* (`$a[i+1]`, `$a[a[0]]` are SB4041; neither is an
+lvalue). The fix this section specified — "extend `scan_dollar` to fuse
+`$name[…balanced…]` into a single token" — is exactly what the 2026-10-03
+brace-less desugar does, built for the word-context "all paths must agree"
+amendment to DD#80. It arrived without anyone connecting it to this edge, so the
+`arith_depth > 0` carve-out in `braceless_subscript` sat for a day guarding
+against a defect that the same function had already fixed. Removing that guard
+was the entire change; the "**Risk**" paragraph below was likewise already paid,
+since `expr.rs` has split `name[…]` back out since the desugar landed.
+
+The investigation below is kept as history — it is the record of *why* the
+reject was right when it was written.
 
 Model B's table lists `$a[i]` (non-brace) as an rvalue read "as today". Inside
 `(( ))` it doesn't parse: `scan_arith_dollar` reads `$a` as `DollarVar("a")`,
