@@ -1,6 +1,6 @@
 ---
 title: Eliminate ICE panic arms by pushing invariants into the type system
-status: pending
+status: done
 depends: []
 gates:
   - per-site decision recorded (refactor / typestate / keep+cite)
@@ -154,3 +154,40 @@ filed.
 structure and the per-site decision protocol still apply; the file
 distribution should be re-derived before starting, since seven sites have
 gone.
+
+## Resolved 2026-10-05 — commit `50ab2f2`
+
+DG supplied the selection criterion this task was missing: an unreachable
+line earns its place only if it catches a regression **orthogonally**. One
+that re-asks the gate's own question about the same data is a second copy of
+one assertion.
+
+That is decidable from the ICE's own parameter type (see AGENTS.md,
+"An ICE must catch a regression ORTHOGONALLY"). Measured over all **107** ICE
+sites: only 20 name an SB rule, of which **11 were duplicates**.
+
+Per-site decisions, as the gates require:
+
+| site | rule | decision |
+|---|---|---|
+| `control_flow.rs` ×4 (`detect_array_iter`) | SB5009 ×3, SB4045 | **refactor** — shape spelled out once as `ir::for_head_keys`, read with `?` |
+| `expr_handlers.rs` (`try_len_intrinsic`) | SB5062 | **answer** — `collection_operand_name` returns `pe.name`; general path is then correct |
+| `expr_handlers.rs` (`join_intrinsic`) | SB5062 | **answer** — same helper |
+| `stmt_handlers.rs` ×2 (`handle_argv`) | SB4045 | **keep+cite** — `try_builtin`'s `None` = "not a builtin" → silent runtime death |
+| `stmt_handlers.rs` (`handle_keys`) | SB5073/SB4045 | **keep+cite** — same |
+| `ir.rs` ×2 (`readline_target`) | SB5057 | **keep+cite** — declining emits no `ReadLine`; the program reads nothing, silently |
+
+The nine orthogonal sites are untouched and correct by the criterion; two of
+them carry comments recording bugs they actually caught.
+
+**The second criterion, which this task did not anticipate:** *what does
+declining cost?* A duplicate is only removable when the fallback is a safe
+decline. Where `None` means "not a builtin" it is a measured catastrophe, and
+the panic is the only way to say "malformed". Cite the consequence, not the
+gate name.
+
+**Remaining:** the 87 structural ICE sites (exhaustiveness pins, totality
+markers, same-function-already-handled arms) were not in scope here and are
+governed by "Cold arms: ICE or answer?" in AGENTS.md.
+
+Status: **done** for the SB-citing cohort.

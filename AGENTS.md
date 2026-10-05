@@ -779,14 +779,47 @@ downcast when you want to loop over several shapes or assert on the message.
 `sash/src/transform/stmt_handlers.rs` and `sash/src/ir.rs` are the two worked
 examples.
 
-**Counting ICE tests: grep undercounts.** Measured 2026-10-04, `sash` has
-**80** unit tests of which **68 are ICE assertions** and 12 are ordinary —
-the 2026-10-04 redux deleted 30 rivals (every one of them already covered by a
-concrete spec id) and added two. A grep for `catch_unwind` inside test bodies
-undercounts, because some tests reach it through a shared helper
-(`stmt_handlers::ice_on`, `emit_c::ices`, `emit_c::empty_args_ice`), so any
-census has to resolve same-file helpers before it means anything — a census
+**Counting ICE tests: grep undercounts.** Measured 2026-10-05, `sash` has
+**81** unit tests of which **65 are ICE assertions** and 16 are ordinary. (It
+was 80/68/12 on 2026-10-04; the duplicate-backstop elimination below converted
+three ICE tests into ordinary ones and added one.) A grep for `catch_unwind`
+inside test bodies undercounts, because some tests reach it through a shared
+helper (`stmt_handlers::ice_on`, `emit_c::ices`, `emit_c::empty_args_ice`), so
+any census has to resolve same-file helpers before it means anything — a census
 written for this entry missed `empty_args_ice` and reported 66/14.
+
+**An ICE must catch a regression ORTHOGONALLY, or have no safe alternative.**
+(DG, 2026-10-05: *"if the backstop is essentially an identical test to the
+original then why is it more trustworthy; whereas if it has an orthogonal way
+to catch a problem, that is perhaps when it would be most valuable"*.) Two
+tests, applied in order:
+
+1. **Is it orthogonal?** The mechanical check is the ICE's own *parameter
+   type*. If the parameter still holds the exact AST the named rule inspected
+   (`&ExprKind`, `&Command`, `&[Expr]`) **and** that rule is a `validate.rs` /
+   `type_check.rs` gate, nothing happened in between: the panic is a second
+   copy of one assertion, no more trustworthy than the gate and free to drift
+   from the rule it quotes. If the parameter is `SsaValue` / `SsaInst` /
+   `&str` / a rendered `String`, **or** the named rule is a *parse* rule (so
+   the data went tokens → AST), it is orthogonal — it also covers bugs in the
+   lowering, which the gate structurally cannot see. Measured across all 107
+   ICE sites: only 20 name an SB rule at all, and of those 11 were duplicates.
+2. **If it is a duplicate, what does declining cost?** Prefer deleting the
+   panic — but only when `None`/the fallback is a *safe* answer. `detect_array_iter`'s
+   `None` routes to the word-list path the gate already vetted, so the four
+   guards went. `handle_argv`'s does not: `try_builtin` returns
+   `Option<BlockId>` where `None` means "not a builtin", so a declined builtin
+   compiles clean and dies at runtime with `sash: bug: bare command passed to
+   sash_exec` — measured, eight `argv` spellings reached it. There the panic is
+   the only way to say "malformed", and it stays. **Cite the consequence, not
+   the gate name**: a comment that only says "SB4045 guarantees this" is
+   restating the duplicate.
+
+A third outcome is often the best one: **the answer is knowable, so give it.**
+`len @a` / `join @a` ICE'd on a splat operand because `expr_to_string` is a
+*display* renderer that writes `@a` as `${aarrvals}`. But DD#100 Part D retired
+`@a` as an *exact synonym* of the bare name, so reading `pe.name` makes the
+general path correct and the arm disappears. See "Cold arms: ICE or answer?".
 
 **A unit test asserting behaviour a spec already pins is a rival — delete it.**
 The in-crate `#[cfg(test)]` modules were never covered by journal 304's redux
