@@ -702,11 +702,11 @@ pub(super) struct ArrayIter {
 /// Recognise the two for-in sources that iterate a collection: `@a` (the
 /// `arrvals` splat) and `$(keys m)`.
 ///
-/// DD#116: the `return None` guards below are a *backstop* with specification
-/// fidelity — "only `$(keys NAME)` iterates" is the rule itself, not a second
-/// opinion about it. Everything else in `$( … )` is one value (DD#28, SB5009),
-/// so falling through to `None` is this function stating the spec, and the
-/// shape of the guard is what makes that readable.
+/// The `$(keys m)` shape is spelled out once, in `ir::for_head_keys`, and read
+/// here. This function used to re-derive it with four `unreachable!` guards
+/// quoting SB5009 and SB4045 — a duplicate of the gate's own predicate over the
+/// same `ExprKind` the gate had already seen, which is the kind of backstop
+/// that cannot catch anything the gate would not have caught itself.
 ///
 /// Two arms were deleted here (2026-10-03) as DD#116 *rivals*: a
 /// `DoubleQuoted` arm that recursed, so `for v in "@a"` would have iterated,
@@ -723,34 +723,11 @@ fn detect_array_iter(kind: &ExprKind) -> Option<ArrayIter> {
             })
         }
         // Sash-native: $(keys arr) in for-loop → array key iteration (DD#41)
-        ExprKind::CommandSubstitution(stmts) if stmts.len() == 1 => {
-            // The three shapes below are unreachable from any accepted
-            // program: SB5009 restricts a single-statement `$( … )` in a
-            // for-loop head to exactly `$(keys NAME)`, so a non-command
-            // statement, a non-literal command name, and any literal other
-            // than `keys` are all rejected before transform (probed
-            // 2026-10-04: `$(if …)`, `$($c)`, `$(cat f)` — all SB5009).
-            //
-            // They were `return None` until 2026-10-04, which answered
-            // "this is not an array iteration" — a *classification*, and
-            // a silently wrong one if SB5009 ever narrows: the head would
-            // fall through to the word-list path and iterate the capture's
-            // bytes instead. An ICE is the regression guard for that.
-            let StmtKind::Command(c) = &stmts[0].kind else {
-                unreachable!("SB5009 restricts a for-head cmdsub to `$(keys NAME)`");
-            };
-            let ExprKind::Literal(cmd_name) = &c.name.kind else {
-                unreachable!("SB5009 restricts a for-head cmdsub to a literal `keys`");
-            };
-            if cmd_name != "keys" {
-                unreachable!("SB5009 rejects `$({cmd_name} …)` in a for-loop head");
-            }
+        ExprKind::CommandSubstitution(stmts) => {
             // `$(keys m)` has no splat to carry a modifier, so never vouched.
-            let Some(a) = c.args.first() else {
-                unreachable!("SB4045 rejects a zero-argument `keys`");
-            };
+            let map = crate::ir::for_head_keys(stmts)?;
             Some(ArrayIter {
-                name: expr_to_string(a),
+                name: expr_to_string(map),
                 use_keys: true,
                 vouched: false,
             })
@@ -1179,16 +1156,22 @@ mod invariant_tests {
     }
 
     /// Hand `detect_array_iter` the four for-head shapes SB5009 and SB4045
-    /// reject, and assert each one ICEs.
+    /// reject, and assert each is declined rather than mis-lowered.
     ///
-    /// These were `return None` — "this is not an array iteration" — until
-    /// 2026-10-04. That answer is only correct while the validator still
-    /// rejects the shape: if SB5009 ever narrowed, a `$(cat f)` head would
-    /// take the word-list path and iterate the capture's bytes instead of
-    /// failing. The panic is the regression guard for that; the validator
-    /// remains the defense. A test that stops panicking is the finding.
+    /// These ICE'd between 2026-10-04 and 2026-10-05, on the reasoning that a
+    /// `return None` would be silently wrong if SB5009 narrowed. The panics
+    /// went because they re-asked SB5009's own question about the same
+    /// `ExprKind` SB5009 had already inspected — a duplicate predicate, free to
+    /// drift from the rule it quoted and unable to catch anything the gate
+    /// would not have caught itself.
+    ///
+    /// What this asserts now is the property that actually matters, and the one
+    /// the ICEs were reaching for: an unrecognised substitution body is **not**
+    /// mistaken for a collection. Declining it routes the head to the word-list
+    /// path, which SB5009 has already vetted. No spec can make this assertion,
+    /// because every shape here is rejected before transform runs.
     #[test]
-    fn a_for_head_cmdsub_that_is_not_keys_ices() {
+    fn a_for_head_cmdsub_that_is_not_keys_is_declined() {
         let non_command = ExprKind::CommandSubstitution(vec![Statement {
             kind: StmtKind::Suppressed(Box::new(Statement::true_cmd(sp()))),
             span: sp(),
@@ -1211,18 +1194,29 @@ mod invariant_tests {
             vec![],
             sp(),
         )]);
+        let two_statements = ExprKind::CommandSubstitution(vec![
+            Statement::command(
+                Expr::literal("cat", sp()),
+                vec![Expr::literal("f", sp())],
+                sp(),
+            ),
+            Statement::command(
+                Expr::literal("keys", sp()),
+                vec![Expr::literal("m", sp())],
+                sp(),
+            ),
+        ]);
 
         for (what, kind) in [
             ("a non-command statement (SB5009)", non_command),
             ("a non-literal command name (SB5009)", non_literal_head),
             ("a literal that is not `keys` (SB5009)", not_keys),
             ("a zero-argument `keys` (SB4045)", keys_no_args),
+            ("`keys` among several statements (SB5073)", two_statements),
         ] {
-            let r =
-                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| detect_array_iter(&kind)));
             assert!(
-                r.is_err(),
-                "{what} must ICE, not classify as `not an array iteration`"
+                detect_array_iter(&kind).is_none(),
+                "{what} must be declined, not lowered as a collection"
             );
         }
     }

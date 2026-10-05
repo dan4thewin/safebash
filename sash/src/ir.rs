@@ -418,6 +418,39 @@ pub fn literal_word_text(expr: &Expr) -> Option<String> {
     }
 }
 
+/// The one definition of a for-head `$( … )` that iterates a collection:
+/// exactly `$(keys NAME)`. Yields the map argument, or `None` for every other
+/// substitution body.
+///
+/// This exists so the transform **reads** the shape instead of re-deriving it.
+/// It used to re-derive it, as four `let … else { unreachable!() }` guards that
+/// re-asked SB5009's own question about the very same `ExprKind` SB5009 had
+/// already inspected — a second copy of one assertion, which is not a backstop
+/// (DG, 2026-10-05: a backstop earns its place only when it catches the problem
+/// *orthogonally*; one that re-asks the gate's question on unchanged data is no
+/// more trustworthy than the gate). The duplicate predicate was also free to
+/// drift from the rule it quoted.
+///
+/// `None` is an ordinary answer, not a silent wrong one: it is the same `None`
+/// every non-collection for-in word yields, and it routes to the word-list path
+/// that SB5009 has already vetted. The bodies this rejects do not reach here —
+/// `$(cat f; keys m)` and `$(keys m; keys m)` are SB5073, `$(keys)` is SB4045
+/// (probed 2026-10-05) — and if one ever did, it would be iterated as words
+/// rather than mis-lowered as a collection.
+pub fn for_head_keys(stmts: &[Statement]) -> Option<&Expr> {
+    let [stmt] = stmts else { return None };
+    let StmtKind::Command(c) = &stmt.kind else {
+        return None;
+    };
+    let ExprKind::Literal(name) = &c.name.kind else {
+        return None;
+    };
+    if name != "keys" {
+        return None;
+    }
+    c.args.first()
+}
+
 /// Walk an expression tree, visiting the node and all sub-expressions.
 ///
 /// **Stops at a `$( … )`**: the node is visited, its body is not. DD#86 makes

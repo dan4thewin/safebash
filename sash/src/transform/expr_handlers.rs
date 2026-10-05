@@ -393,6 +393,34 @@ fn try_strlen_intrinsic(c: &Command, state: &VersionState) -> Option<SsaValue> {
     })
 }
 
+/// The collection NAME a `len` / `join` operand denotes.
+///
+/// `expr_to_string` is a *display* renderer, so reading a name out of it is
+/// only correct for the literal word that validate guarantees. The splat arm
+/// is the case where that is not true: it renders `@a` as `${aarrvals}`, which
+/// strips to `{aarrvals}` and matches nothing — `len @a` would emit a `strlen`
+/// of an undefined var (a silent 0 where the element count belongs) and
+/// `join @a SEP` a silent empty join.
+///
+/// Both sites guarded that with an `unreachable!` citing SB5062, which rejects
+/// a splat operand since DD#100 Part D. Those were duplicates of SB5062's own
+/// question about the same `ExprKind` SB5062 had already inspected, so they
+/// could not catch a drift the gate would not have caught first. The answer is
+/// knowable instead: DD#100 Part D retired `@a` as an *exact synonym* of the
+/// bare name, so the name is `pe.name` and the general path then does the right
+/// thing (`state.collections` holds `a`, so `len` yields `arrlen`).
+fn collection_operand_name(expr: &Expr) -> String {
+    match &expr.kind {
+        ExprKind::ParameterExpansion(pe) if pe.operator.as_deref() == Some("arrvals") => {
+            pe.name.clone()
+        }
+        _ => {
+            let s = expr_to_string(expr);
+            s.strip_prefix('$').unwrap_or(&s).to_string()
+        }
+    }
+}
+
 fn try_len_intrinsic(c: &Command, state: &VersionState) -> Option<SsaValue> {
     // DD#75 §2: dispatch on the operand's TYPE, not the `$` sigil. This
     // retires the old `len a` vs `len $a` syntactic split that made
@@ -408,24 +436,7 @@ fn try_len_intrinsic(c: &Command, state: &VersionState) -> Option<SsaValue> {
     // is the DD#58 arithmetic sexpr `(len s)`, where a string operand is
     // allowed and does yield its byte length.
     let arg = c.args.first()?;
-    let name = match &arg.kind {
-        // INVARIANT: DD#100 Part D removed the splat operand — `len @a` is
-        // SB5062 before transform, so this arm is unreachable from any
-        // accepted program. Kept as a loud guard because the fallback below
-        // does not degrade safely: `expr_to_string` renders a parameter
-        // expansion as `${NAME}{OP}`, so `@a` becomes the string
-        // `"${aarrvals}"`, strips to `"{aarrvals}"`, misses
-        // `state.collections` (which holds `"a"`), and emits **`strlen` of an
-        // undefined var** — a silent 0 where the element count belongs.
-        // Measured, not assumed; see the unit test below.
-        ExprKind::ParameterExpansion(pe) if pe.operator.as_deref() == Some("arrvals") => {
-            unreachable!("len splat operand guaranteed rejected by validate (SB5062)");
-        }
-        _ => {
-            let s = expr_to_string(arg);
-            s.strip_prefix('$').unwrap_or(&s).to_string()
-        }
-    };
+    let name = collection_operand_name(arg);
     // DD#75 §5: a user-written `args` names the implicit per-function array.
     let name = super::expressions::resolve_args_name(&name, state);
     let v = state.lookup(&name);
@@ -462,20 +473,9 @@ fn join_intrinsic(c: &Command, state: &VersionState) -> SsaValue {
         // >2-arg) `$(join …)` before transform, so this is unreachable.
         unreachable!("join arity guaranteed by validate::check_join_arity");
     };
-    // The array arg is a bare NAME. It used to be able to be `@arr`
-    // (ParameterExpansion/arrvals), but DD#100 Part D removed the splat
-    // operand as an exact synonym of the bare-name form. The fallback is
-    // therefore correct only for a literal word.
-    let arr_name = match &arr_expr.kind {
-        // INVARIANT: `join @a SEP` is SB5062 before transform. Guarded loudly
-        // for the same reason as the separator above: the fallback renders
-        // the expansion as `"${aarrvals}"` and joins *that* name, which no
-        // program can have declared — a silent empty join, not a crash.
-        ExprKind::ParameterExpansion(pe) if pe.operator.as_deref() == Some("arrvals") => {
-            unreachable!("join splat operand guaranteed rejected by validate (SB5062)");
-        }
-        _ => expr_to_string(arr_expr),
-    };
+    // The array arg is a bare NAME, or the `@a` synonym DD#100 Part D retired
+    // (SB5062); `collection_operand_name` reads both.
+    let arr_name = collection_operand_name(arr_expr);
     let arr_name = super::expressions::resolve_args_name(&arr_name, state);
     let v = state.lookup(&arr_name);
     SsaValue::ParamExpansion {
@@ -1047,37 +1047,63 @@ mod tests {
             .expect("ICE payload is a string")
     }
 
+    /// A splat operand is SB5062 before transform, so no program reaches these
+    /// paths — but the arm that used to `unreachable!` here was a duplicate of
+    /// SB5062's own question about the same `ExprKind` SB5062 had inspected,
+    /// and could not catch a drift the gate would not catch first.
+    ///
+    /// What is worth pinning is that the name is read *correctly*. Reading it
+    /// off `expr_to_string` (a display renderer) yields `{aarrvals}`, which
+    /// matches no declared collection: `len @a` would emit a `strlen` of an
+    /// undefined var — a silent 0 where the element count belongs — and
+    /// `join @a ,` a silent empty join. `@a` was an exact synonym of `a`
+    /// (DD#100 Part D), so `a` is the answer, and these assert the general
+    /// path then reaches it.
     #[test]
-    fn len_splat_operand_is_a_loud_ice() {
+    fn a_splat_operand_resolves_to_the_bare_collection_name() {
+        assert_eq!(collection_operand_name(&splat_arg("a")), "a");
+        assert_eq!(collection_operand_name(&lit("a")), "a");
+    }
+
+    #[test]
+    fn len_of_a_splat_operand_counts_the_collection() {
         let c = Command {
             name: lit("len"),
             args: vec![splat_arg("a")],
         };
-        let st = state();
-        let caught =
-            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| try_len_intrinsic(&c, &st)));
-        let err = caught.expect_err("a splat operand reaching try_len_intrinsic must ICE");
-        let msg = ice_text(&err);
-        assert!(
-            msg.contains("SB5062"),
-            "the ICE must name the validation rule that guarantees it: {msg}"
+        let mut st = state();
+        st.collections.insert("a".to_string());
+        let v = try_len_intrinsic(&c, &st).expect("`len` yields a value");
+        let SsaValue::ParamExpansion { operator, .. } = v else {
+            panic!("`len` lowers to a parameter expansion");
+        };
+        assert_eq!(
+            operator, "arrlen",
+            "a splat operand must count elements, not strlen an undefined var"
         );
     }
 
     #[test]
-    fn join_splat_operand_is_a_loud_ice() {
+    fn join_of_a_splat_operand_names_the_collection() {
         let c = Command {
             name: lit("join"),
             args: vec![splat_arg("a"), lit(",")],
         };
-        let st = state();
-        let caught =
-            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| join_intrinsic(&c, &st)));
-        let err = caught.expect_err("a splat operand reaching join_intrinsic must ICE");
-        let msg = ice_text(&err);
-        assert!(
-            msg.contains("SB5062"),
-            "the ICE must name the validation rule that guarantees it: {msg}"
+        let mut st = state();
+        st.collections.insert("a".to_string());
+        let SsaValue::ParamExpansion {
+            var,
+            operator,
+            operand,
+        } = join_intrinsic(&c, &st)
+        else {
+            panic!("`join` lowers to a parameter expansion");
+        };
+        assert_eq!(operator, "arrjoin");
+        assert_eq!(operand, ",");
+        assert_eq!(
+            var.name, "a",
+            "a splat operand must join the collection `a`, not `{{aarrvals}}`"
         );
     }
 
