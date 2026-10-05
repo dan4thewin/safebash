@@ -641,6 +641,19 @@ renders the same sentence a literal grep will never find, so a passing spec
 that asserts the message can belong to an entirely different renderer. That is
 exactly what hid `check_scalar_assignment`'s cold arm (journal 397).
 
+**A diagnostic CODE is not a site, and `$err == *SB4014*` does not pin one.**
+`SB4014` is raised at **eleven** places in `parse/`; `SB4020` at several. A
+spec asserting the bare code passes if *any* of them fires, so "chk 93.19
+covers this arm" was a conclusion about the wrong site — the arm was cold the
+whole time, and a unit test was retired against that non-evidence (journal
+475). Before accepting a spec as cover for a specific line, check how many
+sites share the code (`grep -rn '"SB4014"' sash/src/`); if more than one,
+the spec must assert the distinguishing **message text**, not the code. The
+same reasoning applies to a unit test offered as cover: `atok_to_text`'s
+40-arm test asserted the renderer in isolation and would have passed while
+the call site formatted with `{:?}` — which *was* the original bug. Prefer
+the spec that reads the message the user actually gets.
+
 **The fastest reachability probe is to make the arm `panic!` and rebuild — but
 a negative result needs a positive control.** `cargo build` can no-op, a patch
 can fail to apply, and a `grep` for the marker can swallow it; all three look

@@ -1,3 +1,32 @@
+## ══ STATUS (2026-10-05, latest) — the code was not the site ══
+
+Coverage re-measured at `d3cd57f` (the previous db was stale in 12 of 39
+files): **98.16% lines**, 98.86% functions, 92.03% branches, 474 cold lines.
+
+**The ranking's top entry was my own deletion.** `atok_to_text` had 40 cold
+arms because yesterday's redux retired the test that warmed them, and the
+"rival" verdict was wrong — no spec asserts the token *spelling*, which is the
+only reason the renderer exists. Restoring the test would have been the wrong
+repair too: it calls the renderer directly, so it would have passed while the
+call site formatted with `{:?}`, which *was* the original bug. **32 new specs
+(31.141–31.172)** assert the message end to end instead. The other 16 arms can
+never be the "found" token and are totality arms.
+
+**A diagnostic code is not a site.** `SB4014` is raised at 11 places; chk 93.19
+asserts the bare code and fires a different one, so "93.19 covers this arm" was
+a conclusion about the wrong function. Now an explicit AGENTS.md rule: if more
+than one site shares the code, the spec must assert the distinguishing message.
+
+Swept the rest mechanically — of every function the 30 deleted tests called,
+only three have cold lines now, and two are accounted for above.
+
+Sweep **7751** (+64, exactly predicted), 0 failing, 0 flips, 64 new ids.
+
+**Open for DG:** the `expr_to_string` family (19 cold lines) is
+validate-shadowed — called 20891 times, always `Literal`; `len "$s"`→SB5062,
+`join "$a"`/`keys "$m"`→SB4064, `read "v"`→SB5057. No spec can warm it, and it
+is a *diagnostic* renderer, so ICE-ing it means panicking on the error path.
+
 ## ══ STATUS (2026-10-04, latest) — the arm that looked live ══
 
 `mk test` rc=0 (**80** + 27 + 20), fmt/totality/complexity clean. Sweep

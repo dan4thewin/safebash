@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup arithmetic
-plan=371
+plan=403
 echo "1..$plan" >&3
 
 set +e
@@ -2046,6 +2046,111 @@ echo $(( (status) ))'
 run_sash '(( 0 ))
 echo "$(( $? )) $(( (status) ))"'
 [[ $rc = 0 && $out = "1 1" && -z $err ]]; chk as.8
+
+
+# ── SB4020 names the token the user WROTE (atok_to_text) ────────────────────
+# 31.43 above asserts only that the message says "operand"; it would pass just
+# as happily on `found Amp`, which is the bug atok_to_text was written to fix
+# (an internal variant name shown for a character the user typed). These pin
+# the rendering itself, one spelling per arm, end to end through the real
+# diagnostic — a unit test on the renderer cannot, because it would still pass
+# if the call site went back to formatting the token with `{:?}`.
+# 31.141 the operand diagnostic spells `**` as written
+run_sash 'echo "$(( ** 1 ))"'
+[[ $rc != 0 && -z $out && $err == *'found `**`'* ]]; chk 31.141
+# 31.142 the operand diagnostic spells `<<` as written
+run_sash 'echo "$(( << 1 ))"'
+[[ $rc != 0 && -z $out && $err == *'found `<<`'* ]]; chk 31.142
+# 31.143 the operand diagnostic spells `>>` as written
+run_sash 'echo "$(( >> 1 ))"'
+[[ $rc != 0 && -z $out && $err == *'found `>>`'* ]]; chk 31.143
+# 31.144 the operand diagnostic spells `<=` as written
+run_sash 'echo "$(( <= 1 ))"'
+[[ $rc != 0 && -z $out && $err == *'found `<=`'* ]]; chk 31.144
+# 31.145 the operand diagnostic spells `>=` as written
+run_sash 'echo "$(( >= 1 ))"'
+[[ $rc != 0 && -z $out && $err == *'found `>=`'* ]]; chk 31.145
+# 31.146 the operand diagnostic spells `==` as written
+run_sash 'echo "$(( == 1 ))"'
+[[ $rc != 0 && -z $out && $err == *'found `==`'* ]]; chk 31.146
+# 31.147 the operand diagnostic spells `!=` as written
+run_sash 'echo "$(( != 1 ))"'
+[[ $rc != 0 && -z $out && $err == *'found `!=`'* ]]; chk 31.147
+# 31.148 the operand diagnostic spells `&&` as written
+run_sash 'echo "$(( && 1 ))"'
+[[ $rc != 0 && -z $out && $err == *'found `&&`'* ]]; chk 31.148
+# 31.149 the operand diagnostic spells `||` as written
+run_sash 'echo "$(( || 1 ))"'
+[[ $rc != 0 && -z $out && $err == *'found `||`'* ]]; chk 31.149
+# 31.150 the operand diagnostic spells `+=` as written
+run_sash 'echo "$(( += 1 ))"'
+[[ $rc != 0 && -z $out && $err == *'found `+=`'* ]]; chk 31.150
+# 31.151 the operand diagnostic spells `-=` as written
+run_sash 'echo "$(( -= 1 ))"'
+[[ $rc != 0 && -z $out && $err == *'found `-=`'* ]]; chk 31.151
+# 31.152 the operand diagnostic spells `*=` as written
+run_sash 'echo "$(( *= 1 ))"'
+[[ $rc != 0 && -z $out && $err == *'found `*=`'* ]]; chk 31.152
+# 31.153 the operand diagnostic spells `/=` as written
+run_sash 'echo "$(( /= 1 ))"'
+[[ $rc != 0 && -z $out && $err == *'found `/=`'* ]]; chk 31.153
+# 31.154 the operand diagnostic spells `%=` as written
+run_sash 'echo "$(( %= 1 ))"'
+[[ $rc != 0 && -z $out && $err == *'found `%=`'* ]]; chk 31.154
+# 31.155 the operand diagnostic spells `&=` as written
+run_sash 'echo "$(( &= 1 ))"'
+[[ $rc != 0 && -z $out && $err == *'found `&=`'* ]]; chk 31.155
+# 31.156 the operand diagnostic spells `|=` as written
+run_sash 'echo "$(( |= 1 ))"'
+[[ $rc != 0 && -z $out && $err == *'found `|=`'* ]]; chk 31.156
+# 31.157 the operand diagnostic spells `^=` as written
+run_sash 'echo "$(( ^= 1 ))"'
+[[ $rc != 0 && -z $out && $err == *'found `^=`'* ]]; chk 31.157
+# 31.158 the operand diagnostic spells `<<=` as written
+run_sash 'echo "$(( <<= 1 ))"'
+[[ $rc != 0 && -z $out && $err == *'found `<<=`'* ]]; chk 31.158
+# 31.159 the operand diagnostic spells `>>=` as written
+run_sash 'echo "$(( >>= 1 ))"'
+[[ $rc != 0 && -z $out && $err == *'found `>>=`'* ]]; chk 31.159
+# 31.160 the operand diagnostic spells `*` as written
+run_sash 'echo "$(( * 1 ))"'
+[[ $rc != 0 && -z $out && $err == *'found `*`'* ]]; chk 31.160
+# 31.161 the operand diagnostic spells `/` as written
+run_sash 'echo "$(( / 1 ))"'
+[[ $rc != 0 && -z $out && $err == *'found `/`'* ]]; chk 31.161
+# 31.162 the operand diagnostic spells `%` as written
+run_sash 'echo "$(( % 1 ))"'
+[[ $rc != 0 && -z $out && $err == *'found `%`'* ]]; chk 31.162
+# 31.163 the operand diagnostic spells `<` as written
+run_sash 'echo "$(( < 1 ))"'
+[[ $rc != 0 && -z $out && $err == *'found `<`'* ]]; chk 31.163
+# 31.164 the operand diagnostic spells `>` as written
+run_sash 'echo "$(( > 1 ))"'
+[[ $rc != 0 && -z $out && $err == *'found `>`'* ]]; chk 31.164
+# 31.165 the operand diagnostic spells `&` as written
+run_sash 'echo "$(( & 1 ))"'
+[[ $rc != 0 && -z $out && $err == *'found `&`'* ]]; chk 31.165
+# 31.166 the operand diagnostic spells `|` as written
+run_sash 'echo "$(( | 1 ))"'
+[[ $rc != 0 && -z $out && $err == *'found `|`'* ]]; chk 31.166
+# 31.167 the operand diagnostic spells `^` as written
+run_sash 'echo "$(( ^ 1 ))"'
+[[ $rc != 0 && -z $out && $err == *'found `^`'* ]]; chk 31.167
+# 31.168 the operand diagnostic spells `=` as written
+run_sash 'echo "$(( = 1 ))"'
+[[ $rc != 0 && -z $out && $err == *'found `=`'* ]]; chk 31.168
+# 31.169 the operand diagnostic spells `?` as written
+run_sash 'echo "$(( ? 1 ))"'
+[[ $rc != 0 && -z $out && $err == *'found `?`'* ]]; chk 31.169
+# 31.170 the operand diagnostic spells `:` as written
+run_sash 'echo "$(( : 1 ))"'
+[[ $rc != 0 && -z $out && $err == *'found `:`'* ]]; chk 31.170
+# 31.171 the operand diagnostic spells `,` as written
+run_sash 'echo "$(( , 1 ))"'
+[[ $rc != 0 && -z $out && $err == *'found `,`'* ]]; chk 31.171
+# 31.172 the operand diagnostic spells `)` as written
+run_sash 'echo "$(( ) 1 ))"'
+[[ $rc != 0 && -z $out && $err == *'found `)`'* ]]; chk 31.172
 
 set -e
 tally
