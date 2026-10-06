@@ -395,30 +395,24 @@ fn try_strlen_intrinsic(c: &Command, state: &VersionState) -> Option<SsaValue> {
 
 /// The collection NAME a `len` / `join` operand denotes.
 ///
-/// `expr_to_string` is a *display* renderer, so reading a name out of it is
-/// only correct for the literal word that validate guarantees. The splat arm
-/// is the case where that is not true: it renders `@a` as `${aarrvals}`, which
-/// strips to `{aarrvals}` and matches nothing — `len @a` would emit a `strlen`
-/// of an undefined var (a silent 0 where the element count belongs) and
-/// `join @a SEP` a silent empty join.
+/// Validate has already fixed the operand to a bare name — every other
+/// spelling is rejected, and measured: `len @a`, `join @a ,`, `len @args`,
+/// `len @{a:-}`, `len "$s"` and `join $a ,` are SB5062, `len $a` is SB5064.
+/// So this reads the name off `expr_to_string` and strips the sigil.
 ///
-/// Both sites guarded that with an `unreachable!` citing SB5062, which rejects
-/// a splat operand since DD#100 Part D. Those were duplicates of SB5062's own
-/// question about the same `ExprKind` SB5062 had already inspected, so they
-/// could not catch a drift the gate would not have caught first. The answer is
-/// knowable instead: DD#100 Part D retired `@a` as an *exact synonym* of the
-/// bare name, so the name is `pe.name` and the general path then does the right
-/// thing (`state.collections` holds `a`, so `len` yields `arrlen`).
+/// **There is deliberately no arm for the `@a` splat.** Both call sites used
+/// to carry one, as an `unreachable!` citing SB5062 — a duplicate of SB5062's
+/// own question about the same `ExprKind` SB5062 had already inspected, which
+/// cannot catch a drift the gate would not catch first. Giving it the correct
+/// answer instead (`pe.name`, since DD#100 Part D retired `@a` as an exact
+/// synonym of the bare name) was no better: the arm stayed unreachable, and an
+/// arm handling a rejected spelling tells the next reader that spelling is
+/// legitimate (DG, 2026-10-06). The fallback would render `@a` as
+/// `${aarrvals}` → `{aarrvals}`, which matches no declared collection; that is
+/// unreachable too, and SB5062 is where it is said.
 fn collection_operand_name(expr: &Expr) -> String {
-    match &expr.kind {
-        ExprKind::ParameterExpansion(pe) if pe.operator.as_deref() == Some("arrvals") => {
-            pe.name.clone()
-        }
-        _ => {
-            let s = expr_to_string(expr);
-            s.strip_prefix('$').unwrap_or(&s).to_string()
-        }
-    }
+    let s = expr_to_string(expr);
+    s.strip_prefix('$').unwrap_or(&s).to_string()
 }
 
 fn try_len_intrinsic(c: &Command, state: &VersionState) -> Option<SsaValue> {
@@ -1010,20 +1004,7 @@ pub(crate) fn fold_arith_op(l: i64, r: i64, op: ArithOp) -> Option<i64> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ir::{ParameterExpansion, Span};
-
-    fn splat_arg(name: &str) -> Expr {
-        Expr {
-            kind: ExprKind::ParameterExpansion(ParameterExpansion {
-                name: name.to_string(),
-                operator: Some("arrvals".to_string()),
-                operand: None,
-                index: None,
-                taint_off: false,
-            }),
-            span: Span::new(1, 1),
-        }
-    }
+    use crate::ir::Span;
 
     fn lit(s: &str) -> Expr {
         Expr {
@@ -1047,65 +1028,11 @@ mod tests {
             .expect("ICE payload is a string")
     }
 
-    /// A splat operand is SB5062 before transform, so no program reaches these
-    /// paths — but the arm that used to `unreachable!` here was a duplicate of
-    /// SB5062's own question about the same `ExprKind` SB5062 had inspected,
-    /// and could not catch a drift the gate would not catch first.
-    ///
-    /// What is worth pinning is that the name is read *correctly*. Reading it
-    /// off `expr_to_string` (a display renderer) yields `{aarrvals}`, which
-    /// matches no declared collection: `len @a` would emit a `strlen` of an
-    /// undefined var — a silent 0 where the element count belongs — and
-    /// `join @a ,` a silent empty join. `@a` was an exact synonym of `a`
-    /// (DD#100 Part D), so `a` is the answer, and these assert the general
-    /// path then reaches it.
-    #[test]
-    fn a_splat_operand_resolves_to_the_bare_collection_name() {
-        assert_eq!(collection_operand_name(&splat_arg("a")), "a");
-        assert_eq!(collection_operand_name(&lit("a")), "a");
-    }
-
-    #[test]
-    fn len_of_a_splat_operand_counts_the_collection() {
-        let c = Command {
-            name: lit("len"),
-            args: vec![splat_arg("a")],
-        };
-        let mut st = state();
-        st.collections.insert("a".to_string());
-        let v = try_len_intrinsic(&c, &st).expect("`len` yields a value");
-        let SsaValue::ParamExpansion { operator, .. } = v else {
-            panic!("`len` lowers to a parameter expansion");
-        };
-        assert_eq!(
-            operator, "arrlen",
-            "a splat operand must count elements, not strlen an undefined var"
-        );
-    }
-
-    #[test]
-    fn join_of_a_splat_operand_names_the_collection() {
-        let c = Command {
-            name: lit("join"),
-            args: vec![splat_arg("a"), lit(",")],
-        };
-        let mut st = state();
-        st.collections.insert("a".to_string());
-        let SsaValue::ParamExpansion {
-            var,
-            operator,
-            operand,
-        } = join_intrinsic(&c, &st)
-        else {
-            panic!("`join` lowers to a parameter expansion");
-        };
-        assert_eq!(operator, "arrjoin");
-        assert_eq!(operand, ",");
-        assert_eq!(
-            var.name, "a",
-            "a splat operand must join the collection `a`, not `{{aarrvals}}`"
-        );
-    }
+    // A splat operand is SB5062 before transform (measured 2026-10-06:
+    // `len @a`, `join @a ,`, `len @args`, `len @{a:-}`, `len @{a:~}` and
+    // `"$(len @a)"` all raise it, at the one site that raises it). Both
+    // handlers used to carry an arm for it; there is deliberately none now,
+    // so there is nothing here to assert. See `collection_operand_name`.
 
     /// `$(join a "$sep")`. SB5074 rejects a non-literal separator; the
     /// predecessor of this guard fell back to the argument's *source text*
