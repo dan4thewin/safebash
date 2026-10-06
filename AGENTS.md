@@ -780,9 +780,10 @@ downcast when you want to loop over several shapes or assert on the message.
 examples.
 
 **Counting ICE tests: grep undercounts.** Measured 2026-10-05, `sash` has
-**81** unit tests of which **65 are ICE assertions** and 16 are ordinary. (It
-was 80/68/12 on 2026-10-04; the duplicate-backstop elimination below converted
-three ICE tests into ordinary ones and added one.) A grep for `catch_unwind`
+**78** unit tests of which **65 are ICE assertions** and 13 are ordinary. (It
+was 80/68/12 on 2026-10-04; the duplicate-backstop elimination below retired
+three ICE tests, and the three ordinary ones written to replace them were
+deleted in turn when their arm was.) A grep for `catch_unwind`
 inside test bodies undercounts, because some tests reach it through a shared
 helper (`stmt_handlers::ice_on`, `emit_c::ices`, `emit_c::empty_args_ice`), so
 any census has to resolve same-file helpers before it means anything — a census
@@ -815,11 +816,17 @@ tests, applied in order:
    the gate name**: a comment that only says "SB4045 guarantees this" is
    restating the duplicate.
 
-A third outcome is often the best one: **the answer is knowable, so give it.**
-`len @a` / `join @a` ICE'd on a splat operand because `expr_to_string` is a
-*display* renderer that writes `@a` as `${aarrvals}`. But DD#100 Part D retired
-`@a` as an *exact synonym* of the bare name, so reading `pe.name` makes the
-general path correct and the arm disappears. See "Cold arms: ICE or answer?".
+A third outcome exists — **the answer is knowable, so give it** — but it only
+applies when the arm becomes *reachable*. `len @a` / `join @a` ICE'd on a splat
+operand; replacing the panic with the correct answer (`pe.name`, since DD#100
+Part D retired `@a` as an exact synonym of the bare name) removed the duplicate
+assertion but left the arm unreachable, because SB5062 rejects every splat
+spelling. **DG rejected that (2026-10-06): an unreachable arm handling a
+rejected spelling is worse than either option, because it documents the
+spelling as supported.** The arm was deleted outright. Reach for "give it the
+answer" only where something can actually arrive; otherwise delete, and let the
+gate's diagnostic be the single place the rule is stated. See "Cold arms: ICE
+or answer?".
 
 **A unit test asserting behaviour a spec already pins is a rival — delete it.**
 The in-crate `#[cfg(test)]` modules were never covered by journal 304's redux

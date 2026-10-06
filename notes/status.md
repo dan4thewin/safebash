@@ -16,13 +16,16 @@ still holds the AST the gate inspected + gate is in `validate.rs` → duplicate
 orthogonal.** Two of the orthogonal ones carry comments recording real bugs
 they caught — criterion and history agree.
 
-**Six removed** (`50ab2f2`). `detect_array_iter`'s four re-derived SB5009's
-predicate by hand; the shape is now spelled out once as `ir::for_head_keys` and
-read with `?`. `len @a` / `join @a` got the *correct arm* instead of a panic:
-they guarded a real breakage (`expr_to_string` is a display renderer, so `@a`
-became `{aarrvals}` → a silent 0 / empty join) but DD#100 Part D made `@a` an
-exact synonym of the bare name, so `pe.name` is the answer and the general path
-then works.
+**Six removed** (`50ab2f2`, `6a44932`). `detect_array_iter`'s four re-derived
+SB5009's predicate by hand; the shape is now spelled out once as
+`ir::for_head_keys` and read with `?`. `len @a` / `join @a` first got the
+*correct arm* instead of a panic — then DG had the arm deleted outright:
+**"delete - it risks a reader mistaking the spelling as legitimate"**. Removing
+the duplicate assertion had left the arm unreachable, and an unreachable arm
+handling a rejected spelling reads as *support* for it. Measured before
+deleting (I had been asserting it from a doc comment): every splat spelling is
+SB5062 at the one site that raises it, `len $a` is SB5064, bare forms compile.
+`collection_operand_name` is now the bare read.
 
 **Five kept, on a second criterion: what does declining cost?** `handle_argv`
 ×2, `handle_keys`, `readline_target` ×2 are duplicates by the parameter test,
@@ -32,9 +35,13 @@ clean and dies at runtime with `sash: bug: bare command passed to sash_exec`
 panic stays. The sites that survived are exactly the three that already
 documented a *measured* consequence rather than just naming a gate.
 
-Sweep **7751**, predicted before running; 0 failing, 0 flips, 0 new ids,
-self-test 248. `mk test` 81 + 27 + 20. Census re-measured: **81 tests, 65 ICE,
-16 ordinary** (was 80/68/12). Journal 476.
+**The refined rule:** *"the answer is knowable, so give it"* applies only when
+the arm becomes **reachable**. Where the gate rejects every spelling, delete,
+and let the diagnostic be the one place the rule is stated.
+
+Sweep **7751**, predicted before running, twice; 0 failing, 0 flips, 0 new ids,
+self-test 248. `mk test` rc=0 (78 + 27 + 20). Census re-measured: **78 tests,
+65 ICE, 13 ordinary** (was 80/68/12). Journal 476.
 
 **Settled, no longer open for DG:** `expr_to_string`'s 19 cold lines and
 `from_arith`'s 5 are **not** backstops — they return the correct rendering and
@@ -14969,7 +14976,7 @@ modified: 2026-06-07
 
 ## Spec status: 7738 passing / 0 failing of 7751 (spec.db @ fffc23f)
 
-_Regenerated 2026-10-05 by `mk status`. Edits inside this block will be
+_Regenerated 2026-10-06 by `mk status`. Edits inside this block will be
 overwritten; edit outside the BEGIN/END markers._
 <!-- END: mk-status -->
 

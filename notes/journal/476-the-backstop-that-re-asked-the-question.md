@@ -128,4 +128,48 @@ resolves to the bare name so `len` counts elements and `join` names the
 collection. No spec can make those assertions; every shape involved is
 rejected before transform runs.
 
-Commit `50ab2f2`.
+Commits `50ab2f2`, `6a44932`.
+
+## Correction, same day — the answer nobody could ask for
+
+DG asked the obvious verification question I had not asked myself: *"len @a and
+join @a are SB5062, yes?"* I had asserted it from the doc comments. Measured,
+it holds — every spelling is rejected, at the single site that raises SB5062
+(`validate.rs:8833`): `len @a`, `join @a ,`, `len @args`, `join @args ,`,
+`len @{a:-}`, `len @{a:~}`, `"$(len @a)"` and `join $a ,`; `len $a` is SB5064;
+the bare forms compile. That also retroactively justified unifying the two call
+sites, which had differed — `len` stripped the `$` sigil and `join` did not.
+Neither can see a sigil at all.
+
+But confirming it exposed that "give it the correct answer" had not actually
+satisfied DG's rule. The arm stopped being a duplicate assertion and stayed
+**unreachable**. By his own criterion it had not earned its line either, and he
+named a cost I had missed:
+
+> delete - it risks a reader mistaking the spelling as legitimate
+
+That is the sharper point, and it is about the *reader*, not the compiler. A
+panic at least reads as "this cannot happen". An arm that quietly handles `@a`
+reads as **support for `@a`**, which is false, and the next person to touch the
+function inherits the false belief. So the arm is gone;
+`collection_operand_name` is the bare read, with a doc comment recording why
+there is deliberately no splat case and what was measured.
+
+The three unit tests written to pin the "correct answer" went with it, along
+with their fixture and import. Nothing replaces them: the behaviour is pinned
+by the specs for `len a` / `join a ,`, and a unit test for the rejected
+spelling would assert SB5062 — the duplicate this whole thread started as.
+
+**The refined rule:** *"the answer is knowable, so give it"* applies only when
+the arm becomes **reachable**. Where the gate rejects every spelling, delete,
+and let the diagnostic be the one place the rule is stated.
+
+There is a methodological point too. I wrote "SB5062 rejects it" three times —
+in a commit message, a journal entry and an AGENTS.md rule — on the strength of
+a doc comment I had read, and it took DG asking to turn that into a probe. The
+claim happened to be true. It was still unverified when I shipped it, and the
+cheap check that settled it took one minute.
+
+Gates after: `mk test` rc=0 (78 + 27 + 20), sweep **7751** again as predicted,
+0 failing, 0 flips, 0 new ids, self-test 248. Census now **78 tests, 65 ICE,
+13 ordinary**.

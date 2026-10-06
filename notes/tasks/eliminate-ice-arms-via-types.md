@@ -171,8 +171,8 @@ Per-site decisions, as the gates require:
 | site | rule | decision |
 |---|---|---|
 | `control_flow.rs` ×4 (`detect_array_iter`) | SB5009 ×3, SB4045 | **refactor** — shape spelled out once as `ir::for_head_keys`, read with `?` |
-| `expr_handlers.rs` (`try_len_intrinsic`) | SB5062 | **answer** — `collection_operand_name` returns `pe.name`; general path is then correct |
-| `expr_handlers.rs` (`join_intrinsic`) | SB5062 | **answer** — same helper |
+| `expr_handlers.rs` (`try_len_intrinsic`) | SB5062 | **delete** — see note below |
+| `expr_handlers.rs` (`join_intrinsic`) | SB5062 | **delete** — same |
 | `stmt_handlers.rs` ×2 (`handle_argv`) | SB4045 | **keep+cite** — `try_builtin`'s `None` = "not a builtin" → silent runtime death |
 | `stmt_handlers.rs` (`handle_keys`) | SB5073/SB4045 | **keep+cite** — same |
 | `ir.rs` ×2 (`readline_target`) | SB5057 | **keep+cite** — declining emits no `ReadLine`; the program reads nothing, silently |
@@ -191,3 +191,26 @@ markers, same-function-already-handled arms) were not in scope here and are
 governed by "Cold arms: ICE or answer?" in AGENTS.md.
 
 Status: **done** for the SB-citing cohort.
+
+
+### Amendment 2026-10-06 — `6a44932`
+
+The two SB5062 sites were first given the *correct answer* (`pe.name`) rather
+than deleted. DG rejected that: **"delete - it risks a reader mistaking the
+spelling as legitimate"**. Removing the duplicate assertion left the arm
+unreachable, and an unreachable arm that handles a rejected spelling documents
+that spelling as supported.
+
+Verified by execution first, since the SB5062 claim had been taken from a doc
+comment: every splat spelling raises SB5062 at the single site that raises it
+(`validate.rs:8833`) — `len @a`, `join @a ,`, `len @args`, `join @args ,`,
+`len @{a:-}`, `len @{a:~}`, `"$(len @a)"`, `join $a ,`; `len $a` is SB5064; the
+bare forms compile.
+
+So this task has **four** outcomes, not three, and they are ordered:
+
+1. **refactor** — share the predicate so the question is asked once;
+2. **delete** — the fallback is a safe decline, or the arm is unreachable;
+3. **answer** — only where the arm is, or becomes, *reachable*;
+4. **keep+cite** — declining is a measured catastrophe; cite the consequence,
+   not the gate name.
