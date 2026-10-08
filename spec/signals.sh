@@ -1,7 +1,7 @@
 #!/bin/bash
 # DD#56 — signals and END block
 . common.sh
-plan=48
+plan=49
 setup signals
 
 set +e
@@ -201,6 +201,18 @@ END {
 /bin/echo b
 }'
 [[ $rc != 0 && -z $out && $err == *SB4055* ]]; chk 56.37
+
+# 56.88 an END body that never closes is a parse error, reported and recovered
+# from rather than carried forward. `take_end_block`'s Err arm had never run:
+# every END in the suite parses, so the one path that reports a malformed one
+# was unexercised. It matters because the arm also decides what happens *next*
+# — it recovers and keeps parsing rather than registering a half-built body, so
+# a failure here would not be a missing message but a later pass walking an END
+# block the parser never finished.
+run_sash 'echo hi
+END {
+/bin/echo bye'
+[[ $rc != 0 && -z $out && $err == *SB4014* ]]; chk 56.88
 
 # 56.38 the END body is TOP-LEVEL scope, not a function body, so a positional
 # splat is the top-level reject (SB5045) exactly as it is outside END. While

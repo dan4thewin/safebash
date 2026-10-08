@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup arithmetic
-plan=403
+plan=406
 echo "1..$plan" >&3
 
 set +e
@@ -596,6 +596,26 @@ run_sash 'int map m=([k]=5); (( m[0]++ ))'
 # — positionals are function-only (SB5031). Mode-independent.
 run_sash 'echo $(( args[0] ))'
 [[ $rc != 0 && -z $out && $err == *SB5031* ]]; chk bsx.10
+
+# bsx.11-bsx.13 a bad cell nested INSIDE a subscript-assignment is still a bad
+# cell. `walk_arith_subscripts` recurses from `SubscriptAssign` into both the
+# index and the assigned value, and that arm had never run: every `(( a[i] = …
+# ))` in the suite assigns a plain literal to an int array, and a *bad* subject
+# in assign position is caught earlier by the DD#105 int-key rule (bsx.7). So
+# the recursion — the part that reaches a second cell — was carrying the whole
+# of `(( b[0] = m[0] ))` unexercised. A missing recursion is silent: the
+# offending read compiles and the map cell is read under arithmetic rules that
+# cannot express its key.
+# bsx.11 a bare map cell as the assigned VALUE
+run_sash 'int map m=([k]=5); int array b=(1 2); (( b[0] = m[0] ))'
+[[ $rc != 0 && -z $out && $err == *SB4030* && $err == *"is a map"* ]]; chk bsx.11
+# bsx.12 a string-array cell as the assigned value owes a disposition (DD#77 D1)
+# exactly as it would on its own
+run_sash 'array s=(x y); int array b=(1 2); (( b[0] = s[0] ))'
+[[ $rc != 0 && -z $out && $err == *SB4030* && $err == *"string cell"* ]]; chk bsx.12
+# bsx.13 the INDEX is walked too, not just the value
+run_sash 'int map m=([k]=5); int array b=(1 2); (( b[m[0]] = 9 ))'
+[[ $rc != 0 && -z $out && $err == *SB4030* && $err == *"is a map"* ]]; chk bsx.13
 
 # ── `$a[i]` (dollar, non-brace) IS a subscript read in arith (DG, 2026-10-04).
 # It did not used to be: the `$(( ))` body is rebuilt token→string→re-lexed, and
