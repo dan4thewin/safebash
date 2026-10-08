@@ -38,7 +38,7 @@ pub(super) fn handle_pipeline(
     let pe = resolve_pipeline_externs(builder, module, ctx.externs);
 
     // Pipe-while-read needs one extra pipe (last stage → parent).
-    let num_pipes = if capture_read_fd { n } else { n - 1 };
+    let num_pipes = crate::ssa::pipeline_num_pipes(n, capture_read_fd);
     let pipe_slots = create_pipe_slots(builder, num_pipes, pe.pipe);
 
     let pid_slot = builder.create_sized_stack_slot(StackSlotData::new(

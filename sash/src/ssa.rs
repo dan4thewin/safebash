@@ -1636,6 +1636,222 @@ pub fn substring_part_int(part: &str) -> i64 {
     })
 }
 
+/// The five `SsaValue` variants that cannot appear in **scalar value** position,
+/// with the pass that was supposed to have removed each one.
+///
+/// Both backends used to spell these five arms out individually, with a comment
+/// in `emit_c` reading "native ICEs on exactly these (codegen/values.rs:81-115);
+/// c mirrors it arm for arm" — and that line reference had already drifted off
+/// the arms it named. Hand-mirroring the same claim in two places is the fork
+/// this repo has been bitten by three times; saying it once is the fix.
+///
+/// Each claim is **orthogonal** to the gate that guarantees it. `validate` and
+/// `transform` decide these questions about the AST; this function is the only
+/// site that can say anything about the *lowered* `SsaValue` that came out the
+/// other side. A lifting pass that missed a case, or a list builder that failed
+/// to intercept a splat, is invisible upstream and lands exactly here.
+///
+/// # Panics
+///
+/// Always — that is the entire contract.
+pub(crate) fn unlowerable_scalar_value(backend: &str, value: &SsaValue) -> ! {
+    // Deliberately *not* total over `SsaValue`: the five named here are the
+    // contract, and the final arm exists to tell a caller/callee drift apart
+    // from a genuine refusal rather than mislabel it as one.
+    let why = match value {
+        // DD#81: a `$(f)` on a defined-so-far function is always lifted to a
+        // captured temp during transform (a forward/undefined name resolves
+        // external instead), so a bare FuncCall never reaches codegen.
+        SsaValue::FuncCall { name, .. } => {
+            format!("FuncCall ({name}) should have been lifted during transform")
+        }
+        SsaValue::IntFuncCall { name, .. } => {
+            format!("IntFuncCall ({name}) should have been lifted during transform")
+        }
+        SsaValue::CmdSubstBody { .. } => {
+            "CmdSubstBody should have been lifted during transform".to_string()
+        }
+        // DD#20/#22: a splat is one value per element, so it only has a meaning
+        // in a list position, where the argv / array-literal builder expands it.
+        SsaValue::ArraySplat { array, .. } => {
+            format!("ArraySplat (@{array}) must be expanded by the argv builder")
+        }
+        // DD#84: `:~` is legal only in an elidable list position, where the list
+        // builder intercepts it. Reaching a scalar lowering means validate's
+        // SB5046 guard was bypassed.
+        SsaValue::ElideEmpty { .. } => {
+            "ElideEmpty (:~) must be expanded by a list builder".to_string()
+        }
+        other => panic!(
+            "ICE: {backend} called unlowerable_scalar_value on {:?}, which is \
+             not one of the five unlowerable variants — the caller's arm and \
+             this match have drifted apart.",
+            std::mem::discriminant(other)
+        ),
+    };
+    panic!("ICE: {backend} lowered a value as a scalar, but {why}.")
+}
+
+/// How many pipes an `SsaInst::Pipeline` of `n` stages needs.
+///
+/// Shared by both backends so the one expression cannot drift. With a capture
+/// there is an extra pipe (index `n-1`) carrying last-stage → parent.
+///
+/// # Panics
+///
+/// The floor differs by form, because the two forms count different things.
+/// `lower_pipeline_body` routes only `commands.len() > 1` to the stage builders
+/// and sends a lone command to `lower_one`, so:
+///
+/// * a plain pipeline carries **every** command as a stage — `n >= 2`;
+/// * a capture (`cmd | readline x`, `cmd | while readline …`) carries only the
+///   **producers**, `&p.commands[..len - 1]`, with the reader left to the
+///   parent — `n >= 1`.
+///
+/// The ICE is not a restatement of that `> 1` gate: it is the only site that
+/// can say anything about `stages.len()`, a quantity derived from
+/// `commands.len()` through `push_command_stage` and the compound arm of
+/// `lower_one_pipeline_stage`. A pusher that dropped a stage would be invisible
+/// to the gate and land here.
+///
+/// It is also what makes the violation *visible*. `n - 1` on a `usize` wraps,
+/// so a zero-stage pipeline used to ask the native backend to create
+/// `usize::MAX` pipes, while the C backend quietly rewrote a one-stage pipeline
+/// as a plain command. Since `emit_c` is the differential oracle, that silent
+/// normalisation was the worse of the two — the backend whose job is to
+/// disagree out loud was absorbing the difference.
+pub(crate) fn pipeline_num_pipes(n: usize, capture_read_fd: bool) -> usize {
+    if capture_read_fd {
+        assert!(
+            n >= 1,
+            "ICE: a capturing SsaInst::Pipeline reached codegen with {n} producer \
+             stages. lower_pipeline_body only builds one for `commands.len() > 1` \
+             and the capture builders take `commands[..len - 1]`, so at least one \
+             producer must survive."
+        );
+        n
+    } else {
+        assert!(
+            n >= 2,
+            "ICE: a plain SsaInst::Pipeline reached codegen with {n} stage(s). \
+             lower_pipeline_body only builds one for `commands.len() > 1`, and \
+             each pusher contributes exactly one stage per command, so a stage \
+             was dropped between the two."
+        );
+        n - 1
+    }
+}
+
+#[cfg(test)]
+mod unlowerable_value_tests {
+    use super::{unlowerable_scalar_value, SsaValue};
+
+    fn ice_message(value: &SsaValue) -> String {
+        let err = std::panic::catch_unwind(|| unlowerable_scalar_value("native", value))
+            .expect_err("must panic");
+        err.downcast_ref::<String>()
+            .expect("ICE panics carry a formatted String")
+            .clone()
+    }
+
+    /// Each of the five is unreachable from source — that is what the ICE
+    /// asserts — so only a direct call can reach it. The claims differ, so the
+    /// test checks that the message names the *right* one: an arm that fell
+    /// through to a neighbour would still panic and would still look fine.
+    #[test]
+    fn every_unlowerable_variant_names_its_own_claim() {
+        let cases: Vec<(SsaValue, &str)> = vec![
+            (
+                SsaValue::FuncCall {
+                    name: "f".into(),
+                    args: vec![],
+                    colls: vec![],
+                },
+                "FuncCall (f) should have been lifted during transform",
+            ),
+            (
+                SsaValue::IntFuncCall {
+                    name: "g".into(),
+                    args: vec![],
+                    colls: vec![],
+                },
+                "IntFuncCall (g) should have been lifted during transform",
+            ),
+            (
+                SsaValue::CmdSubstBody { body: vec![] },
+                "CmdSubstBody should have been lifted during transform",
+            ),
+            (
+                SsaValue::ArraySplat {
+                    array: "a".into(),
+                    disposition: None,
+                },
+                "ArraySplat (@a) must be expanded by the argv builder",
+            ),
+            (
+                SsaValue::ElideEmpty {
+                    source: Box::new(SsaValue::Literal("x".into())),
+                    taint_off: false,
+                },
+                "ElideEmpty (:~) must be expanded by a list builder",
+            ),
+        ];
+        for (value, claim) in cases {
+            let msg = ice_message(&value);
+            assert!(
+                msg.starts_with("ICE: native lowered a value as a scalar"),
+                "{msg}"
+            );
+            assert!(msg.contains(claim), "wrong claim for {value:?}: {msg}");
+        }
+    }
+
+    /// The callers select the five by variant; this function spells them out
+    /// again. If the two lists drift, a lowerable value arrives here — and that
+    /// must be told apart from a genuine refusal, not reported as one.
+    #[test]
+    fn a_lowerable_value_reports_the_drift_not_a_refusal() {
+        let msg = ice_message(&SsaValue::Literal("x".into()));
+        assert!(
+            msg.contains("not one of the five unlowerable variants"),
+            "{msg}"
+        );
+        assert!(msg.contains("drifted apart"), "{msg}");
+    }
+}
+
+#[cfg(test)]
+mod pipeline_tests {
+    use super::pipeline_num_pipes;
+
+    /// The floor is per-form, and getting that wrong is not hypothetical: an
+    /// earlier version of this asserted `n > 1` for both, which rejected every
+    /// `cmd | readline x` in the suite. A capture carries producers only.
+    #[test]
+    fn a_degenerate_pipeline_is_a_loud_ice() {
+        for (n, capture) in [(0usize, false), (1, false), (0, true)] {
+            let err = std::panic::catch_unwind(|| pipeline_num_pipes(n, capture))
+                .expect_err("must panic");
+            let msg = err
+                .downcast_ref::<String>()
+                .expect("ICE panics carry a formatted String");
+            assert!(msg.contains("reached codegen with"), "{msg}");
+            assert!(msg.contains("lower_pipeline_body"), "{msg}");
+        }
+    }
+
+    #[test]
+    fn a_real_pipeline_counts_its_pipes() {
+        // Plain: every command is a stage, and n-1 pipes join them.
+        assert_eq!(pipeline_num_pipes(2, false), 1);
+        assert_eq!(pipeline_num_pipes(5, false), 4);
+        // Capture: producers only, plus one pipe carrying the last to the parent.
+        // `echo hi | readline x` is the one-producer case.
+        assert_eq!(pipeline_num_pipes(1, true), 1);
+        assert_eq!(pipeline_num_pipes(2, true), 2);
+    }
+}
+
 #[cfg(test)]
 mod int_cell_tests {
     /// The guard must be loud. Unit tests reach what the spec suite cannot:

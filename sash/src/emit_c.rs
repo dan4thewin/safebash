@@ -1410,19 +1410,16 @@ fn lower_value_as_str_aggregate(e: &mut Emit, value: &SsaValue, types: &VarTypes
         }
         // The five below cannot reach a scalar value lowering: each is either
         // lifted out of value position during transform or expanded by an
-        // argv/list builder. Native ICEs on exactly these
-        // (codegen/values.rs:81-115); c mirrors it arm for arm. This used to
+        // argv/list builder. The claim is stated once, in
+        // `ssa::unlowerable_scalar_value`, and native's `lower_value` makes it
+        // from the same site — so the two backends cannot drift. This used to
         // be a `/* TODO */` comment returning an empty string, which would
         // have turned a lowering bug into a silently empty value.
-        SsaValue::FuncCall { name, .. } => {
-            panic!("ICE: FuncCall should have been lifted during transform: {name}")
-        }
-        SsaValue::IntFuncCall { name, .. } => {
-            panic!("ICE: IntFuncCall should have been lifted during transform: {name}")
-        }
-        SsaValue::CmdSubstBody { .. } => {
-            panic!("ICE: CmdSubstBody should have been lifted during transform")
-        }
+        SsaValue::FuncCall { .. }
+        | SsaValue::IntFuncCall { .. }
+        | SsaValue::CmdSubstBody { .. }
+        | SsaValue::ArraySplat { .. }
+        | SsaValue::ElideEmpty { .. } => crate::ssa::unlowerable_scalar_value("c", value),
         // `$(<file)` — one runtime call, the same one native emits, so the two
         // backends cannot drift on slurp semantics (strip rule, error handling).
         SsaValue::SlurpFile(path) => {
@@ -1438,14 +1435,6 @@ fn lower_value_as_str_aggregate(e: &mut Emit, value: &SsaValue, types: &VarTypes
             .unwrap();
             (format!("{}_p", t), format!("{}_l", t))
         }
-        SsaValue::ArraySplat { array, .. } => panic!(
-            "ICE: ArraySplat (@{array}) must be expanded by the argv builder, \
-             not lowered as a scalar value"
-        ),
-        SsaValue::ElideEmpty { .. } => panic!(
-            "ICE: ElideEmpty (:~) must be expanded by a list builder, \
-             not lowered as a scalar value"
-        ),
         // Everything else is handled by the caller (`lower_value_as_str`) and
         // only reaches here if that dispatch is wrong — a compiler bug, not a
         // program the user can write. ICE rather than emit a value we did not
@@ -3812,14 +3801,10 @@ fn emit_pipeline(
     negated: &[bool],
     types: &VarTypes,
 ) {
-    if emit_degenerate_pipeline(e, stages, checked, capture_read_fd, types) {
-        return;
-    }
     let n = stages.len();
 
     let p = e.fresh();
-    // With capture, an extra pipe (index n-1) carries last-stage → parent.
-    let num_pipes = if capture_read_fd { n } else { n - 1 };
+    let num_pipes = crate::ssa::pipeline_num_pipes(n, capture_read_fd);
     writeln!(e.out, "    /* pipeline: {} stages */", n).unwrap();
 
     emit_pipeline_create_pipes(e, &p, num_pipes);
@@ -3843,31 +3828,6 @@ fn emit_pipeline(
 
     emit_pipeline_parent_close(e, &p, num_pipes, capture_read_fd);
     emit_pipeline_finish(e, &p, checked, suppressed, negated, stages);
-}
-
-/// A 0- or 1-stage "pipeline" needs none of the fork/pipe machinery. Returns
-/// true when it handled the case. Split out of `emit_pipeline` to keep that
-/// function under the complexity gate.
-fn emit_degenerate_pipeline(
-    e: &mut Emit,
-    stages: &[(String, Vec<SsaValue>, Vec<crate::ir::Redirect>)],
-    checked: bool,
-    capture_read_fd: bool,
-    types: &VarTypes,
-) -> bool {
-    let n = stages.len();
-    if n == 0 {
-        return true;
-    }
-    if n == 1 && !capture_read_fd {
-        // Degenerate 1-stage pipeline: emit as a plain command carrying the
-        // pipeline's own `checked` so a bare failing stage still aborts.
-        let (name, args, redirects) = &stages[0];
-        let kind = BuiltinCmd::from_name(name);
-        emit_command(e, name, &kind, args, redirects, checked, types);
-        return true;
-    }
-    false
 }
 
 /// Reap the children, publish the aggregate status, and apply the DD#55 abort.

@@ -520,28 +520,43 @@ fn make_if(
     }
 }
 
-/// The single `attest` command a condition consists of, when that condition is
-/// a negated one — `if ! attest …`.
+/// Test a condition for `if ! attest …` and, when it matches, replace the
+/// negated single-stage pipeline with the bare `attest` command. Returns
+/// whether it matched.
 ///
 /// A standalone `! cmd` is a `Pipeline` carrying `negated: true`, *not* a
 /// `StmtKind::Negated`, which only ever appears as a stage inside a
 /// multi-stage pipeline. Requiring exactly one command is what keeps
 /// `! attest … | cmd` (not a caught attest, and SB4022 anyway) out.
-fn negated_attest_condition(condition: &[Statement]) -> bool {
-    let [only] = condition else {
+///
+/// Test and strip are one function on purpose. They used to be two — a `&`
+/// predicate and a `&mut` rewriter — each destructuring this same shape, and
+/// the rewriter's three "already established" early returns were cold because
+/// the predicate had proved them. Two destructurings of one shape can drift,
+/// and the drift would have been silent in the worst direction: returning
+/// early there leaves the negation in place, so `if ! attest … { A } else { B }`
+/// keeps its branches unswapped and the program means the opposite of what it
+/// says. Having one destructuring is better than having a second one check the
+/// first.
+fn take_negated_attest(condition: &mut [Statement]) -> bool {
+    let [stmt] = condition else {
         return false;
     };
-    let StmtKind::Pipeline(p) = &only.kind else {
+    let StmtKind::Pipeline(p) = &mut stmt.kind else {
         return false;
     };
     if !p.negated {
         return false;
     }
-    let [stage] = p.commands.as_slice() else {
+    let is_attest = matches!(p.commands.as_slice(),
+        [stage] if matches!(&stage.kind,
+            StmtKind::Command(c) if matches!(&c.name.kind, ExprKind::Literal(n) if n == "attest")));
+    if !is_attest {
         return false;
-    };
-    matches!(&stage.kind,
-        StmtKind::Command(c) if matches!(&c.name.kind, ExprKind::Literal(n) if n == "attest"))
+    }
+    // `is_attest` matched a one-element slice, so index 0 exists.
+    *stmt = p.commands.remove(0);
+    true
 }
 
 /// DD#121: rewrite `if ! attest … { A } else { B }` into the equivalent
@@ -561,28 +576,11 @@ fn negated_attest_condition(condition: &[Statement]) -> bool {
 /// becomes empty — the attest passing is then simply a no-op, which is what
 /// the source says.
 fn flip_negated_attest(inner: &mut If, span: Span) {
-    if !negated_attest_condition(&inner.condition) {
+    if !take_negated_attest(&mut inner.condition) {
         return;
     }
-    strip_condition_negation(&mut inner.condition);
     let fall_through = negated_fall_through(inner, span);
     inner.else_body = Some(std::mem::replace(&mut inner.then_body, fall_through));
-}
-
-/// Replace the negated single-stage pipeline wrapping the `attest` with the
-/// bare `attest` command. The shape is already established by
-/// [`negated_attest_condition`], so each `else` here is unreachable.
-fn strip_condition_negation(condition: &mut [Statement]) {
-    let [stmt] = condition else {
-        return;
-    };
-    let StmtKind::Pipeline(p) = &mut stmt.kind else {
-        return;
-    };
-    let Some(only) = p.commands.pop() else {
-        return;
-    };
-    *stmt = only;
 }
 
 /// The body the rewritten `if` falls through to when the attest *passes* —

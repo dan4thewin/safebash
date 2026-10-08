@@ -1,4 +1,63 @@
-## ══ STATUS (2026-10-08, latest) — the copy that declined differently ══
+## ══ STATUS (2026-10-08, latest) — the producer I did not check ══
+
+**Coverage queue, four more candidates.** One spec gap on an everyday idiom,
+one dead branch deleted, one duplicate destructuring merged, ten mirrored ICE
+arms collapsed to one shared site. Journal 479.
+
+**`emit_degenerate_pipeline` deleted.** Its 0-/1-stage guard was unreachable:
+`lower_pipeline_body` only builds an `SsaInst::Pipeline` for
+`commands.len() > 1` and every pusher contributes one stage per command. The
+native backend had no such guard and would have wrapped `n - 1` on a `usize`.
+A defensive branch in `emit_c` — the *differential oracle* — that silently
+normalises what native mishandles is the oracle absorbing the difference it
+exists to report. Both now call `ssa::pipeline_num_pipes`, which ICEs instead.
+
+**And I got that ICE's floor wrong, which is the finding worth keeping.** I
+wrote `n > 1` for both forms; `spec/taint.sh` failed fifteen checks. A capture
+pipeline (`cmd | readline x`) carries only the **producers**,
+`commands[..len-1]` — two commands, one stage. I had traced one of the three
+producers of `SsaInst::Pipeline` and generalised. Journal 439 said this in the
+same words about a different walker: enumerate the *producer*, and three
+producers means checking one is checking none. The floor is now per-form.
+(Also: `assert!(c, "literal")` panics with `&str`, `assert!(c, "{n}")` with
+`String` — the test downcast to `String` and failed on the working branch.)
+
+**The five unlowerable `SsaValue` variants are stated once now.** Both backends
+spelled out the same five ICE arms; `emit_c`'s comment said "c mirrors it arm
+for arm (codegen/values.rs:81-115)" and that line reference had already drifted
+off the arms it named. All ten route to `ssa::unlowerable_scalar_value`. They
+stay as backstops because they are orthogonal — validate/transform decide these
+about the AST, this is the only site that sees the *lowered* value.
+
+**`strip_condition_negation` merged into its predicate.** Three cold `return`s
+whose doc said they were unreachable because `negated_attest_condition` had
+already proved them — two destructurings of one shape, split only by `&` vs
+`&mut`. An ICE there would have been the bad kind: the same question on the
+same data. Now one function, `take_negated_attest`. What the cold lines hid was
+not nothing: returning early leaves the negation in place, so
+`if ! attest … { A } else { B }` keeps its branches unswapped and the program
+means the opposite of what it says.
+
+**`sig_scan_test`'s `!`/`&&`/`||` arms had never run** — no function signature
+scan in 7801 checks had seen `fn f { [[ ${args[0]} == x && ${args[1]} == y ]] }`.
+Live and correct, verified by execution first, but an arm that failed to
+recurse would silently *under-count* the arity rather than crash. Specs
+`81.33`-`81.36`; `81.34` is the control, since `81.33` alone is satisfied by a
+signature that over-counts.
+
+**State.** `mk test` 85+27+20 (was 81). Sweep **7809**, predicted before
+running; 0 failing, 0 flips, exactly 8 new ids, self-test 248.
+
+**Next on the queue.** `lower_value_as_str_aggregate`'s `other =>` (ICEs at
+runtime on a new variant; total would make it a compile error, at the cost of
+naming ~16 variants). Then the unexamined: `take_end_block`,
+`parse_trailing_pipeline`, `argv_splat_start`, `compile_native`'s diagnostic
+loop, `walk_arith_subscripts`'s `SubscriptAssign` arm, and the
+`emit_attest` / `load_var_or_empty` / `parse_var_base_version` fallbacks.
+Still DG's call: `insert_case_phis`'s single-path arm, and whether
+`sysroot_file_exists`'s `.squashfs` path is still wanted.
+
+## ══ STATUS (2026-10-08) — the copy that declined differently ══
 
 **Coverage queue, eleven candidates examined.** One genuine spec gap, three
 unreachable arms converted to ICEs, two false alarms checked and dropped.

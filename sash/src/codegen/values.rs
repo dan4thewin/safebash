@@ -67,21 +67,11 @@ pub(super) fn lower_value(
         SsaValue::Var(vref) => {
             lower_var_value(vref, builder, module, vars, externs, exit_status_var)
         }
-        SsaValue::FuncCall { name, .. } => {
-            // DD#81: a `$(f)` on a defined-so-far function is always lifted to a
-            // captured temp during transform (a forward/undefined name resolves
-            // external instead), so a bare FuncCall never reaches codegen.
-            panic!("ICE: FuncCall should have been lifted during transform: {name}")
-        }
-        SsaValue::IntFuncCall { name, .. } => {
-            panic!(
-                "ICE: IntFuncCall should have been lifted during transform: {}",
-                name
-            );
-        }
-        SsaValue::CmdSubstBody { .. } => {
-            panic!("ICE: CmdSubstBody should have been lifted during transform");
-        }
+        SsaValue::FuncCall { .. }
+        | SsaValue::IntFuncCall { .. }
+        | SsaValue::CmdSubstBody { .. }
+        | SsaValue::ArraySplat { .. }
+        | SsaValue::ElideEmpty { .. } => crate::ssa::unlowerable_scalar_value("native", value),
         SsaValue::SlurpFile(path) => lower_slurp_file_value(
             path,
             builder,
@@ -91,13 +81,6 @@ pub(super) fn lower_value(
             externs,
             exit_status_var,
         ),
-        SsaValue::ArraySplat { array, .. } => {
-            panic!(
-                "ICE: ArraySplat (@{}) must be expanded by the argv builder, \
-                 not lowered as a scalar value",
-                array
-            );
-        }
         // DD#91: `${x:!}` is a pure taint annotation — lower the source and
         // emit exactly what a bare expansion would.
         SsaValue::Trusted { source } => lower_value(
@@ -109,15 +92,6 @@ pub(super) fn lower_value(
             externs,
             exit_status_var,
         ),
-        SsaValue::ElideEmpty { .. } => {
-            // DD#84: `:~` is only valid in an elidable list position, where the
-            // argv / array-literal builder intercepts it. Reaching a scalar
-            // lower_value means validate's SB5046 guard was bypassed.
-            panic!(
-                "ICE: ElideEmpty (:~) must be expanded by a list builder, \
-                 not lowered as a scalar value"
-            );
-        }
         SsaValue::Concat(parts) => lower_concat_value(
             parts,
             builder,

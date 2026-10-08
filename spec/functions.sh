@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup functions
-plan=167
+plan=171
 echo "1..$plan" >&3
 
 set +e
@@ -1202,6 +1202,45 @@ run_sash 'fn g {
 }
 g hello'
 [[ $rc = 0 && $out = "[hello]" && -z $err ]]; chk 81.32
+
+
+# 81.33-81.36 a positional read inside a COMPOUND test still counts toward the
+# signature. `sig_scan_test` recurses through `!`, `&&` and `||`; only the
+# `Unary`/`Binary` leaves had ever been exercised, so the three recursive arms
+# were carrying the whole of `fn f { [[ $1 == a && $2 == b ]] }` on an
+# unverified claim. An arm that failed to recurse would not be loud — it would
+# silently under-count the arity, and a call that omits the argument would
+# compile and read an argument that was never passed.
+
+# 81.33 `&&` records BOTH operands' positionals
+run_sash 'fn f {
+    [[ ${args[0]} == x && ${args[1]} == y ]] && echo both
+}
+f x'
+[[ $rc != 0 && -z $out && $err == *SB5042* && $err == *"expects 2 arguments"* ]]; chk 81.33
+
+# 81.34 the control: the same body with both arguments compiles and reads both.
+# 81.33 alone is satisfied by a signature that over-counts, so the pair is what
+# pins the index set rather than just its size.
+run_sash 'fn f {
+    [[ ${args[0]} == x && ${args[1]} == y ]] && echo both
+}
+f x y'
+[[ $rc = 0 && $out = "both" && -z $err ]]; chk 81.34
+
+# 81.35 `!` recurses into the negated test — the operand is still a read
+run_sash 'fn g {
+    [[ ! ${args[0]} == x ]] && echo notx
+}
+g'
+[[ $rc != 0 && -z $out && $err == *SB5042* && $err == *"expects 1 argument"* ]]; chk 81.35
+
+# 81.36 `||` with a nested `!` — both recursive arms on one test
+run_sash 'fn h {
+    [[ ! ${args[0]} == x || ${args[1]} == y ]] && echo hit
+}
+h a'
+[[ $rc != 0 && -z $out && $err == *SB5042* && $err == *"expects 2 arguments"* ]]; chk 81.36
 
 
 set -e
