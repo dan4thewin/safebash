@@ -79,6 +79,13 @@ str s="a"
 s+="b"        # fine
 ```
 
+> **2026-10-08 ([DD#124](DD124-assignment-value-shape.md)):** that statement
+> had no shape rule of its own, so `array a=(x)` followed by `a=x` segfaulted
+> exactly as `array a=x` had. Sixteen spellings were broken. The rule below is
+> now shared with the statement site, and `InitShape`'s `Collection` has been
+> split into `ArrayLit`/`AssocLit` — folding the two together let
+> `array a=([b]=2)` pass *this* rule and silently empty `a`.
+
 ## Divergence from bash, accepted
 
 bash reads `declare -a a=x` as `a[0]=x` and `declare s=(x)` as making `s` an

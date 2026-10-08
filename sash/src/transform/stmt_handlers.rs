@@ -1027,8 +1027,12 @@ pub(super) fn handle_assignment(
 /// raised SB4030, and the append form reached codegen as an ICE ("undefined
 /// array"). Re-assigning an already-declared collection stays legal — the rule
 /// is about *introducing* one without the keyword.
+///
+/// Both literal shapes count. `([key]=value)` was missing from this match, so
+/// `str s=([b]=2)` silently emptied `s` instead of being told to declare a
+/// `map`; it is the same mistake as `str s=(x)` and gets the same answer.
 fn check_bare_collection_literal(a: &Assignment, stmt: &Statement, state: &mut VersionState) {
-    if a.index.is_some() || !matches!(a.value.kind, ExprKind::Array(_)) {
+    if a.index.is_some() || !matches!(a.value.kind, ExprKind::Array(_) | ExprKind::AssocArray(_)) {
         return;
     }
     if state.collections.contains(&a.name) {
@@ -1115,10 +1119,17 @@ fn build_subscript_rhs(
     }
 }
 
-/// `var += val` — append form. Dispatches on the value shape:
-/// IndexedArray literal → element-by-element ArrayAppend; assoc
-/// array → ArrayAppend; otherwise string-concat (or arithmetic add
-/// for int-typed vars).
+/// `var += val` — append form. An `( … )` literal appends element by element;
+/// anything else is a scalar append (string concat, or arithmetic add for an
+/// int-typed var).
+///
+/// There is deliberately no map case. SB5091 rejects `+=` on a map outright and
+/// SB5090 rejects every non-`( … )` value on an array, so by the time lowering
+/// runs the only collection append left is the one that works. This used to
+/// branch on `state.assoc_arrays` and emit an `ArrayAppend` carrying a whole
+/// `AssocArray`: `emit_array_append_c` appends at the integer index
+/// `sash_table_len(tbl)`, which is meaningless for a map, and the SSA taint
+/// pass classes `AssocArray` as assign-only, so the same shape also ICEd.
 fn handle_append_assign(
     a: &Assignment,
     state: &mut VersionState,
@@ -1138,16 +1149,7 @@ fn handle_append_assign(
                 });
             }
         }
-        other => {
-            if state.assoc_arrays.contains(&a.name) {
-                ssa.block_mut(block).insts.push(SsaInst::ArrayAppend {
-                    array: a.name.clone(),
-                    value: other,
-                });
-            } else {
-                append_scalar(a, other, state, ssa, block);
-            }
-        }
+        other => append_scalar(a, other, state, ssa, block),
     }
     block
 }

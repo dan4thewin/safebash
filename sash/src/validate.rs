@@ -1864,35 +1864,104 @@ fn validate_declaration(d: &Declaration, diags: &mut Vec<Diagnostic>) {
 /// DD#99 splat form (`map m=@{a:-}`); its own rules are enforced by
 /// `check_map_decl_splats` and SB5025.
 fn check_decl_value_shape(d: &Declaration, diags: &mut Vec<Diagnostic>) {
-    let is_collection = d.flags.iter().any(|f| f == "-a" || f == "-A");
+    let kind = decl_target_kind(d);
     for a in &d.assignments {
-        if let Some(diag) = decl_shape_diag(a, is_collection) {
+        if let Some(diag) = decl_shape_diag(a, kind) {
             diags.push(diag);
         }
     }
 }
 
-/// What kind of thing an initializer denotes.
+/// What kind of thing an assignment's value denotes.
 ///
-/// `Splat` is neither: `map m=@{a:-}` is the DD#99 fill-from-array form, whose
-/// own rules live in `check_map_decl_splats` and SB5025, and a plain `$x` on a
-/// scalar is the ordinary case. Both must pass through here untouched.
+/// `Splat` is none of the literals: `map m=@{a:-}` is the DD#99 fill-from-array
+/// form, whose own rules live in `check_map_decl_splats` and SB5025, and a
+/// plain `$x` on a scalar is the ordinary case. Both must pass through here
+/// untouched.
+///
+/// An array literal and a map literal are **separate** shapes. Folding them
+/// into one `Collection` was DD#117's own blind spot: `array a=([b]=2)` and
+/// `map m=(x y)` each matched "collection into collection" and passed, and the
+/// first silently produced an empty array.
 enum InitShape {
-    Collection,
+    ArrayLit,
+    AssocLit,
     Scalar,
     Splat,
 }
 
 fn init_shape(value: &Expr) -> InitShape {
     match &value.kind {
-        ExprKind::Array(_) | ExprKind::AssocArray(_) => InitShape::Collection,
+        ExprKind::Array(_) => InitShape::ArrayLit,
+        ExprKind::AssocArray(_) => InitShape::AssocLit,
         ExprKind::ParameterExpansion(_) => InitShape::Splat,
         _ => InitShape::Scalar,
     }
 }
 
+/// The kind a name holds: what its declaration introduced.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum TargetKind {
+    Array,
+    Map,
+    Scalar,
+}
+
+/// The kind a declaration introduces, read from its flags.
+fn decl_target_kind(d: &Declaration) -> TargetKind {
+    if d.flags.iter().any(|f| f == "-A") {
+        TargetKind::Map
+    } else if d.flags.iter().any(|f| f == "-a") {
+        TargetKind::Array
+    } else {
+        TargetKind::Scalar
+    }
+}
+
+/// The sentence for a value whose shape contradicts its target's kind, or
+/// `None` when the two agree.
+///
+/// Shared by the declaration rule (SB4064) and the statement rule (SB5090), so
+/// that `array a=x` and a later `a=x` cannot drift apart. They are one mistake
+/// written in two places, and DD#117 only ever reached the first.
+///
+/// **Total over `(TargetKind, InitShape)` on purpose — do not add a wildcard.**
+/// The pair is the whole rule; a `_` arm here is a silent accept.
+fn shape_mismatch_msg(name: &str, kind: TargetKind, value: &Expr) -> Option<String> {
+    match (kind, init_shape(value)) {
+        (TargetKind::Array, InitShape::Scalar) => Some(format!(
+            "`{name}` is an array, so its value must be a `( … )` literal — a \
+             scalar does not become a one-element collection in sash; write \
+             `{name}=({})` if that is what you meant",
+            decl_value_brief(value),
+        )),
+        (TargetKind::Array, InitShape::AssocLit) => Some(format!(
+            "`{name}` is an array, so its value must be a `( … )` list of \
+             elements — `([key]=value)` pairs need a `map`"
+        )),
+        (TargetKind::Map, InitShape::Scalar) => Some(format!(
+            "`{name}` is a map, so its value must be a `([key]=value)` literal \
+             — a scalar does not become a one-element collection in sash"
+        )),
+        (TargetKind::Map, InitShape::ArrayLit) => Some(format!(
+            "`{name}` is a map, so its value must be a `([key]=value)` literal \
+             — a flat `( … )` list carries no keys"
+        )),
+        (TargetKind::Scalar, InitShape::ArrayLit | InitShape::AssocLit) => Some(format!(
+            "`{name}` is a scalar, so its value cannot be a `( … )` collection \
+             literal — declare it with `array` or `map` to hold several values"
+        )),
+        (TargetKind::Array, InitShape::ArrayLit)
+        | (TargetKind::Map, InitShape::AssocLit)
+        | (TargetKind::Scalar, InitShape::Scalar)
+        | (TargetKind::Array, InitShape::Splat)
+        | (TargetKind::Map, InitShape::Splat)
+        | (TargetKind::Scalar, InitShape::Splat) => None,
+    }
+}
+
 /// `Some(diag)` when the initializer's shape contradicts the declared kind.
-fn decl_shape_diag(a: &DeclAssignment, is_collection: bool) -> Option<Diagnostic> {
+fn decl_shape_diag(a: &DeclAssignment, kind: TargetKind) -> Option<Diagnostic> {
     let value = a.value.as_ref()?;
     // `array a=$(argv …)` is a scalar into a collection, but SB5025 says
     // something SB4064 cannot: use the out-param form `argv N a`. SB4064's
@@ -1900,39 +1969,17 @@ fn decl_shape_diag(a: &DeclAssignment, is_collection: bool) -> Option<Diagnostic
     // `array a=($(argv 1))` is rejected in turn (SB5021/SB5025). SB4064 runs
     // in an earlier phase that exits before SB5025's, so deferring is what
     // keeps the better diagnostic reachable at all.
-    if is_collection && is_argv_splat_expr(value) {
+    if kind != TargetKind::Scalar && is_argv_splat_expr(value) {
         return None;
     }
-    match (is_collection, init_shape(value)) {
-        (true, InitShape::Scalar) => Some(scalar_into_collection_diag(&a.name, value)),
-        (false, InitShape::Collection) => Some(collection_into_scalar_diag(&a.name, value)),
-        _ => None,
+    // `map m=(x y)` is SB4031's (DD#33), which names the `[key]=value` form the
+    // author has to write. It runs in this same phase, so reporting both would
+    // double up on a single mistake.
+    if kind == TargetKind::Map && matches!(init_shape(value), InitShape::ArrayLit) {
+        return None;
     }
-}
-
-fn scalar_into_collection_diag(name: &str, value: &Expr) -> Diagnostic {
-    Diagnostic::error_span(
-        value.span,
-        "SB4064",
-        format!(
-            "`{name}` is declared as a collection, so its initializer must be a \
-             `( … )` literal — a scalar value does not become a one-element \
-             collection in sash; write `{name}=({})` if that is what you meant",
-            decl_value_brief(value),
-        ),
-    )
-}
-
-fn collection_into_scalar_diag(name: &str, value: &Expr) -> Diagnostic {
-    Diagnostic::error_span(
-        value.span,
-        "SB4064",
-        format!(
-            "`{name}` is declared as a scalar, so its initializer cannot be a \
-             `( … )` collection literal — declare it with `array` or `map` to \
-             hold several values"
-        ),
-    )
+    let msg = shape_mismatch_msg(&a.name, kind, value)?;
+    Some(Diagnostic::error_span(value.span, "SB4064", msg))
 }
 
 /// How to echo a rejected scalar initializer back in the SB4064 hint. A plain
@@ -1944,6 +1991,105 @@ fn decl_value_brief(value: &Expr) -> String {
         ExprKind::Literal(s) if !s.is_empty() => s.clone(),
         _ => "…".to_string(),
     }
+}
+
+/// SB5090/SB5091: an assignment's value must have the shape of the target's
+/// kind, and a map has no append position.
+///
+/// This is DD#117's rule one statement later. DD#117 settled the *declaration*
+/// (`array a=x` is SB4064) and explicitly left append "available as a
+/// statement, once the name is declared" — but gave the statement no shape
+/// rule at all, and nothing else had one either. The same mistake a line down
+/// was still a segfault:
+///
+/// ```text
+/// array a=(x)
+/// a=y            # scalar into a collection slot → SIGSEGV, len a == 0
+/// a+=$(echo hi)  # likewise
+/// map m=([k]=1)
+/// m=(y)          # silently emptied the map
+/// m+=([j]=2)     # reached codegen as an ICE
+/// ```
+///
+/// Fifteen spellings were wrong: seven faulted, seven wrote nothing and said
+/// nothing, one ICEd. They survived because every one of them is a spelling no
+/// spec had ever written — the same reason DD#117's cases survived.
+///
+/// A map is rejected for `+=` (SB5091) rather than given bash's merge
+/// semantics. DG, 2026-10-08: favour clarity over compatibility — a map has no
+/// end to append to, and `m[key]=value` says what the author means.
+pub fn check_assign_value_shape(program: &Program) -> Vec<Diagnostic> {
+    let mut kinds = HashMap::new();
+    for block in program_blocks(program) {
+        crate::type_check::collect_collection_kinds(block, &mut kinds);
+    }
+    let mut diags = Vec::new();
+    for block in program_blocks(program) {
+        crate::ir::walk_stmt_tree(block, &mut |stmt| {
+            let StmtKind::Assignment(a) = &stmt.kind else {
+                return;
+            };
+            if let Some(d) = assign_shape_diag(a, &kinds) {
+                diags.push(d);
+            }
+        });
+    }
+    diags
+}
+
+/// `Some(diag)` when a statement assignment's value contradicts the target's
+/// kind. `kinds` maps a declared collection name to whether it is a map.
+fn assign_shape_diag(a: &Assignment, kinds: &HashMap<String, bool>) -> Option<Diagnostic> {
+    // `a[i]=v` assigns to a *cell*, and a scalar is exactly what belongs
+    // there. The kind of the collection says nothing about the cell's value.
+    if a.index.is_some() {
+        return None;
+    }
+    let kind = assign_target_kind(&a.name, kinds);
+    if kind == TargetKind::Map && a.op == AssignOp::Append {
+        return Some(map_append_diag(a));
+    }
+    if assign_shape_deferred(kind, &a.value) {
+        return None;
+    }
+    let msg = shape_mismatch_msg(&a.name, kind, &a.value)?;
+    Some(Diagnostic::error_span(a.value.span, "SB5090", msg))
+}
+
+/// The kind a name holds. A name absent from the program's collection
+/// declarations is a scalar; SB5049 rejects a name that is both.
+fn assign_target_kind(name: &str, kinds: &HashMap<String, bool>) -> TargetKind {
+    match kinds.get(name) {
+        Some(true) => TargetKind::Map,
+        Some(false) => TargetKind::Array,
+        None => TargetKind::Scalar,
+    }
+}
+
+/// Shapes SB5090 leaves to a diagnostic that says more than it can.
+fn assign_shape_deferred(kind: TargetKind, value: &Expr) -> bool {
+    // A scalar given a collection literal is SB5055's: it names the
+    // declaration the author is missing, not the shape they wrote.
+    if kind == TargetKind::Scalar {
+        return true;
+    }
+    // Deferred for the same reason SB4064 defers it: SB5025 names the
+    // out-param form `argv N a`, which is the only thing that works here.
+    is_argv_splat_expr(value)
+}
+
+/// SB5091: `+=` on a map. DG, 2026-10-08 — a map has no end to append to, and
+/// `m[key]=value` is the spelling that already works.
+fn map_append_diag(a: &Assignment) -> Diagnostic {
+    Diagnostic::error_span(
+        a.value.span,
+        "SB5091",
+        format!(
+            "`{name}` is a map, which has no append position — assign to a \
+             key instead: `{name}[key]=value`",
+            name = a.name,
+        ),
+    )
 }
 
 /// SB4026: reject an out-of-range decimal literal assigned to an int var.

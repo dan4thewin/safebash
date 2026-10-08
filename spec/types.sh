@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup types
-plan=341
+plan=364
 echo "1..$plan" >&3
 
 set +e
@@ -1943,6 +1943,89 @@ array arr=(p q)
 str z=${arr[$(( (f) ))]}
 echo "[$z]"'
 [[ $rc = 0 && $out = "[q]" && -z $err ]]; chk 75.165
+
+
+# ── decl.29-decl.51  ASSIGNMENT value shape (SB5090/SB5091) ──────────
+# DD#117 settled the *declaration* (`array a=x` is SB4064) and explicitly left
+# append "available as a statement, once the name is declared" — but gave the
+# statement no shape rule, and nothing else had one either. The same mistake
+# one line later was still a segfault. Fifteen spellings were wrong: seven
+# faulted, seven wrote nothing and said nothing, and `map m+=([k]=v)` reached
+# codegen as an ICE. Every one survived because no spec had ever written it,
+# which is exactly how DD#117's own cases survived.
+#
+# DG, 2026-10-08: `+=` on a map is rejected outright (SB5091) rather than given
+# bash's merge semantics — clarity over compatibility. A map has no end to
+# append to; `m[key]=value` says what the author means.
+
+# decl.29-decl.32 a scalar into an array slot — all four SEGFAULTED
+run_sash 'array a=(x); a=y; echo "${a[0]}"'
+[[ $rc != 0 && -z $out && $err == *SB5090* ]]; chk decl.29
+run_sash 'array a=(x); a+=y; echo "${a[0]}"'
+[[ $rc != 0 && -z $out && $err == *SB5090* ]]; chk decl.30
+run_sash 'array a=(x); a=$(echo hi); echo "${a[0]}"'
+[[ $rc != 0 && -z $out && $err == *SB5090* ]]; chk decl.31
+run_sash 'array a=(x); a+=$(echo hi); echo "${a[0]}"'
+[[ $rc != 0 && -z $out && $err == *SB5090* ]]; chk decl.32
+
+# decl.33-decl.34 map pairs into an array — `=` silently emptied it, `+=` faulted
+run_sash 'array a=(x); a=([b]=2); echo "${a[0]}"'
+[[ $rc != 0 && -z $out && $err == *SB5090* ]]; chk decl.33
+run_sash 'array a=(x); a+=([b]=2); echo "${a[0]}"'
+[[ $rc != 0 && -z $out && $err == *SB5090* ]]; chk decl.34
+
+# decl.35-decl.36 into a map slot — the scalar faulted, the flat list emptied it
+run_sash 'map m=([a]=1); m=y; echo "${m[a]}"'
+[[ $rc != 0 && -z $out && $err == *SB5090* ]]; chk decl.35
+run_sash 'map m=([a]=1); m=(y); echo "${m[a]}"'
+[[ $rc != 0 && -z $out && $err == *SB5090* ]]; chk decl.36
+
+# decl.37-decl.40 `+=` on a map is rejected whatever the value's shape.
+# decl.37 is the one that ICEd the compiler: `ArrayAppend` carrying a whole
+# AssocArray is assign-only to the SSA taint pass.
+run_sash 'map m=([a]=1); m+=([b]=2); echo "${m[b]}"'
+[[ $rc != 0 && -z $out && $err == *SB5091* ]]; chk decl.37
+run_sash 'map m=([a]=1); m+=z; echo "${m[a]}"'
+[[ $rc != 0 && -z $out && $err == *SB5091* ]]; chk decl.38
+run_sash 'map m=([a]=1); m+=(y); echo "${m[a]}"'
+[[ $rc != 0 && -z $out && $err == *SB5091* ]]; chk decl.39
+run_sash 'str x=y; map m=([a]=1); m+=$x; echo "${m[a]}"'
+[[ $rc != 0 && -z $out && $err == *SB5091* ]]; chk decl.40
+
+# decl.41 the SB5091 message names the cell form the author should write
+run_sash 'map m=([a]=1); m+=z; echo "${m[a]}"'
+[[ $rc != 0 && $err == *'m[key]=value'* ]]; chk decl.41
+
+# decl.42-decl.43 a map literal given to a scalar. SB5055 owns this (it names
+# the missing declaration); its match covered `( … )` but not `([k]=v)`, so
+# these two silently emptied `s` instead.
+run_sash 'str s=a; s=([b]=2); echo "$s"'
+[[ $rc != 0 && -z $out && $err == *SB5055* ]]; chk decl.42
+run_sash 'str s=a; s+=([b]=2); echo "$s"'
+[[ $rc != 0 && -z $out && $err == *SB5055* ]]; chk decl.43
+
+# decl.44 the DECLARATION hole in DD#117's own rule: it classified both
+# literals as "a collection", so array↔map cross-shape passed and emptied `a`.
+run_sash 'array a=([b]=2); echo "${a[0]}"'
+[[ $rc != 0 && -z $out && $err == *SB4064* ]]; chk decl.44
+
+# decl.45-decl.46 SB5090 defers to the better diagnostic, as SB4064 does
+run_sash 'array a=(x); a=@{b:-}; echo "${a[0]}"'
+[[ $rc != 0 && -z $out && $err == *SB5025* ]]; chk decl.45
+run_sash 'array a=(x); a=$(argv 1); echo "${a[0]}"' x y z
+[[ $rc != 0 && -z $out && $err != *SB5090* ]]; chk decl.46
+
+# decl.47-decl.51 controls: every shape-matched assignment still works
+run_sash 'array a=(x); a=(y); echo "${a[0]}"'
+[[ $rc = 0 && $out = "y" && -z $err ]]; chk decl.47
+run_sash 'map m=([a]=1); m=([b]=2); echo "${m[b]}"'
+[[ $rc = 0 && $out = "2" && -z $err ]]; chk decl.48
+run_sash 'map m=([a]=1); m[b]=2; echo "${m[b]}"'
+[[ $rc = 0 && $out = "2" && -z $err ]]; chk decl.49
+run_sash 'array a=(x); a[0]=z; echo "${a[0]}"'
+[[ $rc = 0 && $out = "z" && -z $err ]]; chk decl.50
+run_sash 'array b=(p q); map m=@{b:-}; echo "${m[p]}"'
+[[ $rc = 0 && $out = "q" && -z $err ]]; chk decl.51
 
 set -e
 tally
