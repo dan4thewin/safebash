@@ -1,4 +1,64 @@
-## ══ STATUS (2026-10-08, latest) — the rule that stopped at the declaration ══
+## ══ STATUS (2026-10-08, latest) — the copy that declined differently ══
+
+**Coverage queue, eleven candidates examined.** One genuine spec gap, three
+unreachable arms converted to ICEs, two false alarms checked and dropped.
+Journal 478. Committed `39d726f`.
+
+**The gap was `cmd > f 2>&1`.** `emit_one_redirect`'s guarded-dup branch — a
+dup emitted under a preceding open's failure guard — had never run. Every
+`2>&1` in the suite was the harness's own bash, never a compiled program.
+`rd.9` pins the idiom, `rd.10` is the ordering control (dup first copies the
+un-redirected fd 1). Both byte-identical to bash, measured before asserting.
+
+**`extract_func_args` was a forked copy of `single_command_subst`'s shape
+test, and the copy had drifted.** It unwrapped `StmtKind::Redirected`; the
+canonical test *declines* it so a redirected capture keeps its redirect —
+the fix for `$(/bin/echo hi > f)` capturing `hi` and leaving `f` untouched.
+Harmless only because the producer declines first. Third time the "never fork
+a shared walker" rule has had something to say; first time coldness found it.
+
+**`lower_arith_mutation_structured`'s `_` arm lowered unexpected shapes to
+`ArithTest`** — which evaluates its operand and discards it. A new mutating
+`ArithExpr` variant would have silently stopped mutating. Now total over all
+sixteen variants, so it would be a compile error instead. Its comment blamed
+SB5007, a *validator* rule, for protecting a *parser* function.
+
+**Two that looked like bugs and were not** — worth knowing before someone
+re-finds them: `[[ $x == * { … } ]]` runs nothing because `*` is an exact
+literal under DD#66, not a catch-all (`x='*'` matches it); and native
+reporting a redirect failure on the invoker's stderr rather than through a
+preceding `2>&1` is DD#120, decided deliberately.
+
+**State.** `mk test` 81+27+20 (was 78). Sweep **7801**, predicted before
+running; 0 failing, 0 flips, 4 new ids, self-test 248. Coverage **98.33%
+lines** (499 of 29859), 98.78% functions, 92.19% branches; `coverage.db`
+444 → 429 uncovered, current at `39d726f`.
+
+**Next — the queue, in order.** The three converted functions now have *no*
+cold lines: the union folds in unit tests, so a category-4 arm with a pin
+stops being cold. Remaining:
+
+- `lower_value` (5) and `lower_value_as_str_aggregate` (6) — all ICE panics,
+  want pins. `lower_value_as_str_aggregate` ends in `other =>` rather than
+  naming its variants; worth making total while pinning it.
+- `emit_one_redirect`'s own `other => panic!` arm (1) — same treatment.
+- `insert_case_phis`'s single-path arm — unreachable (`items == 1 &&
+  is_default` is only the `||`-only dispatch, SB4068). Orthogonal, so it
+  would qualify as a backstop, but its body is a *correct* answer rather
+  than a wrong one — the opposite of the arith arm's case. **DG's call.**
+- `sysroot_file_exists`'s `.squashfs` branch — live code, no spec, but
+  speccing needs `unsquashfs` and a real image. **Is that path still
+  wanted?** If not it is a deletion, not a gap.
+- `ice_text` (4) is `#[cfg(test)]` and pollutes the ranking. Filtering
+  `#[cfg(test)]` out of the cold-line query is a small tooling fix.
+- Settled, leave alone: `atok_to_text` (14), the `expr_to_string` family
+  (21), `from_arith` (5), `keys_splat_map_name` (4), and
+  `is_taint_source`/`expr_uses_tainted`'s collection arms — all totality or
+  validate-shadowed. The taint ones were *confirmed* unreachable with
+  `cov-batch`: `map m=([k]=$(getenv HOME))` is correctly SB5021 but reaches
+  a different walker entirely, so the obvious spec would have proved nothing.
+
+## ══ STATUS (2026-10-08) — the rule that stopped at the declaration ══
 
 **Sixteen broken spellings of plain assignment. Seven segfaulted.** Found by
 writing a spec for a cold line in `handle_append_assign` — the map-append path,
