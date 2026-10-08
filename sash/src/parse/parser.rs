@@ -2190,15 +2190,14 @@ fn looks_like_regex_mutation(scanner: &mut Scanner) -> Option<String> {
 
 fn parse_assignment(scanner: &mut Scanner, span: Span) -> Result<Option<Statement>, Diagnostic> {
     let name_tok = scanner.next();
-    let raw_name = match name_tok.token {
-        Tok::Word(w) => w,
-        _ => {
-            return Err(parse_error(
-                span,
-                "SB4014",
-                "expected variable name".to_string(),
-            ))
-        }
+    let Tok::Word(raw_name) = name_tok.token else {
+        // `parse_simple_or_assignment` reaches here only when
+        // `looks_like_assignment` matched, and that returns false unless
+        // `scanner.peek()` is a `Tok::Word` — the very token consumed above.
+        unreachable!(
+            "looks_like_assignment guarantees a Tok::Word head, got {:?}",
+            name_tok.token
+        )
     };
 
     let (name, index) = parse_assignment_lhs(scanner, raw_name, span)?;
@@ -3596,5 +3595,17 @@ mod invariant_tests {
     fn parse_assign_op_rejects_a_token_that_is_not_an_assignment() {
         let mut sc = Scanner::new("x");
         let _ = parse_assign_op(&mut sc);
+    }
+
+    /// `parse_simple_or_assignment` calls `parse_assignment` only when
+    /// `looks_like_assignment` matched, and that returns false unless the head
+    /// token is a `Tok::Word`. The arm used to be a `SB4014 "expected variable
+    /// name"` diagnostic for a shape no source can produce. Only a direct call
+    /// with a non-word head can reach it.
+    #[test]
+    #[should_panic(expected = "looks_like_assignment guarantees a Tok::Word head")]
+    fn parse_assignment_rejects_a_non_word_head() {
+        let mut sc = Scanner::new("= 1");
+        let _ = parse_assignment(&mut sc, Span::new(1, 1));
     }
 }

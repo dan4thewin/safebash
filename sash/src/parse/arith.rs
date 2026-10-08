@@ -1460,6 +1460,15 @@ fn subscript_assign_rhs(
     }
 }
 
+/// Lower a mutating arithmetic expression to a Statement.
+///
+/// **Total over `ArithExpr` on purpose — do not add a wildcard.**
+/// `lower_arith_command` routes only `ArithKind::Mutation` here, and
+/// `classify_arith_expr` answers `Mutation` for exactly the six variants
+/// handled below. Naming the other ten makes a *new* `ArithExpr` variant a
+/// compile error here rather than a silent one: the arm used to be `_ =>`
+/// lowering any unexpected shape to `ArithTest`, which evaluates its operand
+/// and discards it — a mutation that quietly stopped mutating.
 fn lower_arith_mutation_structured(expr: &ArithExpr, span: Span) -> Statement {
     match expr {
         ArithExpr::Assign { var, value } => arith_assign_stmt(var, None, (**value).clone(), span),
@@ -1499,13 +1508,20 @@ fn lower_arith_mutation_structured(expr: &ArithExpr, span: Span) -> Statement {
                 span,
             }
         }
-        _ => {
-            // Should not reach here for valid code (SB5007 rejects bare expressions)
-            Statement {
-                kind: StmtKind::ArithTest(Box::new(expr.clone())),
-                span,
-            }
-        }
+        ArithExpr::Literal(_)
+        | ArithExpr::Var(_)
+        | ArithExpr::DollarVar(_)
+        | ArithExpr::BinOp { .. }
+        | ArithExpr::UnaryOp { .. }
+        | ArithExpr::Ternary { .. }
+        | ArithExpr::FuncCall { .. }
+        | ArithExpr::Paren(_)
+        | ArithExpr::Expansion(_)
+        | ArithExpr::Subscript { .. } => unreachable!(
+            "classify_arith_expr answers Mutation only for Assign, CompoundAssign, \
+             PostIncDec, PreIncDec, SubscriptAssign and Comma, and lower_arith_command \
+             routes only Mutation here: {expr:?}"
+        ),
     }
 }
 
@@ -1803,6 +1819,61 @@ mod tests {
     #[should_panic(expected = "prefix ++/-- never survives the parser")]
     fn lower_arith_mutation_structured_rejects_prefix_incdec() {
         let _ = lower_arith_mutation_structured(&prefix_incdec(), Span::new(1, 1));
+    }
+
+    /// `lower_arith_command` routes only `ArithKind::Mutation` into
+    /// `lower_arith_mutation_structured`. These are the non-mutation shapes:
+    /// `classify_arith_expr` answers `Comparison` or `Test` for every one, so
+    /// none can arrive. The arm used to be `_ =>`, silently lowering them to
+    /// `ArithTest` — a mutation that evaluates its operand and discards it. A
+    /// test that stops panicking means the classifier and the lowering have
+    /// drifted apart.
+    #[test]
+    fn lower_arith_mutation_rejects_every_non_mutation_shape() {
+        let shapes = [
+            ArithExpr::Literal(1),
+            ArithExpr::Var("x".into()),
+            ArithExpr::DollarVar("x".into()),
+            ArithExpr::BinOp {
+                left: Box::new(ArithExpr::Literal(1)),
+                op: IrArithOp::Add,
+                right: Box::new(ArithExpr::Literal(2)),
+            },
+            ArithExpr::Paren(Box::new(ArithExpr::Literal(1))),
+            ArithExpr::Subscript {
+                name: "a".into(),
+                index: Box::new(ArithExpr::Literal(0)),
+            },
+            ArithExpr::FuncCall {
+                name: "f".into(),
+                args: vec![],
+            },
+            ArithExpr::Ternary {
+                cond: Box::new(ArithExpr::Literal(1)),
+                true_val: Box::new(ArithExpr::Literal(2)),
+                false_val: Box::new(ArithExpr::Literal(3)),
+            },
+        ];
+        for shape in shapes {
+            assert_ne!(
+                classify_arith_expr(&shape),
+                ArithKind::Mutation,
+                "{shape:?} must not classify as a mutation"
+            );
+            let caught = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                lower_arith_mutation_structured(&shape, Span::new(1, 1))
+            }));
+            let err = caught.expect_err("a non-mutation shape must ICE here");
+            let msg = err
+                .downcast_ref::<&'static str>()
+                .map(|s| (*s).to_string())
+                .or_else(|| err.downcast_ref::<String>().cloned())
+                .expect("ICE payload is a string");
+            assert!(
+                msg.contains("classify_arith_expr answers Mutation only"),
+                "ICE must name the invariant that guarantees it, got: {msg}"
+            );
+        }
     }
 
     /// `step_arith_collect` intercepts all five paren tokens before

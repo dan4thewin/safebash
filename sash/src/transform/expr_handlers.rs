@@ -213,7 +213,7 @@ fn func_call_capture(name: String, c: &Command, state: &VersionState) -> SsaValu
 /// it's a bare literal, and the inner `Command`. Returns `None` for
 /// anything that isn't a single-command substitution after stripping
 /// `Comment` filler and `Redirected` / `Suppressed` wrappers.
-fn single_command_subst(expr: &Expr) -> Option<(&Statement, Option<String>, &Command)> {
+pub(super) fn single_command_subst(expr: &Expr) -> Option<(&Statement, Option<String>, &Command)> {
     let ExprKind::CommandSubstitution(stmts) = &expr.kind else {
         return None;
     };

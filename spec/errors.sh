@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup errors
-plan=328
+plan=330
 echo "1..$plan" >&3
 
 set +e
@@ -458,6 +458,29 @@ chk rd.7
 run_sash '/bin/echo hi 2>&1 1> /nonexistent_dir_55/f
 echo after'
 [[ $rc != 0 && -z $err && -z $out    && $rerr == *"/nonexistent_dir_55/f: No such file or directory"* ]]; chk rd.8
+
+# rd.9 a dup AFTER a successful open — the everyday `> f 2>&1`. The open points
+# fd 1 at the file, then `2>&1` points fd 2 at the same description, so both
+# streams land in it. Every `2>&1` in the suite until now was the harness's own
+# bash, never a compiled program, and the dup is emitted under the preceding
+# open's failure guard (bash abandons a redirect list at the first failed open)
+# — so this ordering was the one guarded-dup path nothing reached.
+rm -f rd9.txt
+run_sash '/bin/sh -c "echo out; echo err 1>&2" > rd9.txt 2>&1
+echo after'
+[[ $rc = 0 && $out = "after" && -z $err \
+   && "$(cat rd9.txt)" = "out
+err" ]]; chk rd.9
+
+# rd.10 the ordering control for rd.9: with the dup FIRST, `2>&1` copies fd 1
+# while it is still the invoker's stdout, so stderr goes there and only stdout
+# is redirected into the file. Without this pair rd.9 is also satisfied by an
+# implementation that merges the two streams whatever the order.
+rm -f rd10.txt
+run_sash '/bin/sh -c "echo out; echo err 1>&2" 2>&1 > rd10.txt
+echo after'
+[[ $rc = 0 && $out = "err
+after" && -z $err && "$(cat rd10.txt)" = "out" ]]; chk rd.10
 
 # --- DD#46 top-level positional rejection: directed error text (DD#60) ---
 

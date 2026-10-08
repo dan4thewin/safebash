@@ -1459,22 +1459,21 @@ pub(super) fn capture_body_into(
 /// Re-extract the call args from the original `$(…)` expression. The
 /// args were dropped when `expr_to_value` collapsed the substitution
 /// into a `FuncCall(name)`, so we pull them back from the `Expr` here.
+///
+/// The shape test is `single_command_subst`'s — the one function that
+/// decided this was a `FuncCall` at all (`handle_command_substitution` →
+/// `resolve_single_cmdsubst` → `func_call_capture`). It used to be
+/// duplicated here, and the copy had already drifted: it unwrapped
+/// `StmtKind::Redirected`, which the canonical test deliberately *declines*
+/// so a redirected capture falls to `CmdSubstBody` and keeps its redirect.
 fn extract_func_args(value: &Expr) -> Vec<Expr> {
-    let ExprKind::CommandSubstitution(stmts) = &value.kind else {
-        return vec![];
+    let Some((_, _, c)) = super::expr_handlers::single_command_subst(value) else {
+        unreachable!(
+            "try_capture_inline runs only when expr_to_value produced a FuncCall, \
+             and single_command_subst is the only route to one"
+        )
     };
-    if stmts.len() != 1 {
-        return vec![];
-    }
-    let inner = match &stmts[0].kind {
-        StmtKind::Redirected(r) => &r.body.kind,
-        other => other,
-    };
-    if let StmtKind::Command(c) = inner {
-        c.args.clone()
-    } else {
-        vec![]
-    }
+    c.args.clone()
 }
 
 /// `attest`, `argv` and `keys` each reach lowering with their shape already
@@ -1559,5 +1558,57 @@ mod invariant_tests {
     fn a_keys_statement_of_the_wrong_arity_is_a_loud_ice() {
         ice_on("keys", vec![lit("m")], "SB5073");
         ice_on("keys", vec![lit("m"), lit("k"), lit("x")], "SB5073");
+    }
+
+    /// `extract_func_args` is reached only from `try_capture_inline`, which
+    /// runs only when `expr_to_value` produced an `SsaValue::FuncCall` — and
+    /// `single_command_subst` is the only route to one. These are the four
+    /// shapes it declines, so none can arrive here. The checks used to be
+    /// duplicated inside `extract_func_args`, and the copy had already drifted
+    /// from the original over `Redirected`.
+    #[test]
+    fn extract_func_args_rejects_every_shape_single_command_subst_declines() {
+        let cmd = Statement {
+            kind: StmtKind::Command(Command {
+                name: lit("f"),
+                args: vec![],
+            }),
+            span: Span::new(1, 1),
+        };
+        let subst = |stmts: Vec<Statement>| Expr {
+            kind: ExprKind::CommandSubstitution(stmts),
+            span: Span::new(1, 1),
+        };
+        let redirected = Statement {
+            kind: StmtKind::Redirected(crate::ir::Redirected {
+                body: Box::new(cmd.clone()),
+                redirects: vec![],
+            }),
+            span: Span::new(1, 1),
+        };
+        let shapes = [
+            // not a command substitution at all
+            lit("plain"),
+            // zero and two statements
+            subst(vec![]),
+            subst(vec![cmd.clone(), cmd.clone()]),
+            // a redirected capture — declined so the redirect survives
+            subst(vec![redirected]),
+        ];
+        for shape in shapes {
+            let caught = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                extract_func_args(&shape)
+            }));
+            let err = caught.expect_err("this shape must ICE");
+            let msg = err
+                .downcast_ref::<&'static str>()
+                .map(|s| (*s).to_string())
+                .or_else(|| err.downcast_ref::<String>().cloned())
+                .expect("ICE payload is a string");
+            assert!(
+                msg.contains("single_command_subst is the only route"),
+                "ICE must name the invariant that guarantees it, got: {msg}"
+            );
+        }
     }
 }
