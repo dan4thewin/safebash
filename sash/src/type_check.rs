@@ -157,6 +157,11 @@ fn expr_type(expr: &Expr, env: &TypeEnv) -> VarType {
 /// `$(cmd)`: int when `cmd` is one of the compiler intrinsics that
 /// returns an int, otherwise the recorded function type (defaults to
 /// String for unknown commands).
+///
+/// A *statement* builtin — `$(echo …)`, `$(unset x)` — keeps the default
+/// String: it is a capture of the command's stdout, not an intrinsic call,
+/// which is why `resolve::ArithDenotation::Statement` is about arithmetic
+/// only and says nothing about `$( )`.
 fn command_substitution_type(parts: &[Statement], env: &TypeEnv) -> VarType {
     let Some(first) = parts.first() else {
         return VarType::String;
@@ -165,33 +170,10 @@ fn command_substitution_type(parts: &[Statement], env: &TypeEnv) -> VarType {
         return VarType::String;
     };
     let name = expr_to_name(&c.name);
-    if is_int_returning_intrinsic(&name) {
+    if crate::resolve::is_int_valued_intrinsic(&name) {
         return VarType::Int;
     }
     env.func_type(&name)
-}
-
-/// A `$(…)` command substitution is int-typed when its command is one of
-/// the sash-native value functions that yield an integer: `len`/`argc`
-/// (counts), `random` (i64 draw), `epochseconds` (unix time), `signum`
-/// (DD#56 last-signal number), `status` (`$?`), and the
-/// `getpid`/`getppid`/`getcpid` process ids. String-valued functions
-/// (`toupper`, `join`, `basename`, …) are not listed, so
-/// `int n=$(toupper s)` stays a type error (SB4030).
-fn is_int_returning_intrinsic(name: &str) -> bool {
-    matches!(
-        name,
-        "len"
-            | "strlen"
-            | "argc"
-            | "random"
-            | "signum"
-            | "epochseconds"
-            | "status"
-            | "getpid"
-            | "getppid"
-            | "getcpid"
-    )
 }
 
 /// DD#58/Option C: reject a string producer used in an arithmetic sexpr. The
@@ -384,15 +366,8 @@ fn bare_map_subscript_error(name: &str, span: Span, string_valued: bool) -> Type
 /// string, emit a type error.
 fn check_arith_sexpr(a: &ArithExpr, span: Span, env: &TypeEnv, errors: &mut Vec<TypeError>) {
     walk_arith_funccalls(a, &mut |name, args| {
-        if is_sexpr_string_producer(name, env) {
-            errors.push(TypeError {
-                message: format!(
-                    "`{name}` can't be called in an arithmetic sexpr — it yields a \
-                     string, not an int. Capture it first with `$()`: `s=$({name} …)`, \
-                     then use `s` (or an `int` of it) in `$(( … ))`."
-                ),
-                span,
-            });
+        if let Some(e) = sexpr_callee_error(name, span, env) {
+            errors.push(e);
         }
         check_sexpr_intrinsic_operands(name, args, span, env, errors);
     });
@@ -668,16 +643,56 @@ fn check_int_pe_default(
     });
 }
 
-/// A sexpr callee that is NOT a valid int producer: a string-returning intrinsic,
-/// or a user string/void function. Int
-/// intrinsics (`len`, `getpid`, `argc`, …), user `-> int` functions, and a bare
-/// variable `(x)` (arithmetic grouping) are all valid and return `false`.
-fn is_sexpr_string_producer(name: &str, env: &TypeEnv) -> bool {
-    const STRING_INTRINSICS: &[&str] = &[
-        "toupper", "tolower", "join", "keys", "basename", "dirname", "getcwd", "getenv", "arg",
-        "sub", "gsub", "match",
-    ];
-    STRING_INTRINSICS.contains(&name) || matches!(env.funcs.get(name), Some(VarType::String))
+/// A sexpr callee that is not a valid int producer, as a type error — or
+/// `None` when the callee is legal.
+///
+/// The three answers are the three ways a `(name …)` can be wrong, and the
+/// message has to differ because the advice does: a string intrinsic should
+/// be captured with `$( )`, while a command (`echo`, `cd`, `break`) has no
+/// value to capture in arithmetic at all. Both used to be the same silent
+/// `0` — `is_sexpr_string_producer` carried its own list of twelve string
+/// intrinsics and let every other compiler name through as an int producer.
+///
+/// Int intrinsics, user `-> int` functions, and a bare variable `(x)`
+/// (arithmetic grouping, not a call) are all legal and return `None`.
+fn sexpr_callee_error(name: &str, span: Span, env: &TypeEnv) -> Option<TypeError> {
+    use crate::resolve::ArithDenotation as D;
+    match crate::resolve::arith_denotation(name) {
+        Some(D::Int) => None,
+        Some(D::Str) => Some(string_callee_error(name, span)),
+        Some(D::Statement) => Some(statement_callee_error(name, span)),
+        // Not a name the compiler owns: a variable or a user function. Only a
+        // user *string* function is wrong here.
+        None if matches!(env.funcs.get(name), Some(VarType::String)) => {
+            Some(string_callee_error(name, span))
+        }
+        None => None,
+    }
+}
+
+/// The SB4030 text for a sexpr callee that yields a string.
+fn string_callee_error(name: &str, span: Span) -> TypeError {
+    TypeError {
+        message: format!(
+            "`{name}` can't be called in an arithmetic sexpr — it yields a \
+             string, not an int. Capture it first with `$()`: `s=$({name} …)`, \
+             then use `s` (or an `int` of it) in `$(( … ))`."
+        ),
+        span,
+    }
+}
+
+/// The SB4030 text for a sexpr callee that is a statement — it denotes no
+/// value at all, so there is nothing to capture and no conversion to offer.
+fn statement_callee_error(name: &str, span: Span) -> TypeError {
+    TypeError {
+        message: format!(
+            "`{name}` is a command, not a value — it denotes nothing in \
+             arithmetic. Only an int intrinsic (`len`, `argc`, `getpid`, …) \
+             or a `-> int` function can be called in `$(( … ))`."
+        ),
+        span,
+    }
 }
 
 /// `${var:-default}` / `${var-default}` preserve the variable's type;

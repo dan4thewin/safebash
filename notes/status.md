@@ -1,4 +1,44 @@
-## ══ STATUS (2026-10-09, latest) — the namespace that was never partitioned ══
+## ══ STATUS (2026-10-09, latest) — the list that could not grow ══
+
+**Nineteen names were silently `0` in arithmetic.** `$(( (echo) ))` compiled
+and printed `0`; so did `(cd)`, `(read)`, `(break)`, `(argv)`, `(unset)` and
+thirteen more. Journal 482, specs `58.36`-`58.53`.
+
+**The cause was a deny-list over an open set.** `is_sexpr_string_producer`
+listed twelve string intrinsics and admitted every *other* compiler-owned name
+as a valid int producer, which then lowered as a read of an unset variable.
+Five of the nineteen are `BuiltinCmd` variants added after that list was
+written — they joined the legal class on the day they were declared, with no
+edit to the file that decides it.
+
+**One table now, keyed on the enum.** `resolve::ArithDenotation` says `Int` /
+`Str` / `Statement` for every compiler-owned name and is **total over
+`BuiltinCmd`**, so a new builtin does not compile until it is classified. Two
+other lists are deleted: `type_check::is_int_returning_intrinsic` and
+`is_sexpr_string_producer` both read the one table, and `resolve::INTRINSICS`
+lost the five entries (`argv`, `len`, `strlen`, `keys`, `join`) that
+contradicted its own doc by also being `BuiltinCmd` names.
+
+**A statement gets its own message.** "capture it first with `$()`" is good
+advice for `toupper` and wrong for `break`, so `Statement` says "`echo` is a
+command, not a value — it denotes nothing in arithmetic."
+
+**The first sweep, before any new spec, reported zero flips.** That is the
+measurement of the gap: nothing in the suite touched any of the nineteen in
+either direction, which is how `bug-arith-sexpr-intrinsics-zero` could be
+marked done with two thirds of its own category B still open.
+
+**Gates.** Sweep **7883** (predicted before running), 0 failing, 0 flips, 36
+new ids, self-test 248. Units 86/27/20.
+
+**Next:** DD#126 — `wait` as a non-aborting int builtin (wait(2)/waitpid(2),
+`-1` on ECHILD, status via `$(status)`, `- wait` to discard), and bare-word
+nullary intrinsics in arithmetic (`$(( getpid ))`, `$(( wait ))`), which DD#125
+unblocked. Adding `wait` to the `Int` denotation is a one-line change to the
+table — and if it is made without a lowering, `resolve_nullary_sexpr`'s new ICE
+fires rather than returning 0.
+
+## ══ STATUS (2026-10-09) — the namespace that was never partitioned ══
 
 **DD#125 landed: a name the compiler already understands is not the user's to
 bind.** Keywords + `BuiltinCmd` names + `INTRINSICS`, rejected as a variable,

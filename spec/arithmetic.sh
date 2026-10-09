@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup arithmetic
-plan=406
+plan=424
 echo "1..$plan" >&3
 
 set +e
@@ -2174,6 +2174,92 @@ run_sash 'echo "$(( , 1 ))"'
 # 31.172 the operand diagnostic spells `)` as written
 run_sash 'echo "$(( ) 1 ))"'
 [[ $rc != 0 && -z $out && $err == *'found `)`'* ]]; chk 31.172
+
+# ── DD#58 arith sexpr: the callee must denote a value (2026-10-09) ──
+#
+# The sexpr callee rule was allow-by-default. `is_sexpr_string_producer` held a
+# hand-written list of twelve string intrinsics and treated every *other*
+# compiler-owned name as a valid int producer, so nineteen names lowered to a
+# read of an unset variable: `$(( (echo) ))` was a silent 0, and so were `(cd)`,
+# `(read)`, `(break)`, `(argv)` and the rest. Five of the nineteen were
+# `BuiltinCmd` variants added after the list was written. Nothing in the suite
+# touched any of them — the first sweep after the fix reported zero flips.
+#
+# The fix keys the classification on the `BuiltinCmd` *enum*, so a new builtin
+# does not compile until it is classified. These specs pin the behaviour; the
+# totality is what keeps it.
+
+# 58.36 the headline: `echo` is a command, so it is not an arithmetic operand.
+run_sash 'echo $(( (echo) ))'
+[[ $rc != 0 && -z $out && $err == *SB4030* && $err == *"is a command, not a value"* ]]; chk 58.36
+# 58.37 with arguments too — a sexpr that carries args is unambiguously a call,
+# and the callee is still not callable. (The arg is a defined variable so the
+# SB5031 read check, which runs first, has nothing to say.)
+run_sash 'int n=1
+echo $(( (echo n) ))'
+[[ $rc != 0 && -z $out && $err == *SB4030* && $err == *"\`echo\`"* ]]; chk 58.37
+# 58.38 `cd` — a statement whose `$( )` form is separately rejected (SB4066),
+# so the sexpr was the only surface that accepted it at all.
+run_sash 'echo $(( (cd) ))'
+[[ $rc != 0 && -z $out && $err == *SB4030* && $err == *"\`cd\`"* ]]; chk 58.38
+# 58.39 `read` — an out-parameter binder has no value.
+run_sash 'echo $(( (read) ))'
+[[ $rc != 0 && -z $out && $err == *SB4030* && $err == *"\`read\`"* ]]; chk 58.39
+# 58.40 `break` — control flow.
+run_sash 'echo $(( (break) ))'
+[[ $rc != 0 && -z $out && $err == *SB4030* && $err == *"\`break\`"* ]]; chk 58.40
+# 58.41 `unset` — a mutation.
+run_sash 'echo $(( (unset) ))'
+[[ $rc != 0 && -z $out && $err == *SB4030* && $err == *"\`unset\`"* ]]; chk 58.41
+# 58.42 `argv` — it was listed in `resolve::INTRINSICS` *and* recognized by
+# `BuiltinCmd::from_name`, the duplication that made a per-name denotation
+# something two tables could disagree about.
+run_sash 'echo $(( (argv) ))'
+[[ $rc != 0 && -z $out && $err == *SB4030* && $err == *"\`argv\`"* ]]; chk 58.42
+# 58.43 `matchall` — its siblings `match`/`sub`/`gsub` were on the string
+# deny-list and it was not, so it slipped through by a different route.
+run_sash 'str s=abc
+str p=b
+echo $(( (matchall s p) ))'
+[[ $rc != 0 && -z $out && $err == *SB4030* && $err == *"\`matchall\`"* ]]; chk 58.43
+# 58.44-58.47 the four `BuiltinCmd` variants added *after* the deny-list was
+# written. A deny-list cannot cover a name that does not exist yet; this is the
+# cohort that proves the direction was wrong, not the contents.
+run_sash 'echo $(( (write) ))'
+[[ $rc != 0 && -z $out && $err == *SB4030* && $err == *"\`write\`"* ]]; chk 58.44
+run_sash 'echo $(( (readline) ))'
+[[ $rc != 0 && -z $out && $err == *SB4030* && $err == *"\`readline\`"* ]]; chk 58.45
+run_sash 'echo $(( (mapfile) ))'
+[[ $rc != 0 && -z $out && $err == *SB4030* && $err == *"\`mapfile\`"* ]]; chk 58.46
+run_sash 'echo $(( (attest) ))'
+[[ $rc != 0 && -z $out && $err == *SB4030* && $err == *"\`attest\`"* ]]; chk 58.47
+# 58.48 the rule applies to the bare `(( … ))` statement test, not just
+# `$(( … ))` — two entry points into the same walker.
+run_sash 'int x=1
+(( (exit) ))'
+[[ $rc != 0 && -z $out && $err == *SB4030* && $err == *"\`exit\`"* ]]; chk 58.48
+# 58.49 ...and to a `(( … ))` condition.
+run_sash 'int x=1
+if (( (cd) )) { echo y; }'
+[[ $rc != 0 && -z $out && $err == *SB4030* && $err == *"\`cd\`"* ]]; chk 58.49
+# 58.50 a *string* callee keeps its own message: there the advice is to capture
+# first, which is advice a command has no use for. The two faults stay distinct.
+run_sash 'str s=ab
+echo $(( (toupper s) ))'
+[[ $rc != 0 && -z $out && $err == *SB4030* && $err == *"yields a"* && $err == *"\$(toupper"* ]]; chk 58.50
+# 58.51 a user string function is still a string callee, not a command.
+run_sash 'fn g { echo hi; }
+echo $(( (g) + 1 ))'
+[[ $rc != 0 && -z $out && $err == *SB4030* && $err == *"yields a"* ]]; chk 58.51
+# 58.52 the legal side is untouched: an int intrinsic still computes.
+run_sash 'int p=$(( (getpid) ))
+if (( p > 0 )) { echo yes; }'
+[[ $rc = 0 && $out = "yes" && -z $err ]]; chk 58.52
+# 58.53 `(x)` on a plain variable is still arithmetic GROUPING, not a call —
+# the name is not the compiler's, so it never reaches the denotation rule.
+run_sash 'int x=7
+echo $(( (x) + 1 ))'
+[[ $rc = 0 && $out = "8" && -z $err ]]; chk 58.53
 
 set -e
 tally

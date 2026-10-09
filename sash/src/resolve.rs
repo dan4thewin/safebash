@@ -20,36 +20,143 @@ use crate::ir::*;
 use crate::ssa::BuiltinCmd;
 use std::collections::HashSet;
 
+/// What a name the compiler owns denotes in **arithmetic** — as a DD#58
+/// sexpr callee `(name …)` or a bare word in `$(( … ))`.
+///
+/// Arithmetic is the one context where a compiler name is not a command but
+/// an *operand*, so every such name has to answer for itself here. Nothing
+/// made them: the arith type rule carried a hand-written deny-list of string
+/// intrinsics and treated every other compiler name as a valid int producer.
+/// Nineteen names were therefore accepted and lowered as reads of an unset
+/// variable — `$(( (echo) ))`, `(cd)`, `(read)`, `(break)` and the rest were
+/// each a silent `0`. Five of the nineteen (`write`, `readline`, `mapfile`,
+/// `attest`, `matchall`) were `BuiltinCmd` variants added *after* the
+/// deny-list was written, which is the failure a deny-list guarantees.
+///
+/// This table is keyed on the `BuiltinCmd` enum instead, so a new builtin
+/// does not compile until someone says what it denotes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ArithDenotation {
+    /// Yields an i64 — legal as an arithmetic operand.
+    Int,
+    /// Yields a string — it belongs in a `$( )` capture, not in `$(( ))`.
+    Str,
+    /// Denotes no value at all: a statement.
+    Statement,
+}
+
 /// Names that are NOT PATH-resolved externals even though `from_name`
 /// returns `Other` for them: compiler intrinsics that surface as command
-/// or command-substitution heads. Kept in sync with the intrinsic set in
-/// `ssa_taint::cmd_subst_taint`.
-const INTRINSICS: &[&str] = &[
-    "getenv",
-    "argv",
-    "arg",
-    "argc",
-    "status",
-    "len",
-    "strlen",
-    "keys",
-    "join",
-    "epochseconds",
-    "random",
-    "getpid",
-    "getppid",
-    "getcpid",
-    "getcwd",
-    "signum",
+/// or command-substitution heads, each with what it denotes in arithmetic.
+/// Kept in sync with the intrinsic set in `ssa_taint::cmd_subst_taint`.
+///
+/// `argv`, `len`, `strlen`, `keys` and `join` were listed here too, in
+/// contradiction of the sentence above — `from_name` recognizes all five.
+/// The duplication was harmless while every reader asked only "is this name
+/// the compiler's", because both spellings answer yes; it became a hazard
+/// the moment a name had to carry a *denotation*, which two tables can
+/// disagree about. All five are classified once, on the `BuiltinCmd` side.
+const INTRINSICS: &[(&str, ArithDenotation)] = &[
+    ("getenv", ArithDenotation::Str),
+    ("arg", ArithDenotation::Str),
+    ("argc", ArithDenotation::Int),
+    ("status", ArithDenotation::Int),
+    ("epochseconds", ArithDenotation::Int),
+    ("random", ArithDenotation::Int),
+    ("getpid", ArithDenotation::Int),
+    ("getppid", ArithDenotation::Int),
+    ("getcpid", ArithDenotation::Int),
+    ("getcwd", ArithDenotation::Str),
+    ("signum", ArithDenotation::Int),
 ];
+
+/// What each [`BuiltinCmd`] denotes in arithmetic.
+///
+/// **Total over `BuiltinCmd` on purpose — do not add a wildcard.** The
+/// classification a new builtin needs is exactly the one the old deny-list
+/// let it skip.
+///
+/// `Other` is a real answer, not a hole: it means "not the compiler's name",
+/// which is how a plain variable (`$(( (x) ))` is grouping, not a call) and a
+/// user function reach their own resolution.
+fn builtin_denotation(k: BuiltinCmd) -> Option<ArithDenotation> {
+    use ArithDenotation::{Int, Statement, Str};
+    use BuiltinCmd as B;
+    Some(match k {
+        B::Len | B::Strlen => Int,
+        B::Keys
+        | B::Join
+        | B::Sub
+        | B::Gsub
+        | B::Match
+        | B::Toupper
+        | B::Tolower
+        | B::Basename
+        | B::Dirname => Str,
+        B::Echo
+        | B::Write
+        | B::Test
+        | B::Noop
+        | B::Exit
+        | B::Exec
+        | B::Cd
+        | B::Wait
+        | B::Close
+        | B::Attest
+        | B::Read
+        | B::Mapfile
+        | B::Argv
+        | B::Break
+        | B::Continue
+        | B::Return
+        | B::Signal
+        | B::Unset
+        | B::MatchAll => Statement,
+        // The compiler-internal opcodes. `from_name` cannot produce one (it
+        // classifies only names a user can write), so this arm is a totality
+        // arm — it names its variants rather than using `_` so that a new
+        // opcode is a compile error here. `Statement` is nonetheless the
+        // right answer if the route ever opened: an opcode is not a value.
+        B::NegateTestResult
+        | B::SetTestFromStatus
+        | B::LetExit
+        | B::ForkBackground
+        | B::StoreBgPid
+        | B::TrapSignal
+        | B::SignalFlag
+        | B::TableDelete
+        | B::TableDeleteIdx => Statement,
+        B::Other => return None,
+    })
+}
+
+/// What `name` denotes in arithmetic, or `None` when the compiler does not
+/// own the name — a user function or a plain variable, which the caller
+/// resolves from its own tables.
+pub(crate) fn arith_denotation(name: &str) -> Option<ArithDenotation> {
+    builtin_denotation(BuiltinCmd::from_name(name))
+        .or_else(|| INTRINSICS.iter().find(|(n, _)| *n == name).map(|(_, d)| *d))
+}
+
+/// True when `name` is a compiler intrinsic whose value is an i64. The one
+/// predicate behind both "is `$(name)` int-typed" (`type_check`) and "may
+/// `(name …)` appear in `$(( ))`" — they are the same question, and asking
+/// it twice from two lists is what let the second answer rot.
+pub(crate) fn is_int_valued_intrinsic(name: &str) -> bool {
+    arith_denotation(name) == Some(ArithDenotation::Int)
+}
 
 /// True for any sash-native intrinsic — the `BuiltinCmd` set plus the
 /// command-head-only names in [`INTRINSICS`]. The single source of truth for
 /// "is this name the compiler's, rather than a PATH lookup or a user
 /// function"; `validate` uses it to decide whether an arith sexpr `(name …)`
 /// names anything at all.
+///
+/// Deliberately *not* the predicate for "may this appear in arithmetic" —
+/// that is [`arith_denotation`]. Owning a name and denoting a value are
+/// different questions about it.
 pub(crate) fn is_intrinsic(name: &str) -> bool {
-    BuiltinCmd::from_name(name) != BuiltinCmd::Other || INTRINSICS.contains(&name)
+    arith_denotation(name).is_some()
 }
 
 /// Words the parser gives a meaning of their own. Most are already
@@ -82,8 +189,8 @@ pub(crate) fn is_reserved_name(name: &str) -> bool {
 }
 
 /// True for the two intrinsics whose `$( )` denotes a **collection**: `argv`
-/// yields the positional list, `keys` a map's keys. Every other name in
-/// [`INTRINSICS`] — and every real command — yields a single value.
+/// yields the positional list, `keys` a map's keys. Every other intrinsic —
+/// and every real command — yields a single value.
 ///
 /// Stated in the positive because that is the exception set. The predicate
 /// used to be spelled the other way round (`is_scalar_value_intrinsic`), which
@@ -93,7 +200,7 @@ pub(crate) fn is_reserved_name(name: &str) -> bool {
 /// is no such thing in sash's value model — DD#28 eliminates word splitting,
 /// so a capture is one value however many lines it holds.
 pub(crate) fn is_collection_intrinsic(name: &str) -> bool {
-    INTRINSICS.contains(&name) && (name == "argv" || name == "keys")
+    name == "argv" || name == "keys"
 }
 
 /// Resolve every external command head in `program` to an absolute path.
@@ -154,10 +261,7 @@ fn is_resolvable_external(name: &str, funcs: &HashSet<String>) -> bool {
     if name.contains('/') {
         return false;
     }
-    if INTRINSICS.contains(&name) || funcs.contains(name) {
-        return false;
-    }
-    matches!(BuiltinCmd::from_name(name), BuiltinCmd::Other)
+    !is_intrinsic(name) && !funcs.contains(name)
 }
 
 /// A command head that is (or resolves to) an EXTERNAL program — i.e. NOT a
@@ -176,7 +280,7 @@ pub(crate) fn is_external_looking(name: &str) -> bool {
     if name.contains('/') {
         return true;
     }
-    !INTRINSICS.contains(&name) && matches!(BuiltinCmd::from_name(name), BuiltinCmd::Other)
+    !is_intrinsic(name)
 }
 
 fn collect_functions(stmts: &[Statement], funcs: &mut HashSet<String>) {

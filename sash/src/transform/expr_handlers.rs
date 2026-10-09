@@ -849,12 +849,19 @@ pub(crate) fn stateful_intrinsic_slot(name: &str) -> Option<&'static str> {
 /// `CmdSubst` node and codegen computes the i64 (native direct via
 /// `int_intrinsic_i64`, c via its atoi fallback).
 ///
-/// **A stateless intrinsic missing from that list does not fail loudly.** It
-/// falls through to the variable branch below and reads an unset slot: a
-/// silent 0. `getcpid` was once excluded and did exactly that, invisibly,
-/// because `validate` exempts every intrinsic name from the SB5031 typo check.
-/// A string intrinsic here is category B (rejected in type_check); see
-/// bug-arith-sexpr-intrinsics-zero.
+/// **A stateless intrinsic missing from that list no longer falls through.**
+/// It used to: the variable branch below read an unset slot and yielded a
+/// silent 0, which is what `getcpid` did invisibly for as long as it was
+/// excluded, because `validate` exempts every intrinsic name from the SB5031
+/// typo check. The guard below turns that into an ICE at compile time.
+///
+/// The guard is worth its line because it asks a *different* question from
+/// the gates upstream, on different data. `type_check` rejects the `Str` and
+/// `Statement` denotations and SB4045 rejects a nullary `(len)`/`(strlen)`;
+/// neither looks at this function's name list, so neither can notice an
+/// `Int`-denoting intrinsic that was added to `resolve`'s table and never
+/// given a lowering here. That is precisely the `getcpid` regression, and
+/// it is the one this arm catches.
 fn resolve_nullary_sexpr(name: &str, state: &VersionState) -> Option<SsaValue> {
     if let Some(var) = stateful_intrinsic_slot(name) {
         return Some(SsaValue::Var(state.lookup(var)));
@@ -866,6 +873,13 @@ fn resolve_nullary_sexpr(name: &str, state: &VersionState) -> Option<SsaValue> {
                 suppressed: false,
             })
         }
+        _ if crate::resolve::arith_denotation(name).is_some() => unreachable!(
+            "nullary sexpr `({name})` names a compiler intrinsic with no arith \
+             lowering. A non-`Int` denotation is rejected by type_check and a \
+             nullary `(len)`/`(strlen)` by SB4045, so `{name}` must be a new \
+             `ArithDenotation::Int` entry in `resolve` that was never given an \
+             arm here — the silent-0 regression `getcpid` once was."
+        ),
         // `(x)` on a plain variable is arithmetic GROUPING, not a call: the
         // arith parser emits `FuncCall` for every `(name)` and defers the
         // decision here (DD#58). A nullary name that is neither an intrinsic
@@ -1078,6 +1092,32 @@ mod tests {
         );
     }
 
+    /// A nullary sexpr `(name)` naming a compiler intrinsic that
+    /// `resolve_nullary_sexpr` has no arm for. Unreachable from source —
+    /// `type_check` rejects every `Str`/`Statement` denotation and SB4045
+    /// rejects a nullary `(len)`/`(strlen)` — so the arm exists to catch a
+    /// *regression*: an `ArithDenotation::Int` entry added to `resolve`'s
+    /// table and never given a lowering here. That is `getcpid`'s historical
+    /// silent 0, and it is invisible without this guard, because the name
+    /// falls through to the variable branch and reads an unset slot.
+    ///
+    /// Both shapes are asserted. `len` is the regression as it would arrive
+    /// from an `Int` entry; `getcwd` from a `Str` one that lost its gate.
+    #[test]
+    fn a_lowering_less_intrinsic_in_a_nullary_sexpr_is_a_loud_ice() {
+        for name in ["len", "getcwd"] {
+            let st = state();
+            let caught = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                resolve_nullary_sexpr(name, &st)
+            }));
+            let err = caught.expect_err("an intrinsic with no arith lowering must ICE");
+            let msg = ice_text(&err);
+            assert!(
+                msg.contains(name) && msg.contains("getcpid"),
+                "the ICE must name the intrinsic and the regression it guards: {msg}"
+            );
+        }
+    }
     /// Bug #3 fork A: a mutation in a *value* context is either rejected by
     /// SB4020 or hoisted into a preceding store, so the value path never
     /// meets one. The half-wired path this replaced silently dropped the

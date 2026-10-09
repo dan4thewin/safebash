@@ -185,3 +185,35 @@ string producer in a sexpr (SB4030); closes the getenv/arg validator-bypass and
 the user-string-fn side-effect run. specs arithmetic.sh sx.1–17.
 
 Deferred (small): getcpid-in-sexpr (`$!` slot).
+
+## Category B was closed by enumeration, and reopened 2026-10-09 (journal 482)
+
+The Part 2 entry above says category B is done. It covered the thirteen
+string intrinsics this file names — because the fix was a *list* of them
+(`type_check::is_sexpr_string_producer::STRING_INTRINSICS`), and a list can
+only cover what someone enumerated.
+
+Two thirds of the category were still open. A sexpr callee that denotes **no
+value at all** is neither category A nor a "string producer", so nineteen
+names stayed silent `0`:
+
+    echo write exit exec cd wait close attest read readline mapfile
+    readarray argv break continue return signal unset matchall
+
+Five of them (`write`, `readline`, `mapfile`, `attest`, `matchall`) are
+`BuiltinCmd` variants added *after* the deny-list was written. They joined
+the "valid int producer" class on the day they were declared, with no edit
+to the file that decides it.
+
+**Now closed, and closed differently.** `resolve::ArithDenotation` classifies
+every compiler-owned name as `Int` / `Str` / `Statement`, total over
+`BuiltinCmd`, so a new builtin does not compile until it is classified. The
+other two lists this file describes are gone:
+`type_check::is_int_returning_intrinsic` and `is_sexpr_string_producer` both
+now read the one table. Specs `58.36`-`58.53`.
+
+**Lesson for the gate list at the top of this file.** It enumerates thirteen
+intrinsic names and asks for "spec tests pin every func's sexpr behaviour".
+Both halves are satisfiable by a fix that enumerates, which is what happened.
+A gate that says "the classification is total" is the one that covers the
+names nobody has thought of yet.

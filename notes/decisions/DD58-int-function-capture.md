@@ -16,6 +16,20 @@ status: implemented
 > inside `$(( ))` — the sexpr expects an int producer — is a type error
 > (capture it first with `$()`); that is DD#30, not a `$()` restriction.
 
+> **Amendment — the callee denotes a value, or it is rejected (2026-10-09,
+> journal 482).** The amendment above names two classes, int producers and
+> string producers, and the implementation followed it literally: a
+> hand-written deny-list of string intrinsics, with everything else admitted
+> as an int producer. There is a **third** class — a name that denotes no
+> value at all (`echo`, `cd`, `read`, `break`, `argv`, …) — and nineteen of
+> them were admitted and lowered as a read of an unset variable, a silent
+> `0`. The rule is now stated over the whole set: **a sexpr callee must be
+> an int producer; every other compiler-owned name is a type error**, with
+> a distinct message for a statement (nothing to capture) and for a string
+> producer (capture it first). The classification lives in
+> `resolve::ArithDenotation` and is total over `BuiltinCmd`, so a new
+> builtin cannot be added without one.
+
 `-> int` functions return an integer via `return N`. Their return
 value is captured in arithmetic context via s-expression call syntax:
 
