@@ -10,7 +10,7 @@ set -eu
 . common.sh
 setup cli
 set +e
-plan=46
+plan=61
 echo "1..$plan" >&3
 
 SASH=$(command -v "${SASH:-sash}")
@@ -247,19 +247,138 @@ $SASH -c 'echo inline-out' >/dev/null 2>op.err; rc=$?
 out=$([[ -x a.out ]] && ./a.out)
 [[ $rc = 0 && $out = "inline-out" ]]; chk cli.30
 
-# cli.31-32 `sysroot_file_exists` squashfs branch. cli.6 covers the plain
+# cli.31-32 `root_path_facts` squashfs branch. cli.6 covers the plain
 # directory sysroot; a `.squashfs` / `.sqsh` root instead shells out to
-# `unsquashfs -l` once and caches the listing. A root that is not a readable
+# `unsquashfs -ll` once and caches the listing. A root that is not a readable
 # image yields an empty listing, so the command simply does not resolve —
 # the point is that the switch handler runs rather than what it finds.
 # Two externals in one compile exercise the second lookup, which reuses the
 # populated cache rather than repopulating it.
+#
+# These two prove nothing about the listing PARSER: an absent image means
+# empty stdout, so not one line is ever parsed. The sq.* block below resolves
+# against a real image, which is what covers it.
 PATH=/bin $SASH --sysroot="$PWD/nosuch.squashfs" -c 'toolA
 toolB' -o sq1 >/dev/null 2>sq.err; rc=$?
 [[ $rc != 0 && $(grep -c SB5011 sq.err) = 2 ]]; chk cli.31
 
 PATH=/bin $SASH --sysroot="$PWD/nosuch.sqsh" -c 'toolA' -o sq2 >/dev/null 2>sq2.err; rc=$?
 [[ $rc != 0 && $(grep -c SB5011 sq2.err) = 1 ]]; chk cli.32
+
+# sq.1-15 the squashfs sysroot resolved against a REAL image.
+#
+# Every line of the `unsquashfs -ll` parser and the symlink follower was cold
+# until this block existed — cli.31-32 exercise the switch, never the parse.
+# Several checks below are the only record in the tree of a fact about
+# `unsquashfs -ll` output format, so each one names which fact it holds.
+#
+# Do NOT add `PATH=/bin` to these: the compiler resolves `unsquashfs` through
+# PATH, and restricting it makes every check pass for the wrong reason (an
+# unreadable image, not a resolved one). Absolute heads do not consult PATH,
+# so leaving it alone costs nothing.
+#
+# The fixture needs no root — mksquashfs's pseudo-file syntax supplies the
+# device node, and chmod supplies every mode case.
+mkdir -p sqtree/bin sqtree/usr/bin sqtree/usr/lib
+cp /bin/true sqtree/bin/tool
+cp /bin/true sqtree/usr/lib/libtool
+ln -s bin/tool sqtree/rel
+ln -s /bin/tool sqtree/abs
+ln -s ../lib/libtool sqtree/usr/bin/updown
+ln -s ../nowhere/gone sqtree/usr/bin/dangle
+ln -s loop2 sqtree/loop1
+ln -s loop1 sqtree/loop2
+cp /bin/true sqtree/noexec && chmod 444 sqtree/noexec
+cp /bin/true sqtree/setuid && chmod 4644 sqtree/setuid
+cp /bin/true sqtree/setuid_exec && chmod 4755 sqtree/setuid_exec
+cp /bin/true sqtree/sticky_exec && chmod 1755 sqtree/sticky_exec
+printf 'dev d 755 0 0\ndev/zero c 666 0 0 1 5\n' > sq.pf
+mksquashfs sqtree img.squashfs -no-progress -quiet -pf sq.pf >/dev/null 2>&1
+SQ="$PWD/img.squashfs"
+
+# sq.1 a plain regular executable inside the image resolves. This is the
+#      check that proves the listing was parsed at all.
+$SASH --sysroot="$SQ" -c '/bin/tool' -o sqa >/dev/null 2>sqa.err; rc=$?
+[[ $rc = 0 && ! -s sqa.err ]]; chk sq.1
+
+# sq.2 a relative symlink is followed, read against the link's own directory.
+$SASH --sysroot="$SQ" -c '/rel' -o sqb >/dev/null 2>sqb.err; rc=$?
+[[ $rc = 0 && ! -s sqb.err ]]; chk sq.2
+
+# sq.3 an absolute symlink target is read from the image root, not the host's.
+$SASH --sysroot="$SQ" -c '/abs' -o sqc >/dev/null 2>sqc.err; rc=$?
+[[ $rc = 0 && ! -s sqc.err ]]; chk sq.3
+
+# sq.4 `..` in a target is resolved before lookup. A squashfs listing holds
+#      no `..` in any key, so an unnormalised join misses and reports the
+#      program absent — a FALSE REJECT, and `../lib/x` is how real images
+#      spell most cross-directory links. This check is that bug's gravestone.
+$SASH --sysroot="$SQ" -c '/usr/bin/updown' -o sqd >/dev/null 2>sqd.err; rc=$?
+[[ $rc = 0 && ! -s sqd.err ]]; chk sq.4
+
+# sq.5 ...and normalising is not the same as accepting: a `..` target that
+#      genuinely leads nowhere is still rejected. Without this, sq.4 would
+#      also pass if the follower simply stopped checking.
+$SASH --sysroot="$SQ" -c '/usr/bin/dangle' -o sqe >/dev/null 2>sqe.err; rc=$?
+[[ $rc != 0 && $(<sqe.err) == *"SB5095"*"no such file"* ]]; chk sq.5
+
+# sq.6 a symlink cycle is named as one. The hop limit is what keeps it from
+#      hanging the compiler, and `PathMiss::LinkLoop` is why it does not
+#      report "no such file" — the end of a loop is not an empty directory.
+$SASH --sysroot="$SQ" -c '/loop1' -o sqf >/dev/null 2>sqf.err; rc=$?
+[[ $rc != 0 && $(<sqf.err) == *"SB5095"*"symlink chain does not terminate"* ]]; chk sq.6
+
+# sq.7 a directory is named as one.
+$SASH --sysroot="$SQ" -c '/bin' -o sqg >/dev/null 2>sqg.err; rc=$?
+[[ $rc != 0 && $(<sqg.err) == *"SB5095"*"it is a directory"* ]]; chk sq.7
+
+# sq.8 a device node is rejected as not-a-regular-file — and its listing line
+#      is the format fact that breaks naive parsing: the size column reads
+#      `1,  5`, two whitespace-separated tokens where every other line has
+#      one. A column-counting parser gets the path wrong for this line.
+$SASH --sysroot="$SQ" -c '/dev/zero' -o sqh >/dev/null 2>sqh.err; rc=$?
+[[ $rc != 0 && $(<sqh.err) == *"SB5095"*"it is not a regular file"* ]]; chk sq.8
+
+# sq.9 a regular file with no execute bit is rejected, and the message quotes
+#      the mode so the reader can see why.
+$SASH --sysroot="$SQ" -c '/noexec' -o sqi >/dev/null 2>sqi.err; rc=$?
+[[ $rc != 0 && $(<sqi.err) == *"SB5095"*"mode 0444 grants no execute"* ]]; chk sq.9
+
+# sq.10 `-rwSr--r--`: an UPPERCASE S is setuid WITHOUT execute. The mode must
+#       come out 0644, not 0744 — reading the character as an execute bit
+#       here would wave through a file nothing can run.
+$SASH --sysroot="$SQ" -c '/setuid' -o sqj >/dev/null 2>sqj.err; rc=$?
+[[ $rc != 0 && $(<sqj.err) == *"SB5095"*"mode 0644 grants no execute"* ]]; chk sq.10
+
+# sq.11 `-rwsr-xr-x`: a LOWERCASE s is setuid WITH execute, so this resolves.
+#       The pair sq.10/sq.11 is the whole reason `triple_bits` reads the
+#       character instead of testing it for `x`; testing for `x` would reject
+#       every setuid binary in a real image.
+$SASH --sysroot="$SQ" -c '/setuid_exec' -o sqk >/dev/null 2>sqk.err; rc=$?
+[[ $rc = 0 && ! -s sqk.err ]]; chk sq.11
+
+# sq.12 `-rwxr-xr-t`: a lowercase t is sticky WITH execute. Same rule, other
+#       character, so a fix that special-cased only `s` would fail here.
+$SASH --sysroot="$SQ" -c '/sticky_exec' -o sql >/dev/null 2>sql.err; rc=$?
+[[ $rc = 0 && ! -s sql.err ]]; chk sq.12
+
+# sq.13 a path simply not in the image.
+$SASH --sysroot="$SQ" -c '/nosuch' -o sqm >/dev/null 2>sqm.err; rc=$?
+[[ $rc != 0 && $(<sqm.err) == *"SB5095"*"no such file"* ]]; chk sq.13
+
+# sq.14 two in-image commands in one compile. cli.31 makes this claim against
+#       an EMPTY listing, where a broken cache would be invisible; here the
+#       second lookup has to find something.
+$SASH --sysroot="$SQ" -c '/bin/tool
+/rel' -o sqn >/dev/null 2>sqn.err; rc=$?
+[[ $rc = 0 && ! -s sqn.err ]]; chk sq.14
+
+# sq.15 the manifest reports in-image paths. SB5095 exists so the manifest
+#       cannot assert a dependency the compiler knows is unmeetable; this is
+#       the other half — what it does assert comes from the image.
+printf '/bin/tool\n/usr/bin/updown\n' > sqman.sash
+out=$($SASH --sysroot="$SQ" --manifest sqman.sash 2>/dev/null); rc=$?
+[[ $rc = 0 && $out == *"/bin/tool"* && $out == *"/usr/bin/updown"* ]]; chk sq.15
 
 # cli.33-36 the `K` and `G` multipliers. cli.23 covers `M`, which is the only
 # suffix any spec had ever spelled. Accepting the suffix is not the claim

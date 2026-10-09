@@ -82,8 +82,13 @@ struct SquashEntry {
     link: Option<String>,
 }
 
-/// Cache of the squashfs listing (absolute in-image path → entry).
-static SQUASHFS_CACHE: Mutex<Option<std::collections::HashMap<String, SquashEntry>>> =
+/// Cache of the squashfs listing (absolute in-image path → entry), keyed by
+/// the image it was read from. The key is what makes the cache safe to hold
+/// in a `static`: without it a second compile against a *different* image in
+/// the same process would silently be answered from the first image's
+/// listing. One compile per process is all the CLI does today, so the key
+/// costs nothing and removes the trap rather than documenting it.
+static SQUASHFS_CACHE: Mutex<Option<(String, std::collections::HashMap<String, SquashEntry>)>> =
     Mutex::new(None);
 
 /// The three bits one `rwx` triple of an `ls`-style mode string carries. A
@@ -144,14 +149,16 @@ fn parse_squashfs_line(line: &str) -> Option<(String, SquashEntry)> {
     Some((path, SquashEntry { facts, link }))
 }
 
-/// The squashfs listing, read once per compile and cached. An unreadable or
-/// absent image yields an empty map, so every lookup in it reports "not
-/// there" — the same answer `--sysroot=<dir>` gives for a missing root.
+/// The squashfs listing for `sysroot`, read once per image and cached. An
+/// unreadable or absent image yields an empty map, so every lookup in it
+/// reports "not there" — the same answer `--sysroot=<dir>` gives for a
+/// missing root.
 fn squashfs_listing(
     sysroot: &str,
-) -> std::sync::MutexGuard<'static, Option<HashMap<String, SquashEntry>>> {
+) -> std::sync::MutexGuard<'static, Option<(String, HashMap<String, SquashEntry>)>> {
     let mut cache = SQUASHFS_CACHE.lock().unwrap();
-    if cache.is_none() {
+    let holds_this_image = matches!(cache.as_ref(), Some((root, _)) if root == sysroot);
+    if !holds_this_image {
         let output = std::process::Command::new("unsquashfs")
             .args(["-ll", "-no-progress", sysroot])
             .output();
@@ -162,7 +169,7 @@ fn squashfs_listing(
                 .collect(),
             Err(_) => HashMap::new(),
         };
-        *cache = Some(entries);
+        *cache = Some((sysroot.to_string(), entries));
     }
     cache
 }
@@ -179,25 +186,48 @@ pub(crate) enum PathMiss {
     LinkLoop,
 }
 
+/// Lexically resolve `.` and `..` against the components to their left. A
+/// squashfs listing holds literal paths — no entry in it ever contains a `..`
+/// — so a symlink target that uses one (`../lib/tool`, which is how real
+/// images spell most cross-directory links) can only be found once the join
+/// has been normalised. Without this the lookup misses and the path reports
+/// `Absent`: a runnable program called a false reject, which is the one
+/// failure SB5095 cannot afford.
+///
+/// `..` at the root stays at the root, as the kernel does.
+fn normalize_path(path: &str) -> String {
+    let mut parts: Vec<&str> = Vec::new();
+    for part in path.split('/') {
+        match part {
+            "" | "." => {}
+            ".." => {
+                parts.pop();
+            }
+            p => parts.push(p),
+        }
+    }
+    format!("/{}", parts.join("/"))
+}
+
 /// Resolve `path` within a squashfs image, following symlinks. The hop limit
 /// is what keeps a cyclic link from hanging the compiler; a target is read
 /// relative to the link's own directory unless it is absolute, exactly as the
 /// kernel would read it inside that image.
 fn squashfs_path_facts(sysroot: &str, path: &str) -> Result<PathFacts, PathMiss> {
     let listing = squashfs_listing(sysroot);
-    let entries = listing.as_ref().ok_or(PathMiss::Absent)?;
-    let mut current = path.to_string();
+    let entries = &listing.as_ref().ok_or(PathMiss::Absent)?.1;
+    let mut current = normalize_path(path);
     for _ in 0..8 {
         let entry = entries.get(&current).ok_or(PathMiss::Absent)?;
         let Some(target) = &entry.link else {
             return Ok(entry.facts);
         };
-        current = if target.starts_with('/') {
+        current = normalize_path(&if target.starts_with('/') {
             target.clone()
         } else {
             let dir = current.rsplit_once('/').map_or("", |(d, _)| d);
             format!("{}/{}", dir, target)
-        };
+        });
     }
     Err(PathMiss::LinkLoop)
 }
@@ -915,4 +945,104 @@ fn compile_native(
     link_object(&obj_path, &output);
 
     println!("sash: {} -> {} (static binary)", input, output);
+}
+
+/// Facts about `unsquashfs -ll` output format that no spec can reach.
+///
+/// `spec/cli.sh` `sq.1`-`sq.15` resolve real commands against a real image
+/// and cover the rest of this parser. They cannot cover a path containing a
+/// space: a command head with a space in it is rejected by SB5011 long before
+/// resolution, so the listing line can never be the thing under test. The
+/// sample lines below are verbatim `unsquashfs -ll` output.
+#[cfg(test)]
+mod invariant_tests {
+    use super::*;
+
+    fn parse(line: &str) -> (String, SquashEntry) {
+        parse_squashfs_line(line).expect("line should parse")
+    }
+
+    #[test]
+    fn path_may_contain_a_space() {
+        let (path, entry) =
+            parse("-rwxr-xr-x dg/dg                 39256 2026-10-09 22:21 squashfs-root/my tool");
+        assert_eq!(
+            path, "/my tool",
+            "the name is not the last whitespace field"
+        );
+        assert_eq!(entry.facts.kind, FileKind::Regular);
+        assert!(entry.facts.is_executable());
+    }
+
+    #[test]
+    fn device_size_column_is_two_fields() {
+        // `1,  5` where every other line carries a single size. A parser that
+        // counts columns reads the path from the wrong place on this line.
+        let (path, entry) =
+            parse("crw-rw-rw- root/root             1,  5 2026-10-09 22:16 squashfs-root/dev/zero");
+        assert_eq!(path, "/dev/zero");
+        assert_eq!(entry.facts.kind, FileKind::Other);
+        assert!(!entry.facts.is_executable(), "a device is not a program");
+    }
+
+    #[test]
+    fn symlink_target_is_split_off() {
+        let (path, entry) = parse(
+            "lrwxrwxrwx dg/dg                    15 2026-10-09 22:18 squashfs-root/usr/bin/good -> ../lib/realtool",
+        );
+        assert_eq!(path, "/usr/bin/good");
+        assert_eq!(entry.link.as_deref(), Some("../lib/realtool"));
+    }
+
+    #[test]
+    fn an_arrow_in_a_regular_file_name_is_not_a_target() {
+        // Only a mode string starting with `l` makes " -> " a separator; a
+        // regular file is free to have one in its name.
+        let (path, entry) =
+            parse("-rw-r--r-- dg/dg                    7 2026-10-09 22:21 squashfs-root/a -> b");
+        assert_eq!(path, "/a -> b");
+        assert_eq!(entry.link, None);
+    }
+
+    #[test]
+    fn the_image_root_itself_is_not_an_entry() {
+        assert!(
+            parse_squashfs_line(
+                "drwxrwxr-x dg/dg                   124 2026-10-09 22:16 squashfs-root"
+            )
+            .is_none(),
+            "the root would key the empty path"
+        );
+    }
+
+    #[test]
+    fn setuid_case_decides_the_execute_bit() {
+        let (_, upper) =
+            parse("-rwSr--r-- dg/dg                 39256 2026-10-09 22:16 squashfs-root/x");
+        let (_, lower) =
+            parse("-rwsr-xr-x dg/dg                 39256 2026-10-09 22:21 squashfs-root/y");
+        assert_eq!(upper.facts.mode, 0o644, "uppercase S holds no execute bit");
+        assert_eq!(lower.facts.mode, 0o755, "lowercase s holds one");
+    }
+
+    #[test]
+    fn a_malformed_mode_string_does_not_panic() {
+        // `triple_bits` indexes bytes 1..10, so a short mode string would be
+        // an out-of-bounds panic — the compiler crashing on whatever an
+        // `unsquashfs` we do not control decided to print. The guard turns
+        // that into "no permissions", which cannot be mistaken for runnable.
+        let (path, entry) = parse("x dg/dg 1 2026-10-09 22:21 squashfs-root/odd");
+        assert_eq!(path, "/odd");
+        assert_eq!(entry.facts.mode, 0, "an unreadable mode grants nothing");
+        assert!(!entry.facts.is_executable());
+    }
+
+    #[test]
+    fn dotdot_cannot_climb_past_the_root() {
+        // The kernel clamps here; a `pop` on an empty component list has to
+        // do the same, or a target of `../..` would escape the image.
+        assert_eq!(normalize_path("/../../etc/passwd"), "/etc/passwd");
+        assert_eq!(normalize_path("/usr/bin/../lib/x"), "/usr/lib/x");
+        assert_eq!(normalize_path("/./a//b/"), "/a/b");
+    }
 }
