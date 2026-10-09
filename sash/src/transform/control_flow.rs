@@ -516,7 +516,7 @@ pub(super) fn lower_while(
     // `lower_while` through `pipelines::lower_pipe_while_read` and so never
     // saw the old patch at all.
     if w.until {
-        ssa.block_mut(cond_exit).insts.push(SsaInst::sigil(
+        ssa.block_mut(cond_exit).insts.push(SsaInst::internal(
             BuiltinCmd::NegateTestResult,
             vec![],
             true,

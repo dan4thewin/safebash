@@ -65,7 +65,7 @@ pub struct PhiNode {
 /// transform, codegen and emit_janet, and gives compile-time safety
 /// for compiler-internal sigils (variants whose canonical name starts
 /// with `__`). Use [`BuiltinCmd::from_name`] to classify a raw name;
-/// use [`BuiltinCmd::sigil_str`] for the round-trip back to the
+/// use [`BuiltinCmd::internal_name`] for the round-trip back to the
 /// canonical sigil string used in `SsaInst::Command::name`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum BuiltinCmd {
@@ -85,7 +85,7 @@ pub enum BuiltinCmd {
     LetExit,
     /// Fork point — used by background `cmd &` (DD#38: `&` is the fork
     /// mechanism). (Subshells `( … )` are rejected; this is not subshell-only.)
-    SubshellStart,
+    ForkBackground,
     /// Capture the most recent background pid into a named variable.
     StoreBgPid,
     /// Install signal handler block.
@@ -173,17 +173,18 @@ pub enum BuiltinCmd {
 impl BuiltinCmd {
     /// Classify a raw command name into a [`BuiltinCmd`] variant.
     /// Unrecognized names map to [`BuiltinCmd::Other`].
+    ///
+    /// **Only names a user can write.** The nine compiler-internal opcodes
+    /// ([`BuiltinCmd::internal_name`]) are deliberately absent. They used to
+    /// be listed here, which made the compiler's private vocabulary a parse
+    /// target: `__table_delete() { … }` in a script went through this
+    /// classifier. Nothing needed that direction — [`SsaInst::internal`]
+    /// sets `kind` directly and every backend dispatches on `kind`, so the
+    /// internal spelling is write-only and all nine arms were cold. Removing
+    /// them makes a `__`-prefixed name an ordinary unknown command (SB5011),
+    /// which is what it always should have been.
     pub fn from_name(name: &str) -> Self {
         match name {
-            "__negate_test_result" => Self::NegateTestResult,
-            "__set_test_from_status" => Self::SetTestFromStatus,
-            "__let_exit" => Self::LetExit,
-            "__subshell" => Self::SubshellStart,
-            "__store_bg_pid" => Self::StoreBgPid,
-            "__trap_signal" => Self::TrapSignal,
-            "__signal_flag" => Self::SignalFlag,
-            "__table_delete" => Self::TableDelete,
-            "__table_delete_idx" => Self::TableDeleteIdx,
             "echo" => Self::Echo,
             // DD#99: `write` is `echo` minus the trailing newline.
             "write" => Self::Write,
@@ -222,15 +223,20 @@ impl BuiltinCmd {
         }
     }
 
-    /// Canonical sigil string for compiler-internal sigil variants.
-    /// Returns `None` for non-sigil variants (the raw name should be
-    /// used instead).
-    pub fn sigil_str(self) -> Option<&'static str> {
+    /// Display spelling for a compiler-internal opcode. Returns `None` for
+    /// variants that come from source (their raw name should be used).
+    ///
+    /// These strings exist only because [`SsaInst::Command`] carries a
+    /// `name: String` beside its `kind`, and a synthesised command has no
+    /// source text to put there. They are for display — SSA printing and
+    /// `--emit-ir` — and are **not** parsed back by
+    /// [`BuiltinCmd::from_name`].
+    pub fn internal_name(self) -> Option<&'static str> {
         Some(match self {
             Self::NegateTestResult => "__negate_test_result",
             Self::SetTestFromStatus => "__set_test_from_status",
             Self::LetExit => "__let_exit",
-            Self::SubshellStart => "__subshell",
+            Self::ForkBackground => "__fork_background",
             Self::StoreBgPid => "__store_bg_pid",
             Self::TrapSignal => "__trap_signal",
             Self::SignalFlag => "__signal_flag",
@@ -688,13 +694,19 @@ impl SsaInst {
         }
     }
 
-    /// Construct an `SsaInst::Command` representing a compiler-internal
-    /// sigil. Panics if `kind` is not a sigil variant (one whose
-    /// [`BuiltinCmd::sigil_str`] returns `Some`).
-    pub fn sigil(kind: BuiltinCmd, args: Vec<SsaValue>, checked: bool) -> Self {
+    /// Construct an `SsaInst::Command` for a compiler-internal opcode —
+    /// one the compiler synthesises rather than reading from source (the
+    /// `&` fork, a table delete, a trap install).
+    ///
+    /// # Panics
+    ///
+    /// If `kind` has no internal spelling, i.e. it is a variant that comes
+    /// from source. Such a command must be built with
+    /// [`SsaInst::command`], which classifies the name it was given.
+    pub fn internal(kind: BuiltinCmd, args: Vec<SsaValue>, checked: bool) -> Self {
         let name = kind
-            .sigil_str()
-            .expect("SsaInst::sigil requires a sigil variant")
+            .internal_name()
+            .expect("SsaInst::internal requires a compiler-internal variant")
             .to_string();
         SsaInst::Command {
             name,

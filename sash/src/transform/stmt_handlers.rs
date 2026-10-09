@@ -600,9 +600,11 @@ pub(super) fn handle_pipeline(
     state.in_condition += 1;
     let block = lower_pipeline_body(p, ssa, state, block);
     state.in_condition -= 1;
-    ssa.block_mut(block)
-        .insts
-        .push(SsaInst::sigil(BuiltinCmd::NegateTestResult, vec![], true));
+    ssa.block_mut(block).insts.push(SsaInst::internal(
+        BuiltinCmd::NegateTestResult,
+        vec![],
+        true,
+    ));
     block
 }
 
@@ -1285,9 +1287,11 @@ fn try_capture_condition(
 
 /// `test_result = ($? == 0)` — the capture-condition status sync sigil.
 fn push_set_test_from_status(ssa: &mut SsaProgram, block: BlockId) {
-    ssa.block_mut(block)
-        .insts
-        .push(SsaInst::sigil(BuiltinCmd::SetTestFromStatus, vec![], true));
+    ssa.block_mut(block).insts.push(SsaInst::internal(
+        BuiltinCmd::SetTestFromStatus,
+        vec![],
+        true,
+    ));
 }
 
 /// DD#88: an assignment-in-condition that `validate` let through as an

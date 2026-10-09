@@ -1888,13 +1888,13 @@ fn emit_builtin_extra(
 }
 
 /// Background-job builtins split out of `emit_builtin_extra` (complexity gate):
-/// `cmd &` (SubshellStart fork), `$!` (StoreBgPid), and `wait`. Returns true
+/// `cmd &` (ForkBackground fork), `$!` (StoreBgPid), and `wait`. Returns true
 /// when it handled `kind`.
 fn emit_bg_builtin_c(e: &mut Emit, kind: &BuiltinCmd, args: &[SsaValue], types: &VarTypes) {
     match kind {
         // Fork; the pid lands in __test_result so the Branch dispatches child
-        // (0) vs parent (pid). Mirrors native emit_subshell_start.
-        BuiltinCmd::SubshellStart => {
+        // (0) vs parent (pid). Mirrors native emit_fork_background.
+        BuiltinCmd::ForkBackground => {
             writeln!(e.out, "    __test_result = sash_fork();").unwrap();
         }
         // `$!` — store the last background pid (the fork result still in
@@ -2091,7 +2091,7 @@ fn emit_command_body(
         BuiltinCmd::Match | BuiltinCmd::Cd | BuiltinCmd::TrapSignal | BuiltinCmd::SignalFlag => {
             emit_builtin_extra(e, name, kind, args, checked, types)
         }
-        BuiltinCmd::SubshellStart | BuiltinCmd::StoreBgPid | BuiltinCmd::Wait => {
+        BuiltinCmd::ForkBackground | BuiltinCmd::StoreBgPid | BuiltinCmd::Wait => {
             emit_bg_builtin_c(e, kind, args, types)
         }
 

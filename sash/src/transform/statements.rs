@@ -405,7 +405,7 @@ fn lower_arith_test_stmt(
         target: target.clone(),
         value: val,
     });
-    ssa.block_mut(*block).insts.push(SsaInst::sigil(
+    ssa.block_mut(*block).insts.push(SsaInst::internal(
         BuiltinCmd::LetExit,
         vec![SsaValue::Var(target)],
         true,
@@ -804,7 +804,7 @@ fn lower_list_stmt(
     _stmt: &Statement,
     ssa: &mut SsaProgram,
     state: &mut VersionState,
-    mut block: BlockId,
+    block: BlockId,
 ) -> BlockId {
     if let Some(done) = try_lower_attest_list(l, ssa, state, block) {
         return done;
@@ -818,77 +818,83 @@ fn lower_list_stmt(
     // checked and aborts (bare-command-uncaught).
     let caught = state.in_condition > 0;
     match l.op {
-        ListOp::And => {
-            // left && right: run left, skip right if left failed
-            state.in_condition += 1;
-            block = lower_one(&l.left, ssa, state, block);
-            state.in_condition -= 1;
-            let right_block = ssa.new_block("and.right");
-            let merge_block = ssa.new_block("and.merge");
-            ssa.block_mut(block).terminator = Terminator::Branch {
-                condition: block.to_string(),
-                true_block: right_block,
-                false_block: merge_block,
-            };
-            let right_end = lower_one(&l.right, ssa, state, right_block);
-            if caught {
-                super::entry::uncheck_last_condition_inst(&mut ssa.block_mut(right_end).insts);
-            }
-            ssa.block_mut(right_end).terminator = Terminator::Goto(merge_block);
-            merge_block
-        }
-        ListOp::Or => {
-            // left || right: run left, skip right if left succeeded
-            state.in_condition += 1;
-            block = lower_one(&l.left, ssa, state, block);
-            state.in_condition -= 1;
-            let right_block = ssa.new_block("or.right");
-            let merge_block = ssa.new_block("or.merge");
-            ssa.block_mut(block).terminator = Terminator::Branch {
-                condition: block.to_string(),
-                true_block: merge_block,  // success → skip right
-                false_block: right_block, // failure → run right
-            };
-            let right_end = lower_one(&l.right, ssa, state, right_block);
-            if caught {
-                super::entry::uncheck_last_condition_inst(&mut ssa.block_mut(right_end).insts);
-            }
-            reset_or_status_at_top_level(caught, ssa, state, right_end);
-            ssa.block_mut(right_end).terminator = Terminator::Goto(merge_block);
-            merge_block
-        }
-        ListOp::Background => {
-            // cmd & — fork, child runs cmd, parent continues
-            let child_block = ssa.new_block("bg.child");
-            let parent_block = ssa.new_block("bg.parent");
-
-            // Fork
-            ssa.block_mut(block).insts.push(SsaInst::sigil(
-                BuiltinCmd::SubshellStart,
-                vec![],
-                true,
-            ));
-            ssa.block_mut(block).terminator = Terminator::Branch {
-                condition: "__fork_pid".to_string(),
-                true_block: parent_block, // parent continues
-                false_block: child_block, // child runs command
-            };
-
-            // Store fork pid in $! variable
-            let bg_target = state.define("!");
-            ssa.block_mut(parent_block).insts.push(SsaInst::sigil(
-                BuiltinCmd::StoreBgPid,
-                vec![SsaValue::Var(bg_target)],
-                true,
-            ));
-
-            // Child: run the command then _exit
-            let child_end = lower_one(&l.left, ssa, state, child_block);
-            ssa.block_mut(child_end).terminator = Terminator::Return;
-
-            parent_block
-        }
+        ListOp::And | ListOp::Or => lower_short_circuit(l, ssa, state, block, caught),
+        ListOp::Background => lower_background(l, ssa, state, block),
     }
+}
+
+/// `left && right` / `left || right`. One implementation: the two differ only
+/// in which way the guard branches and in `||`'s top-level status reset, so
+/// keeping them apart meant two copies of the block wiring.
+fn lower_short_circuit(
+    l: &List,
+    ssa: &mut SsaProgram,
+    state: &mut VersionState,
+    mut block: BlockId,
+    caught: bool,
+) -> BlockId {
+    let is_and = matches!(l.op, ListOp::And);
+    let tag = if is_and { "and" } else { "or" };
+
+    state.in_condition += 1;
+    block = lower_one(&l.left, ssa, state, block);
+    state.in_condition -= 1;
+
+    let right_block = ssa.new_block(&format!("{tag}.right"));
+    let merge_block = ssa.new_block(&format!("{tag}.merge"));
+    // `&&` runs the right operand when the left SUCCEEDED; `||` when it failed.
+    let (true_block, false_block) = match is_and {
+        true => (right_block, merge_block),
+        false => (merge_block, right_block),
+    };
+    ssa.block_mut(block).terminator = Terminator::Branch {
+        condition: block.to_string(),
+        true_block,
+        false_block,
+    };
+
+    let right_end = lower_one(&l.right, ssa, state, right_block);
+    if caught {
+        super::entry::uncheck_last_condition_inst(&mut ssa.block_mut(right_end).insts);
+    }
+    if !is_and {
+        reset_or_status_at_top_level(caught, ssa, state, right_end);
+    }
+    ssa.block_mut(right_end).terminator = Terminator::Goto(merge_block);
+    merge_block
+}
+
+/// `cmd &` — fork; the child runs the command and `_exit`s, the parent
+/// continues with the pid in `$!`.
+fn lower_background(
+    l: &List,
+    ssa: &mut SsaProgram,
+    state: &mut VersionState,
+    block: BlockId,
+) -> BlockId {
+    let child_block = ssa.new_block("bg.child");
+    let parent_block = ssa.new_block("bg.parent");
+
+    ssa.block_mut(block)
+        .insts
+        .push(SsaInst::internal(BuiltinCmd::ForkBackground, vec![], true));
+    ssa.block_mut(block).terminator = Terminator::Branch {
+        condition: "__fork_pid".to_string(),
+        true_block: parent_block,
+        false_block: child_block,
+    };
+
+    let bg_target = state.define("!");
+    ssa.block_mut(parent_block).insts.push(SsaInst::internal(
+        BuiltinCmd::StoreBgPid,
+        vec![SsaValue::Var(bg_target)],
+        true,
+    ));
+
+    let child_end = lower_one(&l.left, ssa, state, child_block);
+    ssa.block_mut(child_end).terminator = Terminator::Return;
+
+    parent_block
 }
 
 /// Emit the empty map plus its pairwise fill. `false` when the declaration's

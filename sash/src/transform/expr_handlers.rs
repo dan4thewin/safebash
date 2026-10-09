@@ -107,7 +107,7 @@ fn is_statement_builtin(kind: BuiltinCmd) -> bool {
         | BuiltinCmd::NegateTestResult
         | BuiltinCmd::SetTestFromStatus
         | BuiltinCmd::LetExit
-        | BuiltinCmd::SubshellStart
+        | BuiltinCmd::ForkBackground
         | BuiltinCmd::StoreBgPid
         | BuiltinCmd::TrapSignal
         | BuiltinCmd::SignalFlag

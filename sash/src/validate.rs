@@ -4260,7 +4260,7 @@ fn command_args_elidable(name: &str) -> bool {
         B::NegateTestResult
         | B::SetTestFromStatus
         | B::LetExit
-        | B::SubshellStart
+        | B::ForkBackground
         | B::StoreBgPid
         | B::TrapSignal
         | B::SignalFlag
@@ -7151,13 +7151,17 @@ fn insert_last_literal_arg(args: &[Expr], set: &mut HashSet<String>) {
     }
 }
 
-/// A non-flag literal argument to `read`/`readline` names a variable the
-/// command introduces.
+/// A literal argument to `read`/`readline` names a variable the command
+/// introduces.
+///
+/// There is no flag filter here: DD#99 gave the read family **no flags at
+/// all** (NUL is the only separator, and there is nothing to configure). A
+/// leading `-` is therefore just an unusual variable name, and `read -a arr
+/// -d :` is a four-argument `read`, rejected on arity by SB5057. The filter
+/// this used to carry described bash's `read`, not sash's.
 fn insert_read_target_arg(arg: &Expr, set: &mut HashSet<String>) {
     if let ExprKind::Literal(s) = &arg.kind {
-        if !s.starts_with('-') {
-            set.insert(s.clone());
-        }
+        set.insert(s.clone());
     }
 }
 
@@ -10681,6 +10685,84 @@ fn reserved_loop_var_diag(name: &str, span: Span) -> Option<Diagnostic> {
         return None;
     };
     Some(Diagnostic::error_span(span, "SB5080", msg))
+}
+
+/// DD#125: a name the compiler already understands is not the user's to
+/// bind. Walks every site that *introduces* a name — the same set
+/// `collect_scope_names` enumerates (assignment LHS, declarations, `for`
+/// variables, read/`argv`/`match`/`keys` out-params, DD#93 attest-convert
+/// targets) plus `fn` names — and rejects a reserved one with SB5092.
+///
+/// Without this, `is_reserved_name`'s three resolution positions disagree:
+/// `fn getpid -> int { return 42 }` yielded the *intrinsic* in
+/// `$(( (getpid) ))` and `42` in `$(getpid)`, in one program. Reserving is
+/// also what makes a bare arithmetic word unambiguous, so `$(( wait ))` can
+/// name the intrinsic rather than an undeclared variable.
+pub fn check_reserved_names(program: &Program) -> Vec<Diagnostic> {
+    let mut diags = Vec::new();
+    for stmt in program
+        .statements
+        .iter()
+        .chain(program.end_block.iter().flatten())
+    {
+        check_reserved_names_stmt(stmt, &mut diags);
+    }
+    diags
+}
+
+fn check_reserved_names_stmt(stmt: &Statement, diags: &mut Vec<Diagnostic>) {
+    let span = stmt.span;
+    match &stmt.kind {
+        StmtKind::Assignment(a) => flag_reserved(&a.name, "variable", span, diags),
+        StmtKind::Declaration(d) => flag_declared_names(d, span, diags),
+        StmtKind::For(f) => flag_reserved(&f.variable, "`for` variable", span, diags),
+        StmtKind::Function(f) => flag_reserved(&f.name, "function", span, diags),
+        StmtKind::Command(c) => flag_command_bindings(c, span, diags),
+        _ => {}
+    }
+    for s in stmt.child_bodies().into_iter().flatten() {
+        check_reserved_names_stmt(s, diags);
+    }
+}
+
+/// Every name a typed declaration introduces — `int a=1, b=2` binds both.
+fn flag_declared_names(d: &Declaration, span: Span, diags: &mut Vec<Diagnostic>) {
+    for a in &d.assignments {
+        flag_reserved(&a.name, "variable", span, diags);
+    }
+}
+
+/// Names a *command* introduces: `read`/`readline`/`argv`/`match`/`keys`
+/// out-params, and DD#93's attest-convert target. Sorted, because two
+/// bindings in one command would otherwise be diagnosed in hash order.
+fn flag_command_bindings(c: &Command, span: Span, diags: &mut Vec<Diagnostic>) {
+    let mut set = HashSet::new();
+    collect_read_targets(c, &mut set);
+    set.extend(attest_convert_target(c).map(str::to_string));
+    let mut targets: Vec<_> = set.into_iter().collect();
+    targets.sort();
+    for t in targets {
+        flag_reserved(&t, "variable", span, diags);
+    }
+}
+
+/// Push SB5092 when `name` is the compiler's. `what` names the binding form
+/// so the message says which one to rename.
+fn flag_reserved(name: &str, what: &str, span: Span, diags: &mut Vec<Diagnostic>) {
+    if !crate::resolve::is_reserved_name(name) {
+        return;
+    }
+    diags.push(Diagnostic::error_span(
+        span,
+        "SB5092",
+        format!(
+            "`{name}` is a name the compiler already understands, so it cannot \
+             also be a {what} (DD#125). sash resolves a bare name differently in \
+             an arithmetic sexpr, a `$( )` word, and a bare arithmetic operand, \
+             so a user binding that shadows one would mean two different things \
+             in one program. Rename the {what}"
+        ),
+    ));
 }
 
 /// SB5081: `break`/`continue` outside any enclosing loop. The transform lowers

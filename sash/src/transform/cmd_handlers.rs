@@ -91,7 +91,7 @@ pub(super) fn handle_signal(
     match expr_to_string(&c.args[1]).as_str() {
         "IGN" => {
             // SIG_IGN = 1
-            ssa.block_mut(block).insts.push(SsaInst::sigil(
+            ssa.block_mut(block).insts.push(SsaInst::internal(
                 BuiltinCmd::TrapSignal,
                 vec![
                     SsaValue::Literal(signum.to_string()),
@@ -102,7 +102,7 @@ pub(super) fn handle_signal(
         }
         "DFL" => {
             // SIG_DFL = 0
-            ssa.block_mut(block).insts.push(SsaInst::sigil(
+            ssa.block_mut(block).insts.push(SsaInst::internal(
                 BuiltinCmd::TrapSignal,
                 vec![
                     SsaValue::Literal(signum.to_string()),
@@ -112,7 +112,7 @@ pub(super) fn handle_signal(
             ));
         }
         "FLAG" => {
-            ssa.block_mut(block).insts.push(SsaInst::sigil(
+            ssa.block_mut(block).insts.push(SsaInst::internal(
                 BuiltinCmd::SignalFlag,
                 vec![SsaValue::Literal(signum.to_string())],
                 true,
@@ -120,7 +120,7 @@ pub(super) fn handle_signal(
         }
         "EXIT" => {
             // Register FLAG handler + mark as exiting signal
-            ssa.block_mut(block).insts.push(SsaInst::sigil(
+            ssa.block_mut(block).insts.push(SsaInst::internal(
                 BuiltinCmd::SignalFlag,
                 vec![SsaValue::Literal(signum.to_string())],
                 true,
@@ -173,7 +173,7 @@ fn unset_element(
     } else {
         BuiltinCmd::TableDeleteIdx
     };
-    ssa.block_mut(block).insts.push(SsaInst::sigil(
+    ssa.block_mut(block).insts.push(SsaInst::internal(
         cmd,
         vec![SsaValue::Var(arr_ref), SsaValue::Literal(key)],
         true,

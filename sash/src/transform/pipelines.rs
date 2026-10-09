@@ -27,7 +27,7 @@ fn emit_for_bound(
     };
     ssa.block_mut(header)
         .insts
-        .push(SsaInst::sigil(BuiltinCmd::LetExit, vec![cond], true));
+        .push(SsaInst::internal(BuiltinCmd::LetExit, vec![cond], true));
 }
 
 /// `for k in @m` binds the KEY, `for v in @a` the VALUE. Hoisted out of

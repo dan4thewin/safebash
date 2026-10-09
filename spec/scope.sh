@@ -7,7 +7,7 @@ set -eu
 . common.sh
 setup scope
 set +e
-plan=85
+plan=100
 echo "1..$plan" >&3
 
 # 86.1 `str s` with no initializer declares a string, meaningful-zero ""
@@ -262,10 +262,11 @@ run_sash 'fn f { echo ${args[0]} }
 f =nums'
 [[ $rc != 0 && -z $out && $err == *SB5066* ]]; chk 86.23
 
-# 86.24 spaced-both at command position is still the DD#86 write (here the
-# target is undeclared, so it reaches the dead-variable check, not `echo`)
+# 86.24 spaced-both at command position is still the DD#86 write -- which is
+# what the diagnostic proves: the target is `echo`, and DD#125 reserves it, so
+# this is SB5092 rather than the SB5011 an ordinary command would get
 run_sash 'echo = a'
-[[ $rc != 0 && -z $out && $err == *SB5050* ]]; chk 86.24
+[[ $rc != 0 && -z $out && $err == *SB5092* && $err == *'`echo`'* ]]; chk 86.24
 
 # ── DD#86 (2026-09-11): `const` in a loop body, and `fn` placement ──────────
 
@@ -661,6 +662,87 @@ str g=1
 str s=$(if [[ $g == 1 ]] { x=two }; echo hi)
 echo "$s $x"'
 [[ $rc = 0 && $out = "hi two" && -z $err ]]; chk 86.70
+
+# ---- DD#125: a name the compiler already understands is not the user's ----
+# The reserved set is keywords + BuiltinCmd names + INTRINSICS. Three groups,
+# three spellings of the same error, so each group gets both a variable and a
+# non-variable binding form.
+
+# 125.1 a keyword as a variable. `in` is contextual -- it lexes as an ordinary
+# word outside a `for`, so this used to compile.
+run_sash 'int in=5; echo $(( in ))'
+[[ $rc != 0 && -z $out && $err == *SB5092* && $err == *'`in`'* ]]; chk 125.1
+
+# 125.2 the other contextual keyword
+run_sash 'int do=5; echo $(( do ))'
+[[ $rc != 0 && -z $out && $err == *SB5092* ]]; chk 125.2
+
+# 125.3 a statement builtin as a variable
+run_sash 'int cd=5; echo $(( cd ))'
+[[ $rc != 0 && -z $out && $err == *SB5092* && $err == *'`cd`'* ]]; chk 125.3
+
+# 125.4 a value intrinsic as a variable -- the case that motivated the rule:
+# `$(( (status) ))` gave the intrinsic while `$status` gave the variable
+run_sash 'int status=5; echo $(( status ))'
+[[ $rc != 0 && -z $out && $err == *SB5092* ]]; chk 125.4
+
+# 125.5 a value intrinsic as a function name. Before DD#125 this program had
+# two answers for `getpid` depending on which call syntax was used.
+run_sash 'fn getpid -> int { return 42 }
+int n=$(getpid)
+echo $n'
+[[ $rc != 0 && -z $out && $err == *SB5092* && $err == *'`getpid`'* ]]; chk 125.5
+
+# 125.6 a value builtin as a function name
+run_sash 'fn sub { : }
+echo hi'
+[[ $rc != 0 && -z $out && $err == *SB5092* ]]; chk 125.6
+
+# 125.7 a `for` variable
+run_sash 'array a=(1 2)
+for len in @a { echo $len }'
+[[ $rc != 0 && -z $out && $err == *SB5092* && $err == *'`len`'* ]]; chk 125.7
+
+# 125.8 a read target binds a name, so it is covered too
+run_sash 'readline echo
+echo $echo'
+[[ $rc != 0 && -z $out && $err == *SB5092* && $err == *'`echo`'* ]]; chk 125.8
+
+# 125.9 a collection declaration
+run_sash 'array keys=(1 2); echo $(len keys)'
+[[ $rc != 0 && -z $out && $err == *SB5092* && $err == *'`keys`'* ]]; chk 125.9
+
+# 125.10 a map declaration
+run_sash 'map join=([k]=v); echo ${join[k]}'
+[[ $rc != 0 && -z $out && $err == *SB5092* ]]; chk 125.10
+
+# 125.11 a bare assignment, not just a typed declaration
+run_sash 'random=5
+echo $random'
+[[ $rc != 0 && -z $out && $err == *SB5092* ]]; chk 125.11
+
+# 125.12 the reservation reaches inside a function body, not just the top level
+run_sash 'fn f { int argc=3; echo $(( argc )) }
+f'
+[[ $rc != 0 && -z $out && $err == *SB5092* && $err == *'`argc`'* ]]; chk 125.12
+
+# 125.13 SB5092 must not MASK a better diagnostic. `read -a arr -d :` is a
+# four-argument `read` (DD#99 gave the family no flags), so SB5057 owns it;
+# the target extractor hands SB5092 the `-d` flag's argument `:`. Reported
+# from the earlier batch, SB5092 suppressed the arity error and asked the
+# user to rename a delimiter.
+run_sash 'array arr=(); read -a arr -d :'
+[[ $rc != 0 && -z $out && $err == *SB5057* ]]; chk 125.13
+
+# 125.14 an ordinary name that merely CONTAINS a reserved one is unaffected --
+# the check is whole-name, not substring
+run_sash 'int status_code=5; int cdx=2; echo $(( status_code + cdx ))'
+[[ $rc = 0 && $out = "7" && -z $err ]]; chk 125.14
+
+# 125.15 and a reserved name is still usable as a plain word argument -- the
+# rule is about BINDING a name, not mentioning one
+run_sash 'echo status len wait cd'
+[[ $rc = 0 && $out = "status len wait cd" && -z $err ]]; chk 125.15
 
 
 set -e

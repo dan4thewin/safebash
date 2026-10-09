@@ -143,10 +143,13 @@ run_sash 'fn add { int a=$(($1)); int b=$(($2)); (( c = a + b )); echo $c; }
 add 9000000000000000000 1000000000000000000'
 [[ $rc != 0 && -z $out ]]; chk 25.5
 
-# 25.6 runtime SUB overflow (underflow) traps
-run_sash 'fn sub { int a=$(($1)); int b=$(($2)); (( c = a - b )); echo $c; }
-sub -9000000000000000000 1000000000000000000'
-[[ $rc != 0 && -z $out ]]; chk 25.6
+# 25.6 runtime SUB overflow (underflow) traps. The function is `subtract`,
+# not `sub`: `sub` is a value intrinsic, so `sub a b` as a statement was
+# SB5073 at COMPILE time and this spec passed on `rc != 0` without ever
+# reaching the trap it names. DD#125 now rejects the definition outright.
+run_sash 'fn subtract { int a=$(($1)); int b=$(($2)); (( c = a - b )); echo $c; }
+subtract -9000000000000000000 1000000000000000000'
+[[ $rc != 0 && -z $out && -z $err ]]; chk 25.6
 
 # 25.7 i64::MIN echoes correctly — itoa must not panic on negation
 run_sash 'int x=-9223372036854775808; echo $x'
@@ -1527,15 +1530,15 @@ x=$(( 1 ? 2 ))
 echo $x'
 [[ $rc != 0 && $err == *SB4020* && $err == *'expected `:`'* && $err != *Colon* ]]; chk 31.87
 
-# 31.88 a keyword used as an identifier takes its spelling from
-# `keyword_to_str`, not from the variant's Debug name (which agreed only by
-# accident of every such variant being a single lowercase word)
+# 31.88 a keyword used as an identifier still takes its spelling from
+# `keyword_to_str`, not from the variant's Debug name (`In`) -- the parse
+# succeeds and DD#125 rejects it afterwards, so the diagnostic naming the
+# loop variable is what proves which spelling the parser produced
 run_sash 'for in in a b
 do
   echo $in
 done'
-[[ $rc = 0 && $out = "a
-b" && -z $err ]]; chk 31.88
+[[ $rc != 0 && -z $out && $err == *SB5092* && $err == *'`in`'* ]]; chk 31.88
 
 # 31.89 control: parens are intercepted by step_arith_collect before
 # tok_to_text (whose paren arms are unreachable, DD#116), so grouping and

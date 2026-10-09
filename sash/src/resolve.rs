@@ -52,6 +52,35 @@ pub(crate) fn is_intrinsic(name: &str) -> bool {
     BuiltinCmd::from_name(name) != BuiltinCmd::Other || INTRINSICS.contains(&name)
 }
 
+/// Words the parser gives a meaning of their own. Most are already
+/// unusable as a variable name because the lexer turns them into a
+/// non-`Word` token, so `int if=5` fails to parse — but that is an
+/// accident of tokenization, not a rule, and it does not cover the
+/// *contextual* keywords: `in` and `do` lex as `Tok::Word` everywhere
+/// except their one position, so `int in=5` and `int do=5` compiled.
+/// Kept in sync with `parse::lexer::classify_word_token`.
+const KEYWORDS: &[&str] = &[
+    "if", "then", "else", "elif", "fi", "while", "until", "do", "done", "for", "in", "case",
+    "esac", "fn", "function", "str", "int", "const", "array", "map", "attest", "signal", "END",
+    "return", "break", "continue",
+];
+
+/// DD#125: is `name` the compiler's, rather than the user's to bind?
+///
+/// A name the compiler already understands may not be introduced as a
+/// variable, collection, loop variable, read target, or function. The rule
+/// exists because sash resolves a bare name differently in three positions
+/// — an arith sexpr, a `$( )` word, and a bare arithmetic operand — and
+/// without reservation the same name in one program resolved to two
+/// different things: `fn getpid -> int { return 42 }` gave the intrinsic's
+/// pid in `$(( (getpid) ))` and `42` in `$(getpid)`.
+///
+/// Reserving makes a bare word in arithmetic unambiguous, which is what
+/// lets `$(( wait ))` / `$(( getpid ))` name the intrinsic (DD#125).
+pub(crate) fn is_reserved_name(name: &str) -> bool {
+    KEYWORDS.contains(&name) || is_intrinsic(name)
+}
+
 /// True for the two intrinsics whose `$( )` denotes a **collection**: `argv`
 /// yields the positional list, `keys` a map's keys. Every other name in
 /// [`INTRINSICS`] — and every real command — yields a single value.

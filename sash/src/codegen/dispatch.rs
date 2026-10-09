@@ -269,7 +269,7 @@ impl SsaInst {
             BuiltinCmd::NegateTestResult => self.emit_negate_test_result(builder, ctx),
             BuiltinCmd::SetTestFromStatus => self.emit_set_test_from_status(builder, ctx),
             BuiltinCmd::LetExit => return self.emit_let_exit(args, builder, module, ctx),
-            BuiltinCmd::SubshellStart => self.emit_subshell_start(builder, module, ctx),
+            BuiltinCmd::ForkBackground => self.emit_fork_background(builder, module, ctx),
             BuiltinCmd::StoreBgPid => return self.emit_store_bg_pid(args, builder, module, ctx),
             BuiltinCmd::TrapSignal => self.emit_trap_signal(args, builder, module, ctx),
             BuiltinCmd::SignalFlag => self.emit_signal_flag(args, builder, module, ctx),
@@ -332,7 +332,7 @@ impl SsaInst {
         builder.def_var(test_result_var, result);
     }
 
-    fn emit_subshell_start(
+    fn emit_fork_background(
         &self,
         builder: &mut FunctionBuilder,
         module: &mut ObjectModule,

@@ -360,6 +360,13 @@ fn run_semantic_checks(input: &str, program: &crate::ir::Program, flags: &[&str]
     tdiags.extend(validate::check_elide_positions(program));
     tdiags.extend(validate::check_args_immutable(program));
     tdiags.extend(validate::check_reserved_loop_var(program));
+    // SB5092 (DD#125): no user binding may take a compiler-owned name. Sits
+    // in this batch, not in `validate()`, because it reads a name out of a
+    // shape an earlier check may already have rejected — `read -a arr -d :`
+    // is SB5057, and the read-target extractor hands back the `-d` flag's
+    // argument `:`. From the earlier batch it masked the arity error
+    // entirely and asked the user to rename a delimiter.
+    tdiags.extend(validate::check_reserved_names(program));
     tdiags.extend(validate::check_loop_control_context(program));
     tdiags.extend(validate::check_discard_reads(program));
     tdiags.extend(validate::check_readline_arity(program));
