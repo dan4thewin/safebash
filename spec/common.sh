@@ -112,6 +112,38 @@ run_sash() {
     esac
 }
 
+# DD#23/SB5095: the compiler rejects a command path that is not an executable
+# file, so a spec can no longer reach the runtime's exec-ENOENT branch simply
+# by naming a path that was never there — that program does not compile. The
+# branch is still live (a program can be removed, replaced or unmounted after
+# the binary is built), so the honest way to exercise it is to be that case:
+# stage a real program, let the compiler see it, delete it before the binary
+# runs.
+#
+# The source names it by the literal SPEC_VANISH_CMD, which this substitutes.
+# Both backends honour `_spec_vanish`; it is cleared on the way out so an
+# ordinary `run_sash` can never trip over it.
+run_sash_vanish() {
+    local src=$1; shift
+    local victim=${TMPDIR:-/tmp}/sash_vanish_$$
+    if ! cp /bin/true "$victim" 2>/dev/null || ! chmod 755 "$victim" 2>/dev/null; then
+        rc=125 out="" err="spec: could not stage a vanishing command at $victim" rerr=""
+        return
+    fi
+    _spec_vanish=$victim
+    run_sash "${src//SPEC_VANISH_CMD/$victim}" "$@"
+    _spec_vanish=
+    rm -f "$victim"
+}
+
+# Remove the staged program, if this is a `run_sash_vanish` call. Called from
+# each backend between a successful compile and the run.
+_vanish_now() {
+    if [[ -n ${_spec_vanish:-} ]]; then
+        rm -f "$_spec_vanish"
+    fi
+}
+
 _run_sash_native() {
     local src=$1; shift
     timeout "$SPEC_TIMEOUT" ${SASH:-sash} ${SASH_CFLAGS:-} -c "$src" -o ./test_bin \
@@ -120,6 +152,7 @@ _run_sash_native() {
     if [[ $rc = 0 ]]; then
         # Capture runtime stderr separately (rerr) so abort diagnostics
         # (DD#55) can be asserted; err stays for compile diagnostics.
+        _vanish_now
         out=$(timeout "$SPEC_TIMEOUT" ./test_bin "$@" </dev/null 2>rt.err)
         rc=$?
         rerr=$(cat rt.err 2>/dev/null)
@@ -157,6 +190,7 @@ _run_sash_c() {
                 rc=126 out="" err="gcc failed: $(<gcc.err)"
             fi
         else
+            _vanish_now
             out=$(timeout "$SPEC_TIMEOUT" ./test_bin "$@" </dev/null 2>rerr.raw)
             rc=$?
             err=""

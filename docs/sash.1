@@ -145,7 +145,29 @@ Disable both taint passes.
 .SS Environment
 .TP
 .BI \-\-sysroot= path
-Set the sysroot used for command resolution (DD#23).
+Set the sysroot used for command resolution (DD#23). A directory or a
+.B .squashfs
+/
+.B .sqsh
+image. Every command path \(em whether found by the PATH search or written
+out in full \(em is checked against this root rather than the build host.
+.PP
+A command path must name a
+.B regular file with an execute bit
+in that root. A bare name that matches nothing executable on PATH is
+.BR SB5011 ;
+a relative path is
+.BR SB5051 ;
+an absolute path that is absent, a directory, a device node, or not
+executable is
+.BR SB5095 ,
+and the message names which. Use
+.RB \[dq] "[[ \-x /path ]]" \[dq]
+to test for a program at
+.I run
+time, and
+.B /usr/bin/env
+to defer the search to one.
 .
 .SS Rejected here, accepted by sash\-convert
 .B \-\-emit\-source ,
@@ -1025,6 +1047,9 @@ code. Those referenced here:
 .B SB5011
 command resolution failed (e.g.
 .BR readarray ).
+.TP
+.B SB5095
+an absolute command path that is not an executable file (DD#23).
 .TP
 .B SB5015
 .BR read :

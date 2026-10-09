@@ -4054,7 +4054,16 @@ fn check_exec_target(c: &Command, diags: &mut Vec<Diagnostic>) {
     // exec replaces the process with an EXTERNAL program: an absolute path or a
     // PATH-resolvable name (not the inline `echo`/`:` shortcut — the transform
     // resolves the target to its real path).
-    if !tname.starts_with('/') && !resolve_on_path(tname) {
+    if tname.starts_with('/') {
+        // Same standard as a command head, through the same function (SB5095).
+        diags.extend(crate::resolve::command_path_diag(
+            "`exec` target ",
+            tname,
+            target.span,
+        ));
+        return;
+    }
+    if !resolve_on_path(tname) {
         diags.push(Diagnostic::error_span(
             target.span,
             "SB5011",

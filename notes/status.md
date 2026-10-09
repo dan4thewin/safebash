@@ -1,4 +1,53 @@
-## ══ STATUS (2026-10-09, latest) — the latch that answered anyway ══
+## ══ STATUS (2026-10-09, latest) — the path that was never looked at ══
+
+**SB5095: an absolute command head must be a runnable file.** DG read the
+previous entry's behaviour-change flag and asked whether `/nonexistant` should
+be caught at compile time. It should have been; it was not. The compiler had a
+three-way asymmetry — bare name → SB5011, relative `./x` → SB5051, **absolute
+`/x` → compiles, 127 at runtime** — because `is_resolvable_external` returned
+`false` for anything containing `/`, so an absolute head was never looked at.
+`--manifest` was emitting a dependency it already knew could not be met.
+Journal 486, specs `errors.sh` `cmdpath.1`-`cmdpath.17`.
+
+**The obstacle was inside DD#23.** Its "Or chain alternatives" example
+(`/usr/bin/grep … || /bin/grep …`) only parses as advice if an absolute path
+may be absent — and a hand-written two-entry fallback *is* the search
+ambiguity DD#23 exists to forbid. DG approved the rejection; the example is
+**withdrawn in an addendum**, not silently edited.
+
+**It names the fault, not just the miss**: `no such file` / `it is a
+directory` / `it is not a regular file` / `mode 0444 grants no execute
+permission` / `its symlink chain does not terminate`. `PathMiss::LinkLoop`
+exists because a cycle first reported "no such file" — a wrong answer wearing
+a true answer's clothes, the same call as `waitstatus` returning `-1`.
+
+**A second, pre-existing bug fell out**: `resolve_command_path` tested
+`is_file()`, so a mode-0444 candidate early in `PATH` **won** the search and
+the failure arrived at `exec` time with the shadowing path baked in. It now
+requires executability and keeps looking (`cmdpath.17`).
+
+**The squashfs branch had to be rewritten, not extended.** `unsquashfs -l`
+gives names only; type and mode need `-ll` — but `-l` counted a symlink as
+present, so rejecting non-regular entries without following links would have
+broken every real image (`/bin -> usr/bin`). It now follows, 8-hop capped.
+
+**The harness traded a capability for the rule.** No spec can name a missing
+absolute path any more, so `run_sash_vanish` deletes the target *between
+compile and run*, in both backends. The spec is now a program whose dependency
+vanished underneath it — the only way that runtime path is still reachable,
+and a truer description of when it happens in the field.
+
+Scope boundaries are specified, because the one failure SB5095 cannot afford
+is a false reject: `[[ -x /path ]]` untouched (DD#23 names it as *the* runtime
+existence test), globs untouched (`head_is_unjudgeable` exempts `*?[$`).
+
+Sweep **8031/8031 predicted**, 34 new ids all `cmdpath`, **zero flips**;
+`mk test` green. Filed `notes/tasks/target-user-access-check.md` for DG's
+`--target-user` parenthetical.
+
+---
+
+## ══ STATUS (2026-10-09) — the latch that answered anyway ══
 
 **DD#126 §2: `wait` no longer touches `$?`.** The reaped child's status goes
 to a runtime-owned latch read by a new nullary int intrinsic,

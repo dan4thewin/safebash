@@ -204,6 +204,7 @@ taint pass, and the CST itself into this single module.)
 | `check_dynexec` | SB4001 | `eval`, `source`, `.`, `command`, `coproc` |
 | `check_heredoc` | SB5002 | heredocs / here-strings |
 | `check_command_head` | SB5011 | an unknown name in command position |
+| `check_exec_target` | SB5011, SB5095 | an `exec` target that is not a runnable program |
 | `check_taint` | SB5020 | a tainted value used without `attest` |
 
 There are **no reserved words.** A bash builtin sash does not implement
@@ -550,6 +551,12 @@ belongs to the consumer.
 `--manifest` prints the program's external-command manifest: every binary
 the program can execve, resolved to an absolute path at compile time
 (DD#23). It is what makes a compiled script auditable without running it.
+
+Every path in it is one the compiler confirmed is a regular file with an
+execute bit, in the resolution root (`--sysroot`, or the build host). Until
+SB5095 that was not true: an absolute head was never looked at, so a
+manifest could list a path the compiler already knew was absent — a
+requirement that cannot be met, asserted as fact.
 
 ### Source emission
 

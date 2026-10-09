@@ -1293,7 +1293,7 @@ if (( (status) == 0 )) { echo y }'
 #        `wait` does not write `$?`: read the latch and act on it. Before
 #        DD#126 §2 this fell out of `- wait` leaving 127 in `$?`, which is
 #        the same accident that made `$?` mean two things after a `wait`.
-run_sash '/nonexistent_binary_xyz &
+run_sash_vanish 'SPEC_VANISH_CMD &
 - wait
 int s=$(waitstatus)
 exit $s'

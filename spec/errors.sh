@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup errors
-plan=330
+plan=347
 echo "1..$plan" >&3
 
 set +e
@@ -229,26 +229,28 @@ run_sash 'fn f -> int { - /bin/false; return $?; }'
 #       rather than to `$?`. A parent that never reads the latch has said
 #       "I do not care" twice, so it exits on its own status. 126.36 is the
 #       spelling that propagates the failure.
-run_sash '/nonexistent_binary_xyz &
+#       The command is staged, compiled against, then deleted before the
+#       binary runs (SB5095 rejects a path that was never there).
+run_sash_vanish 'SPEC_VANISH_CMD &
 - wait'
 [[ $rc = 0 && -z $err ]] \
-  && [[ $rerr == *"/nonexistent_binary_xyz: No such file or directory"* ]] \
+  && [[ $rerr == *": No such file or directory"* ]] \
   && [[ $rerr == *"command failed (exit 127)"* ]]; chk 55.16
 
 # 55.30 fg UNCAUGHT exec failure → child errno detail + parent uncaught
 #       abort (both lines). DD#55: child owns exec errors; parent's
 #       command-failed fires because it is uncaught.
-run_sash '/nonexistent_binary_xyz
+run_sash_vanish 'SPEC_VANISH_CMD
 echo unreached'
 [[ $rc != 0 && -z $out \
-   && $rerr == *"/nonexistent_binary_xyz: No such file or directory"* \
-   && $rerr == *"/nonexistent_binary_xyz: command failed (exit 127)"* ]]; chk 55.30
+   && $rerr == *": No such file or directory"* \
+   && $rerr == *": command failed (exit 127)"* ]]; chk 55.30
 
 # 55.31 CAUGHT exec failure (`|| …`) → only the child's errno detail; the
 #       parent does NOT abort, so no command-failed line.
-run_sash '/nonexistent_binary_xyz || echo caught'
+run_sash_vanish 'SPEC_VANISH_CMD || echo caught'
 [[ $rc = 0 && $out = "caught" && -z $err \
-   && $rerr == *"/nonexistent_binary_xyz: No such file or directory"* \
+   && $rerr == *": No such file or directory"* \
    && $rerr != *"command failed"* ]]; chk 55.31
 
 # 55.17 $(status) only valid as first expression in handling branch
@@ -731,6 +733,86 @@ run_sash 'nosuchcmd991 x'
 [[ $rc != 0 && $err == *SB5011* && $err != *SB5051* ]]; chk relpath.5
 run_sash './tool a | /bin/cat'
 [[ $rc != 0 && -z $out && $err == *SB5051* ]]; chk relpath.6
+
+# cmdpath.* DD#23/SB5095: an ABSOLUTE command head skips the PATH search, but
+# the compiler still knows whether the program is there and whether it can be
+# run. Until SB5095 that was the one spelling of "this program is not here"
+# nobody checked — a bare name is SB5011 and a relative one SB5051, both at
+# compile time, while the path the author was most explicit about compiled
+# clean and became a runtime 127.
+#
+# "Not there" is only one of the faults. A directory, a device node and a
+# regular file with no execute bit are all PRESENT, and none of them can be
+# `exec`ed; the diagnostic names which, because "command not found" for a
+# mode-0644 file sends the reader looking for the wrong thing.
+run_sash '/nonexistent_cp991'
+[[ $rc != 0 && -z $out && $err == *SB5095* && $err == *"no such file"* ]]; chk cmdpath.1
+run_sash '/tmp'
+[[ $rc != 0 && -z $out && $err == *SB5095* && $err == *"is a directory"* ]]; chk cmdpath.2
+run_sash '/dev/null'
+[[ $rc != 0 && -z $out && $err == *SB5095* && $err == *"not a regular file"* ]]; chk cmdpath.3
+rm -f cp991_noexec; printf 'not a program\n' > cp991_noexec; chmod 444 cp991_noexec
+run_sash "$PWD/cp991_noexec"
+[[ $rc != 0 && -z $out && $err == *SB5095* && $err == *"0444"* \
+   && $err == *"no execute permission"* ]]; chk cmdpath.4
+
+# Uniform across positions, exactly as SB5051 is: the rule is a property of a
+# command head, not of the statement it sits in. `-` and `&` are the two that
+# matter most — both are ways of saying "I am not handling this", and neither
+# is a licence to name a program that cannot run.
+run_sash '/bin/echo hi | /nonexistent_cp991'
+[[ $rc != 0 && $err == *SB5095* ]]; chk cmdpath.5
+run_sash 'x=$(/nonexistent_cp991)
+echo "$x"'
+[[ $rc != 0 && -z $out && $err == *SB5095* ]]; chk cmdpath.6
+run_sash '- /nonexistent_cp991'
+[[ $rc != 0 && $err == *SB5095* ]]; chk cmdpath.7
+run_sash '/nonexistent_cp991 &
+- wait'
+[[ $rc != 0 && $err == *SB5095* ]]; chk cmdpath.8
+
+# `exec` replaces the process image, so a target that cannot run is worse
+# there than anywhere else — there is no process left to report it.
+run_sash 'exec /nonexistent_cp991'
+[[ $rc != 0 && $err == *SB5095* && $err == *"exec"* ]]; chk cmdpath.9
+run_sash 'exec /tmp'
+[[ $rc != 0 && $err == *SB5095* && $err == *"is a directory"* ]]; chk cmdpath.10
+
+# The controls. Without these, a compiler that rejected every absolute head
+# would pass cmdpath.1-10.
+run_sash '/bin/echo ok'
+[[ $rc = 0 && $out = "ok" && -z $err ]]; chk cmdpath.11
+run_sash 'exec /bin/echo ok'
+[[ $rc = 0 && $out = "ok" && -z $err ]]; chk cmdpath.12
+# A symlink to a program IS a program: `metadata`, not `symlink_metadata`.
+rm -f cp991_link; ln -s /bin/echo cp991_link
+run_sash "$PWD/cp991_link ok"
+[[ $rc = 0 && $out = "ok" && -z $err ]]; chk cmdpath.13
+# DD#23 names `[[ -x PATH ]]` as the RUNTIME existence test that replaces
+# `command -v`. It is a test, not a command head, so SB5095 must not touch it
+# — rejecting this would delete the escape the DD prescribes.
+run_sash 'if [[ -x /nonexistent_cp991 ]]; then echo y; else echo n; fi'
+[[ $rc = 0 && $out = "n" && -z $err ]]; chk cmdpath.14
+# The three diagnostics stay distinct: bare is SB5011, relative is SB5051.
+run_sash 'nosuchcmd992 x'
+[[ $rc != 0 && $err == *SB5011* && $err != *SB5095* ]]; chk cmdpath.15
+run_sash './nosuchcmd992 x'
+[[ $rc != 0 && $err == *SB5051* && $err != *SB5095* ]]; chk cmdpath.16
+
+# cmdpath.17 the same rule applied to the PATH search itself: a candidate
+# that is present but not executable does not win it. Before SB5095 the
+# search tested `is_file()`, so an unreadable-as-a-program file early in PATH
+# resolved, shadowing the real tool, and the failure arrived at `exec` time
+# with the shadowing path baked into the binary.
+rm -rf cp991_d1 cp991_d2; mkdir -p cp991_d1 cp991_d2
+printf 'not a program\n' > cp991_d1/cptool991; chmod 444 cp991_d1/cptool991
+printf '#!/bin/sh\necho second\n' > cp991_d2/cptool991; chmod 755 cp991_d2/cptool991
+_cp991_path=$PATH
+PATH="$PWD/cp991_d1:$PWD/cp991_d2:$PATH"
+run_sash 'cptool991'
+PATH=$_cp991_path
+[[ $rc = 0 && $out = "second" && -z $err ]]; chk cmdpath.17
+rm -rf cp991_d1 cp991_d2 cp991_noexec cp991_link
 
 # ── Compound-condition catch (DD#55; DG 2026-08-19). `&&`/`||` operands in a
 # condition are caught (not aborted); a `;` list's non-final member and an
@@ -1613,9 +1695,9 @@ echo "[$n]"'
 # is the case that only works because the scope fd is F_DUPFD_CLOEXEC: still
 # open when execve fails, gone when it succeeds.
 rm -f iv1_cap.txt
-run_sash '/nonexistent_dir_120/nocmd 2> iv1_cap.txt
+run_sash_vanish 'SPEC_VANISH_CMD 2> iv1_cap.txt
 echo after'
-[[ $rc = 127 && -z $out    && $rerr == *"/nonexistent_dir_120/nocmd: No such file or directory"*    && -f iv1_cap.txt && ! -s iv1_cap.txt ]]; chk iv.1
+[[ $rc = 127 && -z $out    && $rerr == *": No such file or directory"*    && -f iv1_cap.txt && ! -s iv1_cap.txt ]]; chk iv.1
 
 # iv.2 the DD#55 implicit-check abort, emitted by the parent after wait
 rm -f iv2_cap.txt
@@ -1656,8 +1738,8 @@ run_sash 'END { echo cleanup }
 # iv.7 the same leak by the exec-failure route, which aborts from a
 # different place
 rm -f iv7_log.txt
-run_sash 'END { echo cleanup }
-/nonexistent_dir_120/nocmd > iv7_log.txt'
+run_sash_vanish 'END { echo cleanup }
+SPEC_VANISH_CMD > iv7_log.txt'
 [[ $rc = 127 && $out = "cleanup" && -f iv7_log.txt && ! -s iv7_log.txt ]]; chk iv.7
 
 # iv.8 and by the echo write-failure route — a third abort site, which is

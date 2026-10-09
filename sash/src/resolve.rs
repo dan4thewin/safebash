@@ -256,8 +256,11 @@ pub(crate) fn resolve_commands(program: &mut Program) -> Vec<Diagnostic> {
 }
 
 /// DD#23: search PATH (honoring `--sysroot`, including a `.squashfs` image)
-/// for `name`, returning its absolute path. Shared by this front-end pass
-/// and the transform's `resolve_pipeline_command`.
+/// for `name`, returning its absolute path. A candidate that is present but
+/// not executable does not win the search — the shell's own rule, and the one
+/// that keeps resolution from baking in a path that can only fail at `exec`.
+/// Shared by this front-end pass and the transform's
+/// `resolve_pipeline_command`.
 pub(crate) fn resolve_command_path(name: &str) -> Option<String> {
     let sysroot = crate::get_sysroot();
     let path_var = std::env::var("PATH").unwrap_or_default();
@@ -267,21 +270,59 @@ pub(crate) fn resolve_command_path(name: &str) -> Option<String> {
     // dir stays unresolved (→ SB5011).
     for dir in path_var.split(':').filter(|d| d.starts_with('/')) {
         let target_path = format!("{}/{}", dir, name);
-        if resolved_path_exists(&sysroot, &target_path) {
+        if resolved_path_executable(&sysroot, &target_path) {
             return Some(target_path);
         }
     }
     None
 }
 
-/// Does `target_path` name an existing file — within `--sysroot` (dir or
-/// squashfs image) when set, else on the build host?
-fn resolved_path_exists(sysroot: &Option<String>, target_path: &str) -> bool {
-    if let Some(sr) = sysroot {
-        crate::sysroot_file_exists(sr, target_path)
-    } else {
-        std::path::Path::new(target_path).is_file()
+/// Does the resolution root hold a program at `target_path`? A present but
+/// unrunnable entry — a directory, a device node, a mode-0444 file — answers
+/// no, so a PATH search keeps looking rather than resolving to something that
+/// can only fail at `exec` time.
+fn resolved_path_executable(sysroot: &Option<String>, target_path: &str) -> bool {
+    crate::root_path_facts(sysroot, target_path).is_ok_and(|f| f.is_executable())
+}
+
+/// Why the resolution root cannot run `path`, phrased as a diagnostic clause,
+/// or `None` if it can. An absolute head skips the PATH search but is held to
+/// the same standard: DD#23 resolves command paths at compile time, and the
+/// compiler already knows whether the program is there and runnable.
+///
+/// **Total over `FileKind` and `PathMiss` on purpose — do not add a
+/// wildcard.** Each variant is a different answer to "why can this not run",
+/// and the whole value of SB5095 over a runtime 127 is that it names which.
+pub(crate) fn command_path_fault(path: &str) -> Option<String> {
+    let sysroot = crate::get_sysroot();
+    let facts = match crate::root_path_facts(&sysroot, path) {
+        Ok(f) => f,
+        Err(crate::PathMiss::Absent) => return Some("no such file".to_string()),
+        Err(crate::PathMiss::LinkLoop) => {
+            return Some("its symlink chain does not terminate".to_string())
+        }
+    };
+    match facts.kind {
+        crate::FileKind::Directory => return Some("it is a directory".to_string()),
+        crate::FileKind::Other => return Some("it is not a regular file".to_string()),
+        crate::FileKind::Regular => {}
     }
+    if facts.mode & 0o111 == 0 {
+        return Some(format!(
+            "mode {:04o} grants no execute permission",
+            facts.mode
+        ));
+    }
+    None
+}
+
+/// A literal command head the compiler must not judge, because it is not a
+/// path: a glob is expanded at runtime (`validate`'s `is_valid_command`
+/// exempts it too), and a head carrying an expansion sigil is not a literal
+/// path either. Checking one would be a false reject, which is the only
+/// failure mode SB5095 cannot afford.
+fn head_is_unjudgeable(name: &str) -> bool {
+    name.contains(['*', '?', '[', '$'])
 }
 
 /// True if `name` is a true external command head that must be resolved to
@@ -409,19 +450,10 @@ fn resolve_command(c: &mut Command, funcs: &HashSet<String>, diags: &mut Vec<Dia
     let ExprKind::Literal(name) = &c.name.kind else {
         return;
     };
-    // DD#23: an external command path must be absolute. A relative path head
-    // (`./x`, `../x`, `a/b`) would bind to the runtime cwd — the "search
-    // ambiguity" DD#23 forbids. Reject it. (An absolute `/x` path contains a
-    // slash too but is left as-is by `is_resolvable_external` below.)
-    if name.contains('/') && !name.starts_with('/') {
-        diags.push(Diagnostic::error_span(
-            c.name.span,
-            "SB5051",
-            format!(
-                "relative external path '{}' — DD#23 requires an absolute path (starting with '/')",
-                name
-            ),
-        ));
+    // A head that already carries a path is not a search, so it never reaches
+    // `resolve_command_path`; DD#23 judges it on its own terms.
+    if name.contains('/') {
+        check_path_head(name, c.name.span, diags);
         return;
     }
     if !is_resolvable_external(name, funcs) {
@@ -438,6 +470,51 @@ fn resolve_command(c: &mut Command, funcs: &HashSet<String>, diags: &mut Vec<Dia
             ),
         )),
     }
+}
+
+/// DD#23 on a command head that spells out a path.
+///
+/// A **relative** one (`./x`, `../x`, `a/b`) binds to the runtime cwd — the
+/// "search ambiguity" DD#23 forbids — and is SB5051.
+///
+/// An **absolute** one skips the PATH search, which is how it became the one
+/// spelling of "this program is not here" that nobody checked: a bare name is
+/// SB5011 and a relative one SB5051, both at compile time, while the path the
+/// author was most explicit about compiled clean and failed at `exec`. SB5095
+/// closes that, and names which fault it found.
+fn check_path_head(name: &str, span: Span, diags: &mut Vec<Diagnostic>) {
+    if !name.starts_with('/') {
+        diags.push(Diagnostic::error_span(
+            span,
+            "SB5051",
+            format!(
+                "relative external path '{}' — DD#23 requires an absolute path (starting with '/')",
+                name
+            ),
+        ));
+        return;
+    }
+    diags.extend(command_path_diag("", name, span));
+}
+
+/// The SB5095 diagnostic for `path`, or `None` if the resolution root can run
+/// it. The single authority for the rule, shared by the command-head pass here
+/// and `validate`'s `exec`-target check: two positions, one standard, and no
+/// second implementation to drift from this one.
+///
+/// `what` prefixes the message to name the position. A command head needs no
+/// prefix; an `exec` target says so, because a failed `exec` has already torn
+/// down the process image that would have reported it.
+pub(crate) fn command_path_diag(what: &str, path: &str, span: Span) -> Option<Diagnostic> {
+    if head_is_unjudgeable(path) {
+        return None;
+    }
+    let why = command_path_fault(path)?;
+    Some(Diagnostic::error_span(
+        span,
+        "SB5095",
+        format!("{}'{}' is not an executable program — {}", what, path, why),
+    ))
 }
 
 fn resolve_expr(e: &mut Expr, funcs: &HashSet<String>, diags: &mut Vec<Diagnostic>) {

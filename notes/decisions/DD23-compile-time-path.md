@@ -24,9 +24,8 @@ Sash-native scripts use absolute paths directly:
 
     /usr/bin/grep pattern file
 
-Or chain alternatives:
-
-    /usr/bin/grep pattern file || /bin/grep pattern file
+An absolute path skips the PATH search, but it is held to the same
+standard — see the SB5095 addendum below.
 
 ## Existence testing
 
@@ -125,3 +124,112 @@ Impl: `resolve.rs` (`resolve_command_path` dir-skip; `resolve_command` SB5051;
 `is_valid_command` defers relative heads so `resolve` owns the diagnostic),
 `validate.rs` (`command_name_is_taint_source` → `contains('/')`). Specs
 `errors.sh` relpath.1–6 (×3 modes). SB5051 is a new code.
+
+## Addendum (2026-10-09) — an absolute command head must be an executable
+## file (SB5095)
+
+DG, on reading the DD#126 §2 journal: *"the /nonexistent should be caught
+at compile time, yes?"* — and then: *"reject any path that doesn't resolve
+(or is not executable - directory, device, mode 444 ...); new code"*.
+
+### The asymmetry
+
+Three spellings of "this program is not here", and only two were caught:
+
+| head | before |
+|---|---|
+| `nonexistent_binary_xyz` | **SB5011** at compile time |
+| `./nonexistent_binary_xyz` | **SB5051** at compile time |
+| `/nonexistent_binary_xyz` | **compiled**, then 127 at runtime |
+
+The uncaught one is the spelling the author was most explicit about.
+`is_resolvable_external` returns false for any name containing `/`, so an
+absolute head was never looked at — even though `resolved_path_exists`
+(sysroot- and squashfs-aware) sat beside it and was already the answer for
+every bare name. `--manifest` went further and listed
+`/nonexistent_binary_xyz` as a dependency: a requirement the compiler knew
+could not be met, asserted as fact.
+
+### The rule
+
+A **literal absolute command head** must name something the resolution root
+reports as a **regular file with at least one execute bit**. Anything else
+is **SB5095**, and the diagnostic names which fault it is:
+
+- `no such file`
+- `it is a directory`
+- `it is not a regular file` (device node, socket, FIFO)
+- `mode 0444 grants no execute permission`
+- `its symlink chain does not terminate`
+
+"Command not found" would have been the wrong sentence for four of those
+five — a reader told that about a mode-0644 file goes looking for the file.
+
+The resolution root is the same one the PATH search uses: the build host, or
+`--sysroot=<dir>`, or `--sysroot=<image.squashfs>`. Symlinks are followed
+(`/bin/sh -> dash` is a program), in the image as well as on the host.
+
+The rule applies uniformly in every position a command head appears —
+top-level, pipeline stage, `$( )`, `&`, `-` — exactly as SB5051 does, and
+to an `exec` target, where it matters most: a failed `exec` has already torn
+down the process image that would have reported it.
+
+### Scope boundaries
+
+- **`[[ -x /path ]]` is untouched.** This DD names it as *the* runtime
+  existence test replacing `command -v`; rejecting it would delete the
+  escape the DD prescribes. SB5095 reads command heads, not test operands.
+- **Globs are untouched.** A head containing `*`, `?`, `[` or `$` is not a
+  literal path, and `validate`'s `is_valid_command` already exempts it. The
+  only failure SB5095 cannot afford is a false reject.
+- **Relative heads still get SB5051, bare names still get SB5011.** Three
+  distinct facts, three codes (`errors.sh` cmdpath.15-16 pin the
+  distinction).
+
+### The PATH search got the same rule
+
+`resolve_command_path` tested `is_file()`, so a *present but unrunnable*
+candidate won the search: a mode-0444 `cptool` early in PATH shadowed the
+real one later, and the failure arrived at `exec` time with the shadowing
+path already baked into the binary. It now requires an executable, which is
+the shell's own rule, and keeps looking otherwise (`cmdpath.17`).
+
+### What this costs, and why it is still right
+
+**The chain-alternatives example is withdrawn.** This DD used to offer
+
+    /usr/bin/grep pattern file || /bin/grep pattern file
+
+which only makes sense if an absolute path may be absent. As DG and I read
+it, that example is at odds with this DD's own spine: a hand-written
+two-entry fallback *is* the search ambiguity the security argument forbids.
+The sanctioned escapes remain `--sysroot` (resolve against the target, not
+the build host) and `/usr/bin/env tool` (delegate the search, explicitly).
+
+**It tightens cross-compilation.** Compiling for a root you do not have now
+requires `--sysroot` or `env`. That obligation was always implied — a bare
+name has been resolved against the build host since DD#23 was written — but
+an absolute head used to slip it.
+
+**It costs a spec idiom, and that needed a replacement rather than a
+shrug.** Roughly a dozen specs provoked the runtime's exec-ENOENT branch by
+naming a path that was never there. Those programs no longer compile, and
+the branch is still live — a program can be removed, replaced or unmounted
+between build and run. `spec/common.sh` grows `run_sash_vanish`, which
+stages a real program, lets the compiler see it, and deletes it before the
+binary runs. That is the honest shape of the case: the spec *is* the program
+that disappeared.
+
+### Deferred
+
+DG: *"maybe add a `--target-user` switch to do fine-grained access
+checking"*. The check today is coarse — *some* user can execute this. Which
+user is a question the compiler cannot answer without being told who the
+target runs as. Filed as `notes/tasks/target-user-access-check.md`.
+
+Impl: `lib.rs` (`FileKind`/`PathFacts`/`PathMiss`/`root_path_facts`, and the
+squashfs listing moved from `unsquashfs -l` to `-ll` so it can report type
+and mode at all), `resolve.rs` (`command_path_fault`,
+`resolved_path_executable`, the SB5095 arm in `resolve_command`),
+`validate.rs` (`check_exec_target`). Specs `errors.sh` cmdpath.1-17.
+SB5095 is a new code.

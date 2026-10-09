@@ -15,6 +15,7 @@ pub(crate) mod transform;
 pub mod type_check;
 pub(crate) mod validate;
 
+use std::collections::HashMap;
 use std::sync::Mutex;
 
 static SYSROOT: Mutex<Option<String>> = Mutex::new(None);
@@ -44,37 +45,207 @@ pub(crate) fn get_heap_size() -> Option<usize> {
     *HEAP_SIZE.lock().unwrap()
 }
 
-/// Cache of squashfs file listings (path → set of files)
-static SQUASHFS_CACHE: Mutex<Option<std::collections::HashSet<String>>> = Mutex::new(None);
+/// What kind of thing a resolution root has at a path.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum FileKind {
+    Regular,
+    Directory,
+    /// A device node, socket, FIFO — present, but not a program.
+    Other,
+}
 
-/// Check if a path exists in the sysroot. Supports both directory sysroots
-/// and .squashfs image files (via unsquashfs -l).
-pub(crate) fn sysroot_file_exists(sysroot: &str, path: &str) -> bool {
-    if sysroot.ends_with(".squashfs") || sysroot.ends_with(".sqsh") {
-        let mut cache = SQUASHFS_CACHE.lock().unwrap();
-        if cache.is_none() {
-            // Populate cache from unsquashfs -l
-            let output = std::process::Command::new("unsquashfs")
-                .args(["-l", "-no-progress", sysroot])
-                .output();
-            let files: std::collections::HashSet<String> = match output {
-                Ok(out) => {
-                    String::from_utf8_lossy(&out.stdout)
-                        .lines()
-                        .filter_map(|line| {
-                            // unsquashfs -l output: "squashfs-root/usr/bin/cat"
-                            line.strip_prefix("squashfs-root").map(|p| p.to_string())
-                        })
-                        .collect()
-                }
-                Err(_) => std::collections::HashSet::new(),
-            };
-            *cache = Some(files);
+/// What a resolution root reports about one path: its kind and its permission
+/// bits. DD#23 resolves command paths at compile time, so "is something there"
+/// is not a sufficient question — a directory, a device node and a mode-0444
+/// regular file are all present and none of them can be `exec`ed.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct PathFacts {
+    pub(crate) kind: FileKind,
+    pub(crate) mode: u32,
+}
+
+impl PathFacts {
+    /// Can *some* user run this? The coarse test DD#23 applies at compile
+    /// time: a regular file carrying at least one execute bit. *Which* user
+    /// is a finer question the compiler cannot answer without being told who
+    /// the target runs as — see `notes/tasks/target-user-access-check.md`.
+    pub(crate) fn is_executable(&self) -> bool {
+        self.kind == FileKind::Regular && self.mode & 0o111 != 0
+    }
+}
+
+/// One entry of a squashfs listing. `link` is `Some` only for a symlink, and
+/// holds the raw target as the image records it.
+#[derive(Clone)]
+struct SquashEntry {
+    facts: PathFacts,
+    link: Option<String>,
+}
+
+/// Cache of the squashfs listing (absolute in-image path → entry).
+static SQUASHFS_CACHE: Mutex<Option<std::collections::HashMap<String, SquashEntry>>> =
+    Mutex::new(None);
+
+/// The three bits one `rwx` triple of an `ls`-style mode string carries. A
+/// lowercase `s`/`t` holds its execute bit and an uppercase `S`/`T` does not,
+/// which is the whole reason this reads the character rather than testing it
+/// for `'x'`.
+fn triple_bits(t: &[u8]) -> u32 {
+    (u32::from(t[0] == b'r') << 2)
+        | (u32::from(t[1] == b'w') << 1)
+        | u32::from(matches!(t[2], b'x' | b's' | b't'))
+}
+
+/// Permission bits from an `ls`-style mode string (`-rwxr-sr-t`). Only the
+/// nine permission characters are read; the leading type character is
+/// `kind_from_listing`'s business.
+fn mode_from_listing(modestr: &str) -> u32 {
+    let b = modestr.as_bytes();
+    if b.len() < 10 {
+        return 0;
+    }
+    (triple_bits(&b[1..4]) << 6) | (triple_bits(&b[4..7]) << 3) | triple_bits(&b[7..10])
+}
+
+/// The file type an `ls`-style mode string's leading character names. A
+/// symlink's own kind is never the answer — `squashfs_path_facts` follows it
+/// and reports the target's — so it lands in `Other` and is overwritten there.
+fn kind_from_listing(modestr: &str) -> Option<FileKind> {
+    match modestr.as_bytes().first()? {
+        b'-' => Some(FileKind::Regular),
+        b'd' => Some(FileKind::Directory),
+        _ => Some(FileKind::Other),
+    }
+}
+
+/// The in-image path and symlink target on one listing line. The listing is
+/// columnar, but a device node's size column is `major, minor` and a file
+/// name may contain spaces, so the path is located by its `squashfs-root`
+/// prefix rather than by counting fields. `None` is the image root itself.
+fn path_and_link(line: &str, is_link: bool) -> Option<(String, Option<String>)> {
+    let rest = line[line.find(" squashfs-root")? + 1..].strip_prefix("squashfs-root")?;
+    let (path, link) = match rest.split_once(" -> ") {
+        Some((p, target)) if is_link => (p, Some(target.to_string())),
+        _ => (rest, None),
+    };
+    (!path.is_empty()).then(|| (path.to_string(), link))
+}
+
+/// Parse one `unsquashfs -ll` line into an in-image absolute path and its
+/// entry.
+fn parse_squashfs_line(line: &str) -> Option<(String, SquashEntry)> {
+    let modestr = line.split_whitespace().next()?;
+    let kind = kind_from_listing(modestr)?;
+    let (path, link) = path_and_link(line, modestr.starts_with('l'))?;
+    let facts = PathFacts {
+        kind,
+        mode: mode_from_listing(modestr),
+    };
+    Some((path, SquashEntry { facts, link }))
+}
+
+/// The squashfs listing, read once per compile and cached. An unreadable or
+/// absent image yields an empty map, so every lookup in it reports "not
+/// there" — the same answer `--sysroot=<dir>` gives for a missing root.
+fn squashfs_listing(
+    sysroot: &str,
+) -> std::sync::MutexGuard<'static, Option<HashMap<String, SquashEntry>>> {
+    let mut cache = SQUASHFS_CACHE.lock().unwrap();
+    if cache.is_none() {
+        let output = std::process::Command::new("unsquashfs")
+            .args(["-ll", "-no-progress", sysroot])
+            .output();
+        let entries: HashMap<String, SquashEntry> = match output {
+            Ok(out) => String::from_utf8_lossy(&out.stdout)
+                .lines()
+                .filter_map(parse_squashfs_line)
+                .collect(),
+            Err(_) => HashMap::new(),
+        };
+        *cache = Some(entries);
+    }
+    cache
+}
+
+/// Why a resolution root has no runnable facts for a path.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum PathMiss {
+    /// Nothing is there.
+    Absent,
+    /// A symlink chain that did not terminate within the hop limit. Distinct
+    /// from `Absent` on purpose: the end of a loop is not an empty directory
+    /// entry, and reporting it as one is a wrong answer in true answer's
+    /// clothing.
+    LinkLoop,
+}
+
+/// Resolve `path` within a squashfs image, following symlinks. The hop limit
+/// is what keeps a cyclic link from hanging the compiler; a target is read
+/// relative to the link's own directory unless it is absolute, exactly as the
+/// kernel would read it inside that image.
+fn squashfs_path_facts(sysroot: &str, path: &str) -> Result<PathFacts, PathMiss> {
+    let listing = squashfs_listing(sysroot);
+    let entries = listing.as_ref().ok_or(PathMiss::Absent)?;
+    let mut current = path.to_string();
+    for _ in 0..8 {
+        let entry = entries.get(&current).ok_or(PathMiss::Absent)?;
+        let Some(target) = &entry.link else {
+            return Ok(entry.facts);
+        };
+        current = if target.starts_with('/') {
+            target.clone()
+        } else {
+            let dir = current.rsplit_once('/').map_or("", |(d, _)| d);
+            format!("{}/{}", dir, target)
+        };
+    }
+    Err(PathMiss::LinkLoop)
+}
+
+/// What the resolution root says about `path`: a directory sysroot, a
+/// `.squashfs`/`.sqsh` image, or — with no `--sysroot` — the build host.
+pub(crate) fn root_path_facts(sysroot: &Option<String>, path: &str) -> Result<PathFacts, PathMiss> {
+    match sysroot {
+        Some(sr) if sr.ends_with(".squashfs") || sr.ends_with(".sqsh") => {
+            squashfs_path_facts(sr, path)
         }
-        cache.as_ref().unwrap().contains(path)
+        Some(sr) => host_path_facts(&format!("{}{}", sr, path)),
+        None => host_path_facts(path),
+    }
+}
+
+/// Build-host facts for `path`. Symlinks are followed (`metadata`, not
+/// `symlink_metadata`): `/bin/sh -> dash` is a runnable program and the
+/// compiler must say so. A chain that loops surfaces as `ELOOP`, which the
+/// squashfs branch reaches by its own hop limit.
+fn host_path_facts(path: &str) -> Result<PathFacts, PathMiss> {
+    use std::os::unix::fs::PermissionsExt;
+    let md = std::fs::metadata(path).map_err(|e| miss_from_io(&e))?;
+    Ok(PathFacts {
+        kind: kind_from_metadata(&md),
+        mode: md.permissions().mode() & 0o7777,
+    })
+}
+
+/// Which miss a failed `metadata` call is. Only `ELOOP` is worth separating:
+/// every other error — absent, unreadable parent, bad name — leaves the
+/// compiler with nothing at that path, which is `Absent`.
+fn miss_from_io(e: &std::io::Error) -> PathMiss {
+    const ELOOP: i32 = 40;
+    if e.raw_os_error() == Some(ELOOP) {
+        PathMiss::LinkLoop
     } else {
-        let full_path = format!("{}{}", sysroot, path);
-        std::path::Path::new(&full_path).is_file()
+        PathMiss::Absent
+    }
+}
+
+fn kind_from_metadata(md: &std::fs::Metadata) -> FileKind {
+    if md.is_file() {
+        FileKind::Regular
+    } else if md.is_dir() {
+        FileKind::Directory
+    } else {
+        FileKind::Other
     }
 }
 
