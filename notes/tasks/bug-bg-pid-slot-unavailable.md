@@ -1,6 +1,6 @@
 ---
 title: "`$!` / `$(getcpid)` before any `&` is a silent empty string, where `$(status)` is SB5012"
-status: next
+status: done
 priority: P1
 kind: bug
 depends: []
@@ -51,3 +51,24 @@ DD#126 removes bare `wait`'s dependence on `$!` (bare `wait` becomes
 `wait(2)`, reaping any child), so after that work `$!` is read only by an
 explicit `wait $!` or `$(getcpid)`. That narrows the blast radius but does
 not close the hole.
+
+## Resolved — DD#126 §2 (2026-10-09)
+
+Option 1, generalised. DG chose the `$(waitstatus)` latch for `wait`'s status,
+which created a *second* single-slot compiler-managed value with exactly this
+problem, so one rule now covers both: **SB5094 — a latch is readable only in
+the statement immediately following the one that wrote it.**
+
+`echo $!` with no preceding `&` is now a compile error naming `$(getcpid)`,
+not an empty string. The sentinel (option 2) was not taken: `-1` would have
+made "no job yet" testable at runtime, but it leaves the *stale* read — `&`,
+then ten statements, then `$!` — answering with a plausible wrong number,
+which is the worse half of the fault.
+
+Not just `$!`: the state machine is in the walk, so a read inside a function
+body, after a branch, or two statements late is rejected in every spelling
+(`$!`, `$(getcpid)`, `$(( getcpid ))`, `$(( (getcpid) ))`).
+
+Specs: `spec/commands.sh` 126.26-126.31, `spec/misc.sh` spv.4 (which had been
+asserting the bug — `$!` and `$(getcpid)` "agreed" because both were empty).
+Rule and rationale: `notes/decisions/DD126-wait-as-int-builtin.md`.

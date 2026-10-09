@@ -560,6 +560,12 @@ fn try_nullary_intrinsic(
             let pid = builder.inst_results(call)[0];
             Some(emit_int_to_str(builder, module, externs, pid))
         }
+        "waitstatus" => {
+            let func_ref = module.declare_func_in_func(externs.wait_status, builder.func);
+            let call = builder.ins().call(func_ref, &[]);
+            let st = builder.inst_results(call)[0];
+            Some(emit_int_to_str(builder, module, externs, st))
+        }
         "getpid" => {
             let func_ref = module.declare_func_in_func(externs.getpid, builder.func);
             let call = builder.ins().call(func_ref, &[]);
@@ -701,10 +707,10 @@ fn try_native_intrinsic(
 /// directly), and the `- wait` statement (via `emit_wait`). `argv` is the
 /// whole `["wait", pid?]` vector.
 ///
-/// The status slot is **seeded with the current `$?`** before the call, so the
-/// runtime's "write only on a reap" makes a childless wait leave the status
-/// untouched without a branch here. That is also what keeps the two backends
-/// honest: neither has an opinion of its own about what a failed wait reports.
+/// `wait` does **not** touch `$?`. The reaped child's status goes into the
+/// runtime's latch, which `$(waitstatus)` reads — so there is nothing here for
+/// the two backends to disagree about, which is how they came to disagree
+/// about a childless `wait` in the first place.
 pub(super) fn emit_wait_value(
     argv: &[SsaValue],
     builder: &mut FunctionBuilder,
@@ -728,22 +734,9 @@ pub(super) fn emit_wait_value(
         // child in my process group", which is not the same question.
         None => builder.ins().iconst(I64, -1),
     };
-    let slot =
-        builder.create_sized_stack_slot(StackSlotData::new(StackSlotKind::ExplicitSlot, 8, 3));
-    let seed = match exit_status_var {
-        Some(esv) => builder.use_var(esv),
-        None => builder.ins().iconst(I64, 0),
-    };
-    builder.ins().stack_store(seed, slot, 0);
-    let addr = builder.ins().stack_addr(I64, slot, 0);
     let f = module.declare_func_in_func(externs.wait_any, builder.func);
-    let call = builder.ins().call(f, &[pid, addr]);
-    let reaped = builder.inst_results(call)[0];
-    if let Some(esv) = exit_status_var {
-        let status = builder.ins().stack_load(I64, slot, 0);
-        builder.def_var(esv, status);
-    }
-    reaped
+    let call = builder.ins().call(f, &[pid]);
+    builder.inst_results(call)[0]
 }
 
 /// Compute a nullary int intrinsic as a **direct i64** (no string round-trip).
@@ -769,6 +762,13 @@ pub(super) fn int_intrinsic_i64(
         }
         "getppid" => {
             let f = module.declare_func_in_func(externs.getppid, builder.func);
+            let call = builder.ins().call(f, &[]);
+            builder.inst_results(call)[0]
+        }
+        // DD#126: the latch the last `wait` wrote. The runtime owns it, so
+        // neither backend has a copy to get wrong.
+        "waitstatus" => {
+            let f = module.declare_func_in_func(externs.wait_status, builder.func);
             let call = builder.ins().call(f, &[]);
             builder.inst_results(call)[0]
         }

@@ -260,16 +260,22 @@ pub(super) fn declare_runtime_functions(module: &mut ObjectModule) -> ExternFunc
         .declare_function("sash_wait", Linkage::Import, &wait_sig)
         .expect("declare sash_wait");
 
-    // DD#126: sash_wait_any(pid, status_out) -> reaped pid, or -1.
-    // `status_out` is in/out — seeded with the current `$?` and overwritten
-    // only on a reap, so a childless wait leaves the status alone.
+    // DD#126: sash_wait_any(pid) -> reaped pid, or -1. The reaped child's
+    // status goes into the runtime's own latch, which `sash_wait_status`
+    // reads — not into `$?`, and not into anything either backend maintains.
     let mut wait_any_sig = Signature::new(CallConv::SystemV);
     wait_any_sig.params.push(AbiParam::new(I64)); // pid (<= 0 means any)
-    wait_any_sig.params.push(AbiParam::new(I64)); // status_out
     wait_any_sig.returns.push(AbiParam::new(I64)); // reaped pid or -1
     let wait_any_func = module
         .declare_function("sash_wait_any", Linkage::Import, &wait_any_sig)
         .expect("declare sash_wait_any");
+
+    // DD#126: sash_wait_status() -> the last reap's status, or -1.
+    let mut wait_status_sig = Signature::new(CallConv::SystemV);
+    wait_status_sig.returns.push(AbiParam::new(I64));
+    let wait_status_func = module
+        .declare_function("sash_wait_status", Linkage::Import, &wait_status_sig)
+        .expect("declare sash_wait_status");
 
     // sash_pipe(out_ptr) -> 0 ok, -1 err
     let mut pipe_sig = Signature::new(CallConv::SystemV);
@@ -833,6 +839,7 @@ pub(super) fn declare_runtime_functions(module: &mut ObjectModule) -> ExternFunc
         exec: exec_func,
         wait: wait_func,
         wait_any: wait_any_func,
+        wait_status: wait_status_func,
         pipe: pipe_func,
         close: close_func,
         dup2: dup2_func,

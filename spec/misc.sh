@@ -257,8 +257,13 @@ run_sash '(( 0 )); echo $?'
 # spv.3 $(status) keyword reads the same status
 run_sash '(( 0 )); echo $(status)'
 [[ $rc = 0 && $out = "1" && -z $err ]]; chk spv.3
-# spv.4 $! and $(getcpid) are the same value (empty with no background job)
-run_sash 'x=$!; y=$(getcpid); [[ $x == $y ]] && echo Y'
+# spv.4 $! and $(getcpid) are the same value. Both have to be read in the
+# one statement after the `&` — DD#126 makes the child-pid latch readable
+# only there. This spec used to assert they agreed *with no background job
+# at all*, which they did: both were empty. That agreement was the bug
+# `bug-bg-pid-slot-unavailable` names, not a property worth pinning.
+run_sash '/bin/sleep 0 &
+[[ $! == $(getcpid) ]] && echo Y'
 [[ $rc = 0 && $out = "Y" && -z $err ]]; chk spv.4
 
 # spv.5-spv.8 DD#111: the sugar is desugared in the FRONT END, so `$$` and

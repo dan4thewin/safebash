@@ -3010,21 +3010,73 @@ enum StatusState {
     Available,
 }
 
+/// DD#126: a compiler-managed value that a single statement produces as a
+/// *side* output, separate from its status.
+#[derive(Clone, Copy, PartialEq)]
+enum Latch {
+    /// The pid of a job this statement backgrounded — `$(getcpid)` / `$!`.
+    ChildPid,
+    /// The exit status of the child this statement reaped — `$(waitstatus)`.
+    WaitStatus,
+}
+
+/// Whether a latch written by the *immediately preceding* statement is still
+/// readable. Both latches are single-slot and silently overwritten, so a read
+/// one statement too late is a wrong answer rather than an error — which is
+/// exactly what `$!` did before this rule existed
+/// (`notes/tasks/bug-bg-pid-slot-unavailable.md`).
+///
+/// One enum, not two, because no statement both backgrounds a job and reaps
+/// one: at most one latch can be fresh.
+#[derive(Clone, Copy, PartialEq)]
+enum LatchState {
+    Stale,
+    Fresh(Latch),
+}
+
+/// What the statement about to be checked may read: the `$?` availability
+/// state and the compiler-managed latch, walked together by one walker so the
+/// two cannot drift (`notes/journal/456-the-copy-that-never-got-the-fix.md`).
+#[derive(Clone, Copy)]
+struct FlowState {
+    status: StatusState,
+    latch: LatchState,
+}
+
+impl FlowState {
+    fn new(status: StatusState) -> Self {
+        FlowState {
+            status,
+            latch: LatchState::Stale,
+        }
+    }
+
+    /// After a catching construct (`if`/`while`/`for`/`case`, or a `&&`/`||`
+    /// list): which branch ran is not known, so nothing survives.
+    fn end_construct(&mut self) {
+        self.status = StatusState::Undefined;
+        self.latch = LatchState::Stale;
+    }
+}
+
 /// Check $? usage across a statement list.
 fn check_dollar_question(stmts: &[Statement], seed: StatusState, diags: &mut Vec<Diagnostic>) {
-    let mut state = seed;
+    let mut state = FlowState::new(seed);
     for stmt in stmts {
         check_dq_stmt(stmt, &mut state, diags);
     }
 }
 
-fn check_dq_stmt(stmt: &Statement, state: &mut StatusState, diags: &mut Vec<Diagnostic>) {
+fn check_dq_stmt(stmt: &Statement, state: &mut FlowState, diags: &mut Vec<Diagnostic>) {
     match &stmt.kind {
         StmtKind::List(l) => check_dq_list(l, state, diags),
         StmtKind::Group(g) => {
             for s in &g.body {
                 check_dq_stmt(s, state, diags);
             }
+            // A group is braces, not a catching construct: its last statement
+            // owns the latch on the way out, so do not overwrite it below.
+            return;
         }
         StmtKind::Function(f) => check_dq_function(f, diags),
         StmtKind::If(i) => check_dq_if(i, state, diags),
@@ -3033,15 +3085,47 @@ fn check_dq_stmt(stmt: &Statement, state: &mut StatusState, diags: &mut Vec<Diag
         StmtKind::Case(c) => check_dq_case(c, state, diags),
         _ => check_dq_leaf(stmt, state, diags),
     }
+    state.latch = latch_after(stmt);
+}
+
+/// What a statement leaves the latch in — **the single authority**, applied
+/// above to every statement shape there is.
+///
+/// It has to be structural rather than a transition inside [`check_dq_list`],
+/// because `- cmd &` is `Suppressed(List(Background, …))` — the suppression
+/// wraps the whole list — and so never reaches that arm at all. Answering it
+/// in two places is how the first cut rejected `- cmd & ; int p=$!`.
+fn latch_after(stmt: &Statement) -> LatchState {
+    if stmt_backgrounds_job(stmt) {
+        LatchState::Fresh(Latch::ChildPid)
+    } else if stmt_reaps_child(stmt) {
+        LatchState::Fresh(Latch::WaitStatus)
+    } else {
+        LatchState::Stale
+    }
+}
+
+/// Does this statement background a job? `cmd &` is a `ListOp::Background`
+/// list; `- cmd &` wraps that list in the suppression.
+fn stmt_backgrounds_job(stmt: &Statement) -> bool {
+    match &stmt.kind {
+        StmtKind::Suppressed(inner) => stmt_backgrounds_job(inner),
+        StmtKind::Redirected(r) => stmt_backgrounds_job(&r.body),
+        StmtKind::List(l) => l.op == crate::ir::ListOp::Background,
+        _ => false,
+    }
 }
 
 /// `a && b` / `a || b`: left runs normally, right is a branch so
 /// inherited $? is available only for the first statement.
-fn check_dq_list(l: &crate::ir::List, state: &mut StatusState, diags: &mut Vec<Diagnostic>) {
+fn check_dq_list(l: &crate::ir::List, state: &mut FlowState, diags: &mut Vec<Diagnostic>) {
     check_dq_stmt(&l.left, state, diags);
-    let mut branch_state = StatusState::Available;
+    let mut branch_state = FlowState {
+        status: StatusState::Available,
+        latch: state.latch,
+    };
     check_dq_stmt_branch(&l.right, &mut branch_state, diags);
-    *state = StatusState::Undefined;
+    state.end_construct();
 }
 
 /// A function body is checked in a fresh status context — the caller's `$?`
@@ -3053,7 +3137,7 @@ fn check_dq_list(l: &crate::ir::List, state: &mut StatusState, diags: &mut Vec<D
 /// signal `128+n`, or the last command's status on normal exit). That status is
 /// available as the block's FIRST action, so `END { echo "exited $?" }` is valid.
 fn check_dq_function(f: &crate::ir::Function, diags: &mut Vec<Diagnostic>) {
-    let mut fn_state = StatusState::Undefined;
+    let mut fn_state = FlowState::new(StatusState::Undefined);
     for s in &f.body {
         check_dq_stmt(s, &mut fn_state, diags);
     }
@@ -3063,7 +3147,7 @@ fn check_dq_function(f: &crate::ir::Function, diags: &mut Vec<Diagnostic>) {
 /// the inherited state, then each branch body with the
 /// first-statement-only rule. After the construct, state is
 /// undefined regardless of which branch ran.
-fn check_dq_if(i: &crate::ir::If, state: &mut StatusState, diags: &mut Vec<Diagnostic>) {
+fn check_dq_if(i: &crate::ir::If, state: &mut FlowState, diags: &mut Vec<Diagnostic>) {
     for s in &i.condition {
         check_dq_stmt(s, state, diags);
     }
@@ -3078,13 +3162,13 @@ fn check_dq_if(i: &crate::ir::If, state: &mut StatusState, diags: &mut Vec<Diagn
     if let Some(ref eb) = i.else_body {
         check_dq_body_branch(eb, *state, diags);
     }
-    *state = StatusState::Undefined;
+    state.end_construct();
 }
 
 /// `while … do … done`: condition uses inherited state, body
 /// re-reads it fresh for each iteration. After the loop, state
 /// is undefined.
-fn check_dq_while(w: &crate::ir::While, state: &mut StatusState, diags: &mut Vec<Diagnostic>) {
+fn check_dq_while(w: &crate::ir::While, state: &mut FlowState, diags: &mut Vec<Diagnostic>) {
     for s in &w.condition {
         check_dq_stmt(s, state, diags);
     }
@@ -3092,59 +3176,117 @@ fn check_dq_while(w: &crate::ir::While, state: &mut StatusState, diags: &mut Vec
     for s in &w.body {
         check_dq_stmt(s, &mut bs, diags);
     }
-    *state = StatusState::Undefined;
+    state.end_construct();
 }
 
 /// `for x in … do … done`: word list does not consume $? (literal/
 /// expansion only). Body re-reads inherited state fresh for each
 /// iteration. After the loop, state is undefined — for is a
 /// catching construct (caught/uncaught model).
-fn check_dq_for(f: &crate::ir::For, state: &mut StatusState, diags: &mut Vec<Diagnostic>) {
+fn check_dq_for(f: &crate::ir::For, state: &mut FlowState, diags: &mut Vec<Diagnostic>) {
     let mut bs = *state;
     for s in &f.body {
         check_dq_stmt(s, &mut bs, diags);
     }
-    *state = StatusState::Undefined;
+    state.end_construct();
 }
 
 /// `case word in pat) body ;; … esac`: scrutinee does not consume
 /// $? (it's a word). Each arm body re-reads inherited state fresh.
 /// After the case, state is undefined — case is a catching construct.
-fn check_dq_case(c: &crate::ir::Case, state: &mut StatusState, diags: &mut Vec<Diagnostic>) {
+fn check_dq_case(c: &crate::ir::Case, state: &mut FlowState, diags: &mut Vec<Diagnostic>) {
     for item in &c.items {
         let mut bs = *state;
         for s in &item.body {
             check_dq_stmt(s, &mut bs, diags);
         }
     }
-    *state = StatusState::Undefined;
+    state.end_construct();
 }
 
 /// Default arm: a leaf-ish statement (Command, Pipeline, etc.).
 /// Two responsibilities: (1) if it consumes `$?`, raise SB5012
 /// when the status is unavailable; (2) update state to reflect
 /// what this statement does (sets, consumes, or neither).
-fn check_dq_leaf(stmt: &Statement, state: &mut StatusState, diags: &mut Vec<Diagnostic>) {
+fn check_dq_leaf(stmt: &Statement, state: &mut FlowState, diags: &mut Vec<Diagnostic>) {
     if stmt_uses_status(stmt) {
-        if *state != StatusState::Available {
+        if state.status != StatusState::Available {
             emit_status_unavailable(stmt, diags);
         }
-        *state = StatusState::Undefined;
+        state.status = StatusState::Undefined;
     }
+    // Reads are checked against the *incoming* latch, before this statement's
+    // own transition, so `- /bin/x & ; - wait $!` reads a fresh `$!` and only
+    // then latches the status it reaped.
+    check_latch_reads(stmt, state.latch, diags);
     if let Some(next) = leaf_status_after(stmt) {
-        *state = next;
+        state.status = next;
+    }
+}
+
+/// SB5094: a latch read is legal only in the statement immediately after the
+/// one that wrote it.
+fn check_latch_reads(stmt: &Statement, latch: LatchState, diags: &mut Vec<Diagnostic>) {
+    let mut reads = Vec::new();
+    find_latch_reads(stmt, &mut reads);
+    for (span, want) in reads {
+        if latch != LatchState::Fresh(want) {
+            diags.push(Diagnostic::error_span(
+                span,
+                "SB5094",
+                latch_unavailable_msg(want),
+            ));
+        }
+    }
+}
+
+/// Total over `Latch` on purpose — do not add a wildcard.
+fn latch_unavailable_msg(want: Latch) -> String {
+    match want {
+        Latch::ChildPid => {
+            "$(getcpid) is not available here — it reads the pid of a job \
+             backgrounded by the immediately preceding statement (the punctuation sugar \
+             $! reads the same value)"
+        }
+        Latch::WaitStatus => {
+            "$(waitstatus) is not available here — it reads the status of \
+             the child reaped by the immediately preceding statement"
+        }
+    }
+    .to_string()
+}
+
+/// Collect the span and kind of every latch read in `stmt`. Mirrors
+/// [`find_status_reads`]: both intrinsics are `$( )` heads after the DD#111
+/// desugar, and both can also appear as an arithmetic sexpr.
+fn find_latch_reads(stmt: &Statement, out: &mut Vec<(Span, Latch)>) {
+    for (name, which) in LATCH_INTRINSICS {
+        find_one_latch_read(stmt, name, which, out);
+    }
+}
+
+/// The canonical spelling of each latch reader. `$!` is parser-level
+/// punctuation sugar for `$(getcpid)` (DD#111), so only the long form appears
+/// here — and the diagnostics name the long form for the same reason.
+const LATCH_INTRINSICS: [(&str, Latch); 2] = [
+    ("getcpid", Latch::ChildPid),
+    ("waitstatus", Latch::WaitStatus),
+];
+
+fn find_one_latch_read(stmt: &Statement, name: &str, which: Latch, out: &mut Vec<(Span, Latch)>) {
+    walk_exprs_in_stmt(stmt, &mut |expr, _| {
+        if expr_calls_intrinsic(expr, name, false) {
+            out.push((expr.span, which));
+        }
+    });
+    if arith_test_names_intrinsic(stmt, name) {
+        out.push((stmt.span, which));
     }
 }
 
 /// What a leaf statement leaves `$?` in, or `None` for a statement that says
 /// nothing about it (so the inherited state survives).
 fn leaf_status_after(stmt: &Statement) -> Option<StatusState> {
-    // DD#126 comes first: `- wait` suppresses the *pid*, which is a different
-    // thing from the status, so the ordinary "`-` means I am not handling
-    // this" rule below must not claim it.
-    if stmt_reaps_child(stmt) {
-        return Some(StatusState::Available);
-    }
     if is_suppressed(stmt) {
         return Some(StatusState::Undefined);
     }
@@ -3156,23 +3298,19 @@ fn leaf_status_after(stmt: &Statement) -> Option<StatusState> {
 
 /// DD#126: does this statement reap a child, in any spelling?
 ///
-/// `wait` is the one command whose `-` and whose `$?` talk about *different
-/// things*. Everywhere else `-` says "I am not handling this status", so
-/// reading it afterwards is a contradiction and the machine clears it. But
-/// `- wait` discards the **pid**; the reaped child's exit status is a separate
-/// output, and `$(status)` is the only way to read it. Clearing the state
-/// there would leave DD#126's "`- wait` then look at how the child did" — the
-/// whole reason `wait` consumes a status at all — unexpressible.
-///
-/// The same applies to a capture (`int p=$(wait)`), which `is_capture_condition_stmt`
-/// does not cover because `wait` is not an external command.
+/// `wait` is the one command whose status output is not `$?`: it returns a
+/// *pid*, and the reaped child's status goes to the `$(waitstatus)` latch. So
+/// `- wait` is an ordinary suppression — the *pid* is what is discarded — and
+/// this predicate's one job is to say the latch is now fresh, in every
+/// spelling: a capture (`int p=$(wait)`) and an arithmetic `(( wait > 0 ))`
+/// are neither of them a `StmtKind::Command`.
 fn stmt_reaps_child(stmt: &Statement) -> bool {
     match &stmt.kind {
         StmtKind::Suppressed(inner) => stmt_reaps_child(inner),
         StmtKind::Redirected(r) => stmt_reaps_child(&r.body),
         StmtKind::Command(c) => expr_literal_str(&c.name) == "wait",
         _ => {
-            let mut found = false;
+            let mut found = arith_test_names_intrinsic(stmt, "wait");
             walk_own_exprs_in_stmt(stmt, &mut |e, _| found |= expr_calls_wait(e));
             found
         }
@@ -3271,6 +3409,35 @@ fn find_status_reads(stmt: &Statement, spans: &mut Vec<Span>) {
             spans.push(expr.span);
         }
     });
+    if arith_test_names_intrinsic(stmt, "status") {
+        spans.push(stmt.span);
+    }
+}
+
+/// Does the `(( … ))` *statement* form name intrinsic `want`?
+///
+/// **A `(( … ))` statement is structurally invisible to an `Expr` walk.** Its
+/// children hang off an `ArithExpr`, and `Statement::direct_exprs` yields
+/// nothing at all for `StmtKind::ArithTest` — deliberately, so the passes that
+/// want `ArithExpr` nodes walk the arith tree themselves. Every check that
+/// asks "does this statement name intrinsic X" therefore has to ask the arith
+/// tree separately, and two of them were not:
+///
+/// * `if (( (status) == 0 )) { … }` read `$?` with no preceding command and
+///   raised **no SB5012** — the `$(( … ))` *expression* form was caught, the
+///   statement form was not;
+/// * `while (( wait > 0 )) { int s=$(waitstatus) }` did not register as a
+///   reap, so the drain loop DD#126 exists for could not read its own status.
+///
+/// The arith tree has no per-node span, so the enclosing statement carries the
+/// diagnostic — once, however many reads it holds.
+fn arith_test_names_intrinsic(stmt: &Statement, want: &str) -> bool {
+    let StmtKind::ArithTest(a) = &stmt.kind else {
+        return false;
+    };
+    let mut found = false;
+    walk_arith_intrinsic_calls(a, &mut |name, _| found |= name == want);
+    found
 }
 
 fn stmt_uses_status(stmt: &Statement) -> bool {
@@ -3301,11 +3468,11 @@ fn is_assignment_from_arith(stmt: &Statement) -> bool {
 /// In || branches, status is available only for the first statement.
 /// In handling branches (||, if/else), inherited status available for first statement only.
 /// After that, the inherited status is gone.
-fn check_dq_stmt_branch(stmt: &Statement, state: &mut StatusState, diags: &mut Vec<Diagnostic>) {
+fn check_dq_stmt_branch(stmt: &Statement, state: &mut FlowState, diags: &mut Vec<Diagnostic>) {
     match &stmt.kind {
         StmtKind::Group(g) => {
             check_dq_body_branch(&g.body, *state, diags);
-            *state = StatusState::Undefined;
+            state.end_construct();
         }
         _ => {
             // Single statement branch: normal check
@@ -3315,14 +3482,14 @@ fn check_dq_stmt_branch(stmt: &Statement, state: &mut StatusState, diags: &mut V
 }
 
 /// Apply first-statement-only rule to a body (Vec<Statement>).
-fn check_dq_body_branch(stmts: &[Statement], state: StatusState, diags: &mut Vec<Diagnostic>) {
+fn check_dq_body_branch(stmts: &[Statement], state: FlowState, diags: &mut Vec<Diagnostic>) {
     for (i, s) in stmts.iter().enumerate() {
         if i == 0 {
             let mut first_state = state;
             check_dq_stmt(s, &mut first_state, diags);
         } else {
             // After first statement, inherited status is consumed
-            let mut inner = StatusState::Undefined;
+            let mut inner = FlowState::new(StatusState::Undefined);
             check_dq_stmt(s, &mut inner, diags);
         }
     }
@@ -3370,6 +3537,7 @@ const BUILTINS: &[&str] = &[
     "getpid",
     "getppid",
     "getcpid",
+    "waitstatus",
     "getcwd",
     "epochseconds",
     // Regex (DD#63): match/matchall are boolean commands (sub/gsub are
@@ -3422,6 +3590,7 @@ const VALUE_ONLY_INTRINSICS: &[&str] = &[
     "getpid",
     "getppid",
     "getcpid",
+    "waitstatus",
     "getcwd",
     "epochseconds",
     "argc",

@@ -315,7 +315,8 @@ fn emit_prologue(out: &mut String) {
     writeln!(out, "extern i64 sash_fork(void);").unwrap();
     writeln!(out, "extern i64 sash_pipe(i64* out_pair);").unwrap();
     writeln!(out, "extern i64 sash_wait(i64 pid);").unwrap();
-    writeln!(out, "extern i64 sash_wait_any(i64 pid, i64* status_out);").unwrap();
+    writeln!(out, "extern i64 sash_wait_any(i64 pid);").unwrap();
+    writeln!(out, "extern i64 sash_wait_status(void);").unwrap();
     writeln!(
         out,
         "extern void sash_exec(const char* const* argv, const char* const* envp) __attribute__((noreturn));"
@@ -1946,10 +1947,11 @@ fn emit_wait_value_c(e: &mut Emit, argv: &[SsaValue], types: &VarTypes) -> Strin
         None => "-1".to_string(),
     };
     let t = e.fresh();
+    // `wait` does not touch `__exit_status`: the reaped child's status goes
+    // into the runtime's latch, read by `$(waitstatus)`.
     writeln!(
         e.out,
-        "    i64 {t}_st = __exit_status; i64 {t}_pid = sash_wait_any({pid}, &{t}_st); \
-         __exit_status = {t}_st;",
+        "    i64 {t}_pid = sash_wait_any({pid});",
         t = t,
         pid = pid
     )
@@ -3342,6 +3344,12 @@ fn try_process_intrinsic_c(e: &mut Emit, name: &str) -> Option<CStr> {
             let t = e.fresh();
             writeln!(e.out, "    i64 {t}_pid = sash_getppid();", t = t).unwrap();
             Some(emit_itoa_temp(e, &format!("{}_pid", t)))
+        }
+        // DD#126: the latch the last `wait` wrote, owned by the runtime.
+        "waitstatus" => {
+            let t = e.fresh();
+            writeln!(e.out, "    i64 {t}_ws = sash_wait_status();", t = t).unwrap();
+            Some(emit_itoa_temp(e, &format!("{}_ws", t)))
         }
         "random" => {
             let t = e.fresh();

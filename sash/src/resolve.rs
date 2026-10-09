@@ -66,6 +66,7 @@ const INTRINSICS: &[(&str, ArithDenotation)] = &[
     ("getpid", ArithDenotation::Int),
     ("getppid", ArithDenotation::Int),
     ("getcpid", ArithDenotation::Int),
+    ("waitstatus", ArithDenotation::Int),
     ("getcwd", ArithDenotation::Str),
     ("signum", ArithDenotation::Int),
 ];

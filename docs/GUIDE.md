@@ -243,7 +243,7 @@ value as a function argument is a read, which is a compile error.
 Top-level `$1`–`$N` are compile errors (DD#46: use `$(argv N)`).
 
 **Clean sources:** literals, arithmetic from clean operands, `$0`,
-`$#`, `$(status)`, `$(getpid)`, `$(getcpid)`, variables assigned from
+`$#`, `$(status)`, `$(getpid)`, `$(getcpid)`, `$(waitstatus)`, variables assigned from
 clean expressions. The punctuation spellings `$?`/`$$`/`$!` are input
 sugar for the last three (DD#75); the keyword form is canonical and is
 what `sash-convert` emits. As an arithmetic operand the spelling is the

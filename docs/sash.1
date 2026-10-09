@@ -554,9 +554,25 @@ bash spells this
 .BR $$ .
 .TP
 .B $(getcpid)
-The pid of the most recent background job.
+The pid of the job backgrounded by the immediately preceding statement.
 bash spells this
 .BR $! .
+.TP
+.B $(waitstatus)
+The exit status of the child reaped by the immediately preceding
+.BR wait ,
+or
+.B \-1
+if it reaped nothing.
+.PP
+.B $(getcpid)
+and
+.B $(waitstatus)
+read single-slot latches that the next statement overwrites without warning,
+so each is readable only in the statement
+.I immediately following
+the one that wrote it
+.RB ( SB5094 ).
 .PP
 .B The spelling depends on where the value sits.
 In command position the keyword is a command substitution,

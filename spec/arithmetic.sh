@@ -408,7 +408,7 @@ run_sash '/bin/sleep 0 & echo $(( (getcpid) > 0 ))'
 [[ $rc = 0 && $out = "1" && -z $err ]]; chk sx.24
 # sx.25 …and the sexpr agrees with the `$!` punctuation sugar, which always
 # worked here — the two spellings disagreeing is what made it silent
-run_sash '/bin/sleep 0 & int a=$(( (getcpid) )); int b=$(( $! )); echo $(( a == b ))'
+run_sash '/bin/sleep 0 & echo $(( (getcpid) == $! ))'
 [[ $rc = 0 && $out = "1" && -z $err ]]; chk sx.25
 # sx.7 signum — read the sash_signum global.
 # signum with no signal received → 0 (pins it computes in a sexpr)

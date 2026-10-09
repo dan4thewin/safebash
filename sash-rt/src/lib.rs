@@ -591,17 +591,16 @@ fn reaped_status(status: rustix::process::WaitStatus) -> i64 {
 /// status, and it never aborts: "no children" is a value the program can test,
 /// which is what makes `while (( (wait) > 0 )) { … }` a drain loop.
 ///
-/// `status_out` is an **in/out** slot. The caller seeds it with the current
-/// `$?` and the runtime overwrites it only when a child was actually reaped,
-/// so "wait reaped nothing, so it says nothing about any child's status" falls
-/// out of the ABI instead of being a branch each backend has to get right
-/// separately — which is exactly how the two backends came to disagree about
-/// a childless `wait` in the first place.
+/// The reaped child's status goes into [`SASH_WAIT_STATUS`], which
+/// `$(waitstatus)` reads; it does **not** touch `$?`. A latch maintained by
+/// two code generators is a latch they will eventually disagree about —
+/// literally how the childless-`wait` divergence happened — so it lives here,
+/// written on every call, in one place.
 ///
 /// `sash_wait` is deliberately left alone: the pipeline waiter wants the
 /// status of a *named* stage and has no use for the pid.
 #[no_mangle]
-pub extern "C" fn sash_wait_any(pid: i64, status_out: *mut i64) -> i64 {
+pub extern "C" fn sash_wait_any(pid: i64) -> i64 {
     let opts = rustix::process::WaitOptions::empty();
     let reaped = if pid > 0 {
         let target = unsafe { rustix::process::Pid::from_raw_unchecked(pid as i32) };
@@ -613,11 +612,34 @@ pub extern "C" fn sash_wait_any(pid: i64, status_out: *mut i64) -> i64 {
     };
     match reaped {
         Ok(Some((child, status))) => {
-            unsafe { *status_out = reaped_status(status) };
+            unsafe { SASH_WAIT_STATUS = reaped_status(status) };
             child.as_raw_nonzero().get() as i64
         }
-        _ => -1,
+        _ => {
+            // Nothing reaped, so there is no child's status to report. -1 is
+            // the same "no child" answer the return value gives, and a real
+            // exit status can never be negative, so it cannot be mistaken for
+            // one. Written rather than left alone: a stale status from an
+            // earlier reap would be a wrong answer, where this is a knowable
+            // one.
+            unsafe { SASH_WAIT_STATUS = -1 };
+            -1
+        }
     }
+}
+
+/// DD#126: the latch `$(waitstatus)` reads — the status of the child the last
+/// `wait` reaped, or `-1` if it reaped none. Process-global, so a background
+/// child that waits latches its own, which is what a separate process should
+/// see.
+static mut SASH_WAIT_STATUS: i64 = -1;
+
+/// Read the latch. `validate` only admits a read in the statement immediately
+/// after the `wait` that wrote it, so the `-1` initial value is unobservable;
+/// it is there because an uninitialised static is not a thing this crate has.
+#[no_mangle]
+pub extern "C" fn sash_wait_status() -> i64 {
+    unsafe { SASH_WAIT_STATUS }
 }
 
 /// Redirect fd to a file.

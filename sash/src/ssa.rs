@@ -1506,7 +1506,7 @@ pub(crate) fn value_intrinsic_arity(name: &str) -> Option<RangeInclusive<usize>>
         // argument. Without an entry here an extra argument was silently
         // discarded (`$(getpid X)` yielded the pid).
         "status" | "getpid" | "getppid" | "getcwd" | "epochseconds" | "argc" | "signum"
-        | "random" => Some(0..=0),
+        | "random" | "waitstatus" => Some(0..=0),
         // DD#126: `wait` reaps any child, `wait PID` reaps that one.
         "wait" => Some(0..=1),
         "len" | "strlen" | "keys" | "toupper" | "tolower" | "basename" | "dirname" | "getenv" => {

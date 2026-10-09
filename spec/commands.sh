@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup commands
-plan=172
+plan=188
 echo "1..$plan" >&3
 
 set +e
@@ -1057,31 +1057,30 @@ run_sash 'int p=$(wait)
 echo "[$p]"'
 [[ $rc = 0 && $out = "[-1]" && -z $err ]]; chk 126.4
 
-# 126.5 the reaped child's exit is readable through `$(status)` even after
-#       the `-` form — `-` discards the *pid*, which is a different thing
-#       from the status. `wait` is the only command where those two differ.
+# 126.5 the reaped child's exit is readable through `$(waitstatus)` even
+#       after the `-` form — `-` discards the *pid*, which is a different
+#       thing from the status. `wait` does not touch `$?` at all.
 run_sash '- /bin/sh -c "exit 3" &
 - wait
-int s=$(status)
+int s=$(waitstatus)
 echo "s=$s"'
 [[ $rc = 0 && $out = "s=3" && -z $err ]]; chk 126.5
 
 # 126.6 and after the capture form
 run_sash '- /bin/sh -c "exit 5" &
 int p=$(wait)
-int s=$(status)
+int s=$(waitstatus)
 echo "pos=$(( p > 0 )) s=$s"'
 [[ $rc = 0 && $out = "pos=1 s=5" && -z $err ]]; chk 126.6
 
-# 126.7 a reap that found nothing says nothing about any child: the status
-#       survives the failed wait. Both backends seed the out-param with the
-#       current `$?` and write it back unconditionally, so this falls out of
-#       the ABI with no branch on either side.
+# 126.7 a reap that found nothing latches **-1**, not the status of whatever
+#       ran last. A stale status would be a wrong answer dressed as a real
+#       one; -1 cannot be a child exit status, so it is a knowable one.
 run_sash '- /bin/false
 int p=$(wait)
-int s=$(status)
+int s=$(waitstatus)
 echo "[$p] s=$s"'
-[[ $rc = 0 && $out = "[-1] s=1" && -z $err ]]; chk 126.7
+[[ $rc = 0 && $out = "[-1] s=-1" && -z $err ]]; chk 126.7
 
 # 126.8 "wait for all" is a loop, not a flag (DD#126 declines to invent a
 #       job-control surface). The extra parens are the call spelling.
@@ -1113,7 +1112,7 @@ echo "reaped=$n"'
 run_sash '- /bin/sh -c "exit 7" &
 int c=$(getcpid)
 int r=$(wait $c)
-int s=$(status)
+int s=$(waitstatus)
 echo "same=$(( r == c )) s=$s"'
 [[ $rc = 0 && $out = "same=1 s=7" && -z $err ]]; chk 126.11
 
@@ -1123,7 +1122,7 @@ echo "same=$(( r == c )) s=$s"'
 #        means the *value* of p, which is why it lowers on its own path.
 run_sash '- /bin/sh -c "exit 9" &
 int r=$(( (wait (getcpid)) ))
-int s=$(status)
+int s=$(waitstatus)
 echo "pos=$(( r > 0 )) s=$s"'
 [[ $rc = 0 && $out = "pos=1 s=9" && -z $err ]]; chk 126.12
 
@@ -1168,6 +1167,137 @@ if (( p > 0 )) { echo ok }'
 run_sash 'int wait=1
 echo $wait'
 [[ $rc != 0 && $err == *SB5092* ]]; chk 126.20
+
+# --- DD#126 §2: $(waitstatus) and the one-statement latch rule -------------
+# `wait` returns a pid, so the child's exit status needs a home of its own.
+# It is a runtime-owned latch read by `$(waitstatus)`, and — like the
+# background-pid latch `$(getcpid)`/`$!` — it is single-slot and silently
+# overwritten. SB5094 makes a read that is one statement too late an error
+# rather than a wrong answer.
+
+# 126.21 the motivating idiom: drain every child and read each one's status.
+#        The loop condition is the producing statement, so the body's first
+#        statement sees a fresh latch on every iteration.
+run_sash '- /bin/sh -c "exit 4" &
+- /bin/sh -c "exit 6" &
+int n=0
+int tot=0
+while (( wait > 0 )) { int s=$(waitstatus); tot=$(( tot + s )); n=$(( n + 1 )) }
+echo "n=$n tot=$tot"'
+[[ $rc = 0 && $out = "n=2 tot=10" && -z $err ]]; chk 126.21
+
+# 126.22 and one statement later it is already gone — the same read, moved
+#        down one line, is rejected rather than answered with -1.
+run_sash '- /bin/sh -c "exit 4" &
+int n=0
+while (( wait > 0 )) { n=$(( n + 1 )); int s=$(waitstatus); echo $s }
+echo "n=$n"'
+[[ $rc != 0 && $err == *SB5094* ]]; chk 126.22
+
+# 126.23 a childless wait latches -1, which is why the latch is worth reading
+#        at all: it reports "nothing was reaped" instead of a stale status.
+run_sash 'int p=$(wait)
+int s=$(waitstatus)
+echo "[$p] s=$s"'
+[[ $rc = 0 && $out = "[-1] s=-1" && -z $err ]]; chk 126.23
+
+# 126.24 `$(waitstatus)` with no wait anywhere is SB5094, not an empty read
+run_sash 'int s=$(waitstatus)
+echo $s'
+[[ $rc != 0 && $err == *SB5094* ]]; chk 126.24
+
+# 126.25 a statement between the reap and the read invalidates it
+run_sash '- /bin/sh -c "exit 3" &
+- wait
+echo hi
+int s=$(waitstatus)
+echo $s'
+[[ $rc != 0 && $err == *SB5094* ]]; chk 126.25
+
+# 126.26 the child-pid latch gets the same rule. `- cmd &` is
+#        Suppressed(List(Background, …)) — the suppression wraps the whole
+#        list — so the producer has to be recognised structurally, not as a
+#        transition inside the list arm of the walker.
+run_sash '- /bin/sleep 0 &
+int p=$(getcpid)
+int r=$(wait $p)
+echo "ok=$(( r == p ))"'
+[[ $rc = 0 && $out = "ok=1" && -z $err ]]; chk 126.26
+
+# 126.27 one statement later, rejected
+run_sash '- /bin/sleep 0 &
+echo hi
+int p=$!
+echo $p'
+[[ $rc != 0 && $err == *SB5094* ]]; chk 126.27
+
+# 126.28 `$!` with no `&` anywhere. This is `bug-bg-pid-slot-unavailable`:
+#        the read used to compile and yield an empty string.
+run_sash 'int p=$!
+echo $p'
+[[ $rc != 0 && $err == *SB5094* ]]; chk 126.28
+
+# 126.29 a function body cannot see its caller's latch — it is not the
+#        statement after the producer, whatever the call site looks like
+run_sash 'fn f { int p=$!; echo $p }
+- /bin/sleep 0 &
+f
+- wait'
+[[ $rc != 0 && $err == *SB5094* ]]; chk 126.29
+
+# 126.30 reading `$!` and reaping in the same statement is fine: the read is
+#        checked against the *incoming* latch, before this statement writes
+#        its own.
+run_sash '- /bin/sh -c "exit 8" &
+- wait $!
+int s=$(waitstatus)
+echo "s=$s"'
+[[ $rc = 0 && $out = "s=8" && -z $err ]]; chk 126.30
+
+# 126.31 a group is braces, not a catching construct — the latch survives to
+#        the next statement inside it
+run_sash '{
+  - /bin/sh -c "exit 2" &
+  - wait $!
+  int s=$(waitstatus)
+  echo "s=$s"
+}'
+[[ $rc = 0 && $out = "s=2" && -z $err ]]; chk 126.31
+
+# 126.32 `wait` no longer owns `$?`, so the DD#55 suppression exception that
+#        used to keep the status readable after `- wait` is gone: `-` means
+#        `-` again, with no carve-out.
+run_sash '- /bin/sh -c "exit 3" &
+- wait
+int q=$(status)
+echo $q'
+[[ $rc != 0 && $err == *SB5012* ]]; chk 126.32
+
+# 126.33 `waitstatus` is reserved (DD#125) like every other intrinsic name
+run_sash 'int waitstatus=1
+echo $waitstatus'
+[[ $rc != 0 && $err == *SB5092* ]]; chk 126.33
+
+# 126.34-126.35 SB5012 could not see the `(( … ))` *statement* form at all.
+#        A `(( … ))` statement owns its children through an `ArithExpr`, and
+#        `Statement::direct_exprs` yields nothing for it by design, so an
+#        `Expr` walk — however thorough — found no status read. The `$(( … ))`
+#        expression form was checked; this one silently was not.
+run_sash 'if (( (status) == 0 )) { echo y }'
+[[ $rc != 0 && $err == *SB5012* ]]; chk 126.34
+run_sash '/bin/true
+if (( (status) == 0 )) { echo y }'
+[[ $rc = 0 && $out = "y" && -z $err ]]; chk 126.35
+
+# 126.36 how a background failure reaches the parent's exit status now that
+#        `wait` does not write `$?`: read the latch and act on it. Before
+#        DD#126 §2 this fell out of `- wait` leaving 127 in `$?`, which is
+#        the same accident that made `$?` mean two things after a `wait`.
+run_sash '/nonexistent_binary_xyz &
+- wait
+int s=$(waitstatus)
+exit $s'
+[[ $rc = 127 && -z $err ]]; chk 126.36
 
 set -e
 tally

@@ -920,7 +920,7 @@ fn resolve_nullary_sexpr(name: &str, args: &[ArithExpr], state: &VersionState) -
         return Some(SsaValue::Var(state.lookup(var)));
     }
     match name {
-        "getpid" | "getppid" | "argc" | "random" | "signum" | "epochseconds" => {
+        "getpid" | "getppid" | "argc" | "random" | "signum" | "epochseconds" | "waitstatus" => {
             Some(SsaValue::CmdSubst {
                 argv: vec![SsaValue::Literal(name.to_string())],
                 suppressed: false,

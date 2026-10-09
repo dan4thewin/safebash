@@ -600,7 +600,7 @@ fn cmd_subst_taint(
         // DD#126: `wait` yields a pid the kernel assigned to a process this
         // program forked — compiler-managed, like `getpid`, not input.
         "len" | "strlen" | "epochseconds" | "random" | "argc" | "getpid" | "getppid"
-        | "getcpid" | "getcwd" | "status" | "signum" | "wait" => Taint::Clean,
+        | "waitstatus" | "getcpid" | "getcwd" | "status" | "signum" | "wait" => Taint::Clean,
         "echo" => any_tainted(&argv[1..], taint, user_functions),
         _ => {
             // Only a BARE name can be a user function: DD#23 resolution

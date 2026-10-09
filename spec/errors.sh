@@ -223,11 +223,17 @@ run_sash 'fn f -> int { - /bin/false; return $?; }'
 [[ $rc != 0 && -z $out && -n $err ]]; chk 55.15
 
 # 55.16 background exec failure — the CHILD reports the exec errno at the
-#       point of failure; the parent's uncaught abort adds command-failed.
+#       point of failure and exits 127; both messages are the child's.
+#       The parent exits 0, and that is DD#126 §2: `- wait` discards the
+#       *pid*, and the reaped status now goes to the `$(waitstatus)` latch
+#       rather than to `$?`. A parent that never reads the latch has said
+#       "I do not care" twice, so it exits on its own status. 126.36 is the
+#       spelling that propagates the failure.
 run_sash '/nonexistent_binary_xyz &
 - wait'
-[[ $rc != 0 && -z $err ]] \
-  && [[ $rerr == *"/nonexistent_binary_xyz: No such file or directory"* ]]; chk 55.16
+[[ $rc = 0 && -z $err ]] \
+  && [[ $rerr == *"/nonexistent_binary_xyz: No such file or directory"* ]] \
+  && [[ $rerr == *"command failed (exit 127)"* ]]; chk 55.16
 
 # 55.30 fg UNCAUGHT exec failure → child errno detail + parent uncaught
 #       abort (both lines). DD#55: child owns exec errors; parent's
