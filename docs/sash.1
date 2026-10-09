@@ -29,9 +29,11 @@ sash \- compile a safe subset of bash to a static native binary
 .SH DESCRIPTION
 .B sash
 compiles a script written in the safe subset of bash to a static ELF
-binary. Output is byte-identical to what
+binary. The subset is defined by safebash's own design decisions, not by
 .BR bash (1)
-produces for the same script.
+compatibility: where the two differ,
+.B sash
+implements the behaviour its design decisions specify.
 .PP
 This page documents every surface in safebash that takes a switch: the
 compiler driver, the three builtins that accept flags

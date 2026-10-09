@@ -2,7 +2,7 @@
 
 A chronological record of the safebash compiler, built experiment by
 experiment from a blank Rust project to a fully consolidated compiler
-producing static native binaries with byte-identical Bash output.
+producing static native binaries from a safe subset of bash.
 
 The project began on 2026-03-26 with a design document.
 

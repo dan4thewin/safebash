@@ -10,7 +10,16 @@ the stamina for incremental implementation.
 
 The compiler works end-to-end: bash source → parse → validate →
 lower → type check → transform → fold → codegen → link → static ELF.
-Output is byte-identical to Bash. Also supports `--emit-c`, `--emit-ir`,
+**Byte-identical-to-Bash is NOT a goal, and has not been one for a long
+time** (bash has too many indefensible quirks). Where sash and bash differ,
+the question is whether sash's behaviour is *defensible*, not whether it
+matches — and a divergence is settled by a DD, not by deferring to bash.
+Several are deliberate and documented (DD#73 glob absolutization, DD#55
+`wait`'s implicit-check status, `cap.12`'s `-p /dev/stdout`). Do not cite
+"bash does X" as evidence that sash is wrong; cite a DD, or raise the
+question. Bash remains a *reference* for the subset sash does implement, so
+an unexplained divergence is still worth investigating — it just is not
+automatically a bug. Also supports `--emit-c`, `--emit-ir`,
 `--manifest`, `--extract`, `--trace`, `--no-taint`, `--heap-size` and
 `--sysroot`; `sash --help` lists the full set. (`--janet`/`--janet-map` are
 **gone** — the Janet backend was removed by DD#104 in favour of the
