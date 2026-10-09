@@ -1354,6 +1354,19 @@ fn lower_cmdsubst_as_int(
     exit_status_var: Option<Variable>,
 ) -> cranelift_codegen::ir::Value {
     if let Some(SsaValue::Literal(name)) = argv.first() {
+        // DD#126: `wait` takes an operand, so it cannot go through the
+        // nullary table below.
+        if name == "wait" {
+            return crate::codegen::value_handlers::emit_wait_value(
+                argv,
+                builder,
+                module,
+                vars,
+                literals,
+                externs,
+                exit_status_var,
+            );
+        }
         if let Some(v) = crate::codegen::value_handlers::int_intrinsic_i64(
             name,
             builder,

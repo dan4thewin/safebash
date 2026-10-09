@@ -1,6 +1,6 @@
 ---
 title: "bare `wait` with no children: native sets `$?`=127, `--emit-c` sets 0 — a differential divergence no spec catches"
-status: next
+status: done
 priority: P2
 kind: bug
 depends: []
@@ -9,6 +9,15 @@ gates:
   - "a spec reads `$?` after `wait` in both modes"
   - "`codegen/dispatch.rs::emit_wait`'s inline `_<digits>` stripper is gone (see below)"
 ---
+
+**Closed by DD#126 (2026-10-09).** All three gates met, and the divergence is
+closed by the ABI rather than by a matching pair of branches:
+`sash_wait_any(pid, status_out)` overwrites `*status_out` only on a successful
+reap, and both backends seed the slot with the current `$?` and write it back
+unconditionally. Neither backend has a branch on the childless case, so
+neither can disagree about it again. `emit_wait`'s inline `_<digits>` stripper
+is gone — it now delegates to `emit_wait_value`. Specs: `commands.sh` 126.4,
+126.7, 126.13.
 
 # The two `wait` lowerings disagree
 

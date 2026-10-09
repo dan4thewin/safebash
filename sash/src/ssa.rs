@@ -16,6 +16,7 @@
 ///   3. Insert phi nodes at dominance frontiers
 ///   4. Rename variables with version numbers
 use std::collections::{BTreeMap, HashMap};
+use std::ops::RangeInclusive;
 
 /// A unique identifier for a basic block.
 pub type BlockId = usize;
@@ -1489,25 +1490,32 @@ pub struct VersionState {
     pub pending_redirect_scope: Option<Vec<crate::ir::Redirect>>,
 }
 
-/// Fixed argument count for a value-producing intrinsic (`len`, `sub`, …) when
-/// used as a `$( )` head. `None` for variadic intrinsics (`join`, `echo`) and
-/// non-intrinsics. Shared by validate (SB4045 arity check) and the transform
-/// backstop that keeps a malformed intrinsic from falling through to a bare
-/// external command.
-pub(crate) fn value_intrinsic_arity(name: &str) -> Option<usize> {
+/// Permitted argument counts for a value-producing intrinsic (`len`, `sub`, …)
+/// when used as a `$( )` head or an arith sexpr callee. `None` for genuinely
+/// variadic intrinsics (`join`, `echo`) and non-intrinsics. Shared by validate
+/// (SB4045 arity check, both spellings) and the transform backstop that keeps
+/// a malformed intrinsic from falling through to a bare external command.
+///
+/// A *range* rather than a count because `wait` takes 0 or 1 (DD#126) and the
+/// alternative was a second table for the one name that needed it — which is
+/// the shape that let `$(( (strlen a b) ))` stay silent while `$(strlen a b)`
+/// reported SB4045.
+pub(crate) fn value_intrinsic_arity(name: &str) -> Option<RangeInclusive<usize>> {
     match name {
         // Nullary: the value comes from a global or a syscall, never an
         // argument. Without an entry here an extra argument was silently
         // discarded (`$(getpid X)` yielded the pid).
         "status" | "getpid" | "getppid" | "getcwd" | "epochseconds" | "argc" | "signum"
-        | "random" => Some(0),
+        | "random" => Some(0..=0),
+        // DD#126: `wait` reaps any child, `wait PID` reaps that one.
+        "wait" => Some(0..=1),
         "len" | "strlen" | "keys" | "toupper" | "tolower" | "basename" | "dirname" | "getenv" => {
-            Some(1)
+            Some(1..=1)
         }
-        "match" => Some(2),
-        "sub" | "gsub" => Some(3),
+        "match" => Some(2..=2),
+        "sub" | "gsub" => Some(3..=3),
         // `arg` is genuinely variadic (DD#60: `$(arg N)` / `$(arg N DEFAULT)`),
-        // as are `join` and `echo`, so they have no fixed arity to check.
+        // as are `join` and `echo`, so they have no arity to check.
         _ => None,
     }
 }

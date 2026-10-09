@@ -597,8 +597,10 @@ fn cmd_subst_taint(
     let basename = cmd.rsplit('/').next().unwrap_or(cmd);
     match basename {
         "getenv" | "argv" | "arg" => Taint::Tainted,
+        // DD#126: `wait` yields a pid the kernel assigned to a process this
+        // program forked — compiler-managed, like `getpid`, not input.
         "len" | "strlen" | "epochseconds" | "random" | "argc" | "getpid" | "getppid"
-        | "getcpid" | "getcwd" | "status" | "signum" => Taint::Clean,
+        | "getcpid" | "getcwd" | "status" | "signum" | "wait" => Taint::Clean,
         "echo" => any_tainted(&argv[1..], taint, user_functions),
         _ => {
             // Only a BARE name can be a user function: DD#23 resolution

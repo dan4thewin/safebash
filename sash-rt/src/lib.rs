@@ -561,17 +561,62 @@ pub extern "C" fn sash_exec(argv: *const *const u8, envp: *const *const u8) -> !
 pub extern "C" fn sash_wait(pid: i64) -> i64 {
     let pid = unsafe { rustix::process::Pid::from_raw_unchecked(pid as i32) };
     match rustix::process::waitpid(Some(pid), rustix::process::WaitOptions::empty()) {
-        Ok(Some((_pid, status))) => {
-            if let Some(code) = status.exit_status() {
-                return code as i64;
-            }
-            match status.terminating_signal() {
-                Some(sig) => 128 + sig as i64,
-                None => 128,
-            }
-        }
+        Ok(Some((_pid, status))) => reaped_status(status),
         Ok(None) => 0,
         Err(_) => 127,
+    }
+}
+
+/// The exit status of a reaped child, in the one encoding sash uses.
+///
+/// Shared by [`sash_wait`] and [`sash_wait_any`] rather than written twice:
+/// the `128 + signum` convention is the kind of detail that drifts when it is
+/// duplicated, and a disagreement between the pipeline waiter and the `wait`
+/// builtin about what a SIGPIPE death reports would be invisible.
+fn reaped_status(status: rustix::process::WaitStatus) -> i64 {
+    if let Some(code) = status.exit_status() {
+        return code as i64;
+    }
+    match status.terminating_signal() {
+        Some(sig) => 128 + sig as i64,
+        None => 128,
+    }
+}
+
+/// DD#126: reap one child and report **which** one.
+///
+/// `pid <= 0` is `wait(2)` — reap any child. A positive `pid` is
+/// `waitpid(2)` on that child. Returns the reaped pid, or `-1` when there is
+/// nothing to reap (ECHILD) or the call fails. It returns a *pid*, never a
+/// status, and it never aborts: "no children" is a value the program can test,
+/// which is what makes `while (( (wait) > 0 )) { … }` a drain loop.
+///
+/// `status_out` is an **in/out** slot. The caller seeds it with the current
+/// `$?` and the runtime overwrites it only when a child was actually reaped,
+/// so "wait reaped nothing, so it says nothing about any child's status" falls
+/// out of the ABI instead of being a branch each backend has to get right
+/// separately — which is exactly how the two backends came to disagree about
+/// a childless `wait` in the first place.
+///
+/// `sash_wait` is deliberately left alone: the pipeline waiter wants the
+/// status of a *named* stage and has no use for the pid.
+#[no_mangle]
+pub extern "C" fn sash_wait_any(pid: i64, status_out: *mut i64) -> i64 {
+    let opts = rustix::process::WaitOptions::empty();
+    let reaped = if pid > 0 {
+        let target = unsafe { rustix::process::Pid::from_raw_unchecked(pid as i32) };
+        rustix::process::waitpid(Some(target), opts)
+    } else {
+        // `waitpid(None, …)` is `waitpid(0, …)` in rustix — "any child in my
+        // process group", not "any child". `wait` is the one that is `-1`.
+        rustix::process::wait(opts)
+    };
+    match reaped {
+        Ok(Some((child, status))) => {
+            unsafe { *status_out = reaped_status(status) };
+            child.as_raw_nonzero().get() as i64
+        }
+        _ => -1,
     }
 }
 

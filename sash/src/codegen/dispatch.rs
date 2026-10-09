@@ -747,6 +747,10 @@ impl SsaInst {
             .trap(cranelift_codegen::ir::TrapCode::user(1).unwrap());
     }
 
+    /// DD#126: the `- wait` statement. Reaps a child for the effect and drops
+    /// the pid; the status lands in `$?` exactly as it does for the value
+    /// spellings, because both go through `emit_wait_value`. A *bare* `wait`
+    /// never reaches here — SB4016 rejects it.
     fn emit_wait(
         &self,
         args: &[SsaValue],
@@ -754,54 +758,17 @@ impl SsaInst {
         module: &mut ObjectModule,
         ctx: &mut InstCtx,
     ) -> bool {
-        let vars = &mut *ctx.vars;
-        let literals = ctx.literals;
-        let externs = ctx.externs;
-        let exit_status_var = ctx.exit_status_var;
-        // wait [pid] — wait for specific pid or last bg job
-        let pid = if let Some(arg) = args.first() {
-            let (ptr, len) = lower_value(
-                arg,
-                builder,
-                module,
-                vars,
-                literals,
-                externs,
-                Some(exit_status_var),
-            );
-            let atoi_ref = module.declare_func_in_func(externs.atoi, builder.func);
-            let call = builder.ins().call(atoi_ref, &[ptr, len]);
-            builder.inst_results(call)[0]
-        } else {
-            // No arg: wait for $! — look up the "!" variable
-            let key = vars.keys().find(|k| {
-                let base = if let Some(idx) = k.rfind('_') {
-                    let suffix = &k[idx + 1..];
-                    if suffix.chars().all(|c| c.is_ascii_digit()) {
-                        &k[..idx]
-                    } else {
-                        k.as_str()
-                    }
-                } else {
-                    k.as_str()
-                };
-                base == "!"
-            });
-            if let Some(k) = key.cloned() {
-                let sv = &vars[&k];
-                let (ptr, len) = (builder.use_var(sv.str_ptr()), builder.use_var(sv.str_len()));
-                let atoi_ref = module.declare_func_in_func(externs.atoi, builder.func);
-                let call = builder.ins().call(atoi_ref, &[ptr, len]);
-                builder.inst_results(call)[0]
-            } else {
-                // No $! variable — wait for pid 0 (wait any child)
-                builder.ins().iconst(I64, 0)
-            }
-        };
-        let wait_ref = module.declare_func_in_func(externs.wait, builder.func);
-        let call = builder.ins().call(wait_ref, &[pid]);
-        let status = builder.inst_results(call)[0];
-        builder.def_var(exit_status_var, status);
+        let mut argv = vec![SsaValue::Literal("wait".to_string())];
+        argv.extend(args.iter().cloned());
+        crate::codegen::value_handlers::emit_wait_value(
+            &argv,
+            builder,
+            module,
+            ctx.vars,
+            ctx.literals,
+            ctx.externs,
+            Some(ctx.exit_status_var),
+        );
         false
     }
 

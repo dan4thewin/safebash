@@ -315,6 +315,7 @@ fn emit_prologue(out: &mut String) {
     writeln!(out, "extern i64 sash_fork(void);").unwrap();
     writeln!(out, "extern i64 sash_pipe(i64* out_pair);").unwrap();
     writeln!(out, "extern i64 sash_wait(i64 pid);").unwrap();
+    writeln!(out, "extern i64 sash_wait_any(i64 pid, i64* status_out);").unwrap();
     writeln!(
         out,
         "extern void sash_exec(const char* const* argv, const char* const* envp) __attribute__((noreturn));"
@@ -1918,28 +1919,42 @@ fn emit_bg_builtin_c(e: &mut Emit, kind: &BuiltinCmd, args: &[SsaValue], types: 
     }
 }
 
-/// `wait [PID]`: reap a child by pid (or, with no arg, `$!`), adopting its
-/// exit status; a no-arg wait with no `$!` var is a bare success.
+/// DD#126: the `- wait` statement. Reaps a child for the effect and drops the
+/// pid; a *bare* `wait` never reaches here (SB4016). Shares
+/// `emit_wait_value_c` with the value spellings, which is what makes the two
+/// backends agree about a childless wait — they used to disagree precisely
+/// because this function had a `None` branch that emitted no call at all, so
+/// `$?` was 0 here and 127 natively and no spec read it.
 fn emit_wait_c(e: &mut Emit, args: &[SsaValue], types: &VarTypes) {
-    let pid_expr = if let Some(arg) = args.first() {
-        let (p, l) = lower_value_as_str(e, arg, types);
-        Some(format!("sash_atoi({}, {})", p, l))
-    } else if types.keys().any(|(n, _)| n == "!") {
-        let base = c_var_name("!", 0);
-        Some(format!("sash_atoi({base}_ptr, {base}_len)", base = base))
-    } else {
-        None
+    let mut argv = vec![SsaValue::Literal("wait".to_string())];
+    argv.extend(args.iter().cloned());
+    emit_wait_value_c(e, &argv, types);
+    writeln!(e.out, "    __test_result = 1;").unwrap();
+}
+
+/// DD#126 `wait` as a value: emit the call and return the C expression naming
+/// the reaped pid (or -1). `argv` is the whole `["wait", pid?]` vector.
+///
+/// The status temp is seeded with the current `__exit_status` and written back
+/// unconditionally, because the runtime overwrites it only on a reap. Mirrors
+/// `value_handlers::emit_wait_value`.
+fn emit_wait_value_c(e: &mut Emit, argv: &[SsaValue], types: &VarTypes) -> String {
+    let pid = match argv.get(1) {
+        Some(arg) => lower_value_as_int(e, arg, types),
+        // wait(2), not `waitpid(0, …)` — the latter is "any child in my
+        // process group", a different question.
+        None => "-1".to_string(),
     };
-    match pid_expr {
-        Some(pid) => writeln!(
-            e.out,
-            "    __exit_status = sash_wait({pid}); \
-             __test_result = (__exit_status == 0) ? 1 : 0;",
-            pid = pid
-        )
-        .unwrap(),
-        None => writeln!(e.out, "    __exit_status = 0; __test_result = 1;").unwrap(),
-    }
+    let t = e.fresh();
+    writeln!(
+        e.out,
+        "    i64 {t}_st = __exit_status; i64 {t}_pid = sash_wait_any({pid}, &{t}_st); \
+         __exit_status = {t}_st;",
+        t = t,
+        pid = pid
+    )
+    .unwrap();
+    format!("{}_pid", t)
 }
 
 /// Dispatch on `BuiltinCmd`. `Other` goes to `emit_exec` (external command),
@@ -3456,6 +3471,11 @@ fn try_native_intrinsic_c(
             )
             .unwrap();
             Some((format!("{}_p", t), format!("{}_l", t)))
+        }
+        // DD#126: `$(wait)` / `$(wait $p)` — the pid, rendered as a string.
+        "wait" => {
+            let pid = emit_wait_value_c(e, argv, types);
+            Some(emit_itoa_temp(e, &pid))
         }
         "getenv" if argv.len() >= 2 => {
             let (np, nl) = lower_value_as_str(e, &argv[1], types);

@@ -79,6 +79,10 @@ fn is_statement_builtin(kind: BuiltinCmd) -> bool {
         | BuiltinCmd::Tolower
         | BuiltinCmd::Basename
         | BuiltinCmd::Dirname => false,
+        // DD#126: `wait` produces a value (the reaped pid), so `$(wait)` and
+        // `$(wait $p)` are intrinsic calls, not captures of a statement's
+        // stdout. It is the only name on this side that also has an effect.
+        BuiltinCmd::Wait => false,
         // Not a builtin at all — an external command or a user function, which
         // is exactly what the argv path is for.
         BuiltinCmd::Other => false,
@@ -93,7 +97,6 @@ fn is_statement_builtin(kind: BuiltinCmd) -> bool {
         | BuiltinCmd::Exit
         | BuiltinCmd::Exec
         | BuiltinCmd::Cd
-        | BuiltinCmd::Wait
         | BuiltinCmd::Close
         | BuiltinCmd::Attest
         | BuiltinCmd::Read
@@ -185,7 +188,7 @@ fn nullary_stateful_slot(name: &str, c: &Command) -> Option<&'static str> {
 /// well-formed even when validation is bypassed.
 fn wrong_arity_backstop(name: &str, c: &Command) -> Option<SsaValue> {
     let arity = crate::ssa::value_intrinsic_arity(name)?;
-    if c.args.len() == arity {
+    if arity.contains(&c.args.len()) {
         return None;
     }
     Some(SsaValue::Literal(String::new()))
@@ -271,7 +274,28 @@ fn try_native_intrinsic(name: &str, c: &Command, state: &VersionState) -> Option
         // path — so it falls through here (was a dead `try_keys_intrinsic`).
         BuiltinCmd::Join => Some(join_intrinsic(c, state)),
         BuiltinCmd::Echo => Some(echo_concat(c, state)),
+        // DD#126: `$(wait)` / `$(wait $p)`. The operand is an ordinary command
+        // argument here, so it lowers through `expr_to_value` like any other.
+        BuiltinCmd::Wait => Some(wait_value(
+            c.args.iter().map(|a| expr_to_value(a, state)).collect(),
+        )),
         other => try_string_intrinsic(other, c, state),
+    }
+}
+
+/// The one shape of the DD#126 `wait` node: `CmdSubst { argv: ["wait", pid?] }`,
+/// reusing the word-form carrier the stateless intrinsics already travel in.
+///
+/// Both backends lower `argv[1]` with their **int** lowering, so the two
+/// construction sites may hand it either an arithmetic value (`(wait p)`,
+/// where `p` is the variable) or a command argument (`$(wait $p)`). Writing
+/// the argv shape once is what keeps those two spellings the same node.
+fn wait_value(args: Vec<SsaValue>) -> SsaValue {
+    let mut argv = vec![SsaValue::Literal("wait".to_string())];
+    argv.extend(args);
+    SsaValue::CmdSubst {
+        argv,
+        suppressed: false,
     }
 }
 
@@ -766,13 +790,14 @@ fn comma_to_ssa(exprs: &[ArithExpr], expr: &Expr, state: &VersionState) -> SsaVa
 }
 
 fn funccall_to_ssa(name: &str, args: &[ArithExpr], expr: &Expr, state: &VersionState) -> SsaValue {
+    if let Some(v) = try_arith_wait(name, args, expr, state) {
+        return v;
+    }
     if let Some(v) = try_arith_int_intrinsic(name, args, state) {
         return v;
     }
-    if args.is_empty() {
-        if let Some(v) = resolve_nullary_sexpr(name, state) {
-            return v;
-        }
+    if let Some(v) = resolve_nullary_sexpr(name, args, state) {
+        return v;
     }
     let ssa_args: Vec<SsaValue> = args.iter().map(|a| arith_to_ssa(a, expr, state)).collect();
     // DD#100: the arith lexer owns `=`, so `$(( (f =a) ))` is SB4020 — an
@@ -782,6 +807,29 @@ fn funccall_to_ssa(name: &str, args: &[ArithExpr], expr: &Expr, state: &VersionS
         args: ssa_args,
         colls: vec![],
     }
+}
+
+/// DD#126: `(wait)` / `(wait p)` as an arith sexpr. Checked ahead of
+/// [`try_arith_int_intrinsic`] because `wait`'s operand is an arithmetic
+/// *value*: a bare `p` means the variable, whereas
+/// `reconstruct_intrinsic_command` — which the name-taking intrinsics go
+/// through — turns that same `ArithExpr::Var("p")` into the *literal* `p`,
+/// which is right for `(len a)` and wrong here. `None` → not `wait`.
+///
+/// Arity is `check_arith_sexpr_arity`'s question, asked off the same
+/// `value_intrinsic_arity` table, so this does not re-ask it.
+fn try_arith_wait(
+    name: &str,
+    args: &[ArithExpr],
+    expr: &Expr,
+    state: &VersionState,
+) -> Option<SsaValue> {
+    if name != "wait" {
+        return None;
+    }
+    Some(wait_value(
+        args.iter().map(|a| arith_to_ssa(a, expr, state)).collect(),
+    ))
 }
 
 /// DD#58/#75: an int-returning intrinsic with args (e.g. `len`) called as an
@@ -862,7 +910,12 @@ pub(crate) fn stateful_intrinsic_slot(name: &str) -> Option<&'static str> {
 /// `Int`-denoting intrinsic that was added to `resolve`'s table and never
 /// given a lowering here. That is precisely the `getcpid` regression, and
 /// it is the one this arm catches.
-fn resolve_nullary_sexpr(name: &str, state: &VersionState) -> Option<SsaValue> {
+fn resolve_nullary_sexpr(name: &str, args: &[ArithExpr], state: &VersionState) -> Option<SsaValue> {
+    // "Nullary" is this function's own question, so it asks it rather than
+    // leaving the caller to guard the call.
+    if !args.is_empty() {
+        return None;
+    }
     if let Some(var) = stateful_intrinsic_slot(name) {
         return Some(SsaValue::Var(state.lookup(var)));
     }
@@ -1108,7 +1161,7 @@ mod tests {
         for name in ["len", "getcwd"] {
             let st = state();
             let caught = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                resolve_nullary_sexpr(name, &st)
+                resolve_nullary_sexpr(name, &[], &st)
             }));
             let err = caught.expect_err("an intrinsic with no arith lowering must ICE");
             let msg = ice_text(&err);

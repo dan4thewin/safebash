@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup commands
-plan=152
+plan=172
 echo "1..$plan" >&3
 
 set +e
@@ -76,7 +76,7 @@ echo ok'
 
 # 14.3 background command
 run_sash 'echo bg &
-wait'
+- wait'
 [[ $rc = 0 && -z $err ]]; chk 14.3
 
 # 23.1 bare command resolved to absolute path
@@ -1024,6 +1024,150 @@ run_sash 'str p=d119hxx
 run_sash 'str p=d119i
 /bin/echo hi > ${p:~}'
 [[ $rc != 0 && $err == *SB5046* ]]; chk 14.71
+
+# ── DD#126: `wait` is a non-aborting, pid-returning int builtin ──────────
+# `wait` is wait(2); `wait PID` is waitpid(2). The value is the reaped pid,
+# or -1 on ECHILD/error — it never aborts. The reaped child's exit lands in
+# `$?` / `$(status)`, and on -1 the status is left untouched.
+
+# 126.1 the pid is a value, so a bare `wait` statement is SB4016 — the same
+#       rule that rejects a bare call to an int-returning function. `-` is
+#       the discard, and DG's "`-` wait for I-don't-care" only has content
+#       if the bare form is not also it.
+run_sash 'echo bg &
+wait'
+[[ $rc != 0 && $err == *SB4016* ]]; chk 126.1
+
+# 126.2 `- wait` is the discard
+run_sash 'echo bg &
+- wait
+echo done'
+[[ $rc = 0 && $out = "bg
+done" && -z $err ]]; chk 126.2
+
+# 126.3 captured, the value is the reaped pid
+run_sash '- /bin/true &
+int p=$(wait)
+echo "pos=$(( p > 0 ))"'
+[[ $rc = 0 && $out = "pos=1" && -z $err ]]; chk 126.3
+
+# 126.4 no children: -1, and NOT an abort. This is the half the two backends
+#       used to disagree about (notes/tasks/bug-wait-backends-diverge-no-children).
+run_sash 'int p=$(wait)
+echo "[$p]"'
+[[ $rc = 0 && $out = "[-1]" && -z $err ]]; chk 126.4
+
+# 126.5 the reaped child's exit is readable through `$(status)` even after
+#       the `-` form — `-` discards the *pid*, which is a different thing
+#       from the status. `wait` is the only command where those two differ.
+run_sash '- /bin/sh -c "exit 3" &
+- wait
+int s=$(status)
+echo "s=$s"'
+[[ $rc = 0 && $out = "s=3" && -z $err ]]; chk 126.5
+
+# 126.6 and after the capture form
+run_sash '- /bin/sh -c "exit 5" &
+int p=$(wait)
+int s=$(status)
+echo "pos=$(( p > 0 )) s=$s"'
+[[ $rc = 0 && $out = "pos=1 s=5" && -z $err ]]; chk 126.6
+
+# 126.7 a reap that found nothing says nothing about any child: the status
+#       survives the failed wait. Both backends seed the out-param with the
+#       current `$?` and write it back unconditionally, so this falls out of
+#       the ABI with no branch on either side.
+run_sash '- /bin/false
+int p=$(wait)
+int s=$(status)
+echo "[$p] s=$s"'
+[[ $rc = 0 && $out = "[-1] s=1" && -z $err ]]; chk 126.7
+
+# 126.8 "wait for all" is a loop, not a flag (DD#126 declines to invent a
+#       job-control surface). The extra parens are the call spelling.
+run_sash '- /bin/true &
+- /bin/true &
+- /bin/true &
+int n=0
+while (( (wait) > 0 )) { n=$(( n + 1 )) }
+echo "reaped=$n"'
+[[ $rc = 0 && $out = "reaped=3" && -z $err ]]; chk 126.8
+
+# 126.9 and the bare word is the same intrinsic (DD#125)
+run_sash '- /bin/true &
+- /bin/true &
+int n=0
+while (( wait > 0 )) { n=$(( n + 1 )) }
+echo "reaped=$n"'
+[[ $rc = 0 && $out = "reaped=2" && -z $err ]]; chk 126.9
+
+# 126.10 the drain loop terminates immediately with no children
+run_sash 'int n=0
+while (( wait > 0 )) { n=$(( n + 1 )) }
+echo "reaped=$n"'
+[[ $rc = 0 && $out = "reaped=0" && -z $err ]]; chk 126.10
+
+# 126.11 `wait PID` is waitpid(2) — it returns the pid it was given, and the
+#        status is that child's. The argument reaches the backends as a
+#        lowered int, so `$(getcpid)` and a variable both work.
+run_sash '- /bin/sh -c "exit 7" &
+int c=$(getcpid)
+int r=$(wait $c)
+int s=$(status)
+echo "same=$(( r == c )) s=$s"'
+[[ $rc = 0 && $out = "same=1 s=7" && -z $err ]]; chk 126.11
+
+# 126.12 the sexpr spelling, with the argument as an arithmetic expression
+#        rather than a word. `(len a)` names a collection, so the shared
+#        reconstruction turns a sexpr operand into a literal; `(wait p)`
+#        means the *value* of p, which is why it lowers on its own path.
+run_sash '- /bin/sh -c "exit 9" &
+int r=$(( (wait (getcpid)) ))
+int s=$(status)
+echo "pos=$(( r > 0 )) s=$s"'
+[[ $rc = 0 && $out = "pos=1 s=9" && -z $err ]]; chk 126.12
+
+# 126.13 waiting on a pid that is not our child is -1, not an abort
+run_sash 'int r=$(wait 999999)
+echo "[$r]"'
+[[ $rc = 0 && $out = "[-1]" && -z $err ]]; chk 126.13
+
+# 126.14-126.16 arity, in all three positions. The statement spelling is the
+#        one the value-intrinsic arity checks cannot see; before DD#126 it
+#        discarded the surplus in silence.
+run_sash '- wait 1 2'
+[[ $rc != 0 && $err == *SB4045* ]]; chk 126.14
+run_sash 'int r=$(wait 1 2)
+echo $r'
+[[ $rc != 0 && $err == *SB4045* ]]; chk 126.15
+run_sash 'int r=$(( (wait 1 2) ))
+echo $r'
+[[ $rc != 0 && $err == *SB4045* ]]; chk 126.16
+
+# 126.17 the operand is an int sink, so a string is SB4030 in the `-` form
+#        too (`wait $s` bare is isink.6)
+run_sash 'str s=1
+- wait $s'
+[[ $rc != 0 && $err == *SB4030* ]]; chk 126.17
+
+# 126.18 a boolean context consumes a status, and `wait`'s value is a pid, so
+#        `if wait` would read "the reaped pid was 0". SB4016 has no
+#        condition escape here, unlike the int-returning-function case.
+run_sash '- /bin/true &
+if wait { echo y }'
+[[ $rc != 0 && $err == *SB4016* ]]; chk 126.18
+
+# 126.19 the pid is clean — it is compiler-managed, like `$$` and `$!`, not
+#        a value read out of the environment
+run_sash '- /bin/true &
+int p=$(wait)
+if (( p > 0 )) { echo ok }'
+[[ $rc = 0 && $out = "ok" && -z $err ]]; chk 126.19
+
+# 126.20 `wait` is reserved (DD#125), so it cannot be shadowed by a name
+run_sash 'int wait=1
+echo $wait'
+[[ $rc != 0 && $err == *SB5092* ]]; chk 126.20
 
 set -e
 tally

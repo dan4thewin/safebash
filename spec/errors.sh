@@ -225,7 +225,7 @@ run_sash 'fn f -> int { - /bin/false; return $?; }'
 # 55.16 background exec failure — the CHILD reports the exec errno at the
 #       point of failure; the parent's uncaught abort adds command-failed.
 run_sash '/nonexistent_binary_xyz &
-wait'
+- wait'
 [[ $rc != 0 && -z $err ]] \
   && [[ $rerr == *"/nonexistent_binary_xyz: No such file or directory"* ]]; chk 55.16
 
@@ -262,7 +262,7 @@ run_sash '/bin/false || echo $?'
 [[ $rc = 0 && $out = "1" && -z $err ]]; chk 55.18
 
 # 55.19 $! is sugar for $(getcpid)
-run_sash '/bin/sleep 0 & p=$!; wait $p; echo done'
+run_sash '/bin/sleep 0 & p=$!; - wait $p; echo done'
 [[ $rc = 0 && $out = "done" && -z $err ]]; chk 55.19
 
 # ── DD#55 syscall-abort: internal builtins must thread real status ──
@@ -1562,7 +1562,7 @@ echo $t'
 # that `wait $(getcpid)` passes
 run_sash '/bin/sleep 0 &
 p=$!
-wait $p
+- wait $p
 echo done'
 [[ $rc = 0 && $out = "done" && -z $err ]]; chk isink.11
 run_sash 'int n=7
@@ -1750,11 +1750,12 @@ attest s [[ -z $s ]]
 echo "[$s]"'
 [[ $rc = 0 && $out = "[]" && -z $err ]]; chk csc.13
 
-# csc.14 `wait` as the sole body
+# csc.14 `wait` is no longer a capture of a statement's stdout. DD#126 makes
+#        it an int intrinsic yielding the reaped pid, so a `str` target is a
+#        type error. This spec used to assert the empty capture.
 run_sash 'str s=$(wait)
-attest s [[ -z $s ]]
 echo "[$s]"'
-[[ $rc = 0 && $out = "[]" && -z $err ]]; chk csc.14
+[[ $rc != 0 && $err == *SB4030* ]]; chk csc.14
 
 # csc.15 `attest` as the sole body — and its declassification persists,
 #        because a body is a function body, not a subshell (DD#86)

@@ -676,8 +676,74 @@ fn try_native_intrinsic(
             externs,
             exit_status_var,
         ),
+        // DD#126: `$(wait)` / `$(wait $p)` — the pid, rendered as a string.
+        "wait" => {
+            let reaped = emit_wait_value(
+                argv_values,
+                builder,
+                module,
+                vars,
+                literals,
+                externs,
+                exit_status_var,
+            );
+            Some(emit_int_to_str(builder, module, externs, reaped))
+        }
         _ => None,
     }
+}
+
+/// DD#126: `wait` / `wait $p` as a **value** — the reaped pid, or -1.
+///
+/// The single native lowering, shared by the three spellings: `$(wait)` (via
+/// `try_native_intrinsic`, which stringifies it), `$(( wait ))` and
+/// `$(( (wait p) ))` (via `lower_cmdsubst_as_int`, which takes the i64
+/// directly), and the `- wait` statement (via `emit_wait`). `argv` is the
+/// whole `["wait", pid?]` vector.
+///
+/// The status slot is **seeded with the current `$?`** before the call, so the
+/// runtime's "write only on a reap" makes a childless wait leave the status
+/// untouched without a branch here. That is also what keeps the two backends
+/// honest: neither has an opinion of its own about what a failed wait reports.
+pub(super) fn emit_wait_value(
+    argv: &[SsaValue],
+    builder: &mut FunctionBuilder,
+    module: &mut ObjectModule,
+    vars: &HashMap<String, VarSlot>,
+    literals: &HashMap<String, cranelift_module::DataId>,
+    externs: &ExternFuncs,
+    exit_status_var: Option<Variable>,
+) -> cranelift_codegen::ir::Value {
+    let pid = match argv.get(1) {
+        Some(arg) => crate::codegen::values::lower_value_as_int(
+            arg,
+            builder,
+            module,
+            vars,
+            literals,
+            externs,
+            exit_status_var,
+        ),
+        // No argument: wait(2). -1 rather than 0 — `waitpid(0, …)` is "any
+        // child in my process group", which is not the same question.
+        None => builder.ins().iconst(I64, -1),
+    };
+    let slot =
+        builder.create_sized_stack_slot(StackSlotData::new(StackSlotKind::ExplicitSlot, 8, 3));
+    let seed = match exit_status_var {
+        Some(esv) => builder.use_var(esv),
+        None => builder.ins().iconst(I64, 0),
+    };
+    builder.ins().stack_store(seed, slot, 0);
+    let addr = builder.ins().stack_addr(I64, slot, 0);
+    let f = module.declare_func_in_func(externs.wait_any, builder.func);
+    let call = builder.ins().call(f, &[pid, addr]);
+    let reaped = builder.inst_results(call)[0];
+    if let Some(esv) = exit_status_var {
+        let status = builder.ins().stack_load(I64, slot, 0);
+        builder.def_var(esv, status);
+    }
+    reaped
 }
 
 /// Compute a nullary int intrinsic as a **direct i64** (no string round-trip).

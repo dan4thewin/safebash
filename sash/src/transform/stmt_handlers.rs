@@ -32,6 +32,11 @@ pub(super) fn handle_command(
     // consumed — a bare or `-`-suppressed one is a compile error.
     check_boolean_must_consume(kind, stmt, state);
 
+    // DD#55/#126: a bare `wait` discards the pid it reaped. Checked here
+    // rather than beside the user-function case below because `try_builtin`
+    // consumes the statement first and the check would never be reached.
+    check_non_void_bare_wait(kind, stmt, state);
+
     // DD#63: the 3-arg out-array form `match S P ARR` (the 2-arg boolean
     // and `$(match …)` value forms fall through).
     if let Some(b) = try_handle_match_into(kind, c, ssa, state, block) {
@@ -142,6 +147,26 @@ fn try_test_arg_capture(
 /// against the named variable. DD#39 compile-time regex validation.
 /// Single-arg form only. Returns `None` when the arg does not start
 /// with `s/` or the substitution body is malformed.
+/// DD#126: `wait` returns a pid, so a bare `wait` statement drops a value.
+/// Same rule and same remedy as SB4016 on a `-> int` function — `- wait` is
+/// the "reap one, I don't care which" spelling.
+///
+/// Unlike the function case there is no `in_condition` escape. A boolean
+/// context consumes a *status*, and `wait`'s value is a pid: `if wait { … }`
+/// would read "the pid was 0", which is never true. That is DD#74's reasoning
+/// for int functions, applied to the one int builtin.
+fn check_non_void_bare_wait(kind: BuiltinCmd, stmt: &Statement, state: &mut VersionState) {
+    if kind != BuiltinCmd::Wait || state.suppressed > 0 {
+        return;
+    }
+    state.diagnostics.push(format!(
+        "{}:{}: error [SB4016] `wait` returns the pid it reaped — capture it \
+         with `$(wait)` or `$(( wait ))`, test it with `(( (wait) > 0 ))`, or \
+         discard it with `- wait`",
+        stmt.span.line, stmt.span.col
+    ));
+}
+
 /// DD#55/SB4016: a bare call of a non-void (`-> int`) function in
 /// statement position must be handled by `if`/`||` or captured by
 /// `$((…))`. Emits a diagnostic when violated; does not affect

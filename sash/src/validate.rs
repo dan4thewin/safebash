@@ -25,6 +25,7 @@
 use crate::diagnostic::Diagnostic;
 use crate::ir::*;
 use std::collections::HashMap;
+use std::ops::RangeInclusive;
 
 // ── Entry point ────────────────────────────────────────────────────
 
@@ -570,8 +571,8 @@ fn check_cmdsub_arity(expr: &Expr, diags: &mut Vec<Diagnostic>) {
     let Some(arity) = crate::ssa::value_intrinsic_arity(name) else {
         return;
     };
-    if c.args.len() != arity {
-        diags.push(cmdsub_arity_diag(name, arity, c.args.len(), c.name.span));
+    if !arity.contains(&c.args.len()) {
+        diags.push(cmdsub_arity_diag(name, &arity, c.args.len(), c.name.span));
     }
 }
 
@@ -591,7 +592,12 @@ fn check_cmdsub_arity(expr: &Expr, diags: &mut Vec<Diagnostic>) {
 ///
 /// The rest (`sub`, `gsub`, `len`, `strlen`) are value-only — a bare statement
 /// draws SB5073 — so the generic sentence is accurate for them.
-fn cmdsub_arity_diag(name: &str, arity: usize, got: usize, span: Span) -> Diagnostic {
+fn cmdsub_arity_diag(
+    name: &str,
+    arity: &RangeInclusive<usize>,
+    got: usize,
+    span: Span,
+) -> Diagnostic {
     if name == "keys" && got == 2 {
         return Diagnostic::error_span(
             span,
@@ -619,11 +625,22 @@ fn cmdsub_arity_diag(name: &str, arity: usize, got: usize, span: Span) -> Diagno
         span,
         "SB4045",
         format!(
-            "`{name}` expects {arity} argument{} but got {got} — a value intrinsic \
-             must be called with its exact arity",
-            if arity == 1 { "" } else { "s" },
+            "`{name}` expects {} but got {got} — a value intrinsic must be \
+             called with its exact arity",
+            arity_phrase(arity),
         ),
     )
+}
+
+/// "1 argument" / "0 or 1 arguments" / "3 arguments" — the permitted-count
+/// half of the SB4045 sentence, shared by the `$( )` and sexpr spellings so
+/// one mistake cannot be described two ways.
+fn arity_phrase(arity: &RangeInclusive<usize>) -> String {
+    let (lo, hi) = (*arity.start(), *arity.end());
+    if lo == hi {
+        return format!("{lo} argument{}", if lo == 1 { "" } else { "s" });
+    }
+    format!("{lo} or {hi} arguments")
 }
 
 /// SB4045 for the sexpr spelling: `(len a)` / `(strlen $s)` inside `$(( … ))`
@@ -760,16 +777,30 @@ fn const_eval_arith(a: &ArithExpr) -> Option<i64> {
 }
 
 /// The SB4045 complaint for one arith sexpr call, or `None` if it is fine.
+///
+/// Arity comes from `value_intrinsic_arity`, the same table the `$( )`
+/// spelling uses, so `(getpid x)` and `$(getpid x)` cannot answer differently
+/// — the sexpr side used to hard-code `len`/`strlen` and let every other
+/// intrinsic through with any argument count, which for a nullary one meant
+/// falling into the user-int-func path and yielding a silent 0.
+///
+/// The *operand shape* check is narrower than the arity check on purpose. It
+/// asks whether `reconstruct_intrinsic_command` can rebuild the operand as a
+/// command argument, which is the question only for the intrinsics that take
+/// a **name** (`len a`, `strlen $s`). `wait`'s operand is an ordinary
+/// arithmetic value lowered by `arith_to_ssa`, so no shape is out of bounds.
 fn arith_intrinsic_complaint(name: &str, args: &[ArithExpr]) -> Option<String> {
-    if name != "len" && name != "strlen" {
-        return None;
-    }
-    if args.len() != 1 {
+    let arity = crate::ssa::value_intrinsic_arity(name)?;
+    if !arity.contains(&args.len()) {
         return Some(format!(
-            "`{name}` expects 1 argument but got {} — a value intrinsic must be \
+            "`{name}` expects {} but got {} — a value intrinsic must be \
              called with its exact arity",
+            arity_phrase(&arity),
             args.len()
         ));
+    }
+    if name != "len" && name != "strlen" {
+        return None;
     }
     if arith_intrinsic_operand_ok(&args[0]) {
         return None;
@@ -3100,13 +3131,51 @@ fn check_dq_leaf(stmt: &Statement, state: &mut StatusState, diags: &mut Vec<Diag
         }
         *state = StatusState::Undefined;
     }
+    if let Some(next) = leaf_status_after(stmt) {
+        *state = next;
+    }
+}
+
+/// What a leaf statement leaves `$?` in, or `None` for a statement that says
+/// nothing about it (so the inherited state survives).
+fn leaf_status_after(stmt: &Statement) -> Option<StatusState> {
+    // DD#126 comes first: `- wait` suppresses the *pid*, which is a different
+    // thing from the status, so the ordinary "`-` means I am not handling
+    // this" rule below must not claim it.
+    if stmt_reaps_child(stmt) {
+        return Some(StatusState::Available);
+    }
     if is_suppressed(stmt) {
-        *state = StatusState::Undefined;
-    } else if is_command_like(stmt)
-        || is_assignment_from_arith(stmt)
-        || is_capture_condition_stmt(stmt)
-    {
-        *state = StatusState::Available;
+        return Some(StatusState::Undefined);
+    }
+    if is_command_like(stmt) || is_assignment_from_arith(stmt) || is_capture_condition_stmt(stmt) {
+        return Some(StatusState::Available);
+    }
+    None
+}
+
+/// DD#126: does this statement reap a child, in any spelling?
+///
+/// `wait` is the one command whose `-` and whose `$?` talk about *different
+/// things*. Everywhere else `-` says "I am not handling this status", so
+/// reading it afterwards is a contradiction and the machine clears it. But
+/// `- wait` discards the **pid**; the reaped child's exit status is a separate
+/// output, and `$(status)` is the only way to read it. Clearing the state
+/// there would leave DD#126's "`- wait` then look at how the child did" — the
+/// whole reason `wait` consumes a status at all — unexpressible.
+///
+/// The same applies to a capture (`int p=$(wait)`), which `is_capture_condition_stmt`
+/// does not cover because `wait` is not an external command.
+fn stmt_reaps_child(stmt: &Statement) -> bool {
+    match &stmt.kind {
+        StmtKind::Suppressed(inner) => stmt_reaps_child(inner),
+        StmtKind::Redirected(r) => stmt_reaps_child(&r.body),
+        StmtKind::Command(c) => expr_literal_str(&c.name) == "wait",
+        _ => {
+            let mut found = false;
+            walk_own_exprs_in_stmt(stmt, &mut |e, _| found |= expr_calls_wait(e));
+            found
+        }
     }
 }
 
@@ -3154,14 +3223,45 @@ fn emit_status_unavailable(stmt: &Statement, diags: &mut Vec<Diagnostic>) {
 /// the diagnostic — and carries it **once**, however many reads it holds,
 /// because repeating one span would print the same line twice.
 fn expr_reads_status(expr: &Expr) -> bool {
-    if crate::ir::intrinsic_call_name(expr) == Some("status") {
+    expr_calls_intrinsic(expr, "status", false)
+}
+
+/// DD#126: `$(wait)` or `$(wait $p)`, or `wait` inside `$(( … ))`.
+fn expr_calls_wait(expr: &Expr) -> bool {
+    expr_calls_intrinsic(expr, "wait", true)
+}
+
+/// Does `expr` name intrinsic `want` — as a `$( )` head or inside `$(( … ))`?
+///
+/// Two node types carry such a call, not one, which is the point of the doc
+/// above: `walk_all_exprs` visits `Expr`s, and `(status)` in arithmetic is an
+/// `ArithExpr::FuncCall`, a different type that an `Expr` walk cannot see
+/// however thorough. One walker answers it for `status` (SB5012) and for
+/// `wait` (DD#126 status availability) so the two cannot drift.
+///
+/// `with_args` is the one place they genuinely differ. SB5012 wants the DD#111
+/// nullary shape exactly — `intrinsic_call_name`'s doc records that
+/// `$(status 5)` is SB4045, a different thing from a status read — while
+/// `$(wait $p)` is an ordinary `wait`.
+fn expr_calls_intrinsic(expr: &Expr, want: &str, with_args: bool) -> bool {
+    let head: Option<&str> = if with_args {
+        match &expr.kind {
+            ExprKind::CommandSubstitution(stmts) => {
+                single_cmdsub_command(stmts).map(|c| expr_literal_str(&c.name))
+            }
+            _ => None,
+        }
+    } else {
+        crate::ir::intrinsic_call_name(expr)
+    };
+    if head == Some(want) {
         return true;
     }
     let ExprKind::Arithmetic(a) = &expr.kind else {
         return false;
     };
     let mut found = false;
-    walk_arith_intrinsic_calls(a, &mut |name, _| found |= name == "status");
+    walk_arith_intrinsic_calls(a, &mut |name, _| found |= name == want);
     found
 }
 
@@ -10402,17 +10502,48 @@ fn check_match_arity_in(stmts: &[Statement], diags: &mut Vec<Diagnostic>) {
 
 fn check_match_arity_stmt(stmt: &Statement, diags: &mut Vec<Diagnostic>) {
     if let StmtKind::Command(c) = &stmt.kind {
-        let name = expr_literal_str(&c.name);
-        if let Some(d) = match_arity_diag(name, c.args.len(), stmt.span) {
-            diags.push(d);
-        }
-        if let Some(d) = retired_bulk_read_diag(name, stmt.span) {
-            diags.push(d);
-        }
+        diags.extend(command_name_arity_diags(c, stmt.span));
     }
     for body in stmt.child_bodies() {
         check_match_arity_in(body, diags);
     }
+}
+
+/// The per-command checks this walk carries, each keyed on the command name
+/// and each returning at most one diagnostic. Collected rather than pushed so
+/// that adding a check does not deepen the walk above.
+fn command_name_arity_diags(c: &crate::ir::Command, span: Span) -> Vec<Diagnostic> {
+    let name = expr_literal_str(&c.name);
+    let mut out = Vec::new();
+    out.extend(match_arity_diag(name, c.args.len(), span));
+    out.extend(retired_bulk_read_diag(name, span));
+    out.extend(wait_arity_diag(name, c.args.len(), span));
+    out
+}
+
+/// DD#126: `- wait` or `- wait PID`, and nothing else.
+///
+/// `check_cmdsub_arity` and `check_arith_sexpr_arity` cover the two *value*
+/// spellings off `value_intrinsic_arity`; this is the statement spelling,
+/// which neither sees. Without it `- wait 1 2` compiled and the surplus was
+/// discarded in silence — the same shape as the `match S P g h` above.
+fn wait_arity_diag(name: &str, got: usize, span: Span) -> Option<Diagnostic> {
+    if name != "wait" {
+        return None;
+    }
+    let arity = crate::ssa::value_intrinsic_arity("wait")?;
+    if arity.contains(&got) {
+        return None;
+    }
+    Some(Diagnostic::error_span(
+        span,
+        "SB4045",
+        format!(
+            "`wait` expects {} but got {got} — `wait` reaps any child, \
+             `wait PID` reaps that one",
+            arity_phrase(&arity)
+        ),
+    ))
 }
 
 /// DD#99 stage 6: `mapfile` / `readarray` are retired. Point at the

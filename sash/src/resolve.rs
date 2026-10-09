@@ -84,6 +84,11 @@ fn builtin_denotation(k: BuiltinCmd) -> Option<ArithDenotation> {
     use BuiltinCmd as B;
     Some(match k {
         B::Len | B::Strlen => Int,
+        // DD#126: `wait` yields a *pid* — the reaped child, or -1 for "no
+        // children". It is the one int-valued name here that also has an
+        // effect, which is why it stays out of `VALUE_ONLY_INTRINSICS`:
+        // `- wait` is a legal statement, where `- len s` is not.
+        B::Wait => Int,
         B::Keys
         | B::Join
         | B::Sub
@@ -100,7 +105,6 @@ fn builtin_denotation(k: BuiltinCmd) -> Option<ArithDenotation> {
         | B::Exit
         | B::Exec
         | B::Cd
-        | B::Wait
         | B::Close
         | B::Attest
         | B::Read

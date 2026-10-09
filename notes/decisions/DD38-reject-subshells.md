@@ -21,4 +21,5 @@ declaration of "these effects are temporary."
 Background execution via `cmd &`. Fork is explicit and is an OS
 primitive, not an isolation abstraction. `my_func &` forks process,
 child jumps to trampoline blocks. `$!` stores last background pid.
-`wait` collects children.
+`wait` collects children — one per call, returning the reaped pid (DD#126);
+"wait for all" is a loop, not a flag.

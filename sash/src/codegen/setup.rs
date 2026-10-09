@@ -260,6 +260,17 @@ pub(super) fn declare_runtime_functions(module: &mut ObjectModule) -> ExternFunc
         .declare_function("sash_wait", Linkage::Import, &wait_sig)
         .expect("declare sash_wait");
 
+    // DD#126: sash_wait_any(pid, status_out) -> reaped pid, or -1.
+    // `status_out` is in/out — seeded with the current `$?` and overwritten
+    // only on a reap, so a childless wait leaves the status alone.
+    let mut wait_any_sig = Signature::new(CallConv::SystemV);
+    wait_any_sig.params.push(AbiParam::new(I64)); // pid (<= 0 means any)
+    wait_any_sig.params.push(AbiParam::new(I64)); // status_out
+    wait_any_sig.returns.push(AbiParam::new(I64)); // reaped pid or -1
+    let wait_any_func = module
+        .declare_function("sash_wait_any", Linkage::Import, &wait_any_sig)
+        .expect("declare sash_wait_any");
+
     // sash_pipe(out_ptr) -> 0 ok, -1 err
     let mut pipe_sig = Signature::new(CallConv::SystemV);
     pipe_sig.params.push(AbiParam::new(I64)); // out_ptr (writes [r_fd, w_fd])
@@ -821,6 +832,7 @@ pub(super) fn declare_runtime_functions(module: &mut ObjectModule) -> ExternFunc
         fork: fork_func,
         exec: exec_func,
         wait: wait_func,
+        wait_any: wait_any_func,
         pipe: pipe_func,
         close: close_func,
         dup2: dup2_func,

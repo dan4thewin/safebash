@@ -1,4 +1,42 @@
-## ══ STATUS (2026-10-09, latest) — the rule that promised, and the remedy it removed ══
+## ══ STATUS (2026-10-09, latest) — the builtin that aborted because it had nothing to say ══
+
+**DD#126: `wait` is `wait(2)`/`waitpid(2)`, returns the reaped pid or `-1`,
+and never aborts.** It was a statement builtin that aborted on `ECHILD`, which
+made DG's `while (( wait > 0 )) { : }` drain loop unwritable — the loop's exit
+condition was the program's exit. DG declined to invent bash's wait-for-all:
+"waiting for all would require a loop". Journal 484, specs `commands.sh`
+`126.1`-`126.20`.
+
+**The backend divergence was closed by removing both branches, not by making
+them agree.** `bug-wait-backends-diverge-no-children` (native left `$?` at
+127, `--emit-c` set 0): `sash_wait_any(pid, status_out)` writes the slot
+**only on a successful reap**, and both backends seed it with the current `$?`
+and write it back unconditionally. "A reap that found nothing says nothing
+about any child" is now an ABI property, and neither backend has a line that
+could disagree. Same move as 483's parser desugar.
+
+**`wait` is the first command where `-` and `$?` talk about different
+things** — `-` discards the *pid*, and `$(status)` is the only route to the
+child's exit — so SB5012 carries one exception, `stmt_reaps_child`. A bare
+`wait` is **SB4016** (the unconsumed-value rule, applied; DG's "`-` wait for
+I-don't-care" only has content if the bare form is not also it).
+
+**`value_intrinsic_arity` now returns a range**, and all three positions read
+it — including the statement spelling `- wait 1 2`, which neither value check
+could see and which discarded the surplus in silence. Generalising
+`arith_intrinsic_complaint` off that table **newly catches `(getpid x)`**,
+previously a silent 0.
+
+**Known gap, reported not closed:** an arithmetic *condition* sets `$?` from
+its own verdict, so `while (( wait > 0 )) { … }` cannot read the reaped
+child's status in the body. Usable shapes: `int p=$(wait); int s=$(status)`,
+or `- wait` + `$(status)`. Matches wait(2)'s out-param; a `waitstatus`
+intrinsic would close it and is purely additive.
+
+Sweep **7965** (predicted exactly), 0 failing, 0 flips, 40 new ids. `mk test`
+green.
+
+## ══ STATUS (2026-10-09) — the rule that promised, and the remedy it removed ══
 
 **DD#125 had been paid for and never collected.** The DD justifies reservation
 as the thing that "makes a bare word in arithmetic unambiguous, which is what

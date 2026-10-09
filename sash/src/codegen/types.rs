@@ -65,6 +65,7 @@ pub(super) struct ExternFuncs {
     pub(super) fork: cranelift_module::FuncId,
     pub(super) exec: cranelift_module::FuncId,
     pub(super) wait: cranelift_module::FuncId,
+    pub(super) wait_any: cranelift_module::FuncId,
     pub(super) pipe: cranelift_module::FuncId,
     pub(super) close: cranelift_module::FuncId,
     pub(super) dup2: cranelift_module::FuncId,

@@ -198,7 +198,7 @@ run_sash '( echo hello )'
 
 # 38.4 background with &
 run_sash 'echo bg &
-wait'
+- wait'
 [[ $rc = 0 && -z $err ]]; chk 38.4
 
 # 38.5 $! stores last bg pid

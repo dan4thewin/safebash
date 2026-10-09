@@ -139,8 +139,13 @@ command, `[[ ]]`, `(( ))`) is fine, and binds only that unit — `! X && Y` is
 
 Exec failure (fork or exec fails) is checked — the parent aborts.
 A successfully forked background process runs independently and
-can outlive the sash program. `wait` is optional. If used, `wait`'s
-return value follows normal implicit check rules.
+can outlive the sash program. `wait` is optional.
+
+**Amended by DD#126 (2026-10-09).** `wait` no longer returns a status and is
+no longer subject to the implicit check: it is an int intrinsic yielding the
+reaped **pid**, or `-1` on `ECHILD`, and it never aborts. The reaped child's
+exit is read through `$(status)`. A bare `wait` statement is SB4016 — the
+unconsumed-value rule, not the implicit-check rule.
 
 ## User-defined functions
 
