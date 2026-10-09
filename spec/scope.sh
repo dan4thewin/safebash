@@ -7,7 +7,7 @@ set -eu
 . common.sh
 setup scope
 set +e
-plan=100
+plan=107
 echo "1..$plan" >&3
 
 # 86.1 `str s` with no initializer declares a string, meaningful-zero ""
@@ -743,6 +743,49 @@ run_sash 'int status_code=5; int cdx=2; echo $(( status_code + cdx ))'
 # rule is about BINDING a name, not mentioning one
 run_sash 'echo status len wait cd'
 [[ $rc = 0 && $out = "status len wait cd" && -z $err ]]; chk 125.15
+
+# --- SB5093: reading a reserved name (DG 2026-10-09) ---
+#
+# DD#125 created a dead end the day it landed. SB5031's advice is "assign it
+# first, or write ${x:-DEFAULT}", and SB5092 rejects the assignment *because*
+# the compiler owns the name — a rule satisfiable only by breaking another
+# rule. The read side now answers for itself, and the advice differs by what
+# the name denotes.
+
+# 125.16 an int intrinsic names the capture AND the bare arithmetic word
+run_sash 'echo $getpid'
+[[ $rc != 0 && -z $out && $err == *SB5093* && $err == *"is a sash intrinsic"* ]]; chk 125.16
+
+# 125.17 a keyword is not a variable either -- `in` and `do` lex as words
+run_sash 'echo $do'
+[[ $rc != 0 && -z $out && $err == *SB5093* && $err == *"sash keyword"* ]]; chk 125.17
+
+# 125.18 the `${x:-…}` opt-out does NOT apply: this is not an intentional
+#        default, it is a read of a name that can never be bound, and it
+#        quietly produced the default
+run_sash 'echo ${getpid:-5}'
+[[ $rc != 0 && -z $out && $err == *SB5093* ]]; chk 125.18
+
+# 125.19 a statement builtin denotes no value at all
+run_sash 'echo $echo'
+[[ $rc != 0 && -z $out && $err == *SB5093* && $err == *"sash command"* ]]; chk 125.19
+
+# 125.20 a string intrinsic is advised to its capture form, not to `$(( ))`
+run_sash 'echo $getcwd'
+[[ $rc != 0 && -z $out && $err == *SB5093* && $err == *"capture it with"* ]]; chk 125.20
+
+# 125.21 the splat read has the same dead end -- `array keys=(…)` is SB5092
+run_sash 'for x in @keys { echo $x }'
+[[ $rc != 0 && -z $out && $err == *SB5093* ]]; chk 125.21
+
+# 125.22 the BINDING half of SB5092 is the first gate in the compiler, so a
+#        clash reports its cause alone. Bind `status` and the DD#125 desugar
+#        reads a bare `status` as the intrinsic, whose SB5012 availability
+#        error is an artifact of the clash rather than a second fault. This
+#        pins the ordering: before the split, SB5012 masked SB5092 entirely.
+run_sash 'int status=5
+echo $(( status ))'
+[[ $rc != 0 && -z $out && $err == *SB5092* && $err != *SB5012* ]]; chk 125.22
 
 
 set -e

@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup arithmetic
-plan=424
+plan=438
 echo "1..$plan" >&3
 
 set +e
@@ -2260,6 +2260,71 @@ if (( p > 0 )) { echo yes; }'
 run_sash 'int x=7
 echo $(( (x) + 1 ))'
 [[ $rc = 0 && $out = "8" && -z $err ]]; chk 58.53
+
+# --- DD#125: a bare word in arithmetic is a nullary call (DG 2026-10-09) ---
+#
+# `$(( f ))` already called a nullary `-> int` user function; the intrinsics
+# did not, and every one of them reported SB5031 "assign it first" — advice
+# SB5092 forbids the author from taking. The parser now desugars a bare
+# compiler-owned word into the very `FuncCall` node the sexpr form builds,
+# so the two spellings cannot drift apart.
+
+# 58.54 the motivating case
+run_sash 'echo $(( getpid > 0 ))'
+[[ $rc = 0 && $out = "1" && -z $err ]]; chk 58.54
+
+# 58.55 the bare word and the `$( )` capture name the same intrinsic
+run_sash 'int a=$(getpid)
+echo $(( a == getpid ))'
+[[ $rc = 0 && $out = "1" && -z $err ]]; chk 58.55
+
+# 58.56 / 58.57 / 58.58 the rest of the stateless int intrinsics
+run_sash 'echo $(( signum ))'
+[[ $rc = 0 && $out = "0" && -z $err ]]; chk 58.56
+run_sash 'echo $(( epochseconds > 1700000000 ))'
+[[ $rc = 0 && $out = "1" && -z $err ]]; chk 58.57
+run_sash 'echo $(( getppid > 0 ))'
+[[ $rc = 0 && $out = "1" && -z $err ]]; chk 58.58
+
+# 58.59 a stateful one: the bare word reads the `?` slot, like `$(status)`
+run_sash '/bin/true
+echo $(( status ))'
+[[ $rc = 0 && $out = "0" && -z $err ]]; chk 58.59
+
+# 58.60 bare and sexpr are ONE node, not two code paths that agree today
+run_sash 'echo $(( (argc) - argc ))'
+[[ $rc = 0 && $out = "0" && -z $err ]]; chk 58.60
+
+# 58.61 a bare word in a `(( ))` condition
+run_sash 'int x=0
+if (( getpid > 0 )) { x=1 }
+echo $x'
+[[ $rc = 0 && $out = "1" && -z $err ]]; chk 58.61
+
+# 58.62 an int intrinsic that needs an argument is still an arity error --
+#       the desugar must not turn `len` into a nullary call that yields 0
+run_sash 'echo $(( len ))'
+[[ $rc != 0 && -z $out && $err == *SB4045* ]]; chk 58.62
+
+# 58.63 a statement builtin denotes no value, bare exactly as in `(echo)`
+run_sash 'echo $(( echo ))'
+[[ $rc != 0 && -z $out && $err == *SB4030* ]]; chk 58.63
+
+# 58.64 and a string intrinsic belongs in a capture, not in `$(( ))`
+run_sash 'echo $(( getcwd ))'
+[[ $rc != 0 && -z $out && $err == *SB4030* ]]; chk 58.64
+
+# 58.65 / 58.66 the lookahead: an assignment target and a `++` operand are
+#       NOT reads, so they stay `ArithExpr::Var` and reach SB5092 (DD#125)
+#       rather than a parse error about a stray `=`
+run_sash '(( getpid = 5 ))'
+[[ $rc != 0 && -z $out && $err == *SB5092* ]]; chk 58.65
+run_sash '(( getpid++ ))'
+[[ $rc != 0 && -z $out && $err == *SB5092* ]]; chk 58.66
+
+# 58.67 inside a VALUE `$(( ))` the mutation rule answers first
+run_sash 'echo $(( getpid = 5 ))'
+[[ $rc != 0 && -z $out && $err == *SB4020* ]]; chk 58.67
 
 set -e
 tally

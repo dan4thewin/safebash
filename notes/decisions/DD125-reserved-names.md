@@ -132,3 +132,108 @@ since the intrinsic was added.
 This predates DD#125; reservation only made it visible by rejecting the
 definition too. The function is now `subtract`, the assertion also requires
 `-z $err`, and the trap fires for the first time.
+
+## Amendment 2026-10-09: what reservation bought, and what it broke
+
+Reservation was justified in this DD as the thing that makes a bare
+arithmetic word unambiguous. That was a promise, not a behaviour: on the day
+DD#125 landed, `$(( getpid ))` still reported SB5031 and `$(( wait ))`
+reported SB5031, exactly as before. Two changes collect the payment and fix
+the hole the rule itself opened.
+
+### Bare words in arithmetic are nullary calls
+
+`$(( f ))` already called a nullary `-> int` user function — it had for as
+long as int functions existed. The *intrinsics* did not, and that asymmetry
+was the whole of the gap. DG's rule: consistent bare words.
+
+`parse::arith::bare_word_atom` desugars a bare compiler-owned word into the
+very `ArithExpr::FuncCall { args: [] }` node the DD#58 sexpr form builds. The
+choice to do this in the parser rather than in the three consumers is the
+load-bearing one: validate, `type_check` and the transform each then see
+**one** shape, so
+
+- a bare `echo` reports the same SB4030 as `(echo)`,
+- a bare `len` reports the same SB4045 arity error as `(len)`,
+- `$(( (argc) - argc ))` is one node evaluated twice, not two code paths that
+  happen to agree today.
+
+Teaching three passes to special-case `ArithExpr::Var` would have been three
+lists for one question — the exact shape that let the sexpr denotation rule
+rot into nineteen silent zeros one commit earlier (journal 482).
+
+The lookahead in `bare_word_atom` is load-bearing too. An assignment target
+and a `++`/`--` operand are not reads, and `try_assignment`/`try_postfix`
+match on `Var`; leaving those as `Var` keeps `(( getpid = 5 ))` on SB5092
+rather than a parse error about a stray `=`.
+
+This is why reservation was required. Without it, `getpid` could be both a
+variable and an intrinsic, and the parser would have no basis to choose.
+
+### SB5093: reading a reserved name
+
+DD#125 created a dead end the day it landed, and nothing noticed because
+every spec about it was about *binding*.
+
+```
+$ echo $getpid
+error [SB5031] '$getpid' is assigned nowhere — assign it first, …
+$ int getpid=1
+error [SB5092] `getpid` is a name the compiler already understands …
+```
+
+A rule satisfiable only by breaking another rule is not advice. Before
+DD#125, `int getpid=5` was legal and SB5031's advice worked; reservation
+removed the remedy without touching the diagnostic that recommends it.
+
+SB5093 answers the read side, with advice that differs by what the name
+denotes (`resolve::reserved_read_advice`, keyed on `ArithDenotation`):
+
+| denotation  | example   | advice                                       |
+|-------------|-----------|----------------------------------------------|
+| `Int`       | `getpid`  | write `$(getpid)`, or a bare `getpid` in `$(( … ))` |
+| `Str`       | `getcwd`  | capture it with `$(getcwd …)`                |
+| `Statement` | `echo`    | a command, not a variable — it denotes no value |
+| keyword     | `do`      | a sash keyword, not a variable               |
+
+It is raised ahead of the `${x:-…}` opt-out. `${getpid:-5}` is not an
+intentional default; it is a read of a name that can never be bound, and it
+quietly produced `5`.
+
+The scalar sink (`$x`) and the splat sink (`@a`) had the same dead end and
+near-identical guard lists, and both had to grow the same branch. They now
+share `classify_read` → `ReadVerdict`, so a third copy cannot drift.
+
+### The binding gate moved to the front
+
+"Diagnostic placement" above records why SB5092 sits in the second batch: run
+early, its *command out-param* extractor reads a name out of a shape an
+earlier check may already have rejected, so `read -a arr -d :` reported
+"rename the variable `:`" and suppressed SB5057.
+
+The bare-word desugar made that placement wrong for the other half. Bind
+`status` and `$(( status ))` now reads the intrinsic, whose SB5012
+availability error fires in `validate()` — an earlier batch — and masked
+SB5092 entirely. The author was told the status was unavailable, with no hint
+that their own declaration caused it.
+
+`check_reserved_names` now takes a `ReservedScope`, and the two halves run in
+different phases:
+
+- **`Bindings`** — assignment LHS, declarations, `for` variables, `fn` names.
+  Reads a name straight off a well-formed node, so nothing can mis-extract
+  it. Runs as the compiler's **first** gate, on its own, exiting immediately:
+  a naming violation is logically prior to every semantic check, and once a
+  program binds `status` no other diagnostic about `status` is trustworthy.
+  Reporting the cause alone is the same judgement the SB5002 retain makes for
+  a heredoc's cascade.
+- **`CommandTargets`** — `read`/`argv`/`match`/`keys` out-params and the
+  DD#93 attest-convert target. Stays in the second batch, for the reason
+  above.
+
+Pinned by `125.22`, which asserts SB5092 **and** the absence of SB5012.
+
+### Coverage
+
+`58.54`-`58.67` (bare words, in `spec/arithmetic.sh`) and `125.16`-`125.22`
+(SB5093 and the gate split, in `spec/scope.sh`).

@@ -188,6 +188,36 @@ pub(crate) fn is_reserved_name(name: &str) -> bool {
     KEYWORDS.contains(&name) || is_intrinsic(name)
 }
 
+/// DD#125: why a *read* of a reserved name names nothing the author could
+/// have bound, and what to write instead. `None` when the name is theirs.
+///
+/// SB5031's advice — "assign it first, or write `${x:-DEFAULT}`" — is advice
+/// SB5092 forbids the author from taking. `echo $getpid` sent them to
+/// `int getpid=…`, which is rejected *because* the compiler owns the name.
+/// A rule satisfiable only by breaking another rule is a dead end, so the
+/// read side has to answer for itself. The reservation created this the
+/// moment it landed: before DD#125, `int getpid=5` was legal and SB5031's
+/// advice worked.
+pub(crate) fn reserved_read_advice(name: &str) -> Option<String> {
+    match arith_denotation(name) {
+        Some(ArithDenotation::Int) => Some(format!(
+            "`{name}` is a sash intrinsic, not a variable — write `$({name})`, \
+             or a bare `{name}` inside `$(( … ))`"
+        )),
+        Some(ArithDenotation::Str) => Some(format!(
+            "`{name}` is a sash intrinsic, not a variable — capture it with \
+             `$({name} …)`"
+        )),
+        Some(ArithDenotation::Statement) => Some(format!(
+            "`{name}` is a sash command, not a variable — it denotes no value"
+        )),
+        None if KEYWORDS.contains(&name) => {
+            Some(format!("`{name}` is a sash keyword, not a variable"))
+        }
+        None => None,
+    }
+}
+
 /// True for the two intrinsics whose `$( )` denotes a **collection**: `argv`
 /// yields the positional list, `keys` a map's keys. Every other intrinsic —
 /// and every real command — yields a single value.

@@ -9303,14 +9303,14 @@ impl ReadSink<'_> {
                 set.insert(name.to_string());
             }
             SinkMode::Flag(diags) => {
-                if !is_plain_identifier(name)
-                    || handled_elsewhere(name)
-                    || name == "args"
-                    || known.contains(name)
-                {
+                if name == "args" {
                     return;
                 }
-                diags.push(undefined_splat_diag(name, span));
+                match classify_read(name, span, known) {
+                    ReadVerdict::Silent => {}
+                    ReadVerdict::Reserved(d) => diags.push(d),
+                    ReadVerdict::Undefined => diags.push(undefined_splat_diag(name, span)),
+                }
             }
         }
     }
@@ -9320,26 +9320,58 @@ impl ReadSink<'_> {
             SinkMode::Collect(set) => {
                 set.insert(name.to_string());
             }
-            SinkMode::Flag(diags) => {
-                if opt_out
-                    || !is_plain_identifier(name)
-                    || handled_elsewhere(name)
-                    || known.contains(name)
-                {
-                    return;
-                }
-                diags.push(Diagnostic::error_span(
-                    span,
-                    "SB5031",
-                    format!(
-                        "'${}' is assigned nowhere (possible typo) — assign it first, \
-                         or write ${{{}:-DEFAULT}} for an intentional default",
-                        name, name
-                    ),
-                ));
-            }
+            SinkMode::Flag(diags) => match classify_read(name, span, known) {
+                ReadVerdict::Silent => {}
+                ReadVerdict::Reserved(d) => diags.push(d),
+                // The `${x:-…}` opt-out applies only here, and only to a name
+                // that is genuinely the author's — see `ReadVerdict::Reserved`.
+                ReadVerdict::Undefined if !opt_out => diags.push(undefined_scalar_diag(name, span)),
+                ReadVerdict::Undefined => {}
+            },
         }
     }
+}
+
+/// What a read of an unintroduced name should produce, before the caller adds
+/// its own wording. The scalar sink (`$x`) and the splat sink (`@a`) carried
+/// near-identical guard lists and then both had to grow the same DD#125
+/// branch; a shared classifier is what stops the third copy from drifting.
+enum ReadVerdict {
+    /// Not a diagnosable read: not a plain identifier, compiler-managed, or
+    /// already in scope.
+    Silent,
+    /// DD#125: the compiler owns the name, so neither sink's advice is
+    /// takeable — SB5093 answers with advice that is.
+    Reserved(Diagnostic),
+    /// The author's own name, genuinely unintroduced — the caller's rule.
+    Undefined,
+}
+
+/// Classify one read. The reserved check sits *after* the scope guards (a
+/// name the program declared is SB5092's to report, once) and *before* any
+/// opt-out: `${getpid:-5}` is not an intentional default, it is a read of a
+/// name that can never be bound, and it quietly produced the default.
+fn classify_read(name: &str, span: Span, known: &HashSet<String>) -> ReadVerdict {
+    if !is_plain_identifier(name) || handled_elsewhere(name) || known.contains(name) {
+        return ReadVerdict::Silent;
+    }
+    match crate::resolve::reserved_read_advice(name) {
+        Some(advice) => ReadVerdict::Reserved(Diagnostic::error_span(span, "SB5093", advice)),
+        None => ReadVerdict::Undefined,
+    }
+}
+
+/// SB5031: a scalar read of a name nothing introduces.
+fn undefined_scalar_diag(name: &str, span: Span) -> Diagnostic {
+    Diagnostic::error_span(
+        span,
+        "SB5031",
+        format!(
+            "'${}' is assigned nowhere (possible typo) — assign it first, \
+             or write ${{{}:-DEFAULT}} for an intentional default",
+            name, name
+        ),
+    )
 }
 
 fn check_reads_in_scope(stmts: &[Statement], known: &HashSet<String>, sink: &mut ReadSink) {
@@ -10687,6 +10719,25 @@ fn reserved_loop_var_diag(name: &str, span: Span) -> Option<Diagnostic> {
     Some(Diagnostic::error_span(span, "SB5080", msg))
 }
 
+/// Which half of DD#125 to check. The two run in different phases, and the
+/// split is not cosmetic.
+///
+/// `Bindings` reads a name straight off a well-formed node (an assignment
+/// LHS, a declaration, a `for` variable, a `fn` name), so nothing can
+/// mis-extract it — it is safe to run as the very first gate, and it has to,
+/// because a naming violation is logically prior to every semantic check.
+///
+/// `CommandTargets` reads a name out of a *command*, through an extractor
+/// that an earlier check may already have rejected the shape of: `read -a
+/// arr -d :` is SB5057, and `collect_read_targets` hands back the `-d`
+/// flag's argument `:`. Run early, that masks the arity error and asks the
+/// author to rename a delimiter.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum ReservedScope {
+    Bindings,
+    CommandTargets,
+}
+
 /// DD#125: a name the compiler already understands is not the user's to
 /// bind. Walks every site that *introduces* a name — the same set
 /// `collect_scope_names` enumerates (assignment LHS, declarations, `for`
@@ -10698,30 +10749,38 @@ fn reserved_loop_var_diag(name: &str, span: Span) -> Option<Diagnostic> {
 /// `$(( (getpid) ))` and `42` in `$(getpid)`, in one program. Reserving is
 /// also what makes a bare arithmetic word unambiguous, so `$(( wait ))` can
 /// name the intrinsic rather than an undeclared variable.
-pub fn check_reserved_names(program: &Program) -> Vec<Diagnostic> {
+pub fn check_reserved_names(program: &Program, scope: ReservedScope) -> Vec<Diagnostic> {
     let mut diags = Vec::new();
     for stmt in program
         .statements
         .iter()
         .chain(program.end_block.iter().flatten())
     {
-        check_reserved_names_stmt(stmt, &mut diags);
+        check_reserved_names_stmt(stmt, scope, &mut diags);
     }
     diags
 }
 
-fn check_reserved_names_stmt(stmt: &Statement, diags: &mut Vec<Diagnostic>) {
+fn check_reserved_names_stmt(stmt: &Statement, scope: ReservedScope, diags: &mut Vec<Diagnostic>) {
     let span = stmt.span;
-    match &stmt.kind {
-        StmtKind::Assignment(a) => flag_reserved(&a.name, "variable", span, diags),
-        StmtKind::Declaration(d) => flag_declared_names(d, span, diags),
-        StmtKind::For(f) => flag_reserved(&f.variable, "`for` variable", span, diags),
-        StmtKind::Function(f) => flag_reserved(&f.name, "function", span, diags),
-        StmtKind::Command(c) => flag_command_bindings(c, span, diags),
+    match (&stmt.kind, scope) {
+        (StmtKind::Assignment(a), ReservedScope::Bindings) => {
+            flag_reserved(&a.name, "variable", span, diags)
+        }
+        (StmtKind::Declaration(d), ReservedScope::Bindings) => flag_declared_names(d, span, diags),
+        (StmtKind::For(f), ReservedScope::Bindings) => {
+            flag_reserved(&f.variable, "`for` variable", span, diags)
+        }
+        (StmtKind::Function(f), ReservedScope::Bindings) => {
+            flag_reserved(&f.name, "function", span, diags)
+        }
+        (StmtKind::Command(c), ReservedScope::CommandTargets) => {
+            flag_command_bindings(c, span, diags)
+        }
         _ => {}
     }
     for s in stmt.child_bodies().into_iter().flatten() {
-        check_reserved_names_stmt(s, diags);
+        check_reserved_names_stmt(s, scope, diags);
     }
 }
 

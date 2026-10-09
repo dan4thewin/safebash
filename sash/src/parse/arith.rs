@@ -1216,6 +1216,36 @@ impl ArithParser {
         }
     }
 
+    /// A bare word in arithmetic that names something the compiler owns is a
+    /// **nullary call**, not a variable read: `$(( getpid ))` is `(getpid)`,
+    /// exactly as `$(( f ))` already calls a nullary `-> int` function.
+    ///
+    /// DD#125 is what makes this unambiguous — a compiler-owned name cannot
+    /// be bound (SB5092), so a surviving *read* of one can only mean the
+    /// intrinsic. Emitting the very node the sexpr form produces is the
+    /// point: validate, `type_check` and the transform each see one shape,
+    /// so a bare `echo` reports the same SB4030 as `(echo)` and a bare `len`
+    /// the same SB4045 arity error. Teaching three passes to special-case
+    /// `ArithExpr::Var` separately would have been three lists for one
+    /// question, which is exactly how the sexpr denotation rule rotted.
+    ///
+    /// The lookahead is load-bearing. An assignment target or a `++`/`--`
+    /// operand is not a read, and `try_assignment`/`try_postfix` match on
+    /// `Var`; leaving those as `Var` keeps `(( getpid = 5 ))` on SB5092
+    /// rather than a parse error about a stray `=`.
+    fn bare_word_atom(&self, name: String) -> ArithExpr {
+        let assignable = match self.peek() {
+            Some(tok) => {
+                assign_op_for(tok).is_some() || matches!(tok, ATok::PlusPlus | ATok::MinusMinus)
+            }
+            None => false,
+        };
+        if !assignable && crate::resolve::arith_denotation(&name).is_some() {
+            return ArithExpr::FuncCall { name, args: vec![] };
+        }
+        ArithExpr::Var(name)
+    }
+
     /// Atoms and operands: literals, variables, parenthesised forms. An
     /// out-of-range `BadNum` is rejected here (SB4026); the `-i64::MIN`
     /// case is folded earlier by the unary-neg peephole in `parse_unary`.
@@ -1232,7 +1262,7 @@ impl ArithParser {
             }
             Some(ATok::Var(name)) => {
                 self.advance();
-                Ok(ArithExpr::Var(name))
+                Ok(self.bare_word_atom(name))
             }
             Some(ATok::DollarVar(name)) => {
                 self.advance();

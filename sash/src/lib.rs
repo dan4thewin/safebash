@@ -286,6 +286,21 @@ fn check_flags(flags: &[&str]) {
 /// before command resolution so a rejected construct surfaces its own
 /// diagnostic rather than a spurious SB4032 on the tokens it leaves behind.
 fn run_structural_checks(input: &str, program: &crate::ir::Program) {
+    // SB5092 (DD#125), the *binding* half — the very first gate, on purpose.
+    // A naming violation is logically prior to every semantic check: once a
+    // program binds `status`, the DD#125 desugar reads a bare `status` in
+    // `$(( … ))` as the intrinsic, and the SB5012 availability error that
+    // follows is an artifact of the author's own clash, not a second fault.
+    // Reporting the cause alone is the same judgement the SB5002 retain
+    // below makes for a heredoc's cascade.
+    //
+    // `CommandTargets` deliberately stays in the later batch — see
+    // `ReservedScope`.
+    let reserved = validate::check_reserved_names(program, validate::ReservedScope::Bindings);
+    if !reserved.is_empty() {
+        print_diags(input, &reserved);
+        std::process::exit(1);
+    }
     let mut vdiags = validate::validate(program);
     vdiags.extend(validate::check_malformed_sed(program));
     vdiags.extend(validate::check_subscript_index(program));
@@ -360,13 +375,16 @@ fn run_semantic_checks(input: &str, program: &crate::ir::Program, flags: &[&str]
     tdiags.extend(validate::check_elide_positions(program));
     tdiags.extend(validate::check_args_immutable(program));
     tdiags.extend(validate::check_reserved_loop_var(program));
-    // SB5092 (DD#125): no user binding may take a compiler-owned name. Sits
-    // in this batch, not in `validate()`, because it reads a name out of a
-    // shape an earlier check may already have rejected — `read -a arr -d :`
-    // is SB5057, and the read-target extractor hands back the `-d` flag's
-    // argument `:`. From the earlier batch it masked the arity error
-    // entirely and asked the user to rename a delimiter.
-    tdiags.extend(validate::check_reserved_names(program));
+    // SB5092 (DD#125), the *command out-param* half. Sits in this batch, not
+    // with the binding half in `run_structural_checks`, because it reads a
+    // name out of a shape an earlier check may already have rejected —
+    // `read -a arr -d :` is SB5057, and the read-target extractor hands back
+    // the `-d` flag's argument `:`. From the earlier batch it masked the
+    // arity error entirely and asked the user to rename a delimiter.
+    tdiags.extend(validate::check_reserved_names(
+        program,
+        validate::ReservedScope::CommandTargets,
+    ));
     tdiags.extend(validate::check_loop_control_context(program));
     tdiags.extend(validate::check_discard_reads(program));
     tdiags.extend(validate::check_readline_arity(program));
