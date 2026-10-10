@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup types
-plan=368
+plan=390
 echo "1..$plan" >&3
 
 set +e
@@ -2081,6 +2081,114 @@ run_sash 'array b=(p q); map m=@{b:-}; echo "${m[p]}"'
 # `$(getcwd)` is the one nullary intrinsic that is genuinely string-valued,
 # and den.19 is what says so: it is the *only* name in the table that needs
 # no quotes.
+
+# den.1/den.2 argc
+run_sash 'str s=$(argc)
+echo $s'
+[[ $rc != 0 && -z $out && $err == *SB4030* ]]; chk den.1
+run_sash 'str s="$(argc)"
+echo $s'
+[[ $rc = 0 && $out = "1" && -z $err ]]; chk den.2
+
+# den.3/den.4 epochseconds
+run_sash 'str s=$(epochseconds)
+echo $s'
+[[ $rc != 0 && -z $out && $err == *SB4030* ]]; chk den.3
+run_sash 'str s="$(epochseconds)"
+echo $(( (strlen $s) == 10 ))'
+[[ $rc = 0 && $out = "1" && -z $err ]]; chk den.4
+
+# den.5/den.6 random
+run_sash 'str s=$(random)
+echo $s'
+[[ $rc != 0 && -z $out && $err == *SB4030* ]]; chk den.5
+run_sash 'str s="$(random)"
+echo $(( (strlen $s) > 0 ))'
+[[ $rc = 0 && $out = "1" && -z $err ]]; chk den.6
+
+# den.7/den.8 getpid
+run_sash 'str s=$(getpid)
+echo $s'
+[[ $rc != 0 && -z $out && $err == *SB4030* ]]; chk den.7
+run_sash 'str s="$(getpid)"
+echo $(( (strlen $s) > 0 ))'
+[[ $rc = 0 && $out = "1" && -z $err ]]; chk den.8
+
+# den.9/den.10 getppid
+run_sash 'str s=$(getppid)
+echo $s'
+[[ $rc != 0 && -z $out && $err == *SB4030* ]]; chk den.9
+run_sash 'str s="$(getppid)"
+echo $(( (strlen $s) > 0 ))'
+[[ $rc = 0 && $out = "1" && -z $err ]]; chk den.10
+
+# den.11/den.12 signum
+run_sash 'str s=$(signum)
+echo $s'
+[[ $rc != 0 && -z $out && $err == *SB4030* ]]; chk den.11
+run_sash 'str s="$(signum)"
+echo $s'
+[[ $rc = 0 && $out = "0" && -z $err ]]; chk den.12
+
+# den.13/den.14 status — the preceding command is what makes it available
+#                (SB5012 otherwise), so the type error is reached only with
+#                one in front of it.
+run_sash 'true
+str s=$(status)
+echo $s'
+[[ $rc != 0 && -z $out && $err == *SB4030* ]]; chk den.13
+run_sash 'true
+str s="$(status)"
+echo $s'
+[[ $rc = 0 && $out = "0" && -z $err ]]; chk den.14
+
+# den.15/den.16 getcpid — needs a preceding `&`
+run_sash 'sleep 0 &
+str s=$(getcpid)
+echo $s
+- wait'
+[[ $rc != 0 && -z $out && $err == *SB4030* ]]; chk den.15
+run_sash 'sleep 0 &
+str s="$(getcpid)"
+echo $(( (strlen $s) > 0 ))
+- wait'
+[[ $rc = 0 && $out = "1" && -z $err ]]; chk den.16
+
+# den.17/den.18 waitstatus — needs the immediately preceding reap (SB5094)
+run_sash 'sleep 0 &
+- wait
+str s=$(waitstatus)
+echo $s'
+[[ $rc != 0 && -z $out && $err == *SB4030* ]]; chk den.17
+run_sash 'sleep 0 &
+- wait
+str s="$(waitstatus)"
+echo $s'
+[[ $rc = 0 && $out = "0" && -z $err ]]; chk den.18
+
+# den.19/den.20 getcwd is the exception: genuinely string-valued, so the
+#               bare form is the correct one and quoting changes nothing.
+run_sash 'str s=$(getcwd)
+echo $(( (strlen $s) > 0 ))'
+[[ $rc = 0 && $out = "1" && -z $err ]]; chk den.19
+run_sash 'str s="$(getcwd)"
+echo $(( (strlen $s) > 0 ))'
+[[ $rc = 0 && $out = "1" && -z $err ]]; chk den.20
+
+# den.21 the int path yields a real timestamp, not a pointer. This is what
+#        a wrong extern signature for `sash_epochseconds` would break.
+run_sash 'int n=$(epochseconds)
+echo $(( n > 1700000000 && n < 4000000000 ))'
+[[ $rc = 0 && $out = "1" && -z $err ]]; chk den.21
+
+# den.22 and both contexts agree on the value, which they cannot if one of
+#        them is reading a pointer.
+run_sash 'int n=$(epochseconds)
+str s="$(epochseconds)"
+int m=$(( (strlen $s) ))
+echo $(( m == 10 && n > 0 ))'
+[[ $rc = 0 && $out = "1" && -z $err ]]; chk den.22
+
 
 set -e
 tally
