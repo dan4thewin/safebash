@@ -450,6 +450,17 @@ fn resolve_command(c: &mut Command, funcs: &HashSet<String>, diags: &mut Vec<Dia
     if !is_resolvable_external(name, funcs) {
         return;
     }
+    // The `None` arm is cold, and now unreachable by construction: `validate`
+    // only blesses a bare name through `BUILTINS` (every entry an intrinsic,
+    // so `is_resolvable_external` already returned above — pinned by
+    // `every_builtin_name_is_an_intrinsic`), a declared function (likewise),
+    // or `resolve_on_path`, which calls *this same* `resolve_command_path`.
+    //
+    // It stays a diagnostic rather than an `unreachable!()` because it is the
+    // graceful backstop for exactly the drift that put `kill` in `BUILTINS`
+    // without an implementation: a name `validate` calls a builtin that this
+    // file does not know. That is an orthogonal question to the one the unit
+    // test asks, and reporting it is strictly better than crashing on it.
     match resolve_command_path(name) {
         Some(abs) => c.name.kind = ExprKind::Literal(abs),
         None => diags.push(Diagnostic::error_span(

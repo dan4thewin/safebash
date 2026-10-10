@@ -3527,7 +3527,6 @@ const BUILTINS: &[&str] = &[
     "signal",
     "exec",
     "wait",
-    "kill",
     "signum",
     // Filesystem
     "cd",
@@ -3550,6 +3549,12 @@ const BUILTINS: &[&str] = &[
     // twins and silently exec'd them in statement position, while the rest
     // escaped only because no binary of that name happened to be installed.
     // VALUE_ONLY_INTRINSICS below then makes statement position SB5073.
+    //
+    // "Never PATH-resolved" is a claim about a *different* list: `resolve`
+    // gates on `is_intrinsic`, not on this one, so it holds only while every
+    // name here is also an intrinsic. `kill` was the one that was not, and it
+    // exec'd `/usr/bin/kill` for its whole life. `every_builtin_name_is_an_intrinsic`
+    // now enforces the subset relation.
     "len",
     "strlen",
     "keys",
@@ -11301,5 +11306,49 @@ mod tests {
             op: None,
         };
         check_arith_reads(&a, Span::new(1, 1), &HashSet::new(), &mut sink);
+    }
+
+    /// `BUILTINS` states that a name listed in it "is never PATH-resolved".
+    /// Nothing enforces that: the pass which would resolve it gates on
+    /// `resolve::is_intrinsic` — `BuiltinCmd` ∪ `INTRINSICS`, a *different*
+    /// list. The claim holds only while every `BUILTINS` entry is also an
+    /// intrinsic, and no type says so.
+    ///
+    /// `kill` sat here without being either. `resolve_command` quietly
+    /// rewrote the head to `/usr/bin/kill`, while `is_external_source` went
+    /// on reporting it non-external for taint — the exact divergence that
+    /// function's own doc comment calls a laundering hole. It was removed
+    /// 2026-10-10; this is what stops the next such entry landing in silence.
+    #[test]
+    fn every_builtin_name_is_an_intrinsic() {
+        let strays: Vec<&str> = BUILTINS
+            .iter()
+            .copied()
+            .filter(|n| !crate::resolve::is_intrinsic(n))
+            .collect();
+        assert!(
+            strays.is_empty(),
+            "BUILTINS entries `resolve::is_intrinsic` does not own, so \
+             `resolve_command` will PATH-resolve them and `is_external_source` \
+             will still call them non-external: {strays:?}"
+        );
+    }
+
+    /// The companion claim, from `VALUE_ONLY_INTRINSICS`' doc: "They stay in
+    /// `BUILTINS` above so they are never PATH-resolved (a machine with a
+    /// real `getenv` on PATH must not silently exec it)". Same shape of
+    /// unenforced subset relation between two hand-maintained lists.
+    #[test]
+    fn value_only_intrinsics_are_all_builtins() {
+        let strays: Vec<&str> = VALUE_ONLY_INTRINSICS
+            .iter()
+            .copied()
+            .filter(|n| !BUILTINS.contains(n))
+            .collect();
+        assert!(
+            strays.is_empty(),
+            "value-only intrinsics missing from BUILTINS, so a host with a \
+             binary of that name would exec it: {strays:?}"
+        );
     }
 }
