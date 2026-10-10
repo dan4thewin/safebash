@@ -1338,14 +1338,44 @@ fn lower_disposition_as_int(
 }
 
 /// DD#58/Option C: a sexpr nullary int intrinsic reuses the word-form
-/// `CmdSubst` node (`(getppid)` → `CmdSubst{["getppid"]}`). In int context,
-/// compute the i64 DIRECTLY (no string round-trip) rather than
-/// capture-then-atoi. Names with no direct i64 — `$(getcwd)`, `$(getenv …)`,
-/// an external command — return `None` and fall through to the string+atoi
-/// path here.
+/// `CmdSubst` node (`(getppid)` → `CmdSubst{["getppid"]}`), and the word form
+/// `$(getppid)` builds the same node directly. Either way int context computes
+/// the i64 DIRECTLY, with no string round-trip.
+///
+/// **There is no fallback, because nothing can reach one.** There was one
+/// until 2026-10-10 — `lower_value` + `sash_atoi` — and `epochseconds` was its
+/// last user, until DG's ruling that every int intrinsic be int-valued in the
+/// runtime made `sash_epochseconds()` return an i64. What remains is
+/// unreachable by construction, on the producer side:
+///
+/// - `type_check` rejects every capture in int context that is not an
+///   `ArithDenotation::Int` intrinsic (SB4030, measured for `$(getcwd)`,
+///   `$(getenv …)` and an external command, in both the `int x =` and the
+///   array-subscript positions). It is behind no flag — `--no-taint` still
+///   reports it.
+/// - `status` and `getcpid`, the two stateful `Int` names, are rewritten to
+///   the `?`/`!` slots by `nullary_stateful_slot` before codegen runs.
+/// - the remaining seven each have an `int_intrinsic_i64` arm, and `wait` is
+///   taken above.
+///
+/// The ICE earns its line by asking a *different* question from the gates
+/// upstream, on different data. `type_check` consults `resolve`'s denotation
+/// table and never looks at the emission table here, so it cannot notice an
+/// `Int` name added to `resolve` and never given an arm.
+/// `resolve_nullary_sexpr`'s guard catches exactly that — but only for the
+/// `(name)` sexpr. The word form `$(name)` builds its `CmdSubst` in
+/// `handle_command_substitution` without passing through there, so this is the
+/// hop that guard cannot cover. Silently, it would be `getcpid`'s historical
+/// 0: `lower_value` would try to exec a name that is not a program, and
+/// `sash_atoi` an empty capture.
+///
+/// Not unit-tested — reaching it needs a live `FunctionBuilder` and
+/// `ObjectModule`, and `codegen/` has no harness for either (`codegen/tests.rs`
+/// is the `[[ ]]` lowering, not a test module). The first hop of the same
+/// regression is unit-tested, at `transform::expr_handlers::tests::
+/// a_lowering_less_intrinsic_in_a_nullary_sexpr_is_a_loud_ice`.
 #[allow(clippy::too_many_arguments)]
 fn lower_cmdsubst_as_int(
-    value: &SsaValue,
     argv: &[SsaValue],
     builder: &mut FunctionBuilder,
     module: &mut ObjectModule,
@@ -1378,18 +1408,15 @@ fn lower_cmdsubst_as_int(
             return v;
         }
     }
-    let (ptr, len) = lower_value(
-        value,
-        builder,
-        module,
-        vars,
-        literals,
-        externs,
-        exit_status_var,
-    );
-    let atoi_ref = module.declare_func_in_func(externs.atoi, builder.func);
-    let call = builder.ins().call(atoi_ref, &[ptr, len]);
-    builder.inst_results(call)[0]
+    unreachable!(
+        "`$( … )` in int context must name `wait` or an intrinsic with an \
+         `int_intrinsic_i64` arm. SB4030 rejects every other capture there, \
+         and `nullary_stateful_slot` has already taken `status`/`getcpid`, so \
+         a head with no arm is an `ArithDenotation::Int` name added to \
+         `resolve` and never given one — `getcpid`'s silent 0, in the word \
+         form that `resolve_nullary_sexpr`'s guard does not see. Head: {:?}",
+        argv.first()
+    )
 }
 
 /// Emit Cranelift instructions for lowering an `SsaValue` to an i64 in
@@ -1525,11 +1552,10 @@ pub(super) fn lower_value_as_int(
         }
         // DD#58/Option C: a sexpr nullary int intrinsic reuses the word-form
         // `CmdSubst` node (`(getppid)` → `CmdSubst{["getppid"]}`). In int
-        // context, compute the i64 DIRECTLY (no string round-trip) rather than
-        // capture-then-atoi. Names with no direct i64 (`getcwd`, `getenv`)
-        // return None and fall through to the string+atoi fallback below.
+        // context, compute the i64 DIRECTLY (no string round-trip). Every
+        // capture that reaches int context is one of those — SB4030 rejects
+        // the rest — so the callee ICEs rather than falling back to atoi.
         SsaValue::CmdSubst { argv, .. } => lower_cmdsubst_as_int(
-            value,
             argv,
             builder,
             module,
