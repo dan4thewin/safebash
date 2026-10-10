@@ -228,23 +228,29 @@ fn dir_sysroot_fault(path: &str) -> Option<String> {
     }
 }
 
-/// The squashfs listing for `sysroot`, read once per image and cached.
+/// The squashfs listing for `sysroot`.
+///
+/// `check_sysroot` reads the image once, before compilation starts, and
+/// primes the cache, so this only ever hands back what is already there. The
+/// lazy re-read this used to carry could not run — `check_flags` primes the
+/// cache for the same `--sysroot` string that `root_path_facts` later asks
+/// about — and a second, unreachable copy of the read is exactly the shape
+/// that has hidden bugs here before: a fix lands on one copy and the other
+/// quietly keeps the old behaviour.
+///
+/// The assert is orthogonal to the gate rather than a restatement of it:
+/// `check_sysroot` judges the flag string, this judges the cache. It fires if
+/// a second sysroot entry point appears, if the cache key changes, or if
+/// priming becomes conditional.
 fn squashfs_listing(
     sysroot: &str,
 ) -> std::sync::MutexGuard<'static, Option<(String, HashMap<String, SquashEntry>)>> {
-    let mut cache = SQUASHFS_CACHE.lock().unwrap();
-    let holds_this_image = matches!(cache.as_ref(), Some((root, _)) if root == sysroot);
-    if !holds_this_image {
-        // Normally primed by `check_sysroot` before compilation starts. An
-        // unreadable image reports the same usage error here rather than an
-        // empty listing: a silent empty map answers every later lookup with a
-        // confident, wrong "not there".
-        let entries = read_squashfs_listing(sysroot).unwrap_or_else(|why| {
-            eprintln!("sash: --sysroot={sysroot}: {why}");
-            std::process::exit(1);
-        });
-        *cache = Some((sysroot.to_string(), entries));
-    }
+    let cache = SQUASHFS_CACHE.lock().unwrap();
+    assert!(
+        matches!(cache.as_ref(), Some((root, _)) if root == sysroot),
+        "check_sysroot primes SQUASHFS_CACHE for the --sysroot image before \
+         compilation starts, so the listing for '{sysroot}' is already here"
+    );
     cache
 }
 
@@ -1121,5 +1127,35 @@ mod invariant_tests {
         assert_eq!(normalize_path("/../../etc/passwd"), "/etc/passwd");
         assert_eq!(normalize_path("/usr/bin/../lib/x"), "/usr/lib/x");
         assert_eq!(normalize_path("/./a//b/"), "/a/b");
+    }
+
+    /// `squashfs_listing` hands back a cache `check_sysroot` has already
+    /// primed. It used to re-read the image when the cache missed — code that
+    /// could not run, because `check_flags` primes for the same `--sysroot`
+    /// string `root_path_facts` later asks about, and a second unreachable
+    /// copy of a read is how a fix lands on one copy and misses the other.
+    ///
+    /// The spec suite cannot test this: it can only run `sash`, and every way
+    /// of reaching the listing goes through the priming. So reach past the
+    /// CLI and ask for an image the cache does not hold. The panic IS the
+    /// claim that the invariant still holds; if this stops panicking, a path
+    /// to the listing has appeared that does not prime, which is the finding.
+    #[test]
+    fn listing_requires_the_cache_to_be_primed() {
+        let caught = std::panic::catch_unwind(|| {
+            drop(super::squashfs_listing(
+                "/no_such_image_for_this_test.squashfs",
+            ));
+        });
+        let err = caught.expect_err("an unprimed listing must not be answered");
+        let msg = err
+            .downcast_ref::<String>()
+            .cloned()
+            .or_else(|| err.downcast_ref::<&str>().map(|s| s.to_string()))
+            .unwrap_or_default();
+        assert!(
+            msg.contains("check_sysroot primes"),
+            "the panic must name the invariant that guarantees it, got: {msg}"
+        );
     }
 }
