@@ -89,11 +89,12 @@ run_sash 'echo "${foo:-'\''a}b'\''}"'
 # before any read is attributed. Both reject; the reason changed.
 run_sash 'echo "${foo:-$HOME}"'
 [[ $rc != 0 && -z $out && $err == *SB4070* ]]; chk vm.dv11
-# V12 double quotes are NOT the escape hatch — contrast V8. DD#65 makes the
-# operand a double-quoted-string *body*, in which `"` is an ordinary literal
-# byte that neither strips nor groups; the 2026-09-30 follow-on gave the
-# stripping hatch to single quotes alone. So the quotes land in the value.
-# This was the one `${var:-…}` spelling with no spec of its own.
+# V12 double quotes are NOT the escape hatch — contrast V8. Since DD#65's
+# 2026-09-30 follow-on the `:-` operand is a plain **literal**
+# (`parse_disposition_literal` yields `ExprKind::Literal` unconditionally),
+# so `"` is just a byte with no quoting role and lands in the value. A `$`
+# here is SB4070; a *wholly* single-quoted operand is the one spelling that
+# strips, which is V8. This was the one `${var:-…}` spelling with no spec.
 run_sash 'echo "${foo:-"x"}"'
 [[ $rc = 0 && $out = '"x"' && -z $err ]]; chk vm.dv12
 

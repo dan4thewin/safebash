@@ -16,12 +16,15 @@ a different codegen path and never renders the int as text. Specs `126.37`
 route in is not one.** The theory was that a double-quoted `${var:-…}`
 operand would reach `joined_form_to_string`. Checking `notes/decisions/`
 first — because `${x:-"abc"}` keeping its quotes while `${x:-'abc'}` loses
-them reads like a bug — found DD#65 settles it: the operand is a
-double-quoted-string *body*, where `'` and `"` are ordinary literal bytes,
-with the stripping hatch given to whole-operand single quotes alone. **Not a
+them reads like a bug — found DD#65 settles it, though I first cited its
+**superseded** half (DG caught it): since the 2026-09-30 follow-on all three
+disposition defaults take a plain **literal** operand, `$` in one is SB4070,
+and a wholly single-quoted operand is the one stripping hatch. The
+`:- ≡ "…"` double-quoted-body model is the retired original; it gives the
+same bytes here, which is how the misreading survived. **Not a
 bug.** Spec `vm.dv12` went in as behaviour coverage (the one `${var:-…}`
-spelling that had none) and passes — but line 513 stayed cold. The same
-2026-09-30 follow-on is why: the operand is now a `Literal`, not a
+spelling that had none) and passes — but line 513 stayed cold. That same
+follow-on is why: the operand is now a `Literal`, not a
 `DoubleQuoted`. The first comment on that spec claimed otherwise and was
 corrected in place. Whether *any* of the 24 call sites can pass a
 non-`Literal` is filed as `notes/tasks/expr-to-string-only-sees-literal.md`,

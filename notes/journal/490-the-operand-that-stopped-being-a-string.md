@@ -39,11 +39,17 @@ that way; `vm.dv1`–`vm.dv11` cover every `:-` form *except* double quotes.
 
 Before writing it I checked `notes/decisions/`, because the first measurement
 looked like a bug: `${x:-"abc"}` yields `"abc"` **with the quotes** while
-`${x:-'abc'}` yields `abc`. DD#65 settles it — the operand is exactly a
-double-quoted-string *body*, in which `'` and `"` are ordinary literal bytes
-that neither strip nor group, and the 2026-09-30 follow-on gave the stripping
-hatch to whole-operand single quotes alone. Both measurements are correct and
-deliberate. Not a bug. The rule earned its keep.
+`${x:-'abc'}` yields `abc`. DD#65 settles it — but I quoted the wrong half of
+it, and DG caught that. The `:- ≡ "…"` double-quoted-string-body model is the
+**original**, and it was *superseded* on 2026-09-30: all three disposition
+defaults now take a plain **literal** operand
+(`parse_disposition_literal` yields `ExprKind::Literal` unconditionally), a
+`$` in one is SB4070, and a wholly single-quoted operand is the single
+stripping hatch. The byte-level answer is the same either way, which is why
+the error survived a reading — but the retired model implies interpolation,
+which is exactly what the follow-on removed, so citing it is misleading.
+The measurements were correct and deliberate. Not a bug. The rule earned its
+keep; my reading of it did not.
 
 So `vm.dv12` went in as a plain behaviour spec, and it passes.
 
