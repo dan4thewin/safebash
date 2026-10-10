@@ -83,10 +83,18 @@ make the arms ICE with the guarantee named (per the repo's
 
 `operand_pattern_string:121` is the one site that plausibly passes something
 else — its doc says it handles `SingleQuoted`/`DoubleQuoted`/`Concat` itself
-and delegates "everything else", which would include `SimpleExpansion`. But its
-own doc also says it is "only meaningful when `expr_is_dynamic` is false", and
-an expansion is dynamic, so the callers may already exclude it. Check that
-first; it is the cheapest decisive one.
+and delegates "everything else", which would include `SimpleExpansion`.
+
+**Closed, 2026-10-10 — it cannot.** Both callers (`test_to_ssa:149` and
+`dispatch_test:946`) guard the call with `!expr_is_dynamic(...)`, and
+`expr_is_dynamic` answers `false` for exactly `Literal`, `SingleQuoted`, and a
+`DoubleQuoted`/`Concat` whose parts are all non-dynamic — every other kind is
+`true` via its `_ =>` arm. The three non-`Literal` survivors are taken by
+`operand_pattern_string`'s own arms, so the delegation receives `Literal` and
+nothing else. By construction, not by sampling.
+
+That was the likeliest of the 24 to pass something else, which strengthens the
+"outgrown its signature" reading considerably. 23 sites left to enumerate.
 
 Do **not** conclude from coverage alone. Journal 439 is the standing warning:
 checking the transform you think removes a form said "unreachable", checking
