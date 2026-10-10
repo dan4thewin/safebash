@@ -1887,3 +1887,66 @@ mod int_cell_tests {
         assert!(msg.contains("storage annotation"), "{msg}");
     }
 }
+
+#[cfg(test)]
+mod checked_arith_op_tests {
+    use super::{ArithOp, CheckedArithOp};
+
+    /// `CheckedArithOp::from_arith` answers `Some` for exactly the three ops
+    /// that can overflow an `i64`, and `None` for the other thirteen.
+    ///
+    /// Both callers — `codegen::arithmetic::emit_arith_op` and
+    /// `emit_c::emit_arith_op_c` — call it *inside* an `Add | Sub | Mul` arm
+    /// and immediately `.expect("checked op by arm guard")`, so the `None`
+    /// arms never run in a compile and the `.expect()` is load-bearing on a
+    /// classification nothing re-checks. This asserts it from the other side:
+    /// the arm guard is codegen's claim about this function, and the table
+    /// below is the function's own answer. If the two ever disagree, a build
+    /// panics in `expect` — but only for a program that reaches that arm.
+    ///
+    /// The `None` answers are the documented contract (see `from_arith`'s doc
+    /// comment for why each op cannot overflow), not a placeholder, which is
+    /// why they are pinned rather than turned into an ICE.
+    #[test]
+    fn from_arith_is_some_for_exactly_the_overflowing_ops() {
+        let checked = [
+            (ArithOp::Add, CheckedArithOp::Add),
+            (ArithOp::Sub, CheckedArithOp::Sub),
+            (ArithOp::Mul, CheckedArithOp::Mul),
+        ];
+        for (op, want) in checked {
+            assert_eq!(
+                CheckedArithOp::from_arith(op),
+                Some(want),
+                "{op:?} overflows and must have a checked form"
+            );
+        }
+
+        let unchecked = [
+            ArithOp::Div,
+            ArithOp::Mod,
+            ArithOp::Pow,
+            ArithOp::Shl,
+            ArithOp::Shr,
+            ArithOp::Eq,
+            ArithOp::Ne,
+            ArithOp::Lt,
+            ArithOp::Le,
+            ArithOp::Gt,
+            ArithOp::Ge,
+            ArithOp::And,
+            ArithOp::Or,
+            ArithOp::BitAnd,
+            ArithOp::BitOr,
+            ArithOp::BitXor,
+        ];
+        for op in unchecked {
+            assert_eq!(
+                CheckedArithOp::from_arith(op),
+                None,
+                "{op:?} cannot overflow — a checked form would be a second, \
+                 unreachable overflow path"
+            );
+        }
+    }
+}

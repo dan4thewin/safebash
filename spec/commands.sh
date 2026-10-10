@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup commands
-plan=191
+plan=193
 echo "1..$plan" >&3
 
 set +e
@@ -1327,6 +1327,26 @@ str r="$(wait $c)"
 str w="$c"
 if [[ $r == $w ]] { echo match } else { echo "mismatch r=$r w=$w" }'
 [[ $rc = 0 && $out = "match" && -z $err ]]; chk 126.39
+
+# 126.40 `$(waitstatus)` in *string* position. Same gap as 126.37 one level
+#        over: every §2 spec above reads the latch as an int, which lowers
+#        through `int_intrinsic_i64`. The string form is the only one that
+#        reaches `try_nullary_intrinsic`'s `waitstatus` arm, and it was the
+#        single cold arm among that function's five sibling intrinsics —
+#        `getpid`, `getppid`, `random` and `epochseconds` are all exercised.
+#        The read is still bound by the one-statement latch rule (126.22).
+run_sash '- /bin/sh -c "exit 7" &
+- wait
+echo $(waitstatus)'
+[[ $rc = 0 && $out = "7" && -z $err ]]; chk 126.40
+
+# 126.41 the same arm through an interpolation rather than a bare argument,
+#        which is the spelling that has to carry the digits into a `str`.
+run_sash '- /bin/sh -c "exit 7" &
+- wait
+str r="$(waitstatus)"
+echo "s=$r"'
+[[ $rc = 0 && $out = "s=7" && -z $err ]]; chk 126.41
 
 set -e
 tally

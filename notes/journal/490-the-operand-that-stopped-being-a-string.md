@@ -81,3 +81,81 @@ sweep that records into `spec.db`. So the ids were already registered and none
 were new to this one. Two sweeps at one commit hash is precisely the hazard
 AGENTS.md warns about for hash-keyed baselines; the row-order query is immune
 by construction, which is why it is the one we use.
+
+## Second pass — `atok_to_text`, `$(waitstatus)`, `from_arith`
+
+Continued down the re-ranked list. Four entries, three outcomes, and two of
+them needed no work at all.
+
+### `atok_to_text` (14 cold) — unexercised, not unreachable
+
+The arith diagnostic renderer, cc 47 / cog 1, and the largest single entry in
+the ranking. Fourteen cold arms, among them `Num`, `Var`, `Plus` and `LParen`
+— the most ordinary tokens in the language, which made it look like a gap.
+
+It has exactly two callers, and enumerating them settles it:
+
+- `expect` renders the token it *wanted*, and is called with `Colon` or
+  `RParen`. Those two are warm. Nothing else is reachable from there.
+- `parse_prefix_atom`'s fallthrough renders the token it *found*, but only
+  reaches it for tokens no earlier arm took. `parse_prefix` consumes the six
+  prefix operators, `skip_terminators` eats every `Sep` on the line before the
+  match, `parse_expansion_atom` takes `Subscript`/`BareSubscript`/
+  `ParamExpansion`, and the match's own earlier arms take `Num`, `Var`,
+  `DollarVar`, `LParen`, `BadNum` and `BadLit`.
+
+That accounts for all fourteen, exactly. `Sep` was the one that looked live
+until `skip_terminators` turned up three lines above the match.
+
+But this is a property of *these two callers*, not an invariant any pass
+enforces — which is the line the repo's rule draws. A third caller is an
+ordinary future change, and it would need every one of these arms; making them
+ICE would convert a correct renderer into a landmine. So: merely unexercised,
+keep the arms, pin them with a unit test. The test asserts each source
+spelling and, orthogonally, that no rendering equals `format!("{tok:?}")` —
+which is the bug the function was written to fix, SB4020 telling people
+`found Amp` for a `&` they had typed.
+
+### `$(waitstatus)` in string position (4 cold) — a real gap
+
+Same shape as `$(wait)`, one level over. `try_nullary_intrinsic` has five
+sibling intrinsics and `waitstatus` was the only cold one — `getpid`,
+`getppid`, `random` and `epochseconds` are all exercised. Every DD#126 §2
+spec reads the latch as `int s=$(waitstatus)`, which lowers through
+`int_intrinsic_i64` instead.
+
+`126.40` (`echo $(waitstatus)`) and `126.41` (`str r="$(waitstatus)"`) close
+it. Both still obey the one-statement latch rule, so the read sits directly
+under the `- wait` that produced it.
+
+### `from_arith` (5 cold) — unreachable, and the ICE is in the caller
+
+`CheckedArithOp::from_arith`'s five `None` arms are cold because both callers
+invoke it *inside* an `Add | Sub | Mul` match arm and then
+`.expect("checked op by arm guard")`. Unreachable by construction.
+
+Converting them would be wrong: `None` is the correct, documented answer —
+the doc comment explains per-op why each cannot overflow — and the function is
+a total classifier, not a walker making an unverified claim. What is worth
+having is the contract the `.expect()` leans on, asserted from the other side.
+The unit test pins `Some` for exactly the three overflowing ops and `None` for
+the other thirteen. It is orthogonal to codegen: today that `.expect()` is only
+tested by compiling a program that reaches the arm.
+
+Proved both tests capable of failing before trusting them — `Pow => Some(Mul)`
+makes the second one fail with the message naming the contract.
+
+### Already classified, no work
+
+`build_function_pipeline_stage` and `lower_one_pipeline_stage` (5 each) are
+the compound-pipeline stage and the pipeline recursion diagnostic — SB4022 and
+SB5037, both named in AGENTS.md as validate-shadowed. No spec can warm them.
+
+### Gate
+
+Sweep **8097**, predicted 8097 beforehand. No regressions, machinery 248,
+4 new ids — and this time the prediction of *that* was wrong: I expected 2,
+reasoning that the native pair already had rows from a standalone run.
+`spec/common.sh` contains no `sqlite3` at all; recording is entirely
+`run.sh`'s, so a standalone run never registers anything. Which also
+retro-confirms the earlier two-rows-per-id accounting.

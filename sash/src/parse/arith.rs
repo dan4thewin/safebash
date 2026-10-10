@@ -1923,4 +1923,56 @@ mod tests {
             assert!(caught.is_err(), "{tok:?} should be unreachable here");
         }
     }
+
+    /// The operand and prefix-operator spellings, which neither caller of
+    /// `atok_to_text` can currently reach.
+    ///
+    /// `expect` renders the token it *wanted*, and it is only ever called with
+    /// `Colon` or `RParen`. The other caller is `parse_prefix_atom`'s
+    /// fallthrough, which sees only what no earlier arm took: `parse_prefix`
+    /// consumes the six prefix operators, `skip_terminators` eats every `Sep`,
+    /// `parse_expansion_atom` takes the three expansion forms, and the match's
+    /// own arms take `Num`/`Var`/`DollarVar`/`LParen`/`BadNum`/`BadLit`.
+    ///
+    /// That is a property of these two callers, not an invariant any pass
+    /// enforces, so these arms are *correct and unexercised* rather than
+    /// unreachable by construction — a third caller would need every one. The
+    /// spellings are pinned here instead of being deleted or made to ICE.
+    ///
+    /// The `{:?}` assertion is the one this function exists for: SB4020 used
+    /// to format the token with `Debug` and tell people
+    /// `found Amp` for a `&` they had typed.
+    #[test]
+    fn atok_to_text_spells_the_operand_and_prefix_tokens() {
+        let cases: [(ATok, &str); 16] = [
+            (ATok::Num(42), "42"),
+            (
+                ATok::BadNum("99999999999999999999".into()),
+                "99999999999999999999",
+            ),
+            (ATok::BadLit("08".into()), "08"),
+            (ATok::Var("x".into()), "x"),
+            (ATok::DollarVar("x".into()), "$x"),
+            (ATok::Subscript("a".into(), "0".into()), "${a[0]}"),
+            (ATok::BareSubscript("a".into(), "0".into()), "a[0]"),
+            (ATok::ParamExpansion("x:-7".into()), "${x:-7}"),
+            (ATok::PlusPlus, "++"),
+            (ATok::MinusMinus, "--"),
+            (ATok::Plus, "+"),
+            (ATok::Minus, "-"),
+            (ATok::Tilde, "~"),
+            (ATok::Bang, "!"),
+            (ATok::Sep, ";"),
+            (ATok::LParen, "("),
+        ];
+        for (tok, want) in cases {
+            let got = atok_to_text(&tok);
+            assert_eq!(got, want, "{tok:?} must render as its source spelling");
+            assert_ne!(
+                got,
+                format!("{tok:?}"),
+                "a diagnostic must never leak the Rust variant name"
+            );
+        }
+    }
 }
