@@ -812,15 +812,68 @@ fn arith_intrinsic_complaint(name: &str, args: &[ArithExpr]) -> Option<String> {
     ))
 }
 
-/// The operand shapes the transform's `reconstruct_intrinsic_command` rebuilds.
+/// The operand shapes the transform's `reconstruct_intrinsic_command` rebuilds
+/// — asked of the transform itself, so the two cannot drift. This used to be a
+/// hand-kept copy of `intrinsic_operand_kind`'s match, Paren recursion and all.
 fn arith_intrinsic_operand_ok(a: &ArithExpr) -> bool {
-    match a {
-        ArithExpr::Var(_)
-        | ArithExpr::DollarVar(_)
-        | ArithExpr::Literal(_)
-        | ArithExpr::Expansion(_) => true,
-        ArithExpr::Paren(inner) => arith_intrinsic_operand_ok(inner),
-        _ => false,
+    crate::transform::expr_handlers::intrinsic_operand_kind(a).is_some()
+}
+
+/// Does this sexpr argument rebuild to a **literal**, rather than to something
+/// that reads a variable?
+///
+/// Only meaningful together with [`is_scalar_operand_intrinsic`]: the same
+/// `ArithExpr::Var("a")` rebuilds to `ExprKind::Literal("a")` for both `len`
+/// and `strlen`, but it *names a collection* to `len` and *is* the
+/// one-character string `"a"` to `strlen`. The shape is shared; the discipline
+/// is not.
+fn sexpr_arg_is_literal_operand(a: &ArithExpr) -> bool {
+    matches!(
+        crate::transform::expr_handlers::intrinsic_operand_kind(a),
+        Some(ExprKind::Literal(_))
+    )
+}
+
+/// The arguments of an arith sexpr `(name args…)`, as reads.
+///
+/// DD#102 split the int intrinsics into two operand disciplines, and this is
+/// one of the places the split has to be re-asked. `len` takes a collection
+/// **name**, so `(len a)` reads `a`. `strlen` takes a **value**, so the bare
+/// `a` in `(strlen a)` is the one-character string `"a"` and reads nothing —
+/// exactly as `$(strlen a)` does, and exactly as `intrinsic_operand_kind`
+/// already lowers it.
+///
+/// Walking every argument as a read regardless is the *pre*-DD#102 model, in
+/// which every int intrinsic resolved a name. It had both failure directions:
+///
+/// - a false positive, `(strlen nosuch)` → SB5031, which DD#102 explicitly
+///   retires — "an unknown bare word is a string literal, not a missing
+///   variable, so there is nothing to report" — while the word form
+///   `$(strlen nosuch)` happily answers 6;
+/// - a false negative, because this sink also feeds SB5050: the bare word was
+///   credited with a *phantom read*, so `str s=x; echo $(( (strlen s) ))` hid
+///   a dead variable that `$(strlen s)` reports.
+///
+/// `is_scalar_operand_intrinsic` is the canonical list of the value-taking
+/// family, shared with SB5070 — which had this very fault, keyed on the family
+/// `strlen` had just left, and was repaired on 2026-09-17. Keying off that list
+/// rather than naming `strlen` here is what stops a third copy from drifting.
+fn check_sexpr_arg_reads(
+    name: &str,
+    args: &[crate::ir::ArithExpr],
+    span: Span,
+    known: &HashSet<String>,
+    sink: &mut ReadSink,
+) {
+    if !is_scalar_operand_intrinsic(name) {
+        check_arith_each(args, span, known, sink);
+        return;
+    }
+    for a in args {
+        if sexpr_arg_is_literal_operand(a) {
+            continue;
+        }
+        check_arith_reads(a, span, known, sink);
     }
 }
 
@@ -9854,7 +9907,7 @@ fn check_arith_reads(
                 sink.collect_only(name);
                 sink.flag_unknown_sexpr_callee(name, span);
             }
-            check_arith_each(args, span, known, sink);
+            check_sexpr_arg_reads(name, args, span, known, sink);
         }
         // `${…}` import — normal-parse rvalue, checked by the ordinary path.
         Expansion(inner) => check_expr_reads(inner, known, sink),

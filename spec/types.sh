@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup types
-plan=364
+plan=368
 echo "1..$plan" >&3
 
 set +e
@@ -848,6 +848,36 @@ echo "$s" > /dev/null
 int n = $(( (strlen s) * 2 ))
 echo $n'
 [[ $rc = 0 && $out = "2" && -z $err ]]; chk 75.60
+
+# 75.166 ..and the two spellings of that operand must agree. `validate`'s read
+# enumerator walked every sexpr argument as a variable read, which is the
+# *pre*-DD#102 model in which every int intrinsic resolved a name. So the word
+# form answered 6 while the sexpr form rejected the same operand with SB5031 —
+# the diagnostic DD#102 retires outright: "an unknown bare word is a string
+# literal, not a missing variable, so there is nothing to report". Asserting
+# both in one program is what makes a future divergence impossible to miss.
+run_sash 'echo "$(strlen nosuch) $(( (strlen nosuch) ))"'
+[[ $rc = 0 && $out = "6 6" && -z $err ]]; chk 75.166
+
+# 75.167 the same phantom read had a second, quieter direction. The read sink
+# feeds SB5050 as well as SB5031, so crediting the bare word with a read hid a
+# genuinely dead variable that the word form reports. `s` is written and never
+# read here: `(strlen s)` measures the one-character string "s".
+run_sash 'str s = hello
+echo $(( (strlen s) ))'
+[[ $rc != 0 && -z $out && $err == *SB5050* ]]; chk 75.167
+
+# 75.168 `len` is unchanged and must stay so: its operand is a collection
+# *name*, so a bare word there really is a read and an unknown one really is
+# SB5031. This is the spec that fails if the fix is widened from the
+# value-taking family to every sexpr callee.
+run_sash 'echo $(( (len nosuch) ))'
+[[ $rc != 0 && -z $out && $err == *SB5031* ]]; chk 75.168
+
+# 75.169 and the `$` spelling is still a read for `strlen` too — only the bare
+# word became a literal.
+run_sash 'echo $(( (strlen $nosuch) ))'
+[[ $rc != 0 && -z $out && $err == *SB5031* ]]; chk 75.169
 
 # 75.61 a collection name is a word like any other — `strlen a` measures the
 # one-character string "a", just as `toupper a` yields "A". This used to be
@@ -2026,6 +2056,31 @@ run_sash 'array a=(x); a[0]=z; echo "${a[0]}"'
 [[ $rc = 0 && $out = "z" && -z $err ]]; chk decl.50
 run_sash 'array b=(p q); map m=@{b:-}; echo "${m[p]}"'
 [[ $rc = 0 && $out = "q" && -z $err ]]; chk decl.51
+
+# ══════════════════════════════════════════════════════════════════════
+# An int intrinsic needs an explicit double-quote wrap to reach a `str`
+# ══════════════════════════════════════════════════════════════════════
+#
+# DG (2026-10-10): "the aim is that int to string conversions must be
+# unambiguously denoted, so `str s="$x"`, the double quotes are the
+# expression of intent." The rule `int` *variables* already obeyed now
+# covers every `ArithDenotation::Int` intrinsic uniformly: bare is SB4030,
+# quoted converts.
+#
+# `epochseconds` used to be the exception in the *implementation* rather
+# than the surface — its runtime returned a decimal string, so `str` took
+# it unconverted while `int` context round-tripped it through `sash_atoi`.
+# `sash_epochseconds()` now returns an i64 like its siblings, and den.21 /
+# den.22 are the regression tests for that ABI change: a mis-declared
+# extern would give a pointer where the timestamp should be.
+#
+# `$(wait)` belongs to this table but is already pinned by errors.sh
+# csc.14 (bare is SB4030) and commands.sh 126.38 (quoted converts), so it
+# is not repeated here.
+#
+# `$(getcwd)` is the one nullary intrinsic that is genuinely string-valued,
+# and den.19 is what says so: it is the *only* name in the table that needs
+# no quotes.
 
 set -e
 tally

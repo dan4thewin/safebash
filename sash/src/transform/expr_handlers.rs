@@ -955,7 +955,13 @@ pub(crate) fn is_arith_int_intrinsic(name: &str) -> bool {
 /// One arith sexpr operand as the `ExprKind` the intrinsic builder expects.
 /// `None` for a shape that cannot be rebuilt — `validate::check_arith_sexpr_arity`
 /// (SB4045) rejects those, so this never silently yields a wrong answer.
-fn intrinsic_operand_kind(a: &ArithExpr) -> Option<ExprKind> {
+///
+/// `validate` consumes this directly rather than keeping its own copy of the
+/// shape table: `arith_intrinsic_operand_ok` asks which shapes rebuild at all,
+/// and `sexpr_arg_is_literal_operand` asks which of them rebuild to a
+/// *literal* — the question DD#102 made load-bearing, because a literal
+/// operand is not a variable read.
+pub(crate) fn intrinsic_operand_kind(a: &ArithExpr) -> Option<ExprKind> {
     Some(match a {
         ArithExpr::Var(n) => ExprKind::Literal(n.clone()),
         ArithExpr::DollarVar(n) => ExprKind::SimpleExpansion(n.clone()),
