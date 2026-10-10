@@ -247,23 +247,26 @@ $SASH -c 'echo inline-out' >/dev/null 2>op.err; rc=$?
 out=$([[ -x a.out ]] && ./a.out)
 [[ $rc = 0 && $out = "inline-out" ]]; chk cli.30
 
-# cli.31-32 `root_path_facts` squashfs branch. cli.6 covers the plain
-# directory sysroot; a `.squashfs` / `.sqsh` root instead shells out to
-# `unsquashfs -ll` once and caches the listing. A root that is not a readable
-# image yields an empty listing, so the command simply does not resolve —
-# the point is that the switch handler runs rather than what it finds.
-# Two externals in one compile exercise the second lookup, which reuses the
-# populated cache rather than repopulating it.
+# cli.31-32 an unreadable `--sysroot` image is a USAGE error, not a language
+# one, and compilation does not start (DG, 2026-10-10). These used to assert
+# one SB5011 per command head: an absent image yielded an empty listing, so
+# every head in the program reported "not found" and the single real fault —
+# a bad compiler argument — was buried under a diagnostic per line of the
+# user's source, each blaming the wrong thing.
 #
-# These two prove nothing about the listing PARSER: an absent image means
-# empty stdout, so not one line is ever parsed. The sq.* block below resolves
-# against a real image, which is what covers it.
+# These two prove nothing about the listing PARSER; they never did. The sq.*
+# block below resolves against a real image, which is what covers it — and
+# which now also exercises the cache priming this check performs.
 PATH=/bin $SASH --sysroot="$PWD/nosuch.squashfs" -c 'toolA
 toolB' -o sq1 >/dev/null 2>sq.err; rc=$?
-[[ $rc != 0 && $(grep -c SB5011 sq.err) = 2 ]]; chk cli.31
+sr_err=$(cat sq.err)
+[[ $rc != 0 && $(grep -c SB sq.err) = 0 && $sr_err == "sash: --sysroot="* && $sr_err == *nosuch.squashfs* ]]; chk cli.31
 
-PATH=/bin $SASH --sysroot="$PWD/nosuch.sqsh" -c 'toolA' -o sq2 >/dev/null 2>sq2.err; rc=$?
-[[ $rc != 0 && $(grep -c SB5011 sq2.err) = 1 ]]; chk cli.32
+# A directory sysroot that is not there has the identical failure shape, so
+# it reports the same way rather than SB5011 per head.
+PATH=/bin $SASH --sysroot="$PWD/nosuchdir" -c 'toolA' -o sq2 >/dev/null 2>sq2.err; rc=$?
+sr_err=$(cat sq2.err)
+[[ $rc != 0 && $(grep -c SB sq2.err) = 0 && $sr_err == "sash: --sysroot="* && $sr_err == *nosuchdir* ]]; chk cli.32
 
 # sq.1-15 the squashfs sysroot resolved against a REAL image.
 #

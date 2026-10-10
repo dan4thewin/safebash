@@ -2038,8 +2038,7 @@ impl Scanner {
     /// which always claims the braced form.
     fn word_ends_here(&self, b: u8, depth: i32) -> bool {
         match b {
-            b' ' | b'\t' | b'\n' | b';' | b'|' | b'&' | b'(' | b')' | b'{' | b'}' | b'<' | b'>'
-            | b'"' | b'\'' | b'`' | b'$' | b'=' => true,
+            b if always_ends_bare_word(b) => true,
             b'#' => self.arith_depth > 0,
             b'+' => self.source.get(self.pos + 1) == Some(&b'='),
             b'@' => self.source.get(self.pos + 1) == Some(&b'{'),
@@ -2096,6 +2095,69 @@ impl Scanner {
 fn logos_input(bytes: &[u8]) -> &str {
     std::str::from_utf8(bytes)
         .expect("source is valid UTF-8 and the scanner stands at a character boundary")
+}
+
+/// Bytes that end a bare word in *every* context.
+///
+/// `Scanner::word_ends_here` layers the context-dependent breaks on top of
+/// this set (`#` inside `$(( ))`, `+=`, `@{`, a doubled `[[`/`]]`). It is
+/// shared rather than duplicated because `has_bare_spelling` asks the same
+/// question from outside the scanner, and a private second copy of a word
+/// rule is how a fix lands on one reader and silently misses the other.
+pub(crate) fn always_ends_bare_word(b: u8) -> bool {
+    matches!(
+        b,
+        b' ' | b'\t'
+            | b'\n'
+            | b';'
+            | b'|'
+            | b'&'
+            | b'('
+            | b')'
+            | b'{'
+            | b'}'
+            | b'<'
+            | b'>'
+            | b'"'
+            | b'\''
+            | b'`'
+            | b'$'
+            | b'='
+    )
+}
+
+/// Could `s` be written as a single *bare* word — no quotes at all?
+///
+/// This is the test behind SB5096: a single-quoted command head is allowed
+/// only when quoting is the one way to say the name (DG, 2026-10-10 — "should
+/// only be used when there is no unquoted way to say the command name"), so
+/// `'/opt/my tool'` is legal and `'echo'` is not.
+///
+/// Biased deliberately towards "needs quoting". Every context-dependent break
+/// `word_ends_here` can take is counted here as a break, even where this
+/// particular position would not take it, because a false *accept* costs a
+/// redundant pair of quotes while a false *reject* would make a real program
+/// unsayable. The one exception is `#`, which DD#110 makes an ordinary word
+/// byte everywhere but the start of a word.
+///
+/// `unit tests cross-check this against the real Scanner` — see
+/// `bare_spelling_agrees_with_the_scanner`.
+pub(crate) fn has_bare_spelling(s: &str) -> bool {
+    let b = s.as_bytes();
+    if b.is_empty() {
+        return false;
+    }
+    !b.iter().enumerate().any(|(i, &c)| {
+        let next = b.get(i + 1).copied();
+        match c {
+            c if always_ends_bare_word(c) => true,
+            b'#' => i == 0,
+            b'+' => next == Some(b'='),
+            b'@' => next == Some(b'{'),
+            b'[' | b']' => next == Some(c),
+            _ => false,
+        }
+    })
 }
 
 /// Byte index just past the `[A-Za-z_][A-Za-z0-9_]*` identifier at `start`,
@@ -2217,5 +2279,68 @@ mod invariant_tests {
     #[test]
     fn logos_input_decodes_valid_utf8() {
         assert_eq!(logos_input("if é".as_bytes()), "if é");
+    }
+
+    /// `has_bare_spelling` answers a question the Scanner also answers, from
+    /// outside it. A prose claim that the two agree is the kind of thing that
+    /// rots silently, so drive the real scanner: a string has a bare spelling
+    /// exactly when scanning that text bare yields one token holding it whole.
+    ///
+    /// The predicate is deliberately biased towards "needs quoting", so the
+    /// assertion is one-directional: whenever it claims a bare spelling
+    /// exists, the scanner must agree. The converse is allowed to be
+    /// conservative (it costs a redundant pair of quotes, never a program
+    /// that cannot be written).
+    #[test]
+    fn bare_spelling_agrees_with_the_scanner() {
+        use super::has_bare_spelling;
+        let cases = [
+            "echo",
+            "/bin/echo",
+            "/usr/bin/env",
+            "ech*",
+            "ec?o",
+            "[e]cho",
+            "a#b",
+            "my tool",
+            "/opt/my tool",
+            "a;b",
+            "a|b",
+            "a=b",
+            "a+=b",
+            "a@{b}",
+            "a[[b",
+            "#lead",
+            "a$b",
+        ];
+        for text in cases {
+            if !has_bare_spelling(text) {
+                continue;
+            }
+            let mut sc = Scanner::new(text);
+            let tok = sc.next_token();
+            assert!(
+                sc.at_eof(),
+                "{text:?} was claimed bare-spellable but did not scan as one token"
+            );
+            assert_eq!(
+                sc.source_slice(tok.span.start, tok.span.end),
+                text,
+                "{text:?} was claimed bare-spellable but the token text differs"
+            );
+        }
+    }
+
+    /// The half that matters for SB5096: these have no unquoted spelling, so
+    /// the rule must let a single-quoted head carry them.
+    #[test]
+    fn a_name_needing_quotes_has_no_bare_spelling() {
+        use super::has_bare_spelling;
+        for text in ["my tool", "/opt/my tool", "a;b", "a|b", "a$b", "", "#lead"] {
+            assert!(
+                !has_bare_spelling(text),
+                "{text:?} must be reported as needing quotes"
+            );
+        }
     }
 }

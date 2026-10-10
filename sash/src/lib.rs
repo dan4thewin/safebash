@@ -149,26 +149,100 @@ fn parse_squashfs_line(line: &str) -> Option<(String, SquashEntry)> {
     Some((path, SquashEntry { facts, link }))
 }
 
-/// The squashfs listing for `sysroot`, read once per image and cached. An
-/// unreadable or absent image yields an empty map, so every lookup in it
-/// reports "not there" — the same answer `--sysroot=<dir>` gives for a
-/// missing root.
+/// Read the squashfs listing for `image`, or say why it cannot be read.
+///
+/// Separated from the cache so the up-front `--sysroot` check and the
+/// resolution path share one reader: a fault must read the same whether it is
+/// found before compilation starts or during it.
+fn read_squashfs_listing(image: &str) -> Result<HashMap<String, SquashEntry>, String> {
+    let output = std::process::Command::new("unsquashfs")
+        .args(["-ll", "-no-progress", image])
+        .output()
+        .map_err(|e| match e.kind() {
+            std::io::ErrorKind::NotFound => "unsquashfs is not installed".to_string(),
+            _ => format!("could not run unsquashfs: {e}"),
+        })?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let why = stderr
+            .lines()
+            .map(str::trim)
+            .find(|l| !l.is_empty())
+            .unwrap_or("unsquashfs could not read it");
+        return Err(why.to_string());
+    }
+    Ok(String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .filter_map(parse_squashfs_line)
+        .collect())
+}
+
+/// Reject a `--sysroot` the compiler cannot resolve against, before
+/// compilation starts.
+///
+/// This is a *usage* error, not an SB-coded language error (DG, 2026-10-10 —
+/// "I would not expect compilation to even start if the image was
+/// unreadable"). The alternative was worse than useless: an unreadable image
+/// yielded an empty listing, so every single command head in the program
+/// reported SB5095 "no such file" and the one real fault was buried under a
+/// diagnostic per line, each of them blaming the user's source for a problem
+/// in the compiler's arguments.
+///
+/// A successful read *primes* the cache, so `unsquashfs` runs exactly once
+/// even though the check happens long before the first path lookup.
+fn check_sysroot(path: &str) {
+    if let Some(why) = sysroot_fault(path) {
+        eprintln!("sash: --sysroot={path}: {why}");
+        std::process::exit(1);
+    }
+}
+
+/// Why `path` cannot serve as a resolution root, or `None` if it can.
+fn sysroot_fault(path: &str) -> Option<String> {
+    if path.ends_with(".squashfs") || path.ends_with(".sqsh") {
+        return image_sysroot_fault(path);
+    }
+    dir_sysroot_fault(path)
+}
+
+/// A successful read *primes* the cache, so `unsquashfs` runs exactly once
+/// even though this happens long before the first path lookup.
+fn image_sysroot_fault(path: &str) -> Option<String> {
+    match read_squashfs_listing(path) {
+        Ok(entries) => {
+            *SQUASHFS_CACHE.lock().unwrap() = Some((path.to_string(), entries));
+            None
+        }
+        Err(why) => Some(why),
+    }
+}
+
+/// A directory sysroot has the identical failure shape to an unreadable image
+/// — every lookup under a root that is not there reports "no such file" — so
+/// it earns the same up-front answer.
+fn dir_sysroot_fault(path: &str) -> Option<String> {
+    match std::fs::metadata(path) {
+        Ok(m) if m.is_dir() => None,
+        Ok(_) => Some("not a directory".to_string()),
+        Err(e) => Some(e.to_string()),
+    }
+}
+
+/// The squashfs listing for `sysroot`, read once per image and cached.
 fn squashfs_listing(
     sysroot: &str,
 ) -> std::sync::MutexGuard<'static, Option<(String, HashMap<String, SquashEntry>)>> {
     let mut cache = SQUASHFS_CACHE.lock().unwrap();
     let holds_this_image = matches!(cache.as_ref(), Some((root, _)) if root == sysroot);
     if !holds_this_image {
-        let output = std::process::Command::new("unsquashfs")
-            .args(["-ll", "-no-progress", sysroot])
-            .output();
-        let entries: HashMap<String, SquashEntry> = match output {
-            Ok(out) => String::from_utf8_lossy(&out.stdout)
-                .lines()
-                .filter_map(parse_squashfs_line)
-                .collect(),
-            Err(_) => HashMap::new(),
-        };
+        // Normally primed by `check_sysroot` before compilation starts. An
+        // unreadable image reports the same usage error here rather than an
+        // empty listing: a silent empty map answers every later lookup with a
+        // confident, wrong "not there".
+        let entries = read_squashfs_listing(sysroot).unwrap_or_else(|why| {
+            eprintln!("sash: --sysroot={sysroot}: {why}");
+            std::process::exit(1);
+        });
         *cache = Some((sysroot.to_string(), entries));
     }
     cache
@@ -476,6 +550,9 @@ fn check_flags(flags: &[&str]) {
         eprintln!("sash: unrecognized option '{f}'");
         eprintln!("{USAGE}");
         std::process::exit(1);
+    }
+    if let Some(path) = flags.iter().find_map(|f| f.strip_prefix("--sysroot=")) {
+        check_sysroot(path);
     }
 }
 

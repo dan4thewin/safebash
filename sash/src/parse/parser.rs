@@ -25,7 +25,7 @@ use super::expr::{
     is_identifier, keyword_to_str, parse_array_literal, parse_assignment_value, parse_expr,
     parse_operand_word, parse_subscript_index, span_from,
 };
-use super::lexer::{Scanner, Tok};
+use super::lexer::{has_bare_spelling, Scanner, Tok};
 use crate::diagnostic::Diagnostic;
 use crate::ir::*;
 
@@ -2479,24 +2479,67 @@ fn quoted_var_subject(var_name: &str, span: Span) -> Expr {
     }
 }
 
-fn parse_command(scanner: &mut Scanner, span: Span) -> Result<Option<Statement>, Diagnostic> {
-    // Parse the command name
-    let name_expr = parse_expr(scanner)?;
+/// A single-quoted command head denotes a literal command name.
+///
+/// Quoting is how a name containing a word-break byte is said at all —
+/// `'/opt/my tool'` has no bare spelling, and before this the compiler simply
+/// could not run such a path. It is *only* for that: DG, 2026-10-10 — a quoted
+/// head "should only be used when there is no unquoted way to say the command
+/// name", so `'echo'` is SB5096 rather than a second spelling of `echo`.
+///
+/// Normalizing here rather than in `validate` is deliberate. The rest of the
+/// compiler holds "a command head is `ExprKind::Literal`" as an invariant —
+/// `ssa_taint` and `capture_purity` both carry an `unreachable!` naming
+/// SB5011 as its guarantee — so a `SingleQuoted` head that survived parsing
+/// would reach `transform` and ICE. Rewriting it to `Literal` keeps the
+/// invariant true by construction.
+///
+/// A *double*-quoted head stays SB5011: interpolation makes it genuinely
+/// non-literal, and there is no single name to resolve at compile time.
+fn normalize_command_head(name: Expr) -> Result<Expr, Diagnostic> {
+    let ExprKind::SingleQuoted(text) = &name.kind else {
+        return Ok(name);
+    };
+    if has_bare_spelling(text) {
+        return Err(superfluous_quoted_head_diag(text, name.span));
+    }
+    Ok(Expr {
+        kind: ExprKind::Literal(text.clone()),
+        span: name.span,
+    })
+}
 
-    // Parse arguments until terminator or pipe/list operator
+fn superfluous_quoted_head_diag(text: &str, span: Span) -> Diagnostic {
+    parse_error(
+        span,
+        "SB5096",
+        format!(
+            "quoted command name `'{text}'` can be written without quotes — \
+             write `{text}`; quote a command name only when it has no bare \
+             spelling, as with a path containing a space"
+        ),
+    )
+}
+
+/// Collect a command's words and redirects until a terminator.
+fn parse_command_words(
+    scanner: &mut Scanner,
+    span: Span,
+) -> Result<(Vec<Expr>, Vec<Redirect>), Diagnostic> {
     let mut args = Vec::new();
     let mut redirects: Vec<Redirect> = Vec::new();
-
-    loop {
-        if scanner.at_eof() {
-            break;
-        }
+    while !scanner.at_eof() {
         if !parse_command_element(scanner, span, &mut args, &mut redirects)? {
             break;
         }
     }
+    Ok((args, redirects))
+}
 
-    // Build the command statement
+fn parse_command(scanner: &mut Scanner, span: Span) -> Result<Option<Statement>, Diagnostic> {
+    let name_expr = normalize_command_head(parse_expr(scanner)?)?;
+    let (args, redirects) = parse_command_words(scanner, span)?;
+
     let mut stmt = Statement {
         kind: StmtKind::Command(Command {
             name: name_expr,
@@ -2505,7 +2548,6 @@ fn parse_command(scanner: &mut Scanner, span: Span) -> Result<Option<Statement>,
         span,
     };
 
-    // Wrap with redirects if any
     if !redirects.is_empty() {
         stmt = Statement {
             kind: StmtKind::Redirected(Redirected {

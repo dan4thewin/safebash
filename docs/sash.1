@@ -151,6 +151,10 @@ Set the sysroot used for command resolution (DD#23). A directory or a
 .B .sqsh
 image. Every command path \(em whether found by the PATH search or written
 out in full \(em is checked against this root rather than the build host.
+A root that cannot be read \(em a missing directory, or an image
+.B unsquashfs
+cannot open \(em is a usage error reported before compilation starts, not a
+per\-command diagnostic.
 .PP
 A command path must name a
 .B regular file with an execute bit
@@ -168,6 +172,24 @@ to test for a program at
 time, and
 .B /usr/bin/env
 to defer the search to one.
+.PP
+A command name is a literal path. There is no globbing in command position:
+.B *
+is a glob only in an array context (DD#39), so
+.B /bin/ech*
+names a program that does not exist rather than matching one.
+.PP
+A command name whose text has no bare spelling \(em most often a path
+containing a space \(em may be written in
+.B single
+quotes, which denote the literal name:
+.RB \[dq] "\[aq]/opt/my tool\[aq]" \[dq] .
+Quoting a name that could have been written bare is
+.BR SB5096 .
+Double quotes are not accepted in command position
+.RB ( SB5011 ):
+a double\-quoted word can interpolate, so there is no single name to resolve
+at compile time.
 .
 .SS Rejected here, accepted by sash\-convert
 .B \-\-emit\-source ,
@@ -1050,6 +1072,9 @@ command resolution failed (e.g.
 .TP
 .B SB5095
 an absolute command path that is not an executable file (DD#23).
+.TP
+.B SB5096
+a quoted command name that could have been written without quotes.
 .TP
 .B SB5015
 .BR read :

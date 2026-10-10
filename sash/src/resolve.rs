@@ -316,15 +316,6 @@ pub(crate) fn command_path_fault(path: &str) -> Option<String> {
     None
 }
 
-/// A literal command head the compiler must not judge, because it is not a
-/// path: a glob is expanded at runtime (`validate`'s `is_valid_command`
-/// exempts it too), and a head carrying an expansion sigil is not a literal
-/// path either. Checking one would be a false reject, which is the only
-/// failure mode SB5095 cannot afford.
-fn head_is_unjudgeable(name: &str) -> bool {
-    name.contains(['*', '?', '[', '$'])
-}
-
 /// True if `name` is a true external command head that must be resolved to
 /// an absolute path (not a path already, not a builtin, not an intrinsic,
 /// not a user function).
@@ -506,9 +497,6 @@ fn check_path_head(name: &str, span: Span, diags: &mut Vec<Diagnostic>) {
 /// prefix; an `exec` target says so, because a failed `exec` has already torn
 /// down the process image that would have reported it.
 pub(crate) fn command_path_diag(what: &str, path: &str, span: Span) -> Option<Diagnostic> {
-    if head_is_unjudgeable(path) {
-        return None;
-    }
     let why = command_path_fault(path)?;
     Some(Diagnostic::error_span(
         span,

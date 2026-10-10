@@ -3902,8 +3902,9 @@ fn bad_command_head_diag(name: &Expr) -> Diagnostic {
         name.span,
         "SB5011",
         "a command name must be a literal path — a variable or expansion \
-         can't be resolved at compile time; use the literal path, or \
-         `/usr/bin/env` for a runtime tool"
+         can't be resolved at compile time; use the literal path, \
+         single-quote it if it contains a space, or `/usr/bin/env` for a \
+         runtime tool"
             .to_string(),
     )
 }
@@ -4172,10 +4173,12 @@ fn is_valid_command(name: &str, funcs: &HashSet<String>) -> bool {
     if funcs.contains(name) {
         return true;
     }
-    // Glob pattern (e.g. /usr/bin/*) — not a command
-    if name.contains('*') {
-        return true;
-    }
+    // No `*` arm. It used to pass any bare name containing a star, on the
+    // assumption that a glob head expands at runtime. DD#39 makes the glob
+    // star-only, and DG (2026-10-10) scoped it to array context: in command
+    // position `*` is an ordinary filename byte, so `ech*` names a program
+    // that does not exist and must be rejected rather than quietly falling
+    // through to the PATH search for `echo`.
     // PATH-resolvable: check if command exists on system PATH
     if resolve_on_path(name) {
         return true;

@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup errors
-plan=347
+plan=356
 echo "1..$plan" >&3
 
 set +e
@@ -2048,6 +2048,56 @@ echo "[$s]($(len q))"'
 run_sash 'unset zz
 echo done'
 [[ $rc != 0 && -z $out && $err == *SB4030* ]]; chk csc.40
+
+# qhead.* A single-quoted command head denotes a literal command name, so a
+# path containing a space can be run at all. Before this there was no spelling
+# for one: bare broke the word, and a double-quoted head is SB5011 because
+# interpolation makes it genuinely non-literal.
+#
+# The quoting is NOT a second spelling of an ordinary name (DG, 2026-10-10 —
+# "should only be used when there is no unquoted way to say the command
+# name"), so the rule is two-sided and both sides are pinned here. The test is
+# shared with the lexer's own `word_ends_here`, cross-checked against the real
+# Scanner by a unit test, so these specs pin the POLICY rather than restating
+# the byte set.
+rm -rf qh_dir; mkdir qh_dir; printf '#!/bin/sh\necho spaced\n' > 'qh_dir/qh tool'
+chmod +x 'qh_dir/qh tool'
+
+# qhead.1-3 superfluous quotes are rejected. A bare name, an absolute path and
+# a name containing `*` all have bare spellings — `*` is not a word break, and
+# per DD#39 not a glob in this position either.
+run_sash "'echo' hi"
+[[ $rc != 0 && -z $out && $err == *SB5096* && $err == *"without quotes"* ]]; chk qhead.1
+run_sash "'/bin/echo' hi"
+[[ $rc != 0 && -z $out && $err == *SB5096* ]]; chk qhead.2
+run_sash "'ech*'"
+[[ $rc != 0 && -z $out && $err == *SB5096* ]]; chk qhead.3
+
+# qhead.4 the case the rule exists for: a path with a space runs.
+run_sash "'$PWD/qh_dir/qh tool'"
+[[ $rc = 0 && $out == spaced ]]; chk qhead.4
+
+# qhead.5-6 double quotes are NOT the escape hatch, even when quoting is
+# genuinely needed. SB5011 stands: a double-quoted word can interpolate, so
+# there is no single name to resolve at compile time.
+run_sash '"echo" hi'
+[[ $rc != 0 && -z $out && $err == *SB5011* ]]; chk qhead.5
+run_sash "\"\$PWD/qh_dir/qh tool\""
+[[ $rc != 0 && -z $out && $err == *SB5011* ]]; chk qhead.6
+
+# qhead.7-9 `*` in command position is an ordinary filename byte. The head
+# used to be exempt from SB5095 on the assumption that a glob expands at
+# runtime; DD#39 makes the glob star-only and DG scoped it to array context,
+# so `ech*` names a program that does not exist. The exemption re-opened
+# exactly the compile-time/runtime asymmetry SB5095 was built to close, and
+# the bare arm silently fell through to the PATH search for `echo`.
+run_sash '/bin/ech* hi'
+[[ $rc != 0 && -z $out && $err == *SB5095* && $err == *"no such file"* ]]; chk qhead.7
+run_sash 'ech* hi'
+[[ $rc != 0 && -z $out && $err == *SB5011* ]]; chk qhead.8
+# ...and the `exec` position reports it too, from the same authority.
+run_sash 'exec /bin/ech*'
+[[ $rc != 0 && -z $out && $err == *SB5095* ]]; chk qhead.9
 
 
 set -e
