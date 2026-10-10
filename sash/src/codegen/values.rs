@@ -1340,8 +1340,9 @@ fn lower_disposition_as_int(
 /// DD#58/Option C: a sexpr nullary int intrinsic reuses the word-form
 /// `CmdSubst` node (`(getppid)` → `CmdSubst{["getppid"]}`). In int context,
 /// compute the i64 DIRECTLY (no string round-trip) rather than
-/// capture-then-atoi. Names without a direct i64 (`epochseconds`) return
-/// `None` and fall through to the string+atoi path here.
+/// capture-then-atoi. Names with no direct i64 — `$(getcwd)`, `$(getenv …)`,
+/// an external command — return `None` and fall through to the string+atoi
+/// path here.
 #[allow(clippy::too_many_arguments)]
 fn lower_cmdsubst_as_int(
     value: &SsaValue,
@@ -1525,8 +1526,8 @@ pub(super) fn lower_value_as_int(
         // DD#58/Option C: a sexpr nullary int intrinsic reuses the word-form
         // `CmdSubst` node (`(getppid)` → `CmdSubst{["getppid"]}`). In int
         // context, compute the i64 DIRECTLY (no string round-trip) rather than
-        // capture-then-atoi. Names without a direct i64 (`epochseconds`) return
-        // None and fall through to the string+atoi fallback below.
+        // capture-then-atoi. Names with no direct i64 (`getcwd`, `getenv`)
+        // return None and fall through to the string+atoi fallback below.
         SsaValue::CmdSubst { argv, .. } => lower_cmdsubst_as_int(
             value,
             argv,

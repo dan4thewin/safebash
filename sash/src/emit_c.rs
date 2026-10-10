@@ -255,7 +255,7 @@ fn emit_prologue(out: &mut String) {
          i64 wl, i64 has_word, i64 abort);"
     )
     .unwrap();
-    writeln!(out, "extern sash_pair sash_epochseconds(void);").unwrap();
+    writeln!(out, "extern i64 sash_epochseconds(void);").unwrap();
     writeln!(out, "extern i64 sash_getpid(void);").unwrap();
     writeln!(out, "extern i64 sash_getppid(void);").unwrap();
     writeln!(out, "extern i64 sash_random(void);").unwrap();
@@ -3328,10 +3328,13 @@ fn emit_case_conversion_c(e: &mut Emit, upper: bool, s_ptr: &str, s_len: &str) -
 /// gate. Returns Some when `name` is one of them.
 fn try_process_intrinsic_c(e: &mut Emit, name: &str) -> Option<CStr> {
     match name {
+        // DG (2026-10-10): `sash_epochseconds` returns an i64, like every
+        // other int intrinsic, so this renders it the same way its siblings
+        // do instead of taking a `(ptr, len)` from the runtime.
         "epochseconds" => {
             let t = e.fresh();
-            writeln!(e.out, "    sash_pair {t} = sash_epochseconds();", t = t).unwrap();
-            Some((format!("{}.ptr", t), format!("{}.len", t)))
+            writeln!(e.out, "    i64 {t}_es = sash_epochseconds();", t = t).unwrap();
+            Some(emit_itoa_temp(e, &format!("{}_es", t)))
         }
         // DD#56: `$(signum)` → the last-received signal number global.
         "signum" => Some(emit_itoa_temp(e, "sash_signum")),

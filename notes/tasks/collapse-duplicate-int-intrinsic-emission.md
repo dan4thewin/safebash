@@ -1,5 +1,5 @@
 title: Collapse the duplicate int-intrinsic emission in native codegen
-status: open
+status: done
 priority: P2
 kind: task
 depends: []
@@ -79,3 +79,34 @@ the `kill` bug.
 through `lower_value` + `atoi` in `lower_cmdsubst_as_int`'s fallback. Making
 it int-first would mean a new runtime entry point, i.e. a sash-rt ABI change.
 Worth asking DG separately; it is not needed for the collapse above.
+
+## Done, 2026-10-10
+
+All four gates met. `try_nullary_intrinsic` keeps exactly one arm — `getcwd`,
+the only nullary intrinsic that is genuinely string-valued — and otherwise
+delegates to `int_intrinsic_i64` + `emit_int_to_str`.
+
+**Check 1 resolved: `status` is safe under the blanket delegation**, and it is
+safe for a stronger reason than "the transform intercepts it". The transform's
+`nullary_stateful_slot` rewrites a bare `$(status)` to `Var("?")` and
+`wrong_arity_backstop` rejects `$(status …)`, so the name cannot reach this
+table at all. Rather than exclude it, the delegation plumbs `exit_status_var`
+through — which makes the arm *total* over what `int_intrinsic_i64` knows
+instead of leaving a latent fall-through to the external-exec path if the
+transform's interception ever changes.
+
+**"Not in scope" went in scope.** DG ruled the same day that every int
+intrinsic must be int-valued in the runtime and reach a `str` target only
+through an explicit `"…"`:
+
+> All the int intrinsics should need an explicit double-quote wrap to assign
+> to string var.
+
+So `sash_epochseconds()` became `-> i64` (it had been formatting into a stack
+buffer and calling `alloc_cstr`, only for `lower_cmdsubst_as_int` to `atoi` it
+straight back), `epochseconds` joined `int_intrinsic_i64`, and the C backend's
+arm now matches its `getpid`/`random`/`waitstatus` siblings. That removed the
+second of the two would-be exceptions, leaving `getcwd` alone.
+
+The denotation rule itself needed no code — it already held uniformly for all
+ten int intrinsics. It is now pinned by `spec/types.sh` `den.1`-`den.22`.

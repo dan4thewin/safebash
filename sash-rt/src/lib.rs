@@ -3177,31 +3177,19 @@ pub extern "C" fn sash_random() -> i64 {
     i64::from_ne_bytes(buf) & i64::MAX
 }
 
-/// Return current epoch seconds as a decimal string (ptr, len).
+/// Current epoch seconds.
+///
+/// DG (2026-10-10): an int intrinsic returns an **int** from the runtime. It
+/// used to return a decimal string `(ptr, len)` and so had its own private
+/// itoa, which made it the one `ArithDenotation::Int` name whose int context
+/// was a round trip — `int t=$(epochseconds)` rendered the number here only
+/// for `sash_atoi` to parse it straight back. The decimal rendering belongs
+/// to the one conversion site both backends already share (`sash_itoa`, via
+/// `emit_int_to_str`), reached only when the program denotes the conversion.
 #[no_mangle]
-pub extern "C" fn sash_epochseconds() -> (*mut u8, usize) {
+pub extern "C" fn sash_epochseconds() -> i64 {
     let ts = rustix::time::clock_gettime(rustix::time::ClockId::Realtime);
-    let secs = ts.tv_sec as u64;
-    // itoa into stack buffer
-    let mut buf = [0u8; 20];
-    let mut n = secs;
-    let mut i = buf.len();
-    if n == 0 {
-        i -= 1;
-        buf[i] = b'0';
-    } else {
-        while n > 0 {
-            i -= 1;
-            buf[i] = b'0' + (n % 10) as u8;
-            n /= 10;
-        }
-    }
-    let len = buf.len() - i;
-    let ptr = unsafe { alloc_cstr(len) };
-    unsafe {
-        core::ptr::copy_nonoverlapping(buf[i..].as_ptr(), ptr, len);
-    }
-    (ptr, len)
+    ts.tv_sec as i64
 }
 
 /// Start capturing stdout: save stdout, point it at an anonymous memory file.

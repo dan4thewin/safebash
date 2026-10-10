@@ -534,78 +534,54 @@ fn lower_arg_intrinsic(
     Some((str_ptr, str_len))
 }
 
-/// The argument-free half of the intrinsic table: `$(epochseconds)`,
-/// `$(getppid)`, `$(getpid)`, `$(random)`, `$(getcwd)`, `$(argc)`,
-/// `$(signum)`. Split out of `try_native_intrinsic` because these arms need
-/// nothing but the builder, the module and the extern table — none of the
-/// operand-lowering context — and because keeping them inline put that
-/// function over the cyclomatic gate.
+/// The **string rendering** of a nullary intrinsic: `$(getcwd)`,
+/// `$(epochseconds)`, `$(getppid)`, `$(getpid)`, `$(random)`, `$(argc)`,
+/// `$(signum)`, `$(waitstatus)`.
+///
+/// Only `getcwd` is genuinely string-valued — the runtime hands back a
+/// `(ptr, len)` and there is no int to speak of. Every other name is an
+/// **int** intrinsic, and this function deliberately does not know how to
+/// compute one. It asks `int_intrinsic_i64`, the single producer, and then
+/// denotes the conversion with `emit_int_to_str` — the shape the `wait` arm
+/// in `try_native_intrinsic` already had, and the one DG asked for
+/// (2026-10-10): *"I wouldn't expect the implementation of `wait` itself to
+/// be context-aware, I'd expect it to always return an int."*
+///
+/// Six of these names used to be spelled out here as well, each re-emitting
+/// the same call (or the same `global_value`+`load`) that `int_intrinsic_i64`
+/// emits, and only then converting. The two copies agreed, but nothing held
+/// them together — the same two-lists-one-question shape as the phantom
+/// `kill` builtin (journal 489) and the `emit_exec_static_argv` fork of
+/// `build_argv_fixed` (journal 441). A name added to `int_intrinsic_i64` is
+/// now reachable from string context for free, which is the property whose
+/// absence produced those bugs.
+///
+/// `status` is the one name `int_intrinsic_i64` knows that cannot arrive
+/// here: `transform::expr_handlers::nullary_stateful_slot` resolves a bare
+/// `$(status)` to the compiler-managed `?` slot, and `wrong_arity_backstop`
+/// catches `$(status …)`. It is covered by the delegation rather than
+/// excluded, so there is no name the int table knows and this one cannot
+/// render — excluding it would mean an `$(status)` that somehow got here
+/// fell through to the external-exec path and aborted at runtime.
 fn try_nullary_intrinsic(
     name: &str,
     builder: &mut FunctionBuilder,
     module: &mut ObjectModule,
     externs: &ExternFuncs,
+    exit_status_var: Option<Variable>,
 ) -> Option<(cranelift_codegen::ir::Value, cranelift_codegen::ir::Value)> {
-    match name {
-        "epochseconds" => {
-            let func_ref = module.declare_func_in_func(externs.epochseconds, builder.func);
-            let call = builder.ins().call(func_ref, &[]);
-            let ptr = builder.inst_results(call)[0];
-            let len = builder.inst_results(call)[1];
-            Some((ptr, len))
-        }
-        "getppid" => {
-            let func_ref = module.declare_func_in_func(externs.getppid, builder.func);
-            let call = builder.ins().call(func_ref, &[]);
-            let pid = builder.inst_results(call)[0];
-            Some(emit_int_to_str(builder, module, externs, pid))
-        }
-        "waitstatus" => {
-            let func_ref = module.declare_func_in_func(externs.wait_status, builder.func);
-            let call = builder.ins().call(func_ref, &[]);
-            let st = builder.inst_results(call)[0];
-            Some(emit_int_to_str(builder, module, externs, st))
-        }
-        "getpid" => {
-            let func_ref = module.declare_func_in_func(externs.getpid, builder.func);
-            let call = builder.ins().call(func_ref, &[]);
-            let pid = builder.inst_results(call)[0];
-            Some(emit_int_to_str(builder, module, externs, pid))
-        }
-        "random" => {
-            let func_ref = module.declare_func_in_func(externs.random, builder.func);
-            let call = builder.ins().call(func_ref, &[]);
-            let val = builder.inst_results(call)[0];
-            Some(emit_int_to_str(builder, module, externs, val))
-        }
-        "getcwd" => {
-            let func_ref = module.declare_func_in_func(externs.getcwd, builder.func);
-            let out_slot = builder.create_sized_stack_slot(StackSlotData::new(
-                StackSlotKind::ExplicitSlot,
-                8,
-                3,
-            ));
-            let out_addr = builder.ins().stack_addr(I64, out_slot, 0);
-            let call = builder.ins().call(func_ref, &[out_addr]);
-            let ptr = builder.inst_results(call)[0];
-            let len = builder.ins().stack_load(I64, out_slot, 0);
-            Some((ptr, len))
-        }
-        "argc" => {
-            let argc_gv = module.declare_data_in_func(externs.argc, builder.func);
-            let argc_base = builder.ins().global_value(I64, argc_gv);
-            let argc_val = builder.ins().load(I64, MemFlags::new(), argc_base, 0);
-            // DD#60: $(argc) is C argc (includes the program name at argv[0]).
-            Some(emit_int_to_str(builder, module, externs, argc_val))
-        }
-        "signum" => {
-            let signum_gv = module.declare_data_in_func(externs.signum, builder.func);
-            let signum_base = builder.ins().global_value(I64, signum_gv);
-            let signum_val = builder.ins().load(I64, MemFlags::new(), signum_base, 0);
-            Some(emit_int_to_str(builder, module, externs, signum_val))
-        }
-        _ => None,
+    if name == "getcwd" {
+        let func_ref = module.declare_func_in_func(externs.getcwd, builder.func);
+        let out_slot =
+            builder.create_sized_stack_slot(StackSlotData::new(StackSlotKind::ExplicitSlot, 8, 3));
+        let out_addr = builder.ins().stack_addr(I64, out_slot, 0);
+        let call = builder.ins().call(func_ref, &[out_addr]);
+        let ptr = builder.inst_results(call)[0];
+        let len = builder.ins().stack_load(I64, out_slot, 0);
+        return Some((ptr, len));
     }
+    let v = int_intrinsic_i64(name, builder, module, externs, exit_status_var)?;
+    Some(emit_int_to_str(builder, module, externs, v))
 }
 
 /// DD#101: `$(getenv NAME)` reports a *lookup* status — 0 when NAME is
@@ -644,7 +620,7 @@ fn try_native_intrinsic(
     externs: &ExternFuncs,
     exit_status_var: Option<Variable>,
 ) -> Option<(cranelift_codegen::ir::Value, cranelift_codegen::ir::Value)> {
-    if let Some(v) = try_nullary_intrinsic(name, builder, module, externs) {
+    if let Some(v) = try_nullary_intrinsic(name, builder, module, externs, exit_status_var) {
         return Some(v);
     }
     match name {
@@ -740,13 +716,13 @@ pub(super) fn emit_wait_value(
 }
 
 /// Compute a nullary int intrinsic as a **direct i64** (no string round-trip).
-/// The single source of truth for the sexpr `(getppid)`/`(argc)`/… value:
-/// `lower_value_as_int` (arith/int context) calls this directly, mirroring
-/// what the string arms in `try_native_intrinsic` compute before
-/// `emit_int_to_str`. Returns `None` for a name without a direct i64 (e.g.
-/// `epochseconds`, whose runtime yields a string — the caller falls back to
-/// atoi). `getpid`/`status` are reached via the `$$`/`$?` specials, not here,
-/// but are included so the helper is complete. DD#58/Option C.
+/// The single source of truth for the nullary intrinsic's value in *both*
+/// contexts: `lower_value_as_int` (arith/int context) calls this directly,
+/// and `try_nullary_intrinsic` calls it too and wraps the result in
+/// `emit_int_to_str` for string context. Returns `None` for a name with no
+/// direct i64 — `getcwd`, which is genuinely string-valued, and every
+/// non-intrinsic. `getpid`/`status` are reached via the `$$`/`$?` specials,
+/// not here, but are included so the helper is complete. DD#58/Option C.
 pub(super) fn int_intrinsic_i64(
     name: &str,
     builder: &mut FunctionBuilder,
@@ -774,6 +750,15 @@ pub(super) fn int_intrinsic_i64(
         }
         "random" => {
             let f = module.declare_func_in_func(externs.random, builder.func);
+            let call = builder.ins().call(f, &[]);
+            builder.inst_results(call)[0]
+        }
+        // DG (2026-10-10): `sash_epochseconds` returns an i64. It used to
+        // return a decimal string, which made this the one `Int`-denoted
+        // name with no direct i64 — `int t=$(epochseconds)` rendered the
+        // number in the runtime only to `sash_atoi` it straight back.
+        "epochseconds" => {
+            let f = module.declare_func_in_func(externs.epochseconds, builder.func);
             let call = builder.ins().call(f, &[]);
             builder.inst_results(call)[0]
         }

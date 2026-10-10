@@ -723,12 +723,9 @@ pub(super) fn declare_runtime_functions(module: &mut ObjectModule) -> ExternFunc
     // sash_getcwd(out_len) -> ptr  (same sig as existing)
     // Already declared via pwd — reuse getcwd_func below
 
-    // sash_epochseconds() -> (ptr, len)
-    let mut epoch_sig = module.make_signature();
-    epoch_sig.returns.push(AbiParam::new(I64));
-    epoch_sig.returns.push(AbiParam::new(I64));
+    // sash_epochseconds() -> i64  (same nullary → i64 signature)
     let epochseconds_func = module
-        .declare_function("sash_epochseconds", Linkage::Import, &epoch_sig)
+        .declare_function("sash_epochseconds", Linkage::Import, &getpid_sig)
         .expect("declare");
 
     // sash_glob(dir_ptr, dir_len, pat_ptr, pat_len) -> table_ptr
