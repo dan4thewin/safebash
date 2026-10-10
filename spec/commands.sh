@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup commands
-plan=188
+plan=191
 echo "1..$plan" >&3
 
 set +e
@@ -1298,6 +1298,35 @@ run_sash_vanish 'SPEC_VANISH_CMD &
 int s=$(waitstatus)
 exit $s'
 [[ $rc = 127 && -z $err ]]; chk 126.36
+
+# 126.37 `$(wait)` in *string* position. Every DD#126 spec above reads it as an
+#        int (`int p=$(wait)`), which lowers through a different codegen path;
+#        the string form goes through `try_native_intrinsic`'s `wait` arm and
+#        renders the pid with `emit_int_to_str`, which nothing exercised. The
+#        no-children sentinel is the one value that is deterministic, and it
+#        pins the sign as well as the digits.
+run_sash 'echo $(wait)'
+[[ $rc = 0 && $out = "-1" && -z $err ]]; chk 126.37
+
+# 126.38 the string rendering agrees with the int one: `"$(wait)"` is the same
+#        pid `$(getcpid)` reported, spelled as text. Asserting the two against
+#        each other inside the program keeps the check deterministic without
+#        the harness having to know a pid.
+run_sash '/bin/true &
+int c=$(getcpid)
+str r="$(wait)"
+str w="$c"
+if [[ $r == $w ]] { echo match } else { echo "mismatch r=$r w=$w" }'
+[[ $rc = 0 && $out = "match" && -z $err ]]; chk 126.38
+
+# 126.39 the targeted form `$(wait $p)` in string position — a second arity
+#        into `emit_wait_value`, same string rendering.
+run_sash '/bin/true &
+int c=$(getcpid)
+str r="$(wait $c)"
+str w="$c"
+if [[ $r == $w ]] { echo match } else { echo "mismatch r=$r w=$w" }'
+[[ $rc = 0 && $out = "match" && -z $err ]]; chk 126.39
 
 set -e
 tally

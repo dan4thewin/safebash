@@ -5,7 +5,7 @@
 set -eu
 . common.sh
 setup var_modifiers
-plan=158
+plan=159
 echo "1..$plan" >&3
 
 set +e
@@ -89,6 +89,13 @@ run_sash 'echo "${foo:-'\''a}b'\''}"'
 # before any read is attributed. Both reject; the reason changed.
 run_sash 'echo "${foo:-$HOME}"'
 [[ $rc != 0 && -z $out && $err == *SB4070* ]]; chk vm.dv11
+# V12 double quotes are NOT the escape hatch — contrast V8. DD#65 makes the
+# operand a double-quoted-string *body*, in which `"` is an ordinary literal
+# byte that neither strips nor groups; the 2026-09-30 follow-on gave the
+# stripping hatch to single quotes alone. So the quotes land in the value.
+# This was the one `${var:-…}` spelling with no spec of its own.
+run_sash 'echo "${foo:-"x"}"'
+[[ $rc = 0 && $out = '"x"' && -z $err ]]; chk vm.dv12
 
 # ── Braced rejected/env vars reject like the unbraced form (was a silent
 # bypass: `${RANDOM}`/`${HOME}` compiled to empty — validate_expr only checked
