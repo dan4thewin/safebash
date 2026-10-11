@@ -99,3 +99,81 @@ That was the likeliest of the 24 to pass something else, which strengthens the
 Do **not** conclude from coverage alone. Journal 439 is the standing warning:
 checking the transform you think removes a form said "unreachable", checking
 the *producer* said "reachable", and three of eight candidates failed that way.
+
+## Enumeration, 2026-10-10 — all 24 sites settled
+
+Every live call site passes an `ExprKind::Literal`, each by a guarantee that
+runs *before* the transform. Enumerated from the producer/guard side, not from
+samples.
+
+**Ten sites take a command head — `expr_to_string(&c.name)`:**
+
+    cmd_handlers.rs:21   handle_read            statements.rs:736    is_attest_left
+    control_flow.rs:372  lower_if               stmt_handlers.rs:28  handle_command
+    control_flow.rs:623  argv_splat_start       stmt_handlers.rs:700 is_array_read_last
+    statements.rs:108    try_producer_tail_call stmt_handlers.rs:708 is_lastpipe_read_last
+    statements.rs:267    body_calls_user_function stmt_handlers.rs:754 push_command_stage
+
+One guarantee covers all ten: `validate::check_cmd_at:3931` rejects any head
+that is not a `Literal` (`bad_command_head_diag`) and returns. It reaches every
+`StmtKind::Command` in the program — including pipeline stages, since
+`ir.rs::structural_bodies:126` maps `Pipeline(p) => vec![&p.commands]`. That
+last hop is what covers `push_command_stage`.
+
+**Two sites take `signal`'s args** (`cmd_handlers.rs:88, 91`): SB4059-SB4062
+require "exactly two literal arguments", and `check_signum_arg` emits "a
+`signal` number must be an integer literal, not an expansion". The handler's
+own comment records that the gates which used to stand here each turned a
+malformed `signal` into a silent no-op.
+
+**Four sites take a collection or target name** — `detect_array_iter:730`
+(map), `collection_operand_name:459` (a `len`/`join` operand; a splat is
+SB5062 before transform), `handle_keys:565, 566` (map and dest). All are name
+positions the validator constrains.
+
+**One site takes a read/match fill target** — `fill_target_name:226`, called
+from `lower_newread` and `try_handle_match_into`.
+
+**One site is DD#65's operand** — `pe_operand_string:371`. Covered in "What
+this is not" above: the 2026-09-30 follow-on made the operand a `Literal`
+carrying raw body text.
+
+**One site was closed earlier** — `operand_pattern_string:121` (see above).
+
+**Three sites are not independent routes** — `expressions.rs:492, 494, 522`
+recurse from *inside* arms that are themselves cold, so they can only run if
+an enclosing arm does.
+
+**One site is now gone.** `cmdsub_body_value:38`'s `_ =>` arm was the only
+candidate that could receive a non-`Literal`, and it could receive exactly
+one thing. Its sole caller `handle_command_substitution` is reached only from
+`expr_to_value`'s fall-through, which names every `ExprKind` except
+`CommandSubstitution` and `Test` — and `ExprKind::Test` is statement-only
+(built only by `parse_test_command`/`parse_attest`), the same guarantee
+`validate` already ICEs on as `TEST_IS_STATEMENT_ONLY`. Measured: the function
+is entered 185 times and that arm is taken 0.
+
+It answered *silently* — `SsaValue::Expr("[[ ... ]]")`, carrying a test's
+source text into a value position, which is the shape that let a `join`
+separator become the five characters `"$sep"`. Converted to an
+`unreachable!()` naming the guarantee, with a `#[should_panic]` unit test.
+
+### Gate 3: what the two helpers are
+
+`joined_form_to_string` and `opaque_form_to_string` are **unreachable by
+construction**, as a corollary: they are called only from `expr_to_string`'s
+own non-`Literal` arms, and nothing passes a non-`Literal`.
+
+### What is left — an API decision for DG
+
+All three gates are met, and the measurement the task opened with now has an
+explanation: `expr_to_string` is entered 21338 times and takes one arm because
+**every caller is asking the same question** — "what is the literal name/text
+here?" — and the validator has already guaranteed the answer exists. The
+general source-text renderer is an API no caller wants.
+
+That is the "outgrown its signature" reading, confirmed rather than suspected.
+Narrowing it (to `literal_name_of()`), or making its arms ICE, is a
+consequential and hard-to-reverse API change across 23 call sites — **DG's
+call, not the implementer's.** The enumeration above is the evidence he needs
+to make it; nothing further should be changed here without that ruling.

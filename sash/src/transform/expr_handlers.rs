@@ -30,14 +30,35 @@ pub(super) fn handle_command_substitution(expr: &Expr, state: &VersionState) -> 
 
 /// The general `$( … )` lowering: carry the body for `lift_int_func_calls` to
 /// materialize into a capture temp.
+///
+/// Only an `ExprKind::CommandSubstitution` can arrive. The sole caller is
+/// [`handle_command_substitution`], itself reached only from `expr_to_value`'s
+/// fall-through, and that match names every `ExprKind` except
+/// `CommandSubstitution` and `Test` — so those two are exactly what the
+/// fall-through admits.
+///
+/// `ExprKind::Test` cannot be the one that arrives: it is built only by
+/// `parse_test_command` and `parse_attest`, both of which yield a *statement*,
+/// never a value. [`crate::validate`] relies on the same guarantee and ICEs on
+/// it (`TEST_IS_STATEMENT_ONLY`).
+///
+/// So this ICEs rather than answering. The answer it used to give was
+/// `SsaValue::Expr("[[ ... ]]")` — an opaque placeholder carrying the *source
+/// text* of a test into a value position, which is the shape that let a
+/// `join` separator silently become the five characters `"$sep"`. If `[[ … ]]`
+/// ever becomes an expression, this lowering has to be written knowingly.
 fn cmdsub_body_value(expr: &Expr) -> SsaValue {
-    match &expr.kind {
-        ExprKind::CommandSubstitution(stmts) => SsaValue::CmdSubstBody {
-            body: stmts.to_vec(),
-        },
-        _ => SsaValue::Expr(expr_to_string(expr)),
+    let ExprKind::CommandSubstitution(stmts) = &expr.kind else {
+        unreachable!("{CMDSUB_BODY_IS_A_SUBSTITUTION}");
+    };
+    SsaValue::CmdSubstBody {
+        body: stmts.to_vec(),
     }
 }
+
+const CMDSUB_BODY_IS_A_SUBSTITUTION: &str =
+    "ICE: a non-`CommandSubstitution` reached cmdsub_body_value — `[[ … ]]` \
+     became an expression without this lowering being extended";
 
 /// A `BuiltinCmd` that is a **statement**: it has no value shape, so a
 /// single-command `$( … )` around it must be lowered as a *body*, not as an
@@ -1177,6 +1198,28 @@ mod tests {
             );
         }
     }
+    /// `$( … )` lowering must only ever meet a `CommandSubstitution`.
+    /// `expr_to_value`'s fall-through admits exactly two `ExprKind`s —
+    /// `CommandSubstitution` and `Test`, every other variant having its own
+    /// arm — and `Test` is built only by `parse_test_command`/`parse_attest`,
+    /// both of which yield a statement.
+    ///
+    /// The ICE is the claim. The arm it replaced answered silently, carrying
+    /// the source text `"[[ ... ]]"` into a value position as an opaque
+    /// `SsaValue::Expr`; whoever makes `[[ … ]]` an expression has to write
+    /// this lowering knowingly rather than inherit a placeholder.
+    #[test]
+    #[should_panic(expected = "became an expression without this lowering")]
+    fn a_test_cannot_reach_the_cmdsub_body_lowering() {
+        cmdsub_body_value(&Expr {
+            kind: ExprKind::Test(TestExpr::Unary {
+                op: "-n".to_string(),
+                operand: Box::new(lit("t")),
+            }),
+            span: Span::new(1, 1),
+        });
+    }
+
     /// Bug #3 fork A: a mutation in a *value* context is either rejected by
     /// SB4020 or hoisted into a preceding store, so the value path never
     /// meets one. The half-wired path this replaced silently dropped the
