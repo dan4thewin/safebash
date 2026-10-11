@@ -946,16 +946,35 @@ fn lower_one_pipeline_stage(
         StmtKind::Redirected(r) => (&r.body.kind, r.redirects.clone()),
         other => (other, vec![]),
     };
-    if let StmtKind::Command(c) = inner {
-        push_command_stage(c, redirects, idx, ssa, state, block, stages);
-    } else {
-        let compound_entry = ssa.new_block(&format!("pipe_compound_{}", idx));
-        let compound_exit = lower_one(stmt, ssa, state, compound_entry);
-        ssa.block_mut(compound_exit).terminator = Terminator::Return;
-        ssa.compound_pipeline_blocks.push(compound_entry);
-        stages.push((format!("__compound_{}", compound_entry), vec![], vec![]));
-    }
+    let StmtKind::Command(c) = inner else {
+        unreachable!("{COMPOUND_STAGE_IS_REJECTED_AT_PARSE}");
+    };
+    push_command_stage(c, redirects, idx, ssa, state, block, stages);
 }
+
+/// Every pipeline stage is a `Command`, because the *parser* says so — this is
+/// shadowed one pass earlier than most, not by `validate`. Measured 2026-10-11
+/// over eight spellings, all rejected before the transform runs: a `{ }` group
+/// first or last in the pipe, a `while`/`if`/`for` head, and `(( … ))` are
+/// each **SB4022**; a redirected group is SB4021; `case` is SB4029.
+///
+/// The arm this replaced was not a wrong answer — it was a complete, plausible
+/// lowering (fork a compound child into `compound_pipeline_blocks` as
+/// `__compound_<id>`) that had never once run. That is the dangerous shape:
+/// relax SB4022 and the route opens *in silence*, with no spec having ever
+/// exercised it. The sibling machinery is still live and still tested —
+/// `build_function_pipeline_stage` takes the same path for a function-call
+/// stage — so nothing is lost by making this entry say what it knows.
+///
+/// Contrast `build_function_pipeline_stage`'s recursion guard below, which is
+/// also unreachable and is deliberately *kept* as a real diagnostic: that one
+/// states an invariant the site is uniquely able to state (DD#116). This one
+/// states nothing; it just duplicates a lowering for a form the language does
+/// not have.
+const COMPOUND_STAGE_IS_REJECTED_AT_PARSE: &str =
+    "ICE: a compound command reached a pipeline stage — SB4022 rejects one at \
+     parse, so a stage is always a Command; the compound-stage lowering was \
+     never exercised and must be written knowingly";
 
 /// A `Command` pipeline stage that names a known function: inline the function
 /// body into its own SSA blocks (a forked compound child, recorded in
@@ -1561,6 +1580,29 @@ mod invariant_tests {
             msg.contains(want),
             "the ICE must name what guarantees it: wanted {want:?}, got {msg:?}"
         );
+    }
+
+    /// A pipeline stage is always a `Command`: SB4022 rejects a compound one
+    /// at *parse*, a pass earlier than the usual `validate` shadow. Measured
+    /// over eight spellings — `{ }` first and last, `while`/`if`/`for` heads,
+    /// `(( … ))`, a redirected group (SB4021) and `case` (SB4029).
+    ///
+    /// The arm this replaced was a complete, never-executed lowering. The ICE
+    /// is the claim that no such stage exists; if SB4022 is ever relaxed, this
+    /// is what stops the untested route from opening in silence.
+    #[test]
+    #[should_panic(expected = "SB4022 rejects one at parse")]
+    fn a_compound_pipeline_stage_is_a_loud_ice() {
+        let (mut ssa, mut state, block) = fixtures();
+        let mut stages = vec![];
+        let stmt = Statement {
+            kind: StmtKind::Pipeline(Pipeline {
+                commands: vec![],
+                negated: false,
+            }),
+            span: Span::new(1, 1),
+        };
+        lower_one_pipeline_stage(&stmt, 0, &mut ssa, &mut state, block, &mut stages);
     }
 
     #[test]

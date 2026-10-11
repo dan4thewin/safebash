@@ -64,8 +64,23 @@ renderer is an API no caller wants. Narrowing it to `literal_name_of()`, or
 making its arms ICE, spans 23 call sites and is hard to reverse — **DG's
 call.** The enumeration is in the task file so it needn't be redone.
 
-Sweep **8155** (3962 c + 4180 native + 13 skipped), zero failing, zero flips.
-`mk test` 102 units green.
+**Postscript — a fourth cold arm, shadowed at *parse*.** Re-ranked after
+refreshing `coverage.db`. `lower_one_pipeline_stage`'s compound branch is
+unreachable: checked by execution over eight spellings (`{ }` first and last,
+`while`/`if`/`for` heads, `(( … ))`, redirected group, `case`) — SB4022 six
+times, SB4021 once, SB4029 once. **All parser diagnostics**, so this is
+shadowed a pass earlier than the "validate-shadowed" category assumes.
+
+It was not a wrong answer but a *complete, never-executed lowering* (fork a
+compound child as `__compound_<id>`) that would open in silence if SB4022 were
+relaxed. Now an ICE + `#[should_panic]` test. Its neighbour fifteen lines down,
+`build_function_pipeline_stage`'s recursion guard, is also unreachable and
+correctly **stays** a diagnostic — DD#116, it states an invariant only that
+site can state. Two unreachable blocks, opposite treatments; "unreachable" was
+never the deciding question.
+
+Sweep 8155, zero flips; `mk test` 103 units.
+
 
 ## ══ STATUS (2026-10-10, latest) — the spelling that disagreed with itself ══
 

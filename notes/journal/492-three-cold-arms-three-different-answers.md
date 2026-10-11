@@ -136,3 +136,44 @@ general source-text renderer is an API that no caller wants.
 Narrowing it to `literal_name_of()`, or making its arms ICE, is a change across
 23 call sites and is hard to reverse. That is DG's call. The enumeration is
 written down in the task file so he can make it without redoing the work.
+
+## Postscript: a fourth, and the first one shadowed at *parse*
+
+Re-ranked after refreshing `coverage.db` (which flagged exactly the three files
+I had edited — the staleness check works). The new head was the
+`expr_to_string` family, now blocked on DG, and `resolve_command`, already
+triaged. The first actionable item was a pair of pipeline-stage functions.
+
+Half of it needed nothing: `build_function_pipeline_stage`'s recursion guard
+already carries a thorough comment explaining it is a DD#116 specification-
+fidelity backstop, kept deliberately as a real diagnostic because "no function
+is inlined into itself" is a statement that site is uniquely able to make.
+
+The other half, `lower_one_pipeline_stage`'s compound branch, had no comment at
+all. AGENTS.md asserts it is SB4022-shadowed; I checked by execution rather
+than trusting the note, across eight spellings — `{ }` first and last in the
+pipe, `while`/`if`/`for` heads, `(( … ))`, a redirected group, `case`. All
+rejected: SB4022 six times, SB4021 once, SB4029 once.
+
+**The notable part is *where*.** Every one of those is a *parser* diagnostic,
+not a validator one. This arm is shadowed a pass earlier than the "validate-
+shadowed" category assumes, which is worth knowing because it changes what
+could ever reopen it.
+
+What made it worth converting rather than annotating is what it did instead of
+refusing: a complete, plausible lowering — fork a compound child into
+`compound_pipeline_blocks` as `__compound_<id>` — that had never once run.
+Relax SB4022 and that route opens in silence, with no spec behind it. Exactly
+the shape the repo rule names. The sibling machinery stays live and tested
+(`build_function_pipeline_stage` takes the same path for a function-call
+stage), so nothing was lost.
+
+The contrast with its neighbour is the useful thing to have written down: two
+unreachable blocks, fifteen lines apart, with opposite correct treatments. One
+states an invariant only it can state, so it stays a diagnostic. One states
+nothing and merely duplicates a lowering for a form the language does not have,
+so it ICEs. "Unreachable" was never the deciding question.
+
+Sweep 8155 with the ICE in place — corroboration, not proof, since "merely
+unexercised" is silent by definition. The `#[should_panic]` test is the part
+that makes the claim falsifiable.
