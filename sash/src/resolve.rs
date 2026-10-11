@@ -610,3 +610,79 @@ fn resolve_test_expr(t: &mut TestExpr, funcs: &HashSet<String>, diags: &mut Vec<
         }
     }
 }
+
+/// Two arms of [`resolve_command`] that no *program* can reach, because an
+/// earlier pass rejects the shape — so under DG's coverage rule they are the
+/// unit-test half, not exempt work. Neither is an `unreachable!()`: both are
+/// deliberate graceful degradation, and the comments at the sites explain
+/// why. A unit test is the only artefact that can execute them, and the only
+/// one that fails if the degradation stops degrading gracefully.
+#[cfg(test)]
+mod shadowed_arm_tests {
+    use super::*;
+
+    fn cmd(kind: ExprKind) -> Command {
+        Command {
+            name: Expr {
+                kind,
+                span: Span::new(1, 1),
+            },
+            args: vec![],
+        }
+    }
+
+    /// A non-`Literal` head returns early, leaving the command untouched.
+    /// `validate` raises SB5011 for these in `run_structural_checks`, which
+    /// exits before this pass runs at all, so the `else` is cross-pass
+    /// unreachable. The claim under test is that it *degrades* — resolves
+    /// nothing and says nothing — rather than resolving something wrong.
+    #[test]
+    fn a_non_literal_head_is_left_alone_and_undiagnosed() {
+        let funcs = HashSet::new();
+        let mut diags = Vec::new();
+        let mut c = cmd(ExprKind::SingleQuoted("cat".into()));
+        resolve_command(&mut c, &funcs, &mut diags);
+        assert!(
+            diags.is_empty(),
+            "the early return must not diagnose: validate owns SB5011 for \
+             non-literal heads, and a second one here would double-report"
+        );
+        assert!(
+            matches!(&c.name.kind, ExprKind::SingleQuoted(s) if s == "cat"),
+            "the head must be left exactly as found, not resolved"
+        );
+    }
+
+    /// A bare name that `is_resolvable_external` accepts but
+    /// `resolve_command_path` cannot find. Unreachable by construction —
+    /// `validate` only blesses a bare name via `BUILTINS` (all intrinsics,
+    /// so the guard above returns first), a declared function (likewise), or
+    /// `resolve_on_path`, which calls this same resolver. It is kept as the
+    /// backstop for exactly the drift that once put `kill` in `BUILTINS`
+    /// with no implementation. If this test stops producing SB5011, that
+    /// backstop is gone.
+    #[test]
+    fn an_unresolvable_bare_external_reports_sb5011_rather_than_crashing() {
+        let funcs = HashSet::new();
+        let mut diags = Vec::new();
+        let name = "sash_no_such_command_zq7";
+        assert!(
+            is_resolvable_external(name, &funcs),
+            "test premise: the name must get past the guard above, or this \
+             exercises the guard instead of the arm it targets"
+        );
+        assert!(
+            resolve_command_path(name).is_none(),
+            "test premise: the name must not resolve on PATH or in the sysroot"
+        );
+        let mut c = cmd(ExprKind::Literal(name.into()));
+        resolve_command(&mut c, &funcs, &mut diags);
+        assert_eq!(diags.len(), 1, "expected exactly one diagnostic");
+        assert_eq!(diags[0].code, "SB5011");
+        assert!(
+            diags[0].message.contains(name),
+            "the diagnostic must name the command it could not find, got: {}",
+            diags[0].message
+        );
+    }
+}

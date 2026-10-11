@@ -1119,3 +1119,110 @@ mod invariant_tests {
         }
     }
 }
+
+/// The three cold sites in [`attach_redirects_to_last_inst`]. Two are ICEs
+/// and one is a live totality arm, and all three are unreachable from any
+/// *program* — so under DG's coverage rule they are the unit-test half of
+/// the campaign rather than exempt. Each ICE test asserts the message names
+/// the rule that guarantees it; a test that stops panicking is the finding.
+#[cfg(test)]
+mod redirect_attach_tests {
+    use super::*;
+    use crate::ir::{Redirect, RedirectOp};
+
+    fn one_redirect() -> Vec<Redirect> {
+        vec![Redirect {
+            fd: None,
+            op: RedirectOp::Write,
+            target: Expr {
+                kind: ExprKind::Literal("/tmp/x".into()),
+                span: Span::new(1, 1),
+            },
+        }]
+    }
+
+    fn stage(name: &str) -> (String, Vec<SsaValue>, Vec<Redirect>) {
+        (name.to_string(), vec![], vec![])
+    }
+
+    fn catch(f: impl FnOnce()) -> String {
+        let err = std::panic::catch_unwind(std::panic::AssertUnwindSafe(f))
+            .expect_err("this shape must ICE");
+        err.downcast_ref::<&'static str>()
+            .map(|s| (*s).to_string())
+            .or_else(|| err.downcast_ref::<String>().cloned())
+            .expect("ICE payload is a string")
+    }
+
+    /// A redirect-carrying statement that lowered to nothing at all. SB4046
+    /// rejects the heads that lower to no instruction, so the block is never
+    /// empty here.
+    #[test]
+    fn redirects_on_an_empty_block_are_a_loud_ice() {
+        let msg = catch(|| {
+            let mut ssa = SsaProgram::new();
+            let blk = ssa.new_block("entry");
+            attach_redirects_to_last_inst(&mut ssa, blk, &one_redirect());
+        });
+        assert!(
+            msg.contains("SB4046") && msg.contains("head_may_take_redirect"),
+            "the ICE must name the rule that guarantees it, got: {msg}"
+        );
+    }
+
+    /// An instruction that cannot carry redirects at all — SB4046 again.
+    /// `Assign` stands for the eighteen arms that share this panic.
+    #[test]
+    fn redirects_on_a_non_redirectable_inst_are_a_loud_ice() {
+        let msg = catch(|| {
+            let mut ssa = SsaProgram::new();
+            let blk = ssa.new_block("entry");
+            ssa.block_mut(blk).insts.push(SsaInst::Assign {
+                target: crate::ssa::VarRef::new("x", 0),
+                value: SsaValue::Literal("1".into()),
+            });
+            attach_redirects_to_last_inst(&mut ssa, blk, &one_redirect());
+        });
+        assert!(
+            msg.contains("SB4046") && msg.contains("head_may_take_redirect"),
+            "the ICE must name the rule that guarantees it, got: {msg}"
+        );
+    }
+
+    /// The `Pipeline` arm. Not an ICE — it does real work, and no program
+    /// reaches it because the parser binds `a | b > f` to the final *stage*
+    /// (`Pipeline[Command, Redirected(Command)]`) and rejects every spelling
+    /// that would wrap a pipeline as a unit: `{ a | b } > f` is SB4021, a
+    /// backgrounded one SB4022.
+    ///
+    /// It is kept rather than made an ICE because it is the correct answer
+    /// if that binding ever changes. The test pins *which* stage receives
+    /// the redirects, which is the only thing the arm decides and the one
+    /// thing a reader could plausibly get backwards.
+    #[test]
+    fn a_pipeline_passes_redirects_to_its_final_stage_only() {
+        let mut ssa = SsaProgram::new();
+        let blk = ssa.new_block("entry");
+        ssa.block_mut(blk).insts.push(SsaInst::Pipeline {
+            stages: vec![stage("/bin/echo"), stage("/bin/cat")],
+            capture_read_fd: false,
+            checked: true,
+            suppressed: vec![],
+            negated: vec![],
+        });
+        attach_redirects_to_last_inst(&mut ssa, blk, &one_redirect());
+
+        let SsaInst::Pipeline { stages, .. } = &ssa.block_mut(blk).insts[0] else {
+            panic!("the instruction must still be a Pipeline");
+        };
+        assert!(
+            stages[0].2.is_empty(),
+            "an earlier stage must not receive the pipeline's redirects"
+        );
+        assert_eq!(
+            stages[1].2.len(),
+            1,
+            "the final stage is where a whole-pipeline redirect lands"
+        );
+    }
+}

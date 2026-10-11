@@ -468,7 +468,7 @@ fn find_highest_version<'a>(vars: &'a HashMap<String, VarSlot>, var: &str) -> Op
     best.map(|(_, sv)| sv)
 }
 
-fn parse_var_base_version(k: &str) -> (&str, u32) {
+pub(crate) fn parse_var_base_version(k: &str) -> (&str, u32) {
     if let Some(idx) = k.rfind('_') {
         let suffix = &k[idx + 1..];
         if !suffix.is_empty() && suffix.chars().all(|c| c.is_ascii_digit()) {
@@ -527,5 +527,40 @@ mod tests {
             caught.is_err(),
             "an unresolved redirect-target variable must raise a loud ICE"
         );
+    }
+}
+
+/// [`parse_var_base_version`]'s fallback path — the `(k, 0)` return taken
+/// when a key carries no `_<digits>` suffix. Cold because every key in the
+/// slot map is built with one, so it is reachable only by direct call.
+#[cfg(test)]
+mod parse_var_base_version_tests {
+    use super::parse_var_base_version;
+
+    #[test]
+    fn a_versioned_key_splits_into_base_and_version() {
+        assert_eq!(parse_var_base_version("count_7"), ("count", 7));
+        // Documented at the site: a base ending in `_N` stays distinct —
+        // `x_2` at v0 keys as `x_2_0`, not as `x` at v2.
+        assert_eq!(parse_var_base_version("x_2_0"), ("x_2", 0));
+    }
+
+    #[test]
+    fn a_key_with_no_version_suffix_reads_as_version_zero() {
+        assert_eq!(parse_var_base_version("count"), ("count", 0));
+        assert_eq!(parse_var_base_version("my_var"), ("my_var", 0));
+        // The `is_empty` guard: `"".chars().all(..)` is vacuously true, so
+        // without it this would strip to `("x", 0)`. See the companion test
+        // in `codegen::values`, where the guard is absent.
+        assert_eq!(parse_var_base_version("x_"), ("x_", 0));
+    }
+
+    /// `find_highest_version` compares versions numerically, so a suffix too
+    /// large for `u32` must not silently read as a *high* version. It reads
+    /// as 0 — the lowest — which loses to any real version rather than
+    /// beating all of them.
+    #[test]
+    fn an_unparseable_numeric_suffix_falls_back_to_zero() {
+        assert_eq!(parse_var_base_version("x_99999999999999999999"), ("x", 0));
     }
 }

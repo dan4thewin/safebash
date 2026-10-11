@@ -1992,3 +1992,53 @@ mod invariant_tests {
         let _ = readline_target(&args);
     }
 }
+
+/// Totality arms that no *program* reaches, because an earlier pass rejects
+/// every spelling that would build them. Under DG's coverage rule these are
+/// the unit-test half rather than exempt work: "no spec can warm it" is a
+/// statement about the spec suite, not a licence to leave it unexecuted.
+///
+/// Unlike [`invariant_tests`] above, these arms are not ICEs — they do real
+/// work, and the test asserts the work is *right*. That matters more than it
+/// sounds: an unexecuted correct-looking arm is the shape that let
+/// `SsaInst::Test` escape the SSA taint pass for its whole life.
+#[cfg(test)]
+mod shadowed_arm_tests {
+    use super::*;
+
+    /// `walk_arith_subscripts`' `SubscriptAssign` arm — `a[i] = v` as an
+    /// arithmetic assignment target. Cold because both callers
+    /// (`type_check::check_arith_bare_map_subscript`,
+    /// `validate::push_arith_subjects`) sit behind rules that reject the
+    /// spellings which build one: measured 2026-10-11 by replacing the arm
+    /// with a panic, where `(( m[k] = 5 ))` raised SB4030 from a different
+    /// walker and a full native sweep never fired the probe.
+    ///
+    /// The arm's whole distinction from the `Subscript` arm is that it
+    /// descends into `value` as well as `index`. That third line is the one
+    /// a reader would most plausibly drop, and it is what this pins.
+    #[test]
+    fn subscript_assign_yields_its_subject_and_descends_both_sides() {
+        // (( outer[inner[0]] = other[1] ))
+        let tree = ArithExpr::SubscriptAssign {
+            name: "outer".into(),
+            index: Box::new(ArithExpr::Subscript {
+                name: "inner".into(),
+                index: Box::new(ArithExpr::Literal(0)),
+            }),
+            op: None,
+            value: Box::new(ArithExpr::Subscript {
+                name: "other".into(),
+                index: Box::new(ArithExpr::Literal(1)),
+            }),
+        };
+        let mut seen = Vec::new();
+        walk_arith_subscripts(&tree, &mut |n| seen.push(n.to_string()));
+        assert_eq!(
+            seen,
+            vec!["outer", "inner", "other"],
+            "the subject, then the index subtree, then the value subtree — \
+             a missing `other` means the walk into `value` was dropped"
+        );
+    }
+}

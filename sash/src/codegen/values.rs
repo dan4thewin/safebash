@@ -1689,3 +1689,52 @@ mod tests {
         );
     }
 }
+
+/// [`strip_ssa_version`]'s fallback paths. Cold because every key codegen
+/// builds carries a `_<version>` suffix, so the two ways of *not* having one
+/// are reachable only by direct call — the unit-test half of DG's coverage
+/// rule rather than exempt work.
+#[cfg(test)]
+mod strip_ssa_version_tests {
+    use super::strip_ssa_version;
+
+    #[test]
+    fn a_versioned_key_loses_exactly_its_suffix() {
+        assert_eq!(strip_ssa_version("count_7"), "count");
+        assert_eq!(strip_ssa_version("$_3"), "$");
+        // A base name that itself ends in `_N` keeps it: only the last
+        // `_<digits>` run is the version.
+        assert_eq!(strip_ssa_version("x_2_0"), "x_2");
+    }
+
+    #[test]
+    fn a_key_with_no_underscore_is_returned_whole() {
+        assert_eq!(strip_ssa_version("?"), "?");
+        assert_eq!(strip_ssa_version("count"), "count");
+    }
+
+    #[test]
+    fn a_non_numeric_suffix_is_not_a_version() {
+        assert_eq!(strip_ssa_version("my_var"), "my_var");
+        assert_eq!(strip_ssa_version("a_1b"), "a_1b");
+    }
+
+    /// Pins a known divergence from `redirects::parse_var_base_version`,
+    /// which does the same base-extraction but guards `!suffix.is_empty()`.
+    /// Here `"".chars().all(is_ascii_digit)` is vacuously true, so a key
+    /// ending in a bare `_` strips it; there, it does not.
+    ///
+    /// Not a bug today: keys are built as `name_version`, so none ends in a
+    /// bare `_` and no input can tell the two apart. It is recorded because
+    /// the pair is the shape that bites — a fix applied to one copy of a
+    /// duplicated walker, silently not the other. If a key ever can end in
+    /// `_`, this test is the one that says there are two answers.
+    #[test]
+    fn a_bare_trailing_underscore_is_stripped_here_but_not_in_redirects() {
+        assert_eq!(strip_ssa_version("x_"), "x");
+        assert_eq!(
+            crate::codegen::redirects::parse_var_base_version("x_"),
+            ("x_", 0)
+        );
+    }
+}
