@@ -3183,12 +3183,12 @@ fn parse_list_operand(scanner: &mut Scanner) -> Result<Option<Statement>, Diagno
 ///
 /// `parse_command` is the one place that can see both the command head and
 /// its trailing redirects before they are fused into a `Redirected` node, so
-/// it is where the closed list in [`BuiltinCmd::may_take_redirect`] is
-/// applied. Rejecting here rather than in a later pass is deliberate: the two
-/// sites that used to discard these redirects (the `_ => {}` in
-/// `attach_redirects_to_last_inst`, and the codegen arms that take no
-/// `redirects` parameter) are both downstream, and a gate upstream of both
-/// means neither can be reached holding a redirect it would silently drop.
+/// it is where the closed allow-list is applied. Rejecting here rather than in
+/// a later pass is deliberate: the two sites that used to discard these
+/// redirects (the `_ => {}` in `attach_redirects_to_last_inst`, and the
+/// codegen arms that take no `redirects` parameter) are both downstream, and a
+/// gate upstream of both means neither can be reached holding a redirect it
+/// would silently drop.
 ///
 /// Only a *literal* head is judged. `$cmd >f` is an expansion whose value is
 /// unknown here and is an external command anyway, so it is allowed through —

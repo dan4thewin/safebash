@@ -360,19 +360,34 @@ fn attach_redirects_to_result(
 /// which used to be a bare `return`.
 ///
 /// Nothing can legally arrive here in those shapes any more. SB4046 is now a
-/// closed allow-list ([`BuiltinCmd::may_take_redirect`]) applied in
-/// `parse_command`, so a redirect only survives parsing on `echo`, `write`,
-/// `exec`, `:`, `read`/`readline`, an external command or a user function —
-/// which is exactly the set that lowers to the four handled arms — or on a
-/// pipeline. A panic from here is therefore a report that the parse gate and
-/// this lowering have drifted apart, and the repair is to reconcile them, not
-/// to restore a wildcard that would resume dropping output on the floor.
+/// closed allow-list applied in `parse_command`, so a redirect only survives
+/// parsing on `echo`, `write`, `exec`, `:`, `read`/`readline`, an external
+/// command or a user function — which is exactly the set that lowers to the
+/// four handled arms — or on a pipeline. A panic from here is therefore a
+/// report that the parse gate and this lowering have drifted apart, and the
+/// repair is to reconcile them, not to restore a wildcard that would resume
+/// dropping output on the floor.
+///
+/// The allow-list is [`crate::resolve::head_may_take_redirect`], **not**
+/// `BuiltinCmd::may_take_redirect`, which this doc and both panics below used
+/// to name. That method maps all twelve `resolve::INTRINSICS` to
+/// `BuiltinCmd::Other` and so answers "allow" for every one of them; it is the
+/// enum-total list, not the authority for a *name*.
+///
+/// The `SsaInst::Pipeline` arm is unreachable by construction and is kept only
+/// for totality. `a | b > f` parses as `Pipeline[Command, Redirected(Command)]`
+/// — the redirect binds to the final *stage*, which is bash's semantics — so
+/// it arrives via `stage_redirect_flags`, never here. Reaching this arm needs
+/// a `Redirected(Pipeline)`, and every spelling that would wrap a pipeline as
+/// a unit is rejected at parse: `{ a | b } > f` is SB4021, a backgrounded one
+/// SB4022. Measured 2026-10-11 by replacing the arm with a panic and running
+/// the suite, which stayed green; spec `rdr.47`-`rdr.49` cover the real path.
 fn attach_redirects_to_last_inst(ssa: &mut SsaProgram, blk_id: BlockId, redirects: &[Redirect]) {
     let blk = ssa.block_mut(blk_id);
     let Some(inst) = blk.insts.last_mut() else {
         panic!(
             "ICE: a statement carrying {} redirect(s) lowered to no instruction at all — \
-             SB4046 (BuiltinCmd::may_take_redirect) should have rejected it at parse",
+             SB4046 (resolve::head_may_take_redirect) should have rejected it at parse",
             redirects.len()
         );
     };
@@ -405,7 +420,7 @@ fn attach_redirects_to_last_inst(ssa: &mut SsaProgram, blk_id: BlockId, redirect
         | SsaInst::AttestRetag { .. } => {
             panic!(
                 "ICE: {} redirect(s) reached an instruction that cannot carry them — \
-                 SB4046 (BuiltinCmd::may_take_redirect) should have rejected it at parse: {inst:?}",
+                 SB4046 (resolve::head_may_take_redirect) should have rejected it at parse: {inst:?}",
                 redirects.len()
             );
         }

@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup errors
-plan=404
+plan=407
 echo "1..$plan" >&3
 
 set +e
@@ -1765,6 +1765,35 @@ run_sash '- /bin/echo hi > /tmp/sash_rdr_st
 echo $?'
 [[ $err == *SB5012* ]]; chk rdr.46
 rm -f /tmp/sash_rdr_st
+# rdr.47 a trailing redirect on a pipeline, which DD#55 names as legal
+# alongside `cmd && a | b` and `a | b &`. It had no end-to-end spec at all —
+# the only matches in the suite were sash-convert *rendering* assertions.
+#
+# Note what the parser does with it, because it is not what the surface
+# suggests: `a | b > f` becomes `Pipeline[Command, Redirected(Command)]`, not
+# `Redirected(Pipeline)`. The redirect binds to the FINAL STAGE (verified with
+# --emit-ir), which is bash's semantics. Every spelling that would wrap a
+# pipeline as a unit is rejected at parse — `{ a | b } > f` is SB4021, a
+# backgrounded one SB4022 — so `Redirected(Pipeline)` is never constructed.
+# These specs therefore do NOT reach `attach_redirects_to_last_inst`'s
+# `SsaInst::Pipeline` arm; that arm is unreachable by construction. Measured,
+# not assumed: the arm was replaced with a panic and this file still passed.
+rm -f /tmp/sash_rdr_pl
+run_sash '/bin/echo hi | /bin/cat > /tmp/sash_rdr_pl'
+[[ $rc = 0 && -z $out && -z $err && $(cat /tmp/sash_rdr_pl) = "hi" ]]; chk rdr.47
+# rdr.48 appending, and accumulating across two pipelines rather than
+# truncating — the stage-level spelling is rdr.41
+rm -f /tmp/sash_rdr_pl
+run_sash '/bin/echo one | /bin/cat >> /tmp/sash_rdr_pl
+/bin/echo two | /bin/cat >> /tmp/sash_rdr_pl
+/bin/cat /tmp/sash_rdr_pl'
+[[ $rc = 0 && $out = $'one\ntwo' && -z $err ]]; chk rdr.48
+# rdr.49 an input redirect binds to the final stage, so it reads the file and
+# not the pipe — bash's behaviour
+printf 'in1\nin2\n' > /tmp/sash_rdr_in
+run_sash '/bin/cat | /bin/cat < /tmp/sash_rdr_in'
+[[ $rc = 0 && $out = $'in1\nin2' && -z $err ]]; chk rdr.49
+rm -f /tmp/sash_rdr_pl /tmp/sash_rdr_in
 
 
 # dspan.1 every "expected expression" pointed at 1:1 — `parts_to_expr` built
