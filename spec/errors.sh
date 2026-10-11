@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup errors
-plan=356
+plan=359
 echo "1..$plan" >&3
 
 set +e
@@ -2098,6 +2098,31 @@ run_sash 'ech* hi'
 # ...and the `exec` position reports it too, from the same authority.
 run_sash 'exec /bin/ech*'
 [[ $rc != 0 && -z $out && $err == *SB5095* ]]; chk qhead.9
+
+# qhead.10-12 `''` is the degenerate case of that normalisation, and it is a
+# shape the compiler could not previously see: before a single-quoted head
+# became a literal, `''` lexed as a quoted form and never reached name
+# resolution. It has no bare spelling, so SB5096 does not fire; it is simply a
+# command name of zero length, and the ordinary not-found answer is the right
+# one. (`resolve::is_resolvable_external` deliberately has no `is_empty` arm
+# for exactly this reason — the empty name falls through to SB5011 — but its
+# sibling `is_external_looking` does, and qhead.11 is the only spelling in the
+# suite that reaches it.)
+run_sash "''"
+[[ $rc != 0 && -z $out && $err == *SB5011* && $err == *"command '' not found"* ]]; chk qhead.10
+
+# qhead.11 the capture-condition position (DD#88). `is_external_looking("")`
+# answers false, so the RHS is additionally reported as not-a-capture-condition
+# (SB4025) — a true statement, since an empty name is not an external command.
+# SB5011 is the one that explains it, and is asserted here.
+run_sash "if y=\$('') { /bin/echo hi }"
+[[ $rc != 0 && -z $out && $err == *SB5011* && $err == *"command '' not found"* ]]; chk qhead.11
+
+# qhead.12 ...and inside an ordinary capture, where no capture-condition rule
+# applies at all.
+run_sash "str z = \$('')
+echo \"\$z\""
+[[ $rc != 0 && -z $out && $err == *SB5011* && $err == *"command '' not found"* ]]; chk qhead.12
 
 
 set -e

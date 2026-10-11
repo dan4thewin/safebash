@@ -320,11 +320,16 @@ pub(crate) fn command_path_fault(path: &str) -> Option<String> {
 /// an absolute path (not a path already, not a builtin, not an intrinsic,
 /// not a user function).
 fn is_resolvable_external(name: &str, funcs: &HashSet<String>) -> bool {
-    // No `name.is_empty()` arm: an empty head cannot be an `ExprKind::Literal`.
-    // `''` and `""` lex as quoted forms, not literals, and the word scanner
-    // never emits a zero-length unquoted word — so the arm measured 0 hits and
-    // bought nothing, since an empty name would fall through to SB5011
-    // "command '' not found" anyway.
+    // No `name.is_empty()` arm, and the reason is NOT that an empty name
+    // cannot get here — it can, since `normalize_command_head` began turning a
+    // single-quoted head into a `Literal` (the SB5096 work). `''` is a command
+    // name of zero length, and this comment used to assert the opposite on the
+    // strength of a measurement taken before that change.
+    //
+    // The arm is still absent because the answer without it is already right:
+    // `""` is not an intrinsic and not a declared function, so resolution
+    // proceeds and `resolve_command_path` reports SB5011 "command '' not
+    // found". Pinned by `spec/errors.sh` `qhead.10`.
     if name.contains('/') {
         return false;
     }
@@ -341,6 +346,11 @@ fn is_resolvable_external(name: &str, funcs: &HashSet<String>) -> bool {
 /// (names are still bare) and defers the user-function exclusion to the
 /// transform.
 pub(crate) fn is_external_looking(name: &str) -> bool {
+    // Unlike the sibling above, this arm is live: an empty name reaches here
+    // from `''` in a capture condition, and answering `false` is what makes
+    // `if y=$('')` report SB5011 rather than being admitted as a
+    // capture-condition RHS. `spec/errors.sh` `qhead.11` is the only spelling
+    // in the suite that reaches it — do not retire it as dead.
     if name.is_empty() {
         return false;
     }
