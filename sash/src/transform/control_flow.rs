@@ -1110,8 +1110,35 @@ fn redirect_merge_false_branches(
 }
 
 /// Insert phi nodes at the merge block across all incoming paths (arms +
-/// optional no-match). Single-path inputs (e.g. wildcard-only case)
-/// just adopt that path's snapshot.
+/// optional no-match).
+///
+/// **There are always at least two paths.** The `else if all_paths.len() == 1`
+/// that stood here was a remnant of the removed `case` construct — its comment
+/// said "wildcard-only case", and `case x in *) … ;; esac` was indeed one path.
+/// The DD#66 dispatch form that replaced it cannot express that, and the chain
+/// is short enough to state in full:
+///
+/// 1. `parse_dispatch` seeds `items` with one `is_default: false` arm *before*
+///    calling `parse_dispatch_arms`, so `items[0]` is never the default and
+///    `items.len() >= 1`;
+/// 2. `parse_dispatch_arms` is the only place that sets `is_default: true`, and
+///    it appends — so any default arm implies `items.len() >= 2`. A
+///    default-only dispatch (`[[ $x == || { … } ]]`) is SB4014 at parse;
+/// 3. `lower_case` returns early when `items.is_empty()`;
+/// 4. `build_case_bodies` pushes exactly one snapshot per item;
+/// 5. `wire_no_match_path` returns `None` **iff** some item is the default.
+///
+/// So with a default arm `all_paths == items.len() >= 2`, and without one
+/// `all_paths == items.len() + 1 >= 2`. `StmtKind::Case` has a single producer
+/// (`parse/parser.rs`'s dispatch form), so there is no second route in.
+///
+/// The ICE is not a restatement of the grammar's question. `all_paths` is
+/// computed downstream by `build_case_bodies` and `wire_no_match_path`, and
+/// the regression it catches is one in *those*: a `has_wildcard` test that
+/// wrongly reported a default would skip wiring the no-match block, so a
+/// non-matching value would reach the merge without `$? = 0`. The old branch
+/// absorbed exactly that into a plausible-looking `state.restore` and
+/// miscompiled in silence.
 fn insert_case_phis(
     ssa: &mut SsaProgram,
     merge_block: BlockId,
@@ -1124,35 +1151,55 @@ fn insert_case_phis(
         all_paths.push(nm.clone());
     }
 
-    if all_paths.len() >= 2 {
-        let all_vars: std::collections::HashSet<String> = all_paths
-            .iter()
-            .flat_map(|(_, s)| s.keys().cloned())
-            .collect();
+    if all_paths.len() < 2 {
+        unreachable!("{DISPATCH_HAS_TWO_PATHS}");
+    }
 
-        for var in &all_vars {
-            let versions: Vec<(BlockId, u32)> = all_paths
-                .iter()
-                .map(|(bid, s)| (*bid, s.get(var).copied().unwrap_or(0)))
-                .collect();
+    let all_vars: std::collections::HashSet<String> = all_paths
+        .iter()
+        .flat_map(|(_, s)| s.keys().cloned())
+        .collect();
 
-            let first_ver = versions[0].1;
-            if versions.iter().any(|(_, v)| *v != first_ver) {
-                let target = state.define(var);
-                let sources: Vec<(BlockId, VarRef)> = versions
-                    .iter()
-                    .map(|(bid, ver)| (*bid, VarRef::new(var, *ver)))
-                    .collect();
-                ssa.block_mut(merge_block)
-                    .phis
-                    .push(PhiNode { target, sources });
-            }
-        }
-    } else if all_paths.len() == 1 {
-        let (_, ref path_state) = all_paths[0];
-        state.restore(path_state);
+    for var in &all_vars {
+        insert_one_case_phi(ssa, merge_block, &all_paths, var, state);
     }
 }
+
+/// One variable's phi at a dispatch merge, inserted only when the paths
+/// disagree about its version. A path with no entry for `var` reads as
+/// version 0, which is the pre-dispatch value.
+fn insert_one_case_phi(
+    ssa: &mut SsaProgram,
+    merge_block: BlockId,
+    all_paths: &[BranchSnapshot],
+    var: &str,
+    state: &mut VersionState,
+) {
+    let versions: Vec<(BlockId, u32)> = all_paths
+        .iter()
+        .map(|(bid, s)| (*bid, s.get(var).copied().unwrap_or(0)))
+        .collect();
+
+    let first_ver = versions[0].1;
+    if versions.iter().all(|(_, v)| *v == first_ver) {
+        return;
+    }
+
+    let target = state.define(var);
+    let sources: Vec<(BlockId, VarRef)> = versions
+        .iter()
+        .map(|(bid, ver)| (*bid, VarRef::new(var, *ver)))
+        .collect();
+    ssa.block_mut(merge_block)
+        .phis
+        .push(PhiNode { target, sources });
+}
+
+const DISPATCH_HAS_TWO_PATHS: &str =
+    "ICE: a dispatch reached the merge with fewer than two incoming paths \
+     — the grammar seeds one non-default arm and `wire_no_match_path` adds \
+     a no-match path unless a default arm exists (which implies a second \
+     arm), so one of those two guarantees has been lost";
 
 #[cfg(test)]
 mod invariant_tests {
@@ -1160,6 +1207,29 @@ mod invariant_tests {
 
     fn sp() -> Span {
         Span::new(1, 1)
+    }
+
+    /// A dispatch always reaches `insert_case_phis` with at least two paths:
+    /// one non-default arm the grammar seeds, plus either a second arm (when a
+    /// `||` default is present) or the synthesised no-match path. The branch
+    /// that used to handle one path was a leftover from the removed `case`
+    /// construct, where `case x in *) … ;; esac` really was single-path.
+    ///
+    /// No spec can make this assertion — the parser rejects the only source
+    /// spelling that would produce it (`[[ $x == || { … } ]]` is SB4014), so
+    /// the shape has to be handed to the function directly. The ICE is the
+    /// claim that `wire_no_match_path` still wires a no-match path whenever
+    /// there is no default arm; a regression there would arrive here as one
+    /// path and used to be absorbed silently.
+    #[test]
+    #[should_panic(expected = "fewer than two incoming paths")]
+    fn a_single_path_dispatch_is_a_loud_ice() {
+        let mut ssa = SsaProgram::new();
+        let merge = ssa.new_block("dispatch.merge");
+        let arm = ssa.new_block("case.0");
+        let mut state = VersionState::with_types(std::collections::HashMap::new());
+        let only_path: BranchSnapshot = (arm, state.snapshot());
+        insert_case_phis(&mut ssa, merge, &[only_path], None, &mut state);
     }
 
     /// Hand `detect_array_iter` the four for-head shapes SB5009 and SB4045
