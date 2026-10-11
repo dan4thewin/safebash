@@ -184,18 +184,29 @@ containing a space \(em may be written in
 .B single
 quotes, which denote the literal name:
 .RB \[dq] "\[aq]/opt/my tool\[aq]" \[dq] .
+Every quoted
+.I constant
+name is judged at parse time, by whichever rule is true of it.
 Quoting a name that could have been written bare is
-.BR SB5096 ,
-and an empty name
-.RB ( \[aq]\[aq] )
+.BR SB5096 ;
+so is a name that genuinely needs quoting but is said some other way \(em
+double\-quoted
+.RB ( \[dq]/opt/my\ tool\[dq] ),
+or assembled from several quoted and bare pieces \(em with the opposite
+advice.
+One rule earns one code: a command name is one bare word, or one
+single\-quoted word when it has no bare spelling.
+An empty name
+.RB ( \[aq]\[aq] " or " \[dq]\[dq] )
 is
 .BR SB4074 :
 a zero\-length name can denote neither an intrinsic nor a program, so it is a
 syntax error rather than a resolution failure.
-Double quotes are not accepted in command position
-.RB ( SB5011 ):
-a double\-quoted word can interpolate, so there is no single name to resolve
-at compile time.
+.PP
+.B SB5011
+is left for a head that really is resolved at runtime \(em one containing a
+variable, an expansion or a capture \(em which is what its text has always
+said.
 .
 .SS Rejected here, accepted by sash\-convert
 .B \-\-emit\-source ,
@@ -1080,11 +1091,13 @@ command resolution failed (e.g.
 an absolute command path that is not an executable file (DD#23).
 .TP
 .B SB5096
-a quoted command name that could have been written without quotes.
+a quoted constant command name that is not said the one accepted way \(em
+either it needed no quotes at all, or it needs them and was double\-quoted or
+concatenated.
 .TP
 .B SB4074
 an empty command name
-.RB ( \[aq]\[aq] ).
+.RB ( \[aq]\[aq] " or " \[dq]\[dq] ).
 .TP
 .B SB5015
 .BR read :

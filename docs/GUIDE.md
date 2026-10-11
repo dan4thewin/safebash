@@ -204,7 +204,7 @@ taint pass, and the CST itself into this single module.)
 | `check_dynexec` | SB4001 | `eval`, `source`, `.`, `command`, `coproc` |
 | `check_heredoc` | SB5002 | heredocs / here-strings |
 | `check_command_head` | SB5011 | an unknown name in command position |
-| `normalize_command_head` | SB5096, SB4074 | a quoted command name that has a bare spelling, or an empty one (both parse time) |
+| `normalize_command_head` | SB5096, SB4074 | a quoted *constant* command name said any way but the one accepted spelling, or an empty one (both parse time) |
 | `check_exec_target` | SB5011, SB5095 | an `exec` target that is not a runnable program |
 | `check_taint` | SB5020 | a tainted value used without `attest` |
 
@@ -569,12 +569,23 @@ There is no globbing in command position. `*` is a glob only in an array
 context (DD#39, scoped by DG on 2026-10-10), so `/bin/ech*` is a program
 that does not exist rather than a pattern. A command name with no bare
 spelling — a path containing a space — is written in single quotes, which
-denote the literal name; quoting a name that could have been written bare is
-SB5096, and a double-quoted head remains SB5011 because interpolation leaves
-no single name to resolve. An *empty* name is SB4074, a syntax error rather
-than a resolution one (DG, 2026-10-11): a zero-length name can denote neither
-an intrinsic nor a program, and quoting says a name with no bare spelling, not
-the absence of a name.
+denote the literal name.
+
+Every *quoted constant* head is judged at parse time, by whichever rule is
+true of it (DG, 2026-10-11). Quoting a name that could have been written bare
+is SB5096 ("write it bare"); so is a name that genuinely needs quoting but is
+said some other way — double-quoted, or assembled from pieces — with the
+opposite advice. One rule, so one code: a command name is one bare word, or
+one single-quoted word when it has no bare spelling. An *empty* name is
+SB4074, a syntax error rather than a resolution one: a zero-length name can
+denote neither an intrinsic nor a program, and quoting says a name with no
+bare spelling, not the absence of a name.
+
+SB5011 is left for the heads that really are resolved at runtime, which is
+what its text has always claimed. It used to receive six constant shapes as
+well — `""`, `"echo"`, `"/bin/echo"`, `"ec"ho`, `ec"ho"`, `'ec'ho` — and tell
+each of them that "a variable or expansion can't be resolved at compile
+time", a cause none of them had.
 
 ### Source emission
 

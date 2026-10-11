@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup errors
-plan=359
+plan=368
 echo "1..$plan" >&3
 
 set +e
@@ -2077,11 +2077,12 @@ run_sash "'ech*'"
 run_sash "'$PWD/qh_dir/qh tool'"
 [[ $rc = 0 && $out == spaced ]]; chk qhead.4
 
-# qhead.5-6 double quotes are NOT the escape hatch, even when quoting is
-# genuinely needed. SB5011 stands: a double-quoted word can interpolate, so
-# there is no single name to resolve at compile time.
+# qhead.5-6 double quotes are NOT the escape hatch. Both are rejected, but by
+# whichever rule is actually true of them — that distinction is qhead.13-21.
+# `"echo"` is a constant that needed no quotes at all (SB5096); the second has
+# a real `$PWD` in it, so it is the SB5011 the message describes.
 run_sash '"echo" hi'
-[[ $rc != 0 && -z $out && $err == *SB5011* ]]; chk qhead.5
+[[ $rc != 0 && -z $out && $err == *SB5096* ]]; chk qhead.5
 run_sash "\"\$PWD/qh_dir/qh tool\""
 [[ $rc != 0 && -z $out && $err == *SB5011* ]]; chk qhead.6
 
@@ -2125,6 +2126,59 @@ run_sash "if y=\$('') { /bin/echo hi }"
 run_sash "str z = \$('')
 echo \"\$z\""
 [[ $rc != 0 && -z $out && $err == *SB4074* && $err == *"empty command name"* ]]; chk qhead.12
+
+# qhead.13-21 DG, 2026-10-11: judge every *quoted constant* head here, not
+# only a wholly single-quoted one.
+#
+# Six shapes used to fall through to `validate`'s general SB5011, whose text
+# explains the rejection as "a variable or expansion can't be resolved at
+# compile time" — a cause none of them has. `bad_command_head_diag`'s own doc
+# comment names that exact fault and special-cases it for `a-b=1`; these were
+# the same fault, unfixed. The verdicts never changed (all were already
+# rejected); what changed is that the reason given is now true of the input.
+#
+# qhead.13-14 `""` is an empty name, the same as `''` — the quote character
+# was never the point. It used to get SB5011 purely because it took a
+# different path through the parser.
+run_sash '"" hi'
+[[ $rc != 0 && -z $out && $err == *SB4074* && $err != *SB5011* ]]; chk qhead.13
+run_sash 'if y=$("") { /bin/echo hi }'
+[[ $rc != 0 && -z $out && $err == *SB4074* && $err != *SB5011* ]]; chk qhead.14
+
+# qhead.15-18 a constant assembled from quoted pieces, or quoted with the
+# wrong character, is still a constant with a bare spelling. All four name
+# `echo` or `/bin/echo` and all four get SB5096's "write it bare". qhead.17 is
+# the one that shows this was never only a double-quote problem: a *single*
+# quoted piece inside a concatenation fell through too, because the old check
+# matched a head that was wholly `SingleQuoted`.
+run_sash '"ec"ho hi'
+[[ $rc != 0 && -z $out && $err == *SB5096* && $err == *"without quotes"* ]]; chk qhead.15
+run_sash 'ec"ho" hi'
+[[ $rc != 0 && -z $out && $err == *SB5096* ]]; chk qhead.16
+run_sash "'ec'ho hi"
+[[ $rc != 0 && -z $out && $err == *SB5096* ]]; chk qhead.17
+run_sash '"/bin/echo" hi'
+[[ $rc != 0 && -z $out && $err == *SB5096* ]]; chk qhead.18
+
+# qhead.19 a constant that genuinely needs quoting, said the wrong way. Same
+# SB5096 — one rule ("one bare word, or one single-quoted word when it has no
+# bare spelling") deserves one code — but the advice is the opposite one.
+run_sash '"/qh dir/qh tool" hi'
+[[ $rc != 0 && -z $out && $err == *SB5096* && $err == *"single-quoted word"* ]]; chk qhead.19
+
+# qhead.20 the load-bearing non-capture. `a-b=1` is a `Concat` of *bare*
+# literals, so a constancy test alone would capture it and replace its good
+# diagnostic with a quoting one. The gate is `head_contains_quote`: this
+# family is about quoting, so an unquoted head is not its business.
+run_sash 'a-b=1'
+[[ $rc != 0 && -z $out && $err == *"is not a valid variable name"* && $err != *SB5096* ]]; chk qhead.20
+
+# qhead.21 ...and the other side of it: a head that really does interpolate
+# still gets SB5011, so that message's stated reason is true of every input
+# that now receives it.
+run_sash 'str x="echo"
+"$x" hi'
+[[ $rc != 0 && -z $out && $err == *SB5011* && $err == *"variable or expansion"* ]]; chk qhead.21
 
 
 set -e

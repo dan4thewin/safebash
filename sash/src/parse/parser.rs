@@ -2494,9 +2494,6 @@ fn quoted_var_subject(var_name: &str, span: Span) -> Expr {
 /// would reach `transform` and ICE. Rewriting it to `Literal` keeps the
 /// invariant true by construction.
 ///
-/// A *double*-quoted head stays SB5011: interpolation makes it genuinely
-/// non-literal, and there is no single name to resolve at compile time.
-///
 /// An *empty* head is SB4074, a syntax error rather than a resolution one.
 /// DG, 2026-10-11: "an empty name can neither name an intrinsic nor an
 /// external — strikes me as more of a syntax error". Quoting exists to say a
@@ -2506,42 +2503,141 @@ fn quoted_var_subject(var_name: &str, span: Span) -> Expr {
 /// of zero length in command position, and it reached `validate` as a *pair*
 /// of diagnostics (SB4025 + SB5011) where every other unrunnable head gets
 /// exactly one.
+///
+/// Every *quoted constant* head is judged here, not just a wholly
+/// single-quoted one (DG, 2026-10-11). The six shapes `""`, `"echo"`,
+/// `"/bin/echo"`, `"ec"ho`, `ec"ho"` and `'ec'ho` used to fall through to
+/// `validate`'s general SB5011, which explains the rejection as "a variable
+/// or expansion can't be resolved at compile time" — a cause none of them
+/// has. `bad_command_head_diag`'s own doc names that fault and special-cases
+/// it for `a-b=1`; these were the same fault, unfixed. Deciding them here
+/// leaves SB5011's text true of every input that still receives it.
+///
+/// The gate is `head_contains_quote`, and it is load-bearing: `a-b=1` is a
+/// `Concat` of bare literals, so a constancy test alone would capture it and
+/// replace its good diagnostic with a quoting one. This family is about
+/// quoting, so an unquoted head is not its business.
 fn normalize_command_head(name: Expr) -> Result<Expr, Diagnostic> {
-    let ExprKind::SingleQuoted(text) = &name.kind else {
+    if !head_contains_quote(&name.kind) {
+        return Ok(name);
+    }
+    let Some(text) = constant_head_text(&name.kind) else {
         return Ok(name);
     };
     if text.is_empty() {
         return Err(empty_command_head_diag(name.span));
     }
-    if has_bare_spelling(text) {
-        return Err(superfluous_quoted_head_diag(text, name.span));
+    if has_bare_spelling(&text) {
+        return Err(superfluous_quoted_head_diag(&text, name.span));
     }
+    // No bare spelling, so quoting is required — but only one spelling of it
+    // is accepted, a single word in single quotes. Double quotes would make
+    // the head a runtime value, and a concatenation says in pieces what one
+    // quoted word says whole.
+    let ExprKind::SingleQuoted(text) = name.kind else {
+        return Err(wrong_quoted_head_diag(&text, name.span));
+    };
     Ok(Expr {
-        kind: ExprKind::Literal(text.clone()),
+        kind: ExprKind::Literal(text),
         span: name.span,
     })
 }
 
+/// Whether a command head is quoted anywhere within it.
+///
+/// **Total over `ExprKind` on purpose — do not add a wildcard.**
+fn head_contains_quote(kind: &ExprKind) -> bool {
+    match kind {
+        ExprKind::SingleQuoted(_) | ExprKind::DoubleQuoted(_) => true,
+        ExprKind::Concat(parts) => parts.iter().any(|p| head_contains_quote(&p.kind)),
+        ExprKind::Literal(_)
+        | ExprKind::SimpleExpansion(_)
+        | ExprKind::ParameterExpansion(_)
+        | ExprKind::Subscript { .. }
+        | ExprKind::CommandSubstitution(_)
+        | ExprKind::SlurpFile(_)
+        | ExprKind::Arithmetic(_)
+        | ExprKind::Array(_)
+        | ExprKind::AssocArray(_)
+        | ExprKind::Test(_) => false,
+    }
+}
+
+/// The compile-time text of a command head, or `None` when any part of it is
+/// resolved at runtime.
+///
+/// **Total over `ExprKind` on purpose — do not add a wildcard.**
+fn constant_head_text(kind: &ExprKind) -> Option<String> {
+    match kind {
+        ExprKind::Literal(s) | ExprKind::SingleQuoted(s) => Some(s.clone()),
+        ExprKind::DoubleQuoted(parts) | ExprKind::Concat(parts) => {
+            let mut text = String::new();
+            for part in parts {
+                text.push_str(&constant_head_text(&part.kind)?);
+            }
+            Some(text)
+        }
+        // A value, a capture, a file read or an arithmetic result — only the
+        // runtime knows these, which is exactly what SB5011 says.
+        ExprKind::SimpleExpansion(_)
+        | ExprKind::ParameterExpansion(_)
+        | ExprKind::Subscript { .. }
+        | ExprKind::CommandSubstitution(_)
+        | ExprKind::SlurpFile(_)
+        | ExprKind::Arithmetic(_) => None,
+        // Not a word at all. Rejected elsewhere, and not by a quoting rule.
+        ExprKind::Array(_) | ExprKind::AssocArray(_) | ExprKind::Test(_) => None,
+    }
+}
+
+/// SB4074. Deliberately does not name a spelling: `''` and `""` are both
+/// zero-length names, and so is any concatenation of empty quoted pieces.
 fn empty_command_head_diag(span: Span) -> Diagnostic {
     parse_error(
         span,
         "SB4074",
-        "empty command name `''` — a name of zero length can denote neither a \
-         sash intrinsic nor a program on disk; single quotes in command \
-         position say a name that has no bare spelling, such as a path \
-         containing a space, not the absence of a name"
+        "empty command name — a name of zero length can denote neither a \
+         sash intrinsic nor a program on disk; quotes in command position \
+         say a name that has no bare spelling, such as a path containing a \
+         space, not the absence of a name"
             .to_string(),
     )
 }
 
+/// SB5096 for a quoted constant that did not need quoting at all. Renders the
+/// text unquoted, because the head may have been written with either quote
+/// character or assembled from several pieces, and the advice is the same for
+/// all of them: write the one bare word.
 fn superfluous_quoted_head_diag(text: &str, span: Span) -> Diagnostic {
     parse_error(
         span,
         "SB5096",
         format!(
-            "quoted command name `'{text}'` can be written without quotes — \
-             write `{text}`; quote a command name only when it has no bare \
-             spelling, as with a path containing a space"
+            "command name `{text}` is quoted but can be written without \
+             quotes — write `{text}`; quote a command name only when it has \
+             no bare spelling, as with a path containing a space"
+        ),
+    )
+}
+
+/// SB5096 for a constant that *does* need quoting but is not said the one way
+/// sash accepts. Same code as the superfluous case on purpose: both are the
+/// single rule "a command name is one bare word, or one single-quoted word
+/// when it has no bare spelling", and a second code would split one rule in
+/// two.
+///
+/// Double quotes are not merely redundant here — they are the spelling that
+/// interpolates, so accepting them would make the head's constancy an
+/// accident of its contents.
+fn wrong_quoted_head_diag(text: &str, span: Span) -> Diagnostic {
+    parse_error(
+        span,
+        "SB5096",
+        format!(
+            "command name `{text}` has no bare spelling, so it must be one \
+             single-quoted word — write `'{text}'`; double quotes in command \
+             position would make the name a runtime value, and a \
+             concatenation says in pieces what one quoted word says whole"
         ),
     )
 }

@@ -3944,6 +3944,20 @@ fn check_cmd_at(
 /// it is not a `Literal` either. Telling the author of `a-b=1` that "a variable
 /// or expansion can't be resolved at compile time" names a cause the line does
 /// not have: there is no variable and no expansion in it.
+///
+/// The same fault once had a *third* shape, and this comment named it without
+/// fixing it. Six quoted constants — `""`, `"echo"`, `"/bin/echo"`, `"ec"ho`,
+/// `ec"ho"`, `'ec'ho` — reached the general message below and were told the
+/// identical untruth. DG, 2026-10-11: "why would `\"\"` as a command use a
+/// different error from `\'\'`?" They are now decided in the parser by
+/// `normalize_command_head`, which judges every quoted *constant* head.
+///
+/// So the general message's stated reason is true of everything that still
+/// receives it: whatever reaches it is either a malformed assignment target
+/// (handled above) or a head containing a genuine expansion. Pinned by
+/// `spec/errors.sh` qhead.20-21, which assert both sides of that — an
+/// unquoted `Concat` keeps the assignment message, and an interpolating head
+/// keeps this one.
 fn bad_command_head_diag(name: &Expr) -> Diagnostic {
     if let Some(target) = malformed_assignment_target(&name.kind) {
         return Diagnostic::error_span(
