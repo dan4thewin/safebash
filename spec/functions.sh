@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup functions
-plan=171
+plan=172
 echo "1..$plan" >&3
 
 set +e
@@ -1089,23 +1089,45 @@ if p; then echo y; else echo n; fi'
 [[ $rc = 0 && $out = "y" && -z $err ]]; chk 74.62
 
 # 74.63 …and through a REDIRECT on the `return` itself. Same walk, the other
-# wrapper: `return 0 2>/dev/null` is a `Redirected` whose body returns.
+# wrapper: `return /bin/true 2>/dev/null` is a `Redirected` whose body returns.
+#
+# This used to be spelled `return 0 2>/dev/null`. DG ruled 2026-10-11 that
+# the literal-code form is nonsense — `return N` states the status outright,
+# where a producer *derives* it, so there is nothing for the redirect to
+# attach to (74.64). DD#74's "a trailing redirect, exactly as a normal
+# statement would" is about the producer composite, which is what this spec
+# needs anyway: the point is that the predicate walk sees through a
+# `Redirected` to the `return` inside it.
 run_sash 'p() {
-return 0 2>/dev/null
+return /bin/true 2>/dev/null
 }
 if p; then echo y; else echo n; fi'
 [[ $rc = 0 && $out = "y" && -z $err ]]; chk 74.63
 
-# 74.64 the redirected `return` still carries its VALUE out to `$?`. The
-# redirect has no inst of its own to attach to — `return` lowers to a
-# terminator, not a command — so the attach step has to leave it alone rather
-# than bind it to whatever inst happened to be last in the block.
+# 74.64 `return N` with a redirect is SB4046. `return N` writes nothing to any
+# descriptor — it names the status directly — so the redirect could only
+# create and truncate the file as a side effect.
+#
+# This spec used to assert the opposite, that `return 3 2>/dev/null` compiled
+# and carried its value out to `$?`. It did, by SILENTLY DISCARDING the
+# redirect: its own comment said "the attach step has to leave it alone",
+# which is the drop written down and accepted rather than reported. The file
+# was never created. That is one of the cases that made the wider rule.
 run_sash 'f() {
 return 3 2>/dev/null
 }
 f
 echo "rc=$?"'
-[[ $rc = 0 && $out = "rc=3" && -z $err ]]; chk 74.64
+[[ $rc != 0 && -z $out && $err == *SB4046* && $err == *return* ]]; chk 74.64
+
+# 74.64b the value still reaches `$?` without the redirect — SB4046 did not
+# disturb what the old spelling was really testing.
+run_sash 'f() {
+return 3
+}
+f
+echo "rc=$?"'
+[[ $rc = 0 && $out = "rc=3" && -z $err ]]; chk 74.64b
 
 # ── lift: a capture nested in a value must be materialized ──────────────
 # `lift_int_func_calls` walks a value and captures every `$(f)` into a temp.

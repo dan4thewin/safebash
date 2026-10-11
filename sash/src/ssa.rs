@@ -224,6 +224,87 @@ impl BuiltinCmd {
         }
     }
 
+    /// Whether a trailing redirect may attach to this command (SB4046).
+    ///
+    /// The rule SB4046 states is "redirects attach to a command that produces
+    /// output", and this is its closed list. `true` means the command either
+    /// writes to a descriptor (`echo`, `write`), reads from one (`read` /
+    /// `readline`), replaces the process with something that does (`exec`),
+    /// or is not a builtin at all ([`Self::Other`] — an external command or a
+    /// user function). Everything else produces no output, so a redirect on
+    /// it is meaningless; bash creates and truncates the file and writes
+    /// nothing into it, which DG ruled is a wart to reject rather than copy.
+    ///
+    /// [`Self::Noop`] is the deliberate exception: `: >f` produces no output
+    /// either, but truncate-a-file is the whole point of the idiom and it is
+    /// universal, so DG's call (2026-10-11) was to make it work rather than
+    /// reject it.
+    ///
+    /// This started as a bug rather than a rule. Every `false` arm below was
+    /// *silently dropping* its redirect — `cd /tmp >f`, `exit 0 >f`,
+    /// `close 9 >f`, `argv 1 a >f`, `unset m[k] >f`, `return 0 >f` and
+    /// `if match … >f` all compiled clean and never opened the file. The
+    /// drop had two independent causes (a `_ => {}` in
+    /// `attach_redirects_to_last_inst`, and codegen arms that took no
+    /// `redirects` parameter at all), which is why the fix is a gate at parse
+    /// rather than a patch at either site: reject here and neither site can
+    /// be reached holding a redirect it would discard.
+    ///
+    /// **Total over the enum on purpose — do not add a wildcard.** A new
+    /// builtin must state whether it can carry a redirect; defaulting either
+    /// way is how the silent drop happened in the first place.
+    pub fn may_take_redirect(self) -> bool {
+        match self {
+            // Produce output, consume input, or become a process that does.
+            Self::Echo | Self::Write | Self::Exec | Self::Read => true,
+            // Not a builtin: an external command or a user function.
+            Self::Other => true,
+            // DG's exception — `: >f` is the truncate idiom.
+            Self::Noop => true,
+
+            // No output: rejected with SB4046.
+            Self::Test
+            | Self::Exit
+            | Self::Cd
+            | Self::Wait
+            | Self::Close
+            | Self::Attest
+            | Self::Mapfile
+            | Self::Argv
+            | Self::Break
+            | Self::Continue
+            | Self::Return
+            | Self::Signal
+            | Self::Unset => false,
+
+            // Value-only intrinsics: their result is a value, not a stream.
+            Self::Len
+            | Self::Strlen
+            | Self::Keys
+            | Self::Join
+            | Self::Sub
+            | Self::Gsub
+            | Self::Match
+            | Self::MatchAll
+            | Self::Toupper
+            | Self::Tolower
+            | Self::Basename
+            | Self::Dirname => false,
+
+            // Compiler-internal sigils: never written in source, so no
+            // trailing redirect can reach them.
+            Self::NegateTestResult
+            | Self::SetTestFromStatus
+            | Self::LetExit
+            | Self::ForkBackground
+            | Self::StoreBgPid
+            | Self::TrapSignal
+            | Self::SignalFlag
+            | Self::TableDelete
+            | Self::TableDeleteIdx => false,
+        }
+    }
+
     /// Display spelling for a compiler-internal opcode. Returns `None` for
     /// variants that come from source (their raw name should be used).
     ///

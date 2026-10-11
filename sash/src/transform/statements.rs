@@ -352,10 +352,29 @@ fn attach_redirects_to_result(
 
 /// Simple command + redirects: attach the redirects directly to the last
 /// emitted inst (Command / Pipeline last-stage / ReadLine / ReadArray).
+///
+/// **Total over `SsaInst` on purpose — do not add a wildcard.** The arms that
+/// ICE below used to be a single `_ => {}`, and it was silently discarding
+/// redirects: `return 0 >f`, `unset m[k] >f` and `if match … >f` all compiled
+/// clean and never opened the file. So did the no-instruction case above,
+/// which used to be a bare `return`.
+///
+/// Nothing can legally arrive here in those shapes any more. SB4046 is now a
+/// closed allow-list ([`BuiltinCmd::may_take_redirect`]) applied in
+/// `parse_command`, so a redirect only survives parsing on `echo`, `write`,
+/// `exec`, `:`, `read`/`readline`, an external command or a user function —
+/// which is exactly the set that lowers to the four handled arms — or on a
+/// pipeline. A panic from here is therefore a report that the parse gate and
+/// this lowering have drifted apart, and the repair is to reconcile them, not
+/// to restore a wildcard that would resume dropping output on the floor.
 fn attach_redirects_to_last_inst(ssa: &mut SsaProgram, blk_id: BlockId, redirects: &[Redirect]) {
     let blk = ssa.block_mut(blk_id);
     let Some(inst) = blk.insts.last_mut() else {
-        return;
+        panic!(
+            "ICE: a statement carrying {} redirect(s) lowered to no instruction at all — \
+             SB4046 (BuiltinCmd::may_take_redirect) should have rejected it at parse",
+            redirects.len()
+        );
     };
     match inst {
         SsaInst::Command { redirects: r, .. }
@@ -368,7 +387,28 @@ fn attach_redirects_to_last_inst(ssa: &mut SsaProgram, blk_id: BlockId, redirect
                 last.2 = redirects.to_vec();
             }
         }
-        _ => {}
+        SsaInst::Assign { .. }
+        | SsaInst::Test(..)
+        | SsaInst::SubscriptAssign { .. }
+        | SsaInst::ArrayAppend { .. }
+        | SsaInst::MapFromArray { .. }
+        | SsaInst::SplitValue { .. }
+        | SsaInst::MatchInto { .. }
+        | SsaInst::ArgvFill { .. }
+        | SsaInst::KeysFill { .. }
+        | SsaInst::CaptureStart { .. }
+        | SsaInst::CaptureEnd { .. }
+        | SsaInst::RedirectPush { .. }
+        | SsaInst::RedirectPop { .. }
+        | SsaInst::Attest { .. }
+        | SsaInst::AttestAll { .. }
+        | SsaInst::AttestRetag { .. } => {
+            panic!(
+                "ICE: {} redirect(s) reached an instruction that cannot carry them — \
+                 SB4046 (BuiltinCmd::may_take_redirect) should have rejected it at parse: {inst:?}",
+                redirects.len()
+            );
+        }
     }
 }
 

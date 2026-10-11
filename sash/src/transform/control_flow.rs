@@ -608,11 +608,19 @@ fn try_dispatch_argv_splat(
 /// If `word` is `$(argv)` or `$(argv N)`, return the start index
 /// (0 for bare `$(argv)`, N for `$(argv N)` with a literal N).
 ///
-/// **The body must be exactly one statement.** This was `stmts.first()`, which
-/// made `for x in $(argv; /usr/bin/touch f)` an argv-slice loop and silently
-/// discarded the `touch` — `lower_for_argv_slice` lowers the slice, not the
-/// body. `validate` rejects that shape now (SB5025); this is the half that
-/// made it wrong, and it stays narrow so the two cannot drift back apart.
+/// **The body must be exactly one undecorated statement.** This was
+/// `stmts.first()`, which made `for x in $(argv; /usr/bin/touch f)` an
+/// argv-slice loop and silently discarded the `touch` — `lower_for_argv_slice`
+/// lowers the slice, not the body.
+///
+/// It also used to look *through* `StmtKind::Redirected`, which was the same
+/// bug wearing the other hat: `for x in $(argv >f)` compiled, iterated the
+/// arguments and never created the file. Narrowing to one statement had fixed
+/// only the half anyone had thought to test. A redirected body now falls to
+/// the `Command` match below and answers `None`.
+///
+/// `validate` rejects both shapes (SB5025); this is the half that made them
+/// wrong, and it stays narrow so the two cannot drift back apart.
 fn argv_splat_start(word: &Expr) -> Option<i64> {
     let ExprKind::CommandSubstitution(stmts) = &word.kind else {
         return None;
@@ -620,11 +628,7 @@ fn argv_splat_start(word: &Expr) -> Option<i64> {
     let [stmt] = stmts.as_slice() else {
         return None;
     };
-    let inner = match &stmt.kind {
-        StmtKind::Redirected(r) => &r.body.kind,
-        other => other,
-    };
-    let StmtKind::Command(c) = inner else {
+    let StmtKind::Command(c) = &stmt.kind else {
         return None;
     };
     if literal_name_of(&c.name) != "argv" {

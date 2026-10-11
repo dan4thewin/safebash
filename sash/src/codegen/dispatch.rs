@@ -279,7 +279,7 @@ impl SsaInst {
             BuiltinCmd::TableDeleteIdx => {
                 return self.emit_table_delete(args, true, builder, module, ctx)
             }
-            BuiltinCmd::Noop => self.emit_noop(builder, ctx),
+            BuiltinCmd::Noop => self.emit_noop(redirects, builder, module, ctx),
             BuiltinCmd::Match => self.emit_match(args, builder, module, ctx),
             BuiltinCmd::Exit => return self.emit_exit(args, builder, module, ctx),
             BuiltinCmd::Exec => return self.emit_exec(name, args, redirects, builder, module, ctx),
@@ -381,13 +381,37 @@ impl SsaInst {
         }
     }
 
-    fn emit_noop(&self, builder: &mut FunctionBuilder, ctx: &mut InstCtx) {
-        // `:` succeeds silently: test_result = 1, $? = 0. (true/false are
-        // external programs now.)
-        let one = builder.ins().iconst(I64, 1);
-        builder.def_var(ctx.test_result_var, one);
-        let zero = builder.ins().iconst(I64, 0);
-        builder.def_var(ctx.exit_status_var, zero);
+    /// `:` succeeds silently: test_result = 1, $? = 0. (true/false are
+    /// external programs now.)
+    ///
+    /// DD-less exception to SB4046 (DG, 2026-10-11): `:` produces no output,
+    /// yet `: >f` is the universal truncate-a-file idiom, so it honours its
+    /// redirects instead of being rejected with the other no-output
+    /// builtins. It used to *silently drop* them — this function took no
+    /// `redirects` parameter at all, so `: >f` compiled clean and never
+    /// opened the file. The guarded-body wrapper is the same one `echo` uses,
+    /// which also gives `:` the DD#55 open-failure behaviour for free.
+    fn emit_noop(
+        &self,
+        redirects: &[crate::ir::Redirect],
+        builder: &mut FunctionBuilder,
+        module: &mut ObjectModule,
+        ctx: &mut InstCtx,
+    ) {
+        let in_condition = ctx.in_condition;
+        super::inst_handlers::emit_redirect_guarded_body(
+            redirects,
+            in_condition,
+            builder,
+            module,
+            ctx,
+            |b, _m, c| {
+                let one = b.ins().iconst(I64, 1);
+                b.def_var(c.test_result_var, one);
+                let zero = b.ins().iconst(I64, 0);
+                b.def_var(c.exit_status_var, zero);
+            },
+        );
     }
 
     /// DD#63: `match SUBJECT PATTERN` boolean command. Calls the real
@@ -454,6 +478,28 @@ impl SsaInst {
             emit_exec_redirects_only(redirects, builder, module, ctx);
             false
         } else {
+            // `exec CMD >f`: install the redirects in this process and then
+            // replace it, so CMD inherits them — bash's semantics. No
+            // save/restore, because nothing returns here to restore into.
+            //
+            // This used to pass `redirects` no further than the no-args
+            // branch, so `exec /bin/echo hi >f` wrote `hi` to the *terminal*
+            // and never created the file: wrong output, not merely a missing
+            // side effect. Unlike the no-args form this deliberately skips
+            // the DD#120 `scope_bind` rebind — per-command redirects are a
+            // channel for the command's output, not for the program's
+            // diagnostics about it.
+            if !redirects.is_empty() {
+                emit_redirects(
+                    redirects,
+                    builder,
+                    module,
+                    ctx.externs,
+                    ctx.literals,
+                    ctx.vars,
+                    Some(ctx.exit_status_var),
+                );
+            }
             emit_exec_static_argv(args, builder, module, ctx);
             true
         }

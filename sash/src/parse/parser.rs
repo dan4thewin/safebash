@@ -2661,6 +2661,10 @@ fn parse_command(scanner: &mut Scanner, span: Span) -> Result<Option<Statement>,
     let name_expr = normalize_command_head(parse_expr(scanner)?)?;
     let (args, redirects) = parse_command_words(scanner, span)?;
 
+    if !redirects.is_empty() {
+        reject_redirect_on_no_output_builtin(&name_expr, span)?;
+    }
+
     let mut stmt = Statement {
         kind: StmtKind::Command(Command {
             name: name_expr,
@@ -3175,6 +3179,37 @@ fn parse_list_operand(scanner: &mut Scanner) -> Result<Option<Statement>, Diagno
     }
 }
 
+/// SB4046 for a trailing redirect on a builtin that produces no output.
+///
+/// `parse_command` is the one place that can see both the command head and
+/// its trailing redirects before they are fused into a `Redirected` node, so
+/// it is where the closed list in [`BuiltinCmd::may_take_redirect`] is
+/// applied. Rejecting here rather than in a later pass is deliberate: the two
+/// sites that used to discard these redirects (the `_ => {}` in
+/// `attach_redirects_to_last_inst`, and the codegen arms that take no
+/// `redirects` parameter) are both downstream, and a gate upstream of both
+/// means neither can be reached holding a redirect it would silently drop.
+///
+/// Only a *literal* head is judged. `$cmd >f` is an expansion whose value is
+/// unknown here and is an external command anyway, so it is allowed through —
+/// the same reasoning `normalize_command_head` uses to leave expansions to
+/// SB5011.
+fn reject_redirect_on_no_output_builtin(name: &Expr, span: Span) -> Result<(), Diagnostic> {
+    let ExprKind::Literal(n) = &name.kind else {
+        return Ok(());
+    };
+    if crate::ssa::BuiltinCmd::from_name(n).may_take_redirect() {
+        return Ok(());
+    }
+    Err(parse_error(
+        span,
+        "SB4046",
+        format!(
+            "a redirect cannot attach to `{n}` — redirects attach to a command that produces output"
+        ),
+    ))
+}
+
 /// Redirects + pipeline (`|`), but NOT trailing list operators.
 fn wrap_pipeline_part(scanner: &mut Scanner, stmt: Statement) -> Result<Statement, Diagnostic> {
     let redirects = parse_trailing_redirects(scanner, stmt.span)?;
@@ -3207,8 +3242,19 @@ fn wrap_pipeline_part(scanner: &mut Scanner, stmt: Statement) -> Result<Statemen
 /// `parse_simple_command`, the `None` case is reached and the redirect would
 /// simply vanish from the AST — output going to a file the program never
 /// opens, with no diagnostic. Panicking instead turns that regression into a
-/// caught ICE. Exercised by `redirect_reject_noun_is_loud_ice`, since no
-/// source text can reach it.
+/// caught ICE.
+///
+/// **That is not hypothetical — it happened, and this ICE is what caught it.**
+/// `parse_attest` builds its `StmtKind::Command` by hand instead of going
+/// through `parse_simple_command`, so it never absorbed its trailing
+/// redirect, and `attest s [[ -n $s ]] >f` panicked the compiler for all
+/// three redirect operators. The repair is an arm in
+/// `noncommand_redirect_target`, not a wildcard here. So the older line of
+/// this doc — "no source text can reach it" — was false when written, and the
+/// unit test that stood in for source coverage could not tell: it constructs
+/// the one shape it already knows about. Treat a panic from here as a report
+/// that some parser path builds a command without absorbing its redirects,
+/// and add the arm rather than silencing the ICE.
 pub(super) fn redirect_reject_noun(kind: &StmtKind) -> &'static str {
     match noncommand_redirect_target(kind) {
         Some(what) => what,
@@ -3231,6 +3277,17 @@ pub(super) fn redirect_reject_noun(kind: &StmtKind) -> &'static str {
 /// is a wart rather than a feature. sash parsed the redirect correctly and
 /// then discarded it in the transform, which diverged from bash *silently*;
 /// DG's call was that a meaningless redirect is an error, not a no-op.
+///
+/// `attest` is the third, and it arrived as the ICE in `redirect_reject_noun`
+/// firing on real source text — which that function's own doc had called
+/// unreachable. `parse_attest` builds its `StmtKind::Command` directly and
+/// never routes through `parse_simple_command`, so it is the one command that
+/// reaches here still holding its trailing redirect. That is precisely the
+/// "some statement kind later gains the ability to carry a redirect past
+/// `parse_simple_command`" regression the ICE was placed to catch, and it
+/// caught it: `attest s [[ -n $s ]] >f` panicked the compiler for every
+/// redirect operator. An `attest` produces no output, so it belongs with the
+/// tests above rather than being given a redirect to honour.
 fn noncommand_redirect_target(kind: &StmtKind) -> Option<&'static str> {
     match kind {
         StmtKind::Function(_) => Some("a function definition"),
@@ -3238,6 +3295,7 @@ fn noncommand_redirect_target(kind: &StmtKind) -> Option<&'static str> {
         StmtKind::Assignment(_) => Some("a variable assignment"),
         StmtKind::ArithTest(_) => Some("an arithmetic test"),
         StmtKind::Command(c) if is_bracket_test(c) => Some("a `[[ … ]]` test"),
+        StmtKind::Command(c) if is_named_command(c, "attest") => Some("an `attest`"),
         _ => None,
     }
 }
@@ -3245,7 +3303,13 @@ fn noncommand_redirect_target(kind: &StmtKind) -> Option<&'static str> {
 /// The `[[ … ]]` form, which `parse_test_command` builds as a command whose
 /// name is the literal `[[`.
 fn is_bracket_test(c: &Command) -> bool {
-    matches!(&c.name.kind, ExprKind::Literal(n) if n == "[[")
+    is_named_command(c, "[[")
+}
+
+/// A command whose head is exactly the literal `name`. Only meaningful for
+/// the parser-built commands, whose heads are always `ExprKind::Literal`.
+fn is_named_command(c: &Command, name: &str) -> bool {
+    matches!(&c.name.kind, ExprKind::Literal(n) if n == name)
 }
 
 fn background_list_op(scanner: &mut Scanner, left: Statement) -> Statement {

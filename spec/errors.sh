@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup errors
-plan=368
+plan=389
 echo "1..$plan" >&3
 
 set +e
@@ -1517,6 +1517,130 @@ run_sash '/bin/echo hi > /tmp/sash_rdr_ok'
 # rdr.10 control: a redirect inside an if body is untouched
 run_sash 'if [[ -f /etc/passwd ]] { /bin/echo y > /tmp/sash_rdr_ok }'
 [[ $rc = 0 && -z $err ]]; chk rdr.10
+rm -f /tmp/sash_rdr_ok
+
+# ── SB4046 part 2: the no-output *builtins* ──────────────────────────
+# DG 2026-10-11, extending the rule above from statement kinds to command
+# names. Every one of these used to compile clean and SILENTLY DISCARD the
+# redirect — the file was never opened and the filename never reached the
+# binary. The drop had two independent causes, a `_ => {}` in
+# `attach_redirects_to_last_inst` and codegen arms that took no `redirects`
+# parameter at all, which is why the gate is a closed allow-list at parse
+# (`BuiltinCmd::may_take_redirect`) rather than a patch at either site.
+#
+# The c backend already honoured several of these, so native and c disagreed
+# on shapes no spec exercised — the differential oracle could not report a
+# divergence nobody asked it about.
+#
+# rdr.11 `attest` is the one that did not merely drop the redirect: it
+# PANICKED the compiler. `parse_attest` builds its command by hand and never
+# routes through `parse_simple_command`, so the redirect survived to
+# `redirect_reject_noun` — an ICE whose own doc said no source text could
+# reach it. All three operators crashed.
+run_sash 'str s = "x"
+attest s [[ -n $s ]] > /tmp/sash_rdr_should_not_exist
+echo "$s"'
+[[ $rc != 0 && -z $out && $err == *SB4046* && $err == *attest* \
+   && $err != *ICE* && $err != *panic* ]]; chk rdr.11
+run_sash 'str s = "x"
+attest s [[ -n $s ]] 2> /tmp/sash_rdr_should_not_exist
+echo "$s"'
+[[ $rc != 0 && $err == *SB4046* && $err != *panic* ]]; chk rdr.12
+run_sash 'str s = "x"
+attest s [[ -n $s ]] < /tmp/sash_rdr_should_not_exist
+echo "$s"'
+[[ $rc != 0 && $err == *SB4046* && $err != *panic* ]]; chk rdr.13
+# rdr.14 the DD#93 Part B shorthand reaches the same gate
+run_sash 'str s = "x"
+attest s -n > /tmp/sash_rdr_should_not_exist
+echo "$s"'
+[[ $rc != 0 && $err == *SB4046* && $err != *panic* ]]; chk rdr.14
+# rdr.15 `cd` — bash creates the file; sash rejects rather than copy the wart
+run_sash 'cd /tmp > /tmp/sash_rdr_should_not_exist
+echo done'
+[[ $rc != 0 && -z $out && $err == *SB4046* && $err == *cd* ]]; chk rdr.15
+# rdr.16 `exit`
+run_sash 'exit 0 > /tmp/sash_rdr_should_not_exist'
+[[ $rc != 0 && $err == *SB4046* && $err == *exit* ]]; chk rdr.16
+# rdr.17 `close`
+run_sash 'close 2 > /tmp/sash_rdr_should_not_exist'
+[[ $rc != 0 && $err == *SB4046* && $err == *close* ]]; chk rdr.17
+# rdr.18 `unset`
+run_sash 'map m
+m[q]=1
+echo "$(len m)"
+unset m[q] > /tmp/sash_rdr_should_not_exist'
+[[ $rc != 0 && $err == *SB4046* && $err == *unset* ]]; chk rdr.18
+# rdr.19 `return` inside a function
+run_sash 'fn g { return 0 > /tmp/sash_rdr_should_not_exist
+}
+- g'
+[[ $rc != 0 && $err == *SB4046* && $err == *return* ]]; chk rdr.19
+# rdr.20 `match` where its result IS used, so SB4018 cannot be what fires
+run_sash 'str s = "ab"
+if match "$s" /a/ > /tmp/sash_rdr_should_not_exist { echo y }'
+[[ $rc != 0 && -z $out && $err == *SB4046* && $err == *match* ]]; chk rdr.20
+# rdr.21 a value-only intrinsic
+run_sash 'str s = "ab"
+strlen "$s" > /tmp/sash_rdr_should_not_exist'
+[[ $rc != 0 && $err == *SB4046* ]]; chk rdr.21
+# rdr.22 none of the above ever created its file
+[[ ! -e /tmp/sash_rdr_should_not_exist ]]; chk rdr.22
+
+# ── the allow-list: these must keep working ──────────────────────────
+# rdr.23 `:` is DG's deliberate exception. It produces no output like the
+# rest, but `: >f` is the universal truncate idiom, so it HONOURS its
+# redirect instead of being rejected. It used to drop it silently.
+rm -f /tmp/sash_rdr_trunc
+run_sash 'echo before
+: > /tmp/sash_rdr_trunc
+echo after'
+[[ $rc = 0 && $out = $'before\nafter' && -z $err && -e /tmp/sash_rdr_trunc ]]; chk rdr.23
+# rdr.24 and it truncates an existing file to empty, which is the whole point
+printf 'CONTENT\n' > /tmp/sash_rdr_trunc
+run_sash ': > /tmp/sash_rdr_trunc'
+[[ $rc = 0 && -z $err && -e /tmp/sash_rdr_trunc && ! -s /tmp/sash_rdr_trunc ]]; chk rdr.24
+rm -f /tmp/sash_rdr_trunc
+# rdr.25 `exec CMD >f` was the worst of the set: it produced WRONG OUTPUT
+# rather than a missing side effect, printing to the terminal while the file
+# was never made. `exec` replaces the process with one that does produce
+# output, so it honours the redirect — bash's semantics.
+rm -f /tmp/sash_rdr_exec
+run_sash 'exec /bin/echo hi > /tmp/sash_rdr_exec'
+[[ $rc = 0 && -z $out && -z $err && $(cat /tmp/sash_rdr_exec) = "hi" ]]; chk rdr.25
+rm -f /tmp/sash_rdr_exec
+# rdr.26 the no-argument `exec` fd-manipulation form is untouched
+rm -f /tmp/sash_rdr_exec
+run_sash 'exec > /tmp/sash_rdr_exec
+echo hi'
+[[ $rc = 0 && -z $out && $(cat /tmp/sash_rdr_exec) = "hi" ]]; chk rdr.26
+rm -f /tmp/sash_rdr_exec
+# rdr.27 `echo`/`write` and an external command are unaffected
+rm -f /tmp/sash_rdr_ok
+run_sash 'echo hi > /tmp/sash_rdr_ok'
+[[ $rc = 0 && -z $err && $(cat /tmp/sash_rdr_ok) = "hi" ]]; chk rdr.27
+run_sash 'write hi > /tmp/sash_rdr_ok'
+[[ $rc = 0 && -z $err && $(cat /tmp/sash_rdr_ok) = "hi" ]]; chk rdr.28
+# rdr.29 `readline` consumes input, so it takes a redirect too
+printf 'hello\n' > /tmp/sash_rdr_in
+run_sash 'str s = ""
+readline s < /tmp/sash_rdr_in
+attest s [[ -n $s ]]
+echo "got:$s"'
+[[ $rc = 0 && $out = "got:hello" && -z $err ]]; chk rdr.29
+rm -f /tmp/sash_rdr_in /tmp/sash_rdr_ok
+# rdr.30 a user function is not a builtin, so it keeps its redirect
+rm -f /tmp/sash_rdr_ok
+run_sash 'fn g { echo fromfn
+}
+g > /tmp/sash_rdr_ok'
+[[ $rc = 0 && -z $out && $(cat /tmp/sash_rdr_ok) = "fromfn" ]]; chk rdr.30
+rm -f /tmp/sash_rdr_ok
+# rdr.31 an expansion head is not judged here — its value is unknown at parse
+# and it is an external command anyway, so it is left to SB5011
+run_sash 'str c = "/bin/echo"
+$c hi > /tmp/sash_rdr_ok'
+[[ $err != *SB4046* ]]; chk rdr.31
 rm -f /tmp/sash_rdr_ok
 
 

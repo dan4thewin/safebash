@@ -6,7 +6,7 @@
 set -eu
 . common.sh
 setup argv
-plan=76
+plan=81
 echo "1..$plan" >&3
 
 set +e
@@ -383,11 +383,13 @@ run_sash 'for x in $(argv; /usr/bin/touch /tmp/sash-spec-avc1); do attest x [[ -
 run_sash 'for x in $(argv 1; /bin/echo extra); do attest x [[ -n $x ]]; echo "$x"; done' p q
 [[ $rc != 0 && -z $out && $err == *SB5025* ]]; chk av.c2
 
-# av.c3 a redirection wrapper must not smuggle it past the check —
-# `sole_cmdsub_command` looks through `Redirected`, so every `argv`
-# shape test shares one unwrap rather than each writing its own
+# av.c3 a redirection wrapper must not smuggle it past the check. This is now
+# caught one pass earlier: DG's 2026-10-11 ruling made a redirect on a
+# no-output builtin SB4046 at parse (`BuiltinCmd::may_take_redirect`), and
+# `argv` writes to no descriptor, so the redirect is rejected before the
+# two-statement rule is ever consulted. Either way it does not compile.
 run_sash 'for x in $(argv 2>/dev/null; /bin/echo extra); do attest x [[ -n $x ]]; echo "$x"; done' p q
-[[ $rc != 0 && -z $out && $err == *SB5025* ]]; chk av.c3
+[[ $rc != 0 && -z $out && $err == *SB4046* ]]; chk av.c3
 
 # av.c4 and in a capture, where the splat is not legal at all: the
 # rejection must not be the only thing standing between the author and
@@ -415,6 +417,58 @@ run_sash 'str s=$(argv b); attest s [[ -z $s ]]; echo "[$s]"' p q
 # av.c8 control: the splat spelling is untouched
 run_sash 'for x in $(argv 1); do attest x [[ -n $x ]]; echo "$x"; done' p q
 [[ $rc = 0 && $out = $'p\nq' && -z $err ]]; chk av.c8
+
+# av.c9-12 a redirection on the splat was the surviving half of av.c1's bug.
+#
+# Narrowing the transform to one statement fixed the shape anyone had thought
+# to test and left the other: three lines below, `argv_splat_start` went on
+# looking *through* `StmtKind::Redirected`. So `for x in $(argv >f)` compiled,
+# iterated the arguments, and never created the file — the filename did not
+# reach the binary at all. Both backends agreed, so it was one fault in the
+# shared front end rather than a divergence.
+#
+# av.c3 looks like it covered this and does not: its body is `argv 2>/dev/null;
+# /bin/echo extra`, so it was rejected for being two statements. A redirect on
+# its own had no spec, which is why the hole survived the fix that closed its
+# twin.
+#
+# The answer is SB4046, not the SB5025 the multi-statement body gets. Chasing
+# this is what exposed a far wider fault — `cd`, `exit`, `close`, `unset`,
+# `argv N a` and `:` were ALL discarding their redirects silently — so DG
+# ruled 2026-10-11 that a redirect on any builtin producing no output is an
+# error, caught at parse by a closed allow-list. `argv` writes to no
+# descriptor, so it is rejected there and the splat rule never runs.
+rm -f /tmp/sash-spec-avc9
+run_sash 'for x in $(argv >/tmp/sash-spec-avc9); do attest x [[ -n $x ]]; echo "$x"; done' p q
+[[ $rc != 0 && -z $out && $err == *SB4046* && $err == *argv* \
+   && ! -e /tmp/sash-spec-avc9 ]]; chk av.c9
+
+# av.c10 the sliced spelling takes the same answer.
+run_sash 'for x in $(argv 1 >/tmp/sash-spec-avc10); do attest x [[ -n $x ]]; echo "$x"; done' p q
+[[ $rc != 0 && -z $out && $err == *SB4046* && ! -e /tmp/sash-spec-avc10 ]]; chk av.c10
+
+# av.c11-12 every operator, not just `>`. `2>` is the one most likely to be
+# written in the belief that it suppresses something, and `<` cannot even be
+# given a meaning — the splat reads no input.
+run_sash 'for x in $(argv 2>/tmp/sash-spec-avc11); do attest x [[ -n $x ]]; echo "$x"; done' p q
+[[ $rc != 0 && -z $out && $err == *SB4046* ]]; chk av.c11
+run_sash 'for x in $(argv </dev/null); do attest x [[ -n $x ]]; echo "$x"; done' p q
+[[ $rc != 0 && -z $out && $err == *SB4046* ]]; chk av.c12
+
+# av.c13 the other side of the rule, and the reason it is about the splat
+# rather than about `argv`. DD#60's out-param fill IS a statement, so a
+# redirection on it parses as the statement's own — and was then silently
+# discarded, which is how this spec found the wider fault. `argv 1 a` writes
+# nothing to stdout, so the redirect could never have meant anything; DG
+# ruled 2026-10-11 that a meaningless redirect is an error, not a no-op, so
+# it is SB4046 here rather than the SB5025 the splat gets.
+rm -f /tmp/sash-spec-avc13
+run_sash 'argv 1 a >/tmp/sash-spec-avc13
+attest x in a [[ -n $x ]]
+for x in @a; do echo "$x"; done' p q
+[[ $rc != 0 && -z $out && $err == *SB4046* && $err == *argv* \
+   && ! -e /tmp/sash-spec-avc13 ]]; chk av.c13
+rm -f /tmp/sash-spec-avc13
 
 
 set -e
