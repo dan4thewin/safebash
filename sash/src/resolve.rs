@@ -320,16 +320,25 @@ pub(crate) fn command_path_fault(path: &str) -> Option<String> {
 /// an absolute path (not a path already, not a builtin, not an intrinsic,
 /// not a user function).
 fn is_resolvable_external(name: &str, funcs: &HashSet<String>) -> bool {
-    // No `name.is_empty()` arm, and the reason is NOT that an empty name
-    // cannot get here — it can, since `normalize_command_head` began turning a
-    // single-quoted head into a `Literal` (the SB5096 work). `''` is a command
-    // name of zero length, and this comment used to assert the opposite on the
-    // strength of a measurement taken before that change.
+    // No `name.is_empty()` arm, for the same reason as `is_external_looking`'s:
+    // **SB4074 rejects an empty command name at parse** (DG, 2026-10-11), and
+    // `''` was the only spelling that produced a zero-length `Literal` head, so
+    // the case cannot arrive. `qhead.10`-`qhead.12` pin the parse rejection.
     //
-    // The arm is still absent because the answer without it is already right:
-    // `""` is not an intrinsic and not a declared function, so resolution
-    // proceeds and `resolve_command_path` reports SB5011 "command '' not
-    // found". Pinned by `spec/errors.sh` `qhead.10`.
+    // This comment has now been wrong twice, both times the same way: it
+    // asserted a conclusion ("an empty name cannot get here", then "it can,
+    // and SB5011 reports it") drawn from a measurement or a spec that a later
+    // commit invalidated, and nothing re-read it. Pin a claim to the rule that
+    // guarantees it, not to the observation that happened to agree.
+    //
+    // The `/` branch below is cold for a different reason and is NOT padding.
+    // The sole caller, `resolve_command`, tests `name.contains('/')` four lines
+    // before calling here and returns — a path head is judged by DD#23, not
+    // searched. But `false` is the *right answer* for that shape (a name with a
+    // slash is not a PATH search), so the branch stays: deleting it would leave
+    // a silently wrong answer waiting for a second caller. An `unreachable!()`
+    // is ruled out by the same rule that ruled it out next door — it would
+    // re-ask the caller's own question of the same string.
     if name.contains('/') {
         return false;
     }
