@@ -3340,6 +3340,23 @@ fn find_one_latch_read(stmt: &Statement, name: &str, which: Latch, out: &mut Vec
 /// What a leaf statement leaves `$?` in, or `None` for a statement that says
 /// nothing about it (so the inherited state survives).
 fn leaf_status_after(stmt: &Statement) -> Option<StatusState> {
+    // A redirect says where the output goes, not what becomes of the status:
+    // `cmd >f` ran a command and set `$?` exactly as `cmd` did. Peel it before
+    // asking anything else.
+    //
+    // Every other statement-shape predicate in this file already does
+    // (`stmt_backgrounds_job`, `stmt_reaps_child`), and `stmt_backgrounds_job`
+    // carries a doc recording the identical fault being fixed for `$!`. This
+    // one was missed, so `/bin/echo hi >f` followed by `$?` drew a false
+    // SB5012 claiming there was "no preceding command" — the message naming
+    // the one thing that had demonstrably just happened.
+    //
+    // Suppression is *not* peeled: DD#21 makes `-` one of the three
+    // dispositions a status may be given (checked, ignored, propagated), so
+    // `- cmd` has already answered for it and `Undefined` is the right answer.
+    if let StmtKind::Redirected(r) = &stmt.kind {
+        return leaf_status_after(&r.body);
+    }
     if is_suppressed(stmt) {
         return Some(StatusState::Undefined);
     }

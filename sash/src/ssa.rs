@@ -226,12 +226,20 @@ impl BuiltinCmd {
 
     /// Whether a trailing redirect may attach to this command (SB4046).
     ///
+    /// **Not the authority for a command *name*** — ask
+    /// [`crate::resolve::head_may_take_redirect`] instead. `from_name`
+    /// collapses every name outside this enum to [`Self::Other`], which
+    /// covers externals and user functions but *also* the twelve value
+    /// intrinsics in `resolve::INTRINSICS`, so this predicate answers `true`
+    /// for `getcwd` and `getenv`. Keying the parse gate here is exactly that
+    /// mistake; `head_may_take_redirect` joins the two tables.
+    ///
     /// The rule SB4046 states is "redirects attach to a command that produces
     /// output", and this is its closed list. `true` means the command either
     /// writes to a descriptor (`echo`, `write`), reads from one (`read` /
     /// `readline`), replaces the process with something that does (`exec`),
-    /// or is not a builtin at all ([`Self::Other`] — an external command or a
-    /// user function). Everything else produces no output, so a redirect on
+    /// or is not a builtin at all ([`Self::Other`] — see the caveat above).
+    /// Everything else produces no output, so a redirect on
     /// it is meaningless; bash creates and truncates the file and writes
     /// nothing into it, which DG ruled is a wart to reject rather than copy.
     ///
@@ -1586,8 +1594,15 @@ pub(crate) fn value_intrinsic_arity(name: &str) -> Option<RangeInclusive<usize>>
         // Nullary: the value comes from a global or a syscall, never an
         // argument. Without an entry here an extra argument was silently
         // discarded (`$(getpid X)` yielded the pid).
+        //
+        // `getcpid` was the one name this list missed, and the omission was
+        // invisible: `parse::expr::parse_getcpid_word` rebuilt the command
+        // with `args: vec![]`, so no argument survived for anyone to count.
+        // Routing that spelling through the ordinary parse is what exposed
+        // it — `$(getcpid x)` then reached the int-context lowering and hit
+        // its `unreachable!()`.
         "status" | "getpid" | "getppid" | "getcwd" | "epochseconds" | "argc" | "signum"
-        | "random" | "waitstatus" => Some(0..=0),
+        | "random" | "waitstatus" | "getcpid" => Some(0..=0),
         // DD#126: `wait` reaps any child, `wait PID` reaps that one.
         "wait" => Some(0..=1),
         "len" | "strlen" | "keys" | "toupper" | "tolower" | "basename" | "dirname" | "getenv" => {

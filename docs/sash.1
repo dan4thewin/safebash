@@ -377,6 +377,25 @@ return 0 > f                 # SB4046
 .fi
 .RE
 .PP
+The same rule covers a value\-producing intrinsic. These are read as a
+capture \[em]
+.BR getenv ,
+.BR arg ,
+.BR argc ,
+.BR status ,
+.BR epochseconds ,
+.BR random ,
+.BR getpid ,
+.BR getppid ,
+.BR getcpid ,
+.BR waitstatus ,
+.BR getcwd ,
+.BR signum
+\[em] and a capture has no descriptor to redirect, so
+.B \[dq]$(getcwd 2>/dev/null)\[dq]
+is
+.BR SB4046 .
+.PP
 The same rule covers a function definition, a variable declaration, a bare
 assignment, an arithmetic test and a
 .RB \[dq] [[ \ ]] \[dq]
@@ -404,6 +423,21 @@ inherits it \[em] bash's behaviour. The no\-argument form
 .B \[dq]exec > f\[dq]
 rebinds the invoker's own descriptors for the rest of the program, and is the
 one redirect form that also moves the diagnostic channel (DD#120).
+.PP
+A redirect says where output goes; it does not dispose of the exit status.
+.B \[dq]cmd > f\[dq]
+sets
+.B $?
+exactly as
+.B cmd
+does. Suppression is the one wrapper that does dispose of it:
+.B \[dq]\- cmd\[dq]
+elects the
+.I ignored
+disposition (DD#21), so reading
+.B $?
+afterwards is
+.BR SB5012 .
 .
 .SH TEST OPERATORS
 The

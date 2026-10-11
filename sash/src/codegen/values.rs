@@ -1411,10 +1411,14 @@ fn lower_cmdsubst_as_int(
     unreachable!(
         "`$( … )` in int context must name `wait` or an intrinsic with an \
          `int_intrinsic_i64` arm. SB4030 rejects every other capture there, \
-         and `nullary_stateful_slot` has already taken `status`/`getcpid`, so \
-         a head with no arm is an `ArithDenotation::Int` name added to \
-         `resolve` and never given one — `getcpid`'s silent 0, in the word \
-         form that `resolve_nullary_sexpr`'s guard does not see. Head: {:?}",
+         `nullary_stateful_slot` takes the bare `status`/`getcpid`, and \
+         SB4045 takes the same heads with arguments (`value_intrinsic_arity` \
+         pins both at 0 — `getcpid` only since 2026-10-12; before that the \
+         parser's private `parse_getcpid_word` discarded the arguments, and \
+         `$(getcpid x)` reached here). So a head with no arm is an \
+         `ArithDenotation::Int` name added to `resolve` and never given one \
+         — `getcpid`'s silent 0, in the word form that \
+         `resolve_nullary_sexpr`'s guard does not see. Head: {:?}",
         argv.first()
     )
 }

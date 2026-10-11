@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup errors
-plan=389
+plan=404
 echo "1..$plan" >&3
 
 set +e
@@ -1642,6 +1642,127 @@ run_sash 'str c = "/bin/echo"
 $c hi > /tmp/sash_rdr_ok'
 [[ $err != *SB4046* ]]; chk rdr.31
 rm -f /tmp/sash_rdr_ok
+# rdr.32 EVERY value-producing intrinsic rejects a redirect, not just the
+# `BuiltinCmd` ones. `BuiltinCmd::from_name` maps all twelve `resolve`
+# intrinsics to `Other`, and `may_take_redirect` read `Other` as
+# "external or user function — allow", so `$(getcwd 2>/dev/null)` escaped
+# SB4046 and drew a false SB5073 while `$(len a 2>/dev/null)` was caught.
+# The gate now asks `resolve::head_may_take_redirect`, which joins both
+# tables. Looped so the whole set is pinned, not a sample of it.
+_bad=""
+for _n in getenv arg argc epochseconds random getpid getppid waitstatus getcwd signum; do
+  run_sash "str s = \$($_n x 2>/dev/null)
+echo \$s"
+  [[ $err == *SB4046* ]] || _bad="$_bad $_n"
+done
+[[ -z $_bad ]]; chk rdr.32
+# rdr.33 `status` and `getcpid` reached the same fault down a DIFFERENT road:
+# `parse_status_word`/`parse_getcpid_word` claimed the word before
+# `parse_command` ran, so the parser's redirect gate never saw them at all.
+# `parse_getcpid_word` discarded the rest of the command without consuming
+# it, so `2>/dev/null` became a second statement and SB5073's "not one
+# statement among several" was SELF-FULFILLING; `parse_status_word` fed `2>`
+# to `parse_expr` and got SB4014 "expected expression". Both now fall
+# through to the ordinary parse unless the next token closes the capture.
+run_sash '/bin/true
+int x = $(status 2>/dev/null)
+echo $x'
+[[ $err == *SB4046* ]]; chk rdr.33
+run_sash '/bin/sleep 0 &
+int x = $(getcpid 2>/dev/null)
+echo $x'
+[[ $err == *SB4046* ]]; chk rdr.34
+# rdr.35 the bare forms still parse — the shortcut claims exactly `$(status)`
+# and `$(getcpid)` by looking ahead for the closing paren. Read in an `else`,
+# where DD#21 makes a non-zero status available to be handled.
+run_sash 'if /bin/sh -c "exit 7" {
+echo no
+} else {
+int x = $(status)
+echo "st=$x"
+}'
+[[ $rc = 0 && $out = "st=7" && -z $err ]]; chk rdr.35
+# rdr.36 `$(getcpid x)` was the one name missing from `value_intrinsic_arity`,
+# and nothing could see the gap while the parser was throwing the argument
+# away. Routing it through the ordinary parse exposed it as an ICE in the
+# int-context lowering. It is an arity error, like every sibling.
+run_sash '/bin/sleep 0 &
+int x = $(getcpid x)
+echo $x'
+[[ $err == *SB4045* && $err != *panic* ]]; chk rdr.36
+# rdr.37 a SUPPRESSED capture honours its redirect. The parser nests this as
+# `Suppressed(Redirected(Command))`, and `single_command_subst`'s guard
+# tested the OUTERMOST kind for `Redirected` — which is `Suppressed` — so it
+# missed, took the fast path, and built a `CmdSubst` carrying no redirects
+# at all. The redirect was dropped in silence, in both backends. The guard
+# was non-transitive while the peel beneath it was transitive.
+rm -f /tmp/sash_rdr_sup
+run_sash 'str s = $(- /bin/sh -c "echo E >&2; echo OUT" 2>/tmp/sash_rdr_sup)
+attest s [[ -n $s ]]
+echo "got:$s"'
+[[ $rc = 0 && $out = "got:OUT" && -z $err && $(cat /tmp/sash_rdr_sup) = "E" ]]; chk rdr.37
+rm -f /tmp/sash_rdr_sup
+# rdr.38 and the same spelling aimed at /dev/null really does suppress — the
+# tell for the dropped redirect was `E` arriving on the terminal
+run_sash 'str s = $(- /bin/sh -c "echo E >&2; echo OUT" 2>/dev/null)
+attest s [[ -n $s ]]
+echo "got:$s"'
+[[ $rc = 0 && $out = "got:OUT" && $rerr != *E* ]]; chk rdr.38
+# rdr.39 `return CMD` derives its status from the command, so it is a command
+# statement and takes a redirect (DD#74). `return N` names the status
+# outright and has no output to redirect — DG: "return N >f is nonsense".
+run_sash 'fn f {
+return /bin/sh -c "echo E >&2; exit 3" 2>/dev/null
+}
+f
+echo "rc=$?"'
+[[ $rc = 0 && $out = "rc=3" && $rerr != *E* ]]; chk rdr.39
+run_sash 'fn f {
+return 3 > /tmp/sash_rdr_rn
+}
+f'
+[[ $err == *SB4046* && ! -e /tmp/sash_rdr_rn ]]; chk rdr.40
+# rdr.41 an APPENDING redirect on a pipeline stage accumulates across
+# statements rather than truncating each time
+rm -f /tmp/sash_rdr_ap
+run_sash '/bin/echo one >> /tmp/sash_rdr_ap | /bin/cat
+/bin/echo two >> /tmp/sash_rdr_ap | /bin/cat
+/bin/cat /tmp/sash_rdr_ap'
+[[ $rc = 0 && $out = $'one\ntwo' && -z $err ]]; chk rdr.41
+rm -f /tmp/sash_rdr_ap
+# rdr.42 a redirect does not erase the exit status. SB5012's
+# `leaf_status_after` asked `is_command_like`, which lists `Command` /
+# `Pipeline` / `List` / `ArithTest` but not `Redirected`, so a redirected
+# command left the status `Undefined` and the next `$?` was told there was
+# "no preceding command" — naming the one thing that had just happened. Its
+# two sibling predicates (`stmt_backgrounds_job`, `stmt_reaps_child`) both
+# peel the wrapper already, and the first of those carries a doc recording
+# this exact fault being fixed for `$!`.
+rm -f /tmp/sash_rdr_st
+run_sash '/bin/echo hi > /tmp/sash_rdr_st
+int x = $(status)
+echo "st=$x"'
+[[ $rc = 0 && $out = "st=0" && -z $err ]]; chk rdr.42
+run_sash '/bin/echo hi > /tmp/sash_rdr_st
+echo $?'
+[[ $rc = 0 && $out = "0" && -z $err ]]; chk rdr.43
+# rdr.44 the status is still readable when the `$?` is itself inside the
+# redirected statement
+run_sash '/bin/true
+/bin/echo $? > /tmp/sash_rdr_st
+/bin/cat /tmp/sash_rdr_st'
+[[ $rc = 0 && $out = "0" && -z $err ]]; chk rdr.44
+# rdr.45 suppression is NOT peeled, and must not be: DD#21 makes `-` one of
+# the three dispositions a status may be given (checked, ignored,
+# propagated), so `- cmd` has already answered for it. This is the control
+# that keeps the fix above from becoming "peel every wrapper".
+run_sash '- /bin/sh -c "exit 7"
+echo $?'
+[[ $err == *SB5012* ]]; chk rdr.45
+run_sash '- /bin/echo hi > /tmp/sash_rdr_st
+echo $?'
+[[ $err == *SB5012* ]]; chk rdr.46
+rm -f /tmp/sash_rdr_st
 
 
 # dspan.1 every "expected expression" pointed at 1:1 — `parts_to_expr` built

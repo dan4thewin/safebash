@@ -3194,11 +3194,16 @@ fn parse_list_operand(scanner: &mut Scanner) -> Result<Option<Statement>, Diagno
 /// unknown here and is an external command anyway, so it is allowed through —
 /// the same reasoning `normalize_command_head` uses to leave expansions to
 /// SB5011.
+///
+/// Asks [`crate::resolve::head_may_take_redirect`], not
+/// `BuiltinCmd::may_take_redirect`. The enum predicate cannot answer for a
+/// name `from_name` does not know, and the twelve `INTRINSICS` value
+/// producers are exactly those names.
 fn reject_redirect_on_no_output_builtin(name: &Expr, span: Span) -> Result<(), Diagnostic> {
     let ExprKind::Literal(n) = &name.kind else {
         return Ok(());
     };
-    if crate::ssa::BuiltinCmd::from_name(n).may_take_redirect() {
+    if crate::resolve::head_may_take_redirect(n) {
         return Ok(());
     }
     Err(parse_error(

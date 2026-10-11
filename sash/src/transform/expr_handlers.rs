@@ -246,18 +246,25 @@ pub(super) fn single_command_subst(expr: &Expr) -> Option<(&Statement, Option<St
         return None;
     }
     let stmt = real_stmts[0];
-    // A redirected capture (`$(cmd > f)`) declines the fast path and falls to
-    // `CmdSubstBody`, where the redirect is lowered by the ordinary statement
-    // machinery — the same path `$(a | b > f)` has always taken, and the only
-    // one both backends implement. The fast path carried its redirects in the
-    // SSA node instead, which the C backend discarded outright and native
-    // dropped whenever the target was a literal path (its interner never
-    // walked them), so `$(/bin/echo hi > f)` captured `hi` and left `f`
-    // untouched. Costs no extra fork.
-    if matches!(stmt.kind, StmtKind::Redirected(_)) {
+    // A redirected capture (`$(cmd > f)`, `$(- cmd > f)`) declines the fast
+    // path and falls to `CmdSubstBody`, where the redirect is lowered by the
+    // ordinary statement machinery — the same path `$(a | b > f)` has always
+    // taken, and the only one both backends implement. The fast path carried
+    // its redirects in the SSA node instead, which the C backend discarded
+    // outright and native dropped whenever the target was a literal path (its
+    // interner never walked them), so `$(/bin/echo hi > f)` captured `hi` and
+    // left `f` untouched. Costs no extra fork.
+    //
+    // The guard asks the *peel* whether it stripped a redirect rather than
+    // testing `stmt.kind` itself, because the wrappers nest: the parser builds
+    // `$(- cmd > f)` as `Suppressed(Redirected(Command))`, so an outermost-kind
+    // test sees `Suppressed`, misses the redirect, and hands the bare `Command`
+    // to the fast path — reinstating the very drop this guard exists to stop,
+    // for the one spelling nothing tested. One walk, one answer.
+    let (inner, redirected) = unwrap_subst_wrappers(&stmt.kind);
+    if redirected {
         return None;
     }
-    let inner = unwrap_subst_wrappers(&stmt.kind);
     let StmtKind::Command(c) = inner else {
         return None;
     };
@@ -269,14 +276,24 @@ pub(super) fn single_command_subst(expr: &Expr) -> Option<(&Statement, Option<St
 }
 
 /// Peel any number of `Redirected` / `Suppressed` wrappers off a
-/// `StmtKind`, returning a reference to the innermost kind. Used by
-/// `single_command_subst` to look through `$(- foo)` etc.
-fn unwrap_subst_wrappers(mut s: &StmtKind) -> &StmtKind {
+/// `StmtKind`, returning the innermost kind and whether any of the
+/// wrappers was a `Redirected`.
+///
+/// The flag is the point. The wrappers nest in either order, so a caller
+/// that peels transitively and tests for a redirect non-transitively will
+/// disagree with itself — which is how `$(- cmd > f)` silently dropped its
+/// redirect while `$(cmd > f)` honoured it. Reporting what was stripped
+/// keeps the question and the walk in one place.
+fn unwrap_subst_wrappers(mut s: &StmtKind) -> (&StmtKind, bool) {
+    let mut redirected = false;
     loop {
         match s {
-            StmtKind::Redirected(r) => s = &r.body.kind,
+            StmtKind::Redirected(r) => {
+                redirected = true;
+                s = &r.body.kind;
+            }
             StmtKind::Suppressed(inner) => s = &inner.kind,
-            other => return other,
+            other => return (other, redirected),
         }
     }
 }

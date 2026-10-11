@@ -164,6 +164,29 @@ pub(crate) fn is_intrinsic(name: &str) -> bool {
     arith_denotation(name).is_some()
 }
 
+/// SB4046: may a *literal* command head carry a trailing redirect?
+///
+/// The name-level authority, and the one the parser must ask.
+/// [`BuiltinCmd::may_take_redirect`] answers only for the enum, and
+/// `from_name` collapses every name outside it to [`BuiltinCmd::Other`] —
+/// which means "not the compiler's name" for an external or a user function,
+/// and *also* for all twelve names in [`INTRINSICS`]. Keying the gate on the
+/// enum alone therefore let `$(getcwd 2>/dev/null)` past while rejecting
+/// `$(len a 2>/dev/null)`, and the two are the same kind of thing: a value
+/// producer, writing to no descriptor.
+///
+/// That is the hazard [`INTRINSICS`]'s own doc names — two tables agree on
+/// "is this name the compiler's" and diverge the moment a name has to carry a
+/// property. The join belongs here, where both tables are in scope, rather
+/// than at a call site that can only see one.
+pub(crate) fn head_may_take_redirect(name: &str) -> bool {
+    let kind = BuiltinCmd::from_name(name);
+    if matches!(kind, BuiltinCmd::Other) {
+        return !is_intrinsic(name);
+    }
+    kind.may_take_redirect()
+}
+
 /// Words the parser gives a meaning of their own. Most are already
 /// unusable as a variable name because the lexer turns them into a
 /// non-`Word` token, so `int if=5` fails to parse — but that is an

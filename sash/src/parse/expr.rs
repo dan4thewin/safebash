@@ -1625,21 +1625,14 @@ fn collect_cmd_sub_body(
     closed: &mut bool,
 ) -> Result<Option<Expr>, Diagnostic> {
     while !scanner.at_eof() {
-        let tok = scanner.peek().token.clone();
-        match tok {
-            Tok::RParen => {
-                scanner.next();
+        match cmd_sub_body_step(scanner, span, stmts)? {
+            CmdSubStep::Closed => {
                 *closed = true;
                 return Ok(None);
             }
-            Tok::Newline | Tok::Semi => {
-                scanner.next();
-            }
-            _ => match parse_cmd_sub_step(scanner, span, &tok, stmts)? {
-                CmdSubStep::Return(e) => return Ok(Some(e)),
-                CmdSubStep::Break => return Ok(None),
-                CmdSubStep::Continue | CmdSubStep::Pushed => {}
-            },
+            CmdSubStep::Return(e) => return Ok(Some(e)),
+            CmdSubStep::Break => return Ok(None),
+            CmdSubStep::Skipped | CmdSubStep::Pushed => {}
         }
     }
     Ok(None)
@@ -1660,16 +1653,42 @@ fn unterminated_cmd_sub_diag(span: Span) -> Diagnostic {
     )
 }
 
-/// Outcome of one normal-token iteration inside parse_command_substitution.
+/// Outcome of one iteration of [`collect_cmd_sub_body`]'s loop.
+///
+/// `Closed` and `Skipped` are here rather than in the loop so that the loop
+/// holds exactly one `match`: the structural tokens and the statement step
+/// are answered in one place and reported in one vocabulary.
 enum CmdSubStep {
+    /// A `)` ended the substitution; the caller records *how* it ended.
+    Closed,
+    /// A `;` or newline between statements — nothing to record.
+    Skipped,
     /// First-word special shortcut consumed the whole $(...); caller returns this Expr.
     Return(Expr),
-    /// First-word special shortcut pushed a stmt; caller continues the outer loop.
-    Continue,
     /// parse_statement returned None; caller breaks out of the loop.
     Break,
     /// parse_statement returned Some; caller falls through to the next iteration.
     Pushed,
+}
+
+/// One iteration: consume a structural token, or parse one statement.
+fn cmd_sub_body_step(
+    scanner: &mut Scanner,
+    span: Span,
+    stmts: &mut Vec<Statement>,
+) -> Result<CmdSubStep, Diagnostic> {
+    let tok = scanner.peek().token.clone();
+    match tok {
+        Tok::RParen => {
+            scanner.next();
+            Ok(CmdSubStep::Closed)
+        }
+        Tok::Newline | Tok::Semi => {
+            scanner.next();
+            Ok(CmdSubStep::Skipped)
+        }
+        _ => parse_cmd_sub_step(scanner, span, &tok, stmts),
+    }
 }
 
 fn parse_cmd_sub_step(
@@ -1678,7 +1697,7 @@ fn parse_cmd_sub_step(
     tok: &Tok,
     stmts: &mut Vec<Statement>,
 ) -> Result<CmdSubStep, Diagnostic> {
-    if let Some(step) = try_first_word_shortcut(scanner, span, tok, stmts)? {
+    if let Some(step) = try_first_word_shortcut(scanner, span, tok, stmts) {
         return Ok(step);
     }
     match super::parser::parse_statement(scanner)? {
@@ -1697,22 +1716,15 @@ fn try_first_word_shortcut(
     scanner: &mut Scanner,
     span: Span,
     tok: &Tok,
-    stmts: &mut Vec<Statement>,
-) -> Result<Option<CmdSubStep>, Diagnostic> {
+    stmts: &[Statement],
+) -> Option<CmdSubStep> {
     if !stmts.is_empty() {
-        return Ok(None);
+        return None;
     }
     let Tok::Word(w) = tok else {
-        return Ok(None);
+        return None;
     };
-    match try_special_word(scanner, span, w)? {
-        Some(SpecialWord::Returned(e)) => Ok(Some(CmdSubStep::Return(e))),
-        Some(SpecialWord::Continued(s)) => {
-            stmts.push(s);
-            Ok(Some(CmdSubStep::Continue))
-        }
-        None => Ok(None),
-    }
+    try_special_word(scanner, span, w).map(CmdSubStep::Return)
 }
 
 /// `$(<file)` — the slurp form. Caller has just consumed `(`.
@@ -1730,84 +1742,36 @@ fn parse_slurp_form(scanner: &mut Scanner, span: Span) -> Result<Expr, Diagnosti
     })
 }
 
-/// Outcome of probing the first word of a `$(…)` substitution for
-/// one of the bareword shortcuts (`status`, `getcpid`).
-enum SpecialWord {
-    /// Already consumed the entire substitution; return this `Expr`.
-    Returned(Expr),
-    /// Pushed a command statement; caller should `continue` the loop.
-    Continued(Statement),
-}
-
-/// Probe for bareword-shortcut command substitutions:
-/// `$(status)` → `$?`, `$(status args…)` → status command,
-/// `$(getcpid)` → `$!`, `$(getcpid)` (with no args allowed) →
-/// getcpid command. Returns `Ok(None)` when `w` is not one of
-/// these.
-fn try_special_word(
-    scanner: &mut Scanner,
-    span: Span,
-    w: &str,
-) -> Result<Option<SpecialWord>, Diagnostic> {
-    match w {
-        "status" => parse_status_word(scanner, span).map(Some),
-        "getcpid" => parse_getcpid_word(scanner, span).map(Some),
-        _ => Ok(None),
+/// Probe for the bareword stateful-slot substitutions `$(status)` and
+/// `$(getcpid)` — DD#111, where `$?` / `$!` are the sugar and these are the
+/// real thing. Consumes the head and the `)` and yields the intrinsic
+/// expansion; returns `None` for every other spelling.
+///
+/// **Only the exact nullary form is claimed here, and the lookahead is what
+/// enforces that.** `status` and `getcpid` with anything following are
+/// ordinary commands, so declining lets `parse_statement` parse them and
+/// every ordinary gate apply. Two hand-rolled `Command` reconstructions used
+/// to live here instead, and both were wrong in the same way: they bypassed
+/// `parse_command`, so SB4046 never saw the head, and a trailing redirect
+/// reported something else entirely. `$(status 2>/dev/null)` drew SB4014
+/// "expected expression" (its private arg loop fed `2>` to `parse_expr`),
+/// and `$(getcpid 2>/dev/null)` drew SB5073 *"recognised only when it is the
+/// whole substitution, not one statement among several"* — false when
+/// written, and self-fulfilling, because `parse_getcpid_word` discarded the
+/// rest of the command without consuming it, so `2>/dev/null` became the
+/// second statement the message complained about. A private reconstruction
+/// of a shared parse is how a diagnostic ends up describing a program nobody
+/// wrote.
+fn try_special_word(scanner: &mut Scanner, span: Span, w: &str) -> Option<Expr> {
+    if !matches!(w, "status" | "getcpid") {
+        return None;
     }
-}
-
-/// `$(status)` yields the intrinsic itself (DD#111 — `$?` is the sugar, this
-/// is the real thing); `$(status args…)` reconstructs as a regular `status`
-/// command (args parsed until the next pipeline / list / close-paren
-/// terminator), which SB4045 then rejects, `status` being a value intrinsic of
-/// arity 0.
-fn parse_status_word(scanner: &mut Scanner, span: Span) -> Result<SpecialWord, Diagnostic> {
+    if !matches!(scanner.peek_n(1).token, Tok::RParen) {
+        return None;
+    }
     scanner.next();
-    if matches!(scanner.peek().token, Tok::RParen) {
-        scanner.next();
-        return Ok(SpecialWord::Returned(intrinsic_expansion("status", span)));
-    }
-    let mut args = Vec::new();
-    while !scanner.at_eof()
-        && !matches!(
-            scanner.peek().token,
-            Tok::RParen | Tok::Newline | Tok::Semi | Tok::Pipe | Tok::AndAnd | Tok::OrOr
-        )
-    {
-        args.push(parse_expr(scanner)?);
-    }
-    Ok(SpecialWord::Continued(Statement {
-        kind: StmtKind::Command(Command {
-            name: Expr {
-                kind: ExprKind::Literal("status".to_string()),
-                span,
-            },
-            args,
-        }),
-        span,
-    }))
-}
-
-/// `$(getcpid)` yields the intrinsic itself (DD#111 — `$!` is the sugar, this
-/// is the real thing, so the fold that used to collapse it into
-/// `SimpleExpansion("!")` is gone); anything else with the `getcpid` head
-/// reconstructs as a no-arg `getcpid` command.
-fn parse_getcpid_word(scanner: &mut Scanner, span: Span) -> Result<SpecialWord, Diagnostic> {
     scanner.next();
-    if matches!(scanner.peek().token, Tok::RParen) {
-        scanner.next();
-        return Ok(SpecialWord::Returned(intrinsic_expansion("getcpid", span)));
-    }
-    Ok(SpecialWord::Continued(Statement {
-        kind: StmtKind::Command(Command {
-            name: Expr {
-                kind: ExprKind::Literal("getcpid".to_string()),
-                span,
-            },
-            args: vec![],
-        }),
-        span,
-    }))
+    Some(intrinsic_expansion(w, span))
 }
 
 fn expect_rparen(scanner: &mut Scanner, span: Span) -> Result<(), Diagnostic> {
