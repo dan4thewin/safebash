@@ -1,3 +1,72 @@
+## ══ STATUS (2026-10-11, latest) — three cold arms, three different answers ══
+
+**Coverage queue, three items off the top of the ranking.** No two wanted the
+same treatment, which is the argument for classifying before mining. Journal
+492.
+
+**The atoi fallback DG's ruling had just killed** (`98948fd`).
+`lower_cmdsubst_as_int` fell back to `lower_value` + `sash_atoi` when a capture
+in int context had no intrinsic arm, and `epochseconds` was that path's
+documented last user — so the morning's ABI change made it cold. Enumerated
+the producer rather than deleting on sight: `type_check`'s **SB4030** rejects
+every capture whose denotation is not `Int` (measured for `$(getcwd)`,
+`$(getenv …)` and an external command, in two positions each — all three
+report SB5020 first, and `--no-taint` exposes SB4030 behind them); the two
+stateful Int names are rewritten to the `?`/`!` slots before codegen; the rest
+have arms. Now an ICE.
+
+Worth knowing: **three hand-maintained lists of the int-intrinsic set exist** —
+`resolve::INTRINSICS` (9), `resolve_nullary_sexpr`'s stateless list (7),
+`int_intrinsic_i64`'s arms (7 + `status`). The existing ICE guards list-1 vs
+list-2 but only for the `(name)` sexpr; the word form `$(name)` builds its
+`CmdSubst` elsewhere and never passes through it. That hop is what the new ICE
+closes — orthogonal, not a second asking.
+
+**The empty command head — a spec gap a recent commit created** (`cbea683`).
+`is_external_looking`'s `is_empty` arm was cold, and its sibling had the same
+arm *deleted* by an earlier session on the recorded grounds that "an empty head
+cannot be an `ExprKind::Literal`". True when written; falsified three commits
+ago by the SB5096 work, which made `normalize_command_head` turn a
+single-quoted head into a literal. So `''` is now a zero-length literal command
+name, and having no bare spelling it does not trip SB5096 itself.
+
+Confirmed by **execution**, not reading — four spellings failed first. The one
+that works is DD#88's capture-condition form, `if y=$('') { … }`, found by
+reading the call-site guard (`in_condition`) rather than guessing. Three specs
+(`qhead.10`–`qhead.12`); both comments corrected. **Note for DG:** that form
+reports SB4025 *and* SB5011. SB4025's wording fits an empty name poorly, but
+its statement is true and SB5011 explains the real problem, so I left it.
+
+**The arm that answered silently** (`a8b7916`). `cmdsub_body_value`'s `_ =>`
+returned `SsaValue::Expr("[[ ... ]]")` — a test's *source text* carried into a
+value position, the same shape as the bug where a `join` separator became the
+five characters `"$sep"`. Unreachable by construction: its caller is reached
+only from `expr_to_value`'s fall-through, which admits exactly
+`CommandSubstitution` and `Test`, and `ExprKind::Test` is statement-only — the
+guarantee `validate` already ICEs on as `TEST_IS_STATEMENT_ONLY`. Entered 185
+times, arm taken 0. Now an ICE with a `#[should_panic]` test.
+
+**`expr-to-string-only-sees-literal` — all three gates met, one decision left
+for DG.** All 24 call sites enumerated from the producer side. **Every live one
+passes an `ExprKind::Literal.`** Ten are command heads, covered by one
+guarantee (`check_cmd_at` rejects a non-`Literal` head and returns) — the hop
+worth checking was pipeline stages, and `structural_bodies`' `Pipeline(p) =>
+vec![&p.commands]` reaches them. Two are `signal`'s args (SB4059–SB4062:
+"exactly two literal arguments"), four are collection/target names, one is
+DD#65's operand, one was closed earlier, three are recursion from inside cold
+arms. `joined_form_to_string`/`opaque_form_to_string` are unreachable as a
+corollary.
+
+So the 21338-entries-one-arm measurement has an explanation: **every caller is
+asking the same question** — "what is the literal name here?" — and the
+validator has already guaranteed the answer exists. The general source-text
+renderer is an API no caller wants. Narrowing it to `literal_name_of()`, or
+making its arms ICE, spans 23 call sites and is hard to reverse — **DG's
+call.** The enumeration is in the task file so it needn't be redone.
+
+Sweep **8155** (3962 c + 4180 native + 13 skipped), zero failing, zero flips.
+`mk test` 102 units green.
+
 ## ══ STATUS (2026-10-10, latest) — the spelling that disagreed with itself ══
 
 **DG's int→string denotation ruling, implemented.** *"the aim is that int to
