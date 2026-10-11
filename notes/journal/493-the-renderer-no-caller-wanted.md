@@ -126,3 +126,79 @@ ask one function.
 Sweep 8155 both times (3962 c + 4180 native + 13 skipped), predicted exactly,
 zero flips, zero new ids. `mk test` 149 units, 0 failures. Commits `88a1b3f`
 and `1d88eff`.
+
+## Postscript — two more from the queue, and a comment that lied twice
+
+Refreshed `coverage.db` after the above: **389 → 363** uncovered lines, and
+the ranking is much flatter than it was (head 9, where it had been 21).
+
+### The comment that had gone stale for the second time
+
+`resolve_command` heads the ranking at 9 cold lines, and both of its cold
+spots are already settled in place with reasoned comments — a cross-pass
+`return` and the `BUILTINS`-drift backstop that the `kill` incident earned.
+Nothing to do there.
+
+But two lines down, `is_resolvable_external`'s comment asserted that `''`
+reaches it and is reported as SB5011 "command '' not found", *pinned by
+`spec/errors.sh` `qhead.10`*. Both halves had been false since the morning:
+SB4074 now rejects an empty command name at parse, and `qhead.10` asserts
+SB4074. Its sibling `is_external_looking`, fifteen lines down, says exactly
+that — so the two comments contradicted each other, in the same file, written
+within hours of each other. I wrote the second one and did not re-read the
+first.
+
+What makes it worth a journal entry is that the comment *records its own
+previous version being wrong the same way*: "this comment used to assert the
+opposite on the strength of a measurement taken before that change". Twice
+now, same mechanism. The comment pinned its conclusion to evidence that
+happened to agree at the time — a measurement, then a spec id — rather than
+to the rule that guarantees it. Evidence goes stale silently; a rule does
+not, because changing it is a visible act.
+
+The replacement says so explicitly, so the next reader has something to
+re-check rather than a conclusion to trust.
+
+The cold `/` branch it sits above is a separate question with the opposite
+answer: **keep it**. `resolve_command` is the sole caller and guards
+`name.contains('/')` four lines before calling, so it cannot run today — but
+`false` is the *correct* answer for a slash-bearing name, and deleting it
+would leave a silently wrong answer waiting for a second caller. Not every
+cold line is an ICE candidate or a deletion; some are just correct.
+
+### The dispatch that cannot have one path
+
+`insert_case_phis` had an `else if all_paths.len() == 1` arm adopting that
+path's snapshot. Its own comment named the shape it was for: "wildcard-only
+case". That is a `case` construct — `case x in *) … ;; esac` — and `case` was
+removed (SB4029). The arm is a remnant of a retired grammar.
+
+The DD#66 dispatch form that replaced it cannot express a single-path merge,
+and for once the whole chain fits in a paragraph: `parse_dispatch` seeds
+`items` with one non-default arm *before* `parse_dispatch_arms` runs, and that
+function is the only site setting `is_default: true`, and it appends. So a
+default arm implies two items. Without a default, `wire_no_match_path`
+synthesises a second path. Either way, two. `[[ $x == || { … } ]]` — the
+spelling that would give one — is SB4014, verified by execution.
+
+The treatment is an ICE, and it is worth saying why this one passes DG's
+orthogonality test when the empty-name arm next door failed it. That one
+would have re-asked the parser's own question of the same string. This one
+asks about `all_paths`, a quantity computed *downstream* by
+`build_case_bodies` and `wire_no_match_path`. The regression it catches lives
+in those: a `has_wildcard` test that wrongly reported a default would skip
+wiring the no-match block, and a non-matching value would reach the merge
+without `$? = 0`. The old branch absorbed exactly that into a
+plausible-looking `state.restore` and miscompiled in silence. Different
+question, different pass, real failure mode.
+
+Written as a guard clause rather than an `else`, which also catches a
+zero-path merge — and inverting it flattened the function that the complexity
+gate then asked for (cc=9/cog=8, the phi loop nested two deep inside the arm).
+The per-variable body became `insert_one_case_phi`. cc=5/cog=3 and cc=5/cog=1.
+
+That is twice in one session the gate has fired on a function I only touched
+incidentally, and both times the function was genuinely worth flattening.
+Grandfather-on-modify is doing what it was designed to do.
+
+Sweep 8155 throughout, zero flips, zero new ids. 150 units.

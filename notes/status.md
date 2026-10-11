@@ -39,8 +39,30 @@ rather than respelling the predicate `is_attest_left` already held. cc=3/cog=3.
 
 Sweep 8155 both times, zero flips, zero new ids. `mk test` 149, 0 failures.
 
-**Next:** resume the coverage queue (`coverage.db` needs `mk cov-union` +
-`mk cov-db` — four files have moved).
+**Coverage queue, two more** (`120a877`, `0fa3997`). `coverage.db` refreshed:
+**389 → 363** uncovered lines, ranking much flatter (head 9, was 21).
+
+- `resolve_command` heads the ranking but both cold spots are already settled
+  in place. Two lines down, **`is_resolvable_external`'s comment had gone
+  stale for the second time** — it claimed `''` reaches it and is reported as
+  SB5011, pinned by `qhead.10`, both false since SB4074 landed that morning,
+  and contradicting its own sibling fifteen lines below. Both times it pinned
+  its conclusion to evidence (a measurement, then a spec id) rather than to
+  the rule that guarantees it. Its cold `/` branch **stays**: the sole caller
+  guards it, but `false` is the correct answer and deleting it would leave a
+  silently wrong answer for a second caller.
+- **`insert_case_phis`' single-path arm → ICE.** A remnant of the removed
+  `case` construct (its comment said "wildcard-only case"). The dispatch
+  grammar seeds one non-default arm before `||` can appear, and
+  `wire_no_match_path` adds a second path otherwise, so two paths always.
+  Passes the orthogonality test where the empty-name arm failed it: it asks
+  about `all_paths`, computed downstream, and catches a `has_wildcard`
+  regression that would skip the no-match block and lose `$? = 0`. The guard
+  clause also flattened the function for the complexity gate (cc=9/cog=8 →
+  5/3, with `insert_one_case_phi` extracted).
+
+**Next:** continue the coverage queue (`coverage.db` is current as of
+`7218e56`; three files have moved since).
 
 ## ══ STATUS (2026-10-11, latest) — three cold arms, three different answers ══
 
