@@ -2496,10 +2496,23 @@ fn quoted_var_subject(var_name: &str, span: Span) -> Expr {
 ///
 /// A *double*-quoted head stays SB5011: interpolation makes it genuinely
 /// non-literal, and there is no single name to resolve at compile time.
+///
+/// An *empty* head is SB4074, a syntax error rather than a resolution one.
+/// DG, 2026-10-11: "an empty name can neither name an intrinsic nor an
+/// external — strikes me as more of a syntax error". Quoting exists to say a
+/// name that has no bare spelling; it is not a way to say the absence of a
+/// name. Rejecting it here is what keeps every later pass free of the case:
+/// `''` was previously the one spelling that could put an `ExprKind::Literal`
+/// of zero length in command position, and it reached `validate` as a *pair*
+/// of diagnostics (SB4025 + SB5011) where every other unrunnable head gets
+/// exactly one.
 fn normalize_command_head(name: Expr) -> Result<Expr, Diagnostic> {
     let ExprKind::SingleQuoted(text) = &name.kind else {
         return Ok(name);
     };
+    if text.is_empty() {
+        return Err(empty_command_head_diag(name.span));
+    }
     if has_bare_spelling(text) {
         return Err(superfluous_quoted_head_diag(text, name.span));
     }
@@ -2507,6 +2520,18 @@ fn normalize_command_head(name: Expr) -> Result<Expr, Diagnostic> {
         kind: ExprKind::Literal(text.clone()),
         span: name.span,
     })
+}
+
+fn empty_command_head_diag(span: Span) -> Diagnostic {
+    parse_error(
+        span,
+        "SB4074",
+        "empty command name `''` — a name of zero length can denote neither a \
+         sash intrinsic nor a program on disk; single quotes in command \
+         position say a name that has no bare spelling, such as a path \
+         containing a space, not the absence of a name"
+            .to_string(),
+    )
 }
 
 fn superfluous_quoted_head_diag(text: &str, span: Span) -> Diagnostic {

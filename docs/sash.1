@@ -185,7 +185,13 @@ containing a space \(em may be written in
 quotes, which denote the literal name:
 .RB \[dq] "\[aq]/opt/my tool\[aq]" \[dq] .
 Quoting a name that could have been written bare is
-.BR SB5096 .
+.BR SB5096 ,
+and an empty name
+.RB ( \[aq]\[aq] )
+is
+.BR SB4074 :
+a zero\-length name can denote neither an intrinsic nor a program, so it is a
+syntax error rather than a resolution failure.
 Double quotes are not accepted in command position
 .RB ( SB5011 ):
 a double\-quoted word can interpolate, so there is no single name to resolve
@@ -1075,6 +1081,10 @@ an absolute command path that is not an executable file (DD#23).
 .TP
 .B SB5096
 a quoted command name that could have been written without quotes.
+.TP
+.B SB4074
+an empty command name
+.RB ( \[aq]\[aq] ).
 .TP
 .B SB5015
 .BR read :

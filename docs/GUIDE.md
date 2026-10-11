@@ -204,7 +204,7 @@ taint pass, and the CST itself into this single module.)
 | `check_dynexec` | SB4001 | `eval`, `source`, `.`, `command`, `coproc` |
 | `check_heredoc` | SB5002 | heredocs / here-strings |
 | `check_command_head` | SB5011 | an unknown name in command position |
-| `normalize_command_head` | SB5096 | a quoted command name that has a bare spelling (parse time) |
+| `normalize_command_head` | SB5096, SB4074 | a quoted command name that has a bare spelling, or an empty one (both parse time) |
 | `check_exec_target` | SB5011, SB5095 | an `exec` target that is not a runnable program |
 | `check_taint` | SB5020 | a tainted value used without `attest` |
 
@@ -571,7 +571,10 @@ that does not exist rather than a pattern. A command name with no bare
 spelling — a path containing a space — is written in single quotes, which
 denote the literal name; quoting a name that could have been written bare is
 SB5096, and a double-quoted head remains SB5011 because interpolation leaves
-no single name to resolve.
+no single name to resolve. An *empty* name is SB4074, a syntax error rather
+than a resolution one (DG, 2026-10-11): a zero-length name can denote neither
+an intrinsic nor a program, and quoting says a name with no bare spelling, not
+the absence of a name.
 
 ### Source emission
 

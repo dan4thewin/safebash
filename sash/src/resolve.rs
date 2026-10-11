@@ -345,15 +345,20 @@ fn is_resolvable_external(name: &str, funcs: &HashSet<String>) -> bool {
 /// capture-condition check (DD#88), which runs in `validate` BEFORE resolution
 /// (names are still bare) and defers the user-function exclusion to the
 /// transform.
+///
+/// Like its sibling, this has no `is_empty` arm, and now for the same reason:
+/// **SB4074 rejects an empty command name at parse** (DG, 2026-10-11 — an
+/// empty name is a syntax error, since it can denote neither an intrinsic nor
+/// an external). `''` was the only spelling that produced a zero-length
+/// `ExprKind::Literal` head, and the sole caller matches on `Literal`, so the
+/// case cannot arrive.
+///
+/// The arm that stood here is deliberately not replaced by an `unreachable!`.
+/// It would ask the parser's own question — "is this name empty?" — of the
+/// same string the parser already judged, and a backstop that re-asks the gate
+/// on the same data catches nothing the gate does not (DG's rule). `qhead.10`
+/// -`qhead.12` pin the parse rejection instead.
 pub(crate) fn is_external_looking(name: &str) -> bool {
-    // Unlike the sibling above, this arm is live: an empty name reaches here
-    // from `''` in a capture condition, and answering `false` is what makes
-    // `if y=$('')` report SB5011 rather than being admitted as a
-    // capture-condition RHS. `spec/errors.sh` `qhead.11` is the only spelling
-    // in the suite that reaches it — do not retire it as dead.
-    if name.is_empty() {
-        return false;
-    }
     if name.contains('/') {
         return true;
     }
