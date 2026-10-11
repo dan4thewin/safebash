@@ -1,3 +1,46 @@
+## ══ STATUS (2026-10-11, latest) — the question that found six of them ══
+
+**DG: "why would `""` as a command use a different error from `''`?"** There
+was no good answer, and the question opened a pre-existing bug six shapes
+wide. Journal 493, postscript 2. Committed `d4a27ba`.
+
+`""`, `"echo"`, `"/bin/echo"`, `"ec"ho`, `ec"ho"` and `'ec'ho` all drew
+SB5011's *"a variable or expansion can't be resolved at compile time"* — false
+of every one of them. All six are compile-time constants with no variable and
+no expansion. `'ec'ho` was the shape I would not have predicted: a head
+*containing* a single-quoted piece fell through too, because the check asked
+whether the head **was** `SingleQuoted` rather than whether it **contained** a
+quote.
+
+**The fault was already written down.** `bad_command_head_diag`'s doc comment
+names this exact untruth — for `a-b=1`, which was special-cased — and then
+stops. A known bug class, fixed for one member and left live for the rest,
+with the diagnosis sitting in the source. Distinct from a stale comment: this
+one was *true*, and writing it down had felt like dealing with it.
+
+`normalize_command_head` now judges every quoted **constant** head: empty is
+SB4074; a bare spelling is SB5096 "write it bare"; no bare spelling is SB5096
+"write it as one single-quoted word". One rule — *a command name is one bare
+word, or one single-quoted word when it has no bare spelling* — so one code,
+per DG's parsimony preference. No new code minted.
+
+**The entry gate is `head_contains_quote`, not constancy, and that is
+load-bearing.** `a-b=1` is a `Concat` of *bare* literals and is perfectly
+constant, so a constancy test alone would have stolen its good diagnostic.
+qhead.20 pins that from outside; qhead.21 pins the complement — SB5011's text
+is now true of every input that still receives it.
+
+No verdicts moved: all six were already rejected, and the accepted set is
+unchanged. qhead.5 asserted the old answer for `"echo"` and was updated;
+qhead.6 survived because it really does contain `$PWD`.
+
+Sweep **8173** (3971 c + 4189 native + 13 skipped), predicted exactly from +9
+dual-mode checks. Zero flips, zero unexpected new ids, 150 units green.
+
+**Next:** resume the coverage queue. `coverage.db` is stale for
+`control_flow.rs`, `resolve.rs`, `parser.rs` and `validate.rs` — re-run
+`mk cov-union` + `mk cov-db` + `mk cov-reset` + `mk build` before ranking.
+
 ## ══ STATUS (2026-10-11, latest) — the renderer no caller wanted ══
 
 **Both decisions that were waiting on DG are settled and landed.** Journal 493.
@@ -12,7 +55,9 @@ SB4074 at parse, in all three positions. Enumerated the producer first: seven
 `Command` construction sites in the parser, six with fixed or table-looked-up
 names, and only `parse_command` takes user text — so one check closes it.
 `""` is a different path and keeps SB5011 (rejected for being double-quoted,
-not for being empty).
+not for being empty). **Superseded the same day — see the section above.** DG
+asked why the two should differ at all; they should not, and `""` is now
+SB4074 as well.
 
 `resolve::is_external_looking`'s now-dead `is_empty` arm was **deleted, not
 ICE'd** — first negative application of DG's orthogonality rule. An ICE there

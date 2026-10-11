@@ -202,3 +202,83 @@ incidentally, and both times the function was genuinely worth flattening.
 Grandfather-on-modify is doing what it was designed to do.
 
 Sweep 8155 throughout, zero flips, zero new ids. 150 units.
+
+## Postscript 2 — the question that found six of them
+
+DG, reading the new SB4074 work: *"why would `""` as a command use a
+different error from `''`?"*
+
+There was no good answer. `''` had just been given a parse-time diagnostic;
+`""` fell through to `validate`'s general SB5011 and was told
+
+> a command name must be a literal path — a variable or expansion can't be
+> resolved at compile time
+
+which is simply false of `""`. The quote character was never the thing that
+mattered, and nothing in the design had ever claimed it was — the split was
+an artefact of `normalize_command_head` matching `ExprKind::SingleQuoted`
+because that was the shape the *previous* task happened to need.
+
+Probing the whole family turned two shapes into six. `""`, `"echo"`,
+`"/bin/echo"`, `"ec"ho`, `ec"ho"` and `'ec'ho` all got that message, and all
+six are compile-time constants with no variable and no expansion anywhere in
+them. The last one is the one I would not have predicted: a head with a
+*single*-quoted piece in it fell through as well, because the check tested
+whether the head **was** `SingleQuoted`, not whether it **contained** a quote.
+`'ec'ho` parses as a `Concat`, so it missed.
+
+**The fault was already written down.** `bad_command_head_diag`'s doc comment
+says, in as many words, that telling the author of `a-b=1` "a variable or
+expansion can't be resolved at compile time" names a cause the line does not
+have — and then special-cases `a-b=1` and stops. The general arm kept the
+false text for everything else that reached it. So this was not an unknown
+bug; it was a known bug class, fixed for one member and left live for the
+rest, with the diagnosis sitting in the source the whole time.
+
+That is worth naming as a pattern distinct from the stale comment in the
+`resolve.rs` postscript above. A stale comment makes a true claim that later
+becomes false. This one made a *true* claim that stayed true, and the harm
+was that writing it down felt like dealing with it.
+
+### The gate is the interesting part
+
+DG chose to split the diagnostic by compile-time constancy. The obvious
+implementation — fold any constant head to its text and judge it — is wrong,
+and I nearly wrote it before noticing. `a-b=1` is a `Concat` of *bare*
+literals. It is perfectly constant. A constancy test alone captures it and
+replaces its good special-cased message with "this can be written without
+quotes", which is both wrong and worse than what it had.
+
+So the entry condition is `head_contains_quote`, not constancy: this family
+of rules is about quoting, and an unquoted head is none of its business.
+Constancy is then the *second* test, deciding whether the head is judgeable
+at all. `spec/errors.sh` qhead.20 pins it from the outside — `a-b=1` must
+keep its assignment-target diagnostic and must not see SB5096 — because the
+property is a near-miss, and a near-miss with no spec is a near-miss that
+comes back.
+
+qhead.21 pins the complement. With the six constants gone, SB5011's text is
+true of everything that still reaches it, and that is a property worth
+holding on purpose rather than noticing later.
+
+### One rule, one code
+
+Three outcomes, two codes. Empty is SB4074. A constant with a bare spelling
+is SB5096 "write it bare". A constant *without* a bare spelling that was said
+some other way — double-quoted, or assembled in pieces — is also SB5096, with
+the opposite advice: "write it as one single-quoted word".
+
+Reusing the code was deliberate, and follows DG's stated preference for
+parsimony on the `kill` question a few sessions ago. Both messages enforce one
+rule — *a command name is one bare word, or one single-quoted word when it has
+no bare spelling* — and a second code would have split one rule across two
+places where a reader has to reassemble it.
+
+No verdicts moved. Every one of the six was already rejected; the accepted set
+is still exactly "a bare literal, or one single-quoted word with no bare
+spelling". What changed is that the reason given is now true of the input. One
+existing spec, qhead.5, had asserted the old answer for `"echo"` and was
+updated; qhead.6 survived untouched because it really does contain `$PWD` and
+really is SB5011.
+
+Sweep 8173, predicted exactly from nine new dual-mode checks. Zero flips.
