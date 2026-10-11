@@ -1,6 +1,6 @@
 //! Handlers for expression evaluation in the transform.
 
-use super::expressions::{arg_to_value, expr_to_string, expr_to_value};
+use super::expressions::{arg_to_value, expr_to_value, literal_name_of};
 use crate::ir::*;
 use crate::ssa::*;
 
@@ -443,7 +443,7 @@ fn try_strlen_intrinsic(c: &Command, state: &VersionState) -> Option<SsaValue> {
 /// Validate has already fixed the operand to a bare name — every other
 /// spelling is rejected, and measured: `len @a`, `join @a ,`, `len @args`,
 /// `len @{a:-}`, `len "$s"` and `join $a ,` are SB5062, `len $a` is SB5064.
-/// So this reads the name off `expr_to_string` and strips the sigil.
+/// So this reads the name off `literal_name_of` and strips the sigil.
 ///
 /// **There is deliberately no arm for the `@a` splat.** Both call sites used
 /// to carry one, as an `unreachable!` citing SB5062 — a duplicate of SB5062's
@@ -456,8 +456,8 @@ fn try_strlen_intrinsic(c: &Command, state: &VersionState) -> Option<SsaValue> {
 /// `${aarrvals}` → `{aarrvals}`, which matches no declared collection; that is
 /// unreachable too, and SB5062 is where it is said.
 fn collection_operand_name(expr: &Expr) -> String {
-    let s = expr_to_string(expr);
-    s.strip_prefix('$').unwrap_or(&s).to_string()
+    let s = literal_name_of(expr);
+    s.strip_prefix('$').unwrap_or(s).to_string()
 }
 
 fn try_len_intrinsic(c: &Command, state: &VersionState) -> Option<SsaValue> {

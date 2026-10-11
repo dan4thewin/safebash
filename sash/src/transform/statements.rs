@@ -4,7 +4,7 @@
 //! SECURITY: This is where commands become SsaInst::Command with resolved names.
 
 use super::control_flow::{flatten_elif, lower_case, lower_for, lower_if, lower_while};
-use super::expressions::{expr_to_string, expr_to_value};
+use super::expressions::{expr_to_value, literal_name_of};
 use super::functions::{collect_returns, lift_int_func_calls};
 use crate::ir::*;
 use crate::ssa::*;
@@ -105,7 +105,7 @@ fn try_producer_tail_call(
         return None;
     };
     let (tf, header, aname) = state.tail_loop.clone()?;
-    if expr_to_string(&c.name) != tf {
+    if literal_name_of(&c.name) != tf {
         return None;
     }
     let new_args: Vec<SsaValue> = c.args.iter().map(|a| expr_to_value(a, state)).collect();
@@ -264,7 +264,7 @@ fn body_calls_user_function(body: &Statement, state: &VersionState) -> bool {
     };
     state
         .function_bodies
-        .contains_key(&crate::transform::expressions::expr_to_string(&c.name))
+        .contains_key(crate::transform::expressions::literal_name_of(&c.name))
 }
 
 /// A redirect target that is a scalar *read* — `${x:-f}` (ParameterExpansion)
@@ -729,11 +729,24 @@ fn track_collection_kind(name: &str, val: &SsaValue, state: &mut VersionState) {
     }
 }
 
+/// DD#24's `attest VAR [[ … ]]` command, if this statement is one.
+///
+/// Two callers ask the same question of different shapes — `is_attest_left`
+/// wants a yes/no for an `&&`/`||` operand, `lower_if` wants the `Command`
+/// back out of a one-statement condition — so the predicate lives here once.
+/// A second spelling of it is exactly how a fix lands on one copy and not
+/// the other.
+pub(super) fn attest_command(stmt: &Statement) -> Option<&Command> {
+    let StmtKind::Command(c) = &stmt.kind else {
+        return None;
+    };
+    (literal_name_of(&c.name) == "attest" && c.args.len() >= 2).then_some(c)
+}
+
 /// A `attest VAR [[ … ]]` command as an `&&`/`||` operand — detected so
 /// `lower_list_stmt` can route it through the if-attest catch machinery.
 fn is_attest_left(stmt: &Statement) -> bool {
-    matches!(&stmt.kind, StmtKind::Command(c)
-        if expr_to_string(&c.name) == "attest" && c.args.len() >= 2)
+    attest_command(stmt).is_some()
 }
 
 /// DD#24/#47: a `attest` as the left operand of `&&`/`||` is a *caught* gate, not
@@ -944,7 +957,7 @@ fn arrvals_fill_mode(pe: &ParameterExpansion) -> Option<(u8, String)> {
             1u8,
             pe.operand
                 .as_deref()
-                .map(expr_to_string)
+                .map(|e| literal_name_of(e).to_string())
                 .unwrap_or_default(),
         )),
         _ => None,

@@ -1,6 +1,6 @@
 //! Control flow: if/while/for/case → SSA blocks with branches.
 
-use super::expressions::{expr_to_string, expr_to_value, resolve_args_name, test_to_ssa};
+use super::expressions::{expr_to_value, literal_name_of, resolve_args_name, test_to_ssa};
 use super::helpers::insert_phis_two_branch;
 use super::pipelines::{lower_for_argv_slice, lower_for_array};
 use super::statements::lower_stmts;
@@ -360,6 +360,17 @@ fn merge_attest_branches(
     );
 }
 
+/// DD#24's if-attest form: a condition that is exactly one `attest` command.
+///
+/// Extracted from `lower_if` so the detection is flat rather than three
+/// nested `if`s — the shape the complexity gate reads as hidden nesting.
+fn if_attest_condition(i: &If) -> Option<&Command> {
+    let [cond] = i.condition.as_slice() else {
+        return None;
+    };
+    super::statements::attest_command(cond)
+}
+
 pub(super) fn lower_if(
     i: &If,
     ssa: &mut SsaProgram,
@@ -367,12 +378,8 @@ pub(super) fn lower_if(
     block: BlockId,
 ) -> BlockId {
     // DD#24: detect if-attest conditional form
-    if i.condition.len() == 1 {
-        if let StmtKind::Command(c) = &i.condition[0].kind {
-            if expr_to_string(&c.name) == "attest" && c.args.len() >= 2 {
-                return lower_if_attest(i, c, ssa, state, block);
-            }
-        }
+    if let Some(c) = if_attest_condition(i) {
+        return lower_if_attest(i, c, ssa, state, block);
     }
 
     // Lower condition into current block
@@ -620,12 +627,12 @@ fn argv_splat_start(word: &Expr) -> Option<i64> {
     let StmtKind::Command(c) = inner else {
         return None;
     };
-    if expr_to_string(&c.name) != "argv" {
+    if literal_name_of(&c.name) != "argv" {
         return None;
     }
     match c.args.first() {
         None => Some(0),
-        Some(a) => expr_to_string(a).parse::<i64>().ok().filter(|n| *n >= 0),
+        Some(a) => literal_name_of(a).parse::<i64>().ok().filter(|n| *n >= 0),
     }
 }
 
@@ -727,7 +734,7 @@ fn detect_array_iter(kind: &ExprKind) -> Option<ArrayIter> {
             // `$(keys m)` has no splat to carry a modifier, so never vouched.
             let map = crate::ir::for_head_keys(stmts)?;
             Some(ArrayIter {
-                name: expr_to_string(map),
+                name: literal_name_of(map).to_string(),
                 use_keys: true,
                 vouched: false,
             })

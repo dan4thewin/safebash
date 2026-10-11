@@ -2,7 +2,8 @@
 
 use super::cmd_handlers::check_callee_arity;
 use super::expressions::{
-    arg_to_value, expr_to_string, expr_to_value, resolve_args_name, subscript_to_value, test_to_ssa,
+    arg_to_value, expr_to_value, literal_name_of, resolve_args_name, subscript_to_value,
+    test_to_ssa,
 };
 use super::functions::{lift_int_func_args, lift_int_func_calls};
 use super::pipelines::lower_pipe_while_read;
@@ -25,8 +26,8 @@ pub(super) fn handle_command(
     state: &mut VersionState,
     mut block: BlockId,
 ) -> BlockId {
-    let name = expr_to_string(&c.name);
-    let kind = BuiltinCmd::from_name(&name);
+    let name = literal_name_of(&c.name);
+    let kind = BuiltinCmd::from_name(name);
 
     // DD#70 (B): `match` and a bare `[[ … ]]` are booleans that must be
     // consumed — a bare or `-`-suppressed one is a compile error.
@@ -43,12 +44,12 @@ pub(super) fn handle_command(
         return b;
     }
 
-    if let Some(b) = try_builtin(kind, &name, c, stmt, ssa, state, &mut block) {
+    if let Some(b) = try_builtin(kind, name, c, stmt, ssa, state, &mut block) {
         return b;
     }
 
-    check_non_void_bare_call(&name, stmt, state);
-    super::cmd_handlers::handle_function_call_or_command(&name, c, stmt, ssa, state, block)
+    check_non_void_bare_call(name, stmt, state);
+    super::cmd_handlers::handle_function_call_or_command(name, c, stmt, ssa, state, block)
 }
 
 /// Dispatch a `BuiltinCmd` to its handler. Most builtins always
@@ -398,7 +399,7 @@ fn handle_break_stmt(
     let n = c
         .args
         .first()
-        .map(|a| expr_to_string(a).parse::<usize>().unwrap_or(1))
+        .map(|a| literal_name_of(a).parse::<usize>().unwrap_or(1))
         .unwrap_or(1);
     let depth = state.loop_stack.len();
     if n > 0 && depth > 0 {
@@ -419,7 +420,7 @@ fn handle_continue_stmt(
     let n = c
         .args
         .first()
-        .map(|a| expr_to_string(a).parse::<usize>().unwrap_or(1))
+        .map(|a| literal_name_of(a).parse::<usize>().unwrap_or(1))
         .unwrap_or(1);
     let depth = state.loop_stack.len();
     if n > 0 && depth > 0 {
@@ -512,7 +513,11 @@ fn handle_argv(
     state: &mut VersionState,
     block: BlockId,
 ) -> BlockId {
-    let args: Vec<String> = c.args.iter().map(expr_to_string).collect();
+    let args: Vec<String> = c
+        .args
+        .iter()
+        .map(|a| literal_name_of(a).to_string())
+        .collect();
     let Some(target) = args.last() else {
         unreachable!("SB4045 rejects a zero-argument `argv`")
     };
@@ -562,8 +567,8 @@ fn handle_keys(
     let [map, dest] = &c.args[..] else {
         unreachable!("SB5073/SB4045 reject every `keys` statement but `keys m k`")
     };
-    let source = super::expressions::resolve_args_name(&expr_to_string(map), state);
-    let array = super::expressions::resolve_args_name(&expr_to_string(dest), state);
+    let source = super::expressions::resolve_args_name(literal_name_of(map), state);
+    let array = super::expressions::resolve_args_name(literal_name_of(dest), state);
     autodeclare_bulk_target(&array, false, ssa, state, block);
     // A LATER version than the autodeclare's empty-array Assign, so the SSA
     // taint backstop resolves the array to this fill rather than to the clean
@@ -697,7 +702,7 @@ fn check_negation_must_consume(stmt: &Statement, state: &mut VersionState) {
 /// `readline` is the only scalar one left.
 fn is_array_read_last(last: &Statement) -> bool {
     match &last.kind {
-        StmtKind::Command(c) => expr_to_string(&c.name) == "read",
+        StmtKind::Command(c) => literal_name_of(&c.name) == "read",
         _ => false,
     }
 }
@@ -705,7 +710,7 @@ fn is_array_read_last(last: &Statement) -> bool {
 /// The SCALAR lastpipe consumer — `readline NAME` only (DD#99).
 fn is_lastpipe_read_last(last: &Statement) -> bool {
     match &last.kind {
-        StmtKind::Command(c) => expr_to_string(&c.name) == "readline",
+        StmtKind::Command(c) => literal_name_of(&c.name) == "readline",
         _ => false,
     }
 }
@@ -751,16 +756,16 @@ fn push_command_stage(
     // redirect does, so codegen's stage-redirect lowering only sees scalar
     // reads it can resolve (was: silently redirected to an empty filename).
     let redirects = spill_scalar_redirect_targets(&redirects, ssa, state, block);
-    let name = expr_to_string(&c.name);
-    if state.known_functions.contains(&name) {
-        if let Some(entry) = build_function_pipeline_stage(&name, c, ssa, state, idx) {
+    let name = literal_name_of(&c.name);
+    if state.known_functions.contains(name) {
+        if let Some(entry) = build_function_pipeline_stage(name, c, ssa, state, idx) {
             stages.push((format!("__compound_{}", entry), vec![], redirects));
             return;
         }
     }
     let args: Vec<SsaValue> = c.args.iter().map(|a| arg_to_value(a, state)).collect();
     // DD#99: a `write` stage is an `echo -n` stage (see rewrite_write_as_echo).
-    let (name, args) = super::cmd_handlers::rewrite_write_as_echo(&name, args);
+    let (name, args) = super::cmd_handlers::rewrite_write_as_echo(name, args);
     stages.push((resolve_pipeline_command(&name, state), args, redirects));
 }
 

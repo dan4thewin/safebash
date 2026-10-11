@@ -9262,7 +9262,9 @@ fn slot_toplevel_diag(name: &str, span: Span) -> Diagnostic {
 /// SB5062: `len` / `join` / `keys` resolve their operand as a variable NAME.
 /// Any other spelling was rendered by `expr_to_string` — a source-text
 /// formatter, quotes and all — and the resulting text looked up as if it were
-/// a name. That silently found nothing (`len "$s"` read as **0**, `join "a"`
+/// a name. (`expr_to_string` has since been narrowed to `literal_name_of`,
+/// which ICEs rather than render — but the rule is what keeps it unreached.)
+/// That silently found nothing (`len "$s"` read as **0**, `join "a"`
 /// as empty, and the operand was not even counted as a read) or produced a
 /// bogus name that crashed codegen (`keys @m` → `ICE: undefined arrlen:
 /// ${marrvals}`). Accept only what each builtin can actually resolve.
@@ -10811,8 +10813,11 @@ fn retired_bulk_read_diag(name: &str, span: Span) -> Option<Diagnostic> {
 // could not lower, and `None` there means "not a builtin" — so the statement
 // became an ordinary command named `argv`, compiled clean, and died at
 // runtime with `sash: bug: bare command passed to sash_exec`. Eight spellings
-// reached it, including `argv "1" a`: the index is read with `expr_to_string`,
-// a *display* renderer that keeps the quotes, so `"1"` never parses as 1.
+// reached it, including `argv "1" a`: the index was read with `expr_to_string`,
+// a *display* renderer that kept the quotes, so `"1"` never parsed as 1.
+//
+// (That renderer is now `literal_name_of`, which ICEs on a non-literal
+// rather than rendering one; this rule is what keeps it unreached.)
 //
 // The target is `flag_fill_target`'s (SB5063); this covers arity and index.
 

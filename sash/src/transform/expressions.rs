@@ -118,7 +118,7 @@ pub(super) fn operand_pattern_string(expr: &Expr) -> String {
         ExprKind::DoubleQuoted(parts) | ExprKind::Concat(parts) => {
             parts.iter().map(operand_pattern_string).collect()
         }
-        _ => expr_to_string(expr),
+        _ => literal_name_of(expr).to_string(),
     }
 }
 
@@ -223,7 +223,7 @@ pub(super) fn resolve_args_name(name: &str, state: &VersionState) -> String {
 /// array literally named `A` and the caller's collection was left untouched —
 /// which is precisely the out-parameter form Part E exists for.
 pub(super) fn fill_target_name(e: &Expr, state: &VersionState) -> String {
-    resolve_args_name(&expr_to_string(e), state)
+    resolve_args_name(literal_name_of(e), state)
 }
 
 /// A single-digit positional name `"1".."9"` → its 0-based `args` index (n-1).
@@ -368,7 +368,7 @@ fn pe_operand_value(pe: &ParameterExpansion, state: &VersionState) -> SsaValue {
 fn pe_operand_string(pe: &ParameterExpansion) -> String {
     pe.operand
         .as_ref()
-        .map(|e| expr_to_string(e))
+        .map(|e| literal_name_of(e).to_string())
         .unwrap_or_default()
 }
 
@@ -470,104 +470,68 @@ fn try_array_single_glob(vals: &[SsaValue]) -> Option<SsaValue> {
     })
 }
 
-/// Convert an expression to a simple string representation.
-/// Render an expression back to something close to its source text.
+/// The literal name an expression carries.
 ///
-/// Three families, and the arms are grouped by them: forms whose text is
-/// their own content, forms built by joining rendered children, and forms
-/// with no faithful single-line rendering, for which a placeholder naming the
-/// construct stands in. The two helpers re-match on the kind and are total
-/// only over the variants routed to them — safe because *this* match stays
-/// exhaustive, so a new `ExprKind` is a compile error here first.
+/// This was `expr_to_string`, a renderer with an arm per `ExprKind` that
+/// reproduced something close to the source text. Measured over a full union
+/// coverage run it was entered 21338 times and took the `Literal` arm every
+/// time; all 25 call sites were then enumerated from the producer side and
+/// every one of them is guaranteed a `Literal` by a pass that runs earlier:
 ///
-/// **Total over `ExprKind` on purpose — do not add a wildcard.**
-pub(super) fn expr_to_string(expr: &Expr) -> String {
-    match &expr.kind {
-        ExprKind::Literal(s) => s.clone(),
-        ExprKind::SimpleExpansion(var) => format!("${}", var),
-        ExprKind::SingleQuoted(s) => format!("'{}'", s),
-        ExprKind::ParameterExpansion(pe) => {
-            format!("${{{}{}}}", pe.name, pe.operator.as_deref().unwrap_or(""))
-        }
-        ExprKind::SlurpFile(path) => format!("$(<{})", expr_to_string(path)),
-        ExprKind::Subscript { name, index } => {
-            format!("${{{}[{}]}}", name, expr_to_string(index))
-        }
-        ExprKind::DoubleQuoted(_)
-        | ExprKind::Concat(_)
-        | ExprKind::Array(_)
-        | ExprKind::AssocArray(_) => joined_form_to_string(&expr.kind),
-        ExprKind::CommandSubstitution(_) | ExprKind::Arithmetic(_) | ExprKind::Test(_) => {
-            opaque_form_to_string(&expr.kind).to_string()
-        }
-    }
+/// - ten take a command head, and `validate::check_cmd_at` rejects a
+///   non-`Literal` head and returns. That traversal reaches pipeline stages
+///   too, via `ir::structural_bodies`' `Pipeline(p) => vec![&p.commands]`;
+/// - two take `signal`'s arguments, which SB4059-SB4062 require to be exactly
+///   two literals (`check_signum_arg`: "must be an integer literal, not an
+///   expansion");
+/// - the rest are collection names, read/match fill targets, intrinsic
+///   operands (DD#102) and DD#65's disposition operand — all name positions
+///   the validator constrains.
+///
+/// So every caller was asking one question, "what is the literal name here?",
+/// and the general renderer was an API no caller wanted. DG narrowed it
+/// (2026-10-11). Returning `&str` rather than a cloned `String` falls out of
+/// the narrowing.
+///
+/// The arms that are gone did not merely go uncovered — they were *answers*.
+/// Handing back `"$(...)"` or `"[[ ... ]]"` for an expression in a name
+/// position is the shape that once let a `join` separator silently become the
+/// five characters `"$sep"`.
+pub(super) fn literal_name_of(expr: &Expr) -> &str {
+    let ExprKind::Literal(s) = &expr.kind else {
+        unreachable!("{NAME_POSITION_IS_A_LITERAL}");
+    };
+    s
 }
 
-/// The forms rendered by joining their children, optionally inside a
-/// delimiter pair. See [`expr_to_string`] for why the fallthrough is safe.
-fn joined_form_to_string(kind: &ExprKind) -> String {
-    match kind {
-        ExprKind::Concat(parts) => parts.iter().map(expr_to_string).collect(),
-        ExprKind::DoubleQuoted(parts) => {
-            let inner: String = parts.iter().map(expr_to_string).collect();
-            format!("\"{}\"", inner)
-        }
-        ExprKind::Array(elems) => {
-            let inner: Vec<String> = elems.iter().map(expr_to_string).collect();
-            format!("({})", inner.join(" "))
-        }
-        ExprKind::AssocArray(pairs) => {
-            let inner: Vec<String> = pairs
-                .iter()
-                .map(|(k, v)| format!("[{}]={}", k, expr_to_string(v)))
-                .collect();
-            format!("({})", inner.join(" "))
-        }
-        _ => unreachable!("not a joined form"),
-    }
-}
-
-/// The forms with no faithful single-line rendering: the text names the
-/// construct rather than reproducing it. See [`expr_to_string`].
-fn opaque_form_to_string(kind: &ExprKind) -> &'static str {
-    match kind {
-        ExprKind::CommandSubstitution(_) => "$(...)",
-        ExprKind::Arithmetic(_) => "$(( ... ))",
-        ExprKind::Test(_) => "[[ ... ]]",
-        _ => unreachable!("not an opaque form"),
-    }
-}
+const NAME_POSITION_IS_A_LITERAL: &str =
+    "ICE: a non-literal expression reached literal_name_of — every caller \
+     is a name position an earlier pass constrains (a command head by \
+     check_cmd_at, `signal`'s args by SB4059-SB4062, a collection or fill \
+     target by its own rule); one of those guarantees has been lost";
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    // The two helpers are total only over the variants `expr_to_string` routes
-    // to them, and each ends in an `unreachable!`. That arm is not defensive
-    // padding — it is the ICE a *regression* would hit, if someone added an
-    // `ExprKind` to one group's arm in `expr_to_string` without adding it to
-    // the helper. No accepted program can reach it, so a unit test calling the
-    // helper directly is the only way to exercise the guard.
-    //
-    // Same shape as `unresolved_redirect_var_is_loud_ice` in codegen/redirects.
+    /// `literal_name_of` replaced a renderer with an arm per `ExprKind`. All
+    /// 22 call sites are name positions an earlier pass constrains to a
+    /// `Literal`, so the other arms were not merely uncovered — they were
+    /// *answers*, handing back `"$(...)"` or `"[[ ... ]]"` where a name was
+    /// wanted. That is the shape that once let a `join` separator become the
+    /// five characters `"$sep"`.
+    ///
+    /// The ICE is the claim that the guarantee holds. A regression that loses
+    /// it — a validator rule relaxed, a new caller in an unconstrained
+    /// position — lands here loudly instead of silently naming a command
+    /// `$(...)`.
     #[test]
-    fn joined_helper_ices_on_a_form_it_does_not_own() {
-        let kind = ExprKind::Literal("hello".to_string());
-        let caught = std::panic::catch_unwind(|| joined_form_to_string(&kind));
-        assert!(
-            caught.is_err(),
-            "a non-joined form reaching joined_form_to_string must raise a loud ICE"
-        );
-    }
-
-    #[test]
-    fn opaque_helper_ices_on_a_form_it_does_not_own() {
-        let kind = ExprKind::Literal("hello".to_string());
-        let caught = std::panic::catch_unwind(|| opaque_form_to_string(&kind));
-        assert!(
-            caught.is_err(),
-            "a non-opaque form reaching opaque_form_to_string must raise a loud ICE"
-        );
+    #[should_panic(expected = "every caller is a name position")]
+    fn a_non_literal_in_a_name_position_is_a_loud_ice() {
+        literal_name_of(&Expr {
+            kind: ExprKind::SimpleExpansion("x".to_string()),
+            span: Span::new(1, 1),
+        });
     }
 
     /// Same shape on the value side: `composite_to_value` is total only over

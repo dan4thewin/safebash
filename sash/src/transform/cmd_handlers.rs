@@ -1,6 +1,6 @@
 //! Command-specific handlers extracted from handle_command.
 
-use super::expressions::{arg_to_value, expr_to_string, expr_to_value};
+use super::expressions::{arg_to_value, expr_to_value, literal_name_of};
 use super::functions::lift_int_func_args;
 use super::resolution::resolve_pipeline_command;
 use super::statements::lower_stmts;
@@ -18,7 +18,7 @@ pub(super) fn handle_read(
     // DD#99 stage 6: `read ARRAY` / `read SRC ARRAY` IS the NUL-split array
     // read — the staging alias `read` is retired. Arity/flags are checked
     // in validate (SB5057), so by here the shape is known good.
-    if expr_to_string(&c.name) == "read" {
+    if literal_name_of(&c.name) == "read" {
         return lower_newread(c, ssa, state, block);
     }
     emit_readline_inst(&crate::ir::readline_target(&c.args), ssa, state, block);
@@ -85,10 +85,10 @@ pub(super) fn handle_signal(
     // gates that used to stand here (`args.len() >= 2`, `unwrap_or(0)`,
     // `signum > 0`, `_ => {}`) each turned a malformed `signal` into a silent
     // no-op; the validator rejects those spellings now.
-    let signum: i64 = expr_to_string(&c.args[0])
+    let signum: i64 = literal_name_of(&c.args[0])
         .parse()
         .expect("SB4060/SB4061 validated the signal number");
-    match expr_to_string(&c.args[1]).as_str() {
+    match literal_name_of(&c.args[1]) {
         "IGN" => {
             // SIG_IGN = 1
             ssa.block_mut(block).insts.push(SsaInst::internal(
@@ -141,13 +141,13 @@ pub(super) fn handle_signal(
 /// matches nothing — every target after the first was silently discarded.
 fn unset_targets(c: &Command) -> Vec<String> {
     let mut items: Vec<String> = Vec::new();
-    for arg in c.args.iter().map(expr_to_string) {
+    for arg in c.args.iter().map(literal_name_of) {
         if arg.starts_with('-') {
             continue;
         }
         match items.last_mut() {
-            Some(prev) if arg.starts_with('[') => prev.push_str(&arg),
-            _ => items.push(arg),
+            Some(prev) if arg.starts_with('[') => prev.push_str(arg),
+            _ => items.push(arg.to_string()),
         }
     }
     items
