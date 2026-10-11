@@ -1,3 +1,47 @@
+## ══ STATUS (2026-10-11, latest) — the renderer no caller wanted ══
+
+**Both decisions that were waiting on DG are settled and landed.** Journal 493.
+
+**SB4074 — an empty command name is a syntax error** (`88a1b3f`). DG: *"an
+empty name can neither name an intrinsic nor an external — strikes me as more
+of a syntax error."* `''` as a head drew SB5011 ("command '' not found"), and
+in capture-condition position SB4025 as well — whose text asserts a reason
+("captures a sash intrinsic/builtin … or concatenates") untrue of `''`. The
+only shape in the language drawing two diagnostics, one of them lying. Now one
+SB4074 at parse, in all three positions. Enumerated the producer first: seven
+`Command` construction sites in the parser, six with fixed or table-looked-up
+names, and only `parse_command` takes user text — so one check closes it.
+`""` is a different path and keeps SB5011 (rejected for being double-quoted,
+not for being empty).
+
+`resolve::is_external_looking`'s now-dead `is_empty` arm was **deleted, not
+ICE'd** — first negative application of DG's orthogonality rule. An ICE there
+would re-ask the parser's own question of the same string and learn nothing.
+
+**`expr_to_string` narrowed to `literal_name_of`** (`1d88eff`). Entered 21338
+times over a union coverage run, `Literal` arm every time. Enumerated all 25
+call sites from the producer side: ten command heads (guaranteed by
+`check_cmd_at`, reaching pipeline stages via `structural_bodies`' `Pipeline(p)
+=> vec![&p.commands]`), two `signal` args (SB4059-SB4062), thirteen collection
+names / fill targets / DD#102 operands / DD#65's operand. No caller wanted a
+renderer. Now `literal_name_of(&Expr) -> &str`, ICEing otherwise;
+`joined_form_to_string` and `opaque_form_to_string` deleted with it.
+
+The deleted arms were **answers**, not merely uncovered — rendering
+`"$(...)"` for a name position is the shape that once made a `join` separator
+the five characters `"$sep"`, and is what SB5062 and the `argv` arity rule
+exist to prevent upstream.
+
+**The complexity gate asked for `lower_if`** (cc=6/cog=9, hidden nesting: three
+nested `if`s detecting DD#24's if-attest form). Extracted as
+`if_attest_condition`, delegating to a new shared `statements::attest_command`
+rather than respelling the predicate `is_attest_left` already held. cc=3/cog=3.
+
+Sweep 8155 both times, zero flips, zero new ids. `mk test` 149, 0 failures.
+
+**Next:** resume the coverage queue (`coverage.db` needs `mk cov-union` +
+`mk cov-db` — four files have moved).
+
 ## ══ STATUS (2026-10-11, latest) — three cold arms, three different answers ══
 
 **Coverage queue, three items off the top of the ranking.** No two wanted the

@@ -1,5 +1,5 @@
 title: expr_to_string only ever sees ExprKind::Literal — decide what it is
-status: open
+status: done
 priority: P3
 kind: task
 depends: []
@@ -177,3 +177,30 @@ Narrowing it (to `literal_name_of()`), or making its arms ICE, is a
 consequential and hard-to-reverse API change across 23 call sites — **DG's
 call, not the implementer's.** The enumeration above is the evidence he needs
 to make it; nothing further should be changed here without that ruling.
+
+
+## Done, 2026-10-11 — `1d88eff`
+
+DG ruled: narrow the API (option C). `expr_to_string` is now
+`literal_name_of(&Expr) -> &str`, which ICEs on any other `ExprKind`;
+`joined_form_to_string` and `opaque_form_to_string` are deleted. Returning a
+borrow rather than a cloned String falls out of the narrowing.
+
+All three gates met:
+
+- **every call site enumerated** — 25 of them, with the guarantee for each
+  (see the enumeration section above, and the function's own doc comment);
+- **each cold arm classified** — none of the four rubric categories fits.
+  They were not a spec gap, not shadowed, not totality padding: they were
+  *answers*, rendering `"$(...)"` or `"[[ ... ]]"` into a position wanting a
+  name. SB5062's and the `argv` arity rule's doc comments both name this
+  renderer as the mechanism of a bug they fix;
+- **the two helpers** became unreachable by deletion rather than by argument.
+
+Collateral: the rename touched `lower_if`, so the grandfather-on-modify
+complexity gate asked for it (cc=6/cog=9, three nested `if`s detecting DD#24's
+if-attest form). Extracted as `if_attest_condition`, delegating to a new
+shared `statements::attest_command` rather than respelling the predicate
+`is_attest_left` already held. `lower_if` is now cc=3/cog=3.
+
+Journal 493.
