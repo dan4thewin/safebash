@@ -29,11 +29,14 @@ Five more faults, all the same shape: a classifier handed `Redirected(…)` or
    `Redirected`. Its two siblings in the same state machine both peel it, and
    one carries a doc recording the identical fault being fixed for `$!`.
 
-**`- cmd` then `$?` is correct, not a bug.** DD#21 makes `-` the *ignored*
-disposition, so reading the status afterwards contradicts the author's own
-election. Checking the DD first is the only reason a deliberate rule did not
-get "fixed". It is now a spec control (`rdr.45`/`rdr.46`) so the next reader
-cannot finish the job and break it.
+**`- cmd` then `$?` is correct, not a bug.** DD#55 states it outright — *"`$?`
+is not available after `- cmd` … you said you don't care; you don't get to
+inspect it"* — and names `- cmd; return $?` specifically (spec `55.15`).
+Checking a DD first is the only reason a deliberate rule did not get "fixed",
+but I stopped at DD#21, which only *implies* it; DG pointed at DD#55. **Cite
+the rule that states the claim, not the first one it can be derived from.**
+All DD#55 spellings re-verified against the live binary. It is now a spec
+control (`rdr.45`/`rdr.46`) so the next reader cannot finish the job.
 
 **Journal 494 said three bespoke `Command` constructors; there are seven.** I
 had grepped `parser.rs` and called it an enumeration of `parse/`. **The two I

@@ -3351,9 +3351,13 @@ fn leaf_status_after(stmt: &Statement) -> Option<StatusState> {
     // SB5012 claiming there was "no preceding command" — the message naming
     // the one thing that had demonstrably just happened.
     //
-    // Suppression is *not* peeled: DD#21 makes `-` one of the three
-    // dispositions a status may be given (checked, ignored, propagated), so
-    // `- cmd` has already answered for it and `Undefined` is the right answer.
+    // Suppression is *not* peeled, and DD#55 says so outright: "`$?` is not
+    // available after `- cmd` — reading `$?` after `-` is a compile error.
+    // You said you don't care; you don't get to inspect it." It names
+    // `- cmd; return $?` as a compile error specifically (spec 55.15).
+    //
+    // DD#21 only lists `-` as one of three dispositions, from which this
+    // follows but is not stated. Cite the rule that states it.
     if let StmtKind::Redirected(r) = &stmt.kind {
         return leaf_status_after(&r.body);
     }

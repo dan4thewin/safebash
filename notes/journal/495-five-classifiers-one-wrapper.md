@@ -108,11 +108,25 @@ Writing a spec for the above, I reached for `- cmd` then `$(status)` and got
 That turned out to be two separate questions wearing one diagnostic.
 
 `- cmd` is correct. DD#21 makes `-` one of the three dispositions a status may
-be given — checked, ignored, propagated — and electing `-` *is* electing to
-ignore it. Reading `$?` afterwards contradicts the disposition the author
-already chose. My spec premise was wrong, not the compiler. I checked the DD
-before touching it, which is the only reason I did not "fix" a deliberate
-rule.
+be given — checked, ignored, propagated — so this *follows*. But DG asked me
+to check DD#55, and DD#55 does not leave it to be inferred:
+
+> `$?` is not available after `- cmd` — reading `$?` after `-` is a compile
+> error. You said you don't care; you don't get to inspect it.
+
+It even names `- cmd; return $?` as a compile error specifically, which spec
+`55.15` already pins. My spec premise was wrong, not the compiler. I checked a
+DD before touching it, which is the only reason I did not "fix" a deliberate
+rule — but I stopped at the first DD that settled the question, and the
+*explicit* one was the second. **Cite the rule that states the claim, not the
+first one it can be derived from.** Every reference has been moved to DD#55.
+
+Checked the rest of DD#55 against the live binary while I was there, since it
+names several of the exact spellings this session changed: `x=$(- cmd)`
+captures output and does not abort (`rc=0`, `x=PARTIAL`), `x=$(cmd)` on a
+failing command aborts and never assigns (`rc=7`), `- cmd; return $?` is
+rejected, `cmd >f` then `$?` now reads 0 exactly as bare `cmd` does, and
+`- cmd >f` then `$?` is still SB5012. All eight agree.
 
 `cmd >f` is a bug. `leaf_status_after` asked `is_command_like`, which lists
 `Command`, `Pipeline`, `List` and `ArithTest` — and not `Redirected`. So a

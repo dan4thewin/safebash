@@ -1752,10 +1752,12 @@ run_sash '/bin/true
 /bin/echo $? > /tmp/sash_rdr_st
 /bin/cat /tmp/sash_rdr_st'
 [[ $rc = 0 && $out = "0" && -z $err ]]; chk rdr.44
-# rdr.45 suppression is NOT peeled, and must not be: DD#21 makes `-` one of
-# the three dispositions a status may be given (checked, ignored,
-# propagated), so `- cmd` has already answered for it. This is the control
-# that keeps the fix above from becoming "peel every wrapper".
+# rdr.45 suppression is NOT peeled, and must not be. DD#55: "`$?` is not
+# available after `- cmd` — reading `$?` after `-` is a compile error. You
+# said you don't care; you don't get to inspect it." 55.15 pins the
+# `- cmd; return $?` spelling the DD names; these two are the top-level bare
+# read and the redirected combination, and they are the control that keeps
+# the fix above from becoming "peel every wrapper".
 run_sash '- /bin/sh -c "exit 7"
 echo $?'
 [[ $err == *SB5012* ]]; chk rdr.45
