@@ -5398,8 +5398,8 @@ fn argv_splat_self_diag(expr: &Expr) -> Option<Diagnostic> {
     if is_argv_splat_expr(expr) {
         return Some(argv_splat_diag(expr.span));
     }
-    if is_keys_splat_expr(expr) {
-        return keys_splat_diag(expr);
+    if let Some(c) = keys_splat_command(expr) {
+        return keys_splat_diag(expr.span, c);
     }
     None
 }
@@ -5409,18 +5409,17 @@ fn argv_splat_self_diag(expr: &Expr) -> Option<Diagnostic> {
 /// valid — and the only one this diagnostic may quote, because it quotes it
 /// back as *advice*. Every other spelling is SB5062's to report; paraphrasing
 /// one here would suggest a `for` line that is itself rejected.
-fn keys_splat_map_name(expr: &Expr) -> Option<&str> {
-    let ExprKind::CommandSubstitution(stmts) = &expr.kind else {
-        return None;
-    };
-    let inner = match stmts.first().map(|s| &s.kind) {
-        Some(StmtKind::Redirected(r)) => &r.body.kind,
-        Some(other) => other,
-        None => return None,
-    };
-    let StmtKind::Command(c) = inner else {
-        return None;
-    };
+///
+/// Takes the `Command` rather than the `Expr` on purpose. This used to
+/// re-derive it: destructure `CommandSubstitution`, unwrap `Redirected`, match
+/// `StmtKind::Command` — a private fork of [`stmt_command`], whose own doc
+/// says it is shared so that "a second unwrap that forgot `Redirected`" cannot
+/// diverge. The fork had not forgotten `Redirected`, but it had kept
+/// `stmts.first()`, the spelling [`sole_cmdsub_command`] was *fixed away from*
+/// when `$(argv; /usr/bin/touch f)` turned out to compile clean and silently
+/// discard the `touch`. Its caller's guard masked the difference, so the copy
+/// was wrong and harmless at the same time — which is how a fork survives.
+fn keys_splat_map_name(c: &Command) -> Option<&str> {
     match &c.args.first()?.kind {
         ExprKind::Literal(name) => Some(name),
         _ => None,
@@ -5430,10 +5429,10 @@ fn keys_splat_map_name(expr: &Expr) -> Option<&str> {
 /// SB5025 for a `$(keys m)` splat outside a for-in source. `None` when the
 /// operand is not a bare map name — that program has a more fundamental
 /// error, and SB5062 names it.
-fn keys_splat_diag(expr: &Expr) -> Option<Diagnostic> {
-    let map = keys_splat_map_name(expr)?;
+fn keys_splat_diag(span: Span, c: &Command) -> Option<Diagnostic> {
+    let map = keys_splat_map_name(c)?;
     Some(Diagnostic::error_span(
-        expr.span,
+        span,
         "SB5025",
         format!(
             "`$(keys {map})` is an array splat — it is valid only as the sole \
@@ -5659,8 +5658,20 @@ fn argv_command_is_splat(c: &Command) -> bool {
 /// a statement; reading it as a splat here would make `for x in $(keys m k)`
 /// iterate a fill that produces no value.
 fn is_keys_splat_expr(expr: &Expr) -> bool {
-    matches!(&expr.kind, ExprKind::CommandSubstitution(stmts)
-        if sole_cmdsub_command(stmts, "keys").is_some_and(|c| c.args.len() == 1))
+    keys_splat_command(expr).is_some()
+}
+
+/// The `keys` command of a `$(keys m)` splat, or `None` if `expr` is not one.
+///
+/// The extractor is the authority and [`is_keys_splat_expr`] is defined in
+/// terms of it, so the predicate and the thing it predicates cannot drift
+/// apart. They did: the diagnostic re-derived the command with its own
+/// traversal, which answered a question this one had already answered.
+fn keys_splat_command(expr: &Expr) -> Option<&Command> {
+    let ExprKind::CommandSubstitution(stmts) = &expr.kind else {
+        return None;
+    };
+    sole_cmdsub_command(stmts, "keys").filter(|c| c.args.len() == 1)
 }
 
 /// An array-returning command-sub splat legal as a for-in source:
