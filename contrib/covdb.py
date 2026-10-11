@@ -62,6 +62,25 @@ SQLite cannot see.  Hashing is deliberately of the worktree rather than the
 index or HEAD, so an uncommitted edit counts -- coverage is measured against
 whatever was on disk.
 
+Records DEFINED inside a `#[cfg(test)]` module are dropped.  `coverage.sh
+--lcov` already excludes `tests.rs` and `/tests/` by filename, but the
+dominant unit-test shape in this repo is a `#[cfg(test)] mod` living inside a
+production file -- AGENTS.md asks for it explicitly, because most of the
+functions under test are private.  Those modules are test code; counting their
+cold lines as production misses displaces real candidates from the head of the
+by-function ranking.  `ice_text` sat there with 4 uncovered lines on the
+strength of a downcast arm no ICE payload takes.
+
+This drops lines *defined* in such a module.  It deliberately does NOT change
+which RUNS count: a unit test warming a production line is the entire point of
+`mk cov-union`, and that still happens.
+
+The range is found by scanning for `#[cfg(test)]` followed by `mod NAME {`,
+closing at the next column-0 `}`.  Brace counting would be wrong here -- the
+ICE tests are full of `panic!("... {inst:?}")` -- whereas a `}` in a string
+literal is never alone at column 0.  Verified against all 24 such modules in
+the tree.
+
 lcov hit counts can exceed int64, so they are clamped to 2**62 after summing.
 """
 import os
@@ -92,6 +111,46 @@ def git(*a):
                               check=True).stdout
     except (OSError, subprocess.CalledProcessError):
         return ""
+
+
+_CFG_TEST = re.compile(r"^#\[cfg\(test\)\]\s*$")
+_MOD_OPEN = re.compile(r"^mod\s+\w+\s*\{\s*$")
+
+_ranges_cache = {}
+
+
+def cfg_test_ranges(relpath):
+    """Inclusive line ranges of every `#[cfg(test)] mod` in a file.
+
+    Returns [] for a file that cannot be read, so a missing or generated
+    source degrades to "exclude nothing" rather than crashing the load.
+    """
+    if relpath in _ranges_cache:
+        return _ranges_cache[relpath]
+    out = []
+    try:
+        with open(os.path.join(ROOT, relpath)) as fh:
+            lines = fh.read().split("\n")
+    except OSError:
+        _ranges_cache[relpath] = out
+        return out
+    i = 0
+    while i < len(lines):
+        if _CFG_TEST.match(lines[i]) and i + 1 < len(lines) and _MOD_OPEN.match(lines[i + 1]):
+            start = i + 1  # 1-based, the attribute line
+            j = i + 2
+            while j < len(lines) and lines[j] != "}":
+                j += 1
+            out.append((start, j + 1))
+            i = j + 1
+        else:
+            i += 1
+    _ranges_cache[relpath] = out
+    return out
+
+
+def in_cfg_test(relpath, line):
+    return any(a <= line <= b for a, b in cfg_test_ranges(relpath))
 
 
 def hash_worktree(files):
@@ -172,14 +231,18 @@ for ln in open(lcov):
         k = (sf, int(n), int(block), branch)
         branch_hits[k] = branch_hits.get(k, 0) + (0 if taken == "-" else int(taken))
 
-c.executemany("INSERT INTO cov_lines VALUES(?,?,?)",
-              [(f, n, min(v, CLAMP)) for (f, n), v in line_hits.items()])
-c.executemany("INSERT INTO cov_fns VALUES(?,?,?,?)",
-              [(f, fn_line.get(m, 0), m, min(v, CLAMP))
-               for (f, m), v in fn_hits.items()])
-c.executemany("INSERT INTO cov_branches VALUES(?,?,?,?,?)",
-              [(f, n, b, br, min(v, CLAMP))
-               for (f, n, b, br), v in branch_hits.items()])
+line_rows = [(f, n, min(v, CLAMP)) for (f, n), v in line_hits.items()
+             if not in_cfg_test(f, n)]
+fn_rows = [(f, fn_line.get(m, 0), m, min(v, CLAMP)) for (f, m), v in fn_hits.items()
+           if not in_cfg_test(f, fn_line.get(m, 0))]
+branch_rows = [(f, n, b, br, min(v, CLAMP)) for (f, n, b, br), v in branch_hits.items()
+               if not in_cfg_test(f, n)]
+dropped = (len(line_hits) - len(line_rows), len(fn_hits) - len(fn_rows),
+           len(branch_hits) - len(branch_rows))
+
+c.executemany("INSERT INTO cov_lines VALUES(?,?,?)", line_rows)
+c.executemany("INSERT INTO cov_fns VALUES(?,?,?,?)", fn_rows)
+c.executemany("INSERT INTO cov_branches VALUES(?,?,?,?,?)", branch_rows)
 
 # The lcov does not record what it measured, so HEAD is only the right answer
 # when the lcov was produced from it -- the documented flow is
@@ -210,3 +273,5 @@ for label, q in (
 ):
     total, missed = c.execute(q).fetchone()
     print(f"{label:10} {total or 0:6} recorded, {missed or 0:5} uncovered")
+print(f"excluded   {dropped[0]:6} lines, {dropped[2]} branches, {dropped[1]} functions"
+      " defined in #[cfg(test)] modules")

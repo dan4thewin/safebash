@@ -718,9 +718,15 @@ shape. All 22 `process::exit` sites are in `lib.rs`; nearly all fire at top
 level after a pass returns, which is why it is rare. `parse_heap_size` is the
 one that exits mid-loop with a caller's frame live.
 
-**A cold non-ICE line is one of four things, and only the first is work**
-(DG's rule, 2026-10-04: *every line warm by spec except ICEs first, then a
-unit test for the final ICE lines*):
+**A cold non-ICE line is one of four things** (DG's rule, 2026-10-04: *every
+line warm by spec except ICEs first, then a unit test for the final ICE
+lines*). The four decide **which artefact** warms a line, not whether it is
+work — that rule is an order of operations, and categories 2-4 are all
+reachable by a direct call even though no program reaches them. Reading "no
+spec can warm it" as "exempt" is what let five functions carry a
+do-not-re-open stamp for several sessions (journal 496); the 100% target is
+the union of spec and unit-test reachability, so every category below lands
+in the total:
 
 1. a genuine spec gap — write the spec;
 2. a **validate-shadowed** arm in a later pass, for a form the first gate
@@ -744,6 +750,13 @@ unit test for the final ICE lines*):
    requires it (`is_taint_source`'s `AssocArray`/`Test`, and friends). Do not
    delete these — the convention has caught three bugs in three sessions;
 4. an **ICE** arm — a unit test, and only after (1) is done for that function.
+
+(2) and (3) get a unit test too, after (1). Unlike an ICE arm, they do real
+work, so the test must assert the work is **right** rather than merely run the
+line: `walk_arith_subscripts`' `SubscriptAssign` arm differs from its
+`Subscript` sibling only in descending into `value`, so that is what its test
+pins. An unexecuted *correct-looking* arm is the shape that let `SsaInst::Test`
+escape the SSA taint pass for its whole life.
 
 Classify before mining. Ranking raw cold-line counts puts (2)-(4) at the head,
 because rustfmt spreads a `panic!(…)` or an `Err(…)` across five lines while a
@@ -860,6 +873,16 @@ JOIN symbols s ON s.file=cl.file AND cl.line BETWEEN s.start_line AND s.end_line
 WHERE cl.count=0 AND s.kind IN ('function','method')
 GROUP BY s.file, s.name, s.start_line ORDER BY uncov DESC;
 ```
+
+**Lines defined inside a `#[cfg(test)]` module are excluded from
+`coverage.db`.** `covdb.py` scans for `#[cfg(test)]` + `mod NAME {`, closing
+at the next column-0 `}`, and drops their DA/BRDA/FN records — 1256 lines,
+182 functions as of 2026-10-11, and `mk cov-db` prints the counts so a scan
+that matched nothing is visible. Unit tests still **warm** production lines,
+which is the entire point of `mk cov-union`; only lines *defined* in test code
+are dropped. Without this, test-only helpers rank as production work:
+`ice_text` sat in the queue with four cold lines on the strength of a downcast
+arm no ICE payload takes.
 
 **`sash-rt` is not measured by any of this.** It is `#![no_std]` with no
 libc, so instrumentation compiles but nothing writes a profraw at exit.

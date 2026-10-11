@@ -1145,13 +1145,24 @@ mod redirect_attach_tests {
         (name.to_string(), vec![], vec![])
     }
 
+    /// Per-stage redirect counts, or an empty vec if the instruction is not
+    /// a `Pipeline` -- which fails the caller's `assert_eq!` with the counts
+    /// it expected, rather than needing an unreachable panic arm of its own.
+    fn stage_redirect_counts(ssa: &mut SsaProgram, blk: BlockId) -> Vec<usize> {
+        match &ssa.block_mut(blk).insts[0] {
+            SsaInst::Pipeline { stages, .. } => stages.iter().map(|s| s.2.len()).collect(),
+            _ => vec![],
+        }
+    }
+
     fn catch(f: impl FnOnce()) -> String {
         let err = std::panic::catch_unwind(std::panic::AssertUnwindSafe(f))
             .expect_err("this shape must ICE");
-        err.downcast_ref::<&'static str>()
-            .map(|s| (*s).to_string())
-            .or_else(|| err.downcast_ref::<String>().cloned())
-            .expect("ICE payload is a string")
+        // Both ICEs here panic with format arguments, so the payload is
+        // always a `String` -- never the `&'static str` a literal would give.
+        err.downcast_ref::<String>()
+            .cloned()
+            .expect("ICE payload is a formatted String")
     }
 
     /// A redirect-carrying statement that lowered to nothing at all. SB4046
@@ -1212,17 +1223,40 @@ mod redirect_attach_tests {
         });
         attach_redirects_to_last_inst(&mut ssa, blk, &one_redirect());
 
-        let SsaInst::Pipeline { stages, .. } = &ssa.block_mut(blk).insts[0] else {
-            panic!("the instruction must still be a Pipeline");
-        };
-        assert!(
-            stages[0].2.is_empty(),
-            "an earlier stage must not receive the pipeline's redirects"
-        );
         assert_eq!(
-            stages[1].2.len(),
-            1,
-            "the final stage is where a whole-pipeline redirect lands"
+            stage_redirect_counts(&mut ssa, blk),
+            vec![0, 1],
+            "a whole-pipeline redirect lands on the final stage and no other"
+        );
+    }
+
+    /// The `if let`'s implicit else: a `Pipeline` with no stages at all.
+    /// `push_pipeline_stage` always pushes at least one, so this is a second
+    /// layer of unreachability inside an already-unreachable arm.
+    ///
+    /// The arm drops the redirects silently rather than panicking. That is
+    /// the right call precisely *because* this is already dead code -- an
+    /// ICE here would claim something about pipeline construction that this
+    /// function cannot see. The test pins the silence so it stays a choice
+    /// rather than an oversight.
+    #[test]
+    fn an_empty_pipeline_swallows_redirects_without_panicking() {
+        let mut ssa = SsaProgram::new();
+        let blk = ssa.new_block("entry");
+        ssa.block_mut(blk).insts.push(SsaInst::Pipeline {
+            stages: vec![],
+            capture_read_fd: false,
+            checked: true,
+            suppressed: vec![],
+            negated: vec![],
+        });
+        attach_redirects_to_last_inst(&mut ssa, blk, &one_redirect());
+        assert!(
+            matches!(
+                &ssa.block_mut(blk).insts[0],
+                SsaInst::Pipeline { stages, .. } if stages.is_empty()
+            ),
+            "the instruction must be left as an empty Pipeline"
         );
     }
 }

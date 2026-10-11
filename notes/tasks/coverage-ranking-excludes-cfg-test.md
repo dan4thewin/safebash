@@ -1,5 +1,5 @@
 ---
-status: next
+status: done
 priority: P3
 kind: chore
 ---
@@ -13,29 +13,31 @@ branch that no current ICE payload takes.
 
 It is not work, and it displaces real candidates from the head of the queue.
 
-## The fix
+## Done 2026-10-11 — option (1), filter at load
 
-`contrib/coverage.sh --lcov` already excludes `tests\.rs` and `/tests/` by
-filename. That does not catch a `#[cfg(test)] mod invariant_tests` living
-*inside* a production file, which is now the dominant unit-test shape in this
-repo (AGENTS.md asks for it explicitly: "Put the module in the **same file**
-— most of these functions are private").
+`contrib/covdb.py` learns the line ranges of `#[cfg(test)] mod` blocks per
+file and drops the DA / BRDA / FN records defined inside them. Chosen over
+filtering at query because it cannot be forgotten: every consumer of
+`coverage.db` gets the honest ranking, including ad-hoc SQL.
 
-Two options, DG's call on which:
+The range scan looks for `#[cfg(test)]` followed by `mod NAME {`, closing at
+the next **column-0 `}`**. Brace counting would be wrong — the ICE tests are
+full of `panic!("… {inst:?}")` — whereas a `}` inside a string literal is
+never alone at column 0. All 24 such modules in the tree have that exact
+shape; there is no `#[cfg(test)]` on anything but a module.
 
-1. **Filter at load.** `contrib/covdb.py` learns the line ranges of
-   `#[cfg(test)]` modules per file and skips their DA records. Keeps the
-   ranking honest for every consumer of `coverage.db`.
-2. **Filter at query.** The ranking SQL in AGENTS.md joins against a new
-   `symbols`-derived exclusion. Cheaper, but every ad-hoc query has to
-   remember it.
+Measured on the union lcov: **1240 lines, 24 branches and 183 functions
+excluded**, and the `sash/src` cold-line count drops 339 → 329. So test code
+was contributing ten cold lines to the production ranking, `ice_text`'s four
+among them. `ice_text` now reports zero.
 
-(1) is the one that cannot be forgotten.
+`mk cov-db` prints the exclusion counts, so a scan that silently matched
+nothing is visible rather than inferred.
 
-## Note the interaction with the union
+## The interaction with the union — preserved
 
-This must **not** stop unit tests from *warming* production lines — that is
-the whole point of `mk cov-union`, and journal 478 is the first time it was
-watched working (three functions went from cold to no-cold-lines purely
-because their ICE pins landed). The exclusion is about lines *defined* inside
-a `#[cfg(test)]` block, not about which runs count.
+This does **not** stop unit tests from *warming* production lines, which is
+the whole point of `mk cov-union`. The filter is on lines *defined* inside a
+`#[cfg(test)]` block, not on which runs count. Confirmed in the same
+measurement: the thirteen unit tests added this session warmed 22 production
+lines across five functions, all of which left the queue.

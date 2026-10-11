@@ -1,3 +1,63 @@
+## ══ STATUS (2026-10-11, latest) — "settled" meant "exempt", and it was not ══
+
+**DG, on the "already settled, do not re-open" label I had put on five
+functions in the coverage queue: *"no spec can warm them means they must be
+warmed by a unit test - the 100% goal as the union of specs and unit tests is
+achievable, is it not?"* It is. The label was wrong.** Journal 496.
+
+The standing rule (journal 466) is an **order of operations** — specs first,
+unit tests for the remainder — and 467 applied the second half to 28 ICE
+lines. I had been applying it only to ICEs and treating the other two cold-arm
+categories, validate-shadowed and totality, as *finished* because no program
+reaches them. "No spec can warm it" is a statement about the spec suite, not a
+licence to leave a line unexecuted.
+
+**Thirteen tests, 24 lines, none of which needed anything clever** — a
+`#[cfg(test)] mod` in the same file and a direct call:
+
+- `resolve_command` (9) — SB5011 is raised in an earlier pass that exits
+  first. The second site is the backstop against exactly the drift that put
+  `kill` in `BUILTINS` with no implementation.
+- `attach_redirects_to_last_inst` (6) — two SB4046 ICEs, the parse-shadowed
+  `Pipeline` arm, and the empty-stages path inside it.
+- `walk_arith_subscripts` (3) — the `SubscriptAssign` arm.
+- `strip_ssa_version` (3) / `parse_var_base_version` (3) — no-suffix
+  fallbacks, plus the u32 overflow path, which must read as version 0 and
+  *lose* rather than beat every real version.
+
+**A test that merely runs a cold line is not worth writing.** Two of these do
+real work rather than panic, so the assertion is the point: the
+`SubscriptAssign` arm differs from its sibling only in descending into
+`value`, mutation-checked; the `Pipeline` arm decides *which stage* gets the
+redirects. An unexecuted *correct-looking* arm is what let `SsaInst::Test`
+escape the SSA taint pass for its whole life.
+
+**Wrong twice on the way, caught by a panic probe both times.** `(( m[k] = 5 ))`
+raises SB4030 from one of the walker's own callers, so I read the arm as
+spec-reachable; a probe planted in it never fired, through that program or a
+full sweep. The diagnostic comes from a different walker. Plant the panic,
+build, **grep the binary for the probe string**, run the file — a silent build
+failure otherwise leaves the old binary and makes the test vacuous.
+
+**Predicting the delta caught the measurement lying.** 347 → 336 expected,
+339 reported; two of the three missing lines were cold lines in *my own test
+code*. That is the open `coverage-ranking-excludes-cfg-test` complaint, so it
+is now **done** — `covdb.py` drops records defined inside `#[cfg(test)] mod`
+blocks (option 1, filter at load, because it cannot be forgotten). **1256
+lines, 182 functions excluded**; `ice_text`, the task's example, reports zero.
+Unit tests still *warm* production lines — only lines *defined* in test code
+are dropped.
+
+**`sash/src` cold lines 359 → 328**, and all five functions are off the head
+of the queue. The honest asterisk on "100%" is the one 467 named: arms
+unreachable because the *same function* covers the case (`arith_to_ssa`'s
+trailing arm). Those are eliminated by types, not tested —
+`eliminate-ice-arms-via-types`.
+
+mk test 117 (was 103), sweep 8263 unchanged, zero regressions, liveness 258.
+
+---
+
 ## ══ STATUS (2026-10-12, latest) — five classifiers, one wrapper ══
 
 **Journal 494's enumeration was wrong, so the redirect family was not closed.
