@@ -346,6 +346,65 @@ sash does not interpret backslash escapes in
 .B \-e
 is printed literally, as is the text after it.
 .
+.SH REDIRECTION
+A redirect may attach only to something that produces output or consumes
+input. That is
+.BR echo ,
+.BR write ,
+.BR exec ,
+.BR read ,
+.BR readline ,
+an external command, a user function, or a pipeline \[em] plus
+.BR : ,
+which is a deliberate exception described below.
+.PP
+Every other builtin writes to no descriptor, so a redirect on it can only
+create and truncate the file as a side effect. bash does exactly that; sash
+rejects it with
+.B SB4046
+rather than copy the wart:
+.PP
+.RS 4
+.nf
+cd /tmp > f                  # SB4046
+exit 0 > f                   # SB4046
+close 9 > f                  # SB4046
+unset m[k] > f               # SB4046
+argv 1 a > f                 # SB4046
+match \[dq]$s\[dq] /a/ > f           # SB4046
+attest s [[ \-n $s ]] > f     # SB4046
+return 0 > f                 # SB4046
+.fi
+.RE
+.PP
+The same rule covers a function definition, a variable declaration, a bare
+assignment, an arithmetic test and a
+.RB \[dq] [[ \ ]] \[dq]
+test.
+.PP
+.B \[dq]:\[dq]
+is the exception. It produces no output either, but
+.B \[dq]: > f\[dq]
+is the universal spelling for truncating a file, so it honours its redirects
+and creates or truncates the target.
+.PP
+.B return
+follows the shape of its operand.
+.B \[dq]return N\[dq]
+names the status outright and is rejected above;
+.B \[dq]return CMD\[dq]
+derives the status from a producer that does produce output, so
+.B \[dq]return /bin/true 2>/dev/null\[dq]
+is accepted and the redirect applies to the producer (DD#74).
+.PP
+.B \[dq]exec CMD > f\[dq]
+installs the redirect and then replaces the process, so
+.B CMD
+inherits it \[em] bash's behaviour. The no\-argument form
+.B \[dq]exec > f\[dq]
+rebinds the invoker's own descriptors for the rest of the program, and is the
+one redirect form that also moves the diagnostic channel (DD#120).
+.
 .SH TEST OPERATORS
 The
 .RB \[dq] [[ \ ]] \[dq]
