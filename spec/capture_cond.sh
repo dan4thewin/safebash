@@ -9,7 +9,7 @@ set -eu
 . common.sh
 setup capture_cond
 set +e
-plan=48
+plan=51
 echo "1..$plan" >&3
 
 # 88.1 non-negated success: the then-branch runs, stdout captured into x
@@ -320,6 +320,32 @@ run_sash 'str a = $(/bin/echo a >/tmp/sash_cc_x; /bin/echo b)
 /bin/echo "[${a:!}]"'
 [[ $rc = 0 && $out = "[b]" && -z $err && $(cat /tmp/sash_cc_x) = a ]]; chk cap4075.8
 rm -f /tmp/sash_cc_x
+# ── 88.29-88.31: the three body shapes `validate` rejects before the transform
+# ever sees them. `is_capture_condition_rhs` fixes the shape — exactly one
+# statement, peeling to a multi-stage pipeline of externals or a command with
+# an external-looking head — and `run_semantic_checks` exits on its diagnostics
+# *before* `ir_to_ssa`, so the transform's own capture-condition classifier
+# cannot be reached with any of them.
+#
+# They are pinned HERE, on the gate that actually owns the question, rather
+# than defended a second time downstream: a re-test of the same AST in a later
+# pass is a second copy of a classifier, not a backstop, and copies in this
+# file have historically drifted away from the original rather than catching it.
+
+# 88.29 a MULTI-STATEMENT body is not a single status
+run_sash 'if x=$(/bin/echo a; /bin/echo b) { echo "got $x" }'
+[[ $rc != 0 && -z $out && $err == *SB4025* ]]; chk 88.29
+
+# 88.30 a COMPOUND body (not a command or a pipeline)
+run_sash 'if x=$(if true { /bin/echo y }) { echo "got $x" }'
+[[ $rc != 0 && -z $out && $err == *SB4025* ]]; chk 88.30
+
+# 88.31 a NON-LITERAL command head — unresolvable at compile time, so it is
+#       not an external-looking head either
+run_sash 'str c=/bin/echo
+if x=$(${c} hi 2>&1) { echo "got $x" }'
+[[ $rc != 0 && -z $out && $err == *SB4025* ]]; chk 88.31
+
 
 set -e
 tally

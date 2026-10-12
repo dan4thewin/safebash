@@ -1340,7 +1340,7 @@ fn try_capture_condition(
         // and uncheck the rest afterwards, since a plain Command does not
         // consult `state.suppressed` at emission time. Either way the status
         // is consumed by the branch, so it must not abort.
-        SsaValue::CmdSubstBody { body, .. } if is_capture_condition_body(body, state) => {
+        SsaValue::CmdSubstBody { body, .. } if !capture_condition_head_is_user_fn(body, state) => {
             let pre_len = ssa.block(block).insts.len();
             state.suppressed += 1;
             let after = capture_body_into(name, body, state, ssa, block);
@@ -1377,29 +1377,36 @@ fn reject_nonexternal_capture_condition(a: &Assignment, state: &mut VersionState
     ));
 }
 
-/// True when a `$(…)` body is a capture-condition body: exactly one statement
-/// that is a pipeline (`$(a | b)`), or a command carrying a redirect
-/// (`$(cmd 2>/dev/null)`). A multi-statement `$(a; b)` is not a condition, and
-/// `validate` has already rejected everything else that reaches here.
+/// The one question `validate` could not answer about a capture-condition body.
 ///
-/// The command case must still exclude a **user function**. `validate` runs
-/// before resolution and cannot consult the function table, so `$(f 2>&1)`
-/// arrives looking exactly like an external — and a bare `$(f)` never reaches
-/// this arm at all, because it lowers to `FuncCall` rather than a body
-/// capture. Checking the table here keeps the redirected spelling on DD#88's
-/// side of the line with its unredirected twin.
-fn is_capture_condition_body(body: &[Statement], state: &VersionState) -> bool {
-    let [stmt] = body else {
-        return false;
-    };
-    match peel_capture_wrappers(&stmt.kind) {
-        StmtKind::Pipeline(_) => true,
-        StmtKind::Command(c) => match &c.name.kind {
-            ExprKind::Literal(n) => !state.function_bodies.contains_key(n.as_str()),
+/// `validate::is_capture_condition_rhs` has already fixed the *shape* — exactly
+/// one statement, peeling to a multi-stage pipeline of externals or a command
+/// with an external-looking head — and `run_semantic_checks` exits on its
+/// diagnostics before `ir_to_ssa` runs, so nothing else reaches here. Re-testing
+/// the shape would be the same question asked of the same AST one pass later:
+/// a second copy of a classifier rather than a backstop, and the copies in this
+/// file have drifted away from their originals rather than catching them (the
+/// `Redirected`-peeling disagreements, journal 495). Specs 88.29-88.31 pin
+/// those three rejections on the gate that owns them.
+///
+/// What `validate` genuinely cannot decide is whether the head names a **user
+/// function**: it runs before resolution, so `$(f 2>&1)` arrives looking
+/// exactly like an external. A bare `$(f)` never reaches this arm at all — it
+/// lowers to `FuncCall` — so without this check the redirected spelling would
+/// drift off DD#88's side of the line from its unredirected twin (88.28).
+///
+/// A pipeline is *not* asked: a user function is legal as a stage, because what
+/// the condition tests is the pipeline's status, not the function's output
+/// (`if x=$(/bin/echo hi | myfn)` compiles and is correct).
+fn capture_condition_head_is_user_fn(body: &[Statement], state: &VersionState) -> bool {
+    body.iter()
+        .any(|stmt| match peel_capture_wrappers(&stmt.kind) {
+            StmtKind::Command(c) => {
+                matches!(&c.name.kind, ExprKind::Literal(n)
+                if state.function_bodies.contains_key(n.as_str()))
+            }
             _ => false,
-        },
-        _ => false,
-    }
+        })
 }
 
 /// Peel `Redirected` / `Suppressed` wrappers off a capture body statement.
