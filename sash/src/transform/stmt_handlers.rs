@@ -1740,4 +1740,57 @@ mod invariant_tests {
             );
         }
     }
+
+    /// DD#116: the recursion backstop in `build_function_pipeline_stage`.
+    /// SB5037 rejects recursion in `validate`, so no program that reaches the
+    /// transform can fire this — but it is not a restatement of that gate.
+    /// `validate` reads the AST call graph; this reads the **live `inlining`
+    /// stack**, so a call form the graph cannot see is still caught here, and
+    /// inlining is the pass whose termination actually depends on the rule.
+    ///
+    /// The assertions that earn the test are the unwind, not the refusal. The
+    /// early return sits *after* `save_caller_args` — which `mem::take`s
+    /// `current_args_name` — and *before* `state.inlining.push`, so it owes a
+    /// restore and must not pop a frame it never pushed. Dropping either is
+    /// invisible to every other test: the caller's `args` would silently
+    /// rebind to "" on a path nothing executes.
+    #[test]
+    fn recursion_into_an_inlining_function_unwinds_what_it_took() {
+        let (mut ssa, mut state, _block) = fixtures();
+        state.function_bodies.insert("f".to_string(), vec![]);
+        state.inlining.push("f".to_string());
+        state.current_args_name = "args_7".to_string();
+
+        let c = Command {
+            name: lit("f"),
+            args: vec![],
+        };
+        let got = build_function_pipeline_stage("f", &c, &mut ssa, &mut state, 0);
+
+        assert!(got.is_none(), "a recursive stage must not be built");
+        assert_eq!(
+            state.diagnostics.len(),
+            1,
+            "exactly one diagnostic, from this site"
+        );
+        assert!(
+            state.diagnostics[0].contains("SB5037"),
+            "the backstop must name the rule that normally catches this, got: {:?}",
+            state.diagnostics[0]
+        );
+        assert_eq!(
+            state.current_args_name, "args_7",
+            "`save_caller_args` took the caller's args name, so the early \
+             return owes the restore"
+        );
+        assert_eq!(
+            state.inlining,
+            vec!["f".to_string()],
+            "the refusal must not pop a frame it never pushed"
+        );
+        assert!(
+            ssa.compound_pipeline_blocks.is_empty(),
+            "a refused stage must not register a pipeline block"
+        );
+    }
 }
