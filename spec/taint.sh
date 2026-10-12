@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup taint
-plan=337
+plan=339
 echo "1..$plan" >&3
 
 set +e
@@ -89,6 +89,21 @@ str h=$(getenv NOPE_XYZ)
 attest h [[ ${g:-qq} == zz ]]
 echo "ok [$h]"'
 [[ $rc != 0 && -z $out && $err == *SB5020* && $err == *"doesn't reference"* ]]; chk atop.3
+
+# atop.4 a NEGATED predicate still references its binder. `test_references_var`
+# recurses through `!`, and nothing reached that arm — a wrong answer here is
+# silent either way, so atop.5 pins the other direction.
+run_sash 'str h=$(getenv NOPE_XYZ)
+attest h [[ ! $h == zz ]]
+echo "ok [$h]"'
+[[ $rc = 0 && $out = "ok []" && -z $err ]]; chk atop.4
+
+# atop.5 …and a negated predicate naming a different variable still does not
+run_sash 'str g=zz
+str h=$(getenv NOPE_XYZ)
+attest h [[ ! $g == qq ]]
+echo "ok [$h]"'
+[[ $rc != 0 && -z $out && $err == *SB5020* && $err == *"doesn't reference"* ]]; chk atop.5
 
 # 24.12 attest failure (unconditional) aborts at runtime
 run_sash 'x=$(getenv HOME)

@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup functions
-plan=182
+plan=184
 echo "1..$plan" >&3
 
 set +e
@@ -603,6 +603,23 @@ run_sash 'fn f { if true; then echo a; else echo b; fi; }
 x=
 [[ -n $x ]] || f'
 [[ $rc = 0 && $out = "a" && -z $err ]]; chk 74.37
+
+# 74.65 / 74.66 — the two statement shapes `stmt_always_returns` reaches that
+# no spec did. 74.33-74.37 all end a body in a Command or an If, so the
+# REDIRECTED arm (which must peel the redirect and judge the statement under
+# it) and the catch-all for every other statement kind were both cold. Both
+# must answer "does not return", and a wrong answer is silent: SB4037 would
+# simply not fire on a predicate that cannot produce a status.
+
+# 74.65 a redirected tail is still not a `return`
+run_sash 'fn f { echo hi >/dev/null; }
+if f; then echo yes; fi'
+[[ $rc != 0 && -z $out && $err == *SB4037* ]]; chk 74.65
+
+# 74.66 a loop tail is not a `return` either (the catch-all arm)
+run_sash 'fn f { while true; do :; done }
+if f; then echo yes; fi'
+[[ $rc != 0 && -z $out && $err == *SB4037* ]]; chk 74.66
 
 # ------------------------------------------------- capture in a [[ ]] operand
 # A `$(f)` capture used as a test operand reached codegen as a bare FuncCall

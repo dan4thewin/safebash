@@ -1,4 +1,37 @@
-## ══ STATUS (2026-10-12, latest) — two tautologies and an untested wrapper ══
+## ══ STATUS (2026-10-12, latest) — four shapes that reached no spec ══
+
+**My reasoning about which program reaches which arm was wrong three times out
+of three; the probe tool was right every time.** Journal 503.
+
+Three `validate.rs` walkers each had a cold `ExprKind::AssocArray` arm
+(`is_taint_source`, `expr_uses_tainted`, `check_value_cmdsub_reads` — the trio
+that must agree). Twelve hand-written map-literal programs all produced the
+expected SB5021 and warmed **nothing**: `reject_tainted_into_array` is handed
+each *element value*, so the literal is already decomposed before any walker
+sees it. Those arms are category 2/3 — a direct-call unit test, next pass.
+
+**A "nothing warmed" result is only information if the tool can report a
+positive.** Checked that first, with two programs aimed at SB4037 — and that
+check is what found the real gaps.
+
+| line | arm | shape |
+|---|---|---|
+| `validate.rs:2536` | `test_references_var` → `Not` | `attest h [[ ! $h == zz ]]` |
+| `validate.rs:3938` | `stmt_always_returns` → `Redirected` | `fn f { echo hi >/dev/null; }` as predicate |
+| `validate.rs:3940` | `stmt_always_returns` → catch-all | `fn f { while true; …; done }` as predicate |
+
+All category 1 — correct already, unspecified. Each is silent when wrong, so
+each positive is paired with a negative. `atop.4`/`atop.5` (taint.sh 337→339),
+`74.65`/`74.66` (functions.sh 182→184).
+
+**`cov-batch --spec` is the check that counts** — the snippet that warms a line
+and the spec that ships are different programs. All three confirmed warm by the
+spec files themselves.
+
+Sweep **8367** (predicted first), zero failures, zero flips, 8 new ids,
+liveness 258.
+
+## ══ STATUS (2026-10-12) — two tautologies and an untested wrapper ══
 
 **Three cold lines in `parse_trailing_pipeline`, one cause.** Line 2890
 re-tested the `Tok::Pipe` the function's own guard had already returned on
