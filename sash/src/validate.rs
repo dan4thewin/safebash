@@ -11649,4 +11649,97 @@ mod tests {
              binary of that name would exec it: {strays:?}"
         );
     }
+
+    /// A map literal containing a taint source or a tainted read.
+    fn assoc_with(value: ExprKind) -> Expr {
+        e(ExprKind::AssocArray(vec![
+            ("k".to_string(), e(ExprKind::Literal("v".to_string()))),
+            ("j".to_string(), e(value)),
+        ]))
+    }
+
+    fn assoc_clean() -> Expr {
+        e(ExprKind::AssocArray(vec![(
+            "k".to_string(),
+            e(ExprKind::Literal("v".to_string())),
+        )]))
+    }
+
+    /// `$(<f)` — the smallest single-node taint source.
+    fn slurp() -> ExprKind {
+        ExprKind::SlurpFile(Box::new(e(ExprKind::Literal("f".to_string()))))
+    }
+
+    // `is_taint_source`, `expr_uses_tainted` and `check_value_cmdsub_reads`
+    // each carry an `ExprKind::AssocArray` arm, and all three are cold. A map
+    // literal does not reach them: `reject_tainted_into_array` is handed each
+    // element VALUE, so the literal is taken apart one level up, and twelve
+    // probe programs spelling `map m=([k]=$(getenv X))` every way warmed none
+    // of the three (journal 503).
+    //
+    // Unlike the `ExprKind::Test` arm above, these are ANSWERS rather than
+    // ICEs. Nothing forbids a map literal here — it merely does not arrive —
+    // and `reject_tainted_into_array` reads the first two as a pair, so an arm
+    // that disagreed with its twin would be a taint hole rather than a crash.
+    // Each test therefore pins the answer AND a negative, so an arm hard-wired
+    // to `true` fails rather than passing half the suite.
+
+    #[test]
+    fn a_map_literal_is_a_taint_source_iff_a_value_is() {
+        assert!(is_taint_source(&assoc_with(slurp())));
+        assert!(!is_taint_source(&assoc_clean()));
+    }
+
+    #[test]
+    fn a_map_literal_uses_taint_iff_a_value_does() {
+        let tainted = HashSet::from(["t".to_string()]);
+        assert!(expr_uses_tainted(
+            &assoc_with(ExprKind::SimpleExpansion("t".to_string())),
+            &tainted
+        ));
+        assert!(!expr_uses_tainted(&assoc_clean(), &tainted));
+        // The two must agree about a map literal, which is the whole reason
+        // both arms exist: `reject_tainted_into_array` ORs them together.
+        assert!(!is_taint_source(&assoc_with(ExprKind::SimpleExpansion(
+            "t".to_string()
+        ))));
+    }
+
+    #[test]
+    fn a_map_literal_value_is_descended_for_cmdsub_reads() {
+        let tainted = HashSet::from(["t".to_string()]);
+        // `([j]=$(echo $t))` — a read of tainted `t` inside a `$( )` element.
+        let inner = StmtKind::Command(crate::ir::Command {
+            name: e(ExprKind::Literal("echo".to_string())),
+            args: vec![e(ExprKind::SimpleExpansion("t".to_string()))],
+        });
+        let cmdsub = ExprKind::CommandSubstitution(vec![Statement {
+            kind: inner,
+            span: Span::new(1, 1),
+        }]);
+
+        let mut diags = Vec::new();
+        check_value_cmdsub_reads(&assoc_with(cmdsub), &tainted, &mut diags);
+        assert_eq!(diags.len(), 1, "the element's `$( )` is a read site");
+        assert_eq!(diags[0].code, "SB5020", "{diags:?}");
+
+        let mut clean = Vec::new();
+        check_value_cmdsub_reads(&assoc_clean(), &tainted, &mut clean);
+        assert!(clean.is_empty(), "a literal element reads nothing");
+    }
+
+    /// `first_expansion` is the fourth walker with a cold `AssocArray` arm, for
+    /// the same reason and with a fourth caller: `flag_arg_builtin` asks it
+    /// about an `arg` DEFAULT, and a default is parsed as a word, so no map
+    /// literal arrives. Its `Test` arm is cold for the stronger reason given on
+    /// `expr_uses_tainted`'s above — `ExprKind::Test` is statement-only. Both
+    /// are kept by the no-wildcard rule stated in the function's own doc, and
+    /// both must answer "substituted", because the rule they serve is "can any
+    /// of this change at runtime" and a silent "no" reopens it.
+    #[test]
+    fn first_expansion_sees_through_a_map_literal_and_a_test() {
+        assert!(first_expansion(&assoc_with(slurp())).is_some());
+        assert!(first_expansion(&assoc_clean()).is_none());
+        assert!(first_expansion(&e(ExprKind::Test(unary("t")))).is_some());
+    }
 }
