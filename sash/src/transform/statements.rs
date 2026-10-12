@@ -594,13 +594,29 @@ fn lower_suppressed_stmt(
     state.suppressed += 1;
     let result_block = lower_one(inner, ssa, state, block);
     state.suppressed -= 1;
+    uncheck_emitted_since(ssa, block, pre_len, result_block);
+    result_block
+}
+
+/// Mark every Command/Pipeline emitted since `(block, pre_len)` as unchecked —
+/// the "no implicit exit check" half of DD#55 suppression.
+///
+/// Shared with the DD#88 capture-condition, whose status is consumed by the
+/// branch and so must not abort either. `state.suppressed` alone is not
+/// enough: only `handle_regular_pipeline` reads it at emission time, so a
+/// plain Command needs this post-pass to be unchecked at all.
+pub(super) fn uncheck_emitted_since(
+    ssa: &mut SsaProgram,
+    block: BlockId,
+    pre_len: usize,
+    result_block: BlockId,
+) {
     uncheck_block_from(ssa, block, pre_len);
     if result_block != block {
         for b in (block + 1)..=result_block {
             uncheck_block_from(ssa, b, 0);
         }
     }
-    result_block
 }
 
 fn uncheck_block_from(ssa: &mut SsaProgram, block_id: BlockId, from: usize) {

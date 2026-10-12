@@ -9,7 +9,7 @@ set -eu
 . common.sh
 setup capture_cond
 set +e
-plan=30
+plan=48
 echo "1..$plan" >&3
 
 # 88.1 non-negated success: the then-branch runs, stdout captured into x
@@ -197,6 +197,129 @@ if h=$(getenv) { /bin/echo "$h" }'
 run_sash 'str h=""
 if h=$(getenv HOME X) { /bin/echo "$h" }'
 [[ $rc != 0 && -z $out && $err == *SB4045* ]]; chk dd101.12
+
+# ── Redirects in a capture (DD#88 addendum, DG 2026-10-12) ─────────────
+# A redirect on a captured command is fine SO LONG AS the capture pipe still
+# has a writer. `ir::redirects_preserve_capture` simulates the list left to
+# right; SB4075 rejects the cases that abandon the pipe. The rule is scoped to
+# every `$( … )`, not just a condition — see cap4075.* below.
+
+# 88.19 a redirect that leaves fd 1 alone: the capture still reads stdout
+run_sash 'if x=$(/bin/sh -c "echo OUT; echo ERR >&2" 2>/dev/null) { attest x [[ -n $x ]]; /bin/echo "ok [$x]" }'
+[[ $rc = 0 && $out = "ok [OUT]" && -z $err && $rerr != *ERR* ]]; chk 88.19
+
+# 88.20 the `2>&1 >file` idiom — fd 2 takes the pipe, then fd 1 goes to the
+# file, so the capture reads STDERR and the file gets stdout. This is the
+# spelling DG named when settling the rule. The real exit code still reaches
+# `$?` as the first action of the handling branch.
+rm -f /tmp/sash_cc_sw
+run_sash 'if x=$(/bin/sh -c "echo OUT; echo ERR >&2; exit 3" 2>&1 >/tmp/sash_cc_sw) {
+  /bin/echo no
+} else {
+  /bin/echo "st=$?"
+  /bin/echo "cap=[${x:!}]"
+}'
+[[ $rc = 0 && $out = $'st=3\ncap=[ERR]' && -z $err ]]; chk 88.20
+[[ $(cat /tmp/sash_cc_sw) = OUT ]]; chk 88.21
+rm -f /tmp/sash_cc_sw
+
+# 88.22 a redirect on fd 0 cannot touch the capture
+rm -f /tmp/sash_cc_in
+printf 'from-stdin\n' > /tmp/sash_cc_in
+run_sash 'if x=$(/bin/cat </tmp/sash_cc_in) { attest x [[ -n $x ]]; /bin/echo "ok [$x]" }'
+[[ $rc = 0 && $out = "ok [from-stdin]" && -z $err ]]; chk 88.22
+rm -f /tmp/sash_cc_in
+
+# 88.23 a dup onto an unrelated fd keeps the pipe reachable, so it is allowed
+run_sash 'if x=$(/bin/echo hi 3>&1) { attest x [[ -n $x ]]; /bin/echo "ok [$x]" }'
+[[ $rc = 0 && $out = "ok [hi]" && -z $err ]]; chk 88.23
+
+# 88.24 `- cmd` suppression composes with a surviving redirect
+run_sash 'if x=$(- /bin/sh -c "echo OUT; echo ERR >&2" 2>/dev/null) { attest x [[ -n $x ]]; /bin/echo "ok [$x]" }'
+[[ $rc = 0 && $out = "ok [OUT]" && -z $err ]]; chk 88.24
+
+# 88.25 `while` takes the same form
+run_sash 'int n = 0
+while x=$(/bin/sh -c "echo t; exit $n" 2>/dev/null) {
+  attest x [[ -n $x ]]
+  /bin/echo "[$x]"
+  n = 1
+}'
+[[ $rc = 0 && $out = "[t]" && -z $err ]]; chk 88.25
+
+# 88.26 a pipeline stage may carry a redirect that spares the capture. Before
+# this, `stmt_is_external_command` peeled `-`/`!` but NOT `Redirected`, so it
+# disagreed with its own caller (which peels one on a bare command) and this
+# drew a false SB4025.
+run_sash 'if x=$(/bin/echo hi | /bin/sh -c "cat; echo E >&2" 2>/dev/null) { attest x [[ -n $x ]]; /bin/echo "ok [$x]" }'
+[[ $rc = 0 && $out = "ok [hi]" && -z $err ]]; chk 88.26
+
+# 88.27 an EARLIER stage's `>file` steals its own stdout from the next pipe,
+# not from the capture — the last stage still feeds it
+rm -f /tmp/sash_cc_st
+run_sash 'if x=$(/bin/echo a >/tmp/sash_cc_st | /bin/echo b) { attest x [[ -n $x ]]; /bin/echo "ok [$x]" }'
+[[ $rc = 0 && $out = "ok [b]" && -z $err && $(cat /tmp/sash_cc_st) = a ]]; chk 88.27
+rm -f /tmp/sash_cc_st
+
+# 88.28 a user function is still DD#88's reject, redirect or no — the function
+# table check moved with the relaxation rather than being left behind. The
+# message names the function, which is the one shape it is TRUE of.
+run_sash 'fn f {
+  /bin/echo hi
+}
+if x=$(f 2>/dev/null) { /bin/echo "$x" }'
+[[ $rc != 0 && -z $out && $err == *SB4025* && $err == *"function's output"* ]]; chk 88.28
+
+# ── SB4075: an abandoned capture, anywhere ─────────────────────────────
+# Scoped to every `$( … )`, because `a=$(cmd >f)` is the same mistake as
+# `if a=$(cmd >f)`: the capture can only ever produce "".
+
+# cap4075.1 the condition case that started it. It used to draw the DD#88
+# message — "capturing a function's output is not a condition" — with no
+# function anywhere in the program, because `try_capture_condition` fell to
+# `_ => None` and the caller had only one explanation for None.
+rm -f /tmp/sash_cc_x
+run_sash 'if x=$(/bin/echo hi >/tmp/sash_cc_x) { /bin/echo "$x" }'
+[[ $rc != 0 && -z $out && $err == *SB4075* && $err != *"function's output"* ]]; chk cap4075.1
+
+# cap4075.2 ...and a PLAIN assignment is the same fault
+run_sash 'str a = $(/bin/echo hi >/tmp/sash_cc_x)
+/bin/echo "${a:!}"'
+[[ $rc != 0 && -z $out && $err == *SB4075* ]]; chk cap4075.2
+
+# cap4075.3 ...as is a capture in argument position, with no assignment at all
+run_sash '/bin/echo "[$(/bin/echo hi >/tmp/sash_cc_x)]"'
+[[ $rc != 0 && -z $out && $err == *SB4075* ]]; chk cap4075.3
+
+# cap4075.4 the OTHER order of the pair: `>file 2>&1` sends fd 2 to the file,
+# not to the pipe, so unlike 88.20 nothing is left writing the capture
+run_sash 'str a = $(/bin/echo hi >/tmp/sash_cc_x 2>&1)
+/bin/echo "${a:!}"'
+[[ $rc != 0 && -z $out && $err == *SB4075* ]]; chk cap4075.4
+
+# cap4075.5 `&>file` desugars to a plain `>file` (the parser builds one Write
+# on fd 1), so it is caught by the same simulation
+run_sash 'str a = $(/bin/echo hi &>/tmp/sash_cc_x)
+/bin/echo "${a:!}"'
+[[ $rc != 0 && -z $out && $err == *SB4075* ]]; chk cap4075.5
+
+# cap4075.6 a dup can abandon the pipe too — `1>&2` hands fd 1 to stderr
+run_sash 'str a = $(/bin/echo hi 1>&2)
+/bin/echo "${a:!}"'
+[[ $rc != 0 && -z $out && $err == *SB4075* ]]; chk cap4075.6
+
+# cap4075.7 a pipeline whose LAST stage abandons the pipe
+run_sash 'str a = $(/bin/echo hi | /bin/cat >/tmp/sash_cc_x)
+/bin/echo "${a:!}"'
+[[ $rc != 0 && -z $out && $err == *SB4075* ]]; chk cap4075.7
+
+# cap4075.8 the rule is about the capture having SOME writer, not about every
+# statement having one: `b` still feeds it
+rm -f /tmp/sash_cc_x
+run_sash 'str a = $(/bin/echo a >/tmp/sash_cc_x; /bin/echo b)
+/bin/echo "[${a:!}]"'
+[[ $rc = 0 && $out = "[b]" && -z $err && $(cat /tmp/sash_cc_x) = a ]]; chk cap4075.8
+rm -f /tmp/sash_cc_x
 
 set -e
 tally

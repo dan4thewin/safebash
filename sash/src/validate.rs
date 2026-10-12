@@ -1266,21 +1266,26 @@ fn validate_assignment_stmt(
     }
 }
 
-/// True when an assignment RHS is a single external `$(cmd)` command
-/// substitution — the capture-condition form (`if x=$(cmd)` / `while x=$(cmd)`),
-/// where the command's exit status is the condition and its stdout is captured
-/// into the target. Post-resolution an external command's name is an absolute
-/// path (contains `/`); a user function / intrinsic / builtin stays a bare
-/// name, so this structurally excludes `$(user_fn)` (which is NOT a
-/// capture-condition). A pipeline / multi-statement / concat RHS is also
-/// excluded (a single external command only).
+/// True when an assignment RHS is the DD#88 capture-condition form
+/// (`if x=$(cmd)` / `while x=$(cmd)`), where the command's exit status is the
+/// condition and its stdout is captured into the target.
 ///
-/// **DD#101 carve-out:** `$(getenv NAME)` also qualifies. It is the one
-/// intrinsic that can *fail* — not by malfunctioning, but by looking up a
-/// name the environment does not contain — so `home=$(getenv HOME) ||
-/// home=/root` is a real condition. The carve-out is `getenv` specifically,
-/// not intrinsics generally: `$(len a)` and friends are pure functions of
-/// their arguments and stay in the can't-fail set.
+/// Qualifying shapes: a single external `$(cmd)`, an all-external pipeline
+/// `$(a | b)`, or — the **DD#101 carve-out** — `$(getenv NAME)`, the one
+/// intrinsic that can *fail*, not by malfunctioning but by looking up a name
+/// the environment does not contain, so `home=$(getenv HOME) || home=/root` is
+/// a real condition. The carve-out is `getenv` specifically, not intrinsics
+/// generally: `$(len a)` and friends are pure functions of their arguments and
+/// stay in the can't-fail set. Excluded: a concatenation, a multi-statement
+/// `$(a; b)`, and any literal RHS.
+///
+/// Redirects are peeled and not judged here. Whether a redirect leaves the
+/// capture with a writer is a property of **every** capture, not of this one
+/// position, so it is asked once by [`check_capture_has_writer`].
+///
+/// `validate` runs BEFORE command resolution, so a bare user-function name
+/// passes the external test here; the transform, which has the function table,
+/// rejects the residual `$(user_fn)` capture-condition.
 fn is_capture_condition_rhs(value: &Expr) -> bool {
     let ExprKind::CommandSubstitution(stmts) = &value.kind else {
         return false;
@@ -1288,15 +1293,7 @@ fn is_capture_condition_rhs(value: &Expr) -> bool {
     let [stmt] = stmts.as_slice() else {
         return false;
     };
-    let mut kind = &stmt.kind;
-    loop {
-        match kind {
-            StmtKind::Redirected(r) => kind = &r.body.kind,
-            StmtKind::Suppressed(inner) => kind = &inner.kind,
-            _ => break,
-        }
-    }
-    match kind {
+    match peel_capture_wrappers(&stmt.kind).0 {
         StmtKind::Command(c) => is_external_command_head(c) || is_getenv_lookup(c),
         // `$(a | b)` — every stage must be an external command.
         StmtKind::Pipeline(p) => {
@@ -1304,6 +1301,31 @@ fn is_capture_condition_rhs(value: &Expr) -> bool {
         }
         _ => false,
     }
+}
+
+/// Peel `Redirected` / `Suppressed` off a capture body, returning the
+/// innermost kind and each `Redirected` layer's list **in application order**
+/// (innermost first — an outer wrapper's redirects run after an inner one's).
+///
+/// The layers are returned rather than a yes/no flag for the reason recorded
+/// on `transform::expr_handlers::unwrap_subst_wrappers`: a caller that peels
+/// transitively but asks about redirects non-transitively disagrees with
+/// itself, which is how `$(- cmd > f)` once dropped its redirect in silence.
+fn peel_capture_wrappers(kind: &StmtKind) -> (&StmtKind, Vec<&Vec<crate::ir::Redirect>>) {
+    let mut kind = kind;
+    let mut layers = Vec::new();
+    loop {
+        match kind {
+            StmtKind::Redirected(r) => {
+                layers.push(&r.redirects);
+                kind = &r.body.kind;
+            }
+            StmtKind::Suppressed(inner) => kind = &inner.kind,
+            _ => break,
+        }
+    }
+    layers.reverse();
+    (kind, layers)
 }
 
 /// DD#101: `$(getenv NAME)` — the one intrinsic whose status is a real
@@ -1324,11 +1346,20 @@ fn is_external_command_head(c: &crate::ir::Command) -> bool {
     matches!(&c.name.kind, ExprKind::Literal(n) if crate::resolve::is_external_looking(n))
 }
 
-/// A pipeline stage (peeling `-`/`!`) that is a single external command.
+/// A pipeline stage (peeling `-`/`!`, and any redirect) that is a single
+/// external command. The redirect peel matters: `$(a | b 2>f)` is a pipeline
+/// of two external commands, and refusing to look past the stage's redirect
+/// would make it disagree with `capture_condition_shape`, which peels one on
+/// a bare command. Whether a stage redirect *steals the capture* is a separate
+/// question, asked of the last stage only (`ir::redirects_preserve_capture`).
 fn stmt_is_external_command(stmt: &Statement) -> bool {
     let mut kind = &stmt.kind;
-    while let StmtKind::Suppressed(inner) | StmtKind::Negated(inner) = kind {
-        kind = &inner.kind;
+    loop {
+        match kind {
+            StmtKind::Suppressed(inner) | StmtKind::Negated(inner) => kind = &inner.kind,
+            StmtKind::Redirected(r) => kind = &r.body.kind,
+            _ => break,
+        }
     }
     matches!(kind, StmtKind::Command(c) if is_external_command_head(c))
 }
@@ -2262,7 +2293,98 @@ fn validate_expr(expr: &Expr, _parent_span: Span, diags: &mut Vec<Diagnostic>) {
             ));
         }
         ExprKind::Array(elems) => check_retired_regex_filter(elems, diags),
+        ExprKind::CommandSubstitution(body) => check_capture_has_writer(body, expr.span, diags),
         _ => {}
+    }
+}
+
+/// SB4075 (DD#88, DG 2026-10-12): a `$( … )` capture must still have something
+/// writing to it.
+///
+/// Inside a substitution the body starts with fd 1 attached to the capture
+/// pipe. A redirect can move that pipe around, and the capture is only
+/// meaningful while *some* fd still holds it:
+///
+/// - `$(cmd 2>/dev/null)` — fd 1 untouched, the capture reads stdout. Fine.
+/// - `$(cmd 2>&1 >f)` — fd 2 takes the pipe, then fd 1 goes to the file, so
+///   the capture reads *stderr*. That is the whole point of the idiom, and it
+///   is the case DG named when settling the rule. Fine.
+/// - `$(cmd >f)` — the pipe is abandoned, so the capture is unconditionally
+///   empty. **Rejected**, as is `$(cmd >f 2>&1)` (fd 2 dups the file, not the
+///   pipe) and `$(cmd &>f)`, which the parser desugars to a plain `>f`.
+///
+/// Scoped to the whole language rather than to the capture-condition that
+/// exposed it: an abandoned capture is nonsense wherever it is written, and
+/// `a=$(cmd >f)` is the same mistake as `if a=$(cmd >f)`.
+///
+/// Deliberately permissive about what counts as a writer — **any** top-level
+/// statement that could still write qualifies, and a form whose writer is not
+/// plainly visible (a compound, an assignment) counts as one. `$(a >f; b)` is
+/// fine because `b` feeds the capture.
+fn check_capture_has_writer(body: &[Statement], span: Span, diags: &mut Vec<Diagnostic>) {
+    if body.is_empty()
+        || body
+            .iter()
+            .any(|s| stmt_can_write_capture(&s.kind, Vec::new()))
+    {
+        return;
+    }
+    diags.push(Diagnostic::error_span(
+        span,
+        "SB4075",
+        "this redirect sends the command's output somewhere else, leaving the `$( … )` capture \
+         with nothing to read — it could only ever produce the empty string. Run the command on \
+         its own if you want the redirect (`cmd >file`), or keep the capture fed by redirecting \
+         the other stream into it (`$(cmd 2>&1 >file)`)"
+            .to_string(),
+    ));
+}
+
+/// Could this statement still write to the enclosing `$( … )`'s capture, given
+/// the redirect layers `applied` already in force (outermost first)?
+///
+/// **Total over `StmtKind` on purpose — do not add a wildcard.** The `true`
+/// arms are not a catch-all: each one is a claim that the form either writes
+/// the capture directly or hides its writer somewhere this walk does not look,
+/// and a new statement form has to make that claim for itself rather than
+/// inheriting a silent "no".
+fn stmt_can_write_capture<'a>(
+    kind: &'a StmtKind,
+    mut applied: Vec<&'a Vec<crate::ir::Redirect>>,
+) -> bool {
+    let (inner, mut layers) = peel_capture_wrappers(kind);
+    applied.append(&mut layers);
+    match inner {
+        StmtKind::Command(_) => {
+            crate::ir::redirects_preserve_capture(applied.into_iter().flatten())
+        }
+        // A pipeline's capture is written by its LAST stage. An earlier stage's
+        // `>f` steals its own stdout from the next pipe, not from us.
+        StmtKind::Pipeline(p) => match p.commands.last() {
+            Some(last) => stmt_can_write_capture(&last.kind, applied),
+            None => true,
+        },
+        // `- cmd` / `! cmd` are peeled above, so these cannot survive the peel;
+        // `Redirected` likewise. Listed for totality.
+        StmtKind::Suppressed(_) | StmtKind::Negated(_) | StmtKind::Redirected(_) => true,
+        // Writers hidden inside a body this walk does not enter. A redirect on
+        // one branch says nothing about the others, and SB4021 already rejects
+        // a redirect on the compound itself — so never claim the capture is
+        // abandoned on their account.
+        StmtKind::If(_)
+        | StmtKind::While(_)
+        | StmtKind::For(_)
+        | StmtKind::Case(_)
+        | StmtKind::Group(_)
+        | StmtKind::List(_)
+        | StmtKind::ReturnProducer(_) => true,
+        // No output of their own, so they neither feed nor abandon a capture.
+        // `true` keeps them from being read as "the capture is dead": a body
+        // of `$(x=1)` is an empty capture for reasons that are not this rule's.
+        StmtKind::Assignment(_)
+        | StmtKind::Declaration(_)
+        | StmtKind::Function(_)
+        | StmtKind::ArithTest(_) => true,
     }
 }
 

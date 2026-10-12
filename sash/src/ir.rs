@@ -1375,6 +1375,61 @@ impl Redirect {
     }
 }
 
+/// DD#88: does this redirect list leave the capture pipe with a writer?
+///
+/// Inside `$( … )` the command starts with fd 1 attached to the capture pipe.
+/// A redirect list can move that pipe around, and the capture-condition form
+/// (`if x=$(cmd …)`) is only meaningful while *some* fd still holds it — DG's
+/// rule, 2026-10-12. Simulated left-to-right, exactly as the kernel applies
+/// them:
+///
+/// - `cmd 2>/dev/null` — fd 1 untouched. The capture reads stdout. **Legal.**
+/// - `cmd 2>&1 >f` — fd 2 takes the pipe, then fd 1 goes to the file. The
+///   capture reads *stderr*, which is the whole point of the idiom. **Legal.**
+/// - `cmd >f` — the pipe is abandoned, so `x` is unconditionally empty.
+///   **Rejected**, as is the other order `cmd >f 2>&1` (fd 2 dups the file,
+///   not the pipe) and `&>f`, which the parser desugars to a plain `>f`.
+///
+/// Totally decidable: a dup target is a literal fd number or the parser
+/// already rejected it (SB4048), so there is no dynamic case to be
+/// conservative about. An unreadable one is treated as *not* the pipe, which
+/// only ever makes this stricter — and cannot arise from parsed source.
+///
+/// **Total over `RedirectOp` on purpose — do not add a wildcard.** A new
+/// operator moves fds around and must say so here, or a capture silently
+/// becomes empty.
+pub fn redirects_preserve_capture<'a>(redirects: impl IntoIterator<Item = &'a Redirect>) -> bool {
+    // The fds still pointing at the capture pipe. Starts as just stdout.
+    let mut holding: Vec<i64> = vec![1];
+    for r in redirects {
+        let fd = r.resolved_fd();
+        let now_holds = match r.op {
+            // The fd is reattached to a file — it no longer holds the pipe.
+            RedirectOp::Write | RedirectOp::Append | RedirectOp::Read | RedirectOp::ReadWrite => {
+                false
+            }
+            // The fd becomes whatever the source fd currently is.
+            RedirectOp::DupOutput | RedirectOp::DupInput => {
+                dup_target_fd(&r.target).is_some_and(|src| holding.contains(&src))
+            }
+        };
+        holding.retain(|&held| held != fd);
+        if now_holds {
+            holding.push(fd);
+        }
+    }
+    !holding.is_empty()
+}
+
+/// The fd a `>&`/`<&` names. `reject_nonfd_dup_target` pins this to a literal
+/// run of digits at parse time, so the `None` arm is unreachable from source.
+fn dup_target_fd(target: &Expr) -> Option<i64> {
+    match &target.kind {
+        ExprKind::Literal(s) => s.parse::<i64>().ok(),
+        _ => None,
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum RedirectOp {
     Write,     // >

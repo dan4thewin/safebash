@@ -131,3 +131,97 @@ carves out one exception: `$(getenv NAME)` interrogates external state and can
 report a not-found **result**, so it composes with both `x=$(getenv N) || …`
 and `if ! x=$(getenv N) { … }`. All other intrinsics remain can't-fail, and
 SB4025's advice text still applies to them.
+
+## Addendum 2026-10-12 — redirects, and the capture that has no writer
+
+DG, asked whether a redirect belongs in a capture-condition: *"so long as the
+cmd's stdout remains connected to the caller (e.g., `cmd 2>&1 >f`) it should be
+supported"* — and then, on seeing the rule written down: *"the idea that the
+capture needs a writer even after redirects makes sense for all captures, not
+just ones after `if`."*
+
+So the rule is **not** a capture-condition rule. It is a rule about every
+`$( … )`.
+
+### The rule
+
+Inside a substitution the body starts with fd 1 attached to the capture pipe.
+A redirect list may move that pipe around. The capture is meaningful while
+**some fd still holds it**, and nonsense otherwise — the value could only ever
+be `""`. Simulated left to right, exactly as the kernel applies the list
+(`ir::redirects_preserve_capture`):
+
+| spelling | capture fed by | verdict |
+|---|---|---|
+| `$(cmd 2>/dev/null)` | stdout (fd 1 untouched) | legal |
+| `$(cmd 2>&1 >f)` | **stderr** — fd 2 took the pipe before fd 1 left | legal |
+| `$(cmd <in)` | stdout | legal |
+| `$(cmd 3>&1)` | stdout, and fd 3 as well | legal |
+| `$(cmd >f)` | nothing | **SB4075** |
+| `$(cmd >f 2>&1)` | nothing — fd 2 dups the *file* | **SB4075** |
+| `$(cmd &>f)` | nothing — the parser desugars this to `>f` | **SB4075** |
+| `$(cmd 1>&2)` | nothing | **SB4075** |
+
+A pipeline's capture is written by its **last stage**, so that is the stage
+judged: `$(a >f | b)` is legal (`a` steals its own stdout from the next pipe,
+not from us) and `$(a | b >f)` is not.
+
+The check is permissive about what counts as a writer. **Any** top-level
+statement of the body that could still write qualifies — `$(a >f; b)` is legal
+because `b` feeds the capture — and a form whose writer is not plainly visible
+(a compound, an assignment) counts as one. SB4075 only ever fires on a capture
+that is unambiguously abandoned.
+
+Fully decidable: `>&`/`<&` targets are literal fd numbers or the parser
+already rejected them (SB4048), so there is no dynamic case.
+
+### Why a new code rather than SB4025
+
+SB4025 is "a value binding used where an exit status is consumed" — a
+*boolean-context* fault. An abandoned capture is wrong in any position:
+`a=$(cmd >f)` is the same mistake as `if a=$(cmd >f)`, and `echo $(cmd >f)` is
+too. SB4075 is emitted from `validate_expr`'s `CommandSubstitution` arm, so it
+fires wherever a substitution is written.
+
+This is a **breaking change** against both bash and previous sash, which bound
+`""` silently. It is the usual safebash trade: bash's answer is well-defined
+and useless, and the program that wanted it is spelled `cmd >f`.
+
+### What a redirect in a capture-condition now does
+
+`try_capture_condition` previously matched two `SsaValue` shapes — a bare
+`CmdSubst`, and a `CmdSubstBody` that `is_single_pipeline`. A redirected
+command is neither (`single_command_subst` declines a redirected capture so the
+redirect is lowered by the ordinary statement machinery), so it fell to
+`_ => None`, whose only caller-side explanation is DD#88's user-function
+rejection. **`if x=$(cmd 2>/dev/null)` was told that capturing a function's
+output is not a condition, with no function anywhere in the program.**
+
+Now a `CmdSubstBody` qualifies when its single statement peels to a pipeline or
+to a command that is not a user function — the function-table check moves with
+the relaxation, so `$(f 2>&1)` stays on DD#88's side of the line with its
+unredirected twin. The body is lowered with `state.suppressed` bumped *and*
+`uncheck_emitted_since` applied: only `handle_regular_pipeline` reads
+`state.suppressed` at emission time, so a plain Command needs the post-pass to
+be unchecked at all. Verified byte-identical to bash, including `$?` carrying
+the real exit code into the `else` branch.
+
+A second, smaller disagreement fixed alongside: `stmt_is_external_command`
+peeled `-`/`!` but not `Redirected`, while the caller that peels a bare
+command's redirect sat fifteen lines above it. `$(a | b 2>f)` drew a false
+SB4025 on that account.
+
+### Tests
+
+`spec/capture_cond.sh` 88.19-88.28 (surviving redirects in `if`/`while`, the
+`2>&1 >f` idiom with its file and its `$?`, fd 0, an unrelated fd, `-`
+suppression, a pipeline stage, an earlier stage, and the user function that
+still earns SB4025) and cap4075.1-8 (the rejections, in condition / assignment
+/ argument position, both orders of the idiom, `&>`, a dup, a pipeline tail,
+and the multi-statement body that is still fed).
+
+`spec/commands.sh` csr.1-csr.9 predate this and asserted the old
+bind-empty-silently behaviour. The six write-to-file cases were respelled
+`2>&1 >f`, which exercises the identical codegen — same literal / computed
+target, same open, same dup2 — while keeping the capture fed, so the silent
+redirect-drop bug they were written for stays pinned.

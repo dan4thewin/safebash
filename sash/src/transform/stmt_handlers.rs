@@ -1319,14 +1319,19 @@ fn try_capture_condition(
             push_set_test_from_status(ssa, block);
             Some(block)
         }
-        // Pipeline `$(a | b)` → capture the body with the inner pipeline
-        // unchecked (state.suppressed), which sets $? to the aggregate status;
-        // then sync test_result. Only a single pipeline qualifies (validate
-        // restricts the RHS shape; a multi-statement body is not a condition).
-        SsaValue::CmdSubstBody { body, .. } if is_single_pipeline(body) => {
+        // A body capture — a pipeline `$(a | b)`, or any command carrying a
+        // redirect, which `single_command_subst` deliberately declines so the
+        // redirect is lowered by the ordinary statement machinery. Lower it
+        // with `state.suppressed` bumped (an inner pipeline emits unchecked)
+        // and uncheck the rest afterwards, since a plain Command does not
+        // consult `state.suppressed` at emission time. Either way the status
+        // is consumed by the branch, so it must not abort.
+        SsaValue::CmdSubstBody { body, .. } if is_capture_condition_body(body, state) => {
+            let pre_len = ssa.block(block).insts.len();
             state.suppressed += 1;
             let after = capture_body_into(name, body, state, ssa, block);
             state.suppressed -= 1;
+            super::statements::uncheck_emitted_since(ssa, block, pre_len, after);
             push_set_test_from_status(ssa, after);
             Some(after)
         }
@@ -1358,10 +1363,44 @@ fn reject_nonexternal_capture_condition(a: &Assignment, state: &mut VersionState
     ));
 }
 
-/// True when a `$(…)` body is exactly one pipeline (`$(a | b)`) — the only
-/// multi-command capture-condition shape (a multi-statement `$(a; b)` is not).
-fn is_single_pipeline(body: &[Statement]) -> bool {
-    matches!(body, [stmt] if matches!(&stmt.kind, StmtKind::Pipeline(_)))
+/// True when a `$(…)` body is a capture-condition body: exactly one statement
+/// that is a pipeline (`$(a | b)`), or a command carrying a redirect
+/// (`$(cmd 2>/dev/null)`). A multi-statement `$(a; b)` is not a condition, and
+/// `validate` has already rejected everything else that reaches here.
+///
+/// The command case must still exclude a **user function**. `validate` runs
+/// before resolution and cannot consult the function table, so `$(f 2>&1)`
+/// arrives looking exactly like an external — and a bare `$(f)` never reaches
+/// this arm at all, because it lowers to `FuncCall` rather than a body
+/// capture. Checking the table here keeps the redirected spelling on DD#88's
+/// side of the line with its unredirected twin.
+fn is_capture_condition_body(body: &[Statement], state: &VersionState) -> bool {
+    let [stmt] = body else {
+        return false;
+    };
+    match peel_capture_wrappers(&stmt.kind) {
+        StmtKind::Pipeline(_) => true,
+        StmtKind::Command(c) => match &c.name.kind {
+            ExprKind::Literal(n) => !state.function_bodies.contains_key(n.as_str()),
+            _ => false,
+        },
+        _ => false,
+    }
+}
+
+/// Peel `Redirected` / `Suppressed` wrappers off a capture body statement.
+/// The transform's counterpart to `validate::peel_capture_wrappers`, which
+/// also reports the redirects it stripped; here only the innermost kind
+/// matters, because whether those redirects are legal was settled by SB4075.
+fn peel_capture_wrappers(kind: &StmtKind) -> &StmtKind {
+    let mut kind = kind;
+    loop {
+        match kind {
+            StmtKind::Redirected(r) => kind = &r.body.kind,
+            StmtKind::Suppressed(inner) => kind = &inner.kind,
+            _ => return kind,
+        }
+    }
 }
 
 /// Inline a function-substitution `$(fname args...)` so its output

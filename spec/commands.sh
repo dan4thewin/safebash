@@ -827,16 +827,24 @@ rm -f fdout
 # single-command fast path and lowers through `CmdSubstBody`, the same path
 # `$(a | b > f)` always took and the only one both backends implement.
 # Every case below was differentially checked against bash.
+#
+# The write-to-file cases are spelled `2>&1 >f` rather than the bare `>f` they
+# used when first written. Bare `>f` is now SB4075 (DD#88 addendum, DG
+# 2026-10-12): it leaves the capture with no writer, so it could only ever
+# produce "". `2>&1 >f` exercises the identical codegen — same literal /
+# computed target, same open, same dup2 — while keeping the capture fed (by
+# stderr), so no path here lost coverage. `spec/capture_cond.sh` cap4075.*
+# pins the rejection itself; do not "restore" the bare spelling.
 
 # csr.1 stdout to a file: capture is EMPTY, file gets the output (builtin head)
-run_sash 'str x=$(echo hi > csr1f)
+run_sash 'str x=$(echo hi 2>&1 > csr1f)
 attest x [[ -z $x || -n $x ]]
 echo "cap=[$x]"
 cat csr1f'
 [[ $rc = 0 && $out = $'cap=[]\nhi' && -z $err ]]; chk csr.1
 
 # csr.2 same with an EXTERNAL head (the fork/exec capture path)
-run_sash 'str x=$(/bin/echo hi > csr2f)
+run_sash 'str x=$(/bin/echo hi 2>&1 > csr2f)
 attest x [[ -z $x || -n $x ]]
 echo "cap=[$x]"
 cat csr2f'
@@ -844,7 +852,7 @@ cat csr2f'
 
 # csr.3 append inside a capture does not truncate
 run_sash 'echo a > csr3f
-str x=$(/bin/echo b >> csr3f)
+str x=$(/bin/echo b 2>&1 >> csr3f)
 attest x [[ -z $x || -n $x ]]
 echo "cap=[$x]"
 cat csr3f'
@@ -873,14 +881,14 @@ cat csr6f'
 
 # csr.7 a NON-literal target (the `redirect_s` path, computed ptr+len)
 run_sash 'str f=csr7f
-str x=$(/bin/echo dyn > ${f:?empty})
+str x=$(/bin/echo dyn 2>&1 > ${f:?empty})
 attest x [[ -z $x || -n $x ]]
 echo "cap=[$x]"
 cat csr7f'
 [[ $rc = 0 && $out = $'cap=[]\ndyn' && -z $err ]]; chk csr.7
 
 # csr.8 >/dev/null discards rather than captures
-run_sash 'str x=$(/bin/echo hi > /dev/null)
+run_sash 'str x=$(/bin/echo hi 2>&1 > /dev/null)
 attest x [[ -z $x || -n $x ]]
 echo "cap=[$x]"'
 [[ $rc = 0 && $out = "cap=[]" && -z $err ]]; chk csr.8
@@ -888,7 +896,7 @@ echo "cap=[$x]"'
 # csr.9 DD#55: a redirected capture still aborts on a nonzero exit, exactly as
 #       the unredirected form does — routing through the body path must not
 #       have quietly dropped the check.
-run_sash 'str x=$(/bin/false > csr9f)
+run_sash 'str x=$(/bin/false 2>&1 > csr9f)
 attest x [[ -z $x || -n $x ]]
 echo "after=[$x]"'
 [[ $rc != 0 && $out != *after* && $rerr == *"/bin/false"* ]]; chk csr.9
