@@ -390,25 +390,52 @@ fn push_attest_all(
         .push(SsaInst::AttestRetag { target, source });
 }
 
+/// The loop-stack entry a `break`/`continue` count selects, or `None` during
+/// pass 1 of `lower_while`.
+///
+/// `break` and `continue` are twins here — same count, same clamp, same stack —
+/// so they share this rather than keeping two copies of it. The copies had
+/// already drifted: `continue N` was uncovered by any spec while `break 2` was
+/// specified, which is how the count faults SB5097 now rejects survived in both.
+///
+/// **An empty stack is not an error.** `lower_while` lowers the body twice —
+/// pass 1 only to discover which variables the body modifies — and it pushes
+/// the loop context *after* pass 1, whose instructions are then discarded. So a
+/// `break`/`continue` inside a `while` is reached once with no enclosing entry,
+/// and the right answer is to emit nothing and keep lowering into the same
+/// block. (`for` pushes before its single pass, which is why this only shows up
+/// under `while`.) SB5081 is what guarantees a *genuinely* unenclosed one never
+/// gets here.
+///
+/// A count larger than the nesting depth clamps to the outermost loop, which is
+/// also what bash does (`continue 9` inside one loop continues that loop).
+/// SB5097 guarantees a literal decimal of at least 1, so the clamp is always a
+/// valid index; saturating on overflow keeps a huge literal clamping, where
+/// `unwrap_or(1)` used to turn every unparsable count into `continue 1`.
+fn loop_target(c: &Command, state: &VersionState) -> Option<(BlockId, BlockId)> {
+    let n = c
+        .args
+        .first()
+        .map(|a| literal_name_of(a).parse::<usize>().unwrap_or(usize::MAX))
+        .unwrap_or(1);
+    let depth = state.loop_stack.len();
+    if depth == 0 {
+        return None;
+    }
+    Some(state.loop_stack[depth - n.min(depth)])
+}
+
 fn handle_break_stmt(
     c: &Command,
     state: &mut VersionState,
     ssa: &mut SsaProgram,
     block: BlockId,
 ) -> BlockId {
-    let n = c
-        .args
-        .first()
-        .map(|a| literal_name_of(a).parse::<usize>().unwrap_or(1))
-        .unwrap_or(1);
-    let depth = state.loop_stack.len();
-    if n > 0 && depth > 0 {
-        let level = n.min(depth);
-        let (_header, exit) = state.loop_stack[depth - level];
-        ssa.block_mut(block).terminator = Terminator::Goto(exit);
-        return ssa.new_block("after_break");
-    }
-    block
+    let Some((_header, exit)) = loop_target(c, state) else {
+        return block;
+    };
+    ssa.block_mut(block).terminator = Terminator::Goto(exit);
+    ssa.new_block("after_break")
 }
 
 fn handle_continue_stmt(
@@ -417,19 +444,11 @@ fn handle_continue_stmt(
     ssa: &mut SsaProgram,
     block: BlockId,
 ) -> BlockId {
-    let n = c
-        .args
-        .first()
-        .map(|a| literal_name_of(a).parse::<usize>().unwrap_or(1))
-        .unwrap_or(1);
-    let depth = state.loop_stack.len();
-    if n > 0 && depth > 0 {
-        let level = n.min(depth);
-        let (header, _exit) = state.loop_stack[depth - level];
-        ssa.block_mut(block).terminator = Terminator::Goto(header);
-        return ssa.new_block("after_continue");
-    }
-    block
+    let Some((header, _exit)) = loop_target(c, state) else {
+        return block;
+    };
+    ssa.block_mut(block).terminator = Terminator::Goto(header);
+    ssa.new_block("after_continue")
 }
 
 fn handle_return_stmt(

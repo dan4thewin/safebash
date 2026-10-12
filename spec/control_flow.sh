@@ -5,7 +5,7 @@
 set -eu
 . common.sh
 setup control_flow
-plan=85
+plan=97
 echo "1..$plan" >&3
 
 set +e
@@ -397,6 +397,92 @@ run_sash 'echo hi; break'
 # cf.n18 a function body starts a fresh loop context
 run_sash 'fn f { break; }; f'
 [[ $rc != 0 && -z $out && $err == *SB5081* ]]; chk cf.n18
+
+# --- SB5097: the loop COUNT on break/continue ------------------------
+# SB5081 rejects a `break`/`continue` that would be a silent no-op for want of
+# an enclosing loop. The optional count reached the same no-op by a second
+# route and nothing stopped it: the transform guarded on `n > 0 && depth > 0`,
+# so `continue 0` fell straight through and did nothing, where bash fails the
+# builtin ("loop count out of range") and abandons the loop. Two neighbouring
+# spellings were worse than a no-op — `continue $k` crashed the compiler in
+# `literal_name_of`, and `continue abc` became `continue 1` via `unwrap_or(1)`.
+#
+# `continue N` was not specified at all before this block (only `break 2` was),
+# which is how all of it survived in twin copies of the same handler.
+
+# cf.lc1 `continue 2` in nested `while` — byte-identical to bash
+run_sash 'int i=0
+while (( i < 3 )) {
+  i=$(( i + 1 )); int j=0
+  while (( j < 3 )) { j=$(( j + 1 )); if (( j == 2 )) { continue 2 }; echo "i=$i j=$j" }
+}'
+[[ $rc = 0 && $out = $'i=1 j=1\ni=2 j=1\ni=3 j=1' && -z $err ]]; chk cf.lc1
+
+# cf.lc2 `break 2` in nested `while`
+run_sash 'int i=0
+while (( i < 3 )) {
+  i=$(( i + 1 )); int j=0
+  while (( j < 3 )) { j=$(( j + 1 )); if (( j == 2 )) { break 2 }; echo "i=$i j=$j" }
+}
+echo done'
+[[ $rc = 0 && $out = $'i=1 j=1\ndone' && -z $err ]]; chk cf.lc2
+
+# cf.lc3 `continue 2` in nested `for` — `for` pushes its loop context before
+#        its single lowering pass, unlike `while`
+run_sash 'for a in 1 2 3 {
+  for b in x y z { if [[ $b == y ]] { continue 2 }; echo "$a$b" }
+}'
+[[ $rc = 0 && $out = $'1x\n2x\n3x' && -z $err ]]; chk cf.lc3
+
+# cf.lc4 a count deeper than the nesting CLAMPS to the outermost loop, as bash
+#        does — this is not an error
+run_sash 'int i=0
+while (( i < 3 )) { i=$(( i + 1 )); if (( i == 2 )) { continue 9 }; echo $i }'
+[[ $rc = 0 && $out = $'1\n3' && -z $err ]]; chk cf.lc4
+
+# cf.lc5 a bare `continue` inside a `while`. `lower_while` lowers the body
+#        twice and pushes the loop context only after pass 1, so this reaches
+#        the handler once with an empty stack; emitting nothing there is
+#        correct, because pass 1's instructions are discarded.
+run_sash 'int i=0
+while (( i < 3 )) { i=$(( i + 1 )); if (( i == 2 )) { continue }; echo $i }'
+[[ $rc = 0 && $out = $'1\n3' && -z $err ]]; chk cf.lc5
+
+# cf.lc6 `continue 0` is the silent no-op SB5081 exists to prevent
+run_sash 'int i=0
+while (( i < 3 )) { i=$(( i + 1 )); if (( i == 2 )) { continue 0 }; echo $i }'
+[[ $rc != 0 && -z $out && $err == *SB5097* && $err == *"silent no-op"* ]]; chk cf.lc6
+
+# cf.lc7 `break 0` likewise — the twins share one rule
+run_sash 'int i=0
+while (( i < 3 )) { i=$(( i + 1 )); if (( i == 2 )) { break 0 }; echo $i }'
+[[ $rc != 0 && -z $out && $err == *SB5097* && $err == *"silent no-op"* ]]; chk cf.lc7
+
+# cf.lc8 `00` parses to zero too — the check is on the value, not the spelling
+run_sash 'int i=0
+while (( i < 3 )) { i=$(( i + 1 )); if (( i == 2 )) { continue 00 }; echo $i }'
+[[ $rc != 0 && -z $out && $err == *SB5097* ]]; chk cf.lc8
+
+# cf.lc9 a non-numeric count silently MEANT `continue 1` before this rule
+run_sash 'int i=0
+while (( i < 3 )) { i=$(( i + 1 )); if (( i == 2 )) { continue abc }; echo $i }'
+[[ $rc != 0 && -z $out && $err == *SB5097* && $err == *"not a number"* ]]; chk cf.lc9
+
+# cf.lc10 a non-literal count ICEd the compiler in `literal_name_of`
+run_sash 'int i=0
+int k=2
+while (( i < 3 )) { i=$(( i + 1 )); if (( i == 2 )) { continue $k }; echo $i }'
+[[ $rc != 0 && -z $out && $err == *SB5097* && $err != *"internal error"* ]]; chk cf.lc10
+
+# cf.lc11 extra arguments were silently ignored; bash fails with "too many"
+run_sash 'int i=0
+while (( i < 3 )) { i=$(( i + 1 )); if (( i == 2 )) { continue 1 2 }; echo $i }'
+[[ $rc != 0 && -z $out && $err == *SB5097* && $err == *"at most one"* ]]; chk cf.lc11
+
+# cf.lc12 a quoted count is not a literal — write the number
+run_sash 'int i=0
+while (( i < 3 )) { i=$(( i + 1 )); if (( i == 2 )) { continue "2" }; echo $i }'
+[[ $rc != 0 && -z $out && $err == *SB5097* ]]; chk cf.lc12
 
 # --- SB5009: a for-in source must denote a COLLECTION ----------------
 # DD#28 eliminates word splitting, so a source holding ONE scalar could only

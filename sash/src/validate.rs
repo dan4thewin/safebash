@@ -11372,6 +11372,14 @@ fn flag_reserved(name: &str, what: &str, span: Span, diags: &mut Vec<Diagnostic>
 /// no-op** — the statement compiles and does nothing. bash warns; sash rejects.
 /// A function body starts a fresh context: a `break` lexically inside a
 /// function is not inside a loop even when the call site is.
+///
+/// SB5097 applies the same principle to the optional loop **count**, which
+/// reaches the same no-op by a second route: the transform guards on
+/// `n > 0 && depth > 0`, so `continue 0` fell through and did nothing at all
+/// while bash fails the builtin ("loop count out of range") and abandons the
+/// loop. A count that is not a literal decimal was worse than a no-op — a
+/// non-literal `continue $k` crashed the compiler in `literal_name_of`, and a
+/// non-numeric `continue abc` silently became `continue 1` via `unwrap_or(1)`.
 pub fn check_loop_control_context(program: &Program) -> Vec<Diagnostic> {
     let mut diags = Vec::new();
     for stmt in program
@@ -11410,20 +11418,84 @@ fn descend_loop_control(stmt: &Statement, in_loop: bool, diags: &mut Vec<Diagnos
     }
 }
 
-/// The SB5081 diagnostic for a `break`/`continue` with no enclosing loop.
+/// The SB5081 diagnostic for a `break`/`continue` with no enclosing loop, and
+/// the SB5097 diagnostics for a loop count that cannot mean what it says.
 fn loop_control_diag(c: &Command, span: Span, in_loop: bool) -> Option<Diagnostic> {
     let name = expr_literal_str(&c.name);
-    if in_loop || (name != "break" && name != "continue") {
+    if name != "break" && name != "continue" {
         return None;
     }
-    Some(Diagnostic::error_span(
-        span,
-        "SB5081",
-        format!(
-            "`{name}` is not inside a loop — it would compile to a silent \
-             no-op. Remove it, or move it into a `for`/`while` body"
-        ),
-    ))
+    if !in_loop {
+        return Some(Diagnostic::error_span(
+            span,
+            "SB5081",
+            format!(
+                "`{name}` is not inside a loop — it would compile to a silent \
+                 no-op. Remove it, or move it into a `for`/`while` body"
+            ),
+        ));
+    }
+    loop_count_diag(name, c, span)
+}
+
+/// SB5097: the optional loop count on `break`/`continue`.
+///
+/// The count is read once, at compile time, and selects an entry of the
+/// transform's loop stack. Every spelling that cannot do that is rejected here
+/// rather than silently reinterpreted:
+///
+/// - **more than one argument** — bash fails with "too many arguments";
+/// - **a non-literal** (`continue $k`) — nothing resolves it at compile time,
+///   and it reached `literal_name_of`, whose `unreachable!` says every caller
+///   is a constrained name position. This one was not;
+/// - **a non-decimal** (`continue abc`) — `parse::<usize>().unwrap_or(1)` made
+///   it mean `continue 1`, an answer the source never asked for;
+/// - **zero** — `n > 0` is false, so the statement fell through and did
+///   nothing. That is SB5081's silent no-op reached by a second route.
+///
+/// A count *larger* than the nesting depth is **not** an error: the transform
+/// clamps with `n.min(depth)` and so does bash, so `continue 9` inside one
+/// loop continues that loop in both.
+fn loop_count_diag(name: &str, c: &Command, span: Span) -> Option<Diagnostic> {
+    if c.args.len() > 1 {
+        return Some(Diagnostic::error_span(
+            span,
+            "SB5097",
+            format!(
+                "`{name}` takes at most one loop count, got {} arguments",
+                c.args.len()
+            ),
+        ));
+    }
+    let arg = c.args.first()?;
+    let ExprKind::Literal(text) = &arg.kind else {
+        return Some(Diagnostic::error_span(
+            span,
+            "SB5097",
+            format!(
+                "`{name}` needs a literal loop count — this one is not known \
+                 at compile time. Write the number, or restructure the loop"
+            ),
+        ));
+    };
+    if text.is_empty() || !text.bytes().all(|b| b.is_ascii_digit()) {
+        return Some(Diagnostic::error_span(
+            span,
+            "SB5097",
+            format!("`{name}` needs a decimal loop count — `{text}` is not a number"),
+        ));
+    }
+    if text.bytes().all(|b| b == b'0') {
+        return Some(Diagnostic::error_span(
+            span,
+            "SB5097",
+            format!(
+                "`{name} {text}` would compile to a silent no-op — a loop count \
+                 counts enclosing loops, so it starts at 1"
+            ),
+        ));
+    }
+    None
 }
 
 #[cfg(test)]
