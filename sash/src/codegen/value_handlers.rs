@@ -947,33 +947,25 @@ mod invariant_tests {
     /// variable can reach emission unmapped, and it names the function that
     /// has to grow a case when a new defining instruction is added.
     ///
-    /// No spec can make this claim. The spec suite only runs programs the
-    /// compiler accepts, and reaching this arm requires editing the compiler
-    /// — so the ICE fires in the opener's own sweep, never in a user's build.
-    /// That is what makes the assertion orthogonal to the sweep rather than a
-    /// restatement of it.
+    /// **What this catches that the sweep cannot.** Not the invariant — if an
+    /// eleventh defining instruction arrives unmapped, this test still passes
+    /// and the ICE fires in the opener's own sweep instead. What it catches is
+    /// the *reversion*: someone restoring the tolerant fallback, which is what
+    /// this function did for its entire life, on a doc comment arguing from
+    /// bash semantics. A silent empty is silent, so the sweep stays green;
+    /// only this test goes red. The data is orthogonal too — an empty map is a
+    /// shape none of the sweep's 8367 programs produces.
+    ///
+    /// Deliberately **no positive companion**. One would guard against
+    /// `load_var` panicking unconditionally and so passing this test
+    /// vacuously, but the sweep already runs the mapped path 232 times and
+    /// would fail on the first compile. A control the sweep already performs
+    /// is not a backstop.
     #[test]
     #[should_panic(expected = "setup::map_inst_versioned")]
     fn an_unmapped_version_is_a_compiler_error_not_an_empty_string() {
         super::super::test_support::with_builder(|builder| {
             let vars: HashMap<String, VarSlot> = HashMap::new();
-            load_var(&VarRef::new("x", 3), &vars, builder);
-        });
-    }
-
-    /// The companion positive: a mapped version still loads, so the test
-    /// above is pinning the *miss* and not merely the fact that `load_var`
-    /// panics on everything.
-    #[test]
-    fn a_mapped_version_loads_its_slot() {
-        super::super::test_support::with_builder(|builder| {
-            let ptr = builder.declare_var(I64);
-            let len = builder.declare_var(I64);
-            let zero = builder.ins().iconst(I64, 0);
-            builder.def_var(ptr, zero);
-            builder.def_var(len, zero);
-            let mut vars = HashMap::new();
-            vars.insert("x_3".to_string(), VarSlot::Str { ptr, len });
             load_var(&VarRef::new("x", 3), &vars, builder);
         });
     }

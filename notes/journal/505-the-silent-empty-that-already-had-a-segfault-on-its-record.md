@@ -108,21 +108,61 @@ emitter untested: a `FunctionBuilder` borrows a `Function` and a
 one. It can lend one to a closure. `codegen/test_support.rs` is eleven lines
 of `with_builder(|builder| …)` and it unblocks the whole directory.
 
-`load_var`'s ICE is pinned with it, plus a positive companion so the test is
-pinning the *miss* and not merely that the function panics on everything.
+`load_var`'s ICE is pinned with it.
 
-`emit_attest`'s ICE is **not** pinned. Reaching it needs a full `InstCtx`, an
-`ObjectModule` with the runtime declared, and the source name pre-interned —
-the heavier harness. It also asserts the same invariant, naming the same
-function, so by DG's rule (an unreachable line earns its place by backstopping
-*orthogonally*) a second test of it would be close to a restatement. Left
-cold, deliberately, and recorded here rather than filed as work.
+## DG: "does the backstop pass the rival test?"
+
+His own rule, turned on the thing I had just landed: an unreachable line earns
+its place only if it catches a regression **orthogonally** — "if the backstop
+is essentially an identical test to the original then why is it more
+trustworthy". Three artefacts, and they do not all survive it.
+
+**The `unreachable!()` passes.** The rival is the spec sweep, and the two
+detect on different axes. The sweep is behavioural and only sees shapes a spec
+covers; its version of this fault is a segfault in the user's compiled binary,
+which journal 449 shows took a session to diagnose because it presented as
+memory-layout nondeterminism. The ICE is structural, fires at the point of the
+fault for *any* program, and names the function to fix.
+
+**The negative unit test passes, but not for the reason I first wrote.** I had
+claimed it asserts the invariant. It does not — if an eleventh defining
+instruction arrives unmapped, the test still passes and the ICE fires in the
+opener's sweep. What it catches is the **reversion**: someone restoring the
+tolerant fallback. That is not hypothetical; it is what the function did for
+its entire life, on a doc comment arguing from bash. A silent empty is silent,
+so the sweep stays green and only this test goes red. The data is orthogonal
+too — an empty map is a shape none of the 8367 programs produces.
+
+Proved it can fail rather than asserting it: restoring the `(null, 0)` arm
+turns the test red, and nothing else in either gate moves.
+
+**The positive companion fails, and I removed it.** I had added
+`a_mapped_version_loads_its_slot` as a control — a `#[should_panic(expected =
+…)]` passes vacuously if the function panics on everything. But the sweep
+already runs the mapped path **232 times** and would fail on the first
+compile. That is precisely "re-asking the gate's own question on the same
+data". The sweep *is* the control. `mk test` 125 → 124.
+
+The counter-argument I considered and rejected: a unit test should be
+self-contained, not lean on a different gate for interpretability. But the
+harness is self-checking anyway — `with_builder` failing internally produces a
+panic whose message does not contain `setup::map_inst_versioned`, so the test
+goes red rather than passing vacuously.
+
+`emit_attest`'s ICE is **not** pinned, and the rival test is why. The *line*
+earns its place — it guards a second data path, since an attest source can be
+populated by a previous attest's own `vars.insert` rather than by
+`map_inst_versioned`, so `load_var`'s ICE cannot catch a fault there. But a
+unit *test* of it would assert the same sentence against the same named
+function as the one above, which is a restatement, not a backstop. Left cold
+deliberately. (Reaching it also needs the heavier harness — a full `InstCtx`,
+an `ObjectModule` with the runtime declared, and the source name pre-interned.)
 
 ## Gates
 
 Sweep **8367** — 4068 c + 13 skipped + 4286 native, predicted before running.
 Zero flips, zero new ids, liveness 258 (the comparison can report a non-zero).
-`mk test` 123 → **125**.
+`mk test` 123 → **124** (125 before the rival test removed one).
 
 The sweep is the real result: neither ICE fires on any of 8367 programs. The
 invariant held before it was asserted; now it says so.

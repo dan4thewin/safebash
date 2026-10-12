@@ -26,15 +26,26 @@ tiers before attributing the misses.**
 
 **Codegen test scaffolding exists now.** `codegen/test_support.rs` —
 `with_builder(|builder| …)`, eleven lines, solving the borrow that had kept
-every emitter untested. `load_var`'s ICE is pinned with it (plus a positive
-companion). `emit_attest`'s is left cold on purpose: same invariant, same named
-function, so a second test restates rather than backstops.
+every emitter untested.
+
+**DG applied the rival test to it and one artefact failed.** The
+`unreachable!()` passes (structural vs the sweep's behavioural detection; the
+sweep's version of this fault is a segfault that cost a session in journal
+449). The negative unit test passes, though not as first written — it does not
+assert the invariant, it catches the **reversion** to a tolerant fallback,
+which the sweep is structurally blind to because a silent empty is silent.
+Proved by restoring the `(null, 0)` arm and watching it go red. **The positive
+companion failed and was removed**: the sweep already runs the mapped path 232
+times, so it was re-asking the gate's own question on the same data. `mk test`
+125 → **124**. `emit_attest`'s ICE line earns its place (a second data path —
+an attest source can come from a previous attest's own insert) but a test of it
+would restate, so it stays cold.
 
 **Also settled:** DG confirmed `continue "2"` stays rejected as a non-literal
 loop count (SB5097).
 
 Sweep **8367** unchanged — zero flips, zero new ids, liveness 258. `mk test`
-123 → **125**.
+123 → **124**.
 
 ## ══ STATUS (2026-10-12) — the arms the callers take apart first ══
 
