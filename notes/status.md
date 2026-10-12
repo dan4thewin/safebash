@@ -1,3 +1,68 @@
+## ══ STATUS (2026-10-12, latest) — two passes that disagreed about what a function is ══
+
+**Ranking cold lines turned up two P1 bugs, one of them a silent wrong
+answer.** The coverage queue's head was `build_function_pipeline_stage`; four
+of its five cold lines are the DD#116 recursion backstop (category 2, still
+owed a unit test), but the fifth was a `?` on `state.function_bodies` whose
+*caller* guards on `state.known_functions`. Journal 498.
+
+**Those two sets disagree by design.** `known_functions` is a whole-program
+pre-pass (`entry.rs:16`); `function_bodies` is filled when the `fn` statement
+is *lowered* (`statements.rs:151`). A function called before its definition is
+in the first and not the second — so the `?` was a silent fall-through to
+"treat it as an external command."
+
+- `echo hi | up` before `fn up { … }` compiled clean and died at **runtime**
+  with the runtime's own `sash: bug: bare command passed to sash_exec`, 127.
+- `int n=$(( (up) ))` before `fn up -> int { return 7 }` printed **0**, status
+  0, no diagnostic. `inline_int_func` had `None => return SsaValue::Expr("0")`.
+  The sibling comment in `expr_handlers`' nullary-sexpr arm records the *same*
+  silent-0 being fixed once before, for a different cause.
+
+**SB5011 cannot catch either, because validate's function table is
+whole-program.** Validate says "that's a function, nothing to resolve"; the
+transform says "no body yet, must be a command." Each pass is locally
+consistent and they mean different things by the word — journal 495's
+classifier disagreement one level up, between two *populations* rather than two
+predicates.
+
+**No design call to make: DD#81 Part A already has both in its rejected
+table**, and states the mechanism ("record each name resolved as an external;
+on `fn NAME`, if `NAME` is already in that set, reject"). Three sites resolve a
+bareword to an external and **only `cmd_handlers.rs:231` recorded**. The fix is
+two copies of five lines that already existed, `lowering_fn_template` guard
+included — that guard is what keeps DD#81's *kept* column alive, so
+`fn a { echo hi | b }; fn b {…}; a` still compiles (81.43).
+
+**A third hole fell out of the fix.** `echo hi | tr a-z A-Z` then `fn tr {…}`
+now rejects — DD#81's *first* rejected row, dynamic shadowing, in the
+pipeline-stage position. Accepted the whole time; not found by looking, but by
+making the stage path agree with the plain-command path.
+
+Checked every call position forward (plain, `$(f)`, argument, `[[ ]]` operand,
+array element, stage first and middle, arith sexpr) — the first five already
+rejected, the last two were the holes — and the kept column backward.
+
+Sweep **8319** (predicted 8319), zero failures, **zero flips**, exactly 20 new
+ids (`functions.sh` 81.37-81.46). `mk test` 117.
+
+**Coverage, before the interruption:** `mk cov-union` measured **98.59% lines**
+(437 cold), **92.58% branch**, **98.89% function** (30 cold). That lcov is now
+**stale for `transform/stmt_handlers.rs` and `transform/functions.rs`** — this
+fix renumbers both — so it was never loaded into `coverage.db`. Re-run
+`mk cov-union` → `mk cov-db` → `mk cov-stale` before ranking anything.
+Branch is still the least-mined axis.
+
+**Next:** the `build_function_pipeline_stage` recursion-backstop unit test
+(category 2, orthogonal — it reads the live `inlining` stack, not validate's
+AST call graph, and its early return owes a `restore_caller_args` that a
+refactor could silently drop), then the rest of the cold-line queue.
+
+**Still owed to DG — three re-estimates** that kept their tasks out of the
+queue: `r47-validate-rs-per-rule-tests` (filed 1087 lines, actually 7222),
+`audit-string-keyed-builtin-dispatch` (36 → 153),
+`eliminate-ice-arms-via-types` (23 → 16).
+
 ## ══ STATUS (2026-10-12, latest) — a capture needs a writer, and that is a rule about every `$( )` ══
 
 **The one coverage-queue item parked on DG turned out to be two defects, and

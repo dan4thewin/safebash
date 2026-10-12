@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup functions
-plan=172
+plan=182
 echo "1..$plan" >&3
 
 set +e
@@ -1263,6 +1263,83 @@ run_sash 'fn h {
 }
 h a'
 [[ $rc != 0 && -z $out && $err == *SB5042* && $err == *"expects 2 arguments"* ]]; chk 81.36
+
+# ── 81.37-81.46: DD#81 Part A forward calls, in the three positions that
+# resolve a bareword to an external. The plain-command path recorded the
+# external use (so the later `fn` raised SB5041) but the PIPELINE-STAGE and
+# ARITH-SEXPR paths did not, each failing in its own way:
+#   - a pipeline stage compiled to a bare `exec("up")` and died at RUNTIME with
+#     the runtime's own "bare command passed to sash_exec", status 127;
+#   - `$(( (f) ))` returned a literal 0, silently, with a clean exit.
+# SB5011 cannot catch either, because *validate's* function table is
+# whole-program while the transform's `function_bodies` is execution-order —
+# the two passes disagreed about whether `up` was a function.
+
+# 81.37 forward call as the FIRST pipeline stage
+run_sash 'echo hi | up
+fn up { tr a-z A-Z }'
+[[ $rc != 0 && -z $out && $err == *SB5041* && $err == *"'up'"* ]]; chk 81.37
+
+# 81.38 forward call as a MIDDLE stage (a different stage index)
+run_sash 'echo hi | up | cat
+fn up { tr a-z A-Z }'
+[[ $rc != 0 && -z $out && $err == *SB5041* ]]; chk 81.38
+
+# 81.39 forward call in an ARITH SEXPR — was a silent 0 with status 0
+run_sash 'int n=$(( (up) ))
+echo $n
+fn up -> int { return 7 }'
+[[ $rc != 0 && -z $out && $err == *SB5041* ]]; chk 81.39
+
+# 81.40 a BARE EXTERNAL as a stage, then defined as a function: DD#81's
+#       "dynamic shadowing" row. The stage path recorded nothing, so this
+#       was accepted too.
+run_sash 'echo hi | tr a-z A-Z
+fn tr { echo no }
+tr'
+[[ $rc != 0 && $err == *SB5041* && $err == *"'tr'"* ]]; chk 81.40
+
+# 81.41 BACKWARD stage call still works (the fix must not reject the normal form)
+run_sash 'fn up { tr a-z A-Z }
+echo hi | up'
+[[ $rc = 0 && $out = "HI" && -z $err ]]; chk 81.41
+
+# 81.42 BACKWARD arith sexpr still returns the real value, not 0
+run_sash 'fn up -> int { return 7 }
+int n=$(( (up) ))
+echo $n'
+[[ $rc = 0 && $out = "7" && -z $err ]]; chk 81.42
+
+# 81.43 DD#81 KEPT: "helper below caller" as a pipeline stage. `b` is only ever
+#       *called* — when `a` runs, `b` is defined — so the record made while
+#       lowering `a`'s dead `fn_` template must not count as real execution
+#       order. This is what the `lowering_fn_template` guard protects.
+run_sash 'fn a { echo hi | b }
+fn b { tr a-z A-Z }
+a'
+[[ $rc = 0 && $out = "HI" && -z $err ]]; chk 81.43
+
+# 81.44 same, for the arith-sexpr path
+run_sash 'fn a -> int { int t=$(( (b) ))
+return $t }
+fn b -> int { return 4 }
+int z=$(( (a) ))
+echo $z'
+[[ $rc = 0 && $out = "4" && -z $err ]]; chk 81.44
+
+# 81.45 DD#81 KEPT: an EXPLICIT external stage is always the real command, so a
+#       later `fn` of that name is not a collision
+run_sash 'echo hi | /bin/cat
+fn cat { echo no }
+cat'
+[[ $rc = 0 && $out = $'hi\nno' && -z $err ]]; chk 81.45
+
+# 81.46 a stage callee that is never defined anywhere is still SB5011, not
+#       SB5041 — the forward-call record must not swallow the missing-command
+#       diagnostic
+run_sash 'fn a { echo hi | b }
+a'
+[[ $rc != 0 && -z $out && $err == *SB5011* && $err == *"'b'"* ]]; chk 81.46
 
 
 set -e

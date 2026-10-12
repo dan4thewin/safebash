@@ -763,6 +763,20 @@ fn push_command_stage(
             return;
         }
     }
+    // DD#81 Part A: reaching here means this stage resolved to an EXTERNAL —
+    // either the name is not a function at all, or it is one whose `fn` has not
+    // been lowered yet (`known_functions` is a whole-program pre-pass,
+    // `function_bodies` is execution-order, so a forward call is in the first
+    // and not the second). Record the use so a later `fn NAME` raises SB5041,
+    // exactly as the plain-command path does at `cmd_handlers.rs`.
+    //
+    // Without this, `echo hi | up` before `fn up { … }` passed SB5011 — which
+    // exempts `up` because *validate's* function table is whole-program — and
+    // then compiled to a bare `exec("up")`, dying at runtime with the runtime's
+    // own "bare command passed to sash_exec" and status 127.
+    if !state.lowering_fn_template {
+        state.externally_used.borrow_mut().insert(name.to_string());
+    }
     let args: Vec<SsaValue> = c.args.iter().map(|a| arg_to_value(a, state)).collect();
     // DD#99: a `write` stage is an `echo -n` stage (see rewrite_write_as_echo).
     let (name, args) = super::cmd_handlers::rewrite_write_as_echo(name, args);

@@ -463,7 +463,23 @@ pub(super) fn inline_int_func(
 ) -> SsaValue {
     let body = match state.function_bodies.get(name).cloned() {
         Some(b) => b,
-        None => return SsaValue::Expr("0".to_string()),
+        None => {
+            // DD#81 Part A: an `-> int` call whose `fn` has not been lowered
+            // yet is a *forward call* — `known_functions` (whole-program) put
+            // us on this path, `function_bodies` (execution-order) says the
+            // definition has not run. Record the use so the definition raises
+            // SB5041, exactly as the plain-command and `$( … )` paths do.
+            //
+            // Without the record this returned a literal `0` and said nothing:
+            // `int n=$(( (f) ))` before `fn f -> int { return 7 }` computed 0
+            // and exited clean. The sibling comment in `expr_handlers`'
+            // nullary-sexpr arm records the same silent-0 shape being fixed
+            // once before, for a different cause.
+            if !state.lowering_fn_template {
+                state.externally_used.borrow_mut().insert(name.to_string());
+            }
+            return SsaValue::Expr("0".to_string());
+        }
     };
 
     // DD#27/§5: a call to a function already being inlined is recursion. Reject
