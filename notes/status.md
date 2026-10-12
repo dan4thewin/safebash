@@ -1,4 +1,42 @@
-## ══ STATUS (2026-10-12, latest) — the arms the callers take apart first ══
+## ══ STATUS (2026-10-12, latest) — the silent empty with a segfault on its record ══
+
+**DG: yes to both `unreachable!()`s.** Journal 505. `load_var_or_empty` and
+`emit_attest`'s `_` arm answered "no codegen slot" with `(null, 0)`. The
+justification cited *bash* ("undefined vars are empty strings") — but SB5031
+already rejects a read of a name introduced nowhere, so a missing slot is a
+compiler fault, not an undefined variable. `setup.rs::map_inst_versioned`'s own
+comment records that this null **already segfaulted** in `sash_table_len`.
+
+**Enumerated before asserting:** ten `SsaInst` variants carry a `target:
+VarRef`; `map_inst_versioned` names eight and `emit_attest`/`emit_attest_retag`
+insert the other two at emit time. The ICE text names the function that must
+grow a case when an eleventh arrives — it ends in `_ => {}`, so nothing else
+would say so. `emit_attest` also asked the same question twice and answered it
+two different ways; now one lookup, and both `VarSlot` matches are total.
+
+**Finding, filed not fixed — `emit_c`'s fallback is wider than native's and it
+is LIVE.** `load_var_or_empty_c` claims to mirror `load_var` but has three
+tiers to native's one. Over the sweep the exact-version lookup misses **20 /
+509**, the highest-version tier answers **8** of those and the empty sentinel
+**12**, while native misses **0 / 232**. So the C backend emits the value of a
+*different SSA version* 8 times. Green in both modes, so not a known
+divergence — but `--emit-c` exists to catch substitutions, not contain them.
+`notes/tasks/emit-c-var-slot-fallback-asymmetry.md`, P2. **Do not delete the
+tiers before attributing the misses.**
+
+**Codegen test scaffolding exists now.** `codegen/test_support.rs` —
+`with_builder(|builder| …)`, eleven lines, solving the borrow that had kept
+every emitter untested. `load_var`'s ICE is pinned with it (plus a positive
+companion). `emit_attest`'s is left cold on purpose: same invariant, same named
+function, so a second test restates rather than backstops.
+
+**Also settled:** DG confirmed `continue "2"` stays rejected as a non-literal
+loop count (SB5097).
+
+Sweep **8367** unchanged — zero flips, zero new ids, liveness 258. `mk test`
+123 → **125**.
+
+## ══ STATUS (2026-10-12) — the arms the callers take apart first ══
 
 **Four walkers, one `ExprKind` variant, four different reasons for being
 cold.** Journal 504. `is_taint_source`, `expr_uses_tainted`,

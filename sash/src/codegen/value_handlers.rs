@@ -30,7 +30,7 @@ pub(super) fn handle_param_expansion(
         return emit_glob_expansion(operand, builder, module, literals, externs);
     }
 
-    let (s_ptr, s_len) = load_var_or_empty(var, vars, builder);
+    let (s_ptr, s_len) = load_var(var, vars, builder);
 
     match operator {
         "strlen" => emit_int_to_str(builder, module, externs, s_len),
@@ -45,24 +45,33 @@ pub(super) fn handle_param_expansion(
     }
 }
 
-/// Load (str_ptr, str_len) for a var, or zero/zero if the var is
-/// not in scope. Bash treats undefined vars as empty strings in
-/// parameter expansion, so the `:- / -` / `:+ / +` defaulting
-/// operators do not need a special path here — the rest of the
-/// emission already handles the empty case correctly.
-fn load_var_or_empty(
+/// Load (str_ptr, str_len) for a var.
+///
+/// Every SSA version that *defines* a variable is mapped to a slot before
+/// emission begins: `setup::map_inst_versioned` covers the eight defining
+/// instructions, and `emit_attest` / `emit_attest_retag` insert the two
+/// attest targets as they emit. So a miss here is not an unset variable —
+/// SB5031 already rejects a read of a name introduced nowhere in scope — it
+/// is a defining instruction added without a case in `map_inst_versioned`.
+///
+/// This used to return `(null, 0)`, which is the exact silent shape
+/// `map_inst_versioned`'s own comment warns about: the null reaches
+/// `sash_table_len` and the compiled program segfaults. Failing here turns a
+/// crash in the user's binary into a compiler error naming the function to
+/// fix.
+fn load_var(
     var: &VarRef,
     vars: &HashMap<String, VarSlot>,
     builder: &mut FunctionBuilder,
 ) -> (cranelift_codegen::ir::Value, cranelift_codegen::ir::Value) {
     let key = var.display();
-    if let Some(sv) = vars.get(&key) {
-        (builder.use_var(sv.str_ptr()), builder.use_var(sv.str_len()))
-    } else {
-        let null = builder.ins().iconst(I64, 0);
-        let zero = builder.ins().iconst(I64, 0);
-        (null, zero)
-    }
+    let Some(sv) = vars.get(&key) else {
+        unreachable!(
+            "no codegen slot for `{key}`; setup::map_inst_versioned must map \
+             every SSA version that defines a variable"
+        )
+    };
+    (builder.use_var(sv.str_ptr()), builder.use_var(sv.str_len()))
 }
 
 fn emit_table_len(
@@ -925,4 +934,47 @@ fn emit_cmdsub_abort_check(
 
     builder.switch_to_block(cont_block);
     builder.seal_block(cont_block);
+}
+
+#[cfg(test)]
+mod invariant_tests {
+    use super::*;
+
+    /// `load_var` used to answer a missing slot with `(null, 0)`. The null
+    /// then reached `sash_table_len` and segfaulted the **compiled program**
+    /// — `setup::map_inst_versioned`'s own comment records that incident. The
+    /// `unreachable!` is the claim that no SSA version which defines a
+    /// variable can reach emission unmapped, and it names the function that
+    /// has to grow a case when a new defining instruction is added.
+    ///
+    /// No spec can make this claim. The spec suite only runs programs the
+    /// compiler accepts, and reaching this arm requires editing the compiler
+    /// — so the ICE fires in the opener's own sweep, never in a user's build.
+    /// That is what makes the assertion orthogonal to the sweep rather than a
+    /// restatement of it.
+    #[test]
+    #[should_panic(expected = "setup::map_inst_versioned")]
+    fn an_unmapped_version_is_a_compiler_error_not_an_empty_string() {
+        super::super::test_support::with_builder(|builder| {
+            let vars: HashMap<String, VarSlot> = HashMap::new();
+            load_var(&VarRef::new("x", 3), &vars, builder);
+        });
+    }
+
+    /// The companion positive: a mapped version still loads, so the test
+    /// above is pinning the *miss* and not merely the fact that `load_var`
+    /// panics on everything.
+    #[test]
+    fn a_mapped_version_loads_its_slot() {
+        super::super::test_support::with_builder(|builder| {
+            let ptr = builder.declare_var(I64);
+            let len = builder.declare_var(I64);
+            let zero = builder.ins().iconst(I64, 0);
+            builder.def_var(ptr, zero);
+            builder.def_var(len, zero);
+            let mut vars = HashMap::new();
+            vars.insert("x_3".to_string(), VarSlot::Str { ptr, len });
+            load_var(&VarRef::new("x", 3), &vars, builder);
+        });
+    }
 }

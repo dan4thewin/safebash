@@ -550,20 +550,25 @@ impl SsaInst {
         // `sash_itoa` rather than dropped: the C backend already names the
         // value for an int (`emit_var_value` → `emit_itoa_temp`), so passing
         // zeros here made the two backends print different diagnostics for
-        // the same program. Only a variable with no slot at all falls back.
+        // the same program.
+        //
+        // One lookup serves both the fail block (the message) and the pass
+        // block (the retagged copy). They ask the identical question, so they
+        // must not be able to answer it differently. A miss is a compiler
+        // fault, not an unset variable — see `load_var` in value_handlers.rs.
         let src_key = format!("{}_{}", source.name, source.version);
-        let (val_ptr, val_len) = match vars.get(src_key.as_str()) {
-            Some(VarSlot::Str { ptr, len }) => {
-                let (p, l) = (*ptr, *len);
-                (builder.use_var(p), builder.use_var(l))
-            }
-            Some(VarSlot::Int(v)) => {
-                let val = builder.use_var(*v);
+        let Some(&src_slot) = vars.get(src_key.as_str()) else {
+            unreachable!(
+                "no codegen slot for attest source `{src_key}`; \
+                 setup::map_inst_versioned must map every SSA version that \
+                 defines a variable"
+            )
+        };
+        let (val_ptr, val_len) = match src_slot {
+            VarSlot::Str { ptr, len } => (builder.use_var(ptr), builder.use_var(len)),
+            VarSlot::Int(v) => {
+                let val = builder.use_var(v);
                 super::types::emit_int_to_str(builder, module, externs, val)
-            }
-            _ => {
-                let z = builder.ins().iconst(I64, 0);
-                (z, z)
             }
         };
         let attest_fail_ref = module.declare_func_in_func(externs.attest_fail, builder.func);
@@ -578,25 +583,22 @@ impl SsaInst {
         builder.seal_block(pass_block);
 
         // Copy source value to target — target is the new clean SSA version
-        let src_key = format!("{}_{}", source.name, source.version);
-        if let Some(slot) = vars.get(src_key.as_str()).cloned() {
-            let tgt_key = format!("{}_{}", target.name, target.version);
-            match slot {
-                VarSlot::Str { ptr, len } => {
-                    let p = builder.use_var(ptr);
-                    let l = builder.use_var(len);
-                    let tp = builder.declare_var(I64);
-                    let tl = builder.declare_var(I64);
-                    builder.def_var(tp, p);
-                    builder.def_var(tl, l);
-                    vars.insert(tgt_key, VarSlot::Str { ptr: tp, len: tl });
-                }
-                VarSlot::Int(v) => {
-                    let val = builder.use_var(v);
-                    let tv = builder.declare_var(I64);
-                    builder.def_var(tv, val);
-                    vars.insert(tgt_key, VarSlot::Int(tv));
-                }
+        let tgt_key = format!("{}_{}", target.name, target.version);
+        match src_slot {
+            VarSlot::Str { ptr, len } => {
+                let p = builder.use_var(ptr);
+                let l = builder.use_var(len);
+                let tp = builder.declare_var(I64);
+                let tl = builder.declare_var(I64);
+                builder.def_var(tp, p);
+                builder.def_var(tl, l);
+                vars.insert(tgt_key, VarSlot::Str { ptr: tp, len: tl });
+            }
+            VarSlot::Int(v) => {
+                let val = builder.use_var(v);
+                let tv = builder.declare_var(I64);
+                builder.def_var(tv, val);
+                vars.insert(tgt_key, VarSlot::Int(tv));
             }
         }
         false

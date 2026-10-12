@@ -3011,11 +3011,17 @@ fn emit_glob_c(e: &mut Emit, operand: &str) -> CStr {
     (format!("{}_p", t), "0".to_string())
 }
 
-/// Mirrors `load_var_or_empty` (codegen/value_handlers.rs:70). Look
-/// up the highest-version slot for `var.name`; if absent, return
-/// ("\"\"", "0") as the empty-string sentinel. emit_c carries the
-/// version directly on VarRef so we can prefer the exact version
-/// when present.
+/// Mirrors `load_var` (codegen/value_handlers.rs). Look up the slot for
+/// `var.name` at `var.version`; if absent, fall back to the highest version,
+/// then to `("\"\"", "0")`.
+///
+/// **This is wider than the native path, which now ICEs on a miss.** Measured
+/// 2026-10-12 over the spec sweep: the exact-version lookup misses 20 times in
+/// 509 calls, the highest-version tier answers 8 of those and the empty
+/// sentinel 12 — while the native map never misses at all. The asymmetry is
+/// live, unexplained, and tracked in
+/// `notes/tasks/emit-c-var-slot-fallback-asymmetry.md`. Do not "fix" it by
+/// deleting the tiers until that is understood.
 ///
 /// An Int var renders through `sash_itoa` like everywhere else in this
 /// backend. Emitting `{base}_ptr`/`{base}_len` unconditionally was a **hard

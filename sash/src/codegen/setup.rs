@@ -1347,8 +1347,9 @@ fn map_inst_versioned(
         | SsaInst::CaptureEnd { target, .. }
         // The bulk fills define a real SSA version so the taint backstop can
         // see them (they fill a collection in place). Every version must ALIAS
-        // the one base slot: an unmapped version makes `load_var_or_empty`
-        // miss, hand back a null pointer, and segfault in `sash_table_len`.
+        // the one base slot: an unmapped version makes `load_var` miss, which
+        // used to hand back a null pointer and segfault in `sash_table_len`
+        // and is now a compiler ICE naming this function.
         | SsaInst::ArgvFill { target, .. }
         | SsaInst::KeysFill { target, .. }
         | SsaInst::ReadArray { target, .. }
