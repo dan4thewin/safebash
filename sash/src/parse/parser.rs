@@ -2882,44 +2882,41 @@ fn parse_trailing_pipeline(
     }
     let span = stmt.span;
     let mut commands = vec![stmt];
-    // One iteration by construction: `parse_statement` consumes the whole rest
-    // of the pipeline and `append_pipeline_stage` merges it, so there is never
-    // a second `|` left to see. It was a `while` only because the old code
+    // The guard above already consumed the only question about this token, and
+    // nothing since has advanced the scanner, so this stage is unconditional.
+    // It was a `while` once, and re-testing the same token was how the old code
     // could fall through without consuming anything — the path that dropped a
     // trailing `|` on the floor (SB4056).
-    if matches!(scanner.peek().token, Tok::Pipe) {
-        let pipe_span = scanner.peek().span;
-        scanner.next();
-        skip_terminators(scanner);
-        // Same hole as the list operators: with no stage after the `|` the loop
-        // simply fell out and the pipeline was returned as its left side alone,
-        // so `echo a |` compiled and printed `a`. bash rejects it.
-        let Some(next_stmt) = parse_statement(scanner)? else {
-            return Err(parse_error(
-                span_from(scanner, pipe_span.start),
-                "SB4056",
-                "`|` has no right-hand side — a pipeline needs a command on both sides".to_string(),
-            ));
-        };
-        append_pipeline_stage(&mut commands, next_stmt);
-    }
+    let pipe_span = scanner.peek().span;
+    scanner.next();
+    skip_terminators(scanner);
+    // Same hole as the list operators: with no stage after the `|` the loop
+    // simply fell out and the pipeline was returned as its left side alone,
+    // so `echo a |` compiled and printed `a`. bash rejects it.
+    let Some(next_stmt) = parse_statement(scanner)? else {
+        return Err(parse_error(
+            span_from(scanner, pipe_span.start),
+            "SB4056",
+            "`|` has no right-hand side — a pipeline needs a command on both sides".to_string(),
+        ));
+    };
+    append_pipeline_stage(&mut commands, next_stmt);
+    // `commands` started at one stage and `append_pipeline_stage` pushes or
+    // extends on every arm — and no `Pipeline` is built anywhere with an empty
+    // `commands` (the only two sites are this one, which needs two, and
+    // `parse_negated`'s one-command wrapper). So this is a multi-stage pipeline
+    // by construction and the stage checks are unconditional.
     // DD#55 / SB4023: `pipeline && C` / `pipeline || C` is rejected — see
     // reject_pipeline_and_or_postfix.
     reject_pipeline_and_or_postfix(&commands, span)?;
-    if commands.len() > 1 {
-        reject_statement_form_pipeline_stage(&commands)?;
-        reject_nonconsuming_final_stage(&commands)?;
-    }
-    Ok(if commands.len() > 1 {
-        Statement {
-            kind: StmtKind::Pipeline(Pipeline {
-                commands,
-                negated: false,
-            }),
-            span,
-        }
-    } else {
-        commands.into_iter().next().unwrap()
+    reject_statement_form_pipeline_stage(&commands)?;
+    reject_nonconsuming_final_stage(&commands)?;
+    Ok(Statement {
+        kind: StmtKind::Pipeline(Pipeline {
+            commands,
+            negated: false,
+        }),
+        span,
     })
 }
 

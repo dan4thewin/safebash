@@ -487,7 +487,7 @@ fn embed_artifacts(product: &mut cranelift_object::ObjectProduct, embedded: &Emb
 
 #[cfg(test)]
 mod tests {
-    use super::panic_payload_message;
+    use super::{compile_to_object, panic_payload_message};
 
     // `panic_payload_message` decodes a caught codegen `catch_unwind` payload.
     // It only runs when a codegen ICE actually fires, which every guard is
@@ -512,5 +512,39 @@ mod tests {
             panic_payload_message(p),
             "internal compiler error in codegen"
         );
+    }
+
+    /// The three tests above assert the *decoder*; this one asserts the
+    /// *wiring*. Delete the `catch_unwind` in `compile_to_object` and all three
+    /// still pass, because nothing above ever calls `compile_to_object` — the
+    /// ICE would simply escape as a stacktrace, which is the behaviour the
+    /// wrapper exists to prevent. That makes this an orthogonal backstop rather
+    /// than a second asking of the same question.
+    ///
+    /// The shape: an `SsaProgram` whose `entry` names a block that does not
+    /// exist. `ir_to_ssa` cannot produce one — every entry comes from
+    /// `new_block`, which inserts before it returns the id — so no source
+    /// program reaches this and the spec suite never can.
+    #[test]
+    fn codegen_ice_becomes_an_error_not_a_stacktrace() {
+        let program = crate::ir::Program {
+            statements: Vec::new(),
+            end_block: None,
+        };
+        let ssa = crate::ssa::SsaProgram::new();
+        assert!(
+            ssa.blocks.is_empty() && ssa.entry == 0,
+            "entry has no block"
+        );
+
+        // Silence the default hook: the panic is expected, and its backtrace
+        // on stderr would read as a test failure.
+        let prev = std::panic::take_hook();
+        std::panic::set_hook(Box::new(|_| {}));
+        let result = compile_to_object(&program, &ssa, "", false);
+        std::panic::set_hook(prev);
+
+        let diags = result.expect_err("codegen must not succeed on a dangling entry");
+        assert_eq!(diags.len(), 1, "one diagnostic per caught ICE: {diags:?}");
     }
 }

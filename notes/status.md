@@ -1,4 +1,39 @@
-## ══ STATUS (2026-10-12, latest) — the arm that outlived its ruling ══
+## ══ STATUS (2026-10-12, latest) — two tautologies and an untested wrapper ══
+
+**Three cold lines in `parse_trailing_pipeline`, one cause.** Line 2890
+re-tested the `Tok::Pipe` the function's own guard had already returned on
+(nothing between them advances the scanner), and `commands.len() > 1` is a
+tautology after an unconditional `append_pipeline_stage` — which pushes or
+extends on all three arms, and neither parser `Pipeline` site can build an
+empty one (enumerated, not assumed). Both conditions removed. Journal 502.
+
+When a line is unreachable *within its own function*, AGENTS.md says not to
+chase it with a test; deleting the question is the move that leaves nothing to
+chase.
+
+**`compile_to_object`'s `catch_unwind` had three tests and none of them tested
+it.** All three exercise `panic_payload_message`, the *decoder*. Delete the
+`catch_unwind` and all three still pass — the ICE would escape as a stacktrace,
+the one thing the wrapper exists to prevent. Orthogonal, so it earns a test:
+an `SsaProgram` whose `entry` names a block that does not exist (which
+`ir_to_ssa` cannot build, since `new_block` inserts before it returns an id).
+`mk test` 118 → 119.
+
+Sweep **8359** unchanged, zero flips, zero new ids, liveness 258.
+
+**Queue next: `codegen/` is the largest cohort (65 cold lines) and is blocked
+on one thing** — no scaffolding exists for calling an emitter directly; each
+needs a `FunctionBuilder` + `ObjectModule` + `ExternFuncs`. One shared
+`#[cfg(test)]` harness unlocks all of it.
+
+**For DG before that lands:** `load_var_or_empty` silently returns `(null, 0)`
+when a variable has no codegen slot, justified in its doc by *bash* semantics
+("Bash treats undefined vars as empty strings") that sash's declaration rules
+make stale. `emit_attest` has the same shape. Journal 449 is the session where
+a silently-missing slot *was* the bug. Whether these become ICEs is a
+behaviour question, not a coverage one.
+
+## ══ STATUS (2026-10-12) — the arm that outlived its ruling ══
 
 **Third shared-classifier fork in three sessions.**
 `type_check::join_operand_name` carried an arm resolving a `@a` splat to its
