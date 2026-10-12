@@ -687,6 +687,22 @@ snippet that warmed the line and the spec you actually wrote are different
 programs, and only the second one counts. Both need `mk cov-probe-build`
 first and `mk cov-reset` after.
 
+**An empty `cov-batch` report is ambiguous until you prove the tool can report
+a positive.** "Nothing warmed" and "the corpus never ran usefully" print
+identically, and the first one is the interesting answer only once the second
+is ruled out. Put one candidate in the corpus you can *reason* reaches a cold
+line, and confirm it lands, before concluding that twelve others missed.
+Measured 2026-10-12: twelve map-literal programs warmed none of the three cold
+`ExprKind::AssocArray` arms — the real answer, since every caller decomposes
+the literal first — but it only became a finding after a two-program control
+run came back with both of its lines. That control run is also what surfaced
+the two genuine SB4037 gaps.
+
+**Rank by function, then read the whole function.** `first_expansion` has two
+cold lines in two unrelated arms, so a ranking by per-function count sorted it
+below every function with three in one — and the two arms were cold for
+different reasons again. Counting finds clusters; it does not find families.
+
 **A cold line can also be a measurement fault, and merging more profraws is
 what causes it.** LLVM does not give every region a physical counter — it
 keeps the minimum and derives the rest as *expressions*, and a loop body's
