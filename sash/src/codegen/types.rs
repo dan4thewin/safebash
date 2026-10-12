@@ -42,6 +42,39 @@ impl VarSlot {
     }
 }
 
+/// The slot for one versioned variable key (`name_version`), or a loud ICE.
+///
+/// Every SSA version that *defines* a variable is mapped before emission:
+/// `setup::map_inst_versioned` covers the eight defining `SsaInst` variants,
+/// and `emit_attest` / `emit_attest_retag` insert the two attest targets as
+/// they emit. SB5031 separately rejects a scalar read of a name introduced
+/// nowhere in scope. So a miss here is never an undefined variable — it is a
+/// defining instruction that reached emission unmapped, and the message names
+/// the function that has to grow a case.
+///
+/// **One function on purpose.** Both callers used to answer a miss their own
+/// way: `load_var` with `(null, 0)`, and `emit_attest` with zeros in the fail
+/// block and a silently skipped copy in the pass block — two different answers
+/// to one question, in one function. `map_inst_versioned`'s own comment
+/// records that the null reached `sash_table_len` and segfaulted the compiled
+/// program.
+///
+/// Unifying them is also what makes the claim testable. Per call site the
+/// guard is buried behind a `FunctionBuilder` (and, for attest, an
+/// `ObjectModule`, an `InstCtx` and a pre-interned literal), so pinning each
+/// one needs scaffolding heavier than the thing it checks. Here it is a map
+/// lookup, and the single test below protects every caller from the
+/// reversion that this code shipped with for its entire life.
+pub(super) fn var_slot(vars: &std::collections::HashMap<String, VarSlot>, key: &str) -> VarSlot {
+    match vars.get(key) {
+        Some(slot) => *slot,
+        None => unreachable!(
+            "no codegen slot for `{key}`; setup::map_inst_versioned must map \
+             every SSA version that defines a variable"
+        ),
+    }
+}
+
 #[allow(dead_code)]
 pub(super) struct ExternFuncs {
     pub(super) write: cranelift_module::FuncId,
@@ -270,8 +303,27 @@ pub(super) fn emit_int_to_str(
 /// shape as `codegen::redirects::unresolved_redirect_var_is_loud_ice`.
 #[cfg(test)]
 mod tests {
-    use super::VarSlot;
+    use super::{var_slot, VarSlot};
     use cranelift_frontend::Variable;
+
+    /// `var_slot` replaced three tolerant answers to one question — two in
+    /// `emit_attest`, one in `load_var`. This test is the claim that it stays
+    /// intolerant.
+    ///
+    /// It does **not** assert the invariant: if an eleventh defining
+    /// instruction arrives unmapped, this test is still green and the ICE
+    /// fires in the opener's own spec sweep instead. What it catches is the
+    /// *reversion* — someone restoring a `(null, 0)` or `("" , 0)` fallback,
+    /// which is exactly what this code did for its entire life, justified by
+    /// a doc comment arguing from bash semantics. The spec sweep is
+    /// structurally blind to that: a silent empty is silent, so all 8367
+    /// programs stay green while the compiler goes back to emitting a null
+    /// pointer into `sash_table_len`.
+    #[test]
+    #[should_panic(expected = "setup::map_inst_versioned")]
+    fn an_unmapped_version_is_a_compiler_error_not_an_empty_string() {
+        var_slot(&std::collections::HashMap::new(), "x_3");
+    }
 
     #[test]
     fn str_ptr_on_an_int_slot_is_a_loud_ice() {

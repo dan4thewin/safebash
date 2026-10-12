@@ -554,16 +554,11 @@ impl SsaInst {
         //
         // One lookup serves both the fail block (the message) and the pass
         // block (the retagged copy). They ask the identical question, so they
-        // must not be able to answer it differently. A miss is a compiler
-        // fault, not an unset variable — see `load_var` in value_handlers.rs.
+        // must not be able to answer it differently — they used to, and the
+        // pass block's answer was to skip the copy in silence. A miss is a
+        // compiler fault; `types::var_slot` owns that claim.
         let src_key = format!("{}_{}", source.name, source.version);
-        let Some(&src_slot) = vars.get(src_key.as_str()) else {
-            unreachable!(
-                "no codegen slot for attest source `{src_key}`; \
-                 setup::map_inst_versioned must map every SSA version that \
-                 defines a variable"
-            )
-        };
+        let src_slot = super::types::var_slot(vars, &src_key);
         let (val_ptr, val_len) = match src_slot {
             VarSlot::Str { ptr, len } => (builder.use_var(ptr), builder.use_var(len)),
             VarSlot::Int(v) => {

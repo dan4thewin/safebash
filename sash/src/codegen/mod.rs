@@ -11,8 +11,6 @@ mod entry;
 mod inst_handlers;
 mod redirects;
 mod setup;
-#[cfg(test)]
-mod test_support;
 mod tests;
 mod types;
 mod value_handlers;

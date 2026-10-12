@@ -1,4 +1,34 @@
-## ══ STATUS (2026-10-12, latest) — the silent empty with a segfault on its record ══
+## ══ STATUS (2026-10-12, latest) — two ICEs making one claim ══
+
+**DG: "if a unit test can't warm the line, is it supposedly protecting against
+a regression in the self-same function?"** Journal 506. I had left
+`emit_attest`'s ICE cold on the grounds that it guards a second data path
+*and* that a test of it would restate `load_var`'s — an exclusive or, taken
+both ways. And `load_var`'s test does nothing for `emit_attest`, so the one
+regression this is all about was unguarded at the site I had declared safe.
+
+**The fix was not a second test.** Two sites making one claim became one
+function: `types::var_slot(vars, key) -> VarSlot`. One ICE line, one sentence,
+one test — and it protects both callers because both route through it.
+
+**The tell that this was right: the test no longer needs a `FunctionBuilder`.**
+It is a map lookup. `codegen/test_support.rs` (yesterday's `with_builder`
+harness, built specifically to reach the guard behind the builder borrow)
+became unused and was **deleted**. Scaffolding that exists only to reach
+duplicated logic is a sign the logic should not be duplicated.
+
+Three tolerant answers to one question are now gone: `load_var`'s `(null, 0)`,
+`emit_attest`'s zeros in the fail block, and its silently skipped copy in the
+pass block.
+
+**Residual, stated plainly:** rewriting a caller to *bypass* `var_slot` is
+still uncaught — equally true of per-site tests, but there is now one obvious
+place to look.
+
+Sweep **8367**, zero flips, zero new ids. `mk test` **124** + 27 + 20. The
+restructure changes the release binary, so both gates were re-run.
+
+## ══ STATUS (2026-10-12) — the silent empty with a segfault on its record ══
 
 **DG: yes to both `unreachable!()`s.** Journal 505. `load_var_or_empty` and
 `emit_attest`'s `_` arm answered "no codegen slot" with `(null, 0)`. The

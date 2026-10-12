@@ -47,30 +47,14 @@ pub(super) fn handle_param_expansion(
 
 /// Load (str_ptr, str_len) for a var.
 ///
-/// Every SSA version that *defines* a variable is mapped to a slot before
-/// emission begins: `setup::map_inst_versioned` covers the eight defining
-/// instructions, and `emit_attest` / `emit_attest_retag` insert the two
-/// attest targets as they emit. So a miss here is not an unset variable —
-/// SB5031 already rejects a read of a name introduced nowhere in scope — it
-/// is a defining instruction added without a case in `map_inst_versioned`.
-///
-/// This used to return `(null, 0)`, which is the exact silent shape
-/// `map_inst_versioned`'s own comment warns about: the null reaches
-/// `sash_table_len` and the compiled program segfaults. Failing here turns a
-/// crash in the user's binary into a compiler error naming the function to
-/// fix.
+/// A missing slot is a compiler fault, not an unset variable — see
+/// `types::var_slot`, which makes and tests that claim for every caller.
 fn load_var(
     var: &VarRef,
     vars: &HashMap<String, VarSlot>,
     builder: &mut FunctionBuilder,
 ) -> (cranelift_codegen::ir::Value, cranelift_codegen::ir::Value) {
-    let key = var.display();
-    let Some(sv) = vars.get(&key) else {
-        unreachable!(
-            "no codegen slot for `{key}`; setup::map_inst_versioned must map \
-             every SSA version that defines a variable"
-        )
-    };
+    let sv = super::types::var_slot(vars, &var.display());
     (builder.use_var(sv.str_ptr()), builder.use_var(sv.str_len()))
 }
 
@@ -934,39 +918,4 @@ fn emit_cmdsub_abort_check(
 
     builder.switch_to_block(cont_block);
     builder.seal_block(cont_block);
-}
-
-#[cfg(test)]
-mod invariant_tests {
-    use super::*;
-
-    /// `load_var` used to answer a missing slot with `(null, 0)`. The null
-    /// then reached `sash_table_len` and segfaulted the **compiled program**
-    /// — `setup::map_inst_versioned`'s own comment records that incident. The
-    /// `unreachable!` is the claim that no SSA version which defines a
-    /// variable can reach emission unmapped, and it names the function that
-    /// has to grow a case when a new defining instruction is added.
-    ///
-    /// **What this catches that the sweep cannot.** Not the invariant — if an
-    /// eleventh defining instruction arrives unmapped, this test still passes
-    /// and the ICE fires in the opener's own sweep instead. What it catches is
-    /// the *reversion*: someone restoring the tolerant fallback, which is what
-    /// this function did for its entire life, on a doc comment arguing from
-    /// bash semantics. A silent empty is silent, so the sweep stays green;
-    /// only this test goes red. The data is orthogonal too — an empty map is a
-    /// shape none of the sweep's 8367 programs produces.
-    ///
-    /// Deliberately **no positive companion**. One would guard against
-    /// `load_var` panicking unconditionally and so passing this test
-    /// vacuously, but the sweep already runs the mapped path 232 times and
-    /// would fail on the first compile. A control the sweep already performs
-    /// is not a backstop.
-    #[test]
-    #[should_panic(expected = "setup::map_inst_versioned")]
-    fn an_unmapped_version_is_a_compiler_error_not_an_empty_string() {
-        super::super::test_support::with_builder(|builder| {
-            let vars: HashMap<String, VarSlot> = HashMap::new();
-            load_var(&VarRef::new("x", 3), &vars, builder);
-        });
-    }
 }
