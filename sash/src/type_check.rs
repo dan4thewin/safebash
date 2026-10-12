@@ -1664,20 +1664,27 @@ fn check_len_operand(c: &Command, span: Span, env: &TypeEnv, errors: &mut Vec<Ty
     });
 }
 
-/// The variable name an operand refers to: `@a` (arrvals splat) → `a`; a bare
-/// name → itself; `$a` → `a`; anything else → empty (not a simple name
-/// operand).
+/// The variable name an operand refers to: a bare name → itself; `$a` → `a`;
+/// anything else → empty (not a simple name operand).
 ///
 /// `$a` resolves to the same name as `a` because the operand slot of
-/// `len`/`strlen`/`join` resolves a *name*, and both spellings name the same
+/// `len`/`join`/`keys` resolves a *name*, and both spellings name the same
 /// variable. Leaving `$a` unresolved here let `len $s` past the
 /// collection-only check while `len s` was rejected — the sigil silently
 /// decided whether the guard ran.
+///
+/// **There is deliberately no arm for the `@a` splat.** This function is the
+/// type-check counterpart of `transform::expr_handlers::collection_operand_name`,
+/// and DG's ruling when that one's splat arm was removed (2026-10-06) applies
+/// unchanged: SB5062 rejects `len @a`, `join @a ,` and `keys @m` in validate,
+/// before type check runs, so an arm here re-asks the gate's own question
+/// about the same `ExprKind` and cannot catch a drift the gate would not catch
+/// first — while telling the next reader that a rejected spelling is
+/// legitimate. DD#100 Part D retired `@a` as a synonym for the bare name; the
+/// arm was simply left behind, on this half of the pair only. A splat now
+/// falls to the empty answer, which all three callers already handle.
 pub(crate) fn join_operand_name(expr: &Expr) -> String {
     match &expr.kind {
-        ExprKind::ParameterExpansion(pe) if pe.operator.as_deref() == Some("arrvals") => {
-            pe.name.clone()
-        }
         ExprKind::Literal(s) => s.clone(),
         ExprKind::SimpleExpansion(s) => s.clone(),
         _ => String::new(),

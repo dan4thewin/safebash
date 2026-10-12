@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup taint
-plan=334
+plan=337
 echo "1..$plan" >&3
 
 set +e
@@ -60,6 +60,35 @@ run_sash 'x=$(getenv HOME)
 attest x [[ "foo" == $x ]]
 echo $x'
 [[ $rc != 0 && -z $out && -n $err ]]; chk 24.11
+
+# --- the SPELLINGS an attest operand may use to name its binder -------
+# 24.10/24.11 pin that the test must name the binder, and that only the LHS
+# counts. `expr_references_var` walks that LHS, and two of its arms were
+# reached by no spec at all: a parameter expansion and a concatenation. Both
+# are ordinary ways to write the operand, so an arm that silently answered
+# "no" would reject a correct program, and one that silently answered "yes"
+# would let an attest through that validates nothing. The negative in atop.3
+# is what tells those two apart — without it, an arm hard-wired to `true`
+# passes atop.1 and atop.2 both.
+
+# atop.1 a PARAMETER EXPANSION operand names the binder
+run_sash 'str h=$(getenv NOPE_XYZ)
+attest h [[ ${h:-zz} == zz ]]
+echo "ok [$h]"'
+[[ $rc = 0 && $out = "ok []" && -z $err ]]; chk atop.1
+
+# atop.2 a CONCATENATION operand names the binder
+run_sash 'str h=$(getenv NOPE_XYZ)
+attest h [[ ${h}tail == tail ]]
+echo "ok [$h]"'
+[[ $rc = 0 && $out = "ok []" && -z $err ]]; chk atop.2
+
+# atop.3 the same spelling naming a DIFFERENT variable does not count
+run_sash 'str g=zz
+str h=$(getenv NOPE_XYZ)
+attest h [[ ${g:-qq} == zz ]]
+echo "ok [$h]"'
+[[ $rc != 0 && -z $out && $err == *SB5020* && $err == *"doesn't reference"* ]]; chk atop.3
 
 # 24.12 attest failure (unconditional) aborts at runtime
 run_sash 'x=$(getenv HOME)

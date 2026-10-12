@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup types
-plan=390
+plan=392
 echo "1..$plan" >&3
 
 set +e
@@ -641,6 +641,17 @@ run_sash 'array a=(x y); echo $(len a); echo $(join "a" ",")'
 # 75.36 `keys @m` ICEd the compiler — a splat is not a map reference
 run_sash 'map m=([k]=v); for k in $(keys @m); do echo "$k"; done'
 [[ $rc != 0 && -z $out && $err == *SB5062* ]]; chk 75.36
+# 75.170 `len @a` — the other two thirds of the splat rule. DD#100 Part D
+#        retired `@a` as a synonym for the bare name, but only `keys @m` was
+#        ever pinned, so `type_check::join_operand_name` kept resolving a
+#        splat to its name long after validate had stopped allowing one. That
+#        arm is gone (its counterpart `collection_operand_name` lost the same
+#        arm in 2026-10-06); these two are what hold the gate in place.
+run_sash 'array a=(x y z); echo $(len @a)'
+[[ $rc != 0 && -z $out && $err == *SB5062* && $err == *"not a splat"* ]]; chk 75.170
+# 75.171 `join @a SEP` likewise
+run_sash 'array a=(x y z); echo $(join @a ",")'
+[[ $rc != 0 && -z $out && $err == *SB5062* && $err == *"not a splat"* ]]; chk 75.171
 # 75.37 `keys $m` ICEd the same way
 run_sash 'map m=([k]=v); for k in $(keys $m); do echo "$k"; done'
 [[ $rc != 0 && -z $out && $err == *SB5062* ]]; chk 75.37
