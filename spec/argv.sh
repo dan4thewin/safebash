@@ -216,18 +216,26 @@ run_sash '[[ -n $(argv) ]] && echo yes'
 [[ $rc != 0 && -z $out && -n $err ]]; chk av.x8
 
 # ── Mixed-taint for-in rejection ─────────────────────────────────
+#
+# Each of these trips TWO rules: SB5020 (the splat is tainted and unattested)
+# and SB5027 (a for-in over $(argv) must be its sole source). All three used to
+# assert only `-n $err`, which SB5020 satisfies on its own — so SB5027 was
+# raised by the compiler, warmed by the sweep, and asserted by nothing in the
+# suite. Name both codes, or the sole-source rule could be deleted outright and
+# every spec here would stay green.
 
 # av.m1 clean + tainted sources in one for-in header is rejected
 run_sash 'for x in head $(argv) tail; do echo "$x"; done'
-[[ $rc != 0 && -z $out && -n $err ]]; chk av.m1
+[[ $rc != 0 && -z $out && $err == *SB5020* && $err == *SB5027* \
+   && $err == *'sole source'* ]]; chk av.m1
 
 # av.m2 two tainted sources in one for-in header is rejected
 run_sash 'for x in $(argv) $(argv 1); do echo "$x"; done'
-[[ $rc != 0 && -z $out && -n $err ]]; chk av.m2
+[[ $rc != 0 && -z $out && $err == *SB5020* && $err == *SB5027* ]]; chk av.m2
 
 # av.m3 named array + argv in one for-in header is rejected
 run_sash 'array a=(x y); for x in @a $(argv); do echo "$x"; done'
-[[ $rc != 0 && -z $out && -n $err ]]; chk av.m3
+[[ $rc != 0 && -z $out && $err == *SB5020* && $err == *SB5027* ]]; chk av.m3
 
 # ── DD#46 positionals inside (( )) / $(( )) ──────────────────────
 # $#/$1.. are function-local but legal inside arithmetic there; the

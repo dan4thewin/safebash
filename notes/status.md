@@ -1,4 +1,45 @@
-## ══ STATUS (2026-10-12, latest) — two ICEs making one claim ══
+## ══ STATUS (2026-10-13, latest) — the rule that nothing asserted ══
+
+**DG: "the 'keeping tasks out of the queue' from before - tell me".** Two
+backlog tasks each ended with a note I wrote on 2026-09-12 saying *re-estimate
+before scheduling*. Neither gate was ever discharged, so both sat out of the
+queue for a month on their own instructions. Discharged. Journal 507.
+
+**r47 — the goal was met while the task sat blocked, with one exception.** It
+asks for `sash/tests/validate/sb{NNNN}.rs`; `sash/tests/` was deleted in
+journal 304 **because its harness was fail-open**. Sizing wrong a third time
+(1087 filed → 7222 → actually **11745**; ~14 codes listed, **93** actual). But
+one `comm` answers the real question: **92 of 93** codes raised by
+`validate.rs` are named by a spec.
+
+**The exception was a genuine hole, of exactly the shape the task was filed to
+catch.** SB5027's line is *warm* — six hits in `coverage.db` — and three specs
+(`av.m1`-`av.m3`) run programs that raise it. All three asserted only
+`-n $err`, which the co-fired SB5020 satisfies on its own. **The rule could
+have been deleted outright and the suite would have stayed green.**
+
+**A warm line is not coverage; "some program reaches the rule" is not an
+assertion.**
+
+Fixed by tightening the three existing specs to name both codes — not by
+adding ids. My first draft added `60.73`/`60.74`, and its control turned out to
+be a verbatim rival of the existing `av.s1`. **Proved by reversion:** stubbing
+`check_for_header_splat` to `false` turns exactly **three** specs red; before
+the change it turned **none**.
+
+**audit-string-keyed is 57, not 153.** That figure counted 21 sites in
+`emit_janet*.rs`, **deleted by DD#104**. Inspecting validate.rs's 25 sites
+found six functions answering "which argument is the out-target?" from six
+disagreeing name lists — the shape behind six past bugs, so I checked it first
+under the bug policy. **Not a bug:** `readline` is scalar-binding by DD#99, and
+`mapfile` is vestigial (SB5060 retired it). Re-filed narrowly at P4; the
+`mapfile` call is recorded as a *hypothesis*, since line coverage cannot see
+which alternative of a `matches!` fired.
+
+Sweep **8367**, zero failures, zero flips, zero new ids — all predicted before
+running. Liveness 258. `mk test` **124** + 27 + 20.
+
+## ══ STATUS (2026-10-12) — two ICEs making one claim ══
 
 **DG: "if a unit test can't warm the line, is it supposedly protecting against
 a regression in the self-same function?"** Journal 506. I had left
@@ -16529,7 +16570,7 @@ modified: 2026-06-07
 
 ## Spec status: 8354 passing / 0 failing of 8367 (spec.db @ fffc23f)
 
-_Regenerated 2026-10-12 by `mk status`. Edits inside this block will be
+_Regenerated 2026-10-14 by `mk status`. Edits inside this block will be
 overwritten; edit outside the BEGIN/END markers._
 <!-- END: mk-status -->
 
