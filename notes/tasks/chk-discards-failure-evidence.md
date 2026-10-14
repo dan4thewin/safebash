@@ -1,55 +1,71 @@
 ---
-title: chk discards failure evidence, so a transient cannot be diagnosed
-status: open
+title: "CLOSED: chk discards failure evidence, so a transient cannot be diagnosed"
+status: closed
+closed: 2026-10-14
 priority: P3
 kind: tooling
 source: journal 508 (the c:cli.31/32/40/41/42 flake)
 depends: []
 gates:
-  - DG's call — this changes the authoritative gate's harness.
+  - Withdrawn in place. The premise was false; see below.
 ---
 
-## What
+## Closed — the premise was wrong
 
-`spec/common.sh`'s `chk` records a status and nothing else. On failure it
-prints `not ok <index>` to fd 3 and writes a `failing` row to the TSV; `$out`,
-`$err` and `$rerr` are discarded at that moment and never recovered.
+This task claimed `chk` discards `$out` / `$err` / `$rerr` on failure, leaving
+a transient undiagnosable. **That is not true, and DG caught it with one
+question: "what about the xtrace?"**
 
-For a **reproducible** failure this costs nothing — you re-run the spec and
-look. For a **transient** it is fatal. The only artefact is a row in `runs`
-saying something was wrong once, with no way to learn what.
+`spec/common.sh`'s `setup()` already captures everything:
 
-## Why it came up
+```sh
+trace=.trace/$(date +%a)/"$id.$SASH_MODE"
+exec 3>&1 >> "$trace" 2>&1
+PS4='+$LINENO: '
+set -x
+```
 
-Five specs — `c:cli.31`, `32`, `40`, `41`, `42` — flipped passing→failing in
-one sweep and back in the next. Everything checkable was checked and cleared
-(no code change but a doc comment; identical test bodies in both modes, yet
-only `c:` failed; per-file `mktemp -d` with an EXIT trap verified not to fire
-in subshells; no disk or inode pressure). It did not reproduce in 40 targeted
-iterations or in a second full sweep.
+The spec file's entire stdout and stderr — every command, every expansion,
+every variable assignment, line-numbered — goes to a per-file, per-mode trace.
+`exec 3>&1` is precisely why `chk` writes `ok` / `not ok` to fd 3: fd 1 is the
+trace. `run.sh`'s `2>/dev/null` discards only what escapes that redirect.
 
-It stays unexplained **because the evidence was discarded at the instant it
-existed.** Journal 508.
+So the harness does not need a failure-context feature. It has had one all
+along, and I filed a task against a facility I had not read.
 
-These five compound the problem: they assert `$(grep -c SB f) = 0` alongside
-an exact message match, a shape that cannot distinguish *wrong output* from
-*no output at all*. A regression and a transient render identically.
+## What the trace actually showed
 
-## Options
+The flake it was filed over was **not a transient**. The trace held the answer
+verbatim:
 
-1. **Nothing.** Transients are rare; the cost is one unexplained row.
-2. **Echo context on failure only.** In `chk`'s failing branch, emit `$out` /
-   `$err` / `$rerr` to the sweep log. Cheap, no schema change; the log grows
-   only when something is already wrong.
-3. **Record it.** Add a column to `runs` (or a side table) holding the captured
-   streams for failing rows, so the history is queryable rather than living in
-   a log that is not kept.
+```
++262: sr_err='sash: --sysroot=/tmp/tmp.nkqYLkSBp3/nosuch.squashfs: Could not open ...'
+++263: grep -c SB sq.err
++263: [[ 1 = 0 ]]
+```
 
-Option 2 is the smallest thing that would have made the flake diagnosable.
+`mktemp -d` had produced `/tmp/tmp.nkqYLkSBp3` — ten random alphanumerics that
+happened to contain the literal `SB`. The five specs grepped their captured
+stderr for a bare `SB`; every one of those messages echoes the `--sysroot`
+path; the path contains the tmpdir name. The count matched the **directory
+name**, not a diagnostic code.
 
-## Caution
+That accounts for every feature of it — c mode only (its `mktemp -d` differed
+from native's), all five together (one dir), never reproducible (a fresh name
+each run), once in 400+ runs (~0.2%: 9 positions x 1/62^2).
 
-`chk` reads `$?` as its first action. Anything added to it must not disturb
-that — `local -i last_rc=$?` has to stay the first statement, and any new
-command must come after the comparison. A context dump that clobbers `$?` for
-the *next* `chk` would be a silent, suite-wide fault.
+Fixed in `spec/cli.sh` by matching the full code shape, `SB[0-9]{4}`, with a
+comment recording why. Reproduced deterministically before the fix and
+verified after.
+
+## The lesson, which did survive
+
+Two, and neither is the one this task was filed on:
+
+1. **Read the harness before concluding it lacks something.** The trace
+   directory is right there in `spec/.trace/`, retained about a day.
+2. **An assertion must not be able to match the scaffolding.** A bare `SB`
+   against text that embeds a `mktemp` path is a test that fails at random and
+   looks exactly like a regression when it does.
+
+Both are now recorded in AGENTS.md.

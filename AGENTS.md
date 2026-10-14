@@ -402,6 +402,34 @@ cd spec && PATH=$(cd .. && pwd)/target/release:$PATH \
 Prepending is harmless for every other file, so just do it always. **A
 standalone failure count is not a finding until it survives that.**
 
+**A failing spec has already recorded its own evidence — read the trace before
+theorising.** `common.sh`'s `setup()` opens
+`spec/.trace/$(date +%a)/<file>.<mode>` and redirects the whole spec file into
+it under `set -x` with `PS4='+$LINENO: '`. (`exec 3>&1` is why `chk` writes
+`ok`/`not ok` to fd 3 — fd 1 is the trace.) Every command, expansion and
+assignment is there, line-numbered. The file is **appended** to, so several
+runs on the same weekday coexist; take the timestamp from `spec.db`
+(`SELECT committed_at FROM runs WHERE test_id=… ORDER BY rowid DESC`) and match
+it against the `date` line each run writes at the top of its block. Retention
+is about a day (`-mtime +1`), keyed by weekday name.
+
+On 2026-10-14 I declared a five-spec failure an unreproducible transient and
+filed a task saying the harness discards failure evidence. Both wrong: the
+trace held the answer verbatim, and DG found it by asking "what about the
+xtrace?". **Do not conclude a facility is missing without reading
+`common.sh`.**
+
+**An assertion must not be able to match the scaffolding.** Those five specs
+asserted `$(grep -c SB <file>) = 0`. Their messages echo the `--sysroot` path,
+the path is under the file's `mktemp -d`, and a mktemp suffix is ten random
+alphanumerics — so when one came back as `/tmp/tmp.nkqYLkSBp3`, the grep
+counted the **directory name**. Roughly 0.2% per sweep (9 positions × 1/62²),
+in c mode only because each file *and mode* gets its own dir, and all five at
+once because they share one. **It renders identically to a real regression.**
+Match the full code shape, `grep -cE 'SB[0-9]{4}'`, never a bare `SB`; and
+reproduce an intermittent failure deterministically (recreate the directory by
+name) before and after the fix, or you have not fixed it.
+
 **`plan=` inside a spec file is per-mode, not per-sweep.** It is +N even in a
 dual-mode file -- the file runs once per mode and `plan` is compared against
 that one run's index. Setting it to +2N gives a *passing* file that prints

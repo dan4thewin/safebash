@@ -257,23 +257,32 @@ out=$([[ -x a.out ]] && ./a.out)
 # These two prove nothing about the listing PARSER; they never did. The sq.*
 # block below resolves against a real image, which is what covers it — and
 # which now also exercises the cache priming this check performs.
+#
+# The five `grep -cE 'SB[0-9]{4}'` below used to spell the pattern as a bare
+# `SB`, which made them nondeterministic: every one of these messages echoes
+# the `--sysroot` path, the path is under this file's `mktemp -d`, and a
+# mktemp suffix is ten random alphanumerics. On 2026-10-14 one came back as
+# `/tmp/tmp.nkqYLkSBp3` and all five failed at once in c mode only — the
+# count matched the DIRECTORY NAME, not a diagnostic. Roughly a 0.2% chance
+# per sweep (9 positions x 1/62^2), and it is indistinguishable from a real
+# regression. Match the full code shape; never a bare `SB`.
 PATH=/bin $SASH --sysroot="$PWD/nosuch.squashfs" -c 'toolA
 toolB' -o sq1 >/dev/null 2>sq.err; rc=$?
 sr_err=$(cat sq.err)
-[[ $rc != 0 && $(grep -c SB sq.err) = 0 && $sr_err == "sash: --sysroot="* && $sr_err == *nosuch.squashfs* ]]; chk cli.31
+[[ $rc != 0 && $(grep -cE 'SB[0-9]{4}' sq.err) = 0 && $sr_err == "sash: --sysroot="* && $sr_err == *nosuch.squashfs* ]]; chk cli.31
 
 # A directory sysroot that is not there has the identical failure shape, so
 # it reports the same way rather than SB5011 per head.
 PATH=/bin $SASH --sysroot="$PWD/nosuchdir" -c 'toolA' -o sq2 >/dev/null 2>sq2.err; rc=$?
 sr_err=$(cat sq2.err)
-[[ $rc != 0 && $(grep -c SB sq2.err) = 0 && $sr_err == "sash: --sysroot="* && $sr_err == *nosuchdir* ]]; chk cli.32
+[[ $rc != 0 && $(grep -cE 'SB[0-9]{4}' sq2.err) = 0 && $sr_err == "sash: --sysroot="* && $sr_err == *nosuchdir* ]]; chk cli.32
 
 # cli.40 a sysroot that EXISTS but is not a directory. Distinct from cli.32:
 # `metadata` succeeds, so the fault is the kind rather than the lookup.
 : > sr_plain_file
 $SASH --sysroot="$PWD/sr_plain_file" -c 'toolA' -o sq3 >/dev/null 2>sq3.err; rc=$?
 sr_err=$(cat sq3.err)
-[[ $rc != 0 && $(grep -c SB sq3.err) = 0 && $sr_err == *"not a directory"* ]]; chk cli.40
+[[ $rc != 0 && $(grep -cE 'SB[0-9]{4}' sq3.err) = 0 && $sr_err == *"not a directory"* ]]; chk cli.40
 
 # cli.41 the image reader needs `unsquashfs`, and its absence is reported as
 # the missing tool rather than as an unreadable image — the two faults send a
@@ -281,7 +290,7 @@ sr_err=$(cat sq3.err)
 # is ever opened, so this does not depend on the path existing.
 PATH=/nonexistent $SASH --sysroot="$PWD/absent.squashfs" -c 'toolA' -o sq4 >/dev/null 2>sq4.err; rc=$?
 sr_err=$(cat sq4.err)
-[[ $rc != 0 && $(grep -c SB sq4.err) = 0 && $sr_err == *"unsquashfs is not installed"* ]]; chk cli.41
+[[ $rc != 0 && $(grep -cE 'SB[0-9]{4}' sq4.err) = 0 && $sr_err == *"unsquashfs is not installed"* ]]; chk cli.41
 
 # cli.42 the hazard case, and the reason this is a usage error at all: an
 # image that is PRESENT but unreadable. An absent one is obvious; a corrupt
@@ -291,7 +300,7 @@ sr_err=$(cat sq4.err)
 : > corrupt.squashfs
 $SASH --sysroot="$PWD/corrupt.squashfs" -c 'toolA' -o sq5 >/dev/null 2>sq5.err; rc=$?
 sr_err=$(cat sq5.err)
-[[ $rc != 0 && $(grep -c SB sq5.err) = 0 && $sr_err == "sash: --sysroot="*corrupt.squashfs* ]]; chk cli.42
+[[ $rc != 0 && $(grep -cE 'SB[0-9]{4}' sq5.err) = 0 && $sr_err == "sash: --sysroot="*corrupt.squashfs* ]]; chk cli.42
 
 # sq.1-15 the squashfs sysroot resolved against a REAL image.
 #

@@ -25,19 +25,26 @@ specs red against a predicted five — the sixth was `55.14`, already SB4017's
 positive but asserting only `-n $err`. My `0.5p` was a verbatim duplicate of
 it. **Before writing a positive, stub the rule and see what already fails.**
 
-**Unexplained, and reported as a finding:** `c:cli.31/32/40/41/42` flipped
-passing→failing in one sweep and back in the next. Not a code regression, not
-mode-dependent bodies, not shared state (the `mktemp -d` EXIT trap was tested
-and does not fire in subshells), not disk pressure, and not reproducible — 40
-iterations and a second full sweep came back clean. Left unexplained rather
-than given an invented cause.
+**Not a flake — a latent spec bug, found via the xtrace.** `c:cli.31/32/40/41/42`
+flipped passing→failing in one sweep and back in the next. I wrote it up as
+unexplained and filed a task claiming `chk` discards failure evidence. **Both
+wrong.** DG asked "what about the xtrace?" — `common.sh`'s `setup()` has always
+redirected each spec file into `spec/.trace/$(date +%a)/<file>.<mode>` under
+`set -x` (`exec 3>&1` is why `chk` writes to fd 3), and the failing block was
+still there, timestamped to match `spec.db`.
 
-**Open for DG — `chk` discards failure evidence.** It records pass/fail and
-nothing else: `$out`, `$err` and `$rerr` are dropped. That is free for a
-reproducible failure and fatal for a transient. These five compound it by
-asserting `$(grep -c SB f) = 0` *and* an exact message, a shape that cannot
-tell *wrong output* from *no output*. Touches the authoritative gate, so
-raised rather than changed.
+It held the answer verbatim: `mktemp -d` returned `/tmp/tmp.nkqYLkSBp3`, and
+all five assert `$(grep -c SB f) = 0` against messages that echo the
+`--sysroot` path. **The grep counted the directory name.** That explains c-mode
+only (each file *and mode* gets its own dir), all five together (one dir),
+never reproducible (fresh name), once in 400+ (~0.2% = 9 positions × 1/62²).
+Fixed to `grep -cE 'SB[0-9]{4}'`, reproduced deterministically before and
+after. Blast radius was exactly those five — every other such grep already
+names a complete code. Task closed as filed on a false premise.
+
+**Two lessons in AGENTS.md:** read the trace before theorising, and an
+assertion must not be able to match the scaffolding — a bare `SB` against text
+embedding a `mktemp` path renders identically to a real regression.
 
 Gates: sweep **8375** exactly as predicted (+4 ids × 2 modes), zero failures,
 zero flips, zero new-id surprises on the re-run; `mk test` 124 + 27 + 20.

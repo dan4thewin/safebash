@@ -83,7 +83,7 @@ That is the general shape: **before writing a positive, stub the rule and see
 what already fails.** A green run proves nothing about an assertion that was
 never capable of failing.
 
-## A flake I could not explain
+## A flake that was not a flake
 
 The first sweep after these changes reported 8375 — exactly the predicted total
 — with zero new-id surprises but **five flips**: `c:cli.31`, `32`, `40`, `41`,
@@ -102,19 +102,74 @@ It did not reproduce: standalone c-mode `cli.sh` passed 64/64, a 40-iteration
 loop of `cli.31`'s exact body gave zero failures, and a second full sweep came
 back 8375 with zero failures and the five flipped back.
 
-I am leaving it unexplained rather than inventing a cause.
+I wrote it up as unexplained, and filed a task saying the harness discards
+failure evidence so the next occurrence would be equally undiagnosable.
 
-## The reason it stays unexplained
+**Both of those were wrong, and DG took three words to show it: "what about
+the xtrace?"**
 
-`chk` records a status and nothing else. On failure it prints `not ok <index>`
-and discards `$out`, `$err`, and `$rerr`. For a reproducible failure that costs
-nothing — you re-run it. For a transient it is fatal: the evidence is gone at
-the moment it existed, and the only artefact is a row in `runs` saying
-something was wrong once.
+## The harness had already recorded it
 
-These five make it worse by asserting `$(grep -c SB f) = 0` alongside an exact
-message match, a shape that cannot distinguish *wrong output* from *no output
-at all*. A regression and a transient look identical.
+`common.sh`'s `setup()` opens a per-file, per-mode trace and redirects the
+whole spec file into it under `set -x`:
 
-Whether the harness should capture failure context is DG's call — it touches
-the authoritative gate — so it is raised rather than changed.
+```sh
+trace=.trace/$(date +%a)/"$id.$SASH_MODE"
+exec 3>&1 >> "$trace" 2>&1
+PS4='+$LINENO: '
+set -x
+```
+
+`exec 3>&1` is exactly why `chk` writes `ok` / `not ok` to fd 3 — fd 1 is the
+trace. Every command, expansion and assignment is there, line-numbered. The
+file is appended to, so the failing sweep and the passing re-run were both
+still sitting in `.trace/Wed/cli.c`; `spec.db` gave the timestamp
+(`04:07:30Z`), which picked out the block.
+
+I had concluded a facility was missing without reading the file that provides
+it.
+
+## What it actually was
+
+```
++262: sr_err='sash: --sysroot=/tmp/tmp.nkqYLkSBp3/nosuch.squashfs: Could not open ...'
+++263: grep -c SB sq.err
++263: [[ 1 = 0 ]]
+```
+
+`mktemp -d` had returned `/tmp/tmp.nkqYLkSBp3`. Ten random alphanumerics, and
+these happened to contain the literal **`SB`**.
+
+All five specs assert `$(grep -c SB <file>) = 0`. Every one of those messages
+echoes the `--sysroot` path back, and the path is under this file's tmpdir. So
+the grep counted the **directory name**, not a diagnostic code.
+
+Every feature of the "flake" falls out of that: c mode only, because each file
+*and mode* gets its own `mktemp -d` and native's name did not contain `SB`; all
+five at once, because they share one dir; never reproducible, because the name
+is fresh each run; once in 400+ runs, because the odds are about 0.2% — nine
+adjacent positions at 1/62².
+
+Not a transient. A latent test bug that had been in the suite since those specs
+were written, firing roughly once every five hundred sweeps, and **rendering
+identically to a real regression**.
+
+Fixed by matching the full code shape, `SB[0-9]{4}`, which a random suffix
+cannot fake. Reproduced deterministically first — recreate the directory by
+name, watch the old assertion fail and the new one pass — because a fix for an
+intermittent bug is worth nothing without a deterministic reproduction.
+
+Every other `grep -c SB…` in the suite already names a complete code
+(`SB5018`, `SB4030`), so the blast radius was exactly these five.
+
+## Two lessons, neither the one I filed
+
+1. **Read the harness before concluding it lacks something.** I proposed adding
+   failure-context capture to a gate that has captured it all along.
+2. **An assertion must not be able to match the scaffolding.** A bare `SB`
+   tested against text that embeds a `mktemp` path is a test that fails at
+   random, and the day it does, it looks like a regression.
+
+The second is the more dangerous, because "unexplained, did not reproduce" is a
+conclusion that closes an investigation. It almost closed this one.
+
