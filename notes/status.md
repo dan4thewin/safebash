@@ -1,4 +1,46 @@
-## ══ STATUS (2026-10-14, latest) — four more rules nothing asserted ══
+## ══ STATUS (2026-10-14, latest) — three diagnostics the suite had never read ══
+
+**A new axis on the coverage queue: intersect cold lines with SB raise sites.**
+Ranking by function finds clusters; this finds *lies*. A cold walker arm needs
+a probe before you know what it is, but a cold `parse_error(.., "SB4014", ..)`
+labels itself — someone thought a user could reach it. **277 raise sites, 148
+codes, 56 with more than one site, 3 cold.** One of each kind. Journal 509; the
+`GLOB` query is in AGENTS.md.
+
+**One was a real gap.** `expect_rparen` (`expr.rs:1782`) has exactly one caller,
+`parse_slurp_form` — the `$(<file)` form — and nothing in the suite had ever
+written a malformed one. `sl.14` now does. It asserts the **message text**, not
+the code: SB4014 is raised at ten places in `parse/`, so `$err == *SB4014*`
+would pass if any of them fired. `"expected ')'"` is unique to this site.
+
+**Two were lies about the language**, both now `unreachable!()`.
+`parser.rs:705` converted a `parse_if` `None` into `SB4027 "expected \`if\`"`,
+but `parse_if` cannot return `Ok(None)` — every arm is an `Err` or ends in
+`Ok(Some(make_if(..)))`. `parser.rs:3384` raised `SB4014 "expected redirect
+operator"` after all three callers had already gated on the token set. Same
+shape as DG's `len @a` ruling: an unreachable arm handling a rejected spelling
+documents the spelling as supported.
+
+**Both pass the rival test, and for an unusual reason** — the guard and the ICE
+are about *different functions*. `matches!(peek, Tok::If)` is a claim about the
+token stream; the ICE is a claim about `parse_if`'s contract, which the peek
+structurally cannot check. `parse_redirect`'s asserts that three separate
+callers still gate, and no one gate can speak for the other two. Only
+`parse_redirect` is unit-testable (direct call, contract deliberately broken);
+`parse_brace_else` is the "do not chase" category.
+
+**Waiting on DG — the `parse_if` signature.** Narrowing it from
+`Result<Option<Statement>, _>` to `Result<Statement, _>` would delete the cold
+line at the type level (`eliminate-ice-arms-via-types`), but **27 functions in
+`sash/src/parse/` share that signature** as the "None = not my form" dispatch
+protocol, and `dispatch_statement:298` returns it onward unchanged. Narrowing
+one would put a `.map(Some)` there and make it the odd one out. Took the
+reversible path; the convention break is not reversible.
+
+Sweep **8377** (predicted 8375 + 2 before running), zero failures, zero flips,
+two new ids both `sl.14`, liveness 258. `mk test` 125 + 27 + 20.
+
+## ══ STATUS (2026-10-14) — four more rules nothing asserted ══
 
 **Ran journal 507's census over the rest of the compiler.** Four more rules
 raised by live code and named only in spec comments: **SB4017, SB4021, SB4023,

@@ -785,6 +785,29 @@ cold lines in two unrelated arms, so a ranking by per-function count sorted it
 below every function with three in one — and the two arms were cold for
 different reasons again. Counting finds clusters; it does not find families.
 
+**A second axis: intersect cold lines with SB raise sites.** Ranking by
+function finds clusters; this finds *lies*. A cold walker arm needs a probe
+before you know what it is, but a cold `parse_error(.., "SB4014", ..)` labels
+itself — someone thought a user could reach it, so either they were right and
+no spec says so (category 1), or they were wrong and the diagnostic advertises
+a condition the language cannot produce. SQLite has no regex, so use `GLOB`:
+
+```sql
+SELECT file, line_num, content FROM lines
+WHERE file LIKE 'sash/src/%'
+  AND content GLOB '*SB[0-9][0-9][0-9][0-9]*'
+  AND trim(content) NOT GLOB '//*';
+```
+
+Drop the test modules and the `.expect(` / `unreachable!(` / `panic!(` /
+`assert` lines, then join against
+`SELECT file||'|'||line FROM cov_lines WHERE count = 0`. Measured 2026-10-14 at
+98.23% line coverage: **277 raise sites, 148 distinct codes, 56 codes with more
+than one site, 3 cold** — one genuine gap and two unreachable diagnostics,
+which is a good hit rate for one query. The 56-codes-with-multiple-sites figure
+is the other product of the same extraction, and it is what tells you whether a
+spec may assert a bare code (see "A diagnostic CODE is not a site").
+
 **A cold line can also be a measurement fault, and merging more profraws is
 what causes it.** LLVM does not give every region a physical counter — it
 keeps the minimum and derives the rest as *expressions*, and a loop body's

@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup misc
-plan=111
+plan=112
 echo "1..$plan" >&3
 
 set +e
@@ -851,6 +851,18 @@ two]" && -z $err ]]; chk sl.12
 run_sash 's="$(<sf.txt)"
 echo "$s"'
 [[ $rc != 0 && $err == *"SB5020"* ]]; chk sl.13
+
+# sl.14 the slurp form's closing paren is checked, and the check had never
+# run. `expect_rparen` is `parse_slurp_form`'s only caller, and its line was
+# cold in the union coverage at f91e1ae -- nothing in the suite had ever
+# written a malformed `$(<...)`.
+#
+# The message text is the assertion, not the code. SB4014 is raised at TEN
+# places in `parse/`, so `$err == *SB4014*` would pass if any of them fired
+# and would not pin this one; "expected ')'" is unique to this site.
+run_sash 'x=$(< a b)
+echo "$x"'
+[[ $rc != 0 && $err == *"SB4014"* && $err == *"expected ')'"* ]]; chk sl.14
 
 # ---- non-ASCII source bytes round-trip (mojibake bug) ----------------------
 # Every byte-at-a-time literal scanner built its String with

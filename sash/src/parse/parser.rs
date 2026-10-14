@@ -701,8 +701,20 @@ fn parse_brace_elif(scanner: &mut Scanner, span: Span) -> Result<ElifClause, Dia
 /// → a brace block.
 fn parse_brace_else(scanner: &mut Scanner, span: Span) -> Result<Vec<Statement>, Diagnostic> {
     if matches!(scanner.peek().token, Tok::If) {
-        let nested = parse_if(scanner)?
-            .ok_or_else(|| parse_error(span, "SB4027", "expected `if`".to_string()))?;
+        // `parse_if` returns `Ok(None)` on no path: every arm of its trailing
+        // match is an `Err`, or delegates to `parse_if_brace`/`parse_if_keyword`,
+        // both of which end in `Ok(Some(make_if(..)))`. The `Option` exists only
+        // because 27 `parse_*` functions share one dispatch signature.
+        //
+        // This was an `SB4027 "expected \`if\`"` diagnostic, which advertised a
+        // user-facing error for a shape no source can produce. The ICE is
+        // orthogonal to the `matches!` above: that asks what the next token is,
+        // this asks whether `parse_if` still honours its contract — a question
+        // about another function, which the peek structurally cannot see. No
+        // unit test can reach it without editing `parse_if` itself.
+        let Some(nested) = parse_if(scanner)? else {
+            unreachable!("parse_if yields Ok(Some(..)) or Err when its head token is `if`")
+        };
         Ok(vec![nested])
     } else {
         parse_brace_block(scanner, span)
@@ -3380,8 +3392,17 @@ fn parse_redirect(scanner: &mut Scanner, span: Span) -> Result<Redirect, Diagnos
         Tok::HereString => return Err(here_string_diag(span)),
         _ => {}
     }
-    let (fd, op) = redirect_op_for_token(&tok.token)
-        .ok_or_else(|| parse_error(span, "SB4014", "expected redirect operator".to_string()))?;
+    // Every caller gates the token first: the `match` arm in
+    // `parse_command_element` lists exactly `is_redirect_op`'s set,
+    // `fd_prefix_binds` gates `parse_fd_redirect`, and `next_trailing_redirect`
+    // calls `is_redirect_op` outright. `AmpGt` and `HereString` return above,
+    // leaving precisely the six tokens `redirect_op_for_token` maps. This was an
+    // `SB4014 "expected redirect operator"` diagnostic for a shape no source can
+    // produce; the ICE instead claims the callers still gate, which none of them
+    // can check about the others.
+    let Some((fd, op)) = redirect_op_for_token(&tok.token) else {
+        unreachable!("parse_redirect's callers gate on the redirect-token set")
+    };
     let target = parse_expr(scanner)?;
     if matches!(op, RedirectOp::DupOutput | RedirectOp::DupInput) {
         reject_nonfd_dup_target(&target, op, span)?;
@@ -3788,6 +3809,20 @@ mod invariant_tests {
     #[should_panic(expected = "neither side is empty")]
     fn build_expr_from_parts_rejects_the_empty_slice() {
         let _ = build_expr_from_parts(&[], Span::new(1, 1));
+    }
+
+    /// `parse_redirect` is only ever entered on a token its caller has already
+    /// gated — `parse_command_element`'s match arm, `fd_prefix_binds`, or
+    /// `is_redirect_op` — so `redirect_op_for_token` cannot return `None` there.
+    /// It was an `SB4014` diagnostic, advertising a user-facing error for a
+    /// shape no source produces. Only a direct call, deliberately breaking the
+    /// caller contract, can reach it; the panic is therefore the claim that the
+    /// three gates are still in place, which no one of them can assert alone.
+    #[test]
+    #[should_panic(expected = "gate on the redirect-token set")]
+    fn parse_redirect_rejects_a_token_no_caller_would_pass() {
+        let mut sc = Scanner::new("notaredirect");
+        let _ = parse_redirect(&mut sc, Span::new(1, 1));
     }
 
     /// DD#116: `parse_assignment_lhs` reaches its `[` branch only through the
