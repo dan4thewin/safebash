@@ -1,14 +1,15 @@
-title: Per-rule integration tests for validate.rs
-status: ready
+title: "CLOSED: per-rule integration tests for validate.rs (goal met by spec/, artefact retired)"
+status: closed
+closed: 2026-10-14
 priority: P7
 kind: work
 source: opus-47-review
 depends: []
 gates:
-  - one test file per SBxxxx code in sash/tests/validate/
-  - each test exercises both accept (valid input) and reject (rejected input)
-  - mk test passes
-  - coverage of validate.rs ≥ 95% lines (currently indirectly tested)
+  - "WITHDRAWN — every gate below names sash/tests/validate/, a surface deleted"
+  - "in journal 304 because its harness was fail-open. The task's GOAL (every"
+  - "rule asserted somewhere) was met by spec/: 92 of 93 codes, and the 93rd"
+  - "(SB5027) was closed in 55b9eb6. See the 2026-10-13 re-measurement below."
 
 `validate.rs` is 1087 lines of safety-critical code. It absorbed
 ~1600 lines of CST-based rules plus 975 lines of taint analysis. The
@@ -109,3 +110,10 @@ exactly three specs red, where before the change it turned none.
 and the goal is met. The residual worth keeping is not a Rust suite but the
 one-line `comm` above — a code is only covered if a spec *names* it, and this
 task's real finding is that "some program reaches the rule" is not coverage.
+
+## Closed 2026-10-14 by DG
+
+DG: "close/refile as recommended". Closed, not completed — the prescribed
+artefact was never built and should not be. The durable residue is the census
+in AGENTS.md ("a warm line is not coverage"), which does this task's job in one
+line and keeps doing it.

@@ -648,17 +648,51 @@ those programs trip SB5020 *first*, which satisfies that on its own. Deleting
 the rule outright would have left the whole suite green. A co-fired diagnostic
 masks the one you meant to pin, so assert the **code**, never bare `-n $err`.
 
-The cheap census — a code is covered only if a spec *names* it:
+The cheap census — a code is covered only if a spec *names* it. **Filter
+comment lines on both sides**, or the output has a permanent nonzero baseline
+and stops being a gate:
 
 ```sh
-comm -23 <(grep -o '"SB[0-9]\{4\}"' sash/src/validate.rs | tr -d '"' | sort -u) \
-         <(grep -ho 'SB[0-9]\{4\}' spec/*.sh | sort -u)
+SRC="grep -rhE 'SB[0-9]{4}' sash/src/ | grep -vE '^[[:space:]]*//' \
+     | grep -oE 'SB[0-9]{4}' | sort -u"
+SPEC="grep -hE 'SB[0-9]{4}' spec/*.sh | grep -vE '^[[:space:]]*#' \
+      | grep -oE 'SB[0-9]{4}' | sort -u"
+comm -23 <(eval "$SRC") <(eval "$SPEC")   # raised, asserted by nothing
+comm -13 <(eval "$SRC") <(eval "$SPEC")   # asserted, raised by nothing
 ```
 
-It reported exactly one code on 2026-10-13, so the output is normally empty and
-any line in it is a finding. **Then prove the fix by reversion**: stub the rule's
-condition to `false`, rebuild, and count the red specs. Three, where the same
-stub had previously turned none — that number is the result, not the green run.
+Both are empty as of 2026-10-14, so **any** line in either is a finding.
+
+Three things about the pattern, each learned by getting it wrong first:
+
+- **Match the code anywhere, not as `"SB[0-9]{4}"`.** The quoted form only sees
+  codes passed as a standalone argument to a `Diagnostic` constructor, and
+  **17 of 153** are not — they are interpolated into a hand-rolled
+  `format!("{}:{}: error [SB5055] …")`. A rule emitted that way and asserted by
+  nothing is *invisible*. Same format-string blind spot this file already warns
+  about for message text.
+- **Filter comments, or you measure the wrong thing.** Unfiltered, the forward
+  direction reports three retired codes that survive only in explanatory
+  comments, and — worse — the *spec* side counts a code named in a `#` comment
+  as asserted. Filtering the spec side is what surfaced SB4017 / SB4021 /
+  SB4023 / SB4024.
+- **Run it in both directions.** `comm -13` is how the format-string blind spot
+  was found at all, and it caught a `validate.rs` doc comment asserting "a
+  separate rule (SB4042, type_check)" — a code DD#80 *considered and deferred*,
+  so no SB4042 has ever existed.
+
+**A bare `-n $err` is not an assertion.** It is satisfied by any diagnostic, so
+a spec written for one rule passes after that rule is deleted, as long as the
+program still fails for some other reason. That is how SB5027 hid behind a
+co-fired SB5020, and how `55.13`/`55.14` sat as the only positives for SB4016
+and SB4017 without naming either. Assert the **code**.
+
+**Then prove a fix by reversion**: stub the rule's condition to `false` (or
+misspell its code), rebuild, and count the red specs. Five, where the same stub
+had previously turned one — that number is the result, not the green run. It
+also tells you when a new spec is a *rival*: stubbing SB4017 turned `55.14` red
+too, which is how a just-written positive was found to be a duplicate of a
+spec that had been there all along.
 
 **A cold line is a hypothesis, not a finding.** Confirm it by execution before
 building any work on it. `mk cov-probe-build` once, then

@@ -56,5 +56,9 @@ from "this position is not a caught form at all". Detecting the second case
 needs the position, not just the taint state — i.e. the caller has to say
 which syntactic slot the attest came from.
 
-Worth doing with the `r47-validate-rs-per-rule-tests` work rather than alone:
-the cold-arm ranking already wants `check_adjacency` broken up.
+Was filed as "worth doing with the `r47-validate-rs-per-rule-tests` work
+rather than alone". **r47 was closed 2026-10-14** — it prescribed a Rust suite
+under `sash/tests/validate/`, a surface deleted in journal 304 — so this no
+longer has a carrier and stands alone. The standing reason survives: the
+cold-arm ranking already wants `check_adjacency` broken up, so pair it with
+that rather than with a retired task.

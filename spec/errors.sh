@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup errors
-plan=407
+plan=411
 echo "1..$plan" >&3
 
 set +e
@@ -27,6 +27,16 @@ run_sash 'fn f -> int {
 int x=$((f))
 echo "$x"'
 [[ $rc = 0 && $out = "5" && -z $err ]]; chk 0.5
+
+# 0.5q the bare `return` spelling of SB4017. 55.14 below covers `return 0`;
+# the rule's test is `s.is_empty() || s == "0"`, so the empty return is the
+# other half of one arm and nothing reached it.
+run_sash 'fn f -> int {
+    return
+}
+int x=$((f))
+echo "$x"'
+[[ $rc != 0 && -z $out && $err == *SB4017* ]]; chk 0.5q
 
 # 0.6 scan_expr_positionals_stmt must walk elif branches when
 # computing the highest positional read inside a function body.
@@ -209,14 +219,19 @@ run_sash 'fn f -> int { return 42; }
 echo $(f)'
 [[ $rc = 0 && $out = "42" && -z $err ]]; chk 55.12
 
-# 55.13 bare call of non-void function → compile error
+# 55.13 bare call of non-void function → compile error (SB4016). Named the
+# code 2026-10-14: `-n $err` alone is satisfied by ANY diagnostic, so this
+# passed whether or not the rule it was filed for still existed.
 run_sash 'fn f -> int { return 42; }
 f'
-[[ $rc != 0 && -z $out && -n $err ]]; chk 55.13
+[[ $rc != 0 && -z $out && $err == *SB4016* ]]; chk 55.13
 
-# 55.14 return 0 as only return path → compile error
+# 55.14 return 0 as only return path → compile error (SB4017), likewise named.
+# This was SB4017's ONLY live assertion in the suite — 0.5 near the top of the
+# file is a negative (the rule must not fire spuriously) and would pass if the
+# rule were deleted outright.
 run_sash 'fn f -> int { return 0; }'
-[[ $rc != 0 && -z $out && -n $err ]]; chk 55.14
+[[ $rc != 0 && -z $out && $err == *SB4017* && $err == *'only returns 0'* ]]; chk 55.14
 
 # 55.15 - cmd; return $? → compile error ($? unavailable after -)
 run_sash 'fn f -> int { - /bin/false; return $?; }'
@@ -1774,7 +1789,9 @@ rm -f /tmp/sash_rdr_st
 # `Redirected(Pipeline)`. The redirect binds to the FINAL STAGE (verified with
 # --emit-ir), which is bash's semantics. Every spelling that would wrap a
 # pipeline as a unit is rejected at parse — `{ a | b } > f` is SB4021, a
-# backgrounded one SB4022 — so `Redirected(Pipeline)` is never constructed.
+# backgrounded one SB4024 (NOT SB4022, as this comment said until 2026-10-14;
+# SB4022 is the *pipe* member of the family) — so `Redirected(Pipeline)` is
+# never constructed.
 # These specs therefore do NOT reach `attach_redirects_to_last_inst`'s
 # `SsaInst::Pipeline` arm; that arm is unreachable by construction. Measured,
 # not assumed: the arm was replaced with a panic and this file still passed.
@@ -1794,6 +1811,31 @@ printf 'in1\nin2\n' > /tmp/sash_rdr_in
 run_sash '/bin/cat | /bin/cat < /tmp/sash_rdr_in'
 [[ $rc = 0 && $out = $'in1\nin2' && -z $err ]]; chk rdr.49
 rm -f /tmp/sash_rdr_pl /tmp/sash_rdr_in
+
+
+# ── Suffixes on a compound command (SB4021 / 4022 / 4023 / 4024) ────
+#
+# One family, four codes, one message shape: "wrap the compound in a function".
+# Only SB4022 (the pipe) had a live assertion — pf.16/pf.17. The other three
+# were raised by the parser, named in comments here and in validate.rs, and
+# asserted by NOTHING. The comment three blocks up even named the wrong code
+# for the backgrounded case. Assert each separately: they are four distinct
+# arms of `compound_suffix_fault` and a shared message would not tell them
+# apart.
+
+# csfx.1 a redirect on a compound
+run_sash '{ /bin/echo a | /bin/cat; } >/tmp/sash_csfx'
+[[ $rc != 0 && -z $out && $err == *SB4021* && $err == *'wrap the compound'* \
+   && ! -e /tmp/sash_csfx ]]; chk csfx.1
+
+# csfx.2 `&&` / `||` on a compound
+run_sash 'for x in a b; do /bin/echo "$x"; done && /bin/echo y'
+[[ $rc != 0 && -z $out && $err == *SB4023* ]]; chk csfx.2
+
+# csfx.3 `&` on a compound — the case the rdr.47 comment misnamed as SB4022
+run_sash 'while false; do :; done &'
+[[ $rc != 0 && -z $out && $err == *SB4024* && $err != *SB4022* ]]; chk csfx.3
+rm -f /tmp/sash_csfx
 
 
 # dspan.1 every "expected expression" pointed at 1:1 — `parts_to_expr` built

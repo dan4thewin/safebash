@@ -10251,7 +10251,10 @@ fn flag_malformed_sed(e: &Expr, diags: &mut Vec<Diagnostic>) {
 /// so an explicit nested context is a clean expansion node and passes; an
 /// ambiguous bare form falls through to a `Literal` (with stray chars) or a
 /// `Concat`, which this check rejects. Type-level "string key on an int array"
-/// is a separate rule (SB4042, type_check).
+/// is a separate rule, emitted by type_check as **SB4030**. (DD#80 considered a
+/// distinct SB4042 for it and *deferred* — it would need a per-error code at
+/// every `TypeError` site — so no SB4042 exists anywhere; this comment named it
+/// as fact until 2026-10-14.)
 ///
 /// The rule is the index's, not the position's: it is enforced on reads
 /// (`${a[K]}` and its two brace-less spellings, which the lexer desugars to it)

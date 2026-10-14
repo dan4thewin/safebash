@@ -1,6 +1,9 @@
 ---
-title: Audit string-keyed builtin dispatch outside BuiltinCmd::from_name
-status: pending
+title: "SUPERSEDED: audit string-keyed builtin dispatch outside BuiltinCmd::from_name"
+status: superseded
+closed: 2026-10-14
+superseded-by: collapse-validate-out-target-predicates
+kind: hardening
 depends: []
 gates: []
 ---
@@ -161,3 +164,11 @@ again — six copies of one question is six chances for a fix to land on five.
 
 **Re-file narrowly** as "collapse the six out-target predicates in validate.rs"
 and drop the 57-site sweep. P4 — it is a latent hazard, not a live fault.
+
+## Superseded 2026-10-14 by DG
+
+DG: "close/refile as recommended". Re-filed as
+`collapse-validate-out-target-predicates` (P4), which carries the one part of
+this audit with value — the six-way out-target predicate. The 57-site sweep is
+dropped: the remainder is this task's own category 2, where `from_name` swaps a
+string compare for an enum compare and nothing else.
