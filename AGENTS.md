@@ -640,6 +640,26 @@ computed from the covmap. `coverage.db`'s is the lcov's, and was wrong by 36
 points for three days without anything noticing. Quote the former; use the
 latter only for ranking.
 
+**And a WARM line is not coverage.** The converse failure is silent and the
+coverage tooling cannot see it at all: a rule can be raised, reached, and
+asserted by nothing. Measured 2026-10-13, SB5027's line had six hits and three
+specs ran programs that raise it — but all three asserted only `-n $err`, and
+those programs trip SB5020 *first*, which satisfies that on its own. Deleting
+the rule outright would have left the whole suite green. A co-fired diagnostic
+masks the one you meant to pin, so assert the **code**, never bare `-n $err`.
+
+The cheap census — a code is covered only if a spec *names* it:
+
+```sh
+comm -23 <(grep -o '"SB[0-9]\{4\}"' sash/src/validate.rs | tr -d '"' | sort -u) \
+         <(grep -ho 'SB[0-9]\{4\}' spec/*.sh | sort -u)
+```
+
+It reported exactly one code on 2026-10-13, so the output is normally empty and
+any line in it is a finding. **Then prove the fix by reversion**: stub the rule's
+condition to `false`, rebuild, and count the red specs. Three, where the same
+stub had previously turned none — that number is the result, not the green run.
+
 **A cold line is a hypothesis, not a finding.** Confirm it by execution before
 building any work on it. `mk cov-probe-build` once, then
 `contrib/cov-probe.sh FILE:LINE 'snippet'` answers "does this snippet reach
