@@ -58,7 +58,13 @@ instead of assuming. Predicted "8 gone"; measured "9 gone, 1 new", and the
 discrepancy *was* the finding.
 
 Sweep **8383**, predicted 8383. Zero failures, zero flips, exactly the six
-expected new ids, liveness 258. `mk test` 125 + 27 + 20, unchanged. Hand-probed 14 shapes (EOF, `!`/`-` at EOF, `return -`, `&&`/`|`
+expected new ids, liveness 258. `mk test` 125 + 27 + 20, unchanged.
+
+**Final coverage, re-measured at `36e0932` (`mk cov-stale`: current):**
+`parse/parser.rs` **20 → 9** cold lines (55%, against the 40% the task
+costed); whole compiler **296 → 284**. The nine that remain are ordinary
+totality arms in `VarType`/`DeclKeyword`/`ListOp` renderers plus two shadowed
+fallthroughs — no `Option` relay and no diagnostic left among them. Hand-probed 14 shapes (EOF, `!`/`-` at EOF, `return -`, `&&`/`|`
 at EOF, `else if`, empty body) — all identical to pre-refactor. Journal 510.
 
 ## ══ STATUS (2026-10-14) — three diagnostics the suite had never read ══

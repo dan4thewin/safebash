@@ -142,3 +142,19 @@ discrepancy *was* the finding.
 
 Sweep **8383**, predicted 8383 (3 specs × 2 modes). Zero failures, zero flips,
 exactly the six expected new ids, liveness 258.
+
+## Final measurement
+
+Re-measured at `36e0932`, `mk cov-union` → `mk cov-db` → `mk cov-stale`
+(current):
+
+| | before (`f91e1ae`) | after (`36e0932`) |
+|---|---|---|
+| `parse/parser.rs` cold lines | 20 | **9** |
+| whole-compiler cold lines | 296 | **284** |
+
+55% of the file's cold cohort, against the 40% the task costed — the extra
+coming from the predicate fix and the braces the extraction removed. The nine
+that remain are ordinary category (2)/(3) material: `_ =>` totality arms in
+`VarType`/`DeclKeyword`/`ListOp` renderers and two shadowed fallthroughs. No
+`Option` relay, and no diagnostic, is left among them.
