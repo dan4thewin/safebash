@@ -228,13 +228,12 @@ fn parse_top_level_item(
         return;
     }
 
-    match parse_statement(scanner) {
+    match parse_statement_here(scanner) {
         // Constructs parsed only so they can be reported, not accepted.
-        Ok(Some(stmt)) => {
+        Ok(stmt) => {
             check_rejected(&stmt, diags);
             stmts.push(stmt);
         }
-        Ok(None) => {}
         Err(d) => {
             diags.push(d);
             recover(scanner); // skip to the next line and keep going
@@ -264,25 +263,32 @@ fn recover(scanner: &mut Scanner) {
 }
 
 /// Parse a single statement. Returns None for empty/comment-only lines.
+///
+/// `None` means "there is no statement here", and EOF is the only thing that
+/// produces it. Callers that have already established `!at_eof()` should call
+/// `parse_statement_here` instead — handling an `Option` they cannot receive
+/// is what left `parse_top_level_item` and `parse_body_until` with a cold arm
+/// each.
 pub fn parse_statement(scanner: &mut Scanner) -> Result<Option<Statement>, Diagnostic> {
     skip_terminators(scanner);
     if scanner.at_eof() {
         return Ok(None);
     }
+    parse_statement_here(scanner).map(Some)
+}
 
+/// Parse a statement the caller has already established is there.
+fn parse_statement_here(scanner: &mut Scanner) -> Result<Statement, Diagnostic> {
     let start = scanner.peek().span.start;
     let tok = scanner.peek().token.clone();
     let span = span_from(scanner, start);
 
-    let stmt = match dispatch_statement(scanner, tok, span)? {
-        Some(s) => s,
-        None => return Ok(None),
-    };
+    let stmt = dispatch_statement(scanner, tok, span)?;
 
     if is_compound(&stmt.kind) {
         reject_compound_postfix(stmt, scanner)
     } else {
-        Ok(Some(maybe_wrap_redirects(scanner, stmt)?))
+        maybe_wrap_redirects(scanner, stmt)
     }
 }
 
@@ -293,7 +299,7 @@ fn dispatch_statement(
     scanner: &mut Scanner,
     tok: Tok,
     span: Span,
-) -> Result<Option<Statement>, Diagnostic> {
+) -> Result<Statement, Diagnostic> {
     match tok {
         Tok::If => parse_if(scanner),
         Tok::While | Tok::Until => parse_while(scanner),
@@ -341,12 +347,12 @@ fn dispatch_statement(
 fn reject_compound_postfix(
     stmt: Statement,
     scanner: &mut Scanner,
-) -> Result<Option<Statement>, Diagnostic> {
+) -> Result<Statement, Diagnostic> {
     let next = scanner.peek().token.clone();
     if let Some((code, msg)) = compound_postfix_rejection(&next) {
         return Err(parse_error(stmt.span, code, msg));
     }
-    Ok(Some(stmt))
+    Ok(stmt)
 }
 
 /// Lookup table: which SB-code/message a particular trailing token should
@@ -420,10 +426,7 @@ fn parse_body_until(scanner: &mut Scanner, stop: &[Tok]) -> Result<Vec<Statement
         if stop.iter().any(|s| tok_eq(&scanner.peek().token, s)) {
             break;
         }
-        match parse_statement(scanner)? {
-            Some(stmt) => stmts.push(stmt),
-            None => break,
-        }
+        stmts.push(parse_statement_here(scanner)?);
     }
     Ok(stmts)
 }
@@ -470,7 +473,7 @@ fn brace_group_cond_error(span: Span) -> Diagnostic {
     )
 }
 
-fn parse_if(scanner: &mut Scanner) -> Result<Option<Statement>, Diagnostic> {
+fn parse_if(scanner: &mut Scanner) -> Result<Statement, Diagnostic> {
     let sp = scanner.peek().span;
     let span = span_from(scanner, sp.start);
     scanner.next(); // consume 'if'
@@ -614,7 +617,7 @@ fn parse_if_keyword(
     scanner: &mut Scanner,
     span: Span,
     condition: Vec<Statement>,
-) -> Result<Option<Statement>, Diagnostic> {
+) -> Result<Statement, Diagnostic> {
     expect(scanner, &Tok::Then, span, "expected 'then'")?;
     let then_body = parse_body_until(scanner, &[Tok::Elif, Tok::Else, Tok::Fi])?;
 
@@ -639,13 +642,7 @@ fn parse_if_keyword(
 
     expect(scanner, &Tok::Fi, span, "expected 'fi'")?;
 
-    Ok(Some(make_if(
-        span,
-        condition,
-        then_body,
-        elif_clauses,
-        else_body,
-    )))
+    Ok(make_if(span, condition, then_body, elif_clauses, else_body))
 }
 
 /// DD#68: the brace form of `if` — `if COND { … } [elif COND { … }]…
@@ -655,7 +652,7 @@ fn parse_if_brace(
     scanner: &mut Scanner,
     span: Span,
     condition: Vec<Statement>,
-) -> Result<Option<Statement>, Diagnostic> {
+) -> Result<Statement, Diagnostic> {
     let then_body = parse_brace_block(scanner, span)?;
     let mut elif_clauses = Vec::new();
     let mut else_body = None;
@@ -673,13 +670,7 @@ fn parse_if_brace(
             _ => break,
         }
     }
-    Ok(Some(make_if(
-        span,
-        condition,
-        then_body,
-        elif_clauses,
-        else_body,
-    )))
+    Ok(make_if(span, condition, then_body, elif_clauses, else_body))
 }
 
 /// DD#68: one `elif COND { … }` clause of a brace `if` (the `elif` is
@@ -701,20 +692,11 @@ fn parse_brace_elif(scanner: &mut Scanner, span: Span) -> Result<ElifClause, Dia
 /// → a brace block.
 fn parse_brace_else(scanner: &mut Scanner, span: Span) -> Result<Vec<Statement>, Diagnostic> {
     if matches!(scanner.peek().token, Tok::If) {
-        // `parse_if` returns `Ok(None)` on no path: every arm of its trailing
-        // match is an `Err`, or delegates to `parse_if_brace`/`parse_if_keyword`,
-        // both of which end in `Ok(Some(make_if(..)))`. The `Option` exists only
-        // because 27 `parse_*` functions share one dispatch signature.
-        //
-        // This was an `SB4027 "expected \`if\`"` diagnostic, which advertised a
-        // user-facing error for a shape no source can produce. The ICE is
-        // orthogonal to the `matches!` above: that asks what the next token is,
-        // this asks whether `parse_if` still honours its contract — a question
-        // about another function, which the peek structurally cannot see. No
-        // unit test can reach it without editing `parse_if` itself.
-        let Some(nested) = parse_if(scanner)? else {
-            unreachable!("parse_if yields Ok(Some(..)) or Err when its head token is `if`")
-        };
+        // `parse_if` cannot answer "not an `if`" — every arm of its trailing
+        // match is an `Err` or ends in a statement — so there is nothing to
+        // handle here. This was an `SB4027 "expected \`if\`"` diagnostic for a
+        // shape no source can produce.
+        let nested = parse_if(scanner)?;
         Ok(vec![nested])
     } else {
         parse_brace_block(scanner, span)
@@ -723,7 +705,7 @@ fn parse_brace_else(scanner: &mut Scanner, span: Span) -> Result<Vec<Statement>,
 
 // ── while/until ──────────────────────────────────────────────
 
-fn parse_while(scanner: &mut Scanner) -> Result<Option<Statement>, Diagnostic> {
+fn parse_while(scanner: &mut Scanner) -> Result<Statement, Diagnostic> {
     let sp = scanner.peek().span;
     let span = span_from(scanner, sp.start);
     let until = matches!(scanner.peek().token, Tok::Until);
@@ -740,19 +722,19 @@ fn parse_while(scanner: &mut Scanner) -> Result<Option<Statement>, Diagnostic> {
     }
     let body = parse_loop_body(scanner, span)?;
 
-    Ok(Some(Statement {
+    Ok(Statement {
         kind: StmtKind::While(While {
             condition,
             body,
             until,
         }),
         span,
-    }))
+    })
 }
 
 // ── for ──────────────────────────────────────────────────────
 
-fn parse_for(scanner: &mut Scanner) -> Result<Option<Statement>, Diagnostic> {
+fn parse_for(scanner: &mut Scanner) -> Result<Statement, Diagnostic> {
     let sp = scanner.peek().span;
     let span = span_from(scanner, sp.start);
     scanner.next(); // consume 'for'
@@ -785,14 +767,14 @@ fn parse_for(scanner: &mut Scanner) -> Result<Option<Statement>, Diagnostic> {
 
     let body = parse_loop_body(scanner, span)?;
 
-    Ok(Some(Statement {
+    Ok(Statement {
         kind: StmtKind::For(For {
             variable,
             words,
             body,
         }),
         span,
-    }))
+    })
 }
 
 /// DD#68: parse a loop body — `{ … }` (brace form) or `do … done` (sugar).
@@ -808,7 +790,7 @@ fn parse_loop_body(scanner: &mut Scanner, span: Span) -> Result<Vec<Statement>, 
     }
 }
 
-fn parse_c_style_for(scanner: &mut Scanner, span: Span) -> Result<Option<Statement>, Diagnostic> {
+fn parse_c_style_for(scanner: &mut Scanner, span: Span) -> Result<Statement, Diagnostic> {
     scanner.next(); // consume ((
 
     // Collect raw content for init; cond; update — split on ;
@@ -823,12 +805,12 @@ fn parse_c_style_for(scanner: &mut Scanner, span: Span) -> Result<Option<Stateme
     skip_terminators(scanner);
     let body = parse_loop_body(scanner, span)?;
 
-    Ok(Some(lower_c_style_for(init, cond, update, body, span)?))
+    lower_c_style_for(init, cond, update, body, span)
 }
 
 // ── function ─────────────────────────────────────────────────
 
-fn parse_function(scanner: &mut Scanner) -> Result<Option<Statement>, Diagnostic> {
+fn parse_function(scanner: &mut Scanner) -> Result<Statement, Diagnostic> {
     let sp = scanner.peek().span;
     let span = span_from(scanner, sp.start);
     scanner.next(); // consume 'fn' or 'function'
@@ -836,13 +818,13 @@ fn parse_function(scanner: &mut Scanner) -> Result<Option<Statement>, Diagnostic
     let name = expect_word(scanner, span, "expected function name")?;
 
     parse_optional_empty_parens(scanner, span)?;
-    Ok(Some(finish_function_def(scanner, name, span)?))
+    finish_function_def(scanner, name, span)
 }
 
 /// DD#67: bash `name() { ... }` function-definition sugar (no `fn`/
 /// `function` keyword). Produces the same `Function` IR as `fn name { }`.
 /// The leading `name ( )` shape is recognised by [`is_paren_function`].
-fn parse_paren_function(scanner: &mut Scanner) -> Result<Option<Statement>, Diagnostic> {
+fn parse_paren_function(scanner: &mut Scanner) -> Result<Statement, Diagnostic> {
     let sp = scanner.peek().span;
     let span = span_from(scanner, sp.start);
     let name = expect_word(scanner, span, "expected function name")?;
@@ -858,7 +840,7 @@ fn parse_paren_function(scanner: &mut Scanner) -> Result<Option<Statement>, Diag
         span,
         "expected ')' in function definition",
     )?;
-    Ok(Some(finish_function_def(scanner, name, span)?))
+    finish_function_def(scanner, name, span)
 }
 
 /// True if the upcoming tokens are `WORD ( )` — the bash `name()`
@@ -933,17 +915,14 @@ fn consume_int_token(scanner: &mut Scanner) -> VarType {
 
 // ── declarations (int, const, array, map) ────────────────────
 
-fn parse_declaration(
-    scanner: &mut Scanner,
-    keyword: &str,
-) -> Result<Option<Statement>, Diagnostic> {
+fn parse_declaration(scanner: &mut Scanner, keyword: &str) -> Result<Statement, Diagnostic> {
     let sp = scanner.peek().span;
     let span = span_from(scanner, sp.start);
     scanner.next(); // consume keyword
 
     let (decl_keyword, var_type, flags) = declaration_axes(scanner, keyword);
     let assignments = parse_declaration_assignments(scanner, span)?;
-    Ok(Some(Statement {
+    Ok(Statement {
         kind: StmtKind::Declaration(Declaration {
             keyword: decl_keyword,
             var_type,
@@ -951,7 +930,7 @@ fn parse_declaration(
             assignments,
         }),
         span,
-    }))
+    })
 }
 
 /// Resolve a declaration's (keyword, type, structure-flags) axes, consuming any
@@ -1115,7 +1094,7 @@ fn parse_end_block(scanner: &mut Scanner) -> Result<Vec<Statement>, Diagnostic> 
 
 // ── group { ... } ────────────────────────────────────────────
 
-fn parse_group(scanner: &mut Scanner) -> Result<Option<Statement>, Diagnostic> {
+fn parse_group(scanner: &mut Scanner) -> Result<Statement, Diagnostic> {
     let sp = scanner.peek().span;
     let span = span_from(scanner, sp.start);
     scanner.next(); // consume '{'
@@ -1123,22 +1102,22 @@ fn parse_group(scanner: &mut Scanner) -> Result<Option<Statement>, Diagnostic> {
     let body = parse_body_until(scanner, &[Tok::RBrace])?;
     expect(scanner, &Tok::RBrace, span, "expected '}'")?;
 
-    Ok(Some(Statement {
+    Ok(Statement {
         kind: StmtKind::Group(Group { body }),
         span,
-    }))
+    })
 }
 
 // ── arithmetic (( )) ─────────────────────────────────────────
 
-fn parse_arith_stmt(scanner: &mut Scanner) -> Result<Option<Statement>, Diagnostic> {
+fn parse_arith_stmt(scanner: &mut Scanner) -> Result<Statement, Diagnostic> {
     let sp = scanner.peek().span;
     let span = span_from(scanner, sp.start);
     scanner.next(); // consume ((
 
     let expr = parse_arith_command(scanner, span)?;
     let stmt = lower_arith_command(expr, span);
-    Ok(Some(stmt))
+    Ok(stmt)
 }
 
 // ── negated command (! cmd) ──────────────────────────────────
@@ -1179,7 +1158,7 @@ fn case_removed_error(span: Span) -> Diagnostic {
 /// function's; it is consumed (never aborts). Disambiguation: `[[`/`((`, or a
 /// non-numeric command word after `return`, is a producer; a numeric literal,
 /// a `$`-expansion, or end-of-statement is a value.
-fn parse_return_producer_head(scanner: &mut Scanner) -> Result<Option<Statement>, Diagnostic> {
+fn parse_return_producer_head(scanner: &mut Scanner) -> Result<Statement, Diagnostic> {
     match scanner.peek().token {
         Tok::DblBracketOpen => parse_test_command(scanner),
         Tok::DblParen => parse_arith_stmt(scanner),
@@ -1212,10 +1191,7 @@ fn return_producer_error(span: Span) -> Diagnostic {
 /// away without running it. `keyword_to_str` is the canonical reserved-word
 /// list (parse/expr.rs), so a keyword added later is covered here without a
 /// second list to keep in step.
-fn parse_return_value_form(
-    scanner: &mut Scanner,
-    after: &Tok,
-) -> Result<Option<Statement>, Diagnostic> {
+fn parse_return_value_form(scanner: &mut Scanner, after: &Tok) -> Result<Statement, Diagnostic> {
     if super::expr::keyword_to_str(after).is_some() || matches!(after, Tok::Dash | Tok::Eq) {
         let bad = scanner.peek_n(1).span;
         return Err(return_producer_error(span_from(scanner, bad.start)));
@@ -1223,7 +1199,7 @@ fn parse_return_value_form(
     parse_simple_or_assignment(scanner)
 }
 
-fn parse_return(scanner: &mut Scanner) -> Result<Option<Statement>, Diagnostic> {
+fn parse_return(scanner: &mut Scanner) -> Result<Statement, Diagnostic> {
     let after = scanner.peek_n(1).token.clone();
     let is_producer = matches!(after, Tok::DblBracketOpen | Tok::DblParen | Tok::Bang)
         || matches!(&after, Tok::Word(w) if !w.chars().all(|c| c.is_ascii_digit()));
@@ -1234,26 +1210,27 @@ fn parse_return(scanner: &mut Scanner) -> Result<Option<Statement>, Diagnostic> 
     let span = span_from(scanner, sp.start);
     scanner.next(); // consume 'return'
     let producer = parse_return_producer_head(scanner)?;
-    match producer {
-        Some(p) => {
-            // DD#74: `return` takes a status *producer*, and a producer can be a
-            // composite — `return A | B`, `return A && B`, `return A > f`. The
-            // per-kind parse above yields only the first command / `[[ ]]` /
-            // `(( ))`; fold any trailing pipeline / `&&`/`||` list / redirect
-            // into the producer (the same `maybe_wrap_redirects` a normal
-            // statement gets) so the whole composite is consumed by the return,
-            // not left as an uncaught pipeline stage after a stage-0 `return`.
-            let folded = maybe_wrap_redirects(scanner, p)?;
-            Ok(Some(Statement {
-                kind: StmtKind::ReturnProducer(Box::new(folded)),
-                span,
-            }))
-        }
-        None => Err(return_producer_error(span)),
-    }
+    // DD#74: `return` takes a status *producer*, and a producer can be a
+    // composite — `return A | B`, `return A && B`, `return A > f`. The
+    // per-kind parse above yields only the first command / `[[ ]]` /
+    // `(( ))`; fold any trailing pipeline / `&&`/`||` list / redirect
+    // into the producer (the same `maybe_wrap_redirects` a normal
+    // statement gets) so the whole composite is consumed by the return,
+    // not left as an uncaught pipeline stage after a stage-0 `return`.
+    //
+    // `parse_return_producer_head` always answers — its catch-all arm is
+    // `parse_simple_or_assignment`. The `None => Err(return_producer_error(..))`
+    // that stood here was a second, unreachable site for the very message
+    // `parse_return_value_form` raises live, so probing the message found
+    // the other one and read as proof this arm worked.
+    let folded = maybe_wrap_redirects(scanner, producer)?;
+    Ok(Statement {
+        kind: StmtKind::ReturnProducer(Box::new(folded)),
+        span,
+    })
 }
 
-fn parse_negated(scanner: &mut Scanner) -> Result<Option<Statement>, Diagnostic> {
+fn parse_negated(scanner: &mut Scanner) -> Result<Statement, Diagnostic> {
     let sp = scanner.peek().span;
     let span = span_from(scanner, sp.start);
     scanner.next(); // consume '!'
@@ -1268,9 +1245,7 @@ fn parse_negated(scanner: &mut Scanner) -> Result<Option<Statement>, Diagnostic>
     let start = scanner.peek().span.start;
     let tok = scanner.peek().token.clone();
     let unit_span = span_from(scanner, start);
-    let Some(stmt) = dispatch_statement(scanner, tok, unit_span)? else {
-        return Ok(None);
-    };
+    let stmt = dispatch_statement(scanner, tok, unit_span)?;
     // DD#66: `! [[ dispatch ]]` — the dispatch is statement-only.
     if stmt_is_dispatch(&stmt) {
         return Err(dispatch_stmt_only_error(span));
@@ -1297,13 +1272,13 @@ fn parse_negated(scanner: &mut Scanner) -> Result<Option<Statement>, Diagnostic>
         return Err(negate_pipeline_error(span));
     }
     // Wrap the single unit in a negated 1-command pipeline.
-    Ok(Some(Statement {
+    Ok(Statement {
         kind: StmtKind::Pipeline(Pipeline {
             commands: vec![stmt],
             negated: true,
         }),
         span,
-    }))
+    })
 }
 
 /// SB4040: `!` may only negate the **terminal** segment of a pipeline (DD#70).
@@ -1325,7 +1300,7 @@ fn negate_pipeline_error(span: Span) -> Diagnostic {
 
 // ── suppressed command (- cmd) ───────────────────────────────
 
-fn parse_suppressed(scanner: &mut Scanner) -> Result<Option<Statement>, Diagnostic> {
+fn parse_suppressed(scanner: &mut Scanner) -> Result<Statement, Diagnostic> {
     let sp = scanner.peek().span;
     let span = span_from(scanner, sp.start);
 
@@ -1347,11 +1322,11 @@ fn parse_suppressed(scanner: &mut Scanner) -> Result<Option<Statement>, Diagnost
         )
     {
         scanner.next(); // consume '-'
-        if let Some(stmt) = parse_statement(scanner)? {
-            Ok(Some(push_suppression_into_pipeline(stmt, span)))
-        } else {
-            Ok(None)
-        }
+                        // The peek above established that a word-like token or a compound
+                        // keyword follows the `-`, so a statement is here by construction and
+                        // `parse_statement`'s "nothing here" answer was unreachable.
+        let stmt = parse_statement_here(scanner)?;
+        Ok(push_suppression_into_pipeline(stmt, span))
     } else {
         // Not a suppressed command — treat as simple command starting with -
         parse_simple_or_assignment(scanner)
@@ -1404,7 +1379,7 @@ fn push_suppression_into_pipeline(stmt: Statement, span: Span) -> Statement {
 
 // ── [[ test ]] ───────────────────────────────────────────────
 
-fn parse_test_command(scanner: &mut Scanner) -> Result<Option<Statement>, Diagnostic> {
+fn parse_test_command(scanner: &mut Scanner) -> Result<Statement, Diagnostic> {
     let sp = scanner.peek().span;
     let span = span_from(scanner, sp.start);
     scanner.next(); // consume [[
@@ -1420,7 +1395,7 @@ fn parse_test_command(scanner: &mut Scanner) -> Result<Option<Statement>, Diagno
 
     expect(scanner, &Tok::DblBracketClose, span, "expected ']]'")?;
 
-    Ok(Some(Statement {
+    Ok(Statement {
         kind: StmtKind::Command(Command {
             name: Expr {
                 kind: ExprKind::Literal("[[".to_string()),
@@ -1432,7 +1407,7 @@ fn parse_test_command(scanner: &mut Scanner) -> Result<Option<Statement>, Diagno
             }],
         }),
         span,
-    }))
+    })
 }
 
 /// DD#71: multi-exact dispatch signal — a bare word (another pattern)
@@ -1524,7 +1499,7 @@ fn parse_dispatch(
     scanner: &mut Scanner,
     span: Span,
     first: TestExpr,
-) -> Result<Option<Statement>, Diagnostic> {
+) -> Result<Statement, Diagnostic> {
     let TestExpr::Binary { left, op, right } = first else {
         return Err(parse_error(
             span,
@@ -1553,10 +1528,10 @@ fn parse_dispatch(
 
     expect(scanner, &Tok::DblBracketClose, span, "expected ']]'")?;
 
-    Ok(Some(Statement {
+    Ok(Statement {
         kind: StmtKind::Case(Case { value, items, op }),
         span,
-    }))
+    })
 }
 
 /// Parse a test expression inside [[ ]].
@@ -1976,7 +1951,7 @@ fn is_binary_test_op(op: &str) -> bool {
 
 // ── attest ────────────────────────────────────────────────────
 
-fn parse_attest(scanner: &mut Scanner) -> Result<Option<Statement>, Diagnostic> {
+fn parse_attest(scanner: &mut Scanner) -> Result<Statement, Diagnostic> {
     let sp = scanner.peek().span;
     let span = span_from(scanner, sp.start);
     scanner.next(); // consume 'attest'
@@ -2003,7 +1978,32 @@ fn parse_attest(scanner: &mut Scanner) -> Result<Option<Statement>, Diagnostic> 
         parse_attest_all_lead(scanner, first, span)?
     };
 
-    // Expect [[ test_expr ]]
+    // Expect the predicate: `[[ … ]]`, the DD#93 Part D `(( … ))`, or the
+    // Part B bare-unary shorthand.
+    if let Some(pred) = parse_attest_predicate(scanner, &args, span)? {
+        args.push(pred);
+    }
+
+    Ok(Statement {
+        kind: StmtKind::Command(Command {
+            name: Expr {
+                kind: ExprKind::Literal("attest".to_string()),
+                span,
+            },
+            args,
+        }),
+        span,
+    })
+}
+
+/// The attest predicate, in its three spellings. Absent is legal *here* —
+/// whether a given attest form requires one is a `validate` question, not a
+/// parse one, so this answers `None` rather than raising.
+fn parse_attest_predicate(
+    scanner: &mut Scanner,
+    args: &[Expr],
+    span: Span,
+) -> Result<Option<Expr>, Diagnostic> {
     if matches!(scanner.peek().token, Tok::DblBracketOpen) {
         scanner.next();
         let test_expr = parse_test_expr(scanner, span)?;
@@ -2013,39 +2013,30 @@ fn parse_attest(scanner: &mut Scanner) -> Result<Option<Statement>, Diagnostic> 
             span,
             "expected ']]' in attest",
         )?;
-        args.push(Expr {
+        Ok(Some(Expr {
             kind: ExprKind::Test(test_expr),
             span,
-        });
+        }))
     } else if matches!(scanner.peek().token, Tok::DblParen) {
         // DD#93 Part D: the int-assignment is the predicate. Parsed as an
         // attest predicate, never as a free arithmetic statement — which is
         // why the bare source needs no DD#77 disposition here.
         scanner.next();
         let arith = parse_arith_command(scanner, span)?;
-        args.push(Expr {
+        Ok(Some(Expr {
             kind: ExprKind::Arithmetic(Box::new(arith)),
             span,
-        });
+        }))
     } else if let Some(op) = peek_unary_test_op(scanner) {
         // DD#93 Part B: `attest VAR OP` ≡ `attest VAR [[ OP $VAR ]]`.
         scanner.next();
-        args.push(Expr {
-            kind: ExprKind::Test(attest_shorthand_test(&op, &args, span)),
+        Ok(Some(Expr {
+            kind: ExprKind::Test(attest_shorthand_test(&op, args, span)),
             span,
-        });
+        }))
+    } else {
+        Ok(None)
     }
-
-    Ok(Some(Statement {
-        kind: StmtKind::Command(Command {
-            name: Expr {
-                kind: ExprKind::Literal("attest".to_string()),
-                span,
-            },
-            args,
-        }),
-        span,
-    }))
 }
 
 /// A bare word that is a unary test operator (`-n`, `-f`, `i?`, …). Same
@@ -2126,7 +2117,7 @@ fn parse_attest_all_lead(
 
 // ── simple commands and assignments ──────────────────────────
 
-fn parse_simple_or_assignment(scanner: &mut Scanner) -> Result<Option<Statement>, Diagnostic> {
+fn parse_simple_or_assignment(scanner: &mut Scanner) -> Result<Statement, Diagnostic> {
     let sp = scanner.peek().span;
     let span = span_from(scanner, sp.start);
 
@@ -2198,7 +2189,7 @@ fn looks_like_regex_mutation(scanner: &mut Scanner) -> Option<String> {
     }
 }
 
-fn parse_assignment(scanner: &mut Scanner, span: Span) -> Result<Option<Statement>, Diagnostic> {
+fn parse_assignment(scanner: &mut Scanner, span: Span) -> Result<Statement, Diagnostic> {
     let name_tok = scanner.next();
     let Tok::Word(raw_name) = name_tok.token else {
         // `parse_simple_or_assignment` reaches here only when
@@ -2218,7 +2209,7 @@ fn parse_assignment(scanner: &mut Scanner, span: Span) -> Result<Option<Statemen
     if matches!(scanner.peek().token, Tok::LParen) {
         scanner.next();
         let arr = parse_array_literal(scanner, span)?;
-        return Ok(Some(Statement {
+        return Ok(Statement {
             kind: StmtKind::Assignment(Assignment {
                 name,
                 index,
@@ -2226,12 +2217,12 @@ fn parse_assignment(scanner: &mut Scanner, span: Span) -> Result<Option<Statemen
                 value: arr,
             }),
             span,
-        }));
+        });
     }
 
     // Check for empty assignment (newline/semi/eof immediately)
     if scanner.at_eof() || matches!(scanner.peek().token, Tok::Newline | Tok::Semi) {
-        return Ok(Some(Statement {
+        return Ok(Statement {
             kind: StmtKind::Assignment(Assignment {
                 name,
                 index,
@@ -2242,12 +2233,12 @@ fn parse_assignment(scanner: &mut Scanner, span: Span) -> Result<Option<Statemen
                 },
             }),
             span,
-        }));
+        });
     }
 
     let value = parse_assignment_value(scanner)?;
 
-    Ok(Some(Statement {
+    Ok(Statement {
         kind: StmtKind::Assignment(Assignment {
             name,
             index,
@@ -2255,7 +2246,7 @@ fn parse_assignment(scanner: &mut Scanner, span: Span) -> Result<Option<Statemen
             value,
         }),
         span,
-    }))
+    })
 }
 
 /// Parse the optional subscript on an assignment LHS. A bare `name[`
@@ -2410,7 +2401,7 @@ fn parse_regex_mutation(
     scanner: &mut Scanner,
     span: Span,
     var_name: &str,
-) -> Result<Option<Statement>, Diagnostic> {
+) -> Result<Statement, Diagnostic> {
     scanner.next(); // consume variable name
     scanner.next(); // consume =~
     let raw = scanner
@@ -2421,7 +2412,7 @@ fn parse_regex_mutation(
     let subject = quoted_var_subject(var_name, span);
     let value =
         super::expr::build_sed_sub(body, subject, span)?.ok_or_else(|| sed_malformed_err(span))?;
-    Ok(Some(Statement {
+    Ok(Statement {
         kind: StmtKind::Assignment(Assignment {
             name: var_name.to_string(),
             index: None,
@@ -2429,7 +2420,7 @@ fn parse_regex_mutation(
             value,
         }),
         span,
-    }))
+    })
 }
 
 fn sed_malformed_err(span: Span) -> Diagnostic {
@@ -2669,7 +2660,7 @@ fn parse_command_words(
     Ok((args, redirects))
 }
 
-fn parse_command(scanner: &mut Scanner, span: Span) -> Result<Option<Statement>, Diagnostic> {
+fn parse_command(scanner: &mut Scanner, span: Span) -> Result<Statement, Diagnostic> {
     let name_expr = normalize_command_head(parse_expr(scanner)?)?;
     let (args, redirects) = parse_command_words(scanner, span)?;
 
@@ -2695,7 +2686,7 @@ fn parse_command(scanner: &mut Scanner, span: Span) -> Result<Option<Statement>,
         };
     }
 
-    Ok(Some(stmt))
+    Ok(stmt)
 }
 
 /// A `{` has been reached while collecting a command's word list. Decide
@@ -3168,6 +3159,10 @@ fn parse_trailing_list_op(
 
 /// Parse one `&&`/`||` chain operand: a command + its pipeline/redirects,
 /// but NOT a trailing list operator (the caller loops, left-associative).
+///
+/// Keeps its `Option` unlike the rest of the statement parsers: `None` here
+/// is live, and is what `parse_trailing_pipeline` turns into SB4056 for a
+/// dangling `/bin/true &&`.
 fn parse_list_operand(scanner: &mut Scanner) -> Result<Option<Statement>, Diagnostic> {
     skip_terminators(scanner);
     if scanner.at_eof() {
@@ -3176,13 +3171,10 @@ fn parse_list_operand(scanner: &mut Scanner) -> Result<Option<Statement>, Diagno
     let start = scanner.peek().span.start;
     let tok = scanner.peek().token.clone();
     let span = span_from(scanner, start);
-    let stmt = match dispatch_statement(scanner, tok, span)? {
-        Some(s) => s,
-        None => return Ok(None),
-    };
+    let stmt = dispatch_statement(scanner, tok, span)?;
     if is_compound(&stmt.kind) {
         // Compounds can't take a postfix `&&`/`||`/redirect/pipe (SB4023/…).
-        reject_compound_postfix(stmt, scanner)
+        reject_compound_postfix(stmt, scanner).map(Some)
     } else {
         Ok(Some(wrap_pipeline_part(scanner, stmt)?))
     }

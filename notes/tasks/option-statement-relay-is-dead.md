@@ -1,6 +1,6 @@
 ---
 title: The Option<Statement> relay is dead — 8 cold lines and a third false diagnostic
-status: open
+status: done
 priority: P2
 kind: hardening
 source: journal 509 follow-up (2026-10-15)
@@ -60,7 +60,17 @@ route is `parse_return_producer_head` returning `None`, whose sole source is its
 `Tok::Bang => parse_negated(scanner)` arm, and `parse_negated`'s own `Ok(None)`
 (1260) is itself cold.
 
-## Why this is blocked on DG
+## Resolution (2026-10-15, journal 510) — DG chose C
+
+Done, and it closed **all eight** lines rather than the one C was costed for.
+The probes this task demanded turned out to be the wrong instrument:
+**narrowing a signature is self-proving**, because a relay carrying a live
+`None` simply fails to typecheck. The compiler accepted 25 of 27 narrowings and
+the two left are exactly the two with a live `None` — it partitioned the cohort
+for free. Sweep 8377, zero flips, zero new ids. See journal 510 and the new
+AGENTS.md rule "when a cold line is a TYPE's fault, change the type".
+
+## Why this was blocked on DG (historical)
 
 It is the back half of journal 509's fork, which is DG's call:
 

@@ -745,6 +745,26 @@ same reasoning applies to a unit test offered as cover: `atok_to_text`'s
 the call site formatted with `{:?}` — which *was* the original bug. Prefer
 the spec that reads the message the user actually gets.
 
+**And when a diagnostic is built by a shared constructor, the MESSAGE does not
+pin a site either.** `return_producer_error` has two call sites raising
+byte-identical SB4014 text; one is warm, one was cold, and probing the sentence
+fires the warm one. The test is the *constructor's* call-site count, not the
+string's uniqueness (journal 510).
+
+**When a cold line is a TYPE's fault, change the type — don't probe it.** A
+cold `None`/`Err` relay arm exists because the signature admits a case the
+function cannot produce. Narrowing the signature is self-proving: if the relay
+could carry a live value, the narrowed function does not typecheck and `rustc`
+names the line. So the experiment and the fix are one edit, and the result is a
+proof over every path rather than one probe's corroboration. Measured 2026-10-15
+on `parse/parser.rs`: 25 of 27 `Result<Option<Statement>, _>` signatures
+narrowed, the compiler accepted all 25, and the two left alone were exactly the
+two with a live `None` — it partitioned the cohort without being told which was
+which, deleting eight cold lines (40% of the file's cohort) including a third
+unreachable user-facing diagnostic. Prefer this to an `unreachable!()`: an ICE
+asserts "this cannot happen" and must be believed; an unrepresentable case is
+the stronger claim and the cheaper one.
+
 **The fastest reachability probe is to make the arm `panic!` and rebuild — but
 a negative result needs a positive control.** `cargo build` can no-op, a patch
 can fail to apply, and a `grep` for the marker can swallow it; all three look
