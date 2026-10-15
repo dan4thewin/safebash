@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup taint
-plan=339
+plan=342
 echo "1..$plan" >&3
 
 set +e
@@ -1467,6 +1467,32 @@ map m = @{a:~}
 attest k v in m [[ -n $k && -n $v ]]
 echo done'
 [[ $rc = 0 && $out = "done" ]]; chk 93.58
+
+# 93.59 attest-all with NO predicate: `classify_attest` answers None and
+#       `handle_attest_stmt` ICEs on it ("`attest` shape is fixed by
+#       parse_attest before lowering (SB4014)"). It was not: the scalar
+#       path is guarded by a peek, the attest-all path was not, so this
+#       parsed clean, slipped `check_attest_form`'s `let … else { return }`,
+#       and crashed the compiler. The parser now makes the ICE's claim true.
+run_sash 'array a=(p q)
+attest x in a
+echo done'
+[[ $rc != 0 && -z $out && $err == *SB4014* \
+   && $err == *"or a test operator in attest-all"* ]]; chk 93.59
+
+# 93.60 …same with two binders (the map spelling), which reached the same ICE
+run_sash 'array a=(p q)
+attest x y in a
+echo done'
+[[ $rc != 0 && -z $out && $err == *SB4014* \
+   && $err == *"or a test operator in attest-all"* ]]; chk 93.60
+
+# 93.61 positive control: the Part B operator shorthand IS a predicate, so
+#       attest-all without `[[ ]]` is still accepted
+run_sash 'array a=(p q)
+attest x in a -n
+echo done'
+[[ $rc = 0 && $out = "done" ]]; chk 93.61
 
 # ── attest on an INT variable (codegen/dispatch.rs::emit_attest) ──
 # Every attest spec in the suite attested a *string*. The int paths in

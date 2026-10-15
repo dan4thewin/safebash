@@ -97,3 +97,48 @@ function is 7/4. Both clear the bar without an annotation.
 Worth noting as a cost of the mechanism: a 25-signature sweep will drag in
 whatever grandfathered functions it brushes against. One here, and it was a
 ten-minute extraction, but a wider sweep could surface several at once.
+
+## …and the free rider was hiding a compiler crash
+
+Extracting `parse_attest_predicate` left it answering `Option<Expr>`, because
+at the time I read absence as "a `validate` question, not a parse one". The
+very next coverage run called that: `parser.rs` went 20 → **11** cold lines,
+but one of the 11 was *new* — my own `Ok(None)`.
+
+Probing it found a bug:
+
+```
+array a=(p q)
+attest x in a          # no predicate
+```
+
+ICEs the compiler. `classify_attest` answers `None` for that shape,
+`check_attest_form` has a `let … else { return }` and says nothing, and
+`handle_attest_stmt` hits `unreachable!("`attest` shape is fixed by
+parse_attest before lowering (SB4014)")`. **The ICE named a guarantee
+`parse_attest` did not provide.** The scalar path is safe — the predicate peek
+(`[[`, `((`, or a unary operator) is the same condition that chooses it — but
+the attest-all lead is reached precisely when that peek *fails*, so nothing
+downstream of `in ARRAY` required a predicate at all. Two binders
+(`attest x y in a`, the map spelling) reach it too.
+
+Pre-existing, not introduced: before the extraction the same three-branch
+chain simply fell through without pushing, producing the identical AST. It had
+been live since the attest-all form existed, and no spec had ever written a
+predicate-less attest.
+
+Fixed where the ICE says it is fixed — `parse_attest_predicate` now returns
+`Result<Expr, _>` and raises SB4014 on the fourth branch. That makes the ICE's
+claim true, and the cold `Ok(None)` is gone the same way the other eight were:
+by not being expressible. Specs `93.59`/`93.60` (both spellings) and `93.61`
+(positive control — the Part B operator shorthand *is* a predicate, so
+attest-all with no `[[ ]]` is still legal).
+
+The sequence is worth noting. A cold line I created by hand, in a refactor
+whose entire subject was cold lines, was a real bug — and the thing that caught
+it in under an hour was re-measuring instead of assuming the count. The
+prediction was "8 gone"; the measurement said "9 gone, 1 new", and the
+discrepancy *was* the finding.
+
+Sweep **8383**, predicted 8383 (3 specs × 2 modes). Zero failures, zero flips,
+exactly the six expected new ids, liveness 258.

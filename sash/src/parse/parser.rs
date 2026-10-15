@@ -1979,10 +1979,8 @@ fn parse_attest(scanner: &mut Scanner) -> Result<Statement, Diagnostic> {
     };
 
     // Expect the predicate: `[[ … ]]`, the DD#93 Part D `(( … ))`, or the
-    // Part B bare-unary shorthand.
-    if let Some(pred) = parse_attest_predicate(scanner, &args, span)? {
-        args.push(pred);
-    }
+    // Part B bare-unary shorthand. Mandatory — see `parse_attest_predicate`.
+    args.push(parse_attest_predicate(scanner, &args, span)?);
 
     Ok(Statement {
         kind: StmtKind::Command(Command {
@@ -1996,14 +1994,22 @@ fn parse_attest(scanner: &mut Scanner) -> Result<Statement, Diagnostic> {
     })
 }
 
-/// The attest predicate, in its three spellings. Absent is legal *here* —
-/// whether a given attest form requires one is a `validate` question, not a
-/// parse one, so this answers `None` rather than raising.
+/// The attest predicate, in its three spellings — and it is **mandatory**.
+///
+/// Every form DD#93 documents carries one, and `classify_attest` answers
+/// `None` without it, which `handle_attest_stmt` treats as impossible: its
+/// ICE says "`attest` shape is fixed by `parse_attest` before lowering
+/// (SB4014)". That was false. The scalar path is guarded — this is only
+/// entered after a `[[`, `((` or unary-operator peek — but the attest-all
+/// path is not, so `attest x in a` with nothing after it parsed clean,
+/// slipped `check_attest_form`'s `let … else { return }`, and crashed the
+/// compiler in the transform. Raising here is what makes the ICE's claim
+/// true.
 fn parse_attest_predicate(
     scanner: &mut Scanner,
     args: &[Expr],
     span: Span,
-) -> Result<Option<Expr>, Diagnostic> {
+) -> Result<Expr, Diagnostic> {
     if matches!(scanner.peek().token, Tok::DblBracketOpen) {
         scanner.next();
         let test_expr = parse_test_expr(scanner, span)?;
@@ -2013,29 +2019,36 @@ fn parse_attest_predicate(
             span,
             "expected ']]' in attest",
         )?;
-        Ok(Some(Expr {
+        Ok(Expr {
             kind: ExprKind::Test(test_expr),
             span,
-        }))
+        })
     } else if matches!(scanner.peek().token, Tok::DblParen) {
         // DD#93 Part D: the int-assignment is the predicate. Parsed as an
         // attest predicate, never as a free arithmetic statement — which is
         // why the bare source needs no DD#77 disposition here.
         scanner.next();
         let arith = parse_arith_command(scanner, span)?;
-        Ok(Some(Expr {
+        Ok(Expr {
             kind: ExprKind::Arithmetic(Box::new(arith)),
             span,
-        }))
+        })
     } else if let Some(op) = peek_unary_test_op(scanner) {
         // DD#93 Part B: `attest VAR OP` ≡ `attest VAR [[ OP $VAR ]]`.
         scanner.next();
-        Ok(Some(Expr {
+        Ok(Expr {
             kind: ExprKind::Test(attest_shorthand_test(&op, args, span)),
             span,
-        }))
+        })
     } else {
-        Ok(None)
+        // Reachable only from the attest-all lead (DD#113 keeps `(( … ))`
+        // scalar-only, so `[[ … ]]` or a Part B operator is what can follow).
+        Err(parse_error(
+            span,
+            "SB4014",
+            "expected '[[ … ]]' or a test operator in attest-all (attest x in a [[ … ]])"
+                .to_string(),
+        ))
     }
 }
 
