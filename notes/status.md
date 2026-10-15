@@ -29,13 +29,24 @@ callers still gate, and no one gate can speak for the other two. Only
 `parse_redirect` is unit-testable (direct call, contract deliberately broken);
 `parse_brace_else` is the "do not chase" category.
 
-**Waiting on DG — the `parse_if` signature.** Narrowing it from
-`Result<Option<Statement>, _>` to `Result<Statement, _>` would delete the cold
-line at the type level (`eliminate-ice-arms-via-types`), but **27 functions in
-`sash/src/parse/` share that signature** as the "None = not my form" dispatch
-protocol, and `dispatch_statement:298` returns it onward unchanged. Narrowing
-one would put a `.map(Some)` there and make it the odd one out. Took the
-reversible path; the convention break is not reversible.
+**Waiting on DG — the `parse_if` signature, reframed.** The commit message
+said the 27 functions sharing `Result<Option<Statement>, _>` do so as a
+"None = not my form" dispatch protocol. **That is wrong and the journal
+corrects it.** `dispatch_statement` is a total match on the head token; every
+arm commits and nothing backtracks. The `None` means only "there is no
+statement here", it originates solely at `parse_statement:270` (EOF /
+comment-only), and three functions relay it. **So 23 of the 27 can never return
+`None`** — the `Option` is repetition, not protocol, and `parse_brace_else` was
+just the one place that answered the impossible case with a user-facing
+diagnostic instead of ignoring it.
+
+Three-way fork, DG's call: **A** leave it (committed — one `unreachable!()`,
+zero churn); **B** narrow `parse_if` alone (deletes the cold line, makes 1 of
+27 odd, `.map(Some)` at `dispatch_statement:298` — worst of both); **C** narrow
+all 23 (removes the class, not the instance; `parse_statement` and
+`dispatch_statement` keep their `Option`; touches 23 signatures and their call
+sites). My earlier "breaking a 27-function convention" overstated B and C — the
+only honest objection to C is its size.
 
 Sweep **8377** (predicted 8375 + 2 before running), zero failures, zero flips,
 two new ids both `sl.14`, liveness 258. `mk test` 125 + 27 + 20.

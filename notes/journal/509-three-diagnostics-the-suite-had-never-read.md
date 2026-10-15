@@ -98,22 +98,51 @@ makes the panic a claim rather than a prediction.
 `Ok(None)` requires editing `parse_if`. This is the category AGENTS.md says
 not to chase: document the invariant in the arm and stop.
 
-## The signature change I did not make
+## The signature change I did not make — and a correction
 
 There is a tidier fix for `parser.rs:705`: `parse_if` returns
 `Result<Option<Statement>, Diagnostic>` but never produces the `None`, so
 narrowing it to `Result<Statement, Diagnostic>` would delete the cold line at
 the type level — exactly the thesis of `eliminate-ice-arms-via-types`.
 
-I did not, and the reason is worth recording. **Twenty-seven functions in
-`sash/src/parse/` share that signature** as a deliberate protocol: `None` means
-"not my form", which is what lets `dispatch_statement` try them in turn.
-`dispatch_statement:298` is `Tok::If => parse_if(scanner)` — it returns the
-`Option` onward unchanged. Narrowing `parse_if` alone would put a `.map(Some)`
-at that call site and make one of the twenty-seven different from the rest, to
-remove a line that an `unreachable!()` already handles. Flagged for DG rather
-than decided; the conservative path is reversible and the convention break is
-not.
+**The commit message gets the reason wrong, and this is the correction.** I
+wrote that the 27 functions sharing that signature do so as a deliberate
+"`None` = not my form" protocol that lets `dispatch_statement` try them in
+turn. That is not what the code does. `dispatch_statement` is a *total* match
+on the head token — every arm commits, `_ => parse_simple_or_assignment` is the
+catch-all, and nothing backtracks. There is no try-in-turn protocol to break.
+
+What the `None` actually means is narrower and duller: **"there is no statement
+here."** It originates in exactly one place, `parse_statement:270`, whose doc
+comment says so outright ("Returns None for empty/comment-only lines"), and
+three functions relay it — `parse_negated:1272`, `parse_suppressed:1353`,
+`parse_list_operand:3174/3181`, each handing on a `None` that traces back to
+that EOF check.
+
+Which means **23 of the 27 can never return `None`**. The `Option` is not a
+protocol there, it is repetition, and every caller pays for a case that cannot
+arise. `parse_brace_else` is simply the one place where somebody answered the
+impossible case with a *user-facing diagnostic* instead of ignoring it, which
+is why coverage found this one and not the other twenty-two.
+
+So the fork is three-way, not two:
+
+- **A — leave it** (what is committed). One `unreachable!()` in the one spot
+  that has to name the case. Zero churn.
+- **B — narrow `parse_if` alone.** Deletes the cold line, but makes one of 27
+  signatures different from the rest and puts a `.map(Some)` at
+  `dispatch_statement:298`. The worst of both: real churn, no systemic gain.
+- **C — narrow all 23 that never return `None`.** `parse_statement` keeps the
+  `Option` because it is the real producer, and `dispatch_statement` keeps it
+  because it relays through `parse_negated`/`parse_suppressed`, so its arms
+  become `parse_if(scanner).map(Some)` and so on. This removes the whole class
+  of impossible-case handling rather than one instance of it, at the cost of
+  touching 23 signatures and their call sites.
+
+I took A because it is reversible and the other two are DG's call. My earlier
+framing — "breaking a 27-function convention" — overstated B and C, since the
+shared signature is not a convention carrying meaning. The honest objection to
+C is only its size.
 
 ## Numbers
 
