@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup functions
-plan=184
+plan=190
 echo "1..$plan" >&3
 
 set +e
@@ -1357,6 +1357,32 @@ cat'
 run_sash 'fn a { echo hi | b }
 a'
 [[ $rc != 0 && -z $out && $err == *SB5011* && $err == *"'b'"* ]]; chk 81.46
+
+# A present return-type arrow requires DD#16's `int`, in every definition
+# spelling. Missing types used to silently select the default string return.
+run_sash 'fn f -> { echo ok; }; f'
+[[ $rc != 0 && -z $out && $err == *SB4014* \
+   && $err == *"expected 'int' after '->'"* ]]; chk rty.1
+
+run_sash 'fn f() -> { echo ok; }; f'
+[[ $rc != 0 && -z $out && $err == *SB4014* \
+   && $err == *"expected 'int' after '->'"* ]]; chk rty.2
+
+run_sash 'function f() -> { echo ok; }; f'
+[[ $rc != 0 && -z $out && $err == *SB4014* \
+   && $err == *"expected 'int' after '->'"* ]]; chk rty.3
+
+run_sash 'f() -> { echo ok; }; f'
+[[ $rc != 0 && -z $out && $err == *SB4014* \
+   && $err == *"expected 'int' after '->'"* ]]; chk rty.4
+
+run_sash 'fn f -> str { echo ok; }; f'
+[[ $rc != 0 && -z $out && $err == *SB4014* \
+   && $err == *"expected 'int' after '->'"* ]]; chk rty.5
+
+run_sash 'fn f ->'
+[[ $rc != 0 && -z $out && $err == *SB4014* \
+   && $err == *"expected 'int' after '->'"* ]]; chk rty.6
 
 
 set -e

@@ -107,6 +107,13 @@ bless k v in m [[ $k =~ ^[A-Z_]+$ && $v =~ ^[[:print:]]*$ ]]
 - Arity/kind mismatch (1 binder on a map, 2 on an indexed array) is a
   type error directing to the correct form.
 
+**Enforcement correction (2026-10-16, journal 511):** more than two binders
+with a `[[ ... ]]` predicate or DD#93's unary shorthand is SB4014. The parser
+previously admitted the form, which could reach the transform's malformed
+attest ICE once ordinary declarations prevented SB5031 from masking it.
+Specs `93.62`/`93.63`. Arithmetic attest-all remains DD#113's SB5054 in
+`validate`, including an over-long lead (`93.52`); that diagnostic is unchanged.
+
 ### Semantics
 
 - Runs the predicate once per element, binding `$x` to that element.

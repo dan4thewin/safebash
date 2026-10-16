@@ -751,19 +751,19 @@ byte-identical SB4014 text; one is warm, one was cold, and probing the sentence
 fires the warm one. The test is the *constructor's* call-site count, not the
 string's uniqueness (journal 510).
 
-**When a cold line is a TYPE's fault, change the type — don't probe it.** A
-cold `None`/`Err` relay arm exists because the signature admits a case the
-function cannot produce. Narrowing the signature is self-proving: if the relay
-could carry a live value, the narrowed function does not typecheck and `rustc`
-names the line. So the experiment and the fix are one edit, and the result is a
-proof over every path rather than one probe's corroboration. Measured 2026-10-15
-on `parse/parser.rs`: 25 of 27 `Result<Option<Statement>, _>` signatures
-narrowed, the compiler accepted all 25, and the two left alone were exactly the
-two with a live `None` — it partitioned the cohort without being told which was
-which, deleting eight cold lines (40% of the file's cohort) including a third
-unreachable user-facing diagnostic. Prefer this to an `unreachable!()`: an ICE
-asserts "this cannot happen" and must be believed; an unrepresentable case is
-the stronger claim and the cheaper one.
+**Once a result alternative is proved impossible, narrow the type.** Enumerate
+its producers and the caller guards first; then a narrower signature makes that
+contract mechanically enforceable. Journal 510 removed eight cold relay lines
+this way, but overstated what the successful build proved. Changing signatures
+*and deleting branches* does not prove the deleted branches were unreachable
+in the old program; the compiler checks the new program, not the edit's
+behavioural equivalence. It does not partition live and dead cases for us.
+Keep the construction evidence and verify the behaviour (journal 511).
+
+**A cold brace can be a real branch.** `parse_for`'s closing `}` belonged to the
+implicit false branch of `if ... Tok::In`, not unreachable punctuation.
+`for x` reached it and produced a normal missing-body diagnostic. Probe before
+discarding a brace's DA record as a measurement fault (journal 511).
 
 **The fastest reachability probe is to make the arm `panic!` and rebuild — but
 a negative result needs a positive control.** `cargo build` can no-op, a patch

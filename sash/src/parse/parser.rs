@@ -594,12 +594,9 @@ fn flip_negated_attest(inner: &mut If, span: Span) {
 /// the unnegated condition being false, so `if !C {A} elif C2 {B} else {D}`
 /// is `if C { if C2 {B} else {D} } else {A}`.
 fn negated_fall_through(inner: &mut If, span: Span) -> Vec<Statement> {
-    if inner.elif_clauses.is_empty() {
-        return inner.else_body.take().unwrap_or_default();
-    }
     let mut rest = std::mem::take(&mut inner.elif_clauses).into_iter();
     let Some(first) = rest.next() else {
-        return Vec::new();
+        return inner.else_body.take().unwrap_or_default();
     };
     vec![Statement {
         kind: StmtKind::If(If {
@@ -856,7 +853,7 @@ fn finish_function_def(
     name: String,
     span: Span,
 ) -> Result<Statement, Diagnostic> {
-    let return_type = parse_optional_return_type(scanner);
+    let return_type = parse_optional_return_type(scanner)?;
 
     skip_terminators(scanner);
     expect(
@@ -892,25 +889,25 @@ fn parse_optional_empty_parens(scanner: &mut Scanner, span: Span) -> Result<(), 
 /// `>` as its own token, so the arrow arrives **split** as `-` `>` for every
 /// spelling (`->int`, `-> int`, `()  ->  int`, `  ->  int`); there is no single
 /// `Word("->")` form to accept.
-fn parse_optional_return_type(scanner: &mut Scanner) -> VarType {
+fn parse_optional_return_type(scanner: &mut Scanner) -> Result<VarType, Diagnostic> {
     let Tok::Word(w) = &scanner.peek().token else {
-        return VarType::String;
+        return Ok(VarType::String);
     };
     if w == "-" && matches!(scanner.peek_n(1).token, Tok::Gt) {
+        let start = scanner.peek().span.start;
         scanner.next(); // consume -
         scanner.next(); // consume >
-        return consume_int_token(scanner);
-    }
-    VarType::String
-}
-
-fn consume_int_token(scanner: &mut Scanner) -> VarType {
-    if matches!(scanner.peek().token, Tok::Int) {
+        if !matches!(scanner.peek().token, Tok::Int) {
+            return Err(parse_error(
+                span_from(scanner, start),
+                "SB4014",
+                "expected 'int' after '->' in function return type".to_string(),
+            ));
+        }
         scanner.next();
-        VarType::Int
-    } else {
-        VarType::String
+        return Ok(VarType::Int);
     }
+    Ok(VarType::String)
 }
 
 // ── declarations (int, const, array, map) ────────────────────
@@ -939,22 +936,20 @@ fn parse_declaration(scanner: &mut Scanner, keyword: &str) -> Result<Statement, 
 /// const+structure is intentionally left as a compile error (spec 35.2), so it
 /// is not stacked here.
 fn declaration_axes(scanner: &mut Scanner, keyword: &str) -> (DeclKeyword, VarType, Vec<String>) {
-    if keyword == "const" && matches!(scanner.peek().token, Tok::Int) {
-        scanner.next();
-        return (DeclKeyword::Readonly, VarType::Int, vec!["-r".to_string()]);
-    }
-    if keyword == "int" {
-        match scanner.peek().token {
-            Tok::Array => {
-                scanner.next();
-                return (DeclKeyword::Declare, VarType::Int, vec!["-a".to_string()]);
-            }
-            Tok::Map => {
-                scanner.next();
-                return (DeclKeyword::Declare, VarType::Int, vec!["-A".to_string()]);
-            }
-            _ => {}
+    match (keyword, &scanner.peek().token) {
+        ("const", Tok::Int) => {
+            scanner.next();
+            return (DeclKeyword::Readonly, VarType::Int, vec!["-r".to_string()]);
         }
+        ("int", Tok::Array) => {
+            scanner.next();
+            return (DeclKeyword::Declare, VarType::Int, vec!["-a".to_string()]);
+        }
+        ("int", Tok::Map) => {
+            scanner.next();
+            return (DeclKeyword::Declare, VarType::Int, vec!["-A".to_string()]);
+        }
+        _ => {}
     }
     match keyword {
         "int" => (DeclKeyword::Declare, VarType::Int, vec![]),
@@ -976,7 +971,7 @@ fn declaration_axes(scanner: &mut Scanner, keyword: &str) -> (DeclKeyword, VarTy
             VarType::String,
             vec!["-A".to_string()],
         ),
-        _ => (DeclKeyword::Declare, VarType::String, vec![]),
+        _ => unreachable!("dispatch_statement passes only declaration keywords"),
     }
 }
 
@@ -2079,9 +2074,7 @@ fn attest_shorthand_test(op: &str, lead: &[Expr], span: Span) -> TestExpr {
     };
     let name_at = |i: usize| match lead.get(i).map(|e| &e.kind) {
         Some(ExprKind::Literal(s)) => s.clone(),
-        // Unreachable via parse_attest (the lead is always literals); a
-        // wrong name here would be caught by taint_attest's SB5020.
-        _ => String::new(),
+        _ => unreachable!("parse_attest builds each binder as a literal name"),
     };
     match lead.len() {
         // `attest k v in m OP` — the map form's predicate must validate BOTH
@@ -2118,6 +2111,14 @@ fn parse_attest_all_lead(
     }
     scanner.next(); // consume 'in'
     let array = expect_word(scanner, span, "expected array name after 'in' in attest")?;
+    // DD#113 reserves arithmetic attest-all shape errors for validate's SB5054.
+    if binders.len() > 2 && !matches!(scanner.peek().token, Tok::DblParen) {
+        return Err(parse_error(
+            span,
+            "SB4014",
+            "attest-all takes one array binder or two map binders before 'in'".to_string(),
+        ));
+    }
     binders.push(array);
     Ok(binders
         .into_iter()
@@ -3124,9 +3125,9 @@ fn parse_trailing_list_op(
     // there is nothing to group with, because the answer is `if` or dispatch.
     let mut chain_op: Option<ListOp> = None;
     loop {
-        let op = match scanner.peek().token {
-            Tok::AndAnd => ListOp::And,
-            Tok::OrOr => ListOp::Or,
+        let (op, spelling) = match scanner.peek().token {
+            Tok::AndAnd => (ListOp::And, "&&"),
+            Tok::OrOr => (ListOp::Or, "||"),
             Tok::Amp => return Ok(background_list_op(scanner, left)),
             _ => return Ok(left),
         };
@@ -3151,11 +3152,7 @@ fn parse_trailing_list_op(
                 format!(
                     "`{}` has no right-hand side — a list operator needs a command \
                      on both sides",
-                    match op {
-                        ListOp::And => "&&",
-                        ListOp::Or => "||",
-                        ListOp::Background => "&",
-                    }
+                    spelling
                 ),
             ));
         };
@@ -3588,7 +3585,7 @@ fn unrecognized_operator_diag(pe: &ParameterExpansion, span: Span) -> Option<Dia
             kind: ExprKind::Literal(s),
             ..
         }) => s.as_str(),
-        _ => "",
+        _ => unreachable!("unrecognized parameter operator carries a literal remainder"),
     };
     Some(parse_error(
         span,
@@ -3809,6 +3806,71 @@ fn walk_exprs(stmt: &Statement, f: &mut impl FnMut(&Expr)) {
 #[cfg(test)]
 mod invariant_tests {
     use super::*;
+
+    #[test]
+    #[should_panic(expected = "dispatch_statement passes only declaration keywords")]
+    fn declaration_axes_rejects_an_unknown_keyword() {
+        let _ = declaration_axes(&mut Scanner::new("x"), "unknown");
+    }
+
+    #[test]
+    #[should_panic(expected = "parse_attest builds each binder as a literal name")]
+    fn attest_shorthand_rejects_a_missing_binder() {
+        let _ = attest_shorthand_test("-n", &[], Span::new(1, 1));
+    }
+
+    #[test]
+    #[should_panic(expected = "parse_attest builds each binder as a literal name")]
+    fn attest_shorthand_rejects_a_nonliteral_binder() {
+        let span = Span::new(1, 1);
+        let lead = [Expr {
+            kind: ExprKind::SimpleExpansion("x".into()),
+            span,
+        }];
+        let _ = attest_shorthand_test("-n", &lead, span);
+    }
+
+    #[test]
+    #[should_panic(expected = "unrecognized parameter operator carries a literal remainder")]
+    fn unrecognized_operator_rejects_a_missing_remainder() {
+        let span = Span::new(1, 1);
+        let expr = Expr::param("x", Some("unrecognized"), None, span);
+        let ExprKind::ParameterExpansion(pe) = expr.kind else {
+            unreachable!();
+        };
+        let _ = unrecognized_operator_diag(&pe, span);
+    }
+
+    #[test]
+    #[should_panic(expected = "unrecognized parameter operator carries a literal remainder")]
+    fn unrecognized_operator_rejects_a_nonliteral_remainder() {
+        let span = Span::new(1, 1);
+        let operand = Expr {
+            kind: ExprKind::SimpleExpansion("y".into()),
+            span,
+        };
+        let expr = Expr::param("x", Some("unrecognized"), Some(Box::new(operand)), span);
+        let ExprKind::ParameterExpansion(pe) = expr.kind else {
+            unreachable!();
+        };
+        let _ = unrecognized_operator_diag(&pe, span);
+    }
+
+    #[test]
+    fn nonword_heads_have_no_constant_text() {
+        let span = Span::new(1, 1);
+        let test = TestExpr::Unary {
+            op: "-n".into(),
+            operand: Box::new(Expr::literal("x", span)),
+        };
+        for kind in [
+            ExprKind::Array(vec![Expr::literal("echo", span)]),
+            ExprKind::AssocArray(vec![("key".into(), Expr::literal("echo", span))]),
+            ExprKind::Test(test),
+        ] {
+            assert_eq!(constant_head_text(&kind), None, "{kind:?}");
+        }
+    }
 
     #[test]
     #[should_panic(expected = "neither side is empty")]

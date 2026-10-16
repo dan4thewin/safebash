@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup taint
-plan=342
+plan=344
 echo "1..$plan" >&3
 
 set +e
@@ -1493,6 +1493,22 @@ run_sash 'array a=(p q)
 attest x in a -n
 echo done'
 [[ $rc = 0 && $out = "done" ]]; chk 93.61
+
+# A third binder cannot be classified. Declare the names to get past SB5031,
+# which otherwise masks the transform ICE this malformed form used to reach.
+run_sash 'str x=p
+array a=(p q)
+attest x y z in a -n
+echo done'
+[[ $rc != 0 && -z $out && $err == *SB4014* \
+   && $err == *"one array binder or two map binders"* ]]; chk 93.62
+
+run_sash 'str x=p; str y=q; str z=r
+array a=(p q)
+attest x y z in a [[ -n $x && -n $y && -n $z ]]
+echo done'
+[[ $rc != 0 && -z $out && $err == *SB4014* \
+   && $err == *"one array binder or two map binders"* ]]; chk 93.63
 
 # ── attest on an INT variable (codegen/dispatch.rs::emit_attest) ──
 # Every attest spec in the suite attested a *string*. The int paths in

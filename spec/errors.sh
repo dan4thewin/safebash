@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup errors
-plan=411
+plan=413
 echo "1..$plan" >&3
 
 set +e
@@ -2497,6 +2497,15 @@ run_sash 'a-b=1'
 run_sash 'str x="echo"
 "$x" hi'
 [[ $rc != 0 && -z $out && $err == *SB5011* && $err == *"variable or expansion"* ]]; chk qhead.21
+
+# These parser fallthroughs are reachable, not invariant failures.
+run_sash '-'
+[[ $rc != 0 && -z $out && $err == *SB5011* \
+   && $err == *"command '-' not found"* ]]; chk pcold.1
+
+run_sash 'for x'
+[[ $rc != 0 && -z $out && $err == *SB4014* \
+   && $err == *'expected a `{ }` body or `do`'* ]]; chk pcold.2
 
 
 set -e

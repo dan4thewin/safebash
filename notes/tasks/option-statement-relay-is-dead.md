@@ -63,12 +63,11 @@ route is `parse_return_producer_head` returning `None`, whose sole source is its
 ## Resolution (2026-10-15, journal 510) — DG chose C
 
 Done, and it closed **all eight** lines rather than the one C was costed for.
-The probes this task demanded turned out to be the wrong instrument:
-**narrowing a signature is self-proving**, because a relay carrying a live
-`None` simply fails to typecheck. The compiler accepted 25 of 27 narrowings and
-the two left are exactly the two with a live `None` — it partitioned the cohort
-for free. Sweep 8377, zero flips, zero new ids. See journal 510 and the new
-AGENTS.md rule "when a cold line is a TYPE's fault, change the type".
+Twenty-five signatures narrowed after examining their producers and caller
+guards; the two remaining `Option`s retain live EOF cases. Sweep 8377, zero
+flips, zero new ids. Journal 511 corrects the original resolution's
+"self-proving" claim: compiling after changing branches and signatures checks
+the new contract, not whether the removed branches were unreachable before.
 
 ## Why this was blocked on DG (historical)
 

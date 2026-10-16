@@ -2,6 +2,12 @@
 
 2026-10-15. Follows journal 509. DG: *"address C and the 40%"*.
 
+**Correction, 2026-10-16 (journal 511):** the refactor and measured reduction
+stand, but "self-proving" below overclaims. We changed the branches as well as
+the signatures; a successful build checks the new contract, not the deleted
+branches' old reachability. Nor were the remaining nine lines all totality or
+shadowed material: probing found two live spec gaps and a missing-type bug.
+
 ## What landed
 
 25 of the 27 functions in `parse/parser.rs` that returned
