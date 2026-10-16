@@ -463,6 +463,7 @@ enum ATok {
     /// fell through to a bogus `DollarVar("var:OP…")` → undefined → silent 0
     /// (bug-arith-param-expansion-operator-zero).
     ParamExpansion(String),
+    UnterminatedBrace(String),
     // Operators (ordered by length for tokenization)
     PlusPlus,
     MinusMinus,
@@ -521,7 +522,7 @@ enum ATok {
 fn atok_to_text(tok: &ATok) -> String {
     match tok {
         ATok::Num(n) => n.to_string(),
-        ATok::BadNum(s) | ATok::BadLit(s) | ATok::Var(s) => s.clone(),
+        ATok::BadNum(s) | ATok::BadLit(s) | ATok::Var(s) | ATok::UnterminatedBrace(s) => s.clone(),
         ATok::DollarVar(name) => format!("${name}"),
         ATok::Subscript(name, index) => format!("${{{name}[{index}]}}"),
         ATok::BareSubscript(name, index) => format!("{name}[{index}]"),
@@ -783,12 +784,15 @@ fn scan_arith_dollar(input: &str, bytes: &[u8], i: usize) -> (ATok, usize) {
 /// first `}`: a body may contain a nested `${ … }` of its own (`${a[${i}]}`),
 /// and stopping early truncated it to `a[${i`, so the trailing `]` lexed as a
 /// stray and the read died with SB4035 — while the three other spellings of
-/// that same read all accepted it. An unbalanced `${` keeps the scan-to-end
-/// behaviour, so the real parser still reports it.
+/// that same read all accepted it. An unbalanced body is an error token, never
+/// a valid variable read with its missing closer silently supplied.
 fn scan_arith_braced_var(input: &str, bytes: &[u8], start: usize) -> (ATok, usize) {
     match crate::parse::expr::balanced_close(bytes, start - 1) {
         Some(close) => (braced_body_token(&input[start..close]), close + 1),
-        None => (braced_body_token(&input[start..]), bytes.len()),
+        None => (
+            ATok::UnterminatedBrace(input[start - 2..].to_string()),
+            bytes.len(),
+        ),
     }
 }
 
@@ -1250,12 +1254,11 @@ impl ArithParser {
     /// out-of-range `BadNum` is rejected here (SB4026); the `-i64::MIN`
     /// case is folded earlier by the unary-neg peephole in `parse_unary`.
     fn parse_prefix_atom(&mut self) -> Result<ArithExpr, Diagnostic> {
-        if let Some(tok) = self.peek().cloned() {
-            if let Some(result) = self.parse_expansion_atom(&tok) {
-                return result;
-            }
+        let tok = self.peek().cloned();
+        if let Some(result) = tok.as_ref().and_then(|tok| self.parse_expansion_atom(tok)) {
+            return result;
         }
-        match self.peek().cloned() {
+        match tok {
             Some(ATok::Num(n)) => {
                 self.advance();
                 Ok(ArithExpr::Literal(n))
@@ -1277,6 +1280,15 @@ impl ArithParser {
                 self.advance();
                 Err(arith_bad_literal_error(self.span, &s))
             }
+            Some(tok @ ATok::UnterminatedBrace(_)) => Err(Diagnostic::error_at(
+                self.span.line,
+                self.span.col,
+                "SB4057",
+                format!(
+                    "unterminated `${{` in arithmetic: `{}` — expected `}}`",
+                    atok_to_text(&tok)
+                ),
+            )),
             // An operand is owed here. Recovering silently to 0 turned a
             // malformed expression into a *wrong answer* rather than an error:
             // `$(( 1 +* 2 ))` became 0 and `$(( 1 + ))` became 1, both of which
@@ -1574,15 +1586,28 @@ pub fn collect_arith_content_raw(scanner: &mut Scanner, span: Span) -> Result<St
 /// Collect raw content between the opening (( or $(( and closing )).
 /// Respects nesting of (( )) and ( ).
 fn collect_arith_content(scanner: &mut Scanner, span: Span) -> Result<String, Diagnostic> {
+    let collected = scan_arith_content(scanner);
+    if !collected.closed {
+        return Err(arith_error(
+            span,
+            "unterminated arithmetic — expected `))`. Note a `#` comment runs to \
+             the end of its line, so a `))` after one is part of the comment"
+                .to_string(),
+        ));
+    }
+    Ok(collected.content)
+}
+
+pub(super) struct CollectedArith {
+    pub content: String,
+    pub closed: bool,
+}
+
+/// Shared by ordinary arithmetic and the scanner's double-quoted interpolation.
+/// Closing parentheses stay individual: in `)))`, the first may close a group
+/// and the remaining two close the arithmetic construct.
+pub(super) fn scan_arith_content(scanner: &mut Scanner) -> CollectedArith {
     let mut content = String::new();
-    // Depth is a count of INDIVIDUAL open parens still needing a close, starting
-    // at 2 for the already-consumed `((` / `$((`. Each `(` is +1 and each `)` is
-    // −1 (the `((`/`))` tokens are +2/−2 shortcuts for an adjacent pair). The
-    // content ends when depth returns to 0. Counting individual parens — rather
-    // than treating `((`/`))` as indivisible ±1 units — is what lets a mix of
-    // single and double parens balance, e.g. `$(( (dbl (2)) ))` (a sexpr call
-    // with a parenthesised arg), whose trailing `))` are two single closes, not
-    // the arith terminator (bug-arith-sexpr-nested-cmdsub-arg).
     let mut depth = 2i32;
 
     // Scan the body in arithmetic mode so `<<` lexes as left-shift, not a
@@ -1597,23 +1622,14 @@ fn collect_arith_content(scanner: &mut Scanner, span: Span) -> Result<String, Di
     }
     scanner.exit_arith();
 
-    // DD#94: running out of input with parens still open is a hard error, never
-    // a silent truncation of the expression (the DD#72 principle). Since a `#`
-    // comment now runs to end of line inside arithmetic, the usual cause is a
-    // closing `))` sitting on a commented line, so say so.
-    if depth > 0 {
-        return Err(arith_error(
-            span,
-            "unterminated arithmetic — expected `))`. Note a `#` comment runs to \
-             the end of its line, so a `))` after one is part of the comment"
-                .to_string(),
-        ));
+    CollectedArith {
+        content,
+        closed: depth == 0,
     }
-    Ok(content)
 }
 
 /// One iteration of collect_arith_content. Mutates `content` and `depth`;
-/// returns true when collection should terminate (closing `))` consumed).
+/// returns true when the outer `))` delimiter has been consumed.
 fn step_arith_collect(
     scanner: &mut Scanner,
     tok: &Tok,
@@ -1621,7 +1637,6 @@ fn step_arith_collect(
     depth: &mut i32,
 ) -> bool {
     match tok {
-        Tok::DblParenClose => step_dbl_paren_close(scanner, content, depth),
         Tok::DblParen => step_open_paren(scanner, content, depth, "(("),
         Tok::DollarDblParen => step_open_paren(scanner, content, depth, "$(("),
         Tok::LParen => {
@@ -1633,17 +1648,6 @@ fn step_arith_collect(
         Tok::RParen => step_rparen(scanner, content, depth),
         _ => step_default_token(scanner, tok, content),
     }
-}
-
-/// `))` token — already-paired; decrement depth and (when depth hits 0) terminate.
-fn step_dbl_paren_close(scanner: &mut Scanner, content: &mut String, depth: &mut i32) -> bool {
-    *depth -= 2;
-    scanner.next();
-    if *depth <= 0 {
-        return true;
-    }
-    content.push_str("))");
-    false
 }
 
 /// Opening `((` or `$((` — increment depth, append the text.
@@ -1659,15 +1663,15 @@ fn step_open_paren(
     false
 }
 
-/// `)` token — if followed by another `)`, treat as `))`; otherwise single `)`.
+/// Close an inner group, or consume the two adjacent outer closes.
+/// An unmatched single close stays in the text for the arithmetic diagnostic.
 fn step_rparen(scanner: &mut Scanner, content: &mut String, depth: &mut i32) -> bool {
-    // A single `)` closes one open paren. If that returns depth to 0 it is the
-    // arith terminator (consume, don't emit); otherwise it is content. Adjacent
-    // `))` lexes as one `DblParenClose` token, so a bare `RParen` here is a lone
-    // close.
     scanner.next();
-    *depth -= 1;
-    if *depth <= 0 {
+    if *depth > 2 {
+        *depth -= 1;
+    } else if scanner.next_is_adjacent() && matches!(scanner.peek().token, Tok::RParen) {
+        scanner.next();
+        *depth = 0;
         return true;
     }
     content.push(')');
@@ -1704,13 +1708,7 @@ fn needs_separator_space(next: &Tok, prev_text: &str) -> bool {
     }
     !matches!(
         next,
-        Tok::DblParenClose
-            | Tok::RParen
-            | Tok::Semi
-            | Tok::Newline
-            | Tok::Eof
-            | Tok::DblParen
-            | Tok::LParen
+        Tok::RParen | Tok::Semi | Tok::Newline | Tok::Eof | Tok::DblParen | Tok::LParen
     ) && !prev_text.ends_with(' ')
 }
 
@@ -1779,14 +1777,14 @@ fn tok_to_text(tok: &Tok) -> String {
         Tok::Newline => "\n".to_string(),
         Tok::LBrace => "{".to_string(),
         Tok::RBrace => "}".to_string(),
-        // Parens never arrive here. `step_arith_collect` intercepts all five
+        // Parens never arrive here. `step_arith_collect` intercepts all four
         // *before* `step_default_token` (the sole caller of this function),
         // because rendering them is depth-sensitive: `))` emits nothing when
-        // it closes the expression, and a lone `)` may terminate collection
-        // instead of being content. A plain spelling here would be a second,
+        // it closes the expression, rather than being content.
+        // A plain spelling here would be a second,
         // already-disagreeing answer to that question (DD#116, rival). The
         // arms stay so a new token is still a compile error (property 2).
-        Tok::LParen | Tok::RParen | Tok::DollarDblParen | Tok::DblParen | Tok::DblParenClose => {
+        Tok::LParen | Tok::RParen | Tok::DollarDblParen | Tok::DblParen => {
             unreachable!("paren tokens are handled by step_arith_collect, not tok_to_text")
         }
         Tok::Bang => "!".to_string(),
@@ -1826,6 +1824,26 @@ fn tok_to_text(tok: &Tok) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn token_text_for_trivia_and_end_is_empty() {
+        assert_eq!(tok_to_text(&Tok::Comment("not expression text".into())), "");
+        assert_eq!(tok_to_text(&Tok::Eof), "");
+    }
+
+    // The scanner's deferred lexical error masks this raw API's result at the CLI.
+    #[test]
+    fn raw_arithmetic_rejects_an_unterminated_braced_operand() {
+        for input in ["${x", "1 + ${x", "${x:-${y}"] {
+            let diagnostic = parse_arith_str(input, Span::new(7, 11)).unwrap_err();
+            assert_eq!(diagnostic.code, "SB4057");
+            assert!(diagnostic
+                .message
+                .contains("unterminated `${` in arithmetic:"));
+            assert!(diagnostic.message.contains("expected `}`"));
+            assert_eq!((diagnostic.line, diagnostic.col), (7, 11));
+        }
+    }
 
     /// `++x`. `reject_prefix_incdec` raises SB4020 at both arith entry
     /// points, so `ArithExpr::PreIncDec` never reaches a later pass. These
@@ -1906,19 +1924,13 @@ mod tests {
         }
     }
 
-    /// `step_arith_collect` intercepts all five paren tokens before
+    /// `step_arith_collect` intercepts all four paren tokens before
     /// `step_default_token` — the sole caller of `tok_to_text` — because
     /// rendering them is depth-sensitive. A spelling here would be a second,
     /// already-disagreeing answer (DD#116, rival).
     #[test]
     fn tok_to_text_rejects_every_paren_token() {
-        for tok in [
-            Tok::LParen,
-            Tok::RParen,
-            Tok::DollarDblParen,
-            Tok::DblParen,
-            Tok::DblParenClose,
-        ] {
+        for tok in [Tok::LParen, Tok::RParen, Tok::DollarDblParen, Tok::DblParen] {
             let caught = std::panic::catch_unwind(|| tok_to_text(&tok));
             assert!(caught.is_err(), "{tok:?} should be unreachable here");
         }

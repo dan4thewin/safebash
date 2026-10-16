@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup arithmetic
-plan=438
+plan=466
 echo "1..$plan" >&3
 
 set +e
@@ -2327,6 +2327,73 @@ run_sash '(( getpid++ ))'
 # 58.67 inside a VALUE `$(( ))` the mutation rule answers first
 run_sash 'echo $(( getpid = 5 ))'
 [[ $rc != 0 && -z $out && $err == *SB4020* ]]; chk 58.67
+
+# A group/call close may be adjacent to the outer `))` without joining it.
+run_sash 'echo $(((1+2)))'
+[[ $rc = 0 && $out = "3" && -z $err ]]; chk aclose.1
+run_sash 'echo "$(((1+2)))"'
+[[ $rc = 0 && $out = "3" && -z $err ]]; chk aclose.2
+run_sash 'echo $(( ((1+2))))'
+[[ $rc = 0 && $out = "3" && -z $err ]]; chk aclose.3
+run_sash 'echo "$(( ((1+2))))"'
+[[ $rc = 0 && $out = "3" && -z $err ]]; chk aclose.4
+run_sash 'int array a=(2 4); echo $(((len a)))'
+[[ $rc = 0 && $out = "2" && -z $err ]]; chk aclose.5
+run_sash 'echo $(echo $(((1+2))))'
+[[ $rc = 0 && $out = "3" && -z $err ]]; chk aclose.6
+run_sash 'echo "$(echo $(((1+2))))suffix"'
+[[ $rc = 0 && $out = "3suffix" && -z $err ]]; chk aclose.7
+run_sash 'int x=0; (( x=(1+2))); echo $x'
+[[ $rc = 0 && $out = "3" && -z $err ]]; chk aclose.8
+run_sash 'int x=1; if (( (x>0))) { echo yes }'
+[[ $rc = 0 && $out = "yes" && -z $err ]]; chk aclose.9
+run_sash 'int i=0; while (( (i<2))) { echo $i; (( i++ )) }'
+[[ $rc = 0 && $out = $'0\n1' && -z $err ]]; chk aclose.10
+run_sash 'int i=0; for ((i=0;i<2;(i+=1))) { echo $i }'
+[[ $rc = 0 && $out = $'0\n1' && -z $err ]]; chk aclose.11
+
+# DD#94 applies inside quotes too; comment punctuation cannot close arithmetic.
+run_sash 'echo "$(( 1 + # ) ignored
+2 ))"'
+[[ $rc = 0 && $out = "3" && -z $err ]]; chk aclose.12
+run_sash 'echo "$(( 1 + # ( )) " $'"'"' ${ ignored
+2 ))"'
+[[ $rc = 0 && $out = "3" && -z $err ]]; chk aclose.13
+run_sash 'echo "$((16#ff))"'
+[[ $rc != 0 && -z $out && $err == *"invalid numeric literal"* ]]; chk aclose.14
+
+# The outer delimiter is still adjacent `))`, not two separated closes.
+run_sash 'echo $((1) )'
+[[ $rc != 0 && -z $out && $err == *"unterminated arithmetic"* ]]; chk aclose.15
+run_sash 'echo "$((1) )"'
+[[ $rc != 0 && -z $out && $err == *"unterminated"* ]]; chk aclose.16
+run_sash 'echo $((1)'
+[[ $rc != 0 && -z $out && $err == *"unterminated arithmetic"* ]]; chk aclose.17
+run_sash 'echo "$((1)"'
+[[ $rc != 0 && -z $out && $err == *"unterminated"* ]]; chk aclose.18
+run_sash 'echo $(((1+2))))'
+[[ $rc != 0 && -z $out && -n $err ]]; chk aclose.19
+run_sash 'echo "x$(((1+2)))y"'
+[[ $rc = 0 && $out = "x3y" && -z $err ]]; chk aclose.20
+
+# Arithmetic re-lexing must not turn an unclosed `${` into a valid read.
+run_sash 'int x=5; echo "$(( ${x ))"'
+[[ $rc != 0 && -z $out && $err == *SB4057* && $err == *'`${`'* ]]; chk arithcold.1
+run_sash 'int x=5; echo "$(( ${x:-${x} ))"'
+[[ $rc != 0 && -z $out && $err == *SB4057* && $err == *'`${`'* ]]; chk arithcold.2
+
+run_sash 'str s=12; echo $(( ${s:-0x} ))'
+[[ $rc != 0 && -z $out && $err == *"arithmetic default for"* && $err == *"must be an integer literal"* ]]; chk arithcold.3
+run_sash 'str s=12; echo $(( ${s:-0b2} ))'
+[[ $rc != 0 && -z $out && $err == *"arithmetic default for"* && $err == *"must be an integer literal"* ]]; chk arithcold.4
+run_sash 'int array a=(7); echo $(( a[0 ))'
+[[ $rc != 0 && -z $out && $err == *'stray `[` in arithmetic'* ]]; chk arithcold.5
+run_sash '(( 1++ ))'
+[[ $rc != 0 && -z $out && $err == *"unexpected token after arithmetic expression"* ]]; chk arithcold.6
+run_sash '(( (1)-- ))'
+[[ $rc != 0 && -z $out && $err == *"unexpected token after arithmetic expression"* ]]; chk arithcold.7
+run_sash 'echo $(( -9223372036854775809 ))'
+[[ $rc != 0 && -z $out && $err == *"integer literal out of range: 9223372036854775809"* ]]; chk arithcold.8
 
 set -e
 tally

@@ -189,3 +189,17 @@ is what had made `$(( ,, ))` an empty expression.
 
 Specs `94.31`–`94.40` in `spec/arithmetic.sh`. Found while chasing
 `atok_to_text`'s cold arms for coverage — journal 398.
+
+## Enforcement correction (2026-10-16)
+
+Quoted arithmetic had a private boundary scanner and handed raw text directly
+to the arithmetic re-lexer. It neither recognized DD#94 comments nor enforced
+balanced `${…}` bodies: `int x=5; echo "$(( ${x ))"` silently printed `5`.
+Quoted and unquoted arithmetic now share token collection, including comment
+handling and lexical errors.
+
+Closing parentheses are individual tokens. A group/call close can be adjacent
+to the outer `))` without consuming part of it: `$(((1+2)))` evaluates to `3`,
+quoted or not. The outer delimiter still requires adjacent closes; a spare
+single `)` remains expression text and gets the ordinary arithmetic diagnostic.
+Specs `aclose.1`–`aclose.20` and `arithcold.1`–`arithcold.8`; journal 515.

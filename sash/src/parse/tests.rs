@@ -130,7 +130,6 @@ mod logos_equivalence {
             (">", LogosTok::Gt),
             ("&>", LogosTok::AmpGt),
             ("((", LogosTok::DblParen),
-            ("))", LogosTok::DblParenClose),
             ("(", LogosTok::LParen),
             (")", LogosTok::RParen),
             ("{", LogosTok::LBrace),
@@ -180,20 +179,31 @@ mod logos_equivalence {
     /// The peeked path and the direct path must agree token-for-token.
     #[test]
     fn scanner_next_agrees_with_peek_then_next() {
-        use crate::parse::lexer::Scanner;
+        for src in [
+            "if x { echo a; } else { echo b; }",
+            "echo \"a$(((1+2)))b\"\"$((3+4))\" end",
+            "echo \"$((1 + # )) ignored\n2))\" end",
+        ] {
+            for lookahead in [0, 1, 3] {
+                assert_scanner_lookahead(src, lookahead);
+            }
+        }
+    }
 
-        let src = "if x { echo a; } else { echo b; }";
+    fn assert_scanner_lookahead(src: &str, lookahead: usize) {
+        use crate::parse::lexer::{Scanner, Tok};
+
         let mut direct = Scanner::new(src);
         let mut peeked = Scanner::new(src);
-
+        let mut last_end = 0;
         loop {
             let d = direct.next();
-            peeked.peek();
+            peeked.peek_n(lookahead);
+            assert_eq!(peeked.next_is_adjacent(), d.span.start == last_end);
             let p = peeked.next();
-            assert_eq!(d.token, p.token);
-            assert_eq!(d.span.start, p.span.start);
-            assert_eq!(d.span.end, p.span.end);
-            if matches!(d.token, crate::parse::lexer::Tok::Eof) {
+            assert_eq!(d, p, "{src:?}, lookahead={lookahead}");
+            last_end = d.span.end;
+            if matches!(d.token, Tok::Eof) {
                 break;
             }
         }

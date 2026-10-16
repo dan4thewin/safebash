@@ -88,7 +88,6 @@ pub enum Tok {
     // Arithmetic
     DollarDblParen, // $((
     DblParen,       // ((
-    DblParenClose,  // ))
 
     // Assignment
     Eq,         // =
@@ -562,9 +561,6 @@ impl Scanner {
     ) -> SpannedToken {
         use super::logos_tokens::{to_tok, LogosTok};
 
-        if let Some(tok) = self.split_dbl_paren_close(&lt, start) {
-            return tok;
-        }
         let end = self.pos + len;
         let token = if matches!(lt, LogosTok::Comment) {
             Tok::Comment(String::from_utf8_lossy(&self.source[self.pos..end]).to_string())
@@ -603,31 +599,6 @@ impl Scanner {
                 end: self.pos,
             },
         })
-    }
-
-    /// `))` lexes as one `DblParenClose`, but that token is only meaningful
-    /// inside arithmetic (`(( ))` / `$(( ))`). Outside arith mode, a `))` is two
-    /// separate `)` — e.g. two adjacent command-substitution closes in
-    /// `$(f $(g))` (bug-bare-nested-cmdsub-arg). Split it: emit a single
-    /// `RParen`, consuming one byte, so the second `)` re-lexes next call
-    /// (`)))` splits into three closes). `None` leaves the token as-is.
-    fn split_dbl_paren_close(
-        &mut self,
-        lt: &super::logos_tokens::LogosTok,
-        start: usize,
-    ) -> Option<SpannedToken> {
-        use super::logos_tokens::LogosTok;
-        if matches!(lt, LogosTok::DblParenClose) && self.arith_depth == 0 {
-            self.pos = start + 1;
-            return Some(SpannedToken {
-                token: Tok::RParen,
-                span: LexSpan {
-                    start,
-                    end: start + 1,
-                },
-            });
-        }
-        None
     }
 
     /// Scan `<<<` (HereString) / `<<` (heredoc sentinel, rejected) /
@@ -1662,46 +1633,28 @@ impl Scanner {
         self.scan_braced_content()
     }
 
-    /// One step of the `"…$((…))…"` scan: consume the `((`/`))` pair or the
-    /// single byte at `self.pos`, adjusting `depth`. Returns `false` when the
-    /// `))` closing the OUTERMOST pair is reached, leaving `self.pos` on it.
-    /// Mirrors [`Self::step_dq_cmd_sub`], which does the same for `$(…)`.
-    fn step_dq_arith_sub(&mut self, depth: &mut i32) -> bool {
-        let rest = &self.source[self.pos..];
-        if rest.starts_with(b"((") {
-            *depth += 1;
-            self.pos += 2;
-        } else if rest.starts_with(b"))") {
-            *depth -= 1;
-            if *depth == 0 {
-                return false;
-            }
-            self.pos += 2;
-        } else {
-            self.pos += 1;
-        }
-        true
-    }
-
     /// `$((…))` — caller has not yet advanced past `((`. Returns the
-    /// inner arithmetic text and advances past the closing `))`.
+    /// inner arithmetic text using the same collector as an unquoted expansion.
     fn consume_dq_arith_sub(&mut self) -> String {
         self.pos += 2; // skip ((
-        let inner_start = self.pos;
-        let mut depth = 1i32;
-        while self.pos + 1 < self.source.len() && self.step_dq_arith_sub(&mut depth) {}
-        let content = String::from_utf8_lossy(&self.source[inner_start..self.pos]).to_string();
-        if depth == 0 {
-            self.pos += 2; // skip ))
-        } else {
-            // The loop ran off the end with `))` still owed. Every sibling
-            // construct rejects this (`"${ s"` and `"$( cmd"` both raise
-            // SB4057, as does a bare `$(( 1 + 2`); only the in-`"…"` `$((`
-            // scanner used to return its partial text and evaluate it, so
-            // `echo "$(( 1 + 2"` silently printed 3. `open_at` is the `$`.
-            self.record_unterminated(inner_start - 3, "`$((`");
+        let open_at = self.pos - 3;
+        // This can run while peek_n is building a token beyond older lookahead.
+        // The nested token stream must not consume that queue or its adjacency.
+        let peeked = std::mem::take(&mut self.peeked);
+        let last_end = self.last_end;
+        let unterminated = self.unterminated;
+        let collected = super::arith::scan_arith_content(self);
+        self.peeked = peeked;
+        self.last_end = last_end;
+        if !collected.closed {
+            // Without `))`, the enclosing quote can look like an unclosed
+            // inner string. That consequence must not replace the arith opener.
+            if matches!(self.unterminated, Some((_, "`\"` string"))) {
+                self.unterminated = unterminated;
+            }
+            self.record_unterminated(open_at, "`$((`");
         }
-        content
+        collected.content
     }
 
     /// `$(…)` — caller has not yet advanced past `(`. Returns the

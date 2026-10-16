@@ -56,8 +56,6 @@ pub enum LogosTok {
     AmpGt,
     #[token("((")]
     DblParen,
-    #[token("))")]
-    DblParenClose,
     #[token(";;")]
     DblSemi,
     #[token(">>")]
@@ -112,7 +110,6 @@ pub fn to_tok(t: LogosTok) -> super::lexer::Tok {
         LogosTok::OrOr => Tok::OrOr,
         LogosTok::AmpGt => Tok::AmpGt,
         LogosTok::DblParen => Tok::DblParen,
-        LogosTok::DblParenClose => Tok::DblParenClose,
         LogosTok::DblSemi => Tok::DblSemi,
         LogosTok::DblGt => Tok::DblGt,
         LogosTok::GtAmp => Tok::GtAmp,
