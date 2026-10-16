@@ -5,7 +5,7 @@
 set -eu
 . common.sh
 setup var_modifiers
-plan=167
+plan=168
 echo "1..$plan" >&3
 
 set +e
@@ -857,6 +857,12 @@ str x=""
 str z=$x:-${y:!}
 echo "[$z]"'
 [[ $rc != 0 && -z $out && $err == *SB4070* ]]; chk vm.bl25
+
+# The brace-less scanner balances nested braces before the literal-only gate.
+run_sash 'str x=ok
+echo $x:-${y:-${z:-fallback}}'
+[[ $rc != 0 && -z $out && $err == *SB4070* \
+   && $err == *'a `$` expansion in one would be silently emitted as text'* ]]; chk lexcold.6
 
 set -e
 tally

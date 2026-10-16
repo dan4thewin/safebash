@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup errors
-plan=413
+plan=417
 echo "1..$plan" >&3
 
 set +e
@@ -2507,6 +2507,24 @@ run_sash 'for x'
 [[ $rc != 0 && -z $out && $err == *SB4014* \
    && $err == *'expected a `{ }` body or `do`'* ]]; chk pcold.2
 
+# A quoted segment in a brace-less default still owes its own closer.
+run_sash "echo \$x:-\$(echo 'broken)"
+[[ $rc != 0 && -z $out && $err == *':1:17: error [SB4057]'* \
+   && $err == *"unterminated \`'\` string"* ]]; chk lexcold.2
+
+# Multiple bad C-escapes preserve the first escape and its source position.
+run_sash "echo \$'\\101\\cA'"
+[[ $rc != 0 && -z $out && $err == *':1:8: error [SB4063]'* \
+   && $err == *'octal escapes are not supported'* ]]; chk lexcold.3
+
+# Outer missing closers must not replace the inner arithmetic opener.
+run_sash 'echo "$(echo "$((1"'
+[[ $rc != 0 && -z $out && $err == *':1:15: error [SB4057]'* \
+   && $err == *'unterminated `$((`'* ]]; chk lexcold.4
+
+run_sash "echo \"\$(echo \$'\\101\\cA')\""
+[[ $rc != 0 && -z $out && $err == *':1:16: error [SB4063]'* \
+   && $err == *'octal escapes are not supported'* ]]; chk lexcold.5
 
 set -e
 tally

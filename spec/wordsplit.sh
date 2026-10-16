@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup wordsplit
-plan=134
+plan=144
 echo "1..$plan" >&3
 
 set +e
@@ -767,6 +767,41 @@ run_sash '/bin/echo ab\'
 # 64.18 quoting still protects it — `'"'"'a\'"'"' is two bytes, continuation or not.
 run_sash "/bin/echo 'a\\'"
 [[ $rc = 0 && $out = 'a\' && -z $err ]]; chk 64.18
+
+# Capture boundaries obey the same DD#64 quote rules as the captured program.
+run_sash 'echo "$(echo "a\"; echo b)"'
+[[ $rc = 0 && $out = $'a\\\nb' && -z $err ]]; chk dqbound.1
+
+run_sash "echo \"\$(echo \$'a\\'b')\""
+[[ $rc = 0 && $out = "a'b" && -z $err ]]; chk dqbound.2
+
+run_sash "echo \"\$(echo \"a\$'\"'b\")\""
+[[ $rc = 0 && $out = 'a"b' && -z $err ]]; chk dqbound.3
+
+run_sash "echo \"\$(echo \$'a\\'b)')\""
+[[ $rc = 0 && $out = "a'b)" && -z $err ]]; chk dqbound.4
+
+run_sash "echo \"\$(echo \"\$(echo \$'a\\'b')\")\""
+[[ $rc = 0 && $out = "a'b" && -z $err ]]; chk dqbound.5
+
+run_sash 'echo "$(echo "a\b")"'
+[[ $rc = 0 && $out = 'a\b' && -z $err ]]; chk dqbound.6
+
+# Comments cannot close a capture or open an inner quote.
+run_sash 'echo "$(echo ok # ) ignored
+)"'
+[[ $rc = 0 && $out = ok && -z $err ]]; chk dqbound.7
+
+run_sash 'echo "$(echo ok # " ) ignored
+)"'
+[[ $rc = 0 && $out = ok && -z $err ]]; chk dqbound.8
+
+run_sash 'echo "$(echo a#b)"'
+[[ $rc = 0 && $out = a#b && -z $err ]]; chk dqbound.9
+
+# DD#90: even without a literal prefix, backticks inside double quotes are text.
+run_sash 'echo "`literal`"'
+[[ $rc = 0 && $out = '`literal`' && -z $err ]]; chk lexcold.1
 
 set -e
 tally

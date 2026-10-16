@@ -66,7 +66,7 @@ written from the implementation rather than from bash, and passed. See journal
 Tests: `spec/wordsplit.sh` 64.9–64.18. No mode guard is needed — the answer is
 the same with or without a trailing newline, which is what makes it correct.
 
-**Still deferred** to DD#63/DD#65 — the brace-scan `\}` (lexer.rs:660,
+**Historical deferral, resolved below** — the brace-scan `\}` (lexer.rs:660,
 plus the in-`"…"` `${}` skip at ~824 and `skip_balanced_dquote`) and the
 `/`-operator `\/` (`find_unescaped_slash`). These are `${var:OP}`
 brace/glob-matching machinery removed when Path B (DD#63) and the
@@ -209,6 +209,21 @@ text; for that the runtime is byte-clean and the data paths (`read`, `arg`,
 `getenv`, capture) carry arbitrary bytes intact.
 
 Also retired from the set: octal (`\101`, `\0101`, **`\0`**) and `\cX`.
+
+## Enforcement correction (2026-10-16): quoted capture boundaries
+
+The private `"…$(…)…"` boundary skipper survived the earlier removals and
+still treated `\"` as an escaped quote. It also did not recognize `$'…'`
+escapes or C-string interpolation inside a nested `"…"`. Valid captured
+programs therefore drew spurious SB4057 errors.
+
+Capture boundaries now use the actual double-quote and C-string scanners;
+there is no separate backslash grammar. Comments use the ordinary comment
+boundary rule and scanner too, so quotes and parentheses in a comment cannot
+change the capture boundary, while `a#b` remains a word. This enforces the
+existing rules, not a new escape set. `spec/wordsplit.sh` `dqbound.1`-`dqbound.9`
+pin the outputs; `spec/errors.sh` `lexcold.4`-`lexcold.5` pin first-error
+preservation through nested captures.
 
 ## See also
 - DD#115 — the `$'…'` escape set; narrows the escape-hatch claim above.

@@ -228,6 +228,10 @@ impl Scanner {
             self.pos += 1;
             return;
         }
+        self.record_unterminated(open_at, what);
+    }
+
+    fn record_unterminated(&mut self, open_at: usize, what: &'static str) {
         if self.unterminated.is_none() {
             self.unterminated = Some((open_at, what));
         }
@@ -530,17 +534,23 @@ impl Scanner {
     /// `None` when the byte is not `#`, or when it opens a genuine comment
     /// (start of input, or preceded by a blank or a newline).
     fn attached_hash_word(&mut self, start: usize) -> Option<SpannedToken> {
-        if self.source[self.pos] != b'#' {
+        if self.source[self.pos] != b'#' || self.hash_starts_comment() {
             return None;
         }
-        match self.source[..self.pos].last() {
-            Some(b' ') | Some(b'\t') | Some(b'\n') | None => None,
-            Some(b';') | Some(b'&') | Some(b'|') | Some(b'<') | Some(b'>') | Some(b'(') => {
-                self.attached_hash.get_or_insert(self.pos);
-                Some(self.scan_word(start))
-            }
-            Some(_) => Some(self.scan_word(start)),
+        if matches!(
+            self.source[..self.pos].last(),
+            Some(b';' | b'&' | b'|' | b'<' | b'>' | b'(')
+        ) {
+            self.attached_hash.get_or_insert(self.pos);
         }
+        Some(self.scan_word(start))
+    }
+
+    fn hash_starts_comment(&self) -> bool {
+        matches!(
+            self.source[..self.pos].last(),
+            Some(b' ' | b'\t' | b'\n') | None
+        )
     }
 
     /// Turn a matched `logos` token of `len` bytes into a `SpannedToken`.
@@ -854,7 +864,14 @@ impl Scanner {
             b'\'' => {
                 // $'...' ANSI-C quoting
                 self.pos += 1; // skip '
-                self.scan_ansi_c_quoted(start)
+                let value = self.consume_ansi_c_quoted(start);
+                SpannedToken {
+                    token: Tok::AnsiCQuoted(value),
+                    span: LexSpan {
+                        start,
+                        end: self.pos,
+                    },
+                }
             }
             b'(' => self.scan_dollar_paren(start),
             b'{' => {
@@ -1635,9 +1652,7 @@ impl Scanner {
     fn scan_dq_cstring(&mut self, literal: &mut String) {
         let dollar = self.pos - 1;
         self.pos += 1; // skip opening '
-        if let Tok::AnsiCQuoted(s) = self.scan_ansi_c_quoted(dollar).token {
-            literal.push_str(&s);
-        }
+        literal.push_str(&self.consume_ansi_c_quoted(dollar));
     }
 
     /// `${…}` — opening `{` is at `self.pos`. Returns the inner text
@@ -1674,21 +1689,17 @@ impl Scanner {
         self.pos += 2; // skip ((
         let inner_start = self.pos;
         let mut depth = 1i32;
-        while self.pos + 1 < self.source.len() && depth > 0 {
-            if !self.step_dq_arith_sub(&mut depth) {
-                break;
-            }
-        }
+        while self.pos + 1 < self.source.len() && self.step_dq_arith_sub(&mut depth) {}
         let content = String::from_utf8_lossy(&self.source[inner_start..self.pos]).to_string();
         if depth == 0 {
             self.pos += 2; // skip ))
-        } else if self.unterminated.is_none() {
+        } else {
             // The loop ran off the end with `))` still owed. Every sibling
             // construct rejects this (`"${ s"` and `"$( cmd"` both raise
             // SB4057, as does a bare `$(( 1 + 2`); only the in-`"…"` `$((`
             // scanner used to return its partial text and evaluate it, so
             // `echo "$(( 1 + 2"` silently printed 3. `open_at` is the `$`.
-            self.unterminated = Some((inner_start - 3, "`$((`"));
+            self.record_unterminated(inner_start - 3, "`$((`");
         }
         content
     }
@@ -1720,7 +1731,7 @@ impl Scanner {
     }
 
     /// One byte of a `"…$(…)…"` body: track paren depth, and skip nested
-    /// quoted runs whole so a `)` inside them does not close the substitution.
+    /// quoted runs and comments whole so their `)` does not close the substitution.
     fn step_dq_cmd_sub(&mut self, depth: &mut i32) {
         match self.source[self.pos] {
             b'(' => {
@@ -1734,7 +1745,17 @@ impl Scanner {
                 }
             }
             b'\'' => self.skip_balanced_squote(),
-            b'"' => self.skip_balanced_dquote(),
+            b'"' => {
+                self.scan_double_quoted(self.pos);
+            }
+            b'$' if self.source.get(self.pos + 1) == Some(&b'\'') => {
+                let start = self.pos;
+                self.pos += 2;
+                self.consume_ansi_c_quoted(start);
+            }
+            b'#' if self.hash_starts_comment() => {
+                self.scan_via_logos(self.pos);
+            }
             _ => {
                 self.pos += 1;
             }
@@ -1750,20 +1771,6 @@ impl Scanner {
             self.pos += 1;
         }
         self.require_closer(open_at, "`'` string");
-    }
-
-    /// Skip a double-quoted run starting at `self.pos`. Honours `\`
-    /// escapes (one extra byte past the backslash).
-    fn skip_balanced_dquote(&mut self) {
-        let open_at = self.pos;
-        self.pos += 1; // opening "
-        while self.pos < self.source.len() && self.source[self.pos] != b'"' {
-            if self.source[self.pos] == b'\\' {
-                self.pos += 1;
-            }
-            self.pos += 1;
-        }
-        self.require_closer(open_at, "`\"` string");
     }
 
     /// A `` ` `` inside a `"…"` string is a **literal** backtick character:
@@ -1785,16 +1792,10 @@ impl Scanner {
     }
 
     /// Scan $'...' ANSI-C quoted string (opening $' already consumed).
-    fn scan_ansi_c_quoted(&mut self, start: usize) -> SpannedToken {
+    fn consume_ansi_c_quoted(&mut self, start: usize) -> String {
         let bytes = self.scan_ansi_c_bytes();
         self.require_closer(start, "`$'` string");
-        SpannedToken {
-            token: Tok::AnsiCQuoted(String::from_utf8_lossy(&bytes).into_owned()),
-            span: LexSpan {
-                start,
-                end: self.pos,
-            },
-        }
+        String::from_utf8_lossy(&bytes).into_owned()
     }
 
     /// True when `self.pos` starts a `\<byte>` escape with a byte to follow.
@@ -2244,6 +2245,14 @@ fn simple_escape(b: u8) -> Option<char> {
 #[cfg(test)]
 mod invariant_tests {
     use super::{logos_input, Scanner};
+
+    #[test]
+    #[should_panic(expected = "scanner stands on a lead byte")]
+    fn push_source_char_rejects_a_continuation_byte_position() {
+        let mut sc = Scanner::new("\u{e9}");
+        sc.pos = 1;
+        sc.push_source_char(&mut String::new());
+    }
 
     #[test]
     #[should_panic(expected = "the byte dispatcher owns")]

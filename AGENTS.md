@@ -633,6 +633,12 @@ that cannot fail is not a gate.
 never sees it and the instrumented artifacts look fresh. The leftover binary
 is slower and drops `default_*.profraw` wherever it runs. Use `mk cov-reset`.
 
+**Do not overlap coverage with `mk test` or another release build.** The
+`test` target depends on `build` and runs release-mode cargo tests too, so it
+can replace the instrumented artifacts during a sweep. Run the ordinary gate
+before coverage, or after `mk cov-reset`, never alongside it. The initial
+coverage canary does not protect against a later replacement.
+
 `coverage.db` (repo root, **untracked and gitignored**, same status as
 `spec.db`) holds lcov line/function/branch data so uncovered lines can be
 joined against the indexnudge `symbols` table and ranked **by function**.
