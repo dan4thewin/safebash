@@ -5,10 +5,34 @@
 set -eu
 . common.sh
 setup var_modifiers
-plan=159
+plan=167
 echo "1..$plan" >&3
 
 set +e
+
+# DD#65's unknown-tail rejection also applies after a cell's closing bracket.
+run_sash 'array a=(x); echo ${a[0]garbage}'
+[[ $rc != 0 && -z $out && $err == *SB4047* && $err == *'unrecognized content `garbage`'* ]]; chk celop.1
+run_sash 'array a=(x); echo ${a[0]&junk}'
+[[ $rc != 0 && -z $out && $err == *SB4047* && $err == *'unrecognized content `&junk`'* ]]; chk celop.2
+run_sash 'map m=([k]=x); echo "${m[k]garbage}"'
+[[ $rc != 0 && -z $out && $err == *SB4047* && $err == *'unrecognized content `garbage`'* ]]; chk celop.3
+run_sash 'int array a=(7); echo $(( ${a[0]garbage} ))'
+[[ $rc != 0 && -z $out && $err == *SB4047* && $err == *'unrecognized content `garbage`'* ]]; chk celop.4
+
+# Live cell classifiers: @Q rejects as a scalar transform does; an unsupported
+# disposition on retired [@] declines the per-element classifier.
+run_sash 'array a=(x); echo ${a[0]@Q}'
+[[ $rc != 0 && -z $out && $err == *SB4015* && $err == *'${var@Q}'* ]]; chk celop.5
+run_sash 'array a=(x); echo ${a[@]:-fallback}'
+[[ $rc != 0 && -z $out && $err == *SB4038* && $err == *'@a'* ]]; chk celop.6
+
+# A cell operator does not hide the index from the argv-splat rules.
+run_sash 'map m=([k]=x); echo ${m[$(argv)]:!}'
+[[ $rc != 0 && -z $out && $err == *SB5025* && $err == *'is an array splat'* ]]; chk celop.7
+
+run_sash 'fn f { : @args; map m=([k]=x); echo ${m[$@]:!-fallback} }; f'
+[[ $rc != 0 && -z $out && $err == *SB5045* && $err == *'$@'* ]]; chk celop.8
 
 # ── toupper / tolower builtins (DD#65 — irreducible case conversion) ──
 run_sash 's=hello; echo $(toupper $s)'

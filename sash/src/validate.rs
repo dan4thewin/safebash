@@ -5124,6 +5124,9 @@ fn dollar_at_pexp(span: Span, pe: &ParameterExpansion, in_fn: bool, diags: &mut 
     if pe.name == "@" || pe.name == "*" {
         dollar_at_diag(span, &pe.name, in_fn, diags);
     }
+    if let Some(index) = pe.index.as_deref() {
+        dollar_at_expr(index, in_fn, diags);
+    }
     if let Some(op) = &pe.operand {
         dollar_at_expr(op, in_fn, diags);
     }
@@ -5599,7 +5602,10 @@ fn check_argv_splat_expr(expr: &Expr, diags: &mut Vec<Diagnostic>) {
         }
         ExprKind::AssocArray(pairs) => check_argv_splat_seq(pairs.iter().map(|(_, v)| v), diags),
         ExprKind::Subscript { index, .. } => check_argv_splat_expr(index, diags),
-        ExprKind::ParameterExpansion(pe) => check_argv_splat_opt(pe.operand.as_deref(), diags),
+        ExprKind::ParameterExpansion(pe) => {
+            check_argv_splat_opt(pe.index.as_deref(), diags);
+            check_argv_splat_opt(pe.operand.as_deref(), diags);
+        }
         ExprKind::Test(t) => check_argv_splat_test(t, diags),
         _ => {}
     }
@@ -7069,17 +7075,16 @@ fn is_taint_source(expr: &Expr) -> bool {
         // fires) but only as an unspanned "SSA taint backstop" message, which
         // is a worse diagnostic for the same program.
         ExprKind::SlurpFile(_) => true,
-        // DD#78: a `:-` default is part of the expansion's *value*, so a source
-        // there is a source here. `!` (DD#91) vouches for the whole expansion,
-        // exactly as in `pexp_uses_tainted` — these two walkers are read as a
-        // pair by `reject_tainted_into_array` and must agree about what they
-        // descend into.
+        // A source in the index or default remains a source here. Like
+        // `pexp_uses_tainted`, this is used by `reject_tainted_into_array`;
+        // both must visit the same children without extending the trust flag.
         ExprKind::ParameterExpansion(pe) => {
             // `!` (DD#91) vouches for the read of `pe.name`'s stored value, not
-            // for a *source* materialised in the default: in
+            // for a *source* materialised in the index or default: in
             // `${x:!-$(getenv HOME)}` nobody asked to bypass the getenv. So
             // `taint_off` is deliberately not consulted here.
-            pe.operand.as_deref().is_some_and(is_taint_source)
+            pe.index.as_deref().is_some_and(is_taint_source)
+                || pe.operand.as_deref().is_some_and(is_taint_source)
         }
         // `$(( … ))` reaches its operands through expansion leaves, like
         // [`arith_uses_tainted`]. No source can reach one today (a bare
@@ -7177,10 +7182,14 @@ fn pexp_uses_tainted(pe: &ParameterExpansion, tainted: &HashSet<String>) -> bool
     // inside it taints the result too (correct propagation — without this,
     // `z=${x:-$tainted}` left `z` clean).
     //
-    // `taint_off` scopes to the subject only, so it gates the name and NOT the
-    // operand walk: each nested expansion carries its own flag, which is what
+    // `taint_off` scopes to the stored value only, not the index or operand
+    // walks: each nested expansion carries its own flag, which is what
     // makes `${x:!-${y:!}}` the spelling that vouches for both reads.
     (!pe.taint_off && tainted.contains(pe.name.as_str()))
+        || pe
+            .index
+            .as_deref()
+            .is_some_and(|i| expr_uses_tainted(i, tainted))
         || pe
             .operand
             .as_deref()
@@ -7418,6 +7427,9 @@ fn check_param_expansion_taint(
             format!("tainted variable ${{{} ...}} used without attest", pe.name),
             diags,
         );
+    }
+    if let Some(index) = pe.index.as_deref() {
+        check_expr_taint(index, tainted, diags);
     }
 }
 
@@ -10142,6 +10154,9 @@ fn check_param_expansion_reads(
         sink.record_splat(&pe.name, span, known);
     } else {
         sink.record_param(&pe.name, span, known, pe.operator.is_some());
+    }
+    if let Some(index) = pe.index.as_deref() {
+        check_expr_reads(index, known, sink);
     }
     if let Some(ref operand) = pe.operand {
         check_expr_reads(operand, known, sink);

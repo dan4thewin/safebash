@@ -236,6 +236,12 @@ The kept forms (`:-`/`:?`/`:off:len`/`:s/`, subscripts, `@`-transform SB4015,
 `!`-indirect SB4003, strlen) are all recognised earlier, so only real garbage
 reaches the reject. Specs `spec/var_modifiers.sh` vm.un1-4.
 
+**Cell enforcement, 2026-10-16.** The cell path had retained its own silent
+fallback: `${a[0]garbage}` and `${a[0]&junk}` read the cell after discarding the
+suffix, including inside arithmetic. It now uses the same unknown-content
+sentinel as the scalar path and rejects with SB4047. Specs `celop.1`-`celop.4`
+cover arrays, maps, quoted words and arithmetic. Journal 512.
+
 ### Follow-on (2026-09-30) — `$` in a `:?` abort message is SB4070
 
 The `:?` abort **message** is a literal, and a `$` in it is now rejected

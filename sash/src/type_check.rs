@@ -300,10 +300,9 @@ fn check_arith_bare_map_subscript(
 /// bare `m[k]` is inexpressible under arith rules (model B), so `${m[k]}` is
 /// the sole spelling, and before this it was unchecked.
 ///
-/// A disposition-carrying cell (`${s[0]:-7}`, `${s[0]:?msg}`) parses as a
-/// `ParameterExpansion` rather than a `Subscript` and so never matches — that
-/// is the DD#77 escape hatch, and it keeps working. A cell passed to a sexpr
-/// (`(strlen ${a[1]})`) is not an int operand and is not visited at all.
+/// A disposition-carrying cell (`${s[0]:-7}`, `${s[0]:?msg}`) is exempt, but
+/// `${s[0]:!}` only changes trust and still owes the conversion. A cell passed
+/// to a sexpr (`(strlen ${a[1]})`) is not an int operand and is not visited.
 fn check_arith_expansion_string_cell(
     a: &ArithExpr,
     span: Span,
@@ -311,7 +310,7 @@ fn check_arith_expansion_string_cell(
     errors: &mut Vec<TypeError>,
 ) {
     crate::ir::walk_arith_imported_operands(a, &mut |e| {
-        let ExprKind::Subscript { name, .. } = &e.kind else {
+        let Some(name) = undisposed_cell_name(e) else {
             return;
         };
         // A collection-parameter slot's element kind is whatever the call site
@@ -324,6 +323,16 @@ fn check_arith_expansion_string_cell(
             errors.push(string_cell_error(name, span));
         }
     });
+}
+
+fn undisposed_cell_name(e: &Expr) -> Option<&str> {
+    match &e.kind {
+        ExprKind::Subscript { name, .. } => Some(name),
+        ExprKind::ParameterExpansion(pe) if pe.index.is_some() && pe.operator.is_none() => {
+            Some(&pe.name)
+        }
+        _ => None,
+    }
 }
 
 /// DD#77 D1 for a string-valued cell: the same discipline as a string scalar —
@@ -456,17 +465,34 @@ fn check_arith_string_operands(
     errors: &mut Vec<TypeError>,
 ) {
     crate::ir::walk_arith_var_reads(a, &mut |name| {
-        if env.vars.contains_key(name) && env.var_type(name) == VarType::String {
-            errors.push(TypeError {
-                message: format!(
-                    "bare string `{name}` in arithmetic — a string→int conversion must \
-                     carry a disposition: `${{{name}:-N}}` (default N if not an integer) \
-                     or `${{{name}:?msg}}` (abort if not an integer)."
-                ),
-                span,
-            });
-        }
+        check_string_scalar_operand(name, span, env, errors);
     });
+    crate::ir::walk_arith_imported_operands(a, &mut |e| {
+        check_scalar_import_operand(e, span, env, errors);
+    });
+}
+
+fn check_scalar_import_operand(e: &Expr, span: Span, env: &TypeEnv, errors: &mut Vec<TypeError>) {
+    let ExprKind::ParameterExpansion(pe) = &e.kind else {
+        return;
+    };
+    if pe.operator.is_some() || pe.index.is_some() {
+        return;
+    }
+    check_string_scalar_operand(&pe.name, span, env, errors);
+}
+
+fn check_string_scalar_operand(name: &str, span: Span, env: &TypeEnv, errors: &mut Vec<TypeError>) {
+    if env.vars.contains_key(name) && env.var_type(name) == VarType::String {
+        errors.push(TypeError {
+            message: format!(
+                "bare string `{name}` in arithmetic — a string→int conversion must \
+                 carry a disposition: `${{{name}:-N}}` (default N if not an integer) \
+                 or `${{{name}:?msg}}` (abort if not an integer)."
+            ),
+            span,
+        });
+    }
 }
 
 /// DD#77 D4: in arithmetic, a `${s:-DEFAULT}` disposition's DEFAULT must be a
@@ -565,7 +591,7 @@ fn walk_value_default(expr: &Expr, env: &TypeEnv, errors: &mut Vec<TypeError>) {
     }
 }
 
-/// Check a `${…}` node, then descend into its default operand.
+/// Check a `${…}` node, then descend into its cell index and default operand.
 fn walk_pe_default(
     pe: &ParameterExpansion,
     span: Span,
@@ -573,6 +599,9 @@ fn walk_pe_default(
     errors: &mut Vec<TypeError>,
 ) {
     check_int_pe_default(pe, span, env, errors);
+    if let Some(index) = pe.index.as_deref() {
+        walk_value_default(index, env, errors);
+    }
     if let Some(op) = pe.operand.as_deref() {
         walk_value_default(op, env, errors);
     }

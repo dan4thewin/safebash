@@ -717,13 +717,10 @@ fn command_sub_to_expr(content: &str, span: Span) -> Result<Expr, Diagnostic> {
 pub fn parse_parameter_expansion(content: &str, span: Span) -> Result<Expr, Diagnostic> {
     let bytes = content.as_bytes();
 
-    if let Some(e) = try_braced_splat(content, span) {
-        return Ok(e);
-    }
-    if let Some(e) = try_strlen_or_arrlen(content, bytes, span) {
-        return Ok(e);
-    }
-    if let Some(e) = try_indirection_or_arrkeys(content, bytes, span) {
+    if let Some(e) = try_braced_splat(content, span)
+        .or_else(|| try_strlen_or_arrlen(content, bytes, span))
+        .or_else(|| try_indirection_or_arrkeys(content, bytes, span))
+    {
         return Ok(e);
     }
 
@@ -749,7 +746,11 @@ pub fn parse_parameter_expansion(content: &str, span: Span) -> Result<Expr, Diag
     // sentinel `unrecognized` operator so `rejected_param_operator_diag` rejects
     // it (SB4047): the compiler must never emit code for input it doesn't fully
     // understand.
-    Ok(Expr::param(
+    Ok(unrecognized_parameter_operator(rest, name, span))
+}
+
+fn unrecognized_parameter_operator(rest: &str, name: &str, span: Span) -> Expr {
+    Expr::param(
         name,
         Some("unrecognized"),
         Some(Box::new(Expr {
@@ -757,7 +758,7 @@ pub fn parse_parameter_expansion(content: &str, span: Span) -> Result<Expr, Diag
             span,
         })),
         span,
-    ))
+    )
 }
 
 /// The operator-suffixed `${name OP…}` forms: `:s/…` sed, `:off:len`
@@ -1104,12 +1105,15 @@ fn subscript_operator_expr(
 /// to keep that dispatcher under the complexity gate; `:s/` is deliberately
 /// absent (it consumes the index instead of attaching it).
 fn cell_attaching_operator(name: &str, after: &str, span: Span) -> Result<Expr, Diagnostic> {
-    // DD#84: `:~` (elide) joins `:-`/`:?` as a cell disposition.
-    let is_disposition =
-        after.starts_with(":-") || after.starts_with(":?") || after.starts_with(":~");
-    if is_disposition {
-        return Ok(scalar_op_or_bare(
+    // DD#91's trust modifier applies to a cell's value just as to a scalar.
+    let is_disposition_or_trust = after.starts_with(":-")
+        || after.starts_with(":?")
+        || after.starts_with(":~")
+        || after.starts_with(":!");
+    if is_disposition_or_trust {
+        return Ok(scalar_op_or_unrecognized(
             parse_standard_operator(after, name, span)?,
+            after,
             name,
             span,
         ));
@@ -1118,7 +1122,7 @@ fn cell_attaching_operator(name: &str, after: &str, span: Span) -> Result<Expr, 
         // substring (`:o:l`) on a cell — carry the cell index; the transform
         // builds a `Substring` node that reads the cell as the source (edge 4).
         // A cell behaves like a string variable (DG). Any other `:`-led op that
-        // isn't substring/sed/`:-`/`:?` has no cell lowering — reject
+        // isn't substring/sed/a disposition/trust has no cell lowering — reject
         // explicitly (SB4039) rather than silently drop.
         return Ok(try_substring_op(after, name, span)
             .unwrap_or_else(|| Expr::param(name, Some("cell_string_op"), None, span)));
@@ -1128,25 +1132,26 @@ fn cell_attaching_operator(name: &str, after: &str, span: Span) -> Result<Expr, 
     if let Some(expr) = try_at_transform(after, name, span) {
         return Ok(expr);
     }
-    Ok(scalar_op_or_bare(
+    Ok(scalar_op_or_unrecognized(
         parse_standard_operator(after, name, span)?,
+        after,
         name,
         span,
     ))
 }
 
-/// A parsed scalar operator, or a bare `${name}` when `rest` matched none.
-fn scalar_op_or_bare(parsed: Option<Expr>, name: &str, span: Span) -> Expr {
-    parsed.unwrap_or_else(|| Expr::param(name, None, None, span))
+fn scalar_op_or_unrecognized(parsed: Option<Expr>, rest: &str, name: &str, span: Span) -> Expr {
+    parsed.unwrap_or_else(|| unrecognized_parameter_operator(rest, name, span))
 }
 
 /// Attach a cell subscript to a freshly-parsed `${name OP}` expansion, turning
-/// it into `${name[index] OP}`. A non-`ParameterExpansion` (never produced by
-/// the callers here) is left unchanged.
+/// it into `${name[index] OP}`. Sed consumes its index before reaching here;
+/// every remaining cell-operator parser produces a `ParameterExpansion`.
 fn attach_cell_index(expr: &mut Expr, index: Box<Expr>) {
-    if let ExprKind::ParameterExpansion(pe) = &mut expr.kind {
-        pe.index = Some(index);
-    }
+    let ExprKind::ParameterExpansion(pe) = &mut expr.kind else {
+        unreachable!("non-sed cell operators produce parameter expansions");
+    };
+    pe.index = Some(index);
 }
 
 /// The `${a[@]}` / `${a[*]}` splat branch. A trailing operator (e.g.
@@ -1433,9 +1438,10 @@ fn parse_trusted_operator(peeled: &str, name: &str, span: Span) -> Result<Expr, 
 
 /// Set the DD#91 `!` modifier on an already-parsed expansion.
 fn trusted(mut e: Expr) -> Expr {
-    if let ExprKind::ParameterExpansion(pe) = &mut e.kind {
-        pe.taint_off = true;
-    }
+    let ExprKind::ParameterExpansion(pe) = &mut e.kind else {
+        unreachable!("disposition parsers produce parameter expansions for the trust modifier");
+    };
+    pe.taint_off = true;
     e
 }
 
@@ -1631,7 +1637,6 @@ fn collect_cmd_sub_body(
                 return Ok(None);
             }
             CmdSubStep::Return(e) => return Ok(Some(e)),
-            CmdSubStep::Break => return Ok(None),
             CmdSubStep::Skipped | CmdSubStep::Pushed => {}
         }
     }
@@ -1665,9 +1670,7 @@ enum CmdSubStep {
     Skipped,
     /// First-word special shortcut consumed the whole $(...); caller returns this Expr.
     Return(Expr),
-    /// parse_statement returned None; caller breaks out of the loop.
-    Break,
-    /// parse_statement returned Some; caller falls through to the next iteration.
+    /// A statement was appended; caller falls through to the next iteration.
     Pushed,
 }
 
@@ -1700,18 +1703,14 @@ fn parse_cmd_sub_step(
     if let Some(step) = try_first_word_shortcut(scanner, span, tok, stmts) {
         return Ok(step);
     }
-    match super::parser::parse_statement(scanner)? {
-        Some(stmt) => {
-            stmts.push(stmt);
-            Ok(CmdSubStep::Pushed)
-        }
-        None => Ok(CmdSubStep::Break),
-    }
+    // The loop rules out EOF and cmd_sub_body_step consumes terminators.
+    stmts.push(super::parser::parse_statement_here(scanner)?);
+    Ok(CmdSubStep::Pushed)
 }
 
 /// Probe the first word (when no statements have been parsed yet) for one
 /// of the bareword shortcuts (status / getcpid). Returns Some(step) when
-/// a shortcut fired; None to fall through to parse_statement.
+/// a shortcut fired; None to fall through to parse_statement_here.
 fn try_first_word_shortcut(
     scanner: &mut Scanner,
     span: Span,
@@ -1907,6 +1906,33 @@ pub(super) fn keyword_to_str(tok: &Tok) -> Option<&'static str> {
 #[cfg(test)]
 mod invariant_tests {
     use super::*;
+
+    #[test]
+    fn balanced_close_supports_the_parenthesis_entry() {
+        // Source callers enter on `[` or `{`; the shared scanner also accepts `(`.
+        assert_eq!(balanced_close(br#"(x [y] "{z}") tail"#, 0), Some(12));
+    }
+
+    #[test]
+    fn balanced_close_declines_an_invalid_opener() {
+        assert_eq!(balanced_close(b"x", 0), None);
+    }
+
+    #[test]
+    #[should_panic(expected = "non-sed cell operators produce parameter expansions")]
+    fn attach_cell_index_rejects_a_non_parameter_result() {
+        let span = Span::new(1, 1);
+        let mut expr = Expr::literal("not a parameter", span);
+        attach_cell_index(&mut expr, Box::new(Expr::literal("0", span)));
+    }
+
+    #[test]
+    #[should_panic(
+        expected = "disposition parsers produce parameter expansions for the trust modifier"
+    )]
+    fn trusted_rejects_a_non_parameter_result() {
+        let _ = trusted(Expr::literal("not a parameter", Span::new(1, 1)));
+    }
 
     #[test]
     #[should_panic(expected = "parse_quoted_arm called with non-quoted token")]

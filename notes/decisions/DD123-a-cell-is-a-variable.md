@@ -174,6 +174,19 @@ lvalue; bare `m[k]` is still inexpressible; `${…}` is still never an lvalue.
   `bare_map_subscript_error` made type-aware so a string map's author is not
   sent to `${m[k]}`, which would reject in turn.
 
+## Enforcement follow-on (2026-10-16)
+
+The same principle exposed two remaining
+parser differences: cell trust forms were rejected instead of taking the
+scalar trust path, while unknown cell tails silently vanished. Both are fixed
+(DD#91 / SB4047). Tracing the new trust path also exposed omitted cell-index
+walks in read, taint, argv-splat and default-type checks. The index is a separate
+read, not covered by the cell's trust flag. Bare trusted string values still
+owe their string-to-int disposition, for cells and scalars alike. The existing
+SB4039 rejection for unsupported cell colon operators is preserved; its text
+no longer incorrectly says substring/sed on cells are unimplemented.
+Journal 512 records the probes and the coverage measurement.
+
 ## Prior art
 
 - `notes/decisions/DD77-*` D1 — the string→int crossing and its dispositions.

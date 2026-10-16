@@ -180,6 +180,26 @@ a taint annotation, not a change of type, so it now sees through `Trusted`.
 
 Specs: `taint.sh` 91.24-91.33. journal 431.
 
+## Cell enforcement (2026-10-16)
+
+DD#123's cell-is-variable principle applies the existing four trust forms to a
+cell too: `${a[i]:!}`, `${a[i]:!-W}`, `${a[i]:!?M}`, `${a[i]:!~}`. The parser
+had routed all four to the unsupported-cell-colon diagnostic instead of the
+shared trust parser. Corrected for arrays and maps, in words and arithmetic,
+with the same brace-less/interpolation boundaries as a scalar.
+
+Trust covers the stored value, **not the index expression**. Read enumeration,
+taint-use/source checks and the shared expression walker now visit
+`ParameterExpansion.index` as well as its operand. A vouched cell therefore
+does not launder an unvouched index, and a variable read only as the index is
+not dead. The index also remains subject to argv-splat and default-type rules.
+
+Nor does trust perform a string-to-int conversion: bare `${s:!}` and
+`${a[i]:!}` on strings still owe DD#77's disposition in arithmetic. The old
+gate missed scalar imports as well as trusted cell imports; both now report
+SB4030, while int subjects and actual dispositions preserve their behavior.
+Specs `taint.sh` `ctrs.1`-`ctrs.21`; journal 512.
+
 ## Audit surface
 
 `:!` is a deliberate validator bypass — the adversarial audit's highest-priority

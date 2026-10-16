@@ -459,13 +459,18 @@ pub fn for_head_keys(stmts: &[Statement]) -> Option<&Expr> {
 /// where its expressions are reached. Descending here as well would visit
 /// every expression in a body once per enclosing level and emit each
 /// diagnostic depth+1 times (journal 308).
+///
+/// Total over `ExprKind` on purpose — do not add a wildcard.
 pub fn walk_expr_tree<'a>(expr: &'a Expr, f: &mut impl FnMut(&'a Expr)) {
     f(expr);
     match &expr.kind {
         ExprKind::DoubleQuoted(parts) | ExprKind::Concat(parts) => walk_each(parts, f),
         ExprKind::Array(elems) => walk_each(elems, f),
         ExprKind::AssocArray(pairs) => walk_each_pair(pairs, f),
-        ExprKind::ParameterExpansion(pe) => walk_opt(pe.operand.as_deref(), f),
+        ExprKind::ParameterExpansion(pe) => {
+            walk_opt(pe.index.as_deref(), f);
+            walk_opt(pe.operand.as_deref(), f);
+        }
         ExprKind::Test(t) => walk_test_exprs(t, f),
         ExprKind::Subscript { index, .. } => walk_expr_tree(index, f),
         // `$(( … ))` — descend into any `${…}` expansions embedded in the arith
@@ -475,10 +480,13 @@ pub fn walk_expr_tree<'a>(expr: &'a Expr, f: &mut impl FnMut(&'a Expr)) {
         ExprKind::Arithmetic(arith) => walk_arith_expansions(arith, f),
         // `$(<file)` — the path is an ordinary expression and may itself be an
         // expansion (`$(<$f)`), so expr-level checks must reach it. Omitting
-        // this arm is silent: the walker has a `_` fall-through, so the subtree
-        // would simply never be visited.
+        // this arm used to be silent behind a wildcard, leaving the subtree
+        // unvisited. The match is now exhaustive.
         ExprKind::SlurpFile(path) => walk_expr_tree(path, f),
-        _ => {}
+        ExprKind::Literal(_)
+        | ExprKind::SingleQuoted(_)
+        | ExprKind::SimpleExpansion(_)
+        | ExprKind::CommandSubstitution(_) => {}
     }
 }
 

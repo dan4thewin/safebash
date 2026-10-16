@@ -3,10 +3,22 @@
 set -eu
 . common.sh
 setup types
-plan=392
+plan=394
 echo "1..$plan" >&3
 
 set +e
+
+# Array literals may put each element, including the final one, on its own line.
+run_sash 'array a=(
+one
+two
+)
+echo $(join a)'
+[[ $rc = 0 && $out = "one two" && -z $err ]]; chk alayout.1
+
+# Default-type checks must descend into a parameter expansion's cell index.
+run_sash 'array a=(x); int i=0; echo ${a[${i:-oops}]:!}'
+[[ $rc != 0 && -z $out && $err == *SB4030* && $err == *default* ]]; chk alayout.2
 
 # --- DD#0 (implicit): bash control-flow constructs must apply
 # compile-time analyses uniformly. A type error at top level must

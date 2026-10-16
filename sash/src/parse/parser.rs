@@ -278,7 +278,7 @@ pub fn parse_statement(scanner: &mut Scanner) -> Result<Option<Statement>, Diagn
 }
 
 /// Parse a statement the caller has already established is there.
-fn parse_statement_here(scanner: &mut Scanner) -> Result<Statement, Diagnostic> {
+pub(super) fn parse_statement_here(scanner: &mut Scanner) -> Result<Statement, Diagnostic> {
     let start = scanner.peek().span.start;
     let tok = scanner.peek().token.clone();
     let span = span_from(scanner, start);
@@ -3602,8 +3602,8 @@ fn unrecognized_operator_diag(pe: &ParameterExpansion, span: Span) -> Option<Dia
 }
 
 /// The single-operator rejects that are a plain equality (or the two-char
-/// `@X` transform): indirect `${!x}` (SB4003), a substring/`:s/` on an array
-/// cell (SB4039), and the `@`-transform family (SB4015). `None` if `op` is
+/// `@X` transform): indirect `${!x}` (SB4003), an unsupported colon operator
+/// on a cell (SB4039), and the `@`-transform family (SB4015). `None` if `op` is
 /// none of these.
 fn simple_rejected_operator_diag(
     op: &str,
@@ -3626,9 +3626,9 @@ fn simple_rejected_operator_diag(
             span,
             "SB4039",
             format!(
-                "substring / `:s/…` on an array cell (`${{{}[…]:…}}`) isn't \
-                 supported yet — copy the cell into a scalar first, then apply \
-                 the operator",
+                "unsupported parameter operator on an array cell (`${{{}[…]:…}}`) — \
+                 use a disposition (`:-` / `:?` / `:~`), the `:!` trust modifier, \
+                 substring `:off:len`, or sed `:s/…/…/`",
                 pe.name
             ),
         ));

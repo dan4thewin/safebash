@@ -26,7 +26,7 @@ if [ -f "$db" ]; then
     passing="$(sqlite3 "$db" "SELECT COUNT(*) FROM test_status WHERE status='passing';" 2>/dev/null || echo '?')"
     failing="$(sqlite3 "$db" "SELECT COUNT(*) FROM test_status WHERE status='failing';" 2>/dev/null || echo '?')"
     total="$(sqlite3 "$db" "SELECT COUNT(*) FROM test_status;" 2>/dev/null || echo '?')"
-    last_run="$(sqlite3 "$db" "SELECT MAX(commit_hash) FROM runs;" 2>/dev/null || echo '?')"
+    last_run="$(sqlite3 "$db" "SELECT commit_hash FROM runs ORDER BY rowid DESC LIMIT 1;" 2>/dev/null || echo '?')"
 else
     passing='?'; failing='?'; total='?'; last_run='no spec.db'
 fi

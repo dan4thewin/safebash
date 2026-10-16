@@ -743,9 +743,11 @@ run_sash 'map m=([k]=hello); echo ${m[k]:s/l/L/g}'
 # scx.21 malformed sed on a cell → SB4032 (mode-independent, shared with scalar)
 run_sash 'array a=(hi 13 21); echo ${a[0]:s/h}'
 [[ $rc != 0 && -z $out && $err == *SB4032* ]]; chk scx.21
-# scx.22 a `:`-op with no cell lowering (`:+`) still rejects explicitly → SB4039
+# scx.22 a dropped `:`-op (`:+`) still rejects, without falsely claiming
+# substring and sed on cells are unsupported.
 run_sash 'array a=(hi 13 21); echo ${a[0]:+x}'
-[[ $rc != 0 && -z $out && $err == *SB4039* ]]; chk scx.22
+[[ $rc != 0 && -z $out && $err == *SB4039* \
+   && $err == *"unsupported parameter operator on an array cell"* ]]; chk scx.22
 
 # ── DD#77 D1, the IMPORTED half: a string cell reaching arithmetic through the
 # `${…}` value-import owes the same disposition a bare one does — "a string

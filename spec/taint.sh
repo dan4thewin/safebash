@@ -3,10 +3,96 @@
 set -eu
 . common.sh
 setup taint
-plan=344
+plan=365
 echo "1..$plan" >&3
 
 set +e
+
+# DD#91 + DD#123: trust modifies a cell's stored value, not its type or index.
+run_sash 'array a=()
+argv 1 a
+echo "${a[0]:!}|${a[7]:!}|${a[7]:!-fallback}|${a[0]:!?missing}"
+echo A ${a[7]:!~} B' hello
+[[ $rc = 0 && $out = $'hello||fallback|hello\nA B' && -z $rerr ]]; chk ctrs.1
+
+run_sash 'array a=(13 hi)
+echo "$(( ${a[0]:!-7} )):$(( ${a[1]:!-7} ))"'
+[[ $rc = 0 && $out = "13:7" && -z $rerr ]]; chk ctrs.2
+
+run_sash 'int array a=(0 9)
+echo "$(( ${a[0]:!-7} )):$(( ${a[1]:!?missing} )):$(( ${a[1]:!} ))"'
+[[ $rc = 0 && $out = "7:9:9" && -z $rerr ]]; chk ctrs.3
+
+run_sash 'map m=([k]=13 [bad]=hi)
+echo "${m[k]:!}|${m[missing]:!-fallback}|${m[k]:!?missing}"
+echo A ${m[missing]:!~} B
+echo "$(( ${m[k]:!-7} )):$(( ${m[bad]:!-7} ))"'
+[[ $rc = 0 && $out = $'13|fallback|13\nA B\n13:7' && -z $rerr ]]; chk ctrs.4
+
+run_sash 'array a=(13); echo $(( ${a[0]:!} ))'
+[[ $rc != 0 && -z $out && $err == *SB4030* && $err == *disposition* ]]; chk ctrs.5
+
+run_sash 'array a=(); argv 1 a; echo ${a[9]:!?cell-missing}' one
+[[ $rc != 0 && -z $out && $rerr == *cell-missing* ]]; chk ctrs.6
+
+run_sash 'map m=([k]=hi); echo $(( ${m[k]:!?cell-not-int} ))'
+[[ $rc != 0 && -z $out && $rerr == *cell-not-int* ]]; chk ctrs.7
+
+# A vouched use does not declassify the collection for a later bare read.
+run_sash 'array a=(); argv 1 a; echo ${a[0]:!}; echo ${a[0]}' one
+[[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk ctrs.8
+
+run_sash 'array a=(); argv 1 a
+echo $a[0]:! $a[7]:!-fallback $a[0]:!?missing
+echo A $a[7]:!~ B' hello
+[[ $rc = 0 && $out = $'hello fallback hello\nA B' && -z $rerr ]]; chk ctrs.9
+
+run_sash 'array a=(); argv 1 a
+array b=(before ${a[7]:!~} ${a[0]:!~} after)
+echo $(join b)' hello
+[[ $rc = 0 && $out = "before hello after" && -z $rerr ]]; chk ctrs.10
+
+run_sash 'array a=(hello); echo "${a[0]:!~}"'
+[[ $rc != 0 && -z $out && $err == *SB5046* && $err == *':!~'* ]]; chk ctrs.11
+
+# Reading only through the cell index is still a read for SB5050.
+run_sash 'array a=(hello); int i=0; echo ${a[$i]:!-fallback}'
+[[ $rc = 0 && $out = "hello" && -z $rerr ]]; chk ctrs.12
+
+# The separate vouched use keeps the old dead-variable fault from masking
+# the index-taint regression. Trusting a cell never vouches for its index.
+run_sash 'array a=(hello); str i=$(arg 1); : ${i:!}
+echo ${a[$(( ${i:-0} ))]:!}' 0
+[[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk ctrs.13
+
+run_sash 'array a=(hello); str i=$(arg 1); : ${i:!}
+str z=${a[$(( ${i:-0} ))]:!}; echo "$z"' 0
+[[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk ctrs.14
+
+run_sash 'array a=(hello); str i=$(arg 1); : ${i:!}
+array b=(${a[$(( ${i:-0} ))]:!}); echo $(join b)' 0
+[[ $rc != 0 && -z $out && $err == *SB5021* ]]; chk ctrs.15
+
+run_sash 'map m=([k]=hello); str key=$(arg 1); : ${key:!}
+echo ${m[$key]:!}' k
+[[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk ctrs.16
+
+run_sash 'array a=(hello); echo ${a[$missing]:!-fallback}'
+[[ $rc != 0 && -z $out && $err == *SB5031* && $err == *missing* ]]; chk ctrs.17
+
+# Shared expression walks must see rejected operators nested inside the index.
+run_sash 'array a=(hello); int i=0; echo ${a[$(( ${i@Q} ))]:!-fallback}'
+[[ $rc != 0 && -z $out && $err == *SB4015* && $err == *'${var@Q}'* ]]; chk ctrs.18
+
+run_sash 'map m=([k]=hello)
+array b=(${m[$(arg 1)]:!}); echo $(join b)' k
+[[ $rc != 0 && -z $out && $err == *SB5021* ]]; chk ctrs.19
+
+run_sash 'map m=([k]=hello); echo ${m[$(arg 1)]:!}' k
+[[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk ctrs.20
+
+run_sash 'str s=13; echo $(( ${s:!} ))'
+[[ $rc != 0 && -z $out && $err == *SB4030* && $err == *disposition* ]]; chk ctrs.21
 
 # 24.1 getenv produces tainted var
 run_sash 'x=$(getenv HOME); echo $x'
