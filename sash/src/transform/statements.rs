@@ -429,6 +429,8 @@ fn attach_redirects_to_last_inst(ssa: &mut SsaProgram, blk_id: BlockId, redirect
 
 /// `(( expr ))` as a condition: evaluate arithmetic, set exit status based on
 /// result (0 = true if nonzero, 1 = false if zero).
+/// Feed the integer directly to `LetExit`; an untyped temporary would force an
+/// int -> string -> int roundtrip in both backends.
 fn lower_arith_test_stmt(
     expr: &ArithExpr,
     stmt: &Statement,
@@ -455,16 +457,9 @@ fn lower_arith_test_stmt(
     };
     let val = expr_to_value(&ir_expr, state);
     let val = lift_int_func_calls(val, ssa, state, block);
-    let target = state.define("__arith_test");
-    ssa.block_mut(*block).insts.push(SsaInst::Assign {
-        target: target.clone(),
-        value: val,
-    });
-    ssa.block_mut(*block).insts.push(SsaInst::internal(
-        BuiltinCmd::LetExit,
-        vec![SsaValue::Var(target)],
-        true,
-    ));
+    ssa.block_mut(*block)
+        .insts
+        .push(SsaInst::internal(BuiltinCmd::LetExit, vec![val], true));
     *block
 }
 

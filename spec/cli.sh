@@ -10,7 +10,7 @@ set -eu
 . common.sh
 setup cli
 set +e
-plan=64
+plan=66
 echo "1..$plan" >&3
 
 SASH=$(command -v "${SASH:-sash}")
@@ -454,6 +454,26 @@ err=$($SASH --no-taint 2>&1 >/dev/null); rc=$?
 # name the path and the reason.
 err=$($SASH ./no-such-script.sash -o ns.out 2>&1 >/dev/null); rc=$?
 [[ $rc != 0 && $err == *"./no-such-script.sash"* && $err == *"No such file"* && ! -e ns.out ]]; chk cli.39
+
+# Integer arithmetic conditions must not stringify their result to test it.
+out=$("$SASH" --emit-c -c 'int x=1
+if (( x+=10, x>0 )) { echo yes }' 2>c.err); rc=$?
+err=$(<c.err)
+c_body=${out#*'int main('}
+[[ $rc = 0 && -z $err && $out == *'int main('* \
+   && $c_body != *'sash_itoa('* && $c_body != *'sash_atoi('* ]]; chk arithslot.1
+
+# Real boundaries still convert: attest parses captured text, echo formats x.
+out=$("$SASH" --emit-c -c 's=$(/bin/echo 12)
+attest s ((x=s))
+if (( x+=10, x>0 )) { echo yes }
+echo $x' 2>c.err); rc=$?
+err=$(<c.err)
+c_body=${out#*'int main('}
+itoa_calls=$(grep -o 'sash_itoa(' <<< "$c_body" | wc -l)
+atoi_calls=$(grep -o 'sash_atoi(' <<< "$c_body" | wc -l)
+[[ $rc = 0 && -z $err && $out == *'int main('* \
+   && $itoa_calls = 1 && $atoi_calls = 1 ]]; chk arithslot.2
 
 set -e
 tally
