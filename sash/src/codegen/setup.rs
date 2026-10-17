@@ -80,6 +80,12 @@ pub(super) fn declare_runtime_functions(module: &mut ObjectModule) -> ExternFunc
         .declare_function("sash_scope_bind", Linkage::Import, &scope_bind_sig)
         .expect("declare sash_scope_bind");
 
+    let mut reserve_fds_sig = Signature::new(CallConv::SystemV);
+    push_i64s(&mut reserve_fds_sig, 2, 0);
+    let reserve_fds_func = module
+        .declare_function("sash_reserve_fds", Linkage::Import, &reserve_fds_sig)
+        .expect("declare sash_reserve_fds");
+
     // sash_attest_fail(name_ptr, name_len, val_ptr, val_len) -> ! — attest
     // gate failure diagnostic (`<argv0>: attest: <name> = '<val>' failed …`).
     let mut attest_fail_sig = Signature::new(CallConv::SystemV);
@@ -302,13 +308,21 @@ pub(super) fn declare_runtime_functions(module: &mut ObjectModule) -> ExternFunc
         .declare_function("sash_dup2", Linkage::Import, &dup2_sig)
         .expect("declare sash_dup2");
 
-    // sash_dup(fd) -> new_fd
+    // Private redirect backups: close-on-exec, excluding the referenced fd set.
     let mut dup_sig = Signature::new(CallConv::SystemV);
     dup_sig.params.push(AbiParam::new(I64));
+    dup_sig.params.push(AbiParam::new(I64));
+    dup_sig.params.push(AbiParam::new(I64));
     dup_sig.returns.push(AbiParam::new(I64));
-    let dup_func = module
-        .declare_function("sash_dup", Linkage::Import, &dup_sig)
-        .expect("declare sash_dup");
+    let save_fd_func = module
+        .declare_function("sash_save_fd", Linkage::Import, &dup_sig)
+        .expect("declare sash_save_fd");
+    let mut restore_sig = Signature::new(CallConv::SystemV);
+    restore_sig.params.push(AbiParam::new(I64));
+    restore_sig.params.push(AbiParam::new(I64));
+    let restore_fd_func = module
+        .declare_function("sash_restore_fd", Linkage::Import, &restore_sig)
+        .expect("declare sash_restore_fd");
 
     // sash_redirect(fd, path, flags) -> 0 ok, -1 err
     let mut redirect_sig = Signature::new(CallConv::SystemV);
@@ -822,6 +836,7 @@ pub(super) fn declare_runtime_functions(module: &mut ObjectModule) -> ExternFunc
         emsg: emsg_func,
         emsg_status: emsg_status_func,
         scope_bind: scope_bind_func,
+        reserve_fds: reserve_fds_func,
         scope_restore: scope_restore_func,
         attest_fail: attest_fail_func,
         arith_overflow: arith_overflow_func,
@@ -840,7 +855,8 @@ pub(super) fn declare_runtime_functions(module: &mut ObjectModule) -> ExternFunc
         pipe: pipe_func,
         close: close_func,
         dup2: dup2_func,
-        dup: dup_func,
+        save_fd: save_fd_func,
+        restore_fd: restore_fd_func,
         redirect: redirect_func,
         redirect_s: redirect_s_func,
         read: read_func,
@@ -1588,4 +1604,35 @@ pub(crate) fn define_heap_size(module: &mut ObjectModule) {
     module
         .define_data(data_id, &desc)
         .expect("define sash_heap_size");
+}
+
+pub(super) fn reserve_user_fds(
+    fds: &[i64],
+    builder: &mut cranelift_frontend::FunctionBuilder,
+    module: &mut ObjectModule,
+    externs: &ExternFuncs,
+) {
+    use cranelift_codegen::ir::InstBuilder;
+
+    if fds.is_empty() {
+        return;
+    }
+    let data = module
+        .declare_data("__sash_user_fds", Linkage::Local, false, false)
+        .expect("declare source descriptor set");
+    let mut desc = DataDescription::new();
+    let bytes = fds
+        .iter()
+        .flat_map(|fd| fd.to_le_bytes())
+        .collect::<Vec<_>>();
+    desc.define(bytes.into_boxed_slice());
+    desc.set_align(8);
+    module
+        .define_data(data, &desc)
+        .expect("define source descriptor set");
+    let global = module.declare_data_in_func(data, builder.func);
+    let ptr = builder.ins().global_value(I64, global);
+    let len = builder.ins().iconst(I64, fds.len() as i64);
+    let reserve = module.declare_func_in_func(externs.reserve_fds, builder.func);
+    builder.ins().call(reserve, &[ptr, len]);
 }

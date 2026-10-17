@@ -86,6 +86,7 @@ pub(super) struct ExternFuncs {
     pub(super) scope_bind: cranelift_module::FuncId,
     /// DD#120: restore the invoker's own 0/1/2 on entry to END.
     pub(super) scope_restore: cranelift_module::FuncId,
+    pub(super) reserve_fds: cranelift_module::FuncId,
     pub(super) attest_fail: cranelift_module::FuncId,
     pub(super) arith_overflow: cranelift_module::FuncId,
     pub(super) arith_divzero: cranelift_module::FuncId,
@@ -104,7 +105,8 @@ pub(super) struct ExternFuncs {
     pub(super) pipe: cranelift_module::FuncId,
     pub(super) close: cranelift_module::FuncId,
     pub(super) dup2: cranelift_module::FuncId,
-    pub(super) dup: cranelift_module::FuncId,
+    pub(super) save_fd: cranelift_module::FuncId,
+    pub(super) restore_fd: cranelift_module::FuncId,
     pub(super) redirect: cranelift_module::FuncId,
     pub(super) redirect_s: cranelift_module::FuncId,
     pub(super) read: cranelift_module::FuncId,

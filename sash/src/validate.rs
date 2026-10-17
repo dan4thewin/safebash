@@ -4216,12 +4216,13 @@ fn check_close_arg(c: &Command, diags: &mut Vec<Diagnostic>) {
     }
     let arg = &c.args[0];
     let is_fd = matches!(&arg.kind,
-        ExprKind::Literal(s) if !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit()));
+        ExprKind::Literal(s) if !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit())
+            && s.parse::<i32>().is_ok());
     if !is_fd {
         diags.push(Diagnostic::error_span(
             arg.span,
             "SB4052",
-            "`close` needs a literal file-descriptor number (e.g. `close 3`) — \
+            "`close` needs a literal file-descriptor number in 0..2147483647 (e.g. `close 3`) — \
              not a variable or expression"
                 .to_string(),
         ));

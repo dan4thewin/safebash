@@ -6,7 +6,8 @@ use cranelift_codegen::ir::condcodes::IntCC;
 use cranelift_codegen::ir::types::I64;
 use cranelift_codegen::ir::InstBuilder;
 use cranelift_codegen::ir::Value;
-use cranelift_frontend::{FunctionBuilder, Variable};
+use cranelift_codegen::ir::{StackSlotData, StackSlotKind};
+use cranelift_frontend::FunctionBuilder;
 use cranelift_module::Module;
 use cranelift_object::ObjectModule;
 use std::collections::HashMap;
@@ -19,8 +20,8 @@ pub(super) struct SavedFd {
     pub(super) saved_copy: cranelift_codegen::ir::Value, // dup'd copy to restore from
 }
 
-/// DD#55: a redirect `open(2)` setup-failure surfaced to the command
-/// handler. `failed` is 1 when an open redirect failed (else 0);
+/// DD#55: a redirect setup-failure surfaced to the command
+/// handler. `failed` is 1 when a redirect failed (else 0);
 /// `path_ptr`/`path_len` name the **first redirect that actually failed**,
 /// which is the path DD#70's `<argv0>: <path>: <reason>` contract wants.
 #[derive(Clone, Copy)]
@@ -30,26 +31,11 @@ pub(super) struct RedirectFailure {
     pub(super) path_len: Value,
 }
 
-/// Emit fd redirections before a command. Returns saved state for restore.
-/// Backward-compatible wrapper over [`emit_redirects_guarded`] for callers
-/// that don't guard against open(2) failure.
-pub(super) fn emit_redirects(
-    redirects: &[crate::ir::Redirect],
-    builder: &mut FunctionBuilder,
-    module: &mut ObjectModule,
-    externs: &ExternFuncs,
-    literals: &HashMap<String, cranelift_module::DataId>,
-    vars: &HashMap<String, VarSlot>,
-    #[allow(unused_variables)] _exit_status_var: Variable,
-) -> Vec<SavedFd> {
-    emit_redirects_guarded(redirects, builder, module, externs, literals, vars).0
-}
-
-/// Like [`emit_redirects`], but also returns a [`RedirectFailure`] when at
-/// least one redirect is a file `open(2)` (Write/Append/Read), so the
+/// Apply redirections and return a [`RedirectFailure`] when at
+/// least one redirect is present, so the
 /// caller can apply the DD#55 setup-failure semantics (skip body, fail
 /// status, abort governed by context). Returns `None` failure when no
-/// open redirect is present (dup only).
+/// redirect is present.
 pub(super) fn emit_redirects_guarded(
     redirects: &[crate::ir::Redirect],
     builder: &mut FunctionBuilder,
@@ -58,12 +44,28 @@ pub(super) fn emit_redirects_guarded(
     literals: &HashMap<String, cranelift_module::DataId>,
     vars: &HashMap<String, VarSlot>,
 ) -> (Vec<SavedFd>, Option<RedirectFailure>) {
+    if redirects.is_empty() {
+        return (Vec::new(), None);
+    }
     let mut saved = Vec::new();
     let mut acc: Option<RedirectFailure> = None;
+    let fds = crate::ir::redirect_referenced_fds(redirects);
+    let size = u32::try_from(fds.len() * 8).expect("redirect descriptor table fits a stack slot");
+    let slot =
+        builder.create_sized_stack_slot(StackSlotData::new(StackSlotKind::ExplicitSlot, size, 3));
+    for (i, fd) in fds.iter().enumerate() {
+        let value = builder.ins().iconst(I64, *fd);
+        let offset = i32::try_from(i * 8).expect("redirect descriptor offset fits a stack slot");
+        builder.ins().stack_store(value, slot, offset);
+    }
+    let protected = builder.ins().stack_addr(I64, slot, 0);
+    let count = builder.ins().iconst(I64, fds.len() as i64);
     for redir in redirects {
-        let fd = redir.fd.unwrap_or(default_fd_for_op(&redir.op)) as i64;
+        let fd = redir.fd.unwrap_or(redir.op.default_fd()) as i64;
         let fd_val = builder.ins().iconst(I64, fd);
-        saved.push(emit_save_fd(fd, fd_val, builder, module, externs));
+        saved.push(emit_save_fd(
+            fd, fd_val, protected, count, builder, module, externs,
+        ));
         // Bash performs redirects left to right and STOPS at the first failed
         // open(2). Once one has failed, a later redirect must not run: an
         // eager `open` creates or truncates a file bash never touches, so
@@ -71,7 +73,9 @@ pub(super) fn emit_redirects_guarded(
         // real control flow (the `native-ternary-eager-eval` precedent) also
         // makes the reported path right *by construction* — only the first
         // failure survives, so there is no "which path?" left to get wrong.
-        acc = emit_next_redirect(acc, redir, fd_val, builder, module, externs, literals, vars);
+        acc = Some(emit_next_redirect(
+            acc, redir, fd_val, builder, module, externs, literals, vars,
+        ));
     }
     (saved, acc)
 }
@@ -80,8 +84,7 @@ pub(super) fn emit_redirects_guarded(
 ///
 /// With no prior failure this is a plain `emit_one_redirect`; with one, the
 /// redirect is wrapped in the skip/do branch so it never runs. Returns the
-/// failure that survives — `None` only while nothing that can fail has been
-/// emitted yet (a leading run of dups).
+/// failure that survives. Every redirect, including a dup, can fail.
 #[allow(clippy::too_many_arguments)]
 fn emit_next_redirect(
     prev: Option<RedirectFailure>,
@@ -92,19 +95,19 @@ fn emit_next_redirect(
     externs: &ExternFuncs,
     literals: &HashMap<String, cranelift_module::DataId>,
     vars: &HashMap<String, VarSlot>,
-) -> Option<RedirectFailure> {
+) -> RedirectFailure {
     if let Some(prev) = prev {
-        return Some(emit_guarded_redirect(
+        return emit_guarded_redirect(
             prev, redir, fd_val, builder, module, externs, literals, vars,
-        ));
+        );
     }
     let (failed, path_ptr, path_len) =
-        emit_one_redirect(redir, fd_val, builder, module, externs, literals, vars)?;
-    Some(RedirectFailure {
+        emit_one_redirect(redir, fd_val, builder, module, externs, literals, vars);
+    RedirectFailure {
         failed,
         path_ptr,
         path_len,
-    })
+    }
 }
 
 /// Emit `redir` only when no earlier open has failed.
@@ -115,8 +118,6 @@ fn emit_next_redirect(
 /// through unchanged, so the surviving `path_ptr`/`path_len` always name the
 /// **first** redirect that failed.
 ///
-/// A dup (`>&N`) yields no failure triple of its own; it is still guarded,
-/// because bash abandons the whole redirect list at the first failure.
 #[allow(clippy::too_many_arguments)]
 fn emit_guarded_redirect(
     prev: RedirectFailure,
@@ -141,10 +142,8 @@ fn emit_guarded_redirect(
 
     builder.switch_to_block(do_blk);
     builder.seal_block(do_blk);
-    let (failed, path_ptr, path_len) = emit_one_redirect(
-        redir, fd_val, builder, module, externs, literals, vars,
-    )
-    .unwrap_or((prev.failed, prev.path_ptr, prev.path_len));
+    let (failed, path_ptr, path_len) =
+        emit_one_redirect(redir, fd_val, builder, module, externs, literals, vars);
     builder.ins().jump(
         merge,
         &[
@@ -174,26 +173,19 @@ fn emit_guarded_redirect(
     }
 }
 
-/// Bash default fd: stdout for write-ish ops, stdin for read-ish ops.
-pub(super) fn default_fd_for_op(op: &crate::ir::RedirectOp) -> u32 {
-    use crate::ir::RedirectOp;
-    match op {
-        RedirectOp::Write | RedirectOp::Append | RedirectOp::DupOutput => 1,
-        // `<>` is a `<` form: bash defaults it to stdin, not stdout.
-        RedirectOp::Read | RedirectOp::DupInput | RedirectOp::ReadWrite => 0,
-    }
-}
-
 /// dup() the live fd so it can be restored later, and record the pairing.
+#[allow(clippy::too_many_arguments)]
 fn emit_save_fd(
     fd: i64,
     fd_val: cranelift_codegen::ir::Value,
+    protected: Value,
+    count: Value,
     builder: &mut FunctionBuilder,
     module: &mut ObjectModule,
     externs: &ExternFuncs,
 ) -> SavedFd {
-    let dup_ref = module.declare_func_in_func(externs.dup, builder.func);
-    let dup_call = builder.ins().call(dup_ref, &[fd_val]);
+    let dup_ref = module.declare_func_in_func(externs.save_fd, builder.func);
+    let dup_call = builder.ins().call(dup_ref, &[fd_val, protected, count]);
     let saved_copy = builder.inst_results(dup_call)[0];
     SavedFd {
         original_fd: fd,
@@ -201,12 +193,7 @@ fn emit_save_fd(
     }
 }
 
-/// Dispatch on the RedirectOp shape. `Write`/`Append`/`Read` share the
-/// open-and-dup2 pattern (open_flags_for_op covers the three flag
-/// values); `DupOutput` gets its own emitter. Unknown ops are no-ops
-/// (the save still happened). Returns `Some((failed, path_ptr, path_len))`
-/// for a file `open(2)` redirect (DD#55 setup-failure surfacing); `None`
-/// for dup/noop.
+/// Both file opens and descriptor duplication can fail during setup.
 fn emit_one_redirect(
     redir: &crate::ir::Redirect,
     fd_val: cranelift_codegen::ir::Value,
@@ -215,9 +202,8 @@ fn emit_one_redirect(
     externs: &ExternFuncs,
     literals: &HashMap<String, cranelift_module::DataId>,
     vars: &HashMap<String, VarSlot>,
-) -> Option<(Value, Value, Value)> {
-    use crate::ir::RedirectOp;
-    if let Some(flags) = open_flags_for_op(&redir.op) {
+) -> (Value, Value, Value) {
+    if let Some(flags) = redir.op.open_flags() {
         return emit_open_redirect(
             fd_val,
             &redir.target,
@@ -230,26 +216,13 @@ fn emit_one_redirect(
         );
     }
     // `>&N` and `<&N` are the same operation — dup2(N, fd). They differ only
-    // in which fd they default to, which `default_fd_for_op` already handles.
-    if matches!(redir.op, RedirectOp::DupOutput | RedirectOp::DupInput) {
-        emit_dup_fd(fd_val, &redir.target, builder, module, externs);
-    }
-    None
-}
-
-/// open(2) flags for the four open-and-dup2 redirect ops.
-/// (1 = O_WRONLY|O_CREAT|O_TRUNC, 2 = O_WRONLY|O_CREAT|O_APPEND,
-/// 0 = O_RDONLY, 3 = O_RDWR|O_CREAT — interpreted by the
-/// `redirect`/`redirect_s` runtime.)
-fn open_flags_for_op(op: &crate::ir::RedirectOp) -> Option<i64> {
-    use crate::ir::RedirectOp;
-    match op {
-        RedirectOp::Write => Some(1),
-        RedirectOp::Append => Some(2),
-        RedirectOp::Read => Some(0),
-        RedirectOp::ReadWrite => Some(3),
-        _ => None,
-    }
+    // in which fd they default to.
+    let result = emit_dup_fd(fd_val, &redir.target, builder, module, externs);
+    let (ptr, len) =
+        lower_ir_redirect_expr(&redir.target, builder, module, vars, literals, externs);
+    let failed = builder.ins().icmp_imm(IntCC::SignedLessThan, result, 0);
+    let failed = builder.ins().uextend(I64, failed);
+    (failed, ptr, len)
 }
 
 /// `> file` / `>> file` / `< file`. Literal path → fast `redirect`;
@@ -274,7 +247,7 @@ fn emit_open_redirect(
     externs: &ExternFuncs,
     literals: &HashMap<String, cranelift_module::DataId>,
     vars: &HashMap<String, VarSlot>,
-) -> Option<(Value, Value, Value)> {
+) -> (Value, Value, Value) {
     let flags_val = builder.ins().iconst(I64, flags);
     let (path_ptr, path_len, result) = if let crate::ir::ExprKind::Literal(s) = &target.kind {
         let Some(&data_id) = literals.get(s.as_str()) else {
@@ -300,27 +273,25 @@ fn emit_open_redirect(
     let zero = builder.ins().iconst(I64, 0);
     let lt = builder.ins().icmp(IntCC::SignedLessThan, result, zero);
     let failed = builder.ins().uextend(I64, lt);
-    Some((failed, path_ptr, path_len))
+    (failed, path_ptr, path_len)
 }
 
-/// `>&N` / `<&N` — dup2(target_fd, fd). Non-literal targets default to fd 2
-/// (cov.86-88 reject a non-numeric fd-dup target, so that arm is defensive).
+/// `>&N` / `<&N` — malformed operands must not silently become fd 2.
 fn emit_dup_fd(
     fd_val: cranelift_codegen::ir::Value,
     target: &crate::ir::Expr,
     builder: &mut FunctionBuilder,
     module: &mut ObjectModule,
     externs: &ExternFuncs,
-) {
-    let target_fd: i64 = match &target.kind {
-        crate::ir::ExprKind::Literal(s) => s.parse().unwrap_or(2),
-        _ => 2,
-    };
+) -> Value {
+    let target_fd =
+        crate::ir::dup_target_fd(target).expect("SB4048 requires a literal descriptor number");
     let target_val = builder
         .ins()
         .iconst(cranelift_codegen::ir::types::I64, target_fd);
     let dup2_ref = module.declare_func_in_func(externs.dup2, builder.func);
-    builder.ins().call(dup2_ref, &[target_val, fd_val]);
+    let call = builder.ins().call(dup2_ref, &[target_val, fd_val]);
+    builder.inst_results(call)[0]
 }
 
 /// Restore saved fds after a command completes
@@ -334,9 +305,19 @@ pub(super) fn emit_restore(
         let fd_val = builder
             .ins()
             .iconst(cranelift_codegen::ir::types::I64, s.original_fd);
-        let dup2_ref = module.declare_func_in_func(externs.dup2, builder.func);
-        builder.ins().call(dup2_ref, &[s.saved_copy, fd_val]);
-        let close_ref = module.declare_func_in_func(externs.close, builder.func);
+        let restore_ref = module.declare_func_in_func(externs.restore_fd, builder.func);
+        builder.ins().call(restore_ref, &[s.saved_copy, fd_val]);
+    }
+}
+
+pub(super) fn emit_discard_saved(
+    saved: Vec<SavedFd>,
+    builder: &mut FunctionBuilder,
+    module: &mut ObjectModule,
+    externs: &ExternFuncs,
+) {
+    let close_ref = module.declare_func_in_func(externs.close, builder.func);
+    for s in saved {
         builder.ins().call(close_ref, &[s.saved_copy]);
     }
 }

@@ -289,6 +289,7 @@ fn emit_prologue(out: &mut String) {
         out,
         "extern void sash_emsg_status(const char* np, i64 nl, i64 status);\n\
          extern void sash_scope_bind(void);\n\
+         extern void sash_reserve_fds(const i64* fds, i64 count);\n\
          extern void sash_scope_restore(void);"
     )
     .unwrap();
@@ -298,7 +299,12 @@ fn emit_prologue(out: &mut String) {
     )
     .unwrap();
     // Phase 4 — redirects
-    writeln!(out, "extern i64 sash_dup(i64 fd);").unwrap();
+    writeln!(
+        out,
+        "extern i64 sash_save_fd(i64 fd, const i64* protected, i64 count);"
+    )
+    .unwrap();
+    writeln!(out, "extern void sash_restore_fd(i64 saved, i64 fd);").unwrap();
     writeln!(out, "extern i64 sash_dup2(i64 src, i64 dst);").unwrap();
     writeln!(out, "extern i64 sash_close(i64 fd);").unwrap();
     writeln!(
@@ -437,6 +443,7 @@ fn emit_main(e: &mut Emit, ssa: &SsaProgram) {
     e.has_exiting_signals = !ssa.exiting_signals.is_empty();
     writeln!(e.out, "int main(int argc, char** argv) {{").unwrap();
     writeln!(e.out, "    (void)argc; (void)argv;").unwrap();
+    emit_user_fds(e, &ssa.user_fds);
     writeln!(e.out, "    i64 __exit_status = 0;").unwrap();
     writeln!(e.out, "    i64 __test_result = 0;").unwrap();
     writeln!(e.out, "    (void)__test_result;").unwrap();
@@ -454,12 +461,11 @@ fn emit_main(e: &mut Emit, ssa: &SsaProgram) {
 
     // Phase 1: only main-body blocks. fn_* (function bodies) come
     // in Phase 4 — they map to C function definitions.
-    let block_ids: Vec<BlockId> = ssa.blocks.keys().copied().collect();
-    for &id in &block_ids {
-        let block = ssa.block(id);
-        if block.label.starts_with("fn_") {
-            continue;
-        }
+    let main_blocks = ssa
+        .blocks
+        .iter()
+        .filter(|(_, block)| !block.label.starts_with("fn_"));
+    for (&id, block) in main_blocks {
         emit_block(e, id, block, &types);
     }
 
@@ -474,6 +480,24 @@ fn emit_main(e: &mut Emit, ssa: &SsaProgram) {
     }
     writeln!(e.out, "    return 0;  /* unreachable */").unwrap();
     writeln!(e.out, "}}").unwrap();
+}
+
+fn emit_user_fds(e: &mut Emit, fds: &[i64]) {
+    if fds.is_empty() {
+        return;
+    }
+    let values = fds
+        .iter()
+        .map(i64::to_string)
+        .collect::<Vec<_>>()
+        .join(", ");
+    writeln!(
+        e.out,
+        "    static const i64 __sash_user_fds[] = {{ {values} }};\n    \
+         sash_reserve_fds(__sash_user_fds, {});",
+        fds.len()
+    )
+    .unwrap();
 }
 
 /// Walk every assignment in the SSA and record the declared type
@@ -1861,17 +1885,14 @@ fn emit_cd_c(e: &mut Emit, args: &[SsaValue], checked: bool, types: &VarTypes) {
 /// `sash_trap(sig, handler)`; `__signal_flag [sig]` → `sash_signal_flag(sig)`.
 /// Kept out of `emit_command` (complexity gate); the builtin always succeeds.
 fn emit_signal_builtin_c(e: &mut Emit, kind: &BuiltinCmd, args: &[SsaValue]) {
-    let sig = match args.first() {
-        Some(SsaValue::Literal(s)) => s.parse::<i64>().unwrap_or(0),
-        _ => 0,
-    };
     if matches!(kind, BuiltinCmd::SignalFlag) {
+        let [signal] = kind.expect_ssa_args(args);
+        let sig = kind.expect_literal_int(signal);
         writeln!(e.out, "    sash_signal_flag({});", sig).unwrap();
     } else {
-        let handler = match args.get(1) {
-            Some(SsaValue::Literal(h)) => h.parse::<i64>().unwrap_or(0),
-            _ => 0,
-        };
+        let [signal, handler] = kind.expect_ssa_args(args);
+        let sig = kind.expect_literal_int(signal);
+        let handler = kind.expect_literal_int(handler);
         writeln!(e.out, "    sash_trap({}, {});", sig, handler).unwrap();
     }
     writeln!(e.out, "    __exit_status = 0; __test_result = 1;").unwrap();
@@ -1913,16 +1934,16 @@ fn emit_bg_builtin_c(e: &mut Emit, kind: &BuiltinCmd, args: &[SsaValue], types: 
         // `$!` — store the last background pid (the fork result still in
         // __test_result) into its var, as a string.
         BuiltinCmd::StoreBgPid => {
-            if let Some(SsaValue::Var(vr)) = args.first() {
-                let base = c_var_name(&vr.name, vr.version);
-                let (p, l) = emit_itoa_temp(e, "__test_result");
-                writeln!(
-                    e.out,
-                    "    {base}_ptr = {p}; {base}_len = {l};",
-                    base = base
-                )
-                .unwrap();
-            }
+            let [target] = kind.expect_ssa_args(args);
+            let vr = kind.expect_var_arg(target);
+            let base = c_var_name(&vr.name, vr.version);
+            let (p, l) = emit_itoa_temp(e, "__test_result");
+            writeln!(
+                e.out,
+                "    {base}_ptr = {p}; {base}_len = {l};",
+                base = base
+            )
+            .unwrap();
         }
         // `wait [PID]` — reap a background child, adopting its exit status.
         // No-arg `wait` waits for `$!`. Mirrors native emit_wait.
@@ -1980,30 +2001,6 @@ fn emit_wait_value_c(e: &mut Emit, argv: &[SsaValue], types: &VarTypes) -> Strin
 /// silently vanished. That fail-open default produced three silently-wrong
 /// builtins (`exec`, `close`, `unset m[k]` — journal 278) and was closed in
 /// `87ced59`. The sentence describing it outlived it by a commit.
-/// DD#14: `exec > file` with no command is *persistent* fd manipulation — it
-/// rebinds the running process's descriptors for the rest of the program. The
-/// per-command save/restore that wraps every other command would undo it on
-/// the very next line, which is how this silently misrouted output back to the
-/// original stdout. Mirrors native `emit_exec_redirects_only`, which likewise
-/// applies the redirects and discards the saved fds.
-///
-/// Only the *success* path suppresses the restore. If the open fails there is
-/// no persistent redirect to keep, so that branch restores and aborts as usual.
-fn is_persistent_exec(kind: &BuiltinCmd, args: &[SsaValue]) -> bool {
-    matches!(kind, BuiltinCmd::Exec) && args.is_empty()
-}
-
-/// DD#120: `exec 2>…` is the one redirect form that rebinds the INVOKER's own
-/// stderr, so the diagnostic channel follows it. A per-command redirect
-/// (`cmd 2>…`) deliberately does not — it is a channel for that command's
-/// output, not for the program's diagnostics about it. Mirrors the native call
-/// in `emit_exec_redirects_only`.
-fn emit_scope_bind_if_persistent(e: &mut Emit, kind: &BuiltinCmd, args: &[SsaValue]) {
-    if is_persistent_exec(kind, args) {
-        writeln!(e.out, "    sash_scope_bind();").unwrap();
-    }
-}
-
 fn emit_command(
     e: &mut Emit,
     name: &str,
@@ -2021,17 +2018,36 @@ fn emit_command(
         emit_redirects_guarded(e, redirects, types)
     };
 
-    let persistent = is_persistent_exec(kind, args);
-
     let Some(rf) = failure else {
-        emit_command_body(e, name, kind, args, checked, types);
-        if !saved.is_empty() && !persistent {
-            emit_restore(e, &saved);
-        }
-        emit_scope_bind_if_persistent(e, kind, args);
+        emit_command_success(e, name, kind, args, checked, types, &saved);
         return;
     };
     emit_redirect_guarded_body(e, name, kind, args, checked, types, &saved, &rf);
+}
+
+/// Commit exec's backups before its body (which may never return); ordinary
+/// commands restore afterwards. Bare exec must not rebind the invoker's scope.
+fn emit_command_success(
+    e: &mut Emit,
+    name: &str,
+    kind: &BuiltinCmd,
+    args: &[SsaValue],
+    checked: bool,
+    types: &VarTypes,
+    saved: &[SavedFdC],
+) {
+    let exec = matches!(kind, BuiltinCmd::Exec);
+    if exec {
+        emit_discard_saved(e, saved);
+    }
+    emit_command_body(e, name, kind, args, checked, types);
+    if !exec {
+        emit_restore(e, saved);
+        return;
+    }
+    if !saved.is_empty() && args.is_empty() {
+        writeln!(e.out, "    sash_scope_bind();").unwrap();
+    }
 }
 
 /// Emit a command whose redirect setup can fail (an open redirect). On
@@ -2068,11 +2084,7 @@ fn emit_redirect_guarded_body(
         emit_open_failure_goto(e);
     }
     writeln!(e.out, "    }} else {{").unwrap();
-    emit_command_body(e, name, kind, args, checked, types);
-    if !saved.is_empty() && !is_persistent_exec(kind, args) {
-        emit_restore(e, saved);
-    }
-    emit_scope_bind_if_persistent(e, kind, args);
+    emit_command_success(e, name, kind, args, checked, types, saved);
     writeln!(e.out, "    }}").unwrap();
 }
 
@@ -2167,53 +2179,6 @@ fn emit_command_body(
     }
 }
 
-/// Terminal for the `BuiltinCmd` variants that cannot appear in command
-/// position. Split out of `emit_command_body` so that dispatcher stays under
-/// the complexity gate; the three groups below are the three distinct reasons
-/// a variant is unreachable there.
-///
-/// Reaching any of these means the transform produced something impossible,
-/// which is a compiler bug rather than a user error — hence ICE rather than a
-/// diagnostic. There is deliberately no "unsupported builtin" outcome: the c
-/// backend is a full backend held to byte-identical parity with native, so a
-/// variant is either emitted or impossible, with no third category.
-fn ice_unreachable_command(kind: &BuiltinCmd, name: &str) -> ! {
-    match kind {
-        // Rewritten before codegen: DD#99 `write` becomes `echo` with the
-        // newline suppressed (transform/cmd_handlers.rs:rewrite_write_as_echo).
-        BuiltinCmd::Write => {
-            panic!("ICE: {kind:?} is rewritten before codegen and must not reach emit_command_body (as `{name}`)")
-        }
-
-        // Expression intrinsics: resolved during transform
-        // (transform/expr_handlers.rs) into SSA values, so they never survive
-        // as a command.
-        BuiltinCmd::Len
-        | BuiltinCmd::Strlen
-        | BuiltinCmd::Keys
-        | BuiltinCmd::Join
-        | BuiltinCmd::Sub
-        | BuiltinCmd::Gsub
-        | BuiltinCmd::MatchAll
-        | BuiltinCmd::Toupper
-        | BuiltinCmd::Tolower
-        | BuiltinCmd::Basename
-        | BuiltinCmd::Dirname
-        | BuiltinCmd::Argv => {
-            panic!("ICE: {kind:?} is an expression intrinsic resolved in transform and must not reach emit_command_body (as `{name}`)")
-        }
-
-        // Carried by their own SsaInst or dissolved by the transform:
-        // `[[` → SsaInst::Test, `read`/`readline` → SsaInst::ReadLine,
-        // `break`/`continue`/`return` → control flow, `signal` → TrapSignal /
-        // SignalFlag, `unset` → TableDelete or removal, `mapfile` →
-        // recognition only (the validator rejects it).
-        _ => {
-            panic!("ICE: {kind:?} is lowered to its own instruction and must not reach emit_command_body (as `{name}`)")
-        }
-    }
-}
-
 /// Process / fd primitives, split out of `emit_command_body` to keep that
 /// dispatcher under the complexity gate. Returns false for anything it does
 /// not handle, so the caller falls through to `emit_builtin_extra`.
@@ -2232,8 +2197,9 @@ fn emit_process_builtin(
     match kind {
         BuiltinCmd::Exec => emit_exec_builtin(e, args, types),
         BuiltinCmd::Close => emit_close_builtin(e, args, checked, types),
-        BuiltinCmd::TableDelete => emit_table_delete_c(e, args, false, types),
-        BuiltinCmd::TableDeleteIdx => emit_table_delete_c(e, args, true, types),
+        BuiltinCmd::TableDelete | BuiltinCmd::TableDeleteIdx => {
+            emit_table_delete_c(e, kind, args, types)
+        }
         _ => panic!("ICE: emit_process_builtin called with {kind:?}"),
     }
 }
@@ -2244,11 +2210,8 @@ fn emit_process_builtin(
 /// (status 0, test_result 1); if zero, the test failed (status 1,
 /// test_result 0).
 fn emit_let_exit(e: &mut Emit, args: &[SsaValue], types: &VarTypes) {
-    let int_val = if let Some(arg) = args.first() {
-        lower_value_as_int(e, arg, types)
-    } else {
-        "0".to_string()
-    };
+    let [arg] = BuiltinCmd::LetExit.expect_ssa_args(args);
+    let int_val = lower_value_as_int(e, arg, types);
     let t = e.fresh();
     writeln!(e.out, "    i64 {t}_v = {iv};", t = t, iv = int_val).unwrap();
     writeln!(e.out, "    __exit_status = ({t}_v == 0) ? 1 : 0;", t = t).unwrap();
@@ -2292,25 +2255,20 @@ fn emit_exec(e: &mut Emit, name: &str, args: &[SsaValue], checked: bool, types: 
 
 /// `unset m[key]` — delete one entry. The transform emits this as the internal
 /// `__table_delete` sigil with `[Var(map), Literal(key)]` (cmd_handlers.rs:180).
-/// Mirrors native `emit_table_delete` (dispatch.rs:935), including its
-/// `args.len() >= 2` guard. Without this the sigil fell through to the `_ =>`
+/// Mirrors native `emit_table_delete`. Without this the sigil fell through to the `_ =>`
 /// TODO arm and `unset m[k]` was a silent no-op in the C backend: the key
 /// stayed present, `len` was unchanged, and the value still read back.
-fn emit_table_delete_c(e: &mut Emit, args: &[SsaValue], is_integer_key: bool, types: &VarTypes) {
-    if args.len() < 2 {
-        return;
-    }
-    let SsaValue::Var(name) = &args[0] else {
-        return;
-    };
+fn emit_table_delete_c(e: &mut Emit, kind: &BuiltinCmd, args: &[SsaValue], types: &VarTypes) {
+    let [table, key] = kind.expect_ssa_args(args);
+    let name = kind.expect_var_arg(table);
     let table_expr = lookup_table_var(&name.name, types);
-    let (kp, kl) = if is_integer_key {
+    let (kp, kl) = if matches!(kind, BuiltinCmd::TableDeleteIdx) {
         let t = e.fresh();
-        let idx_int = lower_value_as_int(e, &args[1], types);
+        let idx_int = lower_value_as_int(e, key, types);
         writeln!(e.out, "    i64 {t}_k = {idx};", t = t, idx = idx_int).unwrap();
         (format!("(const char*)&{}_k", t), "8".to_string())
     } else {
-        lower_value_as_str(e, &args[1], types)
+        lower_value_as_str(e, key, types)
     };
     writeln!(
         e.out,
@@ -3189,13 +3147,9 @@ fn emit_regex_match_c(
 /// `sash_regex_match` (1 matched / 0 not) and sets `__test_result` (the
 /// branch boolean) and `__exit_status` (matched ? 0 : 1).
 fn emit_match_c(e: &mut Emit, args: &[SsaValue], types: &VarTypes) {
-    let empty = || ("\"\"".to_string(), "0".to_string());
-    let (s_ptr, s_len) = args
-        .first()
-        .map_or_else(empty, |s| lower_value_as_str(e, s, types));
-    let (p_ptr, p_len) = args
-        .get(1)
-        .map_or_else(empty, |p| lower_value_as_str(e, p, types));
+    let [subject, pattern] = BuiltinCmd::Match.expect_ssa_args(args);
+    let (s_ptr, s_len) = lower_value_as_str(e, subject, types);
+    let (p_ptr, p_len) = lower_value_as_str(e, pattern, types);
     let m = e.fresh();
     writeln!(
         e.out,
@@ -3617,8 +3571,8 @@ fn emit_redirects(
     emit_redirects_guarded(e, redirects, types).0
 }
 
-/// Like `emit_redirects`, but also returns the first open(2)-failure guard
-/// (OR-folded across multiple open redirects) so the caller can apply the
+/// Like `emit_redirects`, but also returns the first redirect-failure guard
+/// (OR-folded across multiple redirects) so the caller can apply the
 /// DD#55 setup-failure semantics (skip body, fail status, context abort).
 /// Mirrors native emit_redirects_guarded (codegen/redirects.rs).
 fn emit_redirects_guarded(
@@ -3626,12 +3580,28 @@ fn emit_redirects_guarded(
     redirects: &[crate::ir::Redirect],
     types: &VarTypes,
 ) -> (Vec<SavedFdC>, Option<RedirectFailC>) {
+    if redirects.is_empty() {
+        return (Vec::new(), None);
+    }
     let mut saved = Vec::with_capacity(redirects.len());
     let mut fail: Option<RedirectFailC> = None;
+    let protected = e.fresh();
+    let fds = crate::ir::redirect_referenced_fds(redirects);
+    let count = fds.len();
+    let values = fds
+        .iter()
+        .map(i64::to_string)
+        .collect::<Vec<_>>()
+        .join(", ");
+    writeln!(e.out, "    const i64 {protected}_fds[] = {{ {values} }};").unwrap();
     for r in redirects {
-        let fd = r.fd.unwrap_or(default_fd_for_op(&r.op)) as i64;
+        let fd = r.fd.unwrap_or(r.op.default_fd()) as i64;
         let t = e.fresh();
-        writeln!(e.out, "    i64 {t}_saved = sash_dup({fd});", t = t, fd = fd).unwrap();
+        writeln!(
+            e.out,
+            "    i64 {t}_saved = sash_save_fd({fd}, {protected}_fds, {count});"
+        )
+        .unwrap();
         saved.push(SavedFdC {
             saved_var: format!("{}_saved", t),
             original_fd: fd,
@@ -3643,9 +3613,8 @@ fn emit_redirects_guarded(
         // the accumulated failure flag; C's `?:` short-circuits, so a guarded
         // open is simply never called. Mirrors native emit_guarded_redirect.
         let guard = fail.as_ref().map(|(f, _, _)| f.clone());
-        if let Some(new) = emit_one_redirect(e, r, fd, types, guard.as_deref()) {
-            fail = Some(fold_redirect_failure(e, fail, new));
-        }
+        let new = emit_one_redirect(e, r, fd, types, guard.as_deref());
+        fail = Some(fold_redirect_failure(e, fail, new));
     }
     (saved, fail)
 }
@@ -3676,32 +3645,6 @@ fn fold_redirect_failure(
     (format!("{ot}_f"), format!("{ot}_p"), format!("{ot}_l"))
 }
 
-/// Bash default fd: stdout for write-ish ops, stdin for read-ish ops.
-/// Mirrors default_fd_for_op (codegen/redirects.rs:39).
-fn default_fd_for_op(op: &crate::ir::RedirectOp) -> u32 {
-    use crate::ir::RedirectOp;
-    match op {
-        RedirectOp::Write | RedirectOp::Append | RedirectOp::DupOutput => 1,
-        // `<>` is a `<` form: bash defaults it to stdin, not stdout.
-        RedirectOp::Read | RedirectOp::DupInput | RedirectOp::ReadWrite => 0,
-    }
-}
-
-/// open(2) flags by RedirectOp. Mirrors open_flags_for_op
-/// (codegen/redirects.rs:114). Returns None for ops that don't
-/// follow the open-and-dup2 pattern (DupOutput, etc.).
-fn open_flags_for_op(op: &crate::ir::RedirectOp) -> Option<i64> {
-    use crate::ir::RedirectOp;
-    match op {
-        RedirectOp::Write => Some(1),
-        RedirectOp::Append => Some(2),
-        RedirectOp::Read => Some(0),
-        // 3 = O_RDWR|O_CREAT (no truncate) — bash's `<>`.
-        RedirectOp::ReadWrite => Some(3),
-        _ => None,
-    }
-}
-
 /// Dispatch on RedirectOp shape. Mirrors emit_one_redirect
 /// (codegen/redirects.rs:69).
 fn emit_one_redirect(
@@ -3710,31 +3653,11 @@ fn emit_one_redirect(
     fd: i64,
     types: &VarTypes,
     guard: Option<&str>,
-) -> Option<RedirectFailC> {
-    use crate::ir::RedirectOp;
-    if let Some(flags) = open_flags_for_op(&r.op) {
+) -> RedirectFailC {
+    if let Some(flags) = r.op.open_flags() {
         return emit_open_redirect(e, fd, &r.target, flags, types, guard);
     }
-    match r.op {
-        // `>&N` and `<&N` are the same dup2(N, fd); they differ only in the fd
-        // they default to, which `default_fd_for_op` already decides.
-        RedirectOp::DupOutput | RedirectOp::DupInput => match guard {
-            // Bash abandons the whole redirect list at the first failed open,
-            // so a later dup must not run either.
-            Some(g) => {
-                writeln!(e.out, "    if (!({g})) {{").unwrap();
-                emit_dup_fd(e, fd, &r.target);
-                writeln!(e.out, "    }}").unwrap();
-            }
-            None => emit_dup_fd(e, fd, &r.target),
-        },
-        // Write/Append/Read/ReadWrite were taken by open_flags_for_op above, so
-        // every variant is now accounted for and this is a compiler bug. It used
-        // to emit a comment, which silently dropped the redirect and left the
-        // command running on the wrong fd.
-        other => panic!("ICE: unhandled redirect op reached emit_redirect: {other:?}"),
-    }
-    None
+    emit_dup_fd(e, fd, &r.target, guard)
 }
 
 /// `> file` / `>> file` / `< file`. Mirrors emit_open_redirect
@@ -3753,7 +3676,7 @@ fn emit_open_redirect(
     flags: i64,
     types: &VarTypes,
     guard: Option<&str>,
-) -> Option<RedirectFailC> {
+) -> RedirectFailC {
     let t = e.fresh();
     // `guard` is nonzero once an earlier open has failed. C's `?:` does not
     // evaluate the untaken arm, so the `open(2)` genuinely does not happen —
@@ -3775,7 +3698,7 @@ fn emit_open_redirect(
             flags = flags
         )
         .unwrap();
-        return Some((format!("{}_rf", t), path, format!("{}", s.len())));
+        return (format!("{}_rf", t), path, format!("{}", s.len()));
     }
     // Dynamic path — lower via ir_expr_as_str, call sash_redirect_s.
     let (ptr, len) = ir_expr_as_str(e, target, types);
@@ -3788,18 +3711,30 @@ fn emit_open_redirect(
         flags = flags
     )
     .unwrap();
-    Some((format!("{}_rf", t), ptr, len))
+    (format!("{}_rf", t), ptr, len)
 }
 
-/// `>&N` — dup2(target_fd, fd). Mirrors emit_dup_output
-/// (codegen/redirects.rs:163). Non-literal targets default to fd 2
-/// (matches codegen behaviour).
-fn emit_dup_fd(e: &mut Emit, fd: i64, target: &crate::ir::Expr) {
-    let target_fd: i64 = match &target.kind {
-        crate::ir::ExprKind::Literal(s) => s.parse().unwrap_or(2),
-        _ => 2,
+/// A failed dup is a setup failure too; never run it after an earlier failure.
+fn emit_dup_fd(
+    e: &mut Emit,
+    fd: i64,
+    target: &crate::ir::Expr,
+    guard: Option<&str>,
+) -> RedirectFailC {
+    let target_fd =
+        crate::ir::dup_target_fd(target).expect("SB4048 requires a literal descriptor number");
+    let t = e.fresh();
+    let call = format!("(sash_dup2({target_fd}, {fd}) < 0)");
+    let guarded = match guard {
+        Some(g) => format!("({g}) ? 0 : {call}"),
+        None => call,
     };
-    writeln!(e.out, "    sash_dup2({tf}, {fd});", tf = target_fd, fd = fd).unwrap();
+    writeln!(e.out, "    i64 {t}_rf = {guarded};").unwrap();
+    (
+        format!("{t}_rf"),
+        format!("\"{target_fd}\""),
+        target_fd.to_string().len().to_string(),
+    )
 }
 
 /// Mirrors emit_restore (codegen/redirects.rs:214). Walk saved
@@ -3809,11 +3744,17 @@ fn emit_restore(e: &mut Emit, saved: &[SavedFdC]) {
     for s in saved.iter().rev() {
         writeln!(
             e.out,
-            "    sash_dup2({sv}, {orig}); sash_close({sv});",
+            "    sash_restore_fd({sv}, {orig});",
             sv = s.saved_var,
             orig = s.original_fd
         )
         .unwrap();
+    }
+}
+
+fn emit_discard_saved(e: &mut Emit, saved: &[SavedFdC]) {
+    for s in saved {
+        writeln!(e.out, "    sash_close({});", s.saved_var).unwrap();
     }
 }
 
@@ -3847,36 +3788,32 @@ fn emit_redirect_push(
         )
         .unwrap();
     }
-    let Some((failed, path_ptr, path_len)) = failure else {
-        writeln!(e.out, "    __test_result = 1;").unwrap();
-        return;
-    };
+    // A lost function-call redirect scope must not silently succeed (DD#116, property 1).
+    let (failed, path_ptr, path_len) =
+        failure.expect("ICE: RedirectPush requires at least one redirect");
     writeln!(e.out, "    if ({failed}) {{", failed = failed).unwrap();
     writeln!(e.out, "        __exit_status = 1; __test_result = 0;").unwrap();
-    // Inside END the scope is unchecked (DD#56) but the failure is still
-    // reported — silence is for a *caught* failure (55.25), not a cleanup
-    // one. Mirrors the native `checked || ctx.in_end_block`.
-    if checked || e.end_region.contains(&e.cur_block) {
-        // DD#120: `sash_emsg` writes to the invoker's scope fd, so the
-        // scope's own redirects cannot capture it and this order no longer
-        // decides where the message lands. Restore still has to happen here
-        // rather than on the skip path, which an abort never reaches: an END
-        // block (DD#56) runs afterwards. Matches `emit_redirect_guarded_body`
-        // above and the native `emit_open_failure_msg` /
-        // `emit_open_failure_terminate` pair.
-        writeln!(
-            e.out,
-            "        sash_emsg({p}, {l}, 0, 0);",
-            p = path_ptr,
-            l = path_len
-        )
-        .unwrap();
-        emit_restore(e, &saved);
-        emit_open_failure_goto(e);
-    }
+    emit_scope_open_failure(e, checked, &saved, &path_ptr, &path_len);
     writeln!(e.out, "    }} else {{").unwrap();
     writeln!(e.out, "        __test_result = 1;").unwrap();
     writeln!(e.out, "    }}").unwrap();
+}
+
+fn emit_scope_open_failure(
+    e: &mut Emit,
+    checked: bool,
+    saved: &[SavedFdC],
+    path_ptr: &str,
+    path_len: &str,
+) {
+    let in_end = e.end_region.contains(&e.cur_block);
+    if checked || in_end {
+        writeln!(e.out, "        sash_emsg({path_ptr}, {path_len}, 0, 0);").unwrap();
+    }
+    if checked && !in_end {
+        emit_restore(e, saved);
+        emit_open_failure_goto(e);
+    }
 }
 
 /// Close the scope `RedirectPush { site }` opened. Mirrors native
@@ -4750,5 +4687,86 @@ mod tests {
     fn close_with_no_fd_is_a_loud_ice() {
         let msg = empty_args_ice(emit_close_builtin);
         assert!(msg.contains("SB4052"), "got: {msg}");
+    }
+
+    #[test]
+    #[should_panic(expected = "RedirectPush requires at least one redirect")]
+    fn an_empty_redirect_scope_must_not_silently_succeed() {
+        let mut ssa = SsaProgram::new();
+        let entry = ssa.new_block("entry");
+        ssa.block_mut(entry).insts.push(SsaInst::RedirectPush {
+            site: 0,
+            redirects: vec![],
+            checked: true,
+        });
+        emit_c(&ssa);
+    }
+
+    #[test]
+    fn command_emission_uses_the_shared_ssa_operand_contracts() {
+        for (kind, args, claim) in [
+            (BuiltinCmd::TrapSignal, vec![], "exactly 2 SSA arguments"),
+            (BuiltinCmd::SignalFlag, vec![], "exactly 1 SSA arguments"),
+            (BuiltinCmd::LetExit, vec![], "exactly 1 SSA arguments"),
+            (BuiltinCmd::StoreBgPid, vec![], "exactly 1 SSA arguments"),
+            (BuiltinCmd::TableDelete, vec![], "exactly 2 SSA arguments"),
+            (
+                BuiltinCmd::TableDeleteIdx,
+                vec![],
+                "exactly 2 SSA arguments",
+            ),
+            (BuiltinCmd::Match, vec![], "exactly 2 SSA arguments"),
+            (
+                BuiltinCmd::SignalFlag,
+                vec![SsaValue::Literal("bad".into())],
+                "non-integer literal",
+            ),
+            (
+                BuiltinCmd::TrapSignal,
+                vec![
+                    SsaValue::Literal("15".into()),
+                    SsaValue::Literal("bad".into()),
+                ],
+                "non-integer literal",
+            ),
+            (
+                BuiltinCmd::StoreBgPid,
+                vec![SsaValue::Literal("1".into())],
+                "variable operand",
+            ),
+            (
+                BuiltinCmd::TableDelete,
+                vec![
+                    SsaValue::Literal("table".into()),
+                    SsaValue::Literal("key".into()),
+                ],
+                "variable operand",
+            ),
+            (
+                BuiltinCmd::TableDeleteIdx,
+                vec![
+                    SsaValue::Literal("table".into()),
+                    SsaValue::Literal("0".into()),
+                ],
+                "variable operand",
+            ),
+        ] {
+            let payload = std::panic::catch_unwind(|| {
+                emit_command_body(
+                    &mut Emit::new(),
+                    "malformed",
+                    &kind,
+                    &args,
+                    true,
+                    &HashMap::new(),
+                );
+            })
+            .expect_err("malformed SSA must not produce C");
+            let message = payload
+                .downcast_ref::<String>()
+                .expect("formatted invariant");
+            assert!(message.contains(&format!("{kind:?}")), "{message}");
+            assert!(message.contains(claim), "{message}");
+        }
     }
 }

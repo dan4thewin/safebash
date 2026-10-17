@@ -150,6 +150,7 @@ pub fn compile_ssa(program: &SsaProgram, embedded: Embedded, trace: bool) -> Vec
         let end_cl_block = fs.end_cl_block;
         let end_region = program.end_region();
 
+        super::setup::reserve_user_fds(&program.user_fds, &mut builder, &mut module, &externs);
         super::setup::init_undeclared_redirect_vars(
             &mut builder,
             &mut module,

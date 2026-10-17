@@ -335,6 +335,59 @@ impl BuiltinCmd {
             _ => return None,
         })
     }
+
+    /// Decode the transform-to-backend protocol, not source argument syntax.
+    /// A missing or extra operand must not turn an instruction into a no-op.
+    pub(crate) fn expect_ssa_args<const N: usize>(self, args: &[SsaValue]) -> &[SsaValue; N] {
+        args.try_into().unwrap_or_else(|_| {
+            panic!(
+                "ICE: {self:?} needs exactly {N} SSA arguments, got {}",
+                args.len()
+            )
+        })
+    }
+
+    pub(crate) fn expect_literal_int(self, arg: &SsaValue) -> i64 {
+        let SsaValue::Literal(text) = arg else {
+            panic!("ICE: {self:?} needs an integer literal, got {arg:?}")
+        };
+        text.parse()
+            .unwrap_or_else(|_| panic!("ICE: {self:?} has a non-integer literal `{text}`"))
+    }
+
+    pub(crate) fn expect_var_arg(self, arg: &SsaValue) -> &VarRef {
+        match arg {
+            SsaValue::Var(var) => var,
+            _ => panic!("ICE: {self:?} needs a variable operand, got {arg:?}"),
+        }
+    }
+}
+
+/// A command kind whose work belongs to an earlier pass. Shared by backends:
+/// silently succeeding here would hide a failed rewrite or instruction lowering.
+pub(crate) fn ice_unreachable_command(kind: &BuiltinCmd, name: &str) -> ! {
+    match kind {
+        BuiltinCmd::Write => {
+            panic!("ICE: {kind:?} is rewritten before codegen and must not reach backend command emission (as `{name}`)")
+        }
+        BuiltinCmd::Len
+        | BuiltinCmd::Strlen
+        | BuiltinCmd::Keys
+        | BuiltinCmd::Join
+        | BuiltinCmd::Sub
+        | BuiltinCmd::Gsub
+        | BuiltinCmd::MatchAll
+        | BuiltinCmd::Toupper
+        | BuiltinCmd::Tolower
+        | BuiltinCmd::Basename
+        | BuiltinCmd::Dirname
+        | BuiltinCmd::Argv => {
+            panic!("ICE: {kind:?} is an expression intrinsic resolved in transform and must not reach backend command emission (as `{name}`)")
+        }
+        _ => {
+            panic!("ICE: {kind:?} is lowered to its own instruction and must not reach backend command emission (as `{name}`)")
+        }
+    }
 }
 
 /// An SSA instruction — a versioned wrapper around an IR operation.
@@ -1338,6 +1391,8 @@ pub struct SsaProgram {
     /// Collected at the single resolution funnel (`resolve_pipeline_command`)
     /// so it cannot miss an external nor leak a builtin/internal sigil.
     pub external_deps: std::collections::BTreeSet<String>,
+    /// Runtime-owned descriptors must not occupy a number named by source.
+    pub(crate) user_fds: Vec<i64>,
     next_block_id: usize,
 }
 
@@ -1404,6 +1459,7 @@ impl SsaProgram {
             exiting_signals: std::collections::HashSet::new(),
             compound_pipeline_blocks: Vec::new(),
             external_deps: std::collections::BTreeSet::new(),
+            user_fds: Vec::new(),
             next_block_id: 0,
         }
     }

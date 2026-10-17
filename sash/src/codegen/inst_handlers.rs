@@ -250,12 +250,9 @@ fn emit_one_stage_redirect(
     // This hardcoded 1 pointed an input redirect at the stage's STDOUT, so
     // `cmd < f | consumer` fed the stage nothing — silently, or hanging on a
     // terminal stdin. Shared with the non-pipeline path so they cannot drift.
-    let fd = builder.ins().iconst(
-        I64,
-        redir
-            .fd
-            .unwrap_or_else(|| super::redirects::default_fd_for_op(&redir.op)) as i64,
-    );
+    let fd = builder
+        .ins()
+        .iconst(I64, redir.fd.unwrap_or(redir.op.default_fd()) as i64);
     let flags = builder.ins().iconst(I64, stage_redirect_flags(&redir.op));
     // Literal fast-path: use the interned constant directly.
     if let crate::ir::ExprKind::Literal(s) = &redir.target.kind {
@@ -826,6 +823,35 @@ pub(super) fn emit_redirect_guarded_body(
     ctx: &mut InstCtx,
     body: impl FnOnce(&mut FunctionBuilder, &mut ObjectModule, &mut InstCtx),
 ) {
+    emit_redirect_guarded(
+        redirects,
+        in_condition,
+        builder,
+        module,
+        ctx,
+        |builder, module, ctx, saved| {
+            body(builder, module, ctx);
+            emit_restore(saved, builder, module, ctx.externs);
+            false
+        },
+    );
+}
+
+/// Shared setup/failure handling. The body owns successful backups and reports
+/// termination, so exec can commit them and replace the process without a restore.
+pub(super) fn emit_redirect_guarded(
+    redirects: &[crate::ir::Redirect],
+    in_condition: bool,
+    builder: &mut FunctionBuilder,
+    module: &mut ObjectModule,
+    ctx: &mut InstCtx,
+    body: impl FnOnce(
+        &mut FunctionBuilder,
+        &mut ObjectModule,
+        &mut InstCtx,
+        Vec<super::redirects::SavedFd>,
+    ) -> bool,
+) -> bool {
     let (saved, failure) = emit_redirects_guarded(
         redirects,
         builder,
@@ -835,9 +861,7 @@ pub(super) fn emit_redirect_guarded_body(
         ctx.vars,
     );
     let Some(rf) = failure else {
-        body(builder, module, ctx);
-        emit_restore(saved, builder, module, ctx.externs);
-        return;
+        return body(builder, module, ctx, saved);
     };
 
     let fail_block = builder.create_block();
@@ -872,12 +896,13 @@ pub(super) fn emit_redirect_guarded_body(
     // Ok path: open succeeded — run the command body normally.
     builder.switch_to_block(ok_block);
     builder.seal_block(ok_block);
-    body(builder, module, ctx);
-    emit_restore(saved, builder, module, ctx.externs);
-    builder.ins().jump(merge_block, &[]);
+    if !body(builder, module, ctx, saved) {
+        builder.ins().jump(merge_block, &[]);
+    }
 
     builder.switch_to_block(merge_block);
     builder.seal_block(merge_block);
+    false
 }
 
 /// `f > out.txt`: open a redirect *scope* around an inlined function body.
@@ -912,14 +937,10 @@ pub(super) fn emit_redirect_push(
     for (slot, s) in ctx.redirect_slots[site as usize].iter().zip(saved.iter()) {
         builder.def_var(*slot, s.saved_copy);
     }
+    // The sole producer brackets a redirected function call. Losing its list
+    // must not silently make an unredirected call succeed (DD#116, property 1).
+    let rf = failure.expect("ICE: RedirectPush requires at least one redirect");
     let one = builder.ins().iconst(I64, 1);
-    let Some(rf) = failure else {
-        // Nothing here can fail (a dup-only scope, or no redirects at all):
-        // the scope is open, so the branch must take the body.
-        builder.def_var(ctx.test_result_var, one);
-        return;
-    };
-
     let fail_block = builder.create_block();
     let ok_block = builder.create_block();
     let merge_block = builder.create_block();
@@ -932,21 +953,7 @@ pub(super) fn emit_redirect_push(
     let zero = builder.ins().iconst(I64, 0);
     builder.def_var(ctx.exit_status_var, one);
     builder.def_var(ctx.test_result_var, zero);
-    // Inside END the scope is unchecked (DD#56) but the failure is still
-    // reported — silence is for a *caught* failure (55.25), not a cleanup
-    // one, and the plain-command path in END reports too.
-    let report = checked || ctx.in_end_block;
-    let mut terminated = false;
-    if report {
-        // Report first, while the scope's successful redirects are still in
-        // effect — bash writes the diagnostic through them (`f 2> capt > /bad`
-        // puts it in `capt`). Only then put the fds back: the pop is on the
-        // skip path, which an abort never reaches, so the restore has to
-        // happen here — an END block (DD#56) still runs.
-        emit_open_failure_msg(&rf, builder, module, ctx);
-        emit_restore(saved.clone(), builder, module, ctx.externs);
-        terminated = !emit_open_failure_terminate(builder, module, ctx);
-    }
+    let terminated = emit_scope_open_failure(checked, &rf, saved, builder, module, ctx);
     if !terminated {
         builder.ins().jump(merge_block, &[]);
     }
@@ -958,6 +965,25 @@ pub(super) fn emit_redirect_push(
 
     builder.switch_to_block(merge_block);
     builder.seal_block(merge_block);
+}
+
+fn emit_scope_open_failure(
+    checked: bool,
+    failure: &RedirectFailure,
+    saved: Vec<super::redirects::SavedFd>,
+    builder: &mut FunctionBuilder,
+    module: &mut ObjectModule,
+    ctx: &mut InstCtx,
+) -> bool {
+    if checked || ctx.in_end_block {
+        emit_open_failure_msg(failure, builder, module, ctx);
+    }
+    // END continues through the normal pop. Only an actual abort bypasses it.
+    if !checked || ctx.in_end_block {
+        return false;
+    }
+    emit_restore(saved, builder, module, ctx.externs);
+    !emit_open_failure_terminate(builder, module, ctx)
 }
 
 /// Close the scope `RedirectPush { site }` opened: put each saved fd back,

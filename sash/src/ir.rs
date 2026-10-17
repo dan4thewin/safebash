@@ -1370,16 +1370,9 @@ impl Redirect {
     /// write-ish ops, stdin for the read-ish ones (`<>` is a `<` form, so it
     /// defaults to stdin, not stdout).
     ///
-    /// Both backends carry their own copy of this rule next to their emitters
-    /// (they are deliberate mirrors of each other); this one exists for the
-    /// transform, which must name the same fds when it builds a redirect
-    /// scope's `RedirectPop`.
+    /// Shared by the transform and both backends.
     pub fn resolved_fd(&self) -> i64 {
-        let default = match self.op {
-            RedirectOp::Write | RedirectOp::Append | RedirectOp::DupOutput => 1,
-            RedirectOp::Read | RedirectOp::DupInput | RedirectOp::ReadWrite => 0,
-        };
-        self.fd.map_or(default, |fd| fd as i64)
+        i64::from(self.fd.unwrap_or(self.op.default_fd()))
     }
 }
 
@@ -1431,7 +1424,7 @@ pub fn redirects_preserve_capture<'a>(redirects: impl IntoIterator<Item = &'a Re
 
 /// The fd a `>&`/`<&` names. `reject_nonfd_dup_target` pins this to a literal
 /// run of digits at parse time, so the `None` arm is unreachable from source.
-fn dup_target_fd(target: &Expr) -> Option<i64> {
+pub(crate) fn dup_target_fd(target: &Expr) -> Option<i64> {
     match &target.kind {
         ExprKind::Literal(s) => s.parse::<i64>().ok(),
         _ => None,
@@ -1446,6 +1439,83 @@ pub enum RedirectOp {
     DupOutput, // >&
     DupInput,  // <&
     ReadWrite, // <>
+}
+
+impl RedirectOp {
+    pub(crate) fn default_fd(self) -> u32 {
+        match self {
+            Self::Write | Self::Append | Self::DupOutput => 1,
+            Self::Read | Self::DupInput | Self::ReadWrite => 0,
+        }
+    }
+
+    /// Runtime redirect modes, not platform open(2) flags.
+    pub(crate) fn open_flags(self) -> Option<i64> {
+        match self {
+            Self::Write => Some(1),
+            Self::Append => Some(2),
+            Self::Read => Some(0),
+            Self::ReadWrite => Some(3),
+            Self::DupOutput | Self::DupInput => None,
+        }
+    }
+}
+
+/// Private backups must not occupy a named target or a closed dup source.
+pub(crate) fn redirect_referenced_fds(redirects: &[Redirect]) -> Vec<i64> {
+    let mut fds = Vec::with_capacity(redirects.len() * 2);
+    for redir in redirects {
+        fds.push(i64::from(redir.fd.unwrap_or(redir.op.default_fd())));
+        if matches!(redir.op, RedirectOp::DupOutput | RedirectOp::DupInput) {
+            fds.push(
+                dup_target_fd(&redir.target).expect("SB4048 requires a literal descriptor number"),
+            );
+        }
+    }
+    fds.sort_unstable();
+    fds.dedup();
+    fds
+}
+
+/// Keep runtime bookkeeping clear of source fds in every scope, including
+/// captures, functions and END. Ordinary numeric operands are not fd names.
+pub(crate) fn program_referenced_fds(program: &Program) -> Vec<i64> {
+    let mut fds = std::collections::BTreeSet::new();
+    for body in std::iter::once(program.statements.as_slice()).chain(program.end_block.as_deref()) {
+        walk_stmt_tree(body, &mut |stmt| collect_stmt_fds(stmt, &mut fds));
+    }
+    fds.into_iter().collect()
+}
+
+/// Total over statement metadata; do not add a wildcard.
+fn collect_stmt_fds(stmt: &Statement, fds: &mut std::collections::BTreeSet<i64>) {
+    match &stmt.kind {
+        StmtKind::Redirected(r) => fds.extend(redirect_referenced_fds(&r.redirects)),
+        StmtKind::Command(c) => {
+            if matches!(&c.name.kind, ExprKind::Literal(name) if name == "close") {
+                let fd = c
+                    .args
+                    .first()
+                    .and_then(dup_target_fd)
+                    .expect("SB4052 requires a literal descriptor number");
+                fds.insert(fd);
+            }
+        }
+        StmtKind::Assignment(_)
+        | StmtKind::Declaration(_)
+        | StmtKind::Pipeline(_)
+        | StmtKind::If(_)
+        | StmtKind::While(_)
+        | StmtKind::For(_)
+        | StmtKind::Case(_)
+        | StmtKind::Function(_)
+        | StmtKind::List(_)
+        | StmtKind::Group(_)
+        | StmtKind::Suppressed(_)
+        | StmtKind::Negated(_)
+        | StmtKind::ArithTest(_)
+        | StmtKind::ReturnProducer(_) => {}
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]

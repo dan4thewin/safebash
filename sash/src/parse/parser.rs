@@ -2530,12 +2530,16 @@ fn quoted_var_subject(var_name: &str, span: Span) -> Expr {
 /// it for `a-b=1`; these were the same fault, unfixed. Deciding them here
 /// leaves SB5011's text true of every input that still receives it.
 ///
-/// The gate is `head_contains_quote`, and it is load-bearing: `a-b=1` is a
-/// `Concat` of bare literals, so a constancy test alone would capture it and
+/// The gate is quoting in the consumed spelling, and it is load-bearing:
+/// `a-b=1` is a `Concat` of bare literals, so a constancy test alone would capture it and
 /// replace its good diagnostic with a quoting one. This family is about
 /// quoting, so an unquoted head is not its business.
-fn normalize_command_head(name: Expr) -> Result<Expr, Diagnostic> {
-    if !head_contains_quote(&name.kind) {
+///
+/// Use the consumed spelling: ANSI-C quotes have already become `Literal`
+/// nodes. Compiler-owned forms such as `[[` already have an unquoted spelling,
+/// even when that spelling is a delimiter rather than a bare word.
+fn normalize_command_head(name: Expr, spelling: &str) -> Result<Expr, Diagnostic> {
+    if !spelling.contains(['\'', '"']) {
         return Ok(name);
     }
     let Some(text) = constant_head_text(&name.kind) else {
@@ -2544,40 +2548,23 @@ fn normalize_command_head(name: Expr) -> Result<Expr, Diagnostic> {
     if text.is_empty() {
         return Err(empty_command_head_diag(name.span));
     }
-    if has_bare_spelling(&text) {
+    if crate::resolve::is_intrinsic(&text) || has_bare_spelling(&text) {
         return Err(superfluous_quoted_head_diag(&text, name.span));
     }
-    // No bare spelling, so quoting is required — but only one spelling of it
-    // is accepted, a single word in single quotes. Double quotes would make
-    // the head a runtime value, and a concatenation says in pieces what one
-    // quoted word says whole.
-    let ExprKind::SingleQuoted(text) = name.kind else {
-        return Err(wrong_quoted_head_diag(&text, name.span));
+    normalize_literal_head(name, text)
+}
+
+fn normalize_literal_head(name: Expr, text: String) -> Result<Expr, Diagnostic> {
+    // Preserve whole literal heads, including decoded ANSI-C quotes. A
+    // concatenation is not an alternative spelling of one quoted word.
+    let text = match name.kind {
+        ExprKind::SingleQuoted(text) | ExprKind::Literal(text) => text,
+        _ => return Err(wrong_quoted_head_diag(&text, name.span)),
     };
     Ok(Expr {
         kind: ExprKind::Literal(text),
         span: name.span,
     })
-}
-
-/// Whether a command head is quoted anywhere within it.
-///
-/// **Total over `ExprKind` on purpose — do not add a wildcard.**
-fn head_contains_quote(kind: &ExprKind) -> bool {
-    match kind {
-        ExprKind::SingleQuoted(_) | ExprKind::DoubleQuoted(_) => true,
-        ExprKind::Concat(parts) => parts.iter().any(|p| head_contains_quote(&p.kind)),
-        ExprKind::Literal(_)
-        | ExprKind::SimpleExpansion(_)
-        | ExprKind::ParameterExpansion(_)
-        | ExprKind::Subscript { .. }
-        | ExprKind::CommandSubstitution(_)
-        | ExprKind::SlurpFile(_)
-        | ExprKind::Arithmetic(_)
-        | ExprKind::Array(_)
-        | ExprKind::AssocArray(_)
-        | ExprKind::Test(_) => false,
-    }
 }
 
 /// The compile-time text of a command head, or `None` when any part of it is
@@ -2675,7 +2662,9 @@ fn parse_command_words(
 }
 
 fn parse_command(scanner: &mut Scanner, span: Span) -> Result<Statement, Diagnostic> {
-    let name_expr = normalize_command_head(parse_expr(scanner)?)?;
+    let start = scanner.peek().span.start;
+    let name_expr = parse_expr(scanner)?;
+    let name_expr = normalize_command_head(name_expr, scanner.consumed_source_since(start))?;
     let (args, redirects) = parse_command_words(scanner, span)?;
 
     if !redirects.is_empty() {
@@ -3422,7 +3411,8 @@ fn parse_redirect(scanner: &mut Scanner, span: Span) -> Result<Redirect, Diagnos
 /// exposing dup/close as builtins is a separate follow-up.
 fn reject_nonfd_dup_target(target: &Expr, op: RedirectOp, span: Span) -> Result<(), Diagnostic> {
     let is_fd = matches!(&target.kind,
-        ExprKind::Literal(s) if !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit()));
+        ExprKind::Literal(s) if !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit())
+            && s.parse::<i32>().is_ok());
     if is_fd {
         return Ok(());
     }
@@ -3435,7 +3425,7 @@ fn reject_nonfd_dup_target(target: &Expr, op: RedirectOp, span: Span) -> Result<
         span,
         "SB4048",
         format!(
-            "`{arrow}` needs a file-descriptor number (e.g. `{arrow}2`) — sash \
+            "`{arrow}` needs a file-descriptor number in 0..2147483647 (e.g. `{arrow}2`) — sash \
              doesn't support `{arrow}` with a non-numeric target, trailing text, \
              or the `-` close form. Redirect to a file with `>`/`<`, dup a \
              numbered fd, or close one with `close N`."

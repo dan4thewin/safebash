@@ -326,6 +326,11 @@ impl Scanner {
         std::str::from_utf8(&self.source[start..end]).unwrap_or("")
     }
 
+    /// Consumed source only: lookahead and following trivia are excluded.
+    pub fn consumed_source_since(&self, start: usize) -> &str {
+        self.source_slice(start, self.last_end)
+    }
+
     /// Peek at the next token without consuming it.
     pub fn peek(&mut self) -> &SpannedToken {
         if self.peeked.is_empty() {

@@ -130,6 +130,17 @@ static mut SASH_SCOPE_SAVE: [i64; 3] = [-1, -1, -1];
 /// redirects by hand.
 const SCOPE_MIN_FD: i64 = 100;
 
+static mut SASH_USER_FDS: &[i64] = &[];
+
+/// The compiler supplies static, sorted metadata before any source code runs.
+#[no_mangle]
+pub extern "C" fn sash_reserve_fds(fds: *const i64, count: i64) {
+    unsafe {
+        SASH_USER_FDS = core::slice::from_raw_parts(fds, count as usize);
+    }
+    sash_scope_bind();
+}
+
 /// Bind the invoker's scope fds to whatever 0/1/2 mean *right now*.
 ///
 /// Called twice, for the two moments at which 0/1/2 are by definition the
@@ -152,7 +163,7 @@ pub extern "C" fn sash_scope_bind() {
         .enumerate()
     {
         // The index IS the fd number: slot 0 saves fd 0, and so on.
-        let fd = sash_fcntl_dupfd_cloexec(idx as i64, SCOPE_MIN_FD);
+        let fd = dup_unreserved(idx as i64, SCOPE_MIN_FD, &[]);
         let old = *slot;
         *slot = if fd >= 0 { fd } else { -1 };
         if old >= 0 {
@@ -204,6 +215,30 @@ fn sash_fcntl_dupfd_cloexec(fd: i64, min: i64) -> i64 {
         );
         result
     }
+}
+
+fn user_fd(fd: i64) -> bool {
+    unsafe { SASH_USER_FDS }.binary_search(&fd).is_ok()
+}
+
+fn dup_unreserved(fd: i64, mut min: i64, protected: &[i64]) -> i64 {
+    loop {
+        let saved = sash_fcntl_dupfd_cloexec(fd, min);
+        if saved < 0 || (!user_fd(saved) && !protected.contains(&saved)) {
+            return saved;
+        }
+        sash_close(saved);
+        min = saved + 1;
+    }
+}
+
+fn protect_owned_fd(fd: i64) -> i64 {
+    if fd >= 3 && !user_fd(fd) {
+        return fd;
+    }
+    let moved = save_fd(fd, &[]);
+    sash_close(fd);
+    moved
 }
 
 /// Write one diagnostic segment to the invoker's channel (DD#120).
@@ -669,14 +704,7 @@ pub extern "C" fn sash_redirect(fd: i64, path: *const u8, flags: i64) -> i64 {
             }
         };
         let src = rustix::fd::IntoRawFd::into_raw_fd(opened) as i64;
-        core::arch::asm!(
-            "syscall",
-            in("rax") 33_i64,
-            in("rdi") src,
-            in("rsi") fd,
-            lateout("rcx") _,
-            lateout("r11") _,
-        );
+        let result = sash_dup2(src, fd);
         // `dup2(src, fd)` with `src == fd` is a POSIX no-op that closes
         // nothing, so an unconditional close here destroys the redirect we
         // just installed. `open` hands back the LOWEST free fd, so this fires
@@ -686,7 +714,7 @@ pub extern "C" fn sash_redirect(fd: i64, path: *const u8, flags: i64) -> i64 {
         if src != fd {
             sash_close(src);
         }
-        0
+        result
     }
 }
 
@@ -705,6 +733,7 @@ pub extern "C" fn sash_dup2(src_fd: i64, dst_fd: i64) -> i64 {
             lateout("r11") _,
         );
         if result < 0 {
+            set_last_errno_raw(-result);
             -1
         } else {
             0
@@ -715,13 +744,13 @@ pub extern "C" fn sash_dup2(src_fd: i64, dst_fd: i64) -> i64 {
 /// Create a pipe.
 #[no_mangle]
 pub extern "C" fn sash_pipe(out_ptr: *mut i64) -> i64 {
-    match rustix::pipe::pipe() {
+    match rustix::pipe::pipe_with(rustix::pipe::PipeFlags::CLOEXEC) {
         Ok((r, w)) => {
             unsafe {
                 let r_raw = rustix::fd::IntoRawFd::into_raw_fd(r) as i64;
                 let w_raw = rustix::fd::IntoRawFd::into_raw_fd(w) as i64;
-                *out_ptr = r_raw;
-                *out_ptr.add(1) = w_raw;
+                *out_ptr = protect_owned_fd(r_raw);
+                *out_ptr.add(1) = protect_owned_fd(w_raw);
             }
             0
         }
@@ -1677,18 +1706,47 @@ pub unsafe extern "C" fn sash_join_args(
 /// dup(fd)
 #[no_mangle]
 pub extern "C" fn sash_dup(fd: i64) -> i64 {
-    unsafe {
-        let result: i64;
-        core::arch::asm!(
-            "syscall",
-            in("rax") 32_i64,
-            in("rdi") fd,
-            lateout("rax") result,
-            lateout("rcx") _,
-            lateout("r11") _,
-        );
-        result
+    save_fd(fd, &[])
+}
+
+/// A private redirect backup. EBADF means the original descriptor was closed;
+/// every other failure must abort rather than silently lose the ability to restore.
+#[no_mangle]
+pub extern "C" fn sash_save_fd(fd: i64, protected: *const i64, count: i64) -> i64 {
+    let protected = unsafe { core::slice::from_raw_parts(protected, count as usize) };
+    save_fd(fd, protected)
+}
+
+fn save_fd(fd: i64, protected: &[i64]) -> i64 {
+    let saved = dup_unreserved(fd, 3, protected);
+    if saved < 0 && saved != -9 {
+        set_last_errno_raw(-saved);
+        fd_backup_abort(b"save fd");
     }
+    saved
+}
+
+#[no_mangle]
+pub extern "C" fn sash_restore_fd(saved: i64, fd: i64) {
+    if saved < 0 {
+        sash_close(fd);
+        return;
+    }
+    let result = sash_dup2(saved, fd);
+    if result < 0 {
+        fd_backup_abort(b"restore fd");
+    }
+    sash_close(saved);
+}
+
+fn fd_backup_abort(operation: &[u8]) -> ! {
+    sash_emsg(
+        operation.as_ptr(),
+        operation.len() as i64,
+        core::ptr::null(),
+        0,
+    );
+    sash_exit(1)
 }
 
 /// Lexicographic string comparison. Returns <0, 0, or >0.
@@ -3207,7 +3265,7 @@ pub extern "C" fn sash_capture_start() -> (i64, i64) {
         Ok(f) => {
             let raw = f.as_raw_fd() as i64;
             core::mem::forget(f);
-            raw
+            protect_owned_fd(raw)
         }
         Err(e) => {
             set_last_errno(e);
@@ -3233,8 +3291,7 @@ pub extern "C" fn sash_capture_start() -> (i64, i64) {
 #[no_mangle]
 pub extern "C" fn sash_capture_end(saved_stdout: i64, cap_fd: i64) -> (*mut u8, usize) {
     // Restore original stdout
-    sash_dup2(saved_stdout, 1);
-    sash_close(saved_stdout);
+    sash_restore_fd(saved_stdout, 1);
     // Resume an enclosing buffered capture, if any.
     capture_pop();
 

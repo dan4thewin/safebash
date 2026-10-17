@@ -60,7 +60,9 @@ syntax; only close is a builtin (DG 2026-09-04: close-only, dup stays on
 
 - **Surface:** `close N`. `N` must be a **literal non-negative fd number** — a
   variable/expansion or a bad arity is **SB4052** (the same no-dynamic-fd
-  discipline as a `N>&M` dup target).
+  discipline as a `N>&M` dup target). Both operands must fit the OS descriptor
+  type, **0..2147483647**; overflowing literals are rejected, never wrapped or
+  replaced with another descriptor.
 - **Semantics:** void; `$?` = 0 on success, 1 on failure. Per DD#55 a **bare**
   `close` on a failed `close(2)` (e.g. EBADF) **aborts** with
   `<argv0>: close: <fd>: <reason>`; a **caught** (`if`/`while`/`&&`/`||`) or

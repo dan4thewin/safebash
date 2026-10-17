@@ -20,7 +20,7 @@
 set -eu
 . common.sh
 setup exec
-plan=33
+plan=70
 echo "1..$plan" >&3
 
 set +e
@@ -213,6 +213,160 @@ exec /usr/bin/printf "[%s]" @{a:~}'
 # ex.22 control: the guard does not fire on a clean argument
 run_sash 'exec /usr/bin/printf "[%s]" ok'
 [[ $rc = 0 && $out = "[ok]" && -z $rerr ]]; chk ex.22
+
+# Bare exec is a successful no-op, including its condition verdict and END.
+run_sash 'exec; echo ok'
+[[ $rc = 0 && $out = ok && -z $rerr ]]; chk ex.23
+run_sash 'if exec { echo $(status) } else { echo failed }'
+[[ $rc = 0 && $out = 0 && -z $rerr ]]; chk ex.24
+run_sash 'END { echo end }; exec; echo body'
+[[ $rc = 0 && $out = $'body\nend' && -z $rerr ]]; chk ex.25
+
+run_sash 'if exec 9> ex_condition { echo $(status) } else { echo failed }; close 9'
+[[ $rc = 0 && $out = 0 && -f ex_condition && -z $rerr ]]; chk ex.26
+
+# Failed setup must replace an earlier true verdict, skip the body and roll back.
+run_sash '/bin/true
+if exec 9> ex_missing/file { echo bad } else { echo $(status) }
+echo done'
+[[ $rc = 0 && $out = $'1\ndone' && -z $rerr ]]; chk ex.27
+run_sash 'END { echo end }; exec 9> ex_missing/file; echo bad'
+[[ $rc != 0 && $out = end && $rerr == *'ex_missing/file: No such file or directory'* ]]; chk ex.28
+run_sash '- exec 9> ex_missing/file; echo after'
+[[ $rc != 0 && -z $out && $rerr == *'ex_missing/file: No such file or directory'* ]]; chk ex.29
+run_sash 'END { echo end }; exec /bin/echo bad > ex_missing/file; echo after'
+[[ $rc != 0 && $out = end && $rerr == *'ex_missing/file: No such file or directory'* ]]; chk ex.30
+run_sash 'if exec /bin/echo bad 9> ex_missing/file { echo bad } else { echo $(status) }; echo done'
+[[ $rc = 0 && $out = $'1\ndone' && -z $rerr ]]; chk ex.31
+
+# Persistent redirects commit their backups instead of leaking one every time.
+saved_soft_limit=$(ulimit -Sn)
+ulimit -Sn 128
+run_sash 'int n=0
+while (( n<200 )) { exec 9> /dev/null; (( n++ )) }
+close 9
+readline line < /etc/hostname
+attest line [[ -n $line ]]
+echo ok'
+ulimit -Sn "$saved_soft_limit"
+[[ $rc = 0 && $out = ok && -z $rerr ]]; chk ex.32
+
+# Discarding backups must not close a later explicit target in the same list.
+run_sash 'exec > ex_stdout 3> ex_fd3
+/bin/echo fd3 >&3
+echo stdout
+close 3'
+[[ $rc = 0 && -z $out && -z $rerr &&
+   $(cat ex_stdout) = stdout && $(cat ex_fd3) = fd3 ]]; chk ex.33
+
+# Saving stdout must not make a closed dup source appear open.
+run_sash '- close 3
+if exec 1>&3 { echo wrong } else { echo $(status) }
+echo restored'
+[[ $rc = 0 && $out = $'1\nrestored' && -z $rerr ]]; chk ex.34
+
+# A scoped redirect to an originally closed fd must close it again.
+run_sash 'echo quiet 9> ex_scoped
+if close 9 { echo leaked } else { echo restored }'
+[[ $rc = 0 && $out = $'quiet\nrestored' && -z $rerr ]]; chk ex.35
+run_sash 'echo scoped > ex_first > ex_second; echo restored'
+[[ $rc = 0 && $out = restored && ! -s ex_first &&
+   $(cat ex_second) = scoped && -z $rerr ]]; chk ex.36
+run_sash 'if exec 9> ex_rollback 8> ex_missing/file { echo bad } else { echo caught }
+if close 9 { echo leaked } else { echo closed }'
+[[ $rc = 0 && $out = $'caught\nclosed' && -z $rerr ]]; chk ex.37
+
+printf 'keep\n' > ex_keep
+run_sash 'if exec 1>&9 > ex_keep { echo bad } else { echo caught }; echo restored'
+[[ $rc = 0 && $out = $'caught\nrestored' && $(cat ex_keep) = keep && -z $rerr ]]; chk ex.38
+
+# Neither a replacement nor an ordinary external may inherit private backups.
+fd_scan='for fd in /proc/self/fd/*; do if [ "$fd" -ef ex_original ]; then echo leaked; exit 1; fi; done; echo clean'
+run_sash "exec 9> ex_original; exec /bin/sh -c '$fd_scan' 9> ex_new"
+[[ $rc = 0 && $out = clean && -z $rerr ]]; chk ex.39
+run_sash "exec 9> ex_original; /bin/sh -c '$fd_scan' 9> ex_new; /bin/echo restored >&9; close 9"
+[[ $rc = 0 && $out = clean && $(cat ex_original) = restored && -z $rerr ]]; chk ex.40
+
+# Bare exec inside a temporary scope must not steal the invoker's diagnostics.
+run_sash 'f() { exec }; f 2> ex_diag; false'
+[[ $rc != 0 && -z $out && ! -s ex_diag && $rerr == *false* ]]; chk ex.41
+
+run_sash 'END { echo end }; - close 3; exec 1>&3; echo bad'
+[[ $rc != 0 && $out = end && $rerr == *'3: Bad file descriptor'* ]]; chk ex.42
+
+# Numeric dup operands must fit the OS fd type, not fall back to fd 2.
+run_sash 'exec 1>&2147483648'
+[[ $rc != 0 && -z $out && $err == *SB4048* && $err == *'0..2147483647'* ]]; chk ex.43
+run_sash 'exec 1>&184467440737095516160'
+[[ $rc != 0 && -z $out && $err == *SB4048* ]]; chk ex.44
+run_sash 'exec 9> ex_numeric; echo ok >&09; close 9'
+[[ $rc = 0 && -z $out && $(cat ex_numeric) = ok && -z $rerr ]]; chk ex.45
+
+# Invalid high descriptors must fail the actual redirect, not backup allocation.
+ulimit -Sn 70
+run_sash 'if exec > ex_no_backup 99> /dev/null { echo bad } else { echo $(status) }; echo restored'
+[[ $rc = 0 && $out = $'1\nrestored' && -z $rerr ]]; chk ex.46
+run_sash 'if exec 1>&99 { echo bad } else { echo $(status) }; echo restored'
+ulimit -Sn "$saved_soft_limit"
+[[ $rc = 0 && $out = $'1\nrestored' && -z $rerr ]]; chk ex.47
+run_sash 'if exec 1>&2147483647 { echo bad } else { echo $(status) }; echo restored'
+[[ $rc = 0 && $out = $'1\nrestored' && -z $rerr ]]; chk ex.48
+
+# A function's close operands must not name its enclosing redirect's backups.
+run_sash 'fn f { - close 3; - close 4; - close 5; - close 6; - close 7; - close 8; echo body }
+END { echo end }
+f > ex_function
+echo after'
+[[ $rc = 0 && $out = $'after\nend' && $(cat ex_function) = body && -z $rerr ]]; chk ex.49
+
+# The invoker's channel is private too, even when source names its old number.
+run_sash 'if close 100 { echo private } else { echo closed }'
+[[ $rc = 0 && $out = closed && -z $rerr ]]; chk ex.50
+run_sash '- close 102; false'
+[[ $rc != 0 && -z $out && $rerr == *'false: command failed (exit 1)'* ]]; chk ex.51
+run_sash 'echo main; END { if close 100 { echo private } else { echo closed } }'
+[[ $rc = 0 && $out = $'main\nclosed' && -z $rerr ]]; chk ex.52
+
+# A capture's saved stdout and memfd must survive closes inside its body.
+run_sash 'str x=$(- close 3; - close 4; - close 5; - close 6; - close 7; - close 8; echo captured)
+attest x [[ -n $x ]]
+echo "[$x]"'
+[[ $rc = 0 && $out = '[captured]' && -z $rerr ]]; chk ex.53
+
+# The same applies to the parent-side read fd of a lastpipe loop.
+run_sash 'int n=0
+/usr/bin/printf "one\ntwo\n" | while readline line {
+    attest line [[ -n $line ]]
+    - close 3; - close 4; - close 5; - close 6; - close 7; - close 8
+    (( n++ ))
+}
+echo $n'
+[[ $rc = 0 && $out = 2 && -z $rerr ]]; chk ex.54
+
+# Do not reserve unrelated numeric data: that exhausts a finite fd namespace.
+numbers=$(seq 3 127 | tr '\n' ' ')
+ulimit -Sn 128
+run_sash "array nums=($numbers); echo \$(len nums) > ex_numbers; echo done"
+ulimit -Sn "$saved_soft_limit"
+[[ $rc = 0 && $out = done && $(cat ex_numbers) = 125 && -z $rerr ]]; chk ex.55
+
+run_sash 'if exec 1>&100 { echo private } else { echo caught }; echo restored'
+[[ $rc = 0 && $out = $'caught\nrestored' && -z $rerr ]]; chk ex.56
+
+# A lastpipe reader must not leak into an external called from its body.
+# The script's own fd 3/4 remain inheritable; the pipe uses unreserved 5/6.
+run_sash "exec 3> /dev/null; exec 4> /dev/null
+/usr/bin/printf 'one\n' | while readline line {
+    attest line [[ -n \$line ]]
+    /bin/sh -c 'test -e /proc/self/fd/3 && test -e /proc/self/fd/4 && test ! -e /proc/self/fd/5 && test ! -e /proc/self/fd/6 && echo clean'
+}
+close 3; close 4"
+[[ $rc = 0 && $out = clean && -z $rerr ]]; chk ex.57
+
+run_sash 'close 2147483648'
+[[ $rc != 0 && -z $out && $err == *SB4052* && $err == *'0..2147483647'* ]]; chk cl.12
+run_sash 'close 184467440737095516160'
+[[ $rc != 0 && -z $out && $err == *SB4052* ]]; chk cl.13
 
 set -e
 tally

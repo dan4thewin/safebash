@@ -12,7 +12,7 @@ use cranelift_module::Module;
 use cranelift_object::ObjectModule;
 
 use super::commands::lower_echo;
-use super::redirects::emit_redirects;
+use super::redirects::emit_discard_saved;
 use super::tests::lower_test_expr;
 use super::types::{emit_int_to_str, find_array_slot, ExternFuncs, InstCtx, VarSlot};
 use super::values::lower_value;
@@ -260,12 +260,7 @@ impl SsaInst {
             BuiltinCmd::Echo => {
                 return self.emit_echo(args, redirects, *checked, builder, module, ctx)
             }
-            BuiltinCmd::Test => {
-                // Legacy path — should not be reached now that transform
-                // emits SsaInst::Test directly. Treat as always-true.
-                let one = builder.ins().iconst(I64, 1);
-                builder.def_var(ctx.test_result_var, one);
-            }
+            BuiltinCmd::Test => ice_unreachable_command(kind, name),
             BuiltinCmd::NegateTestResult => self.emit_negate_test_result(builder, ctx),
             BuiltinCmd::SetTestFromStatus => self.emit_set_test_from_status(builder, ctx),
             BuiltinCmd::LetExit => return self.emit_let_exit(args, builder, module, ctx),
@@ -273,11 +268,8 @@ impl SsaInst {
             BuiltinCmd::StoreBgPid => return self.emit_store_bg_pid(args, builder, module, ctx),
             BuiltinCmd::TrapSignal => self.emit_trap_signal(args, builder, module, ctx),
             BuiltinCmd::SignalFlag => self.emit_signal_flag(args, builder, module, ctx),
-            BuiltinCmd::TableDelete => {
-                return self.emit_table_delete(args, false, builder, module, ctx)
-            }
-            BuiltinCmd::TableDeleteIdx => {
-                return self.emit_table_delete(args, true, builder, module, ctx)
+            BuiltinCmd::TableDelete | BuiltinCmd::TableDeleteIdx => {
+                return self.emit_table_delete(args, *kind, builder, module, ctx)
             }
             BuiltinCmd::Noop => self.emit_noop(redirects, builder, module, ctx),
             BuiltinCmd::Match => self.emit_match(args, builder, module, ctx),
@@ -353,17 +345,13 @@ impl SsaInst {
         module: &mut ObjectModule,
         ctx: &mut InstCtx,
     ) {
-        // trap '' SIG or trap - SIG: call sash_trap(signum, handler)
-        if args.len() >= 2 {
-            if let (SsaValue::Literal(sig_s), SsaValue::Literal(handler_s)) = (&args[0], &args[1]) {
-                let signum = builder.ins().iconst(I64, sig_s.parse::<i64>().unwrap_or(0));
-                let handler = builder
-                    .ins()
-                    .iconst(I64, handler_s.parse::<i64>().unwrap_or(0));
-                let trap_ref = module.declare_func_in_func(ctx.externs.trap, builder.func);
-                builder.ins().call(trap_ref, &[signum, handler]);
-            }
-        }
+        // handle_signal emits exactly two integer literals for IGN / DFL.
+        let kind = BuiltinCmd::TrapSignal;
+        let [signal, handler] = kind.expect_ssa_args(args);
+        let signum = builder.ins().iconst(I64, kind.expect_literal_int(signal));
+        let handler = builder.ins().iconst(I64, kind.expect_literal_int(handler));
+        let trap_ref = module.declare_func_in_func(ctx.externs.trap, builder.func);
+        builder.ins().call(trap_ref, &[signum, handler]);
     }
 
     fn emit_signal_flag(
@@ -373,12 +361,12 @@ impl SsaInst {
         module: &mut ObjectModule,
         ctx: &mut InstCtx,
     ) {
-        // signal N FLAG: call sash_signal_flag(signum)
-        if let Some(SsaValue::Literal(sig_s)) = args.first() {
-            let signum = builder.ins().iconst(I64, sig_s.parse::<i64>().unwrap_or(0));
-            let flag_ref = module.declare_func_in_func(ctx.externs.signal_flag, builder.func);
-            builder.ins().call(flag_ref, &[signum]);
-        }
+        // handle_signal emits one integer literal for FLAG / EXIT.
+        let kind = BuiltinCmd::SignalFlag;
+        let [signal] = kind.expect_ssa_args(args);
+        let signum = builder.ins().iconst(I64, kind.expect_literal_int(signal));
+        let flag_ref = module.declare_func_in_func(ctx.externs.signal_flag, builder.func);
+        builder.ins().call(flag_ref, &[signum]);
     }
 
     /// `:` succeeds silently: test_result = 1, $? = 0. (true/false are
@@ -426,17 +414,9 @@ impl SsaInst {
         module: &mut ObjectModule,
         ctx: &mut InstCtx,
     ) {
-        // Unreachable by construction. SB4045 (`match_arity_diag`) rejects any
-        // count but 2 or 3, and `check_match_arity_stmt` recurses through
-        // `child_bodies()` — total, and covering the if/elif/while conditions
-        // and both `&&`/`||` sides that are the only positions DD#70's
-        // must-consume rule leaves for a `match`. The 3-arg out-array form is
-        // taken earlier by `try_handle_match_into`, so exactly two args reach
-        // here. Silently answering "no match" instead would report a result it
-        // had not checked — the same fault SB4045 was added to fix.
-        let (Some(subject), Some(pattern)) = (args.first(), args.get(1)) else {
-            panic!("ICE: `match` reached codegen with {} args; SB4045 accepts only 2 or 3, and the 3-arg form is lowered by try_handle_match_into", args.len())
-        };
+        // SB4045 admits 2 or 3 source args; try_handle_match_into removes the
+        // 3-arg form. An extra SSA operand would lose its out-array silently.
+        let [subject, pattern] = BuiltinCmd::Match.expect_ssa_args(args);
         let (s_ptr, s_len) = lower_value(
             subject,
             builder,
@@ -474,35 +454,23 @@ impl SsaInst {
         module: &mut ObjectModule,
         ctx: &mut InstCtx,
     ) -> bool {
-        if args.is_empty() {
-            emit_exec_redirects_only(redirects, builder, module, ctx);
-            false
-        } else {
-            // `exec CMD >f`: install the redirects in this process and then
-            // replace it, so CMD inherits them — bash's semantics. No
-            // save/restore, because nothing returns here to restore into.
-            //
-            // This used to pass `redirects` no further than the no-args
-            // branch, so `exec /bin/echo hi >f` wrote `hi` to the *terminal*
-            // and never created the file: wrong output, not merely a missing
-            // side effect. Unlike the no-args form this deliberately skips
-            // the DD#120 `scope_bind` rebind — per-command redirects are a
-            // channel for the command's output, not for the program's
-            // diagnostics about it.
-            if !redirects.is_empty() {
-                emit_redirects(
-                    redirects,
-                    builder,
-                    module,
-                    ctx.externs,
-                    ctx.literals,
-                    ctx.vars,
-                    ctx.exit_status_var,
-                );
-            }
-            emit_exec_static_argv(args, builder, module, ctx);
-            true
-        }
+        super::inst_handlers::emit_redirect_guarded(
+            redirects,
+            ctx.in_condition,
+            builder,
+            module,
+            ctx,
+            |builder, module, ctx, saved| {
+                emit_discard_saved(saved, builder, module, ctx.externs);
+                if args.is_empty() {
+                    emit_exec_redirects_only(redirects, builder, module, ctx);
+                    false
+                } else {
+                    emit_exec_static_argv(args, builder, module, ctx);
+                    true
+                }
+            },
+        )
     }
 
     /// TRUST: attest is the ONLY mechanism to move tainted → clean.
@@ -623,17 +591,8 @@ impl SsaInst {
     /// one slot", `emit_c.rs`), which is why the differential oracle showed the
     /// fault only in the native backend.
     fn emit_attest_retag(&self, source: &VarRef, target: &VarRef, ctx: &mut InstCtx) -> bool {
-        let vars = &mut *ctx.vars;
-        let src_key = format!("{}_{}", source.name, source.version);
-        // Tables live in `_0`; fall back to that if the exact version slot
-        // isn't present (arrays are mutated in place, not re-versioned).
-        let slot = vars
-            .get(src_key.as_str())
-            .or_else(|| vars.get(format!("{}_0", source.name).as_str()))
-            .cloned();
-        if let Some(slot) = slot {
-            vars.insert(format!("{}_{}", target.name, target.version), slot);
-        }
+        let slot = super::types::var_slot(ctx.vars, &source.display());
+        ctx.vars.insert(target.display(), slot);
         false
     }
 
@@ -911,25 +870,24 @@ impl SsaInst {
         // let builtin / loop bound: exit status 0 if value != 0, 1 if == 0.
         // The arg is any integer-valued SsaValue (a `(( ))` result, or a
         // for-loop bound comparison `__ai < ${arr arrlen}`).
-        if let Some(arg) = args.first() {
-            let int_val = super::values::lower_value_as_int(
-                arg,
-                builder,
-                module,
-                vars,
-                literals,
-                externs,
-                exit_status_var,
-            );
-            let zero = builder.ins().iconst(I64, 0);
-            let is_zero = builder.ins().icmp(IntCC::Equal, int_val, zero);
-            let one = builder.ins().iconst(I64, 1);
-            let es = builder.ins().select(is_zero, one, zero);
-            builder.def_var(exit_status_var, es);
-            // Also set test_result_var for branch terminators (if/while/for).
-            let tr = builder.ins().select(is_zero, zero, one);
-            builder.def_var(test_result_var, tr);
-        }
+        let [arg] = BuiltinCmd::LetExit.expect_ssa_args(args);
+        let int_val = super::values::lower_value_as_int(
+            arg,
+            builder,
+            module,
+            vars,
+            literals,
+            externs,
+            exit_status_var,
+        );
+        let zero = builder.ins().iconst(I64, 0);
+        let is_zero = builder.ins().icmp(IntCC::Equal, int_val, zero);
+        let one = builder.ins().iconst(I64, 1);
+        let es = builder.ins().select(is_zero, one, zero);
+        builder.def_var(exit_status_var, es);
+        // Also set test_result_var for branch terminators (if/while/for).
+        let tr = builder.ins().select(is_zero, zero, one);
+        builder.def_var(test_result_var, tr);
         false
     }
 
@@ -944,21 +902,21 @@ impl SsaInst {
         let test_result_var = ctx.test_result_var;
         let externs = ctx.externs;
         // Store fork pid (test_result_var) into $! variable
-        if let Some(SsaValue::Var(vr)) = args.first() {
-            let pid = builder.use_var(test_result_var);
-            // Convert pid to string via itoa
-            let (str_ptr, str_len) = emit_int_to_str(builder, module, externs, pid);
-            let sv = &vars[&vr.display()];
-            builder.def_var(sv.str_ptr(), str_ptr);
-            builder.def_var(sv.str_len(), str_len);
-        }
+        let kind = BuiltinCmd::StoreBgPid;
+        let [target] = kind.expect_ssa_args(args);
+        let vr = kind.expect_var_arg(target);
+        let pid = builder.use_var(test_result_var);
+        let (str_ptr, str_len) = emit_int_to_str(builder, module, externs, pid);
+        let sv = super::types::var_slot(vars, &vr.display());
+        builder.def_var(sv.str_ptr(), str_ptr);
+        builder.def_var(sv.str_len(), str_len);
         false
     }
 
     fn emit_table_delete(
         &self,
         args: &[SsaValue],
-        is_integer_key: bool,
+        kind: BuiltinCmd,
         builder: &mut FunctionBuilder,
         module: &mut ObjectModule,
         ctx: &mut InstCtx,
@@ -968,9 +926,20 @@ impl SsaInst {
         let externs = ctx.externs;
         let exit_status_var = ctx.exit_status_var;
         // unset map[key] → sash_table_delete(table_ptr, key_ptr, key_len)
-        if args.len() >= 2 {
-            let (tbl_ptr, _) = lower_value(
-                &args[0],
+        let [table, key] = kind.expect_ssa_args(args);
+        kind.expect_var_arg(table);
+        let (tbl_ptr, _) = lower_value(
+            table,
+            builder,
+            module,
+            vars,
+            literals,
+            externs,
+            exit_status_var,
+        );
+        let (key_ptr, key_len) = if matches!(kind, BuiltinCmd::TableDeleteIdx) {
+            let idx_int = super::values::lower_value_as_int(
+                key,
                 builder,
                 module,
                 vars,
@@ -978,34 +947,23 @@ impl SsaInst {
                 externs,
                 exit_status_var,
             );
-            let (key_ptr, key_len) = if is_integer_key {
-                let idx_int = super::values::lower_value_as_int(
-                    &args[1],
-                    builder,
-                    module,
-                    vars,
-                    literals,
-                    externs,
-                    exit_status_var,
-                );
-                let (idx_slot, kp) = super::values::alloc_out_slot(builder);
-                builder.ins().stack_store(idx_int, idx_slot, 0);
-                let kl = builder.ins().iconst(I64, 8);
-                (kp, kl)
-            } else {
-                lower_value(
-                    &args[1],
-                    builder,
-                    module,
-                    vars,
-                    literals,
-                    externs,
-                    exit_status_var,
-                )
-            };
-            let del_ref = module.declare_func_in_func(externs.table_delete, builder.func);
-            builder.ins().call(del_ref, &[tbl_ptr, key_ptr, key_len]);
-        }
+            let (idx_slot, kp) = super::values::alloc_out_slot(builder);
+            builder.ins().stack_store(idx_int, idx_slot, 0);
+            let kl = builder.ins().iconst(I64, 8);
+            (kp, kl)
+        } else {
+            lower_value(
+                key,
+                builder,
+                module,
+                vars,
+                literals,
+                externs,
+                exit_status_var,
+            )
+        };
+        let del_ref = module.declare_func_in_func(externs.table_delete, builder.func);
+        builder.ins().call(del_ref, &[tbl_ptr, key_ptr, key_len]);
         false
     }
 
@@ -1187,8 +1145,8 @@ impl SsaInst {
     }
 }
 
-/// `exec` with no args: standalone fd manipulation. Applies the
-/// redirects in the current process and sets $? = 0.
+/// Finish successful standalone fd manipulation: the guard already applied
+/// the redirects. Rebind diagnostics only when exec actually changed the fds.
 fn emit_exec_redirects_only(
     redirects: &[crate::ir::Redirect],
     builder: &mut FunctionBuilder,
@@ -1196,15 +1154,6 @@ fn emit_exec_redirects_only(
     ctx: &mut InstCtx,
 ) {
     if !redirects.is_empty() {
-        emit_redirects(
-            redirects,
-            builder,
-            module,
-            ctx.externs,
-            ctx.literals,
-            ctx.vars,
-            ctx.exit_status_var,
-        );
         // DD#120: this is the ONE redirect form that rebinds the invoker's own
         // stderr, so the diagnostic channel follows it. A per-command redirect
         // (`cmd 2>…`) deliberately does not — it is a channel for the command's
@@ -1214,6 +1163,8 @@ fn emit_exec_redirects_only(
     }
     let zero = builder.ins().iconst(I64, 0);
     builder.def_var(ctx.exit_status_var, zero);
+    let one = builder.ins().iconst(I64, 1);
+    builder.def_var(ctx.test_result_var, one);
 }
 
 /// `exec CMD ARGS…` — `args[0]` is the command, exactly the shape
@@ -1432,4 +1383,177 @@ fn emit_readline_body(
     let got_data = builder.ins().icmp(IntCC::NotEqual, ptr, zero);
     let result = builder.ins().uextend(I64, got_data);
     builder.def_var(ctx.test_result_var, result);
+}
+
+#[cfg(test)]
+mod invariant_tests {
+    use super::*;
+    use crate::codegen::entry::{compile_ssa, Embedded};
+
+    fn native_ice(insts: Vec<SsaInst>) -> String {
+        let mut ssa = SsaProgram::new();
+        let entry = ssa.new_block("entry");
+        ssa.block_mut(entry).insts = insts;
+        let payload = std::panic::catch_unwind(|| {
+            compile_ssa(
+                &ssa,
+                Embedded {
+                    source: None,
+                    ir: None,
+                    manifest: None,
+                },
+                false,
+            )
+        })
+        .expect_err("malformed SSA must not compile");
+        payload
+            .downcast_ref::<String>()
+            .expect("the invariant reports a formatted claim")
+            .clone()
+    }
+
+    fn internal_ice(kind: BuiltinCmd, args: Vec<SsaValue>) -> String {
+        native_ice(vec![SsaInst::internal(kind, args, true)])
+    }
+
+    #[test]
+    fn an_unlowered_test_command_must_not_become_true() {
+        let message = native_ice(vec![SsaInst::command("[[", vec![], vec![], true)]);
+        assert!(message.contains("Test"), "{message}");
+        assert!(
+            message.contains("lowered to its own instruction"),
+            "{message}"
+        );
+    }
+
+    #[test]
+    fn an_empty_redirect_scope_must_not_silently_succeed() {
+        let message = native_ice(vec![SsaInst::RedirectPush {
+            site: 0,
+            redirects: vec![],
+            checked: true,
+        }]);
+        assert!(
+            message.contains("RedirectPush requires at least one redirect"),
+            "{message}"
+        );
+    }
+
+    #[test]
+    fn internal_command_arity_is_exact() {
+        for (kind, count) in [
+            (BuiltinCmd::TrapSignal, 2),
+            (BuiltinCmd::SignalFlag, 1),
+            (BuiltinCmd::LetExit, 1),
+            (BuiltinCmd::StoreBgPid, 1),
+            (BuiltinCmd::TableDelete, 2),
+            (BuiltinCmd::TableDeleteIdx, 2),
+        ] {
+            for len in [0, count + 1] {
+                let message = internal_ice(kind, vec![SsaValue::Literal("1".into()); len]);
+                assert!(
+                    message.contains(&format!("{kind:?} needs exactly {count} SSA arguments")),
+                    "{message}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn match_cannot_lose_a_missing_pattern_or_an_extra_out_array() {
+        for len in [0, 1, 3] {
+            let message = native_ice(vec![SsaInst::command(
+                "match",
+                vec![SsaValue::Literal("x".into()); len],
+                vec![],
+                true,
+            )]);
+            assert!(
+                message.contains("Match needs exactly 2 SSA arguments"),
+                "{message}"
+            );
+        }
+    }
+
+    #[test]
+    fn signal_operands_must_remain_integer_literals() {
+        for bad in [
+            SsaValue::Var(VarRef::new("dynamic", 0)),
+            SsaValue::Literal("not-an-integer".into()),
+            SsaValue::Literal("9223372036854775808".into()),
+        ] {
+            for (kind, args) in [
+                (BuiltinCmd::SignalFlag, vec![bad.clone()]),
+                (
+                    BuiltinCmd::TrapSignal,
+                    vec![bad.clone(), SsaValue::Literal("1".into())],
+                ),
+                (
+                    BuiltinCmd::TrapSignal,
+                    vec![SsaValue::Literal("15".into()), bad.clone()],
+                ),
+            ] {
+                let message = internal_ice(kind, args);
+                assert!(message.contains(&format!("{kind:?}")), "{message}");
+                assert!(message.contains("integer literal"), "{message}");
+            }
+        }
+    }
+
+    #[test]
+    fn background_pid_storage_needs_a_variable_target() {
+        let message = internal_ice(BuiltinCmd::StoreBgPid, vec![SsaValue::Literal("1".into())]);
+        assert!(
+            message.contains("StoreBgPid needs a variable operand"),
+            "{message}"
+        );
+    }
+
+    #[test]
+    fn a_table_delete_needs_a_variable_table() {
+        for kind in [BuiltinCmd::TableDelete, BuiltinCmd::TableDeleteIdx] {
+            let message = internal_ice(
+                kind,
+                vec![
+                    SsaValue::Literal("table".into()),
+                    SsaValue::Literal("0".into()),
+                ],
+            );
+            assert!(
+                message.contains(&format!("{kind:?} needs a variable operand")),
+                "{message}"
+            );
+        }
+    }
+
+    #[test]
+    fn retag_cannot_silently_skip_an_unmapped_source() {
+        let message = native_ice(vec![SsaInst::AttestRetag {
+            source: VarRef::new("missing", 0),
+            target: VarRef::new("missing", 1),
+        }]);
+        assert!(
+            message.contains("no codegen slot for `missing_0`"),
+            "{message}"
+        );
+        assert!(message.contains("map_inst_versioned"), "{message}");
+    }
+
+    #[test]
+    fn retag_cannot_substitute_a_different_source_version() {
+        let message = native_ice(vec![
+            SsaInst::Assign {
+                target: VarRef::new("items", 0),
+                value: SsaValue::IndexedArray(vec![]),
+            },
+            SsaInst::AttestRetag {
+                source: VarRef::new("items", 7),
+                target: VarRef::new("items", 8),
+            },
+        ]);
+        assert!(
+            message.contains("no codegen slot for `items_7`"),
+            "{message}"
+        );
+    }
 }

@@ -11,6 +11,7 @@ pub fn ir_to_ssa_typed(
     type_map: HashMap<String, VarType>,
 ) -> (SsaProgram, Vec<String>) {
     let mut ssa = SsaProgram::new();
+    ssa.user_fds = program_referenced_fds(program);
     let mut state = VersionState::with_types(type_map);
     reserve_source_names(program, &mut state.reserved_names);
 

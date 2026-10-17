@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup errors
-plan=417
+plan=429
 echo "1..$plan" >&3
 
 set +e
@@ -2486,7 +2486,7 @@ run_sash '"/qh dir/qh tool" hi'
 
 # qhead.20 the load-bearing non-capture. `a-b=1` is a `Concat` of *bare*
 # literals, so a constancy test alone would capture it and replace its good
-# diagnostic with a quoting one. The gate is `head_contains_quote`: this
+# diagnostic with a quoting one. The gate is the consumed source spelling: this
 # family is about quoting, so an unquoted head is not its business.
 run_sash 'a-b=1'
 [[ $rc != 0 && -z $out && $err == *"is not a valid variable name"* && $err != *SB5096* ]]; chk qhead.20
@@ -2497,6 +2497,36 @@ run_sash 'a-b=1'
 run_sash 'str x="echo"
 "$x" hi'
 [[ $rc != 0 && -z $out && $err == *SB5011* && $err == *"variable or expansion"* ]]; chk qhead.21
+
+# Compiler-owned spellings are not external names needing quotes.
+run_sash "if '[[' { echo accepted }"
+[[ $rc != 0 && -z $out && $err == *SB5096* ]]; chk qhead.22
+run_sash 'if "[[" { echo accepted }'
+[[ $rc != 0 && -z $out && $err == *SB5096* ]]; chk qhead.23
+run_sash "if '[''[' { echo accepted }"
+[[ $rc != 0 && -z $out && $err == *SB5096* ]]; chk qhead.24
+run_sash "- '[['"
+[[ $rc != 0 && -z $out && $err == *SB5096* ]]; chk qhead.25
+run_sash "str x=\$('[['); echo \$x"
+[[ $rc != 0 && -z $out && $err == *SB5096* ]]; chk qhead.26
+run_sash "f() { if '[[' { echo accepted } }; f"
+[[ $rc != 0 && -z $out && $err == *SB5096* ]]; chk qhead.27
+run_sash "if \$'[[' { echo accepted }"
+[[ $rc != 0 && -z $out && $err == *SB5096* ]]; chk qhead.28
+
+# ANSI-C decoding must not erase quote provenance at the head.
+run_sash "\$'\\x65cho' hi"
+[[ $rc != 0 && -z $out && $err == *SB5096* ]]; chk qhead.29
+run_sash "\$''"
+[[ $rc != 0 && -z $out && $err == *SB4074* && $err == *"empty command name"* ]]; chk qhead.30
+run_sash "ec\$'ho' hi"
+[[ $rc != 0 && -z $out && $err == *SB5096* ]]; chk qhead.31
+run_sash "\$'$PWD/qh_dir/qh tool'"
+[[ $rc = 0 && $out = spaced && -z $rerr ]]; chk qhead.32
+
+# Lookahead may scan this comment, but its quotes do not belong to the head.
+run_sash 'echo ok # "not a quoted head"'
+[[ $rc = 0 && $out = ok && -z $rerr ]]; chk qhead.33
 
 # These parser fallthroughs are reachable, not invariant failures.
 run_sash '-'

@@ -462,6 +462,17 @@ and an unbounded count overran it (journal 290).
 `sash_echo`, `sash_write`, `sash_read_line`,
 `sash_heredoc_redirect`.
 
+Both backends use the same redirect metadata and runtime save/restore
+primitives. The transform reserves the script's literal fd operands across
+functions, captures and END; both backends register that set before running
+source code. Runtime-owned scope copies, backups, pipes and capture memfds
+avoid it. Private copies and pipe endpoints are close-on-exec; explicitly
+opened script descriptors remain inheritable. Backups also exclude every fd
+named by their redirect list, including closed dup sources. Scoped commands restore an
+originally closed descriptor by closing it again; successful `exec` commits
+the redirects and closes its backups instead. Failed opens or dups take the
+shared setup-failure path, so the command never runs on the wrong fds.
+
 ### Process management
 
 `sash_exec` — execve with absolute path (no PATH walk; DD#23).
