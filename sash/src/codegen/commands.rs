@@ -67,7 +67,7 @@ fn echo_write_one_arg(
     literals: &HashMap<String, cranelift_module::DataId>,
     externs: &ExternFuncs,
     space_id: cranelift_module::DataId,
-    exit_status_var: Option<Variable>,
+    exit_status_var: Variable,
     mut failed: cranelift_codegen::ir::Value,
 ) -> cranelift_codegen::ir::Value {
     // DD#84/#91: an elide arg (`${x:~}` / `${x:!}`) contributes its *(space +
@@ -132,7 +132,7 @@ fn echo_write_elide_arg(
     literals: &HashMap<String, cranelift_module::DataId>,
     externs: &ExternFuncs,
     space_id: cranelift_module::DataId,
-    exit_status_var: Option<Variable>,
+    exit_status_var: Variable,
     failed: cranelift_codegen::ir::Value,
 ) -> cranelift_codegen::ir::Value {
     let (ptr, len) = lower_value(
@@ -185,7 +185,7 @@ pub(super) fn lower_echo(
     externs: &ExternFuncs,
     space_id: cranelift_module::DataId,
     nl_id: cranelift_module::DataId,
-    exit_status_var: Option<Variable>,
+    exit_status_var: Variable,
 ) -> cranelift_codegen::ir::Value {
     let fd = builder.ins().iconst(I64, 1);
     let write_ref = module.declare_func_in_func(externs.write, builder.func);
@@ -299,7 +299,7 @@ pub(super) fn build_exec_argv(
         vars,
         literals,
         externs,
-        Some(exit_status_var),
+        exit_status_var,
     )
 }
 
@@ -314,7 +314,7 @@ pub(super) fn build_argv_values(
     vars: &HashMap<String, VarSlot>,
     literals: &HashMap<String, cranelift_module::DataId>,
     externs: &ExternFuncs,
-    exit_status_var: Option<Variable>,
+    exit_status_var: Variable,
 ) -> cranelift_codegen::ir::Value {
     if values
         .iter()
@@ -368,7 +368,7 @@ fn build_argv_fixed(
     vars: &HashMap<String, VarSlot>,
     literals: &HashMap<String, cranelift_module::DataId>,
     externs: &ExternFuncs,
-    exit_status_var: Option<Variable>,
+    exit_status_var: Variable,
 ) -> cranelift_codegen::ir::Value {
     let argc = values.len();
     let argv_size = ((argc + 1) * 8) as u32;
@@ -404,7 +404,7 @@ fn build_argv_runtime(
     vars: &HashMap<String, VarSlot>,
     literals: &HashMap<String, cranelift_module::DataId>,
     externs: &ExternFuncs,
-    exit_status_var: Option<Variable>,
+    exit_status_var: Variable,
 ) -> cranelift_codegen::ir::Value {
     // 0) Pre-resolve each `@a` splat to the table to expand (DD#69
     //    disposition applied once, so argc and the fill agree).
@@ -503,29 +503,52 @@ fn resolve_splat_tables(
     vars: &HashMap<String, VarSlot>,
     literals: &HashMap<String, cranelift_module::DataId>,
     externs: &ExternFuncs,
-    exit_status_var: Option<Variable>,
+    exit_status_var: Variable,
 ) -> Vec<cranelift_codegen::ir::Value> {
     let mut splat_tables = Vec::new();
     for v in values {
         if let SsaValue::ArraySplat { array, disposition } = v {
-            let tbl = array_table_ptr(array, vars, builder);
-            let eff = match disposition {
-                None => tbl,
-                Some(d) => emit_splat_disposition(
-                    builder,
-                    module,
-                    vars,
-                    literals,
-                    externs,
-                    exit_status_var,
-                    tbl,
-                    d,
-                ),
-            };
+            let eff = resolve_splat_table(
+                array,
+                disposition.as_ref(),
+                builder,
+                module,
+                vars,
+                literals,
+                externs,
+                exit_status_var,
+            );
             splat_tables.push(eff);
         }
     }
     splat_tables
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(super) fn resolve_splat_table(
+    array: &str,
+    disposition: Option<&crate::ssa::ArraySplatDisposition>,
+    builder: &mut FunctionBuilder,
+    module: &mut ObjectModule,
+    vars: &HashMap<String, VarSlot>,
+    literals: &HashMap<String, cranelift_module::DataId>,
+    externs: &ExternFuncs,
+    exit_status_var: Variable,
+) -> cranelift_codegen::ir::Value {
+    let table = array_table_ptr(array, vars, builder);
+    match disposition {
+        None => table,
+        Some(d) => emit_splat_disposition(
+            builder,
+            module,
+            vars,
+            literals,
+            externs,
+            exit_status_var,
+            table,
+            d,
+        ),
+    }
 }
 
 /// Load an array variable's table pointer by name.
@@ -548,7 +571,7 @@ pub(super) fn emit_splat_disposition(
     vars: &HashMap<String, VarSlot>,
     literals: &HashMap<String, cranelift_module::DataId>,
     externs: &ExternFuncs,
-    exit_status_var: Option<Variable>,
+    exit_status_var: Variable,
     tbl: cranelift_codegen::ir::Value,
     d: &crate::ssa::ArraySplatDisposition,
 ) -> cranelift_codegen::ir::Value {

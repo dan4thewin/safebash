@@ -959,8 +959,8 @@ pub enum SsaValue {
     /// Concatenation of multiple values (from double-quoted strings
     /// with mixed literal and variable parts).
     Concat(Vec<SsaValue>),
-    /// Arithmetic expansion: $((expr))
-    /// Stores the variable name, operator, and integer operand.
+    /// Synthesized collection/argv loop increment, stored only in integer slots.
+    /// Source arithmetic uses `ArithBinOp` instead.
     ArithExpr {
         var: VarRef,
         op: ArithOp,
@@ -1492,6 +1492,8 @@ pub struct VersionState {
     pub function_bodies: HashMap<String, Vec<crate::ir::Statement>>,
     /// Variable type map from type inference.
     pub type_map: HashMap<String, crate::ir::VarType>,
+    /// Source names/literal operands and compiler temporaries already allocated.
+    pub reserved_names: std::collections::HashSet<String>,
     /// Variables known to be associative arrays (vs indexed).
     pub assoc_arrays: std::collections::HashSet<String>,
     /// Variables known to be any collection (array or map) — for unset semantics.
@@ -1618,6 +1620,7 @@ pub(crate) fn value_intrinsic_arity(name: &str) -> Option<RangeInclusive<usize>>
 
 impl VersionState {
     pub fn with_types(type_map: HashMap<String, crate::ir::VarType>) -> Self {
+        let reserved_names = type_map.keys().cloned().collect();
         Self {
             current: HashMap::new(),
             counter: HashMap::new(),
@@ -1628,6 +1631,7 @@ impl VersionState {
             in_condition: 0,
             suppressed: 0,
             type_map,
+            reserved_names,
             assoc_arrays: std::collections::HashSet::new(),
             collections: std::collections::HashSet::new(),
             readonly_vars: std::collections::HashSet::new(),
@@ -1752,8 +1756,8 @@ pub fn substring_part_int(part: &str) -> i64 {
     })
 }
 
-/// The five `SsaValue` variants that cannot appear in **scalar value** position,
-/// with the pass that was supposed to have removed each one.
+/// The `SsaValue` variants that cannot appear in **string/scalar lowering**,
+/// and the invariant that rules each one out.
 ///
 /// Both backends used to spell these five arms out individually, with a comment
 /// in `emit_c` reading "native ICEs on exactly these (codegen/values.rs:81-115);
@@ -1771,7 +1775,7 @@ pub fn substring_part_int(part: &str) -> i64 {
 ///
 /// Always — that is the entire contract.
 pub(crate) fn unlowerable_scalar_value(backend: &str, value: &SsaValue) -> ! {
-    // Deliberately *not* total over `SsaValue`: the five named here are the
+    // Deliberately *not* total over `SsaValue`: the variants named here are the
     // contract, and the final arm exists to tell a caller/callee drift apart
     // from a genuine refusal rather than mislabel it as one.
     let why = match value {
@@ -1798,9 +1802,14 @@ pub(crate) fn unlowerable_scalar_value(backend: &str, value: &SsaValue) -> ! {
         SsaValue::ElideEmpty { .. } => {
             "ElideEmpty (:~) must be expanded by a list builder".to_string()
         }
+        // Only lower_for_array / lower_for_argv_slice build this specialized
+        // form, twice each; every target is a synthesized integer counter.
+        SsaValue::ArithExpr { .. } => {
+            "ArithExpr loop increments must stay in integer slots".to_string()
+        }
         other => panic!(
             "ICE: {backend} called unlowerable_scalar_value on {:?}, which is \
-             not one of the five unlowerable variants — the caller's arm and \
+             not one of the unlowerable variants — the caller's arm and \
              this match have drifted apart.",
             std::mem::discriminant(other)
         ),
@@ -1870,7 +1879,7 @@ mod unlowerable_value_tests {
             .clone()
     }
 
-    /// Each of the five is unreachable from source — that is what the ICE
+    /// Each is unreachable in this context from source — that is what the ICE
     /// asserts — so only a direct call can reach it. The claims differ, so the
     /// test checks that the message names the *right* one: an arm that fell
     /// through to a neighbour would still panic and would still look fine.
@@ -1911,6 +1920,14 @@ mod unlowerable_value_tests {
                 },
                 "ElideEmpty (:~) must be expanded by a list builder",
             ),
+            (
+                SsaValue::ArithExpr {
+                    var: super::VarRef::new_typed("counter", 0, crate::ir::VarType::Int),
+                    op: super::ArithOp::Add,
+                    operand: 1,
+                },
+                "ArithExpr loop increments must stay in integer slots",
+            ),
         ];
         for (value, claim) in cases {
             let msg = ice_message(&value);
@@ -1922,16 +1939,13 @@ mod unlowerable_value_tests {
         }
     }
 
-    /// The callers select the five by variant; this function spells them out
+    /// The callers select by variant; this function spells the variants out
     /// again. If the two lists drift, a lowerable value arrives here — and that
     /// must be told apart from a genuine refusal, not reported as one.
     #[test]
     fn a_lowerable_value_reports_the_drift_not_a_refusal() {
         let msg = ice_message(&SsaValue::Literal("x".into()));
-        assert!(
-            msg.contains("not one of the five unlowerable variants"),
-            "{msg}"
-        );
+        assert!(msg.contains("not one of the unlowerable variants"), "{msg}");
         assert!(msg.contains("drifted apart"), "{msg}");
     }
 }

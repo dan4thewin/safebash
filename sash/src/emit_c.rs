@@ -1335,7 +1335,7 @@ fn lower_value_as_str(e: &mut Emit, value: &SsaValue, types: &VarTypes) -> CStr 
             (format!("\"{}\"", c_escape(s)), format!("{}", s.len()))
         }
         SsaValue::Var(vref) => emit_var_value(e, vref, types),
-        SsaValue::ArithExpr { .. } | SsaValue::ArithBinOp { .. } | SsaValue::Ternary { .. } => {
+        SsaValue::ArithBinOp { .. } | SsaValue::Ternary { .. } => {
             let int_expr = lower_value_as_int(e, value, types);
             emit_itoa_temp(e, &int_expr)
         }
@@ -1410,9 +1410,8 @@ fn lower_value_as_str_aggregate(e: &mut Emit, value: &SsaValue, types: &VarTypes
             let n = lower_value_as_int(e, inner, types);
             ("(const char*)0".to_string(), n)
         }
-        // The five below cannot reach a scalar value lowering: each is either
-        // lifted out of value position during transform or expanded by an
-        // argv/list builder. The claim is stated once, in
+        // These cannot reach string/scalar lowering: lifting, list expansion
+        // or integer storage intercepts each. The claim is stated once, in
         // `ssa::unlowerable_scalar_value`, and native's `lower_value` makes it
         // from the same site — so the two backends cannot drift. This used to
         // be a `/* TODO */` comment returning an empty string, which would
@@ -1421,6 +1420,7 @@ fn lower_value_as_str_aggregate(e: &mut Emit, value: &SsaValue, types: &VarTypes
         | SsaValue::IntFuncCall { .. }
         | SsaValue::CmdSubstBody { .. }
         | SsaValue::ArraySplat { .. }
+        | SsaValue::ArithExpr { .. }
         | SsaValue::ElideEmpty { .. } => crate::ssa::unlowerable_scalar_value("c", value),
         // `$(<file)` — one runtime call, the same one native emits, so the two
         // backends cannot drift on slurp semantics (strip rule, error handling).
@@ -1564,6 +1564,13 @@ fn lower_value_as_int(e: &mut Emit, value: &SsaValue, types: &VarTypes) -> Strin
             .map(|n| n.to_string())
             .unwrap_or_else(|_| format!("sash_atoi(\"{}\", {})", c_escape(s), s.len())),
         SsaValue::Var(vref) => lower_var_as_int_c(vref),
+        SsaValue::ParamExpansion { var, operator, .. } if operator == "arrlen" => {
+            let table = lookup_table_var(&var.name, types);
+            let t = e.fresh();
+            writeln!(e.out, "    i64 {t} = sash_table_len((SashTable*){table});").unwrap();
+            t
+        }
+        SsaValue::CmdSubst { argv, .. } => lower_cmdsubst_as_int_c(e, argv, types),
         // codegen/values.rs:341+ for ArithExpr: lower_value_as_int(Var(var))
         // then emit_arith_op(op, lhs, iconst(operand)).
         SsaValue::ArithExpr { var, op, operand } => {
@@ -1573,18 +1580,7 @@ fn lower_value_as_int(e: &mut Emit, value: &SsaValue, types: &VarTypes) -> Strin
         // codegen/values.rs:356+ for ArithBinOp: lower_value_as_int(left/right)
         // then emit_arith_op(op, l, r).
         SsaValue::ArithBinOp { left, op, right } => {
-            // `&&` / `||` must not evaluate the right operand when the left
-            // already decides the result. C's `&&` short-circuits, but the
-            // operand *statements* `lower_value_as_int` emits (div-by-zero
-            // guard, overflow trap) would sit before the expression and run
-            // unconditionally — so route them through an if/else, exactly as
-            // the ternary does.
-            if matches!(op, ArithOp::And | ArithOp::Or) {
-                return emit_logical_as_int_c(e, *op, left, right, types);
-            }
-            let l = lower_value_as_int(e, left, types);
-            let r = lower_value_as_int(e, right, types);
-            emit_arith_op_c(e, *op, &l, &r)
+            lower_arith_binop_as_int_c(e, *op, left, right, types)
         }
         // A ternary is int-valued; lower it to an if/else that assigns the
         // chosen branch into a temp, so each branch's side-effecting statements
@@ -1599,12 +1595,27 @@ fn lower_value_as_int(e: &mut Emit, value: &SsaValue, types: &VarTypes) -> Strin
         // DD#76: an int cell handled in lower_disposition_as_int_c.
         // DD#77 arith disposition (:- / :?) handled in lower_disposition_as_int_c.
         _ => {
-            // Fallback (e.g. ${arr arrlen}, subscripts): lower as a string
+            // Fallback (e.g. subscripts): lower as a string
             // then sash_atoi. Mirrors codegen's lower_value_as_int fallback.
             let (ptr, len) = lower_value_as_str(e, value, types);
             format!("sash_atoi({}, {})", ptr, len)
         }
     }
+}
+
+fn lower_arith_binop_as_int_c(
+    e: &mut Emit,
+    op: ArithOp,
+    left: &SsaValue,
+    right: &SsaValue,
+    types: &VarTypes,
+) -> String {
+    if matches!(op, ArithOp::And | ArithOp::Or) {
+        return emit_logical_as_int_c(e, op, left, right, types);
+    }
+    let l = lower_value_as_int(e, left, types);
+    let r = lower_value_as_int(e, right, types);
+    emit_arith_op_c(e, op, &l, &r)
 }
 
 /// Lazy `&&` / `||`: evaluate the left operand, then emit the right operand's
@@ -3333,38 +3344,10 @@ fn emit_case_conversion_c(e: &mut Emit, upper: bool, s_ptr: &str, s_len: &str) -
 /// `try_native_intrinsic_c` to keep that dispatcher under the complexity
 /// gate. Returns Some when `name` is one of them.
 fn try_process_intrinsic_c(e: &mut Emit, name: &str) -> Option<CStr> {
+    if let Some(value) = int_intrinsic_i64_c(e, name) {
+        return Some(emit_itoa_temp(e, &value));
+    }
     match name {
-        // DG (2026-10-10): `sash_epochseconds` returns an i64, like every
-        // other int intrinsic, so this renders it the same way its siblings
-        // do instead of taking a `(ptr, len)` from the runtime.
-        "epochseconds" => {
-            let t = e.fresh();
-            writeln!(e.out, "    i64 {t}_es = sash_epochseconds();", t = t).unwrap();
-            Some(emit_itoa_temp(e, &format!("{}_es", t)))
-        }
-        // DD#56: `$(signum)` → the last-received signal number global.
-        "signum" => Some(emit_itoa_temp(e, "sash_signum")),
-        "getpid" => {
-            let t = e.fresh();
-            writeln!(e.out, "    i64 {t}_pid = sash_getpid();", t = t).unwrap();
-            Some(emit_itoa_temp(e, &format!("{}_pid", t)))
-        }
-        "getppid" => {
-            let t = e.fresh();
-            writeln!(e.out, "    i64 {t}_pid = sash_getppid();", t = t).unwrap();
-            Some(emit_itoa_temp(e, &format!("{}_pid", t)))
-        }
-        // DD#126: the latch the last `wait` wrote, owned by the runtime.
-        "waitstatus" => {
-            let t = e.fresh();
-            writeln!(e.out, "    i64 {t}_ws = sash_wait_status();", t = t).unwrap();
-            Some(emit_itoa_temp(e, &format!("{}_ws", t)))
-        }
-        "random" => {
-            let t = e.fresh();
-            writeln!(e.out, "    i64 {t}_r = sash_random();", t = t).unwrap();
-            Some(emit_itoa_temp(e, &format!("{}_r", t)))
-        }
         "getcwd" => {
             let t = e.fresh();
             writeln!(
@@ -3375,9 +3358,104 @@ fn try_process_intrinsic_c(e: &mut Emit, name: &str) -> Option<CStr> {
             .unwrap();
             Some((format!("{}_p", t), format!("{}_l", t)))
         }
-        // DD#60: $(argc) is C argc (program argv length).
-        "argc" => Some(emit_itoa_temp(e, "sash_argc")),
         _ => None,
+    }
+}
+
+/// Shared by integer and string contexts; only the latter formats the result.
+fn int_intrinsic_i64_c(e: &mut Emit, name: &str) -> Option<String> {
+    let value = match name {
+        "epochseconds" => "sash_epochseconds()",
+        "signum" => "sash_signum",
+        "getpid" => "sash_getpid()",
+        "getppid" => "sash_getppid()",
+        "waitstatus" => "sash_wait_status()",
+        "random" => "sash_random()",
+        "argc" => "sash_argc",
+        "status" => "__exit_status",
+        _ => return None,
+    };
+    let t = e.fresh();
+    writeln!(e.out, "    i64 {t} = {value};").unwrap();
+    Some(t)
+}
+
+fn lower_cmdsubst_as_int_c(e: &mut Emit, argv: &[SsaValue], types: &VarTypes) -> String {
+    let Some(SsaValue::Literal(name)) = argv.first() else {
+        unreachable!("ICE: int-valued command substitution has no integer lowering")
+    };
+    if name == "wait" {
+        return emit_wait_value_c(e, argv, types);
+    }
+    int_intrinsic_i64_c(e, name)
+        .expect("ICE: int-valued command substitution has no integer lowering")
+}
+
+#[cfg(test)]
+mod integer_capture_invariant_tests {
+    use super::*;
+
+    #[test]
+    fn an_integer_capture_without_an_emitter_is_a_loud_ice() {
+        for argv in [
+            vec![],
+            vec![SsaValue::Literal("not-an-int-intrinsic".into())],
+            vec![SsaValue::Var(VarRef::new("dynamic", 0))],
+        ] {
+            let mut ssa = SsaProgram::new();
+            let entry = ssa.new_block("entry");
+            ssa.block_mut(entry).insts.push(SsaInst::Assign {
+                target: VarRef::new_typed("result", 1, VarType::Int),
+                value: SsaValue::CmdSubst {
+                    argv,
+                    suppressed: false,
+                },
+            });
+            let payload = std::panic::catch_unwind(|| emit_c(&ssa))
+                .expect_err("malformed SSA must not emit C");
+            let message = payload
+                .downcast_ref::<String>()
+                .map(String::as_str)
+                .or_else(|| payload.downcast_ref::<&str>().copied())
+                .expect("the invariant reports a string claim");
+            assert!(
+                message.contains("int-valued command substitution"),
+                "{message}"
+            );
+            assert!(message.contains("no integer lowering"), "{message}");
+        }
+    }
+
+    #[test]
+    fn a_direct_status_emitter_snapshots_the_integer_without_formatting() {
+        let mut e = Emit::new();
+        assert_eq!(
+            int_intrinsic_i64_c(&mut e, "status").as_deref(),
+            Some("__t0")
+        );
+        assert_eq!(e.out, "    i64 __t0 = __exit_status;\n");
+    }
+
+    #[test]
+    fn synthesized_loop_arithmetic_must_not_use_a_string_slot() {
+        let mut ssa = SsaProgram::new();
+        let entry = ssa.new_block("entry");
+        ssa.block_mut(entry).insts.push(SsaInst::Assign {
+            target: VarRef::new("result", 1),
+            value: SsaValue::ArithExpr {
+                var: VarRef::new_typed("counter", 0, VarType::Int),
+                op: ArithOp::Add,
+                operand: 1,
+            },
+        });
+        let payload = std::panic::catch_unwind(|| emit_c(&ssa))
+            .expect_err("a loop increment must not emit a string conversion");
+        let message = payload.downcast_ref::<String>().expect("formatted claim");
+        assert!(message.contains("c lowered"), "{message}");
+        assert!(
+            message.contains("loop increments must stay in integer slots"),
+            "{message}"
+        );
     }
 }
 

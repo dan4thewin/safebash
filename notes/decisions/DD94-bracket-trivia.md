@@ -203,3 +203,10 @@ to the outer `))` without consuming part of it: `$(((1+2)))` evaluates to `3`,
 quoted or not. The outer delimiter still requires adjacent closes; a spare
 single `)` remains expression text and gets the ordinary arithmetic diagnostic.
 Specs `aclose.1`–`aclose.20` and `arithcold.1`–`arithcold.8`; journal 515.
+
+The collector also preserves physical token adjacency rather than guessing
+which shell-token pairs form an arithmetic operator. Compact `p!=0` must stay
+compact; whitespace in `p! =0` or `p- =2` must not manufacture `!=` or `-=`.
+The old private operator-suffix list did both: it split valid inequality and
+joined a separated subtraction/assignment into a silently accepted compound
+assignment. Specs `arithadj.1`–`arithadj.6`; journal 516.

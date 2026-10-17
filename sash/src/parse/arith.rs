@@ -1606,6 +1606,7 @@ pub(super) struct CollectedArith {
 /// Shared by ordinary arithmetic and the scanner's double-quoted interpolation.
 /// Closing parentheses stay individual: in `)))`, the first may close a group
 /// and the remaining two close the arithmetic construct.
+/// Preserve physical token adjacency: a shell token boundary can split `!=`.
 pub(super) fn scan_arith_content(scanner: &mut Scanner) -> CollectedArith {
     let mut content = String::new();
     let mut depth = 2i32;
@@ -1682,30 +1683,13 @@ fn step_default_token(scanner: &mut Scanner, tok: &Tok, content: &mut String) ->
     let text = tok_to_text(tok);
     content.push_str(&text);
     scanner.next();
-    if needs_separator_space(&scanner.peek().token, &text) {
+    if !scanner.next_is_adjacent() && needs_separator_space(&scanner.peek().token, &text) {
         content.push(' ');
     }
     false
 }
 
 fn needs_separator_space(next: &Tok, prev_text: &str) -> bool {
-    // The bash lexer splits compound operators whose second byte is `=`
-    // into `<op>` + `=` (it has no arith context): `<=` `>=` and the
-    // arithmetic compound-assignments `-=` `*=` `/=` `%=` `&=` `|=` `^=`
-    // (also `<<=`/`>>=`, whose prev ends in `<`/`>`). A separator space
-    // here would turn `x -= 3` into `x - = 3`, which the arith byte-lexer
-    // mis-parses as `x - (=→0)` — dropping the operand and the write-back.
-    // Keep them adjacent so the arith lexer recombines the operator.
-    // (`+=` is a single `PlusAssign` shell token, so it never hits this;
-    // `==`/`!=` are single `Word` tokens.)
-    if matches!(next, Tok::Eq)
-        && prev_text
-            .chars()
-            .next_back()
-            .is_some_and(|c| matches!(c, '<' | '>' | '-' | '*' | '/' | '%' | '&' | '|' | '^'))
-    {
-        return false;
-    }
     !matches!(
         next,
         Tok::RParen | Tok::Semi | Tok::Newline | Tok::Eof | Tok::DblParen | Tok::LParen

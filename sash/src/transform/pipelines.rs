@@ -7,6 +7,15 @@ use super::statements::{lower_one, lower_stmts};
 use crate::ir::*;
 use crate::ssa::*;
 
+fn reserve_loop_int(state: &mut VersionState, mut name: String) -> String {
+    while state.reserved_names.contains(&name) {
+        name.push('_');
+    }
+    state.reserved_names.insert(name.clone());
+    state.type_map.insert(name.clone(), VarType::Int);
+    name
+}
+
 /// Emit a for-loop bound check `left < right` on the `(( ))` arithmetic
 /// path: an `ArithBinOp` comparison fed to `LetExit`, which sets
 /// `test_result_var` for the enclosing `Terminator::Loop`. Keeps integer
@@ -69,7 +78,7 @@ pub(super) fn lower_for_array(
     let body_block = ssa.new_block("for_arr.body");
     let latch = ssa.new_block("for_arr.latch");
     let exit_block = ssa.new_block("for_arr.exit");
-    let idx_name = format!("__ai{}", header);
+    let idx_name = reserve_loop_int(state, format!("__ai{}", header));
 
     // __ai = 0
     let idx_var = state.define(&idx_name);
@@ -189,8 +198,8 @@ pub(super) fn lower_for_argv_slice(
     let body_block = ssa.new_block("for_at.body");
     let latch = ssa.new_block("for_at.latch");
     let exit_block = ssa.new_block("for_at.exit");
-    let idx_name = format!("__fi{}", header);
-    let argc_name = format!("__argc{}", header);
+    let idx_name = reserve_loop_int(state, format!("__fi{}", header));
+    let argc_name = reserve_loop_int(state, format!("__argc{}", header));
 
     // Initialize index: __fi = start
     let idx_var = state.define(&idx_name);

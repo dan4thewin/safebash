@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup arithmetic
-plan=466
+plan=472
 echo "1..$plan" >&3
 
 set +e
@@ -2394,6 +2394,21 @@ run_sash '(( (1)-- ))'
 [[ $rc != 0 && -z $out && $err == *"unexpected token after arithmetic expression"* ]]; chk arithcold.7
 run_sash 'echo $(( -9223372036854775809 ))'
 [[ $rc != 0 && -z $out && $err == *"integer literal out of range: 9223372036854775809"* ]]; chk arithcold.8
+
+run_sash 'echo $((1!=0)) $((1!=1))'
+[[ $rc = 0 && $out = "1 0" && -z $err ]]; chk arithadj.1
+run_sash 'int p=1; if ((p!=0)) { echo yes }'
+[[ $rc = 0 && $out = yes && -z $err ]]; chk arithadj.2
+run_sash 'int p=1; echo "$((p!=0))"'
+[[ $rc = 0 && $out = 1 && -z $err ]]; chk arithadj.3
+run_sash 'int i=0; for ((i=0;i!=2;i++)) { echo $i }'
+[[ $rc = 0 && $out = $'0\n1' && -z $err ]]; chk arithadj.4
+
+# Whitespace must not manufacture a compound operator either.
+run_sash 'int p=1; if ((p! =0)) { : }'
+[[ $rc != 0 && -z $out && $err == *"unexpected token after arithmetic expression"* ]]; chk arithadj.5
+run_sash 'int p=1; ((p- =2)); echo $p'
+[[ $rc != 0 && -z $out && $err == *"expected an operand in arithmetic expression, found \`=\`"* ]]; chk arithadj.6
 
 set -e
 tally

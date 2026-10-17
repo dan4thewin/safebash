@@ -10,7 +10,7 @@ set -eu
 . common.sh
 setup cli
 set +e
-plan=66
+plan=70
 echo "1..$plan" >&3
 
 SASH=$(command -v "${SASH:-sash}")
@@ -474,6 +474,48 @@ itoa_calls=$(grep -o 'sash_itoa(' <<< "$c_body" | wc -l)
 atoi_calls=$(grep -o 'sash_atoi(' <<< "$c_body" | wc -l)
 [[ $rc = 0 && -z $err && $out == *'int main('* \
    && $itoa_calls = 1 && $atoi_calls = 1 ]]; chk arithslot.2
+
+out=$("$SASH" --emit-c -c 'array a=(red blue)
+for x in @a { echo $x }' 2>c.err); rc=$?
+err=$(<c.err)
+c_body=${out#*'int main('}
+[[ $rc = 0 && -z $err && $out == *'int main('* \
+   && $c_body == *'i64 __ai'* && $c_body != *'sash_itoa('* \
+   && $c_body != *'sash_atoi('* ]]; chk loopint.6
+
+out=$("$SASH" --emit-c -c 'map m=([k]=red [j]=blue)
+for x in @m { echo $x }
+for k in $(keys m) { echo $k }' 2>c.err); rc=$?
+err=$(<c.err)
+c_body=${out#*'int main('}
+[[ $rc = 0 && -z $err && $out == *'int main('* \
+   && $c_body == *'i64 __ai'* && $c_body != *'sash_itoa('* \
+   && $c_body != *'sash_atoi('* ]]; chk loopint.7
+
+out=$("$SASH" --emit-c -c 'for x in $(argv 1) {
+    attest x [[ -n $x ]]
+    echo $x
+}' 2>c.err); rc=$?
+err=$(<c.err)
+c_body=${out#*'int main('}
+[[ $rc = 0 && -z $err && $out == *'int main('* \
+   && $c_body == *'i64 __fi'* && $c_body == *'i64 __argc'* \
+   && $c_body != *'sash_itoa('* && $c_body != *'sash_atoi('* ]]; chk loopint.8
+
+# The shared C intrinsic emitter formats only at a string boundary.
+out=$("$SASH" --emit-c -c 'int reaped=$(wait)
+int ws=$(waitstatus)
+int p=$(getpid)
+int pp=$(getppid)
+int es=$(epochseconds)
+int r=$(random)
+int ac=$(argc)
+int sn=$(signum)
+if (( p > 0 && pp > 0 && es > 0 && r >= 0 && ac > 0 && sn == 0 && reaped <= 0 && ws != 0 )) { : }' 2>c.err); rc=$?
+err=$(<c.err)
+c_body=${out#*'int main('}
+[[ $rc = 0 && -z $err && $out == *'int main('* \
+   && $c_body != *'sash_itoa('* && $c_body != *'sash_atoi('* ]]; chk loopint.9
 
 set -e
 tally

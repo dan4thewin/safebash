@@ -14,7 +14,7 @@ use cranelift_object::ObjectModule;
 use std::collections::HashMap;
 
 use super::arithmetic::emit_arith_op;
-use super::types::{emit_int_to_str, find_array_slot, ExternFuncs, VarSlot};
+use super::types::{emit_int_to_str, find_array_slot, var_slot, ExternFuncs, VarSlot};
 use super::value_handlers::{handle_cmdsub, handle_param_expansion};
 use crate::ssa::*;
 
@@ -58,7 +58,7 @@ pub(super) fn lower_value(
     vars: &HashMap<String, VarSlot>,
     literals: &HashMap<String, cranelift_module::DataId>,
     externs: &ExternFuncs,
-    #[allow(unused_variables)] exit_status_var: Option<Variable>,
+    #[allow(unused_variables)] exit_status_var: Variable,
 ) -> (cranelift_codegen::ir::Value, cranelift_codegen::ir::Value) {
     match value {
         SsaValue::Literal(s) | SsaValue::Expr(s) => {
@@ -71,6 +71,7 @@ pub(super) fn lower_value(
         | SsaValue::IntFuncCall { .. }
         | SsaValue::CmdSubstBody { .. }
         | SsaValue::ArraySplat { .. }
+        | SsaValue::ArithExpr { .. }
         | SsaValue::ElideEmpty { .. } => crate::ssa::unlowerable_scalar_value("native", value),
         SsaValue::SlurpFile(path) => lower_slurp_file_value(
             path,
@@ -233,22 +234,6 @@ pub(super) fn lower_value(
             let req_ref = module.declare_func_in_func(externs.require_value, builder.func);
             builder.ins().call(req_ref, &[s_len, m_ptr, m_len]);
             (s_ptr, s_len)
-        }
-        SsaValue::ArithExpr { .. } => {
-            // One arithmetic lowering, not two: ask the int path for the value
-            // and stringify it. This arm used to recompute what
-            // `lower_value_as_int` already does, which is why that arm was dead
-            // in the native backend while the c backend hit its equivalent 57×.
-            let result = lower_value_as_int(
-                value,
-                builder,
-                module,
-                vars,
-                literals,
-                externs,
-                exit_status_var,
-            );
-            emit_int_to_str(builder, module, externs, result)
         }
         SsaValue::ArithBinOp {
             op: ArithOp::And | ArithOp::Or,
@@ -428,7 +413,7 @@ fn lower_regex_replace_value(
     vars: &HashMap<String, VarSlot>,
     literals: &HashMap<String, cranelift_module::DataId>,
     externs: &ExternFuncs,
-    exit_status_var: Option<Variable>,
+    exit_status_var: Variable,
 ) -> (cranelift_codegen::ir::Value, cranelift_codegen::ir::Value) {
     let (s_ptr, s_len) = lower_value(
         subject,
@@ -477,7 +462,7 @@ fn lower_regex_match_value(
     vars: &HashMap<String, VarSlot>,
     literals: &HashMap<String, cranelift_module::DataId>,
     externs: &ExternFuncs,
-    exit_status_var: Option<Variable>,
+    exit_status_var: Variable,
 ) -> (cranelift_codegen::ir::Value, cranelift_codegen::ir::Value) {
     let (s_ptr, s_len) = lower_value(
         subject,
@@ -508,15 +493,13 @@ fn lower_var_value(
     module: &mut ObjectModule,
     vars: &HashMap<String, VarSlot>,
     externs: &ExternFuncs,
-    exit_status_var: Option<Variable>,
+    exit_status_var: Variable,
 ) -> (cranelift_codegen::ir::Value, cranelift_codegen::ir::Value) {
     let key = vref.display();
     let base = strip_ssa_version(&key);
     if base == "?" {
-        if let Some(esv) = exit_status_var {
-            let status = builder.use_var(esv);
-            return emit_int_to_str(builder, module, externs, status);
-        }
+        let status = builder.use_var(exit_status_var);
+        return emit_int_to_str(builder, module, externs, status);
     }
     lower_slot_as_str_value(&key, builder, module, vars, externs)
 }
@@ -556,7 +539,7 @@ fn lower_concat_value(
     vars: &HashMap<String, VarSlot>,
     literals: &HashMap<String, cranelift_module::DataId>,
     externs: &ExternFuncs,
-    exit_status_var: Option<Variable>,
+    exit_status_var: Variable,
 ) -> (cranelift_codegen::ir::Value, cranelift_codegen::ir::Value) {
     assert!(!parts.is_empty(), "empty Concat");
     let (mut acc_ptr, mut acc_len) = lower_value(
@@ -597,7 +580,7 @@ fn lower_assoc_array_value(
     vars: &HashMap<String, VarSlot>,
     literals: &HashMap<String, cranelift_module::DataId>,
     externs: &ExternFuncs,
-    exit_status_var: Option<Variable>,
+    exit_status_var: Variable,
 ) -> (cranelift_codegen::ir::Value, cranelift_codegen::ir::Value) {
     let capacity = core::cmp::max(pairs.len() * 2, 8) as i64;
     let cap_val = builder.ins().iconst(I64, capacity);
@@ -639,7 +622,7 @@ fn lower_subscript_value(
     vars: &HashMap<String, VarSlot>,
     literals: &HashMap<String, cranelift_module::DataId>,
     externs: &ExternFuncs,
-    exit_status_var: Option<Variable>,
+    exit_status_var: Variable,
 ) -> (cranelift_codegen::ir::Value, cranelift_codegen::ir::Value) {
     let (val_ptr, val_len) = lower_subscript_raw(
         array,
@@ -675,7 +658,7 @@ fn lower_subscript_raw(
     vars: &HashMap<String, VarSlot>,
     literals: &HashMap<String, cranelift_module::DataId>,
     externs: &ExternFuncs,
-    exit_status_var: Option<Variable>,
+    exit_status_var: Variable,
 ) -> (cranelift_codegen::ir::Value, cranelift_codegen::ir::Value) {
     let table_ptr = lookup_array_table(array, vars, builder);
     let (key_ptr, key_len) = if is_integer_key {
@@ -726,7 +709,7 @@ fn lower_subscript_as_int(
     vars: &HashMap<String, VarSlot>,
     literals: &HashMap<String, cranelift_module::DataId>,
     externs: &ExternFuncs,
-    exit_status_var: Option<Variable>,
+    exit_status_var: Variable,
 ) -> cranelift_codegen::ir::Value {
     let (val_ptr, val_len) = lower_subscript_raw(
         array,
@@ -821,7 +804,7 @@ fn lower_slurp_file_value(
     vars: &HashMap<String, VarSlot>,
     literals: &HashMap<String, cranelift_module::DataId>,
     externs: &ExternFuncs,
-    exit_status_var: Option<Variable>,
+    exit_status_var: Variable,
 ) -> (cranelift_codegen::ir::Value, cranelift_codegen::ir::Value) {
     let (path_ptr, path_len) = lower_value(
         path,
@@ -851,17 +834,21 @@ fn index_var_to_int(
     vars: &HashMap<String, VarSlot>,
     externs: &ExternFuncs,
 ) -> cranelift_codegen::ir::Value {
-    let idx_sv = vars
-        .get(&index.display())
-        .unwrap_or_else(|| panic!("ICE: undefined index var: {}", index.display()));
-    match *idx_sv {
+    slot_as_int(var_slot(vars, &index.display()), builder, module, externs)
+}
+
+fn slot_as_int(
+    slot: VarSlot,
+    builder: &mut FunctionBuilder,
+    module: &mut ObjectModule,
+    externs: &ExternFuncs,
+) -> cranelift_codegen::ir::Value {
+    match slot {
         VarSlot::Int(v) => builder.use_var(v),
         VarSlot::Str { ptr, len } => {
-            let idx_ptr = builder.use_var(ptr);
-            let idx_len = builder.use_var(len);
-            let atoi_ref = module.declare_func_in_func(externs.atoi, builder.func);
-            let call = builder.ins().call(atoi_ref, &[idx_ptr, idx_len]);
-            builder.inst_results(call)[0]
+            let ptr = builder.use_var(ptr);
+            let len = builder.use_var(len);
+            atoi_call(builder, module, externs, ptr, len)
         }
     }
 }
@@ -883,7 +870,7 @@ fn lower_logical_short_circuit(
     vars: &HashMap<String, VarSlot>,
     literals: &HashMap<String, cranelift_module::DataId>,
     externs: &ExternFuncs,
-    exit_status_var: Option<Variable>,
+    exit_status_var: Variable,
 ) -> cranelift_codegen::ir::Value {
     let l = lower_value_as_int(
         left,
@@ -956,7 +943,7 @@ fn lower_ternary_int(
     vars: &HashMap<String, VarSlot>,
     literals: &HashMap<String, cranelift_module::DataId>,
     externs: &ExternFuncs,
-    exit_status_var: Option<Variable>,
+    exit_status_var: Variable,
 ) -> cranelift_codegen::ir::Value {
     let cond_int = lower_value_as_int(
         cond,
@@ -1018,7 +1005,7 @@ fn lower_ternary_value(
     vars: &HashMap<String, VarSlot>,
     literals: &HashMap<String, cranelift_module::DataId>,
     externs: &ExternFuncs,
-    exit_status_var: Option<Variable>,
+    exit_status_var: Variable,
 ) -> (cranelift_codegen::ir::Value, cranelift_codegen::ir::Value) {
     let cond_int = lower_value_as_int(
         cond,
@@ -1088,7 +1075,7 @@ fn lower_indexed_array_value(
     vars: &HashMap<String, VarSlot>,
     literals: &HashMap<String, cranelift_module::DataId>,
     externs: &ExternFuncs,
-    exit_status_var: Option<Variable>,
+    exit_status_var: Variable,
 ) -> (cranelift_codegen::ir::Value, cranelift_codegen::ir::Value) {
     let capacity = core::cmp::max(elems.len() * 2, 8) as i64;
     let cap_val = builder.ins().iconst(I64, capacity);
@@ -1124,20 +1111,16 @@ fn lower_indexed_array_value(
             // single "x y z", and `(@a q)` built a 2-element array. Silently
             // lossy: `("a b" "c")` and `(a b c)` both collapsed to "a b c".
             SsaValue::ArraySplat { array, disposition } => {
-                let tbl = super::commands::array_table_ptr(array, vars, builder);
-                let eff = match disposition {
-                    None => tbl,
-                    Some(d) => super::commands::emit_splat_disposition(
-                        builder,
-                        module,
-                        vars,
-                        literals,
-                        externs,
-                        exit_status_var,
-                        tbl,
-                        d,
-                    ),
-                };
+                let eff = super::commands::resolve_splat_table(
+                    array,
+                    disposition.as_ref(),
+                    builder,
+                    module,
+                    vars,
+                    literals,
+                    externs,
+                    exit_status_var,
+                );
                 emit_splat_append(builder, module, externs, table_ptr, widx, eff);
             }
             _ => {
@@ -1263,7 +1246,7 @@ fn lower_disposition_as_int(
     vars: &HashMap<String, VarSlot>,
     literals: &HashMap<String, cranelift_module::DataId>,
     externs: &ExternFuncs,
-    exit_status_var: Option<Variable>,
+    exit_status_var: Variable,
 ) -> Option<cranelift_codegen::ir::Value> {
     match value {
         // DD#76: an int-cell subscript read / int cell in int context.
@@ -1369,11 +1352,8 @@ fn lower_disposition_as_int(
 /// 0: `lower_value` would try to exec a name that is not a program, and
 /// `sash_atoi` an empty capture.
 ///
-/// Not unit-tested — reaching it needs a live `FunctionBuilder` and
-/// `ObjectModule`, and `codegen/` has no harness for either (`codegen/tests.rs`
-/// is the `[[ ]]` lowering, not a test module). The first hop of the same
-/// regression is unit-tested, at `transform::expr_handlers::tests::
-/// a_lowering_less_intrinsic_in_a_nullary_sexpr_is_a_loud_ice`.
+/// The invariant tests below inject malformed SSA through `compile_ssa`;
+/// testing the transform's separate sexpr guard would not cover this route.
 #[allow(clippy::too_many_arguments)]
 fn lower_cmdsubst_as_int(
     argv: &[SsaValue],
@@ -1382,13 +1362,11 @@ fn lower_cmdsubst_as_int(
     vars: &HashMap<String, VarSlot>,
     literals: &HashMap<String, cranelift_module::DataId>,
     externs: &ExternFuncs,
-    exit_status_var: Option<Variable>,
+    exit_status_var: Variable,
 ) -> cranelift_codegen::ir::Value {
-    if let Some(SsaValue::Literal(name)) = argv.first() {
-        // DD#126: `wait` takes an operand, so it cannot go through the
-        // nullary table below.
-        if name == "wait" {
-            return crate::codegen::value_handlers::emit_wait_value(
+    let value = match argv.first() {
+        Some(SsaValue::Literal(name)) if name == "wait" => {
+            Some(crate::codegen::value_handlers::emit_wait_value(
                 argv,
                 builder,
                 module,
@@ -1396,20 +1374,20 @@ fn lower_cmdsubst_as_int(
                 literals,
                 externs,
                 exit_status_var,
-            );
+            ))
         }
-        if let Some(v) = crate::codegen::value_handlers::int_intrinsic_i64(
+        Some(SsaValue::Literal(name)) => crate::codegen::value_handlers::int_intrinsic_i64(
             name,
             builder,
             module,
             externs,
             exit_status_var,
-        ) {
-            return v;
-        }
-    }
-    unreachable!(
-        "`$( … )` in int context must name `wait` or an intrinsic with an \
+        ),
+        _ => None,
+    };
+    value.unwrap_or_else(|| {
+        unreachable!(
+            "`$( … )` in int context must name `wait` or an intrinsic with an \
          `int_intrinsic_i64` arm. SB4030 rejects every other capture there, \
          `nullary_stateful_slot` takes the bare `status`/`getcpid`, and \
          SB4045 takes the same heads with arguments (`value_intrinsic_arity` \
@@ -1419,8 +1397,9 @@ fn lower_cmdsubst_as_int(
          `ArithDenotation::Int` name added to `resolve` and never given one \
          — `getcpid`'s silent 0, in the word form that \
          `resolve_nullary_sexpr`'s guard does not see. Head: {:?}",
-        argv.first()
-    )
+            argv.first()
+        )
+    })
 }
 
 /// Emit Cranelift instructions for lowering an `SsaValue` to an i64 in
@@ -1453,7 +1432,7 @@ pub(super) fn lower_value_as_int(
     vars: &HashMap<String, VarSlot>,
     literals: &HashMap<String, cranelift_module::DataId>,
     externs: &ExternFuncs,
-    exit_status_var: Option<Variable>,
+    exit_status_var: Variable,
 ) -> cranelift_codegen::ir::Value {
     // DD#77 arith `:-`/`:?` dispositions are handled first (out-of-line) to keep
     // this dispatcher under the complexity gate.
@@ -1489,44 +1468,17 @@ pub(super) fn lower_value_as_int(
             let rhs = builder.ins().iconst(I64, *operand);
             emit_arith_op(*op, var_val, rhs, builder, module, externs)
         }
-        SsaValue::ArithBinOp { left, op, right } => {
-            // `&&` / `||` short-circuit (bash): the right operand is not
-            // evaluated when the left already decides the result, so its
-            // guards (div/mod-by-zero, overflow trap) must not run either.
-            // Same class as the eager-ternary bug fixed in journal 193.
-            if matches!(op, ArithOp::And | ArithOp::Or) {
-                return lower_logical_short_circuit(
-                    *op,
-                    left,
-                    right,
-                    builder,
-                    module,
-                    vars,
-                    literals,
-                    externs,
-                    exit_status_var,
-                );
-            }
-            let l = lower_value_as_int(
-                left,
-                builder,
-                module,
-                vars,
-                literals,
-                externs,
-                exit_status_var,
-            );
-            let r = lower_value_as_int(
-                right,
-                builder,
-                module,
-                vars,
-                literals,
-                externs,
-                exit_status_var,
-            );
-            emit_arith_op(*op, l, r, builder, module, externs)
-        }
+        SsaValue::ArithBinOp { left, op, right } => lower_arith_binop_as_int(
+            *op,
+            left,
+            right,
+            builder,
+            module,
+            vars,
+            literals,
+            externs,
+            exit_status_var,
+        ),
         SsaValue::Ternary {
             cond,
             true_val,
@@ -1590,6 +1542,52 @@ pub(super) fn lower_value_as_int(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
+fn lower_arith_binop_as_int(
+    op: ArithOp,
+    left: &SsaValue,
+    right: &SsaValue,
+    builder: &mut FunctionBuilder,
+    module: &mut ObjectModule,
+    vars: &HashMap<String, VarSlot>,
+    literals: &HashMap<String, cranelift_module::DataId>,
+    externs: &ExternFuncs,
+    exit_status_var: Variable,
+) -> cranelift_codegen::ir::Value {
+    if matches!(op, ArithOp::And | ArithOp::Or) {
+        return lower_logical_short_circuit(
+            op,
+            left,
+            right,
+            builder,
+            module,
+            vars,
+            literals,
+            externs,
+            exit_status_var,
+        );
+    }
+    let l = lower_value_as_int(
+        left,
+        builder,
+        module,
+        vars,
+        literals,
+        externs,
+        exit_status_var,
+    );
+    let r = lower_value_as_int(
+        right,
+        builder,
+        module,
+        vars,
+        literals,
+        externs,
+        exit_status_var,
+    );
+    emit_arith_op(op, l, r, builder, module, externs)
+}
+
 /// A `SsaValue::Var` read in int context: a computed special ($$/$?) computes
 /// its value; a materialized slot reads its int (or atoi's its string); an
 /// unknown key is 0.
@@ -1599,7 +1597,7 @@ fn lower_var_as_int(
     module: &mut ObjectModule,
     vars: &HashMap<String, VarSlot>,
     externs: &ExternFuncs,
-    exit_status_var: Option<Variable>,
+    exit_status_var: Variable,
 ) -> cranelift_codegen::ir::Value {
     let key = vref.display();
     // Computed specials ($$ → getpid, $? → the exit-status var) have no
@@ -1613,17 +1611,7 @@ fn lower_var_as_int(
         // Undefined variable → 0 in int context
         return builder.ins().iconst(I64, 0);
     };
-    match *sv {
-        VarSlot::Int(v) => builder.use_var(v),
-        VarSlot::Str { ptr, len } => {
-            // String var in int context: atoi
-            let ptr = builder.use_var(ptr);
-            let len = builder.use_var(len);
-            let atoi_ref = module.declare_func_in_func(externs.atoi, builder.func);
-            let call = builder.ins().call(atoi_ref, &[ptr, len]);
-            builder.inst_results(call)[0]
-        }
-    }
+    slot_as_int(*sv, builder, module, externs)
 }
 
 /// The one computed special var with no materialized slot: `$?` → the
@@ -1637,10 +1625,10 @@ fn lower_var_as_int(
 fn special_var_as_int(
     key: &str,
     builder: &mut FunctionBuilder,
-    exit_status_var: Option<Variable>,
+    exit_status_var: Variable,
 ) -> Option<cranelift_codegen::ir::Value> {
     match strip_ssa_version(key) {
-        "?" => exit_status_var.map(|esv| builder.use_var(esv)),
+        "?" => Some(builder.use_var(exit_status_var)),
         _ => None,
     }
 }
@@ -1735,6 +1723,115 @@ mod strip_ssa_version_tests {
         assert_eq!(
             crate::codegen::redirects::parse_var_base_version("x_"),
             ("x_", 0)
+        );
+    }
+}
+
+#[cfg(test)]
+mod invariant_tests {
+    use super::*;
+    use crate::codegen::entry::{compile_ssa, Embedded};
+    use crate::ir::VarType;
+
+    fn native_value_ice(value: SsaValue, var_type: VarType) -> String {
+        let mut ssa = SsaProgram::new();
+        let entry = ssa.new_block("entry");
+        ssa.block_mut(entry).insts.push(SsaInst::Assign {
+            target: VarRef::new_typed("result", 1, var_type),
+            value,
+        });
+        let payload = std::panic::catch_unwind(|| {
+            compile_ssa(
+                &ssa,
+                Embedded {
+                    source: None,
+                    ir: None,
+                    manifest: None,
+                },
+                false,
+            )
+        })
+        .expect_err("malformed SSA must not compile");
+        payload
+            .downcast_ref::<String>()
+            .expect("the invariant reports a formatted claim")
+            .clone()
+    }
+
+    #[test]
+    fn scalar_lowering_reaches_the_shared_unlowerable_guard() {
+        let message = native_value_ice(
+            SsaValue::FuncCall {
+                name: "f".into(),
+                args: vec![],
+                colls: vec![],
+            },
+            VarType::String,
+        );
+        assert!(
+            message.contains("native lowered a value as a scalar"),
+            "{message}"
+        );
+        assert!(
+            message.contains("FuncCall (f) should have been lifted"),
+            "{message}"
+        );
+    }
+
+    #[test]
+    fn an_int_cell_annotation_cannot_be_an_arithmetic_operand() {
+        let message = native_value_ice(
+            SsaValue::ArithBinOp {
+                left: Box::new(SsaValue::IntCell(Box::new(SsaValue::Literal("1".into())))),
+                op: ArithOp::Add,
+                right: Box::new(SsaValue::Literal("1".into())),
+            },
+            VarType::Int,
+        );
+        assert!(message.contains("IntCell"), "{message}");
+        assert!(message.contains("native codegen"), "{message}");
+    }
+
+    #[test]
+    fn integer_captures_need_an_emitter_not_a_string_fallback() {
+        for argv in [
+            vec![],
+            vec![SsaValue::Literal("not-an-int-intrinsic".into())],
+            vec![SsaValue::Var(VarRef::new("dynamic", 0))],
+        ] {
+            let message = native_value_ice(
+                SsaValue::CmdSubst {
+                    argv,
+                    suppressed: false,
+                },
+                VarType::Int,
+            );
+            assert!(message.contains("int_intrinsic_i64"), "{message}");
+            assert!(message.contains("SB4030"), "{message}");
+        }
+    }
+
+    #[test]
+    fn a_noninteger_ssa_literal_must_not_turn_into_zero() {
+        let message = native_value_ice(SsaValue::Literal("1x".into()), VarType::Int);
+        assert!(message.contains("non-integer literal `1x`"), "{message}");
+        assert!(message.contains("SB4030"), "{message}");
+    }
+
+    #[test]
+    fn synthesized_loop_arithmetic_must_not_use_a_string_slot() {
+        let message = native_value_ice(
+            SsaValue::ArithExpr {
+                var: VarRef::new_typed("counter", 0, VarType::Int),
+                op: ArithOp::Add,
+                operand: 1,
+            },
+            VarType::String,
+        );
+        assert!(message.contains("native lowered"), "{message}");
+        assert!(
+            message.contains("loop increments must stay in integer slots"),
+            "{message}"
         );
     }
 }

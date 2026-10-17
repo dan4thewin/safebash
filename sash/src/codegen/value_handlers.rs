@@ -23,7 +23,7 @@ pub(super) fn handle_param_expansion(
     vars: &HashMap<String, VarSlot>,
     literals: &HashMap<String, cranelift_module::DataId>,
     externs: &ExternFuncs,
-    _exit_status_var: Option<Variable>,
+    _exit_status_var: Variable,
 ) -> (cranelift_codegen::ir::Value, cranelift_codegen::ir::Value) {
     // arr=(*.sh) bypasses the var load and goes straight to the glob syscall.
     if operator == "glob" {
@@ -450,7 +450,7 @@ pub(super) fn handle_cmdsub(
     vars: &HashMap<String, VarSlot>,
     literals: &HashMap<String, cranelift_module::DataId>,
     externs: &ExternFuncs,
-    exit_status_var: Option<Variable>,
+    exit_status_var: Variable,
 ) -> (cranelift_codegen::ir::Value, cranelift_codegen::ir::Value) {
     if let Some(SsaValue::Literal(name)) = argv_values.first() {
         if let Some(result) = try_native_intrinsic(
@@ -489,7 +489,7 @@ fn lower_arg_intrinsic(
     vars: &HashMap<String, VarSlot>,
     literals: &HashMap<String, cranelift_module::DataId>,
     externs: &ExternFuncs,
-    exit_status_var: Option<Variable>,
+    exit_status_var: Variable,
 ) -> Option<(cranelift_codegen::ir::Value, cranelift_codegen::ir::Value)> {
     let (idx_ptr, idx_len) = lower_value(
         &argv_values[1],
@@ -561,7 +561,7 @@ fn try_nullary_intrinsic(
     builder: &mut FunctionBuilder,
     module: &mut ObjectModule,
     externs: &ExternFuncs,
-    exit_status_var: Option<Variable>,
+    exit_status_var: Variable,
 ) -> Option<(cranelift_codegen::ir::Value, cranelift_codegen::ir::Value)> {
     if name == "getcwd" {
         let func_ref = module.declare_func_in_func(externs.getcwd, builder.func);
@@ -586,15 +586,12 @@ fn try_nullary_intrinsic(
 fn emit_getenv_lookup_status(
     val_ptr: cranelift_codegen::ir::Value,
     builder: &mut FunctionBuilder,
-    exit_status_var: Option<Variable>,
+    exit_status_var: Variable,
 ) {
-    let Some(es_var) = exit_status_var else {
-        return;
-    };
     let zero = builder.ins().iconst(I64, 0);
     let absent = builder.ins().icmp(IntCC::Equal, val_ptr, zero);
     let status = builder.ins().uextend(I64, absent);
-    builder.def_var(es_var, status);
+    builder.def_var(exit_status_var, status);
 }
 
 /// Compile-time intrinsic dispatch for `$(epochseconds)`, `$(getppid)`,
@@ -611,7 +608,7 @@ fn try_native_intrinsic(
     vars: &HashMap<String, VarSlot>,
     literals: &HashMap<String, cranelift_module::DataId>,
     externs: &ExternFuncs,
-    exit_status_var: Option<Variable>,
+    exit_status_var: Variable,
 ) -> Option<(cranelift_codegen::ir::Value, cranelift_codegen::ir::Value)> {
     if let Some(v) = try_nullary_intrinsic(name, builder, module, externs, exit_status_var) {
         return Some(v);
@@ -687,7 +684,7 @@ pub(super) fn emit_wait_value(
     vars: &HashMap<String, VarSlot>,
     literals: &HashMap<String, cranelift_module::DataId>,
     externs: &ExternFuncs,
-    exit_status_var: Option<Variable>,
+    exit_status_var: Variable,
 ) -> cranelift_codegen::ir::Value {
     let pid = match argv.get(1) {
         Some(arg) => crate::codegen::values::lower_value_as_int(
@@ -721,7 +718,7 @@ pub(super) fn int_intrinsic_i64(
     builder: &mut FunctionBuilder,
     module: &mut ObjectModule,
     externs: &ExternFuncs,
-    exit_status_var: Option<Variable>,
+    exit_status_var: Variable,
 ) -> Option<cranelift_codegen::ir::Value> {
     let v = match name {
         "getpid" => {
@@ -765,7 +762,7 @@ pub(super) fn int_intrinsic_i64(
             let base = builder.ins().global_value(I64, gv);
             builder.ins().load(I64, MemFlags::new(), base, 0)
         }
-        "status" => return exit_status_var.map(|esv| builder.use_var(esv)),
+        "status" => return Some(builder.use_var(exit_status_var)),
         _ => return None,
     };
     Some(v)
@@ -786,7 +783,7 @@ fn emit_cmdsub_exec(
     vars: &HashMap<String, VarSlot>,
     literals: &HashMap<String, cranelift_module::DataId>,
     externs: &ExternFuncs,
-    exit_status_var: Option<Variable>,
+    exit_status_var: Variable,
 ) -> (cranelift_codegen::ir::Value, cranelift_codegen::ir::Value) {
     // 1. Build argv (null-terminated pointer array); `@a` splats expand
     //    to one entry per element (DD#20/DD#22). argv_values[0] is the cmd.
@@ -872,11 +869,9 @@ fn emit_cmdsub_exec(
     // DD#55: store exit status and check — abort if nonzero. `$(- cmd)`
     // (suppressed) discards the status and does NOT abort (mirrors a
     // statement-position `- cmd`); the captured stdout is still returned.
-    if let Some(esv) = exit_status_var {
-        builder.def_var(esv, cmd_status);
-        if !suppressed {
-            emit_cmdsub_abort_check(cmd_status, argv_values, builder, module, literals, externs);
-        }
+    builder.def_var(exit_status_var, cmd_status);
+    if !suppressed {
+        emit_cmdsub_abort_check(cmd_status, argv_values, builder, module, literals, externs);
     }
 
     (buf_ptr, result_len)

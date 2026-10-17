@@ -174,7 +174,7 @@ impl SsaInst {
                     vars,
                     literals,
                     externs,
-                    Some(exit_status_var),
+                    exit_status_var,
                 );
                 builder.def_var(test_result_var, result);
                 // A `[[ … ]]` publishes its status like every other producer,
@@ -444,7 +444,7 @@ impl SsaInst {
             ctx.vars,
             ctx.literals,
             ctx.externs,
-            Some(ctx.exit_status_var),
+            ctx.exit_status_var,
         );
         let (p_ptr, p_len) = lower_value(
             pattern,
@@ -453,7 +453,7 @@ impl SsaInst {
             ctx.vars,
             ctx.literals,
             ctx.externs,
-            Some(ctx.exit_status_var),
+            ctx.exit_status_var,
         );
         let regex_ref = module.declare_func_in_func(ctx.externs.regex_match, builder.func);
         let call = builder.ins().call(regex_ref, &[s_ptr, s_len, p_ptr, p_len]);
@@ -497,7 +497,7 @@ impl SsaInst {
                     ctx.externs,
                     ctx.literals,
                     ctx.vars,
-                    Some(ctx.exit_status_var),
+                    ctx.exit_status_var,
                 );
             }
             emit_exec_static_argv(args, builder, module, ctx);
@@ -528,7 +528,7 @@ impl SsaInst {
             vars,
             literals,
             externs,
-            Some(exit_status_var),
+            exit_status_var,
         );
         let pass_block = builder.create_block();
         let fail_block = builder.create_block();
@@ -705,14 +705,11 @@ impl SsaInst {
             let (kp, kl) = emit_table_lookup(externs.table_key, table_ptr, ci, builder, module);
             builder.def_var(binder_ptrs[0], kp);
             builder.def_var(binder_lens[0], kl);
-            let (vp, vl) = emit_table_lookup(externs.table_value, table_ptr, ci, builder, module);
-            builder.def_var(binder_ptrs[1], vp);
-            builder.def_var(binder_lens[1], vl);
-        } else {
-            let (vp, vl) = emit_table_lookup(externs.table_value, table_ptr, ci, builder, module);
-            builder.def_var(binder_ptrs[0], vp);
-            builder.def_var(binder_lens[0], vl);
         }
+        let value_binder = usize::from(is_map);
+        let (vp, vl) = emit_table_lookup(externs.table_value, table_ptr, ci, builder, module);
+        builder.def_var(binder_ptrs[value_binder], vp);
+        builder.def_var(binder_lens[value_binder], vl);
         let result = lower_test_expr(
             test,
             builder,
@@ -720,16 +717,13 @@ impl SsaInst {
             ctx.vars,
             ctx.literals,
             externs,
-            Some(exit_status_var),
+            exit_status_var,
         );
 
         if if_form {
             let ap = builder.use_var(all_passed);
             let ap2 = builder.ins().band(ap, result);
             builder.def_var(all_passed, ap2);
-            let cnext = builder.ins().iadd_imm(ci, 1);
-            builder.def_var(counter, cnext);
-            builder.ins().jump(header, &[]);
         } else {
             let cont = builder.create_block();
             let fail = builder.create_block();
@@ -741,21 +735,17 @@ impl SsaInst {
             // cont: counter++ ; loop
             builder.switch_to_block(cont);
             builder.seal_block(cont);
-            let cnext = builder.ins().iadd_imm(ci, 1);
-            builder.def_var(counter, cnext);
-            builder.ins().jump(header, &[]);
         }
+        let cnext = builder.ins().iadd_imm(ci, 1);
+        builder.def_var(counter, cnext);
+        builder.ins().jump(header, &[]);
 
         // header's predecessors (entry + back-edge) are now complete.
         builder.seal_block(header);
 
         builder.switch_to_block(after);
         builder.seal_block(after);
-        let passed = if if_form {
-            builder.use_var(all_passed)
-        } else {
-            builder.ins().iconst(I64, 1)
-        };
+        let passed = builder.use_var(all_passed);
         builder.def_var(test_result_var, passed);
 
         for key in binder_keys {
@@ -810,7 +800,7 @@ impl SsaInst {
             ctx.vars,
             ctx.literals,
             ctx.externs,
-            Some(ctx.exit_status_var),
+            ctx.exit_status_var,
         );
         false
     }
@@ -848,7 +838,7 @@ impl SsaInst {
             vars,
             literals,
             externs,
-            Some(exit_status_var),
+            exit_status_var,
         );
         let set_ref = module.declare_func_in_func(externs.table_set, builder.func);
         builder
@@ -929,7 +919,7 @@ impl SsaInst {
                 vars,
                 literals,
                 externs,
-                Some(exit_status_var),
+                exit_status_var,
             );
             let zero = builder.ins().iconst(I64, 0);
             let is_zero = builder.ins().icmp(IntCC::Equal, int_val, zero);
@@ -986,7 +976,7 @@ impl SsaInst {
                 vars,
                 literals,
                 externs,
-                Some(exit_status_var),
+                exit_status_var,
             );
             let (key_ptr, key_len) = if is_integer_key {
                 let idx_int = super::values::lower_value_as_int(
@@ -996,7 +986,7 @@ impl SsaInst {
                     vars,
                     literals,
                     externs,
-                    Some(exit_status_var),
+                    exit_status_var,
                 );
                 let (idx_slot, kp) = super::values::alloc_out_slot(builder);
                 builder.ins().stack_store(idx_int, idx_slot, 0);
@@ -1010,7 +1000,7 @@ impl SsaInst {
                     vars,
                     literals,
                     externs,
-                    Some(exit_status_var),
+                    exit_status_var,
                 )
             };
             let del_ref = module.declare_func_in_func(externs.table_delete, builder.func);
@@ -1042,7 +1032,7 @@ impl SsaInst {
                 ctx.vars,
                 ctx.literals,
                 externs,
-                Some(exit_status_var),
+                exit_status_var,
             ),
             None => builder.ins().iconst(I64, 0),
         };
@@ -1089,7 +1079,7 @@ impl SsaInst {
             ctx.vars,
             ctx.literals,
             ctx.externs,
-            Some(ctx.exit_status_var),
+            ctx.exit_status_var,
         );
         let src = find_array_slot(ctx.vars, source, "array");
         let src_ptr = builder.use_var(src.str_ptr());
@@ -1122,7 +1112,7 @@ impl SsaInst {
             ctx.vars,
             ctx.literals,
             ctx.externs,
-            Some(ctx.exit_status_var),
+            ctx.exit_status_var,
         );
         let sv = find_array_slot(ctx.vars, array, "array");
         let table_ptr = builder.use_var(sv.str_ptr());
@@ -1213,7 +1203,7 @@ fn emit_exec_redirects_only(
             ctx.externs,
             ctx.literals,
             ctx.vars,
-            Some(ctx.exit_status_var),
+            ctx.exit_status_var,
         );
         // DD#120: this is the ONE redirect form that rebinds the invoker's own
         // stderr, so the diagnostic channel follows it. A per-command redirect
@@ -1250,7 +1240,7 @@ fn emit_exec_static_argv(
         ctx.vars,
         ctx.literals,
         ctx.externs,
-        Some(ctx.exit_status_var),
+        ctx.exit_status_var,
     );
     finalize_exec(argv_addr, builder, module, ctx.externs);
 }
@@ -1345,7 +1335,7 @@ fn emit_echo_body(
         ctx.externs,
         ctx.space_id,
         ctx.nl_id,
-        Some(ctx.exit_status_var),
+        ctx.exit_status_var,
     );
     builder.def_var(ctx.exit_status_var, failed);
     let zero = builder.ins().iconst(I64, 0);

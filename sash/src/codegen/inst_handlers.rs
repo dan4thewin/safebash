@@ -309,7 +309,7 @@ fn lower_pipeline_builtin(
             ctx.externs,
             ctx.space_id,
             ctx.nl_id,
-            Some(ctx.exit_status_var),
+            ctx.exit_status_var,
         );
     }
     // echo / `:` in a pipeline stage exit 0 (true/false are now external).
@@ -569,7 +569,7 @@ fn handle_exit_status_assign(
         ctx.vars,
         ctx.literals,
         ctx.externs,
-        Some(ctx.exit_status_var),
+        ctx.exit_status_var,
     );
     builder.def_var(ctx.exit_status_var, int_val);
     // DD#74: keep test_result_var in sync with $? so a function's `return N`
@@ -598,7 +598,7 @@ fn handle_regular_assign(
                 ctx.vars,
                 ctx.literals,
                 ctx.externs,
-                Some(ctx.exit_status_var),
+                ctx.exit_status_var,
             );
             builder.def_var(v, int_val);
         }
@@ -610,7 +610,7 @@ fn handle_regular_assign(
                 ctx.vars,
                 ctx.literals,
                 ctx.externs,
-                Some(ctx.exit_status_var),
+                ctx.exit_status_var,
             );
             builder.def_var(ptr, ptr_val);
             builder.def_var(len, len_val);
@@ -1073,7 +1073,7 @@ pub(super) fn handle_cd(
         ctx.vars,
         ctx.literals,
         ctx.externs,
-        Some(ctx.exit_status_var),
+        ctx.exit_status_var,
     );
     let chdir_ref = module.declare_func_in_func(ctx.externs.chdir, builder.func);
     let call = builder.ins().call(chdir_ref, &[ptr, len]);
@@ -1134,7 +1134,7 @@ pub(super) fn handle_close(
         ctx.vars,
         ctx.literals,
         ctx.externs,
-        Some(ctx.exit_status_var),
+        ctx.exit_status_var,
     );
     let close_ref = module.declare_func_in_func(ctx.externs.close, builder.func);
     let call = builder.ins().call(close_ref, &[fd_val]);
@@ -1200,7 +1200,7 @@ pub(super) fn handle_match_into(
         ctx.vars,
         ctx.literals,
         ctx.externs,
-        Some(ctx.exit_status_var),
+        ctx.exit_status_var,
     );
     let (p_ptr, p_len) = lower_value(
         pattern,
@@ -1209,7 +1209,7 @@ pub(super) fn handle_match_into(
         ctx.vars,
         ctx.literals,
         ctx.externs,
-        Some(ctx.exit_status_var),
+        ctx.exit_status_var,
     );
     let sv = find_array_slot(ctx.vars, array, "array");
     let table_ptr = builder.use_var(sv.str_ptr());
@@ -1302,7 +1302,7 @@ pub(super) fn handle_subscript_assign(
             vars,
             literals,
             externs,
-            Some(exit_status_var),
+            exit_status_var,
         );
         let idx_slot =
             builder.create_sized_stack_slot(StackSlotData::new(StackSlotKind::ExplicitSlot, 8, 3));
@@ -1318,7 +1318,7 @@ pub(super) fn handle_subscript_assign(
             vars,
             literals,
             externs,
-            Some(exit_status_var),
+            exit_status_var,
         )
     };
 
@@ -1329,7 +1329,7 @@ pub(super) fn handle_subscript_assign(
         vars,
         literals,
         externs,
-        Some(exit_status_var),
+        exit_status_var,
     );
     let set_ref = module.declare_func_in_func(externs.table_set, builder.func);
     builder

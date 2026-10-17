@@ -5,7 +5,7 @@
 set -eu
 . common.sh
 setup control_flow
-plan=97
+plan=109
 echo "1..$plan" >&3
 
 set +e
@@ -593,6 +593,87 @@ for k in $(keys m; /bin/echo e) { echo "[$k]" }'
 # fs.11-fs.13 each pinned for a different wrapper.
 run_sash 'for k in $(/bin/echo a 2>/dev/null) { attest k [[ -n $k ]]; echo "[$k]" }'
 [[ $rc != 0 && -z $out && $err == *SB5009* ]]; chk fs.15
+
+# Loop-control integers must not allocate decimal strings on each iteration.
+# The small heap leaves ample room for the table, but not 20000 counter strings.
+SASH_CFLAGS="${SASH_CFLAGS:-} --heap-size=64K" run_sash 'array a=(red blue)
+int n=0
+while (( n<10000 )) { for x in @a { : $x }; (( n++ )) }
+echo $n'
+[[ $rc = 0 && $out = 10000 && -z $err && -z $rerr ]]; chk loopint.1
+
+SASH_CFLAGS="${SASH_CFLAGS:-} --heap-size=64K" run_sash 'map m=([k]=red [j]=blue)
+int n=0
+while (( n<10000 )) { for x in @m { : $x }; (( n++ )) }
+echo $n'
+[[ $rc = 0 && $out = 10000 && -z $err && -z $rerr ]]; chk loopint.2
+
+SASH_CFLAGS="${SASH_CFLAGS:-} --heap-size=64K" run_sash 'map m=([k]=red [j]=blue)
+int n=0
+while (( n<10000 )) { for k in $(keys m) { : $k }; (( n++ )) }
+echo $n'
+[[ $rc = 0 && $out = 10000 && -z $err && -z $rerr ]]; chk loopint.3
+
+SASH_CFLAGS="${SASH_CFLAGS:-} --heap-size=64K" run_sash 'int n=0
+while (( n<10000 )) {
+    for x in $(argv 1) { attest x [[ -n $x ]]; : $x }
+    (( n++ ))
+}
+echo $n' red blue
+[[ $rc = 0 && $out = 10000 && -z $err && -z $rerr ]]; chk loopint.4
+
+# Even an empty collection rechecks its bound once per enclosing iteration.
+SASH_CFLAGS="${SASH_CFLAGS:-} --heap-size=64K" run_sash 'array a
+int n=0
+while (( n<10000 )) { for x in @a { : $x }; (( n++ )) }
+echo $n'
+[[ $rc = 0 && $out = 10000 && -z $err && -z $rerr ]]; chk loopint.5
+
+# Compiler counters must not overwrite user variables, including later ones.
+run_sash 'str __ai1=first
+str __ai1_=second
+array a=(x y)
+for x in @a { echo $x }
+str __ai1__=later
+echo "$__ai1 $__ai1_ $__ai1__"'
+[[ $rc = 0 && $out = $'x\ny\nfirst second later' && -z $err && -z $rerr ]]; chk loopint.10
+
+run_sash 'str __fi1=start
+str __argc1=bound
+for x in $(argv 1) { attest x [[ -n $x ]]; echo $x }
+str __fi1_=future_i
+str __argc1_=future_b
+echo "$__fi1 $__argc1 $__fi1_ $__argc1_"' red blue
+[[ $rc = 0 && $out = $'red\nblue\nstart bound future_i future_b' && -z $err && -z $rerr ]]; chk loopint.11
+
+run_sash 'array a=(red blue)
+for __ai1 in @a { echo $__ai1 }'
+[[ $rc = 0 && $out = $'red\nblue' && -z $err && -z $rerr ]]; chk loopint.12
+
+run_sash 'for __fi1 in $(argv 1) {
+    attest __fi1 [[ -n $__fi1 ]]
+    echo $__fi1
+}' red blue
+[[ $rc = 0 && $out = $'red\nblue' && -z $err && -z $rerr ]]; chk loopint.13
+
+run_sash 'for __argc1 in $(argv 1) {
+    attest __argc1 [[ -n $__argc1 ]]
+    echo $__argc1
+}' red blue
+[[ $rc = 0 && $out = $'red\nblue' && -z $err && -z $rerr ]]; chk loopint.14
+
+run_sash 'array a=(red blue)
+for x in @a { echo $x }
+for __ai1 in tail { echo $__ai1 }'
+[[ $rc = 0 && $out = $'red\nblue\ntail' && -z $err && -z $rerr ]]; chk loopint.15
+
+run_sash 'str n=7
+array a=(red blue)
+for x in @a {
+    attest n (( __ai1 = n ))
+    echo "$x $__ai1"
+}'
+[[ $rc = 0 && $out = $'red 7\nblue 7' && -z $err && -z $rerr ]]; chk loopint.16
 
 
 set -e

@@ -52,12 +52,13 @@ impl VarSlot {
 /// defining instruction that reached emission unmapped, and the message names
 /// the function that has to grow a case.
 ///
-/// **One function on purpose.** Both callers used to answer a miss their own
-/// way: `load_var` with `(null, 0)`, and `emit_attest` with zeros in the fail
+/// **One function on purpose.** `load_var` used to answer a miss with
+/// `(null, 0)`, and `emit_attest` with zeros in the fail
 /// block and a silently skipped copy in the pass block — two different answers
 /// to one question, in one function. `map_inst_versioned`'s own comment
 /// records that the null reached `sash_table_len` and segfaulted the compiled
 /// program.
+/// Loop-index loads share this guard too, rather than a private lookup panic.
 ///
 /// Unifying them is also what makes the claim testable. Per call site the
 /// guard is buried behind a `FunctionBuilder` (and, for attest, an

@@ -104,7 +104,7 @@ pub(super) fn lower_test_expr(
     vars: &HashMap<String, VarSlot>,
     literals: &HashMap<String, cranelift_module::DataId>,
     externs: &ExternFuncs,
-    exit_status_var: Option<Variable>,
+    exit_status_var: Variable,
 ) -> cranelift_codegen::ir::Value {
     match test {
         SsaTest::Binary { left, op, right } => lower_test_binary(
@@ -163,7 +163,7 @@ fn lower_test_unary(
     vars: &HashMap<String, VarSlot>,
     literals: &HashMap<String, cranelift_module::DataId>,
     externs: &ExternFuncs,
-    exit_status_var: Option<Variable>,
+    exit_status_var: Variable,
 ) -> cranelift_codegen::ir::Value {
     let (ptr, len) = lower_value(
         operand,
@@ -277,7 +277,7 @@ fn lower_pair(
     vars: &HashMap<String, VarSlot>,
     literals: &HashMap<String, cranelift_module::DataId>,
     externs: &ExternFuncs,
-    exit_status_var: Option<Variable>,
+    exit_status_var: Variable,
 ) -> (
     cranelift_codegen::ir::Value,
     cranelift_codegen::ir::Value,
@@ -312,7 +312,7 @@ fn lower_test_binary(
     vars: &HashMap<String, VarSlot>,
     literals: &HashMap<String, cranelift_module::DataId>,
     externs: &ExternFuncs,
-    exit_status_var: Option<Variable>,
+    exit_status_var: Variable,
 ) -> cranelift_codegen::ir::Value {
     let (l_ptr, l_len, r_ptr, r_len) = lower_pair(
         left,

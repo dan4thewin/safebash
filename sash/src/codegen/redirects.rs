@@ -40,7 +40,7 @@ pub(super) fn emit_redirects(
     externs: &ExternFuncs,
     literals: &HashMap<String, cranelift_module::DataId>,
     vars: &HashMap<String, VarSlot>,
-    #[allow(unused_variables)] _exit_status_var: Option<Variable>,
+    #[allow(unused_variables)] _exit_status_var: Variable,
 ) -> Vec<SavedFd> {
     emit_redirects_guarded(redirects, builder, module, externs, literals, vars).0
 }

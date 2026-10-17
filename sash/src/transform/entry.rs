@@ -12,18 +12,9 @@ pub fn ir_to_ssa_typed(
 ) -> (SsaProgram, Vec<String>) {
     let mut ssa = SsaProgram::new();
     let mut state = VersionState::with_types(type_map);
+    reserve_source_names(program, &mut state.reserved_names);
 
-    state.known_functions = collect_function_names(program);
-    // Pre-populate int-typed function names so `$(f)` / `$((f))` capture the
-    // return value even for a forward reference (parallels known_functions;
-    // lower_function also inserts lazily for nested defs).
-    for stmt in &program.statements {
-        if let StmtKind::Function(f) = &stmt.kind {
-            if f.return_type == VarType::Int {
-                state.function_int_typed.insert(f.name.clone());
-            }
-        }
-    }
+    register_functions(program, &mut state);
 
     let entry = ssa.new_block("entry");
     ssa.entry = entry;
@@ -60,17 +51,61 @@ pub fn ir_to_ssa_typed(
     (ssa, diags)
 }
 
-/// First pass over the IR: collect the names of every defined
-/// function so that `CommandSubstitution` lowering can detect
-/// elidable function calls without forking through the resolver.
-fn collect_function_names(program: &Program) -> HashSet<String> {
-    let mut names = HashSet::new();
+fn reserve_source_names(program: &Program, names: &mut HashSet<String>) {
+    for body in std::iter::once(program.statements.as_slice()).chain(program.end_block.as_deref()) {
+        walk_stmt_tree(body, &mut |stmt| reserve_stmt_names(stmt, names));
+    }
+}
+
+/// Total over statement metadata; do not add a wildcard.
+/// The shared walkers reach functions and captures.
+/// Literal operands cover command binders without duplicating their argument grammar.
+fn reserve_stmt_names(stmt: &Statement, names: &mut HashSet<String>) {
+    match &stmt.kind {
+        StmtKind::Assignment(a) => {
+            names.insert(a.name.clone());
+        }
+        StmtKind::Declaration(d) => {
+            names.extend(d.assignments.iter().map(|a| a.name.clone()));
+        }
+        StmtKind::For(f) => {
+            names.insert(f.variable.clone());
+        }
+        StmtKind::Command(c) => {
+            names.extend(crate::validate::attest_convert_target(c).map(str::to_owned));
+        }
+        StmtKind::Pipeline(_)
+        | StmtKind::If(_)
+        | StmtKind::While(_)
+        | StmtKind::Case(_)
+        | StmtKind::Function(_)
+        | StmtKind::Redirected(_)
+        | StmtKind::List(_)
+        | StmtKind::Group(_)
+        | StmtKind::Suppressed(_)
+        | StmtKind::Negated(_)
+        | StmtKind::ArithTest(_)
+        | StmtKind::ReturnProducer(_) => {}
+    }
+    walk_own_exprs(stmt, &mut |expr| {
+        if let ExprKind::Literal(name) | ExprKind::SingleQuoted(name) = &expr.kind {
+            names.insert(name.clone());
+        }
+    });
+}
+
+/// Pre-register names and integer returns for forward references; nested
+/// definitions are still registered lazily by `lower_function`.
+fn register_functions(program: &Program, state: &mut VersionState) {
     for stmt in &program.statements {
-        if let StmtKind::Function(f) = &stmt.kind {
-            names.insert(f.name.clone());
+        let StmtKind::Function(f) = &stmt.kind else {
+            continue;
+        };
+        state.known_functions.insert(f.name.clone());
+        if f.return_type == VarType::Int {
+            state.function_int_typed.insert(f.name.clone());
         }
     }
-    names
 }
 
 /// DD#56: install a dedicated `__end__` block that contains the
