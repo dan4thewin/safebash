@@ -1036,13 +1036,6 @@ impl<'a> Interner<'a> {
         if operator == "glob" {
             self.intern(".");
         }
-        // DD#33: per-element operations on arrvals
-        if operator.starts_with("arrvals_/") {
-            // operand is "regex\0replacement" (null-separated)
-            for part in operand.split('\0') {
-                self.intern(part);
-            }
-        }
     }
 
     fn intern_ir_expr(&mut self, expr: &crate::ir::Expr) {
@@ -1276,22 +1269,14 @@ fn collect_base_vars(
     base_vars
 }
 
+/// Bulk fills reuse the collection's initializing Assign; only defining
+/// instructions allocate base slots.
 fn declare_inst_bases(
     builder: &mut cranelift_frontend::FunctionBuilder,
     inst: &SsaInst,
     base_vars: &mut HashMap<String, super::types::VarSlot>,
 ) {
     match inst {
-        SsaInst::MatchInto { array, .. } => {
-            base_vars
-                .entry(array.clone())
-                .or_insert_with(|| make_str_slot(builder));
-        }
-        SsaInst::ReadArray { target, .. } => {
-            base_vars
-                .entry(target.name.clone())
-                .or_insert_with(|| make_str_slot(builder));
-        }
         SsaInst::Command { name, args, .. } if name == "__store_bg_pid" => {
             declare_bg_pid_base(builder, args, base_vars);
         }

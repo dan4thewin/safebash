@@ -4715,6 +4715,41 @@ mod tests {
         assert!(msg.contains("DD#58"), "got: {msg}");
     }
 
+    #[test]
+    fn retired_array_modifiers_cannot_become_plain_joins() {
+        for operator in [
+            "arrvals_/",
+            "arrvals_//",
+            "arrvals_#",
+            "arrvals_##",
+            "arrvals_%",
+            "arrvals_%%",
+            "arrvals_^",
+            "arrvals_^^",
+            "arrvals_,",
+            "arrvals_,,",
+        ] {
+            let payload = std::panic::catch_unwind(|| {
+                emit_param_expansion(
+                    &mut Emit::new(),
+                    &VarRef::new("a", 1),
+                    operator,
+                    "before\0after",
+                    &HashMap::new(),
+                );
+            })
+            .expect_err("a retired operator must not compile");
+            let message = payload
+                .downcast_ref::<String>()
+                .expect("the refusal reports the operator");
+            assert!(
+                message.contains("unimplemented parameter expansion operator"),
+                "{message}"
+            );
+            assert!(message.contains(operator), "{message}");
+        }
+    }
+
     // SB4052 (`close`) and SB4066 (`cd`) both require exactly one argument, so
     // neither builtin can reach codegen empty-handed. The branches these
     // assertions replaced answered the misuse silently — `$? = 0` and

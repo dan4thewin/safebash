@@ -82,6 +82,11 @@ supported per-element array ops). Reject specs: `var_modifiers.sh`
 vm.dr16-18. The now-dead per-element codegen (`apply_per_element_op`,
 `per_elem_regex_replace`/`_strip_prefix`/`_strip_suffix`) was removed.
 
+Journal 519 removes the leftover native interner's NUL-split support for that
+retired family. Native dispatch now accepts only the actual joined-value
+operators, `arrvals` and `arrjoin`, matching C: a malformed `arrvals_<op>` must
+reach the existing loud refusal, not silently become an ordinary join.
+
 ## Moved to builtins
 
 - **`^^` `,,`** (full upper/lower) → **`$(toupper s)` / `$(tolower s)`**

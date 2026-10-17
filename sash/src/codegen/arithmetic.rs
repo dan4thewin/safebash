@@ -2,6 +2,7 @@
 //!
 //! SECURITY: Overflow traps (DD#25). Division by zero traps.
 
+use cranelift_codegen::ir::condcodes::IntCC;
 use cranelift_codegen::ir::types::I64;
 use cranelift_codegen::ir::InstBuilder;
 use cranelift_frontend::FunctionBuilder;
@@ -19,9 +20,6 @@ pub(super) fn emit_arith_op(
     module: &mut ObjectModule,
     externs: &ExternFuncs,
 ) -> cranelift_codegen::ir::Value {
-    if let Some(cc) = comparison_intcc(op) {
-        return emit_icmp_bool(cc, lhs, rhs, builder);
-    }
     match op {
         ArithOp::Add | ArithOp::Sub | ArithOp::Mul => {
             // `from_arith` is `Some` for exactly these three (the arm guard) —
@@ -32,14 +30,10 @@ pub(super) fn emit_arith_op(
         ArithOp::Div | ArithOp::Mod => {
             emit_div_or_mod_with_zero_check(op, lhs, rhs, builder, module, externs)
         }
-        // Every caller intercepts these before we get here: the `ArithBinOp`
-        // arm of `lower_value_as_int` routes them to
-        // `lower_logical_short_circuit`, and the two `ArithExpr` callers can
-        // only pass `Add` — that node is built at four sites in
-        // `transform/pipelines.rs`, all of them `i = i + 1`. Emitting them
-        // here at all would be *eager*, which is the bash divergence fixed in
-        // journal 409: the right operand's div-by-zero and overflow guards
-        // must not run when the left operand already decides the result.
+        // Both general ArithBinOp paths intercept logical ops before lowering
+        // either operand. The only other caller handles ArithExpr, built at
+        // four loop-increment sites that pass Add. Eager emission here would
+        // run the right operand's guards even when the left decides the result.
         ArithOp::And | ArithOp::Or => {
             unreachable!("logical ops handled by lower_logical_short_circuit")
         }
@@ -48,27 +42,13 @@ pub(super) fn emit_arith_op(
         ArithOp::BitOr => builder.ins().bor(lhs, rhs),
         ArithOp::BitXor => builder.ins().bxor(lhs, rhs),
         ArithOp::Pow => emit_pow(lhs, rhs, builder, module, externs),
-        // handled above
-        ArithOp::Eq | ArithOp::Ne | ArithOp::Lt | ArithOp::Le | ArithOp::Gt | ArithOp::Ge => {
-            unreachable!("comparison ops handled by comparison_intcc fast path")
-        }
+        ArithOp::Eq => emit_icmp_bool(IntCC::Equal, lhs, rhs, builder),
+        ArithOp::Ne => emit_icmp_bool(IntCC::NotEqual, lhs, rhs, builder),
+        ArithOp::Lt => emit_icmp_bool(IntCC::SignedLessThan, lhs, rhs, builder),
+        ArithOp::Le => emit_icmp_bool(IntCC::SignedLessThanOrEqual, lhs, rhs, builder),
+        ArithOp::Gt => emit_icmp_bool(IntCC::SignedGreaterThan, lhs, rhs, builder),
+        ArithOp::Ge => emit_icmp_bool(IntCC::SignedGreaterThanOrEqual, lhs, rhs, builder),
     }
-}
-
-/// Map the six comparison `ArithOp`s to their Cranelift `IntCC`.
-/// Returns `None` for non-comparison ops so the caller can fall
-/// through to the main dispatcher.
-fn comparison_intcc(op: ArithOp) -> Option<cranelift_codegen::ir::condcodes::IntCC> {
-    use cranelift_codegen::ir::condcodes::IntCC;
-    Some(match op {
-        ArithOp::Eq => IntCC::Equal,
-        ArithOp::Ne => IntCC::NotEqual,
-        ArithOp::Lt => IntCC::SignedLessThan,
-        ArithOp::Le => IntCC::SignedLessThanOrEqual,
-        ArithOp::Gt => IntCC::SignedGreaterThan,
-        ArithOp::Ge => IntCC::SignedGreaterThanOrEqual,
-        _ => return None,
-    })
 }
 
 /// DD#25: `+`, `-`, `*` with a runtime overflow trap (not silent

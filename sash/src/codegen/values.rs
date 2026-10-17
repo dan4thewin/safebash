@@ -1740,7 +1740,7 @@ mod invariant_tests {
             target: VarRef::new_typed("result", 1, var_type),
             value,
         });
-        let payload = std::panic::catch_unwind(|| {
+        let Err(payload) = std::panic::catch_unwind(|| {
             compile_ssa(
                 &ssa,
                 Embedded {
@@ -1750,12 +1750,14 @@ mod invariant_tests {
                 },
                 false,
             )
-        })
-        .expect_err("malformed SSA must not compile");
+        }) else {
+            panic!("malformed SSA must not compile");
+        };
         payload
             .downcast_ref::<String>()
-            .expect("the invariant reports a formatted claim")
-            .clone()
+            .cloned()
+            .or_else(|| payload.downcast_ref::<&str>().map(|text| text.to_string()))
+            .expect("the invariant reports text")
     }
 
     #[test]
@@ -1833,5 +1835,53 @@ mod invariant_tests {
             message.contains("loop increments must stay in integer slots"),
             "{message}"
         );
+    }
+
+    #[test]
+    fn synthesized_loop_arithmetic_cannot_bypass_short_circuit_lowering() {
+        for op in [ArithOp::And, ArithOp::Or] {
+            let message = native_value_ice(
+                SsaValue::ArithExpr {
+                    var: VarRef::new_typed("result", 1, VarType::Int),
+                    op,
+                    operand: 1,
+                },
+                VarType::Int,
+            );
+            assert!(
+                message.contains("logical ops handled by lower_logical_short_circuit"),
+                "{message}"
+            );
+        }
+    }
+
+    #[test]
+    fn retired_array_modifiers_cannot_become_plain_joins() {
+        for operator in [
+            "arrvals_/",
+            "arrvals_//",
+            "arrvals_#",
+            "arrvals_##",
+            "arrvals_%",
+            "arrvals_%%",
+            "arrvals_^",
+            "arrvals_^^",
+            "arrvals_,",
+            "arrvals_,,",
+        ] {
+            let message = native_value_ice(
+                SsaValue::ParamExpansion {
+                    var: VarRef::new("result", 1),
+                    operator: operator.into(),
+                    operand: "before\0after".into(),
+                },
+                VarType::String,
+            );
+            assert!(
+                message.contains("unsupported parameter expansion operator"),
+                "{message}"
+            );
+            assert!(message.contains(operator), "{message}");
+        }
     }
 }

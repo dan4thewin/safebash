@@ -38,7 +38,7 @@ pub(super) fn handle_param_expansion(
             let arr_len = emit_table_len(s_ptr, builder, module, externs);
             emit_int_to_str(builder, module, externs, arr_len)
         }
-        op if op == "arrvals" || op == "arrjoin" || op.starts_with("arrvals_") => {
+        "arrvals" | "arrjoin" => {
             emit_array_join_expansion(operator, operand, s_ptr, builder, module, literals, externs)
         }
         _ => emit_string_op_expansion(operator, operand, s_ptr, s_len, builder, module, externs),
@@ -164,8 +164,7 @@ fn alloc_join_buffer(
     (buf_ptr, pos_slot)
 }
 
-/// Resolve the separator string: `arrjoin` uses the operand,
-/// everything else (arrvals, arrvals_*) uses a single space.
+/// Resolve the separator: `arrjoin` uses the operand, `arrvals` a single space.
 fn intern_join_separator(
     operator: &str,
     operand: &str,
