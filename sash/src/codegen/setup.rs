@@ -200,9 +200,10 @@ pub(super) fn declare_runtime_functions(module: &mut ObjectModule) -> ExternFunc
         .declare_function("sash_require_value", Linkage::Import, &require_value_sig)
         .expect("declare sash_require_value");
 
-    // sash_signal_flag(signum) -> i64
+    // sash_signal_flag(signum, exiting) -> i64
     let mut signal_flag_sig = Signature::new(CallConv::SystemV);
     signal_flag_sig.params.push(AbiParam::new(I64)); // signum
+    signal_flag_sig.params.push(AbiParam::new(I64)); // exiting
     signal_flag_sig.returns.push(AbiParam::new(I64));
     let signal_flag_func = module
         .declare_function("sash_signal_flag", Linkage::Import, &signal_flag_sig)
@@ -212,6 +213,9 @@ pub(super) fn declare_runtime_functions(module: &mut ObjectModule) -> ExternFunc
     let signum_data = module
         .declare_data("sash_signum", Linkage::Import, true, false)
         .expect("declare sash_signum");
+    let exit_signum_data = module
+        .declare_data("sash_exit_signum", Linkage::Import, true, false)
+        .expect("declare sash_exit_signum");
 
     let trace_flag_data = module
         .declare_data("sash_trace_flag", Linkage::Import, true, false)
@@ -921,6 +925,7 @@ pub(super) fn declare_runtime_functions(module: &mut ObjectModule) -> ExternFunc
         require_value: require_value_func,
         signal_flag: signal_flag_func,
         signum: signum_data,
+        exit_signum: exit_signum_data,
         trace_flag: trace_flag_data,
     }
 }
@@ -947,11 +952,12 @@ pub(super) fn intern_literals(
                                          // time (cd / echo write-error contexts; the path segment is dynamic).
     let _ = interner.intern("cd");
     let _ = interner.intern("echo: write error");
+    let _ = interner.intern("pipe");
+    let _ = interner.intern("fork");
+    let _ = interner.intern("dup2");
 
-    for block in program.blocks.values() {
-        for inst in &block.insts {
-            interner.intern_inst(inst);
-        }
+    for inst in program.blocks.values().flat_map(|block| &block.insts) {
+        interner.intern_inst(inst);
     }
 
     if trace {

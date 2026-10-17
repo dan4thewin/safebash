@@ -107,6 +107,22 @@ context silently ignored its **first** segment (an undocumented
 `i == 0 && !checked` skip that conflated leading-`-` suppression with
 condition context), and where a non-first `-` dropped the stage entirely.
 
+### Pipeline construction failure (2026-10-17, DG)
+
+If pipe creation or a later fork fails, stop constructing the pipeline,
+close its pipes, and wait for the stages already started. Do not send
+SIGKILL or otherwise force their termination: as DG put it, "we can't know
+the harm a SIGKILL could cause - close and wait". Waiting may take as long
+as those stages need; that is deliberate, not a reason to add a kill timeout.
+The construction failure still follows the normal caught/uncaught error
+handling above.
+
+Both backends check allocation/fork results before consuming pipe outputs or
+recording a pid. A failed capturing pipeline skips its reader/loop entirely;
+construction failure is not EOF and must not clear or overwrite the consumer's
+target. Child fd wiring or redirect failure prevents that stage's body from
+running.
+
 ### `&&` / `||` / `!` do not take a pipeline operand
 
 A pipeline may be an **entire** condition (`if a | b; then …`, `while a | b`),

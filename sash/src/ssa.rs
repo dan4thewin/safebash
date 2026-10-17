@@ -81,6 +81,8 @@ pub enum BuiltinCmd {
     /// truth value, so this syncs it (mirrors how a plain command condition
     /// sets `test_result` from its own status).
     SetTestFromStatus,
+    /// Skip a lastpipe consumer if its producer pipeline could not be constructed.
+    SetTestFromPipe,
     /// Run a `let` expression for side-effects, propagate non-zero
     /// exit per DD#55.
     LetExit,
@@ -91,8 +93,10 @@ pub enum BuiltinCmd {
     StoreBgPid,
     /// Install signal handler block.
     TrapSignal,
-    /// Cooperative signal-flag check inserted at safe points.
+    /// Register a FLAG/EXIT handler: signal number and EXIT bit.
     SignalFlag,
+    /// Poll a pending EXIT request at a DD#56 boundary.
+    SignalCheckpoint,
     /// `unset arr[key]` on a **map** — the key is the literal string, which is
     /// how a map keys its entries.
     TableDelete,
@@ -303,11 +307,13 @@ impl BuiltinCmd {
             // trailing redirect can reach them.
             Self::NegateTestResult
             | Self::SetTestFromStatus
+            | Self::SetTestFromPipe
             | Self::LetExit
             | Self::ForkBackground
             | Self::StoreBgPid
             | Self::TrapSignal
             | Self::SignalFlag
+            | Self::SignalCheckpoint
             | Self::TableDelete
             | Self::TableDeleteIdx => false,
         }
@@ -325,11 +331,13 @@ impl BuiltinCmd {
         Some(match self {
             Self::NegateTestResult => "__negate_test_result",
             Self::SetTestFromStatus => "__set_test_from_status",
+            Self::SetTestFromPipe => "__set_test_from_pipe",
             Self::LetExit => "__let_exit",
             Self::ForkBackground => "__fork_background",
             Self::StoreBgPid => "__store_bg_pid",
             Self::TrapSignal => "__trap_signal",
             Self::SignalFlag => "__signal_flag",
+            Self::SignalCheckpoint => "__signal_checkpoint",
             Self::TableDelete => "__table_delete",
             Self::TableDeleteIdx => "__table_delete_idx",
             _ => return None,
@@ -360,6 +368,30 @@ impl BuiltinCmd {
             SsaValue::Var(var) => var,
             _ => panic!("ICE: {self:?} needs a variable operand, got {arg:?}"),
         }
+    }
+
+    pub(crate) fn expect_signal_flag(args: &[SsaValue]) -> (i64, i64) {
+        let [signal, exiting] = Self::SignalFlag.expect_ssa_args(args);
+        let signal = Self::SignalFlag.expect_literal_int(signal);
+        let exiting = Self::SignalFlag.expect_literal_int(exiting);
+        assert!(
+            matches!(exiting, 0 | 1),
+            "ICE: SignalFlag EXIT bit must be 0 or 1"
+        );
+        (signal, exiting)
+    }
+
+    pub(crate) fn expect_close_fd(args: &[SsaValue]) -> (i64, &str) {
+        let [arg] = Self::Close.expect_ssa_args(args);
+        let SsaValue::Literal(text) = arg else {
+            panic!("ICE: Close needs a literal file descriptor")
+        };
+        let fd = Self::Close.expect_literal_int(arg);
+        assert!(
+            (0..=i32::MAX as i64).contains(&fd),
+            "ICE: Close file descriptor is outside 0..2147483647"
+        );
+        (fd, text)
     }
 }
 
@@ -1393,6 +1425,7 @@ pub struct SsaProgram {
     pub external_deps: std::collections::BTreeSet<String>,
     /// Runtime-owned descriptors must not occupy a number named by source.
     pub(crate) user_fds: Vec<i64>,
+    checkpoint_blocks: std::collections::HashSet<BlockId>,
     next_block_id: usize,
 }
 
@@ -1460,6 +1493,7 @@ impl SsaProgram {
             compound_pipeline_blocks: Vec::new(),
             external_deps: std::collections::BTreeSet::new(),
             user_fds: Vec::new(),
+            checkpoint_blocks: std::collections::HashSet::new(),
             next_block_id: 0,
         }
     }
@@ -1478,6 +1512,26 @@ impl SsaProgram {
             },
         );
         id
+    }
+
+    pub(crate) fn new_checkpoint_block(&mut self, label: &str) -> BlockId {
+        let id = self.new_block(label);
+        self.checkpoint_blocks.insert(id);
+        id
+    }
+
+    pub(crate) fn install_signal_checkpoints(&mut self) {
+        let blocks = std::mem::take(&mut self.checkpoint_blocks);
+        if self.exiting_signals.is_empty() {
+            return;
+        }
+        // Two-pass loop lowering clears its discovery instructions.
+        for id in blocks {
+            self.block_mut(id).insts.insert(
+                0,
+                SsaInst::internal(BuiltinCmd::SignalCheckpoint, Vec::new(), true),
+            );
+        }
     }
 
     pub fn block_mut(&mut self, id: BlockId) -> &mut BasicBlock {

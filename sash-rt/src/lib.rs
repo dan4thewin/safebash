@@ -97,7 +97,9 @@ pub static mut sash_argc: i64 = 0;
 #[no_mangle]
 pub static mut sash_argv: *const *const u8 = core::ptr::null();
 #[no_mangle]
-pub static mut sash_signum: i64 = 0;
+pub static sash_signum: core::sync::atomic::AtomicI64 = core::sync::atomic::AtomicI64::new(0);
+#[no_mangle]
+pub static sash_exit_signum: core::sync::atomic::AtomicI64 = core::sync::atomic::AtomicI64::new(0);
 #[no_mangle]
 pub static mut sash_trace_flag: i64 = 0;
 
@@ -233,10 +235,19 @@ fn dup_unreserved(fd: i64, mut min: i64, protected: &[i64]) -> i64 {
 }
 
 fn protect_owned_fd(fd: i64) -> i64 {
+    let moved = try_protect_owned_fd(fd);
+    if moved < 0 && moved != -9 {
+        set_last_errno_raw(-moved);
+        fd_backup_abort(b"save fd");
+    }
+    moved
+}
+
+fn try_protect_owned_fd(fd: i64) -> i64 {
     if fd >= 3 && !user_fd(fd) {
         return fd;
     }
-    let moved = save_fd(fd, &[]);
+    let moved = dup_unreserved(fd, 3, &[]);
     sash_close(fd);
     moved
 }
@@ -595,10 +606,13 @@ pub extern "C" fn sash_exec(argv: *const *const u8, envp: *const *const u8) -> !
 #[no_mangle]
 pub extern "C" fn sash_wait(pid: i64) -> i64 {
     let pid = unsafe { rustix::process::Pid::from_raw_unchecked(pid as i32) };
-    match rustix::process::waitpid(Some(pid), rustix::process::WaitOptions::empty()) {
-        Ok(Some((_pid, status))) => reaped_status(status),
-        Ok(None) => 0,
-        Err(_) => 127,
+    loop {
+        match rustix::process::waitpid(Some(pid), rustix::process::WaitOptions::empty()) {
+            Ok(Some((_pid, status))) => return reaped_status(status),
+            Ok(None) => return 0,
+            Err(e) if e == rustix::io::Errno::INTR => continue,
+            Err(_) => return 127,
+        }
     }
 }
 
@@ -749,12 +763,27 @@ pub extern "C" fn sash_pipe(out_ptr: *mut i64) -> i64 {
             unsafe {
                 let r_raw = rustix::fd::IntoRawFd::into_raw_fd(r) as i64;
                 let w_raw = rustix::fd::IntoRawFd::into_raw_fd(w) as i64;
-                *out_ptr = protect_owned_fd(r_raw);
-                *out_ptr.add(1) = protect_owned_fd(w_raw);
+                let read = try_protect_owned_fd(r_raw);
+                if read < 0 {
+                    sash_close(w_raw);
+                    set_last_errno_raw(-read);
+                    return -1;
+                }
+                let write = try_protect_owned_fd(w_raw);
+                if write < 0 {
+                    sash_close(read);
+                    set_last_errno_raw(-write);
+                    return -1;
+                }
+                *out_ptr = read;
+                *out_ptr.add(1) = write;
             }
             0
         }
-        Err(_) => -1,
+        Err(e) => {
+            set_last_errno(e);
+            -1
+        }
     }
 }
 
@@ -3329,7 +3358,7 @@ fn signal_registration_failed(signum: i64) -> ! {
 /// Register a signal handler.  handler_fn is a function pointer:
 ///   extern "C" fn(i32) -> ()
 /// Pass 0 for SIG_DFL, 1 for SIG_IGN.
-/// Returns 0 on success, -1 on error.
+/// Returns 0 on success; aborts on registration failure.
 #[no_mangle]
 pub extern "C" fn sash_trap(signum: i64, handler: i64) -> i64 {
     use core::mem;
@@ -3348,20 +3377,7 @@ pub extern "C" fn sash_trap(signum: i64, handler: i64) -> i64 {
     // SA_RESTORER = 0x04000000, SA_RESTART = 0x10000000
     act.sa_flags = 0x04000000 | 0x10000000;
 
-    // We need a restorer for x86_64. Use a minimal one.
-    extern "C" fn restorer() {
-        unsafe {
-            core::arch::asm!(
-                "mov rax, 15", // __NR_rt_sigreturn
-                "syscall",
-                options(noreturn)
-            );
-        }
-    }
-    #[allow(clippy::fn_to_numeric_cast)]
-    {
-        act.sa_restorer = restorer as u64;
-    }
+    act.sa_restorer = sash_flag_restorer as *const () as u64;
 
     // rt_sigaction syscall (13)
     let ret: i64;
@@ -3388,54 +3404,25 @@ pub extern "C" fn sash_trap(signum: i64, handler: i64) -> i64 {
 // sash_signal_flag
 // ═══════════════════════════════════════════════════════════════
 
-/// Register a FLAG handler for the given signal.
-/// When the signal arrives, sash_signum is set to the signal number.
-/// Program continues — no check points, zero overhead.
+/// Register FLAG (exiting = 0) or EXIT (exiting = 1).
+/// The handler records the disposition at delivery, not at a later checkpoint.
 #[no_mangle]
-pub extern "C" fn sash_signal_flag(signum_val: i64) -> i64 {
-    use core::mem;
-
-    #[repr(C)]
-    struct KernelSigaction {
-        sa_handler: u64,
-        sa_flags: u64,
-        sa_restorer: u64,
-        sa_mask: [u64; 16],
-    }
-
-    let mut act: KernelSigaction = unsafe { mem::zeroed() };
-    act.sa_handler = sash_flag_handler as u64;
-    // SA_RESTORER = 0x04000000, SA_RESTART = 0x10000000
-    act.sa_flags = 0x04000000 | 0x10000000;
-    #[allow(clippy::fn_to_numeric_cast)]
-    {
-        act.sa_restorer = sash_flag_restorer as u64;
-    }
-
-    let ret: i64;
-    unsafe {
-        core::arch::asm!(
-            "syscall",
-            in("rax") 13i64,           // __NR_rt_sigaction
-            in("rdi") signum_val,
-            in("rsi") &act as *const _ as i64,
-            in("rdx") 0i64,           // NULL oldact
-            in("r10") 8i64,           // sigsetsize
-            lateout("rax") ret,
-            lateout("rcx") _,
-            lateout("r11") _,
-        );
-    }
-    if ret < 0 {
-        signal_registration_failed(signum_val);
-    }
-    0
+pub extern "C" fn sash_signal_flag(signum_val: i64, exiting: i64) -> i64 {
+    let handler = if exiting == 0 {
+        sash_flag_handler
+    } else {
+        sash_exit_handler
+    };
+    sash_trap(signum_val, handler as *const () as i64)
 }
 
 extern "C" fn sash_flag_handler(sig: i32) {
-    unsafe {
-        sash_signum = sig as i64;
-    }
+    sash_signum.store(sig as i64, core::sync::atomic::Ordering::Relaxed);
+}
+
+extern "C" fn sash_exit_handler(sig: i32) {
+    sash_flag_handler(sig);
+    sash_exit_signum.store(sig as i64, core::sync::atomic::Ordering::Relaxed);
 }
 
 #[unsafe(naked)]
@@ -3712,6 +3699,7 @@ pub unsafe extern "C" fn sash_split_into_array(
     terminator: i64,
     table: *mut u8,
 ) {
+    sash_table_clear(table as *mut SashTable);
     if ptr.is_null() || len == 0 {
         return;
     }

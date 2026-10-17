@@ -402,6 +402,14 @@ cd spec && PATH=$(cd .. && pwd)/target/release:$PATH \
 Prepending is harmless for every other file, so just do it always. **A
 standalone failure count is not a finding until it survives that.**
 
+**Fault/resource specs use `run_sash_under SOURCE PREFIX...`.** It restricts
+or traces only the compiled binary, not sash or gcc. The suite requires
+`strace` and util-linux `prlimit`; on this x86_64 runtime fork is `clone`,
+pipe creation is `pipe2`, and wait is `wait4`. Verify the actual syscall
+before injecting it. Low-fd probes must account for the harness's inherited
+fd 3 (TAP output) and, during sweeps, fd 4 (TSV): trace the intended allocation
+failure instead of accepting a matching surface error as proof of the branch.
+
 **A failing spec has already recorded its own evidence — read the trace before
 theorising.** `common.sh`'s `setup()` opens
 `spec/.trace/$(date +%a)/<file>.<mode>` and redirects the whole spec file into
@@ -1477,6 +1485,13 @@ binaries that never terminated), and latterly because a doctest failed. Both
 causes are gone: the hanging suites were deleted in the test redux, and the
 doctest was a 4-space-indented code block in `validate::check_taint`'s doc
 comment holding *sash* source, which rustdoc dutifully compiled as Rust.
+
+**Keep `mk test` and its `mk build` prerequisite's Cargo phases chained
+with `&&`.** Separate newline commands let a failing sash phase be overwritten
+by later successful convert/expand phases (journal 518). Their negative
+controls use a session-only Cargo wrapper that fails sash's build or test
+phase: mk must return nonzero and neither later crate phase may run. A positive
+unit report alone does not prove this gate holds.
 
 Steps 1 and 2 are **both** gates now. Step 2 (the spec suite) is still the
 one that carries the behavioural weight — it outnumbers the unit tests by

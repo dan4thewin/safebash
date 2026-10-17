@@ -114,15 +114,21 @@ pub(super) fn handle_signal(
         "FLAG" => {
             ssa.block_mut(block).insts.push(SsaInst::internal(
                 BuiltinCmd::SignalFlag,
-                vec![SsaValue::Literal(signum.to_string())],
+                vec![
+                    SsaValue::Literal(signum.to_string()),
+                    SsaValue::Literal("0".to_string()),
+                ],
                 true,
             ));
         }
         "EXIT" => {
-            // Register FLAG handler + mark as exiting signal
+            // Register EXIT handler + enable checkpoints.
             ssa.block_mut(block).insts.push(SsaInst::internal(
                 BuiltinCmd::SignalFlag,
-                vec![SsaValue::Literal(signum.to_string())],
+                vec![
+                    SsaValue::Literal(signum.to_string()),
+                    SsaValue::Literal("1".to_string()),
+                ],
                 true,
             ));
             state.exiting_signals.insert(signum);
@@ -305,11 +311,11 @@ fn inline_function_call(
     let pre_state = state.snapshot();
 
     // Inline the function body
-    let call_block = ssa.new_block(&format!("call_{}", name));
+    let call_block = ssa.new_checkpoint_block(&format!("call_{}", name));
     ssa.block_mut(block).terminator = Terminator::Goto(call_block);
 
     // Set return target so `return` jumps to restore block
-    let restore_block = ssa.new_block(&format!("ret_{}", name));
+    let restore_block = ssa.new_checkpoint_block(&format!("ret_{}", name));
     let saved_return_target = state.return_target;
     state.return_target = Some(restore_block);
     // DD#27/§5: a self tail-call (`return F …`) in the body loops to call_block.

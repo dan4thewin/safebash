@@ -503,9 +503,9 @@ pub(super) fn inline_int_func(
     let saved_status = state.lookup("?");
 
     // Inline function body
-    let call_block = ssa.new_block(&format!("intcall_{}", name));
+    let call_block = ssa.new_checkpoint_block(&format!("intcall_{}", name));
     ssa.block_mut(*block).terminator = Terminator::Goto(call_block);
-    let restore_block = ssa.new_block(&format!("intret_{}", name));
+    let restore_block = ssa.new_checkpoint_block(&format!("intret_{}", name));
     let saved_return_target = state.return_target;
     state.return_target = Some(restore_block);
     // DD#27/§5: a self tail-call in the body loops back to call_block.

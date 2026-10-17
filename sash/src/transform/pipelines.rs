@@ -74,7 +74,7 @@ pub(super) fn lower_for_array(
     state: &mut VersionState,
     block: BlockId,
 ) -> BlockId {
-    let header = ssa.new_block("for_arr.header");
+    let header = ssa.new_checkpoint_block("for_arr.header");
     let body_block = ssa.new_block("for_arr.body");
     let latch = ssa.new_block("for_arr.latch");
     let exit_block = ssa.new_block("for_arr.exit");
@@ -194,7 +194,7 @@ pub(super) fn lower_for_argv_slice(
     state: &mut VersionState,
     block: BlockId,
 ) -> BlockId {
-    let header = ssa.new_block("for_at.header");
+    let header = ssa.new_checkpoint_block("for_at.header");
     let body_block = ssa.new_block("for_at.body");
     let latch = ssa.new_block("for_at.latch");
     let exit_block = ssa.new_block("for_at.exit");

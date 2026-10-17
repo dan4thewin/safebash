@@ -477,6 +477,15 @@ shared setup-failure path, so the command never runs on the wrong fds.
 
 `sash_exec` — execve with absolute path (no PATH walk; DD#23).
 
+Ordinary and lastpipe/capturing pipelines use one stage builder, retaining
+per-stage suppression, negation and inlined functions. Both backends check
+pipe/fork results before consuming outputs or recording pids. Construction
+failure closes successful pipes and waits for already-started stages, retrying
+interrupted waits; it never force-kills them or adds a kill timeout (DD#55).
+Capturing consumers have an explicit skip edge on failure, rather than reading
+an invalid fd or treating failure as EOF. Child fd wiring and redirects share
+the checked setup machinery; a failed setup never executes the stage body.
+
 Command substitution has **two** capture paths, chosen per site at compile
 time by `transform::capture_purity`:
 
@@ -505,6 +514,16 @@ One consequence is deliberately observable: a pure body probing its own
 stdout (`[[ -p /dev/stdout ]]`) sees the caller's real stdout, while
 an impure one sees a regular file. Specs `cap.12` and `cap.17` pin both
 halves. See journal 277.
+
+### Signals
+
+FLAG and EXIT handlers record delivery in separate runtime atomics (DD#56).
+Only EXIT requests shutdown; the most-recent-signal value alone cannot decide
+it. With any EXIT declaration, both backends poll at external/pipeline and
+loop/function boundaries, enter END with `128+signal`, or exit directly without
+END. Canonical END-region membership prevents re-entry. The transform installs
+loop/function checkpoint instructions after discovery passes finish, so those
+passes cannot clear them. FLAG-only programs receive no polling instructions.
 
 ### Environment
 
@@ -628,7 +647,12 @@ the converter's job; the compiler only compiles.
 every `spec/*.sh` in both the native and C modes and accumulates results in
 `spec.db` (SQLite, repo root, untracked — every run rewrites it wholesale,
 and `runs` records a `commit_hash` per test so the database is its own
-history). It is currently 4542 tests across 41 files.
+history).
+
+Runtime fault/resource regressions require `strace` and util-linux `prlimit`.
+`run_sash_under` applies their prefix only to the compiled binary, never to
+the compiler or C linker. Syscall injection makes partial pipe/fork failures,
+interrupted waits and signal checkpoint boundaries deterministic.
 
 `sash/tests/` **no longer exists.** All 546 Rust integration tests, and the
 `sash-rt-tests` crate, were deleted in the 2026-09-14 redux (journal 304)
@@ -647,9 +671,11 @@ green was measuring a pipeline with a pass removed.
 > If you build a new harness, **drive the real `sash` binary**. A harness
 > that calls into the middle of the pipeline tests a compiler we do not ship.
 
-`mk test` (Plan 9 mk, not make) covers what remains: 152 C regex checks, 26
-`sash-grep` checks, and 77 in-crate unit tests (`sash` 30, `sash-convert`
-27, `sash-expand` 20). It is green.
+`mk test` (Plan 9 mk, not make) covers C regex, `sash-grep`, `sash-getopt`
+and in-crate Rust units (`sash`, `sash-convert`, `sash-expand`). Its Cargo
+phases, and those of its `mk build` prerequisite, are chained with `&&`: a
+failed compiler build/unit phase must not be hidden by later successful
+crate phases.
 
 ---
 

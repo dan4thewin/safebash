@@ -11,7 +11,7 @@
 set -eu
 . common.sh
 setup pipe_functions
-plan=34
+plan=63
 echo "1..$plan" >&3
 
 set +e
@@ -253,6 +253,139 @@ run_sash 'fn f { /bin/head -n1; /bin/cat }
 run_sash '/bin/printf "a\0b\0" | read arr
 echo "n=$(len arr)"'
 [[ $rc = 0 && $out = "n=2" && -z $rerr ]]; chk pf.34
+
+# Stage setup uses the same checked redirects as ordinary commands.
+printf 'from-fd\n' > input
+run_sash 'exec 9< input; /bin/cat <&9 | /bin/cat; close 9'
+[[ $rc = 0 && $out = from-fd && -z $rerr ]]; chk p518.1
+
+run_sash '/bin/sh -c "printf written >&3" 3<> created | /bin/cat'
+[[ $rc = 0 && $(<created) = written && -z $rerr ]]; chk p518.2
+
+printf OLD-DATA > existing
+run_sash '/bin/sh -c "printf new >&3" 3<> existing | /bin/cat'
+[[ $rc = 0 && $(<existing) = new-DATA && -z $rerr ]]; chk p518.3
+
+run_sash 'if /bin/sh -c "echo bad; touch marker" < missing | /bin/cat { echo bad } else { echo $(status) }'
+[[ $rc = 0 && $out = 1 && ! -e marker && -z $rerr ]]; chk p518.4
+
+run_sash '- close 9
+if /bin/echo bad 1>&9 | /bin/cat { echo bad } else { echo $(status) }'
+[[ $rc = 0 && $out = 1 && -z $rerr ]]; chk p518.5
+
+run_sash 'if echo data > /dev/full | /bin/cat { echo bad } else { echo $(status) }'
+[[ $rc = 0 && $out = 1 && -z $rerr ]]; chk p518.6
+
+run_sash 'END { echo $(status) }
+/bin/echo bad < missing | /bin/cat
+echo bad'
+[[ $rc = 1 && $out = 1 && $rerr == *"missing:"* ]]; chk p518.7
+
+run_sash '- /bin/sh -c "touch marker" < missing | /bin/cat
+echo continued'
+[[ $rc = 0 && $out = continued && ! -e marker && -z $rerr ]]; chk p518.8
+
+run_sash ': | - /bin/echo bad < missing | /bin/cat
+echo continued'
+[[ $rc = 0 && $out = continued && -z $rerr ]]; chk p518.9
+
+run_sash 'exec 9< input
+: | /bin/cat <&9 | /bin/cat
+close 9'
+[[ $rc = 0 && $out = from-fd && -z $rerr ]]; chk p518.10
+
+run_sash 'exec 9> redirected
+echo data | /bin/cat >&9
+close 9'
+[[ $rc = 0 && -z $out && $(<redirected) = data && -z $rerr ]]; chk p518.11
+
+run_sash 'fn f { /bin/touch marker }
+if f < missing | /bin/cat { echo bad } else { echo $(status) }'
+[[ $rc = 0 && $out = 1 && ! -e marker && -z $rerr ]]; chk p518.12
+
+run_sash ': | /bin/cat'
+[[ $rc = 0 && -z $out && -z $rerr ]]; chk p518.13
+
+printf keep > keep
+run_sash 'if echo bad > missing-dir/file > keep | /bin/cat { echo bad } else { echo $(status) }'
+[[ $rc = 0 && $out = 1 && $(<keep) = keep && -z $rerr ]]; chk p518.14
+
+# The compiler/linker are not resource-limited or traced. Only the resulting
+# binary is wrapped, and strace does not follow the already-started children.
+run_sash_under 'if echo data | /bin/cat { echo bad } else { echo $(status) }' prlimit --nofile=4:4
+[[ $rc = 0 && $out = 1 && -z $rerr ]]; chk p518.15
+
+run_sash_under 'END { echo $(status) }
+echo data | /bin/cat
+echo bad' strace -qq -o fault.log -e inject=pipe2:error=EIO:when=1
+[[ $rc = 1 && $out = 1 && $rerr == *": pipe: "* ]]; chk p518.16
+
+run_sash_under 'if /bin/touch marker | /bin/cat | /bin/cat { echo bad } else { echo $(status) }' \
+    strace -qq -o fault.log -e inject=pipe2:error=EMFILE:when=2
+[[ $rc = 0 && $out = 1 && ! -e marker && -z $rerr ]]; chk p518.17
+
+run_sash_under 'if /bin/sh -c "sleep 0.05; echo done > finished" | /bin/cat { echo bad } else { /bin/cat finished }' \
+    strace -qq -o fault.log -e inject=clone:error=EAGAIN:when=2
+[[ $rc = 0 && $out = done && -z $rerr ]]; chk p518.18
+
+run_sash_under 'END { echo $(status) }
+echo data | /bin/cat
+echo bad' strace -qq -o fault.log -e inject=clone:error=EAGAIN:when=1
+[[ $rc = 1 && $out = 1 && $rerr == *": fork: "* ]]; chk p518.19
+
+rm -f finished
+run_sash_under 'if /bin/sh -c "sleep 0.05; echo done > finished" | /bin/cat { echo bad } else { /bin/cat finished }' \
+    strace -qq -o fault.log -e inject=clone:error=EAGAIN:when=2 -e inject=wait4:error=EINTR:when=1
+[[ $rc = 0 && $out = done && -z $rerr ]]; chk p518.20
+
+run_sash_under 'if echo data | readline x { echo $x } else { echo $(status) }' \
+    strace -qq -o fault.log -e inject=pipe2:error=EMFILE:when=1
+[[ $rc = 0 && $out = 1 && -z $rerr ]]; chk p518.21
+
+run_sash_under 'array a=(old)
+- { echo data | read a }
+echo ${a[0]}' strace -qq -o fault.log -e inject=clone:error=EAGAIN:when=1
+[[ $rc = 0 && $out = old && -z $rerr ]]; chk p518.22
+
+run_sash_under '- { echo data | while readline x { attest x [[ -n $x ]]; echo $x } }
+echo continued' strace -qq -o fault.log -e inject=pipe2:error=EMFILE:when=1
+[[ $rc = 0 && $out = continued && -z $rerr ]]; chk p518.23
+
+rm -f finished
+run_sash_under 'if /bin/sh -c "sleep 0.05; echo done > finished" | /bin/cat | readline x { attest x [[ -n $x ]]; echo $x } else { /bin/cat finished }' \
+    strace -qq -o fault.log -e inject=clone:error=EAGAIN:when=2
+[[ $rc = 0 && $out = done && -z $rerr ]]; chk p518.24
+
+run_sash 'array a=(old)
+- echo data | read a
+echo ${a[0]}'
+[[ $rc = 0 && $out = data && -z $rerr ]]; chk p518.25
+
+run_sash 'array a=(old)
+- echo data < missing | read a
+echo $(len a)'
+[[ $rc = 0 && $out = 0 && -z $rerr ]]; chk p518.26
+
+run_sash 'array a=(a b c)
+s=new
+read $s a
+echo "$(len a):${a[0]}"'
+[[ $rc = 0 && $out = 1:new && -z $rerr ]]; chk p518.27
+
+# pipe2 may succeed while relocating an endpoint away from an authored fd
+# fails. This is still construction failure, before either output is consumed.
+# common.sh keeps fd 3 open, so the successful pair occupies fds 4 and 5.
+run_sash_under '- close 4
+END { echo $(status) }
+: | /bin/cat
+echo bad' prlimit --nofile=6:6
+[[ $rc = 1 && $out = 1 && $rerr == *": pipe: "* ]]; chk p518.28
+
+run_sash_under '- close 5
+END { echo $(status) }
+: | /bin/cat
+echo bad' prlimit --nofile=6:6
+[[ $rc = 1 && $out = 1 && $rerr == *": pipe: "* ]]; chk p518.29
 
 set -e
 tally

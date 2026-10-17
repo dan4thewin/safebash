@@ -695,12 +695,12 @@ fn dispatch_multistage_pipeline(
     if is_while_read || is_array_read {
         return handle_pipe_while_or_array_read(p, last, is_array_read, ssa, state, block);
     }
-    if is_lastpipe_read_last(last) {
-        handle_lastpipe_read(p, last, ssa, state, block);
+    if let Some(command) = lastpipe_read_command(last) {
+        handle_lastpipe_read(p, command, ssa, state, block)
     } else {
         handle_regular_pipeline(p, ssa, state, block);
+        block
     }
-    block
 }
 
 /// DD#70 (B): `! X` produces a must-consume boolean (for any operand). A
@@ -727,34 +727,44 @@ fn is_array_read_last(last: &Statement) -> bool {
 }
 
 /// The SCALAR lastpipe consumer — `readline NAME` only (DD#99).
-fn is_lastpipe_read_last(last: &Statement) -> bool {
+fn lastpipe_read_command(last: &Statement) -> Option<&Command> {
     match &last.kind {
-        StmtKind::Command(c) => literal_name_of(&c.name) == "readline",
-        _ => false,
+        StmtKind::Command(c) if literal_name_of(&c.name) == "readline" => Some(c),
+        _ => None,
     }
 }
 
-/// Build pipeline stages from the producer commands (all but the last).
-/// Used by pipe-while-read and lastpipe-read shapes; both have identical loops.
-/// A known-function stage is inlined as a forked compound child (like the
-/// regular pipeline), not exec'd as a bare command.
-fn build_producer_stages(
+/// Build ordinary and capturing pipelines through the same stage classifier,
+/// preserving suppression, negation and inlined function stages.
+fn build_pipeline_inst(
     cmds: &[Statement],
     ssa: &mut SsaProgram,
     state: &mut VersionState,
     block: BlockId,
-) -> Vec<(String, Vec<SsaValue>, Vec<Redirect>)> {
+    capture_read_fd: bool,
+) -> SsaInst {
     let mut stages = vec![];
+    let mut suppressed = vec![];
+    let mut negated = vec![];
     for (idx, cmd) in cmds.iter().enumerate() {
-        let (inner, redirects) = match &cmd.kind {
-            StmtKind::Redirected(r) => (&r.body.kind, r.redirects.clone()),
-            other => (other, vec![]),
-        };
-        if let StmtKind::Command(c) = inner {
-            push_command_stage(c, redirects, idx, ssa, state, block, &mut stages);
-        }
+        push_pipeline_stage(
+            cmd,
+            idx,
+            ssa,
+            state,
+            block,
+            &mut stages,
+            &mut suppressed,
+            &mut negated,
+        );
     }
-    stages
+    SsaInst::Pipeline {
+        stages,
+        capture_read_fd,
+        checked: state.in_condition == 0 && state.suppressed == 0,
+        suppressed,
+        negated,
+    }
 }
 
 /// Push a `Command` pipeline stage into `stages`: a known function inlines as a
@@ -811,30 +821,47 @@ fn handle_pipe_while_or_array_read(
     is_array_read: bool,
     ssa: &mut SsaProgram,
     state: &mut VersionState,
-    mut block: BlockId,
+    block: BlockId,
 ) -> BlockId {
-    let stages = build_producer_stages(&p.commands[..p.commands.len() - 1], ssa, state, block);
-    ssa.block_mut(block).insts.push(SsaInst::Pipeline {
-        stages,
-        capture_read_fd: true,
-        checked: true,
-        suppressed: vec![],
-        negated: vec![],
-    });
-    if is_array_read {
+    let pipeline =
+        build_pipeline_inst(&p.commands[..p.commands.len() - 1], ssa, state, block, true);
+    ssa.block_mut(block).insts.push(pipeline);
+    lower_pipe_consumer(ssa, state, block, |ssa, state, block| {
+        if !is_array_read {
+            return lower_pipe_while_read(last, ssa, state, block);
+        }
         let mark = super::pipelines::mark_ssa(ssa);
-        block = lower_one(last, ssa, state, block);
-        // DD#24: the read is clean only if every producer is compiler-computed.
-        // Same predicate `handle_lastpipe_read` uses for `readline`, and the
-        // same `validate::is_external_source` the front-end taint pass uses.
+        let block = lower_one(last, ssa, state, block);
         let clean_pipe = !p.commands[..p.commands.len() - 1]
             .iter()
             .any(crate::validate::is_external_source);
         rewrite_lastpipe_consumer_fds(ssa, &mark, clean_pipe);
-    } else {
-        block = lower_pipe_while_read(last, ssa, state, block);
-    }
-    block
+        block
+    })
+}
+
+fn lower_pipe_consumer(
+    ssa: &mut SsaProgram,
+    state: &mut VersionState,
+    block: BlockId,
+    body: impl FnOnce(&mut SsaProgram, &mut VersionState, BlockId) -> BlockId,
+) -> BlockId {
+    let before = state.snapshot();
+    let consumer = ssa.new_block("pipe.consumer");
+    let done = ssa.new_block("pipe.done");
+    ssa.block_mut(block)
+        .insts
+        .push(SsaInst::internal(BuiltinCmd::SetTestFromPipe, vec![], true));
+    ssa.block_mut(block).terminator = Terminator::Branch {
+        condition: "pipe-ready".into(),
+        true_block: consumer,
+        false_block: done,
+    };
+    let exit = body(ssa, state, consumer);
+    ssa.block_mut(exit).terminator = Terminator::Goto(done);
+    let after = state.snapshot();
+    super::helpers::insert_phis_two_branch(state, ssa, done, exit, &after, block, &before);
+    done
 }
 
 /// After lowering an array-read lastpipe consumer, repoint its read fd
@@ -870,36 +897,29 @@ fn repoint_stdin_to_pipe_sentinel(inst: &mut SsaInst, clean: bool) {
 /// consumes from that pipe in the main process.
 fn handle_lastpipe_read(
     p: &Pipeline,
-    last: &Statement,
+    command: &Command,
     ssa: &mut SsaProgram,
     state: &mut VersionState,
     block: BlockId,
-) {
+) -> BlockId {
     let producers = &p.commands[..p.commands.len() - 1];
     // DD#24: the read targets are clean only if every producer is
     // compiler-computed. This was hardcoded `true`, which disabled the SSA
     // backstop for every lastpipe read — so when the front-end pass also
     // missed a laundering shape, nothing caught it.
     let clean_pipe = !producers.iter().any(crate::validate::is_external_source);
-    let stages = build_producer_stages(producers, ssa, state, block);
-    ssa.block_mut(block).insts.push(SsaInst::Pipeline {
-        stages,
-        capture_read_fd: true,
-        checked: true,
-        suppressed: vec![],
-        negated: vec![],
-    });
-    // An array read is peeled off earlier by `is_array_read_last`, so only
-    // `readline` reaches here — one target, no flags (DD#99/SB5057).
-    if let StmtKind::Command(c) = &last.kind {
-        let target = state.define(&crate::ir::readline_target(&c.args));
+    let pipeline = build_pipeline_inst(producers, ssa, state, block, true);
+    ssa.block_mut(block).insts.push(pipeline);
+    lower_pipe_consumer(ssa, state, block, |ssa, state, block| {
+        let target = state.define(&crate::ir::readline_target(&command.args));
         ssa.block_mut(block).insts.push(SsaInst::ReadLine {
             target,
             fd: -1,
             redirects: vec![],
             clean_pipe,
         });
-    }
+        block
+    })
 }
 
 /// Regular pipeline: `cmd1 | cmd2 | ...`. Compound commands (while, for, if)
@@ -911,32 +931,8 @@ fn handle_regular_pipeline(
     state: &mut VersionState,
     block: BlockId,
 ) {
-    let mut stages = vec![];
-    let mut suppressed = vec![];
-    let mut negated = vec![];
-    for (idx, cmd) in p.commands.iter().enumerate() {
-        push_pipeline_stage(
-            cmd,
-            idx,
-            ssa,
-            state,
-            block,
-            &mut stages,
-            &mut suppressed,
-            &mut negated,
-        );
-    }
-    ssa.block_mut(block).insts.push(SsaInst::Pipeline {
-        stages,
-        capture_read_fd: false,
-        // DD#55: a `-`-suppressed pipeline (and a capture-condition pipeline,
-        // `if x=$(a|b)`) runs unchecked — its aggregate status is consumed, not
-        // aborted on. `state.suppressed` is bumped only by `- cmd` lowering and
-        // the capture-condition capture.
-        checked: state.suppressed == 0,
-        suppressed,
-        negated,
-    });
+    let pipeline = build_pipeline_inst(&p.commands, ssa, state, block, false);
+    ssa.block_mut(block).insts.push(pipeline);
 }
 
 /// Lower one pipeline stage `cmd` and extend the `stages`/`suppressed`/`negated`
@@ -1053,7 +1049,7 @@ fn build_function_pipeline_stage(
     state.inlining.push(resolved.clone());
     let saved_ro = super::functions::enter_fn_body_scope(state);
 
-    let entry = ssa.new_block(&format!("pipe_fn_{}_{}", name, idx));
+    let entry = ssa.new_checkpoint_block(&format!("pipe_fn_{}_{}", name, idx));
     // `split_call_args` + `arg_to_value`, exactly as `inline_function_call`: a
     // pipeline stage is still a call, so `@a` is a COMMAND-ARG position and
     // splats one value per element (DD#20/#22), and `=name` binds a slot rather
@@ -1068,7 +1064,7 @@ fn build_function_pipeline_stage(
     super::functions::setup_callee_args(&arg_values, ssa, state, entry);
 
     // `return` inside the body jumps to ret_block, which ends the forked child.
-    let ret_block = ssa.new_block(&format!("pipe_fn_ret_{}_{}", name, idx));
+    let ret_block = ssa.new_checkpoint_block(&format!("pipe_fn_ret_{}_{}", name, idx));
     state.return_target = Some(ret_block);
     let exit = lower_stmts(&body, ssa, state, entry);
     ssa.block_mut(exit).terminator = Terminator::Goto(ret_block);
@@ -1504,9 +1500,9 @@ pub(super) fn capture_func_into(
 
     super::functions::setup_callee_args(arg_values, ssa, state, block);
 
-    let call_block = ssa.new_block(&format!("cap_{}", fname));
+    let call_block = ssa.new_checkpoint_block(&format!("cap_{}", fname));
     ssa.block_mut(block).terminator = Terminator::Goto(call_block);
-    let restore_block = ssa.new_block(&format!("capret_{}", fname));
+    let restore_block = ssa.new_checkpoint_block(&format!("capret_{}", fname));
     let saved_return_target = state.return_target;
     state.return_target = Some(restore_block);
     let exit_block = lower_stmts(&body, ssa, state, call_block);

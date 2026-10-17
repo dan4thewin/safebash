@@ -2782,7 +2782,7 @@ fn fd_prefix_binds(scanner: &mut Scanner) -> bool {
     next.span.start == fd_end
         && matches!(
             next.token,
-            Tok::Gt | Tok::DblGt | Tok::GtAmp | Tok::LtAmp | Tok::Lt
+            Tok::Gt | Tok::DblGt | Tok::GtAmp | Tok::LtAmp | Tok::Lt | Tok::LtGt
         )
 }
 

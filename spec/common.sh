@@ -112,6 +112,13 @@ run_sash() {
     esac
 }
 
+# Restrict or fault-inject only the compiled program, never the compiler/linker.
+run_sash_under() {
+    local src=$1; shift
+    local -a _spec_runtime=("$@")
+    run_sash "$src"
+}
+
 # DD#23/SB5095: the compiler rejects a command path that is not an executable
 # file, so a spec can no longer reach the runtime's exec-ENOENT branch simply
 # by naming a path that was never there — that program does not compile. The
@@ -153,7 +160,7 @@ _run_sash_native() {
         # Capture runtime stderr separately (rerr) so abort diagnostics
         # (DD#55) can be asserted; err stays for compile diagnostics.
         _vanish_now
-        out=$(timeout "$SPEC_TIMEOUT" ./test_bin "$@" </dev/null 2>rt.err)
+        out=$(timeout "$SPEC_TIMEOUT" "${_spec_runtime[@]}" ./test_bin "$@" </dev/null 2>rt.err)
         rc=$?
         rerr=$(cat rt.err 2>/dev/null)
         if (( rc == 124 )); then rerr=$(_hang_msg "the test binary"); fi
@@ -191,7 +198,7 @@ _run_sash_c() {
             fi
         else
             _vanish_now
-            out=$(timeout "$SPEC_TIMEOUT" ./test_bin "$@" </dev/null 2>rerr.raw)
+            out=$(timeout "$SPEC_TIMEOUT" "${_spec_runtime[@]}" ./test_bin "$@" </dev/null 2>rerr.raw)
             rc=$?
             err=""
             rerr=$(<rerr.raw)

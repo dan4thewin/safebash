@@ -5,8 +5,8 @@ EXPAND=sash-expand
 CSRC=`ls sash-rt/csrc/*.c sash-rt/csrc/*.S sash-rt/csrc/*.h | tr '\n' ' '`
 
 build:V: $RT/target/release/libsash_rt.a target/release/sash-regex target/release/sash-getopt
-	(cd $SASH && cargo build --release)
-	(cd $CONVERT && cargo build --release)
+	(cd $SASH && cargo build --release) &&
+	(cd $CONVERT && cargo build --release) &&
 	(cd $EXPAND && cargo build --release)
 
 target/release/sash-regex: sash-rt/csrc/sash-regex.c sash-rt/csrc/regcomp.c sash-rt/csrc/regexec.c sash-rt/csrc/regaux.c
@@ -21,8 +21,8 @@ $RT/target/release/libsash_rt.a: $RT/src/lib.rs $CSRC
 	(cd $RT && cargo clean -p sash-rt 2>/dev/null; cargo build --release)
 
 test:V: build regex-test sash-grep-test sash-getopt-test status
-	(cd $SASH && cargo test --release)
-	(cd $CONVERT && cargo test --release)
+	(cd $SASH && cargo test --release) &&
+	(cd $CONVERT && cargo test --release) &&
 	(cd sash-expand && cargo test --release)
 
 regex-test:V:

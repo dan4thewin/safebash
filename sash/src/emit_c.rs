@@ -349,11 +349,12 @@ fn emit_prologue(out: &mut String) {
     .unwrap();
     // DD#56: the last-received signal number global (set by the runtime
     // signal handler). `$(signum)` / the `(signum)` arith sexpr read it.
-    writeln!(out, "extern i64 sash_signum;").unwrap();
+    writeln!(out, "extern volatile i64 sash_signum;").unwrap();
+    writeln!(out, "extern volatile i64 sash_exit_signum;").unwrap();
     // DD#56 signal builtin: `signal N IGN/DFL/EXIT` → sash_trap(sig, handler);
     // `signal N FLAG` → sash_signal_flag(sig).
     writeln!(out, "extern i64 sash_trap(i64 signum, i64 handler);").unwrap();
-    writeln!(out, "extern i64 sash_signal_flag(i64 signum);").unwrap();
+    writeln!(out, "extern i64 sash_signal_flag(i64 signum, i64 exiting);").unwrap();
     writeln!(
         out,
         "extern i64 sash_regex_match_into(const char* sp, i64 sl, const char* pp, i64 pl, SashTable* t);"
@@ -1882,13 +1883,12 @@ fn emit_cd_c(e: &mut Emit, args: &[SsaValue], checked: bool, types: &VarTypes) {
 }
 
 /// DD#56 signal builtin emission. `__trap_signal [sig, handler]` →
-/// `sash_trap(sig, handler)`; `__signal_flag [sig]` → `sash_signal_flag(sig)`.
+/// `sash_trap(sig, handler)`; `__signal_flag [sig, exiting]` selects FLAG/EXIT.
 /// Kept out of `emit_command` (complexity gate); the builtin always succeeds.
 fn emit_signal_builtin_c(e: &mut Emit, kind: &BuiltinCmd, args: &[SsaValue]) {
     if matches!(kind, BuiltinCmd::SignalFlag) {
-        let [signal] = kind.expect_ssa_args(args);
-        let sig = kind.expect_literal_int(signal);
-        writeln!(e.out, "    sash_signal_flag({});", sig).unwrap();
+        let (sig, exiting) = BuiltinCmd::expect_signal_flag(args);
+        writeln!(e.out, "    sash_signal_flag({sig}, {exiting});").unwrap();
     } else {
         let [signal, handler] = kind.expect_ssa_args(args);
         let sig = kind.expect_literal_int(signal);
@@ -2122,6 +2122,14 @@ fn emit_command_body(
         // first arg as int; if zero → status=1, test_result=0; else
         // status=0, test_result=1.
         BuiltinCmd::LetExit => emit_let_exit(e, args, types),
+        BuiltinCmd::SignalCheckpoint => {
+            let [] = kind.expect_ssa_args(args);
+            emit_signal_exit_check(e);
+        }
+        BuiltinCmd::SetTestFromPipe => {
+            let [] = kind.expect_ssa_args(args);
+            writeln!(e.out, "    __test_result = (__pipe_read_fd >= 0);").unwrap();
+        }
 
         // ── delegated groups ──────────────────────────────────────────
         BuiltinCmd::Exec
@@ -2224,6 +2232,7 @@ fn emit_let_exit(e: &mut Emit, args: &[SsaValue], types: &VarTypes) {
 /// sets __test_result so a Branch terminator reading it sees
 /// success ⇔ exit==0.
 fn emit_exec(e: &mut Emit, name: &str, args: &[SsaValue], checked: bool, types: &VarTypes) {
+    emit_signal_exit_check(e);
     let argv = emit_argv(e, name, args, types, "    ");
     writeln!(
         e.out,
@@ -2283,11 +2292,8 @@ fn emit_table_delete_c(e: &mut Emit, kind: &BuiltinCmd, args: &[SsaValue], types
 /// (inst_handlers.rs:979). SB4052 guarantees exactly one literal fd, and both
 /// backends now rely on that rather than answering a misuse silently.
 /// Diagnostic: `<argv0>: close: <fd>: <reason>`.
-fn emit_close_builtin(e: &mut Emit, args: &[SsaValue], checked: bool, types: &VarTypes) {
-    let arg = args
-        .first()
-        .expect("SB4052 validated `close` as taking exactly one argument");
-    let fd = lower_value_as_int(e, arg, types);
+fn emit_close_builtin(e: &mut Emit, args: &[SsaValue], checked: bool, _types: &VarTypes) {
+    let (fd, lit) = BuiltinCmd::expect_close_fd(args);
     let t = e.fresh();
     writeln!(e.out, "    i64 {t}_r = sash_close({fd});").unwrap();
     writeln!(
@@ -2301,9 +2307,6 @@ fn emit_close_builtin(e: &mut Emit, args: &[SsaValue], checked: bool, types: &Va
     // Second diagnostic segment is the fd as written. SB4052 requires a
     // literal, so there is always a spelling to quote; the wildcard that stood
     // here handed the diagnostic a null segment, as native's did.
-    let SsaValue::Literal(lit) = arg else {
-        panic!("SB4052 validated `close`'s argument as a literal fd number")
-    };
     let (p2, l2) = (format!("\"{}\"", c_escape(lit)), lit.len().to_string());
     writeln!(
         e.out,
@@ -2337,6 +2340,7 @@ fn emit_exec_builtin(e: &mut Emit, args: &[SsaValue], types: &VarTypes) {
         writeln!(e.out, "    __exit_status = 0; __test_result = 1;").unwrap();
         return;
     }
+    emit_signal_exit_check(e);
     let t = e.fresh();
     let argv = format!("{}_argv", t);
     // argv[0] is a value, not a literal: lower and guard it exactly as the
@@ -2360,25 +2364,20 @@ fn emit_exec_builtin(e: &mut Emit, args: &[SsaValue], types: &VarTypes) {
     writeln!(e.out, "    sash_exit(127);").unwrap();
 }
 
-/// DD#56: after an external command, if the program arms a `signal N EXIT`
-/// trap and a trap'd signal has fired (sash_signum != 0), jump to the END
-/// block with status 128+signum. Mirrors native `emit_signal_exit_check`
-/// (inst_handlers.rs:642). No-op unless EXIT-armed, an END block exists, and
-/// we are before it (a check inside END would re-jump forever).
+/// DD#56: poll an EXIT request, never re-entering END.
 fn emit_signal_exit_check(e: &mut Emit) {
     if !e.has_exiting_signals {
         return;
     }
-    let Some(eb) = e.end_block else {
-        return;
-    };
-    if e.cur_block >= eb {
+    if e.end_region.contains(&e.cur_block) {
         return;
     }
+    let pending = e.fresh();
+    let target = abort_target(e);
     writeln!(
         e.out,
-        "    if (sash_signum != 0) {{ __exit_status = 128 + sash_signum; goto _blk_{}; }}",
-        eb
+        "    i64 {pending} = sash_exit_signum; \
+         if ({pending} != 0) {{ __exit_status = 128 + {pending}; goto {target}; }}"
     )
     .unwrap();
 }
@@ -3563,14 +3562,6 @@ struct SavedFdC {
 /// Mirrors emit_redirects (codegen/redirects.rs:19). For each
 /// redirect: save the live fd via sash_dup, then dispatch on op.
 /// Returns the saved-fd list for later emit_restore.
-fn emit_redirects(
-    e: &mut Emit,
-    redirects: &[crate::ir::Redirect],
-    types: &VarTypes,
-) -> Vec<SavedFdC> {
-    emit_redirects_guarded(e, redirects, types).0
-}
-
 /// Like `emit_redirects`, but also returns the first redirect-failure guard
 /// (OR-folded across multiple redirects) so the caller can apply the
 /// DD#55 setup-failure semantics (skip body, fail status, context abort).
@@ -3853,15 +3844,15 @@ fn emit_pipeline(
     negated: &[bool],
     types: &VarTypes,
 ) {
+    emit_signal_exit_check(e);
     let n = stages.len();
 
     let p = e.fresh();
     let num_pipes = crate::ssa::pipeline_num_pipes(n, capture_read_fd);
     writeln!(e.out, "    /* pipeline: {} stages */", n).unwrap();
 
-    emit_pipeline_create_pipes(e, &p, num_pipes);
-    // pid slots — one per stage.
     writeln!(e.out, "    i64 {p}_pids[{n}];", p = p, n = n).unwrap();
+    emit_pipeline_create_pipes(e, &p, num_pipes, checked);
 
     for (i, (name, args, redirects)) in stages.iter().enumerate() {
         emit_pipeline_stage(
@@ -3874,12 +3865,16 @@ fn emit_pipeline(
             name,
             args,
             redirects,
+            checked,
+            checked && !suppressed.get(i).copied().unwrap_or(false),
             types,
         );
     }
 
     emit_pipeline_parent_close(e, &p, num_pipes, capture_read_fd);
     emit_pipeline_finish(e, &p, checked, suppressed, negated, stages);
+    writeln!(e.out, "{p}_done: ;").unwrap();
+    emit_signal_exit_check(e);
 }
 
 /// Reap the children, publish the aggregate status, and apply the DD#55 abort.
@@ -3912,15 +3907,47 @@ fn emit_pipeline_finish(
 }
 
 /// Create `num_pipes` anonymous pipes for a pipeline.
-fn emit_pipeline_create_pipes(e: &mut Emit, p: &str, num_pipes: usize) {
+fn emit_pipeline_create_pipes(e: &mut Emit, p: &str, num_pipes: usize, checked: bool) {
     for i in 0..num_pipes {
         writeln!(
             e.out,
-            "    i64 {p}_pipe{i}[2]; sash_pipe({p}_pipe{i});",
+            "    i64 {p}_pipe{i}[2]; if (sash_pipe({p}_pipe{i}) < 0) {{",
             p = p,
             i = i
         )
         .unwrap();
+        emit_pipeline_setup_failure(e, p, i, 0, checked, "pipe");
+        writeln!(e.out, "    }}").unwrap();
+    }
+}
+
+fn emit_pipeline_setup_failure(
+    e: &mut Emit,
+    p: &str,
+    pipes: usize,
+    started: usize,
+    checked: bool,
+    operation: &str,
+) {
+    emit_pipeline_parent_close(e, p, pipes, false);
+    for i in 0..started {
+        writeln!(e.out, "    sash_wait({p}_pids[{i}]);").unwrap();
+    }
+    writeln!(
+        e.out,
+        "    __exit_status = 1; __test_result = 0; __pipe_read_fd = -1;"
+    )
+    .unwrap();
+    if checked {
+        let abort = abort_target(e);
+        writeln!(
+            e.out,
+            "    sash_emsg(\"{operation}\", {}, 0, 0); goto {abort};",
+            operation.len()
+        )
+        .unwrap();
+    } else {
+        writeln!(e.out, "    goto {p}_done;").unwrap();
     }
 }
 
@@ -4011,9 +4038,14 @@ fn emit_pipeline_stage(
     name: &str,
     args: &[SsaValue],
     redirects: &[crate::ir::Redirect],
+    checked: bool,
+    report_setup_failure: bool,
     types: &VarTypes,
 ) {
     writeln!(e.out, "    {p}_pids[{i}] = sash_fork();", p = p, i = i).unwrap();
+    writeln!(e.out, "    if ({p}_pids[{i}] < 0) {{").unwrap();
+    emit_pipeline_setup_failure(e, p, num_pipes, i, checked, "fork");
+    writeln!(e.out, "    }}").unwrap();
     writeln!(
         e.out,
         "    if ({p}_pids[{i}] == 0) {{  /* child {i} */",
@@ -4022,12 +4054,14 @@ fn emit_pipeline_stage(
     )
     .unwrap();
 
-    emit_stage_child_pipes(e, p, i, n, num_pipes, capture_read_fd);
+    emit_stage_child_pipes(e, p, i, n, num_pipes, capture_read_fd, report_setup_failure);
 
     // Stage-level redirects (these go inside the child).
     if !redirects.is_empty() {
-        let _saved = emit_redirects(e, redirects, types);
-        // Child exits after exec; no need to restore.
+        let (saved, failure) = emit_redirects_guarded(e, redirects, types);
+        let (failed, path, len) = failure.expect("nonempty redirects have a setup failure result");
+        emit_pipeline_child_failure(e, &failed, report_setup_failure, &path, &len);
+        emit_discard_saved(e, &saved);
     }
 
     // Run the command. If it's an inline builtin, emit the body
@@ -4036,6 +4070,13 @@ fn emit_pipeline_stage(
     match kind {
         BuiltinCmd::Echo => {
             emit_echo(e, args, false, types);
+            emit_pipeline_child_failure(
+                e,
+                "__exit_status",
+                report_setup_failure,
+                "\"echo: write error\"",
+                "17",
+            );
             writeln!(e.out, "        sash_exit(0);").unwrap();
         }
         BuiltinCmd::Noop => {
@@ -4069,23 +4110,24 @@ fn emit_stage_child_pipes(
     n: usize,
     num_pipes: usize,
     capture_read_fd: bool,
+    report_failure: bool,
 ) {
+    writeln!(e.out, "    i64 {p}_wire_failed = 0;").unwrap();
     if i > 0 {
         writeln!(
             e.out,
-            "        sash_dup2({p}_pipe{prev}[0], 0);",
+            "        {p}_wire_failed |= sash_dup2({p}_pipe{prev}[0], 0) < 0;",
             p = p,
             prev = i - 1
         )
         .unwrap();
     }
     if i < n - 1 || capture_read_fd {
-        let pipe_idx = if i < num_pipes { i } else { num_pipes - 1 };
         writeln!(
             e.out,
-            "        sash_dup2({p}_pipe{idx}[1], 1);",
+            "        {p}_wire_failed |= sash_dup2({p}_pipe{idx}[1], 1) < 0;",
             p = p,
-            idx = pipe_idx
+            idx = i
         )
         .unwrap();
     }
@@ -4098,6 +4140,21 @@ fn emit_stage_child_pipes(
         )
         .unwrap();
     }
+    emit_pipeline_child_failure(
+        e,
+        &format!("{p}_wire_failed"),
+        report_failure,
+        "\"dup2\"",
+        "4",
+    );
+}
+
+fn emit_pipeline_child_failure(e: &mut Emit, failed: &str, report: bool, path: &str, len: &str) {
+    writeln!(e.out, "    if ({failed}) {{").unwrap();
+    if report {
+        writeln!(e.out, "    sash_emsg({path}, {len}, 0, 0);").unwrap();
+    }
+    writeln!(e.out, "    sash_exit(1); }}").unwrap();
 }
 
 /// Per-stage external exec. Same shape as emit_exec but uses
@@ -4577,7 +4634,7 @@ fn emit_read_array_body(e: &mut Emit, array: &str, fd: i64, types: &VarTypes) {
     // DD#99: NUL is the only separator, with terminator semantics.
     writeln!(
         e.out,
-        "    if ({t}.ptr) sash_split_into_array({t}.ptr, {t}.len, 0, 1, (unsigned char*){tbl});",
+        "    sash_split_into_array({t}.ptr, {t}.len, 0, 1, (unsigned char*){tbl});",
         t = t,
         tbl = table_expr
     )
@@ -4686,7 +4743,10 @@ mod tests {
     #[test]
     fn close_with_no_fd_is_a_loud_ice() {
         let msg = empty_args_ice(emit_close_builtin);
-        assert!(msg.contains("SB4052"), "got: {msg}");
+        assert!(
+            msg.contains("Close needs exactly 1 SSA arguments"),
+            "got: {msg}"
+        );
     }
 
     #[test]
@@ -4706,7 +4766,38 @@ mod tests {
     fn command_emission_uses_the_shared_ssa_operand_contracts() {
         for (kind, args, claim) in [
             (BuiltinCmd::TrapSignal, vec![], "exactly 2 SSA arguments"),
-            (BuiltinCmd::SignalFlag, vec![], "exactly 1 SSA arguments"),
+            (BuiltinCmd::SignalFlag, vec![], "exactly 2 SSA arguments"),
+            (
+                BuiltinCmd::SignalCheckpoint,
+                vec![SsaValue::Literal("0".into())],
+                "exactly 0 SSA arguments",
+            ),
+            (BuiltinCmd::Close, vec![], "exactly 1 SSA arguments"),
+            (
+                BuiltinCmd::SetTestFromPipe,
+                vec![SsaValue::Literal("0".into())],
+                "exactly 0 SSA arguments",
+            ),
+            (
+                BuiltinCmd::Close,
+                vec![SsaValue::Literal("1".into()), SsaValue::Literal("2".into())],
+                "exactly 1 SSA arguments",
+            ),
+            (
+                BuiltinCmd::Close,
+                vec![SsaValue::Var(VarRef::new("dynamic", 0))],
+                "literal file descriptor",
+            ),
+            (
+                BuiltinCmd::Close,
+                vec![SsaValue::Literal("-1".into())],
+                "outside 0..2147483647",
+            ),
+            (
+                BuiltinCmd::Close,
+                vec![SsaValue::Literal("2147483648".into())],
+                "outside 0..2147483647",
+            ),
             (BuiltinCmd::LetExit, vec![], "exactly 1 SSA arguments"),
             (BuiltinCmd::StoreBgPid, vec![], "exactly 1 SSA arguments"),
             (BuiltinCmd::TableDelete, vec![], "exactly 2 SSA arguments"),
@@ -4718,8 +4809,19 @@ mod tests {
             (BuiltinCmd::Match, vec![], "exactly 2 SSA arguments"),
             (
                 BuiltinCmd::SignalFlag,
-                vec![SsaValue::Literal("bad".into())],
+                vec![
+                    SsaValue::Literal("bad".into()),
+                    SsaValue::Literal("0".into()),
+                ],
                 "non-integer literal",
+            ),
+            (
+                BuiltinCmd::SignalFlag,
+                vec![
+                    SsaValue::Literal("15".into()),
+                    SsaValue::Literal("2".into()),
+                ],
+                "EXIT bit must be 0 or 1",
             ),
             (
                 BuiltinCmd::TrapSignal,
@@ -4764,7 +4866,9 @@ mod tests {
             .expect_err("malformed SSA must not produce C");
             let message = payload
                 .downcast_ref::<String>()
-                .expect("formatted invariant");
+                .cloned()
+                .or_else(|| payload.downcast_ref::<&str>().map(|text| text.to_string()))
+                .expect("invariant text");
             assert!(message.contains(&format!("{kind:?}")), "{message}");
             assert!(message.contains(claim), "{message}");
         }

@@ -11,9 +11,7 @@ use cranelift_module::Module;
 use cranelift_object::ObjectModule;
 
 use super::commands::{lower_echo, lower_exec};
-use super::redirects::{
-    emit_redirects_guarded, emit_restore, lower_ir_redirect_expr, RedirectFailure,
-};
+use super::redirects::{emit_discard_saved, emit_redirects_guarded, emit_restore, RedirectFailure};
 use super::types::{find_array_slot, ExternFuncs, InstCtx, VarSlot};
 use super::values::{lower_value, lower_value_as_int};
 use crate::ssa::*;
@@ -35,17 +33,22 @@ pub(super) fn handle_pipeline(
     ctx: &mut InstCtx,
 ) -> bool {
     let n = stages.len();
+    emit_signal_exit_check(builder, module, ctx);
     let pe = resolve_pipeline_externs(builder, module, ctx.externs);
 
     // Pipe-while-read needs one extra pipe (last stage → parent).
     let num_pipes = crate::ssa::pipeline_num_pipes(n, capture_read_fd);
-    let pipe_slots = create_pipe_slots(builder, num_pipes, pe.pipe);
-
     let pid_slot = builder.create_sized_stack_slot(StackSlotData::new(
         StackSlotKind::ExplicitSlot,
         (n * 8) as u32,
         3,
     ));
+    let setup = PipelineSetup {
+        pid_slot,
+        done: builder.create_block(),
+        checked,
+    };
+    let pipe_slots = create_pipe_slots(num_pipes, &setup, &pe, builder, module, ctx);
 
     for (i, (name, args, redirects)) in stages.iter().enumerate() {
         lower_pipeline_stage(
@@ -56,7 +59,8 @@ pub(super) fn handle_pipeline(
             redirects,
             capture_read_fd,
             &pipe_slots,
-            pid_slot,
+            &setup,
+            checked && !suppressed.get(i).copied().unwrap_or(false),
             &pe,
             builder,
             module,
@@ -87,7 +91,17 @@ pub(super) fn handle_pipeline(
             fail_name_len,
         );
     }
+    builder.ins().jump(setup.done, &[]);
+    builder.switch_to_block(setup.done);
+    builder.seal_block(setup.done);
+    emit_signal_exit_check(builder, module, ctx);
     false
+}
+
+struct PipelineSetup {
+    pid_slot: cranelift_codegen::ir::StackSlot,
+    done: cranelift_codegen::ir::Block,
+    checked: bool,
 }
 
 /// Pre-resolved Cranelift FuncRefs for the runtime calls a pipeline needs.
@@ -98,7 +112,6 @@ struct PipelineExterns {
     close: cranelift_codegen::ir::FuncRef,
     exec: cranelift_codegen::ir::FuncRef,
     wait: cranelift_codegen::ir::FuncRef,
-    redirect: cranelift_codegen::ir::FuncRef,
 }
 
 fn resolve_pipeline_externs(
@@ -113,24 +126,78 @@ fn resolve_pipeline_externs(
         close: module.declare_func_in_func(externs.close, builder.func),
         exec: module.declare_func_in_func(externs.exec, builder.func),
         wait: module.declare_func_in_func(externs.wait, builder.func),
-        redirect: module.declare_func_in_func(externs.redirect, builder.func),
     }
 }
 
 fn create_pipe_slots(
-    builder: &mut FunctionBuilder,
     num_pipes: usize,
-    pipe_ref: cranelift_codegen::ir::FuncRef,
+    setup: &PipelineSetup,
+    pe: &PipelineExterns,
+    builder: &mut FunctionBuilder,
+    module: &mut ObjectModule,
+    ctx: &mut InstCtx,
 ) -> Vec<cranelift_codegen::ir::StackSlot> {
     let mut slots = Vec::with_capacity(num_pipes);
     for _ in 0..num_pipes {
         let slot =
             builder.create_sized_stack_slot(StackSlotData::new(StackSlotKind::ExplicitSlot, 16, 3));
         let addr = builder.ins().stack_addr(I64, slot, 0);
-        builder.ins().call(pipe_ref, &[addr]);
+        let call = builder.ins().call(pe.pipe, &[addr]);
+        let result = builder.inst_results(call)[0];
+        guard_pipeline_setup(result, "pipe", &slots, 0, setup, pe, builder, module, ctx);
         slots.push(slot);
     }
     slots
+}
+
+#[allow(clippy::too_many_arguments)]
+fn guard_pipeline_setup(
+    result: cranelift_codegen::ir::Value,
+    operation: &str,
+    pipes: &[cranelift_codegen::ir::StackSlot],
+    started: usize,
+    setup: &PipelineSetup,
+    pe: &PipelineExterns,
+    builder: &mut FunctionBuilder,
+    module: &mut ObjectModule,
+    ctx: &mut InstCtx,
+) {
+    let failed = builder.ins().icmp_imm(IntCC::SignedLessThan, result, 0);
+    let failure = builder.create_block();
+    let success = builder.create_block();
+    builder.ins().brif(failed, failure, &[], success, &[]);
+    builder.switch_to_block(failure);
+    builder.seal_block(failure);
+    parent_close_pipes(builder, false, pipes, pe);
+    for i in 0..started {
+        let pid = builder
+            .ins()
+            .stack_load(I64, setup.pid_slot, (i * 8) as i32);
+        builder.ins().call(pe.wait, &[pid]);
+    }
+    let one = builder.ins().iconst(I64, 1);
+    update_pipeline_status(builder, one, ctx);
+    let absent = builder.ins().iconst(I64, -1);
+    builder.def_var(ctx.pipe_read_fd_var, absent);
+    let (ptr, len) = diag_static_seg(operation, ctx.literals, module, builder);
+    let (empty, zero) = diag_empty_seg(builder);
+    emit_status_abort_check(
+        builder,
+        module,
+        ctx.externs,
+        ctx.exit_status_var,
+        ctx.end_cl_block,
+        setup.checked,
+        AbortMsg::Errno {
+            seg1_ptr: ptr,
+            seg1_len: len,
+            seg2_ptr: empty,
+            seg2_len: zero,
+        },
+    );
+    builder.ins().jump(setup.done, &[]);
+    builder.switch_to_block(success);
+    builder.seal_block(success);
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -142,7 +209,8 @@ fn lower_pipeline_stage(
     redirects: &[crate::ir::Redirect],
     capture_read_fd: bool,
     pipe_slots: &[cranelift_codegen::ir::StackSlot],
-    pid_slot: cranelift_codegen::ir::StackSlot,
+    setup: &PipelineSetup,
+    report_setup_failure: bool,
     pe: &PipelineExterns,
     builder: &mut FunctionBuilder,
     module: &mut ObjectModule,
@@ -151,7 +219,10 @@ fn lower_pipeline_stage(
     let null = builder.ins().iconst(I64, 0);
     let call = builder.ins().call(pe.fork, &[]);
     let pid = builder.inst_results(call)[0];
-    builder.ins().stack_store(pid, pid_slot, (i * 8) as i32);
+    guard_pipeline_setup(pid, "fork", pipe_slots, i, setup, pe, builder, module, ctx);
+    builder
+        .ins()
+        .stack_store(pid, setup.pid_slot, (i * 8) as i32);
     let is_child = builder.ins().icmp(IntCC::Equal, pid, null);
 
     let child_block = builder.create_block();
@@ -164,10 +235,22 @@ fn lower_pipeline_stage(
     builder.switch_to_block(child_block);
     builder.seal_block(child_block);
 
-    wire_child_pipes(builder, i, n, capture_read_fd, pipe_slots, pe);
-    emit_stage_redirects(redirects, builder, module, ctx, pe);
+    let failed = wire_child_pipes(builder, i, n, capture_read_fd, pipe_slots, pe);
+    let (path_ptr, path_len) = diag_static_seg("dup2", ctx.literals, module, builder);
+    emit_stage_setup_check(
+        RedirectFailure {
+            failed,
+            path_ptr,
+            path_len,
+        },
+        report_setup_failure,
+        builder,
+        module,
+        ctx,
+    );
+    emit_stage_redirects(redirects, report_setup_failure, builder, module, ctx);
 
-    if lower_pipeline_builtin(name, args, builder, module, ctx) {
+    if lower_pipeline_builtin(name, args, report_setup_failure, builder, module, ctx) {
         // builtin exited inline
     } else if let Some(suffix) = name.strip_prefix("__compound_") {
         // DD#14: compound command as pipeline stage
@@ -190,23 +273,19 @@ fn wire_child_pipes(
     capture_read_fd: bool,
     pipe_slots: &[cranelift_codegen::ir::StackSlot],
     pe: &PipelineExterns,
-) {
+) -> cranelift_codegen::ir::Value {
+    let mut failed = builder.ins().iconst(I64, 0);
     // Wire stdin from previous pipe
     if i > 0 {
         let prev_read = builder.ins().stack_load(I64, pipe_slots[i - 1], 0);
         let stdin = builder.ins().iconst(I64, 0);
-        builder.ins().call(pe.dup2, &[prev_read, stdin]);
+        failed = wire_pipeline_fd(builder, pe, prev_read, stdin, failed);
     }
     // Wire stdout to next pipe (or capture pipe for last stage)
     if i < n - 1 || capture_read_fd {
-        let pipe_idx = if i < pipe_slots.len() {
-            i
-        } else {
-            pipe_slots.len() - 1
-        };
-        let next_write = builder.ins().stack_load(I64, pipe_slots[pipe_idx], 8);
+        let next_write = builder.ins().stack_load(I64, pipe_slots[i], 8);
         let stdout = builder.ins().iconst(I64, 1);
-        builder.ins().call(pe.dup2, &[next_write, stdout]);
+        failed = wire_pipeline_fd(builder, pe, next_write, stdout, failed);
     }
     // Close all pipe fds in child
     for slot in pipe_slots {
@@ -215,70 +294,72 @@ fn wire_child_pipes(
         builder.ins().call(pe.close, &[r]);
         builder.ins().call(pe.close, &[w]);
     }
+    failed
+}
+
+fn wire_pipeline_fd(
+    builder: &mut FunctionBuilder,
+    pe: &PipelineExterns,
+    source: cranelift_codegen::ir::Value,
+    target: cranelift_codegen::ir::Value,
+    failed: cranelift_codegen::ir::Value,
+) -> cranelift_codegen::ir::Value {
+    let call = builder.ins().call(pe.dup2, &[source, target]);
+    let result = builder.inst_results(call)[0];
+    let next_failed = builder.ins().icmp_imm(IntCC::SignedLessThan, result, 0);
+    let next_failed = builder.ins().uextend(I64, next_failed);
+    builder.ins().bor(failed, next_failed)
 }
 
 fn emit_stage_redirects(
     redirects: &[crate::ir::Redirect],
+    report_failure: bool,
     builder: &mut FunctionBuilder,
     module: &mut ObjectModule,
     ctx: &mut InstCtx,
-    pe: &PipelineExterns,
 ) {
-    for redir in redirects {
-        emit_one_stage_redirect(redir, builder, module, ctx, pe);
-    }
-}
-
-/// open(2) mode for a stage redirect: 0 = read, 1 = write/truncate, 2 = append.
-/// `Read` falls in the `_` arm deliberately — 0 is its mode.
-fn stage_redirect_flags(op: &crate::ir::RedirectOp) -> i64 {
-    match op {
-        crate::ir::RedirectOp::Write => 1,
-        crate::ir::RedirectOp::Append => 2,
-        _ => 0,
-    }
-}
-
-fn emit_one_stage_redirect(
-    redir: &crate::ir::Redirect,
-    builder: &mut FunctionBuilder,
-    module: &mut ObjectModule,
-    ctx: &mut InstCtx,
-    pe: &PipelineExterns,
-) {
-    // The implicit fd depends on the DIRECTION: `< f` is fd 0, `> f` is fd 1.
-    // This hardcoded 1 pointed an input redirect at the stage's STDOUT, so
-    // `cmd < f | consumer` fed the stage nothing — silently, or hanging on a
-    // terminal stdin. Shared with the non-pipeline path so they cannot drift.
-    let fd = builder
-        .ins()
-        .iconst(I64, redir.fd.unwrap_or(redir.op.default_fd()) as i64);
-    let flags = builder.ins().iconst(I64, stage_redirect_flags(&redir.op));
-    // Literal fast-path: use the interned constant directly.
-    if let crate::ir::ExprKind::Literal(s) = &redir.target.kind {
-        if let Some(&data_id) = ctx.literals.get(s.as_str()) {
-            let gv = module.declare_data_in_func(data_id, builder.func);
-            let path_ptr = builder.ins().global_value(I64, gv);
-            builder.ins().call(pe.redirect, &[fd, path_ptr, flags]);
-        }
+    if redirects.is_empty() {
         return;
     }
-    // Lower the target the same way a top-level redirect does
-    // (find_highest_version for `$f`, concat for `"$x.txt"`); the old ad-hoc
-    // ir_expr_to_ssa_value hardcoded version 0 and dropped `${x:-f}` / `$a[i]`,
-    // silently redirecting a pipeline stage to an empty filename.
-    // ParameterExpansion / Subscript targets are spilled to a `$__redir_target_N`
-    // scalar in the transform, so only the handled scalar kinds reach here.
-    let (ptr, len) = lower_ir_redirect_expr(
-        &redir.target,
+    let (saved, failure) = emit_redirects_guarded(
+        redirects,
         builder,
         module,
-        ctx.vars,
-        ctx.literals,
         ctx.externs,
+        ctx.literals,
+        ctx.vars,
     );
-    let redirect_s_ref = module.declare_func_in_func(ctx.externs.redirect_s, builder.func);
-    builder.ins().call(redirect_s_ref, &[fd, ptr, len, flags]);
+    emit_stage_setup_check(
+        failure.expect("nonempty redirects have a setup failure result"),
+        report_failure,
+        builder,
+        module,
+        ctx,
+    );
+    emit_discard_saved(saved, builder, module, ctx.externs);
+}
+
+fn emit_stage_setup_check(
+    failure: RedirectFailure,
+    report_failure: bool,
+    builder: &mut FunctionBuilder,
+    module: &mut ObjectModule,
+    ctx: &mut InstCtx,
+) {
+    let fail = builder.create_block();
+    let success = builder.create_block();
+    builder.ins().brif(failure.failed, fail, &[], success, &[]);
+    builder.switch_to_block(fail);
+    builder.seal_block(fail);
+    if report_failure {
+        emit_open_failure_msg(&failure, builder, module, ctx);
+    }
+    let one = builder.ins().iconst(I64, 1);
+    let exit = module.declare_func_in_func(ctx.externs.exit, builder.func);
+    builder.ins().call(exit, &[one]);
+    builder.ins().trap(TrapCode::unwrap_user(1));
+    builder.switch_to_block(success);
+    builder.seal_block(success);
 }
 
 /// Returns true if `name` is an inline pipeline-stage builtin.
@@ -286,6 +367,7 @@ fn emit_one_stage_redirect(
 fn lower_pipeline_builtin(
     name: &str,
     args: &[SsaValue],
+    report_failure: bool,
     builder: &mut FunctionBuilder,
     module: &mut ObjectModule,
     ctx: &mut InstCtx,
@@ -294,10 +376,7 @@ fn lower_pipeline_builtin(
         return false;
     }
     if name == "echo" {
-        // Pipeline-stage echo runs in a forked child; its write status
-        // feeds the child exit, handled by the pipeline path — ignore the
-        // returned write-failure flag here.
-        let _ = lower_echo(
+        let failed = lower_echo(
             args,
             builder,
             module,
@@ -307,6 +386,19 @@ fn lower_pipeline_builtin(
             ctx.space_id,
             ctx.nl_id,
             ctx.exit_status_var,
+        );
+        let (path_ptr, path_len) =
+            diag_static_seg("echo: write error", ctx.literals, module, builder);
+        emit_stage_setup_check(
+            RedirectFailure {
+                failed,
+                path_ptr,
+                path_len,
+            },
+            report_failure,
+            builder,
+            module,
+            ctx,
         );
     }
     // echo / `:` in a pipeline stage exit 0 (true/false are now external).
@@ -632,6 +724,7 @@ pub(super) fn handle_general_command(
     // aborts unless caught; on success the command runs and its own exit
     // status applies.
     emit_redirect_guarded_body(redirects, in_condition, builder, module, ctx, |b, m, c| {
+        emit_signal_exit_check(b, m, c);
         lower_exec(
             name,
             args,
@@ -654,20 +747,18 @@ pub(super) fn handle_general_command(
             c.exit_status_var,
             c.end_cl_block,
             checked,
-            Some(AbortMsg::Status {
+            AbortMsg::Status {
                 name_ptr: np,
                 name_len: nl,
-            }),
+            },
         );
         emit_signal_exit_check(b, m, c);
     });
     false
 }
 
-/// DD#56: signal EXIT check point after an external command. If a trap'd
-/// signal fired, jump to the END block with status 128+signum. Flattened
-/// with early returns to keep callers under the complexity gate.
-fn emit_signal_exit_check(
+/// DD#56: consume an EXIT request outside END; FLAG delivery is not a request.
+pub(super) fn emit_signal_exit_check(
     builder: &mut FunctionBuilder,
     module: &mut ObjectModule,
     ctx: &mut InstCtx,
@@ -675,15 +766,12 @@ fn emit_signal_exit_check(
     if ctx.program.exiting_signals.is_empty() {
         return;
     }
-    let Some(end_cl) = ctx.end_cl_block else {
-        return;
-    };
-    if ctx.program.end_block.is_some_and(|eb| ctx.ssa_id >= eb) {
+    if ctx.in_end_block {
         return;
     }
-    let signum_gv = module.declare_data_in_func(ctx.externs.signum, builder.func);
+    let signum_gv = module.declare_data_in_func(ctx.externs.exit_signum, builder.func);
     let signum_base = builder.ins().global_value(I64, signum_gv);
-    let signum_val = builder.ins().load(I64, MemFlags::new(), signum_base, 0);
+    let signum_val = builder.ins().atomic_load(I64, MemFlags::new(), signum_base);
     let zero_sig = builder.ins().iconst(I64, 0);
     let sig_fired = builder.ins().icmp(IntCC::NotEqual, signum_val, zero_sig);
     let sig_end_block = builder.create_block();
@@ -697,7 +785,13 @@ fn emit_signal_exit_check(
     let c128 = builder.ins().iconst(I64, 128);
     let exit_code = builder.ins().iadd(signum_val, c128);
     builder.def_var(ctx.exit_status_var, exit_code);
-    builder.ins().jump(end_cl, &[]);
+    if let Some(end_cl) = ctx.end_cl_block {
+        builder.ins().jump(end_cl, &[]);
+    } else {
+        let exit = module.declare_func_in_func(ctx.externs.exit, builder.func);
+        builder.ins().call(exit, &[exit_code]);
+        builder.ins().trap(TrapCode::unwrap_user(1));
+    }
     builder.switch_to_block(sig_cont_block);
     builder.seal_block(sig_cont_block);
 }
@@ -1022,7 +1116,7 @@ pub(super) fn emit_status_abort_check(
     exit_status_var: cranelift_frontend::Variable,
     end_cl_block: Option<cranelift_codegen::ir::Block>,
     abort: bool,
-    msg: Option<AbortMsg>,
+    msg: AbortMsg,
 ) {
     if !abort {
         return;
@@ -1040,26 +1134,23 @@ pub(super) fn emit_status_abort_check(
     builder.switch_to_block(abort_block);
     builder.seal_block(abort_block);
     // DD#55: descriptive diagnostic to stderr, only on the actual abort.
-    if let Some(m) = msg {
-        match m {
-            AbortMsg::Errno {
-                seg1_ptr,
-                seg1_len,
-                seg2_ptr,
-                seg2_len,
-            } => {
-                let emsg_ref = module.declare_func_in_func(externs.emsg, builder.func);
-                builder
-                    .ins()
-                    .call(emsg_ref, &[seg1_ptr, seg1_len, seg2_ptr, seg2_len]);
-            }
-            AbortMsg::Status { name_ptr, name_len } => {
-                let emsg_status_ref =
-                    module.declare_func_in_func(externs.emsg_status, builder.func);
-                builder
-                    .ins()
-                    .call(emsg_status_ref, &[name_ptr, name_len, status]);
-            }
+    match msg {
+        AbortMsg::Errno {
+            seg1_ptr,
+            seg1_len,
+            seg2_ptr,
+            seg2_len,
+        } => {
+            let emsg_ref = module.declare_func_in_func(externs.emsg, builder.func);
+            builder
+                .ins()
+                .call(emsg_ref, &[seg1_ptr, seg1_len, seg2_ptr, seg2_len]);
+        }
+        AbortMsg::Status { name_ptr, name_len } => {
+            let emsg_status_ref = module.declare_func_in_func(externs.emsg_status, builder.func);
+            builder
+                .ins()
+                .call(emsg_status_ref, &[name_ptr, name_len, status]);
         }
     }
     if let Some(end_cl) = end_cl_block {
@@ -1134,7 +1225,7 @@ pub(super) fn handle_cd(
         ctx.exit_status_var,
         ctx.end_cl_block,
         checked,
-        Some(msg),
+        msg,
     );
     false
 }
@@ -1150,18 +1241,8 @@ pub(super) fn handle_close(
     module: &mut ObjectModule,
     ctx: &mut InstCtx,
 ) -> bool {
-    let arg = args
-        .first()
-        .expect("SB4052 validated `close` as taking exactly one argument");
-    let fd_val = lower_value_as_int(
-        arg,
-        builder,
-        module,
-        ctx.vars,
-        ctx.literals,
-        ctx.externs,
-        ctx.exit_status_var,
-    );
+    let (fd, fd_spelling) = BuiltinCmd::expect_close_fd(args);
+    let fd_val = builder.ins().iconst(I64, fd);
     let close_ref = module.declare_func_in_func(ctx.externs.close, builder.func);
     let call = builder.ins().call(close_ref, &[fd_val]);
     let result = builder.inst_results(call)[0];
@@ -1179,9 +1260,6 @@ pub(super) fn handle_close(
     let (s1p, s1l) = diag_static_seg("close", ctx.literals, module, builder);
     // SB4052 requires a literal fd, so there is always a spelling to quote.
     // The wildcard that stood here handed the diagnostic a null segment.
-    let SsaValue::Literal(fd_spelling) = arg else {
-        panic!("SB4052 validated `close`'s argument as a literal fd number")
-    };
     let (s2p, s2l) = diag_static_seg(fd_spelling, ctx.literals, module, builder);
     let msg = AbortMsg::Errno {
         seg1_ptr: s1p,
@@ -1196,7 +1274,7 @@ pub(super) fn handle_close(
         ctx.exit_status_var,
         ctx.end_cl_block,
         checked,
-        Some(msg),
+        msg,
     );
     false
 }

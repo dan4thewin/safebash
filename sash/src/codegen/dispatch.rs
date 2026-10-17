@@ -263,11 +263,24 @@ impl SsaInst {
             BuiltinCmd::Test => ice_unreachable_command(kind, name),
             BuiltinCmd::NegateTestResult => self.emit_negate_test_result(builder, ctx),
             BuiltinCmd::SetTestFromStatus => self.emit_set_test_from_status(builder, ctx),
+            BuiltinCmd::SetTestFromPipe => {
+                let [] = BuiltinCmd::SetTestFromPipe.expect_ssa_args(args);
+                let fd = builder.use_var(ctx.pipe_read_fd_var);
+                let ready = builder
+                    .ins()
+                    .icmp_imm(IntCC::SignedGreaterThanOrEqual, fd, 0);
+                let ready = builder.ins().uextend(I64, ready);
+                builder.def_var(ctx.test_result_var, ready);
+            }
             BuiltinCmd::LetExit => return self.emit_let_exit(args, builder, module, ctx),
             BuiltinCmd::ForkBackground => self.emit_fork_background(builder, module, ctx),
             BuiltinCmd::StoreBgPid => return self.emit_store_bg_pid(args, builder, module, ctx),
             BuiltinCmd::TrapSignal => self.emit_trap_signal(args, builder, module, ctx),
             BuiltinCmd::SignalFlag => self.emit_signal_flag(args, builder, module, ctx),
+            BuiltinCmd::SignalCheckpoint => {
+                let [] = BuiltinCmd::SignalCheckpoint.expect_ssa_args(args);
+                super::inst_handlers::emit_signal_exit_check(builder, module, ctx);
+            }
             BuiltinCmd::TableDelete | BuiltinCmd::TableDeleteIdx => {
                 return self.emit_table_delete(args, *kind, builder, module, ctx)
             }
@@ -361,12 +374,12 @@ impl SsaInst {
         module: &mut ObjectModule,
         ctx: &mut InstCtx,
     ) {
-        // handle_signal emits one integer literal for FLAG / EXIT.
-        let kind = BuiltinCmd::SignalFlag;
-        let [signal] = kind.expect_ssa_args(args);
-        let signum = builder.ins().iconst(I64, kind.expect_literal_int(signal));
+        // handle_signal emits the signal number and a FLAG/EXIT bit.
+        let (signal, exiting) = BuiltinCmd::expect_signal_flag(args);
+        let signum = builder.ins().iconst(I64, signal);
+        let exiting = builder.ins().iconst(I64, exiting);
         let flag_ref = module.declare_func_in_func(ctx.externs.signal_flag, builder.func);
-        builder.ins().call(flag_ref, &[signum]);
+        builder.ins().call(flag_ref, &[signum, exiting]);
     }
 
     /// `:` succeeds silently: test_result = 1, $? = 0. (true/false are
@@ -466,6 +479,7 @@ impl SsaInst {
                     emit_exec_redirects_only(redirects, builder, module, ctx);
                     false
                 } else {
+                    super::inst_handlers::emit_signal_exit_check(builder, module, ctx);
                     emit_exec_static_argv(args, builder, module, ctx);
                     true
                 }
@@ -1309,7 +1323,7 @@ fn emit_echo_body(
         ctx.exit_status_var,
         ctx.end_cl_block,
         checked,
-        Some(msg),
+        msg,
     );
 }
 
@@ -1408,8 +1422,9 @@ mod invariant_tests {
         .expect_err("malformed SSA must not compile");
         payload
             .downcast_ref::<String>()
-            .expect("the invariant reports a formatted claim")
-            .clone()
+            .cloned()
+            .or_else(|| payload.downcast_ref::<&str>().map(|text| text.to_string()))
+            .expect("the invariant reports its claim")
     }
 
     fn internal_ice(kind: BuiltinCmd, args: Vec<SsaValue>) -> String {
@@ -1443,13 +1458,15 @@ mod invariant_tests {
     fn internal_command_arity_is_exact() {
         for (kind, count) in [
             (BuiltinCmd::TrapSignal, 2),
-            (BuiltinCmd::SignalFlag, 1),
+            (BuiltinCmd::SignalFlag, 2),
+            (BuiltinCmd::SignalCheckpoint, 0),
+            (BuiltinCmd::SetTestFromPipe, 0),
             (BuiltinCmd::LetExit, 1),
             (BuiltinCmd::StoreBgPid, 1),
             (BuiltinCmd::TableDelete, 2),
             (BuiltinCmd::TableDeleteIdx, 2),
         ] {
-            for len in [0, count + 1] {
+            for len in [0, count + 1].into_iter().filter(|&len| len != count) {
                 let message = internal_ice(kind, vec![SsaValue::Literal("1".into()); len]);
                 assert!(
                     message.contains(&format!("{kind:?} needs exactly {count} SSA arguments")),
@@ -1483,7 +1500,14 @@ mod invariant_tests {
             SsaValue::Literal("9223372036854775808".into()),
         ] {
             for (kind, args) in [
-                (BuiltinCmd::SignalFlag, vec![bad.clone()]),
+                (
+                    BuiltinCmd::SignalFlag,
+                    vec![bad.clone(), SsaValue::Literal("0".into())],
+                ),
+                (
+                    BuiltinCmd::SignalFlag,
+                    vec![SsaValue::Literal("15".into()), bad.clone()],
+                ),
                 (
                     BuiltinCmd::TrapSignal,
                     vec![bad.clone(), SsaValue::Literal("1".into())],
@@ -1507,6 +1531,56 @@ mod invariant_tests {
             message.contains("StoreBgPid needs a variable operand"),
             "{message}"
         );
+    }
+
+    #[test]
+    fn signal_registration_needs_a_flag_or_exit_bit() {
+        let message = internal_ice(
+            BuiltinCmd::SignalFlag,
+            vec![
+                SsaValue::Literal("15".into()),
+                SsaValue::Literal("2".into()),
+            ],
+        );
+        assert!(message.contains("EXIT bit must be 0 or 1"), "{message}");
+    }
+
+    #[test]
+    fn close_needs_a_literal_os_descriptor_even_when_unchecked() {
+        for count in [0, 2] {
+            let message = native_ice(vec![SsaInst::command(
+                "close",
+                vec![SsaValue::Literal("1".into()); count],
+                vec![],
+                false,
+            )]);
+            assert!(
+                message.contains("Close needs exactly 1 SSA arguments"),
+                "{message}"
+            );
+        }
+        for (arg, claim) in [
+            (
+                SsaValue::Var(VarRef::new("dynamic", 0)),
+                "literal file descriptor",
+            ),
+            (SsaValue::Literal("bad".into()), "non-integer literal"),
+            (SsaValue::Literal("-1".into()), "outside 0..2147483647"),
+            (
+                SsaValue::Literal("2147483648".into()),
+                "outside 0..2147483647",
+            ),
+        ] {
+            for checked in [false, true] {
+                let message = native_ice(vec![SsaInst::command(
+                    "close",
+                    vec![arg.clone()],
+                    vec![],
+                    checked,
+                )]);
+                assert!(message.contains(claim), "{message}");
+            }
+        }
     }
 
     #[test]

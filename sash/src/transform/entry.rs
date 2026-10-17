@@ -32,6 +32,7 @@ pub fn ir_to_ssa_typed(
 
     // Copy exiting signals to program for codegen check point insertion
     ssa.exiting_signals = state.exiting_signals.clone();
+    ssa.install_signal_checkpoints();
     // Surface the collected external-program manifest (see VersionState::external_deps).
     ssa.external_deps = state.external_deps.borrow().clone();
 

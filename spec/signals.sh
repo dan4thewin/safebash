@@ -1,7 +1,7 @@
 #!/bin/bash
 # DD#56 — signals and END block
 . common.sh
-plan=49
+plan=66
 setup signals
 
 set +e
@@ -389,6 +389,117 @@ END {
   exit 7
 }'
 [[ $rc = 7 && $out = "main" ]]; chk 56.87
+
+# FLAG cannot become an EXIT merely because another signal is EXIT-armed.
+run_sash 'signal 12 FLAG
+signal 15 EXIT
+END { echo $(signum) }
+/bin/kill -12 $$
+echo survived'
+[[ $rc = 0 && $out = $'survived\n12' && -z $rerr ]]; chk sig518.1
+
+run_sash 'signal 15 EXIT
+/bin/kill -15 $$
+echo bad'
+[[ $rc = 143 && -z $out && -z $rerr ]]; chk sig518.2
+
+run_sash 'signal 15 EXIT
+signal 15 FLAG
+/bin/kill -15 $$
+echo $(signum)'
+[[ $rc = 0 && $out = 15 && -z $rerr ]]; chk sig518.3
+
+run_sash 'signal 15 FLAG
+/bin/kill -15 $$
+signal 15 EXIT
+/bin/true
+echo survived'
+[[ $rc = 0 && $out = survived && -z $rerr ]]; chk sig518.4
+
+run_sash 'int p=$$
+signal 15 EXIT
+/bin/kill -15 $p | /bin/cat
+echo bad'
+[[ $rc = 143 && -z $out && -z $rerr ]]; chk sig518.5
+
+run_sash 'signal 15 EXIT
+END {
+  fn cleanup { /bin/echo end }
+  cleanup
+  for x in a b { /bin/echo $x }
+}
+/bin/kill -15 $$
+echo bad'
+[[ $rc = 143 && $out = $'end\na\nb' && -z $rerr ]]; chk sig518.6
+
+# Delivery on the first authored write leaves a pending EXIT without an
+# external-command checkpoint masking the function/loop boundary under test.
+run_sash_under 'signal 15 EXIT
+fn f { echo bad }
+echo armed
+f
+echo bad' strace -qq -o signal.log -e inject=write:signal=SIGTERM:when=1
+[[ $rc = 143 && $out = armed && -z $rerr ]]; chk sig518.7
+
+run_sash_under 'signal 15 EXIT
+fn f { echo tick; echo body }
+f
+echo bad' strace -qq -o signal.log -e inject=write:signal=SIGTERM:when=1
+[[ $rc = 143 && $out = $'tick\nbody' && -z $rerr ]]; chk sig518.8
+
+run_sash_under 'signal 15 EXIT
+fn f -> int { echo tick; return 7 }
+int n=$(( (f) ))
+echo $n
+echo bad' strace -qq -o signal.log -e inject=write:signal=SIGTERM:when=1
+[[ $rc = 143 && $out = tick && -z $rerr ]]; chk sig518.9
+
+run_sash_under 'signal 15 EXIT
+int n=0
+while (( n < 3 )) { (( n += 1 )); echo tick; echo body }
+echo bad' strace -qq -o signal.log -e inject=write:signal=SIGTERM:when=1
+[[ $rc = 143 && $out = $'tick\nbody' && -z $rerr ]]; chk sig518.10
+
+run_sash_under 'signal 15 EXIT
+for x in a b c { echo $x }
+echo bad' strace -qq -o signal.log -e inject=write:signal=SIGTERM:when=1
+[[ $rc = 143 && $out = a && -z $rerr ]]; chk sig518.11
+
+run_sash_under 'signal 15 EXIT
+array a=(a b c)
+for x in @a { echo $x }
+echo bad' strace -qq -o signal.log -e inject=write:signal=SIGTERM:when=1
+[[ $rc = 143 && $out = a && -z $rerr ]]; chk sig518.12
+
+run_sash_under 'signal 15 EXIT
+fn f { for x in @args { echo $x } }
+f a b c
+echo bad' strace -qq -o signal.log -e inject=write:signal=SIGTERM:when=1
+[[ $rc = 143 && $out = a && -z $rerr ]]; chk sig518.13
+
+run_sash_under 'signal 15 EXIT
+int n=0
+until (( n >= 3 )) { (( n += 1 )); echo tick }
+echo bad' strace -qq -o signal.log -e inject=write:signal=SIGTERM:when=1
+[[ $rc = 143 && $out = tick && -z $rerr ]]; chk sig518.14
+
+run_sash_under 'signal 15 EXIT
+exec 3> marker
+fn f { write tick >&3 }
+s=$(f)
+echo $s
+echo bad' strace -qq -o signal.log -e inject=write:signal=SIGTERM:when=1
+[[ $rc = 143 && -z $out && $(<marker) = tick && -z $rerr ]]; chk sig518.15
+
+run_sash_under 'signal 15 FLAG
+echo armed
+echo $(signum)' strace -qq -o signal.log -e inject=write:signal=SIGTERM:when=1
+[[ $rc = 0 && $out = $'armed\n15' && -z $rerr ]]; chk sig518.16
+
+printf '%s\n' 'signal 15 FLAG; fn f { echo ok }; f' > flag.sash
+out=$(timeout "$SPEC_TIMEOUT" "${SASH:-sash}" --emit-c flag.sash 2> flag.err)
+rc=$?
+[[ $rc = 0 && $out != *"= sash_exit_signum;"* && $out != *"__signal_checkpoint"* && ! -s flag.err ]]; chk sig518.17
 
 set -e
 tally

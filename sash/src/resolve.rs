@@ -124,11 +124,13 @@ fn builtin_denotation(k: BuiltinCmd) -> Option<ArithDenotation> {
         // right answer if the route ever opened: an opcode is not a value.
         B::NegateTestResult
         | B::SetTestFromStatus
+        | B::SetTestFromPipe
         | B::LetExit
         | B::ForkBackground
         | B::StoreBgPid
         | B::TrapSignal
         | B::SignalFlag
+        | B::SignalCheckpoint
         | B::TableDelete
         | B::TableDeleteIdx => Statement,
         B::Other => return None,

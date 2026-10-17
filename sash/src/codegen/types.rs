@@ -171,6 +171,7 @@ pub(super) struct ExternFuncs {
     pub(super) require_value: cranelift_module::FuncId,
     pub(super) signal_flag: cranelift_module::FuncId,
     pub(super) signum: cranelift_module::DataId,
+    pub(super) exit_signum: cranelift_module::DataId,
     pub(super) trace_flag: cranelift_module::DataId,
 }
 

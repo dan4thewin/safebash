@@ -461,7 +461,7 @@ pub(super) fn lower_while(
     state: &mut VersionState,
     block: BlockId,
 ) -> BlockId {
-    let header = ssa.new_block("while.header");
+    let header = ssa.new_checkpoint_block("while.header");
     let body_block = ssa.new_block("while.body");
     let exit_block = ssa.new_block("while.exit");
 
@@ -757,7 +757,11 @@ fn lower_for_static(
     let mut current = block;
 
     // Pre-create iteration blocks so `continue` can jump to the next one.
-    let iter_blocks: Vec<BlockId> = f.words.iter().map(|_| ssa.new_block("for.iter")).collect();
+    let iter_blocks: Vec<BlockId> = f
+        .words
+        .iter()
+        .map(|_| ssa.new_checkpoint_block("for.iter"))
+        .collect();
 
     for (i, word) in f.words.iter().enumerate() {
         let iter_block = iter_blocks[i];

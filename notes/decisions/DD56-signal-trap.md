@@ -127,10 +127,30 @@ The compiler inserts signal flag checks only when at least one
 - Before function returns
 - At loop tops (while/for/until)
 
-At each check point: load `signum`, if nonzero and signal is in the
-exiting set, jump to END block.
+At each check point: load the pending-EXIT signal, and if nonzero enter END
+with status `128+signal` (or exit directly if there is no END).
 
 FLAG traps add zero runtime overhead — no checks inserted.
+
+### Checkpoint implementation corrected (2026-10-17, journal 518)
+
+The check reads a separate pending-EXIT atomic, not `signum` against a
+compile-time set. FLAG updates only `signum`; EXIT updates both. This records
+the disposition **at delivery**: a FLAG signal cannot trigger shutdown merely
+because the program also declares EXIT, and a historical FLAG does not become
+an exit when that signal is later armed EXIT.
+
+Both backends check before and after external commands and pipelines, before
+a replacing `exec`, and at the loop/function boundaries above. This includes
+captured functions, integer functions and forked function stages. A pending
+EXIT sets status `128+signal` and enters END, or exits directly when there is
+no END. Checks inside the canonical END region are skipped: numeric block
+ordering is not a reliable test of region membership.
+
+Loop lowering discards its first-pass discovery instructions. The transform
+therefore records checkpoint block IDs, then installs `SignalCheckpoint`
+instructions after all lowering and END construction. FLAG-only programs
+receive none.
 
 ## Changing signal disposition
 
@@ -161,17 +181,11 @@ Last declaration wins at that point in execution.
 
 ## Runtime implementation
 
-Signal handler (Rust, async-signal-safe):
-```rust
-static SASH_SIGNUM: AtomicI64 = AtomicI64::new(0);
-
-extern "C" fn sash_signal_handler(sig: c_int) {
-    SASH_SIGNUM.store(sig as i64, Ordering::Relaxed);
-}
-```
-
-Registration via `sigaction(2)`. Flag check in generated code:
-load `SASH_SIGNUM`, compare against exiting set, branch to END.
+Two async-signal-safe Rust handlers store into `AtomicI64` globals
+`sash_signum` and `sash_exit_signum` as described above.
+`sash_signal_flag(signum, exiting)` selects FLAG (`0`) or EXIT (`1`) and
+delegates to the shared `sash_trap` sigaction registration and naked syscall
+restorer. Native code uses atomic loads; emitted C uses volatile loads.
 
 ## Interaction with DD#55
 

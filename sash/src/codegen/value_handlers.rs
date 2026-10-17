@@ -760,7 +760,7 @@ pub(super) fn int_intrinsic_i64(
         "signum" => {
             let gv = module.declare_data_in_func(externs.signum, builder.func);
             let base = builder.ins().global_value(I64, gv);
-            builder.ins().load(I64, MemFlags::new(), base, 0)
+            builder.ins().atomic_load(I64, MemFlags::new(), base)
         }
         "status" => return Some(builder.use_var(exit_status_var)),
         _ => return None,
