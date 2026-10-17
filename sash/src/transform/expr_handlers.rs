@@ -480,32 +480,17 @@ fn collection_operand_name(expr: &Expr) -> String {
 }
 
 fn try_len_intrinsic(c: &Command, state: &VersionState) -> Option<SsaValue> {
-    // DD#75 §2: dispatch on the operand's TYPE, not the `$` sigil. This
-    // retires the old `len a` vs `len $a` syntactic split that made
-    // `len <string>` read a non-table (garbage).
-    //
-    // The `strlen` fallback below does NOT mean "byte length" in general — it
-    // means "read the var slot's length field", and `handle_param_expansion`
-    // emits exactly that. For a collection that field holds the element
-    // count, which is why the branch is correct for the two collection kinds
-    // that are absent from `state.collections`: DD#100 parameter slots and
-    // the implicit `args`. A statement-level `len <scalar>` never arrives
-    // here at all — SB4030 rejects it and points at `strlen`. What remains
-    // is the DD#58 arithmetic sexpr `(len s)`, where a string operand is
-    // allowed and does yield its byte length.
+    // `len` counts collections; scalar length is SsaValue::StrLen.
+    // Unbound function templates and later-rejected operands also pass here,
+    // so absence from `state.collections` is not a scalar-length request.
     let arg = c.args.first()?;
     let name = collection_operand_name(arg);
     // DD#75 §5: a user-written `args` names the implicit per-function array.
     let name = super::expressions::resolve_args_name(&name, state);
     let v = state.lookup(&name);
-    let operator = if state.collections.contains(&name) {
-        "arrlen"
-    } else {
-        "strlen"
-    };
     Some(SsaValue::ParamExpansion {
         var: v,
-        operator: operator.to_string(),
+        operator: "arrlen".to_string(),
         operand: String::new(),
     })
 }

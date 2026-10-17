@@ -276,11 +276,9 @@ pub(super) fn lower_value(
             emit_int_to_str(builder, module, externs, result)
         }
         SsaValue::CmdSubst {
-            argv: argv_values,
-            suppressed,
+            argv: argv_values, ..
         } => handle_cmdsub(
             argv_values,
-            *suppressed,
             builder,
             module,
             vars,
@@ -1795,6 +1793,82 @@ mod invariant_tests {
     }
 
     #[test]
+    fn string_cmdsub_carriers_must_be_intrinsics_with_literal_heads() {
+        for (argv, expected) in [
+            (vec![], "non-literal head"),
+            (
+                vec![SsaValue::Var(VarRef::new("dynamic", 0))],
+                "non-literal head",
+            ),
+            (
+                vec![SsaValue::Literal("/bin/echo".into())],
+                "must be lifted to a pipeline",
+            ),
+            (
+                vec![SsaValue::Literal("unknown-intrinsic".into())],
+                "must be lifted to a pipeline",
+            ),
+        ] {
+            let message = native_value_ice(
+                SsaValue::CmdSubst {
+                    argv,
+                    suppressed: false,
+                },
+                VarType::String,
+            );
+            assert!(message.contains(expected), "{message}");
+        }
+    }
+
+    #[test]
+    fn the_direct_status_emitter_snapshots_its_integer_slot_without_calls() {
+        let isa = cranelift_native::builder()
+            .expect("host ISA")
+            .finish(cranelift_codegen::settings::Flags::new(
+                cranelift_codegen::settings::builder(),
+            ))
+            .expect("build ISA");
+        let mut module = ObjectModule::new(
+            cranelift_object::ObjectBuilder::new(
+                isa,
+                "status_snapshot",
+                cranelift_module::default_libcall_names(),
+            )
+            .expect("object builder"),
+        );
+        let externs = crate::codegen::setup::declare_runtime_functions(&mut module);
+        let mut function = cranelift_codegen::ir::Function::new();
+        function
+            .signature
+            .returns
+            .push(cranelift_codegen::ir::AbiParam::new(I64));
+        let mut context = cranelift_frontend::FunctionBuilderContext::new();
+        let mut builder = FunctionBuilder::new(&mut function, &mut context);
+        let entry = builder.create_block();
+        builder.switch_to_block(entry);
+        builder.seal_block(entry);
+        let status = builder.declare_var(I64);
+        let original = builder.ins().iconst(I64, 37);
+        builder.def_var(status, original);
+        let snapshot = super::super::value_handlers::int_intrinsic_i64(
+            "status",
+            &mut builder,
+            &mut module,
+            &externs,
+            status,
+        );
+        assert_eq!(snapshot, Some(original));
+        let next = builder.ins().iconst(I64, 42);
+        builder.def_var(status, next);
+        assert_ne!(snapshot, Some(builder.use_var(status)));
+        builder
+            .ins()
+            .return_(&[snapshot.expect("status is an integer")]);
+        builder.finalize();
+        assert!(!function.display().to_string().contains("call"));
+    }
+
+    #[test]
     fn integer_captures_need_an_emitter_not_a_string_fallback() {
         for argv in [
             vec![],
@@ -1856,7 +1930,7 @@ mod invariant_tests {
     }
 
     #[test]
-    fn retired_array_modifiers_cannot_become_plain_joins() {
+    fn retired_parameter_operators_have_no_backend_fallback() {
         for operator in [
             "arrvals_/",
             "arrvals_//",
@@ -1868,6 +1942,7 @@ mod invariant_tests {
             "arrvals_^^",
             "arrvals_,",
             "arrvals_,,",
+            "strlen",
         ] {
             let message = native_value_ice(
                 SsaValue::ParamExpansion {

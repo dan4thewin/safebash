@@ -188,6 +188,9 @@ fn classify_inst_def(
             // the SSA taint view correct (defense-in-depth).
             taint.insert(var_key(target), taint_of_flag(*tainted));
         }
+        SsaInst::Pipeline { capture, .. } => {
+            taint.extend(capture.target().map(|target| (var_key(target), Taint::Tainted)));
+        }
 
         SsaInst::ArgvFill { target, .. } => {
             // DD#60/#61: argv is a bulk-read source — always tainted.
@@ -235,8 +238,7 @@ fn classify_inst_def(
         | SsaInst::CaptureStart { .. }
         | SsaInst::AttestAll { .. } // validates in place; AttestRetag defines the clean version
         | SsaInst::RedirectPush { .. } // moves fds around; defines no value
-        | SsaInst::RedirectPop { .. }
-        | SsaInst::Pipeline { .. } => {}
+        | SsaInst::RedirectPop { .. } => {}
     }
 }
 
@@ -457,10 +459,7 @@ fn value_is_tainted(
             value_is_tainted(inner, taint, user_functions)
         }
 
-        // Command substitution: the only variant whose taint
-        // depends on the callee (builtins are clean, externals
-        // tainted, user fns clean by DD#24).
-        SsaValue::CmdSubst { argv, .. } => cmd_subst_taint(argv, taint, user_functions),
+        SsaValue::CmdSubst { argv, .. } => cmd_subst_taint(argv, user_functions),
     }
 }
 
@@ -565,23 +564,18 @@ fn any_tainted<'a>(
     }
 }
 
-/// Compute the taint of a `$(...)` command substitution.
+/// Compute the taint of an intrinsic command-substitution carrier.
 ///
 /// - `getenv` / `argv` / `arg` — external input, always tainted.
 /// - Pure generators (`argc`, `epochseconds`, `random`, `getpid`, `getcwd`,
 ///   …) and `len` (cardinality only, DD#24-exempt) — always clean.
-/// - **Pass-through transforms** (`echo`) — the output derives
-///   from the operands, so it is tainted iff any operand is, exactly like every
-///   other transform value (`Concat`, `RegexReplace`, …). (`join`/`keys` never
-///   reach here: the transform lowers them to intrinsics, not a command
-///   capture, so a bare `join`/`keys` argv can't appear in SSA.)
-/// - User-defined functions — clean by DD#24.
-/// - Everything else runs via execve/execveat — tainted.
-fn cmd_subst_taint(
-    argv: &[SsaValue],
-    taint: &HashMap<String, Taint>,
-    user_functions: &std::collections::HashSet<String>,
-) -> Taint {
+///
+/// Builtin `echo` lowers to a concat/body capture, not this carrier. External
+/// captures define tainted Pipeline targets; a basename such as `/bin/echo`
+/// must never acquire builtin pass-through semantics here.
+/// User-function carriers violate lowering; other malformed carriers stay
+/// conservatively tainted until the backend refuses them.
+fn cmd_subst_taint(argv: &[SsaValue], user_functions: &std::collections::HashSet<String>) -> Taint {
     // INVARIANT: the head is always a `Literal`, and argv is never empty.
     // SB5011 rejects a non-literal command name ("a command name must be a
     // literal path") in every position, and SB4045 rejects a zero-argument
@@ -594,14 +588,12 @@ fn cmd_subst_taint(
     let Some(SsaValue::Literal(cmd)) = argv.first() else {
         unreachable!("SB5011 guarantees a literal command head, SB4045 a non-empty argv");
     };
-    let basename = cmd.rsplit('/').next().unwrap_or(cmd);
-    match basename {
+    match cmd.as_str() {
         "getenv" | "argv" | "arg" => Taint::Tainted,
         // DD#126: `wait` yields a pid the kernel assigned to a process this
         // program forked — compiler-managed, like `getpid`, not input.
         "len" | "strlen" | "epochseconds" | "random" | "argc" | "getpid" | "getppid"
         | "waitstatus" | "getcpid" | "getcwd" | "status" | "signum" | "wait" => Taint::Clean,
-        "echo" => any_tainted(&argv[1..], taint, user_functions),
         _ => {
             // Only a BARE name can be a user function: DD#23 resolution
             // rewrites an external head to an absolute path and nothing else
@@ -609,8 +601,8 @@ fn cmd_subst_taint(
             //
             // Do NOT fall back to the basename. `/bin/cat` alongside a user
             // function named `cat` would match and be classified Clean — a
-            // real execve laundered by a name collision, exactly contrary to
-            // "everything else runs via execve/execveat" above.
+            // real execve laundered by a name collision, contrary to the
+            // external-input contract.
             //
             // The `cmd` test is never true: a user-function capture is
             // lowered elsewhere and never reaches this arm, so the `Clean`
@@ -782,7 +774,7 @@ fn check_value_use(
 /// the rule, `n=$(len a)` on a tainted array made `n` tainted while the
 /// direct `echo $(len a)` passed.
 fn is_measurement_op(operator: &str) -> bool {
-    operator == "arrlen" || operator == "strlen"
+    operator == "arrlen"
 }
 
 /// The propagation half of the DD#60 rule above: a measurement yields a count,
@@ -1044,7 +1036,6 @@ mod tests {
     // panic and the pass that enforces the invariant stayed the defense.
     #[test]
     fn cmd_subst_head_resolution_ices() {
-        let taint = HashMap::new();
         let fns = std::collections::HashSet::from(["f".to_string()]);
 
         for (what, argv) in [
@@ -1053,15 +1044,18 @@ mod tests {
             ("a user-function head", vec![SsaValue::Literal("f".into())]),
         ] {
             let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                cmd_subst_taint(&argv, &taint, &fns)
+                cmd_subst_taint(&argv, &fns)
             }));
             assert!(r.is_err(), "{what} must ICE, not return a taint");
         }
 
-        // The live arm is unchanged: a resolved external is tainted.
-        assert_eq!(
-            cmd_subst_taint(&[SsaValue::Literal("/bin/cat".into())], &taint, &fns),
-            Taint::Tainted
-        );
+        // Malformed external carriers still fail closed before backend refusal.
+        for name in ["/bin/cat", "/bin/echo", "/bin/getpid", "/tmp/status"] {
+            assert_eq!(
+                cmd_subst_taint(&[SsaValue::Literal(name.into())], &fns),
+                Taint::Tainted,
+                "{name}"
+            );
+        }
     }
 }

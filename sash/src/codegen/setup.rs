@@ -1076,6 +1076,19 @@ impl<'a> Interner<'a> {
         }
     }
 
+    fn intern_pipeline(
+        &mut self,
+        stages: &[(String, Vec<SsaValue>, Vec<crate::ir::Redirect>)],
+        capture: &PipelineCapture,
+    ) {
+        if capture.target().is_some() {
+            self.intern("");
+        }
+        for (name, args, redirects) in stages {
+            self.intern_command_parts(name, args, redirects, false);
+        }
+    }
+
     fn intern_inst(&mut self, inst: &SsaInst) {
         match inst {
             SsaInst::Assign { value, .. } => self.intern_value(value),
@@ -1086,11 +1099,9 @@ impl<'a> Interner<'a> {
                 ..
             } => self.intern_command_parts(name, args, redirects, true),
             SsaInst::Test(test_expr, _) => self.intern_test_expr(test_expr),
-            SsaInst::Pipeline { stages, .. } => {
-                for (name, args, redirects) in stages {
-                    self.intern_command_parts(name, args, redirects, false);
-                }
-            }
+            SsaInst::Pipeline {
+                stages, capture, ..
+            } => self.intern_pipeline(stages, capture),
             SsaInst::SubscriptAssign { index, value, .. } => {
                 self.intern_value(index);
                 self.intern_value(value);
@@ -1285,7 +1296,12 @@ fn declare_inst_bases(
                 .entry(target.name.clone())
                 .or_insert_with(|| assign_target_slot(builder, target, value));
         }
-        SsaInst::ReadLine { target, .. } | SsaInst::CaptureEnd { target, .. } => {
+        SsaInst::ReadLine { target, .. }
+        | SsaInst::CaptureEnd { target, .. }
+        | SsaInst::Pipeline {
+            capture: PipelineCapture::Value(target),
+            ..
+        } => {
             base_vars
                 .entry(target.name.clone())
                 .or_insert_with(|| slot_for_var_type(builder, &target.var_type));
@@ -1352,6 +1368,10 @@ fn map_inst_versioned(
         SsaInst::Assign { target, .. }
         | SsaInst::ReadLine { target, .. }
         | SsaInst::CaptureEnd { target, .. }
+        | SsaInst::Pipeline {
+            capture: PipelineCapture::Value(target),
+            ..
+        }
         // The bulk fills define a real SSA version so the taint backstop can
         // see them (they fill a collection in place). Every version must ALIAS
         // the one base slot: an unmapped version makes `load_var` miss, which

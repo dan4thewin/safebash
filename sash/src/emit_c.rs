@@ -131,6 +131,7 @@ fn emit_prologue(out: &mut String) {
     .unwrap();
     writeln!(out, "extern void sash_capture_start_buf(void);").unwrap();
     writeln!(out, "extern sash_pair sash_capture_end_buf(void);").unwrap();
+    writeln!(out, "extern sash_pair sash_capture_drain(i64 fd);").unwrap();
     writeln!(out).unwrap();
     writeln!(out, "/* sash-rt C ABI (Phase 4) */").unwrap();
     writeln!(
@@ -272,11 +273,6 @@ fn emit_prologue(out: &mut String) {
     )
     .unwrap();
     writeln!(out, "extern void sash_argv_guard(const char* p, i64 n);").unwrap();
-    writeln!(
-        out,
-        "extern const char* sash_capture_status(const char* const* argv, const char* const* envp, i64* out_len, i64* out_status);"
-    )
-    .unwrap();
     // cd: chdir + DD#55 errno-diagnostic abort.
     writeln!(out, "extern i64 sash_chdir(const char* p, i64 l);").unwrap();
     writeln!(out, "extern void* sash_alloc(i64 n);").unwrap();
@@ -536,9 +532,9 @@ fn collection_or_declared_type(value: &SsaValue, declared: VarType) -> VarType {
     }
 }
 
-/// Record every read target as a String var so `declare_vars` emits its
+/// Record string-valued targets so `declare_vars` emits their
 /// `_ptr`/`_len` even when the value is never read later.
-fn insert_read_target_types(targets: &[VarRef], types: &mut VarTypes) {
+fn insert_string_target_types(targets: &[VarRef], types: &mut VarTypes) {
     for t in targets {
         types.insert((t.name.clone(), t.version), VarType::String);
     }
@@ -558,7 +554,9 @@ fn collect_inst_var_types(inst: &SsaInst, types: &mut VarTypes) {
                 collect_value_vars(a, types);
             }
         }
-        SsaInst::Pipeline { stages, .. } => collect_pipeline_var_types(stages, types),
+        SsaInst::Pipeline {
+            stages, capture, ..
+        } => collect_pipeline_var_types(stages, capture, types),
         SsaInst::ArrayAppend { value, .. } => collect_value_vars(value, types),
         // The capture target holds the captured stdout (its declared type).
         SsaInst::CaptureEnd { target, .. } => {
@@ -568,15 +566,13 @@ fn collect_inst_var_types(inst: &SsaInst, types: &mut VarTypes) {
         // never read later (native declares all read targets — otherwise
         // c emits an assignment to an undeclared `_ptr`/`_len`).
         SsaInst::ReadLine { target, .. } => {
-            insert_read_target_types(std::slice::from_ref(target), types);
+            insert_string_target_types(std::slice::from_ref(target), types);
         }
         // DD#61 attest-all: the loop binders are set inside the emitted loop, so
         // they need C slot declarations (as String ptr/len). c_var_name
         // collapses their unique versions onto the binder name.
         SsaInst::AttestAll { binders, .. } => {
-            for b in binders {
-                types.insert((b.name.clone(), b.version), VarType::String);
-            }
+            insert_string_target_types(binders, types);
         }
         _ => {}
     }
@@ -585,8 +581,14 @@ fn collect_inst_var_types(inst: &SsaInst, types: &mut VarTypes) {
 /// Walk every pipeline stage's args, recording each referenced var's type.
 fn collect_pipeline_var_types(
     stages: &[(String, Vec<SsaValue>, Vec<crate::ir::Redirect>)],
+    capture: &PipelineCapture,
     types: &mut VarTypes,
 ) {
+    types.extend(
+        capture
+            .target()
+            .map(|target| ((target.name.clone(), target.version), target.var_type)),
+    );
     for (_, args, _) in stages {
         for a in args {
             collect_value_vars(a, types);
@@ -919,6 +921,10 @@ fn emit_capture_end_c(e: &mut Emit, site: u32, buffered: bool, target: &VarRef) 
         )
         .unwrap();
     }
+    store_capture_c(e, target, &format!("{t}.ptr"), &format!("{t}.len"));
+}
+
+fn store_capture_c(e: &mut Emit, target: &VarRef, ptr: &str, len: &str) {
     let base = c_var_name(&target.name, target.version);
     // DD#58 Option C: `$(…)` is return-type-polymorphic, and a `CaptureEnd`
     // is the *stdout* half of it — a `-> int` function's return value goes
@@ -930,13 +936,7 @@ fn emit_capture_end_c(e: &mut Emit, site: u32, buffered: bool, target: &VarRef) 
     let VarType::String = target.var_type else {
         panic!("DD#58: a capture yields stdout, so its target is a string")
     };
-    writeln!(
-        e.out,
-        "    {base}_ptr = {t}.ptr; {base}_len = {t}.len;",
-        base = base,
-        t = t
-    )
-    .unwrap();
+    writeln!(e.out, "    {base}_ptr = {ptr}; {base}_len = {len};").unwrap();
 }
 
 /// Attest family sub-dispatcher for `emit_inst` (Attest / AttestAll / AttestRetag).
@@ -1158,18 +1158,10 @@ fn emit_inst(e: &mut Emit, inst: &SsaInst, types: &VarTypes) {
         SsaInst::Pipeline {
             stages,
             checked,
-            capture_read_fd,
+            capture,
             suppressed,
             negated,
-        } => emit_pipeline(
-            e,
-            stages,
-            *checked,
-            *capture_read_fd,
-            suppressed,
-            negated,
-            types,
-        ),
+        } => emit_pipeline(e, stages, *checked, capture, suppressed, negated, types),
         // Phase 5: SsaInst::SubscriptAssign → sash_table_set.
         // Mirrors handle_subscript_assign (codegen/inst_handlers.rs:1070).
         SsaInst::SubscriptAssign {
@@ -1372,12 +1364,7 @@ fn lower_value_as_str(e: &mut Emit, value: &SsaValue, types: &VarTypes) -> CStr 
             operator,
             operand,
         } => emit_param_expansion(e, var, operator, operand, types),
-        // Phase 3: $(...) → handle_cmdsub
-        // (codegen/value_handlers.rs:691). Tries native intrinsics
-        // first; external exec is deferred to Phase 4.
-        SsaValue::CmdSubst {
-            argv, suppressed, ..
-        } => emit_cmdsub(e, argv, *suppressed, types),
+        SsaValue::CmdSubst { argv, .. } => emit_cmdsub(e, argv, types),
         // Concat in value position (assignment RHS, subscript-assign value):
         // left-fold the parts through sash_concat, mirroring native
         // lower_concat_value (codegen/values.rs:314).
@@ -2923,16 +2910,8 @@ fn highest_version(name: &str, types: &VarTypes) -> Option<((String, u32), VarTy
 /// Mirrors `handle_param_expansion` from codegen/value_handlers.rs:18.
 /// Loads the var as (ptr, len), then dispatches on operator.
 ///
-/// Phase 3 implements: strlen (#), strip suffix (% / %%), strip
-/// prefix (# / ##), default (:- / -), alternate (:+ / +),
-/// substring, case conversion (^ / ^^ / , / ,,). Plain ${var} with
-/// no operator is handled by emit_assign at the consumer level
-/// (it never appears as a ParamExpansion with empty operator in
-/// SSA — the transform converts it to SsaValue::Var).
-///
-/// Deferred to later phases: glob (needs `.` dir
-/// literal), regex_replace (DD#37), arrvals / arrjoin
-/// (needs table runtime), arrlen, strlen_elem.
+/// Collection length/join, globs and substring retain parameter operators.
+/// Scalar length is SsaValue::StrLen, not a slot-length parameter operator.
 fn emit_param_expansion(
     e: &mut Emit,
     var: &VarRef,
@@ -2944,7 +2923,6 @@ fn emit_param_expansion(
 
     match operator {
         "" => (s_ptr, s_len),
-        "strlen" => emit_itoa_temp(e, &s_len),
         // Phase 5: arrlen / arrvals — table-based vars.
         // The var's _ptr slot holds the table pointer; _len holds 0.
         "arrlen" => emit_arrlen(e, &s_ptr),
@@ -3345,8 +3323,37 @@ fn lower_cmdsubst_as_int_c(e: &mut Emit, argv: &[SsaValue], types: &VarTypes) ->
 }
 
 #[cfg(test)]
-mod integer_capture_invariant_tests {
+mod capture_invariant_tests {
     use super::*;
+
+    #[test]
+    fn string_cmdsub_carriers_must_be_intrinsics_with_literal_heads() {
+        for (argv, expected) in [
+            (vec![], "non-literal head"),
+            (
+                vec![SsaValue::Var(VarRef::new("dynamic", 0))],
+                "non-literal head",
+            ),
+            (
+                vec![SsaValue::Literal("/bin/echo".into())],
+                "must be lifted to a pipeline",
+            ),
+            (
+                vec![SsaValue::Literal("unknown-intrinsic".into())],
+                "must be lifted to a pipeline",
+            ),
+        ] {
+            let payload =
+                std::panic::catch_unwind(|| emit_cmdsub(&mut Emit::new(), &argv, &VarTypes::new()))
+                    .expect_err("malformed SSA must not emit C");
+            let message = payload
+                .downcast_ref::<String>()
+                .map(String::as_str)
+                .or_else(|| payload.downcast_ref::<&str>().copied())
+                .expect("the invariant reports text");
+            assert!(message.contains(expected), "{message}");
+        }
+    }
 
     #[test]
     fn an_integer_capture_without_an_emitter_is_a_loud_ice() {
@@ -3412,64 +3419,13 @@ mod integer_capture_invariant_tests {
     }
 }
 
-/// Mirrors `handle_cmdsub` from codegen/value_handlers.rs:691.
-/// Tries native intrinsics first (getenv, epochseconds, etc.), then the
-/// external exec/capture path.
-fn emit_cmdsub(e: &mut Emit, argv: &[SsaValue], suppressed: bool, types: &VarTypes) -> CStr {
-    if let Some(SsaValue::Literal(name)) = argv.first() {
-        if let Some(result) = try_native_intrinsic_c(e, name, argv, types) {
-            return result;
-        }
-        return emit_cmdsub_exec_c(e, name, &argv[1..], suppressed, types);
-    }
-    // A non-literal head (`$( $c hi )`) is rejected by SB5011 in validate.rs,
-    // the same rule statement position has always had, so reaching here means
-    // the validator let one through. This used to emit a comment and capture
-    // the empty string.
-    panic!("ICE: command substitution with a non-literal head reached codegen")
-}
-
-/// External `$(cmd args…)` capture: build argv, fork/exec and capture stdout
-/// via `sash_capture_status`, set `$?`, and abort on nonzero — mirrors native
-/// `emit_cmdsub_exec` (value_handlers.rs). `suppressed` (`$(- cmd)`, DD#55)
-/// discards the status and skips the abort; the captured (ptr, len) is returned
-/// (trailing newline already stripped by the runtime).
-fn emit_cmdsub_exec_c(
-    e: &mut Emit,
-    name: &str,
-    args: &[SsaValue],
-    suppressed: bool,
-    types: &VarTypes,
-) -> CStr {
-    let argv = emit_argv(e, name, args, types, "    ");
-    let t = e.fresh();
-    writeln!(
-        e.out,
-        "    i64 {t}_l; i64 {t}_st; const char* {t}_p = sash_capture_status((const char* const*){argv}, sash_envp, &{t}_l, &{t}_st);",
-        t = t,
-        argv = argv
-    )
-    .unwrap();
-    writeln!(
-        e.out,
-        "    __exit_status = {t}_st; __test_result = ({t}_st == 0) ? 1 : 0;",
-        t = t
-    )
-    .unwrap();
-    if !suppressed {
-        // DD#55: same diagnostic native emits in emit_cmdsub_abort_check
-        // (value_handlers.rs:875). A `-`-suppressed capture never reaches here,
-        // so it stays silent.
-        let esc = c_escape(name);
-        writeln!(
-            e.out,
-            "    if ({t}_st != 0) {{ sash_emsg_status(\"{esc}\", {nl}, {t}_st); sash_exit({t}_st); }}",
-            t = t,
-            nl = name.len()
-        )
-        .unwrap();
-    }
-    (format!("{}_p", t), format!("{}_l", t))
+/// Only intrinsic carriers remain here; external captures are Pipeline effects.
+fn emit_cmdsub(e: &mut Emit, argv: &[SsaValue], types: &VarTypes) -> CStr {
+    let Some(SsaValue::Literal(name)) = argv.first() else {
+        panic!("ICE: command substitution with a non-literal head reached codegen")
+    };
+    try_native_intrinsic_c(e, name, argv, types)
+        .expect("ICE: non-intrinsic command substitution must be lifted to a pipeline")
 }
 
 /// Mirrors `try_native_intrinsic` (codegen/value_handlers.rs:736).
@@ -3839,7 +3795,7 @@ fn emit_pipeline(
     e: &mut Emit,
     stages: &[(String, Vec<SsaValue>, Vec<crate::ir::Redirect>)],
     checked: bool,
-    capture_read_fd: bool,
+    capture: &PipelineCapture,
     suppressed: &[bool],
     negated: &[bool],
     types: &VarTypes,
@@ -3848,7 +3804,10 @@ fn emit_pipeline(
     let n = stages.len();
 
     let p = e.fresh();
+    init_pipeline_capture_c(e, capture);
+    let capture_read_fd = capture.pipe_to_parent();
     let num_pipes = crate::ssa::pipeline_num_pipes(n, capture_read_fd);
+    let argv = prepare_capture_argv_c(e, stages, capture, types);
     writeln!(e.out, "    /* pipeline: {} stages */", n).unwrap();
 
     writeln!(e.out, "    i64 {p}_pids[{n}];", p = p, n = n).unwrap();
@@ -3867,14 +3826,62 @@ fn emit_pipeline(
             redirects,
             checked,
             checked && !suppressed.get(i).copied().unwrap_or(false),
+            argv[i].as_deref(),
             types,
         );
     }
 
-    emit_pipeline_parent_close(e, &p, num_pipes, capture_read_fd);
+    emit_pipeline_parent_close(e, &p, num_pipes, capture.pipe_to_parent());
+    if matches!(capture, PipelineCapture::ReadFd) {
+        let i = num_pipes - 1;
+        writeln!(e.out, "    __pipe_read_fd = {p}_pipe{i}[0];").unwrap();
+    }
+    drain_pipeline_capture_c(e, capture, &p, num_pipes);
     emit_pipeline_finish(e, &p, checked, suppressed, negated, stages);
     writeln!(e.out, "{p}_done: ;").unwrap();
     emit_signal_exit_check(e);
+}
+
+fn init_pipeline_capture_c(e: &mut Emit, capture: &PipelineCapture) {
+    match capture {
+        PipelineCapture::None => {}
+        PipelineCapture::ReadFd => {
+            writeln!(e.out, "    __pipe_read_fd = -1;").unwrap();
+        }
+        PipelineCapture::Value(target) => store_capture_c(e, target, "\"\"", "0"),
+    }
+}
+
+fn prepare_capture_argv_c(
+    e: &mut Emit,
+    stages: &[(String, Vec<SsaValue>, Vec<crate::ir::Redirect>)],
+    capture: &PipelineCapture,
+    types: &VarTypes,
+) -> Vec<Option<String>> {
+    stages
+        .iter()
+        .map(|(name, args, _)| {
+            if capture.target().is_some() && name.starts_with('/') {
+                Some(emit_argv(e, name, args, types, "    "))
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
+fn drain_pipeline_capture_c(e: &mut Emit, capture: &PipelineCapture, p: &str, num_pipes: usize) {
+    if let PipelineCapture::Value(target) = capture {
+        let i = num_pipes - 1;
+        let t = e.fresh();
+        writeln!(
+            e.out,
+            "    sash_pair {t} = sash_capture_drain({p}_pipe{i}[0]); \
+             sash_close({p}_pipe{i}[0]);"
+        )
+        .unwrap();
+        store_capture_c(e, target, &format!("{t}.ptr"), &format!("{t}.len"));
+    }
 }
 
 /// Reap the children, publish the aggregate status, and apply the DD#55 abort.
@@ -3933,11 +3940,7 @@ fn emit_pipeline_setup_failure(
     for i in 0..started {
         writeln!(e.out, "    sash_wait({p}_pids[{i}]);").unwrap();
     }
-    writeln!(
-        e.out,
-        "    __exit_status = 1; __test_result = 0; __pipe_read_fd = -1;"
-    )
-    .unwrap();
+    writeln!(e.out, "    __exit_status = 1; __test_result = 0;").unwrap();
     if checked {
         let abort = abort_target(e);
         writeln!(
@@ -3951,22 +3954,14 @@ fn emit_pipeline_setup_failure(
     }
 }
 
-/// Parent closes all pipe fds after forking, except (when capturing) the
-/// final pipe's read end, which is stashed in `__pipe_read_fd`.
-fn emit_pipeline_parent_close(e: &mut Emit, p: &str, num_pipes: usize, capture_read_fd: bool) {
+/// Parent closes pipe fds, retaining only a requested final reader.
+/// Publishing lastpipe's reader and draining a value capture are separate.
+fn emit_pipeline_parent_close(e: &mut Emit, p: &str, num_pipes: usize, retain_read_fd: bool) {
     for i in 0..num_pipes {
-        if capture_read_fd && i == num_pipes - 1 {
-            writeln!(e.out, "    sash_close({p}_pipe{i}[1]);", p = p, i = i).unwrap();
-            writeln!(e.out, "    __pipe_read_fd = {p}_pipe{i}[0];", p = p, i = i).unwrap();
-        } else {
-            writeln!(
-                e.out,
-                "    sash_close({p}_pipe{i}[0]); sash_close({p}_pipe{i}[1]);",
-                p = p,
-                i = i
-            )
-            .unwrap();
+        if !retain_read_fd || i != num_pipes - 1 {
+            writeln!(e.out, "    sash_close({p}_pipe{i}[0]);", p = p, i = i).unwrap();
         }
+        writeln!(e.out, "    sash_close({p}_pipe{i}[1]);", p = p, i = i).unwrap();
     }
 }
 
@@ -4040,6 +4035,7 @@ fn emit_pipeline_stage(
     redirects: &[crate::ir::Redirect],
     checked: bool,
     report_setup_failure: bool,
+    prepared_argv: Option<&str>,
     types: &VarTypes,
 ) {
     writeln!(e.out, "    {p}_pids[{i}] = sash_fork();", p = p, i = i).unwrap();
@@ -4093,7 +4089,7 @@ fn emit_pipeline_stage(
         // `sash: bug: bare command passed to sash_exec`.
         _ => match name.strip_prefix("__compound_") {
             Some(id) => writeln!(e.out, "        goto _blk_{};", id).unwrap(),
-            None => emit_pipeline_exec(e, name, args, types),
+            None => emit_pipeline_exec(e, name, args, prepared_argv, types),
         },
     }
 
@@ -4161,8 +4157,16 @@ fn emit_pipeline_child_failure(e: &mut Emit, failed: &str, report: bool, path: &
 /// sash_exec (which never returns) instead of sash_run (which
 /// fork+execs internally). Mirrors lower_exec_stage
 /// (codegen/inst_handlers.rs:279).
-fn emit_pipeline_exec(e: &mut Emit, name: &str, args: &[SsaValue], types: &VarTypes) {
-    let argv = emit_argv(e, name, args, types, "        ");
+fn emit_pipeline_exec(
+    e: &mut Emit,
+    name: &str,
+    args: &[SsaValue],
+    prepared_argv: Option<&str>,
+    types: &VarTypes,
+) {
+    let argv = prepared_argv
+        .map(str::to_owned)
+        .unwrap_or_else(|| emit_argv(e, name, args, types, "        "));
     writeln!(
         e.out,
         "        sash_exec((const char* const*){argv}, sash_envp);"
@@ -4716,7 +4720,7 @@ mod tests {
     }
 
     #[test]
-    fn retired_array_modifiers_cannot_become_plain_joins() {
+    fn retired_parameter_operators_have_no_backend_fallback() {
         for operator in [
             "arrvals_/",
             "arrvals_//",
@@ -4728,6 +4732,7 @@ mod tests {
             "arrvals_^^",
             "arrvals_,",
             "arrvals_,,",
+            "strlen",
         ] {
             let payload = std::panic::catch_unwind(|| {
                 emit_param_expansion(

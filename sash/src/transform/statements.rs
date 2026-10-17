@@ -1227,7 +1227,7 @@ mod redirect_attach_tests {
         let blk = ssa.new_block("entry");
         ssa.block_mut(blk).insts.push(SsaInst::Pipeline {
             stages: vec![stage("/bin/echo"), stage("/bin/cat")],
-            capture_read_fd: false,
+            capture: PipelineCapture::None,
             checked: true,
             suppressed: vec![],
             negated: vec![],
@@ -1256,7 +1256,7 @@ mod redirect_attach_tests {
         let blk = ssa.new_block("entry");
         ssa.block_mut(blk).insts.push(SsaInst::Pipeline {
             stages: vec![],
-            capture_read_fd: false,
+            capture: PipelineCapture::None,
             checked: true,
             suppressed: vec![],
             negated: vec![],

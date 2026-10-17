@@ -486,8 +486,14 @@ Capturing consumers have an explicit skip edge on failure, rather than reading
 an invalid fd or treating failure as EOF. Child fd wiring and redirects share
 the checked setup machinery; a failed setup never executes the stage body.
 
-Command substitution has **two** capture paths, chosen per site at compile
-time by `transform::capture_purity`:
+A single unredirected external `$(command)` lowers to a one-stage pipeline
+with a private value-capture target. Arguments run in the parent before
+pipe/fork, stdout remains pipe-backed, and the parent drains it before
+waiting. It shares pipeline construction checks and caught/suppressed/END
+routing, without publishing or invalidating an enclosing lastpipe reader.
+
+Function and multi-statement command-substitution bodies have **two** capture
+paths, chosen per site at compile time by `transform::capture_purity`:
 
 * `sash_capture_start_buf` / `sash_capture_end_buf` — the fast path. The body
   is *pure*: nothing in it forks onto this capture's stdout and nothing

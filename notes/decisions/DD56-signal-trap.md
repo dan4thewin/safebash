@@ -189,9 +189,13 @@ restorer. Native code uses atomic loads; emitted C uses volatile loads.
 
 ## Interaction with DD#55
 
-END block follows DD#55 error model. External commands inside END
-get implicit exit checks. A failed command aborts END and calls
-`sash_exit` directly. Use `- cmd` to suppress failures during cleanup.
+Cleanup commands run unchecked: a failed cleanup step must not skip the
+rest of END or re-enter it. This is DG's established "diagnose, restore,
+keep cleaning up" policy (journal 367; specs 56.80–56.87), not the earlier
+abort-on-cleanup-failure description. Redirect setup failure diagnoses,
+restores its scope, and continues; ordinary command failure also continues.
+External value captures follow the same policy through their pipeline
+instructions. Explicit `exit N` still ends cleanup and overrides the status.
 
 ## Converter mappings
 

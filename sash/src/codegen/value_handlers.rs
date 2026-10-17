@@ -2,7 +2,7 @@
 
 use cranelift_codegen::ir::condcodes::IntCC;
 use cranelift_codegen::ir::types::I64;
-use cranelift_codegen::ir::{InstBuilder, MemFlags, StackSlotData, StackSlotKind, TrapCode};
+use cranelift_codegen::ir::{InstBuilder, MemFlags, StackSlotData, StackSlotKind};
 use cranelift_frontend::{FunctionBuilder, Variable};
 use cranelift_module::Module;
 use cranelift_object::ObjectModule;
@@ -33,7 +33,6 @@ pub(super) fn handle_param_expansion(
     let (s_ptr, s_len) = load_var(var, vars, builder);
 
     match operator {
-        "strlen" => emit_int_to_str(builder, module, externs, s_len),
         "arrlen" => {
             let arr_len = emit_table_len(s_ptr, builder, module, externs);
             emit_int_to_str(builder, module, externs, arr_len)
@@ -438,12 +437,11 @@ pub(crate) fn emit_case_conversion(
 
 /// Handle SsaValue::CmdSubst — command substitution $(cmd args...).
 ///
-/// TRUST: Command names are resolved at compile time. Builtins (echo, printf)
-/// are handled inline without fork. External commands use fork/exec.
+/// External captures have already become pipe-backed Pipeline instructions.
+/// Only intrinsic carriers may reach this value dispatcher.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn handle_cmdsub(
     argv_values: &[SsaValue],
-    suppressed: bool,
     builder: &mut FunctionBuilder,
     module: &mut ObjectModule,
     vars: &HashMap<String, VarSlot>,
@@ -451,23 +449,12 @@ pub(super) fn handle_cmdsub(
     externs: &ExternFuncs,
     exit_status_var: Variable,
 ) -> (cranelift_codegen::ir::Value, cranelift_codegen::ir::Value) {
-    if let Some(SsaValue::Literal(name)) = argv_values.first() {
-        if let Some(result) = try_native_intrinsic(
-            name,
-            argv_values,
-            builder,
-            module,
-            vars,
-            literals,
-            externs,
-            exit_status_var,
-        ) {
-            return result;
-        }
-    }
-    emit_cmdsub_exec(
+    let Some(SsaValue::Literal(name)) = argv_values.first() else {
+        panic!("ICE: command substitution with a non-literal head reached codegen")
+    };
+    try_native_intrinsic(
+        name,
         argv_values,
-        suppressed,
         builder,
         module,
         vars,
@@ -475,6 +462,7 @@ pub(super) fn handle_cmdsub(
         externs,
         exit_status_var,
     )
+    .expect("ICE: non-intrinsic command substitution must be lifted to a pipeline")
 }
 
 /// DD#60: `$(arg N)` (abort on OOB) and the addendum `$(arg N DEFAULT)` (default
@@ -710,8 +698,8 @@ pub(super) fn emit_wait_value(
 /// and `try_nullary_intrinsic` calls it too and wraps the result in
 /// `emit_int_to_str` for string context. Returns `None` for a name with no
 /// direct i64 — `getcwd`, which is genuinely string-valued, and every
-/// non-intrinsic. `getpid`/`status` are reached via the `$$`/`$?` specials,
-/// not here, but are included so the helper is complete. DD#58/Option C.
+/// non-intrinsic. Source `status` lowers to its managed slot, but the direct
+/// API still snapshots that slot as an i64. DD#58/Option C.
 pub(super) fn int_intrinsic_i64(
     name: &str,
     builder: &mut FunctionBuilder,
@@ -765,151 +753,4 @@ pub(super) fn int_intrinsic_i64(
         _ => return None,
     };
     Some(v)
-}
-
-/// External `$(cmd ...)`: pipe → fork → (child: redirect stdout to
-/// pipe, exec) ‖ (parent: read loop into a 64 KiB heap buffer, wait,
-/// strip trailing newline, propagate DD#55 exit).
-///
-/// The child applies **no** redirects: a redirected capture never reaches
-/// here, having been routed to `CmdSubstBody` by `single_command_subst`.
-#[allow(clippy::too_many_arguments)]
-fn emit_cmdsub_exec(
-    argv_values: &[SsaValue],
-    suppressed: bool,
-    builder: &mut FunctionBuilder,
-    module: &mut ObjectModule,
-    vars: &HashMap<String, VarSlot>,
-    literals: &HashMap<String, cranelift_module::DataId>,
-    externs: &ExternFuncs,
-    exit_status_var: Variable,
-) -> (cranelift_codegen::ir::Value, cranelift_codegen::ir::Value) {
-    // 1. Build argv (null-terminated pointer array); `@a` splats expand
-    //    to one entry per element (DD#20/DD#22). argv_values[0] is the cmd.
-    let argv_addr = super::commands::build_argv_values(
-        argv_values,
-        builder,
-        module,
-        vars,
-        literals,
-        externs,
-        exit_status_var,
-    );
-
-    // envp
-    let envp_gv = module.declare_data_in_func(externs.envp, builder.func);
-    let envp_addr = builder.ins().global_value(I64, envp_gv);
-    let envp_val = builder.ins().load(I64, MemFlags::new(), envp_addr, 0);
-
-    // 2. Create pipe: [read_fd, write_fd]
-    let pipe_slot =
-        builder.create_sized_stack_slot(StackSlotData::new(StackSlotKind::ExplicitSlot, 16, 3));
-    let pipe_addr = builder.ins().stack_addr(I64, pipe_slot, 0);
-    let pipe_ref = module.declare_func_in_func(externs.pipe, builder.func);
-    builder.ins().call(pipe_ref, &[pipe_addr]);
-    let read_fd = builder.ins().stack_load(I64, pipe_slot, 0);
-    let write_fd = builder.ins().stack_load(I64, pipe_slot, 8);
-
-    // 3. Fork
-    let fork_ref = module.declare_func_in_func(externs.fork, builder.func);
-    let fork_call = builder.ins().call(fork_ref, &[]);
-    let pid = builder.inst_results(fork_call)[0];
-
-    let zero = builder.ins().iconst(I64, 0);
-    let is_child = builder.ins().icmp(IntCC::Equal, pid, zero);
-
-    let child_block = builder.create_block();
-    let parent_block = builder.create_block();
-
-    builder
-        .ins()
-        .brif(is_child, child_block, &[], parent_block, &[]);
-
-    // 4. Child block: redirect stdout to pipe, exec
-    builder.switch_to_block(child_block);
-    builder.seal_block(child_block);
-
-    let close_ref = module.declare_func_in_func(externs.close, builder.func);
-    builder.ins().call(close_ref, &[read_fd]);
-
-    let one = builder.ins().iconst(I64, 1); // stdout fd
-    let dup2_ref = module.declare_func_in_func(externs.dup2, builder.func);
-    builder.ins().call(dup2_ref, &[write_fd, one]);
-
-    builder.ins().call(close_ref, &[write_fd]);
-
-    let exec_ref = module.declare_func_in_func(externs.exec, builder.func);
-    builder.ins().call(exec_ref, &[argv_addr, envp_val]);
-    builder.ins().trap(TrapCode::user(1).unwrap()); // exec never returns
-
-    // 5. Parent block: close write end, read loop, wait
-    builder.switch_to_block(parent_block);
-    builder.seal_block(parent_block);
-
-    builder.ins().call(close_ref, &[write_fd]);
-
-    // Drain the pipe. This was ~45 lines of inline IR: a fixed 64 KiB
-    // buffer, a read loop that stopped when it was full, and a strip of a
-    // single trailing newline. Both halves were wrong — the child died of
-    // SIGPIPE once the reader stopped, and bash strips *every* trailing
-    // newline — and the same two bugs were copied across three runtime
-    // functions. `sash_capture_drain` is now the only implementation.
-    let drain_ref = module.declare_func_in_func(externs.capture_drain, builder.func);
-    let drain_call = builder.ins().call(drain_ref, &[read_fd]);
-    let buf_ptr = builder.inst_results(drain_call)[0];
-    let result_len = builder.inst_results(drain_call)[1];
-
-    builder.ins().call(close_ref, &[read_fd]);
-
-    let wait_ref = module.declare_func_in_func(externs.wait, builder.func);
-    let wait_call = builder.ins().call(wait_ref, &[pid]);
-    let cmd_status = builder.inst_results(wait_call)[0];
-
-    // DD#55: store exit status and check — abort if nonzero. `$(- cmd)`
-    // (suppressed) discards the status and does NOT abort (mirrors a
-    // statement-position `- cmd`); the captured stdout is still returned.
-    builder.def_var(exit_status_var, cmd_status);
-    if !suppressed {
-        emit_cmdsub_abort_check(cmd_status, argv_values, builder, module, literals, externs);
-    }
-
-    (buf_ptr, result_len)
-}
-
-/// DD#55: a failed non-suppressed `$(cmd)` capture aborts — print
-/// `<argv0>: <name>: command failed (exit N)` and `sash_exit(status)`. Emitted
-/// only when the capture is unsuppressed (extracted from `emit_cmdsub_exec` so
-/// the suppression guard stays a single branch).
-#[allow(clippy::too_many_arguments)]
-fn emit_cmdsub_abort_check(
-    cmd_status: cranelift_codegen::ir::Value,
-    argv_values: &[SsaValue],
-    builder: &mut FunctionBuilder,
-    module: &mut ObjectModule,
-    literals: &HashMap<String, cranelift_module::DataId>,
-    externs: &ExternFuncs,
-) {
-    let zero_s = builder.ins().iconst(I64, 0);
-    let failed = builder.ins().icmp(IntCC::NotEqual, cmd_status, zero_s);
-    let abort_block = builder.create_block();
-    let cont_block = builder.create_block();
-    builder
-        .ins()
-        .brif(failed, abort_block, &[], cont_block, &[]);
-
-    builder.switch_to_block(abort_block);
-    builder.seal_block(abort_block);
-    // DD#55 diagnostic: `<argv0>: <name>: command failed (exit N)`.
-    if let Some(SsaValue::Literal(name)) = argv_values.first() {
-        let (np, nl) = super::inst_handlers::diag_static_seg(name, literals, module, builder);
-        let emsg_status_ref = module.declare_func_in_func(externs.emsg_status, builder.func);
-        builder.ins().call(emsg_status_ref, &[np, nl, cmd_status]);
-    }
-    // TODO: DD#56 — route to END block for cmdsub abort
-    let exit_ref = module.declare_func_in_func(externs.exit, builder.func);
-    builder.ins().call(exit_ref, &[cmd_status]);
-    builder.ins().trap(TrapCode::user(1).unwrap());
-
-    builder.switch_to_block(cont_block);
-    builder.seal_block(cont_block);
 }

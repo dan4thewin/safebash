@@ -7,13 +7,8 @@ use super::statements::{lower_one, lower_stmts};
 use crate::ir::*;
 use crate::ssa::*;
 
-fn reserve_loop_int(state: &mut VersionState, mut name: String) -> String {
-    while state.reserved_names.contains(&name) {
-        name.push('_');
-    }
-    state.reserved_names.insert(name.clone());
-    state.type_map.insert(name.clone(), VarType::Int);
-    name
+fn reserve_loop_int(state: &mut VersionState, name: String) -> String {
+    state.reserve_temp_name(name, VarType::Int)
 }
 
 /// Emit a for-loop bound check `left < right` on the `(( ))` arithmetic

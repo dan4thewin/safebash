@@ -760,7 +760,11 @@ fn build_pipeline_inst(
     }
     SsaInst::Pipeline {
         stages,
-        capture_read_fd,
+        capture: if capture_read_fd {
+            PipelineCapture::ReadFd
+        } else {
+            PipelineCapture::None
+        },
         checked: state.in_condition == 0 && state.suppressed == 0,
         suppressed,
         negated,
@@ -1337,16 +1341,22 @@ fn try_capture_condition(
         // Single external `$(cmd)` → a suppressed capture value, then sync
         // test_result from $?.
         SsaValue::CmdSubst { argv, .. } => {
-            let target = state.define(name);
-            ssa.block_mut(block).insts.push(SsaInst::Assign {
-                target,
-                value: SsaValue::CmdSubst {
+            let mut after = block;
+            let value = super::functions::lift_int_func_calls(
+                SsaValue::CmdSubst {
                     argv: argv.clone(),
                     suppressed: true,
                 },
-            });
-            push_set_test_from_status(ssa, block);
-            Some(block)
+                ssa,
+                state,
+                &mut after,
+            );
+            let target = state.define(name);
+            ssa.block_mut(after)
+                .insts
+                .push(SsaInst::Assign { target, value });
+            push_set_test_from_status(ssa, after);
+            Some(after)
         }
         // A body capture — a pipeline `$(a | b)`, or any command carrying a
         // redirect, which `single_command_subst` deliberately declines so the

@@ -604,8 +604,7 @@ pub enum SsaInst {
     /// Multi-stage pipeline: cmd1 | cmd2 | ...
     Pipeline {
         stages: Vec<(String, Vec<SsaValue>, Vec<crate::ir::Redirect>)>,
-        /// If true, the last pipe read fd is saved for a subsequent while-read loop
-        capture_read_fd: bool,
+        capture: PipelineCapture,
         /// DD#55: if true, nonzero aggregate status aborts
         checked: bool,
         /// DD#55 per-segment `-` suppression, aligned with `stages`. A
@@ -647,6 +646,27 @@ pub enum SsaInst {
     /// copies the source slot (the collection's backing table) to a new
     /// clean SSA version. No runtime validation (already done by AttestAll).
     AttestRetag { target: VarRef, source: VarRef },
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum PipelineCapture {
+    None,
+    ReadFd,
+    /// Drain the final pipe before waiting and define a tainted string value.
+    Value(VarRef),
+}
+
+impl PipelineCapture {
+    pub(crate) fn pipe_to_parent(&self) -> bool {
+        !matches!(self, Self::None)
+    }
+
+    pub(crate) fn target(&self) -> Option<&VarRef> {
+        match self {
+            Self::Value(target) => Some(target),
+            Self::None | Self::ReadFd => None,
+        }
+    }
 }
 
 /// Why a [`SsaInst::Test`] exists in SSA.
@@ -1729,6 +1749,19 @@ pub(crate) fn value_intrinsic_arity(name: &str) -> Option<RangeInclusive<usize>>
 }
 
 impl VersionState {
+    pub(crate) fn reserve_temp_name(
+        &mut self,
+        mut name: String,
+        var_type: crate::ir::VarType,
+    ) -> String {
+        while self.reserved_names.contains(&name) {
+            name.push('_');
+        }
+        self.reserved_names.insert(name.clone());
+        self.type_map.insert(name.clone(), var_type);
+        name
+    }
+
     pub fn with_types(type_map: HashMap<String, crate::ir::VarType>) -> Self {
         let reserved_names = type_map.keys().cloned().collect();
         Self {
@@ -1941,7 +1974,9 @@ pub(crate) fn unlowerable_scalar_value(backend: &str, value: &SsaValue) -> ! {
 /// * a plain pipeline carries **every** command as a stage — `n >= 2`;
 /// * a capture (`cmd | readline x`, `cmd | while readline …`) carries only the
 ///   **producers**, `&p.commands[..len - 1]`, with the reader left to the
-///   parent — `n >= 1`.
+///   parent — `n >= 1`;
+/// * an external value capture contributes one producer and a private parent
+///   reader — `n == 1`.
 ///
 /// The ICE is not a restatement of that `> 1` gate: it is the only site that
 /// can say anything about `stages.len()`, a quantity derived from
@@ -1960,9 +1995,9 @@ pub(crate) fn pipeline_num_pipes(n: usize, capture_read_fd: bool) -> usize {
         assert!(
             n >= 1,
             "ICE: a capturing SsaInst::Pipeline reached codegen with {n} producer \
-             stages. lower_pipeline_body only builds one for `commands.len() > 1` \
-             and the capture builders take `commands[..len - 1]`, so at least one \
-             producer must survive."
+             stages. Lastpipe takes `commands[..len - 1]` from a multi-command \
+             pipeline; an external value capture contributes one command. \
+             At least one producer must survive."
         );
         n
     } else {
@@ -2076,7 +2111,14 @@ mod pipeline_tests {
                 .downcast_ref::<String>()
                 .expect("ICE panics carry a formatted String");
             assert!(msg.contains("reached codegen with"), "{msg}");
-            assert!(msg.contains("lower_pipeline_body"), "{msg}");
+            assert!(
+                msg.contains(if capture {
+                    "external value capture"
+                } else {
+                    "lower_pipeline_body"
+                }),
+                "{msg}"
+            );
         }
     }
 

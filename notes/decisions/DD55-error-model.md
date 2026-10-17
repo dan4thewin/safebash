@@ -123,6 +123,12 @@ construction failure is not EOF and must not clear or overwrite the consumer's
 target. Child fd wiring or redirect failure prevents that stage's body from
 running.
 
+A single external `$(command)` uses the same checked pipeline construction.
+Uncaught failure enters END; caught construction failure binds empty output
+and a false condition. `$(- command)` discards failure without aborting, but
+failed setup never executes the command. The capture drains its private pipe
+before waiting and does not replace an enclosing lastpipe reader.
+
 ### `&&` / `||` / `!` do not take a pipeline operand
 
 A pipeline may be an **entire** condition (`if a | b; then …`, `while a | b`),

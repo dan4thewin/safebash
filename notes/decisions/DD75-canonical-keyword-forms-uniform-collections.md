@@ -61,7 +61,20 @@ output (`converter-special-var-sugar`); the public GUIDE/SUBSET prose reframe
 (DG voice). The keyword pid/random *intrinsics as arith operands* remain a
 separate gap (`bug-arith-keyword-pid-intrinsic-zero`).
 
-## 2. `len` is type-polymorphic (Go semantics)
+## 2. `len` counts collections; `strlen` counts bytes
+
+**Amended 2026-09-10 (DG):** "make len collection only, add strlen for
+scalar" ([completed amendment](../tasks/dd75-len-collection-only-strlen.md)).
+`len` counts array elements or map entries; scalar operands are SB4030 in
+both value and arithmetic contexts. `strlen` takes a scalar **value** under
+DD#102. Both yield int.
+
+The SSA forms are `ParamExpansion(arrlen)` and `StrLen`, respectively.
+Missing collection membership during transform is not a scalar request:
+unbound function templates and later-rejected operands also pass through
+there. The old `ParamExpansion(strlen)` slot-length fallback is gone.
+
+**Original type-polymorphic rule (superseded by the amendment above):**
 
 `len x` yields an **int**, dispatching on `x`'s type (the transform already
 knows collection-ness via `state.collections`):

@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup commands
-plan=193
+plan=217
 echo "1..$plan" >&3
 
 set +e
@@ -1355,6 +1355,155 @@ run_sash '- /bin/sh -c "exit 7" &
 str r="$(waitstatus)"
 echo "s=$r"'
 [[ $rc = 0 && $out = "s=7" && -z $err ]]; chk 126.41
+
+# Single external captures share checked pipeline construction and END routing.
+run_sash 'END { echo $(status) }
+str x=$(/bin/false)
+echo "bad=${x:!}"'
+[[ $rc = 1 && $out = 1 && $rerr == *"/bin/false: command failed (exit 1)"* ]]; chk capext.1
+
+rm -f capext.marker
+run_sash_under 'END { echo $(status) }
+str x=$(/bin/sh -c "echo bad > capext.marker; echo leaked")
+echo "bad=${x:!}"' strace -qq -o capext.trace -e inject=pipe2:error=EIO:when=1
+[[ $rc = 1 && $out = 1 && ! -e capext.marker && $rerr == *": pipe: "* ]] &&
+    grep -q 'pipe2.*INJECTED' capext.trace; chk capext.2
+
+run_sash_under 'END { echo $(status) }
+str x=$(/bin/sh -c "echo bad > capext.marker; echo leaked")
+echo "bad=${x:!}"' strace -qq -o capext.trace -e inject=clone:error=EIO:when=1
+[[ $rc = 1 && $out = 1 && ! -e capext.marker && $rerr == *": fork: "* ]] &&
+    grep -q 'clone.*INJECTED' capext.trace; chk capext.3
+
+run_sash_under 'END { echo end }
+str x=$(- /bin/sh -c "echo bad > capext.marker; echo leaked")
+echo "x=[${x:!}]"' strace -qq -o capext.trace -e inject=pipe2:error=EIO:when=1
+[[ $rc = 0 && $out = $'x=[]\nend' && ! -e capext.marker && -z $rerr ]]; chk capext.4
+
+run_sash_under 'END { echo end }
+str x=$(- /bin/sh -c "echo bad > capext.marker; echo leaked")
+echo "x=[${x:!}]"' strace -qq -o capext.trace -e inject=clone:error=EIO:when=1
+[[ $rc = 0 && $out = $'x=[]\nend' && ! -e capext.marker && -z $rerr ]]; chk capext.5
+
+run_sash_under 'if x=$(/bin/sh -c "echo bad > capext.marker; echo leaked") {
+  echo "bad=${x:!}"
+} else { echo $(status) }' strace -qq -o capext.trace -e inject=pipe2:error=EIO:when=1
+[[ $rc = 0 && $out = 1 && ! -e capext.marker && -z $rerr ]]; chk capext.6
+
+run_sash_under 'if x=$(/bin/sh -c "echo bad > capext.marker; echo leaked") {
+  echo "bad=${x:!}"
+} else { echo $(status) }' strace -qq -o capext.trace -e inject=clone:error=EIO:when=1
+[[ $rc = 0 && $out = 1 && ! -e capext.marker && -z $rerr ]]; chk capext.7
+
+# Follow the child: a parent-only trace never injects its stdout dup2.
+# These programs have no parent dup2, so the failure is isolated to setup.
+run_sash_under 'str x=$(/bin/sh -c "echo bad > capext.marker; echo leaked")
+echo "bad=${x:!}"' strace -f -qq -o capext.trace -e trace=execve,dup2 -e inject=dup2:error=EIO:when=1
+[[ $rc = 1 && -z $out && ! -e capext.marker && $rerr == *": dup2: "* ]] &&
+    grep -q 'dup2.*EIO.*INJECTED' capext.trace &&
+    ! grep -qE 'execve\("/(bin|usr/bin)/' capext.trace; chk capext.8
+
+run_sash_under 'str x=$(- /bin/sh -c "echo bad > capext.marker; echo leaked")
+echo "x=[${x:!}]"' strace -f -qq -o capext.trace -e trace=execve,dup2 -e inject=dup2:error=EIO:when=1
+[[ $rc = 0 && $out = 'x=[]' && ! -e capext.marker && -z $rerr ]] &&
+    grep -q 'dup2.*EIO.*INJECTED' capext.trace; chk capext.9
+
+run_sash_under 'if x=$(/bin/sh -c "echo bad > capext.marker; echo leaked") {
+  echo "bad=${x:!}"
+} else { echo $(status) }' strace -f -qq -o capext.trace -e trace=execve,dup2 -e inject=dup2:error=EIO:when=1
+[[ $rc = 0 && $out = 1 && ! -e capext.marker && -z $rerr ]] &&
+    grep -q 'dup2.*EIO.*INJECTED' capext.trace; chk capext.10
+
+# Drain before waiting, including more than a pipe buffer and embedded NULs.
+run_sash 'str x=$(/bin/head -c 131072 /dev/zero)
+echo "$(strlen ${x:!})"'
+[[ $rc = 0 && $out = 131072 && -z $rerr ]]; chk capext.11
+
+run_sash 'str x=$(/usr/bin/printf "abc\n\n\n")
+echo "[${x:!}]"'
+[[ $rc = 0 && $out = '[abc]' && -z $rerr ]]; chk capext.12
+
+# Intrinsic arguments still execute in the parent, before pipe/fork.
+run_sash 'int p=$(getpid)
+str x=$(/bin/echo "$(getpid)")
+if [[ ${x:!} == "$p" ]] { echo same } else { echo wrong }'
+[[ $rc = 0 && $out = same && -z $rerr ]]; chk capext.13
+
+run_sash '- /bin/true &
+int p=$(getcpid)
+str x=$(/bin/echo "$(wait $p)")
+if [[ ${x:!} == "$p" ]] { echo same } else { echo wrong }'
+[[ $rc = 0 && $out = same && -z $rerr ]]; chk capext.14
+
+run_sash 'str __extcap_1=user
+str __extcap_1_=later
+str x=$(/bin/echo one)
+str y=$(/bin/echo two)
+str __extcap_1__=after
+echo "${x:!}:${y:!}:$__extcap_1:$__extcap_1_:$__extcap_1__"'
+[[ $rc = 0 && $out = one:two:user:later:after && -z $rerr ]]; chk capext.15
+
+# A private value capture must not publish or invalidate lastpipe's reader.
+run_sash '/usr/bin/printf "a\nb\n" | while readline line {
+  attest line [[ -n $line ]]
+  str x=$(/bin/echo cap)
+  echo "$line:[${x:!}]"
+}'
+[[ $rc = 0 && $out = $'a:[cap]\nb:[cap]' && -z $rerr ]]; chk capext.16
+
+run_sash_under '/usr/bin/printf "a\nb\n" | while readline line {
+  attest line [[ -n $line ]]
+  str x=$(- /bin/echo cap)
+  echo "$line:[${x:!}]"
+}' strace -qq -o capext.trace -e inject=pipe2:error=EIO:when=2
+[[ $rc = 0 && $out = $'a:[]\nb:[cap]' && -z $rerr ]]; chk capext.17
+
+run_sash_under '/usr/bin/printf "a\nb\n" | while readline line {
+  attest line [[ -n $line ]]
+  str x=$(- /bin/echo cap)
+  echo "$line:[${x:!}]"
+}' strace -qq -o capext.trace -e inject=clone:error=EIO:when=2
+[[ $rc = 0 && $out = $'a:[]\nb:[cap]' && -z $rerr ]]; chk capext.18
+
+run_sash_under 'if ! x=$(/bin/echo bad) { echo "caught=$?" }
+echo "x=[${x:!}]"' strace -qq -o capext.trace -e inject=pipe2:error=EIO:when=1
+[[ $rc = 0 && $out = $'caught=0\nx=[]' && -z $rerr ]]; chk capext.19
+
+# Argument-side wait happens even when constructing the capture pipe fails.
+run_sash_under '- /bin/true &
+int p=$(getcpid)
+str x=$(- /bin/echo "$(wait $p)")
+int w=$(wait)
+echo "x=[${x:!}] reaped=$w"' strace -qq -o capext.trace -e inject=pipe2:error=EIO:when=1
+[[ $rc = 0 && $out = 'x=[] reaped=-1' && -z $rerr ]]; chk capext.20
+
+run_sash 'fn f {
+  str x=$(/bin/echo inner)
+  echo "${x:!}"
+}
+str y=$(f)
+echo "$y"'
+[[ $rc = 0 && $out = inner && -z $rerr ]]; chk capext.21
+
+LC_ALL=C run_sash 'str x=$(/usr/bin/stat -Lc %F /dev/stdout)
+echo "${x:!}"'
+[[ $rc = 0 && $out = fifo && -z $rerr ]]; chk capext.22
+
+run_sash_under '/usr/bin/printf "a\nb\n" | while readline line {
+  attest line [[ -n $line ]]
+  if echo data | /bin/cat { echo "pipe=$line" } else { echo "caught=$line" }
+}' strace -qq -o capext.trace -e inject=pipe2:error=EIO:when=2
+[[ $rc = 0 && $out = $'caught=a\ndata\npipe=b' && -z $rerr ]]; chk capext.23
+
+run_sash 'echo main
+END {
+  str x=$(/bin/false)
+  echo "x=[${x:!}]"
+  echo tail
+}'
+[[ $rc = 0 && $out = $'main\nx=[]\ntail' && -z $rerr ]]; chk capext.24
+
+rm -f capext.marker capext.trace
 
 set -e
 tally

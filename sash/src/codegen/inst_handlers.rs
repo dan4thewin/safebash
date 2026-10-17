@@ -24,7 +24,7 @@ use crate::ssa::*;
 #[allow(clippy::too_many_arguments)]
 pub(super) fn handle_pipeline(
     stages: &[(String, Vec<SsaValue>, Vec<crate::ir::Redirect>)],
-    capture_read_fd: bool,
+    capture: &PipelineCapture,
     checked: bool,
     suppressed: &[bool],
     negated: &[bool],
@@ -35,8 +35,10 @@ pub(super) fn handle_pipeline(
     let n = stages.len();
     emit_signal_exit_check(builder, module, ctx);
     let pe = resolve_pipeline_externs(builder, module, ctx.externs);
+    init_pipeline_capture(capture, builder, module, ctx);
 
-    // Pipe-while-read needs one extra pipe (last stage → parent).
+    // A parent reader needs one extra pipe (last stage → parent).
+    let capture_read_fd = capture.pipe_to_parent();
     let num_pipes = crate::ssa::pipeline_num_pipes(n, capture_read_fd);
     let pid_slot = builder.create_sized_stack_slot(StackSlotData::new(
         StackSlotKind::ExplicitSlot,
@@ -47,6 +49,7 @@ pub(super) fn handle_pipeline(
         pid_slot,
         done: builder.create_block(),
         checked,
+        argv: prepare_capture_argv(stages, capture, builder, module, ctx),
     };
     let pipe_slots = create_pipe_slots(num_pipes, &setup, &pe, builder, module, ctx);
 
@@ -69,7 +72,13 @@ pub(super) fn handle_pipeline(
     }
 
     parent_close_pipes(builder, capture_read_fd, &pipe_slots, &pe);
-    save_capture_fd(builder, capture_read_fd, &pipe_slots, ctx.pipe_read_fd_var);
+    save_capture_fd(
+        builder,
+        matches!(capture, PipelineCapture::ReadFd),
+        &pipe_slots,
+        ctx.pipe_read_fd_var,
+    );
+    drain_pipeline_capture(capture, &pipe_slots, builder, module, ctx);
 
     // DD#55: materialize each stage's name for the abort diagnostic
     // (`<argv0>: <failing-stage>: command failed (exit N)`).
@@ -98,10 +107,92 @@ pub(super) fn handle_pipeline(
     false
 }
 
+fn init_pipeline_capture(
+    capture: &PipelineCapture,
+    builder: &mut FunctionBuilder,
+    module: &mut ObjectModule,
+    ctx: &mut InstCtx,
+) {
+    match capture {
+        PipelineCapture::ReadFd => {
+            let absent = builder.ins().iconst(I64, -1);
+            builder.def_var(ctx.pipe_read_fd_var, absent);
+        }
+        PipelineCapture::Value(target) => {
+            let (ptr, len) = super::values::lower_literal_value("", builder, module, ctx.literals);
+            let slot = super::types::var_slot(ctx.vars, &target.display());
+            builder.def_var(slot.str_ptr(), ptr);
+            builder.def_var(slot.str_len(), len);
+        }
+        PipelineCapture::None => {}
+    }
+}
+
+fn drain_pipeline_capture(
+    capture: &PipelineCapture,
+    pipes: &[cranelift_codegen::ir::StackSlot],
+    builder: &mut FunctionBuilder,
+    module: &mut ObjectModule,
+    ctx: &mut InstCtx,
+) {
+    if let PipelineCapture::Value(target) = capture {
+        let pipe = *pipes.last().expect("a value capture has a final pipe");
+        let fd = builder.ins().stack_load(I64, pipe, 0);
+        let drain = module.declare_func_in_func(ctx.externs.capture_drain, builder.func);
+        let call = builder.ins().call(drain, &[fd]);
+        let ptr = builder.inst_results(call)[0];
+        let len = builder.inst_results(call)[1];
+        let close = module.declare_func_in_func(ctx.externs.close, builder.func);
+        builder.ins().call(close, &[fd]);
+        let slot = super::types::var_slot(ctx.vars, &target.display());
+        builder.def_var(slot.str_ptr(), ptr);
+        builder.def_var(slot.str_len(), len);
+    }
+}
+
 struct PipelineSetup {
     pid_slot: cranelift_codegen::ir::StackSlot,
     done: cranelift_codegen::ir::Block,
     checked: bool,
+    argv: Vec<Option<cranelift_codegen::ir::Value>>,
+}
+
+fn prepare_capture_argv(
+    stages: &[(String, Vec<SsaValue>, Vec<crate::ir::Redirect>)],
+    capture: &PipelineCapture,
+    builder: &mut FunctionBuilder,
+    module: &mut ObjectModule,
+    ctx: &mut InstCtx,
+) -> Vec<Option<cranelift_codegen::ir::Value>> {
+    stages
+        .iter()
+        .map(|(name, args, _)| {
+            if capture.target().is_some() && name.starts_with('/') {
+                Some(build_stage_argv(name, args, builder, module, ctx))
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
+fn build_stage_argv(
+    name: &str,
+    args: &[SsaValue],
+    builder: &mut FunctionBuilder,
+    module: &mut ObjectModule,
+    ctx: &mut InstCtx,
+) -> cranelift_codegen::ir::Value {
+    super::commands::build_exec_argv(
+        name,
+        args,
+        builder,
+        module,
+        ctx.vars,
+        ctx.literals,
+        ctx.externs,
+        ctx.exit_status_var,
+    )
 }
 
 /// Pre-resolved Cranelift FuncRefs for the runtime calls a pipeline needs.
@@ -177,8 +268,6 @@ fn guard_pipeline_setup(
     }
     let one = builder.ins().iconst(I64, 1);
     update_pipeline_status(builder, one, ctx);
-    let absent = builder.ins().iconst(I64, -1);
-    builder.def_var(ctx.pipe_read_fd_var, absent);
     let (ptr, len) = diag_static_seg(operation, ctx.literals, module, builder);
     let (empty, zero) = diag_empty_seg(builder);
     emit_status_abort_check(
@@ -258,7 +347,7 @@ fn lower_pipeline_stage(
         let compound_cl = ctx.cl_blocks[&compound_block_id];
         builder.ins().jump(compound_cl, &[]);
     } else {
-        lower_exec_stage(name, args, builder, module, ctx, pe, null);
+        lower_exec_stage(name, args, builder, module, ctx, pe, setup.argv[i]);
     }
 
     // Parent block
@@ -417,18 +506,10 @@ fn lower_exec_stage(
     module: &mut ObjectModule,
     ctx: &mut InstCtx,
     pe: &PipelineExterns,
-    _null: cranelift_codegen::ir::Value,
+    prepared_argv: Option<cranelift_codegen::ir::Value>,
 ) {
-    let argv_addr = super::commands::build_exec_argv(
-        name,
-        args,
-        builder,
-        module,
-        ctx.vars,
-        ctx.literals,
-        ctx.externs,
-        ctx.exit_status_var,
-    );
+    let argv_addr =
+        prepared_argv.unwrap_or_else(|| build_stage_argv(name, args, builder, module, ctx));
     let envp_gv = module.declare_data_in_func(ctx.externs.envp, builder.func);
     let envp_addr = builder.ins().global_value(I64, envp_gv);
     let envp = builder.ins().load(I64, MemFlags::new(), envp_addr, 0);

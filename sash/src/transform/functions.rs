@@ -201,7 +201,7 @@ pub(super) fn lift_int_func_calls(
             SsaValue::Var(state.lookup(&temp))
         }
 
-        // ── `:-` is LAZY: its operand runs only when the default fires ─
+        // Source defaults are literal (SB4070); walk API values too.
         SsaValue::DefaultValue { source, default } => {
             lift_default_value(*source, *default, ssa, state, block)
         }
@@ -211,10 +211,7 @@ pub(super) fn lift_int_func_calls(
         SsaValue::IndexedArray(parts) => {
             SsaValue::IndexedArray(lift_each(parts, ssa, state, block))
         }
-        SsaValue::CmdSubst { argv, suppressed } => SsaValue::CmdSubst {
-            argv: lift_each(argv, ssa, state, block),
-            suppressed,
-        },
+        SsaValue::CmdSubst { argv, suppressed } => lift_cmdsub(argv, suppressed, ssa, state, block),
         SsaValue::AssocArray(pairs) => SsaValue::AssocArray(
             pairs
                 .into_iter()
@@ -321,6 +318,36 @@ pub(super) fn lift_int_func_calls(
         | SsaValue::TableValue { .. }
         | SsaValue::TableKey { .. }) => v,
     }
+}
+
+fn lift_cmdsub(
+    argv: Vec<SsaValue>,
+    suppressed: bool,
+    ssa: &mut SsaProgram,
+    state: &mut VersionState,
+    block: &mut BlockId,
+) -> SsaValue {
+    let argv = lift_each(argv, ssa, state, block);
+    let Some(SsaValue::Literal(name)) = argv
+        .first()
+        .filter(|head| matches!(head, SsaValue::Literal(name) if name.starts_with('/')))
+    else {
+        return SsaValue::CmdSubst { argv, suppressed };
+    };
+    let name = name.clone();
+    let temp = state.reserve_temp_name(
+        format!("__extcap_{}", ssa.blocks.len()),
+        crate::ir::VarType::String,
+    );
+    let target = state.define(&temp);
+    ssa.block_mut(*block).insts.push(SsaInst::Pipeline {
+        stages: vec![(name, argv.into_iter().skip(1).collect(), vec![])],
+        capture: PipelineCapture::Value(target.clone()),
+        checked: !suppressed,
+        suppressed: vec![],
+        negated: vec![],
+    });
+    SsaValue::Var(target)
 }
 
 fn lift_each(
