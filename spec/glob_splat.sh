@@ -10,7 +10,7 @@
 set -eu
 . common.sh
 setup glob_splat
-plan=68
+plan=81
 echo "1..$plan" >&3
 
 set +e
@@ -390,6 +390,70 @@ run_sash 'for v in "a@b" "@" "@{}" { echo "[$v]" }'
 [[ $rc = 0 && $out == "[a@b]
 [@]
 [@{}]" && -z $rerr ]]; chk gs.65
+
+# Joins are strings, not fixed-size scratch buffers.
+join_payload() {
+    printf -v join_text '%*s' "$1" ''
+    join_text=${join_text// /x}
+}
+
+join_payload 4095
+run_sash "array a=('$join_text'); echo \$(join a)"
+[[ $rc = 0 && $out = "$join_text" && -z $err && -z $rerr ]]; chk joinbuf.1
+
+join_payload 4096
+run_sash "array a=('$join_text'); echo \$(join a)"
+[[ $rc = 0 && $out = "$join_text" && -z $err && -z $rerr ]]; chk joinbuf.2
+
+join_payload 4097
+run_sash "array a=('$join_text'); echo \$(join a)"
+[[ $rc = 0 && $out = "$join_text" && -z $err && -z $rerr ]]; chk joinbuf.3
+
+join_payload 8192
+run_sash "array a=('$join_text'); echo \$(join a)"
+[[ $rc = 0 && $out = "$join_text" && -z $err && -z $rerr ]]; chk joinbuf.4
+
+run_sash "array a=(a b); echo \$(join a '$join_text')"
+[[ $rc = 0 && $out = "a${join_text}b" && -z $err && -z $rerr ]]; chk joinbuf.5
+
+# A later join cannot overwrite an earlier result's backing storage.
+run_sash "array a=('$join_text'); array b=(kept value)
+str x=\$(join a)
+str y=\$(join b ,)
+echo \"\$x|\$y\""
+[[ $rc = 0 && $out = "$join_text|kept,value" && -z $err && -z $rerr ]]; chk joinbuf.6
+
+run_sash 'int map m=([low]=-9223372036854775808 [drop]=17 [high]=9223372036854775807 [zero]=0)
+unset m[drop]
+echo $(join m ,)'
+[[ $rc = 0 && $out = '-9223372036854775808,9223372036854775807,0' \
+   && -z $err && -z $rerr ]]; chk joinbuf.7
+
+run_sash 'array a=($'"'"'a\x00b'"'"' c)
+str s=$(join a $'"'"'\x00:'"'"')
+echo "$s" > joined-bytes'
+bytes=$(od -An -tx1 joined-bytes | tr -d ' \n')
+[[ $rc = 0 && $bytes = 610062003a630a && -z $err && -z $rerr ]]; chk joinbuf.8
+
+# A joined string also obeys DD#87's trailing-NUL invariant at an argv boundary.
+run_sash "array a=('$join_text' tail)
+/usr/bin/printf '%s\n' \"\$(join a ,)\""
+[[ $rc = 0 && $out = "$join_text,tail" && -z $err && -z $rerr ]]; chk joinbuf.9
+
+run_sash 'array a=(); echo "<$(join a)>"'
+[[ $rc = 0 && $out = '<>' && -z $err && -z $rerr ]]; chk joinbuf.10
+
+run_sash 'array a=("" q ""); echo "<$(join a)>"'
+[[ $rc = 0 && $out = '< q >' && -z $err && -z $rerr ]]; chk joinbuf.11
+
+run_sash 'array a=("" q ""); echo "<$(join a "")>"'
+[[ $rc = 0 && $out = '<q>' && -z $err && -z $rerr ]]; chk joinbuf.12
+
+join_payload 4096
+SASH_CFLAGS="${SASH_CFLAGS:-} --heap-size=8K" run_sash "array a=('$join_text' '$join_text' '$join_text' '$join_text' '$join_text' '$join_text' '$join_text' '$join_text' '$join_text' '$join_text')
+echo \$(join a)"
+[[ $rc = 1 && -z $out && -z $err \
+   && $rerr == *'out of memory (requested 40970 bytes)'* ]]; chk joinbuf.13
 
 set -e
 tally

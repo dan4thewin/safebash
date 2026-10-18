@@ -588,6 +588,13 @@ pub(super) fn declare_runtime_functions(module: &mut ObjectModule) -> ExternFunc
         .declare_function("sash_table_value", Linkage::Import, &table_value_sig)
         .expect("declare sash_table_value");
 
+    let mut table_join_sig = module.make_signature();
+    table_join_sig.params.extend([AbiParam::new(I64); 4]);
+    table_join_sig.returns.push(AbiParam::new(I64));
+    let table_join_func = module
+        .declare_function("sash_table_join", Linkage::Import, &table_join_sig)
+        .expect("declare sash_table_join");
+
     // sash_table_key(table, index, out_len_ptr) -> key_ptr
     let mut table_key_sig = module.make_signature();
     table_key_sig.params.push(AbiParam::new(I64)); // table
@@ -887,6 +894,7 @@ pub(super) fn declare_runtime_functions(module: &mut ObjectModule) -> ExternFunc
         table_get: table_get_func,
         table_len: table_len_func,
         table_value: table_value_func,
+        table_join: table_join_func,
         table_key: table_key_func,
         table_delete: table_delete_func,
         read_line: read_line_func,

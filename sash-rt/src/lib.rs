@@ -2203,6 +2203,53 @@ pub unsafe extern "C" fn sash_table_value(
     core::ptr::null()
 }
 
+unsafe fn table_entry_text<'a>(entry: &'a TableEntry, integer: &'a mut [u8; 21]) -> &'a [u8] {
+    if entry.val_ptr.is_null() {
+        itoa_inner(entry.val_len, integer)
+    } else {
+        core::slice::from_raw_parts(entry.val_ptr, entry.val_len as usize)
+    }
+}
+
+/// Join live values in insertion order into one owned, NUL-terminated string.
+#[no_mangle]
+pub unsafe extern "C" fn sash_table_join(
+    t: *const SashTable,
+    sep_ptr: *const u8,
+    sep_len: i64,
+    out_len: *mut i64,
+) -> *mut u8 {
+    let entries = core::slice::from_raw_parts((*t).entries, (*t).entry_count as usize);
+    let mut integer = [0; 21];
+    let mut total = 0usize;
+    let mut separator = 0usize;
+    for entry in entries.iter().filter(|entry| !entry.deleted) {
+        let value = table_entry_text(entry, &mut integer);
+        total = total
+            .checked_add(separator)
+            .and_then(|n| n.checked_add(value.len()))
+            .filter(|&n| n < isize::MAX as usize)
+            .unwrap_or_else(|| sash_panic_oom(isize::MAX as usize));
+        separator = sep_len as usize;
+    }
+
+    let buf = alloc_cstr(total);
+    let mut pos = 0usize;
+    let mut first = true;
+    for entry in entries.iter().filter(|entry| !entry.deleted) {
+        if !first && sep_len > 0 {
+            core::ptr::copy_nonoverlapping(sep_ptr, buf.add(pos), sep_len as usize);
+            pos += sep_len as usize;
+        }
+        let value = table_entry_text(entry, &mut integer);
+        core::ptr::copy_nonoverlapping(value.as_ptr(), buf.add(pos), value.len());
+        pos += value.len();
+        first = false;
+    }
+    *out_len = total as i64;
+    buf
+}
+
 // ── C-callable memory wrappers for Plan 9 regexp ───────────────────────
 // Route to heap4 via sash_alloc/sash_free_ptr.
 

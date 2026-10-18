@@ -133,6 +133,7 @@ pub(super) struct ExternFuncs {
     pub(super) table_get: cranelift_module::FuncId,
     pub(super) table_len: cranelift_module::FuncId,
     pub(super) table_value: cranelift_module::FuncId,
+    pub(super) table_join: cranelift_module::FuncId,
     pub(super) table_key: cranelift_module::FuncId,
     pub(super) table_delete: cranelift_module::FuncId,
     pub(super) read_line: cranelift_module::FuncId,

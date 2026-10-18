@@ -20,7 +20,7 @@
 //!
 //! See `notes/tasks/add-c-oracle.md` for the full 6-phase plan.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fmt::Write;
 
 use crate::ir::VarType;
@@ -374,6 +374,11 @@ fn emit_prologue(out: &mut String) {
     .unwrap();
     writeln!(
         out,
+        "extern const char* sash_table_join(const SashTable* t, const char* sep, i64 sep_len, i64* out_len);"
+    )
+    .unwrap();
+    writeln!(
+        out,
         "extern const char* sash_table_key(SashTable* t, i64 idx, i64* out_len);"
     )
     .unwrap();
@@ -645,41 +650,35 @@ fn collect_value_vars(value: &SsaValue, types: &mut VarTypes) {
 /// (the table/ptr slot), since only an int-valued collection is
 /// mixed and it must be stored as a table.
 fn declare_vars(out: &mut String, types: &VarTypes) {
-    // Collapse versions: name → slot type. STRING (table/ptr) wins: an
-    // int-valued collection (`int array`) has Int-typed save/restore versions
-    // (the local save is a plain Var assign) but is stored as a table, so it
-    // needs the `_ptr`/`_len` slots. A plain int scalar is Int at every
-    // version and a plain string var String at every version — only
-    // int-collections are mixed, and they need the String slot.
-    let mut by_name: HashMap<String, VarType> = HashMap::new();
+    let storage = variable_storage_types(types);
+    if storage.is_empty() {
+        return;
+    }
+    for (name, vtype) in storage {
+        let base = c_var_name(name, 0);
+        match vtype {
+            VarType::Int => writeln!(out, "    i64 {base} = 0; (void){base};").unwrap(),
+            VarType::String => writeln!(
+                out,
+                "    const char* {base}_ptr = \"\"; i64 {base}_len = 0; (void){base}_ptr; (void){base}_len;"
+            )
+            .unwrap(),
+        }
+    }
+    writeln!(out).unwrap();
+}
+
+fn variable_storage_types(types: &VarTypes) -> BTreeMap<&str, VarType> {
+    // Collapse versions by name. Table storage wins over the element type
+    // of an int-valued collection.
+    let mut by_name = BTreeMap::new();
     for ((name, _ver), vt) in types {
-        let entry = by_name.entry(name.clone()).or_insert(*vt);
+        let entry = by_name.entry(name.as_str()).or_insert(*vt);
         if *vt == VarType::String {
             *entry = VarType::String;
         }
     }
-    let mut sorted: Vec<_> = by_name.iter().collect();
-    sorted.sort_by_key(|(name, _)| (*name).clone());
-    if sorted.is_empty() {
-        return;
-    }
-    for (name, vtype) in &sorted {
-        let base = c_var_name(name, 0);
-        match vtype {
-            VarType::Int => {
-                writeln!(out, "    i64 {} = 0; (void){};", base, base).unwrap();
-            }
-            VarType::String => {
-                writeln!(
-                    out,
-                    "    const char* {0}_ptr = \"\"; i64 {0}_len = 0; (void){0}_ptr; (void){0}_len;",
-                    base
-                )
-                .unwrap();
-            }
-        }
-    }
-    writeln!(out).unwrap();
+    by_name
 }
 
 /// Map an SSA `(name, version)` to a C identifier stem. **Versions
@@ -1249,15 +1248,8 @@ fn emit_assign(e: &mut Emit, target: &VarRef, value: &SsaValue, types: &VarTypes
         return;
     }
     let base = c_var_name(&target.name, target.version);
-    // A collection-valued assignment stores a table pointer in the `_ptr` slot
-    // (String path), even for an int-valued collection (DD#76). For a plain
-    // `Var` assign into an int-collection (its function-local save/restore),
-    // the value alone looks Int, so also route to the String path when the
-    // target name is declared as a table slot (see declare_vars "String wins").
-    let mut slot_ty = collection_or_declared_type(value, target.var_type);
-    if slot_ty == VarType::Int && name_is_table_slot(&target.name, types) {
-        slot_ty = VarType::String;
-    }
+    // DD#76: collection assignments store a table pointer even for int cells.
+    let slot_ty = collection_or_declared_type(value, target.var_type);
     match slot_ty {
         VarType::String => {
             let (ptr, len) = lower_value_as_str(e, value, types);
@@ -1271,10 +1263,7 @@ fn emit_assign(e: &mut Emit, target: &VarRef, value: &SsaValue, types: &VarTypes
     }
 }
 
-/// True if any recorded version of `name` is a String (table/ptr) slot — so
-/// declare_vars declares its `_ptr`/`_len`. Used to route an int-collection's
-/// plain-`Var` save/restore assigns to the String path (they'd otherwise look
-/// Int and write an undeclared scalar).
+/// Whether a name has pointer storage, including int-valued collections.
 fn name_is_table_slot(name: &str, types: &VarTypes) -> bool {
     types
         .iter()
@@ -1402,7 +1391,7 @@ fn lower_value_as_str_aggregate(e: &mut Emit, value: &SsaValue, types: &VarTypes
             emit_substring_c(e, &s_ptr, &s_len, spec)
         }
         // DD#60: argv-slice loop var (argv[idx], 0-based) / argv snapshot.
-        SsaValue::ArgvIndex(_) => emit_c_argv_value(e, value),
+        SsaValue::ArgvIndex(index) => emit_c_argv_index(e, index),
         // Phase 5: subscript read: ${arr[i]} or ${map[k]}.
         SsaValue::Subscript {
             array,
@@ -1470,38 +1459,24 @@ fn emit_var_value(e: &mut Emit, vref: &VarRef, types: &VarTypes) -> CStr {
     }
     let base = c_var_name(&vref.name, vref.version);
     // An int-valued collection has var_type Int but is stored as a table, so
-    // read its `_ptr`/`_len` slots (declared by declare_vars "String wins"),
-    // not `sash_itoa(scalar)`. Matters for its local save/restore Var reads.
+    // read its `_ptr`/`_len` slots, not `sash_itoa(scalar)`.
     if vref.var_type == VarType::String || name_is_table_slot(&vref.name, types) {
         return (format!("{}_ptr", base), format!("{}_len", base));
     }
     emit_itoa_temp(e, &base)
 }
 
-/// DD#60: `ArgvIndex` (argv[idx], 0-based — the loop guard keeps idx in
-/// range) and `ArgvSnapshot` (`array a=$(argv N)` → `sash_argv_snapshot`).
-fn emit_c_argv_value(e: &mut Emit, value: &SsaValue) -> CStr {
-    match value {
-        SsaValue::ArgvIndex(idx_ref) => {
-            // Parity with native `index_var_to_int`: an Int slot is read
-            // directly. Hard-coding `sash_atoi({iv}_ptr, {iv}_len)` would
-            // name slots an int var does not have (`declare_vars` emits one
-            // C variable for Int, two for String) — a C compile error the
-            // moment an index var is an int counter.
-            let idx = lower_var_as_int_c(idx_ref);
-            let t = e.fresh();
-            writeln!(
-                e.out,
-                "    i64 {t}_i = {idx}; i64 {t}_l; \
-                 const char* {t}_p = sash_argv_get({t}_i, &{t}_l);",
-                t = t,
-                idx = idx
-            )
-            .unwrap();
-            (format!("{}_p", t), format!("{}_l", t))
-        }
-        _ => unreachable!("emit_c_argv_value: non-argv value"),
-    }
+/// DD#60: argv[idx], 0-based; the loop guard keeps idx in range.
+fn emit_c_argv_index(e: &mut Emit, index: &VarRef) -> CStr {
+    let idx = lower_var_as_int_c(index);
+    let t = e.fresh();
+    writeln!(
+        e.out,
+        "    i64 {t}_i = {idx}; i64 {t}_l; \
+         const char* {t}_p = sash_argv_get({t}_i, &{t}_l);"
+    )
+    .unwrap();
+    (format!("{}_p", t), format!("{}_l", t))
 }
 
 /// Emit `i64 __tN_l; const char* __tN_p = (const char*)sash_itoa(int_expr, &__tN_l);`
@@ -1826,7 +1801,7 @@ fn c_escape(s: &str) -> String {
             '\n' => out.push_str("\\n"),
             '\r' => out.push_str("\\r"),
             '\t' => out.push_str("\\t"),
-            c if (c as u32) < 32 => write!(out, "\\x{:02x}", c as u32).unwrap(),
+            c if (c as u32) < 32 => write!(out, "\\{:03o}", c as u32).unwrap(),
             c => out.push(c),
         }
     }
@@ -2854,9 +2829,7 @@ fn ir_expr_as_str(e: &mut Emit, expr: &crate::ir::Expr, types: &VarTypes) -> CSt
         }
         ExprKind::SimpleExpansion(name) => latest_var_as_str(e, name, types),
         ExprKind::DoubleQuoted(parts) | ExprKind::Concat(parts) => {
-            if parts.is_empty() {
-                return ("\"\"".to_string(), "0".to_string());
-            }
+            assert!(!parts.is_empty(), "ICE: empty redirect target");
             let (mut acc_ptr, mut acc_len) = ir_expr_as_str(e, &parts[0], types);
             for p in &parts[1..] {
                 let (pp, pl) = ir_expr_as_str(e, p, types);
@@ -2886,10 +2859,10 @@ fn ir_expr_as_str(e: &mut Emit, expr: &crate::ir::Expr, types: &VarTypes) -> CSt
 /// Look up the highest-version slot for `name` and return its
 /// (ptr, len) C expression pair. A String var yields its slots directly;
 /// an Int renders through `sash_itoa` via `emit_itoa_temp`, which is why
-/// `e` is threaded. An unknown var is the empty string.
+/// `e` is threaded. A missing slot is a lowering bug, not an empty filename.
 fn latest_var_as_str(e: &mut Emit, name: &str, types: &VarTypes) -> CStr {
     let Some(((n, v), vtype)) = highest_version(name, types) else {
-        return ("\"\"".to_string(), "0".to_string());
+        panic!("ICE: unresolved redirect target — variable ${name} has no slot");
     };
     var_slot_as_str_c(e, &c_var_name(&n, v), vtype)
 }
@@ -2923,7 +2896,6 @@ fn emit_param_expansion(
     let (s_ptr, s_len) = load_var_or_empty_c(e, var, types);
 
     match operator {
-        "" => (s_ptr, s_len),
         // Phase 5: arrlen / arrvals — table-based vars.
         // The var's _ptr slot holds the table pointer; _len holds 0.
         "arrlen" => emit_arrlen(e, &s_ptr),
@@ -4384,10 +4356,7 @@ fn emit_arrlen(e: &mut Emit, table_expr: &str) -> CStr {
     emit_itoa_temp(e, &format!("{}_n", t))
 }
 
-/// `${arr[@]}` / `${arr[*]}` — array values joined by sep.
-/// Sep encoded in operand (default = single space). Phase 5: walk
-/// the table by index, concatenate values with sep into a
-/// stack-allocated buffer.
+/// Join collection values with the operand separator (`arrvals`: a space).
 fn emit_arr_values_joined(
     e: &mut Emit,
     operator: &str,
@@ -4395,7 +4364,15 @@ fn emit_arr_values_joined(
     sep_operand: &str,
 ) -> CStr {
     let sep = arrjoin_separator(operator, sep_operand);
-    emit_arr_join_loop(e, table_expr, sep)
+    let t = e.fresh();
+    writeln!(
+        e.out,
+        "    i64 {t}_len; const char* {t}_ptr = sash_table_join((SashTable*){table_expr}, \"{sep}\", {sep_len}, &{t}_len);",
+        sep = c_escape(sep),
+        sep_len = sep.len()
+    )
+    .unwrap();
+    (format!("{t}_ptr"), format!("{t}_len"))
 }
 
 /// The separator for a join: `arrjoin` uses its operand, `arrvals` uses a
@@ -4414,66 +4391,6 @@ fn arrjoin_separator<'a>(operator: &str, operand: &'a str) -> &'a str {
     } else {
         " "
     }
-}
-
-/// Emit a runtime loop that walks the table by index, gathering values into
-/// a 4096-byte stack buffer separated by `sep`. The returned (ptr, len) pair
-/// refers to the buffer.
-///
-/// Values only: key iteration is `$(keys m)`, which is a for-loop form (DD#75
-/// §3), never a joined parameter expansion.
-fn emit_arr_join_loop(e: &mut Emit, table_expr: &str, sep: &str) -> CStr {
-    let t = e.fresh();
-    let getter = "sash_table_value";
-    writeln!(e.out, "    char {t}_buf[4096];", t = t).unwrap();
-    writeln!(e.out, "    i64 {t}_pos = 0;", t = t).unwrap();
-    writeln!(
-        e.out,
-        "    i64 {t}_n = sash_table_len((SashTable*){tbl});",
-        t = t,
-        tbl = table_expr
-    )
-    .unwrap();
-    writeln!(
-        e.out,
-        "    for (i64 {t}_i = 0; {t}_i < {t}_n; {t}_i++) {{",
-        t = t
-    )
-    .unwrap();
-    writeln!(
-        e.out,
-        "        i64 {t}_el; const char* {t}_ep = {fn}((SashTable*){tbl}, {t}_i, &{t}_el);",
-        t = t,
-        fn = getter,
-        tbl = table_expr
-    )
-    .unwrap();
-    writeln!(
-        e.out,
-        "        if ({t}_i > 0 && {t}_pos + {sl} < 4096) {{",
-        t = t,
-        sl = sep.len()
-    )
-    .unwrap();
-    for b in sep.bytes() {
-        writeln!(e.out, "            {t}_buf[{t}_pos++] = {b};", t = t, b = b).unwrap();
-    }
-    writeln!(e.out, "        }}").unwrap();
-    writeln!(
-        e.out,
-        "        for (i64 {t}_j = 0; {t}_j < {t}_el && {t}_pos < 4096; {t}_j++) {{",
-        t = t
-    )
-    .unwrap();
-    writeln!(
-        e.out,
-        "            {t}_buf[{t}_pos++] = {t}_ep[{t}_j];",
-        t = t
-    )
-    .unwrap();
-    writeln!(e.out, "        }}").unwrap();
-    writeln!(e.out, "    }}").unwrap();
-    (format!("{}_buf", t), format!("{}_pos", t))
 }
 
 /// SsaValue::TableValue { array, index }. Mirrors
@@ -4531,9 +4448,6 @@ fn emit_guarded_body(
     };
     let Some((failed, path_ptr, path_len)) = failure else {
         body(e, types);
-        if !saved.is_empty() {
-            emit_restore(e, &saved);
-        }
         return;
     };
     let in_condition = e.in_condition;
@@ -4662,8 +4576,10 @@ mod tests {
     // land here; these tests confirm it lands loudly rather than falling
     // through to a wrong emission.
     fn ices(kind: BuiltinCmd, name: &str) -> String {
-        let caught = std::panic::catch_unwind(move || ice_unreachable_command(&kind, name));
-        let payload = caught.expect_err("ice_unreachable_command must panic");
+        let caught = std::panic::catch_unwind(move || {
+            emit_command_body(&mut Emit::new(), name, &kind, &[], true, &HashMap::new());
+        });
+        let payload = caught.expect_err("command dispatch must refuse non-command variants");
         payload
             .downcast_ref::<String>()
             .cloned()
@@ -4723,6 +4639,7 @@ mod tests {
     #[test]
     fn retired_parameter_operators_have_no_backend_fallback() {
         for operator in [
+            "",
             "arrvals_/",
             "arrvals_//",
             "arrvals_#",
@@ -4801,6 +4718,180 @@ mod tests {
             checked: true,
         });
         emit_c(&ssa);
+    }
+
+    #[test]
+    #[should_panic(expected = "variable $missing has no slot")]
+    fn a_missing_redirect_variable_must_not_become_an_empty_filename() {
+        ir_expr_as_str(
+            &mut Emit::new(),
+            &crate::ir::Expr {
+                kind: crate::ir::ExprKind::SimpleExpansion("missing".into()),
+                span: crate::ir::Span::default(),
+            },
+            &HashMap::new(),
+        );
+    }
+
+    #[test]
+    fn an_empty_redirect_concat_must_not_become_a_filename() {
+        for kind in [
+            crate::ir::ExprKind::DoubleQuoted(vec![]),
+            crate::ir::ExprKind::Concat(vec![]),
+        ] {
+            assert_ice(
+                || {
+                    ir_expr_as_str(
+                        &mut Emit::new(),
+                        &crate::ir::Expr {
+                            kind,
+                            span: crate::ir::Span::default(),
+                        },
+                        &HashMap::new(),
+                    );
+                },
+                "empty redirect target",
+            );
+        }
+    }
+
+    fn assert_ice(f: impl FnOnce(), expected: &str) {
+        let payload = std::panic::catch_unwind(std::panic::AssertUnwindSafe(f))
+            .expect_err("malformed input must not produce C");
+        let message = payload
+            .downcast_ref::<String>()
+            .cloned()
+            .or_else(|| payload.downcast_ref::<&str>().map(|s| s.to_string()))
+            .expect("invariant text");
+        assert!(message.contains(expected), "{message}");
+    }
+
+    #[test]
+    #[should_panic(expected = "owned by lower_value_as_str")]
+    fn a_caller_owned_value_must_not_reach_the_aggregate_fallback() {
+        lower_value_as_str_aggregate(
+            &mut Emit::new(),
+            &SsaValue::Literal("scalar".into()),
+            &HashMap::new(),
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "the C backend reached int context with an SsaValue::IntCell")]
+    fn an_int_cell_annotation_must_not_become_an_expression() {
+        lower_value_as_int(
+            &mut Emit::new(),
+            &SsaValue::IntCell(Box::new(SsaValue::Literal("1".into()))),
+            &HashMap::new(),
+        );
+    }
+
+    #[test]
+    fn logical_operators_cannot_use_eager_arithmetic_emission() {
+        for op in [ArithOp::And, ArithOp::Or] {
+            assert_ice(
+                || {
+                    emit_arith_op_c(&mut Emit::new(), op, "left", "right");
+                },
+                "logical ops handled by emit_logical_as_int_c",
+            );
+        }
+    }
+
+    #[test]
+    fn builtin_helpers_refuse_dispatch_from_the_wrong_group() {
+        assert_ice(
+            || {
+                emit_builtin_extra(
+                    &mut Emit::new(),
+                    "echo",
+                    &BuiltinCmd::Echo,
+                    &[],
+                    true,
+                    &HashMap::new(),
+                );
+            },
+            "emit_builtin_extra called with Echo",
+        );
+        assert_ice(
+            || {
+                emit_bg_builtin_c(&mut Emit::new(), &BuiltinCmd::Echo, &[], &HashMap::new());
+            },
+            "emit_bg_builtin_c called with Echo",
+        );
+        assert_ice(
+            || {
+                emit_process_builtin(
+                    &mut Emit::new(),
+                    &BuiltinCmd::Echo,
+                    &[],
+                    true,
+                    &HashMap::new(),
+                );
+            },
+            "emit_process_builtin called with Echo",
+        );
+    }
+
+    #[test]
+    fn retired_and_unknown_predicate_operators_cannot_reach_emission() {
+        let value = SsaValue::Literal("value".into());
+        let right = SsaTestRhs::Value(value.clone());
+        for op in ["-eq", "-ne", "-lt", "-le", "-gt", "-ge", "unknown"] {
+            assert_ice(
+                || {
+                    lower_test_binary(&mut Emit::new(), &value, op, &right, &HashMap::new());
+                },
+                &format!("unimplemented test operator: {op}"),
+            );
+        }
+        for op in ["-v", "-o", "-R", "-t", "unknown"] {
+            assert_ice(
+                || {
+                    lower_test_unary(&mut Emit::new(), op, &value, &HashMap::new());
+                },
+                &format!("unimplemented unary test operator: {op}"),
+            );
+        }
+    }
+
+    #[test]
+    fn non_scalar_redirect_targets_must_be_lowered_before_the_raw_bridge() {
+        for kind in [
+            crate::ir::ExprKind::Array(vec![]),
+            crate::ir::ExprKind::AssocArray(vec![]),
+            crate::ir::ExprKind::CommandSubstitution(vec![]),
+        ] {
+            assert_ice(
+                || {
+                    ir_expr_as_str(
+                        &mut Emit::new(),
+                        &crate::ir::Expr {
+                            kind,
+                            span: crate::ir::Span::default(),
+                        },
+                        &HashMap::new(),
+                    );
+                },
+                "reached ir_expr_as_str",
+            );
+        }
+    }
+
+    #[test]
+    fn the_arrvals_backend_contract_emits_a_space_separated_join() {
+        let mut e = Emit::new();
+        let var = VarRef::new("a", 0);
+        let types = HashMap::from([(("a".into(), 0), VarType::String)]);
+        let (ptr, len) = emit_param_expansion(&mut e, &var, "arrvals", "ignored", &types);
+        let table = format!("{}_ptr", c_var_name("a", 0));
+        assert!(
+            e.out.contains(&format!(
+                "const char* {ptr} = sash_table_join((SashTable*){table}, \" \", 1, &{len});"
+            )),
+            "{}",
+            e.out
+        );
     }
 
     #[test]

@@ -406,3 +406,15 @@ that it produces no output so the capture would be empty, rather than reciting
 an arity. `match` is the only other name that needed that, for the same reason.
 
 Specs: `types.sh` 75.132-75.147, `errors.sh` via.27-30.
+
+## Implementation correction 2026-10-18 - join output storage
+
+`join` has no 4 KiB result limit. Coverage work found that C silently
+truncated at that boundary while native copied beyond its stack buffer.
+Both now call the same runtime join, which sizes all live values and
+separators, allocates one NUL-terminated string, and preserves integer
+rendering, insertion order and embedded bytes. Allocation failure follows
+DD#107; it is not a partial successful join. Explicit empty separators
+remain empty, distinct from the default space.
+
+Specs: `glob_splat.sh` `joinbuf.1`-`joinbuf.13`; journal 522.

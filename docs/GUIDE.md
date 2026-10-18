@@ -416,12 +416,18 @@ argv, envp from the stack, calls `sash_main`.
 
 `sash_concat`, `sash_itoa`, `sash_atoi`, `sash_strlen`,
 `sash_substring`, `sash_strip_prefix`, `sash_strip_suffix`,
-`sash_toupper`, `sash_tolower`, `sash_regex_match`,
+`sash_toupper`, `sash_tolower`, `sash_table_join`, `sash_regex_match`,
 `sash_regex_match_into`, `sash_regex_replace`, `sash_fnmatch`.
 
 All strings are `(ptr, len)` pairs with a null terminator at
 `ptr[len]`. This gives length-bounded operations for safety and
 null-terminated C interop for `execve` without copying (DD#12).
+
+Both backends use `sash_table_join` for collection joins. It sizes the live
+values and separators before allocating one terminated result, preserving
+insertion order, integer-cell formatting and embedded NUL bytes. There is
+no 4 KiB join limit; insufficient heap reports the ordinary allocation
+failure (DD#107), rather than truncating or overrunning a scratch buffer.
 
 ### Regex
 

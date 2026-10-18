@@ -103,64 +103,17 @@ fn emit_array_join_expansion(
     literals: &HashMap<String, cranelift_module::DataId>,
     externs: &ExternFuncs,
 ) -> (cranelift_codegen::ir::Value, cranelift_codegen::ir::Value) {
-    let len_ref = module.declare_func_in_func(externs.table_len, builder.func);
-    let call = builder.ins().call(len_ref, &[s_ptr]);
-    let arr_len = builder.inst_results(call)[0];
-
-    let (buf_ptr, pos_slot) = alloc_join_buffer(builder);
-    let item_fn = module.declare_func_in_func(externs.table_value, builder.func);
     let (sep_ptr, sep_len) = intern_join_separator(operator, operand, builder, module, literals);
-
-    let idx_var = init_loop_var(builder);
-    let header = builder.create_block();
-    let body = builder.create_block();
-    let exit = builder.create_block();
-    builder.ins().jump(header, &[]);
-
-    builder.switch_to_block(header);
-    let i = builder.use_var(idx_var);
-    let done = builder
-        .ins()
-        .icmp(IntCC::SignedGreaterThanOrEqual, i, arr_len);
-    builder.ins().brif(done, exit, &[], body, &[]);
-
-    builder.switch_to_block(body);
-    builder.seal_block(body);
-
-    let item_block =
-        emit_separator_for_nonfirst_item(builder, idx_var, buf_ptr, pos_slot, sep_ptr, sep_len);
-
-    builder.switch_to_block(item_block);
-    builder.seal_block(item_block);
-    // DD#65: per-element modifiers (`${arr[@]OP}`) are dropped — they reject at
-    // parse (SB4034), so the operator here is always a plain join
-    // (`arrvals`/`arrjoin`) and the item is copied as-is.
-    let (item_ptr, item_len) = fetch_item(builder, item_fn, s_ptr, idx_var);
-    copy_item_bytes(builder, item_ptr, item_len, buf_ptr, pos_slot);
-    advance_loop_index(builder, idx_var, header);
-
-    builder.switch_to_block(exit);
-    builder.seal_block(exit);
-    let final_len = builder.ins().stack_load(I64, pos_slot, 0);
-    (buf_ptr, final_len)
-}
-
-/// Reserve a 4KB stack buffer for the joined output and a separate
-/// stack slot tracking the running write position.
-fn alloc_join_buffer(
-    builder: &mut FunctionBuilder,
-) -> (
-    cranelift_codegen::ir::Value,
-    cranelift_codegen::ir::StackSlot,
-) {
-    let buf_slot =
-        builder.create_sized_stack_slot(StackSlotData::new(StackSlotKind::ExplicitSlot, 4096, 3));
-    let buf_ptr = builder.ins().stack_addr(I64, buf_slot, 0);
-    let pos_slot =
+    let len_slot =
         builder.create_sized_stack_slot(StackSlotData::new(StackSlotKind::ExplicitSlot, 8, 3));
-    let zero = builder.ins().iconst(I64, 0);
-    builder.ins().stack_store(zero, pos_slot, 0);
-    (buf_ptr, pos_slot)
+    let len_ptr = builder.ins().stack_addr(I64, len_slot, 0);
+    let join = module.declare_func_in_func(externs.table_join, builder.func);
+    let call = builder
+        .ins()
+        .call(join, &[s_ptr, sep_ptr, sep_len, len_ptr]);
+    let ptr = builder.inst_results(call)[0];
+    let len = builder.ins().stack_load(I64, len_slot, 0);
+    (ptr, len)
 }
 
 /// Resolve the separator: `arrjoin` uses the operand, `arrvals` a single space.
@@ -177,165 +130,6 @@ fn intern_join_separator(
     let sep_ptr = builder.ins().global_value(I64, sep_gv);
     let sep_len = builder.ins().iconst(I64, sep_str.len() as i64);
     (sep_ptr, sep_len)
-}
-
-fn init_loop_var(builder: &mut FunctionBuilder) -> cranelift_frontend::Variable {
-    let idx_var = builder.declare_var(I64);
-    let zero = builder.ins().iconst(I64, 0);
-    builder.def_var(idx_var, zero);
-    idx_var
-}
-
-/// Emit: if `idx > 0` { copy separator into buf; advance pos } then
-/// fall through into the returned item block.
-fn emit_separator_for_nonfirst_item(
-    builder: &mut FunctionBuilder,
-    idx_var: cranelift_frontend::Variable,
-    buf_ptr: cranelift_codegen::ir::Value,
-    pos_slot: cranelift_codegen::ir::StackSlot,
-    sep_ptr: cranelift_codegen::ir::Value,
-    sep_len: cranelift_codegen::ir::Value,
-) -> cranelift_codegen::ir::Block {
-    let cur_i = builder.use_var(idx_var);
-    let need_sep = builder.ins().icmp_imm(IntCC::SignedGreaterThan, cur_i, 0);
-    let sep_block = builder.create_block();
-    let item_block = builder.create_block();
-    builder
-        .ins()
-        .brif(need_sep, sep_block, &[], item_block, &[]);
-
-    builder.switch_to_block(sep_block);
-    builder.seal_block(sep_block);
-    let pos = builder.ins().stack_load(I64, pos_slot, 0);
-    let dst = builder.ins().iadd(buf_ptr, pos);
-    emit_bytecopy_loop(builder, sep_ptr, sep_len, dst);
-    let pos_after_sep = builder.ins().iadd(pos, sep_len);
-    builder.ins().stack_store(pos_after_sep, pos_slot, 0);
-    builder.ins().jump(item_block, &[]);
-    item_block
-}
-
-/// Emit a counted byte-copy loop: for j in 0..len { dst[j] = src[j] }
-/// using the current basic block as the loop header.
-fn emit_bytecopy_loop(
-    builder: &mut FunctionBuilder,
-    src: cranelift_codegen::ir::Value,
-    len: cranelift_codegen::ir::Value,
-    dst: cranelift_codegen::ir::Value,
-) {
-    let copy_idx = builder.declare_var(I64);
-    let zero = builder.ins().iconst(I64, 0);
-    builder.def_var(copy_idx, zero);
-    let hdr = builder.create_block();
-    let body = builder.create_block();
-    let done = builder.create_block();
-    builder.ins().jump(hdr, &[]);
-
-    builder.switch_to_block(hdr);
-    let j = builder.use_var(copy_idx);
-    let end = builder.ins().icmp(IntCC::SignedGreaterThanOrEqual, j, len);
-    builder.ins().brif(end, done, &[], body, &[]);
-
-    builder.switch_to_block(body);
-    builder.seal_block(body);
-    let j2 = builder.use_var(copy_idx);
-    let src_addr = builder.ins().iadd(src, j2);
-    let b = builder.ins().load(
-        cranelift_codegen::ir::types::I8,
-        cranelift_codegen::ir::MemFlags::new(),
-        src_addr,
-        0,
-    );
-    let dst_addr = builder.ins().iadd(dst, j2);
-    builder
-        .ins()
-        .store(cranelift_codegen::ir::MemFlags::new(), b, dst_addr, 0);
-    let next = builder.ins().iadd_imm(j2, 1);
-    builder.def_var(copy_idx, next);
-    builder.ins().jump(hdr, &[]);
-    builder.seal_block(hdr);
-
-    builder.switch_to_block(done);
-    builder.seal_block(done);
-}
-
-fn fetch_item(
-    builder: &mut FunctionBuilder,
-    item_fn: cranelift_codegen::ir::FuncRef,
-    s_ptr: cranelift_codegen::ir::Value,
-    idx_var: cranelift_frontend::Variable,
-) -> (cranelift_codegen::ir::Value, cranelift_codegen::ir::Value) {
-    let cur_i = builder.use_var(idx_var);
-    let item_len_slot =
-        builder.create_sized_stack_slot(StackSlotData::new(StackSlotKind::ExplicitSlot, 8, 3));
-    let item_len_addr = builder.ins().stack_addr(I64, item_len_slot, 0);
-    let call = builder.ins().call(item_fn, &[s_ptr, cur_i, item_len_addr]);
-    let item_ptr = builder.inst_results(call)[0];
-    let item_len = builder.ins().stack_load(I64, item_len_slot, 0);
-    (item_ptr, item_len)
-}
-
-/// Append `item_len` bytes from `item_ptr` to the buffer at the
-/// current pos_slot value, advancing pos_slot in lockstep.
-fn copy_item_bytes(
-    builder: &mut FunctionBuilder,
-    item_ptr: cranelift_codegen::ir::Value,
-    item_len: cranelift_codegen::ir::Value,
-    buf_ptr: cranelift_codegen::ir::Value,
-    pos_slot: cranelift_codegen::ir::StackSlot,
-) {
-    let copy_idx = builder.declare_var(I64);
-    let zero = builder.ins().iconst(I64, 0);
-    builder.def_var(copy_idx, zero);
-
-    let hdr = builder.create_block();
-    let body = builder.create_block();
-    let done = builder.create_block();
-    builder.ins().jump(hdr, &[]);
-
-    builder.switch_to_block(hdr);
-    let j = builder.use_var(copy_idx);
-    let end = builder
-        .ins()
-        .icmp(IntCC::SignedGreaterThanOrEqual, j, item_len);
-    builder.ins().brif(end, done, &[], body, &[]);
-
-    builder.switch_to_block(body);
-    builder.seal_block(body);
-    let j2 = builder.use_var(copy_idx);
-    let cur_pos = builder.ins().stack_load(I64, pos_slot, 0);
-    let src_addr = builder.ins().iadd(item_ptr, j2);
-    let b = builder.ins().load(
-        cranelift_codegen::ir::types::I8,
-        cranelift_codegen::ir::MemFlags::new(),
-        src_addr,
-        0,
-    );
-    let dst_addr = builder.ins().iadd(buf_ptr, cur_pos);
-    builder
-        .ins()
-        .store(cranelift_codegen::ir::MemFlags::new(), b, dst_addr, 0);
-    let new_pos = builder.ins().iadd_imm(cur_pos, 1);
-    builder.ins().stack_store(new_pos, pos_slot, 0);
-    let next = builder.ins().iadd_imm(j2, 1);
-    builder.def_var(copy_idx, next);
-    builder.ins().jump(hdr, &[]);
-    builder.seal_block(hdr);
-
-    builder.switch_to_block(done);
-    builder.seal_block(done);
-}
-
-fn advance_loop_index(
-    builder: &mut FunctionBuilder,
-    idx_var: cranelift_frontend::Variable,
-    header: cranelift_codegen::ir::Block,
-) {
-    let cur_i = builder.use_var(idx_var);
-    let next_i = builder.ins().iadd_imm(cur_i, 1);
-    builder.def_var(idx_var, next_i);
-    builder.ins().jump(header, &[]);
-    builder.seal_block(header);
 }
 
 #[allow(clippy::too_many_arguments)]
