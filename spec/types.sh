@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup types
-plan=394
+plan=409
 echo "1..$plan" >&3
 
 set +e
@@ -2212,6 +2212,62 @@ int m=$(( (strlen $s) ))
 echo $(( m == 10 && n > 0 ))'
 [[ $rc = 0 && $out = "1" && -z $err ]]; chk den.22
 
+# Literal syntax and the runtime's signed-64-bit domain must both hold.
+run_sash 'int low=-9223372036854775808
+int high=9223372036854775807
+echo $low $high'
+[[ $rc = 0 && $out = '-9223372036854775808 9223372036854775807' \
+   && -z $err && -z $rerr ]]; chk lit64.1
+
+run_sash 'int n=--1; echo $n'
+[[ $rc != 0 && -z $out && $err == *SB4030* && $err == *'cannot assign string'* \
+   && $err != *'panicked'* ]]; chk lit64.2
+
+run_sash 'int n=1-2; echo $n'
+[[ $rc != 0 && -z $out && $err == *SB4030* && $err == *'cannot assign string'* \
+   && $err != *'panicked'* ]]; chk lit64.3
+
+run_sash 'int n=-; echo $n'
+[[ $rc != 0 && -z $out && $err == *SB4030* && $err == *'cannot assign string'* \
+   && $err != *'panicked'* ]]; chk lit64.4
+
+run_sash 'int n=; echo $n'
+[[ $rc != 0 && -z $out && $err == *SB4014* && $err == *'expected expression'* ]]; chk lit64.5
+
+run_sash 'int n=9223372036854775808; echo $n'
+[[ $rc != 0 && -z $out && $err == *SB4026* && $err == *'integer literal out of range'* ]]; chk lit64.6
+
+run_sash 'int n=-9223372036854775809; echo $n'
+[[ $rc != 0 && -z $out && $err == *SB4026* && $err == *'integer literal out of range'* ]]; chk lit64.7
+
+run_sash 'int array a=(1-2); echo ${a[0]}'
+[[ $rc != 0 && -z $out && $err == *SB4030* && $err != *'panicked'* ]]; chk lit64.8
+
+run_sash 'array a=(word); echo ${a[9223372036854775807]:-missing}'
+[[ $rc = 0 && $out = missing && -z $err && -z $rerr ]]; chk lit64.9
+
+run_sash 'array a=(word); echo ${a[9223372036854775808]}'
+[[ $rc != 0 && -z $out && $err == *SB4030* \
+   && $err == *'non-integer index on indexed array'* && $err != *'panicked'* ]]; chk lit64.10
+
+run_sash 'fn f { echo ${args[18446744073709551616]} }; f'
+[[ $rc != 0 && -z $out && $err == *SB4030* \
+   && $err == *'non-integer index on indexed array'* && $err != *'panicked'* ]]; chk lit64.11
+
+run_sash 'array a=(word); a[18446744073709551616]=other; echo ${a[0]}'
+[[ $rc != 0 && -z $out && $err == *SB4030* \
+   && $err == *'non-integer index on indexed array'* && $err != *'panicked'* ]]; chk lit64.12
+
+# A numeric map key still needs quotes even when it does not fit an int.
+run_sash 'map m=([18446744073709551616]=word); echo ${m[18446744073709551616]}'
+[[ $rc != 0 && -z $out && $err == *SB4030* && $err == *'integer key on map'* ]]; chk lit64.13
+
+run_sash 'map m=([18446744073709551616]=word); echo ${m["18446744073709551616"]}'
+[[ $rc = 0 && $out = word && -z $err && -z $rerr ]]; chk lit64.14
+
+# Strict parsing does not extend the existing minus-only literal spelling.
+run_sash 'int n=+1; echo $n'
+[[ $rc != 0 && -z $out && $err == *SB4030* && $err == *'cannot assign string'* ]]; chk lit64.15
 
 set -e
 tally

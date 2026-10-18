@@ -17,3 +17,11 @@ front-end taint and the independent SSA backstop after resolution; source-name
 restoration must not affect the identities used to classify taint.
 Journal 525 records the controls and ordinary/coverage gates; those are not
 a substitute for the adversarial review.
+
+Coverage 526 adds synthetic-name isolation and caller/callee evaluation
+boundaries: legal `__` globals, repeated live string/int results, argument
+captures before callee rebinding, unchanged pipeline child isolation, pending
+redirect ownership and tail-call splat/slot handling. Include malformed
+integer literals and array indices at the signed-64-bit boundary without
+weakening the independent numeric-map-key rule. Journal 526 records the
+failed-before controls and source/API attribution.

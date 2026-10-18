@@ -397,3 +397,19 @@ because it may also deliver three elements and move whatever follows.
 
 Impl `transform/cmd_handlers.rs::call_arg_bounds`. Specs `optional_args.sh`
 84.53-84.72. journal 443.
+
+## Argument materialization repair (2026-10-18)
+
+An argument's nested calls execute before the callee's `args`, collection
+slots or inline context replace the caller's. Plain calls, function captures
+and function pipeline stages now use the same argument lifter as integer
+calls. The pipeline path retains its existing child boundary: argument-side
+changes stay in that stage. Call redirects are taken out of pending state
+before lifting, and opened afterwards, so an argument capture cannot steal
+the outer call's redirect.
+
+This repairs unevaluated function values reaching codegen, false recursion
+for finite `f $(f leaf)` nesting, and caller positional/capture boundaries;
+it does not introduce multiple signatures or a new pipeline evaluation
+boundary. `functions.sh` `tmpcap.4`, `tmpcap.13`-`tmpcap.18`; journal 526.
+Tail producers use the same materializer and preserve splats (DD#27).

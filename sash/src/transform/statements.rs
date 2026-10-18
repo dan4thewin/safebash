@@ -4,7 +4,7 @@
 //! SECURITY: This is where commands become SsaInst::Command with resolved names.
 
 use super::control_flow::{flatten_elif, lower_case, lower_for, lower_if, lower_while};
-use super::expressions::{expr_to_value, literal_name_of};
+use super::expressions::{arg_to_value, expr_to_value, literal_name_of};
 use super::functions::{collect_returns, lift_int_func_calls};
 use crate::ir::*;
 use crate::ssa::*;
@@ -108,7 +108,11 @@ fn try_producer_tail_call(
     if literal_name_of(&c.name) != tf {
         return None;
     }
-    let new_args: Vec<SsaValue> = c.args.iter().map(|a| expr_to_value(a, state)).collect();
+    let (scalar_args, coll_args) = super::functions::split_call_args(&c.args);
+    if !coll_args.is_empty() {
+        return None;
+    }
+    let new_args: Vec<SsaValue> = scalar_args.iter().map(|a| arg_to_value(a, state)).collect();
     Some(super::functions::emit_tail_call(
         header, &aname, new_args, ssa, state, block,
     ))
@@ -309,7 +313,10 @@ pub(super) fn spill_scalar_redirect_targets(
     for redir in redirects {
         if target_needs_spill(&redir.target.kind) {
             let val = expr_to_value(&redir.target, state);
-            let name = format!("__redir_target_{}_{}", ssa.blocks.len(), out.len());
+            let name = state.reserve_temp_name(
+                format!("__redir_target_{}_{}", ssa.blocks.len(), out.len()),
+                VarType::String,
+            );
             let target = state.define(&name);
             ssa.block_mut(block)
                 .insts

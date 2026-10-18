@@ -20,7 +20,7 @@ pub(super) fn setup_callee_args(
     state: &mut VersionState,
     block: BlockId,
 ) {
-    let name = format!("__args{}", state.args_counter);
+    let name = state.reserve_temp_name(format!("__args{}", state.args_counter), VarType::String);
     state.args_counter += 1;
     let v = state.define(&name);
     ssa.block_mut(block).insts.push(SsaInst::Assign {
@@ -196,7 +196,8 @@ pub(super) fn lift_int_func_calls(
             // A multi-statement/pipeline `$(…)` body: capture its stdout into a
             // temp (fresh name from the block count), then use the temp. The
             // capture is tainted (external output).
-            let temp = format!("__bodycap_{}", ssa.blocks.len());
+            let temp =
+                state.reserve_temp_name(format!("__bodycap_{}", ssa.blocks.len()), VarType::String);
             *block = super::stmt_handlers::capture_body_into(&temp, &body, state, ssa, *block);
             SsaValue::Var(state.lookup(&temp))
         }
@@ -385,14 +386,13 @@ fn lift_str_func_call(
     state: &mut VersionState,
     block: &mut BlockId,
 ) -> SsaValue {
-    let temp = format!("__strcap_{name}");
-    match super::stmt_handlers::capture_func_into(&temp, &name, &args, &colls, state, ssa, *block) {
-        Some(new_block) => {
-            *block = new_block;
-            SsaValue::Var(state.lookup(&temp))
-        }
-        None => SsaValue::FuncCall { name, args, colls },
-    }
+    let temp = state.reserve_temp_name(format!("__strcap_{name}"), VarType::String);
+    *block =
+        super::stmt_handlers::capture_func_into(&temp, &name, &args, &colls, state, ssa, *block)
+            .unwrap_or_else(|| {
+                unreachable!("string capture requires a registered function body: {name}")
+            });
+    SsaValue::Var(state.lookup(&temp))
 }
 
 /// `${x:-WORD}` / `@{a:-WORD}`: lower to the branchless `DefaultValue` select,
@@ -467,8 +467,9 @@ pub(super) fn emit_tail_call(
     new_args: Vec<SsaValue>,
     ssa: &mut SsaProgram,
     state: &mut VersionState,
-    block: BlockId,
+    mut block: BlockId,
 ) -> BlockId {
+    let new_args = lift_int_func_args(new_args, ssa, state, &mut block);
     let av = state.define(args_name);
     ssa.block_mut(block).insts.push(SsaInst::Assign {
         target: av,
@@ -546,7 +547,7 @@ pub(super) fn inline_int_func(
 
     // The return value is in "?" (set by `return N`)
     let result_ref = state.lookup("?");
-    let temp_name = format!("__intret_{}", name);
+    let temp_name = state.reserve_temp_name(format!("__intret_{}", name), VarType::Int);
     let temp_var = state.define(&temp_name);
     ssa.block_mut(restore_block).insts.push(SsaInst::Assign {
         target: temp_var.clone(),
@@ -579,8 +580,8 @@ pub(super) enum Arity {
     /// optional (DD#84: read only via `:-`/`:~`); `min == max` when every read
     /// index is required.
     Fixed { min: usize, max: usize },
-    /// Uses `@args` / `$(len args)` / `${#args}` / `$#` / `$@` / a dynamic
-    /// index. Takes at least `floor` (the highest literal index + 1, if any).
+    /// Uses whole `args` or a dynamic index. Takes at least `floor` (the
+    /// highest required literal index + 1, if any); counting alone does not.
     Variadic { floor: usize },
 }
 
@@ -706,22 +707,10 @@ fn sig_scan_child_bodies(stmt: &Statement, sig: &mut ArgSig) {
     }
 }
 
+/// **Total over `StmtKind` on purpose — do not add a wildcard.**
 fn sig_scan_stmt(stmt: &Statement, sig: &mut ArgSig) {
     match &stmt.kind {
-        StmtKind::Command(c) => {
-            sig_scan_expr(&c.name, sig);
-            // A bare `@args` splat into an EXTERNAL command implies the function
-            // takes ≥1 argument (DG 2026-09-05): `tool @args` is treated like
-            // `: $1; tool @args`, recording a required index 0 → min arity ≥1.
-            // That makes `@args` provably non-empty (SB5032 waived in validate)
-            // and forces callers to pass ≥1 (SB5042). External-only: for-in /
-            // builtin `@args` handle emptiness themselves, so they impose no
-            // floor.
-            if is_external_head(&c.name) && c.args.iter().any(is_bare_args_splat) {
-                sig.required.insert(0);
-            }
-            sig_scan_exprs(&c.args, sig);
-        }
+        StmtKind::Command(c) => sig_scan_command(c, sig),
         StmtKind::Assignment(a) => sig_scan_expr(&a.value, sig),
         StmtKind::Declaration(d) => sig_scan_decl(d, sig),
         StmtKind::For(f) => {
@@ -735,8 +724,26 @@ fn sig_scan_stmt(stmt: &Statement, sig: &mut ArgSig) {
         // not child bodies — scan it directly (else `$#`/`$N` inside a
         // condition are missed and a variadic function looks fixed).
         StmtKind::ArithTest(a) => sig_scan_arith(a, sig),
-        _ => sig_scan_child_bodies(stmt, sig),
+        StmtKind::Pipeline(_)
+        | StmtKind::If(_)
+        | StmtKind::While(_)
+        | StmtKind::Redirected(_)
+        | StmtKind::List(_)
+        | StmtKind::Group(_)
+        | StmtKind::Suppressed(_)
+        | StmtKind::Negated(_)
+        | StmtKind::ReturnProducer(_) => sig_scan_child_bodies(stmt, sig),
     }
+}
+
+fn sig_scan_command(c: &Command, sig: &mut ArgSig) {
+    sig_scan_expr(&c.name, sig);
+    // DD#81: a bare @args into an external requires at least one argument;
+    // builtins and for-in handle an empty array themselves.
+    if is_external_head(&c.name) && c.args.iter().any(is_bare_args_splat) {
+        sig.required.insert(0);
+    }
+    sig_scan_exprs(&c.args, sig);
 }
 
 /// An external command head: post-DD#23 resolution it is an absolute path
@@ -841,37 +848,32 @@ fn sig_scan_test(test: &TestExpr, sig: &mut ArgSig) {
     }
 }
 
-/// `$N` / `${N}` (1..9) → 0-based index; `$@` → whole-args (variadic).
+/// `$N` / `${N}` (1..9) → 0-based index. `$@` is rejected by SB5045.
 /// A bare `$N` is a *required* read.
 ///
 /// `$#` is deliberately **not** here (DD#81 addendum 2026-09-28). It observes
 /// the argument *count* without accessing an argument, so it says nothing
 /// about arity — see `cmdsub_reads_whole_args`.
 fn sig_record_name(name: &str, sig: &mut ArgSig) {
-    if let Ok(n) = name.parse::<usize>() {
-        if (1..=9).contains(&n) {
-            sig.required.insert(n - 1);
-        }
-    } else if name == "@" {
-        sig.variadic = true;
+    if let Some(n) = positional_index_1_9(name) {
+        sig_record_positional(n, false, sig);
     }
 }
 
 /// A `${args[K]}` index: a literal → a fixed index (recorded as optional or
 /// required per `optional`); anything dynamic → variadic.
 fn sig_record_index(idx: &Expr, sig: &mut ArgSig, optional: bool) {
-    match &idx.kind {
-        ExprKind::Literal(s) => match s.parse::<usize>() {
-            Ok(n) => {
-                if optional {
-                    sig.optional.insert(n);
-                } else {
-                    sig.required.insert(n);
-                }
-            }
-            Err(_) => sig.variadic = true,
-        },
-        _ => sig.variadic = true,
+    let ExprKind::Literal(s) = &idx.kind else {
+        sig.variadic = true;
+        return;
+    };
+    let n = s.parse::<usize>().unwrap_or_else(|_| {
+        unreachable!("a malformed literal args index must not erase the function's arity ceiling")
+    });
+    if optional {
+        sig.optional.insert(n);
+    } else {
+        sig.required.insert(n);
     }
 }
 
@@ -931,18 +933,27 @@ pub(super) fn collect_returns(stmts: &[Statement]) -> Vec<Option<String>> {
     returns
 }
 
+/// **Total over `StmtKind` on purpose — do not add a wildcard.**
 fn collect_returns_inner(stmts: &[Statement], returns: &mut Vec<Option<String>>) {
     for stmt in stmts {
         match &stmt.kind {
             StmtKind::Command(c) => maybe_collect_return(c, returns),
             // Nested function definitions have their own returns.
             StmtKind::Function(_) => {}
-            // Default: descend into every nested statement body via
-            // structural_bodies(). Covers If (incl. elif_clauses), While,
-            // For, Case, Group, Pipeline, List, Redirected, Suppressed.
-            // Leaf StmtKinds (Assignment, Declaration, Comment,
-            // ArithTest) return empty bodies.
-            _ => collect_returns_bodies(stmt, returns),
+            StmtKind::Assignment(_)
+            | StmtKind::Declaration(_)
+            | StmtKind::Pipeline(_)
+            | StmtKind::If(_)
+            | StmtKind::While(_)
+            | StmtKind::For(_)
+            | StmtKind::Case(_)
+            | StmtKind::Redirected(_)
+            | StmtKind::List(_)
+            | StmtKind::Group(_)
+            | StmtKind::Suppressed(_)
+            | StmtKind::Negated(_)
+            | StmtKind::ArithTest(_)
+            | StmtKind::ReturnProducer(_) => collect_returns_bodies(stmt, returns),
         }
     }
 }
@@ -977,5 +988,94 @@ fn literal_command_name(name: &Expr) -> &str {
     match &name.kind {
         ExprKind::Literal(s) => s.as_str(),
         _ => "",
+    }
+}
+
+#[cfg(test)]
+mod invariant_tests {
+    use super::*;
+    use std::collections::HashMap;
+
+    fn lit(s: &str) -> Expr {
+        Expr::literal(s, Span::new(1, 1))
+    }
+
+    #[test]
+    fn nested_function_arguments_and_returns_belong_to_the_nested_scope() {
+        let span = Span::new(1, 1);
+        let nested = Statement {
+            kind: StmtKind::Function(Function {
+                name: "inner".to_string(),
+                return_type: VarType::String,
+                body: vec![
+                    Statement::command(
+                        lit("echo"),
+                        vec![Expr {
+                            kind: ExprKind::SimpleExpansion("9".to_string()),
+                            span,
+                        }],
+                        span,
+                    ),
+                    Statement::command(lit("return"), vec![lit("7")], span),
+                ],
+            }),
+            span,
+        };
+        let body = vec![
+            nested,
+            Statement::command(
+                lit(":"),
+                vec![Expr {
+                    kind: ExprKind::SimpleExpansion("1".to_string()),
+                    span,
+                }],
+                span,
+            ),
+            Statement::command(lit("return"), vec![lit("0")], span),
+        ];
+        assert_eq!(
+            analyze_arity(&body),
+            (Arity::Fixed { min: 1, max: 1 }, vec![])
+        );
+        assert_eq!(collect_returns(&body), vec![Some("0".to_string())]);
+    }
+
+    #[test]
+    fn nonliteral_command_head_is_not_a_literal_return() {
+        let span = Span::new(1, 1);
+        let command = Command {
+            name: Expr {
+                kind: ExprKind::SimpleExpansion("return_name".to_string()),
+                span,
+            },
+            args: vec![lit("7")],
+        };
+        let mut returns = Vec::new();
+        maybe_collect_return(&command, &mut returns);
+        assert!(returns.is_empty());
+    }
+
+    #[test]
+    #[should_panic(expected = "string capture requires a registered function body: missing")]
+    fn unregistered_function_value_cannot_remain_unlifted() {
+        let mut ssa = SsaProgram::new();
+        let mut block = ssa.entry;
+        let mut state = VersionState::with_types(HashMap::new());
+        lift_int_func_calls(
+            SsaValue::FuncCall {
+                name: "missing".to_string(),
+                args: vec![],
+                colls: vec![],
+            },
+            &mut ssa,
+            &mut state,
+            &mut block,
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "a malformed literal args index must not erase")]
+    fn malformed_literal_index_cannot_make_a_signature_variadic() {
+        sig_record_index(&lit("not_an_index"), &mut ArgSig::default(), false);
     }
 }

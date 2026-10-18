@@ -39,7 +39,9 @@ fn lower_newread(
             Some(expr_to_value(src, state)),
             super::expressions::fill_target_name(dst, state),
         ),
-        _ => return block,
+        _ => unreachable!(
+            "SB5057 requires one or two read operands; a malformed read must not disappear"
+        ),
     };
     super::stmt_handlers::autodeclare_bulk_target(&target, false, ssa, state, block);
     // Define a LATER version than the autodeclare's empty-array Assign, so the
@@ -258,7 +260,7 @@ fn inline_function_call(
     c: &Command,
     ssa: &mut SsaProgram,
     state: &mut VersionState,
-    block: BlockId,
+    mut block: BlockId,
 ) -> BlockId {
     // DD#27/§5: reject a call to a function already being inlined (recursion) —
     // unbounded inlining would overflow the compiler. Tail self-calls are
@@ -269,8 +271,6 @@ fn inline_function_call(
             .push(super::functions::recursion_diagnostic(name));
         return block;
     }
-    state.inlining.push(name.to_string());
-
     // `f > out.txt`: the redirect parked by `lower_redirected_stmt`. Taken
     // before the body is lowered, so a nested redirected call inside the body
     // opens its own scope rather than re-opening this one.
@@ -291,6 +291,8 @@ fn inline_function_call(
     let arg_values: Vec<SsaValue> = scalar_args.iter().map(|a| arg_to_value(a, state)).collect();
 
     check_callee_arity(name, body, &arg_values, state);
+    let arg_values = lift_int_func_args(arg_values, ssa, state, &mut block);
+    state.inlining.push(name.to_string());
     let saved_args = super::functions::save_caller_args(state);
     let saved_slots = super::functions::setup_callee_slots(&coll_args, state);
     let saved_ro = super::functions::enter_fn_body_scope(state);
@@ -598,7 +600,7 @@ fn emit_external_command(
 /// and record it as an external dependency (for `--manifest`). A target that
 /// already contains `/` or is not a literal (the latter is rejected at
 /// validation) is left untouched.
-fn resolve_exec_target_arg(mut args: Vec<SsaValue>, state: &VersionState) -> Vec<SsaValue> {
+fn resolve_exec_target_arg(mut args: Vec<SsaValue>, state: &mut VersionState) -> Vec<SsaValue> {
     let target = match args.first() {
         Some(SsaValue::Literal(s)) if !s.contains('/') => s.clone(),
         _ => return args,
@@ -606,6 +608,10 @@ fn resolve_exec_target_arg(mut args: Vec<SsaValue>, state: &VersionState) -> Vec
     if let Some(path) = crate::resolve::resolve_command_path(&target) {
         state.external_deps.borrow_mut().insert(path.clone());
         args[0] = SsaValue::Literal(path);
+    } else {
+        state.diagnostics.push(format!(
+            "1:1: error [SB5011] `exec` target '{target}' could not be resolved at compile time"
+        ));
     }
     args
 }
@@ -667,5 +673,30 @@ mod invariant_tests {
         ssa.entry = block;
         let mut state = VersionState::with_types(HashMap::new());
         handle_signal("signal", &c, &stmt, &mut ssa, &mut state, block);
+    }
+
+    #[test]
+    #[should_panic(expected = "a malformed read must not disappear")]
+    fn malformed_read_cannot_be_silently_dropped() {
+        let c = Command {
+            name: lit("read"),
+            args: vec![],
+        };
+        let mut ssa = SsaProgram::new();
+        let block = ssa.entry;
+        let mut state = VersionState::with_types(HashMap::new());
+        lower_newread(&c, &mut ssa, &mut state, block);
+    }
+
+    #[test]
+    fn unresolved_exec_target_cannot_reach_codegen_as_a_bare_name() {
+        let name = format!("__sash_missing_exec_{}__", std::process::id());
+        assert!(crate::resolve::resolve_command_path(&name).is_none());
+        let mut state = VersionState::with_types(HashMap::new());
+        resolve_exec_target_arg(vec![SsaValue::Literal(name.clone())], &mut state);
+        assert_eq!(state.diagnostics.len(), 1);
+        assert!(state.diagnostics[0].contains("[SB5011]"));
+        assert!(state.diagnostics[0].contains(&name));
+        assert!(state.external_deps.borrow().is_empty());
     }
 }

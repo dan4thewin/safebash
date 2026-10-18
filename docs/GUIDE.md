@@ -237,6 +237,17 @@ AST. A source-name table keeps diagnostics and runtime attest labels in the
 user's spelling. The original AST/source remain the artifact input:
 `--emit-ir`, embedded IR and embedded source do not expose compiler names.
 
+Compiler temporaries use the same reserved-name set, through
+`VersionState::reserve_temp_name`: a private-looking spelling cannot alias a
+source global or another call's live result. The `__` namespace remains legal
+source, not a compiler reservation (DD#125).
+
+Function arguments are materialized before installing the callee's `args`
+and collection slots. Plain calls, captures, pipeline stages and tail calls
+share the argument lifter; nested calls retain their caller's positionals,
+and splats remain splats. Pipeline arguments still execute inside their
+existing forked function stage, not in the parent (DD#81, DD#27).
+
 ### Phase 3: Taint
 
 Flow-sensitive taint analysis (DD#24, DD#42–44), tracking each variable

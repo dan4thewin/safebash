@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup functions
-plan=190
+plan=211
 echo "1..$plan" >&3
 
 set +e
@@ -1384,6 +1384,151 @@ run_sash 'fn f ->'
 [[ $rc != 0 && -z $out && $err == *SB4014* \
    && $err == *"expected 'int' after '->'"* ]]; chk rty.6
 
+# Compiler temporaries must neither bind source names nor alias earlier results.
+run_sash 'str __strcap_f=sentinel
+str __strcap_f_=another
+fn f { echo captured }
+echo $(f)
+echo $__strcap_f $__strcap_f_'
+[[ $rc = 0 && $out = $'captured\nsentinel another' && -z $err && -z $rerr ]]; chk tmpcap.1
+
+run_sash 'const __strcap_f=sentinel
+fn f { echo captured }
+echo $(f)
+echo $__strcap_f'
+[[ $rc = 0 && $out = $'captured\nsentinel' && -z $err && -z $rerr ]]; chk tmpcap.2
+
+run_sash 'int count=0
+fn next { (( count += 1 )); echo $count }
+echo $(next) $(next)
+echo $count'
+[[ $rc = 0 && $out = $'1 2\n2' && -z $err && -z $rerr ]]; chk tmpcap.3
+
+run_sash 'int count=0
+fn next { (( count += 1 )); echo $count }
+fn pair { echo $1 $2 }
+pair $(next) $(next)
+echo $count'
+[[ $rc = 0 && $out = $'1 2\n2' && -z $err && -z $rerr ]]; chk tmpcap.4
+
+run_sash 'int __intret_f=77
+fn f -> int { return 7 }
+echo $(( (f) ))
+echo $__intret_f'
+[[ $rc = 0 && $out = $'7\n77' && -z $err && -z $rerr ]]; chk tmpcap.5
+
+run_sash 'const int __intret_f=77
+fn f -> int { return 7 }
+echo $(( (f) ))
+echo $__intret_f'
+[[ $rc = 0 && $out = $'7\n77' && -z $err && -z $rerr ]]; chk tmpcap.6
+
+run_sash 'int count=0
+fn bump -> int { (( count += 1 )); return $count }
+echo $(( (bump) )) $(( (bump) ))
+echo $count'
+[[ $rc = 0 && $out = $'1 2\n2' && -z $err && -z $rerr ]]; chk tmpcap.7
+
+run_sash 'int count=0
+fn bump -> int { (( count += 1 )); return $count }
+echo $(( (bump) * 10 + (bump) ))
+echo $count'
+[[ $rc = 0 && $out = $'12\n2' && -z $err && -z $rerr ]]; chk tmpcap.8
+
+run_sash 'array __args0=(sentinel)
+array __args0_=(another)
+fn show { echo $1 }
+show passed
+echo ${__args0[0]} ${__args0_[0]}'
+[[ $rc = 0 && $out = $'passed\nsentinel another' && -z $err && -z $rerr ]]; chk tmpcap.9
+
+run_sash 'str __args0=sentinel
+fn show { echo $1 }
+show passed
+echo $__args0'
+[[ $rc = 0 && $out = $'passed\nsentinel' && -z $err && -z $rerr ]]; chk tmpcap.10
+
+run_sash 'str __bodycap_1=sentinel
+str __bodycap_1_=another
+echo $(echo left; echo right)
+echo $__bodycap_1 $__bodycap_1_'
+[[ $rc = 0 && $out = $'left\nright\nsentinel another' && -z $err && -z $rerr ]]; chk tmpcap.11
+
+run_sash 'str __redir_target_1_0=sentinel
+str __redir_target_1_0_=another
+str destination=tmpcap.redirect
+echo payload > ${destination:?target}
+echo $__redir_target_1_0 $__redir_target_1_0_'
+[[ $rc = 0 && $out = 'sentinel another' && -z $err && -z $rerr \
+   && -f tmpcap.redirect && $(<tmpcap.redirect) = payload ]]; chk tmpcap.12
+rm -f tmpcap.redirect
+
+run_sash 'int count=0
+fn next { (( count += 1 )); echo $count }
+fn pair { echo $1 $2 }
+str result=$(pair $(next) $(next))
+echo $result
+echo $count'
+[[ $rc = 0 && $out = $'1 2\n2' && -z $err && -z $rerr ]]; chk tmpcap.13
+
+run_sash 'fn pass { echo $1 }; pass $(pass leaf)'
+[[ $rc = 0 && $out = leaf && -z $err && -z $rerr ]]; chk tmpcap.14
+
+run_sash 'int count=0
+fn next { (( count += 1 )); echo $count }
+fn pair { echo $1 $2 }
+pair $(next) $(next) | /bin/cat
+echo $count'
+[[ $rc = 0 && $out = $'1 2\n0' && -z $err && -z $rerr ]]; chk tmpcap.15
+
+run_sash 'fn pass { echo $1 }; pass $(pass leaf) | /bin/cat'
+[[ $rc = 0 && $out = leaf && -z $err && -z $rerr ]]; chk tmpcap.16
+
+run_sash 'fn pass { echo $1 }
+fn caller { pass $(pass $1) }
+caller word'
+[[ $rc = 0 && $out = word && -z $err && -z $rerr ]]; chk tmpcap.17
+
+run_sash 'int count=0
+fn next { (( count += 1 )); echo $count }
+fn pair { echo $1 $2 }
+pair $(next) $(next) > tmpcap.call
+echo $count'
+[[ $rc = 0 && $out = 2 && -z $err && -z $rerr \
+   && -f tmpcap.call && $(<tmpcap.call) = '1 2' ]]; chk tmpcap.18
+rm -f tmpcap.call
+
+run_sash 'int ticks=0
+fn next { (( ticks += 1 )); echo $ticks }
+fn walk {
+  if [[ $1 == start ]] { return walk $(next) }
+  echo $1
+  return 0
+}
+- walk start
+echo $ticks'
+[[ $rc = 0 && $out = $'1\n1' && -z $err && -z $rerr ]]; chk tmpcap.19
+
+run_sash 'fn walk {
+  int at=0
+  str first=${args[$at]}
+  if [[ $first == start ]] {
+    array follow=(done extra)
+    return walk @follow
+  }
+  echo $(join args ,)
+  return 0
+}
+- walk start'
+[[ $rc = 0 && $out = 'done,extra' && -z $err && -z $rerr ]]; chk tmpcap.20
+
+run_sash 'fn walk {
+  if [[ -n ${A[0]} ]] { return walk =A }
+  return 0
+}
+array a=(word)
+- walk =a'
+[[ $rc != 0 && -z $out && $err == *SB5037* && $err == *recursion* ]]; chk tmpcap.21
 
 set -e
 tally

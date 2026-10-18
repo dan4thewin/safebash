@@ -1050,9 +1050,6 @@ fn build_function_pipeline_stage(
         super::functions::restore_caller_args(saved_args, state);
         return None;
     }
-    state.inlining.push(resolved.clone());
-    let saved_ro = super::functions::enter_fn_body_scope(state);
-
     let entry = ssa.new_checkpoint_block(&format!("pipe_fn_{}_{}", name, idx));
     // `split_call_args` + `arg_to_value`, exactly as `inline_function_call`: a
     // pipeline stage is still a call, so `@a` is a COMMAND-ARG position and
@@ -1064,13 +1061,18 @@ fn build_function_pipeline_stage(
     let (scalar_args, coll_args) = super::functions::split_call_args(&c.args);
     let arg_values: Vec<SsaValue> = scalar_args.iter().map(|a| arg_to_value(a, state)).collect();
     check_callee_arity(name, &body, &arg_values, state);
+    // Keep argument evaluation in the existing forked stage, in caller scope.
+    let mut body_block = entry;
+    let arg_values = super::functions::lift_int_func_args(arg_values, ssa, state, &mut body_block);
+    state.inlining.push(resolved.clone());
+    let saved_ro = super::functions::enter_fn_body_scope(state);
     let saved_slots = super::functions::setup_callee_slots(&coll_args, state);
-    super::functions::setup_callee_args(&arg_values, ssa, state, entry);
+    super::functions::setup_callee_args(&arg_values, ssa, state, body_block);
 
     // `return` inside the body jumps to ret_block, which ends the forked child.
     let ret_block = ssa.new_checkpoint_block(&format!("pipe_fn_ret_{}_{}", name, idx));
     state.return_target = Some(ret_block);
-    let exit = lower_stmts(&body, ssa, state, entry);
+    let exit = lower_stmts(&body, ssa, state, body_block);
     ssa.block_mut(exit).terminator = Terminator::Goto(ret_block);
     ssa.block_mut(ret_block).terminator = Terminator::Return;
 
@@ -1491,6 +1493,9 @@ pub(super) fn capture_func_into(
     // DD#81 Part B: arity-check the `$( )` capture path too (it now carries the
     // call's args), matching the plain-call and pipeline-stage paths.
     super::cmd_handlers::check_callee_arity(fname, &body, arg_values, state);
+    let mut block = block;
+    let arg_values =
+        super::functions::lift_int_func_args(arg_values.to_vec(), ssa, state, &mut block);
 
     // One site number per capture, reserved before the body is lowered so a
     // nested capture inside the body gets a different one.
@@ -1508,7 +1513,7 @@ pub(super) fn capture_func_into(
     let saved_slots = super::functions::setup_callee_slots(coll_args, state);
     let saved_ro = super::functions::enter_fn_body_scope(state);
 
-    super::functions::setup_callee_args(arg_values, ssa, state, block);
+    super::functions::setup_callee_args(&arg_values, ssa, state, block);
 
     let call_block = ssa.new_checkpoint_block(&format!("cap_{}", fname));
     ssa.block_mut(block).terminator = Terminator::Goto(call_block);

@@ -187,6 +187,15 @@ Only the bare integer literal is stated separately, because `expr_type` types
 `2` as String (bash does, and nothing else in the language wants a bare
 literal to be an int by itself).
 
+A bare literal array index must also fit the runtime's signed 64-bit domain:
+unsigned decimal `0` through `9223372036854775807`. A longer sequence of
+digits is not a valid index merely because it looks numeric. The map-side
+spelling rule is separate: a digit-only key still needs quotes even when it
+exceeds that range. Explicit arithmetic and int-typed indices retain their
+existing rules. Coverage 526 found the missing range check reaching a
+codegen invariant through `args`; `types.sh` `lit64.1`-`lit64.15` pin the
+domain and the related scalar/int-collection literal checks.
+
 The predicate this replaces asked the **negative** question — "is this a
 *string* key?" — and could only name forms it already knew were strings,
 defaulting everything else to accepted. That is not a fixable list:

@@ -42,3 +42,16 @@ overflow the *compiler's* own stack. So:
 A general array **slice** (post-beta, `research-array-slice`) will subsume the
 dropped `shift`; tail recursion + `for x in @args` cover the common iteration
 needs today.
+
+## Argument materialization repair (2026-10-18)
+
+Both tail-call spellings use the shared argument lifter before rebinding
+`args`. The producer form also uses the ordinary call-argument renderer, so
+`return F @a` splats rather than joining `a` into one argument. Captures in
+the new arguments execute in the current iteration, before its argument
+array changes. `functions.sh` `tmpcap.19`-`tmpcap.20`.
+
+The tail loop rebinds scalar `args`, not collection slots. A producer call
+with `=collection` therefore takes the same SB5037 refusal as the existing
+int-tail path; it cannot silently keep the old slots and treat the marker
+as a string argument. `tmpcap.21`.

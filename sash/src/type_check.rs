@@ -1716,7 +1716,7 @@ fn check_subscript_key_kind(
 /// bash does, and nothing else in the language wants `2` to be an int by
 /// itself.
 fn is_int_index(expr: &Expr, env: &TypeEnv) -> bool {
-    is_integer_literal(expr) || expr_type(expr, env) == VarType::Int
+    (is_integer_literal(expr) && is_numeric_literal(expr)) || expr_type(expr, env) == VarType::Int
 }
 
 /// The SB4030 text for an index that is not int-typed on an indexed array.
@@ -1897,7 +1897,8 @@ fn check_len_operand(c: &Command, span: Span, env: &TypeEnv, errors: &mut Vec<Ty
     });
 }
 
-/// Check if an expression is an integer literal
+/// An unsigned decimal spelling, even outside the runtime integer range.
+/// Map-key disambiguation is about spelling, not whether the number fits.
 fn is_integer_literal(expr: &Expr) -> bool {
     match &expr.kind {
         ExprKind::Literal(s) => !s.is_empty() && s.chars().all(|c| c.is_ascii_digit()),
@@ -2637,7 +2638,7 @@ fn already_recorded(found: &[(Span, String)], span: Span, name: &str) -> bool {
 
 fn is_numeric_literal(expr: &Expr) -> bool {
     match &expr.kind {
-        ExprKind::Literal(s) => s.chars().all(|c| c.is_ascii_digit() || c == '-'),
+        ExprKind::Literal(s) => !s.starts_with('+') && s.parse::<i64>().is_ok(),
         _ => false,
     }
 }

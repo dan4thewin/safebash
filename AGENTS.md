@@ -141,6 +141,12 @@ checked SSA from the original AST; that AST/source is retained for artifacts.
 Each function has one inferred collection count and full string/int
 array/map slot signature (DD#100), including forwarded slots.
 
+Every synthetic variable must go through `VersionState::reserve_temp_name`,
+with its actual `VarType`, before `define`. A counter or function-name prefix
+does not avoid legal source globals or another live call's result. This also
+applies to implicit argument arrays, captures, integer returns and redirect
+spills; the `__` namespace is not reserved (DD#125).
+
 The compiler has **no tree-sitter dependency and no CST** — the parser
 (`parse/`) yields the AST directly (the codebase calls this AST its
 "IR"). tree-sitter survives only in the separate `sash-convert` crate

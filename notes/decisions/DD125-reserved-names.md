@@ -96,6 +96,21 @@ unknown command (SB5011), exactly like `__anything_else`. Reserving would have
 kept the leak and papered over it with a diagnostic; deleting removes the
 namespace. `cov.327`-`cov.330` pass unchanged.
 
+### Compiler temporaries must avoid source names, not reserve them
+
+Coverage work (2026-10-18, journal 526) found legal globals such as
+`__strcap_f`, `__intret_f`, `__bodycap_1` and `__args0` overwritten by
+compiler storage. Repeated calls also shared one result name, so two results
+in a single argument list became `2 2` instead of `1 2`.
+
+Every such binding now uses `VersionState::reserve_temp_name`, including
+redirect spills. It avoids all inferred source bindings, including later
+declarations, and every prior temporary reservation. Integer results retain
+their integer type; captures, redirect targets and argument-array elements
+are strings. A counter or a function-name prefix alone guarantees neither
+source isolation nor distinct live results. No new source names are reserved.
+Specs `functions.sh` `tmpcap.1`-`tmpcap.12`.
+
 ## Diagnostic placement
 
 SB5092 runs in `lib.rs`'s second validation batch, beside its sibling
