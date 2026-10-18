@@ -365,7 +365,8 @@ fn note_binding(
 
 /// Walk one scope. Control-flow bodies are part of the enclosing scope (sash
 /// has no block scope), so they share `seen`; a function body is a new scope
-/// and gets a fresh map.
+/// and gets a fresh map. Captures inherit the enclosing bindings for the
+/// no-shadow rule, but never export their own local introductions.
 fn scan_scope_redecl(
     stmts: &[Statement],
     seen: &mut HashMap<String, Span>,
@@ -399,18 +400,24 @@ fn scan_stmt_redecl(
             note_binding(&a.name, stmt.span, seen, bound)
         }
         StmtKind::For(f) => note_binding(&f.variable, stmt.span, seen, bound),
-        StmtKind::ArithTest(e) => {
-            let mut names = Vec::new();
-            crate::ir::walk_arith_var_writes(e, &mut |n: &str| names.push(n.to_string()));
-            for n in names {
-                note_binding(&n, stmt.span, seen, bound);
-            }
-        }
+        StmtKind::ArithTest(e) => note_arith_bindings(e, stmt.span, seen, bound),
         _ => {}
     }
-    for body in stmt.child_bodies() {
+    for body in stmt.structural_bodies() {
         scan_scope_redecl(body, seen, bound, diags);
     }
+    for body in stmt.cmdsub_bodies() {
+        scan_scope_redecl(body, &mut seen.clone(), &mut bound.clone(), diags);
+    }
+}
+
+fn note_arith_bindings(
+    e: &ArithExpr,
+    span: Span,
+    seen: &mut HashMap<String, Span>,
+    bound: &mut HashMap<String, Span>,
+) {
+    crate::ir::walk_arith_var_writes(e, &mut |name| note_binding(name, span, seen, bound));
 }
 
 fn flag_redecl(
@@ -7602,30 +7609,42 @@ fn check_bare_cmdsub_taint(stmts: &[Statement], span: Span, diags: &mut Vec<Diag
 
 /// Names introduced in a scope: assignment LHS, int/array/map/const
 /// declaration names, `for` loop variables, and read/mapfile targets.
-/// Descends control-flow bodies (same scope) but NOT nested function
-/// bodies (a new scope).
-fn collect_scope_names(stmts: &[Statement], set: &mut HashSet<String>) {
+/// Descends structural bodies (same scope), not functions or captures.
+pub(crate) fn collect_scope_names(stmts: &[Statement], set: &mut HashSet<String>) {
     for stmt in stmts {
-        match &stmt.kind {
-            StmtKind::Assignment(a) => {
-                set.insert(a.name.clone());
-            }
-            StmtKind::Declaration(d) => insert_decl_names(d, set),
-            StmtKind::For(f) => {
-                set.insert(f.variable.clone());
-                collect_scope_names(&f.body, set);
-            }
-            StmtKind::Command(c) => {
-                collect_read_targets(c, set);
-                // DD#93 Part D: `attest SOURCE (( TARGET = SOURCE ))` introduces
-                // TARGET — the attest binds it to the converted value.
-                if let Some(target) = attest_convert_target(c) {
-                    set.insert(target.to_string());
-                }
-            }
-            StmtKind::Function(_) => {} // separate scope — do not collect
-            _ => collect_child_scope_names(stmt, set),
+        collect_stmt_scope_names(stmt, set);
+    }
+}
+
+/// Total over `StmtKind`; do not add a wildcard.
+fn collect_stmt_scope_names(stmt: &Statement, set: &mut HashSet<String>) {
+    match &stmt.kind {
+        StmtKind::Assignment(a) => {
+            set.insert(a.name.clone());
         }
+        StmtKind::Declaration(d) => insert_decl_names(d, set),
+        StmtKind::For(f) => {
+            set.insert(f.variable.clone());
+            collect_scope_names(&f.body, set);
+        }
+        StmtKind::Command(c) => {
+            collect_read_targets(c, set);
+            // DD#93 Part D: `attest SOURCE (( TARGET = SOURCE ))` introduces
+            // TARGET — the attest binds it to the converted value.
+            set.extend(attest_convert_target(c).map(str::to_string));
+        }
+        StmtKind::Function(_) => {} // separate scope — do not collect
+        StmtKind::Pipeline(_)
+        | StmtKind::If(_)
+        | StmtKind::While(_)
+        | StmtKind::Case(_)
+        | StmtKind::List(_)
+        | StmtKind::Group(_)
+        | StmtKind::Redirected(_)
+        | StmtKind::Suppressed(_)
+        | StmtKind::Negated(_)
+        | StmtKind::ReturnProducer(_)
+        | StmtKind::ArithTest(_) => collect_child_scope_names(stmt, set),
     }
 }
 
@@ -7636,7 +7655,7 @@ fn insert_decl_names(d: &Declaration, set: &mut HashSet<String>) {
 }
 
 fn collect_child_scope_names(stmt: &Statement, set: &mut HashSet<String>) {
-    for body in stmt.child_bodies() {
+    for body in stmt.structural_bodies() {
         collect_scope_names(body, set);
     }
 }
@@ -8086,8 +8105,7 @@ fn collect_reads(stmts: &[Statement], set: &mut HashSet<String>) {
 
 /// A bare collection-name operand to `len`/`join`/`keys` is a read of that
 /// collection (`len a` reads `a`). Record it for every command, including those
-/// inside a `$( )` capture. Reuses `len_operand_name`/`join_operand_name`
-/// (which also unwrap the `@a` splat form).
+/// inside a `$( )` capture. Reuses the type checker's canonical name accessor.
 fn collect_value_fn_operands(stmts: &[Statement], set: &mut HashSet<String>) {
     for stmt in stmts {
         if let StmtKind::Command(c) = &stmt.kind {
@@ -8133,7 +8151,7 @@ fn record_collection_operand(c: &Command, set: &mut HashSet<String>) {
     let n = c
         .args
         .first()
-        .map(crate::type_check::join_operand_name)
+        .map(crate::type_check::expr_to_name)
         .filter(|s| !s.is_empty());
     if let Some(n) = n {
         set.insert(n);

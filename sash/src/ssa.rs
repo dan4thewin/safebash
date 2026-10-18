@@ -1429,6 +1429,7 @@ pub(crate) fn condition_inst_index(block: &BasicBlock) -> Option<usize> {
 /// The complete SSA representation of a program.
 #[derive(Debug)]
 pub struct SsaProgram {
+    pub(crate) source_names: crate::bindings::SourceNames,
     pub blocks: BTreeMap<BlockId, BasicBlock>,
     pub entry: BlockId,
     /// DD#56: dedicated END block — all exit paths goto here
@@ -1505,6 +1506,7 @@ impl SsaProgram {
     }
     pub fn new() -> Self {
         Self {
+            source_names: crate::bindings::SourceNames::default(),
             blocks: BTreeMap::new(),
             entry: 0,
             end_block: None,

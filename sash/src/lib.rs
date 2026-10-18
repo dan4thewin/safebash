@@ -5,6 +5,7 @@ pub mod ir;
 pub mod parse;
 
 // Internal modules — not used outside the crate
+pub(crate) mod bindings;
 pub mod codegen;
 pub(crate) mod diagnostic;
 pub(crate) mod regex_validate;
@@ -428,7 +429,39 @@ pub fn cli_main(args: Vec<String>) {
 
     apply_and_check_flags(&parsed.flags);
 
-    let (program, parse_diags) = match parse::parse(&source) {
+    let program = parse_and_resolve(input, &source);
+    let (bound, names) = bindings::resolve(&program, &source);
+    run_semantic_checks(input, &bound, &parsed.flags, &names);
+
+    // Transform-time compile errors precede the dead-variable gate for every backend.
+    let mut ssa = transform_or_exit(input, &bound, &names);
+    ssa.source_names = names.clone();
+
+    // DD#86: more-specific semantic/type/transform errors win over SB5050.
+    let mut dead = validate::check_dead_variables(&bound);
+    if !dead.is_empty() {
+        restore_diagnostics(&mut dead, &names);
+        print_diags(input, &dead);
+        std::process::exit(1);
+    }
+
+    if maybe_emit_alt_output(input, &parsed.flags, &program, &ssa) {
+        return;
+    }
+
+    compile_native(
+        input,
+        &source,
+        &program,
+        &ssa,
+        parsed.output_path,
+        parsed.inline_source.is_some(),
+        &parsed.flags,
+    );
+}
+
+fn parse_and_resolve(input: &str, source: &str) -> ir::Program {
+    let (program, parse_diags) = match parse::parse(source) {
         Ok(result) => result,
         Err(diags) => {
             print_diags(input, &diags);
@@ -454,38 +487,7 @@ pub fn cli_main(args: Vec<String>) {
         std::process::exit(1);
     }
 
-    run_semantic_checks(input, &program, &parsed.flags);
-
-    // Transform-time compile errors (SB4016/17/18 ignored non-void results,
-    // SB4044 const-reassign, SB5015/16 read-flags, SB5041 command/function
-    // collision, …). Enforce them for every backend so the c/manifest
-    // paths reject exactly what native does — AND so they precede the
-    // dead-variable gate below.
-    let ssa = transform_or_exit(input, &program);
-
-    // SB5050 (DD#86): the dead-variable gate runs LAST — after taint (SB5020),
-    // type (SB4030), and the transform errors above — so a variable that is
-    // also involved in a more-specific error surfaces that error first
-    // (DG, 2026-09-02: more-specific error wins).
-    let dead = validate::check_dead_variables(&program);
-    if !dead.is_empty() {
-        print_diags(input, &dead);
-        std::process::exit(1);
-    }
-
-    if maybe_emit_alt_output(input, &parsed.flags, &program) {
-        return;
-    }
-
-    compile_native(
-        input,
-        &source,
-        &program,
-        &ssa,
-        parsed.output_path,
-        parsed.inline_source.is_some(),
-        &parsed.flags,
-    );
+    program
 }
 
 /// Apply `--sysroot=`. Flag *validity* is checked earlier, in
@@ -622,7 +624,7 @@ fn run_ssa_taint_gate(input: &str, ssa: &crate::ssa::SsaProgram, flags: &[&str])
     let taint_ices = ssa_taint::verify_ssa_taint(ssa);
     if !taint_ices.is_empty() {
         for ice in &taint_ices {
-            eprintln!("{}: {}", input, ice);
+            eprintln!("{}: {}", input, ssa.source_names.restore(ice));
         }
         std::process::exit(1);
     }
@@ -636,7 +638,12 @@ fn ssa_taint_disabled(flags: &[&str]) -> bool {
 
 /// Taint, positional, argv-splat, and type checks. Run after resolution so
 /// the taint pass classifies on the resolved exec form.
-fn run_semantic_checks(input: &str, program: &crate::ir::Program, flags: &[&str]) {
+fn run_semantic_checks(
+    input: &str,
+    program: &crate::ir::Program,
+    flags: &[&str],
+    names: &bindings::SourceNames,
+) {
     let mut tdiags = if cst_taint_disabled(flags) {
         Vec::new()
     } else {
@@ -677,16 +684,17 @@ fn run_semantic_checks(input: &str, program: &crate::ir::Program, flags: &[&str]
     tdiags.extend(validate::check_map_from_array(program));
     tdiags.extend(validate::check_assign_value_shape(program));
     if !tdiags.is_empty() {
+        restore_diagnostics(&mut tdiags, names);
         print_diags(input, &tdiags);
         std::process::exit(1);
     }
 
-    type_check_or_exit(input, program);
+    type_check_or_exit(input, program, names);
 }
 
 /// Type check, reporting every SB4030 before exiting. Split out of
 /// `run_semantic_checks` so that function stays a flat list of passes.
-fn type_check_or_exit(input: &str, program: &crate::ir::Program) {
+fn type_check_or_exit(input: &str, program: &crate::ir::Program, names: &bindings::SourceNames) {
     let type_errors = type_check::type_check(program);
     if type_errors.is_empty() {
         return;
@@ -694,7 +702,10 @@ fn type_check_or_exit(input: &str, program: &crate::ir::Program) {
     for te in &type_errors {
         eprintln!(
             "{}:{}:{}: error [SB4030] {}",
-            input, te.span.line, te.span.col, te.message
+            input,
+            te.span.line,
+            te.span.col,
+            names.restore(&te.message)
         );
     }
     std::process::exit(1);
@@ -713,12 +724,16 @@ fn type_check_or_exit(input: &str, program: &crate::ir::Program) {
 ///
 /// Runs before `maybe_emit_alt_output` so the alt-output backends reject
 /// exactly the programs native does.
-fn transform_or_exit(input: &str, program: &crate::ir::Program) -> crate::ssa::SsaProgram {
+fn transform_or_exit(
+    input: &str,
+    program: &crate::ir::Program,
+    names: &bindings::SourceNames,
+) -> crate::ssa::SsaProgram {
     let type_map = type_check::infer_types(program);
     let (ssa, diags) = transform::ir_to_ssa_typed(program, type_map);
     if !diags.is_empty() {
         for d in &diags {
-            eprintln!("{}:{}", input, d);
+            eprintln!("{}:{}", input, names.restore(d));
         }
         std::process::exit(1);
     }
@@ -729,17 +744,22 @@ fn transform_or_exit(input: &str, program: &crate::ir::Program) -> crate::ssa::S
 /// (`--emit-ir`, `--emit-c`, `--manifest`). Returns `true` if one
 /// fired (caller should return); `false` if none matched (caller
 /// proceeds to native codegen).
-fn maybe_emit_alt_output(input: &str, flags: &[&str], program: &crate::ir::Program) -> bool {
+fn maybe_emit_alt_output(
+    input: &str,
+    flags: &[&str],
+    program: &crate::ir::Program,
+    ssa: &crate::ssa::SsaProgram,
+) -> bool {
     if flags.contains(&"--emit-ir") {
         print!("{}", emit_ir::emit_ir(program));
         return true;
     }
     if flags.contains(&"--emit-c") {
-        emit_c_to_stdout(input, flags, program);
+        emit_c_to_stdout(input, flags, ssa);
         return true;
     }
     if flags.contains(&"--manifest") {
-        emit_manifest(program);
+        emit_manifest(ssa);
         return true;
     }
     false
@@ -750,9 +770,7 @@ fn maybe_emit_alt_output(input: &str, flags: &[&str], program: &crate::ir::Progr
 /// linked against libsash_rt.a is a differential oracle against
 /// Cranelift-compiled output of the same SSA — any disagreement
 /// is a bug somewhere in the compiler.
-fn emit_c_to_stdout(input: &str, flags: &[&str], program: &crate::ir::Program) {
-    let type_map = type_check::infer_types(program);
-    let (ssa, _) = transform::ir_to_ssa_typed(program, type_map);
+fn emit_c_to_stdout(input: &str, flags: &[&str], ssa: &crate::ssa::SsaProgram) {
     // DD#82: the SSA taint backstop runs here too. It is the *second* layer —
     // the CST pass normally rejects first — but `--no-taint-cst` disables that
     // one, and the backstop also covers documented CST gaps (see the note at
@@ -761,8 +779,8 @@ fn emit_c_to_stdout(input: &str, flags: &[&str], program: &crate::ir::Program) {
     // compiled and printed the value, where native exits 1. The c backend is
     // also the differential oracle, so it has to run the same gates or the
     // comparison is between two different compilers.
-    run_ssa_taint_gate(input, &ssa, flags);
-    print!("{}", emit_c::emit_c(&ssa));
+    run_ssa_taint_gate(input, ssa, flags);
+    print!("{}", emit_c::emit_c(ssa));
 }
 
 /// `--extract <binary> [source|ir|manifest]`: dump one embedded artifact
@@ -931,6 +949,12 @@ fn print_diags(input: &str, diags: &[diagnostic::Diagnostic]) {
     }
 }
 
+fn restore_diagnostics(diags: &mut [diagnostic::Diagnostic], names: &bindings::SourceNames) {
+    for diag in diags {
+        diag.message = names.restore(&diag.message);
+    }
+}
+
 /// `--manifest`: emit one path per line for every external dependency.
 ///
 /// The manifest is collected at the single command-resolution funnel
@@ -940,9 +964,7 @@ fn print_diags(input: &str, diags: &[diagnostic::Diagnostic]) {
 /// through that funnel, and only names that resolve to a real path (contain
 /// `/`) are recorded, the manifest can neither miss an external nor leak a
 /// builtin or compiler-internal sigil.
-fn emit_manifest(program: &crate::ir::Program) {
-    let type_map = type_check::infer_types(program);
-    let (ssa, _) = transform::ir_to_ssa_typed(program, type_map);
+fn emit_manifest(ssa: &crate::ssa::SsaProgram) {
     for dep in &ssa.external_deps {
         println!("{}", dep);
     }
@@ -1019,7 +1041,7 @@ fn compile_native(
         Ok(bytes) => bytes,
         Err(diags) => {
             for d in &diags {
-                eprintln!("{}:{}", input, d);
+                eprintln!("{}:{}", input, ssa.source_names.restore(d));
             }
             std::process::exit(1);
         }

@@ -16,6 +16,7 @@ pub struct TypeError {
 }
 
 /// Environment tracking variable and function types.
+#[derive(Clone)]
 struct TypeEnv {
     vars: HashMap<String, VarType>,
     funcs: HashMap<String, VarType>,
@@ -23,8 +24,8 @@ struct TypeEnv {
     intrinsic_int: HashSet<String>,
     /// Variables declared as array or map (collections)
     collections: HashSet<String>,
-    /// DD#100: per-function collection-slot kinds, inferred from call sites.
-    slot_kinds: HashMap<String, SlotKinds>,
+    /// DD#100: one collection signature per function, inferred from all calls.
+    slot_signatures: HashMap<String, CollectionSignature>,
     /// The slots whose kind is known while checking the current body. A slot
     /// outside this set is genuinely unknown (the function is never called
     /// with one, or the argument was undeclared), so kind checks skip it.
@@ -54,12 +55,8 @@ impl TypeEnv {
         // intrinsic spelling.
         let mut intrinsic_int = HashSet::new();
         intrinsic_int.insert("#".to_string()); // $#
-                                               // DD#100: `A`..`E` are the collection-parameter slots. They are always
-                                               // collections, but their *kind* is per-call-site (Part B: array and
-                                               // map are both usable), and this pass runs before inlining — so they
-                                               // are seeded as collections and deliberately left out of
-                                               // `assoc_arrays`, which would commit them to one kind program-wide.
-                                               // SB5065 has already rejected any top-level use.
+                                               // DD#100: slots are always collections. Their full type is installed
+                                               // per function from its one inferred signature before checking its body.
         let collections = (0..crate::ir::MAX_COLLECTION_SLOTS)
             .map(crate::ir::collection_slot_name)
             .collect();
@@ -68,7 +65,7 @@ impl TypeEnv {
             funcs: HashMap::new(),
             intrinsic_int,
             collections,
-            slot_kinds: HashMap::new(),
+            slot_signatures: HashMap::new(),
             known_slots: HashSet::new(),
             assoc_arrays: HashSet::new(),
             declared_str: HashSet::new(),
@@ -115,9 +112,7 @@ impl TypeEnv {
         self.collections.contains(name)
     }
 
-    /// DD#100 Part B: a collection-parameter slot's *kind* is whatever the
-    /// call site passed, and this pass runs before inlining, so no
-    /// program-wide answer exists. Kind-specific checks skip slots.
+    /// An uncalled function has no call-site type for its slots.
     fn is_slot(&self, name: &str) -> bool {
         crate::ir::is_collection_slot(name) && !self.known_slots.contains(name)
     }
@@ -185,7 +180,7 @@ fn command_substitution_type(parts: &[Statement], env: &TypeEnv) -> VarType {
 /// attest predicates exempted from the disposition rule.
 fn check_stmt_arith_exprs(stmt: &Statement, env: &TypeEnv, errors: &mut Vec<TypeError>) {
     let attest_preds = crate::validate::attest_arith_predicates(stmt);
-    walk_all_exprs(stmt, &mut |e| {
+    walk_own_exprs(stmt, &mut |e| {
         if let ExprKind::Arithmetic(a) = &e.kind {
             let exempt = attest_preds.contains(&(e as *const Expr));
             check_arith_expr_rules(a, e.span, exempt, env, errors);
@@ -230,11 +225,6 @@ fn check_sexpr_string_producers(stmt: &Statement, env: &TypeEnv, errors: &mut Ve
     if let StmtKind::Assignment(a) = &stmt.kind {
         check_arith_indexed_map_assign(a, stmt.span, env, errors);
     }
-    for body in stmt.structural_bodies() {
-        for s in body {
-            check_sexpr_string_producers(s, env, errors);
-        }
-    }
 }
 
 /// Reject `(( m[k] = … ))` on a map: its lowered assignment carries an
@@ -271,16 +261,23 @@ fn check_arith_bare_map_subscript(
     errors: &mut Vec<TypeError>,
 ) {
     crate::ir::walk_arith_subscripts(a, &mut |name| {
-        if env.assoc_arrays.contains(name) {
-            errors.push(bare_map_subscript_error(
-                name,
-                span,
-                env.var_type(name) == VarType::String,
-            ));
-        } else if env.is_collection(name) && env.var_type(name) == VarType::String {
-            errors.push(string_cell_error(name, span));
-        }
+        check_bare_cell(name, span, env, errors);
     });
+}
+
+fn check_bare_cell(name: &str, span: Span, env: &TypeEnv, errors: &mut Vec<TypeError>) {
+    if env.is_slot(name) {
+        return;
+    }
+    if env.assoc_arrays.contains(name) {
+        errors.push(bare_map_subscript_error(
+            name,
+            span,
+            env.var_type(name) == VarType::String,
+        ));
+    } else if env.is_collection(name) && env.var_type(name) == VarType::String {
+        errors.push(string_cell_error(name, span));
+    }
 }
 
 /// DD#77 D1 for a cell read through the `${…}` **value-import** — the other
@@ -310,19 +307,21 @@ fn check_arith_expansion_string_cell(
     errors: &mut Vec<TypeError>,
 ) {
     crate::ir::walk_arith_imported_operands(a, &mut |e| {
-        let Some(name) = undisposed_cell_name(e) else {
-            return;
-        };
-        // A collection-parameter slot's element kind is whatever the call site
-        // passed and this pass runs before inlining (DD#100 Part B), so there
-        // is no program-wide answer to give.
-        if env.is_slot(name) {
-            return;
-        }
-        if env.is_collection(name) && env.var_type(name) == VarType::String {
-            errors.push(string_cell_error(name, span));
-        }
+        check_imported_cell(e, span, env, errors);
     });
+}
+
+fn check_imported_cell(e: &Expr, span: Span, env: &TypeEnv, errors: &mut Vec<TypeError>) {
+    let Some(name) = undisposed_cell_name(e) else {
+        return;
+    };
+    // Only an uncalled function lacks a call-site signature.
+    if env.is_slot(name) {
+        return;
+    }
+    if env.is_collection(name) && env.var_type(name) == VarType::String {
+        errors.push(string_cell_error(name, span));
+    }
 }
 
 fn undisposed_cell_name(e: &Expr) -> Option<&str> {
@@ -535,7 +534,7 @@ fn check_arith_default_literals(a: &ArithExpr, errors: &mut Vec<TypeError>) {
 /// `0x`/`0o`/`0b` radix prefix)? Rejects leading-zero octal, `base#digits`,
 /// interpolations and empty.
 ///
-/// The operand is always an `ExprKind::Literal`. DD#65's original 2026-07-04
+/// A present operand is an `ExprKind::Literal`. DD#65's original 2026-07-04
 /// model made it an interpolating `DoubleQuoted`, and this function still
 /// carried an arm for that shape — dead since the **2026-09-30 follow-on**
 /// ("all three disposition defaults take a literal operand"), which routed
@@ -564,11 +563,6 @@ fn default_is_arith_literal(operand: Option<&Expr>) -> bool {
 /// walk treats `$(( … ))` as opaque (no duplicate diagnostic).
 fn check_int_value_defaults(stmt: &Statement, env: &TypeEnv, errors: &mut Vec<TypeError>) {
     stmt.direct_exprs(&mut |e| walk_value_default(e, env, errors));
-    for body in stmt.structural_bodies() {
-        for s in body {
-            check_int_value_defaults(s, env, errors);
-        }
-    }
 }
 
 /// Walk a value-context expression tree, flagging each int-subject `${x:-D}`
@@ -582,7 +576,8 @@ fn walk_value_default(expr: &Expr, env: &TypeEnv, errors: &mut Vec<TypeError>) {
             walk_value_slice(parts, env, errors)
         }
         ExprKind::AssocArray(pairs) => walk_value_pairs(pairs, env, errors),
-        ExprKind::CommandSubstitution(stmts) => walk_value_cmdsub(stmts, env, errors),
+        // Statement recursion owns command substitutions and their slot scope.
+        ExprKind::CommandSubstitution(_) => {}
         ExprKind::Subscript { index, .. } => walk_value_default(index, env, errors),
         ExprKind::Test(t) => walk_value_test(t, env, errors),
         // `$(( … ))` defaults are owned by check_arith_default_literals.
@@ -618,13 +613,6 @@ fn walk_value_slice(parts: &[Expr], env: &TypeEnv, errors: &mut Vec<TypeError>) 
 fn walk_value_pairs(pairs: &[(String, Expr)], env: &TypeEnv, errors: &mut Vec<TypeError>) {
     for (_, v) in pairs {
         walk_value_default(v, env, errors);
-    }
-}
-
-/// Recurse into each statement of a `$(…)` command substitution.
-fn walk_value_cmdsub(stmts: &[Statement], env: &TypeEnv, errors: &mut Vec<TypeError>) {
-    for s in stmts {
-        check_int_value_defaults(s, env, errors);
     }
 }
 
@@ -746,7 +734,9 @@ fn parameter_expansion_type(pe: &ParameterExpansion, env: &TypeEnv) -> VarType {
     }
 }
 
-fn expr_to_name(expr: &Expr) -> String {
+/// A literal name or `$name`, not a display renderer or a splat decoder.
+/// DD#100 Part D rejects `@name` in name operands before type checking.
+pub(crate) fn expr_to_name(expr: &Expr) -> String {
     match &expr.kind {
         ExprKind::Literal(s) => s.clone(),
         ExprKind::SimpleExpansion(v) => v.clone(),
@@ -754,36 +744,331 @@ fn expr_to_name(expr: &Expr) -> String {
     }
 }
 
-/// DD#100 Part B: the collection kind bound to a function's slot. A slot is
-/// filled by the caller, so its kind comes from the call sites, not the body.
+/// DD#100: structure and element type are both part of the signature.
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum SlotKind {
-    Unbound,
-    Array,
-    Map,
+struct CollectionType {
+    is_map: bool,
+    element: VarType,
 }
 
-/// Per-function slot kinds, inferred from every call site.
-///
-/// This pass runs before inlining, so a slot has no kind of its own — yet the
-/// kind-specific checks (`keys` is map-only, a string key needs a map, an
-/// integer key needs an array) must still apply, or they silently produce
-/// wrong answers: `keys A` on an array printed garbage and `${A[x]}` on an
-/// array returned element 0.
-///
-/// Call sites that disagree on a slot's kind are rejected. Starting strict is
-/// the forward-compatible order (as in Part C): per-instantiation checking can
-/// be allowed later without breaking any accepted program, whereas tightening
-/// later would break them.
-fn infer_slot_kinds(program: &Program, errors: &mut Vec<TypeError>) -> HashMap<String, SlotKinds> {
-    let mut decls = HashMap::new();
-    collect_collection_kinds(&program.statements, &mut decls);
-    let mut out: HashMap<String, SlotKinds> = HashMap::new();
-    collect_slot_kind_calls(&program.statements, &decls, &mut out, errors);
-    out
+impl CollectionType {
+    fn description(self) -> &'static str {
+        match (self.is_map, self.element) {
+            (false, VarType::String) => "string array",
+            (false, VarType::Int) => "int array",
+            (true, VarType::String) => "string map",
+            (true, VarType::Int) => "int map",
+        }
+    }
 }
 
-type SlotKinds = [SlotKind; crate::ir::MAX_COLLECTION_SLOTS];
+#[derive(Clone, PartialEq, Eq)]
+struct CollectionSignature {
+    arity: usize,
+    slots: [Option<CollectionType>; MAX_COLLECTION_SLOTS],
+}
+
+#[derive(Clone, Copy)]
+enum SlotBinding {
+    Collection(CollectionType),
+    Forwarded(usize),
+}
+
+struct CollectionCall {
+    caller: String,
+    callee: String,
+    args: Vec<Option<SlotBinding>>,
+    span: Span,
+}
+
+fn infer_collection_signatures(
+    program: &Program,
+    errors: &mut Vec<TypeError>,
+) -> HashMap<String, CollectionSignature> {
+    let functions: HashSet<_> = program
+        .statements
+        .iter()
+        .filter_map(|s| match &s.kind {
+            StmtKind::Function(f) => Some(f.name.clone()),
+            _ => None,
+        })
+        .collect();
+    let mut calls = Vec::new();
+    collect_collection_calls(
+        &program.statements,
+        "",
+        &HashMap::new(),
+        &functions,
+        &mut calls,
+    );
+    let signatures = propagate_collection_signatures(&calls);
+    for call in &calls {
+        check_collection_call(call, &signatures, errors);
+    }
+    signatures
+}
+
+fn propagate_collection_signatures(
+    calls: &[CollectionCall],
+) -> HashMap<String, CollectionSignature> {
+    let mut signatures = HashMap::new();
+    let mut changed = true;
+    while changed {
+        let previous = signatures.clone();
+        for call in calls {
+            propagate_collection_call(call, &previous, &mut signatures);
+        }
+        changed = signatures != previous;
+    }
+    signatures
+}
+
+fn scope_collections(
+    stmts: &[Statement],
+    owner: &str,
+    inherited: &HashMap<String, CollectionType>,
+) -> HashMap<String, CollectionType> {
+    let mut visible = inherited.clone();
+    walk_scoped_structural_stmts(stmts, owner, &mut |stmt, in_fn| {
+        if in_fn == owner {
+            record_collection_types(stmt, &mut visible);
+        }
+    });
+    if !owner.is_empty() {
+        visible.insert(
+            "args".to_string(),
+            CollectionType {
+                is_map: false,
+                element: VarType::String,
+            },
+        );
+    }
+    visible
+}
+
+fn record_collection_types(stmt: &Statement, out: &mut HashMap<String, CollectionType>) {
+    if let StmtKind::Declaration(d) = &stmt.kind {
+        record_declared_collection_types(d, out);
+    }
+    let StmtKind::Command(c) = &stmt.kind else {
+        return;
+    };
+    let Some(target) = collection_fill_target(c) else {
+        return;
+    };
+    let name = expr_to_name(target);
+    if !name.is_empty() && !is_collection_slot(&name) {
+        out.entry(name).or_insert(CollectionType {
+            is_map: false,
+            element: VarType::String,
+        });
+    }
+}
+
+fn record_declared_collection_types(d: &Declaration, out: &mut HashMap<String, CollectionType>) {
+    let Some(is_map) = declared_collection_kind(d) else {
+        return;
+    };
+    for a in &d.assignments {
+        out.insert(
+            a.name.clone(),
+            CollectionType {
+                is_map,
+                element: d.var_type,
+            },
+        );
+    }
+}
+
+fn collect_collection_calls(
+    stmts: &[Statement],
+    owner: &str,
+    inherited: &HashMap<String, CollectionType>,
+    functions: &HashSet<String>,
+    out: &mut Vec<CollectionCall>,
+) {
+    let visible = scope_collections(stmts, owner, inherited);
+    walk_scoped_structural_stmts(stmts, owner, &mut |stmt, in_fn| {
+        if in_fn != owner {
+            return;
+        }
+        collect_nested_collection_calls(stmt, owner, &visible, functions, out);
+        record_collection_call(stmt, owner, &visible, functions, out);
+        record_arith_collection_calls(stmt, owner, functions, out);
+    });
+}
+
+fn collect_nested_collection_calls(
+    stmt: &Statement,
+    owner: &str,
+    visible: &HashMap<String, CollectionType>,
+    functions: &HashSet<String>,
+    out: &mut Vec<CollectionCall>,
+) {
+    if let StmtKind::Function(f) = &stmt.kind {
+        collect_collection_calls(&f.body, &f.name, visible, functions, out);
+    }
+    for body in stmt.cmdsub_bodies() {
+        collect_collection_calls(body, owner, visible, functions, out);
+    }
+}
+
+fn record_collection_call(
+    stmt: &Statement,
+    owner: &str,
+    visible: &HashMap<String, CollectionType>,
+    functions: &HashSet<String>,
+    out: &mut Vec<CollectionCall>,
+) {
+    let StmtKind::Command(c) = &stmt.kind else {
+        return;
+    };
+    let callee = expr_to_name(&c.name);
+    if !functions.contains(&callee) {
+        return;
+    }
+    let args = collection_args(&c.args)
+        .iter()
+        .map(|name| {
+            visible
+                .get(name)
+                .copied()
+                .map(SlotBinding::Collection)
+                .or_else(|| {
+                    (0..MAX_COLLECTION_SLOTS)
+                        .position(|j| collection_slot_name(j) == *name)
+                        .map(SlotBinding::Forwarded)
+                })
+        })
+        .collect();
+    out.push(CollectionCall {
+        caller: owner.to_string(),
+        callee,
+        args,
+        span: stmt.span,
+    });
+}
+
+fn record_arith_collection_calls(
+    stmt: &Statement,
+    owner: &str,
+    functions: &HashSet<String>,
+    out: &mut Vec<CollectionCall>,
+) {
+    let mut seen = HashSet::new();
+    let mut record = |name: &str, _: &[ArithExpr]| {
+        if functions.contains(name) && seen.insert(name.to_string()) {
+            out.push(CollectionCall {
+                caller: owner.to_string(),
+                callee: name.to_string(),
+                args: vec![],
+                span: stmt.span,
+            });
+        }
+    };
+    walk_stmt_arith_calls(stmt, &mut record);
+}
+
+fn walk_stmt_arith_calls(stmt: &Statement, record: &mut impl FnMut(&str, &[ArithExpr])) {
+    walk_own_exprs(stmt, &mut |e| {
+        if let ExprKind::Arithmetic(a) = &e.kind {
+            walk_arith_funccalls(a, record);
+        }
+    });
+    if let StmtKind::ArithTest(a) = &stmt.kind {
+        walk_arith_funccalls(a, record);
+    }
+}
+
+fn collection_call_types(
+    call: &CollectionCall,
+    signatures: &HashMap<String, CollectionSignature>,
+) -> Vec<Option<CollectionType>> {
+    call.args
+        .iter()
+        .map(|binding| match binding {
+            Some(SlotBinding::Collection(kind)) => Some(*kind),
+            Some(SlotBinding::Forwarded(j)) => {
+                signatures.get(&call.caller).and_then(|s| s.slots[*j])
+            }
+            None => None,
+        })
+        .collect()
+}
+
+fn propagate_collection_call(
+    call: &CollectionCall,
+    previous: &HashMap<String, CollectionSignature>,
+    out: &mut HashMap<String, CollectionSignature>,
+) {
+    let signature = out
+        .entry(call.callee.clone())
+        .or_insert(CollectionSignature {
+            arity: call.args.len(),
+            slots: [None; MAX_COLLECTION_SLOTS],
+        });
+    for (slot, kind) in signature
+        .slots
+        .iter_mut()
+        .zip(collection_call_types(call, previous))
+    {
+        if slot.is_none() {
+            *slot = kind;
+        }
+    }
+}
+
+fn check_collection_call(
+    call: &CollectionCall,
+    signatures: &HashMap<String, CollectionSignature>,
+    errors: &mut Vec<TypeError>,
+) {
+    let signature = &signatures[&call.callee];
+    if signature.arity != call.args.len() {
+        errors.push(TypeError {
+            message: format!(
+                "function `{}` is called with both {} and {} collection arguments — \
+                 a function has one inferred signature",
+                call.callee,
+                signature.arity,
+                call.args.len()
+            ),
+            span: call.span,
+        });
+    }
+    for (j, (expected, actual)) in signature
+        .slots
+        .iter()
+        .zip(collection_call_types(call, signatures))
+        .enumerate()
+    {
+        if let (Some(expected), Some(actual)) = (expected, actual) {
+            check_collection_slot(*expected, actual, &call.callee, j, call.span, errors);
+        }
+    }
+}
+
+fn check_collection_slot(
+    expected: CollectionType,
+    actual: CollectionType,
+    callee: &str,
+    j: usize,
+    span: Span,
+    errors: &mut Vec<TypeError>,
+) {
+    if expected != actual {
+        errors.push(TypeError {
+            message: format!(
+                "function `{callee}` collection slot `{}` has conflicting types: {} \
+                 and {} — a function has one inferred signature; every call must agree",
+                collection_slot_name(j),
+                expected.description(),
+                actual.description()
+            ),
+            span,
+        });
+    }
+}
 
 /// Every collection declaration in the program → whether it is a map.
 pub(crate) fn collect_collection_kinds(stmts: &[Statement], out: &mut HashMap<String, bool>) {
@@ -810,74 +1095,6 @@ fn declared_collection_kind(d: &Declaration) -> Option<bool> {
     }
 }
 
-fn collect_slot_kind_calls(
-    stmts: &[Statement],
-    decls: &HashMap<String, bool>,
-    out: &mut HashMap<String, SlotKinds>,
-    errors: &mut Vec<TypeError>,
-) {
-    crate::ir::walk_stmt_tree(stmts, &mut |stmt| {
-        if let StmtKind::Command(c) = &stmt.kind {
-            record_call_slot_kinds(c, stmt.span, decls, out, errors);
-        }
-    });
-}
-
-fn record_call_slot_kinds(
-    c: &Command,
-    span: Span,
-    decls: &HashMap<String, bool>,
-    out: &mut HashMap<String, SlotKinds>,
-    errors: &mut Vec<TypeError>,
-) {
-    let fname = expr_to_name(&c.name);
-    let passed = crate::ir::collection_args(&c.args);
-    if passed.is_empty() {
-        return;
-    }
-    let slots = out
-        .entry(fname.clone())
-        .or_insert([SlotKind::Unbound; crate::ir::MAX_COLLECTION_SLOTS]);
-    for (j, name) in passed
-        .iter()
-        .enumerate()
-        .take(crate::ir::MAX_COLLECTION_SLOTS)
-    {
-        let Some(kind) =
-            decls
-                .get(name.as_str())
-                .map(|&m| if m { SlotKind::Map } else { SlotKind::Array })
-        else {
-            continue; // undeclared, or itself a slot — reported elsewhere
-        };
-        merge_slot_kind(&mut slots[j], kind, &fname, j, span, errors);
-    }
-}
-
-fn merge_slot_kind(
-    slot: &mut SlotKind,
-    kind: SlotKind,
-    fname: &str,
-    j: usize,
-    span: Span,
-    errors: &mut Vec<TypeError>,
-) {
-    if *slot == SlotKind::Unbound {
-        *slot = kind;
-    } else if *slot != kind {
-        errors.push(TypeError {
-            message: format!(
-                "function `{fname}` is called with both an array and a map in \
-                 collection slot `{}` — a slot's kind comes from its call sites, \
-                 and the body is checked against one kind. Split the function, or \
-                 pass the same kind everywhere",
-                crate::ir::collection_slot_name(j)
-            ),
-            span,
-        });
-    }
-}
-
 /// Type-check a program. Returns a list of type errors (empty = OK).
 pub fn type_check(program: &Program) -> Vec<TypeError> {
     let mut errors = Vec::new();
@@ -890,9 +1107,9 @@ pub fn type_check(program: &Program) -> Vec<TypeError> {
         }
     }
 
-    // DD#100 Part B: a slot's kind comes from the call sites, so infer it
+    // DD#100: the full signature comes from the call sites, so infer it
     // before checking any body (a call may appear after the definition).
-    env.slot_kinds = infer_slot_kinds(program, &mut errors);
+    env.slot_signatures = infer_collection_signatures(program, &mut errors);
 
     // Second pass: check statements
     for stmt in &program.statements {
@@ -935,17 +1152,24 @@ pub fn type_check(program: &Program) -> Vec<TypeError> {
     errors
 }
 
-/// Run one whole-program check over each top-level statement. Each pass
-/// recurses into nested bodies itself, so this stays a flat loop.
+/// Every pass uses the same function binding and visits each statement once.
 fn run_stmt_pass(
     program: &Program,
     env: &TypeEnv,
     errors: &mut Vec<TypeError>,
     pass: fn(&Statement, &TypeEnv, &mut Vec<TypeError>),
 ) {
-    for stmt in &program.statements {
-        pass(stmt, env, errors);
-    }
+    let mut scopes = HashMap::new();
+    walk_scoped_stmts(&program.statements, "", &mut |stmt, owner| {
+        let scope = scopes.entry(owner.to_string()).or_insert_with(|| {
+            let mut scope = env.clone();
+            if !owner.is_empty() {
+                enter_function_slots(owner, &mut scope);
+            }
+            scope
+        });
+        pass(stmt, scope, errors);
+    });
 }
 
 /// Substring (`${n:1:2}`) is a string operation, so an int-typed subject is a
@@ -953,7 +1177,7 @@ fn run_stmt_pass(
 /// at parse (SB4034, DD#65 pruned operators), which is why substring was the
 /// one that reached codegen and panicked.
 fn check_int_string_ops(stmt: &Statement, env: &TypeEnv, errors: &mut Vec<TypeError>) {
-    crate::ir::walk_all_exprs(stmt, &mut |e| {
+    crate::ir::walk_own_exprs(stmt, &mut |e| {
         let ExprKind::ParameterExpansion(pe) = &e.kind else {
             return;
         };
@@ -983,7 +1207,7 @@ fn check_int_string_ops(stmt: &Statement, env: &TypeEnv, errors: &mut Vec<TypeEr
 /// (`${s:1:}`) is 0 in bash too. `try_substring_op` strips the parens, so the
 /// operand seen here is already `-2`.
 fn check_substring_operand(stmt: &Statement, errors: &mut Vec<TypeError>) {
-    crate::ir::walk_all_exprs(stmt, &mut |e| {
+    crate::ir::walk_own_exprs(stmt, &mut |e| {
         let ExprKind::ParameterExpansion(pe) = &e.kind else {
             return;
         };
@@ -1120,42 +1344,25 @@ fn check_substituted_command_operands(
     env: &TypeEnv,
     errors: &mut Vec<TypeError>,
 ) {
-    let mut subs: Vec<Statement> = Vec::new();
-    walk_all_exprs(stmt, &mut |e| {
-        if let ExprKind::CommandSubstitution(stmts) = &e.kind {
-            subs.extend(stmts.iter().cloned());
-        }
-    });
-    for s in &subs {
-        check_substituted_operands_in_stmt(s, env, errors);
+    for body in stmt.cmdsub_bodies() {
+        walk_scoped_structural_stmts(body, "", &mut |s, _| {
+            check_substituted_operands_in_stmt(s, env, errors);
+        });
     }
 }
 
 /// Run the operand checks on one statement inside a command substitution,
-/// descending through any grouping/pipeline wrapper so `$( { toupper $n; } )`
-/// is checked like the bare form.
+/// The owning traversal handles grouping, pipelines and nested captures.
 fn check_substituted_operands_in_stmt(
     stmt: &Statement,
     env: &TypeEnv,
     errors: &mut Vec<TypeError>,
 ) {
     if let StmtKind::Command(c) = &stmt.kind {
-        // Only the *type-based* checks belong here. `check_join_operand` and
-        // `check_keys_operand` ask whether the operand is a known collection,
-        // which is a question about scope: inside a function the implicit
-        // `args` is registered as `check_stmt` descends, and this pass runs
-        // over the finished top-level env, where it is not. Re-running them
-        // here rejected the legitimate `$(join args)` and `$(keys A)`
-        // (cf.f11, xa.6, 75.24, 100.12). Their own path already reaches them
-        // correctly; the vacuity was only ever in the type checks, which are
-        // pure and need no scope.
+        // Collection-shape checks already run in check_stmt. This second
+        // pass needs only the final inferred types and the owning signature.
         check_string_intrinsic_operands(c, stmt.span, env, errors);
         check_int_sink_operands(c, stmt.span, env, errors);
-    }
-    for body in stmt.structural_bodies() {
-        for s in body {
-            check_substituted_operands_in_stmt(s, env, errors);
-        }
     }
 }
 
@@ -1242,9 +1449,6 @@ fn check_int_redirect_target(stmt: &Statement, env: &TypeEnv, errors: &mut Vec<T
         for redir in &r.redirects {
             check_one_redirect_target(&redir.target, env, errors);
         }
-    }
-    for s in stmt.structural_bodies().into_iter().flatten() {
-        check_int_redirect_target(s, env, errors);
     }
 }
 
@@ -1614,7 +1818,7 @@ fn check_keys_operand(c: &Command, span: Span, env: &TypeEnv, errors: &mut Vec<T
     let Some(arg) = c.args.first() else {
         return;
     };
-    let name = join_operand_name(arg);
+    let name = expr_to_name(arg);
     // A non-name operand is SB5062 and an unpassed slot is SB5066, both from
     // validate, so `name` is always a real name here and a passed slot is
     // always in `assoc_arrays` or `collections`.
@@ -1643,7 +1847,7 @@ fn check_join_operand(c: &Command, span: Span, env: &TypeEnv, errors: &mut Vec<T
     let Some(arr) = c.args.first() else {
         return;
     };
-    let name = join_operand_name(arr);
+    let name = expr_to_name(arr);
     if name.is_empty() || env.collections.contains(&name) {
         return;
     }
@@ -1669,7 +1873,7 @@ fn check_len_operand(c: &Command, span: Span, env: &TypeEnv, errors: &mut Vec<Ty
     let Some(arg) = c.args.first() else {
         return;
     };
-    let name = join_operand_name(arg);
+    let name = expr_to_name(arg);
     // Fire only on a name known to be a scalar. "Absent from `collections`"
     // is not the same question: an undeclared name is SB5039's or SB5055's to
     // report, and answering it here masked the real diagnostic with a
@@ -1691,33 +1895,6 @@ fn check_len_operand(c: &Command, span: Span, env: &TypeEnv, errors: &mut Vec<Ty
         ),
         span,
     });
-}
-
-/// The variable name an operand refers to: a bare name → itself; `$a` → `a`;
-/// anything else → empty (not a simple name operand).
-///
-/// `$a` resolves to the same name as `a` because the operand slot of
-/// `len`/`join`/`keys` resolves a *name*, and both spellings name the same
-/// variable. Leaving `$a` unresolved here let `len $s` past the
-/// collection-only check while `len s` was rejected — the sigil silently
-/// decided whether the guard ran.
-///
-/// **There is deliberately no arm for the `@a` splat.** This function is the
-/// type-check counterpart of `transform::expr_handlers::collection_operand_name`,
-/// and DG's ruling when that one's splat arm was removed (2026-10-06) applies
-/// unchanged: SB5062 rejects `len @a`, `join @a ,` and `keys @m` in validate,
-/// before type check runs, so an arm here re-asks the gate's own question
-/// about the same `ExprKind` and cannot catch a drift the gate would not catch
-/// first — while telling the next reader that a rejected spelling is
-/// legitimate. DD#100 Part D retired `@a` as a synonym for the bare name; the
-/// arm was simply left behind, on this half of the pair only. A splat now
-/// falls to the empty answer, which all three callers already handle.
-pub(crate) fn join_operand_name(expr: &Expr) -> String {
-    match &expr.kind {
-        ExprKind::Literal(s) => s.clone(),
-        ExprKind::SimpleExpansion(s) => s.clone(),
-        _ => String::new(),
-    }
 }
 
 /// Check if an expression is an integer literal
@@ -1997,21 +2174,13 @@ fn check_command(c: &Command, span: Span, env: &mut TypeEnv, errors: &mut Vec<Ty
     match expr_to_name(&c.name).as_str() {
         "unset" => check_unset_args(c, span, env, errors),
         "attest" => check_attest_form(c, span, env, errors),
-        "argv" => register_collection_target(c, span, env, errors),
-        // DD#99: `read [SRC] ARRAY` — the target is always the last arg.
-        "read" => register_collection_target(c, span, env, errors),
-        // DD#63: `match S P ARR` / `matchall S P ARR` fill (and auto-declare)
-        // the trailing array; the two-arg `match S P` binds nothing.
-        "match" | "matchall" if c.args.len() == 3 => {
-            register_collection_target(c, span, env, errors)
-        }
-        // DD#75 §3: `keys m k` snapshots a map's keys into the trailing
-        // array. One argument is the `$(keys m)` splat, which fills nothing.
-        "keys" if c.args.len() == 2 => register_collection_target(c, span, env, errors),
         // DD#99: `readline` is the scalar half of the family (SB5057 pins it to
         // exactly one bare target), so its target type wants the opposite check.
         "readline" => check_scalar_fill_target(c, span, env, errors),
         _ => {}
+    }
+    if collection_fill_target(c).is_some() {
+        register_collection_target(c, span, env, errors);
     }
 
     // DD#33: check subscript key types in command args
@@ -2023,6 +2192,16 @@ fn check_command(c: &Command, span: Span, env: &mut TypeEnv, errors: &mut Vec<Ty
     check_int_sink_operands(c, span, env, errors);
     for arg in &c.args {
         check_subscript_types(arg, env, errors);
+    }
+}
+
+/// The same out-array role drives checking and signature inference.
+fn collection_fill_target(c: &Command) -> Option<&Expr> {
+    match expr_to_name(&c.name).as_str() {
+        "argv" | "read" => c.args.last(),
+        "match" | "matchall" if c.args.len() == 3 => c.args.last(),
+        "keys" if c.args.len() == 2 => c.args.last(),
+        _ => None,
     }
 }
 
@@ -2078,52 +2257,57 @@ fn register_collection_target(
     env: &mut TypeEnv,
     errors: &mut Vec<TypeError>,
 ) {
-    let Some(last) = c.args.last() else {
+    let Some(last) = collection_fill_target(c) else {
         return;
     };
     let name = expr_to_name(last);
-    // A DD#100 collection slot (`A`..`E`) is a collection by construction, and
-    // is bound by the caller rather than introduced here.
-    if name.is_empty() || crate::ir::is_collection_slot(&name) {
+    if name.is_empty() || env.is_slot(&name) {
         return;
     }
-    if env.vars.contains_key(&name) && !env.collections.contains(&name) {
-        errors.push(TypeError {
-            message: format!(
-                "cannot fill the collection `{}` with `{}` — `{}` is already a \
+    if let Some(message) = collection_fill_error(c, &name, env) {
+        errors.push(TypeError { message, span });
+        return;
+    }
+    env.collections.insert(name);
+}
+
+fn collection_fill_error(c: &Command, name: &str, env: &TypeEnv) -> Option<String> {
+    if env.vars.contains_key(name) && !env.collections.contains(name) {
+        return Some(format!(
+            "cannot fill the collection `{}` with `{}` — `{}` is already a \
                  {} variable, and a variable does not change type (DD#86); \
                  fill a new name, or declare `array {}` instead",
-                name,
-                expr_to_name(&c.name),
-                name,
-                type_name(env.var_type(&name)),
-                name
-            ),
-            span,
-        });
-        return;
+            name,
+            expr_to_name(&c.name),
+            name,
+            type_name(env.var_type(name)),
+            name
+        ));
     }
     // A map is in `collections` too, so the guard above waves it through. DD#99
     // settles that it must not be: a bulk fill writes the DD#33 raw-8-byte-i64
     // keys 0, 1, 2 …, and writing those into a string-keyed table yields a key
     // of eight NUL bytes — a DD#87 breach reachable from ordinary safe code.
-    if env.assoc_arrays.contains(&name) {
-        errors.push(TypeError {
-            message: format!(
-                "cannot fill the map `{}` with `{}` — a bulk fill writes the \
+    if env.assoc_arrays.contains(name) {
+        return Some(format!(
+            "cannot fill the map `{}` with `{}` — a bulk fill writes the \
                  indexed keys 0, 1, 2 …, not the string keys a map holds; \
                  DD#99: maps are built by assignment, not by `{}`. Fill an \
                  indexed array and convert it pairwise: `map {} = @{{a:-EXTRA}}`",
-                name,
-                expr_to_name(&c.name),
-                expr_to_name(&c.name),
-                name
-            ),
-            span,
-        });
-        return;
+            name,
+            expr_to_name(&c.name),
+            expr_to_name(&c.name),
+            name
+        ));
     }
-    env.collections.insert(name);
+    if env.var_type(name) == VarType::Int {
+        return Some(format!(
+            "cannot fill int collection `{name}` with `{}` — this builtin \
+                 produces string elements; fill a string array and convert explicitly",
+            expr_to_name(&c.name)
+        ));
+    }
+    None
 }
 
 /// DD#61: the attest form must match the attested entity's kind.
@@ -2237,32 +2421,24 @@ fn attest_map_form_error(key: &str, val: &str, map: &str, env: &TypeEnv) -> Opti
     ))
 }
 
-/// DD#30: unset on a scalar variable (int or string, not declared
-/// as -a/-A) is rejected. Subscript forms like `unset name[i]` are
-/// allowed.
+/// DD#30: both whole and subscripted targets must name collections.
 fn check_unset_args(c: &Command, span: Span, env: &TypeEnv, errors: &mut Vec<TypeError>) {
-    for arg in &c.args {
-        let name = expr_to_name(arg);
-        // Names containing '[' are subscript forms — allowed.
-        if name.contains('[') || name.is_empty() {
-            continue;
-        }
-        let vtype = env.var_type(&name);
-        if vtype != VarType::String && vtype != VarType::Int {
-            continue;
-        }
-        // Declared as array/map → OK
-        if env.is_collection(&name) {
-            continue;
-        }
-        errors.push(TypeError {
-            message: format!(
-                "unset on scalar '{}' is not allowed — use {}=\"\" to clear",
-                name, name,
-            ),
-            span,
-        });
+    for target in crate::transform::unset_targets(c) {
+        let name = target
+            .split_once('[')
+            .map_or(target.as_str(), |(base, _)| base);
+        check_unset_target(name, span, env, errors);
     }
+}
+
+fn check_unset_target(name: &str, span: Span, env: &TypeEnv, errors: &mut Vec<TypeError>) {
+    if env.is_collection(name) || env.is_slot(name) {
+        return;
+    }
+    errors.push(TypeError {
+        message: format!("unset on scalar '{name}' is not allowed — use {name}=\"\" to clear",),
+        span,
+    });
 }
 
 fn check_for(f: &For, env: &mut TypeEnv, errors: &mut Vec<TypeError>) {
@@ -2283,46 +2459,44 @@ fn check_for(f: &For, env: &mut TypeEnv, errors: &mut Vec<TypeError>) {
 /// indexed array). Register it for the body, then restore — a nested/sibling
 /// scope or top level must not see it (top-level `args` is a separate reject).
 fn check_function(f: &Function, env: &mut TypeEnv, errors: &mut Vec<TypeError>) {
-    let had_args = env.collections.contains("args");
-    env.collections.insert("args".to_string());
-    // DD#100: seed the map slots this function is called with, so the
-    // kind-specific checks (`keys` map-only, string vs integer key) apply
-    // inside the body exactly as they would on the caller's collection.
-    let map_slots = enter_slot_kinds(&f.name, env);
+    enter_function_slots(&f.name, env);
     for s in &f.body {
         check_stmt(s, env, errors);
     }
-    for name in map_slots {
+    for j in 0..MAX_COLLECTION_SLOTS {
+        let name = collection_slot_name(j);
+        env.vars.remove(&name);
         env.assoc_arrays.remove(&name);
         env.known_slots.remove(&name);
     }
-    if !had_args {
-        env.collections.remove("args");
+    // SB5071 permits definitions only at top level: no enclosing slot scope.
+    env.collections.remove("args");
+}
+
+/// Every checker binds the same full signature, including the element types.
+fn enter_function_slots(fname: &str, env: &mut TypeEnv) {
+    env.collections.insert("args".to_string());
+    let slots = env
+        .slot_signatures
+        .get(fname)
+        .map_or([None; MAX_COLLECTION_SLOTS], |s| s.slots);
+    for (j, kind) in slots.into_iter().enumerate() {
+        let name = collection_slot_name(j);
+        env.vars.remove(&name);
+        env.assoc_arrays.remove(&name);
+        env.known_slots.remove(&name);
+        if let Some(kind) = kind {
+            bind_function_slot(name, kind, env);
+        }
     }
 }
 
-/// Bind this function's slot kinds for the duration of its body check,
-/// returning the names to clear afterwards. A **map** slot is also marked
-/// associative, which is what the kind checks read; an **array** slot only
-/// needs to be *known*. An unbound slot stays unknown, so `TypeEnv::is_slot`
-/// keeps it out of the kind checks — there is nothing to check it against.
-fn enter_slot_kinds(fname: &str, env: &mut TypeEnv) -> Vec<String> {
-    let Some(kinds) = env.slot_kinds.get(fname).copied() else {
-        return Vec::new();
-    };
-    let mut added = Vec::new();
-    for (j, k) in kinds.iter().enumerate() {
-        if *k == SlotKind::Unbound {
-            continue;
-        }
-        let name = crate::ir::collection_slot_name(j);
-        if *k == SlotKind::Map {
-            env.assoc_arrays.insert(name.clone());
-        }
-        env.known_slots.insert(name.clone());
-        added.push(name);
+fn bind_function_slot(name: String, kind: CollectionType, env: &mut TypeEnv) {
+    env.vars.insert(name.clone(), kind.element);
+    if kind.is_map {
+        env.assoc_arrays.insert(name.clone());
     }
-    added
+    env.known_slots.insert(name);
 }
 
 fn check_if(if_stmt: &If, env: &mut TypeEnv, errors: &mut Vec<TypeError>) {
@@ -2593,6 +2767,117 @@ fn infer_declaration_types(d: &crate::ir::Declaration, env: &mut TypeEnv) {
 mod tests {
     use super::*;
     use crate::ir::ParameterExpansion;
+
+    #[test]
+    fn unknown_collection_bindings_do_not_invent_a_slot_type() {
+        let call = CollectionCall {
+            caller: "uncalled".to_string(),
+            callee: "forwarded".to_string(),
+            args: vec![None, Some(SlotBinding::Forwarded(0))],
+            span: Span::new(1, 1),
+        };
+        let signatures = propagate_collection_signatures(std::slice::from_ref(&call));
+        let signature = &signatures["forwarded"];
+        assert_eq!(signature.arity, 2);
+        assert!(signature.slots.iter().all(Option::is_none));
+        let mut errors = Vec::new();
+        check_collection_call(&call, &signatures, &mut errors);
+        assert!(errors.is_empty(), "{errors:?}");
+    }
+
+    #[test]
+    fn compound_values_are_not_simple_names() {
+        let value = Expr {
+            kind: ExprKind::Arithmetic(Box::new(ArithExpr::Literal(1))),
+            span: Span::new(1, 1),
+        };
+        assert_eq!(expr_to_name(&value), "");
+    }
+
+    #[test]
+    fn only_literal_nodes_are_arithmetic_defaults() {
+        let quoted = Expr {
+            kind: ExprKind::SingleQuoted("7".to_string()),
+            span: Span::new(1, 1),
+        };
+        assert!(!default_is_arith_literal(Some(&quoted)));
+    }
+
+    #[test]
+    fn parser_shadowed_substring_operands_are_left_to_the_parser() {
+        for operand in [
+            None,
+            Some(Box::new(Expr {
+                kind: ExprKind::SimpleExpansion("offset".to_string()),
+                span: Span::new(1, 1),
+            })),
+        ] {
+            let stmt = Statement {
+                kind: StmtKind::Command(Command {
+                    name: Expr::literal("echo", Span::new(1, 1)),
+                    args: vec![Expr::param(
+                        "s",
+                        Some("substring"),
+                        operand,
+                        Span::new(1, 1),
+                    )],
+                }),
+                span: Span::new(1, 1),
+            };
+            let mut errors = Vec::new();
+            check_substring_operand(&stmt, &mut errors);
+            assert!(errors.is_empty(), "{errors:?}");
+        }
+    }
+
+    #[test]
+    fn redirect_constant_proof_requires_a_nonempty_constant_part() {
+        let span = Span::new(1, 1);
+        let variable = Expr {
+            kind: ExprKind::SimpleExpansion("fallback".to_string()),
+            span,
+        };
+        let quoted = Expr {
+            kind: ExprKind::DoubleQuoted(vec![variable.clone(), Expr::literal("file", span)]),
+            span,
+        };
+        let concatenation = Expr {
+            kind: ExprKind::Concat(vec![quoted]),
+            span,
+        };
+        assert!(operand_is_nonempty_const(&concatenation));
+        assert!(!operand_is_nonempty_const(&variable));
+    }
+
+    #[test]
+    fn internal_operator_names_are_quoted_not_invented_as_source() {
+        assert_eq!(operator_noun("internal_operator"), "`internal_operator`");
+    }
+
+    #[test]
+    fn equal_types_need_no_conversion_hint() {
+        for ty in [VarType::String, VarType::Int] {
+            assert_eq!(conversion_hint(ty, ty), "");
+        }
+    }
+
+    #[test]
+    fn unreconstructible_sexpr_operands_do_not_invent_a_command() {
+        let mut errors = Vec::new();
+        let operand = ArithExpr::BinOp {
+            left: Box::new(ArithExpr::Literal(1)),
+            op: IrArithOp::Add,
+            right: Box::new(ArithExpr::Literal(2)),
+        };
+        check_sexpr_intrinsic_operands(
+            "len",
+            &[operand],
+            Span::new(1, 1),
+            &TypeEnv::new(),
+            &mut errors,
+        );
+        assert!(errors.is_empty(), "{errors:?}");
+    }
 
     /// DD#119's redirect-target proof has no `:~` case to explain, because an
     /// elide in a non-variadic position never survives `validate` (SB5046).

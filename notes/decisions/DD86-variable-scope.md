@@ -482,3 +482,48 @@ read too broadly for `type_check.rs`. Two corrections:
 DD#30's `unset`-on-a-scalar is the witness: rejected at top level, in a
 function body and in an `if` body, silently accepted inside `$( )` until this
 change. Specs `csc.35`-`csc.40`.
+
+## Addendum (2026-10-18, DG) — resolve lexical identities once
+
+Sibling functions and sibling captures may reuse a local spelling, including
+with different types. The shared, unqualified type map did not preserve that
+rule: a string-array `items` in one function and an int-array `items` in
+another printed **`4` then `7`**, instead of `word` then `7`, in both backends.
+Cloning type environments alone would leave SSA and collection lookup with
+the same ambiguous names.
+
+DG chose centralized binding resolution and suggested function-name prefixes:
+
+> "do 1; could prepend function name to locals..."
+
+`bindings.rs` now gives each lexical local one internal identity, once, before
+semantic checks, typing and SSA lowering. Named functions inherit globals,
+not caller locals. Captures inherit their enclosing bindings and introduce
+their own locals; structural control-flow bodies do not introduce scopes.
+Attest-all binders belong only to their predicate. Generated identities
+reserve source identifiers and disambiguate collisions.
+
+All downstream passes share that resolved AST. The earlier addendum's claim
+that ordinary names share the `TypeEnv` describes the old representation,
+not permission to conflate lexical bindings. Separate environments are no
+longer needed for uniquely resolved ordinary names; implicit `args` and
+collection slots still receive their own function environments.
+
+Resolution distinguishes variable/name operands from literal values and map
+keys. Diagnostics and runtime attest labels recover source spellings;
+`--emit-ir`, embedded IR and embedded source retain the original AST/source.
+C output and manifests reuse the checked SSA rather than rebuilding it from
+the original, unqualified AST.
+
+Redeclaration tracking also opens a child scope for each capture: inherited
+names still cannot be shadowed, but one capture's new locals do not escape
+into its siblings.
+
+SSA diagnostics restore the structured binding name **before** appending its
+version. A formatted `qualified_name_1` can equal another binding's qualified
+base name; replacing identifier tokens after formatting can therefore name the
+wrong source variable, not merely leak an internal prefix. The backstop
+receives the same source-name table as the other diagnostic paths.
+
+Specs `spec/collparam.sh` `bindscope.1`-`bindscope.39`;
+journal 525.

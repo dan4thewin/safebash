@@ -38,6 +38,7 @@ type VarTypes = HashMap<(String, u32), VarType>;
 /// codegen's per-call-site stack slot allocation.
 struct Emit {
     out: String,
+    source_names: crate::bindings::SourceNames,
     next_temp: usize,
     /// DD#56: the END-cleanup block id, if the program has one. A DD#55 (A)
     /// abort routes THROUGH this block (so an `END { exit N }` / cleanup
@@ -67,6 +68,7 @@ impl Emit {
     fn new() -> Self {
         Self {
             out: String::new(),
+            source_names: crate::bindings::SourceNames::default(),
             next_temp: 0,
             end_block: None,
             has_exiting_signals: false,
@@ -87,6 +89,7 @@ impl Emit {
 /// and a `__exit:` label that calls sash_exit with the status.
 pub fn emit_c(ssa: &SsaProgram) -> String {
     let mut e = Emit::new();
+    e.source_names = ssa.source_names.clone();
     emit_prologue(&mut e.out);
     emit_main(&mut e, ssa);
     e.out
@@ -951,12 +954,13 @@ fn emit_attest_inst(e: &mut Emit, inst: &SsaInst, types: &VarTypes) -> bool {
         SsaInst::Attest { source, test, .. } => {
             let val = lower_test_expr(e, test, types);
             let (vp, vl) = emit_var_value(e, source, types);
+            let name = e.source_names.original(&source.name);
             writeln!(
                 e.out,
                 "    if (!({val})) sash_attest_fail(\"{nm}\", {nl}, {vp}, {vl});",
                 val = val,
-                nm = c_escape(&source.name),
-                nl = source.name.len(),
+                nm = c_escape(name),
+                nl = name.len(),
                 vp = vp,
                 vl = vl
             )
@@ -1098,12 +1102,13 @@ fn emit_attest_check(
         )
         .unwrap();
     } else {
+        let name = e.source_names.original(&source.name);
         writeln!(
             e.out,
             "        if (!({val})) sash_attest_fail(\"{nm}\", {nl}, {x}_ptr, {x}_len);",
             val = val,
-            nm = c_escape(&source.name),
-            nl = source.name.len(),
+            nm = c_escape(name),
+            nl = name.len(),
             x = names.last().unwrap()
         )
         .unwrap();

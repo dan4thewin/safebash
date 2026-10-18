@@ -534,10 +534,11 @@ impl SsaInst {
         builder.seal_block(fail_block);
         // attest failed: `<argv0>: attest: <name> = '<val>' failed the gate`,
         // exit(1). Name + value tell the user which gate failed and why.
-        let name_id = literals[source.name.as_str()];
+        let name = ctx.program.source_names.original(&source.name);
+        let name_id = literals[name];
         let name_gv = module.declare_data_in_func(name_id, builder.func);
         let name_ptr = builder.ins().global_value(I64, name_gv);
-        let name_len = builder.ins().iconst(I64, source.name.len() as i64);
+        let name_len = builder.ins().iconst(I64, name.len() as i64);
         // The source value, for `= '<val>'`. An int slot is rendered with
         // `sash_itoa` rather than dropped: the C backend already names the
         // value for an int (`emit_var_value` → `emit_itoa_temp`), so passing
@@ -714,7 +715,13 @@ impl SsaInst {
             // fail: "attest: validation failed" → stderr, exit(1)
             builder.switch_to_block(fail);
             builder.seal_block(fail);
-            self.emit_attest_fail(&source.name, builder, module, ctx.literals, externs);
+            self.emit_attest_fail(
+                ctx.program.source_names.original(&source.name),
+                builder,
+                module,
+                ctx.literals,
+                externs,
+            );
             // cont: counter++ ; loop
             builder.switch_to_block(cont);
             builder.seal_block(cont);

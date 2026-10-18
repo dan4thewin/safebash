@@ -30,3 +30,19 @@ Boundaries (unchanged):
 `is_numeric_literal` (the declaration-init gate) is the shared predicate, so
 reassignment accepts exactly what init accepts.
 
+## Addendum (2026-10-18) — an unset subscript still needs a collection
+
+`unset name[index]` deletes a collection element; brackets do not make a
+scalar or an undeclared name a collection. The type checker had skipped every
+subscripted operand, allowing `unset missing[0]` to compile and segfault.
+The same collection-only check now covers whole and element targets,
+including function locals, captures and collection slots (SB4030).
+
+Checking and lowering share the existing logical-target normalizer, so split
+bracket tokens and multiple targets cannot disagree. Both deletion forms
+resolve DD#100 slots to the caller's collection; previously element deletion
+looked up `A` itself, and whole deletion could silently assign an empty scalar
+to it instead of clearing the caller. Missing elements of a declared
+collection remain harmless no-ops.
+
+Specs `spec/collparam.sh` `bindscope.25`-`bindscope.37`; journal 525.

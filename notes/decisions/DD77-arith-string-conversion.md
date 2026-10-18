@@ -179,6 +179,9 @@ exactly like a scalar `${s:OP}`, in both word and arith contexts.
   array (and a bare string scalar used as an int index `a[s]`) is the same
   string→int crossing as a bare scalar string → D1 error, needing a
   disposition. Int-array cells (DD#76) read the raw i64, unaffected.
+  This includes the implicit string array `args`: bare `args[i]` is not an
+  integer conversion. Installing its environment in every type-checking
+  visitor closed that bypass (2026-10-18, specs `bsx.8`/`bsx.9`).
 - **Operator parity.** The pruned families reject identically to a scalar:
   `${a[i]#x}`/`${a[i]/x/y}` → SB4034, `${a[i]@U}` → SB4015. Substring
   (`${a[i]:o:l}`) and sed (`${a[i]:s/…/}`) have no cell-source lowering yet —

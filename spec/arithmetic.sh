@@ -577,15 +577,12 @@ run_sash 'int array a=(7 13 21); (( a[2] += 5 )); echo $a[2]'
 # bsx.5 bare a[i] = lvalue
 run_sash 'int array a=(7 13 21); (( a[0] = 99 )); echo $a[0]'
 [[ $rc = 0 && $out = "99" && -z $err ]]; chk bsx.5
-# bsx.8 bare `args[i]` (the implicit positional array) in arith inside a
-# function — resolves to the per-inline __argsN slot like the word form
-# ${args[i]} (arith-args-subscript-codegen; was an SB5031 false positive
-# masking a codegen ICE).
+# The implicit args array holds strings too (DD#77). Previously the auxiliary
+# type pass entered function bodies without installing the args environment.
 run_sash 'f() { echo $(( args[0] + 1 )); }; f 5'
-[[ $rc = 0 && $out = "6" && -z $err ]]; chk bsx.8
-# bsx.9 contiguous multi-arg read `args[0]`+`args[1]`
+[[ $rc != 0 && $err == *SB4030* && $err == *'string cell `args'* ]]; chk bsx.8
 run_sash 'f() { echo $(( args[0] + args[1] )); }; f 3 4'
-[[ $rc = 0 && $out = "7" && -z $err ]]; chk bsx.9
+[[ $rc != 0 && $err == *SB4030* && $err == *'string cell `args'* ]]; chk bsx.9
 # bsx.6 bare `m[k]` on a MAP in arith → compile error (string key not
 # expressible under arith rules; use `${m[k]}` / `m[k]=`). Literal index so the
 # error is the map rejection (SB4030), not a B2 undeclared-index one.

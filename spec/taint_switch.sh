@@ -225,7 +225,8 @@ echo "n=$n"' x y
 
 # bkstp.1 NEGATIVE — a tainted REDIRECT TARGET inside a `$( )` body. This
 #         compiled, and the binary wrote a file named by the environment.
-run_sash '/bin/echo $(str h=$(getenv TARGET); echo pwned > $h)'
+#         :? proves nonempty (DD#119), not trusted: only the backstop refuses it.
+run_sash '/bin/echo $(str h=$(getenv TARGET); echo pwned > ${h:?target})'
 [[ $rc != 0 && -z $out && $err == *"taint backstop"* ]]; chk bkstp.1
 
 # bkstp.2 NEGATIVE — a tainted TEST OPERAND inside a `$( )` body. This

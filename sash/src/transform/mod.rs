@@ -23,5 +23,6 @@ mod statements;
 mod stmt_handlers;
 
 pub use self::entry::ir_to_ssa_typed;
+pub(crate) use cmd_handlers::unset_targets;
 
 mod entry;

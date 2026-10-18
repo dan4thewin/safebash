@@ -6,6 +6,37 @@ function could read and mutate a caller's array only by **hard-coding its
 name**. Contents were parameterisable (splat `@a`, read-only); identity was
 not. This DD adds collection parameters.
 
+**Current rule (DG, 2026-10-18): one inferred signature per function.**
+Collection count, array/map kind and string/int element type must agree at
+every call. The addendum below supersedes Part B's per-instantiation typing
+and Part F's suggestion that polymorphic checking might be added later.
+
+## Addendum (2026-10-18, DG) — one function, one inferred signature
+
+> "while we do infer the signature of a function, I don't think we can allow
+> a function to have more than one signature"
+
+Each function has a fixed collection-argument count and one full type for
+each slot: **string array, int array, string map, or int map**. Even a helper
+whose body only uses `len A` cannot be called with two different types, or
+with different numbers of collection arguments. DD#81's fixed/variadic
+scalar-argument rules are unchanged.
+
+Forwarding (`inner =A`) propagates the same signature through the call graph.
+Inference reaches a fixpoint before reporting disagreements as SB4030.
+Every type-checking visitor enters the inferred slot environment, including
+arithmetic, string operands, defaults and redirect checks. A string cell
+through `A` therefore owes precisely the conversion an ordinary string cell
+owes; an int collection cannot receive a string-producing bulk fill.
+
+This fixes measured bypasses, not just a diagnostic gap: a string cell
+containing `nonsense` evaluated to zero in arithmetic, and a string assigned
+through an int slot reached native codegen's non-integer-literal ICE.
+An uncalled function has no concrete call-site signature; unknown slots
+remain conservative rather than inventing a type.
+
+Specs `spec/collparam.sh` `slotty.1`-`slotty.40`; journal 525.
+
 ## Background — why this was cheap
 
 sash **inlines every function** (DD#27 §5 / SB5037 reject recursion; there is

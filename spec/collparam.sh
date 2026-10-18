@@ -17,7 +17,7 @@ set -eu
 . common.sh
 setup collparam
 set +e
-plan=45
+plan=124
 echo "1..$plan" >&3
 
 # ── Part A: binding and reading ───────────────────────────────────
@@ -356,6 +356,471 @@ array q=(3 1 4)
 str t=$(f =q)
 echo "t=$t"'
 [[ $rc = 0 && $err != *SB5050* ]]; chk 100.45
+
+# One inferred signature includes both structure and element type.
+run_sash 'fn measure { echo $(( ${A[0]} )) }
+array a=(nonsense)
+measure =a'
+[[ $rc != 0 && -z $out && $err == *SB4030* && $err == *'string cell `A'* ]]; chk slotty.1
+
+run_sash 'fn measure { echo $(( ${A[0]} )) }
+int array a=(7)
+measure =a'
+[[ $rc = 0 && $out = 7 && -z $err ]]; chk slotty.2
+
+run_sash 'fn measure { echo $(( ${A[word]} )) }
+int map m=([word]=9)
+measure =m'
+[[ $rc = 0 && $out = 9 && -z $err ]]; chk slotty.3
+
+run_sash 'fn measure { echo $(( ${A[word]} )) }
+map m=([word]=nonsense)
+measure =m'
+[[ $rc != 0 && -z $out && $err == *SB4030* && $err == *'string cell `A'* ]]; chk slotty.4
+
+run_sash 'fn fill { A[0]=nonsense }
+int array a=(7)
+fill =a
+echo ${a[0]}'
+[[ $rc != 0 && -z $out && $err == *SB4030* && $err == *'cannot assign string value to int variable `A`'* ]]; chk slotty.5
+
+run_sash 'fn fill { A[0]=$(( 8 )) }
+int array a=(7)
+fill =a
+echo ${a[0]}'
+[[ $rc = 0 && $out = 8 && -z $err ]]; chk slotty.6
+
+run_sash 'fn fill { int n=8; A[0]=$n }
+array a=(word)
+fill =a
+echo ${a[0]}'
+[[ $rc != 0 && -z $out && $err == *SB4030* && $err == *'cannot assign int value to string variable `A`'* ]]; chk slotty.7
+
+run_sash 'fn size { echo $(strlen ${A[0]}) }
+int array a=(17)
+size =a'
+[[ $rc != 0 && -z $out && $err == *SB4030* && $err == *'`strlen` is a string operation'* ]]; chk slotty.8
+
+run_sash 'fn size { echo $(strlen "${A[0]}") }
+int array a=(17)
+size =a'
+[[ $rc = 0 && $out = 2 && -z $err ]]; chk slotty.9
+
+run_sash 'fn show { echo ${A[0]:-word} }
+int array a=(0)
+show =a'
+[[ $rc != 0 && -z $out && $err == *SB4030* && $err == *'default for int `A` must be an integer literal'* ]]; chk slotty.10
+
+run_sash 'fn show { echo ${A[0]:-word} }
+array a=()
+show =a'
+[[ $rc = 0 && $out = word && -z $err ]]; chk slotty.11
+
+run_sash 'fn show { echo ${A[0]:0:1} }
+int array a=(17)
+show =a'
+[[ $rc != 0 && -z $out && $err == *SB4030* && $err == *'substring of int variable `A`'* ]]; chk slotty.12
+
+run_sash 'fn inner { echo ${A[word]} }
+fn outer { inner =A }
+array a=(value)
+outer =a'
+[[ $rc != 0 && -z $out && $err == *SB4030* && $err == *"non-integer index on indexed array 'A'"* ]]; chk slotty.13
+
+run_sash 'fn inner { echo ${A[word]} }
+fn outer { inner =A }
+map m=([word]=hello)
+outer =m'
+[[ $rc = 0 && $out = hello && -z $err ]]; chk slotty.14
+
+run_sash 'fn inner { echo $(( ${A[0]} )) }
+fn middle { inner =A }
+fn outer { middle =A }
+int array a=(7)
+outer =a'
+[[ $rc = 0 && $out = 7 && -z $err ]]; chk slotty.15
+
+run_sash 'fn inner { echo $(( ${A[0]} )) }
+fn outer { inner =A }
+array a=(nonsense)
+outer =a'
+[[ $rc != 0 && -z $out && $err == *SB4030* && $err == *'string cell `A'* ]]; chk slotty.16
+
+run_sash 'fn count { echo $(len A) }
+array words=(hello)
+int array numbers=(10 20)
+count =words
+count =numbers'
+[[ $rc != 0 && -z $out && $err == *SB4030* && $err == *'one inferred signature'* \
+   && $err == *'string array'* && $err == *'int array'* ]]; chk slotty.17
+
+run_sash 'fn count { echo $(len A) }
+map words=([word]=hello)
+int map numbers=([word]=10)
+count =words
+count =numbers'
+[[ $rc != 0 && -z $out && $err == *SB4030* && $err == *'one inferred signature'* \
+   && $err == *'string map'* && $err == *'int map'* ]]; chk slotty.18
+
+run_sash 'fn both { echo $(( ${A[0]} )) ${B[word]} }
+int array a=(7)
+map m=([word]=hello)
+both =a =m'
+[[ $rc = 0 && $out = "7 hello" && -z $err ]]; chk slotty.19
+
+run_sash 'fn integer { echo $(( ${A[0]} )) }
+fn string { echo $(strlen ${A[0]}) }
+int array a=(7)
+array b=(hello)
+integer =a
+string =b'
+[[ $rc = 0 && $out = $'7\n5' && -z $err ]]; chk slotty.20
+
+run_sash 'fn inner { echo $(len A) }
+fn outer { inner =A }
+int array numbers=(7)
+array words=(hello)
+inner =numbers
+outer =words'
+[[ $rc != 0 && -z $out && $err == *SB4030* && $err == *'function `inner`'* \
+   && $err == *'one inferred signature'* ]]; chk slotty.21
+
+# Anonymous bodies and sibling functions have distinct local bindings.
+run_sash 'fn count { echo $(len A) }
+str first=$(array items=(word); count =items)
+str second=$(int array items=(7); count =items)
+echo $first $second'
+[[ $rc != 0 && -z $out && $err == *SB4030* && $err == *'one inferred signature'* ]]; chk slotty.22
+
+run_sash 'fn count { echo $(len A) }
+fn first { array items=(word); count =items }
+fn second { int array items=(7); count =items }
+first
+second'
+[[ $rc != 0 && -z $out && $err == *SB4030* && $err == *'one inferred signature'* ]]; chk slotty.23
+
+run_sash 'fn measure { echo $(( ${A[0]} )) }
+read "nonsense" generated
+measure =generated'
+[[ $rc != 0 && -z $out && $err == *SB4030* && $err == *'string cell `A'* ]]; chk slotty.24
+
+run_sash 'fn size { echo $(strlen ${A[0]}) }
+fn outer { str text=$(size =A); echo $text }
+int array a=(7)
+outer =a'
+[[ $rc != 0 && -z $out && $err == *SB4030* && $err == *'`strlen` is a string operation'* ]]; chk slotty.25
+
+run_sash 'fn size { echo $(strlen ${A[0]}) }
+int array a=(7)
+size =a | /bin/cat'
+[[ $rc != 0 && -z $out && $err == *SB4030* && $err == *'`strlen` is a string operation'* ]]; chk slotty.26
+
+# Collection slots are fixed, not variadic; scalar variadics retain DD#81.
+run_sash 'fn count { echo $(len A) }
+array a=(word)
+array b=(other)
+count =a
+count =a =b
+echo $(len b)'
+[[ $rc != 0 && -z $out && $err == *SB4030* && $err == *'both 1 and 2 collection arguments'* ]]; chk slotty.27
+
+run_sash 'fn nothing { : }
+array a=(word)
+nothing
+nothing =a
+echo $(len a)'
+[[ $rc != 0 && -z $out && $err == *SB4030* && $err == *'both 0 and 1 collection arguments'* ]]; chk slotty.28
+
+run_sash 'fn zero -> int { return 0 }
+array a=(word)
+int first=$(zero =a)
+int second=$(( (zero) ))
+echo $first $second $(len a)'
+[[ $rc != 0 && -z $out && $err == *SB4030* && $err == *'one inferred signature'* \
+   && $err == *'collection arguments'* ]]; chk slotty.29
+
+run_sash 'fn fill { read "nonsense" A }
+int array a=()
+fill =a
+echo $(len a)'
+[[ $rc != 0 && -z $out && $err == *SB4030* && $err == *'cannot fill int collection `A`'* ]]; chk slotty.30
+
+run_sash 'fn fill { keys B A }
+map target=()
+map source=([word]=value)
+fill =target =source
+echo $(len target)'
+[[ $rc != 0 && -z $out && $err == *SB4030* && $err == *'cannot fill the map `A`'* ]]; chk slotty.31
+
+run_sash 'fn fill { match abc "(a)" A }
+int array a=()
+fill =a
+echo $(len a)'
+[[ $rc != 0 && -z $out && $err == *SB4030* && $err == *'cannot fill int collection `A`'* ]]; chk slotty.32
+
+run_sash 'int array a=()
+read "nonsense" a
+echo $(len a)'
+[[ $rc != 0 && -z $out && $err == *SB4030* && $err == *'cannot fill int collection `a`'* ]]; chk slotty.33
+
+run_sash 'fn setit { (( A[0] = 1 )) }
+map m=([word]=value)
+setit =m
+echo $(len m)'
+[[ $rc != 0 && -z $out && $err == *SB4030* && $err == *'bare'* && $err == *'map'* ]]; chk slotty.34
+
+run_sash 'fn dormant { echo $(( ${A[0]} )); echo $(( A[0] )) }
+echo unused'
+[[ $rc = 0 && $out = unused && -z $err ]]; chk slotty.35
+
+run_sash 'fn count { echo $(len A) }
+array a=(word)
+array b=(one two)
+count =a
+count =b'
+[[ $rc = 0 && $out = $'1\n2' && -z $err ]]; chk slotty.36
+
+run_sash 'fn string { echo ${A[0]} }
+fn integer { echo $(( ${A[0]} )) }
+str first=$(array items=(word); string =items)
+str second=$(int array items=(7); integer =items)
+echo $first $second'
+[[ $rc = 0 && $out = "word 7" && -z $err ]]; chk slotty.37
+
+run_sash 'str text=$(array items=(one); array items=(two); echo $(len items))
+echo $text'
+[[ $rc != 0 && -z $out && $err == *SB5049* && $err == *'already declared in this scope'* ]]; chk slotty.38
+
+run_sash 'array items=(outer)
+str text=$(array items=(inner); echo $(len items))
+echo $text $(len items)'
+[[ $rc != 0 && -z $out && $err == *SB5049* && $err == *'already declared in this scope'* ]]; chk slotty.39
+
+run_sash 'fn counts { : @args; echo "$1:$(len args):$(len A)" }
+array a=(word)
+counts first =a
+counts second extra =a'
+[[ $rc = 0 && $out = $'first:1:1\nsecond:2:1' && -z $err ]]; chk slotty.40
+
+# DD#86: internal identities belong to bindings, not their source spelling.
+run_sash 'fn string { array items=(word); echo ${items[0]} }
+fn integer { int array items=(7); echo ${items[0]} }
+string
+integer'
+[[ $rc = 0 && $out = $'word\n7' && -z $err ]]; chk bindscope.1
+
+run_sash 'fn integer { int array items=(7); echo ${items[0]} }
+fn string { array items=(word); echo ${items[0]} }
+integer
+string'
+[[ $rc = 0 && $out = $'7\nword' && -z $err ]]; chk bindscope.2
+
+run_sash 'fn indexed { array items=(word); echo ${items[0]} }
+fn keyed { int map items=([key]=7); echo ${items[key]} }
+indexed
+keyed'
+[[ $rc = 0 && $out = $'word\n7' && -z $err ]]; chk bindscope.3
+
+run_sash 'fn scalar { str items=word; echo $items }
+fn indexed { int array items=(7); echo ${items[0]} }
+scalar
+indexed'
+[[ $rc = 0 && $out = $'word\n7' && -z $err ]]; chk bindscope.4
+
+run_sash 'fn inner { int array items=(7); echo ${items[0]} }
+fn outer { array items=(word); echo ${items[0]}; inner; echo ${items[0]} }
+outer'
+[[ $rc = 0 && $out = $'word\n7\nword' && -z $err ]]; chk bindscope.5
+
+run_sash 'fn inner { int item=7; echo $item }
+fn outer { str item=word; echo $item; inner; echo $item }
+outer'
+[[ $rc = 0 && $out = $'word\n7\nword' && -z $err ]]; chk bindscope.6
+
+run_sash 'fn outer {
+str item=before
+str result=$(item=after; echo $item)
+echo $item $result
+}
+outer'
+[[ $rc = 0 && $out = "after after" && -z $err ]]; chk bindscope.7
+
+run_sash 'fn outer {
+str first=$(str middle=$(array items=(word); echo ${items[0]}); echo $middle)
+str second=$(int array items=(7); echo ${items[0]})
+echo $first $second
+}
+outer'
+[[ $rc = 0 && $out = "word 7" && -z $err ]]; chk bindscope.8
+
+run_sash 'str state=before
+fn update { str result=$(state=after; echo changed); echo $result }
+update
+echo $state'
+[[ $rc = 0 && $out = $'changed\nafter' && -z $err ]]; chk bindscope.9
+
+run_sash 'fn word { str item=word; echo $(toupper $item) }
+fn number { int item=7; echo $(( item + 1 )) }
+number
+word'
+[[ $rc = 0 && $out = $'8\nWORD' && -z $err ]]; chk bindscope.10
+
+run_sash 'fn string { array items=(word); echo items =items "${items[0]}" }
+string'
+[[ $rc = 0 && $out = "items =items word" && -z $err ]]; chk bindscope.11
+
+run_sash 'str __string_items=keep
+str __string_items_1=also
+fn string { array items=(word); echo ${items[0]} }
+string
+echo $__string_items $__string_items_1'
+[[ $rc = 0 && $out = $'word\nkeep also' && -z $err ]]; chk bindscope.12
+
+run_sash 'fn show { echo "$1:$(len A)" }
+fn outer { array items=(word); show items =items }
+outer'
+[[ $rc = 0 && $out = "items:1" && -z $err ]]; chk bindscope.13
+
+run_sash 'fn first { map items=([key]=word); keys items names; echo $(join names ,) }
+fn second { int array items=(7); echo ${items[0]} }
+first
+second'
+[[ $rc = 0 && $out = $'key\n7' && -z $err ]]; chk bindscope.14
+
+run_sash 'fn first { array items=(one two); unset items[0]; echo "$(len items):${items[1]}" }
+fn second { int array items=(7); echo ${items[0]} }
+first
+second'
+[[ $rc = 0 && $out = $'1:two\n7' && -z $err ]]; chk bindscope.15
+
+run_sash 'fn first { str item=word; echo $(toupper item) $(strlen item) $item }
+first'
+[[ $rc = 0 && $out = "ITEM 4 word" && -z $err ]]; chk bindscope.16
+
+run_sash 'fn first { for item in one two { echo $item } }
+fn second { int item=7; if (( item > 0 )) { echo $(( item + 1 )) } }
+first
+second'
+[[ $rc = 0 && $out = $'one\ntwo\n8' && -z $err ]]; chk bindscope.17
+
+run_sash 'fn first { int array items=(7); int index=0; echo $(( items[index] + ${items[$index]} )) }
+fn second { array items=(word); echo ${items[0]} }
+first
+second'
+[[ $rc = 0 && $out = $'14\nword' && -z $err ]]; chk bindscope.18
+
+run_sash 'fn first { str item=key; : $item; map entries=([item]=word); echo ${entries[item]}; unset entries[item]; echo $(len entries) }
+first'
+[[ $rc = 0 && $out = $'word\n0' && -z $err ]]; chk bindscope.19
+
+run_sash 'fn first { str path=scope-output; echo word >${path:?missing}; str text=$(<${path:?missing}); attest text [[ -n $text ]]; echo $text }
+fn second { int path=7; echo $path }
+first
+second'
+[[ $rc = 0 && $out = $'word\n7' && -z $err ]]; chk bindscope.20
+
+run_sash 'fn first { int item=7; echo $(strlen $item) }
+first'
+[[ $rc != 0 && $err == *SB4030* && $err == *'`strlen` is a string operation'* \
+   && $err == *'`item`'* && $err != *'__first_item'* ]]; chk bindscope.21
+
+run_sash 'fn first { str item=word; attest item [[ $item == no ]]; echo $item }
+first'
+[[ $rc = 1 && $rerr == *"attest: item = 'word' failed the gate"* \
+   && $rerr != *'__first_item'* && -z $err ]]; chk bindscope.22
+
+run_sash 'fn first { array items=(word); attest element in items [[ $element == no ]]; echo $(len items) }
+first'
+[[ $rc = 1 && $rerr == *"attest: items"* && $rerr == *"failed the gate"* \
+   && $rerr != *'__first_items'* && -z $err ]]; chk bindscope.23
+
+printf '%s\n' 'fn first { array items=(word); echo ${items[0]} }; first' > bindings.sash
+"${SASH:-sash}" --emit-ir bindings.sash > bindings.ir 2>bindings.err; flag_rc=$?
+"${SASH:-sash}" bindings.sash -o bindings-bin >/dev/null 2>>bindings.err; native_rc=$?
+embedded=$("${SASH:-sash}" --extract bindings-bin ir 2>>bindings.err); extract_rc=$?
+source=$("${SASH:-sash}" --extract bindings-bin source 2>>bindings.err); source_rc=$?
+[[ $flag_rc = 0 && $native_rc = 0 && $extract_rc = 0 && $source_rc = 0 \
+   && $(<bindings.ir) = "$embedded" && $embedded == *'"items"'* \
+   && $embedded != *'__first_items'* && $source = "$(<bindings.sash)" ]]; chk bindscope.24
+
+# A subscript does not turn an unknown name or a scalar into a collection.
+run_sash 'unset missing[0]; echo done'
+[[ $rc != 0 && $err == *SB4030* && $err == *"'missing'"* ]]; chk bindscope.25
+
+run_sash 'str item=word; unset item[0]; echo $item'
+[[ $rc != 0 && $err == *SB4030* && $err == *"'item'"* ]]; chk bindscope.26
+
+run_sash 'int item=7; unset item[0]; echo $item'
+[[ $rc != 0 && $err == *SB4030* && $err == *"'item'"* ]]; chk bindscope.27
+
+run_sash 'fn first { unset missing[0]; echo done }; first'
+[[ $rc != 0 && $err == *SB4030* && $err == *"'missing'"* ]]; chk bindscope.28
+
+run_sash 'echo $(unset missing[0]; echo done)'
+[[ $rc != 0 && $err == *SB4030* && $err == *"'missing'"* ]]; chk bindscope.29
+
+run_sash 'fn remove { unset A[0]; echo $(join A ,) }
+array items=(red green)
+remove =items
+echo $(join items ,)'
+[[ $rc = 0 && $out = $'green\ngreen' && -z $err ]]; chk bindscope.30
+
+run_sash 'fn remove { unset A[0]; echo $(join A ,) }
+int array items=(7 9)
+remove =items
+echo $(join items ,)'
+[[ $rc = 0 && $out = $'9\n9' && -z $err ]]; chk bindscope.31
+
+run_sash 'fn remove { unset A[first]; echo ${A[second]} }
+map items=([first]=red [second]=green)
+remove =items
+echo ${items[second]}'
+[[ $rc = 0 && $out = $'green\ngreen' && -z $err ]]; chk bindscope.32
+
+run_sash 'fn remove { unset A[first]; echo ${A[second]} }
+int map items=([first]=7 [second]=9)
+remove =items
+echo ${items[second]}'
+[[ $rc = 0 && $out = $'9\n9' && -z $err ]]; chk bindscope.33
+
+run_sash 'fn first { array words=(red green); int array numbers=(7 9)
+unset words[0] numbers[1]
+echo $(join words ,); echo $(join numbers ,) }
+first'
+[[ $rc = 0 && $out = $'green\n7' && -z $err ]]; chk bindscope.34
+
+run_sash 'fn first { array items=(word); unset items[5]; echo $(join items ,) }
+fn second { map items=([key]=value); unset items[missing]; echo ${items[key]} }
+first; second'
+[[ $rc = 0 && $out = $'word\nvalue' && -z $err ]]; chk bindscope.35
+
+run_sash 'fn empty { unset A; echo $(len A) }
+array items=(red green)
+empty =items
+echo $(len items)'
+[[ $rc = 0 && $out = $'0\n0' && -z $err ]]; chk bindscope.36
+
+run_sash 'fn remove { unset A[0] }
+fn forward { remove =A; echo $(join A ,) }
+array items=(red green)
+forward =items
+echo $(join items ,)'
+[[ $rc = 0 && $out = $'green\ngreen' && -z $err ]]; chk bindscope.37
+
+SASH_CFLAGS="${SASH_CFLAGS:-} --no-taint-cst" \
+run_sash '/bin/echo $(str token=$(getenv HOME); echo $token)'
+[[ $rc != 0 && -z $out && $err == *'tainted variable token_1 used'* \
+   && $err == *'SSA taint backstop'* && $err != *'__top_capture'* ]]; chk bindscope.38
+
+# A formatted SSA version can equal another binding's qualified base name.
+SASH_CFLAGS="${SASH_CFLAGS:-} --no-taint-cst" \
+run_sash 'fn a { str b_t=$(getenv HOME); echo $b_t }
+fn a_b { str t=$(getenv HOME); echo $t }
+a
+a_b'
+[[ $rc != 0 && -z $out && $err == *'tainted variable b_t_1 used'* \
+   && $err == *'tainted variable t_1 used'* && $err == *'SSA taint backstop'* \
+   && $err != *'__a_b_t'* ]]; chk bindscope.39
 
 set -e
 tally

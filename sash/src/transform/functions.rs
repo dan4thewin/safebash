@@ -899,34 +899,32 @@ fn cmdsub_reads_whole_args(stmts: &[Statement]) -> bool {
     })
 }
 
-/// Scan an arithmetic expression for `args` reads: `$N`/`$#` (`DollarVar`),
-/// bare `args[k]` (`Subscript`), and imported `${args[k]}` (`Expansion`).
+/// Scan arithmetic positional reads and imported, disposition-bearing cells.
+/// Bare `args[k]` is a string-cell type error (DD#77), not another signature.
+/// Total over `ArithExpr`; do not add a wildcard.
 fn sig_scan_arith(a: &ArithExpr, sig: &mut ArgSig) {
     match a {
         ArithExpr::Var(name) | ArithExpr::DollarVar(name) => sig_record_name(name, sig),
         ArithExpr::Expansion(e) => sig_scan_expr(e, sig),
-        ArithExpr::Subscript { name, index } | ArithExpr::SubscriptAssign { name, index, .. }
-            if name == "args" =>
-        {
-            sig_record_arith_index(index, sig);
-        }
-        _ => {}
+        ArithExpr::Literal(_)
+        | ArithExpr::Assign { .. }
+        | ArithExpr::CompoundAssign { .. }
+        | ArithExpr::PostIncDec { .. }
+        | ArithExpr::PreIncDec { .. }
+        | ArithExpr::Subscript { .. }
+        | ArithExpr::SubscriptAssign { .. }
+        | ArithExpr::BinOp { .. }
+        | ArithExpr::UnaryOp { .. }
+        | ArithExpr::Ternary { .. }
+        | ArithExpr::Comma(_)
+        | ArithExpr::FuncCall { .. }
+        | ArithExpr::Paren(_) => {}
     }
     for child in a.children() {
         sig_scan_arith(child, sig);
     }
 }
 
-/// A bare `args[k]` arith index: an int literal → fixed *required* index; else
-/// variadic. (Arithmetic reads are always bare — no disposition in `$(( ))`.)
-fn sig_record_arith_index(idx: &ArithExpr, sig: &mut ArgSig) {
-    match idx {
-        ArithExpr::Literal(n) if *n >= 0 => {
-            sig.required.insert(*n as usize);
-        }
-        _ => sig.variadic = true,
-    }
-}
 pub(super) fn collect_returns(stmts: &[Statement]) -> Vec<Option<String>> {
     let mut returns = Vec::new();
     collect_returns_inner(stmts, &mut returns);

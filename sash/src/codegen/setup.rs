@@ -949,7 +949,7 @@ pub(super) fn intern_literals(
     cranelift_module::DataId,
     cranelift_module::DataId,
 ) {
-    let mut interner = Interner::new(module);
+    let mut interner = Interner::new(module, &program.source_names);
 
     let space_id = interner.intern(" ");
     let nl_id = interner.intern("\n");
@@ -983,13 +983,15 @@ pub(super) fn intern_literals(
 struct Interner<'a> {
     module: &'a mut ObjectModule,
     literals: HashMap<String, cranelift_module::DataId>,
+    source_names: &'a crate::bindings::SourceNames,
 }
 
 impl<'a> Interner<'a> {
-    fn new(module: &'a mut ObjectModule) -> Self {
+    fn new(module: &'a mut ObjectModule, source_names: &'a crate::bindings::SourceNames) -> Self {
         Self {
             module,
             literals: HashMap::new(),
+            source_names,
         }
     }
 
@@ -1139,7 +1141,8 @@ impl<'a> Interner<'a> {
             }
             SsaInst::Attest { test, source, .. } | SsaInst::AttestAll { test, source, .. } => {
                 self.intern_test_expr(test);
-                self.intern(&source.name);
+                let name = self.source_names.original(&source.name).to_string();
+                self.intern(&name);
             }
             _ => {}
         }

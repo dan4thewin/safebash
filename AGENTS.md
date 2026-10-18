@@ -130,9 +130,16 @@ integration tests are `pub`.
 ### Pipeline
 
 hand-written parser (logos lexer + recursive descent) → Program (AST,
-defined in `ir.rs`) → validate (rules + taint + positionals + argv-splat)
-→ type check → transform (AST→SSA) → fold → codegen (Cranelift) → link →
-static ELF
+defined in `ir.rs`) → structural validation → command resolution →
+lexical binding resolution → semantic validation (taint + positionals +
+argv-splat) → type check → transform (AST→SSA) → fold → codegen (Cranelift)
+→ link → static ELF
+
+`bindings.rs` resolves lexical identities once for all semantic/type/SSA
+passes (DD#86). Do not reintroduce unqualified local-name maps or rebuild
+checked SSA from the original AST; that AST/source is retained for artifacts.
+Each function has one inferred collection count and full string/int
+array/map slot signature (DD#100), including forwarded slots.
 
 The compiler has **no tree-sitter dependency and no CST** — the parser
 (`parse/`) yields the AST directly (the codebase calls this AST its
@@ -158,6 +165,7 @@ preprocessor and global `ARITH_MAP` are gone.)
   - `error.rs` — parse_error helpers
   - `tests.rs` — parser unit tests
 - `ir.rs` — IR definitions
+- `bindings.rs` — centralized lexical identities and source-name restoration
 - `type_check.rs` — type checking pass
 - `transform/` — IR → SSA transformation
   - `entry.rs` — ir_to_ssa, ir_to_ssa_typed

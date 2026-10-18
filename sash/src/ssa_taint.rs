@@ -14,6 +14,7 @@
 //! 2. The taint propagation rules match the CST analyzer's rules
 //! 3. `attest` is the ONLY way to move from Tainted → Clean
 
+use crate::bindings::SourceNames;
 use crate::ssa::*;
 /// tainted value reaching a use site, that's a bug in the CST analyzer.
 ///
@@ -50,7 +51,7 @@ pub fn verify_ssa_taint(program: &SsaProgram) -> Vec<String> {
 
     // Phase 2: report tainted uses in output/external/index positions.
     for block in program.blocks.values() {
-        check_block_uses(block, &taint, &mut errors);
+        check_block_uses(block, &taint, &mut errors, &program.source_names);
     }
 
     errors
@@ -255,9 +256,14 @@ fn read_line_taint(clean_pipe: bool) -> Taint {
 }
 
 /// Phase-2 per-block driver: dispatch each instruction to `check_inst_uses`.
-fn check_block_uses(block: &BasicBlock, taint: &HashMap<String, Taint>, errors: &mut Vec<String>) {
+fn check_block_uses(
+    block: &BasicBlock,
+    taint: &HashMap<String, Taint>,
+    errors: &mut Vec<String>,
+    names: &SourceNames,
+) {
     for inst in &block.insts {
-        check_inst_uses(inst, taint, errors);
+        check_inst_uses(inst, taint, errors, names);
     }
 }
 
@@ -271,11 +277,18 @@ fn check_block_uses(block: &BasicBlock, taint: &HashMap<String, Taint>, errors: 
 /// four-arm match that used to live here ended in `_ => {}` and is how
 /// `SsaInst::Test` and `SsaInst::RedirectPush` escaped the backstop for the
 /// whole life of the pass.
-fn check_inst_uses(inst: &SsaInst, taint: &HashMap<String, Taint>, errors: &mut Vec<String>) {
+fn check_inst_uses(
+    inst: &SsaInst,
+    taint: &HashMap<String, Taint>,
+    errors: &mut Vec<String>,
+    names: &SourceNames,
+) {
     for (read, context) in inst.taint_reads() {
         match read {
-            TaintRead::Value(v) => check_value_use(v, taint, errors, &context),
-            TaintRead::RedirectTarget(e) => check_redirect_target(e, taint, errors, &context),
+            TaintRead::Value(v) => check_value_use(v, taint, errors, &context, names),
+            TaintRead::RedirectTarget(e) => {
+                check_redirect_target(e, taint, errors, &context, names)
+            }
         }
     }
 }
@@ -293,6 +306,7 @@ fn check_redirect_target(
     taint: &HashMap<String, Taint>,
     errors: &mut Vec<String>,
     context: &str,
+    source_names: &SourceNames,
 ) {
     let mut names: Vec<String> = Vec::new();
     crate::ir::walk_expr_tree(target, &mut |e| collect_expr_var_name(e, &mut names));
@@ -300,7 +314,8 @@ fn check_redirect_target(
         if taint_of_name(taint, &name) == Taint::Tainted {
             errors.push(format!(
                 "tainted variable ${} used as {} without attest (SSA taint backstop)",
-                name, context
+                source_names.original(&name),
+                source_names.restore(context)
             ));
         }
     }
@@ -663,12 +678,13 @@ fn check_value_use(
     taint: &HashMap<String, Taint>,
     errors: &mut Vec<String>,
     context: &str,
+    names: &SourceNames,
 ) {
     match value {
         // ── Var-rooted reads ────────────────────────────────────────────
-        SsaValue::Var(vref) => check_tainted_var(vref, "", context, taint, errors),
+        SsaValue::Var(vref) => check_tainted_var(vref, "", context, taint, errors, names),
         SsaValue::ParamExpansion { var, operator, .. } => {
-            check_param_expansion_use(var, operator, taint, errors, context)
+            check_param_expansion_use(var, operator, taint, errors, context, names)
         }
 
         // ── Unreachable by construction (see `ASSIGN_ONLY_VALUE`) ───────
@@ -680,18 +696,18 @@ fn check_value_use(
 
         // ── Collection reads, resolved by bare name (DD#61) ─────────────
         SsaValue::Subscript { array, index, .. } => {
-            check_tainted_array(array, context, taint, errors);
-            check_value_use(index, taint, errors, context);
+            check_tainted_array(array, context, taint, errors, names);
+            check_value_use(index, taint, errors, context, names);
         }
         SsaValue::ArraySplat { array, disposition } => {
-            check_splat_use(array, disposition, taint, errors, context)
+            check_splat_use(array, disposition, taint, errors, context, names)
         }
 
         // ── DD#91 sanctioned bypasses: the author has vouched ───────────
         SsaValue::Trusted { .. } => {}
         SsaValue::ElideEmpty { source, taint_off } => {
             if !taint_off {
-                check_value_use(source, taint, errors, context);
+                check_value_use(source, taint, errors, context, names);
             }
         }
 
@@ -719,14 +735,14 @@ fn check_value_use(
         | SsaValue::IntCell(inner)
         | SsaValue::CaseConvert { subject: inner, .. }
         | SsaValue::Substring { source: inner, .. } => {
-            check_value_use(inner, taint, errors, context)
+            check_value_use(inner, taint, errors, context, names)
         }
         SsaValue::Concat(parts) | SsaValue::IndexedArray(parts) => {
-            check_each(parts, taint, errors, context)
+            check_each(parts, taint, errors, context, names)
         }
         SsaValue::CmdSubst { argv: args, .. }
         | SsaValue::FuncCall { args, .. }
-        | SsaValue::IntFuncCall { args, .. } => check_each(args, taint, errors, context),
+        | SsaValue::IntFuncCall { args, .. } => check_each(args, taint, errors, context, names),
         SsaValue::ArithBinOp { left, right, .. }
         | SsaValue::RegexMatch {
             subject: left,
@@ -740,8 +756,8 @@ fn check_value_use(
             source: left,
             message: right,
         } => {
-            check_value_use(left, taint, errors, context);
-            check_value_use(right, taint, errors, context);
+            check_value_use(left, taint, errors, context, names);
+            check_value_use(right, taint, errors, context, names);
         }
         SsaValue::RegexReplace {
             subject,
@@ -749,18 +765,18 @@ fn check_value_use(
             replacement,
             ..
         } => {
-            check_value_use(subject, taint, errors, context);
-            check_value_use(pattern, taint, errors, context);
-            check_value_use(replacement, taint, errors, context);
+            check_value_use(subject, taint, errors, context, names);
+            check_value_use(pattern, taint, errors, context, names);
+            check_value_use(replacement, taint, errors, context, names);
         }
         SsaValue::Ternary {
             cond,
             true_val,
             false_val,
         } => {
-            check_value_use(cond, taint, errors, context);
-            check_value_use(true_val, taint, errors, context);
-            check_value_use(false_val, taint, errors, context);
+            check_value_use(cond, taint, errors, context, names);
+            check_value_use(true_val, taint, errors, context, names);
+            check_value_use(false_val, taint, errors, context, names);
         }
     }
 }
@@ -803,9 +819,10 @@ fn check_param_expansion_use(
     taint: &HashMap<String, Taint>,
     errors: &mut Vec<String>,
     context: &str,
+    names: &SourceNames,
 ) {
     if !is_measurement_op(operator) {
-        check_tainted_var(var, " in param expansion", context, taint, errors);
+        check_tainted_var(var, " in param expansion", context, taint, errors, names);
     }
 }
 
@@ -819,15 +836,16 @@ fn check_splat_use(
     taint: &HashMap<String, Taint>,
     errors: &mut Vec<String>,
     context: &str,
+    names: &SourceNames,
 ) {
     if !disposition.as_ref().is_some_and(|d| d.taint_off) {
-        check_tainted_array(array, context, taint, errors);
+        check_tainted_array(array, context, taint, errors, names);
     }
     // `has_word` false means `@{a:-}` / `@{a:~}` — the `word` field is a
     // placeholder, not something the program wrote. A `:?` message IS read
     // (it reaches stderr on the abort path), so `abort` is not excluded here.
     if let Some(d) = disposition.as_ref().filter(|d| d.has_word) {
-        check_value_use(&d.word, taint, errors, context);
+        check_value_use(&d.word, taint, errors, context, names);
     }
 }
 
@@ -837,9 +855,10 @@ fn check_each(
     taint: &HashMap<String, Taint>,
     errors: &mut Vec<String>,
     context: &str,
+    names: &SourceNames,
 ) {
     for v in values {
-        check_value_use(v, taint, errors, context);
+        check_value_use(v, taint, errors, context, names);
     }
 }
 
@@ -851,11 +870,17 @@ fn check_tainted_var(
     context: &str,
     taint: &HashMap<String, Taint>,
     errors: &mut Vec<String>,
+    names: &SourceNames,
 ) {
     if is_tainted(taint, vref) {
+        // Restore the binding before adding its version: the joined token
+        // can equal a different binding's qualified base name.
         errors.push(format!(
             "tainted variable {}_{} used{} as {} without attest (SSA taint backstop)",
-            vref.name, vref.version, where_, context
+            names.original(&vref.name),
+            vref.version,
+            where_,
+            names.restore(context)
         ));
     }
 }
@@ -866,11 +891,13 @@ fn check_tainted_array(
     context: &str,
     taint: &HashMap<String, Taint>,
     errors: &mut Vec<String>,
+    names: &SourceNames,
 ) {
     if taint_of_name(taint, array) == Taint::Tainted {
         errors.push(format!(
             "tainted array {}[...] used as {} without attest (SSA taint backstop)",
-            array, context
+            names.original(array),
+            names.restore(context)
         ));
     }
 }
@@ -907,7 +934,7 @@ mod tests {
 
     fn errors_for(value: &SsaValue, taint: &HashMap<String, Taint>) -> Vec<String> {
         let mut errors = Vec::new();
-        check_value_use(value, taint, &mut errors, "a sink");
+        check_value_use(value, taint, &mut errors, "a sink", &SourceNames::default());
         errors
     }
 

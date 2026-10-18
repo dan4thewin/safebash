@@ -1,6 +1,6 @@
 //! Command-specific handlers extracted from handle_command.
 
-use super::expressions::{arg_to_value, expr_to_value, literal_name_of};
+use super::expressions::{arg_to_value, expr_to_value, literal_name_of, resolve_args_name};
 use super::functions::lift_int_func_args;
 use super::resolution::resolve_pipeline_command;
 use super::statements::lower_stmts;
@@ -145,12 +145,14 @@ pub(super) fn handle_signal(
 /// re-attaches to the previous one. Joining every argument instead made
 /// `unset a[0] a[1]` a single target named `a` with the key `0]a[1`, which
 /// matches nothing — every target after the first was silently discarded.
-fn unset_targets(c: &Command) -> Vec<String> {
+pub(crate) fn unset_targets(c: &Command) -> Vec<String> {
     let mut items: Vec<String> = Vec::new();
-    for arg in c.args.iter().map(literal_name_of) {
-        if arg.starts_with('-') {
-            continue;
-        }
+    for arg in c
+        .args
+        .iter()
+        .map(literal_name_of)
+        .filter(|arg| !arg.starts_with('-'))
+    {
         match items.last_mut() {
             Some(prev) if arg.starts_with('[') => prev.push_str(arg),
             _ => items.push(arg.to_string()),
@@ -171,10 +173,10 @@ fn unset_element(
     state: &mut VersionState,
     block: BlockId,
 ) {
-    let arr_name = &full[..bracket];
+    let arr_name = resolve_args_name(&full[..bracket], state);
     let key = full[bracket + 1..full.len() - 1].to_string();
-    let arr_ref = state.lookup(arr_name);
-    let cmd = if state.assoc_arrays.contains(arr_name) {
+    let arr_ref = state.lookup(&arr_name);
+    let cmd = if state.assoc_arrays.contains(&arr_name) {
         BuiltinCmd::TableDelete
     } else {
         BuiltinCmd::TableDeleteIdx
@@ -186,15 +188,16 @@ fn unset_element(
     ));
 }
 
-/// `unset name` → rebind the whole variable: a collection to a fresh empty
-/// table, a scalar to the empty string.
+/// `unset name` → rebind the resolved collection to a fresh empty table.
 fn unset_whole(name: &str, ssa: &mut SsaProgram, state: &mut VersionState, block: BlockId) {
-    let value = if state.collections.contains(name) {
-        SsaValue::Literal("__new_table__".to_string())
-    } else {
-        SsaValue::Literal(String::new())
-    };
-    let target = state.define(name);
+    let name = resolve_args_name(name, state);
+    // Dead function templates retain the reserved slot name until real inlining.
+    assert!(
+        state.collections.contains(&name) || crate::ir::is_collection_slot(&name),
+        "ICE: unset requires a collection name"
+    );
+    let value = SsaValue::Literal("__new_table__".to_string());
+    let target = state.define(&name);
     ssa.block_mut(block)
         .insts
         .push(SsaInst::Assign { target, value });
@@ -631,6 +634,15 @@ pub(super) fn rewrite_write_as_echo(name: &str, args: Vec<SsaValue>) -> (String,
 mod invariant_tests {
     use super::*;
     use std::collections::HashMap;
+
+    #[test]
+    #[should_panic(expected = "unset requires a collection name")]
+    fn unset_cannot_turn_a_missing_collection_into_a_scalar_assignment() {
+        let mut ssa = SsaProgram::new();
+        let block = ssa.entry;
+        let mut state = VersionState::with_types(HashMap::new());
+        unset_whole("missing", &mut ssa, &mut state, block);
+    }
 
     fn lit(s: &str) -> Expr {
         Expr {

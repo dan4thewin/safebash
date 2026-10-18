@@ -153,6 +153,10 @@ of the build.
        ▼
  validate.rs → diagnostics (SB4001–SB50xx)
        │
+ [2a]  │  Resolve
+       ▼
+ resolve.rs → absolute command heads; bindings.rs → lexical identities
+       │
   [3]  │  Taint
        ▼
  validate.rs::check_taint → per-definition taint (SB4020/SB5020)
@@ -218,6 +222,20 @@ DG retired it on 2026-09-12 because it both reserved the names and made
 the unknown-command story non-uniform.) `eval` / `source` / `.` are the
 exception: they are *rejected*, not merely unknown, and cannot be
 redefined away.
+
+### Between validation and semantic checks: resolve names
+
+After structural validation, `resolve.rs` resolves external command heads
+(DD#23), then `bindings.rs` gives each lexical local one internal identity
+(DD#86). Function-name prefixes distinguish sibling locals; captures get
+distinct child identities while retaining access to enclosing bindings.
+Globals stay shared, and control-flow bodies stay in their existing scope.
+The resolver rewrites name operands, not literal values or map keys.
+
+Typing, semantic validation and SSA lowering all consume the same resolved
+AST. A source-name table keeps diagnostics and runtime attest labels in the
+user's spelling. The original AST/source remain the artifact input:
+`--emit-ir`, embedded IR and embedded source do not expose compiler names.
 
 ### Phase 3: Taint
 
@@ -305,6 +323,13 @@ is a compile-time error.
 - `int x=5` / `declare int x=5` / `declare -i x` — int variables
 - `fn name() -> int { }` — int-returning functions
 - `$#`, `$(status)` (sugar: `$?`), `$((...))` — intrinsically int
+
+Each function has **one inferred signature** (DD#81/DD#100). Scalar
+fixed/variadic arity remains inferred from `args` usage. Collection-argument
+count, array/map kind and string/int element type must agree at every call,
+including forwarded slots. A call-graph fixpoint resolves collection types
+before checking conflicts; every checking visitor uses the same function
+environment. Inlining does not make a function polymorphic.
 
 ### Phase 6: Transform
 
