@@ -243,13 +243,14 @@ fn lower_redirected_stmt(
         state.pending_redirect_scope = Some(redirects.clone());
     }
 
+    let pipe_reader = state.pipe_reader.take();
     let result_block = lower_one(&r.body, ssa, state, block);
-    // `Some` still parked ⇒ the call was not inlined after all (a recursive
-    // call, rejected with SB5037, returns before taking it). Drop it rather
-    // than leaking it onto the next call.
-    let unconsumed = state.pending_redirect_scope.take().is_some();
-    if !bracketed || unconsumed {
-        attach_redirects_to_result(ssa, block, result_block, &redirects);
+    state.pipe_reader = pipe_reader;
+    // A rejected recursive call leaves its scope parked and emits no command.
+    // Discard it; only a non-function command needs per-instruction redirects.
+    state.pending_redirect_scope = None;
+    if !bracketed {
+        attach_redirects_to_last_inst(ssa, result_block, &redirects);
     }
     result_block
 }
@@ -336,29 +337,10 @@ pub(super) fn spill_scalar_redirect_targets(
     out
 }
 
-/// Attach a simple command's redirects to the last emitted instruction in
-/// the block(s) it produced (no-op when there are no redirects).
-fn attach_redirects_to_result(
-    ssa: &mut SsaProgram,
-    block: BlockId,
-    result_block: BlockId,
-    redirects: &[Redirect],
-) {
-    if redirects.is_empty() {
-        return;
-    }
-    let blocks_to_check = if result_block == block {
-        vec![block]
-    } else {
-        vec![block, result_block]
-    };
-    for blk_id in blocks_to_check {
-        attach_redirects_to_last_inst(ssa, blk_id, redirects);
-    }
-}
-
 /// Simple command + redirects: attach the redirects directly to the last
 /// emitted inst (Command / Pipeline last-stage / ReadLine / ReadArray).
+/// The caller passes the final command block, not its argument-setup block;
+/// rejected function calls do not reach this attachment path.
 ///
 /// **Total over `SsaInst` on purpose — do not add a wildcard.** The arms that
 /// ICE below used to be a single `_ => {}`, and it was silently discarding
@@ -422,6 +404,7 @@ fn attach_redirects_to_last_inst(ssa: &mut SsaProgram, blk_id: BlockId, redirect
         | SsaInst::CaptureEnd { .. }
         | SsaInst::RedirectPush { .. }
         | SsaInst::RedirectPop { .. }
+        | SsaInst::PipelineFinish { .. }
         | SsaInst::Attest { .. }
         | SsaInst::AttestAll { .. }
         | SsaInst::AttestRetag { .. } => {
@@ -789,7 +772,7 @@ fn wrap_int_cells(val: SsaValue) -> SsaValue {
                 .map(|(k, v)| (k, SsaValue::IntCell(Box::new(v))))
                 .collect(),
         ),
-        other => other,
+        _ => unreachable!("an int collection initializer must lower to a table literal"),
     }
 }
 
@@ -977,7 +960,9 @@ fn lower_background(
         true,
     ));
 
+    let pipe_reader = state.pipe_reader.take();
     let child_end = lower_one(&l.left, ssa, state, child_block);
+    state.pipe_reader = pipe_reader;
     ssa.block_mut(child_end).terminator = Terminator::Return;
 
     parent_block
@@ -1049,11 +1034,7 @@ fn map_from_array_parts(
     // for `:-` it is the supplied KEY. Neither is used by `:~`/`:!~`.
     let key = match pe.operand.as_deref() {
         Some(w) if mode == 0 || mode == 1 => expr_to_value(w, state),
-        _ => SsaValue::Literal(if mode == 1 {
-            "map from array: odd element count".to_string()
-        } else {
-            String::new()
-        }),
+        _ => SsaValue::Literal(String::new()),
     };
     Some((pe.name.clone(), mode, key, message, pe.taint_off))
 }
@@ -1070,6 +1051,32 @@ fn map_from_array_parts(
 mod invariant_tests {
     use super::*;
     use std::collections::HashMap;
+
+    #[test]
+    fn redirect_scope_classification_declines_non_commands() {
+        let (_, mut state, _) = fixtures();
+        state.function_bodies.insert("f".into(), vec![]);
+        let command =
+            Statement::command(Expr::literal("f", Span::default()), vec![], Span::default());
+        let wrapped = stmt(StmtKind::Negated(Box::new(command)));
+        assert!(!body_calls_user_function(&wrapped, &state));
+    }
+
+    #[test]
+    #[should_panic(expected = "an int collection initializer must lower to a table literal")]
+    fn a_scalar_cannot_silently_initialize_an_int_table() {
+        wrap_int_cells(SsaValue::Literal("not a table".into()));
+    }
+
+    #[test]
+    fn a_non_fill_parameter_operator_is_not_a_map_fill() {
+        let ExprKind::ParameterExpansion(pe) =
+            Expr::param("a", Some("arrjoin"), None, Span::default()).kind
+        else {
+            unreachable!()
+        };
+        assert_eq!(arrvals_fill_mode(&pe), None);
+    }
 
     fn fixtures() -> (SsaProgram, VersionState, BlockId) {
         let mut ssa = SsaProgram::new();

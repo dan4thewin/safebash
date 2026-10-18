@@ -534,6 +534,23 @@ pipe/fork, stdout remains pipe-backed, and the parent drains it before
 waiting. It shares pipeline construction checks and caught/suppressed/END
 routing, without publishing or invalidating an enclosing lastpipe reader.
 
+Parent-reader pipelines stream before waiting (DD#122). Each site owns a
+stack-resident runtime record containing its fd, pending children and enclosing
+record. Read instructions carry that site's negative encoding; stdin is never
+rebound. Binding is lexical at reader construction, suspended across calls,
+captures, redirects and background children, rather than a broad SSA rewrite.
+Both `readline` and a bulk `read` in a bounded loop body follow that rule.
+
+The shared `transform::reader_cleanup` pass places `PipelineFinish` on CFG
+edges leaving a reader region, inner first; conditional exits get bridge blocks
+with phi predecessors retargeted. Finishing closes before reaping and applies
+the existing suppression/pipefail fold. Nonlocal transfers retain their saved
+status after successful cleanup. Runtime abort/END cleanup closes all active
+readers before reaping, preserving the triggering status; forked children close
+inherited reader fds without adopting the parent's children. Public `wait`
+results are cached for a later owning-pipeline fold. Native and C share this
+lifecycle, including early scalar completion and tail-call back-edges.
+
 Function and multi-statement command-substitution bodies have **two** capture
 paths, chosen per site at compile time by `transform::capture_purity`:
 

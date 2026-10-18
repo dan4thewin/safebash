@@ -430,6 +430,7 @@ pub extern "C" fn sash_emsg_status(name_ptr: *const u8, name_len: i64, status: i
 /// function.
 #[no_mangle]
 pub extern "C" fn sash_shutdown(status: i64) -> ! {
+    sash_reader_cleanup();
     #[cfg(feature = "coverage")]
     coverage::dump();
     rustix::runtime::exit_group(status as i32)
@@ -549,11 +550,111 @@ unsafe fn cstr_bytes(p: *const u8) -> &'static [u8] {
     core::slice::from_raw_parts(p, cstr_len(p))
 }
 
+/// Compiler-owned, stack-resident reader scope: four machine words in the ABI.
+#[repr(C)]
+pub struct SashReader {
+    previous: *mut SashReader,
+    fd: i64,
+    pids: *mut i64,
+    count: i64,
+}
+
+static mut SASH_READERS: *mut SashReader = core::ptr::null_mut();
+
+/// Register only a successfully constructed parent-reader pipeline.
+#[no_mangle]
+pub extern "C" fn sash_reader_start(scope: *mut SashReader, fd: i64, pids: *mut i64, count: i64) {
+    unsafe {
+        scope.write(SashReader {
+            previous: SASH_READERS,
+            fd,
+            pids,
+            count,
+        });
+        SASH_READERS = scope;
+    }
+}
+
+fn close_reader(scope: &mut SashReader) {
+    sash_close(scope.fd);
+    scope.fd = -1;
+}
+
+fn reap_reader(scope: &mut SashReader) {
+    for pid in unsafe { core::slice::from_raw_parts_mut(scope.pids, scope.count as usize) } {
+        *pid = if *pid < 0 { -1 - *pid } else { sash_wait(*pid) };
+    }
+}
+
+fn remember_reader_status(pid: i64, status: i64) {
+    unsafe {
+        let mut scope = SASH_READERS;
+        while let Some(reader) = scope.as_mut() {
+            let pids = core::slice::from_raw_parts_mut(reader.pids, reader.count as usize);
+            if let Some(slot) = pids.iter_mut().find(|slot| **slot == pid) {
+                // Pids are positive; a public wait can retain a status here
+                // without losing its own pid/status result.
+                *slot = -1 - status;
+                return;
+            }
+            scope = reader.previous;
+        }
+    }
+}
+
+/// Close before waiting; replace the pid array with statuses for the backend fold.
+#[no_mangle]
+pub extern "C" fn sash_reader_finish(scope: *mut SashReader) {
+    unsafe {
+        assert!(
+            SASH_READERS == scope,
+            "reader scopes must finish in nesting order"
+        );
+        SASH_READERS = (*scope).previous;
+        close_reader(&mut *scope);
+        reap_reader(&mut *scope);
+    }
+}
+
+/// Abort/END closes every reader before waiting, retaining the triggering status.
+#[no_mangle]
+pub extern "C" fn sash_reader_cleanup() {
+    unsafe {
+        let head = SASH_READERS;
+        SASH_READERS = core::ptr::null_mut();
+        let mut scope = head;
+        while let Some(reader) = scope.as_mut() {
+            close_reader(reader);
+            scope = reader.previous;
+        }
+        scope = head;
+        while let Some(reader) = scope.as_mut() {
+            reap_reader(reader);
+            scope = reader.previous;
+        }
+    }
+}
+
+/// A forked child owns neither the parent's readers nor its pending children.
+fn discard_inherited_readers() {
+    unsafe {
+        let mut scope = SASH_READERS;
+        SASH_READERS = core::ptr::null_mut();
+        while let Some(reader) = scope.as_mut() {
+            close_reader(reader);
+            scope = reader.previous;
+        }
+    }
+}
+
 /// Fork. Returns child pid in parent, 0 in child, -1 on error.
 #[no_mangle]
 pub extern "C" fn sash_fork() -> i64 {
     match unsafe { rustix::runtime::kernel_fork() } {
-        Ok(rustix::runtime::Fork::Child(_)) => 0,
+        Ok(rustix::runtime::Fork::Child(_)) => {
+            discard_inherited_readers();
+            0
+        }
         Ok(rustix::runtime::Fork::ParentOf(pid)) => pid.as_raw_nonzero().get() as i64,
         Err(e) => {
             set_last_errno(e);
@@ -661,8 +762,11 @@ pub extern "C" fn sash_wait_any(pid: i64) -> i64 {
     };
     match reaped {
         Ok(Some((child, status))) => {
-            unsafe { SASH_WAIT_STATUS = reaped_status(status) };
-            child.as_raw_nonzero().get() as i64
+            let pid = child.as_raw_nonzero().get() as i64;
+            let status = reaped_status(status);
+            remember_reader_status(pid, status);
+            unsafe { SASH_WAIT_STATUS = status };
+            pid
         }
         _ => {
             // Nothing reaped, so there is no child's status to report. -1 is

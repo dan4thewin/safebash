@@ -25,3 +25,11 @@ redirect ownership and tail-call splat/slot handling. Include malformed
 integer literals and array indices at the signed-64-bit boundary without
 weakening the independent numeric-map-key rule. Journal 526 records the
 failed-before controls and source/API attribution.
+
+Coverage 527 adds pipeline-owned streaming readers and lexical reader binding.
+Include nested scalar/bulk/loop consumers; calls, captures, redirects and forked
+children that must retain their own input; cleanup across break/continue,
+returns and tail calls; END/abort status preservation; descriptor/child
+ownership under construction faults, EINTR and authored wait; and suppression
+or negation applied only after consumption. Review CFG bridge/phi repair and
+both backend folds, not only the runtime linked ownership stack.

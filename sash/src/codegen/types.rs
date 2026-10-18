@@ -80,6 +80,9 @@ pub(super) fn var_slot(vars: &std::collections::HashMap<String, VarSlot>, key: &
 pub(super) struct ExternFuncs {
     pub(super) write: cranelift_module::FuncId,
     pub(super) exit: cranelift_module::FuncId,
+    pub(super) reader_start: cranelift_module::FuncId,
+    pub(super) reader_finish: cranelift_module::FuncId,
+    pub(super) reader_cleanup: cranelift_module::FuncId,
     pub(super) emsg: cranelift_module::FuncId,
     pub(super) emsg_status: cranelift_module::FuncId,
     /// DD#120: re-bind the invoker's own 0/1/2 after an `exec`-scope redirect.
@@ -188,7 +191,7 @@ pub(super) struct InstCtx<'a> {
     pub(super) nl_id: cranelift_module::DataId,
     pub(super) test_result_var: cranelift_frontend::Variable,
     pub(super) exit_status_var: cranelift_frontend::Variable,
-    pub(super) pipe_read_fd_var: cranelift_frontend::Variable,
+    pub(super) readers: &'a std::collections::BTreeMap<u32, ReaderSlot>,
     /// One `(saved_stdout, capture_handle)` slot pair per capture site, indexed
     /// by `SsaInst::CaptureStart { site }`. A single shared pair let a nested
     /// capture clobber the enclosing one.
@@ -224,11 +227,17 @@ pub(super) struct FuncState {
     pub(super) vars: std::collections::HashMap<String, VarSlot>,
     pub(super) test_result_var: cranelift_frontend::Variable,
     pub(super) exit_status_var: cranelift_frontend::Variable,
-    pub(super) pipe_read_fd_var: cranelift_frontend::Variable,
+    pub(super) readers: std::collections::BTreeMap<u32, ReaderSlot>,
     pub(super) capture_slots: Vec<(cranelift_frontend::Variable, cranelift_frontend::Variable)>,
     pub(super) redirect_slots: Vec<Vec<cranelift_frontend::Variable>>,
     pub(super) saved_end_status_var: cranelift_frontend::Variable,
     pub(super) end_cl_block: Option<cranelift_codegen::ir::Block>,
+}
+
+pub(super) struct ReaderSlot {
+    pub(super) scope: cranelift_codegen::ir::StackSlot,
+    pub(super) pids: cranelift_codegen::ir::StackSlot,
+    pub(super) pipeline: crate::ssa::ReaderPipeline,
 }
 
 /// Look up an array/map slot by base name. Tables live in `_0` slots

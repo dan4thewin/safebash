@@ -62,6 +62,7 @@ struct Emit {
     /// `ctx.in_end_block`; the region itself comes from the shared
     /// `SsaProgram::end_region` so the backends cannot disagree.
     end_region: std::collections::HashSet<BlockId>,
+    readers: std::collections::BTreeMap<u32, crate::ssa::ReaderPipeline>,
 }
 
 impl Emit {
@@ -75,6 +76,7 @@ impl Emit {
             cur_block: 0,
             in_condition: false,
             end_region: std::collections::HashSet::new(),
+            readers: std::collections::BTreeMap::new(),
         }
     }
     fn fresh(&mut self) -> String {
@@ -289,7 +291,10 @@ fn emit_prologue(out: &mut String) {
         "extern void sash_emsg_status(const char* np, i64 nl, i64 status);\n\
          extern void sash_scope_bind(void);\n\
          extern void sash_reserve_fds(const i64* fds, i64 count);\n\
-         extern void sash_scope_restore(void);"
+         extern void sash_scope_restore(void);\n\
+         extern void sash_reader_start(void* scope, i64 fd, i64* pids, i64 count);\n\
+         extern void sash_reader_finish(void* scope);\n\
+         extern void sash_reader_cleanup(void);"
     )
     .unwrap();
     writeln!(
@@ -441,10 +446,23 @@ fn emit_slot_decls(e: &mut Emit, ssa: &SsaProgram) {
     }
 }
 
+fn emit_reader_slots(e: &mut Emit) {
+    for (site, pipeline) in &e.readers {
+        writeln!(
+            e.out,
+            "    i64 __reader_{site}[4]; i64 __reader_{site}_pids[{}];\n\
+             (void)__reader_{site}; (void)__reader_{site}_pids;",
+            pipeline.stages.len(),
+        )
+        .unwrap();
+    }
+}
+
 fn emit_main(e: &mut Emit, ssa: &SsaProgram) {
     let types = collect_var_types(ssa);
     e.end_block = ssa.end_block;
     e.end_region = ssa.end_region();
+    e.readers = ssa.reader_pipelines();
     e.has_exiting_signals = !ssa.exiting_signals.is_empty();
     writeln!(e.out, "int main(int argc, char** argv) {{").unwrap();
     writeln!(e.out, "    (void)argc; (void)argv;").unwrap();
@@ -458,18 +476,16 @@ fn emit_main(e: &mut Emit, ssa: &SsaProgram) {
     writeln!(e.out, "    i64 __end_status = 0;").unwrap();
     writeln!(e.out, "    (void)__end_status;").unwrap();
     emit_slot_decls(e, ssa);
-    // DD#20 lastpipe: a capturing pipeline stashes its final stage's
-    // read-end here; ReadLine/ReadLineMulti/Mapfile with fd=-1 consume it.
-    writeln!(e.out, "    i64 __pipe_read_fd = -1;").unwrap();
-    writeln!(e.out, "    (void)__pipe_read_fd;").unwrap();
+    emit_reader_slots(e);
     declare_vars(&mut e.out, &types);
 
     // Phase 1: only main-body blocks. fn_* (function bodies) come
     // in Phase 4 — they map to C function definitions.
+    let reachable = ssa.reachable();
     let main_blocks = ssa
         .blocks
         .iter()
-        .filter(|(_, block)| !block.label.starts_with("fn_"));
+        .filter(|(id, block)| reachable.contains(id) && !block.label.starts_with("fn_"));
     for (&id, block) in main_blocks {
         emit_block(e, id, block, &types);
     }
@@ -729,7 +745,7 @@ fn emit_block(e: &mut Emit, id: BlockId, block: &BasicBlock, types: &VarTypes) {
     if block.label == "__end__" {
         writeln!(e.out, "    __end_status = __exit_status;").unwrap();
         // DD#120: see the native counterpart in codegen/entry.rs.
-        writeln!(e.out, "    sash_scope_restore();").unwrap();
+        writeln!(e.out, "    sash_reader_cleanup(); sash_scope_restore();").unwrap();
     }
     // Caught/uncaught $? model: mirror codegen/entry.rs — at the
     // start of a catching construct's exit block, reset __exit_status
@@ -771,8 +787,7 @@ fn is_catching_construct_exit(label: &str) -> bool {
 fn emit_read_inst(e: &mut Emit, inst: &SsaInst, types: &VarTypes) -> bool {
     match inst {
         // Phase 5: SsaInst::ReadLine → sash_read_line.
-        // Single-target read (read VAR). fd=-1 is the lastpipe sentinel
-        // (read from the captured pipe fd). __read_eof tracks EOF.
+        // Negative fds encode owned reader sites. __read_eof tracks EOF.
         SsaInst::ReadLine {
             target,
             fd,
@@ -1166,6 +1181,14 @@ fn emit_inst(e: &mut Emit, inst: &SsaInst, types: &VarTypes) {
             suppressed,
             negated,
         } => emit_pipeline(e, stages, *checked, capture, suppressed, negated, types),
+        SsaInst::PipelineFinish {
+            site,
+            checked,
+            preserve_status,
+            loop_consumer,
+        } => {
+            emit_reader_finish(e, *site, *checked, *preserve_status, *loop_consumer);
+        }
         // Phase 5: SsaInst::SubscriptAssign → sash_table_set.
         // Mirrors handle_subscript_assign (codegen/inst_handlers.rs:1070).
         SsaInst::SubscriptAssign {
@@ -2094,8 +2117,9 @@ fn emit_command_body(
             emit_signal_exit_check(e);
         }
         BuiltinCmd::SetTestFromPipe => {
-            let [] = kind.expect_ssa_args(args);
-            writeln!(e.out, "    __test_result = (__pipe_read_fd >= 0);").unwrap();
+            let [arg] = kind.expect_ssa_args(args);
+            let fd = c_read_fd(kind.expect_literal_int(arg));
+            writeln!(e.out, "    __test_result = ({fd} >= 0);").unwrap();
         }
 
         // ── delegated groups ──────────────────────────────────────────
@@ -3763,11 +3787,8 @@ fn emit_redirect_pop(e: &mut Emit, site: u32, fds: &[i64]) {
 /// via dup2, parent waits for all children, exit status comes
 /// from the last stage.
 ///
-/// When `capture_read_fd` (DD#20 lastpipe), an extra pipe carries the
-/// final stage's stdout to the parent: its read end is stashed in
-/// `__pipe_read_fd` for a following ReadLine/ReadLineMulti/Mapfile
-/// (fd=-1) to consume in-process. Mirrors save_capture_fd /
-/// parent_close_pipes (codegen/inst_handlers.rs).
+/// A reader pipeline owns its extra pipe and children until its consumer
+/// completes. Register them without waiting; PipelineFinish closes/reaps.
 fn emit_pipeline(
     e: &mut Emit,
     stages: &[(String, Vec<SsaValue>, Vec<crate::ir::Redirect>)],
@@ -3780,14 +3801,13 @@ fn emit_pipeline(
     emit_signal_exit_check(e);
     let n = stages.len();
 
-    let p = e.fresh();
+    let p = declare_pipeline_pids(e, capture, n);
     init_pipeline_capture_c(e, capture);
     let capture_read_fd = capture.pipe_to_parent();
     let num_pipes = crate::ssa::pipeline_num_pipes(n, capture_read_fd);
     let argv = prepare_capture_argv_c(e, stages, capture, types);
     writeln!(e.out, "    /* pipeline: {} stages */", n).unwrap();
 
-    writeln!(e.out, "    i64 {p}_pids[{n}];", p = p, n = n).unwrap();
     emit_pipeline_create_pipes(e, &p, num_pipes, checked);
 
     for (i, (name, args, redirects)) in stages.iter().enumerate() {
@@ -3809,21 +3829,38 @@ fn emit_pipeline(
     }
 
     emit_pipeline_parent_close(e, &p, num_pipes, capture.pipe_to_parent());
-    if matches!(capture, PipelineCapture::ReadFd) {
+    if matches!(capture, PipelineCapture::ReadFd(_)) {
         let i = num_pipes - 1;
-        writeln!(e.out, "    __pipe_read_fd = {p}_pipe{i}[0];").unwrap();
+        writeln!(
+            e.out,
+            "    sash_reader_start({p}, {p}_pipe{i}[0], {p}_pids, {n});"
+        )
+        .unwrap();
+    } else {
+        drain_pipeline_capture_c(e, capture, &p, num_pipes);
+        let names: Vec<_> = stages.iter().map(|stage| stage.0.clone()).collect();
+        emit_pipeline_finish(e, &p, checked, suppressed, negated, &names, false);
     }
-    drain_pipeline_capture_c(e, capture, &p, num_pipes);
-    emit_pipeline_finish(e, &p, checked, suppressed, negated, stages);
     writeln!(e.out, "{p}_done: ;").unwrap();
     emit_signal_exit_check(e);
+}
+
+fn declare_pipeline_pids(e: &mut Emit, capture: &PipelineCapture, n: usize) -> String {
+    match capture {
+        PipelineCapture::ReadFd(site) => format!("__reader_{site}"),
+        PipelineCapture::None | PipelineCapture::Value(_) => {
+            let p = e.fresh();
+            writeln!(e.out, "    i64 {p}_pids[{n}];").unwrap();
+            p
+        }
+    }
 }
 
 fn init_pipeline_capture_c(e: &mut Emit, capture: &PipelineCapture) {
     match capture {
         PipelineCapture::None => {}
-        PipelineCapture::ReadFd => {
-            writeln!(e.out, "    __pipe_read_fd = -1;").unwrap();
+        PipelineCapture::ReadFd(site) => {
+            writeln!(e.out, "    __reader_{site}[1] = -1;").unwrap();
         }
         PipelineCapture::Value(target) => store_capture_c(e, target, "\"\"", "0"),
     }
@@ -3869,9 +3906,10 @@ fn emit_pipeline_finish(
     checked: bool,
     suppressed: &[bool],
     negated: &[bool],
-    stages: &[(String, Vec<SsaValue>, Vec<crate::ir::Redirect>)],
+    stages: &[String],
+    reaped: bool,
 ) {
-    emit_pipeline_wait(e, p, suppressed, negated, stages);
+    emit_pipeline_wait(e, p, suppressed, negated, stages, reaped);
     writeln!(e.out, "    __exit_status = {p}_status;", p = p).unwrap();
     writeln!(e.out, "    __test_result = (__exit_status == 0) ? 1 : 0;").unwrap();
     // DD#55: a nonzero aggregate aborts in a `checked` (statement) position;
@@ -3888,6 +3926,50 @@ fn emit_pipeline_finish(
         )
         .unwrap();
     }
+}
+
+fn emit_reader_finish(
+    e: &mut Emit,
+    site: u32,
+    checked: bool,
+    preserve_status: bool,
+    loop_consumer: bool,
+) {
+    writeln!(e.out, "    {{").unwrap();
+    let saved = save_reader_status(e, preserve_status, loop_consumer);
+    let p = format!("__reader_{site}");
+    writeln!(e.out, "    sash_reader_finish({p});").unwrap();
+    let pipeline = e.readers[&site].clone();
+    emit_pipeline_finish(
+        e,
+        &p,
+        checked,
+        &pipeline.suppressed,
+        &pipeline.negated,
+        &pipeline.stages,
+        true,
+    );
+    if preserve_status {
+        writeln!(
+            e.out,
+            "    __exit_status = {saved}_status; __test_result = {saved}_test;"
+        )
+        .unwrap();
+    } else if !loop_consumer {
+        writeln!(e.out, "    __test_result = __test_result && {saved}_test;").unwrap();
+    }
+    writeln!(e.out, "    }}").unwrap();
+}
+
+fn save_reader_status(e: &mut Emit, preserve_status: bool, loop_consumer: bool) -> String {
+    let saved = e.fresh();
+    if preserve_status {
+        writeln!(e.out, "    i64 {saved}_status = __exit_status;").unwrap();
+    }
+    if preserve_status || !loop_consumer {
+        writeln!(e.out, "    i64 {saved}_test = __test_result;").unwrap();
+    }
+    saved
 }
 
 /// Create `num_pipes` anonymous pipes for a pipeline.
@@ -3951,7 +4033,8 @@ fn emit_pipeline_wait(
     p: &str,
     suppressed: &[bool],
     negated: &[bool],
-    stages: &[(String, Vec<SsaValue>, Vec<crate::ir::Redirect>)],
+    stages: &[String],
+    reaped: bool,
 ) {
     writeln!(e.out, "    i64 {p}_status = 0;", p = p).unwrap();
     // DD#55: the diagnostic names the FAILING stage, not the last one, so the
@@ -3965,31 +4048,54 @@ fn emit_pipeline_wait(
     )
     .unwrap();
     for (i, stage) in stages.iter().enumerate() {
-        let is_suppressed = suppressed.get(i).copied().unwrap_or(false);
-        let is_negated = negated.get(i).copied().unwrap_or(false);
-        if is_suppressed {
-            writeln!(e.out, "    sash_wait({p}_pids[{i}]);", p = p, i = i).unwrap();
-            continue;
-        }
-        let st = if is_negated {
-            // invert: a negated stage is true (0) exactly when it failed.
-            format!("(({p}_st == 0) ? 1 : 0)", p = p)
-        } else {
-            format!("{p}_st", p = p)
-        };
-        let esc = c_escape(&stage.0);
-        let nl = stage.0.len();
-        writeln!(
-            e.out,
-            "    {{ i64 {p}_st = sash_wait({p}_pids[{i}]); i64 {p}_s2 = {st}; \
-             if ({p}_status == 0 && {p}_s2 != 0) {{ {p}_status = {p}_s2; \
-             {p}_fail = \"{esc}\"; {p}_fail_len = {nl}; }} }}",
-            p = p,
-            i = i,
-            st = st
-        )
-        .unwrap();
+        emit_pipeline_stage_status(
+            e,
+            p,
+            i,
+            stage,
+            suppressed.get(i).copied().unwrap_or(false),
+            negated.get(i).copied().unwrap_or(false),
+            reaped,
+        );
     }
+}
+
+fn pipeline_stage_result(p: &str, i: usize, reaped: bool) -> String {
+    if reaped {
+        format!("{p}_pids[{i}]")
+    } else {
+        format!("sash_wait({p}_pids[{i}])")
+    }
+}
+
+fn emit_pipeline_stage_status(
+    e: &mut Emit,
+    p: &str,
+    i: usize,
+    stage: &str,
+    suppressed: bool,
+    negated: bool,
+    reaped: bool,
+) {
+    let raw = pipeline_stage_result(p, i, reaped);
+    if suppressed {
+        writeln!(e.out, "    (void){raw};").unwrap();
+        return;
+    }
+    let status = if negated {
+        format!("(({p}_st == 0) ? 1 : 0)")
+    } else {
+        format!("{p}_st")
+    };
+    let esc = c_escape(stage);
+    let len = stage.len();
+    writeln!(
+        e.out,
+        "    {{ i64 {p}_st = {raw}; i64 {p}_s2 = {status}; \
+         if ({p}_status == 0 && {p}_s2 != 0) {{ {p}_status = {p}_s2; \
+         {p}_fail = \"{esc}\"; {p}_fail_len = {len}; }} }}"
+    )
+    .unwrap();
 }
 
 /// One pipeline stage. Mirrors lower_pipeline_stage
@@ -4052,6 +4158,7 @@ fn emit_pipeline_stage(
             );
             writeln!(e.out, "        sash_exit(0);").unwrap();
         }
+
         BuiltinCmd::Noop => {
             writeln!(e.out, "        sash_exit(0);").unwrap();
         }
@@ -4338,12 +4445,10 @@ fn emit_subscript_assign(
 fn lookup_table_var(name: &str, types: &VarTypes) -> String {
     // Pick the highest-version slot — that's the most recent
     // assignment, which carries the table pointer.
-    if let Some(((n, v), _)) = highest_version(name, types) {
-        let base = c_var_name(&n, v);
-        format!("{}_ptr", base)
-    } else {
-        "(const char*)0".to_string()
-    }
+    let ((n, v), _) = highest_version(name, types)
+        .unwrap_or_else(|| panic!("ICE: collection `{name}` has no emitted SSA slot"));
+    let base = c_var_name(&n, v);
+    format!("{}_ptr", base)
 }
 
 /// ${#arr[@]} — table length. Mirrors emit_table_len
@@ -4516,11 +4621,10 @@ fn emit_readline_body(e: &mut Emit, target: &VarRef, fd: i64) {
     .unwrap();
 }
 
-/// The C fd expression for a read: fd=-1 is the lastpipe sentinel
-/// (consume the captured pipe read end), else the literal fd.
+/// Resolve an owned reader site, or retain an ordinary literal fd.
 fn c_read_fd(fd: i64) -> String {
-    if fd == -1 {
-        "__pipe_read_fd".to_string()
+    if fd < 0 {
+        format!("__reader_{}[1]", crate::ssa::reader_pipe_site(fd))
     } else {
         fd.to_string()
     }
@@ -4725,6 +4829,12 @@ mod tests {
     }
 
     #[test]
+    #[should_panic(expected = "collection `missing` has no emitted SSA slot")]
+    fn a_missing_collection_must_not_become_a_null_table() {
+        lookup_table_var("missing", &HashMap::new());
+    }
+
+    #[test]
     #[should_panic(expected = "variable $missing has no slot")]
     fn a_missing_redirect_variable_must_not_become_an_empty_filename() {
         ir_expr_as_str(
@@ -4911,8 +5021,8 @@ mod tests {
             (BuiltinCmd::Close, vec![], "exactly 1 SSA arguments"),
             (
                 BuiltinCmd::SetTestFromPipe,
-                vec![SsaValue::Literal("0".into())],
-                "exactly 0 SSA arguments",
+                vec![],
+                "exactly 1 SSA arguments",
             ),
             (
                 BuiltinCmd::Close,

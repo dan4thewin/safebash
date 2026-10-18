@@ -207,6 +207,22 @@ impl SsaInst {
                     stages, capture, *checked, suppressed, negated, builder, module, ctx,
                 );
             }
+            SsaInst::PipelineFinish {
+                site,
+                checked,
+                preserve_status,
+                loop_consumer,
+            } => {
+                return super::inst_handlers::handle_pipeline_finish(
+                    *site,
+                    *checked,
+                    *preserve_status,
+                    *loop_consumer,
+                    builder,
+                    module,
+                    ctx,
+                );
+            }
             SsaInst::Attest {
                 source,
                 target,
@@ -256,8 +272,9 @@ impl SsaInst {
             BuiltinCmd::NegateTestResult => self.emit_negate_test_result(builder, ctx),
             BuiltinCmd::SetTestFromStatus => self.emit_set_test_from_status(builder, ctx),
             BuiltinCmd::SetTestFromPipe => {
-                let [] = BuiltinCmd::SetTestFromPipe.expect_ssa_args(args);
-                let fd = builder.use_var(ctx.pipe_read_fd_var);
+                let [arg] = BuiltinCmd::SetTestFromPipe.expect_ssa_args(args);
+                let fd = BuiltinCmd::SetTestFromPipe.expect_literal_int(arg);
+                let fd = super::inst_handlers::read_fd(fd, builder, ctx);
                 let ready = builder
                     .ins()
                     .icmp_imm(IntCC::SignedGreaterThanOrEqual, fd, 0);
@@ -1355,20 +1372,20 @@ fn emit_read_array_body(
     ctx: &mut InstCtx,
 ) {
     let externs = ctx.externs;
-    let pipe_read_fd_var = ctx.pipe_read_fd_var;
     let sv = find_array_slot(&*ctx.vars, array, "array");
     let table_ptr = builder.use_var(sv.str_ptr());
 
-    let fd_val = if fd == -1 {
-        builder.use_var(pipe_read_fd_var)
-    } else {
-        builder.ins().iconst(I64, fd)
-    };
+    let fd_val = super::inst_handlers::read_fd(fd, builder, ctx);
 
     let read_all_ref = module.declare_func_in_func(externs.read_all, builder.func);
     let call = builder.ins().call(read_all_ref, &[fd_val]);
     let data_ptr = builder.inst_results(call)[0];
     let data_len = builder.inst_results(call)[1];
+    let nonempty = builder
+        .ins()
+        .icmp_imm(IntCC::SignedGreaterThan, data_len, 0);
+    let result = builder.ins().uextend(I64, nonempty);
+    builder.def_var(ctx.test_result_var, result);
 
     // DD#99: NUL is the only separator, with terminator semantics (a
     // trailing empty field is dropped).
@@ -1391,12 +1408,7 @@ fn emit_readline_body(
     ctx: &mut InstCtx,
 ) {
     let externs = ctx.externs;
-    // fd=-1 is sentinel for "use captured pipe fd"
-    let fd_val = if fd == -1 {
-        builder.use_var(ctx.pipe_read_fd_var)
-    } else {
-        builder.ins().iconst(I64, fd)
-    };
+    let fd_val = super::inst_handlers::read_fd(fd, builder, ctx);
     let read_line_ref = module.declare_func_in_func(externs.read_line, builder.func);
     let call = builder.ins().call(read_line_ref, &[fd_val]);
     let (ptr, len) = (builder.inst_results(call)[0], builder.inst_results(call)[1]);
@@ -1539,7 +1551,7 @@ mod invariant_tests {
             (BuiltinCmd::TrapSignal, 2),
             (BuiltinCmd::SignalFlag, 2),
             (BuiltinCmd::SignalCheckpoint, 0),
-            (BuiltinCmd::SetTestFromPipe, 0),
+            (BuiltinCmd::SetTestFromPipe, 1),
             (BuiltinCmd::LetExit, 1),
             (BuiltinCmd::StoreBgPid, 1),
             (BuiltinCmd::TableDelete, 2),

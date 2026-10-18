@@ -54,10 +54,12 @@ to the thing that reads it.
 
 ### 1. A reader binds to its own pipeline and no other
 
-`repoint_readlines_to_pipe` and `rewrite_lastpipe_consumer_fds` attach a
-pipe by rewriting a reader's fd to `-1`, a sentinel codegen resolves to the
-captured pipe fd. Both used to walk **every block lowered so far**, so the
-rewrite reached backwards:
+The read-family emitters take a lexical binding from `VersionState::pipe_reader`,
+installed only while lowering the pipeline's final stage. A negative fd encodes
+its owned reader site; codegen resolves that site's record, not an ambient fd.
+
+The original post-lowering repoints walked **every block lowered so far**,
+reaching backwards:
 
 ```sash
 /bin/printf 'x\n' | while readline a; do echo "A=$a"; done
@@ -70,19 +72,50 @@ echo "MID=[$mid]"
 the first pipeline and the identical statement reads fd 0 correctly. Exit 0,
 no diagnostic, both backends.
 
-Each repoint is now scoped to the instructions its own final stage produced
-(`transform::pipelines::mark_ssa` / `for_each_new_inst`). A nested
-pipe-while repoints its own readers first, and the outer `fd == 0` guard
-then leaves them alone — an inner reader belongs to the inner pipe.
+Scoping those scans to newly lowered instructions was not sufficient. They
+still stole reads from inlined functions, command substitutions and redirected
+commands, and the loop scan missed bulk `read` entirely.
 
-### 2. There is one spelling of "no pipe captured"
+Binding now happens when each reader is emitted, not in a later SSA scan.
+Nested pipelines save/restore the lexical binding; calls, captures, redirected
+commands and background children suspend it. A reader in a called function
+uses that function's stdin, and `< file` keeps meaning the file. A bulk read
+in a bounded loop body binds just as a scalar `readline` does. The old scan
+helpers are removed.
 
-Native codegen initialised `pipe_read_fd_var` to `0`, `--emit-c` to `-1`.
-`0` is a *valid* fd, so when the sentinel leaked the native build read stdin
-and looked right while the C build aborted inside rustix. Both are `-1` now.
-After the scoping fix the value is unobservable — an instruction carries fd
-`-1` only when the pipeline instruction defining the variable was emitted
-immediately before it — but one sentinel should have one spelling.
+### 2. Every reader owns its pipe and pending children
+
+The first scoping repair still kept one ambient captured fd. An inner reader
+overwrote it: an outer `one\ntwo\n` pipeline with an inner reader printed only
+the `one` iteration, then mistook the inner pipe's EOF for the outer's.
+Each reader now has a unique site, private fd and pending-child array in both
+backends. Its negative fd encodes that site, including through nested calls.
+The runtime record uses `-1` for an absent or closed pipe; fd 0 is never an
+absence sentinel.
+
+DG, 2026-10-18:
+
+> why wouldn't each consumer simply keep doing reads until EOF or sigpipe,
+> and only then evaluate child status?
+
+**Start producers, consume concurrently, close the reader, wait, then evaluate
+producer status.** Waiting first deadlocked once output filled a pipe. Reader
+effects before a producer's eventual failure are normal streaming effects,
+not a reason to spool or postpone consumption.
+
+A single `readline` finishes after its record; `read` drains to EOF. A loop
+consumes until its condition finishes or control leaves it. Normal completion,
+`break`, escaping `continue`, `return` and tail calls close and reap the scopes
+they leave, inner first. Ordinary loop continuation retains its reader.
+Closing an early consumer may give its producer SIGPIPE; DD#55's existing
+per-stage suppression and aggregate-status rules still apply.
+
+Abort, explicit exit and END close all outstanding readers before reaping,
+preserving the triggering status. A forked child closes inherited reader fds
+without adopting its parent's children. An authored `wait` may reap an owned
+producer; its status is retained for the owning pipeline's later aggregate,
+without changing the public wait result. No path force-kills producers or adds
+a forced termination timeout.
 
 ### 3. The final stage must consume the pipe (SB4022 / SB4073)
 
@@ -127,7 +160,7 @@ While(_))` — because SB4073 now guarantees what it used to assume.
 The reader search (`Statement::binds_a_pipe_reader`) deliberately does not
 descend into a nested `Pipeline`, a `Function` definition, or a `Redirected`
 body: a reader in any of those binds to something else, and the transform's
-repoint scopes itself to match.
+lexical context follows those boundaries.
 
 ## Notes
 

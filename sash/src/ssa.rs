@@ -616,6 +616,15 @@ pub enum SsaInst {
         /// negated (enforced at parse). Empty ⇒ none.
         negated: Vec<bool>,
     },
+    /// Close a parent reader and reap its producers after consumption.
+    PipelineFinish {
+        site: u32,
+        checked: bool,
+        /// Nonlocal exits must retain their return/status/condition value.
+        preserve_status: bool,
+        /// A completed while succeeds; a scalar/array read retains its EOF test.
+        loop_consumer: bool,
+    },
     /// attest VAR [[ test_expr ]] — runtime validation of tainted data.
     /// If the test fails, abort with nonzero exit.
     Attest {
@@ -650,7 +659,8 @@ pub enum SsaInst {
 #[derive(Debug, Clone, PartialEq)]
 pub enum PipelineCapture {
     None,
-    ReadFd,
+    /// Stream to this parent-reader site; its PipelineFinish closes and waits.
+    ReadFd(u32),
     /// Drain the final pipe before waiting and define a tainted string value.
     Value(VarRef),
 }
@@ -663,9 +673,35 @@ impl PipelineCapture {
     pub(crate) fn target(&self) -> Option<&VarRef> {
         match self {
             Self::Value(target) => Some(target),
-            Self::None | Self::ReadFd => None,
+            Self::None | Self::ReadFd(_) => None,
         }
     }
+}
+
+/// Negative read fds identify compiler-owned pipes, never process-wide stdin.
+pub(crate) fn reader_pipe_fd(site: u32) -> i64 {
+    -1 - i64::from(site)
+}
+
+pub(crate) fn reader_pipe_site(fd: i64) -> u32 {
+    u32::try_from(-1 - fd).expect("ICE: an owned pipe fd must encode a reader site")
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct ReaderPipeline {
+    pub stages: Vec<String>,
+    pub suppressed: Vec<bool>,
+    pub negated: Vec<bool>,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct ReaderRegion {
+    pub site: u32,
+    pub entry: BlockId,
+    pub done: BlockId,
+    pub candidates: std::collections::HashSet<BlockId>,
+    pub checked: bool,
+    pub loop_consumer: bool,
 }
 
 /// Why a [`SsaInst::Test`] exists in SSA.
@@ -851,6 +887,7 @@ impl SsaInst {
             | SsaInst::ArgvFill { .. }
             | SsaInst::KeysFill { .. }
             | SsaInst::CaptureStart { .. }
+            | SsaInst::PipelineFinish { .. }
             | SsaInst::RedirectPop { .. } => vec![],
         }
     }
@@ -1415,6 +1452,7 @@ pub(crate) fn condition_inst_index(block: &BasicBlock) -> Option<usize> {
         SsaInst::Command { name, .. } if name == "__negate_test_result" => false,
         SsaInst::Command { .. }
         | SsaInst::Pipeline { .. }
+        | SsaInst::PipelineFinish { .. }
         | SsaInst::ReadLine { .. }
         | SsaInst::ReadArray { .. }
         // A redirect scope (`f > out.txt`) ends its block with the Branch
@@ -1451,7 +1489,7 @@ pub struct SsaProgram {
 
 impl Terminator {
     /// The blocks control can transfer to from this terminator.
-    fn successors(&self) -> Vec<BlockId> {
+    pub(crate) fn successors(&self) -> Vec<BlockId> {
         match self {
             Terminator::Goto(dest) => vec![*dest],
             Terminator::Branch {
@@ -1470,6 +1508,30 @@ impl Terminator {
 }
 
 impl SsaProgram {
+    pub(crate) fn reader_pipelines(&self) -> BTreeMap<u32, ReaderPipeline> {
+        self.blocks
+            .values()
+            .flat_map(|block| &block.insts)
+            .filter_map(|inst| match inst {
+                SsaInst::Pipeline {
+                    stages,
+                    capture: PipelineCapture::ReadFd(site),
+                    suppressed,
+                    negated,
+                    ..
+                } => Some((
+                    *site,
+                    ReaderPipeline {
+                        stages: stages.iter().map(|stage| stage.0.clone()).collect(),
+                        suppressed: suppressed.clone(),
+                        negated: negated.clone(),
+                    },
+                )),
+                _ => None,
+            })
+            .collect()
+    }
+
     /// Highest `CaptureStart`/`CaptureEnd` site number in the program, plus
     /// one — i.e. how many capture slot pairs a backend must allocate. Zero
     /// when the program captures nothing.
@@ -1710,6 +1772,10 @@ pub struct VersionState {
     /// inliner takes it before lowering the body, so a nested call inside the
     /// body cannot pick it up.
     pub pending_redirect_scope: Option<Vec<crate::ir::Redirect>>,
+    pub(crate) next_reader_site: u32,
+    pub(crate) reader_regions: Vec<ReaderRegion>,
+    /// Lexical pipe binding, suspended across function/capture/redirect scopes.
+    pub(crate) pipe_reader: Option<(i64, bool)>,
 }
 
 /// Permitted argument counts for a value-producing intrinsic (`len`, `sub`, …)
@@ -1795,6 +1861,9 @@ impl VersionState {
             next_capture_site: 0,
             next_redirect_site: 0,
             pending_redirect_scope: None,
+            next_reader_site: 0,
+            reader_regions: Vec::new(),
+            pipe_reader: None,
         }
     }
 

@@ -29,6 +29,7 @@ pub fn ir_to_ssa_typed(
     ssa.block_mut(exit).terminator = Terminator::Return;
 
     install_end_block(&mut ssa, &mut state);
+    super::reader_cleanup::install(&mut ssa, &state.reader_regions);
 
     // Copy exiting signals to program for codegen check point insertion
     ssa.exiting_signals = state.exiting_signals.clone();
@@ -179,7 +180,9 @@ pub(super) fn uncheck_last_condition_inst(insts: &mut [SsaInst]) {
             // block is not unchecked on the strength of a branch that is not
             // its own.
             SsaInst::RedirectPush { .. } => return,
-            SsaInst::Command { checked, .. } | SsaInst::Pipeline { checked, .. } => {
+            SsaInst::Command { checked, .. }
+            | SsaInst::Pipeline { checked, .. }
+            | SsaInst::PipelineFinish { checked, .. } => {
                 *checked = false;
                 return;
             }
@@ -208,6 +211,7 @@ fn mark_block_unchecked(block: &mut BasicBlock) {
         match inst {
             SsaInst::Command { checked, .. }
             | SsaInst::Pipeline { checked, .. }
+            | SsaInst::PipelineFinish { checked, .. }
             // A redirect scope must be unchecked here for the same reason,
             // and doubly so: its abort jumps to the END block, which inside
             // END is a jump to itself. Unchecked, a failed open skips the

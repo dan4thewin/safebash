@@ -239,6 +239,7 @@ fn classify_inst_def(
         | SsaInst::CaptureStart { .. }
         | SsaInst::AttestAll { .. } // validates in place; AttestRetag defines the clean version
         | SsaInst::RedirectPush { .. } // moves fds around; defines no value
+        | SsaInst::PipelineFinish { .. }
         | SsaInst::RedirectPop { .. } => {}
     }
 }

@@ -155,8 +155,8 @@ impl Statement {
     /// Deliberately does NOT descend into a nested `Pipeline`, a `Function`
     /// definition, or a `Redirected` body: a reader in any of those binds to
     /// something else (that pipeline's own pipe, a later call, the redirect).
-    /// `transform::pipelines`' repoint scopes itself to match, by rewriting
-    /// only the instructions the final stage's own lowering just produced.
+    /// Lowering's lexical reader binding follows these same scope boundaries;
+    /// it is suspended across calls, captures, redirects and background children.
     pub fn binds_a_pipe_reader(&self) -> bool {
         if self.is_pipe_reader() {
             return true;

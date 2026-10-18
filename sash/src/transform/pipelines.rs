@@ -1,9 +1,8 @@
 //! Pipeline and for-loop variant lowering.
 
-use super::control_flow::lower_while;
 use super::expressions::expr_to_value;
-use super::helpers::insert_phis_two_branch;
-use super::statements::{lower_one, lower_stmts};
+use super::helpers::{insert_phis_two_branch, update_loop_phi_sources};
+use super::statements::lower_stmts;
 use crate::ir::*;
 use crate::ssa::*;
 
@@ -167,12 +166,7 @@ pub(super) fn lower_for_array(
     ssa.block_mut(latch).terminator = Terminator::Goto(header);
 
     let body_state_2 = state.snapshot();
-    for phi in ssa.block_mut(header).phis.iter_mut() {
-        let var_name = &phi.target.name;
-        if let Some(ver) = body_state_2.get(var_name) {
-            phi.sources[1].1 = VarRef::new(var_name, *ver);
-        }
-    }
+    update_loop_phi_sources(ssa, header, &body_state_2);
 
     exit_block
 }
@@ -311,85 +305,7 @@ pub(super) fn lower_for_argv_slice(
 
     // Update phi sources
     let body_state_2 = state.snapshot();
-    for phi in ssa.block_mut(header).phis.iter_mut() {
-        let var_name = &phi.target.name;
-        if let Some(ver) = body_state_2.get(var_name) {
-            phi.sources[1].1 = VarRef::new(var_name, *ver);
-        }
-    }
+    update_loop_phi_sources(ssa, header, &body_state_2);
 
     exit_block
-}
-
-// ── Pipe-while-read lowering ──────────────────────────────────
-
-/// Lower `cmd | while readline var { body }`.
-/// The Pipeline instruction with capture_read_fd=true precedes this.
-/// This lowers the while-read loop with fd=-1 (sentinel for pipe fd).
-pub(super) fn lower_pipe_while_read(
-    stmt: &Statement,
-    ssa: &mut SsaProgram,
-    state: &mut VersionState,
-    block: BlockId,
-) -> BlockId {
-    let StmtKind::While(w) = &stmt.kind else {
-        // Shouldn't happen — caller verified this is a While
-        return lower_one(stmt, ssa, state, block);
-    };
-    // The while's reader (condition or body) is what the pipe binds to — reuse
-    // the standard while lowering, then repoint the `ReadLine`s *this lowering
-    // produced* to the pipe sentinel. SB4073 has already established that there
-    // is at least one.
-    let mark = mark_ssa(ssa);
-    let exit = lower_while(w, ssa, state, block);
-    repoint_readlines_to_pipe(ssa, &mark);
-    exit
-}
-
-/// Record how many instructions each block holds, so a lowering that happens
-/// next can be found again by [`for_each_new_inst`].
-///
-/// DD#122: this is how a pipe binds to *its own* final stage and nothing else.
-/// The repoints used to walk every block in the program, which meant a
-/// `readline` with no pipe at all was captured by a later pipeline and silently
-/// aimed at that pipeline's exhausted pipe — `readline mid` printed empty if
-/// and only if some unrelated `cmd | while readline` appeared above it.
-pub(super) fn mark_ssa(ssa: &SsaProgram) -> std::collections::HashMap<BlockId, usize> {
-    ssa.blocks
-        .iter()
-        .map(|(id, b)| (*id, b.insts.len()))
-        .collect()
-}
-
-/// Visit every instruction added since `mark` — in blocks that did not exist
-/// then, and the tail of blocks that did.
-pub(super) fn for_each_new_inst(
-    ssa: &mut SsaProgram,
-    mark: &std::collections::HashMap<BlockId, usize>,
-    f: &mut impl FnMut(&mut SsaInst),
-) {
-    for bid in ssa.blocks.keys().cloned().collect::<Vec<_>>() {
-        let insts = &mut ssa.block_mut(bid).insts;
-        let from = mark.get(&bid).copied().unwrap_or(0).min(insts.len());
-        for inst in &mut insts[from..] {
-            f(inst);
-        }
-    }
-}
-
-/// Point the stdin `ReadLine`s of the stage just lowered at fd -1, the pipe-fd
-/// sentinel the pipeline instruction installs. A nested pipe-while inside the
-/// body has already repointed its own readers, and the `fd == 0` guard leaves
-/// those alone — an inner reader belongs to the inner pipe.
-fn repoint_readlines_to_pipe(
-    ssa: &mut SsaProgram,
-    mark: &std::collections::HashMap<BlockId, usize>,
-) {
-    for_each_new_inst(ssa, mark, &mut |inst| {
-        if let SsaInst::ReadLine { fd, .. } = inst {
-            if *fd == 0 {
-                *fd = -1;
-            }
-        }
-    });
 }

@@ -1,7 +1,7 @@
 //! Control flow: if/while/for/case → SSA blocks with branches.
 
 use super::expressions::{expr_to_value, literal_name_of, resolve_args_name, test_to_ssa};
-use super::helpers::insert_phis_two_branch;
+use super::helpers::{insert_phis_two_branch, update_loop_phi_sources};
 use super::pipelines::{lower_for_argv_slice, lower_for_array};
 use super::statements::lower_stmts;
 use crate::ir::*;
@@ -519,9 +519,8 @@ pub(super) fn lower_while(
     // previous iteration's value, which the callee then overwrote. `until f`
     // silently behaved exactly like `while f`.
     //
-    // Placing it here also fixes `cmd | until readline v { }`, which reaches
-    // `lower_while` through `pipelines::lower_pipe_while_read` and so never
-    // saw the old patch at all.
+    // This also covers `cmd | until readline v { }`, whose lexical reader
+    // binding is installed by its enclosing pipeline consumer.
     if w.until {
         ssa.block_mut(cond_exit).insts.push(SsaInst::internal(
             BuiltinCmd::NegateTestResult,
@@ -549,14 +548,7 @@ pub(super) fn lower_while(
 
     // Update phi sources to use the correct versions from pass 2
     let body_state_2 = state.snapshot();
-    let header_phis = &mut ssa.block_mut(header).phis;
-    for phi in header_phis.iter_mut() {
-        let var_name = &phi.target.name;
-        // Update the body source (index 1) with the new version
-        if let Some(ver) = body_state_2.get(var_name) {
-            phi.sources[1].1 = VarRef::new(var_name, *ver);
-        }
-    }
+    update_loop_phi_sources(ssa, header, &body_state_2);
 
     exit_block
 }

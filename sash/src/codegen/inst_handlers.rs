@@ -40,11 +40,12 @@ pub(super) fn handle_pipeline(
     // A parent reader needs one extra pipe (last stage → parent).
     let capture_read_fd = capture.pipe_to_parent();
     let num_pipes = crate::ssa::pipeline_num_pipes(n, capture_read_fd);
-    let pid_slot = builder.create_sized_stack_slot(StackSlotData::new(
-        StackSlotKind::ExplicitSlot,
-        (n * 8) as u32,
-        3,
-    ));
+    let pid_slot = match capture {
+        PipelineCapture::ReadFd(site) => ctx.readers[site].pids,
+        PipelineCapture::None | PipelineCapture::Value(_) => builder.create_sized_stack_slot(
+            StackSlotData::new(StackSlotKind::ExplicitSlot, (n * 8) as u32, 3),
+        ),
+    };
     let setup = PipelineSetup {
         pid_slot,
         done: builder.create_block(),
@@ -72,33 +73,16 @@ pub(super) fn handle_pipeline(
     }
 
     parent_close_pipes(builder, capture_read_fd, &pipe_slots, &pe);
-    save_capture_fd(
-        builder,
-        matches!(capture, PipelineCapture::ReadFd),
-        &pipe_slots,
-        ctx.pipe_read_fd_var,
-    );
+    save_capture_fd(capture, &pipe_slots, builder, module, ctx);
     drain_pipeline_capture(capture, &pipe_slots, builder, module, ctx);
 
-    // DD#55: materialize each stage's name for the abort diagnostic
-    // (`<argv0>: <failing-stage>: command failed (exit N)`).
-    let mut stage_names = Vec::with_capacity(n);
-    for (name, _, _) in stages {
-        stage_names.push(diag_static_seg(name, ctx.literals, module, builder));
-    }
-    let (final_worst, fail_name_ptr, fail_name_len) =
-        wait_for_children(builder, suppressed, negated, pid_slot, &pe, &stage_names);
-    update_pipeline_status(builder, final_worst, ctx);
-
-    if checked {
-        emit_pipeline_abort_check(
-            builder,
-            module,
-            ctx,
-            final_worst,
-            fail_name_ptr,
-            fail_name_len,
-        );
+    if !matches!(capture, PipelineCapture::ReadFd(_)) {
+        let pipeline = ReaderPipeline {
+            stages: stages.iter().map(|stage| stage.0.clone()).collect(),
+            suppressed: suppressed.to_vec(),
+            negated: negated.to_vec(),
+        };
+        finish_pipeline(&pipeline, pid_slot, false, checked, builder, module, ctx);
     }
     builder.ins().jump(setup.done, &[]);
     builder.switch_to_block(setup.done);
@@ -114,9 +98,11 @@ fn init_pipeline_capture(
     ctx: &mut InstCtx,
 ) {
     match capture {
-        PipelineCapture::ReadFd => {
+        PipelineCapture::ReadFd(site) => {
             let absent = builder.ins().iconst(I64, -1);
-            builder.def_var(ctx.pipe_read_fd_var, absent);
+            builder
+                .ins()
+                .stack_store(absent, ctx.readers[site].scope, 8);
         }
         PipelineCapture::Value(target) => {
             let (ptr, len) = super::values::lower_literal_value("", builder, module, ctx.literals);
@@ -539,15 +525,101 @@ fn parent_close_pipes(
 }
 
 fn save_capture_fd(
-    builder: &mut FunctionBuilder,
-    capture_read_fd: bool,
+    capture: &PipelineCapture,
     pipe_slots: &[cranelift_codegen::ir::StackSlot],
-    pipe_read_fd_var: cranelift_frontend::Variable,
+    builder: &mut FunctionBuilder,
+    module: &mut ObjectModule,
+    ctx: &mut InstCtx,
 ) {
-    if capture_read_fd && !pipe_slots.is_empty() {
-        let last_slot = pipe_slots[pipe_slots.len() - 1];
-        let pipe_r = builder.ins().stack_load(I64, last_slot, 0);
-        builder.def_var(pipe_read_fd_var, pipe_r);
+    if let PipelineCapture::ReadFd(site) = capture {
+        let slot = &ctx.readers[site];
+        let last_slot = *pipe_slots
+            .last()
+            .expect("a reader pipeline has a final pipe");
+        let fd = builder.ins().stack_load(I64, last_slot, 0);
+        let scope = builder.ins().stack_addr(I64, slot.scope, 0);
+        let pids = builder.ins().stack_addr(I64, slot.pids, 0);
+        let count = builder.ins().iconst(I64, slot.pipeline.stages.len() as i64);
+        let start = module.declare_func_in_func(ctx.externs.reader_start, builder.func);
+        builder.ins().call(start, &[scope, fd, pids, count]);
+    }
+}
+
+pub(super) fn read_fd(
+    fd: i64,
+    builder: &mut FunctionBuilder,
+    ctx: &InstCtx,
+) -> cranelift_codegen::ir::Value {
+    if fd < 0 {
+        let site = reader_pipe_site(fd);
+        builder.ins().stack_load(I64, ctx.readers[&site].scope, 8)
+    } else {
+        builder.ins().iconst(I64, fd)
+    }
+}
+
+pub(super) fn handle_pipeline_finish(
+    site: u32,
+    checked: bool,
+    preserve_status: bool,
+    loop_consumer: bool,
+    builder: &mut FunctionBuilder,
+    module: &mut ObjectModule,
+    ctx: &mut InstCtx,
+) -> bool {
+    let saved_status = builder.use_var(ctx.exit_status_var);
+    let saved_test = builder.use_var(ctx.test_result_var);
+    let slot = &ctx.readers[&site];
+    let addr = builder.ins().stack_addr(I64, slot.scope, 0);
+    let finish = module.declare_func_in_func(ctx.externs.reader_finish, builder.func);
+    builder.ins().call(finish, &[addr]);
+    finish_pipeline(
+        &slot.pipeline,
+        slot.pids,
+        true,
+        checked,
+        builder,
+        module,
+        ctx,
+    );
+    if preserve_status {
+        builder.def_var(ctx.exit_status_var, saved_status);
+        builder.def_var(ctx.test_result_var, saved_test);
+    } else if !loop_consumer {
+        let producers_ok = builder.use_var(ctx.test_result_var);
+        let ok = builder.ins().band(producers_ok, saved_test);
+        builder.def_var(ctx.test_result_var, ok);
+    }
+    false
+}
+
+fn finish_pipeline(
+    pipeline: &ReaderPipeline,
+    pids: cranelift_codegen::ir::StackSlot,
+    reaped: bool,
+    checked: bool,
+    builder: &mut FunctionBuilder,
+    module: &mut ObjectModule,
+    ctx: &mut InstCtx,
+) {
+    let names: Vec<_> = pipeline
+        .stages
+        .iter()
+        .map(|name| diag_static_seg(name, ctx.literals, module, builder))
+        .collect();
+    let pe = resolve_pipeline_externs(builder, module, ctx.externs);
+    let (status, name_ptr, name_len) = wait_for_children(
+        builder,
+        &pipeline.suppressed,
+        &pipeline.negated,
+        pids,
+        &pe,
+        &names,
+        reaped,
+    );
+    update_pipeline_status(builder, status, ctx);
+    if checked {
+        emit_pipeline_abort_check(builder, module, ctx, status, name_ptr, name_len);
     }
 }
 
@@ -562,6 +634,7 @@ fn wait_for_children(
     pid_slot: cranelift_codegen::ir::StackSlot,
     pe: &PipelineExterns,
     names: &[(cranelift_codegen::ir::Value, cranelift_codegen::ir::Value)],
+    reaped: bool,
 ) -> (
     cranelift_codegen::ir::Value,
     cranelift_codegen::ir::Value,
@@ -576,19 +649,14 @@ fn wait_for_children(
     builder.def_var(name_len_var, init_zero);
 
     for (i, &(np, nl)) in names.iter().enumerate() {
-        let pid = builder.ins().stack_load(I64, pid_slot, (i * 8) as i32);
-        let call = builder.ins().call(pe.wait, &[pid]);
-        let raw_status = builder.inst_results(call)[0];
-        // DD#70: a `!`-negated stage inverts its status (0↔nonzero) before it
-        // joins the aggregate, so `a | ! b` reports true exactly when b failed.
-        let status = if negated.get(i).copied().unwrap_or(false) {
-            let zero = builder.ins().iconst(I64, 0);
-            let is_zero = builder.ins().icmp(IntCC::Equal, raw_status, zero);
-            let one = builder.ins().iconst(I64, 1);
-            builder.ins().select(is_zero, one, zero)
-        } else {
-            raw_status
-        };
+        let status = pipeline_stage_status(
+            builder,
+            pid_slot,
+            i,
+            reaped,
+            negated.get(i).copied().unwrap_or(false),
+            pe.wait,
+        );
         // DD#55: a `-`-suppressed stage still ran, but its status is excluded
         // from the aggregate.
         if suppressed.get(i).copied().unwrap_or(false) {
@@ -615,6 +683,31 @@ fn wait_for_children(
         builder.use_var(name_ptr_var),
         builder.use_var(name_len_var),
     )
+}
+
+fn pipeline_stage_status(
+    builder: &mut FunctionBuilder,
+    pids: cranelift_codegen::ir::StackSlot,
+    i: usize,
+    reaped: bool,
+    negated: bool,
+    wait: cranelift_codegen::ir::FuncRef,
+) -> cranelift_codegen::ir::Value {
+    let pid = builder.ins().stack_load(I64, pids, (i * 8) as i32);
+    let raw = if reaped {
+        pid
+    } else {
+        let call = builder.ins().call(wait, &[pid]);
+        builder.inst_results(call)[0]
+    };
+    if negated {
+        let zero = builder.ins().iconst(I64, 0);
+        let is_zero = builder.ins().icmp(IntCC::Equal, raw, zero);
+        let one = builder.ins().iconst(I64, 1);
+        builder.ins().select(is_zero, one, zero)
+    } else {
+        raw
+    }
 }
 
 fn update_pipeline_status(

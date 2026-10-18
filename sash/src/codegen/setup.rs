@@ -46,6 +46,21 @@ pub(super) fn declare_runtime_functions(module: &mut ObjectModule) -> ExternFunc
     let exit_func = module
         .declare_function("sash_exit", Linkage::Import, &exit_sig)
         .expect("declare sash_exit");
+    let mut reader_start_sig = Signature::new(CallConv::SystemV);
+    push_i64s(&mut reader_start_sig, 4, 0);
+    let reader_start = module
+        .declare_function("sash_reader_start", Linkage::Import, &reader_start_sig)
+        .expect("declare reader start");
+    let mut reader_finish_sig = Signature::new(CallConv::SystemV);
+    push_i64s(&mut reader_finish_sig, 1, 0);
+    let reader_finish = module
+        .declare_function("sash_reader_finish", Linkage::Import, &reader_finish_sig)
+        .expect("declare reader finish");
+    let mut reader_cleanup_sig = Signature::new(CallConv::SystemV);
+    push_i64s(&mut reader_cleanup_sig, 0, 0);
+    let reader_cleanup = module
+        .declare_function("sash_reader_cleanup", Linkage::Import, &reader_cleanup_sig)
+        .expect("declare reader cleanup");
 
     // sash_emsg(seg1_ptr, seg1_len, seg2_ptr, seg2_len) -> () — DD#55
     // abort diagnostic to stderr (no return value).
@@ -844,6 +859,9 @@ pub(super) fn declare_runtime_functions(module: &mut ObjectModule) -> ExternFunc
     ExternFuncs {
         write: write_func,
         exit: exit_func,
+        reader_start,
+        reader_finish,
+        reader_cleanup,
         emsg: emsg_func,
         emsg_status: emsg_status_func,
         scope_bind: scope_bind_func,
@@ -1231,7 +1249,7 @@ pub(super) fn allocate_variables(
         vars,
         test_result_var: ambient.test_result_var,
         exit_status_var: ambient.exit_status_var,
-        pipe_read_fd_var: ambient.pipe_read_fd_var,
+        readers: declare_reader_slots(builder, program),
         capture_slots: declare_capture_slots(builder, program),
         redirect_slots: declare_redirect_slots(builder, program),
         saved_end_status_var: ambient.saved_end_status_var,
@@ -1409,7 +1427,6 @@ struct AmbientVars {
     test_result_var: cranelift_frontend::Variable,
     exit_status_var: cranelift_frontend::Variable,
     saved_end_status_var: cranelift_frontend::Variable,
-    pipe_read_fd_var: cranelift_frontend::Variable,
 }
 
 fn declare_ambient_vars(builder: &mut cranelift_frontend::FunctionBuilder) -> AmbientVars {
@@ -1421,17 +1438,6 @@ fn declare_ambient_vars(builder: &mut cranelift_frontend::FunctionBuilder) -> Am
         v.def_var(var, zero);
         var
     };
-    // DD#122: "no pipe captured" is -1, not 0. `emit_c` has always written -1
-    // here; native wrote 0, which is a *valid* fd — so when the pipe-fd sentinel
-    // leaked to a `readline` that had no pipe, native read stdin and looked
-    // correct while the C build aborted in `rustix`. One sentinel, one spelling.
-    // After the repoint scoping this is unobservable: an instruction only
-    // carries fd -1 if the pipeline instruction that defines this variable was
-    // emitted immediately before it.
-    let minus_one = builder.ins().iconst(I64, -1);
-    let pipe_read_fd_var = builder.declare_var(I64);
-    builder.def_var(pipe_read_fd_var, minus_one);
-
     AmbientVars {
         // [[ ]] last test result
         test_result_var: decl(builder),
@@ -1439,9 +1445,38 @@ fn declare_ambient_vars(builder: &mut cranelift_frontend::FunctionBuilder) -> Am
         exit_status_var: decl(builder),
         // DD#56: saved exit status for END block (preserves triggering status)
         saved_end_status_var: decl(builder),
-        // Pipe read fd for pipe-while-read pattern (fd from captured pipeline)
-        pipe_read_fd_var,
     }
+}
+
+fn declare_reader_slots(
+    builder: &mut cranelift_frontend::FunctionBuilder,
+    program: &SsaProgram,
+) -> std::collections::BTreeMap<u32, super::types::ReaderSlot> {
+    use cranelift_codegen::ir::{StackSlotData, StackSlotKind};
+    program
+        .reader_pipelines()
+        .into_iter()
+        .map(|(site, pipeline)| {
+            let scope = builder.create_sized_stack_slot(StackSlotData::new(
+                StackSlotKind::ExplicitSlot,
+                32,
+                3,
+            ));
+            let pids = builder.create_sized_stack_slot(StackSlotData::new(
+                StackSlotKind::ExplicitSlot,
+                (pipeline.stages.len() * 8) as u32,
+                3,
+            ));
+            (
+                site,
+                super::types::ReaderSlot {
+                    scope,
+                    pids,
+                    pipeline,
+                },
+            )
+        })
+        .collect()
 }
 
 /// Declare one `(saved_stdout, capture_handle)` variable pair per capture site.

@@ -107,6 +107,25 @@ context silently ignored its **first** segment (an undocumented
 `i == 0 && !checked` skip that conflated leading-`-` suppression with
 condition context), and where a non-first `-` dropped the stage entirely.
 
+### Parent-reader pipelines stream before checking (2026-10-18, DG)
+
+DD#122's parent reader consumes concurrently with its producers. Only after
+the consumer completes or leaves its scope does it close the read end, reap
+the producers and evaluate their aggregate. Waiting before consuming can
+deadlock on pipe capacity; it is not required by the error model.
+
+Consumer effects before a producer's eventual failure remain visible. Early
+completion may cause producer SIGPIPE, handled by the same suppression and
+pipefail rules above. Successful cleanup preserves a nonlocal return or loop
+transfer's existing status; checked producer failure still follows the normal
+abort path. Abort/explicit exit closes all outstanding readers before reaping
+and retains its triggering status for END. No forced kills or termination
+timeouts.
+
+An authored `$(wait)` can reap a pending producer; the owning reader retains
+that status for its aggregate instead of attempting a second wait and reporting
+a spurious 127. The public wait pid/status result is unchanged.
+
 ### Pipeline construction failure (2026-10-17, DG)
 
 If pipe creation or a later fork fails, stop constructing the pipeline,

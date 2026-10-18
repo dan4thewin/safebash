@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup functions
-plan=211
+plan=212
 echo "1..$plan" >&3
 
 set +e
@@ -1529,6 +1529,10 @@ run_sash 'fn walk {
 array a=(word)
 - walk =a'
 [[ $rc != 0 && -z $out && $err == *SB5037* && $err == *recursion* ]]; chk tmpcap.21
+
+run_sash 'fn unused -> int { echo unused }
+echo ok'
+[[ $rc = 0 && $out = ok && -z $err && -z $rerr ]]; chk fnnoret.1
 
 set -e
 tally

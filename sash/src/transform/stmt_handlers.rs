@@ -6,7 +6,6 @@ use super::expressions::{
     test_to_ssa,
 };
 use super::functions::{lift_int_func_args, lift_int_func_calls};
-use super::pipelines::lower_pipe_while_read;
 use super::resolution::resolve_pipeline_command;
 use super::statements::{lower_one, lower_stmts, spill_scalar_redirect_targets};
 use crate::ir::*;
@@ -693,7 +692,7 @@ fn dispatch_multistage_pipeline(
     let is_while_read = matches!(&last.kind, StmtKind::While(_));
     let is_array_read = is_array_read_last(last);
     if is_while_read || is_array_read {
-        return handle_pipe_while_or_array_read(p, last, is_array_read, ssa, state, block);
+        return handle_pipe_while_or_array_read(p, last, ssa, state, block);
     }
     if let Some(command) = lastpipe_read_command(last) {
         handle_lastpipe_read(p, command, ssa, state, block)
@@ -741,7 +740,7 @@ fn build_pipeline_inst(
     ssa: &mut SsaProgram,
     state: &mut VersionState,
     block: BlockId,
-    capture_read_fd: bool,
+    reader_site: Option<u32>,
 ) -> SsaInst {
     let mut stages = vec![];
     let mut suppressed = vec![];
@@ -760,11 +759,7 @@ fn build_pipeline_inst(
     }
     SsaInst::Pipeline {
         stages,
-        capture: if capture_read_fd {
-            PipelineCapture::ReadFd
-        } else {
-            PipelineCapture::None
-        },
+        capture: reader_site.map_or(PipelineCapture::None, PipelineCapture::ReadFd),
         checked: state.in_condition == 0 && state.suppressed == 0,
         suppressed,
         negated,
@@ -817,83 +812,82 @@ fn push_command_stage(
 }
 
 /// `cmd1 | ... | while readline var` or `cmd1 | ... | read arr`.
-/// Emit producer stages as a pipeline that returns a pipe fd,
-/// then lower the last stage with fd = -1 (pipe-fd sentinel).
+/// Register producer stages and lower the consumer against its owned pipe site.
 fn handle_pipe_while_or_array_read(
     p: &Pipeline,
     last: &Statement,
-    is_array_read: bool,
     ssa: &mut SsaProgram,
     state: &mut VersionState,
     block: BlockId,
 ) -> BlockId {
-    let pipeline =
-        build_pipeline_inst(&p.commands[..p.commands.len() - 1], ssa, state, block, true);
+    let site = state.next_reader_site;
+    state.next_reader_site += 1;
+    let pipeline = build_pipeline_inst(
+        &p.commands[..p.commands.len() - 1],
+        ssa,
+        state,
+        block,
+        Some(site),
+    );
     ssa.block_mut(block).insts.push(pipeline);
-    lower_pipe_consumer(ssa, state, block, |ssa, state, block| {
-        if !is_array_read {
-            return lower_pipe_while_read(last, ssa, state, block);
-        }
-        let mark = super::pipelines::mark_ssa(ssa);
-        let block = lower_one(last, ssa, state, block);
-        let clean_pipe = !p.commands[..p.commands.len() - 1]
-            .iter()
-            .any(crate::validate::is_external_source);
-        rewrite_lastpipe_consumer_fds(ssa, &mark, clean_pipe);
-        block
-    })
+    let clean_pipe = !p.commands[..p.commands.len() - 1]
+        .iter()
+        .any(crate::validate::is_external_source);
+    lower_pipe_consumer(
+        ssa,
+        state,
+        block,
+        site,
+        matches!(last.kind, StmtKind::While(_)),
+        clean_pipe,
+        |ssa, state, block| lower_one(last, ssa, state, block),
+    )
 }
 
 fn lower_pipe_consumer(
     ssa: &mut SsaProgram,
     state: &mut VersionState,
     block: BlockId,
+    site: u32,
+    loop_consumer: bool,
+    clean_pipe: bool,
     body: impl FnOnce(&mut SsaProgram, &mut VersionState, BlockId) -> BlockId,
 ) -> BlockId {
     let before = state.snapshot();
     let consumer = ssa.new_block("pipe.consumer");
     let done = ssa.new_block("pipe.done");
-    ssa.block_mut(block)
-        .insts
-        .push(SsaInst::internal(BuiltinCmd::SetTestFromPipe, vec![], true));
+    ssa.block_mut(block).insts.push(SsaInst::internal(
+        BuiltinCmd::SetTestFromPipe,
+        vec![SsaValue::Literal(reader_pipe_fd(site).to_string())],
+        true,
+    ));
     ssa.block_mut(block).terminator = Terminator::Branch {
         condition: "pipe-ready".into(),
         true_block: consumer,
         false_block: done,
     };
+    let pipe_reader = state
+        .pipe_reader
+        .replace((reader_pipe_fd(site), clean_pipe));
     let exit = body(ssa, state, consumer);
+    state.pipe_reader = pipe_reader;
     ssa.block_mut(exit).terminator = Terminator::Goto(done);
     let after = state.snapshot();
     super::helpers::insert_phis_two_branch(state, ssa, done, exit, &after, block, &before);
-    done
-}
-
-/// After lowering an array-read lastpipe consumer, repoint its read fd
-/// (currently 0 = stdin) to -1 (pipe sentinel) so codegen reads from
-/// the captured pipe fd instead of the inherited stdin, and record whether
-/// that pipe is clean so the SSA taint backstop classifies it correctly.
-///
-/// DD#122: scoped to the instructions the consumer's own lowering produced.
-/// This walked every block in the program, so a `read arr` reading fd 0 with no
-/// pipe at all was silently re-aimed at a later pipeline's pipe — the same
-/// defect `repoint_readlines_to_pipe` had, in the array half of the read family.
-fn rewrite_lastpipe_consumer_fds(
-    ssa: &mut SsaProgram,
-    mark: &std::collections::HashMap<BlockId, usize>,
-    clean: bool,
-) {
-    super::pipelines::for_each_new_inst(ssa, mark, &mut |inst| {
-        repoint_stdin_to_pipe_sentinel(inst, clean);
+    state.reader_regions.push(ReaderRegion {
+        site,
+        entry: consumer,
+        done,
+        candidates: ssa
+            .blocks
+            .range(consumer..)
+            .map(|(&id, _)| id)
+            .filter(|&id| id != done)
+            .collect(),
+        checked: state.in_condition == 0 && state.suppressed == 0,
+        loop_consumer,
     });
-}
-
-fn repoint_stdin_to_pipe_sentinel(inst: &mut SsaInst, clean: bool) {
-    if let SsaInst::ReadArray { fd, clean_pipe, .. } = inst {
-        if *fd == 0 {
-            *fd = -1;
-            *clean_pipe = clean;
-        }
-    }
+    done
 }
 
 /// DD#20: lastpipe — `cmd | read var` runs `read` in the main shell.
@@ -912,18 +906,28 @@ fn handle_lastpipe_read(
     // backstop for every lastpipe read — so when the front-end pass also
     // missed a laundering shape, nothing caught it.
     let clean_pipe = !producers.iter().any(crate::validate::is_external_source);
-    let pipeline = build_pipeline_inst(producers, ssa, state, block, true);
+    let site = state.next_reader_site;
+    state.next_reader_site += 1;
+    let pipeline = build_pipeline_inst(producers, ssa, state, block, Some(site));
     ssa.block_mut(block).insts.push(pipeline);
-    lower_pipe_consumer(ssa, state, block, |ssa, state, block| {
-        let target = state.define(&crate::ir::readline_target(&command.args));
-        ssa.block_mut(block).insts.push(SsaInst::ReadLine {
-            target,
-            fd: -1,
-            redirects: vec![],
-            clean_pipe,
-        });
-        block
-    })
+    lower_pipe_consumer(
+        ssa,
+        state,
+        block,
+        site,
+        false,
+        clean_pipe,
+        |ssa, state, block| {
+            let target = state.define(&crate::ir::readline_target(&command.args));
+            ssa.block_mut(block).insts.push(SsaInst::ReadLine {
+                target,
+                fd: reader_pipe_fd(site),
+                redirects: vec![],
+                clean_pipe,
+            });
+            block
+        },
+    )
 }
 
 /// Regular pipeline: `cmd1 | cmd2 | ...`. Compound commands (while, for, if)
@@ -935,7 +939,7 @@ fn handle_regular_pipeline(
     state: &mut VersionState,
     block: BlockId,
 ) {
-    let pipeline = build_pipeline_inst(&p.commands, ssa, state, block, false);
+    let pipeline = build_pipeline_inst(&p.commands, ssa, state, block, None);
     ssa.block_mut(block).insts.push(pipeline);
 }
 
@@ -1580,7 +1584,9 @@ pub(super) fn capture_body_into(
 
     let saved_return_target = state.return_target;
     state.return_target = Some(restore_block);
+    let pipe_reader = state.pipe_reader.take();
     let exit_block = lower_stmts(body, ssa, state, call_block);
+    state.pipe_reader = pipe_reader;
     state.return_target = saved_return_target;
     ssa.block_mut(exit_block).terminator = Terminator::Goto(restore_block);
 

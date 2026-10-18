@@ -18,6 +18,7 @@ mod expressions;
 mod functions;
 mod helpers;
 mod pipelines;
+mod reader_cleanup;
 mod resolution;
 mod statements;
 mod stmt_handlers;

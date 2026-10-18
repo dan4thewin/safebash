@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup commands
-plan=217
+plan=226
 echo "1..$plan" >&3
 
 set +e
@@ -1504,6 +1504,55 @@ END {
 [[ $rc = 0 && $out = $'main\nx=[]\ntail' && -z $rerr ]]; chk capext.24
 
 rm -f capext.marker capext.trace
+
+# A command's redirects belong after argument evaluation, not on its setup.
+run_sash 'fn f { echo value }
+echo $(f) > rarg.out
+/bin/cat rarg.out'
+[[ $rc = 0 && $out = value && -z $err && -z $rerr ]]; chk rarg.1
+
+run_sash 'fn f { echo value }
+/usr/bin/printf "%s\n" $(f) > rarg.out
+/bin/cat rarg.out'
+[[ $rc = 0 && $out = value && -z $err && -z $rerr ]]; chk rarg.2
+
+run_sash 'int count=0
+fn next { (( count += 1 )); echo $count }
+echo $(next) $(next) > rarg.out
+echo $count
+/bin/cat rarg.out'
+[[ $rc = 0 && $out = $'2\n1 2' && -z $err && -z $rerr ]]; chk rarg.3
+
+run_sash 'fn f -> int { return 7 }
+echo $(( (f) )) > rarg.out
+/bin/cat rarg.out'
+[[ $rc = 0 && $out = 7 && -z $err && -z $rerr ]]; chk rarg.4
+
+run_sash 'echo $(echo one; echo two) > rarg.out
+/bin/cat rarg.out'
+[[ $rc = 0 && $out = $'one\ntwo' && -z $err && -z $rerr ]]; chk rarg.5
+
+run_sash 'str destination=rarg.out
+fn f { echo value }
+echo $(f) > ${destination:?target}
+/bin/cat rarg.out'
+[[ $rc = 0 && $out = value && -z $err && -z $rerr ]]; chk rarg.6
+
+run_sash 'fn f { echo value }
+echo initial > rarg.out
+echo $(f) >> rarg.out
+/bin/cat rarg.out'
+[[ $rc = 0 && $out = $'initial\nvalue' && -z $err && -z $rerr ]]; chk rarg.7
+
+run_sash 'fn f { f > rarg.out }; f'
+[[ $rc != 0 && -z $out && $err == *SB5037* && $err == *recursion* \
+   && $err != *panicked* ]]; chk rarg.8
+
+run_sash 'fn f { - f > rarg.out }; f'
+[[ $rc != 0 && -z $out && $err == *SB5037* && $err == *recursion* \
+   && $err != *panicked* ]]; chk rarg.9
+
+rm -f rarg.out
 
 set -e
 tally

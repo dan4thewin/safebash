@@ -102,17 +102,21 @@ pub(super) fn restore_caller_args(saved: String, state: &mut VersionState) {
 /// the inlined call, the inline would skip the table-allocating `Assign` and the
 /// runtime read would fill a NULL table (segfault). Snapshot those too so each
 /// lowering re-allocates its own table.
+///
+/// A call's readers use its stdin, not an enclosing loop's lexical pipe binding.
 pub(super) struct FnBodyScope {
     readonly_vars: std::collections::HashSet<String>,
     collections: std::collections::HashSet<String>,
     assoc_arrays: std::collections::HashSet<String>,
+    pipe_reader: Option<(i64, bool)>,
 }
 
-pub(super) fn enter_fn_body_scope(state: &VersionState) -> FnBodyScope {
+pub(super) fn enter_fn_body_scope(state: &mut VersionState) -> FnBodyScope {
     FnBodyScope {
         readonly_vars: state.readonly_vars.clone(),
         collections: state.collections.clone(),
         assoc_arrays: state.assoc_arrays.clone(),
+        pipe_reader: state.pipe_reader.take(),
     }
 }
 
@@ -120,6 +124,7 @@ pub(super) fn exit_fn_body_scope(state: &mut VersionState, saved: FnBodyScope) {
     state.readonly_vars = saved.readonly_vars;
     state.collections = saved.collections;
     state.assoc_arrays = saved.assoc_arrays;
+    state.pipe_reader = saved.pipe_reader;
 }
 
 /// Apply the same capture lifting the assignment and argument paths use to a

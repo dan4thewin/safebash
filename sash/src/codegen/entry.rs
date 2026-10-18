@@ -140,7 +140,7 @@ pub fn compile_ssa(program: &SsaProgram, embedded: Embedded, trace: bool) -> Vec
         let mut vars = fs.vars;
         let test_result_var = fs.test_result_var;
         let exit_status_var = fs.exit_status_var;
-        let pipe_read_fd_var = fs.pipe_read_fd_var;
+        let readers = fs.readers;
         let capture_slots = fs.capture_slots;
         let redirect_slots = fs.redirect_slots;
         let saved_end_status_var = fs.saved_end_status_var;
@@ -166,7 +166,7 @@ pub fn compile_ssa(program: &SsaProgram, embedded: Embedded, trace: bool) -> Vec
             externs: &externs,
             test_result_var,
             exit_status_var,
-            pipe_read_fd_var,
+            readers: &readers,
             capture_slots: &capture_slots,
             redirect_slots: &redirect_slots,
             saved_end_status_var,
@@ -207,7 +207,7 @@ struct EmitCtx<'a, 'b> {
     externs: &'a super::types::ExternFuncs,
     test_result_var: cranelift_frontend::Variable,
     exit_status_var: cranelift_frontend::Variable,
-    pipe_read_fd_var: cranelift_frontend::Variable,
+    readers: &'a std::collections::BTreeMap<u32, super::types::ReaderSlot>,
     capture_slots: &'a [(cranelift_frontend::Variable, cranelift_frontend::Variable)],
     redirect_slots: &'a [Vec<cranelift_frontend::Variable>],
     saved_end_status_var: cranelift_frontend::Variable,
@@ -280,6 +280,10 @@ fn emit_block_entry_hooks(ctx: &mut EmitCtx, label: &str) {
     if label == "__end__" {
         let es = ctx.builder.use_var(ctx.exit_status_var);
         ctx.builder.def_var(ctx.saved_end_status_var, es);
+        let cleanup = ctx
+            .module
+            .declare_func_in_func(ctx.externs.reader_cleanup, ctx.builder.func);
+        ctx.builder.ins().call(cleanup, &[]);
         // DD#120: END is the invoker's code, so it runs on the invoker's
         // fds. An abort inside a redirected command jumps straight here,
         // leaving that command's redirects applied — the restore that would
@@ -330,7 +334,7 @@ fn emit_block_insts(ctx: &mut EmitCtx, ssa_block: &BasicBlock, ssa_id: BlockId) 
                 nl_id: ctx.nl_id,
                 test_result_var: ctx.test_result_var,
                 exit_status_var: ctx.exit_status_var,
-                pipe_read_fd_var: ctx.pipe_read_fd_var,
+                readers: ctx.readers,
                 capture_slots: ctx.capture_slots,
                 redirect_slots: ctx.redirect_slots,
                 end_cl_block: ctx.end_cl_block,

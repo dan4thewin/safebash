@@ -352,7 +352,7 @@ fn source_is_int(source: &SsaValue, pe: &ParameterExpansion, state: &VersionStat
         SsaValue::Subscript {
             is_integer_value, ..
         } => *is_integer_value,
-        _ => false,
+        _ => unreachable!("a disposition subject must lower to a variable or cell"),
     }
 }
 
@@ -406,11 +406,7 @@ pub(super) fn subscript_to_value(name: &str, index: &Expr, state: &VersionState)
 }
 
 fn concat_to_value(parts: &[Expr], state: &VersionState) -> SsaValue {
-    let mut vals: Vec<SsaValue> = parts.iter().map(|p| expr_to_value(p, state)).collect();
-    if vals.len() == 1 {
-        return vals.pop().unwrap();
-    }
-    SsaValue::Concat(vals)
+    SsaValue::Concat(parts.iter().map(|p| expr_to_value(p, state)).collect())
 }
 
 /// `"…"` double-quoted: single-part is the part itself; all-literal parts
@@ -513,6 +509,18 @@ const NAME_POSITION_IS_A_LITERAL: &str =
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    #[should_panic(expected = "a disposition subject must lower to a variable or cell")]
+    fn a_computed_length_cannot_be_a_disposition_subject() {
+        let state = VersionState::with_types(std::collections::HashMap::new());
+        let ExprKind::ParameterExpansion(pe) =
+            Expr::param("#", Some(":-"), None, Span::default()).kind
+        else {
+            unreachable!()
+        };
+        parameter_expansion_to_value(&pe, &state);
+    }
 
     /// `literal_name_of` replaced a renderer with an arm per `ExprKind`. All
     /// 22 call sites are name positions an earlier pass constrains to a

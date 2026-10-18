@@ -11,7 +11,7 @@
 set -eu
 . common.sh
 setup pipe_functions
-plan=63
+plan=104
 echo "1..$plan" >&3
 
 set +e
@@ -386,6 +386,400 @@ END { echo $(status) }
 : | /bin/cat
 echo bad' prlimit --nofile=6:6
 [[ $rc = 1 && $out = 1 && $rerr == *": pipe: "* ]]; chk p518.29
+
+# Each nested reader retains its own pipe across outer-loop iterations.
+run_sash '/usr/bin/printf "one\ntwo\n" | while readline a {
+  attest a [[ -n $a ]]
+  /usr/bin/printf "inner\n" | while readline b {
+    attest b [[ $b == inner ]]
+    echo $a $b
+  }
+}'
+[[ $rc = 0 && $out = $'one inner\ntwo inner' && -z $rerr ]]; chk pipeown.1
+
+run_sash '/usr/bin/printf "one\ntwo\n" | while readline a {
+  attest a [[ -n $a ]]
+  /usr/bin/printf "x\0y\0" | read b
+  echo "$a:$(len b)"
+}'
+[[ $rc = 0 && $out = $'one:2\ntwo:2' && -z $rerr ]]; chk pipeown.2
+
+run_sash 'fn inner {
+  echo child | readline b
+  echo $1 $b
+}
+/usr/bin/printf "one\ntwo\n" | while readline a {
+  attest a [[ -n $a ]]
+  inner $a
+}'
+[[ $rc = 0 && $out = $'one child\ntwo child' && -z $rerr ]]; chk pipeown.3
+
+run_sash 'fn pair { echo a; echo b }
+pair | while readline a {
+  attest a [[ -n $a ]]
+  pair | while readline b {
+    attest b [[ -n $b ]]
+    pair | while readline c { attest c [[ -n $c ]]; echo $a$b$c }
+  }
+}'
+[[ $rc = 0 && $out = $'aaa\naab\naba\nabb\nbaa\nbab\nbba\nbbb' && -z $rerr ]]; chk pipeown.4
+
+# More than a pipe buffer must stream while the parent consumes it.
+run_sash 'int n=0
+/usr/bin/seq 1 20000 | while readline v {
+  attest v [[ -n $v ]]
+  (( n++ ))
+}
+echo $n'
+[[ $rc = 0 && $out = 20000 && -z $rerr ]]; chk pipeown.5
+
+run_sash '/usr/bin/head -c 1048576 /dev/zero | /usr/bin/tr '\''\0'\'' x | read a
+attest e in a [[ -n $e ]]
+echo "$(len a):$(strlen ${a[0]})"'
+[[ $rc = 0 && $out = 1:1048576 && -z $rerr ]]; chk pipeown.6
+
+run_sash 'END { echo "end:$(status)" }
+/bin/sh -c "echo record; exit 7" | while readline v {
+  attest v [[ -n $v ]]
+  echo $v
+}
+echo bad'
+[[ $rc = 7 && $out = $'record\nend:7' && $rerr == *"command failed (exit 7)"* ]]; chk pipeown.7
+
+run_sash 'if /bin/sh -c "echo record; exit 7" | while readline v {
+  attest v [[ -n $v ]]
+  echo $v
+} { echo bad } else { echo $(status) }'
+[[ $rc = 0 && $out = $'record\n7' && -z $rerr ]]; chk pipeown.8
+
+run_sash '- /bin/sh -c "echo record; exit 7" | while readline v {
+  attest v [[ -n $v ]]
+  echo $v
+}
+echo after'
+[[ $rc = 0 && $out = $'record\nafter' && -z $rerr ]]; chk pipeown.9
+
+run_sash 'echo record | - /bin/sh -c "cat; exit 9" | while readline v {
+  attest v [[ -n $v ]]
+  echo $v
+}
+echo after'
+[[ $rc = 0 && $out = $'record\nafter' && -z $rerr ]]; chk pipeown.10
+
+run_sash 'if /bin/sh -c "echo record; exit 4" | /bin/sh -c "cat; exit 9" | while readline v {
+  attest v [[ -n $v ]]
+  echo $v
+} { echo bad } else { echo $(status) }'
+[[ $rc = 0 && $out = $'record\n4' && -z $rerr ]]; chk pipeown.11
+
+# Early completion closes the reader before waiting, allowing producer SIGPIPE.
+run_sash '- /usr/bin/seq 1 200000 | readline v
+attest v [[ $v == 1 ]]
+echo $v
+int p=$(( (wait) ))
+echo $p'
+[[ $rc = 0 && $out = $'1\n-1' && -z $rerr ]]; chk pipeown.12
+
+run_sash 'END { echo $(status) }
+/usr/bin/seq 1 200000 | readline v
+attest v [[ -n $v ]]
+echo $v'
+[[ $rc = 141 && $out = 141 && $rerr == *"command failed (exit 141)"* ]]; chk pipeown.13
+
+run_sash 'int n=0
+- /usr/bin/seq 1 200000 | while readline v {
+  attest v [[ -n $v ]]
+  (( n++ ))
+  break
+}
+int p=$(( (wait) ))
+echo $n $p'
+[[ $rc = 0 && $out = "1 -1" && -z $rerr ]]; chk pipeown.14
+
+run_sash '/usr/bin/seq 1 3 | while readline v {
+  attest v [[ -n $v ]]
+  if [[ $v == 2 ]] { continue }
+  echo $v
+}
+int p=$(( (wait) ))
+echo $p'
+[[ $rc = 0 && $out = $'1\n3\n-1' && -z $rerr ]]; chk pipeown.15
+
+run_sash 'for label in left right {
+  - /usr/bin/seq 1 200000 | while readline v {
+    attest v [[ -n $v ]]
+    echo $label
+    break 2
+  }
+  echo bad
+}
+int p=$(( (wait) ))
+echo done $p'
+[[ $rc = 0 && $out = $'left\ndone -1' && -z $rerr ]]; chk pipeown.16
+
+run_sash 'int n=0
+while (( n < 2 )) {
+  (( n++ ))
+  - /usr/bin/seq 1 200000 | while readline v {
+    attest v [[ -n $v ]]
+    continue 2
+  }
+  echo bad
+}
+int p=$(( (wait) ))
+echo $n $p'
+[[ $rc = 0 && $out = "2 -1" && -z $rerr ]]; chk pipeown.17
+
+run_sash '/usr/bin/printf "one\ntwo\n" | while readline a {
+  attest a [[ -n $a ]]
+  - /usr/bin/seq 1 200000 | while readline b {
+    attest b [[ -n $b ]]
+    echo $a $b
+    break
+  }
+}
+int p=$(( (wait) ))
+echo $p'
+[[ $rc = 0 && $out = $'one 1\ntwo 1\n-1' && -z $rerr ]]; chk pipeown.18
+
+run_sash 'fn inner -> int {
+  - /usr/bin/seq 1 200000 | while readline v {
+    attest v [[ -n $v ]]
+    return 7
+  }
+  return 9
+}
+/usr/bin/printf "one\ntwo\n" | while readline a {
+  attest a [[ -n $a ]]
+  int result=$(( (inner) ))
+  echo "$result:$a"
+}
+int p=$(( (wait) ))
+echo $p'
+[[ $rc = 0 && $out = $'7:one\n7:two\n-1' && -z $rerr ]]; chk pipeown.19
+
+run_sash 'fn count {
+  int n=$(($1))
+  if (( n > 0 )) {
+    - /usr/bin/seq 1 200000 | while readline v {
+      attest v [[ -n $v ]]
+      int m=$(( n - 1 ))
+      return count $m
+    }
+  }
+  echo done
+}
+count 3
+int p=$(( (wait) ))
+echo $p'
+[[ $rc = 0 && $out = $'done\n-1' && -z $rerr ]]; chk pipeown.20
+
+run_sash 'fn count -> int {
+  int n=$(($1))
+  if (( n > 0 )) {
+    - /usr/bin/seq 1 200000 | while readline v {
+      attest v [[ -n $v ]]
+      int m=$(( n - 1 ))
+      return $(( (count m) ))
+    }
+  }
+  return 42
+}
+int answer=$(( (count 3) ))
+int p=$(( (wait) ))
+echo $answer $p'
+[[ $rc = 0 && $out = "42 -1" && -z $rerr ]]; chk pipeown.21
+
+rm -f finished
+run_sash 'END { echo "end:$(status)"; /bin/cat finished }
+/bin/sh -c "echo record; sleep 0.05; echo done > finished" | while readline v {
+  attest v [[ -n $v ]]
+  /bin/false
+}
+echo bad'
+[[ $rc = 1 && $out = $'end:1\ndone' && $rerr == *"command failed (exit 1)"* ]]; chk pipeown.22
+
+rm -f finished
+run_sash 'END { echo "end:$(status)"; /bin/cat finished }
+/bin/sh -c "echo record; sleep 0.05; echo done > finished" | while readline v {
+  attest v [[ -n $v ]]
+  exit 23
+}'
+[[ $rc = 23 && $out = $'end:23\ndone' && -z $rerr ]]; chk pipeown.23
+
+rm -f finished
+run_sash_under '/bin/sh -c "echo record; sleep 0.05; echo done > finished" | while readline v {
+  attest v [[ $v == impossible ]]
+  echo $v
+}' strace -qq -o fault.log -e trace=close,wait4
+[[ $rc = 1 && $(<finished) = done && $rerr == *"failed the gate"* ]] &&
+  grep -q 'wait4(' fault.log; chk pipeown.24
+
+run_sash_under 'int n=0
+while (( n < 100 )) {
+  echo record | readline v
+  attest v [[ $v == record ]]
+  (( n++ ))
+}
+int p=$(( (wait) ))
+echo $n $p' prlimit --nofile=12:12
+[[ $rc = 0 && $out = "100 -1" && -z $rerr ]]; chk pipeown.25
+
+run_sash 'END {
+  echo "end:$(status)"
+  /bin/sh -c "echo cleanup; exit 9" | while readline x {
+    attest x [[ -n $x ]]
+    echo $x
+  }
+  echo complete
+}
+echo record | while readline v {
+  attest v [[ -n $v ]]
+  /bin/false
+}'
+[[ $rc = 1 && $out = $'end:1\ncleanup\ncomplete' && $rerr == *"command failed (exit 1)"* ]]; chk pipeown.26
+
+run_sash_under '/usr/bin/printf "one\ntwo\n" | while readline a {
+  attest a [[ -n $a ]]
+  if echo inner | readline b {
+    attest b [[ -n $b ]]
+    echo "$a:$b"
+  } else { echo "$a:failed" }
+}' strace -qq -o fault.log -e inject=pipe2:error=EMFILE:when=2
+[[ $rc = 0 && $out = $'one:failed\ntwo:inner' && -z $rerr ]]; chk pipeown.27
+
+rm -f finished
+run_sash_under '/usr/bin/printf "one\ntwo\n" | while readline a {
+  attest a [[ -n $a ]]
+  if /bin/sh -c "sleep 0.05; echo done > finished" | /bin/cat | readline b {
+    attest b [[ -n $b ]]
+    echo bad $b
+  } else { /bin/cat finished; echo $a }
+}' strace -qq -o fault.log -e inject=clone:error=EAGAIN:when=3
+[[ $rc = 0 && $out = $'done\none\ndone\ntwo' && -z $rerr ]]; chk pipeown.28
+
+run_sash_under 'echo record | readline v
+attest v [[ -n $v ]]
+int p=$(( (wait) ))
+echo $v $p' strace -qq -o fault.log -e inject=wait4:error=EINTR:when=1
+[[ $rc = 0 && $out = "record -1" && -z $rerr ]]; chk pipeown.29
+
+# An authored wait may reap a producer; finishing still uses its real status.
+run_sash 'if /bin/sh -c "echo record; exit 7" | while readline v {
+  attest v [[ -n $v ]]
+  int p=$(( (wait) ))
+  if (( p > 0 )) { echo reaped }
+  echo $v
+} { echo bad } else { echo $(status) }'
+[[ $rc = 0 && $out = $'reaped\nrecord\n7' && -z $rerr ]]; chk pipeown.30
+
+run_sash 'if /bin/true | read a { echo bad } else { echo "$(len a):empty" }
+if /bin/echo record | read b { echo "$(len b):full" } else { echo bad }'
+[[ $rc = 0 && $out = $'0:empty\n1:full' && -z $rerr ]]; chk pipeown.31
+
+run_sash 'if : | readline a { echo bad } else { echo empty }
+if /bin/sh -c "echo record; exit 7" | readline b {
+  attest b [[ -n $b ]]
+  echo bad $b
+} else { echo $(status) }
+echo "[$a]"'
+[[ $rc = 0 && $out = $'empty\n7\n[]' && -z $rerr ]]; chk pipeown.32
+
+printf 'stdin\n' > reader-stdin
+run_sash 'exec 0< reader-stdin
+/usr/bin/printf "one\ntwo\n" | while readline a {
+  attest a [[ -n $a ]]
+  /bin/cat
+  echo $a
+}'
+[[ $rc = 0 && $out = $'stdin\none\ntwo' && -z $rerr ]]; chk pipeown.33
+
+run_sash 'if /bin/sh -c "echo outer; exit 7" | while readline a {
+  attest a [[ -n $a ]]
+  echo inner | while readline b {
+    attest b [[ -n $b ]]
+    int p=$(( (wait) ))
+    int q=$(( (wait) ))
+    if (( p > 0 && q > 0 )) { echo reaped }
+    echo $a $b
+  }
+} { echo bad } else { echo $(status) }'
+[[ $rc = 0 && $out = $'reaped\nouter inner\n7' && -z $rerr ]]; chk pipeown.34
+
+run_sash 'int n=0
+echo pipe | while (( n < 1 )) {
+  read a
+  attest e in a [[ -n $e ]]
+  echo "value:$(join a)"
+  (( n++ ))
+}
+echo $n'
+[[ $rc = 0 && $out = $'value:pipe\n\n1' && -z $rerr ]]; chk pipeown.35
+
+run_sash '/usr/bin/printf "one\ntwo\n" | while readline a {
+  attest a [[ -n $a ]]
+  int n=0
+  echo inner | while (( n < 1 )) {
+    read b
+    attest e in b [[ -n $e ]]
+    echo "$a:$(len b):$(strlen ${b[0]})"
+    (( n++ ))
+  }
+}'
+[[ $rc = 0 && $out = $'one:1:6\ntwo:1:6' && -z $rerr ]]; chk pipeown.36
+
+printf 'from-file\n' > reader-line-input
+run_sash '/usr/bin/printf "one\ntwo\n" | while readline a {
+  attest a [[ -n $a ]]
+  readline b < reader-line-input
+  attest b [[ -n $b ]]
+  echo "$a:$b"
+}'
+[[ $rc = 0 && $out = $'one:from-file\ntwo:from-file' && -z $rerr ]]; chk pipeown.37
+
+printf 'from-file\0' > reader-array-input
+run_sash '/usr/bin/printf "one\ntwo\n" | while readline a {
+  attest a [[ -n $a ]]
+  read b < reader-array-input
+  attest e in b [[ -n $e ]]
+  echo "$a:$(join b)"
+}'
+[[ $rc = 0 && $out = $'one:from-file\ntwo:from-file' && -z $rerr ]]; chk pipeown.38
+
+printf 'stdin-one\nstdin-two\n' > reader-stdin
+run_sash 'fn f {
+  readline v
+  attest v [[ -n $v ]]
+  echo $v
+}
+exec 0< reader-stdin
+/usr/bin/printf "one\ntwo\n" | while readline a {
+  attest a [[ -n $a ]]
+  echo $a
+  f
+}'
+[[ $rc = 0 && $out = $'one\nstdin-one\ntwo\nstdin-two' && -z $rerr ]]; chk pipeown.39
+
+run_sash 'fn f {
+  readline v
+  attest v [[ -n $v ]]
+  echo "read:$v"
+}
+/usr/bin/printf "one\ntwo\n" | while readline a {
+  attest a [[ -n $a ]]
+  echo $a
+  f < reader-line-input
+}'
+[[ $rc = 0 && $out = $'one\nread:from-file\ntwo\nread:from-file' && -z $rerr ]]; chk pipeown.40
+
+run_sash 'exec 0< reader-stdin
+/usr/bin/printf "one\ntwo\n" | while readline a {
+  attest a [[ -n $a ]]
+  str b=$(readline q; attest q [[ -n $q ]]; echo $q)
+  attest b [[ -n $b ]]
+  echo "$a:$b"
+}'
+[[ $rc = 0 && $out = $'one:stdin-one\ntwo:stdin-two' && -z $rerr ]]; chk pipeown.41
 
 set -e
 tally
