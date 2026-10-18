@@ -57,10 +57,20 @@ no external dependencies therefore has no `.sash_manifest` at all — and that
 is the common case, since an all-builtin program depends on nothing.
 
 Reading an absent `.sash_manifest` as an error would make the common case look
-broken, so an absent manifest reads back as an empty one. The fallback is
-scoped by `.sash_source`: a binary that has one is a sash binary whose
-manifest is genuinely empty, and anything else still errors. `--extract
-/bin/true manifest` fails, as it should.
+broken, so an absent manifest reads back as an empty one. An empty-source
+program also loses its `.sash_source`, but its IR is always nonempty. Either
+`.sash_source` or `.sash_ir` therefore identifies a sash output whose absent
+source/manifest is empty; the source marker also preserves older outputs.
+An ordinary ELF still errors. `--extract /bin/true manifest` fails, as it
+should, and a missing IR is never treated as empty.
+
+This fallback applies only to an **absent** section, not a failed read. A
+present but unreadable or non-UTF-8 artifact reports its own error rather
+than returning an empty string or the placeholder `<binary data>`.
+
+The codegen artifact bundle requires all three texts, including legitimate
+empty bodies. The obsolete optional fields had no production omission
+caller and contradicted the always-on invariant.
 
 ## What did not change
 
@@ -78,7 +88,9 @@ section and the flag cannot drift apart.
 
 ## Specs
 
-`spec/cli.sh` 109.1–109.7: the IR round-trips out of a binary; IR and manifest
+`spec/cli.sh` 109.1–109.12: the IR round-trips out of a binary; IR and manifest
 sections equal their flag output byte-for-byte; an empty manifest extracts as
 empty at rc 0; the DD#45 no-argument spelling is preserved; an unknown section
-name is rejected; a non-sash binary still errors.
+name is rejected; a non-sash binary still errors. Empty-source source and
+manifest extraction succeed, and all three artifact readers reject present
+but unreadable/non-UTF-8 section data.

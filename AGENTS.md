@@ -618,7 +618,9 @@ in-crate unit tests, which is off by default because it hides exactly the
 should-never-run assertions worth finding. **`mk cov-reset` afterwards** —
 see below.
 
-All the logic lives in `contrib/coverage.sh`. Do not hand-roll a coverage
+The driver lives in `contrib/coverage.sh`; filename scope and the exported-file
+canary are shared with both probe tools in `contrib/cov-common.sh`.
+Do not hand-roll a coverage
 run; three separate things silently measure *nothing* and still print a
 clean report:
 
@@ -635,6 +637,16 @@ clean report:
 The script gates every run on a **canary**: one `sash` invocation must drop a
 profraw or it aborts. Keep that property in anything you add here — a gate
 that cannot fail is not a gate.
+
+**`codegen/tests.rs` is production code.** Never exclude `tests.rs` globally:
+that hid the entire native `[[ ]]` emitter and left native-zero claims unproven.
+Cargo-llvm-cov adds that exclusion by default even with a custom regex;
+the shared report arguments disable its default filename filter.
+Only `parse/tests.rs` is a filename-excluded unit module; inline
+`#[cfg(test)]` modules are handled by the database loader. All three lcov
+exporters require a `codegen/tests.rs` source record before accepting a report.
+Prove the scope canary rejects the old filtered export as well as accepting
+the new one.
 
 **`mk build` does NOT undo a coverage run.** cargo-llvm-cov passes
 `-Cinstrument-coverage` through a `RUSTC_WRAPPER`, so cargo's fingerprint

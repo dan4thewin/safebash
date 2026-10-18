@@ -389,7 +389,7 @@ pub(super) fn lower_literal_value(
     module: &mut ObjectModule,
     literals: &HashMap<String, cranelift_module::DataId>,
 ) -> (cranelift_codegen::ir::Value, cranelift_codegen::ir::Value) {
-    let data_id = literals[s];
+    let data_id = intern_or_declare(literals, s);
     let gv = module.declare_data_in_func(data_id, builder.func);
     let ptr = builder.ins().global_value(I64, gv);
     let len = builder.ins().iconst(I64, s.len() as i64);
@@ -1666,13 +1666,12 @@ mod tests {
     /// Same shape as `unresolved_redirect_var_is_loud_ice` in
     /// `codegen::redirects`.
     #[test]
+    #[should_panic(
+        expected = "ICE: codegen referenced a string the literal pre-pass did not intern: \"never-interned\""
+    )]
     fn missing_literal_is_loud_ice() {
         let literals: HashMap<String, cranelift_module::DataId> = HashMap::new();
-        let caught = std::panic::catch_unwind(|| intern_or_declare(&literals, "never-interned"));
-        assert!(
-            caught.is_err(),
-            "a string the literal pre-pass did not intern must raise a loud ICE"
-        );
+        intern_or_declare(&literals, "never-interned");
     }
 }
 
@@ -1742,9 +1741,9 @@ mod invariant_tests {
             compile_ssa(
                 &ssa,
                 Embedded {
-                    source: None,
-                    ir: None,
-                    manifest: None,
+                    source: "",
+                    ir: "",
+                    manifest: "",
                 },
                 false,
             )

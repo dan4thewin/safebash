@@ -13,6 +13,7 @@ use cranelift_object::ObjectModule;
 use std::collections::HashMap;
 
 use super::types::{emit_int_to_str, ExternFuncs, VarSlot};
+use super::values::lower_literal_value;
 
 #[derive(Clone)]
 pub(super) struct SavedFd {
@@ -250,12 +251,7 @@ fn emit_open_redirect(
 ) -> (Value, Value, Value) {
     let flags_val = builder.ins().iconst(I64, flags);
     let (path_ptr, path_len, result) = if let crate::ir::ExprKind::Literal(s) = &target.kind {
-        let Some(&data_id) = literals.get(s.as_str()) else {
-            redirect_target_ice(&format!("literal {s:?} not interned in the literals map"))
-        };
-        let path_gv = module.declare_data_in_func(data_id, builder.func);
-        let path_ptr = builder.ins().global_value(I64, path_gv);
-        let path_len = builder.ins().iconst(I64, s.len() as i64);
+        let (path_ptr, path_len) = lower_literal_value(s, builder, module, literals);
         let redirect_ref = module.declare_func_in_func(externs.redirect, builder.func);
         let call = builder
             .ins()
@@ -352,7 +348,7 @@ pub(super) fn lower_ir_redirect_expr(
 ) -> (cranelift_codegen::ir::Value, cranelift_codegen::ir::Value) {
     match &expr.kind {
         crate::ir::ExprKind::Literal(s) | crate::ir::ExprKind::SingleQuoted(s) => {
-            redirect_expr_literal(s, builder, module, literals)
+            lower_literal_value(s, builder, module, literals)
         }
         crate::ir::ExprKind::SimpleExpansion(var) => {
             redirect_expr_simple_expansion(var, builder, module, vars, externs)
@@ -367,31 +363,14 @@ pub(super) fn lower_ir_redirect_expr(
 /// A redirect target that couldn't be resolved to a `(ptr, len)`. Every path
 /// that reaches here is guarded upstream — a non-scalar target is rejected at
 /// parse (SB4049), a `${x:-f}` / `$a[i]` target is spilled to a scalar in the
-/// transform, an undeclared `$f` is rejected by validate (SB5031), and a
-/// literal target is always interned — so arriving here is a compiler-invariant
+/// transform, and an undeclared `$f` is rejected by validate (SB5031) —
+/// so arriving here is a compiler-invariant
 /// violation. Raise a loud ICE (caught by `catch_unwind` in
 /// `compile_to_object`, surfaced as a clean error) instead of the old silent
 /// `(0, 0)`, which redirected to an EMPTY filename
 /// (bug-redirect-nonsimple-target-empty class).
 fn redirect_target_ice(reason: &str) -> ! {
     panic!("ICE: unresolved redirect target — {reason}");
-}
-
-fn redirect_expr_literal(
-    s: &str,
-    builder: &mut FunctionBuilder,
-    module: &mut ObjectModule,
-    literals: &HashMap<String, cranelift_module::DataId>,
-) -> (cranelift_codegen::ir::Value, cranelift_codegen::ir::Value) {
-    use cranelift_codegen::ir::types::I64;
-    if let Some(&data_id) = literals.get(s) {
-        let gv = module.declare_data_in_func(data_id, builder.func);
-        let ptr = builder.ins().global_value(I64, gv);
-        let len = builder.ins().iconst(I64, s.len() as i64);
-        (ptr, len)
-    } else {
-        redirect_target_ice(&format!("literal {s:?} not interned in the literals map"))
-    }
 }
 
 fn redirect_expr_simple_expansion(

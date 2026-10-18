@@ -37,7 +37,7 @@
 set -eu
 cd "$(dirname "$0")/.."
 
-IGNORE='(sash-rt|sash-convert|sash-expand|/tests/|tests\.rs|main\.rs)'
+. contrib/cov-common.sh
 
 build_instrumented() {
     eval "$(cargo +nightly llvm-cov show-env --sh --branch 2>/dev/null)"
@@ -96,7 +96,8 @@ n=$(ls target/*.profraw 2>/dev/null | wc -l)
 
 out=$(mktemp)
 cargo +nightly llvm-cov report --release --branch \
-    --ignore-filename-regex "$IGNORE" --lcov --output-path "$out" 2>/dev/null
+    "${COV_REPORT_SCOPE[@]}" --lcov --output-path "$out" 2>/dev/null
+cov_check_scope "$out"
 
 file="${target%:*}"; line="${target##*:}"
 echo "── $file:$line  (from $n profraw(s)) ──"

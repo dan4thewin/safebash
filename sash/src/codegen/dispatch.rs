@@ -1405,9 +1405,9 @@ mod invariant_tests {
             compile_ssa(
                 &ssa,
                 Embedded {
-                    source: None,
-                    ir: None,
-                    manifest: None,
+                    source: "",
+                    ir: "",
+                    manifest: "",
                 },
                 false,
             )
@@ -1445,6 +1445,32 @@ mod invariant_tests {
             message.contains("RedirectPush requires at least one redirect"),
             "{message}"
         );
+    }
+
+    #[test]
+    fn non_scalar_redirect_targets_are_loud_invariant_failures() {
+        for (kind, expected) in [
+            (crate::ir::ExprKind::Array(vec![]), "Array"),
+            (crate::ir::ExprKind::AssocArray(vec![]), "AssocArray"),
+        ] {
+            let message = native_ice(vec![SsaInst::command(
+                "echo",
+                vec![],
+                vec![crate::ir::Redirect {
+                    fd: None,
+                    op: crate::ir::RedirectOp::Write,
+                    target: crate::ir::Expr {
+                        kind,
+                        span: crate::ir::Span::default(),
+                    },
+                }],
+                true,
+            )]);
+            assert!(
+                message.contains(&format!("unexpected non-scalar target kind {expected}")),
+                "{message}"
+            );
+        }
     }
 
     #[test]

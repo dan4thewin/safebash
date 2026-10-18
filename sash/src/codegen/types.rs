@@ -307,7 +307,7 @@ pub(super) fn emit_int_to_str(
 /// shape as `codegen::redirects::unresolved_redirect_var_is_loud_ice`.
 #[cfg(test)]
 mod tests {
-    use super::{var_slot, VarSlot};
+    use super::{find_array_slot, var_slot, VarSlot};
     use cranelift_frontend::Variable;
 
     /// `var_slot` replaced three tolerant answers to one question — two in
@@ -327,6 +327,12 @@ mod tests {
     #[should_panic(expected = "setup::map_inst_versioned")]
     fn an_unmapped_version_is_a_compiler_error_not_an_empty_string() {
         var_slot(&std::collections::HashMap::new(), "x_3");
+    }
+
+    #[test]
+    #[should_panic(expected = "ICE: undefined map: missing")]
+    fn an_undefined_collection_names_its_context() {
+        find_array_slot(&std::collections::HashMap::new(), "missing", "map");
     }
 
     #[test]

@@ -27,7 +27,7 @@
 set -eu
 cd "$(dirname "$0")/.."
 
-IGNORE='(sash-rt|sash-convert|sash-expand|/tests/|tests\.rs|main\.rs)'
+. contrib/cov-common.sh
 spec_mode=""
 if [ "${1:-}" = "--spec" ]; then spec_mode=1; shift; fi
 corpus="${1:?usage: cov-batch.sh [--spec] DIR [FILE_FILTER]}"
@@ -58,7 +58,8 @@ n=$(ls target/*.profraw 2>/dev/null | wc -l)
 
 lcov=$(mktemp); warm=$(mktemp)
 cargo +nightly llvm-cov report --release --branch \
-    --ignore-filename-regex "$IGNORE" --lcov --output-path "$lcov" 2>/dev/null
+    "${COV_REPORT_SCOPE[@]}" --lcov --output-path "$lcov" 2>/dev/null
+cov_check_scope "$lcov"
 
 awk '/^SF:/ { sf = substr($0, 4); next }
      /^DA:/ { split(substr($0, 4), d, ",")

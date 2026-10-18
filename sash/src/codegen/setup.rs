@@ -935,7 +935,6 @@ pub(super) fn declare_runtime_functions(module: &mut ObjectModule) -> ExternFunc
 pub(super) fn intern_literals(
     module: &mut ObjectModule,
     program: &SsaProgram,
-    _bash_source: Option<&str>,
     trace: bool,
 ) -> (
     HashMap<String, cranelift_module::DataId>,

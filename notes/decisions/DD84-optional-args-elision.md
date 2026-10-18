@@ -328,3 +328,25 @@ Impl: `transform/cmd_handlers.rs::check_callee_arity` + `call_arg_bounds`
 (which is why the check now takes the argument *values*, not their count);
 `transform/functions.rs::analyze_arity`. Specs `optional_args.sh` 84.53-84.67;
 `functions.sh` sp.3 migrated. journal 443.
+
+## Addendum (2026-10-18) — echo separators follow actual arguments
+
+An elided argument reserves no space in an echo argument list. With a dynamic
+empty string, `echo ${x:!~} tail` prints `tail`, not ` tail`; two leading
+elisions still reserve nothing. A real empty argument is different:
+`echo ${x:!} tail` prints ` tail` (DD#91's modifier addendum).
+
+Both backends track runtime token presence alongside accumulated write
+failure. An empty elision preserves both; a present argument counts even if
+its write fails. This applies to ordinary echo, pipeline stages and captured
+bodies without passing raw echo strings through the NUL-rejecting argv builder.
+
+The `$(echo ...)` scalar-concat shortcut cannot represent a runtime-sized
+argument list. An echo capture containing elision uses the original body
+capture instead; a pure echo body still uses the in-process buffer, not a
+fork. Ordinary fixed-size echo captures keep their concat shortcut.
+
+Specs `optional_args.sh` 84.73-84.86 pin skipped/kept arguments, real empty
+tokens, all-elided newline bytes, pipeline and capture behavior, no-fork
+capture, and a one-write-only EIO on both elision join edges. The explicitly
+deferred integer-zero elision above is unchanged.

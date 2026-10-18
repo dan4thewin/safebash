@@ -63,7 +63,7 @@ index or HEAD, so an uncommitted edit counts -- coverage is measured against
 whatever was on disk.
 
 Records DEFINED inside a `#[cfg(test)]` module are dropped.  `coverage.sh
---lcov` already excludes `tests.rs` and `/tests/` by filename, but the
+--lcov` already excludes `parse/tests.rs` and `/tests/` by filename, but the
 dominant unit-test shape in this repo is a `#[cfg(test)] mod` living inside a
 production file -- AGENTS.md asks for it explicitly, because most of the
 functions under test are private.  Those modules are test code; counting their

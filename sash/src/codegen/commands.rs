@@ -52,9 +52,45 @@ fn echo_parse_flags(args: &[SsaValue]) -> (&[SsaValue], bool) {
     (args, false)
 }
 
-/// Write one echo argument: a leading space when not first, then the
-/// value (Concat parts written sequentially without spaces; a scalar is
-/// a one-element slice). Folds each write's failure into `failed`.
+#[derive(Clone, Copy)]
+struct EchoState {
+    failed: cranelift_codegen::ir::Value,
+    has_arg: cranelift_codegen::ir::Value,
+}
+
+fn echo_write_separator(
+    builder: &mut FunctionBuilder,
+    module: &mut ObjectModule,
+    write_ref: cranelift_codegen::ir::FuncRef,
+    fd: cranelift_codegen::ir::Value,
+    space_id: cranelift_module::DataId,
+    state: EchoState,
+) -> cranelift_codegen::ir::Value {
+    let write_blk = builder.create_block();
+    let cont_blk = builder.create_block();
+    builder.append_block_param(cont_blk, I64);
+    let has_arg = builder.ins().icmp_imm(IntCC::NotEqual, state.has_arg, 0);
+    builder.ins().brif(
+        has_arg,
+        write_blk,
+        &[],
+        cont_blk,
+        &[BlockArg::Value(state.failed)],
+    );
+    builder.switch_to_block(write_blk);
+    builder.seal_block(write_blk);
+    let sp_gv = module.declare_data_in_func(space_id, builder.func);
+    let sp_ptr = builder.ins().global_value(I64, sp_gv);
+    let sp_len = builder.ins().iconst(I64, 1);
+    let failed = echo_write_tracked(builder, write_ref, fd, sp_ptr, sp_len, state.failed);
+    builder.ins().jump(cont_blk, &[BlockArg::Value(failed)]);
+    builder.switch_to_block(cont_blk);
+    builder.seal_block(cont_blk);
+    builder.block_params(cont_blk)[0]
+}
+
+/// Real empty arguments still count; only an empty elision leaves `has_arg`
+/// unchanged. Concat parts remain raw writes, including interior NUL bytes.
 #[allow(clippy::too_many_arguments)]
 fn echo_write_one_arg(
     builder: &mut FunctionBuilder,
@@ -62,19 +98,13 @@ fn echo_write_one_arg(
     write_ref: cranelift_codegen::ir::FuncRef,
     fd: cranelift_codegen::ir::Value,
     arg: &SsaValue,
-    is_first: bool,
     vars: &HashMap<String, VarSlot>,
     literals: &HashMap<String, cranelift_module::DataId>,
     externs: &ExternFuncs,
     space_id: cranelift_module::DataId,
     exit_status_var: Variable,
-    mut failed: cranelift_codegen::ir::Value,
-) -> cranelift_codegen::ir::Value {
-    // DD#84/#91: an elide arg (`${x:~}` / `${x:!}`) contributes its *(space +
-    // value)* only when non-empty, so an identity value writes nothing —
-    // matching the argv builder. `:~`/`:!` only appear as a WHOLE arg (SB5046
-    // forbids them inside a concatenation), so handling the arg-level case
-    // covers it; a scalar `lower_value` of `ElideEmpty` would ICE.
+    state: EchoState,
+) -> EchoState {
     if let SsaValue::ElideEmpty { source, .. } = arg {
         return echo_write_elide_arg(
             builder,
@@ -82,21 +112,15 @@ fn echo_write_one_arg(
             write_ref,
             fd,
             source,
-            is_first,
             vars,
             literals,
             externs,
             space_id,
             exit_status_var,
-            failed,
+            state,
         );
     }
-    if !is_first {
-        let sp_gv = module.declare_data_in_func(space_id, builder.func);
-        let sp_ptr = builder.ins().global_value(I64, sp_gv);
-        let sp_len = builder.ins().iconst(I64, 1);
-        failed = echo_write_tracked(builder, write_ref, fd, sp_ptr, sp_len, failed);
-    }
+    let mut failed = echo_write_separator(builder, module, write_ref, fd, space_id, state);
     let parts: &[SsaValue] = match arg {
         SsaValue::Concat(parts) => parts,
         other => std::slice::from_ref(other),
@@ -113,13 +137,14 @@ fn echo_write_one_arg(
         );
         failed = echo_write_tracked(builder, write_ref, fd, ptr, len, failed);
     }
-    failed
+    EchoState {
+        failed,
+        has_arg: builder.ins().iconst(I64, 1),
+    }
 }
 
-/// DD#84/#91: write an elide (`:~`/`:!`) echo arg — the leading space (when not
-/// first) and the value are written only when the value is non-empty, so an
-/// identity value contributes nothing. Threads `failed` through both edges via
-/// a block parameter.
+/// DD#84/#91: an empty `:~` / `:!~` contributes neither a value nor a separator.
+/// Both edges retain previous write failures and runtime argument presence.
 #[allow(clippy::too_many_arguments)]
 fn echo_write_elide_arg(
     builder: &mut FunctionBuilder,
@@ -127,14 +152,13 @@ fn echo_write_elide_arg(
     write_ref: cranelift_codegen::ir::FuncRef,
     fd: cranelift_codegen::ir::Value,
     source: &SsaValue,
-    is_first: bool,
     vars: &HashMap<String, VarSlot>,
     literals: &HashMap<String, cranelift_module::DataId>,
     externs: &ExternFuncs,
     space_id: cranelift_module::DataId,
     exit_status_var: Variable,
-    failed: cranelift_codegen::ir::Value,
-) -> cranelift_codegen::ir::Value {
+    state: EchoState,
+) -> EchoState {
     let (ptr, len) = lower_value(
         source,
         builder,
@@ -146,31 +170,36 @@ fn echo_write_elide_arg(
     );
     let write_blk = builder.create_block();
     let cont_blk = builder.create_block();
-    builder.append_block_param(cont_blk, I64); // carries `failed`
+    builder.append_block_param(cont_blk, I64);
+    builder.append_block_param(cont_blk, I64);
     let is_empty = builder.ins().icmp_imm(IntCC::Equal, len, 0);
     builder.ins().brif(
         is_empty,
         cont_blk,
-        &[BlockArg::Value(failed)],
+        &[
+            BlockArg::Value(state.failed),
+            BlockArg::Value(state.has_arg),
+        ],
         write_blk,
         &[],
     );
 
     builder.switch_to_block(write_blk);
     builder.seal_block(write_blk);
-    let mut f = failed;
-    if !is_first {
-        let sp_gv = module.declare_data_in_func(space_id, builder.func);
-        let sp_ptr = builder.ins().global_value(I64, sp_gv);
-        let sp_len = builder.ins().iconst(I64, 1);
-        f = echo_write_tracked(builder, write_ref, fd, sp_ptr, sp_len, f);
-    }
-    f = echo_write_tracked(builder, write_ref, fd, ptr, len, f);
-    builder.ins().jump(cont_blk, &[BlockArg::Value(f)]);
+    let failed = echo_write_separator(builder, module, write_ref, fd, space_id, state);
+    let failed = echo_write_tracked(builder, write_ref, fd, ptr, len, failed);
+    let has_arg = builder.ins().iconst(I64, 1);
+    builder.ins().jump(
+        cont_blk,
+        &[BlockArg::Value(failed), BlockArg::Value(has_arg)],
+    );
 
     builder.switch_to_block(cont_blk);
     builder.seal_block(cont_blk);
-    builder.block_params(cont_blk)[0]
+    EchoState {
+        failed: builder.block_params(cont_blk)[0],
+        has_arg: builder.block_params(cont_blk)[1],
+    }
 }
 
 /// Lower `echo`. Returns the write-failure status (0 = OK, 1 = some
@@ -189,23 +218,26 @@ pub(super) fn lower_echo(
 ) -> cranelift_codegen::ir::Value {
     let fd = builder.ins().iconst(I64, 1);
     let write_ref = module.declare_func_in_func(externs.write, builder.func);
-    let mut failed = builder.ins().iconst(I64, 0);
+    let zero = builder.ins().iconst(I64, 0);
+    let mut state = EchoState {
+        failed: zero,
+        has_arg: zero,
+    };
     let (print_args, suppress_newline) = echo_parse_flags(args);
 
-    for (i, arg) in print_args.iter().enumerate() {
-        failed = echo_write_one_arg(
+    for arg in print_args {
+        state = echo_write_one_arg(
             builder,
             module,
             write_ref,
             fd,
             arg,
-            i == 0,
             vars,
             literals,
             externs,
             space_id,
             exit_status_var,
-            failed,
+            state,
         );
     }
 
@@ -213,9 +245,9 @@ pub(super) fn lower_echo(
         let nl_gv = module.declare_data_in_func(nl_id, builder.func);
         let nl_ptr = builder.ins().global_value(I64, nl_gv);
         let nl_len = builder.ins().iconst(I64, 1);
-        failed = echo_write_tracked(builder, write_ref, fd, nl_ptr, nl_len, failed);
+        state.failed = echo_write_tracked(builder, write_ref, fd, nl_ptr, nl_len, state.failed);
     }
-    failed
+    state.failed
 }
 
 /// Emit fork/exec for an external command.

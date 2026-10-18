@@ -10,7 +10,7 @@ set -eu
 . common.sh
 setup cli
 set +e
-plan=70
+plan=75
 echo "1..$plan" >&3
 
 SASH=$(command -v "${SASH:-sash}")
@@ -221,6 +221,99 @@ err=$($SASH --extract srcbin bogus 2>&1 >/dev/null); rc=$?
 : > notsash.bin
 $SASH --extract notsash.bin manifest >/dev/null 2>&1; rc=$?
 [[ $rc != 0 ]]; chk 109.7
+
+# 109.8 empty source is still a real program, with an exactly empty source
+# artifact through both the default and explicit extraction spellings.
+timeout "$SPEC_TIMEOUT" "$SASH" -c '' -o emptyartifacts >/dev/null 2>art.err
+compile_rc=$?
+timeout "$SPEC_TIMEOUT" ./emptyartifacts >empty-run.out 2>empty-run.err; run_rc=$?
+"$SASH" --extract emptyartifacts >empty-default.out 2>art.err; default_rc=$?
+"$SASH" --extract emptyartifacts source >empty-explicit.out 2>art.err; explicit_rc=$?
+[[ $compile_rc = 0 && $run_rc = 0 && $default_rc = 0 && $explicit_rc = 0 \
+   && ! -s empty-run.out && ! -s empty-run.err \
+   && ! -s empty-default.out && ! -s empty-explicit.out ]]; chk 109.8
+
+# 109.9 the same binary has no dependencies; its nonempty IR survives even
+# when both of the other zero-length sections disappear at link time.
+"$SASH" --extract emptyartifacts manifest >empty-manifest.out 2>art.err; manifest_rc=$?
+"$SASH" --extract emptyartifacts ir >empty-ir.out 2>art.err; ir_rc=$?
+"$SASH" --emit-ir -c '' >empty-flag-ir.out 2>art.err; flag_rc=$?
+[[ $manifest_rc = 0 && ! -s empty-manifest.out && $ir_rc = 0 && $flag_rc = 0 ]] \
+    && grep -q ':ir-version 1' empty-ir.out \
+    && cmp -s empty-ir.out empty-flag-ir.out; chk 109.9
+
+# 109.10 a valid ordinary ELF is not an empty sash program.
+out=$("$SASH" --extract /bin/true source 2>art.err); source_rc=$?
+err=$(<art.err)
+out2=$("$SASH" --extract /bin/true manifest 2>art.err); manifest_rc=$?
+err2=$(<art.err)
+out3=$("$SASH" --extract /bin/true ir 2>art.err); ir_rc=$?
+err3=$(<art.err)
+[[ $source_rc != 0 && $manifest_rc != 0 && $ir_rc != 0 \
+   && -z $out && -z $out2 && -z $out3 \
+   && $err == *"no .sash_source section found"* \
+   && $err2 == *"no .sash_manifest section found"* \
+   && $err3 == *"no .sash_ir section found"* ]]; chk 109.10
+
+timeout "$SPEC_TIMEOUT" "$SASH" -c '/bin/true' -o artifact-fixture >/dev/null 2>art.err
+fixture_rc=$?
+corrupt_artifact() {
+    python3 - "$1" "$2" <<'PY'
+import struct
+import sys
+from pathlib import Path
+
+section, fault = sys.argv[1:]
+image = bytearray(Path("artifact-fixture").read_bytes())
+assert image[:6] == b"\x7fELF\x02\x01", "fixture must be little-endian ELF64"
+shoff = struct.unpack_from("<Q", image, 40)[0]
+shentsize, shnum, shstrndx = struct.unpack_from("<HHH", image, 58)
+strings_header = shoff + shentsize * shstrndx
+offset, size = struct.unpack_from("<QQ", image, strings_header + 24)
+names = image[offset:offset + size]
+for index in range(shnum):
+    header = shoff + shentsize * index
+    name_offset = struct.unpack_from("<I", image, header)[0]
+    name = names[name_offset:].split(b"\0", 1)[0]
+    if name != (".sash_" + section).encode():
+        continue
+    offset, size = struct.unpack_from("<QQ", image, header + 24)
+    assert size > 0, "fixture artifact must be nonempty"
+    if fault == "unreadable":
+        struct.pack_into("<Q", image, header + 24, len(image) + 1)
+    elif fault == "utf8":
+        image[offset] = 255
+    else:
+        raise AssertionError("unknown fixture fault")
+    Path("artifact-broken").write_bytes(image)
+    break
+else:
+    raise AssertionError("fixture is missing " + section)
+PY
+}
+
+# A present but broken section is never an absent/empty artifact.
+ok=1; checked=0
+for section in source ir manifest; do
+    corrupt_artifact "$section" unreadable; patch_rc=$?
+    out=$("$SASH" --extract artifact-broken "$section" 2>art.err); rc=$?
+    err=$(<art.err)
+    [[ $fixture_rc = 0 && $patch_rc = 0 && $rc != 0 && -z $out \
+       && $err == *".sash_$section: unreadable:"* ]] || ok=0
+    checked=$((checked + 1))
+done
+[[ $ok = 1 && $checked = 3 ]]; chk 109.11
+
+ok=1; checked=0
+for section in source ir manifest; do
+    corrupt_artifact "$section" utf8; patch_rc=$?
+    out=$("$SASH" --extract artifact-broken "$section" 2>art.err); rc=$?
+    err=$(<art.err)
+    [[ $fixture_rc = 0 && $patch_rc = 0 && $rc != 0 && -z $out \
+       && $err == *".sash_$section: invalid UTF-8:"* ]] || ok=0
+    checked=$((checked + 1))
+done
+[[ $ok = 1 && $checked = 3 ]]; chk 109.12
 
 # cli.27-29 `native_output_path`: with no `-o`, the binary is named from the
 # input. The spec runner always passes `-o`, so all three branches here were

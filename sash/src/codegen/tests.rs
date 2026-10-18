@@ -185,8 +185,8 @@ fn lower_test_unary(
         "p?" => emit_shape_test(builder, module, externs.is_print, ptr, len),
         "g?" => emit_shape_test(builder, module, externs.is_graph, ptr, len),
         // INVARIANT: the parser's is_unary_test_op gates which operators reach
-        // here; each one it accepts is either handled above (-n/-z/i?/p?/g?/-t)
-        // or is a file test below, except -v/-o/-R which validate rejects
+        // here; each one it accepts is either handled above (-n/-z/i?/p?/g?)
+        // or is a file test below, except -v/-o/-R/-t which validate rejects
         // (SB5028, unsupported_unary_test_hint). A None here means a
         // parser/codegen drift, not user input.
         other => match file_test_op_code(other) {
@@ -377,5 +377,65 @@ fn lower_test_binary(
         // rejected by SB5019, and synthesized loop bounds use the `(( ))`
         // arith path (transform/pipelines.rs::emit_for_bound), not tests.
         other => panic!("ICE: unimplemented test operator: {}", other),
+    }
+}
+
+#[cfg(test)]
+mod invariant_tests {
+    use super::*;
+    use crate::codegen::entry::{compile_ssa, Embedded};
+    use crate::ssa::{SsaInst, SsaProgram, TestOrigin};
+
+    fn assert_test_ice(test: SsaTest, expected: &str) {
+        let mut ssa = SsaProgram::new();
+        let entry = ssa.new_block("entry");
+        ssa.block_mut(entry)
+            .insts
+            .push(SsaInst::Test(test, TestOrigin::Plain));
+        let payload = std::panic::catch_unwind(|| {
+            compile_ssa(
+                &ssa,
+                Embedded {
+                    source: "",
+                    ir: "",
+                    manifest: "",
+                },
+                false,
+            )
+        })
+        .expect_err("an unsupported SSA test must not compile");
+        let message = payload
+            .downcast_ref::<String>()
+            .map(String::as_str)
+            .or_else(|| payload.downcast_ref::<&str>().copied())
+            .expect("the invariant reports its claim");
+        assert_eq!(message, expected);
+    }
+
+    #[test]
+    fn unsupported_unary_operators_are_backend_invariant_violations() {
+        for op in ["-v", "-o", "-R", "-t", "unknown"] {
+            assert_test_ice(
+                SsaTest::Unary {
+                    op: op.into(),
+                    operand: SsaValue::Literal("operand".into()),
+                },
+                &format!("ICE: unimplemented unary test operator: {op}"),
+            );
+        }
+    }
+
+    #[test]
+    fn unsupported_binary_operators_are_backend_invariant_violations() {
+        for op in ["-eq", "-ne", "-lt", "-le", "-gt", "-ge", "unknown"] {
+            assert_test_ice(
+                SsaTest::Binary {
+                    left: SsaValue::Literal("1".into()),
+                    op: op.into(),
+                    right: SsaTestRhs::Value(SsaValue::Literal("2".into())),
+                },
+                &format!("ICE: unimplemented test operator: {op}"),
+            );
+        }
     }
 }

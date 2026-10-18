@@ -632,10 +632,12 @@ a compiled program always carries the source it was built from, its IR
 capture, and its manifest (DD#45, DD#109). The section defaults to `source`,
 so the original `--extract <binary>` spelling is unchanged.
 
-Because a zero-length section does not survive into the linked ELF, a program
-with no external dependencies has no `.sash_manifest` at all; that reads back
-as an empty manifest rather than an error (scoped by `.sash_source`, so a
-non-sash binary still fails).
+Because zero-length sections do not survive into the linked ELF, an empty
+program loses both its source and manifest sections. The mandatory,
+nonempty `.sash_ir` identifies that output; `.sash_source` also recognizes
+older outputs. Absent source/manifest sections then read back as empty,
+while an ordinary ELF, a missing IR, or a present unreadable/non-UTF-8
+artifact still fails. The native codegen bundle requires all three texts.
 
 Embedding the IR on every compile is what keeps the exhaustive emitter honest:
 a variant that fails to render breaks every build instead of only the rare

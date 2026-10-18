@@ -56,7 +56,7 @@ done
 # profile pool and an uninstrumented compiler. (This comment used to say
 # sash-rt was "not measurable this way at all"; instrumentation always worked,
 # only the at-exit write was missing. Journal 320.)
-IGNORE='(sash-rt|sash-convert|sash-expand|/tests/|tests\.rs|main\.rs)'
+. contrib/cov-common.sh
 
 eval "$(cargo $toolchain llvm-cov show-env --sh $branch 2>/dev/null)"
 
@@ -120,12 +120,13 @@ bash spec/run.sh >/dev/null 2>&1
 
 n=$(ls target/*.profraw 2>/dev/null | wc -l)
 echo "profraws from sweep: $n"
-cargo $toolchain llvm-cov report --release $branch --ignore-filename-regex "$IGNORE"
+cargo $toolchain llvm-cov report --release $branch "${COV_REPORT_SCOPE[@]}"
 
 if [ -n "$lcov" ]; then
     mkdir -p "$(dirname "$lcov")"
     cargo $toolchain llvm-cov report --release $branch \
-        --ignore-filename-regex "$IGNORE" --lcov --output-path "$lcov"
+        "${COV_REPORT_SCOPE[@]}" --lcov --output-path "$lcov"
+    cov_check_scope "$lcov"
     echo "lcov written to $lcov"
 fi
 

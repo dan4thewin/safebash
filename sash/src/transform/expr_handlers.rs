@@ -12,13 +12,14 @@ pub(super) fn handle_command_substitution(expr: &Expr, state: &VersionState) -> 
         // placeholder at runtime.
         return cmdsub_body_value(expr);
     };
-    if let Some(name) = name_opt {
-        if is_statement_builtin(BuiltinCmd::from_name(&name)) {
-            return cmdsub_body_value(expr);
-        }
-        if let Some(v) = resolve_single_cmdsubst(name, c, state) {
-            return v;
-        }
+    if name_opt
+        .as_deref()
+        .is_some_and(|name| is_statement_builtin(BuiltinCmd::from_name(name)))
+    {
+        return cmdsub_body_value(expr);
+    }
+    if let Some(v) = name_opt.and_then(|name| resolve_single_cmdsubst(name, c, state, expr)) {
+        return v;
     }
     let argv = build_argv(c, state);
     // DD#55: `$(- cmd)` suppresses the captured command's exit check (no abort
@@ -156,14 +157,16 @@ fn subst_is_suppressed(kind: &StmtKind) -> bool {
 /// (DD#81 execution-order gate); a native intrinsic → its value; otherwise
 /// record the external use (for the SB5041 collision) and return `None` so the
 /// caller emits a plain external `CmdSubst`.
-fn resolve_single_cmdsubst(name: String, c: &Command, state: &VersionState) -> Option<SsaValue> {
+fn resolve_single_cmdsubst(
+    name: String,
+    c: &Command,
+    state: &VersionState,
+    expr: &Expr,
+) -> Option<SsaValue> {
     if state.function_bodies.contains_key(name.as_str()) {
         return Some(func_call_capture(name, c, state));
     }
-    if let Some(var) = nullary_stateful_slot(&name, c) {
-        return Some(SsaValue::Var(state.lookup(var)));
-    }
-    if let Some(v) = try_native_intrinsic(&name, c, state) {
+    if let Some(v) = try_capture_intrinsic(&name, c, state, expr) {
         return Some(v);
     }
     if let Some(v) = wrong_arity_backstop(&name, c) {
@@ -173,6 +176,21 @@ fn resolve_single_cmdsubst(name: String, c: &Command, state: &VersionState) -> O
         state.externally_used.borrow_mut().insert(name);
     }
     None
+}
+
+fn try_capture_intrinsic(
+    name: &str,
+    c: &Command,
+    state: &VersionState,
+    expr: &Expr,
+) -> Option<SsaValue> {
+    if let Some(var) = nullary_stateful_slot(name, c) {
+        return Some(SsaValue::Var(state.lookup(var)));
+    }
+    if name == "echo" {
+        return Some(echo_concat(c, state, expr));
+    }
+    try_native_intrinsic(name, c, state)
 }
 
 /// The stateful-slot intrinsics (`$(status)`, `$(getcpid)`) resolve to a
@@ -302,7 +320,8 @@ fn unwrap_subst_wrappers(mut s: &StmtKind) -> (&StmtKind, bool) {
 
 /// Native-builtin shortcut for `$(name args…)` — the DD#41 collection
 /// intrinsics, the DD#65 string sugar (delegated to
-/// `try_string_intrinsic`), and echo (DD#14). Returns `None` for any other
+/// `try_string_intrinsic`). Echo needs its original body and resolves above.
+/// Returns `None` for any other
 /// builtin (or unknown name), letting the caller fall through to the regular
 /// `CmdSubst` argv path.
 fn try_native_intrinsic(name: &str, c: &Command, state: &VersionState) -> Option<SsaValue> {
@@ -313,7 +332,6 @@ fn try_native_intrinsic(name: &str, c: &Command, state: &VersionState) -> Option
         // rejected SB5025 in validate, and `for … in $(keys m)` uses the splat
         // path — so it falls through here (was a dead `try_keys_intrinsic`).
         BuiltinCmd::Join => Some(join_intrinsic(c, state)),
-        BuiltinCmd::Echo => Some(echo_concat(c, state)),
         // DD#126: `$(wait)` / `$(wait $p)`. The operand is an ordinary command
         // argument here, so it lowers through `expr_to_value` like any other.
         BuiltinCmd::Wait => Some(wait_value(
@@ -528,21 +546,28 @@ fn join_intrinsic(c: &Command, state: &VersionState) -> SsaValue {
     }
 }
 
-fn echo_concat(c: &Command, state: &VersionState) -> SsaValue {
-    if c.args.is_empty() {
+fn echo_concat(c: &Command, state: &VersionState, expr: &Expr) -> SsaValue {
+    let values: Vec<_> = c.args.iter().map(|arg| expr_to_value(arg, state)).collect();
+    // A runtime-sized argument list cannot be a scalar concatenation.
+    // Preserve the original body, including any suppression wrapper.
+    if values
+        .iter()
+        .any(|value| matches!(value, SsaValue::ElideEmpty { .. }))
+    {
+        return cmdsub_body_value(expr);
+    }
+    let mut values = values.into_iter();
+    let Some(first) = values.next() else {
         return SsaValue::Literal(String::new());
+    };
+    let mut parts = vec![first];
+    for value in values {
+        parts.push(SsaValue::Literal(" ".to_string()));
+        parts.push(value);
     }
-    let mut parts: Vec<SsaValue> = Vec::new();
-    for (i, arg) in c.args.iter().enumerate() {
-        if i > 0 {
-            parts.push(SsaValue::Literal(" ".to_string()));
-        }
-        parts.push(expr_to_value(arg, state));
-    }
-    if parts.len() == 1 {
-        parts.remove(0)
-    } else {
-        SsaValue::Concat(parts)
+    match parts.len() {
+        1 => parts.remove(0),
+        _ => SsaValue::Concat(parts),
     }
 }
 pub(super) fn handle_structured_arithmetic(

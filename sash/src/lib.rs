@@ -793,16 +793,6 @@ fn dump_sash_source(args: &[String]) {
     match read_artifact_section(&data, section) {
         Ok(source) => print!("{source}"),
         Err(msg) => {
-            // A zero-length section does not survive into the linked ELF, so
-            // a program with no external dependencies has no .sash_manifest
-            // at all. That is an empty manifest, not a missing artifact —
-            // reporting it as an error would make the common case look
-            // broken. `.sash_source` distinguishes the two: a binary that
-            // has one is a sash binary whose manifest is genuinely empty,
-            // and anything else still errors.
-            if section == ".sash_manifest" && read_artifact_section(&data, ".sash_source").is_ok() {
-                return;
-            }
             eprintln!("sash: {binary_path}: {msg}");
             std::process::exit(1);
         }
@@ -817,16 +807,27 @@ fn read_artifact_section(image: &[u8], section: &str) -> Result<String, String> 
     use object::read::{Object, ObjectSection};
     let obj =
         object::read::File::parse(image).map_err(|e| format!("not a valid object file: {e}"))?;
-    let found = obj
-        .sections()
-        .find(|s| s.name() == Ok(section))
-        .ok_or_else(|| format!("no {section} section found"))?;
+    let Some(found) = obj.sections().find(|s| s.name() == Ok(section)) else {
+        if empty_artifact_section(&obj, section) {
+            return Ok(String::new());
+        }
+        return Err(format!("no {section} section found"));
+    };
     let body = found
         .data()
         .map_err(|e| format!("{section}: unreadable: {e}"))?;
-    Ok(std::str::from_utf8(body)
-        .unwrap_or("<binary data>")
-        .to_string())
+    std::str::from_utf8(body)
+        .map(str::to_owned)
+        .map_err(|e| format!("{section}: invalid UTF-8: {e}"))
+}
+
+/// The linker drops empty source/manifest sections; the mandatory, nonempty IR
+/// also identifies an empty-source binary. Source keeps older outputs readable.
+fn empty_artifact_section(obj: &object::read::File<'_>, section: &str) -> bool {
+    use object::read::Object;
+    matches!(section, ".sash_source" | ".sash_manifest")
+        && (obj.section_by_name(".sash_source").is_some()
+            || obj.section_by_name(".sash_ir").is_some())
 }
 
 struct ParsedCli<'a> {

@@ -2565,40 +2565,41 @@ fn emit_splat_disposition_c(
 /// With `-n` flag (first arg): suppress trailing newline.
 /// Emit the write(2)s for one echo argument (a Concat writes each part), OR-ing
 /// any failure into `{t}_wf`. Split out to keep emit_echo under the gate.
-/// DD#84/#91: emit one `echo` arg — a `sep` (leading space, when not first) plus
-/// the value. An elide arg (`${x:~}`/`${x:!}`) writes its separator + value only
+/// DD#84/#91: emit one `echo` arg with a separator only after a runtime argument.
+/// An elide arg (`${x:~}`/`${x:!~}`) writes its separator + value only
 /// when non-empty (matching the argv builder); it only appears as a whole arg
 /// (SB5046 forbids it in a concat).
-fn emit_echo_arg(e: &mut Emit, t: &str, arg: &SsaValue, sep: bool, types: &VarTypes) {
+fn emit_echo_arg(e: &mut Emit, t: &str, arg: &SsaValue, types: &VarTypes) {
     if let SsaValue::ElideEmpty { source, .. } = arg {
-        emit_echo_elide_arg(e, t, source, sep, types);
+        emit_echo_elide_arg(e, t, source, types);
         return;
     }
-    if sep {
-        writeln!(e.out, "    {t}_wf |= (sash_write(1, \" \", 1) < 0);", t = t).unwrap();
-    }
+    writeln!(
+        e.out,
+        "    if ({t}_has_arg) {t}_wf |= (sash_write(1, \" \", 1) < 0);"
+    )
+    .unwrap();
     emit_echo_write_arg(e, t, arg, types);
+    writeln!(e.out, "    {t}_has_arg = 1;").unwrap();
 }
 
-/// DD#84/#91: write an elide (`:~`/`:!`) echo arg in C — the (separator + value)
+/// DD#84/#91: write an elide (`:~`/`:!~`) echo arg in C — the (separator + value)
 /// is emitted only when the value is non-empty.
-fn emit_echo_elide_arg(e: &mut Emit, t: &str, source: &SsaValue, sep: bool, types: &VarTypes) {
+fn emit_echo_elide_arg(e: &mut Emit, t: &str, source: &SsaValue, types: &VarTypes) {
     let (ptr, len) = lower_value_as_str(e, source, types);
     writeln!(e.out, "    if ({len} > 0) {{", len = len).unwrap();
-    if sep {
-        writeln!(
-            e.out,
-            "        {t}_wf |= (sash_write(1, \" \", 1) < 0);",
-            t = t
-        )
-        .unwrap();
-    }
+    writeln!(
+        e.out,
+        "        if ({t}_has_arg) {t}_wf |= (sash_write(1, \" \", 1) < 0);"
+    )
+    .unwrap();
     writeln!(
         e.out,
         "        {t}_wf |= (sash_write(1, {ptr}, {len}) < 0);",
         t = t
     )
     .unwrap();
+    writeln!(e.out, "        {t}_has_arg = 1;").unwrap();
     writeln!(e.out, "    }}").unwrap();
 }
 
@@ -2628,9 +2629,9 @@ fn emit_echo(e: &mut Emit, args: &[SsaValue], checked: bool, types: &VarTypes) {
     // write fails aborts with `<argv0>: echo: write error: <reason>`; caught /
     // suppressed echo just sets a nonzero status.
     let t = e.fresh();
-    writeln!(e.out, "    i64 {t}_wf = 0;", t = t).unwrap();
-    for (i, arg) in print_args.iter().enumerate() {
-        emit_echo_arg(e, &t, arg, i > 0, types);
+    writeln!(e.out, "    i64 {t}_wf = 0, {t}_has_arg = 0;").unwrap();
+    for arg in print_args {
+        emit_echo_arg(e, &t, arg, types);
     }
 
     if !suppress_newline {
@@ -2814,7 +2815,7 @@ fn test_rhs_as_str(e: &mut Emit, right: &SsaTestRhs, types: &VarTypes) -> CStr {
 }
 
 /// Lower a unary test: -n / -z (and implicit-? bare word), the DD#93
-/// content-shape tests, `-t fd`, and the stat(2) file tests.
+/// content-shape tests, and the stat(2) file tests.
 ///
 /// The file-test opcodes come from codegen's `file_test_op_code` rather than
 /// a second table here, so the two backends cannot answer the same operator
@@ -2831,7 +2832,7 @@ fn lower_test_unary(e: &mut Emit, op: &str, operand: &SsaValue, types: &VarTypes
         "g?" => format!("sash_is_graph({}, {})", ptr, len),
         // INVARIANT: mirrors codegen/tests.rs::lower_unary. The parser's
         // is_unary_test_op gates which operators reach here; each one is
-        // either handled above or is a file test, except -v/-o/-R which
+        // either handled above or is a file test, except -v/-o/-R/-t which
         // validate rejects (SB5028). A None means parser/backend drift, not
         // user input — panic rather than emit a program that silently
         // answers "false" to every file test.

@@ -7,7 +7,7 @@
 set -eu
 . common.sh
 setup filetest
-plan=46
+plan=47
 echo "1..$plan" >&3
 
 set +e
@@ -116,6 +116,14 @@ run_sash 'if [[ -S plain ]]; then echo yes; else echo no; fi'
 # -O: owned by the effective uid.  -a: historical alias of -e.
 run_sash 'if [[ -O plain ]]; then echo yes; else echo no; fi'
 [[ $rc = 0 && $out = "yes" && -z $err ]]; chk ft.28
+
+# -G compares the file's group with the effective gid; a missing path is false.
+printf 'x\n' > groupf
+chgrp "$(id -g)" groupf
+group_rc=$?
+run_sash 'if [[ -G groupf ]]; then echo yes; else echo no; fi
+if [[ -G nosuch ]]; then echo yes; else echo no; fi'
+[[ $group_rc = 0 && $rc = 0 && $out = $'yes\nno' && -z $err ]]; chk ft.47
 
 # ── D. stat-mode bits: -u / -g / -k ─────────────────────────────────
 # The codegen table has implemented these as codes 13/12/10 since it was

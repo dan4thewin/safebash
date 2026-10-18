@@ -62,9 +62,9 @@ pub fn compile_to_object(
         compile_ssa(
             ssa,
             Embedded {
-                source: Some(bash_source),
-                ir: Some(&ir_text),
-                manifest: Some(&manifest_text),
+                source: bash_source,
+                ir: &ir_text,
+                manifest: &manifest_text,
             },
             enable_trace,
         )
@@ -88,12 +88,11 @@ fn panic_payload_message(payload: Box<dyn std::any::Any + Send>) -> String {
 
 /// The verbatim artifacts embedded as ELF note sections by a native
 /// compile: the source (DD#45) plus the IR capture and the manifest
-/// (DD#109). Bundled rather than passed as three adjacent `Option<&str>`
-/// parameters, which would be trivially transposable at the call site.
+/// (DD#109). Every native compile supplies all three, including empty bodies.
 pub struct Embedded<'a> {
-    pub source: Option<&'a str>,
-    pub ir: Option<&'a str>,
-    pub manifest: Option<&'a str>,
+    pub source: &'a str,
+    pub ir: &'a str,
+    pub manifest: &'a str,
 }
 
 /// The manifest body: one external dependency path per line. Byte-identical
@@ -109,7 +108,6 @@ fn manifest_text(ssa: &SsaProgram) -> String {
 }
 
 pub fn compile_ssa(program: &SsaProgram, embedded: Embedded, trace: bool) -> Vec<u8> {
-    let bash_source = embedded.source;
     let reachable = program.reachable();
     let shared_flags = settings::Flags::new(settings::builder());
     let isa = cranelift_native::builder()
@@ -123,8 +121,7 @@ pub fn compile_ssa(program: &SsaProgram, embedded: Embedded, trace: bool) -> Vec
 
     super::setup::define_heap_size(&mut module);
     let externs = super::setup::declare_runtime_functions(&mut module);
-    let (literals, space_id, nl_id) =
-        super::setup::intern_literals(&mut module, program, bash_source, trace);
+    let (literals, space_id, nl_id) = super::setup::intern_literals(&mut module, program, trace);
     let mut literals = literals;
     // ── Build main() ───────────────────────────────────────────
     let main_sig = Signature::new(CallConv::SystemV);
@@ -257,15 +254,18 @@ fn emit_all_blocks(mut ctx: EmitCtx) {
     }
 }
 
-/// Return the block to emit, or None if it should be skipped
-/// (unreachable, or a function block that was constant-folded).
+/// Unbound function templates have no incoming edge. A reachable one is a
+/// lowering regression, not a block that can safely be left unfilled.
 fn block_to_emit<'a, 'b>(ctx: &EmitCtx<'a, 'b>, ssa_id: BlockId) -> Option<&'a BasicBlock> {
     if !ctx.reachable.contains(&ssa_id) {
         return None;
     }
     let block = ctx.program.block(ssa_id);
     if block.label.starts_with("fn_") {
-        return None;
+        panic!(
+            "ICE: unbound function template {} is reachable",
+            block.label
+        );
     }
     Some(block)
 }
@@ -415,12 +415,8 @@ fn emit_branch_outcome_trace(
     let false_label = ctx.program.block(false_target).label.as_str();
     let true_msg = format!("+ {} \u{2192} {}\n", kind, true_label);
     let false_msg = format!("+ {} \u{2192} {}\n", kind, false_label);
-    let (Some(&true_id), Some(&false_id)) = (
-        ctx.literals.get(true_msg.as_str()),
-        ctx.literals.get(false_msg.as_str()),
-    ) else {
-        return;
-    };
+    let true_id = super::values::intern_or_declare(ctx.literals, &true_msg);
+    let false_id = super::values::intern_or_declare(ctx.literals, &false_msg);
 
     let trace_gv = ctx
         .module
@@ -473,9 +469,6 @@ fn embed_artifacts(product: &mut cranelift_object::ObjectProduct, embedded: &Emb
         (&b".sash_ir"[..], embedded.ir),
         (&b".sash_manifest"[..], embedded.manifest),
     ] {
-        let Some(body) = body else {
-            continue;
-        };
         let section_id =
             product
                 .object
@@ -547,5 +540,21 @@ mod tests {
 
         let diags = result.expect_err("codegen must not succeed on a dangling entry");
         assert_eq!(diags.len(), 1, "one diagnostic per caught ICE: {diags:?}");
+    }
+
+    #[test]
+    fn a_reachable_function_template_is_an_invariant_violation() {
+        let program = crate::ir::Program {
+            statements: Vec::new(),
+            end_block: None,
+        };
+        let mut ssa = crate::ssa::SsaProgram::new();
+        ssa.new_block("fn_unbound");
+        let diags = compile_to_object(&program, &ssa, "", false)
+            .expect_err("an unbound function template must not be emitted or silently skipped");
+        assert_eq!(
+            diags,
+            ["ICE: unbound function template fn_unbound is reachable"]
+        );
     }
 }

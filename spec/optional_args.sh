@@ -7,7 +7,7 @@ set -eu
 . common.sh
 setup optional_args
 set +e
-plan=72
+plan=86
 echo "1..$plan" >&3
 
 # ── Optional trailing args via `:-` (a trailing `${args[i]:-D}` is optional) ──
@@ -459,6 +459,81 @@ run_sash 'fn f { : @args; for v in @args; do echo "<$v>"; done }
 array e=(q)
 f @e x'
 [[ $rc = 0 && $out = $'<q>\n<x>' && -z $err ]]; chk 84.72
+
+# A skipped argument must not reserve a separator. Keep these values dynamic
+# so constant folding cannot remove the elision before either backend sees it.
+export SASH_ECHO_EMPTY="" SASH_ECHO_KEPT=kept SASH_ECHO_ZERO=0
+
+run_sash 'str x=$(getenv SASH_ECHO_EMPTY)
+echo ${x:!~} tail'
+[[ $rc = 0 && $out = tail && -z $err && -z $rerr ]]; chk 84.73
+
+run_sash 'str x=$(getenv SASH_ECHO_KEPT)
+echo ${x:!~} tail'
+[[ $rc = 0 && $out = "kept tail" && -z $err && -z $rerr ]]; chk 84.74
+
+run_sash 'str x=$(getenv SASH_ECHO_EMPTY)
+echo ${x:!~} ${x:!~} tail'
+[[ $rc = 0 && $out = tail && -z $err && -z $rerr ]]; chk 84.75
+
+run_sash 'str x=$(getenv SASH_ECHO_EMPTY)
+str y=$(getenv SASH_ECHO_KEPT)
+echo ${x:!~} ${y:!~} tail'
+[[ $rc = 0 && $out = "kept tail" && -z $err && -z $rerr ]]; chk 84.76
+
+run_sash 'str x=$(getenv SASH_ECHO_EMPTY)
+echo ${x:!~} ${x:!~} >echo-empty'
+bytes=$(od -An -tx1 echo-empty | tr -d ' \n')
+[[ $rc = 0 && $bytes = 0a && -z $err && -z $rerr ]]; chk 84.77
+
+run_sash 'str x=$(getenv SASH_ECHO_EMPTY)
+echo ${x:!~} ${x:!} tail'
+[[ $rc = 0 && $out = " tail" && -z $err && -z $rerr ]]; chk 84.78
+
+run_sash 'str x=$(getenv SASH_ECHO_EMPTY)
+echo ${x:!} ${x:!~} tail'
+[[ $rc = 0 && $out = " tail" && -z $err && -z $rerr ]]; chk 84.79
+
+run_sash 'str x=$(getenv SASH_ECHO_ZERO)
+echo ${x:!~} tail'
+[[ $rc = 0 && $out = "0 tail" && -z $err && -z $rerr ]]; chk 84.80
+
+run_sash_under 'str x=$(getenv SASH_ECHO_EMPTY)
+echo ${x:!~} tail | /bin/cat' \
+    strace -qq -o echo-pipeline.log -e trace=process
+[[ $rc = 0 && $out = tail && -z $err && -z $rerr ]] \
+    && grep -Eq '(clone3?|fork|vfork)\(.*= [1-9][0-9]*$' echo-pipeline.log; chk 84.81
+
+run_sash_under 'str x=$(getenv SASH_ECHO_EMPTY)
+str y=$(echo ${x:!~} tail)
+echo "<$y>"' strace -qq -o echo-capture.log -e trace=process
+[[ $rc = 0 && $out = "<tail>" && -z $err && -z $rerr ]] \
+    && grep -q '^execve(' echo-capture.log \
+    && ! grep -Eq '(clone3?|fork|vfork)\(' echo-capture.log; chk 84.82
+
+# Fail only the first write, then let later writes succeed: neither join edge
+# may erase the earlier failure, and a failed token still owns its separator.
+run_sash_under 'str x=$(getenv SASH_ECHO_EMPTY)
+if echo before ${x:!~} tail { echo missed } else { echo caught }' \
+    strace -qq -o echo-write.log -e trace=write -e inject=write:error=EIO:when=1
+[[ $rc = 0 && $out = $' tail\ncaught' && -z $err && -z $rerr ]] \
+    && grep -Eq '^write\(1, "before", 6\).*EIO.*INJECTED' echo-write.log; chk 84.83
+
+run_sash_under 'str x=$(getenv SASH_ECHO_KEPT)
+if echo before ${x:!~} tail { echo missed } else { echo caught }' \
+    strace -qq -o echo-write.log -e trace=write -e inject=write:error=EIO:when=1
+[[ $rc = 0 && $out = $' kept tail\ncaught' && -z $err && -z $rerr ]] \
+    && grep -Eq '^write\(1, "before", 6\).*EIO.*INJECTED' echo-write.log; chk 84.84
+
+run_sash 'str x=$(getenv SASH_ECHO_KEPT)
+str y=$(echo ${x:!~} tail)
+echo "<$y>"'
+[[ $rc = 0 && $out = "<kept tail>" && -z $err && -z $rerr ]]; chk 84.85
+
+run_sash 'str x=$(getenv SASH_ECHO_EMPTY)
+str y=$(:; echo ${x:!~} tail)
+echo "<$y>"'
+[[ $rc = 0 && $out = "<tail>" && -z $err && -z $rerr ]]; chk 84.86
 
 set -e
 tally
