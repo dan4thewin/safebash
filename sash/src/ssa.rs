@@ -109,7 +109,7 @@ pub enum BuiltinCmd {
     // ─── Shell builtins recognized by codegen / emit_janet ───
     Echo,
     /// `[[ ... ]]` — recognized at IR level, becomes `SsaInst::Test`
-    /// in SSA. Only appears as a `Command` in legacy / fallback paths.
+    /// in SSA. Must not reach codegen as a `Command`.
     Test,
     /// `:` — no-op.
     Noop,
@@ -123,8 +123,7 @@ pub enum BuiltinCmd {
     /// per DD#55 unless caught/suppressed.
     Close,
     /// `attest VAR [[ ... ]]` — recognized at IR level, becomes
-    /// `SsaInst::Attest` in SSA. Only appears as a `Command` in
-    /// fallback paths (no TestExpr arg).
+    /// `SsaInst::Attest` in SSA. Must not reach codegen as a `Command`.
     Attest,
     Read,
     /// `mapfile` / `readarray` — RECOGNITION ONLY. DD#99 retired both and

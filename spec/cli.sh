@@ -10,7 +10,7 @@ set -eu
 . common.sh
 setup cli
 set +e
-plan=75
+plan=78
 echo "1..$plan" >&3
 
 SASH=$(command -v "${SASH:-sash}")
@@ -609,6 +609,32 @@ err=$(<c.err)
 c_body=${out#*'int main('}
 [[ $rc = 0 && -z $err && $out == *'int main('* \
    && $c_body != *'sash_itoa('* && $c_body != *'sash_atoi('* ]]; chk loopint.9
+
+# A present but non-executable reader is not a missing installation.
+mkdir denied-reader
+: > denied-reader/unsquashfs
+chmod 644 denied-reader/unsquashfs
+PATH="$PWD/denied-reader" $SASH --sysroot="$PWD/denied.squashfs" -c 'echo yes' \
+    >denied.out 2>denied.err; rc=$?
+sr_err=$(<denied.err)
+[[ $rc != 0 && ! -s denied.out \
+   && $sr_err == *'could not run unsquashfs: Permission denied'* \
+   && $sr_err != *SB[0-9][0-9][0-9][0-9]* ]]; chk cli.43
+
+# Host metadata must distinguish a symlink loop just as the image reader does.
+ln -s host-loop-b host-loop-a
+ln -s host-loop-a host-loop-b
+$SASH -c "$PWD/host-loop-a" >host-loop.out 2>host-loop.err; rc=$?
+sr_err=$(<host-loop.err)
+[[ $rc != 0 && ! -s host-loop.out && $sr_err == *SB5095* \
+   && $sr_err == *'symlink chain does not terminate'* ]]; chk cli.44
+
+# A real linker failure cannot announce success or retain the temporary object.
+mkdir blocked-link-output
+$SASH -c 'echo yes' -o blocked-link-output >link-fail.out 2>link-fail.err; rc=$?
+[[ $rc != 0 && ! -s link-fail.out \
+   && $(<link-fail.err) == *'sash: linking failed'* \
+   && ! -e blocked-link-output.o && -d blocked-link-output ]]; chk cli.45
 
 set -e
 tally

@@ -74,12 +74,8 @@ fn command_is_pure(
 ) -> bool {
     let name = match &cmd.name.kind {
         crate::ir::ExprKind::Literal(s) => s.as_str(),
-        // A head this pass cannot read as a literal is a head it cannot prove
-        // anything about. Unreachable in practice — SB5011 ("a command name
-        // must be a literal path") rejects every non-literal head, verified
-        // against a quoted name, a bare variable and a braced expansion — so
-        // this is a backstop, kept because guessing here would silently
-        // mis-buffer a capture rather than fail.
+        // Parsed/resolved heads are Literal (DD#23). A broader API input
+        // cannot be proved safe for buffering; declining is conservative.
         _ => return false,
     };
     // DD#23: `resolve` rewrites an external head to an absolute path, and
@@ -104,16 +100,66 @@ fn command_is_pure(
     // statement about the suite and a misleading one about the code — the
     // shape simply had no spec. Specs cap.19-cap.21 cover it now, cap.20
     // being the one that fails if this walk is removed.
-    if let Some(body) = bodies.get(name) {
-        let owned = name.to_string();
-        if !visiting.insert(owned.clone()) {
-            return false;
-        }
-        let pure = stmts_are_pure(body, bodies, visiting);
-        visiting.remove(&owned);
-        return pure;
+    let Some(body) = bodies.get(name) else {
+        // A builtin or intrinsic: its stdout writes funnel through `sash_write`.
+        return true;
+    };
+    let owned = name.to_string();
+    if !visiting.insert(owned.clone()) {
+        return false;
     }
-    // A builtin or intrinsic: in-process, so its stdout writes funnel through
-    // `sash_write` and the buffer catches them.
-    true
+    let pure = stmts_are_pure(body, bodies, visiting);
+    visiting.remove(&owned);
+    pure
+}
+
+#[cfg(test)]
+mod api_contract_tests {
+    use super::*;
+    use crate::ir::{Expr, ExprKind, Span};
+
+    fn call(kind: ExprKind) -> Statement {
+        Statement {
+            kind: StmtKind::Command(Command {
+                name: Expr {
+                    kind,
+                    span: Span::default(),
+                },
+                args: vec![],
+            }),
+            span: Span::default(),
+        }
+    }
+
+    #[test]
+    fn nonliteral_heads_cannot_be_proved_pure() {
+        for kind in [
+            ExprKind::SimpleExpansion("command".into()),
+            ExprKind::SingleQuoted("echo".into()),
+            ExprKind::DoubleQuoted(vec![Expr {
+                kind: ExprKind::Literal("echo".into()),
+                span: Span::default(),
+            }]),
+        ] {
+            assert!(!capture_body_is_pure(&[call(kind)], &HashMap::new()));
+        }
+    }
+
+    #[test]
+    fn recursive_function_graphs_are_impure() {
+        for callee in ["outer", "inner"] {
+            let mut bodies = HashMap::new();
+            bodies.insert("outer".into(), vec![call(ExprKind::Literal(callee.into()))]);
+            if callee == "inner" {
+                bodies.insert(
+                    "inner".into(),
+                    vec![call(ExprKind::Literal("outer".into()))],
+                );
+            }
+            assert!(!capture_body_is_pure(
+                &[call(ExprKind::Literal("outer".into()))],
+                &bodies
+            ));
+        }
+    }
 }

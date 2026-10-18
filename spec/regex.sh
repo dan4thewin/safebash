@@ -6,7 +6,7 @@
 set -eu
 . common.sh
 setup regex
-plan=91
+plan=92
 echo "1..$plan" >&3
 
 set +e
@@ -621,6 +621,11 @@ str v=ab
 str w=${v:s/a/1/,s/b/2/g}
 echo "[$x][$w]"'
 [[ $rc = 0 && $out = "[bAaA][12]" && -z $err ]]; chk 63.fl7
+
+run_sash 'str subject=abc
+if [[ $subject =~ $'"'"'a\x00b'"'"' ]] { echo matched }'
+[[ $rc != 0 && -z $out && $err == *SB5023* \
+   && $err == *'pattern contains null byte'* ]]; chk rxcompile.1
 
 set -e
 tally

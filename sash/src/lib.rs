@@ -1160,3 +1160,51 @@ mod invariant_tests {
         );
     }
 }
+
+#[cfg(test)]
+mod native_error_tests {
+    #[test]
+    fn codegen_errors_exit_with_annotated_diagnostics() {
+        const CHILD: &str = "SASH_TEST_NATIVE_CODEGEN_ERROR_CHILD";
+        if std::env::var_os(CHILD).is_some() {
+            let program = crate::ir::Program {
+                statements: vec![],
+                end_block: None,
+            };
+            let mut ssa = crate::ssa::SsaProgram::new();
+            let entry = ssa.new_block("entry");
+            ssa.block_mut(entry)
+                .insts
+                .push(crate::ssa::SsaInst::command("join", vec![], vec![], false));
+            super::compile_native(
+                "native-codegen-fixture.sash",
+                "",
+                &program,
+                &ssa,
+                Some("/dev/null/not-created"),
+                false,
+                &[],
+            );
+            unreachable!("the native driver must exit on a codegen error");
+        }
+        let output = std::process::Command::new(std::env::current_exe().expect("unit test binary"))
+            .args([
+                "--exact",
+                "native_error_tests::codegen_errors_exit_with_annotated_diagnostics",
+                "--nocapture",
+            ])
+            .env(CHILD, "1")
+            .output()
+            .expect("run isolated native-driver failure");
+        assert_eq!(output.status.code(), Some(1), "{output:?}");
+        let stderr = String::from_utf8(output.stderr).expect("diagnostic UTF-8");
+        assert!(
+            stderr.contains(
+                "native-codegen-fixture.sash:ICE: Join is an expression intrinsic resolved in transform"
+            ),
+            "{stderr}"
+        );
+        let stdout = String::from_utf8(output.stdout).expect("test-runner UTF-8");
+        assert!(!stdout.contains("(static binary)"), "{stdout}");
+    }
+}

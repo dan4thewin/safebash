@@ -234,9 +234,9 @@ impl SsaInst {
 
     /// Dispatch an `SsaInst::Command` on its `BuiltinCmd` kind.
     ///
-    /// SECURITY: Every BuiltinCmd variant is handled. Variants not listed
-    /// explicitly fall through to `handle_general_command`, which dispatches
-    /// on `name` (printf, len/keys/join intrinsics, exec lookup, …).
+    /// **Total over `BuiltinCmd` on purpose — do not add a wildcard.** Only
+    /// `Other` reaches external-command emission; rewritten/lowered builtins
+    /// must not become bare exec targets when a compiler invariant breaks.
     #[allow(clippy::too_many_arguments)]
     fn emit_command_kind(
         &self,
@@ -253,7 +253,6 @@ impl SsaInst {
             BuiltinCmd::Echo => {
                 return self.emit_echo(args, redirects, *checked, builder, module, ctx)
             }
-            BuiltinCmd::Test => ice_unreachable_command(kind, name),
             BuiltinCmd::NegateTestResult => self.emit_negate_test_result(builder, ctx),
             BuiltinCmd::SetTestFromStatus => self.emit_set_test_from_status(builder, ctx),
             BuiltinCmd::SetTestFromPipe => {
@@ -288,15 +287,33 @@ impl SsaInst {
                 return super::inst_handlers::handle_close(args, *checked, builder, module, ctx)
             }
             BuiltinCmd::Wait => return self.emit_wait(args, builder, module, ctx),
-            // All other builtins (read, mapfile, printf, attest, etc.) and
-            // external commands / user functions fall through to the general
-            // command handler, which dispatches on `name` for the remaining
-            // cases (printf, len/keys/join intrinsics, exec lookup, …).
-            _ => {
+            BuiltinCmd::Other => {
                 return super::inst_handlers::handle_general_command(
                     name, args, redirects, checked, builder, module, ctx,
                 );
             }
+            BuiltinCmd::Write
+            | BuiltinCmd::Len
+            | BuiltinCmd::Strlen
+            | BuiltinCmd::Keys
+            | BuiltinCmd::Join
+            | BuiltinCmd::Sub
+            | BuiltinCmd::Gsub
+            | BuiltinCmd::MatchAll
+            | BuiltinCmd::Toupper
+            | BuiltinCmd::Tolower
+            | BuiltinCmd::Basename
+            | BuiltinCmd::Dirname
+            | BuiltinCmd::Argv
+            | BuiltinCmd::Test
+            | BuiltinCmd::Attest
+            | BuiltinCmd::Read
+            | BuiltinCmd::Mapfile
+            | BuiltinCmd::Break
+            | BuiltinCmd::Continue
+            | BuiltinCmd::Return
+            | BuiltinCmd::Signal
+            | BuiltinCmd::Unset => ice_unreachable_command(kind, name),
         }
         false
     }
@@ -1396,6 +1413,42 @@ fn emit_readline_body(
 mod invariant_tests {
     use super::*;
     use crate::codegen::entry::{compile_ssa, Embedded};
+
+    #[test]
+    fn unlowered_builtins_cannot_fall_through_to_external_commands() {
+        let groups: &[(&[&str], &str)] = &[
+            (&["write"], "rewritten before codegen"),
+            (
+                &[
+                    "len", "strlen", "keys", "join", "sub", "gsub", "matchall", "toupper",
+                    "tolower", "basename", "dirname", "argv",
+                ],
+                "expression intrinsic resolved in transform",
+            ),
+            (
+                &[
+                    "[[",
+                    "attest",
+                    "read",
+                    "readline",
+                    "mapfile",
+                    "readarray",
+                    "break",
+                    "continue",
+                    "return",
+                    "signal",
+                    "unset",
+                ],
+                "lowered to its own instruction",
+            ),
+        ];
+        for (names, expected) in groups {
+            for name in *names {
+                let message = native_ice(vec![SsaInst::command(*name, vec![], vec![], false)]);
+                assert!(message.contains(expected), "{name}: {message}");
+            }
+        }
+    }
 
     fn native_ice(insts: Vec<SsaInst>) -> String {
         let mut ssa = SsaProgram::new();
