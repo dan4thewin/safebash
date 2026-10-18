@@ -3641,8 +3641,7 @@ fn emit_dup_fd(
     target: &crate::ir::Expr,
     guard: Option<&str>,
 ) -> RedirectFailC {
-    let target_fd =
-        crate::ir::dup_target_fd(target).expect("SB4048 requires a literal descriptor number");
+    let target_fd = crate::ir::validated_fd_number(target);
     let t = e.fresh();
     let call = format!("(sash_dup2({target_fd}, {fd}) < 0)");
     let guarded = match guard {

@@ -623,6 +623,37 @@ fn resolve_test_expr(t: &mut TestExpr, funcs: &HashSet<String>, diags: &mut Vec<
 mod shadowed_arm_tests {
     use super::*;
 
+    #[test]
+    fn internal_builtin_denotations_are_statements() {
+        for kind in [
+            BuiltinCmd::NegateTestResult,
+            BuiltinCmd::SetTestFromStatus,
+            BuiltinCmd::SetTestFromPipe,
+            BuiltinCmd::LetExit,
+            BuiltinCmd::ForkBackground,
+            BuiltinCmd::StoreBgPid,
+            BuiltinCmd::TrapSignal,
+            BuiltinCmd::SignalFlag,
+            BuiltinCmd::SignalCheckpoint,
+            BuiltinCmd::TableDelete,
+            BuiltinCmd::TableDeleteIdx,
+        ] {
+            assert_eq!(
+                builtin_denotation(kind),
+                Some(ArithDenotation::Statement),
+                "{kind:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn path_heads_are_not_candidates_for_path_resolution() {
+        let funcs = HashSet::new();
+        for name in ["/bin/true", "./true", "bin/true"] {
+            assert!(!is_resolvable_external(name, &funcs), "{name}");
+        }
+    }
+
     fn cmd(kind: ExprKind) -> Command {
         Command {
             name: Expr {

@@ -780,6 +780,27 @@ mod invariant_tests {
     use super::*;
 
     #[test]
+    fn export_and_multiple_flags_survive_whole_program_serialization() {
+        let rendered = emit_ir(&Program {
+            statements: vec![Statement {
+                kind: StmtKind::Declaration(Declaration {
+                    keyword: DeclKeyword::Export,
+                    var_type: VarType::String,
+                    flags: vec!["-a".into(), "-r".into()],
+                    assignments: vec![],
+                }),
+                span: crate::ir::Span::new(7, 1),
+            }],
+            end_block: None,
+        });
+        assert!(
+            rendered.contains("{:kind :declaration :line 7 :keyword :export "),
+            "{rendered}"
+        );
+        assert!(rendered.contains(":flags [\"-a\" \"-r\"]"), "{rendered}");
+    }
+
+    #[test]
     fn expr_composite_rejects_every_word_form() {
         let forms = [
             ExprKind::Literal("a".into()),

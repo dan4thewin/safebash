@@ -2013,6 +2013,45 @@ pub(crate) fn pipeline_num_pipes(n: usize, capture_read_fd: bool) -> usize {
 }
 
 #[cfg(test)]
+mod api_contract_tests {
+    use super::*;
+
+    #[test]
+    fn only_authorial_commands_may_take_redirects() {
+        for kind in [
+            BuiltinCmd::NegateTestResult,
+            BuiltinCmd::SetTestFromStatus,
+            BuiltinCmd::SetTestFromPipe,
+            BuiltinCmd::LetExit,
+            BuiltinCmd::ForkBackground,
+            BuiltinCmd::StoreBgPid,
+            BuiltinCmd::TrapSignal,
+            BuiltinCmd::SignalFlag,
+            BuiltinCmd::SignalCheckpoint,
+            BuiltinCmd::TableDelete,
+            BuiltinCmd::TableDeleteIdx,
+        ] {
+            assert!(!kind.may_take_redirect(), "{kind:?}");
+        }
+        assert!(BuiltinCmd::Other.may_take_redirect());
+    }
+
+    #[test]
+    #[should_panic(expected = "SsaInst::internal requires a compiler-internal variant")]
+    fn authorial_builtin_cannot_use_the_internal_constructor() {
+        SsaInst::internal(BuiltinCmd::Echo, vec![], false);
+    }
+
+    #[test]
+    #[should_panic(
+        expected = "non-integer substring part `1x` reached codegen; type_check (SB4030) should have rejected it"
+    )]
+    fn malformed_rendered_substring_part_is_an_invariant_failure() {
+        substring_part_int("1x");
+    }
+}
+
+#[cfg(test)]
 mod unlowerable_value_tests {
     use super::{unlowerable_scalar_value, SsaValue};
 

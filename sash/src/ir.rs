@@ -1393,27 +1393,14 @@ impl Redirect {
 ///
 /// Totally decidable: a dup target is a literal fd number or the parser
 /// already rejected it (SB4048), so there is no dynamic case to be
-/// conservative about. An unreadable one is treated as *not* the pipe, which
-/// only ever makes this stricter — and cannot arise from parsed source.
-///
-/// **Total over `RedirectOp` on purpose — do not add a wildcard.** A new
-/// operator moves fds around and must say so here, or a capture silently
-/// becomes empty.
+/// conservative about. An invalid target is a broken compiler invariant,
+/// not evidence that a descriptor no longer holds the pipe.
 pub fn redirects_preserve_capture<'a>(redirects: impl IntoIterator<Item = &'a Redirect>) -> bool {
     // The fds still pointing at the capture pipe. Starts as just stdout.
     let mut holding: Vec<i64> = vec![1];
     for r in redirects {
         let fd = r.resolved_fd();
-        let now_holds = match r.op {
-            // The fd is reattached to a file — it no longer holds the pipe.
-            RedirectOp::Write | RedirectOp::Append | RedirectOp::Read | RedirectOp::ReadWrite => {
-                false
-            }
-            // The fd becomes whatever the source fd currently is.
-            RedirectOp::DupOutput | RedirectOp::DupInput => {
-                dup_target_fd(&r.target).is_some_and(|src| holding.contains(&src))
-            }
-        };
+        let now_holds = redirect_inherits_capture(r, &holding);
         holding.retain(|&held| held != fd);
         if now_holds {
             holding.push(fd);
@@ -1422,13 +1409,28 @@ pub fn redirects_preserve_capture<'a>(redirects: impl IntoIterator<Item = &'a Re
     !holding.is_empty()
 }
 
-/// The fd a `>&`/`<&` names. `reject_nonfd_dup_target` pins this to a literal
-/// run of digits at parse time, so the `None` arm is unreachable from source.
-pub(crate) fn dup_target_fd(target: &Expr) -> Option<i64> {
-    match &target.kind {
-        ExprKind::Literal(s) => s.parse::<i64>().ok(),
-        _ => None,
+/// **Total over `RedirectOp` on purpose — do not add a wildcard.** A new
+/// operator must say whether its destination inherits the capture pipe.
+fn redirect_inherits_capture(r: &Redirect, holding: &[i64]) -> bool {
+    match r.op {
+        RedirectOp::Write | RedirectOp::Append | RedirectOp::Read | RedirectOp::ReadWrite => false,
+        RedirectOp::DupOutput | RedirectOp::DupInput => {
+            holding.contains(&validated_fd_number(&r.target))
+        }
     }
+}
+
+/// The literal fd named by `>&`/`<&` (SB4048) or `close` (SB4052): decimal
+/// digits in the nonnegative i32 range. A broken invariant must not silently
+/// remove a capture writer or omit a descriptor from the private-fd exclusion set.
+pub(crate) fn validated_fd_number(target: &Expr) -> i64 {
+    let parsed = match &target.kind {
+        ExprKind::Literal(s) if !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit()) => {
+            s.parse::<i32>().ok()
+        }
+        _ => None,
+    };
+    i64::from(parsed.expect("SB4048/SB4052 validated a literal descriptor in 0..2147483647"))
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -1467,9 +1469,7 @@ pub(crate) fn redirect_referenced_fds(redirects: &[Redirect]) -> Vec<i64> {
     for redir in redirects {
         fds.push(i64::from(redir.fd.unwrap_or(redir.op.default_fd())));
         if matches!(redir.op, RedirectOp::DupOutput | RedirectOp::DupInput) {
-            fds.push(
-                dup_target_fd(&redir.target).expect("SB4048 requires a literal descriptor number"),
-            );
+            fds.push(validated_fd_number(&redir.target));
         }
     }
     fds.sort_unstable();
@@ -1496,7 +1496,7 @@ fn collect_stmt_fds(stmt: &Statement, fds: &mut std::collections::BTreeSet<i64>)
                 let fd = c
                     .args
                     .first()
-                    .and_then(dup_target_fd)
+                    .map(validated_fd_number)
                     .expect("SB4052 requires a literal descriptor number");
                 fds.insert(fd);
             }
@@ -2032,8 +2032,8 @@ pub fn arith_brief(expr: &ArithExpr) -> String {
         // so the disagreement resolves that way rather than by softening it.
         ArithExpr::PreIncDec { .. } => unreachable!("{}", PREFIX_INCDEC_INVARIANT),
 
-        // Elided on purpose — see the note on totality above. `Paren` is what
-        // makes `if (( y + (x *= 2) ))` read `mutation y + ...` (spec 31.63).
+        // Elided on purpose: a parenthesized non-mutation is quoted as `...`
+        // by both statement and non-final comma diagnostics (irbrief.1–2).
         ArithExpr::DollarVar(_)
         | ArithExpr::UnaryOp { .. }
         | ArithExpr::Ternary { .. }
@@ -2065,7 +2065,8 @@ pub enum IrUnaryArithOp {
 #[cfg(test)]
 mod invariant_tests {
     use super::{
-        arith_brief, mutation_target_in, readline_target, ArithExpr, Expr, ExprKind, Span,
+        arith_brief, mutation_target_in, readline_target, validated_fd_number, ArithExpr, Expr,
+        ExprKind, Span,
     };
 
     fn word(kind: ExprKind) -> Expr {
@@ -2124,6 +2125,34 @@ mod invariant_tests {
         let args = [word(ExprKind::SimpleExpansion("x".into()))];
         let _ = readline_target(&args);
     }
+
+    #[test]
+    fn duplicate_descriptors_cannot_have_unvalidated_targets() {
+        for kind in [
+            ExprKind::SimpleExpansion("fd".into()),
+            ExprKind::DoubleQuoted(vec![word(ExprKind::Literal("1".into()))]),
+            ExprKind::Literal(String::new()),
+            ExprKind::Literal("not-a-descriptor".into()),
+            ExprKind::Literal("-1".into()),
+            ExprKind::Literal("-0".into()),
+            ExprKind::Literal("+1".into()),
+            ExprKind::Literal("2147483648".into()),
+            ExprKind::Literal("9223372036854775808".into()),
+        ] {
+            let target = word(kind);
+            let payload = std::panic::catch_unwind(|| validated_fd_number(&target))
+                .expect_err("an invalid dup target must not become an optional descriptor");
+            let message = payload
+                .downcast_ref::<String>()
+                .cloned()
+                .or_else(|| payload.downcast_ref::<&str>().map(|s| s.to_string()))
+                .expect("invariant text");
+            assert!(
+                message.contains("SB4048/SB4052 validated a literal descriptor in 0..2147483647"),
+                "{message}"
+            );
+        }
+    }
 }
 
 /// Totality arms that no *program* reaches, because an earlier pass rejects
@@ -2138,6 +2167,30 @@ mod invariant_tests {
 #[cfg(test)]
 mod shadowed_arm_tests {
     use super::*;
+
+    #[test]
+    fn malformed_attest_shapes_are_not_recognized() {
+        let word = |kind| Expr {
+            kind,
+            span: Span::new(1, 1),
+        };
+        let name = || word(ExprKind::Literal("x".into()));
+        let predicate = word(ExprKind::Test(TestExpr::Unary {
+            op: "-n".into(),
+            operand: Box::new(name()),
+        }));
+        for args in [
+            vec![name(), name()],
+            vec![
+                word(ExprKind::SimpleExpansion("x".into())),
+                predicate.clone(),
+            ],
+            vec![predicate.clone()],
+            vec![name(), name(), name(), name(), predicate],
+        ] {
+            assert!(classify_attest(&args).is_none(), "{args:?}");
+        }
+    }
 
     /// `walk_arith_subscripts`' `SubscriptAssign` arm — `a[i] = v` as an
     /// arithmetic assignment target. Cold because both callers

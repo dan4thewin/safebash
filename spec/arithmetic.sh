@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup arithmetic
-plan=472
+plan=474
 echo "1..$plan" >&3
 
 set +e
@@ -2409,6 +2409,19 @@ run_sash 'int p=1; if ((p! =0)) { : }'
 [[ $rc != 0 && -z $out && $err == *"unexpected token after arithmetic expression"* ]]; chk arithadj.5
 run_sash 'int p=1; ((p- =2)); echo $p'
 [[ $rc != 0 && -z $out && $err == *"expected an operand in arithmetic expression, found \`=\`"* ]]; chk arithadj.6
+
+# The non-mutation being diagnosed can contain an intentionally elided node.
+run_sash 'int x=1
+if (( (x + 1), x > 0 )) { echo yes }
+echo $x'
+[[ $rc != 0 && -z $out && $err == *SB5007* \
+   && $err == *'non-final comma expression ... must be a mutation'* ]]; chk irbrief.1
+
+run_sash 'int x=1
+(( (x + 1) == 2 ))
+echo $x'
+[[ $rc != 0 && -z $out && $err == *SB5007* \
+   && $err == *'comparison ... == 2 as bare statement has no effect'* ]]; chk irbrief.2
 
 set -e
 tally

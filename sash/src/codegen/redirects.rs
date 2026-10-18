@@ -280,8 +280,7 @@ fn emit_dup_fd(
     module: &mut ObjectModule,
     externs: &ExternFuncs,
 ) -> Value {
-    let target_fd =
-        crate::ir::dup_target_fd(target).expect("SB4048 requires a literal descriptor number");
+    let target_fd = crate::ir::validated_fd_number(target);
     let target_val = builder
         .ins()
         .iconst(cranelift_codegen::ir::types::I64, target_fd);

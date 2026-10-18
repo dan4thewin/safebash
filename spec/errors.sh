@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup errors
-plan=429
+plan=430
 echo "1..$plan" >&3
 
 set +e
@@ -1056,6 +1056,13 @@ echo $(join a "")'
 run_sash 'array a=(x y)
 echo $(join a)'
 [[ $rc = 0 && $out = "x y" && -z $err ]]; chk jsep.7
+
+run_sash 'array a=(x y)
+str sep=-
+echo $(join a "${sep}tail")'
+[[ $rc != 0 && -z $out && $err == *SB5074* \
+   && $err == *'separator is fixed at compile time'* \
+   && $err == *'an expansion cannot be used here'* ]]; chk jsep.8
 
 # ── a string intrinsic on an int operand is a type error (SB4030) ──
 # `$(toupper $n)` on an `int n=42` used to yield "42" — the implicit coercion
