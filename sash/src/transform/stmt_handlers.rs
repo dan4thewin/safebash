@@ -51,9 +51,8 @@ pub(super) fn handle_command(
     super::cmd_handlers::handle_function_call_or_command(name, c, stmt, ssa, state, block)
 }
 
-/// Dispatch a `BuiltinCmd` to its handler. Most builtins always
-/// consume the statement (return `Some`); `Test` and `Argv` may
-/// return `None` to fall through to the regex / general handler.
+/// Dispatch a statement builtin to its handler. A selected builtin consumes
+/// the statement; unrelated kinds fall through to general command handling.
 fn try_builtin(
     kind: BuiltinCmd,
     name: &str,
@@ -65,7 +64,7 @@ fn try_builtin(
 ) -> Option<BlockId> {
     match kind {
         BuiltinCmd::Attest => Some(handle_attest_stmt(c, ssa, state, *block)),
-        BuiltinCmd::Test => try_test_arg_capture(c, ssa, state, *block),
+        BuiltinCmd::Test => Some(handle_test_command(c, ssa, state, *block)),
         BuiltinCmd::Break => Some(handle_break_stmt(c, state, ssa, *block)),
         BuiltinCmd::Continue => Some(handle_continue_stmt(c, state, ssa, *block)),
         BuiltinCmd::Return => Some(handle_return_stmt(c, ssa, state, block)),
@@ -104,9 +103,7 @@ fn try_handle_match_into(
     let array = super::expressions::fill_target_name(&c.args[2], state);
     // DD#63: the out-array form fills (and auto-declares) its trailing
     // array, for singular `match` exactly as for `matchall`.
-    if c.args.len() == 3 {
-        autodeclare_bulk_target(&array, false, ssa, state, block);
-    }
+    autodeclare_bulk_target(&array, ssa, state, block);
     ssa.block_mut(block).insts.push(SsaInst::MatchInto {
         subject,
         pattern,
@@ -116,31 +113,28 @@ fn try_handle_match_into(
     Some(block)
 }
 
-/// `[[ … ]]` attached as an argument (the parser may emit `test` /
-/// `[` commands whose first/only arg carries the `Test` expression
-/// kind). The first matching arg wins. Returns `None` when no
-/// `ExprKind::Test` is found so the caller falls through.
-fn try_test_arg_capture(
+/// `parse_test_command` produces exactly one Test operand. Once dispatch has
+/// selected `[[`, declining or ignoring extra operands would discard it.
+fn handle_test_command(
     c: &Command,
     ssa: &mut SsaProgram,
     state: &mut VersionState,
-    block: BlockId,
-) -> Option<BlockId> {
-    for arg in &c.args {
-        if let ExprKind::Test(test_expr) = &arg.kind {
-            let mut block = block;
-            let ssa_test = test_to_ssa(test_expr, state);
-            // A `$(f)` operand must be captured into a temp before the test —
-            // the capture may open a new block, so continue in whichever the
-            // lift leaves us in.
-            let ssa_test = super::functions::lift_test_captures(ssa_test, ssa, state, &mut block);
-            ssa.block_mut(block)
-                .insts
-                .push(SsaInst::Test(ssa_test, TestOrigin::Plain));
-            return Some(block);
-        }
-    }
-    None
+    mut block: BlockId,
+) -> BlockId {
+    let [Expr {
+        kind: ExprKind::Test(test_expr),
+        ..
+    }] = c.args.as_slice()
+    else {
+        unreachable!("a selected [[ command requires exactly one Test operand");
+    };
+    let ssa_test = test_to_ssa(test_expr, state);
+    // A capture may open a new block, so emit the test where the lift ends.
+    let ssa_test = super::functions::lift_test_captures(ssa_test, ssa, state, &mut block);
+    ssa.block_mut(block)
+        .insts
+        .push(SsaInst::Test(ssa_test, TestOrigin::Plain));
+    block
 }
 
 /// `var s/pattern/replacement/flags` — bash-style sed substitution
@@ -287,69 +281,56 @@ fn handle_attest_stmt(
     //
     // `attest` is a reserved word (`Tok::Attest`), so every occurrence in
     // statement position goes through `parse_attest`, which fixes the shape
-    // before lowering — a malformed one is SB4014 at parse time, and quoting
-    // the name (`"attest" x`) makes it an ordinary command instead. There is
-    // no path by which an unclassifiable `attest` Command reaches here.
+    // before lowering — a malformed one is SB4014 at parse time, and SB5096
+    // rejects a quoted head. No unclassifiable `attest` Command reaches here.
     let Some((form, pred)) = classify_attest(&c.args) else {
         unreachable!("`attest` shape is fixed by parse_attest before lowering (SB4014)")
     };
-    {
-        // DD#93 Part D: `attest SOURCE (( TARGET = SOURCE ))`.
-        if let (AttestForm::Scalar { var }, AttestPredicate::ArithConvert { target, value }) =
-            (&form, &pred)
-        {
-            let (var, target) = (var.to_string(), target.to_string());
-            let value = (*value).clone();
+    let test = match pred {
+        // DD#93 Part D: the classifier requires one scalar conversion source.
+        AttestPredicate::ArithConvert { target, value } => {
+            let var = literal_name_of(&c.args[0]).to_string();
+            let target = target.to_string();
+            let value = value.clone();
             let span = c.args.last().map(|a| a.span).unwrap_or_default();
             push_attest_arith_convert(ssa, state, block, &var, &target, &value, span);
             return block;
         }
-        // Total over `AttestPredicate` (DD#116 property 2): a new predicate
-        // variant is a compile error here rather than a silently dropped
-        // `attest`. `ArithConvert` is unreachable in this position because
-        // `classify_attest_convert` only ever pairs it with a single-name
-        // lead, which the arm above has already consumed.
-        let test = match pred {
-            AttestPredicate::Test(test) => test,
-            AttestPredicate::ArithConvert { .. } => {
-                unreachable!("ArithConvert is only produced with AttestForm::Scalar")
-            }
-        };
-        let test = test.clone();
-        match form {
-            AttestForm::Scalar { var } => {
-                let var = var.to_string();
-                let source = state.lookup(&var);
-                // Resolve the predicate's operands BEFORE defining the target
-                // version, so `$var` in the test binds to the source (the
-                // value being attested). emit_attest evaluates the test before
-                // the target slot exists. See dispatch.rs::emit_attest.
-                let ssa_test = test_to_ssa(&test, state);
-                let target = state.define(&var);
-                ssa.block_mut(block).insts.push(SsaInst::Attest {
-                    target,
-                    source,
-                    test: ssa_test,
-                });
-            }
-            AttestForm::Indexed { binder, array } => {
-                push_attest_all(
-                    ssa,
-                    state,
-                    block,
-                    array,
-                    vec![binder.to_string()],
-                    test,
-                    false,
-                );
-            }
-            AttestForm::Map { key, val, map } => {
-                let binders = vec![key.to_string(), val.to_string()];
-                push_attest_all(ssa, state, block, map, binders, test, true);
-            }
+        AttestPredicate::Test(test) => test.clone(),
+    };
+    match form {
+        AttestForm::Scalar { var } => {
+            let var = var.to_string();
+            let source = state.lookup(&var);
+            // Resolve the predicate's operands BEFORE defining the target
+            // version, so `$var` in the test binds to the source (the
+            // value being attested). emit_attest evaluates the test before
+            // the target slot exists. See dispatch.rs::emit_attest.
+            let ssa_test = test_to_ssa(&test, state);
+            let target = state.define(&var);
+            ssa.block_mut(block).insts.push(SsaInst::Attest {
+                target,
+                source,
+                test: ssa_test,
+            });
         }
-        block
+        AttestForm::Indexed { binder, array } => {
+            push_attest_all(
+                ssa,
+                state,
+                block,
+                array,
+                vec![binder.to_string()],
+                test,
+                false,
+            );
+        }
+        AttestForm::Map { key, val, map } => {
+            let binders = vec![key.to_string(), val.to_string()];
+            push_attest_all(ssa, state, block, map, binders, test, true);
+        }
     }
+    block
 }
 
 /// DD#61: emit a statement-form attest-all — `AttestAll` (exits on a failing
@@ -551,7 +532,7 @@ fn handle_argv(
     // Auto-declare (DG 2026-07-08): if `a` isn't already an array, create
     // the versioned slot the same way `array a=()` does, so the fill and later
     // len/iteration/element reads agree with no prior `array a=()`.
-    autodeclare_bulk_target(&array, false, ssa, state, block);
+    autodeclare_bulk_target(&array, ssa, state, block);
     // Define a LATER version than the autodeclare's empty-array Assign, so the
     // SSA taint backstop resolves this array to the fill's taint, not to the
     // clean empty array the declaration produced.
@@ -587,7 +568,7 @@ fn handle_keys(
     };
     let source = super::expressions::resolve_args_name(literal_name_of(map), state);
     let array = super::expressions::resolve_args_name(literal_name_of(dest), state);
-    autodeclare_bulk_target(&array, false, ssa, state, block);
+    autodeclare_bulk_target(&array, ssa, state, block);
     // A LATER version than the autodeclare's empty-array Assign, so the SSA
     // taint backstop resolves the array to this fill rather than to the clean
     // empty array the declaration produced. (Both are clean here — see
@@ -601,14 +582,12 @@ fn handle_keys(
 }
 
 /// Auto-declare a bulk-read target array (mirrors argv, DG 2026-07-08): if
-/// `name` isn't already a collection, emit the empty-array/-map Assign that
+/// `name` isn't already a collection, emit the empty-array Assign that
 /// creates the versioned `name_0` slot — so the fill (`argv`/`read`) and any
 /// later `len`/iteration/element read resolve without a prior `array
-/// name=()`. Without this the codegen `find_array_slot` panics (ICE). `as_map`
-/// creates an associative array.
+/// name=()`. Without this the codegen `find_array_slot` panics (ICE).
 pub(super) fn autodeclare_bulk_target(
     name: &str,
-    as_map: bool,
     ssa: &mut SsaProgram,
     state: &mut VersionState,
     block: BlockId,
@@ -617,16 +596,11 @@ pub(super) fn autodeclare_bulk_target(
         return;
     }
     state.collections.insert(name.to_string());
-    let value = if as_map {
-        state.assoc_arrays.insert(name.to_string());
-        SsaValue::AssocArray(vec![])
-    } else {
-        SsaValue::IndexedArray(vec![])
-    };
     let target = state.define(name);
-    ssa.block_mut(block)
-        .insts
-        .push(SsaInst::Assign { target, value });
+    ssa.block_mut(block).insts.push(SsaInst::Assign {
+        target,
+        value: SsaValue::IndexedArray(vec![]),
+    });
 }
 
 /// Handle StmtKind::Pipeline — multi-command pipe chains.
@@ -1273,7 +1247,7 @@ fn append_scalar(
 
 /// `var = val` — plain assignment. If the value is a `FuncCall`
 /// substitution that needs capture, inlines the body
-/// (`try_capture_inline`); otherwise lifts any int-typed function
+/// (`capture_inline`); otherwise lifts any int-typed function
 /// calls and emits a single `Assign`.
 fn handle_plain_assign(
     a: &Assignment,
@@ -1289,9 +1263,7 @@ fn handle_plain_assign(
         // A string function's result is its stdout; inline-capture it.
         // (An `-> int` function is an IntFuncCall here, not a FuncCall — it
         // falls through to lift_int_func_calls, capturing the return value.)
-        if let Some(b) = try_capture_inline(a, fname, state, ssa, block) {
-            return b;
-        }
+        return capture_inline(a, fname, state, ssa, block);
     }
     // DD#58 / Option C: lift IntFuncCall (from `$(f)` / `$((f))`) into a temp.
     let val = lift_int_func_calls(val, ssa, state, &mut block);
@@ -1460,14 +1432,13 @@ fn peel_capture_wrappers(kind: &StmtKind) -> &StmtKind {
 /// positional params (DD#46 clears unbound slots), inlines the body
 /// with `return_target` pointing at the restore block, emits
 /// `CaptureEnd`, and restores the saved positional / local params.
-/// Returns `None` when no body is registered for `fname`.
-fn try_capture_inline(
+fn capture_inline(
     a: &Assignment,
     fname: &str,
     state: &mut VersionState,
     ssa: &mut SsaProgram,
     block: BlockId,
-) -> Option<BlockId> {
+) -> BlockId {
     let func_args = extract_func_args(&a.value);
     // Same COMMAND-ARG lowering as `inline_function_call`: `@a` splats per
     // element (DD#20/#22) and `=name` binds a slot (DD#100). This path kept
@@ -1480,8 +1451,9 @@ fn try_capture_inline(
 
 /// Inline the body of function `fname` (with `func_args` bound to its
 /// positionals) between `CaptureStart` / `CaptureEnd`, storing the captured
-/// stdout into the variable `target_name`. Returns the restore block, or
-/// `None` when no body is registered. Shared by the assignment path
+/// stdout into the variable `target_name`. Returns the restore block.
+/// A lowered function value requires a registered body. Shared by the
+/// assignment path
 /// (`s=$(f)`) and the argument-position capture lift
 /// (`echo $(f)` — string-func-capture-in-arg-ice).
 pub(super) fn capture_func_into(
@@ -1492,8 +1464,14 @@ pub(super) fn capture_func_into(
     state: &mut VersionState,
     ssa: &mut SsaProgram,
     block: BlockId,
-) -> Option<BlockId> {
-    let body = state.function_bodies.get(fname).cloned()?;
+) -> BlockId {
+    let body = state
+        .function_bodies
+        .get(fname)
+        .cloned()
+        .unwrap_or_else(|| {
+            unreachable!("string capture requires a registered function body: {fname}")
+        });
     // DD#81 Part B: arity-check the `$( )` capture path too (it now carries the
     // call's args), matching the plain-call and pipeline-stage paths.
     super::cmd_handlers::check_callee_arity(fname, &body, arg_values, state);
@@ -1541,7 +1519,7 @@ pub(super) fn capture_func_into(
     super::functions::exit_fn_body_scope(state, saved_ro);
     super::functions::restore_caller_slots(saved_slots, state);
     super::functions::restore_caller_args(saved_args, state);
-    Some(restore_block)
+    restore_block
 }
 
 /// Capture a **multi-statement / pipeline** `$(…)` body's stdout into
@@ -1618,7 +1596,7 @@ pub(super) fn capture_body_into(
 fn extract_func_args(value: &Expr) -> Vec<Expr> {
     let Some((_, _, c)) = super::expr_handlers::single_command_subst(value) else {
         unreachable!(
-            "try_capture_inline runs only when expr_to_value produced a FuncCall, \
+            "capture_inline runs only when expr_to_value produced a FuncCall, \
              and single_command_subst is the only route to one"
         )
     };
@@ -1633,11 +1611,6 @@ fn extract_func_args(value: &Expr) -> Vec<Expr> {
 /// at runtime with `sash: bug: bare command passed to sash_exec`. DG's rule
 /// for the coverage campaign: an unreachable assertion earns a unit test
 /// proving it catches what it claims.
-///
-/// `handle_attest_stmt`'s second guard — the `AttestPredicate::ArithConvert`
-/// arm after the scalar form is consumed — is deliberately *not* tested: it
-/// is a DD#116 property-2 totality arm, unreachable by construction in the
-/// same function rather than by an earlier pass, so nothing can call it.
 #[cfg(test)]
 mod invariant_tests {
     use super::*;
@@ -1665,6 +1638,11 @@ mod invariant_tests {
         let caught = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             let (mut ssa, mut state, block) = fixtures();
             match name {
+                "[[" => {
+                    state.in_condition = 1;
+                    let stmt = Statement::command(c.name.clone(), c.args.clone(), Span::new(1, 1));
+                    handle_command(&c, &stmt, &mut ssa, &mut state, block)
+                }
                 "attest" => handle_attest_stmt(&c, &mut ssa, &mut state, block),
                 "argv" => handle_argv(&c, &mut ssa, &mut state, block),
                 "keys" => handle_keys(&c, &mut ssa, &mut state, block),
@@ -1712,6 +1690,30 @@ mod invariant_tests {
     }
 
     #[test]
+    fn a_malformed_test_cannot_fall_through_or_drop_arguments() {
+        let test = Expr {
+            kind: ExprKind::Test(TestExpr::Unary {
+                op: "-n".to_string(),
+                operand: Box::new(lit("word")),
+            }),
+            span: Span::new(1, 1),
+        };
+        for args in [
+            vec![],
+            vec![lit("word")],
+            vec![lit("word"), test.clone()],
+            vec![test.clone(), lit("word")],
+            vec![test.clone(), test],
+        ] {
+            ice_on(
+                "[[",
+                args,
+                "a selected [[ command requires exactly one Test operand",
+            );
+        }
+    }
+
+    #[test]
     fn a_zero_argument_argv_is_a_loud_ice() {
         ice_on("argv", vec![], "SB4045");
     }
@@ -1732,7 +1734,7 @@ mod invariant_tests {
         ice_on("keys", vec![lit("m"), lit("k"), lit("x")], "SB5073");
     }
 
-    /// `extract_func_args` is reached only from `try_capture_inline`, which
+    /// `extract_func_args` is reached only from `capture_inline`, which
     /// runs only when `expr_to_value` produced an `SsaValue::FuncCall` — and
     /// `single_command_subst` is the only route to one. These are the four
     /// shapes it declines, so none can arrive here. The checks used to be

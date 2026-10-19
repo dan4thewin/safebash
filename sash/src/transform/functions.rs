@@ -393,10 +393,7 @@ fn lift_str_func_call(
 ) -> SsaValue {
     let temp = state.reserve_temp_name(format!("__strcap_{name}"), VarType::String);
     *block =
-        super::stmt_handlers::capture_func_into(&temp, &name, &args, &colls, state, ssa, *block)
-            .unwrap_or_else(|| {
-                unreachable!("string capture requires a registered function body: {name}")
-            });
+        super::stmt_handlers::capture_func_into(&temp, &name, &args, &colls, state, ssa, *block);
     SsaValue::Var(state.lookup(&temp))
 }
 

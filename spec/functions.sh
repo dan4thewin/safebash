@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup functions
-plan=212
+plan=214
 echo "1..$plan" >&3
 
 set +e
@@ -1533,6 +1533,22 @@ array a=(word)
 run_sash 'fn unused -> int { echo unused }
 echo ok'
 [[ $rc = 0 && $out = ok && -z $err && -z $rerr ]]; chk fnnoret.1
+
+run_sash 'fn leaf -> int { return $(( ${A[0]} + 1 )) }
+fn caller -> int { return $(leaf =A) }
+int array nums=(7)
+echo $(caller =nums)'
+[[ $rc = 0 && $out = 8 && -z $err && -z $rerr ]]; chk tailcoll.1
+
+run_sash 'fn walk -> int {
+  int n=$(($1))
+  if (( n <= 0 )) { return $(( ${A[0]} )) }
+  int next=$(( n - 1 ))
+  return $(walk $next =A)
+}
+int array nums=(7)
+echo $(walk 2 =nums)'
+[[ $rc != 0 && -z $out && $err == *SB5037* && $err == *recursion* ]]; chk tailcoll.2
 
 set -e
 tally

@@ -43,7 +43,7 @@ fn lower_newread(
             "SB5057 requires one or two read operands; a malformed read must not disappear"
         ),
     };
-    super::stmt_handlers::autodeclare_bulk_target(&target, false, ssa, state, block);
+    super::stmt_handlers::autodeclare_bulk_target(&target, ssa, state, block);
     // Define a LATER version than the autodeclare's empty-array Assign, so the
     // SSA taint backstop's max-version lookup resolves to the fill rather than
     // to the clean empty array (a naive `{name}_0` insert loses that race).
