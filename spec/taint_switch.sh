@@ -5,7 +5,7 @@
 set -eu
 . common.sh
 setup taint_switch
-plan=43
+plan=45
 echo "1..$plan" >&3
 
 set +e
@@ -124,6 +124,16 @@ run_sash 'str x=$(arg 1)
 attest x [[ -n $x ]] && echo "ok=$x"
 echo "got=$x"' ""
 [[ $rc = 0 && $out = "got=" && -z $err ]]; chk sw.25
+
+run_sash 'str s=$(arg 1)
+if attest s (( n = s * 2 )) { (( n += 3 )); echo "then:$n" }
+echo "after:$n"' 7
+[[ $rc = 0 && $out = $'then:17\nafter:17' && -z $err && -z $rerr ]]; chk ifcv.1
+
+run_sash 'str s=$(arg 1)
+if attest s (( n = s * 2 )) { echo "then:$n" }
+echo "after:$n"' bad
+[[ $rc = 0 && $out = "after:0" && -z $err && -z $rerr ]]; chk ifcv.2
 
 unset SASH_CFLAGS
 

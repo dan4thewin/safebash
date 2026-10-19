@@ -106,12 +106,6 @@ fn lower_if_attest_convert(
     let merge_block = ssa.new_block("if_attest_convert.merge");
     let pre_state = state.snapshot();
 
-    ssa.block_mut(block).terminator = Terminator::Branch {
-        true_block: then_block,
-        false_block: merge_block,
-        condition: "attest".to_string(),
-    };
-
     // Then: the conversion succeeded — retag the source clean and bind the
     // target to its value.
     let source_ref = state.lookup(source_name);
@@ -132,17 +126,18 @@ fn lower_if_attest_convert(
     let then_exit = lower_stmts(&i.then_body, ssa, state, then_block);
     ssa.block_mut(then_exit).terminator = Terminator::Goto(merge_block);
 
-    if let Some(else_body) = &i.else_body {
-        let else_block = ssa.new_block("if_attest_convert.else");
-        if let Terminator::Branch { false_block, .. } = &mut ssa.block_mut(block).terminator {
-            *false_block = else_block;
-        }
-        state.restore(&pre_state);
-        let else_exit = lower_stmts(else_body, ssa, state, else_block);
-        ssa.block_mut(else_exit).terminator = Terminator::Goto(merge_block);
-    } else {
-        state.restore(&pre_state);
-    }
+    let then_state = state.snapshot();
+    merge_attest_branches(
+        i.else_body.as_deref(),
+        ssa,
+        state,
+        block,
+        then_block,
+        merge_block,
+        then_exit,
+        &then_state,
+        &pre_state,
+    );
 
     merge_block
 }
@@ -233,24 +228,24 @@ fn lower_if_attest(
     block: BlockId,
 ) -> BlockId {
     let Some((form, pred)) = crate::ir::classify_attest(&c.args) else {
-        return block;
+        // This dispatcher has already selected attest; declining deletes the if.
+        unreachable!("a selected if-attest cannot discard its condition or branches");
     };
     // DD#93 Part D in the `if` position: the conversion is the condition.
     // The target is *declared* before the branch (so it exists, defaulted, on
     // the else path — DG 2026-09-07) and *assigned* only in the then-branch,
     // where the conversion is known to have succeeded.
-    if let (AttestForm::Scalar { var }, AttestPredicate::ArithConvert { target, value }) =
-        (&form, &pred)
-    {
-        let (var, target) = (var.to_string(), target.to_string());
-        let value = (*value).clone();
-        let span = c.args.last().map(|a| a.span).unwrap_or_default();
-        return lower_if_attest_convert(i, &var, &target, &value, span, ssa, state, block);
-    }
-    let AttestPredicate::Test(test) = pred else {
-        return block;
+    let test = match pred {
+        AttestPredicate::ArithConvert { target, value } => {
+            // The classifier requires exactly one scalar name before this predicate.
+            let var = literal_name_of(&c.args[0]).to_string();
+            let target = target.to_string();
+            let value = value.clone();
+            let span = c.args.last().map(|a| a.span).unwrap_or_default();
+            return lower_if_attest_convert(i, &var, &target, &value, span, ssa, state, block);
+        }
+        AttestPredicate::Test(test) => test.clone(),
     };
-    let test = test.clone();
 
     let kind = AttestKind::of(&form);
 
@@ -260,13 +255,6 @@ fn lower_if_attest(
     let merge_block = ssa.new_block("if_attest.merge");
 
     let pre_state = state.snapshot();
-
-    // Branch on test result
-    ssa.block_mut(block).terminator = Terminator::Branch {
-        true_block: then_block,
-        false_block: merge_block,
-        condition: "attest".to_string(),
-    };
 
     // Then branch: retag the attested entity clean (only reached on pass).
     push_attest_retag(&kind, &test, ssa, state, then_block);
@@ -291,6 +279,7 @@ fn lower_if_attest(
         ssa,
         state,
         block,
+        then_block,
         merge_block,
         then_exit,
         &then_state,
@@ -310,11 +299,19 @@ fn merge_attest_branches(
     ssa: &mut SsaProgram,
     state: &mut VersionState,
     block: BlockId,
+    then_block: BlockId,
     merge_block: BlockId,
     then_exit: BlockId,
     then_state: &std::collections::HashMap<String, u32>,
     pre_state: &std::collections::HashMap<String, u32>,
 ) {
+    let else_block = else_body.map_or(merge_block, |_| ssa.new_block("if_attest.else"));
+    ssa.block_mut(block).terminator = Terminator::Branch {
+        true_block: then_block,
+        false_block: else_block,
+        condition: "attest".to_string(),
+    };
+
     let Some(else_body) = else_body else {
         // SB5089 rejects this shape, but `--no-taint` reaches it: merge the
         // then-branch against the untaken fall-through edge from `block`.
@@ -330,10 +327,6 @@ fn merge_attest_branches(
         return;
     };
 
-    let else_block = ssa.new_block("if_attest.else");
-    if let Terminator::Branch { false_block, .. } = &mut ssa.block_mut(block).terminator {
-        *false_block = else_block;
-    }
     state.restore(pre_state);
     let else_exit = lower_stmts(else_body, ssa, state, else_block);
     ssa.block_mut(else_exit).terminator = Terminator::Goto(merge_block);
@@ -792,11 +785,6 @@ pub(super) fn lower_case(
 ) -> BlockId {
     let merge_block = ssa.new_block("dispatch.merge");
 
-    if c.items.is_empty() {
-        ssa.block_mut(block).terminator = Terminator::Goto(merge_block);
-        return merge_block;
-    }
-
     let pre_state = state.snapshot();
     let (case_blocks, case_exits, branch_states) = build_case_bodies(c, ssa, state, &pre_state);
 
@@ -806,7 +794,7 @@ pub(super) fn lower_case(
 
     build_dispatch_chain(c, ssa, state, &case_blocks, &check_blocks, merge_block);
 
-    let no_match_path = wire_no_match_path(c, ssa, state, &pre_state, &check_blocks, merge_block);
+    let no_match_path = wire_no_match_path(c, ssa, state, &pre_state, merge_block);
 
     insert_case_phis(
         ssa,
@@ -1056,7 +1044,6 @@ fn wire_no_match_path(
     ssa: &mut SsaProgram,
     state: &mut VersionState,
     pre_state: &std::collections::HashMap<String, u32>,
-    check_blocks: &[BlockId],
     merge_block: BlockId,
 ) -> Option<BranchSnapshot> {
     let has_wildcard = c.items.iter().any(is_default_arm);
@@ -1074,37 +1061,25 @@ fn wire_no_match_path(
     });
     ssa.block_mut(no_match_block).terminator = Terminator::Goto(merge_block);
 
-    redirect_merge_false_branches(ssa, check_blocks, merge_block, no_match_block);
+    redirect_merge_false_branches(ssa, merge_block, no_match_block);
 
     Some((no_match_block, no_match_snapshot))
 }
 
 /// Find every block whose terminator is `Branch { false_block: merge, .. }`
-/// and redirect the false branch to `no_match`. Considers both the
-/// dispatch check_blocks and any multi-pattern sub-blocks (which live
-/// elsewhere in `ssa.blocks`).
+/// and redirect the false branch to `no_match`, including multi-pattern
+/// sub-blocks. The merge block id uniquely identifies this dispatch's edges.
 fn redirect_merge_false_branches(
     ssa: &mut SsaProgram,
-    check_blocks: &[BlockId],
     merge_block: BlockId,
     no_match_block: BlockId,
 ) {
-    for bid in check_blocks {
-        if let Terminator::Branch { false_block, .. } = &mut ssa.block_mut(*bid).terminator {
-            if *false_block == merge_block {
-                *false_block = no_match_block;
-            }
-        }
-    }
-    let all_block_ids: Vec<usize> = ssa.blocks.keys().cloned().collect();
-    for bid in all_block_ids {
-        if check_blocks.contains(&bid) || bid == merge_block || bid == no_match_block {
+    for block in ssa.blocks.values_mut() {
+        let Terminator::Branch { false_block, .. } = &mut block.terminator else {
             continue;
-        }
-        if let Terminator::Branch { false_block, .. } = &mut ssa.block_mut(bid).terminator {
-            if *false_block == merge_block {
-                *false_block = no_match_block;
-            }
+        };
+        if *false_block == merge_block {
+            *false_block = no_match_block;
         }
     }
 }
@@ -1124,9 +1099,8 @@ fn redirect_merge_false_branches(
 /// 2. `parse_dispatch_arms` is the only place that sets `is_default: true`, and
 ///    it appends — so any default arm implies `items.len() >= 2`. A
 ///    default-only dispatch (`[[ $x == || { … } ]]`) is SB4014 at parse;
-/// 3. `lower_case` returns early when `items.is_empty()`;
-/// 4. `build_case_bodies` pushes exactly one snapshot per item;
-/// 5. `wire_no_match_path` returns `None` **iff** some item is the default.
+/// 3. `build_case_bodies` pushes exactly one snapshot per item;
+/// 4. `wire_no_match_path` returns `None` **iff** some item is the default.
 ///
 /// So with a default arm `all_paths == items.len() >= 2`, and without one
 /// `all_paths == items.len() + 1 >= 2`. `StmtKind::Case` has a single producer
@@ -1298,21 +1272,107 @@ mod invariant_tests {
         }
     }
 
-    /// The companion: the arm these guards shadow is *warm*, so it must keep
-    /// answering. `for x in a b c` has an ordinary word-list head and reaches
-    /// `_ => None` (measured count 3 in the spec suite), and `$(keys m)` is
-    /// the live array-key iteration this function exists to detect.
     #[test]
-    fn the_live_arms_still_answer() {
-        assert!(detect_array_iter(&ExprKind::Literal("a".to_string())).is_none());
-
-        let keys = ExprKind::CommandSubstitution(vec![Statement::command(
-            Expr::literal("keys", sp()),
-            vec![Expr::literal("m", sp())],
+    #[should_panic(expected = "a selected if-attest cannot discard its condition or branches")]
+    fn a_malformed_caught_attest_cannot_disappear() {
+        let condition = Statement::command(
+            Expr::literal("attest", sp()),
+            vec![
+                Expr::literal("subject", sp()),
+                Expr::literal("not-a-predicate", sp()),
+            ],
             sp(),
-        )]);
-        let it = detect_array_iter(&keys).expect("$(keys m) is an array iteration");
-        assert_eq!(it.name, "m");
-        assert!(it.use_keys);
+        );
+        let i = If {
+            condition: vec![condition],
+            then_body: vec![Statement::true_cmd(sp())],
+            elif_clauses: vec![],
+            else_body: None,
+        };
+        let mut ssa = SsaProgram::new();
+        let block = ssa.new_block("entry");
+        let mut state = VersionState::with_types(std::collections::HashMap::new());
+        lower_if(&i, &mut ssa, &mut state, block);
+    }
+
+    #[test]
+    #[should_panic(expected = "fewer than two incoming paths")]
+    fn an_empty_dispatch_cannot_silently_pass_through() {
+        let c = Case {
+            value: Expr::literal("subject", sp()),
+            items: vec![],
+            op: "==".to_string(),
+        };
+        let mut ssa = SsaProgram::new();
+        let block = ssa.new_block("entry");
+        let mut state = VersionState::with_types(std::collections::HashMap::new());
+        lower_case(&c, &mut ssa, &mut state, block);
+    }
+
+    #[test]
+    fn an_argv_slice_does_not_discard_a_substitution_body_or_wrapper() {
+        let argv = Statement::command(Expr::literal("argv", sp()), vec![], sp());
+        let suppressed = Statement {
+            kind: StmtKind::Suppressed(Box::new(argv.clone())),
+            span: sp(),
+        };
+        let redirected = Statement {
+            kind: StmtKind::Redirected(Redirected {
+                body: Box::new(argv.clone()),
+                redirects: vec![],
+            }),
+            span: sp(),
+        };
+        for stmts in [
+            vec![],
+            vec![argv, Statement::true_cmd(sp())],
+            vec![suppressed],
+            vec![redirected],
+        ] {
+            let word = Expr {
+                kind: ExprKind::CommandSubstitution(stmts),
+                span: sp(),
+            };
+            assert_eq!(argv_splat_start(&word), None, "{word:?}");
+        }
+    }
+
+    #[test]
+    fn no_match_rewiring_only_changes_matching_false_edges() {
+        let mut ssa = SsaProgram::new();
+        let check = ssa.new_block("check");
+        let other = ssa.new_block("other");
+        let goto = ssa.new_block("goto");
+        let merge = ssa.new_block("merge");
+        let no_match = ssa.new_block("no_match");
+        ssa.block_mut(check).terminator = Terminator::Branch {
+            true_block: merge,
+            false_block: merge,
+            condition: "test".to_string(),
+        };
+        ssa.block_mut(other).terminator = Terminator::Branch {
+            true_block: merge,
+            false_block: goto,
+            condition: "test".to_string(),
+        };
+        ssa.block_mut(goto).terminator = Terminator::Goto(merge);
+        redirect_merge_false_branches(&mut ssa, merge, no_match);
+
+        assert!(matches!(
+            ssa.block(check).terminator,
+            Terminator::Branch { true_block, false_block, .. }
+                if true_block == merge && false_block == no_match
+        ));
+        assert!(matches!(
+            ssa.block(other).terminator,
+            Terminator::Branch { true_block, false_block, .. }
+                if true_block == merge && false_block == goto
+        ));
+        assert!(matches!(
+            ssa.block(goto).terminator,
+            Terminator::Goto(target) if target == merge
+        ));
+        assert!(matches!(ssa.block(merge).terminator, Terminator::Return));
+        assert!(matches!(ssa.block(no_match).terminator, Terminator::Return));
     }
 }

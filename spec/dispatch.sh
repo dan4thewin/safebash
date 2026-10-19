@@ -6,7 +6,7 @@
 set -eu
 . common.sh
 setup dispatch
-plan=72
+plan=73
 echo "1..$plan" >&3
 
 set +e
@@ -293,6 +293,15 @@ then
 fi'
 [[ $rc = 0 && $out = "yes" && -z $err ]]; chk 94.30
 
+run_sash 'for word in a b c d {
+  [[ $word ==
+    a b c { echo "hit:$word" }
+    e f g { echo bad }
+  ]]
+  echo "after:$word"
+}'
+[[ $rc = 0 && $out = $'hit:a\nafter:a\nhit:b\nafter:b\nhit:c\nafter:c\nafter:d' &&
+   -z $err && -z $rerr ]]; chk cflow.1
 
 set -e
 tally

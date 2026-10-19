@@ -1,5 +1,5 @@
 ---
-title: Investigate the installed Go mk deadlock during the test gate
+title: Investigate the installed Go mk dependency scheduler deadlock
 status: open
 priority: P2
 kind: tooling
@@ -8,6 +8,7 @@ depends: []
 gates:
   - reproduce and identify the runner failure independently of Rust assertions
   - default mk test completes without a runner deadlock
+  - cov-reset completes its recursive build without a runner deadlock
 ---
 
 During journal 511's parser work, plain `timeout 900 mk test` exited 2 with
@@ -21,3 +22,14 @@ a usable serialized gate, not the root cause or that serialization repairs
 the runner. Investigate scheduling/dependency handling and obtain a minimal
 reproducer before proposing an upstream issue or a runner change. No claim
 that this is deterministic, a compiler regression, or a missing dependency.
+
+Journal 528 (2026-10-19) reproduced the same stack shape in `mk cov-reset`'s
+recursive `mk build`, immediately after building `sash-getopt`. The reset had
+already removed the instrumented release tree and profiles; its rebuild
+failed before any Rust assertion or ordinary spec sweep ran. This broadens
+the observed trigger beyond the `test` target. The full coverage exports,
+merged profiles and database had already been saved outside `target`.
+Completing the clean rebuild with `mk -p 1 build`, followed by
+`mk -p 1 test`, passed all 219/27/20 units; the full ordinary 9255-check
+sweep and no-profile canaries then passed too. The runner remains open;
+serialization is not a root-cause claim.
