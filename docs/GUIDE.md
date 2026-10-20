@@ -248,6 +248,12 @@ share the argument lifter; nested calls retain their caller's positionals,
 and splats remain splats. Pipeline arguments still execute inside their
 existing forked function stage, not in the parent (DD#81, DD#27).
 
+Suppression scopes the complete operation, including nested argument captures.
+One shared lowering scope records the starting instruction suffix and newly
+created blocks, rather than treating an inlined return block as its boundary.
+Suppressed captures retain their normal value and type; structural validation,
+taint and status-availability rules still apply (DD#55).
+
 ### Phase 3: Taint
 
 Flow-sensitive taint analysis (DD#24, DD#42–44), tracking each variable
@@ -375,6 +381,11 @@ Everything else is `SB5037`:
 | direct self tail-call — `return $(( (f …) ))` | compiled to a loop |
 | non-tail self-call — `return $(( n * (f m) ))` | **SB5037** |
 | mutual recursion — `f` calls `g` calls `f` | **SB5037** |
+
+A suppressed capture-return, `return $(- f ...)`, also remains a tail loop.
+A checked loop enters one separately lowered suppressed loop at that call;
+the initial iteration stays checked, and subsequent tail calls reuse the
+suppressed loop. No runtime call stack or suppression flag is added.
 
 The non-tail case is the one worth naming explicitly, because it is what a
 direct translation of the textbook factorial produces: the multiply happens

@@ -6,7 +6,7 @@
 set -eu
 . common.sh
 setup arith_literals
-plan=31
+plan=33
 echo "1..$plan" >&3
 
 set +e
@@ -100,6 +100,12 @@ run_sash 'x=-0xff; echo $(( ${x:?nan} + 0 ))'
 # zero
 run_sash 'x=0; echo $(( ${x:?nan} + 0 ))'
 [[ $rc = 0 && $out = "0" && -z $err ]]; chk nl.s10
+
+# Constant unary plus and numeric value operands in an intrinsic sexpr.
+run_sash 'echo "$(( +17 ))" "$(( +(0xff) ))" "$(( +(-9) ))"'
+[[ $rc = 0 && $out = "17 255 -9" && -z $err && -z $rerr ]]; chk exprcv.1
+run_sash 'echo "$(( (strlen 12345) ))" "$(( (strlen 0) ))"'
+[[ $rc = 0 && $out = "5 1" && -z $err && -z $rerr ]]; chk exprcv.2
 
 set -e
 tally

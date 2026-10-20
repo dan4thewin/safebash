@@ -64,6 +64,22 @@ discarded. `x` gets whatever output cmd produced before it exited.
 `x=$(cmd) || x=default` — explicit handling. If cmd fails, the
 `||` branch executes.
 
+### Suppression scopes the complete call (2026-10-20 correction)
+
+The prefix includes argument evaluation and the called body, including
+commands in branched bodies. It must neither miss blocks allocated after an
+inlined return block nor uncheck blocks belonging to an earlier operation.
+
+Suppression does not change the produced value or its type: a captured
+`-> int` function still yields its integer return (DD#58), and a string
+function still yields stdout. Sole value intrinsics retain their value
+position. Structural arity checks, taint and status availability remain in
+force; this is not a validation bypass.
+
+For `return $(- self ...)`, suppression starts at that tail call, including
+its arguments. Earlier work in the initial invocation stays checked; later
+iterations inherit suppression while retaining constant-stack tail lowering.
+
 ## Pipelines
 
 Pipefail always on (DD#20). Implicit check fires on the pipeline's

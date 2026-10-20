@@ -569,7 +569,7 @@ fn check_cmdsub_arity(expr: &Expr, diags: &mut Vec<Diagnostic>) {
     let ExprKind::CommandSubstitution(stmts) = &expr.kind else {
         return;
     };
-    let Some(c) = single_cmdsub_command(stmts) else {
+    let Some(c) = crate::ir::single_value_command(stmts) else {
         return;
     };
     let ExprKind::Literal(name) = &c.name.kind else {
@@ -593,7 +593,7 @@ fn check_cmdsub_arity(expr: &Expr, diags: &mut Vec<Diagnostic>) {
 ///
 /// For `match` the misdirection was costly: the repair a reader infers from
 /// the generic text is to consume the status (`|| :`), which **compiles** —
-/// `single_cmdsub_command` sees a list, not a command, so this check never
+/// `single_value_command` sees a list, not a command, so this check never
 /// runs — and captures the empty string silently. So each gets text steering
 /// to the repair that is actually right.
 ///
@@ -924,7 +924,7 @@ fn check_cmdsub_splat_operand(
     let ExprKind::CommandSubstitution(stmts) = &expr.kind else {
         return;
     };
-    let Some(c) = single_cmdsub_command(stmts) else {
+    let Some(c) = crate::ir::single_value_command(stmts) else {
         return;
     };
     check_command_splat_operand(c, collections, true, diags);
@@ -1055,20 +1055,6 @@ fn splat_collection_name(kind: &ExprKind) -> Option<&str> {
         .as_deref()
         .is_some_and(|op| op.starts_with("arrvals"))
         .then_some(pe.name.as_str())
-}
-
-/// The single command body of a `$( )` (ignoring comments), or `None` if the
-/// substitution holds a pipeline / multiple statements (not a simple intrinsic
-/// call).
-fn single_cmdsub_command(stmts: &[Statement]) -> Option<&Command> {
-    let mut cmd = None;
-    for s in stmts {
-        match &s.kind {
-            StmtKind::Command(c) if cmd.is_none() => cmd = Some(c),
-            _ => return None,
-        }
-    }
-    cmd
 }
 
 /// SB4037 (DD#74): a function used in a boolean context must supply its
@@ -3585,15 +3571,11 @@ fn expr_calls_wait(expr: &Expr) -> bool {
 /// `$(status 5)` is SB4045, a different thing from a status read — while
 /// `$(wait $p)` is an ordinary `wait`.
 fn expr_calls_intrinsic(expr: &Expr, want: &str, with_args: bool) -> bool {
-    let head: Option<&str> = if with_args {
-        match &expr.kind {
-            ExprKind::CommandSubstitution(stmts) => {
-                single_cmdsub_command(stmts).map(|c| expr_literal_str(&c.name))
-            }
-            _ => None,
+    let head = match &expr.kind {
+        ExprKind::CommandSubstitution(stmts) if with_args => {
+            crate::ir::single_value_command(stmts).map(|c| expr_literal_str(&c.name))
         }
-    } else {
-        crate::ir::intrinsic_call_name(expr)
+        _ => crate::ir::intrinsic_call_name(expr),
     };
     if head == Some(want) {
         return true;
@@ -4066,6 +4048,10 @@ fn check_cmd_at(
     pos: CmdPos,
     diags: &mut Vec<Diagnostic>,
 ) {
+    if let StmtKind::Suppressed(inner) = &stmt.kind {
+        check_cmd_at(inner, funcs, pos, diags);
+        return;
+    }
     for body in stmt.cmdsub_bodies() {
         check_cmdsub_body(body, funcs, diags);
     }

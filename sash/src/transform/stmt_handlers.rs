@@ -448,15 +448,24 @@ fn handle_return_stmt(
     } else {
         SsaValue::Literal("0".to_string())
     };
+    emit_return_value(exit_val, ssa, state, *block)
+}
+
+fn emit_return_value(
+    exit_val: SsaValue,
+    ssa: &mut SsaProgram,
+    state: &mut VersionState,
+    block: BlockId,
+) -> BlockId {
     let es_var = state.define("?");
-    ssa.block_mut(*block).insts.push(SsaInst::Assign {
+    ssa.block_mut(block).insts.push(SsaInst::Assign {
         target: es_var,
         value: exit_val,
     });
     if let Some(target) = state.return_target {
-        ssa.block_mut(*block).terminator = Terminator::Goto(target);
+        ssa.block_mut(block).terminator = Terminator::Goto(target);
     } else {
-        ssa.block_mut(*block).terminator = Terminator::Return;
+        ssa.block_mut(block).terminator = Terminator::Return;
     }
     ssa.new_block("after_return")
 }
@@ -466,6 +475,23 @@ fn handle_return_stmt(
 /// block. `None` when it is not a tail self-call (the caller lifts normally).
 fn try_int_tail_call(
     val: &SsaValue,
+    ssa: &mut SsaProgram,
+    state: &mut VersionState,
+    block: &mut BlockId,
+) -> Option<BlockId> {
+    let unwrapped;
+    let (val, suppressed) = if let SsaValue::CmdSubstBody { body } = val {
+        unwrapped = super::functions::suppressed_capture_value(body, state)?;
+        (&unwrapped, true)
+    } else {
+        (val, false)
+    };
+    lower_int_tail_call(val, suppressed, ssa, state, block)
+}
+
+fn lower_int_tail_call(
+    val: &SsaValue,
+    suppressed: bool,
     ssa: &mut SsaProgram,
     state: &mut VersionState,
     block: &mut BlockId,
@@ -483,6 +509,16 @@ fn try_int_tail_call(
     let (tf, header, aname) = state.tail_loop.clone()?;
     if *name != tf {
         return None;
+    }
+    if suppressed && state.suppressed == 0 {
+        // Only subsequent iterations are suppressed. Lower one suppressed
+        // specialization; its own self-tail calls reuse its unchecked loop.
+        let scope = super::statements::SuppressionScope::enter(ssa, state, *block);
+        let lifted = lift_int_func_args(args.clone(), ssa, state, block);
+        let value =
+            super::functions::inline_int_func(name, &lifted, colls, ssa, state, block, true);
+        scope.finish(ssa, state);
+        return Some(emit_return_value(value, ssa, state, *block));
     }
     let lifted = lift_int_func_args(args.clone(), ssa, state, block);
     Some(super::functions::emit_tail_call(
@@ -1344,16 +1380,30 @@ fn try_capture_condition(
         // consult `state.suppressed` at emission time. Either way the status
         // is consumed by the branch, so it must not abort.
         SsaValue::CmdSubstBody { body, .. } if !capture_condition_head_is_user_fn(body, state) => {
-            let pre_len = ssa.block(block).insts.len();
-            state.suppressed += 1;
-            let after = capture_body_into(name, body, state, ssa, block);
-            state.suppressed -= 1;
-            super::statements::uncheck_emitted_since(ssa, block, pre_len, after);
-            push_set_test_from_status(ssa, after);
-            Some(after)
+            capture_condition_body(name, body, state, ssa, block)
         }
         _ => None,
     }
+}
+
+fn capture_condition_body(
+    name: &str,
+    body: &[Statement],
+    state: &mut VersionState,
+    ssa: &mut SsaProgram,
+    block: BlockId,
+) -> Option<BlockId> {
+    let scope = super::statements::SuppressionScope::enter(ssa, state, block);
+    let after = match super::functions::suppressed_capture_value(body, state) {
+        Some(value) => try_capture_condition(name, &value, state, ssa, block),
+        None => {
+            let after = capture_body_into(name, body, state, ssa, block);
+            push_set_test_from_status(ssa, after);
+            Some(after)
+        }
+    };
+    scope.finish(ssa, state);
+    after
 }
 
 /// `test_result = ($? == 0)` — the capture-condition status sync sigil.

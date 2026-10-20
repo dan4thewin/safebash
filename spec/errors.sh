@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup errors
-plan=430
+plan=465
 echo "1..$plan" >&3
 
 set +e
@@ -2562,6 +2562,205 @@ run_sash 'echo "$(echo "$((1"'
 run_sash "echo \"\$(echo \$'\\101\\cA')\""
 [[ $rc != 0 && -z $out && $err == *':1:16: error [SB4063]'* \
    && $err == *'octal escapes are not supported'* ]]; chk lexcold.5
+
+# Suppression scopes the complete call, not just its final block or exec.
+run_sash 'fn speak { if (( 1 )) { /bin/false }; echo hello }
+- speak
+echo after'
+[[ $rc = 0 && $out = $'hello\nafter' && -z $err && -z $rerr ]]; chk supval.1
+
+run_sash 'fn speak { echo hello; /bin/false }
+str x=$(- speak)
+echo "[$x]"'
+[[ $rc = 0 && $out = '[hello]' && -z $err && -z $rerr ]]; chk supval.2
+
+run_sash 'fn speak { echo hello; /bin/false }
+echo "[$(- speak)]"'
+[[ $rc = 0 && $out = '[hello]' && -z $err && -z $rerr ]]; chk supval.3
+
+run_sash 'fn count -> int { /bin/false; return 7 }
+int n=$(- count)
+echo "$n"'
+[[ $rc = 0 && $out = 7 && -z $err && -z $rerr ]]; chk supval.4
+
+run_sash 'fn count -> int { /bin/false; return 7 }
+int n=$(- count)
+echo $((n + 1))'
+[[ $rc = 0 && $out = 8 && -z $err && -z $rerr ]]; chk supval.5
+
+run_sash 'fn fail { echo token; /bin/false }
+fn use { echo "$1" }
+str x=$(- use $(fail))
+echo "[$x]"'
+[[ $rc = 0 && $out = '[token]' && -z $err && -z $rerr ]]; chk supval.6
+
+run_sash 'fn fail { echo token; /bin/false }
+str x=$(- toupper $(fail))
+echo "[$x]"'
+[[ $rc = 0 && $out = '[TOKEN]' && -z $err && -z $rerr ]]; chk supval.7
+
+run_sash 'fn fail { echo token; /bin/false }
+str x=$(- echo $(fail))
+echo "[$x]"'
+[[ $rc = 0 && $out = '[token]' && -z $err && -z $rerr ]]; chk supval.8
+
+run_sash 'fn descend -> int {
+int n=$(($1))
+if (( n == 0 )) { /bin/false; return 7 }
+int next=$((n - 1))
+return $(- descend $next)
+}
+echo $(descend 2)'
+[[ $rc = 0 && $out = 7 && -z $err && -z $rerr ]]; chk supval.9
+
+# The first iteration is still checked; only the tail-prefixed ones change.
+run_sash 'fn descend -> int {
+int n=$(($1))
+/bin/false
+if (( n == 0 )) { return 7 }
+int next=$((n - 1))
+return $(- descend $next)
+}
+echo $(descend 2)'
+[[ $rc = 1 && -z $out && -z $err && $rerr == *'command failed (exit 1)'* ]]; chk supval.10
+
+run_sash 'fn descend -> int {
+int n=$(($1))
+if (( n == 0 )) { /bin/false; return 7 }
+int next=$((n - 1))
+return $(- descend $next)
+}
+echo $(- descend 10000)'
+[[ $rc = 0 && $out = 7 && -z $err && -z $rerr ]]; chk supval.11
+
+run_sash 'fn descend -> int {
+int n=$(($1))
+if (( n == 1 )) { /bin/false }
+if (( n == 0 )) { return 7 }
+int next=$((n - 1))
+return $(- descend $next)
+}
+echo $(descend 2)'
+[[ $rc = 0 && $out = 7 && -z $err && -z $rerr ]]; chk supval.12
+
+run_sash 'fn descend -> int {
+int n=$(($1))
+if (( n == 0 )) { /bin/false; return 7 }
+int next=$((n - 1))
+return $(descend $next)
+}
+echo $(descend 2)'
+[[ $rc = 1 && -z $out && -z $err && $rerr == *'command failed (exit 1)'* ]]; chk supval.13
+
+run_sash 'fn zero { echo 0; /bin/false }
+fn descend -> int {
+int n=$(($1))
+if (( n == 0 )) { return 7 }
+return $(- descend $(zero))
+}
+echo $(descend 1)'
+[[ $rc = 0 && $out = 7 && -z $err && -z $rerr ]]; chk supval.14
+
+# A later prefix must not uncheck blocks emitted by an earlier capture.
+run_sash 'fn count -> int { if (( 1 )) { /bin/false }; return 7 }
+fn safe { echo hello }
+int n=$(count)
+- safe
+echo "$n"'
+[[ $rc = 1 && -z $out && -z $err && $rerr == *'command failed (exit 1)'* ]]; chk supval.15
+
+run_sash 'fn speak { if (( 1 )) { /bin/false }; echo token }
+fn safe { echo hello }
+str x=$(speak)
+- safe
+echo "$x"'
+[[ $rc = 1 && -z $out && -z $err && $rerr == *'command failed (exit 1)'* ]]; chk supval.16
+
+run_sash 'fn speak { echo hello; /bin/false }
+- speak
+/bin/false
+echo after'
+[[ $rc = 1 && $out = hello && -z $err && $rerr == *'command failed (exit 1)'* ]]; chk supval.17
+
+run_sash 'fn fail { echo token; /bin/false }
+str x=$(- basename $(fail))
+echo "$x"'
+[[ $rc = 0 && $out = token && -z $err && -z $rerr ]]; chk supval.18
+
+run_sash 'fn fail { echo token; /bin/false }
+int n=$(- strlen $(fail))
+echo "$n"'
+[[ $rc = 0 && $out = 5 && -z $err && -z $rerr ]]; chk supval.19
+
+SASH_CFLAGS=--no-taint run_sash 'fn fail { echo token; /bin/false }
+str x=$(- /bin/echo $(fail))
+echo "[$x]"'
+[[ $rc = 0 && $out = '[token]' && -z $err && -z $rerr ]]; chk supval.20
+
+run_sash 'fn fail { if (( 1 )) { /bin/false }; echo token }
+- /bin/echo $(fail)
+echo after'
+[[ $rc = 0 && $out = $'token\nafter' && -z $err && -z $rerr ]]; chk supval.21
+
+run_sash 'fn speak { if (( 1 )) { /bin/false }; echo token }
+str x=$(- speak 2>&1)
+echo "[$x]"'
+[[ $rc = 0 && $out = '[token]' && -z $err && -z $rerr ]]; chk supval.22
+
+# Prefix peeling must retain the sole-value position and structural gates.
+run_sash 'echo $(- strlen)'
+[[ $rc != 0 && -z $out && $err == *SB4045* && $err == *'expects 1 argument but got 0'* ]]; chk supval.23
+
+run_sash '- toupper token'
+[[ $rc != 0 && -z $out && $err == *SB5073* && $err == *'A bare statement would discard the value'* ]]; chk supval.24
+
+run_sash 'str x=$(- toupper token; echo trailing); echo "$x"'
+[[ $rc != 0 && -z $out && $err == *SB5073* && $err == *'not one statement among several'* ]]; chk supval.25
+
+run_sash 'fn speak { echo token }
+if x=$(- speak) { echo "$x" }'
+[[ $rc != 0 && -z $out && $err == *SB4025* && $err == *"capturing a function"* ]]; chk supval.26
+
+run_sash 'fn count -> int { if (( 1 )) { return 0 }; return 7 }
+int n=$(count; echo token)
+echo "$n"'
+[[ $rc != 0 && -z $out && $err == *SB4030* && $err == *'string'* ]]; chk supval.27
+
+run_sash 'fn safe { echo hello }
+int choose=1
+if (( choose )) {
+if (( choose )) { /bin/false }
+} else { - safe }
+echo after'
+[[ $rc = 1 && -z $out && -z $err && $rerr == *'command failed (exit 1)'* ]]; chk supval.28
+
+SASH_CFLAGS=--no-taint run_sash 'echo $(- getpid extra)'
+[[ $rc != 0 && -z $out && $err == *SB4045* && $err == *'expects 0 arguments but got 1'* ]]; chk supval.29
+
+SASH_CFLAGS=--no-taint run_sash 'echo $(- wait 1 2)'
+[[ $rc != 0 && -z $out && $err == *SB4045* && $err == *'got 2'* ]]; chk supval.30
+
+run_sash 'echo $(- status)'
+[[ $rc != 0 && -z $out && $err == *SB5012* ]]; chk supval.31
+
+run_sash 'if /bin/false { : } else { echo $(- status) }'
+[[ $rc = 0 && $out = 1 && -z $err && -z $rerr ]]; chk supval.32
+
+run_sash '- /bin/false; echo $(- status)'
+[[ $rc != 0 && -z $out && $err == *SB5012* ]]; chk supval.33
+
+SASH_SPEC_SUPVAL_PRESENT=token run_sash 'if x=$(- getenv SASH_SPEC_SUPVAL_PRESENT) {
+attest x [[ -n $x ]]
+echo "$x"
+} else { echo missing }'
+[[ $rc = 0 && $out = token && -z $err && -z $rerr ]]; chk supval.34
+
+unset SASH_SPEC_SUPVAL_ABSENT
+run_sash 'if x=$(- getenv SASH_SPEC_SUPVAL_ABSENT) {
+attest x [[ -n $x ]]
+echo "$x"
+} else { echo missing }'
+[[ $rc = 0 && $out = missing && -z $err && -z $rerr ]]; chk supval.35
 
 set -e
 tally

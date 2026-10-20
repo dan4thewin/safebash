@@ -5,28 +5,26 @@ use crate::ir::*;
 use crate::ssa::*;
 
 pub(super) fn handle_command_substitution(expr: &Expr, state: &VersionState) -> SsaValue {
-    let Some((stmt, name_opt, c)) = single_command_subst(expr) else {
+    let Some((stmt, name, c)) = single_command_subst(expr) else {
         // Multi-statement / pipeline body (`$(x=1; echo $x)`, `$(a | b)`):
         // carry the body as a `CmdSubstBody` to be lifted into a capture temp
         // by `lift_int_func_calls` (like `IntFuncCall`). Was a silent `$(...)`
         // placeholder at runtime.
         return cmdsub_body_value(expr);
     };
-    if name_opt
-        .as_deref()
-        .is_some_and(|name| is_statement_builtin(BuiltinCmd::from_name(name)))
+    if matches!(stmt.kind, StmtKind::Suppressed(_))
+        || is_statement_builtin(BuiltinCmd::from_name(&name))
     {
         return cmdsub_body_value(expr);
     }
-    if let Some(v) = name_opt.and_then(|name| resolve_single_cmdsubst(name, c, state, expr)) {
+    if let Some(v) = resolve_single_cmdsubst(name, c, state, expr) {
         return v;
     }
     let argv = build_argv(c, state);
-    // DD#55: `$(- cmd)` suppresses the captured command's exit check (no abort
-    // on failure), mirroring statement-position `- cmd`. `single_command_subst`
-    // peeled the `Suppressed` wrapper to reach the command, so detect it here.
-    let suppressed = subst_is_suppressed(&stmt.kind);
-    SsaValue::CmdSubst { argv, suppressed }
+    SsaValue::CmdSubst {
+        argv,
+        suppressed: false,
+    }
 }
 
 /// The general `$( … )` lowering: carry the body for `lift_int_func_calls` to
@@ -143,16 +141,6 @@ fn is_statement_builtin(kind: BuiltinCmd) -> bool {
     }
 }
 
-/// True when a `$(…)` single-command body carries a `- ` suppression prefix
-/// (`$(- cmd)`, `$(- cmd >f)`) — peels `Redirected` wrappers to find it.
-fn subst_is_suppressed(kind: &StmtKind) -> bool {
-    match kind {
-        StmtKind::Redirected(r) => subst_is_suppressed(&r.body.kind),
-        StmtKind::Suppressed(_) => true,
-        _ => false,
-    }
-}
-
 /// Resolve a single-command `$(name …)`: a **defined-so-far** function → capture
 /// (DD#81 execution-order gate); a native intrinsic → its value; otherwise
 /// record the external use (for the SB5041 collision) and return `None` so the
@@ -163,13 +151,11 @@ fn resolve_single_cmdsubst(
     state: &VersionState,
     expr: &Expr,
 ) -> Option<SsaValue> {
+    require_intrinsic_arity(&name, c.args.len());
     if state.function_bodies.contains_key(name.as_str()) {
         return Some(func_call_capture(name, c, state));
     }
     if let Some(v) = try_capture_intrinsic(&name, c, state, expr) {
-        return Some(v);
-    }
-    if let Some(v) = wrong_arity_backstop(&name, c) {
         return Some(v);
     }
     if !state.lowering_fn_template {
@@ -221,18 +207,15 @@ fn nullary_stateful_slot(name: &str, c: &Command) -> Option<&'static str> {
     stateful_intrinsic_slot(name)
 }
 
-/// Backstop (fork B): a fixed-arity value-intrinsic that didn't lower is a
-/// malformed (wrong-arity) call. It must NOT fall through to a bare external
-/// command — that reaches `sash_exec` and aborts at runtime ("bare command
-/// passed to sash_exec"). Yield an empty capture instead; validate (SB4045)
-/// reports the arity error under normal compilation, and this keeps the SSA
-/// well-formed even when validation is bypassed.
-fn wrong_arity_backstop(name: &str, c: &Command) -> Option<SsaValue> {
-    let arity = crate::ssa::value_intrinsic_arity(name)?;
-    if arity.contains(&c.args.len()) {
-        return None;
+/// A malformed call must neither become a successful empty value nor escape
+/// as an external command. Structural validation has no bypass.
+fn require_intrinsic_arity(name: &str, count: usize) {
+    if let Some(arity) = value_intrinsic_arity(name) {
+        assert!(
+            arity.contains(&count),
+            "value intrinsic `{name}` argument count {count} is outside {arity:?} after validation"
+        );
     }
-    Some(SsaValue::Literal(String::new()))
 }
 
 /// `$(f …)` on a known user function. Option C: an `-> int` function
@@ -252,70 +235,25 @@ fn func_call_capture(name: String, c: &Command, state: &VersionState) -> SsaValu
     }
 }
 
-/// Extract `$(<single-command>)` shape: returns the original outer
-/// `Statement` (needed to recover any redirects), the head name if
-/// it's a bare literal, and the inner `Command`. Returns `None` for
-/// anything that isn't a single-command substitution after stripping
-/// `Comment` filler and `Redirected` / `Suppressed` wrappers.
-pub(super) fn single_command_subst(expr: &Expr) -> Option<(&Statement, Option<String>, &Command)> {
+/// Extract a single value command, retaining its outer suppression wrapper.
+/// Redirected commands instead require ordinary body capture.
+pub(super) fn single_command_subst(expr: &Expr) -> Option<(&Statement, String, &Command)> {
     let ExprKind::CommandSubstitution(stmts) = &expr.kind else {
         return None;
     };
-    let real_stmts: Vec<&Statement> = stmts.iter().collect();
-    if real_stmts.len() != 1 {
-        return None;
-    }
-    let stmt = real_stmts[0];
-    // A redirected capture (`$(cmd > f)`, `$(- cmd > f)`) declines the fast
-    // path and falls to `CmdSubstBody`, where the redirect is lowered by the
-    // ordinary statement machinery — the same path `$(a | b > f)` has always
-    // taken, and the only one both backends implement. The fast path carried
-    // its redirects in the SSA node instead, which the C backend discarded
-    // outright and native dropped whenever the target was a literal path (its
-    // interner never walked them), so `$(/bin/echo hi > f)` captured `hi` and
-    // left `f` untouched. Costs no extra fork.
-    //
-    // The guard asks the *peel* whether it stripped a redirect rather than
-    // testing `stmt.kind` itself, because the wrappers nest: the parser builds
-    // `$(- cmd > f)` as `Suppressed(Redirected(Command))`, so an outermost-kind
-    // test sees `Suppressed`, misses the redirect, and hands the bare `Command`
-    // to the fast path — reinstating the very drop this guard exists to stop,
-    // for the one spelling nothing tested. One walk, one answer.
-    let (inner, redirected) = unwrap_subst_wrappers(&stmt.kind);
-    if redirected {
-        return None;
-    }
-    let StmtKind::Command(c) = inner else {
-        return None;
-    };
-    let name = match &c.name.kind {
-        ExprKind::Literal(n) => Some(n.clone()),
-        _ => None,
-    };
+    let c = single_value_command(stmts)?;
+    let stmt = &stmts[0];
+    let name = literal_command_head(c).to_string();
     Some((stmt, name, c))
 }
 
-/// Peel any number of `Redirected` / `Suppressed` wrappers off a
-/// `StmtKind`, returning the innermost kind and whether any of the
-/// wrappers was a `Redirected`.
-///
-/// The flag is the point. The wrappers nest in either order, so a caller
-/// that peels transitively and tests for a redirect non-transitively will
-/// disagree with itself — which is how `$(- cmd > f)` silently dropped its
-/// redirect while `$(cmd > f)` honoured it. Reporting what was stripped
-/// keeps the question and the walk in one place.
-fn unwrap_subst_wrappers(mut s: &StmtKind) -> (&StmtKind, bool) {
-    let mut redirected = false;
-    loop {
-        match s {
-            StmtKind::Redirected(r) => {
-                redirected = true;
-                s = &r.body.kind;
-            }
-            StmtKind::Suppressed(inner) => s = &inner.kind,
-            other => return (other, redirected),
-        }
-    }
+/// A dynamic head must not escape as runtime exec argv; declining this value
+/// path would instead send it to the ordinary command-capture path.
+fn literal_command_head(c: &Command) -> &str {
+    let ExprKind::Literal(name) = &c.name.kind else {
+        unreachable!("literal command head required before constructing capture argv");
+    };
+    name
 }
 
 /// Native-builtin shortcut for `$(name args…)` — the DD#41 collection
@@ -326,8 +264,8 @@ fn unwrap_subst_wrappers(mut s: &StmtKind) -> (&StmtKind, bool) {
 /// `CmdSubst` argv path.
 fn try_native_intrinsic(name: &str, c: &Command, state: &VersionState) -> Option<SsaValue> {
     match BuiltinCmd::from_name(name) {
-        BuiltinCmd::Len => try_len_intrinsic(c, state),
-        BuiltinCmd::Strlen => try_strlen_intrinsic(c, state),
+        BuiltinCmd::Len => Some(len_intrinsic(c, state)),
+        BuiltinCmd::Strlen => Some(strlen_intrinsic(c, state)),
         // `keys` is not a scalar value intrinsic: a value-context `$(keys m)` is
         // rejected SB5025 in validate, and `for … in $(keys m)` uses the splat
         // path — so it falls through here (was a dead `try_keys_intrinsic`).
@@ -362,7 +300,7 @@ fn wait_value(args: Vec<SsaValue>) -> SsaValue {
 /// Split from `try_native_intrinsic` because the two families share nothing
 /// but the dispatch.
 fn try_string_intrinsic(cmd: BuiltinCmd, c: &Command, state: &VersionState) -> Option<SsaValue> {
-    match cmd {
+    Some(match cmd {
         BuiltinCmd::Sub => regex_replace_intrinsic(c, state, false),
         BuiltinCmd::Gsub => regex_replace_intrinsic(c, state, true),
         BuiltinCmd::Match => regex_match_intrinsic(c, state),
@@ -370,68 +308,52 @@ fn try_string_intrinsic(cmd: BuiltinCmd, c: &Command, state: &VersionState) -> O
         BuiltinCmd::Tolower => case_convert_intrinsic(c, state, false),
         BuiltinCmd::Basename => path_sugar_intrinsic(c, state, ".*/"),
         BuiltinCmd::Dirname => path_sugar_intrinsic(c, state, "/[^/]*$"),
-        _ => None,
-    }
+        _ => return None,
+    })
 }
 
 /// DD#65: `$(basename p)` / `$(dirname p)` are **sugar** for a fixed-pattern
 /// `sub` — `basename` strips everything up to the last `/` (`.*/` → ``),
 /// `dirname` strips the trailing `/component` (`/[^/]*$` → ``). Reuses the
-/// `RegexReplace` path (no fork, no taint beyond the operand). `None` on
-/// wrong arity (falls through to the generic cmdsub path).
-fn path_sugar_intrinsic(c: &Command, state: &VersionState, pattern: &str) -> Option<SsaValue> {
-    if c.args.len() != 1 {
-        return None;
-    }
-    Some(SsaValue::RegexReplace {
+/// `RegexReplace` path (no fork, no taint beyond the operand).
+fn path_sugar_intrinsic(c: &Command, state: &VersionState, pattern: &str) -> SsaValue {
+    SsaValue::RegexReplace {
         subject: Box::new(expr_to_value(&c.args[0], state)),
         pattern: Box::new(SsaValue::Literal(pattern.to_string())),
         replacement: Box::new(SsaValue::Literal(String::new())),
         global: false,
-    })
+    }
 }
 
 /// DD#65: `$(toupper s)` / `$(tolower s)` → `SsaValue::CaseConvert`. The
 /// single operand is an ordinary lowered value (quoting/interpolation are
-/// normal argument evaluation). `None` (falls through to the generic cmdsub
-/// path) if the arity is wrong.
-fn case_convert_intrinsic(c: &Command, state: &VersionState, upper: bool) -> Option<SsaValue> {
-    if c.args.len() != 1 {
-        return None;
-    }
-    Some(SsaValue::CaseConvert {
+/// normal argument evaluation).
+fn case_convert_intrinsic(c: &Command, state: &VersionState, upper: bool) -> SsaValue {
+    SsaValue::CaseConvert {
         subject: Box::new(expr_to_value(&c.args[0], state)),
         upper,
-    })
+    }
 }
 
 /// DD#63: `$(sub S P R)` / `$(gsub S P R)` → `SsaValue::RegexReplace`.
 /// The three operands are ordinary lowered values, so quoting and
-/// interpolation are just normal argument evaluation. Returns `None`
-/// (falls through to the generic cmdsub path) if the arity is wrong.
-fn regex_replace_intrinsic(c: &Command, state: &VersionState, global: bool) -> Option<SsaValue> {
-    if c.args.len() != 3 {
-        return None;
-    }
-    Some(SsaValue::RegexReplace {
+/// interpolation are just normal argument evaluation.
+fn regex_replace_intrinsic(c: &Command, state: &VersionState, global: bool) -> SsaValue {
+    SsaValue::RegexReplace {
         subject: Box::new(expr_to_value(&c.args[0], state)),
         pattern: Box::new(expr_to_value(&c.args[1], state)),
         replacement: Box::new(expr_to_value(&c.args[2], state)),
         global,
-    })
+    }
 }
 
 /// DD#63: `$(match S P)` → `SsaValue::RegexMatch` (whole-match capture).
-/// The two operands are ordinary lowered values. Returns `None` (falls
-/// through to the generic cmdsub path) if the arity is wrong.
-fn regex_match_intrinsic(c: &Command, state: &VersionState) -> Option<SsaValue> {
-    if c.args.len() != 2 {
-        return None;
-    }
-    Some(SsaValue::RegexMatch {
+/// The two operands are ordinary lowered values.
+fn regex_match_intrinsic(c: &Command, state: &VersionState) -> SsaValue {
+    SsaValue::RegexMatch {
         subject: Box::new(expr_to_value(&c.args[0], state)),
         pattern: Box::new(expr_to_value(&c.args[1], state)),
-    })
+    }
 }
 
 /// Build the runtime argv: head followed by every argument lowered
@@ -444,12 +366,10 @@ fn build_argv(c: &Command, state: &VersionState) -> Vec<SsaValue> {
     // printf, …) reaches sash_exec unresolved ("bare command passed to
     // sash_exec"). echo/true/false/: stay bare — the cmdsub codegen
     // inlines them.
-    let head = match &c.name.kind {
-        ExprKind::Literal(name) => {
-            SsaValue::Literal(super::resolution::resolve_pipeline_command(name, state))
-        }
-        _ => expr_to_value(&c.name, state),
-    };
+    let head = SsaValue::Literal(super::resolution::resolve_pipeline_command(
+        literal_command_head(c),
+        state,
+    ));
     argv.push(head);
     for arg in &c.args {
         argv.push(arg_to_value(arg, state));
@@ -464,15 +384,11 @@ fn build_argv(c: &Command, state: &VersionState) -> Vec<SsaValue> {
 /// The operand is lowered by `expr_to_value` exactly as `toupper`'s is, so
 /// quoting and interpolation are normal argument evaluation: `strlen s` is
 /// the length of the string `"s"`, `strlen $s` the length of `s`'s value, and
-/// `strlen ${a[0]}` the length of that cell. `None` on wrong arity, which
-/// falls through to the generic cmdsub path.
-fn try_strlen_intrinsic(c: &Command, state: &VersionState) -> Option<SsaValue> {
-    if c.args.len() != 1 {
-        return None;
-    }
-    Some(SsaValue::StrLen {
+/// `strlen ${a[0]}` the length of that cell.
+fn strlen_intrinsic(c: &Command, state: &VersionState) -> SsaValue {
+    SsaValue::StrLen {
         subject: Box::new(expr_to_value(&c.args[0], state)),
-    })
+    }
 }
 
 /// The collection NAME a `len` / `join` operand denotes.
@@ -497,27 +413,27 @@ fn collection_operand_name(expr: &Expr) -> String {
     s.strip_prefix('$').unwrap_or(s).to_string()
 }
 
-fn try_len_intrinsic(c: &Command, state: &VersionState) -> Option<SsaValue> {
+fn len_intrinsic(c: &Command, state: &VersionState) -> SsaValue {
     // `len` counts collections; scalar length is SsaValue::StrLen.
     // Unbound function templates and later-rejected operands also pass here,
     // so absence from `state.collections` is not a scalar-length request.
-    let arg = c.args.first()?;
+    let arg = &c.args[0];
     let name = collection_operand_name(arg);
     // DD#75 §5: a user-written `args` names the implicit per-function array.
     let name = super::expressions::resolve_args_name(&name, state);
     let v = state.lookup(&name);
-    Some(SsaValue::ParamExpansion {
+    SsaValue::ParamExpansion {
         var: v,
         operator: "arrlen".to_string(),
         operand: String::new(),
-    })
+    }
 }
 
 fn join_intrinsic(c: &Command, state: &VersionState) -> SsaValue {
     // DD#75: `join arr` → space-separated; `join arr sep` → sep-separated.
     // Array first, separator second (least-surprise, collection-first —
     // consistent with `len`/`keys`).
-    let (arr_expr, sep) = if c.args.len() >= 2 {
+    let (arr_expr, sep) = if c.args.len() == 2 {
         // INVARIANT: validate::flag_join_separator (SB5074) rejects a
         // non-literal separator before transform. The predecessor of this
         // call fell back to the argument's *source text*, so
@@ -534,8 +450,7 @@ fn join_intrinsic(c: &Command, state: &VersionState) -> SsaValue {
         // >2-arg) `$(join …)` before transform, so this is unreachable.
         unreachable!("join arity guaranteed by validate::check_join_arity");
     };
-    // The array arg is a bare NAME, or the `@a` synonym DD#100 Part D retired
-    // (SB5062); `collection_operand_name` reads both.
+    // The array operand is a bare name (DD#100; SB5062).
     let arr_name = collection_operand_name(arr_expr);
     let arr_name = super::expressions::resolve_args_name(&arr_name, state);
     let v = state.lookup(&arr_name);
@@ -606,10 +521,13 @@ fn strip_arith_parens(arith: &ArithExpr) -> &ArithExpr {
 
 #[allow(clippy::only_used_in_recursion)]
 fn arith_to_ssa(arith: &ArithExpr, expr: &Expr, state: &VersionState) -> SsaValue {
-    if let Some(v) = arith_leaf_to_ssa(arith, state) {
-        return v;
-    }
     match arith {
+        ArithExpr::Literal(n) => SsaValue::Expr(n.to_string()),
+        ArithExpr::Var(name) => super::expressions::positional_to_value(name, state)
+            .unwrap_or_else(|| var_to_ssa(name, state)),
+        ArithExpr::DollarVar(name) => super::expressions::positional_to_value(name, state)
+            .unwrap_or_else(|| SsaValue::Var(state.lookup(name))),
+        ArithExpr::Expansion(inner) => canonicalize_arith_default(expr_to_value(inner, state)),
         ArithExpr::BinOp { left, op, right } => binop_to_ssa(left, *op, right, expr, state),
         ArithExpr::UnaryOp { op, operand } => unaryop_to_ssa(*op, operand, expr, state),
         // A mutation (`x = …`, `x += …`, `x++`/`x--`, `a[i] = …`) never reaches
@@ -645,18 +563,6 @@ fn arith_to_ssa(arith: &ArithExpr, expr: &Expr, state: &VersionState) -> SsaValu
         // the integer key (lower_subscript_raw's is_integer_key path calls
         // lower_value_as_int on the index).
         ArithExpr::Subscript { name, index } => subscript_read_to_ssa(name, index, expr, state),
-        // Value leaves are handled by `arith_leaf_to_ssa` above, which returns
-        // `Some` for all four of them unconditionally — so this arm is
-        // unreachable by construction, not by an earlier pass, and no test
-        // can call it. Naming the four rather than writing `_` is what earns
-        // it: a new `ArithExpr` variant is now a compile error here instead
-        // of silently landing on an ICE at runtime.
-        ArithExpr::Literal(_)
-        | ArithExpr::Var(_)
-        | ArithExpr::DollarVar(_)
-        | ArithExpr::Expansion(_) => {
-            unreachable!("arith value leaf not handled by arith_leaf_to_ssa")
-        }
     }
 }
 
@@ -683,48 +589,22 @@ fn subscript_read_to_ssa(
     }
 }
 
-/// The value-producing leaves of an `ArithExpr`: a literal, a bare/`$`-var, or a
-/// `${…}` normal-expansion import (`${a[i]}`/`${m[k]}` → the cell via the shared
-/// `expr_to_value`). Returns `None` for the operator/mutation/control forms,
-/// which the caller's match handles.
-fn arith_leaf_to_ssa(arith: &ArithExpr, state: &VersionState) -> Option<SsaValue> {
-    match arith {
-        ArithExpr::Literal(n) => Some(SsaValue::Expr(n.to_string())),
-        // DD#75 §5: `$1`/`$#` in arithmetic mean the same `args` reads as
-        // outside `$(( ))` — route positionals through the shared helper first.
-        ArithExpr::Var(name) => Some(
-            super::expressions::positional_to_value(name, state)
-                .unwrap_or_else(|| var_to_ssa(name, state)),
-        ),
-        ArithExpr::DollarVar(name) => Some(
-            super::expressions::positional_to_value(name, state)
-                .unwrap_or_else(|| SsaValue::Var(state.lookup(name))),
-        ),
-        ArithExpr::Expansion(inner) => {
-            Some(canonicalize_arith_default(expr_to_value(inner, state)))
-        }
-        _ => None,
-    }
-}
-
 /// DD#72: in arith context, a `${s:-LITERAL}` default is used as an int operand.
 /// The default is lowered by a decimal conversion at runtime, so rewrite a
 /// non-decimal DD#72 literal default (`0xff`, `0o17`, `0b101`) to its decimal
-/// form here — the type-check D4 pass accepts exactly these literals. Leaves a
-/// non-literal default untouched (a plain decimal is already correct; a
-/// non-literal was rejected by D4). Arith-scoped, so a *string*-context
+/// form here — the type-check D4 pass accepts exactly these literals.
+/// Arith-scoped, so a *string*-context
 /// `${s:-0xff}` keeps its literal "0xff" (that path never calls this).
 fn canonicalize_arith_default(v: SsaValue) -> SsaValue {
     let SsaValue::DefaultValue { source, default } = v else {
         return v;
     };
-    let default = match *default {
-        SsaValue::Literal(ref s) => match crate::parse::parse_dd72_literal(s) {
-            Some(n) => Box::new(SsaValue::Literal(n.to_string())),
-            None => default,
-        },
-        _ => default,
+    let SsaValue::Literal(default) = *default else {
+        unreachable!("arithmetic default must lower to a literal value");
     };
+    let default = crate::parse::parse_dd72_literal(&default)
+        .expect("arithmetic default must be a validated DD#72 integer literal");
+    let default = Box::new(SsaValue::Literal(default.to_string()));
     SsaValue::DefaultValue { source, default }
 }
 
@@ -833,13 +713,15 @@ pub(crate) fn fold_unary_op(v: i64, op: IrUnaryArithOp) -> Option<i64> {
 }
 
 fn comma_to_ssa(exprs: &[ArithExpr], expr: &Expr, state: &VersionState) -> SsaValue {
-    match exprs.last() {
-        Some(last) => arith_to_ssa(last, expr, state),
-        None => SsaValue::Expr("0".to_string()),
-    }
+    assert!(
+        exprs.len() >= 2,
+        "arithmetic comma sequence requires at least two operands"
+    );
+    arith_to_ssa(&exprs[exprs.len() - 1], expr, state)
 }
 
 fn funccall_to_ssa(name: &str, args: &[ArithExpr], expr: &Expr, state: &VersionState) -> SsaValue {
+    require_intrinsic_arity(name, args.len());
     if let Some(v) = try_arith_wait(name, args, expr, state) {
         return v;
     }
@@ -1185,20 +1067,135 @@ mod tests {
 
     /// `$(join)`. SB5040 rejects a 0-arg (and >2-arg) join.
     #[test]
-    fn join_zero_arity_is_a_loud_ice() {
+    fn join_wrong_arity_is_a_loud_ice() {
+        for count in [0, 3] {
+            let c = Command {
+                name: lit("join"),
+                args: vec![lit("a"); count],
+            };
+            let st = state();
+            let caught =
+                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| join_intrinsic(&c, &st)));
+            let err = caught.expect_err("a malformed join reaching its builder must ICE");
+            let msg = ice_text(&err);
+            assert!(
+                msg.contains("check_join_arity"),
+                "the ICE must name the validation rule that guarantees it: {msg}"
+            );
+        }
+    }
+
+    #[test]
+    fn malformed_capture_intrinsic_counts_cannot_become_values_or_externals() {
+        for name in [
+            "status",
+            "getpid",
+            "getppid",
+            "getcwd",
+            "epochseconds",
+            "argc",
+            "signum",
+            "random",
+            "waitstatus",
+            "getcpid",
+            "wait",
+            "len",
+            "strlen",
+            "keys",
+            "toupper",
+            "tolower",
+            "basename",
+            "dirname",
+            "getenv",
+            "match",
+            "sub",
+            "gsub",
+        ] {
+            let arity = value_intrinsic_arity(name).unwrap();
+            for count in [0, 4].into_iter().filter(|count| !arity.contains(count)) {
+                let c = Command {
+                    name: lit(name),
+                    args: vec![lit("a"); count],
+                };
+                let host = Expr {
+                    kind: ExprKind::CommandSubstitution(vec![Statement::command(
+                        c.name.clone(),
+                        c.args.clone(),
+                        c.name.span,
+                    )]),
+                    span: c.name.span,
+                };
+                let caught = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    resolve_single_cmdsubst(name.to_string(), &c, &state(), &host)
+                }));
+                let msg = ice_text(&caught.expect_err("malformed intrinsic count must ICE"));
+                assert!(
+                    msg.contains(name) && msg.contains("argument count"),
+                    "{msg}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn malformed_arithmetic_intrinsic_counts_cannot_skip_the_shared_guard() {
+        for name in ["wait", "len", "strlen", "status", "getpid"] {
+            let args = vec![ArithExpr::Literal(1); 2];
+            let host = lit("host");
+            let caught = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                funccall_to_ssa(name, &args, &host, &state())
+            }));
+            let msg = ice_text(&caught.expect_err("malformed arithmetic intrinsic count must ICE"));
+            assert!(
+                msg.contains(name) && msg.contains("argument count"),
+                "{msg}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_nonliteral_capture_head_cannot_become_a_dynamic_argv() {
         let c = Command {
-            name: lit("join"),
+            name: Expr {
+                kind: ExprKind::SimpleExpansion("tool".to_string()),
+                span: Span::new(1, 1),
+            },
             args: vec![],
         };
-        let st = state();
-        let caught =
-            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| join_intrinsic(&c, &st)));
-        let err = caught.expect_err("a zero-arg join reaching join_intrinsic must ICE");
-        let msg = ice_text(&err);
-        assert!(
-            msg.contains("check_join_arity"),
-            "the ICE must name the validation rule that guarantees it: {msg}"
-        );
+        let caught = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            build_argv(&c, &state());
+        }));
+        let msg = ice_text(&caught.expect_err("a dynamic head cannot leave transform"));
+        assert!(msg.contains("literal command head"), "{msg}");
+    }
+
+    #[test]
+    fn malformed_arithmetic_defaults_cannot_survive_canonicalization() {
+        for default in [
+            SsaValue::Literal("word".to_string()),
+            SsaValue::Expr("1".to_string()),
+        ] {
+            let caught = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                canonicalize_arith_default(SsaValue::DefaultValue {
+                    source: Box::new(SsaValue::Literal("2".to_string())),
+                    default: Box::new(default),
+                })
+            }));
+            let msg = ice_text(&caught.expect_err("malformed arithmetic default must ICE"));
+            assert!(msg.contains("arithmetic default"), "{msg}");
+        }
+    }
+
+    #[test]
+    fn an_arithmetic_comma_sequence_requires_multiple_operands() {
+        for count in [0, 1] {
+            let operands = vec![ArithExpr::Literal(1); count];
+            let caught = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                comma_to_ssa(&operands, &lit("host"), &state())
+            }));
+            let msg = ice_text(&caught.expect_err("a malformed comma sequence must ICE"));
+            assert!(msg.contains("at least two"), "{msg}");
+        }
     }
 
     /// A nullary sexpr `(name)` naming a compiler intrinsic that

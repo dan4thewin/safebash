@@ -567,38 +567,41 @@ fn emit_arith_store(
     *block = lower_one(&stmt, ssa, state, *block);
 }
 
-/// DD#55: `- cmd` (suppressed) — lower the inner statement, then mark the last
-/// emitted Command/Pipeline instruction(s) as unchecked.
+/// DD#55: lower the complete suppressed operation without implicit checks.
 fn lower_suppressed_stmt(
     inner: &Statement,
     ssa: &mut SsaProgram,
     state: &mut VersionState,
     block: BlockId,
 ) -> BlockId {
-    let pre_len = ssa.block(block).insts.len();
-    state.suppressed += 1;
+    let scope = SuppressionScope::enter(ssa, state, block);
     let result_block = lower_one(inner, ssa, state, block);
-    state.suppressed -= 1;
-    uncheck_emitted_since(ssa, block, pre_len, result_block);
+    scope.finish(ssa, state);
     result_block
 }
 
-/// Mark every Command/Pipeline emitted since `(block, pre_len)` as unchecked —
-/// the "no implicit exit check" half of DD#55 suppression.
-///
-/// Shared with the DD#88 capture-condition, whose status is consumed by the
-/// branch and so must not abort either. `state.suppressed` alone is not
-/// enough: only `handle_regular_pipeline` reads it at emission time, so a
-/// plain Command needs this post-pass to be unchecked at all.
-pub(super) fn uncheck_emitted_since(
-    ssa: &mut SsaProgram,
+/// An inlined call allocates its return block before its body blocks. The
+/// returned block ID is therefore not the boundary of the emitted operation.
+pub(super) struct SuppressionScope {
     block: BlockId,
     pre_len: usize,
-    result_block: BlockId,
-) {
-    uncheck_block_from(ssa, block, pre_len);
-    if result_block != block {
-        for b in (block + 1)..=result_block {
+    first_new_block: usize,
+}
+
+impl SuppressionScope {
+    pub(super) fn enter(ssa: &SsaProgram, state: &mut VersionState, block: BlockId) -> Self {
+        state.suppressed += 1;
+        Self {
+            block,
+            pre_len: ssa.block(block).insts.len(),
+            first_new_block: ssa.blocks.len(),
+        }
+    }
+
+    pub(super) fn finish(self, ssa: &mut SsaProgram, state: &mut VersionState) {
+        state.suppressed -= 1;
+        uncheck_block_from(ssa, self.block, self.pre_len);
+        for b in self.first_new_block..ssa.blocks.len() {
             uncheck_block_from(ssa, b, 0);
         }
     }

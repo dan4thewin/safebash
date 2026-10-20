@@ -3,6 +3,7 @@
 use crate::ir::*;
 use crate::ssa::*;
 
+use super::expressions::expr_to_value;
 use super::statements::lower_stmts;
 
 /// DD#75 §5: bind the callee's implicit `args` array (0-indexed) from the
@@ -191,13 +192,19 @@ pub(super) fn lift_int_func_calls(
         // ── the captures this pass exists to materialize ──────────────
         SsaValue::IntFuncCall { name, args, colls } => {
             let lifted = lift_each(args, ssa, state, block);
-            inline_int_func(&name, &lifted, &colls, ssa, state, block)
+            inline_int_func(&name, &lifted, &colls, ssa, state, block, false)
         }
         SsaValue::FuncCall { name, args, colls } => {
             let lifted = lift_each(args, ssa, state, block);
             lift_str_func_call(name, lifted, colls, ssa, state, block)
         }
         SsaValue::CmdSubstBody { body, .. } => {
+            if let Some(value) = suppressed_capture_value(&body, state) {
+                let scope = super::statements::SuppressionScope::enter(ssa, state, *block);
+                let value = lift_int_func_calls(value, ssa, state, block);
+                scope.finish(ssa, state);
+                return value;
+            }
             // A multi-statement/pipeline `$(…)` body: capture its stdout into a
             // temp (fresh name from the block count), then use the temp. The
             // capture is tainted (external output).
@@ -324,6 +331,32 @@ pub(super) fn lift_int_func_calls(
         | SsaValue::TableValue { .. }
         | SsaValue::TableKey { .. }) => v,
     }
+}
+
+/// Preserve a sole command's value while its prefix scopes materialization,
+/// including nested argument captures. Redirects stay on ordinary body capture.
+pub(super) fn suppressed_capture_value(
+    body: &[Statement],
+    state: &VersionState,
+) -> Option<SsaValue> {
+    let [stmt] = body else {
+        return None;
+    };
+    if !matches!(stmt.kind, StmtKind::Suppressed(_)) {
+        return None;
+    }
+    let c = crate::ir::single_value_command(body)?;
+    Some(expr_to_value(
+        &Expr {
+            kind: ExprKind::CommandSubstitution(vec![Statement::command(
+                c.name.clone(),
+                c.args.clone(),
+                stmt.span,
+            )]),
+            span: stmt.span,
+        },
+        state,
+    ))
 }
 
 fn lift_cmdsub(
@@ -490,31 +523,16 @@ pub(super) fn inline_int_func(
     ssa: &mut SsaProgram,
     state: &mut VersionState,
     block: &mut BlockId,
+    suppressed_tail_entry: bool,
 ) -> SsaValue {
-    let body = match state.function_bodies.get(name).cloned() {
-        Some(b) => b,
-        None => {
-            // DD#81 Part A: an `-> int` call whose `fn` has not been lowered
-            // yet is a *forward call* — `known_functions` (whole-program) put
-            // us on this path, `function_bodies` (execution-order) says the
-            // definition has not run. Record the use so the definition raises
-            // SB5041, exactly as the plain-command and `$( … )` paths do.
-            //
-            // Without the record this returned a literal `0` and said nothing:
-            // `int n=$(( (f) ))` before `fn f -> int { return 7 }` computed 0
-            // and exited clean. The sibling comment in `expr_handlers`'
-            // nullary-sexpr arm records the same silent-0 shape being fixed
-            // once before, for a different cause.
-            if !state.lowering_fn_template {
-                state.externally_used.borrow_mut().insert(name.to_string());
-            }
-            return SsaValue::Expr("0".to_string());
-        }
+    let Some(body) = defined_int_function_body(name, state) else {
+        return SsaValue::Expr("0".to_string());
     };
 
     // DD#27/§5: a call to a function already being inlined is recursion. Reject
-    // (no crash from unbounded inlining) — tail self-calls are handled earlier.
-    if state.inlining.iter().any(|n| n == name) {
+    // A checked self-tail loop may enter one suppressed specialization. Its
+    // own tail calls are back edges, so this never permits unbounded inlining.
+    if !suppressed_tail_entry && state.inlining.iter().any(|n| n == name) {
         state.diagnostics.push(recursion_diagnostic(name));
         return SsaValue::Literal("0".to_string());
     }
@@ -570,6 +588,16 @@ pub(super) fn inline_int_func(
     *block = restore_block;
     state.inlining.pop();
     SsaValue::Var(temp_var)
+}
+
+/// DD#81: record a call before its definition so that the later definition
+/// reports SB5041. Whole-program return typing alone does not make it defined.
+fn defined_int_function_body(name: &str, state: &VersionState) -> Option<Vec<Statement>> {
+    let body = state.function_bodies.get(name).cloned();
+    if body.is_none() && !state.lowering_fn_template {
+        state.externally_used.borrow_mut().insert(name.to_string());
+    }
+    body
 }
 
 // ── DD#81 Part B: function-call arity from `args` usage ──────────────────

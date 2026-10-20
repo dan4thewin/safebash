@@ -357,8 +357,22 @@ pub fn walk_all_exprs<'a>(stmt: &'a Statement, f: &mut impl FnMut(&'a Expr)) {
     }
 }
 
+/// The single command whose value a substitution resolves. Suppression changes
+/// checking, not its value or type; redirects require ordinary body capture.
+pub(crate) fn single_value_command(stmts: &[Statement]) -> Option<&Command> {
+    let [stmt] = stmts else {
+        return None;
+    };
+    match &stmt.kind {
+        StmtKind::Command(c) => Some(c),
+        StmtKind::Suppressed(inner) => single_value_command(std::slice::from_ref(inner)),
+        _ => None,
+    }
+}
+
 /// Recognise a nullary intrinsic call — the `$(name)` shape that
-/// `parse::expr::intrinsic_expansion` builds. Returns the intrinsic's name.
+/// `parse::expr::intrinsic_expansion` builds, including a suppression prefix
+/// which does not change which intrinsic is read. Returns the intrinsic's name.
 ///
 /// **This is the inverse of `parse::expr::intrinsic_expansion` and the two
 /// must change together**; `parse::tests::intrinsic_expansion_round_trips`
@@ -375,12 +389,7 @@ pub fn intrinsic_call_name(expr: &Expr) -> Option<&str> {
     let ExprKind::CommandSubstitution(stmts) = &expr.kind else {
         return None;
     };
-    let [stmt] = stmts.as_slice() else {
-        return None;
-    };
-    let StmtKind::Command(c) = &stmt.kind else {
-        return None;
-    };
+    let c = single_value_command(stmts)?;
     if !c.args.is_empty() {
         return None;
     }

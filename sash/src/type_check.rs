@@ -158,10 +158,7 @@ fn expr_type(expr: &Expr, env: &TypeEnv) -> VarType {
 /// which is why `resolve::ArithDenotation::Statement` is about arithmetic
 /// only and says nothing about `$( )`.
 fn command_substitution_type(parts: &[Statement], env: &TypeEnv) -> VarType {
-    let Some(first) = parts.first() else {
-        return VarType::String;
-    };
-    let StmtKind::Command(c) = &first.kind else {
+    let Some(c) = crate::ir::single_value_command(parts) else {
         return VarType::String;
     };
     let name = expr_to_name(&c.name);

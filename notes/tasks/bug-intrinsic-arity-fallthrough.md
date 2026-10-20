@@ -19,10 +19,28 @@ gates: []
   intrinsic that fell through (`try_native_intrinsic` → None) no longer records
   an external use / emits a bare command — it yields an empty capture, so
   nothing bare reaches `sash_exec` even when validation is bypassed
-  (DG's `--bypass` switches).
+  (DG's `--bypass` switches). **Superseded 2026-10-20; the rationale was
+  wrong — see the correction below.**
 
 specs `spec/errors.sh` 55.42-45 (`$(sub a)`, `$(toupper)`, `$(len a b)`, and a
 correct-arity control). Full 3-mode sweep: 0 regressions, 12 new passing.
+
+## Correction (2026-10-20, journal 530)
+
+Backstop B's justification was wrong, and it described no current policy.
+DG: *"I'm only aware of taint bypass switches. Why would we ever want arity
+bypass?"* The only escape hatch is `--no-taint` (DD#82). It disables taint
+checking alone; structural checks such as SB4045 still run under it
+(`supval.29` and `supval.30` pin this). `--bypass` is not a sash option.
+There is no supported way to compile a wrong-arity intrinsic call.
+
+An empty capture was therefore a successful wrong answer for malformed IR,
+not a defense. Journal 530 replaced it with one shared count invariant
+(`require_intrinsic_arity`, consulting `value_intrinsic_arity`). That
+invariant runs before capture and arithmetic resolution and refuses loudly.
+The per-intrinsic `None` declines are gone. Defense in depth is now SB4045
+for source, plus an ICE as the regression guard. A malformed count can no
+longer yield a value or an external command.
 
 ## Symptom (original)
 
