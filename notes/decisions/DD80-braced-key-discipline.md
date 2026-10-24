@@ -263,11 +263,13 @@ was a walk.
 
 The generic index message advises "use an integer literal, an `int` variable,
 or `$(( … ))`". For a capture that advice is a dead end: `${a[$(( $(f) ))]}`
-is **SB4041** (a capture is not an arithmetic operand either) and `int i=$(f)`
-is **SB4030**. An author holding a string-returning function has exactly one
-migration — declare it `fn f -> int` — so the message names that form
-directly, per `array_index_error`'s own standing rule that a diagnostic must
-not send its reader from one SB4030 to the same SB4030.
+is **SB4035** (a capture is not an arithmetic operand either) and `int i=$(f)`
+is **SB4030**. (When this was written it was SB4041, the index's fallback
+swallowing the arithmetic's own error; see the 2026-10-24 addendum.) An
+author holding a string-returning function has exactly one migration —
+declare it `fn f -> int` — so the message names that form directly, per
+`array_index_error`'s own standing rule that a diagnostic must not send its
+reader from one SB4030 to the same SB4030.
 
 ## Amendment (2026-10-03) — one grammar, three spellings
 
@@ -394,3 +396,41 @@ because the previous version assumed and was wrong.
 Pinned by `spec/subscript.sh` sections P (`80.97`–`80.106`, the rejections
 and their read twins) and Q (`80.107`–`80.113`, the legal write forms that
 must not move).
+
+## Addendum (2026-10-24, batch-531 port step F14) — an explicit index that fails to parse reports its own error
+
+An index is re-parsed as a value expression (`parse_whole_index`). When that
+parse failed, the text fell back to a literal, and a literal that is not a
+clean bareword is the ambiguous form SB4041 rejects. For an **implicit** form
+that is the right answer: `${a[(1+2)]}` and the empty `${a[]}` have no
+construct of their own to blame, and SB4041's advice — make the index
+explicit — is the fix.
+
+For an **explicit** form it is the wrong one. Forms 2–4 above (`$var`, an
+expansion, a quoted key) open with `$`, `"` or `'`, and when one of them fails
+to parse, the failure is that form's own error. The fallback discarded it,
+and SB4041 then told the author to write an explicit form — sending them back
+to the one they wrote. `${a[$(( 1 + ))]}` was advised to open arithmetic
+explicitly; its real error is the missing operand (batch-531 B39).
+
+**The rule.**
+
+- An index that opens with `$`, `"` or `'` and fails to parse reports that
+  parse error: `${a[$(( 1 + ))]}`, `a[$(( 1 + ))]=x` and `${a["$(( 1 + ))"]}`
+  are SB4020, "ends where an operand is expected".
+- An index that parses but leaves text behind (`${m[$s x]}`) is still a mixed
+  form, SB4041: the leftover text is the implicit part (`80.4`, `cov.110`).
+- An implicit index that fails to parse is still SB4041.
+
+It composes with DD#72's addendum of the same date, which makes a `$` that
+starts no variable a stray byte: `${a[$(( $ ))]}` used to read `a[0]`
+natively and emit C that gcc rejects, and is now SB4035. The capture case in
+the 2026-10-03 addendum is corrected above: `${a[$(( $(f) ))]}` is SB4035,
+not SB4041.
+
+Specs: `80.131`–`80.134` (subscript.sh) and `75.164` (types.sh, re-coded
+from SB4041 to SB4035). (`80.135`, `${a[${}]}`, sits beside them but pins
+DD#65's rule: `${}` parses to that rule's SB4047 sentinel, so it never reaches
+this route.) The implicit boundary is `cov.125`'s (an empty index in
+arithmetic, still SB4041): a stub that sent every failing index down the
+explicit route turned it red. Journal 533.

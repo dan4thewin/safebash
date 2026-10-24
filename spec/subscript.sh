@@ -10,7 +10,7 @@
 set -eu
 . common.sh
 setup subscript
-plan=128
+plan=133
 echo "1..$plan" >&3
 
 set +e
@@ -862,6 +862,45 @@ run_sash 'int map m=([a]=5); str k=a; echo $(( ${m[${k}]} + 1 )) ${m[${k}]}'
 # to the end of the program in silence
 run_sash 'int i=1; echo $(( ${i ))'
 [[ $rc != 0 ]]; chk 80.130
+
+# ── an explicit index that fails to parse reports its own error (DD#80,
+# 2026-10-24 addendum) ──
+#
+# A braced index is re-parsed as a value expression, and when that failed the
+# text fell back to a literal that the validator rejects as ambiguous (SB4041).
+# For an implicit form that is right: `(1+2)` has no construct of its own to
+# report (cov.125 pins that boundary with an empty index). For an explicit
+# form — `$var`, an expansion, a quoted key — SB4041's advice to write an
+# explicit form sends the author back to the one they wrote:
+# `${a[$(( 1 + ))]}` was told to open arithmetic explicitly. Now the explicit
+# form's own parse error wins.
+
+# 80.131 the headline: an arithmetic index with a missing operand
+run_sash 'array a=(1 2)
+echo "${a[$(( 1 + ))]}"'
+[[ $rc != 0 && -z $out && $err == *SB4020* \
+   && $err == *'ends where an operand is expected'* && $err != *SB4041* ]]; chk 80.131
+# 80.132 a write index shares the reader
+run_sash 'array a=(1 2)
+a[$(( 1 + ))]=x
+echo "${a[0]}"'
+[[ $rc != 0 && -z $out && $err == *SB4020* \
+   && $err == *'ends where an operand is expected'* && $err != *SB4041* ]]; chk 80.132
+# 80.133 a quoted key is an explicit form too
+run_sash 'array a=(1 2)
+echo "${a["$(( 1 + ))"]}"'
+[[ $rc != 0 && -z $out && $err == *SB4020* \
+   && $err == *'ends where an operand is expected'* && $err != *SB4041* ]]; chk 80.133
+# 80.134 a stray `$` in the index's arithmetic (DD#72, 2026-10-24 addendum).
+# It used to read `a[0]` natively and emit C that gcc rejects.
+run_sash 'array a=(p q)
+echo "${a[$(( $ ))]}"'
+[[ $rc != 0 && -z $out && $err == *SB4035* && $err == *'stray `$` in arithmetic'* ]]; chk 80.134
+# 80.135 an empty `${}` as the index names no variable (DD#65, 2026-10-24
+# addendum); it used to be SB4030 advice to convert a variable called `$`
+run_sash 'array a=(p q)
+echo "${a[${}]}"'
+[[ $rc != 0 && -z $out && $err == *SB4047* && $err == *'`${}` names no variable'* ]]; chk 80.135
 
 
 set -e

@@ -1724,9 +1724,9 @@ fn is_int_index(expr: &Expr, env: &TypeEnv) -> bool {
 /// spelling was never the problem — the operand's type was.
 fn array_index_error(name: &str, index: &Expr, env: &TypeEnv) -> String {
     // A capture needs its own advice. The generic text below offers
-    // `$(( … ))`, and `${a[$(( $(f) ))]}` is SB4041 — a capture is not an
-    // arithmetic operand either. The only route is an int-returning function
-    // (DD#74), so name that rather than send the author to a second error.
+    // `$(( … ))`, and `${a[$(( $(f) ))]}` is SB4035 — a capture is not an
+    // arithmetic operand either. Name a route that works, an int-returning
+    // function (DD#74), rather than send the author to a second error.
     if matches!(index.kind, ExprKind::CommandSubstitution(_)) {
         return format!(
             "capture as an index on indexed array '{name}' — `$( … )` yields a \

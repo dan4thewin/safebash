@@ -5,7 +5,7 @@
 set -eu
 . common.sh
 setup var_modifiers
-plan=168
+plan=176
 echo "1..$plan" >&3
 
 set +e
@@ -317,6 +317,34 @@ run_sash 'echo $(( ${[0]} ))'
 run_sash 'array a1=(7 8)
 echo ${a1[1]}'
 [[ $rc = 0 && $out = "8" && -z $err ]]; chk vm.un12
+
+# nn1-8: a braced expansion with NO variable name (DD#65, 2026-10-24
+# addendum). The body scanner's name run may be empty, and every operator was
+# then built on a variable called `` — `${}` printed nothing, `${:-d}` printed
+# `d`, `${:?m}` aborted at run time with `m`, `${:0:1}` reached a native codegen
+# ICE, and `${:~}` / `${:!}` / `${:s/…/…/}` emitted C that gcc rejects. They take
+# the unrecognized sentinel, whose SB4047 names the missing variable.
+run_sash 'echo "[${}]"'
+[[ $rc != 0 && -z $out && $err == *SB4047* && $err == *'`${}` names no variable'* ]]; chk vm.nn1
+run_sash 'echo "[${:-d}]"'
+[[ $rc != 0 && -z $out && $err == *SB4047* && $err == *'`${:-d}` names no variable'* ]]; chk vm.nn2
+run_sash 'echo "[${:?m}]"
+echo after'
+[[ $rc != 0 && -z $out && $err == *SB4047* && $err == *'`${:?m}` names no variable'* ]]; chk vm.nn3
+run_sash 'x=abc
+echo "[${:0:1}]" "$x"'
+[[ $rc != 0 && -z $out && $err == *SB4047* && $err == *'`${:0:1}` names no variable'* \
+   && $err != *ICE* ]]; chk vm.nn4
+run_sash 'echo ${:~} x'
+[[ $rc != 0 && -z $out && $err == *SB4047* && $err == *'`${:~}` names no variable'* ]]; chk vm.nn5
+run_sash 'echo ${:!} x'
+[[ $rc != 0 && -z $out && $err == *SB4047* && $err == *'`${:!}` names no variable'* ]]; chk vm.nn6
+run_sash 'echo "[${:s/a/b/}]"'
+[[ $rc != 0 && -z $out && $err == *SB4047* && $err == *'`${:s/a/b/}` names no variable'* ]]; chk vm.nn7
+# nn8: a name run emptied by any other byte gets the same message; it used to
+# read "unrecognized content `&` after ``"
+run_sash 'echo "[${&}]"'
+[[ $rc != 0 && -z $out && $err == *SB4047* && $err == *'`${&}` names no variable'* ]]; chk vm.nn8
 
 # ── Brace-less dispositions (DG 2026-09-04): `$x:-foo` / `$x:?msg` / `$x:~`
 # desugar to the braced form. Only `:-`/`:?`/`:~` immediately after `$name`

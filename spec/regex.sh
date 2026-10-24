@@ -6,7 +6,7 @@
 set -eu
 . common.sh
 setup regex
-plan=92
+plan=93
 echo "1..$plan" >&3
 
 set +e
@@ -621,6 +621,15 @@ str v=ab
 str w=${v:s/a/1/,s/b/2/g}
 echo "[$x][$w]"'
 [[ $rc = 0 && $out = "[bAaA][12]" && -z $err ]]; chk 63.fl7
+
+# 63.fl8 the rejection reads as one sentence. Its source lines lost their `\`
+#        continuations, so each line break became a run of indentation spaces
+#        inside the message (each fragment below spans one of the three).
+run_sash 'str x=aAaA
+x =~ s/a/b/z
+echo "[$x]"'
+[[ $rc != 0 && -z $out && $err == *SB4032* && $err == *'(replace every match)'* \
+   && $err == *'no case-insensitive mode'* && $err == *'both sides for `i`'* ]]; chk 63.fl8
 
 run_sash 'str subject=abc
 if [[ $subject =~ $'"'"'a\x00b'"'"' ]] { echo matched }'

@@ -1816,12 +1816,13 @@ echo $(( +x ))'
 [[ $rc = 0 && $out = "-5" && -z $err ]]; chk cov.355
 
 # cov.356 a `$((` *inside* an arithmetic context. The arith collector sees the
-# token and opens a nested group rather than treating it as a new expansion;
-# the result is a doubled close that the parser rejects. Nesting arithmetic is
-# pointless — `$(( … ))` already yields a number — so the point of the spec is
-# that it is rejected cleanly instead of mis-nesting into silent garbage.
+# token and opens a nested group rather than treating it as a new expansion.
+# Nesting arithmetic is pointless — `$(( … ))` already yields a number — so the
+# point of the spec is that it is rejected cleanly instead of mis-nesting into
+# silent garbage. The `$` starts no variable (DD#72); the nested-substitution
+# message names plain `( … )` grouping.
 run_sash 'echo $(( $((1)) + 2 ))'
-[[ $rc != 0 && -z $out && $err == *SB4020* ]]; chk cov.356
+[[ $rc != 0 && -z $out && $err == *SB4035* && $err == *'group with plain `( … )`'* ]]; chk cov.356
 
 # cov.357 `$( … )` nested inside another `$( … )`, inside a double-quoted
 # string. The double-quote scanner tracks command-substitution depth with its

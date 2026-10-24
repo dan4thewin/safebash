@@ -143,25 +143,65 @@ not obviously a bug stays unchanged in the port:
 
 ### 3. F14 malformed names and arithmetic
 
-- [ ] **B38** (fixed-on-branch+question; no DD). Invalid parameter names are
+- [ ] **B38** (open+question; no DD). Invalid parameter names are
   accepted or swallowed in arithmetic and expansions: `$(( $0 ))` and `$((
   ${0} ))` print empty, where the word `${0}` is SB5017. Questions on
   `${10}` and `$-`.
-- [ ] **B39** (fixed-on-branch; DD80, DD114). Index parse errors were
+  - Corrected in F14 (journal 533): Step 0 recorded it as
+    fixed-on-branch+question, but base, the branch and F14 give the same
+    verdict on each of its shapes. The one probe the branch changes,
+    `$(( $ + 1 ))`, is B70's. Tracked by `bug-digit-led-names`,
+    `bug-multi-digit-positionals`, `q-word-dollar-dash` and
+    `bug-convert-dollar-ten`; `$0` in arithmetic by
+    `bug-reserved-names-in-arithmetic`.
+- [x] **B39** (fixed-on-branch; DD80, DD114). Index parse errors were
   swallowed. The branch re-codes 75.164 from SB4041 to SB4035, citing a DD80
   addendum that was never written.
+  - Landed in F14 (journal 533), ported as-is: an index that opens with
+    `$`, `"` or `'` reports its own parse error. DD80's addendum, now
+    written, states the rule and the two cases that stay SB4041. Specs
+    `80.131`-`80.134` and the re-coded `75.164`; `cov.125`, `80.4` and
+    `cov.110` pin the cases that stay SB4041.
 - [ ] **B40** (open; DD125). Reserved-name reads in arithmetic escape
   SB5031: `handled_elsewhere` exempts environment, rejected and slot names.
-  Same root as B41.
+  Same root as B41. Tracked by `bug-reserved-names-in-arithmetic`.
 - [ ] **B41** (open; DD125). `${HOME[0]}` ICEs in both backends. Same root
-  as B40.
-- [ ] **B66** (fixed-on-branch; no DD). The SB4032 unsupported-flag message
+  as B40. Tracked by `bug-reserved-names-in-arithmetic`.
+- [x] **B66** (fixed-on-branch; no DD). The SB4032 unsupported-flag message
   carries three 18-space runs (lost line continuations).
-- [ ] **B70** (fixed-on-branch; DD72, DD79). A lone `$` or a nested
-  substitution (`$(`, `$((`, `$'…'`) in arithmetic draws the generic SB4020.
-  The branch gives SB4035 with a message naming the form, re-coding 31.46,
-  31.67, 31.85 and cov.356, and makes `${}` SB4047. Its spec comments
-  attribute "the `$` starts no variable" to DD72, which no DD says.
+  - Landed in F14 (journal 533), ported as-is. Spec `63.fl8`.
+- [x] **B70** (fixed-on-branch; DD72, DD79). A lone `$` in arithmetic is a
+  silent read of the variable with the empty name (`$(( $ + 1 ))` prints
+  1); a nested substitution (`$(`, `$((`) or `$'…'` draws the generic
+  SB4020. `${}` and `${:…}` expand the empty name too (`${:0:1}` is a
+  native ICE). The branch gives SB4035 with a message naming the form,
+  re-coding 31.46, 31.67, 31.85 and cov.356, and makes `${}` SB4047. Its
+  spec comments attribute "the `$` starts no variable" to DD72, which no DD
+  says.
+  - Corrected in F14 (journal 533): Step 0 had the lone `$` drawing
+    SB4020, as only the nested forms and `$'…'` do.
+  - Landed in F14 (journal 533), ported as-is. DD65's and DD72's addenda
+    state the two rules; DD72's now says what the spec comments cite.
+    Specs `31.173`-`31.177`, `vm.nn1`-`vm.nn8`, `80.134`, `80.135`, and
+    the re-coded `31.46`, `31.67`, `31.85` and `cov.356`.
+
+Filed as backlog tasks during F14, under DG's rule that a behaviour that is
+not obviously a bug stays unchanged in the port:
+
+- `bug-digit-led-names` (P2, B38): `${1x}`, `${1_}` and `$1x` in
+  arithmetic read a variable nothing can bind; `${1x:0:1}` is a native ICE.
+- `bug-multi-digit-positionals` (P2, B38): `${10}` and `${01}` read an
+  unbound variable inside a function. DD75 has both `$1..$n` and
+  `$1..$9`; the task asks which.
+- `bug-reserved-names-in-arithmetic` (P2; B40, B41, B38's `$0`): reserved
+  and environment names escape SB5017 and SB5018 outside a word.
+- `q-word-dollar-dash` (P3, B38): `$-` in a word is literal text.
+- `bug-convert-dollar-ten` (P2, B38): sash-convert reads `$10`, `$01` and
+  `$1x` as one positional name at top level.
+- `bug-malformed-index-generic-sb4047` (P3): an index with an unclosed
+  quote, parenthesis or `]` gets the generic SB4047.
+- `bug-echo-partial-line-before-abort` (P2): `echo` and `write` print part
+  of their line before an argument aborts.
 
 ### 4. F15 regex and sed operands
 

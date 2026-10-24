@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup arithmetic
-plan=474
+plan=479
 echo "1..$plan" >&3
 
 set +e
@@ -1218,9 +1218,11 @@ run_sash 'int x=$(( @@@ )); echo "$x"'
 
 # 31.46 `$( )` inside `$(( ))` is rejected in a string too. Bash evaluates a
 # nested command substitution here; sash rejects it in every other position,
-# and this one used to be a silent 0 instead of joining them.
+# and this one used to be a silent 0 instead of joining them. The `$` that
+# opens it starts no variable (DD#72); the message names the nested
+# substitution and the routes that do get a command's value into arithmetic.
 run_sash 'echo "$(( $(getpid) > 0 ))"'
-[[ $rc != 0 && -z $out && $err == *SB4020* ]]; chk 31.46
+[[ $rc != 0 && -z $out && $err == *SB4035* && $err == *'is not an arithmetic operand'* ]]; chk 31.46
 # 31.47 a malformed arith inside a `${var:-WORD}` default no longer reaches the
 # arithmetic parser at all: the default is a literal, so SB4070 fires first.
 # The direct spelling still covers SB4020.
@@ -1361,11 +1363,13 @@ run_sash 'int x=1
 (( x = 1 <<< ))
 echo $x'
 [[ $rc != 0 && -z $out && $err == *SB4020* ]]; chk 31.66
-# 31.67 an ANSI-C quote now reaches the re-lexer instead of vanishing
+# 31.67 an ANSI-C quote now reaches the re-lexer instead of vanishing. Its `$`
+# opens no variable, so it is a stray byte (DD#72), not a generic "unexpected
+# token after arithmetic expression".
 run_sash "int x=1
 (( x = 1 \$'a' ))
 echo \$x"
-[[ $rc != 0 && -z $out && $err == *SB4020* ]]; chk 31.67
+[[ $rc != 0 && -z $out && $err == *SB4035* && $err == *'stray `$` in arithmetic'* ]]; chk 31.67
 # 31.68 the regression shield for the one token that legitimately reaches the
 # renderer as a separator: `for (( ;; ))` collects as `;;` and must stay a
 # legitimately empty expression, not a parse error.
@@ -1505,11 +1509,12 @@ run_sash 'int x=1
 echo $x'
 [[ $rc != 0 && -z $out && $err == *SB4035* ]]; chk 31.84
 
-# 31.85 `$(` survives collection
+# 31.85 `$(` survives collection, and is named as a nested substitution rather
+# than a generic "unexpected token after arithmetic expression".
 run_sash 'int x=1
 (( x = $(echo 2) + 1 ))
 echo $x'
-[[ $rc != 0 && -z $out && $err == *SB4020* ]]; chk 31.85
+[[ $rc != 0 && -z $out && $err == *SB4035* && $err == *'is not an arithmetic operand'* ]]; chk 31.85
 
 # ── arith diagnostics name the source text, never a Rust variant ──
 # SB4020 used to format the token with `{:?}`, so `>&` reported
@@ -2173,6 +2178,34 @@ run_sash 'echo "$(( , 1 ))"'
 # 31.172 the operand diagnostic spells `)` as written
 run_sash 'echo "$(( ) 1 ))"'
 [[ $rc != 0 && -z $out && $err == *'found `)`'* ]]; chk 31.172
+
+# ── a `$` that starts no variable (DD#72, 2026-10-24 addendum) ──
+#
+# The arithmetic scanner read every `$` as the start of a variable and scanned
+# the name after it. A `$` followed by a byte that cannot start a name scanned
+# an EMPTY name, a read of the variable called `` — so `$(( $ + 1 ))` printed
+# 1 and `$(( $- + 1 ))` printed -1, with no diagnostic. That `$` is now a stray
+# byte, SB4035 like any other byte that is no token. (`$(` gets its own message,
+# pinned by 31.46, 31.85 and cov.356.) An empty braced name inside arithmetic is
+# the word rule (DD#65, 2026-10-24 addendum; vm.nn*): it read the same variable.
+
+# 31.173 a bare `$` before an operator
+run_sash 'echo $(( $ + 1 ))'
+[[ $rc != 0 && -z $out && $err == *SB4035* && $err == *'stray `$` in arithmetic'* ]]; chk 31.173
+# 31.174 `$-` is no variable in sash, so its `$` opens nothing either
+run_sash 'echo $(( $- + 1 ))'
+[[ $rc != 0 && -z $out && $err == *SB4035* && $err == *'stray `$` in arithmetic'* ]]; chk 31.174
+# 31.175 the `(( … ))` statement scans the same way
+run_sash 'int x=0
+(( x = $ ))
+echo "$x"'
+[[ $rc != 0 && -z $out && $err == *SB4035* && $err == *'stray `$` in arithmetic'* ]]; chk 31.175
+# 31.176 `${}` names no variable in arithmetic, as in a word
+run_sash 'echo $(( ${} + 1 ))'
+[[ $rc != 0 && -z $out && $err == *SB4047* && $err == *'`${}` names no variable'* ]]; chk 31.176
+# 31.177 …and with an operator, where the `1` used to be the default of ``
+run_sash 'echo $(( ${:-1} ))'
+[[ $rc != 0 && -z $out && $err == *SB4047* && $err == *'`${:-1}` names no variable'* ]]; chk 31.177
 
 # ── DD#58 arith sexpr: the callee must denote a value (2026-10-09) ──
 #

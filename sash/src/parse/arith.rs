@@ -71,6 +71,29 @@ fn arith_bad_literal_error(span: Span, literal: &str) -> Diagnostic {
             ),
         );
     }
+    // A `$` that starts no variable (`scan_arith_dollar`). `$(` is a nested
+    // `$( … )` / `$(( … ))`, which is not an operand; the advice names forms
+    // that work (`int n=$(f)` does not for a string-producing `f`: SB4030).
+    if literal == "$(" {
+        return Diagnostic::error_at(
+            span.line,
+            span.col,
+            "SB4035",
+            "a nested `$( … )` or `$(( … ))` is not an arithmetic operand — \
+             capture it into a variable first (a string capture converts with a \
+             disposition, `${s:-0}`), call an int function as `(f)` (DD#58), \
+             and group with plain `( … )`"
+                .to_string(),
+        );
+    }
+    if literal == "$" {
+        return Diagnostic::error_at(
+            span.line,
+            span.col,
+            "SB4035",
+            "stray `$` in arithmetic — a variable is `$name`, `${name}` or bare `name`".to_string(),
+        );
+    }
     Diagnostic::error_at(
         span.line,
         span.col,
@@ -765,17 +788,24 @@ fn scan_decimal_literal(input: &str, start: usize, end: usize) -> (ATok, usize) 
 /// token and the byte index just past it.
 fn scan_arith_dollar(input: &str, bytes: &[u8], i: usize) -> (ATok, usize) {
     let j = i + 1; // skip '$'
-    if j < bytes.len() && bytes[j] == b'{' {
-        return scan_arith_braced_var(input, bytes, j + 1);
+    match bytes.get(j).copied() {
+        Some(b'{') => scan_arith_braced_var(input, bytes, j + 1),
+        // Special single-char vars: $#, $?, $$, $!, $@, $* (none are
+        // ascii-alphanumeric, so the identifier scan would miss them and leave
+        // the sigil char stray). Positionals $1..$9 are digits, handled by the
+        // alphanumeric scan in scan_arith_named_var.
+        Some(c @ (b'#' | b'?' | b'$' | b'!' | b'@' | b'*')) => {
+            (ATok::DollarVar((c as char).to_string()), j + 1)
+        }
+        Some(c) if c.is_ascii_alphanumeric() || c == b'_' => scan_arith_named_var(input, bytes, j),
+        // A `$` that starts no variable is a stray byte (DD#72). It used to scan
+        // as a read of the variable called `` — `$(( $ + 1 ))` printed 1, and a
+        // nested `$(f)` / `$((…))` got a generic "unexpected token" about the
+        // `(` after it. Only the `$` is consumed: the `(` still scans as itself,
+        // so the token stream stays balanced; the literal names what `$` opened.
+        Some(b'(') => (ATok::BadLit("$(".to_string()), j),
+        _ => (ATok::BadLit("$".to_string()), j),
     }
-    // Special single-char vars: $#, $?, $$, $!, $@, $* (none are
-    // ascii-alphanumeric, so the identifier scan would miss them and leave
-    // the sigil char stray). Positionals $1..$9 are digits, handled by the
-    // alphanumeric scan in scan_arith_named_var.
-    if j < bytes.len() && matches!(bytes[j], b'#' | b'?' | b'$' | b'!' | b'@' | b'*') {
-        return (ATok::DollarVar((bytes[j] as char).to_string()), j + 1);
-    }
-    scan_arith_named_var(input, bytes, j)
 }
 
 /// Scan a braced `${name}` body starting just past the `{`.

@@ -2185,17 +2185,21 @@ echo "${b[0]}"'
 # pin the ruling itself — these pin that the DIAGNOSTIC names a form that
 # works, which the generic index message did not.
 # 75.163 the capture-specific message, not the generic "use `$(( … ))`" — that
-# advice is a dead end here, because `${a[$(( $(f) ))]}` is SB4041.
+# advice is a dead end here, because `${a[$(( $(f) ))]}` is SB4035 (a capture is
+# not an arithmetic operand either).
 run_sash 'f() { echo 1; }
 array arr=(p q)
 str z=${arr[$(f)]}
 echo "[$z]"'
 [[ $rc != 0 && -z $out && $err == *"capture as an index"* && $err == *"fn f -> int"* ]]; chk 75.163
-# 75.164 the dead end the message avoids sending anyone to.
+# 75.164 the dead end the message avoids sending anyone to. Its own error is
+# the nested capture: SB4041's "open arithmetic explicitly" would send the
+# author back to the form they wrote, so an explicit index's own parse error
+# wins (DD#80, 2026-10-24 addendum).
 run_sash 'f() { echo 1; }
 array arr=(p q)
 echo "[${arr[$(( $(f) ))]}]"'
-[[ $rc != 0 && -z $out && $err == *SB4041* ]]; chk 75.164
+[[ $rc != 0 && -z $out && $err == *SB4035* && $err == *'is not an arithmetic operand'* && $err != *SB4041* ]]; chk 75.164
 # 75.165 and the form it does name.
 run_sash 'fn f -> int { return 1 }
 array arr=(p q)

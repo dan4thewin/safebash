@@ -3578,6 +3578,16 @@ fn unrecognized_operator_diag(pe: &ParameterExpansion, span: Span) -> Option<Dia
         }) => s.as_str(),
         _ => unreachable!("unrecognized parameter operator carries a literal remainder"),
     };
+    if pe.name.is_empty() {
+        return Some(parse_error(
+            span,
+            "SB4047",
+            format!(
+                "`${{{trailing}}}` names no variable — a braced expansion starts \
+                 with a variable name (`${{x}}`, `${{x:-…}}`)"
+            ),
+        ));
+    }
     Some(parse_error(
         span,
         "SB4047",

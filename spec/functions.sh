@@ -1179,9 +1179,9 @@ str z=${arr[$(f)]}
 echo "[$z]"'
 [[ $rc != 0 && -z $out && $err == *SB4030* && $err == *"capture as an index"* ]]; chk lift.3
 # lift.3b the legal form DG named. The advice in lift.3's diagnostic has to be
-# a form that actually works: `${arr[$(( $(f) ))]}` is SB4041 (a capture is not
-# an arithmetic operand either) and `int i=$(f)` is SB4030, so an int-returning
-# function is the only route and the message says so.
+# a form that actually works: `${arr[$(( $(f) ))]}` is SB4035 (a capture is not
+# an arithmetic operand either) and `int i=$(f)` is SB4030, so the message
+# names an int-returning function, which this pins as working.
 run_sash 'fn f -> int { return 1 }
 array arr=(p q)
 str z=${arr[$(( (f) ))]}

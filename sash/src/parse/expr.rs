@@ -776,15 +776,34 @@ pub fn parse_parameter_expansion(
     Ok(unrecognized_parameter_operator(rest, name, span))
 }
 
-/// The forms told apart by their leading byte, before any name is scanned: a
-/// braced splat `${@}` / `${*[…]}`, `${#…}`, and `${!…}`.
+/// The forms told apart by their leading byte, before any name is scanned: no
+/// name at all (`${}`, `${:…}`), a braced splat `${@}` / `${*[…]}`, `${#…}`,
+/// and `${!…}`.
 fn try_leading_form(content: &str, span: Span, origin: Origin) -> Result<Option<Expr>, Diagnostic> {
+    if names_no_variable(content) {
+        return Ok(Some(unrecognized_parameter_operator(content, "", span)));
+    }
     if let Some(e) = try_braced_splat(content, span, origin)? {
         return Ok(Some(e));
     }
     let bytes = content.as_bytes();
     Ok(try_strlen_or_arrlen(content, bytes, span)
         .or_else(|| try_indirection_or_arrkeys(content, bytes, span)))
+}
+
+/// `${}` and the `:`-led operators on no name (`${:-x}`, `${:s/a/b/}`,
+/// `${:0:1}`). Every one of these used to build a real operator on a variable
+/// called `` — `${}` printed nothing, `${:-x}` printed `x`, `${:0:1}` reached a
+/// codegen ICE — where bash rejects them all as a bad substitution. They take
+/// the `unrecognized` sentinel, whose diagnostic names the missing variable.
+///
+/// The other empty-name spellings are already rejected under their own codes
+/// and keep them: `${#}`/`${?}`/`${-}` are dropped operators (SB4034),
+/// `${[0]}` has no collection (SB4047), `${!}` is indirection (SB4003), and
+/// `${@}`/`${*}` are splats (SB5045). A name is the leading `[A-Za-z0-9_]*`
+/// run (`scan_param_name`), so empty or `:`-led content has none.
+fn names_no_variable(content: &str) -> bool {
+    content.is_empty() || content.starts_with(':')
 }
 
 fn unrecognized_parameter_operator(rest: &str, name: &str, span: Span) -> Expr {
@@ -1077,11 +1096,13 @@ fn step_close_depth(depth: &mut i32) -> bool {
 }
 
 /// Re-parse a captured subscript index as a full value expression (DD#80), so
-/// nested contexts survive. A parse failure or a leftover tail (a mixed/bare
-/// form the value parser cannot consume whole) falls back to a `Literal` — which
-/// `validate::check_subscript_index` then rejects as ambiguous (SB4041). The
-/// index scanner's own fatal is an error, not a fallback
-/// ([`parse_whole_index`]). `origin` is where `idx` starts in the program.
+/// nested contexts survive. A leftover tail (a mixed/bare form the value parser
+/// cannot consume whole), or a parse failure of an implicit form, falls back to
+/// a `Literal` — which `validate::check_subscript_index` then rejects as
+/// ambiguous (SB4041). The index scanner's own fatal is an error, not a
+/// fallback ([`parse_whole_index`]), and so is an explicit form that fails to
+/// parse ([`opens_explicit_index`]). `origin` is where `idx` starts in the
+/// program.
 pub(super) fn parse_subscript_index(
     idx: &str,
     span: Span,
@@ -1113,7 +1134,8 @@ pub(super) fn parse_subscript_index(
 /// the braced `${name[…]}`. Returning `None` for both cases leaves the caller
 /// holding a `Literal`, which `validate::check_subscript_index` then rejects as
 /// ambiguous (SB4041). The index scanner's own fatal is an error, not a
-/// fallback: it is the one thing only this scanner can see.
+/// fallback: it is the one thing only this scanner can see. An explicit form's
+/// parse failure is an error too ([`opens_explicit_index`]).
 fn parse_whole_index(trimmed: &str, origin: Origin) -> Result<Option<Expr>, Diagnostic> {
     if is_bare_dollar_subscript(trimmed) {
         return Ok(None);
@@ -1121,9 +1143,21 @@ fn parse_whole_index(trimmed: &str, origin: Origin) -> Result<Option<Expr>, Diag
     let mut scanner = Scanner::with_origin(trimmed, origin);
     let whole = match parse_expr(&mut scanner) {
         Ok(expr) if scanner.at_eof() => Some(expr),
+        Err(d) if opens_explicit_index(trimmed) => return with_scanner_fatal(&scanner, Err(d)),
         _ => None,
     };
     with_scanner_fatal(&scanner, Ok(whole))
+}
+
+/// DD#80's explicit forms 2-4 — `$var`, an expansion (`${…}`, `$(…)`,
+/// `$(( … ))`) and a quoted key — open with `$`, `"` or `'`. When one of them
+/// fails to parse, the failure is that form's own error: SB4041's advice is to
+/// write an explicit form, which would send the reader back to the one they
+/// wrote. `${a[$(( 1 + ))]}` used to get exactly that advice. An implicit form
+/// (`(1+2)`, an empty index) has no construct of its own to report, so its
+/// failure is still SB4041.
+fn opens_explicit_index(trimmed: &str) -> bool {
+    trimmed.starts_with(['$', '"', '\''])
 }
 
 /// `$name[…]` — a `$`-sigil identifier immediately followed by a `[` subscript,
@@ -1410,7 +1444,10 @@ fn build_one_sed_sub(
             span,
             "SB4032",
             format!(
-                "unsupported substitution flag `{flags}` — `g` (replace every                  match) is the only one; the regex engine has no                  case-insensitive mode, so use `$(tolower …)` on both sides                  for `i`"
+                "unsupported substitution flag `{flags}` — `g` (replace every \
+                 match) is the only one; the regex engine has no \
+                 case-insensitive mode, so use `$(tolower …)` on both sides \
+                 for `i`"
             ),
         ));
     }

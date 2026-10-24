@@ -247,6 +247,41 @@ suffix, including inside arithmetic. It now uses the same unknown-content
 sentinel as the scalar path and rejects with SB4047. Specs `celop.1`-`celop.4`
 cover arrays, maps, quoted words and arithmetic. Journal 512.
 
+### Addendum (2026-10-24, batch-531 port step F14) — a braced expansion with no name is SB4047
+
+The fallthrough above catches unknown content *after* a name; nothing caught a
+*missing* name. A body's name is its leading `[A-Za-z0-9_]*` run, which may be
+empty, so `${}` and every `:`-led operator were built on a variable called ``.
+On the base binary (batch-531 B70, the word half):
+
+- `${}` printed nothing and `${:-d}` printed `d`, in both backends;
+- `${:?m}` compiled, then aborted at run time with `m`;
+- `${:0:1}` reached a native codegen ICE ("no codegen slot"), and C printed an
+  empty string;
+- `${:~}`, `${:!}` and `${:s/a/b/}` read an empty value natively, and emitted C
+  that gcc rejects;
+- inside arithmetic, `$(( ${} + 1 ))` and `$(( ${:-1} ))` both printed `1`;
+- as an index, `${a[${}]}` drew SB4030's advice to convert a variable called
+  `$`.
+
+**The rule.** A braced expansion whose content is empty or starts with `:`
+names no variable. It takes the `unrecognized` sentinel and is **SB4047**,
+"`${…}` names no variable — a braced expansion starts with a variable name".
+A name run emptied by any other byte already reached the sentinel; `${&}` read
+"unrecognized content `&` after ``" and now reads the same as the rest.
+
+Empty-name spellings that were already rejected under their own codes keep
+them, unchanged on both binaries: `${#}`, `${?}` and `${-}` are dropped
+operators (SB4034), `${[0]}` has no collection to subscript (SB4047, its own
+message), `${!}` is indirection (SB4003), and `${@}`/`${*}` are splats
+(SB5045).
+
+Code: `names_no_variable`, checked first in `try_leading_form`
+(`parse/expr.rs`), and the empty-name arm of `unrecognized_operator_diag`
+(`parse/parser.rs`). Specs: `vm.nn1`–`vm.nn8` (var_modifiers.sh),
+`31.176`–`31.177` (arithmetic.sh) and `80.135` (subscript.sh). A stray `$` in
+arithmetic is DD#72's addendum of the same date. Journal 533.
+
 ### Follow-on (2026-09-30) — `$` in a `:?` abort message is SB4070
 
 The `:?` abort **message** is a literal, and a `$` in it is now rejected
