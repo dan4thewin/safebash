@@ -1,0 +1,331 @@
+hid	file	fh	old	new	plus	minus	base_fns	branch_fns	chk_del	chk_add	family	families	bids	status	note
+H001	docs/GUIDE.md	1	211,6	211,7	1	0					F10	F10	SB5098	pending	GUIDE row for SB5098
+H002	notes/decisions/114-subscript-index-is-a-read.md	1	71,6	71,17	11	0					F13	F13	B3	pending	DD114 addendum: nested spans exact
+H003	notes/decisions/115-ansi-c-escape-set.md	1	135,6	135,20	14	0					F13	F13	B61	pending	DD115 addendum: sub-scanner fatals dropped at re-lex
+H004	notes/decisions/DD24-taint-quarantine.md	1	101,6	101,46	40	0					F10	F10	SB5098	pending	DD24 enforcement note; cites nonexistent journal 531; says reported to DG for veto
+H005	notes/decisions/DD66-cond-form-dispatch.md	1	112,6	112,10	4	0					F9	F9	B86	pending	DD66 lazy-dispatch addendum
+H006	notes/decisions/DD66-cond-form-dispatch.md	2	184,3	188,45	42	0					F9	F9	B86	pending	DD66 lazy-dispatch addendum
+H007	notes/decisions/DD93-attest-ergonomics.md	1	288,3	288,23	20	0					F10	F10	B89	pending	DD93 addendum (inline source / Part D ${} import); cites Journal 531
+H008	notes/tasks/subscript-index-nested-span.md	1	1,6	1,6	1	1					F13	F13	B3	pending	task subscript-index-nested-span closed
+H009	notes/tasks/subscript-index-nested-span.md	2	43,3	43,32	29	0					F13	F13	B3	pending	task subscript-index-nested-span closed
+H010	sash-rt/src/lib.rs	1	2723,10	2723,11	5	4					F15	F15	B51	pending	sash-rt sash_regex_replace invalid pattern -> sash_exit(2)
+H011	sash/src/bindings.rs	1	32,14	32,7	1	8	resolve	resolve			F3	F3	B16	pending	bindings resolve uses program.function_defs()
+H012	sash/src/codegen/dispatch.rs	1	282,8	282,9	3	2	SsaInst::emit_command_kind	SsaInst::emit_command_kind			F2	F2	B20	pending	emit_command_kind: ForkBackground gone; StoreBgPid gets checked
+H013	sash/src/codegen/dispatch.rs	2	364,20	365,6	0	14	SsaInst::emit_fork_background;SsaInst				F2	F2	B9	pending	emit_fork_background removed (Fork terminator)
+H014	sash/src/codegen/dispatch.rs	3	609,17	596,17	6	6	SsaInst	SsaInst			F10	F10	B88c	pending	AttestRetag doc: scalar, array or map
+H015	sash/src/codegen/dispatch.rs	4	645,9	632,9	3	3	SsaInst	SsaInst			F10	F10	B88d	pending	emit_attest_all doc: first failure decides
+H016	sash/src/codegen/dispatch.rs	5	721,17	708,20	12	9	SsaInst::emit_attest_all	SsaInst::emit_attest_all			F10	F10	B88d	pending	emit_attest_all: first failing cell ends if-form walk
+H017	sash/src/codegen/dispatch.rs	6	739,10	729,10	3	3	SsaInst::emit_attest_all	SsaInst::emit_attest_all			F10	F10	B88d	pending	emit_attest_all: cont block shared
+H018	sash/src/codegen/dispatch.rs	7	939,25	929,65	47	7	SsaInst::emit_store_bg_pid	SsaInst;SsaInst::emit_store_bg_pid			F2	F2	B20	pending	emit_store_bg_pid: negative pid = fork failure, status 1, abort if checked
+H019	sash/src/codegen/dispatch.rs	8	1042,19	1072,18	8	9	SsaInst::emit_exit	SsaInst::emit_exit			F2	F2	B9	pending	emit_exit: in_end_block / child (end_cl None) instead of ssa_id < end_id
+H020	sash/src/codegen/entry.rs	1	146,6	146,7	1	0		compile_ssa			F2	F2	B9	pending	compile_ssa child_region
+H021	sash/src/codegen/entry.rs	2	172,6	173,7	1	0		compile_ssa			F2	F2	B9	pending	EmitCtx child_region init
+H022	sash/src/codegen/entry.rs	3	213,6	215,9	3	0		EmitCtx			F2	F2	B9	pending	EmitCtx child_region field
+H023	sash/src/codegen/entry.rs	4	317,6	322,7	1	0		emit_block_insts			F2	F2	B9	pending	emit_block_insts abort_end_block
+H024	sash/src/codegen/entry.rs	5	337,9	343,8	1	2	emit_block_insts	emit_block_insts			F2	F2	B9	pending	InstCtx end_cl_block per block; ssa_id dropped
+H025	sash/src/codegen/entry.rs	6	350,6	355,17	11	0		(top);abort_end_block			F2	F2	B9	pending	abort_end_block
+H026	sash/src/codegen/entry.rs	7	361,31	377,47	33	17	emit_terminator	emit_terminator;(top);emit_test_branch;emit_fork			F2	F2	B9,B20	pending	emit_terminator Fork/ChildExit; emit_test_branch extraction = gate refactor
+H027	sash/src/codegen/entry.rs	8	393,6	425,10	4	0		emit_return;(top);emit_exit_call			F2	F2	B9	pending	emit_exit_call extraction for ChildExit
+H028	sash/src/codegen/inst_handlers.rs	1	78,7	78,7	1	1	handle_pipeline	handle_pipeline			F2	F2	B10	pending	handle_pipeline: compound_stages.labels
+H029	sash/src/codegen/inst_handlers.rs	2	327,11	327,10	4	5	lower_pipeline_stage	lower_pipeline_stage			F2	F2	B10	pending	lower_pipeline_stage: compound_stages.entry
+H030	sash/src/codegen/inst_handlers.rs	3	590,6	589,9	3	0		handle_pipeline_finish			W5	W5	B111	superseded	native handle_pipeline_finish: signal poll after reader finish (adds END entry after a reader fill = B110 shape; lands with B110's post-fill checkpoint)
+H031	sash/src/codegen/setup.rs	1	984,11	984,13	5	3	intern_literals	intern_literals			F2	F2	B10	pending	intern_literals: compound_stages.functions()
+H032	sash/src/codegen/setup.rs	2	1191,6	1193,13	7	0		Interner<'a>;Interner<'a>::intern_trace_terminators			F2	F2	B10	pending	intern_trace_terminators extraction = gate refactor for H031
+H033	sash/src/codegen/tests.rs	1	5,7	5,7	1	1	(top)	(top)			F8	F8	B87	pending	codegen/tests.rs imports
+H034	sash/src/codegen/tests.rs	2	141,17	141,85	78	10	lower_test_expr	lower_test_expr;(top);lower_test_junction			F8	F8	B87,B88a	pending	lower_test_junction (native lazy && ||)
+H035	sash/src/codegen/types.rs	1	204,7	204,6	0	1	InstCtx				F2	F2	B9	pending	InstCtx.ssa_id removed (emit_exit uses in_end_block / per-block end_cl_block)
+H036	sash/src/emit_c.rs	1	62,6	62,12	6	0		Emit			F2	F2	B9,B10	pending	Emit child_region + compound_stages fields
+H037	sash/src/emit_c.rs	2	76,6	82,8	2	0		Emit::new			F2	F2	B9,B10	pending	Emit::new
+H038	sash/src/emit_c.rs	3	462,6	470,8	2	0		emit_main			F2	F2	B9,B10	pending	emit_main sets child_region/compound_stages
+H039	sash/src/emit_c.rs	4	491,6	501,12	6	0		emit_main;(top);emit_exit_labels			F2	F2	B9	pending	emit_exit_labels extraction
+H040	sash/src/emit_c.rs	5	500,7	516,12	6	1	emit_main	emit_exit_labels			F2	F2	B9	pending	__child_exit label
+H041	sash/src/emit_c.rs	6	762,7	783,7	1	1	emit_block	emit_block			F2	F2	B9	pending	emit_terminator takes Emit
+H042	sash/src/emit_c.rs	7	989,8	1010,8	2	2	emit_attest_inst	emit_attest_inst			F10	F10	B88c	pending	AttestRetag comment
+H043	sash/src/emit_c.rs	8	998,8	1019,9	3	2	(top)	(top)			F10	F10	B88d	pending	emit_attest_all_c doc
+H044	sash/src/emit_c.rs	9	1038,7	1060,7	1	1	emit_attest_all_c	emit_attest_all_c			F10	F10	B88d,B91	pending	emit_attest_check call (names dropped)
+H045	sash/src/emit_c.rs	10	1099,32	1121,22	8	18	(top);emit_attest_check	(top);emit_attest_check			F10	F10	B88d,B91	pending	emit_attest_check: first failure breaks; C message has no value clause
+H046	sash/src/emit_c.rs	11	1912,29	1924,16	9	22	(top);emit_bg_builtin_c	(top);emit_bg_builtin_c			F2	F2	B20	pending	emit_bg_builtin_c: ForkBackground gone, StoreBgPid split
+H047	sash/src/emit_c.rs	12	1942,6	1941,28	22	0		(top);emit_store_bg_pid_c			F2	F2	B20	pending	emit_store_bg_pid_c fork failure
+H048	sash/src/emit_c.rs	13	2130,8	2151,8	2	2	emit_command_body	emit_command_body			F2	F2	B20	pending	emit_command_body passes checked
+H049	sash/src/emit_c.rs	14	2375,8	2396,12	5	1	(top)	(top);abort_target			F2	F2	B9	pending	abort_target: child -> __child_exit
+H050	sash/src/emit_c.rs	15	2676,7	2701,7	1	1	(top)	(top)			F2	F2	B9	pending	emit_exit doc
+H051	sash/src/emit_c.rs	16	2685,11	2710,18	12	5	emit_exit	emit_exit;(top);emit_exit_jump			F2	F2	B9	pending	emit_exit_jump: child; END region test replaces cur_block < eb
+H052	sash/src/emit_c.rs	17	2697,8	2729,11	5	2	(top);emit_terminator	(top);emit_terminator			F2	F2	B9	pending	emit_terminator signature/doc
+H053	sash/src/emit_c.rs	18	2706,6	2741,17	11	0		emit_terminator			F2	F2	B9,B20	pending	emit_terminator Fork/ChildExit arms
+H054	sash/src/emit_c.rs	19	2746,20	2792,34	25	11	lower_test_expr	lower_test_expr;(top);lower_test_junction			F8	F8	B87,B88a	pending	C lower_test_junction
+H055	sash/src/emit_c.rs	20	3838,7	3898,7	1	1	emit_pipeline	emit_pipeline			F2	F2	B10	pending	emit_pipeline compound_stages.labels
+H056	sash/src/emit_c.rs	21	3959,6	4019,9	3	0		emit_reader_finish			W5	W5	B111	superseded	C emit_reader_finish: signal poll after reader finish (see H030)
+H057	sash/src/emit_c.rs	22	4162,17	4225,12	6	11	emit_pipeline_stage	emit_pipeline_stage			F2	F2	B10	pending	emit_pipeline_stage compound_stages.entry
+H058	sash/src/emit_c.rs	23	4929,7	4987,13	7	1	builtin_helpers_refuse_dispatch_from_the_wrong_group	builtin_helpers_refuse_dispatch_from_the_wrong_group			F2	F2	B20	pending	unit test call signature
+H059	sash/src/ir.rs	1	106,11	106,7	1	5	Statement::cmdsub_bodies	Statement::cmdsub_bodies			B37	B37	-	pending	Statement::cmdsub_bodies via shared push_cmdsub_body (gate refactor)
+H060	sash/src/ir.rs	2	181,6	177,44	38	0		Statement;Statement::stage_marks;Statement::stage_body			F1	F1	B25	pending	Statement::stage_marks / stage_body peel authority
+H061	sash/src/ir.rs	3	216,6	250,68	62	0		Statement;Statement::cmdsub_bodies_mut;Statement::own_expr_roots_mut			B37	B37	B37	pending	Statement::cmdsub_bodies_mut + own_expr_roots_mut (total over StmtKind)
+H062	sash/src/ir.rs	4	287,6	383,64	58	0		(top);push_cmdsub_body;push_cmdsub_bodies_mut;push_each_cmdsub_body_mut			B37	B37	B37	pending	push_cmdsub_body / push_cmdsub_bodies_mut / push_each_cmdsub_body_mut
+H063	sash/src/ir.rs	5	363,9	517,28	20	1	single_value_command	single_value_command;(top);value_command			F1	F1	B49	pending	ir::value_command: the one capture-shape peel (F5's B53 rewrite uses it)
+H064	sash/src/ir.rs	6	428,8	601,10	4	2	(top)	(top)			F1	F1	B48	pending	for_head_keys doc: suppressed keys iterate (B48 partial; validate SB5009 recognisers still open)
+H065	sash/src/ir.rs	7	447,10	622,7	1	4	for_head_keys	for_head_keys			F1	F1	B48	pending	for_head_keys via single_value_command
+H066	sash/src/ir.rs	8	720,6	892,79	73	0		(top);walk_arith_nodes;walk_arith_funccalls;walk_arith_expansion_roots_mut			split	F5,B37	B73,B37	pending	F5: walk_arith_nodes + walk_arith_funccalls (B73) | B37: walk_arith_expansion_roots_mut
+H067	sash/src/ir.rs	9	739,6	984,22	16	0		(top);walk_test_operands_mut			B37	B37	B37	pending	walk_test_operands_mut
+H068	sash/src/ir.rs	10	752,6	1013,24	18	0		Program;Program::function_defs;(top)			F3	F3	B8,B16	pending	Program::function_defs
+H069	sash/src/ir.rs	11	897,6	1176,21	15	0		DeclAssignment;DeclAssignment::cmdsub_bodies			drop	drop	-	drop-proposed	DeclAssignment::cmdsub_bodies: no caller on e98fca8 (pub, so no dead-code warning); written for the walker's per-binding order
+H070	sash/src/ir.rs	12	1792,7	2086,7	1	1	ArithExpr	ArithExpr			F5	F5	B73	pending	ArithExpr::children doc names walk_arith_nodes
+H071	sash/src/ir.rs	13	2237,3	2531,101	98	0		(top);body_addresses;cmdsub_bodies_mut_mirrors_cmdsub_bodies;word;command;capture;cmdsub_bodies_mut_mirrors_a_parameter_operand			B37	B37	B37	pending	cmdsub_twin_tests (mut walk mirrors immutable walk)
+H072	sash/src/lib.rs	1	683,6	683,7	1	0		run_semantic_checks			F10	F10	SB5098	pending	lib.rs run_semantic_checks calls check_attest_predicate_code
+H073	sash/src/parse/arith.rs	1	71,6	71,29	23	0		arith_bad_literal_error			F14	F14	B70	pending	arith_bad_literal_error: `$(` and stray `$` -> SB4035
+H074	sash/src/parse/arith.rs	2	765,17	788,24	17	10	scan_arith_dollar	scan_arith_dollar			F14	F14	B70	pending	scan_arith_dollar: stray `$` is BadLit
+H075	sash/src/parse/arith.rs	3	1209,10	1239,13	5	2	ArithParser::parse_expansion_atom	ArithParser::parse_expansion_atom			F13	F13	B3	pending	parse_expansion_atom passes Origin::Within
+H076	sash/src/parse/expr.rs	1	12,7	12,7	1	1	(top)	(top)			F13	F13	B3	pending	import Origin
+H077	sash/src/parse/expr.rs	2	52,8	52,16	9	1	parse_expansion_arm	parse_expansion_arm			F13	F13	B3	pending	parse_expansion_arm: origin past `${` / `$`
+H078	sash/src/parse/expr.rs	3	604,12	612,12	4	4	emit_string_part	emit_string_part			F13	F13	B3	pending	emit_string_part: StringPart origins
+H079	sash/src/parse/expr.rs	4	687,7	695,8	2	1	(top)	(top)			F13	F13	B3	pending	command_sub_to_expr doc
+H080	sash/src/parse/expr.rs	5	695,10	704,28	21	3	command_sub_to_expr	command_sub_to_expr;(top);with_scanner_fatal			F13	F13	B3,B61	pending	command_sub_to_expr with_origin + with_scanner_fatal (B61 examples: $'\101' in sed field, unclosed $( in sed field, glued # in "$(…)")
+H081	sash/src/parse/expr.rs	6	713,29	740,29	11	11	(top);parse_parameter_expansion	(top);parse_parameter_expansion			split	F13,F14	B3,B70	pending	F13: parse_parameter_expansion origin param | F14: try_leading_form call (B70)
+H082	sash/src/parse/expr.rs	7	749,6	776,36	30	0		(top);try_leading_form;names_no_variable			F14	F14	B70	pending	names_no_variable + try_leading_form (helper may be needed in F13 if try_braced_splat's Result trips the complexity gate)
+H083	sash/src/parse/expr.rs	8	764,8	821,13	7	2	parse_cell_operator	parse_cell_operator			F13	F13	B3	pending	parse_cell_operator origin
+H084	sash/src/parse/expr.rs	9	790,27	852,29	10	8	try_braced_splat	try_braced_splat			F13	F13	B3,B61	pending	try_braced_splat fallible (index fatal propagates) + origin
+H085	sash/src/parse/expr.rs	10	882,6	946,7	1	0		try_subscript			F13	F13	B3	pending	try_subscript origin param
+H086	sash/src/parse/expr.rs	11	896,9	961,22	14	1	try_subscript	try_subscript;(top);subscript_with_index			F13	F13	B3	pending	subscript_with_index extraction (gate refactor) + index origin
+H087	sash/src/parse/expr.rs	12	906,16	984,16	3	3	try_subscript	subscript_with_index			F13	F13	B3	pending	subscript_with_index: parse_subscript_index Result/origin
+H088	sash/src/parse/expr.rs	13	924,12	1002,8	2	6	try_subscript	subscript_with_index			F13	F13	B3	pending	subscript_with_index tail: operator origin
+H089	sash/src/parse/expr.rs	14	1022,17	1096,23	16	10	(top);parse_subscript_index	(top);parse_subscript_index			split	F13,F14	B3,B61,B39	pending	F13: parse_subscript_index Result + origin | F14: doc on explicit-form failures (B39)
+H090	sash/src/parse/expr.rs	15	1041,7	1121,7	1	1	parse_subscript_index	parse_subscript_index			F13	F13	B3	pending	parse_subscript_index Ok(match)
+H091	sash/src/parse/expr.rs	16	1051,14	1131,30	22	6	(top);parse_whole_index	(top);parse_whole_index;opens_explicit_index			split	F13,F14	B3,B61,B39	pending	F13: parse_whole_index with_origin + with_scanner_fatal | F14: opens_explicit_index (B39)
+H092	sash/src/parse/expr.rs	17	1079,12	1175,14	3	1	(top)	(top);subscript_operator_expr			F13	F13	B3	pending	subscript_operator_expr origin param
+H093	sash/src/parse/expr.rs	18	1093,7	1191,7	1	1	subscript_operator_expr	subscript_operator_expr			F13	F13	B3	pending	subscript_operator_expr: sed origin
+H094	sash/src/parse/expr.rs	19	1173,28	1271,39	15	4	try_sed_op;(top);build_sed_or_malformed	try_sed_op;(top);build_sed_or_malformed			F13	F13	B3	pending	try_sed_op origin
+H095	sash/src/parse/expr.rs	20	1239,14	1348,6	0	8	(top);split_sed_fields				F15	F15	B69	pending	split_sed_fields removed: its only caller was validate_static_sed_re (H128)
+H096	sash/src/parse/expr.rs	21	1274,10	1375,12	2	0		(top);build_sed_sub			F13	F13	B3	pending	build_sed_sub doc origin
+H097	sash/src/parse/expr.rs	22	1285,7	1388,9	3	1	build_sed_sub	build_sed_sub			F13	F13	B3	pending	build_sed_sub per-edit origin
+H098	sash/src/parse/expr.rs	23	1305,13	1410,15	3	1	(top)	(top);build_one_sed_sub			F13	F13	B3	pending	build_one_sed_sub doc origin
+H099	sash/src/parse/expr.rs	24	1326,13	1433,16	6	3	build_one_sed_sub	build_one_sed_sub			split	F13,F14	B3,B66	pending	F13: build_one_sed_sub origin to RE/SUB words | F14: B66 message whitespace
+H100	sash/src/parse/expr.rs	25	1523,10	1633,11	4	3	parse_interpolating_word	parse_interpolating_word			F13	F13	B3,B61	pending	parse_interpolating_word with_origin + with_scanner_fatal
+H101	sash/src/parse/expr.rs	26	1748,7	1859,7	1	1	(top)	(top)			F4	F4	B24	pending	doc: parse_statement -> parse_statement_here (parse_statement removed by H113)
+H102	sash/src/parse/lexer.rs	1	144,13	144,70	61	4	StringPart	(top);StringPart;Origin;START;Origin::after;advance_line_col			F13	F13	B3	pending	StringPart origins + Origin/after/advance_line_col
+H103	sash/src/parse/lexer.rs	2	202,10	259,20	10	0		Scanner;Scanner::new;Scanner::with_origin			F13	F13	B3	pending	Scanner.origin + with_origin
+H104	sash/src/parse/lexer.rs	3	217,6	284,7	1	0		Scanner::with_origin			F13	F13	B3	pending	Scanner origin init
+H105	sash/src/parse/lexer.rs	4	301,22	369,34	24	12	Scanner;Scanner::line_col	Scanner;Scanner::line_col;Scanner::origin_of;Scanner::byte_at			F13	F13	B3	pending	line_col from origin; origin_of; byte_at
+H106	sash/src/parse/lexer.rs	5	1343,9	1423,10	4	3	Scanner;Scanner::take_sed_stmt_payload	Scanner;Scanner::take_sed_stmt_payload			F13	F13	B3	pending	take_sed_stmt_payload returns origin
+H107	sash/src/parse/lexer.rs	6	1354,7	1435,7	1	1	Scanner::take_sed_stmt_payload	Scanner::take_sed_stmt_payload			F13	F13	B3	pending	take_sed_stmt_payload origin_of(start)
+H108	sash/src/parse/lexer.rs	7	1567,8	1648,9	2	1	Scanner::scan_dq_dollar	Scanner::scan_dq_dollar			F13	F13	B3	pending	scan_dq_dollar Expansion origin
+H109	sash/src/parse/lexer.rs	8	1601,9	1683,11	3	1	Scanner::dq_subscript_or_variable	Scanner::dq_subscript_or_variable			F13	F13	B3	pending	dq_subscript_or_variable origin
+H110	sash/src/parse/lexer.rs	9	1616,8	1700,9	2	1	Scanner::scan_dq_paren	Scanner::scan_dq_paren			F13	F13	B3	pending	scan_dq_paren CommandSub origin
+H111	sash/src/parse/parser.rs	1	6,7	6,7	1	1	(top)	(top)			F4	F4	B24	pending	module doc: parse_statement_here
+H112	sash/src/parse/parser.rs	2	75,7	75,7	1	1	scanner_fatal	scanner_fatal			F13	F13	B61	pending	scanner_fatal pub(super) for with_scanner_fatal
+H113	sash/src/parse/parser.rs	3	262,28	262,14	7	21	(top);parse_statement;parse_statement_here	(top);parse_statement_here			F4	F4	B24	pending	parse_statement (Option twin) removed; dispatch_statement(Reach::Statement)
+H114	sash/src/parse/parser.rs	4	292,14	278,31	22	5	dispatch_statement	(top);Reach;dispatch_statement			F4	F4	B24,n1-n6	pending	Reach enum; dispatch_statement takes reach
+H115	sash/src/parse/parser.rs	5	332,8	335,8	2	2	dispatch_statement	dispatch_statement			F4	F4	B24	pending	parse_suppressed(scanner, reach)
+H116	sash/src/parse/parser.rs	6	441,11	444,48	38	1	parse_compound_list	(top);parse_compound_list;is_background_job;background_status_error			F4	F4	B26	pending	parse_compound_list: background last statement SB4024; is_background_job; background_status_error
+H117	sash/src/parse/parser.rs	7	1219,6	1259,12	6	0		parse_return			F4	F4	B26	pending	parse_return: background producer SB4024 (base: `return /bin/false &` runs, returns 0)
+H118	sash/src/parse/parser.rs	8	1237,10	1283,9	3	4	parse_negated	parse_negated			F4	F4	n1-n6	pending	parse_negated: Reach::Unit (`! - a | b` -> SB4019)
+H119	sash/src/parse/parser.rs	9	1295,7	1340,7	1	1	parse_suppressed	parse_suppressed			F4	F4	B24	pending	parse_suppressed signature
+H120	sash/src/parse/parser.rs	10	1316,11	1361,11	4	4	parse_suppressed	parse_suppressed			F4	F4	B24	pending	parse_suppressed: parse_suppressed_body
+H121	sash/src/parse/parser.rs	11	1328,6	1373,15	9	0		(top);parse_suppressed_body			F4	F4	B24	pending	parse_suppressed_body
+H122	sash/src/parse/parser.rs	12	1336,6	1390,19	13	0		push_suppression_into_pipeline			F4	F4	B23	pending	push_suppression_into_pipeline: `- a | b &`
+H123	sash/src/parse/parser.rs	13	2274,7	2341,7	1	1	parse_assignment_lhs	parse_assignment_lhs			F13	F13	B61	pending	parse_assignment_lhs: index error propagates
+H124	sash/src/parse/parser.rs	14	2326,7	2393,7	1	1	parse_split_subscript_index	parse_split_subscript_index			F13	F13	B61	pending	parse_split_subscript_index -> Result
+H125	sash/src/parse/parser.rs	15	2336,10	2403,11	2	1	parse_split_subscript_index	parse_split_subscript_index			F13	F13	B3	pending	parse_split_subscript_index origin
+H126	sash/src/parse/parser.rs	16	2407,10	2475,10	4	4	(top)	(top)			F13	F13	B3	pending	parse_regex_mutation doc (verbatim payload with origin)
+H127	sash/src/parse/parser.rs	17	2418,14	2486,13	3	4	parse_regex_mutation	parse_regex_mutation			split	F13,F15	B3,B69	pending	F13: take_sed_stmt_payload origin -> build_sed_sub | F15: validate_static_sed_re call removed (B69)
+H128	sash/src/parse/parser.rs	18	2460,30	2527,6	0	24	(top);validate_static_sed_re				F15	F15	B69	pending	validate_static_sed_re removed (replaced by check_static_regex*)
+H129	sash/src/parse/parser.rs	19	2899,7	2942,13	7	1	parse_trailing_pipeline	parse_trailing_pipeline			F4	F4	B23	pending	parse_trailing_pipeline: stage is a list operand
+H130	sash/src/parse/parser.rs	20	2912,9	2961,6	0	3	parse_trailing_pipeline				F4	F4	B23	pending	reject_pipeline_and_or_postfix call removed (SB4023 moves to check_and_or_link)
+H131	sash/src/parse/parser.rs	21	2927,65	2973,34	20	51	(top);append_pipeline_stage;reject_pipeline_and_or_postfix;unwrap_stage_wrappers	(top);append_pipeline_stage;segment_form			F4	F4	B23,n1-n6	pending	append_pipeline_stage + segment_form (`a | - ! b`); unwrap_stage_wrappers removed in favour of Statement::stage_body (F1 H060)
+H132	sash/src/parse/parser.rs	22	3020,7	3035,9	3	1	reject_statement_form_pipeline_stage	reject_statement_form_pipeline_stage			F1	F1	B25	pending	reject_statement_form_pipeline_stage uses stage_body
+H133	sash/src/parse/parser.rs	23	3056,7	3073,7	1	1	reject_nonconsuming_final_stage	reject_nonconsuming_final_stage			F1	F1	B25	pending	reject_nonconsuming_final_stage uses stage_body
+H134	sash/src/parse/parser.rs	24	3098,8	3115,7	1	2	(top)	(top)			F4	F4	B23	pending	parse_trailing_list_op doc
+H135	sash/src/parse/parser.rs	25	3113,38	3129,17	8	29	parse_trailing_list_op	parse_trailing_list_op			F4	F4	B23,B24	pending	parse_trailing_list_op loop via and_or_operator/check_and_or_link/parse_and_or_operand
+H136	sash/src/parse/parser.rs	26	3156,26	3151,107	91	10	(top);parse_list_operand	(top);and_or_operator;finish_list;plain_pipeline_span;check_and_or_link;parse_and_or_operand;parse_list_operand;parse_operand_here			F4	F4	B23,B24	pending	and_or_operator, finish_list, plain_pipeline_span, check_and_or_link, parse_and_or_operand, parse_operand_here
+H137	sash/src/parse/parser.rs	27	3577,6	3653,16	10	0		unrecognized_operator_diag			F14	F14	B70	pending	unrecognized_operator_diag: empty name -> SB4047
+H138	sash/src/parse/tests.rs	1	254,20	254,6	0	14	(top);sed_missing_delimiters_is_loud_ice				F15	F15	B69	pending	unit test for removed validate_static_sed_re
+H139	sash/src/resolve.rs	1	5,8	5,9	3	2	(top)	(top)			B37	B37	B37	pending	resolve.rs module doc: reaches $( ) bodies through Statement::cmdsub_bodies_mut
+H140	sash/src/resolve.rs	2	126,7	127,6	0	1	builtin_denotation				F2	F2	B9,B20	pending	builtin_denotation: ForkBackground gone
+H141	sash/src/resolve.rs	3	145,6	145,201	195	0		(top);walk_value_calls;walk_expr_value_calls;value_call_name;Evaluation;walk_evaluations;walk_expr_evaluations;evaluates_args_in_place;arith_value_calls;substitution_evaluations;evaluations_at			F5	F5	B71,B74	pending	walk_value_calls/walk_expr_value_calls/value_call_name over Evaluation+walk_evaluations/evaluations_at/substitution_evaluations; evaluates_args_in_place; arith_value_calls. Users: capture_purity (F5 B71), expr_handlers capture_args_run_value_calls (F5 B74), validate predicate_code_at/capture_in_predicate (F10 SB5098), value_call_execs (W2 B72), evaluate/taint_evaluation (W1, superseded). Evaluation::Capture and Value{subst,command} serve only the walker: F5 may reduce to a name walk
+H142	sash/src/resolve.rs	4	417,68	612,26	13	55	resolve_stmt;(top);resolve_stmt_exprs;resolve_case_exprs;resolve_declaration;resolve_assignment;resolve_command	resolve_stmt;(top)			B37	B37	B37	pending	resolve_stmt walks cmdsub_bodies_mut; resolve_command doc
+H143	sash/src/resolve.rs	5	565,54	718,6	0	48	resolve_expr;(top);resolve_each;resolve_test_expr				B37	B37	B37	pending	private resolve_expr/resolve_each/resolve_test_expr copies deleted (they skipped pexp index, $(( )) leaves, (( )) tests)
+H144	sash/src/resolve.rs	6	630,7	735,6	0	1	internal_builtin_denotations_are_statements				F2	F2	B9,B20	pending	shadowed_arm_tests: ForkBackground gone
+H145	sash/src/ssa.rs	1	86,10	86,9	3	4	BuiltinCmd	BuiltinCmd			F2	F2	B9,B20	pending	BuiltinCmd: ForkBackground removed; StoreBgPid doc names Terminator::Fork
+H146	sash/src/ssa.rs	2	308,7	307,6	0	1	BuiltinCmd::may_take_redirect				F2	F2	B9,B20	pending	ForkBackground removed (is_internal list)
+H147	sash/src/ssa.rs	3	332,7	330,6	0	1	BuiltinCmd::internal_name				F2	F2	B9,B20	pending	ForkBackground removed (name table)
+H148	sash/src/ssa.rs	4	650,9	647,12	6	3	SsaInst	SsaInst			F10	F10	B88c,B92	pending	AttestRetag doc: scalar/array/map; pass block of every caught if attest
+H149	sash/src/ssa.rs	5	1416,6	1416,16	10	0		Terminator			F2	F2	B9,B17,B20	pending	Terminator::Fork{parent,child} and ChildExit
+H150	sash/src/ssa.rs	6	1434,13	1444,16	9	6	(top)	(top)			F7	F7	B85	pending	condition_inst_index doc
+H151	sash/src/ssa.rs	7	1448,20	1461,64	47	3	condition_inst_index	condition_inst_index;(top);condition_operand_index;sets_condition_status			F7	F7	B85	pending	condition_operand_index + total sets_condition_status (Test, MatchInto, AttestAll, Assign ?)
+H152	sash/src/ssa.rs	8	1474,8	1531,9	3	2	SsaProgram	SsaProgram			F2	F2	B10	pending	SsaProgram.compound_stages replaces compound_pipeline_blocks
+H153	sash/src/ssa.rs	9	1488,7	1546,9	3	1	Terminator	Terminator			F2	F2	B9	pending	successors doc: fork child absent
+H154	sash/src/ssa.rs	10	1502,7	1562,20	14	1	Terminator::successors	Terminator::successors;Terminator;Terminator::forked_child			F2	F2	B9	pending	successors Fork/ChildExit arms; forked_child
+H155	sash/src/ssa.rs	11	1522,7	1595,7	1	1	SsaProgram::reader_pipelines	SsaProgram::reader_pipelines			F2	F2	B10	pending	reader_pipelines stage labels via compound_stages
+H156	sash/src/ssa.rs	12	1573,7	1646,7	1	1	SsaProgram::new	SsaProgram::new			F2	F2	B10	pending	SsaProgram::new compound_stages
+H157	sash/src/ssa.rs	13	1625,14	1698,53	43	4	SsaProgram;SsaProgram::reachable	SsaProgram;SsaProgram::reachable;SsaProgram::child_region;SsaProgram::assert_children_disjoint			F2	F2	B9,B17	pending	reachable via reachable_from; child_region; assert_children_disjoint (ICE)
+H158	sash/src/ssa.rs	14	1649,25	1761,122	107	10	SsaProgram;SsaProgram::reachable_from;SsaProgram::successors_of	SsaProgram;SsaProgram::reachable_from;SsaProgram::same_process_from;SsaProgram::closure;SsaProgram::next_blocks;SsaProgram::process_blocks;SsaProgram::spawned_by;(top);COMPOUND_STAGE_PREFIX;CompoundStages;CompoundStages::record;CompoundStages::entry;CompoundStages::label;CompoundStages::labels;CompoundStages::functions			F2	F2	B9,B10,B17	pending	closure/same_process_from/next_blocks/process_blocks/spawned_by; CompoundStages (record/entry ICE/label/labels/functions). process_blocks/spawned_by also feed ssa_taint check_process (W4)
+H159	sash/src/ssa.rs	15	1683,6	1892,9	3	0		VersionState			W2	W2	B33,B114	superseded	VersionState.exec_fns (superseded: T1 stdout analysis replaces exec_reaching_functions)
+H160	sash/src/ssa.rs	16	1728,7	1940,7	1	1	VersionState	VersionState			F5	F5	B57	pending	inlining doc: SB5033 -> SB5037 (doc typo)
+H161	sash/src/ssa.rs	17	1776,6	1988,13	7	0		VersionState			F13	F13	B54	pending	VersionState.stmt_span
+H162	sash/src/ssa.rs	18	1836,6	2055,7	1	0		VersionState::with_types			W2	W2	B33,B114	superseded	with_types: exec_fns default (superseded)
+H163	sash/src/ssa.rs	19	1864,9	2084,18	9	0		VersionState::with_types;VersionState;VersionState::error_at_stmt			F13	F13	B54	pending	stmt_span init; error_at_stmt
+H164	sash/src/ssa.rs	20	1883,14	2112,14	7	7	VersionState::define	VersionState::define			F13	F13	B54	pending	define: readonly backstop reports at the statement (was 1:1)
+H165	sash/src/ssa.rs	21	1928,6	2157,42	36	0		VersionState;VersionState::enter_forked_child;VersionState::exit_forked_child;(top);ParentContext			F2	F2	B9,B11,B17,B18	pending	enter_forked_child/exit_forked_child; ParentContext (versions, pipe_reader, return_target, loop_stack, tail_loop)
+H166	sash/src/ssa.rs	22	2093,7	2358,6	0	1	only_authorial_commands_may_take_redirects				F2	F2	B9,B20	pending	api_contract_tests: ForkBackground gone
+H167	sash/src/ssa_taint.rs	1	41,20	41,63	54	11	verify_ssa_taint	verify_ssa_taint;(top);Pass;check_process			W4	W4	B18	superseded	ssa_taint per-process check (Pass, check_process over child_region/spawned_by): port with W4, not walker code
+H168	sash/src/ssa_taint.rs	2	171,7	214,7	1	1	classify_inst_def	classify_inst_def			F10	F10	B92	pending	AttestRetag comment: scalar/array/map
+H169	sash/src/ssa_taint.rs	3	182,11	225,12	6	5	classify_inst_def	classify_inst_def			W2	W2	B33,B114	superseded	CaptureEnd comment: tainted when the body crosses the exec boundary (superseded wording; T1)
+H170	sash/src/transform/capture_purity.rs	1	17,6	17,13	7	0		(top)			F5	F5	B71	pending	capture_purity module doc: value calls run inside the capture
+H171	sash/src/transform/capture_purity.rs	2	26,91	33,121	103	73	capture_body_is_pure;stmts_are_pure;stmt_is_pure;command_is_pure	(top);capture_body_is_pure;Purity;Purity<'_>;Purity<'_>::stmts;Purity<'_>::stmt;Purity<'_>::shape_is_pure;Purity<'_>::value_calls_are_pure;Purity<'_>::command_is_pure;Purity<'_>::body_is_pure			F5	F5	B71	pending	Purity walker: value_calls_are_pure via walk_value_calls; body_is_pure (missing body impure)
+H172	sash/src/transform/capture_purity.rs	3	141,7	178,11	5	1	nonliteral_heads_cannot_be_proved_pure	nonliteral_heads_cannot_be_proved_pure			F5	F5	B71	pending	unit test signature (value_fns)
+H173	sash/src/transform/capture_purity.rs	4	158,7	199,8	2	1	recursive_function_graphs_are_impure	recursive_function_graphs_are_impure			F5	F5	B71	pending	unit test signature (value_fns)
+H174	sash/src/transform/cmd_handlers.rs	1	3,7	3,6	0	1	(top)				F5	F5	B57	pending	cmd_handlers: lower_stmts import gone (lower_inlined_body)
+H175	sash/src/transform/cmd_handlers.rs	2	256,7	255,8	2	1	inline_function_call	(top);inline_function_call			F2	F2	B10,B21	pending	inline_function_call pub(super): also the body of a function pipeline stage
+H176	sash/src/transform/cmd_handlers.rs	3	264,13	264,8	2	7	inline_function_call	inline_function_call			F5	F5	B57	pending	inline_function_call: reject_recursive_call
+H177	sash/src/transform/cmd_handlers.rs	4	321,20	316,9	2	13	inline_function_call	inline_function_call			F5	F5	B57,B58,B83	pending	inline_function_call: lower_inlined_body
+H178	sash/src/transform/cmd_handlers.rs	5	397,7	381,7	1	1	check_callee_arity	check_callee_arity			F13	F13	B54	pending	check_callee_arity: error_at_stmt
+H179	sash/src/transform/cmd_handlers.rs	6	505,7	489,7	1	1	arity_dynamic_msg	arity_dynamic_msg			F13	F13	B54	pending	arity_dynamic_msg: no 1:1 prefix
+H180	sash/src/transform/cmd_handlers.rs	7	520,7	504,7	1	1	arity_floor_msg	arity_floor_msg			F13	F13	B54	pending	arity_floor_msg: no 1:1 prefix
+H181	sash/src/transform/cmd_handlers.rs	8	539,7	523,7	1	1	arity_too_few_msg	arity_too_few_msg			F13	F13	B54	pending	arity_too_few_msg: no 1:1 prefix
+H182	sash/src/transform/cmd_handlers.rs	9	555,7	539,7	1	1	arity_too_many_msg	arity_too_many_msg			F13	F13	B54	pending	arity_too_many_msg: no 1:1 prefix
+H183	sash/src/transform/cmd_handlers.rs	10	611,8	595,8	2	2	resolve_exec_target_arg	resolve_exec_target_arg			F13	F13	B54	pending	resolve_exec_target_arg: error_at_stmt
+H184	sash/src/transform/control_flow.rs	1	1,9	1,11	3	1	(top)	(top)			split	F9,F10	B86,B92	pending	control_flow imports. F9: expr_is_dynamic, lift_int_func_calls, lift_test_captures | F10: resolve_args_name import gone with push_if_attest_condition
+H185	sash/src/transform/control_flow.rs	2	62,6	64,15	9	0		AttestKind;AttestKind::subject			F10	F10	B92	pending	AttestKind::subject (unresolved name)
+H186	sash/src/transform/control_flow.rs	3	108,12	119,7	1	6	lower_if_attest_convert	lower_if_attest_convert			F10	F10	B88c,B92	pending	lower_if_attest_convert uses shared push_attest_all_check/retag
+H187	sash/src/transform/control_flow.rs	4	162,61	168,7	1	55	push_if_attest_condition;(top);push_attest_retag	push_if_attest_condition			F10	F10	B88c,B92	pending	push_if_attest_condition private fork deleted
+H188	sash/src/transform/control_flow.rs	5	257,7	209,7	1	1	lower_if_attest	lower_if_attest			F10	F10	B92	pending	lower_if_attest: push_attest_retag(ssa,state,then,kind.subject())
+H189	sash/src/transform/control_flow.rs	6	498,6	450,11	5	0		lower_while			W3	W3	B101	superseded	lower_while pushes loop context BEFORE lowering the condition (transform fix, not walker: Order candidate to land early)
+H190	sash/src/transform/control_flow.rs	7	529,9	486,6	0	3	lower_while				W3	W3	B101	superseded	lower_while: old push after the condition removed
+H191	sash/src/transform/control_flow.rs	8	593,29	547,32	17	14	(top);argv_splat_start	(top);argv_splat_start			F1	F1	B48	pending	argv_splat_start via the shared peel
+H192	sash/src/transform/control_flow.rs	9	777,168	734,172	131	127	lower_case;(top);build_case_bodies;build_check_blocks;wire_case_exits;build_dispatch_chain;emit_dispatch_arm;is_default_arm;dispatch_test	(top);lower_case;dispatch_subject;test_arm_patterns;miss_label;lower_dispatch_arm;join_paths;dispatch_test			F9	F9	B86,B93	pending	lower_case/dispatch rewrite: dispatch_subject copy, lazy pattern tests, test_arm_patterns, miss_label, lower_dispatch_arm, join_paths
+H193	sash/src/transform/control_flow.rs	10	952,196	913,50	24	170	(top);emit_single_pattern_branch;emit_multi_pattern_chain;emit_pattern_link;wire_no_match_path;redirect_merge_false_branches;insert_case_phis	(top);insert_case_phis			F9	F9	B86	pending	insert_case_phis removed (join_paths)
+H194	sash/src/transform/control_flow.rs	11	1171,9	986,9	3	3	DISPATCH_HAS_TWO_PATHS	DISPATCH_HAS_TWO_PATHS			F9	F9	B86	pending	DISPATCH_HAS_TWO_PATHS test
+H195	sash/src/transform/control_flow.rs	12	1192,9	1007,9	3	3	(top)	(top)			F9	F9	B86	pending	dispatch unit test
+H196	sash/src/transform/control_flow.rs	13	1203,7	1018,7	1	1	a_single_path_dispatch_is_a_loud_ice	a_single_path_dispatch_is_a_loud_ice			F9	F9	B86	pending	a_single_path_dispatch_is_a_loud_ice
+H197	sash/src/transform/control_flow.rs	14	1323,56	1138,29	17	44	an_argv_slice_does_not_discard_a_substitution_body_or_wrapper;(top);no_match_rewiring_only_changes_matching_false_edges	an_argv_slice_does_not_discard_a_substitution_body_or_wrapper			F1	F1	B48	pending	an_argv_slice_does_not_discard_a_substitution_body_or_wrapper (unit test of argv_splat_start)
+H198	sash/src/transform/entry.rs	1	30,6	30,7	1	0		ir_to_ssa_typed			F2	F2	B9	pending	ir_to_ssa_typed assert_children_disjoint
+H199	sash/src/transform/entry.rs	2	97,13	98,12	5	6	(top);register_functions	(top);register_functions			split	F3,W2	B8,B114	pending	F3: register_functions iterates function_defs | superseded(W2): exec_fns = exec_reaching_functions
+H200	sash/src/transform/entry.rs	3	144,12	144,9	3	6	(top)	(top)			F7	F7	B85	pending	mark_unchecked_in_conditions doc
+H201	sash/src/transform/entry.rs	4	164,30	161,23	16	23	(top);uncheck_last_condition_inst	(top);uncheck_last_condition_inst			F7	F7	B85	pending	uncheck_last_condition_inst via condition_operand_index
+H202	sash/src/transform/expr_handlers.rs	1	14,6	14,7	1	0		handle_command_substitution			F5	F5	B74	pending	handle_command_substitution body path when args run value calls
+H203	sash/src/transform/expr_handlers.rs	2	27,6	28,28	22	0		(top);capture_args_run_value_calls			F5	F5	B74	pending	capture_args_run_value_calls
+H204	sash/src/transform/expr_handlers.rs	3	131,7	154,6	0	1	is_statement_builtin				F2	F2	B9	pending	is_statement_builtin: ForkBackground gone
+H205	sash/src/transform/functions.rs	1	477,19	477,68	52	3	(top);recursion_diagnostic	recursion_diagnostic;(top);reject_recursive_call;lower_inlined_body			split	F13,F5	B54,B57,B58,B83	pending	F13: recursion_diagnostic drops 1:1 | F5: reject_recursive_call, lower_inlined_body (return_target, tail_loop, in_condition)
+H206	sash/src/transform/functions.rs	2	529,13	578,14	6	5	inline_int_func	inline_int_func			F5	F5	B56,B57	pending	inline_int_func: reject_recursive_call; check_callee_arity at every -> int call (B56)
+H207	sash/src/transform/functions.rs	3	554,16	604,7	1	10	inline_int_func	inline_int_func			F5	F5	B58,B83	pending	inline_int_func: lower_inlined_body
+H208	sash/src/transform/functions.rs	4	643,11	684,22	14	3	analyze_arity	(top);analyze_arity			F5	F5	B53	pending	analyze_arity via ir::walk_scoped_stmts (own scope only)
+H209	sash/src/transform/functions.rs	5	704,76	756,26	16	66	sig_scan_stmts;(top);sig_scan_exprs;sig_scan_decl;sig_scan_case;sig_scan_child_bodies;sig_scan_stmt;sig_scan_command	(top);sig_scan_own;splats_args_into_external			F5	F5	B53	pending	sig_scan_own, splats_args_into_external replace the forked sig_scan_* walk
+H210	sash/src/transform/functions.rs	6	794,45	796,50	34	29	sig_scan_expr;(top);sig_scan_pexp	(top);sig_record_expr			F5	F5	B53	pending	sig_record_expr (total over ExprKind)
+H211	sash/src/transform/functions.rs	7	863,21	870,6	0	15	sig_scan_test;(top)				F5	F5	B53	pending	sig_scan_test removed
+H212	sash/src/transform/functions.rs	8	907,8	899,13	7	2	(top)	(top)			F5	F5	B53	pending	cmdsub_reads_whole_args doc: `keys args` dropped (SB4030 rejects it, 75.100: rejected-spelling arm)
+H213	sash/src/transform/functions.rs	9	918,27	915,30	16	13	cmdsub_reads_whole_args;(top);sig_scan_arith	(top);cmdsub_reads_whole_args;sig_record_arith_names			split	F1,F5	B49,B53	pending	F1: cmdsub_reads_whole_args via ir::value_command (suppressed join) and `keys` dropped | F5: sig_record_arith_names doc
+H214	sash/src/transform/functions.rs	10	953,7	953,7	1	1	sig_scan_arith	sig_record_arith_names			F5	F5	B53	pending	sig_record_arith_names rename
+H215	sash/src/transform/reader_cleanup.rs	1	100,7	100,9	3	1	redirect_edge	redirect_edge			F2	F2	B9	pending	redirect_edge Fork/ChildExit
+H216	sash/src/transform/reader_cleanup.rs	2	225,8	227,22	17	3	edge_rewriting_handles_shared_targets_and_leaf_terminators	edge_rewriting_handles_shared_targets_and_leaf_terminators			F2	F2	B9	pending	redirect_edge unit test
+H217	sash/src/transform/statements.rs	1	21,10	21,23	16	3	(top)	(top);lower_one;lower_stmt_kind			F13	F13	B54	pending	lower_one sets stmt_span for transform diagnostics
+H218	sash/src/transform/statements.rs	2	170,9	183,6	0	3	lower_function_stmt				F3	F3	B8	pending	lower_function_stmt: drop lazy function_int_typed insert
+H219	sash/src/transform/statements.rs	3	888,7	898,12	6	1	lower_list_stmt	lower_list_stmt			F6	F6	B84	pending	lower_list_stmt: suppressed counts as caught
+H220	sash/src/transform/statements.rs	4	936,8	951,10	4	2	(top)	(top)			F2	F2	B9	pending	lower_background doc
+H221	sash/src/transform/statements.rs	5	946,28	963,25	11	14	lower_background	lower_background			F2	F2	B9,B11,B17,B18,B20	pending	lower_background: Fork terminator, enter/exit_forked_child, ChildExit
+H222	sash/src/transform/stmt_handlers.rs	1	1,6	1,5	0	1	(top)				F2	F2	B10,B21	pending	stmt_handlers: check_callee_arity import gone (stage calls inline_function_call)
+H223	sash/src/transform/stmt_handlers.rs	2	119,7	118,7	1	1	handle_test_command	handle_test_command			F8	F8	B87	pending	handle_test_command: block no longer mut
+H224	sash/src/transform/stmt_handlers.rs	3	128,8	127,102	96	2	handle_test_command	handle_test_command;(top);lower_test_tree;test_has_junction;lower_test_junction;lower_test_operand			F8	F8	B87	pending	lower_test_tree/test_has_junction/lower_test_junction/lower_test_operand (lazy && ||, phis, test.and/test.or labels)
+H225	sash/src/transform/stmt_handlers.rs	4	344,10	437,30	24	4	push_attest_all	push_attest_all;(top);push_attest_all_check			F10	F10	B92	pending	push_attest_all -> shared push_attest_all_check
+H226	sash/src/transform/stmt_handlers.rs	5	355,16	468,44	32	4	push_attest_all	push_attest_all_check;(top);push_attest_retag			F10	F10	B92	pending	push_attest_all_check(if_form) + push_attest_retag resolve the slot themselves
+H227	sash/src/transform/stmt_handlers.rs	6	796,8	937,8	2	2	push_command_stage	push_command_stage			F2	F2	B10	pending	push_command_stage: stage label from build_function_pipeline_stage
+H228	sash/src/transform/stmt_handlers.rs	7	842,7	983,7	1	1	handle_pipe_while_or_array_read	handle_pipe_while_or_array_read			W2	W2	B33,B114	superseded	handle_pipe_while_or_array_read: is_external_source(s, exec_fns) (superseded: T1 stdout analysis)
+H229	sash/src/transform/stmt_handlers.rs	8	915,7	1056,9	3	1	handle_lastpipe_read	handle_lastpipe_read			W2	W2	B33,B114	superseded	handle_lastpipe_read: is_external_source(s, exec_fns) (superseded)
+H230	sash/src/transform/stmt_handlers.rs	9	940,9	1083,9	3	3	(top)	(top)			F2	F2	B10	pending	handle_regular_pipeline doc (compound_pipeline_blocks gone)
+H231	sash/src/transform/stmt_handlers.rs	10	969,11	1112,7	1	5	push_pipeline_stage	push_pipeline_stage			F1	F1	B25	pending	push_pipeline_stage: cmd.stage_marks()
+H232	sash/src/transform/stmt_handlers.rs	11	982,10	1121,9	3	4	(top)	(top)			F2	F2	B10	pending	lower_one_pipeline_stage doc
+H233	sash/src/transform/stmt_handlers.rs	12	1011,94	1149,41	23	76	(top);build_function_pipeline_stage	(top);build_function_pipeline_stage			F2	F2	B9,B10,B21	pending	build_function_pipeline_stage: enter_forked_child + inline_function_call + ChildExit + compound_stages.record; DD#116 recursion backstop now the shared inline check
+H234	sash/src/transform/stmt_handlers.rs	13	1353,8	1438,12	5	1	try_capture_condition	try_capture_condition			F6	F6	B76	pending	try_capture_condition: SuppressionScope over a lifted argument capture
+H235	sash/src/transform/stmt_handlers.rs	14	1365,6	1454,7	1	0		try_capture_condition			F6	F6	B76	pending	try_capture_condition: scope.finish
+H236	sash/src/transform/stmt_handlers.rs	15	1522,6	1612,9	3	0		capture_func_into			F5	F5	B57	pending	capture_func_into: reject_recursive_call
+H237	sash/src/transform/stmt_handlers.rs	16	1532,7	1625,11	5	1	capture_func_into	capture_func_into			F5	F5	B71	pending	capture_func_into: capture_body_is_pure(value_fns)
+H238	sash/src/transform/stmt_handlers.rs	17	1550,11	1647,9	3	5	capture_func_into	capture_func_into			F5	F5	B57,B58,B83	pending	capture_func_into: inlining push/pop + lower_inlined_body
+H239	sash/src/transform/stmt_handlers.rs	18	1563,7	1658,11	5	1	capture_func_into	capture_func_into			W2	W2	B33,B114	superseded	capture_func_into tainted: exec_fns.execs(fname) (superseded: T1)
+H240	sash/src/transform/stmt_handlers.rs	19	1601,7	1700,11	5	1	capture_body_into	capture_body_into			F5	F5	B71	pending	capture_body_into: capture_body_is_pure(value_fns)
+H241	sash/src/transform/stmt_handlers.rs	20	1613,7	1716,20	13	0		capture_body_into			F5	F5	B59,B83b	pending	capture_body_into: clear tail_loop and in_condition
+H242	sash/src/transform/stmt_handlers.rs	21	1625,9	1741,10	4	3	capture_body_into	capture_body_into			W2	W2	B33,B114	superseded	capture_body_into tainted: cmdsub_is_taint_source(body, exec_fns) (superseded)
+H243	sash/src/transform/stmt_handlers.rs	22	1835,57	1952,4	0	53	(top);recursion_into_an_inlining_function_unwinds_what_it_took				F2	F2	B10,B21	pending	unit test recursion_into_an_inlining_function_unwinds_what_it_took removed with the stage rewrite. F2 re-pins it on base inline_function_call's existing SB5037 backstop (cmd_handlers.rs:270, before any state is taken); F5's H176 later swaps that backstop to reject_recursive_call and re-pins if needed. No Order edge
+H244	sash/src/type_check.rs	1	412,43	412,6	0	37	(top);walk_arith_funccalls				F5	F5	B73	pending	type_check private walk_arith_funccalls deleted
+H245	sash/src/type_check.rs	2	1724,9	1687,9	3	3	array_index_error	array_index_error			F14	F14	B39	pending	array_index_error comment SB4041->SB4035
+H246	sash/src/validate.rs	1	24,6	24,7	1	0		(top)			W1	W1	-	superseded	use resolve::Evaluation (taint_evaluations); superseded. SB5098 code uses full paths, so F10 needs no import
+H247	sash/src/validate.rs	2	664,7	665,7	1	1	check_arith_sexpr_arity	check_arith_sexpr_arity			F5	F5	B73	pending	walk_arith_funccalls shared walker (validate side)
+H248	sash/src/validate.rs	3	884,23	885,6	0	17	(top);walk_arith_intrinsic_calls				F5	F5	B73	pending	private walk_arith_intrinsic_calls deleted
+H249	sash/src/validate.rs	4	1123,6	1107,7	1	0		validate_stmt_ctx			F15	F15	B69	pending	check_dispatch_regex_patterns call
+H250	sash/src/validate.rs	5	1346,15	1331,7	1	9	stmt_is_external_command	stmt_is_external_command			F1	F1	B25	pending	stmt_is_external_command via stage_body
+H251	sash/src/validate.rs	6	1682,6	1659,7	1	0		validate_command			F15	F15	B69	pending	check_static_regex_operand call
+H252	sash/src/validate.rs	7	2537,21	2515,65	49	5	check_regex_literal	(top);check_regex_literal;check_static_regex_operand;check_dispatch_regex_patterns;check_static_regex			F15	F15	B69	pending	check_regex_literal total over && || !; check_static_regex_operand (sub/gsub/match/matchall); check_dispatch_regex_patterns; check_static_regex
+H253	sash/src/validate.rs	8	3584,7	3606,7	1	1	expr_calls_intrinsic	expr_calls_intrinsic			F5	F5	B73	pending	walk_arith_funccalls caller
+H254	sash/src/validate.rs	9	3621,7	3643,7	1	1	arith_test_names_intrinsic	arith_test_names_intrinsic			F5	F5	B73	pending	walk_arith_funccalls caller
+H255	sash/src/validate.rs	10	4422,14	4444,17	10	7	(top)	(top)			W1	W1	-	superseded	module doc and imports for the (f,S) walker; superseded
+H256	sash/src/validate.rs	11	4437,89	4462,147	110	52	(top);check_taint;taint_top_level;taint_top_block	(top);check_taint;FnTable;Walked;drain_calls;walk_new_calls;walk_uncalled;dedup_diagnostics;taint_top_block			W1	W1	-	superseded	check_taint driver: FnTable/Walked/drain_calls/walk_new_calls/walk_uncalled/dedup; uses F3 function_defs; END entry is W5; superseded
+H257	sash/src/validate.rs	12	4543,7	4626,8	2	1	(top)	(top)			W1	W1	-	superseded	walker plumbing; superseded
+H258	sash/src/validate.rs	13	4551,11	4635,11	3	3	stmt_taints	stmt_taints			W1	W1	-	superseded	walker plumbing; superseded
+H259	sash/src/validate.rs	14	4589,33	4673,271	260	22	(top);loop_entry_fixpoint;MAX_TAINT_FIXPOINT_PASSES	(top);Flow;Frame;LoopExits;BodyFrame;Flow::live;Flow::in_loop;Flow::in_body;Flow::in_barrier;Flow::quietly;Flow::reachable_body;Flow::fname;Flow::visible;Flow::introduce;Flow::checkpoint;Flow::deposit_loop;Flow::deposit_return;Flow::record_call;call_context;loop_head			W1	W1	B95	superseded	Flow/Frame/LoopExits/BodyFrame, call_context, loop_head replaces loop_entry_fixpoint; W3 B95; W5 checkpoint; superseded
+H260	sash/src/validate.rs	15	4751,7	5073,6	0	1	command_args_elidable				F2	F2	B9,B20	pending	ForkBackground
+H261	sash/src/validate.rs	16	5927,7	6248,8	2	1	taint_stmt_no_read_taint	taint_stmt_no_read_taint			W1	W1	-	superseded	taint_evaluations plus exec_fns (W2); superseded
+H262	sash/src/validate.rs	17	5936,35	6258,138	126	23	check_clean_read_taint;(top);is_external_source	check_clean_read_taint;(top);is_external_source;command_execs;runs_command;value_call_execs;ExecFns;ExecFns::execs;ExecFns::returns_value;exec_reaching_functions			split	F1,W2	B25,B33,B114	pending	F1 B25 (minimal): is_external_source classifies stmt.stage_body() (H060) with base's head predicate (slash head, or bare non-BUILTINS name). Compound stages are SB4022 on base and branch, so the branch's structural walk adds nothing for F1; needs no F3/F5 code. Base launders `- /bin/cat f | readline x`, branch SB5020 | W2 B33,B114 superseded: runs_command, command_execs, value_call_execs (walk_value_calls), ExecFns, exec_reaching_functions (function_defs), check_clean_read_taint exec_fns. Base calls every user fn external, so `f | readline x` with f only echoing is a false SB5020; branch clean; T1 decides it in W2
+H263	sash/src/validate.rs	18	5972,15	6397,15	4	4	taint_stmt	taint_stmt			W1	W1	-	superseded	superseded
+H264	sash/src/validate.rs	19	5988,69	6413,300	283	52	taint_stmt;(top);taint_cmdsub_bodies;taint_child_bodies	taint_stmt;(top);taint_evaluations;may_end_evaluating;evaluation_cannot_end;parameter_cannot_end;evaluate;evaluate_expr;taint_evaluation;taint_capture;walk_body;report_leaks			W1	W1	B29,B30	superseded	taint_evaluations/may_end_evaluating/evaluation_cannot_end/evaluate/taint_capture/walk_body/report_leaks; explicit wrapper arms; Function arm unreachable (SB5071; base walks StmtKind::Function in top-level control flow, task taint-fn-in-toplevel-control-flow); W5 checkpoint; superseded
+H265	sash/src/validate.rs	20	6289,20	6945,48	37	9	(top);taint_while	(top);taint_while;while_pass			W3	W3	B95,B99	superseded	taint_while/while_pass; superseded
+H266	sash/src/validate.rs	21	6326,6	7010,24	18	0		taint_list			W4	W4	B18	superseded	background child walked on a clone; re-implement on W1
+H267	sash/src/validate.rs	22	6343,13	7045,7	1	7	taint_list	taint_list			W4	W4	B18	superseded	right_stmt
+H268	sash/src/validate.rs	23	6360,7	7056,7	1	1	taint_list	taint_list			W4	W4	B18	superseded	right_stmt
+H269	sash/src/validate.rs	24	6377,38	7073,77	61	22	taint_for;(top);check_for_words	(top);taint_for;for_pass;check_for_words			W3	W3	B98,B107	superseded	taint_for/for_pass: words checked at the head; check_for_words uses check_bare_cmdsub_taint; superseded
+H270	sash/src/validate.rs	25	6473,19	7208,41	24	2	taint_declaration	taint_declaration;(top);taint_initializer;taint_assignment			W1	W1	B29	superseded	taint_declaration evaluates each initializer before binding (B29 shape) plus W5 checkpoint; superseded
+H271	sash/src/validate.rs	26	6493,17	7250,24	10	3	taint_assignment	taint_assignment			W1	W1	-	superseded	taint_assignment: exec_fns (W2) and span/sx for flow.introduce; superseded
+H272	sash/src/validate.rs	27	6515,18	7279,19	8	7	taint_scalar_assignment	taint_scalar_assignment			split	W1,W2	B29	pending	W1 superseded: flow.introduce | B29 transfer-fn fix (carries per W1 premise): reject_scalar_rhs_read runs BEFORE the target is tainted (y=$(/bin/echo "$y"), y="$y$(/bin/echo b)" false SB5020); check_arg_default_taint call dropped (triple report, q1)
+H273	sash/src/validate.rs	28	6545,7	7310,12	6	1	reject_scalar_rhs_read	reject_scalar_rhs_read			W2	W2	-	superseded	reject_scalar_rhs_read exec_fns; superseded
+H274	sash/src/validate.rs	29	6560,7	7330,7	1	1	reject_scalar_rhs_read	reject_scalar_rhs_read			W2	W2	-	superseded	exec_fns; superseded
+H275	sash/src/validate.rs	30	6581,19	7351,21	7	5	reject_scalar_rhs_read	reject_scalar_rhs_read			W1	W1	B29,B30	superseded	CommandSubstitution arm empties: body reads checked once in taint_evaluations (B29 dedupe); exec_fns; superseded
+H276	sash/src/validate.rs	31	6602,7	7374,7	1	1	reject_scalar_rhs_read	reject_scalar_rhs_read			W2	W2	-	superseded	exec_fns; superseded
+H277	sash/src/validate.rs	32	6638,10	7410,17	9	2	taint_array_literal_assignment	taint_array_literal_assignment			W2	W2	-	superseded	exec_fns; superseded
+H278	sash/src/validate.rs	33	6661,57	7440,34	8	31	reject_tainted_elements;(top);check_arg_default_taint;arg_default;reject_tainted_into_array	reject_tainted_elements;reject_tainted_into_array			W1	W1	B29	superseded	check_arg_default_taint/arg_default deleted (dedupe); check_value_cmdsub_reads -> check_value_index_reads (rename, cmdsub arm moves to taint_evaluations); exec_fns; superseded
+H279	sash/src/validate.rs	34	6737,41	7493,45	29	25	(top);taint_function_body	(top);taint_function_body			W1	W1	B115	superseded	taint_function_body in (f,ctx): BodyFrame, entry slots; tainted_slots_on_entry/report_exit_tainted_globals gone; superseded (T2/T3 re-implement)
+H280	sash/src/validate.rs	35	6791,12	7551,24	18	6	taint_pipeline	taint_pipeline;(top);taint_pipeline_stage			W2	W2	-	superseded	taint_pipeline_stage extraction (neutral) and is_external_source exec_fns; superseded
+H281	sash/src/validate.rs	36	6810,19	7582,27	11	3	taint_redirected;(top);taint_case_arms	taint_redirected;(top);taint_case_arms			split	W2,F9	B93	pending	W2: redirect target exec_fns | F9 B93: taint_case_arms checks every dispatch pattern with check_expr_taint (patterns were never taint-checked); doc names taint_evaluations (W1)
+H282	sash/src/validate.rs	37	6844,24	7624,55	42	11	taint_command;(top)	taint_command;(top);check_command_reads;jump_levels			split	W1,W3,W2	B29,B30,B95	pending	W1 superseded: attest first, record_call, bulk_fill_targets+flow.introduce; W3 B95 break/continue/return deposits, jump_levels | B29 transfer-fn fix: check_command_reads BEFORE taint_out_params/read target (f g "${g[0]}") | B30: check_collection_reader_taint folded into check_command_reads, shared with in-place value commands (W1 per plan)
+H283	sash/src/validate.rs	38	6876,14	7687,14	8	8	taint_read_target	(top);read_target			W1	W1	-	superseded	taint_read_target -> read_target (neutral; bulk_fill_targets uses it)
+H284	sash/src/validate.rs	39	6896,6	7707,18	12	0		(top);predicate_env			F10	F10	B89	pending	predicate_env shared helper (its taint_evaluations use is W1)
+H285	sash/src/validate.rs	40	6910,33	7733,164	149	18	check_attest_predicate_reads	check_attest_predicate_reads;(top);check_arith_convert_reads;check_attest_predicate_code;attest_predicate_expr;predicate_code;predicate_code_at;capture_in_predicate			split	F10,W2	B89,B36,B88b	pending	F10 B89: no early return when nothing else is tainted (inline source in predicate), check_test_taint replaces walk_test_operands | F10 B36: check_arith_convert_reads checks ${..} imports in a conversion value | F10 SB5098 (B88b): check_attest_predicate_code, attest_predicate_expr, predicate_code(_at), capture_in_predicate; uses F3 function_defs, F5 evaluates_args_in_place, resolve::arith_value_calls | W2 exec_fns
+H286	sash/src/validate.rs	41	6980,6	7934,7	1	0		taint_attest			W2	W2	-	superseded	taint_attest exec_fns; superseded
+H287	sash/src/validate.rs	42	6988,24	7943,51	43	16	taint_attest	taint_attest;(top);clear_arith_convert;clear_tested_attest;attest_obligation			F10	F10	-	pending	taint_attest split into clear_arith_convert/clear_tested_attest/attest_obligation: behaviour-neutral complexity-gate refactor; land only if the gate demands it
+H288	sash/src/validate.rs	43	7021,16	8003,6	0	10	taint_attest				F10	F10	-	pending	tail of the H287 refactor (neutral)
+H289	sash/src/validate.rs	44	7058,13	8030,13	4	4	is_taint_source	is_taint_source			W2	W2	-	superseded	is_taint_source exec_fns; superseded
+H290	sash/src/validate.rs	45	7079,14	8051,19	8	3	is_taint_source	is_taint_source			W2	W2	-	superseded	exec_fns; superseded
+H291	sash/src/validate.rs	46	7103,48	8080,44	27	31	arith_is_taint_source;(top);cmdsub_is_taint_source;stmt_runs_taint_source;command_name_is_taint_source	arith_is_taint_source;(top);cmdsub_is_taint_source;command_name_is_taint_source			W2	W2	B33,B72,B114	superseded	cmdsub_is_taint_source: returns_value short-circuit, runs_command+command_execs over the structural tree. Base already catches $(- /bin/cat f), $({ }), $(if ..) (s0 c1/c3/c4); only $(exec CMD) differs, moot under B34 (the exec replaces the program on both trees, s0 c2b); superseded
+H292	sash/src/validate.rs	47	7153,7	8126,7	1	1	cmdsub_is_scalar_taint_source	cmdsub_is_scalar_taint_source			W2	W2	-	superseded	exec_fns; superseded
+H293	sash/src/validate.rs	48	7164,7	8137,7	1	1	cmdsub_is_scalar_taint_source	cmdsub_is_scalar_taint_source			W2	W2	-	superseded	exec_fns; superseded
+H294	sash/src/validate.rs	49	7236,8	8209,8	2	2	expr_uses_tainted	expr_uses_tainted			W1	W1	-	superseded	comment names taint_evaluations
+H295	sash/src/validate.rs	50	7275,7	8248,12	6	1	check_expr_taint	check_expr_taint			W2	W2	-	superseded	check_expr_taint exec_fns; superseded
+H296	sash/src/validate.rs	51	7285,7	8263,7	1	1	check_expr_taint	check_expr_taint			W2	W2	-	superseded	exec_fns; superseded
+H297	sash/src/validate.rs	52	7296,27	8274,23	9	13	check_expr_taint	check_expr_taint			W1	W1	B29,B30	superseded	CommandSubstitution arm: check_cmdsub_use_taint -> check_bare_cmdsub_taint only (inner reads in taint_evaluations); check_parts_taint extraction (neutral); exec_fns; superseded
+H298	sash/src/validate.rs	53	7339,7	8313,7	1	1	check_expr_taint	check_expr_taint			W2	W2	-	superseded	exec_fns; superseded
+H299	sash/src/validate.rs	54	7356,6	8330,18	12	0		(top);check_parts_taint			W2	W2	-	superseded	check_parts_taint helper (neutral complexity extraction)
+H300	sash/src/validate.rs	55	7364,8	8350,15	9	2	check_arith_taint	check_arith_taint			W2	W2	-	superseded	check_arith_taint exec_fns; superseded
+H301	sash/src/validate.rs	56	7374,8	8367,13	7	2	check_test_taint	check_test_taint			W2	W2	-	superseded	check_test_taint exec_fns; superseded
+H302	sash/src/validate.rs	57	7410,6	8408,7	1	0		check_param_expansion_taint			W2	W2	-	superseded	exec_fns; superseded
+H303	sash/src/validate.rs	58	7425,77	8424,48	22	51	check_param_expansion_taint;check_cmdsub_use_taint;(top);check_cmdsub_inner_reads;check_value_cmdsub_reads	check_param_expansion_taint;(top);check_value_index_reads			W1	W1	B29,B30	superseded	check_cmdsub_use_taint/check_cmdsub_inner_reads deleted; check_value_cmdsub_reads renamed check_value_index_reads (no new index check: base already reads the subscript index); superseded
+H304	sash/src/validate.rs	59	7503,31	8473,46	22	7	(top);pexp_value_cmdsub_reads;arith_value_cmdsub_reads	(top);parts_value_index_reads;pexp_value_index_reads;arith_value_index_reads			W1	W1	-	superseded	parts_value_index_reads/pexp_/arith_ renames plus exec_fns; superseded
+H305	sash/src/validate.rs	60	7572,8	8557,13	7	2	check_bare_cmdsub_taint	check_bare_cmdsub_taint			W2	W2	-	superseded	check_bare_cmdsub_taint exec_fns; superseded
+H306	sash/src/validate.rs	61	8692,27	9682,20	11	18	flag_collection_arith_args;(top);walk_arith_funccall_args	flag_collection_arith_args;(top);collection_dollar_var			F5	F5	B73	pending	flag_collection_arith_args uses shared walk_arith_funccalls; private walk_arith_funccall_args deleted; collection_dollar_var (gate refactor)
+H307	sash/src/validate.rs	62	8920,23	9903,29	15	9	(top);SlotCx	(top);SlotCx			W1	W1	-	superseded	SlotCx: fn_names, exec_fns, flow, Copy; superseded
+H308	sash/src/validate.rs	63	9083,33	10072,22	6	17	(top);tainted_slots_on_entry;taint_out_params	(top);taint_out_params			W1	W1	B105	superseded	tainted_slots_on_entry deleted (T3 changes inward slots); taint_out_params records an SB5067 site via flow.introduce; superseded
+H309	sash/src/validate.rs	64	9127,23	10105,34	25	14	(top)	(top)			W1	W1	-	superseded	SB5067 comment block rewritten for per-context exits; superseded (T2 rewrites it again)
+H310	sash/src/validate.rs	65	9151,145	10140,9	1	137	(top);GlobalTaintSite;leaked_global;report_exit_tainted_globals;collect_global_taint_sites;collect_global_names;record_global_name;decl_global_taint;collect_stmt_global_taint;collect_cmd_global_taint	(top)			W1	W1	-	superseded	GlobalTaintSite/report_exit_tainted_globals/collect_global_taint_sites/collect_global_names/record_global_name/decl_global_taint/collect_stmt_global_taint/collect_cmd_global_taint deleted; superseded
+H311	sash/src/validate.rs	66	9302,32	10155,12	4	24	bulk_fill_targets;(top);collect_assign_global_taint	bulk_fill_targets;(top)			W1	W1	-	superseded	bulk_fill_targets via read_target; collect_assign_global_taint deleted; superseded
+H312	sash/src/validate.rs	67	11396,7	12229,9	3	1	(top)	(top)			F5	F5	B60	pending	flag_reserved doc: a $( ) body is a function body, so break/continue there are outside any loop
+H313	sash/src/validate.rs	68	11434,12	12269,14	7	5	(top);descend_loop_control	(top);descend_loop_control			F5	F5	B60	pending	descend_loop_control: structural bodies keep in_loop, cmdsub bodies start fresh (SB5081)
+H314	sash/src/validate.rs	69	11695,7	12532,7	1	1	(top)	(top)			W1	W1	-	superseded	unit-test comment rename
+H315	sash/src/validate.rs	70	11711,8	12548,8	2	2	a_map_literal_is_a_taint_source_iff_a_value_is	a_map_literal_is_a_taint_source_iff_a_value_is			W2	W2	-	superseded	unit test passes ExecFns::default(); superseded
+H316	sash/src/validate.rs	71	11725,31	12562,34	19	16	a_map_literal_uses_taint_iff_a_value_does;a_map_literal_value_is_descended_for_cmdsub_reads	a_map_literal_uses_taint_iff_a_value_does;a_map_literal_value_is_descended_for_index_reads			W1	W1	-	superseded	unit test a_map_literal_value_is_descended_for_index_reads (renamed walker); superseded
+H317	sash/src/validate.rs	72	11767,4	12607,57	53	0		(top);a_nested_definition_cannot_reach_the_statement_walk;a_leak_with_no_recorded_site_is_an_ice			W1	W1	-	superseded	unit tests a_nested_definition_cannot_reach_the_statement_walk (SB5071 ICE in taint_stmt) and a_leak_with_no_recorded_site_is_an_ice; W1 decides whether taint_stmt's Function arm becomes an ICE
+H318	spec/arithmetic.sh	1	1218,9	1218,11	4	2			31.46	31.46	F14	F14	B70	pending	arithmetic.sh 31.46: SB4020 -> SB4035 'is not an arithmetic operand'; comment cites DD#72; program unchanged
+H319	spec/arithmetic.sh	2	1361,11	1363,13	4	2			31.67	31.67	F14	F14	B70	pending	arithmetic.sh 31.67: SB4020 -> SB4035 'stray `$` in arithmetic'; program unchanged
+H320	spec/arithmetic.sh	3	1505,11	1509,12	3	2			31.85	31.85	F14	F14	B70	pending	arithmetic.sh 31.85: SB4020 -> SB4035 'is not an arithmetic operand'; program unchanged
+H321	spec/control_flow.sh	1	5,7	5,7	1	1					split	F8,F9	-	pending	control_flow.sh plan 109 -> 135: F8 +11 (lazy) | F9 +15 (dsplazy)
+H322	spec/control_flow.sh	2	676,5	676,229	224	0				lazy.1 lazy.2 lazy.3 lazy.4 lazy.5 lazy.6 lazy.7 lazy.8 lazy.9 lazy.10 lazy.11 dsplazy.1 dsplazy.2 dsplazy.3 dsplazy.4 dsplazy.5 dsplazy.6 dsplazy.7 dsplazy.8 dsplazy.9 dsplazy.10 dsplazy.11 dsplazy.12 dsplazy.13 dsplazy.14 dsplazy.15	split	F8,F9	B87,B88a,B86	pending	control_flow.sh branch lines 677-904 | F8 B87,B88a: 677-776, header 'DD#95: && / || inside [[ ]] short-circuit', lazy.1-11 (D1 churns lazy.2/.9; negative control sash-b85 fails lazy.1-4,6,7,11) | F9 B86: 777-901, header 'DD#66: a dispatch evaluates lazily', dsplazy.1-15 (D1 churns dsplazy.7/.9; dsplazy.13-15 use --no-taint; preb86 fails all 15) | trailing 902-904 is the file's set -e/tally context
+H323	spec/coverage.sh	1	1816,12	1816,13	6	5			cov.356	cov.356	F14	F14	B70	pending	coverage.sh cov.356: SB4020 -> SB4035 plus 'group with plain `( … )`'; comment rewritten (DD#72); program unchanged
+H324	spec/errors.sh	1	3,7	3,7	1	1					split	F5,F6,F7	-	pending	errors.sh plan 465 -> 493: F5 +12 (55.76-55.87) | F6 +1 (55.88, B84) | F7 +15 (55.89-55.103)
+H325	spec/errors.sh	2	1380,6	1380,236	230	0				55.76 55.77 55.78 55.79 55.80 55.81 55.82 55.83 55.84 55.85 55.86 55.87 55.88 55.89 55.90 55.91 55.92 55.93 55.94 55.95 55.96 55.97 55.98 55.99 55.100 55.101 55.102 55.103	split	F5,F6,F7	B83,B83b,B84,B85	pending	errors.sh branch lines 1382-1611 | F5 B83,B83b: 1382-1478, header '55.76-55.88: a body is not in condition position' (re-headed 55.76-55.87 on port), 55.76-55.87 | F6 B84: 1479-1490, 55.88 (its comment: distinguishes only after F5's leak fix) | F7 B85: 1491-1611, header '55.89-55.103: the condition is the LAST status-setting instruction', 55.89-55.103
+H326	spec/functions.sh	1	1179,9	1179,9	3	3					F14	F14	B39	pending	functions.sh lift.3b comment only: SB4041 -> SB4035 for ${arr[$(( $(f) ))]}; assertion unchanged
+H327	spec/taint.sh	1	3,7	3,7	1	1					split	F10,W1,F9,W5	-	pending	taint.sh plan 365 -> 412: F10 +27 (atpred 16, atlazy 9, atonce 2) | W1 +6 (atslot, rewritten under T3) | F9 +3 (dsptaint) | W5 +11 (endck)
+H328	spec/taint.sh	2	220,11	220,15	7	3			24.16	24.16	F10	F10	SB5098	pending	taint.sh 24.16 rewritten: program [[ $(echo yes) == yes ]] -> [[ $x == $(/bin/echo yes) ]], assertion -n $err -> SB5098 'runs `/bin/echo`' (old program passed vacuously). Program changed: per protocol a fresh id; F10 decides
+H329	spec/taint.sh	3	2307,5	2311,444	439	0				atpred.1 atpred.2 atpred.3 atpred.4 atpred.5 atpred.6 atpred.7 atpred.8 atpred.9 atpred.10 atpred.11 atpred.12 atpred.13 atpred.14 atpred.15 atpred.16 atlazy.1 atlazy.2 atlazy.3 atlazy.4 atlazy.5 atlazy.6 atlazy.7 atlazy.8 atlazy.9 atonce.1 atonce.2 atslot.1 atslot.2 atslot.3 atslot.4 atslot.5 atslot.6 dsptaint.1 dsptaint.2 dsptaint.3 endck.1 endck.2 endck.3 endck.4 endck.5 endck.6 endck.7 endck.8 endck.9 endck.10 endck.11	split	F10,W1,F9,W5	SB5098,B89,B36,B88a,B88c,B88d,B91,B92,B93,e7,B95	pending	taint.sh branch lines 2313-2754 | F10 SB5098,B89,B36: 2313-2442, header 'atpred.1-atpred.16', atpred.1-16 (D1 churns atpred.2/.10-.12) | F10 B88a,B88d,B91: 2443-2518, header 'DD#95 inside attest predicates; DD#61 attest-all stops at its first failing cell', atlazy.1-9 (1-7 B88a; 5/6 B88d; 8/9 B91 C only; D1 churns atlazy.1) | F10 B88c: 2519-2545, header 'A caught attest evaluates its predicate once', atonce.1-2 (strace inject) plus rm -f | W1 B92 (rewrite as fill-then-attest under T3; shared push_attest_all_check/retag lands in F10): 2546-2603, atslot.1-6 | F9 B93: 2604-2626, header 'DD#66: a dispatch pattern is a test operand', dsptaint.1-3 | W5 e7,B95: 2627-2751, header 'DD#56: END begins in the state the program ended in', endck.1-11 (1-7 e7 false positives; 8-10 original-walker bypasses; 11 control; B112 forces endck.10/11 rewrite) | 2752-2754 set -e/tally context
+H330	spec/types.sh	1	1979,17	1979,21	7	3			75.164	75.164	F14	F14	B39	pending	types.sh 75.163 comment SB4041 -> SB4035; 75.164 SB4041 -> SB4035 'is not an arithmetic operand' and != SB4041; cites a DD#80 2026-10-20 addendum that does not exist (owed by F14)
