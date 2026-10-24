@@ -636,19 +636,22 @@ fn ssa_taint_disabled(flags: &[&str]) -> bool {
     flags.contains(&"--no-taint")
 }
 
-/// Taint, positional, argv-splat, and type checks. Run after resolution so
-/// the taint pass classifies on the resolved exec form.
+/// Const writes, taint, positional, argv-splat, and type checks. Run after
+/// resolution so the taint pass classifies on the resolved exec form, and on
+/// the bound program so every local carries its scope.
 fn run_semantic_checks(
     input: &str,
     program: &crate::ir::Program,
     flags: &[&str],
     names: &bindings::SourceNames,
 ) {
-    let mut tdiags = if cst_taint_disabled(flags) {
-        Vec::new()
-    } else {
-        validate::check_taint(program)
-    };
+    // SB4044 sits outside the taint switch: a const write is no taint
+    // question, and `--no-taint` must not carry one into lowering, where
+    // `VersionState::define` asserts it never arrives.
+    let mut tdiags = validate::check_const_writes(program);
+    if !cst_taint_disabled(flags) {
+        tdiags.extend(validate::check_taint(program));
+    }
     tdiags.extend(validate::check_positionals(program));
     tdiags.extend(validate::check_dollar_at(program));
     tdiags.extend(validate::check_argv_splat(program));

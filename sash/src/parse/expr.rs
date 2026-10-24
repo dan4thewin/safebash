@@ -12,7 +12,7 @@
 //! rejection by the post-parse `check_rejected()` pass in parser.rs.
 
 use super::error::parse_error;
-use super::lexer::{Scanner, StringPart, Tok};
+use super::lexer::{Origin, Scanner, StringPart, Tok};
 use crate::diagnostic::Diagnostic;
 use crate::ir::*;
 
@@ -52,8 +52,16 @@ fn parse_expansion_arm(
     match tok {
         Tok::Dollar(name) => parse_dollar_arm(scanner, name.clone(), span, start, parts),
         Tok::DollarBrace(content) => {
+            // `${…}` content starts past the `${`; a brace-less desugar
+            // (`$a[K]`, `$x:-w`) copies the source from just past the `$`.
+            let opener = if scanner.byte_at(start + 1) == Some(b'{') {
+                2
+            } else {
+                1
+            };
+            let origin = scanner.origin_of(start + opener);
             scanner.next();
-            parts.push(parse_parameter_expansion(content, span)?);
+            parts.push(parse_parameter_expansion(content, span, origin)?);
         }
         Tok::DollarParen => {
             scanner.next();
@@ -604,12 +612,12 @@ fn emit_string_part(
             }));
             1
         }
-        StringPart::Expansion(content) => {
-            result.push(parse_parameter_expansion(content, span)?);
+        StringPart::Expansion(content, origin) => {
+            result.push(parse_parameter_expansion(content, span, *origin)?);
             1
         }
-        StringPart::CommandSub(content) => {
-            result.push(command_sub_to_expr(content, span)?);
+        StringPart::CommandSub(content, origin) => {
+            result.push(command_sub_to_expr(content, span, *origin)?);
             1
         }
         StringPart::ArithSub(content) => {
@@ -687,7 +695,8 @@ fn dynamic_subscript_var(idx: &str) -> Option<&str> {
 ///
 /// The lexer consumed the closing `)` while extracting `content`, so it is
 /// re-appended: the sub-scanner then sees exactly the token stream the
-/// unquoted path sees after `$(`.
+/// unquoted path sees after `$(`. It starts at `origin`, so the statements
+/// inside report where they are in the program.
 ///
 /// A third divergence was closed here earlier and is worth not re-introducing:
 /// this used to carve out content starting with a backtick and keep it as a
@@ -695,10 +704,28 @@ fn dynamic_subscript_var(idx: &str) -> Option<&str> {
 /// both the backtick rejection and the taint check. Backticks are rejected
 /// everywhere now (SB5076), and re-lexing the inner script is what surfaces
 /// the sentinel.
-fn command_sub_to_expr(content: &str, span: Span) -> Result<Expr, Diagnostic> {
+fn command_sub_to_expr(content: &str, span: Span, origin: Origin) -> Result<Expr, Diagnostic> {
     let src = format!("{})", content);
-    let mut sub = Scanner::new(&src);
-    parse_command_substitution(&mut sub, span)
+    let mut sub = Scanner::with_origin(&src, origin);
+    let parsed = parse_command_substitution(&mut sub, span);
+    with_scanner_fatal(&sub, parsed)
+}
+
+/// The result of parsing a re-lexed construct, unless its scanner hit one of
+/// its own fatals — an unterminated construct, a rejected `$'…'` escape, a
+/// `#` glued to an operator — which then wins, exactly as the top-level
+/// scanner's fatal outranks every other diagnostic in `parse`.
+///
+/// Every re-lex site routes through this. The sub-scanner used to be dropped
+/// with its fatals unread, so whatever only it could see was lost: the
+/// rejected escape in `"${x:s/b/$'\101'/}"` printed `a101c`, the unclosed `$(`
+/// in `${x:s/$(echo/b/}` was quietly closed and printed `babc`, and the glued
+/// `#` in `"$(echo a;# c)"` was looked up as a command (SB5011).
+fn with_scanner_fatal<T>(sub: &Scanner, parsed: Result<T, Diagnostic>) -> Result<T, Diagnostic> {
+    match super::parser::scanner_fatal(sub) {
+        Some(fatal) => Err(fatal),
+        None => parsed,
+    }
 }
 
 // ── Parameter expansion (${...}) ─────────────────────────────────
@@ -713,29 +740,29 @@ fn command_sub_to_expr(content: &str, span: Span) -> Result<Expr, Diagnostic> {
 //   ${var/pat/rep}  → substitution (glob → regex)
 //   ${var@X}        → rejected (SB4015)
 
-/// Parse ${...} content into an IR ParameterExpansion.
-pub fn parse_parameter_expansion(content: &str, span: Span) -> Result<Expr, Diagnostic> {
-    let bytes = content.as_bytes();
-
-    if let Some(e) = try_braced_splat(content, span)
-        .or_else(|| try_strlen_or_arrlen(content, bytes, span))
-        .or_else(|| try_indirection_or_arrkeys(content, bytes, span))
-    {
+/// Parse ${...} content into an IR ParameterExpansion. `origin` is where
+/// `content` starts in the program, for the nested parts that are re-lexed.
+pub fn parse_parameter_expansion(
+    content: &str,
+    span: Span,
+    origin: Origin,
+) -> Result<Expr, Diagnostic> {
+    if let Some(e) = try_leading_form(content, span, origin)? {
         return Ok(e);
     }
 
     let (name, name_end) = scan_param_name(content);
-    if name_end >= bytes.len() {
+    if name_end >= content.len() {
         return Ok(Expr::param(name, None, None, span));
     }
 
-    if let Some(e) = try_subscript(content, name, name_end, span)? {
+    if let Some(e) = try_subscript(content, name, name_end, span, origin)? {
         return Ok(e);
     }
 
     let rest = &content[name_end..];
 
-    if let Some(e) = parse_cell_operator(rest, name, span)? {
+    if let Some(e) = parse_cell_operator(rest, name, span, origin.after(name))? {
         return Ok(e);
     }
 
@@ -747,6 +774,17 @@ pub fn parse_parameter_expansion(content: &str, span: Span) -> Result<Expr, Diag
     // it (SB4047): the compiler must never emit code for input it doesn't fully
     // understand.
     Ok(unrecognized_parameter_operator(rest, name, span))
+}
+
+/// The forms told apart by their leading byte, before any name is scanned: a
+/// braced splat `${@}` / `${*[…]}`, `${#…}`, and `${!…}`.
+fn try_leading_form(content: &str, span: Span, origin: Origin) -> Result<Option<Expr>, Diagnostic> {
+    if let Some(e) = try_braced_splat(content, span, origin)? {
+        return Ok(Some(e));
+    }
+    let bytes = content.as_bytes();
+    Ok(try_strlen_or_arrlen(content, bytes, span)
+        .or_else(|| try_indirection_or_arrkeys(content, bytes, span)))
 }
 
 fn unrecognized_parameter_operator(rest: &str, name: &str, span: Span) -> Expr {
@@ -764,8 +802,13 @@ fn unrecognized_parameter_operator(rest: &str, name: &str, span: Span) -> Expr {
 /// The operator-suffixed `${name OP…}` forms: `:s/…` sed, `:off:len`
 /// substring, `@X` transforms, and the standard `:-`/`:=`/`#`/`%`/… operators.
 /// Returns `None` for a bare `${name}` (empty/unmatched `rest`).
-fn parse_cell_operator(rest: &str, name: &str, span: Span) -> Result<Option<Expr>, Diagnostic> {
-    if let Some(e) = try_sed_op(rest, name, span)?
+fn parse_cell_operator(
+    rest: &str,
+    name: &str,
+    span: Span,
+    origin: Origin,
+) -> Result<Option<Expr>, Diagnostic> {
+    if let Some(e) = try_sed_op(rest, name, span, origin)?
         .or_else(|| try_substring_op(rest, name, span))
         .or_else(|| try_at_transform(rest, name, span))
     {
@@ -790,27 +833,29 @@ fn parse_cell_operator(rest: &str, name: &str, span: Span) -> Result<Option<Expr
 /// `validate::splat_not_subscriptable_diag` can see it — the brace-less
 /// `$a[K]` desugar routes `$@[0]` through here, and the two spellings must
 /// land on the same diagnostic (DG, 2026-10-03). Specs 80.20/80.21.
-fn try_braced_splat(content: &str, span: Span) -> Option<Expr> {
+fn try_braced_splat(content: &str, span: Span, origin: Origin) -> Result<Option<Expr>, Diagnostic> {
     let sigil = match content.as_bytes().first() {
         Some(b'@') => "@",
         Some(b'*') => "*",
-        _ => return None,
+        _ => return Ok(None),
     };
     if content.as_bytes().get(1) == Some(&b'[') {
-        let index = capture_balanced_subscript(content, 1)
-            .map(|(idx, _)| parse_subscript_index(&idx, span))?;
-        return Some(Expr {
+        let Some((idx, _)) = capture_balanced_subscript(content, 1) else {
+            return Ok(None);
+        };
+        let index = parse_subscript_index(&idx, span, origin.after(&content[..2]))?;
+        return Ok(Some(Expr {
             kind: ExprKind::Subscript {
                 name: sigil.to_string(),
                 index: Box::new(index),
             },
             span,
-        });
+        }));
     }
-    Some(Expr {
+    Ok(Some(Expr {
         kind: ExprKind::SimpleExpansion(sigil.to_string()),
         span,
-    })
+    }))
 }
 
 /// `${#…}` length sugar — retired entirely (DD#75 §4, amended 2026-08-27).
@@ -882,6 +927,7 @@ fn try_subscript(
     name: &str,
     name_end: usize,
     span: Span,
+    origin: Origin,
 ) -> Result<Option<Expr>, Diagnostic> {
     if content.as_bytes()[name_end] != b'[' {
         return Ok(None);
@@ -896,9 +942,22 @@ fn try_subscript(
         return Ok(None);
     };
     let after_bracket = &content[close + 1..];
+    let index_origin = origin.after(&content[..=name_end]);
+    subscript_with_index(name, &idx, after_bracket, span, index_origin).map(Some)
+}
 
+/// `${name[idx]…}` once the index is captured: `idx` is the text between the
+/// brackets, starting at `origin` in the program, and `after_bracket` is
+/// whatever follows the `]`.
+fn subscript_with_index(
+    name: &str,
+    idx: &str,
+    after_bracket: &str,
+    span: Span,
+    origin: Origin,
+) -> Result<Expr, Diagnostic> {
     if idx == "@" || idx == "*" {
-        return Ok(Some(splat_subscript_expr(name, after_bracket, span)));
+        return Ok(splat_subscript_expr(name, after_bracket, span));
     }
 
     // DD#80: re-parse the index as a full expression so an explicit nested
@@ -906,16 +965,16 @@ fn try_subscript(
     // lowers to SSA temporaries like any other operand. An implicit/ambiguous
     // bare form (brackets/operators/mixed) parses to a `Literal`/`Concat` that
     // `validate::check_subscript_index` rejects (SB4041).
-    let index = Box::new(parse_subscript_index(&idx, span));
+    let index = Box::new(parse_subscript_index(idx, span, origin)?);
 
     if after_bracket.is_empty() {
-        return Ok(Some(Expr {
+        return Ok(Expr {
             kind: ExprKind::Subscript {
                 name: name.to_string(),
                 index,
             },
             span,
-        }));
+        });
     }
 
     // `${a[i]OP}` — a trailing operator applies to the *cell* value. DG: a
@@ -924,12 +983,8 @@ fn try_subscript(
     // substring (`:o:l`), and sed (`:s/`) all lower for a cell (edge 4); the
     // pruned families (`#`/`%`/`/`/`@X`) reject on their operator string exactly
     // as for a scalar, and any other `:`-led op rejects as `cell_string_op`.
-    Ok(Some(subscript_operator_expr(
-        name,
-        index,
-        after_bracket,
-        span,
-    )?))
+    let operator_origin = origin.after(idx).after("]");
+    subscript_operator_expr(name, index, after_bracket, span, operator_origin)
 }
 
 /// Capture the `[ … ]` subscript index that starts at `content[open] == '['`,
@@ -1024,15 +1079,21 @@ fn step_close_depth(depth: &mut i32) -> bool {
 /// Re-parse a captured subscript index as a full value expression (DD#80), so
 /// nested contexts survive. A parse failure or a leftover tail (a mixed/bare
 /// form the value parser cannot consume whole) falls back to a `Literal` — which
-/// `validate::check_subscript_index` then rejects as ambiguous (SB4041).
-pub(super) fn parse_subscript_index(idx: &str, span: Span) -> Expr {
+/// `validate::check_subscript_index` then rejects as ambiguous (SB4041). The
+/// index scanner's own fatal is an error, not a fallback
+/// ([`parse_whole_index`]). `origin` is where `idx` starts in the program.
+pub(super) fn parse_subscript_index(
+    idx: &str,
+    span: Span,
+    origin: Origin,
+) -> Result<Expr, Diagnostic> {
     let trimmed = idx.trim();
-    match parse_whole_index(trimmed) {
-        // The sub-scanner numbers lines and columns from the start of the index
-        // TEXT, so its spans are 1:1-relative. Re-anchor the expression the
-        // caller reports on to the whole `${name[…]}`. (Exprs nested deeper
-        // inside the index keep the relative span — see
-        // notes/tasks/subscript-index-nested-span.md.)
+    let origin = origin.after(&idx[..idx.len() - idx.trim_start().len()]);
+    Ok(match parse_whole_index(trimmed, origin)? {
+        // The sub-scanner starts at the index's own position, so everything
+        // nested inside the index reports exactly where it is. The expression
+        // the caller reports on is still re-anchored to the whole
+        // `${name[…]}` (DD#114 Span).
         Some(mut expr) => {
             expr.span = span;
             expr
@@ -1041,7 +1102,7 @@ pub(super) fn parse_subscript_index(idx: &str, span: Span) -> Expr {
             kind: ExprKind::Literal(trimmed.to_string()),
             span,
         },
-    }
+    })
 }
 
 /// The index text as a value expression, or `None` if it is not one the value
@@ -1051,14 +1112,18 @@ pub(super) fn parse_subscript_index(idx: &str, span: Span) -> Expr {
 /// ambiguous as an index (DD#80), because the explicit cell-read index form is
 /// the braced `${name[…]}`. Returning `None` for both cases leaves the caller
 /// holding a `Literal`, which `validate::check_subscript_index` then rejects as
-/// ambiguous (SB4041).
-fn parse_whole_index(trimmed: &str) -> Option<Expr> {
+/// ambiguous (SB4041). The index scanner's own fatal is an error, not a
+/// fallback: it is the one thing only this scanner can see.
+fn parse_whole_index(trimmed: &str, origin: Origin) -> Result<Option<Expr>, Diagnostic> {
     if is_bare_dollar_subscript(trimmed) {
-        return None;
+        return Ok(None);
     }
-    let mut scanner = Scanner::new(trimmed);
-    let expr = parse_expr(&mut scanner).ok()?;
-    scanner.at_eof().then_some(expr)
+    let mut scanner = Scanner::with_origin(trimmed, origin);
+    let whole = match parse_expr(&mut scanner) {
+        Ok(expr) if scanner.at_eof() => Some(expr),
+        _ => None,
+    };
+    with_scanner_fatal(&scanner, Ok(whole))
 }
 
 /// `$name[…]` — a `$`-sigil identifier immediately followed by a `[` subscript,
@@ -1079,12 +1144,14 @@ fn is_bare_dollar_subscript(s: &str) -> bool {
 /// scalar `ParameterExpansion` (so codegen reads the cell); `:s/` desugars to
 /// `$(sub|gsub "${a[i]}" …)`; substring `:o:l` carries the index (the transform
 /// builds a cell-reading `Substring` node); every other operator parses as the
-/// scalar form so `#`/`%`/`/`/`@X` reject identically.
+/// scalar form so `#`/`%`/`/`/`@X` reject identically. `origin` is where
+/// `after` starts in the program.
 fn subscript_operator_expr(
     name: &str,
     index: Box<Expr>,
     after: &str,
     span: Span,
+    origin: Origin,
 ) -> Result<Expr, Diagnostic> {
     // Sed on a cell (`${a[i]:s/RE/SUB/}`) desugars to `$(sub|gsub "${a[i]}" RE
     // SUB)` — the cell read as the subject — reusing the scalar `$(sub)`
@@ -1093,7 +1160,7 @@ fn subscript_operator_expr(
     // attaching it, which is why it cannot share the tail below.
     if let Some(body) = after.strip_prefix(":s/") {
         let subject = quoted_cell_expr(name, index, span);
-        return build_sed_or_malformed(body, subject, name, after, span);
+        return build_sed_or_malformed(body, subject, name, after, span, origin.after(":s/"));
     }
     let mut expr = cell_attaching_operator(name, after, span)?;
     attach_cell_index(&mut expr, index);
@@ -1173,28 +1240,39 @@ fn splat_subscript_expr(name: &str, after_bracket: &str, span: Span) -> Expr {
 /// validator turns into SB4032. (A malformed `$(( … ))` *inside* one of the
 /// RE/SUB words is a different matter — that is a real parse diagnostic and
 /// propagates out, which is why this path is fallible.)
-fn try_sed_op(rest: &str, name: &str, span: Span) -> Result<Option<Expr>, Diagnostic> {
+fn try_sed_op(
+    rest: &str,
+    name: &str,
+    span: Span,
+    origin: Origin,
+) -> Result<Option<Expr>, Diagnostic> {
     let Some(body) = rest.strip_prefix(":s/") else {
         return Ok(None);
     };
     let subject = quoted_var_expr(name, span);
     Ok(Some(build_sed_or_malformed(
-        body, subject, name, rest, span,
+        body,
+        subject,
+        name,
+        rest,
+        span,
+        origin.after(":s/"),
     )?))
 }
 
 /// Build `$(sub|gsub SUBJECT RE SUB)` from a `:s/RE/SUB/` payload with the given
 /// interpolating `subject` (a scalar `"$var"` or a cell `"${a[i]}"`), or the
 /// `s_malformed` sentinel (→ SB4032) when a `/` delimiter is missing. Shared by
-/// the scalar and cell sed forms.
+/// the scalar and cell sed forms. `origin` is where `body` starts.
 fn build_sed_or_malformed(
     body: &str,
     subject: Expr,
     name: &str,
     rest: &str,
     span: Span,
+    origin: Origin,
 ) -> Result<Expr, Diagnostic> {
-    if let Some(expr) = build_sed_sub(body, subject, span)? {
+    if let Some(expr) = build_sed_sub(body, subject, span, origin)? {
         return Ok(expr);
     }
     Ok(Expr {
@@ -1274,10 +1352,12 @@ fn split_sed_edit(body: &str) -> Option<(&str, &str, &str, &str)> {
 /// become interpolating double-quoted words (`$x` expands); regex
 /// metacharacters are ordinary literal bytes. `g` in the flags selects
 /// `gsub`. Returns `None` for a malformed (missing-delimiter) payload.
+/// `origin` is where `body` starts in the program.
 pub(crate) fn build_sed_sub(
     body: &str,
     subject: Expr,
     span: Span,
+    origin: Origin,
 ) -> Result<Option<Expr>, Diagnostic> {
     let mut value = subject;
     let mut rest = body;
@@ -1285,7 +1365,9 @@ pub(crate) fn build_sed_sub(
         let Some((re, sub, flags, after)) = split_sed_edit(rest) else {
             return Ok(None);
         };
-        value = build_one_sed_sub(re, sub, flags, value, span)?;
+        // `rest` is always a suffix of `body`, so this edit starts here.
+        let edit_origin = origin.after(&body[..body.len() - rest.len()]);
+        value = build_one_sed_sub(re, sub, flags, value, span, edit_origin)?;
         // DD#96: `,` chains edits, applied left to right — the next edit's
         // subject is this one's result. Only `s///` chains.
         let after = after.trim_start();
@@ -1305,13 +1387,15 @@ pub(crate) fn build_sed_sub(
 
 /// One `$(sub|gsub SUBJECT RE SUB)` call. RE/SUB become interpolating
 /// double-quoted words (`$x` expands); `g` in this edit's own flags selects
-/// `gsub`, so a flag binds to its edit rather than the whole chain.
+/// `gsub`, so a flag binds to its edit rather than the whole chain. `origin`
+/// is where `re` starts in the program; `sub` follows it and one `/`.
 fn build_one_sed_sub(
     re: &str,
     sub: &str,
     flags: &str,
     subject: Expr,
     span: Span,
+    origin: Origin,
 ) -> Result<Expr, Diagnostic> {
     // DD#63: "`g` is the `sub`/`gsub` choice, not a flag argument. There are
     // **no other flags**" — the engine has no `REG_ICASE` and takes nothing
@@ -1331,8 +1415,8 @@ fn build_one_sed_sub(
         ));
     }
     let cmd_name = if flags == "g" { "gsub" } else { "sub" };
-    let re_expr = *parse_interpolating_word(re, span)?;
-    let sub_expr = *parse_interpolating_word(sub, span)?;
+    let re_expr = *parse_interpolating_word(re, span, origin)?;
+    let sub_expr = *parse_interpolating_word(sub, span, origin.after(re).after("/"))?;
     let cmd = Statement {
         kind: StmtKind::Command(Command {
             name: Expr {
@@ -1523,10 +1607,11 @@ fn parse_disposition_operator(
 /// that rule answers is "when is a conditionally-taken operand evaluated, and
 /// what may it do"; a sed pattern is evaluated unconditionally, every time, so
 /// it never raises it.
-fn parse_interpolating_word(s: &str, span: Span) -> Result<Box<Expr>, Diagnostic> {
-    let mut scanner = Scanner::new(s);
+fn parse_interpolating_word(s: &str, span: Span, origin: Origin) -> Result<Box<Expr>, Diagnostic> {
+    let mut scanner = Scanner::with_origin(s, origin);
     let parts = scanner.scan_default_body();
-    let exprs = string_parts_to_exprs(&parts, span, &scanner)?;
+    let exprs = string_parts_to_exprs(&parts, span, &scanner);
+    let exprs = with_scanner_fatal(&scanner, exprs)?;
     Ok(Box::new(Expr {
         kind: ExprKind::DoubleQuoted(exprs),
         span,

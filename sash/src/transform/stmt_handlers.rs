@@ -506,20 +506,29 @@ fn lower_int_tail_call(
     if !colls.is_empty() {
         return None;
     }
-    let (tf, header, aname) = state.tail_loop.clone()?;
-    if *name != tf {
+    let tail = state.tail_loop.as_ref()?;
+    if *name != tail.func {
         return None;
     }
     if suppressed && state.suppressed == 0 {
         // Only subsequent iterations are suppressed. Lower one suppressed
         // specialization; its own self-tail calls reuse its unchecked loop.
+        let entry_readonly = tail.entry_readonly.clone();
         let scope = super::statements::SuppressionScope::enter(ssa, state, *block);
         let lifted = lift_int_func_args(args.clone(), ssa, state, block);
-        let value =
-            super::functions::inline_int_func(name, &lifted, colls, ssa, state, block, true);
+        let value = super::functions::inline_int_func(
+            name,
+            &lifted,
+            colls,
+            ssa,
+            state,
+            block,
+            Some(entry_readonly),
+        );
         scope.finish(ssa, state);
         return Some(emit_return_value(value, ssa, state, *block));
     }
+    let (header, aname) = (tail.header, tail.args_name.clone());
     let lifted = lift_int_func_args(args.clone(), ssa, state, block);
     Some(super::functions::emit_tail_call(
         header, &aname, lifted, ssa, state, *block,
@@ -1058,9 +1067,7 @@ fn build_function_pipeline_stage(
     // the only one able to make. Deleting it would make the pass's termination
     // an unstated consequence of a check two passes away.
     if state.inlining.iter().any(|n| n == &resolved) {
-        state
-            .diagnostics
-            .push(super::functions::recursion_diagnostic(&resolved));
+        state.error_at_stmt(super::functions::recursion_diagnostic(&resolved));
         super::functions::restore_caller_args(saved_args, state);
         return None;
     }
@@ -1086,7 +1093,13 @@ fn build_function_pipeline_stage(
     // `return` inside the body jumps to ret_block, which ends the forked child.
     let ret_block = ssa.new_checkpoint_block(&format!("pipe_fn_ret_{}_{}", name, idx));
     state.return_target = Some(ret_block);
+    // The stage never inherits its caller's tail loop: `return g …` in a stage
+    // of `g` would jump out of the forked child into g's loop header. It gets
+    // no loop of its own either, so a self tail-call in a stage still reaches
+    // the recursion guard (B21, notes/tasks/batch-531-findings.md).
+    let saved_tail = state.tail_loop.take();
     let exit = lower_stmts(&body, ssa, state, body_block);
+    state.tail_loop = saved_tail;
     ssa.block_mut(exit).terminator = Terminator::Goto(ret_block);
     ssa.block_mut(ret_block).terminator = Terminator::Return;
 
@@ -1552,7 +1565,12 @@ pub(super) fn capture_func_into(
     let restore_block = ssa.new_checkpoint_block(&format!("capret_{}", fname));
     let saved_return_target = state.return_target;
     state.return_target = Some(restore_block);
+    // DD#27/§5: the captured body's own self tail-calls loop to call_block,
+    // inside the capture. Without this it inherited the caller's target, so
+    // `return g` in `$(f)` inside g branched out of the open capture.
+    let saved_tail = state.enter_tail_loop(fname, call_block);
     let exit_block = lower_stmts(&body, ssa, state, call_block);
+    state.tail_loop = saved_tail;
     state.return_target = saved_return_target;
     ssa.block_mut(exit_block).terminator = Terminator::Goto(restore_block);
 

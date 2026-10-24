@@ -197,6 +197,15 @@ There is no CST and no tree-sitter dependency in the compiler — commit
 `1c0e64a` removed both. (`sash-convert` still uses stock
 `tree-sitter-bash` on *bash* input; that is a separate crate.)
 
+Some text is lexed twice: a statement inside a quoted capture, a
+subscript index, a sed field and a `=~` chain are re-lexed by a
+sub-scanner. Each sub-scanner is given its text's place in the program
+(`lexer::Origin`), so a diagnostic inside it reports its own line and
+column, and the re-lex site reports the sub-scanner's fatal ahead of
+whatever the sub-parse returned (DD#114, DD#115). Text the arithmetic
+lexer rebuilds from tokens maps back to no source position, so it
+reports the enclosing expression's (`Origin::Within`).
+
 ### Phase 2: Validate
 
 `validate.rs` walks the AST once. (The old `rules/` directory and its
@@ -236,6 +245,14 @@ Typing, semantic validation and SSA lowering all consume the same resolved
 AST. A source-name table keeps diagnostics and runtime attest labels in the
 user's spelling. The original AST/source remain the artifact input:
 `--emit-ir`, embedded IR and embedded source do not expose compiler names.
+
+The first semantic check is `check_const_writes` (SB4044). On the resolved
+AST each local already carries its scope's qualified name, so one
+program-wide set of consts is exact, and every way a statement binds a name
+is checked against it, wherever the const is declared (DD#86). Lowering only
+asserts the result: binding a const twice in `VersionState::define` is an
+ICE. A merge phi binds through `define_merge` instead, because each version
+it joins was checked where it was written.
 
 Compiler temporaries use the same reserved-name set, through
 `VersionState::reserve_temp_name`: a private-looking spelling cannot alias a
@@ -352,7 +369,9 @@ environment. Inlining does not make a function polymorphic.
 
 `transform/` converts IR → SSA. Variable versioning, phi nodes at
 merge points, basic blocks with explicit terminators, control flow
-graph construction. Function inlining. Arithmetic evaluation.
+graph construction. Function inlining. Arithmetic evaluation. A
+diagnostic raised while lowering reports at the statement being lowered
+(`VersionState::stmt_span`).
 
 #### Functions, inlining, and recursion (DD#27)
 

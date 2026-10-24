@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup types
-plan=409
+plan=430
 echo "1..$plan" >&3
 
 set +e
@@ -184,8 +184,10 @@ run_sash 'fn f { const int x=5; echo $x; }; f'
 run_sash 'const array a=(1 2 3)'
 [[ $rc != 0 && -z $out && -n $err ]]; chk 35.2
 
-# 35.3-35.9 SB4044: a const/readonly variable cannot be reassigned (validate
-# check + transform backstop). Front-end rejects — all modes.
+# 35.3-35.9 SB4044: a const/readonly variable cannot be reassigned. Validate
+# rejects every write channel, after bindings resolve and independent of
+# textual order; lowering's `VersionState::define` only ICEs if one ever
+# slips past it. Front-end rejects — all modes.
 # 35.3 plain reassignment
 run_sash 'const x=1; x=2'
 [[ $rc != 0 && -z $out && $err == *SB4044* ]]; chk 35.3
@@ -204,13 +206,217 @@ run_sash 'const x=1; (( x=5 ))'
 # Both codes used to fire. SB4044 still covers a bare `x=2` (35.3).
 run_sash 'const x=1; const x=2'
 [[ $rc != 0 && -z $out && $err == *SB5049* && $err != *SB4044* ]]; chk 35.7
-# 35.8 backstop: `read` into a const (a channel the validate walk doesn't
-# enumerate — caught by VersionState::define so it can never panic)
+# 35.8 `readline` into a const: validate covers this channel like the others
+# (it used to reach the lowering backstop, which reported 1:1; constw.1-2)
 run_sash 'const x=1; readline x'
 [[ $rc != 0 && -z $out && $err == *SB4044* ]]; chk 35.8
 # 35.9 no false positive: declaring then reading a const is fine
 run_sash 'const x=1; echo $x'
 [[ $rc = 0 && $out = 1 && -z $err ]]; chk 35.9
+
+# constw.1-constw.8: every channel that writes a const is SB4044 at the
+# writing statement (batch-531 F13). Validate used to enumerate only some
+# channels and walk in textual order; the rest reached a lowering backstop
+# that reported 1:1, or nothing caught them at all (constw.8).
+
+# constw.1 a reader stage writes the const
+run_sash 'const x=1
+echo x | readline x
+echo "$x"'
+[[ $rc != 0 && -z $out && $err == *':2:10: error [SB4044]'* ]]; chk constw.1
+
+# constw.2 the same inside a function, writing a global const
+run_sash 'const s=a
+fn f {
+  echo x | readline s
+}
+f
+echo "$s"'
+[[ $rc != 0 && -z $out && $err == *':3:12: error [SB4044]'* ]]; chk constw.2
+
+# constw.3 a `for` variable
+run_sash 'const i=1
+for i in a b {
+  echo "$i"
+}'
+[[ $rc != 0 && -z $out && $err == *':2:1: error [SB4044]'* ]]; chk constw.3
+
+# constw.4 an attest retags its subject, which is a write
+run_sash 'const h=$(getenv HOME)
+attest h [[ $h =~ ^/ ]]
+echo "$h"'
+[[ $rc != 0 && -z $out && $err == *':2:1: error [SB4044]'* ]]; chk constw.4
+
+# constw.5 an attest conversion's target
+run_sash 'const n=1
+s=$(getenv X)
+attest s (( n = s ))
+echo "$n"'
+[[ $rc != 0 && -z $out && $err == *':3:1: error [SB4044]'* ]]; chk constw.5
+
+# constw.6 a collection fill is a write too, so it is SB4044 like the rest;
+# it used to be the type mismatch SB4030
+run_sash 'const x=1
+map m=([k]=v)
+keys m x
+echo "$x"'
+[[ $rc != 0 && -z $out && $err == *':3:1: error [SB4044]'* \
+   && $err != *SB4030* ]]; chk constw.6
+
+# constw.7 a fill in a function defined before the const
+run_sash 'fn f { match abc b x; echo "${x[0]}" }
+const x=1
+f
+echo "$x"'
+[[ $rc != 0 && -z $out && $err == *':1:8: error [SB4044]'* ]]; chk constw.7
+
+# constw.8 a write in a function defined before the const; nothing caught it
+run_sash 'fn f { x=2 }
+const x=1
+echo "$x"'
+[[ $rc != 0 && -z $out && $err == *':1:8: error [SB4044]'* ]]; chk constw.8
+
+# constw.9-constw.18: a const is bound once per entry to its scope, so none
+# of these reassigns one. Each used to be a false SB4044.
+
+# constw.9 two functions, each with its own local `x`
+run_sash 'fn f {
+  const x=1
+  echo "$x"
+}
+fn g {
+  x=2
+  echo "$x"
+}
+f
+g'
+[[ $rc = 0 && $out = $'1\n2' && -z $err ]]; chk constw.9
+
+# constw.10 two sibling captures, each its own body with its own `z`
+run_sash 'a=$(const z=1; echo "$z")
+b=$(z=2; echo "$z")
+echo "$a$b"'
+[[ $rc = 0 && $out = 12 && -z $err ]]; chk constw.10
+
+# constw.11 a const in a self-tail-calling function, bound once per iteration
+run_sash 'fn f {
+  const x=$1
+  echo "$x"
+  if [[ $x != ccc ]] {
+    return f "${x}c"
+  }
+}
+f c'
+[[ $rc = 0 && $out = $'c\ncc\nccc' && -z $err ]]; chk constw.11
+
+# constw.12 a const in an `if` body, merged with the path that skips it
+run_sash 's=a
+if [[ $s == a ]] {
+  const x=1
+  echo "$x"
+}
+echo done'
+[[ $rc = 0 && $out = $'1\ndone' && -z $err ]]; chk constw.12
+
+# constw.13 the same in an `else` body
+run_sash 's=b
+if [[ $s == a ]] {
+  echo yes
+} else {
+  const x=1
+  echo "$x"
+}
+echo done'
+[[ $rc = 0 && $out = $'1\ndone' && -z $err ]]; chk constw.13
+
+# constw.14 a function whose output is redirected
+run_sash 'fn f {
+  const x=1
+  echo "$x"
+}
+f >constw.out
+/bin/cat constw.out'
+[[ $rc = 0 && $out = 1 && -z $err ]]; chk constw.14
+
+# constw.15 the `else` of an attest condition
+run_sash 's=$(/bin/echo a)
+if attest s [[ $s == a ]] {
+  echo "$s"
+} else {
+  const x=1
+  echo "no $x"
+  s=other
+}
+echo "$s done"'
+[[ $rc = 0 && $out = $'a\na done' && -z $err ]]; chk constw.15
+
+# constw.16 an int function's tail call, which loops
+run_sash 'fn descend -> int {
+const k=$1
+int n=$(($1))
+echo "k=$k" >&2
+if (( n == 0 )) { return 7 }
+int next=$((n - 1))
+return $(descend $next)
+}
+echo $(descend 2)'
+[[ $rc = 0 && $out = 7 && $rerr = $'k=2\nk=1\nk=0' && -z $err ]]; chk constw.16
+
+# constw.17 a self-tail-calling function run as a capture
+run_sash 'fn f {
+  const k=$1
+  if [[ $k != ccc ]] {
+    return f "${k}c"
+  }
+  echo "$k"
+}
+str s=$(f c)
+echo "s=$s"'
+[[ $rc = 0 && $out = s=ccc && -z $err ]]; chk constw.17
+
+# constw.18 the same run as a background job
+run_sash 'fn f {
+  const k=$1
+  if [[ $k != ccc ]] {
+    return f "${k}c"
+  }
+  echo "$k"
+}
+f c &
+- wait'
+[[ $rc = 0 && $out = ccc && -z $err ]]; chk constw.18
+
+# constw.19 constw.16 with the tail call suppressed: its one suppressed
+# specialization lowers the body again from inside the first lowering, so it
+# starts from the readonly set the loop was entered with
+run_sash 'fn descend -> int {
+const k=$1
+int n=$(($1))
+echo "k=$k" >&2
+if (( n == 0 )) { return 7 }
+int next=$((n - 1))
+return $(- descend $next)
+}
+echo $(descend 2)'
+[[ $rc = 0 && $out = 7 && $rerr = $'k=2\nk=1\nk=0' && -z $err ]]; chk constw.19
+
+# constw.20-constw.21: a const bound in a dispatch's default arm, merged with
+# the arms that skip it. Each used to be a false SB4044: the merge keeps the
+# default arm's versions, so its phi looked like a second binding of the const.
+
+# constw.20 the default arm is not taken
+run_sash 'x=foo
+[[ $x == foo { echo a; }
+   || { const y=1; echo "c$y"; } ]]
+echo done'
+[[ $rc = 0 && $out = $'a\ndone' && -z $err ]]; chk constw.20
+
+# constw.21 the default arm is taken
+run_sash 'x=zzz
+[[ $x == foo { echo a; }
+   || { const y=1; echo "c$y"; } ]]
+echo done'
+[[ $rc = 0 && $out = $'c1\ndone' && -z $err ]]; chk constw.21
 
 # DD#36 (fixed-point dtoi/itod) is SUPERSEDED — the pair was dropped as YAGNI
 # (DG 2026-09-13). They are now ordinary unknown tokens: SB5011 everywhere, with

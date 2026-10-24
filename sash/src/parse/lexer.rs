@@ -144,13 +144,70 @@ impl Tok {
 
 /// Part of an interpolated double-quoted string.
 /// The scanner splits `"hello $name"` into [Literal("hello "), Variable("name")].
+///
+/// An `Expansion` or `CommandSub` is parsed again from its raw text, so it
+/// carries the [`Origin`] that text starts at; positions inside it then name
+/// the program rather than the substring.
 #[derive(Debug, Clone, PartialEq)]
 pub enum StringPart {
     Literal(String),
-    Variable(String),   // $var
-    Expansion(String),  // ${...} raw content
-    CommandSub(String), // $(...) raw content
-    ArithSub(String),   // $((...)) raw content
+    Variable(String),           // $var
+    Expansion(String, Origin),  // ${...} raw content
+    CommandSub(String, Origin), // $(...) raw content
+    ArithSub(String),           // $((...)) raw content
+}
+
+// ── Source origin ────────────────────────────────────────────────────
+
+/// Where a scanner's text sits in the program, so that a nested scanner
+/// reports positions in the program rather than in its own text.
+///
+/// A construct inside another one — the statements of a `$( … )` in a `"…"`
+/// string, a `${a[…]}` index, a sed field — is parsed by re-lexing its text
+/// with a fresh [`Scanner`]. Numbered from 1:1, everything such a scanner
+/// reported was relative to the substring: `echo "$(strlen $n)"` on line 3
+/// put its diagnostic at 1:1.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Origin {
+    /// The text is a verbatim copy of the source from this 1-based
+    /// (line, column), so a position inside it maps back exactly.
+    At(usize, usize),
+    /// The text was rebuilt rather than copied — the arithmetic lexer
+    /// re-serialises its tokens — so nothing inside it maps back. Every
+    /// position reports the enclosing construct's, and so does every scanner
+    /// nested inside this one.
+    Within(usize, usize),
+}
+
+impl Origin {
+    /// The origin of a whole program's source.
+    pub const START: Origin = Origin::At(1, 1);
+
+    /// The origin of the text that follows `prefix`, when `prefix` itself
+    /// starts at `self`.
+    pub fn after(self, prefix: &str) -> Origin {
+        match self {
+            Origin::At(line, col) => {
+                let (line, col) = advance_line_col((line, col), prefix.as_bytes());
+                Origin::At(line, col)
+            }
+            within @ Origin::Within(..) => within,
+        }
+    }
+}
+
+/// Step a 1-based (line, column) over `bytes`. A column counts bytes, not
+/// characters — the unit [`Scanner::line_col`] has always reported.
+fn advance_line_col((mut line, mut col): (usize, usize), bytes: &[u8]) -> (usize, usize) {
+    for &b in bytes {
+        if b == b'\n' {
+            line += 1;
+            col = 1;
+        } else {
+            col += 1;
+        }
+    }
+    (line, col)
 }
 
 // ── Scanner ──────────────────────────────────────────────────────────
@@ -202,10 +259,20 @@ pub struct Scanner {
     /// this channel a dropped bash escape could only fail silently. First one
     /// wins, as with `unterminated`.
     bad_escape: Option<(usize, String)>,
+    /// Where `source` sits in the program (see [`Origin`]). Every position
+    /// this scanner reports — token spans and its own fatal diagnostics alike
+    /// — is counted from here.
+    origin: Origin,
 }
 
 impl Scanner {
     pub fn new(source: &str) -> Self {
+        Self::with_origin(source, Origin::START)
+    }
+
+    /// A scanner over text that starts at `origin` in the program: the
+    /// re-lex of a nested construct.
+    pub fn with_origin(source: &str, origin: Origin) -> Self {
         Self {
             source: source.as_bytes().to_vec(),
             pos: 0,
@@ -217,6 +284,7 @@ impl Scanner {
             unterminated: None,
             attached_hash: None,
             bad_escape: None,
+            origin,
         }
     }
 
@@ -301,22 +369,34 @@ impl Scanner {
         self.cmd_sub_depth > 0
     }
 
-    /// Compute (line, col) from byte offset. Both 1-based.
+    /// Compute (line, col) from byte offset. Both 1-based, and counted from
+    /// this scanner's [`Origin`], so a nested scanner names program positions.
     pub fn line_col(&self, offset: usize) -> (usize, usize) {
-        let mut line = 1;
-        let mut col = 1;
-        for (i, &b) in self.source.iter().enumerate() {
-            if i >= offset {
-                break;
+        match self.origin {
+            Origin::At(line, col) => {
+                advance_line_col((line, col), &self.source[..offset.min(self.source.len())])
             }
-            if b == b'\n' {
-                line += 1;
-                col = 1;
-            } else {
-                col += 1;
-            }
+            Origin::Within(line, col) => (line, col),
         }
-        (line, col)
+    }
+
+    /// The origin of this scanner's text from `offset` on, for the nested
+    /// scanner that re-lexes it. Exact while this text is a verbatim copy;
+    /// once an enclosing text was rebuilt, the whole nest reports that
+    /// construct's position.
+    pub fn origin_of(&self, offset: usize) -> Origin {
+        match self.origin {
+            Origin::At(..) => {
+                let (line, col) = self.line_col(offset);
+                Origin::At(line, col)
+            }
+            within @ Origin::Within(..) => within,
+        }
+    }
+
+    /// The source byte at `offset`, if there is one.
+    pub fn byte_at(&self, offset: usize) -> Option<u8> {
+        self.source.get(offset).copied()
     }
 
     /// Source text between two byte offsets. Used by the assignment-LHS
@@ -1343,9 +1423,10 @@ impl Scanner {
     ///
     /// Rewinds to just past the last consumed token (dropping any peeked
     /// lookahead), skips blanks, and requires `s/` at that point. Returns the
-    /// payload text and leaves the scanner just past it. `None` if this is not
-    /// an `s/` payload or a delimiter is missing — the caller raises SB4032.
-    pub fn take_sed_stmt_payload(&mut self) -> Option<String> {
+    /// payload text with the [`Origin`] it starts at, and leaves the scanner
+    /// just past it. `None` if this is not an `s/` payload or a delimiter is
+    /// missing — the caller raises SB4032.
+    pub fn take_sed_stmt_payload(&mut self) -> Option<(String, Origin)> {
         self.peeked.clear();
         self.pos = self.last_end;
         self.skip_blanks_only();
@@ -1354,7 +1435,7 @@ impl Scanner {
         let raw = String::from_utf8_lossy(&self.source[start..end]).to_string();
         self.pos = end;
         self.last_end = end;
-        Some(raw)
+        Some((raw, self.origin_of(start)))
     }
 
     /// Blanks only — a newline ends the statement, so it must not be skipped
@@ -1567,8 +1648,9 @@ impl Scanner {
         }
         match self.source[self.pos] {
             b'{' => {
+                let origin = self.origin_of(self.pos + 1);
                 let content = self.consume_dq_brace_expansion();
-                parts.push(StringPart::Expansion(content));
+                parts.push(StringPart::Expansion(content, origin));
             }
             b'(' => self.scan_dq_paren(parts),
             b'\'' => self.scan_dq_cstring(literal),
@@ -1601,9 +1683,11 @@ impl Scanner {
     fn dq_subscript_or_variable(&mut self, name: String) -> StringPart {
         match super::expr::balanced_subscript_close(&self.source, self.pos) {
             Some(close) => {
+                // `name` is the verbatim source just before the `[`.
+                let origin = self.origin_of(self.pos - name.len());
                 let text = String::from_utf8_lossy(&self.source[self.pos..=close]).to_string();
                 self.pos = close + 1;
-                StringPart::Expansion(format!("{name}{text}"))
+                StringPart::Expansion(format!("{name}{text}"), origin)
             }
             None => StringPart::Variable(name),
         }
@@ -1616,8 +1700,9 @@ impl Scanner {
             let content = self.consume_dq_arith_sub();
             parts.push(StringPart::ArithSub(content));
         } else {
+            let origin = self.origin_of(self.pos + 1);
             let content = self.consume_dq_cmd_sub();
-            parts.push(StringPart::CommandSub(content));
+            parts.push(StringPart::CommandSub(content, origin));
         }
     }
 

@@ -13,7 +13,7 @@
 set -eu
 . common.sh
 setup glob
-plan=14
+plan=17
 echo "1..$plan" >&3
 
 set +e
@@ -102,6 +102,43 @@ array a
 for f in * { if [[ \$f =~ '\\.ff\$' ]] { a += (\$f) } }
 echo \$(len a)"
 [[ $rc = 0 && $out = "2" && -z $err ]]; chk g.14
+
+# forglob.1-forglob.3: a `for` over a glob keeps its expansion in a compiler
+# temporary that is reserved like every other (DD#125), so it can neither
+# clobber a source name that happens to share its spelling nor be shared by a
+# nested loop (batch-531 F13). It used to be the fixed name `__forglob`. The
+# expansion's order is not asserted here.
+
+# forglob.1 a source global named `__forglob` survives the loop (it was `[]`)
+run_sash '/usr/bin/touch fga.fgx fgb.fgx
+__forglob=keep
+for f in *.fgx {
+  echo "$f"
+}
+echo "[$__forglob]"'
+[[ $rc = 0 && -z $err && $out == *'/fga.fgx'* && $out == *'/fgb.fgx'* \
+   && $out == *$'\n[keep]' ]]; chk forglob.1
+
+# forglob.2 a nested glob loop no longer overwrites the outer loop's list; the
+# outer loop ran once
+run_sash '/usr/bin/touch fgo1.fgo fgo2.fgo fgi.fgi
+for a in *.fgo {
+  for b in *.fgi {
+    echo "$a $b"
+  }
+}'
+[[ $rc = 0 && -z $err && $out == *'/fgo1.fgo '*'/fgi.fgi'* \
+   && $out == *'/fgo2.fgo '*'/fgi.fgi'* \
+   && $(printf '%s\n' "$out" | wc -l) = 2 ]]; chk forglob.2
+
+# forglob.3 nor is a source const of that name a write target (a false SB4044)
+run_sash '/usr/bin/touch fgc.fgc
+const __forglob=keep
+for f in *.fgc {
+  echo "$f"
+}
+echo "[$__forglob]"'
+[[ $rc = 0 && -z $err && $out == *'/fgc.fgc'$'\n[keep]' ]]; chk forglob.3
 
 set -e
 tally

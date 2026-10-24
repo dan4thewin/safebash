@@ -71,6 +71,17 @@ given a base. The index expression is re-anchored to the span of the enclosing
 still carry relative spans; filed as
 `notes/tasks/subscript-index-nested-span.md`.
 
+### Addendum (2026-10-24, batch-531 port step F13) — nested spans are exact
+
+Closed by giving the scanner an origin (`lexer::Origin`): a re-parse of
+verbatim source text starts numbering where that text sits in the program, so
+everything nested inside an index — and inside a double-quoted `$(…)` or a sed
+RE/SUB, the other two re-lex sites — now carries its real line:col. Text the
+arithmetic parser rebuilds from tokens is not verbatim, so a re-parse of it
+(`Origin::Within`) reports the enclosing arithmetic expression's position
+instead of inventing one. The top-level re-anchor above is unchanged: the
+index expression reports where the read is.
+
 ## Why it was open
 
 Zero existing specs used a tainted subscript index — the full sweep was

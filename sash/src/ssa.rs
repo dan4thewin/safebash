@@ -1671,6 +1671,20 @@ impl SsaProgram {
     }
 }
 
+/// DD#27/§5: the self tail-call target of the function body being lowered.
+/// A `return F …` naming `func` rebinds `args_name` and branches to `header`
+/// instead of inlining `func` again — turning tail recursion into a loop.
+#[derive(Debug, Clone)]
+pub(crate) struct TailLoop {
+    pub(crate) func: String,
+    pub(crate) header: usize,
+    pub(crate) args_name: String,
+    /// The readonly set the body was entered with, before any `const` of its
+    /// own. A suppressed tail specialization lowers the body a second time
+    /// from inside the first, so it starts again from this set.
+    pub(crate) entry_readonly: std::collections::HashSet<String>,
+}
+
 /// Variable versioning state — tracks the current version of each
 /// variable during SSA construction.
 #[derive(Debug, Clone)]
@@ -1728,15 +1742,12 @@ pub struct VersionState {
     pub collection_slots: HashMap<String, String>,
     /// DD#27/§5: the stack of function names currently being inlined on the
     /// active path (push on inline-enter, pop on inline-exit). A call to a name
-    /// already on the stack is a recursive edge — rejected (SB5033) unless it is
+    /// already on the stack is a recursive edge — rejected (SB5037) unless it is
     /// a direct self tail-call (a `return F …`), which lowers to a loop.
     pub inlining: Vec<String>,
-    /// DD#27/§5: when inlining a function, the target for a self tail-call
-    /// (`return F …`): (function name, loop-header block, its `args` array
-    /// name). A `return <call to F>` rebinds `args` and branches to the header
-    /// instead of inlining again — turning tail recursion into a loop. `None`
-    /// outside a function body.
-    pub tail_loop: Option<(String, usize, String)>,
+    /// DD#27/§5: the self tail-call target of the function body being
+    /// lowered (`enter_tail_loop`). `None` outside a function body.
+    pub(crate) tail_loop: Option<TailLoop>,
     /// `--manifest` collection: every command name resolved to a real
     /// executable path (contains `/`) at the resolution funnel. Interior-
     /// mutable so the immutable expression-evaluation path (`expr_to_value`
@@ -1776,6 +1787,13 @@ pub struct VersionState {
     pub(crate) reader_regions: Vec<ReaderRegion>,
     /// Lexical pipe binding, suspended across function/capture/redirect scopes.
     pub(crate) pipe_reader: Option<(i64, bool)>,
+    /// The statement being lowered, which locates the transform's own errors
+    /// (`error_at_stmt`). Call arity, recursion and `exec` resolution are
+    /// raised far below the statement dispatcher, where no span is threaded,
+    /// and every one of them used to report `1:1`.
+    /// `lower_one` sets and restores it, so an inlined body or a `$( )` body
+    /// reports its own statement and the enclosing one is back on return.
+    pub(crate) stmt_span: crate::ir::Span,
 }
 
 /// Permitted argument counts for a value-producing intrinsic (`len`, `sub`, …)
@@ -1864,7 +1882,29 @@ impl VersionState {
             next_reader_site: 0,
             reader_regions: Vec::new(),
             pipe_reader: None,
+            stmt_span: crate::ir::Span::new(1, 1),
         }
+    }
+
+    /// Record an error at the statement being lowered. `msg` begins with the
+    /// bracketed code (`[SB5042] function …`); the location comes from
+    /// `stmt_span`, so no site formats one of its own.
+    pub(crate) fn error_at_stmt(&mut self, msg: impl std::fmt::Display) {
+        let crate::ir::Span { line, col } = self.stmt_span;
+        self.diagnostics.push(format!("{line}:{col}: error {msg}"));
+    }
+
+    /// DD#27/§5: make the body of `func`, entered at `header`, the target of
+    /// its own self tail-calls — never its caller's. Call after the callee's
+    /// `args` are bound and before the body is lowered; returns the enclosing
+    /// target, which the caller restores once the body is lowered.
+    pub(crate) fn enter_tail_loop(&mut self, func: &str, header: usize) -> Option<TailLoop> {
+        self.tail_loop.replace(TailLoop {
+            func: func.to_string(),
+            header,
+            args_name: self.current_args_name.clone(),
+            entry_readonly: self.readonly_vars.clone(),
+        })
     }
 
     /// Reserve a capture site number for one `$( … )` capture.
@@ -1882,18 +1922,31 @@ impl VersionState {
     }
 
     /// Define a new version of a variable.
+    ///
+    /// A `const` is defined once per entry to its scope. validate's SB4044
+    /// rejects every statement that writes one, and SB5072 keeps one out of
+    /// the bodies lowered more than once, so a second definition means
+    /// lowering bound the name twice by itself — and the const would silently
+    /// gain a second value. Merge phis use [`Self::define_merge`].
     pub fn define(&mut self, name: &str) -> VarRef {
-        // Readonly enforcement backstop. validate.rs (SB4044) is the spanned,
-        // user-facing check; this catches any mutation channel it misses so a
-        // readonly reassignment can never reach a panic. Spanless — record the
-        // diagnostic and fall through, letting lowering continue to surface any
-        // further errors.
         if self.readonly_vars.contains(name) && self.current.contains_key(name) {
-            self.diagnostics.push(format!(
-                "1:1: error [SB4044] readonly variable `{name}` cannot be reassigned — \
-                 a `const`/`readonly` binding is immutable"
-            ));
+            panic!(
+                "readonly `{name}` defined twice in lowering; validate's SB4044 rejects \
+                 every write to a const, so a second version would change one"
+            );
         }
+        self.next_version(name)
+    }
+
+    /// Define the version a phi joins at a merge. Each version it joins was
+    /// bound by a statement that was itself checked, so a phi is not a
+    /// reassignment: a `const` bound on one path of an `if` gets its phi at
+    /// the merge like any other name.
+    pub fn define_merge(&mut self, name: &str) -> VarRef {
+        self.next_version(name)
+    }
+
+    fn next_version(&mut self, name: &str) -> VarRef {
         let next = self.counter.entry(name.to_string()).or_insert(0);
         *next += 1;
         let version = *next;
@@ -2118,6 +2171,17 @@ mod api_contract_tests {
     )]
     fn malformed_rendered_substring_part_is_an_invariant_failure() {
         substring_part_int("1x");
+    }
+
+    /// No source program can reach this: SB4044 rejects every write to a
+    /// const. The panic is the claim that lowering never binds one twice.
+    #[test]
+    #[should_panic(expected = "readonly `k` defined twice in lowering; validate's SB4044")]
+    fn defining_a_const_twice_is_an_invariant_failure() {
+        let mut state = VersionState::with_types(HashMap::new());
+        state.define("k");
+        state.readonly_vars.insert("k".to_string());
+        state.define("k");
     }
 }
 

@@ -1209,10 +1209,13 @@ impl ArithParser {
             }
             ATok::ParamExpansion(body) => {
                 // `${var:OP…}` — parse the body with the real parameter-expansion
-                // parser and import the result as an rvalue value (DD#77).
+                // parser and import the result as an rvalue value (DD#77). The
+                // arithmetic lexer rebuilt `body` from its tokens, so nothing
+                // inside it maps back to a column: it reports the expression's.
                 self.advance();
+                let origin = super::lexer::Origin::Within(self.span.line, self.span.col);
                 Some(
-                    crate::parse::expr::parse_parameter_expansion(body, self.span)
+                    crate::parse::expr::parse_parameter_expansion(body, self.span, origin)
                         .map(|expr| ArithExpr::Expansion(Box::new(expr))),
                 )
             }

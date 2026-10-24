@@ -33,7 +33,7 @@ pub(super) fn insert_phis_two_branch(
         let ver_a = state_a.get(var).copied().unwrap_or(0);
         let ver_b = state_b.get(var).copied().unwrap_or(0);
         if ver_a != ver_b {
-            let target = state.define(var);
+            let target = state.define_merge(var);
             ssa.block_mut(merge).phis.push(PhiNode {
                 target,
                 sources: vec![

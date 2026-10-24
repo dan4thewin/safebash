@@ -527,3 +527,66 @@ receives the same source-name table as the other diagnostic paths.
 
 Specs `spec/collparam.sh` `bindscope.1`-`bindscope.39`;
 journal 525.
+
+## Addendum (2026-10-24, batch-531 port step F13) — SB4044 covers every write
+
+Phase 3 above says SB4044 "means only a bare assignment to a const". That
+described the enforcement, not the rule: a const is immutable, so every
+channel that binds the name writes it. Validate's check ran before binding
+resolution, over flat names, in textual order, and enumerated only some
+channels. `VersionState::define` caught some of the rest during lowering and
+reported them at `1:1`. Measured on `1309385`:
+
+- **Writes it missed or misplaced.** A `readline` stage and a `for` variable
+  reached the lowering backstop, at `1:1`. A write in a function defined
+  before the const (`fn f { x=2 }; const x=1`) compiled.
+- **Writes that were not writes.** The backstop also fired on legal programs:
+  a const bound on one path of an `if` (the merge's phi) or in a dispatch's
+  default arm (the dispatch's merge keeps that arm's versions), in a function
+  whose output is redirected, and in a self-tail-calling function, whose
+  lowered template inlined the tail call instead of looping. The flat names
+  did the same for a function's `const x` against another function's local
+  `x`, or a sibling capture's.
+
+DG approved the refinement with the rest of F13: validate's SB4044 covers
+every binding channel, and the backstop becomes an invariant.
+
+**The rule.** SB4044 rejects every statement that binds a const other than its
+declaration: an assignment, a `for` variable, a `(( ))` write, a command
+out-param (`readline`, `read`, `argv`, `mapfile`, a `keys` or `match` fill), an
+attest's re-tag of its subject, and DD#93's conversion target. Every write is
+reported, each at the innermost statement that makes it, whether that comes
+before or after the declaration in the text (a binding does not depend on
+textual order, above). Two channels stay with
+type_check: `unset`, and the collection an `attest … in a` re-tags. Every
+const is a scalar, and both are SB4030 on a scalar in either order. A second
+declaration is SB5049, and a `const` in a loop body SB5072, as before.
+
+**Where it runs.** `check_const_writes` runs first in the semantic batch, on
+the program `bindings::resolve` returns, so a single program-wide set of
+qualified names is exact. It sits outside the taint switch: `--no-taint` does
+not carry a const write into lowering.
+
+**The backstop is an invariant.** `VersionState::define` now panics if lowering
+binds a const twice, and a unit test pins it
+(`defining_a_const_twice_is_an_invariant_failure`). It is orthogonal to
+validate: it sees lowering's own bindings, so it also notices lowering binding
+a name twice by itself. That needed every lowering path that did so fixed
+first. Both merge sites, a two-way branch's phis and a dispatch's, use
+`define_merge`; a function's template runs its self tail call as a loop; a
+captured function owns its tail loop (batch-531 B58); and the suppressed tail
+specialization restarts from the readonly set its body was entered with.
+
+**Decide-and-report.**
+
+- A fill into a const was the type mismatch SB4030, because a const is a
+  scalar. It is now SB4044, the more specific error (`constw.6`).
+- SB4044 moved from the structural batch to the semantic one, which changes
+  only which diagnostics accompany it. A program that also breaks a
+  structural rule now reports that rule alone (SB5007, SB4025, SB4064), and
+  one that reached lowering loses its lowering diagnostics (SB4018). SB4044
+  now accompanies semantic-batch codes instead, such as SB5020 and SB5068.
+  Every one of these programs was rejected before and still is.
+
+Specs `spec/types.sh` 35.3-35.9 and `constw.1`-`constw.21`, `spec/glob.sh`
+`forglob.3`; journal 532.

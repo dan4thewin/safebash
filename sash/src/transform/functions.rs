@@ -192,7 +192,7 @@ pub(super) fn lift_int_func_calls(
         // ── the captures this pass exists to materialize ──────────────
         SsaValue::IntFuncCall { name, args, colls } => {
             let lifted = lift_each(args, ssa, state, block);
-            inline_int_func(&name, &lifted, &colls, ssa, state, block, false)
+            inline_int_func(&name, &lifted, &colls, ssa, state, block, None)
         }
         SsaValue::FuncCall { name, args, colls } => {
             let lifted = lift_each(args, ssa, state, block);
@@ -477,14 +477,12 @@ pub(super) fn lift_int_func_args(
         .collect()
 }
 
-/// Inline a -> int function call, returning an SsaValue::Var pointing
-/// to the temp variable holding the return value.
 /// DD#27/§5: diagnostic for a rejected recursive call. Functions are inlined
 /// (no runtime call stack), so a call cycle can't be inlined — it is rejected,
 /// except a direct self tail-call (`return F …`), which lowers to a loop.
 pub(super) fn recursion_diagnostic(name: &str) -> String {
     format!(
-        "1:1: error [SB5037] recursive call to '{name}' is not supported — \
+        "[SB5037] recursive call to '{name}' is not supported — \
          sash inlines functions, so only a direct self tail-call (`return {name} …`) \
          is allowed (it lowers to a loop); rewrite other recursion as a loop"
     )
@@ -516,6 +514,12 @@ pub(super) fn emit_tail_call(
 
 /// Inline a -> int function call, returning an SsaValue::Var pointing
 /// to the temp variable holding the return value.
+///
+/// `suppressed_tail_entry` is `Some` only for the one suppressed
+/// specialization a checked self-tail loop may enter (`lower_int_tail_call`),
+/// and carries that loop's entry readonly set. The specialization lowers the
+/// body again from inside its first lowering, so the body's own `const`s are
+/// still bound; it starts from the set the loop was entered with instead.
 pub(super) fn inline_int_func(
     name: &str,
     args: &[SsaValue],
@@ -523,17 +527,17 @@ pub(super) fn inline_int_func(
     ssa: &mut SsaProgram,
     state: &mut VersionState,
     block: &mut BlockId,
-    suppressed_tail_entry: bool,
+    suppressed_tail_entry: Option<std::collections::HashSet<String>>,
 ) -> SsaValue {
     let Some(body) = defined_int_function_body(name, state) else {
         return SsaValue::Expr("0".to_string());
     };
 
-    // DD#27/§5: a call to a function already being inlined is recursion. Reject
-    // A checked self-tail loop may enter one suppressed specialization. Its
-    // own tail calls are back edges, so this never permits unbounded inlining.
-    if !suppressed_tail_entry && state.inlining.iter().any(|n| n == name) {
-        state.diagnostics.push(recursion_diagnostic(name));
+    // DD#27/§5: a call to a function already being inlined is recursion. A
+    // checked self-tail loop may enter one suppressed specialization; its own
+    // tail calls are back edges, so this never permits unbounded inlining.
+    if suppressed_tail_entry.is_none() && state.inlining.iter().any(|n| n == name) {
+        state.error_at_stmt(recursion_diagnostic(name));
         return SsaValue::Literal("0".to_string());
     }
     state.inlining.push(name.to_string());
@@ -543,6 +547,9 @@ pub(super) fn inline_int_func(
     let saved_args = save_caller_args(state);
     let saved_slots = setup_callee_slots(colls, state);
     let saved_ro = enter_fn_body_scope(state);
+    if let Some(entry_readonly) = suppressed_tail_entry {
+        state.readonly_vars = entry_readonly;
+    }
 
     // DD#75 §5: materialize the implicit `args` array (0-indexed).
     setup_callee_args(args, ssa, state, *block);
@@ -557,9 +564,7 @@ pub(super) fn inline_int_func(
     let saved_return_target = state.return_target;
     state.return_target = Some(restore_block);
     // DD#27/§5: a self tail-call in the body loops back to call_block.
-    let args_name = state.current_args_name.clone();
-    let saved_tail = state.tail_loop.take();
-    state.tail_loop = Some((name.to_string(), call_block, args_name));
+    let saved_tail = state.enter_tail_loop(name, call_block);
     let exit_block = lower_stmts(&body, ssa, state, call_block);
     state.tail_loop = saved_tail;
     state.return_target = saved_return_target;

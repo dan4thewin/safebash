@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup functions
-plan=214
+plan=220
 echo "1..$plan" >&3
 
 set +e
@@ -1549,6 +1549,64 @@ run_sash 'fn walk -> int {
 int array nums=(7)
 echo $(walk 2 =nums)'
 [[ $rc != 0 && -z $out && $err == *SB5037* && $err == *recursion* ]]; chk tailcoll.2
+
+# tailar.1-tailar.3: a self tail call is arity-checked like any other call,
+# at its own position. The function's lowered template now runs a self tail
+# call as its loop's back edge (batch-531 F13), so the check lives on that
+# path too; these pin both the check and the position (it used to be 1:1).
+
+# tailar.1 too few arguments in a self tail call
+run_sash 'fn f {
+  if (( $1 > 0 )) {
+    return f
+  }
+  echo "done $1"
+}
+f 3'
+[[ $rc != 0 && -z $out && $err == *':3:12: error [SB5042]'* \
+   && $err == *"function 'f' expects 1 argument but was called with 0"* ]]; chk tailar.1
+
+# tailar.2 too many
+run_sash 'fn f { if (( $1 > 0 )) { return f $(( $1 - 1 )) x }; echo "done $1" }
+f 3'
+[[ $rc != 0 && -z $out && $err == *':1:33: error [SB5043]'* \
+   && $err == *"function 'f' takes exactly 1 argument but was called with 2"* ]]; chk tailar.2
+
+# tailar.3 the same check when the function runs as a capture
+run_sash 'fn f { if (( $1 > 0 )) { return f }; echo "done $1" }
+x=$(f 3)
+echo "$x"'
+[[ $rc != 0 && -z $out && $err == *':1:33: error [SB5042]'* \
+   && $err == *"function 'f' expects 1 argument but was called with 0"* ]]; chk tailar.3
+
+# capcyc.1-capcyc.2: `return g` in a function captured from inside g is
+# recursion through a capture, which DD#27 rejects. The captured body used to
+# inherit g's tail loop, so the call became a jump back into g's loop from
+# inside the open capture, and the program printed nothing at all
+# (batch-531 B58).
+
+# capcyc.1 the capture is an assignment's value
+run_sash 'fn f { return g $1 }
+fn g { if (( $1 > 0 )) { str s=$(f $(( $1 - 1 ))); echo "[$s]" }; echo "g$1" }
+g 2'
+[[ $rc != 0 && -z $out && $err == *':1:15: error [SB5037]'* \
+   && $err == *"recursive call to 'g' is not supported"* ]]; chk capcyc.1
+
+# capcyc.2 the capture is interpolated into an argument
+run_sash 'fn f { return g $1 }
+fn g { if (( $1 > 0 )) { echo "[$(f $(( $1 - 1 )))]" }; echo "g$1" }
+g 2'
+[[ $rc != 0 && -z $out && $err == *':1:15: error [SB5037]'* \
+   && $err == *"recursive call to 'g' is not supported"* ]]; chk capcyc.2
+
+# stgcyc.1: the same through a pipeline stage. A stage is a forked child, so it
+# does not inherit its caller's tail loop either: `return g` in a stage `f` of
+# `g` is recursion, not a jump into the parent's loop from inside the child.
+run_sash 'fn f { return g $1 }
+fn g { if (( $1 > 0 )) { f $(( $1 - 1 )) | cat }; echo "g$1" }
+g 2'
+[[ $rc != 0 && -z $out && $err == *':1:15: error [SB5037]'* \
+   && $err == *"recursive call to 'g' is not supported"* ]]; chk stgcyc.1
 
 set -e
 tally

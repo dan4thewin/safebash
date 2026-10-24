@@ -79,8 +79,6 @@ pub fn validate(program: &Program) -> Vec<Diagnostic> {
     }
     // SB4037 (DD#74): a function used as a predicate must `return` on every path
     check_predicate_definite_return(program, &functions, &mut diags);
-    // SB4044: a `const`/`readonly` variable cannot be reassigned.
-    check_const_reassignment(&blocks, &mut diags);
     // SB5049 (DD#86): no shadowing — a typed declaration inside a function of a
     // top-level global name is a redeclaration error.
     check_no_shadow(program, &mut diags);
@@ -125,18 +123,106 @@ fn check_block_value_rules(
     }
 }
 
-/// SB4044: a `const`/`readonly` variable cannot be reassigned. Flat model,
-/// matching the transform's `readonly_vars`: once a name is declared
-/// `const`/`readonly`, a later assignment or re-declaration is rejected here
-/// with a **spanned** diagnostic. Statement-level arith mutations
-/// (`(( x=5 ))`, `(( x++ ))`) lower to `Assignment` nodes, so they're caught by
-/// the Assignment arm too. The rarer channels (`read`/`mapfile`/`argv` into a
-/// const) are caught by the spanless backstop in `VersionState::define`, so no
-/// path can ever reach the old `define()` panic.
-fn check_const_reassignment(blocks: &[&[Statement]], diags: &mut Vec<Diagnostic>) {
-    let mut consts: std::collections::HashSet<String> = std::collections::HashSet::new();
-    for &block in blocks {
-        scan_const_stmts(block, &mut consts, diags);
+/// SB4044: a `const`/`readonly` variable cannot be reassigned, through any
+/// channel.
+///
+/// Runs in the semantic batch, over the program `bindings::resolve` returns,
+/// where every local already carries its scope's qualified name. One
+/// program-wide set of consts is therefore exact: a function's `const x` says
+/// nothing about another function's `x` or a sibling capture's, and a write
+/// is caught whether it comes before or after the declaration in the text
+/// (DD#86: a binding does not depend on textual order). Hence two walks — the
+/// second sees every const.
+///
+/// `VersionState::define` asserts what this establishes; it is not a second
+/// way to report it.
+pub fn check_const_writes(program: &Program) -> Vec<Diagnostic> {
+    let mut consts = HashSet::new();
+    for block in program_blocks(program) {
+        walk_stmt_tree(block, &mut |s| collect_const_names(s, &mut consts));
+    }
+    let mut diags = Vec::new();
+    for block in program_blocks(program) {
+        walk_stmt_tree(block, &mut |s| flag_const_writes(s, &consts, &mut diags));
+    }
+    diags
+}
+
+fn collect_const_names(stmt: &Statement, consts: &mut HashSet<String>) {
+    if let StmtKind::Declaration(d) = &stmt.kind {
+        if d.keyword == DeclKeyword::Readonly {
+            consts.extend(d.assignments.iter().map(|a| a.name.clone()));
+        }
+    }
+}
+
+/// One SB4044 per const that `stmt` binds, at `stmt` — the innermost
+/// statement that writes it. Sorted, so a statement that binds two reports
+/// them in a fixed order.
+fn flag_const_writes(stmt: &Statement, consts: &HashSet<String>, diags: &mut Vec<Diagnostic>) {
+    let mut hits = std::collections::BTreeSet::new();
+    stmt_bound_names(stmt, &mut |name| {
+        if consts.contains(name) {
+            hits.insert(name.to_string());
+        }
+    });
+    for name in hits {
+        diags.push(const_reassign_diag(stmt.span, &name));
+    }
+}
+
+/// Every name `stmt` itself binds — not those of the statements nested in it,
+/// which a statement walk reaches on its own.
+///
+/// Statement-level arithmetic (`(( x=5 ))`, `(( x++ ))`) is an `Assignment` by
+/// the time it gets here, and an arithmetic *test* that writes is SB5007's or
+/// SB4020's, so an `ArithTest` normally binds nothing; it still answers. A
+/// declaration is the binding itself, and a second one is SB5049's
+/// redeclaration. Two channels are left out because every const is a scalar
+/// (the parser has no `const array`/`const map`, and SB4064 refuses a
+/// collection value), and type_check rejects both on a scalar in either
+/// textual order: `unset` and the collection an `attest … in a` re-tags
+/// (SB4030 each).
+///
+/// Total over `StmtKind`; do not add a wildcard.
+fn stmt_bound_names(stmt: &Statement, f: &mut impl FnMut(&str)) {
+    match &stmt.kind {
+        StmtKind::Assignment(a) => f(&a.name),
+        StmtKind::For(fr) => f(&fr.variable),
+        StmtKind::ArithTest(e) => walk_arith_var_writes(e, f),
+        StmtKind::Command(c) => {
+            let mut names = HashSet::new();
+            command_bound_names(c, &mut names);
+            names.extend(attest_retag_target(c).map(str::to_string));
+            for name in &names {
+                f(name);
+            }
+        }
+        StmtKind::Declaration(_)
+        | StmtKind::Pipeline(_)
+        | StmtKind::If(_)
+        | StmtKind::While(_)
+        | StmtKind::Case(_)
+        | StmtKind::Function(_)
+        | StmtKind::Redirected(_)
+        | StmtKind::List(_)
+        | StmtKind::Group(_)
+        | StmtKind::Suppressed(_)
+        | StmtKind::Negated(_)
+        | StmtKind::ReturnProducer(_) => {}
+    }
+}
+
+/// The scalar an `attest` re-tags: `v` in `attest v [[ … ]]`, and SOURCE in
+/// DD#93's `attest SOURCE (( TARGET = SOURCE ))`. Each binds a new version of
+/// the name, carrying the verdict. TARGET is [`attest_convert_target`]'s.
+fn attest_retag_target(c: &Command) -> Option<&str> {
+    if expr_literal_str(&c.name) != "attest" {
+        return None;
+    }
+    match classify_attest(&c.args)?.0 {
+        AttestForm::Scalar { var } => Some(var),
+        AttestForm::Indexed { .. } | AttestForm::Map { .. } => None,
     }
 }
 
@@ -206,10 +292,10 @@ fn flag_nested_fns(stmts: &[Statement], diags: &mut Vec<Diagnostic>) {
 /// `for` because the static form unrolls into genuinely repeated bindings,
 /// `while` because the body is re-entered.
 ///
-/// The construct was already rejected, but only by the spanless backstop in
-/// `VersionState::define` (reported at `1:1`), and in `while`'s case only as a
-/// side effect of `readonly_vars` leaking across the two-pass lowering. This
-/// check makes the rejection deliberate and spanned.
+/// The rule also keeps lowering sound: `lower_while` lowers a body twice (the
+/// first pass is discarded) and the static `for` unrolls one, so a `const` in
+/// either would be defined twice, which `VersionState::define` asserts never
+/// happens.
 fn check_const_in_loop(blocks: &[&[Statement]], diags: &mut Vec<Diagnostic>) {
     for &block in blocks {
         scan_for_loops(block, diags);
@@ -258,58 +344,6 @@ fn flag_const_decls(stmts: &[Statement], diags: &mut Vec<Diagnostic>) {
             ));
         }
     });
-}
-
-fn scan_const_stmts(
-    stmts: &[Statement],
-    consts: &mut std::collections::HashSet<String>,
-    diags: &mut Vec<Diagnostic>,
-) {
-    for stmt in stmts {
-        scan_const_stmt(stmt, consts, diags);
-    }
-}
-
-fn scan_const_stmt(
-    stmt: &Statement,
-    consts: &mut std::collections::HashSet<String>,
-    diags: &mut Vec<Diagnostic>,
-) {
-    match &stmt.kind {
-        StmtKind::Declaration(d) => scan_const_decl(d, consts),
-        StmtKind::Assignment(a) => flag_if_const(consts, &a.name, stmt.span, diags),
-        _ => {}
-    }
-    for body in stmt.child_bodies() {
-        scan_const_stmts(body, consts, diags);
-    }
-}
-
-/// A `const`/`readonly` declaration records its names.
-///
-/// It does NOT report re-declaring an already-const name: that is a
-/// *redeclaration*, which SB5049 reports with the accurate message. SB4044
-/// stays for what it actually describes — a bare assignment writing a const.
-/// (Both used to fire, for `const k` twice and for every typed redeclaration
-/// of a const, telling the user the binding "cannot be reassigned" when they
-/// had not tried to assign to it.)
-fn scan_const_decl(d: &Declaration, consts: &mut std::collections::HashSet<String>) {
-    if d.keyword == DeclKeyword::Readonly {
-        for a in &d.assignments {
-            consts.insert(a.name.clone());
-        }
-    }
-}
-
-fn flag_if_const(
-    consts: &std::collections::HashSet<String>,
-    name: &str,
-    span: Span,
-    diags: &mut Vec<Diagnostic>,
-) {
-    if consts.contains(name) {
-        diags.push(const_reassign_diag(span, name));
-    }
 }
 
 fn const_reassign_diag(span: Span, name: &str) -> Diagnostic {
@@ -7613,12 +7647,7 @@ fn collect_stmt_scope_names(stmt: &Statement, set: &mut HashSet<String>) {
             set.insert(f.variable.clone());
             collect_scope_names(&f.body, set);
         }
-        StmtKind::Command(c) => {
-            collect_read_targets(c, set);
-            // DD#93 Part D: `attest SOURCE (( TARGET = SOURCE ))` introduces
-            // TARGET — the attest binds it to the converted value.
-            set.extend(attest_convert_target(c).map(str::to_string));
-        }
+        StmtKind::Command(c) => command_bound_names(c, set),
         StmtKind::Function(_) => {} // separate scope — do not collect
         StmtKind::Pipeline(_)
         | StmtKind::If(_)
@@ -7644,6 +7673,14 @@ fn collect_child_scope_names(stmt: &Statement, set: &mut HashSet<String>) {
     for body in stmt.structural_bodies() {
         collect_scope_names(body, set);
     }
+}
+
+/// Every name a command binds: [`collect_read_targets`]' out-params and
+/// DD#93 Part D's attest-convert TARGET. The one list, shared by scope
+/// collection, SB5092 and SB4044.
+fn command_bound_names(c: &Command, set: &mut HashSet<String>) {
+    collect_read_targets(c, set);
+    set.extend(attest_convert_target(c).map(str::to_string));
 }
 
 /// `readline x` / `read [SRC] a` introduce their last literal argument name.
@@ -11364,8 +11401,7 @@ fn flag_declared_names(d: &Declaration, span: Span, diags: &mut Vec<Diagnostic>)
 /// bindings in one command would otherwise be diagnosed in hash order.
 fn flag_command_bindings(c: &Command, span: Span, diags: &mut Vec<Diagnostic>) {
     let mut set = HashSet::new();
-    collect_read_targets(c, &mut set);
-    set.extend(attest_convert_target(c).map(str::to_string));
+    command_bound_names(c, &mut set);
     let mut targets: Vec<_> = set.into_iter().collect();
     targets.sort();
     for t in targets {

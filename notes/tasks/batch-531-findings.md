@@ -56,16 +56,90 @@ re-probes them; some may vanish by construction, which the step records.
 
 ### 2. F13 re-lexed text positions
 
-- [ ] **B3** (fixed-on-branch; DD114, DD115). A statement inside a
+- [x] **B3** (fixed-on-branch; DD114, DD115). A statement inside a
   double-quoted capture reports a span relative to the re-lexed substring:
   an error on line 3 reports 1:1 (the branch: 3:21). `command_sub_to_expr`,
   `parse_whole_index` and `parse_interpolating_word` re-lex with a fresh
   scanner.
-- [ ] **B54** (fixed-on-branch; no DD). Transform diagnostics report
+  - Landed in F13 (journal 532), ported as-is: the lexer's `Origin` is
+    threaded to every re-lex site. Specs `relex.1`-`relex.6`, and
+    `relex.12`-`relex.21`, one per remaining place that hands a re-parsed
+    substring its position (each turns red under a reversion of its site).
+- [x] **B54** (fixed-on-branch; no DD). Transform diagnostics report
   position 1:1 (the branch: the real line and column).
-- [ ] **B61** (fixed-on-branch; DD114, DD115). Fatal errors from a
+  - Landed in F13 (journal 532), ported as-is: `VersionState::stmt_span`
+    and `error_at_stmt`. Specs `tpos.1`-`tpos.5`, and `tailar.1`-`tailar.3`
+    (a self tail call's arity error, 1:1 on base; F13's template loops, so
+    the tail call now checks arity itself, before jumping back).
+- [x] **B61** (fixed-on-branch; DD114, DD115). Fatal errors from a
   sub-scanner at a re-lex site are dropped: base compiles and prints `a101c`
   where the branch reports SB4063.
+  - Landed in F13 (journal 532), ported as-is (`with_scanner_fatal`).
+    Specs `relex.7`-`relex.11`, and `relex.15`: in `${@[$'\101']}` base
+    reported SB5031 for the subscript at 2:6; the index's own SB4063 now
+    comes first, at 2:13.
+
+Found while porting F13, on both binaries, and fixed with it (journal 532).
+The `define` ICE needed all four first: without them, a const write that
+validate missed (B116) or a legal program (B117-B119) would ICE:
+
+- [x] **B116** (open; DD86). SB4044 missed writes, or placed them at 1:1.
+  Validate walked in textual order and listed only some channels, so a
+  write in a function defined before the const compiled (`fn f { x=2 };
+  const x=1`), and a `readline` stage or `for` variable reached the
+  lowering backstop, which reported 1:1. Validate's `check_const_writes`
+  now covers every channel, after binding resolution. Specs
+  `constw.1`-`constw.8`.
+- [x] **B117** (open; DD86). The lowering backstop raised a false SB4044 on
+  legal programs. A const bound inside an `if` or `else` body, an attest
+  condition's `else`, a dispatch's default arm, or a function whose output
+  is redirected reached a merge phi, which re-`define`d it. (The dispatch
+  merge keeps the default arm's versions, so its phi looked like a second
+  binding; found late, while auditing hunks against reversion stubs.) A
+  self-tail-calling function's `fn_`
+  template inlined its tail call instead of looping, binding its const
+  twice. Once the template looped, the int tail call's suppressed
+  specialization did the same: it lowers the body again from inside the
+  first lowering, with the const still bound. Fixed by `define_merge`, a
+  looping template and `TailLoop::entry_readonly`.
+  Specs `constw.11`-`constw.16`, `constw.18`-`constw.21`.
+- [x] **B118** (open; DD86). Validate's const set was flat and built before
+  binding resolution, so a function's `const x` made another function's
+  local `x`, or a sibling capture's, a false SB4044. Specs `constw.9`,
+  `constw.10`.
+- [x] **B119** (open; DD125). A glob `for` kept its expansion in the fixed
+  name `__forglob`. A source global of that name was clobbered, a nested
+  glob loop overwrote the outer loop's list (the outer loop ran once), and
+  a source const of that name drew a false SB4044. Now a reserved
+  temporary. Specs `forglob.1`-`forglob.3`.
+
+B58 (§12) also landed with F13, because the `define` ICE needs it
+(`constw.17`).
+
+Filed as backlog tasks during F13, under DG's rule that a behaviour that is
+not obviously a bug stays unchanged in the port:
+
+- `bug-dispatch-in-boolean-positions` (P2): a `[[ … { } ]]` dispatch is
+  accepted as an `elif` condition and as a `&&`/`||` right operand, where
+  DD66 forbids both.
+- `bug-glob-multi-star` (P2): `a*b*c` matches only names containing a
+  literal `*`.
+- `bug-glob-directory-portion` (P2): `sub/*`, `./*` and `/etc/*` match
+  nothing, where DD73 specifies them.
+- `q-glob-semantics` (P2): dotfiles, order, directory-open errors, and a
+  `*` in a non-final segment.
+- `q-attest-retag-of-const` (P3): may `attest` re-tag a const? Still
+  SB4044, now at the statement.
+- `q-empty-keyword-condition` (P3): `if then … fi` and `while do … done`
+  compile and are false.
+- `diag-elif-clause-has-no-span` (P3): an `elif` clause's parse errors
+  point at the `if`.
+- `spec-cov306-308-pin-the-wrong-pass` (P3): `cov.306`-`cov.308` pin
+  validate's SB4044, not the transform-time gate they describe.
+- `spec-harness-hides-compiler-ice` (P2): `spec/common.sh` drops a
+  compiler ICE's text from `$err` in both modes (native rc 1, C rc 101),
+  so a check asserting only `$rc != 0 && -z $out` passes on an ICE, and
+  on a compiler hang.
 
 ### 3. F14 malformed names and arithmetic
 
@@ -159,6 +233,11 @@ re-probes them; some may vanish by construction, which the step records.
 - [ ] **B27** (open; DD86). False SB5050: `collect_value_fn_operands`
   neither recurses nor peels, so a read through a nested or suppressed value
   call is not counted.
+  - Also reached with no wrapper (F13 probe n2, base and F13 worktree):
+    `map m=([k]=v); fn f { keys m x; echo "${x[0]}" }; f` is SB5050 "`m`
+    is assigned but never read" at 1:1. The function records a bare
+    operand only for a `Command` at the top level of the list it is given,
+    so the same bare call nested in any body is missed.
 - [ ] **B28** (open; DD71). `int n=1 | cat`, `int n=1 &` and `array a=(x) &`
   are rightly rejected, but as SB4014 "expected variable name in
   declaration" at 1:1.
@@ -222,6 +301,15 @@ re-probes them; some may vanish by construction, which the step records.
   strace). Pipelines already guard it.
 - [ ] **B21** (fixed-on-branch; DD27). A self-tail function used as a
   pipeline stage draws SB5037.
+  - F13 (journal 532) touched the stage route without fixing B21. Its
+    looping template exposed a stage body inheriting its caller's tail
+    loop: in `fn f { return g $1 }; fn g { … f … | cat … }`, `return g`
+    in the stage lowered as a jump from the forked child into `g`'s loop,
+    an ICE in both backends. Base's SB5037 there was an accident of its
+    non-looping template. A function run as a stage now takes no tail loop,
+    as a captured one does (B58), so the call is the recursion DD27
+    rejects: SB5037 at 1:15 (`stgcyc.1`). The callee-owned stage loop
+    that would fix B21 stays with F2.
 - [x] **B22** (not-a-bug; no DD). Suspected loop on a pipeline-setup failure
   inside END; it does not occur, because the END region is unchecked.
 
@@ -249,11 +337,26 @@ re-probes them; some may vanish by construction, which the step records.
   function-signature scan disagreed with the first, giving a false SB5043.
 - [ ] **B56** (fixed-on-branch; DD58, DD81). `-> int` functions were never
   arity-checked.
+  - F13 changes where the check must go. The `fn_` template now loops, so
+    an int function's self-tail call is lowered by `lower_int_tail_call`,
+    not inlined through `inline_int_func`, where the branch put its check.
+    The port must check arity on the tail path too. Its negative controls
+    are a wrong-arity self-tail call, `return $(( (f) ))` in an `f` that
+    reads `$1` (F13 probe t5), and the same call made ordinarily,
+    `int r=$(( (f) ))` (t6): base and the F13 tree accept both. The string
+    twin was F13's own regression, caught before commit
+    (`try_producer_tail_call`).
 - [ ] **B57** (fixed-on-branch; DD27). `$(f)` inside `f` overflowed the
   compiler's stack instead of drawing the recursion rejection.
-- [ ] **B58** (fixed-on-branch; DD27). A captured function inherited the
+- [x] **B58** (fixed-on-branch; DD27). A captured function inherited the
   caller's tail loop: `return g` in `$(f)` inside `g` produced silent empty
   output.
+  - Landed with F13, because it is coupled to the `define` ICE: without a
+    callee-owned tail loop in `capture_func_into`, capturing a legal
+    self-tail function that declares a `const` (`str s=$(f c)`) would ICE
+    where base gave a false SB4044. Now SB5037 at the cycle's tail call
+    (`capcyc.1`, `capcyc.2`). The
+    same hunk's (H238) inlining push/pop is B57's and stays in F5.
 - [ ] **B59** (fixed-on-branch; DD27, DD86). An anonymous capture body
   inherited the tail loop the same way (`$(…; return g x)`).
 - [ ] **B60** (fixed-on-branch; DD86). `break` or `continue` inside `$( )`
@@ -445,6 +548,12 @@ re-probes them; some may vanish by construction, which the step records.
   forbids: `fn f { exit $n }; int n=1` is a false SB4030; a function that
   assigns a string to a later `int` reaches a codegen ICE; a loop-carried
   copy of a later int prints `01`/`11`.
+  - F13 note: F13 changes what one B6 program reports, not B6. Probe n1,
+    `fn f { keys m x; echo "${x[0]}" }; map m=([k]=v); f`, is still the
+    false SB4030 at 1:8 (`m` is not a map). Probe u2 is n1 plus
+    `const x=1` and a read of `x`, so `keys m x` also writes a const. It
+    now reports SB4044 at 1:8 instead of the SB4030, because validate's
+    SB4044 runs before type_check and stops the compile.
 - [ ] **B7** (open; DD74). An int-function predicate inside a capture is
   unchecked: `x=$(if f { … })` and `x=$(f && echo a)` compile, where the
   top-level forms are SB4030.

@@ -1,13 +1,13 @@
 hid	file	fh	old	new	plus	minus	base_fns	branch_fns	chk_del	chk_add	family	families	bids	status	note
 H001	docs/GUIDE.md	1	211,6	211,7	1	0					F10	F10	SB5098	pending	GUIDE row for SB5098
-H002	notes/decisions/114-subscript-index-is-a-read.md	1	71,6	71,17	11	0					F13	F13	B3	pending	DD114 addendum: nested spans exact
-H003	notes/decisions/115-ansi-c-escape-set.md	1	135,6	135,20	14	0					F13	F13	B61	pending	DD115 addendum: sub-scanner fatals dropped at re-lex
+H002	notes/decisions/114-subscript-index-is-a-read.md	1	71,6	71,17	11	0					F13	F13	B3	ported	DD114 addendum: nested spans exact — journal 532; addendum re-dated 2026-10-24
+H003	notes/decisions/115-ansi-c-escape-set.md	1	135,6	135,20	14	0					F13	F13	B61	ported	DD115 addendum: sub-scanner fatals dropped at re-lex — journal 532; addendum re-dated 2026-10-24
 H004	notes/decisions/DD24-taint-quarantine.md	1	101,6	101,46	40	0					F10	F10	SB5098	pending	DD24 enforcement note; cites nonexistent journal 531; says reported to DG for veto
 H005	notes/decisions/DD66-cond-form-dispatch.md	1	112,6	112,10	4	0					F9	F9	B86	pending	DD66 lazy-dispatch addendum
 H006	notes/decisions/DD66-cond-form-dispatch.md	2	184,3	188,45	42	0					F9	F9	B86	pending	DD66 lazy-dispatch addendum
 H007	notes/decisions/DD93-attest-ergonomics.md	1	288,3	288,23	20	0					F10	F10	B89	pending	DD93 addendum (inline source / Part D ${} import); cites Journal 531
-H008	notes/tasks/subscript-index-nested-span.md	1	1,6	1,6	1	1					F13	F13	B3	pending	task subscript-index-nested-span closed
-H009	notes/tasks/subscript-index-nested-span.md	2	43,3	43,32	29	0					F13	F13	B3	pending	task subscript-index-nested-span closed
+H008	notes/tasks/subscript-index-nested-span.md	1	1,6	1,6	1	1					F13	F13	B3	ported	task subscript-index-nested-span closed — journal 532
+H009	notes/tasks/subscript-index-nested-span.md	2	43,3	43,32	29	0					F13	F13	B3	ported	task subscript-index-nested-span closed — journal 532; re-dated, cites journal 532 and adds the F13 gate measurements
 H010	sash-rt/src/lib.rs	1	2723,10	2723,11	5	4					F15	F15	B51	pending	sash-rt sash_regex_replace invalid pattern -> sash_exit(2)
 H011	sash/src/bindings.rs	1	32,14	32,7	1	8	resolve	resolve			F3	F3	B16	pending	bindings resolve uses program.function_defs()
 H012	sash/src/codegen/dispatch.rs	1	282,8	282,9	3	2	SsaInst::emit_command_kind	SsaInst::emit_command_kind			F2	F2	B20	pending	emit_command_kind: ForkBackground gone; StoreBgPid gets checked
@@ -73,44 +73,44 @@ H071	sash/src/ir.rs	13	2237,3	2531,101	98	0		(top);body_addresses;cmdsub_bodies_
 H072	sash/src/lib.rs	1	683,6	683,7	1	0		run_semantic_checks			F10	F10	SB5098	pending	lib.rs run_semantic_checks calls check_attest_predicate_code
 H073	sash/src/parse/arith.rs	1	71,6	71,29	23	0		arith_bad_literal_error			F14	F14	B70	pending	arith_bad_literal_error: `$(` and stray `$` -> SB4035
 H074	sash/src/parse/arith.rs	2	765,17	788,24	17	10	scan_arith_dollar	scan_arith_dollar			F14	F14	B70	pending	scan_arith_dollar: stray `$` is BadLit
-H075	sash/src/parse/arith.rs	3	1209,10	1239,13	5	2	ArithParser::parse_expansion_atom	ArithParser::parse_expansion_atom			F13	F13	B3	pending	parse_expansion_atom passes Origin::Within
-H076	sash/src/parse/expr.rs	1	12,7	12,7	1	1	(top)	(top)			F13	F13	B3	pending	import Origin
-H077	sash/src/parse/expr.rs	2	52,8	52,16	9	1	parse_expansion_arm	parse_expansion_arm			F13	F13	B3	pending	parse_expansion_arm: origin past `${` / `$`
-H078	sash/src/parse/expr.rs	3	604,12	612,12	4	4	emit_string_part	emit_string_part			F13	F13	B3	pending	emit_string_part: StringPart origins
-H079	sash/src/parse/expr.rs	4	687,7	695,8	2	1	(top)	(top)			F13	F13	B3	pending	command_sub_to_expr doc
-H080	sash/src/parse/expr.rs	5	695,10	704,28	21	3	command_sub_to_expr	command_sub_to_expr;(top);with_scanner_fatal			F13	F13	B3,B61	pending	command_sub_to_expr with_origin + with_scanner_fatal (B61 examples: $'\101' in sed field, unclosed $( in sed field, glued # in "$(…)")
-H081	sash/src/parse/expr.rs	6	713,29	740,29	11	11	(top);parse_parameter_expansion	(top);parse_parameter_expansion			split	F13,F14	B3,B70	pending	F13: parse_parameter_expansion origin param | F14: try_leading_form call (B70)
-H082	sash/src/parse/expr.rs	7	749,6	776,36	30	0		(top);try_leading_form;names_no_variable			F14	F14	B70	pending	names_no_variable + try_leading_form (helper may be needed in F13 if try_braced_splat's Result trips the complexity gate)
-H083	sash/src/parse/expr.rs	8	764,8	821,13	7	2	parse_cell_operator	parse_cell_operator			F13	F13	B3	pending	parse_cell_operator origin
-H084	sash/src/parse/expr.rs	9	790,27	852,29	10	8	try_braced_splat	try_braced_splat			F13	F13	B3,B61	pending	try_braced_splat fallible (index fatal propagates) + origin
-H085	sash/src/parse/expr.rs	10	882,6	946,7	1	0		try_subscript			F13	F13	B3	pending	try_subscript origin param
-H086	sash/src/parse/expr.rs	11	896,9	961,22	14	1	try_subscript	try_subscript;(top);subscript_with_index			F13	F13	B3	pending	subscript_with_index extraction (gate refactor) + index origin
-H087	sash/src/parse/expr.rs	12	906,16	984,16	3	3	try_subscript	subscript_with_index			F13	F13	B3	pending	subscript_with_index: parse_subscript_index Result/origin
-H088	sash/src/parse/expr.rs	13	924,12	1002,8	2	6	try_subscript	subscript_with_index			F13	F13	B3	pending	subscript_with_index tail: operator origin
-H089	sash/src/parse/expr.rs	14	1022,17	1096,23	16	10	(top);parse_subscript_index	(top);parse_subscript_index			split	F13,F14	B3,B61,B39	pending	F13: parse_subscript_index Result + origin | F14: doc on explicit-form failures (B39)
-H090	sash/src/parse/expr.rs	15	1041,7	1121,7	1	1	parse_subscript_index	parse_subscript_index			F13	F13	B3	pending	parse_subscript_index Ok(match)
-H091	sash/src/parse/expr.rs	16	1051,14	1131,30	22	6	(top);parse_whole_index	(top);parse_whole_index;opens_explicit_index			split	F13,F14	B3,B61,B39	pending	F13: parse_whole_index with_origin + with_scanner_fatal | F14: opens_explicit_index (B39)
-H092	sash/src/parse/expr.rs	17	1079,12	1175,14	3	1	(top)	(top);subscript_operator_expr			F13	F13	B3	pending	subscript_operator_expr origin param
-H093	sash/src/parse/expr.rs	18	1093,7	1191,7	1	1	subscript_operator_expr	subscript_operator_expr			F13	F13	B3	pending	subscript_operator_expr: sed origin
-H094	sash/src/parse/expr.rs	19	1173,28	1271,39	15	4	try_sed_op;(top);build_sed_or_malformed	try_sed_op;(top);build_sed_or_malformed			F13	F13	B3	pending	try_sed_op origin
+H075	sash/src/parse/arith.rs	3	1209,10	1239,13	5	2	ArithParser::parse_expansion_atom	ArithParser::parse_expansion_atom			F13	F13	B3	ported	parse_expansion_atom passes Origin::Within — journal 532
+H076	sash/src/parse/expr.rs	1	12,7	12,7	1	1	(top)	(top)			F13	F13	B3	ported	import Origin — journal 532
+H077	sash/src/parse/expr.rs	2	52,8	52,16	9	1	parse_expansion_arm	parse_expansion_arm			F13	F13	B3	ported	parse_expansion_arm: origin past `${` / `$` — journal 532
+H078	sash/src/parse/expr.rs	3	604,12	612,12	4	4	emit_string_part	emit_string_part			F13	F13	B3	ported	emit_string_part: StringPart origins — journal 532
+H079	sash/src/parse/expr.rs	4	687,7	695,8	2	1	(top)	(top)			F13	F13	B3	ported	command_sub_to_expr doc — journal 532
+H080	sash/src/parse/expr.rs	5	695,10	704,28	21	3	command_sub_to_expr	command_sub_to_expr;(top);with_scanner_fatal			F13	F13	B3,B61	ported	command_sub_to_expr with_origin + with_scanner_fatal (B61 examples: $'\101' in sed field, unclosed $( in sed field, glued # in "$(…)") — journal 532
+H081	sash/src/parse/expr.rs	6	713,29	740,29	11	11	(top);parse_parameter_expansion	(top);parse_parameter_expansion			split	F13,F14	B3,B70	ported	F13: parse_parameter_expansion origin param | F14: try_leading_form call (B70) — journal 532; both halves landed: F13 needed the try_leading_form extraction, and B70's behaviour is H082's (F14)
+H082	sash/src/parse/expr.rs	7	749,6	776,36	30	0		(top);try_leading_form;names_no_variable			F14	F14	B70	pending	names_no_variable + try_leading_form (helper may be needed in F13 if try_braced_splat's Result trips the complexity gate) — try_leading_form landed with F13 (journal 532) without names_no_variable, which stays F14's (B70)
+H083	sash/src/parse/expr.rs	8	764,8	821,13	7	2	parse_cell_operator	parse_cell_operator			F13	F13	B3	ported	parse_cell_operator origin — journal 532
+H084	sash/src/parse/expr.rs	9	790,27	852,29	10	8	try_braced_splat	try_braced_splat			F13	F13	B3,B61	ported	try_braced_splat fallible (index fatal propagates) + origin — journal 532
+H085	sash/src/parse/expr.rs	10	882,6	946,7	1	0		try_subscript			F13	F13	B3	ported	try_subscript origin param — journal 532
+H086	sash/src/parse/expr.rs	11	896,9	961,22	14	1	try_subscript	try_subscript;(top);subscript_with_index			F13	F13	B3	ported	subscript_with_index extraction (gate refactor) + index origin — journal 532
+H087	sash/src/parse/expr.rs	12	906,16	984,16	3	3	try_subscript	subscript_with_index			F13	F13	B3	ported	subscript_with_index: parse_subscript_index Result/origin — journal 532
+H088	sash/src/parse/expr.rs	13	924,12	1002,8	2	6	try_subscript	subscript_with_index			F13	F13	B3	ported	subscript_with_index tail: operator origin — journal 532
+H089	sash/src/parse/expr.rs	14	1022,17	1096,23	16	10	(top);parse_subscript_index	(top);parse_subscript_index			split	F13,F14	B3,B61,B39	pending	F13: parse_subscript_index Result + origin | F14: doc on explicit-form failures (B39) — F13 half ported (journal 532)
+H090	sash/src/parse/expr.rs	15	1041,7	1121,7	1	1	parse_subscript_index	parse_subscript_index			F13	F13	B3	ported	parse_subscript_index Ok(match) — journal 532
+H091	sash/src/parse/expr.rs	16	1051,14	1131,30	22	6	(top);parse_whole_index	(top);parse_whole_index;opens_explicit_index			split	F13,F14	B3,B61,B39	pending	F13: parse_whole_index with_origin + with_scanner_fatal | F14: opens_explicit_index (B39) — F13 half ported (journal 532)
+H092	sash/src/parse/expr.rs	17	1079,12	1175,14	3	1	(top)	(top);subscript_operator_expr			F13	F13	B3	ported	subscript_operator_expr origin param — journal 532
+H093	sash/src/parse/expr.rs	18	1093,7	1191,7	1	1	subscript_operator_expr	subscript_operator_expr			F13	F13	B3	ported	subscript_operator_expr: sed origin — journal 532
+H094	sash/src/parse/expr.rs	19	1173,28	1271,39	15	4	try_sed_op;(top);build_sed_or_malformed	try_sed_op;(top);build_sed_or_malformed			F13	F13	B3	ported	try_sed_op origin — journal 532
 H095	sash/src/parse/expr.rs	20	1239,14	1348,6	0	8	(top);split_sed_fields				F15	F15	B69	pending	split_sed_fields removed: its only caller was validate_static_sed_re (H128)
-H096	sash/src/parse/expr.rs	21	1274,10	1375,12	2	0		(top);build_sed_sub			F13	F13	B3	pending	build_sed_sub doc origin
-H097	sash/src/parse/expr.rs	22	1285,7	1388,9	3	1	build_sed_sub	build_sed_sub			F13	F13	B3	pending	build_sed_sub per-edit origin
-H098	sash/src/parse/expr.rs	23	1305,13	1410,15	3	1	(top)	(top);build_one_sed_sub			F13	F13	B3	pending	build_one_sed_sub doc origin
-H099	sash/src/parse/expr.rs	24	1326,13	1433,16	6	3	build_one_sed_sub	build_one_sed_sub			split	F13,F14	B3,B66	pending	F13: build_one_sed_sub origin to RE/SUB words | F14: B66 message whitespace
-H100	sash/src/parse/expr.rs	25	1523,10	1633,11	4	3	parse_interpolating_word	parse_interpolating_word			F13	F13	B3,B61	pending	parse_interpolating_word with_origin + with_scanner_fatal
+H096	sash/src/parse/expr.rs	21	1274,10	1375,12	2	0		(top);build_sed_sub			F13	F13	B3	ported	build_sed_sub doc origin — journal 532
+H097	sash/src/parse/expr.rs	22	1285,7	1388,9	3	1	build_sed_sub	build_sed_sub			F13	F13	B3	ported	build_sed_sub per-edit origin — journal 532
+H098	sash/src/parse/expr.rs	23	1305,13	1410,15	3	1	(top)	(top);build_one_sed_sub			F13	F13	B3	ported	build_one_sed_sub doc origin — journal 532
+H099	sash/src/parse/expr.rs	24	1326,13	1433,16	6	3	build_one_sed_sub	build_one_sed_sub			split	F13,F14	B3,B66	pending	F13: build_one_sed_sub origin to RE/SUB words | F14: B66 message whitespace — F13 half ported (journal 532)
+H100	sash/src/parse/expr.rs	25	1523,10	1633,11	4	3	parse_interpolating_word	parse_interpolating_word			F13	F13	B3,B61	ported	parse_interpolating_word with_origin + with_scanner_fatal — journal 532
 H101	sash/src/parse/expr.rs	26	1748,7	1859,7	1	1	(top)	(top)			F4	F4	B24	pending	doc: parse_statement -> parse_statement_here (parse_statement removed by H113)
-H102	sash/src/parse/lexer.rs	1	144,13	144,70	61	4	StringPart	(top);StringPart;Origin;START;Origin::after;advance_line_col			F13	F13	B3	pending	StringPart origins + Origin/after/advance_line_col
-H103	sash/src/parse/lexer.rs	2	202,10	259,20	10	0		Scanner;Scanner::new;Scanner::with_origin			F13	F13	B3	pending	Scanner.origin + with_origin
-H104	sash/src/parse/lexer.rs	3	217,6	284,7	1	0		Scanner::with_origin			F13	F13	B3	pending	Scanner origin init
-H105	sash/src/parse/lexer.rs	4	301,22	369,34	24	12	Scanner;Scanner::line_col	Scanner;Scanner::line_col;Scanner::origin_of;Scanner::byte_at			F13	F13	B3	pending	line_col from origin; origin_of; byte_at
-H106	sash/src/parse/lexer.rs	5	1343,9	1423,10	4	3	Scanner;Scanner::take_sed_stmt_payload	Scanner;Scanner::take_sed_stmt_payload			F13	F13	B3	pending	take_sed_stmt_payload returns origin
-H107	sash/src/parse/lexer.rs	6	1354,7	1435,7	1	1	Scanner::take_sed_stmt_payload	Scanner::take_sed_stmt_payload			F13	F13	B3	pending	take_sed_stmt_payload origin_of(start)
-H108	sash/src/parse/lexer.rs	7	1567,8	1648,9	2	1	Scanner::scan_dq_dollar	Scanner::scan_dq_dollar			F13	F13	B3	pending	scan_dq_dollar Expansion origin
-H109	sash/src/parse/lexer.rs	8	1601,9	1683,11	3	1	Scanner::dq_subscript_or_variable	Scanner::dq_subscript_or_variable			F13	F13	B3	pending	dq_subscript_or_variable origin
-H110	sash/src/parse/lexer.rs	9	1616,8	1700,9	2	1	Scanner::scan_dq_paren	Scanner::scan_dq_paren			F13	F13	B3	pending	scan_dq_paren CommandSub origin
+H102	sash/src/parse/lexer.rs	1	144,13	144,70	61	4	StringPart	(top);StringPart;Origin;START;Origin::after;advance_line_col			F13	F13	B3	ported	StringPart origins + Origin/after/advance_line_col — journal 532
+H103	sash/src/parse/lexer.rs	2	202,10	259,20	10	0		Scanner;Scanner::new;Scanner::with_origin			F13	F13	B3	ported	Scanner.origin + with_origin — journal 532
+H104	sash/src/parse/lexer.rs	3	217,6	284,7	1	0		Scanner::with_origin			F13	F13	B3	ported	Scanner origin init — journal 532
+H105	sash/src/parse/lexer.rs	4	301,22	369,34	24	12	Scanner;Scanner::line_col	Scanner;Scanner::line_col;Scanner::origin_of;Scanner::byte_at			F13	F13	B3	ported	line_col from origin; origin_of; byte_at — journal 532
+H106	sash/src/parse/lexer.rs	5	1343,9	1423,10	4	3	Scanner;Scanner::take_sed_stmt_payload	Scanner;Scanner::take_sed_stmt_payload			F13	F13	B3	ported	take_sed_stmt_payload returns origin — journal 532
+H107	sash/src/parse/lexer.rs	6	1354,7	1435,7	1	1	Scanner::take_sed_stmt_payload	Scanner::take_sed_stmt_payload			F13	F13	B3	ported	take_sed_stmt_payload origin_of(start) — journal 532
+H108	sash/src/parse/lexer.rs	7	1567,8	1648,9	2	1	Scanner::scan_dq_dollar	Scanner::scan_dq_dollar			F13	F13	B3	ported	scan_dq_dollar Expansion origin — journal 532
+H109	sash/src/parse/lexer.rs	8	1601,9	1683,11	3	1	Scanner::dq_subscript_or_variable	Scanner::dq_subscript_or_variable			F13	F13	B3	ported	dq_subscript_or_variable origin — journal 532
+H110	sash/src/parse/lexer.rs	9	1616,8	1700,9	2	1	Scanner::scan_dq_paren	Scanner::scan_dq_paren			F13	F13	B3	ported	scan_dq_paren CommandSub origin — journal 532
 H111	sash/src/parse/parser.rs	1	6,7	6,7	1	1	(top)	(top)			F4	F4	B24	pending	module doc: parse_statement_here
-H112	sash/src/parse/parser.rs	2	75,7	75,7	1	1	scanner_fatal	scanner_fatal			F13	F13	B61	pending	scanner_fatal pub(super) for with_scanner_fatal
+H112	sash/src/parse/parser.rs	2	75,7	75,7	1	1	scanner_fatal	scanner_fatal			F13	F13	B61	ported	scanner_fatal pub(super) for with_scanner_fatal — journal 532
 H113	sash/src/parse/parser.rs	3	262,28	262,14	7	21	(top);parse_statement;parse_statement_here	(top);parse_statement_here			F4	F4	B24	pending	parse_statement (Option twin) removed; dispatch_statement(Reach::Statement)
 H114	sash/src/parse/parser.rs	4	292,14	278,31	22	5	dispatch_statement	(top);Reach;dispatch_statement			F4	F4	B24,n1-n6	pending	Reach enum; dispatch_statement takes reach
 H115	sash/src/parse/parser.rs	5	332,8	335,8	2	2	dispatch_statement	dispatch_statement			F4	F4	B24	pending	parse_suppressed(scanner, reach)
@@ -121,11 +121,11 @@ H119	sash/src/parse/parser.rs	9	1295,7	1340,7	1	1	parse_suppressed	parse_suppres
 H120	sash/src/parse/parser.rs	10	1316,11	1361,11	4	4	parse_suppressed	parse_suppressed			F4	F4	B24	pending	parse_suppressed: parse_suppressed_body
 H121	sash/src/parse/parser.rs	11	1328,6	1373,15	9	0		(top);parse_suppressed_body			F4	F4	B24	pending	parse_suppressed_body
 H122	sash/src/parse/parser.rs	12	1336,6	1390,19	13	0		push_suppression_into_pipeline			F4	F4	B23	pending	push_suppression_into_pipeline: `- a | b &`
-H123	sash/src/parse/parser.rs	13	2274,7	2341,7	1	1	parse_assignment_lhs	parse_assignment_lhs			F13	F13	B61	pending	parse_assignment_lhs: index error propagates
-H124	sash/src/parse/parser.rs	14	2326,7	2393,7	1	1	parse_split_subscript_index	parse_split_subscript_index			F13	F13	B61	pending	parse_split_subscript_index -> Result
-H125	sash/src/parse/parser.rs	15	2336,10	2403,11	2	1	parse_split_subscript_index	parse_split_subscript_index			F13	F13	B3	pending	parse_split_subscript_index origin
-H126	sash/src/parse/parser.rs	16	2407,10	2475,10	4	4	(top)	(top)			F13	F13	B3	pending	parse_regex_mutation doc (verbatim payload with origin)
-H127	sash/src/parse/parser.rs	17	2418,14	2486,13	3	4	parse_regex_mutation	parse_regex_mutation			split	F13,F15	B3,B69	pending	F13: take_sed_stmt_payload origin -> build_sed_sub | F15: validate_static_sed_re call removed (B69)
+H123	sash/src/parse/parser.rs	13	2274,7	2341,7	1	1	parse_assignment_lhs	parse_assignment_lhs			F13	F13	B61	ported	parse_assignment_lhs: index error propagates — journal 532
+H124	sash/src/parse/parser.rs	14	2326,7	2393,7	1	1	parse_split_subscript_index	parse_split_subscript_index			F13	F13	B61	ported	parse_split_subscript_index -> Result — journal 532
+H125	sash/src/parse/parser.rs	15	2336,10	2403,11	2	1	parse_split_subscript_index	parse_split_subscript_index			F13	F13	B3	ported	parse_split_subscript_index origin — journal 532
+H126	sash/src/parse/parser.rs	16	2407,10	2475,10	4	4	(top)	(top)			F13	F13	B3	ported	parse_regex_mutation doc (verbatim payload with origin) — journal 532
+H127	sash/src/parse/parser.rs	17	2418,14	2486,13	3	4	parse_regex_mutation	parse_regex_mutation			split	F13,F15	B3,B69	pending	F13: take_sed_stmt_payload origin -> build_sed_sub | F15: validate_static_sed_re call removed (B69) — F13 half ported (journal 532)
 H128	sash/src/parse/parser.rs	18	2460,30	2527,6	0	24	(top);validate_static_sed_re				F15	F15	B69	pending	validate_static_sed_re removed (replaced by check_static_regex*)
 H129	sash/src/parse/parser.rs	19	2899,7	2942,13	7	1	parse_trailing_pipeline	parse_trailing_pipeline			F4	F4	B23	pending	parse_trailing_pipeline: stage is a list operand
 H130	sash/src/parse/parser.rs	20	2912,9	2961,6	0	3	parse_trailing_pipeline				F4	F4	B23	pending	reject_pipeline_and_or_postfix call removed (SB4023 moves to check_and_or_link)
@@ -159,10 +159,10 @@ H157	sash/src/ssa.rs	13	1625,14	1698,53	43	4	SsaProgram;SsaProgram::reachable	Ss
 H158	sash/src/ssa.rs	14	1649,25	1761,122	107	10	SsaProgram;SsaProgram::reachable_from;SsaProgram::successors_of	SsaProgram;SsaProgram::reachable_from;SsaProgram::same_process_from;SsaProgram::closure;SsaProgram::next_blocks;SsaProgram::process_blocks;SsaProgram::spawned_by;(top);COMPOUND_STAGE_PREFIX;CompoundStages;CompoundStages::record;CompoundStages::entry;CompoundStages::label;CompoundStages::labels;CompoundStages::functions			F2	F2	B9,B10,B17	pending	closure/same_process_from/next_blocks/process_blocks/spawned_by; CompoundStages (record/entry ICE/label/labels/functions). process_blocks/spawned_by also feed ssa_taint check_process (W4)
 H159	sash/src/ssa.rs	15	1683,6	1892,9	3	0		VersionState			W2	W2	B33,B114	superseded	VersionState.exec_fns (superseded: T1 stdout analysis replaces exec_reaching_functions)
 H160	sash/src/ssa.rs	16	1728,7	1940,7	1	1	VersionState	VersionState			F5	F5	B57	pending	inlining doc: SB5033 -> SB5037 (doc typo)
-H161	sash/src/ssa.rs	17	1776,6	1988,13	7	0		VersionState			F13	F13	B54	pending	VersionState.stmt_span
+H161	sash/src/ssa.rs	17	1776,6	1988,13	7	0		VersionState			F13	F13	B54	ported	VersionState.stmt_span — journal 532; the doc no longer lists the readonly backstop, an ICE now (H164)
 H162	sash/src/ssa.rs	18	1836,6	2055,7	1	0		VersionState::with_types			W2	W2	B33,B114	superseded	with_types: exec_fns default (superseded)
-H163	sash/src/ssa.rs	19	1864,9	2084,18	9	0		VersionState::with_types;VersionState;VersionState::error_at_stmt			F13	F13	B54	pending	stmt_span init; error_at_stmt
-H164	sash/src/ssa.rs	20	1883,14	2112,14	7	7	VersionState::define	VersionState::define			F13	F13	B54	pending	define: readonly backstop reports at the statement (was 1:1)
+H163	sash/src/ssa.rs	19	1864,9	2084,18	9	0		VersionState::with_types;VersionState;VersionState::error_at_stmt			F13	F13	B54	ported	stmt_span init; error_at_stmt — journal 532
+H164	sash/src/ssa.rs	20	1883,14	2112,14	7	7	VersionState::define	VersionState::define			F13	F13	B54	reimplemented	define: readonly backstop reports at the statement (was 1:1) — journal 532: an invariant instead (define panics; unit test defining_a_const_twice_is_an_invariant_failure); validate's SB4044 covers every channel
 H165	sash/src/ssa.rs	21	1928,6	2157,42	36	0		VersionState;VersionState::enter_forked_child;VersionState::exit_forked_child;(top);ParentContext			F2	F2	B9,B11,B17,B18	pending	enter_forked_child/exit_forked_child; ParentContext (versions, pipe_reader, return_target, loop_stack, tail_loop)
 H166	sash/src/ssa.rs	22	2093,7	2358,6	0	1	only_authorial_commands_may_take_redirects				F2	F2	B9,B20	pending	api_contract_tests: ForkBackground gone
 H167	sash/src/ssa_taint.rs	1	41,20	41,63	54	11	verify_ssa_taint	verify_ssa_taint;(top);Pass;check_process			W4	W4	B18	superseded	ssa_taint per-process check (Pass, check_process over child_region/spawned_by): port with W4, not walker code
@@ -176,12 +176,12 @@ H174	sash/src/transform/cmd_handlers.rs	1	3,7	3,6	0	1	(top)				F5	F5	B57	pending
 H175	sash/src/transform/cmd_handlers.rs	2	256,7	255,8	2	1	inline_function_call	(top);inline_function_call			F2	F2	B10,B21	pending	inline_function_call pub(super): also the body of a function pipeline stage
 H176	sash/src/transform/cmd_handlers.rs	3	264,13	264,8	2	7	inline_function_call	inline_function_call			F5	F5	B57	pending	inline_function_call: reject_recursive_call
 H177	sash/src/transform/cmd_handlers.rs	4	321,20	316,9	2	13	inline_function_call	inline_function_call			F5	F5	B57,B58,B83	pending	inline_function_call: lower_inlined_body
-H178	sash/src/transform/cmd_handlers.rs	5	397,7	381,7	1	1	check_callee_arity	check_callee_arity			F13	F13	B54	pending	check_callee_arity: error_at_stmt
-H179	sash/src/transform/cmd_handlers.rs	6	505,7	489,7	1	1	arity_dynamic_msg	arity_dynamic_msg			F13	F13	B54	pending	arity_dynamic_msg: no 1:1 prefix
-H180	sash/src/transform/cmd_handlers.rs	7	520,7	504,7	1	1	arity_floor_msg	arity_floor_msg			F13	F13	B54	pending	arity_floor_msg: no 1:1 prefix
-H181	sash/src/transform/cmd_handlers.rs	8	539,7	523,7	1	1	arity_too_few_msg	arity_too_few_msg			F13	F13	B54	pending	arity_too_few_msg: no 1:1 prefix
-H182	sash/src/transform/cmd_handlers.rs	9	555,7	539,7	1	1	arity_too_many_msg	arity_too_many_msg			F13	F13	B54	pending	arity_too_many_msg: no 1:1 prefix
-H183	sash/src/transform/cmd_handlers.rs	10	611,8	595,8	2	2	resolve_exec_target_arg	resolve_exec_target_arg			F13	F13	B54	pending	resolve_exec_target_arg: error_at_stmt
+H178	sash/src/transform/cmd_handlers.rs	5	397,7	381,7	1	1	check_callee_arity	check_callee_arity			F13	F13	B54	ported	check_callee_arity: error_at_stmt — journal 532
+H179	sash/src/transform/cmd_handlers.rs	6	505,7	489,7	1	1	arity_dynamic_msg	arity_dynamic_msg			F13	F13	B54	ported	arity_dynamic_msg: no 1:1 prefix — journal 532
+H180	sash/src/transform/cmd_handlers.rs	7	520,7	504,7	1	1	arity_floor_msg	arity_floor_msg			F13	F13	B54	ported	arity_floor_msg: no 1:1 prefix — journal 532
+H181	sash/src/transform/cmd_handlers.rs	8	539,7	523,7	1	1	arity_too_few_msg	arity_too_few_msg			F13	F13	B54	ported	arity_too_few_msg: no 1:1 prefix — journal 532
+H182	sash/src/transform/cmd_handlers.rs	9	555,7	539,7	1	1	arity_too_many_msg	arity_too_many_msg			F13	F13	B54	ported	arity_too_many_msg: no 1:1 prefix — journal 532
+H183	sash/src/transform/cmd_handlers.rs	10	611,8	595,8	2	2	resolve_exec_target_arg	resolve_exec_target_arg			F13	F13	B54	ported	resolve_exec_target_arg: error_at_stmt — journal 532
 H184	sash/src/transform/control_flow.rs	1	1,9	1,11	3	1	(top)	(top)			split	F9,F10	B86,B92	pending	control_flow imports. F9: expr_is_dynamic, lift_int_func_calls, lift_test_captures | F10: resolve_args_name import gone with push_if_attest_condition
 H185	sash/src/transform/control_flow.rs	2	62,6	64,15	9	0		AttestKind;AttestKind::subject			F10	F10	B92	pending	AttestKind::subject (unresolved name)
 H186	sash/src/transform/control_flow.rs	3	108,12	119,7	1	6	lower_if_attest_convert	lower_if_attest_convert			F10	F10	B88c,B92	pending	lower_if_attest_convert uses shared push_attest_all_check/retag
@@ -203,7 +203,7 @@ H201	sash/src/transform/entry.rs	4	164,30	161,23	16	23	(top);uncheck_last_condit
 H202	sash/src/transform/expr_handlers.rs	1	14,6	14,7	1	0		handle_command_substitution			F5	F5	B74	pending	handle_command_substitution body path when args run value calls
 H203	sash/src/transform/expr_handlers.rs	2	27,6	28,28	22	0		(top);capture_args_run_value_calls			F5	F5	B74	pending	capture_args_run_value_calls
 H204	sash/src/transform/expr_handlers.rs	3	131,7	154,6	0	1	is_statement_builtin				F2	F2	B9	pending	is_statement_builtin: ForkBackground gone
-H205	sash/src/transform/functions.rs	1	477,19	477,68	52	3	(top);recursion_diagnostic	recursion_diagnostic;(top);reject_recursive_call;lower_inlined_body			split	F13,F5	B54,B57,B58,B83	pending	F13: recursion_diagnostic drops 1:1 | F5: reject_recursive_call, lower_inlined_body (return_target, tail_loop, in_condition)
+H205	sash/src/transform/functions.rs	1	477,19	477,68	52	3	(top);recursion_diagnostic	recursion_diagnostic;(top);reject_recursive_call;lower_inlined_body			split	F13,F5	B54,B57,B58,B83	pending	F13: recursion_diagnostic drops 1:1 | F5: reject_recursive_call, lower_inlined_body (return_target, tail_loop, in_condition) — F13 half ported (journal 532)
 H206	sash/src/transform/functions.rs	2	529,13	578,14	6	5	inline_int_func	inline_int_func			F5	F5	B56,B57	pending	inline_int_func: reject_recursive_call; check_callee_arity at every -> int call (B56)
 H207	sash/src/transform/functions.rs	3	554,16	604,7	1	10	inline_int_func	inline_int_func			F5	F5	B58,B83	pending	inline_int_func: lower_inlined_body
 H208	sash/src/transform/functions.rs	4	643,11	684,22	14	3	analyze_arity	(top);analyze_arity			F5	F5	B53	pending	analyze_arity via ir::walk_scoped_stmts (own scope only)
@@ -215,7 +215,7 @@ H213	sash/src/transform/functions.rs	9	918,27	915,30	16	13	cmdsub_reads_whole_ar
 H214	sash/src/transform/functions.rs	10	953,7	953,7	1	1	sig_scan_arith	sig_record_arith_names			F5	F5	B53	pending	sig_record_arith_names rename
 H215	sash/src/transform/reader_cleanup.rs	1	100,7	100,9	3	1	redirect_edge	redirect_edge			F2	F2	B9	pending	redirect_edge Fork/ChildExit
 H216	sash/src/transform/reader_cleanup.rs	2	225,8	227,22	17	3	edge_rewriting_handles_shared_targets_and_leaf_terminators	edge_rewriting_handles_shared_targets_and_leaf_terminators			F2	F2	B9	pending	redirect_edge unit test
-H217	sash/src/transform/statements.rs	1	21,10	21,23	16	3	(top)	(top);lower_one;lower_stmt_kind			F13	F13	B54	pending	lower_one sets stmt_span for transform diagnostics
+H217	sash/src/transform/statements.rs	1	21,10	21,23	16	3	(top)	(top);lower_one;lower_stmt_kind			F13	F13	B54	ported	lower_one sets stmt_span for transform diagnostics — journal 532
 H218	sash/src/transform/statements.rs	2	170,9	183,6	0	3	lower_function_stmt				F3	F3	B8	pending	lower_function_stmt: drop lazy function_int_typed insert
 H219	sash/src/transform/statements.rs	3	888,7	898,12	6	1	lower_list_stmt	lower_list_stmt			F6	F6	B84	pending	lower_list_stmt: suppressed counts as caught
 H220	sash/src/transform/statements.rs	4	936,8	951,10	4	2	(top)	(top)			F2	F2	B9	pending	lower_background doc
@@ -236,7 +236,7 @@ H234	sash/src/transform/stmt_handlers.rs	13	1353,8	1438,12	5	1	try_capture_condi
 H235	sash/src/transform/stmt_handlers.rs	14	1365,6	1454,7	1	0		try_capture_condition			F6	F6	B76	pending	try_capture_condition: scope.finish
 H236	sash/src/transform/stmt_handlers.rs	15	1522,6	1612,9	3	0		capture_func_into			F5	F5	B57	pending	capture_func_into: reject_recursive_call
 H237	sash/src/transform/stmt_handlers.rs	16	1532,7	1625,11	5	1	capture_func_into	capture_func_into			F5	F5	B71	pending	capture_func_into: capture_body_is_pure(value_fns)
-H238	sash/src/transform/stmt_handlers.rs	17	1550,11	1647,9	3	5	capture_func_into	capture_func_into			F5	F5	B57,B58,B83	pending	capture_func_into: inlining push/pop + lower_inlined_body
+H238	sash/src/transform/stmt_handlers.rs	17	1550,11	1647,9	3	5	capture_func_into	capture_func_into			F5	F5	B57,B58,B83	pending	capture_func_into: inlining push/pop + lower_inlined_body — B58's callee-owned tail loop reimplemented with F13 (journal 532); the inlining push/pop and lower_inlined_body stay F5's
 H239	sash/src/transform/stmt_handlers.rs	18	1563,7	1658,11	5	1	capture_func_into	capture_func_into			W2	W2	B33,B114	superseded	capture_func_into tainted: exec_fns.execs(fname) (superseded: T1)
 H240	sash/src/transform/stmt_handlers.rs	19	1601,7	1700,11	5	1	capture_body_into	capture_body_into			F5	F5	B71	pending	capture_body_into: capture_body_is_pure(value_fns)
 H241	sash/src/transform/stmt_handlers.rs	20	1613,7	1716,20	13	0		capture_body_into			F5	F5	B59,B83b	pending	capture_body_into: clear tail_loop and in_condition

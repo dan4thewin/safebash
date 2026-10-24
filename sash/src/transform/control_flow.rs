@@ -671,8 +671,10 @@ fn try_dispatch_glob(
         operator: "glob".to_string(),
         operand: s.clone(),
     };
-    let target = state.define("__forglob");
-    let tmp_name = target.name.clone();
+    // DD#125: a fixed name would clobber a legal source `__forglob` and alias
+    // a nested glob loop's array with this one.
+    let tmp_name = state.reserve_temp_name("__forglob".to_string(), VarType::String);
+    let target = state.define(&tmp_name);
     ssa.block_mut(block).insts.push(SsaInst::Assign {
         target,
         value: glob_val,
@@ -1159,7 +1161,7 @@ fn insert_one_case_phi(
         return;
     }
 
-    let target = state.define(var);
+    let target = state.define_merge(var);
     let sources: Vec<(BlockId, VarRef)> = versions
         .iter()
         .map(|(bid, ver)| (*bid, VarRef::new(var, *ver)))

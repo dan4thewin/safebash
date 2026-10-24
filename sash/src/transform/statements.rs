@@ -21,10 +21,23 @@ pub(super) fn lower_stmts(
     block
 }
 
-/// Lower a single statement into SSA.
-/// DD#58: Lift IntFuncCall values out of arithmetic expressions.
-/// Inlines the function body, captures the return value as an int temp var.
+/// Lower a single statement into SSA. The statement's span locates any error
+/// the transform raises while lowering it (`VersionState::stmt_span`); the
+/// enclosing statement's is restored afterwards, because a nested body — an
+/// inlined function, a `$( )` — is lowered from inside this call.
 pub(super) fn lower_one(
+    stmt: &Statement,
+    ssa: &mut SsaProgram,
+    state: &mut VersionState,
+    block: BlockId,
+) -> BlockId {
+    let enclosing = std::mem::replace(&mut state.stmt_span, stmt.span);
+    let block = lower_stmt_kind(stmt, ssa, state, block);
+    state.stmt_span = enclosing;
+    block
+}
+
+fn lower_stmt_kind(
     stmt: &Statement,
     ssa: &mut SsaProgram,
     state: &mut VersionState,
@@ -104,18 +117,31 @@ fn try_producer_tail_call(
     let StmtKind::Command(c) = &inner.kind else {
         return None;
     };
-    let (tf, header, aname) = state.tail_loop.clone()?;
-    if literal_name_of(&c.name) != tf {
+    let tail = state.tail_loop.as_ref()?;
+    if literal_name_of(&c.name) != tail.func {
         return None;
     }
+    let (func, header, aname) = (tail.func.clone(), tail.header, tail.args_name.clone());
     let (scalar_args, coll_args) = super::functions::split_call_args(&c.args);
     if !coll_args.is_empty() {
         return None;
     }
+    // The tail call stands in for `lower_one(inner)`, so it is lowered at the
+    // call's own span, as the inlined call it replaces would be.
+    let enclosing = std::mem::replace(&mut state.stmt_span, inner.span);
     let new_args: Vec<SsaValue> = scalar_args.iter().map(|a| arg_to_value(a, state)).collect();
-    Some(super::functions::emit_tail_call(
-        header, &aname, new_args, ssa, state, block,
-    ))
+    // DD#81 Part B checks arity at every call site, and a self tail-call is
+    // one. It used to be checked only because the `fn_` template inlined it
+    // as an ordinary call; the template now loops, so the check is made here.
+    let body = state
+        .function_bodies
+        .get(&func)
+        .cloned()
+        .expect("a tail loop is entered only for a registered function body");
+    super::cmd_handlers::check_callee_arity(&func, &body, &new_args, state);
+    let after = super::functions::emit_tail_call(header, &aname, new_args, ssa, state, block);
+    state.stmt_span = enclosing;
+    Some(after)
 }
 
 /// `while`/`until`. Both forms lower through `lower_while`, which applies the
@@ -153,8 +179,61 @@ fn lower_function_stmt(
         ));
     }
     state.function_bodies.insert(f.name.clone(), f.body.clone());
-    // DD#81 rule (a) contiguity + DD#84 mixing / optional-trailing: emit each
-    // structural defect of the fixed-arity `args` signature at the definition.
+    report_arity_defects(f, stmt, state);
+    if f.return_type == crate::ir::VarType::Int {
+        state.function_int_typed.insert(f.name.clone());
+    }
+    analyze_function_returns(f, stmt, state);
+    let fn_entry = ssa.new_block(&format!("fn_{}", f.name));
+    let fn_exit = lower_fn_template(&f.name, &f.body, ssa, state, fn_entry);
+    ssa.block_mut(fn_exit).terminator = Terminator::Return;
+    block
+}
+
+/// The standalone `fn_NAME` block: a template lowered at the definition, with
+/// no call site and no incoming edge (codegen ICEs if one is reachable). It is
+/// lowered exactly as a call with no arguments is — `inlining`, its own `args`
+/// and its own tail loop — so a self tail-call in it loops instead of inlining
+/// the body a second time, which re-bound the body's `const`s and raised a
+/// false SB4044 at the definition of every such function. $@/$* are rejected
+/// at validation (DD#81) and never reach here.
+///
+/// `args_counter` is restored, so templates leave the numbering of the real
+/// calls' `args` arrays as it was; `reserve_temp_name` keeps the names
+/// distinct. The header must not be labelled `fn_…`: ssa_taint reads those
+/// labels as function names.
+fn lower_fn_template(
+    name: &str,
+    body: &[Statement],
+    ssa: &mut SsaProgram,
+    state: &mut VersionState,
+    fn_entry: BlockId,
+) -> BlockId {
+    use super::functions as fns;
+    let saved_flag = std::mem::replace(&mut state.lowering_fn_template, true);
+    state.inlining.push(name.to_string());
+    let saved_args = fns::save_caller_args(state);
+    let saved_slots = fns::setup_callee_slots(&[], state);
+    let saved_ro = fns::enter_fn_body_scope(state);
+    let saved_counter = state.args_counter;
+    fns::setup_callee_args(&[], ssa, state, fn_entry);
+    let header = ssa.new_checkpoint_block(&format!("call_{}", name));
+    ssa.block_mut(fn_entry).terminator = Terminator::Goto(header);
+    let saved_tail = state.enter_tail_loop(name, header);
+    let fn_exit = lower_stmts(body, ssa, state, header);
+    state.tail_loop = saved_tail;
+    state.args_counter = saved_counter;
+    fns::exit_fn_body_scope(state, saved_ro);
+    fns::restore_caller_slots(saved_slots, state);
+    fns::restore_caller_args(saved_args, state);
+    state.inlining.pop();
+    state.lowering_fn_template = saved_flag;
+    fn_exit
+}
+
+/// DD#81 rule (a) contiguity + DD#84 mixing / optional-trailing: emit each
+/// structural defect of the fixed-arity `args` signature at the definition.
+fn report_arity_defects(f: &Function, stmt: &Statement, state: &mut VersionState) {
     for defect in super::functions::analyze_arity(&f.body).1 {
         let (line, col, name) = (stmt.span.line, stmt.span.col, &f.name);
         let msg = match defect {
@@ -170,23 +249,6 @@ fn lower_function_stmt(
         };
         state.diagnostics.push(msg);
     }
-    if f.return_type == crate::ir::VarType::Int {
-        state.function_int_typed.insert(f.name.clone());
-    }
-    analyze_function_returns(f, stmt, state);
-    let fn_entry = ssa.new_block(&format!("fn_{}", f.name));
-    // The standalone function block is a template lowered without a call
-    // site; $@/$* are rejected at validation (DD#81) and never reach here.
-    // Per-call args are bound when inline_function_call lowers each call.
-    let template_body = f.body.clone();
-    let saved_template_flag = state.lowering_fn_template;
-    let saved_ro = super::functions::enter_fn_body_scope(state);
-    state.lowering_fn_template = true;
-    let fn_exit = lower_stmts(&template_body, ssa, state, fn_entry);
-    state.lowering_fn_template = saved_template_flag;
-    super::functions::exit_fn_body_scope(state, saved_ro);
-    ssa.block_mut(fn_exit).terminator = Terminator::Return;
-    block
 }
 
 /// DD#55: for an `-> int` function, flag SB4017 when every return is a

@@ -33,3 +33,9 @@ Completing the clean rebuild with `mk -p 1 build`, followed by
 `mk -p 1 test`, passed all 219/27/20 units; the full ordinary 9255-check
 sweep and no-profile canaries then passed too. The runner remains open;
 serialization is not a root-cause claim.
+
+Journal 532 (2026-10-24) hit it again on plain `timeout 1800 mk test`:
+`fatal error: all goroutines are asleep - deadlock!` after the regex and
+sash-getopt checks, before any cargo test, with goroutines blocked in
+`main.mkNode` chan sends under `main.mkNodePrereqs`. `mk -p 1 test` then
+passed 226/27/20. Still no root-cause claim.

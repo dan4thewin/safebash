@@ -75,7 +75,7 @@ fn take_end_block(
 /// consequence, not of severity: an unterminated quote swallows the source
 /// after it, so anything else the parse turned up is downstream of that one
 /// mistake and must not be reported alongside it.
-fn scanner_fatal(scanner: &Scanner) -> Option<Diagnostic> {
+pub(super) fn scanner_fatal(scanner: &Scanner) -> Option<Diagnostic> {
     // An unterminated quote / `${` swallows everything after it, so whatever
     // else the parse turned up is downstream of that one mistake. Report it
     // first and alone (SB4057).
@@ -2274,7 +2274,7 @@ fn parse_assignment_lhs(
     span: Span,
 ) -> Result<(String, Option<Expr>), Diagnostic> {
     if let Some(base) = raw_name.strip_suffix('[') {
-        let idx = parse_split_subscript_index(scanner, span);
+        let idx = parse_split_subscript_index(scanner, span)?;
         return Ok((base.to_string(), Some(idx)));
     }
     let Some(bracket_pos) = raw_name.find('[') else {
@@ -2326,7 +2326,7 @@ fn parse_assignment_lhs(
 /// assignment at all — a 40-token index is SB5011 as a command name, not
 /// SB4014 — so an error here could only describe a *supported* index as
 /// unsupported, pointing the user at source that is fine.
-fn parse_split_subscript_index(scanner: &mut Scanner, span: Span) -> Expr {
+fn parse_split_subscript_index(scanner: &mut Scanner, span: Span) -> Result<Expr, Diagnostic> {
     let Some(close) = lhs_index_close_from(scanner, 0) else {
         unreachable!(
             "looks_like_dynamic_subscript_assign already found this `]` with \
@@ -2336,10 +2336,11 @@ fn parse_split_subscript_index(scanner: &mut Scanner, span: Span) -> Expr {
     let start = scanner.peek().span.start;
     let end = scanner.peek_n(close).span.start;
     let text = scanner.source_slice(start, end).to_string();
+    let origin = scanner.origin_of(start);
     for _ in 0..=close {
         scanner.next();
     }
-    parse_subscript_index(&text, span)
+    parse_subscript_index(&text, span, origin)
 }
 
 /// Consume the assignment operator, which is the token immediately after the
@@ -2407,10 +2408,10 @@ const MAX_LHS_INDEX_TOKENS: usize = 32;
 
 /// Parse regex mutation: `var =~ s/RE/SUB/[flags]`. Desugars to
 /// `var = $(sub|gsub "$var" RE SUB)` (DD#63) — RE/SUB are re-parsed as
-/// interpolating words, so `$x` in a field expands. The `s/…` text is
-/// stitched back from the adjacent tokens (the lexer split any embedded
-/// `$x`/`${x}` into their own tokens). A payload missing a mandatory `/`
-/// delimiter is SB4032.
+/// interpolating words, so `$x` in a field expands. The scanner hands over the
+/// `s/…` payload verbatim from the source, with the position it starts at, so
+/// anything inside a field reports where it is. A payload missing a mandatory
+/// `/` delimiter is SB4032.
 fn parse_regex_mutation(
     scanner: &mut Scanner,
     span: Span,
@@ -2418,14 +2419,14 @@ fn parse_regex_mutation(
 ) -> Result<Statement, Diagnostic> {
     scanner.next(); // consume variable name
     scanner.next(); // consume =~
-    let raw = scanner
+    let (raw, origin) = scanner
         .take_sed_stmt_payload()
         .ok_or_else(|| sed_malformed_err(span))?;
     let body = strip_sed_prefix(&raw);
     validate_static_sed_re(body, span)?;
     let subject = quoted_var_subject(var_name, span);
-    let value =
-        super::expr::build_sed_sub(body, subject, span)?.ok_or_else(|| sed_malformed_err(span))?;
+    let value = super::expr::build_sed_sub(body, subject, span, origin.after("s/"))?
+        .ok_or_else(|| sed_malformed_err(span))?;
     Ok(Statement {
         kind: StmtKind::Assignment(Assignment {
             name: var_name.to_string(),

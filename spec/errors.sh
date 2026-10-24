@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup errors
-plan=465
+plan=491
 echo "1..$plan" >&3
 
 set +e
@@ -2761,6 +2761,202 @@ attest x [[ -n $x ]]
 echo "$x"
 } else { echo missing }'
 [[ $rc = 0 && $out = missing && -z $err && -z $rerr ]]; chk supval.35
+
+# relex.1-relex.11: text re-parsed out of a quoted capture, a subscript index
+# or a sed field reports its real source position (batch-531 B3: each re-parse
+# used to number from the start of its own substring), and a fatal its
+# sub-scanner raises is reported rather than dropped (B61). The lexer's
+# `Origin` carries the substring's position into the sub-scanner; see the
+# DD#114 and DD#115 addenda. Each faulty construct sits below line 1, where a
+# substring-relative position cannot coincide with the real one.
+
+# relex.1 a quoted capture: `$HOME` is at 3:18, not the substring's 1:6
+run_sash 'echo start
+echo start
+   echo "[$(echo $HOME)]"'
+[[ $rc != 0 && -z $out && $err == *':3:18: error [SB5018]'* ]]; chk relex.1
+
+# relex.2 the capture spans a line break: its second line is source line 3
+run_sash 'echo start
+echo "[$(echo a
+  echo $HOME)]"'
+[[ $rc != 0 && -z $out && $err == *':3:8: error [SB5018]'* ]]; chk relex.2
+
+# relex.3 a capture inside a subscript index, which is re-parsed on its own
+run_sash 'map m=([k]=v)
+echo "${m[k]}"
+echo "${m[$(nosuchcmd)]}"'
+[[ $rc != 0 && -z $out && $err == *':3:13: error [SB5011]'* ]]; chk relex.3
+
+# relex.4 the same, with the index's capture spanning a line break
+run_sash 'map m=([k]=v)
+echo "${m[$(echo k
+  nosuchcmd)]}"'
+[[ $rc != 0 && -z $out && $err == *':3:3: error [SB5011]'* ]]; chk relex.4
+
+# relex.5 arithmetic one level inside an index's capture reports its own `$((`
+# (the index expression itself keeps DD#114's re-anchor to its `${`)
+run_sash 'map m=([k]=v)
+echo "${m[k]}"
+echo "${m[$(echo $((j+1)))]}"'
+[[ $rc != 0 && -z $out && $err == *':3:18: error [SB5031]'* ]]; chk relex.5
+
+# relex.6 a capture inside a sed field of an expansion
+run_sash 'str x=abc
+echo start
+   echo "${x:s/$(echo $HOME)/b/}"'
+[[ $rc != 0 && -z $out && $err == *':3:23: error [SB5018]'* ]]; chk relex.6
+
+# relex.7 an unsupported `$'…'` escape in a sed field is SB4063 (DD#115); the
+# dropped fatal used to compile it, printing `a101c`
+run_sash "str x=abc
+echo \"\${x:s/b/\$'\\101'/}\""
+[[ $rc != 0 && -z $out && $err == *':2:17: error [SB4063]'* \
+   && $err == *'octal escapes are not supported'* ]]; chk relex.7
+
+# relex.8 an unterminated `$(` in a sed field; it used to print `babc`
+run_sash 'x=abc
+echo "${x:s/$(echo/b/}"'
+[[ $rc != 0 && -z $out && $err == *':2:13: error [SB4057]'* \
+   && $err == *'unterminated `$(`'* ]]; chk relex.8
+
+# relex.9 a `#` glued to an operator inside a quoted capture is SB4058, not
+# the SB5011 its swallowed rest of line used to produce
+run_sash 'echo start
+echo "$(echo a;# c)"'
+[[ $rc != 0 && -z $out && $err == *':2:16: error [SB4058]'* \
+   && $err != *SB5011* ]]; chk relex.9
+
+# relex.10 an unsupported escape in a subscript index (it was SB4030)
+run_sash "map m=([A]=x [101]=y)
+echo \"\${m[\$'\\101']}\""
+[[ $rc != 0 && -z $out && $err == *':2:13: error [SB4063]'* \
+   && $err != *SB4030* ]]; chk relex.10
+
+# relex.11 the statement form of a sed edit re-parses its fields the same way
+run_sash "str x=abc
+x =~ s/b/\$'\\101'/
+echo \$x"
+[[ $rc != 0 && -z $out && $err == *':2:12: error [SB4063]'* ]]; chk relex.11
+
+# relex.12-relex.21: each spec pins one more place that hands a re-parsed
+# substring its position, so that reverting any one of them turns a spec red.
+# The ones above already pin the rest.
+
+# relex.12 a brace-less cell read inside a string: its index starts after `$m`
+run_sash 'map m=([k]=v)
+echo "$m[k]"
+echo "$m[$(nosuchcmd)]"'
+[[ $rc != 0 && -z $out && $err == *':3:12: error [SB5011]'* ]]; chk relex.12
+
+# relex.13 an unquoted `${…}`: its content starts two bytes past the `$`
+run_sash 'map m=([k]=v)
+echo "${m[k]}"
+echo ${m[$(nosuchcmd)]}'
+[[ $rc != 0 && -z $out && $err == *':3:12: error [SB5011]'* ]]; chk relex.13
+
+# relex.14 an unquoted brace-less cell read: its content starts one byte past
+run_sash 'map m=([k]=v)
+echo "${m[k]}"
+echo $m[$(nosuchcmd)]'
+[[ $rc != 0 && -z $out && $err == *':3:11: error [SB5011]'* ]]; chk relex.14
+
+# relex.15 a subscript on the positional splat: its index's own fatal is
+# reported where it is, ahead of SB5031 for the subscript itself
+run_sash "echo start
+echo \"\${@[\$'\\101']}\""
+[[ $rc != 0 && -z $out && $err == *':2:13: error [SB4063]'* ]]; chk relex.15
+
+# relex.16 a sed edit on a cell: the RE starts after `]:s/`
+run_sash 'map m=([k]=v)
+echo start
+echo "${m[k]:s/$(echo $HOME)/b/}"'
+[[ $rc != 0 && -z $out && $err == *':3:23: error [SB5018]'* ]]; chk relex.16
+
+# relex.17 blanks before an index are skipped, not counted out of it
+run_sash 'map m=([k]=v)
+echo "${m[k]}"
+echo "${m[ $(nosuchcmd)]}"'
+[[ $rc != 0 && -z $out && $err == *':3:14: error [SB5011]'* ]]; chk relex.17
+
+# relex.18 the second edit of a chain starts after the first edit and its `,`
+run_sash 'str x=abc
+echo start
+echo "${x:s/a/b/,s/$(echo $HOME)/c/}"'
+[[ $rc != 0 && -z $out && $err == *':3:27: error [SB5018]'* ]]; chk relex.18
+
+# relex.19 an expansion inside `$(( ))` reports the arithmetic's own position:
+# the arithmetic lexer rebuilds the expansion's text, so nothing inside it
+# maps back to a column (the `Within` origin)
+run_sash 'str x=5
+echo start
+int n=$(( ${x:s/5/$(nosuchcmd)/} + 1 ))
+echo $n'
+[[ $rc != 0 && -z $out && $err == *':3:7: error [SB5011]'* ]]; chk relex.19
+
+# relex.20 a dynamic index on an assignment's left-hand side
+run_sash 'array a=(1 2)
+echo start
+a[$(nosuchcmd)]=x
+echo "${a[0]}"'
+[[ $rc != 0 && -z $out && $err == *':3:5: error [SB5011]'* ]]; chk relex.20
+
+# relex.21 the statement form of a chain continued after its `,` onto the next
+# line (DD#96): the second edit is on source line 3
+run_sash 'str x=abc
+x =~ s/a/b/,
+  s/$(echo $HOME)/c/
+echo $x'
+[[ $rc != 0 && -z $out && $err == *':3:12: error [SB5018]'* ]]; chk relex.21
+
+# tpos.1-tpos.5: a diagnostic raised while lowering a statement (call arity,
+# recursion, a splat into a fixed-arity function) reports that statement's
+# position, not 1:1 (batch-531 B54).
+
+# tpos.1 an arity error inside a function body
+run_sash 'fn f { echo hi }
+fn g { f a }
+g
+g'
+[[ $rc != 0 && -z $out && $err == *':2:8: error [SB5043]'* \
+   && $err == *"function 'f' takes exactly 0 arguments but was called with 1"* ]]; chk tpos.1
+
+# tpos.2 recursion that is not a self tail call
+run_sash 'fn f {
+  echo hi
+  f
+}
+f'
+[[ $rc != 0 && -z $out && $err == *':3:3: error [SB5037]'* \
+   && $err == *"recursive call to 'f'"* ]]; chk tpos.2
+
+# tpos.3 too few arguments to a captured call
+run_sash 'fn f { echo $1 }
+echo start
+str x=$(f)
+echo "$x"'
+[[ $rc != 0 && -z $out && $err == *':3:1: error [SB5042]'* \
+   && $err == *"function 'f' expects 1 argument but was called with 0"* ]]; chk tpos.3
+
+# tpos.4 a splat into a function of fixed arity
+run_sash 'fn f {
+  echo "$1"
+}
+array a=(x y)
+echo start
+f @a'
+[[ $rc != 0 && -z $out && $err == *':6:1: error [SB5087]'* ]]; chk tpos.4
+
+# tpos.5 a call in an `elif` condition
+run_sash 'fn f { return /bin/true }
+int n=2
+if (( n == 1 )) {
+  echo a
+} elif f x {
+  echo b
+}
+echo done'
+[[ $rc != 0 && -z $out && $err == *':5:8: error [SB5043]'* ]]; chk tpos.5
 
 set -e
 tally

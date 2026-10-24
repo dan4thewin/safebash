@@ -268,9 +268,7 @@ fn inline_function_call(
     // unbounded inlining would overflow the compiler. Tail self-calls are
     // handled before reaching here. Emit the diagnostic and skip the inline.
     if state.inlining.iter().any(|n| n == name) {
-        state
-            .diagnostics
-            .push(super::functions::recursion_diagnostic(name));
+        state.error_at_stmt(super::functions::recursion_diagnostic(name));
         return block;
     }
     // `f > out.txt`: the redirect parked by `lower_redirected_stmt`. Taken
@@ -326,9 +324,7 @@ fn inline_function_call(
     let saved_return_target = state.return_target;
     state.return_target = Some(restore_block);
     // DD#27/§5: a self tail-call (`return F …`) in the body loops to call_block.
-    let args_name = state.current_args_name.clone();
-    let saved_tail = state.tail_loop.take();
-    state.tail_loop = Some((name.to_string(), call_block, args_name));
+    let saved_tail = state.enter_tail_loop(name, call_block);
     let exit_block = lower_stmts(body, ssa, state, call_block);
     state.tail_loop = saved_tail;
     state.return_target = saved_return_target;
@@ -397,7 +393,7 @@ pub(super) fn check_callee_arity(
         super::functions::Arity::Variadic { floor } => variadic_arity_msg(name, floor, &bounds),
     };
     if let Some(msg) = complaint {
-        state.diagnostics.push(msg);
+        state.error_at_stmt(msg);
     }
 }
 
@@ -505,7 +501,7 @@ fn arity_range(min: usize, max: usize) -> String {
 /// SB5087: a runtime-variable argument count passed to a fixed-arity callee.
 fn arity_dynamic_msg(name: &str, min: usize, max: usize) -> String {
     format!(
-        "1:1: error [SB5087] function '{}' takes {} — it cannot be called with a splat or a `:~` elide, whose argument count is only known at run time. Pass the arguments individually, or let '{}' accept a variable number with `: @args`",
+        "[SB5087] function '{}' takes {} — it cannot be called with a splat or a `:~` elide, whose argument count is only known at run time. Pass the arguments individually, or let '{}' accept a variable number with `: @args`",
         name,
         arity_range(min, max),
         name
@@ -520,7 +516,7 @@ fn arity_floor_msg(name: &str, floor: usize, covered: usize) -> String {
         format!("this call fixes only the first {}", covered)
     };
     format!(
-        "1:1: error [SB5087] function '{}' always reads {} argument{}, but {} — a splat or a `:~` elide has a run-time length, so nothing written after one lands at a position you can count on. Put the required arguments before it, or use `@{{a:-…}}` to guarantee an element",
+        "[SB5087] function '{}' always reads {} argument{}, but {} — a splat or a `:~` elide has a run-time length, so nothing written after one lands at a position you can count on. Put the required arguments before it, or use `@{{a:-…}}` to guarantee an element",
         name,
         floor,
         arity_plural(floor),
@@ -539,7 +535,7 @@ fn arity_plural(n: usize) -> &'static str {
 fn arity_too_few_msg(name: &str, min: usize, variadic: bool, got: usize) -> String {
     let atleast = if variadic { "at least " } else { "" };
     format!(
-        "1:1: error [SB5042] function '{}' expects {}{} argument{} but was called with {}",
+        "[SB5042] function '{}' expects {}{} argument{} but was called with {}",
         name,
         atleast,
         min,
@@ -555,7 +551,7 @@ fn arity_too_few_msg(name: &str, min: usize, variadic: bool, got: usize) -> Stri
 /// told "takes 1 argument", which denies that `f a b` is legal.
 fn arity_too_many_msg(name: &str, min: usize, max: usize, got: usize) -> String {
     format!(
-        "1:1: error [SB5043] function '{}' takes {} but was called with {} — use @args to accept a variable number",
+        "[SB5043] function '{}' takes {} but was called with {} — use @args to accept a variable number",
         name,
         arity_range(min, max),
         got
@@ -611,8 +607,8 @@ fn resolve_exec_target_arg(mut args: Vec<SsaValue>, state: &mut VersionState) ->
         state.external_deps.borrow_mut().insert(path.clone());
         args[0] = SsaValue::Literal(path);
     } else {
-        state.diagnostics.push(format!(
-            "1:1: error [SB5011] `exec` target '{target}' could not be resolved at compile time"
+        state.error_at_stmt(format!(
+            "[SB5011] `exec` target '{target}' could not be resolved at compile time"
         ));
     }
     args

@@ -135,6 +135,20 @@ not four — is unchanged and still enforced.
 `unterminated`/`attached_hash` — the escape is resolved in the lexer, so
 that is the only channel through which a rejection can surface.
 
+**Addendum (2026-10-24, batch-531 port step F13) — the channel was dropped at every re-lex.** Three
+places re-lex a captured substring with a second `Scanner`: a double-quoted
+`$(…)`, a subscript index and a sed RE/SUB. All three discarded the
+sub-scanner, and its fatals went with it, so a rejection that can only
+surface through `parse` did not surface at all. `${x:s/b/$'\101'/}` on
+`abc` compiled and printed `a101c`, the escape read as its literal
+characters; an unterminated `$(` as the sed pattern printed `babc`; and a
+glued `#` inside `"$(echo a;# c)"` (DD#110, SB4058) became a command named
+`#`, reported as SB5011. Each re-lex site now ranks its sub-scanner's fatal
+above whatever the sub-parse returned, exactly as `parse` does for the whole
+program. One limit remains: a sub-parse that fails early stops scanning, so
+a fatal later in the same substring is not seen — but an error is still
+reported, so nothing compiles that should not.
+
 The body buffer is now valid UTF-8 **by construction**: `\xNN` is ASCII
 and `\u` emits a whole character, so no two escapes can combine into one
 character any more.
