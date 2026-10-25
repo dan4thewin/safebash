@@ -8,7 +8,7 @@ H006	notes/decisions/DD66-cond-form-dispatch.md	2	184,3	188,45	42	0					F9	F9	B8
 H007	notes/decisions/DD93-attest-ergonomics.md	1	288,3	288,23	20	0					F10	F10	B89	pending	DD93 addendum (inline source / Part D ${} import); cites Journal 531
 H008	notes/tasks/subscript-index-nested-span.md	1	1,6	1,6	1	1					F13	F13	B3	ported	task subscript-index-nested-span closed — journal 532
 H009	notes/tasks/subscript-index-nested-span.md	2	43,3	43,32	29	0					F13	F13	B3	ported	task subscript-index-nested-span closed — journal 532; re-dated, cites journal 532 and adds the F13 gate measurements
-H010	sash-rt/src/lib.rs	1	2723,10	2723,11	5	4					F15	F15	B51	pending	sash-rt sash_regex_replace invalid pattern -> sash_exit(2)
+H010	sash-rt/src/lib.rs	1	2723,10	2723,11	5	4					F15	F15	B51	ported	sash-rt sash_regex_replace invalid pattern -> sash_exit(2) — journal 534
 H011	sash/src/bindings.rs	1	32,14	32,7	1	8	resolve	resolve			F3	F3	B16	pending	bindings resolve uses program.function_defs()
 H012	sash/src/codegen/dispatch.rs	1	282,8	282,9	3	2	SsaInst::emit_command_kind	SsaInst::emit_command_kind			F2	F2	B20	pending	emit_command_kind: ForkBackground gone; StoreBgPid gets checked
 H013	sash/src/codegen/dispatch.rs	2	364,20	365,6	0	14	SsaInst::emit_fork_background;SsaInst				F2	F2	B9	pending	emit_fork_background removed (Fork terminator)
@@ -93,7 +93,7 @@ H091	sash/src/parse/expr.rs	16	1051,14	1131,30	22	6	(top);parse_whole_index	(top
 H092	sash/src/parse/expr.rs	17	1079,12	1175,14	3	1	(top)	(top);subscript_operator_expr			F13	F13	B3	ported	subscript_operator_expr origin param — journal 532
 H093	sash/src/parse/expr.rs	18	1093,7	1191,7	1	1	subscript_operator_expr	subscript_operator_expr			F13	F13	B3	ported	subscript_operator_expr: sed origin — journal 532
 H094	sash/src/parse/expr.rs	19	1173,28	1271,39	15	4	try_sed_op;(top);build_sed_or_malformed	try_sed_op;(top);build_sed_or_malformed			F13	F13	B3	ported	try_sed_op origin — journal 532
-H095	sash/src/parse/expr.rs	20	1239,14	1348,6	0	8	(top);split_sed_fields				F15	F15	B69	pending	split_sed_fields removed: its only caller was validate_static_sed_re (H128)
+H095	sash/src/parse/expr.rs	20	1239,14	1348,6	0	8	(top);split_sed_fields				F15	F15	B69	ported	split_sed_fields removed: its only caller was validate_static_sed_re (H128) — journal 534
 H096	sash/src/parse/expr.rs	21	1274,10	1375,12	2	0		(top);build_sed_sub			F13	F13	B3	ported	build_sed_sub doc origin — journal 532
 H097	sash/src/parse/expr.rs	22	1285,7	1388,9	3	1	build_sed_sub	build_sed_sub			F13	F13	B3	ported	build_sed_sub per-edit origin — journal 532
 H098	sash/src/parse/expr.rs	23	1305,13	1410,15	3	1	(top)	(top);build_one_sed_sub			F13	F13	B3	ported	build_one_sed_sub doc origin — journal 532
@@ -125,8 +125,8 @@ H123	sash/src/parse/parser.rs	13	2274,7	2341,7	1	1	parse_assignment_lhs	parse_as
 H124	sash/src/parse/parser.rs	14	2326,7	2393,7	1	1	parse_split_subscript_index	parse_split_subscript_index			F13	F13	B61	ported	parse_split_subscript_index -> Result — journal 532
 H125	sash/src/parse/parser.rs	15	2336,10	2403,11	2	1	parse_split_subscript_index	parse_split_subscript_index			F13	F13	B3	ported	parse_split_subscript_index origin — journal 532
 H126	sash/src/parse/parser.rs	16	2407,10	2475,10	4	4	(top)	(top)			F13	F13	B3	ported	parse_regex_mutation doc (verbatim payload with origin) — journal 532
-H127	sash/src/parse/parser.rs	17	2418,14	2486,13	3	4	parse_regex_mutation	parse_regex_mutation			split	F13,F15	B3,B69	pending	F13: take_sed_stmt_payload origin -> build_sed_sub | F15: validate_static_sed_re call removed (B69) — F13 half ported (journal 532)
-H128	sash/src/parse/parser.rs	18	2460,30	2527,6	0	24	(top);validate_static_sed_re				F15	F15	B69	pending	validate_static_sed_re removed (replaced by check_static_regex*)
+H127	sash/src/parse/parser.rs	17	2418,14	2486,13	3	4	parse_regex_mutation	parse_regex_mutation			split	F13,F15	B3,B69	ported	F13: take_sed_stmt_payload origin -> build_sed_sub | F15: validate_static_sed_re call removed (B69) — F13 half ported (journal 532); F15 half ported (journal 534): both halves landed
+H128	sash/src/parse/parser.rs	18	2460,30	2527,6	0	24	(top);validate_static_sed_re				F15	F15	B69	ported	validate_static_sed_re removed (replaced by check_static_regex*) — journal 534
 H129	sash/src/parse/parser.rs	19	2899,7	2942,13	7	1	parse_trailing_pipeline	parse_trailing_pipeline			F4	F4	B23	pending	parse_trailing_pipeline: stage is a list operand
 H130	sash/src/parse/parser.rs	20	2912,9	2961,6	0	3	parse_trailing_pipeline				F4	F4	B23	pending	reject_pipeline_and_or_postfix call removed (SB4023 moves to check_and_or_link)
 H131	sash/src/parse/parser.rs	21	2927,65	2973,34	20	51	(top);append_pipeline_stage;reject_pipeline_and_or_postfix;unwrap_stage_wrappers	(top);append_pipeline_stage;segment_form			F4	F4	B23,n1-n6	pending	append_pipeline_stage + segment_form (`a | - ! b`); unwrap_stage_wrappers removed in favour of Statement::stage_body (F1 H060)
@@ -136,7 +136,7 @@ H134	sash/src/parse/parser.rs	24	3098,8	3115,7	1	2	(top)	(top)			F4	F4	B23	pendi
 H135	sash/src/parse/parser.rs	25	3113,38	3129,17	8	29	parse_trailing_list_op	parse_trailing_list_op			F4	F4	B23,B24	pending	parse_trailing_list_op loop via and_or_operator/check_and_or_link/parse_and_or_operand
 H136	sash/src/parse/parser.rs	26	3156,26	3151,107	91	10	(top);parse_list_operand	(top);and_or_operator;finish_list;plain_pipeline_span;check_and_or_link;parse_and_or_operand;parse_list_operand;parse_operand_here			F4	F4	B23,B24	pending	and_or_operator, finish_list, plain_pipeline_span, check_and_or_link, parse_and_or_operand, parse_operand_here
 H137	sash/src/parse/parser.rs	27	3577,6	3653,16	10	0		unrecognized_operator_diag			F14	F14	B70	ported	unrecognized_operator_diag: empty name -> SB4047 — journal 533
-H138	sash/src/parse/tests.rs	1	254,20	254,6	0	14	(top);sed_missing_delimiters_is_loud_ice				F15	F15	B69	pending	unit test for removed validate_static_sed_re
+H138	sash/src/parse/tests.rs	1	254,20	254,6	0	14	(top);sed_missing_delimiters_is_loud_ice				F15	F15	B69	ported	unit test for removed validate_static_sed_re — journal 534
 H139	sash/src/resolve.rs	1	5,8	5,9	3	2	(top)	(top)			B37	B37	B37	pending	resolve.rs module doc: reaches $( ) bodies through Statement::cmdsub_bodies_mut
 H140	sash/src/resolve.rs	2	126,7	127,6	0	1	builtin_denotation				F2	F2	B9,B20	pending	builtin_denotation: ForkBackground gone
 H141	sash/src/resolve.rs	3	145,6	145,201	195	0		(top);walk_value_calls;walk_expr_value_calls;value_call_name;Evaluation;walk_evaluations;walk_expr_evaluations;evaluates_args_in_place;arith_value_calls;substitution_evaluations;evaluations_at			F5	F5	B71,B74	pending	walk_value_calls/walk_expr_value_calls/value_call_name over Evaluation+walk_evaluations/evaluations_at/substitution_evaluations; evaluates_args_in_place; arith_value_calls. Users: capture_purity (F5 B71), expr_handlers capture_args_run_value_calls (F5 B74), validate predicate_code_at/capture_in_predicate (F10 SB5098), value_call_execs (W2 B72), evaluate/taint_evaluation (W1, superseded). Evaluation::Capture and Value{subst,command} serve only the walker: F5 may reduce to a name walk
@@ -247,10 +247,10 @@ H245	sash/src/type_check.rs	2	1724,9	1687,9	3	3	array_index_error	array_index_er
 H246	sash/src/validate.rs	1	24,6	24,7	1	0		(top)			W1	W1	-	superseded	use resolve::Evaluation (taint_evaluations); superseded. SB5098 code uses full paths, so F10 needs no import
 H247	sash/src/validate.rs	2	664,7	665,7	1	1	check_arith_sexpr_arity	check_arith_sexpr_arity			F5	F5	B73	pending	walk_arith_funccalls shared walker (validate side)
 H248	sash/src/validate.rs	3	884,23	885,6	0	17	(top);walk_arith_intrinsic_calls				F5	F5	B73	pending	private walk_arith_intrinsic_calls deleted
-H249	sash/src/validate.rs	4	1123,6	1107,7	1	0		validate_stmt_ctx			F15	F15	B69	pending	check_dispatch_regex_patterns call
+H249	sash/src/validate.rs	4	1123,6	1107,7	1	0		validate_stmt_ctx			F15	F15	B69	ported	check_dispatch_regex_patterns call — journal 534
 H250	sash/src/validate.rs	5	1346,15	1331,7	1	9	stmt_is_external_command	stmt_is_external_command			F1	F1	B25	pending	stmt_is_external_command via stage_body
-H251	sash/src/validate.rs	6	1682,6	1659,7	1	0		validate_command			F15	F15	B69	pending	check_static_regex_operand call
-H252	sash/src/validate.rs	7	2537,21	2515,65	49	5	check_regex_literal	(top);check_regex_literal;check_static_regex_operand;check_dispatch_regex_patterns;check_static_regex			F15	F15	B69	pending	check_regex_literal total over && || !; check_static_regex_operand (sub/gsub/match/matchall); check_dispatch_regex_patterns; check_static_regex
+H251	sash/src/validate.rs	6	1682,6	1659,7	1	0		validate_command			F15	F15	B52,B69	ported	check_static_regex_operand call — journal 534
+H252	sash/src/validate.rs	7	2537,21	2515,65	49	5	check_regex_literal	(top);check_regex_literal;check_static_regex_operand;check_dispatch_regex_patterns;check_static_regex			F15	F15	B52,B69	ported	check_regex_literal total over && || !; check_static_regex_operand (sub/gsub/match/matchall); check_dispatch_regex_patterns; check_static_regex — journal 534
 H253	sash/src/validate.rs	8	3584,7	3606,7	1	1	expr_calls_intrinsic	expr_calls_intrinsic			F5	F5	B73	pending	walk_arith_funccalls caller
 H254	sash/src/validate.rs	9	3621,7	3643,7	1	1	arith_test_names_intrinsic	arith_test_names_intrinsic			F5	F5	B73	pending	walk_arith_funccalls caller
 H255	sash/src/validate.rs	10	4422,14	4444,17	10	7	(top)	(top)			W1	W1	-	superseded	module doc and imports for the (f,S) walker; superseded

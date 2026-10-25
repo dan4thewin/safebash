@@ -140,3 +140,52 @@ untouched upstream code.
 The dialect deserves a full write-up in the man page / docs — what the engine
 supports, what it deliberately does not, and why. Filed as
 `docs-regex-dialect-writeup`.
+
+## Addendum (2026-10-25): every static regex is compiled at compile time
+
+The 2026-05-24 clarification says a literal pattern "cannot fail at runtime".
+Until now that held only where SB5023 looked: a lone top-level
+`[[ $x =~ re ]]`, and the first edit of an `x =~ s/…/…/` statement, where the
+check also skipped any RE containing `$`. Every other static pattern compiled
+clean and died at runtime with `regexp error`. SB5023 now covers every regex
+the runtime compiles:
+
+- argument 1 of `sub`, `gsub`, `match` and `matchall`, wherever the call
+  stands (statement, condition, `-`, capture);
+- every edit of a `${x:s/…}` chain, of the cell sugar `${a[i]:s/…}` and of an
+  `x =~ s/…` chain, since all three desugar to `sub`/`gsub`;
+- `=~` anywhere in a `[[ ]]` test, under `&&`, `||` and `!` as well as alone,
+  attest predicates included;
+- each pattern of a regex dispatch (DD#66), every arm.
+
+A `$` in a static pattern is an anchor (DD#63), so an RE containing one is
+checked like any other: `x =~ s/(c$/Z/` is SB5023.
+
+One constructor, `validate.rs::check_static_regex`, raises it for all three
+callers (the `[[ ]]` walk, the builtin operand, the dispatch arm). The message
+is `invalid regex in substitution: …` for `sub`/`gsub` and
+`invalid regex pattern: …` otherwise. An operand or a dispatch arm reports its
+pattern. A `[[ ]]` test reports its command: the `[[`, or an attest
+predicate's `attest`. The `${…:s/…}` sugar reports the word that holds it, and
+the statement form its statement. The parser's separate first-edit check is
+gone.
+
+This supersedes the 2026-07-08 scope sentence ("Literal-pattern compile
+validation (SB5023) runs on the `=~` mutation form and `[[ =~ ]]`").
+
+A dynamic pattern still compiles at runtime. `sub`/`gsub` used to print
+`regexp error`, return the subject unchanged and carry on with status 0; they
+now exit 2, as `match`, `matchall` and `[[ =~ ]]` already did. That covers the
+`${x:s/…}` sugar and the statement form, which run on `sub`/`gsub`.
+
+**Open, not settled here.** DD#55 says `-` suppresses a dynamic regcomp
+failure, and DD#70 (A) adds that `if`/`||` catch it. This DD's 2026-05-24
+clarification says only that it aborts. DD#71 says it "aborts via the DD#55
+(A) channel" and names no lever, though that channel is the one DD#70 gives
+levers. No regex builtin honours either lever. `match`, `matchall` and
+`[[ =~ ]]` exit 2 regardless, before this change and after it; `sub` and
+`gsub` carried on regardless before it, and now exit 2 regardless. Filed as
+`notes/tasks/q-dynamic-regcomp-levers.md`; this addendum takes no position.
+
+Specs: 39.36–39.56 (regex.sh). Earlier pins: 39.5 (wordsplit.sh, the
+statement form) and e.a70.regcomp (errors.sh, the exit under `if match`).

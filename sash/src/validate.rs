@@ -1157,6 +1157,7 @@ fn validate_stmt_ctx(stmt: &Statement, diags: &mut Vec<Diagnostic>, in_condition
         }
         StmtKind::Case(c) => {
             check_vacuous_dispatch(c, diags);
+            check_dispatch_regex_patterns(c, diags);
             validate_nested(stmt, in_condition, diags);
         }
         // Wrappers (List, Pipeline, Subshell, Suppressed, Redirected) and
@@ -1716,6 +1717,7 @@ fn validate_command(c: &Command, span: Span, diags: &mut Vec<Diagnostic>) {
     check_signal(name, c, span, diags);
     check_test_constructs(name, c, span, diags);
     check_attest_convert_names(name, c, span, diags);
+    check_static_regex_operand(name, c, diags);
     check_inline_glob(c, diags);
 }
 
@@ -2571,21 +2573,65 @@ fn test_references_var(test: &TestExpr, var: &str) -> bool {
 /// word may be a `Literal`, a quoted string, or a `Concat` of static parts
 /// (bare `(?=h)ello`); any interpolation makes it dynamic → validated at
 /// runtime instead (DD#71).
+///
+/// Every `=~` in the test is checked, not just a lone top-level one: under
+/// `&&`, `||` or `!` the check used to be skipped, so `[[ $x =~ a && $x =~ ( ]]`
+/// compiled and died at runtime with `regexp error`.
 fn check_regex_literal(test: &TestExpr, span: Span, diags: &mut Vec<Diagnostic>) {
-    let TestExpr::Binary { op, right, .. } = test else {
-        return;
+    match test {
+        TestExpr::Binary { op, right, .. } => {
+            if op == "=~" {
+                check_static_regex(right, "invalid regex pattern", span, diags);
+            }
+        }
+        TestExpr::Unary { .. } => {}
+        TestExpr::Not(inner) => check_regex_literal(inner, span, diags),
+        TestExpr::And(l, r) | TestExpr::Or(l, r) => {
+            check_regex_literal(l, span, diags);
+            check_regex_literal(r, span, diags);
+        }
+    }
+}
+
+/// SB5023 for the regex operand of `sub`/`gsub`/`match`/`matchall` (DD#39).
+/// The runtime compiles all of them with the same engine as `=~`, so a static
+/// pattern that cannot compile is a compile error here too — it used to
+/// compile and die at runtime with `regexp error`. The `${x:s/…}` sugar, every
+/// edit of a `,` chain, and the `x =~ s/…` statement all desugar to `sub`/
+/// `gsub` and reach this through their capture bodies.
+fn check_static_regex_operand(name: &str, c: &Command, diags: &mut Vec<Diagnostic>) {
+    let what = match name {
+        "sub" | "gsub" => "invalid regex in substitution",
+        "match" | "matchall" => "invalid regex pattern",
+        _ => return,
     };
-    if op != "=~" {
+    if let Some(re) = c.args.get(1) {
+        check_static_regex(re, what, re.span, diags);
+    }
+}
+
+/// SB5023 for a regex dispatch's patterns (`[[ $x =~ p { … } ]]`, DD#66): each
+/// static pattern is compiled now, exactly as a `[[ =~ ]]` operand is.
+fn check_dispatch_regex_patterns(c: &Case, diags: &mut Vec<Diagnostic>) {
+    if c.op != "=~" {
         return;
     }
-    let Some(pattern) = static_regex_pattern(right) else {
+    for p in c.items.iter().flat_map(|it| &it.patterns) {
+        check_static_regex(p, "invalid regex pattern", p.span, diags);
+    }
+}
+
+/// SB5023 if `expr` is a static regex that the engine rejects. A dynamic
+/// pattern is left to the runtime regcomp (DD#71).
+fn check_static_regex(expr: &Expr, what: &str, span: Span, diags: &mut Vec<Diagnostic>) {
+    let Some(pattern) = static_regex_pattern(expr) else {
         return;
     };
     if let Err(msg) = crate::regex_validate::validate_regex(&pattern) {
         diags.push(Diagnostic::error_span(
             span,
             "SB5023",
-            format!("invalid regex pattern: {}", msg),
+            format!("{what}: {msg}"),
         ));
     }
 }

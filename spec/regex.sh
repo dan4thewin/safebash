@@ -6,7 +6,7 @@
 set -eu
 . common.sh
 setup regex
-plan=93
+plan=114
 echo "1..$plan" >&3
 
 set +e
@@ -635,6 +635,150 @@ run_sash 'str subject=abc
 if [[ $subject =~ $'"'"'a\x00b'"'"' ]] { echo matched }'
 [[ $rc != 0 && -z $out && $err == *SB5023* \
    && $err == *'pattern contains null byte'* ]]; chk rxcompile.1
+
+# ── 39.36-39.56 DD#39 (2026-10-25): every static regex is compiled now ────────
+# SB5023 used to cover only a lone top-level `[[ =~ ]]` and the FIRST edit of
+# an `x =~ s/…` statement (and skipped any RE containing `$`). Everything else
+# compiled and died at runtime with `regexp error`. One constructor serves
+# three sites (operand / `[[ =~ ]]` / dispatch pattern), so each spec pins the
+# code, the text AND the position.
+
+# 39.36 `sub`'s static regex operand
+run_sash 'str x=$(sub abc "(" z)
+echo "[$x]"'
+[[ $rc != 0 && -z $out \
+   && $err == *':1:17: error [SB5023] invalid regex in substitution: missing operand for ('* ]]; chk 39.36
+
+# 39.37 `gsub`'s static regex operand
+run_sash 'str x=abc
+str y=$(gsub "$x" "[" z)
+echo "[$y]"'
+[[ $rc != 0 && -z $out \
+   && $err == *":2:19: error [SB5023] invalid regex in substitution: malformed '[]'"* ]]; chk 39.37
+
+# 39.38 `match`'s static regex operand, as a condition
+run_sash 'str x=abc
+if match "$x" "(" { echo y } else { echo n }'
+[[ $rc != 0 && -z $out \
+   && $err == *':2:15: error [SB5023] invalid regex pattern: missing operand for ('* ]]; chk 39.38
+
+# 39.39 `matchall`'s static regex operand, under `-`
+run_sash 'array a=()
+- matchall abc "(" a
+echo $(len a)'
+[[ $rc != 0 && -z $out \
+   && $err == *':2:16: error [SB5023] invalid regex pattern: missing operand for ('* ]]; chk 39.39
+
+# 39.40 the `${x:s/RE/SUB/}` sugar desugars to `sub` and is checked with it
+run_sash 'str x=abc
+echo "${x:s/b)/1/}"'
+[[ $rc != 0 && -z $out \
+   && $err == *':2:6: error [SB5023] invalid regex in substitution: unmatched right paren'* ]]; chk 39.40
+
+# 39.41 every edit of an expansion chain, here the second (a `gsub`)
+run_sash 'str x=abc
+echo "${x:s/a/1/,s/c)/2/g}"'
+[[ $rc != 0 && -z $out \
+   && $err == *':2:6: error [SB5023] invalid regex in substitution: unmatched right paren'* ]]; chk 39.41
+
+# 39.42 every edit of an `x =~ s/…` chain: the old check saw only the first
+run_sash 'str x=abc
+x =~ s/a/1/,s/c)/2/
+echo "$x"'
+[[ $rc != 0 && -z $out \
+   && $err == *':2:1: error [SB5023] invalid regex in substitution: unmatched right paren'* ]]; chk 39.42
+
+# 39.43 an invalid RE containing a `$` anchor: the old check skipped any `$`
+run_sash 'str x=abc
+x =~ s/(c$/Z/
+echo "$x"'
+[[ $rc != 0 && -z $out \
+   && $err == *':2:1: error [SB5023] invalid regex in substitution: unmatched left paren'* ]]; chk 39.43
+
+# 39.44 the cell sugar `${a[i]:s/…/}`
+run_sash 'array a=(abc)
+echo "${a[0]:s/(/x/}"'
+[[ $rc != 0 && -z $out \
+   && $err == *':2:6: error [SB5023] invalid regex in substitution: missing operand for ('* ]]; chk 39.44
+
+# 39.45 positive: a valid `$`/`^` anchor is static and compiles in every form
+run_sash 'str x=abc
+array a=(abc)
+x =~ s/c$/Z/
+echo "$x ${x:s/^a/Q/} ${a[0]:s/^a(b)/Q/}"'
+[[ $rc = 0 && $out = "abZ QbZ Qc" && -z $rerr ]]; chk 39.45
+
+# 39.46 positive: an interpolated (dynamic) regex is left to the runtime
+run_sash 'str p=b
+str x=abcb
+str y=$(sub "$x" "$p" z)
+echo "[$y][${x:s/$p/Q/g}]"'
+[[ $rc = 0 && $out = "[azcb][aQcQ]" && -z $rerr ]]; chk 39.46
+
+# 39.47 a regex dispatch's pattern (DD#66)
+run_sash 'str x=abc
+[[ $x =~ ( { echo a } || { echo b } ]]'
+[[ $rc != 0 && -z $out \
+   && $err == *':2:10: error [SB5023] invalid regex pattern: missing operand for ('* ]]; chk 39.47
+
+# 39.48 every arm's pattern, not only the first
+run_sash 'str x=abc
+[[ $x =~ q { echo one } ( { echo two } || { echo dflt } ]]'
+[[ $rc != 0 && -z $out \
+   && $err == *':2:25: error [SB5023] invalid regex pattern: missing operand for ('* ]]; chk 39.48
+
+# 39.49 an `=~` under `&&`: the check used to stop at the top-level operator
+run_sash 'str x=abc
+[[ $x =~ a && $x =~ ( ]] && echo m'
+[[ $rc != 0 && -z $out \
+   && $err == *':2:1: error [SB5023] invalid regex pattern: missing operand for ('* ]]; chk 39.49
+
+# 39.50 under `||`
+run_sash 'str x=abc
+[[ $x == q || $x =~ ( ]] && echo m'
+[[ $rc != 0 && -z $out \
+   && $err == *':2:1: error [SB5023] invalid regex pattern: missing operand for ('* ]]; chk 39.50
+
+# 39.51 under `!`
+run_sash 'str x=abc
+[[ ! $x =~ ( ]] && echo m'
+[[ $rc != 0 && -z $out \
+   && $err == *':2:1: error [SB5023] invalid regex pattern: missing operand for ('* ]]; chk 39.51
+
+# 39.52 an attest predicate's `[[ ]]` is checked the same way
+run_sash 'for x in $(argv 1); do attest x [[ $x =~ a && $x =~ ( ]]; echo "got:$x"; done' a
+[[ $rc != 0 && -z $out \
+   && $err == *':1:24: error [SB5023] invalid regex pattern: missing operand for ('* ]]; chk 39.52
+
+# 39.53 a dynamic regex that cannot compile exits 2 (DD#39 2026-05-24) from
+#       `sub`, as it always did from `match`; it used to return the subject
+run_sash 'str p="("
+str x=$(sub abc "$p" z)
+echo "[$x]"'
+[[ $rc = 2 && -z $out && $rerr == *'regexp error: missing operand for ('* ]]; chk 39.53
+
+# 39.54 from `gsub`, through the `${x:s/…/g}` sugar
+run_sash 'str p="("
+str x=abc
+str y=${x:s/$p/z/g}
+echo "[$y]"'
+[[ $rc = 2 && -z $out && $rerr == *'regexp error: missing operand for ('* ]]; chk 39.54
+
+# 39.55 from the `x =~ s/…` statement
+run_sash 'str p="("
+str x=abc
+x =~ s/$p/z/
+echo "[$x]"'
+[[ $rc = 2 && -z $out && $rerr == *'regexp error: missing operand for ('* ]]; chk 39.55
+
+# 39.56 under `-` too, as `- match` with the same pattern always has (and as
+#       e.a70.regcomp pins for `if match`): no lever catches a dynamic regcomp
+#       failure in any regex builtin. DD#70 (A) lists `-`/`if`/`||` as levers
+#       for it; that open question is notes/tasks/q-dynamic-regcomp-levers.md
+run_sash 'str p="("
+str x=$(- sub abc "$p" z)
+echo "after [$x]"'
+[[ $rc = 2 && -z $out && $rerr == *'regexp error: missing operand for ('* ]]; chk 39.56
 
 set -e
 tally

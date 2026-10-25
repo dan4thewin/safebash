@@ -1351,14 +1351,6 @@ fn quoted_var_expr(name: &str, span: Span) -> Expr {
     }
 }
 
-/// Split an `RE/SUB/flags` payload (the text after the leading `s/`) into
-/// its three fields. Returns `None` when either mandatory `/` delimiter is
-/// absent (a malformed substitution).
-pub(crate) fn split_sed_fields(body: &str) -> Option<(&str, &str, &str)> {
-    let (re, sub, flags, _) = split_sed_edit(body)?;
-    Some((re, sub, flags))
-}
-
 /// Split ONE edit off the front of a chain body: `RE/SUB/FLAGS` plus whatever
 /// follows it. Flags are the leading run of letters; `rest` is everything
 /// after them — empty for a lone edit, or a `,`-introduced continuation

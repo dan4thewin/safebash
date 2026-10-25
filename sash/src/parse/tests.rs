@@ -254,20 +254,6 @@ mod logos_equivalence {
         );
     }
 
-    /// Likewise the delimiters: `scan_one_sed_edit` scans both remaining `/`
-    /// before handing the payload over, so `split_sed_fields` cannot fail here.
-    #[test]
-    fn sed_missing_delimiters_is_loud_ice() {
-        use crate::ir::Span;
-        let caught = std::panic::catch_unwind(|| {
-            crate::parse::parser::validate_static_sed_re("no-delimiters", Span::new(1, 1))
-        });
-        assert!(
-            caught.is_err(),
-            "a sed payload without the scanner-required `/` delimiters must raise a loud ICE"
-        );
-    }
-
     /// `parse_word_arm` only routes words that `starts_with("@{")`, so the
     /// prefix strip cannot fail.
     #[test]

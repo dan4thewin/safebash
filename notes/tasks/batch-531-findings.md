@@ -205,26 +205,68 @@ not obviously a bug stays unchanged in the port:
 
 ### 4. F15 regex and sed operands
 
-- [ ] **B51** (fixed-on-branch; DD39, DD63). The runtime's regex replace on
+- [x] **B51** (fixed-on-branch; DD39, DD63). The runtime's regex replace on
   a null program exits 2.
-- [ ] **B52** (fixed-on-branch; DD63). Regex SB5023 was not checked at every
+  - Landed in F15 (journal 534), ported as-is. DD39's addendum (2026-10-25)
+    states the rule. Specs `39.53`-`39.56`.
+- [x] **B52** (fixed-on-branch; DD63). Regex SB5023 was not checked at every
   command depth.
+  - Landed in F15 (journal 534), ported as-is. DD39's addendum (2026-10-25)
+    states the rule. B52 and B69 overlap, and one constructor fixes both.
+    Step 0 filed `sub`/`gsub`, the sugar, and `match` under `if` and `-` as
+    B52; it filed the dispatch and `- matchall` as B69, whose probe
+    directory also holds the `[[ ]]` cases. Specs `39.36`-`39.52` cover
+    the two together.
 - [ ] **B62** (open; DD63). An unclosed `${x:s/b/c/` compiles and runs; DD63
   says SB4032.
+  - Tracked by `bug-sed-expansion-extent`.
 - [ ] **B63** (open; DD63, DD96). A `}` in a chained edit closes the scalar
   expansion: `"${x:s/a/c/,s/}/d/}"` draws SB4032 (unquoted, SB4072).
+  - Tracked by `bug-sed-expansion-extent`.
 - [ ] **B64** (open; DD96). DD96's line break after `,` is rejected in the
   scalar expansion form; the cell and statement forms accept it.
+  - Tracked by `bug-sed-expansion-extent`.
 - [ ] **B65** (open; DD65). A `"` in a scalar payload stops the scan
   (SB4057); DD65 makes quotes ordinary bytes inside `${…}`.
+  - Tracked by `bug-sed-expansion-extent`.
 - [ ] **B67** (open; DD63). The cell form `${a[0]:s/}/x/}` truncates at the
   RE's `}` (SB4032); DD63's Path B applies to the cell sugar too.
+  - Tracked by `bug-sed-expansion-extent`.
 - [ ] **B68** (open; DD63). A positional sed subject with `}` in the RE, `fn
   f { echo ${1:s/}/x/} }`, draws SB4072: the lexer's `sed_prefix_end`
   requires a letter or `_` first, while the parser's `scan_param_name`
   accepts digits.
-- [ ] **B69** (fixed-on-branch; DD39, DD63). A static regex was not checked
+  - Tracked by `bug-sed-expansion-extent`.
+- [x] **B69** (fixed-on-branch; DD39, DD63). A static regex was not checked
   at compile time.
+  - Landed in F15 (journal 534), ported as-is. DD39's addendum (2026-10-25)
+    states the rule. Specs `39.36`-`39.52`, shared with B52 (see B52).
+
+Filed as backlog tasks during F15, under DG's rule that what the branch did
+not fix, and what does not block the rest of the port, goes to the backlog:
+
+- `bug-sed-expansion-extent` (P2; B62-B65, B67, B68): five scanners decide
+  where a `${…:s/…}` payload ends; only the statement form's follows DD63
+  and DD96. It also covers `$'…'` in a payload (DD63 vs DD65).
+- `q-dynamic-regcomp-levers` (P3): DD55 and DD70 (A) say `-` suppresses,
+  and `if`/`||` catch, a dynamic regcomp failure; no regex builtin honours
+  either lever. DD39's 2026-05-24 clarification says only that it aborts,
+  and DD71 names no lever.
+- `bug-subscript-key-check-skips-positions` (P1): DD80's key-type check
+  runs on a private walker. A word index ICEs natively and reads index 0 in
+  C in twelve positions, and fourteen more programs compile.
+- `bug-arith-braced-subscript-index-second-grammar` (P2): inside `$(( ))`,
+  an operator-free `${a[K]}` parses K with a second index grammar, so legal
+  indexes are SB4041.
+- `bug-sed-index-capture-advice` (P3): a sed-expansion index on an indexed
+  array gets the capture advice, which it cannot follow.
+- `bug-arith-operator-expansion-unconverted` (P2): a substring or sed
+  expansion imported into arithmetic converts with no disposition (DD77).
+- `bug-sed-sugar-on-int-escapes-dd105` (P3): `${n:s/…}` on an int compiles,
+  because the desugar writes the `"$n"` conversion.
+- `q-sb5023-names-the-test-not-the-pattern` (P3): SB5023 in a `[[ ]]` test
+  reports the `[[`, and in the sugar and the statement form the word or the
+  statement, so two bad patterns in one test cannot be told apart.
 
 ### 5. D1 int operands in `[[ ]]`
 
@@ -322,6 +364,11 @@ not obviously a bug stays unchanged in the port:
   taint pass reads as clean. `b=${a[$(cat one)]:-dflt}` and `int n=$((
   ${a[$(cat one)]:-0} + 1 ))` compile on base and use the file's content
   unattested; the branch gives SB5020.
+  - Write its specs with a `map` key (noted in F15, journal 534). Both
+    programs index an indexed array with a capture, which DD80 makes
+    SB4030. They compile only because of
+    `bug-subscript-key-check-skips-positions` (rows id2 and ic9), so once
+    that is fixed an indexed-array spec would pin SB4030, not the taint fix.
 
 ### 10. F2 forked children
 
@@ -584,6 +631,10 @@ not obviously a bug stays unchanged in the port:
 - [ ] **B5** (open; DD56, DD30). `type_check` and `infer_types` never visit
   END: an END-local `int n=5; n+=1` prints `51`, and `strlen` of an int in
   END compiles.
+  - Also (F15, journal 534): `END { echo ${a[foo]} }` on an indexed array
+    is a native ICE and prints `x` in C, because DD80's key check never
+    runs in END. `bug-subscript-key-check-skips-positions` leaves END to
+    this fix.
 - [ ] **B6** (open; DD86). Typing depends on textual order, which DD86
   forbids: `fn f { exit $n }; int n=1` is a false SB4030; a function that
   assigns a string to a later `int` reaches a codegen ICE; a loop-carried

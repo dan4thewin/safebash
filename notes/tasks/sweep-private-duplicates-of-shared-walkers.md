@@ -38,6 +38,13 @@ needed.
 For each: delete in favour of the shared one, or write down why it must differ.
 A divergence nobody can justify is a bug waiting for the next fix to miss it.
 
+One instance is already filed on its own: `type_check::check_subscript_types`
+walks expressions privately for DD#80's key-type check and ends in `_ => {}`.
+SB4041 runs on `ir::walk_all_exprs` instead. The private walker misses most
+index positions, giving a native ICE and a silent C miscompile
+(`bug-subscript-key-check-skips-positions`). Like the first two, it was found
+while probing something nearby.
+
 ## What to watch for when deleting
 
 The one in `type_check.rs` looked interchangeable with

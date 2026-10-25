@@ -2423,7 +2423,6 @@ fn parse_regex_mutation(
         .take_sed_stmt_payload()
         .ok_or_else(|| sed_malformed_err(span))?;
     let body = strip_sed_prefix(&raw);
-    validate_static_sed_re(body, span)?;
     let subject = quoted_var_subject(var_name, span);
     let value = super::expr::build_sed_sub(body, subject, span, origin.after("s/"))?
         .ok_or_else(|| sed_malformed_err(span))?;
@@ -2459,30 +2458,6 @@ pub(crate) fn strip_sed_prefix(raw: &str) -> &str {
     raw.strip_prefix("s/").unwrap_or_else(|| {
         panic!("ICE: sed payload reached the parser without the scanner-required `s/`: {raw:?}")
     })
-}
-
-/// Preserve the DD#39 compile-time regex check on the `=~` mutation form: a
-/// STATIC (non-interpolating) pattern is validated now; an interpolating one
-/// (`$x` in the pattern) is a runtime regcomp check.
-///
-/// The `None` arm is the same should-never-run ICE as [`strip_sed_prefix`]:
-/// `scan_one_sed_edit` scans the two remaining `/` delimiters before the
-/// payload is handed over, so `split_sed_fields` cannot fail on a payload that
-/// got this far.
-pub(crate) fn validate_static_sed_re(body: &str, span: Span) -> Result<(), Diagnostic> {
-    let Some((re, _, _)) = super::expr::split_sed_fields(body) else {
-        panic!("ICE: sed payload reached the parser without the scanner-required `/` delimiters: {body:?}")
-    };
-    if !re.contains('$') {
-        if let Err(msg) = crate::regex_validate::validate_regex(re) {
-            return Err(parse_error(
-                span,
-                "SB5023",
-                format!("invalid regex in substitution: {}", msg),
-            ));
-        }
-    }
-    Ok(())
 }
 
 /// `"$var"` as a single interpolating substitution subject.

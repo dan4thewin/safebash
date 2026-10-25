@@ -2723,10 +2723,11 @@ pub unsafe extern "C" fn sash_regex_replace(
 
     let prog = regcomp9(pat_buf);
     if prog.is_null() {
-        // No match possible — return copy of original
-        let out = alloc_cstr(str_len as usize);
-        core::ptr::copy_nonoverlapping(str_ptr, out, str_len as usize);
-        return (out, str_len);
+        // An invalid pattern is a runtime error here exactly as in every other
+        // regex builtin (DD#39, DD#55). This used to return the subject as if
+        // nothing had matched, so a bad interpolated pattern ran on with
+        // status 0 after `regerror9` had already reported it.
+        sash_exit(2);
     }
 
     // Build result incrementally
