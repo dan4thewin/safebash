@@ -76,3 +76,36 @@ conversions from ambiguous intent.
 8. `sash` compiles sash-native source without any bash validation rules
 9. Existing test suite passes (tests adapted to use sash-native input where needed)
 10. shellcheck is invoked internally, not required as a precondition
+
+## Addendum (2026-10-25) — an int operand of a converted test is quoted
+
+DD#30's addendum of the same date makes a whole-int `[[ ]]` operand SB4030.
+Bash has no such line, so without this every converted test on an int would
+now fail to compile. The converter now quotes, as a mechanical conversion, each whole
+test operand that the converted script holds as a sash int: `$(( … ))`; `$?`,
+`$$`, `$!` and `$#`, which convert to `$(status)`, `$(getpid)`, `$(getcpid)`
+and an arithmetic count; a length `${#…}`; and a read of an int-typed name.
+Operands of the `-eq` family are left alone, because those tests are rewritten
+to `(( ))`.
+
+Which names are int-typed is a name-based **superset**, found by a pre-pass:
+`declare -i`/`local -i`, every arithmetic write target (`(( k = 3 ))`,
+`let j=4`, `k++`, a C-style `for` variable), and, to a fixpoint, every copy of
+an int expansion (`rc=$?`, `n=$(( … ))`, `q=$p`). A superset is safe because
+quoting a whole operand never changes what a sash test means, while a name it
+misses is SB4030 at compile time: loud, never silent. The existing `[ ]` →
+`[[ ]]` quote-stripping keeps the quotes on an int-typed name.
+
+Two pre-existing faults had to be fixed with it. The converter treated a
+C-style `for` body, and anything inside a command substitution within
+arithmetic, as arithmetic, so a `$?` there became the DD#58 sexpr `(status)`
+and a string read gained an integer abort disposition. Unquoted, that
+`[[ (status) == $e ]]` was a loud SB4068; quoted, it would have compiled and
+compared `$e` against the literal text `(status)`. Only a `for`'s header is
+arithmetic now, and a command substitution's body never is. `--annotate`
+writes its `# was:` comment after the added closing quote, so the comment
+cannot become part of the operand. A mid-line annotation still comments out
+the rest of its line, which is pre-existing
+(`notes/tasks/bug-convert-annotate-midline.md`).
+
+Specs `spec/convert.sh` `57.178`-`57.191`; journal 535.

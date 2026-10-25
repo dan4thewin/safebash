@@ -249,7 +249,7 @@ run_sash "s=\$($EXPAND /tmp/sash_test_config.conf); attest s [[ -n \$s ]]; - mat
 # $? ≡ $(status), $! ≡ $(getcpid). The keyword form is canonical (docs,
 # diagnostics, sash-convert); the punctuation form is accepted input sugar.
 # spv.1 $$ and $(getpid) are the same value (this process's pid)
-run_sash 'p=$$; q=$(getpid); [[ $p == $q ]] && echo Y'
+run_sash 'p=$$; q=$(getpid); (( p == q )) && echo Y'
 [[ $rc = 0 && $out = "Y" && -z $err ]]; chk spv.1
 # spv.2 $? sugar reads the last status (arith-false → 1)
 run_sash '(( 0 )); echo $?'
@@ -263,7 +263,7 @@ run_sash '(( 0 )); echo $(status)'
 # at all*, which they did: both were empty. That agreement was the bug
 # `bug-bg-pid-slot-unavailable` names, not a property worth pinning.
 run_sash '/bin/sleep 0 &
-[[ $! == $(getcpid) ]] && echo Y'
+[[ "$!" == "$(getcpid)" ]] && echo Y'
 [[ $rc = 0 && $out = "Y" && -z $err ]]; chk spv.4
 
 # spv.5-spv.8 DD#111: the sugar is desugared in the FRONT END, so `$$` and

@@ -46,3 +46,34 @@ to it instead of clearing the caller. Missing elements of a declared
 collection remain harmless no-ops.
 
 Specs `spec/collparam.sh` `bindscope.25`-`bindscope.37`; journal 525.
+
+## Addendum (2026-10-25) — `[[ ]]` does not convert an int operand
+
+`[[ ]]` compares strings (DD#62's exact `==`, DD#63's `=~`, the unary string
+tests), so a whole-int operand there is an implicit int→string conversion,
+which this DD rules out. It was accepted everywhere: `[[ $(( 10 / z )) == 1 ]]`
+compiled. It is now SB4030, the same code `str s=$n` gets, and the message
+says how to convert: quote it (`"$n"`), or compare numbers with `(( … ))`.
+Settled by this DD and DG ("I would expect an error"), as step D1 of the
+batch-531 port (journal 535).
+
+Where it applies: every operand of every test operator, unary and binary,
+through `&&` and `||`; the DD#66 dispatch subject and each pattern (see the
+DD#66 addendum of the same date); and `attest` predicates (DD#93), including
+the Part B shorthand. `attest n -n` builds the test `[[ -n $n ]]`, so on an
+int `n` the message shows the predicate written out in full,
+`attest n [[ -n "$n" ]]`.
+
+`expr_type` decides, so this agrees with the assignment checker: an int
+variable or cell, `$(( … ))`, `$(f)` of an `-> int` function and `$$`
+(DD#111's `$(getpid)`) are ints; `"$n"` and in-word `x$n` are strings and
+stay legal. validate's codes run first, so a numeric test operator is still
+SB5019 whatever its operands.
+
+Not covered yet, both filed: END is not type-checked at all (B5, so an int
+operand there still compiles), and `expr_type` types `${n:?msg}` on an int as
+a string (`notes/tasks/bug-expr-type-int-disposition.md`).
+
+`sash-convert` quotes the operands it can tell are ints (DD#57 addendum of
+the same date). Specs `spec/types.sh` `30.50`-`30.65`; fifteen existing
+programs were rewritten to quote or to use `(( ))` (journal 535).

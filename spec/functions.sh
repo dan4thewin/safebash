@@ -140,13 +140,13 @@ run_sash 'x=$(arg 99); attest x [[ -n $x ]]; echo $x' hello
 
 # 42.7 $(getpid) — in-process intrinsic, positive int, CLEAN capture (usable
 #      without a attest).
-run_sash 'x=$(getpid); if [[ $x =~ ^[0-9]+$ ]] { echo Y } else { echo N }'
+run_sash 'x=$(getpid); if [[ "$x" =~ ^[0-9]+$ ]] { echo Y } else { echo N }'
 [[ $rc = 0 && $out = "Y" && -z $err ]]; chk 42.7
 # 42.8 $(random) — non-negative i64 (0..i64::MAX), clean capture
-run_sash 'a=$(random); if [[ $a =~ ^[0-9]+$ ]] { echo Y } else { echo N }'
+run_sash 'a=$(random); if [[ "$a" =~ ^[0-9]+$ ]] { echo Y } else { echo N }'
 [[ $rc = 0 && $out = "Y" && -z $err ]]; chk 42.8
 # 42.9 two $(random) draws differ (distinct entropy)
-run_sash 'a=$(random); b=$(random); if [[ $a != $b ]] { echo Y } else { echo N }'
+run_sash 'a=$(random); b=$(random); if (( a != b )) { echo Y } else { echo N }'
 [[ $rc = 0 && $out = "Y" && -z $err ]]; chk 42.9
 
 # 46.1 top-level $1..$N → compile error
@@ -637,9 +637,11 @@ run_sash 'fn f() { echo x }
 if [[ $(f) == q ]] { echo T } else { echo F }'
 [[ $rc = 0 && $out = "F" && -z $err ]]; chk ice.2
 
-# ice.3 an `-> int` function's capture (the values.rs:84 sibling arm)
+# ice.3 an `-> int` function's capture (the values.rs:84 sibling arm). The
+# capture is an int, so the operand is quoted (DD#30); lift_test_captures
+# still reaches the IntFuncCall inside the quotes.
 run_sash 'fn n() -> int { return 7 }
-if [[ $(n) == 7 ]] { echo T } else { echo F }'
+if [[ "$(n)" == 7 ]] { echo T } else { echo F }'
 [[ $rc = 0 && $out = "T" && -z $err ]]; chk ice.3
 
 # ice.4 a multi-statement `$(…)` body as an operand (the values.rs:90 arm);

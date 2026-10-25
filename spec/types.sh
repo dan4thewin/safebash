@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup types
-plan=430
+plan=446
 echo "1..$plan" >&3
 
 set +e
@@ -601,6 +601,85 @@ unset a[1]
 a[1]=Q
 echo "n=$(len a) 1=${a[1]}"'
 [[ $rc = 0 && $out = "n=3 1=Q" && -z $err ]]; chk 30.49
+
+# --- DD#30: `[[ ]]` compares strings, so an int operand is not converted ---
+# A whole-int operand would be an implicit int->string conversion, which DD#30
+# rules out: the same SB4030 that `str s=$n` gets. Quoting converts (`"$n"`);
+# `(( … ))` compares numbers. SB4030 has many raise sites, so each spec asserts
+# the code together with the message that names the position.
+
+# 30.50 an int variable in a binary test
+run_sash 'int n=5; [[ $n == 5 ]] && echo y'
+[[ $rc != 0 && -z $out && $err == *'[SB4030] int value in a `[[ ]]` test, which compares strings'* ]]; chk 30.50
+
+# 30.51 a unary test's operand
+run_sash 'int n=5; [[ -z $n ]] || echo y'
+[[ $rc != 0 && -z $out && $err == *'[SB4030] int value in a `[[ ]]` test'* ]]; chk 30.51
+
+# 30.52 the check descends into `&&`, and the error points at the int operand
+run_sash 'int n=5; str s=x; [[ $s == x && $n == 5 ]] && echo y'
+[[ $rc != 0 && -z $out && $err == *':1:33: error [SB4030] int value in a `[[ ]]` test'* ]]; chk 30.52
+
+# 30.53 `$(( … ))` is an int expression, and `[[ ]]` does not convert it
+run_sash '[[ $(( 10 / 2 )) == 5 ]] && echo y'
+[[ $rc != 0 && -z $out && $err == *'[SB4030] int value in a `[[ ]]` test'* ]]; chk 30.53
+
+# 30.54 an `-> int` function's capture (ice.3 is the quoted form)
+run_sash 'fn f -> int { return 7 }
+[[ $(f) == 7 ]] && echo y'
+[[ $rc != 0 && -z $out && $err == *'[SB4030] int value in a `[[ ]]` test'* ]]; chk 30.54
+
+# 30.55 a cell of an int array
+run_sash 'int array a=(1 2); [[ ${a[0]} == 1 ]] && echo y'
+[[ $rc != 0 && -z $out && $err == *'[SB4030] int value in a `[[ ]]` test'* ]]; chk 30.55
+
+# 30.56 `$$` is an int: DD#111 makes it `$(getpid)`
+run_sash '[[ $$ == 0 ]] || echo y'
+[[ $rc != 0 && -z $out && $err == *'[SB4030] int value in a `[[ ]]` test'* ]]; chk 30.56
+
+# 30.57 a DD#66 dispatch subject
+run_sash 'int n=5; [[ $n == 5 { echo five } 6 { echo six } ]]'
+[[ $rc != 0 && -z $out && $err == *'[SB4030] int value in a `[[ ]]` dispatch, which matches strings'* ]]; chk 30.57
+
+# 30.58 a dispatch pattern: the subject is a string, so the pattern is the int
+run_sash 'str s=5; int n=5; [[ $s == 5 { echo five } $n { echo n } ]]'
+[[ $rc != 0 && -z $out && $err == *'[SB4030] int value in a `[[ ]]` dispatch'* ]]; chk 30.58
+
+# 30.59 an `attest` predicate
+run_sash 'int n=5; attest n [[ -n $n ]]; echo "$n"'
+[[ $rc != 0 && -z $out && $err == *'[SB4030] int value in an `attest` predicate, which tests strings'* ]]; chk 30.59
+
+# 30.60 the DD#93 Part B shorthand builds the same test, so the message shows
+# the predicate written out in full
+run_sash 'int n=5; attest n -n; echo "$n"'
+[[ $rc != 0 && -z $out && $err == *'[SB4030] int value in an `attest` predicate'* \
+   && $err == *'written out in full: `attest n [[ -n "$n" ]]`'* ]]; chk 30.60
+
+# 30.61 a test in a function body
+run_sash 'fn f { int n=5; [[ $n == 5 ]] && echo y }
+f'
+[[ $rc != 0 && -z $out && $err == *'[SB4030] int value in a `[[ ]]` test'* ]]; chk 30.61
+
+# 30.62 a test inside a capture that is itself an operand is reported once:
+# each operand is checked for its own type only, and the capture's body is
+# visited as a statement of its own
+run_sash 'int n=5
+[[ "$( [[ $n == 5 ]] && echo y )" == y ]] && echo outer'
+[[ $rc != 0 && -z $out && $err == *'[SB4030] int value in a `[[ ]]` test'* \
+   && $(grep -cF '[SB4030]' <<<"$err") = 1 ]]; chk 30.62
+
+# 30.63 quoting converts: `"$n"` is a string
+run_sash 'int n=5; [[ "$n" == 5 ]] && echo y'
+[[ $rc = 0 && $out = y && -z $err ]]; chk 30.63
+
+# 30.64 so does interpolating into a word
+run_sash 'int n=5; [[ x$n == x5 ]] && echo y'
+[[ $rc = 0 && $out = y && -z $err ]]; chk 30.64
+
+# 30.65 a quoted dispatch subject and pattern
+run_sash 'int n=6; int m=6
+[[ "$n" == 5 { echo five } "$m" { echo m } ]]'
+[[ $rc = 0 && $out = m && -z $err ]]; chk 30.65
 
 # --- DD#65: per-element array ops dropped → `for x in @a` loop + sub/gsub ---
 # (the `${arr[@]OP}` forms now reject SB4034; see var_modifiers.sh vm.dr16-18)

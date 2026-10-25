@@ -152,7 +152,8 @@ construct to the comment path anyway.
 - **Numeric dispatch dropped entirely.** `==` and `=~` are the **only**
   dispatch ops — there is no `-eq`/`-lt`/… dispatch form, now or later.
   Exact numeric dispatch still works through `==` (string-exact: `[[ $n ==
-  1 { … } 2 { … } ]]`); numeric *ranges*/comparisons use an `if`/`elif`
+  1 { … } 2 { … } ]]`, with an `int n` quoted as `"$n"` — see the
+  2026-10-25 addendum); numeric *ranges*/comparisons use an `if`/`elif`
   chain with `(( ))`. This keeps the construct to two clean modes.
 - **Merge-label name → `dispatch.merge`** in `is_catching_construct_exit`
   (siblings: `case.merge`, `if.merge`, `while.exit`). Implementation detail.
@@ -184,3 +185,14 @@ SB5006's cases are not the same shape: `?` and `[…]` in an unquoted word are
 diagnosed for reasons of their own, whereas a literal `*` is a perfectly
 ordinary string to compare against. **Do not re-propose this without new
 evidence that a real user was bitten.**
+
+## Addendum (2026-10-25) — an int subject or pattern is quoted
+
+Dispatch matches strings, so DD#30's rule (addendum of the same date) applies
+to it as to the boolean form: a whole-int subject or pattern is SB4030, "int
+value in a `[[ ]]` dispatch, which matches strings", with the same advice to
+quote it. The numeric dispatch in *Resolved* above is unchanged for a string
+`n`; an `int n` is written `[[ "$n" == 1 { … } 2 { … } ]]`, and an int
+pattern `$m` as `"$m"`. Matching is still exact string equality, so `"$n"`
+matches `1` and not `01`, as before. Specs `spec/types.sh` `30.57`, `30.58`
+and `30.65`; journal 535.

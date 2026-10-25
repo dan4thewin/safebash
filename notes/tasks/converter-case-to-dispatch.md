@@ -104,3 +104,9 @@ fall-through.
 - Keep the MANUAL fallback: the converter must never emit syntactically
   wrong *compilable* dispatch. The auto path only fires when every arm is
   literal; everything else is comment-only with the original preserved.
+- D1 (journal 535): DD66's addendum of 2026-10-25 makes a whole-int dispatch
+  subject or pattern SB4030. When the `case` subject is an int (`int n=1;
+  case $n in 1) …`), the auto path must write `[[ "$n" == 1 { … } ]]`.
+  Decide that with `is_int_expansion` (sash-convert/src/convert.rs), which
+  already makes the same choice for converted `[[ ]]` tests, rather than a
+  second test.

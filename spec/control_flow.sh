@@ -17,7 +17,7 @@ run_sash 'int i=0; while (( i < 3 )); do echo $i; (( i++ )); done'
 [[ $rc = 0 && $out = $'0\n1\n2' && -z $err ]]; chk cf.w1
 
 # cf.w2 while with command condition
-run_sash 'int i=3; while [[ $i != 0 ]]; do echo $i; (( i-- )); done'
+run_sash 'int i=3; while [[ "$i" != 0 ]]; do echo $i; (( i-- )); done'
 [[ $rc = 0 && $out = $'3\n2\n1' && -z $err ]]; chk cf.w2
 
 # cf.w3 while body modifies variable read by condition
@@ -242,7 +242,7 @@ echo after'
 # Separate tests, not one test with `||` inside it — SB4053 rejects that.
 run_sash 'int i=0
 while (( i < 6 )); do
-    if [[ $i == "0" ]] || [[ $i == "2" ]] || [[ $i == "4" ]]; then
+    if [[ "$i" == "0" ]] || [[ "$i" == "2" ]] || [[ "$i" == "4" ]]; then
         echo "even $i"
     fi
     (( i = i + 1 ))

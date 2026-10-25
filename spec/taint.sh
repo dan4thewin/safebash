@@ -1625,7 +1625,7 @@ run_sash 'x=$(arg 1); attest x (( n = x )); echo "$n"' 7
 # SB5020 fix no int can be tainted (every route is SB4030 or SB5020), so the
 # int form is validation-only, like DD#93's map 2-binder form and for the same
 # reason: attest is the only assert-with-diagnostic in the language.
-run_sash 'int n=5; attest n [[ -n $n ]]; echo "$n"'
+run_sash 'int n=5; attest n [[ -n "$n" ]]; echo "$n"'
 [[ $rc = 0 && $out = "5" && -z $err ]]; chk atint.5
 # atint.6 a failing gate aborts with exit 1 and names BOTH the variable and the
 # value. This is the divergence that broke the tie: the C backend printed
@@ -1633,14 +1633,14 @@ run_sash 'int n=5; attest n [[ -n $n ]]; echo "$n"'
 # non-Str slot and printed only `n`. Same program, two diagnostics — native was
 # wrong, and the differential oracle is what caught it. With the int form now
 # validation-only, this message is the whole point of it.
-run_sash 'int n=9; attest n [[ $n == 5 ]]; echo "$n"'
+run_sash 'int n=9; attest n [[ "$n" == 5 ]]; echo "$n"'
 [[ $rc = 1 && -z $out && $rerr == *"attest: n = '9' failed the gate"* ]]; chk atint.6
 # atint.7 the string form names its value the same way — one sentence shape for
 # both types, which is what the int case now agrees with.
 run_sash 'x=$(arg 1); attest x [[ $x == good ]]; echo "$x"' bad
 [[ $rc = 1 && -z $out && $rerr == *"attest: x = 'bad' failed the gate"* ]]; chk atint.7
 # atint.8 the attested int is a real value, not a constant folded past.
-run_sash 'int n=21; attest n [[ -n $n ]]; echo "$(( n * 2 ))"'
+run_sash 'int n=21; attest n [[ -n "$n" ]]; echo "$(( n * 2 ))"'
 [[ $rc = 0 && $out = "42" && -z $err ]]; chk atint.8
 # atint.9 an arithmetic CONDITION is a read position too. `taint_stmt` sent
 # StmtKind::ArithTest to a walker that only visits child bodies — of which an

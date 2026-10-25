@@ -2,8 +2,7 @@
 ///
 /// Operates on the IR after lowering. Reports type errors for:
 /// - Cross-type assignment without explicit conversion
-/// - Numeric comparison operators on string variables
-/// - String comparison operators on int variables
+/// - An int operand in a `[[ ]]` test, dispatch or `attest` predicate
 /// - `exit` with unbounded int variable
 /// - `if func` where func is `-> int`
 use crate::ir::*;
@@ -1140,7 +1139,11 @@ pub fn type_check(program: &Program) -> Vec<TypeError> {
         check_substituted_command_operands,
     );
 
-    // Sixth pass (DD#74): an `-> int` function used as a predicate. Its own
+    // Seventh pass (DD#30): `[[ ]]` compares strings, so an int operand is an
+    // implicit conversion — see check_test_operand_types.
+    run_stmt_pass(program, &env, &mut errors, check_test_operand_types);
+
+    // Eighth pass (DD#74): an `-> int` function used as a predicate. Its own
     // pass rather than a hook in `check_if`, because the six boolean contexts
     // are spread across If/While/List/Pipeline and a single traversal is the
     // only way to apply the tail rule consistently.
@@ -1361,6 +1364,89 @@ fn check_substituted_operands_in_stmt(
         check_string_intrinsic_operands(c, stmt.span, env, errors);
         check_int_sink_operands(c, stmt.span, env, errors);
     }
+}
+
+/// `[[ ]]` compares strings, so a whole-int operand there is an implicit
+/// int→string conversion, which DD#30 rules out: the same SB4030 that
+/// `str s=$n` gets. This covers every test operator, the DD#66 dispatch
+/// subject and patterns, and `attest` predicates (the DD#93 Part B shorthand
+/// `attest n -n` builds the same test). `expr_type` decides, so this agrees
+/// with `check_type_match`: `"$n"` and `x$n` are strings and stay legal.
+///
+/// Only each operand's own type is checked, not its subtree: a capture inside
+/// an operand is a body `run_stmt_pass` visits as a statement of its own.
+fn check_test_operand_types(stmt: &Statement, env: &TypeEnv, errors: &mut Vec<TypeError>) {
+    match &stmt.kind {
+        StmtKind::Command(c) => check_command_test_operands(c, env, errors),
+        StmtKind::Case(c) => check_dispatch_operands(c, env, errors),
+        _ => {}
+    }
+}
+
+/// The `[[ ]]` arguments of a command: a test, or an `attest` predicate.
+fn check_command_test_operands(c: &Command, env: &TypeEnv, errors: &mut Vec<TypeError>) {
+    let context = TestContext::of_command(c);
+    for arg in &c.args {
+        if let ExprKind::Test(t) = &arg.kind {
+            crate::ir::walk_test_operands(t, &mut |e| check_test_operand(e, context, env, errors));
+        }
+    }
+}
+
+/// A DD#66 dispatch: its subject and every pattern.
+fn check_dispatch_operands(c: &Case, env: &TypeEnv, errors: &mut Vec<TypeError>) {
+    check_test_operand(&c.value, TestContext::Dispatch, env, errors);
+    for pattern in c.items.iter().flat_map(|item| &item.patterns) {
+        check_test_operand(pattern, TestContext::Dispatch, env, errors);
+    }
+}
+
+/// Where a `[[ ]]` operand sits, for the wording of its SB4030.
+#[derive(Clone, Copy)]
+enum TestContext {
+    Test,
+    Dispatch,
+    Attest,
+}
+
+impl TestContext {
+    fn of_command(c: &Command) -> Self {
+        if expr_to_name(&c.name) == "attest" {
+            TestContext::Attest
+        } else {
+            TestContext::Test
+        }
+    }
+}
+
+fn check_test_operand(
+    operand: &Expr,
+    context: TestContext,
+    env: &TypeEnv,
+    errors: &mut Vec<TypeError>,
+) {
+    if expr_type(operand, env) != VarType::Int {
+        return;
+    }
+    let hint = conversion_hint(VarType::Int, VarType::String);
+    let message = match context {
+        TestContext::Test => format!(
+            "int value in a `[[ ]]` test, which compares strings{hint}, \
+             or compare numbers with `(( … ))`"
+        ),
+        TestContext::Dispatch => {
+            format!("int value in a `[[ ]]` dispatch, which matches strings{hint}")
+        }
+        TestContext::Attest => format!(
+            "int value in an `attest` predicate, which tests strings{hint} \
+             (a shorthand such as `attest n -n` is written out in full: \
+             `attest n [[ -n \"$n\" ]]`)"
+        ),
+    };
+    errors.push(TypeError {
+        message,
+        span: operand.span,
+    });
 }
 
 /// `exit`, `wait` and `arg` take a *number*: a status, a pid, a positional

@@ -270,9 +270,36 @@ not fix, and what does not block the rest of the port, goes to the backlog:
 
 ### 5. D1 int operands in `[[ ]]`
 
-- [ ] **B113** (open; DD30, DD66). Whole-int operands in `[[ ]]` compile,
+- [x] **B113** (open; DD30, DD66). Whole-int operands in `[[ ]]` compile,
   e.g. `[[ $(( 10 / z )) == 1 ]]`. Settled (D1): SB4030 "quote it"; `"$n"`
   and in-word interpolation stay legal.
+  - Landed in D1 (journal 535). The rule covers `[[ ]]` tests, dispatch
+    subjects and patterns, and attest predicates; sash-convert quotes the
+    int operands it writes. DD30, DD66 and DD57 addenda (2026-10-25). Specs
+    `30.50`-`30.65` and `57.178`-`57.191`; 15 existing specs rewritten to
+    quote. END is not checked yet (see B5).
+
+Filed as backlog tasks during D1, under the same rule as F15's:
+
+- `bug-fresh-clone-rustix-runtime-private` (P1): rustix 1.1.5 made
+  `rustix::runtime` private, and no Cargo.lock is tracked, so a fresh clone
+  cannot build sash-rt. The remedy is DG's call.
+- `bug-readline-into-int-ice` (P2): `readline` into an int ICEs natively and
+  emits C that gcc rejects; D1's attest advice leads straight to it.
+- `bug-expr-type-int-disposition` (P2): `${n:?msg}` on an int is typed as a
+  string, unlike `$n` and `${n:-…}`.
+- `bug-convert-annotate-midline` (P2): `--annotate` writes its `# was:`
+  comment mid-line, which comments out the rest of the line.
+- `bug-convert-test-whitespace-collapse` (P2): the converter collapses
+  whitespace inside a quoted test operand and splits it at `&&` / `||`.
+- `bug-convert-output-fails-to-compile` (P3): a catalogue of converter
+  output that fails to compile with no `# MANUAL:` marker, including `$#`
+  in a function (DD81's migration is `: @args`).
+- `q-attest-shorthand-int-operand` (P4): whether `attest n -n` on an int
+  stays SB4030, as D1 makes it; the attest-all form over an int array is
+  unaffected.
+- `bug-parse-error-in-block-cascades-sb4072` (P4): a parse error inside a
+  block also reports SB4072 at the block's closing `}`.
 
 ### 6. F7 condition status classifier
 
@@ -635,6 +662,10 @@ not fix, and what does not block the rest of the port, goes to the backlog:
     is a native ICE and prints `x` in C, because DD80's key check never
     runs in END. `bug-subscript-key-check-skips-positions` leaves END to
     this fix.
+  - Also (D1, journal 535): a whole-int `[[ ]]` operand in END still
+    compiles (`END { int n=5; [[ $n == 5 ]] && echo y }` prints `y`),
+    because D1's check runs in the pass that skips END. The B5 fix must
+    run `check_test_operand_types` there too.
 - [ ] **B6** (open; DD86). Typing depends on textual order, which DD86
   forbids: `fn f { exit $n }; int n=1` is a false SB4030; a function that
   assigns a string to a later `int` reaches a codegen ICE; a loop-carried

@@ -94,11 +94,13 @@ pub fn convert(source: &str, sc_findings: &[ScFinding], annotate: bool) -> Strin
         declared: HashSet::new(),
     };
     pass.walk(tree.root_node(), src);
-    let collections = Names {
+    let mut collections = Names {
         all: pass.names,
         maps: pass.maps,
         ints: collect_int_names(tree.root_node(), src),
+        int_typed: HashSet::new(),
     };
+    collections.int_typed = collect_int_typed(tree.root_node(), src, &collections.ints);
 
     // Walk the CST
     walk_node(
@@ -143,6 +145,17 @@ fn walk_node(
     annotate: bool,
     collections: &Names,
 ) {
+    // DD#30: sash's `[[ ]]` compares strings, and an int operand there is
+    // SB4030. Bash draws no such line, so an operand the converted script
+    // holds as an int is quoted, which is sash's int→string conversion. The
+    // patches are zero-width, so the operand's own rewrite (`$?` →
+    // `$(status)`) still applies between them.
+    if is_int_expansion(node, source, &collections.int_typed)
+        && is_string_test_operand(node, source)
+    {
+        patches.push(Patch::insert_at(node.start_byte(), "\""));
+        patches.push(Patch::insert_at(node.end_byte(), "\""));
+    }
     match node.kind() {
         "declaration_command" => {
             if convert_declaration(node, source, patches, prefix_lines, annotate, collections) {
@@ -1098,7 +1111,10 @@ fn mapfile_manual_reason(cmd: &str, flags: &[String]) -> String {
 /// Strip unnecessary double-quotes around `$var` / `${var}` in test expressions.
 /// In `[[ ]]`, word splitting doesn't apply, so quoting simple variable
 /// references is unnecessary.  This produces idiomatic `[[ $var ... ]]`.
-fn strip_unnecessary_quotes(inner: &str) -> String {
+///
+/// Except for a name in `int_typed`: there the quotes are the int→string
+/// conversion sash requires (DD#30), and stripping them is SB4030.
+fn strip_unnecessary_quotes(inner: &str, int_typed: &HashSet<String>) -> String {
     let mut result = String::with_capacity(inner.len());
     let chars: Vec<char> = inner.chars().collect();
     let mut i = 0;
@@ -1113,7 +1129,8 @@ fn strip_unnecessary_quotes(inner: &str) -> String {
                     && quoted[1..]
                         .chars()
                         .all(|c| c.is_alphanumeric() || c == '_' || c == '{' || c == '}');
-                if is_simple_var {
+                let name = quoted.get(1..).unwrap_or("").trim_matches(['{', '}']);
+                if is_simple_var && !int_typed.contains(name) {
                     result.push_str(&quoted);
                     i = close + 1;
                     continue;
@@ -1189,7 +1206,7 @@ fn convert_test_command(
         let inner = &text[2..text.len() - 2];
         // In [[ ]], quoting around simple $var is unnecessary — strip it
         // to produce idiomatic [[ ]] syntax.
-        let inner = strip_unnecessary_quotes(inner);
+        let inner = strip_unnecessary_quotes(inner, &collections.int_typed);
         let inner = fix_test_operators(&inner);
         let replacement = format!("[[ {} ]]", inner);
         patches.push(Patch::replace_node(
@@ -1547,6 +1564,207 @@ fn collect_int_names_into(node: Node, source: &[u8], ints: &mut HashSet<String>)
     }
 }
 
+/// Pre-pass: every name the converted script may hold as a sash `int` — the
+/// `-i` names, every arithmetic write target (`(( k = 3 ))`, `let j=4`,
+/// `k++`, a C-style `for` variable) and, to a fixpoint, every copy of an
+/// int-valued expansion (`rc=$?`, `n=$(( … ))`, `q=$p` for an int `p`).
+///
+/// A superset is safe: the set only decides which `[[ ]]` operands get
+/// quoted (see [`is_int_expansion`]), and quoting a whole operand never
+/// changes what a sash test means. A name it misses is SB4030 at compile
+/// time, never a silent change.
+fn collect_int_typed(root: Node, source: &[u8], ints: &HashSet<String>) -> HashSet<String> {
+    let mut typed = ints.clone();
+    collect_arith_writes(root, source, &mut typed);
+    while collect_int_copies(root, source, &mut typed) {}
+    typed
+}
+
+/// The assignment and `++`/`--` targets of every arithmetic context.
+fn collect_arith_writes(node: Node, source: &[u8], typed: &mut HashSet<String>) {
+    let written = match node.kind() {
+        "binary_expression" if in_arithmetic(node, source) => node
+            .child_by_field_name("operator")
+            .filter(|op| is_assign_operator(node_text(*op, source)))
+            .and_then(|_| node.child_by_field_name("left"))
+            .and_then(|left| written_name(left, source)),
+        "postfix_expression" | "unary_expression" if in_arithmetic(node, source) => node
+            .child_by_field_name("operator")
+            .filter(|op| matches!(node_text(*op, source), "++" | "--"))
+            .and_then(|_| prefix_incdec_operand(node, source)),
+        "variable_assignment"
+            if node
+                .parent()
+                .is_some_and(|p| p.kind() == "c_style_for_statement") =>
+        {
+            node.child_by_field_name("name")
+                .and_then(|name| written_name(name, source))
+        }
+        "command" => {
+            collect_let_writes(node, source, typed);
+            None
+        }
+        _ => None,
+    };
+    typed.extend(written);
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        collect_arith_writes(child, source, typed);
+    }
+}
+
+/// The names a `let` command writes. tree-sitter parses its arguments as
+/// words and strings rather than arithmetic, so they are scanned as text.
+fn collect_let_writes(node: Node, source: &[u8], typed: &mut HashSet<String>) {
+    let Some(name_node) = node.child_by_field_name("name") else {
+        return;
+    };
+    if node_text(name_node, source) != "let" {
+        return;
+    }
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        if child.is_named() && child != name_node {
+            let text = node_text(child, source).trim_matches(['"', '\'']);
+            typed.extend(let_written_names(text));
+        }
+    }
+}
+
+/// The identifiers an arithmetic expression assigns or steps: those followed
+/// by an assignment operator or `++`/`--`, or preceded by `++`/`--`. A false
+/// positive only over-quotes; see [`collect_int_typed`].
+fn let_written_names(text: &str) -> Vec<String> {
+    let b = text.as_bytes();
+    let ident = |c: u8| c.is_ascii_alphanumeric() || c == b'_';
+    let mut names = Vec::new();
+    let mut i = 0;
+    while i < b.len() {
+        if !ident(b[i]) {
+            i += 1;
+            continue;
+        }
+        let start = i;
+        while i < b.len() && ident(b[i]) {
+            i += 1;
+        }
+        // A number (`10`, `0x1f`), or a read through `$x` / `${x}`.
+        if b[start].is_ascii_digit() || (start > 0 && matches!(b[start - 1], b'$' | b'{')) {
+            continue;
+        }
+        let mut j = i;
+        while b.get(j).is_some_and(|c| c.is_ascii_whitespace()) {
+            j += 1;
+        }
+        let after = &b[j..];
+        let assigns = [
+            "<<=", ">>=", "+=", "-=", "*=", "/=", "%=", "&=", "|=", "^=", "++", "--",
+        ]
+        .iter()
+        .any(|op| after.starts_with(op.as_bytes()))
+            || (after.starts_with(b"=") && !after.starts_with(b"=="));
+        let before = text[..start].trim_end();
+        if assigns || before.ends_with("++") || before.ends_with("--") {
+            names.push(text[start..i].to_string());
+        }
+    }
+    names
+}
+
+/// One round of the copy fixpoint: a name assigned an int-valued expansion
+/// holds an int. Returns whether the set grew.
+fn collect_int_copies(node: Node, source: &[u8], typed: &mut HashSet<String>) -> bool {
+    let mut grew = false;
+    if node.kind() == "variable_assignment" {
+        let copies = node
+            .child_by_field_name("value")
+            .is_some_and(|value| is_int_expansion(value, source, typed));
+        let name = node
+            .child_by_field_name("name")
+            .and_then(|name| written_name(name, source));
+        if let (true, Some(name)) = (copies, name) {
+            grew |= typed.insert(name);
+        }
+    }
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        grew |= collect_int_copies(child, source, typed);
+    }
+    grew
+}
+
+/// The name a scalar write target names. A cell write `a[i]` is not one: an
+/// int collection is already in the set by its `-i` declaration, and any
+/// other collection cannot take the int (SB4030), so no compilable program
+/// needs it.
+fn written_name(node: Node, source: &[u8]) -> Option<String> {
+    if !matches!(node.kind(), "variable_name" | "word") {
+        return None;
+    }
+    let text = node_text(node, source);
+    is_clean_ident(text).then(|| text.to_string())
+}
+
+/// Whether `node` is an expansion the converted script evaluates as a sash
+/// `int` (DD#30): `$(( … ))`; `$?`, `$$`, `$!` and `$#`, which convert to
+/// `$(status)`, `$(getpid)`, `$(getcpid)` and an arithmetic count; a length
+/// `${#…}`; or a read of a name in `int_typed`.
+fn is_int_expansion(node: Node, source: &[u8], int_typed: &HashSet<String>) -> bool {
+    match node.kind() {
+        "arithmetic_expansion" => true,
+        "simple_expansion" => node.named_child(0).is_some_and(|name| {
+            let text = node_text(name, source);
+            match name.kind() {
+                "special_variable_name" => matches!(text, "?" | "$" | "!" | "#"),
+                "variable_name" => int_typed.contains(text),
+                _ => false,
+            }
+        }),
+        "expansion" => {
+            let text = node_text(node, source);
+            let inner = text
+                .strip_prefix("${")
+                .and_then(|t| t.strip_suffix('}'))
+                .unwrap_or("");
+            if let Some(rest) = inner.strip_prefix('#') {
+                return rest.is_empty() || length_operand(rest).is_some();
+            }
+            let end = inner
+                .find(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+                .unwrap_or(inner.len());
+            matches!(inner, "?" | "$" | "!") || (end > 0 && int_typed.contains(&inner[..end]))
+        }
+        _ => false,
+    }
+}
+
+/// Whether `node` is a whole operand of a `[ ]` / `[[ ]]` test that compares
+/// strings: not part of a word or string, and not an operand of the
+/// `-eq` family, which the converter rewrites to `(( ))`.
+fn is_string_test_operand(node: Node, source: &[u8]) -> bool {
+    let mut cur = node.parent();
+    while let Some(n) = cur {
+        match n.kind() {
+            "test_command" => return true,
+            "parenthesized_expression" | "unary_expression" => {}
+            "binary_expression" => {
+                let numeric = n.child_by_field_name("operator").is_some_and(|op| {
+                    matches!(
+                        node_text(op, source),
+                        "-eq" | "-ne" | "-lt" | "-le" | "-gt" | "-ge"
+                    )
+                });
+                if numeric {
+                    return false;
+                }
+            }
+            _ => return false,
+        }
+        cur = n.parent();
+    }
+    false
+}
+
 /// Whether an `expansion` is exactly `${name}` — one child, no operator, no
 /// subscript, nothing before the name. `${#s}`, `${s:-x}` and `${a[i]}` are
 /// all excluded: each does something the bare read does not.
@@ -1652,12 +1870,21 @@ fn arith_text_dispositions(expr: &str, collections: &Names) -> String {
 
 /// Whether `node` sits inside an arithmetic context — `$(( … ))`, a bare
 /// `(( … ))` statement, or a C-style `for (( … ))` header.
+///
+/// Only the `for`'s header: its body holds ordinary statements, so a
+/// `[[ $? == 0 ]]` there needs `$(status)`, not the DD#58 sexpr, and a
+/// string read there needs no integer disposition. Nor is anything inside a
+/// command substitution arithmetic, wherever the substitution sits — its
+/// body is statements.
 fn in_arithmetic(node: Node, source: &[u8]) -> bool {
+    let mut prev = node;
     let mut cur = node.parent();
     while let Some(n) = cur {
         match n.kind() {
-            "arithmetic_expansion" | "c_style_for_statement" => return true,
+            "arithmetic_expansion" => return true,
+            "c_style_for_statement" => return n.child_by_field_name("body") != Some(prev),
             "compound_statement" if n.child(0).is_some_and(|c| c.kind() == "((") => return true,
+            "command_substitution" => return false,
             // `let "x = $?"` is arithmetic too, but tree-sitter sees a
             // plain command whose arguments happen to be strings.
             "command" => {
@@ -1667,6 +1894,7 @@ fn in_arithmetic(node: Node, source: &[u8]) -> bool {
             }
             _ => {}
         }
+        prev = n;
         cur = n.parent();
     }
     false
@@ -2392,16 +2620,7 @@ fn is_int_literal(s: &str) -> bool {
 /// `None` leaves the expansion alone: `${##…}` is a prefix strip, not a
 /// length, and a non-identifier base is some other form entirely.
 fn length_expansion(rest: &str, collections: &Names, arith: bool) -> Option<String> {
-    if rest.is_empty() || rest.starts_with('#') {
-        return None;
-    }
-    let (base, subscript) = match rest.split_once('[') {
-        Some((b, sub)) => (b, Some(sub.strip_suffix(']')?)),
-        None => (rest, None),
-    };
-    if base.is_empty() || !base.chars().all(|c| c.is_alphanumeric() || c == '_') {
-        return None;
-    }
+    let (base, subscript) = length_operand(rest)?;
     // In arithmetic the DD#58 sexpr is the only spelling that parses: a
     // command substitution is not an arithmetic operand (SB4020).
     let (open, close) = if arith { ("(", ")") } else { ("$(", ")") };
@@ -2415,6 +2634,23 @@ fn length_expansion(rest: &str, collections: &Names, arith: bool) -> Option<Stri
     })
 }
 
+/// The base name and optional subscript of a `${#…}` length form, given the
+/// text after the `#`. `None` is the same verdict [`length_expansion`]
+/// gives, which [`is_int_expansion`] relies on.
+fn length_operand(rest: &str) -> Option<(&str, Option<&str>)> {
+    if rest.is_empty() || rest.starts_with('#') {
+        return None;
+    }
+    let (base, subscript) = match rest.split_once('[') {
+        Some((b, sub)) => (b, Some(sub.strip_suffix(']')?)),
+        None => (rest, None),
+    };
+    if base.is_empty() || !base.chars().all(|c| c.is_alphanumeric() || c == '_') {
+        return None;
+    }
+    Some((base, subscript))
+}
+
 /// What the pre-pass learned about names, threaded through the rewrite walk.
 pub(crate) struct Names {
     /// Every name used as a collection anywhere in the script.
@@ -2426,6 +2662,9 @@ pub(crate) struct Names {
     /// to sash `int`. Arithmetic on these needs no disposition — see
     /// [`arith_disposition`].
     ints: HashSet<String>,
+    /// Every name the converted script may hold as a sash `int` — a
+    /// superset of `ints`. See [`collect_int_typed`].
+    int_typed: HashSet<String>,
 }
 
 /// The pre-pass state: what names are collections, and which constructs need
@@ -2981,20 +3220,28 @@ fn apply_patches(
     let bytes = source.as_bytes();
     let mut result = String::with_capacity(source.len() + patches.len() * 32);
     let mut pos = 0;
+    // An annotation waits for the zero-width insertions at its patch's end:
+    // those close the converted text (the quotes around a DD#30 test
+    // operand), and a `# was:` written inside the quotes would become part
+    // of the operand rather than a comment.
+    let mut pending: Option<&str> = None;
 
     for patch in &sorted {
+        if !(patch.start == patch.end && patch.start == pos) {
+            push_annotation(&mut result, pending.take());
+        }
         if patch.start > pos {
             result.push_str(std::str::from_utf8(&bytes[pos..patch.start]).unwrap_or(""));
         }
         result.push_str(&patch.replacement);
         if annotate {
             if let Some(ref orig) = patch.original {
-                result.push_str("  # was: ");
-                result.push_str(orig);
+                pending = Some(orig);
             }
         }
         pos = patch.end;
     }
+    push_annotation(&mut result, pending.take());
     if pos < bytes.len() {
         result.push_str(std::str::from_utf8(&bytes[pos..]).unwrap_or(""));
     }
@@ -3027,6 +3274,14 @@ fn apply_patches(
     }
 
     final_out
+}
+
+/// Write a pending `--annotate` comment for a converted span.
+fn push_annotation(out: &mut String, original: Option<&str>) {
+    if let Some(orig) = original {
+        out.push_str("  # was: ");
+        out.push_str(orig);
+    }
 }
 
 // ── Helpers ───────────────────────────────────────────────────

@@ -6,7 +6,7 @@ set -eu
 # Run only in native mode to avoid 3× redundancy.
 [[ ${SASH_MODE:-native} != native ]] && exit 0
 setup convert
-plan=202
+plan=216
 echo "1..$plan" >&3
 
 set +e
@@ -1389,6 +1389,137 @@ echo ${a[a[0]]}'
 run_convert '#!/bin/bash
 [ aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa=b ]'
 [[ $rc = 0 && $out == *'# MANUAL: could not parse'*'…'* && -z $err ]]; chk 57.177
+
+# ── An int operand of a string test is quoted (DD#30) ──────────────────
+# sash's `[[ ]]` compares strings and an int is never converted implicitly,
+# so a whole int operand is SB4030; `"$n"` is the explicit conversion. The
+# converter quotes every whole expansion that holds an int in sash. Which
+# names do is a name-based superset — `declare -i`/`local -i`, arithmetic
+# writes, `let`, and copies of an int expansion — because over-quoting a
+# whole expansion never changes a `[[ ]]` meaning, while a missed name is a
+# loud SB4030, never a silent change. Before this, every converted test on
+# an int failed to compile.
+
+# 57.178 an int variable is quoted
+run_convert '#!/bin/bash
+declare -i n=3
+if [[ $n == 3 ]]; then echo yes; fi'
+[[ $rc = 0 && $out == *'[[ "$n" == 3 ]]'* && -z $err ]]; chk 57.178
+
+# 57.179 CONTROL for 57.178: a string variable keeps the bare form. Without
+# it, 57.178 is satisfied by a converter that quotes every operand.
+run_convert '#!/bin/bash
+s=abc
+if [[ $s == abc ]]; then echo m; fi'
+[[ $rc = 0 && $out == *'[[ $s == abc ]]'* && $out != *'"$s"'* && -z $err ]]; chk 57.179
+
+# 57.180 `$?` converts to `$(status)`, an int, so it is quoted too
+run_convert '#!/bin/bash
+/bin/true
+if [[ $? == 0 ]]; then echo ok; fi'
+[[ $rc = 0 && $out == *'[[ "$(status)" == 0 ]]'* && -z $err ]]; chk 57.180
+
+# 57.181 an arithmetic expansion is an int
+run_convert '#!/bin/bash
+declare -i n=1
+if [[ $(( n - 1 )) == 0 ]]; then echo zero; fi'
+[[ $rc = 0 && $out == *'[[ "$(( n - 1 ))" == 0 ]]'* && -z $err ]]; chk 57.181
+
+# 57.182 the quote-stripping pass keeps an int operand's quotes. `[ ]` →
+# `[[ ]]` strips quotes it no longer needs, and these it does.
+run_convert '#!/bin/bash
+declare -i n=3
+if [ "$n" = 3 ]; then echo eq; fi'
+[[ $rc = 0 && $out == *'[[ "$n" == 3 ]]'* && -z $err ]]; chk 57.182
+
+# 57.183 a name assigned in arithmetic holds an int
+run_convert '#!/bin/bash
+(( z = 5 ))
+if [[ $z == 5 ]]; then echo five; fi'
+[[ $rc = 0 && $out == *'[[ "$z" == 5 ]]'* && -z $err ]]; chk 57.183
+
+# 57.184 so does a copy of an int expansion
+run_convert '#!/bin/bash
+declare -i n=3
+m=$n
+if [[ $m == 3 ]]; then echo three; fi'
+[[ $rc = 0 && $out == *'[[ "$m" == 3 ]]'* && -z $err ]]; chk 57.184
+
+# 57.185 and every name a `let` writes. tree-sitter parses `let`'s arguments
+# as words and strings, not arithmetic, so they are found as text.
+run_convert '#!/bin/bash
+let "j = 2" k=7
+if [[ $j == 2 && $k == 7 ]]; then echo let; fi'
+[[ $rc = 0 && $out == *'[[ "$j" == 2 && "$k" == 7 ]]'* && -z $err ]]; chk 57.185
+
+# 57.186 a C-style `for` body is not arithmetic — only its header is. The
+# body was treated as arithmetic, so `$?` became the sexpr `(status)` and a
+# read gained an arithmetic abort disposition, both inside a `[[ ]]`.
+run_convert '#!/bin/bash
+for (( i=0; i<1; i++ )); do
+  /bin/true
+  if [[ $? == 0 && $i == 0 ]]; then echo body; fi
+done'
+[[ $rc = 0 && $out == *'[[ "$(status)" == 0 && "$i" == 0 ]]'* \
+   && $out != *'(status) =='* && $out != *'${i:?'* && -z $err ]]; chk 57.186
+
+# 57.187 --annotate never puts its comment inside the added quotes. There
+# it would become part of the operand, and the test would compare against
+# the comment's text. (A mid-line comment still comments out the rest of
+# its line; that is notes/tasks/bug-convert-annotate-midline.md.)
+run_convert_annotate '#!/bin/bash
+/bin/true
+if [[ $? == 0 ]]; then echo ok; fi'
+[[ $rc = 0 && $out == *'"$(status)"'* && $out != *'"$(status)  # was'* && -z $err ]]; chk 57.187
+
+# 57.188 round trip: the conversions above compile and print what bash does
+run_convert '#!/bin/bash
+declare -i n=3
+if [[ $n == 3 ]]; then echo yes; fi
+for (( i=0; i<1; i++ )); do
+  /bin/true
+  if [[ $? == 0 && $i == 0 ]]; then echo body; fi
+done'
+converted=$out
+run_sash "$converted"
+[[ $rc = 0 && $out = $'yes\nbody' && -z $err ]]; chk 57.188
+
+# 57.189 nothing inside a command substitution is arithmetic, wherever the
+# substitution sits: its body is statements. Before, a `$?` there became the
+# sexpr `(status)` and a string read gained an integer disposition, both
+# inside a `[[ ]]`. (sash rejects a capture as an arithmetic operand, SB4035,
+# so this pins the text.)
+run_convert '#!/bin/bash
+s=abc
+/bin/true
+echo $(( $( [[ $? == 0 && $s == abc ]] && echo 1 ) + 1 ))'
+[[ $rc = 0 && $out == *'[[ "$(status)" == 0 && $s == abc ]]'* \
+   && $out != *'(status) =='* && $out != *'${s:?'* && -z $err ]]; chk 57.189
+
+# 57.190 the other int forms are quoted too: a length, a braced read, `$$`, a
+# unary operand, a parenthesised test, a single-bracket test, and a name
+# written by `++`. The round trip prints what bash does.
+run_convert '#!/bin/bash
+s=abc
+declare -i n=3
+(( ++q ))
+if [[ ${#s} == 3 && ${n} == 3 && -n $n && ( $q == 1 ) ]]; then echo forms; fi
+if [ $n = 3 ] && [[ $$ != 0 ]]; then echo more; fi'
+converted=$out
+run_sash "$converted"
+[[ $converted == *'[[ "$(strlen $s)" == 3 && "${n}" == 3 && -n "$n" && ( "$q" == 1 ) ]]'* \
+   && $converted == *'[[ "$n" == 3 ]] && [[ "$(getpid)" != 0 ]]'* \
+   && $rc = 0 && $out = $'forms\nmore' && -z $err ]]; chk 57.190
+
+# 57.191 CONTROL: an operand of the `-eq` family is not quoted. The converter
+# rewrites those tests to `(( ))`, where an int is already an int.
+run_convert '#!/bin/bash
+declare -i n=3
+if [[ $n -eq 3 ]] && [ $n -lt 4 ]; then echo num; fi'
+converted=$out
+run_sash "$converted"
+[[ $converted == *'(( n == 3 )) && (( n < 4 ))'* && $converted != *'"$n"'* \
+   && $rc = 0 && $out = num && -z $err ]]; chk 57.191
 
 
 set -e

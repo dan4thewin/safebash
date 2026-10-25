@@ -705,10 +705,12 @@ run_sash 'int x=0; (( x-- )); echo $x'
 run_sash 'int x=0; if (( x++, x < 5 )); then echo y; fi'
 [[ $rc = 0 && $out = y && -z $err ]]; chk cov.153
 
-# cov.154 `$$` as a `[[ ]]` operand — skip_dollar_var's special-character set
-# (`@ * # ? ! $`) after a `$`. `$?`/`$#` are rejected there (SB5012/SB5024),
-# so `$$` is the spelling that actually reaches the scan.
-run_sash 'if [[ $$ == 0 ]]; then echo y; fi'
+# cov.154 `$$` as a `[[ ]]` operand. This was written for skip_dollar_var's
+# special-character arm, which no `[[ ]]` operand reaches: that scan's only
+# caller is the brace-less disposition operand, and vm.bl22 covers the arm.
+# `$$` is an int, and a `[[ ]]` test compares strings, so it is quoted
+# (DD#30); a pid is never 0.
+run_sash 'if [[ "$$" == 0 ]]; then echo y; fi'
 [[ $rc = 0 && -z $out && -z $err ]]; chk cov.154
 
 # cov.160-167 the C-style `for` header is an arithmetic STATEMENT context and
@@ -1600,8 +1602,8 @@ __let_exit hi; echo $?'
 run_sash 'a=$(getppid)
 b=$(getppid)
 c=$(getpid)
-[[ $a == $b ]] && echo stable
-[[ $a == $c ]] || echo distinct'
+(( a == b )) && echo stable
+(( a == c )) || echo distinct'
 [[ $rc = 0 && $out = "stable
 distinct" && -z $err ]]; chk cov.331
 # cov.332 getppid is a positive integer (string form round-trips to int)
@@ -1613,13 +1615,13 @@ int n=${a:-0}
 # returning a constant is the failure this catches.
 run_sash 'a=$(random)
 b=$(random)
-[[ $a == $b ]] || echo differ'
+(( a == b )) || echo differ'
 [[ $rc = 0 && $out = "differ" && -z $err ]]; chk cov.333
 # cov.334 random is NON-NEGATIVE. Guaranteed, not luck: sash_random masks
 # with `& i64::MAX` to clear the sign bit (DG 2026-07-07, `$(random)` range),
-# so a leading `-` here would be a real regression in the runtime.
+# so a negative draw here would be a real regression in the runtime.
 run_sash 'r=$(random)
-[[ $r != -* ]] && echo nonneg'
+(( r >= 0 )) && echo nonneg'
 [[ $rc = 0 && $out = "nonneg" && -z $err ]]; chk cov.334
 
 # cov.335-338 the SAME two intrinsics in true string context — an unassigned
