@@ -303,9 +303,32 @@ Filed as backlog tasks during D1, under the same rule as F15's:
 
 ### 6. F7 condition status classifier
 
-- [ ] **B85** (fixed-on-branch; DD55). Wildcard condition-operand scans
+- [x] **B85** (fixed-on-branch; DD55). Wildcard condition-operand scans
   settled on the preceding command: `cmd; if [[ … ]]` lost `cmd`'s abort.
   Branch specs: 55.89-55.103.
+  - Landed in F7 (journal 536), as-is: one shared definition of the
+    condition operand (`ssa::condition_operand_index`), used by the
+    transform's uncheck and both backends' redirect guard. DD55 addendum and
+    DD70 note (2026-10-26). Specs `55.89`-`55.103` verbatim, plus `55.104`
+    (`if a; [[ … ]]`) and `55.105`/`55.106`, which pin the pipeline and
+    redirected-call arms; a unit test pins the `$?` assignment arm.
+
+Filed as backlog tasks during F7, under the same rule as F15's:
+
+- `bug-match-out-array-capture-operand-ice` (P1): a capture as the subject
+  or pattern of the out-array `match … m` / `matchall` ICEs ("should have
+  been lifted"): a function capture with or without `--no-taint`, an
+  external one under `--no-taint` (SB5020 otherwise). It is pre-existing.
+  The 2-argument `match` and `$(match …)` work. Same shape as the done
+  `bug-fn-capture-in-test-operand-ice`.
+- `q-convert-capture-in-condition-operand` (P3): converted bash with an
+  external capture in a test operand now aborts under `--no-taint` where
+  bash carries on; whether the converter should flag it, rewrite it to
+  `$(- …)`, or leave it.
+- `q-condition-classifier-pipelinefinish` (P4): the classifier's
+  `PipelineFinish` arm cannot be reached and would be wrong for a finish
+  that preserves the status; ICE or precise answer. Also notes that its
+  `Command` arm counts every internal sigil, as HEAD's scan did.
 
 ### 7. B55 output-path panic
 

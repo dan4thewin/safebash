@@ -144,12 +144,9 @@ fn install_end_block(ssa: &mut SsaProgram, state: &mut VersionState) {
     ssa.end_block = Some(end_block);
 }
 
-/// DD#55: any Command or Pipeline that produces a value consumed
-/// by a Branch terminator (i.e. is in condition position) must be
-/// marked `checked = false` so that codegen does not insert an
-/// abort-on-nonzero point. The relevant inst is the *last* one in
-/// the block before the branch, so we scan in reverse and stop at
-/// the first match.
+/// DD#55: the instruction whose status a Branch or Loop terminator reads is in
+/// condition position, so a nonzero status there is the else / loop-exit path
+/// and must not abort. See [`uncheck_last_condition_inst`].
 fn mark_unchecked_in_conditions(ssa: &mut SsaProgram) {
     for block in ssa.blocks.values_mut() {
         // `if`/`&&`/`||` conditions end in a Branch; `while`/`until` conditions
@@ -164,30 +161,23 @@ fn mark_unchecked_in_conditions(ssa: &mut SsaProgram) {
     }
 }
 
-/// Mark the last status-bearing inst of a condition block `checked = false`.
-/// DD#70: a `NegateTestResult` sigil sits *after* the operand it negates, so
-/// skip it — the real command/pipeline (which the `!` catches) is the one to
-/// uncheck.
+/// Clear the abort on the instruction in condition position, as
+/// [`crate::ssa::condition_operand_index`] defines it — the definition both
+/// backends use for the redirect guard, so the two cannot pick different
+/// instructions. Only a command or pipeline aborts on its status. A `[[ … ]]`,
+/// a read, a `match`, `attest … in` and `$?` never do, and a redirect scope
+/// recorded condition position on itself when it was built: those leave
+/// nothing to clear, and they end the search — the command before them is not
+/// in condition position and keeps its abort.
 pub(super) fn uncheck_last_condition_inst(insts: &mut [SsaInst]) {
-    for inst in insts.iter_mut().rev() {
-        match inst {
-            SsaInst::Command { name, .. } if name == "__negate_test_result" => continue,
-            // A redirect scope (`f > out.txt`) always closes its block with
-            // the Branch that skips the body on a failed `open(2)`, so a
-            // Branch here says nothing about whether the *call* is in
-            // condition position — the transform already recorded that on the
-            // scope itself. Stop, so an unrelated command earlier in the same
-            // block is not unchecked on the strength of a branch that is not
-            // its own.
-            SsaInst::RedirectPush { .. } => return,
-            SsaInst::Command { checked, .. }
-            | SsaInst::Pipeline { checked, .. }
-            | SsaInst::PipelineFinish { checked, .. } => {
-                *checked = false;
-                return;
-            }
-            _ => {}
-        }
+    let Some(idx) = crate::ssa::condition_operand_index(insts) else {
+        return;
+    };
+    if let SsaInst::Command { checked, .. }
+    | SsaInst::Pipeline { checked, .. }
+    | SsaInst::PipelineFinish { checked, .. } = &mut insts[idx]
+    {
+        *checked = false;
     }
 }
 

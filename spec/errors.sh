@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup errors
-plan=491
+plan=509
 echo "1..$plan" >&3
 
 set +e
@@ -1379,6 +1379,158 @@ echo done'
   run_sash '-[[ -f /etc/passwd ]]
 echo done'
   [[ $rc = 0 && $out = "done" && -z $err && -z $rerr ]]; chk 55.75
+
+# --- 55.89-55.106: the condition is the LAST status-setting instruction -----
+# DD#55 catches the status of the condition operand and nothing else: a
+# command before it keeps its abort, and so does a capture inside a test
+# operand, which is an argument rather than the condition. The transform's
+# uncheck scan and the backends' redirect-guard scan each listed the
+# instructions they recognised and passed over the rest, so a `[[ … ]]`, a
+# `readline`, a `match`, an `attest … in` or a `return [[ … ]]` in condition
+# position was skipped and the scan settled on the command before it. That
+# command then failed silently, its redirect failure was "caught", and
+# `while [[ $(cmd) … ]]` looped on a failing capture. Every shape from 55.89
+# to 55.104 ran on to `done` before the fix, in both backends. Journal 536.
+  # 55.89 a command before an `if [[ … ]]`
+  run_sash 'x=a
+/bin/sh -c "exit 3"
+if [[ $x == a ]] { echo yes }
+echo done'
+  [[ $rc = 3 && -z $out && -z $err \
+ && $rerr == *'/bin/sh: command failed (exit 3)'* ]]; chk 55.89
+
+  # 55.90 a failed capture in the `[[ … ]]` operand itself
+  SASH_CFLAGS=--no-taint run_sash 'if [[ $(/bin/false) == "" ]] { echo yes }
+echo done'
+  [[ $rc = 1 && -z $out && -z $err \
+ && $rerr == *'/bin/false: command failed (exit 1)'* ]]; chk 55.90
+
+  # 55.91 ... in a `while` condition, which looped on the failure
+  SASH_CFLAGS=--no-taint run_sash 'while [[ $(/bin/false) == "" ]] { echo body; break }
+echo done'
+  [[ $rc = 1 && -z $out && -z $err \
+ && $rerr == *'/bin/false: command failed (exit 1)'* ]]; chk 55.91
+
+  # 55.92 a command before the `[[ … ]]` left operand of `&&`
+  run_sash 'x=a
+/bin/sh -c "exit 3"
+[[ $x == a ]] && echo yes
+echo done'
+  [[ $rc = 3 && -z $out && -z $err \
+ && $rerr == *'/bin/sh: command failed (exit 3)'* ]]; chk 55.92
+
+  # 55.93 ... before `if ! [[ … ]]` (DD#70: the sigil follows its operand)
+  run_sash 'x=a
+/bin/sh -c "exit 3"
+if ! [[ $x == b ]] { echo yes }
+echo done'
+  [[ $rc = 3 && -z $out && -z $err \
+ && $rerr == *'/bin/sh: command failed (exit 3)'* ]]; chk 55.93
+
+  # 55.94 ... before the dispatch form (DD#66)
+  run_sash 'x=a
+/bin/sh -c "exit 3"
+[[ $x == a { echo a } || { echo other } ]]
+echo done'
+  [[ $rc = 3 && -z $out && -z $err \
+ && $rerr == *'/bin/sh: command failed (exit 3)'* ]]; chk 55.94
+
+  # 55.95 ... before `if readline`
+  SASH_CFLAGS=--no-taint run_sash '/bin/sh -c "exit 3"
+if readline x < /dev/null { echo "got $x" } else { echo eof }
+echo done'
+  [[ $rc = 3 && -z $out && -z $err \
+ && $rerr == *'/bin/sh: command failed (exit 3)'* ]]; chk 55.95
+
+  # 55.96 ... before `if match`
+  run_sash 'x=ab
+/bin/sh -c "exit 3"
+if match $x "a(b)" m { echo "${m[1]}" }
+echo done'
+  [[ $rc = 3 && -z $out && -z $err \
+ && $rerr == *'/bin/sh: command failed (exit 3)'* ]]; chk 55.96
+
+  # 55.97 ... before `if attest … in` (DD#121)
+  run_sash 'array a=(x y)
+/bin/sh -c "exit 3"
+if attest v in a [[ -n $v ]] { echo all } else { echo some }
+echo done'
+  [[ $rc = 3 && -z $out && -z $err \
+ && $rerr == *'/bin/sh: command failed (exit 3)'* ]]; chk 55.97
+
+  # 55.98 ... before `if read`, DD#99's array read
+  SASH_CFLAGS=--no-taint run_sash '/bin/sh -c "exit 3"
+if read a < /dev/null { echo "got ${a[0]:-none}" } else { echo eof }
+echo done'
+  [[ $rc = 3 && -z $out && -z $err \
+ && $rerr == *'/bin/sh: command failed (exit 3)'* ]]; chk 55.98
+
+  # 55.99 a failed capture whose target the next condition attests: the
+  # capture is a statement of its own, not the condition
+  run_sash 'y=$(/bin/sh -c "echo b; exit 3")
+if attest y [[ -n $y ]] { echo "yes $y" } else { y=z }
+echo "done $y"'
+  [[ $rc = 3 && -z $out && -z $err \
+ && $rerr == *'/bin/sh: command failed (exit 3)'* ]]; chk 55.99
+
+  # 55.100 a command before `return [[ … ]]` in a condition function
+  run_sash 'fn p { /bin/sh -c "exit 3"; return [[ $1 == a ]] }
+if p a { echo yes } else { echo no }
+echo done'
+  [[ $rc = 3 && -z $out && -z $err \
+ && $rerr == *'/bin/sh: command failed (exit 3)'* ]]; chk 55.100
+
+  # 55.101 a failed capture in the operand of `return [[ … ]]`
+  SASH_CFLAGS=--no-taint run_sash 'fn p { return [[ $(/bin/sh -c "echo a; exit 3") == a ]] }
+if p { echo yes } else { echo no }
+echo done'
+  [[ $rc = 3 && -z $out && -z $err \
+ && $rerr == *'/bin/sh: command failed (exit 3)'* ]]; chk 55.101
+
+  # 55.102 ... in the `[[ … ]]` right operand of a caught `||`
+  SASH_CFLAGS=--no-taint run_sash 'if /bin/false || [[ $(/bin/sh -c "echo a; exit 3") == a ]] { echo yes } else { echo no }
+echo done'
+  [[ $rc = 3 && -z $out && -z $err \
+ && $rerr == *'/bin/sh: command failed (exit 3)'* ]]; chk 55.102
+
+  # 55.103 a redirect failure before an `if [[ … ]]` is not the condition's
+  run_sash 'x=a
+/bin/echo hi > /nonexistent_dir_55/f
+if [[ $x == a ]] { echo yes }
+echo done'
+  [[ $rc = 1 && -z $out && -z $err \
+ && $rerr == *'/nonexistent_dir_55/f: No such file or directory'* ]]; chk 55.103
+
+  # 55.104 ... as the non-final member of an `if` list. DD#55: `if a; b` is
+  # `a; if b`, so `a` is a bare command and keeps its abort. bc.a7 pins that
+  # for `if false; true`; with a `[[ … ]]` as the final member the scan
+  # skipped the test, settled on `a` and unchecked it
+  run_sash 'x=a
+if /bin/sh -c "exit 3"; [[ $x == a ]] { echo yes }
+echo done'
+  [[ $rc = 3 && -z $out && -z $err \
+ && $rerr == *'/bin/sh: command failed (exit 3)'* ]]; chk 55.104
+
+  # 55.105-55.106 aborted before the fix too: the old scan unchecked a
+  # pipeline and stopped at a redirect. No shape above reaches those two
+  # arms of the shared classifier (ssa::sets_condition_status), so these
+  # pin them.
+  # 55.105 a command before an `if` whose condition is a pipeline
+  run_sash '/bin/sh -c "exit 3"
+if /bin/true | /bin/true { echo yes }
+echo done'
+  [[ $rc = 3 && -z $out && -z $err \
+ && $rerr == *'/bin/sh: command failed (exit 3)'* ]]; chk 55.105
+
+  # 55.106 a command before a redirected function call. The inlined call
+  # ends the caller's block in a branch on the redirect, so the scan runs
+  # there too, and the redirect is that branch's condition
+  run_sash 'fn f { echo hi }
+/bin/sh -c "exit 3"
+f > /dev/null
+echo done'
+  [[ $rc = 3 && -z $out && -z $err \
+ && $rerr == *'/bin/sh: command failed (exit 3)'* ]]; chk 55.106
 
 # --- 95.13-95.20: SB4056, a list/pipeline operator with no right operand ----
 # `parse_trailing_list_op` did `parse_list_operand(...).unwrap_or(true_cmd)`,

@@ -281,3 +281,50 @@ skipped in a caught position (the aggregate's real status is the condition
 value). native+c; janet emits conditions from the AST (pre-existing
 control-flow gap, `cf-backend-gaps-brace-surfaced` — brace.sh is native-only).
 spec brace.sh bc.a6b/a7/a8/a9/e1/e2, errors.sh cc.1-4. Journal 153.
+
+## Addendum (2026-10-26): the condition is the last status-setting instruction
+
+A condition catches the status of its operand and nothing else. Three scans
+decided which instruction that was: the transform's, which clears the
+operand's abort, and one in each backend, which marks the operand's redirect
+open(2) failure as caught (DD#70). Each listed the instructions it recognised
+and passed over the rest. A `[[ … ]]`, a `readline` or `read`, a `match`, an
+`attest … in`, the dispatch form or a `return [[ … ]]` in condition position
+was therefore skipped, and the scan settled on whatever command came before
+it. That command's failure, and its redirect failure, went unchecked.
+
+The operand is now the **last instruction in the condition's block that sets
+the status** the block's `Branch` or `Loop` reads. `ssa::condition_operand_index`
+is the one definition. The transform clears the abort of that instruction
+only, and both backends treat that instruction's redirect alone as caught
+(`ssa::condition_inst_index`). Its classifier, `ssa::sets_condition_status`,
+is total over `SsaInst`.
+
+Behaviour that changes, all of it previously silent:
+
+- A command or a redirect failure **before** such a condition aborts, as it
+  would before any other statement. That includes the non-final member of
+  `if a; [[ … ]]`, which this DD already treats as `a; if [[ … ]]`.
+- A failed capture **inside** a `[[ … ]]` operand aborts: the capture is an
+  argument of the test, not the condition. A function capture there already
+  aborted. An external capture can only reach a test operand under
+  `--no-taint`, where `while [[ $(cmd) … ]]` used to loop on `cmd`'s failure.
+- `cmd > /bad; if [[ … ]]` no longer "catches" `cmd`'s failed open.
+
+Unchanged, and pinned now because no other spec reaches those arms of the
+classifier: a pipeline as the condition, and a redirected function call.
+The inlined call ends the caller's block in a `Branch` on the redirect,
+whose operand is the redirect scope. Both already kept the abort of the
+command before them.
+
+A `$?` assignment (`return N`, DD#74) sets the status too. No program can
+tell that arm from its opposite, because each producer ends its block in a
+`Goto` or `Return`, or opens a fresh block in which nothing before the
+assignment sets the status; a unit test in `ssa.rs` pins it instead. A reader's
+`PipelineFinish` is also counted, but cannot reach the scan. Reader cleanup,
+which runs before the scan and is its only producer, never leaves one in a
+block that ends in a `Branch` or `Loop`: on such an edge it adds a bridging
+`Goto` block (`notes/tasks/q-condition-classifier-pipelinefinish.md`).
+
+Ported from the batch-531 reference branch (finding B85), as-is. Specs:
+errors.sh 55.89-55.106. Journal 536.

@@ -158,10 +158,14 @@ open's `-1` being discarded, leaving fd 1 = stdout). Consequences:
 - **`-` does not reach the open** — the `-` binds to the *command*
   (echo's write verdict), not the prior implicit `exec N>file`. So
   `- echo > /bad` still **aborts**.
-- Implementation note (no new IR field): the "in condition" signal is the
-  last `Command`/`Pipeline` of a `Branch`-terminated block (codegen
-  derives it the same way transform's `mark_unchecked_in_conditions`
-  does), kept distinct from the `-`-polluted `checked` flag.
+- Implementation note (no new IR field): the "in condition" signal is
+  derived, and kept distinct from the `-`-polluted `checked` flag. It was
+  first the last `Command`/`Pipeline` of a `Branch`-terminated block. Since
+  2026-10-26 (DD#55's addendum of that date) it is the instruction
+  `ssa::condition_inst_index` selects: the last instruction that sets the
+  status, in a block that ends in a `Branch` or a `Loop`. That is the same
+  instruction the transform's `mark_unchecked_in_conditions` unchecks, and
+  both backends call the one function.
 
 ## Diagnostic contract
 

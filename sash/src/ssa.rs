@@ -1434,13 +1434,16 @@ pub enum Terminator {
 ///   places that sigil *after* the operand it negates, and DD#55 counts the
 ///   operand of `!` as condition position. Both backends took the sigil for
 ///   the condition, so `if ! cmd > /bad/f` aborted in both.
+/// - the scan stops at **every** instruction that sets the status
+///   ([`condition_operand_index`]). It stopped only at those that carry
+///   redirects, so `cmd > /bad/f; if [[ … ]]` passed over the `[[ … ]]` and
+///   caught `cmd`'s failed open instead of aborting.
 ///
-/// The reads are included alongside Command/Pipeline because they carry
-/// their own redirects and run the same open(2) guard: `if read a < f` must
-/// catch exactly as `if echo > f` does. This is deliberately a wider set
-/// than transform's `uncheck_last_condition_inst`, which answers a different
-/// question — whether a nonzero *status* aborts — and so covers only the
-/// status-bearing Command/Pipeline.
+/// That is also the instruction the transform unchecks, so a status the
+/// condition catches and a redirect failure it catches belong to one
+/// instruction. Only redirect guards read `in_condition`; selecting one that
+/// has none (a `[[ … ]]`, a `$?` assignment) flags nothing, which is right —
+/// the command before it is not in condition position.
 pub(crate) fn condition_inst_index(block: &BasicBlock) -> Option<usize> {
     if !matches!(
         block.terminator,
@@ -1448,20 +1451,64 @@ pub(crate) fn condition_inst_index(block: &BasicBlock) -> Option<usize> {
     ) {
         return None;
     }
-    block.insts.iter().rposition(|i| match i {
+    condition_operand_index(&block.insts)
+}
+
+/// DD#55: index of the instruction whose status a condition reads — the
+/// **last one in `insts` that sets the status** — or `None` if none does.
+///
+/// Shared by both backends (through [`condition_inst_index`]) and by the
+/// transform, which clears that instruction's abort. Each used to scan for
+/// itself and pass over every instruction it did not list, so a `[[ … ]]`, a
+/// read or a `match` in condition position was skipped and the scan settled
+/// on whatever command preceded it: `cmd; if [[ … ]]` ignored `cmd`'s failure,
+/// and a failed capture in the test's operand never aborted.
+pub(crate) fn condition_operand_index(insts: &[SsaInst]) -> Option<usize> {
+    insts.iter().rposition(sets_condition_status)
+}
+
+/// Does `inst` set the status a following condition reads? `true` for exactly
+/// the instructions both backends lower to a write of the test result; `false`
+/// for those a condition reads straight through.
+///
+/// **Total over `SsaInst` on purpose — do not add a wildcard.** The two scans
+/// this replaced each ended in one, which is how both came to skip the
+/// `[[ … ]]` they were looking for.
+fn sets_condition_status(inst: &SsaInst) -> bool {
+    match inst {
+        // DD#70: the `!` sigil follows the operand it negates and only
+        // rewrites that operand's status; the operand is in condition position.
         SsaInst::Command { name, .. } if name == "__negate_test_result" => false,
         SsaInst::Command { .. }
         | SsaInst::Pipeline { .. }
         | SsaInst::PipelineFinish { .. }
+        | SsaInst::Test(..)
         | SsaInst::ReadLine { .. }
         | SsaInst::ReadArray { .. }
+        | SsaInst::MatchInto { .. }
+        | SsaInst::AttestAll { .. }
         // A redirect scope (`f > out.txt`) ends its block with the Branch
         // that skips the body when the open fails, so the scope — not some
         // earlier command that happens to share the block — is the
         // instruction in condition position.
         | SsaInst::RedirectPush { .. } => true,
-        _ => false,
-    })
+        // DD#74: `return N` is `Assign(?, N)`, and both backends keep the test
+        // result in step with `$?`.
+        SsaInst::Assign { target, .. } => target.name == "?",
+        SsaInst::SubscriptAssign { .. }
+        | SsaInst::ArrayAppend { .. }
+        | SsaInst::MapFromArray { .. }
+        | SsaInst::SplitValue { .. }
+        | SsaInst::ArgvFill { .. }
+        | SsaInst::KeysFill { .. }
+        | SsaInst::CaptureStart { .. }
+        // A capture condition (`if x=$(cmd)`, DD#88) reads the body's status
+        // through the capture's close and the assignment of its target.
+        | SsaInst::CaptureEnd { .. }
+        | SsaInst::RedirectPop { .. }
+        | SsaInst::Attest { .. }
+        | SsaInst::AttestRetag { .. } => false,
+    }
 }
 
 /// The complete SSA representation of a program.
@@ -2383,5 +2430,34 @@ mod checked_arith_op_tests {
                  unreachable overflow path"
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod condition_operand_tests {
+    use super::{condition_operand_index, SsaInst, SsaValue, VarRef};
+    use crate::ir::VarType;
+
+    /// DD#74: `return N` is `Assign(?, N)`, so an assignment to `?` sets the
+    /// status a following condition reads and any other assignment is read
+    /// straight through. No program can tell the two answers apart, so the
+    /// spec suite cannot pin this arm. Every producer of `Assign(?, …)` —
+    /// `return N`, an int call's restore, the caught `||` reset, a `case`
+    /// with no match — either ends its block in a `Goto`/`Return`, which no
+    /// condition scans, or starts a fresh block with nothing before it that
+    /// sets the status. Selecting the assignment, or passing over it to
+    /// nothing, then unchecks and guards the same thing: nothing.
+    #[test]
+    fn an_assignment_to_status_is_the_condition_operand() {
+        let cmd = SsaInst::command("/bin/true", vec![], vec![], true);
+        let assign = |name: &str| SsaInst::Assign {
+            target: VarRef::new_typed(name, 1, VarType::Int),
+            value: SsaValue::Literal("3".into()),
+        };
+        assert_eq!(
+            condition_operand_index(&[cmd.clone(), assign("?")]),
+            Some(1)
+        );
+        assert_eq!(condition_operand_index(&[cmd, assign("n")]), Some(0));
     }
 }
