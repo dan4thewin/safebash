@@ -330,11 +330,27 @@ Filed as backlog tasks during F7, under the same rule as F15's:
   that preserves the status; ICE or precise answer. Also notes that its
   `Command` arm counts every internal sigil, as HEAD's scan did.
 
-### 7. B55 output-path panic
+### 7. B55 output-path panic (sent to the backlog)
 
 - [ ] **B55** (open; no DD). `sash -o` into an unwritable directory panics
   "write .o: Permission denied" (rc 101) at `compile_native`'s `.expect`;
   `link_object`'s `.expect("ld failed")` has the same shape.
+  - Tracked by `bug-native-object-temp-file`, under the same rule as
+    F15's (2026-10-26). The branch does not fix it, and no later step
+    depends on it.
+
+Filed as backlog tasks while researching B55, under the same rule:
+
+- `bug-native-object-temp-file` (P2; B55):
+  - a failed object write or ld spawn panics (rc 101) and can leave the
+    object behind;
+  - the fixed name `<output>.o` overwrites, then deletes, an existing file
+    of that name;
+  - a symlink with that name is written through.
+- `bug-stdout-write-failure-panics` (P3): every stdout write in `sash` and
+  `sash-expand` panics on EPIPE or ENOSPC, even after the binary is built.
+  `sash-convert` already reports the error and exits 1. Question: should
+  EPIPE be quiet?
 
 ### 8. F1 + F4 wrappers, operand and condition grammar
 

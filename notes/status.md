@@ -35,6 +35,23 @@ our programs link no libc (measured), the options (vendored nolibc
 recommended), setjmp's four options, and the cross-compile facts. The P1
 bug now depends on it. The port carries on with B55.
 
+**Update, later still: B55 went to the backlog instead of being fixed.**
+The branch does not fix it, and no later step depends on it. So DG's
+2026-10-25 rule sends it to the backlog, as it sent F15's sed family. The
+research is filed with it:
+
+- `bug-native-object-temp-file` (P2):
+  - a failed object write or ld spawn panics (rc 101) and can leave the
+    object behind;
+  - the fixed name `<output>.o` overwrites, then deletes, an existing file
+    of that name (`sash foo.sh` beside `foo.c`'s `foo.o`);
+  - a symlink with that name is written through.
+- `bug-stdout-write-failure-panics` (P3): `sash` and `sash-expand` panic
+  when a stdout write fails, even after the binary is built. One question
+  for DG: should EPIPE be quiet?
+
+**Next: F1 + F4**, which opens with a discussion with DG.
+
 ## ══ STATUS (2026-10-25) — D1 landed: an int is not a string ══
 
 **D1 (B113) is landed.** A whole-int operand of `[[ ]]` is SB4030, per
