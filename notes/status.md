@@ -26,6 +26,15 @@ bypass.
 The rustix P1 (`bug-fresh-clone-rustix-runtime-private`) still awaits DG's
 choice of remedy.
 
+**Update, later 2026-10-26: the rustix P1 is parked behind a question.**
+Discussing its remedy widened into what the runtime's syscall layer should
+be, with cross-compiling to arm, the Raspberry Pi and macOS in view. DG had
+it captured for later discussion: `q-runtime-syscall-layer` (P1, unruled).
+It records why rustix hides fork, execve, exit_group and sigaction, that
+our programs link no libc (measured), the options (vendored nolibc
+recommended), setjmp's four options, and the cross-compile facts. The P1
+bug now depends on it. The port carries on with B55.
+
 ## ══ STATUS (2026-10-25) — D1 landed: an int is not a string ══
 
 **D1 (B113) is landed.** A whole-int operand of `[[ ]]` is SB4030, per

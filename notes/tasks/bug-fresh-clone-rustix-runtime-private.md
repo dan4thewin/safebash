@@ -3,9 +3,9 @@ title: "BUG: a fresh clone cannot build sash-rt: rustix 1.1.5 made `rustix::runt
 status: open
 priority: P1
 kind: bug
-depends: []
+depends: [q-runtime-syscall-layer]
 gates:
-  - "DG chooses the remedy below; the choice and its reason are recorded where the next person will look for them (the dependency line's comment, or a DD)"
+  - "DG rules on q-runtime-syscall-layer.md; the remedy and its reason are recorded in the DD that ruling writes"
   - "a copy of sash-rt with no Cargo.lock builds: `git archive HEAD sash-rt`, then `cargo generate-lockfile` and `cargo build --release` exit 0"
   - "`mk test` and the full spec sweep pass on the result, in both backends"
 ---
@@ -36,7 +36,9 @@ fresh clone cannot build the runtime, and nothing links.
 
 The compiler crate asks for the `runtime` feature too but never uses the
 module (no `rustix::runtime` under sash/src), so this error cannot arise
-there. Its build against 1.1.5 was not measured.
+there. Measured 2026-10-26: with a fresh lockfile the root workspace
+builds. sash/Cargo.toml:14 is the crate's only mention of rustix, so that
+dependency is dead.
 
 ## Fix
 
@@ -56,8 +58,13 @@ Options:
 
 Using the mangled name is not an option: rustix rotates it on purpose.
 
-Recommendation (made during D1, not yet ruled): (a) now, so a fresh clone
-builds, then (c). This is DG's call.
+**Superseded 2026-10-26.** Discussing these options with DG widened the
+question to the runtime's whole syscall layer, with cross-compiling in
+view. It is captured, unruled, in q-runtime-syscall-layer.md, and this bug
+waits on it. In short: (a) is a dead end, since it freezes rustix and the
+module stays unsupported; (b) is a separate reproducibility policy; (c)
+became options (N) and (R) there. The earlier recommendation, (a) then
+(c), is withdrawn.
 
 Found during the batch-531 port (step D1). Filed under DG's rule for the
 port that anything not blocking the rest of the plan goes to the backlog.

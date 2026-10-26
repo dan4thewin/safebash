@@ -26,19 +26,23 @@ Two independent reasons it cannot build on a Mac:
   resolves to nothing.
 
 **This is an inconsistency inside `sash-rt`, not just a missing port.**
-`sash-rt/src/lib.rs:1259` already carries a complete
+`sash-rt/src/lib.rs:1591` carries a complete
 `#[cfg(target_arch = "aarch64")]` `_start`, written deliberately — the
-comment at 1225 records a real bug where the x86_64 and aarch64 init
-paths drifted. So the Rust half of the runtime treats aarch64 as a
-supported target while the C half silently assumes x86_64. Whichever
-way that is resolved, the two halves should agree.
+comment at 1553 records a real bug where the x86_64 and aarch64 init
+paths drifted. So `_start` treats aarch64 as a supported target, while
+`setjmp.S` assumes x86_64. So do eight x86_64 syscall blocks in the
+Rust half, which no `cfg` gates (found 2026-10-26; listed in
+q-runtime-syscall-layer.md). Whichever way that is resolved, the runtime
+should agree with itself.
 
 Note the aarch64 `_start` uses `:lo12:` relocation syntax, which is
 **ELF**. Mach-O spells the same thing `@PAGEOFF`. So aarch64 support
 today means aarch64 *Linux*, not macOS.
 
 Who needs it: `setjmp`/`longjmp` is the Plan 9 `regcomp` error-recovery
-path (DD#63), reached from `regcomp.c`.
+path (DD#63), reached from `regcomp.c`. q-runtime-syscall-layer.md
+lists four ways to drop or replace it; (A), plain error returns, removes
+`setjmp` entirely.
 
 ## 2. There is no cross-compilation seam at all
 
@@ -49,7 +53,7 @@ produce a working cross compile:
 |---|---|
 | `codegen/entry.rs:130` | `cranelift_native::builder()` — the **host** ISA. No target triple is ever consulted. |
 | `sash/src/` (41 sites) | `CallConv::SystemV`. Apple aarch64 wants `CallConv::AppleAarch64`. |
-| `lib.rs:652` | `Command::new("ld")` with `-static` — GNU ld, static ELF. Mach-O has no static-binary equivalent. |
+| `sash/src/lib.rs:1005` | `Command::new("ld")` with `-static` — GNU ld, static ELF. Mach-O has no static-binary equivalent. |
 | `codegen/entry.rs` | `embed_sash_source` writes a `.sash_source` **ELF section**. |
 
 So the compiler can only ever emit code for the machine it is running

@@ -97,3 +97,8 @@ catch would hide the bug it reports.
 
 Found during the batch-531 port (step F15, finding B51). Filed under DG's
 rule for the port that questions and uncovered cases become backlog tasks.
+
+Interacts with q-runtime-syscall-layer.md (2026-10-26). Its setjmp option
+(B), making the runtime's `regerror9` exit instead of returning, would
+settle this question as (a) by side effect. Rule on this one first, or
+rule on both together.
