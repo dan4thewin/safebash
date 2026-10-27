@@ -6,7 +6,7 @@
 //!
 //! SECURITY: This is the parse-time gate. Every rejected construct
 //! produces a diagnostic with an SB* code. Unknown syntax is a hard error.
-//! No input can reach IR without passing through `parse_statement()`.
+//! No input can reach IR without passing through `parse_statement_here()`.
 //!
 //! Structure:
 //!   - `parse()` — top-level entry: statement loop with error recovery
@@ -248,6 +248,7 @@ fn skip_terminators(scanner: &mut Scanner) {
 }
 
 fn recover(scanner: &mut Scanner) {
+    scanner.mark_recovered();
     // Skip to next newline or semicolon
     loop {
         match scanner.peek().token {
@@ -262,28 +263,23 @@ fn recover(scanner: &mut Scanner) {
     }
 }
 
-/// Parse a single statement. Returns None for empty/comment-only lines.
-///
-/// `None` means "there is no statement here", and EOF is the only thing that
-/// produces it. Callers that have already established `!at_eof()` should call
-/// `parse_statement_here` instead — handling an `Option` they cannot receive
-/// is what left `parse_top_level_item` and `parse_body_until` with a cold arm
-/// each.
-pub fn parse_statement(scanner: &mut Scanner) -> Result<Option<Statement>, Diagnostic> {
-    skip_terminators(scanner);
-    if scanner.at_eof() {
-        return Ok(None);
-    }
-    parse_statement_here(scanner).map(Some)
-}
-
-/// Parse a statement the caller has already established is there.
+/// Parse a statement the caller has already established is there. There is
+/// no `Option`-returning twin: every caller has already established
+/// `!at_eof()`, and handling a `None` they cannot receive is what left
+/// `parse_top_level_item` and `parse_body_until` with a cold arm each. (A
+/// list operand or pipeline stage, which can be missing, goes through
+/// [`parse_list_operand`].)
 pub(super) fn parse_statement_here(scanner: &mut Scanner) -> Result<Statement, Diagnostic> {
-    let start = scanner.peek().span.start;
-    let tok = scanner.peek().token.clone();
-    let span = span_from(scanner, start);
-
-    let stmt = dispatch_statement(scanner, tok, span)?;
+    // A statement-level `-` takes the whole statement, its own fold included
+    // (`Reach::Statement`), so it is not folded a second time here. That
+    // second fold took whatever followed a trailing `&` into the same
+    // statement: `- a & && b` and `- a & || b` compiled, `- a & | b` and
+    // `- a & >f` reached an ICE, where `a & && b` is SB4014.
+    if at_suppression(scanner) {
+        return parse_suppressed(scanner, Reach::Statement);
+    }
+    let stmt = dispatch_statement(scanner, Reach::Statement)?;
+    reject_arith_comma_list_op(&stmt, scanner)?;
 
     if is_compound(&stmt.kind) {
         reject_compound_postfix(stmt, scanner)
@@ -292,14 +288,34 @@ pub(super) fn parse_statement_here(scanner: &mut Scanner) -> Result<Statement, D
     }
 }
 
+/// How far a leading `-` reaches — the syntactic unit it prefixes, which is
+/// decided by where the `-` stands.
+///
+/// At the head of a statement it takes the whole statement: its pipeline, its
+/// `&&`/`||` list and a trailing `&` (`- cmd &` is
+/// `Suppressed(List(Background, …))`, DD#126). As a list operand or pipeline
+/// stage it takes that operand alone. Letting it take the rest of the statement
+/// there is what made `a && - b || c` nest to the right, against the left fold,
+/// and slip past SB4053 (DD#95); and what made `a && - b &` background `b`
+/// alone. Under `!` it takes the single unit `!` negates, which
+/// `parse_negated` then rejects (SB4019).
+#[derive(Clone, Copy)]
+enum Reach {
+    Statement,
+    Operand,
+    Unit,
+}
+
 /// Dispatch on the leading token of a statement. Pure routing — each
 /// arm calls the corresponding `parse_*` subparser, which is responsible
 /// for advancing the scanner.
-fn dispatch_statement(
-    scanner: &mut Scanner,
-    tok: Tok,
-    span: Span,
-) -> Result<Statement, Diagnostic> {
+fn dispatch_statement(scanner: &mut Scanner, reach: Reach) -> Result<Statement, Diagnostic> {
+    if let Some(stray) = stray_block_token(scanner) {
+        return Err(stray);
+    }
+    let start = scanner.peek().span.start;
+    let tok = scanner.peek().token.clone();
+    let span = span_from(scanner, start);
     match tok {
         Tok::If => parse_if(scanner),
         Tok::While | Tok::Until => parse_while(scanner),
@@ -319,21 +335,10 @@ fn dispatch_statement(
                 .to_string(),
         )),
         Tok::LBrace => parse_group(scanner),
-        // A `}` only reaches here when no enclosing block's stop set claimed
-        // it (a block body breaks on `}` before parsing a statement), so it
-        // closes nothing. bash would have kept it literal — say so, rather
-        // than falling through to a bare "expected expression".
-        Tok::RBrace => Err(parse_error(
-            span,
-            "SB4072",
-            "a `}` here closes nothing — no block is open. bash would keep it \
-             literal; quote it for a literal brace (`'a}b'`)"
-                .to_string(),
-        )),
         Tok::DblParen => parse_arith_stmt(scanner),
         Tok::Bang => parse_negated(scanner),
-        Tok::Dash => parse_suppressed(scanner),
-        Tok::Word(ref w) if w == "-" => parse_suppressed(scanner),
+        Tok::Dash => parse_suppressed(scanner, reach),
+        Tok::Word(ref w) if w == "-" => parse_suppressed(scanner, reach),
         Tok::DblBracketOpen => parse_test_command(scanner),
         Tok::Attest => parse_attest(scanner),
         Tok::Word(ref w) if w == "return" => parse_return(scanner),
@@ -342,77 +347,208 @@ fn dispatch_statement(
     }
 }
 
+/// SB4072: a token that can only close or continue a block — `}`, or a
+/// keyword [`stray_keyword_message`] names — standing where a statement must
+/// begin. Every block parser claims its own closers in
+/// [`parse_body_until`]'s stop set, and `if`, `while` and `for` claim
+/// `then`, `do` and `in` in their headers, so one that reaches a statement
+/// head belongs to no block. A keyword used to fall to the ordinary-word
+/// path, which named a command `fi` and drew SB5011's advice to define it —
+/// advice nobody can take, since SB5092 forbids `fn fi`.
+fn stray_block_token(scanner: &mut Scanner) -> Option<Diagnostic> {
+    if !matches!(scanner.peek().token, Tok::RBrace) {
+        return stray_block_keyword(scanner, 0);
+    }
+    let start = scanner.peek().span.start;
+    Some(parse_error(
+        span_from(scanner, start),
+        "SB4072",
+        "a `}` here closes nothing — a `}` ends the innermost open block only if \
+         that block is a `{ … }` one, and never right after a `|`, `&&`, `||` or \
+         `!` that still needs a command. For a literal brace, quote it (`'a}b'`)"
+            .to_string(),
+    ))
+}
+
+/// [`stray_block_token`]'s keyword half, for the token `n` ahead: `0` at a
+/// statement head, `1` after a `-` ([`parse_suppressed`]).
+///
+/// Silent once the parser has recovered from an earlier error
+/// ([`Scanner::has_recovered`]). Recovery skips to the end of a line, which
+/// can drop a block's opener and leave its `fi` or `done` behind, and
+/// calling that stray would report the first error twice. The keyword then
+/// takes the ordinary-word path it always took, which adds nothing once a
+/// parse error exists. A `}` is judged regardless, as it always was, so it
+/// still cascades: notes/tasks/bug-parse-error-in-block-cascades-sb4072.md.
+fn stray_block_keyword(scanner: &mut Scanner, n: usize) -> Option<Diagnostic> {
+    if scanner.has_recovered() {
+        return None;
+    }
+    let tok = scanner.peek_n(n).clone();
+    let message = stray_keyword_message(&tok.token)?;
+    Some(parse_error(
+        span_from(scanner, tok.span.start),
+        "SB4072",
+        message,
+    ))
+}
+
+/// What SB4072 says about a block keyword that has no block to close or
+/// continue, or `None` for a token that is not one.
+fn stray_keyword_message(tok: &Tok) -> Option<String> {
+    Some(match tok {
+        Tok::Then => "a `then` here continues nothing — a `then` may only follow a \
+                      complete `if` or `elif` condition"
+            .to_string(),
+        Tok::Do => "a `do` here opens nothing — a `do` may only follow a complete \
+                    `while`, `until` or `for` header"
+            .to_string(),
+        Tok::In => "an `in` here continues nothing — an `in` may only follow the loop \
+                    variable of a `for` (`for NAME in …`)"
+            .to_string(),
+        Tok::Fi => "a `fi` here closes nothing — a `fi` ends the innermost open block \
+                    only if that block is an `if … then` body (or its `elif … then` or \
+                    `else` part), and only as a statement of its own"
+            .to_string(),
+        Tok::Done => "a `done` here closes nothing — a `done` ends the innermost open \
+                      block only if that block is the `do` body of a `while`, `until` \
+                      or `for`, and only as a statement of its own"
+            .to_string(),
+        Tok::Else => "an `else` here continues nothing — an `else` continues the \
+                      innermost open block only if that block is an `if … then` or \
+                      `elif … then` body, and only as a statement of its own; after a \
+                      brace-form body it must directly follow that body's closing `}`, \
+                      on the same line (`} else {`)"
+            .to_string(),
+        Tok::Elif => "an `elif` here continues nothing — an `elif` continues the \
+                      innermost open block only if that block is an `if … then` or \
+                      `elif … then` body, and only as a statement of its own; after a \
+                      brace-form body it must directly follow that body's closing `}`, \
+                      on the same line (`} elif … {`)"
+            .to_string(),
+        Tok::Esac => format!(
+            "an `esac` here closes nothing — sash has no `case`; use the `[[ ]]` \
+             dispatch form: {DISPATCH_FORM_EXAMPLES}"
+        ),
+        _ => return None,
+    })
+}
+
 /// SB4021–SB4024 reject all postfix composition on compound commands.
 /// Sash idiom: wrap the compound in a function for composition.
 fn reject_compound_postfix(
     stmt: Statement,
     scanner: &mut Scanner,
 ) -> Result<Statement, Diagnostic> {
-    let next = scanner.peek().token.clone();
-    if let Some((code, msg)) = compound_postfix_rejection(&next) {
-        return Err(parse_error(stmt.span, code, msg));
+    // An fd-tagged redirect (`2>f`) has no operator token, so the token table
+    // below cannot see it. Unchecked, the `2` began a new statement and drew
+    // SB5011 "command '2' not found".
+    if binding_fd_word(scanner).is_some() {
+        return Err(compound_redirect_error(stmt.span));
     }
-    Ok(stmt)
+    match compound_postfix_rejection(&scanner.peek().token, stmt.span) {
+        Some(err) => Err(err),
+        None => Ok(stmt),
+    }
 }
 
-/// Lookup table: which SB-code/message a particular trailing token should
-/// raise after a compound command. None ⇒ allowed (statement terminator).
-fn compound_postfix_rejection(next: &Tok) -> Option<(&'static str, String)> {
-    if matches!(
-        next,
-        Tok::Gt
-            | Tok::DblGt
-            | Tok::Lt
-            | Tok::GtAmp
-            | Tok::LtAmp
-            | Tok::LtGt
-            | Tok::AmpGt
-            | Tok::HereString
-    ) {
-        return Some((
-            "SB4021",
-            "a redirect on a compound command isn't allowed — wrap the compound \
-             in a function"
-                .to_string(),
-        ));
+/// Lookup table: which diagnostic a particular trailing token should raise
+/// after a compound command. None ⇒ allowed (statement terminator).
+fn compound_postfix_rejection(next: &Tok, span: Span) -> Option<Diagnostic> {
+    if is_redirect_op(next) {
+        return Some(compound_redirect_error(span));
     }
     if matches!(next, Tok::Pipe) {
-        return Some((
-            "SB4022",
-            "a pipe on a compound command isn't allowed — wrap the compound in a \
-             function"
-                .to_string(),
-        ));
+        return Some(compound_pipe_error(span));
     }
     if matches!(next, Tok::AndAnd | Tok::OrOr) {
-        return Some((
-            "SB4023",
-            "`&&` / `||` on a compound command isn't allowed — wrap the compound \
-             in a function"
-                .to_string(),
-        ));
+        return Some(compound_list_op_error(span));
     }
     if matches!(next, Tok::Amp) {
-        return Some((
-            "SB4024",
-            "`&` on a compound command isn't allowed — wrap the compound in a \
-             function"
-                .to_string(),
-        ));
+        return Some(compound_background_error(span));
     }
     None
 }
 
-/// Check if a statement kind is a compound command.
-fn is_compound(kind: &StmtKind) -> bool {
-    matches!(
-        kind,
-        StmtKind::If(_)
-            | StmtKind::While(_)
-            | StmtKind::For(_)
-            | StmtKind::Case(_)
-            | StmtKind::Group(_)
+/// SB4021 — a redirect on a compound command. Keyed on what follows the
+/// compound, not on a token: [`reject_compound_postfix`] sees the operator,
+/// and [`reject_trailing_redirects`] sees an fd-prefixed `2>f`, which has no
+/// operator token of its own.
+fn compound_redirect_error(span: Span) -> Diagnostic {
+    parse_error(
+        span,
+        "SB4021",
+        "a redirect on a compound command isn't allowed — wrap the compound \
+         in a function"
+            .to_string(),
     )
+}
+
+/// SB4022 — a pipe on a compound command.
+fn compound_pipe_error(span: Span) -> Diagnostic {
+    parse_error(
+        span,
+        "SB4022",
+        "a pipe on a compound command isn't allowed — wrap the compound in a \
+         function"
+            .to_string(),
+    )
+}
+
+/// SB4023 — `&&` / `||` on a compound command.
+fn compound_list_op_error(span: Span) -> Diagnostic {
+    parse_error(
+        span,
+        "SB4023",
+        "`&&` / `||` on a compound command isn't allowed — wrap the compound \
+         in a function"
+            .to_string(),
+    )
+}
+
+/// SB4024 — `&` on a compound command, whether the `&` follows it directly or
+/// backgrounds a chain that holds it ([`background_fault`]).
+fn compound_background_error(span: Span) -> Diagnostic {
+    parse_error(
+        span,
+        "SB4024",
+        "`&` on a compound command isn't allowed — wrap the compound in a \
+         function"
+            .to_string(),
+    )
+}
+
+/// Check if a statement kind is a compound command.
+///
+/// A comma with a write, `(( a++, a < 3 ))`, lowers to a group so each part
+/// can be its own statement (DD#31), but it is still one arithmetic command:
+/// it takes the answers `(( a++ ))` takes, which name it by its write ("a
+/// variable assignment"). Read as a compound, it was told to "wrap the
+/// compound in a function" for a pipe, a redirect or a `&` that `(( a++ ))`
+/// is refused with its own reason.
+fn is_compound(kind: &StmtKind) -> bool {
+    match kind {
+        StmtKind::If(_) | StmtKind::While(_) | StmtKind::For(_) | StmtKind::Case(_) => true,
+        StmtKind::Group(g) => match g.origin {
+            GroupOrigin::Braced | GroupOrigin::CStyleFor => true,
+            GroupOrigin::ArithComma => false,
+        },
+        _ => false,
+    }
+}
+
+/// SB4023 for `(( a++, a < 3 )) && …` / `|| …`, the one postfix on the comma
+/// group that keeps its compound answer. Whether an `&&`/`||` left operand is
+/// a condition position, where DD#31 lets a comma with a write stand, is
+/// open (`notes/tasks/bug-arith-comma-classified-compound.md`, question p2):
+/// `(( a++ )) && …` is SB5007 there, while `return (( a++, a < 3 )) && …`
+/// compiles. Until that is ruled on, the answer stays the one it was.
+fn reject_arith_comma_list_op(stmt: &Statement, scanner: &mut Scanner) -> Result<(), Diagnostic> {
+    let comma = matches!(&stmt.kind, StmtKind::Group(g) if g.origin == GroupOrigin::ArithComma);
+    if comma && matches!(scanner.peek().token, Tok::AndAnd | Tok::OrOr) {
+        return Err(compound_list_op_error(stmt.span));
+    }
+    Ok(())
 }
 
 /// Parse a list of statements until a stop token.
@@ -441,11 +577,136 @@ fn tok_eq(a: &Tok, b: &Tok) -> bool {
 /// so this is also where the header region is marked: inside it a `{`
 /// terminates a command's word list unconditionally, because it opens the
 /// block body (DD#68). See [`Scanner::enter_header`].
+///
+/// The last statement supplies the condition's status, so it cannot be a
+/// background job (SB4024): `if A & {` took the branch on the fork's 0 while
+/// the child reported `A`'s failure as uncaught, and `while A & {` forks once
+/// per iteration. An earlier `A &` in the list is an ordinary statement.
+///
+/// It is also the one place the condition's *shape* is judged, for every
+/// header and both spellings: there must be a condition
+/// ([`missing_condition_error`]), and no `{ }` group or dispatch anywhere in
+/// it ([`condition_shape_fault`]).
 fn parse_compound_list(scanner: &mut Scanner, stop: &[Tok]) -> Result<Vec<Statement>, Diagnostic> {
     scanner.enter_header();
     let result = parse_body_until(scanner, stop);
     scanner.exit_header();
-    result
+    let list = result?;
+    if list.is_empty() {
+        return Err(missing_condition_error(scanner));
+    }
+    if let Some(fault) = list.iter().find_map(condition_shape_fault) {
+        return Err(fault);
+    }
+    if let Some(last) = list.last().filter(|s| is_background_job(s)) {
+        return Err(background_status_error(last.span, "condition"));
+    }
+    Ok(list)
+}
+
+/// SB4027 — a header with no condition. The brace spelling was already
+/// rejected: a `{` straight after the keyword is reported as the `{ }` group
+/// condition it most likely opens (`if { a } { b }`). The keyword spellings
+/// (`if then`, `elif then`, `while do`, `until do`) compiled, and tested
+/// whatever status the previous command had left: `/bin/true; if then echo y;
+/// fi` printed `y`.
+fn missing_condition_error(scanner: &mut Scanner) -> Diagnostic {
+    let next = scanner.peek();
+    let is_brace = matches!(next.token, Tok::LBrace);
+    let start = next.span.start;
+    let span = span_from(scanner, start);
+    if is_brace {
+        return brace_group_cond_error(span);
+    }
+    parse_error(
+        span,
+        "SB4027",
+        "this header has no condition — `if`, `elif`, `while` and `until` take the \
+         command whose status they test, before the `then`, `do` or `{`"
+            .to_string(),
+    )
+}
+
+/// A shape no control-flow header may hold, wherever it stands in one: a
+/// statement of the list, an `&&`/`||` operand, a pipeline stage, or under a
+/// `-`, `!` or `return`. A `{ }` group is SB4027 (DD#68) and a `[[ ]]`
+/// dispatch SB4028 (DD#66(b)). Judging only the list's own statements let
+/// `while - { … }`, `if a && { b } { … }`, `if - [[ $x == a { … } ]] { … }`
+/// and a keyword `elif { … }; then` through, and the dispatch rule was checked
+/// for `if` and `while` but never for either `elif`.
+///
+/// Whether a statement is a dispatch, wrapped or bare, is `dispatch_in`'s call
+/// here as at every single-operand position, so no position judges it with a
+/// test of its own.
+///
+/// A nested compound (`if if a { b } { c }`) is not a shape fault here: whether
+/// a compound may supply a condition's status is a separate question.
+///
+/// **Total over `StmtKind` — do not add a wildcard.**
+fn condition_shape_fault(stmt: &Statement) -> Option<Diagnostic> {
+    if let Some(d) = dispatch_in(stmt) {
+        return Some(dispatch_stmt_only_error(d.span));
+    }
+    match &stmt.kind {
+        StmtKind::Group(g) => group_condition_fault(g, stmt.span),
+        StmtKind::Suppressed(inner)
+        | StmtKind::Negated(inner)
+        | StmtKind::ReturnProducer(inner) => condition_shape_fault(inner),
+        StmtKind::Redirected(r) => condition_shape_fault(&r.body),
+        StmtKind::List(l) => {
+            condition_shape_fault(&l.left).or_else(|| condition_shape_fault(&l.right))
+        }
+        StmtKind::Pipeline(p) => p.commands.iter().find_map(condition_shape_fault),
+        // A dispatch, wrapped or bare, was `dispatch_in`'s to judge above.
+        StmtKind::Case(_)
+        | StmtKind::Assignment(_)
+        | StmtKind::Declaration(_)
+        | StmtKind::Command(_)
+        | StmtKind::If(_)
+        | StmtKind::While(_)
+        | StmtKind::For(_)
+        | StmtKind::Function(_)
+        | StmtKind::ArithTest(_) => None,
+    }
+}
+
+/// [`condition_shape_fault`] for a group. Only a group the user braced is a
+/// `{ }`. The parser's own groups stand for a mutating `(( a, b ))`, the
+/// arithmetic command DD#31 lets a condition hold, and for a C-style `for`, a
+/// loop like any other nested compound.
+fn group_condition_fault(g: &Group, span: Span) -> Option<Diagnostic> {
+    match g.origin {
+        GroupOrigin::Braced => Some(brace_group_cond_error(span)),
+        GroupOrigin::ArithComma | GroupOrigin::CStyleFor => None,
+    }
+}
+
+/// A statement that starts a background job. A trailing `&` folds outermost
+/// and a redirect cannot attach to a list (SB4046), so the only wrapper that
+/// can stand outside it is a statement-level `-`, which takes the whole
+/// statement (`- A &`).
+fn is_background_job(stmt: &Statement) -> bool {
+    match &stmt.kind {
+        StmtKind::Suppressed(inner) => is_background_job(inner),
+        StmtKind::List(l) => l.op == ListOp::Background,
+        _ => false,
+    }
+}
+
+/// SB4024 — a background job stands where a status is consumed. The job's
+/// status is 0 at once, its failure is reported only by the child (DD#55),
+/// and its exit is readable only through `$(status)` once reaped (DD#126), so
+/// the consumer would act on a status the job never produced. Shared by
+/// `return` and the control-flow headers so the sentence exists once.
+fn background_status_error(span: Span, consumer: &str) -> Diagnostic {
+    parse_error(
+        span,
+        "SB4024",
+        format!(
+            "{consumer}: a background job (`… &`) is not a status producer — it has no \
+             status until it is reaped; start the job as its own statement"
+        ),
+    )
 }
 
 // ── if/elif/else/fi ──────────────────────────────────────────
@@ -479,13 +740,8 @@ fn parse_if(scanner: &mut Scanner) -> Result<Statement, Diagnostic> {
     scanner.next(); // consume 'if'
 
     let condition = parse_compound_list(scanner, &[Tok::Then, Tok::LBrace])?;
-    // DD#66: the dispatch form is statement-only — not an `if` condition.
-    if condition.iter().any(stmt_is_dispatch) {
-        return Err(dispatch_stmt_only_error(span));
-    }
     // DD#68: branch on the delimiter — `{` (brace form) or `then` (sugar).
     match scanner.peek().token {
-        Tok::LBrace if condition.is_empty() => Err(brace_group_cond_error(span)),
         Tok::LBrace => parse_if_brace(scanner, span, condition),
         Tok::Then => parse_if_keyword(scanner, span, condition),
         _ => Err(parse_error(
@@ -516,7 +772,7 @@ fn make_if(
         elif_clauses,
         else_body,
     };
-    flip_negated_attest(&mut inner, span);
+    flip_negated_attest(&mut inner);
     Statement {
         kind: StmtKind::If(inner),
         span,
@@ -578,11 +834,11 @@ fn take_negated_attest(condition: &mut [Statement]) -> bool {
 /// a nesting rather than a swap. With no `elif` and no `else`, the then-body
 /// becomes empty — the attest passing is then simply a no-op, which is what
 /// the source says.
-fn flip_negated_attest(inner: &mut If, span: Span) {
+fn flip_negated_attest(inner: &mut If) {
     if !take_negated_attest(&mut inner.condition) {
         return;
     }
-    let fall_through = negated_fall_through(inner, span);
+    let fall_through = negated_fall_through(inner);
     inner.else_body = Some(std::mem::replace(&mut inner.then_body, fall_through));
 }
 
@@ -592,8 +848,9 @@ fn flip_negated_attest(inner: &mut If, span: Span) {
 /// With no `elif`, that is just the `else` body (empty when there was none).
 /// With one, the chain has to *nest* rather than move across: it hangs off
 /// the unnegated condition being false, so `if !C {A} elif C2 {B} else {D}`
-/// is `if C { if C2 {B} else {D} } else {A}`.
-fn negated_fall_through(inner: &mut If, span: Span) -> Vec<Statement> {
+/// is `if C { if C2 {B} else {D} } else {A}`. The nested `if` is the first
+/// `elif`, so it carries that clause's position.
+fn negated_fall_through(inner: &mut If) -> Vec<Statement> {
     let mut rest = std::mem::take(&mut inner.elif_clauses).into_iter();
     let Some(first) = rest.next() else {
         return inner.else_body.take().unwrap_or_default();
@@ -605,8 +862,15 @@ fn negated_fall_through(inner: &mut If, span: Span) -> Vec<Statement> {
             elif_clauses: rest.collect(),
             else_body: inner.else_body.take(),
         }),
-        span,
+        span: first.span,
     }]
+}
+
+/// Consume the `elif` or `else` at the cursor and return its position, so an
+/// error about that clause names the clause rather than the `if` that owns it.
+fn clause_keyword_span(scanner: &mut Scanner) -> Span {
+    let start = scanner.next().span.start;
+    span_from(scanner, start)
 }
 
 /// The `then … [elif …] [else …] fi` sugar form of `if`.
@@ -620,13 +884,14 @@ fn parse_if_keyword(
 
     let mut elif_clauses = Vec::new();
     while matches!(scanner.peek().token, Tok::Elif) {
-        scanner.next(); // consume 'elif'
+        let elif_span = clause_keyword_span(scanner);
         let cond = parse_compound_list(scanner, &[Tok::Then])?;
-        expect(scanner, &Tok::Then, span, "expected 'then' after elif")?;
+        expect(scanner, &Tok::Then, elif_span, "expected 'then' after elif")?;
         let body = parse_body_until(scanner, &[Tok::Elif, Tok::Else, Tok::Fi])?;
         elif_clauses.push(ElifClause {
             condition: cond,
             body,
+            span: elif_span,
         });
     }
 
@@ -656,12 +921,12 @@ fn parse_if_brace(
     loop {
         match scanner.peek().token {
             Tok::Elif => {
-                scanner.next();
-                elif_clauses.push(parse_brace_elif(scanner, span)?);
+                let elif_span = clause_keyword_span(scanner);
+                elif_clauses.push(parse_brace_elif(scanner, elif_span)?);
             }
             Tok::Else => {
-                scanner.next();
-                else_body = Some(parse_brace_else(scanner, span)?);
+                let else_span = clause_keyword_span(scanner);
+                else_body = Some(parse_brace_else(scanner, else_span)?);
                 break;
             }
             _ => break,
@@ -671,22 +936,20 @@ fn parse_if_brace(
 }
 
 /// DD#68: one `elif COND { … }` clause of a brace `if` (the `elif` is
-/// already consumed).
+/// already consumed, and `span` is its position).
 fn parse_brace_elif(scanner: &mut Scanner, span: Span) -> Result<ElifClause, Diagnostic> {
     let cond = parse_compound_list(scanner, &[Tok::LBrace])?;
-    if cond.is_empty() {
-        return Err(brace_group_cond_error(span));
-    }
     let body = parse_brace_block(scanner, span)?;
     Ok(ElifClause {
         condition: cond,
         body,
+        span,
     })
 }
 
 /// DD#68: the else clause of a brace `if` (the `else` is already
-/// consumed). `else if …` → a nested `if` statement; plain `else { … }`
-/// → a brace block.
+/// consumed, and `span` is its position). `else if …` → a nested `if`
+/// statement; plain `else { … }` → a brace block.
 fn parse_brace_else(scanner: &mut Scanner, span: Span) -> Result<Vec<Statement>, Diagnostic> {
     if matches!(scanner.peek().token, Tok::If) {
         // `parse_if` cannot answer "not an `if`" — every arm of its trailing
@@ -709,14 +972,6 @@ fn parse_while(scanner: &mut Scanner) -> Result<Statement, Diagnostic> {
     scanner.next(); // consume 'while' or 'until'
 
     let condition = parse_compound_list(scanner, &[Tok::Do, Tok::LBrace])?;
-    // DD#66: the dispatch form is statement-only — not a loop condition.
-    if condition.iter().any(stmt_is_dispatch) {
-        return Err(dispatch_stmt_only_error(span));
-    }
-    // DD#68: `{` (brace form) or `do` (sugar).
-    if matches!(scanner.peek().token, Tok::LBrace) && condition.is_empty() {
-        return Err(brace_group_cond_error(span));
-    }
     let body = parse_loop_body(scanner, span)?;
 
     Ok(Statement {
@@ -980,48 +1235,66 @@ fn parse_declaration_assignments(
     span: Span,
 ) -> Result<Vec<DeclAssignment>, Diagnostic> {
     let mut assignments = Vec::new();
-
-    loop {
-        if scanner.at_eof()
-            || matches!(
-                scanner.peek().token,
-                Tok::Newline
-                    | Tok::Semi
-                    | Tok::Eof
-                    // A brace block's closer terminates the statement exactly as a
-                    // newline or `;` does, so the declaration list must stop there.
-                    // Without this, `fn f { str x="a" }` consumed the `}` as a
-                    // candidate name and reported SB4014 "expected variable name",
-                    // pointing at a declaration that was already complete. It hit
-                    // every brace form -- fn, for, if, while, and DD#56 END -- and
-                    // only when the declaration was the LAST statement in the block,
-                    // since otherwise a `;` stopped the loop first.
-                    | Tok::RBrace
-                    // A `$( )` closer ends the statement for the same reason
-                    // `}` does. Without this `$( int x=1 )` took the `)` as
-                    // the next declarator name and reported SB4014 "expected
-                    // variable name" on a declaration that was complete.
-                    | Tok::RParen
-                    // Stop at a trailing redirect so `int x=5 > f` returns a clean
-                    // Declaration; `wrap_pipeline_part` then rejects the redirect
-                    // (SB4046) instead of the misleading SB4014 that greedy
-                    // consumption of `>` used to produce.
-                    | Tok::Gt
-                    | Tok::DblGt
-                    | Tok::Lt
-                    | Tok::GtAmp
-                    | Tok::LtAmp
-                    | Tok::LtGt
-                    | Tok::AmpGt
-                    | Tok::HereString
-            )
-        {
-            break;
-        }
+    while !at_declaration_end(scanner) {
         assignments.push(parse_one_decl_assignment(scanner, span)?);
     }
-
     Ok(assignments)
+}
+
+/// Whether the next token ends a declaration's list of declarators, so it
+/// must not be taken as the next declarator name.
+fn at_declaration_end(scanner: &mut Scanner) -> bool {
+    scanner.at_eof()
+        || matches!(
+            scanner.peek().token,
+            Tok::Newline
+                | Tok::Semi
+                | Tok::Eof
+                // A brace block's closer terminates the statement exactly as a
+                // newline or `;` does, so the declaration list must stop there.
+                // Without this, `fn f { str x="a" }` consumed the `}` as a
+                // candidate name and reported SB4014 "expected variable name",
+                // pointing at a declaration that was already complete. It hit
+                // every brace form -- fn, for, if, while, and DD#56 END -- and
+                // only when the declaration was the LAST statement in the block,
+                // since otherwise a `;` stopped the loop first.
+                | Tok::RBrace
+                // A `$( )` closer ends the statement for the same reason
+                // `}` does. Without this `$( int x=1 )` took the `)` as
+                // the next declarator name and reported SB4014 "expected
+                // variable name" on a declaration that was complete.
+                | Tok::RParen
+                // A connector ends the declaration, so the statement gets
+                // the verdict an assignment gets (DD#71: a value binding
+                // cannot feed a pipe, a background job, or an `&&`/`||`
+                // chain) — SB4022, SB4024, SB4025. Taking the connector as
+                // the next declarator name reported SB4014 "expected
+                // variable name" on `int n=1 | cat`.
+                | Tok::Pipe
+                | Tok::Amp
+                | Tok::AndAnd
+                | Tok::OrOr
+                // Stop at a trailing redirect so `int x=5 > f` returns a clean
+                // Declaration; `reject_trailing_redirects` then rejects the
+                // redirect (SB4046) instead of the misleading SB4014 that greedy
+                // consumption of `>` used to produce.
+                | Tok::Gt
+                | Tok::DblGt
+                | Tok::Lt
+                | Tok::GtAmp
+                | Tok::LtAmp
+                | Tok::LtGt
+                | Tok::AmpGt
+                | Tok::HereString
+        )
+        // In a control-flow header a `{` opens the body (DD#68), so it
+        // ends the declaration as it ends a command's words there
+        // (`brace_after_word`). Taking it as the next declarator name
+        // reported SB4014 on `if int n=$(cmd) {`, which DD#88 makes
+        // SB4025. Outside a header the `{` is left alone: whether
+        // `int n=1 { … }` is a declaration and a block, as `n=1 { … }`
+        // is an assignment and a block, is q-statement-form-residuals.
+        || (scanner.in_header() && matches!(scanner.peek().token, Tok::LBrace))
 }
 
 /// Parse one `name`, `name=value`, or `name=(array)` within a declaration
@@ -1098,7 +1371,10 @@ fn parse_group(scanner: &mut Scanner) -> Result<Statement, Diagnostic> {
     expect(scanner, &Tok::RBrace, span, "expected '}'")?;
 
     Ok(Statement {
-        kind: StmtKind::Group(Group { body }),
+        kind: StmtKind::Group(Group {
+            body,
+            origin: GroupOrigin::Braced,
+        }),
         span,
     })
 }
@@ -1117,10 +1393,36 @@ fn parse_arith_stmt(scanner: &mut Scanner) -> Result<Statement, Diagnostic> {
 
 // ── negated command (! cmd) ──────────────────────────────────
 
-/// DD#66: the dispatch form is statement-only. True if `stmt` is a `[[ ]]`
-/// dispatch — every `Case` is a dispatch now that `case…esac` is removed.
-fn stmt_is_dispatch(stmt: &Statement) -> bool {
-    matches!(&stmt.kind, StmtKind::Case(_))
+/// DD#66(b): a `[[ ]]` dispatch is a statement, never a boolean. The dispatch
+/// `stmt` is — itself, or under a `-`, a stage's `!`, a redirect or a `return`
+/// — or `None`. Every `Case` is a dispatch now that `case…esac` is removed.
+/// Matching only a bare `Case` let `! - [[ … ]]` reach `-`'s SB4019 instead,
+/// and an `&&`/`||` operand or a `return` producer was never checked at all.
+///
+/// This is the one place a dispatch is recognised: `!`, a `return` producer
+/// and an `&&`/`||` operand ask it of their operand, and
+/// `condition_shape_fault` of every statement a condition holds.
+///
+/// **Total over `StmtKind` — do not add a wildcard.**
+fn dispatch_in(stmt: &Statement) -> Option<&Statement> {
+    match &stmt.kind {
+        StmtKind::Case(_) => Some(stmt),
+        StmtKind::Suppressed(inner)
+        | StmtKind::Negated(inner)
+        | StmtKind::ReturnProducer(inner) => dispatch_in(inner),
+        StmtKind::Redirected(r) => dispatch_in(&r.body),
+        StmtKind::Assignment(_)
+        | StmtKind::Declaration(_)
+        | StmtKind::Command(_)
+        | StmtKind::Pipeline(_)
+        | StmtKind::If(_)
+        | StmtKind::While(_)
+        | StmtKind::For(_)
+        | StmtKind::Function(_)
+        | StmtKind::List(_)
+        | StmtKind::Group(_)
+        | StmtKind::ArithTest(_) => None,
+    }
 }
 
 fn dispatch_stmt_only_error(span: Span) -> Diagnostic {
@@ -1140,12 +1442,18 @@ fn case_removed_error(span: Span) -> Diagnostic {
     parse_error(
         span,
         "SB4029",
-        "the `case` construct has been removed — use the `[[ ]]` dispatch \
-         form: `[[ $x == pat { … } other { … } || { … } ]]` (exact match) or \
-         `[[ $x =~ regex { … } || { … } ]]` (regex match)"
-            .to_string(),
+        format!(
+            "the `case` construct has been removed — use the `[[ ]]` dispatch \
+             form: {DISPATCH_FORM_EXAMPLES}"
+        ),
     )
 }
+
+/// The two `[[ ]]` dispatch spellings DD#66 offers in place of `case`, shared
+/// by SB4029 (a `case`) and SB4072 (a stray `esac`).
+const DISPATCH_FORM_EXAMPLES: &str = "`[[ $x == pat { … } other { … } || { … } ]]` \
+                                      (exact match) or `[[ $x =~ regex { … } || { … } ]]` \
+                                      (regex match)";
 
 /// DD#74: `return` — either the value form (`return N` / `return $?` / bare,
 /// the existing command path) or a producer form (`return [[ … ]]` /
@@ -1196,8 +1504,13 @@ fn parse_return_value_form(scanner: &mut Scanner, after: &Tok) -> Result<Stateme
 
 fn parse_return(scanner: &mut Scanner) -> Result<Statement, Diagnostic> {
     let after = scanner.peek_n(1).token.clone();
+    // A word is a status value only if an int sink would take it as a
+    // literal, so `return -1` is the value -1, as `return $(( -1 ))` is.
+    // Any other word heads a producer and is looked up as a command, as
+    // `return abc` is. That includes a number beyond i64, which as a value
+    // reached native int lowering and ICE'd.
     let is_producer = matches!(after, Tok::DblBracketOpen | Tok::DblParen | Tok::Bang)
-        || matches!(&after, Tok::Word(w) if !w.chars().all(|c| c.is_ascii_digit()));
+        || matches!(&after, Tok::Word(w) if !is_int_sink_literal(w));
     if !is_producer {
         return parse_return_value_form(scanner, &after);
     }
@@ -1205,6 +1518,13 @@ fn parse_return(scanner: &mut Scanner) -> Result<Statement, Diagnostic> {
     let span = span_from(scanner, sp.start);
     scanner.next(); // consume 'return'
     let producer = parse_return_producer_head(scanner)?;
+    // DD#66(b): a producer supplies the function's status, so it is a boolean
+    // position, and `return [[ $1 == a { … } ]]` compiled. A dispatch further
+    // along a composite producer (`return a && [[ … ]]`) is an `&&`/`||`
+    // operand, which `parse_and_or_operand` refuses on the way through.
+    if let Some(d) = dispatch_in(&producer) {
+        return Err(dispatch_stmt_only_error(d.span));
+    }
     // DD#74: `return` takes a status *producer*, and a producer can be a
     // composite — `return A | B`, `return A && B`, `return A > f`. The
     // per-kind parse above yields only the first command / `[[ ]]` /
@@ -1219,6 +1539,12 @@ fn parse_return(scanner: &mut Scanner) -> Result<Statement, Diagnostic> {
     // `parse_return_value_form` raises live, so probing the message found
     // the other one and read as proof this arm worked.
     let folded = maybe_wrap_redirects(scanner, producer)?;
+    // A trailing `&` folds outermost, so this one test covers `return A &`,
+    // `return ! A &` and `return A && B &`: the function would return success
+    // for a producer that has not finished.
+    if is_background_job(&folded) {
+        return Err(background_status_error(span, "return"));
+    }
     Ok(Statement {
         kind: StmtKind::ReturnProducer(Box::new(folded)),
         span,
@@ -1231,24 +1557,27 @@ fn parse_negated(scanner: &mut Scanner) -> Result<Statement, Diagnostic> {
     scanner.next(); // consume '!'
     skip_terminators(scanner);
 
-    // `!` negates a single reviewer-atomic unit — one command, `[[ ]]`, or
-    // `(( ))` — NOT a multi-stage pipeline (a reviewer shouldn't have to know
-    // how far `!` reaches; sash is easier to review than bash). Parse just the
-    // unit via `dispatch_statement` (which does NOT fold `|`/`&&`); the caller's
-    // `maybe_wrap_redirects` then folds any trailing `&&`/`||`, so `! X && Y`
-    // reassociates to `(!X) && Y` (bash-consistent) instead of `!(X && Y)`.
-    let start = scanner.peek().span.start;
-    let tok = scanner.peek().token.clone();
-    let unit_span = span_from(scanner, start);
-    let stmt = dispatch_statement(scanner, tok, unit_span)?;
-    // DD#66: `! [[ dispatch ]]` — the dispatch is statement-only.
-    if stmt_is_dispatch(&stmt) {
+    // `!` negates the one unit `dispatch_statement` parses, which never folds
+    // `|`/`&&` — a reviewer shouldn't have to know how far `!` reaches (sash
+    // is easier to review than bash). The caller's `maybe_wrap_redirects` then
+    // folds any trailing `&&`/`||`, so `! X && Y` reassociates to `(!X) && Y`
+    // (bash-consistent) instead of `!(X && Y)`. A `-` here takes that unit
+    // too, so `! - a | b` meets SB4019 below instead of negating the whole
+    // `a | b` it used to swallow.
+    //
+    // DD#70 names the unit as one command, `[[ ]]` or `(( ))`. A compound is
+    // accepted here as it always has been; whether it should be is the open
+    // question in `notes/tasks/q-compound-as-condition.md`.
+    let stmt = dispatch_statement(scanner, Reach::Unit)?;
+    // DD#66(b): `! [[ dispatch ]]` — the dispatch is statement-only, through
+    // a `-` too, so `! - [[ … ]]` names the dispatch rather than the `-`.
+    if dispatch_in(&stmt).is_some() {
         return Err(dispatch_stmt_only_error(span));
     }
-    // DD#70: `! - cmd` stays rejected, and NOT as a must-consume rule — `-`
+    // DD#70: `! - cmd` is a composition error, not a must-consume rule — `-`
     // has already discarded the result, so `!` has nothing left to invert.
-    // That is a composition error, so the addendum that made `- !` legal
-    // (`-` discards the negated boolean) does not reach it.
+    // Its mirror `- ! cmd` is SB4019 too, raised where the `-` is parsed
+    // (`unsuppressible_error`).
     if matches!(&stmt.kind, StmtKind::Suppressed(_)) {
         return Err(parse_error(
             span,
@@ -1258,6 +1587,8 @@ fn parse_negated(scanner: &mut Scanner) -> Result<Statement, Diagnostic> {
                 .to_string(),
         ));
     }
+    // Checked on the unit, before the wrapper below would hide what it is.
+    reject_trailing_redirects(scanner, &stmt)?;
     // Reviewability (SB4040): `!` on a pipeline (`! a | b`) is rejected. The
     // operand was parsed by `dispatch_statement`, which never folds `|`, so an
     // already-multi-stage pipeline cannot arrive here — the rest of the
@@ -1295,36 +1626,109 @@ fn negate_pipeline_error(span: Span) -> Diagnostic {
 
 // ── suppressed command (- cmd) ───────────────────────────────
 
-fn parse_suppressed(scanner: &mut Scanner) -> Result<Statement, Diagnostic> {
-    let sp = scanner.peek().span;
-    let span = span_from(scanner, sp.start);
+/// Whether the scanner stands on a `-` that suppresses (DD#55) — one a
+/// command follows. A `-` before a statement it cannot prefix (`- !`,
+/// `- attest`, a declaration) is an error, raised by [`parse_suppressed`]
+/// through `dispatch_statement`'s `-` arm. Any other `-` is an ordinary word:
+/// `- - a` is a command named `-` (SB5011).
+fn at_suppression(scanner: &mut Scanner) -> bool {
+    let tok = &scanner.peek().token;
+    let dash = matches!(tok, Tok::Dash) || matches!(tok, Tok::Word(w) if w == "-");
+    dash && dash_prefixes_command(scanner)
+}
 
-    // Peek ahead: if what follows looks like a command, treat - as suppression.
-    // DD#70 addendum: `!` is word-like enough to follow — `- ! cmd` discards
-    // the negated boolean.
-    let next = scanner.peek_n(1);
-    if next.token.is_word_like()
+/// Whether the token after the `-` at the scanner begins a command the `-`
+/// can prefix: a word, or a compound or test keyword. (`until` was missing,
+/// so `- until …` fell to the ordinary-word path and failed at its `((`.)
+/// `!` is not one: `- !` is SB4019 — see [`unsuppressible_error`].
+fn dash_prefixes_command(scanner: &mut Scanner) -> bool {
+    let next = &scanner.peek_n(1).token;
+    next.is_word_like()
         || matches!(
-            next.token,
+            next,
             Tok::If
                 | Tok::While
+                | Tok::Until
                 | Tok::For
                 | Tok::Case
                 | Tok::DblBracketOpen
                 | Tok::DblParen
                 | Tok::LBrace
-                | Tok::Bang
         )
-    {
+}
+
+fn parse_suppressed(scanner: &mut Scanner, reach: Reach) -> Result<Statement, Diagnostic> {
+    let sp = scanner.peek().span;
+    let span = span_from(scanner, sp.start);
+
+    if dash_prefixes_command(scanner) {
+        // A word-like token or a compound keyword follows the `-`, so a
+        // statement is here by construction and no "nothing here" answer is
+        // needed at any reach.
         scanner.next(); // consume '-'
-                        // The peek above established that a word-like token or a compound
-                        // keyword follows the `-`, so a statement is here by construction and
-                        // `parse_statement`'s "nothing here" answer was unreachable.
-        let stmt = parse_statement_here(scanner)?;
+        let stmt = parse_suppressed_body(scanner, reach)?;
         Ok(push_suppression_into_pipeline(stmt, span))
+    } else if let Some(err) = unsuppressible_error(&scanner.peek_n(1).token, span) {
+        Err(err)
+    } else if let Some(err) = stray_block_keyword(scanner, 1) {
+        Err(err)
     } else {
-        // Not a suppressed command — treat as simple command starting with -
+        // An ordinary word — `- - a`, or a `-` before a terminator or a
+        // redirect — is a command named `-` (SB5011).
         parse_simple_or_assignment(scanner)
+    }
+}
+
+/// The statements a `-` cannot prefix, each with the reason. They used to
+/// fall to the ordinary-word path, which named a command `-` (SB5011) or
+/// reported an "expected expression" (SB4014) at the wrong token.
+fn unsuppressible_error(next: &Tok, span: Span) -> Option<Diagnostic> {
+    let (code, message) = match next {
+        // DD#70: `-` and `!` don't combine on one stage, in either order.
+        Tok::Bang => (
+            "SB4019",
+            "`-` cannot suppress a `!`-negated command — `-` and `!` don't combine \
+             on one stage (`!` inverts the status; suppress discards it). Write \
+             `- cmd` without the `!`"
+                .to_string(),
+        ),
+        // DD#24: a failing attest stops the program or takes a branch.
+        Tok::Attest => (
+            "SB4014",
+            "`-` cannot suppress an `attest` — a failing attest must stop the \
+             program or take a branch, never fall through with the value unproven. \
+             Catch the failure with `if attest …` or `attest … || …`"
+                .to_string(),
+        ),
+        Tok::Str | Tok::Int | Tok::Const | Tok::Array | Tok::Map => (
+            "SB4014",
+            "`-` suppresses a command, and a declaration is not one — to discard a \
+             failure inside its value, put the `-` in the capture: `$(- cmd)`"
+                .to_string(),
+        ),
+        Tok::Fn | Tok::Function => (
+            "SB4014",
+            "`-` suppresses a command, and a function definition is not one — drop \
+             the `-`"
+                .to_string(),
+        ),
+        Tok::End => (
+            "SB4014",
+            "`-` suppresses a command, and an `END { }` block is not one — drop the \
+             `-`"
+            .to_string(),
+        ),
+        _ => return None,
+    };
+    Some(parse_error(span, code, message))
+}
+
+/// What a `-` prefixes, by where it stands — see [`Reach`].
+fn parse_suppressed_body(scanner: &mut Scanner, reach: Reach) -> Result<Statement, Diagnostic> {
+    match reach {
+        Reach::Statement => parse_statement_here(scanner),
+        Reach::Operand => parse_operand_here(scanner),
+        Reach::Unit => dispatch_statement(scanner, Reach::Unit),
     }
 }
 
@@ -1336,17 +1740,25 @@ fn parse_suppressed(scanner: &mut Scanner) -> Result<Statement, Diagnostic> {
 fn push_suppression_into_pipeline(stmt: Statement, span: Span) -> Statement {
     let stmt_span = stmt.span;
     match stmt.kind {
-        // DD#70 addendum: `- ! X` discards the NEGATION's result, so the
-        // suppression must stay outside. Pushing it into the first segment
-        // would leave the `!` unsuppressed and still must-consume. (A negated
-        // `Pipeline` here is always a single command — `! a | b` is SB4040.)
-        StmtKind::Pipeline(ref p) if p.negated => Statement {
-            kind: StmtKind::Suppressed(Box::new(Statement {
-                kind: stmt.kind,
+        // `- a | b &`: the `&` backgrounds the pipeline; it does not widen the
+        // `-`, which is a per-segment operator (DD#70) and still lands on the
+        // first segment. The parent's fork check stays on, as for `a | b &`.
+        StmtKind::List(mut l)
+            if l.op == ListOp::Background && matches!(&l.left.kind, StmtKind::Pipeline(_)) =>
+        {
+            l.left = Box::new(push_suppression_into_pipeline(*l.left, span));
+            Statement {
+                kind: StmtKind::List(l),
                 span: stmt_span,
-            })),
-            span,
-        },
+            }
+        }
+        // `- !` is SB4019 before its body is parsed (`unsuppressible_error`),
+        // so no body here starts with `!`. Neither answer is safe: pushing the
+        // `-` into the stage would build `! - X`, the mirror SB4019, and
+        // keeping it outside would compile the rejected `- ! X`.
+        StmtKind::Pipeline(ref p) if p.negated => {
+            unreachable!("`- !` is SB4019 at parse; no `-` body is a negated pipeline")
+        }
         StmtKind::Pipeline(mut p) if !p.commands.is_empty() => {
             let first = p.commands.remove(0);
             let fspan = first.span;
@@ -2839,17 +3251,25 @@ fn next_trailing_redirect(
     scanner: &mut Scanner,
     span: Span,
 ) -> Result<Option<Redirect>, Diagnostic> {
-    let tok = scanner.peek().token.clone();
-    if is_redirect_op(&tok) {
+    if is_redirect_op(&scanner.peek().token) {
         return parse_redirect(scanner, span).map(Some);
     }
-    let Tok::Word(ref w) = tok else {
-        return Ok(None);
-    };
-    if !is_fd_number(w) || !fd_prefix_binds(scanner) {
-        return Ok(None);
+    match binding_fd_word(scanner) {
+        Some(w) => parse_fd_redirect(scanner, &w, span).map(Some),
+        None => Ok(None),
     }
-    parse_fd_redirect(scanner, w, span).map(Some)
+}
+
+/// The fd digits of an fd-tagged redirect at the cursor (`2` in `2>f`), or
+/// `None`. Such a redirect has no operator token of its own: it is a digit
+/// word glued to the operator, and a digit word that does not bind (`2 >f`)
+/// is an argument.
+fn binding_fd_word(scanner: &mut Scanner) -> Option<String> {
+    let Tok::Word(w) = &scanner.peek().token else {
+        return None;
+    };
+    let w = w.clone();
+    (is_fd_number(&w) && fd_prefix_binds(scanner)).then_some(w)
 }
 
 /// If a `|` follows, consume one more pipeline stage and wrap as a
@@ -2875,7 +3295,13 @@ fn parse_trailing_pipeline(
     // Same hole as the list operators: with no stage after the `|` the loop
     // simply fell out and the pipeline was returned as its left side alone,
     // so `echo a |` compiled and printed `a`. bash rejects it.
-    let Some(next_stmt) = parse_statement(scanner)? else {
+    //
+    // A stage is a list *operand*, not a statement: the old `parse_statement`
+    // here let the last stage swallow a trailing `&&`/`||`/`&`, so `a | b &`
+    // backgrounded `b` alone and then failed as a "compound" final stage
+    // (SB4022), although DD#55 makes a background pipeline legal. `&&`/`||`
+    // after a pipeline is SB4023, raised where the list is folded.
+    let Some(next_stmt) = parse_list_operand(scanner)? else {
         return Err(parse_error(
             span_from(scanner, pipe_span.start),
             "SB4056",
@@ -2888,9 +3314,6 @@ fn parse_trailing_pipeline(
     // `commands` (the only two sites are this one, which needs two, and
     // `parse_negated`'s one-command wrapper). So this is a multi-stage pipeline
     // by construction and the stage checks are unconditional.
-    // DD#55 / SB4023: `pipeline && C` / `pipeline || C` is rejected — see
-    // reject_pipeline_and_or_postfix.
-    reject_pipeline_and_or_postfix(&commands, span)?;
     reject_statement_form_pipeline_stage(&commands)?;
     reject_nonconsuming_final_stage(&commands)?;
     Ok(Statement {
@@ -2903,71 +3326,40 @@ fn parse_trailing_pipeline(
 }
 
 /// Append a parsed `|`-stage, flattening a nested pipeline (right-associative
-/// `a | b | c` → one flat stage list). A negated single-command stage
-/// (`a | ! b`) arrives from `parse_negated` as `Pipeline{[b], negated:true}`;
-/// preserve the negation as a per-segment `Negated(b)` marker instead of
-/// flattening it away (DD#70 terminal-segment negation). A non-terminal `!`
+/// `a | b | c` → one flat stage list). Any other stage is kept in its
+/// per-segment form — see [`segment_form`]. A non-terminal `!`
 /// (`a | ! b | c`) never reaches here — `parse_negated` rejects it (SB4040)
 /// because the negated unit has a trailing `|`.
 fn append_pipeline_stage(commands: &mut Vec<Statement>, next_stmt: Statement) {
     match next_stmt.kind {
-        StmtKind::Pipeline(p) if p.negated && p.commands.len() == 1 => {
-            let span = next_stmt.span;
+        StmtKind::Pipeline(p) if !p.negated => commands.extend(p.commands),
+        _ => commands.push(segment_form(next_stmt)),
+    }
+}
+
+/// A negated stage (`a | ! b`) arrives from `parse_negated` as
+/// `Pipeline{[b], negated:true}`; keep the negation as a per-segment
+/// `Negated(b)` marker instead of flattening it away (DD#70 terminal-segment
+/// negation). A `-` stage never holds one: `a | - ! b` is SB4019 (DD#70).
+fn segment_form(stage: Statement) -> Statement {
+    let span = stage.span;
+    let kind = match stage.kind {
+        StmtKind::Pipeline(p) if p.negated => {
             let inner = p.commands.into_iter().next().unwrap();
-            commands.push(Statement {
-                kind: StmtKind::Negated(Box::new(inner)),
-                span,
-            });
+            StmtKind::Negated(Box::new(inner))
         }
-        StmtKind::Pipeline(p) => commands.extend(p.commands),
-        _ => commands.push(next_stmt),
-    }
-}
-
-/// DD#55 / SB4023: `pipeline && C` / `pipeline || C` is rejected — a `&&`/
-/// `||` after a pipeline is ambiguous postfix (what does it test?), the same
-/// rule as `&&`/`||` on a compound. The recursive stage parse absorbs the
-/// trailing `&&`/`||` into the last stage as a `List`, so a `List(And|Or)`
-/// last stage is exactly that rejected form. (`A && a | b` — a pipeline as
-/// the *consequent* — parses cleanly and is not caught here.)
-fn reject_pipeline_and_or_postfix(commands: &[Statement], span: Span) -> Result<(), Diagnostic> {
-    let is_and_or = commands.last().is_some_and(|last| {
-        matches!(
-            last.kind,
-            StmtKind::List(List {
-                op: ListOp::And | ListOp::Or,
-                ..
-            })
-        )
-    });
-    if is_and_or {
-        return Err(parse_error(
-            span,
-            "SB4023",
-            "`&&` / `||` on a pipeline isn't allowed — use `if pipeline; then …; fi`".to_string(),
-        ));
-    }
-    Ok(())
-}
-
-/// Peel the wrappers a pipeline stage may carry (`- stmt`, `! stmt`,
-/// `stmt > f`) to reach the statement that actually runs, so `- [[ … ]] | cat`
-/// cannot smuggle a test past `reject_statement_form_pipeline_stage`.
-fn unwrap_stage_wrappers(stmt: &Statement) -> &Statement {
-    let mut cur = stmt;
-    loop {
-        match &cur.kind {
-            StmtKind::Suppressed(inner) | StmtKind::Negated(inner) => cur = inner,
-            StmtKind::Redirected(r) => cur = &r.body,
-            _ => return cur,
-        }
-    }
+        other => other,
+    };
+    Statement { kind, span }
 }
 
 /// Name the statement form a stage is, or `None` if it is an ordinary command.
 /// `[[ … ]]` and `attest` parse to a `Command` whose *name* is the literal
 /// `"[["` / `"attest"`, which is exactly why the pipeline path mistook them
-/// for externals.
+/// for externals. `(( n = 2 ))` lowers to an `Assignment`, so "a variable
+/// assignment" names it too, and so does a comma with a write,
+/// `(( n++, n < 3 ))`, whose group exists only because a part writes
+/// (DD#31); only the arithmetic *test* is `(( … ))`.
 fn statement_form_label(stmt: &Statement) -> Option<&'static str> {
     match &stmt.kind {
         StmtKind::Command(c) => match &c.name.kind {
@@ -2975,40 +3367,119 @@ fn statement_form_label(stmt: &Statement) -> Option<&'static str> {
             ExprKind::Literal(n) if n == "attest" => Some("`attest`"),
             _ => None,
         },
-        StmtKind::Assignment(_) | StmtKind::ArithTest(_) => Some("`(( … ))`"),
+        StmtKind::Assignment(_) => Some("a variable assignment"),
+        StmtKind::Group(Group {
+            origin: GroupOrigin::ArithComma,
+            ..
+        }) => Some("a variable assignment"),
+        StmtKind::Declaration(_) => Some("a variable declaration"),
+        StmtKind::ArithTest(_) => Some("`(( … ))`"),
         _ => None,
     }
 }
 
-/// SB4022: `[[ … ]]`, `attest …` and `(( … ))` are statement forms, not
-/// commands, so they may not be pipeline stages. A stage runs in a forked
-/// child: a test's status is discarded and an arithmetic assignment is lost,
-/// which made `(( n = 2 )) | cat` silently do nothing. Worse, `[[` and
-/// `attest` reached codegen as an ordinary command *named* `[[` — the runtime
-/// aborted with its own "bare command passed to sash_exec" assertion, i.e. a
-/// clean compile that could only fail at run time.
+/// SB4022: a pipeline stage runs in a forked child, so a stage whose effect
+/// lands on the process that runs it does nothing the program can see.
 ///
-/// Compound commands (`if`, `for`, `match`) in a *non-final* stage are already
-/// rejected by `compound_postfix_rejection` (the `|` follows the compound, so
-/// the parser sees it as a postfix); in the *final* stage they are rejected by
-/// `reject_nonconsuming_final_stage`. These three were the statement forms
-/// neither classified as compound. `&&`/`||` on a test stays legal — only the
-/// pipe discards the result.
+/// Two populations. The statement forms — `[[ … ]]`, `attest`, `(( … ))`, an
+/// assignment, a declaration — are not commands at all: a test's status is
+/// discarded and an assignment is lost, which made `(( n = 2 )) | cat`
+/// silently do nothing, and `[[` / `attest` reached codegen as an ordinary
+/// command *named* `[[`. Then the in-process builtins
+/// ([`crate::ssa::BuiltinCmd::acts_on_its_process`]): `cd`, `exit`, `return`,
+/// `wait`, `argv a`, … compiled as a stage and died at run time with "bare
+/// command passed to sash_exec", in any position, the last included. The one
+/// builtin a stage may be is DD#122's reader, `readline`/`read` as the *last*
+/// stage, which runs in the parent — under a `-` or `!`, but not under a
+/// redirect, which no backend lowers (`a | readline x <f` crashed, and `2>`
+/// failed the same way).
+///
+/// The advice is the statement's own: wrapping one in a function only moves
+/// it into the function's forked child. Compound commands (`if`, `for`,
+/// `match`) in a *non-final* stage are rejected by `compound_postfix_rejection`
+/// (the `|` follows the compound, so the parser sees it as a postfix); in the
+/// *final* stage by `reject_nonconsuming_final_stage`. `&&`/`||` on a test
+/// stays legal — only the pipe discards the result.
 fn reject_statement_form_pipeline_stage(commands: &[Statement]) -> Result<(), Diagnostic> {
-    for stmt in commands {
-        let stage = unwrap_stage_wrappers(stmt);
-        if let Some(what) = statement_form_label(stage) {
-            return Err(parse_error(
-                stage.span,
-                "SB4022",
-                format!(
-                    "{what} isn't allowed as a pipeline stage — a stage runs in a forked \
-                     child, so its result is discarded; wrap it in a function"
-                ),
-            ));
+    let last = commands.len() - 1;
+    for (i, stmt) in commands.iter().enumerate() {
+        if let Some(message) = stage_fault(stmt, i == last) {
+            return Err(parse_error(stmt.stage_body().span, "SB4022", message));
         }
     }
     Ok(())
+}
+
+/// Why a stage cannot run in a forked child, or `None` if it can.
+fn stage_fault(stmt: &Statement, is_last: bool) -> Option<String> {
+    // Through the stage's wrappers, so `- [[ … ]] | cat` cannot smuggle a
+    // test past this check.
+    let stage = stmt.stage_body();
+    if let Some(what) = statement_form_label(stage) {
+        return Some(format!(
+            "{what} isn't allowed as a pipeline stage — a stage runs in a forked \
+             child, so its result is discarded; run it as its own statement"
+        ));
+    }
+    in_process_stage_fault(stmt, stage, is_last)
+}
+
+/// The in-process builtin half of [`stage_fault`]. `stage` is `stmt`'s
+/// [`Statement::stage_body`]; `stmt` keeps the marks, so a redirect on the
+/// last-stage reader is still visible.
+fn in_process_stage_fault(stmt: &Statement, stage: &Statement, is_last: bool) -> Option<String> {
+    let (builtin, name) = in_process_builtin(stage)?;
+    if !stage.is_pipe_reader() {
+        return Some(in_process_stage_message(builtin, name));
+    }
+    if !is_last {
+        return Some(format!(
+            "`{name}` runs in this process only as a pipeline's last stage — an \
+             earlier stage is a forked child, so the variable it sets would be \
+             lost; run it as its own statement"
+        ));
+    }
+    if stmt.stage_marks().0.is_pipe_reader() {
+        return None;
+    }
+    Some(format!(
+        "a redirect on `{name}` isn't allowed when it is a pipeline's last stage — \
+         it reads the pipe in the parent; drop the redirect, or read the file in \
+         a statement of its own"
+    ))
+}
+
+fn in_process_stage_message(builtin: crate::ssa::BuiltinCmd, name: &str) -> String {
+    if builtin == crate::ssa::BuiltinCmd::Exec {
+        return "`exec` isn't allowed as a pipeline stage — a stage already runs in a \
+                forked child, so `exec` there replaces or rewires that child, not the \
+                program; write the command without `exec`, or run `exec` as its own \
+                statement"
+            .to_string();
+    }
+    format!(
+        "`{name}` isn't allowed as a pipeline stage — a stage runs in a forked child, \
+         so `{name}` would act on the child and its effect would be lost; run it as \
+         its own statement"
+    )
+}
+
+/// The builtin `stmt` runs, if it is one whose effect lands on the process
+/// that runs it ([`crate::ssa::BuiltinCmd::acts_on_its_process`]) — what a
+/// forked child, a pipeline stage or a `&` job, would discard. A DD#74
+/// `return <producer>` runs `return` too: as a stage (`a | return b`) it was
+/// refused as "a compound command".
+fn in_process_builtin(stmt: &Statement) -> Option<(crate::ssa::BuiltinCmd, &str)> {
+    let name = match &stmt.kind {
+        StmtKind::Command(c) => match &c.name.kind {
+            ExprKind::Literal(name) => name.as_str(),
+            _ => return None,
+        },
+        StmtKind::ReturnProducer(_) => "return",
+        _ => return None,
+    };
+    let builtin = crate::ssa::BuiltinCmd::from_name(name);
+    builtin.acts_on_its_process().then_some((builtin, name))
 }
 
 /// DD#122: the final stage of a pipeline must *consume* the pipe.
@@ -3029,21 +3500,42 @@ fn reject_statement_form_pipeline_stage(commands: &[Statement]) -> Result<(), Di
 /// wrap it in a function, which *is* a legal stage.
 ///
 /// Runs after [`reject_statement_form_pipeline_stage`], which has specific
-/// wording for `[[ … ]]`/`attest`/`(( … ))`. The default here is to reject, so
-/// a new `StmtKind` fails closed.
+/// wording for the statement forms and the in-process builtins. The default
+/// here is to reject, so a new `StmtKind` fails closed.
+///
+/// A `while` or `until` that reads the pipe may not carry `!`. The loop runs in
+/// this process and its own status never joins the pipeline's, so there is
+/// nothing for the `!` to invert; the transform had no lowering for it, and
+/// `a | ! while readline x { … }` reached an ICE.
+///
+/// Both messages name the keyword the user wrote ([`While::keyword`]).
 fn reject_nonconsuming_final_stage(commands: &[Statement]) -> Result<(), Diagnostic> {
-    let last = unwrap_stage_wrappers(&commands[commands.len() - 1]);
+    let stage = &commands[commands.len() - 1];
+    let last = stage.stage_body();
+    let (_, _, negated) = stage.stage_marks();
     match &last.kind {
         StmtKind::Command(_) => Ok(()),
-        StmtKind::While(_) if last.binds_a_pipe_reader() => Ok(()),
-        StmtKind::While(_) => Err(parse_error(
+        StmtKind::While(w) if !last.binds_a_pipe_reader() => Err(parse_error(
             last.span,
             "SB4073",
-            "this `while` is a pipeline's last stage but never reads it — the \
-             loop runs in the parent, so the pipe reaches it only through \
-             `readline` or `read`; add one, or drop the `|`"
-                .to_string(),
+            format!(
+                "this `{}` is a pipeline's last stage but never reads it — the \
+                 loop runs in the parent, so the pipe reaches it only through \
+                 `readline` or `read`; add one, or drop the `|`",
+                w.keyword()
+            ),
         )),
+        StmtKind::While(w) if negated => Err(parse_error(
+            last.span,
+            "SB4022",
+            format!(
+                "a negated `{}` isn't allowed as a pipeline's last stage — the \
+                 loop reads the pipe in this process and its own status never \
+                 joins the pipeline's, so `!` has nothing to invert; drop the `!`",
+                w.keyword()
+            ),
+        )),
+        StmtKind::While(_) => Ok(()),
         _ => Err(parse_error(
             last.span,
             "SB4022",
@@ -3074,8 +3566,9 @@ fn mixed_list_error(span: Span) -> Diagnostic {
 
 /// If `&&`, `||`, or `&` follows, wrap `stmt` in a `List` with the
 /// matching `ListOp`. `&` produces `Background` with a synthetic
-/// `true` right-hand side; the binary ops parse one more statement
-/// (defaulting to `true` if the input is malformed).
+/// `true` right-hand side, or SB4024 for a job whose effect would be lost
+/// with its child ([`background_list_op`]); the binary ops parse one more
+/// operand each.
 fn parse_trailing_list_op(
     scanner: &mut Scanner,
     mut left: Statement,
@@ -3089,38 +3582,17 @@ fn parse_trailing_list_op(
     // let one text mean two things, sash rejects the mixture — and out here
     // there is nothing to group with, because the answer is `if` or dispatch.
     let mut chain_op: Option<ListOp> = None;
+    // The operand just before the next operator, when it is a pipeline.
+    let mut pipeline_operand = plain_pipeline_span(&left);
     loop {
-        let (op, spelling) = match scanner.peek().token {
-            Tok::AndAnd => (ListOp::And, "&&"),
-            Tok::OrOr => (ListOp::Or, "||"),
-            Tok::Amp => return Ok(background_list_op(scanner, left)),
-            _ => return Ok(left),
+        let Some((op, spelling)) = and_or_operator(&scanner.peek().token) else {
+            return finish_list(scanner, left);
         };
-        match &chain_op {
-            Some(prev) if *prev != op => return Err(mixed_list_error(left.span)),
-            Some(_) => {}
-            None => chain_op = Some(op.clone()),
-        }
+        check_and_or_link(pipeline_operand, chain_op.as_ref(), &op, left.span)?;
+        chain_op = Some(op.clone());
+        let right = parse_and_or_operand(scanner, spelling)?;
+        pipeline_operand = plain_pipeline_span(&right);
         let span = left.span;
-        let op_start = scanner.peek().span.start;
-        scanner.next(); // consume && / ||
-        skip_terminators(scanner);
-        // A missing right operand is a syntax error (SB4056), not an implicit
-        // `true`. The old `.unwrap_or(true_cmd)` silently turned `echo a &&`
-        // into `echo a && true`, which compiled and ran while bash rejects the
-        // text outright. (`background_list_op` still synthesises a `true` — a
-        // trailing `&` genuinely has no right operand.)
-        let Some(right) = parse_list_operand(scanner)? else {
-            return Err(parse_error(
-                span_from(scanner, op_start),
-                "SB4056",
-                format!(
-                    "`{}` has no right-hand side — a list operator needs a command \
-                     on both sides",
-                    spelling
-                ),
-            ));
-        };
         left = Statement {
             kind: StmtKind::List(List {
                 op,
@@ -3132,26 +3604,120 @@ fn parse_trailing_list_op(
     }
 }
 
-/// Parse one `&&`/`||` chain operand: a command + its pipeline/redirects,
-/// but NOT a trailing list operator (the caller loops, left-associative).
+/// `&&` / `||` and their spellings; any other token ends the chain.
+fn and_or_operator(tok: &Tok) -> Option<(ListOp, &'static str)> {
+    match tok {
+        Tok::AndAnd => Some((ListOp::And, "&&")),
+        Tok::OrOr => Some((ListOp::Or, "||")),
+        _ => None,
+    }
+}
+
+/// The end of a chain: a trailing `&` backgrounds all of it.
+fn finish_list(scanner: &mut Scanner, left: Statement) -> Result<Statement, Diagnostic> {
+    if matches!(scanner.peek().token, Tok::Amp) {
+        return background_list_op(scanner, left);
+    }
+    Ok(left)
+}
+
+/// The span of a multi-stage pipeline. A negated one-command `Pipeline` is a
+/// single unit, so `! a && b` is not one.
+fn plain_pipeline_span(stmt: &Statement) -> Option<Span> {
+    match &stmt.kind {
+        StmtKind::Pipeline(p) if !p.negated => Some(stmt.span),
+        _ => None,
+    }
+}
+
+/// The two rules on a `&&`/`||` link, checked before its right operand.
+///
+/// DD#55 / SB4023: the operand on the operator's left may not be a pipeline —
+/// `&&`/`||` after a pipeline is ambiguous postfix (what does it test?), the
+/// same rule as on a compound. A pipeline as the *consequent* (`A && a | b`)
+/// is fine, because no operator follows it.
+///
+/// DD#95 / SB4053: one chain does not mix `&&` and `||`.
+fn check_and_or_link(
+    pipeline_operand: Option<Span>,
+    chain_op: Option<&ListOp>,
+    op: &ListOp,
+    span: Span,
+) -> Result<(), Diagnostic> {
+    if let Some(pipeline) = pipeline_operand {
+        return Err(parse_error(
+            pipeline,
+            "SB4023",
+            "`&&` / `||` on a pipeline isn't allowed — use `if pipeline; then …; fi`".to_string(),
+        ));
+    }
+    match chain_op {
+        Some(prev) if prev != op => Err(mixed_list_error(span)),
+        _ => Ok(()),
+    }
+}
+
+/// Consume a `&&` / `||` and parse its right operand.
+fn parse_and_or_operand(scanner: &mut Scanner, spelling: &str) -> Result<Statement, Diagnostic> {
+    let op_start = scanner.peek().span.start;
+    scanner.next(); // consume && / ||
+    skip_terminators(scanner);
+    // A missing right operand is a syntax error (SB4056), not an implicit
+    // `true`. The old `.unwrap_or(true_cmd)` silently turned `echo a &&`
+    // into `echo a && true`, which compiled and ran while bash rejects the
+    // text outright. (`background_list_op` still synthesises a `true` — a
+    // trailing `&` genuinely has no right operand.)
+    let Some(right) = parse_list_operand(scanner)? else {
+        return Err(parse_error(
+            span_from(scanner, op_start),
+            "SB4056",
+            format!(
+                "`{}` has no right-hand side — a list operator needs a command \
+                 on both sides",
+                spelling
+            ),
+        ));
+    };
+    // DD#66(b): an `&&`/`||` operand is a boolean position, so `a && [[ … ]]`
+    // and `a && - [[ … ]]` are refused like `if [[ … ]]`.
+    if let Some(d) = dispatch_in(&right) {
+        return Err(dispatch_stmt_only_error(d.span));
+    }
+    Ok(right)
+}
+
+/// Parse one `&&`/`||` chain operand or `|` stage: a command + its
+/// pipeline/redirects, but NOT a trailing list operator (the caller loops,
+/// left-associative).
 ///
 /// Keeps its `Option` unlike the rest of the statement parsers: `None` here
-/// is live, and is what `parse_trailing_pipeline` turns into SB4056 for a
-/// dangling `/bin/true &&`.
+/// is live, and is what `parse_and_or_operand` and `parse_trailing_pipeline`
+/// turn into SB4056 for a dangling `/bin/true &&` or `/bin/true |`.
 fn parse_list_operand(scanner: &mut Scanner) -> Result<Option<Statement>, Diagnostic> {
     skip_terminators(scanner);
     if scanner.at_eof() {
         return Ok(None);
     }
-    let start = scanner.peek().span.start;
-    let tok = scanner.peek().token.clone();
-    let span = span_from(scanner, start);
-    let stmt = dispatch_statement(scanner, tok, span)?;
+    parse_operand_here(scanner).map(Some)
+}
+
+/// [`parse_list_operand`] once the caller has established an operand is here
+/// — also what a `-` in operand position prefixes ([`Reach::Operand`]).
+fn parse_operand_here(scanner: &mut Scanner) -> Result<Statement, Diagnostic> {
+    // An operand-level `-` takes the whole operand, its own redirects and
+    // pipe included, so it is not wrapped a second time here. That second
+    // wrap met a compound's fd-prefixed redirect after the first had passed
+    // it by: `a && - { b } 2>f` and `a | - { b } 2>f` reached an ICE.
+    if at_suppression(scanner) {
+        return parse_suppressed(scanner, Reach::Operand);
+    }
+    let stmt = dispatch_statement(scanner, Reach::Operand)?;
+    reject_arith_comma_list_op(&stmt, scanner)?;
     if is_compound(&stmt.kind) {
         // Compounds can't take a postfix `&&`/`||`/redirect/pipe (SB4023/…).
-        reject_compound_postfix(stmt, scanner).map(Some)
+        reject_compound_postfix(stmt, scanner)
     } else {
-        Ok(Some(wrap_pipeline_part(scanner, stmt)?))
+        wrap_pipeline_part(scanner, stmt)
     }
 }
 
@@ -3192,19 +3758,49 @@ fn reject_redirect_on_no_output_builtin(name: &Expr, span: Span) -> Result<(), D
 }
 
 /// Redirects + pipeline (`|`), but NOT trailing list operators.
+///
+/// No compound arrives: `parse_statement_here` and `parse_operand_here` send
+/// one to [`reject_compound_postfix`], and a `return` producer is a command, a
+/// `[[ … ]]`, a negated unit or an arithmetic command. The comma group of
+/// `return (( a++, a < 3 ))` used to be the exception, answered here as a
+/// compound; it is an arithmetic command (see [`is_compound`]). A compound
+/// let through would be taken as a pipeline stage before a `|`, or as an
+/// `&&`/`||` operand, past the SB4022/SB4023 its own postfix check gives — so
+/// the entry is an ICE, not an answer.
 fn wrap_pipeline_part(scanner: &mut Scanner, stmt: Statement) -> Result<Statement, Diagnostic> {
-    let redirects = parse_trailing_redirects(scanner, stmt.span)?;
-    if !redirects.is_empty() {
-        let what = redirect_reject_noun(&stmt.kind);
-        return Err(parse_error(
-            stmt.span,
-            "SB4046",
-            format!(
-                "a redirect cannot attach to {what} — redirects attach to a command that produces output"
-            ),
-        ));
-    }
+    assert!(
+        !is_compound(&stmt.kind),
+        "ICE: a compound reached wrap_pipeline_part, which would take it as a \
+         pipeline stage or list operand past reject_compound_postfix — \
+         parse_statement_here and parse_operand_here route compounds there, and \
+         no return producer is one"
+    );
+    reject_trailing_redirects(scanner, &stmt)?;
     parse_trailing_pipeline(scanner, stmt)
+}
+
+/// SB4021 / SB4046 for a redirect still pending after `stmt`.
+///
+/// A command absorbs its own redirects in `parse_simple_command`, so anything
+/// left here follows a statement that cannot take one: a test, an assignment,
+/// a declaration, an `attest`, or a compound — which arrives only as a `!`
+/// operand (`! { … } >f`). The redirects are collected rather than peeked at,
+/// so an fd-prefixed `2>f`, which has no operator token, is seen too.
+fn reject_trailing_redirects(scanner: &mut Scanner, stmt: &Statement) -> Result<(), Diagnostic> {
+    if parse_trailing_redirects(scanner, stmt.span)?.is_empty() {
+        return Ok(());
+    }
+    if is_compound(&stmt.kind) {
+        return Err(compound_redirect_error(stmt.span));
+    }
+    let what = redirect_reject_noun(&stmt.kind);
+    Err(parse_error(
+        stmt.span,
+        "SB4046",
+        format!(
+            "a redirect cannot attach to {what} — redirects attach to a command that produces output"
+        ),
+    ))
 }
 
 /// The SB4046 noun for a statement that has a trailing redirect still pending
@@ -3236,22 +3832,35 @@ fn wrap_pipeline_part(scanner: &mut Scanner, stmt: Statement) -> Result<Statemen
 /// the one shape it already knows about. Treat a panic from here as a report
 /// that some parser path builds a command without absorbing its redirects,
 /// and add the arm rather than silencing the ICE.
+///
+/// It caught four more from source (2026-10-27), none of them a command:
+/// `! [[ … ]] >f`, `! attest … >f` and `return ! (( 1 )) 2>f` arrived holding
+/// `parse_negated`'s one-command wrapper, and `return (( a++, a < 3 )) >f` the
+/// comma group. A wrapper is not a kind to name here, so that repair was
+/// upstream: `parse_negated` checks the unit before wrapping it. The comma
+/// group is one — an arithmetic command with a write (DD#31), named in
+/// `noncommand_redirect_target` as the assignment it is. A real compound
+/// (`! { … } >f`) is answered before a noun is asked for: SB4021, in
+/// [`reject_trailing_redirects`].
 pub(super) fn redirect_reject_noun(kind: &StmtKind) -> &'static str {
     match noncommand_redirect_target(kind) {
         Some(what) => what,
         None => panic!(
-            "ICE: a trailing redirect survived to wrap_pipeline_part on a \
+            "ICE: a trailing redirect survived to reject_trailing_redirects on a \
              statement kind that should have absorbed it in parse_simple_command"
         ),
     }
 }
 
 /// A redirect may only attach to something that produces output. If `kind` is
-/// a function definition, a variable declaration, a variable assignment, an
+/// a function definition, a variable declaration, a variable assignment (a
+/// comma with a write, `(( a++, a < 3 ))`, is one: DD#31 splits it into
+/// statements, and its group exists only because a part writes), an
 /// arithmetic test, or a `[[ … ]]` test, a trailing redirect is illegal
 /// (SB4046) — returns the noun for the diagnostic; `None` means a redirect is
-/// allowed on this statement kind. (Compound commands are handled separately
-/// by `reject_compound_postfix`, SB4021.)
+/// allowed on this statement kind. (A compound is answered before this is
+/// asked: SB4021, from `reject_compound_postfix` or
+/// `reject_trailing_redirects`.)
 ///
 /// The two test forms are the later additions. Both produce no output, so
 /// bash's behaviour — create and truncate the file, write nothing into it —
@@ -3274,6 +3883,10 @@ fn noncommand_redirect_target(kind: &StmtKind) -> Option<&'static str> {
         StmtKind::Function(_) => Some("a function definition"),
         StmtKind::Declaration(_) => Some("a variable declaration"),
         StmtKind::Assignment(_) => Some("a variable assignment"),
+        StmtKind::Group(Group {
+            origin: GroupOrigin::ArithComma,
+            ..
+        }) => Some("a variable assignment"),
         StmtKind::ArithTest(_) => Some("an arithmetic test"),
         StmtKind::Command(c) if is_bracket_test(c) => Some("a `[[ … ]]` test"),
         StmtKind::Command(c) if is_named_command(c, "attest") => Some("an `attest`"),
@@ -3293,17 +3906,106 @@ fn is_named_command(c: &Command, name: &str) -> bool {
     matches!(&c.name.kind, ExprKind::Literal(n) if n == name)
 }
 
-fn background_list_op(scanner: &mut Scanner, left: Statement) -> Statement {
+/// `… &`: run the chain `left` as a background job — a `Background` list
+/// whose right side is a synthetic `true`, since a trailing `&` has no right
+/// operand.
+///
+/// SB4024 when the job's work would be lost. A job is a forked child (DD#55),
+/// so a statement whose effect lands on the process that runs it acts on the
+/// child alone: `x=b &` and `(( n = 1 )) &` compiled and dropped the write,
+/// `cd /tmp &` changed nothing, `exec >f &` rewired the child's descriptors,
+/// and `return 3 &` / `break &` ran parent code in the child. This is SB4022's
+/// principle for a pipeline stage, applied to the other forked child.
+fn background_list_op(scanner: &mut Scanner, left: Statement) -> Result<Statement, Diagnostic> {
+    if let Some(err) = background_fault(&left) {
+        return Err(err);
+    }
     let span = left.span;
-    scanner.next();
-    Statement {
+    scanner.next(); // consume '&'
+    Ok(Statement {
         kind: StmtKind::List(List {
             op: ListOp::Background,
             left: Box::new(left),
             right: Box::new(Statement::true_cmd(span)),
         }),
         span,
+    })
+}
+
+/// SB4024 for the statement in a background job whose effect would be lost
+/// with the job's child — or `None` if the job can run.
+///
+/// Every stage of a pipeline is checked, though the stage gate already
+/// refuses an in-process builtin before the last stage, so in practice only
+/// the last can answer: DD#122's reader, which runs in the parent only when
+/// its pipeline does. An `(( … ))` test and a `[[ … ]]` have no effect but
+/// their status. An arithmetic write is an assignment, not an `ArithTest`, and
+/// so is a comma with a write, `(( a++, a > 3 ))`: DD#31 splits it into
+/// statements, and its group exists only because a part writes, so it answers
+/// as the assignment it is. A function definition under `&` is SB5071's.
+///
+/// A compound gets the answer `reject_compound_postfix` gives the `&` right
+/// after one. It reaches here only under `!`, whose one-command wrapper hid
+/// it from that check: `! { … } &`, `a && ! if … { … } &`. That arm was an
+/// ICE claiming no compound could arrive, and those programs reached it.
+///
+/// **Total over `StmtKind` on purpose — do not add a wildcard.** A new kind
+/// must say whether a fork loses what it does.
+fn background_fault(stmt: &Statement) -> Option<Diagnostic> {
+    match &stmt.kind {
+        StmtKind::Suppressed(inner) | StmtKind::Negated(inner) => background_fault(inner),
+        StmtKind::Redirected(r) => background_fault(&r.body),
+        StmtKind::List(l) => background_fault(&l.left).or_else(|| background_fault(&l.right)),
+        StmtKind::Pipeline(p) => p.commands.iter().find_map(background_fault),
+        StmtKind::Assignment(_)
+        | StmtKind::Declaration(_)
+        | StmtKind::Group(Group {
+            origin: GroupOrigin::ArithComma,
+            ..
+        }) => statement_form_label(stmt).map(|what| background_effect_error(stmt.span, what)),
+        StmtKind::Command(c) => command_background_fault(stmt, c),
+        StmtKind::ArithTest(_) | StmtKind::Function(_) => None,
+        StmtKind::If(_)
+        | StmtKind::While(_)
+        | StmtKind::For(_)
+        | StmtKind::Case(_)
+        | StmtKind::Group(_) => Some(compound_background_error(stmt.span)),
+        StmtKind::ReturnProducer(_) => unreachable!(
+            "ICE: a return producer reached background_fault — parse_return folds the \
+             producer's own `&` and refuses it (SB4024)"
+        ),
     }
+}
+
+/// [`background_fault`] for a command: an in-process builtin
+/// ([`in_process_builtin`]) acts on the child. `exec cmd &` is the exception
+/// — it replaces the child with `cmd`, which is all `cmd &` does — but an
+/// `exec` with no command only rewires the descriptors of the process that
+/// runs it.
+fn command_background_fault(stmt: &Statement, c: &Command) -> Option<Diagnostic> {
+    let (builtin, name) = in_process_builtin(stmt)?;
+    if builtin != crate::ssa::BuiltinCmd::Exec {
+        return Some(background_effect_error(stmt.span, &format!("`{name}`")));
+    }
+    c.args
+        .is_empty()
+        .then(|| background_effect_error(stmt.span, "`exec` without a command"))
+}
+
+/// SB4024 — a background job whose effect lands on the process that runs it
+/// ([`background_fault`]). The same code as a status consumer's background
+/// operand ([`background_status_error`]) and a compound's `&`: each is a `&`
+/// that cannot do what it says.
+fn background_effect_error(span: Span, what: &str) -> Diagnostic {
+    parse_error(
+        span,
+        "SB4024",
+        format!(
+            "{what} isn't allowed in a background job — the job (`… &`) runs in a \
+             forked child, so its effect would land on the child and be lost; drop \
+             the `&`"
+        ),
+    )
 }
 
 /// The plain `(fd, op)` for a redirect operator token. `&>` and `<<<` are
@@ -3912,5 +4614,73 @@ mod invariant_tests {
     fn parse_assignment_rejects_a_non_word_head() {
         let mut sc = Scanner::new("= 1");
         let _ = parse_assignment(&mut sc, Span::new(1, 1));
+    }
+
+    /// `parse_return` folds its producer's trailing `&` itself and refuses
+    /// it, so no `&` is left after a return producer for the statement's fold.
+    #[test]
+    #[should_panic(expected = "parse_return folds the producer's own `&`")]
+    fn background_fault_rejects_a_return_producer() {
+        let span = Span::new(1, 1);
+        let ret = Statement {
+            kind: StmtKind::ReturnProducer(Box::new(Statement::true_cmd(span))),
+            span,
+        };
+        let _ = background_fault(&ret);
+    }
+
+    fn negated_true(span: Span) -> Statement {
+        Statement {
+            kind: StmtKind::Pipeline(Pipeline {
+                commands: vec![Statement::true_cmd(span)],
+                negated: true,
+            }),
+            span,
+        }
+    }
+
+    /// `- !` is SB4019 before the `-` body is parsed, so no body arrives
+    /// negated. Both answers the function could give are wrong: pushing the
+    /// `-` into the stage builds the mirror `! - X`, and wrapping it compiles
+    /// the rejected `- ! X`.
+    #[test]
+    #[should_panic(expected = "no `-` body is a negated pipeline")]
+    fn suppression_rejects_a_negated_body() {
+        let span = Span::new(1, 1);
+        let _ = push_suppression_into_pipeline(negated_true(span), span);
+    }
+
+    /// The `&` arm hands every pipeline to the same check, so `- ! X &` cannot
+    /// slip past it as a background list.
+    #[test]
+    #[should_panic(expected = "no `-` body is a negated pipeline")]
+    fn suppression_rejects_a_negated_background_body() {
+        let span = Span::new(1, 1);
+        let job = Statement {
+            kind: StmtKind::List(List {
+                op: ListOp::Background,
+                left: Box::new(negated_true(span)),
+                right: Box::new(Statement::true_cmd(span)),
+            }),
+            span,
+        };
+        let _ = push_suppression_into_pipeline(job, span);
+    }
+
+    /// Both callers send a compound to `reject_compound_postfix`, and no
+    /// `return` producer is one. One let through would become a pipeline stage
+    /// or an `&&`/`||` operand past the SB4022/SB4023 its postfix check gives.
+    #[test]
+    #[should_panic(expected = "a compound reached wrap_pipeline_part")]
+    fn pipeline_part_rejects_a_compound() {
+        let span = Span::new(1, 1);
+        let group = Statement {
+            kind: StmtKind::Group(Group {
+                body: vec![],
+                origin: GroupOrigin::Braced,
+            }),
+            span,
+        };
+        let _ = wrap_pipeline_part(&mut Scanner::new(""), group);
     }
 }

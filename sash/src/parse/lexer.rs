@@ -263,6 +263,11 @@ pub struct Scanner {
     /// this scanner reports — token spans and its own fatal diagnostics alike
     /// — is counted from here.
     origin: Origin,
+    /// Set once the parser has skipped ahead after an error (see
+    /// [`Self::mark_recovered`]). From there on it no longer knows which
+    /// blocks are open, so it cannot tell a stray block keyword (`fi`,
+    /// `done`, …) from the closer of a block whose opener it skipped.
+    recovered: bool,
 }
 
 impl Scanner {
@@ -285,6 +290,7 @@ impl Scanner {
             attached_hash: None,
             bad_escape: None,
             origin,
+            recovered: false,
         }
     }
 
@@ -367,6 +373,17 @@ impl Scanner {
     /// rather than an absorbable metacharacter.
     pub fn in_cmd_sub(&self) -> bool {
         self.cmd_sub_depth > 0
+    }
+
+    /// Record that the parser skipped ahead after an error.
+    pub fn mark_recovered(&mut self) {
+        self.recovered = true;
+    }
+
+    /// Whether the parser has skipped ahead after an error, so that the
+    /// blocks it believes open may not be the source's.
+    pub fn has_recovered(&self) -> bool {
+        self.recovered
     }
 
     /// Compute (line, col) from byte offset. Both 1-based, and counted from

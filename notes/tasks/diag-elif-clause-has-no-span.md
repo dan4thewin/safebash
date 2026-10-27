@@ -1,6 +1,6 @@
 ---
 title: "Diagnostic: an `elif` clause records no position, so its errors point at the `if`"
-status: open
+status: done
 priority: P3
 kind: diagnostic
 depends: []
@@ -60,3 +60,38 @@ elif condition (`q-empty-keyword-condition`), and it fixes only symptom 2.
 
 Probes: `files/port-f13-probes.tar.gz`, directories `el/` (e5–e8) and
 `el2/` (p1–p3, q1, q2).
+
+## Resolution (F1+F4, journal 537)
+
+Fixed as proposed. `ElifClause` has a `span`, which the parser sets from
+the keyword in both spellings (`clause_keyword_span`, `parse/parser.rs`), and
+`else` errors use the `else` keyword the same way. The unit test
+`an_elif_clause_records_its_keyword_position` (`parse/tests.rs`) pins both
+spellings and a negated `if`. `flatten_elif` gives each nested `If` its
+clause's span, pinned by `a_flattened_elif_keeps_its_keyword_position`
+(`transform/control_flow.rs`).
+
+Every error now points at its clause, in both backends. On 8e28c61 each of
+the rows below reported 1:1:
+
+| probe | spec | reported |
+|---|---|---|
+| p1 | cnd.22 | SB4027 at 3:8 |
+| q1 | skw.27 | SB4014 "expected '{' block body" at 3:3 |
+| q2, no closer after it | skw.26 | SB4014 "expected 'then' after elif" at 1:34 |
+| an unclosed `else` body | skw.28 | SB4014 "expected '}' to close the block body" at 3:3 |
+
+Three things differ from the gates as written (decide-and-report):
+
+- SB4027 is reported at the offending `{` (3:8), not at the `elif` keyword
+  (3:3). F1+F4 moved SB4027 to the `{` everywhere, the `if`'s own included.
+  It is still on the clause's line.
+- q2 as probed has a body and a `fi`, so the condition list runs into the
+  `fi`. That shape is now SB4072 at the `fi` (skw.23), the same as any
+  keyword header that misses its `then` or `do`. "expected 'then' after
+  elif" remains for the source that ends first (skw.26).
+- p3 has no spec of its own. It is p1's site one clause later: cur reports
+  SB4027 at 6:8.
+
+The `}` that p1 leaves behind is still reported as SB4072 at 5:1. That
+cascade belongs to `bug-parse-error-in-block-cascades-sb4072`.

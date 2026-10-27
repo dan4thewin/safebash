@@ -93,6 +93,39 @@ mod test {
             );
         }
     }
+
+    /// Each `elif` records its keyword's position in both spellings, and so
+    /// does the `if` that DD#121's negated-attest rewrite nests from the first
+    /// `elif`. The specs pin where an elif's parse errors are reported, but no
+    /// program prints these recorded positions: they are where the transform
+    /// would report a diagnostic about the clause as a whole, and none is
+    /// reachable today.
+    #[test]
+    fn an_elif_clause_records_its_keyword_position() {
+        let if_of = |source: &str| match parse_ok(source).statements.remove(0).kind {
+            StmtKind::If(i) => i,
+            other => panic!("expected an if, got {:?}", other),
+        };
+        let spans = |i: &If| i.elif_clauses.iter().map(|e| e.span).collect::<Vec<_>>();
+
+        let brace = if_of(
+            "if /bin/true {\n  /bin/true\n} elif /bin/false {\n  /bin/true\n} elif /bin/true {\n  /bin/true\n}\n",
+        );
+        assert_eq!(spans(&brace), [Span::new(3, 3), Span::new(5, 3)]);
+
+        let keyword = if_of("if /bin/true; then /bin/true\nelif /bin/false; then /bin/true\nfi\n");
+        assert_eq!(spans(&keyword), [Span::new(2, 1)]);
+
+        let negated = if_of(
+            "if ! attest x [[ -n $x ]] {\n  /bin/true\n} elif /bin/false {\n  /bin/true\n}\n",
+        );
+        assert!(
+            matches!(negated.then_body.as_slice(),
+                [Statement { kind: StmtKind::If(_), span }] if *span == Span::new(3, 3)),
+            "{:?}",
+            negated.then_body
+        );
+    }
 }
 
 // ── Logos prototype equivalence tests ────────────────────────────────
@@ -209,9 +242,11 @@ mod logos_equivalence {
         }
     }
 
-    /// `wrap_pipeline_part` reaches `redirect_reject_noun` only when a
-    /// trailing redirect is still pending, and every kind that can be holding
-    /// one there is a kind `noncommand_redirect_target` names — so the `None`
+    /// `reject_trailing_redirects` (from `wrap_pipeline_part` and
+    /// `parse_negated`) reaches `redirect_reject_noun` only when a trailing
+    /// redirect is still pending and the statement is not a compound, and
+    /// every kind that can be holding one there is a kind
+    /// `noncommand_redirect_target` names — so the `None`
     /// arm is a should-never-run ICE, not a branch any source text can take.
     /// A command is the case that proves it: it absorbs its own redirects in
     /// `parse_simple_command`, so seeing one here means that absorption
@@ -232,7 +267,7 @@ mod logos_equivalence {
         let caught = std::panic::catch_unwind(|| crate::parse::parser::redirect_reject_noun(&kind));
         assert!(
             caught.is_err(),
-            "a redirect surviving to wrap_pipeline_part on a command must raise a loud ICE"
+            "a redirect surviving to reject_trailing_redirects on a command must raise a loud ICE"
         );
     }
 

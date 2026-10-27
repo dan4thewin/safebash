@@ -137,3 +137,27 @@ SB401x must-consume family; keep adjacent per DD#70). Migration: existing
 unquoted-`=~` specs are unaffected (bare metachars still work); new specs
 cover quoted spaces, dynamic patterns, multi-exact arms, and the assignment
 literals.
+
+## Addendum (2026-10-26): a declaration stops where an assignment does
+
+"An assignment (and typed declaration) is a value binding", but only the
+untyped assignment ended at a list or pipe operator. A typed declaration took
+every word to the end of the statement as another assignment, so
+`int n=1 && /bin/echo ok` read `&&` as a name and said SB4014 "expected
+variable name in declaration" (batch-531 B28). A declaration now stops at an
+`|`, `&`, `&&` or `||` token, as an untyped assignment does, and gets the same
+verdicts: SB4025 "a declaration is a value binding, not a boolean or exit
+status" as an `&&`/`||` operand, SB4022 as a pipeline stage and SB4024 under
+`&`. The value-word rule above is unchanged, since only an operator token ends
+the declaration: `str s=a|b`, `str s=a&` and `str s=a&&b` are still literals.
+
+In a control-flow header the `{` that opens the body ends a declaration too,
+as it ends a command's words there (DD#68). The declaration took it as its
+next name and said SB4014, so `if int n=$(cmd) { … }` now gets DD#88's
+SB4025, which the keyword spelling `if int n=$(cmd); then` already got.
+Outside a header a `{` does not end a declaration (decide-and-report):
+`int n=1 { … }` stays SB4014, while the untyped `s=x { echo hi }` splits in
+silence into `s=x` and a `{ }` group and prints `hi`. Which of the two is
+right is `q-statement-form-residuals`.
+
+Specs: errors.sh 71.1-71.9. Journal 537.

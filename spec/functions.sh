@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup functions
-plan=220
+plan=223
 echo "1..$plan" >&3
 
 set +e
@@ -1097,6 +1097,32 @@ return ${s:-1}
 }
 if f; then echo yes; else echo no; fi'
 [[ $rc = 0 && $out = "no" && -z $err ]]; chk 74.61
+
+# 74.67 a signed decimal literal is a status VALUE, as it is to `exit`: a
+# word is a value when an int sink would take it as a literal, so
+# `return -1` returns -1, as `return $(( -1 ))` does. Both words used to be
+# looked up as commands (SB5011 "command '-1' not found").
+run_sash 'fn f { return -1 }
+fn g { return +1 }
+f
+echo "f=$?"
+g
+echo "g=$?"'
+[[ $rc = 0 && $out = "f=-1
+g=1" && -z $err ]]; chk 74.67
+
+# 74.68 ...but a number past i64 is not one. It heads a producer and is
+# looked up as a command, as `return abc` is (74.54). As a value it reached
+# native int lowering and ICE'd, and C aborted at run time with "arithmetic
+# overflow".
+run_sash 'fn f { return 9223372036854775808 }
+f'
+[[ $rc != 0 && $err == *SB5011*"command '9223372036854775808' not found"* ]]; chk 74.68
+
+# 74.69 ...and a sign does not make a word a value: `-x` is a command.
+run_sash 'fn f { return -x }
+f'
+[[ $rc != 0 && $err == *SB5011*"command '-x' not found"* ]]; chk 74.69
 
 # 74.62 a predicate whose body is a `{ }` GROUP ending in `return`. The
 # "does every path return?" walk has to descend into the group, or the group

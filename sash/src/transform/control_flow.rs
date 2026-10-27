@@ -22,7 +22,7 @@ pub(super) fn flatten_elif(i: &If) -> If {
         };
         else_body = Some(vec![Statement {
             kind: StmtKind::If(nested),
-            span: Span::default(),
+            span: elif.span,
         }]);
     }
     If {
@@ -1376,5 +1376,43 @@ mod invariant_tests {
         ));
         assert!(matches!(ssa.block(merge).terminator, Terminator::Return));
         assert!(matches!(ssa.block(no_match).terminator, Terminator::Return));
+    }
+
+    /// `flatten_elif` nests each `elif` as an `If` in the previous clause's
+    /// else body. That `If` is a statement in its own right: `lower_one` makes
+    /// its span the position of any diagnostic raised about it as a whole, so
+    /// it must carry its `elif`'s position. It used to be `Span::default()`,
+    /// which prints as 0:0. No spec can see this, because no If-level
+    /// transform diagnostic is reachable today and `--trace` prints no
+    /// positions.
+    #[test]
+    fn a_flattened_elif_keeps_its_keyword_position() {
+        let clause = |line| ElifClause {
+            condition: vec![Statement::true_cmd(Span::new(line, 6))],
+            body: vec![Statement::true_cmd(Span::new(line + 1, 3))],
+            span: Span::new(line, 3),
+        };
+        let i = If {
+            condition: vec![Statement::true_cmd(Span::new(1, 4))],
+            then_body: vec![Statement::true_cmd(Span::new(2, 3))],
+            elif_clauses: vec![clause(3), clause(5)],
+            else_body: Some(vec![Statement::true_cmd(Span::new(8, 3))]),
+        };
+        let flat = flatten_elif(&i);
+        assert!(flat.elif_clauses.is_empty());
+
+        let mut nested_spans = Vec::new();
+        let mut else_body = flat.else_body;
+        while let Some(body) = else_body.take() {
+            if let [Statement {
+                kind: StmtKind::If(nested),
+                span,
+            }] = body.as_slice()
+            {
+                nested_spans.push(*span);
+                else_body = nested.else_body.clone();
+            }
+        }
+        assert_eq!(nested_spans, [Span::new(3, 3), Span::new(5, 3)]);
     }
 }

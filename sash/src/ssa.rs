@@ -318,6 +318,89 @@ impl BuiltinCmd {
         }
     }
 
+    /// Whether the command's effect lands on the process that runs it, so a
+    /// forked child — a pipeline stage (SB4022) or a `&` job (SB4024) — would
+    /// discard it.
+    ///
+    /// Before these gates every `true` arm compiled as a stage and died at
+    /// runtime with `sash: bug: bare command passed to sash_exec`, or ICEd
+    /// (`keys m k | cat`), and under `&` lost its write in silence
+    /// (`argv a &` left `a` empty) or segfaulted on the never-filled
+    /// collection.
+    ///
+    /// The answer is for the command's *legal statement spellings*. `keys m k`
+    /// and `argv a` write a collection, so [`Self::Keys`] and [`Self::Argv`]
+    /// answer `true`, and an illegal spelling of either (`keys m`, `argv 1`)
+    /// draws the stage error before SB5073 / SB5063 can. A builtin with no
+    /// legal statement spelling answers `false`, so its own rule keeps
+    /// precedence: the value-only intrinsics are SB5073, and
+    /// [`Self::Mapfile`] is SB5060 in every position.
+    ///
+    /// [`Self::Other`] is `false` for all three populations `from_name`
+    /// collapses into it, so unlike [`Self::may_take_redirect`] this needs no
+    /// join with `resolve::INTRINSICS`: an external runs in a process of its
+    /// own anyway, a user-function stage is DD#122's sanctioned form, and the
+    /// twelve value intrinsics are SB5073.
+    ///
+    /// [`Self::Exec`] is `true`: it replaces the process that runs it, so as a
+    /// stage it replaces only the child. That `exec cmd &` stays legal is the
+    /// background gate's exemption, not this predicate's answer. A
+    /// `read`/`readline` *last* stage is DD#122's pipe reader and runs in the
+    /// parent; the stage gate exempts it, also not here. [`Self::Test`] is
+    /// `false`: a test's only effect is its status, which a stage still
+    /// reports (a `[[ … ]]` stage is `statement_form_label`'s anyway).
+    ///
+    /// **Total over the enum on purpose — do not add a wildcard.** A new
+    /// builtin must say whether a fork loses what it does.
+    pub fn acts_on_its_process(self) -> bool {
+        match self {
+            // Control flow of the process that runs them.
+            Self::Exit | Self::Return | Self::Break | Self::Continue => true,
+            // Process state: cwd, descriptors, jobs, variables, dispositions.
+            Self::Cd | Self::Close | Self::Wait | Self::Unset | Self::Signal => true,
+            // Write a variable or collection of the process that runs them.
+            Self::Argv | Self::Read | Self::Keys | Self::Match | Self::MatchAll | Self::Attest => {
+                true
+            }
+            // Replaces the process that runs it.
+            Self::Exec => true,
+
+            // Their effect is output, which a stage pipes on.
+            Self::Echo | Self::Write | Self::Noop => false,
+            // Not a builtin, or a value intrinsic `from_name` does not know.
+            Self::Other => false,
+            // Its effect is its status, which a stage still reports.
+            Self::Test => false,
+            // Retired: SB5060 in every position.
+            Self::Mapfile => false,
+            // Value-only: SB5073 in every position but a sole capture.
+            Self::Len
+            | Self::Strlen
+            | Self::Join
+            | Self::Sub
+            | Self::Gsub
+            | Self::Toupper
+            | Self::Tolower
+            | Self::Basename
+            | Self::Dirname => false,
+
+            // Compiler-internal opcodes, never written in source: each sets
+            // the test status, the exit path, a job, a signal, or a table of
+            // the process that runs it.
+            Self::NegateTestResult
+            | Self::SetTestFromStatus
+            | Self::SetTestFromPipe
+            | Self::LetExit
+            | Self::ForkBackground
+            | Self::StoreBgPid
+            | Self::TrapSignal
+            | Self::SignalFlag
+            | Self::SignalCheckpoint
+            | Self::TableDelete
+            | Self::TableDeleteIdx => true,
+        }
+    }
+
     /// Display spelling for a compiler-internal opcode. Returns `None` for
     /// variants that come from source (their raw name should be used).
     ///
@@ -622,8 +705,11 @@ pub enum SsaInst {
         checked: bool,
         /// Nonlocal exits must retain their return/status/condition value.
         preserve_status: bool,
-        /// A completed while succeeds; a scalar/array read retains its EOF test.
-        loop_consumer: bool,
+        /// Whether the consumer's own verdict joins the producers' status. A
+        /// reader's EOF test joins; a completed `while` succeeds, and a
+        /// `-`-suppressed consumer's verdict is discarded (DD#55), so neither
+        /// of those does.
+        verdict_joins: bool,
     },
     /// attest VAR [[ test_expr ]] — runtime validation of tainted data.
     /// If the test fails, abort with nonzero exit.
@@ -701,7 +787,7 @@ pub(crate) struct ReaderRegion {
     pub done: BlockId,
     pub candidates: std::collections::HashSet<BlockId>,
     pub checked: bool,
-    pub loop_consumer: bool,
+    pub verdict_joins: bool,
 }
 
 /// Why a [`SsaInst::Test`] exists in SSA.
@@ -1765,8 +1851,9 @@ pub struct VersionState {
     /// Depth counter for condition position (if/while condition, LHS of &&/||).
     pub in_condition: u32,
     /// Depth counter for `-` suppression (DD#55). Set while lowering the
-    /// inner statement of `StmtKind::Suppressed`. Distinguishes a bare
-    /// must-consume violation (SB4018) from a `-`-suppressed one (SB4019).
+    /// inner statement of `StmtKind::Suppressed` and a `-`-marked final pipe
+    /// consumer. A must-consume result (SB4016/SB4018) inside it is
+    /// discarded rather than an error.
     pub suppressed: u32,
     /// EXIT trap body statements (if set via `trap 'body' EXIT`).
     pub exit_trap: Option<Vec<crate::ir::Statement>>,
@@ -2186,24 +2273,38 @@ pub(crate) fn pipeline_num_pipes(n: usize, capture_read_fd: bool) -> usize {
 mod api_contract_tests {
     use super::*;
 
+    /// The compiler-internal opcodes: no source spelling reaches them, so a
+    /// predicate's arm for them is pinned here or nowhere.
+    const INTERNAL_OPCODES: [BuiltinCmd; 11] = [
+        BuiltinCmd::NegateTestResult,
+        BuiltinCmd::SetTestFromStatus,
+        BuiltinCmd::SetTestFromPipe,
+        BuiltinCmd::LetExit,
+        BuiltinCmd::ForkBackground,
+        BuiltinCmd::StoreBgPid,
+        BuiltinCmd::TrapSignal,
+        BuiltinCmd::SignalFlag,
+        BuiltinCmd::SignalCheckpoint,
+        BuiltinCmd::TableDelete,
+        BuiltinCmd::TableDeleteIdx,
+    ];
+
     #[test]
     fn only_authorial_commands_may_take_redirects() {
-        for kind in [
-            BuiltinCmd::NegateTestResult,
-            BuiltinCmd::SetTestFromStatus,
-            BuiltinCmd::SetTestFromPipe,
-            BuiltinCmd::LetExit,
-            BuiltinCmd::ForkBackground,
-            BuiltinCmd::StoreBgPid,
-            BuiltinCmd::TrapSignal,
-            BuiltinCmd::SignalFlag,
-            BuiltinCmd::SignalCheckpoint,
-            BuiltinCmd::TableDelete,
-            BuiltinCmd::TableDeleteIdx,
-        ] {
+        for kind in INTERNAL_OPCODES {
             assert!(!kind.may_take_redirect(), "{kind:?}");
         }
         assert!(BuiltinCmd::Other.may_take_redirect());
+    }
+
+    /// Each internal opcode sets state of the process that runs it — the test
+    /// status, the exit path, a job, a signal, or a table — so a fork would
+    /// lose it.
+    #[test]
+    fn a_fork_loses_what_an_internal_opcode_does() {
+        for kind in INTERNAL_OPCODES {
+            assert!(kind.acts_on_its_process(), "{kind:?}");
+        }
     }
 
     #[test]

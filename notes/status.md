@@ -1,4 +1,88 @@
-## ══ STATUS (2026-10-26, latest) — F7 landed: the command before the condition ══
+## ══ STATUS (2026-10-27, latest) — F1+F4 landed: where a dash may stand ══
+
+**F1+F4 is the fifth family ported, and the largest.** It settles where `-`,
+`!` and `&` may stand, what may be a pipeline stage or a background job, and
+the peel family (classifiers that forgot a wrapper). DG's rulings for it
+(2026-10-26): `- !` is SB4019 everywhere, and every known finding inside a
+function the port modifies is fixed now; findings in other functions went to
+the backlog. Journal 537.
+
+- **Taint (DD#24).** B25, the CRITICAL: `- /bin/cat f | readline x`
+  laundered taint, because the source classifier peeled neither the `-` nor
+  a stage's marks. It now peels through `Statement::stage_body`. B31: a marked
+  reader fed by a clean producer drew a false SB5020/SB5067.
+- **`&` (DD#55).** A job runs in a forked child, so whatever acts on the
+  shell's own process is SB4024 under `&`: compounds (also behind `!` or in a
+  list), return/break/continue/exit (B11), assignments and declarations,
+  `(( n = 1 ))`, cd, a bare `exec`, and the in-process builtins (attest, argv,
+  read, readline, keys, match, matchall, close, unset, signal, wait). One
+  classifier decides it, `ssa::BuiltinCmd::acts_on_its_process`. `a | b &` is
+  legal at last (B23), as is `exec cmd &`. A job as a condition's last
+  statement or a return producer is SB4024 (B26). `-` as a list operand or a
+  stage takes that operand alone (B24); on attest, a declaration, fn/function
+  or END it is SB4014 at the `-`; `- until` parses like `- while`.
+- **Stages (DD#122).** An in-process builtin is SB4022 as a stage in any
+  position (B12; it used to compile and die at runtime with "bare command
+  passed to sash_exec"), and `exec` gets its own message. SB4022 calls an
+  assignment "a variable assignment" (B19). `a | - readline x` is legal. A
+  negated final reader is legal where a condition or a return producer
+  consumes it, and SB4018 at statement level. A redirect on the final reader,
+  or `!` on a `while` final stage, is SB4022.
+- **`!` (DD#70).** `- !` is SB4019 again, in both orders. SB4018's advice now
+  says to write `- cmd` without the `!` (the old advice wrote the dead
+  `- ! cmd`). An unconsumed terminal `!` is SB4018. `!` and fd tags no longer
+  hide a redirect, a pipe or `&` (SB4046, SB4021, SB4022).
+- **Declarations (DD#71, B28).** A declaration stops at `| & && ||`, so it
+  gets an assignment's answers (SB4025/SB4022/SB4024) instead of a misleading
+  SB4014. In a header, `{` ends it.
+- **Conditions and blocks (DD#68, DD#66, DD#31).** An empty keyword condition
+  and a `{ }` group condition are SB4027 anywhere in a condition, including
+  `while - { … }` (B112). A stray block keyword is SB4072 (was SB5011); a
+  block that runs into a closer is reported at the closer; after a parse
+  error, keywords are no longer judged; a stray closer inside an unclosed `$(`
+  is SB4057. A dispatch in any boolean position is SB4028. A comma with a
+  write gets an assignment's answers.
+- **`return N` (DD#74).** `N` is the word an int sink takes as a literal, so
+  `return -1` returns -1 (it was SB5011 "command '-1' not found"), and a
+  number past i64 is a command, SB5011, where it used to ICE native and abort
+  C at run time.
+
+**Specs.** 201 new ids per mode: 24.21–29, 55.107–144, 71.1–9, 74.67–69,
+acm.1–12, bng.13–25, cnd.1–24, csfx.4–20, pf.35–68, rdr.50–57, skw.1–34.
+Three existing specs were rewritten in place and kept their ids (the F14
+precedent): e.b70.ndash and bng.5 (now SB4019) and cov.182 (its
+`read A | read B` is now SB4022, so it uses `&&`). DD addenda: DD#24, DD#31,
+DD#55, DD#66, DD#68, DD#70, DD#71, DD#74, DD#122.
+
+**Tasks closed:** `bug-dispatch-in-boolean-positions`,
+`diag-elif-clause-has-no-span`, and `q-empty-keyword-condition` (answered
+with its option (a) as decide-and-report, so DG may still choose (b)).
+
+**Backlog.** 26 new tasks, and new rows in three existing ones. The P1s:
+`bug-peel-family-classifiers` (the peel bugs in functions the port did not
+touch: ICEs, a false SB5050, skipped checks), `bug-noop-drops-argument-effects`
+(`: ${s:?msg}` never aborts) and `bug-return-status-string-operand`
+(`return $s` silently returns 0).
+Among the P2s: `bug-validator-taints-clean-pipe-while-reader`
+(`echo hi | while readline x` draws a false SB5020) and
+`bug-function-name-shadows-command-path`. The open questions for DG are in
+the `q-` tasks (`q-for-without-in-list`, `q-clause-on-next-line`,
+`q-compound-as-condition`, and others). One task is the harness's, not the
+compiler's: `bug-strace-count-injection-drifts-on-restart`. strace counts a
+restarted fork, so pipeown.28's injected fault can land one fork early; it
+happened once in 266 stub runs.
+
+**Gates.** `mk test` 234/27/20, with eight new unit tests; the last pins a
+backstop that no reversion stub could turn red (a negated final loop stage is
+not a reader loop). The sweep is 10009 = 9996 passing + 13 skips,
+with the 108 predicted first-ever ids, no flips and no retirements. The
+complexity gate caught the new `skip_to_cmd_sub_close`, which was split. The
+hook passes without bypass.
+
+**Next: B37** (resolve.rs's private walk skips an index, `$(( ))` and
+`(( ))`, so a capture there reads as clean), when DG says go.
+
+## ══ STATUS (2026-10-26) — F7 landed: the command before the condition ══
 
 **F7 (B85) is the fourth family ported**, as the branch wrote it. A
 condition catches the status of its operand and nothing else (DD#55), and
@@ -17605,9 +17689,9 @@ modified: 2026-06-07
 <!-- BEGIN: mk-status (regenerated by contrib/status-update.sh) -->
 ## Current branch: hand-parser
 
-## Spec status: 9594 passing / 0 failing of 9607 (spec.db @ fec83f7)
+## Spec status: 9996 passing / 0 failing of 10009 (spec.db @ 8e28c61)
 
-_Regenerated 2026-10-26 by `mk status`. Edits inside this block will be
+_Regenerated 2026-10-27 by `mk status`. Edits inside this block will be
 overwritten; edit outside the BEGIN/END markers._
 <!-- END: mk-status -->
 

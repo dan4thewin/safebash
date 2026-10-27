@@ -1470,7 +1470,7 @@ fn int_sink_slots(name: &str) -> Option<usize> {
 /// for the same reason it is a string in a map key.
 fn operand_satisfies_int_sink(arg: &Expr, env: &TypeEnv) -> bool {
     if let ExprKind::Literal(text) = &arg.kind {
-        return text.parse::<i64>().is_ok();
+        return is_int_sink_literal(text);
     }
     expr_type(arg, env) == VarType::Int
 }

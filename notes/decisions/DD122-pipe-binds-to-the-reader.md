@@ -169,3 +169,62 @@ defects above were all found by reading the code and inferring the design
 from it, which produced the wrong model twice — once concluding that a
 `/bin/cat` inside a reader loop *should* see the pipe. DG's three clauses
 settled it. This DD exists so the next reader does not have to guess.
+
+## Addendum (2026-10-26): what a stage may be, and the final reader's marks
+
+§4 lists the legal final stages. It did not say what an earlier stage may be,
+or which marks the final reader may carry. SB4022's principle settles both: a
+stage runs in a forked child, so a builtin whose effect lands on the process
+that runs it would act on the child, and the effect would be lost.
+
+**An in-process builtin is SB4022 as a stage, in any position, the last
+included (batch-531 B12).** That means `return`, `break`, `continue`, `exit`,
+`cd`, `wait`, `close`, `unset`, `signal`, `argv`, `keys`, `match` and
+`matchall`, plus `read`/`readline` anywhere but last. (`attest`, like
+`[[ … ]]`, was already SB4022 as a statement form.) Nearly all of them
+compiled and died at run time with "bug: bare command passed to sash_exec".
+`argv`, `match` and `matchall` were native ICEs. The rest drew another code:
+`keys` a false SB5050, an earlier `readline` SB5020, an earlier `read` SB5069.
+`exec` as a stage is SB4022 too, with a message of its own: the stage is
+already a forked child, so `exec` would replace or rewire that child, not the
+program. `echo`, `write`, `:`, an external command and a user function stay
+legal stages. The classifier is `ssa::BuiltinCmd::acts_on_its_process`. It is
+total over the enum, and the `&` gate shares it (DD#55 addendum 2026-10-26).
+B12 named the control words. The rest of the class is decide-and-report.
+
+An assignment stage is now called "a variable assignment" in the message. It
+used to be called "`(( … ))`" (B19).
+
+**The final reader beneath its marks.** The reader is the last stage whose
+statement, beneath its `-`/`!` marks (`Statement::stage_marks`), is a
+`readline` or a `read`.
+
+- `a | - readline x` and `a | - read ar` are legal. DD#55's `-` runs the
+  reader unchecked, and its verdict does not join the producers' status, so a
+  condition's verdict is the earlier stages' alone (decide-and-report).
+  `- readline` died with the bare-command bug natively, and gcc rejected its
+  C output. `- read` was a native ICE, and its C binary printed a garbage
+  length.
+- `a | ! readline x` and `a | ! read ar` are legal where a condition or a
+  return producer consumes them. The reader's verdict is inverted before it
+  joins. In a condition `! read` was a native ICE, and its C binary printed a
+  garbage length. At statement level a negated reader is SB4018, as is any
+  terminal `!` that nothing consumes (DD#70 addendum 2026-10-26).
+- A redirect on the final reader is SB4022 (decide-and-report). The reader
+  reads the pipe in the parent, so the redirect has nothing to attach to, and
+  no backend lowered it. On `readline` the native binary died of the
+  producer's SIGPIPE and gcc rejected the C output. On `read` native ICEd, and
+  in C the producer died of SIGPIPE. So `stage_marks` peels only the `-`/`!`
+  marks, while `stage_body` also peels a redirect for classifiers that ask
+  what a stage runs.
+- A `while` final stage may carry `-` but not `!`, which is SB4022
+  (decide-and-report). The loop's own status never joins the pipeline's, so
+  `!` would have nothing to invert. Both forms used to ICE. This SB4022 and
+  SB4073 (a last-stage loop that never reads the pipe) name the loop the
+  user wrote: SB4073 said `while` for an `until`.
+
+A mark on a reader no longer changes its taint (DD#24 addendum 2026-10-26).
+
+Specs: pipe_functions.sh pf.35-pf.68 (pf.52, `a | b &`, is DD#55's);
+coverage.sh cov.182 (now pins SB5069 with `&&`, since `read A | read B` is
+SB4022 by pf.46); taint.sh 24.22-24.25, 24.28, 24.29. Journal 537.

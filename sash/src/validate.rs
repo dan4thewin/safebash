@@ -1377,19 +1377,12 @@ fn is_external_command_head(c: &crate::ir::Command) -> bool {
 /// A pipeline stage (peeling `-`/`!`, and any redirect) that is a single
 /// external command. The redirect peel matters: `$(a | b 2>f)` is a pipeline
 /// of two external commands, and refusing to look past the stage's redirect
-/// would make it disagree with `capture_condition_shape`, which peels one on
-/// a bare command. Whether a stage redirect *steals the capture* is a separate
-/// question, asked of the last stage only (`ir::redirects_preserve_capture`).
+/// would make it disagree with `is_capture_condition_rhs`, which peels one off
+/// a bare command (`peel_capture_wrappers`). Whether a stage redirect *steals
+/// the capture* is a separate question, asked of the last stage only
+/// (`ir::redirects_preserve_capture`).
 fn stmt_is_external_command(stmt: &Statement) -> bool {
-    let mut kind = &stmt.kind;
-    loop {
-        match kind {
-            StmtKind::Suppressed(inner) | StmtKind::Negated(inner) => kind = &inner.kind,
-            StmtKind::Redirected(r) => kind = &r.body.kind,
-            _ => break,
-        }
-    }
-    matches!(kind, StmtKind::Command(c) if is_external_command_head(c))
+    matches!(&stmt.stage_body().kind, StmtKind::Command(c) if is_external_command_head(c))
 }
 
 /// DD#70/#71 dual (SB4025): a value binding (assignment / declaration) used
@@ -1473,7 +1466,7 @@ fn validate_while(w: &While, diags: &mut Vec<Diagnostic>) {
 /// a value already in hand, which cannot change between iterations either.
 /// `readline v` is the iteration form, and the message names it.
 fn check_loop_read_condition(w: &While, diags: &mut Vec<Diagnostic>) {
-    let keyword = if w.until { "until" } else { "while" };
+    let keyword = w.keyword();
     for stmt in &w.condition {
         let Some(span) = first_read_span(stmt) else {
             continue;
@@ -5996,6 +5989,10 @@ fn stmt_command(stmt: &Statement) -> Option<&Command> {
 
 /// Like taint_stmt but doesn't mark read/mapfile as tainted
 /// (for pipeline stages where input comes from sash code).
+///
+/// The reader is recognised beneath its `-`/`!` mark — `echo hi | - read x`
+/// used to bind `x` tainted — but not beneath a redirect: a redirected
+/// reader's input is not the pipe, and the parser rejects one as a stage.
 fn taint_stmt_no_read_taint(
     stmt: &Statement,
     tainted: &mut HashSet<String>,
@@ -6003,7 +6000,7 @@ fn taint_stmt_no_read_taint(
     sx: &SlotCx,
     diags: &mut Vec<Diagnostic>,
 ) {
-    if let StmtKind::Command(c) = &stmt.kind {
+    if let StmtKind::Command(c) = &stmt.stage_marks().0.kind {
         let name = expr_literal_str(&c.name);
         // read/mapfile from clean pipe source: don't taint
         if matches!(name, "read" | "readline" | "mapfile") {
@@ -6027,22 +6024,16 @@ fn check_clean_read_taint(c: &Command, tainted: &mut HashSet<String>, diags: &mu
 /// transform's SSA-backstop `clean_pipe` computation so the two taint layers
 /// classify a stage identically — a divergence here is a laundering hole.
 pub(crate) fn is_external_source(stmt: &Statement) -> bool {
-    match &stmt.kind {
-        StmtKind::Command(c) => {
-            let name = expr_literal_str(&c.name);
-            // Absolute path = external
-            if name.starts_with('/') {
-                return true;
-            }
-            // PATH-resolved non-builtin = external
-            if !name.is_empty() && !BUILTINS.contains(&name) {
-                return true;
-            }
-            false
-        }
-        StmtKind::Redirected(r) => is_external_source(&r.body),
+    match &stmt.stage_body().kind {
+        StmtKind::Command(c) => source_head_execs(expr_literal_str(&c.name)),
         _ => false,
     }
+}
+
+/// `is_external_source`'s head test: an absolute path, or a PATH-resolved
+/// non-builtin.
+fn source_head_execs(name: &str) -> bool {
+    name.starts_with('/') || (!name.is_empty() && !BUILTINS.contains(&name))
 }
 
 fn taint_stmt(

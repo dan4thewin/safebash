@@ -1714,7 +1714,8 @@ pub fn parse_command_substitution(scanner: &mut Scanner, span: Span) -> Result<E
     let mut stmts = Vec::new();
     let mut closed = false;
     scanner.enter_cmd_sub();
-    let shortcut = collect_cmd_sub_body(scanner, span, &mut stmts, &mut closed);
+    let shortcut = collect_cmd_sub_body(scanner, span, &mut stmts, &mut closed)
+        .map_err(|d| rediagnose_stray(scanner, span, d));
     scanner.exit_cmd_sub();
     if let Some(e) = shortcut? {
         return Ok(e);
@@ -1770,6 +1771,55 @@ fn unterminated_cmd_sub_diag(span: Span) -> Diagnostic {
          source, so everything after it was read as part of it"
             .to_string(),
     )
+}
+
+/// A stray `}` or block keyword (SB4072) inside a `$(` that is never closed
+/// is the `$(`'s fault, not the token's. In `if c {` / `x=$(cmd` / `}` the `}`
+/// was written to close the `if`; it reads as stray only because the open
+/// `$(` swallowed it, and naming it would send the reader to the wrong line.
+/// So when the substitution cannot be closed from where that token stands,
+/// the answer is SB4057 at the `$(`. Any other diagnostic passes through.
+fn rediagnose_stray(scanner: &mut Scanner, span: Span, d: Diagnostic) -> Diagnostic {
+    if d.code == "SB4072" && !skip_to_cmd_sub_close(scanner) {
+        unterminated_cmd_sub_diag(span)
+    } else {
+        d
+    }
+}
+
+/// Consume tokens through the `)` that closes the current `$(`, and report
+/// whether there is one. It reads tokens, not bytes, so a `)` inside quotes,
+/// a `${…}` or a comment does not count; a nested `( … )` or `$( … )` is
+/// balanced by depth, and `(( … ))` / `$(( … ))` are skipped whole because
+/// arithmetic pairs its own parentheses.
+fn skip_to_cmd_sub_close(scanner: &mut Scanner) -> bool {
+    let mut depth = 0usize;
+    loop {
+        if let Some(closed) = cmd_sub_close_step(scanner, &mut depth) {
+            return closed;
+        }
+    }
+}
+
+/// One token of [`skip_to_cmd_sub_close`]'s scan: `Some(closed)` once the
+/// answer is known, `None` to read on.
+fn cmd_sub_close_step(scanner: &mut Scanner, depth: &mut usize) -> Option<bool> {
+    match scanner.next().token {
+        Tok::Eof => Some(false),
+        Tok::DollarParen | Tok::LParen => {
+            *depth += 1;
+            None
+        }
+        Tok::DollarDblParen | Tok::DblParen => {
+            (!super::arith::scan_arith_content(scanner).closed).then_some(false)
+        }
+        Tok::RParen if *depth == 0 => Some(true),
+        Tok::RParen => {
+            *depth -= 1;
+            None
+        }
+        _ => None,
+    }
 }
 
 /// Outcome of one iteration of [`collect_cmd_sub_body`]'s loop.
@@ -1862,7 +1912,7 @@ fn parse_slurp_form(scanner: &mut Scanner, span: Span) -> Result<Expr, Diagnosti
 ///
 /// **Only the exact nullary form is claimed here, and the lookahead is what
 /// enforces that.** `status` and `getcpid` with anything following are
-/// ordinary commands, so declining lets `parse_statement` parse them and
+/// ordinary commands, so declining lets `parse_statement_here` parse them and
 /// every ordinary gate apply. Two hand-rolled `Command` reconstructions used
 /// to live here instead, and both were wrong in the same way: they bypassed
 /// `parse_command`, so SB4046 never saw the head, and a trailing redirect

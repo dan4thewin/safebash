@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup taint
-plan=365
+plan=374
 echo "1..$plan" >&3
 
 set +e
@@ -554,6 +554,52 @@ run_sash 'x=$(getenv HOME)
 attest x [[ $x =~ ^NEVER$ ]]
 echo $x'
 [[ $rc = 1 && $rerr == *"attest: x = '"* && $rerr == *"failed the gate" ]]; chk 24.20
+# 24.21-24.29 (journal 537; batch-531 B25, B31; DD#24): a `-` or `!` on a
+# reader pipeline's stage must not change the reader's taint. `-` on the
+# source stage hid the source, so x came out clean (B25, CRITICAL). `-` or
+# `!` on the reader stage hid the clean producer, so 24.22-24.25 got a false
+# SB5020 and 24.28/24.29 a false SB5067 (B31).
+printf 'secret\n' > b25.txt
+# 24.21 `- source | readline x`: x is tainted. It printed the file
+run_sash '- /bin/cat b25.txt | readline x
+echo "got $x"'
+[[ $rc != 0 && -z $out \
+   && $err == *':2:6: error [SB5020] tainted variable $x used without attest'* ]]; chk 24.21
+# 24.22 (positive) `echo hi | - readline x`: echo is clean, so x is clean
+run_sash 'echo hi | - readline x
+echo "[$x]"'
+[[ $rc = 0 && $out = "[hi]" && -z $rerr ]]; chk 24.22
+# 24.23 (positive) ... `- read ar`
+run_sash 'echo hi | - read ar
+echo "[${ar[0]}]"'
+[[ $rc = 0 && $out = $'[hi\n]' && -z $rerr ]]; chk 24.23
+# 24.24 (positive) ... `! readline x` in a condition
+run_sash 'if echo hi | ! readline x { echo "neg[$x]" } else { echo "pos[$x]" }'
+[[ $rc = 0 && $out = "pos[hi]" && -z $rerr ]]; chk 24.24
+# 24.25 (positive) ... `! read ar` in a condition
+run_sash 'if echo a | ! read ar { echo "t[${ar[0]}]" } else { echo "f[${ar[0]}]" }'
+[[ $rc = 0 && $out = $'f[a\n]' && -z $rerr ]]; chk 24.25
+# 24.26 an external producer still taints a `- readline` reader
+run_sash '/bin/echo hi | - readline x
+echo "[$x]"'
+[[ $rc != 0 && -z $out \
+   && $err == *':2:6: error [SB5020] tainted variable $x used without attest'* ]]; chk 24.26
+# 24.27 ... and a negated one in a condition
+run_sash 'if - /bin/cat b25.txt | ! readline x { echo "neg" } else { echo "pos[$x]" }'
+[[ $rc != 0 && -z $out \
+   && $err == *':1:65: error [SB5020] tainted variable $x used without attest'* ]]; chk 24.27
+# 24.28 (positive) `! readline x` in a return producer leaves the global x
+#       clean. The read succeeds, so the `!` makes p fail
+run_sash 'str x=init
+fn p { return echo abc | ! readline x }
+if p { echo "t[$x]" } else { echo "f[$x]" }'
+[[ $rc = 0 && $out = "f[abc]" && -z $rerr ]]; chk 24.28
+# 24.29 (positive) ... `- readline x`: the read fails at EOF, but its verdict
+#       does not join, so `:` decides
+run_sash 'str x=init
+fn p { return : | - readline x }
+if p { echo "t[$x]" } else { echo "f[$x]" }'
+[[ $rc = 0 && $out = "t[]" && -z $rerr ]]; chk 24.29
 # dd78.1-dd78.7 DD#78 closed the `:-` taint hole with a read discipline: the
 # default was an interpolating word, so the checker had to walk it and prove
 # whatever it expanded to was clean. DG retired that on 2026-09-30 -- "let's

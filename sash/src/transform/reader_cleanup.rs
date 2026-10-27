@@ -59,7 +59,7 @@ fn finishes(
             site: region.site,
             checked: region.checked,
             preserve_status: target != Some(region.done),
-            loop_consumer: region.loop_consumer,
+            verdict_joins: region.verdict_joins,
         })
         .collect()
 }
@@ -150,7 +150,7 @@ mod invariant_tests {
                 done: stay,
                 candidates: HashSet::from([entry]),
                 checked: false,
-                loop_consumer: false,
+                verdict_joins: true,
             };
             let outer = ReaderRegion {
                 site: 0,
@@ -158,7 +158,7 @@ mod invariant_tests {
                 done,
                 candidates: HashSet::from([entry, stay]),
                 checked: true,
-                loop_consumer: true,
+                verdict_joins: false,
             };
             install(&mut ssa, &[outer, inner]);
 
@@ -172,7 +172,7 @@ mod invariant_tests {
                     site: 1,
                     checked: false,
                     preserve_status: false,
-                    loop_consumer: false
+                    verdict_joins: true
                 }]
             ));
             assert!(matches!(escape.terminator, Terminator::Goto(id) if id == outside));
@@ -183,13 +183,13 @@ mod invariant_tests {
                         site: 1,
                         checked: false,
                         preserve_status: true,
-                        loop_consumer: false
+                        verdict_joins: true
                     },
                     SsaInst::PipelineFinish {
                         site: 0,
                         checked: true,
                         preserve_status: true,
-                        loop_consumer: true
+                        verdict_joins: false
                     }
                 ]
             ));
@@ -206,7 +206,7 @@ mod invariant_tests {
                     site: 0,
                     checked: true,
                     preserve_status: false,
-                    loop_consumer: true
+                    verdict_joins: false
                 }]
             ));
             assert!(ssa.block(outside).insts.is_empty());

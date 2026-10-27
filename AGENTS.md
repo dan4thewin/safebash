@@ -424,6 +424,15 @@ before injecting it. Low-fd probes must account for the harness's inherited
 fd 3 (TAP output) and, during sweeps, fd 4 (TSV): trace the intended allocation
 failure instead of accepting a matching surface error as proof of the branch.
 
+**strace's `when=N` counts restarted entries.** Under ptrace a child's SIGCHLD
+is queued even though its disposition is ignore. A child that exits while the
+parent sits in a later clone's syscall-entry stop therefore restarts that clone
+(ERESTARTNOINTR), the restart is counted, and the fault lands on the previous
+fork. A `when=N` with N ≥ 2 on a restartable syscall (clone, or a blocking
+read or wait4; pipe2 and dup2 never restart) is on target only if no earlier
+counted entry can overlap a child's exit. pipeown.28 is the one exposed spec
+(`notes/tasks/bug-strace-count-injection-drifts-on-restart.md`).
+
 **A failing spec has already recorded its own evidence — read the trace before
 theorising.** `common.sh`'s `setup()` opens
 `spec/.trace/$(date +%a)/<file>.<mode>` and redirects the whole spec file into

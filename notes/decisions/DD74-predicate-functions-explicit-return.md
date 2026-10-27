@@ -155,3 +155,25 @@ No defensive quotes — sash has no word-splitting (DD#22).
   return; groups/redirections recurse. A function called **only** bare (a
   procedure) needs no `return`. Enforced in the front end, so it covers native
   and c (shared SSA); janet inherits the same front-end diagnostic.
+
+## Addendum (2026-10-27): which word is `N`
+
+The table's `return N` meant digits only. Any other word headed a producer and
+was looked up as a command, so `return -1` and `return +1` were SB5011
+"command '-1' not found", while `exit -1` (DD#89) and `return $(( -1 ))`
+returned -1. Worse, a number past i64 was taken as a value: native int
+lowering ICE'd on it and C aborted at run time with "arithmetic overflow".
+
+`N` is now exactly the word an int sink takes as a literal, a decimal that is
+optionally signed and fits in i64. `parse_return` and the int-sink check in
+`type_check` share one predicate, `ir::is_int_sink_literal`, so the two cannot
+disagree. `return -1` returns -1 and `return +1` returns 1. Every other word
+heads a producer, as `return abc` does (74.54): `return 9223372036854775808`
+and `return -x` are SB5011 at compile time.
+
+This was a bug, fixed because `parse_return` is a function the F1+F4 port
+modifies (DG 2026-10-26). A string operand (`return $s`) is still not an int
+sink. That bug is `bug-return-status-string-operand`, which also carries the
+question for DG.
+
+Specs: functions.sh 74.67-74.69. Journal 537.

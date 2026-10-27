@@ -562,7 +562,7 @@ pub(super) fn handle_pipeline_finish(
     site: u32,
     checked: bool,
     preserve_status: bool,
-    loop_consumer: bool,
+    verdict_joins: bool,
     builder: &mut FunctionBuilder,
     module: &mut ObjectModule,
     ctx: &mut InstCtx,
@@ -585,7 +585,7 @@ pub(super) fn handle_pipeline_finish(
     if preserve_status {
         builder.def_var(ctx.exit_status_var, saved_status);
         builder.def_var(ctx.test_result_var, saved_test);
-    } else if !loop_consumer {
+    } else if verdict_joins {
         let producers_ok = builder.use_var(ctx.test_result_var);
         let ok = builder.ins().band(producers_ok, saved_test);
         builder.def_var(ctx.test_result_var, ok);

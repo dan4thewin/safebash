@@ -35,7 +35,24 @@ otherwise.
 | top level `echo "[$(( ${1x} + 1 ))]"` | | `[1]` |
 
 Each one reads a variable called `1x`, `1_`, `12` or `10`. That is not an
-identifier, so no assignment binds it and the typo check never reports it.
+identifier, so no plain assignment binds it and the typo check never reports
+it.
+
+A declaration does bind such a name, until `bug-declaration-names-unvalidated`
+lands. Re-run 2026-10-27 during F1+F4 (journal 537); the same on the current
+tree and on 8e28c61, in both backends:
+
+| Program | Result |
+|---|---|
+| `str 9z=1` then `echo "${9z}"` | prints `1` |
+| `int 9z=1` then `echo "$(( ${9z} + 1 ))"` | prints `2` |
+| `str 9z=1` or `const 9z=1`, then `echo hi` | SB5050 `9z`: the dead-variable check fires, and no name check does |
+| `9z=1` then `echo "${9z}"` | SB5011 "`9z` is not a valid variable name …" |
+
+The Fix below rejects the reads (`${9z}` is digit-led and not all digits), and
+that task rejects the declarations. Either can land first, and each makes the
+first two rows errors on its own. Probes: `files/port-f1f4-probes.tar.gz`,
+directories `sq2/` (m6, n3, m4) and `sq3/` (m6a, m6b).
 
 Bash: with `$1` = 4, `$(( $12 + 0 ))` is 42 and `$(( $10 + 1 ))` is 41,
 because bash expands `$12` textually as `${1}2` before it evaluates. Sash

@@ -207,8 +207,8 @@ while ((i < 2)){ echo w; ((i=i+1)) }'
 [[ $rc = 0 && $out = $'w\nw' && -z $rerr ]]; chk bc.g8
 
 # bc.g9 the sibling gate: a stray `}` was a bare "expected expression"
-#       (SB4014), which said nothing about the brace. It closes nothing here,
-#       and bash keeps it literal — SB4072 says so.
+#       (SB4014), which said nothing about the brace. It closes nothing here
+#       (bash keeps it literal), and SB4072 says so and advises quoting it.
 run_sash 'echo a}b'
 [[ $rc != 0 && -z $out && $err == *SB4072* ]]; chk bc.g9
 

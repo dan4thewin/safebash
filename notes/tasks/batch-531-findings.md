@@ -122,6 +122,9 @@ not obviously a bug stays unchanged in the port:
 - `bug-dispatch-in-boolean-positions` (P2): a `[[ … { } ]]` dispatch is
   accepted as an `elif` condition and as a `&&`/`||` right operand, where
   DD66 forbids both.
+  - Fixed in F1+F4 (journal 537): SB4028 at the dispatch, in every boolean
+    position (cnd.8-cnd.10, cnd.13-cnd.17, cnd.19-cnd.21; DD66 addendum
+    2026-10-26).
 - `bug-glob-multi-star` (P2): `a*b*c` matches only names containing a
   literal `*`.
 - `bug-glob-directory-portion` (P2): `sub/*`, `./*` and `/etc/*` match
@@ -132,8 +135,13 @@ not obviously a bug stays unchanged in the port:
   SB4044, now at the statement.
 - `q-empty-keyword-condition` (P3): `if then … fi` and `while do … done`
   compile and are false.
+  - Answered in F1+F4 (journal 537; decide-and-report): SB4027 "this
+    header has no condition" (cnd.1-cnd.4; DD68 addendum 2026-10-26). The
+    condition was not false: it tested the previous command's status.
 - `diag-elif-clause-has-no-span` (P3): an `elif` clause's parse errors
   point at the `if`.
+  - Fixed in F1+F4 (journal 537): an `elif` or `else` clause's errors
+    point at the clause (skw.26-skw.28, cnd.22).
 - `spec-cov306-308-pin-the-wrong-pass` (P3): `cov.306`-`cov.308` pin
   validate's SB4044, not the transform-time gate they describe.
 - `spec-harness-hides-compiler-ice` (P2): `spec/common.sh` drops a
@@ -354,30 +362,52 @@ Filed as backlog tasks while researching B55, under the same rule:
 
 ### 8. F1 + F4 wrappers, operand and condition grammar
 
-- [ ] **B11** (open+question; DD38). `return N &`, `break &` and `continue
+- [x] **B11** (open+question; DD38). `return N &`, `break &` and `continue
   &` run parent code in the background child (`done` prints twice). The
   branch is worse: `return 3 &` ICEs and `break &` is silently dropped.
   Question: reject (recommended, with a transform backstop) or give `&`
   subshell-exit semantics.
-- [ ] **B12** (open; DD122). Every in-process builtin except `echo`, `write`
+  - Landed in F1+F4 (journal 537): rejected, SB4024 at the control word,
+    following DG's principle that reserved words mean nothing in a pipeline
+    or under `&` (2026-10-26; decide-and-report). Specs 55.116-55.118. F2
+    keeps the branch's transform half, which clears the child's return
+    target and loop stack.
+- [x] **B12** (open; DD122). Every in-process builtin except `echo`, `write`
   and `:` (`exit`, `return`, `break`, `cd`, `wait`, `readline`, …) compiles
   as a non-final pipeline stage, then dies with "bare command passed to
   sash_exec" (127). SB4022's principle, that a stage is a forked child whose
   effects are discarded, says reject.
-- [ ] **B19** (open; DD122). `statement_form_label` calls an assignment "`((
+  - Landed in F1+F4 (journal 537): every in-process builtin is SB4022 as a
+    stage, final or not, except `echo`, `write`, `:` and DD122's final
+    reader. The reader may carry `-`, or `!` where a condition consumes it.
+    Specs pf.35-pf.66 (pf.41 is B19's, pf.52 B23's). `exec` in a forked
+    child and a value intrinsic as a stage are questions in
+    `q-suppression-and-stage-residuals`.
+- [x] **B19** (open; DD122). `statement_form_label` calls an assignment "`((
   … ))`", so `x=safe | cat` draws an SB4022 naming the wrong form.
-- [ ] **B23** (fixed-on-branch; DD55). `a | b &` draws a false SB4022; DD55
+  - Landed in F1+F4 (journal 537): the message names an assignment as one
+    (pf.41).
+- [x] **B23** (fixed-on-branch; DD55). `a | b &` draws a false SB4022; DD55
   says it is legal.
-- [ ] **B24** (fixed-on-branch; DD55, DD95). A `-` operand swallowed the
+  - Landed in F1+F4 (journal 537), as on the branch (pf.52).
+- [x] **B24** (fixed-on-branch; DD55, DD95). A `-` operand swallowed the
   rest of the list: `/bin/true && - /bin/false || /bin/echo x` compiles and
   runs, where the unsuppressed form is DD95's SB4053. The branch rejects
   both.
-- [ ] **B25** (fixed-on-branch; DD24, DD55). CRITICAL taint laundering: `-
+  - Landed in F1+F4 (journal 537), as on the branch: a `-` operand ends at
+    the next list operator, so SB4053 sees the rest (55.129), and `a && - b
+    &` backgrounds the whole list, as `a && b &` does (55.131; 55.130 is
+    the positive).
+- [x] **B25** (fixed-on-branch; DD24, DD55). CRITICAL taint laundering: `-
   /bin/cat f | readline x` leaves `x` clean, because the source classifier
   peels neither Suppressed nor the stage marks.
-- [ ] **B26** (fixed-on-branch; DD55). A condition whose final command is a
+  - Landed in F1+F4 (journal 537), as on the branch: the classifier peels
+    `-` and the stage marks (24.21). An external producer still taints a
+    `-` or negated reader (24.26, 24.27).
+- [x] **B26** (fixed-on-branch; DD55). A condition whose final command is a
   background job compiles: `if - /bin/false & { echo y } else { echo n }`.
   The branch rejects it (SB4024).
+  - Landed in F1+F4 (journal 537), as on the branch (55.119).
 - [ ] **B27** (open; DD86). False SB5050: `collect_value_fn_operands`
   neither recurses nor peels, so a read through a nested or suppressed value
   call is not counted.
@@ -386,41 +416,172 @@ Filed as backlog tasks while researching B55, under the same rule:
     is assigned but never read" at 1:1. The function records a bare
     operand only for a `Command` at the top level of the list it is given,
     so the same bare call nested in any body is missed.
-- [ ] **B28** (open; DD71). `int n=1 | cat`, `int n=1 &` and `array a=(x) &`
+  - Tracked by `bug-peel-family-classifiers` (filed during F1+F4, journal
+    537): the branch does not fix it, and F1+F4 does not touch
+    `collect_value_fn_operands`.
+- [x] **B28** (open; DD71). `int n=1 | cat`, `int n=1 &` and `array a=(x) &`
   are rightly rejected, but as SB4014 "expected variable name in
   declaration" at 1:1.
-- [ ] **B31** (open; DD24, DD122). False positive: a wrapped clean-pipe
+  - Landed in F1+F4 (journal 537): a declaration stops at `|`, `&`, `&&`
+    and `||`, as an assignment does, and gets the same verdicts
+    (71.1-71.5). In a control-flow header the body's `{` ends it too, so a
+    header declaration is SB4025 (71.6-71.8). Outside a header 71.9 still
+    pins SB4014, which `q-statement-form-residuals` asks about.
+- [x] **B31** (open; DD24, DD122). False positive: a wrapped clean-pipe
   reader, `echo hi | - read x`, is tainted, because
   `taint_stmt_no_read_taint` peels only a direct command.
+  - Landed in F1+F4 (journal 537): the reader stage's `-` and `!` are
+    peeled, so a clean producer leaves the reader clean (24.22-24.25,
+    24.28, 24.29). A clean-fed `while readline` loop is still tainted, by
+    another function: `bug-validator-taints-clean-pipe-while-reader`.
 - [ ] **B42** (open; DD55, DD75). `x=$(- len a)` is a false SB5050; `$(- len
   HOME)` ICEs in native and yields garbage in C.
+  - Tracked by `bug-peel-family-classifiers` (journal 537); its `len HOME`
+    half by `bug-reserved-names-in-arithmetic`.
 - [ ] **B43** (open; DD55). `len_cmdsub_operand` does not peel Suppressed.
+  - Tracked by `bug-peel-family-classifiers` (journal 537).
 - [ ] **B44** (open; DD86). A nested `keys m k` is not counted as a read: a
   false SB5050.
+  - Tracked by `bug-peel-family-classifiers` (journal 537).
 - [ ] **B45** (open; DD55). `join_call` ICEs on a suppressed capture.
+  - Tracked by `bug-peel-family-classifiers` (journal 537).
 - [ ] **B46** (open; DD55). `flag_operand_spelling` ICEs on a suppressed
   capture.
+  - Tracked by `bug-peel-family-classifiers` (journal 537).
 - [ ] **B47** (open; DD55). `flag_arg_builtin` does not peel Suppressed, so
   a suppressed form bypasses SB4070 and SB5038.
+  - Tracked by `bug-peel-family-classifiers` (journal 537).
 - [ ] **B48** (open; DD55, DD69). `x=$(- keys m)` ICEs, and iterating `$(-
   keys m)` or `$(- argv 1)` draws SB5009, because the splat recognizers do
   not peel.
+  - Tracked by `bug-peel-family-classifiers` (journal 537). The branch's
+    partial fix (H064, H065, H191, H197) is dropped from the port; the task
+    cites it as reference.
 - [ ] **B50** (open; DD55). `x=$(- sub abc b '\q')` prints `a\qc`; the
   unsuppressed form is SB4033.
-- [ ] **B112** (open; DD95). `while - { … } { … }` sidesteps SB4027, a bug
+  - Tracked by `bug-peel-family-classifiers` (journal 537).
+- [x] **B112** (open; DD95). `while - { … } { … }` sidesteps SB4027, a bug
   per DD95. Fixing it rewrites the branch's endck.10 and endck.11.
-- [ ] **n1** (fixed-on-branch; DD55). `! - a | b`: SB4018 on base, SB4019 on
+  - Landed in F1+F4 (journal 537): a `{ }` group behind `-` is SB4027
+    (cnd.7). W5 rewrites endck.10 and endck.11 to match.
+- [x] **n1** (fixed-on-branch; DD55). `! - a | b`: SB4018 on base, SB4019 on
   the branch.
-- [ ] **n2** (fixed-on-branch; DD55). `a | - ! b`: SB4022 on base; the
+  - Landed in F1+F4 (journal 537), as on the branch (bng.13).
+- [x] **n2** (fixed-on-branch; DD55). `a | - ! b`: SB4022 on base; the
   branch compiles and runs it.
+  - Landed in F1+F4 (journal 537), not as on the branch: `- !` is SB4019
+    everywhere (DG, 2026-10-26), here on the final stage (bng.15).
 - [x] **n3** (control; DD55). `- ! /bin/false` runs on both binaries; the
   control for n1-n6.
-- [ ] **n4** (fixed-on-branch; DD55). `fn f { return /bin/true & }; if f`
+  - No longer runs: `- !` is SB4019 (DG, 2026-10-26; bng.5, e.b70.ndash).
+- [x] **n4** (fixed-on-branch; DD55). `fn f { return /bin/true & }; if f`
   runs on base; SB4024 on the branch.
-- [ ] **n5** (fixed-on-branch; DD55). `if ! - a | b` runs on base; SB4019 on
+  - Landed in F1+F4 (journal 537), as on the branch (55.120).
+- [x] **n5** (fixed-on-branch; DD55). `if ! - a | b` runs on base; SB4019 on
   the branch.
-- [ ] **n6** (fixed-on-branch; DD55). `return /bin/false &` reached as a
+  - Landed in F1+F4 (journal 537), as on the branch (bng.14).
+- [x] **n6** (fixed-on-branch; DD55). `return /bin/false &` reached as a
   condition runs and aborts on base; SB4024 on the branch.
+  - Landed in F1+F4 (journal 537), as on the branch: n4's SB4024, which
+    does not depend on the producer's status, so 55.120 pins it.
+- [x] **double fold** (open on base and branch; found in the port; DD55).
+  A statement-level `-` folded its statement a second time, joining what
+  followed its `&` to the job: `- a & && b` ran `b`, `- a & || b` and
+  `- a & &` compiled (the second a job inside a job), and `- a & | b` and
+  `- a & >f` reached an ICE.
+  - Fixed in F1+F4 (journal 537), because parse_statement_here is a touched
+    function: SB4014 after the `&`, as without the `-` (55.137-55.144).
+
+Filed as backlog tasks during F1+F4. The rule is F15's (2026-10-25), with
+DG's scope for this step (2026-10-26): a finding inside a function F1+F4
+touches is fixed here, and any other finding goes to the backlog.
+
+- `bug-peel-family-classifiers` (P1; B27, B42-B48, B50): `$(- intrinsic …)`
+  and a nested `keys` reach classifiers that do not peel: ICEs, false
+  SB5050, skipped checks.
+- `bug-noop-drops-argument-effects` (P1): `:` drops its arguments' effects,
+  so `: ${s:?msg}`, `: @{a:?}` and `: $(( 1 / z ))` never abort.
+- `bug-return-status-string-operand` (P1): a string operand to `return`
+  silently returns 0 (a literal ICEs natively), though DD89 records `return
+  $s` as SB4030.
+- `bug-fork-failure-reporting-by-form` (P2): a fork failure is reported
+  three ways by form, and `!` turns one into success. It lands with B20.
+- `bug-function-name-shadows-command-path` (P2): a function may be named
+  like a path (`fn /bin/true`); the validator then checks the external
+  program while the compiled code calls the function. Question: which names
+  a function may take.
+- `bug-handling-branch-drops-latch` (P2): in an if/elif/else body or an
+  `&&`/`||` group, a latch read right after its write is a false SB5094.
+- `bug-sb5012-sb5094-nested-body-flow` (P2): `$?` and latch reads in a
+  capture body, a `-`-wrapped or negated compound, or a reader body are
+  checked against the enclosing flow. Question: does a capture body start
+  fresh (recommended) or inherit?
+- `bug-validator-taints-clean-pipe-while-reader` (P2): a `while readline`
+  loop fed by a clean pipe is a false SB5020; the SSA backstop binds it
+  clean.
+- `q-for-without-in-list` (P2): a `for` with no `in` list compiles and never
+  runs (bash iterates `"$@"`), and `for x; in a b` is accepted. Recommended:
+  reject the first, keep the second.
+- `bug-arith-comma-classified-compound` (P3): an arithmetic comma list is
+  called a compound command, and its `&&` verdict differs from its `!`
+  twin's.
+- `bug-arith-comma-nonfinal-part-unchecked` (P3): a comma's non-final part
+  is checked only on an unsplit comma in a condition, so `(( a<3, a>1 ))`
+  compiles, against DD#31.
+- `bug-array-literal-elements-not-operand-words` (P3): an array literal's
+  elements are lexed as command arguments, against DD71.
+- `bug-declaration-names-unvalidated` (P3): a declaration or a `for` binds
+  any word as a variable name (`str 9z=1` runs). Question: the spelling of
+  a function name.
+- `bug-negated-reader-loop-false-sb4073` (P3): `until ! readline x` as the
+  last stage is a false SB4073.
+- `bug-sb4025-advice-misdescribes-rhs` (P3): SB4025's advice calls every
+  rejected capture an intrinsic or a concatenation.
+- `q-arith-test-statement-status` (P3): a bare `(( 0 ))` or `(( a ))`
+  statement sets `$?` without aborting, and the suite relies on it; DD#31
+  accepts only a mutation as a statement, with status 0.
+- `q-clause-on-next-line` (P3): an `else` or `elif` on the line after a brace
+  body's `}` is SB4072 (SB5011 before F1+F4), though every other newline in
+  an `if` or a loop is accepted. Recommended: accept it.
+- `q-compound-as-condition` (P3): may a compound command, or a `{ }` group
+  under `!`, supply a consumed status?
+- `q-suppression-and-stage-residuals` (P3): the residual `-` forms, `exec`
+  in a forked child, a here-string on a compound, and a value intrinsic as
+  a stage.
+- `bug-strace-count-injection-drifts-on-restart` (P3): the harness's, not
+  the compiler's. strace's `when=N` counts a restarted clone, so pipeown.28's
+  injected fault can land on the fork before its target (once in 266 stub
+  runs, C mode). Recommended: reorder the spec so it cannot happen, and
+  have `run_sash_under` detect an off-target fault.
+- `bug-c-int64-min-literal` (P4): the C backend writes i64::MIN as the bare
+  literal `-9223372036854775808`, which gcc warns is unsigned. The output is
+  right today.
+- `bug-sb5012-message-names-no-command` (P4): SB5012 says "no preceding
+  command" when one preceded.
+- `q-sb4072-closer-diagnostics` (P4): `a && fi` and `{ a && }` are SB4072 at
+  the closer, while `a &&` at the end of the input is SB4056 at the
+  operator; and SB4072 does not name the open block.
+- `q-statement-form-residuals` (P4): a word after a complete statement (`}
+  2`), a declaration beside a block (71.9), DD95's grouping, and `return {`.
+- `dedupe-external-head-predicates` (P4): four functions and two name lists
+  answer one question.
+- `doc-keyword-lexing-claims` (P4): DD#125 and a resolve.rs comment say `in`
+  and `do` lex as words outside their position; every keyword is a keyword
+  token everywhere, and `expect_word` accepts eight of them as names.
+
+Appended to existing tasks:
+
+- `bug-parse-error-in-block-cascades-sb4072`: F1+F4's new errors cascade
+  too (cnd.7, pf.36, pf.37). The cause is traced. A second shape, an error
+  before a block's `{` (h1, h3, cov.13, cnd.22-cnd.24), is pre-existing;
+  F1+F4 adds m4, r7 and r8 (skw.20), each a lone SB5011 on 8e28c61. A third
+  option, giving `}` the stray-keyword guard, fails the task's own gate: it
+  hides z1's and z2's real SB4072. Recommended, not yet ruled: brace-aware
+  `recover`, then recovery inside the block.
+- `bug-expr-type-int-disposition`: `exit ${n:?bad}` on an int is a false
+  SB4030 through the same arm.
+- `bug-digit-led-names`: a declaration binds a digit-led name until
+  `bug-declaration-names-unvalidated` lands.
 
 ### 9. B37 resolution walk
 
@@ -452,6 +613,9 @@ Filed as backlog tasks while researching B55, under the same rule:
   `sash_fork`'s -1 is taken for the parent, the job never runs, `$!` is -1
   and the program exits 0 (shown by failing `clone` with EAGAIN under
   strace). Pipelines already guard it.
+  - See `bug-fork-failure-reporting-by-form` (filed during F1+F4, journal
+    537): the forms report a fork failure three ways, and `!` turns one
+    into success. That task lands with B20.
 - [ ] **B21** (fixed-on-branch; DD27). A self-tail function used as a
   pipeline stage draws SB5037.
   - F13 (journal 532) touched the stage route without fixing B21. Its
@@ -486,6 +650,9 @@ Filed as backlog tasks while researching B55, under the same rule:
 - [ ] **B49** (F1; fixed-on-branch; DD55). `cmdsub_reads_whole_args` does
   not peel: `fn f { echo $(- join args) }; f a b c` is a false SB5043. Fixed
   by F5's rewrite of the signature scan (B53).
+  - Stays with F5, whose B53 rewrite carries it. F1+F4 did not port
+    `value_command`'s peel; its hunks H063 and H213 moved to F5 in the
+    ledger (journal 537).
 - [ ] **B53** (fixed-on-branch; no DD). A second, forked copy of the
   function-signature scan disagreed with the first, giving a false SB5043.
 - [ ] **B56** (fixed-on-branch; DD58, DD81). `-> int` functions were never
@@ -529,6 +696,34 @@ Filed as backlog tasks while researching B55, under the same rule:
   capture bodies: under `--no-taint`, `if /bin/echo "[$(/bin/false |
   /bin/cat)]" >/dev/null { echo yes }` prints `yes`. Branch specs:
   55.84-55.86.
+- [ ] **Capture-hoisting order** (question; DD55, DD66, DD86; pre-existing,
+  the same on the branch where it compiles). Every capture in a statement runs
+  before the statement's other reads, so text order is not evaluation order.
+  `⏎` marks a newline; `fn t { /bin/true }` precedes each `ev` row.
+  - A name the capture writes: `echo "$g" "$(f)" "$g"`, with `f` setting
+    `g`, prints `new X new`; bash's subshell gives `old X old` (probes
+    dsp/o1-o7 and w1-w4, `files/p531-ledger.md`). DD66's dispatch now
+    evaluates lazily; argument lists do not.
+  - `$?` to the left of a function capture: ev6 `/bin/sh -c "exit 3" || echo
+    "[$?]" "$(t)"` prints `[0] `, where DD55 (`$?` is the handling branch's
+    first expression) and bash give `[3]`. ev9 (`t` is `return 0`) and ev11
+    (the assignment `x="[$?]$(t)"`) are the same.
+  - `$?` to the right of one: ev5 `… || echo "$(t)" "[$?]"` and ev7 (in an
+    `else`) print ` [0]`. They compile, though `$?` is not the first
+    expression, which DD55 makes SB5012.
+  - A capture body's own `$?`: ev14 `… || echo "$(echo "in=$?")" "$(t)"`
+    prints `in=0`, because `$(t)` runs first (bash: `in=3`); ev13 reads the
+    status `$(t)` left. Without a function capture, ev12 prints `in=3`.
+    `bug-sb5012-sb5094-nested-body-flow` asks whether a body inherits `$?` at
+    all; if it does not, these rows become SB5012.
+  - A pure `echo` capture leaves `$?` alone: ev3 `… || echo "$(echo hi)"
+    "[$?]"` prints `hi [3]`, ev10 `[3] x`.
+  - On the branch, ev5-ev8, ev11, ev13 and ev14 are SB5020 (B114), so it says
+    nothing about their order.
+  - Options carried from the ledger: (a) keep hoisting and document it;
+    (b) evaluate left to right, word by word.
+  - Probes: `files/port-f1f4-probes.tar.gz`, `cb/ev1`-`ev14` (ev1, ev2 and
+    ev4 use an external capture and are SB5020).
 
 ### 13. F6 suppression scope
 
@@ -659,6 +854,13 @@ Filed as backlog tasks while researching B55, under the same rule:
   `x=$(getenv HOME); x=safe &; - wait; echo "$x"` compiles and prints the
   tainted value. The validator walks the background child into the parent's
   state, and `lower_background` has no snapshot/restore (F2 owns that half).
+  - F1+F4 (journal 537) closes the spellings known: an assignment, an
+    `attest` or an `argv` under `&` is SB4024, behind `-` too (55.121-55.123,
+    55.126, 55.127, 55.133, 55.134). A called function's assignment, `fn f {
+    x=safe }; f &`, was
+    already SB5020 on 8e28c61 and still is (probe `b18/c1`). The validator
+    still walks the child into the parent's state; W4 decides what that
+    walk needs now.
 
 ### 18. W5 END
 

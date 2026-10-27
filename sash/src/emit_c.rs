@@ -1185,9 +1185,9 @@ fn emit_inst(e: &mut Emit, inst: &SsaInst, types: &VarTypes) {
             site,
             checked,
             preserve_status,
-            loop_consumer,
+            verdict_joins,
         } => {
-            emit_reader_finish(e, *site, *checked, *preserve_status, *loop_consumer);
+            emit_reader_finish(e, *site, *checked, *preserve_status, *verdict_joins);
         }
         // Phase 5: SsaInst::SubscriptAssign → sash_table_set.
         // Mirrors handle_subscript_assign (codegen/inst_handlers.rs:1070).
@@ -3933,10 +3933,10 @@ fn emit_reader_finish(
     site: u32,
     checked: bool,
     preserve_status: bool,
-    loop_consumer: bool,
+    verdict_joins: bool,
 ) {
     writeln!(e.out, "    {{").unwrap();
-    let saved = save_reader_status(e, preserve_status, loop_consumer);
+    let saved = save_reader_status(e, preserve_status, verdict_joins);
     let p = format!("__reader_{site}");
     writeln!(e.out, "    sash_reader_finish({p});").unwrap();
     let pipeline = e.readers[&site].clone();
@@ -3955,18 +3955,18 @@ fn emit_reader_finish(
             "    __exit_status = {saved}_status; __test_result = {saved}_test;"
         )
         .unwrap();
-    } else if !loop_consumer {
+    } else if verdict_joins {
         writeln!(e.out, "    __test_result = __test_result && {saved}_test;").unwrap();
     }
     writeln!(e.out, "    }}").unwrap();
 }
 
-fn save_reader_status(e: &mut Emit, preserve_status: bool, loop_consumer: bool) -> String {
+fn save_reader_status(e: &mut Emit, preserve_status: bool, verdict_joins: bool) -> String {
     let saved = e.fresh();
     if preserve_status {
         writeln!(e.out, "    i64 {saved}_status = __exit_status;").unwrap();
     }
-    if preserve_status || !loop_consumer {
+    if preserve_status || verdict_joins {
         writeln!(e.out, "    i64 {saved}_test = __test_result;").unwrap();
     }
     saved

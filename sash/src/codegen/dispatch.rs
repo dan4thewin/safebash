@@ -211,13 +211,13 @@ impl SsaInst {
                 site,
                 checked,
                 preserve_status,
-                loop_consumer,
+                verdict_joins,
             } => {
                 return super::inst_handlers::handle_pipeline_finish(
                     *site,
                     *checked,
                     *preserve_status,
-                    *loop_consumer,
+                    *verdict_joins,
                     builder,
                     module,
                     ctx,

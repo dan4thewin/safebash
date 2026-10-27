@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup errors
-plan=509
+plan=664
 echo "1..$plan" >&3
 
 set +e
@@ -566,6 +566,68 @@ run_sash 'x=foo; echo $x'
 run_sash 'false || x=set; : $x; echo done'
 [[ $rc = 0 && $out = "done" && -z $err ]]; chk e.br10
 
+# ── 71.1-71.9: a typed declaration is a value binding too (DD#71) ─────────
+# DD#71: "an assignment (and typed declaration) is a value binding, not a
+# command", so it cannot be a `&&`/`||` operand, a pipeline stage or a
+# background job. A declaration took every word to the end of the statement as
+# an assignment, so `int n=1 && …` read `&&` as a name and said SB4014
+# "expected variable name in declaration" on 71.1-71.4. It now stops at a list
+# or pipe operator, as an untyped assignment does, and gets the same verdicts
+# (batch-531 B28, journal 537).
+# 71.1 a typed declaration as a `&&` operand gets e.br6's verdict
+run_sash 'int n=1 && /bin/echo ok
+echo "$n"'
+[[ $rc != 0 && -z $out \
+   && $err == *':1:1: error [SB4025] a declaration is a value binding, not a boolean or exit status'* ]]; chk 71.1
+# 71.2 ... and as a `||` operand
+run_sash 'int n=1 || /bin/echo ok
+echo "$n"'
+[[ $rc != 0 && -z $out \
+   && $err == *':1:1: error [SB4025] a declaration is a value binding, not a boolean or exit status'* ]]; chk 71.2
+# 71.3 as a pipeline stage it is SB4022: the binding would land in the
+#      stage's child
+run_sash 'int n=1 | /bin/cat
+echo "$n"'
+[[ $rc != 0 && -z $out \
+   && $err == *':1:1: error [SB4022] a variable declaration isn'\''t allowed as a pipeline stage'* ]]; chk 71.3
+# 71.4 under `&` it is SB4024, for the same reason
+run_sash 'int n=1 &
+echo "$n"'
+[[ $rc != 0 && -z $out \
+   && $err == *':1:1: error [SB4024] a variable declaration isn'\''t allowed in a background job'* ]]; chk 71.4
+# 71.5 (positive) a `|` with no blank before it is still part of the value
+#      word; only an operator token ends the declaration
+run_sash 'str s=a|b
+echo "$s"'
+[[ $rc = 0 && $out = "a|b" && -z $rerr ]]; chk 71.5
+# 71.6-71.9 (journal 537): in a control-flow header the `{` that opens the
+# body also ends a declaration, as it ends a command's words there (DD#68).
+# The declaration took the `{` as its next name and said SB4014 "expected
+# variable name in declaration"; DD#88 makes a typed declaration in a
+# condition SB4025, which the bash-style `if int n=$(cmd); then` already was.
+# 71.6 an `if` declaration with a capture
+run_sash 'if int n=$(/bin/echo 1) { echo "$n" }'
+[[ $rc != 0 && -z $out \
+   && $err == *':1:4: error [SB4025] a declaration captures a value, but a capture-condition branches on an exit status'* ]]; chk 71.6
+# 71.7 a `while` declaration without one
+run_sash 'while int n=1 { break }'
+[[ $rc != 0 && -z $out \
+   && $err == *':1:7: error [SB4025] a declaration is a value binding, not a boolean or exit status'* ]]; chk 71.7
+# 71.8 an `elif` header
+run_sash 'if /bin/false { echo a } elif str s=$(/bin/echo 1) { echo "$s" }'
+[[ $rc != 0 && -z $out \
+   && $err == *':1:31: error [SB4025] a declaration captures a value, but a capture-condition branches on an exit status'* ]]; chk 71.8
+# 71.9 (control) outside a header the `{` does not end a declaration, so this
+#      is still SB4014. Whether it should split into a declaration and a
+#      block, as `n=1 { … }` splits into an assignment and a block and
+#      `echo a { … }` into a command and a block (bc.g6), is
+#      q-statement-form-residuals; this pins only that 71.6-71.8 left the
+#      statement level alone.
+run_sash 'int n=1 { echo hi }
+echo "$n"'
+[[ $rc != 0 && -z $out \
+   && $err == *':1:1: error [SB4014] expected variable name in declaration'* ]]; chk 71.9
+
 # ── DD#70 (A)/(B) error-model contract ───────────────────────────────
 # (B) must-consume booleans: `match` (regex.sh 63.1c-2f) and a bare
 # `[[ … ]]`. A bare boolean is a compile error; if/&&/|| consume it;
@@ -597,10 +659,13 @@ echo after'
 run_sash 'if ! true; then echo T; else echo F; fi'
 [[ $rc = 0 && $out = "F" && -z $err ]]; chk e.b70.nif
 
-# e.b70.ndash `-` discards the negation's result — legal
+# e.b70.ndash `- !` is SB4019: `-` and `!` don't combine on one stage, in
+# either order (DD#70 2026-10-26 reverses the 2026-09-09 addendum that made
+# it legal). SB4019 has several sites, so the message pins this one.
 run_sash '- ! true
 echo after'
-[[ $rc = 0 && $out = "after" && -z $err ]]; chk e.b70.ndash
+[[ $rc != 0 && -z $out && $err == *SB4019* \
+   && $err == *'`-` cannot suppress a `!`-negated command'* ]]; chk e.b70.ndash
 
 # e.b70.tdisc `[[ … ]] || :` explicitly discards the boolean → ok
 run_sash 'v=a; [[ $v == a ]] || :
@@ -653,12 +718,13 @@ if ! f; then echo neg; fi'
 # bng.4 `!` on a pipeline is rejected — reviewer can't see `!`'s scope (SB4040)
 run_sash 'if ! /bin/true | /bin/cat; then echo x; fi'
 [[ $rc != 0 && -z $out && $err == *SB4040* ]]; chk bng.4
-# bng.5 `- !` discards the negated result (DD#70 addendum). `!` yields a
-# boolean and `-` discards results, so the composition is legal — redundant
-# with a plain `- cmd`, but explicitly so.
+# bng.5 `- !` is SB4019, the mirror of bng.11's `! -` (DD#70 2026-10-26).
+# `!` inverts a status and `-` discards it, so asking for both is
+# contradictory; a plain `- cmd` says what was meant.
 run_sash '- ! /bin/false
 echo after'
-[[ $rc = 0 && $out = "after" && -z $err ]]; chk bng.5
+[[ $rc != 0 && -z $out && $err == *SB4019* \
+   && $err == *'`-` cannot suppress a `!`-negated command'* ]]; chk bng.5
 
 # ── DD#70 terminal-segment negation (DG 2026-08-31): `!` may negate the FINAL
 # pipeline stage (`a | ! b`), which supplies the pipeline's result — the same
@@ -677,9 +743,9 @@ run_sash 'if /bin/echo abc | /bin/cat | ! /bin/grep -q z; then echo T; else echo
 # bng.10 `!` on a NON-terminal stage (`a | ! b | c`) is rejected — SB4040
 run_sash '/bin/echo abc | ! /bin/grep abc | /bin/cat'
 [[ $rc != 0 && -z $out && $err == *SB4040* ]]; chk bng.10
-# bng.11 `! -` stays rejected, and NOT as the `- !` mirror: `-` has already
-# discarded the result, so `!` has nothing left to invert. That is a
-# composition error, not a must-consume one — the addendum does not touch it.
+# bng.11 `! -` is rejected: `-` has already discarded the result, so `!` has
+# nothing left to invert. A composition error, not a must-consume one; its
+# mirror `- !` is SB4019 too (bng.5).
 run_sash '/bin/echo abc | ! - /bin/grep -q z'
 [[ $rc != 0 && -z $out && $err == *SB4019* ]]; chk bng.11
 # bng.12 `return ! X | Y` — a non-terminal `!` in a return producer → SB4040
@@ -687,6 +753,78 @@ run_sash '/bin/echo abc | ! - /bin/grep -q z'
 run_sash 'f() { return ! /bin/echo abc | /bin/grep -q z }
 if f; then echo T; fi'
 [[ $rc != 0 && -z $out && $err == *SB4040* ]]; chk bng.12
+# bng.13-bng.25 (journal 537; DD#70 2026-10-26): `-` and `!` on one stage are
+# SB4019 wherever they meet, an unconsumed terminal `!` is SB4018, and a `!` on
+# a `{ }` group in a condition is still a group condition.
+# bng.13 `! - a | b` is bng.11's `! -` at the head of a pipeline; it was
+#        SB4018 (batch-531 n1)
+run_sash '! - /bin/echo a | /bin/cat
+echo after'
+[[ $rc != 0 && -z $out \
+   && $err == *':1:1: error [SB4019] `!` cannot negate a `-`-suppressed command'* ]]; chk bng.13
+# bng.14 ... and in a condition, where it compiled (batch-531 n5)
+run_sash 'if ! - /bin/echo a | /bin/false { echo y } else { echo n }
+echo after'
+[[ $rc != 0 && -z $out \
+   && $err == *':1:4: error [SB4019] `!` cannot negate a `-`-suppressed command'* ]]; chk bng.14
+# bng.15 `a | - ! b` is bng.5's `- !` on the final stage; it was the
+#        compound-stage SB4022 (batch-531 n2)
+run_sash '/bin/echo a | - ! /bin/cat
+echo after'
+[[ $rc != 0 && -z $out \
+   && $err == *':1:15: error [SB4019] `-` cannot suppress a `!`-negated command'* ]]; chk bng.15
+# bng.16 `- !` on a `{ }` group, which compiled
+run_sash '- ! { /bin/true }
+echo after'
+[[ $rc != 0 && -z $out \
+   && $err == *':1:1: error [SB4019] `-` cannot suppress a `!`-negated command'* ]]; chk bng.16
+# bng.17 a terminal `!` that nothing consumes is SB4018, the verdict a
+#        standalone `! cmd` gets (DD#70 2026-08-31: "the same `!` a
+#        standalone simple command takes"). It aborted at run time with
+#        "/bin/true: command failed (exit 1)". The advice no longer offers
+#        `-` or `|| :`, which would discard the status `!` inverted
+run_sash '/bin/true | ! /bin/true
+echo after'
+[[ $rc != 0 && -z $out \
+   && $err == *':1:13: error [SB4018] `!` result is unused — consume it with if/`&&`/`||`, or write `- cmd` without the `!`'* ]]; chk bng.17
+# bng.18 ... under `&` (was the compound-stage SB4022)
+run_sash '/bin/true | ! /bin/true &
+- wait
+echo after'
+[[ $rc != 0 && -z $out \
+   && $err == *':1:13: error [SB4018] `!` result is unused — consume it with if/`&&`/`||`, or write `- cmd` without the `!`'* ]]; chk bng.18
+# bng.19 ... as a capture's last statement, whose status is unchecked
+#        (it compiled)
+run_sash 'x=$(/bin/echo a | ! /bin/false)
+echo "[${x:!}]"'
+[[ $rc != 0 && -z $out \
+   && $err == *':1:19: error [SB4018] `!` result is unused — consume it with if/`&&`/`||`, or write `- cmd` without the `!`'* ]]; chk bng.19
+# bng.20 (positive) a return producer consumes a terminal `!`
+run_sash 'fn p { return /bin/echo abc | ! /bin/grep -q z }
+if p { echo t } else { echo f }'
+[[ $rc = 0 && $out = "t" && -z $rerr ]]; chk bng.20
+# bng.21 `if ! { … }` is a `{ }` group condition, which DD#68 bans; the
+#        `!` hid it (it printed `n`)
+run_sash 'if ! { /bin/true } { echo y } else { echo n }'
+[[ $rc != 0 && -z $out \
+   && $err == *':1:6: error [SB4027] a `{ }` group cannot be a condition'* ]]; chk bng.21
+# bng.22 (positive) `! { … }` as a `&&` operand at statement level
+run_sash '! { /bin/false } && echo y'
+[[ $rc = 0 && $out = "y" && -z $rerr ]]; chk bng.22
+# bng.23 (positive) `! { … }` as a return producer
+run_sash 'fn f { return ! { /bin/true } }
+if f { echo y } else { echo n }'
+[[ $rc = 0 && $out = "n" && -z $rerr ]]; chk bng.23
+# bng.24 (positive) a negated loop is not a group: still a legal condition
+#        operand
+run_sash 'if ! for x in a b { echo $x } || /bin/true { echo y }'
+[[ $rc = 0 && $out = $'a\nb\ny' && -z $rerr ]]; chk bng.24
+# bng.25 (positive) `- until` parses like `- while`; it was SB4014
+#        "expected expression" at its condition
+run_sash 'int n=0
+- until (( n >= 2 )) { n+=1 }
+echo "$n"'
+[[ $rc = 0 && $out = "2" && -z $rerr ]]; chk bng.25
 
 # e.b70.fndisc `f || :` does NOT discard a `-> int` function's return.
 # DD#70 offered `|| :` as the discard for an `-> int` function, but by DD#74
@@ -844,6 +982,151 @@ run_sash 'if /bin/false; /bin/true; then echo Y; else echo N; fi'
 # cc.4 a failing if-body final command aborts (bare-command-uncaught)
 run_sash 'if /bin/true; then /bin/false; fi'
 [[ $rc != 0 && -z $out ]]; chk cc.4
+
+# ── cnd.1-cnd.24: what may stand as a condition (journal 537) ─────────────
+# An empty condition compiled (cnd.1-4). A `{ }` group, which
+# DD#68 bans as a condition, got in behind `&&`, `elif` or `-` (cnd.5-7), and
+# a dispatch form, which SB4028 bans, got in the same ways (cnd.8-10, cnd.19)
+# and in the other boolean positions: a `return` producer and an `&&`/`||`
+# operand (cnd.14-17, cnd.20, cnd.21). Behind `! -` it drew `-`'s SB4019
+# instead (cnd.13). A group that was already rejected is now reported at its
+# `{` (cnd.22-24).
+# cnd.1 `if then`
+run_sash 'if then echo y; fi
+echo after'
+[[ $rc != 0 && -z $out \
+   && $err == *':1:4: error [SB4027] this header has no condition'* ]]; chk cnd.1
+# cnd.2 `while do`
+run_sash 'while do echo y; break; done
+echo after'
+[[ $rc != 0 && -z $out \
+   && $err == *':1:7: error [SB4027] this header has no condition'* ]]; chk cnd.2
+# cnd.3 `until do`
+run_sash 'until do echo y; done
+echo after'
+[[ $rc != 0 && -z $out \
+   && $err == *':1:7: error [SB4027] this header has no condition'* ]]; chk cnd.3
+# cnd.4 `elif then`
+run_sash 'if /bin/false; then echo n; elif then echo y; fi
+echo after'
+[[ $rc != 0 && -z $out \
+   && $err == *':1:34: error [SB4027] this header has no condition'* ]]; chk cnd.4
+# cnd.5 a `{ }` group as a condition's `&&` operand is still a group
+#       condition (DD#68); it printed `y`
+run_sash 'if /bin/true && { /bin/true } { echo y }'
+[[ $rc != 0 && -z $out \
+   && $err == *':1:17: error [SB4027] a `{ }` group cannot be a condition'* ]]; chk cnd.5
+# cnd.6 ... as an `elif` condition
+run_sash 'if /bin/false; then echo n; elif { /bin/true; }; then echo y; fi'
+[[ $rc != 0 && -z $out \
+   && $err == *':1:34: error [SB4027] a `{ }` group cannot be a condition'* ]]; chk cnd.6
+# cnd.7 ... behind a `-`; it printed `in clean` and `done` (batch-531
+#       B112). The SB4072 that follows it is a known parse-error cascade
+run_sash 'int n=0
+while - { x=clean; (( n < 1 )) } { n+=1; echo "in $x" }
+echo done'
+[[ $rc != 0 && -z $out \
+   && $err == *':2:9: error [SB4027] a `{ }` group cannot be a condition'* ]]; chk cnd.7
+# cnd.8 the dispatch form composes only as a statement (DD#66), never as a
+#       condition. Behind `-` it printed `d` and `y`, as cnd.9 and cnd.10 did
+run_sash 'str x=a
+if - [[ $x == a { echo d } ]] { echo y }'
+[[ $rc != 0 && -z $out \
+   && $err == *':2:6: error [SB4028] the `[[ ]]` dispatch form is a statement, not a boolean'* ]]; chk cnd.8
+# cnd.9 ... as an `elif` condition
+run_sash 'str x=a
+if /bin/false { echo n } elif [[ $x == a { echo d } ]] { echo y }'
+[[ $rc != 0 && -z $out \
+   && $err == *':2:31: error [SB4028] the `[[ ]]` dispatch form is a statement, not a boolean'* ]]; chk cnd.9
+# cnd.10 ... as a condition's `&&` operand
+run_sash 'str x=a
+if /bin/true && [[ $x == a { echo d } ]] { echo y }'
+[[ $rc != 0 && -z $out \
+   && $err == *':2:17: error [SB4028] the `[[ ]]` dispatch form is a statement, not a boolean'* ]]; chk cnd.10
+# cnd.11 (positive) a comma list splits into several statements (DD#31),
+#        which the parser holds as a group; that group is not a `{ }`
+#        condition
+run_sash 'int a=0
+if (( a++, a > 0 )) { echo "y$a" } else { echo "n$a" }'
+[[ $rc = 0 && $out = "y1" && -z $rerr ]]; chk cnd.11
+# cnd.12 (positive) ... nor in a `while`
+run_sash 'int a=0
+while (( a++, a < 3 )) { echo "w$a" }'
+[[ $rc = 0 && $out = $'w1\nw2' && -z $rerr ]]; chk cnd.12
+# cnd.13 the dispatch is named behind `! -` too, not the `-`
+run_sash 'str x=a
+! - [[ $x == a { echo d } ]]'
+[[ $rc != 0 && -z $out \
+   && $err == *':2:1: error [SB4028] the `[[ ]]` dispatch form is a statement, not a boolean'* ]]; chk cnd.13
+# cnd.14 a `return` producer supplies a status, so it is a boolean
+#        position; it printed `d` and `y`
+run_sash 'fn f { return [[ $1 == a { echo d } ]] }
+if f a { echo y }'
+[[ $rc != 0 && -z $out \
+   && $err == *':1:15: error [SB4028] the `[[ ]]` dispatch form is a statement, not a boolean'* ]]; chk cnd.14
+# cnd.15 ... and so is an `&&`/`||` operand at statement level; it printed `d`
+run_sash 'str x=a
+/bin/true && [[ $x == a { echo d } ]]'
+[[ $rc != 0 && -z $out \
+   && $err == *':2:14: error [SB4028] the `[[ ]]` dispatch form is a statement, not a boolean'* ]]; chk cnd.15
+# cnd.16 ... behind a `-` (likewise)
+run_sash 'str x=a
+/bin/true && - [[ $x == a { echo d } ]]'
+[[ $rc != 0 && -z $out \
+   && $err == *':2:16: error [SB4028] the `[[ ]]` dispatch form is a statement, not a boolean'* ]]; chk cnd.16
+# cnd.17 ... and inside a `return` producer's list; it printed `d` and `y`
+run_sash 'fn f { return /bin/true && [[ $1 == a { echo d } ]] }
+if f a { echo y }'
+[[ $rc != 0 && -z $out \
+   && $err == *':1:28: error [SB4028] the `[[ ]]` dispatch form is a statement, not a boolean'* ]]; chk cnd.17
+# cnd.18 (positive) a dispatch as a capture's whole body is a statement in a
+#        body (DD#86), not a boolean, so it stays legal
+run_sash 'str x=a
+y=$([[ $x == a { echo d } ]])
+echo "[$y]"'
+[[ $rc = 0 && $out = "[d]" && -z $rerr ]]; chk cnd.18
+# cnd.19 a dispatch in the keyword spelling of `elif` (cnd.9 is the brace
+#        one); it printed `d` and `y`
+run_sash 'str x=a
+if /bin/false; then echo n; elif [[ $x == a { echo d } ]]; then echo y; fi'
+[[ $rc != 0 && -z $out \
+   && $err == *':2:34: error [SB4028] the `[[ ]]` dispatch form is a statement, not a boolean'* ]]; chk cnd.19
+# cnd.20 ... as an `||` operand at statement level (cnd.15 is `&&`); it
+#        printed `d`
+run_sash 'str x=a
+/bin/false || [[ $x == a { echo d } ]]'
+[[ $rc != 0 && -z $out \
+   && $err == *':2:15: error [SB4028] the `[[ ]]` dispatch form is a statement, not a boolean'* ]]; chk cnd.20
+# cnd.21 ... and inside a `while` condition (cnd.10 is an `if`); it printed
+#        `d` and `y`. The SB4072 that follows it is a known parse-error
+#        cascade
+run_sash 'str x=a
+while /bin/false || [[ $x == a { echo d } ]] { echo y; break }'
+[[ $rc != 0 && -z $out \
+   && $err == *':2:21: error [SB4028] the `[[ ]]` dispatch form is a statement, not a boolean'* ]]; chk cnd.21
+# cnd.22 a group condition is reported at its `{`, so a brace `elif`'s is
+#        on the elif's line; it was reported at the `if` (1:1). The SB4072
+#        that follows it is a known parse-error cascade
+run_sash 'if /bin/true {
+  echo a
+} elif {
+  echo b
+}'
+[[ $rc != 0 && -z $out \
+   && $err == *':3:8: error [SB4027] a `{ }` group cannot be a condition'* ]]; chk cnd.22
+# cnd.23 ... and an `if`'s, which was reported at the `if` (2:1)
+run_sash 'echo x
+if { /bin/true; }; then echo y; fi'
+[[ $rc != 0 && -z $out \
+   && $err == *':2:4: error [SB4027] a `{ }` group cannot be a condition'* ]]; chk cnd.23
+# cnd.24 a header with no condition before its `{` is reported at that `{`;
+#        it was reported at the `if` (2:1)
+run_sash 'echo x
+if {
+  echo b
+}'
+[[ $rc != 0 && -z $out \
+   && $err == *':2:4: error [SB4027] a `{ }` group cannot be a condition'* ]]; chk cnd.24
 
 # --- SB4045: value-intrinsic wrong arity (was: fall-through to a bare command
 # and a runtime "bug: bare command passed to sash_exec"). Front-end — all modes.
@@ -1532,6 +1815,285 @@ echo done'
   [[ $rc = 3 && -z $out && -z $err \
  && $rerr == *'/bin/sh: command failed (exit 3)'* ]]; chk 55.106
 
+# --- 55.107-55.144: what `-` can suppress, and what can run under `&` ------
+# `-` suppresses a command's failure, so on anything that is not a command it is
+# SB4014 (55.107-55.115). A background job runs in a forked child, so a
+# control word, an assignment or a builtin that acts on this process would act
+# on the child and be lost: SB4024 (DD#55 2026-10-26). A job has no status
+# until it is reaped, so it cannot be a condition or a return producer either.
+# A statement-level `-` takes its statement up to its `&`, and what follows the
+# `&` is a new statement, as without the `-` (55.137-55.144). Every negative
+# here compiled except 55.107-55.115, 55.135 and 55.136, which got the wrong
+# diagnostic, and 55.139 and 55.140, which reached an ICE. Journal 537.
+  # 55.107 `- attest` (was SB4014 "expected expression", at its predicate)
+  run_sash 'str s=abc
+- attest s [[ -n $s ]]
+echo "[$s]"'
+  [[ $rc != 0 && -z $out \
+     && $err == *':2:1: error [SB4014] `-` cannot suppress an `attest`'* ]]; chk 55.107
+
+  # 55.108 `- str` (was SB5011 "command '-' not found"); the advice points
+  #        at `$(- cmd)`
+  run_sash '- str y=$(/bin/false)
+echo "[$y]"'
+  [[ $rc != 0 && -z $out \
+     && $err == *':1:1: error [SB4014] `-` suppresses a command, and a declaration is not one'* ]]; chk 55.108
+
+  # 55.109 `- int` (was SB5011)
+  run_sash '- int n=1
+echo "$n"'
+  [[ $rc != 0 && -z $out \
+     && $err == *':1:1: error [SB4014] `-` suppresses a command, and a declaration is not one'* ]]; chk 55.109
+
+  # 55.110 `- const` (was SB5011)
+  run_sash '- const c=1
+echo "$c"'
+  [[ $rc != 0 && -z $out \
+     && $err == *':1:1: error [SB4014] `-` suppresses a command, and a declaration is not one'* ]]; chk 55.110
+
+  # 55.111 `- array` (was SB4014 "expected expression", at the value)
+  run_sash '- array a=(x)
+echo "${a[0]}"'
+  [[ $rc != 0 && -z $out \
+     && $err == *':1:1: error [SB4014] `-` suppresses a command, and a declaration is not one'* ]]; chk 55.111
+
+  # 55.112 `- map` (likewise)
+  run_sash '- map m=([k]=v)
+echo "${m[k]}"'
+  [[ $rc != 0 && -z $out \
+     && $err == *':1:1: error [SB4014] `-` suppresses a command, and a declaration is not one'* ]]; chk 55.112
+
+  # 55.113 `- fn` (was SB5011)
+  run_sash '- fn f { echo hi }
+f'
+  [[ $rc != 0 && -z $out \
+     && $err == *':1:1: error [SB4014] `-` suppresses a command, and a function definition is not one'* ]]; chk 55.113
+
+  # 55.114 `- function` (was SB5011)
+  run_sash '- function f { echo hi }
+f'
+  [[ $rc != 0 && -z $out \
+     && $err == *':1:1: error [SB4014] `-` suppresses a command, and a function definition is not one'* ]]; chk 55.114
+
+  # 55.115 `- END { }` (was SB5011)
+  run_sash 'echo hi
+- END { echo bye }'
+  [[ $rc != 0 && -z $out \
+     && $err == *':2:1: error [SB4014] `-` suppresses a command, and an `END { }` block is not one'* ]]; chk 55.115
+
+  # 55.116 `return N &`: the child returned into the caller's code, so
+  #        `done` printed twice (batch-531 B11)
+  run_sash 'fn g { return 3 & }
+g
+- wait
+echo done'
+  [[ $rc != 0 && -z $out \
+     && $err == *':1:8: error [SB4024] `return` isn'\''t allowed in a background job'* ]]; chk 55.116
+
+  # 55.117 `break &`: each child broke out of the loop and ran the rest of
+  #        the program, so `after` printed three times (B11)
+  run_sash 'for x in 1 2 { echo "$x"; break & }
+echo after'
+  [[ $rc != 0 && -z $out \
+     && $err == *':1:27: error [SB4024] `break` isn'\''t allowed in a background job'* ]]; chk 55.117
+
+  # 55.118 `continue &`: each child carried on with the loop, so `2` printed
+  #        twice and `after` four times (B11)
+  run_sash 'for x in 1 2 { echo "$x"; continue & }
+echo after'
+  [[ $rc != 0 && -z $out \
+     && $err == *':1:27: error [SB4024] `continue` isn'\''t allowed in a background job'* ]]; chk 55.118
+
+  # 55.119 a background job as a condition: it took the branch and then
+  #        reported "/bin/false: command failed" (batch-531 B26)
+  run_sash 'if /bin/false & { echo y } else { echo n }'
+  [[ $rc != 0 && -z $out \
+     && $err == *':1:4: error [SB4024] condition: a background job (`… &`) is not a status producer'* ]]; chk 55.119
+
+  # 55.120 ... as a return producer; it printed `y` (batch-531 n4)
+  run_sash 'fn f { return /bin/true & }
+if f { echo y } else { echo n }'
+  [[ $rc != 0 && -z $out \
+     && $err == *':1:8: error [SB4024] return: a background job (`… &`) is not a status producer'* ]]; chk 55.120
+
+  # 55.121 an assignment under `&` was lost: it printed `[a]`
+  run_sash 'x=a; x=b &
+- wait
+echo "[$x]"'
+  [[ $rc != 0 && -z $out \
+     && $err == *':1:6: error [SB4024] a variable assignment isn'\''t allowed in a background job'* ]]; chk 55.121
+
+  # 55.122 ... and an arithmetic one: it printed `0`
+  run_sash 'int n=0; (( n = 1 )) &
+- wait; echo $n'
+  [[ $rc != 0 && -z $out \
+     && $err == *':1:10: error [SB4024] a variable assignment isn'\''t allowed in a background job'* ]]; chk 55.122
+
+  # 55.123 ... inside a backgrounded condition: it printed `x0`
+  run_sash 'int a=0; if ! (( a++, a > 3 )) & { echo "x$a" }'
+  [[ $rc != 0 && -z $out \
+     && $err == *':1:15: error [SB4024] a variable assignment isn'\''t allowed in a background job'* ]]; chk 55.123
+
+  # 55.124 `cd &` changed only the child's directory
+  run_sash 'cd /tmp &
+- wait
+echo after'
+  [[ $rc != 0 && -z $out \
+     && $err == *':1:1: error [SB4024] `cd` isn'\''t allowed in a background job'* ]]; chk 55.124
+
+  # 55.125 `exec >f &` rewired only the child's descriptors
+  run_sash 'exec >/dev/null &
+- wait
+echo after'
+  [[ $rc != 0 && -z $out \
+     && $err == *':1:1: error [SB4024] `exec` without a command isn'\''t allowed in a background job'* ]]; chk 55.125
+
+  # 55.126 `attest … &` gated only the child's copy of x, yet the parent's
+  #        read compiled as attested: C printed the unattested value, native
+  #        an empty one
+  run_sash 'x=$(/bin/echo hi)
+attest x [[ -n $x ]] &
+- wait
+echo "x=$x"'
+  [[ $rc != 0 && -z $out \
+     && $err == *':2:1: error [SB4024] `attest` isn'\''t allowed in a background job'* ]]; chk 55.126
+
+  # 55.127 `argv ar &`: the native binary segfaulted, the C one printed a
+  #        garbage length
+  run_sash 'argv ar &
+- wait
+echo "n=$(len ar)"'
+  [[ $rc != 0 && -z $out \
+     && $err == *':1:1: error [SB4024] `argv` isn'\''t allowed in a background job'* ]]; chk 55.127
+
+  # 55.128 (positive) `exec cmd &` stays legal: it replaces the child, which
+  #        is what the job is
+  run_sash 'exec /bin/true &
+- wait
+echo after'
+  [[ $rc = 0 && $out = "after" && -z $rerr ]]; chk 55.128
+
+  # 55.129 a `-` operand ended the parse of its list, so the `|| c` after it
+  #        escaped SB4053 and the program printed `x` (batch-531 B24, DD#95)
+  run_sash '/bin/true && - /bin/false || /bin/echo x
+echo after'
+  [[ $rc != 0 && -z $out \
+     && $err == *':1:1: error [SB4053] `&&` and `||` in one list are ambiguous'* ]]; chk 55.129
+
+  # 55.130 (positive) `a && - b &` stays legal
+  run_sash '/bin/true && - /bin/false &
+- wait
+echo after'
+  [[ $rc = 0 && $out = "after" && -z $rerr ]]; chk 55.130
+
+  # 55.131 `a && - b &` backgrounds the whole list, as `a && b &` does. The
+  #        `-` took `b &` alone, so the `cd` ran in this process and `pwd`
+  #        printed /tmp; now the `cd` is in the job (55.124)
+  run_sash 'cd /tmp && - /bin/true &
+- wait
+/bin/pwd'
+  [[ $rc != 0 && -z $out \
+     && $err == *':1:1: error [SB4024] `cd` isn'\''t allowed in a background job'* ]]; chk 55.131
+
+  # 55.132 the check looks through `-`: the job changed only its own
+  #        directory, and `pwd` printed the old one
+  run_sash '/bin/true && - cd /tmp &
+- wait
+/bin/pwd'
+  [[ $rc != 0 && -z $out \
+     && $err == *':1:16: error [SB4024] `cd` isn'\''t allowed in a background job'* ]]; chk 55.132
+
+  # 55.133 ... an assignment behind `-`: it printed `[a]`
+  run_sash 'x=a
+/bin/true && - x=$(/bin/echo b) &
+- wait
+echo "[${x:!}]"'
+  [[ $rc != 0 && -z $out \
+     && $err == *':2:16: error [SB4024] a variable assignment isn'\''t allowed in a background job'* ]]; chk 55.133
+
+  # 55.134 ... an arithmetic one: it printed `0`
+  run_sash 'int n=0
+/bin/false || - (( n = 1 )) &
+- wait
+echo "$n"'
+  [[ $rc != 0 && -z $out \
+     && $err == *':2:17: error [SB4024] a variable assignment isn'\''t allowed in a background job'* ]]; chk 55.134
+
+  # 55.135 ... a suppressed final reader (DD#122). It was SB4022, which
+  #        called the stage a compound command. Were the check not to look
+  #        through `-`, the job would compile and lose `y`
+  run_sash '/bin/echo hi | - readline y &
+- wait
+echo "[${y:!}]"'
+  [[ $rc != 0 && -z $out \
+     && $err == *':1:18: error [SB4024] `readline` isn'\''t allowed in a background job'* ]]; chk 55.135
+
+  # 55.136 ... `read` (likewise; that job would segfault natively and print
+  #        a garbage length in C)
+  run_sash '/bin/printf "a\0b\0" | - read ar &
+- wait
+echo "n=$(len ar)"'
+  [[ $rc != 0 && -z $out \
+     && $err == *':1:26: error [SB4024] `read` isn'\''t allowed in a background job'* ]]; chk 55.136
+
+  # 55.137 a statement-level `-` takes its statement up to its `&`, and what
+  #        follows the `&` is a new statement, as without the `-` (55.143).
+  #        The parser folded the statement a second time, which joined
+  #        `&& b` to the job: this ran `b`
+  run_sash '- /bin/echo a & && /bin/echo b
+- wait
+echo done'
+  [[ $rc != 0 && -z $out \
+     && $err == *':1:17: error [SB4014] expected expression'* ]]; chk 55.137
+
+  # 55.138 ... `|| b`: `b` never ran
+  run_sash '- /bin/echo a & || /bin/echo b
+- wait
+echo done'
+  [[ $rc != 0 && -z $out \
+     && $err == *':1:17: error [SB4014] expected expression'* ]]; chk 55.138
+
+  # 55.139 ... `| b`: the job became a pipeline stage (ICE)
+  run_sash '- /bin/echo a & | /bin/cat
+- wait
+echo done'
+  [[ $rc != 0 && -z $out \
+     && $err == *':1:17: error [SB4014] expected expression'* ]]; chk 55.139
+
+  # 55.140 ... a redirect after the `&` (ICE)
+  run_sash '- /bin/echo a & >/dev/null
+- wait
+echo done'
+  [[ $rc != 0 && -z $out \
+     && $err == *':1:17: error [SB4014] expected expression'* ]]; chk 55.140
+
+  # 55.141 ... a second `&`: a job that backgrounded the first job
+  run_sash '- /bin/echo a & &
+- wait
+echo done'
+  [[ $rc != 0 && -z $out \
+     && $err == *':1:17: error [SB4014] expected expression'* ]]; chk 55.141
+
+  # 55.142 ... in a block body as well: `b` never ran
+  run_sash 'if /bin/true { - /bin/echo a & || /bin/echo b }
+- wait
+echo done'
+  [[ $rc != 0 && -z $out \
+     && $err == *':1:32: error [SB4014] expected expression'* ]]; chk 55.142
+
+  # 55.143 (control) the same statement without the `-`, unchanged
+  run_sash '/bin/echo a & && /bin/echo b
+- wait
+echo done'
+  [[ $rc != 0 && -z $out \
+     && $err == *':1:15: error [SB4014] expected expression'* ]]; chk 55.143
+
+  # 55.144 (positive) a statement after the `&` on the same line runs
+  run_sash '- /bin/true & echo b
+- wait
+echo done'
+  [[ $rc = 0 && $out = $'b\ndone' && -z $rerr ]]; chk 55.144
+
 # --- 95.13-95.20: SB4056, a list/pipeline operator with no right operand ----
 # `parse_trailing_list_op` did `parse_list_operand(...).unwrap_or(true_cmd)`,
 # so a missing right-hand side became an implicit `true`: `echo a &&` compiled
@@ -1971,6 +2533,46 @@ run_sash '/bin/cat | /bin/cat < /tmp/sash_rdr_in'
 [[ $rc = 0 && $out = $'in1\nin2' && -z $err ]]; chk rdr.49
 rm -f /tmp/sash_rdr_pl /tmp/sash_rdr_in
 
+# rdr.50-rdr.57 (journal 537): a redirect after a `!`-negated test, assignment,
+# declaration or attest is SB4046, as it is without the `!`: none of them
+# produces output. The `!` hid the operand from the check, and every one of
+# these crashed the compiler (ICE).
+# rdr.50 `if ! [[ … ]] >f`
+run_sash 'if ! [[ -n x ]] >/dev/null { echo y } else { echo n }'
+[[ $rc != 0 && -z $out \
+   && $err == *':1:6: error [SB4046] a redirect cannot attach to a `[[ … ]]` test'* ]]; chk rdr.50
+# rdr.51 `if ! (( … )) >f`
+run_sash 'if ! (( 1 )) >/dev/null { echo y } else { echo n }'
+[[ $rc != 0 && -z $out \
+   && $err == *':1:6: error [SB4046] a redirect cannot attach to an arithmetic test'* ]]; chk rdr.51
+# rdr.52 `if ! x=b >f`
+run_sash 'x=a; if ! x=b >/dev/null { echo y } else { echo n }; echo "$x"'
+[[ $rc != 0 && -z $out \
+   && $err == *':1:11: error [SB4046] a redirect cannot attach to a variable assignment'* ]]; chk rdr.52
+# rdr.53 `if ! str s=a >f`
+run_sash 'if ! str s=a >/dev/null { echo "$s" }'
+[[ $rc != 0 && -z $out \
+   && $err == *':1:6: error [SB4046] a redirect cannot attach to a variable declaration'* ]]; chk rdr.53
+# rdr.54 `return ! [[ … ]] >f`
+run_sash 'fn f { return ! [[ -n x ]] >/dev/null }
+if f { echo y } else { echo n }'
+[[ $rc != 0 && -z $out \
+   && $err == *':1:17: error [SB4046] a redirect cannot attach to a `[[ … ]]` test'* ]]; chk rdr.54
+# rdr.55 `if ! attest … >f`
+run_sash 'str s=$(/bin/echo a)
+if ! attest s [[ -n $s ]] >/dev/null { echo y }'
+[[ $rc != 0 && -z $out \
+   && $err == *':2:6: error [SB4046] a redirect cannot attach to an `attest`'* ]]; chk rdr.55
+# rdr.56 `a | ! [[ … ]] >f`, a negated final stage
+run_sash 'if /bin/echo a | ! [[ -n x ]] >/dev/null { echo y }'
+[[ $rc != 0 && -z $out \
+   && $err == *':1:20: error [SB4046] a redirect cannot attach to a `[[ … ]]` test'* ]]; chk rdr.56
+# rdr.57 `! [[ … ]] 2>f` as a statement
+run_sash '! [[ -n x ]] 2>/dev/null
+echo after'
+[[ $rc != 0 && -z $out \
+   && $err == *':1:3: error [SB4046] a redirect cannot attach to a `[[ … ]]` test'* ]]; chk rdr.57
+
 
 # ── Suffixes on a compound command (SB4021 / 4022 / 4023 / 4024) ────
 #
@@ -1995,6 +2597,202 @@ run_sash 'for x in a b; do /bin/echo "$x"; done && /bin/echo y'
 run_sash 'while false; do :; done &'
 [[ $rc != 0 && -z $out && $err == *SB4024* && $err != *SB4022* ]]; chk csfx.3
 rm -f /tmp/sash_csfx
+
+# csfx.4-csfx.11 (journal 537): the same suffixes after a `!`-negated group,
+# and on a comma list in a return producer. Either way the group was hidden
+# from the suffix check: `&` ran it or drew another diagnostic, and a pipe or a
+# redirect crashed the compiler (ICE).
+# csfx.4 `! { … } && b &` (it ran)
+run_sash '! { /bin/false } && /bin/true &
+- wait
+echo after'
+[[ $rc != 0 && -z $out \
+   && $err == *':1:3: error [SB4024] `&` on a compound command'* ]]; chk csfx.4
+
+# csfx.5 `a && ! { … } &` (was SB4018)
+run_sash '/bin/true && ! { /bin/false } &
+- wait
+echo after'
+[[ $rc != 0 && -z $out \
+   && $err == *':1:16: error [SB4024] `&` on a compound command'* ]]; chk csfx.5
+
+# csfx.6 `return ! { … } &` (it ran)
+run_sash 'fn f { return ! { /bin/true } & }
+if f { echo y } else { echo n }'
+[[ $rc != 0 && -z $out \
+   && $err == *':1:17: error [SB4024] `&` on a compound command'* ]]; chk csfx.6
+
+# csfx.7 `$(! { … } &)` (was an unrelated SB5020)
+run_sash 'x=$(! { /bin/true } &)
+echo "[$x]"'
+[[ $rc != 0 && -z $out \
+   && $err == *':1:7: error [SB4024] `&` on a compound command'* ]]; chk csfx.7
+
+# csfx.8 `if ! { … } & {` (it ran)
+run_sash 'if ! { /bin/true } & { echo y }'
+[[ $rc != 0 && -z $out \
+   && $err == *':1:6: error [SB4024] `&` on a compound command'* ]]; chk csfx.8
+
+# csfx.9 a comma list with a write is one arithmetic command (DD#31), held
+#        as a group only because a part writes, so a pipe on one in a return
+#        producer is the assignment's SB4022 (an ICE before journal 537)
+run_sash 'int n=0
+fn f { return (( n = 1, n > 0 )) | /bin/cat }
+if f { echo "y$n" } else { echo "n$n" }'
+[[ $rc != 0 && -z $out \
+   && $err == *':2:15: error [SB4022] a variable assignment isn'\''t allowed as a pipeline stage'* ]]; chk csfx.9
+
+# csfx.10 `! { … } 2>f` (ICE)
+run_sash '! { /bin/true } 2>/dev/null
+echo after'
+[[ $rc != 0 && -z $out \
+   && $err == *':1:3: error [SB4021] a redirect on a compound command'* ]]; chk csfx.10
+
+# csfx.11 a redirect on a comma list with a write in a return producer is
+#         the assignment's SB4046 (an ICE before journal 537)
+run_sash 'int n=0
+fn f { return (( n = 1, n > 0 )) >/dev/null }
+if f { echo "y$n" } else { echo "n$n" }'
+[[ $rc != 0 && -z $out \
+   && $err == *':2:15: error [SB4046] a redirect cannot attach to a variable assignment'* ]]; chk csfx.11
+
+# csfx.12-csfx.19 (journal 537): an fd-tagged redirect (`2>f`) on a compound
+# gets the bare `>f`'s verdict, code and position, wherever the compound
+# stands. The suffix check saw only operator tokens, so the `2` began a new
+# statement: SB5011 "command '2' not found", SB4022 on a last stage, and a
+# parser ICE after a `-`.
+# csfx.12 at statement level
+run_sash '{ /bin/echo hi } 2>/dev/null'
+[[ $rc != 0 && -z $out \
+   && $err == *':1:1: error [SB4021] a redirect on a compound command'* ]]; chk csfx.12
+
+# csfx.13 on an `if`
+run_sash 'if /bin/true { /bin/echo hi } 2>/dev/null'
+[[ $rc != 0 && -z $out \
+   && $err == *':1:1: error [SB4021] a redirect on a compound command'* ]]; chk csfx.13
+
+# csfx.14 as a `&&` operand
+run_sash '/bin/true && { /bin/echo a } 2>/dev/null'
+[[ $rc != 0 && -z $out \
+   && $err == *':1:14: error [SB4021] a redirect on a compound command'* ]]; chk csfx.14
+
+# csfx.15 as a pipeline's first stage
+run_sash '{ /bin/echo a } 2>/dev/null | /bin/cat'
+[[ $rc != 0 && -z $out \
+   && $err == *':1:1: error [SB4021] a redirect on a compound command'* ]]; chk csfx.15
+
+# csfx.16 as its last stage (was SB4022)
+run_sash '/bin/echo a | { /bin/cat } 2>/dev/null'
+[[ $rc != 0 && -z $out \
+   && $err == *':1:15: error [SB4021] a redirect on a compound command'* ]]; chk csfx.16
+
+# csfx.17 after a `-` (ICE)
+run_sash '- { /bin/echo a } 2>/dev/null'
+[[ $rc != 0 && -z $out \
+   && $err == *':1:3: error [SB4021] a redirect on a compound command'* ]]; chk csfx.17
+
+# csfx.18 in a return producer
+run_sash 'fn f { return { /bin/echo a } 2>/dev/null }
+if f { echo y }'
+[[ $rc != 0 && -z $out \
+   && $err == *':1:15: error [SB4021] a redirect on a compound command'* ]]; chk csfx.18
+
+# csfx.19 (control) a digit word with a blank before the operator is not an
+#         fd tag, so it is not the compound's redirect. What a word after
+#         `}` starts is q-statement-form-residuals; this pins only that the
+#         first diagnostic is at the `2`, not on the compound.
+run_sash '{ /bin/echo hi } 2 >/dev/null'
+[[ $rc != 0 && -z $out && $err != *SB4021* \
+   && $err == *':1:18: error ['* ]]; chk csfx.19
+
+# csfx.20 csfx.10 without the fd tag, `! { … } >f`, was the same parser ICE
+#         before journal 537: the `!` wrapper hid the compound from the
+#         redirect check
+run_sash '! { /bin/true } >/dev/null
+echo after'
+[[ $rc != 0 && -z $out \
+   && $err == *':1:3: error [SB4021] a redirect on a compound command'* ]]; chk csfx.20
+
+# acm.1 a comma list with a write is one arithmetic command, not a compound
+#       (DD#31): it is held as a group only because a part writes, so a pipe
+#       on one is the assignment's SB4022, not the compound's advice to wrap
+#       it in a function (that advice, before journal 537)
+run_sash 'int a=0
+(( a++, a<3 )) | /bin/cat
+echo "a=$a"'
+[[ $rc != 0 && -z $out \
+   && $err == *':2:1: error [SB4022] a variable assignment isn'\''t allowed as a pipeline stage'* ]]; chk acm.1
+# acm.2 ... as the last stage
+run_sash 'int a=0
+/bin/echo x | (( a++, a<3 ))
+echo "a=$a"'
+[[ $rc != 0 && -z $out \
+   && $err == *':2:15: error [SB4022] a variable assignment isn'\''t allowed as a pipeline stage'* ]]; chk acm.2
+# acm.3 ... as a middle stage
+run_sash 'int a=0
+/bin/echo x | (( a++, a<3 )) | /bin/cat
+echo "a=$a"'
+[[ $rc != 0 && -z $out \
+   && $err == *':2:15: error [SB4022] a variable assignment isn'\''t allowed as a pipeline stage'* ]]; chk acm.3
+# acm.4 ... and the write need not be the first part
+run_sash 'int a=0
+(( a<3, a++ )) | /bin/cat
+echo "a=$a"'
+[[ $rc != 0 && -z $out \
+   && $err == *':2:1: error [SB4022] a variable assignment isn'\''t allowed as a pipeline stage'* ]]; chk acm.4
+# acm.5 a redirect on one is the assignment's SB4046 (the compound's SB4021
+#       before journal 537)
+run_sash 'int a=0
+(( a++, a<3 )) >/dev/null
+echo "a=$a"'
+[[ $rc != 0 && -z $out \
+   && $err == *':2:1: error [SB4046] a redirect cannot attach to a variable assignment'* ]]; chk acm.5
+# acm.6 ... before a list operator too
+run_sash 'int a=0
+(( a++, a<3 )) >/dev/null && echo y
+echo "a=$a"'
+[[ $rc != 0 && -z $out \
+   && $err == *':2:1: error [SB4046] a redirect cannot attach to a variable assignment'* ]]; chk acm.6
+# acm.7 ... and under `!`, whose operand reaches the redirect check apart
+#       from a statement's
+run_sash 'int a=0
+! (( a++, a<3 )) >/dev/null
+echo "a=$a"'
+[[ $rc != 0 && -z $out \
+   && $err == *':2:3: error [SB4046] a redirect cannot attach to a variable assignment'* ]]; chk acm.7
+# acm.8 `&` on one is the assignment's SB4024 (the compound's before
+#       journal 537)
+run_sash 'int a=0
+(( a++, a<3 )) &
+echo "a=$a"'
+[[ $rc != 0 && -z $out \
+   && $err == *':2:1: error [SB4024] a variable assignment isn'\''t allowed in a background job'* ]]; chk acm.8
+# acm.9 a `-` is peeled: a suppressed one is still an assignment as a stage
+run_sash 'int a=0
+- (( a++, a<3 )) | /bin/cat
+echo "a=$a"'
+[[ $rc != 0 && -z $out \
+   && $err == *':2:3: error [SB4022] a variable assignment isn'\''t allowed as a pipeline stage'* ]]; chk acm.9
+# acm.10 ... and under `&`
+run_sash 'int a=0
+- (( a++, a<3 )) &
+echo "a=$a"'
+[[ $rc != 0 && -z $out \
+   && $err == *':2:3: error [SB4024] a variable assignment isn'\''t allowed in a background job'* ]]; chk acm.10
+# acm.11 `&&` / `||` after one keeps the compound's SB4023 for now: whether
+#        that operand is a condition is an open question (DD#31 addendum
+#        2026-10-27)
+run_sash 'int a=0
+(( a++, a<3 )) && echo y
+echo "a=$a"'
+[[ $rc != 0 && -z $out \
+   && $err == *':2:1: error [SB4023] `&&` / `||` on a compound command'* ]]; chk acm.11
+# acm.12 ... and as a list's operand
+run_sash 'int a=0
+/bin/true && (( a++, a<3 )) && echo y
+echo "a=$a"'
+[[ $rc != 0 && -z $out \
+   && $err == *':2:14: error [SB4023] `&&` / `||` on a compound command'* ]]; chk acm.12
 
 
 # dspan.1 every "expected expression" pointed at 1:1 — `parts_to_expr` built
@@ -2026,6 +2824,172 @@ run_sash 'array a=(p q)
 run_sash '/bin/echo hi
 /bin/echo a)b'
 [[ $rc != 0 && $err == *SB4014* && $err == *:2:12:* ]]; chk dspan.4
+
+# ── skw.1-skw.34: a block keyword or `}` that belongs to no block (journal 537)
+# A keyword that can only close or continue a block (then, do, in, esac,
+# else, elif, fi, done) fell to the ordinary-word path wherever a command
+# could begin, so a stray `fi` was SB5011 "command 'fi' not found", whose
+# advice to define it nobody can take (SB5092 forbids `fn fi`). Each is now
+# SB4072, like a stray `}`, at a statement head and in every position a
+# command may stand (skw.1-skw.17). SB4072's `}` text now says when a `}`
+# does close a block (skw.18, skw.19), and the `else` and `elif` texts say
+# that after a brace body the clause must share the `}`'s line (skw.20). A
+# block that runs into a closer it cannot take is reported at that closer,
+# as bash does, where it was SB4014 or SB4027 at the `if` or `while`
+# (skw.21-skw.25). An `elif` or `else` clause's
+# errors name that clause, not its `if` (skw.26-skw.28). After a parse error,
+# a keyword left over by the recovery is not reported again (skw.29). A
+# stray inside a `$(` that is never closed is reported as that `$(`
+# (skw.30-skw.33). A keyword that is an argument is still a plain word
+# (skw.34).
+skw_then='a `then` here continues nothing — a `then` may only follow a complete `if` or `elif` condition'
+skw_do='a `do` here opens nothing — a `do` may only follow a complete `while`, `until` or `for` header'
+skw_in='an `in` here continues nothing — an `in` may only follow the loop variable of a `for` (`for NAME in …`)'
+skw_esac='an `esac` here closes nothing — sash has no `case`; use the `[[ ]]` dispatch form: `[[ $x == pat { … } other { … } || { … } ]]` (exact match) or `[[ $x =~ regex { … } || { … } ]]` (regex match)'
+skw_fi='a `fi` here closes nothing — a `fi` ends the innermost open block only if that block is an `if … then` body (or its `elif … then` or `else` part), and only as a statement of its own'
+skw_done='a `done` here closes nothing — a `done` ends the innermost open block only if that block is the `do` body of a `while`, `until` or `for`, and only as a statement of its own'
+skw_else=$'an `else` here continues nothing — an `else` continues the innermost open block only if that block is an `if … then` or `elif … then` body, and only as a statement of its own; after a brace-form body it must directly follow that body\'s closing `}`, on the same line (`} else {`)'
+skw_elif=$'an `elif` here continues nothing — an `elif` continues the innermost open block only if that block is an `if … then` or `elif … then` body, and only as a statement of its own; after a brace-form body it must directly follow that body\'s closing `}`, on the same line (`} elif … {`)'
+skw_rb=$'a `}` here closes nothing — a `}` ends the innermost open block only if that block is a `{ … }` one, and never right after a `|`, `&&`, `||` or `!` that still needs a command. For a literal brace, quote it (`\'a}b\'`)'
+skw_sub='unterminated `$(` — it is never closed before the end of the source, so everything after it was read as part of it'
+# skw.1-skw.8 each keyword at a statement head; skw.7 and skw.8 close one
+#             block too many
+run_sash 'then /bin/echo a'
+[[ $rc != 0 && -z $out && $err == *":1:1: error [SB4072] $skw_then"* ]]; chk skw.1
+run_sash 'do /bin/echo a'
+[[ $rc != 0 && -z $out && $err == *":1:1: error [SB4072] $skw_do"* ]]; chk skw.2
+run_sash 'in a b'
+[[ $rc != 0 && -z $out && $err == *":1:1: error [SB4072] $skw_in"* ]]; chk skw.3
+run_sash 'esac'
+[[ $rc != 0 && -z $out && $err == *":1:1: error [SB4072] $skw_esac"* ]]; chk skw.4
+run_sash 'else /bin/echo a'
+[[ $rc != 0 && -z $out && $err == *":1:1: error [SB4072] $skw_else"* ]]; chk skw.5
+run_sash 'elif /bin/true; then /bin/echo a; fi'
+[[ $rc != 0 && -z $out && $err == *":1:1: error [SB4072] $skw_elif"* ]]; chk skw.6
+run_sash 'for x in a; do /bin/echo $x; done; done'
+[[ $rc != 0 && -z $out && $err == *":1:36: error [SB4072] $skw_done"* ]]; chk skw.7
+run_sash 'if /bin/true; then /bin/echo a; fi; fi'
+[[ $rc != 0 && -z $out && $err == *":1:37: error [SB4072] $skw_fi"* ]]; chk skw.8
+# skw.9-skw.15 ... after `|`, `&&` and `&`, behind `!`, `-` and `&& -`, and
+#              as a `return` producer
+run_sash '/bin/echo a | then'
+[[ $rc != 0 && -z $out && $err == *":1:15: error [SB4072] $skw_then"* ]]; chk skw.9
+run_sash '/bin/true && fi'
+[[ $rc != 0 && -z $out && $err == *":1:14: error [SB4072] $skw_fi"* ]]; chk skw.10
+run_sash '/bin/echo a & fi'
+[[ $rc != 0 && -z $out && $err == *":1:15: error [SB4072] $skw_fi"* ]]; chk skw.11
+run_sash '! fi'
+[[ $rc != 0 && -z $out && $err == *":1:3: error [SB4072] $skw_fi"* ]]; chk skw.12
+run_sash '- fi'
+[[ $rc != 0 && -z $out && $err == *":1:3: error [SB4072] $skw_fi"* ]]; chk skw.13
+run_sash '/bin/echo a && - fi'
+[[ $rc != 0 && -z $out && $err == *":1:18: error [SB4072] $skw_fi"* ]]; chk skw.14
+run_sash 'fn f { return ! fi }
+f'
+[[ $rc != 0 && -z $out && $err == *":1:17: error [SB4072] $skw_fi"* ]]; chk skw.15
+# skw.16-skw.17 ... at the head of a capture body, unquoted and inside
+#               "…" (where the position comes through the re-lex). The
+#               capture is closed, so the keyword keeps SB4072
+run_sash 'x=$(fi)
+/bin/echo "$x"'
+[[ $rc != 0 && -z $out && $err == *":1:5: error [SB4072] $skw_fi"* ]]; chk skw.16
+run_sash 'x="$(fi)"
+/bin/echo "$x"'
+[[ $rc != 0 && -z $out && $err == *":1:6: error [SB4072] $skw_fi"* ]]; chk skw.17
+# skw.18-skw.19 a `}` after a `|` or a `-` that still needs a command
+run_sash '{ /bin/echo a | }'
+[[ $rc != 0 && -z $out && $err == *":1:17: error [SB4072] $skw_rb"* ]]; chk skw.18
+run_sash '- }'
+[[ $rc != 0 && -z $out && $err == *":1:3: error [SB4072] $skw_rb"* ]]; chk skw.19
+# skw.20 an `else` on the line after a brace body's `}` continues nothing.
+#        The `}` that follows it is a known parse-error cascade, unasserted
+#        (notes/tasks/bug-parse-error-in-block-cascades-sb4072.md)
+run_sash 'if /bin/true {
+  /bin/echo a
+}
+else {
+  /bin/echo b
+}'
+[[ $rc != 0 && -z $out && $err == *":4:1: error [SB4072] $skw_else"* ]]; chk skw.20
+# skw.21-skw.25 a header with no `then` or `do` runs into a closer: an `if`
+#               and a `while` header, an `elif` header, and an inner `if`
+#               body cut short by its loop's `done`. skw.25 is a `fi` that
+#               does not stand as a statement of its own
+run_sash 'if /bin/true
+  /bin/echo a
+fi'
+[[ $rc != 0 && -z $out && $err == *":3:1: error [SB4072] $skw_fi"* ]]; chk skw.21
+run_sash 'while /bin/false
+  /bin/echo a
+done'
+[[ $rc != 0 && -z $out && $err == *":3:1: error [SB4072] $skw_done"* ]]; chk skw.22
+run_sash 'if /bin/false; then
+  echo a
+elif /bin/true
+  echo b
+fi'
+[[ $rc != 0 && -z $out && $err == *":5:1: error [SB4072] $skw_fi"* ]]; chk skw.23
+run_sash 'while /bin/false; do if /bin/true; then /bin/echo a; done'
+[[ $rc != 0 && -z $out && $err == *":1:54: error [SB4072] $skw_done"* ]]; chk skw.24
+run_sash 'if /bin/true; then
+  /bin/echo a | fi'
+[[ $rc != 0 && -z $out && $err == *":2:17: error [SB4072] $skw_fi"* ]]; chk skw.25
+# skw.26-skw.28 with no closer to run into, the clause names itself
+run_sash 'if /bin/false; then /bin/echo a; elif /bin/true'
+[[ $rc != 0 && -z $out \
+   && $err == *":1:34: error [SB4014] expected 'then' after elif"* ]]; chk skw.26
+run_sash 'if /bin/false {
+  echo a
+} elif /bin/true
+echo b'
+[[ $rc != 0 && -z $out \
+   && $err == *":3:3: error [SB4014] expected '{' block body"* ]]; chk skw.27
+run_sash 'if /bin/false {
+  echo a
+} else {
+  echo b'
+[[ $rc != 0 && -z $out \
+   && $err == *":3:3: error [SB4014] expected '}' to close the block body"* ]]; chk skw.28
+# skw.29 the recovery from an error in a header skips to the `;`, so the
+#        `then` and the `fi` that follow are left over; reporting them would
+#        report the header's error two more times
+run_sash 'if (( 1 + )); then
+  /bin/echo a
+fi'
+[[ $rc != 0 && -z $out && $err == *':1:4: error [SB4020] '* \
+   && $err != *SB4072* ]]; chk skw.29
+# skw.30-skw.33 the `}` or `fi` was written to close the `if`, and is stray
+#               only because the open `$(` took it in. A later `$( … )` or
+#               `$(( … ))` does not close the open one (skw.32, skw.33)
+run_sash 'if /bin/true {
+  x=$(/bin/echo a
+}
+/bin/echo "$x"'
+[[ $rc != 0 && -z $out && $err == *":2:5: error [SB4057] $skw_sub"* \
+   && $err != *SB4072* ]]; chk skw.30
+run_sash 'if /bin/true; then
+  x=$(/bin/echo a
+fi
+/bin/echo "$x"'
+[[ $rc != 0 && -z $out && $err == *":2:5: error [SB4057] $skw_sub"* \
+   && $err != *SB4072* ]]; chk skw.31
+run_sash 'if /bin/true {
+  x=$(/bin/echo a
+}
+y=$(/bin/echo b)
+/bin/echo "$x$y"'
+[[ $rc != 0 && -z $out && $err == *":2:5: error [SB4057] $skw_sub"* \
+   && $err != *SB4072* ]]; chk skw.32
+run_sash 'if /bin/true {
+  x=$(/bin/echo a
+}
+n=$(( 1 + 2 ))
+/bin/echo "$x$n"'
+[[ $rc != 0 && -z $out && $err == *":2:5: error [SB4057] $skw_sub"* \
+   && $err != *SB4072* ]]; chk skw.33
+# skw.34 (positive) as an argument, each keyword is an ordinary word
+run_sash 'echo do done esac in then elif else fi'
+[[ $rc = 0 && $out = 'do done esac in then elif else fi' && -z $rerr ]]; chk skw.34
 
 # --- the operand checks reach every context, not just `echo $(…)` ---
 # The string-intrinsic check ran from `check_stmt`, which only ever sees a

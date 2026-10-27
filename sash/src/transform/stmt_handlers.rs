@@ -656,10 +656,10 @@ pub(super) fn handle_pipeline(
     state: &mut VersionState,
     block: BlockId,
 ) -> BlockId {
-    // DD#70: `! X` is a (B) must-consume boolean — bare/consequent → SB4018,
-    // `-` → SB4019. And `!` *consumes* its operand, so lower it in a boolean
-    // context (an inner `[[ … ]]`/`match` must not itself fire — the `!` is
-    // its consumer).
+    // DD#70: `! X` is a (B) must-consume boolean — bare/consequent → SB4018
+    // (`- ! X` is SB4019 at parse). And `!` *consumes* its operand, so lower
+    // it in a boolean context (an inner `[[ … ]]`/`match` must not itself
+    // fire — the `!` is its consumer).
     if !p.negated {
         return lower_pipeline_body(p, ssa, state, block);
     }
@@ -694,42 +694,118 @@ fn lower_pipeline_body(
 }
 
 /// Route a genuine multi-stage pipeline (`len > 1`) to the matching lowering
-/// based on its last stage: `while read`/`mapfile`, `lastpipe read`, or a
-/// regular fork/exec chain.
+/// based on its final stage beneath that stage's `-`/`!` marks: a `while` or
+/// `read` consumer, a `readline` consumer, or a regular fork/exec chain.
+///
+/// The marks are peeled first. Classifying the raw stage sent
+/// `a | - readline x` down the fork/exec path as a bare `readline` exec, which
+/// died at run time, and `a | - while readline x { … }` into the
+/// compound-stage ICE.
 fn dispatch_multistage_pipeline(
     p: &Pipeline,
     ssa: &mut SsaProgram,
     state: &mut VersionState,
     block: BlockId,
 ) -> BlockId {
-    let last = &p.commands[p.commands.len() - 1];
-    // Structural on purpose: DD#122/SB4073 has already rejected a `while` final
-    // stage with no reader in it, so reaching here means the loop really does
-    // consume the pipe. This predicate used to be the *only* thing deciding it,
-    // which is how `cmd | while (( n < 1 )); do /bin/cat; done` compiled and
-    // silently discarded the pipeline's output.
-    let is_while_read = matches!(&last.kind, StmtKind::While(_));
-    let is_array_read = is_array_read_last(last);
-    if is_while_read || is_array_read {
+    let last = FinalStage::peel(&p.commands[p.commands.len() - 1], state);
+    if last.consumes_as_statement() {
         return handle_pipe_while_or_array_read(p, last, ssa, state, block);
     }
-    if let Some(command) = lastpipe_read_command(last) {
-        handle_lastpipe_read(p, command, ssa, state, block)
+    if let Some(command) = lastpipe_read_command(last.body) {
+        handle_lastpipe_read(p, command, last, ssa, state, block)
     } else {
         handle_regular_pipeline(p, ssa, state, block);
         block
     }
 }
 
+/// A pipeline's final stage beneath its DD#55 `-` and DD#70 `!` marks.
+#[derive(Clone, Copy)]
+struct FinalStage<'a> {
+    body: &'a Statement,
+    suppressed: bool,
+    negated: bool,
+}
+
+impl<'a> FinalStage<'a> {
+    /// DD#70: a terminal `!` is the same must-consume boolean a standalone
+    /// `! cmd` is, so it is SB4018 wherever nothing consumes it — at
+    /// statement level and in a background child alike.
+    fn peel(stage: &'a Statement, state: &mut VersionState) -> Self {
+        let (body, suppressed, negated) = stage.stage_marks();
+        if negated {
+            check_negation_must_consume(stage, state);
+        }
+        Self {
+            body,
+            suppressed,
+            negated,
+        }
+    }
+
+    /// A `while` or `read` consumer lowers as a statement bound to the pipe.
+    ///
+    /// Structural on purpose: DD#122/SB4073 has already rejected a `while`
+    /// final stage with no reader in it, so reaching here means the loop
+    /// really does consume the pipe. This predicate used to be the *only*
+    /// thing deciding it, which is how `cmd | while (( n < 1 )); do /bin/cat;
+    /// done` compiled and silently discarded the pipeline's output.
+    ///
+    /// A `! while` final stage is SB4022 at parse
+    /// (`reject_nonconsuming_final_stage`): the loop's status never joins the
+    /// pipeline's, so the `!` has nothing to invert. The `!self.negated` test
+    /// stays as a backstop — left unclassified, a negated loop reaches the
+    /// regular path, whose stage lowering ICEs on any compound.
+    fn consumes_as_statement(&self) -> bool {
+        let is_while = matches!(self.body.kind, StmtKind::While(_)) && !self.negated;
+        is_while || is_array_read_last(self.body)
+    }
+
+    /// Whether the consumer's own verdict joins the producers' status: a
+    /// reader's EOF test does. A completed `while` succeeds, and DD#55
+    /// discards a `-` consumer's verdict.
+    fn verdict_joins(&self) -> bool {
+        !self.suppressed && !matches!(self.body.kind, StmtKind::While(_))
+    }
+
+    /// Lower the consumer beneath its marks. DD#55: a `-` consumer runs
+    /// unchecked as a whole, as a statement-level `- while` does. DD#70: a
+    /// `!` reader's verdict is inverted before it joins the producers'.
+    fn lower(
+        &self,
+        ssa: &mut SsaProgram,
+        state: &mut VersionState,
+        block: BlockId,
+        body: impl FnOnce(&mut SsaProgram, &mut VersionState, BlockId) -> BlockId,
+    ) -> BlockId {
+        let scope = self
+            .suppressed
+            .then(|| super::statements::SuppressionScope::enter(ssa, state, block));
+        let exit = body(ssa, state, block);
+        if let Some(scope) = scope {
+            scope.finish(ssa, state);
+        }
+        if self.negated {
+            ssa.block_mut(exit).insts.push(SsaInst::internal(
+                BuiltinCmd::NegateTestResult,
+                vec![],
+                true,
+            ));
+        }
+        exit
+    }
+}
+
 /// DD#70 (B): `! X` produces a must-consume boolean (for any operand). A
-/// consuming position (if/while/&&/||) is fine; a bare result is SB4018;
-/// `-` discards it (DD#70 addendum — see `check_boolean_must_consume`).
+/// consuming position (if/while/&&/||) is fine, and so is a `!` nested in a
+/// `-` scope (`- { ! cmd }`), which discards it; a bare result is SB4018.
+/// `- ! cmd` itself is SB4019 at parse, so the advice drops the `!`.
 fn check_negation_must_consume(stmt: &Statement, state: &mut VersionState) {
     if state.in_condition > 0 || state.suppressed > 0 {
         return;
     }
     state.diagnostics.push(format!(
-        "{}:{}: error [SB4018] `!` result is unused — consume it with if/`&&`/`||`, or discard with `-` or `|| :`",
+        "{}:{}: error [SB4018] `!` result is unused — consume it with if/`&&`/`||`, or write `- cmd` without the `!`",
         stmt.span.line, stmt.span.col
     ));
 }
@@ -830,11 +906,12 @@ fn push_command_stage(
     stages.push((resolve_pipeline_command(&name, state), args, redirects));
 }
 
-/// `cmd1 | ... | while readline var` or `cmd1 | ... | read arr`.
+/// `cmd1 | ... | while readline var` or `cmd1 | ... | read arr`, each
+/// possibly marked (`| - while …`, `| ! read arr`).
 /// Register producer stages and lower the consumer against its owned pipe site.
 fn handle_pipe_while_or_array_read(
     p: &Pipeline,
-    last: &Statement,
+    last: FinalStage,
     ssa: &mut SsaProgram,
     state: &mut VersionState,
     block: BlockId,
@@ -857,9 +934,9 @@ fn handle_pipe_while_or_array_read(
         state,
         block,
         site,
-        matches!(last.kind, StmtKind::While(_)),
+        last,
         clean_pipe,
-        |ssa, state, block| lower_one(last, ssa, state, block),
+        |ssa, state, block| lower_one(last.body, ssa, state, block),
     )
 }
 
@@ -868,7 +945,7 @@ fn lower_pipe_consumer(
     state: &mut VersionState,
     block: BlockId,
     site: u32,
-    loop_consumer: bool,
+    stage: FinalStage,
     clean_pipe: bool,
     body: impl FnOnce(&mut SsaProgram, &mut VersionState, BlockId) -> BlockId,
 ) -> BlockId {
@@ -888,7 +965,7 @@ fn lower_pipe_consumer(
     let pipe_reader = state
         .pipe_reader
         .replace((reader_pipe_fd(site), clean_pipe));
-    let exit = body(ssa, state, consumer);
+    let exit = stage.lower(ssa, state, consumer, body);
     state.pipe_reader = pipe_reader;
     ssa.block_mut(exit).terminator = Terminator::Goto(done);
     let after = state.snapshot();
@@ -904,17 +981,19 @@ fn lower_pipe_consumer(
             .filter(|&id| id != done)
             .collect(),
         checked: state.in_condition == 0 && state.suppressed == 0,
-        loop_consumer,
+        verdict_joins: stage.verdict_joins(),
     });
     done
 }
 
 /// DD#20: lastpipe — `cmd | read var` runs `read` in the main shell.
 /// Emit producer stages with captured pipe fd, then emit a ReadLine that
-/// consumes from that pipe in the main process.
+/// consumes from that pipe in the main process, beneath the reader's own
+/// `-`/`!` mark.
 fn handle_lastpipe_read(
     p: &Pipeline,
     command: &Command,
+    last: FinalStage,
     ssa: &mut SsaProgram,
     state: &mut VersionState,
     block: BlockId,
@@ -934,7 +1013,7 @@ fn handle_lastpipe_read(
         state,
         block,
         site,
-        false,
+        last,
         clean_pipe,
         |ssa, state, block| {
             let target = state.define(&crate::ir::readline_target(&command.args));
@@ -978,11 +1057,7 @@ fn push_pipeline_stage(
     suppressed: &mut Vec<bool>,
     negated: &mut Vec<bool>,
 ) {
-    let (unwrapped, is_suppressed, is_negated) = match &cmd.kind {
-        StmtKind::Suppressed(inner) => (inner.as_ref(), true, false),
-        StmtKind::Negated(inner) => (inner.as_ref(), false, true),
-        _ => (cmd, false, false),
-    };
+    let (unwrapped, is_suppressed, is_negated) = cmd.stage_marks();
     let stages_before = stages.len();
     lower_one_pipeline_stage(unwrapped, idx, ssa, state, block, stages);
     suppressed.resize(stages.len(), false);
@@ -991,10 +1066,9 @@ fn push_pipeline_stage(
     negated[stages_before..].fill(is_negated);
 }
 
-/// Lower a single (already Suppressed-peeled) pipeline stage into `stages`:
+/// Lower a single (already `-`/`!`-peeled) pipeline stage into `stages`:
 /// a `Command` becomes a direct stage (possibly several, via function
-/// inlining); any compound is lowered into its own SSA blocks and recorded
-/// as a `__compound_<id>` forked child.
+/// inlining). The parser rejects every compound stage.
 fn lower_one_pipeline_stage(
     stmt: &Statement,
     idx: usize,
@@ -1017,7 +1091,11 @@ fn lower_one_pipeline_stage(
 /// shadowed one pass earlier than most, not by `validate`. Measured 2026-10-11
 /// over eight spellings, all rejected before the transform runs: a `{ }` group
 /// first or last in the pipe, a `while`/`if`/`for` head, and `(( … ))` are
-/// each **SB4022**; a redirected group is SB4021; `case` is SB4029.
+/// each **SB4022**; a redirected group is SB4021; `case` is SB4029. A `return`
+/// producer that is a compound — the comma group `return (( a, b ))` builds —
+/// does not pass through `reject_compound_postfix`, and reached this ICE as
+/// `return (( a, b )) | cat`; `wrap_pipeline_part` now gives it SB4022 too
+/// (2026-10-27).
 ///
 /// The arm this replaced was not a wrong answer — it was a complete, plausible
 /// lowering (fork a compound child into `compound_pipeline_blocks` as
@@ -1750,6 +1828,39 @@ mod invariant_tests {
             span: Span::new(1, 1),
         };
         lower_one_pipeline_stage(&stmt, 0, &mut ssa, &mut state, block, &mut stages);
+    }
+
+    /// `a | ! while …` is SB4022 at parse (`reject_nonconsuming_final_stage`),
+    /// so no program reaches this shape. Were that relaxed,
+    /// `consumes_as_statement`'s `!self.negated` term keeps a negated loop off
+    /// the reader-loop path, which would lower it with an inverted status that
+    /// never joins the pipeline's, so the `!` would compile to nothing. The
+    /// loop goes down the regular path instead, and the compound-stage ICE
+    /// fires.
+    #[test]
+    #[should_panic(expected = "SB4022 rejects one at parse")]
+    fn a_negated_final_loop_stage_is_not_a_reader_loop() {
+        let (mut ssa, mut state, block) = fixtures();
+        let span = Span::new(1, 1);
+        let reader_loop = Statement {
+            kind: StmtKind::While(While {
+                condition: vec![],
+                body: vec![],
+                until: false,
+            }),
+            span,
+        };
+        let p = Pipeline {
+            commands: vec![
+                Statement::command(lit("/bin/echo"), vec![lit("x")], span),
+                Statement {
+                    kind: StmtKind::Negated(Box::new(reader_loop)),
+                    span,
+                },
+            ],
+            negated: false,
+        };
+        dispatch_multistage_pipeline(&p, &mut ssa, &mut state, block);
     }
 
     #[test]

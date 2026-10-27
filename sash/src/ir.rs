@@ -174,11 +174,49 @@ impl Statement {
 
     /// The two DD#99 readers that consume a pipe in the parent process:
     /// `readline NAME` (one line → scalar) and `read ARRAY` (NUL-split).
-    fn is_pipe_reader(&self) -> bool {
+    pub(crate) fn is_pipe_reader(&self) -> bool {
         let StmtKind::Command(c) = &self.kind else {
             return false;
         };
         matches!(&c.name.kind, ExprKind::Literal(n) if n == "readline" || n == "read")
+    }
+
+    /// A pipeline stage's `-` (DD#55) and `!` (DD#70) marks, peeled: the
+    /// statement beneath them, whether the stage is suppressed, and whether it
+    /// is negated. A stage carries at most one of them — the parser refuses
+    /// `- !` and `! -` alike (SB4019) — but the peel does not rely on that.
+    pub fn stage_marks(&self) -> (&Statement, bool, bool) {
+        let (mut cur, mut suppressed, mut negated) = (self, false, false);
+        loop {
+            match &cur.kind {
+                StmtKind::Suppressed(inner) => {
+                    suppressed = true;
+                    cur = inner;
+                }
+                StmtKind::Negated(inner) => {
+                    negated = true;
+                    cur = inner;
+                }
+                _ => return (cur, suppressed, negated),
+            }
+        }
+    }
+
+    /// The statement a pipeline stage actually runs, beneath its `-` / `!`
+    /// marks and its redirect. **Every stage classifier peels through this.**
+    /// Private copies of this loop drifted: `validate::is_external_source`
+    /// peeled only the redirect, so the `-` on `- /bin/cat f | readline x` hid
+    /// an external producer and `x` was bound clean — in the front-end taint
+    /// pass and, through the shared `clean_pipe`, the SSA backstop too.
+    pub fn stage_body(&self) -> &Statement {
+        let mut cur = self;
+        loop {
+            match &cur.kind {
+                StmtKind::Suppressed(inner) | StmtKind::Negated(inner) => cur = inner,
+                StmtKind::Redirected(r) => cur = &r.body,
+                _ => return cur,
+            }
+        }
     }
 
     /// Mutable mirror of [`Self::structural_bodies`] — deliberately not of
@@ -1313,6 +1351,9 @@ pub struct If {
 pub struct ElifClause {
     pub condition: Vec<Statement>,
     pub body: Vec<Statement>,
+    /// The position of the `elif` keyword. An error about the clause reports
+    /// it, and the `If` each clause becomes when the chain is nested carries it.
+    pub span: Span,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -1320,6 +1361,17 @@ pub struct While {
     pub condition: Vec<Statement>,
     pub body: Vec<Statement>,
     pub until: bool, // true for `until` loops
+}
+
+impl While {
+    /// The keyword the user wrote, for a diagnostic that names the loop.
+    pub fn keyword(&self) -> &'static str {
+        if self.until {
+            "until"
+        } else {
+            "while"
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -1332,9 +1384,9 @@ pub struct For {
 /// The **DD#66 dispatch form** `[[ value { pat) … } ]]` — *not* bash
 /// `case`/`esac`, which is not in the subset and has no parser production.
 /// The name is a holdover from when it was lowered from bash `case`; the sole
-/// producer today is `parse::parser::parse_dispatch`, and `stmt_is_dispatch`
-/// is `matches!(kind, StmtKind::Case(_))`. Do not read a surviving `case`
-/// statement into it.
+/// producer today is `parse::parser::parse_dispatch`, and the parser's
+/// `dispatch_in` treats every `StmtKind::Case` as a dispatch. Do not read a
+/// surviving `case` statement into it.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Case {
     pub value: Expr,
@@ -1442,6 +1494,14 @@ pub(crate) fn validated_fd_number(target: &Expr) -> i64 {
     i64::from(parsed.expect("SB4048/SB4052 validated a literal descriptor in 0..2147483647"))
 }
 
+/// An unquoted word an int sink takes as a literal: decimal, optionally
+/// signed, within i64 (`exit 1`, `exit -1`). The int-sink check in
+/// `type_check` and `parse_return`'s value/producer split share it, so a
+/// `return` word is a status value exactly when a sink would accept it as one.
+pub(crate) fn is_int_sink_literal(text: &str) -> bool {
+    text.parse::<i64>().is_ok()
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum RedirectOp {
     Write,     // >
@@ -1544,6 +1604,24 @@ pub enum ListOp {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Group {
     pub body: Vec<Statement>,
+    /// The spelling the group stands for. The parser builds two of the three
+    /// itself, so a check that judges what the user wrote must ask this
+    /// rather than read every group as a `{ }`.
+    pub origin: GroupOrigin,
+}
+
+/// Which source spelling a [`Group`] stands for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GroupOrigin {
+    /// `{ … }`, written as such.
+    Braced,
+    /// One `(( a, b ))` whose comma carries a mutation, split so each part is
+    /// its own statement (DD#31). It is still the single arithmetic command
+    /// the user wrote.
+    ArithComma,
+    /// A C-style `for (( init; cond; step ))`, lowered to its init followed by
+    /// the loop. It is still the one loop the user wrote.
+    CStyleFor,
 }
 
 // ── Expression types ──────────────────────────────────────────

@@ -1,6 +1,6 @@
 ---
 title: "Question: an empty condition in the `then`/`do` spelling compiles and is false"
-status: open
+status: done
 priority: P3
 kind: question
 depends: []
@@ -48,3 +48,24 @@ spelling rejects, and a silently-false empty condition reads as a typo
 that compiled.
 
 Probes: `files/port-f13-probes.tar.gz`, directory `el2/` (k1–k6, p1).
+
+## Resolution (2026-10-27)
+
+Answered in F1+F4 (journal 537) with option (a), as decide-and-report
+rather than a ruling; DG may veto it in favour of (b), which would now mean
+making an empty condition false (the next paragraph shows it never was).
+`if then`,
+`elif then`, `while do` and `until do` are SB4027 "this header has no
+condition", anchored at the `then` or `do`. Specs errors.sh cnd.1-cnd.4,
+both backends; DD#68 addendum 2026-10-26.
+
+The table above misreads its own results: an empty condition was not
+false. It tested the status the previous command left. On the pre-port
+binary, `/bin/true` before `if then echo y; else echo n; fi` printed `y`
+and `- /bin/false` printed `n`, in both backends. k2-k4 and k6 ran nothing
+before the header, and k1's `elif` followed the `if`'s own `/bin/false`,
+so each read as false. At program start the condition read a status that
+an explicit `$?` may not read (SB5012 "no preceding command").
+
+The option (a) message is SB4027's code with its own text, not a new code:
+the brace spelling of the same mistake was already SB4027.

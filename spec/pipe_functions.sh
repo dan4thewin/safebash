@@ -11,7 +11,7 @@
 set -eu
 . common.sh
 setup pipe_functions
-plan=104
+plan=138
 echo "1..$plan" >&3
 
 set +e
@@ -253,6 +253,201 @@ run_sash 'fn f { /bin/head -n1; /bin/cat }
 run_sash '/bin/printf "a\0b\0" | read arr
 echo "n=$(len arr)"'
 [[ $rc = 0 && $out = "n=2" && -z $rerr ]]; chk pf.34
+
+# pf.35-pf.66 (journal 537; batch-531 B12): a stage runs in a forked child, so
+# a builtin that acts on this process does nothing useful there. Only the last
+# stage's reader runs in this process (DD#122), and it may carry `-`, or `!`
+# where a condition consumes it. A `-` discards the reader's status, so a
+# condition's verdict is the earlier stages' alone (pf.61-64). Unless noted,
+# each negative compiled and died with "bug: bare command passed to sash_exec".
+# pf.35 `return` as the last stage
+run_sash 'fn g { /bin/echo x | return 3 }
+g
+echo "st=$?"'
+[[ $rc != 0 && -z $out \
+   && $err == *':1:22: error [SB4022] `return` isn'\''t allowed as a pipeline stage — a stage runs in a forked child, so `return` would act on the child'* ]]; chk pf.35
+# pf.36 `return` as an earlier stage. The SB4072 that follows is a known
+#       parse-error cascade, as in pf.37
+run_sash 'fn g {
+  return 3 | /bin/cat
+  echo in-g
+}
+g
+echo done'
+[[ $rc != 0 && -z $out \
+   && $err == *':2:3: error [SB4022] `return` isn'\''t allowed as a pipeline stage — a stage runs in a forked child, so `return` would act on the child'* ]]; chk pf.36
+# pf.37 `break`
+run_sash 'for i in 1 2 {
+  break | /bin/cat
+  echo $i
+}
+echo after'
+[[ $rc != 0 && -z $out \
+   && $err == *':2:3: error [SB4022] `break` isn'\''t allowed as a pipeline stage — a stage runs in a forked child, so `break` would act on the child'* ]]; chk pf.37
+# pf.38 `exit`
+run_sash 'exit 3 | /bin/cat'
+[[ $rc != 0 && -z $out \
+   && $err == *':1:1: error [SB4022] `exit` isn'\''t allowed as a pipeline stage — a stage runs in a forked child, so `exit` would act on the child'* ]]; chk pf.38
+# pf.39 `readline` as an earlier stage (was SB5020)
+run_sash 'readline x | /bin/cat
+echo "[$x]"'
+[[ $rc != 0 && -z $out \
+   && $err == *':1:1: error [SB4022] `readline` runs in this process only as a pipeline'\''s last stage'* ]]; chk pf.39
+# pf.40 `cd`
+run_sash 'cd /tmp | /bin/cat
+echo after'
+[[ $rc != 0 && -z $out \
+   && $err == *':1:1: error [SB4022] `cd` isn'\''t allowed as a pipeline stage — a stage runs in a forked child, so `cd` would act on the child'* ]]; chk pf.40
+# pf.41 an assignment stage is named as one; the message called it
+#       "`(( … ))`" (batch-531 B19)
+run_sash 'x=safe | /bin/cat
+echo "[$x]"'
+[[ $rc != 0 && -z $out \
+   && $err == *':1:1: error [SB4022] a variable assignment isn'\''t allowed as a pipeline stage'* ]]; chk pf.41
+# pf.42 `exec` as a stage
+run_sash '/bin/echo a | exec /bin/cat
+echo after'
+[[ $rc != 0 && -z $out \
+   && $err == *':1:15: error [SB4022] `exec` isn'\''t allowed as a pipeline stage — a stage already runs in a forked child'* ]]; chk pf.42
+# pf.43 the final reader reads the pipe in this process, so a redirect on
+#       it has nothing to attach to. It compiled; native then died of the
+#       producer's SIGPIPE, and gcc rejected the C output
+run_sash '/bin/echo hi | readline x 2>/dev/null
+echo "x=[${x:!}]"'
+[[ $rc != 0 && -z $out \
+   && $err == *':1:16: error [SB4022] a redirect on `readline` isn'\''t allowed when it is a pipeline'\''s last stage'* ]]; chk pf.43
+# pf.44 ... on `read`: a native ICE, and in C the producer died of SIGPIPE
+run_sash '/bin/printf "a\0b\0" | read ar 2>/dev/null
+echo "n=$(len ar)"'
+[[ $rc != 0 && -z $out \
+   && $err == *':1:24: error [SB4022] a redirect on `read` isn'\''t allowed when it is a pipeline'\''s last stage'* ]]; chk pf.44
+# pf.45 a negated reader loop as the last stage (ICE)
+run_sash '/bin/echo a | ! while readline x { echo "got ${x:!}" }
+echo after'
+[[ $rc != 0 && -z $out \
+   && $err == *':1:17: error [SB4022] a negated `while` isn'\''t allowed as a pipeline'\''s last stage'* ]]; chk pf.45
+# pf.46 `read` as an earlier stage (was SB5069; cov.182 now pins SB5069
+#       with `&&`)
+run_sash 'while read A | read B; do echo x; done'
+[[ $rc != 0 && -z $out \
+   && $err == *':1:7: error [SB4022] `read` runs in this process only as a pipeline'\''s last stage'* ]]; chk pf.46
+# pf.47 (positive) a suppressed reader loop as the last stage (ICE)
+run_sash '/bin/echo a | - while readline x { echo "got ${x:!}" }
+echo after'
+[[ $rc = 0 && $out = $'got a\nafter' && -z $rerr ]]; chk pf.47
+# pf.48 (positive) ... in a condition (ICE)
+run_sash 'if /bin/printf "a\nb\n" | - while readline x { echo "got ${x:!}" } {
+  echo t
+} else {
+  echo f
+}'
+[[ $rc = 0 && $out = $'got a\ngot b\nt' && -z $rerr ]]; chk pf.48
+# pf.49 (positive) `a | - readline y` in a capture. Native died with the
+#       bare-command bug, and gcc rejected the C output
+run_sash 'x=$(/bin/echo hi | - readline y; echo "${y:!}")
+echo "[${x:!}]"'
+[[ $rc = 0 && $out = "[hi]" && -z $rerr ]]; chk pf.49
+# pf.50 (positive) a negated final `read` in a condition: a native ICE,
+#       and C printed a garbage length
+run_sash 'if /bin/true | ! read ar {
+  echo "empty n=$(len ar)"
+} else {
+  echo "got n=$(len ar)"
+}'
+[[ $rc = 0 && $out = "empty n=0" && -z $rerr ]]; chk pf.50
+# pf.51 (positive) ... fed by `:` (likewise)
+run_sash 'if : | ! read ar { echo "t[$(len ar)]" } else { echo "f[$(len ar)]" }'
+[[ $rc = 0 && $out = "t[0]" && -z $rerr ]]; chk pf.51
+# pf.52 (positive) `a | b &` is legal (DD#55); it was the compound-stage
+#       SB4022 (batch-531 B23)
+run_sash '/bin/echo a | /bin/cat &
+- wait
+echo after'
+[[ $rc = 0 && $out = $'a\nafter' && -z $rerr ]]; chk pf.52
+# pf.53 `wait`
+run_sash '/bin/true &
+wait | /bin/cat
+echo after'
+[[ $rc != 0 && -z $out \
+   && $err == *':2:1: error [SB4022] `wait` isn'\''t allowed as a pipeline stage — a stage runs in a forked child, so `wait` would act on the child'* ]]; chk pf.53
+# pf.54 `close`
+run_sash 'exec 9>fd9
+close 9 | /bin/cat
+echo after'
+[[ $rc != 0 && -z $out \
+   && $err == *':2:1: error [SB4022] `close` isn'\''t allowed as a pipeline stage — a stage runs in a forked child, so `close` would act on the child'* ]]; chk pf.54
+# pf.55 `unset`
+run_sash 'array items=(one two)
+unset items[0] | /bin/cat
+echo "n=$(len items)"'
+[[ $rc != 0 && -z $out \
+   && $err == *':2:1: error [SB4022] `unset` isn'\''t allowed as a pipeline stage — a stage runs in a forked child, so `unset` would act on the child'* ]]; chk pf.55
+# pf.56 `signal`
+run_sash 'signal 2 IGN | /bin/cat
+echo after'
+[[ $rc != 0 && -z $out \
+   && $err == *':1:1: error [SB4022] `signal` isn'\''t allowed as a pipeline stage — a stage runs in a forked child, so `signal` would act on the child'* ]]; chk pf.56
+# pf.57 `argv` (a native ICE)
+run_sash 'argv ar | /bin/cat
+echo "n=$(len ar)"'
+[[ $rc != 0 && -z $out \
+   && $err == *':1:1: error [SB4022] `argv` isn'\''t allowed as a pipeline stage — a stage runs in a forked child, so `argv` would act on the child'* ]]; chk pf.57
+# pf.58 `keys` (was SB5050)
+run_sash 'map m=([a]=1)
+keys m ks | /bin/cat
+echo "n=$(len ks)"'
+[[ $rc != 0 && -z $out \
+   && $err == *':2:1: error [SB4022] `keys` isn'\''t allowed as a pipeline stage — a stage runs in a forked child, so `keys` would act on the child'* ]]; chk pf.58
+# pf.59 `match` (a native ICE)
+run_sash 'match abc "(a)" ar | /bin/cat
+echo "n=$(len ar)"'
+[[ $rc != 0 && -z $out \
+   && $err == *':1:1: error [SB4022] `match` isn'\''t allowed as a pipeline stage — a stage runs in a forked child, so `match` would act on the child'* ]]; chk pf.59
+# pf.60 `matchall` (a native ICE)
+run_sash 'matchall abc "[a-c]" ar | /bin/cat
+echo "n=$(len ar)"'
+[[ $rc != 0 && -z $out \
+   && $err == *':1:1: error [SB4022] `matchall` isn'\''t allowed as a pipeline stage — a stage runs in a forked child, so `matchall` would act on the child'* ]]; chk pf.60
+# pf.61 (positive) `readline` fails at end of input, yet under `-` the
+#       condition holds: the verdict is the earlier stages'. Native reported
+#       the bare-command bug, and gcc rejected the C output
+run_sash 'if /bin/true | - readline y { echo t } else { echo f }
+echo "[${y:!}]"'
+[[ $rc = 0 && $out = $'t\n[]' && -z $rerr ]]; chk pf.61
+# pf.62 (positive) ... so a failing earlier stage still fails it (likewise)
+run_sash 'if /bin/false | - readline y { echo t } else { echo f }
+echo "[${y:!}]"'
+[[ $rc = 0 && $out = $'f\n[]' && -z $rerr ]]; chk pf.62
+# pf.63 (positive) ... with `read`: a native ICE, and C printed a garbage
+#       length
+run_sash 'if /bin/true | - read ar { echo "t$(len ar)" } else { echo "f$(len ar)" }'
+[[ $rc = 0 && $out = "t0" && -z $rerr ]]; chk pf.63
+# pf.64 (positive) ... in a `while` condition (as pf.61)
+run_sash 'while /bin/true | - readline y { echo "w[${y:!}]"; break }
+echo after'
+[[ $rc = 0 && $out = $'w[]\nafter' && -z $rerr ]]; chk pf.64
+# pf.65 a negated final reader that nothing consumes is SB4018, as any
+#       unconsumed terminal `!` is (DD#70 2026-10-26). Native reported the
+#       bare-command bug, and gcc rejected the C output
+run_sash '/bin/echo hi | ! readline x
+echo "after[${x:!}]"'
+[[ $rc != 0 && -z $out \
+   && $err == *':1:16: error [SB4018] `!` result is unused — consume it with if/`&&`/`||`, or write `- cmd` without the `!`'* ]]; chk pf.65
+# pf.66 ... with `read`: a native ICE, and C reported the bare-command bug
+run_sash '/bin/printf "a\0" | ! read ar
+echo "after[$(len ar)]"'
+[[ $rc != 0 && -z $out \
+   && $err == *':1:21: error [SB4018] `!` result is unused — consume it with if/`&&`/`||`, or write `- cmd` without the `!`'* ]]; chk pf.66
+# pf.67 SB4073 names the loop the user wrote: an `until` is not a `while`
+run_sash '/bin/echo a | until /bin/false { break }
+echo after'
+[[ $rc != 0 && -z $out \
+   && $err == *':1:15: error [SB4073] this `until` is a pipeline'\''s last stage but never reads it'* ]]; chk pf.67
+# pf.68 ... and so does pf.45's SB4022 for a negated reader loop
+run_sash '/bin/echo a | ! until readline x { break }
+echo after'
+[[ $rc != 0 && -z $out \
+   && $err == *':1:17: error [SB4022] a negated `until` isn'\''t allowed as a pipeline'\''s last stage'* ]]; chk pf.68
 
 # Stage setup uses the same checked redirects as ordinary commands.
 printf 'from-fd\n' > input

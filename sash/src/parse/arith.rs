@@ -442,7 +442,10 @@ pub fn lower_c_style_for(
     let mut group_body = init_stmts;
     group_body.push(while_stmt);
     Ok(Statement {
-        kind: StmtKind::Group(Group { body: group_body }),
+        kind: StmtKind::Group(Group {
+            body: group_body,
+            origin: GroupOrigin::CStyleFor,
+        }),
         span,
     })
 }
@@ -1579,7 +1582,10 @@ fn lower_arith_mutation_structured(expr: &ArithExpr, span: Span) -> Statement {
                 .map(|e| lower_arith_command(e.clone(), span))
                 .collect();
             Statement {
-                kind: StmtKind::Group(Group { body: stmts }),
+                kind: StmtKind::Group(Group {
+                    body: stmts,
+                    origin: GroupOrigin::ArithComma,
+                }),
                 span,
             }
         }

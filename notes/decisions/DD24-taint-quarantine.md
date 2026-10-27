@@ -202,3 +202,28 @@ compiled and leaked at runtime. CST is the authoritative gate
 The principle: taint comes from exec boundaries (fork+exec), file
 reads, and env var reads. A pipe from code that runs inline within
 the sash process is not an external source.
+
+## Addendum (2026-10-26): a stage's marks do not change a pipe's taint
+
+The clarification above decides a reader's taint by whether the pipe's source
+execs. Two classifiers answered by looking at a stage's `-`/`!` marks instead
+of the statement beneath them.
+
+**A `-` on the source hid it (batch-531 B25, CRITICAL).** `is_external_source`
+peeled a stage's redirect but not its marks, so `- /bin/cat f | readline x`
+bound `x` clean and printed the file. The SSA backstop gets the same answer
+through `clean_pipe`, so neither layer caught it. The classifier now peels
+through `Statement::stage_body`, the one peel every stage classifier shares,
+and `x` is tainted (24.21). It stays tainted when the reader is negated as
+well (24.27).
+
+**A `-` or `!` on the reader hid it (B31).** `taint_stmt_no_read_taint`
+recognised only a bare reader, so a marked reader fed by a clean producer was
+tainted anyway. `echo hi | - readline x`, `- read ar`, and `! readline x` or
+`! read ar` in a condition drew a false SB5020 (24.22-24.25). The same readers
+in a return producer drew a false SB5067 (24.28, 24.29). The function now
+looks beneath `stage_marks`. An external producer still taints a marked reader
+(24.26, 24.27). A redirect is not peeled: a redirected reader's input is not
+the pipe, and DD#122 rejects that stage (SB4022, DD#122 addendum 2026-10-26).
+
+Specs: taint.sh 24.21-24.29. Journal 537.

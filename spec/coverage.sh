@@ -838,9 +838,12 @@ if f; then echo y; fi'
 [[ $rc != 0 && -z $out && $err == *SB4037* ]]; chk cov.181
 
 # cov.182 SB5069 names the FIRST `read` in the statement, once, even when the
-# condition holds two — the walk latches on the first hit
-run_sash 'while read A | read B; do echo x; done'
-[[ $rc != 0 && -z $out && $err == *SB5069* && $(grep -c SB5069 <<<"$err") = 1 ]]; chk cov.182
+# condition holds two — the walk latches on the first hit. (Two `read`s joined
+# by `&&`: the `read A | read B` this used was made SB4022 by journal 537 — a
+# non-final `read` stage — and is pinned by pf.46 in pipe_functions.sh.)
+run_sash 'while read A && read B; do echo x; done'
+[[ $rc != 0 && -z $out && $err == *':1:7: error [SB5069]'* \
+   && $(grep -c SB5069 <<<"$err") = 1 ]]; chk cov.182
 
 # cov.183 an inline `*` glob in COMMAND-argument position (DD#69/SB5029) when
 # the word is a concatenation — the bare-literal form is the common one, this

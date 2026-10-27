@@ -195,6 +195,7 @@ command, `[[ ]]`, `(( ))`) is fine, and binds only that unit — `! X && Y` is
 ## Background processes (`cmd &`)
 
 Exec failure (fork or exec fails) is checked — the parent aborts.
+(**Corrected for exec**, and the `&` forms narrowed — addendum 2026-10-26.)
 A successfully forked background process runs independently and
 can outlive the sash program. `wait` is optional.
 
@@ -328,3 +329,72 @@ block that ends in a `Branch` or `Loop`: on such an edge it adds a bridging
 
 Ported from the batch-531 reference branch (finding B85), as-is. Specs:
 errors.sh 55.89-55.106. Journal 536.
+
+## Addendum (2026-10-26, DG): what may run under `&`, and where `-` reaches
+
+DG: *"I don't see reserved words being meaningful within a pipeline or in
+combination with &."* A background job runs in a forked child, and it has no
+status until it is reaped (DD#126). Both facts give SB4024, raised at parse
+time, so it comes before anything a later pass would say about the statement.
+
+**What a job may run.** A statement whose effect lands on the process that runs
+it would act on the child and be lost.
+- Compounds (DG's reserved words). `if … &` and `{ … } &` were already
+  SB4024; they now are too when a `!` or a list hides them (`! { … } &`,
+  `a && ! { … } &`).
+- `return`, `break`, `continue`, `exit` (decide-and-report: DG's "reserved
+  words" read as including the control words). `return N &` returned into the
+  caller's code in the child, `break &`/`continue &` ran the rest of the loop
+  and program in each child (batch-531 B11), and `exit N &` exited only the
+  child.
+- The rest of the class (decide-and-report): an assignment or typed
+  declaration, an arithmetic write `(( n = 1 ))`, `cd`, an `exec` with no
+  command, and `attest`, `argv`, `read`, `readline`, `keys`, `match`,
+  `matchall`, `close`, `unset`, `signal`, `wait`. Most compiled and lost the
+  effect with the child; the others drew an unrelated code (a declaration
+  SB4014, B28; a bare `wait &` SB4016; `match`/`matchall` SB4018; `keys m ks &`
+  a false SB5050 on `m`). Three miscompiled. After `attest x … &` the parent's
+  read of `x` compiled as attested (C printed the unattested value, native an
+  empty one). After `argv ar &` or `read ar &` the parent read a collection
+  nothing had filled (batch-531 B13): the native binary segfaulted and the C
+  one printed a garbage length. The classifier is
+  `ssa::BuiltinCmd::acts_on_its_process`, shared with the stage gate (DD#122
+  addendum 2026-10-26).
+- Still legal: `cmd &`; `exec cmd &`, which replaces the child as `cmd &`
+  would; `a | b &` (§Pipelines above; it drew a false SB4022, B23); and
+  `a && - b &`.
+
+**Who may read its status.** A job as a condition's last statement, or as a
+return producer, is SB4024: the consumer would act on a status the job never
+produced. `if /bin/false & { … }` took the branch (B26), and
+`return /bin/true &` made `if f` true (n4). A terminal `!` in a job inverts a
+status nobody reads: `a | ! b &` is SB4018 (DD#70 addendum 2026-10-26).
+
+**Where `-` reaches.** At a statement's head `-` takes the whole statement,
+a trailing `&` included (DD#126). What follows the `&` is a new statement, as
+it is without the `-`: `- a & && b`, `- a & || b`, `- a & | b`, `- a & >f` and
+`- a & &` are SB4014, as `a & && b` is. The parser folded the statement a
+second time and joined what followed the `&` to the job: three of them
+compiled (`- a & && b` ran `b`, and `- a & &` ran the job inside a second
+job), and `| b` and `>f` reached an ICE. As a list operand or a pipeline stage
+`-` takes that operand alone. It used to take the rest of the statement, so
+`a && - b || c` slipped past SB4053 (DD#95; B24), and `a && - b &`
+backgrounded `b` alone: in `cd /tmp && - /bin/true &` the `cd` ran in the
+parent. The job is now the whole list, as in `a && b &`, so that `cd` is
+SB4024. The check looks through the `-` as well: `a && - cd /tmp &`, an
+assignment or `(( n = 1 ))` behind `-`, and a suppressed final reader
+(`a | - readline y &`, `a | - read ar &`) are SB4024. The first three compiled
+and lost their effect with the child; the readers drew the compound-stage
+SB4022. `-` prefixes a command: on `attest`, a declaration, `fn`/`function`
+or `END` it is SB4014 at the `-`. These drew SB5011 "command '-' not found" or
+an unrelated SB4014. `- until` now parses like `- while`.
+
+**Correction to "Background processes" above.** "Exec failure … the parent
+aborts" is wrong for exec. The exec fails in the child, which prints the errno
+and "command failed (exit 127)" and exits 127. The parent sees the status only
+by reaping it through DD#126's latch (55.16). Under `- cmd &` the child prints
+the errno but not the "command failed" line. Fork failure is meant to abort
+as written; today it is silent (batch-531 B20, open).
+
+Specs: errors.sh 55.107-55.144, 71.4, bng.18, bng.25, csfx.4-csfx.8;
+pipe_functions.sh pf.52. Journal 537.

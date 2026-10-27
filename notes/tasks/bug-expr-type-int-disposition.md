@@ -7,6 +7,7 @@ depends: []
 gates:
   - "`${n:?msg}` on an int has n's type, as `${n:-…}` already does: d1, e4, e5, e6, d4 and d5 become SB4030, like their `$n` twins"
   - "d6 compiles and prints 6, and k4 prints `[5]`"
+  - "x1 `int n=5` / `exit ${n:?bad}` compiles and exits 5"
   - "specs pin d1 and d6 in both backends"
 ---
 
@@ -53,6 +54,12 @@ already is.
 - DD#30's addendum of 2026-10-25 cites this task.
 - B5 in `batch-531-findings`: END is not type-checked, so an int operand
   there still compiles in every spelling.
+- The int sink (`a875d58`) asks `expr_type` too, so `int n=5` /
+  `exit ${n:?bad}` is a false SB4030, "that operand is string-typed", in both
+  backends, while `exit ${n:-0}` exits 5. Found 2026-10-27 in the F1+F4 port
+  (`files/port-f1f4-probes.tar.gz`, `rt3/` x1, x2). The same arm fixes it.
+  `bug-return-status-string-operand` depends on this task if DG makes
+  `return` an int sink: `return ${n:?bad}` returns 5 today (x3).
 
 Found during the batch-531 port (step D1, probing the operand spellings the
 new rule must reach). Filed under DG's rule for the port that questions and

@@ -94,6 +94,7 @@ justified it.
 `- X` now uniformly means **"run X, discard its result"**, whether X is an
 opaque external (A) or in-process logic (B): `- match`, `- matchall`,
 `- [[ … ]]`, `- ! cmd`, and `- f` for an `-> int` function are all legal.
+(**`- ! cmd` is SB4019 again** — addendum 2026-10-26.)
 
 ### Why the original rule did not hold up
 
@@ -376,3 +377,66 @@ a failure creates no file), `rd.3` (a first-redirect failure is still reported),
 applied so far include stderr. bash writes it through them; the C backend
 matches bash; native restores the fds first and does not. Filed as
 `notes/tasks/native-redirect-diag-after-restore.md`.
+
+## Addendum (2026-10-26, DG): `- !` is SB4019 again; an unused terminal `!` is SB4018
+
+**`- !` (DG).** The 2026-09-09 addendum made `- ! cmd` legal by name. DG: *"I
+don't see how `- ! cmd` makes any sense"*, and ruled it SB4019 everywhere. `-`
+discards the status `!` inverts, so `- ! cmd` ran exactly as `- cmd`: the
+reason 2026-09-09 kept `! - cmd` rejected ("`!` has nothing left to invert")
+holds for its mirror. Both orders are SB4019 again, as 2026-08-31 had them, at a
+statement's head and on a pipeline stage. `a | - ! b`, `- ! { … }` and
+`! - a | b` in a condition used to get through or draw the wrong code. The
+message ends "Write `- cmd` without the `!`". 2026-09-09's note that a negated
+pipeline keeps its `-` outside no longer has a case to describe: no `-` body
+starts with `!`, so `push_suppression_into_pipeline`'s negated arm is an ICE.
+
+**SB4018's advice for `!`** said "discard with `-` or `|| :`", which spelled
+`- ! cmd` (now SB4019) or `! cmd || :` (`- cmd`, said indirectly). It now says
+"or write `- cmd` without the `!`". The advice for the other (B) results keeps
+both discards; `- [[ … ]]` and `- match` stay legal (2026-09-09).
+
+**A terminal `!` that nothing consumes is SB4018 (decide-and-report).**
+2026-08-31 lets the final stage take "the same `!` a standalone simple command
+takes", and a standalone `! cmd` that nothing consumes is SB4018 (2026-07-24).
+A terminal `!` escaped that rule: `a | ! b` as a statement compiled, and when
+`b` succeeded the program aborted with "b: command failed (exit 1)", the bug
+2026-07-24 fixed for `! cmd`. It is now SB4018 at statement level, under `&`,
+and as a capture's last statement. A condition and a return producer consume it
+as before, and a `!` inside a `-` scope (`- { ! cmd }`) is discarded by the `-`.
+
+Specs: errors.sh e.b70.ndash and bng.5 (now SB4019; ids kept), bng.13-bng.20;
+pipe_functions.sh pf.65, pf.66 (a negated final reader); bng.7-bng.9 still
+pass. Journal 537.
+
+## Addendum (2026-10-26): `!` and fd tags no longer hide a redirect, pipe or `&`
+
+A redirect, pipe or `&` after a `!`-negated form gets the verdict it gets
+without the `!`. The `!` used to hide its operand from those checks. A redirect
+on a negated `[[ … ]]`, `(( … ))`, assignment, declaration or `attest` is SB4046,
+since none of them produces output (rdr.50-rdr.57: as a statement, in a
+condition, as a final stage and as a return producer). A redirect on a negated
+`{ … }` is SB4021, with or without an fd tag (csfx.10, csfx.20). Each of these
+crashed the compiler. `&` on a negated group is DD#55's SB4024 (csfx.4-csfx.8,
+DD#55 addendum 2026-10-26).
+
+A return producer hid a comma list (DD#31) the same way, and a pipe or a
+redirect on one crashed the compiler. The list holds a write, so each now gets
+an assignment's answer: SB4022 for the pipe (csfx.9) and SB4046 for the
+redirect (csfx.11). DD#31's addendum of 2026-10-27 explains why the list is not
+a compound.
+
+An fd tag hid a redirect from the same checks. They saw only operator tokens,
+so in `{ … } 2>f` the `2` began a new statement: SB5011 "command '2' not
+found" at statement level, SB4022 on a last stage, and a parser ICE after a
+`-`. `2>f` on a compound now gets `>f`'s verdict, code and position wherever
+the compound stands (csfx.12-csfx.18). A digit word with a blank before the
+operator is not a tag, so `{ … } 2 >f` still starts a new statement at the
+`2` (csfx.19). What that word should start is `q-statement-form-residuals`.
+
+`&&` and `||` are the exception: SB4023 still does not see through `!`.
+`! { /bin/false } && echo y` prints `y` (bng.22), where `{ /bin/false } &&
+echo y` is SB4023, and a negated loop slips past the same way (c4 in
+`q-compound-as-condition`). Whether it should is that task's question.
+
+Specs: errors.sh rdr.50-rdr.57, csfx.9-csfx.20. Journal 537.

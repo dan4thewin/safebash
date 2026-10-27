@@ -196,3 +196,48 @@ quote it. The numeric dispatch in *Resolved* above is unchanged for a string
 pattern `$m` as `"$m"`. Matching is still exact string equality, so `"$n"`
 matches `1` and not `01`, as before. Specs `spec/types.sh` `30.57`, `30.58`
 and `30.65`; journal 535.
+
+## Addendum (2026-10-26): every boolean position, not only a header's list
+
+*Composition* above makes the dispatch form statement-only: SB4028 for a
+dispatch as a condition, as the operand of `!`, or as an operand of
+`&&`/`||`. It was enforced for a dispatch standing as a statement of an `if`,
+`while` or `until` condition, and directly under `!`. Everywhere else it
+compiled, and its always-`0` status made the chain succeed, which is the
+footgun the rule exists to remove. Each of these printed the dispatched `d`,
+then ran the body or the rest of the chain:
+
+- behind a `-` in a condition (`cnd.8`);
+- as an `elif` condition, in the brace spelling (`cnd.9`) and the keyword one
+  (`cnd.19`);
+- as an `&&`/`||` operand, in a condition (`cnd.10`; `while a || [[ … ]]`
+  entered its body) or at statement level (`cnd.15`, and behind a `-`,
+  `cnd.16`);
+- as a `return` producer (`cnd.14`) or an operand in one's list (`cnd.17`).
+
+`! - [[ … ]]` was refused, but by the `-` (SB4019, `cnd.13`). These are
+enforcement bugs, not a new rule. One total walker, `dispatch_in`, finds a
+dispatch under a `-`, a `!`, a redirect or a `return`. The `!` parse, the
+`return` parse and the `&&`/`||` operand parse call it, and the shared
+`condition_shape_fault` applies it to every statement of a header's list,
+through `&&`/`||` operands and pipeline stages, for `if`, both spellings of
+`elif`, `while` and `until`. That function carries DD#68's `{ }` rule too.
+
+*Decide-and-report:*
+
+- A `return` producer is a boolean position. Its status becomes the
+  function's, which the caller's condition then tests, so
+  `fn f { return [[ $1 == a { … } ]] }; if f a { … }` is the same footgun one
+  call away.
+- The diagnostic now points at the dispatch's `[[`. The positions enforced
+  before pointed at the header's keyword, so `if [[ $x == a { … } ]] { … }`
+  moves from column 1 to column 4. Directly under `!` it keeps the `!`'s
+  position, as before.
+
+Unchanged: a dispatch on the left of `&&`/`||` is SB4023 and a dispatch as a
+pipeline stage SB4022 (both are compound-command rules). A dispatch that is a
+capture's whole body is a statement in a body (DD#86) and stays legal
+(`cnd.18`). The same capture as a condition is SB4025, as before, because a
+capture condition takes only a single external command or `$(getenv NAME)`.
+
+Specs: `spec/errors.sh` `cnd.8`-`cnd.10`, `cnd.13`-`cnd.19`. Journal 537.
