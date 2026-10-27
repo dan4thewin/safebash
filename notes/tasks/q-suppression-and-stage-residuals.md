@@ -79,16 +79,58 @@ function capture's own `return` status is unchecked in every position
 | ex4 | `exec 3>FILE &` then `- wait` then `echo after` | `after` | SB4024 1:1 "`exec` without a command isn't allowed in a background job — the job (`… &`) runs in a forked child, so its effect would land on the child and be lost; drop the `&`" |
 | ex1 | `exit 3 &` then `- wait` then `echo after` | `after` | SB4024 1:1, the same reason |
 
-ex3 and ex2 both run `exec` in a forked child, where it replaces only that
-child, so each equals the command without `exec`. F1+F4 rejected the stage
-(batch-531 B12: it crashed) and kept ex3 legal on purpose, because ex3
-works and its fate is a language question rather than a bug.
+F1+F4 rejected the stage (batch-531 B12: it crashed) and kept ex3 legal on
+purpose, because ex3 works and its fate is a language question rather than a
+bug.
 
-- **(a) Recommended.** Reject `exec cmd &` with SB4024, "write the command
-  without `exec`". It equals `cmd &`, and SB4022's reason for the stage
-  applies word for word.
-- (b) Accept `a | exec b` as `a | b`, matching ex3.
-- (c) Keep the split, and record why in DD#55.
+Corrected 2026-10-27. This question first said that ex3 and ex2 each equal
+the command without `exec`, and recommended rejecting ex3. That holds for the
+stage, not for the job. Measured at `d60e74f`, both backends unless a row says
+`strace`:
+
+| Id | Program | Result |
+|---|---|---|
+| p1 | `/bin/echo a \| /bin/cat`, under `strace -f` | 2 forks; each stage's child execs its command |
+| s1 | `/bin/true &` then `- wait`, under `strace -f` | 2 forks: a sash child, which forks and execs `/bin/true` |
+| s3 | `- /bin/true &`, the same | 2 forks, as s1 |
+| s2 | `exec /bin/true &`, the same | 1 fork: the child execs `/bin/true` |
+| e4 | `/bin/sleep 1 &` then `/bin/cat /proc/$!/comm` | the program's own name: `$!` is the sash child |
+| e5 | `exec /bin/sleep 1 &`, the same | `sleep`: `$!` is the command |
+| k1 | `/bin/sleep 7.31 &`, `j=$!`, `/bin/kill $j`, `- wait`, then `pgrep` for the sleep | still running, orphaned |
+| k3 | `- /bin/sleep 7.33 &`, the same | still running, orphaned |
+| k2 | `exec /bin/sleep 7.32 &`, the same | gone |
+| w1 | `/bin/false &`, `- wait`, then `int s=$(waitstatus)` and print it | `st=1`; the child prints "/bin/false: command failed (exit 1)" |
+| w3 | `- /bin/false &`, the same | `st=1`, nothing else |
+| w2 | `exec /bin/false &`, the same | `st=1`, nothing else |
+| fg1 | `exec /bin/false` then `echo after` | rc 1, nothing printed |
+
+In a stage `exec` changes nothing: the stage's child already becomes its
+command, and the parent checks its status. Under `&` it changes what the job
+is. A plain job is a sash child that forks the command, checks it and reports
+a failure. `$!` names that child, so a signal sent to `$!` stops the child and
+leaves the command running. `exec cmd &` is the only spelling whose job is the
+command itself: one process, named by `$!`, reached by a signal. Like a
+foreground `exec`, it leaves nothing behind to report a failure, so it reports
+as `- cmd &` does. The status still reaches `$(waitstatus)`.
+
+- **(c) Recommended.** Keep the split, and record the reasons above in DD#55.
+  `exec` as a stage is a spelling that does nothing, and SB4022 says to drop
+  it. `exec cmd &` is how a job is made signallable, and its unreported
+  failure is what `exec` means.
+- (a) Reject `exec cmd &` with SB4024. Then no job can be signalled through
+  `$!` without orphaning its command, unless (d) is chosen too.
+- (b) Accept `a | exec b` as `a | b`: a second spelling of the same stage.
+- (d) Run a job of one external command as a stage runs: its child execs the
+  command. `$!` then names the command and `exec cmd &` is redundant, so (a)
+  follows. But an unmarked job's failure is then reported by nobody; only
+  `wait` and `$(waitstatus)` see it, unless the parent reports what it reaps.
+
+Whichever option: is it acceptable that a signal sent to a plain job's `$!`
+stops only the sash child and orphans the command (k1, k3)? Under (c) the
+answer is to write `exec cmd &` when the job must be signalled. Only (d)
+changes it for `cmd &`.
+
+Probes: directory `exq/` in `files/port-exec-probes.tar.gz`.
 
 ### Q3. `-` where the status is consumed
 

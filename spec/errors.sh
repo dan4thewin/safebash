@@ -1966,8 +1966,8 @@ echo "n=$(len ar)"'
   [[ $rc != 0 && -z $out \
      && $err == *':1:1: error [SB4024] `argv` isn'\''t allowed in a background job'* ]]; chk 55.127
 
-  # 55.128 (positive) `exec cmd &` stays legal: it replaces the child, which
-  #        is what the job is
+  # 55.128 (positive) `exec cmd &` stays legal: the child becomes the command
+  #        (unlike `cmd &`, whose child runs it as a second process; DD#55)
   run_sash 'exec /bin/true &
 - wait
 echo after'

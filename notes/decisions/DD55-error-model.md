@@ -360,9 +360,19 @@ it would act on the child and be lost.
   one printed a garbage length. The classifier is
   `ssa::BuiltinCmd::acts_on_its_process`, shared with the stage gate (DD#122
   addendum 2026-10-26).
-- Still legal: `cmd &`; `exec cmd &`, which replaces the child as `cmd &`
-  would; `a | b &` (§Pipelines above; it drew a false SB4022, B23); and
-  `a && - b &`.
+- Still legal: `cmd &`; `a | b &` (§Pipelines above; it drew a false SB4022,
+  B23); `a && - b &`; and `exec cmd &`, which is not `cmd &`. (Corrected
+  2026-10-27: this bullet first said `exec cmd &` replaced the child as
+  `cmd &` would.) A job `cmd &` is a sash child that runs `cmd` as a second
+  process, checks it and reports a failure. `$!` names that child, so a
+  signal sent to `$!` stops the child and leaves `cmd` running. Under `exec`
+  the child becomes `cmd`: `$!` names the command and a signal reaches it.
+  As with a foreground `exec`, nothing is left to report a failure, so it
+  reports as `- cmd &` does. Either way the status reaches `$(waitstatus)`
+  through `wait` (DD#126). A pipeline stage's child already becomes its
+  command, and the parent checks it, so `exec` there changes nothing and
+  `a | exec b` is SB4022. Whether `exec cmd &` stays legal is open:
+  `notes/tasks/q-suppression-and-stage-residuals.md`, Q2.
 
 **Who may read its status.** A job as a condition's last statement, or as a
 return producer, is SB4024: the consumer would act on a status the job never
@@ -392,9 +402,9 @@ an unrelated SB4014. `- until` now parses like `- while`.
 **Correction to "Background processes" above.** "Exec failure … the parent
 aborts" is wrong for exec. The exec fails in the child, which prints the errno
 and "command failed (exit 127)" and exits 127. The parent sees the status only
-by reaping it through DD#126's latch (55.16). Under `- cmd &` the child prints
-the errno but not the "command failed" line. Fork failure is meant to abort
-as written; today it is silent (batch-531 B20, open).
+by reaping it through DD#126's latch (55.16). Under `- cmd &` and `exec cmd &`
+the child prints the errno but not the "command failed" line. Fork failure is
+meant to abort as written; today it is silent (batch-531 B20, open).
 
 Specs: errors.sh 55.107-55.144, 71.4, bng.18, bng.25, csfx.4-csfx.8;
 pipe_functions.sh pf.52. Journal 537.

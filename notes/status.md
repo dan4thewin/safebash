@@ -17,10 +17,13 @@ the backlog. Journal 537.
   `(( n = 1 ))`, cd, a bare `exec`, and the in-process builtins (attest, argv,
   read, readline, keys, match, matchall, close, unset, signal, wait). One
   classifier decides it, `ssa::BuiltinCmd::acts_on_its_process`. `a | b &` is
-  legal at last (B23), as is `exec cmd &`. A job as a condition's last
-  statement or a return producer is SB4024 (B26). `-` as a list operand or a
-  stage takes that operand alone (B24); on attest, a declaration, fn/function
-  or END it is SB4014 at the `-`; `- until` parses like `- while`.
+  legal at last (B23), as is `exec cmd &`. That is not `cmd &` (corrected the
+  same day): its child becomes the command, so `$!` names the command and
+  nothing reports its failure (`q-suppression-and-stage-residuals` Q2). A job
+  as a condition's last statement or a return producer is SB4024 (B26). `-`
+  as a list operand or a stage takes that operand alone (B24); on attest, a
+  declaration, fn/function or END it is SB4014 at the `-`; `- until` parses
+  like `- while`.
 - **Stages (DD#122).** An in-process builtin is SB4022 as a stage in any
   position (B12; it used to compile and die at runtime with "bare command
   passed to sash_exec"), and `exec` gets its own message. SB4022 calls an

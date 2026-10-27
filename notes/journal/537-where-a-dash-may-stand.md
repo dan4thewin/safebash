@@ -82,8 +82,9 @@ whether a builtin acts on the process that runs it. It is total over
 the compiler builds. The stage gate and the `&` gate both ask it. They part
 in two places. The stage gate exempts a pipeline's final reader, which
 DD#122 runs in the parent, so `a | readline x` is legal while `readline x &`
-is SB4024. And `exec cmd &` replaces the child, as `cmd &` runs one, so it
-stays legal, while `a | exec b` is SB4022 with a message of its own.
+is SB4024. And `exec cmd &` stays legal (the reason first given here was
+wrong; see the correction below), while `a | exec b` is SB4022 with a message
+of its own.
 
 **The parser** (`parse/parser.rs`):
 - `unsuppressible_error` rejects a `-` in front of what it cannot suppress:
@@ -455,6 +456,24 @@ cascade there too).
   so.
 - `q-empty-keyword-condition`'s table read an empty condition as false. It
   tested the previous command's status; the task's resolution says so.
+
+## Correction, same day — `exec cmd &` is not `cmd &`
+
+DG asked me to explain `exec cmd &`. The DD#55 addendum, this journal, the
+`command_background_fault` comment, 55.128's comment and
+`q-suppression-and-stage-residuals` Q2 all said it equals `cmd &`. It does
+not, and I had not measured it. In both backends, `cmd &` and `- cmd &` fork a
+sash child, and that child forks the command, so `$!` names the sash child. A
+signal sent to `$!` stops that child and leaves the command running, orphaned.
+`exec cmd &` forks once and the child becomes the command, so `$!` names it
+and a signal reaches it. Like a foreground `exec`, it leaves nothing to report
+a failure: `exec /bin/false &` prints nothing, as `- /bin/false &` does, and
+the status still reaches `$(waitstatus)`. A pipeline stage's child already
+execs its command, so there `exec` changes nothing, which is why SB4022 is
+right for `a | exec b`. All five texts are corrected. Q2 now recommends
+keeping `exec cmd &` (the way to get a job a signal can reach), and asks
+whether a plain job's orphaning is acceptable. Only comments and notes changed.
+Probes: `files/port-exec-probes.tar.gz`.
 
 ## Next
 

@@ -3978,10 +3978,11 @@ fn background_fault(stmt: &Statement) -> Option<Diagnostic> {
 }
 
 /// [`background_fault`] for a command: an in-process builtin
-/// ([`in_process_builtin`]) acts on the child. `exec cmd &` is the exception
-/// — it replaces the child with `cmd`, which is all `cmd &` does — but an
-/// `exec` with no command only rewires the descriptors of the process that
-/// runs it.
+/// ([`in_process_builtin`]) acts on the child. `exec cmd &` is the exception:
+/// the child becomes `cmd`, so `$!` names the command and nothing is left to
+/// report its failure. That is not `cmd &`, whose child runs `cmd` as a
+/// second process (DD#55, addendum 2026-10-26). An `exec` with no command
+/// only rewires the descriptors of the process that runs it.
 fn command_background_fault(stmt: &Statement, c: &Command) -> Option<Diagnostic> {
     let (builtin, name) = in_process_builtin(stmt)?;
     if builtin != crate::ssa::BuiltinCmd::Exec {
