@@ -233,3 +233,34 @@ and mode at all), `resolve.rs` (`command_path_fault`,
 `resolved_path_executable`, the SB5095 arm in `resolve_command`),
 `validate.rs` (`check_exec_target`). Specs `errors.sh` cmdpath.1-17.
 SB5095 is a new code.
+
+## Addendum (2026-10-27) — resolution reaches every `$( … )` body (B37)
+
+Resolution is a rewrite that the taint pass depends on: a capture is a
+taint source when its head contains a `/`
+(`validate::command_name_is_taint_source`), and a bare head is left clean
+because it might be a user function. So a command that resolution never
+reaches keeps its bare head and reads as clean.
+
+`resolve.rs` walked statements with a private copy of the expression walk,
+and the copy skipped three places that the checkers' walk
+(`Statement::cmdsub_bodies`) visits: a parameter expansion's index,
+`$(( … ))` leaves and `(( … ))` tests. A command there stayed bare for the
+checkers. The transform resolves heads again as it lowers
+(`transform/resolution.rs`), so the program still ran the real `cat`:
+`b=${m[$(cat f)]:-d}` compiled and used the file's content unattested.
+Other shapes were caught only by the SSA backstop, which reports no
+position.
+
+The rule: resolution walks the same `$( … )` bodies, in the same order, as
+the checkers. It reaches them through `Statement::cmdsub_bodies_mut`, the
+mutable twin of `cmdsub_bodies` in `ir.rs`, and `ir::cmdsub_twin_tests`
+pins the two walks to identical results, so there is no private walk left
+to drift. One visible consequence: when an indexed assignment's value and
+index both name a missing absolute program, the value's SB5095 is now
+reported first, as SB5011's already was.
+
+Impl: `ir.rs` (`cmdsub_bodies_mut`, `own_expr_roots_mut`,
+`push_cmdsub_bodies_mut`, `walk_arith_expansion_roots_mut`,
+`walk_test_operands_mut`), `resolve.rs` (`resolve_stmt`). Specs `taint.sh`
+capres.1-20. Journal 538.

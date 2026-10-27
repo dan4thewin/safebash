@@ -53,3 +53,17 @@ The one in `type_check.rs` looked interchangeable with
 behaviour-preserving target was `walk_arith_expansion_roots`. Check which of a
 pair the callback actually assumes before swapping; picking the descending form
 would have quietly *widened* coverage, which is a different change.
+
+## A fourth instance, found and fixed (B37, journal 538)
+
+`resolve.rs` resolved command heads inside `$( … )` bodies through its own
+walk (`resolve_expr`, `resolve_each`, `resolve_test_expr`), which missed a
+parameter expansion's index, the leaves of `$(( … ))` and `(( … ))` tests. A
+command there kept a bare head, which the taint pass reads as clean. The walk
+is deleted in favour of `Statement::cmdsub_bodies_mut`, a twin of the
+checkers' `cmdsub_bodies` pinned by `ir::cmdsub_twin_tests`.
+
+Unlike the first two, it was not a fork: it predates the shared walk
+(d4fdc63, 2026-06-22, against 93d4ac1, 2026-09-29) and shares no name with
+it, so the name signal above would not have found it. Compare what each walk
+reaches, not only what it is called.

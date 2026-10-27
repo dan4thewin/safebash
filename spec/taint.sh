@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup taint
-plan=374
+plan=394
 echo "1..$plan" >&3
 
 set +e
@@ -2352,6 +2352,142 @@ attest e in a [[ -n $e ]]
 map m = @{a:~}
 if attest k v in m [[ $k =~ ^[A-Z]+$ ]]; then echo t; else echo f; fi' K v
 [[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk div.37
+
+# capres.1-20 (journal 538; batch-531 B37; DD#23, DD#24): command resolution
+# reaches every `$( )` body the checkers reach. resolve.rs kept a private copy
+# of the walk that skipped a parameter expansion's index and the leaves of
+# `$(( ))` and `(( ))`, so a command there kept its bare head, which the taint
+# pass judges by its spelling. Base compiled .1/.2/.6-.8/.12/.14-.16 and
+# printed what the tainted key selected; it caught the rest only in the SSA
+# backstop, with no position and a synthetic name. The keys are `map` keys:
+# an indexed-array index may not be a capture (DD#80, SB4030).
+printf k > b37.key
+# capres.1 an assignment value
+run_sash 'map m=([k]=v)
+b=${m[$(cat b37.key)]:-dflt}
+echo "$b"'
+[[ $rc != 0 && -z $out \
+   && $err == *':2:3: error [SB5020] tainted command substitution used without attest'* ]]; chk capres.1
+# capres.2 a declaration value
+run_sash 'map m=([k]=v)
+str b=${m[$(cat b37.key)]:-dflt}
+echo "$b"'
+[[ $rc != 0 && -z $out \
+   && $err == *':2:7: error [SB5020] tainted command substitution used without attest'* ]]; chk capres.2
+# capres.3 a command argument
+run_sash 'map m=([k]=v)
+echo "${m[$(cat b37.key)]:-dflt}"'
+[[ $rc != 0 && -z $out \
+   && $err == *':2:6: error [SB5020] tainted command substitution used without attest'* ]]; chk capres.3
+# capres.4 an assignment target's index
+run_sash 'map m=([k]=v)
+m[${m[$(cat b37.key)]:-k}]=z
+echo "${m[k]} ${m[v]:-none}"'
+[[ $rc != 0 && -z $out \
+   && $err == *':2:3: error [SB5020] tainted command substitution used without attest'* ]]; chk capres.4
+# capres.5 a `[[ ]]` operand
+run_sash 'map m=([k]=v)
+if [[ ${m[$(cat b37.key)]:-q} == v ]] {
+  echo yes
+}'
+[[ $rc != 0 && -z $out \
+   && $err == *':2:7: error [SB5020] tainted command substitution used without attest'* ]]; chk capres.5
+# capres.6 an array literal's element
+run_sash 'map m=([k]=v)
+array q=(${m[$(cat b37.key)]:-d})
+echo "${q[0]}"'
+[[ $rc != 0 && -z $out \
+   && $err == *":2:10: error [SB5021] tainted value cannot be placed in array 'q'"* ]]; chk capres.6
+# capres.7 a map literal's value
+run_sash 'map m=([k]=v)
+map q=([z]=${m[$(cat b37.key)]:-d})
+echo "${q[z]}"'
+[[ $rc != 0 && -z $out \
+   && $err == *":2:12: error [SB5021] tainted value cannot be placed in map 'q'"* ]]; chk capres.7
+# capres.8 a `$(( ))` operand
+run_sash 'map n=([k]=5)
+int x=$(( ${n[$(cat b37.key)]:-0} + 1 ))
+echo "$x"'
+[[ $rc != 0 && -z $out \
+   && $err == *':2:7: error [SB5020] tainted command substitution used without attest'* ]]; chk capres.8
+# capres.9 an index inside `$(( ))`
+run_sash 'map v=([k]=1)
+int array w=(5 6)
+echo $(( w[${v[$(cat b37.key)]:-0}] + 1 ))'
+[[ $rc != 0 && -z $out \
+   && $err == *':3:6: error [SB5020] tainted command substitution used without attest'* ]]; chk capres.9
+# capres.10 an expansion's index inside another's index
+run_sash 'map v=([k]=1)
+array w=(5 6)
+echo $(( ${w[${v[$(cat b37.key)]:-0}]:-0} + 1 ))'
+[[ $rc != 0 && -z $out \
+   && $err == *':3:6: error [SB5020] tainted command substitution used without attest'* ]]; chk capres.10
+# capres.11 a `(( ))` condition
+run_sash 'map n=([k]=5)
+if (( ${n[$(cat b37.key)]:-0} > 0 )) {
+  echo yes
+}'
+[[ $rc != 0 && -z $out \
+   && $err == *':2:4: error [SB5020] tainted command substitution used without attest'* ]]; chk capres.11
+# capres.12 a `(( ))` statement
+run_sash 'map n=([k]=5)
+int x=0
+(( x = ${n[$(cat b37.key)]:-0} ))
+echo "$x"'
+[[ $rc != 0 && -z $out \
+   && $err == *':3:1: error [SB5020] tainted command substitution used without attest'* ]]; chk capres.12
+# capres.13 a `(( ))` assignment target's index
+run_sash 'map v=([k]=1)
+int array w=(5 6)
+(( w[${v[$(cat b37.key)]:-0}] = 9 ))
+echo "${w[1]}"'
+[[ $rc != 0 && -z $out \
+   && $err == *':3:1: error [SB5020] tainted command substitution used without attest'* ]]; chk capres.13
+# capres.14 in a function body
+run_sash 'map m=([k]=v)
+fn f {
+  b=${m[$(cat b37.key)]:-dflt}
+  echo "$b"
+}
+f'
+[[ $rc != 0 && -z $out \
+   && $err == *':3:5: error [SB5020] tainted command substitution used without attest'* ]]; chk capres.14
+# capres.15 in a capture body
+run_sash 'map m=([k]=v)
+y=$(echo ${m[$(cat b37.key)]:-dflt})
+echo "$y"'
+[[ $rc != 0 && -z $out \
+   && $err == *':2:10: error [SB5020] tainted command substitution used without attest'* ]]; chk capres.15
+# capres.16 in END
+run_sash 'map m=([k]=v)
+END {
+  b=${m[$(cat b37.key)]:-dflt}
+  echo "$b"
+}'
+[[ $rc != 0 && -z $out \
+   && $err == *':3:5: error [SB5020] tainted command substitution used without attest'* ]]; chk capres.16
+# capres.17 (positive) a builtin in the index stays a builtin, so it is clean
+run_sash 'map m=([k]=v)
+b=${m[$(echo k)]:-dflt}
+echo "$b"'
+[[ $rc = 0 && $out = v && -z $rerr ]]; chk capres.17
+# capres.18 (positive) ... and a function call stays a call, inside `$(( ))`
+run_sash 'map n=([k]=5)
+fn g { echo k }
+int x=$(( ${n[$(g)]:-0} + 1 ))
+echo "$x"'
+[[ $rc = 0 && $out = 6 && -z $rerr ]]; chk capres.18
+# capres.19 (positive) ... inside a `(( ))` statement
+run_sash 'map n=([k]=5)
+int x=0
+(( x = ${n[$(echo k)]:-0} ))
+echo "$x"'
+[[ $rc = 0 && $out = 5 && -z $rerr ]]; chk capres.19
+# capres.20 (positive) under --no-taint, the resolved head runs
+SASH_CFLAGS="${SASH_CFLAGS:-} --no-taint" run_sash 'map m=([k]=v)
+b=${m[$(cat b37.key)]:-dflt}
+echo "$b"'
+[[ $rc = 0 && $out = v && -z $rerr ]]; chk capres.20
 
 set -e
 tally

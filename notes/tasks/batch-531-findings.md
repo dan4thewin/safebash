@@ -585,7 +585,7 @@ Appended to existing tasks:
 
 ### 9. B37 resolution walk
 
-- [ ] **B37** (fixed-on-branch; DD23, DD24). Taint bypass: `resolve.rs`'s
+- [x] **B37** (fixed-on-branch; DD23, DD24). Taint bypass: `resolve.rs`'s
   private copy of the walk skips a parameter expansion's index, `$(( ))`
   leaves and `(( ))` tests, so a command there keeps a bare head that the
   taint pass reads as clean. `b=${a[$(cat one)]:-dflt}` and `int n=$((
@@ -596,6 +596,27 @@ Appended to existing tasks:
     SB4030. They compile only because of
     `bug-subscript-key-check-skips-positions` (rows id2 and ic9), so once
     that is fixed an indexed-array spec would pin SB4030, not the taint fix.
+  - Landed in B37 (journal 538), as-is. `resolve.rs`'s private walk is
+    deleted; resolution reaches each `$( … )` body through
+    `Statement::cmdsub_bodies_mut`, the mutable twin of the walk that
+    validate's taint and command checks and type_check use.
+    `ir::cmdsub_twin_tests` pins both walks to the same bodies in the same
+    order. Specs `capres.1`-`capres.20` (taint.sh) use map keys. Of the 16
+    negatives, base compiled 9 silently and caught the other 7 only in the
+    positionless SSA backstop; all 16 now get a positioned SB5020 or
+    SB5021. DD23 addendum (2026-10-27). One visible side effect: when an
+    indexed assignment's value and index both draw SB5095, the value's is
+    reported first now, as SB5011's already was.
+
+Filed as a backlog task during B37, under the same rule as F15's:
+
+- `bug-redirect-target-index-capture-ice` (P1): a capture in a redirect
+  target's subscript ICEs in both backends: a function capture
+  (`>${m[$(f)]:-…}`) with or without `--no-taint`, an external one under
+  `--no-taint` (SB5020 otherwise since B37; base ICE'd there too). SB4030's
+  advice for the undispositioned form, `${m[…]:?message}`, leads straight
+  into it. Recommended, not yet ruled: SB4049 for a `$( … )` anywhere in a
+  target.
 
 ### 10. F2 forked children
 
@@ -737,6 +758,11 @@ Appended to existing tasks:
   DD88 make a capture condition suppress the whole capture.
 - [ ] **B81** (open; DD55, DD122). A command stage's argument captures run
   in the parent before the fork; both backends ICE.
+  - Re-probed after B37 (journal 538): an external capture in a stage
+    argument's subscript (`echo ${m[$(cat f)]:-d} | /bin/cat`) is SB5020
+    now; base ICE'd on the bare `cat`. A function capture, with or without
+    a subscript (`echo $(g) | /bin/cat`), and any capture under
+    `--no-taint` still ICE on base, hand-parser and the branch.
 - [ ] **B82** (open; DD55). A stage's suppression is not threaded into
   `build_function_pipeline_stage` or into B81's child; both backends ICE.
 - [ ] **B84** (fixed-on-branch; DD55). A suppressed `a || b` reset `$?` to 0
@@ -756,8 +782,19 @@ Appended to existing tasks:
 - [ ] **B86** (fixed-on-branch; DD66). Dispatch built every pattern test
   eagerly; a capture in a pattern ICE'd in both backends; the subject was
   not copied before the patterns ran. Branch specs: dsplazy.1-15.
+  - Re-probed after B37 (journal 538): a capture in the subject ICEs too,
+    not only one in a pattern. A function capture in either
+    (`[[ $(g) == k {…} || {…} ]]`, `[[ $s == $(g) {…} || {…} ]]`) and any
+    capture under `--no-taint` ICE on hand-parser; the branch runs them.
+    The same capture in a plain test (`[[ ${m[$(g)]:-d} == v ]] && echo a`)
+    works. With taint on, an external capture in the subject's subscript
+    is SB5020 now; base ICE'd on the bare `cat`.
 - [ ] **B93** (fixed-on-branch; DD66, DD24). Dispatch patterns were not
   taint-checked. Branch specs: dsptaint.1-3.
+  - B37 does not reach it: an external capture in a pattern's subscript
+    (`[[ $s == ${m[$(cat f)]:-d} {…} || {…} ]]`, bare `cat` or `/bin/cat`)
+    still ICEs with taint on, in both backends, because nothing
+    taint-checks the pattern. The branch gives SB5020 at 3:10.
 
 ### 16. F10 attest predicates
 

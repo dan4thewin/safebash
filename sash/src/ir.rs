@@ -106,11 +106,7 @@ impl Statement {
     /// recursion gets there.
     pub fn cmdsub_bodies(&self) -> Vec<&[Statement]> {
         let mut bodies = Vec::new();
-        walk_own_exprs(self, &mut |e| {
-            if let ExprKind::CommandSubstitution(stmts) = &e.kind {
-                bodies.push(stmts.as_slice());
-            }
-        });
+        walk_own_exprs(self, &mut |e| push_cmdsub_body(e, &mut bodies));
         bodies
     }
 
@@ -254,6 +250,68 @@ impl Statement {
         }
     }
 
+    /// Mutable mirror of [`Self::cmdsub_bodies`]: the `$( … )` bodies this
+    /// statement owns directly, in the same order. This is how a rewriting
+    /// pass says it wants them (see [`Self::structural_bodies_mut`]).
+    ///
+    /// A rewriting pass must reach exactly the bodies the checkers reach.
+    /// DD#23's command resolution once kept a private copy of this walk, and
+    /// the copy never learned that a body can sit in a parameter-expansion
+    /// index (`${a[$(cat f)]:-x}`), under `$(( … ))`, or in a `(( … ))`
+    /// condition. The canonical walk was fixed for each; the copy was not.
+    /// Those heads stayed bare, the taint pass judges a bare head by its
+    /// spelling, and an external program's output was bound clean. Pinned
+    /// against [`Self::cmdsub_bodies`] by
+    /// `cmdsub_twin_tests::cmdsub_bodies_mut_mirrors_cmdsub_bodies`.
+    pub fn cmdsub_bodies_mut(&mut self) -> Vec<&mut [Statement]> {
+        let mut bodies = Vec::new();
+        for root in self.own_expr_roots_mut() {
+            push_cmdsub_bodies_mut(root, &mut bodies);
+        }
+        bodies
+    }
+
+    /// The roots of the expressions this statement owns itself, mutably: the
+    /// [`Self::direct_exprs`] set in its order, plus the `${…}` expansions of a
+    /// `(( … ))` statement, which [`walk_own_exprs`] adds on the immutable
+    /// side.
+    ///
+    /// **Total over `StmtKind` on purpose — do not add a wildcard**, for the
+    /// reason `direct_exprs` gives: a kind that gains an `Expr` must be a
+    /// compile error here, not a body this walk silently skips.
+    fn own_expr_roots_mut(&mut self) -> Vec<&mut Expr> {
+        match &mut self.kind {
+            StmtKind::Assignment(a) => std::iter::once(&mut a.value)
+                .chain(a.index.as_mut())
+                .collect(),
+            StmtKind::Declaration(d) => d
+                .assignments
+                .iter_mut()
+                .filter_map(|a| a.value.as_mut())
+                .collect(),
+            StmtKind::Command(c) => std::iter::once(&mut c.name).chain(&mut c.args).collect(),
+            StmtKind::For(fo) => fo.words.iter_mut().collect(),
+            StmtKind::Case(c) => std::iter::once(&mut c.value)
+                .chain(c.items.iter_mut().flat_map(|item| &mut item.patterns))
+                .collect(),
+            StmtKind::Redirected(r) => r.redirects.iter_mut().map(|r| &mut r.target).collect(),
+            StmtKind::ArithTest(arith) => {
+                let mut roots = Vec::new();
+                walk_arith_expansion_roots_mut(arith, &mut |e| roots.push(e));
+                roots
+            }
+            StmtKind::Pipeline(_)
+            | StmtKind::If(_)
+            | StmtKind::While(_)
+            | StmtKind::Function(_)
+            | StmtKind::List(_)
+            | StmtKind::Group(_)
+            | StmtKind::Suppressed(_)
+            | StmtKind::Negated(_)
+            | StmtKind::ReturnProducer(_) => Vec::new(),
+        }
+    }
+
     /// The child statement bodies of an `if` (condition, then, each elif's
     /// condition + body, and else). Factored out of
     /// [`Self::structural_bodies`] to keep that dispatcher simple.
@@ -322,6 +380,65 @@ impl Statement {
             // Owns `Expr`s under an `ArithExpr`; see the note above.
             StmtKind::ArithTest(_) => {}
         }
+    }
+}
+
+/// Collect `e`'s body if it is a `$( … )`: the test
+/// [`Statement::cmdsub_bodies`] applies at each node [`walk_own_exprs`]
+/// visits, named so that [`push_cmdsub_bodies_mut`] can say which test it
+/// mirrors.
+fn push_cmdsub_body<'a>(e: &'a Expr, bodies: &mut Vec<&'a [Statement]>) {
+    if let ExprKind::CommandSubstitution(stmts) = &e.kind {
+        bodies.push(stmts.as_slice());
+    }
+}
+
+/// Collect, mutably, every `$( … )` body under `e` that [`push_cmdsub_body`]
+/// collects through [`walk_expr_tree`]: the same nodes, in the same order,
+/// stopping at each substitution as that walk does.
+///
+/// A mutable walk cannot hand a callback a node and then descend into it, so
+/// this is the recursion itself rather than a callback on a
+/// `walk_expr_tree_mut`. **Total over `ExprKind`, as that walk is — do not add
+/// a wildcard.**
+fn push_cmdsub_bodies_mut<'a>(e: &'a mut Expr, bodies: &mut Vec<&'a mut [Statement]>) {
+    match &mut e.kind {
+        ExprKind::CommandSubstitution(stmts) => bodies.push(stmts.as_mut_slice()),
+        ExprKind::DoubleQuoted(parts) | ExprKind::Concat(parts) | ExprKind::Array(parts) => {
+            push_each_cmdsub_body_mut(parts.iter_mut(), bodies)
+        }
+        ExprKind::AssocArray(pairs) => {
+            push_each_cmdsub_body_mut(pairs.iter_mut().map(|(_, v)| v), bodies)
+        }
+        ExprKind::ParameterExpansion(pe) => push_each_cmdsub_body_mut(
+            pe.index
+                .as_deref_mut()
+                .into_iter()
+                .chain(pe.operand.as_deref_mut()),
+            bodies,
+        ),
+        ExprKind::Test(t) => {
+            walk_test_operands_mut(t, &mut |operand| push_cmdsub_bodies_mut(operand, bodies))
+        }
+        ExprKind::Subscript { index, .. } | ExprKind::SlurpFile(index) => {
+            push_cmdsub_bodies_mut(index, bodies)
+        }
+        ExprKind::Arithmetic(arith) => {
+            walk_arith_expansion_roots_mut(arith, &mut |root| push_cmdsub_bodies_mut(root, bodies))
+        }
+        ExprKind::Literal(_) | ExprKind::SingleQuoted(_) | ExprKind::SimpleExpansion(_) => {}
+    }
+}
+
+/// [`push_cmdsub_bodies_mut`] over each expression a form holds, whatever the
+/// shape of its container: a list, the values of a pair list, or a pair of
+/// options.
+fn push_each_cmdsub_body_mut<'a>(
+    exprs: impl Iterator<Item = &'a mut Expr>,
+    bodies: &mut Vec<&'a mut [Statement]>,
+) {
+    for e in exprs {
+        push_cmdsub_bodies_mut(e, bodies);
     }
 }
 
@@ -758,6 +875,47 @@ pub(crate) fn walk_arith_expansion_roots<'a>(arith: &'a ArithExpr, f: &mut impl 
     }
 }
 
+/// Mutable mirror of [`walk_arith_expansion_roots`]: the same arms in the same
+/// order, for a rewriting pass. Total for the same reason — do not add a
+/// wildcard.
+fn walk_arith_expansion_roots_mut<'a>(arith: &'a mut ArithExpr, f: &mut impl FnMut(&'a mut Expr)) {
+    match arith {
+        ArithExpr::Expansion(inner) => f(inner),
+        ArithExpr::BinOp { left, right, .. } => {
+            walk_arith_expansion_roots_mut(left, f);
+            walk_arith_expansion_roots_mut(right, f);
+        }
+        ArithExpr::UnaryOp { operand, .. } | ArithExpr::Paren(operand) => {
+            walk_arith_expansion_roots_mut(operand, f)
+        }
+        ArithExpr::Assign { value, .. } | ArithExpr::CompoundAssign { value, .. } => {
+            walk_arith_expansion_roots_mut(value, f)
+        }
+        ArithExpr::Ternary {
+            cond,
+            true_val,
+            false_val,
+        } => {
+            walk_arith_expansion_roots_mut(cond, f);
+            walk_arith_expansion_roots_mut(true_val, f);
+            walk_arith_expansion_roots_mut(false_val, f);
+        }
+        ArithExpr::Comma(items) | ArithExpr::FuncCall { args: items, .. } => items
+            .iter_mut()
+            .for_each(|it| walk_arith_expansion_roots_mut(it, f)),
+        ArithExpr::Subscript { index, .. } => walk_arith_expansion_roots_mut(index, f),
+        ArithExpr::SubscriptAssign { index, value, .. } => {
+            walk_arith_expansion_roots_mut(index, f);
+            walk_arith_expansion_roots_mut(value, f);
+        }
+        ArithExpr::Literal(_)
+        | ArithExpr::Var(_)
+        | ArithExpr::DollarVar(_)
+        | ArithExpr::PostIncDec { .. }
+        | ArithExpr::PreIncDec { .. } => {}
+    }
+}
+
 /// Visit every operand expression of a test tree, without descending into the
 /// operands themselves. The single shared shape of the `TestExpr` recursion:
 /// callers supply what an operand *means* (a read position, a name to resolve,
@@ -773,6 +931,22 @@ pub(crate) fn walk_test_operands<'a>(t: &'a TestExpr, f: &mut impl FnMut(&'a Exp
         TestExpr::And(l, r) | TestExpr::Or(l, r) => {
             walk_test_operands(l, f);
             walk_test_operands(r, f);
+        }
+    }
+}
+
+/// Mutable mirror of [`walk_test_operands`].
+fn walk_test_operands_mut<'a>(t: &'a mut TestExpr, f: &mut impl FnMut(&'a mut Expr)) {
+    match t {
+        TestExpr::Unary { operand, .. } => f(operand),
+        TestExpr::Binary { left, right, .. } => {
+            f(left);
+            f(right);
+        }
+        TestExpr::Not(inner) => walk_test_operands_mut(inner, f),
+        TestExpr::And(l, r) | TestExpr::Or(l, r) => {
+            walk_test_operands_mut(l, f);
+            walk_test_operands_mut(r, f);
         }
     }
 }
@@ -2313,5 +2487,144 @@ mod shadowed_arm_tests {
             "the subject, then the index subtree, then the value subtree — \
              a missing `other` means the walk into `value` was dropped"
         );
+    }
+}
+
+/// [`Statement::cmdsub_bodies_mut`] must reach exactly the bodies
+/// [`Statement::cmdsub_bodies`] reaches, in the same order — the same
+/// allocations, compared by address. Each case also states its count, so a
+/// position that BOTH walks miss still fails.
+#[cfg(test)]
+mod cmdsub_twin_tests {
+    use super::{
+        ArithExpr, Command, Expr, ExprKind, ParameterExpansion, Span, Statement, StmtKind,
+    };
+
+    fn body_addresses(stmt: &mut Statement) -> (Vec<*const Statement>, Vec<*const Statement>) {
+        let shared = stmt.cmdsub_bodies().iter().map(|b| b.as_ptr()).collect();
+        let unique = stmt
+            .cmdsub_bodies_mut()
+            .iter()
+            .map(|b| b.as_ptr())
+            .collect();
+        (shared, unique)
+    }
+
+    /// Arithmetic cases reach their captures through `${…}` because a capture
+    /// is never an arithmetic operand (DD#80) — a bare `$( … )` there does not
+    /// parse.
+    #[test]
+    fn cmdsub_bodies_mut_mirrors_cmdsub_bodies() {
+        let cases: &[(&str, usize)] = &[
+            ("echo $(a) \"x$(b)\" y$(c)", 3),
+            ("echo $(a $(b))", 1),
+            ("$(a) b", 1),
+            ("echo ${v[$(a)]:-d}", 1),
+            ("echo ${v[$(a)]}", 1),
+            ("echo $(( ${w[$(a)]:-0} + w[${v[$(b)]:-0}] ))", 2),
+            ("echo $(( ${v[$(a)]:-0} ))", 1),
+            ("[[ -n $(a) && $(b) == c ]]", 2),
+            ("[[ $(a) == $(b) { echo } || { echo } ]]", 2),
+            ("x[$(a)]=$(b)", 2),
+            ("str y=$(a) z=$(b)", 2),
+            ("int n=$(( ${w[$(a)]:-0} + 1 ))", 1),
+            ("for z in $(a) $(b) { echo }", 2),
+            ("echo hi >${x[$(a)]:-f}", 1),
+            ("(( ${w[$(a)]:-0} > 0 ))", 1),
+            ("(( n = w[${v[$(a)]:-0}] ? ${w[$(b)]:-0} : 0 ))", 2),
+            ("(( w[${v[$(a)]:-0}] = ${w[$(b)]:-0} ))", 2),
+            ("array q=($(a) $(b))", 2),
+            ("map m=([x]=$(a))", 1),
+            ("y=$(<$(a))", 1),
+        ];
+        for &(src, want) in cases {
+            let (mut program, _) =
+                crate::parse::parse(src).unwrap_or_else(|d| panic!("{src}: {d:?}"));
+            let stmt = &mut program.statements[0];
+            let (shared, unique) = body_addresses(stmt);
+            assert_eq!(shared.len(), want, "{src}: cmdsub_bodies count");
+            assert_eq!(shared, unique, "{src}: cmdsub_bodies_mut diverges");
+        }
+    }
+
+    fn word(kind: ExprKind) -> Expr {
+        Expr {
+            kind,
+            span: Span::new(1, 1),
+        }
+    }
+
+    fn command(name: &str, args: Vec<Expr>) -> Statement {
+        Statement {
+            kind: StmtKind::Command(Command {
+                name: word(ExprKind::Literal(name.into())),
+                args,
+            }),
+            span: Span::new(1, 1),
+        }
+    }
+
+    fn capture(name: &str) -> Box<Expr> {
+        Box::new(word(ExprKind::CommandSubstitution(vec![command(
+            name,
+            vec![],
+        )])))
+    }
+
+    /// No parse puts a `$( … )` in a parameter expansion's operand: every
+    /// operand the parser builds is literal text. `:-` and `:?` take a literal
+    /// (a `$` there is SB4070), substring offsets and a retired operator's
+    /// text (SB4034) are kept verbatim, and `:s/…/` desugars to a nested
+    /// `$(sub …)` in place of the expansion. The arm is still part of the
+    /// shape both walks mirror, so it is pinned here, operand after index.
+    #[test]
+    fn cmdsub_bodies_mut_mirrors_a_parameter_operand() {
+        let pe = ParameterExpansion {
+            name: "v".into(),
+            operator: Some(":-".into()),
+            operand: Some(capture("b")),
+            index: Some(capture("a")),
+            taint_off: false,
+        };
+        let mut stmt = command("echo", vec![word(ExprKind::ParameterExpansion(pe))]);
+        let (shared, unique) = body_addresses(&mut stmt);
+        assert_eq!(shared.len(), 2, "cmdsub_bodies count");
+        assert_eq!(shared, unique, "cmdsub_bodies_mut diverges");
+    }
+
+    /// `${v[$( name )]:-0}` as an arithmetic leaf — the shape a parsed capture
+    /// takes there (see the table above).
+    fn defaulted_capture(name: &str) -> Box<ArithExpr> {
+        let pe = ParameterExpansion {
+            name: "v".into(),
+            operator: Some(":-".into()),
+            operand: Some(Box::new(word(ExprKind::Literal("0".into())))),
+            index: Some(capture(name)),
+            taint_off: false,
+        };
+        Box::new(ArithExpr::Expansion(Box::new(word(
+            ExprKind::ParameterExpansion(pe),
+        ))))
+    }
+
+    /// No program reaches the `SubscriptAssign` arm of either walk. The parser
+    /// lowers a statement `(( w[i] = v ))` or `w[i]++` to an assignment (the
+    /// `(( w[…] = … ))` row above), and every mutation nested in a larger
+    /// expression is SB4020/SB5007 in `validate`, before resolution runs;
+    /// bindings ICEs on one that survives. The arm is the canonical walk's
+    /// shape, which descends into both sides, so that is what is pinned: a
+    /// capture in each.
+    #[test]
+    fn cmdsub_bodies_mut_mirrors_a_subscript_assignment() {
+        let arith = ArithExpr::SubscriptAssign {
+            name: "w".into(),
+            index: defaulted_capture("a"),
+            op: None,
+            value: defaulted_capture("b"),
+        };
+        let mut stmt = command("echo", vec![word(ExprKind::Arithmetic(Box::new(arith)))]);
+        let (shared, unique) = body_addresses(&mut stmt);
+        assert_eq!(shared.len(), 2, "cmdsub_bodies count");
+        assert_eq!(shared, unique, "cmdsub_bodies_mut diverges");
     }
 }

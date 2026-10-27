@@ -5,8 +5,9 @@
 //! / type-check) run, so the taint pass classifies on the real exec form
 //! (`/usr/bin/cat`, not bare `cat`). An external that cannot be resolved is
 //! a FATAL compile error (SB5011, shared with `validate::check_commands`)
-//! instead of the old runtime "bare command passed to sash_exec". This pass
-//! also covers command-substitution heads, which `check_commands` does not.
+//! instead of the old runtime "bare command passed to sash_exec". It reaches
+//! `$( … )` bodies through `Statement::cmdsub_bodies_mut`, the mutable twin of
+//! the walk `check_commands` uses, so the two passes see the same heads.
 //!
 //! Left untouched: already-absolute paths, builtins (`BuiltinCmd::from_name`
 //! != `Other`), compiler intrinsics that appear as command-substitution
@@ -417,68 +418,26 @@ fn resolve_stmts(stmts: &mut [Statement], funcs: &HashSet<String>, diags: &mut V
 }
 
 fn resolve_stmt(stmt: &mut Statement, funcs: &HashSet<String>, diags: &mut Vec<Diagnostic>) {
-    // Resolve the expressions owned directly by this statement (command
-    // heads/args, assignment values, for-words, case patterns, redirect
-    // targets); nested statement bodies are handled by the recursion below.
-    resolve_stmt_exprs(stmt, funcs, diags);
+    // A `$( … )` body is a statement list like any other (DD#86). The shared
+    // twin of the checkers' walk reaches every one this statement owns, so a
+    // head `validate` judged is a head this pass resolves. A private copy of
+    // that walk once stopped short of a parameter-expansion index, `$(( … ))`
+    // and a `(( … ))` condition, and left the heads there bare.
+    for body in stmt.cmdsub_bodies_mut() {
+        resolve_stmts(body, funcs, diags);
+    }
+    if let StmtKind::Command(c) = &mut stmt.kind {
+        resolve_command(c, funcs, diags);
+    }
     for body in stmt.structural_bodies_mut() {
         resolve_stmts(body, funcs, diags);
     }
 }
 
-fn resolve_stmt_exprs(stmt: &mut Statement, funcs: &HashSet<String>, diags: &mut Vec<Diagnostic>) {
-    match &mut stmt.kind {
-        StmtKind::Command(c) => resolve_command(c, funcs, diags),
-        StmtKind::Assignment(a) => resolve_assignment(a, funcs, diags),
-        StmtKind::Declaration(d) => resolve_declaration(d, funcs, diags),
-        StmtKind::For(f) => {
-            for w in &mut f.words {
-                resolve_expr(w, funcs, diags);
-            }
-        }
-        StmtKind::Case(c) => resolve_case_exprs(c, funcs, diags),
-        StmtKind::Redirected(r) => {
-            for redir in &mut r.redirects {
-                resolve_expr(&mut redir.target, funcs, diags);
-            }
-        }
-        _ => {}
-    }
-}
-
-fn resolve_case_exprs(c: &mut Case, funcs: &HashSet<String>, diags: &mut Vec<Diagnostic>) {
-    resolve_expr(&mut c.value, funcs, diags);
-    for item in &mut c.items {
-        for p in &mut item.patterns {
-            resolve_expr(p, funcs, diags);
-        }
-    }
-}
-
-/// Resolve command substitutions inside each initializer of a declaration.
-fn resolve_declaration(d: &mut Declaration, funcs: &HashSet<String>, diags: &mut Vec<Diagnostic>) {
-    for a in &mut d.assignments {
-        if let Some(v) = &mut a.value {
-            resolve_expr(v, funcs, diags);
-        }
-    }
-}
-
-fn resolve_assignment(a: &mut Assignment, funcs: &HashSet<String>, diags: &mut Vec<Diagnostic>) {
-    if let Some(idx) = &mut a.index {
-        resolve_expr(idx, funcs, diags);
-    }
-    resolve_expr(&mut a.value, funcs, diags);
-}
-
+/// Resolve a command's head if it is a plain external literal. The `$( … )`
+/// bodies in its head and arguments are [`resolve_stmt`]'s, reached through
+/// the shared walk before this runs.
 fn resolve_command(c: &mut Command, funcs: &HashSet<String>, diags: &mut Vec<Diagnostic>) {
-    // Resolve command substitutions nested in the head and arguments first.
-    resolve_expr(&mut c.name, funcs, diags);
-    for arg in &mut c.args {
-        resolve_expr(arg, funcs, diags);
-    }
-    // Then resolve the head itself if it is a plain external literal.
-    //
     // The `else` is unreachable, and measurably so: 8221 commands reached here
     // during a full sweep and not one had a non-`Literal` head. `validate`
     // rejects those with SB5011 ("a command name must be a literal path"), and
@@ -563,54 +522,6 @@ pub(crate) fn command_path_diag(what: &str, path: &str, span: Span) -> Option<Di
         "SB5095",
         format!("{}'{}' is not an executable program — {}", what, path, why),
     ))
-}
-
-fn resolve_expr(e: &mut Expr, funcs: &HashSet<String>, diags: &mut Vec<Diagnostic>) {
-    match &mut e.kind {
-        ExprKind::CommandSubstitution(stmts) => resolve_stmts(stmts, funcs, diags),
-        ExprKind::DoubleQuoted(parts) | ExprKind::Concat(parts) | ExprKind::Array(parts) => {
-            resolve_each(parts.iter_mut(), funcs, diags)
-        }
-        ExprKind::AssocArray(pairs) => resolve_each(pairs.iter_mut().map(|(_, v)| v), funcs, diags),
-        ExprKind::Subscript { index, .. } | ExprKind::SlurpFile(index) => {
-            resolve_expr(index, funcs, diags)
-        }
-        ExprKind::ParameterExpansion(pe) => {
-            resolve_each(pe.operand.iter_mut().map(|b| &mut **b), funcs, diags)
-        }
-        ExprKind::Test(t) => resolve_test_expr(t, funcs, diags),
-        ExprKind::Literal(_)
-        | ExprKind::SingleQuoted(_)
-        | ExprKind::SimpleExpansion(_)
-        | ExprKind::Arithmetic(_) => {}
-    }
-}
-
-/// Resolve every expression a form holds, whatever the shape of its
-/// container — a slice, the values of a pair list, or an `Option`.
-fn resolve_each<'a>(
-    exprs: impl Iterator<Item = &'a mut Expr>,
-    funcs: &HashSet<String>,
-    diags: &mut Vec<Diagnostic>,
-) {
-    for e in exprs {
-        resolve_expr(e, funcs, diags);
-    }
-}
-
-fn resolve_test_expr(t: &mut TestExpr, funcs: &HashSet<String>, diags: &mut Vec<Diagnostic>) {
-    match t {
-        TestExpr::Unary { operand, .. } => resolve_expr(operand, funcs, diags),
-        TestExpr::Binary { left, right, .. } => {
-            resolve_expr(left, funcs, diags);
-            resolve_expr(right, funcs, diags);
-        }
-        TestExpr::Not(inner) => resolve_test_expr(inner, funcs, diags),
-        TestExpr::And(l, r) | TestExpr::Or(l, r) => {
-            resolve_test_expr(l, funcs, diags);
-            resolve_test_expr(r, funcs, diags);
-        }
-    }
 }
 
 /// Two arms of [`resolve_command`] that no *program* can reach, because an
