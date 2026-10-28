@@ -6,7 +6,7 @@ set -eu
 # Run only in native mode to avoid 3× redundancy.
 [[ ${SASH_MODE:-native} != native ]] && exit 0
 setup convert
-plan=216
+plan=217
 echo "1..$plan" >&3
 
 set +e
@@ -1520,6 +1520,18 @@ converted=$out
 run_sash "$converted"
 [[ $converted == *'(( n == 3 )) && (( n < 4 ))'* && $converted != *'"$n"'* \
    && $rc = 0 && $out = num && -z $err ]]; chk 57.191
+
+# 57.192 bash's parameter-assertion idiom passes through unchanged, and the
+# compiled program asserts as bash does, because `:` evaluates its arguments
+# (noop.1-noop.9). It used to print `after`: every converted guard was lost.
+run_convert '#!/bin/bash
+x=""
+: "${x:?x must be set}"
+echo after'
+converted=$out
+run_sash "$converted"
+[[ $converted == *': "${x:?x must be set}"'* && $rc = 1 && -z $out \
+   && $rerr == *": x must be set"* ]]; chk 57.192
 
 
 set -e

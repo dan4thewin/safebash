@@ -374,6 +374,50 @@ pub(super) fn build_argv_values(
     }
 }
 
+/// `:` evaluates its arguments for their effects (a `:?` abort, a DD#69
+/// splat disposition, an arithmetic fault) and discards the values. It used
+/// to evaluate none of them, so `: ${s:?empty}` carried on (DD#77). The order
+/// is [`build_argv_runtime`]'s, splat dispositions first and then every
+/// other value left to right, but no argv is built. Nothing is exec'd, so
+/// the DD#99 NUL guard (an exec-boundary check) does not apply, and the
+/// bump heap is not charged for a table nobody reads.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn evaluate_args_for_effects(
+    args: &[SsaValue],
+    builder: &mut FunctionBuilder,
+    module: &mut ObjectModule,
+    vars: &HashMap<String, VarSlot>,
+    literals: &HashMap<String, cranelift_module::DataId>,
+    externs: &ExternFuncs,
+    exit_status_var: Variable,
+) {
+    resolve_splat_tables(
+        args,
+        builder,
+        module,
+        vars,
+        literals,
+        externs,
+        exit_status_var,
+    );
+    for arg in args {
+        let value = match arg {
+            SsaValue::ArraySplat { .. } => continue,
+            SsaValue::ElideEmpty { source, .. } => source.as_ref(),
+            other => other,
+        };
+        lower_value(
+            value,
+            builder,
+            module,
+            vars,
+            literals,
+            externs,
+            exit_status_var,
+        );
+    }
+}
+
 /// DD#99 stage 7: an argv entry's length is known here but is lost at
 /// `execve`, where the entry becomes a C string. Check for an interior NUL
 /// while we still can — silent truncation is the one outcome to avoid.

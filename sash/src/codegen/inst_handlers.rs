@@ -475,6 +475,16 @@ fn lower_pipeline_builtin(
             module,
             ctx,
         );
+    } else {
+        super::commands::evaluate_args_for_effects(
+            args,
+            builder,
+            module,
+            ctx.vars,
+            ctx.literals,
+            ctx.externs,
+            ctx.exit_status_var,
+        );
     }
     // echo / `:` in a pipeline stage exit 0 (true/false are now external).
     let exit_code = builder.ins().iconst(I64, 0);

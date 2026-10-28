@@ -1,6 +1,6 @@
 ---
 title: "Bug: `:` drops its arguments' effects — `: ${s:?msg}`, `: @{a:?}` and `: $(( 1 / z ))` never abort"
-status: open
+status: done
 priority: P1
 kind: bug
 depends: []
@@ -98,3 +98,26 @@ no sash spelling to rewrite to. It is recorded so DG can veto.
 
 Related: Q1 of `q-suppression-and-stage-residuals` (`-` on `:` discards
 nothing, with or without this fix).
+
+## Fixed 2026-10-28 (F2 port, commit B)
+
+As the fix direction says, in both backends and all four sites: native
+`emit_noop` and `lower_pipeline_builtin`'s `:` stage, C's plain and stage
+`Noop` arms. A shared effects-only helper per backend
+(`codegen::commands::evaluate_args_for_effects`, `emit_c::emit_args_for_effects`)
+resolves the splat dispositions and lowers each other value in the argv
+builder's order, then drops the results. It builds no argv, so it takes no
+heap and runs no DD#99 NUL check (DD#69 addendum 2026-10-28).
+
+Specs, both modes: noop.1-noop.9 are the rows (q1i, nc4, nc8 with a
+message, nc9, nc3, sp5, sp6, sp9, and a capture-lifted stage, which reaches
+the plain arm in the stage child). noop.10-noop.13 are the controls (sp7,
+nc1, nc6 and the NUL control). cv1 is convert.sh 57.192. The `: >f` and
+`cmd || :` controls are existing specs (errors.sh rdr.23/rdr.24, regex.sh
+63.2d), unchanged in the sweep. Negative
+control: noop.1-noop.9 and 57.192 fail on the pre-fix binary, the four
+controls pass.
+
+q1h (`- : ${s:?empty}`) now aborts as sp1 does, both backends, but no spec
+pins it: DG ruled 2026-10-28 that nothing may cement the current suppression
+story, and `q-suppression-and-stage-residuals` Q1 may make it an error.

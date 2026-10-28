@@ -237,3 +237,24 @@ only a run-time behaviour, it is read by the arity check
 (`transform/cmd_handlers.rs::arg_min_tokens`). Changing what an empty array
 yields for any of these four forms changes which calls compile. Specs
 `optional_args.sh` 84.59, 84.60, 84.70.
+
+## Addendum 2026-10-28: `:` evaluates its arguments
+
+§3's "`:` ignores its args" is about the join rule only: `:` writes nothing,
+so it flattens nothing. It never meant that the arguments go unevaluated, but
+both backends read it that way and lowered no argument of `:`. So
+`: @{a:?}`, `: ${s:?msg}` and `: $(( 1 / z ))` never aborted, and neither
+did bash's own parameter-assertion idiom after conversion
+(`notes/tasks/bug-noop-drops-argument-effects.md`). Settled by §2 here,
+DD#77 ("`:?` un-prune scope — everywhere") and DD#86 (c) (`: $v` is a real
+read). `:` now evaluates every argument for its effects, in the order the
+argv builder uses (splat dispositions first, then each value left to
+right), and discards the values. A disposition aborts on `:` exactly as on
+`echo`, in a statement, a condition, under a redirect and as a stage.
+
+Decide-and-report: `:` builds no argv, so the lowering reuses the builder's
+leaves without the builder. That means no heap argv per `:` (the bump
+allocator never frees) and no DD#99 interior-NUL check, which guards the
+execve(2) boundary that `:` never crosses. A NUL-bearing argument to `:` is
+not an error (noop.13). Specs: commands.sh noop.1-noop.13, convert.sh
+57.192.

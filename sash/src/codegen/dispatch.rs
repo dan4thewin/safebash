@@ -294,7 +294,7 @@ impl SsaInst {
             BuiltinCmd::TableDelete | BuiltinCmd::TableDeleteIdx => {
                 return self.emit_table_delete(args, *kind, builder, module, ctx)
             }
-            BuiltinCmd::Noop => self.emit_noop(redirects, builder, module, ctx),
+            BuiltinCmd::Noop => self.emit_noop(args, redirects, builder, module, ctx),
             BuiltinCmd::Match => self.emit_match(args, builder, module, ctx),
             BuiltinCmd::Exit => return self.emit_exit(args, builder, module, ctx),
             BuiltinCmd::Exec => return self.emit_exec(name, args, redirects, builder, module, ctx),
@@ -406,8 +406,13 @@ impl SsaInst {
     /// `redirects` parameter at all, so `: >f` compiled clean and never
     /// opened the file. The guarded-body wrapper is the same one `echo` uses,
     /// which also gives `:` the DD#55 open-failure behaviour for free.
+    ///
+    /// Its arguments were dropped the same way, so `: ${s:?empty}` never
+    /// aborted. They are now evaluated for their effects inside the body,
+    /// after the redirect opens, as `echo` evaluates its own.
     fn emit_noop(
         &self,
+        args: &[SsaValue],
         redirects: &[crate::ir::Redirect],
         builder: &mut FunctionBuilder,
         module: &mut ObjectModule,
@@ -420,7 +425,16 @@ impl SsaInst {
             builder,
             module,
             ctx,
-            |b, _m, c| {
+            |b, m, c| {
+                super::commands::evaluate_args_for_effects(
+                    args,
+                    b,
+                    m,
+                    c.vars,
+                    c.literals,
+                    c.externs,
+                    c.exit_status_var,
+                );
                 let one = b.ins().iconst(I64, 1);
                 b.def_var(c.test_result_var, one);
                 let zero = b.ins().iconst(I64, 0);

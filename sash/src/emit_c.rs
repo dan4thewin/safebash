@@ -2123,6 +2123,7 @@ fn emit_command_body(
         BuiltinCmd::Echo => emit_echo(e, args, checked, types),
         BuiltinCmd::Exit => emit_exit(e, args, types),
         BuiltinCmd::Noop => {
+            emit_args_for_effects(e, args, types, "    ");
             writeln!(e.out, "    __exit_status = 0;").unwrap();
             writeln!(e.out, "    __test_result = 1;").unwrap();
         }
@@ -2566,6 +2567,25 @@ fn cache_splat_tables_c(
         }
     }
     splat_lens
+}
+
+/// `:` evaluates its arguments for their effects and discards the values;
+/// the C twin of the native `commands::evaluate_args_for_effects`. The order
+/// is [`emit_argv_splat`]'s, splat dispositions first and then every other
+/// value left to right, but no argv is built, so there is no DD#99 NUL
+/// guard (an exec-boundary check) and no bump-heap argv.
+fn emit_args_for_effects(e: &mut Emit, args: &[SsaValue], types: &VarTypes, ind: &str) {
+    let t = e.fresh();
+    cache_splat_tables_c(e, ind, &t, args, types);
+    for arg in args {
+        let value = match arg {
+            SsaValue::ArraySplat { .. } => continue,
+            SsaValue::ElideEmpty { source, .. } => source.as_ref(),
+            other => other,
+        };
+        let (ptr, len) = lower_value_as_str(e, value, types);
+        writeln!(e.out, "{ind}(void)({ptr}); (void)({len});").unwrap();
+    }
 }
 
 /// DD#69: resolve an external splat's empty-disposition to the effective
@@ -4216,6 +4236,7 @@ fn emit_pipeline_stage(
         }
 
         BuiltinCmd::Noop => {
+            emit_args_for_effects(e, args, types, "        ");
             writeln!(e.out, "        sash_exit(0);").unwrap();
         }
         // DD#14: a forked stage. The transform lowers the function call, or
