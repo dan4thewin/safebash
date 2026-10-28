@@ -204,7 +204,6 @@ pub(super) struct InstCtx<'a> {
     pub(super) redirect_slots: &'a [Vec<cranelift_frontend::Variable>],
     pub(super) end_cl_block: Option<cranelift_codegen::ir::Block>,
     pub(super) program: &'a crate::ssa::SsaProgram,
-    pub(super) ssa_id: usize,
     pub(super) saved_end_status_var: cranelift_frontend::Variable,
     pub(super) cl_blocks: &'a std::collections::HashMap<usize, cranelift_codegen::ir::Block>,
     /// DD#55: true when this command is the condition of a catching

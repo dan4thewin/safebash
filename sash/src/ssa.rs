@@ -86,10 +86,9 @@ pub enum BuiltinCmd {
     /// Run a `let` expression for side-effects, propagate non-zero
     /// exit per DD#55.
     LetExit,
-    /// Fork point — used by background `cmd &` (DD#38: `&` is the fork
-    /// mechanism). (Subshells `( … )` are rejected; this is not subshell-only.)
-    ForkBackground,
-    /// Capture the most recent background pid into a named variable.
+    /// Capture the most recent background pid into a named variable. The
+    /// fork itself is [`Terminator::Fork`], which leaves the pid in
+    /// `test_result` for this to read.
     StoreBgPid,
     /// Install signal handler block.
     TrapSignal,
@@ -308,7 +307,6 @@ impl BuiltinCmd {
             | Self::SetTestFromStatus
             | Self::SetTestFromPipe
             | Self::LetExit
-            | Self::ForkBackground
             | Self::StoreBgPid
             | Self::TrapSignal
             | Self::SignalFlag
@@ -391,7 +389,6 @@ impl BuiltinCmd {
             | Self::SetTestFromStatus
             | Self::SetTestFromPipe
             | Self::LetExit
-            | Self::ForkBackground
             | Self::StoreBgPid
             | Self::TrapSignal
             | Self::SignalFlag
@@ -415,7 +412,6 @@ impl BuiltinCmd {
             Self::SetTestFromStatus => "__set_test_from_status",
             Self::SetTestFromPipe => "__set_test_from_pipe",
             Self::LetExit => "__let_exit",
-            Self::ForkBackground => "__fork_background",
             Self::StoreBgPid => "__store_bg_pid",
             Self::TrapSignal => "__trap_signal",
             Self::SignalFlag => "__signal_flag",
@@ -1502,6 +1498,16 @@ pub enum Terminator {
         body_block: BlockId,
         exit_block: BlockId,
     },
+    /// DD#38: `cmd &` forks. The parent continues at `parent` with the
+    /// child's pid in `test_result`; the child runs `child` in its own
+    /// process. The child is not a control-flow successor: no edge leads
+    /// from its blocks back into the parent's, so per-process analyses
+    /// (reader scopes, phis) never see it. See [`SsaProgram::child_region`].
+    Fork { parent: BlockId, child: BlockId },
+    /// A forked child (a background job or a forked pipeline stage) is
+    /// done: exit with `$?`. Never routed through END — DD#56: END runs
+    /// only in the main process.
+    ChildExit,
 }
 
 /// DD#55: index of the instruction sitting in **condition position**, or
@@ -1607,8 +1613,10 @@ pub struct SsaProgram {
     pub end_block: Option<BlockId>,
     /// DD#56: signals with EXIT disposition (check points inserted)
     pub exiting_signals: std::collections::HashSet<i64>,
-    /// DD#14: compound pipeline stage entry blocks (reachable roots)
-    pub compound_pipeline_blocks: Vec<BlockId>,
+    /// DD#14: forked pipeline stages — each stage's entry block (run by a
+    /// forked child) and what it runs: the function it calls, or the command
+    /// whose arguments the child lifts.
+    pub(crate) compound_stages: CompoundStages,
     /// `--manifest`: absolute paths of every external program this program
     /// execs — direct commands, pipeline stages, and `$( … )` substitutions.
     /// Collected at the single resolution funnel (`resolve_pipeline_command`)
@@ -1621,7 +1629,9 @@ pub struct SsaProgram {
 }
 
 impl Terminator {
-    /// The blocks control can transfer to from this terminator.
+    /// The blocks control can transfer to from this terminator, within the
+    /// same process. A fork's child is deliberately absent: it runs in
+    /// another process and never returns here (see [`Self::forked_child`]).
     pub(crate) fn successors(&self) -> Vec<BlockId> {
         match self {
             Terminator::Goto(dest) => vec![*dest],
@@ -1635,7 +1645,20 @@ impl Terminator {
                 exit_block,
                 ..
             } => vec![*body_block, *exit_block],
-            Terminator::Return => Vec::new(),
+            Terminator::Fork { parent, .. } => vec![*parent],
+            Terminator::Return | Terminator::ChildExit => Vec::new(),
+        }
+    }
+
+    /// The entry block of the child process this terminator forks, if any.
+    pub(crate) fn forked_child(&self) -> Option<BlockId> {
+        match self {
+            Terminator::Fork { child, .. } => Some(*child),
+            Terminator::Goto(_)
+            | Terminator::Branch { .. }
+            | Terminator::Loop { .. }
+            | Terminator::Return
+            | Terminator::ChildExit => None,
         }
     }
 }
@@ -1655,7 +1678,7 @@ impl SsaProgram {
                 } => Some((
                     *site,
                     ReaderPipeline {
-                        stages: stages.iter().map(|stage| stage.0.clone()).collect(),
+                        stages: self.compound_stages.labels(stages),
                         suppressed: suppressed.clone(),
                         negated: negated.clone(),
                     },
@@ -1706,7 +1729,7 @@ impl SsaProgram {
             entry: 0,
             end_block: None,
             exiting_signals: std::collections::HashSet::new(),
-            compound_pipeline_blocks: Vec::new(),
+            compound_stages: CompoundStages::default(),
             external_deps: std::collections::BTreeSet::new(),
             user_fds: Vec::new(),
             checkpoint_blocks: std::collections::HashSet::new(),
@@ -1758,12 +1781,51 @@ impl SsaProgram {
         self.blocks.get(&id).expect("block not found")
     }
 
-    /// Return set of block IDs reachable from block 0.
+    /// Every block that can run, in this process or a forked child: block 0
+    /// and everything reachable from it (see [`Self::reachable_from`]).
     pub fn reachable(&self) -> std::collections::HashSet<BlockId> {
-        let mut roots = vec![0usize];
-        // Also include compound pipeline blocks as roots
-        roots.extend(self.compound_pipeline_blocks.iter().copied());
+        self.reachable_from(&[0])
+    }
+
+    /// The blocks that run in a forked child — a background job or a
+    /// forked pipeline stage, and anything those fork in turn. A block
+    /// here must not exit through END (DD#56: END runs only in the main
+    /// process), so an abort or `exit` from it exits the child directly.
+    pub fn child_region(&self) -> std::collections::HashSet<BlockId> {
+        let roots: Vec<BlockId> = self
+            .blocks
+            .values()
+            .flat_map(|block| self.spawned_by(block))
+            .collect();
         self.reachable_from(&roots)
+    }
+
+    /// ICE unless no block is shared between the main process and a forked
+    /// child, and every child ends in [`Terminator::ChildExit`]. A child that
+    /// jumps into the parent's blocks — a `return` target, a loop exit, END —
+    /// would run the parent's code a second time in the wrong process, and a
+    /// child that reaches `Return` would exit as though it were the program;
+    /// nothing downstream could tell either from correct code.
+    pub(crate) fn assert_children_disjoint(&self) {
+        let mut roots = vec![0];
+        roots.extend(self.end_block);
+        let main = self.same_process_from(&roots);
+        let children = self.child_region();
+        let mut shared: Vec<BlockId> = children.intersection(&main).copied().collect();
+        shared.sort_unstable();
+        assert!(
+            shared.is_empty(),
+            "ICE: blocks {shared:?} run in both the main process and a forked child"
+        );
+        let mut returning: Vec<BlockId> = children
+            .into_iter()
+            .filter(|&id| self.block(id).terminator == Terminator::Return)
+            .collect();
+        returning.sort_unstable();
+        assert!(
+            returning.is_empty(),
+            "ICE: forked-child blocks {returning:?} end in Return — a child ends in ChildExit"
+        );
     }
 
     /// The blocks that make up the END handler (DD#56): `end_block` and
@@ -1782,25 +1844,117 @@ impl SsaProgram {
         }
     }
 
-    /// Blocks reachable from `roots` by following terminators.
+    /// Blocks reachable from `roots` by every route a block has to run
+    /// another: its terminator's successors, the child a
+    /// [`Terminator::Fork`] starts, and the forked stages its pipelines
+    /// fork. An END handler that backgrounds a job therefore owns the job's
+    /// blocks too, and follows END's rules in them.
     pub fn reachable_from(&self, roots: &[BlockId]) -> std::collections::HashSet<BlockId> {
+        self.closure(roots, true)
+    }
+
+    /// Blocks that run in the same process as `roots`: terminator
+    /// successors only, never into a forked child.
+    fn same_process_from(&self, roots: &[BlockId]) -> std::collections::HashSet<BlockId> {
+        self.closure(roots, false)
+    }
+
+    fn closure(&self, roots: &[BlockId], across_forks: bool) -> std::collections::HashSet<BlockId> {
         let mut visited = std::collections::HashSet::new();
         let mut stack: Vec<BlockId> = roots.to_vec();
         while let Some(id) = stack.pop() {
-            if !visited.insert(id) {
-                continue;
+            if visited.insert(id) {
+                stack.extend(self.next_blocks(id, across_forks));
             }
-            stack.extend(self.successors_of(id));
         }
         visited
     }
 
-    /// The blocks control can reach from `id`. Empty for an unknown id.
-    fn successors_of(&self, id: BlockId) -> Vec<BlockId> {
-        self.blocks
-            .get(&id)
-            .map(|b| b.terminator.successors())
-            .unwrap_or_default()
+    /// The blocks [`Self::closure`] visits after `id`: its terminator's
+    /// successors and, across forks, the children it spawns. Empty for an
+    /// unknown id.
+    fn next_blocks(&self, id: BlockId, across_forks: bool) -> Vec<BlockId> {
+        let Some(block) = self.blocks.get(&id) else {
+            return Vec::new();
+        };
+        let mut next = block.terminator.successors();
+        if across_forks {
+            next.extend(self.spawned_by(block));
+        }
+        next
+    }
+
+    /// The entry blocks of the child processes `block` forks: a background
+    /// job's, and each forked stage of its pipelines.
+    pub(crate) fn spawned_by(&self, block: &BasicBlock) -> Vec<BlockId> {
+        let stages = block.insts.iter().flat_map(|inst| match inst {
+            SsaInst::Pipeline { stages, .. } => stages.as_slice(),
+            _ => &[],
+        });
+        block
+            .terminator
+            .forked_child()
+            .into_iter()
+            .chain(stages.filter_map(|stage| self.compound_stages.entry(&stage.0)))
+            .collect()
+    }
+}
+
+const COMPOUND_STAGE_PREFIX: &str = "__compound_";
+
+/// DD#14: the forked pipeline stages. A stage that runs a function, or a
+/// command whose arguments need lifting (`command_pipeline_stage`), is
+/// named `__compound_<entry>` in [`SsaInst::Pipeline`], where `<entry>` is the
+/// block its forked child starts at; this records each such entry and what
+/// the child runs, so the backends can find the child's code and a failure
+/// names the function, or the command's resolved path as a direct stage's
+/// failure does.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct CompoundStages(BTreeMap<BlockId, String>);
+
+impl CompoundStages {
+    /// Record a forked stage that runs `label` — a function, or a command's
+    /// resolved path — from `entry`; returns its stage name.
+    pub(crate) fn record(&mut self, entry: BlockId, label: &str) -> String {
+        self.0.insert(entry, label.to_string());
+        format!("{COMPOUND_STAGE_PREFIX}{entry}")
+    }
+
+    /// The entry block of the forked stage `name` denotes; `None` for a
+    /// direct stage. No direct stage carries the prefix — an external is
+    /// resolved to an absolute path (DD#23) and no builtin is spelled so —
+    /// so a prefixed name that was never recorded is an ICE, not a command.
+    pub(crate) fn entry(&self, name: &str) -> Option<BlockId> {
+        let id = name.strip_prefix(COMPOUND_STAGE_PREFIX)?;
+        let entry = id.parse().ok().filter(|entry| self.0.contains_key(entry));
+        Some(entry.unwrap_or_else(|| {
+            panic!("ICE: pipeline stage `{name}` names no recorded forked stage")
+        }))
+    }
+
+    /// What a diagnostic calls stage `name`: what a forked stage runs (the
+    /// function, or the command's resolved path), otherwise the command itself.
+    pub(crate) fn label<'a>(&'a self, name: &'a str) -> &'a str {
+        match self.entry(name) {
+            Some(entry) => &self.0[&entry],
+            None => name,
+        }
+    }
+
+    /// What a diagnostic calls each stage of a pipeline.
+    pub(crate) fn labels(
+        &self,
+        stages: &[(String, Vec<SsaValue>, Vec<crate::ir::Redirect>)],
+    ) -> Vec<String> {
+        stages
+            .iter()
+            .map(|stage| self.label(&stage.0).to_string())
+            .collect()
+    }
+
+    /// What each forked stage runs, for literal interning.
+    pub(crate) fn forked_labels(&self) -> impl Iterator<Item = &str> {
+        self.0.values().map(String::as_str)
     }
 }
 
@@ -2115,6 +2269,42 @@ impl VersionState {
     pub fn restore(&mut self, snap: &HashMap<String, u32>) {
         self.current = snap.clone();
     }
+
+    /// Enter the lowering of a forked child (`cmd &`, a forked pipeline
+    /// stage). Pair with [`Self::exit_forked_child`].
+    pub(crate) fn enter_forked_child(&mut self) -> ParentContext {
+        ParentContext {
+            versions: self.snapshot(),
+            pipe_reader: self.pipe_reader.take(),
+            return_target: self.return_target.take(),
+            loop_stack: std::mem::take(&mut self.loop_stack),
+            tail_loop: self.tail_loop.take(),
+        }
+    }
+
+    /// Leave a forked child: the parent resumes with exactly the context it
+    /// had at the fork and none of the child's variable versions.
+    pub(crate) fn exit_forked_child(&mut self, parent: ParentContext) {
+        self.restore(&parent.versions);
+        self.pipe_reader = parent.pipe_reader;
+        self.return_target = parent.return_target;
+        self.loop_stack = parent.loop_stack;
+        self.tail_loop = parent.tail_loop;
+    }
+}
+
+/// What a forked child must not inherit from its parent's lowering: the
+/// parent's variable versions (the child's assignments die with the child),
+/// its lexical pipe reader (`sash_fork` discards inherited readers), and
+/// every jump target into parent code — no child block may branch to a
+/// parent block, which is what [`SsaProgram::assert_children_disjoint`]
+/// checks after the fact.
+pub(crate) struct ParentContext {
+    versions: HashMap<String, u32>,
+    pipe_reader: Option<(i64, bool)>,
+    return_target: Option<usize>,
+    loop_stack: Vec<(usize, usize)>,
+    tail_loop: Option<TailLoop>,
 }
 
 /// `IntCell` is a **storage** annotation, never an expression.
@@ -2275,12 +2465,11 @@ mod api_contract_tests {
 
     /// The compiler-internal opcodes: no source spelling reaches them, so a
     /// predicate's arm for them is pinned here or nowhere.
-    const INTERNAL_OPCODES: [BuiltinCmd; 11] = [
+    const INTERNAL_OPCODES: [BuiltinCmd; 10] = [
         BuiltinCmd::NegateTestResult,
         BuiltinCmd::SetTestFromStatus,
         BuiltinCmd::SetTestFromPipe,
         BuiltinCmd::LetExit,
-        BuiltinCmd::ForkBackground,
         BuiltinCmd::StoreBgPid,
         BuiltinCmd::TrapSignal,
         BuiltinCmd::SignalFlag,

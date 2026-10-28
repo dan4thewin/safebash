@@ -146,6 +146,7 @@ pub fn compile_ssa(program: &SsaProgram, embedded: Embedded, trace: bool) -> Vec
         let saved_end_status_var = fs.saved_end_status_var;
         let end_cl_block = fs.end_cl_block;
         let end_region = program.end_region();
+        let child_region = program.child_region();
 
         super::setup::reserve_user_fds(&program.user_fds, &mut builder, &mut module, &externs);
         super::setup::init_undeclared_redirect_vars(
@@ -172,6 +173,7 @@ pub fn compile_ssa(program: &SsaProgram, embedded: Embedded, trace: bool) -> Vec
             saved_end_status_var,
             end_cl_block,
             end_region: &end_region,
+            child_region: &child_region,
             space_id,
             nl_id,
             trace,
@@ -213,6 +215,9 @@ struct EmitCtx<'a, 'b> {
     saved_end_status_var: cranelift_frontend::Variable,
     end_cl_block: Option<cranelift_codegen::ir::Block>,
     end_region: &'a std::collections::HashSet<BlockId>,
+    /// Blocks that run in a forked child: an abort there exits the child
+    /// directly instead of entering END (DD#56).
+    child_region: &'a std::collections::HashSet<BlockId>,
     space_id: cranelift_module::DataId,
     nl_id: cranelift_module::DataId,
     trace: bool,
@@ -317,6 +322,7 @@ fn emit_block_insts(ctx: &mut EmitCtx, ssa_block: &BasicBlock, ssa_id: BlockId) 
     // suppression. `ssa::condition_inst_index` is shared with emit_c so the
     // two backends cannot disagree about which instruction that is.
     let cond_idx = crate::ssa::condition_inst_index(ssa_block);
+    let end_cl_block = abort_end_block(ctx, ssa_id);
     for (idx, inst) in ssa_block.insts.iter().enumerate() {
         if block_terminated {
             break;
@@ -337,9 +343,8 @@ fn emit_block_insts(ctx: &mut EmitCtx, ssa_block: &BasicBlock, ssa_id: BlockId) 
                 readers: ctx.readers,
                 capture_slots: ctx.capture_slots,
                 redirect_slots: ctx.redirect_slots,
-                end_cl_block: ctx.end_cl_block,
+                end_cl_block,
                 program: ctx.program,
-                ssa_id,
                 saved_end_status_var: ctx.saved_end_status_var,
                 cl_blocks: ctx.cl_blocks,
                 in_condition,
@@ -348,6 +353,17 @@ fn emit_block_insts(ctx: &mut EmitCtx, ssa_block: &BasicBlock, ssa_id: BlockId) 
         );
     }
     block_terminated
+}
+
+/// DD#56: where an abort in `ssa_id` enters END. END runs only in the main
+/// process, so a forked child has no END to route through — every abort in
+/// it exits the child directly.
+fn abort_end_block(ctx: &EmitCtx, ssa_id: BlockId) -> Option<cranelift_codegen::ir::Block> {
+    if ctx.child_region.contains(&ssa_id) {
+        None
+    } else {
+        ctx.end_cl_block
+    }
 }
 
 fn emit_terminator(ctx: &mut EmitCtx, ssa_block: &BasicBlock) {
@@ -361,29 +377,50 @@ fn emit_terminator(ctx: &mut EmitCtx, ssa_block: &BasicBlock) {
             true_block,
             false_block,
             ..
-        } => {
-            if ctx.trace {
-                emit_branch_outcome_trace(ctx, "branch", *true_block, *false_block);
-            }
-            let cond = ctx.builder.use_var(ctx.test_result_var);
-            let true_cl = ctx.cl_blocks[true_block];
-            let false_cl = ctx.cl_blocks[false_block];
-            ctx.builder.ins().brif(cond, true_cl, &[], false_cl, &[]);
-        }
+        } => emit_test_branch(ctx, "branch", *true_block, *false_block),
         Terminator::Loop {
             body_block,
             exit_block,
             ..
-        } => {
-            if ctx.trace {
-                emit_branch_outcome_trace(ctx, "loop", *body_block, *exit_block);
-            }
-            let cond = ctx.builder.use_var(ctx.test_result_var);
-            let body_cl = ctx.cl_blocks[body_block];
-            let exit_cl = ctx.cl_blocks[exit_block];
-            ctx.builder.ins().brif(cond, body_cl, &[], exit_cl, &[]);
+        } => emit_test_branch(ctx, "loop", *body_block, *exit_block),
+        Terminator::Fork { parent, child } => emit_fork(ctx, *parent, *child),
+        Terminator::ChildExit => {
+            let status = ctx.builder.use_var(ctx.exit_status_var);
+            emit_exit_call(ctx, status);
         }
     }
+}
+
+/// A `Branch` or `Loop` terminator: jump on the test result, tracing the
+/// outcome under `--trace` as `kind`.
+fn emit_test_branch(ctx: &mut EmitCtx, kind: &str, on_true: BlockId, on_false: BlockId) {
+    if ctx.trace {
+        emit_branch_outcome_trace(ctx, kind, on_true, on_false);
+    }
+    let cond = ctx.builder.use_var(ctx.test_result_var);
+    let true_cl = ctx.cl_blocks[&on_true];
+    let false_cl = ctx.cl_blocks[&on_false];
+    ctx.builder.ins().brif(cond, true_cl, &[], false_cl, &[]);
+}
+
+/// A `Fork` terminator: the child (pid 0) continues at `child`, the parent at
+/// `parent`. The parent's first instruction reads the pid: it is `$!`, or a
+/// negative one is the fork failure that instruction reports.
+fn emit_fork(ctx: &mut EmitCtx, parent: BlockId, child: BlockId) {
+    let fork = ctx
+        .module
+        .declare_func_in_func(ctx.externs.fork, ctx.builder.func);
+    let call = ctx.builder.ins().call(fork, &[]);
+    let pid = ctx.builder.inst_results(call)[0];
+    ctx.builder.def_var(ctx.test_result_var, pid);
+    if ctx.trace {
+        // Each process reports its own side: a nonzero pid (including a
+        // failed fork's -1) is the parent's, zero the child's.
+        emit_branch_outcome_trace(ctx, "branch", parent, child);
+    }
+    let parent_cl = ctx.cl_blocks[&parent];
+    let child_cl = ctx.cl_blocks[&child];
+    ctx.builder.ins().brif(pid, parent_cl, &[], child_cl, &[]);
 }
 
 fn emit_return(ctx: &mut EmitCtx, ssa_block: &BasicBlock) {
@@ -393,6 +430,10 @@ fn emit_return(ctx: &mut EmitCtx, ssa_block: &BasicBlock) {
     } else {
         ctx.builder.use_var(ctx.exit_status_var)
     };
+    emit_exit_call(ctx, status);
+}
+
+fn emit_exit_call(ctx: &mut EmitCtx, status: cranelift_codegen::ir::Value) {
     let exit_ref = ctx
         .module
         .declare_func_in_func(ctx.externs.exit, ctx.builder.func);

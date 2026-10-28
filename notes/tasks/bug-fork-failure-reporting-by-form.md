@@ -39,6 +39,11 @@ The fault is the first `clone` failing with EAGAIN
 | f2 | `if ! /bin/true { echo y } else { echo n }` | `y`, "/bin/true: error 11" |
 | f3 | `if /bin/echo a \| ! /bin/grep -q b { echo y } else { echo n }` | `n`, no message |
 | f4 | `fn f { return ! if /bin/true { /bin/true } }` then `f` then `echo "rc=$?"` | `rc=1`, the same as unfaulted |
+| e1 | `END { /bin/echo hi &; - wait; echo after }` then `echo main` | `main`, `after`, rc 0, no message |
+
+e1 was added 2026-10-28 (probe `bgf/endf4.sh` in `files/port-f2-probes.tar.gz`):
+the same before and after F2, in both backends. Outside END, F2 makes a
+background job report the pipeline way (below); inside END it is still silent.
 
 So there are three behaviours:
 - a simple command reports `<cmd>: error 11` (naming the command that never
@@ -72,8 +77,10 @@ F1+F4 modified none of these functions, so this goes to the backlog under DG's
 rule for the port (fix a known bug in a function the port modifies; file the
 others).
 
-Related: batch-531 B20, a background job's fork failure is silent (open; the
-branch fixes it in F2 with a guarded Fork terminator). DD#55's addendum of
+Related: batch-531 B20, landed with F2 on 2026-10-28. A background job whose
+fork fails now reports the pipeline way: `fork: error 11`, status 1, an abort
+unless caught or suppressed, and `$!` reads -1 (`bgfork.1`-`bgfork.8` in
+commands.sh). Inside END it is still silent (e1). DD#55's addendum of
 2026-10-26 says "Fork failure is meant to abort as written".
 
 ## Fix direction
@@ -81,7 +88,8 @@ branch fixes it in F2 with a guarded Fork terminator). DD#55's addendum of
 One fork-failure path for every form: print `fork: <errno>`, leave one
 status, and follow DD#55's caught/uncaught handling. The failure belongs to
 the statement, not to the command that never ran, so `!` does not invert it.
-Land it with B20 so a background job reports the same way.
+B20 landed first and took the pipeline behaviour, so a background job is now
+in the second group, and this fix covers it with the rest (e1 included).
 
 The question for DG is the status. **Recommended: 1**, as pipelines and
 captures leave today. 127 is what DD#55 gives an exec failure in the child

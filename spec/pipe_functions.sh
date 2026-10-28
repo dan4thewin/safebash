@@ -11,7 +11,7 @@
 set -eu
 . common.sh
 setup pipe_functions
-plan=138
+plan=179
 echo "1..$plan" >&3
 
 set +e
@@ -975,6 +975,320 @@ run_sash 'exec 0< reader-stdin
   echo "$a:$b"
 }'
 [[ $rc = 0 && $out = $'one:stdin-one\ntwo:stdin-two' && -z $rerr ]]; chk pipeown.41
+
+# ---- Forked stages (batch-531 port, F2). A stage is a forked child: it
+# evaluates its own arguments, leaves with its own status, and the parent
+# reports a failed stage by what the source wrote.
+
+# B120: a function stage's arguments are evaluated in the caller's frame. The
+# stage took the caller's positional array before it lowered the stage's own
+# arguments, so any argument that reads the caller's positionals found no
+# array: an ICE in both backends ("undefined array" / "no emitted SSA slot"),
+# and for `$#` in C a silently wrong number.
+
+# stgarg.1 `$1` of the caller, passed to a function stage
+run_sash 'fn f { echo "a=$1" }
+fn h { f "$1" | /bin/cat }
+h x'
+[[ $rc = 0 && $out = a=x && -z $rerr ]]; chk stgarg.1
+
+# stgarg.2 arithmetic over the caller's `$1`
+run_sash 'fn f { echo "f$1" }
+fn g { f $(( $1 - 1 )) | /bin/cat }
+g 2'
+[[ $rc = 0 && $out = f1 && -z $rerr ]]; chk stgarg.2
+
+# stgarg.3 a `:-` default on an unset positional, then the caller reads `$1`
+run_sash 'fn f { echo "a=$1" }
+fn h { f "${2:-dflt}" | /bin/cat; echo "h=$1" }
+h y'
+[[ $rc = 0 && $out = $'a=dflt\nh=y' && -z $rerr ]]; chk stgarg.3
+
+# stgarg.4 the caller's `args` array by index
+run_sash 'fn f { echo "a=$1" }
+fn h { f "${args[0]}" | /bin/cat }
+h y'
+[[ $rc = 0 && $out = a=y && -z $rerr ]]; chk stgarg.4
+
+# stgarg.5 the caller's `$#` (C printed an address-like number here)
+run_sash 'fn f { echo "n=$1" }
+fn h { f "$#" | /bin/cat; echo "h=$1" }
+h y'
+[[ $rc = 0 && $out = $'n=1\nh=y' && -z $rerr ]]; chk stgarg.5
+
+# stgarg.6 a global beside the positional, in the argument and in the stage
+run_sash 'str s=outer
+fn f { echo "f $1 $s" }
+fn h { f "$1-$s" | /bin/cat }
+h x'
+[[ $rc = 0 && $out = 'f x-outer outer' && -z $rerr ]]; chk stgarg.6
+
+# stgarg.7 the stage inside a background job
+run_sash 'fn f { echo "f $1" }
+fn h { f "$1" | /bin/cat; echo "h $1" }
+h x &
+- wait
+echo after'
+[[ $rc = 0 && $out = $'f x\nh x\nafter' && -z $rerr ]]; chk stgarg.7
+
+# stgarg.8 the caller is itself a stage
+run_sash 'fn f { echo "f $1" }
+fn h { f "$1" | /bin/cat }
+h x | /bin/cat
+echo after'
+[[ $rc = 0 && $out = $'f x\nafter' && -z $rerr ]]; chk stgarg.8
+
+# stgarg.9 the function is the final stage
+run_sash 'fn f { /bin/cat; echo "a=$1" }
+fn g { /bin/echo in | f "$1" }
+g y'
+[[ $rc = 0 && $out = $'in\na=y' && -z $rerr ]]; chk stgarg.9
+
+# B10: a failing function stage is reported by the function's name, not by the
+# compiler's `__compound_N` label for the stage.
+
+# pf.69 `exit` in the stage function
+run_sash 'fn f { echo x; exit 3 }
+f | /bin/cat
+echo done'
+[[ $rc = 3 && $out = x && $rerr = "./test_bin: f: command failed (exit 3)" ]]; chk pf.69
+
+# pf.70 `return` in the stage function
+run_sash 'fn f {
+  echo x
+  return 3
+}
+f | /bin/cat
+echo after'
+[[ $rc = 3 && $out = x && $rerr = "./test_bin: f: command failed (exit 3)" ]]; chk pf.70
+
+# pf.71 the status comes from a call inside the stage: still named `f`
+run_sash 'fn g { return 3 }
+fn f { echo x; g }
+f | /bin/cat
+echo after'
+[[ $rc = 3 && $out = x && $rerr = "./test_bin: f: command failed (exit 3)" ]]; chk pf.71
+
+# A stage's body is checked as any body is: its first uncaught failure aborts
+# the child, which reports the command, and the parent reports the function.
+
+# pf.82 a function stage
+run_sash 'fn f { /bin/false; echo "after $?" }
+f | /bin/cat
+echo done'
+[[ $rc = 1 && -z $out \
+   && $rerr = $'./test_bin: /bin/false: command failed (exit 1)\n./test_bin: f: command failed (exit 1)' ]]; chk pf.82
+
+# pf.83 a self-tail function as a stage
+run_sash 'fn f { if (( $1 > 0 )) { /bin/false; echo "n $1"; return f $(( $1 - 1 )) } }
+f 2 | /bin/cat
+echo done'
+[[ $rc = 1 && -z $out \
+   && $rerr = $'./test_bin: /bin/false: command failed (exit 1)\n./test_bin: f: command failed (exit 1)' ]]; chk pf.83
+
+# B17: a background job inside a reader loop. The child left through the
+# reader's finish, which belongs to the parent, and panicked "reader scopes
+# must finish in nesting order" once per job.
+
+# pipeown.42 a function's background job, waited by pid, inside the reader
+run_sash 'fn bg {
+  echo "got $1" &
+  int p=$!
+  int r=$(wait $p)
+  int s=$(waitstatus)
+  echo "s=$s r=$(( r == p ))"
+}
+/bin/printf "1\n2\n" | while readline x {
+  attest x [[ -n $x ]]
+  bg "$x"
+}
+echo done'
+[[ $rc = 0 && $out = $'got 1\ns=0 r=1\ngot 2\ns=0 r=1\ndone' && -z $rerr ]]; chk pipeown.42
+
+# pipeown.43 a command background job directly in the reader body
+run_sash '/bin/printf "1\n2\n" | while readline x {
+  attest x [[ -n $x ]]
+  /bin/true &
+  echo "got $x"
+}
+- wait
+echo done'
+[[ $rc = 0 && $out = $'got 1\ngot 2\ndone' && -z $rerr ]]; chk pipeown.43
+
+# B81: a command stage's arguments are evaluated in the stage's child. A
+# capture in a command stage's arguments (a function's, an external command's,
+# an anonymous body's, or an int function called in its arithmetic) ICE'd at
+# compile time in both backends, and a `:` stage dropped its captures unrun.
+# The child now evaluates them as a function stage's child does: after the
+# stage's redirects, before the exec.
+
+# stgarg.11 the final stage
+run_sash 'fn g { echo hi }
+/bin/echo hi | /bin/grep "$(g)"
+echo done'
+[[ $rc = 0 && $out = $'hi\ndone' && -z $rerr ]]; chk stgarg.11
+
+# stgarg.12 a middle stage
+run_sash 'fn g { echo hi }
+/bin/echo hi | /bin/grep "$(g)" | /bin/cat
+echo done'
+[[ $rc = 0 && $out = $'hi\ndone' && -z $rerr ]]; chk stgarg.12
+
+# stgarg.13 inside a function
+run_sash 'fn g { echo hi }
+fn h { /bin/echo "h:$(g)" | /bin/cat }
+h
+echo done'
+[[ $rc = 0 && $out = $'h:hi\ndone' && -z $rerr ]]; chk stgarg.13
+
+# stgarg.14 inside END
+run_sash 'fn g { echo hi }
+END { /bin/echo "end:$(g)" | /bin/cat }
+echo main'
+[[ $rc = 0 && $out = $'main\nend:hi' && -z $rerr ]]; chk stgarg.14
+
+# stgarg.15 inside a capture
+run_sash 'fn g { echo hi }
+x=$(/bin/echo "$(g)" | /bin/cat)
+echo "x=${x:!}"'
+[[ $rc = 0 && $out = x=hi && -z $rerr ]]; chk stgarg.15
+
+# stgarg.16 a condition
+run_sash 'fn g { echo hi }
+if /bin/echo "$(g)" | /bin/grep -q hi { echo yes } else { echo no }'
+[[ $rc = 0 && $out = yes && -z $rerr ]]; chk stgarg.16
+
+# stgarg.17 a condition whose final stage is negated
+run_sash 'fn g { echo hi }
+if /bin/echo "$(g)" | ! /bin/grep -q zz { echo neg }'
+[[ $rc = 0 && $out = neg && -z $rerr ]]; chk stgarg.17
+
+# stgarg.18 feeding a reader loop
+run_sash 'fn g { echo hi }
+/bin/echo "$(g)" | while readline x { echo "got ${x:!}" }
+echo done'
+[[ $rc = 0 && $out = $'got hi\ndone' && -z $rerr ]]; chk stgarg.18
+
+# stgarg.19 a `write` stage
+run_sash 'fn g { echo hi }
+write "w:$(g)" | /bin/cat
+echo
+echo done'
+[[ $rc = 0 && $out = $'w:hi\ndone' && -z $rerr ]]; chk stgarg.19
+
+# stgarg.20 an int function in the argument's arithmetic
+run_sash 'fn sq -> int { return $(( $1 * $1 )) }
+/bin/echo "n=$(( (sq 3) + 1 ))" | /bin/cat
+echo done'
+[[ $rc = 0 && $out = $'n=10\ndone' && -z $rerr ]]; chk stgarg.20
+
+# stgarg.22 a background pipeline
+run_sash 'fn g { echo hi }
+/bin/echo "bg:$(g)" | /bin/cat &
+- wait
+echo done'
+[[ $rc = 0 && $out = $'bg:hi\ndone' && -z $rerr ]]; chk stgarg.22
+
+# stgarg.23 with a signal trap installed
+run_sash 'fn g { echo hi }
+signal 15 EXIT
+/bin/echo "s:$(g)" | /bin/cat
+echo done'
+[[ $rc = 0 && $out = $'s:hi\ndone' && -z $rerr ]]; chk stgarg.23
+
+# stgarg.24 a capture as a map key
+run_sash 'fn g { echo k }
+map m=([k]=v)
+/bin/echo "${m[$(g)]:-d}" | /bin/cat
+echo done'
+[[ $rc = 0 && $out = $'v\ndone' && -z $rerr ]]; chk stgarg.24
+
+# stgarg.25 an external command's capture (--no-taint: it is not attested)
+SASH_CFLAGS=--no-taint run_sash '/bin/echo "a=$(/bin/echo x)" | /bin/cat
+echo done'
+[[ $rc = 0 && $out = $'a=x\ndone' && -z $rerr ]]; chk stgarg.25
+
+# stgarg.26 an anonymous capture body
+run_sash '/bin/echo "a=$(echo x; echo y)" | /bin/cat
+echo done'
+[[ $rc = 0 && $out = $'a=x\ny\ndone' && -z $rerr ]]; chk stgarg.26
+
+# stgarg.27 the capture reads the stage's stdin, which is the pipe
+SASH_CFLAGS=--no-taint run_sash 'echo hi | /bin/echo "got=$(/bin/cat)"
+echo done'
+[[ $rc = 0 && $out = $'got=hi\ndone' && -z $rerr ]]; chk stgarg.27
+
+# A `:` stage runs its argument captures, as the statement `:` does. Their
+# output is discarded but their stderr is not, and an uncaught failure inside
+# one aborts the stage: the child reports the failure, the parent the stage
+# (DD#55's two lines, as for any failed stage).
+
+# stgarg.28 the capture runs: its stderr is seen
+run_sash 'fn g { /bin/echo side >&2; echo x }
+: "$(g)" | /bin/cat
+echo done'
+[[ $rc = 0 && $out = done && $rerr = side ]]; chk stgarg.28
+
+# stgarg.29 an uncaught failure inside it aborts the stage
+run_sash 'fn g { /bin/false; echo x }
+: "$(g)" | /bin/cat
+echo done'
+[[ $rc = 1 && -z $out \
+   && $rerr = $'./test_bin: /bin/false: command failed (exit 1)\n./test_bin: :: command failed (exit 1)' ]]; chk stgarg.29
+
+# stgarg.30 the same failure in an external stage's argument: the child aborts
+# before its exec, and the parent names the stage's command
+run_sash 'fn g { /bin/false; echo x }
+/bin/echo "a=$(g)" | /bin/cat
+echo done'
+[[ $rc = 1 && -z $out \
+   && $rerr = $'./test_bin: /bin/false: command failed (exit 1)\n./test_bin: /bin/echo: command failed (exit 1)' ]]; chk stgarg.30
+
+# stgarg.31 an `echo` stage's own redirect: echo's write error, then the stage
+run_sash 'fn g { echo hi }
+echo "$(g)" >/dev/full | /bin/cat
+echo done'
+[[ $rc = 1 && -z $out \
+   && $rerr = $'./test_bin: echo: write error: No space left on device\n./test_bin: echo: command failed (exit 1)' ]]; chk stgarg.31
+
+# stgarg.32 the stage's exec fails after its arguments ran: the child reports
+# the errno and the parent the uncaught failure (errors.sh 55.30's two lines)
+run_sash_vanish 'fn g { echo hi }
+SPEC_VANISH_CMD "$(g)" | /bin/cat
+echo unreached'
+[[ $rc != 0 && -z $out \
+   && $rerr == *": No such file or directory"* \
+   && $rerr == *": command failed (exit 127)"* ]]; chk stgarg.32
+
+# Order. A stage applies its redirects and then evaluates its arguments, as a
+# function stage already did; a statement evaluates its arguments first. Which
+# order a stage should use is an open question (q-stage-capture-redirect-order);
+# these pin today's.
+printf 'abc\n' > ro.in
+
+# stgarg.33 a command stage's capture reads the stage's `<` file
+SASH_CFLAGS=--no-taint run_sash ': | /bin/echo "got=$(/bin/cat)" < ro.in
+echo done'
+[[ $rc = 0 && $out = $'got=abc\ndone' && -z $rerr ]]; chk stgarg.33
+
+# stgarg.34 a function stage's capture does too (unchanged)
+SASH_CFLAGS=--no-taint run_sash 'fn f { echo "f:$1" }
+: | f "$(/bin/cat)" < ro.in
+echo done'
+[[ $rc = 0 && $out = $'f:abc\ndone' && -z $rerr ]]; chk stgarg.34
+rm -f ro.in
+
+# stgarg.35 a command stage's `2>` covers its capture's stderr
+run_sash 'fn g { - /bin/ls /nonexistent-stgarg35; echo x }
+/bin/echo "a=$(g)" 2>/dev/null | /bin/cat
+echo done'
+[[ $rc = 0 && $out = $'a=x\ndone' && -z $rerr ]]; chk stgarg.35
+
+# stgarg.36 a statement's `2>` does not: its capture ran first (unchanged)
+run_sash 'fn g { - /bin/ls /nonexistent-stgarg36; echo x }
+/bin/echo "a=$(g)" 2>/dev/null
+echo done'
+[[ $rc = 0 && $out = $'a=x\ndone' && $rerr == *nonexistent-stgarg36* ]]; chk stgarg.36
 
 set -e
 tally

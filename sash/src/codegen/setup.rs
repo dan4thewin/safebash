@@ -984,11 +984,14 @@ pub(super) fn intern_literals(
     for inst in program.blocks.values().flat_map(|block| &block.insts) {
         interner.intern_inst(inst);
     }
+    // A failed forked stage is reported under its label: the function's name,
+    // or the command's path.
+    for label in program.compound_stages.forked_labels() {
+        interner.intern(label);
+    }
 
     if trace {
-        for block in program.blocks.values() {
-            interner.intern_trace_terminator(block, program);
-        }
+        interner.intern_trace_terminators(program);
     }
 
     (interner.literals, space_id, nl_id)
@@ -1191,30 +1194,37 @@ impl<'a> Interner<'a> {
         }
     }
 
+    /// DD#32: intern the branch trace messages for every block's terminator.
+    fn intern_trace_terminators(&mut self, program: &SsaProgram) {
+        for block in program.blocks.values() {
+            self.intern_trace_terminator(block, program);
+        }
+    }
+
     /// DD#32: intern branch trace messages for the block's terminator.
+    ///
+    /// **Total over `Terminator` on purpose — do not add a wildcard.** A
+    /// wildcard here once swallowed the new `Fork`, and every `&` job lost
+    /// its trace line without a diagnostic.
     fn intern_trace_terminator(&mut self, block: &BasicBlock, program: &SsaProgram) {
-        match &block.terminator {
-            crate::ssa::Terminator::Branch {
+        use crate::ssa::Terminator;
+        let (kind, first, second) = match &block.terminator {
+            Terminator::Branch {
                 true_block,
                 false_block,
                 ..
-            } => {
-                let true_label = program.block(*true_block).label.as_str();
-                let false_label = program.block(*false_block).label.as_str();
-                self.intern(&format!("+ branch \u{2192} {}\n", true_label));
-                self.intern(&format!("+ branch \u{2192} {}\n", false_label));
-            }
-            crate::ssa::Terminator::Loop {
+            } => ("branch", *true_block, *false_block),
+            Terminator::Loop {
                 body_block,
                 exit_block,
                 ..
-            } => {
-                let body_label = program.block(*body_block).label.as_str();
-                let exit_label = program.block(*exit_block).label.as_str();
-                self.intern(&format!("+ loop \u{2192} {}\n", body_label));
-                self.intern(&format!("+ loop \u{2192} {}\n", exit_label));
-            }
-            _ => {}
+            } => ("loop", *body_block, *exit_block),
+            Terminator::Fork { parent, child } => ("branch", *parent, *child),
+            Terminator::Goto(_) | Terminator::Return | Terminator::ChildExit => return,
+        };
+        for target in [first, second] {
+            let label = program.block(target).label.as_str();
+            self.intern(&format!("+ {} \u{2192} {}\n", kind, label));
         }
     }
 }

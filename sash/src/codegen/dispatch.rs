@@ -282,8 +282,9 @@ impl SsaInst {
                 builder.def_var(ctx.test_result_var, ready);
             }
             BuiltinCmd::LetExit => return self.emit_let_exit(args, builder, module, ctx),
-            BuiltinCmd::ForkBackground => self.emit_fork_background(builder, module, ctx),
-            BuiltinCmd::StoreBgPid => return self.emit_store_bg_pid(args, builder, module, ctx),
+            BuiltinCmd::StoreBgPid => {
+                return self.emit_store_bg_pid(args, *checked, builder, module, ctx)
+            }
             BuiltinCmd::TrapSignal => self.emit_trap_signal(args, builder, module, ctx),
             BuiltinCmd::SignalFlag => self.emit_signal_flag(args, builder, module, ctx),
             BuiltinCmd::SignalCheckpoint => {
@@ -362,20 +363,6 @@ impl SsaInst {
         let is_zero = builder.ins().icmp(IntCC::Equal, cur_es, zero);
         let result = builder.ins().select(is_zero, one, zero);
         builder.def_var(test_result_var, result);
-    }
-
-    fn emit_fork_background(
-        &self,
-        builder: &mut FunctionBuilder,
-        module: &mut ObjectModule,
-        ctx: &mut InstCtx,
-    ) {
-        // Fork: pid = sash_fork(). Store pid in test_result_var
-        // so the Branch terminator can dispatch on it.
-        let fork_ref = module.declare_func_in_func(ctx.externs.fork, builder.func);
-        let call = builder.ins().call(fork_ref, &[]);
-        let pid = builder.inst_results(call)[0];
-        builder.def_var(ctx.test_result_var, pid);
     }
 
     fn emit_trap_signal(
@@ -939,25 +926,61 @@ impl SsaInst {
         false
     }
 
+    /// `$!` after `cmd &`: the [`Terminator::Fork`] left the child's pid in
+    /// `test_result`, and `$!` takes it either way. A negative pid (`-1`) is a
+    /// fork that never started the job: `$!` reads `-1` rather than naming an
+    /// earlier job (DD#126: a knowable `-1` over a stale answer), and the
+    /// statement fails the way a pipeline's fork does (`guard_pipeline_setup`):
+    /// status 1, and where checked the DD#55 diagnostic and abort. A started
+    /// job leaves `$?` as it was.
     fn emit_store_bg_pid(
         &self,
         args: &[SsaValue],
+        checked: bool,
         builder: &mut FunctionBuilder,
         module: &mut ObjectModule,
         ctx: &mut InstCtx,
     ) -> bool {
-        let vars = &mut *ctx.vars;
-        let test_result_var = ctx.test_result_var;
-        let externs = ctx.externs;
-        // Store fork pid (test_result_var) into $! variable
         let kind = BuiltinCmd::StoreBgPid;
         let [target] = kind.expect_ssa_args(args);
         let vr = kind.expect_var_arg(target);
-        let pid = builder.use_var(test_result_var);
-        let (str_ptr, str_len) = emit_int_to_str(builder, module, externs, pid);
-        let sv = super::types::var_slot(vars, &vr.display());
+        let pid = builder.use_var(ctx.test_result_var);
+        let (str_ptr, str_len) = emit_int_to_str(builder, module, ctx.externs, pid);
+        let sv = super::types::var_slot(ctx.vars, &vr.display());
         builder.def_var(sv.str_ptr(), str_ptr);
         builder.def_var(sv.str_len(), str_len);
+        let failed = builder.ins().icmp_imm(IntCC::SignedLessThan, pid, 0);
+        let failure = builder.create_block();
+        let done = builder.create_block();
+        builder.ins().brif(failed, failure, &[], done, &[]);
+
+        builder.switch_to_block(failure);
+        builder.seal_block(failure);
+        let one = builder.ins().iconst(I64, 1);
+        let zero = builder.ins().iconst(I64, 0);
+        builder.def_var(ctx.exit_status_var, one);
+        builder.def_var(ctx.test_result_var, zero);
+        let (seg1_ptr, seg1_len) =
+            super::inst_handlers::diag_static_seg("fork", ctx.literals, module, builder);
+        let (seg2_ptr, seg2_len) = super::inst_handlers::diag_empty_seg(builder);
+        super::inst_handlers::emit_status_abort_check(
+            builder,
+            module,
+            ctx.externs,
+            ctx.exit_status_var,
+            ctx.end_cl_block,
+            checked,
+            super::inst_handlers::AbortMsg::Errno {
+                seg1_ptr,
+                seg1_len,
+                seg2_ptr,
+                seg2_len,
+            },
+        );
+        builder.ins().jump(done, &[]);
+
+        builder.switch_to_block(done);
+        builder.seal_block(done);
         false
     }
 
@@ -1042,19 +1065,18 @@ impl SsaInst {
             ),
             None => builder.ins().iconst(I64, 0),
         };
-        // DD#56: from the main body (not inside END), route a bare `exit` to the
-        // END block carrying the code; inside END (or with no END) exit directly.
-        let route_to_end = ctx
-            .end_cl_block
-            .zip(ctx.program.end_block)
-            .filter(|(_, end_id)| ctx.ssa_id < *end_id);
-        if let Some((end_cl, _)) = route_to_end {
+        // DD#56: from the main body, route `exit` to the END block carrying
+        // the code. Inside END, with no END, or in a forked child (whose
+        // `end_cl_block` is None: END runs only in the main process) exit
+        // directly.
+        let route_to_end = ctx.end_cl_block.filter(|_| !ctx.in_end_block);
+        if let Some(end_cl) = route_to_end {
             builder.def_var(exit_status_var, code_val);
             builder.ins().jump(end_cl, &[]);
             return true;
         }
-        // Direct exit (no END block, or inside END block). Inside END: also
-        // update saved_end_status_var so Return uses it.
+        // Direct exit. Inside END this also updates saved_end_status_var so
+        // Return uses it.
         builder.def_var(saved_end_status_var, code_val);
         let exit_ref = module.declare_func_in_func(externs.exit, builder.func);
         builder.ins().call(exit_ref, &[code_val]);

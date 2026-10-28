@@ -62,6 +62,12 @@ struct Emit {
     /// `ctx.in_end_block`; the region itself comes from the shared
     /// `SsaProgram::end_region` so the backends cannot disagree.
     end_region: std::collections::HashSet<BlockId>,
+    /// DD#56: the blocks that run in a forked child. END runs only in the
+    /// main process, so an abort or `exit` there leaves through
+    /// `__child_exit` instead. Mirrors native `EmitCtx::child_region`.
+    child_region: std::collections::HashSet<BlockId>,
+    /// DD#14: the forked pipeline stages, for their entry blocks and labels.
+    compound_stages: crate::ssa::CompoundStages,
     readers: std::collections::BTreeMap<u32, crate::ssa::ReaderPipeline>,
 }
 
@@ -76,6 +82,8 @@ impl Emit {
             cur_block: 0,
             in_condition: false,
             end_region: std::collections::HashSet::new(),
+            child_region: std::collections::HashSet::new(),
+            compound_stages: crate::ssa::CompoundStages::default(),
             readers: std::collections::BTreeMap::new(),
         }
     }
@@ -462,6 +470,8 @@ fn emit_main(e: &mut Emit, ssa: &SsaProgram) {
     let types = collect_var_types(ssa);
     e.end_block = ssa.end_block;
     e.end_region = ssa.end_region();
+    e.child_region = ssa.child_region();
+    e.compound_stages = ssa.compound_stages.clone();
     e.readers = ssa.reader_pipelines();
     e.has_exiting_signals = !ssa.exiting_signals.is_empty();
     writeln!(e.out, "int main(int argc, char** argv) {{").unwrap();
@@ -491,6 +501,12 @@ fn emit_main(e: &mut Emit, ssa: &SsaProgram) {
     }
 
     writeln!(e.out).unwrap();
+    emit_exit_labels(e);
+    writeln!(e.out, "}}").unwrap();
+}
+
+/// The labels every exit leaves `main` through.
+fn emit_exit_labels(e: &mut Emit) {
     writeln!(e.out, "__exit:").unwrap();
     // DD#56: with an END block, the final status is the one captured on END
     // entry (or an explicit `exit N` in END), not the END body's last command.
@@ -500,7 +516,12 @@ fn emit_main(e: &mut Emit, ssa: &SsaProgram) {
         writeln!(e.out, "    sash_exit(__exit_status);").unwrap();
     }
     writeln!(e.out, "    return 0;  /* unreachable */").unwrap();
-    writeln!(e.out, "}}").unwrap();
+    // DD#56: a forked child exits with its own status and never runs END.
+    if !e.child_region.is_empty() {
+        writeln!(e.out, "__child_exit:").unwrap();
+        writeln!(e.out, "    sash_exit(__exit_status);").unwrap();
+        writeln!(e.out, "    return 0;  /* unreachable */").unwrap();
+    }
 }
 
 fn emit_user_fds(e: &mut Emit, fds: &[i64]) {
@@ -762,7 +783,7 @@ fn emit_block(e: &mut Emit, id: BlockId, block: &BasicBlock, types: &VarTypes) {
         emit_inst(e, inst, types);
     }
     e.in_condition = false;
-    emit_terminator(&mut e.out, &block.terminator);
+    emit_terminator(e, &block.terminator);
 }
 
 /// Same predicate as `codegen/entry.rs::is_catching_construct_exit`.
@@ -1912,34 +1933,44 @@ fn emit_builtin_extra(
 }
 
 /// Background-job builtins split out of `emit_builtin_extra` (complexity gate):
-/// `cmd &` (ForkBackground fork), `$!` (StoreBgPid), and `wait`. Returns true
-/// when it handled `kind`.
-fn emit_bg_builtin_c(e: &mut Emit, kind: &BuiltinCmd, args: &[SsaValue], types: &VarTypes) {
+/// `$!` (StoreBgPid) and `wait`.
+fn emit_bg_builtin_c(
+    e: &mut Emit,
+    kind: &BuiltinCmd,
+    args: &[SsaValue],
+    checked: bool,
+    types: &VarTypes,
+) {
     match kind {
-        // Fork; the pid lands in __test_result so the Branch dispatches child
-        // (0) vs parent (pid). Mirrors native emit_fork_background.
-        BuiltinCmd::ForkBackground => {
-            writeln!(e.out, "    __test_result = sash_fork();").unwrap();
-        }
-        // `$!` — store the last background pid (the fork result still in
-        // __test_result) into its var, as a string.
-        BuiltinCmd::StoreBgPid => {
-            let [target] = kind.expect_ssa_args(args);
-            let vr = kind.expect_var_arg(target);
-            let base = c_var_name(&vr.name, vr.version);
-            let (p, l) = emit_itoa_temp(e, "__test_result");
-            writeln!(
-                e.out,
-                "    {base}_ptr = {p}; {base}_len = {l};",
-                base = base
-            )
-            .unwrap();
-        }
-        // `wait [PID]` — reap a background child, adopting its exit status.
-        // No-arg `wait` waits for `$!`. Mirrors native emit_wait.
+        BuiltinCmd::StoreBgPid => emit_store_bg_pid_c(e, args, checked),
+        // DD#126 `wait [PID]`: reap a child (no argument, or a PID of 0 or
+        // below, is any child) for its pid; the status goes to the latch
+        // `$(waitstatus)` reads, never `$?`. Mirrors native emit_wait.
         BuiltinCmd::Wait => emit_wait_c(e, args, types),
         _ => panic!("ICE: emit_bg_builtin_c called with {kind:?}"),
     }
+}
+
+/// `$!` after `cmd &`: the Fork terminator left the child's pid in
+/// `__test_result`, and `$!` takes it either way. A negative pid (`-1`) is a
+/// fork that never started the job: `$!` reads `-1` rather than naming an
+/// earlier job (DD#126), and the statement fails the way a pipeline's fork
+/// does (`emit_pipeline_setup_failure`): status 1, and where checked the
+/// DD#55 diagnostic and abort. Mirrors native `emit_store_bg_pid`.
+fn emit_store_bg_pid_c(e: &mut Emit, args: &[SsaValue], checked: bool) {
+    let kind = BuiltinCmd::StoreBgPid;
+    let [target] = kind.expect_ssa_args(args);
+    let vr = kind.expect_var_arg(target);
+    let base = c_var_name(&vr.name, vr.version);
+    let (p, l) = emit_itoa_temp(e, "__test_result");
+    writeln!(e.out, "    {base}_ptr = {p}; {base}_len = {l};").unwrap();
+    writeln!(e.out, "    if (__test_result < 0) {{").unwrap();
+    writeln!(e.out, "    __exit_status = 1; __test_result = 0;").unwrap();
+    if checked {
+        let abort = abort_target(e);
+        writeln!(e.out, "    sash_emsg(\"fork\", 4, 0, 0); goto {abort};").unwrap();
+    }
+    writeln!(e.out, "    }}").unwrap();
 }
 
 /// DD#126: the `- wait` statement. Reaps a child for the effect and drops the
@@ -2130,8 +2161,8 @@ fn emit_command_body(
         BuiltinCmd::Match | BuiltinCmd::Cd | BuiltinCmd::TrapSignal | BuiltinCmd::SignalFlag => {
             emit_builtin_extra(e, name, kind, args, checked, types)
         }
-        BuiltinCmd::ForkBackground | BuiltinCmd::StoreBgPid | BuiltinCmd::Wait => {
-            emit_bg_builtin_c(e, kind, args, types)
+        BuiltinCmd::StoreBgPid | BuiltinCmd::Wait => {
+            emit_bg_builtin_c(e, kind, args, checked, types)
         }
 
         // ── never reaches command position ────────────────────────────
@@ -2375,8 +2406,12 @@ fn emit_signal_exit_check(e: &mut Emit) {
 
 /// DD#56: where a DD#55 (A) abort jumps — the END-cleanup block if present
 /// (so cleanup / `END { exit N }` runs, with the triggering status in
-/// `__exit_status`), otherwise the terminal `__exit` label.
+/// `__exit_status`), otherwise the terminal `__exit` label. A forked child
+/// has no END to run: it leaves through `__child_exit`.
 fn abort_target(e: &Emit) -> String {
+    if e.child_region.contains(&e.cur_block) {
+        return "__child_exit".to_string();
+    }
     match e.end_block {
         Some(id) => format!("_blk_{}", id),
         None => "__exit".to_string(),
@@ -2676,7 +2711,7 @@ fn emit_echo(e: &mut Emit, args: &[SsaValue], checked: bool, types: &VarTypes) {
 /// `__exit` skipped END entirely, so `END { }` + `exit N` ran no cleanup.
 /// Inside END (or with no END block) the exit is direct, and there
 /// `__end_status` must be set here so an `exit N` *inside* END overrides the
-/// triggering status.
+/// triggering status. A forked child exits with the code and runs no END.
 fn emit_exit(e: &mut Emit, args: &[SsaValue], types: &VarTypes) {
     match args.first() {
         Some(arg) => {
@@ -2685,11 +2720,18 @@ fn emit_exit(e: &mut Emit, args: &[SsaValue], types: &VarTypes) {
         }
         None => writeln!(e.out, "    __exit_status = 0;").unwrap(),
     }
-    if let Some(eb) = e.end_block {
-        if e.cur_block < eb {
-            writeln!(e.out, "    goto _blk_{};", eb).unwrap();
-            return;
-        }
+    emit_exit_jump(e);
+}
+
+/// Where an `exit` leaves for, once `__exit_status` holds its code.
+fn emit_exit_jump(e: &mut Emit) {
+    if e.child_region.contains(&e.cur_block) {
+        writeln!(e.out, "    goto __child_exit;").unwrap();
+        return;
+    }
+    if let Some(eb) = e.end_block.filter(|_| !e.end_region.contains(&e.cur_block)) {
+        writeln!(e.out, "    goto _blk_{};", eb).unwrap();
+        return;
     }
     writeln!(e.out, "    __end_status = __exit_status;").unwrap();
     writeln!(e.out, "    goto __exit;").unwrap();
@@ -2697,14 +2739,28 @@ fn emit_exit(e: &mut Emit, args: &[SsaValue], types: &VarTypes) {
 
 /// Mirrors codegen's terminator emission (codegen/entry.rs).
 /// Return → `goto __exit;`. Goto(b) → `goto _blk_{b};`. Branch
-/// and Loop both compare `__test_result` and dispatch.
-fn emit_terminator(out: &mut String, term: &Terminator) {
+/// and Loop both compare `__test_result` and dispatch. Fork leaves the pid
+/// in `__test_result` for the parent's `$!` (a negative one is a failed
+/// fork, which goes to the parent to be reported); ChildExit ends a child.
+fn emit_terminator(e: &mut Emit, term: &Terminator) {
+    let out = &mut e.out;
     match term {
         Terminator::Return => {
             writeln!(out, "    goto __exit;").unwrap();
         }
         Terminator::Goto(b) => {
             writeln!(out, "    goto _blk_{};", b).unwrap();
+        }
+        Terminator::Fork { parent, child } => {
+            writeln!(
+                out,
+                "    __test_result = sash_fork(); \
+                 if (__test_result) goto _blk_{parent}; else goto _blk_{child};"
+            )
+            .unwrap();
+        }
+        Terminator::ChildExit => {
+            writeln!(out, "    goto __child_exit;").unwrap();
         }
         Terminator::Branch {
             true_block,
@@ -3838,7 +3894,7 @@ fn emit_pipeline(
         .unwrap();
     } else {
         drain_pipeline_capture_c(e, capture, &p, num_pipes);
-        let names: Vec<_> = stages.iter().map(|stage| stage.0.clone()).collect();
+        let names = e.compound_stages.labels(stages);
         emit_pipeline_finish(e, &p, checked, suppressed, negated, &names, false);
     }
     writeln!(e.out, "{p}_done: ;").unwrap();
@@ -4162,17 +4218,13 @@ fn emit_pipeline_stage(
         BuiltinCmd::Noop => {
             writeln!(e.out, "        sash_exit(0);").unwrap();
         }
-        // DD#14: a compound command (fn body, `{ }` group, loop) used as a
-        // pipeline stage. The transform lowers the body into its own SSA block
-        // and names the stage `__compound_<id>`; native jumps to that block in
-        // the child (inst_handlers.rs:170). The C emitter already lays every
-        // SSA block down as a `_blk_<id>:` label inside the same function, so
-        // the child branch is a plain `goto`. Without this the stage name fell
-        // through to `emit_pipeline_exec` and became
-        // `sash_exec("__compound_2", …)`, which the runtime rejects with
-        // `sash: bug: bare command passed to sash_exec`.
-        _ => match name.strip_prefix("__compound_") {
-            Some(id) => writeln!(e.out, "        goto _blk_{};", id).unwrap(),
+        // DD#14: a forked stage. The transform lowers the function call, or
+        // the command with its arguments lifted, into its own blocks, ending
+        // in ChildExit or an exec, and records the entry; every SSA block is
+        // a `_blk_<id>:` label in this function, so the child branch is a
+        // plain `goto`. Mirrors native `lower_pipeline_stage`.
+        _ => match e.compound_stages.entry(name) {
+            Some(entry) => writeln!(e.out, "        goto _blk_{entry};").unwrap(),
             None => emit_pipeline_exec(e, name, args, prepared_argv, types),
         },
     }
@@ -4929,7 +4981,13 @@ mod tests {
         );
         assert_ice(
             || {
-                emit_bg_builtin_c(&mut Emit::new(), &BuiltinCmd::Echo, &[], &HashMap::new());
+                emit_bg_builtin_c(
+                    &mut Emit::new(),
+                    &BuiltinCmd::Echo,
+                    &[],
+                    true,
+                    &HashMap::new(),
+                );
             },
             "emit_bg_builtin_c called with Echo",
         );

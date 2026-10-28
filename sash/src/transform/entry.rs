@@ -30,6 +30,7 @@ pub fn ir_to_ssa_typed(
 
     install_end_block(&mut ssa, &mut state);
     super::reader_cleanup::install(&mut ssa, &state.reader_regions);
+    ssa.assert_children_disjoint();
 
     // Copy exiting signals to program for codegen check point insertion
     ssa.exiting_signals = state.exiting_signals.clone();

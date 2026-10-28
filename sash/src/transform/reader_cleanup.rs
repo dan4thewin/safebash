@@ -100,7 +100,9 @@ fn redirect_edge(term: &mut Terminator, old: BlockId, new: BlockId) {
             ..
         } => &mut [body_block, exit_block],
         Terminator::Goto(target) => &mut [target],
-        Terminator::Return => &mut [],
+        // The child is a separate process, not an edge out of this one.
+        Terminator::Fork { parent, .. } => &mut [parent],
+        Terminator::Return | Terminator::ChildExit => &mut [],
     };
     for target in targets {
         if **target == old {
@@ -225,8 +227,22 @@ mod invariant_tests {
         let mut jump = Terminator::Goto(1);
         redirect_edge(&mut jump, 1, 2);
         assert!(matches!(jump, Terminator::Goto(2)));
-        let mut leaf = Terminator::Return;
-        redirect_edge(&mut leaf, 1, 2);
-        assert!(matches!(leaf, Terminator::Return));
+        let mut fork = Terminator::Fork {
+            parent: 1,
+            child: 1,
+        };
+        redirect_edge(&mut fork, 1, 2);
+        assert_eq!(
+            fork,
+            Terminator::Fork {
+                parent: 2,
+                child: 1
+            }
+        );
+        for leaf in [Terminator::Return, Terminator::ChildExit] {
+            let mut term = leaf.clone();
+            redirect_edge(&mut term, 1, 2);
+            assert_eq!(term, leaf);
+        }
     }
 }

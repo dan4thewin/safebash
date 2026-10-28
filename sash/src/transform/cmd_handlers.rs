@@ -256,7 +256,8 @@ pub(super) fn handle_function_call_or_command(
 /// Inline a known function body into the current block.
 /// Saves caller's positional params, sets up the callee's `args`,
 /// lowers the body into a fresh call block, then emits a restore block.
-fn inline_function_call(
+/// Also the body of a function pipeline stage, inside its forked child.
+pub(super) fn inline_function_call(
     name: &str,
     body: &[Statement],
     c: &Command,
@@ -696,5 +697,51 @@ mod invariant_tests {
         assert!(state.diagnostics[0].contains("[SB5011]"));
         assert!(state.diagnostics[0].contains(&name));
         assert!(state.external_deps.borrow().is_empty());
+    }
+
+    /// The SB5037 refusal itself is pinned by `capcyc.*` and `stgcyc.1`;
+    /// what no spec can see is *where* it sits. It must come before the call
+    /// takes anything from its caller — the parked redirect scope, the
+    /// caller's `args` (`save_caller_args` empties `current_args_name`) and
+    /// the `inlining` frame — because the early return restores none of
+    /// them. The function-stage route used to carry a private copy of this
+    /// inliner with the refusal after the take, which owed (and had) its own
+    /// unwind.
+    #[test]
+    fn recursion_is_refused_before_the_call_takes_any_caller_state() {
+        let mut ssa = SsaProgram::new();
+        let block = ssa.entry;
+        let blocks_before = ssa.blocks.len();
+        let mut state = VersionState::with_types(HashMap::new());
+        state.function_bodies.insert("f".to_string(), vec![]);
+        state.inlining.push("f".to_string());
+        state.current_args_name = "args_7".to_string();
+        state.pending_redirect_scope = Some(vec![]);
+        let c = Command {
+            name: lit("f"),
+            args: vec![],
+        };
+
+        let got = inline_function_call("f", &[], &c, &mut ssa, &mut state, block);
+
+        assert_eq!(got, block, "a refused call lowers nothing");
+        assert_eq!(ssa.blocks.len(), blocks_before, "and creates no block");
+        assert_eq!(state.diagnostics.len(), 1, "exactly one diagnostic");
+        assert!(
+            state.diagnostics[0].contains("[SB5037]")
+                && state.diagnostics[0].contains("recursive call to 'f'"),
+            "got: {:?}",
+            state.diagnostics[0]
+        );
+        assert_eq!(state.current_args_name, "args_7", "the caller's args");
+        assert_eq!(
+            state.inlining,
+            vec!["f".to_string()],
+            "no frame pushed or popped"
+        );
+        assert!(
+            state.pending_redirect_scope.is_some(),
+            "the scope stays parked; lower_redirected_stmt discards it"
+        );
     }
 }

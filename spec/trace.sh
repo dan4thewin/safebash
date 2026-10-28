@@ -14,7 +14,7 @@ set -eu
 . common.sh
 setup trace
 [[ ${SASH_MODE:-native} != native ]] && exit 0
-plan=3
+plan=4
 echo "1..$plan" >&3
 
 set +e
@@ -33,6 +33,16 @@ run_sash 'int x=-5; if (( x > 0 )); then echo yes; else echo no; fi'
 # condition fails — the `loop` kind, both terminator targets
 run_sash 'int i=0; while (( i < 2 )); do echo $i; (( i++ )); done'
 [[ $rc = 0 && $out = $'0\n1' && $rerr == *"while.body"* && $rerr == *"while.exit"* ]]; chk tr.3
+
+# tr.4 a background job traces both sides of its fork, and the child's own
+# branches (batch-531 port, F2: the child leaves by its own exit, not the
+# parent's code)
+run_sash 'fn g { if [[ $1 == x ]] { echo in } }
+g x &
+- wait
+echo after'
+[[ $rc = 0 && $out = $'in\nafter' && $rerr == *"bg.parent"* \
+   && $rerr == *"bg.child"* && $rerr == *"if.then"* ]]; chk tr.4
 
 unset SASH_CFLAGS SASH_TRACE
 

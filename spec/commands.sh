@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup commands
-plan=226
+plan=234
 echo "1..$plan" >&3
 
 set +e
@@ -1553,6 +1553,77 @@ run_sash 'fn f { - f > rarg.out }; f'
    && $err != *panicked* ]]; chk rarg.9
 
 rm -f rarg.out
+
+# ---- B20 (batch-531 port, F2): a background job whose fork fails is reported
+# like a pipeline whose construction fails (DD#55): `fork: <errno>`, status 1,
+# abort unless checked or suppressed. Only the program's own clones are failed
+# (parent-only trace).
+
+# bgfork.1 a command job; `$!` is never read after the abort
+run_sash_under '/bin/echo hi &
+p=$!
+- wait
+echo "pid [$p] done"' strace -qq -o bgfork.trace -e inject=clone:error=EAGAIN:when=1
+[[ $rc = 1 && -z $out && $rerr = "./test_bin: fork: error 11" ]] &&
+    grep -q 'clone.*INJECTED' bgfork.trace; chk bgfork.1
+
+# bgfork.2 the abort routes through END, which sees status 1
+run_sash_under 'END { echo "end $(status)" }
+/bin/echo hi &
+- wait
+echo bad' strace -qq -o bgfork.trace -e inject=clone:error=EAGAIN:when=1
+[[ $rc = 1 && $out = 'end 1' && $rerr = "./test_bin: fork: error 11" ]] &&
+    grep -q 'clone.*INJECTED' bgfork.trace; chk bgfork.2
+
+# bgfork.3 a function job
+run_sash_under 'fn g { echo "in $1" }
+g x &
+- wait
+echo bad' strace -qq -o bgfork.trace -e inject=clone:error=EAGAIN:when=1
+[[ $rc = 1 && -z $out && $rerr = "./test_bin: fork: error 11" ]] &&
+    grep -q 'clone.*INJECTED' bgfork.trace; chk bgfork.3
+
+# bgfork.4 an `exec` job (forks once; the child becomes the command)
+run_sash_under 'exec /bin/echo hi &
+- wait
+echo bad' strace -qq -o bgfork.trace -e inject=clone:error=EAGAIN:when=1
+[[ $rc = 1 && -z $out && $rerr = "./test_bin: fork: error 11" ]] &&
+    grep -q 'clone.*INJECTED' bgfork.trace; chk bgfork.4
+
+# bgfork.5 a pipeline job: the job's own fork is the one that fails
+run_sash_under '/bin/echo a | /bin/cat &
+- wait
+echo after' strace -qq -o bgfork.trace -e inject=clone:error=EAGAIN:when=1
+[[ $rc = 1 && -z $out && $rerr = "./test_bin: fork: error 11" ]] &&
+    grep -q 'clone.*INJECTED' bgfork.trace; chk bgfork.5
+
+# bgfork.6 suppressed: silent, and the program goes on
+run_sash_under '- /bin/echo hi &
+- wait
+echo "after"' strace -qq -o bgfork.trace -e inject=clone:error=EAGAIN:when=1
+[[ $rc = 0 && $out = after && -z $rerr ]] &&
+    grep -q 'clone.*INJECTED' bgfork.trace; chk bgfork.6
+
+# bgfork.7 suppressed, but the failure's status stays, as a suppressed failed
+# command's does: it reaches END's `$?` and the exit code
+run_sash_under 'END { echo "end $?" }
+echo main
+- /bin/echo hi &' strace -qq -o bgfork.trace -e inject=clone:error=EAGAIN:when=1
+[[ $rc = 1 && $out = $'main\nend 1' && -z $rerr ]] &&
+    grep -q 'clone.*INJECTED' bgfork.trace; chk bgfork.7
+
+# bgfork.8 `$!` after a failed fork is -1, not the previous job's pid (the
+# second clone fails; the first job is still waitable by its own pid)
+run_sash_under '/bin/sleep 0.2 &
+int p0=$!
+- /bin/echo in &
+int p=$!
+int r=$(wait $p0)
+int s=$(waitstatus)
+echo "neg=$(( p == -1 )) stale=$(( p == p0 )) r=$(( r == p0 )) s=$s"' strace -qq -o bgfork.trace -e inject=clone:error=EAGAIN:when=2
+[[ $rc = 0 && $out = 'neg=1 stale=0 r=1 s=0' && -z $rerr ]] &&
+    grep -q 'clone.*INJECTED' bgfork.trace; chk bgfork.8
+rm -f bgfork.trace
 
 set -e
 tally

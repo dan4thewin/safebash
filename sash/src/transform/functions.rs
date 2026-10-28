@@ -367,13 +367,9 @@ fn lift_cmdsub(
     block: &mut BlockId,
 ) -> SsaValue {
     let argv = lift_each(argv, ssa, state, block);
-    let Some(SsaValue::Literal(name)) = argv
-        .first()
-        .filter(|head| matches!(head, SsaValue::Literal(name) if name.starts_with('/')))
-    else {
+    let Some(name) = external_capture_head(&argv).map(str::to_string) else {
         return SsaValue::CmdSubst { argv, suppressed };
     };
-    let name = name.clone();
     let temp = state.reserve_temp_name(
         format!("__extcap_{}", ssa.blocks.len()),
         crate::ir::VarType::String,
@@ -387,6 +383,65 @@ fn lift_cmdsub(
         negated: vec![],
     });
     SsaValue::Var(target)
+}
+
+/// The command an external `$( … )` capture runs: its head, once DD#23 has
+/// resolved it to an absolute path. Any other head is an intrinsic, which
+/// codegen evaluates in place. Lifting never turns a non-literal head into a
+/// literal, so this answers the same before and after the argv is lifted.
+fn external_capture_head(argv: &[SsaValue]) -> Option<&str> {
+    match argv.first() {
+        Some(SsaValue::Literal(name)) if name.starts_with('/') => Some(name),
+        _ => None,
+    }
+}
+
+/// Whether [`lift_int_func_calls`] would materialize anything in `val` — a
+/// function call or a capture that codegen cannot evaluate in place. A plain
+/// pipeline stage evaluates its arguments where it forks, with no block of its
+/// own to lift into, so a stage whose arguments need lifting runs as a forked
+/// child instead (`command_pipeline_stage`).
+///
+/// **Total over `SsaValue` on purpose — do not add a wildcard.** It must
+/// answer exactly as [`lift_int_func_calls`] acts: a capture missed here
+/// reaches codegen unlifted, which is an ICE. `$(- strlen x)` answers true,
+/// because lifting rewrites its body to the intrinsic; the stage then forks a
+/// child it could have done without, which costs a fork and nothing more.
+pub(super) fn needs_lift(val: &SsaValue) -> bool {
+    match val {
+        SsaValue::IntFuncCall { .. }
+        | SsaValue::FuncCall { .. }
+        | SsaValue::CmdSubstBody { .. } => true,
+        SsaValue::CmdSubst { argv, .. } => {
+            external_capture_head(argv).is_some() || argv.iter().any(needs_lift)
+        }
+        SsaValue::DefaultValue { .. }
+        | SsaValue::Concat(_)
+        | SsaValue::IndexedArray(_)
+        | SsaValue::AssocArray(_)
+        | SsaValue::SlurpFile(_)
+        | SsaValue::CaseConvert { .. }
+        | SsaValue::StrLen { .. }
+        | SsaValue::ElideEmpty { .. }
+        | SsaValue::Trusted { .. }
+        | SsaValue::Substring { .. }
+        | SsaValue::IntCell(_)
+        | SsaValue::Subscript { .. }
+        | SsaValue::ArraySplat { .. }
+        | SsaValue::ArithBinOp { .. }
+        | SsaValue::Ternary { .. }
+        | SsaValue::RegexMatch { .. }
+        | SsaValue::RegexReplace { .. }
+        | SsaValue::RequireValue { .. }
+        | SsaValue::Literal(_)
+        | SsaValue::Var(_)
+        | SsaValue::Expr(_)
+        | SsaValue::ArithExpr { .. }
+        | SsaValue::ParamExpansion { .. }
+        | SsaValue::ArgvIndex(_)
+        | SsaValue::TableValue { .. }
+        | SsaValue::TableKey { .. } => val.child_values().into_iter().any(needs_lift),
+    }
 }
 
 fn lift_each(

@@ -998,8 +998,10 @@ fn lower_short_circuit(
     merge_block
 }
 
-/// `cmd &` — fork; the child runs the command and `_exit`s, the parent
-/// continues with the pid in `$!`.
+/// `cmd &` — fork; the child runs the command and exits with its status
+/// (never through END — DD#56), the parent continues with the pid in `$!`.
+/// The child is lowered in a forked context, so none of its versions,
+/// reader bindings or jump targets reach the parent's code.
 fn lower_background(
     l: &List,
     ssa: &mut SsaProgram,
@@ -1008,28 +1010,25 @@ fn lower_background(
 ) -> BlockId {
     let child_block = ssa.new_block("bg.child");
     let parent_block = ssa.new_block("bg.parent");
-
-    ssa.block_mut(block)
-        .insts
-        .push(SsaInst::internal(BuiltinCmd::ForkBackground, vec![], true));
-    ssa.block_mut(block).terminator = Terminator::Branch {
-        condition: "__fork_pid".to_string(),
-        true_block: parent_block,
-        false_block: child_block,
+    ssa.block_mut(block).terminator = Terminator::Fork {
+        parent: parent_block,
+        child: child_block,
     };
 
+    let parent = state.enter_forked_child();
+    let child_end = lower_one(&l.left, ssa, state, child_block);
+    ssa.block_mut(child_end).terminator = Terminator::ChildExit;
+    state.exit_forked_child(parent);
+
+    // `$!` is defined after the child, so the child reads the previous job's
+    // pid. The parent block is still empty: the fork's pid is the first thing
+    // it reads.
     let bg_target = state.define("!");
     ssa.block_mut(parent_block).insts.push(SsaInst::internal(
         BuiltinCmd::StoreBgPid,
         vec![SsaValue::Var(bg_target)],
         true,
     ));
-
-    let pipe_reader = state.pipe_reader.take();
-    let child_end = lower_one(&l.left, ssa, state, child_block);
-    state.pipe_reader = pipe_reader;
-    ssa.block_mut(child_end).terminator = Terminator::Return;
-
     parent_block
 }
 

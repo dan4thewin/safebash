@@ -4824,7 +4824,6 @@ fn command_args_elidable(name: &str) -> bool {
         | B::SetTestFromStatus
         | B::SetTestFromPipe
         | B::LetExit
-        | B::ForkBackground
         | B::StoreBgPid
         | B::TrapSignal
         | B::SignalFlag

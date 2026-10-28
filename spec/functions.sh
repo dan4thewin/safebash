@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup functions
-plan=223
+plan=225
 echo "1..$plan" >&3
 
 set +e
@@ -1635,6 +1635,34 @@ fn g { if (( $1 > 0 )) { f $(( $1 - 1 )) | cat }; echo "g$1" }
 g 2'
 [[ $rc != 0 && -z $out && $err == *':1:15: error [SB5037]'* \
    && $err == *"recursive call to 'g' is not supported"* ]]; chk stgcyc.1
+
+# ---- B21 (batch-531 port, F2): a self-tail function as a stage. Its tail call
+# is its own loop, in the child; it is not recursion.
+
+# stgcyc.2 the same function called plainly and as a stage
+run_sash 'fn f {
+  if (( $1 > 0 )) {
+    echo "n=$1"
+    return f $(( $1 - 1 ))
+  }
+  echo done
+}
+f 2
+f 2 | /bin/cat'
+[[ $rc = 0 && $out = $'n=2\nn=1\ndone\nn=2\nn=1\ndone' && -z $rerr ]]; chk stgcyc.2
+
+# stgcyc.3 as a stage of a background pipeline
+run_sash 'fn f {
+  if (( $1 > 0 )) {
+    echo "n=$1"
+    return f $(( $1 - 1 ))
+  }
+  echo done
+}
+f 2 | /bin/cat &
+- wait
+echo after'
+[[ $rc = 0 && $out = $'n=2\nn=1\ndone\nafter' && -z $rerr ]]; chk stgcyc.3
 
 set -e
 tally

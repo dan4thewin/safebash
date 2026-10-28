@@ -78,7 +78,7 @@ pub(super) fn handle_pipeline(
 
     if !matches!(capture, PipelineCapture::ReadFd(_)) {
         let pipeline = ReaderPipeline {
-            stages: stages.iter().map(|stage| stage.0.clone()).collect(),
+            stages: ctx.program.compound_stages.labels(stages),
             suppressed: suppressed.to_vec(),
             negated: negated.to_vec(),
         };
@@ -327,11 +327,11 @@ fn lower_pipeline_stage(
 
     if lower_pipeline_builtin(name, args, report_setup_failure, builder, module, ctx) {
         // builtin exited inline
-    } else if let Some(suffix) = name.strip_prefix("__compound_") {
-        // DD#14: compound command as pipeline stage
-        let compound_block_id: usize = suffix.parse().unwrap();
-        let compound_cl = ctx.cl_blocks[&compound_block_id];
-        builder.ins().jump(compound_cl, &[]);
+    } else if let Some(entry) = ctx.program.compound_stages.entry(name) {
+        // DD#14: a forked stage runs its own blocks in the child — a
+        // function's body, or a command once its arguments are lifted —
+        // ending in ChildExit or an exec.
+        builder.ins().jump(ctx.cl_blocks[&entry], &[]);
     } else {
         lower_exec_stage(name, args, builder, module, ctx, pe, setup.argv[i]);
     }

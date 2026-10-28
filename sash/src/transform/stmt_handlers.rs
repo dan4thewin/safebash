@@ -1,11 +1,10 @@
 //! Extracted handlers for the largest StmtKind match arms.
 
-use super::cmd_handlers::check_callee_arity;
 use super::expressions::{
     arg_to_value, expr_to_value, literal_name_of, resolve_args_name, subscript_to_value,
     test_to_ssa,
 };
-use super::functions::{lift_int_func_args, lift_int_func_calls};
+use super::functions::{lift_int_func_args, lift_int_func_calls, needs_lift};
 use super::resolution::resolve_pipeline_command;
 use super::statements::{lower_one, lower_stmts, spill_scalar_redirect_targets};
 use crate::ir::*;
@@ -829,7 +828,7 @@ fn lastpipe_read_command(last: &Statement) -> Option<&Command> {
 }
 
 /// Build ordinary and capturing pipelines through the same stage classifier,
-/// preserving suppression, negation and inlined function stages.
+/// preserving suppression, negation and forked (function and command) stages.
 fn build_pipeline_inst(
     cmds: &[Statement],
     ssa: &mut SsaProgram,
@@ -863,8 +862,10 @@ fn build_pipeline_inst(
 
 /// Push a `Command` pipeline stage into `stages`: a known function inlines as a
 /// forked compound child (`__compound_<id>`, args bound); anything else resolves
-/// to an exec stage (DD#23 compile-time PATH). Shared by the regular pipeline
-/// and the producer-stage (pipe-while-read / lastpipe) builders.
+/// (DD#23 compile-time PATH) to a direct stage, or to a forked child of its own
+/// when an argument needs lifting (see `command_pipeline_stage`). Shared
+/// by the regular pipeline and the producer-stage (pipe-while-read / lastpipe)
+/// builders.
 fn push_command_stage(
     c: &Command,
     redirects: Vec<Redirect>,
@@ -881,8 +882,8 @@ fn push_command_stage(
     let redirects = spill_scalar_redirect_targets(&redirects, ssa, state, block);
     let name = literal_name_of(&c.name);
     if state.known_functions.contains(name) {
-        if let Some(entry) = build_function_pipeline_stage(name, c, ssa, state, idx) {
-            stages.push((format!("__compound_{}", entry), vec![], redirects));
+        if let Some(stage) = build_function_pipeline_stage(name, c, ssa, state, idx) {
+            stages.push((stage, vec![], redirects));
             return;
         }
     }
@@ -903,7 +904,9 @@ fn push_command_stage(
     let args: Vec<SsaValue> = c.args.iter().map(|a| arg_to_value(a, state)).collect();
     // DD#99: a `write` stage is an `echo -n` stage (see rewrite_write_as_echo).
     let (name, args) = super::cmd_handlers::rewrite_write_as_echo(name, args);
-    stages.push((resolve_pipeline_command(&name, state), args, redirects));
+    let command = resolve_pipeline_command(&name, state);
+    let (stage, args) = command_pipeline_stage(command, args, ssa, state, idx);
+    stages.push((stage, args, redirects));
 }
 
 /// `cmd1 | ... | while readline var` or `cmd1 | ... | read arr`, each
@@ -1028,9 +1031,10 @@ fn handle_lastpipe_read(
     )
 }
 
-/// Regular pipeline: `cmd1 | cmd2 | ...`. Compound commands (while, for, if)
-/// become forked children — lowered into their own SSA blocks and recorded
-/// in `compound_pipeline_blocks` for codegen to fork and run.
+/// Regular pipeline: `cmd1 | cmd2 | ...`. A function-call stage, and a
+/// command stage whose arguments need lifting, becomes a forked child —
+/// lowered into its own SSA blocks and recorded in
+/// `SsaProgram::compound_stages` for codegen to fork and run.
 fn handle_regular_pipeline(
     p: &Pipeline,
     ssa: &mut SsaProgram,
@@ -1066,9 +1070,12 @@ fn push_pipeline_stage(
     negated[stages_before..].fill(is_negated);
 }
 
-/// Lower a single (already `-`/`!`-peeled) pipeline stage into `stages`:
-/// a `Command` becomes a direct stage (possibly several, via function
-/// inlining). The parser rejects every compound stage.
+/// Lower a single (already `-`/`!`-peeled) pipeline stage into `stages`.
+/// It is always a `Command`: an external or builtin becomes a direct stage,
+/// or a forked child when an argument needs lifting (see
+/// `command_pipeline_stage`); a function call becomes a forked child
+/// (see `build_function_pipeline_stage`). The parser rejects every compound
+/// stage.
 fn lower_one_pipeline_stage(
     stmt: &Statement,
     idx: usize,
@@ -1098,98 +1105,84 @@ fn lower_one_pipeline_stage(
 /// (2026-10-27).
 ///
 /// The arm this replaced was not a wrong answer — it was a complete, plausible
-/// lowering (fork a compound child into `compound_pipeline_blocks` as
-/// `__compound_<id>`) that had never once run. That is the dangerous shape:
-/// relax SB4022 and the route opens *in silence*, with no spec having ever
-/// exercised it. The sibling machinery is still live and still tested —
-/// `build_function_pipeline_stage` takes the same path for a function-call
-/// stage — so nothing is lost by making this entry say what it knows.
-///
-/// Contrast `build_function_pipeline_stage`'s recursion guard below, which is
-/// also unreachable and is deliberately *kept* as a real diagnostic: that one
-/// states an invariant the site is uniquely able to state (DD#116). This one
-/// states nothing; it just duplicates a lowering for a form the language does
-/// not have.
+/// lowering (fork a compound child as `__compound_<id>`) that had never once
+/// run. That is the dangerous shape: relax SB4022 and the route opens *in
+/// silence*, with no spec having ever exercised it. The sibling machinery is
+/// still live and still tested — `build_function_pipeline_stage` forks a
+/// child for a function-call stage — so nothing is lost by making this entry
+/// say what it knows.
 const COMPOUND_STAGE_IS_REJECTED_AT_PARSE: &str =
     "ICE: a compound command reached a pipeline stage — SB4022 rejects one at \
      parse, so a stage is always a Command; the compound-stage lowering was \
      never exercised and must be written knowingly";
 
-/// A `Command` pipeline stage that names a known function: inline the function
-/// body into its own SSA blocks (a forked compound child, recorded in
-/// `compound_pipeline_blocks` and named `__compound_<id>`), binding the call
-/// args as $1..$N. Mirrors the `{ }`-group compound stage, plus positional
-/// setup and a return target. Subshell semantics: the stage's variable
-/// assignments must not leak to the parent, so the version map is
-/// snapshotted/restored around the inline (only the forked child sees them).
-/// Returns the entry block id, or `None` if the body isn't registered.
+/// A `Command` pipeline stage that names a known function: the call is inlined
+/// into a forked child of its own, starting at a fresh entry block recorded in
+/// [`SsaProgram::compound_stages`], and the child exits with the call's status.
+/// It is an ordinary call in every other respect — the shared inliner evaluates
+/// the arguments (inside the child), checks arity, binds `args` and collection
+/// slots, targets `return`, turns a self tail-call into a loop and refuses
+/// recursion. This used to be a private copy of that inliner, and the copy
+/// lacked the tail-call loop: a self-tail-recursive stage reported SB5037.
+/// Returns the stage name, or `None` if the body is not registered yet (a
+/// forward reference, which resolves as an external).
 fn build_function_pipeline_stage(
     name: &str,
     c: &Command,
     ssa: &mut SsaProgram,
     state: &mut VersionState,
     idx: usize,
-) -> Option<usize> {
-    let resolved = name.to_string();
-    let body = state.function_bodies.get(&resolved).cloned()?;
-
-    let saved = state.snapshot();
-    let saved_return = state.return_target;
-    let saved_args = super::functions::save_caller_args(state);
-
-    // DD#27/§5: reject recursion into a function already being inlined.
-    // DD#116: a *specification fidelity* backstop. SB5037 rejects recursion in
-    // `validate`, so this cannot fire on a program that gets this far — but
-    // inlining is the pass whose termination depends on it, and the rule is
-    // "no function is inlined into itself", which is a statement this site is
-    // the only one able to make. Deleting it would make the pass's termination
-    // an unstated consequence of a check two passes away.
-    if state.inlining.iter().any(|n| n == &resolved) {
-        state.error_at_stmt(super::functions::recursion_diagnostic(&resolved));
-        super::functions::restore_caller_args(saved_args, state);
-        return None;
-    }
+) -> Option<String> {
+    let body = state.function_bodies.get(name).cloned()?;
     let entry = ssa.new_checkpoint_block(&format!("pipe_fn_{}_{}", name, idx));
-    // `split_call_args` + `arg_to_value`, exactly as `inline_function_call`: a
-    // pipeline stage is still a call, so `@a` is a COMMAND-ARG position and
-    // splats one value per element (DD#20/#22), and `=name` binds a slot rather
-    // than contributing to `args` (DD#100). This path kept `expr_to_value` when
-    // the plain-call and array-literal paths were corrected, so `f @a | g`
-    // silently passed the whole array as one joined argument — losing an
-    // element that contains a space — and `f =q | g` left the slot unbound.
-    let (scalar_args, coll_args) = super::functions::split_call_args(&c.args);
-    let arg_values: Vec<SsaValue> = scalar_args.iter().map(|a| arg_to_value(a, state)).collect();
-    check_callee_arity(name, &body, &arg_values, state);
-    // Keep argument evaluation in the existing forked stage, in caller scope.
-    let mut body_block = entry;
-    let arg_values = super::functions::lift_int_func_args(arg_values, ssa, state, &mut body_block);
-    state.inlining.push(resolved.clone());
-    let saved_ro = super::functions::enter_fn_body_scope(state);
-    let saved_slots = super::functions::setup_callee_slots(&coll_args, state);
-    super::functions::setup_callee_args(&arg_values, ssa, state, body_block);
+    let parent = state.enter_forked_child();
+    let end = super::cmd_handlers::inline_function_call(name, &body, c, ssa, state, entry);
+    ssa.block_mut(end).terminator = Terminator::ChildExit;
+    state.exit_forked_child(parent);
+    Some(ssa.compound_stages.record(entry, name))
+}
 
-    // `return` inside the body jumps to ret_block, which ends the forked child.
-    let ret_block = ssa.new_checkpoint_block(&format!("pipe_fn_ret_{}_{}", name, idx));
-    state.return_target = Some(ret_block);
-    // The stage never inherits its caller's tail loop: `return g …` in a stage
-    // of `g` would jump out of the forked child into g's loop header. It gets
-    // no loop of its own either, so a self tail-call in a stage still reaches
-    // the recursion guard (B21, notes/tasks/batch-531-findings.md).
-    let saved_tail = state.tail_loop.take();
-    let exit = lower_stmts(&body, ssa, state, body_block);
-    state.tail_loop = saved_tail;
-    ssa.block_mut(exit).terminator = Terminator::Goto(ret_block);
-    ssa.block_mut(ret_block).terminator = Terminator::Return;
-
-    state.return_target = saved_return;
-    super::functions::exit_fn_body_scope(state, saved_ro);
-    state.restore(&saved);
-    super::functions::restore_caller_slots(saved_slots, state);
-    super::functions::restore_caller_args(saved_args, state);
-    state.inlining.pop();
-
-    ssa.compound_pipeline_blocks.push(entry);
-    Some(entry)
+/// A resolved command's pipeline stage, as the `(name, args)` it contributes
+/// to [`SsaInst::Pipeline`]. A direct stage's arguments are evaluated by
+/// codegen where it forks, with no block to lift into, so when an argument
+/// needs lifting ([`needs_lift`]: a function call, or a capture codegen cannot
+/// evaluate in place) the stage forks a child of its own instead, recorded in
+/// [`SsaProgram::compound_stages`] as a function stage is, and takes no
+/// arguments. The child lifts the arguments and then runs the command as a
+/// direct stage would: `echo` and `:` in place, anything else by exec. The
+/// stage's redirects apply before the child's entry, so a capture among the
+/// arguments runs under them (a statement evaluates its captures before its
+/// redirects). A failure reports the command's resolved path, as a direct
+/// stage's does.
+fn command_pipeline_stage(
+    command: String,
+    args: Vec<SsaValue>,
+    ssa: &mut SsaProgram,
+    state: &mut VersionState,
+    idx: usize,
+) -> (String, Vec<SsaValue>) {
+    if !args.iter().any(needs_lift) {
+        return (command, args);
+    }
+    // The label omits the command: a head too dynamic to judge (`*?[$`) may
+    // contain `*/`, and the C backend prints block labels inside a comment.
+    let entry = ssa.new_checkpoint_block(&format!("pipe_cmd_{idx}"));
+    let parent = state.enter_forked_child();
+    let mut block = entry;
+    let args = lift_int_func_args(args, ssa, state, &mut block);
+    let inst = if matches!(
+        BuiltinCmd::from_name(&command),
+        BuiltinCmd::Echo | BuiltinCmd::Noop
+    ) {
+        SsaInst::command(command.as_str(), args, vec![], true)
+    } else {
+        let argv = std::iter::once(SsaValue::Literal(command.clone()));
+        SsaInst::command("exec", argv.chain(args).collect(), vec![], true)
+    };
+    ssa.block_mut(block).insts.push(inst);
+    ssa.block_mut(block).terminator = Terminator::ChildExit;
+    state.exit_forked_child(parent);
+    (ssa.compound_stages.record(entry, &command), vec![])
 }
 
 /// Handle StmtKind::Assignment — variable assignment with optional function collision check.
@@ -1963,58 +1956,5 @@ mod invariant_tests {
                 "ICE must name the invariant that guarantees it, got: {msg}"
             );
         }
-    }
-
-    /// DD#116: the recursion backstop in `build_function_pipeline_stage`.
-    /// SB5037 rejects recursion in `validate`, so no program that reaches the
-    /// transform can fire this — but it is not a restatement of that gate.
-    /// `validate` reads the AST call graph; this reads the **live `inlining`
-    /// stack**, so a call form the graph cannot see is still caught here, and
-    /// inlining is the pass whose termination actually depends on the rule.
-    ///
-    /// The assertions that earn the test are the unwind, not the refusal. The
-    /// early return sits *after* `save_caller_args` — which `mem::take`s
-    /// `current_args_name` — and *before* `state.inlining.push`, so it owes a
-    /// restore and must not pop a frame it never pushed. Dropping either is
-    /// invisible to every other test: the caller's `args` would silently
-    /// rebind to "" on a path nothing executes.
-    #[test]
-    fn recursion_into_an_inlining_function_unwinds_what_it_took() {
-        let (mut ssa, mut state, _block) = fixtures();
-        state.function_bodies.insert("f".to_string(), vec![]);
-        state.inlining.push("f".to_string());
-        state.current_args_name = "args_7".to_string();
-
-        let c = Command {
-            name: lit("f"),
-            args: vec![],
-        };
-        let got = build_function_pipeline_stage("f", &c, &mut ssa, &mut state, 0);
-
-        assert!(got.is_none(), "a recursive stage must not be built");
-        assert_eq!(
-            state.diagnostics.len(),
-            1,
-            "exactly one diagnostic, from this site"
-        );
-        assert!(
-            state.diagnostics[0].contains("SB5037"),
-            "the backstop must name the rule that normally catches this, got: {:?}",
-            state.diagnostics[0]
-        );
-        assert_eq!(
-            state.current_args_name, "args_7",
-            "`save_caller_args` took the caller's args name, so the early \
-             return owes the restore"
-        );
-        assert_eq!(
-            state.inlining,
-            vec!["f".to_string()],
-            "the refusal must not pop a frame it never pushed"
-        );
-        assert!(
-            ssa.compound_pipeline_blocks.is_empty(),
-            "a refused stage must not register a pipeline block"
-        );
     }
 }

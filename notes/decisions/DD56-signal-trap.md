@@ -108,6 +108,32 @@ block, `return`, or `exit N` all terminate the process.
   status, as usual. (Validator: the `__sash_end__` function starts its `$?`
   state machine `Available`; other functions start fresh — no leak.)
 
+### END runs only in the main process (added 2026-10-28, batch-531 F2)
+
+"Immediately before process exit" means the **main** process. A forked
+child (a background job such as `cmd &` or `f &`, or a forked pipeline stage
+such as a function stage) leaves with its own status and never runs END. A
+job forked inside END does not re-enter END. END runs once, in the process
+that owns the program's exit status.
+
+Before this, the transform turned every non-function return into a jump to
+END, a background child's last block and a function stage's return block
+included. So every forked child ran END (B9). When END itself forked a job,
+the job re-entered END, recursively: a fork bomb. A pipe reader's finish on
+that path also panicked in a background child (B17). Now the SSA ends a
+child with `Terminator::ChildExit`, which exits with the child's `$?`. Both
+backends exclude a child's blocks (the child region) from END's abort
+routing. A checked failure inside a child still aborts the child with its
+diagnostic and status. The parent sees that status as the job's (`wait`,
+`waitstatus`) or as the stage's, and a final stage's failure names the
+function (56.92), not an internal label.
+
+Specs 56.89 and 56.91-56.93 (signals.sh); findings B9, B10 and B17 in
+`notes/tasks/batch-531-findings.md`. Open, and backlogged as row e1 of
+`notes/tasks/bug-fork-failure-reporting-by-form.md`: a background job whose
+fork fails inside END is silent (no diagnostic, END continues), while a
+command that fails to start there is reported and END continues.
+
 ## signum keyword
 
 `$(signum)` returns the most recent signal number as an int.

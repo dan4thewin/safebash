@@ -1,7 +1,7 @@
 #!/bin/bash
 # DD#56 — signals and END block
 . common.sh
-plan=66
+plan=70
 setup signals
 
 set +e
@@ -500,6 +500,49 @@ printf '%s\n' 'signal 15 FLAG; fn f { echo ok }; f' > flag.sash
 out=$(timeout "$SPEC_TIMEOUT" "${SASH:-sash}" --emit-c flag.sash 2> flag.err)
 rc=$?
 [[ $rc = 0 && $out != *"= sash_exit_signum;"* && $out != *"__signal_checkpoint"* && ! -s flag.err ]]; chk sig518.17
+
+# ---- B9 (batch-531 port, F2): END runs only in the main process (DD#56
+# addendum 2026-10-28). A forked child — a background job, a function stage —
+# leaves with its own status and never runs END.
+
+# 56.89 `exit` in a background function: END runs once, in the parent
+run_sash 'END { echo "end $?" }
+fn f { echo hi; exit 3 }
+f &
+- wait
+echo after'
+[[ $rc = 0 && $out = $'hi\nafter\nend 0' && -z $rerr ]]; chk 56.89
+
+# 56.91 `exit 0` in a stage function
+run_sash 'END { echo "end $?" }
+fn f { echo hi; exit 0 }
+f | /bin/cat
+echo after'
+[[ $rc = 0 && $out = $'hi\nafter\nend 0' && -z $rerr ]]; chk 56.91
+
+# 56.92 a failing final-stage function: the parent aborts, names `f`, and runs
+# END exactly once
+run_sash 'END { echo "end $?" }
+fn f { /bin/cat; exit 3 }
+/bin/echo a | f
+echo after'
+[[ $rc = 3 && $out = $'a\nend 3' && $rerr = "./test_bin: f: command failed (exit 3)" ]]; chk 56.92
+
+# 56.93 a background job started inside END does not re-enter END (it used to,
+# and a job in END forked without end; the marker file bounds this probe)
+rm -f endk.ran
+run_sash 'END {
+  if [[ -e endk.ran ]] { echo "re-entered"; exit 9 }
+  /bin/touch endk.ran
+  /bin/echo e &
+  - wait
+  echo end
+}
+/bin/true &
+- wait
+echo main'
+[[ $rc = 0 && $out = $'main\ne\nend' && -z $rerr ]]; chk 56.93
+rm -f endk.ran
 
 set -e
 tally
