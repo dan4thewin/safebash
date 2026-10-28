@@ -13,20 +13,28 @@ build:V:
 	$CXX $CPPFLAGS $CXXFLAGS $SANITIZE -c src/platform_linux.cpp -o $BUILD/platform_linux.o &&
 	$AR rcs $BUILD/libsash_cpp.a $BUILD/runtime.o $BUILD/platform_linux.o &&
 	$CXX $CPPFLAGS $CXXFLAGS $SANITIZE examples/greetings.cpp $BUILD/libsash_cpp.a -o $BUILD/greetings &&
-	$CXX $CPPFLAGS $CXXFLAGS $SANITIZE examples/job_report.cpp $BUILD/libsash_cpp.a -o $BUILD/job_report
+	$CXX $CPPFLAGS $CXXFLAGS $SANITIZE examples/job_report.cpp $BUILD/libsash_cpp.a -o $BUILD/job_report &&
+	$CXX $CPPFLAGS $CXXFLAGS $SANITIZE examples/error_paths.cpp $BUILD/libsash_cpp.a -o $BUILD/error_paths
 
-test:V: build
+fixtures:V: build
 	$CXX $CPPFLAGS $CXXFLAGS tests/command_helper.cpp -o $BUILD/command-helper &&
 	cp tests/no-shebang.sh $BUILD/not-executable &&
 	chmod 644 $BUILD/not-executable &&
 	cp tests/no-shebang.sh $BUILD/no-shebang &&
-	chmod 755 $BUILD/no-shebang &&
+	chmod 755 $BUILD/no-shebang
+
+test:V: fixtures
 	$CXX $CPPFLAGS $CXXFLAGS $SANITIZE tests/runtime.cpp $BUILD/libsash_cpp.a -o $BUILD/runtime-tests &&
 	timeout 30 $BUILD/runtime-tests $BUILD/command-helper &&
 	timeout 10 $BUILD/greetings > $BUILD/greetings.actual &&
 	cmp examples/greetings.expected $BUILD/greetings.actual &&
 	timeout 10 $BUILD/job_report > $BUILD/job_report.actual &&
 	cmp examples/job_report.expected $BUILD/job_report.actual
+
+error-demo:V: fixtures
+	if test -n "$SANITIZE"; then printf '%s\n' 'error-demo requires an unsanitized BUILD (strace and deliberate faults)' >&2; exit 2; fi &&
+	$CXX $CPPFLAGS $CXXFLAGS tests/error_supervisor.cpp -o $BUILD/error-supervisor &&
+	bash examples/error_paths.sh $BUILD
 
 fault-test:V: test
 	timeout 10 strace -qq -e trace=clone -e inject=clone:error=EAGAIN:when=1 -o $BUILD/fork-failure.trace $BUILD/runtime-tests --fork-failure $BUILD/command-helper &&

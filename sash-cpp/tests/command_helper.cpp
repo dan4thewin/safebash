@@ -7,6 +7,7 @@
 #include <cstring>
 #include <fcntl.h>
 #include <string_view>
+#include <unistd.h>
 
 namespace {
 
@@ -90,6 +91,14 @@ int main(int argc, char **argv) {
             return fail("cannot raise signal");
         }
         return fail("signal did not terminate the helper");
+    }
+    if (mode == "ignore-sigchld" && argc >= 3) {
+        if (std::signal(SIGCHLD, SIG_IGN) == SIG_ERR) {
+            return fail("cannot ignore SIGCHLD");
+        }
+        ::execv(argv[2], argv + 2);
+        std::perror("command-helper: exec with ignored SIGCHLD");
+        return 2;
     }
     if (mode == "closed" && argc == 3) {
         int fd;

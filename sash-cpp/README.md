@@ -71,6 +71,64 @@ mk -p 1 SASH="$HOME/src/safebash/_tmp/sash" \
   SASH_RT_LIB="$HOME/src/safebash/sash-rt/target/release/libsash_rt.a" sash-example
 ```
 
+## Error-path showcase
+
+[error_paths.cpp](examples/error_paths.cpp) demonstrates the current
+runtime's failure handling, one operation at a time. The Linux runner
+isolates each invocation, displays stdout, stderr, and exit status, and
+continues to the next demonstration. It succeeds only when the observed
+outcomes match its assertions.
+
+```sh
+mk -p 1 error-demo
+```
+
+The full catalog has 103 cases: 52 basic cases, 38 injected-fault cases,
+and 13 interrupted-operation recovery cases.
+
+| Area | What is demonstrated |
+|---|---|
+| Command outcomes | Checked, caught, and discarded failures; exit 7; real exit 127 versus failed exec; signal termination |
+| Input and library errors | Interior NUL, missing or non-executable commands, ENOEXEC, invalid descriptors, malformed ECMAScript regex, string capacity, allocation exception |
+| Capture | Failed inspection, memfd creation, fd relocation/backup, installation, restoration and flags, rewind, read, and close; initially closed stdout |
+| Launch and wait | Pipe and shared-status allocation, fork, child pre-exec close, completion reads/protocol, endpoint close, unavailable child status, wait failure |
+| Fatal cleanup and diagnostics | Restore, close, reap, and unmap failures during cleanup; stderr failures while reporting the original error |
+| Recovery | EINTR at each implemented retry loop, preserving the uninjected output and status |
+
+Failed captures demonstrate that partial output does not replace the
+assignment target. Caught and discarded operations continue; checked
+failures reach the program boundary instead. Fatal cleanup cannot be
+suppressed: it diagnoses the broken ownership/restoration guarantee and
+terminates with status 2. This exposes existing runtime policy; it does
+not add whole-function suppression.
+
+After `mk -p 1 test`, the basic subset needs neither strace nor the
+Linux fault supervisor. Individual cases can also be selected:
+
+```sh
+bash examples/error_paths.sh --basic build
+bash examples/error_paths.sh --list
+bash examples/error_paths.sh --case cleanup-restore build
+./build/error_paths exit7 caught ./build/command-helper
+```
+
+The full target requires Bash, `strace`, and `timeout`, and must use an
+unsanitized build. Raw output and traces stay in `$BUILD/error-demo/`.
+Fault locations are calibrated against an uninjected run after an explicit
+entry marker, rather than assuming dynamic-loader syscall counts.
+The child-close probe uses per-tracee first-close injection, which also
+affects the parent's first loader close; both injections are shown, and
+the trace must prove the actual fork child failed before exec.
+A Linux subreaper supervises traced cases so even the fatal-wait example
+does not leave an orphaned fixture behind.
+
+`bad-alloc-injected-*` deliberately throws `std::bad_alloc`; it does not
+exhaust the shared host. `completion-protocol-synthetic` injects an
+unexpected read count. Arbitrarily corrupted internal shared status and
+uncaught programming errors are not forced. Nor does this catalog cover
+runtime features that do not exist yet. There is no sash counterpart:
+many cases are API misuse or OS faults, not accepted source programs.
+
 ## Current boundary
 
 `write` and `echo` check their command outcomes and raise `CommandError`
@@ -128,5 +186,5 @@ next platform choice, not a silent fallback for a failed Linux memfd.
 Project [status](../notes-exp/status.md),
 [tasks](../notes-exp/tasks/cpp-transpiler-runtime-before-ir.md),
 [decisions](../notes-exp/decisions/DD02-foreground-fork-exec.md), and
-[journal](../notes-exp/journal/002-job-report-and-foreground-processes.md) live in
+[journal](../notes-exp/journal/003-error-path-showcase.md) live in
 `../notes-exp/`, not the native compiler's `notes/`.

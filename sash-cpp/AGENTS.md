@@ -15,6 +15,13 @@ CLI. Ordinary C++ tests do not require a Rust build or IR input.
 `mk -p 1 fault-test` adds Linux strace probes; run it without sanitizer
 instrumentation. The native command helper is deliberately unsanitized.
 
+`mk -p 1 error-demo` runs the error-path showcase without sanitizers.
+`bash examples/error_paths.sh --basic BUILD` needs no strace; `--list`
+lists cases and `--case NAME` selects one. Traced cases use a Linux
+subreaper so fatal cleanup examples cannot orphan their helper children.
+Calibrate fault sites from baseline traces after the entry marker, verify
+the actual injected syscall, and keep negative controls capable of failing.
+
 Use the selected single-threaded fork/exec model. Prepare argument storage
 before fork; the pre-exec child must not allocate or unwind parent objects.
 Keep normal exit, signal termination, and setup failure distinguishable.

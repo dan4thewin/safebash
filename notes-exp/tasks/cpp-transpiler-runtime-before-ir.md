@@ -81,6 +81,28 @@ capture-storage choice can now be taken up. It does not complete
 background/public wait, forked C++ stages, call-context propagation,
 pipelines, redirects, or the full lifecycle.
 
+## Error-path demonstration - implemented
+
+`cd sash-cpp && mk -p 1 error-demo` runs 103 isolated cases: 52 basic
+outcome/exception cases, 38 injected faults, and 13 EINTR recoveries.
+`examples/error_paths.cpp` exposes the existing checked, caught, and
+discarded handling, with unchanged capture targets after failure.
+The shell catalog adds setup, descriptor, capture, launch, wait,
+diagnostic-write, and fatal cleanup paths.
+
+GCC and Clang run the full catalog. Faults are checked in their syscall
+traces, and ordinary/fatal negative controls fail without injection.
+A Linux subreaper owns descendants of traced cases, including the fixture
+whose runtime owner deliberately cannot reap during fatal cleanup.
+The allocation-boundary demonstration throws `std::bad_alloc` explicitly
+rather than exhausting the shared host; corrupted internal status is not
+manufactured. The basic subset does not need strace.
+
+This is a demonstration of the implemented slice, not completion of later
+runtime machinery or whole-function suppression.
+[Journal 003](../journal/003-error-path-showcase.md) records the evidence
+and limits; the runnable catalog is documented in `sash-cpp/README.md`.
+
 ## Starting points selected by DG
 
 | Area | Starting point |
