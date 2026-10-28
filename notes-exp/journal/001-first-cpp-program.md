@@ -86,14 +86,26 @@ ASan use separate directories, and the documented default command works.
 
 The actual sash CLI caught one mistake in the hand-written counterpart:
 a for-in source uses bare `@names`, not an empty-disposition splat.
-The corrected file passes `--emit-ir`. Native execution cannot yet be
-compared: the separate sash-rt build resolves rustix 1.1.6 and fails on
-the already-filed private `runtime` module. No dependency pin or other
-native workaround was added. The producer plan remains uncommitted as
-DG originally requested.
+The corrected file passes `--emit-ir`. Initially, native execution could
+not be compared: the separate sash-rt build resolves rustix 1.1.6 and
+fails on the already-filed private `runtime` module. No dependency pin or
+other native workaround was added. The producer plan remains uncommitted
+as DG originally requested.
 
 The first runnable milestone is reached; the runtime roadmap is not
 complete. External launch, general redirection, pipelines and readers,
 END/signals, most value operations, and macOS remain. Call-context
 propagation and launch strategy still need their consequential choices
 settled before the next process milestone.
+
+## Native reference follow-up
+
+DG supplied `~/src/safebash/_tmp/sash` as the usable native compiler.
+With that binary and the runtime archive from the same checkout, the
+existing `sash-example` target compiles and runs `greetings.sash`.
+Its output matches both `greetings.expected` and the separately run C++
+executable byte-for-byte: `Hello, Ada!\n`. Both programs exit successfully.
+
+The README now gives the exact reference command. Native comparison is
+no longer blocked; the local fresh-build rustix issue remains unchanged
+and no native dependencies were edited.

@@ -50,9 +50,11 @@ UBSan host limitation.
 
 This is not completion of the roadmap. There is no process-launch API,
 pipeline or reader ownership, general redirection, END, signal handling,
-or collection-operation library yet. The sash counterpart passes the
-current front end, but its native execution remains blocked by the
-already-filed rustix runtime build failure.
+or collection-operation library yet. The sash counterpart compiles and
+runs with DG's supplied `~/src/safebash/_tmp/sash` and the runtime archive
+from the same checkout. Both executables produce exactly `Hello, Ada!\n`,
+also matching the independently specified output. The already-filed local
+rustix build failure does not block this reference run.
 
 ## Starting points selected by DG
 

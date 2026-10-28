@@ -41,6 +41,13 @@ With the real sash CLI and runtime already built in the parent checkout,
 same expected output. Override `SASH` and `SASH_RT_LIB` for other locations.
 This additional target is not a prerequisite for native C++ tests.
 
+For DG's existing native compiler and its companion runtime:
+
+```sh
+mk -p 1 SASH="$HOME/src/safebash/_tmp/sash" \
+  SASH_RT_LIB="$HOME/src/safebash/sash-rt/target/release/libsash_rt.a" sash-example
+```
+
 ## Current boundary
 
 `write` and `echo` check their command outcomes and raise `CommandError`

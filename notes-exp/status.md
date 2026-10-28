@@ -22,10 +22,13 @@ GCC and Clang pass the eight fixture groups and the example. Host-GCC
 AddressSanitizer passes too. Full UBSan is blocked by its metadata probing
 under the zero-fd limit; see [the tooling task](tasks/sanitizer-host-compatibility.md).
 
-The sash counterpart passes the freshly built CLI's front end.
-Executing it is blocked by the native project's existing
-[rustix runtime build bug](../notes/tasks/bug-fresh-clone-rustix-runtime-private.md).
-The experiment has not changed or pinned native dependencies.
+The sash counterpart compiles and runs with DG's supplied
+`~/src/safebash/_tmp/sash` and the runtime archive from that same checkout.
+Its output matches the C++ executable and the expected `Hello, Ada!\n`
+byte-for-byte. The local fresh-build
+[rustix issue](../notes/tasks/bug-fresh-clone-rustix-runtime-private.md)
+is unchanged, but no longer blocks this comparison. The experiment has
+not changed or pinned native dependencies.
 
 The checkout was fast-forwarded to `899179d3`, then branch
 `cpp-runtime-first-slice` was created. Project records stay here, not in
