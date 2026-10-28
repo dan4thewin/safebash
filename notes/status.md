@@ -1,4 +1,27 @@
-## ══ STATUS (2026-10-27, latest) — B37 landed: the walk resolution kept to itself ══
+## ══ STATUS (2026-10-28, latest) — F2 in progress; `-` on user functions filed for consideration ══
+
+**F2 (Order item 10) is in progress, not yet landed.** Its code is ready in
+a trial worktree: the branch's child-exit design for forked children, the
+H243 re-pin and the B81 stage-argument lift, gated, with a trial sweep
+identical to main.
+
+**DG questioned `-` on a user-function call (2026-10-28).** `-` exists to say
+"I don't care" about an external program's result, a better spelling than
+bash's `|| :`; a user function's status is its author's own, and the author
+can suppress inside it. Every potential change from that discussion is filed,
+unruled, in `notes/tasks/q-suppression-on-user-functions.md`, and the DD55 and
+DD70 passages that endorse `- myfunc` point to it. Until DG rules, the port
+adds no code, spec or advice that relies on `-` reaching into a function, so
+F2 drops the trialed B82 wrap and the specs that pinned it.
+
+**New finding B121** (peel family): a redirected predicate call escapes
+SB4037 (`if f >file` with a void `f` compiles; `if f` is SB4037). Filed in
+`bug-peel-family-classifiers`.
+
+**Corrected:** DD55's DD126 amendment said `$(status)` where it means
+`$(waitstatus)`.
+
+## ══ STATUS (2026-10-27) — B37 landed: the walk resolution kept to itself ══
 
 **B37 is Order item 9 of the batch-531 port**, ported as the branch wrote it.
 DD#23's resolution pass rewrites a bare external head to the absolute path it

@@ -35,3 +35,9 @@ or integrated into transform where function calls are resolved.
 
 Bare call of int-typed function → compile error (discards return
 value). Must capture: `x=$(func)` or handle: `if func`.
+
+## Follow-up (2026-10-28)
+
+A bare call of a status-returning (void) function still discards its
+`return` (batch-531 B15); that, and whether `- myfunc` stays legal, are open
+in `q-suppression-on-user-functions` Q3 and Q2.

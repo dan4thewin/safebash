@@ -460,6 +460,12 @@ Filed as backlog tasks while researching B55, under the same rule:
 - [ ] **B50** (open; DD55). `x=$(- sub abc b '\q')` prints `a\qc`; the
   unsuppressed form is SB4033.
   - Tracked by `bug-peel-family-classifiers` (journal 537).
+- [ ] **B121** (open; DD74). A redirected predicate call escapes SB4037:
+  with a void `f`, `if f >file`, `f >file || …`, `if ! f >file` and
+  `if /bin/true && f >file` compile, where each unredirected call is
+  SB4037. Found 2026-10-28 during F2; the same on base, branch and
+  hand-parser, in both backends.
+  - Tracked by `bug-peel-family-classifiers` (its B121 section).
 - [x] **B112** (open; DD95). `while - { … } { … }` sidesteps SB4027, a bug
   per DD95. Fixing it rewrites the branch's endck.10 and endck.11.
   - Landed in F1+F4 (journal 537): a `{ }` group behind `-` is SB4027
@@ -620,6 +626,10 @@ Filed as a backlog task during B37, under the same rule as F15's:
 
 ### 10. F2 forked children
 
+DG 2026-10-28: F2 lands without the B82 wrap and without specs that pin
+`-` reaching into a function (`- f |`, `- f &`); see
+`q-suppression-on-user-functions`.
+
 - [ ] **B9** (fixed-on-branch+question; DD56). Every forked child (a
   function pipeline stage, a background job) runs END when it exits; inside
   END that is a fork bomb. Question: are END-forked children checked? Owed:
@@ -752,10 +762,14 @@ Filed as a backlog task during B37, under the same rule as F15's:
   function discards its status: `fn f { return 3 }; f; echo after` prints
   `after` and exits 0. Journal 253 accepts bare calls of void functions; no
   spec pins the behaviour. Asked in F6's discussion.
+  - DG 2026-10-28: filed, unruled, with `-` on user-function calls in
+    `q-suppression-on-user-functions` Q3.
 - [ ] **B76** (fixed-on-branch; DD55, DD88). In `if x=$(/bin/echo $(f))` the
   fast path lifted the inner `$(f)` out of the condition capture's
   suppression, so a `/bin/false` inside `f` aborted. DD55 (2026-10-20) and
   DD88 make a capture condition suppress the whole capture.
+  - DG 2026-10-28 questions whether `-` should reach into a function at
+    all; open in `q-suppression-on-user-functions` Q4 (argument captures).
 - [ ] **B81** (open; DD55, DD122). A command stage's argument captures run
   in the parent before the fork; both backends ICE.
   - Re-probed after B37 (journal 538): an external capture in a stage
@@ -765,6 +779,9 @@ Filed as a backlog task during B37, under the same rule as F15's:
     `--no-taint` still ICE on base, hand-parser and the branch.
 - [ ] **B82** (open; DD55). A stage's suppression is not threaded into
   `build_function_pipeline_stage` or into B81's child; both backends ICE.
+  - Not ported with F2: the trialed wrap would cement `-` reaching into a
+    function (DG 2026-10-28). Open in `q-suppression-on-user-functions` Q1;
+    B82 is a bug only if Q1 and Q4 keep the reach.
 - [ ] **B84** (fixed-on-branch; DD55). A suppressed `a || b` reset `$?` to 0
   although `b` is unchecked. Branch specs: 55.88.
 
@@ -974,6 +991,9 @@ Filed as a backlog task during B37, under the same rule as F15's:
 - [x] **B75** (duplicate; DD58). Same finding as B79.
 - [ ] **B77** (open; DD58, DD125). Function names exempt every read from
   SB5031.
+  - Extended 2026-10-28 in `q-suppression-on-user-functions` (Related):
+    `: $(( f ))`, Q2's replacement for `- f` on an `-> int` function,
+    reads a non-int `f` as 0 without calling it.
 - [ ] **B78** (open; DD58). DD58's variable/function collision is checked
   only for a plain assignment.
 - [ ] **B79** (open; DD58, DD55). An int function as a pipeline stage: its

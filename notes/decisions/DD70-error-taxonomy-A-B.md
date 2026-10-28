@@ -95,6 +95,8 @@ justified it.
 opaque external (A) or in-process logic (B): `- match`, `- matchall`,
 `- [[ … ]]`, `- ! cmd`, and `- f` for an `-> int` function are all legal.
 (**`- ! cmd` is SB4019 again** — addendum 2026-10-26.)
+(**Under question, 2026-10-28:** `- f` on a user-function call; see
+`notes/tasks/q-suppression-on-user-functions.md`. Unruled.)
 
 ### Why the original rule did not hold up
 
@@ -343,6 +345,9 @@ Line 82's *"`if` / `||` / `|| :`"* should be read as `$(( f ))` / `-` for an
 `-> int` function.
 
 Specs: `e.b70.fndisc` (the rejection), `74.47`/`74.48` (the two replacements).
+
+(**Under question, 2026-10-28:** the user-function cases of this addendum are
+open in `notes/tasks/q-suppression-on-user-functions.md` Q2. Unruled.)
 
 ## Addendum 2026-09-25 — multiple redirects are left-to-right, stop-at-first-failure
 

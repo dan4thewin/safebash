@@ -80,6 +80,11 @@ For `return $(- self ...)`, suppression starts at that tail call, including
 its arguments. Earlier work in the initial invocation stays checked; later
 iterations inherit suppression while retaining constant-stack tail lowering.
 
+(**Under question, 2026-10-28:** DG doubts that `-` on a user-function call
+should reach into the function at all; see
+`notes/tasks/q-suppression-on-user-functions.md` Q1 and Q4. Unruled, so this
+text stands until DG rules.)
+
 ## Pipelines
 
 Pipefail always on (DD#20). Implicit check fires on the pipeline's
@@ -202,7 +207,7 @@ can outlive the sash program. `wait` is optional.
 **Amended by DD#126 (2026-10-09).** `wait` no longer returns a status and is
 no longer subject to the implicit check: it is an int intrinsic yielding the
 reaped **pid**, or `-1` on `ECHILD`, and it never aborts. The reaped child's
-exit is read through `$(status)`. A bare `wait` statement is SB4016 — the
+exit is read through `$(waitstatus)`. A bare `wait` statement is SB4016 — the
 unconsumed-value rule, not the implicit-check rule.
 
 ## User-defined functions
@@ -220,6 +225,10 @@ explicitly handle the return value:
 - `if myfunc` / `myfunc || handle` — explicit handling
 - `- myfunc` — suppressed
 - bare `myfunc` — **compile error** (unhandled non-void return)
+
+(**Under question, 2026-10-28:** whether `- myfunc` stays legal, and how a
+bare call of a status-returning function is handled (B15), are open in
+`notes/tasks/q-suppression-on-user-functions.md` Q2 and Q3. Unruled.)
 
 `return 0` alone is a compile error — if the only possible return
 is zero, the `return` is ceremony. Omit it (void function).

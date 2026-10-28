@@ -1,5 +1,5 @@
 ---
-title: "Bug: `$(- intrinsic …)` and a nested `keys` skip classifiers that do not peel — ICEs, false SB5050, skipped checks"
+title: "Bug: `$(- intrinsic …)`, a nested `keys` and a redirected predicate call skip classifiers that do not peel — ICEs, false SB5050, skipped checks"
 status: open
 priority: P1
 kind: bug
@@ -8,7 +8,8 @@ gates:
   - "every program in the table is accepted with its control's behaviour or rejected with its control's diagnostic, in both backends — none panics and none prints a wrong value"
   - "one shared peel (or Suppressed/Redirected as statement attributes) serves every classifier named below; no new private peel"
   - "specs pin every row in both backends"
-  - "batch-531-findings.md ticks B27, B43–B48 and B50, and ticks B42 together with bug-reserved-names-in-arithmetic (which owns B42's `len HOME` half)"
+  - "B121: a redirected predicate call (y05, y06, y12, y18, y19) is SB4037 like its unredirected control (y24, y25, y20, y21), in both backends; its Suppressed half (y22, y23) follows the suppression rulings"
+  - "batch-531-findings.md ticks B27, B43–B48, B50 and B121, and ticks B42 together with bug-reserved-names-in-arithmetic (which owns B42's `len HOME` half)"
 ---
 
 ## Found
@@ -91,3 +92,35 @@ above names the rule that should have fired, and after the fix each program
 should get that rule's diagnostic, as its control does. Whether a pure `-`
 form (`- [[ … ]]`, `- match s P`) should be legal at all is Q5 of
 `q-suppression-and-stage-residuals`.
+
+## B121: a redirected predicate call escapes SB4037
+
+Found 2026-10-28 while porting F2. `f` is `fn f { echo x }`, a void
+function with no `return`. Each program compiles, where its unredirected
+control is SB4037 ("function `f` is used as a predicate but does not
+`return` on every path"). Measured the same on base 1309385, the branch
+e98fca8 and hand-parser 899179d, in both backends.
+
+| Id | Program | Result | Control |
+|---|---|---|---|
+| y05 | `if f >/nonexistent/d/x { echo t } else { echo "e $?" }` then `echo after` | `e 1`, `after` | y24 `if f { … }`: SB4037 1:1 |
+| y12 | `if f >/tmp/sash_y12 { echo t } else { echo e }` | `t` | y24 |
+| y06 | `f >/nonexistent/d/x \|\| echo "h $?"` then `echo after` | `h 1`, `after` | y25 `f \|\| echo h`: SB4037 1:1 |
+| y18 | `if ! f >/tmp/sash_y18 { echo t } else { echo e }` then `echo after` | `e`, `after` | y20 `if ! f { … }`: SB4037 1:1 |
+| y19 | `if /bin/true && f >/tmp/sash_y19 { echo t } else { echo e }` then `echo after` | `t`, `after` | y21 `if /bin/true && f { … }`: SB4037 1:1 |
+
+Cause: `validate.rs`'s `mark_predicate_operand` names a `Command`, a
+one-command negated `Pipeline` and an `&&`/`||` `List`; its `_ => {}` drops
+`StmtKind::Redirected` and `StmtKind::Suppressed`, so the call is never
+marked as a predicate. Its feeders (`collect_predicate_uses_stmt`,
+`mark_condition_predicate`) and the reporter
+(`report_non_returning_predicates`) are not at fault. It is this family's
+shape: one classifier that does not peel.
+
+The Suppressed half is held. `if - f { … }` (y22) and
+`if /bin/true && - f { … }` (y23) compile and print `x`, `t`, `after` in
+both backends. What they should do depends on Q3 of
+`q-suppression-and-stage-residuals` (`-` where the status is consumed) and
+Q1/Q2 of `q-suppression-on-user-functions`. Fix direction: peel
+`Redirected` now, through this task's shared peel; leave `Suppressed` to
+those rulings.

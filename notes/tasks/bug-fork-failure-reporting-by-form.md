@@ -87,3 +87,9 @@ The question for DG is the status. **Recommended: 1**, as pipelines and
 captures leave today. 127 is what DD#55 gives an exec failure in the child
 ("command failed (exit 127)"), and a command that was never forked did not
 fail to exec.
+
+## Related (2026-10-28)
+
+Whether `-` may discard a fork failure, and on which forms (`- f &`,
+`- f |` for a user function), is open in `q-suppression-on-user-functions`
+Q5 (setup failures), with Q2 (may `-` prefix a user-function call at all).
