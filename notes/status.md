@@ -1,9 +1,35 @@
-## ══ STATUS (2026-10-28, latest) — F2 in progress; `-` on user functions filed for consideration ══
+## ══ STATUS (2026-10-28, latest) — F2 landed: a child runs only its own code ══
 
-**F2 (Order item 10) is in progress, not yet landed.** Its code is ready in
-a trial worktree: the branch's child-exit design for forked children, the
-H243 re-pin and the B81 stage-argument lift, gated, with a trial sweep
-identical to main.
+**F2 is Order item 10 of the batch-531 port.** It landed in three commits:
+7a3ca42, 33616b6 and the notes commit. Journal 539.
+
+A forked child (a pipeline stage or a background job) now runs only its own
+code and leaves through `Terminator::ChildExit` with its own `$?`. Fixed,
+in both backends:
+- **B9**: a forked child no longer runs END, which ends the fork bomb from a
+  job forked inside END (DD56 addendum);
+- **B10**: a failing function stage is named by its function, not
+  `__compound_N`;
+- **B17**: a job inside a reader loop no longer panics;
+- **B20**: a failed background fork reports `fork: error N` and aborts
+  unless checked or suppressed, and `$!` reads -1;
+- **B21**: a self-tail function works as a stage;
+- **B120** (new): a function stage's arguments are evaluated in the
+  caller's frame, where they were an ICE;
+- **B81**: a command stage's argument captures are evaluated in the stage's
+  child.
+
+The B82 wrap and its specs are dropped, per DG's ruling below.
+
+`:` now evaluates its arguments (P1, folded in): `: ${s:?empty}` aborts.
+`:` builds no argv, so it runs no NUL guard (decide-and-report, noop.13).
+
+Specs: 56 new ids in commit A, 14 in commit B. Sweep B: 10187 = 10174 pass
++ 13 skip, with 0 flips. New backlog tasks: `q-f2-residuals`,
+`q-stage-capture-redirect-order`, `bug-sb5037-cycle-reported-twice` and
+`bug-write-diagnostics-name-echo`.
+
+**Next:** F3 (B8/B16, END-defined functions), on DG's go.
 
 **DG questioned `-` on a user-function call (2026-10-28).** `-` exists to say
 "I don't care" about an external program's result, a better spelling than
@@ -12,7 +38,7 @@ can suppress inside it. Every potential change from that discussion is filed,
 unruled, in `notes/tasks/q-suppression-on-user-functions.md`, and the DD55 and
 DD70 passages that endorse `- myfunc` point to it. Until DG rules, the port
 adds no code, spec or advice that relies on `-` reaching into a function, so
-F2 drops the trialed B82 wrap and the specs that pinned it.
+F2 dropped the trialed B82 wrap and the specs that pinned it.
 
 **New finding B121** (peel family): a redirected predicate call escapes
 SB4037 (`if f >file` with a void `f` compiles; `if f` is SB4037). Filed in

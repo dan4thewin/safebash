@@ -44,7 +44,13 @@ then ICEs in both backends:
   (`collection `` has no emitted SSA slot`); the harness sees `rc=101`, `err=`.
 
 The spec for that program (`stgcyc.1`) asserts its code, so it went red
-either way. A spec that asserts only `$rc != 0 && -z $out` would have
+either way.
+
+2026-10-28 (F2, journal 539): the ICE above was B120's, not the missing
+take's. The stage took the caller's positional array before it lowered its
+own arguments, and `$(( $1 - 1 ))` reads the caller's `$1`. F2 fixed B120,
+so this program no longer ICEs, stub or not; the harness gap is unchanged,
+and a new reproducer needs some other ICE. A spec that asserts only `$rc != 0 && -z $out` would have
 passed on the ICE.
 
 Confirmed through the harness itself: sourcing `spec/common.sh` and calling

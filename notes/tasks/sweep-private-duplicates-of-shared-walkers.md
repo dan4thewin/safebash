@@ -67,3 +67,13 @@ Unlike the first two, it was not a fork: it predates the shared walk
 (d4fdc63, 2026-06-22, against 93d4ac1, 2026-09-29) and shares no name with
 it, so the name signal above would not have found it. Compare what each walk
 reaches, not only what it is called.
+
+## A fifth instance, found and fixed (B120, journal 539)
+
+A function pipeline stage set up its call through its own copy of the
+inliner's argument handling. The copy took the caller's positional array
+before lowering the arguments, so an argument reading the caller's `$1` or
+`$#` found no array: an ICE in both backends, and a wrong `$#` in C. F2
+deleted the copy: `build_function_pipeline_stage` now calls
+`inline_function_call` inside `enter_forked_child`/`exit_forked_child`
+(stgarg.1-9).

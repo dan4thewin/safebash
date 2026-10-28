@@ -64,6 +64,7 @@ out of the way (w5, with a plain `$x`, is SB5020 2:48).
 | p1 `echo a \| while readline x { /bin/true; echo "in=$?"; echo "${x:!}" }` | SB5012 1:45 | p1t: legal |
 | p2 `echo hi ⏎ echo a \| while readline x { - /bin/false; echo "in=$?"; echo "${x:!}" }` | prints `hi`, `in=1`, `a` | p2t: SB5012 2:39 |
 | l3 `echo a \| while readline x { - /bin/true & ⏎ - wait $!; echo "${x:!}" }` | SB5094 2:8 | l3t: legal |
+| b17d `/bin/printf "1\n2\n" \| while readline x { attest x [[ -n $x ]] ⏎ echo "got $x" & ⏎ int p=$! ⏎ int r=$(wait $p) ⏎ int s=$(waitstatus) ⏎ echo "s=$s r=$(( r == p ))" } ⏎ echo done` | SB5094 4:9 and 6:9, every version (found in F2, journal 539; `files/port-f2-probes.tar.gz` `sp/b17d.sh`) | legal |
 
 ### `-`-wrapped compounds
 

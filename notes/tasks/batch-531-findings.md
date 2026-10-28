@@ -630,34 +630,66 @@ DG 2026-10-28: F2 lands without the B82 wrap and without specs that pin
 `-` reaching into a function (`- f |`, `- f &`); see
 `q-suppression-on-user-functions`.
 
-- [ ] **B9** (fixed-on-branch+question; DD56). Every forked child (a
+- [x] **B9** (fixed-on-branch+question; DD56). Every forked child (a
   function pipeline stage, a background job) runs END when it exits; inside
   END that is a fork bomb. Question: are END-forked children checked? Owed:
   DD56's addendum "END runs only in the main process".
-- [ ] **B10** (fixed-on-branch; DD55). A function pipeline stage's failure
+  - Landed in F2 (journal 539): a forked child leaves through
+    `Terminator::ChildExit` with its own `$?`, and `child_region` keeps its
+    blocks out of END's abort routing, in both backends. DD56's addendum is
+    written. Specs 56.89, 56.91-56.93.
+  - The question is not ruled. Measured after F2: a child forked inside END
+    is unchecked, as END is. `END { /bin/false & ⏎ - wait ⏎ echo end }`
+    after `echo main` prints `main` and `end`, rc 0, no message. Open in
+    `q-f2-residuals` R4.
+- [x] **B10** (fixed-on-branch; DD55). A function pipeline stage's failure
   names `__compound_N` instead of the function.
-- [ ] **B17** (fixed-on-branch; DD122). A reader scope's finish runs in a
+  - Landed in F2 (journal 539): the stage is reported by the function's
+    name, also when the status comes from a call inside it (pf.69-pf.71).
+    pf.82 and pf.83 pin the two lines a failing stage body prints: the
+    command, then the function.
+- [x] **B17** (fixed-on-branch; DD122). A reader scope's finish runs in a
   background child: under `--no-taint`, every child of `seq 3 | while
   readline x { echo "got $x" & }` dies at runtime with "reader scopes must
   finish in nesting order", in both backends.
-- [ ] **B20** (fixed-on-branch; DD55). A background fork failure is silent:
+  - Landed in F2 (journal 539): the child leaves through `ChildExit`, not
+    through the parent's reader finish (pipeown.42, pipeown.43).
+- [x] **B20** (fixed-on-branch; DD55). A background fork failure is silent:
   `sash_fork`'s -1 is taken for the parent, the job never runs, `$!` is -1
   and the program exits 0 (shown by failing `clone` with EAGAIN under
   strace). Pipelines already guard it.
   - See `bug-fork-failure-reporting-by-form` (filed during F1+F4, journal
     537): the forms report a fork failure three ways, and `!` turns one
-    into success. That task lands with B20.
-- [ ] **B21** (fixed-on-branch; DD27). A self-tail function used as a
+    into success. That task stays in the backlog; it did not land with B20
+    (corrected 2026-10-28).
+  - Landed in F2 (journal 539): the job prints `fork: error N`, sets
+    status 1 and aborts unless checked or suppressed, as a failed pipeline
+    construction does (DD55); `$!` reads -1. Inside END it is still silent
+    (the by-form task's row e1). Specs bgfork.1-bgfork.8.
+- [x] **B21** (fixed-on-branch; DD27). A self-tail function used as a
   pipeline stage draws SB5037.
   - F13 (journal 532) touched the stage route without fixing B21. Its
     looping template exposed a stage body inheriting its caller's tail
     loop: in `fn f { return g $1 }; fn g { … f … | cat … }`, `return g`
-    in the stage lowered as a jump from the forked child into `g`'s loop,
-    an ICE in both backends. Base's SB5037 there was an accident of its
+    in the stage lowered as a jump from the forked child into `g`'s loop.
+    (Corrected 2026-10-28, journal 539: the ICE both backends showed there
+    was B120's, from the argument `$(( $1 - 1 ))`; with an argument that
+    does not read `$1`, the stage silently ran the recursion DD27 forbids,
+    `g0|g1|g2`, rc 0.) Base's SB5037 there was an accident of its
     non-looping template. A function run as a stage now takes no tail loop,
     as a captured one does (B58), so the call is the recursion DD27
     rejects: SB5037 at 1:15 (`stgcyc.1`). The callee-owned stage loop
     that would fix B21 stays with F2.
+  - Landed in F2 (journal 539): a self-tail function runs as a stage,
+    including one also called plainly (stgcyc.2) and one in a background
+    pipeline (stgcyc.3); pf.83 checks its body's failure report.
+- [x] **B120** (open; no DD). Found 2026-10-27 during F2, pre-existing. A
+  function stage took the caller's positional array before it lowered its
+  own arguments, so an argument that reads the caller's positionals found
+  no array: an ICE in both backends, and for `$#` in C a silently wrong
+  number. The stage's argument setup was a private copy of the inliner's.
+  - Landed in F2 (journal 539): the arguments are evaluated in the
+    caller's frame (stgarg.1-stgarg.9, which fail on the pre-port binary).
 - [x] **B22** (not-a-bug; no DD). Suspected loop on a pipeline-setup failure
   inside END; it does not occur, because the END region is unchecked.
 
@@ -770,13 +802,19 @@ DG 2026-10-28: F2 lands without the B82 wrap and without specs that pin
   DD88 make a capture condition suppress the whole capture.
   - DG 2026-10-28 questions whether `-` should reach into a function at
     all; open in `q-suppression-on-user-functions` Q4 (argument captures).
-- [ ] **B81** (open; DD55, DD122). A command stage's argument captures run
+- [x] **B81** (open; DD55, DD122). A command stage's argument captures run
   in the parent before the fork; both backends ICE.
   - Re-probed after B37 (journal 538): an external capture in a stage
     argument's subscript (`echo ${m[$(cat f)]:-d} | /bin/cat`) is SB5020
     now; base ICE'd on the bare `cat`. A function capture, with or without
     a subscript (`echo $(g) | /bin/cat`), and any capture under
     `--no-taint` still ICE on base, hand-parser and the branch.
+  - Landed in F2 (journal 539), folded in from F6: a command stage's
+    captures are evaluated in its child after its redirects, as a function
+    stage's are, and a `:` stage runs its captures, as the statement `:`
+    now does (stgarg.11-stgarg.20 and stgarg.22-stgarg.36; stgarg.34 and
+    stgarg.36 are controls). Whether that order is right is open in
+    `q-stage-capture-redirect-order`.
 - [ ] **B82** (open; DD55). A stage's suppression is not threaded into
   `build_function_pipeline_stage` or into B81's child; both backends ICE.
   - Not ported with F2: the trialed wrap would cement `-` reaching into a

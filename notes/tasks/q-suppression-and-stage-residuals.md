@@ -33,6 +33,7 @@ Probes: `files/port-f1f4-probes.tar.gz`, directories `dr/`, `bk/`, `bl/`,
 | dr3 | `for x in a b {` then `- break` then `echo "in $x"` then `}` then `echo after` | `after` |
 | dr4 | dr3 with `- continue` | `after` |
 | dr5 | `- :` then `echo after` | `after` |
+| q1h | `str s=""` then `- : ${s:?empty}` then `echo after` | aborts with `empty` since 33616b6 (`:` evaluates its arguments, journal 539); printed `after` before. `-` does not discard a disposition abort |
 | dr6 | `fn f { - return /bin/false }` then `f` then `echo "[$?]"` | `[1]` |
 | r6 | dr6 without the `-` | `[1]` |
 

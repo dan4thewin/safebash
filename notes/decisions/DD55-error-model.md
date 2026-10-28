@@ -412,8 +412,11 @@ an unrelated SB4014. `- until` now parses like `- while`.
 aborts" is wrong for exec. The exec fails in the child, which prints the errno
 and "command failed (exit 127)" and exits 127. The parent sees the status only
 by reaping it through DD#126's latch (55.16). Under `- cmd &` and `exec cmd &`
-the child prints the errno but not the "command failed" line. Fork failure is
-meant to abort as written; today it is silent (batch-531 B20, open).
+the child prints the errno but not the "command failed" line. Fork failure
+aborts as written since F2 (2026-10-28, batch-531 B20, journal 539):
+`fork: error N`, status 1, abort unless checked or suppressed, and `$!` reads
+-1. Inside END it is still silent (`bug-fork-failure-reporting-by-form`, row
+e1).
 
 Specs: errors.sh 55.107-55.144, 71.4, bng.18, bng.25, csfx.4-csfx.8;
 pipe_functions.sh pf.52. Journal 537.

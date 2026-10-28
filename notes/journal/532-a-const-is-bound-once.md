@@ -262,6 +262,10 @@ Two of my changes regressed programs that base rejected:
   while it lowers the stage, so the recursion is reported, SB5037 at
   1:15 (stgcyc.1). Without that, both backends ICE: native at
   `codegen/types.rs:285` (exits 1), C at `emit_c.rs:4449` (rc 101).
+  (Corrected in journal 539: that ICE was B120's, the argument
+  `$(( $1 - 1 ))` reading the caller's `$1`. Without the take, a stage
+  whose argument does not read `$1` silently runs the recursion DD27
+  forbids.)
   Giving the stage its own loop would also work, but that is B21's fix
   and belongs to F2; decide-and-report.
 
