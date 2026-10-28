@@ -1,0 +1,30 @@
+CXX=c++
+AR=ar
+BUILD=build
+SANITIZE=
+CPPFLAGS=-Iinclude
+CXXFLAGS=-std=c++17 -Wall -Wextra -Wpedantic -Werror -g
+SASH=../target/release/sash
+SASH_RT_LIB=../sash-rt/target/release/libsash_rt.a
+
+build:V:
+	mkdir -p $BUILD &&
+	$CXX $CPPFLAGS $CXXFLAGS $SANITIZE -c src/runtime.cpp -o $BUILD/runtime.o &&
+	$CXX $CPPFLAGS $CXXFLAGS $SANITIZE -c src/platform_linux.cpp -o $BUILD/platform_linux.o &&
+	$AR rcs $BUILD/libsash_cpp.a $BUILD/runtime.o $BUILD/platform_linux.o &&
+	$CXX $CPPFLAGS $CXXFLAGS $SANITIZE examples/greetings.cpp $BUILD/libsash_cpp.a -o $BUILD/greetings
+
+test:V: build
+	$CXX $CPPFLAGS $CXXFLAGS $SANITIZE tests/runtime.cpp $BUILD/libsash_cpp.a -o $BUILD/runtime-tests &&
+	timeout 30 $BUILD/runtime-tests &&
+	timeout 10 $BUILD/greetings > $BUILD/greetings.actual &&
+	cmp examples/greetings.expected $BUILD/greetings.actual
+
+fmt:V:
+	clang-format --dry-run --Werror include/sash/runtime.hpp src/*.hpp src/*.cpp examples/*.cpp tests/*.cpp
+
+sash-example:V:
+	mkdir -p $BUILD &&
+	SASH_RT_LIB=$SASH_RT_LIB $SASH examples/greetings.sash -o $BUILD/greetings-sash &&
+	timeout 10 $BUILD/greetings-sash > $BUILD/greetings-sash.actual &&
+	cmp examples/greetings.expected $BUILD/greetings-sash.actual

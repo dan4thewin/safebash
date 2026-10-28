@@ -1,0 +1,79 @@
+---
+title: "Run the full sanitizer gate without hiding descriptor-exhaustion cases"
+status: open
+kind: tooling
+depends: []
+gates:
+  - "a consistent host compiler, linker, and sanitizer runtime start and run the complete fixture set"
+  - "the real zero-fd memfd failure is tested without suppressing unrelated undefined-behavior checks"
+  - "independent memory-error and arithmetic-error controls are rejected"
+---
+
+## What works
+
+On the initial Linux host, GCC and Clang ordinary builds pass. This GCC
+AddressSanitizer command also passes all eight fixture groups and the example:
+
+```sh
+cd sash-cpp
+mk -p 1 'CXX=g++ -B/usr/bin' BUILD=build/asan \
+  'SANITIZE=-fsanitize=address -fno-omit-frame-pointer' test
+```
+
+An independent heap-use-after-free control is rejected by ASan. An
+independent signed-overflow control is rejected by UBSan with
+`-fno-sanitize-recover=all`.
+
+## Remaining failures
+
+Clang 20's combined ASan/UBSan executable fails before the first fixture:
+`SetAlternateSignalStack` tries to allocate zero bytes and reports EINVAL.
+An empty `int main() { return 0; }` reproduces it, so it is not evidence
+against the runtime.
+
+GCC 9 needs `-B/usr/bin` here: its default linker resolves Homebrew glibc
+components alongside the host sanitizer libraries and fails to link them.
+Selecting the system tools resolves that failure.
+
+The resulting combined ASan/UBSan build passes six groups, then reports an
+invalid vptr in a standard `system_error` constructor during the zero-fd
+probe. A standalone derived `std::system_error` control reproduces it
+without sash code. `strace` shows the sanitizer's pipe attempts failing
+with EMFILE after `RLIMIT_NOFILE` becomes zero. Restoring the limit before
+inspecting the caught exception does not help: construction already fails.
+
+Minimal independent control, compiled with the same combined sanitizer
+flags and `-fno-sanitize-recover=all`:
+
+```cpp
+#include <cerrno>
+#include <sys/resource.h>
+#include <system_error>
+
+class FixtureError final : public std::system_error {
+  public:
+    using std::system_error::system_error;
+};
+
+int main() {
+    struct rlimit limit {};
+    if (::getrlimit(RLIMIT_NOFILE, &limit) != 0) {
+        return 3;
+    }
+    limit.rlim_cur = 0;
+    if (::setrlimit(RLIMIT_NOFILE, &limit) != 0) {
+        return 4;
+    }
+    try {
+        throw FixtureError(EMFILE, std::generic_category(), "control");
+    } catch (const FixtureError &error) {
+        return error.code().value() == EMFILE ? 0 : 1;
+    }
+}
+```
+
+Resolve the host/tooling conflict or use a suitable host, then rerun the
+complete gate. Do not remove the fault fixture, globally disable vptr
+checks, change the runtime's exception type to appease instrumentation,
+or count the partial UBSan run as passing. Keep the memfd allocation
+failure real and distinguish it from later descriptor-duplication failure.

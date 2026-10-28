@@ -1,0 +1,13 @@
+fn greet {
+    write "Hello, ${args[0]}"
+}
+
+array names
+names[2]=Ada
+names[7]=Grace
+for name in @names {
+    if [[ $name =~ '^A' ]] {
+        message=$(greet $name)
+        echo "$message!"
+    }
+}
