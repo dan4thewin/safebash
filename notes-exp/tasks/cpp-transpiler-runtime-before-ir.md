@@ -48,13 +48,38 @@ The [journal](../journal/001-first-cpp-program.md) records the scope and
 the [sanitizer task](sanitizer-host-compatibility.md) records the remaining
 UBSan host limitation.
 
-This is not completion of the roadmap. There is no process-launch API,
-pipeline or reader ownership, general redirection, END, signal handling,
-or collection-operation library yet. The sash counterpart compiles and
+This is not completion of the roadmap. Pipeline and reader ownership,
+general redirection, END, signal policy, and the collection-operation
+library remain. The sash counterpart compiles and
 runs with DG's supplied `~/src/safebash/_tmp/sash` and the runtime archive
 from the same checkout. Both executables produce exactly `Hello, Ada!\n`,
 also matching the independently specified output. The already-filed local
 rustix build failure does not block this reference run.
+
+## Second runnable milestone - implemented
+
+`job_report.cpp` and its sash counterpart retain a real worker-label
+function, sparse records, a two-round while loop, for traversal, and a
+regex branch. The function runs an external printf inside capture;
+external test commands supply a condition and explicitly discarded
+results. Both programs match their independent eleven-line expected output.
+
+DG selected single-threaded fork/exec after comparison with a posix_spawn
+hybrid; [DD#2](../decisions/DD02-foreground-fork-exec.md) records the choice.
+The library now has foreground `try_execute`/`execute`, distinct normal
+exit/signal/setup results, prebuilt argv, inherited environment, and child
+ownership through wait. There is no shell fallback or PATH search.
+
+Fourteen native fixture groups pass with GCC, Clang, and host-GCC ASan.
+Linux strace probes exercise fork failure, interrupted wait, partial
+descriptor relocation, and setup reporting without child writes.
+The [second journal entry](../journal/002-job-report-and-foreground-processes.md)
+records the reporting-write bug found and fixed during implementation.
+
+This completes the first Linux launch/capture slice, so the macOS
+capture-storage choice can now be taken up. It does not complete
+background/public wait, forked C++ stages, call-context propagation,
+pipelines, redirects, or the full lifecycle.
 
 ## Starting points selected by DG
 
@@ -62,6 +87,7 @@ rustix build failure does not block this reference run.
 |---|---|
 | Platforms | Linux first; macOS follows soon, rather than becoming an indefinite future port |
 | Language | C++17 |
+| Launch and threading | Single-threaded fork/exec, selected in DD#2 |
 | Sparse collections | `std::map`, with numeric keys for indexed arrays and string keys for maps |
 | Regex | `std::regex` with `std::regex_constants::ECMAScript` |
 | General in-process stdout capture | Linux `memfd_create`, not a named temporary file or a synchronously filled pipe |
@@ -115,7 +141,6 @@ forks with DG before building their assumptions throughout the library.
 | Choice | Alternatives and tradeoffs | Proposed way to settle it |
 |---|---|---|
 | Checkedness through calls | Exceptions are selected, but a suppressed function must not merely stop at its first thrown command error. A caller context can select checked operations, or the emitter can make the distinction explicit in generated calls. | Start with command outcomes plus checked wrappers; settle call-context propagation before implementing whole-function or pipeline suppression |
-| Launch mechanism and threading | Fork/exec naturally supports C++ function stages. `posix_spawn` constrains the child path for externals but does not directly launch an arbitrary C++ body. A threaded parent makes running C++ after fork much more restrictive. | Compare fork/exec and a hybrid; recommend a single-threaded initial runtime, without adding capture-drainer threads as an incidental convenience |
 | Collection details | Missing cells can yield meaningful zero values or explicit absence. Negative indices, population versus highest-index length, and snapshot versus live iteration need explicit answers. | Present the native rules beside the simpler standard-map alternatives; keep reads non-inserting under either choice |
 | Text and arithmetic | Counted byte strings are economical; Unicode-aware operations need more machinery. Checked arithmetic preserves faults; explicitly defined wrapping is another defensible choice. Locale-sensitive operations can vary between hosts. | Settle byte/character units, case/classification locale, numeric parsing, overflow, and shifts together; raw signed C++ overflow is never an implementation option |
 | Regex results and replacement | Source-style backreferences require an adapter; standard C++ replacement notation reduces bespoke logic. Group layout, no-match results, and zero-length iteration remain operation-level choices even with the grammar fixed. | Compare readable examples and prefer standard facilities where they remove rather than conceal complexity |
@@ -197,14 +222,15 @@ such failures into success.
 
 ## 3. Implement process launch and child-status ownership
 
-- [ ] Launch explicit executable paths with argument vectors and inherited
+- [x] Launch explicit executable paths with argument vectors and inherited
   environment data, without a shell or command-string quoting layer.
 - [ ] Finish argument construction before the child path. Reject interior
   NUL at executable, argument, environment, and path boundaries rather
   than truncating.
-- [ ] Distinguish child-creation, fd-setup, and exec failures from a program
-  that successfully starts and exits nonzero. A fork/exec path needs a
-  close-on-exec error channel so the parent can make that distinction.
+- [x] Distinguish child-creation, fd-setup, and exec failures from a program
+  that successfully starts and exits nonzero. A close-on-exec completion
+  pipe plus shared setup status preserves that distinction even if a
+  reporting write would fail.
 - [ ] Support foreground execution, background launch, and replacing
   `exec`. Define signal dispositions and inherited descriptors explicitly.
 - [ ] Implement wait-for-pid and wait-for-any with one child-status owner.
@@ -224,7 +250,7 @@ fixtures, not assumptions that a particular system utility exists.
 
 ## 4. Implement Linux memfd capture
 
-- [ ] Implement general in-process capture with `memfd_create` and
+- [x] Implement general in-process capture with `memfd_create` and
   close-on-exec ownership. Redirect actual fd 1 so helper writes and
   foreground external commands see the same destination.
 - [ ] Save stdout, run the C++ body in-process, restore stdout, position

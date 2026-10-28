@@ -1,0 +1,28 @@
+fn worker_label {
+    /usr/bin/printf 'worker:%s' "${args[0]}"
+}
+
+array people
+people[2]=Ada
+people[7]=Grace
+people[11]=Edsger
+people[20]=guest
+int rounds=2
+while (( rounds > 0 )) {
+    echo "round $rounds"
+    for person in @people {
+        if [[ $person =~ '^[A-Z][a-z]+$' ]] {
+            label=$(worker_label $person)
+            if /bin/test $person = Grace {
+                echo "$label: queued"
+            } else {
+                echo "$label: ready"
+            }
+            - /bin/test $person = Ada
+        } else {
+            echo "skip:$person"
+        }
+    }
+    (( rounds -= 1 ))
+}
+echo complete

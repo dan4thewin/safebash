@@ -4,11 +4,17 @@
 #include <string>
 #include <string_view>
 #include <system_error>
+#include <vector>
+
+namespace sash {
+struct ProcessResult;
+}
 
 namespace sash::platform {
 
 std::error_code write_all(int fd, std::string_view bytes) noexcept;
 int report_error(std::string_view program, std::string_view diagnostic, int status) noexcept;
+ProcessResult execute(std::vector<std::string> &command);
 
 class FileDescriptor {
   public:

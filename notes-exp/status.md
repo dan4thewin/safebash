@@ -1,46 +1,49 @@
-## First runnable C++ slice
+## Foreground commands and the second program pair
 
-DG directed the external-transpiler work to start with a hand-written C++
-equivalent of a quasi-trivial sash program.
-
-`sash-cpp/` now contains an independent C++17 library and a runnable
-`examples/greetings.cpp`. It retains a real function, sparse `std::map`,
-ordinary loop and branch, ECMAScript regex, and Linux memfd capture:
+`sash-cpp/examples/job_report.cpp` is the hand-written counterpart of
+`job_report.sash`. It adds external commands to a real captured function,
+sparse records, two rounds of ordinary while/for control flow, a regex
+filter, a command used as a condition, and explicitly discarded failures.
 
 ```sh
 cd sash-cpp
 mk -p 1 test
-./build/greetings
+./build/job_report
 ```
 
-Output is `Hello, Ada!`. Commands have explicit outcomes plus checked
-wrappers; caught and discarded failures do not print or stop later work.
-Nested capture, unwind restoration, binary output, closed stdout, and
-descriptor exhaustion are exercised natively.
+Both job-report executables produce the independently specified eleven
+lines; the first greetings pair still produces `Hello, Ada!`. The native
+reference uses DG's `~/src/safebash/_tmp/sash` with the runtime archive
+from the same checkout. No compiler, producer, or native dependencies
+were changed.
 
-GCC and Clang pass the eight fixture groups and the example. Host-GCC
-AddressSanitizer passes too. Full UBSan is blocked by its metadata probing
-under the zero-fd limit; see [the tooling task](tasks/sanitizer-host-compatibility.md).
+DG selected single-threaded fork/exec over a hybrid launch model.
+Foreground outcomes distinguish normal exit, signal termination, and
+setup failure; checked calls raise, while caught/discarded failures stay
+inspectable and quiet. Private descriptors avoid closed standard slots,
+and the caller owns reaping. Exec errno is published through a preallocated
+shared cell, avoiding a failed reporting write becoming apparent exit 127.
+See [DD#2](decisions/DD02-foreground-fork-exec.md) and
+[journal 002](journal/002-job-report-and-foreground-processes.md).
 
-The sash counterpart compiles and runs with DG's supplied
-`~/src/safebash/_tmp/sash` and the runtime archive from that same checkout.
-Its output matches the C++ executable and the expected `Hello, Ada!\n`
-byte-for-byte. The local fresh-build
+GCC and Clang pass fourteen fixture groups and both examples.
+Host-GCC AddressSanitizer passes too. Linux strace probes cover fork
+failure, interrupted wait, partial error-pipe setup, and write-independent
+exec-error reporting. The previous
+[sanitizer tooling limitations](tasks/sanitizer-host-compatibility.md) remain
+documented; the separate native
 [rustix issue](../notes/tasks/bug-fresh-clone-rustix-runtime-private.md)
-is unchanged, but no longer blocks this comparison. The experiment has
-not changed or pinned native dependencies.
+is unchanged and does not block reference comparison.
 
-The checkout was fast-forwarded to `899179d3`, then branch
-`cpp-runtime-first-slice` was created. Project records stay here, not in
-the native compiler's `notes/`. See [the first journal entry](journal/001-first-cpp-program.md)
-and [DD#1](decisions/DD01-runtime-starting-points.md).
+The [runtime task](tasks/cpp-transpiler-runtime-before-ir.md) stays open.
+The first Linux launch/capture slice is complete, making the macOS storage
+choice timely. Remaining work includes call-context propagation,
+background/public wait, replacing exec, forked C++ stages, general
+redirection, streaming pipelines/readers, END/signals, and most value
+operations.
 
-The [runtime task](tasks/cpp-transpiler-runtime-before-ir.md) remains open:
-external launch, redirections, pipelines, END/signals, and most value
-operations are not implemented. Next is a single external command, with
-call-context and launch choices settled before extending suppression or
-forking C++ function bodies. macOS follows the first Linux launch/capture slice.
-
-The independent producer plan is still the local, uncommitted draft
-`tasks/emit-ir-json-for-c-transpiler.md`, as requested. No IR changes or
-consumer have been implemented.
+Work remains on `cpp-runtime-first-slice`. Experiment records stay here,
+not under the native compiler's `notes/`. The independent producer plan is
+still the local, uncommitted draft
+`tasks/emit-ir-json-for-c-transpiler.md`, as requested. No IR reader or
+emitter has been implemented.

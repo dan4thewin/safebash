@@ -1,0 +1,11 @@
+round 2
+worker:Ada: ready
+worker:Grace: queued
+worker:Edsger: ready
+skip:guest
+round 1
+worker:Ada: ready
+worker:Grace: queued
+worker:Edsger: ready
+skip:guest
+complete

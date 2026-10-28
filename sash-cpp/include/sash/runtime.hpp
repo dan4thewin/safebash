@@ -11,6 +11,8 @@
 #include <system_error>
 #include <type_traits>
 #include <utility>
+#include <variant>
+#include <vector>
 
 namespace sash {
 
@@ -35,7 +37,29 @@ class SetupError final : public std::system_error {
     SetupError(std::error_code error, std::string_view operation);
 };
 
+struct ProcessExit {
+    int status = 0;
+};
+
+struct ProcessSignal {
+    int number = 0;
+};
+
+struct ProcessResult {
+    std::string executable;
+    std::variant<ProcessExit, ProcessSignal, SetupError> outcome;
+
+    [[nodiscard]] bool success() const noexcept {
+        const auto *exit = std::get_if<ProcessExit>(&outcome);
+        return exit != nullptr && exit->status == 0;
+    }
+};
+
 void check(const CommandResult &result);
+void check(const ProcessResult &result);
+[[nodiscard]] ProcessResult try_execute(std::string_view executable,
+                                        const std::vector<std::string> &arguments = {});
+void execute(std::string_view executable, const std::vector<std::string> &arguments = {});
 [[nodiscard]] CommandResult try_write(std::string_view bytes, int fd = 1);
 void write(std::string_view bytes, int fd = 1);
 [[nodiscard]] CommandResult try_echo(std::initializer_list<std::string_view> words);

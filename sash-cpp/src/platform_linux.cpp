@@ -8,12 +8,15 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cerrno>
 #include <charconv>
 #include <cstdlib>
 #include <fcntl.h>
 #include <limits>
+#include <new>
 #include <sys/mman.h>
+#include <sys/wait.h>
 #include <unistd.h>
 #include <utility>
 
@@ -60,17 +63,150 @@ FileDescriptor duplicate(int fd) {
     return FileDescriptor(copy);
 }
 
-FileDescriptor capture_storage() {
-    FileDescriptor raw(::memfd_create("sash-cpp-capture", MFD_CLOEXEC));
-    if (raw.get() < 0) {
-        throw SetupError(last_error(), "memfd_create");
-    }
+FileDescriptor private_descriptor(FileDescriptor raw) {
     if (raw.get() > 2) {
         return raw;
     }
     auto raised = duplicate(raw.get());
     raw.close();
     return raised;
+}
+
+FileDescriptor capture_storage() {
+    FileDescriptor raw(::memfd_create("sash-cpp-capture", MFD_CLOEXEC));
+    if (raw.get() < 0) {
+        throw SetupError(last_error(), "memfd_create");
+    }
+    return private_descriptor(std::move(raw));
+}
+
+struct ErrorPipe {
+    FileDescriptor reader;
+    FileDescriptor writer;
+};
+
+ErrorPipe error_pipe() {
+    int descriptors[2];
+    int result;
+    do {
+        result = ::pipe2(descriptors, O_CLOEXEC);
+    } while (result < 0 && errno == EINTR);
+    if (result < 0) {
+        throw SetupError(last_error(), "create exec error pipe");
+    }
+    FileDescriptor reader(descriptors[0]);
+    FileDescriptor writer(descriptors[1]);
+    return {private_descriptor(std::move(reader)), private_descriptor(std::move(writer))};
+}
+
+class Child {
+  public:
+    explicit Child(pid_t pid) noexcept : pid_(pid) {}
+    Child(const Child &) = delete;
+    Child &operator=(const Child &) = delete;
+
+    ~Child() noexcept {
+        if (pid_ > 0) {
+            int status;
+            if (const auto error = reap(status)) {
+                cleanup_failed("wait for child", error);
+            }
+        }
+    }
+
+    int wait() {
+        int status;
+        if (const auto error = reap(status)) {
+            throw SetupError(error, "wait for child");
+        }
+        return status;
+    }
+
+  private:
+    std::error_code reap(int &status) noexcept {
+        while (true) {
+            const auto waited = ::waitpid(pid_, &status, 0);
+            if (waited < 0) {
+                if (errno == EINTR) {
+                    continue;
+                }
+                const auto error = last_error();
+                if (error.value() == ECHILD) {
+                    pid_ = -1;
+                }
+                return error;
+            }
+            if (WIFEXITED(status) || WIFSIGNALED(status)) {
+                pid_ = -1;
+                return {};
+            }
+        }
+    }
+
+    pid_t pid_;
+};
+
+enum class ChildOperation : int { CloseReader, Exec };
+
+struct ChildFailure {
+    ChildOperation operation = ChildOperation::Exec;
+    std::atomic<int> error{0};
+};
+
+static_assert(std::atomic<int>::is_always_lock_free,
+              "child setup reporting must not acquire an inherited lock");
+
+// EOF detects exec; shared storage reports setup errors without a fallible child write.
+class SharedChildFailure {
+  public:
+    SharedChildFailure() {
+        void *storage = ::mmap(nullptr, sizeof(ChildFailure), PROT_READ | PROT_WRITE,
+                               MAP_SHARED | MAP_ANONYMOUS, -1, 0);
+        if (storage == MAP_FAILED) {
+            throw SetupError(last_error(), "allocate child setup status");
+        }
+        failure_ = ::new (storage) ChildFailure;
+    }
+
+    SharedChildFailure(const SharedChildFailure &) = delete;
+    SharedChildFailure &operator=(const SharedChildFailure &) = delete;
+
+    ~SharedChildFailure() noexcept {
+        failure_->~ChildFailure();
+        if (::munmap(failure_, sizeof(ChildFailure)) < 0) {
+            cleanup_failed("unmap child setup status", last_error());
+        }
+    }
+
+    ChildFailure *get() noexcept { return failure_; }
+
+  private:
+    ChildFailure *failure_;
+};
+
+[[noreturn]] void child_failed(ChildFailure *failure, ChildOperation operation,
+                               int error) noexcept {
+    failure->operation = operation;
+    failure->error.store(error, std::memory_order_release);
+    ::_exit(127);
+}
+
+void wait_for_exec(int channel) {
+    char unexpected;
+    while (true) {
+        const auto count = ::read(channel, &unexpected, 1);
+        if (count < 0) {
+            if (errno == EINTR) {
+                continue;
+            }
+            throw SetupError(last_error(), "read exec completion pipe");
+        }
+        if (count > 0) {
+            throw SetupError(std::make_error_code(std::errc::protocol_error),
+                             "unexpected exec completion data");
+        }
+        return;
+    }
 }
 
 std::error_code replace_descriptor(int source, int destination) noexcept {
@@ -108,6 +244,59 @@ int report_error(std::string_view program, std::string_view diagnostic, int stat
         return 2;
     }
     return status;
+}
+
+ProcessResult execute(std::vector<std::string> &command) {
+    std::vector<char *> arguments;
+    arguments.reserve(command.size() + 1);
+    for (auto &word : command) {
+        arguments.push_back(word.data());
+    }
+    arguments.push_back(nullptr);
+    const auto *executable = command[0].c_str();
+    auto *const *argv = arguments.data();
+    char *empty_environment[] = {nullptr};
+    auto *const *environment = ::environ != nullptr ? ::environ : empty_environment;
+    auto channel = error_pipe();
+    SharedChildFailure shared_failure;
+    auto *const failure = shared_failure.get();
+    const int reader = channel.reader.get();
+    const auto pid = ::fork();
+    if (pid < 0) {
+        const auto error = last_error();
+        throw SetupError(error, "fork " + command[0]);
+    }
+    if (pid == 0) {
+        if (::close(reader) < 0) {
+            child_failed(failure, ChildOperation::CloseReader, errno);
+        }
+        ::execve(executable, argv, environment);
+        child_failed(failure, ChildOperation::Exec, errno);
+    }
+    Child child(pid);
+    channel.writer.close();
+    wait_for_exec(channel.reader.get());
+    channel.reader.close();
+    const int status = child.wait();
+    const int error = failure->error.load(std::memory_order_acquire);
+    if (error != 0) {
+        if (error < 0) {
+            throw SetupError(std::make_error_code(std::errc::protocol_error),
+                             "invalid child setup failure");
+        }
+        switch (failure->operation) {
+        case ChildOperation::CloseReader:
+            throw SetupError({error, std::generic_category()}, "close child exec error reader");
+        case ChildOperation::Exec:
+            throw SetupError({error, std::generic_category()}, "exec " + command[0]);
+        }
+        throw SetupError(std::make_error_code(std::errc::protocol_error),
+                         "unknown child setup operation");
+    }
+    if (WIFEXITED(status)) {
+        return {std::move(command[0]), ProcessExit{WEXITSTATUS(status)}};
+    }
+    return {std::move(command[0]), ProcessSignal{WTERMSIG(status)}};
 }
 
 FileDescriptor::FileDescriptor(int fd) noexcept : fd_(fd) {}

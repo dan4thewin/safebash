@@ -12,13 +12,33 @@ build:V:
 	$CXX $CPPFLAGS $CXXFLAGS $SANITIZE -c src/runtime.cpp -o $BUILD/runtime.o &&
 	$CXX $CPPFLAGS $CXXFLAGS $SANITIZE -c src/platform_linux.cpp -o $BUILD/platform_linux.o &&
 	$AR rcs $BUILD/libsash_cpp.a $BUILD/runtime.o $BUILD/platform_linux.o &&
-	$CXX $CPPFLAGS $CXXFLAGS $SANITIZE examples/greetings.cpp $BUILD/libsash_cpp.a -o $BUILD/greetings
+	$CXX $CPPFLAGS $CXXFLAGS $SANITIZE examples/greetings.cpp $BUILD/libsash_cpp.a -o $BUILD/greetings &&
+	$CXX $CPPFLAGS $CXXFLAGS $SANITIZE examples/job_report.cpp $BUILD/libsash_cpp.a -o $BUILD/job_report
 
 test:V: build
+	$CXX $CPPFLAGS $CXXFLAGS tests/command_helper.cpp -o $BUILD/command-helper &&
+	cp tests/no-shebang.sh $BUILD/not-executable &&
+	chmod 644 $BUILD/not-executable &&
+	cp tests/no-shebang.sh $BUILD/no-shebang &&
+	chmod 755 $BUILD/no-shebang &&
 	$CXX $CPPFLAGS $CXXFLAGS $SANITIZE tests/runtime.cpp $BUILD/libsash_cpp.a -o $BUILD/runtime-tests &&
-	timeout 30 $BUILD/runtime-tests &&
+	timeout 30 $BUILD/runtime-tests $BUILD/command-helper &&
 	timeout 10 $BUILD/greetings > $BUILD/greetings.actual &&
-	cmp examples/greetings.expected $BUILD/greetings.actual
+	cmp examples/greetings.expected $BUILD/greetings.actual &&
+	timeout 10 $BUILD/job_report > $BUILD/job_report.actual &&
+	cmp examples/job_report.expected $BUILD/job_report.actual
+
+fault-test:V: test
+	timeout 10 strace -qq -e trace=clone -e inject=clone:error=EAGAIN:when=1 -o $BUILD/fork-failure.trace $BUILD/runtime-tests --fork-failure $BUILD/command-helper &&
+	grep -qE 'clone.*EAGAIN.*INJECTED' $BUILD/fork-failure.trace &&
+	timeout 10 strace -qq -e trace=wait4 -e inject=wait4:error=EINTR:when=1 -o $BUILD/wait-interrupted.trace $BUILD/runtime-tests --wait-interrupted $BUILD/command-helper &&
+	grep -qE 'wait4.*EINTR.*INJECTED' $BUILD/wait-interrupted.trace &&
+	timeout 10 strace -qq -e trace=pipe2,fcntl,close,prlimit64 -o $BUILD/dup-failure.trace $BUILD/runtime-tests --dup-failure $BUILD/command-helper &&
+	grep -qE 'pipe2\(\[0, [0-9]+\], O_CLOEXEC\).* = 0' $BUILD/dup-failure.trace &&
+	grep -qE 'fcntl\(0, F_DUPFD_CLOEXEC, 3\).*EMFILE' $BUILD/dup-failure.trace &&
+	timeout 10 strace -f -qq -e trace=execve,write -e inject=write:error=ENOMEM:when=1 -o $BUILD/exec-failure.trace $BUILD/runtime-tests --exec-failure $BUILD/command-helper &&
+	grep -qE 'execve\(.*command-helper[.]missing.*ENOENT' $BUILD/exec-failure.trace &&
+	! grep -qE 'write\(([013-9]|[0-9]{2,}),' $BUILD/exec-failure.trace
 
 fmt:V:
 	clang-format --dry-run --Werror include/sash/runtime.hpp src/*.hpp src/*.cpp examples/*.cpp tests/*.cpp
@@ -27,4 +47,7 @@ sash-example:V:
 	mkdir -p $BUILD &&
 	SASH_RT_LIB=$SASH_RT_LIB $SASH examples/greetings.sash -o $BUILD/greetings-sash &&
 	timeout 10 $BUILD/greetings-sash > $BUILD/greetings-sash.actual &&
-	cmp examples/greetings.expected $BUILD/greetings-sash.actual
+	cmp examples/greetings.expected $BUILD/greetings-sash.actual &&
+	SASH_RT_LIB=$SASH_RT_LIB $SASH examples/job_report.sash -o $BUILD/job_report-sash &&
+	timeout 10 $BUILD/job_report-sash > $BUILD/job_report-sash.actual &&
+	cmp examples/job_report.expected $BUILD/job_report-sash.actual

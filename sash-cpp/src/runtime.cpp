@@ -16,6 +16,45 @@ void check(const CommandResult &result) {
     }
 }
 
+void check(const ProcessResult &result) {
+    if (const auto *exit = std::get_if<ProcessExit>(&result.outcome)) {
+        if (exit->status != 0) {
+            throw CommandError(exit->status, result.executable + ": command failed (exit " +
+                                                 std::to_string(exit->status) + ")");
+        }
+    } else if (const auto *signal = std::get_if<ProcessSignal>(&result.outcome)) {
+        throw CommandError(128 + signal->number, result.executable + ": terminated by signal " +
+                                                     std::to_string(signal->number));
+    } else {
+        throw std::get<SetupError>(result.outcome);
+    }
+}
+
+ProcessResult try_execute(std::string_view executable, const std::vector<std::string> &arguments) {
+    std::vector<std::string> command;
+    command.reserve(arguments.size() + 1);
+    command.emplace_back(executable);
+    command.insert(command.end(), arguments.begin(), arguments.end());
+    for (std::size_t i = 0; i < command.size(); ++i) {
+        if (command[i].find('\0') != std::string::npos) {
+            const auto context = i == 0
+                                     ? "execute: executable contains NUL"
+                                     : "execute: argument " + std::to_string(i) + " contains NUL";
+            return {std::move(command[0]),
+                    SetupError(std::make_error_code(std::errc::invalid_argument), context)};
+        }
+    }
+    try {
+        return platform::execute(command);
+    } catch (const SetupError &error) {
+        return {std::move(command[0]), error};
+    }
+}
+
+void execute(std::string_view executable, const std::vector<std::string> &arguments) {
+    check(try_execute(executable, arguments));
+}
+
 namespace {
 
 CommandResult output(std::string_view bytes, int fd, std::string_view operation) {
