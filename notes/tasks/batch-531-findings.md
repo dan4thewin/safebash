@@ -768,8 +768,14 @@ DG 2026-10-28: F2 lands without the B82 wrap and without specs that pin
   - Ported in F5 unit A (journal 542): `descend_loop_control` starts a
     `$( )` body outside any loop (SB5081). Specs cf.n19-cf.n21; DD86
     addendum.
-- [ ] **B71** (fixed-on-branch; DD58). The capture buffer path leaked output
+- [x] **B71** (fixed-on-branch; DD58). The capture buffer path leaked output
   from forks run by int calls in value position.
+  - Ported in F5 unit D (journal 545): `capture_body_is_pure` takes the
+    value functions and checks the body of every value call it finds
+    (`capture_purity.rs`, the branch's file verbatim). The calls come
+    from `resolve::walk_value_calls`, a reduced H141 that walks names only.
+    Specs cap.24-cap.28, cap.32 and cap.34 (the bare-name arm, which the
+    branch has no spec for).
 - [x] **B73** (fixed-on-branch; DD58). `type_check`'s private
   `walk_arith_funccalls` skipped Subscript and SubscriptAssign; the shared
   `ir` walker replaces it.
@@ -777,8 +783,12 @@ DG 2026-10-28: F2 lands without the B82 wrap and without specs that pin
     `ir::walk_arith_funccalls` replace type_check's walker and validate's
     two private copies. Specs sx.36-sx.40. The slot-arity check on a sexpr
     call is a separate gap: `bug-sexpr-call-slot-arity-unchecked`.
-- [ ] **B74** (fixed-on-branch; DD86). Capture fast paths evaluated
+- [x] **B74** (fixed-on-branch; DD86). Capture fast paths evaluated
   arguments outside the capture.
+  - Ported in F5 unit D (journal 545): when a capture's arguments run a
+    value call, `handle_command_substitution` lowers it as a body
+    (`capture_args_run_value_calls`). A value command still takes the
+    value path (`resolve::evaluates_args_in_place`). Specs cap.29-cap.33.
 - [x] **B83** (fixed-on-branch; DD55, DD88). The condition context leaked
   into the bodies of functions called from a condition (named functions, int
   functions, `$(h)` inside `[[ ]]`), so their internal failures went

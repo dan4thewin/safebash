@@ -596,7 +596,11 @@ paths, chosen per site at compile time by `transform::capture_purity`:
 
 A body may contain an external and still be pure, so long as the external's
 output arrives through an *inner* `$( )` — that child gets a pipe of its own.
-Only a fork inheriting *this* capture's stdout disqualifies a site.
+Only a fork inheriting *this* capture's stdout disqualifies a site. A value
+call counts: an int function called as `$(f)`, `(f)` or a bare `f` in
+arithmetic runs its body where the call stands, so a fork in that body
+disqualifies the site too. A capture whose arguments make such a call takes
+the body path, so the call runs inside it (journal 545).
 
 The runtime keeps a **stack** of capture frames, because an impure capture
 can nest inside a pure one: the memfd path pushes a transparent frame that

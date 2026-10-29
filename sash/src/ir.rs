@@ -901,9 +901,24 @@ pub(crate) fn walk_arith_expansion_roots<'a>(arith: &'a ArithExpr, f: &mut impl 
 /// [`ArithExpr::children`], which is total over the enum, so a caller only
 /// names the variants it cares about.
 pub(crate) fn walk_arith_nodes<'a>(a: &'a ArithExpr, f: &mut impl FnMut(&'a ArithExpr)) {
-    f(a);
-    for child in a.children() {
-        walk_arith_nodes(child, f);
+    walk_arith_nodes_pruned(a, &mut |n| {
+        f(n);
+        true
+    });
+}
+
+/// [`walk_arith_nodes`] for a caller that does not want every subtree: `f`
+/// answers whether to descend below the node it was handed. The operands of
+/// `(len …)` / `(strlen …)` are rebuilt as command words, not arithmetic, so a
+/// caller asking what a tree *evaluates* stops there.
+pub(crate) fn walk_arith_nodes_pruned<'a>(
+    a: &'a ArithExpr,
+    f: &mut impl FnMut(&'a ArithExpr) -> bool,
+) {
+    if f(a) {
+        for child in a.children() {
+            walk_arith_nodes_pruned(child, f);
+        }
     }
 }
 

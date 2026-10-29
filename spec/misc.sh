@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup misc
-plan=112
+plan=123
 echo "1..$plan" >&3
 
 set +e
@@ -713,6 +713,109 @@ fn outer {
 str t=$(outer)
 echo "[$t]"'
   [[ $rc = 0 && $out = "[got-inner]" && -z $rerr ]]; chk cap.21
+
+  # cap.24-28 (B71, journal 545) the purity walk must also see VALUE CALLS.
+  # An `-> int` function called with value syntax — `$(count)`, `$(( (count)
+  # ))`, a bare `count` in arithmetic — is inlined where the statement runs
+  # (DD#58 Option C), so its body writes wherever the statement's output
+  # goes. Inside a capture that is the capture. The walk judged the body only
+  # by its own command shapes, so a value call that runs an external left the
+  # site buffered, and the external's child wrote past the buffer to the real
+  # fd 1: each printed "ext" then "[7]". Five positions: a named body, an
+  # anonymous one, a sexpr, an `(( ))` test, and a quoted word.
+  # `--no-taint` because the capture now carries unattested external output,
+  # which the stdout taint rule (W2) will reject; these pin where the bytes go.
+  SASH_CFLAGS=--no-taint run_sash 'fn count -> int { /bin/echo ext; return 7 }
+fn outer { int n=$(count); echo "$n" }
+str s=$(outer)
+echo "[$s]"'
+  [[ $rc = 0 && $out = "[ext
+7]" && -z $rerr ]]; chk cap.24
+
+  SASH_CFLAGS=--no-taint run_sash 'fn count -> int { /bin/echo ext; return 7 }
+str s=$(int n=$(count); echo "$n")
+echo "[$s]"'
+  [[ $rc = 0 && $out = "[ext
+7]" && -z $rerr ]]; chk cap.25
+
+  SASH_CFLAGS=--no-taint run_sash 'fn count -> int { /bin/echo ext; return 7 }
+fn outer { int n=$(( (count) )); echo "$n" }
+str s=$(outer)
+echo "[$s]"'
+  [[ $rc = 0 && $out = "[ext
+7]" && -z $rerr ]]; chk cap.26
+
+  SASH_CFLAGS=--no-taint run_sash 'fn count -> int { /bin/echo ext; return 7 }
+fn outer { if (( (count) > 0 )) { echo y } }
+str s=$(outer)
+echo "[$s]"'
+  [[ $rc = 0 && $out = "[ext
+y]" && -z $rerr ]]; chk cap.27
+
+  SASH_CFLAGS=--no-taint run_sash 'fn count -> int { /bin/echo ext; return 7 }
+fn outer { echo "v=$(count)" }
+str s=$(outer)
+echo "[$s]"'
+  [[ $rc = 0 && $out = "[ext
+v=7]" && -z $rerr ]]; chk cap.28
+
+  # cap.34 the sixth position: a BARE `count` in arithmetic is a value call
+  # too (the transform's var_to_ssa calls the function), with no `( )`.
+  SASH_CFLAGS=--no-taint run_sash 'fn count -> int { /bin/echo ext; return 7 }
+fn outer { int n=$(( count + 1 )); echo "$n" }
+str s=$(outer)
+echo "[$s]"'
+  [[ $rc = 0 && $out = "[ext
+8]" && -z $rerr ]]; chk cap.34
+
+  # cap.29-31 (B74, journal 545) a capture evaluates its ARGUMENTS inside
+  # itself. `$(h …)` of a string function, or `$(echo …)`, took the value
+  # fast path, which evaluates arguments first, where the capture stands; a
+  # value call there wrote "G" past the capture, printing "G" then "[h:1]".
+  # The redirected twin `$(h $(( (g) )) 2>/dev/null)` was already a body and
+  # always kept it. `g` writes in-process, so this is not about purity.
+  run_sash 'fn g -> int { echo G; return 1 }
+fn h { echo "h:$1" }
+str s=$(h $(( (g) )))
+echo "[$s]"'
+  [[ $rc = 0 && $out = "[G
+h:1]" && -z $rerr ]]; chk cap.29
+
+  run_sash 'fn g -> int { echo G; return 1 }
+fn h { echo "h:$1" }
+str s=$(h $(g))
+echo "[$s]"'
+  [[ $rc = 0 && $out = "[G
+h:1]" && -z $rerr ]]; chk cap.30
+
+  run_sash 'fn g -> int { echo G; return 1 }
+str s=$(echo $(( (g) )))
+echo "[$s]"'
+  [[ $rc = 0 && $out = "[G
+1]" && -z $rerr ]]; chk cap.31
+
+  # cap.32 both at once: the argument's value call runs an external, so the
+  # body path must ALSO judge the site impure (B71), or "G" leaks again by
+  # the other route.
+  SASH_CFLAGS=--no-taint run_sash 'fn g -> int { /bin/echo G; return 1 }
+fn h { echo "h:$1" }
+str s=$(h $(( (g) )))
+echo "[$s]"'
+  [[ $rc = 0 && $out = "[G
+h:1]" && -z $rerr ]]; chk cap.32
+
+  # cap.33 the boundary of cap.29-31, a control: a VALUE call evaluates its
+  # arguments where it stands, so `$(k $(g))` keeps the value path and `v` is
+  # k's return value, not its stdout. Inside this capture both writes land in
+  # the capture anyway, in order.
+  run_sash 'fn g -> int { echo G; return 1 }
+fn k -> int { echo "K$1"; return 2 }
+str s=$(echo x; int v=$(k $(g)); echo "$v")
+echo "[$s]"'
+  [[ $rc = 0 && $out = "[x
+G
+K1
+2]" && -z $rerr ]]; chk cap.33
 
 # cap.22 A MALFORMED `$( )` BODY INSIDE DOUBLE QUOTES IS A DIAGNOSTIC. The
 # quoted path's parser was declared `-> Vec<Statement>`, so it had no way to

@@ -145,6 +145,128 @@ pub(crate) fn arith_denotation(name: &str) -> Option<ArithDenotation> {
         .or_else(|| INTRINSICS.iter().find(|(n, _)| *n == name).map(|(_, d)| *d))
 }
 
+/// Visit the **value calls** a statement evaluates where it runs: each call
+/// of an `-> int` function (`is_value_fn`) whose body is inlined into the
+/// statement's own context, so that body's stdout and its execs land wherever
+/// the statement's output goes (DD#58 Option C).
+///
+/// Value syntax is `$(g …)`, `$(- g …)`, `$(( (g …) ))` and a bare
+/// `$(( g ))`, together with every such call in the arguments of a value call
+/// or of a value intrinsic — a name whose [`arith_denotation`] is `Int` or
+/// `Str` (`strlen`, `join`, `getenv`, `wait`, …), whose arguments are
+/// evaluated before the call. Any other `$( … )` is a **capture**: a string
+/// function, `echo`, an external, a statement builtin, a redirected or
+/// multi-statement body. It runs its whole body, arguments included, inside
+/// the capture, so a value call there writes to the capture rather than here.
+/// `keys` denotes `Str` but is captured as a statement; the difference is
+/// unobservable because its operand is a bare name (SB5062).
+///
+/// Does not descend into child statements: a caller that recurses over
+/// structural bodies reaches theirs.
+pub(crate) fn walk_value_calls(
+    stmt: &Statement,
+    is_value_fn: &dyn Fn(&str) -> bool,
+    visit: &mut dyn FnMut(&str),
+) {
+    walk_own_exprs(stmt, &mut |e| value_calls_at(e, is_value_fn, visit));
+    if let StmtKind::ArithTest(a) = &stmt.kind {
+        arith_value_calls(a, is_value_fn, visit);
+    }
+}
+
+/// [`walk_value_calls`] for one expression — an argument about to be
+/// evaluated.
+pub(crate) fn walk_expr_value_calls(
+    expr: &Expr,
+    is_value_fn: &dyn Fn(&str) -> bool,
+    visit: &mut dyn FnMut(&str),
+) {
+    walk_expr_tree(expr, &mut |e| value_calls_at(e, is_value_fn, visit));
+}
+
+/// Whether a `$( … )` headed by `head` evaluates its arguments where it stands
+/// — a value call or a value intrinsic. Any other head is a capture, which
+/// evaluates its arguments inside itself. The one classification
+/// [`walk_value_calls`] and the transform's value lowering both consult.
+pub(crate) fn evaluates_args_in_place(head: &str, is_value_fn: &dyn Fn(&str) -> bool) -> bool {
+    is_value_fn(head)
+        || matches!(
+            arith_denotation(head),
+            Some(ArithDenotation::Int | ArithDenotation::Str)
+        )
+}
+
+/// The value calls in one arithmetic tree: a sexpr `(g …)` or a bare `g`
+/// (the transform's `var_to_ssa`). The operands of `(len …)` / `(strlen …)`
+/// are not arithmetic: they are rebuilt as command words
+/// (`intrinsic_operand_kind`), so a bare `g` there is a name, and an embedded
+/// `${…}` is an `Expr` the expression walk reaches.
+fn arith_value_calls(
+    a: &ArithExpr,
+    is_value_fn: &dyn Fn(&str) -> bool,
+    visit: &mut dyn FnMut(&str),
+) {
+    walk_arith_nodes_pruned(a, &mut |n| match n {
+        ArithExpr::FuncCall { name, .. }
+            if crate::transform::expr_handlers::is_arith_int_intrinsic(name) =>
+        {
+            false
+        }
+        ArithExpr::FuncCall { name, .. } | ArithExpr::Var(name) if is_value_fn(name) => {
+            visit(name);
+            true
+        }
+        _ => true,
+    });
+}
+
+/// One `$( … )`: a value command's calls — those in its arguments, which are
+/// evaluated first, then its own — or none for a capture
+/// ([`evaluates_args_in_place`]), whose calls belong to its body.
+fn substitution_value_calls(
+    body: &[Statement],
+    is_value_fn: &dyn Fn(&str) -> bool,
+    visit: &mut dyn FnMut(&str),
+) {
+    let Some(command) = single_value_command(body) else {
+        return;
+    };
+    let ExprKind::Literal(head) = &command.name.kind else {
+        return;
+    };
+    if !evaluates_args_in_place(head, is_value_fn) {
+        return;
+    }
+    for arg in &command.args {
+        walk_expr_value_calls(arg, is_value_fn, visit);
+    }
+    if is_value_fn(head) {
+        visit(head);
+    }
+}
+
+/// One node of [`walk_value_calls`]. `walk_expr_tree` supplies the descent
+/// and stops at a `$( … )`, so only the two nodes that evaluate answer here.
+///
+/// **Total over `ExprKind` on purpose — do not add a wildcard.**
+fn value_calls_at(e: &Expr, is_value_fn: &dyn Fn(&str) -> bool, visit: &mut dyn FnMut(&str)) {
+    match &e.kind {
+        ExprKind::Arithmetic(a) => arith_value_calls(a, is_value_fn, visit),
+        ExprKind::CommandSubstitution(body) => substitution_value_calls(body, is_value_fn, visit),
+        ExprKind::Literal(_)
+        | ExprKind::SingleQuoted(_)
+        | ExprKind::SimpleExpansion(_)
+        | ExprKind::DoubleQuoted(_)
+        | ExprKind::Concat(_)
+        | ExprKind::Array(_)
+        | ExprKind::AssocArray(_)
+        | ExprKind::ParameterExpansion(_)
+        | ExprKind::Test(_)
+        | ExprKind::Subscript { .. }
+        | ExprKind::SlurpFile(_) => {}
+    }
+}
+
 /// True when `name` is a compiler intrinsic whose value is an i64. The one
 /// predicate behind both "is `$(name)` int-typed" (`type_check`) and "may
 /// `(name …)` appear in `$(( ))`" — they are the same question, and asking

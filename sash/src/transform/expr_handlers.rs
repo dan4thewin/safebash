@@ -14,6 +14,7 @@ pub(super) fn handle_command_substitution(expr: &Expr, state: &VersionState) -> 
     };
     if matches!(stmt.kind, StmtKind::Suppressed(_))
         || is_statement_builtin(BuiltinCmd::from_name(&name))
+        || capture_args_run_value_calls(&name, c, state)
     {
         return cmdsub_body_value(expr);
     }
@@ -25,6 +26,28 @@ pub(super) fn handle_command_substitution(expr: &Expr, state: &VersionState) -> 
         argv,
         suppressed: false,
     }
+}
+
+/// A capture — a string function, `echo`, an external — evaluates its
+/// arguments inside itself, so one whose arguments run a value call
+/// (`$(h $(( (g) )))`, `$(echo $(g))`, `$(/bin/echo $(strlen $(g)))`) takes
+/// the body path, which lowers the command as a statement inside the capture.
+/// The value path evaluates arguments first, where they stand, and an inlined
+/// `g` there wrote its stdout past the capture — while the redirected twin
+/// (`$(h $(( (g) )) 2>/dev/null)`), already a body, kept it. A value call or
+/// value intrinsic evaluates its arguments in place (DD#58 Option C), so it
+/// keeps the value path; [`crate::resolve::walk_value_calls`] draws the same
+/// line from the same predicate.
+fn capture_args_run_value_calls(name: &str, c: &Command, state: &VersionState) -> bool {
+    let is_value_fn = |n: &str| state.function_int_typed.contains(n);
+    if crate::resolve::evaluates_args_in_place(name, &is_value_fn) {
+        return false;
+    }
+    let mut found = false;
+    for arg in &c.args {
+        crate::resolve::walk_expr_value_calls(arg, &is_value_fn, &mut |_| found = true);
+    }
+    found
 }
 
 /// The general `$( … )` lowering: carry the body for `lift_int_func_calls` to
