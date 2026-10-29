@@ -175,6 +175,8 @@ fault() {
     invoke "$active" "$scenario" checked "$context" 1 "${options[@]}"
     grep -E "^$syscall[(].*[(]INJECTED[)]" "$active.trace" >"$active.injected" ||
         die "$name did not inject its intended syscall"
+    grep -qE -- "$selector" "$active.injected" ||
+        die "$name injected a different syscall site than its baseline selector"
     if [[ $effect == error=EINTR ]]; then
         [[ $observed == "$baseline_status" ]] || die "$name failed to recover from interruption"
         cmp -s "$baseline.out" "$active.out" && cmp -s "$baseline.err" "$active.err" ||
@@ -196,8 +198,8 @@ fault() {
     sed 's/^/  injected: /' "$active.injected"
 }
 
-child_close() {
-    local name=child-reader-close
+child_fault() {
+    local name=$1 scenario=$2 syscall=$3 diagnostic=$4
     (( ! basic_only )) || return 0
     wanted "$name" || return 0
     if (( list_only )); then
@@ -209,15 +211,15 @@ child_close() {
     local options=(-f)
     if (( ! without_injection )); then
         # Counters are per tracee: the parent loader's first close is also affected.
-        options+=(-e inject=close:error=EIO:when=1)
+        options+=(-e "inject=$syscall:error=EIO:when=1")
     fi
-    invoke "$active" process checked normal 1 "${options[@]}"
+    invoke "$active" "$scenario" checked normal 1 "${options[@]}"
     [[ $observed == 2 ]] || die "$name exited $observed instead of 2"
-    grep -q '^error_paths: close child exec error reader: ' "$active.err" ||
-        die "$name did not report the pre-exec reader close"
-    awk '
+    grep -qE -- "$diagnostic" "$active.err" ||
+        die "$name did not report its pre-exec failure"
+    awk -v call="$syscall" '
         /clone[(]|clone resumed/ { if ($NF ~ /^[0-9]+$/) child=$NF }
-        /close[(]|close resumed/ {
+        index($0, call "(") || index($0, call " resumed") {
             if (/INJECTED/) { failed[$1]=1; print }
         }
         /execve[(]/ { executed[$1]=1 }
@@ -229,6 +231,7 @@ child_close() {
 }
 
 basic success process checked 0 ''
+basic stream-success stream checked 0 ''
 basic regex-no-match regex-no-match checked 0 'no match is not an error'
 basic capture-success capture checked 0 'target: captured'
 basic capture-closed-success capture-closed checked 0 'target: captured' stdout-closed
@@ -309,7 +312,14 @@ fault process-completion-read process read '^read[(]' 1 error=EIO '^error_paths:
 fault process-close-reader process close '^close[(]' 2 error=EIO '^error_paths: close descriptor: '
 fault wait process wait4 '^wait4[(]' 1 error=EIO '^error_paths: wait for child: '
 fault completion-protocol-synthetic process read '^read[(]' 1 retval=1 '^error_paths: unexpected exec completion data: '
-child_close
+child_fault child-reader-close process close '^error_paths: close child exec error reader: '
+child_fault child-stdout-install stream dup2 '^error_paths: connect child stdout: '
+fault stream-output-pipe stream pipe2 '^pipe2[(]' 1 error=EMFILE '^error_paths: create command output pipe: '
+fault stream-completion-pipe stream pipe2 '^pipe2[(]' 2 error=EMFILE '^error_paths: create exec error pipe: '
+fault stream-close-writer stream close '^close[(]' 1 error=EIO '^error_paths: close descriptor: '
+fault stream-completion-close-writer stream close '^close[(]' 2 error=EIO '^error_paths: close descriptor: '
+fault stream-read stream read '^read[(].*, 8192[)]' 1 error=EIO '^error_paths: read command output: '
+fault stream-close-reader stream close '^close[(]' 4 error=EIO '^error_paths: close descriptor: '
 fault cleanup-restore capture-command dup2 '^dup2[(]' 2 error=EIO '^sash-cpp: cleanup failed: restore stdout '
 fault cleanup-restore-flags capture-command fcntl '^fcntl[(]1, F_SETFD' 1 error=EIO '^sash-cpp: cleanup failed: restore stdout '
 fault cleanup-restore-closed capture-command-closed close '^close[(]1[)]' 2 error=EIO '^sash-cpp: cleanup failed: restore stdout ' stdout-closed
@@ -334,6 +344,7 @@ fault retry-pipe-relocate process fcntl '^fcntl[(]0, F_DUPFD_CLOEXEC' 1 error=EI
 fault retry-completion-read process read '^read[(]' 1 error=EINTR ''
 fault retry-wait process wait4 '^wait4[(]' 1 error=EINTR ''
 fault retry-diagnostic exit7 write '^write[(]2, "error_paths"' 1 error=EINTR ''
+fault retry-stream-read stream read '^read[(].*, 8192[)]' 1 error=EINTR ''
 
 (( ran )) || die "no case selected: $selected"
 if (( ! list_only )); then

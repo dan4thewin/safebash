@@ -1,6 +1,7 @@
 #ifndef SASH_CPP_PLATFORM_HPP
 #define SASH_CPP_PLATFORM_HPP
 
+#include <functional>
 #include <string>
 #include <string_view>
 #include <system_error>
@@ -15,6 +16,8 @@ namespace sash::platform {
 std::error_code write_all(int fd, std::string_view bytes) noexcept;
 int report_error(std::string_view program, std::string_view diagnostic, int status) noexcept;
 ProcessResult execute(std::vector<std::string> &command);
+ProcessResult read_from(std::vector<std::string> &command, const std::function<void(int)> &body);
+std::size_t read_some(int fd, char *buffer, std::size_t capacity);
 
 class FileDescriptor {
   public:

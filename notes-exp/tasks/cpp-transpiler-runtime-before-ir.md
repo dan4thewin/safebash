@@ -83,8 +83,8 @@ pipelines, redirects, or the full lifecycle.
 
 ## Error-path demonstration - implemented
 
-`cd sash-cpp && mk -p 1 error-demo` runs 103 isolated cases: 52 basic
-outcome/exception cases, 38 injected faults, and 13 EINTR recoveries.
+`cd sash-cpp && mk -p 1 error-demo` now runs 112 isolated cases: 53 basic
+outcome/exception cases, 45 injected faults, and 14 EINTR recoveries.
 `examples/error_paths.cpp` exposes the existing checked, caught, and
 discarded handling, with unchanged capture targets after failure.
 The shell catalog adds setup, descriptor, capture, launch, wait,
@@ -101,7 +101,36 @@ manufactured. The basic subset does not need strace.
 This is a demonstration of the implemented slice, not completion of later
 runtime machinery or whole-function suppression.
 [Journal 003](../journal/003-error-path-showcase.md) records the evidence
-and limits; the runnable catalog is documented in `sash-cpp/README.md`.
+and limits of the original 103 cases; journal 004 adds the reader cases.
+The runnable catalog is documented in `sash-cpp/README.md`.
+
+## Third runnable milestone - implemented
+
+`stream_report.cpp` and its sash counterpart stream four external records
+through a parent-side `while readline`. A real function fills the caller's
+sparse collection (`=workers` in sash, an ordinary C++ reference), captures
+external worker labels inside the loop, and retains entries at indices
+1, 2, and 4 afterward. Both match an independent nine-line expected file.
+
+`read_from` checks one producer's completion; `try_read_from` retains its
+typed outcome. The borrowed `LineReader` is explicit, never an ambient fd 0
+binding. Reader effects precede producer status, and cleanup closes the
+pipe before waiting on normal, early, exceptional, and partial-setup paths.
+Consumer exceptions remain distinct from producer outcomes. Line records
+follow the DD#99/DD#122 reference rules, preserving binary bytes and an
+unterminated final record while clearing the target at EOF.
+
+Nineteen native fixture groups and all three C++ goldens pass with GCC,
+Clang, and host-GCC ASan. A two-way handshake proves the consumer runs before
+producer completion; other cases exercise nested readers/captures, original
+stdin, private descriptor inheritance, early SIGPIPE, and ownership failures.
+The full 112-case error catalog passes on both compilers, and five new
+negative controls reject the same runs with injection removed.
+[Journal 004](../journal/004-streaming-worker-report.md) records the scope.
+
+This is the single-producer parent-reader slice, not multi-stage pipelines,
+forked C++ stages, public wait, pipeline suppression, general redirection,
+or shutdown. Those remain below; the macOS storage choice remains open.
 
 ## Starting points selected by DG
 
@@ -311,10 +340,10 @@ invisible optimization or a reason to implement an effect analysis here.
 - [ ] Use one stage-building path for external programs, builtins, and
   C++ function bodies. Check pipe creation, launch, and child fd setup
   before consuming their results.
-- [ ] Support a terminal parent reader, passed explicitly to its consuming
+- [x] Support a terminal parent reader, passed explicitly to its consuming
   operations. Keep updates to ordinary C++ variables visible in the
   parent.
-- [ ] Retain DD#122's reader-local ownership as the reference behavior:
+- [x] Retain DD#122's reader-local ownership as the reference behavior:
   the designated read consumes the pipe, while an unrelated command in
   its loop body still inherits the program's stdin. Do not rebind fd 0
   throughout the parent.

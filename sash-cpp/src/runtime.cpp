@@ -2,6 +2,8 @@
 
 #include "platform.hpp"
 
+#include <algorithm>
+
 namespace sash {
 
 CommandError::CommandError(int status, std::string diagnostic)
@@ -30,7 +32,10 @@ void check(const ProcessResult &result) {
     }
 }
 
-ProcessResult try_execute(std::string_view executable, const std::vector<std::string> &arguments) {
+namespace {
+
+std::vector<std::string> command_words(std::string_view executable,
+                                       const std::vector<std::string> &arguments) {
     std::vector<std::string> command;
     command.reserve(arguments.size() + 1);
     command.emplace_back(executable);
@@ -40,14 +45,20 @@ ProcessResult try_execute(std::string_view executable, const std::vector<std::st
             const auto context = i == 0
                                      ? "execute: executable contains NUL"
                                      : "execute: argument " + std::to_string(i) + " contains NUL";
-            return {std::move(command[0]),
-                    SetupError(std::make_error_code(std::errc::invalid_argument), context)};
+            throw SetupError(std::make_error_code(std::errc::invalid_argument), context);
         }
     }
+    return command;
+}
+
+} // namespace
+
+ProcessResult try_execute(std::string_view executable, const std::vector<std::string> &arguments) {
     try {
+        auto command = command_words(executable, arguments);
         return platform::execute(command);
     } catch (const SetupError &error) {
-        return {std::move(command[0]), error};
+        return {std::string(executable), error};
     }
 }
 
@@ -97,7 +108,45 @@ std::regex compile_regex(std::string_view pattern) {
     }
 }
 
+bool LineReader::readline(std::string &target) {
+    std::string line;
+    while (true) {
+        const auto *begin = buffer_.data() + begin_;
+        const auto *end = buffer_.data() + end_;
+        const auto *newline = std::find(begin, end, '\n');
+        line.append(begin, static_cast<std::size_t>(newline - begin));
+        begin_ = static_cast<std::size_t>(newline - buffer_.data());
+        if (newline != end) {
+            ++begin_;
+            target = std::move(line);
+            return true;
+        }
+        if (eof_) {
+            const bool found = !line.empty();
+            target = std::move(line);
+            return found;
+        }
+        end_ = platform::read_some(fd_, buffer_.data(), buffer_.size());
+        begin_ = 0;
+        eof_ = end_ == 0;
+    }
+}
+
 namespace detail {
+
+ProcessResult read_from(std::string_view executable, const std::vector<std::string> &arguments,
+                        const std::function<void(LineReader &)> &body) {
+    std::vector<std::string> command;
+    try {
+        command = command_words(executable, arguments);
+    } catch (const SetupError &error) {
+        return {std::string(executable), error};
+    }
+    return platform::read_from(command, [&](int fd) {
+        LineReader reader(fd);
+        body(reader);
+    });
+}
 
 std::string capture_stdout(const std::function<void()> &body) {
     platform::StdoutCapture capture;

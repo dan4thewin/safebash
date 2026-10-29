@@ -1,0 +1,28 @@
+fn worker_label {
+    /usr/bin/printf 'worker:%s' "${args[0]}"
+}
+
+fn collect_workers {
+    int seen=0
+    int kept=0
+    /usr/bin/printf 'Ada\nGrace\nguest\nEdsger\n' | while readline person {
+        attest person [[ $person =~ '^[A-Za-z]+$' ]]
+        (( seen += 1 ))
+        if [[ $person =~ '^[A-Z][a-z]+$' ]] {
+            A[$seen]=$person
+            (( kept += 1 ))
+            label=$(worker_label $person)
+            echo "read $seen: $label"
+        } else {
+            echo "skip $seen: $person"
+        }
+    }
+    echo "seen $seen; kept $kept"
+}
+
+array workers
+collect_workers =workers
+for person in @workers {
+    echo "saved: $person"
+}
+echo complete

@@ -13,6 +13,13 @@ condition, and explicitly discarded command results. Two rounds report
 three workers and skip a fourth record. Expected bytes live beside each
 pair in its `.expected` file.
 
+[stream_report.cpp](examples/stream_report.cpp) and
+[stream_report.sash](examples/stream_report.sash) add an external producer
+feeding a parent-side `while readline`. A function fills its caller's
+sparse collection by reference, captures labels inside the loop, and
+leaves the saved workers available afterward. Four records produce three
+workers at indices 1, 2, and 4 and a nine-line report.
+
 On Linux:
 
 ```sh
@@ -20,9 +27,11 @@ cd sash-cpp
 mk -p 1 test
 ./build/greetings
 ./build/job_report
+./build/stream_report
 ```
 
-`greetings` prints `Hello, Ada!`; `job_report` prints the worker rounds.
+`greetings` prints `Hello, Ada!`; `job_report` prints the worker rounds;
+`stream_report` prints streamed records and the retained worker list.
 The build produces a normal C++ static library, `build/libsash_cpp.a`;
 it does not build Rust or link sash-rt.
 For example, the C++ program can also be linked directly:
@@ -60,7 +69,7 @@ ptrace. The command helper is an ordinary unsanitized external executable;
 the library, test driver, and examples receive `SANITIZE`.
 
 With the real sash CLI and runtime already built in the parent checkout,
-`mk -p 1 sash-example` compiles and runs both sash counterparts against
+`mk -p 1 sash-example` compiles and runs all three sash counterparts against
 their expected output. Override `SASH` and `SASH_RT_LIB` for other locations.
 This additional target is not a prerequisite for native C++ tests.
 
@@ -83,8 +92,8 @@ outcomes match its assertions.
 mk -p 1 error-demo
 ```
 
-The full catalog has 103 cases: 52 basic cases, 38 injected-fault cases,
-and 13 interrupted-operation recovery cases.
+The full catalog has 112 cases: 53 basic cases, 45 injected-fault cases,
+and 14 interrupted-operation recovery cases.
 
 The [low-level tour](docs/error-path-tour.md) follows representative cases
 through the Bash runner, strace fault injection, C++ outcomes, and resource
@@ -95,6 +104,7 @@ cleanup. It assumes C and Unix experience rather than C++ familiarity.
 | Command outcomes | Checked, caught, and discarded failures; exit 7; real exit 127 versus failed exec; signal termination |
 | Input and library errors | Interior NUL, missing or non-executable commands, ENOEXEC, invalid descriptors, malformed ECMAScript regex, string capacity, allocation exception |
 | Capture | Failed inspection, memfd creation, fd relocation/backup, installation, restoration and flags, rewind, read, and close; initially closed stdout |
+| Streaming input | Output/completion pipe allocation, partial launch cleanup, child stdout installation, reader errors/close, and interrupted reads |
 | Launch and wait | Pipe and shared-status allocation, fork, child pre-exec close, completion reads/protocol, endpoint close, unavailable child status, wait failure |
 | Fatal cleanup and diagnostics | Restore, close, reap, and unmap failures during cleanup; stderr failures while reporting the original error |
 | Recovery | EINTR at each implemented retry loop, preserving the uninjected output and status |
@@ -165,8 +175,55 @@ set a runtime timeout.
 
 Do not implement suppression by catching every exception around a whole
 function: that would skip commands after its first failure. Function
-checkedness, pipeline aggregation, background launch, and replacing
-`exec` are not implemented yet.
+checkedness, multi-stage pipeline aggregation, background launch, and
+replacing `exec` are not implemented yet.
+
+### Command-backed line readers
+
+The third pair uses the checked form:
+
+```cpp
+sash::read_from("/usr/bin/printf", {"Ada\nGrace\n"}, [&](sash::LineReader &input) {
+    std::string person;
+    while (input.readline(person)) {
+        sash::echo({person});
+    }
+});
+```
+
+The callback runs in the parent, so mutations to captured variables and
+reference parameters remain visible. Only the producer child's stdout
+is connected to the pipe. Parent stdin and stdout are not rebound: an
+ordinary command in the loop still inherits program stdin, and captures
+or nested readers have their own destinations and ownership.
+
+`readline` removes one newline delimiter, retaining all other bytes,
+including NUL and carriage return. An empty terminated line succeeds;
+an unterminated final nonempty record succeeds once. EOF clears the
+target and returns false. A read error raises `SetupError`, not EOF,
+and leaves the target unchanged. These are the DD#99/DD#122 reference
+rules, not whitespace splitting or a new interpretation of `read`.
+
+`try_read_from` returns the producer's `ProcessResult`; `read_from`
+checks it. Setup failure before the consumer starts does not invoke it.
+Consumer exceptions propagate as themselves, not as producer outcomes.
+Already-consumed records and parent mutations are not rolled back if
+the producer subsequently fails.
+
+Completion closes the reader before waiting, including when a callback
+returns early or throws. Early closure can give the producer SIGPIPE;
+the unchecked form retains that signal outcome. During unwinding the
+consumer's original exception survives successful cleanup. There is no
+force-kill policy or runtime timeout: waiting can still block if a
+producer ignores the closed pipe and keeps running.
+
+The `LineReader` is borrowed only for the callback's lifetime; a `return`
+in the callback ends that region, not its surrounding C++ function.
+This slice supports one external producer and a terminal parent reader.
+It does not add multiple stages, forked C++ function stages, public wait,
+or a pipeline-wide suppression rule.
+
+### Capture and remaining boundaries
 
 `capture_stdout` redirects actual fd 1 to an owned Linux memfd and runs
 its void body in-process. Nested frames and exception unwinding restore
@@ -179,7 +236,7 @@ so that choice does not affect their equivalence.
 The runtime is initially single-threaded and its output helpers use raw
 descriptor writes. Captured code must not mix in buffered stdio/iostream
 output or retain background writers. Script-fd reservation, arbitrary
-redirection, pipelines, END, and signal policy are later work.
+redirection, multi-stage pipelines, END, and signal policy are later work.
 Failure to restore descriptor state during unwinding is diagnosed
 and terminates rather than continuing on the wrong stdout.
 
@@ -190,5 +247,5 @@ next platform choice, not a silent fallback for a failed Linux memfd.
 Project [status](../notes-exp/status.md),
 [tasks](../notes-exp/tasks/cpp-transpiler-runtime-before-ir.md),
 [decisions](../notes-exp/decisions/DD02-foreground-fork-exec.md), and
-[journal](../notes-exp/journal/003-error-path-showcase.md) live in
+[journal](../notes-exp/journal/004-streaming-worker-report.md) live in
 `../notes-exp/`, not the native compiler's `notes/`.

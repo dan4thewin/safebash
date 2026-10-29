@@ -15,6 +15,7 @@
 #include <fcntl.h>
 #include <limits>
 #include <new>
+#include <optional>
 #include <sys/mman.h>
 #include <sys/wait.h>
 #include <unistd.h>
@@ -80,19 +81,19 @@ FileDescriptor capture_storage() {
     return private_descriptor(std::move(raw));
 }
 
-struct ErrorPipe {
+struct Pipe {
     FileDescriptor reader;
     FileDescriptor writer;
 };
 
-ErrorPipe error_pipe() {
+Pipe create_pipe(std::string_view operation) {
     int descriptors[2];
     int result;
     do {
         result = ::pipe2(descriptors, O_CLOEXEC);
     } while (result < 0 && errno == EINTR);
     if (result < 0) {
-        throw SetupError(last_error(), "create exec error pipe");
+        throw SetupError(last_error(), operation);
     }
     FileDescriptor reader(descriptors[0]);
     FileDescriptor writer(descriptors[1]);
@@ -146,7 +147,13 @@ class Child {
     pid_t pid_;
 };
 
-enum class ChildOperation : int { CloseReader, Exec };
+enum class ChildOperation : int {
+    CloseReader,
+    CloseOutputReader,
+    InstallOutput,
+    CloseOutputWriter,
+    Exec
+};
 
 struct ChildFailure {
     ChildOperation operation = ChildOperation::Exec;
@@ -217,6 +224,85 @@ std::error_code replace_descriptor(int source, int destination) noexcept {
     return result < 0 ? last_error() : std::error_code{};
 }
 
+void launch(std::vector<std::string> &command, std::optional<Child> &child,
+            Pipe *output = nullptr) {
+    std::vector<char *> arguments;
+    arguments.reserve(command.size() + 1);
+    for (auto &word : command) {
+        arguments.push_back(word.data());
+    }
+    arguments.push_back(nullptr);
+    const auto *executable = command[0].c_str();
+    auto *const *argv = arguments.data();
+    char *empty_environment[] = {nullptr};
+    auto *const *environment = ::environ != nullptr ? ::environ : empty_environment;
+    auto channel = create_pipe("create exec error pipe");
+    SharedChildFailure shared_failure;
+    auto *const failure = shared_failure.get();
+    const int reader = channel.reader.get();
+    const int output_reader = output != nullptr ? output->reader.get() : -1;
+    const int output_writer = output != nullptr ? output->writer.get() : -1;
+    const auto pid = ::fork();
+    if (pid < 0) {
+        const auto error = last_error();
+        throw SetupError(error, "fork " + command[0]);
+    }
+    if (pid == 0) {
+        if (::close(reader) < 0) {
+            child_failed(failure, ChildOperation::CloseReader, errno);
+        }
+        if (output_writer >= 0) {
+            if (::close(output_reader) < 0) {
+                child_failed(failure, ChildOperation::CloseOutputReader, errno);
+            }
+            if (const auto error = replace_descriptor(output_writer, 1)) {
+                child_failed(failure, ChildOperation::InstallOutput, error.value());
+            }
+            if (::close(output_writer) < 0) {
+                child_failed(failure, ChildOperation::CloseOutputWriter, errno);
+            }
+        }
+        ::execve(executable, argv, environment);
+        child_failed(failure, ChildOperation::Exec, errno);
+    }
+    child.emplace(pid);
+    if (output != nullptr) {
+        output->writer.close();
+    }
+    channel.writer.close();
+    wait_for_exec(channel.reader.get());
+    channel.reader.close();
+    const int error = failure->error.load(std::memory_order_acquire);
+    if (error != 0) {
+        if (error < 0) {
+            throw SetupError(std::make_error_code(std::errc::protocol_error),
+                             "invalid child setup failure");
+        }
+        switch (failure->operation) {
+        case ChildOperation::CloseReader:
+            throw SetupError({error, std::generic_category()}, "close child exec error reader");
+        case ChildOperation::CloseOutputReader:
+            throw SetupError({error, std::generic_category()}, "close child output reader");
+        case ChildOperation::InstallOutput:
+            throw SetupError({error, std::generic_category()}, "connect child stdout");
+        case ChildOperation::CloseOutputWriter:
+            throw SetupError({error, std::generic_category()}, "close child output writer");
+        case ChildOperation::Exec:
+            throw SetupError({error, std::generic_category()}, "exec " + command[0]);
+        }
+        throw SetupError(std::make_error_code(std::errc::protocol_error),
+                         "unknown child setup operation");
+    }
+}
+
+ProcessResult completed(std::vector<std::string> &command, Child &child) {
+    const int status = child.wait();
+    if (WIFEXITED(status)) {
+        return {std::move(command[0]), ProcessExit{WEXITSTATUS(status)}};
+    }
+    return {std::move(command[0]), ProcessSignal{WTERMSIG(status)}};
+}
+
 } // namespace
 
 std::error_code write_all(int fd, std::string_view bytes) noexcept {
@@ -247,56 +333,39 @@ int report_error(std::string_view program, std::string_view diagnostic, int stat
 }
 
 ProcessResult execute(std::vector<std::string> &command) {
-    std::vector<char *> arguments;
-    arguments.reserve(command.size() + 1);
-    for (auto &word : command) {
-        arguments.push_back(word.data());
+    std::optional<Child> child;
+    launch(command, child);
+    return completed(command, *child);
+}
+
+ProcessResult read_from(std::vector<std::string> &command, const std::function<void(int)> &body) {
+    // Close the pipe before the child owner waits, including during unwinding.
+    std::optional<Child> child;
+    std::optional<Pipe> output;
+    try {
+        output.emplace(create_pipe("create command output pipe"));
+        launch(command, child, &*output);
+    } catch (const SetupError &error) {
+        return {std::move(command[0]), error};
     }
-    arguments.push_back(nullptr);
-    const auto *executable = command[0].c_str();
-    auto *const *argv = arguments.data();
-    char *empty_environment[] = {nullptr};
-    auto *const *environment = ::environ != nullptr ? ::environ : empty_environment;
-    auto channel = error_pipe();
-    SharedChildFailure shared_failure;
-    auto *const failure = shared_failure.get();
-    const int reader = channel.reader.get();
-    const auto pid = ::fork();
-    if (pid < 0) {
-        const auto error = last_error();
-        throw SetupError(error, "fork " + command[0]);
+    body(output->reader.get());
+    try {
+        output->reader.close();
+        return completed(command, *child);
+    } catch (const SetupError &error) {
+        return {std::move(command[0]), error};
     }
-    if (pid == 0) {
-        if (::close(reader) < 0) {
-            child_failed(failure, ChildOperation::CloseReader, errno);
-        }
-        ::execve(executable, argv, environment);
-        child_failed(failure, ChildOperation::Exec, errno);
+}
+
+std::size_t read_some(int fd, char *buffer, std::size_t capacity) {
+    ssize_t count;
+    do {
+        count = ::read(fd, buffer, capacity);
+    } while (count < 0 && errno == EINTR);
+    if (count < 0) {
+        throw SetupError(last_error(), "read command output");
     }
-    Child child(pid);
-    channel.writer.close();
-    wait_for_exec(channel.reader.get());
-    channel.reader.close();
-    const int status = child.wait();
-    const int error = failure->error.load(std::memory_order_acquire);
-    if (error != 0) {
-        if (error < 0) {
-            throw SetupError(std::make_error_code(std::errc::protocol_error),
-                             "invalid child setup failure");
-        }
-        switch (failure->operation) {
-        case ChildOperation::CloseReader:
-            throw SetupError({error, std::generic_category()}, "close child exec error reader");
-        case ChildOperation::Exec:
-            throw SetupError({error, std::generic_category()}, "exec " + command[0]);
-        }
-        throw SetupError(std::make_error_code(std::errc::protocol_error),
-                         "unknown child setup operation");
-    }
-    if (WIFEXITED(status)) {
-        return {std::move(command[0]), ProcessExit{WEXITSTATUS(status)}};
-    }
-    return {std::move(command[0]), ProcessSignal{WTERMSIG(status)}};
+    return static_cast<std::size_t>(count);
 }
 
 FileDescriptor::FileDescriptor(int fd) noexcept : fd_(fd) {}

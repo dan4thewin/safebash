@@ -1,0 +1,9 @@
+read 1: worker:Ada
+read 2: worker:Grace
+skip 3: guest
+read 4: worker:Edsger
+seen 4; kept 3
+saved: Ada
+saved: Grace
+saved: Edsger
+complete

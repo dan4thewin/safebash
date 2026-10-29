@@ -36,7 +36,8 @@ The AI used a close-on-exec pipe for completion notification and a
 preallocated anonymous shared cell for the setup errno. A lock-free store
 publishes failure without a child write: an ordinary error-payload pipe
 can otherwise turn a failed reporting write into apparent exit 127.
-EOF marks exec or child exit; the parent reaps and inspects the cell.
+EOF marks exec or child exit; the parent inspects the cell before accepting
+setup, and the child owner reaps before returning its final outcome.
 The extra mapping is private implementation machinery, not a generated
 program value or a new source-language rule.
 
@@ -48,3 +49,13 @@ failure; cleanup does not force-kill or impose a runtime timeout.
 
 Background handles, public wait, replacing exec, forked C++ stages,
 script-fd reservation, signal policy, and END remain separate work.
+
+## Streaming-reader extension
+
+The third pair reuses this launch path for one external producer, connecting
+only the child's stdout to a close-on-exec data pipe. Shared setup status
+is checked after completion EOF, without waiting for producer exit first.
+The consumer runs in the parent with an explicit reader; its pipe closes
+before the child owner waits, including during partial setup and unwinding.
+This applies DD#122's reference ownership rule and introduces no pipeline
+aggregation or whole-function suppression choice.

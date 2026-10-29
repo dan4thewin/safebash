@@ -1,6 +1,7 @@
 #ifndef SASH_CPP_RUNTIME_HPP
 #define SASH_CPP_RUNTIME_HPP
 
+#include <array>
 #include <functional>
 #include <initializer_list>
 #include <new>
@@ -66,10 +67,46 @@ void write(std::string_view bytes, int fd = 1);
 void echo(std::initializer_list<std::string_view> words);
 [[nodiscard]] std::regex compile_regex(std::string_view pattern);
 
+class LineReader;
+
 namespace detail {
+ProcessResult read_from(std::string_view executable, const std::vector<std::string> &arguments,
+                        const std::function<void(LineReader &)> &body);
 std::string capture_stdout(const std::function<void()> &body);
 int report_error(std::string_view program, std::string_view diagnostic, int status) noexcept;
 } // namespace detail
+
+class LineReader {
+  public:
+    LineReader(const LineReader &) = delete;
+    LineReader &operator=(const LineReader &) = delete;
+    [[nodiscard]] bool readline(std::string &target);
+
+  private:
+    friend ProcessResult detail::read_from(std::string_view, const std::vector<std::string> &,
+                                           const std::function<void(LineReader &)> &);
+    explicit LineReader(int fd) noexcept : fd_(fd) {}
+
+    int fd_;
+    std::array<char, 8192> buffer_{};
+    std::size_t begin_ = 0;
+    std::size_t end_ = 0;
+    bool eof_ = false;
+};
+
+template <typename Body>
+[[nodiscard]] ProcessResult try_read_from(std::string_view executable,
+                                          const std::vector<std::string> &arguments, Body &&body) {
+    static_assert(std::is_same_v<std::invoke_result_t<Body &, LineReader &>, void>,
+                  "the reader body must return void");
+    return detail::read_from(executable, arguments, std::forward<Body>(body));
+}
+
+template <typename Body>
+void read_from(std::string_view executable, const std::vector<std::string> &arguments,
+               Body &&body) {
+    check(try_read_from(executable, arguments, std::forward<Body>(body)));
+}
 
 template <typename Body> [[nodiscard]] std::string capture_stdout(Body &&body) {
     static_assert(std::is_same_v<std::invoke_result_t<Body &>, void>,

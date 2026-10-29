@@ -3,7 +3,7 @@
 This is a reading guide to the error showcase for programmers comfortable
 with C, Unix processes, and ordinary strace output, but not necessarily
 with C++ or syscall fault injection. It follows representative cases
-through both harnesses and the runtime, rather than cataloguing all 103.
+through both harnesses and the runtime, rather than cataloguing all 112.
 
 The C++ program directly exercises the runtime that future transpiled
 programs will use; it is hand-written, not generated. The Bash program
@@ -39,10 +39,10 @@ containment, not a timeout imposed by the runtime.
 
 | File | Responsibility and useful entry points |
 |---|---|
-| [examples/error_paths.sh](../examples/error_paths.sh) | Catalog and assertions: `basic`, `fault`, `invoke`, `ordinal`, `child_close` |
+| [examples/error_paths.sh](../examples/error_paths.sh) | Catalog and assertions: `basic`, `fault`, `invoke`, `ordinal`, `child_fault` |
 | [examples/error_paths.cpp](../examples/error_paths.cpp) | Scenario dispatch and handling: `main`, `scenario`, `Demo::process`, `Demo::operation` |
 | [include/sash/runtime.hpp](../include/sash/runtime.hpp) | Public result/error types; the `run` program boundary |
-| [src/runtime.cpp](../src/runtime.cpp) | `try_execute`, `execute`, `check`, and the capture callback wrapper |
+| [src/runtime.cpp](../src/runtime.cpp) | `try_execute`, `execute`, `check`, `LineReader`, and the capture/reader callback wrappers |
 | [src/platform.hpp](../src/platform.hpp) | Descriptor and capture owners, including member declaration order |
 | [src/platform_linux.cpp](../src/platform_linux.cpp) | Syscalls: `Child`, `SharedChildFailure`, `StdoutCapture`, `write_all`, `cleanup_failed` |
 | [tests/command_helper.cpp](../tests/command_helper.cpp) | Controlled exits, signals, and the ignored-SIGCHLD wrapper |
@@ -643,7 +643,7 @@ P <... read resumed>"", 1)        = 0
 P wait4(C, [{... WEXITSTATUS(s) == 127}], 0, NULL) = C
 ```
 
-The awk check in `child_close` records failures and exec attempts by PID,
+The awk check in `child_fault` records failures and exec attempts by PID,
 recognizes both complete and resumed close records, and checks at end
 that the actual fork child's close failed and that child never attempted
 exec. Neither another process's failed close nor an arbitrary exit 127
@@ -669,17 +669,28 @@ child's inherited mapping is shared, not a private copy-on-write error
 variable.
 
 On failure, `child_failed` stores the operation, publishes errno with a
-release store to a lock-free atomic, then calls `::_exit(127)`. The parent
-reaps and acquire-loads that errno before interpreting the result. A
+release store to a lock-free atomic, then calls `::_exit(127)`. After EOF,
+the parent acquire-loads that errno before letting a consumer run. A
 nonzero error selects the stored operation and reconstructs `SetupError`,
-overriding interpretation as an ordinary exit 127. The atomic publication
-makes the preceding operation field available with the error.
+with the child reaped before that failure returns. It cannot become an
+ordinary exit 127. Successful setup does not itself wait for process exit:
+foreground execution waits immediately afterward, while a command-backed
+reader consumes first and waits after closing its pipe. The atomic
+publication makes the preceding operation field available with the error.
 
 This avoids a fallible child write of an error payload. The pipe signals
 completion only; the error data is in the preallocated shared cell.
 The child uses prebuilt arguments and does not allocate or unwind
 inherited parent owners. The selected single-threaded model is recorded
 in [DD#2](../../notes-exp/decisions/DD02-foreground-fork-exec.md).
+
+The streaming additions reuse this protocol. `child-stdout-install`
+injects the child's first `dup2`, and the same PID-based check proves it
+failed before exec. The `stream-*` cases exercise the extra data pipe and
+its cleanup. `stream-read` and `retry-stream-read` select the data reader's
+8192-byte read, not the one-byte completion read. The runner requires the
+injected trace line to match that baseline selector; unchanged output
+alone would not prove which retry loop ran.
 
 ## When printing the original error fails too
 

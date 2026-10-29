@@ -14,6 +14,7 @@ build:V:
 	$AR rcs $BUILD/libsash_cpp.a $BUILD/runtime.o $BUILD/platform_linux.o &&
 	$CXX $CPPFLAGS $CXXFLAGS $SANITIZE examples/greetings.cpp $BUILD/libsash_cpp.a -o $BUILD/greetings &&
 	$CXX $CPPFLAGS $CXXFLAGS $SANITIZE examples/job_report.cpp $BUILD/libsash_cpp.a -o $BUILD/job_report &&
+	$CXX $CPPFLAGS $CXXFLAGS $SANITIZE examples/stream_report.cpp $BUILD/libsash_cpp.a -o $BUILD/stream_report &&
 	$CXX $CPPFLAGS $CXXFLAGS $SANITIZE examples/error_paths.cpp $BUILD/libsash_cpp.a -o $BUILD/error_paths
 
 fixtures:V: build
@@ -29,7 +30,9 @@ test:V: fixtures
 	timeout 10 $BUILD/greetings > $BUILD/greetings.actual &&
 	cmp examples/greetings.expected $BUILD/greetings.actual &&
 	timeout 10 $BUILD/job_report > $BUILD/job_report.actual &&
-	cmp examples/job_report.expected $BUILD/job_report.actual
+	cmp examples/job_report.expected $BUILD/job_report.actual &&
+	timeout 10 $BUILD/stream_report > $BUILD/stream_report.actual &&
+	cmp examples/stream_report.expected $BUILD/stream_report.actual
 
 error-demo:V: fixtures
 	if test -n "$SANITIZE"; then printf '%s\n' 'error-demo requires an unsanitized BUILD (strace and deliberate faults)' >&2; exit 2; fi &&
@@ -58,4 +61,7 @@ sash-example:V:
 	cmp examples/greetings.expected $BUILD/greetings-sash.actual &&
 	SASH_RT_LIB=$SASH_RT_LIB $SASH examples/job_report.sash -o $BUILD/job_report-sash &&
 	timeout 10 $BUILD/job_report-sash > $BUILD/job_report-sash.actual &&
-	cmp examples/job_report.expected $BUILD/job_report-sash.actual
+	cmp examples/job_report.expected $BUILD/job_report-sash.actual &&
+	SASH_RT_LIB=$SASH_RT_LIB $SASH examples/stream_report.sash -o $BUILD/stream_report-sash &&
+	timeout 10 $BUILD/stream_report-sash > $BUILD/stream_report-sash.actual &&
+	cmp examples/stream_report.expected $BUILD/stream_report-sash.actual

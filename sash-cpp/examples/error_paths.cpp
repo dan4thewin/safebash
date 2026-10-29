@@ -90,6 +90,14 @@ struct Demo {
 void scenario(const Demo &demo, std::string_view name) {
     if (name == "process" || name == "process-closed") {
         demo.process(rt::try_execute(demo.helper, {"exit", "0"}));
+    } else if (name == "stream") {
+        demo.operation([&] {
+            demo.process(rt::try_read_from(demo.helper, {"binary"}, [](rt::LineReader &input) {
+                std::string line;
+                while (input.readline(line)) {
+                }
+            }));
+        });
     } else if (name == "exit7") {
         demo.process(rt::try_execute(demo.helper, {"exit", "7"}));
     } else if (name == "exit127") {

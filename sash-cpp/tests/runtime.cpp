@@ -370,6 +370,19 @@ void exec_failures(const std::string &helper) {
     require(output.empty(), "invalid arguments must not run a truncated command");
 }
 
+std::vector<std::string> descriptor_probe_arguments() {
+    std::vector<std::string> arguments{"fds"};
+    for (int fd = 3; fd < 128; ++fd) {
+        const int flags = ::fcntl(fd, F_GETFD);
+        if (flags >= 0 && (flags & FD_CLOEXEC) == 0) {
+            arguments.push_back(std::to_string(fd));
+        } else if (flags < 0) {
+            require(errno == EBADF, "inspect inherited descriptors");
+        }
+    }
+    return arguments;
+}
+
 void process_descriptors(const std::string &helper) {
     for (int fd = 0; fd < 3; ++fd) {
         in_child([&] {
@@ -393,15 +406,7 @@ void process_descriptors(const std::string &helper) {
         });
     }
     in_child([&] {
-        std::vector<std::string> arguments{"fds"};
-        for (int fd = 3; fd < 128; ++fd) {
-            const int flags = ::fcntl(fd, F_GETFD);
-            if (flags >= 0 && (flags & FD_CLOEXEC) == 0) {
-                arguments.push_back(std::to_string(fd));
-            } else if (flags < 0) {
-                require(errno == EBADF, "inspect inherited descriptors");
-            }
-        }
+        const auto arguments = descriptor_probe_arguments();
         require(sash::capture_stdout([&] {
                     sash::execute(helper, arguments);
                     sash::write("parent");
@@ -474,6 +479,204 @@ void process_resources(const std::string &helper) {
     });
 }
 
+void reader_records(const std::string &helper) {
+    const std::vector<std::string> expected{"alpha", "", std::string("nul\0inside\r", 11), "last"};
+    std::vector<std::string> records;
+    sash::read_from(helper, {"records", "0"}, [&](sash::LineReader &input) {
+        std::string line = "old";
+        while (input.readline(line)) {
+            records.push_back(line);
+        }
+        require(line.empty(), "EOF must clear the line target");
+        line = "old again";
+        require(!input.readline(line) && line.empty(), "repeated EOF must clear the target");
+    });
+    require(records == expected, "readline must preserve binary records and an unterminated tail");
+    sash::read_from(helper, {"exit", "0"}, [&](sash::LineReader &input) {
+        std::string line = "old";
+        require(!input.readline(line) && line.empty(),
+                "empty input must be EOF, not an empty line");
+    });
+    sash::read_from(helper, {"binary"}, [&](sash::LineReader &input) {
+        std::string line;
+        require(input.readline(line) &&
+                    line == std::string(256 * 1024, 'x') + std::string("\0end", 4),
+                "read a binary line larger than pipe capacity");
+        require(input.readline(line) && line.empty(), "a terminated empty record is successful");
+        require(!input.readline(line) && line.empty(), "newline must not invent a final record");
+    });
+}
+
+void reader_streaming(const std::string &helper) {
+    in_child([&] {
+        int control[2];
+        require(::pipe(control) == 0 && ::fcntl(control[1], F_SETFD, FD_CLOEXEC) == 0,
+                "create handshake channel");
+        sash::read_from(helper, {"handshake", std::to_string(control[0])},
+                        [&](sash::LineReader &input) {
+                            std::string line;
+                            const bool ready = input.readline(line) && line == "ready";
+                            sash::write("Y", control[1]);
+                            require(::close(control[1]) == 0, "close handshake writer");
+                            require(ready, "consumer must run before producer can finish");
+                            require(input.readline(line) && line == "done",
+                                    "producer must see consumer's handshake");
+                            require(!input.readline(line), "handshake producer must reach EOF");
+                        });
+        require(::close(control[0]) == 0, "close handshake reader");
+    });
+}
+
+void reader_outcomes(const std::string &helper) {
+    for (const int status : {7, 127}) {
+        int consumed = 0;
+        const auto result = sash::try_read_from(helper, {"records", std::to_string(status)},
+                                                [&](sash::LineReader &input) {
+                                                    std::string line;
+                                                    while (input.readline(line)) {
+                                                        ++consumed;
+                                                    }
+                                                });
+        const auto *exit = std::get_if<sash::ProcessExit>(&result.outcome);
+        require(exit != nullptr && exit->status == status && consumed == 4,
+                "consume streaming effects before evaluating a producer's nonzero exit");
+        bool checked = false;
+        try {
+            sash::check(result);
+        } catch (const sash::CommandError &error) {
+            checked = error.status() == status;
+        }
+        require(checked, "checking a producer must retain its exit status");
+    }
+    bool called = false;
+    const auto missing =
+        sash::try_read_from(helper + ".missing", {}, [&](sash::LineReader &) { called = true; });
+    const auto *error = std::get_if<sash::SetupError>(&missing.outcome);
+    require(error != nullptr && error->code().value() == ENOENT && !called,
+            "failed exec must not invoke a consumer or become exit 127");
+    const auto nul = sash::try_read_from(helper, {"args", std::string("one\0two", 7)},
+                                         [&](sash::LineReader &) { called = true; });
+    error = std::get_if<sash::SetupError>(&nul.outcome);
+    require(error != nullptr && error->code() == std::errc::invalid_argument && !called,
+            "a reader command must share argv NUL checks before running");
+    in_child([&] {
+        require(std::signal(SIGPIPE, SIG_DFL) != SIG_ERR, "restore default SIGPIPE");
+        sigset_t signals;
+        require(::sigemptyset(&signals) == 0 && ::sigaddset(&signals, SIGPIPE) == 0 &&
+                    ::sigprocmask(SIG_UNBLOCK, &signals, nullptr) == 0,
+                "unblock SIGPIPE");
+        const auto early = sash::try_read_from(helper, {"flood"}, [](sash::LineReader &) {});
+        const auto *signal = std::get_if<sash::ProcessSignal>(&early.outcome);
+        require(signal != nullptr && signal->number == SIGPIPE,
+                "close an early reader before waiting and retain the producer's SIGPIPE");
+        bool preserved = false;
+        try {
+            (void)sash::try_read_from(helper, {"flood"}, [](sash::LineReader &) {
+                throw sash::SetupError(std::make_error_code(std::errc::permission_denied),
+                                       "consumer marker");
+            });
+        } catch (const sash::SetupError &failure) {
+            preserved = failure.code() == std::errc::permission_denied &&
+                        std::string(failure.what()).find("consumer marker") != std::string::npos;
+        }
+        require(preserved, "consumer failure must propagate, not become the producer's result");
+        int status;
+        require(::waitpid(-1, &status, WNOHANG) < 0 && errno == ECHILD,
+                "early and unwound producers must both be reaped");
+    });
+}
+
+void reader_scopes(const std::string &helper) {
+    in_child([&] {
+        int original_input[2];
+        require(::pipe(original_input) == 0, "create original stdin");
+        sash::write("program stdin", original_input[1]);
+        require(::close(original_input[1]) == 0, "close original stdin writer");
+        if (original_input[0] != 0) {
+            require(::dup2(original_input[0], 0) == 0 && ::close(original_input[0]) == 0,
+                    "install original stdin");
+        }
+        const auto descriptor_probe = descriptor_probe_arguments();
+        std::vector<std::string> outer_records;
+        const auto output = sash::capture_stdout([&] {
+            sash::read_from(helper, {"records", "0"}, [&](sash::LineReader &outer) {
+                std::string line;
+                while (outer.readline(line)) {
+                    outer_records.push_back(line);
+                    int inner_records = 0;
+                    sash::read_from(helper, {"records", "0"}, [&](sash::LineReader &inner) {
+                        sash::execute(helper, descriptor_probe);
+                        std::string nested;
+                        while (inner.readline(nested)) {
+                            ++inner_records;
+                        }
+                    });
+                    require(inner_records == 4, "nested reader must have its own stream");
+                    require(sash::capture_stdout([&] {
+                                sash::execute(helper, {"args", "inner"});
+                            }) == std::string("inner\0", 6),
+                            "capture inside reader must use its own stdout and child");
+                    if (outer_records.size() == 1) {
+                        require(sash::capture_stdout([&] { sash::execute(helper, {"stdin"}); }) ==
+                                    "program stdin",
+                                "a command in the reader body must inherit program stdin");
+                    }
+                    sash::write("body\n");
+                }
+            });
+            sash::write("after\n");
+        });
+        require(outer_records.size() == 4 && outer_records.back() == "last",
+                "inner readers and captures must not steal outer records");
+        require(output == "body\nbody\nbody\nbody\nafter\n",
+                "reader commands must not rebind the parent's captured stdout");
+    });
+}
+
+void reader_resources(const std::string &helper) {
+    for (int fd = 0; fd < 3; ++fd) {
+        in_child([&] {
+            if (::close(fd) < 0) {
+                require(errno == EBADF, "close standard descriptor for reader");
+            }
+            int count = 0;
+            sash::read_from(helper, {"records", "0"}, [&](sash::LineReader &input) {
+                std::string line;
+                while (input.readline(line)) {
+                    ++count;
+                }
+            });
+            require(count == 4 && ::fcntl(fd, F_GETFD) < 0 && errno == EBADF,
+                    "reader plumbing must leave closed standard descriptors closed");
+        });
+    }
+    in_child([&] {
+        struct rlimit original{};
+        require(::getrlimit(RLIMIT_NOFILE, &original) == 0, "get reader fd limit");
+        auto none = original;
+        none.rlim_cur = 0;
+        require(::setrlimit(RLIMIT_NOFILE, &none) == 0, "exhaust reader descriptors");
+        bool called = false;
+        const auto result = sash::try_read_from(helper, {"records", "0"},
+                                                [&](sash::LineReader &) { called = true; });
+        require(::setrlimit(RLIMIT_NOFILE, &original) == 0, "restore reader fd limit");
+        const auto *error = std::get_if<sash::SetupError>(&result.outcome);
+        require(error != nullptr && error->code().value() == EMFILE && !called &&
+                    std::string(error->what()).find("create command output pipe") !=
+                        std::string::npos,
+                "failed output-pipe construction must not invoke a consumer");
+        auto limited = original;
+        limited.rlim_cur = std::min(limited.rlim_cur, rlim_t{32});
+        require(::setrlimit(RLIMIT_NOFILE, &limited) == 0, "limit reader leak-check descriptors");
+        for (int i = 0; i < 32; ++i) {
+            sash::read_from(helper, {"exit", "0"}, [](sash::LineReader &) {});
+        }
+        int status;
+        require(::waitpid(-1, &status, WNOHANG) < 0 && errno == ECHILD,
+                "reader completion must reap every producer without leaking descriptors");
+    });
+}
+
 void fork_failure(const std::string &helper) {
     const auto output = sash::capture_stdout([&] {
         const auto result = sash::try_execute(helper, {"args", "must not run"});
@@ -541,6 +744,11 @@ int main(int argc, char **argv) {
         {"exec failures", [&] { exec_failures(helper); }},
         {"process descriptors", [&] { process_descriptors(helper); }},
         {"process resources", [&] { process_resources(helper); }},
+        {"reader records", [&] { reader_records(helper); }},
+        {"reader streaming handshake", [&] { reader_streaming(helper); }},
+        {"reader outcomes and early completion", [&] { reader_outcomes(helper); }},
+        {"nested reader and capture scopes", [&] { reader_scopes(helper); }},
+        {"reader resources", [&] { reader_resources(helper); }},
     };
     for (const auto &test : tests) {
         if (!run_test(test.first, test.second)) {

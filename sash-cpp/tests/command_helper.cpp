@@ -70,6 +70,63 @@ int main(int argc, char **argv) {
         }
         return flushed();
     }
+    if (mode == "records" && argc == 3) {
+        int status;
+        if (!number(argv[2], status) || status < 0 || status > 255) {
+            return fail("invalid record-producer status");
+        }
+        const char records[] = "alpha\n\nnul\0inside\r\nlast";
+        if (!output(records, sizeof(records) - 1) || flushed() != 0) {
+            return fail("cannot write records");
+        }
+        return status;
+    }
+    if (mode == "flood" && argc == 2) {
+        std::array<char, 8192> block{};
+        block.fill('x');
+        while (output(block.data(), block.size())) {
+        }
+        return fail("cannot write flood");
+    }
+    if (mode == "handshake" && argc == 3) {
+        int fd;
+        if (!number(argv[2], fd) || fd < 0) {
+            return fail("invalid handshake descriptor");
+        }
+        if (!output("ready\n", 6) || flushed() != 0) {
+            return fail("cannot announce handshake");
+        }
+        char reply;
+        ssize_t count;
+        do {
+            count = ::read(fd, &reply, 1);
+        } while (count < 0 && errno == EINTR);
+        if (count != 1 || reply != 'Y') {
+            return fail("missing handshake reply");
+        }
+        if (!output("done\n", 5)) {
+            return fail("cannot finish handshake");
+        }
+        return flushed();
+    }
+    if (mode == "stdin" && argc == 2) {
+        std::array<char, 8192> block{};
+        while (true) {
+            const auto count = ::read(0, block.data(), block.size());
+            if (count < 0 && errno == EINTR) {
+                continue;
+            }
+            if (count < 0) {
+                return fail("cannot read stdin");
+            }
+            if (count == 0) {
+                return flushed();
+            }
+            if (!output(block.data(), static_cast<std::size_t>(count))) {
+                return fail("cannot copy stdin");
+            }
+        }
+    }
     if (mode == "env" && argc == 3) {
         const auto *value = std::getenv(argv[2]);
         if (value == nullptr) {
