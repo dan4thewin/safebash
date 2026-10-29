@@ -529,6 +529,15 @@ fn lower_int_tail_call(
         return Some(emit_return_value(value, ssa, state, *block));
     }
     let (header, aname) = (tail.header, tail.args_name.clone());
+    // DD#81 Part B checks arity at *every* call site. A self-tail call lowers
+    // to this back edge rather than through `inline_int_func`, so it is
+    // checked here; the suppressed entry above is checked by that inliner.
+    let body = state
+        .function_bodies
+        .get(name)
+        .cloned()
+        .expect("a self-tail loop is open only while its own function body is lowered");
+    super::cmd_handlers::check_callee_arity(name, &body, args, state);
     let lifted = lift_int_func_args(args.clone(), ssa, state, block);
     Some(super::functions::emit_tail_call(
         header, &aname, lifted, ssa, state, *block,

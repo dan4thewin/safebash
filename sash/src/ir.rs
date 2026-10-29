@@ -518,9 +518,27 @@ pub(crate) fn single_value_command(stmts: &[Statement]) -> Option<&Command> {
     let [stmt] = stmts else {
         return None;
     };
+    value_command(stmt)
+}
+
+/// The command one statement runs, looking through any suppression prefix:
+/// `- argv 1` runs `argv 1` (DD#55 — suppression changes checking, not what
+/// is run or what it yields).
+///
+/// The shared peel for a capture-shape recogniser: [`single_value_command`]
+/// and the signature scan's `cmdsub_reads_whole_args` go through it, so
+/// `$(- join args)` reads the whole argument list just as `$(join args)` does.
+/// A recogniser that matches `StmtKind::Command` itself forgets `Suppressed`;
+/// the ones that still do are listed in
+/// `notes/tasks/bug-peel-family-classifiers.md`.
+///
+/// A `Redirected` statement is not peeled, and for these callers there is
+/// nothing to peel: every intrinsic refuses a redirect at parse time (SB4046),
+/// so a redirected body is never one of the commands they look for.
+pub(crate) fn value_command(stmt: &Statement) -> Option<&Command> {
     match &stmt.kind {
         StmtKind::Command(c) => Some(c),
-        StmtKind::Suppressed(inner) => single_value_command(std::slice::from_ref(inner)),
+        StmtKind::Suppressed(inner) => value_command(inner),
         _ => None,
     }
 }

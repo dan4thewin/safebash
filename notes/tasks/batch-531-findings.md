@@ -717,15 +717,21 @@ DG 2026-10-28: F2 lands without the B82 wrap and without specs that pin
   prints `before` and `hi`, exits 0 and never runs the rest. The branch's
   SB5020 is a taint verdict, not a rule. Question: no DD covers `exec` in a
   capture.
-- [ ] **B49** (F1; fixed-on-branch; DD55). `cmdsub_reads_whole_args` does
+- [x] **B49** (F1; fixed-on-branch; DD55). `cmdsub_reads_whole_args` does
   not peel: `fn f { echo $(- join args) }; f a b c` is a false SB5043. Fixed
   by F5's rewrite of the signature scan (B53).
   - Stays with F5, whose B53 rewrite carries it. F1+F4 did not port
     `value_command`'s peel; its hunks H063 and H213 moved to F5 in the
     ledger (journal 537).
-- [ ] **B53** (fixed-on-branch; no DD). A second, forked copy of the
+  - Ported in F5 unit B (journal 543): `cmdsub_reads_whole_args` finds the
+    command through `ir::value_command`, so `$(- join args)` is variadic
+    (`81.54`).
+- [x] **B53** (fixed-on-branch; no DD). A second, forked copy of the
   function-signature scan disagreed with the first, giving a false SB5043.
-- [ ] **B56** (fixed-on-branch; DD58, DD81). `-> int` functions were never
+  - Ported in F5 unit B (journal 543): `analyze_arity` runs the shared
+    `ir::walk_scoped_stmts` / `ir::walk_own_exprs`; the private walk is
+    gone. Specs `81.47`-`81.53`.
+- [x] **B56** (fixed-on-branch; DD58, DD81). `-> int` functions were never
   arity-checked.
   - F13 changes where the check must go. The `fn_` template now loops, so
     an int function's self-tail call is lowered by `lower_int_tail_call`,
@@ -736,6 +742,9 @@ DG 2026-10-28: F2 lands without the B82 wrap and without specs that pin
     `int r=$(( (f) ))` (t6): base and the F13 tree accept both. The string
     twin was F13's own regression, caught before commit
     (`try_producer_tail_call`).
+  - Ported in F5 unit B (journal 543): `inline_int_func` checks every
+    inlined call, as on the branch, and `lower_int_tail_call` checks the
+    self tail call that F13's loop lowers. Specs `81.55`-`81.61`.
 - [x] **B57** (fixed-on-branch; DD27). `$(f)` inside `f` overflowed the
   compiler's stack instead of drawing the recursion rejection.
   - Ported in F5 unit A (journal 542): every call route, the capture

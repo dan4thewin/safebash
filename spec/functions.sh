@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup functions
-plan=230
+plan=245
 echo "1..$plan" >&3
 
 set +e
@@ -1417,6 +1417,100 @@ cat'
 run_sash 'fn a { echo hi | b }
 a'
 [[ $rc != 0 && -z $out && $err == *SB5011* && $err == *"'b'"* ]]; chk 81.46
+
+# --- 81.47-81.61 DD#81 Part B: one signature scan, arity at every call ---
+#
+# The signature scan was a private copy of the IR walk and missed whole
+# channels, so a function reading `$1` only there was inferred to take no
+# arguments and every call of it was a false SB5043 (B53). It now runs the
+# shared ir::walk_scoped_stmts over the function's own scope. `-> int` calls
+# were never arity-checked at all (B56).
+
+# 81.47 `$1` as an assignment's index
+run_sash 'fn f { map m=(); m[$1]=v; echo "${m[k]}" }
+f k'
+[[ $rc = 0 && $out = v && -z $err ]]; chk 81.47
+
+# 81.48 `$1` as a dispatch pattern
+run_sash 'fn f { [[ x == $1 { echo m } || { echo n } ]] }
+f x'
+[[ $rc = 0 && $out = m && -z $err ]]; chk 81.48
+
+# 81.49 `$1` as a map key under a default
+run_sash 'fn f { map m=([k]=v); echo "${m[$1]:-d}" }
+f k'
+[[ $rc = 0 && $out = v && -z $err ]]; chk 81.49
+
+# 81.50 the same inside `$(( ))`
+run_sash 'fn f { map m=([k]=5); echo $(( ${m[$1]:-0} + 1 )) }
+f k'
+[[ $rc = 0 && $out = 6 && -z $err ]]; chk 81.50
+
+# 81.51 `$1` as a redirect target
+run_sash 'fn f { echo hi >${1:?no target} }
+f fsig.out
+echo done'
+[[ $rc = 0 && $out = done && -z $err && $(<fsig.out) = hi ]]; chk 81.51
+
+# 81.52 `$1` as a map literal's value
+run_sash 'fn f { map m=([a]="$1"); echo "[${m[a]}]" }
+f x'
+[[ $rc = 0 && $out = '[x]' && -z $err ]]; chk 81.52
+
+# 81.53 `$(join args)` as a map literal's value makes the function variadic
+run_sash 'fn f { map m=([a]=$(join args)); echo "[${m[a]}]" }
+f x y'
+[[ $rc = 0 && $out = '[x y]' && -z $err ]]; chk 81.53
+
+# 81.54 so does a suppressed `$(- join args)` (B49): the capture's shape is
+#       read through ir::value_command, which peels the `-`
+run_sash 'fn f { str s=$(- join args); echo "[$s]" }
+f a b c'
+[[ $rc = 0 && $out = '[a b c]' && -z $err ]]; chk 81.54
+
+# 81.55 an `-> int` call is arity-checked (B56): too few, in `$(( ))`
+run_sash 'fn f -> int { return $(( $1 + 1 )) }
+echo $(( (f) ))'
+[[ $rc != 0 && -z $out \
+   && $err == *":2:1: error [SB5042] function 'f' expects 1 argument but was called with 0"* ]]; chk 81.55
+
+# 81.56 too many
+run_sash 'fn f -> int { return $(( $1 + 1 )) }
+echo $(( (f 1 2 3) ))'
+[[ $rc != 0 && -z $out \
+   && $err == *":2:1: error [SB5043] function 'f' takes exactly 1 argument but was called with 3"* ]]; chk 81.56
+
+# 81.57 an `int` capture of an `-> int` function
+run_sash 'fn f -> int { return $(( $1 + 1 )) }
+int n=$(f)
+echo $n'
+[[ $rc != 0 && -z $out \
+   && $err == *":2:1: error [SB5042] function 'f' expects 1 argument but was called with 0"* ]]; chk 81.57
+
+# 81.58 a call in an arithmetic condition, reported at its `((`
+run_sash 'fn f -> int { return $(( $1 + 1 )) }
+if (( (f) > 0 )) { echo pos }'
+[[ $rc != 0 && -z $out \
+   && $err == *":2:4: error [SB5042] function 'f' expects 1 argument but was called with 0"* ]]; chk 81.58
+
+# 81.59 a callee that reads `$1` only as a sexpr argument
+run_sash 'fn f -> int { return $(( (strlen $1) )) }
+echo $(( (f) ))'
+[[ $rc != 0 && -z $out \
+   && $err == *":2:1: error [SB5042] function 'f' expects 1 argument but was called with 0"* ]]; chk 81.59
+
+# 81.60 a self-tail call is a loop back edge, not an inlined call, and it is
+#       checked there too: too few
+run_sash 'fn f -> int { if (( $1 > 0 )) { return $(( (f) )) }; return 0 }
+echo $(( (f 3) ))'
+[[ $rc != 0 && -z $out \
+   && $err == *":1:33: error [SB5042] function 'f' expects 1 argument but was called with 0"* ]]; chk 81.60
+
+# 81.61 too many
+run_sash 'fn f -> int { if (( $1 > 0 )) { return $(( (f $1-1 9) )) }; return 0 }
+echo $(( (f 3) ))'
+[[ $rc != 0 && -z $out \
+   && $err == *":1:33: error [SB5043] function 'f' takes exactly 1 argument but was called with 2"* ]]; chk 81.61
 
 # A present return-type arrow requires DD#16's `int`, in every definition
 # spelling. Missing types used to silently select the default string return.

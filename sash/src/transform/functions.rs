@@ -642,6 +642,8 @@ pub(super) fn inline_int_func(
     if suppressed_tail_entry.is_none() && reject_recursive_call(name, state) {
         return SsaValue::Literal("0".to_string());
     }
+    // DD#81 Part B checks arity at *every* call site; an `-> int` call is one.
+    super::cmd_handlers::check_callee_arity(name, &body, args, state);
     state.inlining.push(name.to_string());
 
     // DD#75 §5: positionals are backed by the `args` array (below), not scalar
@@ -743,11 +745,22 @@ struct ArgSig {
 
 /// Infer a function's arity from how its body reads `args`, plus any structural
 /// defects (DD#81 rule (a) contiguity + DD#84 mixing / optional-trailing).
+///
+/// The traversal is the shared one: [`crate::ir::walk_scoped_stmts`] reaches
+/// every nested body, including each `$( … )` body, and
+/// [`crate::ir::walk_own_exprs`] hands over each statement's own expression
+/// trees once. A private copy of that recursion ended in `_ => {}` and never
+/// saw a positional read in a redirect target, a map literal, a dispatch
+/// pattern, an assignment or subscript index, or `$(<$1)`, so a function
+/// reading `$1` only there was reported as taking no arguments.
 pub(super) fn analyze_arity(body: &[Statement]) -> (Arity, Vec<ArityDefect>) {
     let mut sig = ArgSig::default();
-    for s in body {
-        sig_scan_stmt(s, &mut sig);
-    }
+    crate::ir::walk_scoped_stmts(body, "", &mut |stmt, in_fn| {
+        // A nested function has its own `args` scope.
+        if in_fn.is_empty() {
+            sig_scan_own(stmt, &mut sig);
+        }
+    });
     if sig.variadic {
         return (
             Arity::Variadic {
@@ -804,76 +817,26 @@ fn fixed_min(sig: &ArgSig, max: usize, defects: &mut Vec<ArityDefect>) -> usize 
     lowest_opt
 }
 
-fn sig_scan_stmts(stmts: &[Statement], sig: &mut ArgSig) {
-    for s in stmts {
-        sig_scan_stmt(s, sig);
-    }
-}
-
-fn sig_scan_exprs(exprs: &[Expr], sig: &mut ArgSig) {
-    for e in exprs {
-        sig_scan_expr(e, sig);
-    }
-}
-
-fn sig_scan_decl(d: &Declaration, sig: &mut ArgSig) {
-    for a in &d.assignments {
-        if let Some(ref v) = a.value {
-            sig_scan_expr(v, sig);
-        }
-    }
-}
-
-fn sig_scan_case(c: &Case, sig: &mut ArgSig) {
-    sig_scan_expr(&c.value, sig);
-    for item in &c.items {
-        sig_scan_stmts(&item.body, sig);
-    }
-}
-
-fn sig_scan_child_bodies(stmt: &Statement, sig: &mut ArgSig) {
-    for body in stmt.structural_bodies() {
-        sig_scan_stmts(body, sig);
-    }
-}
-
-/// **Total over `StmtKind` on purpose — do not add a wildcard.**
-fn sig_scan_stmt(stmt: &Statement, sig: &mut ArgSig) {
-    match &stmt.kind {
-        StmtKind::Command(c) => sig_scan_command(c, sig),
-        StmtKind::Assignment(a) => sig_scan_expr(&a.value, sig),
-        StmtKind::Declaration(d) => sig_scan_decl(d, sig),
-        StmtKind::For(f) => {
-            sig_scan_exprs(&f.words, sig);
-            sig_scan_stmts(&f.body, sig);
-        }
-        StmtKind::Case(c) => sig_scan_case(c, sig),
-        // A nested function has its own `args` scope — don't descend.
-        StmtKind::Function(_) => {}
-        // `(( … ))` as a statement / if/while condition carries an ArithExpr,
-        // not child bodies — scan it directly (else `$#`/`$N` inside a
-        // condition are missed and a variadic function looks fixed).
-        StmtKind::ArithTest(a) => sig_scan_arith(a, sig),
-        StmtKind::Pipeline(_)
-        | StmtKind::If(_)
-        | StmtKind::While(_)
-        | StmtKind::Redirected(_)
-        | StmtKind::List(_)
-        | StmtKind::Group(_)
-        | StmtKind::Suppressed(_)
-        | StmtKind::Negated(_)
-        | StmtKind::ReturnProducer(_) => sig_scan_child_bodies(stmt, sig),
-    }
-}
-
-fn sig_scan_command(c: &Command, sig: &mut ArgSig) {
-    sig_scan_expr(&c.name, sig);
+/// One statement's own contribution to the signature: its expressions, the
+/// external `@args` rule, and a `(( … ))` statement's bare positional reads.
+fn sig_scan_own(stmt: &Statement, sig: &mut ArgSig) {
+    crate::ir::walk_own_exprs(stmt, &mut |e| sig_record_expr(e, sig));
     // DD#81: a bare @args into an external requires at least one argument;
     // builtins and for-in handle an empty array themselves.
-    if is_external_head(&c.name) && c.args.iter().any(is_bare_args_splat) {
+    if splats_args_into_external(stmt) {
         sig.required.insert(0);
     }
-    sig_scan_exprs(&c.args, sig);
+    // A `(( … ))` statement or condition: its `${…}` expansions came through
+    // `walk_own_exprs`; its bare `$N` reads are `ArithExpr` nodes.
+    if let StmtKind::ArithTest(a) = &stmt.kind {
+        sig_record_arith_names(a, sig);
+    }
+}
+
+/// An external command handed a bare `@args` splat (DD#81).
+fn splats_args_into_external(stmt: &Statement) -> bool {
+    matches!(&stmt.kind, StmtKind::Command(c)
+        if is_external_head(&c.name) && c.args.iter().any(is_bare_args_splat))
 }
 
 /// An external command head: post-DD#23 resolution it is an absolute path
@@ -894,45 +857,50 @@ fn is_bare_args_splat(arg: &Expr) -> bool {
     }
 }
 
-fn sig_scan_expr(expr: &Expr, sig: &mut ArgSig) {
+/// Record one expression node's `args` reads. The walk hands over every node
+/// of every expression tree once, so this looks at the node alone and never
+/// recurses: a container's parts, a `${…}`'s index and operand, and the
+/// `${…}` inside arithmetic all arrive as nodes of their own.
+///
+/// **Total over `ExprKind` on purpose — do not add a wildcard.** The private
+/// scanner this replaced ended in `_ => {}`, and its missing arms were how a
+/// function reading `$1` came to be reported as taking no arguments.
+fn sig_record_expr(expr: &Expr, sig: &mut ArgSig) {
     match &expr.kind {
         ExprKind::SimpleExpansion(name) => sig_record_name(name, sig),
-        ExprKind::DoubleQuoted(parts) | ExprKind::Concat(parts) | ExprKind::Array(parts) => {
-            sig_scan_exprs(parts, sig)
+        ExprKind::ParameterExpansion(pe) => sig_record_pexp_subject(pe, sig),
+        ExprKind::Subscript { name, index } if name == "args" => {
+            sig_record_index(index, sig, false);
         }
-        ExprKind::ParameterExpansion(pe) => sig_scan_pexp(pe, sig),
-        ExprKind::Subscript { name, index } => {
-            if name == "args" {
-                sig_record_index(index, sig, false);
-            }
-            sig_scan_expr(index, sig);
+        // The body is a statement body the walk reaches on its own; only a
+        // whole-args fold is a property of the substitution itself.
+        ExprKind::CommandSubstitution(stmts) if cmdsub_reads_whole_args(stmts) => {
+            sig.variadic = true;
         }
-        ExprKind::CommandSubstitution(stmts) => {
-            if cmdsub_reads_whole_args(stmts) {
-                sig.variadic = true;
-            }
-            sig_scan_stmts(stmts, sig);
-        }
-        ExprKind::Test(t) => sig_scan_test(t, sig),
-        ExprKind::Arithmetic(a) => sig_scan_arith(a, sig),
-        _ => {}
-    }
-}
-
-/// `${args[k]:OP}` is an indexed cell; `@args` (no cell index) is whole-args
-/// → variadic. `${N}` behaves like `$N` — and a positional `${N:-}`/`${N:~}`
-/// reads index N-1 *optionally* (DD#84), exactly like `${args[N-1]:-}`.
-/// (`${#args}`/`${#}` are retired surfaces — SB4038/SB4034.)
-fn sig_scan_pexp(pe: &ParameterExpansion, sig: &mut ArgSig) {
-    sig_record_pexp_subject(pe, sig);
-    if let Some(op) = &pe.operand {
-        sig_scan_expr(op, sig);
+        ExprKind::Arithmetic(a) => sig_record_arith_names(a, sig),
+        // Another collection's cell, a substitution that does not fold the
+        // whole of `args`, and the nodes with no read of their own.
+        ExprKind::Subscript { .. }
+        | ExprKind::CommandSubstitution(_)
+        | ExprKind::Literal(_)
+        | ExprKind::SingleQuoted(_)
+        | ExprKind::DoubleQuoted(_)
+        | ExprKind::Concat(_)
+        | ExprKind::Array(_)
+        | ExprKind::AssocArray(_)
+        | ExprKind::Test(_)
+        | ExprKind::SlurpFile(_) => {}
     }
 }
 
 /// Record the subject of a `${…}` expansion into the arg signature: an
 /// `args[i]` cell, a positional `${N}`, whole-args (`${args[@]}` → variadic),
 /// or an ordinary name (not an arg → ignored).
+///
+/// `${args[k]:OP}` is an indexed cell; `@args` (no cell index) is whole-args.
+/// `${N}` behaves like `$N` — and a positional `${N:-}`/`${N:~}` reads index
+/// N-1 *optionally* (DD#84), exactly like `${args[N-1]:-}`. (`${#args}`/`${#}`
+/// are retired surfaces — SB4038/SB4034.)
 fn sig_record_pexp_subject(pe: &ParameterExpansion, sig: &mut ArgSig) {
     // DD#84: `:-` / `:~` make the read optional; any other disposition — or
     // none — is a required read.
@@ -960,21 +928,6 @@ fn sig_record_positional(n: usize, optional: bool, sig: &mut ArgSig) {
         sig.optional.insert(n - 1);
     } else {
         sig.required.insert(n - 1);
-    }
-}
-
-fn sig_scan_test(test: &TestExpr, sig: &mut ArgSig) {
-    match test {
-        TestExpr::Unary { operand, .. } => sig_scan_expr(operand, sig),
-        TestExpr::Binary { left, right, .. } => {
-            sig_scan_expr(left, sig);
-            sig_scan_expr(right, sig);
-        }
-        TestExpr::Not(inner) => sig_scan_test(inner, sig),
-        TestExpr::And(a, b) | TestExpr::Or(a, b) => {
-            sig_scan_test(a, sig);
-            sig_scan_test(b, sig);
-        }
     }
 }
 
@@ -1007,8 +960,13 @@ fn sig_record_index(idx: &Expr, sig: &mut ArgSig, optional: bool) {
     }
 }
 
-/// `$(join args)` / `$(keys args)` — a whole-args *fold*: both read every
-/// element, so the callee can use any number and is variadic.
+/// `$(join args)` — a whole-args *fold*: it reads every element, so the callee
+/// can use any number and is variadic.
+///
+/// `$(keys args)` is **not** here although DD#81 once listed it: `args` is an
+/// indexed array and `keys` refuses every indexed array (SB4030, spec 75.100),
+/// so no accepted program contains it and an answer for it would only
+/// advertise a rejected spelling.
 ///
 /// `$(len args)` is deliberately **absent** (DD#81 addendum 2026-09-28, DG):
 /// it reads the argument *count*, not any argument. In a real variadic
@@ -1018,27 +976,30 @@ fn sig_record_index(idx: &Expr, sig: &mut ArgSig, optional: bool) {
 /// erase the arity ceiling. `$#` is the same rule, in `sig_record_name`.
 /// A function that genuinely wants its own count declares it with the DD#81
 /// no-op: `fn n { : @args; echo $# }`.
+///
+/// Suppression changes checking, not what runs (DD#55): `$(- join args)` reads
+/// every argument exactly as `$(join args)` does, so the command is found
+/// through the shared wrapper peel rather than a bare `StmtKind::Command`.
 fn cmdsub_reads_whole_args(stmts: &[Statement]) -> bool {
-    stmts.iter().any(|s| match &s.kind {
-        StmtKind::Command(c) => {
-            matches!(&c.name.kind, ExprKind::Literal(n)
-                if matches!(n.as_str(), "join" | "keys"))
-                && c.args
-                    .iter()
-                    .any(|a| matches!(&a.kind, ExprKind::Literal(x) if x == "args"))
-        }
-        _ => false,
+    stmts.iter().filter_map(crate::ir::value_command).any(|c| {
+        matches!(&c.name.kind, ExprKind::Literal(n) if n == "join")
+            && c.args
+                .iter()
+                .any(|a| matches!(&a.kind, ExprKind::Literal(x) if x == "args"))
     })
 }
 
-/// Scan arithmetic positional reads and imported, disposition-bearing cells.
+/// Record an arithmetic tree's bare positional reads at every node, through
+/// [`ArithExpr::children`] — which includes a sexpr call's arguments, so
+/// `(strlen $1)` reads index 0. An `Expansion` holds an `Expr` the walk
+/// already handed to [`sig_record_expr`], disposition-bearing cells included.
 /// Bare `args[k]` is a string-cell type error (DD#77), not another signature.
 /// Total over `ArithExpr`; do not add a wildcard.
-fn sig_scan_arith(a: &ArithExpr, sig: &mut ArgSig) {
+fn sig_record_arith_names(a: &ArithExpr, sig: &mut ArgSig) {
     match a {
         ArithExpr::Var(name) | ArithExpr::DollarVar(name) => sig_record_name(name, sig),
-        ArithExpr::Expansion(e) => sig_scan_expr(e, sig),
-        ArithExpr::Literal(_)
+        ArithExpr::Expansion(_)
+        | ArithExpr::Literal(_)
         | ArithExpr::Assign { .. }
         | ArithExpr::CompoundAssign { .. }
         | ArithExpr::PostIncDec { .. }
@@ -1053,7 +1014,7 @@ fn sig_scan_arith(a: &ArithExpr, sig: &mut ArgSig) {
         | ArithExpr::Paren(_) => {}
     }
     for child in a.children() {
-        sig_scan_arith(child, sig);
+        sig_record_arith_names(child, sig);
     }
 }
 

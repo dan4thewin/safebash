@@ -424,3 +424,31 @@ definitions only, so an arithmetic use there (`(f)`, a bare `f`) read a
 variable silently. See DD#56's addendum of the same date. The message still
 says "used as a command" when the earlier use was arithmetic
 (`bug-sb5041-text-for-arithmetic-uses`).
+
+## Addendum (2026-10-29) — one signature, inferred once, checked at every call
+
+Batch-531 F5 unit B (journal 543).
+
+- **Every `-> int` call is checked.** Part B's three checked call paths did
+  not include an `-> int` function's: `(f …)` and `$(( (f …) ))`,
+  `int n=$(f …)`, `(( (f) > 0 ))`. A missing argument read as empty and an
+  extra one was ignored (B56). `inline_int_func` now raises SB5042/SB5043
+  like the plain path, and so does `lower_int_tail_call`: since batch-531
+  F13 an int function's self tail call lowers as a loop instead of being
+  inlined (`81.55`-`81.61`).
+- **The signature comes from the shared walk.** `analyze_arity` runs
+  `ir::walk_scoped_stmts` and `ir::walk_own_exprs`, the traversal the other
+  passes use, and stays in the function's own scope. The private copy it
+  replaces (Part B's `sig_scan_arith` belonged to it; the arithmetic half is
+  now `sig_record_arith_names`) ended in `_ => {}`. It missed a positional
+  read in an assignment index, a dispatch pattern, a `${…}` subscript under
+  a default, a redirect target, a map literal and `$(<$1)`, so a function
+  reading `$1` only there drew a false SB5043 at every call (B53,
+  `81.47`-`81.53`).
+- **`$(- join args)` is whole-args access**, like `$(join args)` (B49,
+  `81.54`). `-` changes how a status is checked (DD#55), not what runs, and
+  `join` is an intrinsic, so this is not `-` on a user function
+  (`q-suppression-on-user-functions`).
+- **`$(keys args)` is not whole-args access.** Part B and the table above
+  list it, but `keys` takes a map, so it is SB4030 (`75.100`). The scan no
+  longer looks for it.
