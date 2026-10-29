@@ -413,3 +413,14 @@ for finite `f $(f leaf)` nesting, and caller positional/capture boundaries;
 it does not introduce multiple signatures or a new pipeline evaluation
 boundary. `functions.sh` `tmpcap.4`, `tmpcap.13`-`tmpcap.18`; journal 526.
 Tail producers use the same materializer and preserve splats (DD#27).
+
+## Addendum (2026-10-29) — functions defined in END
+
+Part A's execution order includes `END { }`, which runs after the top level.
+A function defined in END is therefore not yet defined anywhere at the top
+level or earlier in END, and a use there is SB5041 at the definition
+(`56.97`, `56.98`). Until batch-531 F3 the transform registered top-level
+definitions only, so an arithmetic use there (`(f)`, a bare `f`) read a
+variable silently. See DD#56's addendum of the same date. The message still
+says "used as a command" when the earlier use was arithmetic
+(`bug-sb5041-text-for-arithmetic-uses`).

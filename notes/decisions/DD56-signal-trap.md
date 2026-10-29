@@ -134,6 +134,36 @@ Specs 56.89 and 56.91-56.93 (signals.sh); findings B9, B10 and B17 in
 fork fails inside END is silent (no diagnostic, END continues), while a
 command that fails to start there is reported and END continues.
 
+### A function defined in END is a function everywhere (added 2026-10-29, batch-531 F3)
+
+SB5071 admits a `fn` definition only as a direct statement of the top level
+or of `END { }`. A definition in END is a function in every respect, as one
+at the top level is:
+- `(f)` and a bare `f` in arithmetic call it, and it runs as a pipeline
+  stage;
+- its name may not also name a variable (SB4019, the collision DD#70 lists);
+- a collection argument between two such functions (`h =a`) binds;
+- DD#81 Part A applies in execution order. A use earlier in END is SB5041,
+  and so is a use at the top level, which runs before END defines the
+  function.
+
+Before this, the transform and binding resolution registered top-level
+definitions only (B8, B16). `(f)` read a variable named `f`; the stage
+exec'd the bare name and died at runtime ("bare command passed to
+sash_exec"); the collision compiled; a use before the definition was
+silent, so `$(( (f) + 1 ))` printed 1; and `h =a` was never renamed, a
+false SB5066. Both passes now iterate `ir::Program::function_defs`, which
+yields the definitions of both bodies. A definition used to register its
+own `-> int` return type when lowered, which alone made a bare `f` after
+it work in END. That registration was redundant and is gone (56.100 pins
+the replacement).
+
+Specs 56.94-56.100 (signals.sh); findings B8 and B16 in
+`notes/tasks/batch-531-findings.md`. Still open: the type checker scans the
+top level only, END-defined functions included (B5, the typing family).
+Whether END should admit definitions at all is
+`notes/tasks/q-fn-definitions-in-end.md`.
+
 ## signum keyword
 
 `$(signum)` returns the most recent signal number as an int.

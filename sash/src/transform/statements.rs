@@ -158,10 +158,11 @@ fn lower_while_stmt(
 
 /// Function definition. Registers the body for inline expansion at call sites,
 /// then emits the body into a dedicated SSA block sequence terminating in Return.
-/// Special cases: `-> int` return type tracking, DD#55 non-void detection +
-/// SB4017 emission. (The DD#56 END body is `Program::end_block`, seeded into
-/// `state.exit_trap` by `ir_to_ssa` — it is not a function and never reaches
-/// here.)
+/// Special cases: DD#55 non-void detection + SB4017 emission. The name and its
+/// `-> int` return type were registered up front by `register_functions`, for
+/// every definition including END's. (The DD#56 END body is
+/// `Program::end_block`, seeded into `state.exit_trap` by `ir_to_ssa` — it is
+/// not a function and never reaches here.)
 fn lower_function_stmt(
     f: &Function,
     stmt: &Statement,
@@ -180,9 +181,6 @@ fn lower_function_stmt(
     }
     state.function_bodies.insert(f.name.clone(), f.body.clone());
     report_arity_defects(f, stmt, state);
-    if f.return_type == crate::ir::VarType::Int {
-        state.function_int_typed.insert(f.name.clone());
-    }
     analyze_function_returns(f, stmt, state);
     let fn_entry = ssa.new_block(&format!("fn_{}", f.name));
     let fn_exit = lower_fn_template(&f.name, &f.body, ssa, state, fn_entry);

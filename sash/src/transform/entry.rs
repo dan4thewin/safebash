@@ -98,13 +98,11 @@ fn reserve_stmt_names(stmt: &Statement, names: &mut HashSet<String>) {
     });
 }
 
-/// Pre-register names and integer returns for forward references; nested
-/// definitions are still registered lazily by `lower_function`.
+/// Pre-register names and integer returns for forward references, including
+/// `END` functions: registering only top-level ones made `(f)` read a
+/// variable, a pipeline stage exec the bare name, and SB4019/SB5041 miss it.
 fn register_functions(program: &Program, state: &mut VersionState) {
-    for stmt in &program.statements {
-        let StmtKind::Function(f) = &stmt.kind else {
-            continue;
-        };
+    for f in program.function_defs() {
         state.known_functions.insert(f.name.clone());
         if f.return_type == VarType::Int {
             state.function_int_typed.insert(f.name.clone());

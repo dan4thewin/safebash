@@ -32,14 +32,7 @@ pub(crate) fn resolve(program: &Program, source: &str) -> (Program, SourceNames)
     let globals = global_scope(program);
     let mut resolver = Resolver {
         globals: globals.clone(),
-        functions: program
-            .statements
-            .iter()
-            .filter_map(|s| match &s.kind {
-                StmtKind::Function(f) => Some(f.name.clone()),
-                _ => None,
-            })
-            .collect(),
+        functions: program.function_defs().map(|f| f.name.clone()).collect(),
         used: source
             .split(|c: char| !c.is_ascii_alphanumeric() && c != '_')
             .map(str::to_string)

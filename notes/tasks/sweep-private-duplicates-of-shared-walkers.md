@@ -77,3 +77,16 @@ before lowering the arguments, so an argument reading the caller's `$1` or
 deleted the copy: `build_function_pipeline_stage` now calls
 `inline_function_call` inside `enter_forked_child`/`exit_forked_child`
 (stgarg.1-9).
+
+## `Program::function_defs` and the scans it could replace (F3, journal 541)
+
+F3 added `ir::Program::function_defs`, every definition after SB5071 (top
+level and END), and moved the transform's `register_functions` and
+`bindings::resolve` onto it (B8, B16). Other private scans for definitions:
+- `resolve.rs` `collect_functions` recurses through every block, so it
+  covers END already. It runs after SB5071 and could use `function_defs`.
+- `type_check.rs` has three top-level-only scans:
+  `infer_collection_signatures`, `type_check` and `infer_types`. They miss
+  END's functions; that is B5, in the typing family.
+- `validate.rs` `collect_functions` runs before SB5071 rejects a misplaced
+  `fn`, so it must keep recursing. It is not a candidate.

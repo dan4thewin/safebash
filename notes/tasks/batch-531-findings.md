@@ -695,13 +695,20 @@ DG 2026-10-28: F2 lands without the B82 wrap and without specs that pin
 
 ### 11. F3 END-defined functions
 
-- [ ] **B8** (fixed-on-branch; DD58, DD56). The transform registers
+- [x] **B8** (fixed-on-branch; DD58, DD56). The transform registers
   top-level functions only. An END-defined `f` used as `(f)` in arithmetic
   reads as a variable (0); an END-defined pipeline stage compiles to a bare
   exec and dies at runtime.
-- [ ] **B16** (fixed-on-branch; DD86). `bindings.rs` builds its function set
+  - Ported in F3 (journal 541): `ir::Program::function_defs` feeds
+    `register_functions`, and the lazy `-> int` insert is gone. Specs
+    56.94-56.98 and 56.100; SB4019 and SB5041 now fire for END functions
+    (DD56 and DD81 addenda). Backlog: `q-fn-definitions-in-end`,
+    `bug-sb5041-text-for-arithmetic-uses`.
+- [x] **B16** (fixed-on-branch; DD86). `bindings.rs` builds its function set
   from top level only, so names inside an END-defined function are not
   resolved: a false SB5066.
+  - Ported in F3 (journal 541): `bindings::resolve` iterates
+    `function_defs`. Spec 56.99.
 
 ### 12. F5 capture bodies are function bodies
 
