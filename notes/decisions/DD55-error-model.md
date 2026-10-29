@@ -420,3 +420,26 @@ e1).
 
 Specs: errors.sh 55.107-55.144, 71.4, bng.18, bng.25, csfx.4-csfx.8;
 pipe_functions.sh pf.52. Journal 537.
+
+## Addendum (2026-10-29, batch-531 port F5): a body called from a condition is checked
+
+The set -e comparison counts "functions called from `if` lose errexit for
+their entire body" among bash's blind spots, and says sash has none of
+them. DD86 says the condition context stops at a body. The transform
+disagreed: `in_condition` stayed raised while an inlined body was lowered.
+So a function called as an `if` or `while` condition, under `!`, as the
+left operand of `||`, as an `-> int` call in an arithmetic condition, or as
+`$(h)` inside `[[ ]]` ran its whole body unchecked, and its failures were
+swallowed (B83). An anonymous `$( … )` body in a condition command's
+arguments leaked the same way (B83b).
+
+Every function and capture body is now lowered outside the condition
+context. An unhandled failure inside it aborts, as it would at top level.
+The call's own status is still the condition's. When the body runs as a
+forked pipeline stage (`if a | h`), the abort ends that child, with its own
+report, and the condition consumes the child's failure.
+
+Suppression is not part of this change. Whether `-` should apply to a user
+function at all is `q-suppression-on-user-functions` (DG, 2026-10-28).
+
+Specs `errors.sh` 55.76-55.87; journal 542.

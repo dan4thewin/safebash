@@ -3,7 +3,6 @@
 use super::expressions::{arg_to_value, expr_to_value, literal_name_of, resolve_args_name};
 use super::functions::lift_int_func_args;
 use super::resolution::resolve_pipeline_command;
-use super::statements::lower_stmts;
 use crate::ir::*;
 use crate::ssa::*;
 
@@ -265,11 +264,8 @@ pub(super) fn inline_function_call(
     state: &mut VersionState,
     mut block: BlockId,
 ) -> BlockId {
-    // DD#27/§5: reject a call to a function already being inlined (recursion) —
-    // unbounded inlining would overflow the compiler. Tail self-calls are
-    // handled before reaching here. Emit the diagnostic and skip the inline.
-    if state.inlining.iter().any(|n| n == name) {
-        state.error_at_stmt(super::functions::recursion_diagnostic(name));
+    // DD#27/§5: recursion. Tail self-calls are handled before reaching here.
+    if super::functions::reject_recursive_call(name, state) {
         return block;
     }
     // `f > out.txt`: the redirect parked by `lower_redirected_stmt`. Taken
@@ -320,18 +316,9 @@ pub(super) fn inline_function_call(
     let call_block = ssa.new_checkpoint_block(&format!("call_{}", name));
     ssa.block_mut(block).terminator = Terminator::Goto(call_block);
 
-    // Set return target so `return` jumps to restore block
     let restore_block = ssa.new_checkpoint_block(&format!("ret_{}", name));
-    let saved_return_target = state.return_target;
-    state.return_target = Some(restore_block);
-    // DD#27/§5: a self tail-call (`return F …`) in the body loops to call_block.
-    let saved_tail = state.enter_tail_loop(name, call_block);
-    let exit_block = lower_stmts(body, ssa, state, call_block);
-    state.tail_loop = saved_tail;
-    state.return_target = saved_return_target;
-
-    // Normal fall-through also goes to restore block
-    ssa.block_mut(exit_block).terminator = Terminator::Goto(restore_block);
+    let exit_block =
+        super::functions::lower_inlined_body(name, body, call_block, restore_block, ssa, state);
 
     if let Some((site, fds)) = bracket {
         // Close the scope first thing in the restore block, so it also runs

@@ -498,6 +498,11 @@ pub(super) fn lower_while(
     state.collections = pre_collections;
     state.assoc_arrays = pre_assoc_arrays;
 
+    // The condition runs inside the loop as much as the body does: a `break`
+    // or `continue` in it targets this loop (SB5081 judges it in-loop too), so
+    // the context is pushed before the condition is lowered, not after.
+    state.loop_stack.push((header, exit_block));
+
     // Lower condition in header using post-phi state
     state.in_condition += 1;
     let cond_exit = lower_stmts(&w.condition, ssa, state, header);
@@ -528,9 +533,6 @@ pub(super) fn lower_while(
         body_block,
         exit_block,
     };
-
-    // Push loop context for break/continue
-    state.loop_stack.push((header, exit_block));
 
     // Re-lower body with phi-merged versions
     let body_exit = lower_stmts(&w.body, ssa, state, body_block);

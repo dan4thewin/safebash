@@ -590,3 +590,19 @@ specialization restarts from the readonly set its body was entered with.
 
 Specs `spec/types.sh` 35.3-35.9 and `constw.1`-`constw.21`, `spec/glob.sh`
 `forglob.3`; journal 532.
+
+## Addendum (2026-10-29, batch-531 port F5): a `$( )` body starts a fresh loop context
+
+"A body is a function body" (2026-09-29) now also covers the loop context.
+A function body starts a fresh loop context (SB5081, 2026-09-17), and so
+does a `$( … )` body. `for x in a b { str s=$(echo $x; break) }` is SB5081.
+It used to compile, and the `break` branched out of the open capture, so
+every later write was lost (B60). A loop wholly inside the body still
+encloses its own `break` (cf.n21).
+
+A body also no longer inherits the enclosing function's tail loop (DD27's
+2026-10-29 addendum). The rule above, "condition context does not cross the
+boundary", now holds where the transform lowers a body too (DD55's
+2026-10-29 addendum).
+
+Specs `control_flow.sh` cf.n19-cf.n21; journal 542.

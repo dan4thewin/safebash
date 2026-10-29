@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup errors
-plan=664
+plan=676
 echo "1..$plan" >&3
 
 set +e
@@ -1662,6 +1662,102 @@ echo done'
   run_sash '-[[ -f /etc/passwd ]]
 echo done'
   [[ $rc = 0 && $out = "done" && -z $err && -z $rerr ]]; chk 55.75
+
+# --- 55.76-55.87: a body is not in condition position ---------------------
+# DD#55's set -e comparison lists "functions called from `if` lose errexit
+# for their entire body" among bash's blind spots and says sash has none of
+# them; validate's own rule is that the condition context does not cross a
+# function-body boundary. The transform disagreed: `in_condition` stayed
+# raised while an inlined body was lowered, so every command in the body was
+# lowered unchecked and its failure was silently swallowed (`after`, then
+# `yes`). The same leak reached `-> int` bodies in an arithmetic condition,
+# a captured function, and an anonymous `$( … )` body in a condition
+# command's arguments. Each of these printed the swallowed output before the
+# fix, in both backends. Journal 542.
+  # 55.76 a function called as an `if` condition: its body is checked
+  run_sash 'fn h { /bin/false | /bin/cat; echo after; return 0 }
+if h { echo yes }
+echo done'
+  [[ $rc = 1 && -z $out && -z $err \
+ && $rerr == *'/bin/false: command failed (exit 1)'* ]]; chk 55.76
+
+  # 55.77 ... as the operand of `!`
+  run_sash 'fn h { /bin/false | /bin/cat; echo after; return 0 }
+! h || echo neg
+echo done'
+  [[ $rc = 1 && -z $out && -z $err \
+ && $rerr == *'/bin/false: command failed (exit 1)'* ]]; chk 55.77
+
+  # 55.78 ... where the failure is the tail of a list inside the body
+  run_sash 'fn h { : && /bin/false; echo after; return 0 }
+if h { echo yes }
+echo done'
+  [[ $rc = 1 && -z $out && -z $err \
+ && $rerr == *'/bin/false: command failed (exit 1)'* ]]; chk 55.78
+
+  # 55.79 ... as the left operand of `||`
+  run_sash 'fn h { /bin/false | /bin/cat; echo after; return 0 }
+h || echo caught
+echo done'
+  [[ $rc = 1 && -z $out && -z $err \
+ && $rerr == *'/bin/false: command failed (exit 1)'* ]]; chk 55.79
+
+  # 55.80 ... as a `while` condition
+  run_sash 'fn h { /bin/false | /bin/cat; echo after; return 0 }
+while h { echo body; break }
+echo done'
+  [[ $rc = 1 && -z $out && -z $err \
+ && $rerr == *'/bin/false: command failed (exit 1)'* ]]; chk 55.80
+
+  # 55.81 ... as the final stage of a condition pipeline. The stage child
+  # aborts with the diagnostic, so the pipeline fails and the condition is
+  # false; the parent carries on. (`h` drains its input so `/bin/echo` can
+  # never take a SIGPIPE.)
+  run_sash 'fn h { /bin/cat >/dev/null; /bin/false | /bin/cat; echo after; return 0 }
+if /bin/echo y | h { echo yes }
+echo done'
+  [[ $rc = 0 && $out = done && -z $err \
+ && $rerr == *'/bin/false: command failed (exit 1)'* ]]; chk 55.81
+
+  # 55.82 a `-> int` body called from an arithmetic condition
+  run_sash 'fn g -> int { /bin/false | /bin/cat; return 2 }
+if (( g > 1 )) { echo yes }
+echo done'
+  [[ $rc = 1 && -z $out && -z $err \
+ && $rerr == *'/bin/false: command failed (exit 1)'* ]]; chk 55.82
+
+  # 55.83 a capture assignment inside a condition function's body
+  SASH_CFLAGS=--no-taint run_sash 'fn h { x=$(/bin/false); echo "after[$x]"; return 0 }
+if h { echo yes }
+echo done'
+  [[ $rc = 1 && -z $out && -z $err \
+ && $rerr == *'/bin/false: command failed (exit 1)'* ]]; chk 55.83
+
+  # 55.84 an anonymous `$( … )` body in an `if` command's argument: the
+  # capture is an argument, not the condition
+  SASH_CFLAGS=--no-taint run_sash 'if /bin/echo "[$(/bin/false | /bin/cat)]" >/dev/null { echo yes }
+echo done'
+  [[ $rc = 1 && -z $out && -z $err \
+ && $rerr == *'/bin/false: command failed (exit 1)'* ]]; chk 55.84
+
+  # 55.85 ... in a `while` command's argument
+  SASH_CFLAGS=--no-taint run_sash 'while /bin/echo "[$(/bin/false | /bin/cat)]" >/dev/null { echo body; break }
+echo done'
+  [[ $rc = 1 && -z $out && -z $err \
+ && $rerr == *'/bin/false: command failed (exit 1)'* ]]; chk 55.85
+
+  # 55.86 ... in the argument of a negated condition command
+  SASH_CFLAGS=--no-taint run_sash 'if ! /bin/echo "[$(/bin/false | /bin/cat)]" >/dev/null { echo neg }
+echo done'
+  [[ $rc = 1 && -z $out && -z $err \
+ && $rerr == *'/bin/false: command failed (exit 1)'* ]]; chk 55.86
+
+  # 55.87 a captured function in a `[[ ]]` condition operand
+  SASH_CFLAGS=--no-taint run_sash 'fn h { /bin/false | /bin/cat; echo hi }
+if [[ $(h) == hi ]] { echo yes }
+echo done'
+  [[ $rc = 1 && -z $out && -z $err \
+ && $rerr == *'/bin/false: command failed (exit 1)'* ]]; chk 55.87
 
 # --- 55.89-55.106: the condition is the LAST status-setting instruction -----
 # DD#55 catches the status of the condition operand and nothing else: a

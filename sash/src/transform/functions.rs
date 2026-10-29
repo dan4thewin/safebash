@@ -543,6 +543,54 @@ pub(super) fn recursion_diagnostic(name: &str) -> String {
     )
 }
 
+/// DD#27/§5: a call to a function already being inlined is recursion, and
+/// unbounded inlining would overflow the compiler. Records SB5037 and answers
+/// `true`, so the caller declines the inline. Shared by every route that
+/// inlines a body — plain call, `-> int` call and `$( )` capture; the capture
+/// route once had no check at all, so `$(f)` inside `f` inlined itself until
+/// the compiler's own stack overflowed.
+pub(super) fn reject_recursive_call(name: &str, state: &mut VersionState) -> bool {
+    let recursive = state.inlining.iter().any(|n| n == name);
+    if recursive {
+        state.error_at_stmt(recursion_diagnostic(name));
+    }
+    recursive
+}
+
+/// Lower an inlined body of function `name` from `call_block`: `return` and
+/// fall-through both reach `restore_block`, and a direct self tail-call
+/// (`return name …`) loops back to `call_block` (DD#27/§5). Returns the body's
+/// exit block. Shared by the plain call, the `-> int` call and the `$( )`
+/// capture of a function, so each route gets the same body context.
+///
+/// The tail loop is always the callee's own ([`VersionState::enter_tail_loop`]).
+///
+/// So is the condition context: DD#55 recognises condition position
+/// syntactically, and a call in a condition consumes the *call's* status, not
+/// the statuses inside its body. Inherited, it unchecked every pipeline, `&&`
+/// tail and capture-shaped assignment the body ran, so `if h` swallowed a
+/// failure that `h` alone aborts on. Suppression state is not touched here;
+/// whether `-` reaches into a user function's body is an open question
+/// (`notes/tasks/q-suppression-on-user-functions.md`).
+pub(super) fn lower_inlined_body(
+    name: &str,
+    body: &[Statement],
+    call_block: BlockId,
+    restore_block: BlockId,
+    ssa: &mut SsaProgram,
+    state: &mut VersionState,
+) -> BlockId {
+    let saved_return_target = state.return_target.replace(restore_block);
+    let saved_tail = state.enter_tail_loop(name, call_block);
+    let saved_condition = std::mem::take(&mut state.in_condition);
+    let exit_block = lower_stmts(body, ssa, state, call_block);
+    state.in_condition = saved_condition;
+    state.tail_loop = saved_tail;
+    state.return_target = saved_return_target;
+    ssa.block_mut(exit_block).terminator = Terminator::Goto(restore_block);
+    exit_block
+}
+
 /// DD#27/§5: emit a self tail-call as a loop back-edge. Rebinds the current
 /// function's `args` array to `new_args` (evaluated in the caller-of-the-tail
 /// scope, i.e. reading the current iteration's values) and branches to the
@@ -588,11 +636,10 @@ pub(super) fn inline_int_func(
         return SsaValue::Expr("0".to_string());
     };
 
-    // DD#27/§5: a call to a function already being inlined is recursion. A
-    // checked self-tail loop may enter one suppressed specialization; its own
-    // tail calls are back edges, so this never permits unbounded inlining.
-    if suppressed_tail_entry.is_none() && state.inlining.iter().any(|n| n == name) {
-        state.error_at_stmt(recursion_diagnostic(name));
+    // DD#27/§5: recursion is rejected, except that a checked self-tail loop
+    // may enter one suppressed specialization. Its own tail calls are back
+    // edges, so this never permits unbounded inlining.
+    if suppressed_tail_entry.is_none() && reject_recursive_call(name, state) {
         return SsaValue::Literal("0".to_string());
     }
     state.inlining.push(name.to_string());
@@ -616,14 +663,7 @@ pub(super) fn inline_int_func(
     let call_block = ssa.new_checkpoint_block(&format!("intcall_{}", name));
     ssa.block_mut(*block).terminator = Terminator::Goto(call_block);
     let restore_block = ssa.new_checkpoint_block(&format!("intret_{}", name));
-    let saved_return_target = state.return_target;
-    state.return_target = Some(restore_block);
-    // DD#27/§5: a self tail-call in the body loops back to call_block.
-    let saved_tail = state.enter_tail_loop(name, call_block);
-    let exit_block = lower_stmts(&body, ssa, state, call_block);
-    state.tail_loop = saved_tail;
-    state.return_target = saved_return_target;
-    ssa.block_mut(exit_block).terminator = Terminator::Goto(restore_block);
+    lower_inlined_body(name, &body, call_block, restore_block, ssa, state);
 
     // The return value is in "?" (set by `return N`)
     let result_ref = state.lookup("?");

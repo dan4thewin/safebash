@@ -5,7 +5,7 @@
 set -eu
 . common.sh
 setup control_flow
-plan=109
+plan=114
 echo "1..$plan" >&3
 
 set +e
@@ -397,6 +397,50 @@ run_sash 'echo hi; break'
 # cf.n18 a function body starts a fresh loop context
 run_sash 'fn f { break; }; f'
 [[ $rc != 0 && -z $out && $err == *SB5081* ]]; chk cf.n18
+
+# cf.n19-cf.n21 (journal 542): a `$( )` body is a function body (DD#86), so a
+# loop outside the capture does not enclose a `break`/`continue` inside it.
+# Both used to branch out of the open capture and lose all later output (B60).
+
+# cf.n19 break in a capture inside a for
+run_sash 'for x in a b { str s=$(echo $x; break); echo "[$s]" }
+echo end'
+[[ $rc != 0 && -z $out && $err == *':1:33: error [SB5081]'* ]]; chk cf.n19
+
+# cf.n20 continue in a capture inside a while
+run_sash 'int n=0
+while (( n < 3 )) { n+=1; str s=$(echo y$n; continue); echo "[$s]" }
+echo end'
+[[ $rc != 0 && -z $out && $err == *':2:45: error [SB5081]'* ]]; chk cf.n20
+
+# cf.n21 control: a loop wholly inside the capture still encloses its break
+run_sash 'for x in a b { str s=$(for y in 1 2 { echo $x$y; break }); echo "[$s]" }
+echo end'
+[[ $rc = 0 && $out = $'[a1]\n[b1]\nend' && -z $err ]]; chk cf.n21
+
+# cf.n22-cf.n23 (journal 542): a `while`/`until` condition belongs to its own
+# loop, as SB5081 already judged, so a `break` there leaves that loop. It used
+# to leave the enclosing `for` instead (B101).
+
+# cf.n22 while
+run_sash 'for i in 1 2 {
+  while break {
+    echo "in $i"
+  }
+  echo "after while $i"
+}
+echo done'
+[[ $rc = 0 && $out = $'after while 1\nafter while 2\ndone' && -z $err ]]; chk cf.n22
+
+# cf.n23 until
+run_sash 'for i in 1 2 {
+  until break {
+    echo "in $i"
+  }
+  echo "after until $i"
+}
+echo done'
+[[ $rc = 0 && $out = $'after until 1\nafter until 2\ndone' && -z $err ]]; chk cf.n23
 
 # --- SB5097: the loop COUNT on break/continue ------------------------
 # SB5081 rejects a `break`/`continue` that would be a silent no-op for want of

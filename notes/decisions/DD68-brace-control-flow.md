@@ -211,3 +211,14 @@ not close the open one. When the `$(` is closed, the keyword keeps SB4072
   `q-sb4072-closer-diagnostics`.
 
 Specs: errors.sh skw.1-skw.34. Journal 537.
+
+## Addendum (2026-10-29, batch-531 port F5): a `while`/`until` condition belongs to its loop
+
+SB5081 already treats a `break` or `continue` in a `while` or `until`
+condition as inside that loop. But `lower_while` pushed the loop's context
+only after lowering the condition, so a `break` there left the *enclosing*
+loop. `for i in 1 2 { while break { … }; echo "after while $i" }` printed only
+`done` (B101). The push now comes before the condition, so the `break`
+leaves the `while` and the loop body after it runs.
+
+Specs `control_flow.sh` cf.n22, cf.n23; journal 542.

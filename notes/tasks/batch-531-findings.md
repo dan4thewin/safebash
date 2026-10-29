@@ -736,8 +736,11 @@ DG 2026-10-28: F2 lands without the B82 wrap and without specs that pin
     `int r=$(( (f) ))` (t6): base and the F13 tree accept both. The string
     twin was F13's own regression, caught before commit
     (`try_producer_tail_call`).
-- [ ] **B57** (fixed-on-branch; DD27). `$(f)` inside `f` overflowed the
+- [x] **B57** (fixed-on-branch; DD27). `$(f)` inside `f` overflowed the
   compiler's stack instead of drawing the recursion rejection.
+  - Ported in F5 unit A (journal 542): every call route, the capture
+    included, goes through `functions::reject_recursive_call` (SB5037 at
+    the statement). Specs rec.5, rec.6, rec.9; DD27 addendum.
 - [x] **B58** (fixed-on-branch; DD27). A captured function inherited the
   caller's tail loop: `return g` in `$(f)` inside `g` produced silent empty
   output.
@@ -747,10 +750,15 @@ DG 2026-10-28: F2 lands without the B82 wrap and without specs that pin
     where base gave a false SB4044. Now SB5037 at the cycle's tail call
     (`capcyc.1`, `capcyc.2`). The
     same hunk's (H238) inlining push/pop is B57's and stays in F5.
-- [ ] **B59** (fixed-on-branch; DD27, DD86). An anonymous capture body
+- [x] **B59** (fixed-on-branch; DD27, DD86). An anonymous capture body
   inherited the tail loop the same way (`$(…; return g x)`).
-- [ ] **B60** (fixed-on-branch; DD86). `break` or `continue` inside `$( )`
+  - Ported in F5 unit A (journal 542): `capture_body_into` takes the tail
+    loop, so the `return g` is a recursive call, SB5037. Specs rec.7, rec.8.
+- [x] **B60** (fixed-on-branch; DD86). `break` or `continue` inside `$( )`
   in a loop branched out of the open capture; all later output was lost.
+  - Ported in F5 unit A (journal 542): `descend_loop_control` starts a
+    `$( )` body outside any loop (SB5081). Specs cf.n19-cf.n21; DD86
+    addendum.
 - [ ] **B71** (fixed-on-branch; DD58). The capture buffer path leaked output
   from forks run by int calls in value position.
 - [ ] **B73** (fixed-on-branch; DD58). `type_check`'s private
@@ -758,14 +766,19 @@ DG 2026-10-28: F2 lands without the B82 wrap and without specs that pin
   `ir` walker replaces it.
 - [ ] **B74** (fixed-on-branch; DD86). Capture fast paths evaluated
   arguments outside the capture.
-- [ ] **B83** (fixed-on-branch; DD55, DD88). The condition context leaked
+- [x] **B83** (fixed-on-branch; DD55, DD88). The condition context leaked
   into the bodies of functions called from a condition (named functions, int
   functions, `$(h)` inside `[[ ]]`), so their internal failures went
   unchecked. Branch specs: 55.76-55.83, 55.87.
-- [ ] **B83b** (fixed-on-branch; DD55, DD88). The same leak into anonymous
+  - Ported in F5 unit A (journal 542): `functions::lower_inlined_body`
+    lowers every inlined body outside the condition context. DD55
+    addendum; suppression untouched (q-suppression-on-user-functions).
+- [x] **B83b** (fixed-on-branch; DD55, DD88). The same leak into anonymous
   capture bodies: under `--no-taint`, `if /bin/echo "[$(/bin/false |
   /bin/cat)]" >/dev/null { echo yes }` prints `yes`. Branch specs:
   55.84-55.86.
+  - Ported in F5 unit A (journal 542): `capture_body_into` takes
+    `in_condition` too.
 - [ ] **Capture-hoisting order** (question; DD55, DD66, DD86; pre-existing,
   the same on the branch where it compiles). Every capture in a statement runs
   before the statement's other reads, so text order is not evaluation order.
@@ -929,8 +942,11 @@ DG 2026-10-28: F2 lands without the B82 wrap and without specs that pin
   ignored the state after the condition.
 - [ ] **B100** (fixed-on-branch; DD24, DD86). The second phase walked
   deferred function bodies against the final top-level state.
-- [ ] **B101** (fixed-on-branch; DD24). `lower_while` lowered the condition
+- [x] **B101** (fixed-on-branch; DD24). `lower_while` lowered the condition
   before pushing the loop stack. The transform half lands with F5's B60.
+  - Ported in F5 unit A (journal 542): both hunks (H189, H190). Specs
+    cf.n22, cf.n23; DD68 addendum. W3 still re-probes the walker's view
+    of a condition `break` under T2/T3.
 - [ ] **B102** (fixed-on-branch; DD121). A for-binder global inside a
   function is not an SB5067 site.
 - [ ] **B103** (fixed-on-branch; DD100, DD121). A slot out-parameter written

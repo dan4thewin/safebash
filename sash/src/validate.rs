@@ -11468,7 +11468,9 @@ fn flag_reserved(name: &str, what: &str, span: Span, diags: &mut Vec<Diagnostic>
 /// both through `state.loop_stack`, and an empty stack makes them a **silent
 /// no-op** — the statement compiles and does nothing. bash warns; sash rejects.
 /// A function body starts a fresh context: a `break` lexically inside a
-/// function is not inside a loop even when the call site is.
+/// function is not inside a loop even when the call site is. So does a `$( … )`
+/// body, which is a function body (DD#86, 2026-09-29): one that inherited the
+/// loop let `break` branch out of the open capture, losing every later write.
 ///
 /// SB5097 applies the same principle to the optional loop **count**, which
 /// reaches the same no-op by a second route: the transform guards on
@@ -11506,12 +11508,14 @@ fn check_loop_control_stmt(stmt: &Statement, in_loop: bool, diags: &mut Vec<Diag
     }
 }
 
-/// Recurse into every child body, carrying the loop context unchanged.
+/// Recurse into every child body: a structural body carries the loop context
+/// unchanged, and a `$( … )` body starts a fresh one, as a function body does.
 fn descend_loop_control(stmt: &Statement, in_loop: bool, diags: &mut Vec<Diagnostic>) {
-    for body in stmt.child_bodies() {
-        for s in body {
-            check_loop_control_stmt(s, in_loop, diags);
-        }
+    for s in stmt.structural_bodies().into_iter().flatten() {
+        check_loop_control_stmt(s, in_loop, diags);
+    }
+    for s in stmt.cmdsub_bodies().into_iter().flatten() {
+        check_loop_control_stmt(s, false, diags);
     }
 }
 

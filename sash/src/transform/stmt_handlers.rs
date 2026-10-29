@@ -378,13 +378,14 @@ fn push_attest_all(
 /// specified, which is how the count faults SB5097 now rejects survived in both.
 ///
 /// **An empty stack is not an error.** `lower_while` lowers the body twice —
-/// pass 1 only to discover which variables the body modifies — and it pushes
-/// the loop context *after* pass 1, whose instructions are then discarded. So a
-/// `break`/`continue` inside a `while` is reached once with no enclosing entry,
-/// and the right answer is to emit nothing and keep lowering into the same
-/// block. (`for` pushes before its single pass, which is why this only shows up
-/// under `while`.) SB5081 is what guarantees a *genuinely* unenclosed one never
-/// gets here.
+/// pass 1 only to discover which variables the body modifies, its instructions
+/// then discarded — and pushes the loop context after pass 1, just before the
+/// condition (which belongs to the loop as much as the body does). So a
+/// `break`/`continue` inside a `while` body is reached once with no entry for
+/// its own loop, and the right answer at an empty stack is to emit nothing and
+/// keep lowering into the same block. (`for` pushes before its single pass,
+/// which is why this only shows up under `while`.) SB5081 is what guarantees a
+/// *genuinely* unenclosed one never gets here.
 ///
 /// A count larger than the nesting depth clamps to the outermost loop, which is
 /// also what bash does (`continue 9` inside one loop continues that loop).
@@ -1606,6 +1607,9 @@ pub(super) fn capture_func_into(
         .unwrap_or_else(|| {
             unreachable!("string capture requires a registered function body: {fname}")
         });
+    if super::functions::reject_recursive_call(fname, state) {
+        return block;
+    }
     // DD#81 Part B: arity-check the `$( )` capture path too (it now carries the
     // call's args), matching the plain-call and pipeline-stage paths.
     super::cmd_handlers::check_callee_arity(fname, &body, arg_values, state);
@@ -1634,16 +1638,11 @@ pub(super) fn capture_func_into(
     let call_block = ssa.new_checkpoint_block(&format!("cap_{}", fname));
     ssa.block_mut(block).terminator = Terminator::Goto(call_block);
     let restore_block = ssa.new_checkpoint_block(&format!("capret_{}", fname));
-    let saved_return_target = state.return_target;
-    state.return_target = Some(restore_block);
-    // DD#27/§5: the captured body's own self tail-calls loop to call_block,
-    // inside the capture. Without this it inherited the caller's target, so
-    // `return g` in `$(f)` inside g branched out of the open capture.
-    let saved_tail = state.enter_tail_loop(fname, call_block);
-    let exit_block = lower_stmts(&body, ssa, state, call_block);
-    state.tail_loop = saved_tail;
-    state.return_target = saved_return_target;
-    ssa.block_mut(exit_block).terminator = Terminator::Goto(restore_block);
+    // The captured body's own self tail-calls loop to call_block, inside the
+    // capture; `$(f)` inside `f` is recursion, like any other call.
+    state.inlining.push(fname.to_string());
+    super::functions::lower_inlined_body(fname, &body, call_block, restore_block, ssa, state);
+    state.inlining.pop();
 
     let target = state.define(target_name);
     ssa.block_mut(restore_block)
@@ -1702,7 +1701,20 @@ pub(super) fn capture_body_into(
     let saved_return_target = state.return_target;
     state.return_target = Some(restore_block);
     let pipe_reader = state.pipe_reader.take();
+    // An anonymous function has no name to tail-call, so no tail loop. One
+    // inherited from the enclosing function turned `return g …` inside a
+    // `$( … )` inside `g` into a back edge out of the open capture; without
+    // it the call reaches the recursion check like any other.
+    let saved_tail = state.tail_loop.take();
+    // Nor does a condition reach inside: a capture in a condition's argument
+    // is not itself in condition position (validate resets it for the same
+    // reason), so its failing pipeline must abort as it does elsewhere. A
+    // capture *condition* consumes the status through its suppression scope,
+    // which stays in force.
+    let saved_condition = std::mem::take(&mut state.in_condition);
     let exit_block = lower_stmts(body, ssa, state, call_block);
+    state.in_condition = saved_condition;
+    state.tail_loop = saved_tail;
     state.pipe_reader = pipe_reader;
     state.return_target = saved_return_target;
     ssa.block_mut(exit_block).terminator = Terminator::Goto(restore_block);

@@ -55,3 +55,23 @@ The tail loop rebinds scalar `args`, not collection slots. A producer call
 with `=collection` therefore takes the same SB5037 refusal as the existing
 int-tail path; it cannot silently keep the old slots and treat the marker
 as a string argument. `tmpcap.21`.
+
+## Addendum (2026-10-29, batch-531 port F5): a capture is a call route
+
+The recursion rule names three inline sites. A capture of a function,
+`$(f …)`, inlines `f`'s body too, so it is a fourth route, and it skipped
+the check. `$(f)` inside `f` overflowed the compiler's stack whether the
+capture was assigned, passed as an argument, used as a capture condition or
+suppressed (B57). A cycle that ran through a capture was caught only at a
+later plain call, if there was one. Every route now goes through
+`functions::reject_recursive_call`, which reports SB5037 at the statement
+holding the call. A cycle `g → $(f) → g` is now reported at the capture,
+the first edge that closes it.
+
+An anonymous `$( … )` body inside `g` is not `g`. So a `return g …` written
+in it is not `g`'s self tail call: the body no longer inherits `g`'s tail
+loop, and the call is SB5037 like any other recursion. It used to branch to
+`g`'s loop header from inside the open capture, and the program printed
+nothing with status 0 (B59). The named-function case, B58, landed with F13.
+
+Specs `functions.sh` rec.5-rec.9; journal 542.

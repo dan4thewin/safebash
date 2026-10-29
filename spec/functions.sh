@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup functions
-plan=225
+plan=230
 echo "1..$plan" >&3
 
 set +e
@@ -797,6 +797,38 @@ fn b -> int { int n=$(($1)); return $(( (a n) )) }
 int r=$(( (a 3) ))
 echo $r'
 [[ $rc != 0 && $err == *SB5037* ]]; chk rec.4
+
+# rec.5-rec.9 (journal 542): a capture is one more route into a function body,
+# and every route takes DD#27's recursion check. `$(f)` inside f overflowed the
+# compiler's stack (B57); an anonymous capture's self-`return g` inherited g's
+# tail loop and emptied the output with rc 0 (B59).
+
+# rec.5 `$(f)` inside f, assigned
+run_sash 'fn f { if (( $1 > 0 )) { str s=$(f $(( $1 - 1 ))); echo "[$s]" }; echo "d$1" }
+f 2'
+[[ $rc != 0 && -z $out && $err == *':1:26: error [SB5037]'* ]]; chk rec.5
+
+# rec.6 `$(f)` inside f, as an argument
+run_sash 'fn f { if (( $1 > 0 )) { /bin/echo "[$(f $(( $1 - 1 )))]" }; echo "d$1" }
+f 2'
+[[ $rc != 0 && -z $out && $err == *':1:26: error [SB5037]'* ]]; chk rec.6
+
+# rec.7 `return g` inside an anonymous capture inside g, assigned
+run_sash 'fn g { if (( $1 > 0 )) { str s=$(echo x; return g $(( $1 - 1 ))); echo "[$s]" }; echo "g$1" }
+g 2'
+[[ $rc != 0 && -z $out && $err == *':1:49: error [SB5037]'* ]]; chk rec.7
+
+# rec.8 the same, as an argument
+run_sash 'fn g { if (( $1 > 0 )) { /bin/echo "[$(echo x; return g $(( $1 - 1 )))]" }; echo "g$1" }
+g 2'
+[[ $rc != 0 && -z $out && $err == *':1:55: error [SB5037]'* ]]; chk rec.8
+
+# rec.9 a condition capture of f inside f: its own SB4025 and SB5037, where
+# the compiler used to overflow its stack
+run_sash 'fn f { if (( $1 > 0 )) { if s=$(f $(( $1 - 1 ))) { echo "[$s]" } }; echo "d$1" }
+f 2'
+[[ $rc != 0 && -z $out && $err == *':1:31: error [SB4025]'* \
+   && $err == *':1:29: error [SB5037]'* ]]; chk rec.9
 
 # --- fr.* redirect on a user-function call (`f > out.txt`) ---
 #
