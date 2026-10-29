@@ -90,3 +90,20 @@ level and END), and moved the transform's `register_functions` and
   END's functions; that is B5, in the typing family.
 - `validate.rs` `collect_functions` runs before SB5071 rejects a misplaced
   `fn`, so it must keep recursing. It is not a candidate.
+
+## Instances six and seven, found and fixed in F5 (B53, journal 543; B73, journal 544)
+
+- `analyze_arity` inferred a function's signature from its own copy of the
+  body walk: eleven `sig_scan_*` functions ending in `_ => {}`. The copy
+  missed positional reads in six positions (an assignment index, a
+  dispatch pattern, a redirect target, …), so calls drew a false SB5043.
+  It now runs `ir::walk_scoped_stmts` and `ir::walk_own_exprs`.
+- Arithmetic had three private call walkers. type_check's
+  `walk_arith_funccalls` spelled out its recursion behind a `_ => {}` that
+  swallowed `Subscript`/`SubscriptAssign`, so a sexpr under a subscript
+  index escaped every type_check rule (`$(( a[(toupper x)] ))` printed `1`).
+  validate's `walk_arith_intrinsic_calls` had had the same wildcard until
+  `bug-sb5012-blind-to-arith-status-reads` repaired it in place, and that
+  repair never reached type_check's copy: this task's title pattern, a
+  third time. All three are gone. `ir::walk_arith_funccalls` runs over
+  `ir::walk_arith_nodes`, whose descent is the total `ArithExpr::children`.

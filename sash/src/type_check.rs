@@ -411,43 +411,6 @@ fn check_sexpr_intrinsic_operands(
     check_string_intrinsic_operands(&cmd, span, env, errors);
 }
 
-/// Invoke `f(name, args)` for each `FuncCall` in an `ArithExpr` tree.
-fn walk_arith_funccalls(a: &ArithExpr, f: &mut impl FnMut(&str, &[ArithExpr])) {
-    match a {
-        ArithExpr::FuncCall { name, args } => {
-            f(name, args);
-            for arg in args {
-                walk_arith_funccalls(arg, f);
-            }
-        }
-        ArithExpr::BinOp { left, right, .. } => {
-            walk_arith_funccalls(left, f);
-            walk_arith_funccalls(right, f);
-        }
-        ArithExpr::UnaryOp { operand, .. } => walk_arith_funccalls(operand, f),
-        ArithExpr::Assign { value, .. } | ArithExpr::CompoundAssign { value, .. } => {
-            walk_arith_funccalls(value, f)
-        }
-        ArithExpr::Ternary {
-            cond,
-            true_val,
-            false_val,
-        } => {
-            walk_arith_funccalls(cond, f);
-            walk_arith_funccalls(true_val, f);
-            walk_arith_funccalls(false_val, f);
-        }
-        ArithExpr::Comma(exprs) => {
-            for e in exprs {
-                walk_arith_funccalls(e, f);
-            }
-        }
-        ArithExpr::Paren(inner) => walk_arith_funccalls(inner, f),
-        // Leaves (Literal, Var, DollarVar, Pre/PostIncDec) hold no FuncCall.
-        _ => {}
-    }
-}
-
 /// DD#77 D1: a bare string-typed variable used as an arithmetic operand is a
 /// compile error — the string→int crossing must carry a disposition
 /// (`${s:-N}` default / `${s:?msg}` abort). Only KNOWN-string vars are flagged;

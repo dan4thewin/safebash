@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup arithmetic
-plan=479
+plan=484
 echo "1..$plan" >&3
 
 set +e
@@ -532,6 +532,46 @@ run_sash 'array a=(10 200 3)
 str s=abcde
 echo $(( (strlen ${a[1]}) + (strlen $s) + (len a) ))'
 [[ $rc = 0 && $out = 11 && -z $err ]]; chk sx.35
+# sx.36-sx.40 (B73, DD#58) a sexpr under an arithmetic SUBSCRIPT INDEX is
+#   checked like any other. type_check had a private call walker whose
+#   `_ => {}` skipped Subscript/SubscriptAssign, so a string-yielding callee,
+#   a bad `len`/`strlen` operand or a slot function's collection count went
+#   unseen there and the program compiled. All of type_check and validate now
+#   share `ir::walk_arith_funccalls`, which descends through the total
+#   `ArithExpr::children`.
+# sx.36 a user function that yields a string (printed `abc`, then `1`)
+run_sash 'fn s { echo abc }
+int array a=(1 2 3)
+echo $(( a[(s)] ))'
+[[ $rc != 0 && -z $out && $err == *SB4030* \
+   && $err == *"\`s\` can't be called in an arithmetic sexpr"* ]]; chk sx.36
+# sx.37 `len` of a scalar (printed `0`)
+run_sash 'str q=abc
+int array a=(1 2 3 4)
+echo $(( a[(len q)] ))'
+[[ $rc != 0 && -z $out && $err == *SB4030* \
+   && $err == *"\`len\` needs an array or map — \`q\` is a scalar"* ]]; chk sx.37
+# sx.38 a slot function called with one collection by `$(f =x)` and with none
+#       under the subscript has two signatures (native ICE "undefined arrlen";
+#       C printed `0 2`)
+run_sash 'fn f -> int { int n=$(len A); return $n }
+array x=(1 2)
+int k=$(f =x)
+int array a=(5 6 7)
+echo $(( a[(f)] )) $k'
+[[ $rc != 0 && -z $out && $err == *SB4030* \
+   && $err == *'called with both 1 and 0 collection arguments'* ]]; chk sx.38
+# sx.39 `strlen` of an int (printed `2`)
+run_sash 'int n=5
+int array a=(1 2 3)
+echo $(( a[(strlen $n)] ))'
+[[ $rc != 0 && -z $out && $err == *SB4030* \
+   && $err == *"\`strlen\` is a string operation but \`n\` is an int"* ]]; chk sx.39
+# sx.40 the `(( … ))` test reaches the same walker (printed `y`)
+run_sash 'int array a=(1 2 3)
+if (( a[(toupper x)] > 0 )) { echo y }'
+[[ $rc != 0 && -z $out && $err == *SB4030* \
+   && $err == *"\`toupper\` can't be called in an arithmetic sexpr"* ]]; chk sx.40
 
 # ── array/map subscripts as an rvalue in arithmetic (`${…}` value-import) ──
 # BUG: `${a[i]}` in `(( ))` read a bogus variable named "a[i]" → 0. `${…}` is a
@@ -2050,9 +2090,11 @@ run_sash 'int n=$(( (status) ))
 echo $n'
 [[ $rc != 0 && $err == *SB5012* ]]; chk as.3
 # as.4 REGRESSION GUARD for the walker wildcard. A subscript INDEX carries
-#      `ArithExpr` children that `walk_arith_intrinsic_calls` used to drop on
-#      its `_ => {}` arm, so this one stayed blind even after the `Expr`-level
-#      half was fixed. Descent now delegates to the total `ArithExpr::children`.
+#      `ArithExpr` children that validate's call walker used to drop on its
+#      `_ => {}` arm, so this one stayed blind even after the `Expr`-level
+#      half was fixed. Descent now goes through the shared
+#      `ir::walk_arith_funccalls`, which delegates to the total
+#      `ArithExpr::children` (type_check's half is sx.36-sx.40, B73).
 run_sash 'int array a=(2 0 9)
 echo $(( a[(status)] ))'
 [[ $rc != 0 && $err == *SB5012* ]]; chk as.4

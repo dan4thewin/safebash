@@ -770,9 +770,13 @@ DG 2026-10-28: F2 lands without the B82 wrap and without specs that pin
     addendum.
 - [ ] **B71** (fixed-on-branch; DD58). The capture buffer path leaked output
   from forks run by int calls in value position.
-- [ ] **B73** (fixed-on-branch; DD58). `type_check`'s private
+- [x] **B73** (fixed-on-branch; DD58). `type_check`'s private
   `walk_arith_funccalls` skipped Subscript and SubscriptAssign; the shared
   `ir` walker replaces it.
+  - Ported in F5 unit C (journal 544): `ir::walk_arith_nodes` and
+    `ir::walk_arith_funccalls` replace type_check's walker and validate's
+    two private copies. Specs sx.36-sx.40. The slot-arity check on a sexpr
+    call is a separate gap: `bug-sexpr-call-slot-arity-unchecked`.
 - [ ] **B74** (fixed-on-branch; DD86). Capture fast paths evaluated
   arguments outside the capture.
 - [x] **B83** (fixed-on-branch; DD55, DD88). The condition context leaked

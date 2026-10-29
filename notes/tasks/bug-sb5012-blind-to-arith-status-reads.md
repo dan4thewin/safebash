@@ -55,6 +55,8 @@ blind under a subscript index for exactly as long.
 - `walk_arith_intrinsic_calls` delegates descent to `ArithExpr::children()`,
   which is already total over the enum. Four lines, no wildcard, and the two
   dropped variants become unrepresentable rather than merely handled.
+  (2026-10-29: since replaced by the shared `ir::walk_arith_funccalls`,
+  journal 544.)
 - `expr_reads_status` (new) recognises both node types; `find_status_reads`
   calls it. The arithmetic tree has no per-node span, so the enclosing
   `$(( … ))` carries the diagnostic, once per expansion.

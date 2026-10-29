@@ -698,7 +698,7 @@ fn check_arith_sexpr_arity(expr: &Expr, diags: &mut Vec<Diagnostic>) {
         return;
     };
     check_arith_const_faults(a, expr.span, diags);
-    walk_arith_intrinsic_calls(a, &mut |name, args| {
+    walk_arith_funccalls(a, &mut |name, args| {
         if let Some(complaint) = arith_intrinsic_complaint(name, args) {
             diags.push(Diagnostic::error_span(expr.span, "SB4045", complaint));
         }
@@ -915,23 +915,6 @@ fn check_sexpr_arg_reads(
             continue;
         }
         check_arith_reads(a, span, known, sink);
-    }
-}
-
-/// Invoke `f(name, args)` for each sexpr `FuncCall` in an `ArithExpr` tree.
-///
-/// Descent is delegated to [`ArithExpr::children`], which is itself total over
-/// the enum. That matters: this walker used to spell out its own recursion
-/// behind a `_ => {}`, and the wildcard swallowed `Subscript`/`SubscriptAssign`
-/// — both of which carry `ArithExpr` children. A call under a subscript index
-/// (`$(( a[(status)] ))`) was therefore invisible to every caller. Delegating
-/// makes the omission unrepresentable rather than merely fixed.
-fn walk_arith_intrinsic_calls(a: &ArithExpr, f: &mut impl FnMut(&str, &[ArithExpr])) {
-    if let ArithExpr::FuncCall { name, args } = a {
-        f(name, args);
-    }
-    for child in a.children() {
-        walk_arith_intrinsic_calls(child, f);
     }
 }
 
@@ -3657,7 +3640,7 @@ fn expr_calls_intrinsic(expr: &Expr, want: &str, with_args: bool) -> bool {
         return false;
     };
     let mut found = false;
-    walk_arith_intrinsic_calls(a, &mut |name, _| found |= name == want);
+    walk_arith_funccalls(a, &mut |name, _| found |= name == want);
     found
 }
 
@@ -3694,7 +3677,7 @@ fn arith_test_names_intrinsic(stmt: &Statement, want: &str) -> bool {
         return false;
     };
     let mut found = false;
-    walk_arith_intrinsic_calls(a, &mut |name, _| found |= name == want);
+    walk_arith_funccalls(a, &mut |name, _| found |= name == want);
     found
 }
 
@@ -8765,27 +8748,20 @@ fn flag_collection_arith_args(
     collections: &HashSet<String>,
     diags: &mut Vec<Diagnostic>,
 ) {
-    walk_arith_funccall_args(a, &mut |arg| {
-        if let ArithExpr::DollarVar(name) = arg {
-            if collections.contains(name) {
-                diags.push(collection_scalar_read_diag(name, span));
-            }
-        }
+    walk_arith_funccalls(a, &mut |_, args| {
+        let read = args
+            .iter()
+            .filter_map(|arg| collection_dollar_var(arg, collections));
+        diags.extend(read.map(|name| collection_scalar_read_diag(name, span)));
     });
 }
 
-/// Invoke `f(arg)` for every argument of every `FuncCall` in an arith tree.
-/// Shape comes from `ArithExpr::children()`, so a new variant cannot silently
-/// fall out of this traversal.
-fn walk_arith_funccall_args(a: &ArithExpr, f: &mut impl FnMut(&ArithExpr)) {
-    if let ArithExpr::FuncCall { args, .. } = a {
-        for arg in args {
-            f(arg);
-        }
-    }
-    for child in a.children() {
-        walk_arith_funccall_args(child, f);
-    }
+/// `name` when `arg` is `$name` and `name` is a collection.
+fn collection_dollar_var<'a>(arg: &'a ArithExpr, collections: &HashSet<String>) -> Option<&'a str> {
+    let ArithExpr::DollarVar(name) = arg else {
+        return None;
+    };
+    collections.contains(name).then_some(name.as_str())
 }
 
 fn collection_scalar_read_diag(name: &str, span: Span) -> Diagnostic {

@@ -893,6 +893,38 @@ pub(crate) fn walk_arith_expansion_roots<'a>(arith: &'a ArithExpr, f: &mut impl 
     }
 }
 
+/// Visit every node of an `ArithExpr` tree, outermost first. Does not descend
+/// into embedded `${…}` expansions: those hold `Expr`s, and an `Expr` walk
+/// reaches any `$(( … ))` inside them.
+///
+/// **The one arithmetic node walker.** Descent is delegated to
+/// [`ArithExpr::children`], which is total over the enum, so a caller only
+/// names the variants it cares about.
+pub(crate) fn walk_arith_nodes<'a>(a: &'a ArithExpr, f: &mut impl FnMut(&'a ArithExpr)) {
+    f(a);
+    for child in a.children() {
+        walk_arith_nodes(child, f);
+    }
+}
+
+/// Invoke `f(name, args)` for each sexpr `FuncCall` in an `ArithExpr` tree,
+/// outermost first, through [`walk_arith_nodes`].
+///
+/// **The one arithmetic call walker.** It replaces three private copies.
+/// type_check's spelled out its own recursion behind a `_ => {}` that
+/// swallowed `Subscript`/`SubscriptAssign`, whose indices are arithmetic, so
+/// `$(( a[(toupper x)] ))` passed every string-callee rule and printed `1`,
+/// and a slot-using function called under a subscript escaped the signature
+/// check and reached a native codegen ICE (B73). validate's two copies
+/// already delegated to `children`.
+pub(crate) fn walk_arith_funccalls(a: &ArithExpr, f: &mut impl FnMut(&str, &[ArithExpr])) {
+    walk_arith_nodes(a, &mut |n| {
+        if let ArithExpr::FuncCall { name, args } = n {
+            f(name, args);
+        }
+    });
+}
+
 /// Mutable mirror of [`walk_arith_expansion_roots`]: the same arms in the same
 /// order, for a rewriting pass. Total for the same reason — do not add a
 /// wildcard.
@@ -2080,7 +2112,7 @@ impl ArithExpr {
     /// here — a walker that needs to descend into it must say so itself.
     ///
     /// **Total over `ArithExpr` on purpose — do not add a wildcard.**
-    /// `reject_prefix_incdec` and `validate::walk_arith_intrinsic_calls` both
+    /// `reject_prefix_incdec` and [`walk_arith_nodes`] both
     /// delegate their own totality claim to this function, so the no-wildcard
     /// rule has to be enforced *here* or it is enforced nowhere.
     pub(crate) fn children(&self) -> Vec<&ArithExpr> {
