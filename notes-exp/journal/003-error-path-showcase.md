@@ -71,3 +71,19 @@ checkedness, pipelines/readers, general redirects, background/public wait,
 END/signals, macOS storage, and the rest of the runtime remain on the
 existing roadmap. No new design decision was needed for exposing the
 already implemented failure handling. The producer draft stays uncommitted.
+
+## Follow-up: a low-level tour (2026-10-29)
+
+DG asked for a walkthrough for experienced C programmers and strace users
+new to C++ and fault injection. The AI added
+[`sash-cpp/docs/error-path-tour.md`](../../sash-cpp/docs/error-path-tour.md)
+and linked it from the README and status.
+
+The tour follows outcome checking, failed capture and RAII unwinding,
+baseline-calibrated injection, EINTR recovery, ordinary versus destructor
+restoration failure, fatal reap containment, child setup reporting, and
+partial diagnostics. It explains the C++ syntax where it matters and
+distinguishes helper, demo, and runner statuses. The examples follow the
+current code and recorded traces, including the parent-loader side effect
+of per-tracee first-close injection. This is documentation only; runtime
+behavior and the uncommitted producer draft are unchanged.

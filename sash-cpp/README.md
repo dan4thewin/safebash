@@ -86,6 +86,10 @@ mk -p 1 error-demo
 The full catalog has 103 cases: 52 basic cases, 38 injected-fault cases,
 and 13 interrupted-operation recovery cases.
 
+The [low-level tour](docs/error-path-tour.md) follows representative cases
+through the Bash runner, strace fault injection, C++ outcomes, and resource
+cleanup. It assumes C and Unix experience rather than C++ familiarity.
+
 | Area | What is demonstrated |
 |---|---|
 | Command outcomes | Checked, caught, and discarded failures; exit 7; real exit 127 versus failed exec; signal termination |

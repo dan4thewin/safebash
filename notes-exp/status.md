@@ -27,6 +27,11 @@ arbitrary internal corruption and future features are not claimed.
 See [journal 003](journal/003-error-path-showcase.md) and
 the [runnable catalog](../sash-cpp/README.md#error-path-showcase).
 
+The [low-level tour](../sash-cpp/docs/error-path-tour.md) now follows
+representative paths through both harnesses for C programmers new to C++
+and strace injection. It covers result versus exception propagation,
+capture unwinding, fault-site calibration, retries, and fatal cleanup.
+
 No runtime behavior, compiler, producer, or native dependency changed.
 The first greetings and second job-report pairs remain available; their
 native comparison and DG's single-threaded fork/exec choice are recorded
