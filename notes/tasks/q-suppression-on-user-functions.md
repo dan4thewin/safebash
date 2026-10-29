@@ -11,6 +11,71 @@ gates:
   - "`bug-peel-family-classifiers`, `bug-fork-failure-reporting-by-form` and `dd55-nonvoid-functions` are updated to the rulings"
 ---
 
+## Rulings, 2026-10-29
+
+DG, four messages:
+
+> for suppression, let's keep it legal for user functions but have it only
+> address the functions returned value
+
+> suppression should probably be an error on a void function
+
+> I don't think wait should abort on a non-zero status and I don't think
+> suppression should apply to wait
+
+> the task file also shows suppression on a command group, but sash
+> doesn't have command groups
+
+The AI's reading of what they settle, sent to DG for veto:
+
+- **Q1: (a), no reach.** A `-` on a call discards that call's returned
+  value and reaches nothing inside the body. That holds for a statement
+  `- f`, a job `- f &` and a call inside a `-` compound (`- { f }`); a
+  stage `- f |` and a condition already do not reach. It corrects DD#55's
+  unruled "Suppression scopes the complete call" (:67–81), and F6 drops
+  the B82 wrap.
+- **Q4: no reach into argument captures.** `- cmd $(g)` discards cmd's
+  status only, and g's body is checked as usual (DD#86). B76 becomes
+  not-a-bug; hunk-ledger rows H234/H235 are dropped; v03, v04 and c8
+  change.
+- **Q2: a `-` must have a returned value to address.** It stays legal on
+  a call of a status function or an `-> int` function. It is an error,
+  under a new code, on `- void_f`, on `$(- void_f)` and on `$(- int_f)`.
+  The last is an error because an `-> int` function's capture binds the
+  int itself (`int n=$(count)` binds 7, and count's `echo` reaches the
+  real stdout), so nothing is left for the `-`. `$(- status_f)` stays
+  legal: the `-` discards the status, and the capture keeps the output.
+  The error applies only where the `-` directly prefixes the call, not to
+  a call inside a `-` compound. Whether it applies to a stage or a job is
+  Q5's process-form question, below.
+- **wait.** `wait` already never aborts on a nonzero child status
+  (DD#126; 126.5, 126.6, 126.12). What changes is that `- wait` stops
+  being the discard spelling for wait's pid, which reverses DG's
+  2026-10-09 "`-` wait for I-don't-care". Open, two options:
+  - (A), recommended: a bare `wait` / `wait PID` statement is legal. It
+    reaps, discards the pid and latches the status, as C's `wait(NULL);`
+    does. `- wait` gets Q2's new code; `if wait` and `wait || x` stay
+    SB4016 with new advice (126.18 unchanged); `wait &` becomes SB4024.
+    Costs: bash's bare `wait` waits for every job where sash's reaps one,
+    and DD#126's single unconsumed-value rule gains an exception. 126.1
+    flips, and 69 `- wait` lines are rewritten with their ids kept.
+  - (B): a bare `wait` stays SB4016 and `- wait` gets the new code; the
+    discard is spelled `: $(( wait ))`.
+
+  Either way, `wait` and `- int_f` now differ.
+- **Groups.** sash has `{ … }` groups (`parse_group`). A group is the
+  only spelling of a multi-statement right operand of `&&`/`||` (bc.g4),
+  and a bare group statement runs (bc.g5). Everywhere else a group is
+  rejected: as a condition (SB4027), as the left operand of `&&`/`||`
+  (SB4023, g3), redirected (SB4021), as a stage (SB4022) and under `&`
+  (SB4024). Journal 453 has the history: DG approved removing the
+  statement-position group when the AI wrongly reported it inert, the
+  sweep failed the `|| { … }` specs (55.51–55.56, 18.8), and the group
+  stayed. The remark raises Q7.
+
+Still open: Q3 (B15), Q5's process forms (a stage or a job, whose status
+includes SIGPIPE and fork failure), the wait option, Q6, and Q7.
+
 ## What
 
 Found 2026-10-28, while porting F2 (batch-531 B82: a stage's `-` is not
@@ -111,8 +176,9 @@ not (v01): the child aborts, and the `-` discards only the stage's status.
 That asymmetry is batch-531 B82, which F2 was to fix by threading the `-`
 into the child (the "B82 wrap").
 
-A `-` on a group or an `if` reaches every command inside it, while `||`
-cannot take a group at all:
+A `-` on a group or an `if` reaches every command inside it. A group
+cannot be the left operand of `&&`/`||` (SB4023), though it can be the
+right one (bc.g4, `/bin/false || { echo a; echo b; }`):
 
 | Id | Program | Result |
 |---|---|---|
@@ -436,6 +502,32 @@ be a taint error unless g is known to be clean") is W2's T1
 (`batch-531-findings` §18), already planned. F2's new specs give every
 function stage a write (x05's shape, not n1's), so this ruling does not
 churn them.
+
+### Q7. May `-` prefix a compound?
+
+Raised 2026-10-29 by DG's groups remark. `dash_prefixes_command`
+(parser.rs) accepts a `-` before `{`, `if`, `while`, `until`, `for`,
+`case`, `[[` and `((`, and the `-` then covers every command inside (g1,
+g2; a `!` inside is discarded, DD#70 2026-10-26). No DD rules on that
+blanket; DD#55's base rule is "`- cmd` suppresses the implicit check". By
+DG's principle (`-` says I-don't-care about an external or a system call
+result, a better `|| :`), a blanket over several commands is the
+over-generalisation, and it recreates bash's `{ …; } || :` set -e trap.
+
+Six spec lines use it: bng.25 (`- until`), csfx.17 (`- { … } 2>…`, an
+SB4021 check), pf.47 and pf.48 (`| - while readline x { … }`), and
+p518.22 and p518.23 (`- { a | b }`). The last two discard a pipeline's
+construction failure, which is a system call result, and a group is
+today's only spelling for that: a `-` at a pipeline's head binds to the
+first stage alone (`- /bin/echo x | /bin/false` aborts).
+
+- (a) A `-` prefixes one command only. The six lines are rewritten, and
+  discarding a pipeline's construction failure needs a new spelling.
+- (b) Keep the blanket.
+
+Recommended: leave it in the backlog for its own ruling. F6 does not
+depend on it: under no reach, a call inside a `-` compound discards only
+its returned value, and F6 adds no compound spelling.
 
 ### Census
 
