@@ -45,5 +45,5 @@ walker (`sweep-private-duplicates-of-shared-walkers`).
 Not probed: a `(( … ))` test (`if (( (f) > 0 ))`) and a sexpr inside a
 function body. Both go through the same check, so expect the same gap.
 
-Probes: files/port-f5-probes.tar.gz (b73/v4*.sh, v4-results.txt), once F5
-wraps up.
+Probes: the session archive files/port-f5-probes.tar.gz (b73/v4*.sh,
+b73/v4-results.txt).

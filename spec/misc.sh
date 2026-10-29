@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup misc
-plan=123
+plan=125
 echo "1..$plan" >&3
 
 set +e
@@ -816,6 +816,25 @@ echo "[$s]"'
 G
 K1
 2]" && -z $rerr ]]; chk cap.33
+
+  # cap.35-36 (journal 546) `exec CMD` in a capture body is not pure. The
+  # purity walk took the bare builtin for an in-process write, but CMD
+  # replaces this process and writes fd 1 itself, so a buffered site sent
+  # `hi` to the REAL stdout, while a body made impure by an unrelated
+  # `/bin/true` first kept it in the capture. What `exec` in a capture should
+  # do at all is open (q-exec-in-capture, B34); these pin only that the two
+  # paths agree: the program ends at the exec, and its output stays in the
+  # capture that never completes.
+  run_sash 'echo before
+str x=$(exec /bin/echo hi)
+echo "after [$x]"'
+  [[ $rc = 0 && $out = "before" && -z $rerr ]]; chk cap.35
+
+  run_sash 'fn f { exec /bin/echo hi }
+echo before
+str x=$(f)
+echo "after [$x]"'
+  [[ $rc = 0 && $out = "before" && -z $rerr ]]; chk cap.36
 
 # cap.22 A MALFORMED `$( )` BODY INSIDE DOUBLE QUOTES IS A DIAGNOSTIC. The
 # quoted path's parser was declared `-> Vec<Statement>`, so it had no way to

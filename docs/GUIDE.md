@@ -592,11 +592,13 @@ paths, chosen per site at compile time by `transform::capture_purity`:
 * `sash_capture_start` / `sash_capture_end` — the general path. fd 1 is
   pointed at a **memfd** (not a pipe: a captured body runs in-process with
   nobody draining, so a pipe self-deadlocks past 64 KiB). Used whenever the
-  body contains a pipeline, a redirect, or a bare external.
+  body contains a pipeline, a redirect, a bare external, or an `exec`.
 
 A body may contain an external and still be pure, so long as the external's
 output arrives through an *inner* `$( )` — that child gets a pipe of its own.
-Only a fork inheriting *this* capture's stdout disqualifies a site. A value
+Only a fork inheriting *this* capture's stdout disqualifies a site, or an
+`exec CMD`, which replaces this process with a CMD that writes fd 1 itself
+(journal 546). A value
 call counts: an int function called as `$(f)`, `(f)` or a bare `f` in
 arithmetic runs its body where the call stands, so a fork in that body
 disqualifies the site too. A capture whose arguments make such a call takes

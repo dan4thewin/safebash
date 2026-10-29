@@ -5,8 +5,8 @@
 //! site's stdout comes from an in-process `sash_write` the runtime can divert.
 //! The single disqualifying condition is:
 //!
-//! > some process forks with *this* capture's stdout as its fd 1, or fd 1 is
-//! > rebound underneath the buffer.
+//! > some process forks with *this* capture's stdout as its fd 1, an `exec`
+//! > replaces this one, or fd 1 is rebound underneath the buffer.
 //!
 //! The distinction that matters, and the one that makes this worth doing: a
 //! body that merely *wraps* an external (`fn emit { /bin/cat f; }`) is
@@ -30,6 +30,7 @@
 //! safe.
 
 use crate::ir::{Command, Statement, StmtKind};
+use crate::ssa::BuiltinCmd;
 use std::collections::{HashMap, HashSet};
 
 /// Can this capture body's stdout be collected in a userspace buffer?
@@ -103,8 +104,11 @@ impl Purity<'_> {
         // DD#23: `resolve` rewrites an external head to an absolute path, and
         // nothing else acquires a slash — intrinsics, builtins and user
         // functions keep bare names. So a slash means `fork` + `exec` with our
-        // stdout.
-        if name.contains('/') {
+        // stdout. The `exec` builtin is the one bare name that does the same
+        // without the fork: `exec CMD` replaces this process with CMD, which
+        // writes fd 1 itself, so on a buffered site its bytes went to the real
+        // stdout, past the capture (cap.35, cap.36).
+        if name.contains('/') || BuiltinCmd::from_name(name) == BuiltinCmd::Exec {
             return false;
         }
         // This lookup succeeds only for a capture whose body *bare-calls*

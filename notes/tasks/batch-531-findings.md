@@ -714,9 +714,15 @@ DG 2026-10-28: F2 lands without the B82 wrap and without specs that pin
 
 - [ ] **B34** (question; DD86, DD24). `exec` inside a capture replaces the
   whole program: `echo before; x=$(exec /bin/echo hi); echo "after [$x]"`
-  prints `before` and `hi`, exits 0 and never runs the rest. The branch's
-  SB5020 is a taint verdict, not a rule. Question: no DD covers `exec` in a
-  capture.
+  prints `before`, exits 0 and never runs the rest. The branch's SB5020 is a
+  taint verdict (B114), not a rule; hand-parser compiles it with taint on.
+  Question: no DD covers `exec` in a capture.
+  - Until F5 unit E (journal 546) it also printed `hi`, to the real stdout,
+    whenever the purity walk put the site on the buffer path; a body made
+    impure by an unrelated external kept `hi` in the capture. Unit E marks
+    `exec` impure, so both paths agree (cap.35, cap.36). That fixes the
+    optimisation and answers nothing here.
+  - Filed as `q-exec-in-capture` (P3; recommends (a) reject).
 - [x] **B49** (F1; fixed-on-branch; DD55). `cmdsub_reads_whole_args` does
   not peel: `fn f { echo $(- join args) }; f a b c` is a false SB5043. Fixed
   by F5's rewrite of the signature scan (B53).
@@ -808,8 +814,13 @@ DG 2026-10-28: F2 lands without the B82 wrap and without specs that pin
   `⏎` marks a newline; `fn t { /bin/true }` precedes each `ev` row.
   - A name the capture writes: `echo "$g" "$(f)" "$g"`, with `f` setting
     `g`, prints `new X new`; bash's subshell gives `old X old` (probes
-    dsp/o1-o7 and w1-w4, `files/p531-ledger.md`). DD66's dispatch now
-    evaluates lazily; argument lists do not.
+    dsp/o1-o7 and w1-w4, `files/p531-ledger.md`). On hand-parser, DD66's
+    dispatch and `[[ && || ]]` evaluate eagerly, like argument lists; the
+    branch makes them lazy (F9's B86, F8's B87).
+  - That the write happens is settled, so F5's simplification candidate
+    "captures may not write outer names" is closed: DD86's 2026-09-28
+    addendum (DG: changes to globals survive "unless a fork is required").
+    Only the order is open.
   - `$?` to the left of a function capture: ev6 `/bin/sh -c "exit 3" || echo
     "[$?]" "$(t)"` prints `[0] `, where DD55 (`$?` is the handling branch's
     first expression) and bash give `[3]`. ev9 (`t` is `return 0`) and ev11
@@ -830,6 +841,9 @@ DG 2026-10-28: F2 lands without the B82 wrap and without specs that pin
     (b) evaluate left to right, word by word.
   - Probes: `files/port-f1f4-probes.tar.gz`, `cb/ev1`-`ev14` (ev1, ev2 and
     ev4 use an external capture and are SB5020).
+  - Filed as `q-capture-hoisting-order` (P2). Its `$?` rows are bugs under
+    either option. The ab133dd2 re-probes (hn1, ev5, ev6) are in
+    `files/port-f5-probes.tar.gz`.
 
 ### 13. F6 suppression scope
 
