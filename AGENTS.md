@@ -245,6 +245,30 @@ it via `SASH_RT_LIB`. Rebuild it after touching `sash-rt/src` before an
 Spec tests live in `spec/*.sh`. Run with `cd spec && bash run.sh`.
 Results accumulate in `spec.db` (SQLite, repo root).
 
+**`mk gate` is the spec gate in one command, and it exits nonzero on any
+mismatch** (`contrib/gate.sh`, journal 540). It runs `mk test`, then the
+static checks below (duplicate and variable ids, plan vs chk, the SB census in
+both directions), one full sweep, and the spec.db checks against that sweep's
+block of rowids:
+- the total and per-mode counts equal the plan sums;
+- nothing is failing, and no file's run disagreed with its `plan=`;
+- no registry row went unrun (a ghost);
+- the liveness query passes;
+- flips, first-ever ids and retirements equal your predictions.
+
+Predict first, then pass the predictions in: `NEW=12 mk gate` for six new
+dual-mode specs. `FLIPS`, `RETIRED` and `TOTAL` work the same way; each
+defaults to 0, and `TOTAL` defaults to the plan sum. `RETIRED` is also the
+purge cap, so a retirement you did not predict deletes nothing. `mk
+gate-static` runs only the static checks, in seconds. `bash contrib/gate.sh
+--recheck` re-evaluates the last gate sweep against corrected predictions,
+without sweeping again. A pass also regenerates status.md's mk-status block
+from the gate's own sweep. `spec/run.sh` itself still exits 0 whatever fails;
+the gate is the command that fails. Two checks are not automated: the
+negative control (each new spec red on the pre-change binary) and running
+reversion stubs (`notes/tasks/gate-negative-control.md`). The sections below
+explain each check, and they remain the reference when one fails.
+
 **`spec.db` is untracked and gitignored.** It is a local artifact: every run
 rewrites it wholesale, so versioning it added a fresh 20 MB blob per commit
 (9.0 GB of pack across 455 commits) for data that is only meaningful on the
@@ -1504,7 +1528,9 @@ numbers on both sides of its comparison, so the residual does not affect it.
 
 Every task ends with:
 1. All tests pass (`mk test`)
-2. Run specs: `cd spec && bash run.sh` — check spec.db
+2. Run the gate with your predictions: `NEW=<n> mk gate` (plus `FLIPS=`,
+   `RETIRED=` when you expect them). It re-runs step 1, sweeps the specs and
+   checks spec.db; see the Spec tests section
 3. Update `notes/journal/` (new file or append to latest)
 4. Update `docs/GUIDE.md` if new architecture introduced
 5. Add deferred work to `notes/tasks/` (bare frontmatter)

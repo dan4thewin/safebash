@@ -38,6 +38,19 @@ sash-getopt-test:V: target/release/sash-getopt
 spec:V: build
 	bash spec/run.sh
 
+# The spec gate (contrib/gate.sh): unit tests, then the static checks, one full
+# sweep and the spec.db checks against your predictions. Nonzero on any
+# mismatch. Predict first, e.g. `NEW=12 mk gate` for six new dual-mode specs.
+# A pass regenerates the status block from the gate's own sweep; keep that
+# chained with && so it cannot mask a failing gate (journal 518).
+# gate-static runs only the static checks (seconds, no build).
+gate:V: test
+	bash contrib/gate.sh &&
+	bash contrib/status-update.sh
+
+gate-static:V:
+	bash contrib/gate.sh --static
+
 clean:V:
 	(cd $RT && cargo clean)
 	(cd $SASH && cargo clean)
