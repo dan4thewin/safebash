@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup errors
-plan=724
+plan=725
 echo "1..$plan" >&3
 
 set +e
@@ -4205,13 +4205,13 @@ fn f { return 3 }
 echo after'
 [[ $rc = 0 && $out = $'one\nafter' && -z $err && -z $rerr ]]; chk nonvoid.29
 
-# noreach.1-noreach.16: `-` discards only the status of its own command or
+# noreach.1-noreach.17: `-` discards only the status of its own command or
 # call (DD#55 2026-10-30). It does not reach into a user function's body,
 # which is checked like any other body, or into a capture or call lifted from
 # the command's operands, so each /bin/false below aborts; every one of them
-# printed and carried on before that. noreach.2 is the control: the status
-# that f returns is still discarded. An external's output is tainted, so the
-# ids that capture one directly compile with --no-taint.
+# but noreach.17 printed and carried on before that. noreach.2 is the
+# control: the status that f returns is still discarded. An external's output
+# is tainted, so the ids that capture one directly compile with --no-taint.
 
 # noreach.1 the called function's body
 run_sash 'fn f { /bin/false; echo x; return 1 }
@@ -4307,6 +4307,16 @@ run_sash 'fn h -> int { /bin/false; return 3 }
 - (( (h) ))
 echo after'
 [[ $rc = 1 && -z $out && -z $err && $rerr == *'/bin/false: command failed (exit 1)'* ]]; chk noreach.16
+
+# noreach.17 a capture condition's operand capture, lifted out of a single
+# command (batch-531 B76's shape): the condition consumes /bin/echo's status
+# only. Unlike noreach.13's stage, the capture runs in the main process. A
+# control: the port's base (1309385) aborted here too, while the batch-531
+# branch's hunks H234/H235 (dropped) printed "yes [F]" and carried on.
+SASH_CFLAGS=--no-taint run_sash 'fn f { /bin/false; echo F }
+if x=$(/bin/echo $(f)) { echo "yes [$x]" } else { echo no }
+echo done'
+[[ $rc = 1 && -z $out && -z $err && $rerr == *'/bin/false: command failed (exit 1)'* ]]; chk noreach.17
 
 # 55.145-55.147: a `-` over a `||` list keeps the right operand's status
 # (batch-531 B84). The right operand runs unchecked under `-`, and `||`'s

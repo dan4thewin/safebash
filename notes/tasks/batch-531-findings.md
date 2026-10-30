@@ -870,8 +870,12 @@ DG 2026-10-28: F2 lands without the B82 wrap and without specs that pin
     capture's command only, so the abort above is the ruled behaviour.
     F6 unit B (journal 548) deleted `SuppressionScope`; ledger rows
     H234/H235 are dropped. On a0467a22, under `--no-taint`, the program
-    aborts at f's `/bin/false` (rc 1) in both backends. noreach.9 and
-    noreach.13 pin the same shape with an external capture.
+    aborts at f's `/bin/false` (rc 1) in both backends. No spec pinned this
+    shape: noreach.13's operand capture is in a stage, so it runs in the
+    stage's child, and noreach.9 is consumed by `-`, not by a condition.
+    The wrap-up adds noreach.17 for it. noreach.17 is a control: the port's
+    base 1309385 aborted here as well, while the branch's H234/H235 printed
+    `yes [F]` and carried on (Step 0 probe vw/c1 under `--no-taint`).
 - [x] **B81** (open; DD55, DD122). A command stage's argument captures run
   in the parent before the fork; both backends ICE.
   - Re-probed after B37 (journal 538): an external capture in a stage

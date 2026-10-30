@@ -119,10 +119,14 @@ Q1/Q4 rulings removed the reach their premise needed.
   `f` = `{ /bin/false; echo F }`. On a0467a22 it aborts at f's `/bin/false`
   (rc 1) in both backends under `--no-taint`. With taint on it is SB5020
   on `$x`. A capture condition consumes only its capture command's status,
-  so the abort is the ruled behaviour. noreach.9 and noreach.13 pin the
-  same shape with an external capture. Ledger rows H234/H235 (the branch's
-  `SuppressionScope` over a lifted argument capture) are dropped. Unit B
-  had already deleted that type.
+  so the abort is the ruled behaviour. No spec pinned this shape:
+  noreach.13's operand capture is in a stage, so it runs in the stage's
+  child, and noreach.9 is consumed by `-`, not by a condition. noreach.17
+  now pins it (errors.sh plan 725). It is a control: the port's base
+  1309385 aborted here as well, while the branch printed `yes [F]` and
+  carried on (Step 0 probe vw/c1 under `--no-taint`). Ledger rows
+  H234/H235 (the branch's `SuppressionScope` over a lifted argument
+  capture) are dropped. Unit B had already deleted that type.
 - **B82**: Step 0 recorded an ICE in both backends. Its two ICE probes
   (vc/q6, vc/q8) are B81's *unsuppressed* stage-argument captures, which F2
   fixed. On a0467a22, q3, q6 and q8 run cleanly in both backends. The
@@ -149,3 +153,9 @@ had no task of its own, so it is now `q-pipe-stage-never-writes-or-reads`
 The F6 ledger rows are all settled. The F6 probes (f6, f6b, f6c and the
 wrap-up's f6w; 516 text files) are in the session's
 files/port-f6-probes.tar.gz.
+
+noreach.17 was added after the wrap-up commit (9d2a72f9), which had said
+noreach.9 and noreach.13 already pinned B76's shape. They do not, as the
+B76 bullet above now says. `NEW=2 mk gate` passed on its first run:
+rowids 6564822-6575230, 10409 = 10396 pass + 13 skip, 2 first-ever ids,
+no flips or retirements.
