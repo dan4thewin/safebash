@@ -859,12 +859,19 @@ DG 2026-10-28: F2 lands without the B82 wrap and without specs that pin
     SB4016. `-` on a void function is SB4076 (new). A call is checked
     against the definition in force. Specs nonvoid.1-nonvoid.29. The
     questions left are in `q-nonvoid-classifier-residuals`.
-- [ ] **B76** (fixed-on-branch; DD55, DD88). In `if x=$(/bin/echo $(f))` the
+- [x] **B76** (fixed-on-branch; DD55, DD88). In `if x=$(/bin/echo $(f))` the
   fast path lifted the inner `$(f)` out of the condition capture's
   suppression, so a `/bin/false` inside `f` aborted. DD55 (2026-10-20) and
   DD88 make a capture condition suppress the whole capture.
   - DG 2026-10-28 questions whether `-` should reach into a function at
     all; open in `q-suppression-on-user-functions` Q4 (argument captures).
+  - Not a bug (F6 wrap-up, journal 549). DG's Q4 ruling (2026-10-29)
+    removed the reach. A capture condition consumes the status of its
+    capture's command only, so the abort above is the ruled behaviour.
+    F6 unit B (journal 548) deleted `SuppressionScope`; ledger rows
+    H234/H235 are dropped. On a0467a22, under `--no-taint`, the program
+    aborts at f's `/bin/false` (rc 1) in both backends. noreach.9 and
+    noreach.13 pin the same shape with an external capture.
 - [x] **B81** (open; DD55, DD122). A command stage's argument captures run
   in the parent before the fork; both backends ICE.
   - Re-probed after B37 (journal 538): an external capture in a stage
@@ -878,11 +885,24 @@ DG 2026-10-28: F2 lands without the B82 wrap and without specs that pin
     now does (stgarg.11-stgarg.20 and stgarg.22-stgarg.36; stgarg.34 and
     stgarg.36 are controls). Whether that order is right is open in
     `q-stage-capture-redirect-order`.
-- [ ] **B82** (open; DD55). A stage's suppression is not threaded into
+- [x] **B82** (open; DD55). A stage's suppression is not threaded into
   `build_function_pipeline_stage` or into B81's child; both backends ICE.
   - Not ported with F2: the trialed wrap would cement `-` reaching into a
     function (DG 2026-10-28). Open in `q-suppression-on-user-functions` Q1;
     B82 is a bug only if Q1 and Q4 keep the reach.
+  - Not a bug (F6 wrap-up, journal 549). Q1 and Q4 (2026-10-29) removed the
+    reach, so a stage's `-` has nothing to thread into the stage's child.
+    The ICEs in B82's Step 0 probes (q6, q8) were B81's unsuppressed
+    shapes, which F2 fixed. On a0467a22, in both backends, q3/q6/q8 run
+    cleanly. Under `--no-taint`, `- /bin/echo $(f) | /bin/cat`,
+    `- f | /bin/cat`, `- h $(( (g) )) | /bin/cat` and a middle stage
+    `| - /bin/echo $(f) |` each compile. In each, the stage's child aborts
+    inside f or g and reports it, the `-` discards that stage's status,
+    and `done` prints. That is the ruled shape. A stage's status is its
+    process's status, whatever ended the child (`q-suppression-on-user-functions`,
+    2026-10-30, Q2 process forms), and a head `-` binds stage 1 only
+    (`q-suppression-reach-residuals` R6). Whether a stage's `-` should
+    also discard a setup failure is `q-setup-failure-suppressibility`.
 - [x] **B84** (fixed-on-branch; DD55). A suppressed `a || b` reset `$?` to 0
   although `b` is unchecked. Branch specs: 55.88.
   - Ported in F6 unit C (journal 549): H219 in `lower_list_stmt`; specs

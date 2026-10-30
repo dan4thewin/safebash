@@ -106,3 +106,46 @@ rdr.23-.30 and .47-.48 failed at random. Those specs share fixed
 `/tmp/sash_rdr_*` paths, so concurrent copies delete each other's files.
 That is not a finding about the tree: sweeps are serial by design. Run
 serially, the same binaries gave the results above.
+
+## F6 wrap-up
+
+F6 is done in three units: A (journal 547), B (548) and C (this entry).
+The wrap-up is notes only.
+
+Two findings remained open, and both close as not-a-bug, because DG's
+Q1/Q4 rulings removed the reach their premise needed.
+
+- **B76**: the capture condition `if x=$(/bin/echo $(f))`, where
+  `f` = `{ /bin/false; echo F }`. On a0467a22 it aborts at f's `/bin/false`
+  (rc 1) in both backends under `--no-taint`. With taint on it is SB5020
+  on `$x`. A capture condition consumes only its capture command's status,
+  so the abort is the ruled behaviour. noreach.9 and noreach.13 pin the
+  same shape with an external capture. Ledger rows H234/H235 (the branch's
+  `SuppressionScope` over a lifted argument capture) are dropped. Unit B
+  had already deleted that type.
+- **B82**: Step 0 recorded an ICE in both backends. Its two ICE probes
+  (vc/q6, vc/q8) are B81's *unsuppressed* stage-argument captures, which F2
+  fixed. On a0467a22, q3, q6 and q8 run cleanly in both backends. The
+  suppressed shapes each compile in both backends:
+  - `- /bin/echo $(f) | /bin/cat`;
+  - `- f | /bin/cat`;
+  - `- h $(( (g) )) | /bin/cat`;
+  - the middle stage `/bin/echo a | - /bin/echo $(f) | /bin/cat`.
+
+  In each, the stage's child aborts inside f or g and reports it, the `-`
+  discards that stage's status, and `done` prints. A stage's status is
+  its process's status (the 2026-10-30 Q2 process-forms reading), so there
+  is nothing for the `-` to thread into the child.
+
+  One probe, `/bin/echo a | - f` with a non-reading f, ended rc 141. That
+  is the writer racing a final stage that never reads (DD55:94: SIGPIPE is
+  the programmer's). It is not a finding.
+
+`q-suppression-on-user-functions` is closed, and its closing note lists
+where each item went. Q6 (a stage known never to write or never to read)
+had no task of its own, so it is now `q-pipe-stage-never-writes-or-reads`
+(P3, after W2). Its evidence stays in the closed task's Q6 section.
+
+The F6 ledger rows are all settled. The F6 probes (f6, f6b, f6c and the
+wrap-up's f6w; 516 text files) are in the session's
+files/port-f6-probes.tar.gz.

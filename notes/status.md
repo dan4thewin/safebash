@@ -1,4 +1,26 @@
-## ══ STATUS (2026-10-30, latest) — F6 unit C: a suppressed list keeps its failure ══
+## ══ STATUS (2026-10-30, latest) — F6 done: suppression scope ══
+
+F6 is done in three units: A 1327587d, B 825fea9f and C a0467a22 (journals
+547-549). 13 of the port's 20 Order items have landed. The wrap-up is
+notes only (journal 549, "F6 wrap-up"):
+- B76 and B82 close as not-a-bug, because DG's Q1/Q4 rulings removed the
+  reach their premise needed.
+  - B76's shape aborts at f's `/bin/false` in both backends, the ruled
+    behaviour.
+  - B82's recorded ICEs were B81's unsuppressed shapes, which F2 fixed.
+    Its suppressed stage shapes compile, and the `-` discards that
+    stage's status.
+- Ledger rows H234/H235 are dropped, so no F6 row is pending.
+- `q-suppression-on-user-functions` is closed; its closing note lists
+  where each question went. Q6 is the new `q-pipe-stage-never-writes-or-reads`
+  (P3, after W2).
+- The probes are in the session's files/port-f6-probes.tar.gz.
+
+**Next:** F8 (Order item 14), lazy `[[ && || ]]` (B87, B88a). Research
+first, then one batched discussion if a consequential fork remains; the
+`--trace` block-label question is the known one.
+
+## ══ STATUS (2026-10-30) — F6 unit C: a suppressed list keeps its failure ══
 
 F6 unit C (journal 549) fixes batch-531 B84.
 - Before: `- /bin/false || /bin/false` exited 0. `||`'s top-level reset of

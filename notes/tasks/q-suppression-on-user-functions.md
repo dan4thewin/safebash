@@ -1,6 +1,6 @@
 ---
 title: "Question: what `-` may discard on a user-function call, and how far it reaches"
-status: open
+status: done
 priority: P2
 kind: question
 depends: []
@@ -159,6 +159,23 @@ not a bug, and the B82 wrap and ledger rows H234/H235 are dropped at the F6
 wrap-up. What the unit left as it was is in
 `q-suppression-reach-residuals`. This task closes at the F6 wrap-up, once
 Q5-Q7 are confirmed to live in their own tasks.
+
+Closed at the F6 wrap-up (journal 549). Q1-Q4 are ruled and landed: Q3
+and Q2's in-process half in unit A (journal 547), Q1 and Q4 in unit B
+(journal 548). B76 and B82 are not bugs, and B84 is fixed (unit C). The
+rest of the work lives in other tasks:
+
+- Q5 → `q-setup-failure-suppressibility`;
+- Q6 → `q-pipe-stage-never-writes-or-reads` (after W2);
+- Q7 → `retire-suppression-on-compounds`;
+- the command groups → `retire-command-groups`;
+- the ceremony rule and a capture body's `return` →
+  `q-status-function-ceremony`;
+- what units A and B left as they were →
+  `q-nonvoid-classifier-residuals` and `q-suppression-reach-residuals`.
+
+The wait ruling needs no task, because `- wait` is unchanged. The
+sections below remain the evidence for those tasks.
 
 ## What
 
