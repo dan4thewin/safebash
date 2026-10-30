@@ -2091,8 +2091,9 @@ run_sash 'f() {
 argv 1 a
 attest v in a [[ -n $v ]] || return 1
 echo "$(len a)"
+return 0
 }
-f' one two
+f || exit 1' one two
 [[ $rc = 0 && $out = 2 && -z $err ]]; chk div.2
 # div.3 the resolve arm of R2 still works — the fix must not disturb it
 run_sash 'str x=$(getenv HOME)

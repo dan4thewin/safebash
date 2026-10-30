@@ -1584,7 +1584,7 @@ __subshell | /usr/bin/tr s S'
 [[ $rc = 0 && $out = "S" && -z $err ]]; chk cov.329
 # cov.330 args and exit status propagate normally through a sigil-named fn
 run_sash '__let_exit() { echo "got $1"; return 3; }
-__let_exit hi; echo $?'
+__let_exit hi || echo $?'
 [[ $rc = 0 && $out = "got hi
 3" && -z $err ]]; chk cov.330
 

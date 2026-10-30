@@ -49,3 +49,4 @@ B15 is enforced: a bare call or a list tail of a status function is an error
 unless it is caught or discarded with `-`. The original design's bare
 `return` = `return 0` stands. F6 implements this. The ceremony rule for
 status functions is not enforced; it moved to `q-status-function-ceremony`.
+Landed in F6 unit A (journal 547; DD55 addendum 2026-10-30).

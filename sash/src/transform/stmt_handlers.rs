@@ -160,27 +160,34 @@ fn check_non_void_bare_wait(kind: BuiltinCmd, stmt: &Statement, state: &mut Vers
     ));
 }
 
-/// DD#55/SB4016: a bare call of a non-void (`-> int`) function in
-/// statement position must be handled by `if`/`||` or captured by
-/// `$((…))`. Emits a diagnostic when violated; does not affect
-/// codegen (the caller still threads the call through).
+/// DD#55/SB4016: a bare call of a non-void function in statement position
+/// must be handled — an `-> int` function's int captured by `$((…))`, a
+/// status function's status by `if`/`||` — or discarded with `-`. The class
+/// is that of the definition the call runs (`VersionState::call_class`).
+/// Emits a diagnostic when violated; does not affect codegen (the caller
+/// still threads the call through).
 fn check_non_void_bare_call(name: &str, stmt: &Statement, state: &mut VersionState) {
-    // DD#70 addendum: `- f` discards the returned int, like any other result.
-    if state.suppressed > 0 {
+    // DD#70 addendum: `- f` discards the returned value, like any other
+    // result, and a condition handles it.
+    if state.suppressed > 0 || state.in_condition > 0 {
         return;
     }
-    if state.function_non_void.contains(name) && state.in_condition == 0 {
-        // DD#74: an `-> int` function is rejected in *every* boolean context
-        // (SB4030), so `if`/`||` was not advice the author could act on — it
-        // sent them from SB4016 straight into SB4030. This is unconditional,
-        // not a special case: `function_non_void` is populated only by
-        // `analyze_function_returns`, which returns early for anything that
-        // is not `-> int`, so every name reaching here is int-typed.
-        state.diagnostics.push(format!(
-            "{}:{}: error [SB4016] function '{}' returns an int — capture with $(({})) or discard with `-`",
-            stmt.span.line, stmt.span.col, name, name
-        ));
-    }
+    // DD#74: an `-> int` function is rejected in *every* boolean context
+    // (SB4030), so `if`/`||` is not advice the author could act on for one.
+    // A status function's status is what `if`/`||` consume.
+    let advice = match state.call_class(name) {
+        Some(FnClass::Int) => {
+            format!("returns an int — capture with $(({name})) or discard with `-`")
+        }
+        Some(FnClass::Status) => {
+            "returns a status — handle it with `if` or `||`, or discard it with `-`".to_string()
+        }
+        Some(FnClass::Void) | None => return,
+    };
+    state.diagnostics.push(format!(
+        "{}:{}: error [SB4016] function '{}' {}",
+        stmt.span.line, stmt.span.col, name, advice
+    ));
 }
 
 /// DD#70 (B): `match` / `matchall` / a bare `[[ … ]]` are booleans that
@@ -480,18 +487,17 @@ fn try_int_tail_call(
     block: &mut BlockId,
 ) -> Option<BlockId> {
     let unwrapped;
-    let (val, suppressed) = if let SsaValue::CmdSubstBody { body } = val {
+    let val = if let SsaValue::CmdSubstBody { body } = val {
         unwrapped = super::functions::suppressed_capture_value(body, state)?;
-        (&unwrapped, true)
+        &unwrapped
     } else {
-        (val, false)
+        val
     };
-    lower_int_tail_call(val, suppressed, ssa, state, block)
+    lower_int_tail_call(val, ssa, state, block)
 }
 
 fn lower_int_tail_call(
     val: &SsaValue,
-    suppressed: bool,
     ssa: &mut SsaProgram,
     state: &mut VersionState,
     block: &mut BlockId,
@@ -510,28 +516,10 @@ fn lower_int_tail_call(
     if *name != tail.func {
         return None;
     }
-    if suppressed && state.suppressed == 0 {
-        // Only subsequent iterations are suppressed. Lower one suppressed
-        // specialization; its own self-tail calls reuse its unchecked loop.
-        let entry_readonly = tail.entry_readonly.clone();
-        let scope = super::statements::SuppressionScope::enter(ssa, state, *block);
-        let lifted = lift_int_func_args(args.clone(), ssa, state, block);
-        let value = super::functions::inline_int_func(
-            name,
-            &lifted,
-            colls,
-            ssa,
-            state,
-            block,
-            Some(entry_readonly),
-        );
-        scope.finish(ssa, state);
-        return Some(emit_return_value(value, ssa, state, *block));
-    }
     let (header, aname) = (tail.header, tail.args_name.clone());
     // DD#81 Part B checks arity at *every* call site. A self-tail call lowers
     // to this back edge rather than through `inline_int_func`, so it is
-    // checked here; the suppressed entry above is checked by that inliner.
+    // checked here.
     let body = state
         .function_bodies
         .get(name)
@@ -1516,6 +1504,9 @@ fn push_set_test_from_status(ssa: &mut SsaProgram, block: BlockId) {
 /// `enforce_transform_diags`).
 fn reject_nonexternal_capture_condition(a: &Assignment, state: &mut VersionState) {
     let sp = a.value.span;
+    // This rejects the capture outright (`$(- f)` included), so the capture
+    // check's advice on the same capture would only lead to another SB4025.
+    state.expr_diagnostics.get_mut().retain(|(at, _)| *at != sp);
     state.diagnostics.push(format!(
         "{}:{}: error [SB4025] capturing a function's output is not a condition — a function \
          conveys status via `return` (use it as a predicate: `if f {{ … }}`), or capture then \

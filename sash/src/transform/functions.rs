@@ -1,9 +1,10 @@
 //! Function-related transformations: int-func lifting, inlining, helpers.
 
+use std::collections::{HashMap, HashSet};
+
 use crate::ir::*;
 use crate::ssa::*;
 
-use super::expressions::expr_to_value;
 use super::statements::lower_stmts;
 
 /// DD#75 §5: bind the callee's implicit `args` array (0-indexed) from the
@@ -192,7 +193,7 @@ pub(super) fn lift_int_func_calls(
         // ── the captures this pass exists to materialize ──────────────
         SsaValue::IntFuncCall { name, args, colls } => {
             let lifted = lift_each(args, ssa, state, block);
-            inline_int_func(&name, &lifted, &colls, ssa, state, block, None)
+            inline_int_func(&name, &lifted, &colls, ssa, state, block)
         }
         SsaValue::FuncCall { name, args, colls } => {
             let lifted = lift_each(args, ssa, state, block);
@@ -346,7 +347,8 @@ pub(super) fn suppressed_capture_value(
         return None;
     }
     let c = crate::ir::single_value_command(body)?;
-    Some(expr_to_value(
+    // The rebuilt capture drops the `-`, so it must not be checked again.
+    Some(super::expr_handlers::capture_value(
         &Expr {
             kind: ExprKind::CommandSubstitution(vec![Statement::command(
                 c.name.clone(),
@@ -617,12 +619,6 @@ pub(super) fn emit_tail_call(
 
 /// Inline a -> int function call, returning an SsaValue::Var pointing
 /// to the temp variable holding the return value.
-///
-/// `suppressed_tail_entry` is `Some` only for the one suppressed
-/// specialization a checked self-tail loop may enter (`lower_int_tail_call`),
-/// and carries that loop's entry readonly set. The specialization lowers the
-/// body again from inside its first lowering, so the body's own `const`s are
-/// still bound; it starts from the set the loop was entered with instead.
 pub(super) fn inline_int_func(
     name: &str,
     args: &[SsaValue],
@@ -630,16 +626,13 @@ pub(super) fn inline_int_func(
     ssa: &mut SsaProgram,
     state: &mut VersionState,
     block: &mut BlockId,
-    suppressed_tail_entry: Option<std::collections::HashSet<String>>,
 ) -> SsaValue {
     let Some(body) = defined_int_function_body(name, state) else {
         return SsaValue::Expr("0".to_string());
     };
 
-    // DD#27/§5: recursion is rejected, except that a checked self-tail loop
-    // may enter one suppressed specialization. Its own tail calls are back
-    // edges, so this never permits unbounded inlining.
-    if suppressed_tail_entry.is_none() && reject_recursive_call(name, state) {
+    // DD#27/§5: recursion is rejected; a self-tail call is a back edge.
+    if reject_recursive_call(name, state) {
         return SsaValue::Literal("0".to_string());
     }
     // DD#81 Part B checks arity at *every* call site; an `-> int` call is one.
@@ -651,9 +644,6 @@ pub(super) fn inline_int_func(
     let saved_args = save_caller_args(state);
     let saved_slots = setup_callee_slots(colls, state);
     let saved_ro = enter_fn_body_scope(state);
-    if let Some(entry_readonly) = suppressed_tail_entry {
-        state.readonly_vars = entry_readonly;
-    }
 
     // DD#75 §5: materialize the implicit `args` array (0-indexed).
     setup_callee_args(args, ssa, state, *block);
@@ -1018,19 +1008,34 @@ fn sig_record_arith_names(a: &ArithExpr, sig: &mut ArgSig) {
     }
 }
 
-pub(super) fn collect_returns(stmts: &[Statement]) -> Vec<Option<String>> {
-    let mut returns = Vec::new();
-    collect_returns_inner(stmts, &mut returns);
-    returns
+/// Every way a function body hands its caller a result: the `return` commands
+/// (`values`, as [`maybe_collect_return`] reads them) and the statements a
+/// `return <producer>` returns the status of (`producers`, DD#74).
+pub(super) struct ReturnSites<'a> {
+    pub(super) values: Vec<Option<String>>,
+    pub(super) producers: Vec<&'a Statement>,
+}
+
+pub(super) fn collect_return_sites(stmts: &[Statement]) -> ReturnSites<'_> {
+    let mut sites = ReturnSites {
+        values: Vec::new(),
+        producers: Vec::new(),
+    };
+    collect_return_sites_inner(stmts, &mut sites);
+    sites
 }
 
 /// **Total over `StmtKind` on purpose — do not add a wildcard.**
-fn collect_returns_inner(stmts: &[Statement], returns: &mut Vec<Option<String>>) {
+fn collect_return_sites_inner<'a>(stmts: &'a [Statement], sites: &mut ReturnSites<'a>) {
     for stmt in stmts {
         match &stmt.kind {
-            StmtKind::Command(c) => maybe_collect_return(c, returns),
+            StmtKind::Command(c) => maybe_collect_return(c, &mut sites.values),
             // Nested function definitions have their own returns.
             StmtKind::Function(_) => {}
+            StmtKind::ReturnProducer(inner) => {
+                sites.producers.push(inner);
+                collect_return_sites_bodies(stmt, sites);
+            }
             StmtKind::Assignment(_)
             | StmtKind::Declaration(_)
             | StmtKind::Pipeline(_)
@@ -1043,19 +1048,204 @@ fn collect_returns_inner(stmts: &[Statement], returns: &mut Vec<Option<String>>)
             | StmtKind::Group(_)
             | StmtKind::Suppressed(_)
             | StmtKind::Negated(_)
-            | StmtKind::ArithTest(_)
-            | StmtKind::ReturnProducer(_) => collect_returns_bodies(stmt, returns),
+            | StmtKind::ArithTest(_) => collect_return_sites_bodies(stmt, sites),
         }
     }
 }
 
-/// The nested-body half of [`collect_returns_inner`]. `structural_bodies`, not
-/// `child_bodies`: a `$( … )` body is an anonymous function body (DD#86), so a
-/// `return` inside it belongs to that body, not to the enclosing function.
-fn collect_returns_bodies(stmt: &Statement, returns: &mut Vec<Option<String>>) {
+/// The nested-body half of [`collect_return_sites_inner`]. `structural_bodies`,
+/// not `child_bodies`: a `$( … )` body is an anonymous function body (DD#86),
+/// so a `return` inside it belongs to that body, not to the enclosing function.
+fn collect_return_sites_bodies<'a>(stmt: &'a Statement, sites: &mut ReturnSites<'a>) {
     for body in stmt.structural_bodies() {
-        collect_returns_inner(body, returns);
+        collect_return_sites_inner(body, sites);
     }
+}
+
+/// What a `return <producer>` hands back, for deciding whether its function
+/// has a result (DD#55).
+pub(super) enum ProducerStatus<'a> {
+    /// `return f …` inside `f`: the loop's back edge (DD#27), so the result is
+    /// whatever the function's other returns give.
+    SelfTail,
+    /// A call of another user function, which hands back that function's
+    /// result: nothing when it is void.
+    Calls(&'a str),
+    /// Anything else — an external, `[[ … ]]`, `(( … ))`, a pipeline, a
+    /// negation, a redirected call — yields a status the caller can see.
+    Status,
+}
+
+pub(super) fn classify_producer<'a>(
+    producer: &'a Statement,
+    function: &str,
+    is_function: impl Fn(&str) -> bool,
+) -> ProducerStatus<'a> {
+    let StmtKind::Command(c) = &producer.kind else {
+        return ProducerStatus::Status;
+    };
+    let head = literal_command_name(&c.name);
+    if head == function {
+        ProducerStatus::SelfTail
+    } else if is_function(head) {
+        ProducerStatus::Calls(head)
+    } else {
+        ProducerStatus::Status
+    }
+}
+
+impl ProducerStatus<'_> {
+    /// Whether this `return <producer>` exit can only hand back 0, given which
+    /// functions are void; `None` for a self tail-call, which is the loop's
+    /// back edge rather than an exit (DD#27).
+    pub(super) fn exit_yields_zero(&self, is_void: impl Fn(&str) -> bool) -> Option<bool> {
+        match self {
+            ProducerStatus::SelfTail => None,
+            ProducerStatus::Calls(g) => Some(is_void(g)),
+            ProducerStatus::Status => Some(false),
+        }
+    }
+}
+
+/// A literal `return 0`, or a bare `return` (an implicit 0).
+pub(super) fn returns_zero(value: &Option<String>) -> bool {
+    matches!(value.as_deref(), Some("0") | Some(""))
+}
+
+/// DD#55: what one definition's own exits decide. An `-> int` function always
+/// has a result; any other has a status when some exit can hand back one — a
+/// `return` with a nonzero or computed value, or a status-producing `return
+/// <producer>` — and otherwise has the class of the functions its `return g`
+/// exits hand the result to. `is_function` names every function the program
+/// defines, so a `return g` is recorded whichever definition of `g` is in
+/// force where the result is decided.
+pub(super) fn exit_summary(f: &Function, is_function: impl Fn(&str) -> bool) -> ExitSummary {
+    if f.return_type == VarType::Int {
+        return ExitSummary::Int;
+    }
+    returned_callees(f, is_function).map_or(ExitSummary::Status, ExitSummary::Returns)
+}
+
+/// The functions a non-int definition's `return g` exits hand the result to,
+/// or `None` when some exit already yields a status.
+fn returned_callees(f: &Function, is_function: impl Fn(&str) -> bool) -> Option<Vec<String>> {
+    let sites = collect_return_sites(&f.body);
+    let mut callees = Vec::new();
+    for producer in sites.producers {
+        match classify_producer(producer, &f.name, &is_function) {
+            ProducerStatus::SelfTail => {}
+            ProducerStatus::Calls(g) => callees.push(g.to_string()),
+            ProducerStatus::Status => return None,
+        }
+    }
+    sites.values.iter().all(returns_zero).then_some(callees)
+}
+
+/// What a `return g` into a name with no exit summary runs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum Absent {
+    /// An external command, so the exit yields a status: the in-force view,
+    /// where `g` is not defined yet.
+    Status,
+    /// Some definition of a redefined `g`, so the caller's class is unknown:
+    /// the static view, which has no call site to pick one.
+    Unknown,
+}
+
+/// The functions a `return g` exit hands the result to, per undecided name.
+type Undecided<'a> = Vec<(&'a str, &'a [String])>;
+
+/// DD#55: each function's class from its exits. A least fixpoint over the
+/// `return g` edges: a function that hands its result to a non-void one has a
+/// status, and what never reaches one is void, so a cycle that reaches no
+/// status stays void (SB5037 rejects the cycle anyway) and the answer does not
+/// depend on the order of the definitions. A function whose class `absent`
+/// leaves unknown gets none.
+pub(super) fn classify(
+    exits: &HashMap<String, ExitSummary>,
+    absent: Absent,
+) -> HashMap<String, FnClass> {
+    let (mut classes, mut undecided) = seed_classes(exits);
+    while let Some(i) = undecided.iter().position(|(_, callees)| {
+        callees
+            .iter()
+            .any(|g| hands_back_result(g, &classes, exits, absent))
+    }) {
+        classes.insert(undecided.swap_remove(i).0.to_string(), FnClass::Status);
+    }
+    if absent == Absent::Unknown {
+        drop_unknown(&mut undecided, exits);
+    }
+    let void = undecided
+        .into_iter()
+        .map(|(name, _)| (name.to_string(), FnClass::Void));
+    classes.extend(void);
+    classes
+}
+
+/// The classes the exits decide outright, and the functions whose class is
+/// that of the ones they hand the result to.
+fn seed_classes(exits: &HashMap<String, ExitSummary>) -> (HashMap<String, FnClass>, Undecided<'_>) {
+    let mut classes = HashMap::new();
+    let mut undecided = Vec::new();
+    for (name, summary) in exits {
+        let class = match summary {
+            ExitSummary::Int => FnClass::Int,
+            ExitSummary::Status => FnClass::Status,
+            ExitSummary::Returns(callees) => {
+                undecided.push((name.as_str(), callees.as_slice()));
+                continue;
+            }
+        };
+        classes.insert(name.clone(), class);
+    }
+    (classes, undecided)
+}
+
+/// Whether a `return g` exit can hand back a result: `g` is non-void, or it
+/// has no exit summary and runs an external command.
+fn hands_back_result(
+    g: &str,
+    classes: &HashMap<String, FnClass>,
+    exits: &HashMap<String, ExitSummary>,
+    absent: Absent,
+) -> bool {
+    classes.contains_key(g) || (absent == Absent::Status && !exits.contains_key(g))
+}
+
+/// [`Absent::Unknown`]: drop each function that is not yet a status and hands
+/// its result to a name with no exit summary, or to a function dropped
+/// already — some definitions of that name may yield a status.
+fn drop_unknown(undecided: &mut Undecided<'_>, exits: &HashMap<String, ExitSummary>) {
+    let mut unknown = HashSet::new();
+    while let Some(i) = undecided.iter().position(|(_, callees)| {
+        callees
+            .iter()
+            .any(|g| !exits.contains_key(g) || unknown.contains(g.as_str()))
+    }) {
+        unknown.insert(undecided.swap_remove(i).0);
+    }
+}
+
+/// DD#55: each function's class whatever the call site, decided over every
+/// definition before any body is lowered, for the `fn_NAME` templates (an
+/// uncalled body is checked too). A real call runs the definition in force,
+/// so only a name defined once has one class everywhere; a redefined name,
+/// and every function whose class it decides, is left to the real call sites.
+pub(super) fn static_classes(
+    program: &Program,
+    known: &HashSet<String>,
+) -> HashMap<String, FnClass> {
+    let mut definitions: HashMap<&str, usize> = HashMap::new();
+    for f in program.function_defs() {
+        *definitions.entry(f.name.as_str()).or_default() += 1;
+    }
+    let exits = program
+        .function_defs()
+        .filter(|f| definitions[f.name.as_str()] == 1)
+        .map(|f| (f.name.clone(), exit_summary(f, |n| known.contains(n))))
+        .collect();
+    classify(&exits, Absent::Unknown)
 }
 
 /// If `c` is a `return` command, push its target into `returns`:
@@ -1128,7 +1318,10 @@ mod invariant_tests {
             analyze_arity(&body),
             (Arity::Fixed { min: 1, max: 1 }, vec![])
         );
-        assert_eq!(collect_returns(&body), vec![Some("0".to_string())]);
+        assert_eq!(
+            collect_return_sites(&body).values,
+            vec![Some("0".to_string())]
+        );
     }
 
     #[test]

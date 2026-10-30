@@ -386,9 +386,10 @@ f c &
 - wait'
 [[ $rc = 0 && $out = ccc && -z $err ]]; chk constw.18
 
-# constw.19 constw.16 with the tail call suppressed: its one suppressed
-# specialization lowers the body again from inside the first lowering, so it
-# starts from the readonly set the loop was entered with
+# constw.19 constw.16 with the tail call suppressed. That once lowered a second,
+# suppressed specialization of the loop; `-` on a capture that binds an
+# `-> int` function's int now has nothing to discard (SB4076, DD#55
+# 2026-10-29), so the spelling is rejected and the specialization is gone.
 run_sash 'fn descend -> int {
 const k=$1
 int n=$(($1))
@@ -398,7 +399,8 @@ int next=$((n - 1))
 return $(- descend $next)
 }
 echo $(descend 2)'
-[[ $rc = 0 && $out = 7 && $rerr = $'k=2\nk=1\nk=0' && -z $err ]]; chk constw.19
+[[ $rc != 0 && -z $out && $err == *':7:8: error [SB4076]'* \
+   && $err == *"binds the int that function 'descend' returns"* ]]; chk constw.19
 
 # constw.20-constw.21: a const bound in a dispatch's default arm, merged with
 # the arms that skip it. Each used to be a false SB4044: the merge keeps the

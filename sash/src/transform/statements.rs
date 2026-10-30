@@ -5,7 +5,10 @@
 
 use super::control_flow::{flatten_elif, lower_case, lower_for, lower_if, lower_while};
 use super::expressions::{arg_to_value, expr_to_value, literal_name_of};
-use super::functions::{collect_returns, lift_int_func_calls};
+use super::functions::{
+    classify, classify_producer, collect_return_sites, exit_summary, lift_int_func_calls,
+    returns_zero, Absent,
+};
 use crate::ir::*;
 use crate::ssa::*;
 
@@ -33,6 +36,7 @@ pub(super) fn lower_one(
 ) -> BlockId {
     let enclosing = std::mem::replace(&mut state.stmt_span, stmt.span);
     let block = lower_stmt_kind(stmt, ssa, state, block);
+    state.flush_expr_diagnostics();
     state.stmt_span = enclosing;
     block
 }
@@ -158,11 +162,12 @@ fn lower_while_stmt(
 
 /// Function definition. Registers the body for inline expansion at call sites,
 /// then emits the body into a dedicated SSA block sequence terminating in Return.
-/// Special cases: DD#55 non-void detection + SB4017 emission. The name and its
-/// `-> int` return type were registered up front by `register_functions`, for
-/// every definition including END's. (The DD#56 END body is
-/// `Program::end_block`, seeded into `state.exit_trap` by `ir_to_ssa` — it is
-/// not a function and never reaches here.)
+/// Special case: DD#55's SB4017. The name and its `-> int` return type were
+/// decided up front by `register_functions`, for every definition including
+/// END's. A call runs the definition in force, so the classes the calls lowered
+/// from here on check (DD#55) are recomputed as this one comes into force.
+/// (The DD#56 END body is `Program::end_block`, seeded into `state.exit_trap`
+/// by `ir_to_ssa` — it is not a function and never reaches here.)
 fn lower_function_stmt(
     f: &Function,
     stmt: &Statement,
@@ -180,6 +185,9 @@ fn lower_function_stmt(
         ));
     }
     state.function_bodies.insert(f.name.clone(), f.body.clone());
+    let exits = exit_summary(f, |n| state.known_functions.contains(n));
+    state.exits_in_force.insert(f.name.clone(), exits);
+    state.class_in_force = classify(&state.exits_in_force, Absent::Status);
     report_arity_defects(f, stmt, state);
     analyze_function_returns(f, stmt, state);
     let fn_entry = ssa.new_block(&format!("fn_{}", f.name));
@@ -249,31 +257,34 @@ fn report_arity_defects(f: &Function, stmt: &Statement, state: &mut VersionState
     }
 }
 
-/// DD#55: for an `-> int` function, flag SB4017 when every return is a
-/// literal 0 (it should be void), and record non-void status otherwise.
+/// DD#55: an `-> int` function whose every exit yields 0 should be void
+/// (SB4017). A `return g` exit yields what `g` does: a self tail-call is a
+/// loop, not an exit, a void function yields 0, and any other command can
+/// yield a non-zero status. Checked once per definition, so `g` counts as
+/// void only when it is whatever the call site — a redefined `g` may not be.
 fn analyze_function_returns(f: &Function, stmt: &Statement, state: &mut VersionState) {
     if f.return_type != crate::ir::VarType::Int {
         return;
     }
-    let returns = collect_returns(&f.body);
-    if returns.is_empty() {
+    let sites = collect_return_sites(&f.body);
+    let producer_exits = sites.producers.iter().filter_map(|p| {
+        classify_producer(p, &f.name, |n| state.known_functions.contains(n))
+            .exit_yields_zero(|g| state.class_static.get(g) == Some(&FnClass::Void))
+    });
+    // One entry per exit: whether it can only hand back 0.
+    let yields_zero: Vec<bool> = sites
+        .values
+        .iter()
+        .map(returns_zero)
+        .chain(producer_exits)
+        .collect();
+    if yields_zero.is_empty() || yields_zero.contains(&false) {
         return;
     }
-    let all_literal_zero = returns
-        .iter()
-        .all(|v| matches!(v, Some(s) if s.is_empty() || s == "0"));
-    if all_literal_zero {
-        state.diagnostics.push(format!(
-            "{}:{}: error [SB4017] function '{}' only returns 0 — omit the return (void function) or return a meaningful status",
-            stmt.span.line, stmt.span.col, f.name
-        ));
-    }
-    let has_nonzero = returns
-        .iter()
-        .any(|v| !matches!(v, Some(s) if s.is_empty() || s == "0"));
-    if has_nonzero {
-        state.function_non_void.insert(f.name.clone());
-    }
+    state.diagnostics.push(format!(
+        "{}:{}: error [SB4017] function '{}' only returns 0 — omit the return (void function) or return a meaningful status",
+        stmt.span.line, stmt.span.col, f.name
+    ));
 }
 
 /// Statement wrapped in a redirect.
@@ -634,10 +645,36 @@ fn lower_suppressed_stmt(
     state: &mut VersionState,
     block: BlockId,
 ) -> BlockId {
+    check_void_suppression(inner, state);
     let scope = SuppressionScope::enter(ssa, state, block);
     let result_block = lower_one(inner, ssa, state, block);
     scope.finish(ssa, state);
     result_block
+}
+
+/// DD#55 (2026-10-29): on a user function, `-` discards the value it returns,
+/// so a void function leaves it nothing to discard (SB4076). The class is
+/// that of the definition the call runs. A redirect does not change what the
+/// call returns. A stage or a job is a process with an exit status of its
+/// own, and never reaches here.
+fn check_void_suppression(inner: &Statement, state: &mut VersionState) {
+    let call = match &inner.kind {
+        StmtKind::Redirected(r) => &r.body,
+        _ => inner,
+    };
+    let StmtKind::Command(c) = &call.kind else {
+        return;
+    };
+    let ExprKind::Literal(name) = &c.name.kind else {
+        return;
+    };
+    if state.call_class(name) == Some(FnClass::Void) {
+        state.diagnostics.push(format!(
+            "{}:{}: error [SB4076] function '{}' returns nothing, so `-` has nothing \
+             to discard — call it without `-`",
+            state.stmt_span.line, state.stmt_span.col, name
+        ));
+    }
 }
 
 /// An inlined call allocates its return block before its body blocks. The

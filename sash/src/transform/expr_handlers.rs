@@ -5,6 +5,64 @@ use crate::ir::*;
 use crate::ssa::*;
 
 pub(super) fn handle_command_substitution(expr: &Expr, state: &VersionState) -> SsaValue {
+    check_function_capture(expr, state);
+    capture_value(expr, state)
+}
+
+/// DD#55: a capture of a user function. The capture binds what the function
+/// prints — or, for an `-> int` function, the int it returns — so a status
+/// the function returns is dropped unless `$(- f)` discards it, and on a void
+/// or `-> int` function `-` has nothing to discard (SB4076). The class is that
+/// of the definition the capture runs. A redirected capture body is lowered as
+/// a statement and checked there.
+fn check_function_capture(expr: &Expr, state: &VersionState) {
+    let ExprKind::CommandSubstitution(stmts) = &expr.kind else {
+        return;
+    };
+    let Some(c) = single_value_command(stmts) else {
+        return;
+    };
+    let ExprKind::Literal(name) = &c.name.kind else {
+        return;
+    };
+    let Some(class) = state.call_class(name) else {
+        return;
+    };
+    let discarded = matches!(stmts[0].kind, StmtKind::Suppressed(_));
+    let call = call_spelling(name, c);
+    let what = match (discarded, class) {
+        (false, FnClass::Status) => format!(
+            "[SB4016] function '{name}' returns a status, which a capture \
+             cannot handle — discard it with `$(- {call})`"
+        ),
+        (true, FnClass::Int) => format!(
+            "[SB4076] `$({call})` binds the int that function '{name}' \
+             returns, so `-` has nothing to discard — capture it without `-`"
+        ),
+        (true, FnClass::Void) => format!(
+            "[SB4076] function '{name}' returns nothing, so `-` has nothing \
+             to discard — call it without `-`"
+        ),
+        _ => return,
+    };
+    let at = expr.span;
+    let diagnostic = format!("{}:{}: error {what}", at.line, at.col);
+    state.expr_diagnostics.borrow_mut().push((at, diagnostic));
+}
+
+/// The call as the capture advice spells it back: its arguments, which the
+/// advice does not need, elided as `…`.
+fn call_spelling(name: &str, c: &Command) -> String {
+    if c.args.is_empty() {
+        name.to_string()
+    } else {
+        format!("{name} …")
+    }
+}
+
+/// [`handle_command_substitution`] without its function-capture check, for a
+/// capture rebuilt from one already checked (`suppressed_capture_value`).
+pub(super) fn capture_value(expr: &Expr, state: &VersionState) -> SsaValue {
     let Some((stmt, name, c)) = single_command_subst(expr) else {
         // Multi-statement / pipeline body (`$(x=1; echo $x)`, `$(a | b)`):
         // carry the body as a `CmdSubstBody` to be lifted into a capture temp

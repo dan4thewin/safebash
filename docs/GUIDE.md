@@ -401,14 +401,25 @@ Everything else is `SB5037`:
 | non-tail self-call — `return $(( n * (f m) ))` | **SB5037** |
 | mutual recursion — `f` calls `g` calls `f` | **SB5037** |
 
-A suppressed capture-return, `return $(- f ...)`, also remains a tail loop.
-A checked loop enters one separately lowered suppressed loop at that call;
-the initial iteration stays checked, and subsequent tail calls reuse the
-suppressed loop. No runtime call stack or suppression flag is added.
+A suppressed capture-return, `return $(- f ...)`, is SB4076 in an int f:
+`$(f)` binds the int that f returns, so `-` has nothing to discard (DD#55
+addendum 2026-10-30). The separately lowered suppressed loop that journal 530
+built for it is gone (journal 547).
 
 The non-tail case is the one worth naming explicitly, because it is what a
 direct translation of the textbook factorial produces: the multiply happens
 *after* the call returns, so there is nothing to turn into a loop.
+
+**Every function is int, status or void** (DD#55 addendum 2026-10-30). An
+`-> int` function returns an int. A function is void when every exit is
+`return 0`, a bare `return`, the end of its body, or a tail call `return g`
+of a void g (itself included). Any other function returns a status. A call
+must handle the status as a condition (`if`, `while`, the left side of `&&`
+or `||`) or discard it with `-` (`- f`, `$(- f)`). Anything else is SB4016,
+as an int function's unbound answer already was. `-` with nothing to discard
+is SB4076: on a void function, or in `$(- f)` on an int f, whose `$(f)`
+binds the int. Each call is checked against the definition in force where
+it stands.
 
 ### Phases 7–9: Fold, Codegen, Link
 

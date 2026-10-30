@@ -146,6 +146,11 @@ The AI's reading. Decide-and-report items are marked; DG may veto them.
 F6 implements Q1, Q2 (in-process), Q3 and Q4. Q6 waits for W2. The other
 items now live in the four tasks named above.
 
+F6 unit A (journal 547) landed Q3 and Q2's in-process half: SB4016 for an
+unhandled status function, SB4076 for `-` on a void function or in `$(- f)`
+of an int function (DD55 addendum 2026-10-30). Q1 and Q4 (the reach of `-`
+into a body and into argument captures) are the next F6 unit.
+
 ## What
 
 Found 2026-10-28, while porting F2 (batch-531 B82: a stage's `-` is not

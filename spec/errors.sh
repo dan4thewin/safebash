@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup errors
-plan=676
+plan=705
 echo "1..$plan" >&3
 
 set +e
@@ -2546,8 +2546,7 @@ echo "got:$s"'
 run_sash 'fn f {
 return /bin/sh -c "echo E >&2; exit 3" 2>/dev/null
 }
-f
-echo "rc=$?"'
+f || echo "rc=$?"'
 [[ $rc = 0 && $out = "rc=3" && $rerr != *E* ]]; chk rdr.39
 run_sash 'fn f {
 return 3 > /tmp/sash_rdr_rn
@@ -3775,36 +3774,47 @@ run_sash "echo \"\$(echo \$'\\101\\cA')\""
 [[ $rc != 0 && -z $out && $err == *':1:16: error [SB4063]'* \
    && $err == *'octal escapes are not supported'* ]]; chk lexcold.5
 
-# Suppression scopes the complete call, not just its final block or exec.
+# supval.1-supval.22 were written when `-` reached into a call's body. On a
+# user function `-` now discards only the value the function returns (DD#55
+# 2026-10-29), so on a void function, or on a capture that binds an `-> int`
+# function's int, it has nothing to discard: SB4076. The ids that spelled one
+# of those now pin the rejection; the rest keep their programs.
 run_sash 'fn speak { if (( 1 )) { /bin/false }; echo hello }
 - speak
 echo after'
-[[ $rc = 0 && $out = $'hello\nafter' && -z $err && -z $rerr ]]; chk supval.1
+[[ $rc != 0 && -z $out && $err == *':2:1: error [SB4076]'* \
+   && $err == *"function 'speak' returns nothing, so \`-\` has nothing to discard"* ]]; chk supval.1
 
 run_sash 'fn speak { echo hello; /bin/false }
 str x=$(- speak)
 echo "[$x]"'
-[[ $rc = 0 && $out = '[hello]' && -z $err && -z $rerr ]]; chk supval.2
+[[ $rc != 0 && -z $out && $err == *':2:7: error [SB4076]'* \
+   && $err == *"function 'speak' returns nothing"* ]]; chk supval.2
 
 run_sash 'fn speak { echo hello; /bin/false }
 echo "[$(- speak)]"'
-[[ $rc = 0 && $out = '[hello]' && -z $err && -z $rerr ]]; chk supval.3
+[[ $rc != 0 && -z $out && $err == *':2:6: error [SB4076]'* \
+   && $err == *"function 'speak' returns nothing"* ]]; chk supval.3
 
 run_sash 'fn count -> int { /bin/false; return 7 }
 int n=$(- count)
 echo "$n"'
-[[ $rc = 0 && $out = 7 && -z $err && -z $rerr ]]; chk supval.4
+[[ $rc != 0 && -z $out && $err == *':2:7: error [SB4076]'* \
+   && $err == *"\`\$(count)\` binds the int that function 'count' returns"* \
+   && $err == *'capture it without `-`'* ]]; chk supval.4
 
 run_sash 'fn count -> int { /bin/false; return 7 }
 int n=$(- count)
 echo $((n + 1))'
-[[ $rc = 0 && $out = 8 && -z $err && -z $rerr ]]; chk supval.5
+[[ $rc != 0 && -z $out && $err == *':2:7: error [SB4076]'* \
+   && $err == *"binds the int that function 'count' returns"* ]]; chk supval.5
 
 run_sash 'fn fail { echo token; /bin/false }
 fn use { echo "$1" }
 str x=$(- use $(fail))
 echo "[$x]"'
-[[ $rc = 0 && $out = '[token]' && -z $err && -z $rerr ]]; chk supval.6
+[[ $rc != 0 && -z $out && $err == *':3:7: error [SB4076]'* \
+   && $err == *"function 'use' returns nothing"* ]]; chk supval.6
 
 run_sash 'fn fail { echo token; /bin/false }
 str x=$(- toupper $(fail))
@@ -3823,9 +3833,11 @@ int next=$((n - 1))
 return $(- descend $next)
 }
 echo $(descend 2)'
-[[ $rc = 0 && $out = 7 && -z $err && -z $rerr ]]; chk supval.9
+[[ $rc != 0 && -z $out && $err == *':5:8: error [SB4076]'* \
+   && $err == *"\`\$(descend …)\` binds the int that function 'descend' returns"* ]]; chk supval.9
 
-# The first iteration is still checked; only the tail-prefixed ones change.
+# These four pinned the old suppressed self-tail loop, which no program can
+# reach now: each spelling of it is SB4076.
 run_sash 'fn descend -> int {
 int n=$(($1))
 /bin/false
@@ -3834,7 +3846,8 @@ int next=$((n - 1))
 return $(- descend $next)
 }
 echo $(descend 2)'
-[[ $rc = 1 && -z $out && -z $err && $rerr == *'command failed (exit 1)'* ]]; chk supval.10
+[[ $rc != 0 && -z $out && $err == *':6:8: error [SB4076]'* \
+   && $err == *"binds the int that function 'descend' returns"* ]]; chk supval.10
 
 run_sash 'fn descend -> int {
 int n=$(($1))
@@ -3843,7 +3856,8 @@ int next=$((n - 1))
 return $(- descend $next)
 }
 echo $(- descend 10000)'
-[[ $rc = 0 && $out = 7 && -z $err && -z $rerr ]]; chk supval.11
+[[ $rc != 0 && -z $out && $err == *':5:8: error [SB4076]'* \
+   && $err == *':7:6: error [SB4076]'* ]]; chk supval.11
 
 run_sash 'fn descend -> int {
 int n=$(($1))
@@ -3853,7 +3867,8 @@ int next=$((n - 1))
 return $(- descend $next)
 }
 echo $(descend 2)'
-[[ $rc = 0 && $out = 7 && -z $err && -z $rerr ]]; chk supval.12
+[[ $rc != 0 && -z $out && $err == *':6:8: error [SB4076]'* \
+   && $err == *"binds the int that function 'descend' returns"* ]]; chk supval.12
 
 run_sash 'fn descend -> int {
 int n=$(($1))
@@ -3871,18 +3886,20 @@ if (( n == 0 )) { return 7 }
 return $(- descend $(zero))
 }
 echo $(descend 1)'
-[[ $rc = 0 && $out = 7 && -z $err && -z $rerr ]]; chk supval.14
+[[ $rc != 0 && -z $out && $err == *':5:8: error [SB4076]'* \
+   && $err == *"binds the int that function 'descend' returns"* ]]; chk supval.14
 
-# A later prefix must not uncheck blocks emitted by an earlier capture.
+# A later prefix must not uncheck blocks emitted by an earlier capture. `safe`
+# returns a status, so `- safe` is legal and discards it.
 run_sash 'fn count -> int { if (( 1 )) { /bin/false }; return 7 }
-fn safe { echo hello }
+fn safe { echo hello; return 1 }
 int n=$(count)
 - safe
 echo "$n"'
 [[ $rc = 1 && -z $out && -z $err && $rerr == *'command failed (exit 1)'* ]]; chk supval.15
 
 run_sash 'fn speak { if (( 1 )) { /bin/false }; echo token }
-fn safe { echo hello }
+fn safe { echo hello; return 1 }
 str x=$(speak)
 - safe
 echo "$x"'
@@ -3892,7 +3909,8 @@ run_sash 'fn speak { echo hello; /bin/false }
 - speak
 /bin/false
 echo after'
-[[ $rc = 1 && $out = hello && -z $err && $rerr == *'command failed (exit 1)'* ]]; chk supval.17
+[[ $rc != 0 && -z $out && $err == *':2:1: error [SB4076]'* \
+   && $err == *"function 'speak' returns nothing"* ]]; chk supval.17
 
 run_sash 'fn fail { echo token; /bin/false }
 str x=$(- basename $(fail))
@@ -3917,7 +3935,8 @@ echo after'
 run_sash 'fn speak { if (( 1 )) { /bin/false }; echo token }
 str x=$(- speak 2>&1)
 echo "[$x]"'
-[[ $rc = 0 && $out = '[token]' && -z $err && -z $rerr ]]; chk supval.22
+[[ $rc != 0 && -z $out && $err == *':2:9: error [SB4076]'* \
+   && $err == *"function 'speak' returns nothing"* ]]; chk supval.22
 
 # Prefix peeling must retain the sole-value position and structural gates.
 run_sash 'echo $(- strlen)'
@@ -3938,7 +3957,7 @@ int n=$(count; echo token)
 echo "$n"'
 [[ $rc != 0 && -z $out && $err == *SB4030* && $err == *'string'* ]]; chk supval.27
 
-run_sash 'fn safe { echo hello }
+run_sash 'fn safe { echo hello; return 1 }
 int choose=1
 if (( choose )) {
 if (( choose )) { /bin/false }
@@ -3973,6 +3992,215 @@ attest x [[ -n $x ]]
 echo "$x"
 } else { echo missing }'
 [[ $rc = 0 && $out = missing && -z $err && -z $rerr ]]; chk supval.35
+
+# nonvoid.1-nonvoid.24: a non-void function's answer is handled or discarded
+# (batch-531 B15; DD#55 2026-10-29 and 2026-10-30). A status function's call
+# is handled by a condition or `||`, or discarded with `-`; as a bare
+# statement, a list tail, a background job or a capture it is SB4016,
+# wherever it appears. A function whose only exits are `return 0`, a bare
+# `return`, falling off the end or a self-tail call is void, so `-` on it is
+# SB4076. `return g` takes g's class, and the last definition of a name
+# decides it, in any textual order.
+run_sash 'fn f { return 3 }
+f
+echo after'
+[[ $rc != 0 && -z $out && $err == *':2:1: error [SB4016]'* \
+   && $err == *"function 'f' returns a status — handle it with"* ]]; chk nonvoid.1
+
+# the tail of a list is not handled: its status is the statement's
+run_sash 'fn f { return 3 }
+/bin/true && f
+echo after'
+[[ $rc != 0 && -z $out && $err == *':2:14: error [SB4016]'* ]]; chk nonvoid.2
+
+# reading `$?` afterwards does not handle it
+run_sash 'fn f { return 3 }
+f
+echo "st $?"'
+[[ $rc != 0 && -z $out && $err == *':2:1: error [SB4016]'* ]]; chk nonvoid.3
+
+# inside a function body (g itself falls off the end, so it is void)
+run_sash 'fn f { return 3 }
+fn g { f }
+g
+echo after'
+[[ $rc != 0 && -z $out && $err == *':2:8: error [SB4016]'* \
+   && $err != *':3:1:'* ]]; chk nonvoid.4
+
+run_sash 'fn s { return 3 }
+END { s }
+echo after'
+[[ $rc != 0 && -z $out && $err == *':2:7: error [SB4016]'* ]]; chk nonvoid.5
+
+run_sash 'fn f { return 3 }
+f &
+- wait
+echo after'
+[[ $rc != 0 && -z $out && $err == *':2:1: error [SB4016]'* ]]; chk nonvoid.6
+
+# a tail call is status-transparent: b returns a's status
+run_sash 'fn a { return 3 }
+fn b { return a }
+b || echo caught
+b
+echo after'
+[[ $rc != 0 && -z $out && $err == *':4:1: error [SB4016]'* \
+   && $err == *"function 'b' returns a status"* && $err != *':3:1:'* ]]; chk nonvoid.7
+
+# the definition in force decides the class
+run_sash 'fn f { echo one }
+fn f { return 3 }
+f
+echo after'
+[[ $rc != 0 && -z $out && $err == *':3:1: error [SB4016]'* ]]; chk nonvoid.8
+
+# b is defined after the body that calls it
+run_sash 'fn a { b }
+fn b -> int { return 7 }
+echo after'
+[[ $rc != 0 && -z $out && $err == *':1:8: error [SB4016]'* \
+   && $err == *"function 'b' returns an int"* ]]; chk nonvoid.9
+
+# a capture binds the output, so the status has nowhere to go
+run_sash 'fn f { echo out; return 3 }
+x=$(f)
+echo "[$x]"'
+[[ $rc != 0 && -z $out && $err == *':2:3: error [SB4016]'* \
+   && $err == *"which a capture cannot handle — discard it with \`\$(- f)\`"* ]]; chk nonvoid.10
+
+run_sash 'fn f { echo "$1 $2"; return 3 }
+x=$(f one two)
+echo "[$x]"'
+[[ $rc != 0 && -z $out && $err == *':2:3: error [SB4016]'* \
+   && $err == *"discard it with \`\$(- f …)\`"* ]]; chk nonvoid.11
+
+# a statement's `-` does not reach a capture among its arguments
+run_sash 'fn f { echo out; return 3 }
+- /bin/echo $(f)
+echo after'
+[[ $rc != 0 && -z $out && $err == *':2:13: error [SB4016]'* ]]; chk nonvoid.12
+
+run_sash 'fn f { echo out; return 3 }
+if [[ $(f) == out ]] { echo eq }
+echo after'
+[[ $rc != 0 && -z $out && $err == *':2:7: error [SB4016]'* ]]; chk nonvoid.13
+
+# a redirected capture body is a statement, and gets the statement's error
+run_sash 'fn s { echo x; return 3 }
+str y=$(s 2>&1)
+echo "[$y]"'
+[[ $rc != 0 && -z $out && $err == *':2:9: error [SB4016]'* ]]; chk nonvoid.14
+
+# a function capture as a condition is SB4025, which supersedes SB4016
+run_sash 'fn f { echo out; return 3 }
+if x=$(f) { echo "yes [$x]" } else { echo "no [$x]" }'
+[[ $rc != 0 && -z $out && $err == *':2:6: error [SB4025]'* \
+   && $err != *SB4016* ]]; chk nonvoid.15
+
+# `return g` with a void g returns only 0
+run_sash 'fn g { echo g }
+fn f -> int { return g }
+int n=$(( f ))
+echo "[$n]"'
+[[ $rc != 0 && -z $out && $err == *':2:1: error [SB4017]'* \
+   && $err == *"function 'f' only returns 0"* ]]; chk nonvoid.16
+
+# ... and makes a status function void
+run_sash 'fn d { echo d }
+fn c { return d }
+- c
+echo after'
+[[ $rc != 0 && -z $out && $err == *':3:1: error [SB4076]'* \
+   && $err == *"function 'c' returns nothing"* ]]; chk nonvoid.17
+
+run_sash 'fn v { echo x }
+str y=$(- v 2>&1)
+echo "[$y]"'
+[[ $rc != 0 && -z $out && $err == *':2:9: error [SB4076]'* \
+   && $err == *"function 'v' returns nothing"* ]]; chk nonvoid.18
+
+# nonvoid.19-nonvoid.24 are accepted.
+run_sash 'fn f { return 3 }
+fn f { echo two }
+f
+echo after'
+[[ $rc = 0 && $out = $'two\nafter' && -z $err && -z $rerr ]]; chk nonvoid.19
+
+# `return 0` on one path and an int call on the other is an int function
+run_sash 'str v=y
+fn g -> int { return 7 }
+fn f -> int {
+    if [[ $v == x ]] { return 0 }
+    return g
+}
+int n=$(( f ))
+echo "after $n"'
+[[ $rc = 0 && $out = 'after 7' && -z $err && -z $rerr ]]; chk nonvoid.20
+
+run_sash 'fn f { return 3 }
+f && echo yes
+f || echo caught
+echo after'
+[[ $rc = 0 && $out = $'caught\nafter' && -z $err && -z $rerr ]]; chk nonvoid.21
+
+run_sash 'fn f { echo out; return 3 }
+x=$(- f)
+echo "[$x]"'
+[[ $rc = 0 && $out = '[out]' && -z $err && -z $rerr ]]; chk nonvoid.22
+
+run_sash 'fn s { echo x; return 3 }
+str y=$(- s 2>&1)
+echo "[$y]"'
+[[ $rc = 0 && $out = '[x]' && -z $err && -z $rerr ]]; chk nonvoid.23
+
+# a stage or a job is a process, whose own status `-` discards, void or not
+run_sash 'fn v { echo v }
+fn s { echo s; return 3 }
+- v &
+- wait
+- s &
+- wait
+- v | /bin/cat
+- s | /bin/cat
+echo after'
+[[ $rc = 0 && $out = $'v\ns\nv\ns\nafter' && -z $err && -z $rerr ]]; chk nonvoid.24
+
+# nonvoid.25-nonvoid.29: a call is checked against the definition it runs,
+# the one in force where it stands, not a later redefinition.
+run_sash 'fn f -> int { return 3 }
+f
+fn f { echo two }
+echo after'
+[[ $rc != 0 && -z $out && $err == *':2:1: error [SB4016]'* \
+   && $err == *"function 'f' returns an int"* ]]; chk nonvoid.25
+
+# g's body runs the int f, so its bare call is the error
+run_sash 'fn f -> int { return 3 }
+fn g { f }
+g
+fn f { echo two }
+echo after'
+[[ $rc != 0 && -z $out && $err == *':2:8: error [SB4016]'* \
+   && $err == *"function 'f' returns an int"* ]]; chk nonvoid.26
+
+run_sash 'fn f { return 3 }
+f
+fn f { echo two }
+echo after'
+[[ $rc != 0 && -z $out && $err == *':2:1: error [SB4016]'* \
+   && $err == *"function 'f' returns a status"* ]]; chk nonvoid.27
+
+run_sash 'fn f { echo one }
+f
+fn f -> int { return 3 }
+echo after'
+[[ $rc = 0 && $out = $'one\nafter' && -z $err && -z $rerr ]]; chk nonvoid.28
+
+run_sash 'fn f { echo one }
+f
+fn f { return 3 }
+echo after'
+[[ $rc = 0 && $out = $'one\nafter' && -z $err && -z $rerr ]]; chk nonvoid.29
 
 # relex.1-relex.11: text re-parsed out of a quoted capture, a subscript index
 # or a sed field reports its real source position (batch-531 B3: each re-parse

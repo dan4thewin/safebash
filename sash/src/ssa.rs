@@ -1966,10 +1966,29 @@ pub(crate) struct TailLoop {
     pub(crate) func: String,
     pub(crate) header: usize,
     pub(crate) args_name: String,
-    /// The readonly set the body was entered with, before any `const` of its
-    /// own. A suppressed tail specialization lowers the body a second time
-    /// from inside the first, so it starts again from this set.
-    pub(crate) entry_readonly: std::collections::HashSet<String>,
+}
+
+/// DD#55: what a call of a user function hands back to its caller.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum FnClass {
+    /// Nothing: every exit yields 0.
+    Void,
+    /// A status the caller must handle or discard.
+    Status,
+    /// An `-> int` function's int.
+    Int,
+}
+
+/// DD#55: what one function definition's own exits decide about its class.
+#[derive(Debug, Clone)]
+pub(crate) enum ExitSummary {
+    /// An `-> int` definition.
+    Int,
+    /// Some exit hands back a status of its own.
+    Status,
+    /// Every other exit yields 0, so the class is that of the functions these
+    /// `return g` exits hand the result to: void when there are none.
+    Returns(Vec<String>),
 }
 
 /// Variable versioning state — tracks the current version of each
@@ -1998,8 +2017,17 @@ pub struct VersionState {
     pub loop_stack: Vec<(usize, usize)>,
     /// Return target block for `return` in inlined functions.
     pub return_target: Option<usize>,
-    /// Functions that have return statements (non-void).
-    pub function_non_void: std::collections::HashSet<String>,
+    /// DD#55: the exits of each function definition in force — the last one
+    /// lowered for its name — updated at each `fn` statement.
+    pub(crate) exits_in_force: HashMap<String, ExitSummary>,
+    /// DD#55: the class of each function in force, recomputed from
+    /// `exits_in_force` at each `fn` statement: what a call lowered here runs.
+    pub(crate) class_in_force: HashMap<String, FnClass>,
+    /// DD#55: the class of each function whatever the call site
+    /// (`functions::static_classes`), for a `fn_NAME` template, which has no
+    /// call site. A redefined name is absent, as is any function whose result
+    /// it decides.
+    pub(crate) class_static: HashMap<String, FnClass>,
     /// Functions declared with `-> int` return type.
     pub function_int_typed: std::collections::HashSet<String>,
     /// Depth counter for condition position (if/while condition, LHS of &&/||).
@@ -2015,6 +2043,12 @@ pub struct VersionState {
     pub exiting_signals: std::collections::HashSet<i64>,
     /// Diagnostics collected during SSA transformation.
     pub diagnostics: Vec<String>,
+    /// Diagnostics raised on the immutable expression-evaluation path (a
+    /// `$( … )` capture of a function, DD#55), keyed by the capture's span so
+    /// a later verdict on the same capture can supersede them. Interior-mutable
+    /// for the same reason as `external_deps`; moved into `diagnostics` after
+    /// each statement and at the end of `ir_to_ssa_typed`.
+    pub expr_diagnostics: std::cell::RefCell<Vec<(crate::ir::Span, String)>>,
     /// DD#75 §5: the unique array name backing the current function's `args`
     /// (e.g. `__args3`). Because `args` is compiler-managed, each inline gets a
     /// fresh name — nested/recursive calls never collide, so no SSA save/restore
@@ -2142,7 +2176,9 @@ impl VersionState {
             counter: HashMap::new(),
             known_functions: std::collections::HashSet::new(),
             function_bodies: HashMap::new(),
-            function_non_void: std::collections::HashSet::new(),
+            exits_in_force: HashMap::new(),
+            class_in_force: HashMap::new(),
+            class_static: HashMap::new(),
             function_int_typed: std::collections::HashSet::new(),
             in_condition: 0,
             suppressed: 0,
@@ -2156,6 +2192,7 @@ impl VersionState {
             exit_trap: None,
             exiting_signals: std::collections::HashSet::new(),
             diagnostics: Vec::new(),
+            expr_diagnostics: std::cell::RefCell::new(Vec::new()),
             current_args_name: String::new(),
             args_counter: 0,
             collection_slots: HashMap::new(),
@@ -2182,6 +2219,13 @@ impl VersionState {
         self.diagnostics.push(format!("{line}:{col}: error {msg}"));
     }
 
+    /// Move the diagnostics raised while lowering an expression, which sees
+    /// the state only through `&self`, into `diagnostics`.
+    pub(crate) fn flush_expr_diagnostics(&mut self) {
+        let raised = self.expr_diagnostics.get_mut().drain(..);
+        self.diagnostics.extend(raised.map(|(_, d)| d));
+    }
+
     /// DD#27/§5: make the body of `func`, entered at `header`, the target of
     /// its own self tail-calls — never its caller's. Call after the callee's
     /// `args` are bound and before the body is lowered; returns the enclosing
@@ -2191,7 +2235,6 @@ impl VersionState {
             func: func.to_string(),
             header,
             args_name: self.current_args_name.clone(),
-            entry_readonly: self.readonly_vars.clone(),
         })
     }
 
@@ -2268,6 +2311,18 @@ impl VersionState {
     /// never repeat across branches.
     pub fn restore(&mut self, snap: &HashMap<String, u32>) {
         self.current = snap.clone();
+    }
+
+    /// DD#55: the class of the function a call of `name` lowered here runs —
+    /// the definition in force, or in a `fn_NAME` template, which has no call
+    /// site, the name's only definition. `None` for a name with neither.
+    pub(crate) fn call_class(&self, name: &str) -> Option<FnClass> {
+        let classes = if self.lowering_fn_template {
+            &self.class_static
+        } else {
+            &self.class_in_force
+        };
+        classes.get(name).copied()
     }
 
     /// Enter the lowering of a forked child (`cmd &`, a forked pipeline

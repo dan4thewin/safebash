@@ -237,8 +237,9 @@ legal on a function that returns a value, a status or an int, and is an
 error on a void one. A bare call of a status function is an error unless it
 is caught (`if`, `||`) or discarded with `-`, as above. A bare `return`
 counts as `return 0`, and a tail call `return g` passes g's status through.
-F6 lands the ruling. The ceremony rule below stays `-> int`-only (SB4017)
-until `q-status-function-ceremony` is ruled.)
+F6 landed the ruling on 2026-10-30 (addendum at the end). The ceremony rule
+below stays `-> int`-only (SB4017) until `q-status-function-ceremony` is
+ruled.)
 
 `return 0` alone is a compile error — if the only possible return
 is zero, the `return` is ceremony. Omit it (void function).
@@ -453,3 +454,76 @@ Suppression is not part of this change. Whether `-` should apply to a user
 function at all is `q-suppression-on-user-functions` (DG, 2026-10-28).
 
 Specs `errors.sh` 55.76-55.87; journal 542.
+
+## Addendum (2026-10-30, batch-531 port F6): a non-void function's answer is handled or discarded
+
+This lands the rulings of 2026-10-29 and 2026-10-30 in
+`q-suppression-on-user-functions` (Q3, and Q2 for in-process calls), and
+batch-531 B15.
+
+**Three classes.** A function returns an int (`-> int`), a status, or
+nothing (void). It is void when its only exits are `return 0`, a bare
+`return` (which returns 0), falling off the end, and self-tail calls. A tail
+call `return g …` hands back g's result, so a function whose `return g`
+exits all reach void functions is void, and one that reaches an int or a
+status function returns a status (an int g's value becomes the status). Any
+other return producer gives a status: an external command, `[[ ]]`,
+`(( ))`, a status builtin, or a redirected call such as `return g >file`.
+A call is checked against the definition it runs, which is the one in
+force where the call stands. Each `fn` statement recomputes the classes in
+force as it comes into force, so a name defined twice can be a status at one
+call and void at a later one (nonvoid.25-nonvoid.29). The `fn_NAME`
+template of each body, and SB4017's scan, have no call site. They use a table
+built before any body is lowered, over every definition at top level and in
+END (F3's `function_defs`). That table holds only the names defined once and
+the functions whose class depends only on those. A redefined name, and
+anything whose class it decides, is checked where the call is inlined
+(nonvoid.26). Before, only `-> int` functions were classified, in textual
+order while lowering, so a body calling an int function defined after it went
+unchecked (nonvoid.9).
+
+**A status function's status is handled or discarded (B15).** A call is
+handled as a condition (`if`, `while`, the left side of `&&` or `||`), or
+its status is discarded with `-`. Anywhere else it is SB4016, "function 'f'
+returns a status — handle it with `if` or `||`, or discard it with `-`": a
+bare statement, the tail of a list (`/bin/true && f`), a background job
+(`f &`), in a function body or in END. Reading `$?` afterwards does not
+handle it. A capture `$(f)` binds the output and leaves the status nowhere
+to go, so it is SB4016 as well, with the advice `$(- f)` (`$(- f …)` when it
+has arguments). A capture as a condition, `if x=$(f)`, stays SB4025 (DD#88),
+and the SB4016 at the same position is dropped. A redirected capture body,
+`$(s 2>&1)`, lowers as a statement and gets the bare-call text.
+
+**`-` on a void function is SB4076** (new): "function 'f' returns nothing,
+so `-` has nothing to discard — call it without `-`". A capture of an int
+function binds the int, so `$(- f)` on one is SB4076 too: "`$(f)` binds the
+int that function 'f' returns, so `-` has nothing to discard — capture it
+without `-`". A stage or a job is a process with a status of its own, so
+`- v | /bin/cat` and `- v &` stay legal for a void v (nonvoid.24).
+
+**SB4017 sees return producers.** The ceremony rule stays `-> int`-only
+until `q-status-function-ceremony` is ruled. Its scan skipped producers, so
+an int function with `return 0` on one path and `return g` (an int g) on
+another was rejected as "only returns 0" (nonvoid.20), and `return g` with a
+void g compiled and returned 0 (nonvoid.16). The first now compiles; the
+second is SB4017. A function whose only exits are self-tail calls is void
+and draws no SB4017.
+
+**Deleted.** The suppressed int self-tail specialization (journal 530)
+lowered `return $(- f …)` inside an int f as a second, suppressed copy of
+the loop. That spelling is now SB4076, so nothing reaches it. It is gone,
+with `TailLoop.entry_readonly`.
+
+Decide-and-report (DG may veto): the three classes as stated, `return g
+>file` as a status, `f &` as SB4016, SB4025 superseding SB4016, SB4076 for
+`$(- int_f)`, the advice texts, and the class in force at each call. Not
+changed here: whether a `-` on a call reaches into the body, or into a
+capture among the call's arguments (`q-suppression-on-user-functions` Q1
+and Q4, the next F6 unit). The questions this unit raised are in
+`notes/tasks/q-nonvoid-classifier-residuals.md`.
+
+Specs: errors.sh nonvoid.1-nonvoid.29. Rewritten to the rule: errors.sh
+rdr.39, supval.1-supval.6, supval.9-supval.12, supval.14-supval.17,
+supval.22 and supval.28; functions.sh 74.55-74.60, 74.64b, 74.67, tmpcap.19
+and tmpcap.20; coverage.sh cov.330; pipe_functions.sh pf.71; taint.sh
+div.2; types.sh constw.19. Journal 547.

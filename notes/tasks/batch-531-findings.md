@@ -847,12 +847,18 @@ DG 2026-10-28: F2 lands without the B82 wrap and without specs that pin
 
 ### 13. F6 suppression scope
 
-- [ ] **B15** (question; DD55, DD74). A bare call of a status-returning
+- [x] **B15** (question; DD55, DD74). A bare call of a status-returning
   function discards its status: `fn f { return 3 }; f; echo after` prints
   `after` and exits 0. Journal 253 accepts bare calls of void functions; no
   spec pins the behaviour. Asked in F6's discussion.
   - DG 2026-10-28: filed, unruled, with `-` on user-function calls in
     `q-suppression-on-user-functions` Q3.
+  - Ruled 2026-10-30 and landed in F6 unit A (journal 547; DD55 addendum
+    2026-10-30). A status function's call is handled as a condition or
+    discarded with `-`; a bare call, a list tail, `f &` or `$(f)` is
+    SB4016. `-` on a void function is SB4076 (new). A call is checked
+    against the definition in force. Specs nonvoid.1-nonvoid.29. The
+    questions left are in `q-nonvoid-classifier-residuals`.
 - [ ] **B76** (fixed-on-branch; DD55, DD88). In `if x=$(/bin/echo $(f))` the
   fast path lifted the inner `$(f)` out of the condition capture's
   suppression, so a `/bin/false` inside `f` aborted. DD55 (2026-10-20) and

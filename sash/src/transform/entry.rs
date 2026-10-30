@@ -40,6 +40,7 @@ pub fn ir_to_ssa_typed(
 
     mark_unchecked_in_conditions(&mut ssa);
     mark_unchecked_in_end_blocks(&mut ssa);
+    state.flush_expr_diagnostics();
 
     // Exact-dedup diagnostics, preserving first-seen order. A function body is
     // lowered both as a standalone template (lower_function_stmt) and at each
@@ -101,6 +102,9 @@ fn reserve_stmt_names(stmt: &Statement, names: &mut HashSet<String>) {
 /// Pre-register names and integer returns for forward references, including
 /// `END` functions: registering only top-level ones made `(f)` read a
 /// variable, a pipeline stage exec the bare name, and SB4019/SB5041 miss it.
+/// Each function's class whatever the call site (DD#55) is decided here too,
+/// over every definition, for the `fn_NAME` templates; a real call checks the
+/// class of the definition in force (`lower_function_stmt`).
 fn register_functions(program: &Program, state: &mut VersionState) {
     for f in program.function_defs() {
         state.known_functions.insert(f.name.clone());
@@ -108,6 +112,7 @@ fn register_functions(program: &Program, state: &mut VersionState) {
             state.function_int_typed.insert(f.name.clone());
         }
     }
+    state.class_static = super::functions::static_classes(program, &state.known_functions);
 }
 
 /// DD#56: install a dedicated `__end__` block that contains the

@@ -1056,25 +1056,23 @@ return abc
 f'
 [[ $rc != 0 && $err == *SB5011* && $err != *"status producer"* ]]; chk 74.54
 
-# 74.55 a literal status still works
+# 74.55 a literal status still works. (These read the status in an `||`
+# right side: a bare call of a status function is SB4016, DD#55 2026-10-30.)
 run_sash 'f() {
 return 7
 }
-f
-echo "rc=$?"'
+f || echo "rc=$?"'
 [[ $rc = 0 && $out = "rc=7" && -z $err ]]; chk 74.55
 
 # 74.56 ...and so do the quoted / arithmetic status VALUE forms
 run_sash 'f() {
 return $(( 1 + 1 ))
 }
-f
-echo "a=$?"
+f || echo "a=$?"
 g() {
 return "5"
 }
-g
-echo "b=$?"'
+g || echo "b=$?"'
 [[ $rc = 0 && $out = "a=2
 b=5" && -z $err ]]; chk 74.56
 
@@ -1087,8 +1085,7 @@ run_sash 'f() {
 str s=abc
 return ${s:-7}
 }
-f
-echo "rc=$?"'
+f || echo "rc=$?"'
 [[ $rc = 0 && $out = "rc=7" && -z $err ]]; chk 74.57
 
 # 74.58 ...and `:?` must ABORT rather than silently return 0. This is the
@@ -1097,8 +1094,7 @@ run_sash 'f() {
 str s=abc
 return ${s:?not an int}
 }
-f
-echo "rc=$?"'
+f || echo "rc=$?"'
 [[ $rc = 1 && $rerr == *"not an int"* && $out != *rc=* ]]; chk 74.58
 
 # 74.59 a VALID integer string converts to its own value, not to the default
@@ -1106,8 +1102,7 @@ run_sash 'f() {
 str s=5
 return ${s:-7}
 }
-f
-echo "rc=$?"'
+f || echo "rc=$?"'
 [[ $rc = 0 && $out = "rc=5" && -z $err ]]; chk 74.59
 
 # 74.60 ...and passes the `:?` gate without aborting
@@ -1115,8 +1110,7 @@ run_sash 'f() {
 str s=5
 return ${s:?not an int}
 }
-f
-echo "rc=$?"'
+f || echo "rc=$?"'
 [[ $rc = 0 && $out = "rc=5" && -z $err ]]; chk 74.60
 
 # 74.61 the disposition reaches the caller's control flow, not just `$?`
@@ -1136,10 +1130,8 @@ if f; then echo yes; else echo no; fi'
 # looked up as commands (SB5011 "command '-1' not found").
 run_sash 'fn f { return -1 }
 fn g { return +1 }
-f
-echo "f=$?"
-g
-echo "g=$?"'
+f || echo "f=$?"
+g || echo "g=$?"'
 [[ $rc = 0 && $out = "f=-1
 g=1" && -z $err ]]; chk 74.67
 
@@ -1202,8 +1194,7 @@ echo "rc=$?"'
 run_sash 'f() {
 return 3
 }
-f
-echo "rc=$?"'
+f || echo "rc=$?"'
 [[ $rc = 0 && $out = "rc=3" && -z $err ]]; chk 74.64b
 
 # ── lift: a capture nested in a value must be materialized ──────────────
@@ -1659,7 +1650,7 @@ fn walk {
   echo $1
   return 0
 }
-- walk start
+walk start
 echo $ticks'
 [[ $rc = 0 && $out = $'1\n1' && -z $err && -z $rerr ]]; chk tmpcap.19
 
@@ -1673,7 +1664,7 @@ run_sash 'fn walk {
   echo $(join args ,)
   return 0
 }
-- walk start'
+walk start'
 [[ $rc = 0 && $out = 'done,extra' && -z $err && -z $rerr ]]; chk tmpcap.20
 
 run_sash 'fn walk {

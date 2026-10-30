@@ -1062,9 +1062,10 @@ f | /bin/cat
 echo after'
 [[ $rc = 3 && $out = x && $rerr = "./test_bin: f: command failed (exit 3)" ]]; chk pf.70
 
-# pf.71 the status comes from a call inside the stage: still named `f`
+# pf.71 the status comes from a call inside the stage: still named `f`. (The
+# call is a tail `return g`: a bare `g` would discard g's status, SB4016.)
 run_sash 'fn g { return 3 }
-fn f { echo x; g }
+fn f { echo x; return g }
 f | /bin/cat
 echo after'
 [[ $rc = 3 && $out = x && $rerr = "./test_bin: f: command failed (exit 3)" ]]; chk pf.71
