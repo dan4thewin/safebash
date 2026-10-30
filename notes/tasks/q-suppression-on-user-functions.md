@@ -151,6 +151,15 @@ unhandled status function, SB4076 for `-` on a void function or in `$(- f)`
 of an int function (DD55 addendum 2026-10-30). Q1 and Q4 (the reach of `-`
 into a body and into argument captures) are the next F6 unit.
 
+F6 unit B (journal 548) landed Q1 and Q4: a `-` discards the status of the
+one command or call it prefixes and reaches nothing else, neither a called
+body nor a capture among the operands (DD55 addendum 2026-10-30, "a `-` does
+not reach"; specs noreach.1-16; supval.7, .8, .18-.21 rewritten). So B76 is
+not a bug, and the B82 wrap and ledger rows H234/H235 are dropped at the F6
+wrap-up. What the unit left as it was is in
+`q-suppression-reach-residuals`. This task closes at the F6 wrap-up, once
+Q5-Q7 are confirmed to live in their own tasks.
+
 ## What
 
 Found 2026-10-28, while porting F2 (batch-531 B82: a stage's `-` is not

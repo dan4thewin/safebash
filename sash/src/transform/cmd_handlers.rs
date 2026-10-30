@@ -100,7 +100,7 @@ pub(super) fn handle_signal(
                     SsaValue::Literal(signum.to_string()),
                     SsaValue::Literal("1".to_string()),
                 ],
-                true,
+                state.suppressed == 0,
             ));
         }
         "DFL" => {
@@ -111,7 +111,7 @@ pub(super) fn handle_signal(
                     SsaValue::Literal(signum.to_string()),
                     SsaValue::Literal("0".to_string()),
                 ],
-                true,
+                state.suppressed == 0,
             ));
         }
         "FLAG" => {
@@ -121,7 +121,7 @@ pub(super) fn handle_signal(
                     SsaValue::Literal(signum.to_string()),
                     SsaValue::Literal("0".to_string()),
                 ],
-                true,
+                state.suppressed == 0,
             ));
         }
         "EXIT" => {
@@ -132,7 +132,7 @@ pub(super) fn handle_signal(
                     SsaValue::Literal(signum.to_string()),
                     SsaValue::Literal("1".to_string()),
                 ],
-                true,
+                state.suppressed == 0,
             ));
             state.exiting_signals.insert(signum);
         }
@@ -187,7 +187,7 @@ fn unset_element(
     ssa.block_mut(block).insts.push(SsaInst::internal(
         cmd,
         vec![SsaValue::Var(arr_ref), SsaValue::Literal(key)],
-        true,
+        state.suppressed == 0,
     ));
 }
 
@@ -577,7 +577,7 @@ fn emit_external_command(
         resolve_pipeline_command(name, state),
         args,
         Vec::new(),
-        true,
+        state.suppressed == 0,
     ));
     block
 }

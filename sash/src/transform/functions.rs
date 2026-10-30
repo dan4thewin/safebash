@@ -136,7 +136,20 @@ pub(super) fn exit_fn_body_scope(state: &mut VersionState, saved: FnBodyScope) {
 /// reached codegen as a bare `FuncCall`/`IntFuncCall`/`CmdSubstBody` and
 /// panicked (values.rs:81/85/90) even though `v=$(f)` had always worked.
 /// Returns the block to continue in: a capture may open a new one.
+///
+/// A `-` on the test discards the test's own status, not its operands'
+/// (DD#55 2026-10-30), so they are lifted with suppression cleared:
+/// `- [[ $(cmd) == x ]]` aborts when `cmd` fails.
 pub(super) fn lift_test_captures(
+    test: SsaTest,
+    ssa: &mut SsaProgram,
+    state: &mut VersionState,
+    block: &mut BlockId,
+) -> SsaTest {
+    unsuppressed(state, |state| lift_test_operands(test, ssa, state, block))
+}
+
+fn lift_test_operands(
     test: SsaTest,
     ssa: &mut SsaProgram,
     state: &mut VersionState,
@@ -159,15 +172,15 @@ pub(super) fn lift_test_captures(
             SsaTest::Binary { left, op, right }
         }
         SsaTest::Not(inner) => {
-            SsaTest::Not(Box::new(lift_test_captures(*inner, ssa, state, block)))
+            SsaTest::Not(Box::new(lift_test_operands(*inner, ssa, state, block)))
         }
         SsaTest::And(a, b) => SsaTest::And(
-            Box::new(lift_test_captures(*a, ssa, state, block)),
-            Box::new(lift_test_captures(*b, ssa, state, block)),
+            Box::new(lift_test_operands(*a, ssa, state, block)),
+            Box::new(lift_test_operands(*b, ssa, state, block)),
         ),
         SsaTest::Or(a, b) => SsaTest::Or(
-            Box::new(lift_test_captures(*a, ssa, state, block)),
-            Box::new(lift_test_captures(*b, ssa, state, block)),
+            Box::new(lift_test_operands(*a, ssa, state, block)),
+            Box::new(lift_test_operands(*b, ssa, state, block)),
         ),
     }
 }
@@ -192,19 +205,16 @@ pub(super) fn lift_int_func_calls(
     match val {
         // ── the captures this pass exists to materialize ──────────────
         SsaValue::IntFuncCall { name, args, colls } => {
-            let lifted = lift_each(args, ssa, state, block);
+            let lifted = lift_int_func_args(args, ssa, state, block);
             inline_int_func(&name, &lifted, &colls, ssa, state, block)
         }
         SsaValue::FuncCall { name, args, colls } => {
-            let lifted = lift_each(args, ssa, state, block);
+            let lifted = lift_int_func_args(args, ssa, state, block);
             lift_str_func_call(name, lifted, colls, ssa, state, block)
         }
         SsaValue::CmdSubstBody { body, .. } => {
             if let Some(value) = suppressed_capture_value(&body, state) {
-                let scope = super::statements::SuppressionScope::enter(ssa, state, *block);
-                let value = lift_int_func_calls(value, ssa, state, block);
-                scope.finish(ssa, state);
-                return value;
+                return lift_suppressed_capture(value, ssa, state, block);
             }
             // A multi-statement/pipeline `$(…)` body: capture its stdout into a
             // temp (fresh name from the block count), then use the temp. The
@@ -334,8 +344,9 @@ pub(super) fn lift_int_func_calls(
     }
 }
 
-/// Preserve a sole command's value while its prefix scopes materialization,
-/// including nested argument captures. Redirects stay on ordinary body capture.
+/// Preserve a sole command's value while its prefix scopes that command's
+/// own status (see [`lift_suppressed_capture`]); nested argument captures
+/// stay checked. Redirects stay on ordinary body capture.
 pub(super) fn suppressed_capture_value(
     body: &[Statement],
     state: &VersionState,
@@ -361,6 +372,31 @@ pub(super) fn suppressed_capture_value(
     ))
 }
 
+/// `$(- c)` (DD#55): the `-` discards `c`'s own status and nothing `c`
+/// evaluates on the way (DD#55 2026-10-30). An external capture is lifted
+/// unchecked, its arguments checked. A body capture — a statement builtin,
+/// or a capture whose arguments run value calls — is lowered with the
+/// counter raised, which its operand lifts clear again. A value intrinsic or
+/// function capture leaves the capture no status to check, so it is lifted
+/// with suppression cleared.
+fn lift_suppressed_capture(
+    value: SsaValue,
+    ssa: &mut SsaProgram,
+    state: &mut VersionState,
+    block: &mut BlockId,
+) -> SsaValue {
+    match value {
+        SsaValue::CmdSubst { argv, .. } => lift_cmdsub(argv, true, ssa, state, block),
+        body @ SsaValue::CmdSubstBody { .. } => {
+            state.suppressed += 1;
+            let lifted = lift_int_func_calls(body, ssa, state, block);
+            state.suppressed -= 1;
+            lifted
+        }
+        other => unsuppressed(state, |state| lift_int_func_calls(other, ssa, state, block)),
+    }
+}
+
 fn lift_cmdsub(
     argv: Vec<SsaValue>,
     suppressed: bool,
@@ -368,7 +404,7 @@ fn lift_cmdsub(
     state: &mut VersionState,
     block: &mut BlockId,
 ) -> SsaValue {
-    let argv = lift_each(argv, ssa, state, block);
+    let argv = lift_int_func_args(argv, ssa, state, block);
     let Some(name) = external_capture_head(&argv).map(str::to_string) else {
         return SsaValue::CmdSubst { argv, suppressed };
     };
@@ -380,7 +416,7 @@ fn lift_cmdsub(
     ssa.block_mut(*block).insts.push(SsaInst::Pipeline {
         stages: vec![(name, argv.into_iter().skip(1).collect(), vec![])],
         capture: PipelineCapture::Value(target.clone()),
-        checked: !suppressed,
+        checked: !suppressed && state.suppressed == 0,
         suppressed: vec![],
         negated: vec![],
     });
@@ -523,15 +559,30 @@ fn lift_default_value(
 /// variable via [`lift_int_func_calls`]. An `IntFuncCall` that reaches codegen
 /// unlifted is an ICE, so every arg-building site that can carry a `$(f)`
 /// capture routes its argv through this.
+///
+/// The operands are lifted with suppression cleared (DD#55 2026-10-30): a
+/// `-` on the command discards the command's own status, so `- cmd $(g)`
+/// still aborts when `g` fails.
 pub(super) fn lift_int_func_args(
     args: Vec<SsaValue>,
     ssa: &mut SsaProgram,
     state: &mut VersionState,
     block: &mut BlockId,
 ) -> Vec<SsaValue> {
-    args.into_iter()
-        .map(|v| lift_int_func_calls(v, ssa, state, block))
-        .collect()
+    unsuppressed(state, |state| lift_each(args, ssa, state, block))
+}
+
+/// Run `lower` with the `-` counter cleared, then restore it. `-` discards
+/// one operation's own status (DD#55); what the operation evaluates on the
+/// way is checked as it is anywhere else (DD#55 2026-10-30).
+pub(super) fn unsuppressed<T>(
+    state: &mut VersionState,
+    lower: impl FnOnce(&mut VersionState) -> T,
+) -> T {
+    let saved = std::mem::take(&mut state.suppressed);
+    let lowered = lower(state);
+    state.suppressed = saved;
+    lowered
 }
 
 /// DD#27/§5: diagnostic for a rejected recursive call. Functions are inlined
@@ -571,9 +622,8 @@ pub(super) fn reject_recursive_call(name: &str, state: &mut VersionState) -> boo
 /// syntactically, and a call in a condition consumes the *call's* status, not
 /// the statuses inside its body. Inherited, it unchecked every pipeline, `&&`
 /// tail and capture-shaped assignment the body ran, so `if h` swallowed a
-/// failure that `h` alone aborts on. Suppression state is not touched here;
-/// whether `-` reaches into a user function's body is an open question
-/// (`notes/tasks/q-suppression-on-user-functions.md`).
+/// failure that `h` alone aborts on. The same holds for `-` (DD#55
+/// 2026-10-30): `- h` discards only the value `h` returns, so the body runs checked.
 pub(super) fn lower_inlined_body(
     name: &str,
     body: &[Statement],
@@ -585,7 +635,9 @@ pub(super) fn lower_inlined_body(
     let saved_return_target = state.return_target.replace(restore_block);
     let saved_tail = state.enter_tail_loop(name, call_block);
     let saved_condition = std::mem::take(&mut state.in_condition);
+    let saved_suppressed = std::mem::take(&mut state.suppressed);
     let exit_block = lower_stmts(body, ssa, state, call_block);
+    state.suppressed = saved_suppressed;
     state.in_condition = saved_condition;
     state.tail_loop = saved_tail;
     state.return_target = saved_return_target;

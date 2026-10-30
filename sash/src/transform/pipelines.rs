@@ -28,9 +28,11 @@ fn emit_for_bound(
         op: ArithOp::Lt,
         right: Box::new(expr_to_value(right, state)),
     };
-    ssa.block_mut(header)
-        .insts
-        .push(SsaInst::internal(BuiltinCmd::LetExit, vec![cond], true));
+    ssa.block_mut(header).insts.push(SsaInst::internal(
+        BuiltinCmd::LetExit,
+        vec![cond],
+        state.suppressed == 0,
+    ));
 }
 
 /// `for k in @m` binds the KEY, `for v in @a` the VALUE. Hoisted out of

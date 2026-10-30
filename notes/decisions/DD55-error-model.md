@@ -64,11 +64,15 @@ discarded. `x` gets whatever output cmd produced before it exited.
 `x=$(cmd) || x=default` — explicit handling. If cmd fails, the
 `||` branch executes.
 
-### Suppression scopes the complete call (2026-10-20 correction)
+### A `-` discards one status (2026-10-30; replaces the 2026-10-20 correction)
 
-The prefix includes argument evaluation and the called body, including
-commands in branched bodies. It must neither miss blocks allocated after an
-inlined return block nor uncheck blocks belonging to an earlier operation.
+A `-` discards the status of the one command or call it prefixes, and
+nothing else. It does not reach into a user function's body or an
+anonymous `$( … )` body, and it does not reach a capture or an `-> int`
+call among the operands. Each of those is checked where it runs, as it
+would be without the `-`. DG ruled this on 2026-10-29
+(`notes/tasks/q-suppression-on-user-functions.md` Q1 and Q4), and F6
+landed it (addendum 2026-10-30, "a `-` does not reach").
 
 Suppression does not change the produced value or its type: a captured
 `-> int` function still yields its integer return (DD#58), and a string
@@ -76,17 +80,10 @@ function still yields stdout. Sole value intrinsics retain their value
 position. Structural arity checks, taint and status availability remain in
 force; this is not a validation bypass.
 
-For `return $(- self ...)`, suppression starts at that tail call, including
-its arguments. Earlier work in the initial invocation stays checked; later
-iterations inherit suppression while retaining constant-stack tail lowering.
-
-(**Under question, 2026-10-28:** DG doubts that `-` on a user-function call
-should reach into the function at all; see
-`notes/tasks/q-suppression-on-user-functions.md` Q1 and Q4. **Ruled
-2026-10-29:** a `-` on a call discards only the function's returned value.
-It reaches neither the body (Q1) nor the call's argument captures (Q4). F6
-lands the ruling and replaces this section. Until then the compiler behaves
-as written above.)
+(The 2026-10-20 correction said the opposite: the prefix covered argument
+evaluation and the called body, and `return $(- self …)` suppressed every
+later iteration of the tail loop. Journal 530 built that. Journal 547
+retired the tail-loop half (SB4076), and journal 548 the rest.)
 
 ## Pipelines
 
@@ -237,7 +234,9 @@ legal on a function that returns a value, a status or an int, and is an
 error on a void one. A bare call of a status function is an error unless it
 is caught (`if`, `||`) or discarded with `-`, as above. A bare `return`
 counts as `return 0`, and a tail call `return g` passes g's status through.
-F6 landed the ruling on 2026-10-30 (addendum at the end). The ceremony rule
+F6 landed the ruling on 2026-10-30 (addendum at the end). F6's unit B (the
+last addendum) makes `- myfunc` discard only myfunc's own answer; a failure
+inside its body still aborts. The ceremony rule
 below stays `-> int`-only (SB4017) until `q-status-function-ceremony` is
 ruled.)
 
@@ -527,3 +526,58 @@ rdr.39, supval.1-supval.6, supval.9-supval.12, supval.14-supval.17,
 supval.22 and supval.28; functions.sh 74.55-74.60, 74.64b, 74.67, tmpcap.19
 and tmpcap.20; coverage.sh cov.330; pipe_functions.sh pf.71; taint.sh
 div.2; types.sh constw.19. Journal 547.
+
+## Addendum (2026-10-30, batch-531 port F6 unit B): a `-` does not reach
+
+DG ruled on 2026-10-29 that a `-` on a call discards only the function's
+returned value (`q-suppression-on-user-functions` Q1 and Q4). Taken with
+DD#86 (a body is a function body, checked once), the rule for every `-` is:
+**a `-` discards the status of the one command or call it prefixes, and
+nothing else.** These are checked as if the `-` were absent:
+
+- the body of a called function, whether the call is a statement (`- f`),
+  an `-> int` call, a job (`- f &`), a capture (`$(- f)`), a stage, or an
+  int call inside `(( ))`;
+- a capture among the command's operands, for an external, a builtin, a
+  value intrinsic or a `[[ ]]` test, and the body of a function captured
+  there (`- echo $(g)`);
+- a capture or `-> int` call in the operands of a suppressed `(( ))` test.
+
+So `fn f { /bin/false; echo x; return 1 }; - f` now aborts at the
+`/bin/false`; it used to print `x` and carry on. `f`'s `return 1` is still
+discarded (noreach.2). Under a capture condition a function stage that fails
+makes the condition false (noreach.6, .13), because the child aborts and the
+condition sees a failed stage.
+
+**Mechanism.** The transform keeps a suppression depth on `VersionState`.
+`lower_suppressed_stmt` raises it around the command it lowers, and every
+site that emits a status check reads it as it emits. Lifting a command's
+operands and arguments, lowering a `(( ))` test's operands, and inlining any
+body run at depth zero (`functions::unsuppressed`, `lower_inlined_body`). A
+suppressed capture `$(- cmd …)` passes a flag to its own command instead of
+raising the depth, so the depth never reaches its operands. The old
+`SuppressionScope` unchecked every block allocated during the suppressed
+statement after the fact. That is what reached into bodies, and it is
+deleted.
+
+**Pins**, by reversion stub in both modes: removing the take in
+`lower_inlined_body` turns noreach.1, .3, .4, .6 and .15 red; removing the
+`(( ))` operand barrier turns noreach.14 red; removing both takes (the one
+in `unsuppressed`, which every barrier calls, and the one in
+`lower_inlined_body`) turns all six red plus supval.21, noreach.7, .8, .10,
+.11, .13 and .16. supval.7, .8, .18-.20 and noreach.5, .9, .12 are the
+`$(- X …)` shapes, which the flag design and the deleted scope cover. They
+fail on the pre-unit binary, which is their negative control.
+
+Decide-and-report (DG may veto): the rule's reach as listed, including a
+stage's operand capture aborting only its stage child. Not changed here,
+and recorded as questions in `notes/tasks/q-suppression-reach-residuals.md`:
+an assignment's own captures (`- x=$(cmd)`, `- x=$(strlen $(cmd))`,
+`- a[$(cmd)]=v`) are still discarded; the store of `- (( n = … ))` is
+lowered as a suppressed assignment, so a capture in its value is discarded
+too; `$(- value_intrinsic …)` has no status of its own to discard; `-` on
+`x=$(void_f)` escapes SB4076; and a `-` on a compound still covers the
+compound's own direct commands (`retire-suppression-on-compounds`).
+
+Specs: errors.sh noreach.1-noreach.16. Rewritten to the rule: errors.sh
+supval.7, supval.8 and supval.18-supval.21. Journal 548.

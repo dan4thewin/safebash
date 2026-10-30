@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup errors
-plan=705
+plan=721
 echo "1..$plan" >&3
 
 set +e
@@ -3816,15 +3816,18 @@ echo "[$x]"'
 [[ $rc != 0 && -z $out && $err == *':3:7: error [SB4076]'* \
    && $err == *"function 'use' returns nothing"* ]]; chk supval.6
 
+# `-` discards only its own command's status, never that of a capture lifted
+# from the command's operands (DD#55 2026-10-30), so fail's /bin/false aborts.
+# supval.7, .8 and .18-.21 printed fail's output before that.
 run_sash 'fn fail { echo token; /bin/false }
 str x=$(- toupper $(fail))
 echo "[$x]"'
-[[ $rc = 0 && $out = '[TOKEN]' && -z $err && -z $rerr ]]; chk supval.7
+[[ $rc = 1 && -z $out && -z $err && $rerr == *'/bin/false: command failed (exit 1)'* ]]; chk supval.7
 
 run_sash 'fn fail { echo token; /bin/false }
 str x=$(- echo $(fail))
 echo "[$x]"'
-[[ $rc = 0 && $out = '[token]' && -z $err && -z $rerr ]]; chk supval.8
+[[ $rc = 1 && -z $out && -z $err && $rerr == *'/bin/false: command failed (exit 1)'* ]]; chk supval.8
 
 run_sash 'fn descend -> int {
 int n=$(($1))
@@ -3915,22 +3918,22 @@ echo after'
 run_sash 'fn fail { echo token; /bin/false }
 str x=$(- basename $(fail))
 echo "$x"'
-[[ $rc = 0 && $out = token && -z $err && -z $rerr ]]; chk supval.18
+[[ $rc = 1 && -z $out && -z $err && $rerr == *'/bin/false: command failed (exit 1)'* ]]; chk supval.18
 
 run_sash 'fn fail { echo token; /bin/false }
 int n=$(- strlen $(fail))
 echo "$n"'
-[[ $rc = 0 && $out = 5 && -z $err && -z $rerr ]]; chk supval.19
+[[ $rc = 1 && -z $out && -z $err && $rerr == *'/bin/false: command failed (exit 1)'* ]]; chk supval.19
 
 SASH_CFLAGS=--no-taint run_sash 'fn fail { echo token; /bin/false }
 str x=$(- /bin/echo $(fail))
 echo "[$x]"'
-[[ $rc = 0 && $out = '[token]' && -z $err && -z $rerr ]]; chk supval.20
+[[ $rc = 1 && -z $out && -z $err && $rerr == *'/bin/false: command failed (exit 1)'* ]]; chk supval.20
 
 run_sash 'fn fail { if (( 1 )) { /bin/false }; echo token }
 - /bin/echo $(fail)
 echo after'
-[[ $rc = 0 && $out = $'token\nafter' && -z $err && -z $rerr ]]; chk supval.21
+[[ $rc = 1 && -z $out && -z $err && $rerr == *'/bin/false: command failed (exit 1)'* ]]; chk supval.21
 
 run_sash 'fn speak { if (( 1 )) { /bin/false }; echo token }
 str x=$(- speak 2>&1)
@@ -4201,6 +4204,109 @@ f
 fn f { return 3 }
 echo after'
 [[ $rc = 0 && $out = $'one\nafter' && -z $err && -z $rerr ]]; chk nonvoid.29
+
+# noreach.1-noreach.16: `-` discards only the status of its own command or
+# call (DD#55 2026-10-30). It does not reach into a user function's body,
+# which is checked like any other body, or into a capture or call lifted from
+# the command's operands, so each /bin/false below aborts; every one of them
+# printed and carried on before that. noreach.2 is the control: the status
+# that f returns is still discarded. An external's output is tainted, so the
+# ids that capture one directly compile with --no-taint.
+
+# noreach.1 the called function's body
+run_sash 'fn f { /bin/false; echo x; return 1 }
+- f
+echo done'
+[[ $rc = 1 && -z $out && -z $err && $rerr == *'/bin/false: command failed (exit 1)'* ]]; chk noreach.1
+
+# noreach.2 control: the returned status is what `-` discards
+run_sash 'fn f { echo x; return 1 }
+- f
+echo done'
+[[ $rc = 0 && $out = $'x\ndone' && -z $err && -z $rerr ]]; chk noreach.2
+
+# noreach.3 an int function's body
+run_sash 'fn f -> int { /bin/false; return 7 }
+- f
+echo done'
+[[ $rc = 1 && -z $out && -z $err && $rerr == *'/bin/false: command failed (exit 1)'* ]]; chk noreach.3
+
+# noreach.4 a background job's body: the child aborts, and waitstatus says so
+run_sash 'fn f { echo x; /bin/false; echo y; return 1 }
+- f &
+- wait
+int s=$(waitstatus)
+echo "s=$s"'
+[[ $rc = 0 && $out = $'x\ns=1' && -z $err && $rerr == *'/bin/false: command failed (exit 1)'* ]]; chk noreach.4
+
+# noreach.5 a suppressed capture of a status function
+run_sash 'fn f { /bin/false; echo tok; return 1 }
+str x=$(- f)
+echo "[$x]"'
+[[ $rc = 1 && -z $out && -z $err && $rerr == *'/bin/false: command failed (exit 1)'* ]]; chk noreach.5
+
+# noreach.6 a function stage of a capture condition: the stage fails, so the
+# condition is false
+SASH_CFLAGS=--no-taint run_sash 'fn f { /bin/false; echo inf }
+if x=$(f | /bin/cat) { echo "yes [$x]" } else { echo no }
+echo done'
+[[ $rc = 0 && $out = $'no\ndone' && -z $err && $rerr == *'/bin/false: command failed (exit 1)'* ]]; chk noreach.6
+
+# noreach.7 an external command's operand capture
+SASH_CFLAGS=--no-taint run_sash '- /bin/echo "$(/bin/false)"
+echo done'
+[[ $rc = 1 && -z $out && -z $err && $rerr == *'/bin/false: command failed (exit 1)'* ]]; chk noreach.7
+
+# noreach.8 a builtin's operand capture
+SASH_CFLAGS=--no-taint run_sash '- echo "$(/bin/false)"
+echo done'
+[[ $rc = 1 && -z $out && -z $err && $rerr == *'/bin/false: command failed (exit 1)'* ]]; chk noreach.8
+
+# noreach.9 an operand capture of a suppressed capture's command
+SASH_CFLAGS=--no-taint run_sash 'str x=$(- /bin/echo "$(/bin/false)")
+echo "[$x] done"'
+[[ $rc = 1 && -z $out && -z $err && $rerr == *'/bin/false: command failed (exit 1)'* ]]; chk noreach.9
+
+# noreach.10 a function captured as an operand
+run_sash 'fn g { /bin/false; echo x }
+- echo $(g)
+echo done'
+[[ $rc = 1 && -z $out && -z $err && $rerr == *'/bin/false: command failed (exit 1)'* ]]; chk noreach.10
+
+# noreach.11 a `[[ ]]` operand capture
+SASH_CFLAGS=--no-taint run_sash '- [[ $(/bin/false) == x ]]
+echo after'
+[[ $rc = 1 && -z $out && -z $err && $rerr == *'/bin/false: command failed (exit 1)'* ]]; chk noreach.11
+
+# noreach.12 a value intrinsic's argument capture
+SASH_CFLAGS=--no-taint run_sash 'int n=$(- strlen $(/bin/false))
+echo "$n"'
+[[ $rc = 1 && -z $out && -z $err && $rerr == *'/bin/false: command failed (exit 1)'* ]]; chk noreach.12
+
+# noreach.13 a stage's operand capture in a capture condition
+SASH_CFLAGS=--no-taint run_sash 'if x=$(/bin/echo $(/bin/false) | /bin/cat) { echo "yes [$x]" } else { echo no }
+echo done'
+[[ $rc = 0 && $out = $'no\ndone' && -z $err && $rerr == *'/bin/false: command failed (exit 1)'* ]]; chk noreach.13
+
+# noreach.14 a capture in an arithmetic test's operand
+SASH_CFLAGS=--no-taint run_sash 'map m
+m[k]=1
+- (( ${m[$(/bin/false)]:-0} ))
+echo after'
+[[ $rc = 1 && -z $out && -z $err && $rerr == *'/bin/false: command failed (exit 1)'* ]]; chk noreach.14
+
+# noreach.15 an int call assigned inside an arithmetic test
+run_sash 'fn h -> int { /bin/false; return 3 }
+int n=0
+- (( n = (h) ))
+echo "after $n"'
+[[ $rc = 1 && -z $out && -z $err && $rerr == *'/bin/false: command failed (exit 1)'* ]]; chk noreach.15
+
+# noreach.16 an int call as an arithmetic test's operand
+run_sash 'fn h -> int { /bin/false; return 3 }
+- (( (h) ))
+echo after'
+[[ $rc = 1 && -z $out && -z $err && $rerr == *'/bin/false: command failed (exit 1)'* ]]; chk noreach.16
 
 # relex.1-relex.11: text re-parsed out of a quoted capture, a subscript index
 # or a sed field reports its real source position (batch-531 B3: each re-parse

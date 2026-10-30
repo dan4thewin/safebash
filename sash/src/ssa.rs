@@ -1146,7 +1146,7 @@ pub enum SsaValue {
     /// Carries the command name and arguments as expressions. `suppressed` is
     /// set for `$(- cmd)` (DD#55): the captured command's exit status is
     /// discarded and a nonzero exit does NOT abort (mirrors statement-position
-    /// `- cmd`).
+    /// `- cmd`). Captures in its arguments are not covered (DD#55 2026-10-30).
     ///
     /// Carries **no redirects**: a `$(cmd > f)` is routed to `CmdSubstBody`
     /// by `single_command_subst`, so every redirected capture is lowered by
@@ -2032,10 +2032,13 @@ pub struct VersionState {
     pub function_int_typed: std::collections::HashSet<String>,
     /// Depth counter for condition position (if/while condition, LHS of &&/||).
     pub in_condition: u32,
-    /// Depth counter for `-` suppression (DD#55). Set while lowering the
-    /// inner statement of `StmtKind::Suppressed` and a `-`-marked final pipe
-    /// consumer. A must-consume result (SB4016/SB4018) inside it is
-    /// discarded rather than an error.
+    /// Depth counter for `-` suppression (DD#55). Raised while lowering the
+    /// inner statement of `StmtKind::Suppressed`, a `-`-marked final pipe
+    /// consumer, a `$(- cmd)` body and a capture condition. Each check reads
+    /// it where it is constructed and is emitted only at zero. Operand lifts
+    /// and inlined function bodies clear it, so `-` discards one operation's
+    /// own status (DD#55 2026-10-30). A must-consume result (SB4016/SB4018) inside
+    /// it is discarded rather than an error.
     pub suppressed: u32,
     /// EXIT trap body statements (if set via `trap 'body' EXIT`).
     pub exit_trap: Option<Vec<crate::ir::Statement>>,

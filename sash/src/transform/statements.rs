@@ -517,10 +517,14 @@ fn lower_arith_test_stmt(
         span: stmt.span,
     };
     let val = expr_to_value(&ir_expr, state);
-    let val = lift_int_func_calls(val, ssa, state, block);
-    ssa.block_mut(*block)
-        .insts
-        .push(SsaInst::internal(BuiltinCmd::LetExit, vec![val], true));
+    // DD#55 2026-10-30: `- (( … ))` discards the test's status, not its operands'.
+    let val =
+        super::functions::unsuppressed(state, |state| lift_int_func_calls(val, ssa, state, block));
+    ssa.block_mut(*block).insts.push(SsaInst::internal(
+        BuiltinCmd::LetExit,
+        vec![val],
+        state.suppressed == 0,
+    ));
     *block
 }
 
@@ -638,7 +642,10 @@ fn emit_arith_store(
     *block = lower_one(&stmt, ssa, state, *block);
 }
 
-/// DD#55: lower the complete suppressed operation without implicit checks.
+/// DD#55: lower the suppressed operation with its own status discarded.
+/// Every check reads `state.suppressed` where it is constructed; operand
+/// lifts and inlined function bodies clear it, so what the operation
+/// evaluates on the way stays checked (DD#55 2026-10-30).
 fn lower_suppressed_stmt(
     inner: &Statement,
     ssa: &mut SsaProgram,
@@ -646,9 +653,9 @@ fn lower_suppressed_stmt(
     block: BlockId,
 ) -> BlockId {
     check_void_suppression(inner, state);
-    let scope = SuppressionScope::enter(ssa, state, block);
+    state.suppressed += 1;
     let result_block = lower_one(inner, ssa, state, block);
-    scope.finish(ssa, state);
+    state.suppressed -= 1;
     result_block
 }
 
@@ -674,48 +681,6 @@ fn check_void_suppression(inner: &Statement, state: &mut VersionState) {
              to discard — call it without `-`",
             state.stmt_span.line, state.stmt_span.col, name
         ));
-    }
-}
-
-/// An inlined call allocates its return block before its body blocks. The
-/// returned block ID is therefore not the boundary of the emitted operation.
-pub(super) struct SuppressionScope {
-    block: BlockId,
-    pre_len: usize,
-    first_new_block: usize,
-}
-
-impl SuppressionScope {
-    pub(super) fn enter(ssa: &SsaProgram, state: &mut VersionState, block: BlockId) -> Self {
-        state.suppressed += 1;
-        Self {
-            block,
-            pre_len: ssa.block(block).insts.len(),
-            first_new_block: ssa.blocks.len(),
-        }
-    }
-
-    pub(super) fn finish(self, ssa: &mut SsaProgram, state: &mut VersionState) {
-        state.suppressed -= 1;
-        uncheck_block_from(ssa, self.block, self.pre_len);
-        for b in self.first_new_block..ssa.blocks.len() {
-            uncheck_block_from(ssa, b, 0);
-        }
-    }
-}
-
-fn uncheck_block_from(ssa: &mut SsaProgram, block_id: BlockId, from: usize) {
-    let insts = &mut ssa.block_mut(block_id).insts;
-    for inst in insts[from..].iter_mut() {
-        match inst {
-            SsaInst::Command { checked, .. } => {
-                *checked = false;
-            }
-            SsaInst::Pipeline { checked, .. } => {
-                *checked = false;
-            }
-            _ => {}
-        }
     }
 }
 
@@ -1062,7 +1027,7 @@ fn lower_background(
     ssa.block_mut(parent_block).insts.push(SsaInst::internal(
         BuiltinCmd::StoreBgPid,
         vec![SsaValue::Var(bg_target)],
-        true,
+        state.suppressed == 0,
     ));
     parent_block
 }

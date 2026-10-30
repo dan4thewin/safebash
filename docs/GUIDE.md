@@ -265,9 +265,14 @@ share the argument lifter; nested calls retain their caller's positionals,
 and splats remain splats. Pipeline arguments still execute inside their
 existing forked function stage, not in the parent (DD#81, DD#27).
 
-Suppression scopes the complete operation, including nested argument captures.
-One shared lowering scope records the starting instruction suffix and newly
-created blocks, rather than treating an inlined return block as its boundary.
+A `-` discards the status of the one command or call it prefixes, and
+nothing else (DD#55 2026-10-30). The transform keeps a suppression depth on
+`VersionState`: `lower_suppressed_stmt` raises it, and each status check
+reads it as the check is emitted. Operand and argument lifting, the operands
+of a `(( ))` test, and every inlined body run at depth zero, so a capture
+among a suppressed command's operands, or a failure inside a called
+function, is checked as it would be without the `-`. A suppressed capture
+`$(- cmd …)` passes a flag to its own command instead of raising the depth.
 Suppressed captures retain their normal value and type; structural validation,
 taint and status-availability rules still apply (DD#55).
 

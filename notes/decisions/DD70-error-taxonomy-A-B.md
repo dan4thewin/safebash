@@ -96,7 +96,10 @@ opaque external (A) or in-process logic (B): `- match`, `- matchall`,
 `- [[ … ]]`, `- ! cmd`, and `- f` for an `-> int` function are all legal.
 (**`- ! cmd` is SB4019 again** — addendum 2026-10-26.)
 (**Under question, 2026-10-28:** `- f` on a user-function call; see
-`notes/tasks/q-suppression-on-user-functions.md`. Unruled.)
+`notes/tasks/q-suppression-on-user-functions.md`. **Ruled 2026-10-29/30,
+landed by F6 (DD#55 addenda 2026-10-30):** `- f` stays legal on a function
+that returns an int or a status, is SB4076 on a void one, and discards
+only f's own answer, not the failures inside its body.)
 
 ### Why the original rule did not hold up
 

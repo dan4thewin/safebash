@@ -523,7 +523,7 @@ pub(super) fn lower_while(
         ssa.block_mut(cond_exit).insts.push(SsaInst::internal(
             BuiltinCmd::NegateTestResult,
             vec![],
-            true,
+            state.suppressed == 0,
         ));
     }
 

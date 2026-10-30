@@ -667,7 +667,7 @@ pub(super) fn handle_pipeline(
     ssa.block_mut(block).insts.push(SsaInst::internal(
         BuiltinCmd::NegateTestResult,
         vec![],
-        true,
+        state.suppressed == 0,
     ));
     block
 }
@@ -765,9 +765,11 @@ impl<'a> FinalStage<'a> {
         !self.suppressed && !matches!(self.body.kind, StmtKind::While(_))
     }
 
-    /// Lower the consumer beneath its marks. DD#55: a `-` consumer runs
-    /// unchecked as a whole, as a statement-level `- while` does. DD#70: a
-    /// `!` reader's verdict is inverted before it joins the producers'.
+    /// Lower the consumer beneath its marks. DD#55: a `-` consumer's own
+    /// commands run unchecked, as a statement-level `- while`'s do; their
+    /// operands and the function bodies they run stay checked (DD#55 2026-10-30).
+    /// DD#70: a `!` reader's verdict is inverted before it joins the
+    /// producers'.
     fn lower(
         &self,
         ssa: &mut SsaProgram,
@@ -775,18 +777,18 @@ impl<'a> FinalStage<'a> {
         block: BlockId,
         body: impl FnOnce(&mut SsaProgram, &mut VersionState, BlockId) -> BlockId,
     ) -> BlockId {
-        let scope = self
-            .suppressed
-            .then(|| super::statements::SuppressionScope::enter(ssa, state, block));
+        if self.suppressed {
+            state.suppressed += 1;
+        }
         let exit = body(ssa, state, block);
-        if let Some(scope) = scope {
-            scope.finish(ssa, state);
+        if self.suppressed {
+            state.suppressed -= 1;
         }
         if self.negated {
             ssa.block_mut(exit).insts.push(SsaInst::internal(
                 BuiltinCmd::NegateTestResult,
                 vec![],
-                true,
+                state.suppressed == 0,
             ));
         }
         exit
@@ -956,7 +958,7 @@ fn lower_pipe_consumer(
     ssa.block_mut(block).insts.push(SsaInst::internal(
         BuiltinCmd::SetTestFromPipe,
         vec![SsaValue::Literal(reader_pipe_fd(site).to_string())],
-        true,
+        state.suppressed == 0,
     ));
     ssa.block_mut(block).terminator = Terminator::Branch {
         condition: "pipe-ready".into(),
@@ -1172,10 +1174,15 @@ fn command_pipeline_stage(
         BuiltinCmd::from_name(&command),
         BuiltinCmd::Echo | BuiltinCmd::Noop
     ) {
-        SsaInst::command(command.as_str(), args, vec![], true)
+        SsaInst::command(command.as_str(), args, vec![], state.suppressed == 0)
     } else {
         let argv = std::iter::once(SsaValue::Literal(command.clone()));
-        SsaInst::command("exec", argv.chain(args).collect(), vec![], true)
+        SsaInst::command(
+            "exec",
+            argv.chain(args).collect(),
+            vec![],
+            state.suppressed == 0,
+        )
     };
     ssa.block_mut(block).insts.push(inst);
     ssa.block_mut(block).terminator = Terminator::ChildExit;
@@ -1451,16 +1458,15 @@ fn try_capture_condition(
             ssa.block_mut(after)
                 .insts
                 .push(SsaInst::Assign { target, value });
-            push_set_test_from_status(ssa, after);
+            push_set_test_from_status(ssa, after, state.suppressed == 0);
             Some(after)
         }
         // A body capture — a pipeline `$(a | b)`, or any command carrying a
         // redirect, which `single_command_subst` deliberately declines so the
         // redirect is lowered by the ordinary statement machinery. Lower it
-        // with `state.suppressed` bumped (an inner pipeline emits unchecked)
-        // and uncheck the rest afterwards, since a plain Command does not
-        // consult `state.suppressed` at emission time. Either way the status
-        // is consumed by the branch, so it must not abort.
+        // with `state.suppressed` raised, so the commands it runs emit
+        // unchecked: the branch consumes their status, so it must not abort.
+        // Captures in their operands are lifted checked (DD#55 2026-10-30).
         SsaValue::CmdSubstBody { body, .. } if !capture_condition_head_is_user_fn(body, state) => {
             capture_condition_body(name, body, state, ssa, block)
         }
@@ -1475,25 +1481,25 @@ fn capture_condition_body(
     ssa: &mut SsaProgram,
     block: BlockId,
 ) -> Option<BlockId> {
-    let scope = super::statements::SuppressionScope::enter(ssa, state, block);
+    state.suppressed += 1;
     let after = match super::functions::suppressed_capture_value(body, state) {
         Some(value) => try_capture_condition(name, &value, state, ssa, block),
         None => {
             let after = capture_body_into(name, body, state, ssa, block);
-            push_set_test_from_status(ssa, after);
+            push_set_test_from_status(ssa, after, state.suppressed == 0);
             Some(after)
         }
     };
-    scope.finish(ssa, state);
+    state.suppressed -= 1;
     after
 }
 
 /// `test_result = ($? == 0)` — the capture-condition status sync sigil.
-fn push_set_test_from_status(ssa: &mut SsaProgram, block: BlockId) {
+fn push_set_test_from_status(ssa: &mut SsaProgram, block: BlockId, checked: bool) {
     ssa.block_mut(block).insts.push(SsaInst::internal(
         BuiltinCmd::SetTestFromStatus,
         vec![],
-        true,
+        checked,
     ));
 }
 
@@ -1717,8 +1723,8 @@ pub(super) fn capture_body_into(
     // Nor does a condition reach inside: a capture in a condition's argument
     // is not itself in condition position (validate resets it for the same
     // reason), so its failing pipeline must abort as it does elsewhere. A
-    // capture *condition* consumes the status through its suppression scope,
-    // which stays in force.
+    // capture *condition* consumes the status through `state.suppressed`,
+    // which stays in force for the commands the body runs.
     let saved_condition = std::mem::take(&mut state.in_condition);
     let exit_block = lower_stmts(body, ssa, state, call_block);
     state.in_condition = saved_condition;
