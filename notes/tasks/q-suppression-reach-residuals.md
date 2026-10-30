@@ -5,7 +5,7 @@ priority: P3
 kind: question
 depends: []
 gates:
-  - "DG rules on R1-R4 (R5 is settled by retire-suppression-on-compounds); DD#55 records each ruling"
+  - "DG rules on R1-R4, R6 and R7 (R5 is settled by retire-suppression-on-compounds); DD#55 records each ruling"
   - "every repro below prints what the ruling says, in both backends, with specs"
 ---
 
@@ -84,4 +84,35 @@ The third row changed with unit B: the previous binary printed `x` and
 retire-suppression-on-compounds. It is listed here only so the rows have a
 home until those land.
 
-Probe sources: files/port-f6-probes.tar.gz (`f6b/r/`).
+## R6. A statement `-` covers a whole list
+
+`--emit-ir` shows `- a || b` as `Suppressed(List(or, a, b))`, so the `-`
+covers b too: `- /bin/false || /bin/false; echo done` prints `done` (q17,
+both backends). A pipeline-head `-` binds stage 1 only (`- a | b` leaves
+b checked). After F6 unit C (journal 549), the list ends with b's status
+either way, so the program's exit status is right, but b's failure no
+longer aborts.
+
+Question: does a statement `-` bind the whole list or only its first
+operand? Under the first-operand reading, `- a || b` would be
+`(- a) || b`, the same as `a || b`. That makes the `-` dead, so it would
+want a diagnostic of its own.
+
+## R7. SB4076 does not look through a list
+
+`fn f { /bin/echo in; /bin/false }; - f` is SB4076: f is void, so the `-`
+has nothing to discard. But `- /bin/false || f` compiles (r01). The `-`
+is dead there either way: `||` consumes a's failure, and a void f cannot
+fail. f's body is still checked, and r01 aborts at its `/bin/false` (no
+reach). Which diagnostic is right depends on R6, so no spec pins this form
+yet.
+
+## B84 is fixed on every route
+
+F6 unit C (H219, `lower_list_stmt`; journal 549) makes a suppressed `||`
+list keep its right side's status, whichever route reaches it: the
+statement form (R6), `- x=$(a || b)` (R1), or a group (R5). Before, all
+three exited 0 on `/bin/false || /bin/false`. Specs 55.145-55.147 use only
+the statement form, so that they cement none of the open questions above.
+
+Probe sources: files/port-f6-probes.tar.gz (`f6b/r/`; R6, R7 and B84: `f6c/p/` for the q rows, `f6c/r/` for the r and s rows).

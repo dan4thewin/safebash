@@ -950,7 +950,12 @@ fn lower_list_stmt(
     // short-circuit `Branch`, so `mark_unchecked_in_conditions` already unchecks
     // it. At top level the rightmost operand's status is discarded → it stays
     // checked and aborts (bare-command-uncaught).
-    let caught = state.in_condition > 0;
+    //
+    // Suppression consumes the status too: under `-` the right operand runs
+    // unchecked, so its completing says nothing about success, and `||`'s
+    // top-level reset would turn a failed right side into status 0
+    // (`- /bin/false || /bin/false` exited 0, B84).
+    let caught = state.in_condition > 0 || state.suppressed > 0;
     match l.op {
         ListOp::And | ListOp::Or => lower_short_circuit(l, ssa, state, block, caught),
         ListOp::Background => lower_background(l, ssa, state, block),

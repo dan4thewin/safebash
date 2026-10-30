@@ -883,8 +883,13 @@ DG 2026-10-28: F2 lands without the B82 wrap and without specs that pin
   - Not ported with F2: the trialed wrap would cement `-` reaching into a
     function (DG 2026-10-28). Open in `q-suppression-on-user-functions` Q1;
     B82 is a bug only if Q1 and Q4 keep the reach.
-- [ ] **B84** (fixed-on-branch; DD55). A suppressed `a || b` reset `$?` to 0
+- [x] **B84** (fixed-on-branch; DD55). A suppressed `a || b` reset `$?` to 0
   although `b` is unchecked. Branch specs: 55.88.
+  - Ported in F6 unit C (journal 549): H219 in `lower_list_stmt`; specs
+    55.145-55.147.
+  - 55.88 is not ported (decide-and-report). Its premise, that the `-`
+    reaches a function stage's body, was removed by DG's Q1 ruling
+    (2026-10-29); noreach.6 pins the no-reach form of the same shape.
 
 ### 14. F8 lazy `[[ && || ]]`
 

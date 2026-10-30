@@ -581,3 +581,14 @@ compound's own direct commands (`retire-suppression-on-compounds`).
 
 Specs: errors.sh noreach.1-noreach.16. Rewritten to the rule: errors.sh
 supval.7, supval.8 and supval.18-supval.21. Journal 548.
+
+**Addendum 2026-10-30 (F6 unit C, batch-531 B84).** A suppressed `||` list
+consumes its status the way a condition does. Under `-` the right operand
+runs unchecked, so the top-level reset of `$?` to 0 after `||` no longer
+applies, and the list ends with its right side's status. Before,
+`- /bin/false || /bin/false` exited 0; now it exits 1, as a lone
+`- /bin/false` does. This is a bug fix, not a new rule. Two questions stay
+open in `notes/tasks/q-suppression-reach-residuals.md`: R6, whether a
+statement `-` should bind only the first operand (today it covers the whole
+list, while a pipeline-head `-` binds stage 1 only), and R7, SB4076 not
+looking through a list. Specs: errors.sh 55.145-55.147. Journal 549.

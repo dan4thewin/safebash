@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup errors
-plan=721
+plan=724
 echo "1..$plan" >&3
 
 set +e
@@ -4307,6 +4307,26 @@ run_sash 'fn h -> int { /bin/false; return 3 }
 - (( (h) ))
 echo after'
 [[ $rc = 1 && -z $out && -z $err && $rerr == *'/bin/false: command failed (exit 1)'* ]]; chk noreach.16
+
+# 55.145-55.147: a `-` over a `||` list keeps the right operand's status
+# (batch-531 B84). The right operand runs unchecked under `-`, and `||`'s
+# top-level reset to 0 assumed a completed right side had passed its check, so
+# 55.145 and 55.146 exited 0. Suppression consumes the status the way a
+# condition does, so the reset no longer applies: the program exits with the
+# right side's status, as a lone `- /bin/false` does. 55.147 is the control.
+#
+# 55.145 an external right side that fails
+run_sash '- /bin/false || /bin/false'
+[[ $rc = 1 && -z $out && -z $err && -z $rerr ]]; chk 55.145
+
+# 55.146 a status function's returned 1 as the right side
+run_sash 'fn f { /bin/echo in; return 1 }
+- /bin/false || f'
+[[ $rc = 1 && $out = in && -z $err && -z $rerr ]]; chk 55.146
+
+# 55.147 a right side that succeeds still exits 0
+run_sash '- /bin/false || /bin/true'
+[[ $rc = 0 && -z $out && -z $err && -z $rerr ]]; chk 55.147
 
 # relex.1-relex.11: text re-parsed out of a quoted capture, a subscript index
 # or a sed field reports its real source position (batch-531 B3: each re-parse
