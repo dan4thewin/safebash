@@ -76,6 +76,76 @@ The AI's reading of what they settle, sent to DG for veto:
 Still open: Q3 (B15), Q5's process forms (a stage or a job, whose status
 includes SIGPIPE and fork failure), the wait option, Q6, and Q7.
 
+## Rulings, 2026-10-30
+
+DG:
+
+> I misunderstood - wait, it can stay as discarding a pid. a
+> multi-statement group is essentially a user function without a name - I
+> don't think I see any reason to support the groups. the foo || { a; b }
+> can be allowed as a sugaring of if ! foo { a; b }. I'm not at all sure
+> that failure to fork, create a pipe, or allocate memory should be
+> suppressible... each stage of a pipeline can be separate suppressed.
+> suppression should never apply to a construct like for or while. I
+> think any non-void function must be caught or have its result
+> deliberately discarded with -. Push as much of this unresolved/
+> contentious decision making into the backlog. Ask me only what remains
+> undecided and is necessary for the next port step.
+
+The AI's reading. Decide-and-report items are marked; DG may veto them.
+
+- **wait: unchanged.** `- wait` stays the discard spelling for wait's pid
+  (DD#126). The 2026-10-29 wait bullet and its options (A)/(B) are
+  withdrawn. `- wait` discards a value, as `- int_f` does.
+- **Groups go**, and `foo || { a; b }` becomes sugar for
+  `if ! foo { a; b }`. This language change is not on the branch, so it
+  is `retire-command-groups` in the backlog, with its open sub-questions.
+- **Q7: ruled. A `-` never prefixes a compound** (`{`, `if`, `while`,
+  `until`, `for`, `case`). That is `retire-suppression-on-compounds` in
+  the backlog. It cannot land before Q5, because p518.22/.23 are today's
+  only spelling for discarding a pipeline's construction failure.
+- **Q5: still open.** DG is unsure that a failure to fork, create a pipe
+  or allocate memory should be suppressible. It moves to
+  `q-setup-failure-suppressibility`, so that this task can close with F6.
+- **Q2, process forms: settled.** Each stage may carry its own `-`,
+  including a void function's stage, because a stage's status is a
+  process status (SIGPIPE, the child's fork). So Q2's void error is
+  in-process only. A job `- f &` stays legal; under no reach it discards
+  only what Q5 leaves it (today the job's fork failure, y14).
+- **Q3: ruled (a), enforce.** A bare call of a status function is an
+  error, as SB4016 is for `-> int`. The handling forms are a condition,
+  `||`, or `-`. Sub-rulings, decide-and-report:
+  - A bare `return` returns 0 (`handle_return_stmt`; spec 0.5q). Like
+    `return 0`, it gives a function no status. A function whose returns
+    are all zero is void for Q3 and for Q2's error.
+  - DD#55's ceremony rule ("`return 0` alone is a compile error") stays
+    `-> int`-only (SB4017) in F6. With a bare `return` counted as
+    `return 0`, enforcing it for status functions would also reject every
+    early-exit `return` in a void function (w21). It moves to
+    `q-status-function-ceremony`, with its 8 flips.
+  - **Tail calls are status-transparent** (w15, w19). `return g x` gives
+    f a status only if g has one, and a self-tail call adds none. This
+    protects tailar.1–3, capcyc.1–2, stgcyc.1, pipeown.20,
+    constw.11/.17/.18 and 27.4.
+  - A `return` producer that is not a user function (an external
+    command, `[[ ]]`, `(( ))`, a status builtin) gives f a status.
+    `collect_returns` skips producers today, so SB4017's scan never sees
+    them.
+  - Reading `$?` after a bare call is not handling it (rdr.39, 74.67).
+  - A capture of a status function, `$(f)`, discards the status. It is an
+    error unless written `$(- f)`. The advice does not offer `if x=$(f)`:
+    DD#88 makes that SB4025.
+  - A `return` in an anonymous capture body (`$( …; return 3 )`) is the
+    same shape. No spec has one (rec.7/.8 tail-call g and assert SB5037).
+    It goes to `q-status-function-ceremony`.
+  - A list tail is a bare call (journal 253): `/bin/true && f` is an
+    error for a status f, as l3/l4 already are for `-> int`.
+  - Flips (Q3's census): 55.116, rdr.39, rdr.40, skw.15, 74.67, 74.68,
+    74.69, 84.46, pf.35, pf.36.
+
+F6 implements Q1, Q2 (in-process), Q3 and Q4. Q6 waits for W2. The other
+items now live in the four tasks named above.
+
 ## What
 
 Found 2026-10-28, while porting F2 (batch-531 B82: a stage's `-` is not

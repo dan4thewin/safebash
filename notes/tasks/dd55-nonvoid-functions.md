@@ -41,3 +41,11 @@ value). Must capture: `x=$(func)` or handle: `if func`.
 A bare call of a status-returning (void) function still discards its
 `return` (batch-531 B15); that, and whether `- myfunc` stays legal, are open
 in `q-suppression-on-user-functions` Q3 and Q2.
+
+## Follow-up (2026-10-30)
+
+Both are ruled (`q-suppression-on-user-functions`, "Rulings, 2026-10-30").
+B15 is enforced: a bare call or a list tail of a status function is an error
+unless it is caught or discarded with `-`. The original design's bare
+`return` = `return 0` stands. F6 implements this. The ceremony rule for
+status functions is not enforced; it moved to `q-status-function-ceremony`.

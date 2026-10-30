@@ -101,3 +101,8 @@ fail to exec.
 Whether `-` may discard a fork failure, and on which forms (`- f &`,
 `- f |` for a user function), is open in `q-suppression-on-user-functions`
 Q5 (setup failures), with Q2 (may `-` prefix a user-function call at all).
+
+(2026-10-30) Q2 is settled for these forms: every stage may carry its own
+`-`, and a job `- f &` stays legal. Q5 moved to
+`q-setup-failure-suppressibility`, where DG doubts that a failure to fork,
+create a pipe or allocate memory should be suppressible at all.

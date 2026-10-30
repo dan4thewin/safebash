@@ -82,8 +82,11 @@ iterations inherit suppression while retaining constant-stack tail lowering.
 
 (**Under question, 2026-10-28:** DG doubts that `-` on a user-function call
 should reach into the function at all; see
-`notes/tasks/q-suppression-on-user-functions.md` Q1 and Q4. Unruled, so this
-text stands until DG rules.)
+`notes/tasks/q-suppression-on-user-functions.md` Q1 and Q4. **Ruled
+2026-10-29:** a `-` on a call discards only the function's returned value.
+It reaches neither the body (Q1) nor the call's argument captures (Q4). F6
+lands the ruling and replaces this section. Until then the compiler behaves
+as written above.)
 
 ## Pipelines
 
@@ -228,7 +231,14 @@ explicitly handle the return value:
 
 (**Under question, 2026-10-28:** whether `- myfunc` stays legal, and how a
 bare call of a status-returning function is handled (B15), are open in
-`notes/tasks/q-suppression-on-user-functions.md` Q2 and Q3. Unruled.)
+`notes/tasks/q-suppression-on-user-functions.md` Q2 and Q3. **Ruled
+2026-10-29/30** (that task's two "Rulings" sections). `- myfunc` stays
+legal on a function that returns a value, a status or an int, and is an
+error on a void one. A bare call of a status function is an error unless it
+is caught (`if`, `||`) or discarded with `-`, as above. A bare `return`
+counts as `return 0`, and a tail call `return g` passes g's status through.
+F6 lands the ruling. The ceremony rule below stays `-> int`-only (SB4017)
+until `q-status-function-ceremony` is ruled.)
 
 `return 0` alone is a compile error — if the only possible return
 is zero, the `return` is ceremony. Omit it (void function).

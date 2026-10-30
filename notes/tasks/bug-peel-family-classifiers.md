@@ -124,3 +124,9 @@ both backends. What they should do depends on Q3 of
 Q1/Q2 of `q-suppression-on-user-functions`. Fix direction: peel
 `Redirected` now, through this task's shared peel; leave `Suppressed` to
 those rulings.
+
+(2026-10-30) Q1 and Q2 are ruled. A `-` directly on a call of a void
+function is an error, which F6 adds. y22's and y23's f prints `x` and has no
+`return`, so it is void, and F6 rejects both. `if - status_f`, a `-` on a
+call whose status the condition consumes, stays with
+`q-suppression-and-stage-residuals` Q3.
