@@ -1010,8 +1010,8 @@ fn emit_attest_inst(e: &mut Emit, inst: &SsaInst, types: &VarTypes) -> bool {
             is_map,
             if_form,
         } => emit_attest_all_c(e, source, binders, test, *is_map, *if_form, types),
-        // DD#61: retag a clean array/map after a successful `if attest…in`.
-        // No runtime work in c (versions collapse to one slot).
+        // Retag a passed attest's subject (scalar, array or map) clean. No
+        // runtime work in c (versions collapse to one slot).
         SsaInst::AttestRetag { .. } => {}
         _ => return false,
     }
@@ -1019,8 +1019,9 @@ fn emit_attest_inst(e: &mut Emit, inst: &SsaInst, types: &VarTypes) -> bool {
 }
 
 /// DD#61 attest-all: iterate the collection, bind the loop binder(s) from each
-/// cell, and evaluate the predicate. Non-if-form aborts (sash_attest_fail) on
-/// the first failing cell; if-form ANDs the results into __test_result.
+/// cell, and evaluate the predicate. The first failing cell ends the walk:
+/// the statement form aborts (sash_attest_fail), the if-form leaves false in
+/// __test_result.
 /// Mirrors native emit_attest_all (dispatch.rs:663). Binder slots are saved and
 /// restored around the loop so an outer same-named var is untouched (DD#61
 /// shadowing) — c_var_name collapses the binder's unique version onto its name.
@@ -1059,7 +1060,7 @@ fn emit_attest_all_c(
     .unwrap();
     emit_attest_bind(e, is_map, &names, &t);
     let val = lower_test_expr(e, test, types);
-    emit_attest_check(e, if_form, &val, source, &names, &t);
+    emit_attest_check(e, if_form, &val, source, &t);
     writeln!(e.out, "    }}").unwrap();
     emit_attest_binder_slots(e, &names, &t, false);
     if if_form {
@@ -1120,32 +1121,22 @@ fn emit_attest_bind(e: &mut Emit, is_map: bool, names: &[String], t: &str) {
     }
 }
 
-/// Per-cell predicate check: if-form ANDs into `t_all`; else aborts on failure.
-fn emit_attest_check(
-    e: &mut Emit,
-    if_form: bool,
-    val: &str,
-    source: &VarRef,
-    names: &[String],
-    t: &str,
-) {
+/// Per-cell predicate check. The first failing cell decides the ∀ in both
+/// forms (DD#61): the if-form clears `t_all` and leaves the loop, the
+/// statement form aborts. Mirrors native `emit_attest_all`, including the
+/// message: it names the collection and omits a value clause (DD#93), since
+/// no single value failed — for a map, the key may be what failed.
+fn emit_attest_check(e: &mut Emit, if_form: bool, val: &str, source: &VarRef, t: &str) {
     if if_form {
-        writeln!(
-            e.out,
-            "        {t}_all = {t}_all && ({val});",
-            t = t,
-            val = val
-        )
-        .unwrap();
+        writeln!(e.out, "        if (!({val})) {{ {t}_all = 0; break; }}").unwrap();
     } else {
         let name = e.source_names.original(&source.name);
         writeln!(
             e.out,
-            "        if (!({val})) sash_attest_fail(\"{nm}\", {nl}, {x}_ptr, {x}_len);",
+            "        if (!({val})) sash_attest_fail(\"{nm}\", {nl}, (const char*)0, 0);",
             val = val,
             nm = c_escape(name),
             nl = name.len(),
-            x = names.last().unwrap()
         )
         .unwrap();
     }

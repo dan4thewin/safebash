@@ -152,3 +152,21 @@ tainted) or a map via `mapfile -m`.
 - DD#41 — Sash-native array syntax
 - DD#42 — getenv/argv as explicit-origin builtins
 - DD#49 — bless anti-tautology (var on LHS)
+
+## Addendum (2026-10-31): the first failing cell decides, in the `if` form too
+
+"Any element fails → false branch taken" did not say whether the cells after
+the failing one are still tested. The statement form never tested them, because
+it aborts at the first failure. The `if` form did: it ANDed every cell's
+verdict, so a later cell's predicate still ran after the answer was known. A
+predicate that can abort, such as `${y:?unset}`, then aborted a program whose
+`if` should have taken its false branch (batch-531 B88d).
+
+Both forms now stop at the first counterexample. The `if` form takes its false
+branch there, and no later cell's predicate runs. When every cell passes,
+nothing changes: each cell is tested once, and the collection is clean in the
+true branch. This is the short-circuit that DD#93's 2026-10-31 addendum gives
+a predicate's own `&&` and `||`, applied across cells.
+
+Specs taint.sh atlazy.5 (an array) and atlazy.6 (a map, in insertion order).
+atlazy.7 is the all-pass control. Journal 553.

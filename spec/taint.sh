@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup taint
-plan=427
+plan=435
 echo "1..$plan" >&3
 
 set +e
@@ -2495,10 +2495,11 @@ echo "$b"'
 # ── DD#95 inside attest predicates ──
 # Both backends evaluated a predicate's `&&` / `||` eagerly, so a right-hand
 # `${y:?}` aborted a program whose result was already decided (fixed
-# 2026-10-31, journal 550). Of the ids this block skips, atlazy.5/.6
-# (attest-all stops at its first failing cell) and atlazy.8/.9 (the
-# statement form's gate message) are still to land; atlazy.1 will not, as
-# its predicate held a `$(( ))`, which SB5098 now rejects (atpred.17).
+# 2026-10-31, journal 550). The if-form attest-all also ran every later
+# cell's predicate after the first failure, and the C backend's statement
+# form printed a value in its gate message (both fixed 2026-10-31, journal
+# 553). atlazy.1 is not here: its predicate held a `$(( ))`, which SB5098
+# now rejects (atpred.17).
 
 # atlazy.2 a passing left operand decides an attest's `||`: a right-hand
 # `${y:?}` is never evaluated
@@ -2522,6 +2523,23 @@ x=$(arg 1)
 if attest x [[ $x == ok || ${y:?unset} == b ]] { echo "ok $x" } else { x=none; echo "no $x" }' ok
 [[ $rc = 0 && $out = 'ok ok' && -z $err && -z $rerr ]]; chk atlazy.4
 
+# atlazy.5 the if-form attest-all takes the else branch at the first failing
+# cell; no later cell's predicate runs
+run_sash 'str y=""
+argv 1 a
+if attest v in a [[ $v == ok && ${y:?unset} == b ]] { echo all } else { a=(d); echo some }
+echo "done ${a[0]}"' bad ok
+[[ $rc = 0 && $out = $'some\ndone d' && -z $err && -z $rerr ]]; chk atlazy.5
+
+# atlazy.6 ... for a map too, in insertion order
+run_sash 'str y=""
+argv 1 a
+attest e in a [[ -n $e ]]
+map m = @{a:~}
+if attest k v in m [[ $k =~ ^[A-Z]+$ && $v =~ ^[a-z]+$ && ${y:?unset} == b ]] { echo all } else { m=([K]=d); echo some }
+echo "done ${m[K]}"' k v K w
+[[ $rc = 0 && $out = $'some\ndone d' && -z $err && -z $rerr ]]; chk atlazy.6
+
 # atlazy.7 the if-form attest-all, with every cell passing on its left
 # operand: no cell's right operand runs
 run_sash 'str y=""
@@ -2529,6 +2547,72 @@ argv 1 a
 if attest v in a [[ $v == ok || ${y:?unset} == b ]] { echo all } else { a=(d); echo some }
 echo "done ${a[0]}"' ok ok
 [[ $rc = 0 && $out = $'all\ndone ok' && -z $err && -z $rerr ]]; chk atlazy.7
+
+# atlazy.8 the statement form names the collection, with no value clause, in
+# both backends (DD#93): no one value failed the gate
+run_sash 'argv 1 a
+attest v in a [[ $v == ok ]]
+echo "done ${a[0]}"' bad ok
+[[ $rc = 1 && -z $out && -z $err && $rerr == *'attest: a failed the gate'* \
+   && $rerr != *"= '"* ]]; chk atlazy.8
+
+# atlazy.9 ... for a map as well, where the key may be what failed
+run_sash 'argv 1 a
+attest e in a [[ -n $e ]]
+map m = @{a:~}
+attest k v in m [[ $k =~ ^[A-Z]+$ && $v =~ ^[a-z]+$ ]]
+echo "done ${m[K]}"' k v K w
+[[ $rc = 1 && -z $out && -z $err && $rerr == *'attest: m failed the gate'* \
+   && $rerr != *"= '"* ]]; chk atlazy.9
+
+# ── A caught attest evaluates its predicate once and cleans what it checked ──
+# The scalar `if attest` tested its predicate in the condition, then again
+# through the aborting statement gate in its pass block. A file test stat'd
+# its path twice, and an answer that changed in between aborted the *caught*
+# form instead of choosing a branch. The caught attest-all over a DD#100
+# slot checked the caller's collection but retagged the slot name, which no
+# version defines: native codegen ICEd, or a later read of the slot failed
+# the SSA taint backstop on a program the validator had accepted.
+
+# atonce.1 one stat, so a second answer that would differ is never asked for
+: > atonce.file
+run_sash_under 'x=$(getenv ATONCE)
+if attest x [[ -f $x ]] { echo pass } else { x=none; echo fail }
+echo "end $x"' env ATONCE="$PWD/atonce.file" strace -qq -o atonce.trace \
+    -P "$PWD/atonce.file" -e inject=newfstatat:error=ENOENT:when=2
+[[ $rc = 0 && $out = $'pass\nend '"$PWD/atonce.file" && -z $err && -z $rerr \
+   && $(grep -c . atonce.trace) = 1 ]]; chk atonce.1
+
+# atonce.2 ... in the `||` form too, which lowers to the same caught attest
+run_sash_under 'x=$(getenv ATONCE)
+attest x [[ -f $x ]] || { echo caught; exit 4 }
+echo "end $x"' env ATONCE="$PWD/atonce.file" strace -qq -o atonce.trace \
+    -P "$PWD/atonce.file" -e inject=newfstatat:error=ENOENT:when=2
+[[ $rc = 0 && $out = "end $PWD/atonce.file" && -z $err && -z $rerr \
+   && $(grep -c . atonce.trace) = 1 ]]; chk atonce.2
+rm -f atonce.file atonce.trace
+
+# atslot.7 a body fills its own slot, attests it in the caught form and reads
+# it after the `if`: the pass branch retags the caller's collection
+run_sash 'fn f {
+  argv 1 A
+  if attest v in A [[ $v != z ]] { echo "ok ${A[0]}" } else { echo bad; exit 1 }
+  echo "after ${A[1]}"
+}
+array a=()
+f =a' a b
+[[ $rc = 0 && $out = $'ok a\nafter b' && -z $err && -z $rerr ]]; chk atslot.7
+
+# atslot.8 ... in the `||` form, with no later read: the retag alone reached
+# native codegen
+run_sash 'fn f {
+  argv 1 A
+  attest v in A [[ $v != z ]] || exit 3
+  echo ok
+}
+array a=()
+f =a' a b
+[[ $rc = 0 && $out = ok && -z $err && -z $rerr ]]; chk atslot.8
 
 
 # ── DD#66: a dispatch pattern is a test operand ─────────────────────────────

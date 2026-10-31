@@ -610,17 +610,17 @@ impl SsaInst {
         false
     }
 
-    /// DD#61: retag an array/map clean after a successful `AttestAll`.
+    /// Retag an attest's subject (scalar, array or map) clean once its
+    /// predicate has passed — see `SsaInst::AttestRetag`.
     ///
-    /// The retag is a **compile-time** relabelling: it marks the collection
+    /// The retag is a **compile-time** relabelling: it marks the subject
     /// clean for the taint pass and changes nothing at runtime. So the target
     /// version must *alias* the source slot — the same Cranelift variables,
     /// not copies of them.
     ///
-    /// It used to `declare_var`/`def_var` a fresh pair. Those definitions were
-    /// emitted **only in the pass block**, because that is the one place this
-    /// instruction appears (`transform/control_flow.rs`, `AttestKind::Coll`).
-    /// `find_array_slot` resolves a collection by *name*, scanning
+    /// It used to `declare_var`/`def_var` a fresh pair. For a caught
+    /// `if attest … in a` those definitions were emitted **only in the pass
+    /// block**. `find_array_slot` resolves a collection by *name*, scanning
     /// `vars.keys()` for any `a_*`, so on the failing path of a caught
     /// `if attest … in a` it could pick the pass-block-only `a_2` and hand
     /// `sash_table_len` an undefined pointer — a SIGSEGV from safe source.
@@ -646,9 +646,9 @@ impl SsaInst {
     ///
     /// Statement form (`if_form == false`): a failing element writes the
     /// attest error and exits 1; reaching the end sets the test-result var to
-    /// true. If form: AND-accumulates each result and leaves the boolean in
-    /// the test-result var for the surrounding branch. An empty collection
-    /// is vacuously true.
+    /// true. If form: the first failing element leaves false in the
+    /// test-result var for the surrounding branch, and no later element's
+    /// predicate runs. An empty collection is vacuously true.
     #[allow(clippy::too_many_arguments)]
     fn emit_attest_all(
         &self,
@@ -722,17 +722,20 @@ impl SsaInst {
             exit_status_var,
         );
 
+        let cont = builder.create_block();
+        let fail = builder.create_block();
+        builder.ins().brif(result, cont, &[], fail, &[]);
+        builder.switch_to_block(fail);
+        builder.seal_block(fail);
         if if_form {
-            let ap = builder.use_var(all_passed);
-            let ap2 = builder.ins().band(ap, result);
-            builder.def_var(all_passed, ap2);
+            // DD#61: the first failing cell decides the ∀, as it does for the
+            // statement form; a later cell's predicate must not run (it can
+            // abort: `${y:?}`).
+            let failed = builder.ins().iconst(I64, 0);
+            builder.def_var(all_passed, failed);
+            builder.ins().jump(after, &[]);
         } else {
-            let cont = builder.create_block();
-            let fail = builder.create_block();
-            builder.ins().brif(result, cont, &[], fail, &[]);
-            // fail: "attest: validation failed" → stderr, exit(1)
-            builder.switch_to_block(fail);
-            builder.seal_block(fail);
+            // "attest: NAME failed the gate" → stderr, exit(1)
             self.emit_attest_fail(
                 ctx.program.source_names.original(&source.name),
                 builder,
@@ -740,10 +743,10 @@ impl SsaInst {
                 ctx.literals,
                 externs,
             );
-            // cont: counter++ ; loop
-            builder.switch_to_block(cont);
-            builder.seal_block(cont);
         }
+        // cont: counter++ ; loop
+        builder.switch_to_block(cont);
+        builder.seal_block(cont);
         let cnext = builder.ins().iadd_imm(ci, 1);
         builder.def_var(counter, cnext);
         builder.ins().jump(header, &[]);

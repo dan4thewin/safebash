@@ -171,7 +171,7 @@ fn classify_inst_def(
             taint.insert(var_key(target), Taint::Clean);
         }
         SsaInst::AttestRetag { target, .. } => {
-            // DD#61: attest-all produces a clean version of the array/map.
+            // A passed attest's subject — scalar, array or map — is clean.
             taint.insert(var_key(target), Taint::Clean);
         }
         SsaInst::ReadLine {

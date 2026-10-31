@@ -444,10 +444,30 @@ fn push_attest_all(
     test: crate::ir::TestExpr,
     is_map: bool,
 ) {
-    // DD#100: `attest v in A` attests the *caller's* collection — the deferral
-    // Part E describes. Unresolved, this ICEd on an undefined array `A`.
-    let array = &resolve_args_name(array, state);
-    let source = state.lookup(array);
+    push_attest_all_check(ssa, state, block, array, &binders, &test, is_map, false);
+    push_attest_retag(ssa, state, block, array);
+}
+
+/// DD#61: evaluate an attest-all predicate over every element of `array`.
+///
+/// The one builder for both forms: the statement form (`if_form: false`)
+/// aborts on a failing element; the `if` form (`if_form: true`) leaves the
+/// all-passed boolean for the branch that follows.
+///
+/// DD#100: `attest v in A` attests the *caller's* collection — the deferral
+/// Part E describes. Unresolved, this ICEd on an undefined array `A`.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn push_attest_all_check(
+    ssa: &mut SsaProgram,
+    state: &mut VersionState,
+    block: BlockId,
+    array: &str,
+    binders: &[String],
+    test: &crate::ir::TestExpr,
+    is_map: bool,
+    if_form: bool,
+) {
+    let source = state.lookup(&resolve_args_name(array, state));
     // Define the binders so they receive globally-unique SSA versions,
     // resolve the predicate against them, then restore current versions so
     // the binders stay loop-local (DD#61 shadow semantics). The version
@@ -455,16 +475,44 @@ fn push_attest_all(
     // unique and match the slots emit_attest_all creates for them.
     let snap = state.snapshot();
     let binder_refs: Vec<VarRef> = binders.iter().map(|b| state.define(b)).collect();
-    let ssa_test = test_to_ssa(&test, state);
+    let ssa_test = test_to_ssa(test, state);
     state.restore(&snap);
     ssa.block_mut(block).insts.push(SsaInst::AttestAll {
-        source: source.clone(),
+        source,
         binders: binder_refs,
         test: ssa_test,
         is_map,
-        if_form: false,
+        if_form,
     });
-    let target = state.define(array);
+}
+
+/// Retag an attest's subject clean once its predicate has passed.
+///
+/// The one builder for every form whose predicate has already been
+/// evaluated: the statement attest-all, after its `AttestAll`, and every
+/// caught `if attest`, in its pass block. It only relabels. The caught
+/// scalar form used to re-evaluate its predicate here through a second,
+/// aborting `Attest`, so a file test stat'd its path twice and, if the
+/// answer changed in between, the *caught* form aborted through the hard
+/// gate instead of taking its else branch.
+///
+/// It resolves `subject` through any DD#100 slot exactly as the check does
+/// (a scalar resolves to itself). When only the check resolved, the caught
+/// attest-all retagged the slot name — a version nothing defines — so
+/// native codegen ICEd for want of a slot, or a later read of the slot
+/// failed the SSA taint backstop on a program the validator had accepted.
+///
+/// The new version is valid only on the passing path, so codegen treats it
+/// as an alias of the source — see `codegen/dispatch.rs::emit_attest_retag`.
+pub(super) fn push_attest_retag(
+    ssa: &mut SsaProgram,
+    state: &mut VersionState,
+    block: BlockId,
+    subject: &str,
+) {
+    let subject = resolve_args_name(subject, state);
+    let source = state.lookup(&subject);
+    let target = state.define(&subject);
     ssa.block_mut(block)
         .insts
         .push(SsaInst::AttestRetag { target, source });

@@ -1,12 +1,11 @@
 //! Control flow: if/while/for/case → SSA blocks with branches.
 
-use super::expressions::{
-    expr_is_dynamic, expr_to_value, literal_name_of, resolve_args_name, test_to_ssa,
-};
+use super::expressions::{expr_is_dynamic, expr_to_value, literal_name_of, test_to_ssa};
 use super::functions::{lift_int_func_calls, lift_test_captures};
 use super::helpers::{insert_phis_two_branch, update_loop_phi_sources};
 use super::pipelines::{lower_for_argv_slice, lower_for_array};
 use super::statements::lower_stmts;
+use super::stmt_handlers::{push_attest_all_check, push_attest_retag};
 use crate::ir::*;
 use crate::ssa::*;
 
@@ -65,6 +64,15 @@ impl AttestKind {
             },
         }
     }
+
+    /// The name the attest checks and then cleans, as written. The shared
+    /// builders resolve a DD#100 slot themselves.
+    fn subject(&self) -> &str {
+        match self {
+            Self::Scalar(var) => var,
+            Self::Coll { array, .. } => array,
+        }
+    }
 }
 
 /// DD#93 Part D in the `if` position: `if attest SOURCE (( TARGET = SOURCE ))`.
@@ -111,12 +119,7 @@ fn lower_if_attest_convert(
 
     // Then: the conversion succeeded — retag the source clean and bind the
     // target to its value.
-    let source_ref = state.lookup(source_name);
-    let clean_source = state.define(source_name);
-    ssa.block_mut(then_block).insts.push(SsaInst::AttestRetag {
-        target: clean_source,
-        source: source_ref,
-    });
+    push_attest_retag(ssa, state, then_block, source_name);
     super::stmt_handlers::push_attest_convert_bind(
         ssa,
         state,
@@ -165,61 +168,7 @@ fn push_if_attest_condition(
             array,
             binders,
             is_map,
-        } => {
-            // DD#100: the if-form attest-all resolves its slot too.
-            let source = state.lookup(&resolve_args_name(array, state));
-            // Fresh, unique binder versions (see push_attest_all); restore so
-            // the binders stay loop-local.
-            let snap = state.snapshot();
-            let binder_refs: Vec<VarRef> = binders.iter().map(|b| state.define(b)).collect();
-            let ssa_test = test_to_ssa(test, state);
-            state.restore(&snap);
-            ssa.block_mut(block).insts.push(SsaInst::AttestAll {
-                source,
-                binders: binder_refs,
-                test: ssa_test,
-                is_map: *is_map,
-                if_form: true,
-            });
-        }
-    }
-}
-
-/// Emit the clean-retag instruction into the pass block of an `if attest`.
-///
-/// Both arms define a *new version* of the subject, valid only on the passing
-/// path. Codegen must therefore treat that version as an alias of the source
-/// rather than a separately-defined value — see
-/// `codegen/dispatch.rs::emit_attest_retag`.
-fn push_attest_retag(
-    kind: &AttestKind,
-    test: &crate::ir::TestExpr,
-    ssa: &mut SsaProgram,
-    state: &mut VersionState,
-    then_block: BlockId,
-) {
-    match kind {
-        AttestKind::Scalar(var) => {
-            let source_ref = state.lookup(var);
-            // Resolve the predicate before defining the target version so
-            // `$var` binds to the source (emit_attest evaluates the test
-            // before the target slot exists). See dispatch.rs::emit_attest.
-            let ssa_test = test_to_ssa(test, state);
-            let target_ref = state.define(var);
-            ssa.block_mut(then_block).insts.push(SsaInst::Attest {
-                target: target_ref,
-                source: source_ref,
-                test: ssa_test,
-            });
-        }
-        AttestKind::Coll { array, .. } => {
-            let source_ref = state.lookup(array);
-            let target_ref = state.define(array);
-            ssa.block_mut(then_block).insts.push(SsaInst::AttestRetag {
-                target: target_ref,
-                source: source_ref,
-            });
-        }
+        } => push_attest_all_check(ssa, state, block, array, binders, test, *is_map, true),
     }
 }
 
@@ -260,7 +209,7 @@ fn lower_if_attest(
     let pre_state = state.snapshot();
 
     // Then branch: retag the attested entity clean (only reached on pass).
-    push_attest_retag(&kind, &test, ssa, state, then_block);
+    push_attest_retag(ssa, state, then_block, kind.subject());
     let then_exit = lower_stmts(&i.then_body, ssa, state, then_block);
     ssa.block_mut(then_exit).terminator = Terminator::Goto(merge_block);
     let then_state = state.snapshot();

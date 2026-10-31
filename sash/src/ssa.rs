@@ -732,9 +732,12 @@ pub enum SsaInst {
         is_map: bool,
         if_form: bool,
     },
-    /// DD#61: retag an array/map as clean after a successful `AttestAll` —
-    /// copies the source slot (the collection's backing table) to a new
-    /// clean SSA version. No runtime validation (already done by AttestAll).
+    /// Retag an attest's subject — scalar, array or map — clean once its
+    /// predicate has passed: after the statement form's `AttestAll`, and in
+    /// the pass block of every caught `if attest`, whose predicate the
+    /// condition block has already evaluated exactly once. A compile-time
+    /// relabelling: the target is a clean SSA version of the same runtime
+    /// value, and the retag validates nothing itself.
     AttestRetag { target: VarRef, source: VarRef },
 }
 

@@ -427,3 +427,35 @@ non-empty — that loop rebinds `args` only, so it would drop the slots; failing
 closed to the general path is correct and costs nothing measurable.
 
 Specs `collparam.sh` 100.38-100.45. journal 443.
+
+## Addendum (2026-10-31) — the caught attest-all retagged the slot's name, not the slot
+
+Part F's "Substitution has to cover every write path" made both attest-all
+sites resolve a slot through `resolve_args_name`. The caught attest-all has a
+further write: its pass branch retags the collection clean. The caught forms
+are `if attest v in A [[ … ]] { … }` and `attest v in A [[ … ]] || cmd`. That
+retag used the literal name `A` (batch-531 B92). So the check read the
+caller's collection, while the retag defined a version of `A` that no code
+reads. There were two symptoms:
+
+- natively, codegen found no slot for that version and ICEd (`no codegen slot
+  for A_3`, types.rs:72); C ran;
+- when the body read the slot afterwards, the SSA taint backstop still saw the
+  caller's collection as tainted. It rejected the read, in both backends, in a
+  program the validator had accepted.
+
+The retag is now one helper. The statement form and both caught forms use it,
+and it resolves the slot like every other path. This is Part F's own rule
+("Any new path that names a collection must call `resolve_args_name`"),
+applied to a path the rule missed.
+
+Specs:
+
+- collparam.sh 100.28 already ran the statement form, and it now runs through
+  the helper. Without the resolution, it fails natively.
+- taint.sh atslot.7 (the `if` form, with a later read) and atslot.8 (the `||`
+  form) pin the caught forms. Each body fills its own slot and attests it,
+  which is a shape the planned T3 rule (no attest of received taint) keeps
+  legal.
+
+Journal 553.

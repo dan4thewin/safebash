@@ -975,8 +975,9 @@ as legal.
 - Settled 2026-10-31 (journal 552). DG ruled the strict rule: a predicate
   runs no code, so `$(( ))` in it is SB5098 (atpred.17). atlazy.1 is dropped.
 
-Unit A (journal 552) landed B32, B36, B88b and B89. Unit B is B88c, B88d,
-B91 and B92's shared helper, with atonce.1-2 and atlazy.5/.6/.8/.9.
+Unit A (journal 552) landed B32, B36, B88b and B89. Unit B (journal 553)
+landed B88c, B88d, B91 and B92's shared helper, with atonce.1-2,
+atlazy.5/.6/.8/.9 and two new specs, atslot.7/.8.
 
 - [x] **B32** (question; DD93). `attest x [[ -n $x && $(ok "$x") == ok ]]`
   ICEs in both backends; the branch rejects it (SB5020, SB5098). Probably
@@ -1004,10 +1005,20 @@ B91 and B92's shared helper, with atonce.1-2 and atlazy.5/.6/.8/.9.
     branch's narrower scope evaluated echo and some intrinsics in place;
     its atpred.2 and .9-.12 pinned that and are not ported. Specs 24.16
     (assertion tightened), atpred.1, .3-.8 and .13-.31.
-- [ ] **B88c** (fixed-on-branch; DD93). An attest predicate was evaluated
+- [x] **B88c** (fixed-on-branch; DD93). An attest predicate was evaluated
   more than once. Branch specs: atonce.1-2.
-- [ ] **B88d** (fixed-on-branch; DD93, DD61). The attest-all form's sibling
+  - Ported 2026-10-31 (journal 553; DD93 addendum). The pass block of a
+    caught scalar attest (`if attest`, `attest … || X`) only retags, through
+    the shared `push_attest_retag`. It no longer re-runs the aborting
+    Attest. atonce.1-2 are verbatim: strace fails the second `newfstatat`,
+    and one stat is asserted.
+- [x] **B88d** (fixed-on-branch; DD93, DD61). The attest-all form's sibling
   of B88a. Branch specs: atlazy.5-6.
+  - Ported 2026-10-31 (journal 553; DD61 addendum). In the `if` form the
+    first failing cell takes the false branch, and no later cell's
+    predicate runs: native `brif` to a fail block, C `break`. atlazy.5/.6
+    are verbatim (`${y:?unset}` in a later cell); atlazy.7 is the all-pass
+    control.
 - [x] **B89** (fixed-on-branch; DD93). A tainted comparison operand inside
   an attest predicate was accepted. Branch specs: atpred.1-16 (shared with
   B36, B88b).
@@ -1016,12 +1027,22 @@ B91 and B92's shared helper, with atonce.1-2 and atlazy.5/.6/.8/.9.
     through `check_test_taint`. `== $(getenv USER)` and
     `== $(</etc/hostname)` are SB5020 plus SB5098 at 2:19. Pinned by
     atpred.13-15, which assert the SB5020.
-- [ ] **B91** (fixed-on-branch; DD93, DD61). C's statement-form attest-all
+- [x] **B91** (fixed-on-branch; DD93, DD61). C's statement-form attest-all
   failure printed the value (`= 'bad'`); native does not. Branch specs:
   atlazy.8-9.
-- [ ] **B92** (fixed-on-branch; DD100, DD93). A caught attest-all over a
+  - Ported 2026-10-31 (journal 553; DD93 addendum). C passes a null value
+    to `sash_attest_fail`, so both backends print `attest: NAME failed the
+    gate`. sash-rt is unchanged. atlazy.8/.9 are verbatim and red in C only
+    on the pre-F10 binary.
+- [x] **B92** (fixed-on-branch; DD100, DD93). A caught attest-all over a
   DD100 slot retagged the unresolved slot name. Branch specs: atslot.1-6
   (rewritten in W1 under T3).
+  - Ported 2026-10-31 (journal 553; DD100 addendum). The shared
+    `push_attest_all_check` and `push_attest_retag` resolve the slot. On
+    the pre-F10 binary, native ICE'd (`no codegen slot for A_3`,
+    types.rs:72), and a later read of the slot was a false SSA-backstop
+    rejection in both backends. atslot.7/.8 are new fill-then-attest specs,
+    which T3 keeps legal. atslot.1-6 stay W1's.
 
 ### 17. W1 local checks and summaries
 

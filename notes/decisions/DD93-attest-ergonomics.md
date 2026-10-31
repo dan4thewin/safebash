@@ -332,3 +332,35 @@ reported beside it. Journal 552.
 
 The F8 addendum above said atlazy.1 would land with F10. It will not: its
 predicate holds `$(( 1 / z ))`, which is SB5098 now (spec atpred.17).
+
+## Addendum (2026-10-31): a caught attest evaluates its predicate once
+
+A caught scalar attest is `if attest x [[ … ]] { … }`, or `attest x [[ … ]] ||
+cmd`, which lowers through the same path. It tested the predicate in its
+condition, and then its pass branch ran the statement form's gate on the same
+value: the predicate a second time, through the aborting check (batch-531
+B88c). A predicate that reads the outside world can answer differently the
+second time. A file test stat'd its file twice, and when the second stat
+failed, the caught form aborted at the statement form's gate instead of
+choosing a branch.
+
+The pass branch now only retags the value clean, so the predicate runs once.
+The Part D convert form and the collection `if` form already only retagged.
+All three now share one retag helper.
+
+Specs taint.sh atonce.1 (the `if` form) and atonce.2 (the `||` form). strace
+fails the tested file's second `newfstatat`. Each spec asserts that the pass
+path ran and that the file was stat'd exactly once.
+
+**C's attest-all text (batch-531 B91).** C's statement form of attest-all
+printed a value clause, `attest: a = '123' failed the gate`, where native
+prints `attest: a failed the gate`. The map section above already gives
+native's text ("aborts with `attest: cfg failed the gate`"), and it is the
+right one. The gate belongs to the collection, no single value failed it, and
+for a map the key may be what failed. C now prints the same text. The runtime
+needed no change, because it already omits the clause when no value is
+passed. Specs atlazy.8 (an array) and atlazy.9 (a map).
+
+The F8 addendum said atlazy.5/.6/.8/.9 would land with F10, and they have.
+atlazy.5/.6 pin a collection rule, so they are recorded in DD#61's 2026-10-31
+addendum. Journal 553.
