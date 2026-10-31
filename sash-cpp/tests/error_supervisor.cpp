@@ -1,12 +1,37 @@
 #include <cerrno>
+#include <charconv>
 #include <csignal>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <sys/prctl.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
 int main(int argc, char **argv) {
+    if (argc >= 2 && std::strcmp(argv[1], "--close-prelude") == 0) {
+        if (argc < 4) {
+            std::fprintf(stderr, "usage: error-supervisor --close-prelude COUNT COMMAND ...\n");
+            return 2;
+        }
+        int count;
+        const auto *end = argv[2] + std::strlen(argv[2]);
+        const auto parsed = std::from_chars(argv[2], end, count);
+        if (parsed.ec != std::errc{} || parsed.ptr != end || count <= 0) {
+            std::fprintf(stderr, "error-supervisor: invalid close prelude count\n");
+            return 2;
+        }
+        // Consume the root's fault before exec; fork children get fresh counters.
+        for (int i = 0; i < count; ++i) {
+            if (::close(-1) != -1 || (errno != EBADF && errno != EIO)) {
+                std::fprintf(stderr, "error-supervisor: unexpected prelude close result\n");
+                return 2;
+            }
+        }
+        ::execvp(argv[3], argv + 3);
+        std::perror("error-supervisor: exec after close prelude");
+        return 2;
+    }
     if (argc < 2) {
         std::fprintf(stderr, "usage: error-supervisor COMMAND [ARGUMENT...]\n");
         return 2;

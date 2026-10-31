@@ -9,7 +9,8 @@
 
 namespace sash {
 struct ProcessResult;
-}
+struct PipelineResult;
+} // namespace sash
 
 namespace sash::platform {
 
@@ -17,6 +18,8 @@ std::error_code write_all(int fd, std::string_view bytes) noexcept;
 int report_error(std::string_view program, std::string_view diagnostic, int status) noexcept;
 ProcessResult execute(std::vector<std::string> &command);
 ProcessResult read_from(std::vector<std::string> &command, const std::function<void(int)> &body);
+PipelineResult read_pipeline(std::vector<std::vector<std::string>> &commands,
+                             const std::function<void(int)> &body);
 std::size_t read_some(int fd, char *buffer, std::size_t capacity);
 
 class FileDescriptor {

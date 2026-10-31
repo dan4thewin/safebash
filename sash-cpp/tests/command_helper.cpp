@@ -81,9 +81,12 @@ int main(int argc, char **argv) {
         }
         return status;
     }
-    if (mode == "flood" && argc == 2) {
+    if ((mode == "flood" || mode == "flood-records") && argc == 2) {
         std::array<char, 8192> block{};
         block.fill('x');
+        if (mode == "flood-records") {
+            block.back() = '\n';
+        }
         while (output(block.data(), block.size())) {
         }
         return fail("cannot write flood");
@@ -109,7 +112,11 @@ int main(int argc, char **argv) {
         }
         return flushed();
     }
-    if (mode == "stdin" && argc == 2) {
+    if ((mode == "stdin" && argc == 2) || (mode == "relay" && (argc == 2 || argc == 3))) {
+        int status = 0;
+        if (argc == 3 && (!number(argv[2], status) || status < 0 || status > 255)) {
+            return fail("invalid relay status");
+        }
         std::array<char, 8192> block{};
         while (true) {
             const auto count = ::read(0, block.data(), block.size());
@@ -120,10 +127,14 @@ int main(int argc, char **argv) {
                 return fail("cannot read stdin");
             }
             if (count == 0) {
-                return flushed();
+                const int error = flushed();
+                return error == 0 ? status : error;
             }
             if (!output(block.data(), static_cast<std::size_t>(count))) {
                 return fail("cannot copy stdin");
+            }
+            if (mode == "relay" && flushed() != 0) {
+                return fail("cannot relay stdin");
             }
         }
     }

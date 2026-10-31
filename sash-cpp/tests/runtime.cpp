@@ -22,6 +22,14 @@ void require(bool condition, const char *message) {
     }
 }
 
+void default_signal(int number) {
+    require(std::signal(number, SIG_DFL) != SIG_ERR, "restore default signal disposition");
+    sigset_t signals;
+    require(::sigemptyset(&signals) == 0 && ::sigaddset(&signals, number) == 0 &&
+                ::sigprocmask(SIG_UNBLOCK, &signals, nullptr) == 0,
+            "unblock test signal");
+}
+
 struct ChildResult {
     int status;
     std::string diagnostic;
@@ -560,11 +568,7 @@ void reader_outcomes(const std::string &helper) {
     require(error != nullptr && error->code() == std::errc::invalid_argument && !called,
             "a reader command must share argv NUL checks before running");
     in_child([&] {
-        require(std::signal(SIGPIPE, SIG_DFL) != SIG_ERR, "restore default SIGPIPE");
-        sigset_t signals;
-        require(::sigemptyset(&signals) == 0 && ::sigaddset(&signals, SIGPIPE) == 0 &&
-                    ::sigprocmask(SIG_UNBLOCK, &signals, nullptr) == 0,
-                "unblock SIGPIPE");
+        default_signal(SIGPIPE);
         const auto early = sash::try_read_from(helper, {"flood"}, [](sash::LineReader &) {});
         const auto *signal = std::get_if<sash::ProcessSignal>(&early.outcome);
         require(signal != nullptr && signal->number == SIGPIPE,
@@ -586,16 +590,19 @@ void reader_outcomes(const std::string &helper) {
     });
 }
 
+void install_stdin(std::string_view bytes) {
+    int input[2];
+    require(::pipe(input) == 0, "create original stdin");
+    sash::write(bytes, input[1]);
+    require(::close(input[1]) == 0, "close original stdin writer");
+    if (input[0] != 0) {
+        require(::dup2(input[0], 0) == 0 && ::close(input[0]) == 0, "install original stdin");
+    }
+}
+
 void reader_scopes(const std::string &helper) {
     in_child([&] {
-        int original_input[2];
-        require(::pipe(original_input) == 0, "create original stdin");
-        sash::write("program stdin", original_input[1]);
-        require(::close(original_input[1]) == 0, "close original stdin writer");
-        if (original_input[0] != 0) {
-            require(::dup2(original_input[0], 0) == 0 && ::close(original_input[0]) == 0,
-                    "install original stdin");
-        }
+        install_stdin("program stdin");
         const auto descriptor_probe = descriptor_probe_arguments();
         std::vector<std::string> outer_records;
         const auto output = sash::capture_stdout([&] {
@@ -648,6 +655,16 @@ void reader_resources(const std::string &helper) {
             });
             require(count == 4 && ::fcntl(fd, F_GETFD) < 0 && errno == EBADF,
                     "reader plumbing must leave closed standard descriptors closed");
+            count = 0;
+            sash::read_pipeline({{helper, {"records", "0"}}, {helper, {"relay"}}},
+                                [&](sash::LineReader &input) {
+                                    std::string line;
+                                    while (input.readline(line)) {
+                                        ++count;
+                                    }
+                                });
+            require(count == 4 && ::fcntl(fd, F_GETFD) < 0 && errno == EBADF,
+                    "pipeline wiring must preserve closed parent standard descriptors");
         });
     }
     in_child([&] {
@@ -675,6 +692,261 @@ void reader_resources(const std::string &helper) {
         require(::waitpid(-1, &status, WNOHANG) < 0 && errno == ECHILD,
                 "reader completion must reap every producer without leaking descriptors");
     });
+}
+
+void pipeline_streaming(const std::string &helper) {
+    sash::read_pipeline({{helper, {"binary"}}, {helper, {"relay"}}, {helper, {"relay"}}},
+                        [&](sash::LineReader &input) {
+                            std::string line;
+                            require(input.readline(line) && line == std::string(256 * 1024, 'x') +
+                                                                        std::string("\0end", 4),
+                                    "stream a large binary line through multiple stages");
+                            require(input.readline(line) && line.empty(), "retain the empty line");
+                            require(!input.readline(line), "pipeline must deliver EOF");
+                        });
+    in_child([&] {
+        int control[2];
+        require(::pipe(control) == 0 && ::fcntl(control[1], F_SETFD, FD_CLOEXEC) == 0,
+                "create pipeline handshake");
+        sash::read_pipeline(
+            {{helper, {"handshake", std::to_string(control[0])}},
+             {helper, {"relay"}},
+             {helper, {"relay"}}},
+            [&](sash::LineReader &input) {
+                std::string line;
+                const bool ready = input.readline(line) && line == "ready";
+                sash::write("Y", control[1]);
+                require(::close(control[1]) == 0 && ready, "all stages must run before waiting");
+                require(input.readline(line) && line == "done", "relay the consumer handshake");
+                require(!input.readline(line), "handshake must reach pipeline EOF");
+            });
+        require(::close(control[0]) == 0, "close pipeline handshake reader");
+    });
+}
+
+void pipeline_outcomes(const std::string &helper) {
+    for (const auto statuses : {std::array{7, 0, 0}, std::array{7, 3, 2}, std::array{0, 4, 0}}) {
+        int consumed = 0;
+        const auto result =
+            sash::try_read_pipeline({{helper, {"records", std::to_string(statuses[0])}},
+                                     {helper, {"relay", std::to_string(statuses[1])}},
+                                     {helper, {"relay", std::to_string(statuses[2])}}},
+                                    [&](sash::LineReader &input) {
+                                        std::string line;
+                                        while (input.readline(line)) {
+                                            ++consumed;
+                                        }
+                                    });
+        require(!result.success() && result.setup_errors.empty() && consumed == 4,
+                "upstream failures count after consumer effects complete");
+        int rightmost = 0;
+        for (std::size_t i = 0; i < statuses.size(); ++i) {
+            require(result.stages[i] &&
+                        std::get<sash::ProcessExit>(result.stages[i]->outcome).status ==
+                            statuses[i],
+                    "retain every stage's actual exit");
+            if (statuses[i] != 0) {
+                rightmost = statuses[i];
+            }
+        }
+        bool checked = false;
+        try {
+            sash::check(result);
+        } catch (const sash::CommandError &error) {
+            checked = error.status() == rightmost;
+        }
+        require(checked, "checked pipeline must select the rightmost failure, not the maximum");
+    }
+    const auto signaled = sash::try_read_pipeline({{helper, {"exit", "0"}},
+                                                   {helper, {"signal", std::to_string(SIGTERM)}},
+                                                   {helper, {"relay"}}},
+                                                  [](sash::LineReader &) {});
+    require(signaled.stages[1] &&
+                std::get<sash::ProcessSignal>(signaled.stages[1]->outcome).number == SIGTERM,
+            "retain a pipeline stage's signal identity");
+    bool checked = false;
+    try {
+        sash::check(signaled);
+    } catch (const sash::CommandError &error) {
+        checked = error.status() == 128 + SIGTERM;
+    }
+    require(checked, "encode pipeline signals only at the checked boundary");
+    in_child([&] {
+        require(std::signal(SIGCHLD, SIG_IGN) != SIG_ERR, "ignore pipeline child statuses");
+        const auto result = sash::try_read_pipeline(
+            {{helper, {"exit", "0"}}, {helper, {"relay"}}, {helper, {"relay"}}},
+            [](sash::LineReader &input) {
+                std::string line;
+                require(!input.readline(line), "consume the empty pipeline before waiting");
+            });
+        require(result.setup_errors.size() == 3 && !result.success(),
+                "retain each unavailable child status, not an invented success");
+        for (const auto &stage : result.stages) {
+            require(stage && std::get<sash::SetupError>(stage->outcome).code().value() == ECHILD,
+                    "an unobservable started stage must retain its wait error");
+        }
+    });
+}
+
+void pipeline_construction(const std::string &helper) {
+    bool called = false;
+    bool empty = false;
+    try {
+        (void)sash::try_read_pipeline({}, [&](sash::LineReader &) { called = true; });
+    } catch (const sash::SetupError &error) {
+        empty = error.code() == std::errc::invalid_argument;
+    }
+    require(empty && !called, "an empty pipeline is invalid, not a successful empty stream");
+    const auto nul = sash::try_read_pipeline(
+        {{helper, {"records", "0"}}, {helper, {"args", std::string("bad\0arg", 7)}}},
+        [&](sash::LineReader &) { called = true; });
+    require(nul.setup_errors.size() == 1 && nul.setup_errors[0].stage == 1 && !nul.stages[0] &&
+                !nul.stages[1] && !called &&
+                nul.setup_errors[0].error.code() == std::errc::invalid_argument,
+            "prepare every argv before launching any stage");
+    in_child([&] {
+        default_signal(SIGPIPE);
+        std::string target = "unchanged";
+        const auto missing =
+            sash::try_read_pipeline({{helper, {"flood"}},
+                                     {helper, {"relay"}},
+                                     {helper + ".missing", {}},
+                                     {helper, {"relay"}}},
+                                    [&](sash::LineReader &input) { (void)input.readline(target); });
+        require(missing.setup_errors.size() == 1 && missing.setup_errors[0].stage == 2 &&
+                    missing.stages[0] && missing.stages[1] && missing.stages[2] &&
+                    !missing.stages[3] && target == "unchanged",
+                "late failed exec must skip the consumer and leave later stages unstarted");
+        bool checked = false;
+        try {
+            sash::check(missing);
+        } catch (const sash::SetupError &error) {
+            checked = error.code().value() == ENOENT;
+        }
+        require(checked, "the original setup failure wins over cleanup SIGPIPE");
+        int status;
+        require(::waitpid(-1, &status, WNOHANG) < 0 && errno == ECHILD,
+                "partial pipeline construction must reap every started child");
+    });
+    in_child([&] {
+        const int available = ::fcntl(2, F_DUPFD_CLOEXEC, 3);
+        require(available >= 0 && ::close(available) == 0, "locate free pipeline descriptors");
+        struct rlimit original{};
+        require(::getrlimit(RLIMIT_NOFILE, &original) == 0, "get pipeline fd limit");
+        auto limited = original;
+        limited.rlim_cur = static_cast<rlim_t>(available + 2);
+        require(::setrlimit(RLIMIT_NOFILE, &limited) == 0, "limit pipeline pipe construction");
+        const auto result = sash::try_read_pipeline(
+            {{helper, {"exit", "0"}}, {helper, {"relay"}}, {helper, {"relay"}}},
+            [&](sash::LineReader &) { called = true; });
+        require(::setrlimit(RLIMIT_NOFILE, &original) == 0, "restore pipeline fd limit");
+        require(result.setup_errors.size() == 1 && result.setup_errors[0].stage == 1 &&
+                    !result.stages[0] && !result.stages[1] && !called &&
+                    result.setup_errors[0].error.code().value() == EMFILE,
+                "second pipe allocation failure must not run a consumer or invent stage exits");
+        require(::fcntl(available, F_GETFD) < 0 && errno == EBADF &&
+                    ::fcntl(available + 1, F_GETFD) < 0 && errno == EBADF,
+                "release the first pipe after partial allocation");
+    });
+}
+
+void pipeline_scopes(const std::string &helper) {
+    in_child([&] {
+        install_stdin("program stdin");
+        const auto probe = descriptor_probe_arguments();
+        int count = 0;
+        const auto output = sash::capture_stdout([&] {
+            sash::read_pipeline(
+                {{helper, {"records", "0"}}, {helper, {"relay"}}}, [&](sash::LineReader &outer) {
+                    std::string line;
+                    while (outer.readline(line)) {
+                        ++count;
+                        int nested = 0;
+                        sash::read_pipeline({{helper, {"records", "0"}}, {helper, {"relay"}}},
+                                            [&](sash::LineReader &inner) {
+                                                sash::execute(helper, probe);
+                                                std::string value;
+                                                while (inner.readline(value)) {
+                                                    ++nested;
+                                                }
+                                            });
+                        require(nested == 4, "nested pipeline keeps its own reader");
+                        if (count == 1) {
+                            require(sash::capture_stdout([&] {
+                                        sash::execute(helper, {"stdin"});
+                                    }) == "program stdin",
+                                    "pipeline body commands retain parent stdin");
+                        }
+                        sash::write("body\n");
+                    }
+                });
+            sash::write("after\n");
+        });
+        require(count == 4 && output == "body\nbody\nbody\nbody\nafter\n",
+                "nested pipelines and captures preserve outer stream and parent output");
+        default_signal(SIGPIPE);
+        bool preserved = false;
+        try {
+            (void)sash::try_read_pipeline(
+                {{helper, {"flood"}}, {helper, {"relay"}}, {helper, {"relay"}}},
+                [](sash::LineReader &) { throw sash::CommandError(23, "consumer marker"); });
+        } catch (const sash::CommandError &error) {
+            preserved = error.status() == 23;
+        }
+        require(preserved, "consumer exception survives close-before-wait of every stage");
+        struct rlimit limit{};
+        require(::getrlimit(RLIMIT_NOFILE, &limit) == 0, "get pipeline leak-check limit");
+        limit.rlim_cur = std::min(limit.rlim_cur, rlim_t{32});
+        require(::setrlimit(RLIMIT_NOFILE, &limit) == 0, "limit pipeline leak-check descriptors");
+        for (int i = 0; i < 16; ++i) {
+            sash::read_pipeline({{helper, {"exit", "0"}}, {helper, {"relay"}}},
+                                [](sash::LineReader &) {});
+        }
+        int status;
+        require(::waitpid(-1, &status, WNOHANG) < 0 && errno == ECHILD,
+                "completed and unwound pipeline children must all be reaped");
+    });
+}
+
+void pipeline_fork_failure(const std::string &helper) {
+    default_signal(SIGPIPE);
+    bool called = false;
+    const auto result =
+        sash::try_read_pipeline({{helper, {"flood"}}, {helper, {"relay"}}, {helper, {"relay"}}},
+                                [&](sash::LineReader &) { called = true; });
+    require(result.setup_errors.size() == 1 && result.setup_errors[0].stage == 1 &&
+                result.stages[0] && !result.stages[1] && !result.stages[2] && !called &&
+                result.setup_errors[0].error.code().value() == EAGAIN,
+            "the injected second fork must close pipes and retain the started producer");
+    int status;
+    require(::waitpid(-1, &status, WNOHANG) < 0 && errno == ECHILD,
+            "failed later fork must not orphan the first producer");
+}
+
+void pipeline_wait_failure(const std::string &helper) {
+    const auto result = sash::try_read_pipeline(
+        {{helper, {"exit", "0"}}, {helper, {"relay"}}, {helper, {"relay"}}},
+        [](sash::LineReader &input) {
+            std::string line;
+            require(!input.readline(line), "consume the empty pipeline before the wait fault");
+        });
+    require(result.setup_errors.size() == 1 && result.setup_errors[0].stage == 0 &&
+                result.setup_errors[0].error.code().value() == EIO && !result.success(),
+            "retain the first wait error separately from recovered stage outcomes");
+    for (const auto &stage : result.stages) {
+        require(stage && std::holds_alternative<sash::ProcessExit>(stage->outcome) &&
+                    std::get<sash::ProcessExit>(stage->outcome).status == 0,
+                "cleanup reaping must preserve every actual child exit");
+    }
+    bool checked = false;
+    try {
+        sash::check(result);
+    } catch (const sash::SetupError &error) {
+        checked = error.code().value() == EIO;
+    }
+    int status;
+    require(checked && ::waitpid(-1, &status, WNOHANG) < 0 && errno == ECHILD,
+            "the original wait failure remains checked after all children are accounted for");
 }
 
 void fork_failure(const std::string &helper) {
@@ -717,6 +989,12 @@ int main(int argc, char **argv) {
         if (mode == "--wait-interrupted") {
             return run_test(argv[1], [&] { interrupted_wait(helper); }) ? 0 : 1;
         }
+        if (mode == "--pipeline-fork-failure") {
+            return run_test(argv[1], [&] { pipeline_fork_failure(helper); }) ? 0 : 1;
+        }
+        if (mode == "--pipeline-wait-failure") {
+            return run_test(argv[1], [&] { pipeline_wait_failure(helper); }) ? 0 : 1;
+        }
         if (mode == "--dup-failure") {
             return run_test(argv[1], [&] { partial_error_pipe(helper); }) ? 0 : 1;
         }
@@ -749,6 +1027,10 @@ int main(int argc, char **argv) {
         {"reader outcomes and early completion", [&] { reader_outcomes(helper); }},
         {"nested reader and capture scopes", [&] { reader_scopes(helper); }},
         {"reader resources", [&] { reader_resources(helper); }},
+        {"pipeline streaming and handshake", [&] { pipeline_streaming(helper); }},
+        {"pipeline stage outcomes", [&] { pipeline_outcomes(helper); }},
+        {"pipeline construction failures", [&] { pipeline_construction(helper); }},
+        {"pipeline scopes and resources", [&] { pipeline_scopes(helper); }},
     };
     for (const auto &test : tests) {
         if (!run_test(test.first, test.second)) {

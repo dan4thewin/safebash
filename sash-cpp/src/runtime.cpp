@@ -32,6 +32,38 @@ void check(const ProcessResult &result) {
     }
 }
 
+bool PipelineResult::success() const noexcept {
+    return setup_errors.empty() && !stages.empty() &&
+           std::all_of(stages.begin(), stages.end(),
+                       [](const auto &stage) { return stage && stage->success(); });
+}
+
+void check(const PipelineResult &result) {
+    if (!result.setup_errors.empty()) {
+        throw result.setup_errors.front().error;
+    }
+    if (result.stages.empty()) {
+        throw SetupError(std::make_error_code(std::errc::invalid_argument),
+                         "pipeline requires at least one stage");
+    }
+    const ProcessResult *failed = nullptr;
+    for (const auto &stage : result.stages) {
+        if (!stage) {
+            throw SetupError(std::make_error_code(std::errc::protocol_error),
+                             "unstarted pipeline stage without a setup failure");
+        }
+        if (const auto *error = std::get_if<SetupError>(&stage->outcome)) {
+            throw *error;
+        }
+        if (!stage->success()) {
+            failed = &*stage;
+        }
+    }
+    if (failed != nullptr) {
+        check(*failed);
+    }
+}
+
 namespace {
 
 std::vector<std::string> command_words(std::string_view executable,
@@ -134,6 +166,11 @@ bool LineReader::readline(std::string &target) {
 
 namespace detail {
 
+void consume_lines(int fd, const std::function<void(LineReader &)> &body) {
+    LineReader reader(fd);
+    body(reader);
+}
+
 ProcessResult read_from(std::string_view executable, const std::vector<std::string> &arguments,
                         const std::function<void(LineReader &)> &body) {
     std::vector<std::string> command;
@@ -142,10 +179,28 @@ ProcessResult read_from(std::string_view executable, const std::vector<std::stri
     } catch (const SetupError &error) {
         return {std::string(executable), error};
     }
-    return platform::read_from(command, [&](int fd) {
-        LineReader reader(fd);
-        body(reader);
-    });
+    return platform::read_from(command, [&](int fd) { consume_lines(fd, body); });
+}
+
+PipelineResult read_pipeline(const std::vector<Command> &stages,
+                             const std::function<void(LineReader &)> &body) {
+    if (stages.empty()) {
+        throw SetupError(std::make_error_code(std::errc::invalid_argument),
+                         "pipeline requires at least one stage");
+    }
+    std::vector<std::vector<std::string>> commands;
+    commands.reserve(stages.size());
+    for (std::size_t i = 0; i < stages.size(); ++i) {
+        try {
+            commands.push_back(command_words(stages[i].executable, stages[i].arguments));
+        } catch (const SetupError &error) {
+            PipelineResult result;
+            result.stages.resize(stages.size());
+            result.setup_errors.push_back({i, error});
+            return result;
+        }
+    }
+    return platform::read_pipeline(commands, [&](int fd) { consume_lines(fd, body); });
 }
 
 std::string capture_stdout(const std::function<void()> &body) {

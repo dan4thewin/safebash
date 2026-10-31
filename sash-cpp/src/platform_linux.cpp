@@ -107,11 +107,8 @@ class Child {
     Child &operator=(const Child &) = delete;
 
     ~Child() noexcept {
-        if (pid_ > 0) {
-            int status;
-            if (const auto error = reap(status)) {
-                cleanup_failed("wait for child", error);
-            }
+        if (pending()) {
+            (void)finish();
         }
     }
 
@@ -119,6 +116,16 @@ class Child {
         int status;
         if (const auto error = reap(status)) {
             throw SetupError(error, "wait for child");
+        }
+        return status;
+    }
+
+    bool pending() const noexcept { return pid_ > 0; }
+
+    int finish() noexcept {
+        int status;
+        if (const auto error = reap(status)) {
+            cleanup_failed("wait for child", error);
         }
         return status;
     }
@@ -152,6 +159,8 @@ enum class ChildOperation : int {
     CloseOutputReader,
     InstallOutput,
     CloseOutputWriter,
+    InstallInput,
+    CloseInput,
     Exec
 };
 
@@ -224,8 +233,9 @@ std::error_code replace_descriptor(int source, int destination) noexcept {
     return result < 0 ? last_error() : std::error_code{};
 }
 
-void launch(std::vector<std::string> &command, std::optional<Child> &child,
-            Pipe *output = nullptr) {
+[[nodiscard]] std::optional<SetupError> launch(std::vector<std::string> &command,
+                                               std::optional<Child> &child, Pipe *output = nullptr,
+                                               int input = -1) {
     std::vector<char *> arguments;
     arguments.reserve(command.size() + 1);
     for (auto &word : command) {
@@ -262,6 +272,14 @@ void launch(std::vector<std::string> &command, std::optional<Child> &child,
                 child_failed(failure, ChildOperation::CloseOutputWriter, errno);
             }
         }
+        if (input >= 0) {
+            if (const auto error = replace_descriptor(input, 0)) {
+                child_failed(failure, ChildOperation::InstallInput, error.value());
+            }
+            if (::close(input) < 0) {
+                child_failed(failure, ChildOperation::CloseInput, errno);
+            }
+        }
         ::execve(executable, argv, environment);
         child_failed(failure, ChildOperation::Exec, errno);
     }
@@ -280,27 +298,35 @@ void launch(std::vector<std::string> &command, std::optional<Child> &child,
         }
         switch (failure->operation) {
         case ChildOperation::CloseReader:
-            throw SetupError({error, std::generic_category()}, "close child exec error reader");
+            return SetupError({error, std::generic_category()}, "close child exec error reader");
         case ChildOperation::CloseOutputReader:
-            throw SetupError({error, std::generic_category()}, "close child output reader");
+            return SetupError({error, std::generic_category()}, "close child output reader");
         case ChildOperation::InstallOutput:
-            throw SetupError({error, std::generic_category()}, "connect child stdout");
+            return SetupError({error, std::generic_category()}, "connect child stdout");
         case ChildOperation::CloseOutputWriter:
-            throw SetupError({error, std::generic_category()}, "close child output writer");
+            return SetupError({error, std::generic_category()}, "close child output writer");
+        case ChildOperation::InstallInput:
+            return SetupError({error, std::generic_category()}, "connect child stdin");
+        case ChildOperation::CloseInput:
+            return SetupError({error, std::generic_category()}, "close child input reader");
         case ChildOperation::Exec:
-            throw SetupError({error, std::generic_category()}, "exec " + command[0]);
+            return SetupError({error, std::generic_category()}, "exec " + command[0]);
         }
-        throw SetupError(std::make_error_code(std::errc::protocol_error),
-                         "unknown child setup operation");
+        return SetupError(std::make_error_code(std::errc::protocol_error),
+                          "unknown child setup operation");
     }
+    return std::nullopt;
 }
 
-ProcessResult completed(std::vector<std::string> &command, Child &child) {
-    const int status = child.wait();
+ProcessResult completed(std::vector<std::string> &command, int status) {
     if (WIFEXITED(status)) {
         return {std::move(command[0]), ProcessExit{WEXITSTATUS(status)}};
     }
     return {std::move(command[0]), ProcessSignal{WTERMSIG(status)}};
+}
+
+ProcessResult completed(std::vector<std::string> &command, Child &child) {
+    return completed(command, child.wait());
 }
 
 } // namespace
@@ -334,7 +360,9 @@ int report_error(std::string_view program, std::string_view diagnostic, int stat
 
 ProcessResult execute(std::vector<std::string> &command) {
     std::optional<Child> child;
-    launch(command, child);
+    if (const auto error = launch(command, child)) {
+        throw *error;
+    }
     return completed(command, *child);
 }
 
@@ -344,7 +372,9 @@ ProcessResult read_from(std::vector<std::string> &command, const std::function<v
     std::optional<Pipe> output;
     try {
         output.emplace(create_pipe("create command output pipe"));
-        launch(command, child, &*output);
+        if (const auto error = launch(command, child, &*output)) {
+            throw *error;
+        }
     } catch (const SetupError &error) {
         return {std::move(command[0]), error};
     }
@@ -355,6 +385,73 @@ ProcessResult read_from(std::vector<std::string> &command, const std::function<v
     } catch (const SetupError &error) {
         return {std::move(command[0]), error};
     }
+}
+
+PipelineResult read_pipeline(std::vector<std::vector<std::string>> &commands,
+                             const std::function<void(int)> &body) {
+    PipelineResult result;
+    result.stages.resize(commands.size());
+    // All parent endpoints must close before any child owner waits.
+    std::vector<std::optional<Child>> children(commands.size());
+    std::vector<Pipe> pipes;
+    pipes.reserve(commands.size());
+    const auto failure = [&](std::size_t stage, const SetupError &error) {
+        result.setup_errors.push_back({stage, error});
+    };
+    const auto retain = [&](std::size_t stage, ProcessResult outcome) {
+        if (!result.stages[stage]) {
+            result.stages[stage] = std::move(outcome);
+        }
+    };
+    std::size_t stage = 0;
+    bool ready = false;
+    try {
+        for (; stage < commands.size(); ++stage) {
+            pipes.push_back(create_pipe("create pipeline pipe"));
+        }
+        for (stage = 0; stage < commands.size(); ++stage) {
+            const int input = stage > 0 ? pipes[stage - 1].reader.get() : -1;
+            if (const auto error = launch(commands[stage], children[stage], &pipes[stage], input)) {
+                retain(stage, {commands[stage][0], *error});
+                throw *error;
+            }
+            if (stage > 0) {
+                pipes[stage - 1].reader.close();
+            }
+        }
+        ready = true;
+    } catch (const SetupError &error) {
+        failure(stage, error);
+    }
+    if (ready) {
+        body(pipes.back().reader.get());
+    }
+    const auto close = [&](FileDescriptor &fd, std::size_t index) {
+        try {
+            fd.close();
+        } catch (const SetupError &error) {
+            failure(index, error);
+        }
+    };
+    for (std::size_t i = 0; i < pipes.size(); ++i) {
+        close(pipes[i].reader, i);
+        close(pipes[i].writer, i);
+    }
+    for (std::size_t i = 0; i < children.size(); ++i) {
+        if (children[i]) {
+            try {
+                retain(i, completed(commands[i], *children[i]));
+            } catch (const SetupError &error) {
+                failure(i, error);
+                if (children[i]->pending()) {
+                    retain(i, completed(commands[i], children[i]->finish()));
+                } else {
+                    retain(i, {commands[i][0], error});
+                }
+            }
+        }
+    }
+    return result;
 }
 
 std::size_t read_some(int fd, char *buffer, std::size_t capacity) {

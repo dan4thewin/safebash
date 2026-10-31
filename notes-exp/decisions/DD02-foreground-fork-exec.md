@@ -59,3 +59,15 @@ The consumer runs in the parent with an explicit reader; its pipe closes
 before the child owner waits, including during partial setup and unwinding.
 This applies DD#122's reference ownership rule and introduces no pipeline
 aggregation or whole-function suppression choice.
+
+## Multiple-external-stage extension
+
+The fourth pair uses the same launch path for several external stages,
+adding child stdin wiring while keeping the terminal reader in the parent.
+Known pre-exec failure is returned separately inside the launcher so a
+pipeline can retain it as a stage outcome without mistaking a parent's
+setup/close failure for that child's exit or signal.
+All remaining parent endpoints close before any completion wait.
+[DD#3](DD03-external-pipeline-outcomes.md) records the independently
+selected aggregation policy; signal inheritance and no-force-kill remain
+unchanged.

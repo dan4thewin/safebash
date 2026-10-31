@@ -1,0 +1,10 @@
+unique 1: worker:Ada
+unique 2: worker:Edsger
+unique 3: worker:Grace
+skip 4: guest
+seen 4; kept 3
+saved: Ada
+saved: Edsger
+saved: Grace
+upstream failure detected
+complete

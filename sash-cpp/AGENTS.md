@@ -10,7 +10,7 @@ The runtime task is `../notes-exp/tasks/cpp-transpiler-runtime-before-ir.md`.
 
 Build and exercise changes with `mk -p 1 test` in this directory. Use distinct
 `BUILD` directories when changing compilers or sanitizer flags. `mk -p 1
-sash-example` additionally compiles all three sash counterparts with the real
+sash-example` additionally compiles all four sash counterparts with the real
 CLI. Ordinary C++ tests do not require a Rust build or IR input.
 `mk -p 1 fault-test` adds Linux strace probes; run it without sanitizer
 instrumentation. The native command helper is deliberately unsanitized.
@@ -26,9 +26,21 @@ Use the selected single-threaded fork/exec model. Prepare argument storage
 before fork; the pre-exec child must not allocate or unwind parent objects.
 Keep normal exit, signal termination, and setup failure distinguishable.
 
+External pipelines retain every stage outcome. Checking uses the rightmost
+failed stage, not the largest numeric status; setup/cleanup errors are
+recorded separately and the first takes precedence (experiment DD#3).
+Unstarted stages have no invented exit status. Close every remaining parent
+endpoint before waiting for any child, including partial construction and
+consumer unwinding.
+
 Command-backed reader callbacks receive an explicit `LineReader &`; do not
 rebind parent stdin. Close their pipe before waiting for the producer,
 including during unwinding and partial launch failure.
+
+Later-fork/read injection uses a live producer that cannot exit before the
+selected entry. strace counts restarted syscall entries too. Higher child
+close ordinals use the static supervisor's `--close-prelude`; injecting them
+directly into a dynamically loaded parent can fail before `main`.
 
 Keep generated-code examples source-shaped: real functions, ordinary control
 flow, and standard C++ values. Preserve command outcomes for caught/discarded

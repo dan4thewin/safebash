@@ -132,6 +132,34 @@ This is the single-producer parent-reader slice, not multi-stage pipelines,
 forked C++ stages, public wait, pipeline suppression, general redirection,
 or shutdown. Those remain below; the macOS storage choice remains open.
 
+## Fourth runnable milestone - implemented
+
+`pipeline_report.cpp` and its sash counterpart feed printf through
+C-locale sort and uniq before a parent reader fills the caller's collection.
+The ten-line report retains real functions, while/for loops, captured
+labels, and an upstream-failure condition whose final stage succeeds.
+
+DG selected all-stage outcome retention, failure on any stage, and the
+rightmost failed stage for checked numeric status
+([DD#3](../decisions/DD03-external-pipeline-outcomes.md)).
+`read_pipeline` and `try_read_pipeline` reuse launch and line-reader
+machinery. Unstarted stages are explicit; setup/cleanup errors are kept
+separately from known child exits/signals. Partial construction and
+consumer unwinding close all remaining endpoints before waiting.
+
+Twenty-three fixture groups and all four C++ goldens pass with GCC, Clang,
+and host-GCC ASan; the supplied native compiler matches all four sash
+goldens. The full showcase has 151 cases: 73 basic, 61 faults, and 17
+recoveries, passing on both ordinary compilers. Eight new uninjected
+controls, two focused selectors, and three implementation reversions
+pin the completion and ownership rules.
+[Journal 005](../journal/005-external-pipeline-report.md) records the
+counter-prelude harness fix and outcome-preservation correction.
+
+This completes multiple external stages with a terminal parent reader,
+not forked C++ stages, stage/function suppression, public wait, general
+redirects, or shutdown.
+
 ## Starting points selected by DG
 
 | Area | Starting point |
@@ -143,6 +171,7 @@ or shutdown. Those remain below; the macOS storage choice remains open.
 | Regex | `std::regex` with `std::regex_constants::ECMAScript` |
 | General in-process stdout capture | Linux `memfd_create`, not a named temporary file or a synchronously filled pipe |
 | Failure propagation | Exceptions for uncaught failures; retain caught outcomes and explicit suppression rather than making every nonzero command exit throw |
+| External pipeline completion | Retain every stage; checked pipelines fail on any stage and use the rightmost failure, selected in DD#3 |
 | Generated-program shape | Free functions and ordinary C++ control flow, not a bytecode engine or an SSA dispatcher |
 
 These are external-target choices, not changes to native sash. In
@@ -350,13 +379,13 @@ invisible optimization or a reason to implement an effect analysis here.
 - [ ] Give every nested reader its own fd and pending children. Calls,
   captures, redirected commands, and background bodies must not
   accidentally adopt an enclosing reader.
-- [ ] Start producers, consume concurrently, close the reader, then reap
+- [x] Start producers, consume concurrently, close the reader, then reap
   and evaluate completion. Exercise scalar early completion as well as
   full-stream and loop consumers.
 - [ ] Complete the reader regions left by ordinary completion, `break`,
   escaping `continue`, return, and shutdown, inner first. Preserve the
   selected transfer/result when cleanup succeeds.
-- [ ] On partial construction failure, close successful endpoints and
+- [x] On partial construction failure, close successful endpoints and
   account for already-started stages. Keep the existing close-and-wait,
   no-automatic-force-kill policy unless DG explicitly changes it.
 - [ ] Separate status aggregation from execution. Suppressed stages still
@@ -371,6 +400,9 @@ invisible optimization or a reason to implement an effect analysis here.
 Public wait and reader completion must share recorded child outcomes.
 Construction failure is not EOF and must not run a consumer on an invalid
 descriptor or clear its destination as if an empty stream arrived.
+The checked completion and partial-construction items are implemented for
+external stages. The common path for builtins/forked C++ stages, escaping
+reader control transfers, public wait, and suppression remain open.
 
 ## 6. Implement shutdown, END, and signals as one lifecycle
 

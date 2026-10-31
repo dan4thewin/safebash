@@ -15,6 +15,7 @@ build:V:
 	$CXX $CPPFLAGS $CXXFLAGS $SANITIZE examples/greetings.cpp $BUILD/libsash_cpp.a -o $BUILD/greetings &&
 	$CXX $CPPFLAGS $CXXFLAGS $SANITIZE examples/job_report.cpp $BUILD/libsash_cpp.a -o $BUILD/job_report &&
 	$CXX $CPPFLAGS $CXXFLAGS $SANITIZE examples/stream_report.cpp $BUILD/libsash_cpp.a -o $BUILD/stream_report &&
+	$CXX $CPPFLAGS $CXXFLAGS $SANITIZE examples/pipeline_report.cpp $BUILD/libsash_cpp.a -o $BUILD/pipeline_report &&
 	$CXX $CPPFLAGS $CXXFLAGS $SANITIZE examples/error_paths.cpp $BUILD/libsash_cpp.a -o $BUILD/error_paths
 
 fixtures:V: build
@@ -32,16 +33,22 @@ test:V: fixtures
 	timeout 10 $BUILD/job_report > $BUILD/job_report.actual &&
 	cmp examples/job_report.expected $BUILD/job_report.actual &&
 	timeout 10 $BUILD/stream_report > $BUILD/stream_report.actual &&
-	cmp examples/stream_report.expected $BUILD/stream_report.actual
+	cmp examples/stream_report.expected $BUILD/stream_report.actual &&
+	timeout 10 $BUILD/pipeline_report > $BUILD/pipeline_report.actual &&
+	cmp examples/pipeline_report.expected $BUILD/pipeline_report.actual
 
 error-demo:V: fixtures
 	if test -n "$SANITIZE"; then printf '%s\n' 'error-demo requires an unsanitized BUILD (strace and deliberate faults)' >&2; exit 2; fi &&
-	$CXX $CPPFLAGS $CXXFLAGS tests/error_supervisor.cpp -o $BUILD/error-supervisor &&
+	$CXX $CPPFLAGS $CXXFLAGS -static tests/error_supervisor.cpp -o $BUILD/error-supervisor &&
 	bash examples/error_paths.sh $BUILD
 
 fault-test:V: test
 	timeout 10 strace -qq -e trace=clone -e inject=clone:error=EAGAIN:when=1 -o $BUILD/fork-failure.trace $BUILD/runtime-tests --fork-failure $BUILD/command-helper &&
 	grep -qE 'clone.*EAGAIN.*INJECTED' $BUILD/fork-failure.trace &&
+	timeout 10 strace -qq -e trace=clone,close,wait4 -e inject=clone:error=EAGAIN:when=2 -o $BUILD/pipeline-fork-failure.trace $BUILD/runtime-tests --pipeline-fork-failure $BUILD/command-helper &&
+	grep -qE 'clone.*EAGAIN.*INJECTED' $BUILD/pipeline-fork-failure.trace &&
+	timeout 10 strace -qq -e trace=wait4 -e inject=wait4:error=EIO:when=1 -o $BUILD/pipeline-wait-failure.trace $BUILD/runtime-tests --pipeline-wait-failure $BUILD/command-helper &&
+	grep -qE 'wait4.*EIO.*INJECTED' $BUILD/pipeline-wait-failure.trace &&
 	timeout 10 strace -qq -e trace=wait4 -e inject=wait4:error=EINTR:when=1 -o $BUILD/wait-interrupted.trace $BUILD/runtime-tests --wait-interrupted $BUILD/command-helper &&
 	grep -qE 'wait4.*EINTR.*INJECTED' $BUILD/wait-interrupted.trace &&
 	timeout 10 strace -qq -e trace=pipe2,fcntl,close,prlimit64 -o $BUILD/dup-failure.trace $BUILD/runtime-tests --dup-failure $BUILD/command-helper &&
@@ -64,4 +71,7 @@ sash-example:V:
 	cmp examples/job_report.expected $BUILD/job_report-sash.actual &&
 	SASH_RT_LIB=$SASH_RT_LIB $SASH examples/stream_report.sash -o $BUILD/stream_report-sash &&
 	timeout 10 $BUILD/stream_report-sash > $BUILD/stream_report-sash.actual &&
-	cmp examples/stream_report.expected $BUILD/stream_report-sash.actual
+	cmp examples/stream_report.expected $BUILD/stream_report-sash.actual &&
+	SASH_RT_LIB=$SASH_RT_LIB $SASH examples/pipeline_report.sash -o $BUILD/pipeline_report-sash &&
+	timeout 10 $BUILD/pipeline_report-sash > $BUILD/pipeline_report-sash.actual &&
+	cmp examples/pipeline_report.expected $BUILD/pipeline_report-sash.actual

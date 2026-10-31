@@ -1,29 +1,35 @@
-## Third pair: a streaming worker report
+## Fourth pair: sorted, deduplicated pipeline records
 
-[`stream_report.cpp`](../sash-cpp/examples/stream_report.cpp) and its
-[sash counterpart](../sash-cpp/examples/stream_report.sash) stream four
-records from an external producer through a parent-side `while readline`.
-A real function fills its caller's sparse collection by reference,
-captures worker labels inside the loop, and leaves entries 1, 2, and 4
-available afterward. Both produce the independent nine-line report.
+[`pipeline_report.cpp`](../sash-cpp/examples/pipeline_report.cpp) and its
+[sash counterpart](../sash-cpp/examples/pipeline_report.sash) put printf,
+C-locale sort, and uniq before a parent-side `while readline`. A real
+function fills its caller's collection by reference, captures labels in
+the loop, and leaves three workers for a later for traversal. An
+upstream-failure condition succeeds in detecting a failed first command
+despite a successful last command. Both produce the independent ten-line
+report.
 
-The runtime adds checked `read_from`, inspectable `try_read_from`, and
-an explicit `LineReader`. It reuses foreground launch rather than forking
-a second implementation. Only child stdout is piped; commands inside
-the reader still inherit program stdin. Cleanup closes the pipe before
-waiting, including partial launch failure, early return, and unwinding.
-Consumer exceptions do not become producer results.
+DG selected all-stage outcome retention, failure on any stage, and
+rightmost-failure checked status in
+[DD#3](decisions/DD03-external-pipeline-outcomes.md). The runtime adds
+`read_pipeline` and `try_read_pipeline`, reusing launch and `LineReader`.
+Setup/cleanup errors stay separate from known child exits/signals;
+unstarted stages have no invented status. All remaining parent endpoints
+close before any child wait, including partial construction and
+consumer unwinding. Parent stdin is never rebound.
 
-GCC, Clang, and host-GCC ASan pass nineteen fixture groups and all three
-C++ example goldens. DG's supplied native compiler passes all three sash
-goldens. Streaming is pinned by a two-way handshake rather than a sleep;
-nested readers/captures and early SIGPIPE are exercised too.
-See [journal 004](journal/004-streaming-worker-report.md).
+GCC, Clang, and host-GCC ASan pass twenty-three fixture groups and all
+four C++ goldens. DG's supplied native compiler passes all four sash
+goldens. Streaming is pinned by a multi-stage two-way handshake; later
+fork and retained-wait probes check actual syscall/outcome evidence.
+Three implementation negative controls pin rightmost status, outcome
+preservation, and close-before-wait.
+See [journal 005](journal/005-external-pipeline-report.md).
 
 ## Runnable error-path showcase
 
 `sash-cpp/examples/error_paths.cpp` and its shell runner now demonstrate
-112 isolated cases: 53 basic cases, 45 injected faults, and 14 interrupted
+151 isolated cases: 73 basic cases, 61 injected faults, and 17 interrupted
 operation recoveries. Each displays stdout, stderr, and status.
 
 ```sh
@@ -34,15 +40,18 @@ mk -p 1 error-demo
 Checked errors stop their operation's program; caught/discarded errors
 continue. A real exit 127 stays distinct from failed exec, signal outcomes
 retain their identity, and a failed capture leaves its target unchanged.
-The catalog includes descriptor/capture setup, reads/writes, process
-launch and wait, failed diagnostics, and fatal restoration/reap/close/unmap.
+The catalog includes descriptor/capture setup, reads/writes, multi-stage
+construction and stdin wiring, process completion, failed diagnostics,
+and fatal restoration/reap/close/unmap.
 A Linux subreaper supervises traced examples so the fatal-wait case leaves
 no orphaned fixture.
 
-GCC and Clang pass the full showcase. The nine new cases cover streaming
-setup, reads, completion, child stdout installation, and EINTR. Five
-new negative controls reject runs with injection removed, alongside the
-original ordinary/fatal controls.
+GCC and Clang pass the full showcase, whose predicted and actual totals
+are both 151. Eight new catalog controls and both focused pipeline
+selectors reject runs with injection removed. Higher child-close probes
+use the small static supervisor's controlled prelude to avoid failing the
+parent loader before main; generated-program examples remain ordinary
+C++ builds.
 The full showcase deliberately runs without sanitizers. Allocation
 failure is an explicitly thrown exception, not host memory exhaustion;
 arbitrary internal corruption and future features are not claimed.
@@ -52,19 +61,23 @@ the [runnable catalog](../sash-cpp/README.md#error-path-showcase).
 The [low-level tour](../sash-cpp/docs/error-path-tour.md) now follows
 representative paths through both harnesses for C programmers new to C++
 and strace injection. It covers result versus exception propagation,
-capture unwinding, fault-site calibration, retries, and fatal cleanup.
+capture unwinding, fault-site calibration, retries, fatal cleanup, and
+the new pipeline/close-prelude paths.
 
 No compiler, producer, or native dependency changed.
-The first greetings and second job-report pairs remain available; their
-native comparison and DG's single-threaded fork/exec choice are recorded
-in [journal 002](journal/002-job-report-and-foreground-processes.md) and
-[DD#2](decisions/DD02-foreground-fork-exec.md).
+The first three pairs remain available. Their earlier milestones are in
+journals [001](journal/001-first-cpp-program.md),
+[002](journal/002-job-report-and-foreground-processes.md), and
+[004](journal/004-streaming-worker-report.md).
+[DD#2](decisions/DD02-foreground-fork-exec.md) remains the selected
+single-threaded fork/exec model, including signal inheritance and
+no-force-kill.
 
 The [runtime task](tasks/cpp-transpiler-runtime-before-ir.md) stays open.
 The first Linux launch/capture slice is complete, making the macOS storage
 choice timely. Remaining work includes call-context propagation,
 background jobs, replacing exec, forked C++ stages, general redirection,
-multi-stage pipelines, reader exits and public wait integration,
+further pipeline forms, escaping reader control transfers and public wait,
 END/signals, and most value operations.
 
 Existing [sanitizer tooling limitations](tasks/sanitizer-host-compatibility.md)

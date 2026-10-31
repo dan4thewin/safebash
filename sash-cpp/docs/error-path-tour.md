@@ -3,7 +3,7 @@
 This is a reading guide to the error showcase for programmers comfortable
 with C, Unix processes, and ordinary strace output, but not necessarily
 with C++ or syscall fault injection. It follows representative cases
-through both harnesses and the runtime, rather than cataloguing all 112.
+through both harnesses and the runtime, rather than cataloguing all 151.
 
 The C++ program directly exercises the runtime that future transpiled
 programs will use; it is hand-written, not generated. The Bash program
@@ -23,7 +23,10 @@ bash examples/error_paths.sh --list
 All remaining commands run from `sash-cpp/`.
 The build tool is `mk`, not `make`. The `error-demo` target builds the
 library and examples, prepares the command fixtures, builds the Linux
-supervisor, then runs the Bash catalog. To build just the prerequisites
+supervisor, then runs the Bash catalog. The supervisor is statically linked
+for the later child-close probes; this requires static development archives
+but does not make the runtime's ordinary examples static. To build just
+the prerequisites
 for basic cases, without requiring strace:
 
 ```sh
@@ -39,14 +42,14 @@ containment, not a timeout imposed by the runtime.
 
 | File | Responsibility and useful entry points |
 |---|---|
-| [examples/error_paths.sh](../examples/error_paths.sh) | Catalog and assertions: `basic`, `fault`, `invoke`, `ordinal`, `child_fault` |
-| [examples/error_paths.cpp](../examples/error_paths.cpp) | Scenario dispatch and handling: `main`, `scenario`, `Demo::process`, `Demo::operation` |
+| [examples/error_paths.sh](../examples/error_paths.sh) | Catalog and assertions: `basic`, `fault`, `invoke`, `ordinal`, `pipe_endpoint`, `child_fault` |
+| [examples/error_paths.cpp](../examples/error_paths.cpp) | Scenario dispatch and handling: `main`, `scenario`, `Demo::process`, `Demo::pipeline`, `Demo::operation` |
 | [include/sash/runtime.hpp](../include/sash/runtime.hpp) | Public result/error types; the `run` program boundary |
 | [src/runtime.cpp](../src/runtime.cpp) | `try_execute`, `execute`, `check`, `LineReader`, and the capture/reader callback wrappers |
 | [src/platform.hpp](../src/platform.hpp) | Descriptor and capture owners, including member declaration order |
 | [src/platform_linux.cpp](../src/platform_linux.cpp) | Syscalls: `Child`, `SharedChildFailure`, `StdoutCapture`, `write_all`, `cleanup_failed` |
 | [tests/command_helper.cpp](../tests/command_helper.cpp) | Controlled exits, signals, and the ignored-SIGCHLD wrapper |
-| [tests/error_supervisor.cpp](../tests/error_supervisor.cpp) | Test-only subreaper that contains orphaned descendants |
+| [tests/error_supervisor.cpp](../tests/error_supervisor.cpp) | Test-only subreaper and controlled close-counter prelude |
 
 Use those responsibilities and function names as locators; line numbers
 will move. Trace excerpts below are condensed from recorded runs.
@@ -68,6 +71,7 @@ outcomes, callbacks, and cleanup.
 | `std::string_view` | A borrowed pointer/length view. It neither owns nor extends the lifetime of the bytes. |
 | `std::vector<T>` | An owning growable array, with its allocation released automatically. |
 | `std::variant<A, B, C>` | A managed tagged union. `std::get_if<A>(&v)` returns a pointer to the `A` payload, or null if another alternative is selected. |
+| `std::optional<T>` | An absent or present `T`. An absent pipeline stage has not started; it is not a zero-status result. |
 | `[&] { statements; }` | A callable closure borrowing surrounding locals by reference: think callback plus context structure. `[]` captures no surrounding locals. |
 | `template <typename Body>` | Compile this helper for the supplied callable type. It does not interpret the body at runtime. |
 | `[[nodiscard]]` | Warn if an outcome is ignored accidentally. An explicit `(void)` marks intentional discard. |
@@ -393,7 +397,9 @@ their C wrapper names.
 
 `fault` first runs an uninjected baseline. Its expected status is normally
 zero, but intentionally failing scenarios such as `capture-command` and
-`exit7` have a baseline status of 7.
+`exit7` have a baseline status of 7. Checked early pipeline readers have
+baseline status 141 from SIGPIPE; an interrupted read must preserve that
+status too, not turn it into zero.
 
 The `ordinal` awk routine then maintains two different counts:
 
@@ -691,6 +697,128 @@ its cleanup. `stream-read` and `retry-stream-read` select the data reader's
 8192-byte read, not the one-byte completion read. The runner requires the
 injected trace line to match that baseline selector; unchanged output
 alone would not prove which retry loop ran.
+
+## Multiple stages: independent outcomes and close-before-wait
+
+```sh
+bash examples/error_paths.sh --basic --case pipeline-rightmost-caught build
+bash examples/error_paths.sh --basic --case pipeline-rightmost-checked build
+bash examples/error_paths.sh --case pipeline-fork-later build
+bash examples/error_paths.sh --case pipeline-child-input-install build
+```
+
+The first two use three external stages with exit statuses 7, 3, and 2.
+The reader drains their records before completion is checked. Caught mode
+shows all three exits, then `continued`; checked mode raises status **2**,
+not the largest status 7. An upstream exit 7 followed by two successful
+stages also fails. These are DG's choices in
+[DD#3](../../notes-exp/decisions/DD03-external-pipeline-outcomes.md),
+not a new rule imposed on the native compiler.
+
+The data path is:
+
+```text
+stage 0 stdout -> pipe 0 -> stage 1 stdin/stdout -> pipe 1
+               -> stage 2 stdin/stdout -> pipe 2 -> parent LineReader
+```
+
+The runtime prepares command strings and allocates all data pipes before
+forking. Each child wires stdout first and, except for the first stage,
+stdin second. Other private endpoints disappear on successful exec through
+CLOEXEC. Parent writers close during launch; an interstage parent reader
+closes after its downstream child's setup is confirmed. Commands inside
+the reader callback still inherit program stdin.
+
+`PipelineResult` has two independent collections. Its optional `stages`
+keep known exits, signals, and observed pre-exec failures. Unstarted stages
+remain absent. Its `setup_errors` keep indexed setup/cleanup errors in
+encounter order. A parent close or wait error cannot replace a child's
+known exit with that error; the overall pipeline nevertheless fails.
+Checking gives the first setup error precedence over process verdicts.
+
+`pipeline-fork-later` fails the second fork while the first producer is
+live. The consumer is skipped, remaining pipes close, and the started
+producer is reaped after SIGPIPE. A focused `--pipeline-wait-failure`
+fixture instead injects EIO into the first wait, then requires cleanup
+reaping to retain all three actual exit-zero outcomes while the original
+wait error stays checked:
+
+```text
+wait4(A, ..., 0, NULL)                  = -1 EIO (...) (INJECTED)
+wait4(A, [{... WEXITSTATUS(s) == 0}], ...) = A
+wait4(B, [{... WEXITSTATUS(s) == 0}], ...) = B
+wait4(C, [{... WEXITSTATUS(s) == 0}], ...) = C
+```
+
+On completion or construction failure, the explicit close loop attempts
+each endpoint separately, even if another close fails, before waiting on
+any child. During consumer unwinding, the pipe-owner vector is destroyed
+before the child-owner vector. Moving the waits ahead of these closes
+deadlocks the later-fork fixture: the producer's pipe still has a reader,
+so its endless writes block instead of receiving SIGPIPE. The negative
+control terminates that deliberately broken fixture through a timeout
+below an unaffected subreaper.
+
+### Later entries must not drift onto a restarted syscall
+
+strace's `when=N` counts restarted entries too. If an earlier fork overlaps
+a child's exit, SIGCHLD can restart that fork under ptrace and consume an
+extra count. A superficially correct later ordinal can then land earlier.
+
+The later-fork fixture starts an endless `flood` producer and keeps its
+reader open until the second fork: that producer cannot exit first.
+The later-completion and data-read probes use `flood-records`, an endless
+producer with newline-terminated blocks, and return after one record.
+No producer can exit before the selected initial read. Their baseline
+SIGPIPE status is intentional; EINTR recovery must preserve the baseline
+bytes and status. Close-error probes instead use finite, small records:
+synthetically skipping a close must not make a leaked reader hold an
+endless producer alive.
+
+`pipe_endpoint` obtains data endpoints from the baseline's post-marker
+`pipe2` records. The close selectors use those fd numbers, not assumptions
+that an input reader is always fd 3 or the terminal reader fd 7.
+
+### Higher child-close ordinals need a controlled parent prelude
+
+For a later stage, the pre-exec child closes:
+
+1. Its completion-pipe reader.
+2. Its own output-pipe reader.
+3. The stdout source after `dup2`.
+4. The stdin source after `dup2`.
+
+The corresponding probes select close ordinals 2, 3, and 4. Direct
+`-f -e inject=close:error=EIO:when=2` also fails the dynamically loaded
+parent's second close. During development this killed the loader while
+closing libstdc++, before the marker or any child existed: exit 127 was
+not evidence of the intended pre-exec path.
+
+For these later close ordinals, `invoke` execs the C++ demo through the
+static supervisor's `--close-prelude N` mode. Before exec, that mode makes
+N `close(-1)` calls. They own no resource; EBADF is normal and the one
+controlled EIO is accepted. The parent's fault is consumed there, before
+its dynamic loader runs. Exec preserves that tracee's count, while fork
+children start fresh:
+
+```text
+P close(-1)                         = -1 EIO (...) (INJECTED)
+P execve(... error_paths ...)        = 0
+P clone(...)                        = C
+C close(output_reader)              = -1 EIO (...) (INJECTED)
+```
+
+The prelude is an additional mode of the same small helper, not a runtime
+fallback or a static-link requirement for transpiled programs. The outer
+supervisor still contains descendants above strace. The existing
+first-close demonstration retains its intentionally shown loader fault.
+
+`pipeline-child-input-install` targets the **second dup2** in each tracee:
+the first stage has only its stdout dup2, while the next stage's stdin
+dup2 fails before exec. `retry-pipeline-input` substitutes EINTR instead;
+the resumed/retried syscall succeeds, and the PID assertion now requires
+the actual child to reach exec. Byte-for-byte output and status still
+have to match the uninjected baseline.
 
 ## When printing the original error fails too
 

@@ -20,6 +20,13 @@ sparse collection by reference, captures labels inside the loop, and
 leaves the saved workers available afterward. Four records produce three
 workers at indices 1, 2, and 4 and a nine-line report.
 
+[pipeline_report.cpp](examples/pipeline_report.cpp) and
+[pipeline_report.sash](examples/pipeline_report.sash) put three external
+stages before that reader: printf, C-locale sort, and uniq. The function
+retains three workers from four unique records; a later condition detects
+an upstream failure even when the last command succeeds. Both produce
+the adjacent ten-line expected report.
+
 On Linux:
 
 ```sh
@@ -28,10 +35,12 @@ mk -p 1 test
 ./build/greetings
 ./build/job_report
 ./build/stream_report
+./build/pipeline_report
 ```
 
 `greetings` prints `Hello, Ada!`; `job_report` prints the worker rounds;
-`stream_report` prints streamed records and the retained worker list.
+`stream_report` prints streamed records and the retained worker list;
+`pipeline_report` prints sorted, deduplicated records and retained state.
 The build produces a normal C++ static library, `build/libsash_cpp.a`;
 it does not build Rust or link sash-rt.
 For example, the C++ program can also be linked directly:
@@ -61,15 +70,16 @@ non-sanitized build:
 mk -p 1 CXX=g++ BUILD=build/gcc fault-test
 ```
 
-They exercise failed fork, interrupted wait, partial error-pipe setup,
-and exec-error reporting without child writes. The probes check the
+They exercise failed first/later forks, interrupted wait, recovered wait
+errors with retained child outcomes, partial error-pipe setup, and
+exec-error reporting without child writes. The probes check the
 observed `clone`/`wait4` syscalls and trace evidence, not just a matching
 surface diagnostic. Keep this target separate from sanitizer runs under
 ptrace. The command helper is an ordinary unsanitized external executable;
 the library, test driver, and examples receive `SANITIZE`.
 
 With the real sash CLI and runtime already built in the parent checkout,
-`mk -p 1 sash-example` compiles and runs all three sash counterparts against
+`mk -p 1 sash-example` compiles and runs all four sash counterparts against
 their expected output. Override `SASH` and `SASH_RT_LIB` for other locations.
 This additional target is not a prerequisite for native C++ tests.
 
@@ -92,8 +102,8 @@ outcomes match its assertions.
 mk -p 1 error-demo
 ```
 
-The full catalog has 112 cases: 53 basic cases, 45 injected-fault cases,
-and 14 interrupted-operation recovery cases.
+The full catalog has 151 cases: 73 basic cases, 61 injected-fault cases,
+and 17 interrupted-operation recovery cases.
 
 The [low-level tour](docs/error-path-tour.md) follows representative cases
 through the Bash runner, strace fault injection, C++ outcomes, and resource
@@ -105,6 +115,7 @@ cleanup. It assumes C and Unix experience rather than C++ familiarity.
 | Input and library errors | Interior NUL, missing or non-executable commands, ENOEXEC, invalid descriptors, malformed ECMAScript regex, string capacity, allocation exception |
 | Capture | Failed inspection, memfd creation, fd relocation/backup, installation, restoration and flags, rewind, read, and close; initially closed stdout |
 | Streaming input | Output/completion pipe allocation, partial launch cleanup, child stdout installation, reader errors/close, and interrupted reads |
+| External pipelines | Every stage's exit/signal, rightmost checked failure, unstarted stages, late setup failures, stdin wiring, endpoint ownership, and retained outcomes after parent errors |
 | Launch and wait | Pipe and shared-status allocation, fork, child pre-exec close, completion reads/protocol, endpoint close, unavailable child status, wait failure |
 | Fatal cleanup and diagnostics | Restore, close, reap, and unmap failures during cleanup; stderr failures while reporting the original error |
 | Recovery | EINTR at each implemented retry loop, preserving the uninjected output and status |
@@ -133,6 +144,11 @@ entry marker, rather than assuming dynamic-loader syscall counts.
 The child-close probe uses per-tracee first-close injection, which also
 affects the parent's first loader close; both injections are shown, and
 the trace must prove the actual fork child failed before exec.
+Higher child-close ordinals use the static supervisor's controlled close
+prelude so an earlier parent loader failure cannot prevent the intended
+child from being created. The full catalog requires static development
+archives for this small Linux helper; ordinary examples remain normal
+C++ programs and do not require static linking.
 A Linux subreaper supervises traced cases so even the fatal-wait example
 does not leave an orphaned fixture behind.
 
@@ -175,8 +191,8 @@ set a runtime timeout.
 
 Do not implement suppression by catching every exception around a whole
 function: that would skip commands after its first failure. Function
-checkedness, multi-stage pipeline aggregation, background launch, and
-replacing `exec` are not implemented yet.
+checkedness, stage/function suppression, background launch, and replacing
+`exec` are not implemented yet.
 
 ### Command-backed line readers
 
@@ -219,9 +235,52 @@ producer ignores the closed pipe and keeps running.
 
 The `LineReader` is borrowed only for the callback's lifetime; a `return`
 in the callback ends that region, not its surrounding C++ function.
-This slice supports one external producer and a terminal parent reader.
-It does not add multiple stages, forked C++ function stages, public wait,
-or a pipeline-wide suppression rule.
+The same explicit reader is also used by the multi-stage API below.
+
+### External pipelines
+
+The checked form takes an ordered vector of commands:
+
+```cpp
+sash::read_pipeline(
+    {{"/usr/bin/printf", {"Grace\nAda\nGrace\n"}},
+     {"/usr/bin/env", {"LC_ALL=C", "/usr/bin/sort"}},
+     {"/usr/bin/uniq", {}}},
+    [&](sash::LineReader &input) {
+        std::string person;
+        while (input.readline(person)) {
+            sash::echo({person});
+        }
+    });
+```
+
+`try_read_pipeline` instead returns a `PipelineResult`. Its `stages` vector
+has one optional `ProcessResult` per command; empty slots mean unstarted
+stages, never invented exit zero. Observed pre-exec failures stay setup
+outcomes rather than ordinary exit 127. `setup_errors` separately records
+setup/cleanup errors with zero-based stage indices, in encounter order,
+without overwriting known child exits or signals.
+
+An empty command list is an invalid API request and raises `SetupError`,
+including in the inspectable form. Allocation failures and consumer
+exceptions may also escape rather than becoming stage outcomes.
+
+Success requires every stage to succeed and no setup error. Checking first
+raises the earliest setup error, otherwise the rightmost failed stage's
+exit/signal. All started children are accounted for before ordinary
+verdicts are checked; consumed parent state is not rolled back.
+[DD#3](../notes-exp/decisions/DD03-external-pipeline-outcomes.md) records
+DG's choice.
+
+Command strings are checked before any fork. All data pipes are allocated
+before launch, and each later child's stdin comes from the preceding pipe.
+Parent stdin is never rebound. Setup failure skips the consumer, closes all
+remaining parent endpoints before waiting, and leaves unstarted stages
+explicit. Each endpoint is attempted even if another close fails.
+Consumer exceptions propagate unchanged after successful cleanup.
+
+This slice is external stages plus a terminal parent reader, not forked
+C++ stages, public wait, stage suppression, negation, or general redirects.
 
 ### Capture and remaining boundaries
 
@@ -236,7 +295,7 @@ so that choice does not affect their equivalence.
 The runtime is initially single-threaded and its output helpers use raw
 descriptor writes. Captured code must not mix in buffered stdio/iostream
 output or retain background writers. Script-fd reservation, arbitrary
-redirection, multi-stage pipelines, END, and signal policy are later work.
+redirection, further pipeline forms, END, and signal policy are later work.
 Failure to restore descriptor state during unwinding is diagnosed
 and terminates rather than continuing on the wrong stdout.
 
@@ -246,6 +305,6 @@ next platform choice, not a silent fallback for a failed Linux memfd.
 
 Project [status](../notes-exp/status.md),
 [tasks](../notes-exp/tasks/cpp-transpiler-runtime-before-ir.md),
-[decisions](../notes-exp/decisions/DD02-foreground-fork-exec.md), and
-[journal](../notes-exp/journal/004-streaming-worker-report.md) live in
+[decisions](../notes-exp/decisions/DD03-external-pipeline-outcomes.md), and
+[journal](../notes-exp/journal/005-external-pipeline-report.md) live in
 `../notes-exp/`, not the native compiler's `notes/`.

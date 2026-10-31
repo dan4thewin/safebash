@@ -1,5 +1,6 @@
 #include "sash/runtime.hpp"
 
+#include <cerrno>
 #include <csignal>
 #include <cstdlib>
 #include <filesystem>
@@ -66,6 +67,34 @@ struct Demo {
         }
     }
 
+    void pipeline(const rt::PipelineResult &result) const {
+        if (handling == Handling::Checked) {
+            rt::check(result);
+        } else if (handling == Handling::Discarded) {
+            (void)result;
+        } else {
+            for (const auto &failure : result.setup_errors) {
+                say("pipeline setup at stage " + std::to_string(failure.stage) + ": " +
+                    std::to_string(failure.error.code().value()) + ": " + failure.error.what());
+            }
+            for (std::size_t i = 0; i < result.stages.size(); ++i) {
+                const auto prefix = "stage " + std::to_string(i) + ": ";
+                const auto &stage = result.stages[i];
+                if (!stage) {
+                    say(prefix + "not started");
+                } else if (const auto *exit = std::get_if<rt::ProcessExit>(&stage->outcome)) {
+                    say(prefix + "exit " + std::to_string(exit->status));
+                } else if (const auto *signal = std::get_if<rt::ProcessSignal>(&stage->outcome)) {
+                    say(prefix + "signal " + std::to_string(signal->number));
+                } else {
+                    const auto &error = std::get<rt::SetupError>(stage->outcome);
+                    say(prefix + "setup " + std::to_string(error.code().value()) + ": " +
+                        error.what());
+                }
+            }
+        }
+    }
+
     template <typename Body> void operation(Body body) const {
         if (handling == Handling::Checked) {
             body();
@@ -97,6 +126,54 @@ void scenario(const Demo &demo, std::string_view name) {
                 while (input.readline(line)) {
                 }
             }));
+        });
+    } else if (name == "pipeline" || name == "pipeline-empty-output" || name == "pipeline-empty" ||
+               name == "pipeline-upstream" || name == "pipeline-rightmost" ||
+               name == "pipeline-signal" || name == "pipeline-missing" || name == "pipeline-nul" ||
+               name == "pipeline-early" || name == "pipeline-record") {
+        demo.operation([&] {
+            sigset_t signals;
+            if (std::signal(SIGPIPE, SIG_DFL) == SIG_ERR || ::sigemptyset(&signals) < 0 ||
+                ::sigaddset(&signals, SIGPIPE) < 0 ||
+                ::sigprocmask(SIG_UNBLOCK, &signals, nullptr) < 0) {
+                throw rt::SetupError({errno, std::generic_category()}, "prepare pipeline SIGPIPE");
+            }
+            std::vector<rt::Command> commands{{demo.helper, {"records", "0"}},
+                                              {demo.helper, {"relay", "0"}},
+                                              {demo.helper, {"relay", "0"}}};
+            if (name == "pipeline-empty") {
+                commands.clear();
+            } else if (name == "pipeline-empty-output" || name == "pipeline-signal") {
+                commands[0].arguments = {"exit", "0"};
+                if (name == "pipeline-signal") {
+                    commands[1].arguments = {"signal", std::to_string(SIGTERM)};
+                }
+            } else if (name == "pipeline-upstream" || name == "pipeline-rightmost") {
+                commands[0].arguments[1] = "7";
+                if (name == "pipeline-rightmost") {
+                    commands[1].arguments[1] = "3";
+                    commands[2].arguments[1] = "2";
+                }
+            } else if (name == "pipeline-missing") {
+                commands[0].arguments = {"flood"};
+                commands[1].executable += ".missing";
+            } else if (name == "pipeline-nul") {
+                commands[1].arguments = {"args", std::string("one\0two", 7)};
+            } else if (name == "pipeline-early" || name == "pipeline-record") {
+                commands[0].arguments = {name == "pipeline-early" ? "flood" : "flood-records"};
+            }
+            const auto result = rt::try_read_pipeline(commands, [&](rt::LineReader &input) {
+                if (name == "pipeline-early") {
+                    return;
+                }
+                std::string line;
+                while (input.readline(line)) {
+                    if (name == "pipeline-record") {
+                        return;
+                    }
+                }
+            });
+            demo.pipeline(result);
         });
     } else if (name == "exit7") {
         demo.process(rt::try_execute(demo.helper, {"exit", "7"}));

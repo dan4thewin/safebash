@@ -5,6 +5,7 @@
 #include <functional>
 #include <initializer_list>
 #include <new>
+#include <optional>
 #include <regex>
 #include <stdexcept>
 #include <string>
@@ -56,8 +57,27 @@ struct ProcessResult {
     }
 };
 
+struct Command {
+    std::string executable;
+    std::vector<std::string> arguments;
+};
+
+struct PipelineSetupError {
+    std::size_t stage;
+    SetupError error;
+};
+
+struct PipelineResult {
+    // Empty slots are unstarted stages, not successful exits.
+    std::vector<std::optional<ProcessResult>> stages;
+    std::vector<PipelineSetupError> setup_errors;
+
+    [[nodiscard]] bool success() const noexcept;
+};
+
 void check(const CommandResult &result);
 void check(const ProcessResult &result);
+void check(const PipelineResult &result);
 [[nodiscard]] ProcessResult try_execute(std::string_view executable,
                                         const std::vector<std::string> &arguments = {});
 void execute(std::string_view executable, const std::vector<std::string> &arguments = {});
@@ -70,8 +90,11 @@ void echo(std::initializer_list<std::string_view> words);
 class LineReader;
 
 namespace detail {
+void consume_lines(int fd, const std::function<void(LineReader &)> &body);
 ProcessResult read_from(std::string_view executable, const std::vector<std::string> &arguments,
                         const std::function<void(LineReader &)> &body);
+PipelineResult read_pipeline(const std::vector<Command> &commands,
+                             const std::function<void(LineReader &)> &body);
 std::string capture_stdout(const std::function<void()> &body);
 int report_error(std::string_view program, std::string_view diagnostic, int status) noexcept;
 } // namespace detail
@@ -83,8 +106,7 @@ class LineReader {
     [[nodiscard]] bool readline(std::string &target);
 
   private:
-    friend ProcessResult detail::read_from(std::string_view, const std::vector<std::string> &,
-                                           const std::function<void(LineReader &)> &);
+    friend void detail::consume_lines(int, const std::function<void(LineReader &)> &);
     explicit LineReader(int fd) noexcept : fd_(fd) {}
 
     int fd_;
@@ -106,6 +128,17 @@ template <typename Body>
 void read_from(std::string_view executable, const std::vector<std::string> &arguments,
                Body &&body) {
     check(try_read_from(executable, arguments, std::forward<Body>(body)));
+}
+
+template <typename Body>
+[[nodiscard]] PipelineResult try_read_pipeline(const std::vector<Command> &commands, Body &&body) {
+    static_assert(std::is_same_v<std::invoke_result_t<Body &, LineReader &>, void>,
+                  "the reader body must return void");
+    return detail::read_pipeline(commands, std::forward<Body>(body));
+}
+
+template <typename Body> void read_pipeline(const std::vector<Command> &commands, Body &&body) {
+    check(try_read_pipeline(commands, std::forward<Body>(body)));
 }
 
 template <typename Body> [[nodiscard]] std::string capture_stdout(Body &&body) {

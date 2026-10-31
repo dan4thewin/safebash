@@ -62,6 +62,8 @@ invoke() {
     local command=("$program" "$scenario" "$handling" "$helper")
     if [[ $context == no-child-status ]]; then
         command=("$helper" ignore-sigchld "${command[@]}")
+    elif [[ $context == close-prelude-* ]]; then
+        command=("$supervisor" --close-prelude "${context#close-prelude-}" "${command[@]}")
     fi
     if (( traced )); then
         : >"$prefix.trace"
@@ -144,6 +146,21 @@ ordinal() {
     ' "$1"
 }
 
+pipe_endpoint() {
+    awk -v occurrence="$2" -v endpoint="$3" '
+        index($0, "write(2, \"__SASH_CPP_DEMO_BEGIN__") == 1 { begun=1; next }
+        begun && /^pipe2[(]\[[0-9]+, [0-9]+\], O_CLOEXEC[)] *= 0$/ {
+            if (++seen == occurrence) {
+                sub(/^pipe2[(]\[/, "")
+                split($0, fds, ", ")
+                sub(/\].*/, "", fds[2])
+                print fds[endpoint]; found=1; exit
+            }
+        }
+        END { if (!found) exit 1 }
+    ' "$1"
+}
+
 fault() {
     local name=$1 scenario=$2 syscall=$3 selector=$4 occurrence=$5 effect=$6 diagnostic=$7
     local context=${8:-normal}
@@ -156,9 +173,23 @@ fault() {
     fi
     active=$directory/$name
     local baseline=$active.baseline baseline_status=0 number
-    [[ $scenario != capture-command* && $scenario != exit7 ]] || baseline_status=7
+    case $scenario in
+        capture-command*|exit7) baseline_status=7 ;;
+        pipeline-early|pipeline-record) baseline_status=141 ;;
+    esac
     invoke "$baseline" "$scenario" checked "$context" 1
     [[ $observed == "$baseline_status" ]] || die "$name's uninjected baseline failed"
+    local pipe= endpoint=1 fd
+    case $selector in
+        pipeline-input) pipe=1 ;;
+        pipeline-reader) pipe=3 ;;
+        pipeline-writer) pipe=1; endpoint=2 ;;
+    esac
+    if [[ -n $pipe ]]; then
+        fd=$(pipe_endpoint "$baseline.trace" "$pipe" "$endpoint") ||
+            die "$name has no baseline pipeline endpoint"
+        selector="^close[(]$fd[)]"
+    fi
     if ! number=$(ordinal "$baseline.trace" "$syscall" "$selector" "$occurrence"); then
         die "$name's intended syscall was not reached after the trace marker"
     fi
@@ -200,6 +231,8 @@ fault() {
 
 child_fault() {
     local name=$1 scenario=$2 syscall=$3 diagnostic=$4
+    local occurrence=${5:-1} effect=${6:-error=EIO} recovery=0 baseline=$directory/$1.baseline
+    local context=normal
     (( ! basic_only )) || return 0
     wanted "$name" || return 0
     if (( list_only )); then
@@ -208,22 +241,36 @@ child_fault() {
         return
     fi
     active=$directory/$name
+    if [[ $syscall == close ]] && (( occurrence > 1 )); then
+        context=close-prelude-$occurrence
+    fi
+    if [[ $effect == error=EINTR ]]; then
+        recovery=1
+        invoke "$baseline" "$scenario" checked "$context" 1 -f
+        [[ $observed == 0 ]] || die "$name's uninjected baseline failed"
+    fi
     local options=(-f)
     if (( ! without_injection )); then
-        # Counters are per tracee: the parent loader's first close is also affected.
-        options+=(-e "inject=$syscall:error=EIO:when=1")
+        # Counters are per tracee; the prelude protects later parent loader closes.
+        options+=(-e "inject=$syscall:$effect:when=$occurrence")
     fi
-    invoke "$active" "$scenario" checked normal 1 "${options[@]}"
-    [[ $observed == 2 ]] || die "$name exited $observed instead of 2"
-    grep -qE -- "$diagnostic" "$active.err" ||
-        die "$name did not report its pre-exec failure"
-    awk -v call="$syscall" '
+    invoke "$active" "$scenario" checked "$context" 1 "${options[@]}"
+    if (( recovery )); then
+        [[ $observed == 0 ]] || die "$name failed to recover from child interruption"
+        cmp -s "$baseline.out" "$active.out" && cmp -s "$baseline.err" "$active.err" ||
+            die "$name changed output while recovering from child interruption"
+    else
+        [[ $observed == 2 ]] || die "$name exited $observed instead of 2"
+        grep -qE -- "$diagnostic" "$active.err" ||
+            die "$name did not report its pre-exec failure"
+    fi
+    awk -v call="$syscall" -v recovery="$recovery" '
         /clone[(]|clone resumed/ { if ($NF ~ /^[0-9]+$/) child=$NF }
         index($0, call "(") || index($0, call " resumed") {
             if (/INJECTED/) { failed[$1]=1; print }
         }
         /execve[(]/ { executed[$1]=1 }
-        END { exit !(child in failed) || child in executed }
+        END { exit !(child in failed) || (recovery ? !(child in executed) : child in executed) }
     ' "$active.trace" >"$active.injected" ||
         die "$name did not stop the actual fork child before exec"
     show "$name"
@@ -232,6 +279,8 @@ child_fault() {
 
 basic success process checked 0 ''
 basic stream-success stream checked 0 ''
+basic pipeline-success pipeline checked 0 ''
+basic pipeline-empty-stream pipeline-empty-output checked 0 ''
 basic regex-no-match regex-no-match checked 0 'no match is not an error'
 basic capture-success capture checked 0 'target: captured'
 basic capture-closed-success capture-closed checked 0 'target: captured' stdout-closed
@@ -283,6 +332,38 @@ for handling in caught discarded checked; do
         pattern='caught setup 10: wait for child: .*'
     fi
     basic "wait-no-status-$handling" process "$handling" "$status" "$pattern" no-child-status
+    for operation in pipeline-upstream pipeline-rightmost pipeline-signal \
+        pipeline-missing pipeline-nul pipeline-empty; do
+        case $operation in
+            pipeline-upstream)
+                checked_status=7
+                caught=$'stage 0: exit 7\nstage 1: exit 0\nstage 2: exit 0' ;;
+            pipeline-rightmost)
+                checked_status=2
+                caught=$'stage 0: exit 7\nstage 1: exit 3\nstage 2: exit 2' ;;
+            pipeline-signal)
+                checked_status=143
+                caught=$'stage 0: exit 0\nstage 1: signal 15\nstage 2: exit 0' ;;
+            pipeline-missing)
+                checked_status=2
+                caught=$'pipeline setup at stage 1: 2: .*\nstage 0: signal 13\nstage 1: setup 2: .*\nstage 2: not started' ;;
+            pipeline-nul)
+                checked_status=2
+                caught=$'pipeline setup at stage 1: 22: .*\nstage 0: not started\nstage 1: not started\nstage 2: not started' ;;
+            pipeline-empty)
+                checked_status=2
+                caught='caught setup 22: pipeline requires at least one stage: .*' ;;
+        esac
+        status=0
+        pattern=
+        if [[ $handling == checked ]]; then
+            status=$checked_status
+            pattern='^error_paths: '
+        elif [[ $handling == caught ]]; then
+            pattern=$caught
+        fi
+        basic "$operation-$handling" "$operation" "$handling" "$status" "$pattern"
+    done
 done
 
 fault write-error write write '^write[(]1, "written' 1 error=EIO '^error_paths: write: '
@@ -320,6 +401,22 @@ fault stream-close-writer stream close '^close[(]' 1 error=EIO '^error_paths: cl
 fault stream-completion-close-writer stream close '^close[(]' 2 error=EIO '^error_paths: close descriptor: '
 fault stream-read stream read '^read[(].*, 8192[)]' 1 error=EIO '^error_paths: read command output: '
 fault stream-close-reader stream close '^close[(]' 4 error=EIO '^error_paths: close descriptor: '
+fault pipeline-pipe-first pipeline pipe2 '^pipe2[(]' 1 error=EMFILE '^error_paths: create pipeline pipe: '
+fault pipeline-pipe-second pipeline pipe2 '^pipe2[(]' 2 error=EMFILE '^error_paths: create pipeline pipe: '
+fault pipeline-completion-pipe-later pipeline pipe2 '^pipe2[(]' 5 error=EMFILE '^error_paths: create exec error pipe: '
+fault pipeline-fork-later pipeline-early clone '^clone[(]' 2 error=EAGAIN '^error_paths: fork '
+fault pipeline-completion-read-later pipeline-record read '^read[(].*, 1[)]' 2 error=EIO '^error_paths: read exec completion pipe: '
+fault pipeline-close-writer pipeline-empty-output close pipeline-writer 1 error=EIO '^error_paths: close descriptor: '
+fault pipeline-close-input pipeline close pipeline-input 1 error=EIO '^error_paths: close descriptor: '
+fault pipeline-close-reader pipeline close pipeline-reader 1 error=EIO '^error_paths: close descriptor: '
+fault pipeline-read pipeline-record read '^read[(].*, 8192[)]' 1 error=EIO '^error_paths: read command output: '
+fault pipeline-status-storage-later pipeline mmap '^mmap[(].*MAP_SHARED[|]MAP_ANONYMOUS' 2 error=ENOMEM '^error_paths: allocate child setup status: '
+fault pipeline-pipe-relocate pipeline fcntl '^fcntl[(]0, F_DUPFD_CLOEXEC' 1 error=EMFILE '^error_paths: save descriptor: ' stdin-closed
+fault pipeline-wait pipeline wait4 '^wait4[(]' 1 error=EIO '^error_paths: wait for child: '
+child_fault pipeline-child-output-reader pipeline close '^error_paths: close child output reader: ' 2
+child_fault pipeline-child-output-writer pipeline close '^error_paths: close child output writer: ' 3
+child_fault pipeline-child-input-install pipeline dup2 '^error_paths: connect child stdin: ' 2
+child_fault pipeline-child-input-close pipeline close '^error_paths: close child input reader: ' 4
 fault cleanup-restore capture-command dup2 '^dup2[(]' 2 error=EIO '^sash-cpp: cleanup failed: restore stdout '
 fault cleanup-restore-flags capture-command fcntl '^fcntl[(]1, F_SETFD' 1 error=EIO '^sash-cpp: cleanup failed: restore stdout '
 fault cleanup-restore-closed capture-command-closed close '^close[(]1[)]' 2 error=EIO '^sash-cpp: cleanup failed: restore stdout ' stdout-closed
@@ -345,6 +442,9 @@ fault retry-completion-read process read '^read[(]' 1 error=EINTR ''
 fault retry-wait process wait4 '^wait4[(]' 1 error=EINTR ''
 fault retry-diagnostic exit7 write '^write[(]2, "error_paths"' 1 error=EINTR ''
 fault retry-stream-read stream read '^read[(].*, 8192[)]' 1 error=EINTR ''
+fault retry-pipeline-pipe pipeline pipe2 '^pipe2[(]' 2 error=EINTR ''
+fault retry-pipeline-read pipeline-record read '^read[(].*, 8192[)]' 1 error=EINTR ''
+child_fault retry-pipeline-input pipeline dup2 '' 2 error=EINTR
 
 (( ran )) || die "no case selected: $selected"
 if (( ! list_only )); then
