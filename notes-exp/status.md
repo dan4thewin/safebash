@@ -1,3 +1,17 @@
+## Capture-report source repaired; C++ capture slice still in progress
+
+[`capture_report.sash`](../sash-cpp/examples/capture_report.sash) now saves
+the failed pipeline's status in its `||` handler, attests the captured
+output once, then branches on the saved status. It produces the independent
+eight-line report and joins the five-example native golden target.
+No native compiler or language rule changed.
+
+The C++ companion's guard order is repaired in the local draft as well.
+The capture API, companion, and C++ build integration remain uncommitted;
+focused capture fixtures, fault cases, and full milestone gates are still
+pending. This is a source repair, not a completed fifth runtime milestone.
+See [journal 006](journal/006-capture-report-repair.md).
+
 ## Fourth pair: sorted, deduplicated pipeline records
 
 [`pipeline_report.cpp`](../sash-cpp/examples/pipeline_report.cpp) and its

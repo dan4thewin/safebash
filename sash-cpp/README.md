@@ -27,6 +27,13 @@ retains three workers from four unique records; a later condition detects
 an upstream failure even when the last command succeeds. Both produce
 the adjacent ten-line expected report.
 
+[capture_report.sash](examples/capture_report.sash) adds a native capture
+report with nested function captures and saved summaries. Its failure probe
+saves the pipeline status with `||`, attests the output once, then branches
+on the saved status. It produces the adjacent eight-line expected report.
+The C++ capture runtime and companion are still in progress and are not
+part of the published C++ build.
+
 On Linux:
 
 ```sh
@@ -79,7 +86,7 @@ ptrace. The command helper is an ordinary unsanitized external executable;
 the library, test driver, and examples receive `SANITIZE`.
 
 With the real sash CLI and runtime already built in the parent checkout,
-`mk -p 1 sash-example` compiles and runs all four sash counterparts against
+`mk -p 1 sash-example` compiles and runs all five sash examples against
 their expected output. Override `SASH` and `SASH_RT_LIB` for other locations.
 This additional target is not a prerequisite for native C++ tests.
 

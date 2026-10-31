@@ -10,7 +10,7 @@ The runtime task is `../notes-exp/tasks/cpp-transpiler-runtime-before-ir.md`.
 
 Build and exercise changes with `mk -p 1 test` in this directory. Use distinct
 `BUILD` directories when changing compilers or sanitizer flags. `mk -p 1
-sash-example` additionally compiles all four sash counterparts with the real
+sash-example` additionally compiles all five sash examples with the real
 CLI. Ordinary C++ tests do not require a Rust build or IR input.
 `mk -p 1 fault-test` adds Linux strace probes; run it without sanitizer
 instrumentation. The native command helper is deliberately unsanitized.

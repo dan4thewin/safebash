@@ -1,0 +1,36 @@
+fn worker_summary {
+    /usr/bin/printf 'Grace\nAda\nGrace\nEdsger\nAda\n' |
+        /usr/bin/env LC_ALL=C /usr/bin/sort |
+        /usr/bin/uniq |
+        /usr/bin/paste -sd , |
+        /usr/bin/tr -d '\n'
+}
+
+fn framed_summary {
+    /usr/bin/printf '['
+    worker_summary
+    /usr/bin/printf ']'
+}
+
+array summaries
+int round=0
+while (( round < 2 )) {
+    (( round += 1 ))
+    summary=$(worker_summary)
+    summaries[$round]=$summary
+    framed=$(framed_summary)
+    echo "round $round: $summary"
+    echo "framed $round: $framed"
+}
+for summary in @summaries {
+    echo "saved: $summary"
+}
+int probe_status=0
+probe=$(/bin/false | /bin/cat) || probe_status=$(status)
+attest probe [[ $probe == '' ]]
+if (( probe_status == 0 )) {
+    echo 'unexpected capture success'
+} else {
+    echo 'failed capture detected'
+}
+echo complete

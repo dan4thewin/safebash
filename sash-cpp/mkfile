@@ -74,4 +74,7 @@ sash-example:V:
 	cmp examples/stream_report.expected $BUILD/stream_report-sash.actual &&
 	SASH_RT_LIB=$SASH_RT_LIB $SASH examples/pipeline_report.sash -o $BUILD/pipeline_report-sash &&
 	timeout 10 $BUILD/pipeline_report-sash > $BUILD/pipeline_report-sash.actual &&
-	cmp examples/pipeline_report.expected $BUILD/pipeline_report-sash.actual
+	cmp examples/pipeline_report.expected $BUILD/pipeline_report-sash.actual &&
+	SASH_RT_LIB=$SASH_RT_LIB $SASH examples/capture_report.sash -o $BUILD/capture_report-sash &&
+	timeout 10 $BUILD/capture_report-sash > $BUILD/capture_report-sash.actual &&
+	cmp examples/capture_report.expected $BUILD/capture_report-sash.actual
