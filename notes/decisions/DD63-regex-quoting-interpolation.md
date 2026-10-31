@@ -348,3 +348,16 @@ contained to `sash-rt/src/lib.rs`, and it makes a NUL a hard match boundary
 rather than merely a stopping point. Care needed so a non-global `s///` still
 means "first match across the whole subject". Full discussion:
 `notes/tasks/limitation-regex-stops-at-interior-nul.md`.
+
+## Addendum (2026-10-31) — the `s///` expansion sugar in an attest predicate
+
+An attest predicate runs no code (DD#24's 2026-10-31 addendum, SB5098), and
+`${var:s/RE/SUB/}` *is* `$(sub $var "RE" "SUB")` (The thin sugar, above), so
+the sugar is rejected there as well. The desugaring leaves no mark in the
+compiler's tree, so the message names both spellings: "`$(sub …)` runs `sub`
+(a `${…:s/…/…/}` expansion is that call)", and the `/g` form for `gsub`.
+`[[ $var =~ RE ]]` stays legal in a predicate. It is a regex test, which
+DD#24 allows by name, and it reaches the predicate as a test node, not as a
+capture. Specs taint.sh atpred.26 (`gsub` in a `[[ ]]` predicate),
+atpred.31 (`sub` in a Part D value's `${…}` import) and atpred.28 (the `=~`
+control). Journal 552.

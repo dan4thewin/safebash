@@ -99,7 +99,61 @@ appears on the RHS (tautological, no real validation).
 The test expression is a `[[ ]]` test — string comparisons, regex
 match, file tests only. No external commands. No arithmetic. The
 tainted VAR is readable inside the test expression. Other tainted
-vars are not (standard use-site rejection applies).
+vars are not (standard use-site rejection applies). (Enforced since
+2026-10-31 by SB5098, strictly: see the addendum below.)
+
+### Addendum (2026-10-31): a predicate runs no code (SB5098)
+
+Nothing enforced "No external commands. No arithmetic." before 2026-10-31.
+Taint (SB5020) was the only check on a predicate, and it asks a different
+question: `attest x [[ $x == $(/bin/echo yes) ]]` reads no other tainted
+name, and under `--no-taint` nothing looked at all. Spec 24.16, written for
+this paragraph, passed on two SB5020s that have nothing to do with it: its
+predicate never names `$x`, and its `echo $x` reads a tainted name. A
+predicate that runs code never reached a runtime. The transform lowers a
+predicate's operands in place and has nowhere to run a body, so each one
+died in a backend "should have been lifted" ICE. The forms that did compile
+were worse: a `$(getenv …)` or `$(<file)` comparand made the gate compare
+the attacker's input against more of the attacker's input.
+
+**SB5098** enforces the paragraph as a shape rule, strictly (DG
+2026-10-31): a predicate *tests values; it runs no code*. The predicate is
+the one place the attested name is readable while still tainted, so code
+run there would receive the unvetted value.
+
+- A `[[ ]]` predicate holds no `$( … )` of any kind. That covers a user
+  function, an external and a statement builtin, and also `echo`, the value
+  intrinsics and `getenv`. A predicate never needs a capture's value: bind
+  it to a variable before the statement that taints the name, and compare
+  against the variable.
+- The `${…:s/…/…/}` sugar is a `$(sub …)` call (DD#63), so it is SB5098
+  too, and the message names both spellings. `=~` stays legal: it is a
+  test.
+- No `$(<file)`. A file's contents are tainted, like `getenv`'s value.
+- No `$(( … ))` at any depth. "No arithmetic" covers an operand, an index
+  and a `${…}` default alike.
+- DD#93 Part D's `(( t = s ))` is arithmetic by construction, so the
+  sentence cannot mean every arithmetic. There the rule is that the value
+  calls nothing: no sexpr call of an intrinsic or a function, no bare
+  int-function name, and the `[[ ]]` rule again inside each `${…}` the
+  value imports. A `(name)` naming neither is grouping around a variable
+  read (DD#58), not a call, and stays legal: `(( c = n + (d) ))` (cov.278).
+
+Each banned node is reported separately, a nested one included, at the
+position the parser gives it. Inside an index or a quoted word, that is the
+`${` or the `"` that holds it; anywhere in a Part D value, it is the attest.
+A shape rule runs under `--no-taint` too. Where the node is also a taint
+source (`getenv`, `$(<file)`), DD#93's predicate-reads rule reports SB5020
+beside it.
+
+Considered and not taken: a whitelist of pure value intrinsics evaluated in
+place, which an earlier draft of this rule allowed (with `echo`, `getenv`
+and `$(<file)`). Nothing is evaluated in place now, so the old question of
+reading the attested name inside a capture's arguments no longer arises.
+
+Specs taint.sh 24.16, atpred.1, atpred.3–8 and atpred.13–31. The branch's
+atpred.2 and .9–.12 are not ported: they pinned evaluation in place.
+Journal 552.
 
 ## Runtime enforcement (DD#47)
 

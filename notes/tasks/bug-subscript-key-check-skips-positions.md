@@ -22,7 +22,9 @@ of the places an index can appear are out of its reach.
 Results were measured after F15. Every row behaves the same on the base
 commit 1309385 and on the batch-531 branch, so the bug is pre-existing and
 the branch did not fix it. All rows declare `array a=(x y z)` unless they
-show otherwise.
+show otherwise. Row pa1 was added 2026-10-31 by F10 (journal 552) and
+measured on 3b96bc40 and the F10 tree, with the same result on both; it
+was not measured on the base or the branch.
 
 ### A word as an index: the native backend ICEs, C uses index 0
 
@@ -41,6 +43,7 @@ evaluates `foo` as 0 and runs.
 | p2 | `[[ -n ]]` operand | `if [[ -n ${a[foo]} ]] { echo t }` | `t` |
 | p28 | `[[ ]]` right-hand side | `str y=x; [[ $y == ${a[foo]} ]] && echo eq` | `eq` |
 | p31 | dispatch subject | `[[ ${a[foo]} == x { echo isx } ]]` | `isx` |
+| pa1 | attest predicate operand | `v=$(arg 1)` / `attest v [[ $v == ${a[foo]} ]]` / `echo "ok $v"` | `ok x` given `x`; `y` fails the gate |
 | p5 | array-literal element | `array b=(${a[foo]}); echo $(join b)` | `x` |
 | p6 | map-literal value | `map m=([k]=${a[foo]}); echo ${m[k]}` | `x` |
 | p21b | `$(<…)` path | `str v=$(<${a[foo]}); echo "${v:!}"` | tries to read a file named `x` |

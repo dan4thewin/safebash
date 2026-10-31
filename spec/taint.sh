@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup taint
-plan=401
+plan=427
 echo "1..$plan" >&3
 
 set +e
@@ -220,11 +220,13 @@ echo $x'
 run_sash 'x="hello"; echo $x'
 [[ $rc = 0 && $out = "hello" && -z $err ]]; chk 24.15
 
-# 24.16 attest test SHALL NOT allow external commands or arithmetic
+# 24.16 an attest predicate SHALL NOT run code: no `$( … )`, `$(<…)` or
+# `$(( … ))` in it (SB5098; atpred.1, .3-.8, .13-.31)
 run_sash 'x=$(getenv HOME)
 attest x [[ $(echo yes) == yes ]]
 echo $x'
-[[ $rc != 0 && -z $out && -n $err ]]; chk 24.16
+[[ $rc != 0 && -z $out && $err == *:2:13:*SB5098* \
+   && $err == *'`$(echo …)` runs `echo`'* ]]; chk 24.16
 
 # 24.17 compiler SHALL NOT auto-attest known external output
 run_sash 'd=$(/bin/date +%Y-%m-%d); echo $d'
@@ -2493,10 +2495,10 @@ echo "$b"'
 # ── DD#95 inside attest predicates ──
 # Both backends evaluated a predicate's `&&` / `||` eagerly, so a right-hand
 # `${y:?}` aborted a program whose result was already decided (fixed
-# 2026-10-31, journal 550). The ids this block skips belong to the attest
-# predicate work still to land: atlazy.1 (`$(( ))` in a predicate),
-# atlazy.5/.6 (attest-all stops at its first failing cell) and atlazy.8/.9
-# (the statement form's gate message).
+# 2026-10-31, journal 550). Of the ids this block skips, atlazy.5/.6
+# (attest-all stops at its first failing cell) and atlazy.8/.9 (the
+# statement form's gate message) are still to land; atlazy.1 will not, as
+# its predicate held a `$(( ))`, which SB5098 now rejects (atpred.17).
 
 # atlazy.2 a passing left operand decides an attest's `||`: a right-hand
 # `${y:?}` is never evaluated
@@ -2551,6 +2553,218 @@ run_sash 'x=$(/bin/echo a)
 attest x [[ $x =~ ^[a-z]+$ ]]
 [[ a == b "$x" { echo "P $x" } || { echo other } ]]'
 [[ $rc = 0 && $out = "P a" && -z $err && -z $rerr ]]; chk dsptaint.3
+
+# ── atpred.1-atpred.31: an attest predicate tests values; it does not run
+# code (SB5098, DD#24; strict, DG 2026-10-31, journal 552) ──
+# A `[[ ]]` predicate holds no `$( … )` of any kind, no `$(<file)` and no
+# `$(( … ))`, at any depth; a DD#93 Part D conversion's value calls nothing.
+# What a predicate may READ is SB5020's (atpred.13-.16). Before the rule a
+# body, a function, an external or a statement builtin there reached a
+# backend "should have been lifted" ICE in both modes; echo, the value
+# intrinsics, `getenv`, `$(<file)` and `$(( ))` evaluated in place, so a
+# `getenv` or `$(<file)` comparand blessed whatever the attacker supplied.
+# The skipped ids atpred.2 and .9-.12 pinned in-place evaluation the strict
+# rule removes; their programs are rejected at .17-.19.
+
+# atpred.1 a user function in a predicate capture would receive the value
+run_sash 'fn f { echo b }
+x=$(arg 1)
+attest x [[ $x == $(f) ]]
+echo "$x"' b
+[[ $rc != 0 && -z $out && $err == *:3:19:*SB5098* \
+   && $err == *'`$(f …)` calls function `f`'* ]]; chk atpred.1
+
+# atpred.3 ... including a bare int-function name in the DD#93 Part D form
+run_sash 'fn f -> int { return 4 }
+s=$(getenv SHLVL)
+attest s (( n = s + f ))
+echo "$n"'
+[[ $rc != 0 && -z $out && $err == *SB5098* \
+   && $err == *'its arithmetic calls function `f`'* ]]; chk atpred.3
+
+# atpred.4 a capture body of several statements runs code
+run_sash 'x=$(arg 1)
+attest x [[ $x == $(y=b; echo $y) ]]
+echo "$x"' b
+[[ $rc != 0 && -z $out && $err == *:2:19:*SB5098* \
+   && $err == *'runs something other than one plain command'* ]]; chk atpred.4
+
+# atpred.5 a suppressed capture lowers as a body, even with an in-place head
+run_sash 'x=$(arg 1)
+attest x [[ $x == $(- toupper b) ]]
+echo "$x"' B
+[[ $rc != 0 && -z $out && $err == *:2:19:*SB5098* \
+   && $err == *'`$(- …)` is a suppressed capture'* ]]; chk atpred.5
+
+# atpred.6 a statement builtin runs code; the rule reaches the END block
+run_sash 'END {
+  x=$(getenv HOME)
+  attest x [[ $x == $(read y) ]]
+  echo "$x"
+}
+echo main'
+[[ $rc != 0 && -z $out && $err == *:3:21:*SB5098* \
+   && $err == *'`$(read …)` runs `read`'* ]]; chk atpred.6
+
+# atpred.7 a shape rule, not a taint rule: it holds under --no-taint, where
+# SB5020 is silent
+SASH_CFLAGS=--no-taint run_sash 'x=$(arg 1)
+attest x [[ $x == $(/bin/echo b) ]]
+echo "$x"' b
+[[ $rc != 0 && -z $out && $err == *:2:19:*SB5098* \
+   && $err == *'runs `/bin/echo`'* && $err != *SB5020* ]]; chk atpred.7
+
+# atpred.8 a pipeline body is not one plain command
+SASH_CFLAGS=--no-taint run_sash 'x=$(arg 1)
+attest x [[ $x == $(echo a | /usr/bin/tr a b) ]]
+echo "$x"' b
+[[ $rc != 0 && -z $out && $err == *:2:19:*SB5098* \
+   && $err == *'runs something other than one plain command'* ]]; chk atpred.8
+
+# atpred.13 a taint SOURCE read inline vouches for nothing, even when no
+# other name is tainted (the check used to return early in that case)
+run_sash 'x=$(arg 1)
+attest x [[ $x == $(getenv USER) ]]
+echo "$x"' b
+[[ $rc != 0 && -z $out && $err == *:2:19:*SB5020* \
+   && $err == *'tainted command substitution used without attest'* ]]; chk atpred.13
+
+# atpred.14 ... nor does file contents
+run_sash 'x=$(arg 1)
+attest x [[ $x == $(</etc/hostname) ]]
+echo "$x"' b
+[[ $rc != 0 && -z $out && $err == *:2:19:*SB5020* \
+   && $err == *'tainted file contents'* ]]; chk atpred.14
+
+# atpred.15 ... nor in the caught `if attest` form
+run_sash 'x=$(arg 1)
+if attest x [[ $x == $(getenv USER) ]]; then echo "ok $x"; else x=none; fi
+echo "$x"' b
+[[ $rc != 0 && -z $out && $err == *:2:22:*SB5020* \
+   && $err == *'tainted command substitution used without attest'* ]]; chk atpred.15
+
+# atpred.16 a DD#93 Part D value's `${…}` import is a read like any other,
+# rejected by the front end rather than left to the unlocated SSA backstop
+run_sash 't=$(getenv USER)
+s=$(arg 1)
+attest s (( n = ${t:-0} + s ))
+echo "$n"' 5
+[[ $rc != 0 && -z $out && $err == *SB5020* \
+   && $err == *'tainted variable ${t ...} used without attest'* \
+   && $err != *backstop* ]]; chk atpred.16
+
+# atpred.17 no `$(( ))` in a predicate, even quoted; the rule reaches an
+# attest inside a function body (a quoted word reports at its `"`)
+run_sash 'fn g {
+  x=$(arg 1)
+  attest x [[ -n $x && "$(( 2 + 1 ))" == 3 ]]
+  echo "$x"
+}
+g' b
+[[ $rc != 0 && -z $out && $err == *:3:24:*SB5098* \
+   && $err == *'`$(( … ))` evaluates arithmetic'* ]]; chk atpred.17
+
+# atpred.18 a value intrinsic is code too
+run_sash 'x=$(arg 1)
+attest x [[ $x == $(toupper b) ]]
+echo "$x"' B
+[[ $rc != 0 && -z $out && $err == *:2:19:*SB5098* \
+   && $err == *'`$(toupper …)` runs `toupper`'* ]]; chk atpred.18
+
+# atpred.19 ... even one that reads only the attested name, under --no-taint
+SASH_CFLAGS=--no-taint run_sash 'x=$(arg 1)
+attest x [[ $x == "$(tolower "$x")" ]]
+echo "$x"' abc
+[[ $rc != 0 && -z $out && $err == *:2:19:*SB5098* \
+   && $err == *'`$(tolower …)` runs `tolower`'* && $err != *SB5020* ]]; chk atpred.19
+
+# atpred.20 the rule reaches the caught `if attest` form
+run_sash 'x=$(arg 1)
+if attest x [[ $x == "$(echo b)" ]] { echo "ok $x" } else { x=none; echo "no $x" }' b
+[[ $rc != 0 && -z $out && $err == *:2:22:*SB5098* \
+   && $err == *'`$(echo …)` runs `echo`'* ]]; chk atpred.20
+
+# atpred.21 `$(<file)` reads a file: a shape rule, so --no-taint too
+SASH_CFLAGS=--no-taint run_sash 'x=$(arg 1)
+attest x [[ $x == $(</etc/hostname) ]]
+echo "$x"' b
+[[ $rc != 0 && -z $out && $err == *:2:19:*SB5098* \
+   && $err == *'`$(<…)` reads a file'* && $err != *SB5020* ]]; chk atpred.21
+
+# atpred.22 at any depth: a capture in a map key (reported at the `${`)
+run_sash 'map m=([k]=b)
+x=$(arg 1)
+attest x [[ $x == ${m[$(echo k)]} ]]
+echo "$x"' b
+[[ $rc != 0 && -z $out && $err == *:3:19:*SB5098* \
+   && $err == *'`$(echo …)` runs `echo`'* ]]; chk atpred.22
+
+# atpred.23 ... and arithmetic in one
+run_sash 'map m=([1]=b)
+x=$(arg 1)
+attest x [[ $x == ${m[$(( 1 ))]} ]]
+echo "$x"' b
+[[ $rc != 0 && -z $out && $err == *:3:19:*SB5098* \
+   && $err == *'`$(( … ))` evaluates arithmetic'* ]]; chk atpred.23
+
+# atpred.24 a Part D value calls no function, as a sexpr either
+run_sash 'fn f -> int { return 4 }
+s=$(arg 1)
+attest s (( n = (f) + s ))
+echo "$n"' 1
+[[ $rc != 0 && -z $out && $err == *:3:1:*SB5098* \
+   && $err == *'its arithmetic calls function `f`'* ]]; chk atpred.24
+
+# atpred.25 ... nor an intrinsic
+run_sash 's=$(arg 1)
+attest s (( n = (strlen $s) + s ))
+echo "$n"' 1
+[[ $rc != 0 && -z $out && $err == *:2:1:*SB5098* \
+   && $err == *'its arithmetic calls `strlen`'* ]]; chk atpred.25
+
+# atpred.26 the `s///` sugar is a `$(gsub …)` call (DD#63), and the message
+# names both spellings
+run_sash 'x=$(arg 1)
+attest x [[ $x == "${x:s/[^a-z]//g}" ]]
+echo "ok $x"' abc
+[[ $rc != 0 && -z $out && $err == *:2:19:*SB5098* \
+   && $err == *'`$(gsub …)` runs `gsub` (a `${…:s/…/…/g}` expansion is that call)'* ]]; chk atpred.26
+
+# atpred.27 the rule reaches the attest-all form
+run_sash 'argv a
+attest x in a [[ $x == "$(echo b)" ]]
+echo "${a[0]}"' b
+[[ $rc != 0 && -z $out && $err == *:2:24:*SB5098* \
+   && $err == *'`$(echo …)` runs `echo`'* ]]; chk atpred.27
+
+# atpred.28 control: comparisons, regex matches, file tests and a `${…}`
+# operand stay legal ...
+run_sash 'x=$(arg 1)
+attest x [[ $x == abc || $x =~ ^z+$ || -f $x || ${x:-d} == d ]]
+echo "ok $x"' abc
+[[ $rc = 0 && $out = 'ok abc' && -z $err && -z $rerr ]]; chk atpred.28
+
+# atpred.29 ... and still decide the gate
+run_sash 'x=$(arg 1)
+attest x [[ $x == abc || $x =~ ^z+$ || -f $x || ${x:-d} == d ]]
+echo "ok $x"' no
+[[ $rc = 1 && -z $out && -z $err \
+   && $rerr == *"attest: x = 'no' failed the gate"* ]]; chk atpred.29
+
+# atpred.30 the rule reaches an attest inside a capture body
+run_sash 'y=$(x=$(arg 1); attest x [[ $x == $(echo b) ]]; echo "$x")
+echo "$y"' b
+[[ $rc != 0 && -z $out && $err == *:1:35:*SB5098* \
+   && $err == *'`$(echo …)` runs `echo`'* ]]; chk atpred.30
+
+# atpred.31 the sugar is the one way code reaches a Part D value's `${…}`
+# import; reported at the attest
+run_sash 't=2
+s=$(arg 1)
+attest s (( n = ${t:s/2/3/} + s ))
+echo "$n"' 1
+[[ $rc != 0 && -z $out && $err == *:3:1:*SB5098* \
+   && $err == *'`$(sub …)` runs `sub` (a `${…:s/…/…/}` expansion is that call)'* ]]; chk atpred.31
 
 set -e
 tally

@@ -6974,29 +6974,206 @@ fn check_attest_predicate_reads(
     tainted: &HashSet<String>,
     diags: &mut Vec<Diagnostic>,
 ) {
+    // No early return when nothing else is tainted: the predicate may still
+    // read a taint SOURCE inline (`[[ $x == $(getenv Y) ]]`), which vouches
+    // for nothing.
     let mut others = tainted.clone();
     for name in attest_exempt_names(form) {
         others.remove(name);
     }
-    if others.is_empty() {
+    match pred {
+        AttestPredicate::Test(test) => check_test_taint(test, &others, diags),
+        AttestPredicate::ArithConvert { value, .. } => {
+            check_arith_convert_reads(value, span, &others, diags)
+        }
+    }
+}
+
+/// The reads in a DD#93 Part D conversion's value. Its bare names are the
+/// form's own operands — a bare string is SB4030 anywhere else, which is why
+/// [`check_arith_taint`] has no arm for one — reported at the attest; and its
+/// `${…}` imports are reads like any other, each at its own span. Walking
+/// only the bare names let `attest s (( n = ${t:-0} + s ))` through the front
+/// end with a tainted `t`, leaving it to the unlocated SSA backstop.
+fn check_arith_convert_reads(
+    value: &ArithExpr,
+    span: Span,
+    others: &HashSet<String>,
+    diags: &mut Vec<Diagnostic>,
+) {
+    crate::ir::walk_arith_var_reads(value, &mut |name| {
+        let msg = format!("tainted variable ${name} used without attest");
+        push_taint_use(others, name, span, msg, diags)
+    });
+    check_arith_taint(value, others, diags);
+}
+
+/// SB5098 (DD#24): an `attest` predicate tests values; it does not run code.
+///
+/// DD#24 confines the predicate to string comparisons, regex matches and file
+/// tests, with "no external commands". The predicate is also the one place
+/// the attested name may be read while still tainted, so code run there
+/// would receive the unvetted value: `[[ $x == $(/bin/echo $x) ]]` hands it
+/// to an external, `[[ $x == $(f $x) ]]` to a function body free to exec it.
+///
+/// The rule is strict (DG 2026-10-31). A `[[ ]]` predicate holds no `$( … )`
+/// of any kind — not `echo`, not a value intrinsic, not `getenv`, whose value
+/// is itself tainted, and not the `${…:s/…/…/}` sugar, which DD#63 makes the
+/// same `$(sub …)` call — no `$(<file)`, whose contents are tainted too, and
+/// no `$(( … ))`, at any depth: an index or a `${…}` operand counts. A DD#93
+/// Part D conversion is arithmetic by construction, so there the rule is that
+/// its value calls nothing: no sexpr call of an intrinsic or a function (a
+/// `(name)` naming neither is grouping around a read), no bare int-function
+/// name, and the same rule again inside each `${…}` it imports (in practice
+/// only the sugar can put code there: every other `${…}` spelling that holds
+/// code is rejected by its own rule).
+///
+/// A shape check, so it runs under `--no-taint` too. The transform lowers a
+/// predicate's operands in place and has no point at which to run a body:
+/// before this rule a body, a function, an external or a statement builtin
+/// there reached one of the backends' "should have been lifted" ICEs, which
+/// now stand behind it, and a `getenv` or `$(<file)` comparand blessed
+/// whatever the attacker supplied.
+pub fn check_attest_predicate_code(program: &Program) -> Vec<Diagnostic> {
+    let functions: HashSet<&str> = program.function_defs().map(|f| f.name.as_str()).collect();
+    let mut found = Vec::new();
+    for block in program_blocks(program) {
+        crate::ir::walk_stmt_tree(block, &mut |stmt| {
+            predicate_code(stmt, &functions, &mut found)
+        });
+    }
+    found
+        .into_iter()
+        .map(|(span, what)| {
+            Diagnostic::error_span(
+                span,
+                "SB5098",
+                format!(
+                    "attest predicate must not run code, but {what} — test the attested name \
+                     with comparisons, regex matches and file tests only, and bind any other \
+                     operand to a variable before the statement that taints the name"
+                ),
+            )
+        })
+        .collect()
+}
+
+/// Every piece of code a decodable `attest` statement's predicate would run,
+/// each with the span of the expression that runs it.
+fn predicate_code(stmt: &Statement, functions: &HashSet<&str>, found: &mut Vec<(Span, String)>) {
+    let StmtKind::Command(c) = &stmt.kind else {
+        return;
+    };
+    if expr_literal_str(&c.name) != "attest" {
         return;
     }
+    let (Some((_, pred)), Some(last)) = (classify_attest(&c.args), c.args.last()) else {
+        return;
+    };
     match pred {
-        AttestPredicate::Test(test) => {
-            walk_test_operands(test, &mut |e| check_expr_taint(e, &others, diags))
+        AttestPredicate::Test(_) => {
+            walk_expr_tree(last, &mut |e| predicate_node(e, functions, found))
         }
         AttestPredicate::ArithConvert { value, .. } => {
-            crate::ir::walk_arith_var_reads(value, &mut |name| {
-                if others.contains(name) {
-                    diags.push(Diagnostic::error_span(
-                        span,
-                        "SB5020",
-                        format!("tainted variable ${name} used without attest"),
-                    ));
-                }
-            })
+            convert_code(value, last.span, functions, found)
         }
     }
+}
+
+/// One node of a `[[ ]]` predicate. `walk_expr_tree` supplies the descent,
+/// so a banned node nested inside another is reported at its own span too.
+///
+/// **Total over `ExprKind` on purpose — do not add a wildcard.**
+fn predicate_node(e: &Expr, functions: &HashSet<&str>, found: &mut Vec<(Span, String)>) {
+    let what = match &e.kind {
+        ExprKind::CommandSubstitution(body) => capture_in_predicate(body, functions),
+        ExprKind::SlurpFile(_) => "`$(<…)` reads a file".to_string(),
+        ExprKind::Arithmetic(_) => "`$(( … ))` evaluates arithmetic".to_string(),
+        ExprKind::Literal(_)
+        | ExprKind::SingleQuoted(_)
+        | ExprKind::SimpleExpansion(_)
+        | ExprKind::DoubleQuoted(_)
+        | ExprKind::Concat(_)
+        | ExprKind::Array(_)
+        | ExprKind::AssocArray(_)
+        | ExprKind::ParameterExpansion(_)
+        | ExprKind::Test(_)
+        | ExprKind::Subscript { .. } => return,
+    };
+    found.push((e.span, what));
+}
+
+/// What a `$( … )` in a predicate would run.
+fn capture_in_predicate(body: &[Statement], functions: &HashSet<&str>) -> String {
+    const BODY: &str = "`$( … )` runs something other than one plain command";
+    let [stmt] = body else {
+        return BODY.to_string();
+    };
+    if matches!(stmt.kind, StmtKind::Suppressed(_)) {
+        return "`$(- …)` is a suppressed capture".to_string();
+    }
+    let StmtKind::Command(c) = &stmt.kind else {
+        return BODY.to_string();
+    };
+    let head = expr_literal_str(&c.name);
+    if functions.contains(head) {
+        return format!("`$({head} …)` calls function `{head}`");
+    }
+    // DD#63: the `s///` sugar desugars to this very call and leaves no mark,
+    // so name both spellings rather than only the one the user may not have
+    // written.
+    let sugar = match head {
+        "sub" => " (a `${…:s/…/…/}` expansion is that call)",
+        "gsub" => " (a `${…:s/…/…/g}` expansion is that call)",
+        _ => "",
+    };
+    format!("`$({head} …)` runs `{head}`{sugar}")
+}
+
+/// The calls in a DD#93 Part D conversion's value, reported at the
+/// predicate, and the code in each `${…}` it imports, at its own span. A
+/// sexpr's operands are not walked: those of `(len …)` / `(strlen …)` are
+/// command words, not calls, and the sexpr is reported already.
+fn convert_code(
+    value: &ArithExpr,
+    span: Span,
+    functions: &HashSet<&str>,
+    found: &mut Vec<(Span, String)>,
+) {
+    crate::ir::walk_arith_nodes_pruned(value, &mut |node| {
+        let Some((what, descend)) = arith_call(node, functions) else {
+            return true;
+        };
+        found.push((span, what));
+        descend
+    });
+    crate::ir::walk_arith_expansion_roots(value, &mut |root| {
+        walk_expr_tree(root, &mut |e| predicate_node(e, functions, found))
+    });
+}
+
+/// The call one node of a Part D value makes, if any, and whether
+/// [`convert_code`]'s walk descends past it.
+fn arith_call(node: &ArithExpr, functions: &HashSet<&str>) -> Option<(String, bool)> {
+    let (name, descend) = match node {
+        // DD#58: the parser makes every `(name)` a sexpr. One that names
+        // neither an intrinsic nor a function is grouping around a read
+        // (`resolve_nullary_sexpr`, `ReadSink::is_sexpr_callee`), and one with
+        // arguments that names neither is SB5011's.
+        ArithExpr::FuncCall { name, .. }
+            if crate::resolve::is_intrinsic(name) || functions.contains(name.as_str()) =>
+        {
+            (name, false)
+        }
+        ArithExpr::Var(name) if functions.contains(name.as_str()) => (name, true),
+        _ => return None,
+    };
+    let what = if functions.contains(name.as_str()) {
+        format!("its arithmetic calls function `{name}`")
+    } else {
+        format!("its arithmetic calls `{name}`")
+    };
+    Some((what, descend))
 }
 
 /// DD#121 R1: an `attest` must immediately follow the statement that tainted

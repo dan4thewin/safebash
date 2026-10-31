@@ -220,6 +220,7 @@ taint pass, and the CST itself into this single module.)
 | `normalize_command_head` | SB5096, SB4074 | a quoted *constant* command name said any way but the one accepted spelling, or an empty one (both parse time) |
 | `check_exec_target` | SB5011, SB5095 | an `exec` target that is not a runnable program |
 | `check_loop_control_context` | SB5081, SB5097 | a `break`/`continue` that would be a silent no-op — no enclosing loop, or a loop count that cannot mean what it says (zero, non-literal, non-numeric, or more than one) |
+| `check_attest_predicate_code` | SB5098 | an attest predicate that would run code: any `$( … )` (`echo`, the value intrinsics, `getenv` and the `${…:s///}` sugar included), `$(<file)`, or `$(( … ))` at any depth, or a call in a DD#93 Part D value; a shape rule, so it runs under `--no-taint` |
 | `check_taint` | SB5020 | a tainted value used without `attest` |
 
 There are **no reserved words.** A bash builtin sash does not implement

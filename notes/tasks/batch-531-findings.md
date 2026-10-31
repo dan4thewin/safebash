@@ -933,6 +933,8 @@ DG 2026-10-28: F2 lands without the B82 wrap and without specs that pin
   - atlazy.1 is deferred to F10. Its `$(( 1 / z ))` operand is SB4030
     after D1, and quoting it would pin `$(( ))` in a predicate as legal,
     which is one of F10's questions.
+    - Settled by F10 (journal 552): `$(( ))` in a predicate is SB5098
+      (atpred.17), so atlazy.1 is dropped.
 - [x] **B90** (not-reproduced; no DD). Suspected gap in a while header's
   phi; both taint layers reject it on both binaries.
 
@@ -970,26 +972,50 @@ Carried over from F8 (journal 550): branch spec atlazy.1, whose predicate
 holds `$(( 1 / z ))`, ports here once F10 rules on `$(( ))` in a predicate.
 D1 makes the whole-int operand SB4030, and quoting it would pin that form
 as legal.
+- Settled 2026-10-31 (journal 552). DG ruled the strict rule: a predicate
+  runs no code, so `$(( ))` in it is SB5098 (atpred.17). atlazy.1 is dropped.
 
-- [ ] **B32** (question; DD93). `attest x [[ -n $x && $(ok "$x") == ok ]]`
+Unit A (journal 552) landed B32, B36, B88b and B89. Unit B is B88c, B88d,
+B91 and B92's shared helper, with atonce.1-2 and atlazy.5/.6/.8/.9.
+
+- [x] **B32** (question; DD93). `attest x [[ -n $x && $(ok "$x") == ok ]]`
   ICEs in both backends; the branch rejects it (SB5020, SB5098). Probably
   subsumed by SB5098.
-- [ ] **B36** (fixed-on-branch; DD93, DD113). An arithmetic-conversion
+  - Subsumed 2026-10-31 (journal 552): SB5098 at 3:22, "`$(ok …)` calls
+    function `ok`". The pre-F10 binary ICE'd (ssa.rs:2465). atpred.1 pins
+    the same class (a function capture in a predicate); B32 has no spec of
+    its own.
+- [x] **B36** (fixed-on-branch; DD93, DD113). An arithmetic-conversion
   attest predicate did not check `${…}` root reads. Branch specs:
   atpred.1-16 (shared with B88b, B89).
-- [ ] **B88b** (fixed-on-branch; DD24, DD93). A predicate that runs code,
+  - Ported 2026-10-31 (journal 552; DD93 addendum). The bare names go
+    through `walk_arith_var_reads`, and `check_arith_taint` checks the
+    `${…}` imports at their own spans. Pinned by atpred.16.
+- [x] **B88b** (fixed-on-branch; DD24, DD93). A predicate that runs code,
   `attest x [[ $x == $(/bin/echo yes) ]]`, ICEs in both backends: DD24
   forbids external commands in a predicate, but nothing enforced it. The
   branch adds a NEW rejection, SB5098 (a predicate tests values and runs no
   code), pending DG; the branch's commit message omits it. Branch specs:
   atpred.1-16 (shared with B36, B89).
+  - Reimplemented 2026-10-31 (journal 552; DD24, DD63 addenda). DG ruled
+    the strict rule: no `$( … )` of any kind (echo, `$(<…)`, intrinsics,
+    getenv, functions) and no `$(( ))` anywhere in a predicate, and no
+    call in `(( n = s ))`. SB5098 runs under `--no-taint` too. The
+    branch's narrower scope evaluated echo and some intrinsics in place;
+    its atpred.2 and .9-.12 pinned that and are not ported. Specs 24.16
+    (assertion tightened), atpred.1, .3-.8 and .13-.31.
 - [ ] **B88c** (fixed-on-branch; DD93). An attest predicate was evaluated
   more than once. Branch specs: atonce.1-2.
 - [ ] **B88d** (fixed-on-branch; DD93, DD61). The attest-all form's sibling
   of B88a. Branch specs: atlazy.5-6.
-- [ ] **B89** (fixed-on-branch; DD93). A tainted comparison operand inside
+- [x] **B89** (fixed-on-branch; DD93). A tainted comparison operand inside
   an attest predicate was accepted. Branch specs: atpred.1-16 (shared with
   B36, B88b).
+  - Ported 2026-10-31 (journal 552; DD93 addendum). There is no early
+    return when nothing else is tainted, and a `[[ ]]` predicate goes
+    through `check_test_taint`. `== $(getenv USER)` and
+    `== $(</etc/hostname)` are SB5020 plus SB5098 at 2:19. Pinned by
+    atpred.13-15, which assert the SB5020.
 - [ ] **B91** (fixed-on-branch; DD93, DD61). C's statement-form attest-all
   failure printed the value (`= 'bad'`); native does not. Branch specs:
   atlazy.8-9.

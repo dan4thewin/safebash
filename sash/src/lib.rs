@@ -686,6 +686,7 @@ fn run_semantic_checks(
     tdiags.extend(validate::check_argv_form(program));
     tdiags.extend(validate::check_map_from_array(program));
     tdiags.extend(validate::check_assign_value_shape(program));
+    tdiags.extend(validate::check_attest_predicate_code(program));
     if !tdiags.is_empty() {
         restore_diagnostics(&mut tdiags, names);
         print_diags(input, &tdiags);

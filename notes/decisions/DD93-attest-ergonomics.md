@@ -302,3 +302,33 @@ Specs: atlazy.2, .3, .4 and .7. The attest-all ids (atlazy.5/.6, B88d)
 and C's attest-all failure text (atlazy.8/.9, B91) land with F10.
 atlazy.1 does too, because its `$(( ))` operand raises a separate F10
 question.
+
+## Addendum (2026-10-31): two reads the predicate-reads rule missed
+
+The 2026-09-07 rule says every read in a predicate other than the attested
+name must be clean. Two reads escaped it (findings B89 and B36):
+
+- **An inline taint source.** The check returned early whenever no *other
+  name* was tainted, so a predicate that read a source directly was never
+  examined. `attest x [[ $x == "$(getenv WANT)" ]]` and
+  `[[ $x == "$(<allow)" ]]` compiled, in the statement form and the `if
+  attest` form alike, and the gate compared the attacker's input against
+  data nobody had vouched for. There is no early return now: each is
+  SB5020 at the source.
+- **A Part D value's `${…}` import.** Only the bare names in the value were
+  checked, so `attest s (( n = ${t:-0} + s ))` with a tainted `t` passed
+  the front end. Only the SSA backstop caught it, naming an SSA version and
+  no source location. The import is now a read at its own site, SB5020 like
+  any other.
+
+Neither changes a rule; both record that the stated rule is now enforced.
+Since the same date the inline sources are also SB5098, because a predicate
+runs no code (DD#24's 2026-10-31 addendum), so both diagnostics are
+reported. A Part D value's own operands keep their reading: they are bare
+names, reported at the attest.
+
+Specs taint.sh atpred.13–16. atpred.13–15 assert the SB5020, and SB5098 is
+reported beside it. Journal 552.
+
+The F8 addendum above said atlazy.1 would land with F10. It will not: its
+predicate holds `$(( 1 / z ))`, which is SB5098 now (spec atpred.17).
