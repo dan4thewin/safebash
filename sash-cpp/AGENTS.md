@@ -5,6 +5,9 @@ Code lives here; journal, tasks, decisions, and status live in `../notes-exp/`.
 Do not put experiment records in `../notes/`.
 
 Use C++17, `std::map`, ECMAScript `std::regex`, and Linux memfd capture.
+Darwin uses private mkstemp files unlinked before the in-process body;
+shared-memory fds cannot service that byte-write contract. Linux has no
+temporary-file fallback.
 DG makes consequential design decisions; see `../notes-exp/decisions/`.
 The runtime task is `../notes-exp/tasks/cpp-transpiler-runtime-before-ir.md`.
 
@@ -14,6 +17,20 @@ sash-example` additionally compiles all five sash examples with the real
 CLI. Ordinary C++ tests do not require a Rust build or IR input.
 `mk -p 1 fault-test` adds Linux strace probes; run it without sanitizer
 instrumentation. The native command helper is deliberately unsanitized.
+
+The build selects Linux or Darwin automatically. Shared POSIX launch,
+I/O, descriptor restoration, and child ownership stay in
+`src/platform_posix.cpp`; host adapters only supply their OS primitives.
+Darwin pipe flag setup is non-atomic under the selected single-threaded
+model and must own both endpoints before either fallible flag operation.
+Do not retry ordinary close on either supported host.
+
+Real macOS validation uses Apple Clang/libc++ and `BUILD=build/apple`;
+`BUILD=build/apple-asan` with the ordinary ASan flags also works.
+Tests require Plan 9 mk and `timeout` on PATH. Linux-only fault/catalog
+targets reject Darwin, rather than silently skipping their probes.
+Use parenthesized global POSIX signal-set function calls such as
+`(::sigemptyset)(&set)` to tolerate Darwin's function-like SDK macros.
 
 `mk -p 1 error-demo` runs the error-path showcase without sanitizers.
 `bash examples/error_paths.sh --basic BUILD` needs no strace; `--list`
@@ -35,7 +52,8 @@ consumer unwinding.
 
 External-only capture drains a pipe into exact counted bytes and returns
 them separately from pipeline outcomes; it does not rebind parent stdio
-or depend on memfd. General in-process capture still uses memfd. Checking
+or depend on in-process capture storage. General in-process capture uses
+memfd on Linux and unlinked regular files on Darwin. Checking
 precedes assignment; consumer read/allocation exceptions escape even from
 the inspectable form instead of becoming EOF or a child verdict.
 
@@ -55,6 +73,10 @@ no memfd call from pipe capture; an uncalled syscall was not injected.
 The runtime test executable alone overrides allocation to fail a collector
 request without exhausting host memory; matching delete overloads remain
 paired and the fault is disabled outside its scope.
+
+The storage fixture pins regular-file shape, zero links before body writes,
+Darwin privacy, and invalid-TMPDIR failure before body execution. That
+invalid directory must not break Linux memfd or external-only pipe capture.
 
 Keep generated-code examples source-shaped: real functions, ordinary control
 flow, and standard C++ values. Preserve command outcomes for caught/discarded

@@ -43,8 +43,8 @@ void program() {
     for (const auto &entry : workers) {
         rt::echo({"saved: " + entry.second});
     }
-    const auto probe =
-        rt::try_read_pipeline({{"/bin/false", {}}, {"/bin/true", {}}}, [](rt::LineReader &) {});
+    const auto probe = rt::try_read_pipeline({{"/usr/bin/false", {}}, {"/usr/bin/true", {}}},
+                                             [](rt::LineReader &) {});
     if (probe.success()) {
         rt::echo({"unexpected pipeline success"});
     } else {

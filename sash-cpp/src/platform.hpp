@@ -38,6 +38,17 @@ class FileDescriptor {
     int fd_;
 };
 
+struct Pipe {
+    FileDescriptor reader;
+    FileDescriptor writer;
+};
+
+namespace os {
+FileDescriptor capture_storage();
+Pipe create_pipe(std::string_view operation);
+char **environment() noexcept;
+} // namespace os
+
 class StdoutCapture {
   public:
     StdoutCapture();

@@ -35,7 +35,7 @@ The sash failure probe saves status with `||`, attests once, then branches;
 the C++ probe keeps captured bytes separate from pipeline outcomes.
 Both produce the adjacent eight-line expected report.
 
-On Linux:
+On Linux or macOS, with a C++17 compiler, Plan 9 `mk`, and `timeout` on PATH:
 
 ```sh
 cd sash-cpp
@@ -72,6 +72,22 @@ The ASan command selects the system linker as well as GCC on this Linux
 development host; mixing its GCC sanitizer libraries with Homebrew's linker
 fails. Full UBSan execution has a separate zero-fd fixture/tooling conflict,
 recorded in [the sanitizer task](../notes-exp/tasks/sanitizer-host-compatibility.md).
+
+On macOS, the real Apple Clang/libc++ build and its ASan variant use:
+
+```sh
+mk -p 1 CXX=clang++ BUILD=build/apple test
+mk -p 1 CXX=clang++ BUILD=build/apple-asan \
+  'SANITIZE=-fsanitize=address -fno-omit-frame-pointer' test
+./build/apple/capture_report
+```
+
+Both hosts run the same 28 fixture groups and five expected C++ reports,
+including large binary output, nested captures/readers, closed standard
+descriptors, partial setup, and child/fd cleanup. The Darwin build has been
+exercised on Apple Silicon; this is not a claim of testing every Mac SDK
+or architecture. Tests need GNU `timeout`, which is not a stock macOS tool.
+The Linux fault/catalog targets below explicitly reject Darwin.
 
 Additional Linux fault probes require `strace` and an ordinary,
 non-sanitized build:
@@ -142,7 +158,7 @@ suppressed: it diagnoses the broken ownership/restoration guarantee and
 terminates with status 2. This exposes existing runtime policy; it does
 not add whole-function suppression.
 
-After `mk -p 1 test`, the basic subset needs neither strace nor the
+On Linux, after `mk -p 1 test`, the basic subset needs neither strace nor the
 Linux fault supervisor. Individual cases can also be selected:
 
 ```sh
@@ -316,10 +332,10 @@ The checked wrapper checks the pipeline before returning the string, so a
 failed right-hand capture does not replace an existing assignment target.
 
 The parent drains the terminal pipe concurrently into the string, preserving
-NUL, CR, separators, and every final newline. It does not use a memfd or
+NUL, CR, separators, and every final newline. It does not use capture storage or
 rebind parent stdin/stdout; it shares preparation, launch, endpoint ownership,
 and completion with the line-reader pipeline. The terminal command observes
-a FIFO on stdout. Raw capture can run inside a memfd body or a parent-reader
+a FIFO on stdout. Raw capture can run inside an in-process capture body or a parent-reader
 loop without adopting their channels.
 
 Command validation and setup failure before consumption leave output empty
@@ -337,13 +353,21 @@ separate work. Binary capture does not permit NUL in OS argument strings.
 
 ### In-process capture and remaining boundaries
 
-`capture_stdout` redirects actual fd 1 to an owned Linux memfd and runs
+`capture_stdout` redirects actual fd 1 to owned seekable storage and runs
 its void body in-process. Nested frames and exception unwinding restore
 the previous destination, including an originally closed stdout and its
 descriptor flags. This low-level operation returns exact bytes, including
 NUL and trailing newlines; source-level newline treatment remains an open
 choice. The examples use newline-free `write` or `printf` inside capture,
 so that choice does not affect their equivalence.
+
+Linux uses memfd without a filesystem fallback. Darwin uses a private
+mkstemp file, unlinked before the body writes and marked close-on-exec.
+Temporary-directory, creation, unlink, and flag failures are explicit
+setup errors; a failed setup never executes the body. Raw external capture
+still uses a pipe and succeeds even if TMPDIR is invalid.
+Darwin shared-memory fds cannot provide ordinary read/write operations.
+See [DD#4](../notes-exp/decisions/DD04-macos-posix-adapter.md).
 
 The runtime is initially single-threaded and its output helpers use raw
 descriptor writes. Captured code must not mix in buffered stdio/iostream
@@ -352,12 +376,15 @@ redirection, further pipeline forms, END, and signal policy are later work.
 Failure to restore descriptor state during unwinding is diagnosed
 and terminates rather than continuing on the wrong stdout.
 
-Linux operations are isolated in `src/platform_linux.cpp`; the shared
-interface and example have no Linux headers. macOS capture storage is the
-next platform choice, not a silent fallback for a failed Linux memfd.
+Shared POSIX operations and ownership live in `src/platform_posix.cpp`.
+`src/platform_linux.cpp` supplies memfd, pipe2, and environment access;
+`src/platform_darwin.cpp` supplies unlinked capture files, pipe/CLOEXEC,
+and CRT environment access. Public interfaces and examples have no
+Linux-only headers. The build chooses the host adapter and recreates its
+archive so a stale backend member cannot remain active.
 
 Project [status](../notes-exp/status.md),
 [tasks](../notes-exp/tasks/cpp-transpiler-runtime-before-ir.md),
 [decisions](../notes-exp/decisions/DD03-external-pipeline-outcomes.md), and
-[journal](../notes-exp/journal/007-raw-pipeline-capture.md) live in
+[journal](../notes-exp/journal/008-macos-posix-runtime.md) live in
 `../notes-exp/`, not the native compiler's `notes/`.

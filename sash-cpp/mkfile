@@ -2,16 +2,21 @@ CXX=c++
 AR=ar
 BUILD=build
 SANITIZE=
+PLATFORM=`{uname -s | tr A-Z a-z}
 CPPFLAGS=-Iinclude
 CXXFLAGS=-std=c++17 -Wall -Wextra -Wpedantic -Werror -g
 SASH=../target/release/sash
 SASH_RT_LIB=../sash-rt/target/release/libsash_rt.a
 
 build:V:
+	case $PLATFORM in linux|darwin) ;; *) printf 'unsupported sash-cpp platform: %s\n' "$PLATFORM" >&2; exit 2;; esac &&
+	if test -z "$BUILD"; then printf '%s\n' 'BUILD must not be empty' >&2; exit 2; fi &&
 	mkdir -p $BUILD &&
 	$CXX $CPPFLAGS $CXXFLAGS $SANITIZE -c src/runtime.cpp -o $BUILD/runtime.o &&
-	$CXX $CPPFLAGS $CXXFLAGS $SANITIZE -c src/platform_linux.cpp -o $BUILD/platform_linux.o &&
-	$AR rcs $BUILD/libsash_cpp.a $BUILD/runtime.o $BUILD/platform_linux.o &&
+	$CXX $CPPFLAGS $CXXFLAGS $SANITIZE -c src/platform_posix.cpp -o $BUILD/platform_posix.o &&
+	$CXX $CPPFLAGS $CXXFLAGS $SANITIZE -c src/platform_$PLATFORM.cpp -o $BUILD/platform.o &&
+	rm -f $BUILD/libsash_cpp.a &&
+	$AR rcs $BUILD/libsash_cpp.a $BUILD/runtime.o $BUILD/platform_posix.o $BUILD/platform.o &&
 	$CXX $CPPFLAGS $CXXFLAGS $SANITIZE examples/greetings.cpp $BUILD/libsash_cpp.a -o $BUILD/greetings &&
 	$CXX $CPPFLAGS $CXXFLAGS $SANITIZE examples/job_report.cpp $BUILD/libsash_cpp.a -o $BUILD/job_report &&
 	$CXX $CPPFLAGS $CXXFLAGS $SANITIZE examples/stream_report.cpp $BUILD/libsash_cpp.a -o $BUILD/stream_report &&
@@ -41,11 +46,13 @@ test:V: fixtures
 	cmp examples/capture_report.expected $BUILD/capture_report.actual
 
 error-demo:V: fixtures
+	if test "$PLATFORM" != linux; then printf '%s\n' 'error-demo requires Linux (strace and subreaper containment)' >&2; exit 2; fi &&
 	if test -n "$SANITIZE"; then printf '%s\n' 'error-demo requires an unsanitized BUILD (strace and deliberate faults)' >&2; exit 2; fi &&
 	$CXX $CPPFLAGS $CXXFLAGS -static tests/error_supervisor.cpp -o $BUILD/error-supervisor &&
 	bash examples/error_paths.sh $BUILD
 
 fault-test:V: test
+	if test "$PLATFORM" != linux; then printf '%s\n' 'fault-test requires Linux strace injection' >&2; exit 2; fi &&
 	timeout 10 strace -qq -e trace=clone -e inject=clone:error=EAGAIN:when=1 -o $BUILD/fork-failure.trace $BUILD/runtime-tests --fork-failure $BUILD/command-helper &&
 	grep -qE 'clone.*EAGAIN.*INJECTED' $BUILD/fork-failure.trace &&
 	timeout 10 strace -qq -e trace=clone,close,wait4 -e inject=clone:error=EAGAIN:when=2 -o $BUILD/pipeline-fork-failure.trace $BUILD/runtime-tests --pipeline-fork-failure $BUILD/command-helper &&

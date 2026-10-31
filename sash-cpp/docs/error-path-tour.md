@@ -40,6 +40,13 @@ shell runner selects the output directory; change it for another `BUILD`.
 Each invocation has an outer ten-second timeout. That is harness
 containment, not a timeout imposed by the runtime.
 
+The ordinary runtime/examples also build on macOS, sharing the POSIX
+ownership code below. This tour's strace faults and static subreaper remain
+Linux-only. Darwin's in-process capture uses an immediately unlinked
+regular file instead of memfd; its external-only capture still uses a pipe.
+See the [macOS build instructions](../README.md) and
+[platform decision](../../notes-exp/decisions/DD04-macos-posix-adapter.md).
+
 | File | Responsibility and useful entry points |
 |---|---|
 | [examples/error_paths.sh](../examples/error_paths.sh) | Catalog and assertions: `basic`, `fault`, `invoke`, `ordinal`, `pipe_endpoint`, `child_fault` |
@@ -47,7 +54,9 @@ containment, not a timeout imposed by the runtime.
 | [include/sash/runtime.hpp](../include/sash/runtime.hpp) | Public result/error types; the `run` program boundary |
 | [src/runtime.cpp](../src/runtime.cpp) | `try_execute`, `execute`, `check`, `LineReader`, and the capture/reader callback wrappers |
 | [src/platform.hpp](../src/platform.hpp) | Descriptor and capture owners, including member declaration order |
-| [src/platform_linux.cpp](../src/platform_linux.cpp) | Syscalls: `Child`, `SharedChildFailure`, `StdoutCapture`, `write_all`, `cleanup_failed` |
+| [src/platform_posix.cpp](../src/platform_posix.cpp) | Shared syscalls/ownership: `Child`, `SharedChildFailure`, `StdoutCapture`, `write_all`, `cleanup_failed` |
+| [src/platform_linux.cpp](../src/platform_linux.cpp) | Linux capture/pipe/environment primitives: memfd and pipe2 |
+| [src/platform_darwin.cpp](../src/platform_darwin.cpp) | Darwin unlinked capture file, owned pipe/CLOEXEC setup, and CRT environment access |
 | [tests/command_helper.cpp](../tests/command_helper.cpp) | Controlled exits, signals, and the ignored-SIGCHLD wrapper |
 | [tests/runtime.cpp](../tests/runtime.cpp) | Byte/outcome/resource assertions and a test-only collector allocation fault |
 | [tests/capture_faults.sh](../tests/capture_faults.sh) | Positive data-read calibration, read/wait assertions, and the memfd canary/absence pair |
@@ -210,7 +219,7 @@ demo.process(rt::try_execute(demo.helper, {"exit", "7"}));
 ```
 
 The brace list supplies the argument strings. `try_execute` builds owned
-command strings, rejects interior NUL, and calls the Linux implementation.
+command strings, rejects interior NUL, and calls the shared POSIX implementation.
 That implementation prepares the `char *argv[]` pointers before fork,
 creates the completion pipe and shared status cell, forks, then reaps.
 The helper's exit 7 becomes:

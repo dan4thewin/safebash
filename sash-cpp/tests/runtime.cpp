@@ -53,7 +53,7 @@ void require(bool condition, const char *message) {
 void default_signal(int number) {
     require(std::signal(number, SIG_DFL) != SIG_ERR, "restore default signal disposition");
     sigset_t signals;
-    require(::sigemptyset(&signals) == 0 && ::sigaddset(&signals, number) == 0 &&
+    require((::sigemptyset)(&signals) == 0 && (::sigaddset)(&signals, number) == 0 &&
                 ::sigprocmask(SIG_UNBLOCK, &signals, nullptr) == 0,
             "unblock test signal");
 }
@@ -167,6 +167,43 @@ void binary_and_large_capture() {
     require(sash::capture_stdout([] {}).empty(), "empty capture");
 }
 
+void capture_storage_contract(const std::string &helper) {
+    require(sash::capture_stdout([] {
+                struct stat storage{};
+                require(::fstat(1, &storage) == 0 && S_ISREG(storage.st_mode),
+                        "in-process capture must provide a regular file");
+                require(storage.st_nlink == 0, "capture storage must be unlinked before the body");
+#if defined(__APPLE__)
+                require((storage.st_mode & 0077) == 0, "capture file must be private");
+#endif
+                sash::write("ok");
+            }) == "ok",
+            "unlinked capture storage must support ordinary fd writes");
+    in_child([&] {
+        const auto missing = std::filesystem::absolute(helper).string() + ".capture-temp.missing";
+        require(!std::filesystem::exists(missing), "capture temp fixture must not exist");
+        require(::setenv("TMPDIR", missing.c_str(), 1) == 0, "set invalid capture temp directory");
+#if defined(__APPLE__)
+        bool called = false;
+        bool failed = false;
+        try {
+            (void)sash::capture_stdout([&] { called = true; });
+        } catch (const sash::SetupError &error) {
+            failed =
+                (error.code() == std::errc::no_such_file_or_directory ||
+                 error.code() == std::errc::not_a_directory) &&
+                std::string(error.what()).find("locate capture directory") != std::string::npos;
+        }
+        require(failed && !called, "invalid capture directory must fail before the body");
+#else
+        require(sash::capture_stdout([] { sash::write("memfd"); }) == "memfd",
+                "Linux memfd capture must not consult a temporary directory");
+#endif
+        require(sash::capture_pipeline({{helper, {"stdout-pipe"}}}) == "pipe",
+                "external-only capture must not require a temporary directory");
+    });
+}
+
 void echo_empty_words() {
     const auto output = sash::capture_stdout([] {
         sash::echo({std::string_view{}, "x", "", ""});
@@ -225,14 +262,19 @@ void allocation_failure_and_fd_lifetime() {
         require(::setrlimit(RLIMIT_NOFILE, &none) == 0, "exhaust descriptor allocation");
         bool called = false;
         bool failed = false;
+#if defined(__APPLE__)
+        const char *storage_operation = "create capture file";
+#else
+        const char *storage_operation = "memfd_create";
+#endif
         try {
             (void)sash::capture_stdout([&] { called = true; });
         } catch (const sash::SetupError &error) {
             failed = error.code().value() == EMFILE &&
-                     std::string(error.what()).find("memfd_create") != std::string::npos;
+                     std::string(error.what()).find(storage_operation) != std::string::npos;
         }
         require(::setrlimit(RLIMIT_NOFILE, &original) == 0, "restore fd limit");
-        require(failed && !called, "memfd failure must not execute the body");
+        require(failed && !called, "capture storage failure must not execute the body");
 
         auto limited = original;
         limited.rlim_cur = 32;
@@ -986,7 +1028,7 @@ void pipeline_capture_bytes(const std::string &helper) {
     require(sash::capture_pipeline({{helper, {"exit", "0"}}}).empty(),
             "a successful empty producer yields an empty capture");
     require(sash::capture_pipeline({{helper, {"stdout-pipe"}}}) == "pipe",
-            "external-only capture must give its terminal command a pipe, not a memfd");
+            "external-only capture must give its terminal command a pipe, not a capture file");
 
     std::string expected(256 * 1024, 'x');
     expected.append("\0end\n\n", 6);
@@ -1104,7 +1146,7 @@ void pipeline_capture_scopes(const std::string &helper) {
             sash::write("after\n");
         });
         require(count == 4 && output == "before\nbody\nbody\nbody\nbody\ncaught\nafter\n",
-                "raw capture must leave the enclosing memfd destination and reader intact");
+                "raw capture must leave the enclosing capture destination and reader intact");
         struct stat stdin_after{};
         require(::fstat(0, &stdin_after) == 0 && stdin_before.st_dev == stdin_after.st_dev &&
                     stdin_before.st_ino == stdin_after.st_ino,
@@ -1258,6 +1300,12 @@ int main(int argc, char **argv) {
         if (std::getenv("SASH_CPP_TEST_TRACE") != nullptr) {
             sash::write("__SASH_CPP_TEST_BEGIN__\n", 2);
         }
+        if (mode == "--capture-storage") {
+            return run_test(argv[1], [&] { capture_storage_contract(helper); }) ? 0 : 1;
+        }
+        if (mode == "--process-descriptors") {
+            return run_test(argv[1], [&] { process_descriptors(helper); }) ? 0 : 1;
+        }
         if (mode == "--fork-failure") {
             return run_test(argv[1], [&] { fork_failure(helper); }) ? 0 : 1;
         }
@@ -1307,6 +1355,7 @@ int main(int argc, char **argv) {
         {"command outcomes", command_outcomes},
         {"program boundary", program_boundary},
         {"binary and large capture", binary_and_large_capture},
+        {"capture storage contract", [&] { capture_storage_contract(helper); }},
         {"echo empty words", echo_empty_words},
         {"nested capture and unwind", nested_capture_and_unwind},
         {"restored stdout", restored_stdout},

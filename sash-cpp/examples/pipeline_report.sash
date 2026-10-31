@@ -27,7 +27,7 @@ collect_workers =workers
 for person in @workers {
     echo "saved: $person"
 }
-if /bin/false | /bin/true {
+if /usr/bin/false | /usr/bin/true {
     echo 'unexpected pipeline success'
 } else {
     echo 'upstream failure detected'

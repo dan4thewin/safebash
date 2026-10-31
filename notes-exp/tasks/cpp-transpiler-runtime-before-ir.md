@@ -8,7 +8,7 @@ gates:
   - "Linux process launch, redirection, memfd capture, streaming pipelines, and shutdown work together"
   - "sparse arrays and maps use std::map; regex operations use std::regex with ECMAScript grammar"
   - "resource ownership and failure paths are exercised through native executable fixtures"
-  - "Linux-specific operations are isolated so the macOS implementation can follow soon"
+  - "shared POSIX ownership and small host adapters support real Linux and macOS builds"
   - "the remaining consumer work is source-to-C++ emission and call-site semantics, not unfinished runtime machinery"
 ---
 
@@ -76,8 +76,9 @@ descriptor relocation, and setup reporting without child writes.
 The [second journal entry](../journal/002-job-report-and-foreground-processes.md)
 records the reporting-write bug found and fixed during implementation.
 
-This completes the first Linux launch/capture slice, so the macOS
-capture-storage choice can now be taken up. It does not complete
+This completed the first Linux launch/capture slice; the subsequent
+[macOS milestone](../journal/008-macos-posix-runtime.md) is now implemented.
+It does not complete
 background/public wait, forked C++ stages, call-context propagation,
 pipelines, redirects, or the full lifecycle.
 
@@ -192,6 +193,29 @@ treatment, background-writer policy, call-context suppression, forked C++
 stages, redirects, public wait, or shutdown. The runtime roadmap remains
 open; no producer change or IR reader is included.
 
+## macOS bring-up - implemented
+
+DG selected an existing Mac for the next milestone. The shared C++17 code
+now runs with Apple Clang/libc++ on Apple Silicon. POSIX launch, byte I/O,
+restoration, and child ownership are shared rather than duplicated.
+Linux retains memfd/pipe2; Darwin uses immediately unlinked mkstemp capture
+files, owned pipe/CLOEXEC setup, and `_NSGetEnviron`.
+[DD#4](../decisions/DD04-macos-posix-adapter.md) records the contract.
+
+Twenty-eight fixture groups and five C++ goldens pass on both hosts,
+including supported Linux and Apple ASan builds. Invalid TMPDIR refuses
+Darwin in-process capture before the body, but neither Linux memfd nor
+raw pipe capture depends on it. Four isolated Darwin call-error controls
+pin setup cleanup; skipped unlink/CLOEXEC mutations turn the relevant
+checks red. [Journal 008](../journal/008-macos-posix-runtime.md) records
+the real-host evidence. The
+[Darwin fault runner](cpp-darwin-fault-harness.md) is follow-up automation.
+
+The pairs now use utility paths common to both hosts and explicit paste
+stdin. The native Linux reports remain unchanged. Linux-only strace and
+subreaper targets reject Darwin explicitly. No lifecycle or language
+policy is introduced; the full runtime task remains open.
+
 ## Starting points selected by DG
 
 | Area | Starting point |
@@ -210,6 +234,10 @@ These are external-target choices, not changes to native sash. In
 particular, standard-map key order is acceptable instead of native
 insertion order. Apply the chosen order consistently to keys, values,
 joins, splats, and other collection traversals.
+
+The implemented Darwin storage extension does not reopen Linux memfd.
+Darwin shared-memory descriptors cannot service ordinary reads/writes,
+so the fd-1 capture contract uses an unlinked regular file, not shm_open.
 
 ECMAScript here means the C++ standard library's modified ECMAScript
 grammar, not an unspecified JavaScript engine. Do not substitute POSIX
@@ -257,7 +285,6 @@ forks with DG before building their assumptions throughout the library.
 | Text and arithmetic | Counted byte strings are economical; Unicode-aware operations need more machinery. Checked arithmetic preserves faults; explicitly defined wrapping is another defensible choice. Locale-sensitive operations can vary between hosts. | Settle byte/character units, case/classification locale, numeric parsing, overflow, and shifts together; raw signed C++ overflow is never an implementation option |
 | Regex results and replacement | Source-style backreferences require an adapter; standard C++ replacement notation reduces bespoke logic. Group layout, no-match results, and zero-length iteration remain operation-level choices even with the grammar fixed. | Compare readable examples and prefer standard facilities where they remove rather than conceal complexity |
 | Capture completion | Trailing-newline treatment and background writers holding the captured stdout affect which bytes a completed capture yields. | Specify the completion boundary and pin it with direct C++ examples; do not let regular-file EOF accidentally decide the language |
-| macOS capture storage | An immediately unlinked temporary file is straightforward but filesystem-backed. POSIX shared memory offers a different backing and lifecycle. | Choose for the macOS adapter when the first Linux memfd slice works; neither is an automatic Linux fallback |
 
 Ordinary command exit statuses remain outcomes even with exception-based
 propagation. A false predicate, an integer function
@@ -548,19 +575,21 @@ of most process work. Keep ordinary C++ representations visible.
 
 Do not wait for every Linux feature or optimization to be finished.
 
-- [ ] Once descriptor ownership, one external command, and one memfd
+- [x] Once descriptor ownership, one external command, and one memfd
   capture work on Linux, choose and implement the macOS capture-storage
   alternative behind the existing boundary.
-- [ ] Compile the same shared C++17 code and source-shaped examples on
+- [x] Compile the same shared C++17 code and source-shaped examples on
   macOS, with a real macOS compiler and standard library.
-- [ ] Exercise launch, capture, fd restoration, and one parent-reader
-  pipeline first; then carry the full lifecycle and operation cases over.
-- [ ] Address differences in descriptor operations, interrupted close,
+- [x] Exercise all currently implemented launch, capture, fd restoration,
+  reader/pipeline, and resource cases on the real Mac.
+- [ ] Carry later lifecycle and value-operation cases over as they are
+  implemented; this initial port does not complete those features.
+- [x] Address differences in descriptor operations, interrupted close,
   signal APIs/numbers, and filesystem behavior locally. Do not scatter
   platform conditionals throughout the shared runtime.
-- [ ] Keep fixtures independent of `/proc`, Linux-only `/dev` behavior,
+- [x] Keep ordinary fixtures independent of `/proc`, Linux-only `/dev` behavior,
   Linux utility paths, and Linux signal-number assumptions.
-- [ ] Leave Windows outside this task. Source portability does not imply
+- [x] Leave Windows outside this task. Source portability does not imply
   that Unix commands or numeric signals become portable automatically.
 
 ## Ordering, evidence, and completion

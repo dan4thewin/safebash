@@ -1,3 +1,27 @@
+## macOS runtime bring-up complete
+
+The same shared C++17 runtime and five source-shaped programs now run on
+an actual Apple Silicon Mac with Apple Clang/libc++. Shared POSIX code owns
+launch, setup reporting, I/O, capture restoration, and child accounting.
+The Linux adapter retains memfd/pipe2; the Darwin adapter supplies private
+immediately unlinked capture files, owned pipe/CLOEXEC setup, and CRT
+environment access. Public interfaces and pipeline outcome policy are
+unchanged. See [DD#4](decisions/DD04-macos-posix-adapter.md) and
+[journal 008](journal/008-macos-posix-runtime.md).
+
+All 28 fixture groups and five C++ goldens pass on Linux GCC/Clang,
+supported host-GCC ASan, Apple Clang, and Apple ASan. The native Linux
+compiler matches five sash goldens; both Linux compilers retain the
+169-case catalog. Real-Mac call-error controls and unlink/CLOEXEC
+mutations pin failure cleanup and keep the checks capable of failing.
+The [repeatable Darwin fault harness](tasks/cpp-darwin-fault-harness.md)
+remains follow-up tooling.
+
+Examples use BSD/GNU-common utility spellings, and signal-set calls tolerate
+Darwin SDK macros. No producer, native language, or dependency changed.
+Linux END/call-context and signal-response choices remain TBD; this port
+does not choose them.
+
 ## Fifth pair and raw pipeline capture complete
 
 [`capture_report.cpp`](../sash-cpp/examples/capture_report.cpp) and its
@@ -107,8 +131,8 @@ single-threaded fork/exec model, including signal inheritance and
 no-force-kill.
 
 The [runtime task](tasks/cpp-transpiler-runtime-before-ir.md) stays open.
-The first Linux launch/capture slice is complete, making the macOS storage
-choice timely. Remaining work includes call-context propagation,
+The initial macOS slice is now complete alongside the Linux runtime.
+Remaining work includes call-context propagation,
 background jobs, replacing exec, forked C++ stages, general redirection,
 further pipeline forms, escaping reader control transfers and public wait,
 END/signals, and most value operations.

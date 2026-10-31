@@ -118,8 +118,8 @@ struct Demo {
 
 void prepare_pipeline_sigpipe() {
     sigset_t signals;
-    if (std::signal(SIGPIPE, SIG_DFL) == SIG_ERR || ::sigemptyset(&signals) < 0 ||
-        ::sigaddset(&signals, SIGPIPE) < 0 || ::sigprocmask(SIG_UNBLOCK, &signals, nullptr) < 0) {
+    if (std::signal(SIGPIPE, SIG_DFL) == SIG_ERR || (::sigemptyset)(&signals) < 0 ||
+        (::sigaddset)(&signals, SIGPIPE) < 0 || ::sigprocmask(SIG_UNBLOCK, &signals, nullptr) < 0) {
         throw rt::SetupError({errno, std::generic_category()}, "prepare pipeline SIGPIPE");
     }
 }

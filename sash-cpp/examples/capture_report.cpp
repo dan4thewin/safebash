@@ -10,7 +10,7 @@ std::string worker_summary() {
     return rt::capture_pipeline({{"/usr/bin/printf", {"Grace\nAda\nGrace\nEdsger\nAda\n"}},
                                  {"/usr/bin/env", {"LC_ALL=C", "/usr/bin/sort"}},
                                  {"/usr/bin/uniq", {}},
-                                 {"/usr/bin/paste", {"-sd", ","}},
+                                 {"/usr/bin/paste", {"-sd", ",", "-"}},
                                  {"/usr/bin/tr", {"-d", "\\n"}}});
 }
 
@@ -34,7 +34,7 @@ void program() {
     for (const auto &entry : summaries) {
         rt::echo({"saved: " + entry.second});
     }
-    const auto probe = rt::try_capture_pipeline({{"/bin/false", {}}, {"/bin/cat", {}}});
+    const auto probe = rt::try_capture_pipeline({{"/usr/bin/false", {}}, {"/bin/cat", {}}});
     if (!probe.output.empty()) {
         throw rt::CommandError(1, "failed probe must not produce output");
     }

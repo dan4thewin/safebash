@@ -169,7 +169,7 @@ int main(int argc, char **argv) {
             return fail("invalid signal");
         }
         sigset_t unblocked;
-        if (::sigemptyset(&unblocked) != 0 || ::sigaddset(&unblocked, signal) != 0 ||
+        if ((::sigemptyset)(&unblocked) != 0 || (::sigaddset)(&unblocked, signal) != 0 ||
             ::sigprocmask(SIG_UNBLOCK, &unblocked, nullptr) != 0 || std::raise(signal) != 0) {
             return fail("cannot raise signal");
         }

@@ -2,7 +2,7 @@ fn worker_summary {
     /usr/bin/printf 'Grace\nAda\nGrace\nEdsger\nAda\n' |
         /usr/bin/env LC_ALL=C /usr/bin/sort |
         /usr/bin/uniq |
-        /usr/bin/paste -sd , |
+        /usr/bin/paste -sd , - |
         /usr/bin/tr -d '\n'
 }
 
@@ -26,7 +26,7 @@ for summary in @summaries {
     echo "saved: $summary"
 }
 int probe_status=0
-probe=$(/bin/false | /bin/cat) || probe_status=$(status)
+probe=$(/usr/bin/false | /bin/cat) || probe_status=$(status)
 attest probe [[ $probe == '' ]]
 if (( probe_status == 0 )) {
     echo 'unexpected capture success'

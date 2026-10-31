@@ -78,7 +78,9 @@ The fifth pair uses the same external-pipeline consumer path to accumulate
 counted bytes rather than line records. The AI's implementation drains the
 terminal pipe in the parent, then uses the existing completion policy and
 child owners. Parent stdio is not rebound and no memfd is needed; general
-in-process capture still uses memfd.
+in-process capture still uses memfd on Linux. The subsequent
+[macOS adapter](DD04-macos-posix-adapter.md) uses an immediately unlinked
+regular file behind the same capture contract.
 
 `PipelineCapture` retains bytes separately from `PipelineResult`, including
 failed producer output and bytes preceding a completion error. Consumer
