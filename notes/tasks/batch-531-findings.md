@@ -1054,11 +1054,21 @@ including the rule DG chose on 2026-10-31: a function with exactly one call
 site may leave its own taint for the caller to attest immediately after the
 call.
 
-- [ ] **B29** (fixed-on-branch; DD24). A tainted capture argument is
+- [x] **B29** (fixed-on-branch; DD24). A tainted capture argument is
   reported twice, at the same position.
-- [ ] **B30** (fixed-on-branch; DD24). `$(- join a ,)` over a tainted `a` is
+  - Ported 2026-10-31 (journal 555; reimplemented on base's transfer
+    functions). A capture body is walked once, before its statement, so each
+    read is reported once (three times before in an `arg` default), and a
+    body no longer sees its own statement's assignment: `y=hi; y=$(/bin/echo
+    "$y")` and `y=hi; y="$y$(/bin/echo b)"` are accepted. Specs capwalk.1-4
+    and .9-.11; H282's false SB5020 is capwalk.8.
+- [x] **B30** (fixed-on-branch; DD24). `$(- join a ,)` over a tainted `a` is
   caught only by the SSA backstop, with no source position; the branch
-  reports a located SB5020. W1's capture-site summary fixes it.
+  reports a located SB5020. The one full walk of a capture body descends
+  through `-`, and `check_command_reads` checks the reader there; no summary
+  is involved.
+  - Ported 2026-10-31 (journal 555). Specs capwalk.5-7 (a declaration, an
+    `echo` argument, an array element).
 - [ ] **B115** (open; DD100, DD121, DD127). An attest of a slot inside the
   function body is ignored, a false rejection on both binaries. Prerequisite
   of DD127's outward rule.

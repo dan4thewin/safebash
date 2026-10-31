@@ -376,8 +376,9 @@ run_sash 'echo ${y:-$(random)}'
 [[ $rc != 0 && -z $out && $err == *SB4070* ]]; chk cov.92
 
 # cov.93 a tainted `$(arg N DEFAULT)` default in an assignment RHS → SB5020
-# (check_arg_default_taint, DD#60/78). The `$(arg …)` source assignment is
-# allowed, but the nested default is a read; `x=$(arg 1 cleanlit)` compiles.
+# (DD#60/78). The `$(arg …)` source assignment is allowed, but the default is a
+# read, checked where the capture's body is walked (`taint_cmdsub_bodies`);
+# `x=$(arg 1 cleanlit)` compiles.
 run_sash 'argv 1 a; t=$(getenv HOME); x=$(arg 1 $t)' one
 [[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk cov.93
 

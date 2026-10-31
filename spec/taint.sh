@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup taint
-plan=435
+plan=446
 echo "1..$plan" >&3
 
 set +e
@@ -2058,6 +2058,101 @@ run_sash 'str q=$(str h=ok; /bin/echo "$h")
 attest q [[ -n $q ]]
 /bin/echo "$q"'
 [[ $rc = 0 && $out = "ok" && -z $err ]]; chk cbt.10
+
+# ── capwalk.1-capwalk.11 — a `$( )` body is walked once, before its statement ──
+# Batch 531's B29/B30. A capture body used to be walked twice: in full by
+# `taint_cmdsub_bodies`, which ran AFTER the statement's own effect, and
+# partially by a shallow read check wherever a capture can sit (a right side,
+# an argument or operand, an array or map element, an `arg` default). So a
+# tainted read in a body was reported twice (three times in an `arg` default),
+# and a body that read the name its own statement assigns saw that
+# assignment's taint. The shallow check also missed a `-`-suppressed command,
+# so `$(- join a ,)` reached only the SSA backstop, with no code and no
+# position. Now each body is walked once, as statements, against the state
+# before its statement. A declaration walks each initializer's bodies just
+# before binding that initializer, so a later initializer sees an earlier one
+# (journal 555).
+
+# capwalk.1 a tainted read in a body is reported once (the use of `y` on
+#           line 3 is a separate report)
+run_sash 'str x=$(getenv HOME)
+str y=$(/bin/echo "$x")
+echo "$y"'
+[[ $rc != 0 && -z $out && $err == *":2:19: error [SB5020] tainted variable \$x"* \
+   && $(grep -c ':2:19: error \[SB5020\]' <<< "$err") = 1 \
+   && $err == *":3:6: error [SB5020] tainted variable \$y"* ]]; chk capwalk.1
+# capwalk.2 `b`'s body runs after `a` is bound, so it sees `a` tainted: one
+#           report, not two (walked twice) and not none (walked before `a`)
+run_sash 'str a=$(getenv X) b=$(/bin/echo "$a")
+attest b [[ -n $b ]]
+echo "$b"'
+[[ $rc != 0 && -z $out && $err == *":1:33: error [SB5020] tainted variable \$a"* \
+   && $(grep -c 'error \[SB5020\]' <<< "$err") = 1 ]]; chk capwalk.2
+# capwalk.3 `y` is still clean when the body reads it; only the assignment
+#           that the capture feeds taints it
+run_sash 'y=hi
+y=$(/bin/echo "$y")
+attest y [[ $y =~ ^[a-z]+$ ]]
+echo "[$y]"'
+[[ $rc = 0 && $out = "[hi]" && -z $err && -z $rerr ]]; chk capwalk.3
+# capwalk.4 the same holds for a read beside the capture in the right side
+run_sash 'y=hi
+y="$y$(/bin/echo b)"
+attest y [[ $y =~ ^[a-z]+$ ]]
+echo "[$y]"'
+[[ $rc = 0 && $out = "[hib]" && -z $err && -z $rerr ]]; chk capwalk.4
+# capwalk.5 a suppressed `join` of a tainted collection, in a declaration.
+#           (`len` reads `a` too: a program whose only reader is `$(- join ..)`
+#           meets the false SB5050 of bug-peel-family-classifiers first.)
+run_sash 'array a=()
+argv 1 a
+int n=$(len a)
+str y=$(- join a ,)
+echo "$n $y"'
+[[ $rc != 0 && -z $out \
+   && $err == *":4:16: error [SB5020] join of tainted collection 'a' without attest"* ]]; chk capwalk.5
+# capwalk.6 ... in a command's argument
+run_sash 'array a=()
+argv 1 a
+int n=$(len a)
+echo "$n $(- join a ,)"'
+[[ $rc != 0 && -z $out \
+   && $err == *":4:19: error [SB5020] join of tainted collection 'a' without attest"* ]]; chk capwalk.6
+# capwalk.7 ... in an array element
+run_sash 'array a=()
+argv 1 a
+int n=$(len a)
+array b=("$(- join a ,)")
+echo "$n ${b[0]}"'
+[[ $rc != 0 && -z $out \
+   && $err == *":4:20: error [SB5020] join of tainted collection 'a' without attest"* ]]; chk capwalk.7
+# capwalk.8 a call's arguments are read before it fills its slots: `fill`
+#           refills `g` from argv, but `"${g[0]}"` was read while `g` was clean
+run_sash 'fn fill { argv A; echo "$1" }
+array g=(x)
+fill "${g[0]}" =g'
+[[ $rc = 0 && $out = "x" && -z $err && -z $rerr ]]; chk capwalk.8
+# capwalk.9 a tainted read in an argument's capture is reported once (the
+#           capture's own bare use is a separate report)
+run_sash 't=$(getenv HOME)
+echo "$(/bin/echo "$t")"'
+[[ $rc != 0 && -z $out && $err == *":2:19: error [SB5020] tainted variable \$t"* \
+   && $(grep -c ':2:19: error \[SB5020\]' <<< "$err") = 1 \
+   && $err == *":2:6: error [SB5020] tainted command substitution used without attest"* ]]; chk capwalk.9
+# capwalk.10 ... in a map element's capture
+run_sash 't=$(getenv HOME)
+map m=([k]=$(/bin/echo "$t"))'
+[[ $rc != 0 && -z $out && $err == *":2:24: error [SB5020] tainted variable \$t"* \
+   && $(grep -c ':2:24: error \[SB5020\]' <<< "$err") = 1 \
+   && $err == *":2:12: error [SB5021] tainted value cannot be placed in map 'm'"* ]]; chk capwalk.10
+# capwalk.11 ... in an `arg` default, where it was reported three times
+#           (SB4070 is the default's own rule: no `$` in a default)
+run_sash 'argv 1 a
+t=$(getenv HOME)
+x=$(arg 1 $t)'
+[[ $rc != 0 && -z $out && $err == *":3:11: error [SB5020] tainted variable \$t"* \
+   && $(grep -c ':3:11: error \[SB5020\]' <<< "$err") = 1 \
+   && $err == *":3:11: error [SB4070]"* ]]; chk capwalk.11
 
 # ── div.1-div.9 — DD#121 R2: the "don't fall through" exemption ──
 # R2 exempts a path that diverts: "A path that does not fall through (`exit` /

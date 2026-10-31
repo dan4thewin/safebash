@@ -51,6 +51,16 @@ impl Expr {
             span,
         }
     }
+
+    /// The command-substitution bodies this expression owns directly: the
+    /// per-expression half of [`Statement::cmdsub_bodies`], for a statement
+    /// whose expressions do not all run at one time — a declaration evaluates
+    /// and binds each initializer before it evaluates the next.
+    pub fn cmdsub_bodies(&self) -> Vec<&[Statement]> {
+        let mut bodies = Vec::new();
+        walk_expr_tree(self, &mut |e| push_cmdsub_body(e, &mut bodies));
+        bodies
+    }
 }
 
 impl Statement {
