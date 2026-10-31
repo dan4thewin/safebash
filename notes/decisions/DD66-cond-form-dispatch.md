@@ -112,6 +112,10 @@ The work is: generalise `[[ ]]` *parsing* (recognise the arm/`||`/`{…}`
 grammar), swap the op, delete the `case` surface + `=glob`/`fnmatch` +
 `;&`/`;;&`.
 
+(`build_dispatch_chain` no longer exists. The chain it built was eager, and
+on 2026-10-31 a lazy one replaced it; see the addendum on evaluation order
+below.)
+
 ## Converter
 
 `sash-convert` rewrites bash `case $x in a) … ;; b|c) … ;; *) … esac` into
@@ -241,3 +245,69 @@ capture's whole body is a statement in a body (DD#86) and stays legal
 capture condition takes only a single external command or `$(getenv NAME)`.
 
 Specs: `spec/errors.sh` `cnd.8`-`cnd.10`, `cnd.13`-`cnd.19`. Journal 537.
+
+## Addendum (2026-10-31): a dispatch evaluates lazily, in source order
+
+F9 of the batch-531 port (journal 551; findings B86, B93), ported as-is.
+
+"First match wins … the rest are skipped" was implemented for the *groups*
+but not for the *tests*. `lower_case` built every pattern's test up front,
+from the state after the last arm, before lowering any capture in it. That
+had two consequences, in both backends:
+
+- any `$( )` in the subject or a pattern reached codegen unlifted, which
+  was an ICE;
+- had it not been an ICE, a pattern after the matching arm would still
+  have run.
+
+The construct is now lowered as a lazy chain (`transform/control_flow.rs`:
+`lower_case`, `dispatch_subject`, `test_arm_patterns`, `lower_dispatch_arm`).
+Two existing rules settle the order: this DD's own "arms are tested
+top-to-bottom", and DD#95's premise that an operator behaves the same inside
+`[[ ]]` as outside it.
+
+- The **subject is evaluated once**, before any pattern, however many arms
+  it meets.
+- A **pattern is evaluated only after every pattern before it missed**.
+  This holds across arms and across one arm's alternatives
+  (`== a "$(g)" c`).
+- Nothing after the first match is evaluated.
+- A pattern capture's effects are visible in the arm it selects, in later
+  patterns, in the default, and after the dispatch.
+
+**The subject is compared as it was before any pattern ran.** Both backends
+read a variable's current storage. So a pattern capture that rewrites the
+subject's variable (`[[ $x == "$(f)" … ]]` with `f` assigning `x`) would move
+the subject under the remaining arms. When any pattern is dynamic and the
+subject is not a literal, the subject is first copied to a reserved temporary
+(`__dispatch_subject_N`, DD#125). The copy is load-bearing: without it,
+dsplazy.6 and .7 fail.
+
+The `--trace` block labels are unchanged: `case.{i}`, `case.check.{i}`,
+`case.{i}.pat.{j}`, `case.nomatch` and `dispatch.merge`. Two traced probes
+print the same lines before and after the port, one with static patterns
+and one with a dynamic `"$p"` pattern. A capture pattern cannot be
+compared, because it was an ICE before. `dispatch.merge` is still the
+catching-construct exit that resets `$?`.
+
+**A pattern is a test operand, so it is taint-checked like the subject.**
+`taint_case_arms` checked the subject and the groups but never the patterns.
+A tainted `"$x"` pattern was caught only by the SSA backstop, which reports
+no code and no position. An external `$( )` pattern was caught only by the
+ICE above. Each pattern is now checked with `check_expr_taint`, which
+reports SB5020 at the pattern's position.
+
+The check uses the taint set from before the dispatch, and that is sound.
+SB5067 forbids a capture body from leaving a global newly tainted, so no
+pattern can read taint the set lacks. It is also conservative: if a
+pattern's capture clears a global's taint, a later pattern gets no credit
+for that.
+
+**Specs.** `control_flow.sh` `dsplazy.1`-`15` and `taint.sh` `dsptaint.1`-`3`
+pin this addendum.
+
+- dsplazy.7 and .9 quote their int operand (`"$n"`), as the 2026-10-25
+  addendum above requires. Their ids are kept.
+- The specs pin laziness itself, not just the absence of the ICE. dsplazy.2,
+  .4 and .13 each fail when a capture in a pattern that the dispatch never
+  reaches runs anyway.

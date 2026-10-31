@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup taint
-plan=398
+plan=401
 echo "1..$plan" >&3
 
 set +e
@@ -2527,6 +2527,30 @@ argv 1 a
 if attest v in a [[ $v == ok || ${y:?unset} == b ]] { echo all } else { a=(d); echo some }
 echo "done ${a[0]}"' ok ok
 [[ $rc = 0 && $out = $'all\ndone ok' && -z $err && -z $rerr ]]; chk atlazy.7
+
+
+# ── DD#66: a dispatch pattern is a test operand ─────────────────────────────
+# The validator checked a dispatch's subject and arm bodies but never its
+# patterns, so a tainted read there was left to the SSA backstop (no code, no
+# position) — and in a capture, to a codegen ICE.
+
+# dsptaint.1 a tainted variable in a pattern, at the pattern's position
+run_sash 'x=$(/bin/echo a)
+[[ a == "$x" { echo P } || { echo other } ]]'
+[[ $rc != 0 && -z $out \
+   && $err == *"2:9: error [SB5020] tainted variable \$x used without attest"* ]]; chk dsptaint.1
+
+# dsptaint.2 an external capture as a later pattern
+run_sash 'x=a
+[[ $x == b { echo B } "$(/bin/echo a)" { echo P } || { echo other } ]]'
+[[ $rc != 0 && -z $out \
+   && $err == *"2:23: error [SB5020] tainted command substitution used without attest"* ]]; chk dsptaint.2
+
+# dsptaint.3 control: an attested variable in a pattern compiles and matches
+run_sash 'x=$(/bin/echo a)
+attest x [[ $x =~ ^[a-z]+$ ]]
+[[ a == b "$x" { echo "P $x" } || { echo other } ]]'
+[[ $rc = 0 && $out = "P a" && -z $err && -z $rerr ]]; chk dsptaint.3
 
 set -e
 tally

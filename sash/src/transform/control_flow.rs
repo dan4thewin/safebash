@@ -1,6 +1,9 @@
 //! Control flow: if/while/for/case → SSA blocks with branches.
 
-use super::expressions::{expr_to_value, literal_name_of, resolve_args_name, test_to_ssa};
+use super::expressions::{
+    expr_is_dynamic, expr_to_value, literal_name_of, resolve_args_name, test_to_ssa,
+};
+use super::functions::{lift_int_func_calls, lift_test_captures};
 use super::helpers::{insert_phis_two_branch, update_loop_phi_sources};
 use super::pipelines::{lower_for_argv_slice, lower_for_array};
 use super::statements::lower_stmts;
@@ -781,168 +784,172 @@ fn lower_for_static(
 
 // ── Case lowering ─────────────────────────────────────────────
 
+/// DD#66 dispatch, evaluated lazily and in source order. The subject is
+/// evaluated once, before any pattern. A pattern is evaluated only once every
+/// pattern before it has failed to match, so the first match runs its arm and
+/// nothing after it is evaluated. A default arm — always last, because the
+/// parser appends it and stops — runs iff no pattern matched; without one, no
+/// match is a no-op with `$?` = 0.
+///
+/// Each test is lowered in the block where the one before it missed, which is
+/// what makes that order hold for a `$( )` in a pattern: it is lifted where it
+/// is evaluated, so it never runs once an earlier arm has matched, and what it
+/// does is visible in the arm it selects and to every pattern after it.
 pub(super) fn lower_case(
     c: &Case,
     ssa: &mut SsaProgram,
     state: &mut VersionState,
     block: BlockId,
 ) -> BlockId {
-    let merge_block = ssa.new_block("dispatch.merge");
-
-    let pre_state = state.snapshot();
-    let (case_blocks, case_exits, branch_states) = build_case_bodies(c, ssa, state, &pre_state);
-
-    let check_blocks = build_check_blocks(ssa, c.items.len(), block);
-
-    wire_case_exits(ssa, &case_exits, merge_block);
-
-    build_dispatch_chain(c, ssa, state, &case_blocks, &check_blocks, merge_block);
-
-    let no_match_path = wire_no_match_path(c, ssa, state, &pre_state, merge_block);
-
-    insert_case_phis(
-        ssa,
-        merge_block,
-        &branch_states,
-        no_match_path.as_ref(),
-        state,
-    );
-
-    merge_block
+    let merge = ssa.new_block("dispatch.merge");
+    let mut current = block;
+    let subject = dispatch_subject(c, ssa, state, &mut current);
+    let mut paths = Vec::with_capacity(c.items.len() + 1);
+    for (i, item) in c.items.iter().enumerate() {
+        let arm = ssa.new_block(&format!("case.{i}"));
+        if item.is_default {
+            ssa.block_mut(current).terminator = Terminator::Goto(arm);
+            let entry = [(current, state.snapshot())];
+            paths.push(lower_dispatch_arm(item, arm, &entry, merge, ssa, state));
+            insert_case_phis(ssa, merge, &paths, state);
+            return merge;
+        }
+        let entries = test_arm_patterns(c, i, &subject, arm, ssa, state, &mut current);
+        paths.push(lower_dispatch_arm(item, arm, &entries, merge, ssa, state));
+    }
+    // Nothing matched and there is no default: a no-op whose status is 0.
+    let zero = state.define("?");
+    ssa.block_mut(current).insts.push(SsaInst::Assign {
+        target: zero,
+        value: SsaValue::Literal("0".to_string()),
+    });
+    ssa.block_mut(current).terminator = Terminator::Goto(merge);
+    paths.push((current, state.snapshot()));
+    insert_case_phis(ssa, merge, &paths, state);
+    merge
 }
 
 type BranchSnapshot = (BlockId, std::collections::HashMap<String, u32>);
 
-/// Lower each arm's body into its own block; capture exit blocks and the
-/// post-body version snapshot per arm. Each arm starts from `pre_state`.
-fn build_case_bodies(
+/// The subject, evaluated once. A dynamic pattern can run code before it is
+/// compared — a `$(f)` may assign a global the subject reads — and both
+/// backends read a variable's current storage, so the subject is copied into
+/// a temp first and every test compares against the copy.
+fn dispatch_subject(
     c: &Case,
     ssa: &mut SsaProgram,
     state: &mut VersionState,
-    pre_state: &std::collections::HashMap<String, u32>,
-) -> (Vec<BlockId>, Vec<BlockId>, Vec<BranchSnapshot>) {
-    let mut case_blocks = Vec::with_capacity(c.items.len());
-    let mut case_exits = Vec::with_capacity(c.items.len());
-    let mut branch_states = Vec::with_capacity(c.items.len());
-
-    for (i, item) in c.items.iter().enumerate() {
-        state.restore(pre_state);
-        let case_block = ssa.new_block(&format!("case.{}", i));
-        let case_exit = lower_stmts(&item.body, ssa, state, case_block);
-        branch_states.push((case_exit, state.snapshot()));
-        case_blocks.push(case_block);
-        case_exits.push(case_exit);
+    block: &mut BlockId,
+) -> SsaValue {
+    let value = lift_int_func_calls(expr_to_value(&c.value, state), ssa, state, block);
+    let dynamic = c
+        .items
+        .iter()
+        .flat_map(|i| &i.patterns)
+        .any(expr_is_dynamic);
+    if !dynamic || matches!(value, SsaValue::Literal(_)) {
+        return value;
     }
-    (case_blocks, case_exits, branch_states)
+    let name = state.reserve_temp_name(
+        format!("__dispatch_subject_{}", ssa.blocks.len()),
+        VarType::String,
+    );
+    let target = state.define(&name);
+    ssa.block_mut(*block).insts.push(SsaInst::Assign {
+        target: target.clone(),
+        value,
+    });
+    SsaValue::Var(target)
 }
 
-/// Pre-create dispatch-chain blocks: index 0 is the entry block; the rest
-/// are fresh `case.check.N` blocks a non-matching arm falls through to.
-fn build_check_blocks(ssa: &mut SsaProgram, n_items: usize, entry: BlockId) -> Vec<BlockId> {
-    let mut check_blocks = Vec::with_capacity(n_items);
-    check_blocks.push(entry);
-    for i in 1..n_items {
-        check_blocks.push(ssa.new_block(&format!("case.check.{}", i)));
-    }
-    check_blocks
-}
-
-/// Wire each dispatch arm's body-exit to the merge block. (DD#66 dropped
-/// fall-through/resume, so an arm always exits straight to the merge.)
-fn wire_case_exits(ssa: &mut SsaProgram, case_exits: &[BlockId], merge_block: BlockId) {
-    for &exit in case_exits {
-        ssa.block_mut(exit).terminator = Terminator::Goto(merge_block);
-    }
-}
-
-/// Build the pattern-dispatch chain across `check_blocks`. Wildcard arms
-/// become unconditional gotos; single-pattern arms emit one test;
-/// multi-pattern arms chain sub-blocks so any match jumps to the body.
-fn build_dispatch_chain(
+/// Test arm `i`'s patterns in order, each in the block where the previous test
+/// missed, branching to `arm` on a match. Returns the state at every matching
+/// edge — the arm's entries — and leaves `current` at the final miss.
+fn test_arm_patterns(
     c: &Case,
+    i: usize,
+    subject: &SsaValue,
+    arm: BlockId,
     ssa: &mut SsaProgram,
-    state: &VersionState,
-    case_blocks: &[BlockId],
-    check_blocks: &[BlockId],
-    merge_block: BlockId,
-) {
-    let value_ssa = expr_to_value(&c.value, state);
-
-    for (i, item) in c.items.iter().enumerate() {
-        let next_check = if i + 1 < check_blocks.len() {
-            check_blocks[i + 1]
-        } else {
-            merge_block
+    state: &mut VersionState,
+    current: &mut BlockId,
+) -> Vec<BranchSnapshot> {
+    let patterns = &c.items[i].patterns;
+    let mut entries = Vec::with_capacity(patterns.len());
+    for (pj, pat) in patterns.iter().enumerate() {
+        let test = dispatch_test(subject, pat, &c.op, state);
+        let test = lift_test_captures(test, ssa, state, current);
+        ssa.block_mut(*current)
+            .insts
+            .push(SsaInst::Test(test, TestOrigin::Plain));
+        let miss = ssa.new_block(&miss_label(c, i, pj));
+        ssa.block_mut(*current).terminator = Terminator::Branch {
+            condition: "__test".to_string(),
+            true_block: arm,
+            false_block: miss,
         };
-        emit_dispatch_arm(
-            ssa,
-            i,
-            item,
-            &value_ssa,
-            check_blocks[i],
-            case_blocks[i],
-            next_check,
-            &c.op,
-            state,
-        );
+        entries.push((*current, state.snapshot()));
+        *current = miss;
     }
+    entries
 }
 
-/// Wire one dispatch arm's check block: wildcard → unconditional goto;
-/// single pattern → one test branch; multiple → a test chain.
-#[allow(clippy::too_many_arguments)]
-fn emit_dispatch_arm(
-    ssa: &mut SsaProgram,
-    arm_idx: usize,
-    item: &CaseItem,
-    value: &SsaValue,
-    current: BlockId,
-    case_block: BlockId,
-    next_check: BlockId,
-    op: &str,
-    state: &VersionState,
-) {
-    if is_default_arm(item) {
-        ssa.block_mut(current).terminator = Terminator::Goto(case_block);
-        return;
-    }
-    if item.patterns.len() == 1 {
-        emit_single_pattern_branch(
-            ssa,
-            current,
-            value,
-            &item.patterns[0],
-            case_block,
-            next_check,
-            op,
-            state,
-        );
+/// Where arm `i`'s pattern `pj` goes on a miss: the arm's next pattern, else
+/// the next arm's first, else the no-match path.
+fn miss_label(c: &Case, i: usize, pj: usize) -> String {
+    if pj + 1 < c.items[i].patterns.len() {
+        format!("case.{i}.pat.{}", pj + 1)
+    } else if i + 1 < c.items.len() {
+        format!("case.check.{}", i + 1)
     } else {
-        emit_multi_pattern_chain(
-            ssa,
-            arm_idx,
-            current,
-            value,
-            &item.patterns,
-            case_block,
-            next_check,
-            op,
-            state,
-        );
+        "case.nomatch".to_string()
     }
 }
 
-/// DD#71: the `|| { … }` default arm runs unconditionally when reached.
-/// `*` is an ordinary literal pattern, not a wildcard.
-fn is_default_arm(item: &CaseItem) -> bool {
-    item.is_default
+/// Lower one arm's body from the join of its entry edges, exiting to `merge`.
+/// Returns the arm's exit as a merge path, and restores the state the chain
+/// continues from — the last pattern's miss.
+fn lower_dispatch_arm(
+    item: &CaseItem,
+    arm: BlockId,
+    entries: &[BranchSnapshot],
+    merge: BlockId,
+    ssa: &mut SsaProgram,
+    state: &mut VersionState,
+) -> BranchSnapshot {
+    let miss = state.snapshot();
+    join_paths(ssa, arm, entries, state);
+    let exit = lower_stmts(&item.body, ssa, state, arm);
+    ssa.block_mut(exit).terminator = Terminator::Goto(merge);
+    let path = (exit, state.snapshot());
+    state.restore(&miss);
+    path
+}
+
+/// Join `paths` at `block`: continue from the last path's state, and give a
+/// phi to every variable the paths disagree about. An empty list joins
+/// nothing.
+fn join_paths(
+    ssa: &mut SsaProgram,
+    block: BlockId,
+    paths: &[BranchSnapshot],
+    state: &mut VersionState,
+) {
+    if let Some((_, last)) = paths.last() {
+        state.restore(last);
+    }
+    let vars: std::collections::HashSet<String> =
+        paths.iter().flat_map(|(_, s)| s.keys().cloned()).collect();
+    for var in &vars {
+        insert_one_case_phi(ssa, block, paths, var, state);
+    }
 }
 
 fn dispatch_test(value: &SsaValue, pattern: &Expr, op: &str, state: &VersionState) -> SsaTest {
     // DD#66/#71 dispatch ops (`==` exact / `=~` regex) compare against the
     // operand word: a static pattern is a quote-stripped `Pattern` string; a
     // dynamic (interpolated) pattern is a runtime `Value`.
-    let right = if crate::transform::expressions::expr_is_dynamic(pattern) {
+    let right = if expr_is_dynamic(pattern) {
         SsaTestRhs::Value(expr_to_value(pattern, state))
     } else {
         SsaTestRhs::Pattern(crate::transform::expressions::operand_pattern_string(
@@ -956,196 +963,50 @@ fn dispatch_test(value: &SsaValue, pattern: &Expr, op: &str, state: &VersionStat
     }
 }
 
-#[allow(clippy::too_many_arguments)]
-fn emit_single_pattern_branch(
-    ssa: &mut SsaProgram,
-    current: BlockId,
-    value: &SsaValue,
-    pattern: &Expr,
-    true_block: BlockId,
-    false_block: BlockId,
-    op: &str,
-    state: &VersionState,
-) {
-    ssa.block_mut(current).insts.push(SsaInst::Test(
-        dispatch_test(value, pattern, op, state),
-        TestOrigin::Plain,
-    ));
-    ssa.block_mut(current).terminator = Terminator::Branch {
-        condition: "__test".to_string(),
-        true_block,
-        false_block,
-    };
-}
-
-#[allow(clippy::too_many_arguments)]
-fn emit_multi_pattern_chain(
-    ssa: &mut SsaProgram,
-    arm_idx: usize,
-    current: BlockId,
-    value: &SsaValue,
-    patterns: &[Expr],
-    case_block: BlockId,
-    next_check: BlockId,
-    op: &str,
-    state: &VersionState,
-) {
-    let mut pat_current = current;
-    for (pi, pat) in patterns.iter().enumerate() {
-        // Every pattern but the last falls through to a fresh block for the
-        // next one; the last one's false edge leaves the arm. Advancing
-        // `pat_current` unconditionally is safe — on the last iteration the
-        // loop ends before it is read again.
-        let false_block = if pi + 1 < patterns.len() {
-            ssa.new_block(&format!("case.{}.pat.{}", arm_idx, pi + 1))
-        } else {
-            next_check
-        };
-        emit_pattern_link(
-            ssa,
-            pat_current,
-            value,
-            pat,
-            op,
-            state,
-            case_block,
-            false_block,
-        );
-        pat_current = false_block;
-    }
-}
-
-/// One link of a multi-pattern arm: test `pat` against the subject, branch to
-/// the arm body on a match and to `false_block` otherwise.
-#[allow(clippy::too_many_arguments)]
-fn emit_pattern_link(
-    ssa: &mut SsaProgram,
-    block: BlockId,
-    value: &SsaValue,
-    pat: &Expr,
-    op: &str,
-    state: &VersionState,
-    case_block: BlockId,
-    false_block: BlockId,
-) {
-    ssa.block_mut(block).insts.push(SsaInst::Test(
-        dispatch_test(value, pat, op, state),
-        TestOrigin::Plain,
-    ));
-    ssa.block_mut(block).terminator = Terminator::Branch {
-        condition: "__test".to_string(),
-        true_block: case_block,
-        false_block,
-    };
-}
-
-/// If no arm is a wildcard, a no-match path exists. Build a dedicated
-/// `case.nomatch` block that defines `?` = 0 (POSIX: exit status is zero
-/// when no pattern matches) and re-wire dispatch false-branches that
-/// previously landed on `merge_block` to land there instead.
-fn wire_no_match_path(
-    c: &Case,
-    ssa: &mut SsaProgram,
-    state: &mut VersionState,
-    pre_state: &std::collections::HashMap<String, u32>,
-    merge_block: BlockId,
-) -> Option<BranchSnapshot> {
-    let has_wildcard = c.items.iter().any(is_default_arm);
-    if has_wildcard {
-        return None;
-    }
-
-    let no_match_block = ssa.new_block("case.nomatch");
-    state.restore(pre_state);
-    let zero_ref = state.define("?");
-    let no_match_snapshot = state.snapshot();
-    ssa.block_mut(no_match_block).insts.push(SsaInst::Assign {
-        target: zero_ref,
-        value: SsaValue::Literal("0".to_string()),
-    });
-    ssa.block_mut(no_match_block).terminator = Terminator::Goto(merge_block);
-
-    redirect_merge_false_branches(ssa, merge_block, no_match_block);
-
-    Some((no_match_block, no_match_snapshot))
-}
-
-/// Find every block whose terminator is `Branch { false_block: merge, .. }`
-/// and redirect the false branch to `no_match`, including multi-pattern
-/// sub-blocks. The merge block id uniquely identifies this dispatch's edges.
-fn redirect_merge_false_branches(
-    ssa: &mut SsaProgram,
-    merge_block: BlockId,
-    no_match_block: BlockId,
-) {
-    for block in ssa.blocks.values_mut() {
-        let Terminator::Branch { false_block, .. } = &mut block.terminator else {
-            continue;
-        };
-        if *false_block == merge_block {
-            *false_block = no_match_block;
-        }
-    }
-}
-
-/// Insert phi nodes at the merge block across all incoming paths (arms +
-/// optional no-match).
+/// Insert phi nodes at the merge block across all incoming paths: one per arm
+/// `lower_case` lowered, plus the no-match path when there is no default.
 ///
 /// **There are always at least two paths.** The `else if all_paths.len() == 1`
-/// that stood here was a remnant of the removed `case` construct — its comment
-/// said "wildcard-only case", and `case x in *) … ;; esac` was indeed one path.
-/// The DD#66 dispatch form that replaced it cannot express that, and the chain
-/// is short enough to state in full:
+/// that once stood here was a remnant of the removed `case` construct — its
+/// comment said "wildcard-only case", and `case x in *) … ;; esac` was indeed
+/// one path. The DD#66 dispatch form that replaced it cannot express that, and
+/// the chain is short enough to state in full:
 ///
 /// 1. `parse_dispatch` seeds `items` with one `is_default: false` arm *before*
 ///    calling `parse_dispatch_arms`, so `items[0]` is never the default and
 ///    `items.len() >= 1`;
 /// 2. `parse_dispatch_arms` is the only place that sets `is_default: true`, and
-///    it appends — so any default arm implies `items.len() >= 2`. A
-///    default-only dispatch (`[[ $x == || { … } ]]`) is SB4014 at parse;
-/// 3. `build_case_bodies` pushes exactly one snapshot per item;
-/// 4. `wire_no_match_path` returns `None` **iff** some item is the default.
+///    it appends and stops — so a default arm is last and implies
+///    `items.len() >= 2`. A default-only dispatch (`[[ $x == || { … } ]]`) is
+///    SB4014 at parse;
+/// 3. `lower_case` pushes one path per arm, stops after a default, and adds the
+///    no-match path only when its loop ran out of arms without meeting one.
 ///
-/// So with a default arm `all_paths == items.len() >= 2`, and without one
-/// `all_paths == items.len() + 1 >= 2`. `StmtKind::Case` has a single producer
+/// So with a default arm there are `items.len() >= 2` paths, and without one
+/// `items.len() + 1 >= 2`. `StmtKind::Case` has a single producer
 /// (`parse/parser.rs`'s dispatch form), so there is no second route in.
 ///
-/// The ICE is not a restatement of the grammar's question. `all_paths` is
-/// computed downstream by `build_case_bodies` and `wire_no_match_path`, and
-/// the regression it catches is one in *those*: a `has_wildcard` test that
-/// wrongly reported a default would skip wiring the no-match block, so a
-/// non-matching value would reach the merge without `$? = 0`. The old branch
-/// absorbed exactly that into a plausible-looking `state.restore` and
+/// The ICE is not a restatement of the grammar's question. The path list is
+/// built downstream, by `lower_case`, and the regression it catches is one
+/// there: a default met too early, or a no-match path left off, would leave a
+/// non-matching value reaching the merge without `$? = 0`. The old one-path
+/// branch absorbed exactly that into a plausible-looking `state.restore` and
 /// miscompiled in silence.
 fn insert_case_phis(
     ssa: &mut SsaProgram,
     merge_block: BlockId,
-    branch_states: &[BranchSnapshot],
-    no_match_path: Option<&BranchSnapshot>,
+    paths: &[BranchSnapshot],
     state: &mut VersionState,
 ) {
-    let mut all_paths: Vec<BranchSnapshot> = branch_states.to_vec();
-    if let Some(nm) = no_match_path {
-        all_paths.push(nm.clone());
-    }
-
-    if all_paths.len() < 2 {
+    if paths.len() < 2 {
         unreachable!("{DISPATCH_HAS_TWO_PATHS}");
     }
-
-    let all_vars: std::collections::HashSet<String> = all_paths
-        .iter()
-        .flat_map(|(_, s)| s.keys().cloned())
-        .collect();
-
-    for var in &all_vars {
-        insert_one_case_phi(ssa, merge_block, &all_paths, var, state);
-    }
+    join_paths(ssa, merge_block, paths, state);
 }
 
-/// One variable's phi at a dispatch merge, inserted only when the paths
-/// disagree about its version. A path with no entry for `var` reads as
-/// version 0, which is the pre-dispatch value.
+/// One variable's phi where dispatch paths join — an arm's entry or the merge —
+/// inserted only when the paths disagree about its version. A path with no
+/// entry for `var` reads as version 0, which is the pre-dispatch value.
 fn insert_one_case_phi(
     ssa: &mut SsaProgram,
     merge_block: BlockId,
@@ -1175,9 +1036,9 @@ fn insert_one_case_phi(
 
 const DISPATCH_HAS_TWO_PATHS: &str =
     "ICE: a dispatch reached the merge with fewer than two incoming paths \
-     — the grammar seeds one non-default arm and `wire_no_match_path` adds \
-     a no-match path unless a default arm exists (which implies a second \
-     arm), so one of those two guarantees has been lost";
+     — the grammar seeds one non-default arm and `lower_case` adds a \
+     no-match path unless it met a default arm (which the grammar only \
+     appends after another), so one of those two guarantees has been lost";
 
 #[cfg(test)]
 mod invariant_tests {
@@ -1196,9 +1057,9 @@ mod invariant_tests {
     /// No spec can make this assertion — the parser rejects the only source
     /// spelling that would produce it (`[[ $x == || { … } ]]` is SB4014), so
     /// the shape has to be handed to the function directly. The ICE is the
-    /// claim that `wire_no_match_path` still wires a no-match path whenever
-    /// there is no default arm; a regression there would arrive here as one
-    /// path and used to be absorbed silently.
+    /// claim that `lower_case` still adds a no-match path whenever there is no
+    /// default arm; a regression there would arrive here as one path and used
+    /// to be absorbed silently.
     #[test]
     #[should_panic(expected = "fewer than two incoming paths")]
     fn a_single_path_dispatch_is_a_loud_ice() {
@@ -1207,7 +1068,7 @@ mod invariant_tests {
         let arm = ssa.new_block("case.0");
         let mut state = VersionState::with_types(std::collections::HashMap::new());
         let only_path: BranchSnapshot = (arm, state.snapshot());
-        insert_case_phis(&mut ssa, merge, &[only_path], None, &mut state);
+        insert_case_phis(&mut ssa, merge, &[only_path], &mut state);
     }
 
     /// Hand `detect_array_iter` the four for-head shapes SB5009 and SB4045
@@ -1339,45 +1200,6 @@ mod invariant_tests {
             };
             assert_eq!(argv_splat_start(&word), None, "{word:?}");
         }
-    }
-
-    #[test]
-    fn no_match_rewiring_only_changes_matching_false_edges() {
-        let mut ssa = SsaProgram::new();
-        let check = ssa.new_block("check");
-        let other = ssa.new_block("other");
-        let goto = ssa.new_block("goto");
-        let merge = ssa.new_block("merge");
-        let no_match = ssa.new_block("no_match");
-        ssa.block_mut(check).terminator = Terminator::Branch {
-            true_block: merge,
-            false_block: merge,
-            condition: "test".to_string(),
-        };
-        ssa.block_mut(other).terminator = Terminator::Branch {
-            true_block: merge,
-            false_block: goto,
-            condition: "test".to_string(),
-        };
-        ssa.block_mut(goto).terminator = Terminator::Goto(merge);
-        redirect_merge_false_branches(&mut ssa, merge, no_match);
-
-        assert!(matches!(
-            ssa.block(check).terminator,
-            Terminator::Branch { true_block, false_block, .. }
-                if true_block == merge && false_block == no_match
-        ));
-        assert!(matches!(
-            ssa.block(other).terminator,
-            Terminator::Branch { true_block, false_block, .. }
-                if true_block == merge && false_block == goto
-        ));
-        assert!(matches!(
-            ssa.block(goto).terminator,
-            Terminator::Goto(target) if target == merge
-        ));
-        assert!(matches!(ssa.block(merge).terminator, Terminator::Return));
-        assert!(matches!(ssa.block(no_match).terminator, Terminator::Return));
     }
 
     /// `flatten_elif` nests each `elif` as an `If` in the previous clause's

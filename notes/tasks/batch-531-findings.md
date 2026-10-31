@@ -814,9 +814,11 @@ DG 2026-10-28: F2 lands without the B82 wrap and without specs that pin
   `⏎` marks a newline; `fn t { /bin/true }` precedes each `ev` row.
   - A name the capture writes: `echo "$g" "$(f)" "$g"`, with `f` setting
     `g`, prints `new X new`; bash's subshell gives `old X old` (probes
-    dsp/o1-o7 and w1-w4, `files/p531-ledger.md`). On hand-parser, DD66's
-    dispatch and `[[ && || ]]` evaluate eagerly, like argument lists; the
-    branch makes them lazy (F9's B86, F8's B87).
+    dsp/o1-o7 and w1-w4, `files/p531-ledger.md`). Since F8 (B87, journal
+    550) and F9 (B86, journal 551), `[[ && || ]]` operands and DD66's
+    dispatch patterns are lazy on hand-parser, as on the branch: one that is
+    never reached never runs. Within one operand or pattern, its captures
+    still run before its other reads, and argument lists still hoist.
   - That the write happens is settled, so F5's simplification candidate
     "captures may not write outer names" is closed: DD86's 2026-09-28
     addendum (DG: changes to globals survive "unless a fork is required").
@@ -936,7 +938,7 @@ DG 2026-10-28: F2 lands without the B82 wrap and without specs that pin
 
 ### 15. F9 dispatch
 
-- [ ] **B86** (fixed-on-branch; DD66). Dispatch built every pattern test
+- [x] **B86** (fixed-on-branch; DD66). Dispatch built every pattern test
   eagerly; a capture in a pattern ICE'd in both backends; the subject was
   not copied before the patterns ran. Branch specs: dsplazy.1-15.
   - Re-probed after B37 (journal 538): a capture in the subject ICEs too,
@@ -946,12 +948,21 @@ DG 2026-10-28: F2 lands without the B82 wrap and without specs that pin
     The same capture in a plain test (`[[ ${m[$(g)]:-d} == v ]] && echo a`)
     works. With taint on, an external capture in the subject's subscript
     is SB5020 now; base ICE'd on the bare `cat`.
-- [ ] **B93** (fixed-on-branch; DD66, DD24). Dispatch patterns were not
+  - Ported 2026-10-31 (journal 551; DD66 addendum). dsplazy.1-15 kept their
+    ids; dsplazy.7 and dsplazy.9 quote their int operands (D1). The subject
+    is evaluated once, and copied to `__dispatch_subject_N` when a pattern
+    is dynamic.
+- [x] **B93** (fixed-on-branch; DD66, DD24). Dispatch patterns were not
   taint-checked. Branch specs: dsptaint.1-3.
   - B37 does not reach it: an external capture in a pattern's subscript
     (`[[ $s == ${m[$(cat f)]:-d} {…} || {…} ]]`, bare `cat` or `/bin/cat`)
     still ICEs with taint on, in both backends, because nothing
     taint-checks the pattern. The branch gives SB5020 at 3:10.
+  - Ported 2026-10-31 (journal 551; DD66 addendum): `taint_case_arms`
+    checks each pattern with `check_expr_taint`. dsptaint.1-3 are verbatim;
+    .1 and .2 are SB5020 at 2:9 and 2:23. The subscript shape above is
+    SB5020 at 3:10 now, with bare `cat` and with `/bin/cat`, where the
+    pre-F9 binary ICE'd.
 
 ### 16. F10 attest predicates
 

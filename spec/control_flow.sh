@@ -5,7 +5,7 @@
 set -eu
 . common.sh
 setup control_flow
-plan=125
+plan=140
 echo "1..$plan" >&3
 
 set +e
@@ -819,6 +819,134 @@ SASH_CFLAGS="${SASH_CFLAGS:-} --no-taint" run_sash 'x=a
 if [[ $x == a || $(arg 5) == b ]] { echo yes }
 echo done'
 [[ $rc = 0 && $out = $'yes\ndone' && -z $err && -z $rerr ]]; chk lazy.11
+
+
+# ── DD#66: a dispatch evaluates lazily, in source order ──────────────────
+# The subject is evaluated once, before any pattern; a pattern only once every
+# pattern before it has missed; the first match runs its arm and nothing after
+# it is evaluated. A `$( )` in either position was an ICE in both backends:
+# every test was built before any capture in it was lowered.
+
+# dsplazy.1 a captured subject is evaluated once, however many arms it meets
+run_sash 'fn f { echo hit >&2; echo c }
+[[ $(f) == a { echo A } b { echo B } c { echo C } || { echo other } ]]
+echo done'
+[[ $rc = 0 && $out = $'C\ndone' && -z $err && $rerr = hit ]]; chk dsplazy.1
+
+# dsplazy.2 a pattern after the arm that matched is never evaluated
+run_sash 'fn g { echo tried >&2; echo b }
+x=a
+[[ $x == a { echo A } "$(g)" { echo G } || { echo other } ]]
+echo done'
+[[ $rc = 0 && $out = $'A\ndone' && -z $err && -z $rerr ]]; chk dsplazy.2
+
+# dsplazy.3 control: a pattern that is reached runs, and can select its arm
+run_sash 'fn g { echo tried >&2; echo b }
+x=b
+[[ $x == a { echo A } "$(g)" { echo G } || { echo other } ]]
+echo done'
+[[ $rc = 0 && $out = $'G\ndone' && -z $err && $rerr = tried ]]; chk dsplazy.3
+
+# dsplazy.4 within one arm, an alternative after the one that matched is not
+# evaluated, and one reached after a miss is
+run_sash 'fn g { echo tried >&2; echo b }
+x=a
+[[ $x == a "$(g)" { echo "hit $x" } || { echo other } ]]
+x=c
+[[ $x == a "$(g)" c { echo "hit $x" } || { echo other } ]]'
+[[ $rc = 0 && $out = $'hit a\nhit c' && -z $err && $rerr = tried ]]; chk dsplazy.4
+
+# dsplazy.5 a pattern capture's write is visible in the arm it selects, in
+# the default when it misses, and after the dispatch
+run_sash 'g=old
+fn f { g=new; echo b }
+x=b
+[[ $x == a { echo "A $g" } "$(f)" { echo "F $g" } || { echo "O $g" } ]]
+echo "after $g"
+g=old
+x=z
+[[ $x == a { echo "A $g" } "$(f)" { echo "F $g" } || { echo "O $g" } ]]
+echo "after $g"'
+[[ $rc = 0 && $out = $'F new\nafter new\nO new\nafter new' && -z $err \
+   && -z $rerr ]]; chk dsplazy.5
+
+# dsplazy.6 the subject is compared as it was before any pattern ran: a
+# pattern capture that rewrites the subject's variable does not move it
+run_sash 'x=a
+fn f { x=b; echo b }
+[[ $x == "$(f)" { echo "matched $x" } a { echo "A $x" } || { echo "other $x" } ]]
+echo "after $x"'
+[[ $rc = 0 && $out = $'A b\nafter b' && -z $err && -z $rerr ]]; chk dsplazy.6
+
+# dsplazy.7 ... an int subject the same way (quoted: a whole-int operand is
+# SB4030, DD#30)
+run_sash 'int n=5
+fn bump { n=9; echo 9 }
+[[ "$n" == 9 { echo nine } "$(bump)" { echo "bumped $n" } || { echo "other $n" } ]]
+echo "after $n"'
+[[ $rc = 0 && $out = $'other 9\nafter 9' && -z $err && -z $rerr ]]; chk dsplazy.7
+
+# dsplazy.8 a capture in the subject, under each operator and inside a word
+run_sash 'fn f { echo a }
+[[ $(f) == a { echo A } || { echo other } ]]
+[[ $(f) =~ ^a$ { echo RA } || { echo other } ]]
+[[ "x$(f)" == xa { echo XA } || { echo other } ]]
+[[ $(y=a; echo $y) == a { echo anon } || { echo other } ]]'
+[[ $rc = 0 && $out = $'A\nRA\nXA\nanon' && -z $err && -z $rerr ]]; chk dsplazy.8
+
+# dsplazy.9 an int-function subject, directly and through arithmetic (quoted:
+# a whole-int operand is SB4030, DD#30)
+run_sash 'fn n -> int { return 5 }
+[[ "$(n)" == 5 { echo five } || { echo other } ]]
+[[ "$(( (n) + 1 ))" == 6 { echo six } || { echo other } ]]'
+[[ $rc = 0 && $out = $'five\nsix' && -z $err && -z $rerr ]]; chk dsplazy.9
+
+# dsplazy.10 a literal subject against dynamic patterns
+run_sash 'y=lit
+fn f { echo lit }
+[[ lit == "$y" { echo L1 } || { echo other } ]]
+[[ lit == x "$(f)" { echo L2 } || { echo other } ]]'
+[[ $rc = 0 && $out = $'L1\nL2' && -z $err && -z $rerr ]]; chk dsplazy.10
+
+# dsplazy.11 without a default: an arm a capture selects writes a variable
+# read after the merge, and no match is a no-op
+run_sash 'fn f { echo q }
+x=q
+[[ $x == a { echo A } "$(f)" { y=1; echo "Q $y" } ]]
+echo "y=$y"
+x=zz
+[[ $x == a { echo A } "$(f)" { echo Q } ]]
+echo done'
+[[ $rc = 0 && $out = $'Q 1\ny=1\ndone' && -z $err && -z $rerr ]]; chk dsplazy.11
+
+# dsplazy.12 the subject is evaluated afresh on each loop iteration, and in END
+run_sash 'fn f { echo hit >&2; echo a }
+for i in 1 2 {
+  [[ $(f) == a { echo "A$i" } || { echo "O$i" } ]]
+}
+END { [[ $(f) == a { echo endA } || { echo endO } ]] }
+echo main'
+[[ $rc = 0 && $out = $'A1\nA2\nmain\nendA' && -z $err \
+   && $rerr = $'hit\nhit\nhit' ]]; chk dsplazy.12
+
+# dsplazy.13 a failing capture is not run when an earlier arm matched
+SASH_CFLAGS="${SASH_CFLAGS:-} --no-taint" run_sash 'x=b
+[[ $x == b { echo B } "$(/bin/sh -c "echo a; exit 3")" { echo P } || { echo other } ]]
+echo done'
+[[ $rc = 0 && $out = $'B\ndone' && -z $err && -z $rerr ]]; chk dsplazy.13
+
+# dsplazy.14 ... and, when reached, aborts before selecting anything
+SASH_CFLAGS="${SASH_CFLAGS:-} --no-taint" run_sash 'x=a
+[[ $x == b { echo B } "$(/bin/sh -c "echo a; exit 3")" { echo P } || { echo other } ]]
+echo done'
+[[ $rc = 3 && -z $out && -z $err && $rerr == *"command failed (exit 3)"* ]]; chk dsplazy.14
+
+# dsplazy.15 an external subject runs exactly once too, and a suppressed one
+# is a value like any other
+SASH_CFLAGS="${SASH_CFLAGS:-} --no-taint" run_sash '[[ $(/bin/sh -c "echo once >&2; echo c") == a { echo A } b { echo B } c { echo C } || { echo other } ]]
+[[ $(- /bin/sh -c "echo a; exit 3") == a { echo S } || { echo other } ]]
+echo done'
+[[ $rc = 0 && $out = $'C\nS\ndone' && -z $err && $rerr = once ]]; chk dsplazy.15
 
 
 set -e

@@ -48,11 +48,11 @@ that SB5012. The ruling decides only how the fix is built:
   count a capture to the left of `$?` as an earlier expression.
 - **(b) Evaluate left to right, word by word.** The name row prints
   `old X new`, and the first `$?` row prints `[3]` with no special case.
-  On hand-parser, `[[ && || ]]` operands and DD#66 dispatch patterns are
-  evaluated eagerly too: every capture in them runs before the test. The
-  branch evaluates them lazily, as F8 (B87) and F9 (B86), which are not
-  ported yet. Under (b), argument lists would follow the same left-to-right
-  rule.
+  `[[ && || ]]` operands and DD#66 dispatch patterns are already lazy on
+  hand-parser, since F8 (B87, journal 550) and F9 (B86, journal 551): one
+  that is never reached never runs. Within one operand or pattern, its
+  captures still run before its other reads, as in an argument list. Under
+  (b), argument lists would follow the same left-to-right rule.
 
 ## Pointers
 

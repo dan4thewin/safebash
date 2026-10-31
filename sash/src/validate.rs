@@ -6868,7 +6868,13 @@ fn taint_redirected(
     taint_stmt(&r.body, tainted, just, sx, diags);
 }
 
-/// Taint a case statement's discriminant and each arm body.
+/// Taint a dispatch's subject, its patterns and each arm body. A pattern is
+/// a test operand like the subject (DD#66): `[[ $s == "$t" { … } ]]` reads
+/// `t` exactly as the boolean form `[[ $s == "$t" ]]` does. A pattern's
+/// capture body is walked with the statement's other captures
+/// ([`taint_cmdsub_bodies`]), and SB5067 keeps a body from newly tainting a
+/// global, so no pattern can read taint that the pre-dispatch set lacks,
+/// whatever order the patterns run in.
 fn taint_case_arms(
     c: &crate::ir::Case,
     tainted: &mut HashSet<String>,
@@ -6876,6 +6882,9 @@ fn taint_case_arms(
     diags: &mut Vec<Diagnostic>,
 ) {
     check_expr_taint(&c.value, tainted, diags);
+    for pattern in c.items.iter().flat_map(|item| &item.patterns) {
+        check_expr_taint(pattern, tainted, diags);
+    }
     // DD#121: the arms are alternative paths. No arm need match, so the
     // pre-state is itself a path to the merge.
     let mut paths: Vec<(HashSet<String>, bool)> = vec![(tainted.clone(), true)];
