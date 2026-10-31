@@ -48,7 +48,9 @@ A compound status (`fixed-on-branch+question`) means the branch has a fix
 but the step must first settle a question.
 
 The taint walker itself (the branch's context-sensitive walker) is not
-ported. Track W re-implements the taint checks under T1-T3. Most of
+ported. Track W re-implements the taint checks under T1-T3, which DD127
+now states in full, including DG's 2026-10-31 rule for a function with one
+call site. Most of
 track W's findings were fixed inside that walker, so W re-implements or
 re-probes them; some may vanish by construction, which the step records.
 
@@ -1036,30 +1038,42 @@ atlazy.5/.6/.8/.9 and two new specs, atslot.7/.8.
     on the pre-F10 binary.
 - [x] **B92** (fixed-on-branch; DD100, DD93). A caught attest-all over a
   DD100 slot retagged the unresolved slot name. Branch specs: atslot.1-6
-  (rewritten in W1 under T3).
+  (rewritten in W1 under DD127).
   - Ported 2026-10-31 (journal 553; DD100 addendum). The shared
     `push_attest_all_check` and `push_attest_retag` resolve the slot. On
     the pre-F10 binary, native ICE'd (`no codegen slot for A_3`,
     types.rs:72), and a later read of the slot was a false SSA-backstop
     rejection in both backends. atslot.7/.8 are new fill-then-attest specs,
-    which T3 keeps legal. atslot.1-6 stay W1's.
+    which DD127 keeps legal (a body attests its own taint). atslot.1-6 stay
+    W1's.
 
 ### 17. W1 local checks and summaries
+
+W1 implements DD127's name channels (globals and collection slots),
+including the rule DG chose on 2026-10-31: a function with exactly one call
+site may leave its own taint for the caller to attest immediately after the
+call.
 
 - [ ] **B29** (fixed-on-branch; DD24). A tainted capture argument is
   reported twice, at the same position.
 - [ ] **B30** (fixed-on-branch; DD24). `$(- join a ,)` over a tainted `a` is
   caught only by the SSA backstop, with no source position; the branch
   reports a located SB5020. W1's capture-site summary fixes it.
-- [ ] **B115** (open; DD100, DD121). An attest of a slot inside the function
-  body is ignored, a false rejection on both binaries. Prerequisite of T2.
+- [ ] **B115** (open; DD100, DD121, DD127). An attest of a slot inside the
+  function body is ignored, a false rejection on both binaries. Prerequisite
+  of DD127's outward rule.
 
 ### 18. W2 stdout (T1)
 
-- [ ] **B33** (fixed-on-branch; DD24). A user-function capture of external
-  output is clean, so `y=$(f)` needs no attest when `f` runs `/bin/cat`. The
-  branch's fix ("f runs a command") is too broad (B114, e5); T1 replaces it.
-  15 existing specs pin today's behaviour and flip with T1.
+- [ ] **B33** (fixed-on-branch; DD24, DD127). A user-function capture of
+  external output is clean, so `y=$(f)` needs no attest when `f` runs
+  `/bin/cat`. The branch's fix ("f runs a command") is too broad (B114, e5);
+  T1 replaces it. DD127 records T1. DG's "no exceptions" (2026-10-23) means
+  no exemption for a wrapper such as `fn g { /usr/bin/git "$@" }`: what
+  decides where the attest goes is the number of call sites, not the body's
+  shape. A function with exactly one call site may be attested immediately
+  after its capture (DG, 2026-10-31). 15 existing specs pin today's
+  behaviour; W2 re-measures each under that rule.
 - [ ] **B35** (fixed-on-branch; DD24). False positive: `fn f { echo hi }; f
   | readline x` draws SB5020 on base, but DD24 calls a user-function pipe
   source clean. T1 keeps the fix, since `f` emits no external output.

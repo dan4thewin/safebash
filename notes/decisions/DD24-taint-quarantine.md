@@ -15,13 +15,18 @@ A variable is tainted iff its defining instruction is one of:
 - `read x [...]` from any inherited fd, opened fd, or pipe
 - `mapfile -t x` / `readarray` from any inherited fd, opened fd, or pipe
 - `$(cmd)` where `cmd` is an external command
+- `$(f)` or `f | read …` where unattested external output reaches user
+  function `f`'s stdout (DD#127)
 
 `read` / `mapfile` from a heredoc or here-string of clean data
 produce clean values.
 
-User-defined sash functions are trusted: `$(user_func ...)` capture is
-clean. A function that touches a tainted source must bless it before
-use or the function itself fails to compile.
+A user-defined sash function is not a source in itself; the external
+commands inside it are. DD#127 says where their output is attested: in
+the body that produced it or, when that body has exactly one call site,
+immediately after the call. The same rule covers what a function leaves
+in a global or a collection slot. Until W2 lands, the compiler treats
+every user-function capture and pipe as clean.
 
 ## Clean sources
 
@@ -251,11 +256,13 @@ compiled and leaked at runtime. CST is the authoritative gate
   compiles to internal buffer)
 - `printf "k=v\n" | mapfile -m m` → tainted (printf execs)
 - `/bin/cmd | read x` → tainted (absolute path, execs)
-- `user_func | read x` → clean (sash function, no exec)
+- `user_func | read x` → clean unless unattested external output reaches
+  `user_func`'s stdout (DD#127; clean until W2 lands)
 
 The principle: taint comes from exec boundaries (fork+exec), file
 reads, and env var reads. A pipe from code that runs inline within
-the sash process is not an external source.
+the sash process is not an external source in itself; an external
+command inside that code is (DD#127).
 
 ## Addendum (2026-10-26): a stage's marks do not change a pipe's taint
 

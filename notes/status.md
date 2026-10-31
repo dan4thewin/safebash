@@ -1,4 +1,32 @@
-## ══ STATUS (2026-10-31, latest) — F10 landed: a caught attest evaluates once ══
+## ══ STATUS (2026-10-31, latest) — DD127 written: taint across function boundaries ══
+
+DG chose (b) for the single-use refinement and asked for one clear writeup
+with no amendment pattern. It is a new DD127 (decide-and-report: the model
+spans stdout, globals and slots, not just DD100's collection parameters).
+The text it contradicted in DD24, DD63, DD100, DD121, AGENTS, GUIDE and the
+findings index is rewritten in place to agree with it; the old text is in
+git at 0149c49b (journal 554). Notes only: no code or spec changes.
+- The rule: own taint is attested in the body that produced it, or, when
+  that body has exactly one call site, immediately after that call.
+  Received taint is never attested inside a body.
+- Single-use means exactly one call site; an anonymous `$( )` body is one.
+  Shared means zero, two or more. A use of received taint is rejected at
+  the call, with the code the use would get. A shared body that leaves its
+  own taint behind is SB5067.
+- Expected at W1, which measures each: bfb.18/.20/.21 and cov.266 become
+  SB5020 at the later read; bfb.23/.24/.28 become accepted, which reverses
+  part of DD121's 2026-09-30 `$( )` extension (flagged to DG); 100.28
+  becomes SB5088 at the call; cov.264/.265/.267-.269/.341 lose SB5067, and
+  W1 adds second call sites so both of its raise paths stay pinned. The 15
+  B33-parked specs are W2's.
+- Three stale statements are corrected: DD100's SB5021 citation, DD121's
+  `ssa.rs:1492` citation (F13 deleted that code), and DD100's Open bullet
+  for a task that is done.
+
+**Next:** W1 (Order item 17) under DD127; DG said "proceed with the port
+work".
+
+## ══ STATUS (2026-10-31) — F10 landed: a caught attest evaluates once ══
 
 F10 unit B (Order item 16; batch-531 B88c, B88d, B91, B92) is ported as-is
 (journal 553; DD61, DD93 and DD100 addenda). With unit A, F10 is done:

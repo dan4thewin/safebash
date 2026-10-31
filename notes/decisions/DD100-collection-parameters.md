@@ -169,38 +169,48 @@ multiple return values — a function can fill several collections in place.
 This is the load-bearing distinction, and it falls out of what each form
 passes:
 
-| call | passes | is it a read? | attest |
+| call | passes | is it a read? | taint |
 |---|---|---|---|
-| `f @foo` | the **values** | **yes** | required at the call site |
-| `f =foo` | the **identity** | **no** | **deferred into `f`** |
+| `f @foo` | the **values** | **yes** | a tainted `foo` is **SB5020** at the call |
+| `f =foo` | the **identity** | **no** | decided by what `f` does with the slot (DD#127) |
 
-Measured today, `f @a` on a tainted array is already rejected **SB5020** at
-the call site. `=foo` must therefore be excluded from taint's read detection
+`f @a` on a tainted array is rejected **SB5020** at the call site. `=foo` must therefore be excluded from taint's read detection
 — that is the one genuinely new rule this DD adds to the validator.
 
-### The rest needs no new machinery
+### Taint through a slot
 
-Because every call is inlined, the binding is a **name substitution**, and
-the existing passes then see the real sites. All three halves were measured
-against the equivalent hard-coded-name program:
+Because every call is inlined, the binding is a **name substitution**: the
+existing passes see the caller's collection wherever `f` names its slot. What
+taint may cross the call is DD#127's rule, applied to a slot like any other
+name:
 
-- **Taint flows in.** A tainted collection read inside a function body is
-  rejected **SB5020**, exactly as at top level.
-- **`attest` inside the function discharges it.** `fn f { attest e in a
-  [[ -n $e ]]; echo ${a[0]} }` is accepted — so DG's "deferred into `f`" is
-  already the behaviour, not a new mechanism.
-- **Mutation and write-back already work.** A function writing `a[0]=z`
-  changes the caller's array; and a write from a tainted source inside the
-  function taints it, so the caller's later read is rejected **SB5021**.
+- **Inward.** A slot that arrives tainted carries taint `f` received. `f` may
+  read it with `:!` (DD#91). Any other use is rejected at the call, with the
+  code the statement would raise if the taint were `f`'s own: **SB5020** for
+  a read, **SB5021** for writing it into a collection cell, **SB5088** for an
+  attest. The caller attests before the call.
+- **Outward.** A slot `f` fills (`fn fill { argv A }`) carries `f`'s own
+  taint, and `f` may attest it adjacently, inside itself. If it does not, and
+  `f` has exactly one call site, the caller attests immediately after the
+  call, or a later non-`:!` read is **SB5020**. A function with zero, two or
+  more call sites may not leave the slot tainted: **SB5067** at the statement
+  that filled it.
+- **A tainted value written into a cell** is **SB5021** at the write
+  (DD#61), wherever the value came from.
+- **Mutation and write-back need nothing new.** A function writing `A[0]=z`
+  changes the caller's array.
 
-So Part E is mostly *binding plus one exclusion*, not a new taint model.
+So Part E is *binding plus one exclusion*, not a new taint model. Until W1
+lands, the compiler applies the rule recorded under "Slot taint crosses the
+boundary in both directions" below; DD#127's "Implementation status" lists
+the differences.
 
 ### Consequences to expect
 
-- **Diagnostics can point inside a callee because of a caller.** Safety is
-  per-instantiation, so a function that is fine at one call site can raise a
-  taint error at another. The error names a line inside `f` whose cause is a
-  call elsewhere; the message should say which call site instantiated it.
+- **A caller's taint is reported at the call.** Each body is checked once, so
+  its own verdicts never depend on its callers. When a call passes in taint
+  that `f` would use, the error is reported at the call and names the line in
+  `f` that uses it (DD#127).
 - **Aliasing two slots to one collection** (`f =foo =foo`) is coherent under
   substitution — writes through `A` are visible through `B`. Allowed, but
   worth a spec pinning it.
@@ -259,8 +269,8 @@ by reading the code:
 - `handle_subscript_assign` → **ICE** (`undefined array A`) on `A[0]=z`
 - the five bulk-fill sites → `read A` silently filled a function-*local* `A`
   and left the caller's collection untouched
-- both attest-all sites → **ICE** (`undefined attest-all array: A`), which is
-  precisely the deferral Part E exists for
+- both attest-all sites → **ICE** (`undefined attest-all array: A`) on
+  `attest v in A`, the form a body needs to attest a slot it filled (DD#127)
 
 Any new path that names a collection must call `resolve_args_name` or
 `fill_target_name`.
@@ -268,20 +278,25 @@ Any new path that names a collection must call `resolve_args_name` or
 ### Slot taint crosses the boundary in both directions
 
 Part E's "a slot is the caller's collection" makes taint a call-boundary
-problem, and neither direction was covered:
+problem, and at first neither direction was covered:
 
 - **inward** — `argv a; f =a` let `${A[0]}` reach `echo` unattested
 - **outward** — `fn fill { argv A }` left the caller's `a` tainted-but-clean
 
-Both are now resolved structurally before the walk (`analyze_slots`), with a
-fixpoint over the call graph so forwarding (`fn g { f =A }`) closes too. DG
-chose to **allow** a callee to fill a slot from outside and propagate the
-taint outward, rather than ban it as SB5067 bans the global case: an
+"Taint through a slot" above closes both. DG's 2026-09-11 decision to
+**allow** a callee to fill a slot from outside and pass the taint out stands
+for a function with one call site, whose caller attests after the call: an
 out-parameter carrying external data is much of what out-parameters are for.
+A function with zero, two or more call sites attests what it fills, exactly
+as it would for a global (DD#127).
 
-Inward taint is a **union over call sites** — a function called once with a
-tainted collection and once with a clean one is checked as tainted. That
-matches the slot-kind rule, where all call sites must agree too.
+`analyze_slots` resolves, before the walk, which caller collection each slot
+binds to, with a fixpoint over the call graph so forwarding
+(`fn g { f =A }`) closes too. Until W1 lands it also computes slot taint:
+inward as a union over call sites (a function called once with a tainted
+collection and once with a clean one is checked as tainted), outward as a
+fixpoint. W1 replaces that half with per-body summaries applied at each call
+(DD#127, "How it is checked"); the binding half stays.
 
 This work also uncovered and fixed a **pre-existing** taint bypass unrelated
 to slots; see SB5067 in DD#24's lineage and `notes/journal/`.
@@ -334,9 +349,6 @@ so the behaviour cannot drift silently in the meantime.
 - The janet backend has no slot support (`notes/tasks/janet-collection-
   parameters.md`); the 17 runtime tests in `spec/collparam.sh` are guarded
   `in_modes native,c`.
-- A function defined *inside top-level control flow* keeps the old
-  definition-point taint walk (`notes/tasks/taint-fn-in-toplevel-control-
-  flow.md`).
 
 ## Addendum (2026-09-17) — Part B's reservation is now enforced for `for` variables
 
@@ -452,10 +464,12 @@ applied to a path the rule missed.
 Specs:
 
 - collparam.sh 100.28 already ran the statement form, and it now runs through
-  the helper. Without the resolution, it fails natively.
+  the helper. Without the resolution, it fails natively. Its body attests a
+  slot it received, which DD#127 makes SB5088; when W1 flips it, W1 adds a
+  spec in which a body fills a slot and attests it, so the statement form
+  stays pinned.
 - taint.sh atslot.7 (the `if` form, with a later read) and atslot.8 (the `||`
   form) pin the caught forms. Each body fills its own slot and attests it,
-  which is a shape the planned T3 rule (no attest of received taint) keeps
-  legal.
+  which DD#127 keeps legal.
 
 Journal 553.

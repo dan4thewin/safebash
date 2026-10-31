@@ -1606,10 +1606,17 @@ of variable names. A variable is clean or tainted based on where its
 value came from:
 
 - **Clean**: literals, arithmetic from clean operands, compiler-managed
-  values ($#, $?, $$, $!, $LINENO), function args from clean callers,
-  user function capture
+  values ($#, $?, $$, $!, $LINENO), function args from clean callers
 - **Tainted**: $(getenv NAME), $(argv N), read from fd/pipe,
-  external command capture
+  external command capture, and a user function's capture or pipe when
+  unattested external output reaches its stdout (DD#127; the compiler
+  treats these as clean until W2 lands)
+
+Across a function boundary there is one rule (DD#127): own taint is
+attested in the body that produced it, or — when that body has exactly
+one call site — immediately after that call; received taint is never
+attested inside a body. DD#127's "Implementation status" lists what the
+compiler does until W1 and W2 land.
 
 Env vars ($HOME, $PATH, etc.) are NOT special — they're just
 `$(getenv NAME)`, which is tainted. The validator (SB5018) rejects

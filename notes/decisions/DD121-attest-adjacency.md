@@ -64,8 +64,9 @@ found:
   afterwards. Measured: `if`/`then`-attest read from `else`; a never-true
   `while`; and a **zero-trip `for`** all printed unattested argv.
 - **It breaks the call-graph fixpoint.** A fixpoint converges on a grow-only
-  lattice; a set with removals can oscillate. SB5067 — which had **no DD**
-  until this one's 2026-09-30 addendum — exists only to dodge that.
+  lattice; a set with removals can oscillate. SB5067 was introduced, with no
+  DD, only to dodge that. It now has a reason of its own (DD#127): a function
+  with zero, two or more call sites may not leave its own taint behind.
 - **It creates "at which program point do I read the set?"** —
   `tainted_slots_on_entry` reads the *completed* top-level set, so a trailing
   attest retroactively cleans a slot that was tainted at the call.
@@ -84,7 +85,7 @@ it. So "the statement above tainted it" is the whole test, and it is measured
 against an *empty* incoming set — a second `argv a` is still the operation
 that taints `a`, even though it changes nothing.
 
-Four structural positions count as "the statement above", because in each the
+Three structural positions count as "the statement above", because in each the
 tainting operation is the syntactic head of the block it precedes:
 
 | position | example |
@@ -92,11 +93,18 @@ tainting operation is the syntactic head of the block it precedes:
 | a `while` condition → its body | `while readline v { attest v … }` |
 | an `if` condition → its branches | `if x=$(cmd) { attest x … }` (DD#88) |
 | a `for` in-source → its body | `for x in $(argv 1) { attest x … }` |
-| DD#100 slot arrival → the body | `fn f { attest v in A … }` — Part E |
 
 Everything else is plain statement order within one block. A compound
 statement is measured like any other: `h=$(getenv X) \|\| h=DEF` taints `h`,
 so the attest below it is adjacent.
+
+A call to a function with exactly one call site is measured the same way: the
+function's body counts as one compound statement of the caller, so an attest
+immediately below the call is adjacent to whatever the body tainted (DD#127).
+A body is not a position. A call does not produce the taint it passes in, so
+an attest inside a body, of taint the body received, is SB5088, reported at
+the call. (Until W1 lands, the compiler still accepts an attest of a received
+slot; DD#127 lists what it applies until then.)
 
 ## The assignment kill
 
@@ -122,7 +130,7 @@ honour: *"Taint is definition-based, not name-based."*
 |---|---|
 | `bug-attest-in-branch-leaks-past-merge` | **fixed** — verified rejected; pinned by `bfb.15`/`bfb.16` |
 | `bug-slot-inward-taint-reads-final-set` | **fixed** — the trailing attest is now SB5088; verified rejected |
-| SB5067 | **re-decided 2026-09-30** — relaxed to a net-effect rule; see the addendum below |
+| SB5067 | now DD#127's firewall for functions with zero, two or more call sites; see "SB5067 — what a body may leave behind" below |
 | `bug-caught-attest-all-fail-path-undefined-handle` | **fixed separately** (journal 449) — a native-codegen defect, not a taint one; DD#121 made it unreachable from safe source, `--no-taint` kept it reachable |
 
 ## Measured cost
@@ -182,130 +190,94 @@ DD#24's *"`if bless VAR [[ test ]]` → False branch taken, VAR remains
 tainted"* stands for the **written** else: the subject is tainted inside that
 branch, and R2 requires the branch to resolve it before falling through.
 
-## Addendum 2026-09-30 — SB5067 re-decided: a net-effect rule
+## SB5067 — what a body may leave behind
 
-The table above left SB5067 "in place, re-decided separately with DG". DG chose
-**(a) relax it to a net-effect body-exit rule**, paired with **(ii) close the
-SSA backstop's collection gap** (a separate piece of work, below).
+**The rule (DD#127):** a function with zero, two or more call sites may not
+leave behind taint produced by its own commands, on a global or on a
+collection slot (DD#100). It attests that taint inside itself, adjacently, by
+R1. A function with exactly one call site, and an anonymous `$( … )` body, is
+part of the caller's statement: whatever it leaves tainted, the caller attests
+immediately after the call, or a later non-`:!` read is SB5020. Taint a body
+receives is not its own, so it never makes SB5067, and the body cannot attest
+it either (see "What "adjacent" means, precisely").
 
-**The rule is now: a function body may not *leave* a global tainted that it did
-not inherit.** The old rule was syntactic — *any* taint of a global anywhere in
-a body was rejected, regardless of what happened next.
+Until W1 lands, the compiler applies the 2026-09-30 rule recorded under
+History below, and `bfb.17`-`bfb.28`, `cov.264`-`cov.270` and `cov.341` pin
+that rule.
 
-The predicate is deliberately **not** "the global is clean at body exit". That
-is unsatisfiable: a body inherits the caller's tainted set, and R1 forbids
-cleaning an inherited taint (the attest would not be adjacent to anything), so
-the moment any global is tainted at top level *every* function in the program
-would be in permanent violation — including ones that never mention it.
-Measured before choosing the wording.
-
-So the predicate is **no net insert**: the exit set may not contain a global
-absent from the entry set. Paired with R1 — which cannot remove an inherited
-taint — a body's net effect on the caller's set is exactly nil, which is what
-preserves `check_taint`'s fixpoint-free two-phase design. That design's own doc
-comments named SB5067 as the soundness premise; they now name this rule.
-
-**R1 is what makes the relaxation safe, and it is why the ordering objection
-does not apply.** The worry about relaxing SB5067 was always that intervening
-code between the taint and its repair reintroduces order-dependence. R1 forbids
-intervening code outright — the attest must be the statement immediately below —
-and it is **name-agnostic**: measured firing identically for a local and for a
-global. There is no order to depend on.
-
-Consequences, each pinned by a spec:
-
-| shape | verdict | spec |
-|---|---|---|
-| taint a global, attest adjacently | **now compiles**; caller reads it clean | `bfb.17` |
-| the same body without the attest | SB5067 | `bfb.18` |
-| the in-body attest | a real runtime gate, not a compile-time waiver | `bfb.19` |
-| one branch attests, another does not | SB5067, reported at the *leaking* branch | `bfb.20` |
-| re-taint a global the top level attested clean | SB5067 — it is a net insert | `bfb.21` |
-| a body that never touches an already-tainted global | not blamed | `bfb.22` |
-
-`bfb.21` is the case that matters most: if the top level attests a global clean
-and a callee re-taints it, the entry set no longer contains it, so the re-taint
-*is* a net insert and is rejected. The caller's clean view cannot be silently
-falsified.
+**Why an in-body attest is enough.** The worry about any rule that lets a body
+repair its own taint is that code between the taint and the repair brings back
+order-dependence. R1 forbids such code: the attest is the statement
+immediately below, and R1 is name-agnostic (measured firing identically for a
+local and for a global). There is no order to depend on.
 
 **Diagnosis keeps its span.** Rather than report at body exit — which would
 blame the function and lose the location — the pass gathers syntactic taint
 sites with their spans *before* the walk and passes verdict *after*, reporting
 only sites whose name is still dirty at exit, deduped to the last site per name
 (the one actually responsible). `bfb.20` demonstrates it: the blame lands on the
-`else` branch, not the `if`.
+`else` branch, not the `if`. `bfb.20`'s function has one call site, so under
+DD#127 it is no longer SB5067; W1 gives it a second call site so that it keeps
+pinning the span.
 
 **The number SB5067 is kept** — my call at the time, ratified by DG
-2026-09-30 ("we already reused SB5067? if so, let it stand"). The diagnostic is
-the same rule loosened, not a new one, and reuse keeps every existing spec
-assertion structurally valid.
+2026-09-30 ("we already reused SB5067? if so, let it stand"). The rule has
+been loosened and re-scoped, not replaced, and reusing the number keeps every
+existing spec assertion structurally valid.
 
-**Scope change worth knowing:** site collection moved from `walk_stmt_tree` to
+**Each body reports its own sites.** Site collection uses
 `walk_scoped_structural_stmts` filtered on `in_fn.is_empty()`, so a nested
-function's sites are no longer attributed to its parent — the nested body gets
-its own verdict. The walk does not descend into `$( )` bodies either, and for
-the same reason: as of the extension below, each body gathers and reports its
-own sites, so descending here would report one leak twice.
+function's sites are not attributed to its parent, and the walk does not
+descend into `$( )` bodies. Under DD#127, a statement that holds a single-use
+call or a `$( )` and leaves own taint behind is itself a source site of the
+enclosing body. W1 decides the span it reports.
 
-### Why (a) alone, and what (ii) is for
+### The SSA backstop is not the authority
 
-(ii) — giving `ArgvFill`/`ReadArray`/`SplitValue`/`MapFromArray` real SSA
-versions so the SSA taint backstop can see bulk fills — does **not** make
-SB5067 redundant, which is why DG took both. The backstop cannot be the
-authority: **SSA is spanless** (the readonly backstop at `ssa.rs:1492` hardcodes
-`"1:1:"` for want of a location), it reports at the *use* site rather than the
-definition, `taint_of_name` is flow-insensitive in the permissive direction, it
-honours `:!`, and `--no-taint` disables it. (ii) upgrades the collection failure
-mode from a silent leak to an ICE at the use site; it does not diagnose.
+Giving `ArgvFill`/`ReadArray`/`SplitValue`/`MapFromArray` real SSA versions,
+so that the SSA taint backstop can see bulk fills, does **not** make SB5067
+redundant. The backstop cannot be the authority:
 
-**(ii) landed 2026-09-30.** The four fills now carry `target: VarRef` and call
-`state.define()` *after* the autodeclare, giving a monotone layering — clean
-empty declaration, tainted fill, clean attest — that `taint_of_name`'s
-max-version rule reads correctly with no special-casing. That is also why the
-"attest-clears check" the backstop task asked for turned out to be unnecessary:
-the attest already defines a strictly higher clean version.
+- its messages carry no line or column (`tainted variable $x used as …
+  (SSA taint backstop)`);
+- it reports at the *use* site, not the definition;
+- `taint_of_name` is flow-insensitive in the permissive direction;
+- it honours `:!`;
+- `--no-taint` disables it.
 
-It changed nothing about SB5067, exactly as predicted above. What it did change
-is the relationship between the two layers, in the direction this section
-argues for: a function that bulk-fills a global is now caught twice — by
-SB5067 with a span at the taint site, and by the backstop at the use site — and
-only the first of those is a diagnosis. Detail and the two bugs it exposed:
-`notes/tasks/ssa-taint-full-backstop.md`, journal 450.
+It upgrades the collection failure mode from a silent leak to an ICE at the
+use site; it does not diagnose.
 
-### Extended to `$( … )` bodies — DG, 2026-09-30
+That change landed 2026-09-30. The four fills carry `target: VarRef` and call
+`state.define()` *after* the autodeclare. That gives a monotone layering —
+clean empty declaration, tainted fill, clean attest — which `taint_of_name`'s
+max-version rule reads correctly with no special-casing. A leaked bulk fill is
+therefore caught twice: by the validator, with a span at the taint site, and
+by the backstop at the use. Only the first is a diagnosis. Detail, and the two
+bugs it exposed: `notes/tasks/ssa-taint-full-backstop.md`, journal 450.
 
-The net-effect rule now applies to anonymous bodies as well, closing
-`q-cmdsub-body-taints-outer-global`. DD#86 already calls a `$( … )` body an
-anonymous function body, and sash **inlines** it rather than forking a
-subshell, so a write to an enclosing name persists. Before this, a function
-leaving a global tainted was a located SB5067 and the identical `$( )` form was
-silent — or, where the global happened to be read afterwards, a spanless SSA
-backstop reject that `--no-taint` turns off.
+### History
 
-The relaxation is what made this affordable. The old objection to extending
-SB5067 was that it "would newly reject programs that taint inside a body and
-attest after it"; under the net-effect rule an **adjacent in-body attest is the
-repair**, and it works — so the only newly-rejected shape is the genuinely
-leaky one the function rule already rejected. Measured: the sweep went
-7071 -> 7083, the entire +12 being the new specs. No existing spec changed
-verdict.
-
-**DG's `:!` observation is why this is complete rather than partial.** An
-earlier draft flagged `:!` on a body-tainted global as an exception the
-"anonymous function" model left open. It is not one: SB5067 fires at **body
-exit** and never examines the read site, so the bypass is evaluated too late to
-matter. That also retires the exception raised during this DD's own discussion
-— "the sole exception being a missing attest and a global only accessed by `:!`
-(an exception we could disallow...)". The relaxation closed it as a side
-effect. `:!` keeps working where the intent is local: a top-level taint, and a
-body's own locals.
-
-Clone-and-discard in `taint_cmdsub_bodies` is now sound rather than merely
-convenient — the verdict is what makes the discarded set provably equal to the
-one the enclosing scope keeps, which is the no-fixpoint invariant
-`taint_top_level` relies on.
-
-Specs `bfb.23`-`bfb.28`. Journal 451.
+- **2026-09-30, the net-effect rule.** This DD first left SB5067 "in place,
+  re-decided separately with DG". DG relaxed it from a syntactic rule (any
+  taint of a global anywhere in a body) to a net-effect one: a body may not
+  leave a global tainted that it did not inherit ("no net insert", measured
+  against the body's entry set). The backstop work above was its pair. Specs
+  `bfb.17`-`bfb.22`.
+- **2026-09-30, extended to `$( … )` bodies**, closing
+  `q-cmdsub-body-taints-outer-global`. Sash inlines an anonymous body, so it
+  could leave an outer global tainted with no located error. Specs
+  `bfb.23`-`bfb.28`, journal 451; the sweep went 7071 → 7083, all of it the
+  new specs. The extension is what makes `taint_cmdsub_bodies`'s
+  clone-and-discard sound. DG observed that `:!` on a body-tainted global is
+  no exception, because SB5067 judges the body at its exit and never examines
+  the read. That still holds for shared functions.
+- **2026-10-31, DD#127 replaces both.** A shared function keeps a firewall,
+  now on its own taint only. A single-use function and an anonymous body pass
+  their own taint to the caller, which attests after the call, so the
+  extension to `$( )` bodies is reversed: `bfb.23`, `bfb.24` and `bfb.28`
+  become accepted. W1 replaces the clone-and-discard with the body's summary.
+  The text of both earlier rules is in git at 0149c49b.
 
 ## Addendum 2026-10-02 — the negated spelling
 
@@ -336,5 +308,5 @@ about their wording, not their legality.
 
 - DD#24 taint model · DD#91 `:!` · DD#82 `--no-taint` · DD#100 collection
   parameters (the slot machinery whose call-site injection is the pattern this
-  generalises)
+  generalises) · DD#127 taint across function boundaries
 - Specs: `taint.sh` (`div.1`-`div.32`), `coverage.sh`. journal 448, 457.

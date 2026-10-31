@@ -201,9 +201,10 @@ evaluated string; the default has no second pass. In that shared context:
   place, no concatenation); pieces concatenate. The sigils don't collide:
   `$` = interpolation (word layer), `\` = backref (template layer, replacement
   only).
-- **`$(cmd)` is allowed** (not rejected): a user-function capture is clean,
-  an external capture is tainted and needs bless — taint handles it, same
-  as a `${var:-…}` default (DD#65). Arithmetic `$((…))` allowed.
+- **`$(cmd)` is allowed** (not rejected): an external capture is tainted and
+  needs bless, and a user-function capture is tainted as DD#127 says —
+  taint handles both, same as a `${var:-…}` default (DD#65). Arithmetic
+  `$((…))` allowed.
 
 **Desugar correction.** The `s/RE/SUB/` sugar must desugar its fields to
 this **word context**, NOT to literal-double-quoted args. The earlier

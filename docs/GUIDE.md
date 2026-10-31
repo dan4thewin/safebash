@@ -297,6 +297,13 @@ with a call-graph fixpoint: inward, a slot is tainted if *any* call site
 passes a tainted collection; outward, a callee that bulk-fills a slot
 taints the caller's collection.
 
+**DD#127 replaces both.** Each body is checked once and summarised, and the
+summary is applied at every call. The rule is that a body attests its own
+taint or, when it has exactly one call site, the caller attests it
+immediately after that call; received taint is never attested inside a body. That is not implemented yet (DD#127,
+"Implementation status"), so the compiler works as described above until
+it lands, and this section is rewritten then.
+
 **Taint sources:** `$(argv N)` (program arguments), `read`
 targets, `$(external cmd)`, environment variables via `$(getenv NAME)`.
 Function-local `$1`–`$N`/`$@` are always clean — passing a tainted
