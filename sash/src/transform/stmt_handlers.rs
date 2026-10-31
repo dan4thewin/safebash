@@ -118,7 +118,7 @@ fn handle_test_command(
     c: &Command,
     ssa: &mut SsaProgram,
     state: &mut VersionState,
-    mut block: BlockId,
+    block: BlockId,
 ) -> BlockId {
     let [Expr {
         kind: ExprKind::Test(test_expr),
@@ -127,8 +127,102 @@ fn handle_test_command(
     else {
         unreachable!("a selected [[ command requires exactly one Test operand");
     };
-    let ssa_test = test_to_ssa(test_expr, state);
-    // A capture may open a new block, so emit the test where the lift ends.
+    lower_test_tree(test_expr, ssa, state, block)
+}
+
+/// DD#95: `&&` and `||` inside `[[ ]]` short-circuit. The right operand — every
+/// capture it lifts and every expansion that can abort — runs only when the
+/// left one has not already decided the result. Lifting the whole test before
+/// one `Test` ran `[[ -n $z && $(f) == y ]]`'s `f` even when `$z` was empty.
+///
+/// Each operand is its own `Test`, reading the versions current at its own
+/// point, and the branch is the statement-level `&&`/`||` shape without that
+/// form's status rules: a `[[ … ]]` never aborts, and the operand that ran last
+/// has already set both the result and `$?`. A subtree with no junction keeps
+/// the single `Test` it always had.
+fn lower_test_tree(
+    test: &TestExpr,
+    ssa: &mut SsaProgram,
+    state: &mut VersionState,
+    block: BlockId,
+) -> BlockId {
+    match test {
+        TestExpr::And(left, right) => lower_test_junction(left, right, true, ssa, state, block),
+        TestExpr::Or(left, right) => lower_test_junction(left, right, false, ssa, state, block),
+        TestExpr::Not(inner) if test_has_junction(inner) => {
+            // DD#70's sigil follows the operand it negates and flips both the
+            // result and `$?`, as `!` does for a pipeline.
+            let end = lower_test_tree(inner, ssa, state, block);
+            ssa.block_mut(end).insts.push(SsaInst::internal(
+                BuiltinCmd::NegateTestResult,
+                vec![],
+                true,
+            ));
+            end
+        }
+        TestExpr::Not(_) | TestExpr::Unary { .. } | TestExpr::Binary { .. } => {
+            lower_test_operand(test, ssa, state, block)
+        }
+    }
+}
+
+fn test_has_junction(test: &TestExpr) -> bool {
+    match test {
+        TestExpr::And(..) | TestExpr::Or(..) => true,
+        TestExpr::Not(inner) => test_has_junction(inner),
+        TestExpr::Unary { .. } | TestExpr::Binary { .. } => false,
+    }
+}
+
+/// `left && right` / `left || right` inside `[[ ]]`. A capture can write a
+/// global, so the merge carries phis for the SSA taint backstop exactly as an
+/// `if` without `else` does: the skipped path keeps the left operand's versions.
+fn lower_test_junction(
+    left: &TestExpr,
+    right: &TestExpr,
+    is_and: bool,
+    ssa: &mut SsaProgram,
+    state: &mut VersionState,
+    block: BlockId,
+) -> BlockId {
+    let tag = if is_and { "test.and" } else { "test.or" };
+    let left_end = lower_test_tree(left, ssa, state, block);
+    let left_state = state.snapshot();
+    let right_block = ssa.new_block(&format!("{tag}.right"));
+    let merge = ssa.new_block(&format!("{tag}.merge"));
+    let (true_block, false_block) = match is_and {
+        true => (right_block, merge),
+        false => (merge, right_block),
+    };
+    ssa.block_mut(left_end).terminator = Terminator::Branch {
+        condition: left_end.to_string(),
+        true_block,
+        false_block,
+    };
+    let right_end = lower_test_tree(right, ssa, state, right_block);
+    let right_state = state.snapshot();
+    ssa.block_mut(right_end).terminator = Terminator::Goto(merge);
+    super::helpers::insert_phis_two_branch(
+        state,
+        ssa,
+        merge,
+        left_end,
+        &left_state,
+        right_end,
+        &right_state,
+    );
+    merge
+}
+
+/// One junction-free operand: a single `Test`. A capture may open a new block,
+/// so the `Test` goes where the lift ends.
+fn lower_test_operand(
+    test: &TestExpr,
+    ssa: &mut SsaProgram,
+    state: &mut VersionState,
+    mut block: BlockId,
+) -> BlockId {
+    let ssa_test = test_to_ssa(test, state);
     let ssa_test = super::functions::lift_test_captures(ssa_test, ssa, state, &mut block);
     ssa.block_mut(block)
         .insts

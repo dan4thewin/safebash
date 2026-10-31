@@ -96,3 +96,49 @@ say.
 Aligning the two precedences (making the outside bind `&&` tighter), or giving
 the tiers separate spellings à la Perl. Either remains open; this DD composes
 with both, because it only removes the ambiguous case.
+
+## Addendum (2026-10-31): `&&` and `||` inside `[[ ]]` short-circuit
+
+F8 of the batch-531 port (journal 550; findings B87, B88a). DG's question
+was whether `&&` and `||` behave identically inside `[[ ]]` and outside.
+The rule above settles how a mixed chain groups. This addendum settles
+when an operand runs, which was a second divergence the DD did not list.
+
+Inside `[[ ]]`, as outside, a junction's right operand runs only when the
+left one has not decided the result. `[[ L && R ]]` skips R when L is
+false, and `[[ L || R ]]` skips R when L is true. A skipped operand is not
+evaluated at all:
+
+- a capture in R does not run, so it produces no output and writes no
+  global;
+- an expansion that would abort is not evaluated. Examples are
+  `${y:?…}`, an `argv` index out of bounds, and a zero divisor.
+
+Until this date both sides were eager. The transform lifted every capture
+in the test ahead of a single `Test` instruction. Both backends then
+evaluated both operands and combined them bitwise (native `band`/`bor`,
+C `&`/`|`). So `[[ -n $z && $(f) == y ]]` ran f when `$z` was empty, and
+`[[ $x == a || ${y:?} == b ]]` aborted even though x was a.
+
+The junction adds no status rule of its own. The operand that ran last
+sets both the result and `$?`, and a `!` over a junction flips both
+(DD#70).
+
+Two layers carry this, and each pins what the other cannot:
+
+- **Transform.** A junction in a `[[ ]]` statement or condition becomes
+  its own blocks (`test.and.right`/`.merge`, `test.or.right`/`.merge`),
+  so a capture runs inside its own operand's block. Specs: lazy.4 and
+  lazy.6.
+- **Backends.** A junction that stays inside one `Test` is evaluated
+  lazily by both backends. This is the only layer an attest predicate
+  gets, because an attest keeps its predicate as one instruction (DD#93).
+  Specs: atlazy.2, .3, .4 and .7.
+
+Two choices here are decide-and-report:
+
+- `--trace` now prints the junction branches, e.g.
+  `+ branch → test.or.merge` (DD#32's rule that every branch traces;
+  tr.5).
+- lazy.2 and lazy.9 quote their int operands (D1, DD#30), and their ids
+  are kept.

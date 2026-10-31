@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup taint
-plan=394
+plan=398
 echo "1..$plan" >&3
 
 set +e
@@ -2489,6 +2489,44 @@ SASH_CFLAGS="${SASH_CFLAGS:-} --no-taint" run_sash 'map m=([k]=v)
 b=${m[$(cat b37.key)]:-dflt}
 echo "$b"'
 [[ $rc = 0 && $out = v && -z $rerr ]]; chk capres.20
+
+# ── DD#95 inside attest predicates ──
+# Both backends evaluated a predicate's `&&` / `||` eagerly, so a right-hand
+# `${y:?}` aborted a program whose result was already decided (fixed
+# 2026-10-31, journal 550). The ids this block skips belong to the attest
+# predicate work still to land: atlazy.1 (`$(( ))` in a predicate),
+# atlazy.5/.6 (attest-all stops at its first failing cell) and atlazy.8/.9
+# (the statement form's gate message).
+
+# atlazy.2 a passing left operand decides an attest's `||`: a right-hand
+# `${y:?}` is never evaluated
+run_sash 'str y=""
+x=$(arg 1)
+attest x [[ -n $x || ${y:?unset} == b ]]
+echo "ok $x"' v
+[[ $rc = 0 && $out = 'ok v' && -z $err && -z $rerr ]]; chk atlazy.2
+
+# atlazy.3 a failing left operand decides `&&`: the gate fails, unevaluated
+run_sash 'str y=""
+x=$(arg 1)
+attest x [[ $x == ok && ${y:?unset} == b ]]
+echo "ok $x"' bad
+[[ $rc = 1 && -z $out && -z $err \
+   && $rerr == *"attest: x = 'bad' failed the gate"* && $rerr != *unset* ]]; chk atlazy.3
+
+# atlazy.4 the caught `if attest` form is lazy as well
+run_sash 'str y=""
+x=$(arg 1)
+if attest x [[ $x == ok || ${y:?unset} == b ]] { echo "ok $x" } else { x=none; echo "no $x" }' ok
+[[ $rc = 0 && $out = 'ok ok' && -z $err && -z $rerr ]]; chk atlazy.4
+
+# atlazy.7 the if-form attest-all, with every cell passing on its left
+# operand: no cell's right operand runs
+run_sash 'str y=""
+argv 1 a
+if attest v in a [[ $v == ok || ${y:?unset} == b ]] { echo all } else { a=(d); echo some }
+echo "done ${a[0]}"' ok ok
+[[ $rc = 0 && $out = $'all\ndone ok' && -z $err && -z $rerr ]]; chk atlazy.7
 
 set -e
 tally

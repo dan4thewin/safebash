@@ -5,7 +5,7 @@
 
 use cranelift_codegen::ir::condcodes::IntCC;
 use cranelift_codegen::ir::types::{I64, I8};
-use cranelift_codegen::ir::{InstBuilder, MemFlags};
+use cranelift_codegen::ir::{BlockArg, InstBuilder, MemFlags};
 use cranelift_frontend::{FunctionBuilder, Variable};
 use cranelift_module::Module;
 use cranelift_object::ObjectModule;
@@ -141,17 +141,85 @@ pub(super) fn lower_test_expr(
             let one = builder.ins().iconst(I64, 1);
             builder.ins().isub(one, val)
         }
-        SsaTest::And(a, b) => {
-            let va = lower_test_expr(a, builder, module, vars, literals, externs, exit_status_var);
-            let vb = lower_test_expr(b, builder, module, vars, literals, externs, exit_status_var);
-            builder.ins().band(va, vb)
-        }
-        SsaTest::Or(a, b) => {
-            let va = lower_test_expr(a, builder, module, vars, literals, externs, exit_status_var);
-            let vb = lower_test_expr(b, builder, module, vars, literals, externs, exit_status_var);
-            builder.ins().bor(va, vb)
-        }
+        SsaTest::And(a, b) => lower_test_junction(
+            true,
+            a,
+            b,
+            builder,
+            module,
+            vars,
+            literals,
+            externs,
+            exit_status_var,
+        ),
+        SsaTest::Or(a, b) => lower_test_junction(
+            false,
+            a,
+            b,
+            builder,
+            module,
+            vars,
+            literals,
+            externs,
+            exit_status_var,
+        ),
     }
+}
+
+/// `&&` / `||` inside a test. The right operand is evaluated only when the
+/// left one has not already decided the result: DD#95 holds that the two
+/// operators mean the same inside `[[ ]]` as outside it, where they are lazy.
+/// An eager `band`/`bor` ran the right operand's runtime work regardless, so
+/// an abort there (`${y:?}`, a zero divisor) fired on a test the left operand
+/// had already settled. The decided value reaches the merge as a block param.
+#[allow(clippy::too_many_arguments)]
+fn lower_test_junction(
+    is_and: bool,
+    left: &SsaTest,
+    right: &SsaTest,
+    builder: &mut FunctionBuilder,
+    module: &mut ObjectModule,
+    vars: &HashMap<String, VarSlot>,
+    literals: &HashMap<String, cranelift_module::DataId>,
+    externs: &ExternFuncs,
+    exit_status_var: Variable,
+) -> cranelift_codegen::ir::Value {
+    let l = lower_test_expr(
+        left,
+        builder,
+        module,
+        vars,
+        literals,
+        externs,
+        exit_status_var,
+    );
+    let rhs_block = builder.create_block();
+    let merge_block = builder.create_block();
+    let result = builder.append_block_param(merge_block, I64);
+    // A false left operand decides `&&` (0); a true one decides `||` (1).
+    let decided = [BlockArg::Value(
+        builder.ins().iconst(I64, i64::from(!is_and)),
+    )];
+    if is_and {
+        builder.ins().brif(l, rhs_block, &[], merge_block, &decided);
+    } else {
+        builder.ins().brif(l, merge_block, &decided, rhs_block, &[]);
+    }
+    builder.switch_to_block(rhs_block);
+    builder.seal_block(rhs_block);
+    let r = lower_test_expr(
+        right,
+        builder,
+        module,
+        vars,
+        literals,
+        externs,
+        exit_status_var,
+    );
+    builder.ins().jump(merge_block, &[BlockArg::Value(r)]);
+    builder.switch_to_block(merge_block);
+    builder.seal_block(merge_block);
+    result
 }
 
 #[allow(clippy::too_many_arguments)]

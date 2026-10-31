@@ -5,7 +5,7 @@
 set -eu
 . common.sh
 setup control_flow
-plan=114
+plan=125
 echo "1..$plan" >&3
 
 set +e
@@ -718,6 +718,107 @@ for x in @a {
     echo "$x $__ai1"
 }'
 [[ $rc = 0 && $out = $'red 7\nblue 7' && -z $err && -z $rerr ]]; chk loopint.16
+
+# ── DD#95: `&&` / `||` inside `[[ ]]` short-circuit ──
+# The right operand runs only when the left one has not decided the result:
+# a capture there never runs and an expansion that can abort is never
+# evaluated. Before 2026-10-31 (journal 550) the whole test was lifted and
+# evaluated before the branch, so each negative below aborted or ran the
+# capture.
+
+# lazy.1 a decided `||` never evaluates a right-hand `${y:?}`
+run_sash 'x=a
+str y=""
+if [[ $x == a || ${y:?unset} == b ]] { echo yes }
+echo done'
+[[ $rc = 0 && $out = $'yes\ndone' && -z $err && -z $rerr ]]; chk lazy.1
+
+# lazy.2 ... nor a zero divisor (quoted: a whole-int operand is SB4030, DD#30)
+run_sash 'x=a
+int z=0
+if [[ $x == a || "$(( 10 / z ))" == 1 ]] { echo yes }
+echo done'
+[[ $rc = 0 && $out = $'yes\ndone' && -z $err && -z $rerr ]]; chk lazy.2
+
+# lazy.3 a decided `&&` skips its right operand the same way
+run_sash 'x=b
+str y=""
+if [[ $x == a && ${y:?unset} == b ]] { echo yes } else { echo no }
+echo done'
+[[ $rc = 0 && $out = $'no\ndone' && -z $err && -z $rerr ]]; chk lazy.3
+
+# lazy.4 a skipped capture never runs: no output, no global write
+run_sash 'g=old
+fn f { g=new; echo tried >&2; echo b }
+x=a
+if [[ $x == a || $(f) == b ]] { echo "yes $g" }
+echo "after $g"'
+[[ $rc = 0 && $out = $'yes old\nafter old' && -z $err && -z $rerr ]]; chk lazy.4
+
+# lazy.5 control: an undecided left operand runs the capture, and its write
+# survives the merge
+run_sash 'g=old
+fn f { g=new; echo b }
+x=b
+if [[ $x == a || $(f) == b ]] { echo "yes $g" }
+echo "after $g"'
+[[ $rc = 0 && $out = $'yes new\nafter new' && -z $err && -z $rerr ]]; chk lazy.5
+
+# lazy.6 a negated junction is still lazy, and `!` flips its result
+run_sash 'fn g { echo tried >&2; echo b }
+x=a
+if [[ ! ( $x == a || $(g) == b ) ]] { echo yes } else { echo no }
+echo done'
+[[ $rc = 0 && $out = $'no\ndone' && -z $err && -z $rerr ]]; chk lazy.6
+
+# lazy.7 the statement form is lazy too
+run_sash 'x=a
+str y=""
+[[ $x == a || ${y:?unset} == b ]] && echo ok
+echo done'
+[[ $rc = 0 && $out = $'ok\ndone' && -z $err && -z $rerr ]]; chk lazy.7
+
+# lazy.8 control: the operand that ran last sets the result and `$?`
+run_sash 'x=a
+y=c
+[[ $x == a && $y == b ]] || echo "alt $?"
+[[ $x == b || $y == c ]] && echo "and $?"
+if [[ $x == a && ( $y == b || $y == c ) ]] { echo nest1 }
+if [[ ! ( $x == a && $y == b ) ]] { echo neg1 $? }
+if [[ ! ( $x == a && $y == c ) ]] { echo bad } else { echo neg2 }
+echo end'
+[[ $rc = 0 && $out = $'alt 1\nand 0\nnest1\nneg1 0\nneg2\nend' \
+   && -z $err && -z $rerr ]]; chk lazy.8
+
+# lazy.9 control: a loop condition re-runs its right operand on every
+# iteration it is reached, and sees the left operand's current value (the
+# counters are quoted: a whole-int operand is SB4030, DD#30)
+run_sash 'int i=0
+fn f { i+=1; echo $i }
+while [[ "$i" != 9 && $(f) != 3 ]] { echo "body $i" }
+echo "out $i"
+int j=0
+fn h { j+=1; echo $j }
+until [[ "$j" == 9 || $(h) == 3 ]] { echo "ubody $j" }
+echo "uout $j"'
+[[ $rc = 0 && $out = $'body 1\nbody 2\nout 3\nubody 1\nubody 2\nuout 3' \
+   && -z $err && -z $rerr ]]; chk lazy.9
+
+# lazy.10 control: a predicate function and a captured condition
+run_sash 'fn both { return [[ $1 == a && $2 == b ]] }
+fn zed { echo z }
+if both a b { echo t1 }
+if both a c { echo bad } else { echo f1 }
+y=q
+x=$(if [[ $y == b || $(zed) == z ]] { echo cap })
+echo "[$x]"'
+[[ $rc = 0 && $out = $'t1\nf1\n[cap]' && -z $err && -z $rerr ]]; chk lazy.10
+
+# lazy.11 a skipped intrinsic that would abort (argv bounds) is not run
+SASH_CFLAGS="${SASH_CFLAGS:-} --no-taint" run_sash 'x=a
+if [[ $x == a || $(arg 5) == b ]] { echo yes }
+echo done'
+[[ $rc = 0 && $out = $'yes\ndone' && -z $err && -z $rerr ]]; chk lazy.11
 
 
 set -e

@@ -288,3 +288,17 @@ that the stated rule is now enforced, and that it was not before.
 The `if` form and the `[[ ]]` predicates are unaffected; they bind no value.
 
 Spec `60.72`. Journal 414.
+
+## Addendum (2026-10-31): a predicate's `&&` and `||` short-circuit
+
+A predicate's junctions are lazy like any other `[[ ]]`'s (DD#95
+addendum; journal 550, finding B88a). A decided left operand skips the
+right one. So `attest x [[ $x == ok || ${y:?} == z ]]` passes without
+evaluating `${y:?}`, and a failing left operand of `&&` fails the gate
+before its right operand runs. That holds for the statement form and for
+the caught `if attest` form.
+
+Specs: atlazy.2, .3, .4 and .7. The attest-all ids (atlazy.5/.6, B88d)
+and C's attest-all failure text (atlazy.8/.9, B91) land with F10.
+atlazy.1 does too, because its `$(( ))` operand raises a separate F10
+question.

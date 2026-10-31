@@ -2822,18 +2822,32 @@ fn lower_test_expr(e: &mut Emit, test: &SsaTest, types: &VarTypes) -> String {
             let v = lower_test_expr(e, inner, types);
             format!("(1 - ({}))", v)
         }
-        SsaTest::And(a, b) => {
-            // codegen: band(va, vb). Bitwise AND of 0/1 values.
-            let va = lower_test_expr(e, a, types);
-            let vb = lower_test_expr(e, b, types);
-            format!("(({}) & ({}))", va, vb)
-        }
-        SsaTest::Or(a, b) => {
-            let va = lower_test_expr(e, a, types);
-            let vb = lower_test_expr(e, b, types);
-            format!("(({}) | ({}))", va, vb)
-        }
+        SsaTest::And(a, b) => lower_test_junction(e, true, a, b, types),
+        SsaTest::Or(a, b) => lower_test_junction(e, false, a, b, types),
     }
+}
+
+/// `&&` / `||` inside a test, evaluated lazily. Mirrors native
+/// `codegen/tests.rs::lower_test_junction` (DD#95). An operand's runtime work
+/// is emitted as statements ahead of the expression that reads it, so no
+/// expression-level operator can skip it: the right operand's statements go
+/// inside an `if` that runs only when the left operand has not decided.
+fn lower_test_junction(
+    e: &mut Emit,
+    is_and: bool,
+    left: &SsaTest,
+    right: &SsaTest,
+    types: &VarTypes,
+) -> String {
+    let l = lower_test_expr(e, left, types);
+    let t = e.fresh();
+    let undecided = if is_and { "" } else { "!" };
+    writeln!(e.out, "    i64 {t}_v = ({l}) != 0;").unwrap();
+    writeln!(e.out, "    if ({undecided}{t}_v) {{").unwrap();
+    let r = lower_test_expr(e, right, types);
+    writeln!(e.out, "    {t}_v = ({r});").unwrap();
+    writeln!(e.out, "    }}").unwrap();
+    format!("{t}_v")
 }
 
 /// Lower a binary test. Mirrors native `codegen/tests.rs::lower_test_binary`

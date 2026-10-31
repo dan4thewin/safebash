@@ -917,10 +917,20 @@ DG 2026-10-28: F2 lands without the B82 wrap and without specs that pin
 
 ### 14. F8 lazy `[[ && || ]]`
 
-- [ ] **B87** (fixed-on-branch; DD62, DD95). `[[ a && b ]]` and `||`
+- [x] **B87** (fixed-on-branch; DD62, DD95). `[[ a && b ]]` and `||`
   evaluated both operands eagerly. Branch specs: lazy.1-11.
-- [ ] **B88a** (fixed-on-branch; DD93). Attest-predicate operands were
-  evaluated eagerly. Branch specs: atlazy.1-7.
+  - Ported 2026-10-31 (journal 550; DD95 addendum). lazy.1-11 kept their
+    ids; lazy.2 and lazy.9 quote their int operands (D1). New: tr.5, which
+    pins the junction trace labels.
+- [x] **B88a** (fixed-on-branch; DD93). Attest-predicate operands were
+  evaluated eagerly. Branch specs: atlazy.1-4 and atlazy.7.
+  - Correction: the line above used to say atlazy.1-7, but atlazy.5-6 are
+    B88d's.
+  - Ported 2026-10-31 (journal 550; DD93 addendum): atlazy.2, .3, .4 and
+    .7.
+  - atlazy.1 is deferred to F10. Its `$(( 1 / z ))` operand is SB4030
+    after D1, and quoting it would pin `$(( ))` in a predicate as legal,
+    which is one of F10's questions.
 - [x] **B90** (not-reproduced; no DD). Suspected gap in a while header's
   phi; both taint layers reject it on both binaries.
 
@@ -944,6 +954,11 @@ DG 2026-10-28: F2 lands without the B82 wrap and without specs that pin
     taint-checks the pattern. The branch gives SB5020 at 3:10.
 
 ### 16. F10 attest predicates
+
+Carried over from F8 (journal 550): branch spec atlazy.1, whose predicate
+holds `$(( 1 / z ))`, ports here once F10 rules on `$(( ))` in a predicate.
+D1 makes the whole-int operand SB4030, and quoting it would pin that form
+as legal.
 
 - [ ] **B32** (question; DD93). `attest x [[ -n $x && $(ok "$x") == ok ]]`
   ICEs in both backends; the branch rejects it (SB5020, SB5098). Probably

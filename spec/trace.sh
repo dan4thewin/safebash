@@ -14,7 +14,7 @@ set -eu
 . common.sh
 setup trace
 [[ ${SASH_MODE:-native} != native ]] && exit 0
-plan=4
+plan=5
 echo "1..$plan" >&3
 
 set +e
@@ -43,6 +43,17 @@ g x &
 echo after'
 [[ $rc = 0 && $out = $'in\nafter' && $rerr == *"bg.parent"* \
    && $rerr == *"bg.child"* && $rerr == *"if.then"* ]]; chk tr.4
+
+# tr.5 a `[[ ]]` junction is a branch of its own (DD#95, journal 550): a
+# decided left operand jumps to the junction's merge, an undecided one to its
+# right operand
+run_sash 'x=a
+if [[ $x == a || $x == b ]] { echo one }
+if [[ $x == b || $x == a ]] { echo two }
+[[ $x == c && $x == d ]] || echo three'
+[[ $rc = 0 && $out = $'one\ntwo\nthree' && $rerr == *"test.or.merge"* \
+   && $rerr == *"test.or.right"* && $rerr == *"test.and.merge"* \
+   && $rerr != *"test.and.right"* ]]; chk tr.5
 
 unset SASH_CFLAGS SASH_TRACE
 
