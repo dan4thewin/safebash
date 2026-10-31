@@ -75,12 +75,20 @@ struct PipelineResult {
     [[nodiscard]] bool success() const noexcept;
 };
 
+struct PipelineCapture {
+    // Exact bytes, including NUL and final newlines; failed outcomes do not erase them.
+    std::string output;
+    PipelineResult pipeline;
+};
+
 void check(const CommandResult &result);
 void check(const ProcessResult &result);
 void check(const PipelineResult &result);
 [[nodiscard]] ProcessResult try_execute(std::string_view executable,
                                         const std::vector<std::string> &arguments = {});
 void execute(std::string_view executable, const std::vector<std::string> &arguments = {});
+[[nodiscard]] PipelineCapture try_capture_pipeline(const std::vector<Command> &commands);
+[[nodiscard]] std::string capture_pipeline(const std::vector<Command> &commands);
 [[nodiscard]] CommandResult try_write(std::string_view bytes, int fd = 1);
 void write(std::string_view bytes, int fd = 1);
 [[nodiscard]] CommandResult try_echo(std::initializer_list<std::string_view> words);

@@ -27,12 +27,13 @@ retains three workers from four unique records; a later condition detects
 an upstream failure even when the last command succeeds. Both produce
 the adjacent ten-line expected report.
 
-[capture_report.sash](examples/capture_report.sash) adds a native capture
-report with nested function captures and saved summaries. Its failure probe
-saves the pipeline status with `||`, attests the output once, then branches
-on the saved status. It produces the adjacent eight-line expected report.
-The C++ capture runtime and companion are still in progress and are not
-part of the published C++ build.
+[capture_report.cpp](examples/capture_report.cpp) and
+[capture_report.sash](examples/capture_report.sash) capture a five-stage
+external pipeline in a real summary function, nest it inside a framed
+function capture, and retain two rounds of summaries for later traversal.
+The sash failure probe saves status with `||`, attests once, then branches;
+the C++ probe keeps captured bytes separate from pipeline outcomes.
+Both produce the adjacent eight-line expected report.
 
 On Linux:
 
@@ -43,11 +44,13 @@ mk -p 1 test
 ./build/job_report
 ./build/stream_report
 ./build/pipeline_report
+./build/capture_report
 ```
 
 `greetings` prints `Hello, Ada!`; `job_report` prints the worker rounds;
 `stream_report` prints streamed records and the retained worker list;
-`pipeline_report` prints sorted, deduplicated records and retained state.
+`pipeline_report` prints sorted, deduplicated records and retained state;
+`capture_report` prints comma-joined summaries and their captured frames.
 The build produces a normal C++ static library, `build/libsash_cpp.a`;
 it does not build Rust or link sash-rt.
 For example, the C++ program can also be linked directly:
@@ -78,8 +81,11 @@ mk -p 1 CXX=g++ BUILD=build/gcc fault-test
 ```
 
 They exercise failed first/later forks, interrupted wait, recovered wait
-errors with retained child outcomes, partial error-pipe setup, and
-exec-error reporting without child writes. The probes check the
+errors with retained child outcomes, partial error-pipe setup,
+exec-error reporting without child writes, and raw capture read/cleanup.
+Capture probes calibrate the first and second positive data reads by fd,
+verify retained bytes after a wait error, and prove independence from memfd
+with an injection canary followed by an absence check. The probes check the
 observed `clone`/`wait4` syscalls and trace evidence, not just a matching
 surface diagnostic. Keep this target separate from sanitizer runs under
 ptrace. The command helper is an ordinary unsanitized external executable;
@@ -109,8 +115,8 @@ outcomes match its assertions.
 mk -p 1 error-demo
 ```
 
-The full catalog has 151 cases: 73 basic cases, 61 injected-fault cases,
-and 17 interrupted-operation recovery cases.
+The full catalog has 169 cases: 85 basic cases, 65 injected-fault cases,
+and 19 interrupted-operation recovery cases.
 
 The [low-level tour](docs/error-path-tour.md) follows representative cases
 through the Bash runner, strace fault injection, C++ outcomes, and resource
@@ -123,12 +129,14 @@ cleanup. It assumes C and Unix experience rather than C++ familiarity.
 | Capture | Failed inspection, memfd creation, fd relocation/backup, installation, restoration and flags, rewind, read, and close; initially closed stdout |
 | Streaming input | Output/completion pipe allocation, partial launch cleanup, child stdout installation, reader errors/close, and interrupted reads |
 | External pipelines | Every stage's exit/signal, rightmost checked failure, unstarted stages, late setup failures, stdin wiring, endpoint ownership, and retained outcomes after parent errors |
+| Raw pipeline capture | Exact binary bytes, failed producer output retained with outcomes, unchanged checked targets, pipe allocation/read/wait errors, and first/second read recovery |
 | Launch and wait | Pipe and shared-status allocation, fork, child pre-exec close, completion reads/protocol, endpoint close, unavailable child status, wait failure |
 | Fatal cleanup and diagnostics | Restore, close, reap, and unmap failures during cleanup; stderr failures while reporting the original error |
 | Recovery | EINTR at each implemented retry loop, preserving the uninjected output and status |
 
-Failed captures demonstrate that partial output does not replace the
-assignment target. Caught and discarded operations continue; checked
+Checked captures demonstrate that partial output does not replace the
+assignment target; inspectable pipeline capture instead retains the bytes
+with failed producer outcomes. Caught and discarded operations continue; checked
 failures reach the program boundary instead. Fatal cleanup cannot be
 suppressed: it diagnoses the broken ownership/restoration guarantee and
 terminates with status 2. This exposes existing runtime policy; it does
@@ -160,7 +168,10 @@ A Linux subreaper supervises traced cases so even the fatal-wait example
 does not leave an orphaned fixture behind.
 
 `bad-alloc-injected-*` deliberately throws `std::bad_alloc`; it does not
-exhaust the shared host. `completion-protocol-synthetic` injects an
+exhaust the shared host. The separate runtime fixture fails a real collector
+allocation using a test-executable-only allocation override, then checks
+descriptor and child cleanup. It applies no host-wide memory limit.
+`completion-protocol-synthetic` injects an
 unexpected read count. Arbitrarily corrupted internal shared status and
 uncaught programming errors are not forced. Nor does this catalog cover
 runtime features that do not exist yet. There is no sash counterpart:
@@ -289,7 +300,42 @@ Consumer exceptions propagate unchanged after successful cleanup.
 This slice is external stages plus a terminal parent reader, not forked
 C++ stages, public wait, stage suppression, negation, or general redirects.
 
-### Capture and remaining boundaries
+### Raw external-pipeline capture
+
+The fifth pair uses the checked byte collector:
+
+```cpp
+const auto text = sash::capture_pipeline(
+    {{"/usr/bin/printf", {"Ada\nGrace\n"}}, {"/bin/cat", {}}});
+```
+
+`try_capture_pipeline` instead returns `PipelineCapture`, with a counted
+`output` string and a separate `PipelineResult` in `pipeline`. Failed
+producer exits and completion errors do not erase already collected bytes.
+The checked wrapper checks the pipeline before returning the string, so a
+failed right-hand capture does not replace an existing assignment target.
+
+The parent drains the terminal pipe concurrently into the string, preserving
+NUL, CR, separators, and every final newline. It does not use a memfd or
+rebind parent stdin/stdout; it shares preparation, launch, endpoint ownership,
+and completion with the line-reader pipeline. The terminal command observes
+a FIFO on stdout. Raw capture can run inside a memfd body or a parent-reader
+loop without adopting their channels.
+
+Command validation and setup failure before consumption leave output empty
+and retain unstarted stages. An empty command list throws `SetupError`.
+Consumer read errors, allocation failures, and string-capacity errors also
+escape the inspectable form: they are not EOF or invented child outcomes,
+and no partial `PipelineCapture` is returned. Successful cleanup closes all
+parent endpoints before reaping; a cleanup failure retains the existing
+fatal policy.
+
+Completion means pipe EOF followed by accounting for every owned stage.
+A descendant retaining the output pipe can delay EOF; there is no runtime
+timeout or automatic force-kill. Background-writer language semantics remain
+separate work. Binary capture does not permit NUL in OS argument strings.
+
+### In-process capture and remaining boundaries
 
 `capture_stdout` redirects actual fd 1 to an owned Linux memfd and runs
 its void body in-process. Nested frames and exception unwinding restore
@@ -313,5 +359,5 @@ next platform choice, not a silent fallback for a failed Linux memfd.
 Project [status](../notes-exp/status.md),
 [tasks](../notes-exp/tasks/cpp-transpiler-runtime-before-ir.md),
 [decisions](../notes-exp/decisions/DD03-external-pipeline-outcomes.md), and
-[journal](../notes-exp/journal/005-external-pipeline-report.md) live in
+[journal](../notes-exp/journal/007-raw-pipeline-capture.md) live in
 `../notes-exp/`, not the native compiler's `notes/`.

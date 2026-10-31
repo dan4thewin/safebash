@@ -3,7 +3,7 @@
 This is a reading guide to the error showcase for programmers comfortable
 with C, Unix processes, and ordinary strace output, but not necessarily
 with C++ or syscall fault injection. It follows representative cases
-through both harnesses and the runtime, rather than cataloguing all 151.
+through both harnesses and the runtime, rather than cataloguing all 169.
 
 The C++ program directly exercises the runtime that future transpiled
 programs will use; it is hand-written, not generated. The Bash program
@@ -49,6 +49,8 @@ containment, not a timeout imposed by the runtime.
 | [src/platform.hpp](../src/platform.hpp) | Descriptor and capture owners, including member declaration order |
 | [src/platform_linux.cpp](../src/platform_linux.cpp) | Syscalls: `Child`, `SharedChildFailure`, `StdoutCapture`, `write_all`, `cleanup_failed` |
 | [tests/command_helper.cpp](../tests/command_helper.cpp) | Controlled exits, signals, and the ignored-SIGCHLD wrapper |
+| [tests/runtime.cpp](../tests/runtime.cpp) | Byte/outcome/resource assertions and a test-only collector allocation fault |
+| [tests/capture_faults.sh](../tests/capture_faults.sh) | Positive data-read calibration, read/wait assertions, and the memfd canary/absence pair |
 | [tests/error_supervisor.cpp](../tests/error_supervisor.cpp) | Test-only subreaper and controlled close-counter prelude |
 
 Use those responsibilities and function names as locators; line numbers
@@ -819,6 +821,90 @@ dup2 fails before exec. `retry-pipeline-input` substitutes EINTR instead;
 the resumed/retried syscall succeeds, and the PID assertion now requires
 the actual child to reach exec. Byte-for-byte output and status still
 have to match the uninjected baseline.
+
+## Raw capture: bytes and completion are independent
+
+```sh
+bash examples/error_paths.sh --basic --case pipeline-capture-upstream-caught build
+bash examples/error_paths.sh --basic --case pipeline-capture-checked-caught build
+bash examples/error_paths.sh --case capture-pipeline-read-second build
+bash examples/error_paths.sh --case retry-capture-pipeline-read-second build
+```
+
+The first case's producer writes 23 bytes, including NUL and CR, then exits
+7. Two relays deliver those bytes before completion is evaluated. The
+inspectable `try_capture_pipeline` returns an owning `std::string` alongside
+the usual pipeline result:
+
+```text
+stage 0: exit 7
+stage 1: exit 0
+stage 2: exit 0
+captured bytes: 23
+continued
+```
+
+Unlike a line reader, the collector retains newline delimiters and final
+newlines. It appends the count returned by `read`, not a `strlen` result.
+The child writes to a pipe, not the general capture's memfd; parent fd 0
+and fd 1 are untouched. Both consumers share the same launch, setup
+protocol, endpoint owners, and child completion path.
+
+The second case assigns the checked `capture_pipeline` result to an existing
+target. Its collector drains successfully, but the wrapper checks the
+pipeline before returning the string. Exit 7 throws, the private byte string
+is destroyed, and the target stays `unchanged`. This is the evaluation rule
+from Path 2, not rollback or a rule erasing bytes from inspectable results.
+
+### A later read fault is a consumer exception
+
+The read cases use one finite 256 KiB binary producer. It remains blocked
+on output until the parent has drained enough bytes, so it cannot exit
+and restart an earlier read before the first two selected entries.
+`capture-data` uses the first post-marker data pipe's fd; the selector does
+not confuse its 8192-byte reads with one-byte exec-completion reads.
+
+The recorded second-read failure has this condensed parent-side shape:
+
+```text
+pipe2([3, 4], O_CLOEXEC)                    = 0
+pipe2([5, 6], O_CLOEXEC)                    = 0
+read(5, "", 1)                             = 0
+read(3, "xxxx...", 8192)                    = 8192
+read(3, ..., 8192)                         = -1 EIO (...) (INJECTED)
+close(3)                                  = 0
+wait4(child, [{... SIGPIPE}], 0, NULL)      = child
+```
+
+The partial string exists, but `read_some` throws `SetupError`; it does not
+return EOF. The pipe-owner vector closes before the child-owner vector
+reaps. No `PipelineCapture` is returned, even by the inspectable API.
+The direct read-failure fixture requires that exception, an unchanged
+assignment target, and no unreaped child. EINTR instead retries the same
+read, and both harnesses compare against the complete uninjected bytes.
+
+The direct wait-error fixture proves a different path: the full 262150
+bytes have already arrived, a wait returns EIO, and successful cleanup
+reaps exit zero. Both bytes and actual exit remain in the returned capture;
+the separate first wait error still makes checking fail.
+
+### Prove absence, and fail allocation without exhausting the host
+
+`mk -p 1 fault-test` invokes `tests/capture_faults.sh`. Before asserting that
+pipe capture uses no memfd, it injects ENOSYS into a real in-process memfd
+capture and requires that failure. It then runs raw capture with the same
+injection option, requires success and no `memfd_create` trace record, and
+uses a helper that confirms its stdout is a FIFO. The absent syscall was
+not injected; the positive canary proves the injector was capable of it.
+
+The allocation fixture is not strace injection or host memory exhaustion.
+Only the test executable replaces `operator new` and matching delete
+overloads. A scoped threshold rejects requests of at least 64 KiB while
+the small launch allocations remain available. A real collector string
+growth throws `std::bad_alloc`; the target remains unchanged, private fds
+match their earlier snapshot, and both producer children have been reaped.
+The fault turns off on scope exit, including unexpected exceptions.
+The runtime library and external helper have no allocation override.
 
 ## When printing the original error fails too
 

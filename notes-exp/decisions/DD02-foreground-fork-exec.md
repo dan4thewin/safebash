@@ -71,3 +71,18 @@ All remaining parent endpoints close before any completion wait.
 [DD#3](DD03-external-pipeline-outcomes.md) records the independently
 selected aggregation policy; signal inheritance and no-force-kill remain
 unchanged.
+
+## Raw external-capture extension
+
+The fifth pair uses the same external-pipeline consumer path to accumulate
+counted bytes rather than line records. The AI's implementation drains the
+terminal pipe in the parent, then uses the existing completion policy and
+child owners. Parent stdio is not rebound and no memfd is needed; general
+in-process capture still uses memfd.
+
+`PipelineCapture` retains bytes separately from `PipelineResult`, including
+failed producer output and bytes preceding a completion error. Consumer
+read/allocation errors propagate instead of becoming stage outcomes.
+The low-level collector preserves NUL and final newlines. Source-level
+newline treatment, background writers, and call-context suppression remain
+separate choices, not decisions made by this implementation extension.

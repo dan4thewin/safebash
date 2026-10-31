@@ -116,6 +116,14 @@ struct Demo {
     }
 };
 
+void prepare_pipeline_sigpipe() {
+    sigset_t signals;
+    if (std::signal(SIGPIPE, SIG_DFL) == SIG_ERR || ::sigemptyset(&signals) < 0 ||
+        ::sigaddset(&signals, SIGPIPE) < 0 || ::sigprocmask(SIG_UNBLOCK, &signals, nullptr) < 0) {
+        throw rt::SetupError({errno, std::generic_category()}, "prepare pipeline SIGPIPE");
+    }
+}
+
 void scenario(const Demo &demo, std::string_view name) {
     if (name == "process" || name == "process-closed") {
         demo.process(rt::try_execute(demo.helper, {"exit", "0"}));
@@ -132,12 +140,7 @@ void scenario(const Demo &demo, std::string_view name) {
                name == "pipeline-signal" || name == "pipeline-missing" || name == "pipeline-nul" ||
                name == "pipeline-early" || name == "pipeline-record") {
         demo.operation([&] {
-            sigset_t signals;
-            if (std::signal(SIGPIPE, SIG_DFL) == SIG_ERR || ::sigemptyset(&signals) < 0 ||
-                ::sigaddset(&signals, SIGPIPE) < 0 ||
-                ::sigprocmask(SIG_UNBLOCK, &signals, nullptr) < 0) {
-                throw rt::SetupError({errno, std::generic_category()}, "prepare pipeline SIGPIPE");
-            }
+            prepare_pipeline_sigpipe();
             std::vector<rt::Command> commands{{demo.helper, {"records", "0"}},
                                               {demo.helper, {"relay", "0"}},
                                               {demo.helper, {"relay", "0"}}};
@@ -175,6 +178,35 @@ void scenario(const Demo &demo, std::string_view name) {
             });
             demo.pipeline(result);
         });
+    } else if (name == "pipeline-capture" || name == "pipeline-capture-empty" ||
+               name == "pipeline-capture-upstream" || name == "pipeline-capture-missing" ||
+               name == "pipeline-capture-read") {
+        demo.operation([&] {
+            prepare_pipeline_sigpipe();
+            std::vector<rt::Command> commands{{demo.helper, {"records", "0"}},
+                                              {demo.helper, {"relay"}},
+                                              {demo.helper, {"relay"}}};
+            if (name == "pipeline-capture-empty") {
+                commands[0].arguments = {"exit", "0"};
+            } else if (name == "pipeline-capture-upstream") {
+                commands[0].arguments[1] = "7";
+            } else if (name == "pipeline-capture-missing") {
+                commands[0].arguments = {"flood"};
+                commands[1].executable += ".missing";
+            } else if (name == "pipeline-capture-read") {
+                commands = {{demo.helper, {"binary"}}};
+            }
+            const auto captured = rt::try_capture_pipeline(commands);
+            demo.pipeline(captured.pipeline);
+            demo.say("captured bytes: " + std::to_string(captured.output.size()));
+        });
+    } else if (name == "pipeline-capture-checked") {
+        std::string target = "unchanged";
+        demo.operation([&] {
+            target =
+                rt::capture_pipeline({{demo.helper, {"records", "7"}}, {demo.helper, {"relay"}}});
+        });
+        demo.say("target: " + target);
     } else if (name == "exit7") {
         demo.process(rt::try_execute(demo.helper, {"exit", "7"}));
     } else if (name == "exit127") {

@@ -160,6 +160,38 @@ This completes multiple external stages with a terminal parent reader,
 not forked C++ stages, stage/function suppression, public wait, general
 redirects, or shutdown.
 
+## Fifth runnable milestone - implemented
+
+`capture_report.cpp` and its repaired sash counterpart capture a five-stage
+external pipeline in a summary function, nest it inside a framed function
+capture, and retain two rounds for later traversal. Both produce the
+independent eight-line report. The native capture/status/attest sequencing
+was repaired separately in [journal 006](../journal/006-capture-report-repair.md);
+this milestone completes the C++ companion and runtime.
+
+`try_capture_pipeline` returns exact counted bytes and a separate pipeline
+result; `capture_pipeline` checks completion before returning the string.
+The raw consumer shares command preparation, launch, endpoint ownership,
+and reaping with the line-reader pipeline. Failed producer output and bytes
+preceding a completion error remain inspectable. Read/allocation exceptions
+escape rather than becoming EOF or a child verdict. External-only capture
+uses a concurrently drained pipe; general in-process capture retains memfd.
+
+Twenty-seven fixture groups and all five C++ goldens pass with GCC, Clang,
+and supported host-GCC ASan. The supplied native compiler matches all five
+sash goldens. The predicted and observed error catalog is 169 cases:
+85 basic, 65 faults, and 19 recoveries. First/second read probes use a live
+finite binary producer and baseline-calibrated data fds. A real collector
+allocation fault checks descriptor/reap ownership without host exhaustion.
+Six uninjected controls and three source mutations pin injection, raw
+newlines, failure-byte retention, and independence from memfd.
+[Journal 007](../journal/007-raw-pipeline-capture.md) records the scope.
+
+This completes raw external-pipeline capture, not source-level newline
+treatment, background-writer policy, call-context suppression, forked C++
+stages, redirects, public wait, or shutdown. The runtime roadmap remains
+open; no producer change or IR reader is included.
+
 ## Starting points selected by DG
 
 | Area | Starting point |
@@ -351,7 +383,7 @@ fixtures, not assumptions that a particular system utility exists.
 - [ ] Give the backing-storage operation a small replaceable platform
   boundary for macOS. Expose a seekable owned capture store, not the
   Linux syscall throughout the library.
-- [ ] For an external-only capture, implement the concurrently drained
+- [x] For an external-only capture, implement the concurrently drained
   pipe path through the process/pipeline machinery. Never wait for the
   writer before draining its pipe.
 
@@ -394,7 +426,7 @@ invisible optimization or a reason to implement an effect analysis here.
 - [ ] Pin SIGPIPE behavior and child signal dispositions, including early
   readers. Do not accidentally inherit a parent-wide SIGPIPE policy into
   every executed program.
-- [ ] Integrate external capture and memfd-backed compound capture with
+- [x] Integrate external capture and memfd-backed compound capture with
   the same child ownership and completion machinery.
 
 Public wait and reader completion must share recorded child outcomes.
@@ -403,6 +435,8 @@ descriptor or clear its destination as if an empty stream arrived.
 The checked completion and partial-construction items are implemented for
 external stages. The common path for builtins/forked C++ stages, escaping
 reader control transfers, public wait, and suppression remain open.
+Both capture paths now reuse foreground external launch and child ownership;
+the integration does not add a second child-status registry.
 
 ## 6. Implement shutdown, END, and signals as one lifecycle
 

@@ -83,7 +83,49 @@ std::vector<std::string> command_words(std::string_view executable,
     return command;
 }
 
+PipelineResult consume_pipeline(const std::vector<Command> &stages,
+                                const std::function<void(int)> &body) {
+    if (stages.empty()) {
+        throw SetupError(std::make_error_code(std::errc::invalid_argument),
+                         "pipeline requires at least one stage");
+    }
+    std::vector<std::vector<std::string>> commands;
+    commands.reserve(stages.size());
+    for (std::size_t i = 0; i < stages.size(); ++i) {
+        try {
+            commands.push_back(command_words(stages[i].executable, stages[i].arguments));
+        } catch (const SetupError &error) {
+            PipelineResult result;
+            result.stages.resize(stages.size());
+            result.setup_errors.push_back({i, error});
+            return result;
+        }
+    }
+    return platform::read_pipeline(commands, body);
+}
+
 } // namespace
+
+PipelineCapture try_capture_pipeline(const std::vector<Command> &commands) {
+    PipelineCapture captured;
+    captured.pipeline = consume_pipeline(commands, [&](int fd) {
+        std::array<char, 8192> buffer{};
+        while (true) {
+            const auto count = platform::read_some(fd, buffer.data(), buffer.size());
+            if (count == 0) {
+                break;
+            }
+            captured.output.append(buffer.data(), count);
+        }
+    });
+    return captured;
+}
+
+std::string capture_pipeline(const std::vector<Command> &commands) {
+    auto captured = try_capture_pipeline(commands);
+    check(captured.pipeline);
+    return std::move(captured.output);
+}
 
 ProcessResult try_execute(std::string_view executable, const std::vector<std::string> &arguments) {
     try {
@@ -184,23 +226,7 @@ ProcessResult read_from(std::string_view executable, const std::vector<std::stri
 
 PipelineResult read_pipeline(const std::vector<Command> &stages,
                              const std::function<void(LineReader &)> &body) {
-    if (stages.empty()) {
-        throw SetupError(std::make_error_code(std::errc::invalid_argument),
-                         "pipeline requires at least one stage");
-    }
-    std::vector<std::vector<std::string>> commands;
-    commands.reserve(stages.size());
-    for (std::size_t i = 0; i < stages.size(); ++i) {
-        try {
-            commands.push_back(command_words(stages[i].executable, stages[i].arguments));
-        } catch (const SetupError &error) {
-            PipelineResult result;
-            result.stages.resize(stages.size());
-            result.setup_errors.push_back({i, error});
-            return result;
-        }
-    }
-    return platform::read_pipeline(commands, [&](int fd) { consume_lines(fd, body); });
+    return consume_pipeline(stages, [&](int fd) { consume_lines(fd, body); });
 }
 
 std::string capture_stdout(const std::function<void()> &body) {

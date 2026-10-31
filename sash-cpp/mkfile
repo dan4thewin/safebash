@@ -16,6 +16,7 @@ build:V:
 	$CXX $CPPFLAGS $CXXFLAGS $SANITIZE examples/job_report.cpp $BUILD/libsash_cpp.a -o $BUILD/job_report &&
 	$CXX $CPPFLAGS $CXXFLAGS $SANITIZE examples/stream_report.cpp $BUILD/libsash_cpp.a -o $BUILD/stream_report &&
 	$CXX $CPPFLAGS $CXXFLAGS $SANITIZE examples/pipeline_report.cpp $BUILD/libsash_cpp.a -o $BUILD/pipeline_report &&
+	$CXX $CPPFLAGS $CXXFLAGS $SANITIZE examples/capture_report.cpp $BUILD/libsash_cpp.a -o $BUILD/capture_report &&
 	$CXX $CPPFLAGS $CXXFLAGS $SANITIZE examples/error_paths.cpp $BUILD/libsash_cpp.a -o $BUILD/error_paths
 
 fixtures:V: build
@@ -35,7 +36,9 @@ test:V: fixtures
 	timeout 10 $BUILD/stream_report > $BUILD/stream_report.actual &&
 	cmp examples/stream_report.expected $BUILD/stream_report.actual &&
 	timeout 10 $BUILD/pipeline_report > $BUILD/pipeline_report.actual &&
-	cmp examples/pipeline_report.expected $BUILD/pipeline_report.actual
+	cmp examples/pipeline_report.expected $BUILD/pipeline_report.actual &&
+	timeout 10 $BUILD/capture_report > $BUILD/capture_report.actual &&
+	cmp examples/capture_report.expected $BUILD/capture_report.actual
 
 error-demo:V: fixtures
 	if test -n "$SANITIZE"; then printf '%s\n' 'error-demo requires an unsanitized BUILD (strace and deliberate faults)' >&2; exit 2; fi &&
@@ -56,7 +59,8 @@ fault-test:V: test
 	grep -qE 'fcntl\(0, F_DUPFD_CLOEXEC, 3\).*EMFILE' $BUILD/dup-failure.trace &&
 	timeout 10 strace -f -qq -e trace=execve,write -e inject=write:error=ENOMEM:when=1 -o $BUILD/exec-failure.trace $BUILD/runtime-tests --exec-failure $BUILD/command-helper &&
 	grep -qE 'execve\(.*command-helper[.]missing.*ENOENT' $BUILD/exec-failure.trace &&
-	! grep -qE 'write\(([013-9]|[0-9]{2,}),' $BUILD/exec-failure.trace
+	! grep -qE 'write\(([013-9]|[0-9]{2,}),' $BUILD/exec-failure.trace &&
+	bash tests/capture_faults.sh $BUILD
 
 fmt:V:
 	clang-format --dry-run --Werror include/sash/runtime.hpp src/*.hpp src/*.cpp examples/*.cpp tests/*.cpp

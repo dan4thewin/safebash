@@ -7,6 +7,7 @@
 #include <cstring>
 #include <fcntl.h>
 #include <string_view>
+#include <sys/stat.h>
 #include <unistd.h>
 
 namespace {
@@ -53,6 +54,20 @@ int main(int argc, char **argv) {
             if (!output(argv[i], std::strlen(argv[i])) || std::fputc('\0', stdout) == EOF) {
                 return fail("cannot write arguments");
             }
+        }
+        return flushed();
+    }
+    if (mode == "stdout-pipe" && argc == 2) {
+        struct stat destination{};
+        if (::fstat(1, &destination) < 0) {
+            std::perror("command-helper: inspect stdout");
+            return 2;
+        }
+        if (!S_ISFIFO(destination.st_mode)) {
+            return fail("stdout should be a pipe");
+        }
+        if (!output("pipe", 4)) {
+            return fail("cannot report pipe stdout");
         }
         return flushed();
     }

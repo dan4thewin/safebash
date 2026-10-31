@@ -124,7 +124,7 @@ basic() {
         if [[ -n $pattern ]]; then
             expected+=$pattern$'\n'
         fi
-        if [[ $scenario == capture-command* ]]; then
+        if [[ $scenario == capture-command* || $scenario == pipeline-capture-checked ]]; then
             expected+=$'target: unchanged\n'
         fi
         expected+='continued$'
@@ -184,11 +184,16 @@ fault() {
         pipeline-input) pipe=1 ;;
         pipeline-reader) pipe=3 ;;
         pipeline-writer) pipe=1; endpoint=2 ;;
+        capture-data) pipe=1 ;;
     esac
     if [[ -n $pipe ]]; then
         fd=$(pipe_endpoint "$baseline.trace" "$pipe" "$endpoint") ||
             die "$name has no baseline pipeline endpoint"
-        selector="^close[(]$fd[)]"
+        if [[ $selector == capture-data ]]; then
+            selector="^read[(]$fd, .*, 8192[)]"
+        else
+            selector="^close[(]$fd[)]"
+        fi
     fi
     if ! number=$(ordinal "$baseline.trace" "$syscall" "$selector" "$occurrence"); then
         die "$name's intended syscall was not reached after the trace marker"
@@ -281,6 +286,9 @@ basic success process checked 0 ''
 basic stream-success stream checked 0 ''
 basic pipeline-success pipeline checked 0 ''
 basic pipeline-empty-stream pipeline-empty-output checked 0 ''
+basic pipeline-capture-success pipeline-capture checked 0 'captured bytes: 23'
+basic pipeline-capture-empty-stream pipeline-capture-empty checked 0 'captured bytes: 0'
+basic pipeline-capture-large pipeline-capture-read checked 0 'captured bytes: 262150'
 basic regex-no-match regex-no-match checked 0 'no match is not an error'
 basic capture-success capture checked 0 'target: captured'
 basic capture-closed-success capture-closed checked 0 'target: captured' stdout-closed
@@ -364,6 +372,32 @@ for handling in caught discarded checked; do
         fi
         basic "$operation-$handling" "$operation" "$handling" "$status" "$pattern"
     done
+    for operation in pipeline-capture-upstream pipeline-capture-missing pipeline-capture-checked; do
+        case $operation in
+            pipeline-capture-upstream)
+                checked_status=7
+                caught=$'stage 0: exit 7\nstage 1: exit 0\nstage 2: exit 0\ncaptured bytes: 23' ;;
+            pipeline-capture-missing)
+                checked_status=2
+                caught=$'pipeline setup at stage 1: 2: .*\nstage 0: signal 13\nstage 1: setup 2: .*\nstage 2: not started\ncaptured bytes: 0' ;;
+            pipeline-capture-checked)
+                checked_status=7
+                caught='caught command 7: .*' ;;
+        esac
+        status=0
+        pattern=
+        if [[ $handling == checked ]]; then
+            status=$checked_status
+            pattern='^error_paths: '
+        elif [[ $handling == caught ]]; then
+            pattern=$caught
+        elif [[ $operation == pipeline-capture-upstream ]]; then
+            pattern='captured bytes: 23'
+        elif [[ $operation == pipeline-capture-missing ]]; then
+            pattern='captured bytes: 0'
+        fi
+        basic "$operation-$handling" "$operation" "$handling" "$status" "$pattern"
+    done
 done
 
 fault write-error write write '^write[(]1, "written' 1 error=EIO '^error_paths: write: '
@@ -413,6 +447,10 @@ fault pipeline-read pipeline-record read '^read[(].*, 8192[)]' 1 error=EIO '^err
 fault pipeline-status-storage-later pipeline mmap '^mmap[(].*MAP_SHARED[|]MAP_ANONYMOUS' 2 error=ENOMEM '^error_paths: allocate child setup status: '
 fault pipeline-pipe-relocate pipeline fcntl '^fcntl[(]0, F_DUPFD_CLOEXEC' 1 error=EMFILE '^error_paths: save descriptor: ' stdin-closed
 fault pipeline-wait pipeline wait4 '^wait4[(]' 1 error=EIO '^error_paths: wait for child: '
+fault capture-pipeline-pipe pipeline-capture pipe2 '^pipe2[(]' 1 error=EMFILE '^error_paths: create pipeline pipe: '
+fault capture-pipeline-wait pipeline-capture wait4 '^wait4[(]' 1 error=EIO '^error_paths: wait for child: '
+fault capture-pipeline-read-first pipeline-capture-read read capture-data 1 error=EIO '^error_paths: read command output: '
+fault capture-pipeline-read-second pipeline-capture-read read capture-data 2 error=EIO '^error_paths: read command output: '
 child_fault pipeline-child-output-reader pipeline close '^error_paths: close child output reader: ' 2
 child_fault pipeline-child-output-writer pipeline close '^error_paths: close child output writer: ' 3
 child_fault pipeline-child-input-install pipeline dup2 '^error_paths: connect child stdin: ' 2
@@ -444,6 +482,8 @@ fault retry-diagnostic exit7 write '^write[(]2, "error_paths"' 1 error=EINTR ''
 fault retry-stream-read stream read '^read[(].*, 8192[)]' 1 error=EINTR ''
 fault retry-pipeline-pipe pipeline pipe2 '^pipe2[(]' 2 error=EINTR ''
 fault retry-pipeline-read pipeline-record read '^read[(].*, 8192[)]' 1 error=EINTR ''
+fault retry-capture-pipeline-read-first pipeline-capture-read read capture-data 1 error=EINTR ''
+fault retry-capture-pipeline-read-second pipeline-capture-read read capture-data 2 error=EINTR ''
 child_fault retry-pipeline-input pipeline dup2 '' 2 error=EINTR
 
 (( ran )) || die "no case selected: $selected"

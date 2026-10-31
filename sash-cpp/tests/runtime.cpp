@@ -16,6 +16,34 @@
 
 namespace {
 
+std::size_t allocation_failure_size = 0;
+
+} // namespace
+
+// Test-only allocation faults leave the small launch allocations available.
+void *operator new(std::size_t size) {
+    if (allocation_failure_size != 0 && size >= allocation_failure_size) {
+        throw std::bad_alloc{};
+    }
+    if (void *memory = std::malloc(size == 0 ? 1 : size)) {
+        return memory;
+    }
+    throw std::bad_alloc{};
+}
+
+void *operator new[](std::size_t size) { return ::operator new(size); }
+void operator delete(void *memory) noexcept { std::free(memory); }
+void operator delete[](void *memory) noexcept { ::operator delete(memory); }
+void operator delete(void *memory, std::size_t) noexcept { ::operator delete(memory); }
+void operator delete[](void *memory, std::size_t) noexcept { ::operator delete(memory); }
+
+namespace {
+
+struct AllocationFailure {
+    explicit AllocationFailure(std::size_t minimum) { allocation_failure_size = minimum; }
+    ~AllocationFailure() { allocation_failure_size = 0; }
+};
+
 void require(bool condition, const char *message) {
     if (!condition) {
         throw std::runtime_error(message);
@@ -949,6 +977,250 @@ void pipeline_wait_failure(const std::string &helper) {
             "the original wait failure remains checked after all children are accounted for");
 }
 
+void pipeline_capture_bytes(const std::string &helper) {
+    const char records[] = "alpha\n\nnul\0inside\r\nlast";
+    const auto captured = sash::try_capture_pipeline({{helper, {"records", "0"}}});
+    require(captured.pipeline.success() &&
+                captured.output == std::string(records, sizeof(records) - 1),
+            "pipeline capture must retain separators, NUL, CR, and an unterminated tail");
+    require(sash::capture_pipeline({{helper, {"exit", "0"}}}).empty(),
+            "a successful empty producer yields an empty capture");
+    require(sash::capture_pipeline({{helper, {"stdout-pipe"}}}) == "pipe",
+            "external-only capture must give its terminal command a pipe, not a memfd");
+
+    std::string expected(256 * 1024, 'x');
+    expected.append("\0end\n\n", 6);
+    for (const int count : {1, 3}) {
+        std::vector<sash::Command> commands{{helper, {"binary"}}};
+        for (int i = 1; i < count; ++i) {
+            commands.push_back({helper, {"relay"}});
+        }
+        require(sash::capture_pipeline(commands) == expected,
+                "drain large binary captures before waiting, without trimming final newlines");
+    }
+}
+
+void pipeline_capture_outcomes(const std::string &helper) {
+    const char records[] = "alpha\n\nnul\0inside\r\nlast";
+    const auto failed =
+        sash::try_capture_pipeline({{helper, {"records", "7"}}, {helper, {"relay", "3"}}});
+    require(failed.output == std::string(records, sizeof(records) - 1) &&
+                !failed.pipeline.success() && failed.pipeline.setup_errors.empty() &&
+                failed.pipeline.stages.size() == 2 && failed.pipeline.stages[0] &&
+                failed.pipeline.stages[1] &&
+                std::get<sash::ProcessExit>(failed.pipeline.stages[0]->outcome).status == 7 &&
+                std::get<sash::ProcessExit>(failed.pipeline.stages[1]->outcome).status == 3,
+            "capture bytes and every failed producer outcome must survive together");
+    std::string target = "unchanged";
+    bool checked = false;
+    try {
+        target = sash::capture_pipeline({{helper, {"records", "7"}}, {helper, {"relay", "3"}}});
+    } catch (const sash::CommandError &error) {
+        checked = error.status() == 3;
+    }
+    require(checked && target == "unchanged",
+            "checking the rightmost failure must precede capture assignment");
+
+    bool empty = false;
+    try {
+        (void)sash::try_capture_pipeline({});
+    } catch (const sash::SetupError &error) {
+        empty = error.code() == std::errc::invalid_argument;
+    }
+    require(empty, "an empty command list is invalid, not a successful empty capture");
+    const auto nul = sash::try_capture_pipeline(
+        {{helper, {"records", "0"}}, {helper, {"args", std::string("bad\0arg", 7)}}});
+    require(nul.output.empty() && nul.pipeline.setup_errors.size() == 1 &&
+                nul.pipeline.setup_errors[0].stage == 1 &&
+                nul.pipeline.setup_errors[0].error.code() == std::errc::invalid_argument &&
+                !nul.pipeline.stages[0] && !nul.pipeline.stages[1],
+            "invalid capture argv must leave all stages unstarted and output empty");
+    in_child([&] {
+        default_signal(SIGPIPE);
+        const auto missing = sash::try_capture_pipeline(
+            {{helper, {"flood"}}, {helper + ".missing", {}}, {helper, {"relay"}}});
+        require(
+            missing.output.empty() && missing.pipeline.setup_errors.size() == 1 &&
+                missing.pipeline.setup_errors[0].stage == 1 && missing.pipeline.stages[0] &&
+                missing.pipeline.stages[1] && !missing.pipeline.stages[2] &&
+                std::get<sash::ProcessSignal>(missing.pipeline.stages[0]->outcome).number ==
+                    SIGPIPE &&
+                std::get<sash::SetupError>(missing.pipeline.stages[1]->outcome).code().value() ==
+                    ENOENT,
+            "late capture setup failure must close pipes and retain started stages");
+        int status;
+        require(::waitpid(-1, &status, WNOHANG) < 0 && errno == ECHILD,
+                "partial capture setup must reap every started child");
+    });
+    in_child([&] {
+        require(std::signal(SIGCHLD, SIG_IGN) != SIG_ERR, "ignore captured child status");
+        const auto unobserved = sash::try_capture_pipeline({{helper, {"records", "0"}}});
+        require(unobserved.output == std::string(records, sizeof(records) - 1) &&
+                    unobserved.pipeline.setup_errors.size() == 1 &&
+                    unobserved.pipeline.setup_errors[0].error.code().value() == ECHILD &&
+                    !unobserved.pipeline.success(),
+                "an unavailable child status must not erase already captured bytes");
+    });
+}
+
+void pipeline_capture_scopes(const std::string &helper) {
+    in_child([&] {
+        install_stdin("program stdin");
+        const auto probe = descriptor_probe_arguments();
+        struct stat stdin_before{};
+        require(::fstat(0, &stdin_before) == 0, "inspect original capture stdin");
+        int count = 0;
+        const auto output = sash::capture_stdout([&] {
+            sash::write("before\n");
+            sash::read_pipeline(
+                {{helper, {"records", "0"}}, {helper, {"relay"}}}, [&](sash::LineReader &outer) {
+                    std::string line;
+                    while (outer.readline(line)) {
+                        ++count;
+                        require(
+                            sash::capture_pipeline({{helper, probe}, {helper, {"relay"}}}).empty(),
+                            "nested capture-private fds must not survive exec");
+                        const auto label = "nested " + std::to_string(count);
+                        require(sash::capture_pipeline({{helper, {"args", label}},
+                                                        {helper, {"relay"}}}) == label + '\0',
+                                "nested raw capture must not steal outer records");
+                        if (count == 1) {
+                            require(sash::capture_pipeline(
+                                        {{helper, {"stdin"}}, {helper, {"relay"}}}) ==
+                                        "program stdin",
+                                    "captured commands inherit program stdin, not the reader");
+                        }
+                        sash::write("body\n");
+                    }
+                });
+            std::string target = "unchanged";
+            try {
+                target = sash::capture_pipeline({{helper, {"records", "7"}}, {helper, {"relay"}}});
+            } catch (const sash::CommandError &error) {
+                require(error.status() == 7, "retain nested capture failure");
+                sash::write("caught\n");
+            }
+            require(target == "unchanged", "failed pipe capture leaves its assignment untouched");
+            sash::write("after\n");
+        });
+        require(count == 4 && output == "before\nbody\nbody\nbody\nbody\ncaught\nafter\n",
+                "raw capture must leave the enclosing memfd destination and reader intact");
+        struct stat stdin_after{};
+        require(::fstat(0, &stdin_after) == 0 && stdin_before.st_dev == stdin_after.st_dev &&
+                    stdin_before.st_ino == stdin_after.st_ino,
+                "raw capture must not rebind parent stdin");
+    });
+}
+
+void pipeline_capture_resources(const std::string &helper) {
+    in_child([&] {
+        for (int fd = 0; fd < 3; ++fd) {
+            if (::close(fd) < 0) {
+                require(errno == EBADF, "close standard descriptor for raw capture");
+            }
+        }
+        require(sash::capture_pipeline({{helper, {"args", "closed"}}, {helper, {"relay"}}}) ==
+                    std::string("closed\0", 7),
+                "raw capture must work with every parent standard descriptor closed");
+        for (int fd = 0; fd < 3; ++fd) {
+            require(::fcntl(fd, F_GETFD) < 0 && errno == EBADF,
+                    "raw capture plumbing must preserve closed parent descriptors");
+        }
+    });
+    in_child([&] {
+        default_signal(SIGPIPE);
+        struct rlimit original{};
+        require(::getrlimit(RLIMIT_NOFILE, &original) == 0, "get raw capture fd limit");
+        auto none = original;
+        none.rlim_cur = 0;
+        require(::setrlimit(RLIMIT_NOFILE, &none) == 0, "exhaust raw capture descriptors");
+        const auto failed = sash::try_capture_pipeline({{helper, {"records", "0"}}});
+        require(::setrlimit(RLIMIT_NOFILE, &original) == 0, "restore raw capture fd limit");
+        require(failed.output.empty() && failed.pipeline.setup_errors.size() == 1 &&
+                    failed.pipeline.setup_errors[0].error.code().value() == EMFILE &&
+                    !failed.pipeline.stages[0],
+                "pipe allocation failure returns setup failure, not empty successful output");
+
+        std::array<int, 128> descriptors{};
+        for (int fd = 0; fd < static_cast<int>(descriptors.size()); ++fd) {
+            descriptors[fd] = ::fcntl(fd, F_GETFD);
+            require(descriptors[fd] >= 0 || errno == EBADF, "snapshot raw capture descriptors");
+        }
+        auto limited = original;
+        limited.rlim_cur = std::min(limited.rlim_cur, rlim_t{32});
+        require(::setrlimit(RLIMIT_NOFILE, &limited) == 0, "limit raw capture leak-check fds");
+        for (int i = 0; i < 16; ++i) {
+            const auto captured =
+                sash::try_capture_pipeline({{helper, {"args", "bytes"}}, {helper, {"relay", "7"}}});
+            require(captured.output == std::string("bytes\0", 6) && !captured.pipeline.success(),
+                    "failed producer captures must not leak descriptors or bytes");
+        }
+        std::string target = "unchanged";
+        bool allocation_failed = false;
+        {
+            const AllocationFailure fault(64 * 1024);
+            try {
+                target = sash::capture_pipeline({{helper, {"binary"}}, {helper, {"relay"}}});
+            } catch (const std::bad_alloc &) {
+                allocation_failed = true;
+            }
+        }
+        require(::setrlimit(RLIMIT_NOFILE, &original) == 0, "restore raw capture leak-check limit");
+        require(allocation_failed && target == "unchanged",
+                "collector allocation failure must propagate before assignment");
+        for (int fd = 0; fd < static_cast<int>(descriptors.size()); ++fd) {
+            require(::fcntl(fd, F_GETFD) == descriptors[fd],
+                    "completed and unwound captures must release every private descriptor");
+        }
+        int status;
+        require(::waitpid(-1, &status, WNOHANG) < 0 && errno == ECHILD,
+                "allocation failure and ordinary capture completion must reap every child");
+    });
+}
+
+void pipeline_capture_read_failure(const std::string &helper) {
+    default_signal(SIGPIPE);
+    std::string target = "unchanged";
+    bool failed = false;
+    try {
+        target = sash::capture_pipeline({{helper, {"binary"}}});
+    } catch (const sash::SetupError &error) {
+        failed = error.code().value() == EIO &&
+                 std::string(error.what()).find("read command output") != std::string::npos;
+    }
+    int status;
+    require(failed && target == "unchanged" && ::waitpid(-1, &status, WNOHANG) < 0 &&
+                errno == ECHILD,
+            "a consumer read error must throw, preserve the target, and close before reaping");
+}
+
+void pipeline_capture_read_interrupted(const std::string &helper) {
+    std::string expected(256 * 1024, 'x');
+    expected.append("\0end\n\n", 6);
+    require(sash::capture_pipeline({{helper, {"binary"}}}) == expected,
+            "retry interrupted capture reads without losing or duplicating bytes");
+}
+
+void pipeline_capture_wait_failure(const std::string &helper) {
+    std::string expected(256 * 1024, 'x');
+    expected.append("\0end\n\n", 6);
+    const auto captured = sash::try_capture_pipeline({{helper, {"binary"}}});
+    require(captured.output == expected && captured.pipeline.setup_errors.size() == 1 &&
+                captured.pipeline.setup_errors[0].error.code().value() == EIO &&
+                captured.pipeline.stages[0] &&
+                std::get<sash::ProcessExit>(captured.pipeline.stages[0]->outcome).status == 0,
+            "a recovered wait error retains captured bytes and the actual child exit");
+    bool checked = false;
+    try {
+        sash::check(captured.pipeline);
+    } catch (const sash::SetupError &error) {
+        checked = error.code().value() == EIO;
+    }
+    int status;
+    require(checked && ::waitpid(-1, &status, WNOHANG) < 0 && errno == ECHILD,
+            "capture completion must account for the child without hiding the first wait error");
+}
+
 void fork_failure(const std::string &helper) {
     const auto output = sash::capture_stdout([&] {
         const auto result = sash::try_execute(helper, {"args", "must not run"});
@@ -983,6 +1255,9 @@ int main(int argc, char **argv) {
     if (argc == 3) {
         const std::string_view mode(argv[1]);
         const std::string helper(argv[2]);
+        if (std::getenv("SASH_CPP_TEST_TRACE") != nullptr) {
+            sash::write("__SASH_CPP_TEST_BEGIN__\n", 2);
+        }
         if (mode == "--fork-failure") {
             return run_test(argv[1], [&] { fork_failure(helper); }) ? 0 : 1;
         }
@@ -994,6 +1269,27 @@ int main(int argc, char **argv) {
         }
         if (mode == "--pipeline-wait-failure") {
             return run_test(argv[1], [&] { pipeline_wait_failure(helper); }) ? 0 : 1;
+        }
+        if (mode == "--capture-no-memfd" || mode == "--capture-bytes") {
+            return run_test(argv[1], [&] { pipeline_capture_bytes(helper); }) ? 0 : 1;
+        }
+        if (mode == "--capture-outcomes") {
+            return run_test(argv[1], [&] { pipeline_capture_outcomes(helper); }) ? 0 : 1;
+        }
+        if (mode == "--capture-scopes") {
+            return run_test(argv[1], [&] { pipeline_capture_scopes(helper); }) ? 0 : 1;
+        }
+        if (mode == "--capture-resources") {
+            return run_test(argv[1], [&] { pipeline_capture_resources(helper); }) ? 0 : 1;
+        }
+        if (mode == "--capture-read-failure") {
+            return run_test(argv[1], [&] { pipeline_capture_read_failure(helper); }) ? 0 : 1;
+        }
+        if (mode == "--capture-read-interrupted") {
+            return run_test(argv[1], [&] { pipeline_capture_read_interrupted(helper); }) ? 0 : 1;
+        }
+        if (mode == "--capture-wait-failure") {
+            return run_test(argv[1], [&] { pipeline_capture_wait_failure(helper); }) ? 0 : 1;
         }
         if (mode == "--dup-failure") {
             return run_test(argv[1], [&] { partial_error_pipe(helper); }) ? 0 : 1;
@@ -1031,6 +1327,10 @@ int main(int argc, char **argv) {
         {"pipeline stage outcomes", [&] { pipeline_outcomes(helper); }},
         {"pipeline construction failures", [&] { pipeline_construction(helper); }},
         {"pipeline scopes and resources", [&] { pipeline_scopes(helper); }},
+        {"pipeline capture bytes", [&] { pipeline_capture_bytes(helper); }},
+        {"pipeline capture outcomes", [&] { pipeline_capture_outcomes(helper); }},
+        {"pipeline capture scopes", [&] { pipeline_capture_scopes(helper); }},
+        {"pipeline capture resources", [&] { pipeline_capture_resources(helper); }},
     };
     for (const auto &test : tests) {
         if (!run_test(test.first, test.second)) {

@@ -1,16 +1,31 @@
-## Capture-report source repaired; C++ capture slice still in progress
+## Fifth pair and raw pipeline capture complete
 
-[`capture_report.sash`](../sash-cpp/examples/capture_report.sash) now saves
-the failed pipeline's status in its `||` handler, attests the captured
-output once, then branches on the saved status. It produces the independent
-eight-line report and joins the five-example native golden target.
-No native compiler or language rule changed.
+[`capture_report.cpp`](../sash-cpp/examples/capture_report.cpp) and its
+[sash counterpart](../sash-cpp/examples/capture_report.sash) capture a
+five-stage external pipeline in a real function, nest it inside a framed
+function capture, and retain two rounds of summaries for later traversal.
+Both match the independent eight-line expected report.
 
-The C++ companion's guard order is repaired in the local draft as well.
-The capture API, companion, and C++ build integration remain uncommitted;
-focused capture fixtures, fault cases, and full milestone gates are still
-pending. This is a source repair, not a completed fifth runtime milestone.
-See [journal 006](journal/006-capture-report-repair.md).
+The runtime now provides `try_capture_pipeline` and `capture_pipeline`.
+Exact bytes and pipeline outcomes are separate; failed producer output and
+bytes preceding completion errors are retained. The checked wrapper checks
+before returning its assignment value. The raw collector shares pipeline
+launch/drain/wait ownership without memfd or parent-stdio rebinding.
+Read/allocation exceptions propagate after successful close-before-reap
+cleanup, rather than becoming EOF or a stage verdict.
+
+GCC, Clang, and supported host-GCC ASan pass twenty-seven fixture groups and
+all five C++ goldens; DG's supplied native compiler matches all five sash
+goldens. Tests pin binary bytes, final newlines, nested reader/memfd scopes,
+closed standard descriptors, allocation/read cleanup, and retained
+completion output. Three implementation mutations fail as intended and
+rebuilt restored-source controls pass.
+See [journal 007](journal/007-raw-pipeline-capture.md).
+
+The sash capture/status/unconditional-attest sequence was repaired earlier
+in [journal 006](journal/006-capture-report-repair.md). The native
+[branch-policy question](../notes/tasks/q-capture-status-attest-sequence.md)
+remains open; no native compiler or language rule changed.
 
 ## Fourth pair: sorted, deduplicated pipeline records
 
@@ -43,7 +58,7 @@ See [journal 005](journal/005-external-pipeline-report.md).
 ## Runnable error-path showcase
 
 `sash-cpp/examples/error_paths.cpp` and its shell runner now demonstrate
-151 isolated cases: 73 basic cases, 61 injected faults, and 17 interrupted
+169 isolated cases: 85 basic cases, 65 injected faults, and 19 interrupted
 operation recoveries. Each displays stdout, stderr, and status.
 
 ```sh
@@ -61,14 +76,17 @@ A Linux subreaper supervises traced examples so the fatal-wait case leaves
 no orphaned fixture.
 
 GCC and Clang pass the full showcase, whose predicted and actual totals
-are both 151. Eight new catalog controls and both focused pipeline
-selectors reject runs with injection removed. Higher child-close probes
+are both 169. Six new capture catalog controls reject uninjected runs.
+Capture read probes calibrate first/second positive data reads by fd;
+the no-memfd probe has a separate injection canary. Earlier pipeline
+controls remain in place. Higher child-close probes
 use the small static supervisor's controlled prelude to avoid failing the
 parent loader before main; generated-program examples remain ordinary
 C++ builds.
-The full showcase deliberately runs without sanitizers. Allocation
-failure is an explicitly thrown exception, not host memory exhaustion;
-arbitrary internal corruption and future features are not claimed.
+The full showcase deliberately runs without sanitizers. Its allocation
+boundary case explicitly throws; the separate capture fixture denies a
+real collector allocation using a test-only override, not host memory
+exhaustion. Arbitrary internal corruption and future features are not claimed.
 See [journal 003](journal/003-error-path-showcase.md) and
 the [runnable catalog](../sash-cpp/README.md#error-path-showcase).
 
@@ -76,7 +94,8 @@ The [low-level tour](../sash-cpp/docs/error-path-tour.md) now follows
 representative paths through both harnesses for C programmers new to C++
 and strace injection. It covers result versus exception propagation,
 capture unwinding, fault-site calibration, retries, fatal cleanup, and
-the new pipeline/close-prelude paths.
+the pipeline/close-prelude paths, raw byte capture, retained failure output,
+consumer read exceptions, and the allocation/absence controls.
 
 No compiler, producer, or native dependency changed.
 The first three pairs remain available. Their earlier milestones are in
