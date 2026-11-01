@@ -1,3 +1,16 @@
+## Planned END contract: explicit handling, END-only
+
+DG expects END to forbid source function definitions and require every
+fallible operation to be explicitly caught or suppressed, with neither
+automatic abort nor automatic suppression. DG clarified that nothing
+outside END changes. See [DD#5](decisions/DD05-planned-end-explicit-handling.md)
+and [journal 010](journal/010-planned-end-explicit-handling.md).
+
+The automatic per-step cleanup-guard proposal is withdrawn. The next C++
+lifecycle slice targets explicit END handling, while ordinary functions,
+DD#55's no-reach rule, and non-END behavior remain unchanged. This is a
+planned contract; no native compiler, runtime, or example code changed.
+
 ## Rebased onto current hand-parser; function discard clarified
 
 The twelve experiment commits rebased cleanly onto hand-parser `2fc6a22c`.

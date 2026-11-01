@@ -486,12 +486,21 @@ the integration does not add a second child-status registry.
 
 ## 6. Implement shutdown, END, and signals as one lifecycle
 
+Target [DD#5](../decisions/DD05-planned-end-explicit-handling.md), DG's
+planned END-only contract, rather than current native DD#56's automatic
+cleanup handling. Nothing outside END changes; called function bodies
+retain their existing rules.
+
 - [ ] Provide one program-entry/shutdown driver with a user-supplied END
   function and ordinary C++ global state.
+- [ ] Keep source function definitions outside END.
+- [ ] Demonstrate explicit catch or suppression for every fallible END
+  operation. Do not insert automatic END aborts or catch-and-continue
+  guards, and do not pass unchecked END state into ordinary functions.
 - [ ] Exercise normal completion, explicit exit, uncaught operation
   failure, and signal-requested shutdown through that driver.
 - [ ] Run END at most once. Preserve the triggering status unless END
-  deliberately overrides it; define behavior when END itself fails.
+  deliberately overrides it; END failures follow their explicit handling.
 - [ ] Close outstanding readers before reaping, restore capture/redirect
   state, and enter END on the correct program channels.
 - [ ] Keep cleanup ownership separate in forked children. Discard

@@ -86,3 +86,10 @@ Function-result discard follows native DD#55's 2026-10-30 no-reach rule:
 ignoring a returned int/status must not catch failures inside the function,
 its arguments, or nested calls. Conditions leave called bodies checked too.
 Keep result handling at the call site, not in an inherited unchecked mode.
+
+The planned END-only contract is
+[DD#5](../notes-exp/decisions/DD05-planned-end-explicit-handling.md): no
+source function definitions inside END, and every fallible END operation
+explicitly caught or suppressed. No automatic END abort/suppression guards;
+ordinary function bodies and all non-END behavior stay unchanged. This
+contract is not yet implemented in the runtime or native compiler.
