@@ -1,0 +1,34 @@
+fn collect_workers {
+    int seen=0
+    /usr/bin/printf 'Ada\nGrace\n' | while readline person {
+        attest person [[ $person =~ '^[A-Za-z]+$' ]]
+        (( seen += 1 ))
+        A[$seen]=$person
+    }
+    /usr/bin/printf 'collected:%s' $seen
+}
+
+fn finished_status -> int {
+    echo "result discarded"
+    return 7
+}
+
+array workers
+summary=$(collect_workers =workers)
+echo "capture: $summary"
+- finished_status
+echo "body complete"
+exit 0
+
+END {
+    int incoming=$?
+    - echo "END: incoming $incoming"
+    /usr/bin/false || {
+        - echo "END: caught $?"
+    }
+    - /usr/bin/false
+    - echo "END: discarded"
+    for person in @workers {
+        - echo "END: saved $person"
+    }
+}

@@ -18,9 +18,6 @@
 #include <utility>
 
 namespace sash::platform {
-namespace {
-
-std::error_code last_error() noexcept { return {errno, std::generic_category()}; }
 
 [[noreturn]] void cleanup_failed(std::string_view operation, std::error_code error) noexcept {
     std::array<char, 32> number{};
@@ -32,6 +29,10 @@ std::error_code last_error() noexcept { return {errno, std::generic_category()};
     (void)write_all(2, ")\n");
     std::_Exit(2);
 }
+
+namespace {
+
+std::error_code last_error() noexcept { return {errno, std::generic_category()}; }
 
 int descriptor_flags(int fd) noexcept {
     int flags;

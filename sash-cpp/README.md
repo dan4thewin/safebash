@@ -35,6 +35,13 @@ The sash failure probe saves status with `||`, attests once, then branches;
 the C++ probe keeps captured bytes separate from pipeline outcomes.
 Both produce the adjacent eight-line expected report.
 
+[lifecycle_report.cpp](examples/lifecycle_report.cpp) and
+[lifecycle_report.sash](examples/lifecycle_report.sash) retain two workers
+from a captured function, discard a separate function's returned int,
+and explicitly exit into END. END catches one failed command, discards
+another, and traverses the retained collection. All source functions are
+defined outside END; both reports match the adjacent eight-line golden.
+
 On Linux or macOS, with a C++17 compiler, Plan 9 `mk`, and `timeout` on PATH:
 
 ```sh
@@ -45,12 +52,14 @@ mk -p 1 test
 ./build/stream_report
 ./build/pipeline_report
 ./build/capture_report
+./build/lifecycle_report
 ```
 
 `greetings` prints `Hello, Ada!`; `job_report` prints the worker rounds;
 `stream_report` prints streamed records and the retained worker list;
 `pipeline_report` prints sorted, deduplicated records and retained state;
 `capture_report` prints comma-joined summaries and their captured frames.
+`lifecycle_report` prints the captured count and explicitly handled END report.
 The build produces a normal C++ static library, `build/libsash_cpp.a`;
 it does not build Rust or link sash-rt.
 For example, the C++ program can also be linked directly:
@@ -82,9 +91,10 @@ mk -p 1 CXX=clang++ BUILD=build/apple-asan \
 ./build/apple/capture_report
 ```
 
-Both hosts run the same 28 fixture groups and five expected C++ reports,
+Both hosts run the same 35 fixture groups and six expected C++ reports,
 including large binary output, nested captures/readers, closed standard
-descriptors, partial setup, and child/fd cleanup. The Darwin build has been
+descriptors, partial setup, child/fd cleanup, typed exit, main-only END,
+and signal delivery during foreground work and capture. The Darwin build has been
 exercised on Apple Silicon; this is not a claim of testing every Mac SDK
 or architecture. Tests need GNU `timeout`, which is not a stock macOS tool.
 The Linux fault/catalog targets below explicitly reject Darwin.
@@ -99,6 +109,11 @@ mk -p 1 CXX=g++ BUILD=build/gcc fault-test
 They exercise failed first/later forks, interrupted wait, recovered wait
 errors with retained child outcomes, partial error-pipe setup,
 exec-error reporting without child writes, and raw capture read/cleanup.
+Six lifecycle checks inject signal installation in the body or END,
+mask setup within END, fatal disposition restoration, and lifecycle
+entry/restoration handoff failures with allocation denied. END catches
+its setup faults explicitly; failed restoration remains a broken-runtime
+guarantee, not a suppressed source command.
 Capture probes calibrate the first and second positive data reads by fd,
 verify retained bytes after a wait error, and prove independence from memfd
 with an injection canary followed by an absence check. The probes check the
@@ -108,7 +123,7 @@ ptrace. The command helper is an ordinary unsanitized external executable;
 the library, test driver, and examples receive `SANITIZE`.
 
 With the real sash CLI and runtime already built in the parent checkout,
-`mk -p 1 sash-example` compiles and runs all five sash examples against
+`mk -p 1 sash-example` compiles and runs all six sash examples against
 their expected output. Override `SASH` and `SASH_RT_LIB` for other locations.
 This additional target is not a prerequisite for native C++ tests.
 
@@ -133,6 +148,8 @@ mk -p 1 error-demo
 
 The full catalog has 169 cases: 85 basic cases, 65 injected-fault cases,
 and 19 interrupted-operation recovery cases.
+The newer lifecycle fixtures and their six injected-fault checks belong
+to `test` and `fault-test`, not this command/capture catalog.
 
 The [low-level tour](docs/error-path-tour.md) follows representative cases
 through the Bash runner, strace fault injection, C++ outcomes, and resource
@@ -229,6 +246,74 @@ argument evaluation keep their own checks, including under conditions
 (DG's 2026-10-29/30 native DD#55 ruling). No inherited unchecked mode is
 needed for this. Per-stage result suppression, background launch, and
 replacing `exec` are not implemented yet.
+
+### Program lifecycle and END
+
+`run(program, body)` keeps the original void-body entry form.
+`run(program, body, end)` additionally invokes a void END handler with
+`const Shutdown &`: its `reason` is `Completed`, `ExplicitExit`, `Failure`,
+or `Signal`; `status` is the incoming status, and `signal` retains the
+triggering signal separately. Normal void-body completion is zero.
+
+`exit_program(status)` raises a dedicated `ExitRequest`, not a command
+verdict or a function return. Successful body unwinding restores captures
+and closes pipeline endpoints before reaping, then END runs once on the
+program channels. Returning from END preserves the incoming status;
+an explicit `exit_program` in END overrides it without re-entry.
+The callbacks are borrowed rather than copied into allocating closures.
+
+END follows DG's [planned contract](../notes-exp/decisions/DD05-planned-end-explicit-handling.md):
+every fallible operation is explicitly caught or suppressed. The driver
+inserts no automatic catch-and-continue, diagnostic, or abort handling
+around END operations. Ordinary function bodies and argument evaluation
+remain checked, even when called from END. The example also explicitly
+catches setup/allocation/capacity failures and chooses exit 2 for them.
+
+An unhandled fallible END operation is invalid source under that planned
+contract. The hand-written C++ API lets its exception escape to the C++
+caller; it does not invent a successful result or automatic END policy.
+Enforcing no source function definitions in END and mandatory handling
+belongs to the future front end, not a temporary C++ parser. The named
+generated END handler itself is not a source function definition in END.
+Neither native compiler policy nor producer output changed here.
+
+The lifecycle checks the owning PID before END. External fork children
+still exit without unwinding inherited C++ objects, and explicit program
+exit in a forked child uses `_exit`, not parent END. This does not add
+forked C++ stages or solve their future inherited-reader ownership.
+Broken descriptor, reap, signal-restoration, or lifecycle-handoff guarantees
+retain the existing nonallocating fatal-cleanup policy.
+
+### Signals and cooperative checkpoints
+
+Within `run`, the owner calls `signal(number, SignalDisposition::Ignore)`,
+`Default`, `Flag`, or `Exit`. Registration failures are `SetupError`;
+allocation may also fail before the kernel disposition changes.
+Original dispositions and the incoming mask are restored when the driver
+leaves, including after an escaping END exception.
+
+The two signal handlers perform only lock-free integer stores.
+`signum()` reads the most recently delivered handled signal;
+`clear_signum()` clears that information, not a pending EXIT request.
+FLAG cannot become EXIT merely because another signal declares EXIT or
+the same signal is later rearmed. `Shutdown::signal` retains the pending
+EXIT identity even if a later FLAG changes `signum()`.
+
+`checkpoint()` raises a signal exit request in ordinary execution context.
+Hand-written code places it before/after external commands and pipelines,
+and at function/loop boundaries. The command, reader, and capture APIs
+do not secretly insert it; future generated placement belongs to the
+consumer. `run` checks body entry and normal completion too.
+Checkpoints while END is active prevent lifecycle re-entry; they do not
+disable command checks or change called function bodies.
+
+Blocking reads and waits retry EINTR. Signal recording does not interrupt
+ownership cleanup or automatically kill children: shutdown waits for the
+next checkpoint, which can be delayed by foreground work or pipe EOF.
+The fixtures use finite helpers and a two-way pipeline handshake.
+Linux traces confirm interrupted reads/waits before ordinary-context END;
+the same behavior fixtures run on the real Mac using host signal constants.
+There is still no runtime timeout or force-kill policy.
 
 ### Command-backed line readers
 
@@ -374,11 +459,12 @@ See [DD#4](../notes-exp/decisions/DD04-macos-posix-adapter.md).
 The runtime is initially single-threaded and its output helpers use raw
 descriptor writes. Captured code must not mix in buffered stdio/iostream
 output or retain background writers. Script-fd reservation, arbitrary
-redirection, further pipeline forms, END, and signal policy are later work.
+redirection and further pipeline forms remain later work.
 Failure to restore descriptor state during unwinding is diagnosed
 and terminates rather than continuing on the wrong stdout.
 
 Shared POSIX operations and ownership live in `src/platform_posix.cpp`.
+`src/lifecycle.cpp` owns the shared POSIX signal and program boundary.
 `src/platform_linux.cpp` supplies memfd, pipe2, and environment access;
 `src/platform_darwin.cpp` supplies unlinked capture files, pipe/CLOEXEC,
 and CRT environment access. Public interfaces and examples have no
@@ -388,5 +474,5 @@ archive so a stale backend member cannot remain active.
 Project [status](../notes-exp/status.md),
 [tasks](../notes-exp/tasks/cpp-transpiler-runtime-before-ir.md),
 [decisions](../notes-exp/decisions/DD03-external-pipeline-outcomes.md), and
-[journal](../notes-exp/journal/008-macos-posix-runtime.md) live in
+[journal](../notes-exp/journal/011-lifecycle-runtime.md) live in
 `../notes-exp/`, not the native compiler's `notes/`.

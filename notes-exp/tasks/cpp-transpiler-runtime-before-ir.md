@@ -48,9 +48,9 @@ The [journal](../journal/001-first-cpp-program.md) records the scope and
 the [sanitizer task](sanitizer-host-compatibility.md) records the remaining
 UBSan host limitation.
 
-This is not completion of the roadmap. Pipeline and reader ownership,
-general redirection, END, signal policy, and the collection-operation
-library remain. The sash counterpart compiles and
+This was not completion of the roadmap. Pipeline/reader ownership and
+lifecycle milestones are recorded below; general redirection and the
+collection-operation library remain. The sash counterpart compiles and
 runs with DG's supplied `~/src/safebash/_tmp/sash` and the runtime archive
 from the same checkout. Both executables produce exactly `Hello, Ada!\n`,
 also matching the independently specified output. The already-filed local
@@ -216,6 +216,38 @@ stdin. The native Linux reports remain unchanged. Linux-only strace and
 subreaper targets reject Darwin explicitly. No lifecycle or language
 policy is introduced; the full runtime task remains open.
 
+## Sixth runnable milestone - lifecycle implemented
+
+`lifecycle_report.cpp` and its sash counterpart retain collection state
+from a real captured function, discard only another function's returned
+int, and explicitly exit into END. END catches one failed command,
+discards another, and traverses the saved collection; all source functions
+are defined outside END. Both match the independent eight-line golden.
+
+The driver distinguishes normal completion, explicit exit, known uncaught
+body failure, and a signal request. Successful body unwinding closes
+pipeline endpoints before reaping and restores capture before owner-only
+END. An explicit END exit overrides status without re-entry. There are
+no automatic END failure guards or inherited unchecked function mode.
+Invalid unhandled C++ END exceptions escape; mandatory source handling
+and the definition restriction remain future front-end enforcement.
+
+Shared POSIX signal handlers only store lock-free most-recent and pending
+EXIT integers. Checkpoints are explicit at caller/function/loop boundaries,
+not hidden in command or reader helpers. Reads/waits retry EINTR, and
+blocking work can delay shutdown; no force-kill or runtime timeout was added.
+
+All 35 fixture groups and six C++ goldens pass with GCC, Clang, supported
+Linux ASan, actual Apple Clang/libc++, and Apple ASan. The real native
+compiler matches six goldens, and the Linux catalog remains 169 cases.
+Six new signal-call probes reject missing injections; two deny allocation
+while forcing private handoff failures. Pre-acknowledgement consumer failure
+closes the fixture's exec-private writer before reaping. Three isolated
+mutations pin separate FLAG/EXIT identity, no implicit END policy, and
+main-only END. See [journal 011](../journal/011-lifecycle-runtime.md).
+This milestone does not implement forked C++ stage ownership or the
+remaining value, argument, redirect, and wait operations.
+
 ## Starting points selected by DG
 
 | Area | Starting point |
@@ -262,7 +294,7 @@ number or copy an obsolete helper.
 | Descriptor and diagnostic channels | DD#120; runtime fd save/restore and reservation helpers | Invoker channels distinct from temporary command redirects, private descriptors avoiding source-used descriptors |
 | Pipeline reader lifetime | DD#122; pipeline lowering and reader-cleanup responsibilities under `sash/src/transform/` | Parent readers with private fds and pending children; cleanup on control-flow exits |
 | General and buffered capture | Runtime capture helpers; `transform/capture_purity.rs` or its successor | In-process capture, nested frames, and the difference between collecting helper writes and redirecting actual fd 1 |
-| Shutdown and signals | DD#56; runtime signal registration and compiler checkpoint insertion | Signal-safe recording, ordinary-context shutdown, END at most once |
+| Shutdown and signals | Experiment DD#5 for END-only handling; native DD#56 for signals/lifecycle | Explicit END handling, signal-safe recording, ordinary-context shutdown, END at most once |
 | Explicit wait | DD#126; runtime wait and cached-reader-status helpers | Reaped pid separate from child status, shared ownership when public wait meets pipeline completion |
 | Collections, reads, and arguments | DD#79, DD#99, DD#100, DD#123; collection and read helpers | Sparse cells, replacement on read, reference parameters, forwarding, and aliasing |
 | Strings and arithmetic | DD#12, DD#25, DD#77, DD#87 | Counted bytes, OS string boundaries, conversions, and defined arithmetic faults |
@@ -491,32 +523,38 @@ planned END-only contract, rather than current native DD#56's automatic
 cleanup handling. Nothing outside END changes; called function bodies
 retain their existing rules.
 
-- [ ] Provide one program-entry/shutdown driver with a user-supplied END
+- [x] Provide one program-entry/shutdown driver with a user-supplied END
   function and ordinary C++ global state.
-- [ ] Keep source function definitions outside END.
-- [ ] Demonstrate explicit catch or suppression for every fallible END
+- [x] Keep source function definitions outside END.
+- [x] Demonstrate explicit catch or suppression for every fallible END
   operation. Do not insert automatic END aborts or catch-and-continue
   guards, and do not pass unchecked END state into ordinary functions.
-- [ ] Exercise normal completion, explicit exit, uncaught operation
+- [x] Exercise normal completion, explicit exit, uncaught operation
   failure, and signal-requested shutdown through that driver.
-- [ ] Run END at most once. Preserve the triggering status unless END
+- [x] Run END at most once. Preserve the triggering status unless END
   deliberately overrides it; END failures follow their explicit handling.
-- [ ] Close outstanding readers before reaping, restore capture/redirect
+- [x] Close outstanding readers before reaping, restore implemented capture
   state, and enter END on the correct program channels.
 - [ ] Keep cleanup ownership separate in forked children. Discard
   inherited reader ownership rather than adopting the parent's children.
-- [ ] Record signals using signal-safe state only. Perform C++ cleanup,
+- [x] Record signals using signal-safe state only. Perform C++ cleanup,
   diagnostics, and END execution in ordinary execution context.
-- [ ] Keep most-recent signal information distinct from a pending request
+- [x] Keep most-recent signal information distinct from a pending request
   to exit, so FLAG delivery cannot become an EXIT request accidentally.
-- [ ] Expose checkpoints that hand-written functions and loops can call.
+- [x] Expose checkpoints that hand-written functions and loops can call.
   Their eventual placement in generated code belongs to the consumer.
-- [ ] Exercise interrupted reads/waits, FLAG versus EXIT, a signal during
+- [x] Exercise interrupted reads/waits, FLAG versus EXIT, a signal during
   capture, and a signal while a pipeline is active. Define restart versus
   shutdown behavior without doing allocation or throwing in a handler.
-- [ ] Handle expected standard-library failures, including allocation
+- [x] Handle expected standard-library failures, including allocation
   failure, through the selected program-level policy. The final
   diagnostic path must not depend on allocating another large string.
+
+The remaining unchecked child-ownership item is for future forked C++
+stages/jobs. Existing external pre-exec children never unwind inherited
+C++ owners; the lifecycle prevents parent END in children, but is not a
+new implementation of inherited-reader disposal. General redirects and
+public wait remain their own roadmap items.
 
 Do not use `std::exit` or a generic process destructor as a substitute for
 the lifecycle: automatic C++ objects, END, foreground children, and

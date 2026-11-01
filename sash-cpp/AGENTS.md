@@ -13,7 +13,7 @@ The runtime task is `../notes-exp/tasks/cpp-transpiler-runtime-before-ir.md`.
 
 Build and exercise changes with `mk -p 1 test` in this directory. Use distinct
 `BUILD` directories when changing compilers or sanitizer flags. `mk -p 1
-sash-example` additionally compiles all five sash examples with the real
+sash-example` additionally compiles all six sash examples with the real
 CLI. Ordinary C++ tests do not require a Rust build or IR input.
 `mk -p 1 fault-test` adds Linux strace probes; run it without sanitizer
 instrumentation. The native command helper is deliberately unsanitized.
@@ -92,4 +92,14 @@ The planned END-only contract is
 source function definitions inside END, and every fallible END operation
 explicitly caught or suppressed. No automatic END abort/suppression guards;
 ordinary function bodies and all non-END behavior stay unchanged. This
-contract is not yet implemented in the runtime or native compiler.
+source contract is not yet enforced by the native compiler or a consumer.
+The hand-written lifecycle pair demonstrates it; invalid unhandled END
+exceptions escape the C++ caller rather than receiving automatic policy.
+
+`run` owns END and typed `ExitRequest` handling. Signal handlers only store
+lock-free most-recent/pending-EXIT integers; do not conflate them or clear
+the pending request with `clear_signum`. Checkpoints belong explicitly at
+hand-written/generated command, function, and loop boundaries, not hidden
+inside execute/read/capture helpers. Blocking work retries EINTR; there is
+no automatic cancellation or force-kill. END's checkpoint re-entry guard
+does not change ordinary command/function failure checks.

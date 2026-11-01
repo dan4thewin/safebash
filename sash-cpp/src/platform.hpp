@@ -14,6 +14,7 @@ struct PipelineResult;
 
 namespace sash::platform {
 
+[[noreturn]] void cleanup_failed(std::string_view operation, std::error_code error) noexcept;
 std::error_code write_all(int fd, std::string_view bytes) noexcept;
 int report_error(std::string_view program, std::string_view diagnostic, int status) noexcept;
 ProcessResult execute(std::vector<std::string> &command);

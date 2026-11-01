@@ -43,3 +43,13 @@ The other lifecycle rules remain: END belongs to the main process, runs
 at most once, and preserves the triggering status unless explicitly
 overridden. This decision changes neither signal policy nor non-END
 failure policy.
+
+## Prototype milestone
+
+The hand-written C++ lifecycle slice now demonstrates this contract:
+the driver handles typed exits but does not automatically catch END
+operation failures. Its sixth pair explicitly catches or discards each
+fallible END operation and keeps source definitions outside the block.
+Invalid unhandled C++ END exceptions escape to the caller.
+The source-enforcement requirement remains future front-end work; no
+native behavior changed. See [journal 011](../journal/011-lifecycle-runtime.md).

@@ -1,3 +1,42 @@
+## Sixth pair: lifecycle, explicit END, and signals complete
+
+The standalone C++ runtime now has one program boundary for normal
+completion, typed explicit exit, known uncaught body failures, and
+cooperative signal shutdown. END runs in the owner after successful
+reader/capture unwinding, at most once, preserving the triggering status
+unless it explicitly exits with another.
+[Journal 011](journal/011-lifecycle-runtime.md) records implementation
+and controls.
+
+[`lifecycle_report.cpp`](../sash-cpp/examples/lifecycle_report.cpp) and
+its [sash counterpart](../sash-cpp/examples/lifecycle_report.sash) retain
+collection state from a captured function, discard only another function's
+returned int, and explicitly catch/suppress END operations. No source
+functions are defined in END. The native front end still does not enforce
+DG's planned strict END contract; no producer or native code changed.
+
+Signal handlers only record lock-free integers. Most-recent FLAG information
+and pending EXIT identity stay separate. Explicit checkpoints perform
+ordinary-context shutdown; reads/waits retry EINTR, without cancellation,
+force-kill, or runtime timeouts. Lifecycle re-entry guards do not uncheck
+called function bodies.
+
+GCC, Clang, supported Linux ASan, real Apple Clang/libc++, and Apple ASan
+pass 35 fixture groups and six C++ goldens. The supplied native compiler
+matches six sash goldens; both Linux compilers retain the 169-case catalog.
+Six new signal-call fault checks reject missing injections. Private
+handoff diagnostics stay allocation-independent, and a failed consumer's
+acknowledgement writer closes before producer reap. Three
+isolated mutations fail for the intended reasons: conflated FLAG/EXIT,
+automatic END handling, and child END execution.
+
+The broader [runtime task](tasks/cpp-transpiler-runtime-before-ir.md)
+remains open: value/argument operations, general redirects, public wait,
+background/forked-C++ forms, and their inherited-reader ownership.
+There is still no IR reader or emitter. The
+[Darwin fault harness](tasks/cpp-darwin-fault-harness.md) remains follow-up
+tooling; ordinary lifecycle cases now run on the actual Mac.
+
 ## Planned END contract: explicit handling, END-only
 
 DG expects END to forbid source function definitions and require every
@@ -9,7 +48,8 @@ and [journal 010](journal/010-planned-end-explicit-handling.md).
 The automatic per-step cleanup-guard proposal is withdrawn. The next C++
 lifecycle slice targets explicit END handling, while ordinary functions,
 DD#55's no-reach rule, and non-END behavior remain unchanged. This is a
-planned contract; no native compiler, runtime, or example code changed.
+planned source contract. That recording changed only documentation;
+the C++ prototype is now implemented above, while native enforcement remains future work.
 
 ## Rebased onto current hand-parser; function discard clarified
 

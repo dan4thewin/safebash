@@ -637,6 +637,9 @@ harness-produced `.trace` files instead.
 
 The supervisor and timeout are fixture containment. They do not implement
 production background jobs, force-kill policy, END, or general shutdown.
+The runtime's newer [lifecycle and END](../README.md#program-lifecycle-and-end)
+implementation is separate; its six signal-call fault checks live in
+`mk fault-test`, not the 169-case showcase.
 
 ## The child-close probe: per-process counters and truthful exec errors
 

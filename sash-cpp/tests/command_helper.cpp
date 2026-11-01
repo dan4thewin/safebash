@@ -6,6 +6,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <fcntl.h>
+#include <poll.h>
 #include <string_view>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -174,6 +175,56 @@ int main(int argc, char **argv) {
             return fail("cannot raise signal");
         }
         return fail("signal did not terminate the helper");
+    }
+    if ((mode == "signal-parent" && argc == 3) || (mode == "signal-handshake" && argc == 4)) {
+        int signal;
+        if (!number(argv[2], signal) || signal <= 0) {
+            return fail("invalid parent signal");
+        }
+        if (mode == "signal-handshake") {
+            int fd;
+            if (!number(argv[3], fd) || fd < 0) {
+                return fail("invalid signal handshake descriptor");
+            }
+            if (!output("ready\n", 6) || flushed() != 0) {
+                return fail("cannot announce signal handshake");
+            }
+            // Darwin needs read interest for pipe closure; writable interest would spin.
+            struct pollfd channels[] = {{fd, POLLIN, 0}, {1, POLLIN, 0}};
+            int ready;
+            do {
+                ready = ::poll(channels, 2, -1);
+            } while (ready < 0 && errno == EINTR);
+            if (ready < 0) {
+                return fail("cannot wait for signal acknowledgement");
+            }
+            if (channels[0].revents == 0) {
+                return fail("signal output closed before acknowledgement");
+            }
+            char reply;
+            ssize_t count;
+            do {
+                count = ::read(fd, &reply, 1);
+            } while (count < 0 && errno == EINTR);
+            if (count != 1 || reply != 'Y') {
+                return fail("missing signal handshake reply");
+            }
+        }
+        if (::kill(::getppid(), signal) < 0) {
+            return fail("cannot signal parent");
+        }
+        if (mode == "signal-handshake") {
+            std::array<char, 8192> block{};
+            block.fill('x');
+            block.back() = '\n';
+            for (int i = 0; i < 128; ++i) {
+                if (!output(block.data(), block.size())) {
+                    return fail("cannot finish signal records");
+                }
+            }
+            return flushed();
+        }
+        return 0;
     }
     if (mode == "ignore-sigchld" && argc >= 3) {
         if (std::signal(SIGCHLD, SIG_IGN) == SIG_ERR) {

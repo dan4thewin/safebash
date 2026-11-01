@@ -13,6 +13,7 @@
 #include <sys/stat.h>
 #include <sys/wait.h>
 #include <unistd.h>
+#include <utility>
 
 namespace {
 
@@ -42,6 +43,17 @@ namespace {
 struct AllocationFailure {
     explicit AllocationFailure(std::size_t minimum) { allocation_failure_size = minimum; }
     ~AllocationFailure() { allocation_failure_size = 0; }
+};
+
+struct HandshakeWriter {
+    int &fd;
+    ~HandshakeWriter() {
+        const int owned = std::exchange(fd, -1);
+        if (::close(owned) < 0) {
+            (void)std::fputs("test: cannot close handshake writer\n", stderr);
+            std::_Exit(1);
+        }
+    }
 };
 
 void require(bool condition, const char *message) {
@@ -1280,6 +1292,596 @@ void interrupted_wait(const std::string &helper) {
     require(exit != nullptr && exit->status == 7, "retry interrupted wait and retain child status");
 }
 
+void lifecycle_completion() {
+    int ends = 0;
+    bool unwound = false;
+    struct BodyLifetime {
+        bool &finished;
+        ~BodyLifetime() { finished = true; }
+    };
+    require(sash::run(
+                "complete", [&] { BodyLifetime lifetime{unwound}; },
+                [&](const sash::Shutdown &shutdown) {
+                    ++ends;
+                    require(unwound && shutdown.reason == sash::ShutdownReason::Completed &&
+                                shutdown.status == 0 && shutdown.signal == 0,
+                            "normal END must follow body unwinding");
+                }) == 0 &&
+                ends == 1,
+            "normal completion runs END once");
+    ends = 0;
+    unwound = false;
+    require(sash::run(
+                "exit",
+                [&] {
+                    BodyLifetime lifetime{unwound};
+                    sash::exit_program(7);
+                },
+                [&](const sash::Shutdown &shutdown) {
+                    ++ends;
+                    require(unwound && shutdown.reason == sash::ShutdownReason::ExplicitExit &&
+                                shutdown.status == 7 && shutdown.signal == 0,
+                            "explicit exit must remain distinct from command failure");
+                }) == 7 &&
+                ends == 1,
+            "END must preserve the requested status");
+    ends = 0;
+    require(sash::run(
+                "override", [] { sash::exit_program(7); },
+                [&](const sash::Shutdown &shutdown) {
+                    ++ends;
+                    require(shutdown.status == 7, "END receives the original status");
+                    sash::exit_program(9);
+                }) == 9 &&
+                ends == 1,
+            "exit in END overrides without re-entering it");
+    require(sash::run("without-END", [] { sash::exit_program(6); }) == 6,
+            "the original entry form must support explicit exit without END");
+}
+
+void lifecycle_failures() {
+    const auto failed = run_child([] {
+        int ends = 0;
+        const int status = sash::run(
+            "failed", [] { sash::check(sash::CommandResult{7, "body failed"}); },
+            [&](const sash::Shutdown &shutdown) {
+                ++ends;
+                require(shutdown.reason == sash::ShutdownReason::Failure && shutdown.status == 7 &&
+                            shutdown.signal == 0,
+                        "END receives the uncaught body failure");
+                bool caught = false;
+                try {
+                    sash::write("not written", -1);
+                } catch (const sash::CommandError &error) {
+                    caught = error.status() == 2;
+                }
+                require(caught, "END handles its own checked failure explicitly");
+                (void)sash::try_write("discarded", -1);
+            });
+        require(ends == 1, "body failure must run END once");
+        return status;
+    });
+    require(failed.status == 7 && failed.diagnostic == "failed: body failed\n",
+            "explicit END handling must neither replace nor rediagnose incoming failure");
+
+    const auto allocated = run_child([] {
+        int ends = 0;
+        const int status = sash::run(
+            "allocation",
+            [] {
+                AllocationFailure fault(1);
+                sash::signal(SIGUSR1, sash::SignalDisposition::Flag);
+            },
+            [&](const sash::Shutdown &shutdown) {
+                ++ends;
+                require(shutdown.reason == sash::ShutdownReason::Failure && shutdown.status == 2,
+                        "signal snapshot allocation uses the ordinary body boundary");
+            });
+        require(ends == 1, "allocation failure must still run END");
+        return status;
+    });
+    require(allocated.status == 2 && allocated.diagnostic == "allocation: out of memory\n",
+            "the final allocation diagnostic must not allocate");
+
+    bool escaped = false;
+    bool later = false;
+    try {
+        (void)sash::run(
+            "invalid-END", [] {},
+            [&](const sash::Shutdown &) {
+                sash::write("unhandled", -1);
+                later = true;
+            });
+    } catch (const sash::CommandError &error) {
+        escaped = error.status() == 2;
+    }
+    require(escaped && !later,
+            "invalid unhandled END must escape to its C++ caller, not be automatically handled");
+
+    bool caught_body = false;
+    bool caught_allocation = false;
+    require(sash::run(
+                "END-function", [] {},
+                [&](const sash::Shutdown &) {
+                    const auto f = []() -> int {
+                        sash::check(sash::CommandResult{4, "function body failed"});
+                        return 7;
+                    };
+                    try {
+                        (void)f();
+                    } catch (const sash::CommandError &error) {
+                        caught_body = error.status() == 4;
+                    }
+                    try {
+                        AllocationFailure fault(1);
+                        std::string value(128, 'x');
+                    } catch (const std::bad_alloc &) {
+                        caught_allocation = true;
+                    }
+                }) == 0 &&
+                caught_body && caught_allocation,
+            "END explicitly catches allocation and unchanged outside-function body failures");
+
+    const auto body_call = run_child([] {
+        return sash::run(
+            "outside-function",
+            [] {
+                const auto f = []() -> int {
+                    sash::check(sash::CommandResult{4, "function body failed"});
+                    return 7;
+                };
+                (void)f();
+            },
+            [](const sash::Shutdown &shutdown) {
+                require(shutdown.reason == sash::ShutdownReason::Failure && shutdown.status == 4,
+                        "discarding a function result must not discard its body failure");
+            });
+    });
+    require(body_call.status == 4 &&
+                body_call.diagnostic == "outside-function: function body failed\n",
+            "ordinary function checks remain independent of result discard");
+}
+
+void lifecycle_scopes(const std::string &helper) {
+    in_child([&] {
+        default_signal(SIGPIPE);
+        const auto probe = descriptor_probe_arguments();
+        struct stat before{};
+        require(::fstat(1, &before) == 0, "inspect program stdout before shutdown");
+        std::string target = "unchanged";
+        int ends = 0;
+        const auto output = sash::capture_stdout([&] {
+            const int status = sash::run(
+                "unwind",
+                [&] {
+                    target = sash::capture_stdout([&] {
+                        sash::write("private\n");
+                        sash::read_pipeline(
+                            {{helper, {"flood-records"}}, {helper, {"relay"}}},
+                            [&](sash::LineReader &input) {
+                                std::string line;
+                                require(input.readline(line) && line.size() == 8191,
+                                        "the producers must be active before program exit");
+                                sash::exit_program(5);
+                            });
+                    });
+                },
+                [&](const sash::Shutdown &shutdown) {
+                    ++ends;
+                    require(shutdown.reason == sash::ShutdownReason::ExplicitExit &&
+                                shutdown.status == 5 && target == "unchanged",
+                            "exit unwinds capture without assigning partial output");
+                    int child_status;
+                    require(::waitpid(-1, &child_status, WNOHANG) < 0 && errno == ECHILD,
+                            "END must see every foreground producer already reaped");
+                    require(sash::try_execute(helper, probe).success(),
+                            "capture and pipeline-private fds must close before END");
+                    sash::write("END\n");
+                });
+            require(status == 5 && ends == 1, "resource exit must preserve its status once");
+            sash::write("caller\n");
+        });
+        require(output == "END\ncaller\n", "END must write to the restored program channel");
+        struct stat after{};
+        require(::fstat(1, &after) == 0 && before.st_dev == after.st_dev &&
+                    before.st_ino == after.st_ino,
+                "shutdown must restore the enclosing program stdout");
+    });
+}
+
+void lifecycle_signals() {
+    in_child([] {
+        default_signal(SIGUSR1);
+        default_signal(SIGUSR2);
+        require(sash::run(
+                    "FLAG",
+                    [] {
+                        sash::signal(SIGUSR1, sash::SignalDisposition::Flag);
+                        sash::signal(SIGUSR2, sash::SignalDisposition::Exit);
+                        require(std::raise(SIGUSR1) == 0, "deliver FLAG");
+                        sash::checkpoint();
+                        require(sash::signum() == SIGUSR1, "FLAG must retain its signal identity");
+                        sash::signal(SIGUSR1, sash::SignalDisposition::Exit);
+                        sash::checkpoint();
+                        sash::clear_signum();
+                        require(sash::signum() == 0, "clear only the most recent signal");
+                    },
+                    [](const sash::Shutdown &shutdown) {
+                        require(shutdown.reason == sash::ShutdownReason::Completed,
+                                "a historical FLAG cannot become an EXIT request");
+                    }) == 0,
+                "FLAG must not trigger a different or newly armed EXIT disposition");
+        require(sash::run(
+                    "EXIT",
+                    [] {
+                        sash::signal(SIGUSR1, sash::SignalDisposition::Exit);
+                        sash::signal(SIGUSR2, sash::SignalDisposition::Flag);
+                        require(std::raise(SIGUSR1) == 0 && std::raise(SIGUSR2) == 0,
+                                "deliver EXIT followed by FLAG");
+                        sash::checkpoint();
+                        throw std::runtime_error("EXIT checkpoint returned");
+                    },
+                    [](const sash::Shutdown &shutdown) {
+                        require(shutdown.reason == sash::ShutdownReason::Signal &&
+                                    shutdown.status == 128 + SIGUSR1 &&
+                                    shutdown.signal == SIGUSR1 && sash::signum() == SIGUSR2,
+                                "latest FLAG must not overwrite the pending EXIT identity");
+                    }) == 128 + SIGUSR1,
+                "encode the triggering signal only at the exit boundary");
+        require(sash::run(
+                    "clear-pending",
+                    [] {
+                        sash::signal(SIGUSR1, sash::SignalDisposition::Exit);
+                        require(std::raise(SIGUSR1) == 0, "deliver clear-pending signal");
+                        sash::clear_signum();
+                        sash::checkpoint();
+                    },
+                    [](const sash::Shutdown &shutdown) {
+                        require(shutdown.signal == SIGUSR1 && sash::signum() == 0,
+                                "clearing signum must not suppress pending EXIT");
+                    }) == 128 + SIGUSR1,
+                "pending EXIT survives an explicit most-recent reset");
+        int ends = 0;
+        require(sash::run(
+                    "END-signal", [] {},
+                    [&](const sash::Shutdown &shutdown) {
+                        ++ends;
+                        sash::signal(SIGUSR1, sash::SignalDisposition::Exit);
+                        require(std::raise(SIGUSR1) == 0, "deliver signal within END");
+                        sash::checkpoint();
+                        require(shutdown.status == 0 && sash::signum() == SIGUSR1,
+                                "END keeps signal information without re-entry");
+                    }) == 0 &&
+                    ends == 1,
+                "END checkpoints must not start a second shutdown");
+        require(sash::run("ignored",
+                          [] {
+                              sash::signal(SIGUSR1, sash::SignalDisposition::Ignore);
+                              require(std::raise(SIGUSR1) == 0 && sash::signum() == 0,
+                                      "ignored signals must be invisible");
+                              sash::signal(SIGUSR1, sash::SignalDisposition::Default);
+                              struct sigaction action{};
+                              require(::sigaction(SIGUSR1, nullptr, &action) == 0 &&
+                                          action.sa_handler == SIG_DFL,
+                                      "DFL must install the kernel default");
+                          }) == 0,
+                "IGN and DFL are ordinary explicit dispositions");
+    });
+}
+
+void lifecycle_signal_scopes() {
+    in_child([] {
+        default_signal(SIGUSR1);
+        struct sigaction original{};
+        require(::sigaction(SIGUSR1, nullptr, &original) == 0, "read original signal disposition");
+        bool escaped = false;
+        try {
+            (void)sash::run(
+                "restore-END", [] { sash::signal(SIGUSR1, sash::SignalDisposition::Flag); },
+                [](const sash::Shutdown &) { sash::write("unhandled", -1); });
+        } catch (const sash::CommandError &) {
+            escaped = true;
+        }
+        struct sigaction restored{};
+        require(escaped && ::sigaction(SIGUSR1, nullptr, &restored) == 0 &&
+                    restored.sa_handler == original.sa_handler &&
+                    restored.sa_flags == original.sa_flags,
+                "an escaping END error must restore the original disposition");
+        sigset_t mask;
+        require(::sigprocmask(SIG_BLOCK, nullptr, &mask) == 0 &&
+                    (::sigismember)(&mask, SIGUSR1) == 0,
+                "lifecycle handoffs must restore the incoming signal mask");
+        require(sash::signum() == 0, "completed drivers must not leak signal state");
+    });
+    const auto invalid = run_child([] {
+        return sash::run(
+            "invalid-signal", [] { sash::signal(SIGKILL, sash::SignalDisposition::Flag); },
+            [](const sash::Shutdown &shutdown) {
+                require(shutdown.reason == sash::ShutdownReason::Failure && shutdown.status == 2,
+                        "failed registration uses the ordinary body error boundary");
+            });
+    });
+    require(invalid.status == 2 &&
+                invalid.diagnostic.find("install signal disposition") != std::string::npos &&
+                invalid.diagnostic.find("cleanup failed") == std::string::npos,
+            "failed registration must not leave a snapshot that fails again during restoration");
+}
+
+void lifecycle_foreground_signals(const std::string &helper) {
+    in_child([&] {
+        default_signal(SIGUSR1);
+        for (const auto disposition :
+             {sash::SignalDisposition::Flag, sash::SignalDisposition::Exit}) {
+            bool completed = false;
+            int ends = 0;
+            const int status = sash::run(
+                "foreground-signal",
+                [&] {
+                    sash::signal(SIGUSR1, disposition);
+                    sash::checkpoint();
+                    require(sash::try_execute(helper, {"signal-parent", std::to_string(SIGUSR1)})
+                                .success(),
+                            "a signal must not erase foreground command completion");
+                    completed = true;
+                    require(sash::signum() == SIGUSR1, "record the actual foreground signal");
+                    sash::checkpoint();
+                },
+                [&](const sash::Shutdown &shutdown) {
+                    ++ends;
+                    require(completed,
+                            "blocking foreground work completes before checkpoint shutdown");
+                    int child_status;
+                    require(::waitpid(-1, &child_status, WNOHANG) < 0 && errno == ECHILD,
+                            "signal shutdown must not leave a foreground child");
+                    require(shutdown.reason == (disposition == sash::SignalDisposition::Exit
+                                                    ? sash::ShutdownReason::Signal
+                                                    : sash::ShutdownReason::Completed),
+                            "foreground FLAG and EXIT must keep separate behavior");
+                });
+            require(status == (disposition == sash::SignalDisposition::Exit ? 128 + SIGUSR1 : 0) &&
+                        ends == 1,
+                    "foreground signals use ordinary-context END once");
+        }
+    });
+    in_child([&] {
+        default_signal(SIGPIPE);
+        default_signal(SIGUSR1);
+        int ack[2];
+        require(::pipe(ack) == 0, "create signal producer handshake");
+        require(::fcntl(ack[1], F_SETFD, FD_CLOEXEC) == 0,
+                "the acknowledgement writer must not survive exec");
+        std::string target = "unchanged";
+        bool acknowledged = false;
+        const auto output = sash::capture_stdout([&] {
+            const int status = sash::run(
+                "pipeline-signal",
+                [&] {
+                    sash::signal(SIGUSR1, sash::SignalDisposition::Exit);
+                    target = sash::capture_stdout([&] {
+                        sash::read_pipeline(
+                            {{helper,
+                              {"signal-handshake", std::to_string(SIGUSR1),
+                               std::to_string(ack[0])}},
+                             {helper, {"relay"}}},
+                            [&](sash::LineReader &input) {
+                                HandshakeWriter writer{ack[1]};
+                                std::string line;
+                                require(input.readline(line) && line == "ready",
+                                        "signal producer must wait for the consumer");
+                                sash::write("Y", ack[1]);
+                                acknowledged = true;
+                                require(input.readline(line), "retry signal-interrupted reader");
+                                sash::checkpoint();
+                                throw std::runtime_error("pipeline EXIT checkpoint returned");
+                            });
+                    });
+                },
+                [&](const sash::Shutdown &shutdown) {
+                    require(
+                        acknowledged && shutdown.signal == SIGUSR1 && target == "unchanged",
+                        "signal during an active capture must unwind without partial assignment");
+                    int child_status;
+                    require(::waitpid(-1, &child_status, WNOHANG) < 0 && errno == ECHILD,
+                            "signal unwind closes every pipeline endpoint before reaping");
+                    sash::write("END\n");
+                });
+            require(status == 128 + SIGUSR1, "captured pipeline uses the recorded EXIT signal");
+        });
+        require(::close(ack[0]) == 0 && ack[1] == -1, "close signal handshake");
+        require(output == "END\n", "signal END must use the restored program stdout");
+    });
+    const auto before_ack = run_child([&] {
+        int ack[2];
+        require(::pipe(ack) == 0 && ::fcntl(ack[1], F_SETFD, FD_CLOEXEC) == 0,
+                "prepare an exec-private acknowledgement writer");
+        int ends = 0;
+        const int status = sash::run(
+            "before-ack",
+            [&] {
+                sash::read_from(
+                    helper, {"signal-handshake", std::to_string(SIGUSR1), std::to_string(ack[0])},
+                    [&](sash::LineReader &input) {
+                        HandshakeWriter writer{ack[1]};
+                        std::string line;
+                        require(input.readline(line) && line == "ready",
+                                "the producer must wait for acknowledgement");
+                        sash::check(
+                            sash::CommandResult{4, "consumer failed before acknowledgement"});
+                    });
+            },
+            [&](const sash::Shutdown &shutdown) {
+                ++ends;
+                require(shutdown.reason == sash::ShutdownReason::Failure && shutdown.status == 4,
+                        "consumer failure must survive producer handshake EOF");
+                int child_status;
+                require(::waitpid(-1, &child_status, WNOHANG) < 0 && errno == ECHILD,
+                        "pre-acknowledgement failure must reap its producer before END");
+            });
+        require(::close(ack[0]) == 0 && ack[1] == -1 && ends == 1,
+                "the failed consumer must close its borrowed acknowledgement channel");
+        return status;
+    });
+    require(before_ack.status == 4 && before_ack.diagnostic ==
+                                          "command-helper: missing signal handshake reply\n"
+                                          "before-ack: consumer failed before acknowledgement\n",
+            "consumer failure before acknowledgement must finish without timeout or force-kill");
+    const auto closed_output = run_child([&] {
+        default_signal(SIGPIPE);
+        int ack[2];
+        require(::pipe(ack) == 0 && ::fcntl(ack[1], F_SETFD, FD_CLOEXEC) == 0,
+                "prepare an exec-private output-close handshake");
+        const auto result = sash::try_read_from(
+            helper, {"signal-handshake", std::to_string(SIGUSR1), std::to_string(ack[0])},
+            [&](sash::LineReader &input) {
+                std::string line;
+                require(input.readline(line) && line == "ready",
+                        "read readiness before closing the unacknowledged producer output");
+            });
+        const auto *exit = std::get_if<sash::ProcessExit>(&result.outcome);
+        require(exit != nullptr && exit->status == 2 && ::fcntl(ack[1], F_GETFD) >= 0,
+                "closed output must release the producer while the acknowledgement writer lives");
+        int child_status;
+        require(::waitpid(-1, &child_status, WNOHANG) < 0 && errno == ECHILD,
+                "the unacknowledged producer must be reaped after output closes");
+        require(::close(ack[0]) == 0 && ::close(ack[1]) == 0, "close the output-only handshake");
+        return 0;
+    });
+    require(closed_output.status == 0 &&
+                closed_output.diagnostic ==
+                    "command-helper: signal output closed before acknowledgement\n",
+            "ready/read/close must detect pipe closure without acknowledgement or scheduling luck");
+    const auto before_consumer = run_child([&] {
+        default_signal(SIGPIPE);
+        int ack[2];
+        require(::pipe(ack) == 0 && ::fcntl(ack[1], F_SETFD, FD_CLOEXEC) == 0,
+                "prepare a partial-pipeline acknowledgement channel");
+        bool called = false;
+        int ends = 0;
+        const int status = sash::run(
+            "before-consumer",
+            [&] {
+                try {
+                    sash::read_pipeline(
+                        {{helper,
+                          {"signal-handshake", std::to_string(SIGUSR1), std::to_string(ack[0])}},
+                         {helper + ".missing", {}}},
+                        [&](sash::LineReader &) {
+                            HandshakeWriter writer{ack[1]};
+                            called = true;
+                        });
+                } catch (const sash::SetupError &error) {
+                    require(error.code().value() == ENOENT, "the second stage must fail exec");
+                    throw;
+                }
+            },
+            [&](const sash::Shutdown &shutdown) {
+                ++ends;
+                require(!called && shutdown.reason == sash::ShutdownReason::Failure &&
+                            shutdown.status == 2,
+                        "partial setup must skip the consumer and enter END");
+                int child_status;
+                require(::waitpid(-1, &child_status, WNOHANG) < 0 && errno == ECHILD,
+                        "closed output must release the unacknowledged producer");
+            });
+        require(::close(ack[0]) == 0 && ::close(ack[1]) == 0 && ends == 1,
+                "close acknowledgement channel when no consumer adopted its writer");
+        return status;
+    });
+    require(before_consumer.status == 2 &&
+                before_consumer.diagnostic.find("exec " + helper + ".missing") != std::string::npos,
+            "pre-consumer setup failure must complete without timeout or force-kill");
+}
+
+void lifecycle_main_only() {
+    in_child([] {
+        int marker[2];
+        require(::pipe(marker) == 0, "create main-only END marker");
+        pid_t child = -1;
+        require(sash::run(
+                    "main-only",
+                    [&] {
+                        child = ::fork();
+                        require(child >= 0, "fork program body fixture");
+                    },
+                    [&](const sash::Shutdown &) { sash::write("E", marker[1]); }) == 0,
+                "program owner must complete normally");
+        int status;
+        require(::waitpid(child, &status, 0) == child && WIFEXITED(status) &&
+                    WEXITSTATUS(status) == 0,
+                "forked body must leave without parent END");
+        require(::close(marker[1]) == 0, "close END marker writer");
+        char bytes[2];
+        require(::read(marker[0], bytes, sizeof(bytes)) == 1 && bytes[0] == 'E',
+                "only the main process may write the END marker");
+        require(::close(marker[0]) == 0, "close END marker reader");
+
+        child = -1;
+        int ends = 0;
+        require(sash::run(
+                    "fork-in-END", [] {},
+                    [&](const sash::Shutdown &) {
+                        ++ends;
+                        child = ::fork();
+                        require(child >= 0, "fork END fixture");
+                        if (child == 0) {
+                            sash::exit_program(6);
+                        }
+                    }) == 0 &&
+                    ends == 1,
+                "fork inside END must not re-enter it");
+        require(::waitpid(child, &status, 0) == child && WIFEXITED(status) &&
+                    WEXITSTATUS(status) == 6,
+                "a forked END child must take its own explicit exit");
+    });
+}
+
+void lifecycle_signal_install_failure() {
+    int ends = 0;
+    const int status = sash::run(
+        "signal-fault", [] { sash::signal(SIGUSR1, sash::SignalDisposition::Flag); },
+        [&](const sash::Shutdown &shutdown) {
+            ++ends;
+            require(shutdown.reason == sash::ShutdownReason::Failure && shutdown.status == 2,
+                    "expected injected signal installation failure");
+        });
+    require(status == 2 && ends == 1, "installation failure must reach END once");
+}
+
+void lifecycle_signal_end_failure(bool mask_failure) {
+    bool caught = false;
+    const int status = sash::run(
+        "END-signal-fault", [] { sash::exit_program(7); },
+        [&](const sash::Shutdown &) {
+            try {
+                sash::signal(SIGUSR1, sash::SignalDisposition::Flag);
+            } catch (const sash::SetupError &error) {
+                caught =
+                    error.code().value() == EIO &&
+                    std::string(error.what())
+                            .find(mask_failure ? "block signals during lifecycle handoff"
+                                               : "install signal disposition") != std::string::npos;
+            }
+        });
+    require(caught && status == 7, "END must explicitly catch setup failure and preserve status");
+}
+
+void lifecycle_signal_restore_failure() {
+    (void)sash::run(
+        "restore-fault", [] { sash::signal(SIGUSR1, sash::SignalDisposition::Flag); },
+        [](const sash::Shutdown &) { (void)sash::try_write("__END_BEFORE_RESTORE__\n", 2); });
+    throw std::runtime_error("expected injected fatal signal restoration failure");
+}
+
+void lifecycle_handoff_failure() {
+    {
+        AllocationFailure fault(1);
+        (void)sash::run(
+            "handoff-fault", [] {},
+            [](const sash::Shutdown &) { (void)sash::try_write("__HANDOFF_END__\n", 2); });
+    }
+    throw std::runtime_error("expected injected fatal lifecycle handoff failure");
+}
+
 bool run_test(const char *name, const std::function<void()> &body) {
     try {
         body();
@@ -1311,6 +1913,37 @@ int main(int argc, char **argv) {
         }
         if (mode == "--wait-interrupted") {
             return run_test(argv[1], [&] { interrupted_wait(helper); }) ? 0 : 1;
+        }
+        if (mode == "--lifecycle") {
+            return run_test(argv[1],
+                            [&] {
+                                lifecycle_completion();
+                                lifecycle_failures();
+                                lifecycle_scopes(helper);
+                                lifecycle_signals();
+                                lifecycle_signal_scopes();
+                                lifecycle_foreground_signals(helper);
+                                lifecycle_main_only();
+                            })
+                       ? 0
+                       : 1;
+        }
+        if (mode == "--signal-install-failure") {
+            return run_test(argv[1], lifecycle_signal_install_failure) ? 0 : 1;
+        }
+        if (mode == "--signal-END-install-failure" || mode == "--signal-END-mask-failure") {
+            return run_test(
+                       argv[1],
+                       [&] { lifecycle_signal_end_failure(mode == "--signal-END-mask-failure"); })
+                       ? 0
+                       : 1;
+        }
+        if (mode == "--signal-restore-failure") {
+            return run_test(argv[1], lifecycle_signal_restore_failure) ? 0 : 1;
+        }
+        if (mode == "--lifecycle-handoff-failure" ||
+            mode == "--lifecycle-restore-handoff-failure") {
+            return run_test(argv[1], lifecycle_handoff_failure) ? 0 : 1;
         }
         if (mode == "--pipeline-fork-failure") {
             return run_test(argv[1], [&] { pipeline_fork_failure(helper); }) ? 0 : 1;
@@ -1380,6 +2013,13 @@ int main(int argc, char **argv) {
         {"pipeline capture outcomes", [&] { pipeline_capture_outcomes(helper); }},
         {"pipeline capture scopes", [&] { pipeline_capture_scopes(helper); }},
         {"pipeline capture resources", [&] { pipeline_capture_resources(helper); }},
+        {"lifecycle completion and explicit exit", lifecycle_completion},
+        {"explicit END handling and ordinary failures", lifecycle_failures},
+        {"lifecycle reader and capture unwinding", [&] { lifecycle_scopes(helper); }},
+        {"FLAG and EXIT identity", lifecycle_signals},
+        {"signal registration lifetime", lifecycle_signal_scopes},
+        {"foreground and captured pipeline signals", [&] { lifecycle_foreground_signals(helper); }},
+        {"main-only END", lifecycle_main_only},
     };
     for (const auto &test : tests) {
         if (!run_test(test.first, test.second)) {
