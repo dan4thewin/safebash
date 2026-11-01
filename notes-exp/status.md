@@ -1,3 +1,21 @@
+## Rebased onto current hand-parser; function discard clarified
+
+The twelve experiment commits rebased cleanly onto hand-parser `2fc6a22c`.
+All replayed patches match, and the producer draft stays unchanged and
+untracked. See [journal 009](journal/009-hand-parser-rebase-and-function-discard.md).
+
+DG's 2026-10-29/30 [DD#55 ruling](../notes/decisions/DD55-error-model.md)
+supersedes the complete-call suppression assumption: `- f` discards only
+f's returned int or status. Function bodies, arguments, and nested calls
+keep their own checks; an in-process void call has nothing to discard
+(SB4076). The inherited checkedness-parameter proposal is withdrawn.
+Existing C++ checked operations already keep that boundary; no runtime or
+producer code changed.
+
+The next critical-path slice remains program shutdown, END, and signals.
+Function checkedness is no longer an open fork for it. Setup-failure
+suppressibility and residual `-` forms remain native backlog questions.
+
 ## macOS runtime bring-up complete
 
 The same shared C++17 runtime and five source-shaped programs now run on
@@ -19,7 +37,7 @@ remains follow-up tooling.
 
 Examples use BSD/GNU-common utility spellings, and signal-set calls tolerate
 Darwin SDK macros. No producer, native language, or dependency changed.
-Linux END/call-context and signal-response choices remain TBD; this port
+Linux END and signal-response choices remain TBD; this port
 does not choose them.
 
 ## Fifth pair and raw pipeline capture complete
@@ -132,7 +150,7 @@ no-force-kill.
 
 The [runtime task](tasks/cpp-transpiler-runtime-before-ir.md) stays open.
 The initial macOS slice is now complete alongside the Linux runtime.
-Remaining work includes call-context propagation,
+Remaining work includes call-site result handling,
 background jobs, replacing exec, forked C++ stages, general redirection,
 further pipeline forms, escaping reader control transfers and public wait,
 END/signals, and most value operations.

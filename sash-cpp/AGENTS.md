@@ -81,3 +81,8 @@ invalid directory must not break Linux memfd or external-only pipe capture.
 Keep generated-code examples source-shaped: real functions, ordinary control
 flow, and standard C++ values. Preserve command outcomes for caught/discarded
 uses; checking an outcome is what raises an aborting exception.
+
+Function-result discard follows native DD#55's 2026-10-30 no-reach rule:
+ignoring a returned int/status must not catch failures inside the function,
+its arguments, or nested calls. Conditions leave called bodies checked too.
+Keep result handling at the call site, not in an inherited unchecked mode.

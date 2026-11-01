@@ -156,7 +156,7 @@ with failed producer outcomes. Caught and discarded operations continue; checked
 failures reach the program boundary instead. Fatal cleanup cannot be
 suppressed: it diagnoses the broken ownership/restoration guarantee and
 terminates with status 2. This exposes existing runtime policy; it does
-not add whole-function suppression.
+not add source-level function-result handling.
 
 On Linux, after `mk -p 1 test`, the basic subset needs neither strace nor the
 Linux fault supervisor. Individual cases can also be selected:
@@ -223,10 +223,12 @@ including slots initially closed. The foreground caller reaps its child
 on ordinary completion and error paths; cleanup does not force-kill or
 set a runtime timeout.
 
-Do not implement suppression by catching every exception around a whole
-function: that would skip commands after its first failure. Function
-checkedness, stage/function suppression, background launch, and replacing
-`exec` are not implemented yet.
+Discard a function's returned int/status at the call site; do not catch its
+body failures merely because its answer is ignored. Function bodies and
+argument evaluation keep their own checks, including under conditions
+(DG's 2026-10-29/30 native DD#55 ruling). No inherited unchecked mode is
+needed for this. Per-stage result suppression, background launch, and
+replacing `exec` are not implemented yet.
 
 ### Command-backed line readers
 

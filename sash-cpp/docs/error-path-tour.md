@@ -343,10 +343,11 @@ In discarded mode, the same unwind and restoration happen without the
 caught-error line. In checked mode, the exception passes through to
 `run`, so neither the target report nor `continued` runs.
 
-This is not whole-function suppression. Catching around a complete
-source function would skip every later command in that function after
-the first throw. Here the catch is deliberately around one capture
-operation; whole-function checkedness remains separate work.
+This deliberately catches one capture operation; it is not a translation
+of source `- f`. Native DD#55's 2026-10-30 no-reach rule leaves the called
+body and arguments checked. Ignoring f's returned answer must not catch an
+unhandled failure inside f; the caller discards only the answer actually
+returned.
 
 ## What strace fault injection actually changes
 

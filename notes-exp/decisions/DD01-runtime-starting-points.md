@@ -25,10 +25,16 @@ Keep an outcome representation that can be inspected in a condition,
 discarded explicitly, or checked to raise an exception. Setup failures
 must remain distinguishable from the command verdict.
 
-A catch around an entire function is not a complete implementation of
-suppression: it would stop the body at the first failing command rather
-than allowing later commands to run. Call-context propagation and pipeline
-aggregation remain later work.
+Function-result handling belongs at the call site. Discarding a returned
+int or status must not catch an unhandled failure inside the function, its
+arguments, or a nested call. Conditions also leave called bodies checked.
+No inherited unchecked context is needed for function-result discard.
+
+This follows DG's 2026-10-29/30 ruling in
+[native DD#55](../../notes/decisions/DD55-error-model.md): `- f` addresses
+only f's own answer, and is an error on an in-process void function. The
+earlier complete-call suppression assumption is superseded, not a separate
+external-target divergence.
 
 ## Scope of the first implementation
 

@@ -79,7 +79,7 @@ records the reporting-write bug found and fixed during implementation.
 This completed the first Linux launch/capture slice; the subsequent
 [macOS milestone](../journal/008-macos-posix-runtime.md) is now implemented.
 It does not complete
-background/public wait, forked C++ stages, call-context propagation,
+background/public wait, forked C++ stages, call-site result handling,
 pipelines, redirects, or the full lifecycle.
 
 ## Error-path demonstration - implemented
@@ -100,7 +100,7 @@ rather than exhausting the shared host; corrupted internal status is not
 manufactured. The basic subset does not need strace.
 
 This is a demonstration of the implemented slice, not completion of later
-runtime machinery or whole-function suppression.
+runtime machinery or per-stage result suppression.
 [Journal 003](../journal/003-error-path-showcase.md) records the evidence
 and limits of the original 103 cases; journal 004 adds the reader cases.
 The runnable catalog is documented in `sash-cpp/README.md`.
@@ -158,7 +158,7 @@ pin the completion and ownership rules.
 counter-prelude harness fix and outcome-preservation correction.
 
 This completes multiple external stages with a terminal parent reader,
-not forked C++ stages, stage/function suppression, public wait, general
+not forked C++ stages, per-stage result suppression, public wait, general
 redirects, or shutdown.
 
 ## Fifth runnable milestone - implemented
@@ -189,7 +189,7 @@ newlines, failure-byte retention, and independence from memfd.
 [Journal 007](../journal/007-raw-pipeline-capture.md) records the scope.
 
 This completes raw external-pipeline capture, not source-level newline
-treatment, background-writer policy, call-context suppression, forked C++
+treatment, background-writer policy, call-site result handling, forked C++
 stages, redirects, public wait, or shutdown. The runtime roadmap remains
 open; no producer change or IR reader is included.
 
@@ -273,6 +273,26 @@ an inventory of behavior to retain or explicitly replace, not as a blanket
 compatibility mandate. A current runtime quirk is not an external-target
 requirement merely because a spec records it.
 
+## Function checkedness is settled
+
+DG's 2026-10-29/30 ruling in
+[native DD#55](../../notes/decisions/DD55-error-model.md) leaves function
+bodies and argument evaluation checked, independently of how the caller
+uses the answer. A source `- f` discards only f's returned int or status;
+it does not catch failures inside f or nested calls. A condition likewise
+consumes the call's own result without unchecking its body.
+
+Keep ordinary C++ calls and handle or discard their returned values at the
+call site. Do not add an inherited checkedness parameter or scoped runtime
+mode for this. A direct in-process `-` on a void function is SB4076; a
+captured int already binds its value, so `$(- int_f)` is SB4076 too.
+Stages and jobs have a process status of their own and are separate cases.
+
+The earlier whole-function suppression assumption and its context-passing
+fork are withdrawn. Setup-failure suppressibility and residual assignment,
+list, and compound `-` forms remain in the native backlog; this update does
+not decide them.
+
 ## Choices still requiring discussion
 
 Do not reopen the starting points above. Resolve consequential remaining
@@ -280,7 +300,6 @@ forks with DG before building their assumptions throughout the library.
 
 | Choice | Alternatives and tradeoffs | Proposed way to settle it |
 |---|---|---|
-| Checkedness through calls | Exceptions are selected, but a suppressed function must not merely stop at its first thrown command error. A caller context can select checked operations, or the emitter can make the distinction explicit in generated calls. | Start with command outcomes plus checked wrappers; settle call-context propagation before implementing whole-function or pipeline suppression |
 | Collection details | Missing cells can yield meaningful zero values or explicit absence. Negative indices, population versus highest-index length, and snapshot versus live iteration need explicit answers. | Present the native rules beside the simpler standard-map alternatives; keep reads non-inserting under either choice |
 | Text and arithmetic | Counted byte strings are economical; Unicode-aware operations need more machinery. Checked arithmetic preserves faults; explicitly defined wrapping is another defensible choice. Locale-sensitive operations can vary between hosts. | Settle byte/character units, case/classification locale, numeric parsing, overflow, and shifts together; raw signed C++ overflow is never an implementation option |
 | Regex results and replacement | Source-style backreferences require an adapter; standard C++ replacement notation reduces bespoke logic. Group layout, no-match results, and zero-length iteration remain operation-level choices even with the grammar fixed. | Compare readable examples and prefer standard facilities where they remove rather than conceal complexity |
@@ -631,7 +650,7 @@ demonstrating the complete lifecycle, including difficult failure paths.
 No part of that demonstration depends on new producer output.
 
 The later consumer still has substantial work: binding/type mapping,
-expression evaluation order, source-shaped control flow, call-site failure
-context, reader-region exits, and signal-checkpoint placement. Automatic
+expression evaluation order, source-shaped control flow, call-site result
+handling, reader-region exits, and signal-checkpoint placement. Automatic
 capture-path selection and source comment preservation also belong there,
 not in this runtime task.
