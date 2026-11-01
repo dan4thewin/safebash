@@ -325,6 +325,14 @@ fork are withdrawn. Setup-failure suppressibility and residual assignment,
 list, and compound `-` forms remain in the native backlog; this update does
 not decide them.
 
+## Missing-cell reads are settled
+
+DG selected [DD#6](../decisions/DD06-missing-cell-reads.md): an ordinary
+missing-cell read returns `""` for strings or `0` for integers without
+inserting a key. Stored empty/zero cells remain present. Cell dispositions
+retain scalar value semantics, not an unset test. This policy does not
+hide failed key evaluation or other operation errors.
+
 ## Choices still requiring discussion
 
 Do not reopen the starting points above. Resolve consequential remaining
@@ -332,7 +340,7 @@ forks with DG before building their assumptions throughout the library.
 
 | Choice | Alternatives and tradeoffs | Proposed way to settle it |
 |---|---|---|
-| Collection details | Missing cells can yield meaningful zero values or explicit absence. Negative indices, population versus highest-index length, and snapshot versus live iteration need explicit answers. | Present the native rules beside the simpler standard-map alternatives; keep reads non-inserting under either choice |
+| Remaining collection details | Negative indices, population versus highest-index length, and snapshot versus live iteration need explicit answers. | Present the native rules beside the simpler standard-map alternatives; keep DD#6's non-inserting typed-zero reads |
 | Text and arithmetic | Counted byte strings are economical; Unicode-aware operations need more machinery. Checked arithmetic preserves faults; explicitly defined wrapping is another defensible choice. Locale-sensitive operations can vary between hosts. | Settle byte/character units, case/classification locale, numeric parsing, overflow, and shifts together; raw signed C++ overflow is never an implementation option |
 | Regex results and replacement | Source-style backreferences require an adapter; standard C++ replacement notation reduces bespoke logic. Group layout, no-match results, and zero-length iteration remain operation-level choices even with the grammar fixed. | Compare readable examples and prefer standard facilities where they remove rather than conceal complexity |
 | Capture completion | Trailing-newline treatment and background writers holding the captured stdout affect which bytes a completed capture yields. | Specify the completion boundary and pin it with direct C++ examples; do not let regular-file EOF accidentally decide the language |

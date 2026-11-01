@@ -1,3 +1,15 @@
+## Collection runtime: missing-cell reads settled
+
+DG selected [DD#6](decisions/DD06-missing-cell-reads.md): missing string
+cells read `""`, missing integer cells read `0`, and reads never insert.
+Stored empty/zero cells remain present, while dispositions keep their
+ordinary scalar value semantics. The
+[journal](journal/012-collection-missing-cell-policy.md) records the choice.
+
+This settles one policy for the proposed collection/argument slice, not
+its implementation. Negative indices, what length counts, and snapshot
+versus live traversal remain open; sorted `std::map` order stays selected.
+
 ## Sixth pair: lifecycle, explicit END, and signals complete
 
 The standalone C++ runtime now has one program boundary for normal
