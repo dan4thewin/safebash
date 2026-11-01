@@ -1,4 +1,29 @@
-## ══ STATUS (2026-10-31, latest) — W1a: a capture body is walked once ══
+## ══ STATUS (2026-11-01, latest) — the index shim lost its stderr; the hook says when nothing was measured ══
+
+An interrupt inside W1b-1, at DG's priority: get indexnudge "back to a
+reliable state first - it's part of the quality gate". Journal 556.
+- indexnudge's shim discarded every sqlite3 error, because `lock_db_shared`'s
+  `exec 9>>"$lf" 2>/dev/null` silenced the shell's stderr for good. Fixed in
+  `bin/_indexnudge_common.bash` (`bin-rust/` links to it). That copy is not a
+  git repository: **carry the fix to indexnudge's canonical repo**, or the
+  next rsync reverts it. The index itself was sound (58 of 58 files match
+  `wc -l`).
+- `.githooks/pre-commit`: a failed index query ended the hook with rc 1 and
+  no message, because the report block dies under pipefail. No verdict
+  changed (decide-and-report):
+  - the report now says it is unavailable;
+  - the gate prints sqlite3's error, names the failure and exits 1;
+  - a missing index prints `complexity gate SKIPPED` and still passes.
+- Two claims of mine are withdrawn: "the gate fails open on a query error"
+  (my control lacked the hook's `set -euo pipefail`) and "the freshen never
+  runs" (I had bypassed PATH).
+- New question q-complexity-gate-without-index (P3) asks whether a missing
+  index should block the commit. It also records that the hook checks the
+  worktree while the gate reads the staged diff.
+
+Next: W1b-1 (summaries for globals), then W1b-2 (slots).
+
+## ══ STATUS (2026-10-31) — W1a: a capture body is walked once ══
 
 W1 (Order item 17) is split into three units (decide-and-report): W1a fixes
 the per-statement transfer functions, W1b adds DD127's function summaries,

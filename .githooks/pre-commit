@@ -96,7 +96,8 @@ FROM symbols
 WHERE kind IN ('function','method')
   AND cyclomatic IS NOT NULL
   AND file LIKE 'sash/src/%'
-ORDER BY MAX(cyclomatic, cognitive) DESC LIMIT 5;" 2>/dev/null | sed 's/^/  /'
+ORDER BY MAX(cyclomatic, cognitive) DESC LIMIT 5;" 2>/dev/null | sed 's/^/  /' ||
+        red "  report unavailable: the index query failed"
 fi
 
 # --- complexity gate (enforced, grandfather-on-modify) ---------------
@@ -126,6 +127,12 @@ fi
 # Threshold is 3× current means (recalculated per commit) — a ratchet
 # that tightens as the codebase improves. Plan: 3× → 2× → 1.5× as the
 # population of pre-existing violators clears.
+#
+# Without the index the gate cannot measure anything. It still lets the
+# commit through, as before, but it says so instead of passing in silence.
+if [ "${SKIP_COMPLEXITY_GATE:-0}" != "1" ] && [ ! -f .indexnudge-rust.db ]; then
+    red "pre-commit: complexity gate SKIPPED: .indexnudge-rust.db not found, so nothing was measured"
+fi
 if [ "${SKIP_COMPLEXITY_GATE:-0}" != "1" ] && [ -f .indexnudge-rust.db ]; then
     gray "pre-commit: complexity gate (3× mean, grandfather-on-modify)"
 
@@ -175,7 +182,14 @@ WHERE s.file LIKE 'sash/src/%'
       AND r.rstart <= s.end_line
       AND r.rend   >= s.start_line
   )
-ORDER BY MAX(s.cyclomatic, s.cognitive) DESC;" 2>/dev/null)
+ORDER BY MAX(s.cyclomatic, s.cognitive) DESC;") || {
+            # An empty result means "no violations" only if the query ran.
+            rc=$?
+            red "  FAIL: the complexity gate's index query failed (sqlite3 rc $rc), so it measured nothing"
+            red "    repair .indexnudge-rust.db (indexnudge --freshen) and retry"
+            red "    bypass for one commit: SKIP_COMPLEXITY_GATE=1 git commit ..."
+            exit 1
+        }
 
         if [ -n "$gate_out" ]; then
             red "  FAIL: modified function(s) fail the complexity gate"
