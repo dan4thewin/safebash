@@ -177,6 +177,8 @@ preprocessor and global `ARITH_MAP` are gone.)
 - `ir.rs` — IR definitions
 - `bindings.rs` — centralized lexical identities and source-name restoration
 - `type_check.rs` — type checking pass
+- `output_taint.rs` — DD#127 read-boundary source classification
+- `capture_purity.rs` — shared buffer eligibility for validation and lowering
 - `transform/` — IR → SSA transformation
   - `entry.rs` — ir_to_ssa, ir_to_ssa_typed
   - `statements.rs` — lower_one dispatch
@@ -188,7 +190,6 @@ preprocessor and global `ARITH_MAP` are gone.)
   - `helpers.rs` — phi insertion, positional scanning
   - `stmt_handlers.rs` / `cmd_handlers.rs` / `expr_handlers.rs` — the
     per-kind arms split out of the dispatchers above
-  - `capture_purity.rs` — picks the buffer vs memfd capture path per site
 - `resolve.rs` — DD#23 command resolution (absolute paths, manifest)
 - `ssa.rs` — SSA representation (and printing)
 - `codegen/` — Cranelift code generation
@@ -1610,11 +1611,12 @@ of variable names. A variable is clean or tainted based on where its
 value came from:
 
 - **Clean**: literals, arithmetic from clean operands, compiler-managed
-  values ($#, $?, $$, $!, $LINENO), function args from clean callers
-- **Tainted**: $(getenv NAME), $(argv N), read from fd/pipe,
-  external command capture, and a user function's capture or pipe when
-  unattested external output reaches its stdout (DD#127; the compiler
-  treats these as clean until W2 lands)
+  values ($#, $?, $$, $!), function args from clean callers, compiler-owned
+  buffer captures
+- **Tainted**: $(getenv NAME), $(argv N), every fd/pipe read and every
+  kernel-backed capture, including builtin-only output (DD#127). Buffer
+  copies introduce no taint and do not erase existing taint. Existing
+  buffer eligibility stays unchanged; there is no `clean_pipe` exemption.
 
 Across a function boundary there is one rule (DD#127): own taint is
 attested in the body that produced it, or — when that body has exactly
@@ -1622,7 +1624,7 @@ one call site — immediately after that call; received taint is never
 attested inside a body. Globals and A-E now share independent per-function
 summaries, mapped at each call; `SlotInfo` is gone. A passed global's unused
 identity flow must be omitted, or it undoes cleanup through its slot.
-DD#127's "Implementation status" lists the remaining W2-W5 and precision
+DD#127's "Implementation status" lists the remaining W2b-W5 and precision
 boundaries.
 
 Env vars ($HOME, $PATH, etc.) are NOT special — they're just

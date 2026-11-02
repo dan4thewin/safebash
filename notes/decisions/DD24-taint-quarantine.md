@@ -12,21 +12,21 @@ A variable is tainted iff its defining instruction is one of:
 - `x=$(getenv VAR)` — environment variable read
 - `x=$(arg N)` — single program positional param (DD#60)
 - `array a=$(argv)` / `array a=$(argv N)` — whole/sliced argv snapshot (DD#60)
-- `read x [...]` from any inherited fd, opened fd, or pipe
-- `mapfile -t x` / `readarray` from any inherited fd, opened fd, or pipe
-- `$(cmd)` where `cmd` is an external command
-- `$(f)` or `f | read …` where unattested external output reaches user
-  function `f`'s stdout (DD#127)
+- `read ARR` or `readline x` from any fd, including a builtin-produced pipe
+- any kernel-backed `$( … )`, whether it captures an external command,
+  a user function or an anonymous body
 
-`read` / `mapfile` from a heredoc or here-string of clean data
-produce clean values.
+DD#127's boundary is the **kernel read**, not whether the intended producer
+execs. A compiler-owned buffer capture introduces no taint; every pipe and
+memfd drain does. `read SRC ARR` splits an already-held value rather than
+reading a descriptor, so its source is checked as an ordinary value use.
+Heredocs and here-strings are not part of the language (DD#83).
 
-A user-defined sash function is not a source in itself; the external
-commands inside it are. DD#127 says where their output is attested: in
-the body that produced it or, when that body has exactly one call site,
-immediately after the call. The same rule covers what a function leaves
-in a global or a collection slot. Until W2 lands, the compiler treats
-every user-function capture and pipe as clean.
+DD#127 says where output is attested: in the body that produced it or, when
+that body has exactly one call site, immediately after the call. The same
+rule covers what a function leaves in a global or a collection slot.
+W2a implements read-boundary classification; W2b still owns the rejection
+of an outside attest on a shared producer's output.
 
 ## Clean sources
 
@@ -248,43 +248,31 @@ compiled and leaked at runtime. CST is the authoritative gate
 (clean SB5020); the SSA pass is defense-in-depth (see task
 `ssa-taint-cmdsub-operand-propagation`). Spec: taint.sh 60.37–60.46.
 
-## Clarification (2026-05-24): Pipeline taint and exec boundary
+## Pipeline taint: the read boundary (2026-11-02)
 
-"Read from pipe" taint depends on whether the pipe SOURCE execs:
-
-- `echo "hello" | read x` → clean (echo is a builtin, no exec,
-  compiles to internal buffer)
-- `printf "k=v\n" | mapfile -m m` → tainted (printf execs)
-- `/bin/cmd | read x` → tainted (absolute path, execs)
-- `user_func | read x` → clean unless unattested external output reaches
-  `user_func`'s stdout (DD#127; clean until W2 lands)
-
-The principle: taint comes from exec boundaries (fork+exec), file
-reads, and env var reads. A pipe from code that runs inline within
-the sash process is not an external source in itself; an external
-command inside that code is (DD#127).
+Every pipe reader gets tainted bytes, including `echo hello | readline x`
+and a user-function producer. The pipe is a kernel object, not an internal
+buffer. The old exec-boundary exemption for builtin/function producers is
+removed by DD#127. Attest beside the read, or use `:!` explicitly.
 
 ## Addendum (2026-10-26): a stage's marks do not change a pipe's taint
 
-The clarification above decides a reader's taint by whether the pipe's source
-execs. Two classifiers answered by looking at a stage's `-`/`!` marks instead
-of the statement beneath them.
+The then-current exec-boundary rule used the pipe's producer. Two classifiers
+instead looked at a stage's `-`/`!` marks rather than the statement beneath
+them. W2a removes that producer classification altogether; the history below
+explains the regression cases, not an exception to the read boundary.
 
 **A `-` on the source hid it (batch-531 B25, CRITICAL).** `is_external_source`
 peeled a stage's redirect but not its marks, so `- /bin/cat f | readline x`
-bound `x` clean and printed the file. The SSA backstop gets the same answer
-through `clean_pipe`, so neither layer caught it. The classifier now peels
-through `Statement::stage_body`, the one peel every stage classifier shares,
-and `x` is tainted (24.21). It stays tainted when the reader is negated as
-well (24.27).
+bound `x` clean and printed the file. The SSA backstop got the same answer
+through `clean_pipe`, so neither layer caught it. Journal 537 fixed the
+peel; W2a removes `clean_pipe`. The marked reader remains tainted (24.21,
+24.27).
 
 **A `-` or `!` on the reader hid it (B31).** `taint_stmt_no_read_taint`
-recognised only a bare reader, so a marked reader fed by a clean producer was
-tainted anyway. `echo hi | - readline x`, `- read ar`, and `! readline x` or
-`! read ar` in a condition drew a false SB5020 (24.22-24.25). The same readers
-in a return producer drew a false SB5067 (24.28, 24.29). The function now
-looks beneath `stage_marks`. An external producer still taints a marked reader
-(24.26, 24.27). A redirect is not peeled: a redirected reader's input is not
-the pipe, and DD#122 rejects that stage (SB4022, DD#122 addendum 2026-10-26).
+recognised only a bare reader. Under the old rule, builtin-fed marked readers
+drew false SB5020/SB5067 errors (24.22-24.25, 24.28, 24.29). W2a intentionally
+taints all these reads; those acceptance fixtures must attest or explicitly
+trust the data. DD#122 still rejects a redirected reader stage (SB4022).
 
 Specs: taint.sh 24.21-24.29. Journal 537.

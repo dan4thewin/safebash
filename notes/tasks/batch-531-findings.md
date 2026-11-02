@@ -1105,27 +1105,36 @@ the SSA highest-future-version check; that separate fault is recorded in
 
 ### 18. W2 stdout (T1)
 
-- [ ] **B33** (fixed-on-branch; DD24, DD127). A user-function capture of
-  external output is clean, so `y=$(f)` needs no attest when `f` runs
-  `/bin/cat`. The branch's fix ("f runs a command") is too broad (B114, e5);
-  T1 replaces it. DD127 records T1. DG's "no exceptions" (2026-10-23) means
-  no exemption for a wrapper such as `fn g { /usr/bin/git "$@" }`: what
-  decides where the attest goes is the number of call sites, not the body's
-  shape. A function with exactly one call site may be attested immediately
-  after its capture (DG, 2026-10-31). 15 existing specs pin today's
-  behaviour; W2 re-measures each under that rule.
-- [ ] **B35** (fixed-on-branch; DD24). False positive: `fn f { echo hi }; f
-  | readline x` draws SB5020 on base, but DD24 calls a user-function pipe
-  source clean. T1 keeps the fix, since `f` emits no external output.
+- [x] **B33** (fixed-on-branch; DD24, DD127). A user-function capture of
+  external output was clean, so `y=$(f)` needed no attest when `f` ran
+  `/bin/cat`. W2a fixes source classification at the read boundary:
+  every kernel-backed capture is tainted, while a compiler-owned buffer
+  introduces none (journal 560; `outflow.1`-`.14`, `sw.26`-`.28`).
+  The fifteen parked fixtures are adapted without dropping their original
+  runtime/status/grammar assertions; `dd82.4` now asserts located SB5020.
+  **W2b remains:** shared-output provenance and outside-attest enforcement,
+  including single-use chains. W2a does not claim that additional rejection.
+- [x] **B35** (fixed-on-branch under the old rule; superseded by DD127).
+  `fn f { echo hi }; f | readline x` draws SB5020. That was a false
+  positive under producer-based trust; DG's 2026-11-02 kernel-read rule
+  requires it. `outflow.7` pins the located rejection; `.5`/`.6` cover
+  builtin scalar/array readers and `.8` the while reader.
 - [x] **B72** (not-a-bug; DD24). A regression of the branch's own rule,
   fixed on the branch; base and branch agree.
-- [ ] **B114** (branch-regression; DD24). The branch's "f runs a command"
+- [x] **B114** (branch-regression under the old rule; superseded by DD127).
+  The branch's "f runs a command"
   rule rejects a body whose external output is attested inside it (`fn list
   { printf … | while readline n { attest n …; echo "$n" } }; y=$(list)`).
-  Base accepts it, and so does T1.
-- [ ] **e5** (branch-regression; DD24). `fn f { /bin/false >/dev/null; echo
-  hello }; str x=$(- f)`: the branch's broad rule taints `x` although no
-  external output reaches `f`'s stdout. Base and T1 accept it.
+  The existing pipeline-containing body is kernel-backed, so DD127 now
+  requires its result to be tainted too. This is not a claim to have made
+  the old fixture clean. Nested capture/attest/echo already uses an outer
+  buffer (`outflow.11`); broader eligibility is `q-buffer-capture-eligibility`.
+- [x] **e5** (branch-regression under the old rule; superseded by DD127).
+  `fn f { - /bin/false >/dev/null; echo hello }; str x=$(f)` is still
+  kernel-backed and tainted. `/dev/null` is not an isolation proof: an owned
+  probe reopened the parent's saved memfd and changed the captured output
+  in both backends. `outflow.3` pins the new rejection. The original
+  `$(- f)` spelling also relied on the suppression reach retired in F6.
 
 ### 18. W3 intra-procedural edges
 
@@ -1160,9 +1169,11 @@ the SSA highest-future-version check; that separate fault is recorded in
   through transitively bound callers.
 - [ ] **B105** (fixed-on-branch; DD86). A `$( )` body that writes an
   enclosing function's name.
-- [ ] **B106** (question; DD99). Conservative false rejection: a clean-pipe
-  read and a value split (`read $src A`) neither taint nor clear the
-  target's earlier taint (SB5088). Clearing is valid only on success.
+- [ ] **B106** (question; DD99). A value split (`read $src A`) does not
+  clear the target's earlier taint (SB5088). Clearing is valid only on
+  success. The original clean-pipe half is superseded by DD127: every pipe
+  read introduces fresh taint; W2a removes that exemption, not the
+  value-split question.
 - [ ] **B107** (fixed-on-branch; DD24). CRITICAL: for-in words are
   re-evaluated each iteration but were checked against the pre-loop state.
 - [ ] **B108** (fixed-on-branch; DD100). Value-call out-parameters were

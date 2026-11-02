@@ -66,7 +66,7 @@ run_sash '/bin/echo a
 run_sash 'fn g { /bin/echo hi }
 v=$(g # inline comment
 )
-/bin/echo $v'
+/bin/echo ${v:!}'
 [[ $rc = 0 && $out = "hi" && -z $err ]]; chk cmt.11
 
 # ---------------------------------------------------------------------------

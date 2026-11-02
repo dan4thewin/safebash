@@ -110,7 +110,7 @@ pub(super) struct FnBodyScope {
     readonly_vars: std::collections::HashSet<String>,
     collections: std::collections::HashSet<String>,
     assoc_arrays: std::collections::HashSet<String>,
-    pipe_reader: Option<(i64, bool)>,
+    pipe_reader: Option<i64>,
 }
 
 pub(super) fn enter_fn_body_scope(state: &mut VersionState) -> FnBodyScope {

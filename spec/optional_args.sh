@@ -164,7 +164,7 @@ run_sash 'fn f { attest w in args [[ -n $w ]]; /bin/echo z }; f'
 [[ $rc != 0 && -z $out && $err == *SB5052* ]]; chk 84.29
 # 84.30 control: a differently-named local array is fine (only `args` is
 # reserved) — reading `@args` is never a write, so it stays valid.
-run_sash 'fn f { echo hi | read norm; /bin/echo @{norm:?} }; f'
+run_sash 'fn f { echo hi | read norm; attest v in norm [[ -n $v ]]; /bin/echo @{norm:?} }; f'
 [[ $rc = 0 && $out = "hi" && -z $err ]]; chk 84.30
 
 # ── DD#91 addendum: SB5046 keys on the ELIDE, and must say so accurately ──

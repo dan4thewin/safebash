@@ -809,7 +809,7 @@ f 2'
 [[ $rc != 0 && -z $out && $err == *':1:26: error [SB5037]'* ]]; chk rec.5
 
 # rec.6 `$(f)` inside f, as an argument
-run_sash 'fn f { if (( $1 > 0 )) { /bin/echo "[$(f $(( $1 - 1 )))]" }; echo "d$1" }
+SASH_CFLAGS=--no-taint run_sash 'fn f { if (( $1 > 0 )) { /bin/echo "[$(f $(( $1 - 1 )))]" }; echo "d$1" }
 f 2'
 [[ $rc != 0 && -z $out && $err == *':1:26: error [SB5037]'* ]]; chk rec.6
 
@@ -819,7 +819,7 @@ g 2'
 [[ $rc != 0 && -z $out && $err == *':1:49: error [SB5037]'* ]]; chk rec.7
 
 # rec.8 the same, as an argument
-run_sash 'fn g { if (( $1 > 0 )) { /bin/echo "[$(echo x; return g $(( $1 - 1 )))]" }; echo "g$1" }
+SASH_CFLAGS=--no-taint run_sash 'fn g { if (( $1 > 0 )) { /bin/echo "[$(echo x; return g $(( $1 - 1 )))]" }; echo "g$1" }
 g 2'
 [[ $rc != 0 && -z $out && $err == *':1:55: error [SB5037]'* ]]; chk rec.8
 
@@ -1720,7 +1720,7 @@ f 3'
 # tailar.3 the same check when the function runs as a capture
 run_sash 'fn f { if (( $1 > 0 )) { return f }; echo "done $1" }
 x=$(f 3)
-echo "$x"'
+echo "${x:!}"'
 [[ $rc != 0 && -z $out && $err == *':1:33: error [SB5042]'* \
    && $err == *"function 'f' expects 1 argument but was called with 0"* ]]; chk tailar.3
 

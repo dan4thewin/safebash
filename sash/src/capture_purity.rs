@@ -35,7 +35,7 @@ use std::collections::{HashMap, HashSet};
 
 /// Can this capture body's stdout be collected in a userspace buffer?
 /// `value_fns` names the `-> int` functions, whose value calls run inline.
-pub(super) fn capture_body_is_pure(
+pub(crate) fn capture_body_is_pure(
     body: &[Statement],
     function_bodies: &HashMap<String, Vec<Statement>>,
     value_fns: &HashSet<String>,

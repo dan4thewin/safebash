@@ -371,7 +371,7 @@ run_sash 'fn f {
   echo "$k"
 }
 str s=$(f c)
-echo "s=$s"'
+echo "s=${s:!}"'
 [[ $rc = 0 && $out = s=ccc && -z $err ]]; chk constw.17
 
 # constw.18 the same run as a background job
@@ -1988,10 +1988,11 @@ readline m
 echo "k=$(len m)"'
 [[ $rc != 0 && -z $out && $err == *SB4030* ]]; chk 75.126
 # 75.127 POSITIVE control — `readline` into a DECLARED scalar, the shape the
-# new check must not catch. Fed by a clean pipe so the value is clean (DD#20)
-# and the assertion is about the type check, not about taint.
+# new check must not catch. Attest the pipe read (DD#127) so the assertion
+# remains about the target's type.
 run_sash 'str s
 echo hi | readline s
+attest s [[ $s == hi ]]
 echo "[$s]"'
 [[ $rc = 0 && $out = "[hi]" && -z $err ]]; chk 75.127
 

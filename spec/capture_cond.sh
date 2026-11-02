@@ -267,7 +267,7 @@ rm -f /tmp/sash_cc_st
 run_sash 'fn f {
   /bin/echo hi
 }
-if x=$(f 2>/dev/null) { /bin/echo "$x" }'
+if x=$(f 2>/dev/null) { /bin/echo "${x:!}" }'
 [[ $rc != 0 && -z $out && $err == *SB4025* && $err == *"function's output"* ]]; chk 88.28
 
 # ── SB4075: an abandoned capture, anywhere ─────────────────────────────

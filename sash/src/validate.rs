@@ -3812,8 +3812,7 @@ const BUILTINS: &[&str] = &[
 /// Intrinsics that are **value-producing only**: they are legal as a `$( )`
 /// head and nowhere else. They stay in `BUILTINS` above so they are never
 /// PATH-resolved (a machine with a real `getenv` on PATH must not silently
-/// exec it) and so `is_external_source` keeps classifying them as non-external
-/// for taint. This list is what makes a *statement-position* use an error
+/// exec it). This list is what makes a *statement-position* use an error
 /// (SB5073) instead of falling through to `sash_exec` and aborting at runtime
 /// with `sash: bug: bare command passed to sash_exec`.
 ///
@@ -4467,17 +4466,18 @@ fn resolve_on_path(name: &str) -> bool {
 // Forward dataflow analysis: track which variables hold tainted data.
 // A variable is tainted if its value came from:
 //   - $(getenv NAME), $(argv N)  — external input
-//   - $(/absolute/path ...)      — external command output
-//   - read from stdin or a file  — external input
+//   - kernel-backed captures    — bytes read from a pipe or memfd
+//   - read from any fd          — including compiler-generated pipes
 // A variable is clean if:
 //   - assigned from literals, arithmetic, clean variables
-//   - read from a clean pipe (<-) — data came from another sash function
+//   - compiler-owned buffer copies (including buffered captures)
 //   - function parameters ($1-$9) inside function bodies
 //   - attest explicitly removes taint after validation
 //
 // SECURITY: This is definition-based, NOT name-based. There is no
 // "clean list" of variable names. Taint flows through assignment.
 
+use crate::output_taint::OutputTaint;
 use std::cell::{Cell, RefCell};
 use std::collections::BTreeSet;
 use std::collections::HashSet;
@@ -4503,6 +4503,7 @@ pub fn check_taint(program: &Program) -> Vec<Diagnostic> {
     }
     interface.extend((0..MAX_COLLECTION_SLOTS).map(collection_slot_name));
     let census = take_census(program);
+    let output = OutputTaint::new(program);
     let empty = HashMap::new();
     let scratch = BodyCx::default();
     let base = SlotCx {
@@ -4510,6 +4511,7 @@ pub fn check_taint(program: &Program) -> Vec<Diagnostic> {
         map_names: &map_names,
         interface: &interface,
         fns: &census.fns,
+        output: &output,
         summaries: &empty,
         fname: "",
         body: &scratch,
@@ -5938,57 +5940,6 @@ fn stmt_command(stmt: &Statement) -> Option<&Command> {
     }
 }
 
-/// Like taint_stmt but doesn't mark read/mapfile as tainted
-/// (for pipeline stages where input comes from sash code).
-///
-/// The reader is recognised beneath its `-`/`!` mark — `echo hi | - read x`
-/// used to bind `x` tainted — but not beneath a redirect: a redirected
-/// reader's input is not the pipe, and the parser rejects one as a stage.
-fn taint_stmt_no_read_taint(
-    stmt: &Statement,
-    tainted: &mut HashSet<String>,
-    just: &JustTainted,
-    sx: &SlotCx,
-    diags: &mut Vec<Diagnostic>,
-) {
-    if let StmtKind::Command(c) = &stmt.stage_marks().0.kind {
-        let name = expr_literal_str(&c.name);
-        // read/mapfile from clean pipe source: don't taint
-        if matches!(name, "read" | "readline" | "mapfile") {
-            taint_cmdsub_bodies(stmt.stage_marks().0, tainted, sx, diags);
-            taint_arith_calls(stmt.stage_marks().0, tainted, sx, diags);
-            check_clean_read_taint(c, tainted, diags);
-            return;
-        }
-    }
-    taint_stmt(stmt, tainted, just, sx, diags);
-}
-
-/// `read`/`mapfile` from a clean pipe source: check the name+args for taint but
-/// do not taint the read targets.
-fn check_clean_read_taint(c: &Command, tainted: &mut HashSet<String>, diags: &mut Vec<Diagnostic>) {
-    check_expr_taint(&c.name, tainted, diags);
-    for arg in &c.args {
-        check_expr_taint(arg, tainted, diags);
-    }
-}
-
-/// Check if a pipeline stage is an external source (execs). Shared with the
-/// transform's SSA-backstop `clean_pipe` computation so the two taint layers
-/// classify a stage identically — a divergence here is a laundering hole.
-pub(crate) fn is_external_source(stmt: &Statement) -> bool {
-    match &stmt.stage_body().kind {
-        StmtKind::Command(c) => source_head_execs(expr_literal_str(&c.name)),
-        _ => false,
-    }
-}
-
-/// `is_external_source`'s head test: an absolute path, or a PATH-resolved
-/// non-builtin.
-fn source_head_execs(name: &str) -> bool {
-    name.starts_with('/') || (!name.is_empty() && !BUILTINS.contains(&name))
-}
-
 fn taint_stmt(
     stmt: &Statement,
     tainted: &mut HashSet<String>,
@@ -6026,7 +5977,7 @@ fn taint_stmt(
         // inside the condition went unchecked — `if (( ${x:-0} > 5 ))` reached
         // the SSA backstop (an ICE-shaped message naming `__arith_test_1`)
         // instead of a located SB5020. Same omission as the `$(( … ))` rvalue.
-        StmtKind::ArithTest(a) => check_arith_taint(a, tainted, diags),
+        StmtKind::ArithTest(a) => check_arith_taint(a, tainted, sx.output, diags),
         StmtKind::ReturnProducer(inner) => taint_return_producer(inner, tainted, just, sx, diags),
         _ => taint_child_bodies(stmt, tainted, just, sx, diags),
     }
@@ -6370,7 +6321,7 @@ fn taint_list(
     diags: &mut Vec<Diagnostic>,
 ) {
     if matches!(l.op, ListOp::Background) {
-        taint_discarded(&l.left, true, tainted, sx, diags);
+        taint_discarded(&l.left, tainted, sx, diags);
         taint_block(
             std::slice::from_ref(l.right.as_ref()),
             tainted,
@@ -6432,10 +6383,10 @@ fn taint_list(
 /// - A clean source rebinds the loop var to clean values (it is removed
 ///   from the tainted set, e.g. `for x in a b c`).
 fn taint_for(f: &For, tainted: &mut HashSet<String>, sx: &SlotCx, diags: &mut Vec<Diagnostic>) {
-    check_for_words(&f.words, tainted, diags);
+    check_for_words(&f.words, tainted, sx.output, diags);
     // The binder is rebound by the loop, so it takes the in-source's taint and
     // loses whatever it carried before.
-    let from_source = f.words.iter().any(is_taint_source);
+    let from_source = f.words.iter().any(|word| is_taint_source(word, sx.output));
     if from_source {
         tainted.insert(f.variable.clone());
     } else {
@@ -6459,11 +6410,16 @@ fn taint_for(f: &For, tainted: &mut HashSet<String>, sx: &SlotCx, diags: &mut Ve
 /// The iterated words of a `for`: a stored tainted array is a rejected read,
 /// and so is a bare source used as a word. The reads inside a `$(keys m)` are
 /// checked where its body is walked ([`taint_cmdsub_bodies`]).
-fn check_for_words(words: &[Expr], tainted: &HashSet<String>, diags: &mut Vec<Diagnostic>) {
+fn check_for_words(
+    words: &[Expr],
+    tainted: &HashSet<String>,
+    output: &OutputTaint,
+    diags: &mut Vec<Diagnostic>,
+) {
     for w in words {
         reject_tainted_array_iter(w, tainted, diags);
         if let ExprKind::CommandSubstitution(stmts) = &w.kind {
-            check_bare_cmdsub_taint(stmts, w.span, diags);
+            check_bare_cmdsub_taint(stmts, w.span, output, diags);
         }
     }
 }
@@ -6553,17 +6509,24 @@ fn taint_assignment(
     // DD#24 lists `arr[$x]=v` as a use-site of `x`: the index is read to
     // decide which cell to write, whichever assignment form follows.
     if let Some(idx) = &a.index {
-        check_expr_taint(idx, tainted, diags);
+        check_expr_taint(idx, tainted, sx.output, diags);
     }
     if taint_array_literal_assignment(a, tainted, sx, diags) {
         return;
     }
     // `a[i]=value` — subscript assignment into an array slot.
     if a.index.is_some() {
-        reject_tainted_into_array(&a.value, &a.name, sx.is_map(&a.name), tainted, diags);
+        reject_tainted_into_array(
+            &a.value,
+            &a.name,
+            sx.is_map(&a.name),
+            tainted,
+            sx.output,
+            diags,
+        );
         return;
     }
-    taint_scalar_assignment(a, tainted, diags);
+    taint_scalar_assignment(a, tainted, sx.output, diags);
 }
 
 /// The scalar (or string `+=`) case of an assignment.
@@ -6576,13 +6539,14 @@ fn taint_assignment(
 fn taint_scalar_assignment(
     a: &Assignment,
     tainted: &mut HashSet<String>,
+    output: &OutputTaint,
     diags: &mut Vec<Diagnostic>,
 ) {
     // The RHS is read before the target is written: in `y="$y$(/bin/echo b)"`
     // the `$y` is the value `y` held before — clean here — and only the result
     // comes from a source.
-    reject_scalar_rhs_read(&a.value, tainted, diags);
-    let from_source = is_taint_source(&a.value);
+    reject_scalar_rhs_read(&a.value, tainted, output, diags);
+    let from_source = is_taint_source(&a.value, output);
     if from_source {
         tainted.insert(a.name.clone());
     }
@@ -6604,7 +6568,12 @@ fn taint_scalar_assignment(
 /// command substitution in value position (`z=$(getenv X)`, `z="$(getenv X)b"`)
 /// is the sanctioned assignment-from-source and is NOT rejected here; a source
 /// or tainted read in a `:-` *default* (a read position, DD#78) is.
-fn reject_scalar_rhs_read(expr: &Expr, tainted: &HashSet<String>, diags: &mut Vec<Diagnostic>) {
+fn reject_scalar_rhs_read(
+    expr: &Expr,
+    tainted: &HashSet<String>,
+    output: &OutputTaint,
+    diags: &mut Vec<Diagnostic>,
+) {
     match &expr.kind {
         ExprKind::SimpleExpansion(var) => push_taint_use(
             tainted,
@@ -6619,7 +6588,7 @@ fn reject_scalar_rhs_read(expr: &Expr, tainted: &HashSet<String>, diags: &mut Ve
         // `${y}` / `${x:-$y}` — the name read, plus (DD#78) the `:-` default as a
         // read position (rejects a tainted var or a tainted source there).
         ExprKind::ParameterExpansion(pe) => {
-            check_param_expansion_taint(pe, expr.span, tainted, diags)
+            check_param_expansion_taint(pe, expr.span, tainted, output, diags)
         }
         // DD#24: the container AND the index are both reads — `arr[$x]` is
         // listed as a use-site of `x`, position-uniformly.
@@ -6640,11 +6609,11 @@ fn reject_scalar_rhs_read(expr: &Expr, tainted: &HashSet<String>, diags: &mut Ve
             // source, which is right for the RHS itself and wrong for an
             // index. That left `z=${b[$(getenv N)]}` clean while the same
             // expression as a command argument was SB5020.
-            check_expr_taint(index, tainted, diags);
+            check_expr_taint(index, tainted, output, diags);
         }
         ExprKind::DoubleQuoted(parts) | ExprKind::Concat(parts) => {
             for p in parts {
-                reject_scalar_rhs_read(p, tainted, diags);
+                reject_scalar_rhs_read(p, tainted, output, diags);
             }
         }
         // `int n=$(( ${x:-0} ))` — an arithmetic RHS is a copy like any other.
@@ -6655,7 +6624,7 @@ fn reject_scalar_rhs_read(expr: &Expr, tainted: &HashSet<String>, diags: &mut Ve
         // converts *and* declassifies (DD#93 Part D).
         ExprKind::Arithmetic(a) => {
             crate::ir::walk_arith_expansion_roots(a, &mut |e| {
-                reject_scalar_rhs_read(e, tainted, diags)
+                reject_scalar_rhs_read(e, tainted, output, diags)
             });
         }
         // Nothing to reject, for five different reasons:
@@ -6696,10 +6665,17 @@ fn taint_array_literal_assignment(
     match &a.value.kind {
         ExprKind::Array(elems) => {
             let is_map = sx.is_map(&a.name);
-            reject_tainted_elements(elems.iter(), &a.name, is_map, tainted, diags);
+            reject_tainted_elements(elems.iter(), &a.name, is_map, tainted, sx.output, diags);
         }
         ExprKind::AssocArray(pairs) => {
-            reject_tainted_elements(pairs.iter().map(|(_k, v)| v), &a.name, true, tainted, diags);
+            reject_tainted_elements(
+                pairs.iter().map(|(_k, v)| v),
+                &a.name,
+                true,
+                tainted,
+                sx.output,
+                diags,
+            );
         }
         _ => return false,
     }
@@ -6719,10 +6695,11 @@ fn reject_tainted_elements<'a>(
     name: &str,
     is_map: bool,
     tainted: &HashSet<String>,
+    output: &OutputTaint,
     diags: &mut Vec<Diagnostic>,
 ) {
     for e in elems {
-        reject_tainted_into_array(e, name, is_map, tainted, diags);
+        reject_tainted_into_array(e, name, is_map, tainted, output, diags);
     }
 }
 
@@ -6732,9 +6709,10 @@ fn reject_tainted_into_array(
     name: &str,
     is_map: bool,
     tainted: &HashSet<String>,
+    output: &OutputTaint,
     diags: &mut Vec<Diagnostic>,
 ) {
-    if is_taint_source(e) || expr_uses_tainted(e, tainted) {
+    if is_taint_source(e, output) || expr_uses_tainted(e, tainted) {
         diags.push(Diagnostic::error_span(
             e.span,
             "SB5021",
@@ -6744,7 +6722,7 @@ fn reject_tainted_into_array(
     // A subscript index inside the value is a read position (SB5020), which
     // `expr_uses_tainted` above does not report. A read inside a `$( )`
     // element (`a[i]=$(join b)`) is one too, checked where the body is walked.
-    check_value_index_reads(e, tainted, diags);
+    check_value_index_reads(e, tainted, output, diags);
 }
 
 /// SB5021's advice, spelled for the kind of collection actually being filled.
@@ -6770,15 +6748,7 @@ fn tainted_into_collection_msg(name: &str, is_map: bool) -> String {
     )
 }
 
-/// Taint a pipeline: a `read`/`mapfile` stage is exempt from tainting its
-/// targets only when EVERY stage upstream of it is compiler-computed.
-///
-/// This used to consult `p.commands.first()` alone, which made a leading
-/// builtin launder the whole pipeline: `echo ig | /bin/cat secret | read x`
-/// bound the file's contents CLEAN, and the value then flowed into argv and
-/// test operands unchecked. DD#24 is operational — any output that passed
-/// through `execve(2)` is tainted — so the flag must accumulate over the
-/// stages the data actually traversed, not describe only the source.
+/// DD#127: every pipe reader introduces taint, regardless of its producers.
 /// Non-final stages run in children; their reads count, but their writes do not.
 fn taint_pipeline(
     p: &crate::ir::Pipeline,
@@ -6786,12 +6756,9 @@ fn taint_pipeline(
     sx: &SlotCx,
     diags: &mut Vec<Diagnostic>,
 ) {
-    let mut upstream_external = false;
     for (i, s) in p.commands.iter().enumerate() {
-        let read_taints = i == 0 || upstream_external;
         let in_parent = i + 1 == p.commands.len() && stage_runs_in_parent(s);
-        taint_stage(s, read_taints, in_parent, tainted, sx, diags);
-        upstream_external |= is_external_source(s);
+        taint_stage(s, in_parent, tainted, sx, diags);
     }
 }
 
@@ -6802,36 +6769,20 @@ fn stage_runs_in_parent(stmt: &Statement) -> bool {
 
 fn taint_stage(
     stmt: &Statement,
-    read_taints: bool,
     in_parent: bool,
     tainted: &mut HashSet<String>,
     sx: &SlotCx,
     diags: &mut Vec<Diagnostic>,
 ) {
     if in_parent {
-        walk_stage(stmt, read_taints, tainted, sx, diags);
-    } else {
-        taint_discarded(stmt, read_taints, tainted, sx, diags);
-    }
-}
-
-fn walk_stage(
-    stmt: &Statement,
-    read_taints: bool,
-    tainted: &mut HashSet<String>,
-    sx: &SlotCx,
-    diags: &mut Vec<Diagnostic>,
-) {
-    if read_taints {
         taint_stmt(stmt, tainted, &JustTainted::new(), sx, diags);
     } else {
-        taint_stmt_no_read_taint(stmt, tainted, &JustTainted::new(), sx, diags);
+        taint_discarded(stmt, tainted, sx, diags);
     }
 }
 
 fn taint_discarded(
     stmt: &Statement,
-    read_taints: bool,
     tainted: &HashSet<String>,
     sx: &SlotCx,
     diags: &mut Vec<Diagnostic>,
@@ -6842,7 +6793,13 @@ fn taint_discarded(
         log: None,
         ..*sx
     };
-    walk_stage(stmt, read_taints, &mut tainted.clone(), &inner, diags);
+    taint_stmt(
+        stmt,
+        &mut tainted.clone(),
+        &JustTainted::new(),
+        &inner,
+        diags,
+    );
 }
 
 /// Taint a redirected statement. A redirect target is a read position, so a
@@ -6855,7 +6812,7 @@ fn taint_redirected(
     diags: &mut Vec<Diagnostic>,
 ) {
     for rd in &r.redirects {
-        check_expr_taint(&rd.target, tainted, diags);
+        check_expr_taint(&rd.target, tainted, sx.output, diags);
     }
     taint_stmt(&r.body, tainted, just, sx, diags);
 }
@@ -6873,9 +6830,9 @@ fn taint_case_arms(
     sx: &SlotCx,
     diags: &mut Vec<Diagnostic>,
 ) {
-    check_expr_taint(&c.value, tainted, diags);
+    check_expr_taint(&c.value, tainted, sx.output, diags);
     for pattern in c.items.iter().flat_map(|item| &item.patterns) {
-        check_expr_taint(pattern, tainted, diags);
+        check_expr_taint(pattern, tainted, sx.output, diags);
     }
     // DD#121: the arms are alternative paths. No arm need match, so the
     // pre-state is itself a path to the merge.
@@ -6899,25 +6856,30 @@ fn taint_command(
 ) {
     let name = expr_literal_str(&c.name);
     if name == "attest" {
-        taint_attest(c, span, tainted, just, diags);
+        taint_attest(c, span, tainted, just, sx.output, diags);
         return; // Don't check args of attest for taint
     }
     // The words are read before the command runs, so they are checked against
     // the set before its effect: `f "${g[0]}" =g` reads the `g` that held
     // before `f` fills it.
-    check_command_reads(c, tainted, diags);
+    check_command_reads(c, tainted, sx.output, diags);
     taint_call(c, name, span, tainted, sx, diags);
-    if matches!(name, "read" | "readline" | "mapfile" | "argv") && !is_value_split(name, c) {
-        taint_read_target(c, tainted);
+    if let Some(target) = tainted_read_target(c) {
+        tainted.insert(target.to_string());
     }
 }
 
 /// The reads a command makes before it runs: its words, and the collections a
 /// reader takes whole.
-fn check_command_reads(c: &Command, tainted: &HashSet<String>, diags: &mut Vec<Diagnostic>) {
-    check_expr_taint(&c.name, tainted, diags);
+fn check_command_reads(
+    c: &Command,
+    tainted: &HashSet<String>,
+    output: &OutputTaint,
+    diags: &mut Vec<Diagnostic>,
+) {
+    check_expr_taint(&c.name, tainted, output, diags);
     for arg in &c.args {
-        check_expr_taint(arg, tainted, diags);
+        check_expr_taint(arg, tainted, output, diags);
     }
     check_collection_reader_taint(c, tainted, diags);
 }
@@ -6938,14 +6900,16 @@ fn is_value_split(name: &str, c: &Command) -> bool {
     name == "read" && c.args.len() == 2
 }
 
-fn taint_read_target(c: &Command, tainted: &mut HashSet<String>) {
-    for arg in c.args.iter().rev() {
-        let s = expr_literal_str(arg);
-        if !s.starts_with('-') && !s.is_empty() {
-            tainted.insert(s.to_string());
-            return;
-        }
+fn tainted_read_target(c: &Command) -> Option<&str> {
+    let name = expr_literal_str(&c.name);
+    if !matches!(name, "read" | "readline" | "mapfile" | "argv") || is_value_split(name, c) {
+        return None;
     }
+    c.args
+        .iter()
+        .rev()
+        .map(expr_literal_str)
+        .find(|s| !s.starts_with('-') && !s.is_empty())
 }
 
 /// The names a predicate may read while still tainted: the attested
@@ -6972,6 +6936,7 @@ fn check_attest_predicate_reads(
     pred: &AttestPredicate,
     span: Span,
     tainted: &HashSet<String>,
+    output: &OutputTaint,
     diags: &mut Vec<Diagnostic>,
 ) {
     // No early return when nothing else is tainted: the predicate may still
@@ -6982,9 +6947,9 @@ fn check_attest_predicate_reads(
         others.remove(name);
     }
     match pred {
-        AttestPredicate::Test(test) => check_test_taint(test, &others, diags),
+        AttestPredicate::Test(test) => check_test_taint(test, &others, output, diags),
         AttestPredicate::ArithConvert { value, .. } => {
-            check_arith_convert_reads(value, span, &others, diags)
+            check_arith_convert_reads(value, span, &others, output, diags)
         }
     }
 }
@@ -6999,13 +6964,14 @@ fn check_arith_convert_reads(
     value: &ArithExpr,
     span: Span,
     others: &HashSet<String>,
+    output: &OutputTaint,
     diags: &mut Vec<Diagnostic>,
 ) {
     crate::ir::walk_arith_var_reads(value, &mut |name| {
         let msg = format!("tainted variable ${name} used without attest");
         push_taint_use(others, name, span, msg, diags)
     });
-    check_arith_taint(value, others, diags);
+    check_arith_taint(value, others, output, diags);
 }
 
 /// SB5098 (DD#24): an `attest` predicate tests values; it does not run code.
@@ -7219,6 +7185,7 @@ fn taint_attest(
     span: Span,
     tainted: &mut HashSet<String>,
     just: &JustTainted,
+    output: &OutputTaint,
     diags: &mut Vec<Diagnostic>,
 ) {
     let Some((form, pred)) = classify_attest(&c.args) else {
@@ -7227,7 +7194,7 @@ fn taint_attest(
     check_adjacency(&attest_clear_names(c), span, tainted, just, diags);
     // The attested name(s) are tainted by definition — vouching for them is the
     // point — but any OTHER tainted read in the predicate is rejected.
-    check_attest_predicate_reads(&form, &pred, span, tainted, diags);
+    check_attest_predicate_reads(&form, &pred, span, tainted, output, diags);
     // DD#93 Part D: the conversion IS the predicate. It validates the source by
     // construction (it can only succeed on a valid, representable i64), so
     // there is no reference check to make — and it declassifies BOTH the
@@ -7244,7 +7211,21 @@ fn taint_attest(
     };
     // Each form reduces to: the binder name(s) the predicate must validate,
     // the name whose taint clears on success, and the diagnostic otherwise.
-    let (binders, clear, msg): (Vec<&str>, &str, String) = match form {
+    let (binders, clear, msg) = attest_validation(form);
+    // DD#98: a `_` binder is discarded, so there is nothing to validate about
+    // it — that is the whole point of writing `_` instead of a name.
+    if binders
+        .iter()
+        .all(|b| crate::ir::is_discard_binder(b) || test_references_var(test, b))
+    {
+        tainted.remove(clear);
+    } else {
+        diags.push(Diagnostic::error_span(span, "SB5020", msg));
+    }
+}
+
+fn attest_validation(form: AttestForm<'_>) -> (Vec<&str>, &str, String) {
+    match form {
         AttestForm::Scalar { var } => (
             vec![var],
             var,
@@ -7260,16 +7241,6 @@ fn taint_attest(
             map,
             format!("map attest-all must validate both the key ${key} and value ${val} on the left of a test"),
         ),
-    };
-    // DD#98: a `_` binder is discarded, so there is nothing to validate about
-    // it — that is the whole point of writing `_` instead of a name.
-    if binders
-        .iter()
-        .all(|b| crate::ir::is_discard_binder(b) || test_references_var(test, b))
-    {
-        tainted.remove(clear);
-    } else {
-        diags.push(Diagnostic::error_span(span, "SB5020", msg));
     }
 }
 
@@ -7297,13 +7268,13 @@ fn taint_attest(
 ///
 /// A tainted *variable* in that identical position (`${x:-$t}`) was SB5021
 /// throughout, which is what made this a hole rather than a policy.
-fn is_taint_source(expr: &Expr) -> bool {
+fn is_taint_source(expr: &Expr, output: &OutputTaint) -> bool {
     match &expr.kind {
-        ExprKind::CommandSubstitution(stmts) => cmdsub_is_taint_source(stmts),
+        ExprKind::CommandSubstitution(stmts) => output.capture(stmts),
         ExprKind::DoubleQuoted(parts) | ExprKind::Concat(parts) | ExprKind::Array(parts) => {
-            parts.iter().any(is_taint_source)
+            parts.iter().any(|part| is_taint_source(part, output))
         }
-        ExprKind::AssocArray(pairs) => pairs.iter().any(|(_, v)| is_taint_source(v)),
+        ExprKind::AssocArray(pairs) => pairs.iter().any(|(_, v)| is_taint_source(v, output)),
         // `$(<file)` — file contents are external input. This is the IR-level
         // twin of the `ssa_taint.rs` rule; it earns the SPANNED SB5020 at the
         // use site. Without it the value is still caught (the SSA backstop
@@ -7318,14 +7289,19 @@ fn is_taint_source(expr: &Expr) -> bool {
             // for a *source* materialised in the index or default: in
             // `${x:!-$(getenv HOME)}` nobody asked to bypass the getenv. So
             // `taint_off` is deliberately not consulted here.
-            pe.index.as_deref().is_some_and(is_taint_source)
-                || pe.operand.as_deref().is_some_and(is_taint_source)
+            pe.index
+                .as_deref()
+                .is_some_and(|e| is_taint_source(e, output))
+                || pe
+                    .operand
+                    .as_deref()
+                    .is_some_and(|e| is_taint_source(e, output))
         }
         // `$(( … ))` reaches its operands through expansion leaves, like
         // [`arith_uses_tainted`]. No source can reach one today (a bare
         // `$(( $(getenv X) ))` is SB4020 at parse), but see the note above
         // about wildcards staying harmless.
-        ExprKind::Arithmetic(a) => arith_is_taint_source(a),
+        ExprKind::Arithmetic(a) => arith_is_taint_source(a, output),
         // A subscript's *index* is a read position, not part of the value that
         // flows in: `z=${b[$(getenv N)]}` stores `b`'s element, never the env
         // var. Answering `true` would taint `z` with data it does not receive.
@@ -7342,48 +7318,12 @@ fn is_taint_source(expr: &Expr) -> bool {
 
 /// `$(( … ))` reaches its operands through expansion leaves; the source-side
 /// twin of [`arith_uses_tainted`].
-fn arith_is_taint_source(arith: &ArithExpr) -> bool {
+fn arith_is_taint_source(arith: &ArithExpr, output: &OutputTaint) -> bool {
     let mut found = false;
     crate::ir::walk_arith_expansion_roots(arith, &mut |e| {
-        found = found || is_taint_source(e);
+        found = found || is_taint_source(e, output);
     });
     found
-}
-
-/// A command substitution is a taint source when it runs `getenv`/`argv`/
-/// `arg` or an external (absolute-path) command. Unknown PATH-resolved
-/// names can't be classified here (might be a user function), so default
-/// clean.
-/// Whether a `$(…)` body is a taint source (used for assignment/array/word
-/// contexts — `is_taint_source`). Scans EVERY statement / pipeline stage, so a
-/// multi-statement / pipeline body (`$(a | b)`, `$(x=1; cat f)`) is correctly
-/// flagged — not just `stmts.first()`. `pub(crate)` so the transform computes a
-/// matching taint flag for the captured temp (else the SSA-taint backstop ICEs).
-pub(crate) fn cmdsub_is_taint_source(stmts: &[Statement]) -> bool {
-    stmts.iter().any(stmt_runs_taint_source)
-}
-
-fn stmt_runs_taint_source(stmt: &Statement) -> bool {
-    if let StmtKind::Command(c) = &stmt.kind {
-        if command_name_is_taint_source(&c.name) {
-            return true;
-        }
-    }
-    // `structural_bodies`: the taint pass reaches a `$( … )` body through
-    // `check_expr_taint`, not through the statement recursion.
-    stmt.structural_bodies()
-        .iter()
-        .any(|body| body.iter().any(stmt_runs_taint_source))
-}
-
-fn command_name_is_taint_source(name_expr: &Expr) -> bool {
-    let name = expr_literal_str(name_expr);
-    // DD#23: a resolved external head is an absolute path (`/…`); intrinsics,
-    // builtins and user functions keep bare names with no slash. So any name
-    // containing a slash is an external exec → tainted output. `contains('/')`
-    // (not `starts_with('/')`) is defense-in-depth: it flags a relative path
-    // too, should one ever slip the DD#23 rejection in `resolve`.
-    name == "getenv" || name == "argv" || name == "arg" || name.contains('/')
 }
 
 /// A command substitution that yields a tainted **scalar** used directly
@@ -7392,18 +7332,16 @@ fn command_name_is_taint_source(name_expr: &Expr) -> bool {
 /// a `attest` predicate. This covers `$(getenv …)`, `$(arg N)`, and
 /// external `$(/abs …)`. `$(argv …)` is deliberately excluded: it is an
 /// array splat governed by the splat-context check (SB5025), not a scalar.
-fn cmdsub_is_scalar_taint_source(stmts: &[Statement]) -> bool {
+fn cmdsub_is_scalar_taint_source(stmts: &[Statement], output: &OutputTaint) -> bool {
     // A splat-spelled `argv` is an array splat (SB5025 elsewhere), not a
     // scalar source — don't double-diagnose it. `cmdsub_command_is(.., "argv")`
     // was the test and it matched the *name* on `stmts.first()`, so it also
     // swallowed the out-param fill: `$(argv 0 b; …)` was silently exempted
-    // from a taint check it should get. Any other body is a scalar source iff
-    // it runs an external / getenv / arg / argv anywhere (recursive scan, so a
-    // multi-statement / pipeline body is covered — was `stmts.first()` only).
+    // from a taint check it should get.
     if stmts.iter().any(is_argv_splat_stmt) {
         return false;
     }
-    cmdsub_is_taint_source(stmts)
+    output.capture(stmts)
 }
 
 /// The `${…}` arm of [`expr_uses_tainted`], split out to keep that dispatcher
@@ -7515,7 +7453,12 @@ const TEST_IS_STATEMENT_ONLY: &str = "ICE: an ExprKind::Test reached expr_uses_t
 /// a silent escape rather than a compile error, and the last one a taint
 /// bypass that shipped. A new variant must now be classified here explicitly,
 /// even if the classification is "no reads". Do not reintroduce the wildcard.
-fn check_expr_taint(expr: &Expr, tainted: &HashSet<String>, diags: &mut Vec<Diagnostic>) {
+fn check_expr_taint(
+    expr: &Expr,
+    tainted: &HashSet<String>,
+    output: &OutputTaint,
+    diags: &mut Vec<Diagnostic>,
+) {
     match &expr.kind {
         ExprKind::SimpleExpansion(var) => push_taint_use(
             tainted,
@@ -7525,7 +7468,7 @@ fn check_expr_taint(expr: &Expr, tainted: &HashSet<String>, diags: &mut Vec<Diag
             diags,
         ),
         ExprKind::ParameterExpansion(pe) => {
-            check_param_expansion_taint(pe, expr.span, tainted, diags)
+            check_param_expansion_taint(pe, expr.span, tainted, output, diags)
         }
         // DD#24: `arr[$x]` is a use-site of `x` as well as of `arr`.
         ExprKind::Subscript { name, index } => {
@@ -7536,21 +7479,23 @@ fn check_expr_taint(expr: &Expr, tainted: &HashSet<String>, diags: &mut Vec<Diag
                 format!("tainted array ${{{}[...]}} used without attest", name),
                 diags,
             );
-            check_expr_taint(index, tainted, diags);
+            check_expr_taint(index, tainted, output, diags);
         }
         ExprKind::DoubleQuoted(parts) | ExprKind::Concat(parts) => {
-            check_parts_taint(parts, tainted, diags)
+            check_parts_taint(parts, tainted, output, diags)
         }
         // DD#24: a bare scalar source ($(getenv …)/$(arg N)) used directly at
         // a read site is a use of external data without attest — rejected.
         // The reads *inside* the substitution (`$(join a ,)` where `a` is
         // tainted) are checked where its body is walked, by the same transfer
         // functions as any statement (`taint_cmdsub_bodies`).
-        ExprKind::CommandSubstitution(stmts) => check_bare_cmdsub_taint(stmts, expr.span, diags),
+        ExprKind::CommandSubstitution(stmts) => {
+            check_bare_cmdsub_taint(stmts, expr.span, output, diags)
+        }
         // `[[ … ]]` test operands are read positions — a tainted variable or a
         // tainted read inside a `$( )` operand is a use without attest. These
         // were previously unchecked (the arm was missing).
-        ExprKind::Test(t) => check_test_taint(t, tainted, diags),
+        ExprKind::Test(t) => check_test_taint(t, tainted, output, diags),
         // `$(<file)` at a read site is a bare use of external data, exactly
         // like `$(getenv X)`. It was covered for free while the form desugared
         // to `$(cat file)` (an external capture); lowering it to a direct read
@@ -7573,7 +7518,7 @@ fn check_expr_taint(expr: &Expr, tainted: &HashSet<String>, diags: &mut Vec<Diag
         // stays greppable. The same DD's addendum already rejects this exact
         // laundering *inside* an attest predicate ("z would be laundered into
         // clean y", SB5020) — it cannot be legal outside one.
-        ExprKind::Arithmetic(a) => check_arith_taint(a, tainted, diags),
+        ExprKind::Arithmetic(a) => check_arith_taint(a, tainted, output, diags),
         // Nothing to check, for two different reasons. `Literal`/`SingleQuoted`
         // have no expansion at all — text is text. `Array`/`AssocArray` *are*
         // read positions, but a tainted element is rejected at the
@@ -7592,9 +7537,14 @@ fn check_expr_taint(expr: &Expr, tainted: &HashSet<String>, diags: &mut Vec<Diag
 
 /// [`check_expr_taint`] on each part of a quoted or concatenated word. Its own
 /// function so that the dispatcher above has no nesting.
-fn check_parts_taint(parts: &[Expr], tainted: &HashSet<String>, diags: &mut Vec<Diagnostic>) {
+fn check_parts_taint(
+    parts: &[Expr],
+    tainted: &HashSet<String>,
+    output: &OutputTaint,
+    diags: &mut Vec<Diagnostic>,
+) {
     for p in parts {
-        check_expr_taint(p, tainted, diags);
+        check_expr_taint(p, tainted, output, diags);
     }
 }
 
@@ -7606,8 +7556,15 @@ fn check_parts_taint(parts: &[Expr], tainted: &HashSet<String>, diags: &mut Vec<
 /// refused first (`int n=$(getenv X)`/`$(arg N)`/`$(cmd)` are SB4030, and
 /// `read` targets an array, DD#99). If a tainted int ever becomes
 /// constructible, this is the function that needs the extra arm.
-fn check_arith_taint(arith: &ArithExpr, tainted: &HashSet<String>, diags: &mut Vec<Diagnostic>) {
-    crate::ir::walk_arith_expansion_roots(arith, &mut |e| check_expr_taint(e, tainted, diags));
+fn check_arith_taint(
+    arith: &ArithExpr,
+    tainted: &HashSet<String>,
+    output: &OutputTaint,
+    diags: &mut Vec<Diagnostic>,
+) {
+    crate::ir::walk_arith_expansion_roots(arith, &mut |e| {
+        check_expr_taint(e, tainted, output, diags)
+    });
 }
 
 /// Taint-check the operands of a `[[ … ]]` test — each is a read position.
@@ -7616,8 +7573,13 @@ fn check_arith_taint(arith: &ArithExpr, tainted: &HashSet<String>, diags: &mut V
 /// operand *root* and `check_expr_taint` does its own descent, so nothing is
 /// reported twice. Do not reach for `ir::walk_test_exprs` here — that one
 /// visits every node of every operand, which would double-report.
-fn check_test_taint(t: &TestExpr, tainted: &HashSet<String>, diags: &mut Vec<Diagnostic>) {
-    crate::ir::walk_test_operands(t, &mut |e| check_expr_taint(e, tainted, diags));
+fn check_test_taint(
+    t: &TestExpr,
+    tainted: &HashSet<String>,
+    output: &OutputTaint,
+    diags: &mut Vec<Diagnostic>,
+) {
+    crate::ir::walk_test_operands(t, &mut |e| check_expr_taint(e, tainted, output, diags));
 }
 
 fn push_taint_use(
@@ -7652,6 +7614,7 @@ fn check_param_expansion_taint(
     pe: &ParameterExpansion,
     span: Span,
     tainted: &HashSet<String>,
+    output: &OutputTaint,
     diags: &mut Vec<Diagnostic>,
 ) {
     // DD#91: the `!` modifier is a sanctioned per-use taint bypass — the
@@ -7667,7 +7630,7 @@ fn check_param_expansion_taint(
         );
     }
     if let Some(index) = pe.index.as_deref() {
-        check_expr_taint(index, tainted, diags);
+        check_expr_taint(index, tainted, output, diags);
     }
 }
 
@@ -7677,24 +7640,29 @@ fn check_param_expansion_taint(
 /// structure to reach a nested index. A `$( )` value is the sanctioned
 /// assignment-from-source, and the reads in its body are checked where the body
 /// is walked ([`taint_cmdsub_bodies`]).
-fn check_value_index_reads(expr: &Expr, tainted: &HashSet<String>, diags: &mut Vec<Diagnostic>) {
+fn check_value_index_reads(
+    expr: &Expr,
+    tainted: &HashSet<String>,
+    output: &OutputTaint,
+    diags: &mut Vec<Diagnostic>,
+) {
     match &expr.kind {
         ExprKind::DoubleQuoted(parts) | ExprKind::Concat(parts) | ExprKind::Array(parts) => {
-            parts_value_index_reads(parts.iter(), tainted, diags)
+            parts_value_index_reads(parts.iter(), tainted, output, diags)
         }
         ExprKind::AssocArray(pairs) => {
-            parts_value_index_reads(pairs.iter().map(|(_, v)| v), tainted, diags)
+            parts_value_index_reads(pairs.iter().map(|(_, v)| v), tainted, output, diags)
         }
         // A subscript *index* is a read position sitting inside a value
         // position, so it gets the read walker: `a[0]=${b[$(getenv N)]}`
         // stores `b`'s element, but it reads the env var to choose which.
         // `reject_scalar_rhs_read` makes the same call for the scalar form.
-        ExprKind::Subscript { index, .. } => check_expr_taint(index, tainted, diags),
+        ExprKind::Subscript { index, .. } => check_expr_taint(index, tainted, output, diags),
         // `${x:-…}` — the default is a value position (DD#78), the index is a
         // read position, and `!` vouches for neither of the *inner* reads.
-        ExprKind::ParameterExpansion(pe) => pexp_value_index_reads(pe, tainted, diags),
+        ExprKind::ParameterExpansion(pe) => pexp_value_index_reads(pe, tainted, output, diags),
         // `$(( … ))` reaches its operands through expansion leaves.
-        ExprKind::Arithmetic(a) => arith_value_index_reads(a, tainted, diags),
+        ExprKind::Arithmetic(a) => arith_value_index_reads(a, tainted, output, diags),
         // Nothing to descend: a bare variable read is `expr_uses_tainted`'s
         // question, a `$( )` body is walked as statements, `$(<f)` has no
         // index, `[[ … ]]` cannot appear in a value position (SB4014 at parse),
@@ -7716,10 +7684,11 @@ fn check_value_index_reads(expr: &Expr, tainted: &HashSet<String>, diags: &mut V
 fn parts_value_index_reads<'a>(
     parts: impl Iterator<Item = &'a Expr>,
     tainted: &HashSet<String>,
+    output: &OutputTaint,
     diags: &mut Vec<Diagnostic>,
 ) {
     for p in parts {
-        check_value_index_reads(p, tainted, diags);
+        check_value_index_reads(p, tainted, output, diags);
     }
 }
 
@@ -7729,13 +7698,14 @@ fn parts_value_index_reads<'a>(
 fn pexp_value_index_reads(
     pe: &ParameterExpansion,
     tainted: &HashSet<String>,
+    output: &OutputTaint,
     diags: &mut Vec<Diagnostic>,
 ) {
     if let Some(idx) = pe.index.as_deref() {
-        check_expr_taint(idx, tainted, diags);
+        check_expr_taint(idx, tainted, output, diags);
     }
     if let Some(operand) = pe.operand.as_deref() {
-        check_value_index_reads(operand, tainted, diags);
+        check_value_index_reads(operand, tainted, output, diags);
     }
 }
 
@@ -7744,10 +7714,11 @@ fn pexp_value_index_reads(
 fn arith_value_index_reads(
     arith: &ArithExpr,
     tainted: &HashSet<String>,
+    output: &OutputTaint,
     diags: &mut Vec<Diagnostic>,
 ) {
     crate::ir::walk_arith_expansion_roots(arith, &mut |e| {
-        check_value_index_reads(e, tainted, diags);
+        check_value_index_reads(e, tainted, output, diags);
     });
 }
 
@@ -7792,8 +7763,13 @@ fn check_collection_reader_taint(
     push_taint_use(tainted, name, arg.span, msg, diags);
 }
 
-fn check_bare_cmdsub_taint(stmts: &[Statement], span: Span, diags: &mut Vec<Diagnostic>) {
-    if cmdsub_is_scalar_taint_source(stmts) {
+fn check_bare_cmdsub_taint(
+    stmts: &[Statement],
+    span: Span,
+    output: &OutputTaint,
+    diags: &mut Vec<Diagnostic>,
+) {
+    if cmdsub_is_scalar_taint_source(stmts, output) {
         diags.push(Diagnostic::error_span(
             span,
             "SB5020",
@@ -9267,6 +9243,7 @@ struct SlotCx<'a> {
     map_names: &'a HashSet<String>,
     interface: &'a HashSet<String>,
     fns: &'a HashMap<String, CallSites>,
+    output: &'a crate::output_taint::OutputTaint,
     summaries: &'a HashMap<String, FnSummary>,
     fname: &'a str,
     body: &'a BodyCx,
@@ -12199,10 +12176,9 @@ mod tests {
     /// intrinsic, and no type says so.
     ///
     /// `kill` sat here without being either. `resolve_command` quietly
-    /// rewrote the head to `/usr/bin/kill`, while `is_external_source` went
-    /// on reporting it non-external for taint — the exact divergence that
-    /// function's own doc comment calls a laundering hole. It was removed
-    /// 2026-10-10; this is what stops the next such entry landing in silence.
+    /// rewrote the head to `/usr/bin/kill`, despite the builtin list's
+    /// promise. It was removed 2026-10-10; this is what stops the next such
+    /// entry landing in silence.
     #[test]
     fn every_builtin_name_is_an_intrinsic() {
         let strays: Vec<&str> = BUILTINS
@@ -12213,8 +12189,8 @@ mod tests {
         assert!(
             strays.is_empty(),
             "BUILTINS entries `resolve::is_intrinsic` does not own, so \
-             `resolve_command` will PATH-resolve them and `is_external_source` \
-             will still call them non-external: {strays:?}"
+             `resolve_command` will PATH-resolve them despite their builtin \
+             classification: {strays:?}"
         );
     }
 
@@ -12272,8 +12248,9 @@ mod tests {
 
     #[test]
     fn a_map_literal_is_a_taint_source_iff_a_value_is() {
-        assert!(is_taint_source(&assoc_with(slurp())));
-        assert!(!is_taint_source(&assoc_clean()));
+        let output = OutputTaint::default();
+        assert!(is_taint_source(&assoc_with(slurp()), &output));
+        assert!(!is_taint_source(&assoc_clean(), &output));
     }
 
     #[test]
@@ -12286,9 +12263,10 @@ mod tests {
         assert!(!expr_uses_tainted(&assoc_clean(), &tainted));
         // The two must agree about a map literal, which is the whole reason
         // both arms exist: `reject_tainted_into_array` ORs them together.
-        assert!(!is_taint_source(&assoc_with(ExprKind::SimpleExpansion(
-            "t".to_string()
-        ))));
+        assert!(!is_taint_source(
+            &assoc_with(ExprKind::SimpleExpansion("t".to_string())),
+            &OutputTaint::default(),
+        ));
     }
 
     #[test]
@@ -12302,12 +12280,13 @@ mod tests {
         };
 
         let mut diags = Vec::new();
-        check_value_index_reads(&assoc_with(indexed), &tainted, &mut diags);
+        let output = OutputTaint::default();
+        check_value_index_reads(&assoc_with(indexed), &tainted, &output, &mut diags);
         assert_eq!(diags.len(), 1, "the element's index is a read site");
         assert_eq!(diags[0].code, "SB5020", "{diags:?}");
 
         let mut clean = Vec::new();
-        check_value_index_reads(&assoc_clean(), &tainted, &mut clean);
+        check_value_index_reads(&assoc_clean(), &tainted, &output, &mut clean);
         assert!(clean.is_empty(), "a literal element reads nothing");
     }
 

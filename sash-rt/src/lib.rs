@@ -1285,7 +1285,7 @@ pub extern "C" fn sash_capture_drain(fd: i64) -> (*mut u8, usize) {
 //
 // `$( … )` over a *pure* body — one that never forks a process onto the
 // capture's own stdout and never rebinds fd 1 — needs no kernel object at
-// all. The compiler proves purity (`capture_body_is_pure` in `transform/`)
+// all. The compiler proves purity (`capture_body_is_pure` in `capture_purity`)
 // and emits `sash_capture_start_buf`/`sash_capture_end_buf` in place of the
 // memfd pair. Because every in-process stdout write funnels through
 // `sash_write`, diverting there collects the body's entire output without a

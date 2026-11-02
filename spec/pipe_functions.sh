@@ -533,13 +533,13 @@ run_sash_under 'if /bin/sh -c "sleep 0.05; echo done > finished" | /bin/cat { ec
     strace -qq -o fault.log -e inject=clone:error=EAGAIN:when=2 -e inject=wait4:error=EINTR:when=1
 [[ $rc = 0 && $out = done && -z $rerr ]]; chk p518.20
 
-run_sash_under 'if echo data | readline x { echo $x } else { echo $(status) }' \
+run_sash_under 'if echo data | readline x { echo ${x:!} } else { echo $(status) }' \
     strace -qq -o fault.log -e inject=pipe2:error=EMFILE:when=1
 [[ $rc = 0 && $out = 1 && -z $rerr ]]; chk p518.21
 
 run_sash_under 'array a=(old)
 - { echo data | read a }
-echo ${a[0]}' strace -qq -o fault.log -e inject=clone:error=EAGAIN:when=1
+echo ${a[0]:!}' strace -qq -o fault.log -e inject=clone:error=EAGAIN:when=1
 [[ $rc = 0 && $out = old && -z $rerr ]]; chk p518.22
 
 run_sash_under '- { echo data | while readline x { attest x [[ -n $x ]]; echo $x } }
@@ -553,7 +553,7 @@ run_sash_under 'if /bin/sh -c "sleep 0.05; echo done > finished" | /bin/cat | re
 
 run_sash 'array a=(old)
 - echo data | read a
-echo ${a[0]}'
+echo ${a[0]:!}'
 [[ $rc = 0 && $out = data && -z $rerr ]]; chk p518.25
 
 run_sash 'array a=(old)
@@ -601,6 +601,7 @@ run_sash '/usr/bin/printf "one\ntwo\n" | while readline a {
 
 run_sash 'fn inner {
   echo child | readline b
+  attest b [[ $b == child ]]
   echo $1 $b
 }
 /usr/bin/printf "one\ntwo\n" | while readline a {
@@ -877,7 +878,7 @@ if /bin/sh -c "echo record; exit 7" | readline b {
   attest b [[ -n $b ]]
   echo bad $b
 } else { echo $(status) }
-echo "[$a]"'
+echo "[${a:!}]"'
 [[ $rc = 0 && $out = $'empty\n7\n[]' && -z $rerr ]]; chk pipeown.32
 
 printf 'stdin\n' > reader-stdin
@@ -1225,13 +1226,13 @@ echo done'
 # (DD#55's two lines, as for any failed stage).
 
 # stgarg.28 the capture runs: its stderr is seen
-run_sash 'fn g { /bin/echo side >&2; echo x }
+SASH_CFLAGS=--no-taint run_sash 'fn g { /bin/echo side >&2; echo x }
 : "$(g)" | /bin/cat
 echo done'
 [[ $rc = 0 && $out = done && $rerr = side ]]; chk stgarg.28
 
 # stgarg.29 an uncaught failure inside it aborts the stage
-run_sash 'fn g { /bin/false; echo x }
+SASH_CFLAGS=--no-taint run_sash 'fn g { /bin/false; echo x }
 : "$(g)" | /bin/cat
 echo done'
 [[ $rc = 1 && -z $out \
@@ -1239,7 +1240,7 @@ echo done'
 
 # stgarg.30 the same failure in an external stage's argument: the child aborts
 # before its exec, and the parent names the stage's command
-run_sash 'fn g { /bin/false; echo x }
+SASH_CFLAGS=--no-taint run_sash 'fn g { /bin/false; echo x }
 /bin/echo "a=$(g)" | /bin/cat
 echo done'
 [[ $rc = 1 && -z $out \
@@ -1280,13 +1281,13 @@ echo done'
 rm -f ro.in
 
 # stgarg.35 a command stage's `2>` covers its capture's stderr
-run_sash 'fn g { - /bin/ls /nonexistent-stgarg35; echo x }
+SASH_CFLAGS=--no-taint run_sash 'fn g { - /bin/ls /nonexistent-stgarg35; echo x }
 /bin/echo "a=$(g)" 2>/dev/null | /bin/cat
 echo done'
 [[ $rc = 0 && $out = $'a=x\ndone' && -z $rerr ]]; chk stgarg.35
 
 # stgarg.36 a statement's `2>` does not: its capture ran first (unchanged)
-run_sash 'fn g { - /bin/ls /nonexistent-stgarg36; echo x }
+SASH_CFLAGS=--no-taint run_sash 'fn g { - /bin/ls /nonexistent-stgarg36; echo x }
 /bin/echo "a=$(g)" 2>/dev/null
 echo done'
 [[ $rc = 0 && $out = $'a=x\ndone' && $rerr == *nonexistent-stgarg36* ]]; chk stgarg.36

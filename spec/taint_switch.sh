@@ -1,11 +1,11 @@
 #!/bin/bash
 # spec/taint_switch.sh — DD#82 taint bypass switches: --no-taint (full) and
-# --no-taint-cst (CST off, SSA backstop on, native only). Compile flags are
+# --no-taint-cst (front end off, SSA backstop on). Compile flags are
 # injected via SASH_CFLAGS (common.sh).
 set -eu
 . common.sh
 setup taint_switch
-plan=45
+plan=48
 echo "1..$plan" >&3
 
 set +e
@@ -137,8 +137,23 @@ echo "after:$n"' bad
 
 unset SASH_CFLAGS
 
-# ── --no-taint-cst: CST off, SSA backstop remains (native only) ──
+# ── --no-taint-cst: front end off, SSA backstop remains ──
 export SASH_CFLAGS=--no-taint-cst
+# DD#127: the backstop derives taint from the actual kernel-read path,
+# independently of the source classifier. Builtin writers are no exception.
+run_sash 'echo hi | readline x
+echo "$x"'
+[[ $rc != 0 && -z $out && $err == *"taint backstop"* ]]; chk sw.26
+
+run_sash 'write hi | read a
+echo ${a[0]}'
+[[ $rc != 0 && -z $out && $err == *"taint backstop"* && $err == *"tainted array a[...]"* ]]; chk sw.27
+
+run_sash 'fn f { /bin/echo hi }
+x=$(f)
+echo "$x"'
+[[ $rc != 0 && -z $out && $err == *"taint backstop"* ]]; chk sw.28
+
 # sw.4 the SSA backstop still rejects an assigned tainted source
 run_sash 'x=$(getenv HOME); echo $x'
 [[ $rc != 0 && -z $out ]]; chk sw.4

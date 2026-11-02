@@ -3785,13 +3785,13 @@ echo after'
 [[ $rc != 0 && -z $out && $err == *':2:1: error [SB4076]'* \
    && $err == *"function 'speak' returns nothing, so \`-\` has nothing to discard"* ]]; chk supval.1
 
-run_sash 'fn speak { echo hello; /bin/false }
+SASH_CFLAGS=--no-taint run_sash 'fn speak { echo hello; /bin/false }
 str x=$(- speak)
 echo "[$x]"'
 [[ $rc != 0 && -z $out && $err == *':2:7: error [SB4076]'* \
    && $err == *"function 'speak' returns nothing"* ]]; chk supval.2
 
-run_sash 'fn speak { echo hello; /bin/false }
+SASH_CFLAGS=--no-taint run_sash 'fn speak { echo hello; /bin/false }
 echo "[$(- speak)]"'
 [[ $rc != 0 && -z $out && $err == *':2:6: error [SB4076]'* \
    && $err == *"function 'speak' returns nothing"* ]]; chk supval.3
@@ -3809,7 +3809,7 @@ echo $((n + 1))'
 [[ $rc != 0 && -z $out && $err == *':2:7: error [SB4076]'* \
    && $err == *"binds the int that function 'count' returns"* ]]; chk supval.5
 
-run_sash 'fn fail { echo token; /bin/false }
+SASH_CFLAGS=--no-taint run_sash 'fn fail { echo token; /bin/false }
 fn use { echo "$1" }
 str x=$(- use $(fail))
 echo "[$x]"'
@@ -3819,12 +3819,13 @@ echo "[$x]"'
 # `-` discards only its own command's status, never that of a capture lifted
 # from the command's operands (DD#55 2026-10-30), so fail's /bin/false aborts.
 # supval.7, .8 and .18-.21 printed fail's output before that.
-run_sash 'fn fail { echo token; /bin/false }
+# Bypass taint only to reach these status/lowering checks (DD#127).
+SASH_CFLAGS=--no-taint run_sash 'fn fail { echo token; /bin/false }
 str x=$(- toupper $(fail))
 echo "[$x]"'
 [[ $rc = 1 && -z $out && -z $err && $rerr == *'/bin/false: command failed (exit 1)'* ]]; chk supval.7
 
-run_sash 'fn fail { echo token; /bin/false }
+SASH_CFLAGS=--no-taint run_sash 'fn fail { echo token; /bin/false }
 str x=$(- echo $(fail))
 echo "[$x]"'
 [[ $rc = 1 && -z $out && -z $err && $rerr == *'/bin/false: command failed (exit 1)'* ]]; chk supval.8
@@ -3882,7 +3883,7 @@ return $(descend $next)
 echo $(descend 2)'
 [[ $rc = 1 && -z $out && -z $err && $rerr == *'command failed (exit 1)'* ]]; chk supval.13
 
-run_sash 'fn zero { echo 0; /bin/false }
+SASH_CFLAGS=--no-taint run_sash 'fn zero { echo 0; /bin/false }
 fn descend -> int {
 int n=$(($1))
 if (( n == 0 )) { return 7 }
@@ -3901,7 +3902,7 @@ int n=$(count)
 echo "$n"'
 [[ $rc = 1 && -z $out && -z $err && $rerr == *'command failed (exit 1)'* ]]; chk supval.15
 
-run_sash 'fn speak { if (( 1 )) { /bin/false }; echo token }
+SASH_CFLAGS=--no-taint run_sash 'fn speak { if (( 1 )) { /bin/false }; echo token }
 fn safe { echo hello; return 1 }
 str x=$(speak)
 - safe
@@ -3915,12 +3916,12 @@ echo after'
 [[ $rc != 0 && -z $out && $err == *':2:1: error [SB4076]'* \
    && $err == *"function 'speak' returns nothing"* ]]; chk supval.17
 
-run_sash 'fn fail { echo token; /bin/false }
+SASH_CFLAGS=--no-taint run_sash 'fn fail { echo token; /bin/false }
 str x=$(- basename $(fail))
 echo "$x"'
 [[ $rc = 1 && -z $out && -z $err && $rerr == *'/bin/false: command failed (exit 1)'* ]]; chk supval.18
 
-run_sash 'fn fail { echo token; /bin/false }
+SASH_CFLAGS=--no-taint run_sash 'fn fail { echo token; /bin/false }
 int n=$(- strlen $(fail))
 echo "$n"'
 [[ $rc = 1 && -z $out && -z $err && $rerr == *'/bin/false: command failed (exit 1)'* ]]; chk supval.19
@@ -3930,12 +3931,12 @@ str x=$(- /bin/echo $(fail))
 echo "[$x]"'
 [[ $rc = 1 && -z $out && -z $err && $rerr == *'/bin/false: command failed (exit 1)'* ]]; chk supval.20
 
-run_sash 'fn fail { if (( 1 )) { /bin/false }; echo token }
+SASH_CFLAGS=--no-taint run_sash 'fn fail { if (( 1 )) { /bin/false }; echo token }
 - /bin/echo $(fail)
 echo after'
 [[ $rc = 1 && -z $out && -z $err && $rerr == *'/bin/false: command failed (exit 1)'* ]]; chk supval.21
 
-run_sash 'fn speak { if (( 1 )) { /bin/false }; echo token }
+SASH_CFLAGS=--no-taint run_sash 'fn speak { if (( 1 )) { /bin/false }; echo token }
 str x=$(- speak 2>&1)
 echo "[$x]"'
 [[ $rc != 0 && -z $out && $err == *':2:9: error [SB4076]'* \
@@ -4089,7 +4090,7 @@ echo after'
 [[ $rc != 0 && -z $out && $err == *':2:7: error [SB4016]'* ]]; chk nonvoid.13
 
 # a redirected capture body is a statement, and gets the statement's error
-run_sash 'fn s { echo x; return 3 }
+SASH_CFLAGS=--no-taint run_sash 'fn s { echo x; return 3 }
 str y=$(s 2>&1)
 echo "[$y]"'
 [[ $rc != 0 && -z $out && $err == *':2:9: error [SB4016]'* ]]; chk nonvoid.14
@@ -4116,7 +4117,7 @@ echo after'
 [[ $rc != 0 && -z $out && $err == *':3:1: error [SB4076]'* \
    && $err == *"function 'c' returns nothing"* ]]; chk nonvoid.17
 
-run_sash 'fn v { echo x }
+SASH_CFLAGS=--no-taint run_sash 'fn v { echo x }
 str y=$(- v 2>&1)
 echo "[$y]"'
 [[ $rc != 0 && -z $out && $err == *':2:9: error [SB4076]'* \
@@ -4153,7 +4154,7 @@ echo "[$x]"'
 
 run_sash 'fn s { echo x; return 3 }
 str y=$(- s 2>&1)
-echo "[$y]"'
+echo "[${y:!}]"'
 [[ $rc = 0 && $out = '[x]' && -z $err && -z $rerr ]]; chk nonvoid.23
 
 # a stage or a job is a process, whose own status `-` discards, void or not
@@ -4242,7 +4243,7 @@ echo "s=$s"'
 # noreach.5 a suppressed capture of a status function
 run_sash 'fn f { /bin/false; echo tok; return 1 }
 str x=$(- f)
-echo "[$x]"'
+echo "[${x:!}]"'
 [[ $rc = 1 && -z $out && -z $err && $rerr == *'/bin/false: command failed (exit 1)'* ]]; chk noreach.5
 
 # noreach.6 a function stage of a capture condition: the stage fails, so the
@@ -4268,7 +4269,7 @@ echo "[$x] done"'
 [[ $rc = 1 && -z $out && -z $err && $rerr == *'/bin/false: command failed (exit 1)'* ]]; chk noreach.9
 
 # noreach.10 a function captured as an operand
-run_sash 'fn g { /bin/false; echo x }
+SASH_CFLAGS=--no-taint run_sash 'fn g { /bin/false; echo x }
 - echo $(g)
 echo done'
 [[ $rc = 1 && -z $out && -z $err && $rerr == *'/bin/false: command failed (exit 1)'* ]]; chk noreach.10

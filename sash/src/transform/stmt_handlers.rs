@@ -1071,18 +1071,9 @@ fn handle_pipe_while_or_array_read(
         Some(site),
     );
     ssa.block_mut(block).insts.push(pipeline);
-    let clean_pipe = !p.commands[..p.commands.len() - 1]
-        .iter()
-        .any(crate::validate::is_external_source);
-    lower_pipe_consumer(
-        ssa,
-        state,
-        block,
-        site,
-        last,
-        clean_pipe,
-        |ssa, state, block| lower_one(last.body, ssa, state, block),
-    )
+    lower_pipe_consumer(ssa, state, block, site, last, |ssa, state, block| {
+        lower_one(last.body, ssa, state, block)
+    })
 }
 
 fn lower_pipe_consumer(
@@ -1091,7 +1082,6 @@ fn lower_pipe_consumer(
     block: BlockId,
     site: u32,
     stage: FinalStage,
-    clean_pipe: bool,
     body: impl FnOnce(&mut SsaProgram, &mut VersionState, BlockId) -> BlockId,
 ) -> BlockId {
     let before = state.snapshot();
@@ -1107,9 +1097,7 @@ fn lower_pipe_consumer(
         true_block: consumer,
         false_block: done,
     };
-    let pipe_reader = state
-        .pipe_reader
-        .replace((reader_pipe_fd(site), clean_pipe));
+    let pipe_reader = state.pipe_reader.replace(reader_pipe_fd(site));
     let exit = stage.lower(ssa, state, consumer, body);
     state.pipe_reader = pipe_reader;
     ssa.block_mut(exit).terminator = Terminator::Goto(done);
@@ -1144,33 +1132,19 @@ fn handle_lastpipe_read(
     block: BlockId,
 ) -> BlockId {
     let producers = &p.commands[..p.commands.len() - 1];
-    // DD#24: the read targets are clean only if every producer is
-    // compiler-computed. This was hardcoded `true`, which disabled the SSA
-    // backstop for every lastpipe read — so when the front-end pass also
-    // missed a laundering shape, nothing caught it.
-    let clean_pipe = !producers.iter().any(crate::validate::is_external_source);
     let site = state.next_reader_site;
     state.next_reader_site += 1;
     let pipeline = build_pipeline_inst(producers, ssa, state, block, Some(site));
     ssa.block_mut(block).insts.push(pipeline);
-    lower_pipe_consumer(
-        ssa,
-        state,
-        block,
-        site,
-        last,
-        clean_pipe,
-        |ssa, state, block| {
-            let target = state.define(&crate::ir::readline_target(&command.args));
-            ssa.block_mut(block).insts.push(SsaInst::ReadLine {
-                target,
-                fd: reader_pipe_fd(site),
-                redirects: vec![],
-                clean_pipe,
-            });
-            block
-        },
-    )
+    lower_pipe_consumer(ssa, state, block, site, last, |ssa, state, block| {
+        let target = state.define(&crate::ir::readline_target(&command.args));
+        ssa.block_mut(block).insts.push(SsaInst::ReadLine {
+            target,
+            fd: reader_pipe_fd(site),
+            redirects: vec![],
+        });
+        block
+    })
 }
 
 /// Regular pipeline: `cmd1 | cmd2 | ...`. A function-call stage, and a
@@ -1768,7 +1742,7 @@ pub(super) fn capture_func_into(
     // One site number per capture, reserved before the body is lowered so a
     // nested capture inside the body gets a different one.
     let site = state.alloc_capture_site();
-    let buffered = super::capture_purity::capture_body_is_pure(
+    let buffered = crate::capture_purity::capture_body_is_pure(
         &body,
         &state.function_bodies,
         &state.function_int_typed,
@@ -1803,7 +1777,6 @@ pub(super) fn capture_func_into(
             site,
             buffered,
             target,
-            tainted: false,
         });
 
     super::functions::exit_fn_body_scope(state, saved_ro);
@@ -1815,8 +1788,8 @@ pub(super) fn capture_func_into(
 /// Capture a **multi-statement / pipeline** `$(…)` body's stdout into
 /// `target_name`. Mirrors `capture_func_into` but for a raw statement list
 /// (no positional/func-arg setup — a cmdsub inherits the caller's positionals).
-/// `CaptureEnd` is marked `tainted` (external output). Returns the block to
-/// continue lowering from.
+/// The buffer/memfd choice also determines the result's taint (DD#127).
+/// Returns the block to continue lowering from.
 ///
 /// The body is an **anonymous function** (DG, 2026-09-28): sash has no
 /// subshells, so a write to a global inside the body persists, and only names
@@ -1841,7 +1814,7 @@ pub(super) fn capture_body_into(
     block: BlockId,
 ) -> BlockId {
     let site = state.alloc_capture_site();
-    let buffered = super::capture_purity::capture_body_is_pure(
+    let buffered = crate::capture_purity::capture_body_is_pure(
         body,
         &state.function_bodies,
         &state.function_int_typed,
@@ -1882,9 +1855,6 @@ pub(super) fn capture_body_into(
             site,
             buffered,
             target,
-            // Match the CST decision exactly (else the SSA-taint backstop ICEs): the
-            // capture is tainted iff the body runs an external / getenv / arg / argv.
-            tainted: crate::validate::cmdsub_is_taint_source(body),
         });
 
     restore_block

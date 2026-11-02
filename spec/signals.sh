@@ -487,7 +487,7 @@ run_sash_under 'signal 15 EXIT
 exec 3> marker
 fn f { write tick >&3 }
 s=$(f)
-echo $s
+echo ${s:!}
 echo bad' strace -qq -o signal.log -e inject=write:signal=SIGTERM:when=1
 [[ $rc = 143 && -z $out && $(<marker) = tick && -z $rerr ]]; chk sig518.15
 

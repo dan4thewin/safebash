@@ -47,14 +47,13 @@ fn lower_newread(
     // SSA taint backstop's max-version lookup resolves to the fill rather than
     // to the clean empty array (a naive `{name}_0` insert loses that race).
     let target = state.define(&target);
-    let (fd, clean_pipe) = state.pipe_reader.unwrap_or((0, false));
+    let fd = state.pipe_reader.unwrap_or(0);
     let inst = match source {
         Some(source) => SsaInst::SplitValue { source, target },
         None => SsaInst::ReadArray {
             target,
             fd,
             redirects: vec![],
-            clean_pipe,
         },
     };
     ssa.block_mut(block).insts.push(inst);
@@ -65,12 +64,11 @@ fn lower_newread(
 /// target, no flags, newline-terminated — SB5057 has already enforced that.
 fn emit_readline_inst(name: &str, ssa: &mut SsaProgram, state: &mut VersionState, block: BlockId) {
     let target = state.define(name);
-    let (fd, clean_pipe) = state.pipe_reader.unwrap_or((0, false));
+    let fd = state.pipe_reader.unwrap_or(0);
     ssa.block_mut(block).insts.push(SsaInst::ReadLine {
         target,
         fd,
         redirects: vec![],
-        clean_pipe,
     });
 }
 

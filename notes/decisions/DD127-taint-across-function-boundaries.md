@@ -79,7 +79,7 @@ judged at the source.
 
 | channel | single-use `f` | shared `f` |
 |---|---|---|
-| stdout | `$(f)` or `f \| reader` is tainted iff unattested external output can reach `f`'s stdout. Attest it where DD#121 puts the attest for an external command. | The attest must be inside `f`. An attest of a tainted capture at a call site is rejected, naming `f` and its call sites. The capture stays tainted; `:!` at the use stays legal. |
+| stdout | A kernel-backed `$(f)` or `f \| reader` is tainted; a compiler-owned buffer capture introduces no taint. Attest the tainted result where DD#121 puts the attest for an external command. | The attest must be inside `f`. An attest of a tainted capture at a call site is rejected, naming `f` and its call sites. The capture stays tainted; `:!` at the use stays legal. |
 | names outward | The call taints what `f` leaves own-tainted. Attest immediately after the call, or a later non-`:!` read is SB5020. | SB5067 at the source statement inside `f`, the last one per name. |
 | names inward | A use that would be rejected if the received taint were `f`'s own is rejected with the same code, at the call. | the same |
 
@@ -105,6 +105,43 @@ Each is reported at the call, naming the line in `f`. A body's verdicts
 therefore do not depend on its callers: each definition has an independent
 summary, reused at its calls. An anonymous `$( )` body is written where it is
 called, so its errors point at the line in the body.
+
+### The read boundary
+
+**A kernel read introduces taint. A compiler-owned buffer copy introduces
+none, and does not erase existing taint.** This applies to every fd read:
+ordinary files, pipes and memfd captures, including pipes whose producer is
+only `echo`. Environment and program-argument inputs remain tainted too.
+An unchecked tainted value still cannot be read by `echo` or any other copy;
+the ordinary use-site rules require attest or explicit `:!` first.
+
+DG proposed this boundary on 2026-11-02 and chose to implement it using the
+**existing buffer paths first**, without extending buffer eligibility in
+this port. Consequently:
+
+- `$(f)` can be clean when `f` captures input internally, attests it and
+  emits with `echo`. The inner capture reads a kernel object; the outer
+  capture returns a compiler-owned buffer.
+- A direct external, any redirect, a pipeline, or a revisited function in
+  the purity walk currently disqualifies a body from buffering. Its
+  captured result is tainted even if every intended output byte was
+  generated internally.
+- `echo hello | readline x` taints `x`. A streaming wrapper using
+  `cmd | while …` also has a kernel-backed outer capture. Attesting a value
+  before writing it through a pipe does not attest the next kernel read.
+- Integer/value calls return their values, not their stdout. Their stdout
+  effects can still disqualify an enclosing capture from buffering.
+
+Descriptor routing is not a trust proof. A pathname can alias `/dev/stdout`;
+even an external redirected to `/dev/null` can reopen a parent's saved
+capture descriptor through procfs. Both backends admitted such a program
+before W2. No pathname exception or runtime alias guard is added.
+
+Buffer eligibility is shared by the source analysis and lowering. The SSA
+backstop classifies the actual buffer/kernel choice, not a separate
+"trusted producer" flag. Further buffering optimizations may expand the
+clean cases without weakening this rule. DD#88's SB4075 writer-preservation
+check remains a separate syntax policy, not a taint-safety proof.
 
 ### Chains
 
@@ -177,8 +214,8 @@ taint it passes in, so a body is not a fourth position.
 
 ## Examples
 
-Each program was compiled at 0149c49b; "today" is that compiler's verdict.
-"W2" marks the call-site rejection whose code W2 picks.
+Each program was compiled at 0149c49b; the verdict table preserves that
+baseline. "W2b" marks the shared-output call-site rejection still to implement.
 
 ### stdout
 
@@ -380,12 +417,12 @@ below distinguishes what has landed from what remains.
 | example | before W1 | under this DD |
 |---|---|---|
 | e1 | compiles | legal |
-| e2 | compiles | rejected (W2): `branch` has two call sites |
+| e2 | compiles | rejected (W2b): `branch` has two call sites |
 | e2r | compiles | legal |
 | e2s | compiles | legal |
 | e7 | compiles | legal |
 | w1 | compiles | legal: output to the terminal crosses no boundary |
-| w1c | compiles | rejected (W2): `g` has two call sites |
+| w1c | compiles | rejected (W2b): `g` has two call sites |
 | w1d | compiles; prints git's output unchecked | SB5020 at the read of `$s` |
 | e4 | compiles | legal |
 | e5 | SB5067 | SB5067 |
@@ -403,7 +440,8 @@ below distinguishes what has landed from what remains.
 W1b-1 and W1b-2 implement **globals and collection slots** on the existing
 per-statement transfer functions (journals 557 and 559). They do not
 introduce an I/C/T state machine or re-walk a callee in each caller's
-context. Stdout remains W2's work.
+context. W2a implements read-boundary classification (journal 560);
+shared-output attest provenance remains W2b.
 
 ### Building a name summary
 
@@ -512,6 +550,28 @@ in the census. This is B18's validator half, landed with W1b-1 because
 call-site clean overwrites make the separation necessary; W4 still owns the
 per-process SSA backstop.
 
+### Classifying output
+
+`output_taint::OutputTaint` distinguishes value-returning calls from stdout
+captures. Environment and argument values are tainted; arithmetic/intrinsic
+results retain their ordinary operand checks. A real capture is tainted
+unless `capture_purity::capture_body_is_pure` admits the buffer path.
+
+That is the existing lowering predicate, moved out of `transform` for shared
+use, not a new definition of purity. Its eligibility rules are unchanged.
+The source classifier includes every definition of a function name; one
+integer-return definition cannot hide another definition's stdout. Lowering
+uses the body active at the call, so source classification can conservatively
+reject a redefined name whose particular call would buffer.
+
+Every fd reader taints its target directly; the preceding pipeline stages
+are no longer used to infer trust. `read SRC ARR` remains a value split.
+SSA `ReadLine` and `ReadArray` are unconditional taint sources.
+`CaptureEnd` carries only the emitted `buffered` choice, from which the
+backstop derives its result. The former `clean_pipe` and capture `tainted`
+annotations are removed. No output-analysis object is threaded into SSA
+construction, and the name-summary architecture is unchanged.
+
 ## Cost
 
 The obligation depends on the number of call sites, a property of the whole
@@ -529,11 +589,13 @@ DD#100's strict non-aliasing contract is also implemented, as a prerequisite
 to W1b-2 (journal 558): SB5099 rejects duplicate slot identities and overlap
 with globals named anywhere in the callee's call chain, even with
 `--no-taint`. W1b-2 retires the interim slot-taint analysis (journal 559).
+W2a replaces producer-based capture/pipe trust with the read boundary,
+sharing the existing buffer predicate with lowering (journal 560).
 The following remain:
 
-- **W2, stdout:** the old user-function capture and pipeline source
-  classifiers remain; there is no reaches-stdout witness or shared-capture
-  rejection yet.
+- **W2b, shared output:** provenance and the outside-attest rejection are
+  not implemented. They must account for taint introduced by a later kernel
+  read, not restore the discarded descriptor-routing analysis.
 - **W3, ordinary loop edges; W4, per-process SSA checking; W5, END entry.**
   In particular, W4's backstop can still reject a parent read after a child
   taints its private copy; the B18 entry records a measured example.
@@ -593,17 +655,30 @@ The following remain:
   collection. c2 was rechecked and already had its call-site SB5021 under
   W1b-1; it is not a new fix in this unit.
 
-### Still to land
+### Landed in W2a
 
-- Fifteen specs still pin the old clean user-function capture:
-  `supval.2/3/6/7/8/14/16/18/19/21/22`, `cap.20`, `88.28`, `cmt.11`,
-  `dd82.4`. They change at W2, which re-measures each under the single-use
-  rule.
+- `outflow.1`-`.14` pin kernel-backed function/body captures, builtin and
+  function pipes, nested capture/attest/echo buffering, and the separation
+  between integer return values and stdout effects.
+- `sw.26`-`.28` exercise the actual SSA reader/capture classifications with
+  the front-end taint pass disabled. Existing `bkstp.6` remains a buffered
+  capture's clean control.
+- Sixty-three existing fixtures needed adaptation. Their runtime, grammar,
+  status and lowering assertions are preserved with an adjacent attest,
+  localized `:!`, or the existing `--no-taint` test switch. `dd82.4`, whose
+  assertion was specifically clean user-function capture, now requires
+  located SB5020. The fifteen formerly parked cases are among these, not
+  left failing until W2b.
+- The old B35 clean-function-pipe expectation and B114/e5 clean streaming
+  or redirected capture expectations are deliberately superseded. A nested
+  capture/attest/echo wrapper already buffers and remains clean
+  (`outflow.11`); widening eligibility is separate work.
 
 ## Open
 
-- W2: the code of the call-site rejection; the reaches-stdout analysis
-  (B114 lists what the branch's version got wrong).
+- W2b: shared-output provenance and the code of its call-site rejection.
+- Buffer eligibility beyond the existing paths
+  (`q-buffer-capture-eligibility`); kernel reads remain tainted.
 - W4: the per-process SSA backstop; validator name effects landed in W1b-1.
 - W5: END's entry state (B96).
 
@@ -634,6 +709,16 @@ The following remain:
   The AI proposed (b): apply the same transposition to names going outward,
   which narrows the 2026-10-23 firewall to shared functions. DG: "go with b -
   do a full writeup focused on clarity".
+- 2026-11-02. After a probe showed an external reopening its parent's saved
+  memfd capture even with stdout redirected to `/dev/null`, DG proposed:
+
+  > in the prior f example, capturing the output of the internal echo can
+  > be a simple buffer copy rather than a pipe; we could apply taint on any
+  > read(2) call, while leaving buffer copies clean
+
+  DG selected **existing buffer paths first**, rather than extending their
+  eligibility during W2a. This replaces the earlier reaches-stdout/pathname
+  approach, not the independent name summaries.
 - Decided by the AI and reported (DG may veto): a new DD rather than an
   addendum to DD#100; inward errors reported at the call, with the code the
   statement would raise; attesting a clean received name stays legal; zero

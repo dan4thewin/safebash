@@ -143,7 +143,7 @@ else
 fi
 
 # 20.30 lastpipe always on
-run_sash 'echo hello | readline x; echo $x'
+run_sash 'echo hello | readline x; attest x [[ $x == hello ]]; echo $x'
 [[ $rc = 0 && $out = "hello" && -z $err ]]; chk 20.30
 
 # 20.31 `case` is removed (DD#66) — rejected as a reserved word (this also
@@ -694,7 +694,7 @@ fn outer {
   inner
 }
 str t=$(outer)
-echo "[$t]"'
+echo "[${t:!}]"'
   [[ $rc = 0 && $out = "[hi]" && -z $rerr ]]; chk cap.20
 
   # cap.21 the module doc's headline case, reached through a bare call: a
@@ -827,13 +827,13 @@ K1
   # capture that never completes.
   run_sash 'echo before
 str x=$(exec /bin/echo hi)
-echo "after [$x]"'
+echo "after [${x:!}]"'
   [[ $rc = 0 && $out = "before" && -z $rerr ]]; chk cap.35
 
   run_sash 'fn f { exec /bin/echo hi }
 echo before
 str x=$(f)
-echo "after [$x]"'
+echo "after [${x:!}]"'
   [[ $rc = 0 && $out = "before" && -z $rerr ]]; chk cap.36
 
 # cap.22 A MALFORMED `$( )` BODY INSIDE DOUBLE QUOTES IS A DIAGNOSTIC. The

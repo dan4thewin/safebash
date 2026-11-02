@@ -210,10 +210,9 @@ impl Statement {
 
     /// The statement a pipeline stage actually runs, beneath its `-` / `!`
     /// marks and its redirect. **Every stage classifier peels through this.**
-    /// Private copies of this loop drifted: `validate::is_external_source`
-    /// peeled only the redirect, so the `-` on `- /bin/cat f | readline x` hid
-    /// an external producer and `x` was bound clean — in the front-end taint
-    /// pass and, through the shared `clean_pipe`, the SSA backstop too.
+    /// Private copies of this loop once hid suppressed external producers
+    /// from both taint passes. DD#127 now taints every pipe read, but stage
+    /// resolution and grammar checks still need the same underlying command.
     pub fn stage_body(&self) -> &Statement {
         let mut cur = self;
         loop {

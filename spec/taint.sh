@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup taint
-plan=469
+plan=483
 echo "1..$plan" >&3
 
 set +e
@@ -114,9 +114,8 @@ run_sash 'read arr; echo ${arr[0]}'
 run_sash 'x=$(/bin/date); echo $x'
 [[ $rc != 0 && -z $out && -n $err ]]; chk 24.5
 
-# 24.6 read from a clean inline pipe → clean (sash has no here-strings — DD#83;
-# `read x <<< "hello"` is written `echo hello | read x`)
-run_sash 'echo hello | readline x; echo $x'
+# 24.6 a builtin pipe is a kernel read too; attest beside the read (DD#127).
+run_sash 'echo hello | readline x; attest x [[ $x == hello ]]; echo $x'
 [[ $rc = 0 && $out = "hello" && -z $err ]]; chk 24.6
 
 # 24.7 user func capture → clean
@@ -567,19 +566,21 @@ run_sash '- /bin/cat b25.txt | readline x
 echo "got $x"'
 [[ $rc != 0 && -z $out \
    && $err == *':2:6: error [SB5020] tainted variable $x used without attest'* ]]; chk 24.21
-# 24.22 (positive) `echo hi | - readline x`: echo is clean, so x is clean
+# 24.22-25 the marks remain legal; their kernel-read data needs an attest.
 run_sash 'echo hi | - readline x
+attest x [[ $x == hi ]]
 echo "[$x]"'
 [[ $rc = 0 && $out = "[hi]" && -z $rerr ]]; chk 24.22
 # 24.23 (positive) ... `- read ar`
 run_sash 'echo hi | - read ar
+attest v in ar [[ -n $v ]]
 echo "[${ar[0]}]"'
 [[ $rc = 0 && $out = $'[hi\n]' && -z $rerr ]]; chk 24.23
 # 24.24 (positive) ... `! readline x` in a condition
-run_sash 'if echo hi | ! readline x { echo "neg[$x]" } else { echo "pos[$x]" }'
+run_sash 'if echo hi | ! readline x { echo "neg[${x:!}]" } else { echo "pos[${x:!}]" }'
 [[ $rc = 0 && $out = "pos[hi]" && -z $rerr ]]; chk 24.24
 # 24.25 (positive) ... `! read ar` in a condition
-run_sash 'if echo a | ! read ar { echo "t[${ar[0]}]" } else { echo "f[${ar[0]}]" }'
+run_sash 'if echo a | ! read ar { echo "t[${ar[0]:!}]" } else { echo "f[${ar[0]:!}]" }'
 [[ $rc = 0 && $out = $'f[a\n]' && -z $rerr ]]; chk 24.25
 # 24.26 an external producer still taints a `- readline` reader
 run_sash '/bin/echo hi | - readline x
@@ -590,17 +591,17 @@ echo "[$x]"'
 run_sash 'if - /bin/cat b25.txt | ! readline x { echo "neg" } else { echo "pos[$x]" }'
 [[ $rc != 0 && -z $out \
    && $err == *':1:65: error [SB5020] tainted variable $x used without attest'* ]]; chk 24.27
-# 24.28 (positive) `! readline x` in a return producer leaves the global x
-#       clean. The read succeeds, so the `!` makes p fail
+# 24.28 `! readline x` in a return producer: the read succeeds, so p fails.
+#       Trust the read explicitly to observe the status rather than taint.
 run_sash 'str x=init
 fn p { return echo abc | ! readline x }
-if p { echo "t[$x]" } else { echo "f[$x]" }'
+if p { echo "t[${x:!}]" } else { echo "f[${x:!}]" }'
 [[ $rc = 0 && $out = "f[abc]" && -z $rerr ]]; chk 24.28
 # 24.29 (positive) ... `- readline x`: the read fails at EOF, but its verdict
 #       does not join, so `:` decides
 run_sash 'str x=init
 fn p { return : | - readline x }
-if p { echo "t[$x]" } else { echo "f[$x]" }'
+if p { echo "t[${x:!}]" } else { echo "f[${x:!}]" }'
 [[ $rc = 0 && $out = "t[]" && -z $rerr ]]; chk 24.29
 # dd78.1-dd78.7 DD#78 closed the `:-` taint hole with a read discipline: the
 # default was an interpolating word, so the checker had to walk it and prove
@@ -1466,8 +1467,9 @@ attest x p?
 echo "ok"'
 [[ $rc = 0 && $out = "ok" && -z $err ]]; chk tl.6
 
-# tl.7 an ALL-builtin pipeline stays clean — no attest needed (no regression)
+# tl.7 builtin pipe data with spaces remains usable after attest.
 run_sash 'echo "a b" | readline x
+attest x [[ $x == "a b" ]]
 echo "$x"'
 [[ $rc = 0 && $out = "a b" && -z $err ]]; chk tl.7
 
@@ -1548,12 +1550,11 @@ run_sash 'str x=$(/bin/cat d82a.txt)
 echo $x'
 [[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk dd82.3
 
-# dd82.4 control: a user-function capture is Clean by DD#24 even when the
-#        function itself runs an external. Deliberate, and unchanged here.
+# dd82.4 a user-function capture of file contents is a kernel read (DD#127).
 run_sash 'fn mk { /bin/cat d82a.txt; }
 str x=$(mk)
 echo $x'
-[[ $rc = 0 && $out = "payload" ]]; chk dd82.4
+[[ $rc != 0 && -z $out && $err == *SB5020* && $err != *backstop* ]]; chk dd82.4
 
 # ─── the two-binder attest against a NON-map: the shape diagnostic ──────
 # `attest K V in M` requires M to be a map. The message that says so was
@@ -3142,6 +3143,83 @@ array a=()
 f =a
 echo "${a[0]}"' a z
 [[ $rc = 1 && $out = bad && -z $err && -z $rerr ]]; chk atslot.9
+
+# DD#127: taint follows the read boundary, not the apparent stdout producer.
+run_sash 'fn f { /bin/echo external }
+str x=$(f)
+echo "$x"'
+[[ $rc != 0 && $err == *SB5020* && $err != *backstop* ]]; chk outflow.1
+
+run_sash 'fn inner { /bin/echo external }
+fn outer { inner }
+str x=$(outer)
+echo "$x"'
+[[ $rc != 0 && $err == *SB5020* && $err != *backstop* ]]; chk outflow.2
+
+# /dev/null does not protect a saved capture fd from being reopened.
+run_sash 'fn f { /bin/echo discarded >/dev/null; echo internal }
+str x=$(f)
+echo "$x"'
+[[ $rc != 0 && $err == *SB5020* && $err != *backstop* ]]; chk outflow.3
+
+# Even builtin-only output is tainted when its capture drains a memfd.
+run_sash 'str x=$(echo discarded >/dev/null; echo internal)
+echo "$x"'
+[[ $rc != 0 && $err == *SB5020* && $err != *backstop* ]]; chk outflow.4
+
+run_sash 'echo hello | readline x
+echo "$x"'
+[[ $rc != 0 && $err == *SB5020* && $err != *backstop* ]]; chk outflow.5
+
+run_sash 'write hello | read a
+echo "${a[0]}"'
+[[ $rc != 0 && $err == *SB5020* && $err != *backstop* ]]; chk outflow.6
+
+run_sash 'fn f { echo hello }
+f | readline x
+echo "$x"'
+[[ $rc != 0 && $err == *SB5020* && $err != *backstop* ]]; chk outflow.7
+
+run_sash 'echo hello | while readline x { echo "$x" }'
+[[ $rc != 0 && $err == *SB5020* && $err != *backstop* ]]; chk outflow.8
+
+run_sash 'str x=$(: | echo hello)
+echo "$x"'
+[[ $rc != 0 && $err == *SB5020* && $err != *backstop* ]]; chk outflow.9
+
+run_sash 'fn f { echo hello }
+str x=$(f)
+str y=$(f)
+echo "$x $y"'
+[[ $rc = 0 && $out = "hello hello" && -z $err && -z $rerr ]]; chk outflow.10
+
+# An inner kernel read does not taint the outer, compiler-owned echo buffer.
+run_sash 'fn f {
+    str t=$(/bin/echo external)
+    attest t [[ $t == external ]]
+    echo "$t"
+}
+str x=$(f)
+str y=$(f)
+echo "$x $y"'
+[[ $rc = 0 && $out = "external external" && -z $err && -z $rerr ]]; chk outflow.11
+
+run_sash 'fn count -> int { /bin/echo side; return 7 }
+int n=$(count)
+echo "$n"'
+[[ $rc = 0 && $out = $'side\n7' && -z $err && -z $rerr ]]; chk outflow.12
+
+run_sash 'fn count -> int { /bin/echo side; return 7 }
+str x=$(toupper "$(count)")
+echo "$x"'
+[[ $rc = 0 && $out = $'side\n7' && -z $err && -z $rerr ]]; chk outflow.13
+
+# The same value call's stdout does disqualify an enclosing body capture.
+run_sash 'fn count -> int { /bin/echo side; return 7 }
+fn f { int n=$(count); echo "$n" }
+str x=$(f)
+echo "$x"'
+[[ $rc != 0 && $err == *SB5020* && $err != *backstop* ]]; chk outflow.14
 
 set -e
 tally

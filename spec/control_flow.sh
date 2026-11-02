@@ -748,7 +748,7 @@ echo done'
 [[ $rc = 0 && $out = $'no\ndone' && -z $err && -z $rerr ]]; chk lazy.3
 
 # lazy.4 a skipped capture never runs: no output, no global write
-run_sash 'g=old
+SASH_CFLAGS=--no-taint run_sash 'g=old
 fn f { g=new; echo tried >&2; echo b }
 x=a
 if [[ $x == a || $(f) == b ]] { echo "yes $g" }
@@ -765,7 +765,7 @@ echo "after $g"'
 [[ $rc = 0 && $out = $'yes new\nafter new' && -z $err && -z $rerr ]]; chk lazy.5
 
 # lazy.6 a negated junction is still lazy, and `!` flips its result
-run_sash 'fn g { echo tried >&2; echo b }
+SASH_CFLAGS=--no-taint run_sash 'fn g { echo tried >&2; echo b }
 x=a
 if [[ ! ( $x == a || $(g) == b ) ]] { echo yes } else { echo no }
 echo done'
@@ -828,20 +828,20 @@ echo done'
 # every test was built before any capture in it was lowered.
 
 # dsplazy.1 a captured subject is evaluated once, however many arms it meets
-run_sash 'fn f { echo hit >&2; echo c }
+SASH_CFLAGS=--no-taint run_sash 'fn f { echo hit >&2; echo c }
 [[ $(f) == a { echo A } b { echo B } c { echo C } || { echo other } ]]
 echo done'
 [[ $rc = 0 && $out = $'C\ndone' && -z $err && $rerr = hit ]]; chk dsplazy.1
 
 # dsplazy.2 a pattern after the arm that matched is never evaluated
-run_sash 'fn g { echo tried >&2; echo b }
+SASH_CFLAGS=--no-taint run_sash 'fn g { echo tried >&2; echo b }
 x=a
 [[ $x == a { echo A } "$(g)" { echo G } || { echo other } ]]
 echo done'
 [[ $rc = 0 && $out = $'A\ndone' && -z $err && -z $rerr ]]; chk dsplazy.2
 
 # dsplazy.3 control: a pattern that is reached runs, and can select its arm
-run_sash 'fn g { echo tried >&2; echo b }
+SASH_CFLAGS=--no-taint run_sash 'fn g { echo tried >&2; echo b }
 x=b
 [[ $x == a { echo A } "$(g)" { echo G } || { echo other } ]]
 echo done'
@@ -849,7 +849,7 @@ echo done'
 
 # dsplazy.4 within one arm, an alternative after the one that matched is not
 # evaluated, and one reached after a miss is
-run_sash 'fn g { echo tried >&2; echo b }
+SASH_CFLAGS=--no-taint run_sash 'fn g { echo tried >&2; echo b }
 x=a
 [[ $x == a "$(g)" { echo "hit $x" } || { echo other } ]]
 x=c
@@ -920,7 +920,7 @@ echo done'
 [[ $rc = 0 && $out = $'Q 1\ny=1\ndone' && -z $err && -z $rerr ]]; chk dsplazy.11
 
 # dsplazy.12 the subject is evaluated afresh on each loop iteration, and in END
-run_sash 'fn f { echo hit >&2; echo a }
+SASH_CFLAGS=--no-taint run_sash 'fn f { echo hit >&2; echo a }
 for i in 1 2 {
   [[ $(f) == a { echo "A$i" } || { echo "O$i" } ]]
 }

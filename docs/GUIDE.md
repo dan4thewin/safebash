@@ -309,9 +309,18 @@ cleanup still produces a conditional diagnostic. Received taint is never
 freshly adjacent at body entry. The old `SlotInfo` fixpoints are removed;
 slot usage remains a separate arity/dead-variable analysis.
 
-Stdout classification, ordinary loop edges, per-process SSA checking and
-END entry remain W2-W5. The SSA backstop also has a separate future-array-
-version false positive. DD#127's "Implementation status" records these
+**Output taint follows the read boundary (DD#127).** Every kernel-backed
+capture and fd/pipe read introduces taint, including builtin-produced pipes.
+Compiler-owned buffer captures do not; an internally captured and attested
+value can therefore be echoed into a clean outer buffer. Environment and
+program arguments remain sources, and a buffer copy cannot bypass a tainted
+value's use check. There is no descriptor-routing or `clean_pipe` exemption.
+Source analysis shares buffer eligibility with lowering; the SSA backstop
+classifies the actual emitted capture path.
+
+Shared-output attest restrictions, ordinary loop edges, per-process SSA
+checking and END entry remain W2b-W5. The SSA backstop also has a separate
+future-array-version false positive. DD#127's "Implementation status" records these
 boundaries and the conservative value/capture precision limits.
 
 **Non-aliasing is already enforced (DD#100).** Collection arguments must
@@ -625,7 +634,7 @@ results are cached for a later owning-pipeline fold. Native and C share this
 lifecycle, including early scalar completion and tail-call back-edges.
 
 Function and multi-statement command-substitution bodies have **two** capture
-paths, chosen per site at compile time by `transform::capture_purity`:
+paths, chosen per site at compile time by `capture_purity`:
 
 * `sash_capture_start_buf` / `sash_capture_end_buf` — the fast path. The body
   is *pure*: nothing in it forks onto this capture's stdout and nothing
@@ -639,9 +648,10 @@ paths, chosen per site at compile time by `transform::capture_purity`:
 
 A body may contain an external and still be pure, so long as the external's
 output arrives through an *inner* `$( )` — that child gets a pipe of its own.
-Only a fork inheriting *this* capture's stdout disqualifies a site, or an
-`exec CMD`, which replaces this process with a CMD that writes fd 1 itself
-(journal 546). A value
+Direct externals and `exec CMD` disqualify a site; `exec` replaces this
+process with a CMD that writes fd 1 itself (journal 546). The predicate is
+conservative: every pipeline or redirect selects the general path, even
+when the intended output comes only from builtins. A value
 call counts: an int function called as `$(f)`, `(f)` or a bare `f` in
 arithmetic runs its body where the call stands, so a fork in that body
 disqualifies the site too. A capture whose arguments make such a call takes
@@ -653,6 +663,8 @@ suspends buffer diversion for its duration. Depth is static: functions are
 inlined, and the one recursive shape sash accepts — a direct self tail-call —
 becomes a loop rather than a nested frame. Everything else is SB5037. (See
 [Functions, inlining, and recursion](#functions-inlining-and-recursion-dd27).)
+The purity walk nevertheless treats a revisited function as impure, so a
+self-tail function's capture currently takes the general path.
 
 One consequence is deliberately observable: a pure body probing its own
 stdout (`[[ -p /dev/stdout ]]`) sees the caller's real stdout, while

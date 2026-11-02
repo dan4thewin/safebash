@@ -6,8 +6,10 @@ pub mod parse;
 
 // Internal modules — not used outside the crate
 pub(crate) mod bindings;
+pub(crate) mod capture_purity;
 pub mod codegen;
 pub(crate) mod diagnostic;
+pub(crate) mod output_taint;
 pub(crate) mod regex_validate;
 pub(crate) mod resolve;
 pub(crate) mod ssa;

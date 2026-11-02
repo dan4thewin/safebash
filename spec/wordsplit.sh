@@ -21,7 +21,7 @@ run_sash 'x="a b c"; for y in $x; do echo $y; done'
 [[ $rc != 0 && -z $out && -n $err ]]; chk 22.3
 
 # 22.4 read line reads one line
-run_sash 'echo "hello" | readline line; echo $line'
+run_sash 'echo "hello" | readline line; attest line [[ $line == hello ]]; echo $line'
 [[ $rc = 0 && $out = "hello" && -z $err ]]; chk 22.4
 
 # 22.5 `read -f:` (field separator) is retired — DD#99 splits on NUL only, so
@@ -40,7 +40,7 @@ echo ${arr[1]}'
 [[ $rc = 0 && $out = "b" && -z $err ]]; chk 22.6
 
 # 22.7 -r always implied on read
-run_sash 'echo "hello" | readline line; echo $line'
+run_sash 'echo "hello" | readline line; attest line [[ $line == hello ]]; echo $line'
 [[ $rc = 0 && $out = "hello" && -z $err ]]; chk 22.7
 
 # 28.1 for x in $var → compile error
@@ -304,10 +304,8 @@ run_sash 'str s="aa"; if [[ $s =~ ^a{2,3}$ ]]; then echo ok; fi'
 run_sash 'str s="aaa"; if [[ $s =~ ^a{33}$ ]]; then echo m; fi'
 [[ $rc != 0 && -z $out && $err == *SB5023* ]]; chk 39.16
 
-# 22.12 echo|read is clean (builtin pipe, no exec). `echo | read` is the
-# lastpipe inline-pipe: the read builtin consumes the pipe and sets a PARENT
-# variable, in-process (no fork).
-run_sash 'echo "clean" | readline x; echo $x'
+# 22.12 lastpipe sets a PARENT variable; its kernel-read value needs attest.
+run_sash 'echo "clean" | readline x; attest x [[ $x == clean ]]; echo $x'
 [[ $rc = 0 && $out = "clean" && -z $err ]]; chk 22.12
 
 # 22.13 printf|read is tainted (printf execs — an external producer)
@@ -441,7 +439,7 @@ run_sash 'array arr=(); printf "a::b:" | read -a arr -d :; attest e in arr [[ $e
 # The function is lowered twice (dead template + inline); the autodeclared array
 # table registration used to leak from the template into the inline, so the
 # inline skipped the table `Assign` and the runtime read filled a NULL table.
-run_sash 'fn f { echo hi | read norm; /bin/echo "$(len norm):${norm[0]}" }; f'
+run_sash 'fn f { echo hi | read norm; attest v in norm [[ -n $v ]]; /bin/echo "$(len norm):${norm[0]}" }; f'
 [[ $rc = 0 && $out = "1:hi" && -z $err ]]; chk 22.28
 
 # 22.29 builtin `echo` with an elide arg (`${x:~}`/`${x:!~}`) — an empty value
@@ -456,7 +454,7 @@ run_sash 'fn f { x=hi; echo a $x:~ b }; f'
 
 # 22.31 the reported line (DD#99: `echo -n` is now `write`)
 # of a `:!`-trusted value piped into a fresh array read) now works end-to-end.
-run_sash 'fn f { x=hi; write $x:! | read norm; /bin/echo "$(len norm):${norm[0]}" }; f'
+run_sash 'fn f { x=hi; write $x:! | read norm; attest v in norm [[ -n $v ]]; /bin/echo "$(len norm):${norm[0]}" }; f'
 [[ $rc = 0 && $out = "1:hi" && -z $err ]]; chk 22.31
 
 
@@ -502,6 +500,7 @@ echo "$(len x)|$(join x)|${x[2]}"'
 
 # rl.1 reads one line into a scalar
 run_sash 'echo "hello world" | readline v
+attest v [[ $v == "hello world" ]]
 echo "[$v]"'
 [[ $rc = 0 && $out = "[hello world]" && -z $err ]]; chk rl.1
 
@@ -514,11 +513,13 @@ echo "[$v]"'
 # rl.3 does NOT split on whitespace: the whole line is one value (DD#22 — the
 # implicit whitespace split is exactly what DD#99 removes)
 run_sash 'echo "a b c d" | readline v
+attest v [[ $v == "a b c d" ]]
 echo "[$v]"'
 [[ $rc = 0 && $out = "[a b c d]" && -z $err ]]; chk rl.3
 
 # rl.4 auto-declares its target (no prior declaration needed)
 run_sash 'echo hi | readline fresh
+attest fresh [[ $fresh == hi ]]
 echo "[$fresh]"'
 [[ $rc = 0 && $out = "[hi]" && -z $err ]]; chk rl.4
 

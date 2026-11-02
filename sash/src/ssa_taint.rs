@@ -174,20 +174,14 @@ fn classify_inst_def(
             // A passed attest's subject — scalar, array or map — is clean.
             taint.insert(var_key(target), Taint::Clean);
         }
-        SsaInst::ReadLine {
-            target,
-            clean_pipe,
-            ..
-        } => {
-            taint.insert(var_key(target), read_line_taint(*clean_pipe));
+        SsaInst::ReadLine { target, .. } | SsaInst::ReadArray { target, .. } => {
+            // DD#127: kernel-read bytes are tainted, including builtin pipes.
+            taint.insert(var_key(target), Taint::Tainted);
         }
-        SsaInst::CaptureEnd { target, tainted, .. } => {
-            // A `$(user_fn)` capture is optimistically Clean (DD#24); a
-            // multi-statement/pipeline `$(…)` body captures external output
-            // and is Tainted. The upstream CST taint pass
-            // (`cmdsub_is_taint_source`) is the authoritative gate; this keeps
-            // the SSA taint view correct (defense-in-depth).
-            taint.insert(var_key(target), taint_of_flag(*tainted));
+        SsaInst::CaptureEnd {
+            target, buffered, ..
+        } => {
+            taint.insert(var_key(target), taint_of_flag(!buffered));
         }
         SsaInst::Pipeline { capture, .. } => {
             taint.extend(capture.target().map(|target| (var_key(target), Taint::Tainted)));
@@ -205,12 +199,6 @@ fn classify_inst_def(
             // deliberately NOT the `ArgvFill` rule above: argv's bytes come
             // from outside the program, a map's keys were put there by it.
             taint.insert(var_key(target), Taint::Clean);
-        }
-        SsaInst::ReadArray {
-            target, clean_pipe, ..
-        } => {
-            // Same rule as `ReadLine`: clean only from a compiler-computed pipe.
-            taint.insert(var_key(target), read_line_taint(*clean_pipe));
         }
         SsaInst::SplitValue { source, target } => {
             // DD#99 `read $SRC ARR` — the array is as tainted as the scalar
@@ -241,18 +229,6 @@ fn classify_inst_def(
         | SsaInst::RedirectPush { .. } // moves fds around; defines no value
         | SsaInst::PipelineFinish { .. }
         | SsaInst::RedirectPop { .. } => {}
-    }
-}
-
-/// A `read` is clean only when it draws from a clean pipe (data flowing from
-/// another sash function). Reading from stdin or a file redirect is external
-/// input → tainted. (sash has no here-strings; that clean-literal source is
-/// gone — DD#83.)
-fn read_line_taint(clean_pipe: bool) -> Taint {
-    if clean_pipe {
-        Taint::Clean
-    } else {
-        Taint::Tainted
     }
 }
 
@@ -804,8 +780,8 @@ fn param_expansion_taint(var: &VarRef, operator: &str, taint: &HashMap<String, T
     }
 }
 
-/// `CaptureEnd.tainted` is decided at transform time (external -> true,
-/// builtin -> false); this is only the bool-to-`Taint` lift.
+/// Lift the capture's actual kernel-read path to taint, independently of
+/// the front-end source analysis.
 fn taint_of_flag(tainted: bool) -> Taint {
     if tainted {
         Taint::Tainted

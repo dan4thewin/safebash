@@ -534,8 +534,6 @@ pub enum SsaInst {
         target: VarRef,
         fd: i64, // 0 = stdin
         redirects: Vec<crate::ir::Redirect>,
-        /// True when read is in a lastpipe position with clean producer stages
-        clean_pipe: bool,
     },
     /// arr[i]=val or map[key]=val — subscript assignment
     SubscriptAssign {
@@ -579,12 +577,6 @@ pub enum SsaInst {
         target: VarRef,
         fd: i64,
         redirects: Vec<crate::ir::Redirect>,
-        /// As `ReadLine`'s: true when every producer of the pipe that feeds
-        /// this read is compiler-computed, so the bytes never came from
-        /// outside. Governs the SSA taint backstop's classification, and is
-        /// computed by the same `validate::is_external_source` the front-end
-        /// taint pass uses — a divergence here is a laundering hole.
-        clean_pipe: bool,
     },
     /// DD#63: `match S P ARR` out-array form. Fills `array` with
     /// `[whole, g1..gN]` (bash-parity length = group count + 1), clears it
@@ -632,20 +624,18 @@ pub enum SsaInst {
     ///
     /// `buffered` selects the zero-syscall path: when the body provably never
     /// forks onto this capture's stdout and never rebinds fd 1
-    /// (`transform::capture_purity`), the output is collected in a userspace
+    /// (`capture_purity`), the output is collected in a userspace
     /// buffer and no kernel object is created at all. Otherwise stdout is
     /// pointed at a memfd, as before.
     CaptureStart { site: u32, buffered: bool },
     /// End capturing, assign captured output to target. `site` matches the
-    /// paired `CaptureStart`. `tainted` marks a capture of *external* output
-    /// (a multi-statement/pipeline `$(…)` body) — its target is tainted, unlike
-    /// a `$(user_fn)` capture (clean by DD#24).
+    /// paired `CaptureStart`. DD#127: draining a kernel object introduces
+    /// taint; returning the compiler-owned buffer does not.
     CaptureEnd {
         site: u32,
         /// Mirrors the paired `CaptureStart` — see there.
         buffered: bool,
         target: VarRef,
-        tainted: bool,
     },
     /// Open a redirect *scope* around an inlined user-function body
     /// (`f > out.txt`). Saves each affected fd, applies the redirects, and is
@@ -2114,7 +2104,7 @@ pub struct VersionState {
     pub(crate) next_reader_site: u32,
     pub(crate) reader_regions: Vec<ReaderRegion>,
     /// Lexical pipe binding, suspended across function/capture/redirect scopes.
-    pub(crate) pipe_reader: Option<(i64, bool)>,
+    pub(crate) pipe_reader: Option<i64>,
     /// The statement being lowered, which locates the transform's own errors
     /// (`error_at_stmt`). Call arity, recursion and `exec` resolution are
     /// raised far below the statement dispatcher, where no span is threaded,
@@ -2362,7 +2352,7 @@ impl VersionState {
 /// checks after the fact.
 pub(crate) struct ParentContext {
     versions: HashMap<String, u32>,
-    pipe_reader: Option<(i64, bool)>,
+    pipe_reader: Option<i64>,
     return_target: Option<usize>,
     loop_stack: Vec<(usize, usize)>,
     tail_loop: Option<TailLoop>,
