@@ -331,6 +331,29 @@ This completes the bounded argv/environment and strict numeric unit, not
 the remaining text/read/regex families or IR consumption. No native code
 or producer changed.
 
+## Tenth runnable milestone - byte-string operations implemented
+
+`string_report.cpp` and its sash counterpart retain a real option function
+and string-cell traversal. `COUNT=08` is sliced into key/separator/value:
+only the key becomes `count`, while unchanged `08` converts strictly to 8.
+Both match an independent seven-line report; there is no implicit trimming,
+Unicode normalization, or malformed-number repair.
+
+[DD#10](../decisions/DD10-counted-byte-string-operations.md) records shared
+value/cell operations: checked byte length, owned signed/clamped slices,
+ASCII-only upper/lowercase copies, and nonempty print/graph predicates.
+Omitted and explicit-zero length differ; signed minima, interior NUL and
+high bytes remain defined. Allocation failure escapes instead of publishing
+an empty replacement. Pure helpers add no hidden checkpoints.
+
+This completes basic byte-string operations, not regex replacement, bulk
+reads/splitting, remaining formatting, or IR consumption. No native code
+or producer changed. All 51 groups and ten goldens pass across GCC, Clang,
+Linux ASan, real Apple Clang/libc++, and Apple ASan. Text-only UBSan,
+eight isolated negative controls, ten real-CLI source pairs, and the
+unchanged 169-case catalog are recorded in
+[journal 017](../journal/017-counted-byte-string-operations.md).
+
 ## Starting points selected by DG
 
 | Area | Starting point |
@@ -433,7 +456,6 @@ forks with DG before building their assumptions throughout the library.
 
 | Choice | Alternatives and tradeoffs | Proposed way to settle it |
 |---|---|---|
-| Text and numeric ingress | Counted byte strings are economical; Unicode-aware operations need more machinery. Locale-sensitive operations can vary between hosts. Arithmetic width, checked operations, and shifts are already settled in DD#8/DD#25. | Settle remaining byte/character units, case/classification locale, and accountable numeric parsing separately; do not reopen arithmetic |
 | Regex results and replacement | Source-style backreferences require an adapter; standard C++ replacement notation reduces bespoke logic. Group layout, no-match results, and zero-length iteration remain operation-level choices even with the grammar fixed. | Compare readable examples and prefer standard facilities where they remove rather than conceal complexity |
 | Capture completion | Trailing-newline treatment and background writers holding the captured stdout affect which bytes a completed capture yields. | Specify the completion boundary and pin it with direct C++ examples; do not let regular-file EOF accidentally decide the language |
 
@@ -686,10 +708,12 @@ of most process work. Keep ordinary C++ representations visible.
 
 ### Strings, arguments, and reads
 
-- [ ] Implement counted-string concatenation, slicing, case conversion,
-  remaining formatting, and the chosen character predicates.
-- [ ] Cover the remaining applicable operations for scalar strings and string
-  cells rather than maintaining divergent implementations.
+- [x] Use ordinary counted-string concatenation and shared byte length,
+  signed/clamped slicing, ASCII case conversion, and nonempty `p?`/`g?`.
+- [x] Share those operations between scalar strings and string cells,
+  including owned results, binary bytes, and non-inserting missing reads.
+- [ ] Complete remaining formatting and applicable text families, keeping
+  scalar/string-cell behavior shared rather than divergent.
 - [x] Preserve binary bytes internally, and distinguish an empty argument
   from zero arguments. Implement defaults, required-value failures, and
   elision without evaluating unused fallback expressions eagerly.

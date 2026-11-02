@@ -63,6 +63,13 @@ optional environment lookup, strict string-to-integer conversion, a real
 charge function, and ordinary validity and traversal branches. With arguments
 `08 0` and `SASH_CPP_NUMERIC_RATE=0x7`, both match the adjacent eight-line golden.
 
+[string_report.cpp](examples/string_report.cpp) and
+[string_report.sash](examples/string_report.sash) add byte length/slicing,
+ASCII case conversion, and nonempty print/graph predicates. A real option
+function handles `COUNT=08`: only the key becomes `count`, while unchanged
+`08` converts strictly to eight. String cells use the same operations.
+Both match the adjacent seven-line golden.
+
 On Linux or macOS, with a C++17 compiler, Plan 9 `mk`, and `timeout` on PATH:
 
 ```sh
@@ -77,6 +84,7 @@ mk -p 1 test
 ./build/option_report
 ./build/arithmetic_report
 SASH_CPP_NUMERIC_RATE=0x7 ./build/numeric_report 08 0
+./build/string_report COUNT=08
 ```
 
 `greetings` prints `Hello, Ada!`; `job_report` prints the worker rounds;
@@ -87,6 +95,7 @@ SASH_CPP_NUMERIC_RATE=0x7 ./build/numeric_report 08 0
 `option_report` prints the sparse options, copied keys, and exact argument list.
 `arithmetic_report` prints a weighted subtotal, arithmetic results, and a countdown.
 `numeric_report` prints converted options, defaults, cell values, and the charge.
+`string_report` prints the sliced option and ASCII string-cell results.
 The build produces a normal C++ static library, `build/libsash_cpp.a`;
 it does not build Rust or link sash-rt.
 For example, the C++ program can also be linked directly:
@@ -118,7 +127,7 @@ mk -p 1 CXX=clang++ BUILD=build/apple-asan \
 ./build/apple/capture_report
 ```
 
-Both hosts run the same 48 fixture groups and nine expected C++ reports,
+Both hosts run the same 51 fixture groups and ten expected C++ reports,
 including large binary output, nested captures/readers, closed standard
 descriptors, partial setup, child/fd cleanup, typed exit, main-only END,
 and signal delivery during foreground work and capture. Collection fixtures
@@ -130,6 +139,9 @@ function results, failed conditions/arguments, and explicit END handling.
 Input fixtures cover complete signed parsing, owned argv/environment values,
 present-empty versus missing inputs, valid zero, lazy required messages,
 scalar/cell parity, and allocation and lifecycle failure boundaries.
+Text fixtures cover counted binary bytes, signed/clamped substring bounds,
+ASCII-only case changes, nonempty shape predicates, owned results,
+scalar/cell parity, and allocation failure without replacing a destination.
 The Darwin build has been
 exercised on Apple Silicon; this is not a claim of testing every Mac SDK
 or architecture. Tests need GNU `timeout`, which is not a stock macOS tool.
@@ -159,7 +171,7 @@ ptrace. The command helper is an ordinary unsanitized external executable;
 the library, test driver, and examples receive `SANITIZE`.
 
 With the real sash CLI and runtime already built in the parent checkout,
-`mk -p 1 sash-example` compiles and runs all nine sash examples against
+`mk -p 1 sash-example` compiles and runs all ten sash examples against
 their expected output. Override `SASH` and `SASH_RT_LIB` for other locations.
 This additional target is not a prerequisite for native C++ tests.
 
@@ -463,7 +475,41 @@ Failed required conversion preserves the assignment target and follows
 ordinary body unwinding. END still requires explicit handling and receives
 no new automatic guard. Source taint, default admission, and the `i?`
 predicate's source syntax remain producer responsibilities. There is no
-IR consumer or general text/read family in this unit.
+IR consumer or bulk-read family in this unit.
+
+### Counted byte strings and ASCII operations
+
+Ordinary `std::string` values and counted `std::string_view` operands share
+these operations for scalars and owned string-cell reads:
+
+| Helper | Result |
+|---|---|
+| `strlen(text)` | Checked signed-i64 byte count, not a C-string or character count |
+| `substring(text, offset, length = nullopt)` | Owned, terminated byte slice with signed/clamped bounds |
+| `toupper(text)` / `tolower(text)` | Owned copy mapping only ASCII letters |
+| `is_print(text)` | Nonempty, all bytes in `0x20..0x7e` (`p?`) |
+| `is_graph(text)` | Nonempty, all bytes in `0x21..0x7e` (`g?`) |
+
+Positive offsets clamp to the end; negative offsets count from the end and
+clamp to zero. Omitted length takes the remainder, explicit zero is empty,
+positive length clamps to the remainder, and negative length trims bytes
+from its end. Bounds include both signed-i64 extremes without negating the
+minimum. Empty/default views are valid, and slices can split UTF-8 bytes.
+
+Interior NUL and non-ASCII bytes remain counted data. Case conversion
+preserves every byte outside ASCII letters; the predicates reject NUL,
+controls, DEL, high bytes, and empty input. Predicate false is an ordinary
+answer. No operation uses the host locale or normalizes Unicode.
+Length and predicates allocate nothing; slices/case results own their bytes
+and propagate allocation failure rather than returning an empty fallback.
+No helper adds a hidden checkpoint.
+
+The tenth pair's handling is application-specific: `COUNT=08` becomes key
+`count` and unchanged value `08`, then strict numeric conversion yields 8.
+There is no trimming or malformed-number repair. Regex replacement, bulk
+reads/splitting, remaining formatting, and IR consumption remain separate
+work. The required-value failure path retains DD#9's C++ status 2; the
+reference currently returns 1 for the same rejected numeric text.
 
 ### Program lifecycle and END
 

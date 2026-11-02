@@ -410,6 +410,56 @@ std::string arg(int count, const char *const *arguments, std::int64_t index,
     return value == nullptr ? detail::argument_text(fallback) : std::string{value};
 }
 
+namespace {
+
+std::size_t bounded_distance(std::int64_t value, std::size_t limit) noexcept {
+    const auto bits = static_cast<std::uint64_t>(value);
+    // Unsigned magnitude also represents INT64_MIN.
+    const auto magnitude = value < 0 ? std::uint64_t{0} - bits : bits;
+    return magnitude >= limit ? limit : static_cast<std::size_t>(magnitude);
+}
+
+std::string map_ascii_case(std::string_view text, char first, char last, char replacement) {
+    auto result = detail::argument_text(text);
+    for (auto &byte : result) {
+        if (byte >= first && byte <= last) {
+            byte = static_cast<char>(byte - first + replacement);
+        }
+    }
+    return result;
+}
+
+bool has_ascii_shape(std::string_view text, unsigned char first) noexcept {
+    return !text.empty() && std::all_of(text.begin(), text.end(), [first](unsigned char byte) {
+        return byte >= first && byte <= 0x7e;
+    });
+}
+
+} // namespace
+
+std::int64_t strlen(std::string_view text) { return detail::collection_count(text.size()); }
+
+std::string substring(std::string_view text, std::int64_t offset,
+                      std::optional<std::int64_t> length) {
+    const auto distance = bounded_distance(offset, text.size());
+    const auto start = offset < 0 ? text.size() - distance : distance;
+    const auto remaining = text.size() - start;
+    auto count = remaining;
+    if (length) {
+        const auto bound = bounded_distance(*length, remaining);
+        count = *length < 0 ? remaining - bound : bound;
+    }
+    return count == 0 ? std::string{} : std::string(text.data() + start, count);
+}
+
+std::string toupper(std::string_view text) { return map_ascii_case(text, 'a', 'z', 'A'); }
+
+std::string tolower(std::string_view text) { return map_ascii_case(text, 'A', 'Z', 'a'); }
+
+bool is_print(std::string_view text) noexcept { return has_ascii_shape(text, 0x20); }
+
+bool is_graph(std::string_view text) noexcept { return has_ascii_shape(text, 0x21); }
+
 bool LineReader::readline(std::string &target) {
     std::string line;
     while (true) {

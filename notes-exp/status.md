@@ -1,3 +1,32 @@
+## Tenth pair: counted byte strings and ASCII operations complete
+
+DG authorized byte length/slicing, ASCII upper/lowercase conversion, and
+the existing nonempty `p?`/`g?` predicates. Shared value/cell helpers retain
+counted NUL/high bytes, owned results, signed/clamped byte bounds, and
+visible allocation failure. Omitted length differs from explicit zero;
+signed minima remain defined. Pure helpers add no hidden checkpoints.
+[DD#10](decisions/DD10-counted-byte-string-operations.md) records the contracts.
+
+[`string_report.cpp`](../sash-cpp/examples/string_report.cpp) and its
+[sash counterpart](../sash-cpp/examples/string_report.sash) retain a real
+option function and string-cell traversal. For `COUNT=08`, only the key
+becomes `count`; unchanged `08` converts strictly to 8. Both match an
+independent seven-line golden. There is no implicit trimming, Unicode
+normalization, or malformed-number repair.
+
+All 51 groups and ten C++ goldens pass on GCC, Clang, supported Linux ASan,
+real Apple Clang/libc++, and Apple ASan. Both Linux compilers retain the
+fault gates and unchanged 169-case catalog. Text-only UBSan and an
+independent detection canary pass; eight isolated mutations fail their
+intended assertions. All ten real-CLI sash pairs pass with pinned inputs.
+[Journal 017](journal/017-counted-byte-string-operations.md) records evidence,
+50-file Mac parity, and the unchanged required-value failure-policy boundary.
+
+Regex replacement, bulk reads/splitting, remaining formatting, general
+redirects, public wait, and forked-C++/background ownership remain on the
+[runtime roadmap](tasks/cpp-transpiler-runtime-before-ir.md). No native code
+or producer changed; there is still no IR reader or emitter.
+
 ## Ninth pair: numeric ingress and strict conversion complete
 
 DG authorized the bounded program-input/conversion unit. The runtime now

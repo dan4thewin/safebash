@@ -1,0 +1,7 @@
+input: COUNT=08; bytes: 8
+key: count; upper: COUNT
+value: [08]; number: 8
+head: [COUNT=]; empty: []
+cell: [MiXeD]; lower: [mixed]; upper: [MIXED]; bytes: 5; print: yes; graph: yes
+cell: [two words]; lower: [two words]; upper: [TWO WORDS]; bytes: 9; print: yes; graph: no
+cell: []; lower: []; upper: []; bytes: 0; print: no; graph: no

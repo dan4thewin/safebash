@@ -1,0 +1,29 @@
+fn show_option {
+    str text=${args[0]}
+    int bytes=$(strlen $text)
+    str raw_key=${text:0:5}
+    str key=$(tolower $raw_key)
+    str separator=${text:5:1}
+    if [[ $key != count || $separator != '=' ]] {
+        echo "expected COUNT=VALUE" >&2
+        exit 2
+    }
+    str value=${text:6}
+    int integer=$(( ${value:?count must be an integer} ))
+    echo "input: $text; bytes: $bytes"
+    echo "key: $key; upper: $(toupper $key)"
+    echo "value: [$value]; number: $integer"
+    echo "head: [${text:0:6}]; empty: [${text:6:0}]"
+}
+
+str option=$(arg 1 'COUNT=08')
+attest option g?
+show_option $option
+array words=("MiXeD" "two words" "")
+for word in @words {
+    str printable=no
+    str graphical=no
+    if [[ p? $word ]] { printable=yes }
+    if [[ g? $word ]] { graphical=yes }
+    echo "cell: [$word]; lower: [$(tolower $word)]; upper: [$(toupper $word)]; bytes: $(strlen $word); print: $printable; graph: $graphical"
+}

@@ -13,7 +13,7 @@ The runtime task is `../notes-exp/tasks/cpp-transpiler-runtime-before-ir.md`.
 
 Build and exercise changes with `mk -p 1 test` in this directory. Use distinct
 `BUILD` directories when changing compilers or sanitizer flags. `mk -p 1
-sash-example` additionally compiles all nine sash examples with the real
+sash-example` additionally compiles all ten sash examples with the real
 CLI. Ordinary C++ tests do not require a Rust build or IR input.
 `mk -p 1 fault-test` adds Linux strace probes; run it without sanitizer
 instrumentation. The native command helper is deliberately unsanitized.
@@ -123,6 +123,17 @@ an owned optional string: missing is an ordinary lookup result, never an
 automatic abort (DD#101), and present-empty stays present. Reject NUL names
 and surface actual allocation/metadata failures rather than inventing absence.
 These helpers add no source taint/admission checks or environment mirroring.
+
+String operations take counted values, not variable names. Use the shared
+`strlen`/`substring`/`toupper`/`tolower`/`is_print`/`is_graph` helpers for
+scalars and string-cell reads. Slice offsets and optional signed lengths
+count bytes, clamp bounds, and distinguish omission from explicit zero.
+Negative offset counts from the end; negative length trims the remainder.
+Do not negate signed minima. Slices and case results own their bytes;
+case conversion changes ASCII letters only and preserves NUL/high bytes.
+Print/graph require nonempty ASCII `0x20..0x7e` / `0x21..0x7e`; false is
+an ordinary result. No locale dependence, implicit trimming, Unicode
+normalization, malformed-number repair, or hidden helper checkpoints.
 
 A native undeclared word-loop binder is a string even over an int
 collection (DD#86), not automatically the range's C++ value type. Honor

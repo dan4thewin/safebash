@@ -27,6 +27,7 @@ build:V:
 	$CXX $CPPFLAGS $CXXFLAGS $SANITIZE examples/option_report.cpp $BUILD/libsash_cpp.a -o $BUILD/option_report &&
 	$CXX $CPPFLAGS $CXXFLAGS $SANITIZE examples/arithmetic_report.cpp $BUILD/libsash_cpp.a -o $BUILD/arithmetic_report &&
 	$CXX $CPPFLAGS $CXXFLAGS $SANITIZE examples/numeric_report.cpp $BUILD/libsash_cpp.a -o $BUILD/numeric_report &&
+	$CXX $CPPFLAGS $CXXFLAGS $SANITIZE examples/string_report.cpp $BUILD/libsash_cpp.a -o $BUILD/string_report &&
 	$CXX $CPPFLAGS $CXXFLAGS $SANITIZE examples/error_paths.cpp $BUILD/libsash_cpp.a -o $BUILD/error_paths
 
 fixtures:V: build
@@ -56,7 +57,9 @@ test:V: fixtures
 	timeout 10 $BUILD/arithmetic_report > $BUILD/arithmetic_report.actual &&
 	cmp examples/arithmetic_report.expected $BUILD/arithmetic_report.actual &&
 	SASH_CPP_NUMERIC_RATE=0x7 timeout 10 $BUILD/numeric_report 08 0 > $BUILD/numeric_report.actual &&
-	cmp examples/numeric_report.expected $BUILD/numeric_report.actual
+	cmp examples/numeric_report.expected $BUILD/numeric_report.actual &&
+	timeout 10 $BUILD/string_report COUNT=08 > $BUILD/string_report.actual &&
+	cmp examples/string_report.expected $BUILD/string_report.actual
 
 error-demo:V: fixtures
 	if test "$PLATFORM" != linux; then printf '%s\n' 'error-demo requires Linux (strace and subreaper containment)' >&2; exit 2; fi &&
@@ -144,4 +147,7 @@ sash-example:V:
 	cmp examples/arithmetic_report.expected $BUILD/arithmetic_report-sash.actual &&
 	SASH_RT_LIB=$SASH_RT_LIB $SASH examples/numeric_report.sash -o $BUILD/numeric_report-sash &&
 	SASH_CPP_NUMERIC_RATE=0x7 timeout 10 $BUILD/numeric_report-sash 08 0 > $BUILD/numeric_report-sash.actual &&
-	cmp examples/numeric_report.expected $BUILD/numeric_report-sash.actual
+	cmp examples/numeric_report.expected $BUILD/numeric_report-sash.actual &&
+	SASH_RT_LIB=$SASH_RT_LIB $SASH examples/string_report.sash -o $BUILD/string_report-sash &&
+	timeout 10 $BUILD/string_report-sash COUNT=08 > $BUILD/string_report-sash.actual &&
+	cmp examples/string_report.expected $BUILD/string_report-sash.actual

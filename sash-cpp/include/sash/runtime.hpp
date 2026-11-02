@@ -145,6 +145,13 @@ void echo(std::initializer_list<std::string_view> words);
 [[nodiscard]] bool is_int(std::string_view text) noexcept;
 [[nodiscard]] std::int64_t int_or(std::string_view text, std::int64_t fallback) noexcept;
 [[nodiscard]] std::optional<std::string> getenv(std::string_view name);
+[[nodiscard]] std::int64_t strlen(std::string_view text);
+[[nodiscard]] std::string substring(std::string_view text, std::int64_t offset,
+                                    std::optional<std::int64_t> length = std::nullopt);
+[[nodiscard]] std::string toupper(std::string_view text);
+[[nodiscard]] std::string tolower(std::string_view text);
+[[nodiscard]] bool is_print(std::string_view text) noexcept;
+[[nodiscard]] bool is_graph(std::string_view text) noexcept;
 
 template <typename T> using Array = std::map<std::int64_t, T>;
 template <typename T> using Map = std::map<std::string, T>;

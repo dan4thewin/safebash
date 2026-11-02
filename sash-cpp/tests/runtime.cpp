@@ -2781,6 +2781,135 @@ void numeric_dispositions() {
     require(escaped, "unhandled END numeric conversion must not get automatic handling");
 }
 
+void byte_substrings() {
+    constexpr auto minimum = std::numeric_limits<std::int64_t>::min();
+    constexpr auto maximum = std::numeric_limits<std::int64_t>::max();
+    struct Slice {
+        std::int64_t offset;
+        std::optional<std::int64_t> length;
+        std::string_view expected;
+    };
+    const Slice slices[] = {
+        {0, std::nullopt, "abcdef"},
+        {2, std::nullopt, "cdef"},
+        {-2, std::nullopt, "ef"},
+        {-99, std::nullopt, "abcdef"},
+        {99, std::nullopt, ""},
+        {minimum, std::nullopt, "abcdef"},
+        {maximum, std::nullopt, ""},
+        {2, 2, "cd"},
+        {2, 0, ""},
+        {2, -1, "cde"},
+        {2, -99, ""},
+        {-4, -1, "cde"},
+        {-4, maximum, "cdef"},
+        {0, minimum, ""},
+        {minimum, 2, "ab"},
+    };
+    for (const auto &slice : slices) {
+        require(sash::substring("abcdef", slice.offset, slice.length) == slice.expected,
+                "byte slices must clamp signed bounds and distinguish omitted from zero length");
+    }
+    require(sash::strlen({}) == 0 && sash::substring({}, 0).empty() &&
+                sash::substring({}, minimum, maximum).empty(),
+            "default-empty views must support byte length and slicing");
+    const std::string binary("A\0b\xff"
+                             "D",
+                             5);
+    require(sash::strlen(binary) == 5 && sash::substring(binary, 1, 3) == std::string("\0b\xff", 3),
+            "byte length and slices must preserve interior NUL and high bytes");
+    const std::string utf8("caf\xc3\xa9", 5);
+    require(sash::strlen(utf8) == 5 && sash::substring(utf8, 3, 1) == std::string("\xc3", 1),
+            "string offsets and lengths count bytes, not Unicode characters");
+    std::string source = "prefix:value:suffix";
+    const auto copy = sash::substring(std::string_view(source).substr(7, 5), 1, 3);
+    source[8] = 'X';
+    require(copy == "alu", "a counted partial slice must own its bytes independently");
+    source = sash::substring(source, 7, 5);
+    require(source == "vXlue", "slice assignment must remain safe when the source is its target");
+    sash::Array<std::string> array{{0, "Ab Cd"}};
+    sash::Map<std::string> map{{"word", "Ab Cd"}};
+    require(sash::strlen(sash::cell(array, 0)) == 5 &&
+                sash::substring(sash::cell(map, "word"), 1, 3) == "b C" &&
+                sash::substring(sash::cell(array, 99), 0).empty() && sash::len(array) == 1 &&
+                sash::len(map) == 1,
+            "scalar and missing/present string cells must share non-inserting byte operations");
+}
+
+void ascii_text() {
+    const std::string mixed("aZ\0mIX\xc3\xa9\xff", 9);
+    require(sash::toupper(mixed) == std::string("AZ\0MIX\xc3\xa9\xff", 9) &&
+                sash::tolower(mixed) == std::string("az\0mix\xc3\xa9\xff", 9),
+            "case conversion must map ASCII only and preserve counted NUL/UTF-8/high bytes");
+    require(sash::toupper("@AZ[`az{") == "@AZ[`AZ{" && sash::tolower("@AZ[`az{") == "@az[`az{" &&
+                sash::toupper({}).empty() && sash::tolower({}).empty(),
+            "ASCII case bounds must leave neighboring punctuation and empty values unchanged");
+    std::string source = "MiXeD";
+    const auto upper = sash::toupper(source);
+    source = sash::tolower(source);
+    require(upper == "MIXED" && source == "mixed",
+            "case results must own their bytes and permit source-target aliasing");
+    sash::Array<std::string> array{{2, "MiXeD"}};
+    sash::Map<std::string> map{{"word", "MiXeD"}};
+    require(sash::toupper(sash::cell(array, 2)) == "MIXED" &&
+                sash::tolower(sash::cell(map, "word")) == "mixed" &&
+                sash::toupper(sash::cell(map, "missing")).empty() && sash::len(map) == 1,
+            "case conversion must share scalar and non-inserting string-cell semantics");
+    const std::string large(256, 'q');
+    const std::function<std::string()> operations[] = {
+        [&] { return sash::substring(large, 2, 200); },
+        [&] { return sash::toupper(large); },
+        [&] { return sash::tolower(large); },
+    };
+    for (const auto &operation : operations) {
+        std::string target = "kept";
+        bool caught = false;
+        try {
+            const AllocationFailure fault(128);
+            target = operation();
+        } catch (const std::bad_alloc &) {
+            caught = true;
+        }
+        require(
+            caught && target == "kept",
+            "slice/case allocation failure must escape without publishing an empty replacement");
+    }
+}
+
+void text_predicates() {
+    require(sash::is_print("!Hello~") && sash::is_graph("!Hello~") && sash::is_print("two words") &&
+                !sash::is_graph("two words") && sash::is_print(" ") && !sash::is_graph(" "),
+            "ASCII print includes space while graph excludes it, with inclusive endpoints");
+    const std::string_view rejected[] = {
+        {}, "", "\t", "\n", "\x1f", "\x7f", "\x80", "\xc3\xa9", std::string_view("ok\0end", 6),
+    };
+    for (const auto text : rejected) {
+        require(!sash::is_print(text) && !sash::is_graph(text),
+                "ASCII shape tests require nonempty input and reject controls/NUL/high bytes");
+    }
+    sash::Array<std::string> array{{0, "two words"}};
+    sash::Map<std::string> map{{"word", "Hello"}};
+    require(sash::is_print(sash::cell(array, 0)) && !sash::is_graph(sash::cell(array, 0)) &&
+                sash::is_graph(sash::cell(map, "word")) &&
+                !sash::is_print(sash::cell(map, "missing")) && sash::len(map) == 1,
+            "ASCII predicates must share scalar and non-inserting string-cell semantics");
+    bool denied = false;
+    try {
+        const AllocationFailure fault(1);
+        const std::string control(128, 'x');
+        require(control.size() == 128, "text allocation control");
+    } catch (const std::bad_alloc &) {
+        denied = true;
+    }
+    require(denied, "text allocation control must actually deny allocation");
+    {
+        const AllocationFailure fault(1);
+        require(sash::strlen("Hello") == 5 && sash::is_print("Hello world") &&
+                    sash::is_graph("Hello") && !sash::is_print(""),
+                "byte length and ASCII predicates must not allocate");
+    }
+}
+
 bool run_test(const char *name, const std::function<void()> &body) {
     try {
         body();
@@ -2831,6 +2960,16 @@ int main(int argc, char **argv) {
                                 program_arguments();
                                 environment_values();
                                 numeric_dispositions();
+                            })
+                       ? 0
+                       : 1;
+        }
+        if (mode == "--text") {
+            return run_test(argv[1],
+                            [] {
+                                byte_substrings();
+                                ascii_text();
+                                text_predicates();
                             })
                        ? 0
                        : 1;
@@ -2966,6 +3105,9 @@ int main(int argc, char **argv) {
         {"owned program arguments", program_arguments},
         {"environment lookup values", environment_values},
         {"numeric conversion boundaries", numeric_dispositions},
+        {"counted byte substrings", byte_substrings},
+        {"owned ASCII case conversion", ascii_text},
+        {"nonempty ASCII shape predicates", text_predicates},
     };
     for (const auto &test : tests) {
         if (!run_test(test.first, test.second)) {
