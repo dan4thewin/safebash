@@ -4478,36 +4478,21 @@ fn resolve_on_path(name: &str) -> bool {
 // SECURITY: This is definition-based, NOT name-based. There is no
 // "clean list" of variable names. Taint flows through assignment.
 
+use std::cell::{Cell, RefCell};
+use std::collections::BTreeSet;
 use std::collections::HashSet;
 
 /// Run taint analysis: track which variables hold tainted data,
 /// reject any use of tainted variables outside attest expressions.
-/// Taint runs in two phases, because a function body used to be walked at its
-/// **definition** — with only the taint known at that point. A global tainted
-/// further down was invisible inside the body, and an array that fell through
-/// `ssa_taint`'s documented array gap leaked unattested:
 ///
-/// ```text
-/// fn user { for v in @g; do echo "$v"; done }
-/// argv g
-/// user            # printed unattested argv
-/// ```
+/// DD#127: summarize each function independently of its callers. The empty
+/// entry measures its own taint; singleton global entries measure inherited
+/// flows and conditional diagnostics. Calls apply these summaries in source
+/// order. Only a single-use function may leave its own taint to its caller;
+/// a shared function must remove it before returning (SB5067).
 ///
-/// Phase 1 walks the whole top level, deferring function definitions; phase 2
-/// then walks each body against the completed set. That is sound with no
-/// fixpoint **because SB5067 forbids a body from leaving a global tainted
-/// that it did not inherit**: a body's net effect on the global taint set is
-/// insert-nothing, and SB5088 separately forbids it cleaning an inherited
-/// taint, so the net effect is exactly nil and phase 1's set is final before
-/// any body is read. "Body" covers a `$( … )` as well as a function, which is
-/// what lets `taint_cmdsub_bodies` clone-and-discard soundly (DG, 2026-10-01).
-/// A `$( … )` body is inlined rather than forked, so its writes really do
-/// escape; the verdict is what makes the discarded set equal to the kept one. It also costs nothing in precision —
-/// top-level flow order is preserved exactly, so `argv a` followed by an
-/// attest-all still leaves `a` clean for every body.
-///
-/// A function defined *inside* top-level control flow keeps the old
-/// definition-point walk (see `taint-fn-in-toplevel-control-flow`).
+/// Collection slots still use DD#100's call-site union until their summaries
+/// are integrated. Positional arguments are checked at the call (DD#46).
 pub fn check_taint(program: &Program) -> Vec<Diagnostic> {
     let mut tainted: HashSet<String> = HashSet::new();
     let mut diags = Vec::new();
@@ -4517,57 +4502,36 @@ pub fn check_taint(program: &Program) -> Vec<Diagnostic> {
     for block in program_blocks(program) {
         collect_global_names(block, &mut globals);
     }
-    let cx = SlotCx {
+    let census = take_census(program);
+    let empty = HashMap::new();
+    let scratch = BodyCx::default();
+    let base = SlotCx {
         probing: false,
         info: &info,
         map_names: &map_names,
         globals: &globals,
+        fns: &census.fns,
+        summaries: &empty,
+        fname: "",
+        body: &scratch,
+        log: None,
     };
-    for f in taint_top_level(program, &mut tainted, &cx, &mut diags) {
-        taint_function_body(f, &tainted, &cx, &mut diags);
+    let summaries = build_summaries(program, &census, &base);
+    let cx = SlotCx {
+        summaries: &summaries,
+        ..base
+    };
+    for block in program_blocks(program) {
+        taint_block(block, &mut tainted, &JustTainted::new(), &cx, &mut diags);
+    }
+    for (f, span) in program_blocks(program)
+        .into_iter()
+        .flatten()
+        .filter_map(as_function_def)
+    {
+        diags.extend(check_function_def(f, span, &tainted, &cx));
     }
     diags
-}
-
-/// Phase 1: walk the top level, deferring every function definition.
-///
-/// SB5067 keeps a body's net effect on the global taint set at nil — for a
-/// `$( … )` body as much as a function's — so the set this leaves behind is
-/// final, and the deferred bodies can then be checked against it in one pass,
-/// with no fixpoint.
-fn taint_top_level<'a>(
-    program: &'a Program,
-    tainted: &mut HashSet<String>,
-    cx: &SlotCx,
-    diags: &mut Vec<Diagnostic>,
-) -> Vec<&'a Function> {
-    let mut deferred = Vec::new();
-    for block in program_blocks(program) {
-        taint_top_block(block, tainted, cx, diags, &mut deferred);
-    }
-    deferred
-}
-
-/// One top-level block. A function definition is deferred to the second pass
-/// and breaks the DD#121 adjacency chain: the statement after it is adjacent
-/// to a definition, which taints nothing.
-fn taint_top_block<'a>(
-    block: &'a [Statement],
-    tainted: &mut HashSet<String>,
-    cx: &SlotCx,
-    diags: &mut Vec<Diagnostic>,
-    deferred: &mut Vec<&'a Function>,
-) {
-    let mut just = JustTainted::new();
-    for stmt in block {
-        match &stmt.kind {
-            StmtKind::Function(f) => {
-                deferred.push(f);
-                just = JustTainted::new();
-            }
-            _ => just = taint_step(stmt, tainted, &just, cx, diags),
-        }
-    }
 }
 
 /// DD#121 R1: the names the *immediately preceding* sibling statement tainted.
@@ -4587,11 +4551,16 @@ fn taint_step(
     cx: &SlotCx,
     diags: &mut Vec<Diagnostic>,
 ) -> JustTainted {
+    let snap = cx.log.map(|log| (log, log.bump(), tainted.clone()));
     taint_stmt(stmt, tainted, just, cx, diags);
     if cx.probing {
         return JustTainted::new();
     }
-    stmt_taints(stmt, cx)
+    let taints = stmt_taints(stmt, cx);
+    if let Some((log, mark, before)) = snap {
+        log_sites(log, mark, stmt, &before, tainted, &taints, cx.globals);
+    }
+    taints
 }
 
 /// DD#121: the names `stmt` itself taints.
@@ -4607,11 +4576,12 @@ fn taint_step(
 /// whole test, whatever shape that statement has. `h=$(getenv X) || h=DEF` is
 /// one statement and does taint `h`.
 fn stmt_taints(stmt: &Statement, cx: &SlotCx) -> JustTainted {
+    let scratch = BodyCx::default();
     let probe_cx = SlotCx {
-        info: cx.info,
-        map_names: cx.map_names,
-        globals: cx.globals,
         probing: true,
+        log: None,
+        body: &scratch,
+        ..*cx
     };
     let mut probe = HashSet::new();
     let mut discard = Vec::new();
@@ -5987,6 +5957,7 @@ fn taint_stmt_no_read_taint(
         // read/mapfile from clean pipe source: don't taint
         if matches!(name, "read" | "readline" | "mapfile") {
             taint_cmdsub_bodies(stmt.stage_marks().0, tainted, sx, diags);
+            taint_arith_calls(stmt.stage_marks().0, tainted, sx, diags);
             check_clean_read_taint(c, tainted, diags);
             return;
         }
@@ -6034,12 +6005,13 @@ fn taint_stmt(
     // `taint_declaration` walks each initializer's bodies itself.
     if !matches!(stmt.kind, StmtKind::Declaration(_)) {
         taint_cmdsub_bodies(stmt, tainted, sx, diags);
+        taint_arith_calls(stmt, tainted, sx, diags);
     }
     match &stmt.kind {
         StmtKind::Assignment(a) => taint_assignment(a, tainted, sx, diags),
-        StmtKind::Declaration(d) => taint_declaration(d, tainted, sx, diags),
+        StmtKind::Declaration(d) => taint_declaration(d, stmt.span, tainted, sx, diags),
         StmtKind::Command(c) => taint_command(c, stmt.span, tainted, just, sx, diags),
-        StmtKind::Function(f) => taint_function_body(f, tainted, sx, diags),
+        StmtKind::Function(_) => {}
         StmtKind::Pipeline(p) => taint_pipeline(p, tainted, sx, diags),
         StmtKind::Redirected(r) => taint_redirected(r, tainted, just, sx, diags),
         StmtKind::Case(c) => taint_case_arms(c, tainted, sx, diags),
@@ -6056,6 +6028,7 @@ fn taint_stmt(
         // the SSA backstop (an ICE-shaped message naming `__arith_test_1`)
         // instead of a located SB5020. Same omission as the `$(( … ))` rvalue.
         StmtKind::ArithTest(a) => check_arith_taint(a, tainted, diags),
+        StmtKind::ReturnProducer(inner) => taint_return_producer(inner, tainted, just, sx, diags),
         _ => taint_child_bodies(stmt, tainted, just, sx, diags),
     }
 }
@@ -6072,37 +6045,33 @@ fn taint_stmt(
 /// `for`'s words — are leaves or heads, so no arm could do it for them.
 fn taint_cmdsub_bodies(
     stmt: &Statement,
-    tainted: &HashSet<String>,
+    tainted: &mut HashSet<String>,
     sx: &SlotCx,
     diags: &mut Vec<Diagnostic>,
 ) {
     taint_capture_bodies(stmt.cmdsub_bodies(), tainted, sx, diags);
 }
 
-/// Walk each capture body in `bodies` from the set in force where it runs.
-///
-/// The set is CLONED per body, matching `taint_function_body`: a name the body
-/// introduces is body-local and must not leak outward.
-///
-/// A write to a name the enclosing scope already binds *does* persist at
-/// runtime (DD#86) — the body is inlined, not a subshell. That is why SB5067's
-/// net-effect verdict is passed here too, on DG's 2026-10-01 ruling: "a body is
-/// an anonymous function" means the same rule, applied to the same construct.
-/// Clone-and-discard is sound only because of it — the verdict is what makes
-/// the discarded set provably equal to the one the enclosing scope keeps, which
-/// is the no-fixpoint invariant `taint_top_level` relies on.
+/// A capture is single-use (DD#127) and inlined (DD#86), so its taint can
+/// escape. Union is conservative for a capture in a lazy operand: it may not
+/// run, so its kills cannot clear the enclosing state.
 fn taint_capture_bodies(
     bodies: Vec<&[Statement]>,
-    tainted: &HashSet<String>,
+    tainted: &mut HashSet<String>,
     sx: &SlotCx,
     diags: &mut Vec<Diagnostic>,
 ) {
     for body in bodies {
+        let frame = BodyCx::default();
+        let inner = SlotCx {
+            fname: "",
+            body: &frame,
+            ..*sx
+        };
         let mut body_tainted = tainted.clone();
-        let sites = collect_global_taint_sites(body, sx.globals);
-        let entry_set = body_tainted.clone();
-        taint_block(body, &mut body_tainted, &JustTainted::new(), sx, diags);
-        report_exit_tainted_globals(CMDSUB_SUBJECT, &sites, &entry_set, &body_tainted, diags);
+        taint_block(body, &mut body_tainted, &JustTainted::new(), &inner, diags);
+        tainted.extend(body_tainted);
+        tainted.extend(frame.returns.take());
     }
 }
 
@@ -6119,7 +6088,7 @@ fn taint_child_bodies(
     //
     // DD#121: the branching shapes have their own arms in `taint_stmt`, so
     // everything reaching here is a transparent single-statement wrapper
-    // (`Group`, `Suppressed`, `Negated`, `ReturnProducer`) — the wrapped
+    // (`Group`, `Suppressed`, `Negated`) — the wrapped
     // statement sits in the caller's sequence, so the adjacency set passes
     // straight through rather than resetting.
     for body in stmt.structural_bodies() {
@@ -6391,6 +6360,8 @@ fn block_taints(stmts: &[Statement], cx: &SlotCx) -> JustTainted {
 /// DD#121: `&&` / `||`. The right operand runs on only one outcome of the left,
 /// so it is walked against a clone and unioned at the merge. For `||` the left
 /// is a *failing* gate, so the right starts from the pre-attest state.
+///
+/// A background job runs in a child: check its reads, but discard its effects.
 fn taint_list(
     l: &List,
     span: Span,
@@ -6399,6 +6370,17 @@ fn taint_list(
     sx: &SlotCx,
     diags: &mut Vec<Diagnostic>,
 ) {
+    if matches!(l.op, ListOp::Background) {
+        taint_discarded(&l.left, true, tainted, sx, diags);
+        taint_block(
+            std::slice::from_ref(l.right.as_ref()),
+            tainted,
+            &JustTainted::new(),
+            sx,
+            diags,
+        );
+        return;
+    }
     let before = tainted.clone();
     taint_block(
         std::slice::from_ref(l.left.as_ref()),
@@ -6547,6 +6529,7 @@ fn splat_array_name(w: &Expr) -> Option<&str> {
 /// assignments do; a bare declaration binds no value and taints nothing.
 fn taint_declaration(
     d: &Declaration,
+    span: Span,
     tainted: &mut HashSet<String>,
     sx: &SlotCx,
     diags: &mut Vec<Diagnostic>,
@@ -6556,6 +6539,7 @@ fn taint_declaration(
     for a in &d.assignments {
         if let Some(eq) = a.as_assignment() {
             taint_capture_bodies(eq.value.cmdsub_bodies(), tainted, sx, diags);
+            taint_expr_arith_calls(&eq.value, span, tainted, sx, diags);
             taint_assignment(&eq, tainted, sx, diags);
         }
     }
@@ -6787,43 +6771,6 @@ fn tainted_into_collection_msg(name: &str, is_map: bool) -> String {
     )
 }
 
-/// Taint a function body. Positional params ($1-$9, $@) are clean within
-/// a function (the caller's args are statically visible — DD#46); they are
-/// never added to the tainted set, so the body simply inherits the outer
-/// tainted set unchanged.
-fn taint_function_body(
-    f: &Function,
-    tainted: &HashSet<String>,
-    sx: &SlotCx,
-    diags: &mut Vec<Diagnostic>,
-) {
-    let mut fn_tainted = tainted.clone();
-    // DD#100: a slot is the caller's collection, so it enters tainted when any
-    // call site passes a tainted one. Attesting it here is the deferral Part E
-    // describes — the callee, not the caller, states the gate.
-    //
-    // DD#121: that arrival IS the tainting operation as far as the body can
-    // see, so the body's first statement is adjacent to it. Without this the
-    // Part E deferral would be unwritable.
-    let mut entry_just = JustTainted::new();
-    for slot in tainted_slots_on_entry(&f.name, sx.info, tainted) {
-        fn_tainted.insert(slot.clone());
-        entry_just.insert(slot);
-    }
-    let inner = SlotCx {
-        probing: false,
-        info: sx.info,
-        map_names: sx.map_names,
-        globals: sx.globals,
-    };
-    // SB5067 is a net-effect rule, so the sites are gathered BEFORE the walk
-    // and the verdict is passed afterwards, against the exit set.
-    let sites = collect_global_taint_sites(&f.body, sx.globals);
-    let entry_set = fn_tainted.clone();
-    taint_block(&f.body, &mut fn_tainted, &entry_just, &inner, diags);
-    report_exit_tainted_globals(&f.name, &sites, &entry_set, &fn_tainted, diags);
-}
-
 /// Taint a pipeline: a `read`/`mapfile` stage is exempt from tainting its
 /// targets only when EVERY stage upstream of it is compiler-computed.
 ///
@@ -6833,6 +6780,7 @@ fn taint_function_body(
 /// test operands unchecked. DD#24 is operational — any output that passed
 /// through `execve(2)` is tainted — so the flag must accumulate over the
 /// stages the data actually traversed, not describe only the source.
+/// Non-final stages run in children; their reads count, but their writes do not.
 fn taint_pipeline(
     p: &crate::ir::Pipeline,
     tainted: &mut HashSet<String>,
@@ -6841,13 +6789,61 @@ fn taint_pipeline(
 ) {
     let mut upstream_external = false;
     for (i, s) in p.commands.iter().enumerate() {
-        if i > 0 && !upstream_external {
-            taint_stmt_no_read_taint(s, tainted, &JustTainted::new(), sx, diags);
-        } else {
-            taint_stmt(s, tainted, &JustTainted::new(), sx, diags);
-        }
+        let read_taints = i == 0 || upstream_external;
+        let in_parent = i + 1 == p.commands.len() && stage_runs_in_parent(s);
+        taint_stage(s, read_taints, in_parent, tainted, sx, diags);
         upstream_external |= is_external_source(s);
     }
+}
+
+fn stage_runs_in_parent(stmt: &Statement) -> bool {
+    let (body, _, negated) = stmt.stage_marks();
+    (matches!(body.kind, StmtKind::While(_)) && !negated) || body.is_pipe_reader()
+}
+
+fn taint_stage(
+    stmt: &Statement,
+    read_taints: bool,
+    in_parent: bool,
+    tainted: &mut HashSet<String>,
+    sx: &SlotCx,
+    diags: &mut Vec<Diagnostic>,
+) {
+    if in_parent {
+        walk_stage(stmt, read_taints, tainted, sx, diags);
+    } else {
+        taint_discarded(stmt, read_taints, tainted, sx, diags);
+    }
+}
+
+fn walk_stage(
+    stmt: &Statement,
+    read_taints: bool,
+    tainted: &mut HashSet<String>,
+    sx: &SlotCx,
+    diags: &mut Vec<Diagnostic>,
+) {
+    if read_taints {
+        taint_stmt(stmt, tainted, &JustTainted::new(), sx, diags);
+    } else {
+        taint_stmt_no_read_taint(stmt, tainted, &JustTainted::new(), sx, diags);
+    }
+}
+
+fn taint_discarded(
+    stmt: &Statement,
+    read_taints: bool,
+    tainted: &HashSet<String>,
+    sx: &SlotCx,
+    diags: &mut Vec<Diagnostic>,
+) {
+    let frame = BodyCx::default();
+    let inner = SlotCx {
+        body: &frame,
+        log: None,
+        ..*sx
+    };
+    walk_stage(stmt, read_taints, &mut tainted.clone(), &inner, diags);
 }
 
 /// Taint a redirected statement. A redirect target is a read position, so a
@@ -6869,9 +6865,9 @@ fn taint_redirected(
 /// a test operand like the subject (DD#66): `[[ $s == "$t" { … } ]]` reads
 /// `t` exactly as the boolean form `[[ $s == "$t" ]]` does. A pattern's
 /// capture body is walked with the statement's other captures
-/// ([`taint_cmdsub_bodies`]), and SB5067 keeps a body from newly tainting a
-/// global, so no pattern can read taint that the pre-dispatch set lacks,
-/// whatever order the patterns run in.
+/// ([`taint_cmdsub_bodies`]) before dispatch, and the effects are unioned
+/// (DD#127). Every operand sees every capture's possible effect, conservatively
+/// over-approximating whichever pattern order runs.
 fn taint_case_arms(
     c: &crate::ir::Case,
     tainted: &mut HashSet<String>,
@@ -6912,6 +6908,7 @@ fn taint_command(
     // before `f` fills it.
     check_command_reads(c, tainted, diags);
     taint_out_params(c, sx, tainted);
+    taint_call(c, name, span, tainted, sx, diags);
     if matches!(name, "read" | "readline" | "mapfile" | "argv") && !is_value_split(name, c) {
         taint_read_target(c, tainted);
     }
@@ -9141,19 +9138,17 @@ pub(crate) struct SlotInfo {
     taints: HashSet<(String, usize)>,
 }
 
-/// The static facts carried through the taint walk. A forwarded slot argument
-/// (`f =A` inside `g`) needs no enclosing-function context here: the binding
-/// fixpoint already resolved it, and marking the slot name itself tainted is
-/// what the enclosing body reads. `map_names` is separate static knowledge —
-/// SB5021 needs the declared kind of a collection to name a route that exists.
+/// Static call/slot facts and the current body's return and diagnostic state.
+#[derive(Clone, Copy)]
 struct SlotCx<'a> {
     info: &'a SlotInfo,
     map_names: &'a HashSet<String>,
-    /// Names bound at the top level — what SB5067's body-exit rule measures
-    /// against. Carried here so both `taint_function_body` call sites (the
-    /// deferred phase-2 walk and the definition-point walk for a function
-    /// nested in top-level control flow) check the same rule.
     globals: &'a HashSet<String>,
+    fns: &'a HashMap<String, CallSites>,
+    summaries: &'a HashMap<String, FnSummary>,
+    fname: &'a str,
+    body: &'a BodyCx,
+    log: Option<&'a SiteLog>,
     /// Set while `stmt_taints` is measuring one statement's taint effect. It
     /// suppresses the nested measurement, which would otherwise double the
     /// walk at every level of nesting.
@@ -9326,119 +9321,557 @@ fn taint_out_params(c: &Command, cx: &SlotCx, tainted: &mut HashSet<String>) {
     }
 }
 
-// ── SB5067: a body may not LEAVE a global tainted ────────────────
-//
-// The taint pass walks a function body **once**, with the tainted set known
-// at that point. That was sound only because taint could not arrive later —
-// and it could:
-//
-//     array g=()
-//     fn taint_it { argv g }
-//     fn user { for v in @g; do echo "$v"; done }
-//     taint_it
-//     user                 # printed unattested argv
-//
-// `g[0]=$(arg 1)` was already SB5021 ("tainted value cannot be placed in
-// array 'g'"); the **bulk-fill** path simply escaped the same rule.
-//
-// The rule is a **net effect** one (DG, 2026-09-30). It is not "a function
-// may not taint a global" — that rejected a shape DD#121 makes provably
-// safe, because the diagnostic fired on the taint itself and never looked
-// for the attest below it:
-//
-//     fn f { argv g; attest v in g [[ … ]] }      # clean at exit — allowed
-//
-// What is rejected is a body whose EXIT set contains a global it did not
-// inherit. Combined with SB5088 (a body may not attest an inherited taint,
-// so it can never *remove* one), a body's net effect on the global taint set
-// is exactly nil. That is what lets `check_taint` finish the whole top level
-// before it walks any body — no fixpoint, and no conservative rejection of a
-// call that ran before the filler.
-//
-// Why the net-effect form needs no ordering analysis: R1 (SB5088) requires
-// the attest to be the statement immediately following the one that taints
-// its subject, so there is no window in which the global is tainted and
-// observable, and no interleaving of calls can expose one.
-//
-// Note "did not inherit". The predicate is emphatically NOT "clean at exit":
-// a body inherits the top-level tainted set, and SB5088 forbids it cleaning
-// an inherited taint, so once any global is tainted at the top level a
-// clean-at-exit rule would be unsatisfiable for every function in the
-// program — including ones that never mention the global.
-//
-// The other escape hatch remains: fill a local, attest it, assign out.
-//
-//     fn f { array t=(); argv t; attest v in t [[ … ]]; g[0]=${t[1]} }
-//
-// A **slot** (`A`..`E`) is exempt: it is the caller's collection, passed
-// deliberately, and DD#100 lets a callee fill one as an out-parameter. That
-// taint propagates back to the caller (`slot_taint_summary`), so it is
-// tracked rather than banned.
+// ── DD#127: global taint across function boundaries ──────────────
 
-/// One syntactic site in a body that introduces taint into a global.
-///
-/// Gathered before the body's taint walk; whether it is actually a fault is
-/// decided afterwards, by whether the name is still tainted at exit.
-struct GlobalTaintSite {
-    name: String,
-    span: Span,
-    via: String,
+#[derive(Default)]
+struct CallSites {
+    defs: usize,
+    calls: Vec<Span>,
+    int_fn: bool,
 }
 
-/// Report the gathered sites whose target is still tainted when the body
-/// ends — the net-effect verdict.
-///
-/// `entry` is the set on entry (top-level taint plus any tainted slots), so
-/// a global the body merely inherited is not attributed to it. A name is
-/// reported at most once, at its LAST site: with several taints of one name
-/// it is the last that left it dirty at exit.
-/// A site leaked if its global is tainted at exit and was not inherited.
-fn leaked_global(site: &GlobalTaintSite, entry: &HashSet<String>, exit: &HashSet<String>) -> bool {
-    exit.contains(&site.name) && !entry.contains(&site.name)
+impl CallSites {
+    fn single_use(&self) -> bool {
+        self.defs == 1 && self.calls.len() == 1
+    }
 }
 
-fn report_exit_tainted_globals(
-    fname: &str,
-    sites: &[GlobalTaintSite],
-    entry: &HashSet<String>,
-    exit: &HashSet<String>,
-    diags: &mut Vec<Diagnostic>,
-) {
-    let mut seen: HashSet<&str> = HashSet::new();
-    for site in sites.iter().rev() {
-        if leaked_global(site, entry, exit) && seen.insert(site.name.as_str()) {
-            diags.push(global_taint_diag(site.span, fname, &site.name, &site.via));
+#[derive(Default)]
+struct Census {
+    fns: HashMap<String, CallSites>,
+    callees: HashMap<String, BTreeSet<String>>,
+}
+
+impl Census {
+    fn record_call(&mut self, owner: &str, name: &str, span: Span) {
+        if owner == name {
+            return;
+        }
+        let Some(sites) = self.fns.get_mut(name) else {
+            return;
+        };
+        sites.calls.push(span);
+        if !owner.is_empty() {
+            self.callees
+                .entry(owner.to_string())
+                .or_default()
+                .insert(name.to_string());
+        }
+    }
+
+    fn record_stmt(&mut self, stmt: &Statement, owner: &str) {
+        if let StmtKind::Command(c) = &stmt.kind {
+            self.record_call(owner, expr_literal_str(&c.name), stmt.span);
+        }
+        let mut names = Vec::new();
+        crate::resolve::walk_arith_value_calls(
+            stmt,
+            &|name| is_int_fn(name, &self.fns),
+            &mut |name| names.push(name.to_string()),
+        );
+        for name in names {
+            self.record_call(owner, &name, stmt.span);
         }
     }
 }
 
-/// Every site in THIS body that introduces taint into a global.
-///
-/// Structural on purpose, and scoped: a nested function's body is walked by
-/// its own `taint_function_body`, so sites inside one are not attributed to
-/// the enclosing function. A nested `$( )` body is likewise not descended
-/// into — `taint_cmdsub_bodies` gathers and reports its sites separately, so
-/// descending here would report the same leak twice.
-fn collect_global_taint_sites(
-    body: &[Statement],
-    globals: &HashSet<String>,
-) -> Vec<GlobalTaintSite> {
-    let mut sites = Vec::new();
-    crate::ir::walk_scoped_structural_stmts(body, "", &mut |stmt, in_fn| {
-        if in_fn.is_empty() {
-            collect_stmt_global_taint(stmt, globals, &mut sites);
-        }
-    });
-    sites
+fn take_census(program: &Program) -> Census {
+    let mut census = Census::default();
+    for f in program.function_defs() {
+        let sites = census.fns.entry(f.name.clone()).or_default();
+        sites.defs += 1;
+        sites.int_fn |= matches!(f.return_type, VarType::Int);
+    }
+    for block in program_blocks(program) {
+        crate::ir::walk_scoped_stmts(block, "", &mut |stmt, owner| {
+            census.record_stmt(stmt, owner);
+        });
+    }
+    census
 }
 
-/// Names declared at the top level — everything a function must not taint.
-/// Descends into top-level control flow but **not** into function bodies,
-/// whose declarations are local.
-/// The names bound at the top level. Structural on purpose: a name first
-/// introduced inside a `$( … )` body is local to that body (DD#86), so it is
-/// not a global and must not join this set — otherwise an unrelated function's
-/// own local of the same spelling is reported as tainting a global.
+fn is_int_fn(name: &str, fns: &HashMap<String, CallSites>) -> bool {
+    fns.get(name).is_some_and(|sites| sites.int_fn)
+}
+
+#[derive(Default)]
+struct FnSummary {
+    gens: HashSet<String>,
+    flows: HashMap<String, HashSet<String>>,
+    reads: HashMap<String, Vec<Diagnostic>>,
+}
+
+impl FnSummary {
+    fn merge(&mut self, other: Self) {
+        self.gens.extend(other.gens);
+        for (name, flow) in other.flows {
+            self.flows.entry(name).or_default().extend(flow);
+        }
+        for (name, reads) in other.reads {
+            self.reads.entry(name).or_default().extend(reads);
+        }
+    }
+}
+
+#[derive(Default)]
+struct BodyCx {
+    returns: RefCell<HashSet<String>>,
+    back_edges: RefCell<HashSet<String>>,
+}
+
+#[derive(Default)]
+struct SiteLog {
+    next: Cell<usize>,
+    last: RefCell<HashMap<String, (usize, Span, String)>>,
+}
+
+impl SiteLog {
+    fn bump(&self) -> usize {
+        let mark = self.next.get();
+        self.next.set(mark + 1);
+        mark
+    }
+
+    fn record(&self, name: &str, mark: usize, span: Span, via: &str) {
+        let mut sites = self.last.borrow_mut();
+        if sites.get(name).is_none_or(|old| old.0 <= mark) {
+            sites.insert(name.to_string(), (mark, span, via.to_string()));
+        }
+    }
+
+    fn site(&self, name: &str, fallback: Span) -> (Span, String) {
+        self.last
+            .borrow()
+            .get(name)
+            .map(|(_, span, via)| (*span, via.clone()))
+            .unwrap_or_else(|| (fallback, "this statement".to_string()))
+    }
+}
+
+struct BodyWalk {
+    exit: HashSet<String>,
+    diags: Vec<Diagnostic>,
+    log: SiteLog,
+}
+
+struct SummaryBuilder<'a> {
+    defs: HashMap<&'a str, Vec<&'a Function>>,
+    callees: &'a HashMap<String, BTreeSet<String>>,
+    base: SlotCx<'a>,
+    done: HashMap<String, FnSummary>,
+    started: HashSet<String>,
+}
+
+impl SummaryBuilder<'_> {
+    fn build(&mut self, name: &str) {
+        if self.done.contains_key(name) || !self.started.insert(name.to_string()) {
+            return;
+        }
+        let callees: Vec<_> = self
+            .callees
+            .get(name)
+            .into_iter()
+            .flatten()
+            .cloned()
+            .collect();
+        for callee in callees {
+            self.build(&callee);
+        }
+        let mut summary = FnSummary::default();
+        let cx = SlotCx {
+            summaries: &self.done,
+            ..self.base
+        };
+        for f in &self.defs[name] {
+            summary.merge(summarise_def(f, &cx));
+        }
+        self.done.insert(name.to_string(), summary);
+    }
+}
+
+fn build_summaries(
+    program: &Program,
+    census: &Census,
+    base: &SlotCx,
+) -> HashMap<String, FnSummary> {
+    let mut builder = SummaryBuilder {
+        defs: HashMap::new(),
+        callees: &census.callees,
+        base: *base,
+        done: HashMap::new(),
+        started: HashSet::new(),
+    };
+    for f in program.function_defs() {
+        builder.defs.entry(&f.name).or_default().push(f);
+    }
+    let names: BTreeSet<_> = builder.defs.keys().copied().collect();
+    for name in names {
+        builder.build(name);
+    }
+    builder.done
+}
+
+fn summarise_def(f: &Function, cx: &SlotCx) -> FnSummary {
+    let base = walk_body(f, HashSet::new(), &JustTainted::new(), cx);
+    let mut summary = FnSummary {
+        gens: base.exit.intersection(cx.globals).cloned().collect(),
+        ..FnSummary::default()
+    };
+    let names: BTreeSet<_> = cx.globals.iter().collect();
+    for name in names {
+        let walk = walk_body(f, HashSet::from([name.clone()]), &JustTainted::new(), cx);
+        let flow = walk
+            .exit
+            .intersection(cx.globals)
+            .filter(|out| *out == name || !summary.gens.contains(*out))
+            .cloned()
+            .collect();
+        summary.flows.insert(name.clone(), flow);
+        summary
+            .reads
+            .insert(name.clone(), diag_difference(walk.diags, &base.diags));
+    }
+    summary
+}
+
+fn walk_body(
+    f: &Function,
+    mut entry: HashSet<String>,
+    just: &JustTainted,
+    cx: &SlotCx,
+) -> BodyWalk {
+    loop {
+        let (walk, back) = walk_body_once(f, &entry, just, cx);
+        if back.is_subset(&entry) {
+            return walk;
+        }
+        entry.extend(back);
+    }
+}
+
+fn walk_body_once(
+    f: &Function,
+    entry: &HashSet<String>,
+    just: &JustTainted,
+    cx: &SlotCx,
+) -> (BodyWalk, HashSet<String>) {
+    let body = BodyCx::default();
+    let log = SiteLog::default();
+    let inner = SlotCx {
+        fname: &f.name,
+        body: &body,
+        log: Some(&log),
+        probing: false,
+        ..*cx
+    };
+    let mut tainted = entry.clone();
+    let mut diags = Vec::new();
+    taint_block(&f.body, &mut tainted, just, &inner, &mut diags);
+    let mut exit = body.returns.take();
+    if block_falls_through(&f.body) {
+        exit.extend(tainted);
+    }
+    (BodyWalk { exit, diags, log }, body.back_edges.take())
+}
+
+fn diag_difference(diags: Vec<Diagnostic>, baseline: &[Diagnostic]) -> Vec<Diagnostic> {
+    let mut remaining: Vec<_> = baseline.iter().collect();
+    diags
+        .into_iter()
+        .filter(|diag| match remaining.iter().position(|old| *old == diag) {
+            Some(i) => {
+                remaining.remove(i);
+                false
+            }
+            None => true,
+        })
+        .collect()
+}
+
+fn as_function_def(stmt: &Statement) -> Option<(&Function, Span)> {
+    match &stmt.kind {
+        StmtKind::Function(f) => Some((f, stmt.span)),
+        _ => None,
+    }
+}
+
+fn check_function_def(
+    f: &Function,
+    span: Span,
+    final_set: &HashSet<String>,
+    cx: &SlotCx,
+) -> Vec<Diagnostic> {
+    let base = walk_body(f, HashSet::new(), &JustTainted::new(), cx);
+    let mut diags = base.diags.clone();
+    report_shared_globals(f, span, &base, cx, &mut diags);
+    check_slot_entry(f, span, final_set, &base, cx, &mut diags);
+    diags.sort_by(|a, b| (a.line, a.col, &a.message).cmp(&(b.line, b.col, &b.message)));
+    diags
+}
+
+fn report_shared_globals(
+    f: &Function,
+    span: Span,
+    walk: &BodyWalk,
+    cx: &SlotCx,
+    diags: &mut Vec<Diagnostic>,
+) {
+    let Some(why) = shared_reason(&cx.fns[&f.name]) else {
+        return;
+    };
+    let names: BTreeSet<_> = walk.exit.intersection(cx.globals).collect();
+    for name in names {
+        let (site, via) = walk.log.site(name, span);
+        diags.push(global_taint_diag(site, &f.name, name, &via, &why));
+    }
+}
+
+fn shared_reason(sites: &CallSites) -> Option<String> {
+    if sites.single_use() {
+        return None;
+    }
+    if sites.defs != 1 {
+        return Some("it is defined more than once".to_string());
+    }
+    if sites.calls.is_empty() {
+        return Some("it has no call site".to_string());
+    }
+    let calls: Vec<_> = sites
+        .calls
+        .iter()
+        .map(|span| format!("{}:{}", span.line, span.col))
+        .collect();
+    Some(format!("it is called at {}", calls.join(", ")))
+}
+
+fn check_slot_entry(
+    f: &Function,
+    span: Span,
+    final_set: &HashSet<String>,
+    base: &BodyWalk,
+    cx: &SlotCx,
+    diags: &mut Vec<Diagnostic>,
+) {
+    let slots: HashSet<_> = tainted_slots_on_entry(&f.name, cx.info, final_set)
+        .into_iter()
+        .collect();
+    if slots.is_empty() {
+        return;
+    }
+    let walk = walk_body(f, slots.clone(), &slots, cx);
+    diags.extend(diag_difference(walk.diags, &base.diags));
+    let names: BTreeSet<_> = walk
+        .exit
+        .intersection(cx.globals)
+        .filter(|name| !base.exit.contains(*name))
+        .collect();
+    for name in names {
+        let (site, via) = walk.log.site(name, span);
+        diags.push(slot_global_taint_diag(site, &f.name, name, &via));
+    }
+}
+
+fn slot_global_taint_diag(span: Span, fname: &str, target: &str, via: &str) -> Diagnostic {
+    Diagnostic::error_span(
+        span,
+        "SB5067",
+        format!(
+            "`{fname}` leaves the global `{target}` tainted via {via}, with \
+             taint a caller passes in through a collection parameter — \
+             attest it here, in the statement immediately below \
+             (`attest … [[ … ]]`), or attest the collection in the caller \
+             before the call"
+        ),
+    )
+}
+
+fn log_sites(
+    log: &SiteLog,
+    mark: usize,
+    stmt: &Statement,
+    before: &HashSet<String>,
+    after: &HashSet<String>,
+    taints: &JustTainted,
+    globals: &HashSet<String>,
+) {
+    let via = site_via(stmt);
+    for name in after.intersection(globals) {
+        if taints.contains(name) || !before.contains(name) {
+            log.record(name, mark, stmt.span, &via);
+        }
+    }
+}
+
+fn site_via(stmt: &Statement) -> String {
+    match &stmt.stage_body().kind {
+        StmtKind::ReturnProducer(inner) => site_via(inner),
+        StmtKind::Command(c) => match expr_literal_str(&c.name) {
+            "" => "this statement".to_string(),
+            name => format!("`{name}`"),
+        },
+        StmtKind::Assignment(_) | StmtKind::Declaration(_) => "an assignment".to_string(),
+        StmtKind::Pipeline(p) => p
+            .commands
+            .last()
+            .map(site_via)
+            .unwrap_or_else(|| "this statement".to_string()),
+        StmtKind::For(_) => "a `for` binder".to_string(),
+        _ => "this statement".to_string(),
+    }
+}
+
+fn taint_call(
+    c: &Command,
+    name: &str,
+    span: Span,
+    tainted: &mut HashSet<String>,
+    cx: &SlotCx,
+    diags: &mut Vec<Diagnostic>,
+) {
+    if name == "return" {
+        record_exit(tainted, is_self_tail_return(c, cx), cx);
+    } else if cx.fns.contains_key(name) {
+        apply_call(name, span, tainted, cx, diags);
+    }
+}
+
+fn is_self_tail_return(c: &Command, cx: &SlotCx) -> bool {
+    let [arg] = c.args.as_slice() else {
+        return false;
+    };
+    let ExprKind::Arithmetic(arith) = &arg.kind else {
+        return false;
+    };
+    is_int_fn(cx.fname, cx.fns) && arith_calls_self(arith, cx.fname)
+}
+
+fn arith_calls_self(mut arith: &ArithExpr, name: &str) -> bool {
+    while let ArithExpr::Paren(inner) = arith {
+        arith = inner;
+    }
+    match arith {
+        ArithExpr::FuncCall { name: callee, .. } | ArithExpr::Var(callee) => callee == name,
+        _ => false,
+    }
+}
+
+fn record_exit(tainted: &HashSet<String>, self_tail: bool, cx: &SlotCx) {
+    let target = if self_tail {
+        &cx.body.back_edges
+    } else {
+        &cx.body.returns
+    };
+    target.borrow_mut().extend(tainted.iter().cloned());
+}
+
+fn taint_return_producer(
+    inner: &Statement,
+    tainted: &mut HashSet<String>,
+    just: &JustTainted,
+    cx: &SlotCx,
+    diags: &mut Vec<Diagnostic>,
+) {
+    taint_block(std::slice::from_ref(inner), tainted, just, cx, diags);
+    record_exit(tainted, is_self_tail_producer(inner, cx.fname), cx);
+}
+
+fn is_self_tail_producer(inner: &Statement, fname: &str) -> bool {
+    let StmtKind::Command(c) = &inner.kind else {
+        return false;
+    };
+    !fname.is_empty() && expr_literal_str(&c.name) == fname && collection_args(&c.args).is_empty()
+}
+
+fn apply_call(
+    name: &str,
+    span: Span,
+    tainted: &mut HashSet<String>,
+    cx: &SlotCx,
+    diags: &mut Vec<Diagnostic>,
+) {
+    if name == cx.fname {
+        return;
+    }
+    let Some(summary) = cx.summaries.get(name) else {
+        return;
+    };
+    let arrived: BTreeSet<_> = tainted.intersection(cx.globals).cloned().collect();
+    if !cx.probing {
+        relay_reads(name, span, &arrived, summary, diags);
+    }
+    tainted.retain(|name| !cx.globals.contains(name));
+    for name in &arrived {
+        tainted.extend(summary.flows[name].iter().cloned());
+    }
+    if cx.fns[name].single_use() {
+        tainted.extend(summary.gens.iter().cloned());
+    }
+}
+
+fn relay_reads(
+    fname: &str,
+    span: Span,
+    arrived: &BTreeSet<String>,
+    summary: &FnSummary,
+    diags: &mut Vec<Diagnostic>,
+) {
+    for name in arrived {
+        let reads = summary.reads.get(name).into_iter().flatten();
+        diags.extend(reads.map(|diag| {
+            Diagnostic::error_span(
+                span,
+                diag.code,
+                format!(
+                    "`{fname}`, called here with `{name}` tainted, reports at {}:{}: {}",
+                    diag.line, diag.col, diag.message
+                ),
+            )
+        }));
+    }
+}
+
+fn taint_arith_calls(
+    stmt: &Statement,
+    tainted: &mut HashSet<String>,
+    cx: &SlotCx,
+    diags: &mut Vec<Diagnostic>,
+) {
+    crate::resolve::walk_arith_value_calls(stmt, &|name| is_int_fn(name, cx.fns), &mut |name| {
+        taint_value_call(name, stmt.span, tainted, cx, diags)
+    });
+}
+
+fn taint_expr_arith_calls(
+    expr: &Expr,
+    span: Span,
+    tainted: &mut HashSet<String>,
+    cx: &SlotCx,
+    diags: &mut Vec<Diagnostic>,
+) {
+    crate::resolve::walk_expr_arith_value_calls(
+        expr,
+        &|name| is_int_fn(name, cx.fns),
+        &mut |name| taint_value_call(name, span, tainted, cx, diags),
+    );
+}
+
+/// A value call may be skipped, and an earlier operand may read its entry
+/// state. Without an ordered expression walk, only its taints may escape.
+fn taint_value_call(
+    name: &str,
+    span: Span,
+    tainted: &mut HashSet<String>,
+    cx: &SlotCx,
+    diags: &mut Vec<Diagnostic>,
+) {
+    let mut after = tainted.clone();
+    apply_call(name, span, &mut after, cx, diags);
+    tainted.extend(after);
+}
+
+/// Top-level bindings, including control flow but not function bodies.
+/// Structural on purpose: a name introduced inside `$( … )` is local
+/// to that body (DD#86), not a global.
 fn collect_global_names(stmts: &[Statement], out: &mut HashSet<String>) {
     crate::ir::walk_scoped_structural_stmts(stmts, "", &mut |stmt, in_fn| {
         if in_fn.is_empty() {
@@ -9462,62 +9895,13 @@ fn record_global_name(stmt: &Statement, out: &mut HashSet<String>) {
     }
 }
 
-/// Each initializer of a declaration, checked as the plain assignment it is.
-fn decl_global_taint(
-    d: &Declaration,
-    span: Span,
-    globals: &HashSet<String>,
-    sites: &mut Vec<GlobalTaintSite>,
-) {
-    for a in &d.assignments {
-        if let Some(eq) = a.as_assignment() {
-            collect_assign_global_taint(&eq, span, globals, sites);
-        }
-    }
-}
-
-fn collect_stmt_global_taint(
-    stmt: &Statement,
-    globals: &HashSet<String>,
-    sites: &mut Vec<GlobalTaintSite>,
-) {
-    match &stmt.kind {
-        StmtKind::Command(c) => collect_cmd_global_taint(c, stmt.span, globals, sites),
-        StmtKind::Assignment(a) => collect_assign_global_taint(a, stmt.span, globals, sites),
-        StmtKind::Declaration(d) => {
-            decl_global_taint(d, stmt.span, globals, sites);
-        }
-        _ => {}
-    }
-}
-
-/// A bulk fill (`argv g`, `read g`, `mapfile g`) draws from outside the
-/// program, so its target becomes tainted.
-fn collect_cmd_global_taint(
-    c: &Command,
-    span: Span,
-    globals: &HashSet<String>,
-    sites: &mut Vec<GlobalTaintSite>,
-) {
-    let name = expr_literal_str(&c.name);
-    for t in bulk_fill_targets(c) {
-        if globals.contains(&t) {
-            sites.push(GlobalTaintSite {
-                name: t,
-                span,
-                via: name.to_string(),
-            });
-        }
-    }
-}
-
 /// The names a bulk fill (`argv g`, `read g`, `mapfile g`) writes from outside
-/// the program. Empty for anything that is not a bulk fill, so SB5067 and the
-/// DD#100 slot analysis can never disagree about what counts as one.
+/// the program. This is the same test as `taint_command`'s read branch, so
+/// the DD#100 slot analysis and the taint walk cannot disagree.
 ///
 /// DD#75's `keys m k` is deliberately absent. It is a fill, but not one from
 /// *outside*: the keys it copies were put in the map by this program, so the
-/// snapshot is clean (DD#93) and SB5067 has nothing to say about it.
+/// snapshot is clean (DD#93) and neither analysis taints it.
 fn bulk_fill_targets(c: &Command) -> HashSet<String> {
     let name = expr_literal_str(&c.name);
     if !matches!(name, "read" | "readline" | "mapfile" | "argv") || is_value_split(name, c) {
@@ -9528,36 +9912,14 @@ fn bulk_fill_targets(c: &Command) -> HashSet<String> {
     targets
 }
 
-fn collect_assign_global_taint(
-    a: &Assignment,
-    span: Span,
-    globals: &HashSet<String>,
-    sites: &mut Vec<GlobalTaintSite>,
-) {
-    // A tainted *element* write is already SB5021; only the whole-name
-    // assignment reaches here, so the two never double-report.
-    if a.index.is_some() || !globals.contains(&a.name) || !is_taint_source(&a.value) {
-        return;
-    }
-    sites.push(GlobalTaintSite {
-        name: a.name.clone(),
-        span,
-        via: "assignment".to_string(),
-    });
-}
-
-/// The subject `report_exit_tainted_globals` names for an anonymous body.
-/// A function passes its own name; a `$( … )` has none, and the diagnostic's
-/// span already points inside the body, so the construct is the subject.
-const CMDSUB_SUBJECT: &str = "$( … )";
-
-fn global_taint_diag(span: Span, fname: &str, target: &str, via: &str) -> Diagnostic {
+fn global_taint_diag(span: Span, fname: &str, target: &str, via: &str, why: &str) -> Diagnostic {
     Diagnostic::error_span(
         span,
         "SB5067",
         format!(
-            "`{fname}` leaves the global `{target}` tainted via {via} — taint \
-             may not escape the body that creates it, so that a reader can see \
+            "`{fname}` leaves the global `{target}` tainted via {via} — \
+             `{fname}` is shared ({why}), and taint may not escape a shared \
+             body (DD#127), so that a reader can see \
              where external data enters. Attest it here, in the statement \
              immediately below (`attest … [[ … ]]`), or fill a local, attest \
              that, and assign the clean value to `{target}`"

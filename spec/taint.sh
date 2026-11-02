@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup taint
-plan=446
+plan=468
 echo "1..$plan" >&3
 
 set +e
@@ -988,12 +988,9 @@ done
 for v in @a; do /bin/echo "$v"; done'
 [[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk bfb.16
 
-# ── SB5067 under DD#121 R1: a function may not LEAVE a global tainted ──
-# The rule is net-effect, not "clean at exit": a body inherits the top-level
-# tainted set and R1 forbids cleaning an inherited taint, so the predicate is
-# "the exit set may not contain a global the body did not inherit". Because R1
-# pins the attest to the statement immediately below the taint, there is no
-# ordering question about where in the body the repair may sit.
+# ── DD#127: single-use functions may pass their own taint to the caller ──
+# An adjacent in-body attest still works. Without it, the caller receives
+# taint and must attest before reading; shared functions are pinned below.
 # bfb.17 taint a global and attest it adjacently — the caller reads it clean
 run_sash 'array g=()
 fn f {
@@ -1004,14 +1001,14 @@ f
 for v in @g { /bin/echo $v }' one two
 [[ $rc = 0 && $out = $'one\ntwo' && -z $rerr ]]; chk bfb.17
 
-# bfb.18 …and the same body without the attest is SB5067
+# bfb.18 without the attest, the single-use call taints the caller's global
 run_sash 'array g=()
 fn f {
     argv 1 g
 }
 f
 for v in @g { /bin/echo $v }'
-[[ $rc != 0 && -z $out && $err == *SB5067*leaves\ the\ global* ]]; chk bfb.18
+[[ $rc != 0 && -z $out && $err == *SB5020* && $err != *SB5067* ]]; chk bfb.18
 
 # bfb.19 the in-body attest is a real runtime gate, not a compile-time waiver
 run_sash 'array g=()
@@ -1035,10 +1032,9 @@ fn f {
 }
 f
 for v in @g { /bin/echo $v }'
-[[ $rc != 0 && -z $out && $err == *SB5067* ]]; chk bfb.20
+[[ $rc != 0 && -z $out && $err == *SB5020* && $err != *SB5067* ]]; chk bfb.20
 
-# bfb.21 re-tainting a global the top level already attested clean is a net
-# insert — the caller's clean view would otherwise be silently falsified
+# bfb.21 the call invalidates the caller's earlier attest
 run_sash 'array g=()
 argv 1 g
 attest v in g [[ -n $v ]]
@@ -1047,7 +1043,7 @@ fn f {
 }
 f
 for v in @g { /bin/echo $v }'
-[[ $rc != 0 && -z $out && $err == *SB5067* ]]; chk bfb.21
+[[ $rc != 0 && -z $out && $err == *SB5020* && $err != *SB5067* ]]; chk bfb.21
 
 # bfb.22 a body that never touches an already-tainted global is not blamed
 run_sash 'array g=()
@@ -1060,27 +1056,20 @@ attest v in g [[ -n $v ]]
 for v in @g { /bin/echo $v }' one
 [[ $rc = 0 && $out = $'hi\none' && -z $rerr ]]; chk bfb.22
 
-# ── SB5067 extended to `$( … )` bodies (DG, 2026-09-30) ──────────────────
-# DD#86 calls a `$( … )` body an anonymous function body, and sash inlines it
-# rather than forking a subshell, so a write to an enclosing name PERSISTS.
-# The same net-effect rule therefore applies: a body may not LEAVE a global
-# tainted that it did not inherit. Before this, the function form was a located
-# SB5067 and the identical `$( )` form was silent.
-# bfb.23 the shape that was silent: global read before, tainted inside a
-# body, never read after — so neither SB5050 nor the SSA backstop sees it
+# ── DD#127: an anonymous capture body is single-use ─────────────────────
+# Its writes persist (DD#86); leaving taint is legal, reading it is not.
+# bfb.23 no read follows the write, so no attest is required
 run_sash 'str t=clean
 /bin/echo $t
 str q=$(t=$(getenv HOME); echo x)
 /bin/echo $q'
-[[ $rc != 0 && -z $out && $err == *SB5067*leaves\ the\ global* ]]; chk bfb.23
-# bfb.24 `:!` at the read does NOT rescue it. SB5067 is a BODY-EXIT rule and
-# never examines the read site, so the bypass is evaluated too late to matter
-# — which is what closes the `:!` exception for anonymous bodies too.
+[[ $rc = 0 && $out = $'clean\nx' && -z $err && -z $rerr ]]; chk bfb.23
+# bfb.24 the sanctioned per-use bypass is legal for this single-use body
 run_sash 'str t=clean
 str q=$(t=$(getenv HOME); echo x)
 /bin/echo $q
 /bin/echo $t:!'
-[[ $rc != 0 && -z $out && $err == *SB5067* ]]; chk bfb.24
+[[ $rc = 0 && $out == $'x\n'* && -z $err && -z $rerr ]]; chk bfb.24
 # bfb.25 the repair is the same one a function body gets: an ADJACENT in-body
 # attest. The write still escapes (DD#86), and the attest is a real runtime
 # gate, not a compile-time waiver.
@@ -1101,10 +1090,8 @@ str q=$(t=$(getenv HOME); echo mid; attest t [[ -n $t ]]; echo x)
 run_sash 'str q=$(str L=$(getenv HOME); attest L [[ -n $L ]]; echo $L)
 /bin/echo $q'
 [[ $rc = 0 && -n $out && -z $err ]]; chk bfb.27
-# bfb.28 a `$( )` inside a FUNCTION body reports exactly once, attributed to
-# the body. `collect_global_taint_sites` is structural, so the enclosing
-# function does not gather the same site, and the cmdsub's clone-and-discard
-# keeps it out of the function's exit set.
+# bfb.28 both the capture and its enclosing function have one call site;
+# neither requires an in-body attest when nobody reads the tainted global
 run_sash 'str t=clean
 /bin/echo $t
 fn f {
@@ -1112,7 +1099,7 @@ fn f {
     /bin/echo $q
 }
 f'
-[[ $rc != 0 && -z $out && $(grep -c SB5067 <<<"$err") = 1 ]]; chk bfb.28
+[[ $rc = 0 && $out = $'clean\nx' && -z $err && -z $rerr ]]; chk bfb.28
 
 # ── DD#91: the `:!` taint-off MODIFIER (orthogonal to the dispositions) ──
 # A sanctioned per-use bypass — use a tainted value without a attest predicate
@@ -2944,6 +2931,208 @@ attest s (( n = ${t:s/2/3/} + s ))
 echo "$n"' 1
 [[ $rc != 0 && -z $out && $err == *:3:1:*SB5098* \
    && $err == *'`$(sub …)` runs `sub` (a `${…:s/…/…/}` expansion is that call)'* ]]; chk atpred.31
+
+# ── DD#127: global summaries apply at calls, not definitions ────────────
+
+# A later taint cannot travel backwards into an earlier call.
+run_sash 'str x=safe
+fn show { echo "$x" }
+show
+x=$(/bin/echo dirty)'
+[[ $rc = 0 && $out = safe && -z $err && -z $rerr ]]; chk gflow.1
+
+# Nor can a later overwrite hide an unsafe call. Report at that call.
+run_sash 'str x=safe
+fn show { echo "$x" }
+x=$(/bin/echo dirty)
+show
+x=safe'
+[[ $rc != 0 && $err == *":4:1: error [SB5020]"*
+   && $err == *'`show`, called here with `x` tainted, reports at 2:'* ]]; chk gflow.2
+
+# Received taint is not adjacent to the callee's first statement.
+run_sash 'str x=safe
+fn check { attest x [[ -n $x ]]; echo "$x" }
+x=$(/bin/echo dirty)
+check'
+[[ $rc != 0 && $err == *":4:1: error [SB5088]"*
+   && $err == *'`check`, called here with `x` tainted'* ]]; chk gflow.3
+
+# A single-use call is one compound statement for caller-side adjacency.
+run_sash 'str x=clean
+fn fill { x=$(/bin/echo dirty) }
+fill
+attest x [[ $x == dirty ]]
+echo "$x"'
+[[ $rc = 0 && $out = dirty && -z $err && -z $rerr ]]; chk gflow.4
+
+# Shared bodies own their re-taint even when the caller was already tainted.
+# Attribute it once, to the last source, and name both call sites.
+run_sash 'str x=clean
+fn fill {
+    x=$(/bin/echo first)
+    x=$(/bin/echo second)
+}
+x=$(/bin/echo initial)
+fill
+fill
+echo "${x:!}"'
+[[ $rc != 0 && $(grep -c 'error \[SB5067\]' <<<"$err") = 1
+   && $err == *":4:5: error [SB5067]"*
+   && $err == *'shared (it is called at 7:1, 8:1)'* ]]; chk gflow.5
+
+# Inherited-read witnesses relay through a chain of summaries.
+run_sash 'str x=safe
+fn leaf { echo "$x" }
+fn middle { leaf }
+x=$(/bin/echo dirty)
+middle
+x=safe'
+[[ $rc != 0 && $err == *":5:1: error [SB5020]"*
+   && $err == *'`middle`, called here'*'`leaf`, called here'* ]]; chk gflow.6
+
+# Capturing the sole call does not change its outward global obligation.
+run_sash 'str x=clean
+fn fill { x=$(/bin/echo dirty); echo value }
+str result=$(fill)
+attest x [[ $x == dirty ]]
+echo "$result $x"'
+[[ $rc = 0 && $out = "value dirty" && -z $err && -z $rerr ]]; chk gflow.7
+
+# An anonymous capture's taint reaches the next statement.
+run_sash 'str x=clean
+str result=$(x=$(/bin/echo dirty); echo value)
+echo "$result $x"'
+[[ $rc != 0 && $err == *SB5020* && $err != *SB5067* ]]; chk gflow.8
+
+# B18: a background child cannot clean its parent's global.
+run_sash 'str x=clean
+fn clean { x=safe }
+x=$(/bin/echo dirty)
+clean &
+- wait
+echo "$x"'
+[[ $rc != 0 && $err == *SB5020* ]]; chk gflow.9
+
+# The same boundary holds for non-final and final function stages.
+run_sash 'str x=clean
+fn clean { x=safe }
+x=$(/bin/echo dirty)
+clean | /bin/cat
+echo "$x"'
+[[ $rc != 0 && $err == *SB5020* ]]; chk gflow.10
+run_sash 'str x=clean
+fn clean { x=safe }
+x=$(/bin/echo dirty)
+echo | clean
+echo "$x"'
+[[ $rc != 0 && $err == *SB5020* ]]; chk gflow.11
+
+# Discarding child effects must not discard the child's read obligations.
+run_sash 'str x=clean
+fn show { echo "$x" }
+x=$(/bin/echo dirty)
+show &
+- wait
+show | /bin/cat
+x=safe'
+[[ $rc != 0 && $(grep -c 'error \[SB5020\]' <<<"$err") = 2
+   && $err == *":4:1: error [SB5020]"*
+   && $err == *":6:1: error [SB5020]"* ]]; chk gflow.12
+
+# An early return contributes its state even when the fallthrough cleans it.
+run_sash 'str x=clean
+fn fill {
+    x=$(/bin/echo dirty)
+    if [[ $1 == yes ]] { return 1 }
+    x=safe
+    return 0
+}
+- fill no
+echo "$x"'
+[[ $rc != 0 && $err == *SB5020* && $err != *SB5067* ]]; chk gflow.13
+
+# A self-tail back edge can carry taint to an earlier read in the body.
+run_sash 'str x=clean
+fn repeat -> int {
+    echo "$x"
+    if (( $1 > 0 )) {
+        x=$(/bin/echo dirty)
+        return $(( (repeat 0) ))
+    }
+    x=safe
+    return 0
+}
+int n=$(( (repeat 1) ))
+echo "$n"'
+[[ $rc != 0 && $err == *SB5020* && $err != *SB5067* ]]; chk gflow.14
+
+# A bare int-function name in arithmetic is a call, including in a declaration.
+run_sash 'str x=clean
+fn fill -> int { x=$(/bin/echo dirty); return 7 }
+int n=$(( fill ))
+attest x [[ $x == dirty ]]
+echo "$n $x"'
+[[ $rc = 0 && $out = "7 dirty" && -z $err && -z $rerr ]]; chk gflow.15
+
+# Two arithmetic sites make the function shared even within one expression.
+run_sash 'str x=clean
+fn fill -> int { x=$(/bin/echo dirty); return 7 }
+int n=$(( (fill) + (fill) ))
+echo "$n ${x:!}"'
+[[ $rc != 0 && $err == *SB5067*'shared (it is called at'* ]]; chk gflow.16
+
+# The self-tail site is a back edge, not a second external call site.
+run_sash 'str x=clean
+fn fill -> int {
+    if (( $1 > 0 )) {
+        x=$(/bin/echo dirty)
+        return $(( (fill 0) ))
+    }
+    return 7
+}
+int n=$(( (fill 1) ))
+attest x [[ $x == dirty ]]
+echo "$n $x"'
+[[ $rc = 0 && $out = "7 dirty" && -z $err && -z $rerr ]]; chk gflow.17
+
+# A real parent-process call may overwrite an inherited tainted global.
+run_sash 'str x=clean
+fn clean { x=safe }
+x=$(/bin/echo dirty)
+clean
+echo "$x"'
+[[ $rc = 0 && $out = safe && -z $err && -z $rerr ]]; chk gflow.18
+
+# A conditional overwrite is not a must-kill.
+run_sash 'str x=clean
+fn clean { if (( $1 > 0 )) { x=safe } }
+x=$(/bin/echo dirty)
+clean 0
+echo "$x"'
+[[ $rc != 0 && $err == *SB5020* ]]; chk gflow.19
+
+# A skipped lazy capture cannot clean the enclosing state.
+run_sash 'str x=clean
+x=$(/bin/echo dirty)
+str selector=yes
+if [[ $selector == yes || "$(x=safe; echo no)" == yes ]] { echo "$x" }'
+[[ $rc != 0 && $err == *SB5020* ]]; chk gflow.20
+
+# A later operand's value call cannot erase an earlier argument read.
+run_sash 'str x=clean
+fn clean -> int { x=safe; return 7 }
+x=$(/bin/echo dirty)
+echo "$x" $(( clean ))'
+[[ $rc != 0 && $err == *SB5020* ]]; chk gflow.21
+
+# Nor can a skipped arithmetic call clean the next statement's input.
+run_sash 'str x=clean
+fn clean -> int { x=safe; return 7 }
+x=$(/bin/echo dirty)
+int n=$(( 1 || clean ))
+echo "$x $n"'
+[[ $rc != 0 && $err == *SB5020* ]]; chk gflow.22
 
 set -e
 tally

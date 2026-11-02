@@ -184,6 +184,36 @@ pub(crate) fn walk_expr_value_calls(
     walk_expr_tree(expr, &mut |e| value_calls_at(e, is_value_fn, visit));
 }
 
+/// [`walk_value_calls`] without its `$( … )` arm: only the arithmetic value
+/// calls in `stmt`'s own expressions and its `(( ))` test. For a caller that
+/// walks capture bodies as statements, and so meets `$(g …)` as the command
+/// `g` inside the body rather than here.
+pub(crate) fn walk_arith_value_calls(
+    stmt: &Statement,
+    is_value_fn: &dyn Fn(&str) -> bool,
+    visit: &mut dyn FnMut(&str),
+) {
+    walk_own_exprs(stmt, &mut |e| arith_value_calls_at(e, is_value_fn, visit));
+    if let StmtKind::ArithTest(a) = &stmt.kind {
+        arith_value_calls(a, is_value_fn, visit);
+    }
+}
+
+/// [`walk_arith_value_calls`] for one expression.
+pub(crate) fn walk_expr_arith_value_calls(
+    expr: &Expr,
+    is_value_fn: &dyn Fn(&str) -> bool,
+    visit: &mut dyn FnMut(&str),
+) {
+    walk_expr_tree(expr, &mut |e| arith_value_calls_at(e, is_value_fn, visit));
+}
+
+fn arith_value_calls_at(e: &Expr, is_value_fn: &dyn Fn(&str) -> bool, visit: &mut dyn FnMut(&str)) {
+    if let ExprKind::Arithmetic(a) = &e.kind {
+        arith_value_calls(a, is_value_fn, visit);
+    }
+}
+
 /// Whether a `$( … )` headed by `head` evaluates its arguments where it stands
 /// — a value call or a value intrinsic. Any other head is a capture, which
 /// evaluates its arguments inside itself. The one classification

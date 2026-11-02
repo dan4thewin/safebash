@@ -102,9 +102,9 @@ name itself:
   produced the taint.
 
 Each is reported at the call, naming the line in `f`. A body's verdicts
-therefore do not depend on its callers, and each body is checked once. An
-anonymous `$( )` body is written where it is called, so its errors point at
-the line in the body.
+therefore do not depend on its callers: each definition has an independent
+summary, reused at its calls. An anonymous `$( )` body is written where it is
+called, so its errors point at the line in the body.
 
 ### Chains
 
@@ -374,7 +374,10 @@ f =a
 
 ### Verdicts
 
-| example | today | under this DD |
+The baseline column records 0149c49b, before W1; the implementation status
+below distinguishes what has landed from what remains.
+
+| example | before W1 | under this DD |
 |---|---|---|
 | e1 | compiles | legal |
 | e2 | compiles | rejected (W2): `branch` has two call sites |
@@ -397,45 +400,83 @@ f =a
 
 ## How it is checked
 
-This is W1's plan for the name channels; W2 adds stdout. W1 rewrites this
-section in place if the mechanism it lands differs.
+W1b-1 implements **globals** on the existing per-statement transfer
+functions (journal 557). It does not introduce an I/C/T state machine or
+re-walk a callee in each caller's context. Collection slots remain on their
+old machinery until W1b-2; stdout is W2's.
 
-- Each body is walked once, from an entry where every name is **I**
-  (inherited, unknown). A name's state is a set drawn from {I, C (clean),
-  T (own-tainted)}.
-- The walk produces a summary of `f`:
-  - **R_f** — uses of possibly-I names that would be rejected if the name
-    were tainted, each with its code: SB5020 for a read, SB5021 for a cell
-    write;
-  - **A_f** — attests of possibly-I names;
-  - **K_f** — names with no I at exit (overwritten on every path);
-  - **G_f** — names possibly T at exit;
-  - **W_f** — the stdout witness: a path by which unattested external output
-    reaches `f`'s stdout (W2).
-- At a call of `f`, with S the set of names tainted at the call:
-  - each name in S ∩ R_f is reported at the call with its recorded code,
-    naming the line in `f`;
-  - each name in S ∩ A_f is SB5088 at the call;
-  - for a single-use `f`, the state after the call is (S − K_f) ∪ G_f;
-  - for a shared `f`, a non-empty G_f is SB5067 inside `f`, reported once,
-    and the state after the call is S − K_f.
-- When the caller is itself a function `g`, a possibly-I name at the call
-  passes into R_g or A_g, for `g`'s own callers to decide; a possibly-T name
-  is reported at the call, in `g`.
-- DD#27 (no recursion except a self-tail call, which lowers to a loop) and
-  SB5071 (a function is defined only at the top level or in END) make the
-  call graph a DAG plus self-loops. Summaries are computed bottom-up, with an
-  intra-procedural fixpoint for a self-tail loop and no cross-function
-  fixpoint.
-- The top level starts with no I. END's entry state is W5's.
-- A call as a pipeline stage or under `&` is a site. Its R_f and A_f apply;
-  its K_f and G_f stay in the child, whose names die with it (W4).
-- There is no context sensitivity: one call site is one context.
+### Building a global summary
 
-Today `taint_cmdsub_bodies` walks an anonymous body on a clone and discards
-the result. That is sound only because SB5067, applied to `$( )` bodies,
-forbids a body to leave taint behind. W1 applies the body's summary, keeping
-G, instead.
+For each definition of `f`, the compiler walks its body from an empty
+tainted set, then once for each global `g`, with only `g` tainted on entry.
+These are symbolic input probes, not walks for particular callers.
+
+The summary holds:
+
+- **Generators:** globals tainted at an exit of the empty-entry walk.
+  These are `f`'s own taint.
+- **Flows, indexed by incoming global:** globals tainted at an exit of the
+  singleton-entry walk. Independently generated names are excluded, except
+  the incoming name itself: re-tainting an inherited name must not erase its
+  incoming flow.
+- **Conditional diagnostics, indexed by incoming global:** diagnostics
+  added by that singleton input. The empty-entry diagnostics are subtracted
+  as a multiset, preserving repeated sites rather than deduplicating by code.
+  This records reads, cell writes and inherited attests with their original
+  codes and locations.
+
+An exit combines explicit returns with the final state only when the body
+can fall through. Self-tail returns deposit a back-edge state instead; the
+entry grows to a fixpoint before the summary is accepted. Ordinary `while`
+and `for` edge refinements remain W3's work.
+
+The census includes command calls and arithmetic calls, including bare
+int-function names, captures and END. Self-tail calls are excluded. DD#27
+and SB5071 give a call graph with no legal inter-function cycles, so global
+summaries are built bottom-up, without a cross-function fixpoint. A
+multiply-defined name is conservatively shared and its definitions' summaries
+are unioned; this does not model which definition is in force at each call.
+
+### Applying a summary
+
+At an ordinary statement call of `f`:
+
+- For each incoming tainted global, relay its conditional diagnostics at the
+  call, naming `f` and the original location. Transitive calls retain that
+  chain. An inherited attest is therefore SB5088 at the call.
+- Replace the incoming global state with the union of those globals' flows.
+  A global overwritten clean on every continuing path disappears; a
+  conditional overwrite does not clear it. Non-global names are unaffected.
+- Add the generators only for a single-use `f`. For a shared `f`, report
+  SB5067 inside the definition instead, once per escaping global, at its last
+  recorded source. The message says why it is shared and lists its call sites
+  when multiple calls, rather than multiple definitions, make it shared.
+
+Each definition's own diagnostics are reported independently of its callers.
+The top level starts empty, and END currently follows its final state; exits
+into END are W5's remaining work.
+
+### Captures, value calls and child processes
+
+An anonymous capture gets its own return frame, inherits the enclosing taint,
+and merges its resulting taint back. It is single-use, so it has no SB5067
+firewall. Its reads and inherited attests are checked inside the body.
+
+Captures and arithmetic/value calls **union** their effects with the
+incoming state, rather than clearing names they overwrite. A capture or call
+can be skipped by a lazy expression, or follow an earlier operand's read;
+applying its clean overwrite before checking that read would hide the error.
+This is a conservative implementation: even a guaranteed eager clean
+overwrite in a value does not clear the enclosing taint. Precise ordered
+expression transfers are follow-up work, not a different adjacency rule.
+
+A background child and each forked pipeline stage are walked on a clone:
+their reads still count, but their writes, returns and source log do not
+change the parent. The final parent reader keeps its effects (the supported
+`while` consumer and final `read`/`readline` paths). These calls still count
+in the census. This is B18's validator half, landed with W1b-1 because
+call-site clean overwrites make the separation necessary; W4 still owns the
+per-process SSA backstop.
 
 ## Cost
 
@@ -445,65 +486,68 @@ into it: an attest after its capture becomes a rejection, and a name it
 leaves tainted becomes SB5067. Both messages name the call sites, so the
 cause is on the screen.
 
-## Implementation status at 0149c49b
+## Implementation status after W1b-1
 
-None of this is implemented yet. W1 implements the name channels and W2 the
-stdout channel. Until then the compiler applies the earlier rules, and the
-specs pin them:
+The global summary, call-site relays, single-use global effects, shared
+global firewall and validator child isolation above are implemented.
+W1a already fixed local capture ordering and duplicate reads (journal 555).
+The following remain:
 
-- every user-function capture and pipe is clean (until W2);
-- bodies are taint-walked in two phases, as `docs/GUIDE.md` describes;
-- SB5067 is a net-effect rule ("no net insert", measured against the body's
-  entry set), applied to `$( )` bodies too; DD#121's History section
-  records it;
-- `analyze_slots` makes inward slot taint a union over call sites, and
-  outward slot taint a fixpoint;
-- an attest in a body, of a slot the body received, is accepted;
-- B115: an attest in a body, of a slot the body filled, does not clear the
-  caller's collection, so the caller's later read is a false SB5020 (slot4
-  above, both modes).
+- **W1b-2, slots:** `analyze_slots` still unions inward taint across call
+  sites and computes outward fills by fixpoint. `tainted_slots_on_entry`
+  and `taint_out_params` remain. An inherited slot attest is still accepted,
+  B115 still prevents an in-body attest from clearing the caller's
+  collection, and slot-derived taint left on a global still uses the earlier
+  SB5067 rule, even for a single-use function. These are interim limitations,
+  not exceptions to the rule.
+- **W2, stdout:** the old user-function capture and pipeline source
+  classifiers remain; there is no reaches-stdout witness or shared-capture
+  rejection yet.
+- **W3, ordinary loop edges; W4, per-process SSA checking; W5, END entry.**
+  In particular, W4's backstop can still reject a parent read after a child
+  taints its private copy; the B18 entry records a measured example.
+- **Precision follow-ups:** eager value-call/capture overwrites and
+  definition-specific summaries are recorded in
+  `notes/tasks/taint-global-summary-followups.md`.
 
-## Expected spec consequences
+## Spec consequences
 
-W1 and W2 confirm each of these by measurement.
+### Landed in W1b-1
 
-- Unchanged: `bfb.17` (rc 0), `bfb.19`, `bfb.22`, `bfb.25`, `bfb.26`
-  (SB5088), `bfb.27`; `atslot.7`, `atslot.8`.
-- `bfb.18`, `bfb.20`, `bfb.21`: SB5067 becomes SB5020 at the later read
-  (`for v in @g { /bin/echo $v }`), because each function has one call site.
-  `bfb.18` asserts `*SB5067*leaves\ the\ global*`.
-- `bfb.23`, `bfb.24`, `bfb.28`: SB5067 becomes accepted. This reverses the
-  2026-09-30 extension of SB5067 to `$( )` bodies: an anonymous body is
-  single-use, so its caller attests after it.
-- collparam `100.27`: still SB5020, now reported at the call. `100.28`: rc 0
-  becomes SB5088 at the call; W1 adds a spec in which a body fills a slot and
-  attests it. `100.29`, `100.31`, `100.33`: unchanged. `100.30`, `100.32`:
-  SB5020 at the read, unchanged.
-- coverage `cov.264`-`cov.269` and `cov.341` pin SB5067's two raise paths (a
-  bulk fill and an assignment into a global), each with a function that has
-  one call site, so none of them is SB5067 under this rule. `cov.266` reads
-  the global afterwards and becomes SB5020 at the read; the others never read
-  it again, and W1 measures what they raise. W1 gives each function a second
-  call site so that both paths stay pinned. `cov.270` (rc 0, an attested
-  local) is unchanged.
-- A shared function that leaves its own taint behind becomes SB5067: one that
-  re-taints a global (the glob1 shape), or fills a slot and does not attest
-  it. W1 measures which specs have either shape.
-- Fifteen specs pin today's clean user-function capture:
+- `bfb.18`, `bfb.20`, `bfb.21` now require SB5020 at the later read and no
+  SB5067: each function has one call site.
+- `bfb.23`, `bfb.24`, `bfb.28` are accepted. This replaces DD#121's
+  2026-09-30 anonymous-body firewall with the single-use rule.
+- `cov.266` now requires SB5020 at the read. `cov.264`, `cov.265`,
+  `cov.267`-`cov.269` and `cov.341` each gained a second call site and retain
+  their SB5067 assertions. `cov.270` is unchanged.
+- `gflow.1`-`gflow.22` pin call-site timing, inherited diagnostics,
+  generators, shared-source attribution, capture effects, process isolation,
+  returns, self-tail fixpoints, the call census and conservative value merges.
+- The other `bfb` cases, `atslot.7`/`.8` and the collection-parameter specs
+  retain their verdicts in this globals-only unit.
+
+### Still to land
+
+- W1b-2: `100.27` remains SB5020 but moves to the call; `100.28` becomes
+  SB5088 there. `100.29`/`.31`/`.33` retain their verdicts; `100.30`/`.32`
+  remain SB5020 at the read. Rewrite `atslot.1`-`.6` as own-fill/attest
+  cases and pin B115's caller-visible cleanup.
+- W1b-2 also applies the shared-function firewall to an un-attested outgoing
+  slot; W1b-1's `gflow.5` already pins re-tainting a global on entry.
+- Fifteen specs still pin the old clean user-function capture:
   `supval.2/3/6/7/8/14/16/18/19/21/22`, `cap.20`, `88.28`, `cmt.11`,
   `dd82.4`. They change at W2, which re-measures each under the single-use
   rule.
 
 ## Open
 
-- W1: the span reported for a single-use call as a source site; `len A` on a
-  tainted collection; whether SB5067 suppresses later errors for the same
-  name; c2's code; SB5067's message, which says "taint may not escape the
-  body that creates it" and must instead say that the function has zero, two
-  or more call sites.
+- W1b-2: `len A` on a tainted collection; aliasing slots; c2's call-site
+  diagnostic. Global source spans and the shared-function SB5067 message
+  are settled by the implementation above.
 - W2: the code of the call-site rejection; the reaches-stdout analysis
   (B114 lists what the branch's version got wrong).
-- W4: the name effects of a stage or `&` call.
+- W4: the per-process SSA backstop; validator name effects landed in W1b-1.
 - W5: END's entry state (B96).
 
 ## Provenance

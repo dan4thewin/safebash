@@ -200,17 +200,17 @@ name:
 - **Mutation and write-back need nothing new.** A function writing `A[0]=z`
   changes the caller's array.
 
-So Part E is *binding plus one exclusion*, not a new taint model. Until W1
+So Part E is *binding plus one exclusion*, not a new taint model. Until W1b-2
 lands, the compiler applies the rule recorded under "Slot taint crosses the
 boundary in both directions" below; DD#127's "Implementation status" lists
-the differences.
+the differences. W1b-1 implements the global-name channel, not the slots.
 
 ### Consequences to expect
 
-- **A caller's taint is reported at the call.** Each body is checked once, so
-  its own verdicts never depend on its callers. When a call passes in taint
-  that `f` would use, the error is reported at the call and names the line in
-  `f` that uses it (DD#127).
+- **A caller's taint is reported at the call.** Each body is summarised
+  independently, so its own verdicts never depend on its callers. When a call
+  passes in taint that `f` would use, the error is reported at the call and
+  names the line in `f` that uses it (DD#127).
 - **Aliasing two slots to one collection** (`f =foo =foo`) is coherent under
   substitution — writes through `A` are visible through `B`. Allowed, but
   worth a spec pinning it.

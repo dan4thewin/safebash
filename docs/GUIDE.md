@@ -282,27 +282,30 @@ taint and status-availability rules still apply (DD#55).
 Flow-sensitive taint analysis (DD#24, DD#42–44), tracking each variable
 as `Tainted`, `Attested`, or `Clean`.
 
-**Two phases (DD#100).** Phase 1 walks the top level, deferring every
-function definition; phase 2 then checks the deferred bodies against the
-completed set. A single sequential walk checked each body *at its
-definition*, so a global tainted later was invisible inside it — `fn user
-{ for v in @g; … }` followed by `argv g` compiled and leaked. The two
-phases need no fixpoint because **SB5067** forbids a function from
-tainting a global (use a local, attest it, assign out), which makes the
-top level the only place a global's taint can arrive.
+**Global summaries (DD#127).** Each function is analysed independently of
+its callers: an empty-entry walk finds its own generators, and one walk per
+global finds incoming-taint flows and conditional diagnostics. Summaries are
+built bottom-up and applied at the actual calls, not against the final
+top-level state. Returns contribute to the exit set; self-tail back edges
+grow the entry to a fixpoint. Reads of inherited taint, including inherited
+attests (SB5088), are reported at the call with the original body location.
 
-**Collection slots (DD#100)** are a call-site fact, so no phase ordering
-exposes them. `analyze_slots` resolves both directions ahead of the walk
-with a call-graph fixpoint: inward, a slot is tainted if *any* call site
-passes a tainted collection; outward, a callee that bulk-fills a slot
-taints the caller's collection.
+A single-use function may leave its own taint for the caller to attest
+immediately after the call. A shared function must attest it internally;
+SB5067 names the last global source and explains why the function is shared.
+Ordinary calls propagate clean overwrites as well as taint. Captures and
+arithmetic/value calls conservatively union their effects: an overwrite
+cannot hide an earlier read or clear a value when the call is skipped.
+Background children and forked stages are checked on isolated states; the
+final parent reader retains its effects.
 
-**DD#127 replaces both.** Each body is checked once and summarised, and the
-summary is applied at every call. The rule is that a body attests its own
-taint or, when it has exactly one call site, the caller attests it
-immediately after that call; received taint is never attested inside a body. That is not implemented yet (DD#127,
-"Implementation status"), so the compiler works as described above until
-it lands, and this section is rewritten then.
+**Collection slots (DD#100) are the remaining W1b-2 work.** They still use
+`analyze_slots`' call-graph fixpoint: inward taint is unioned across callers,
+and outward bulk fills taint the caller's collection. The slot portion of
+DD#127 is not implemented yet, including its inherited-attest refusal and
+B115's caller-visible in-body cleanup. The globals summary replaces neither
+this interim slot analysis nor W2's pending stdout classifier. DD#127's
+"Implementation status" records those boundaries.
 
 **Taint sources:** `$(argv N)` (program arguments), `read`
 targets, `$(external cmd)`, environment variables via `$(getenv NAME)`.

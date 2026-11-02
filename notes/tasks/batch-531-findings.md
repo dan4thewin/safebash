@@ -1054,6 +1054,13 @@ including the rule DG chose on 2026-10-31: a function with exactly one call
 site may leave its own taint for the caller to attest immediately after the
 call.
 
+W1b-1 implements globals (journal 557): bottom-up generator/flow/diagnostic
+summaries, call-site transfers, shared-only global SB5067, returns and
+self-tail back edges. The census includes arithmetic calls but excludes
+self-tail sites. `gflow.1`-`.22` cover the new mechanism. Capture and value
+effects merge conservatively; `taint-global-summary-followups` records the
+precision limits. Slot summaries remain W1b-2, not part of this completion.
+
 - [x] **B29** (fixed-on-branch; DD24). A tainted capture argument is
   reported twice, at the same position.
   - Ported 2026-10-31 (journal 555; reimplemented on base's transfer
@@ -1071,7 +1078,9 @@ call.
     `echo` argument, an array element).
 - [ ] **B115** (open; DD100, DD121, DD127). An attest of a slot inside the
   function body is ignored, a false rejection on both binaries. Prerequisite
-  of DD127's outward rule.
+  of DD127's outward slot rule. W1b-1 deliberately retains `SlotInfo`,
+  `tainted_slots_on_entry` and `taint_out_params`; W1b-2 owns this fix and
+  the incoming-slot attest change.
 
 ### 18. W2 stdout (T1)
 
@@ -1105,12 +1114,18 @@ call.
   home directory.
 - [ ] **B95** (fixed-on-branch; DD24). CRITICAL: the AST taint walker
   dropped the states at `break`, `continue` and `return`.
+  - W1b-1 implements function returns and self-tail back edges
+    (`gflow.13`/`.14`, journal 557). Ordinary loop `break`/`continue`
+    deposits remain W3.
 - [ ] **B98** (fixed-on-branch; DD24). CRITICAL: `taint_for` applied the
   loop binder to the pre-loop state.
 - [ ] **B99** (fixed-on-branch; DD24). CRITICAL: `taint_while`'s exit
   ignored the state after the condition.
-- [ ] **B100** (fixed-on-branch; DD24, DD86). The second phase walked
+- [x] **B100** (fixed-on-branch; DD24, DD86). The second phase walked
   deferred function bodies against the final top-level state.
+  - Reimplemented in W1b-1 (journal 557). Global diagnostics depend on the
+    state at the call: a later source cannot taint an earlier clean call,
+    and a later overwrite cannot hide an unsafe call (`gflow.1`/`.2`).
 - [x] **B101** (fixed-on-branch; DD24). `lower_while` lowered the condition
   before pushing the loop stack. The transform half lands with F5's B60.
   - Ported in F5 unit A (journal 542): both hunks (H189, H190). Specs
@@ -1135,16 +1150,29 @@ call.
 ### 18. W4 processes
 
 - [ ] **B18** (fixed-on-branch; DD24, DD38). CRITICAL taint bypass:
-  `x=$(getenv HOME); x=safe &; - wait; echo "$x"` compiles and prints the
-  tainted value. The validator walks the background child into the parent's
-  state, and `lower_background` has no snapshot/restore (F2 owns that half).
+  before the port, `x=$(getenv HOME); x=safe &; - wait; echo "$x"` compiled
+  and printed the tainted value. The validator and transform both let the
+  child's writes affect the parent's state.
   - F1+F4 (journal 537) closes the spellings known: an assignment, an
     `attest` or an `argv` under `&` is SB4024, behind `-` too (55.121-55.123,
     55.126, 55.127, 55.133, 55.134). A called function's assignment, `fn f {
     x=safe }; f &`, was
-    already SB5020 on 8e28c61 and still is (probe `b18/c1`). The validator
-    still walks the child into the parent's state; W4 decides what that
-    walk needs now.
+    already SB5020 on 8e28c61 (probe `b18/c1`).
+  - F2 added the transform's snapshot/restore (journal 539).
+  - W1b-1 adds validator isolation (journal 557): child reads are checked,
+    but writes, return states and source logs are discarded. The final
+    parent reader retains its effects. `gflow.9`-`.12` cover background
+    calls and final/non-final function stages; removing the clone turns
+    `.9`-`.11` red. The old driver's ignored call-side clean overwrites
+    happened to reject these already; summaries make isolation essential.
+  - The separate per-process SSA backstop (H167) remains W4, so this entry
+    is not closed wholesale.
+    Measured after W1b-1: `str x=clean; fn fill { x=$(/bin/echo dirty) };
+    - echo hi | fill; echo "$x"` reaches only the SSA backstop's rejection
+    of `x_2`. The old compiler rejected it with SB5067; the new validator
+    accepts it, and the native `--no-taint` binary prints `clean`.
+    Probe `w1b1-stage-write.sash` in `port-w1b1-probes.tar.gz`; this remains
+    a backstop false positive, not a claimed end-to-end acceptance.
 
 ### 18. W5 END
 

@@ -1355,27 +1355,20 @@ run_sash 'int a=1; (( 1 + (a++) ))'
 run_sash 'int array v=(1 2 3); (( 1 + (v[0]=9) ))'
 [[ $rc != 0 && -z $out && $err == *SB4020*embedded*'a[i]'* ]]; chk cov.263
 
-# cov.264-270 SB5067: a function may not *leave* a global tainted at body
-# exit (net-effect rule; DD#121 R1 adjacency makes the in-body attest the
-# repair). Both paths that raise it — a bulk fill (`read`/`readline`/`argv`/
-# `mapfile`) whose target is a global, and a plain assignment of a taint
-# source to one — had **no spec at all**, so the entire diagnostic was
-# uncovered. Taint is the safety property the language exists to enforce;
-# it should not rest on an untested check.
-run_sash 'str g=""; f() { read g; }; f'
+# cov.264-270 DD#127: shared functions cannot leave their own taint behind.
+# Pin bulk fills and scalar assignments; the single-use argv case instead
+# passes its taint to the caller's read.
+run_sash 'str g=""; f() { read g; }; f; f'
 [[ $rc != 0 && $err == *SB5067*leaves\ the\ global* ]]; chk cov.264
-run_sash 'str g=""; f() { readline g; }; f'
+run_sash 'str g=""; f() { readline g; }; f; f'
 [[ $rc != 0 && $err == *SB5067* ]]; chk cov.265
-# The global must not be pre-tainted at top level: under the net-effect rule
-# the body would then *inherit* the taint and add nothing, and the program
-# would fall through to SB5050 (dead variable) instead.
 run_sash 'array g=(); f() { argv g; }; f; for v in @g { /bin/echo $v }'
-[[ $rc != 0 && $err == *SB5067* ]]; chk cov.266
-run_sash 'str g=""; f() { mapfile g; }; f'
+[[ $rc != 0 && $err == *SB5020* && $err != *SB5067* ]]; chk cov.266
+run_sash 'str g=""; f() { mapfile g; }; f; f'
 [[ $rc != 0 && $err == *SB5067* ]]; chk cov.267
-run_sash 'str g=""; f() { g=$(getenv HOME); }; f'
+run_sash 'str g=""; f() { g=$(getenv HOME); }; f; f'
 [[ $rc != 0 && $err == *SB5067*assignment* ]]; chk cov.268
-run_sash 'str g=""; f() { g=$(/bin/date); }; f'
+run_sash 'str g=""; f() { g=$(/bin/date); }; f; f'
 [[ $rc != 0 && $err == *SB5067*assignment* ]]; chk cov.269
 # The same taint into a *local* is the allowed shape — attest it and use it.
 run_sash 'f() { str l=$(getenv HOME); attest l [[ -n $l ]]; echo ok; }; f'
@@ -1680,12 +1673,13 @@ fn f {
 f'
 [[ $rc = 0 && $out = "[v]" && -z $err ]]; chk cov.340
 
-# cov.341 control: a real top-level global still earns SB5067
+# cov.341 a real top-level global still earns SB5067 in a shared function
 run_sash 'str y=v
 /bin/echo "$y"
 fn f {
     y=$(getenv HOME)
 }
+f
 f'
 [[ $rc != 0 && -z $out && $err == *SB5067* ]]; chk cov.341
 
