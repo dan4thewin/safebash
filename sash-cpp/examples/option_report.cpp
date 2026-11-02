@@ -5,11 +5,11 @@
 
 namespace rt = sash;
 
-void amend_options(rt::Array<std::string> &first, rt::Array<std::string> &second) {
+void amend_options(rt::Array<std::string> &options) {
     rt::checkpoint();
-    rt::set_cell(second, 5, rt::cell(first, 5) + "!");
-    rt::unset(first, 9);
-    rt::set_cell(second, 7, "--verbose");
+    rt::set_cell(options, 5, rt::cell(options, 5) + "!");
+    rt::unset(options, 9);
+    rt::set_cell(options, 7, "--verbose");
 }
 
 void prepare_options(rt::Array<std::string> &options) {
@@ -17,7 +17,7 @@ void prepare_options(rt::Array<std::string> &options) {
     rt::set_cell(options, 2, "");
     rt::set_cell(options, 5, "Ada Lovelace");
     rt::set_cell(options, 9, "--color");
-    amend_options(options, options);
+    amend_options(options);
 }
 
 void argument_report(const std::vector<std::string> &arguments) {

@@ -1,0 +1,32 @@
+fn subtotal -> int {
+    int sum=0
+    int i=0
+    for (( i=1; i<=3; i++ )) {
+        (( sum += i * 7 ))
+    }
+    return $sum
+}
+
+int total=$(subtotal)
+int quote=$(( (total + 1) * 3 ))
+echo "subtotal: $total; quote: $quote"
+if (( quote >= 60 )) {
+    echo "tier: standard"
+} else {
+    echo "tier: small"
+}
+int dividend=-17
+int divisor=5
+echo "division: $(( dividend / divisor )); remainder: $(( dividend % divisor )); negated: $(( -dividend ))"
+echo "power: $(( 2 ** 10 )); negative: $(( 2 ** -3 )); zero: $(( 0 ** 0 ))"
+int wide=64
+int signed_value=-9
+echo "left: $(( 1 << 63 )); wide: $(( 1 << wide ))"
+echo "right: $(( signed_value >> 1 )); wide: $(( signed_value >> wide ))"
+int zero=0
+echo "lazy: $(( 1 ? 7 : 10 / zero ))"
+int count=3
+while (( count > 0 )) {
+    echo "countdown: $count"
+    (( count -= 1 ))
+}

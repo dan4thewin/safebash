@@ -1909,7 +1909,7 @@ void collection_cells() {
     auto forward = [&](sash::Array<std::int64_t> &array) { forwarded(array, array); };
     forward(integers);
     require(sash::cell(integers, 5) == 8 && sash::len(integers) == 1,
-            "forwarded and aliased parameters must preserve collection identity");
+            "C++ forwarded and aliased references must preserve collection identity");
     auto copy = strings;
     sash::set_cell(strings, 5, "changed");
     require(sash::cell(copy, 5) == "present", "whole-container copies must be independent");
@@ -2239,6 +2239,276 @@ void collection_allocation() {
             "collection allocation failures must reach the existing allocation-safe reporter");
 }
 
+void arithmetic_values() {
+    using Integer = std::int64_t;
+    using Binary = Integer (*)(Integer, Integer);
+    constexpr auto minimum = std::numeric_limits<Integer>::min();
+    constexpr auto maximum = std::numeric_limits<Integer>::max();
+    const struct {
+        Binary operation;
+        Integer left;
+        Integer right;
+        Integer expected;
+        const char *message;
+    } values[] = {
+        {sash::add, 41, 1, 42, "ordinary checked addition"},
+        {sash::add, minimum, maximum, -1, "addition across opposite extremes"},
+        {sash::add, maximum, minimum, -1, "addition with INT64_MIN on the right"},
+        {sash::add, maximum, -maximum, 0, "addition may cancel at the boundary"},
+        {sash::sub, minimum, minimum, 0, "subtracting INT64_MIN from itself"},
+        {sash::sub, -1, minimum, maximum, "subtraction of INT64_MIN can reach INT64_MAX"},
+        {sash::sub, maximum, maximum, 0, "subtracting INT64_MAX from itself"},
+        {sash::sub, minimum, -1, minimum + 1, "subtraction above INT64_MIN"},
+        {sash::sub, maximum, 1, maximum - 1, "subtraction below INT64_MAX"},
+        {sash::mul, -7, 6, -42, "negative times positive"},
+        {sash::mul, 7, -6, -42, "positive times negative"},
+        {sash::mul, -7, -6, 42, "negative times negative"},
+        {sash::mul, minimum, 1, minimum, "INT64_MIN times one"},
+        {sash::mul, 1, minimum, minimum, "one times INT64_MIN"},
+        {sash::mul, minimum, 0, 0, "INT64_MIN times zero"},
+        {sash::mul, 0, minimum, 0, "zero times INT64_MIN"},
+        {sash::mul, maximum / 2, 2, maximum - 1, "positive product at the overflow boundary"},
+        {sash::mul, minimum / 2, 2, minimum, "negative product at the overflow boundary"},
+        {sash::mul, -maximum, -1, maximum, "negative product at INT64_MAX"},
+        {sash::div, -17, 5, -3, "division truncates toward zero"},
+        {sash::div, 17, -5, -3, "negative-divisor division"},
+        {sash::div, minimum, 1, minimum, "representable division of INT64_MIN"},
+        {sash::div, minimum, minimum, 1, "division of equal negative extremes"},
+        {sash::mod, -17, 5, -2, "remainder follows the dividend sign"},
+        {sash::mod, 17, -5, 2, "negative divisor does not change remainder sign"},
+        {sash::mod, minimum, -1, 0, "INT64_MIN modulo minus one is not a fault"},
+        {sash::mod, minimum, minimum, 0, "remainder of equal negative extremes"},
+        {sash::pow, 0, 0, 1, "zero exponent returns one"},
+        {sash::pow, 0, 7, 0, "positive power of zero"},
+        {sash::pow, 2, 10, 1024, "ordinary checked exponentiation"},
+        {sash::pow, -2, 3, -8, "odd power retains a negative sign"},
+        {sash::pow, -2, 63, minimum, "a negative power may reach INT64_MIN exactly"},
+        {sash::pow, maximum, 1, maximum, "exponent one must not square an unused base"},
+        {sash::pow, minimum, 1, minimum, "INT64_MIN to exponent one"},
+        {sash::pow, 1, maximum, 1, "large exponents require a bounded power loop"},
+        {sash::pow, -1, maximum, -1, "large odd exponents retain parity"},
+        {sash::pow, 2, -3, 0, "negative exponents retain sash's integer result"},
+        {sash::pow, 1, minimum, 0, "negative exponents are not negated or converted to unsigned"},
+    };
+    for (const auto &value : values) {
+        try {
+            require(value.operation(value.left, value.right) == value.expected, value.message);
+        } catch (const sash::ArithmeticError &) {
+            require(false, value.message);
+        }
+    }
+    require(sash::neg(0) == 0 && sash::neg(-17) == 17 && sash::neg(maximum) == -maximum,
+            "representable negation must preserve the signed value");
+
+    const struct {
+        Binary operation;
+        Integer left;
+        Integer right;
+        sash::ArithmeticFault fault;
+        const char *diagnostic;
+        const char *message;
+    } faults[] = {
+        {sash::add, maximum, 1, sash::ArithmeticFault::Overflow, "arithmetic overflow",
+         "addition above INT64_MAX must fault"},
+        {sash::add, minimum, -1, sash::ArithmeticFault::Overflow, "arithmetic overflow",
+         "addition below INT64_MIN must fault"},
+        {sash::add, -1, minimum, sash::ArithmeticFault::Overflow, "arithmetic overflow",
+         "addition of INT64_MIN must check the bound without negating it"},
+        {sash::sub, minimum, 1, sash::ArithmeticFault::Overflow, "arithmetic overflow",
+         "subtraction below INT64_MIN must fault"},
+        {sash::sub, maximum, -1, sash::ArithmeticFault::Overflow, "arithmetic overflow",
+         "subtraction above INT64_MAX must fault"},
+        {sash::sub, 0, minimum, sash::ArithmeticFault::Overflow, "arithmetic overflow",
+         "subtraction of INT64_MIN must fault without negating it first"},
+        {sash::mul, maximum, 2, sash::ArithmeticFault::Overflow, "arithmetic overflow",
+         "positive multiplication overflow must fault"},
+        {sash::mul, minimum, 2, sash::ArithmeticFault::Overflow, "arithmetic overflow",
+         "negative multiplication overflow must fault"},
+        {sash::mul, minimum, -1, sash::ArithmeticFault::Overflow, "arithmetic overflow",
+         "INT64_MIN times minus one must fault"},
+        {sash::mul, -1, minimum, sash::ArithmeticFault::Overflow, "arithmetic overflow",
+         "minus one times INT64_MIN must fault"},
+        {sash::div, minimum, -1, sash::ArithmeticFault::Overflow, "arithmetic overflow",
+         "INT64_MIN divided by minus one must fault"},
+        {sash::div, minimum, 0, sash::ArithmeticFault::DivisionByZero, "division by zero",
+         "division by zero must precede any raw division"},
+        {sash::mod, minimum, 0, sash::ArithmeticFault::DivisionByZero, "division by zero",
+         "modulo by zero must precede any raw remainder"},
+        {sash::pow, 2, 63, sash::ArithmeticFault::Overflow, "arithmetic overflow",
+         "positive exponentiation overflow must fault"},
+        {sash::pow, -2, 64, sash::ArithmeticFault::Overflow, "arithmetic overflow",
+         "even exponentiation overflow must fault"},
+    };
+    for (const auto &fault : faults) {
+        bool caught = false;
+        try {
+            (void)fault.operation(fault.left, fault.right);
+        } catch (const sash::ArithmeticError &error) {
+            caught =
+                error.fault() == fault.fault && std::string_view(error.what()) == fault.diagnostic;
+        }
+        require(caught, fault.message);
+    }
+    bool caught = false;
+    try {
+        (void)sash::neg(minimum);
+    } catch (const sash::ArithmeticError &error) {
+        caught = error.fault() == sash::ArithmeticFault::Overflow;
+    }
+    require(caught, "negating INT64_MIN must fault");
+}
+
+void arithmetic_shifts() {
+    using Integer = std::int64_t;
+    using Binary = Integer (*)(Integer, Integer);
+    constexpr auto minimum = std::numeric_limits<Integer>::min();
+    constexpr auto maximum = std::numeric_limits<Integer>::max();
+    const struct {
+        Binary operation;
+        Integer value;
+        Integer count;
+        Integer expected;
+        const char *message;
+    } values[] = {
+        {sash::shl, minimum, 0, minimum, "zero left shift preserves the sign bit"},
+        {sash::shl, 1, 63, minimum, "left shift can set the sign bit without overflow"},
+        {sash::shl, -1, 63, minimum, "negative left operand is a bit pattern"},
+        {sash::shl, maximum, 1, -2, "left shift discards overflowing value bits"},
+        {sash::shl, minimum, 1, 0, "left shift can discard every set bit"},
+        {sash::shl, -5, 1, -10, "negative left shift is well-defined"},
+        {sash::shl, 8, 64, 0, "left shift by the width does not mask the count"},
+        {sash::shl, -5, 200, 0, "wide left shift discards negative value bits"},
+        {sash::shl, 8, maximum, 0, "large left shift counts remain unbounded"},
+        {sash::shr, minimum, 0, minimum, "zero right shift preserves the value"},
+        {sash::shr, -9, 1, -5, "signed right shift floors rather than truncates"},
+        {sash::shr, minimum, 63, -1, "right shift fills the sign bit"},
+        {sash::shr, maximum, 63, 0, "positive right shift does not add sign bits"},
+        {sash::shr, 8, 64, 0, "wide positive right shift returns zero"},
+        {sash::shr, -9, 64, -1, "wide negative right shift returns minus one"},
+        {sash::shr, -1, maximum, -1, "large right shift counts saturate to the sign"},
+        {sash::shr, 0, maximum, 0, "large right shift of zero remains zero"},
+    };
+    for (const auto &value : values) {
+        require(value.operation(value.value, value.count) == value.expected, value.message);
+    }
+    for (Binary operation : {sash::shl, sash::shr}) {
+        for (Integer count : {Integer{-1}, minimum}) {
+            bool caught = false;
+            try {
+                (void)operation(0, count);
+            } catch (const sash::ArithmeticError &error) {
+                caught = error.fault() == sash::ArithmeticFault::NegativeShiftCount &&
+                         std::string_view(error.what()) == "negative shift count";
+            }
+            require(caught, "even a zero operand must reject a negative shift count");
+        }
+    }
+}
+
+void arithmetic_failures() {
+    constexpr auto minimum = std::numeric_limits<std::int64_t>::min();
+    constexpr auto maximum = std::numeric_limits<std::int64_t>::max();
+    const auto failed = run_child([&] {
+        std::int64_t target = 73;
+        int ends = 0;
+        bool caught_as_command = false;
+        bool later = false;
+        const int status = sash::run(
+            "arithmetic-discard",
+            [&] {
+                const auto f = [&]() -> std::int64_t {
+                    target = sash::add(maximum, 1);
+                    return target;
+                };
+                try {
+                    (void)f();
+                } catch (const sash::CommandError &) {
+                    caught_as_command = true;
+                }
+                later = true;
+            },
+            [&](const sash::Shutdown &shutdown) {
+                ++ends;
+                require(shutdown.reason == sash::ShutdownReason::Failure && shutdown.status == 2 &&
+                            target == 73 && !caught_as_command && !later,
+                        "arithmetic faults preserve the target and cannot become command outcomes");
+            });
+        require(ends == 1, "arithmetic failure must unwind into owner END once");
+        return status;
+    });
+    require(failed.status == 2 && failed.diagnostic == "arithmetic-discard: arithmetic overflow\n",
+            "ignoring a function result must not suppress its arithmetic failure");
+
+    const auto divided = run_child([] {
+        return sash::run("arithmetic-condition", [] {
+            if (sash::div(7, 0) != 0) {
+                require(false, "a division fault must not reach the condition body");
+            }
+        });
+    });
+    require(divided.status == 2 && divided.diagnostic == "arithmetic-condition: division by zero\n",
+            "an arithmetic condition must report its fault instead of yielding false");
+    const auto shifted = run_child([] {
+        return sash::run("arithmetic-argument", [] {
+            const auto f = [](std::int64_t) {
+                require(false, "a failed argument must not call f");
+            };
+            f(sash::shr(0, -1));
+        });
+    });
+    require(shifted.status == 2 &&
+                shifted.diagnostic == "arithmetic-argument: negative shift count\n",
+            "argument evaluation retains the arithmetic failure boundary");
+
+    bool denied = false;
+    try {
+        const AllocationFailure fault(1);
+        const std::string control(128, 'x');
+        require(control.size() == 128, "allocation-fault positive control");
+    } catch (const std::bad_alloc &) {
+        denied = true;
+    }
+    require(denied, "arithmetic allocation control must actually reject an allocation");
+    bool caught = false;
+    {
+        const AllocationFailure fault(1);
+        try {
+            (void)sash::neg(minimum);
+        } catch (const sash::ArithmeticError &error) {
+            caught = error.fault() == sash::ArithmeticFault::Overflow &&
+                     std::string_view(error.what()) == "arithmetic overflow";
+        }
+    }
+    require(caught, "an arithmetic diagnostic payload must not require a C++ allocation");
+
+    bool handled = false;
+    require(sash::run(
+                "arithmetic-END", [] {},
+                [&](const sash::Shutdown &) {
+                    try {
+                        (void)sash::mod(7, 0);
+                    } catch (const sash::ArithmeticError &error) {
+                        handled = error.fault() == sash::ArithmeticFault::DivisionByZero;
+                    }
+                }) == 0 &&
+                handled,
+            "END can explicitly handle its own arithmetic failure");
+    bool escaped = false;
+    bool later = false;
+    try {
+        (void)sash::run(
+            "invalid-arithmetic-END", [] {},
+            [&](const sash::Shutdown &) {
+                (void)sash::mul(maximum, 2);
+                later = true;
+            });
+    } catch (const sash::ArithmeticError &error) {
+        escaped = error.fault() == sash::ArithmeticFault::Overflow;
+    }
+    require(escaped && !later,
+            "unhandled END arithmetic must not receive automatic failure handling");
+}
+
 bool run_test(const char *name, const std::function<void()> &body) {
     try {
         body();
@@ -2268,6 +2538,16 @@ int main(int argc, char **argv) {
                                 collection_dispositions();
                                 collection_arguments(helper);
                                 collection_allocation();
+                            })
+                       ? 0
+                       : 1;
+        }
+        if (mode == "--arithmetic") {
+            return run_test(argv[1],
+                            [] {
+                                arithmetic_values();
+                                arithmetic_shifts();
+                                arithmetic_failures();
                             })
                        ? 0
                        : 1;
@@ -2396,6 +2676,9 @@ int main(int argc, char **argv) {
         {"lazy collection dispositions", collection_dispositions},
         {"owned collection arguments", [&] { collection_arguments(helper); }},
         {"collection allocation failures", collection_allocation},
+        {"checked integer arithmetic", arithmetic_values},
+        {"defined integer shifts", arithmetic_shifts},
+        {"arithmetic failure boundaries", arithmetic_failures},
     };
     for (const auto &test : tests) {
         if (!run_test(test.first, test.second)) {

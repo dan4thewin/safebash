@@ -3,6 +3,7 @@
 
 #include <array>
 #include <cstdint>
+#include <exception>
 #include <functional>
 #include <initializer_list>
 #include <iterator>
@@ -40,6 +41,18 @@ class CommandError final : public std::runtime_error {
 class SetupError final : public std::system_error {
   public:
     SetupError(std::error_code error, std::string_view operation);
+};
+
+enum class ArithmeticFault { Overflow, DivisionByZero, NegativeShiftCount };
+
+class ArithmeticError final : public std::exception {
+  public:
+    explicit ArithmeticError(ArithmeticFault fault) noexcept;
+    [[nodiscard]] ArithmeticFault fault() const noexcept { return fault_; }
+    [[nodiscard]] const char *what() const noexcept override;
+
+  private:
+    ArithmeticFault fault_;
 };
 
 struct ProcessExit {
@@ -118,6 +131,16 @@ void write(std::string_view bytes, int fd = 1);
 [[nodiscard]] CommandResult try_echo(std::initializer_list<std::string_view> words);
 void echo(std::initializer_list<std::string_view> words);
 [[nodiscard]] std::regex compile_regex(std::string_view pattern);
+
+[[nodiscard]] std::int64_t add(std::int64_t left, std::int64_t right);
+[[nodiscard]] std::int64_t sub(std::int64_t left, std::int64_t right);
+[[nodiscard]] std::int64_t mul(std::int64_t left, std::int64_t right);
+[[nodiscard]] std::int64_t neg(std::int64_t value);
+[[nodiscard]] std::int64_t div(std::int64_t left, std::int64_t right);
+[[nodiscard]] std::int64_t mod(std::int64_t left, std::int64_t right);
+[[nodiscard]] std::int64_t pow(std::int64_t base, std::int64_t exponent);
+[[nodiscard]] std::int64_t shl(std::int64_t value, std::int64_t count);
+[[nodiscard]] std::int64_t shr(std::int64_t value, std::int64_t count);
 
 template <typename T> using Array = std::map<std::int64_t, T>;
 template <typename T> using Map = std::map<std::string, T>;

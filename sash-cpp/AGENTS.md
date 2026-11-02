@@ -13,7 +13,7 @@ The runtime task is `../notes-exp/tasks/cpp-transpiler-runtime-before-ir.md`.
 
 Build and exercise changes with `mk -p 1 test` in this directory. Use distinct
 `BUILD` directories when changing compilers or sanitizer flags. `mk -p 1
-sash-example` additionally compiles all seven sash examples with the real
+sash-example` additionally compiles all eight sash examples with the real
 CLI. Ordinary C++ tests do not require a Rust build or IR input.
 `mk -p 1 fault-test` adds Linux strace probes; run it without sanitizer
 instrumentation. The native command helper is deliberately unsanitized.
@@ -83,6 +83,11 @@ flow, and standard C++ values. Preserve command outcomes for caught/discarded
 uses; checking an outcome is what raises an aborting exception.
 
 Collections remain ordinary `Array<T>`/`Map<T>` standard-map aliases.
+The reference producer's 2026-11-02 DD#100 contract requires distinct
+collection identities per call and access through passed/forwarded slots,
+not overlapping global names during that call. Paired examples conform;
+the C++ library retains ordinary references and alias-safety fixtures
+rather than adding source-admission checks or copying parameters.
 Use `cell`, `set_cell`, and `unset` for source cell accesses: reads are
 owned typed-zero values without insertion, and negative array indices fail.
 Population length counts stored empty/zero cells.
@@ -95,6 +100,23 @@ Keep scalar/cell dispositions shared and lazy, and preserve empty splat
 cells unless the source explicitly elides the entire empty collection.
 Prepare owned arguments before launch; NUL is rejected at the existing
 exec boundary, not silently removed by collection helpers.
+
+Keep source integers as `std::int64_t`. Use the checked `add`, `sub`, `mul`,
+`neg`, `div`, `mod`, `pow`, `shl`, and `shr` functions for fallible arithmetic,
+not raw signed operators or a numeric wrapper. ArithmeticError is distinct
+from command outcomes; discarding a returned integer never suppresses it.
+Retain DD#25 shifts: reject negative counts, never mask large counts,
+sign-fill right shifts, and treat discarded left-shift bits as bits rather
+than overflow. The implementation uses bounded checks and unsigned bits.
+Keep comparisons and lazy `&&`/`||`/`?:` source-shaped, and sequence operands
+when their effects or failures make order observable.
+Numeric input conversion remains DD#77 disposition work, not an operation
+overflow; no integer parser has been implemented here.
+
+A native undeclared word-loop binder is a string even over an int
+collection (DD#86), not automatically the range's C++ value type. Honor
+that source binding in a consumer; arithmetic-only pairs can use genuine
+counting loops instead of introducing string-to-int parsing.
 
 Function-result discard follows native DD#55's 2026-10-30 no-reach rule:
 ignoring a returned int/status must not catch failures inside the function,

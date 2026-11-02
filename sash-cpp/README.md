@@ -44,11 +44,18 @@ defined outside END; both reports match the adjacent eight-line golden.
 
 [option_report.cpp](examples/option_report.cpp) and
 [option_report.sash](examples/option_report.sash) add sparse cell operations,
-forwarded and aliased collection parameters, population length, joins,
+forwarded collection parameters, population length, joins,
 pairwise array-to-map conversion, independent key snapshots, and argument
 construction. The report retains empty arguments while explicitly eliding
 others; its real argument-reporting function invokes external printf.
 Both match the adjacent seventeen-line golden.
+
+[arithmetic_report.cpp](examples/arithmetic_report.cpp) and
+[arithmetic_report.sash](examples/arithmetic_report.sash) retain an
+int-returning subtotal function, a counting `for`, a `while`, and ordinary
+branches. Checked integer functions handle nested arithmetic, negation,
+division/remainder, powers, and shifts without changing the integer type.
+Both match the adjacent ten-line golden.
 
 On Linux or macOS, with a C++17 compiler, Plan 9 `mk`, and `timeout` on PATH:
 
@@ -62,6 +69,7 @@ mk -p 1 test
 ./build/capture_report
 ./build/lifecycle_report
 ./build/option_report
+./build/arithmetic_report
 ```
 
 `greetings` prints `Hello, Ada!`; `job_report` prints the worker rounds;
@@ -70,6 +78,7 @@ mk -p 1 test
 `capture_report` prints comma-joined summaries and their captured frames.
 `lifecycle_report` prints the captured count and explicitly handled END report.
 `option_report` prints the sparse options, copied keys, and exact argument list.
+`arithmetic_report` prints a weighted subtotal, arithmetic results, and a countdown.
 The build produces a normal C++ static library, `build/libsash_cpp.a`;
 it does not build Rust or link sash-rt.
 For example, the C++ program can also be linked directly:
@@ -101,12 +110,15 @@ mk -p 1 CXX=clang++ BUILD=build/apple-asan \
 ./build/apple/capture_report
 ```
 
-Both hosts run the same 41 fixture groups and seven expected C++ reports,
+Both hosts run the same 44 fixture groups and eight expected C++ reports,
 including large binary output, nested captures/readers, closed standard
 descriptors, partial setup, child/fd cleanup, typed exit, main-only END,
 and signal delivery during foreground work and capture. Collection fixtures
 exercise live insertion/deletion through aliases, copied loop values, lazy
 dispositions, binary joins, and allocation failures before argument publication.
+Arithmetic fixtures cover signed limits, every multiplication sign pair,
+division/remainder faults, bounded power evaluation, defined shifts, ignored
+function results, failed conditions/arguments, and explicit END handling.
 The Darwin build has been
 exercised on Apple Silicon; this is not a claim of testing every Mac SDK
 or architecture. Tests need GNU `timeout`, which is not a stock macOS tool.
@@ -136,7 +148,7 @@ ptrace. The command helper is an ordinary unsanitized external executable;
 the library, test driver, and examples receive `SANITIZE`.
 
 With the real sash CLI and runtime already built in the parent checkout,
-`mk -p 1 sash-example` compiles and runs all seven sash examples against
+`mk -p 1 sash-example` compiles and runs all eight sash examples against
 their expected output. Override `SASH` and `SASH_RT_LIB` for other locations.
 This additional target is not a prerequisite for native C++ tests.
 
@@ -161,8 +173,9 @@ mk -p 1 error-demo
 
 The full catalog has 169 cases: 85 basic cases, 65 injected-fault cases,
 and 19 interrupted-operation recovery cases.
-The newer lifecycle fixtures and their six injected-fault checks belong
-to `test` and `fault-test`, not this command/capture catalog.
+The newer arithmetic/lifecycle fixtures and the six lifecycle
+injected-fault checks belong to `test` and `fault-test`, not this
+command/capture catalog.
 
 The [low-level tour](docs/error-path-tour.md) follows representative cases
 through the Bash runner, strace fault injection, C++ outcomes, and resource
@@ -266,7 +279,11 @@ replacing `exec` are not implemented yet.
 `std::map<std::string, T>`. Source element types use `std::string` or
 `std::int64_t`. These remain ordinary containers and reference parameters,
 not handles into a runtime variable table. Whole-container assignment copies;
-passing a reference, including two aliases or forwarded references, does not.
+passing a C++ reference, including aliases or forwarded references, does not.
+The current native DD#100 contract requires distinct collection identities
+per call and access through slots rather than overlapping global names
+during that call. The paired examples conform; the C++ library retains
+ordinary alias-safe references rather than recreating source validation.
 
 Use `cell(collection, key)` for non-inserting reads, `set_cell` for
 assignment, `unset` for cell deletion, and ordinary `.clear()` for clearing.
@@ -335,6 +352,49 @@ rejects NUL in executable/argument strings before any launch.
 There is no word splitting or inherited unchecked function mode.
 These helpers do not implement argv/environment ingress, numeric parsing,
 or the remaining string/read operation families.
+
+### Checked integer arithmetic
+
+Integers remain ordinary `std::int64_t` values. Use `add`, `sub`, `mul`,
+`neg`, `div`, `mod`, `pow`, `shl`, and `shr` for operations whose source
+semantics cannot be expressed by unchecked C++ operators:
+
+```cpp
+std::int64_t quote = sash::mul(sash::add(total, 1), 3);
+```
+
+The helpers retain [native DD#25](../notes/decisions/DD25-overflow-traps.md):
+addition, subtraction, multiplication, negation, and power overflow fail;
+division and remainder reject zero; `INT64_MIN / -1` fails but
+`INT64_MIN % -1` returns zero. Division truncates toward zero and remainder
+keeps the dividend's sign.
+
+Shifts reject negative counts and never mask them. A left count of 64 or
+more returns zero; a right count of 64 or more returns zero or minus one
+according to the value's sign. Right shift fills the sign, and left shift
+discards bits without treating that as arithmetic overflow. Bounds checks
+and unsigned-bit operations keep this standard C++17, without raw signed
+overflow or implementation-defined signed shifts.
+
+`pow` uses checked multiplication and exponentiation by squaring, without
+an overflowing unused final square. Exponent zero returns one, including
+`0 ** 0`; negative exponents retain sash's documented result of zero.
+
+Failures throw `ArithmeticError`, carrying an `ArithmeticFault` and a
+fixed diagnostic without an allocating string payload. It is not a
+`CommandError` or a returned command outcome. Ignoring an integer result
+does not suppress evaluation errors. The ordinary body boundary reports
+the diagnostic and returns status 2 after unwinding; END still requires
+explicit handling and receives no automatic arithmetic catch.
+
+Comparisons, bitwise operators, `&&`, `||`, and `?:` remain ordinary C++
+where their semantics fit. Keep fallible operands inside their lazy
+regions; ordinary function arguments do not impose source left-to-right
+order, so operands with observable effects or failures may need explicit
+temporaries.
+There is no checked-number wrapper, operator-overload layer, integer
+parser, or IR consumer. Source diagnostics such as SB5077 and SB5084
+remain the producer's responsibility.
 
 ### Program lifecycle and END
 

@@ -138,6 +138,8 @@ Shutdown finish_body(std::string_view program, const std::function<void()> &body
     } catch (const CommandError &error) {
         return {ShutdownReason::Failure,
                 detail::report_error(program, error.what(), error.status()), 0};
+    } catch (const ArithmeticError &error) {
+        return {ShutdownReason::Failure, detail::report_error(program, error.what(), 2), 0};
     } catch (const SetupError &error) {
         return {ShutdownReason::Failure, detail::report_error(program, error.what(), 2), 0};
     } catch (const std::regex_error &error) {

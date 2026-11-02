@@ -13,6 +13,20 @@ CommandError::CommandError(int status, std::string diagnostic)
 SetupError::SetupError(std::error_code error, std::string_view operation)
     : std::system_error(error, std::string(operation)) {}
 
+ArithmeticError::ArithmeticError(ArithmeticFault fault) noexcept : fault_(fault) {}
+
+const char *ArithmeticError::what() const noexcept {
+    switch (fault_) {
+    case ArithmeticFault::Overflow:
+        return "arithmetic overflow";
+    case ArithmeticFault::DivisionByZero:
+        return "division by zero";
+    case ArithmeticFault::NegativeShiftCount:
+        return "negative shift count";
+    }
+    return "invalid arithmetic fault";
+}
+
 void check(const CommandResult &result) {
     if (!result.success()) {
         throw CommandError(result.status, result.diagnostic);
@@ -66,6 +80,14 @@ void check(const PipelineResult &result) {
 }
 
 namespace {
+
+std::int64_t signed_bits(std::uint64_t bits) noexcept {
+    if (bits <= static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max())) {
+        return static_cast<std::int64_t>(bits);
+    }
+    // Avoid an implementation-defined out-of-range unsigned-to-signed cast.
+    return -1 - static_cast<std::int64_t>(~bits);
+}
 
 std::vector<std::string> command_words(std::string_view executable,
                                        const std::vector<std::string> &arguments) {
@@ -181,6 +203,108 @@ std::regex compile_regex(std::string_view pattern) {
     } catch (const std::regex_error &error) {
         throw CommandError(2, std::string("regex: ") + error.what());
     }
+}
+
+std::int64_t add(std::int64_t left, std::int64_t right) {
+    const auto minimum = std::numeric_limits<std::int64_t>::min();
+    const auto maximum = std::numeric_limits<std::int64_t>::max();
+    if ((right > 0 && left > maximum - right) || (right < 0 && left < minimum - right)) {
+        throw ArithmeticError(ArithmeticFault::Overflow);
+    }
+    return left + right;
+}
+
+std::int64_t sub(std::int64_t left, std::int64_t right) {
+    const auto minimum = std::numeric_limits<std::int64_t>::min();
+    const auto maximum = std::numeric_limits<std::int64_t>::max();
+    if ((right < 0 && left > maximum + right) || (right > 0 && left < minimum + right)) {
+        throw ArithmeticError(ArithmeticFault::Overflow);
+    }
+    return left - right;
+}
+
+std::int64_t mul(std::int64_t left, std::int64_t right) {
+    const auto minimum = std::numeric_limits<std::int64_t>::min();
+    const auto maximum = std::numeric_limits<std::int64_t>::max();
+    if ((left > 0 && right > 0 && left > maximum / right) ||
+        (left > 0 && right < 0 && right < minimum / left) ||
+        (left < 0 && right > 0 && left < minimum / right) ||
+        (left < 0 && right < 0 && left < maximum / right)) {
+        throw ArithmeticError(ArithmeticFault::Overflow);
+    }
+    return left * right;
+}
+
+std::int64_t neg(std::int64_t value) {
+    if (value == std::numeric_limits<std::int64_t>::min()) {
+        throw ArithmeticError(ArithmeticFault::Overflow);
+    }
+    return -value;
+}
+
+std::int64_t div(std::int64_t left, std::int64_t right) {
+    if (right == 0) {
+        throw ArithmeticError(ArithmeticFault::DivisionByZero);
+    }
+    if (left == std::numeric_limits<std::int64_t>::min() && right == -1) {
+        throw ArithmeticError(ArithmeticFault::Overflow);
+    }
+    return left / right;
+}
+
+std::int64_t mod(std::int64_t left, std::int64_t right) {
+    if (right == 0) {
+        throw ArithmeticError(ArithmeticFault::DivisionByZero);
+    }
+    if (left == std::numeric_limits<std::int64_t>::min() && right == -1) {
+        return 0;
+    }
+    return left % right;
+}
+
+std::int64_t pow(std::int64_t base, std::int64_t exponent) {
+    if (exponent < 0) {
+        return 0;
+    }
+    std::int64_t result = 1;
+    while (exponent != 0) {
+        if ((exponent & 1) != 0) {
+            result = mul(result, base);
+        }
+        exponent >>= 1;
+        // An unused final square can overflow even when the result fits.
+        if (exponent != 0) {
+            base = mul(base, base);
+        }
+    }
+    return result;
+}
+
+std::int64_t shl(std::int64_t value, std::int64_t count) {
+    if (count < 0) {
+        throw ArithmeticError(ArithmeticFault::NegativeShiftCount);
+    }
+    if (count >= 64) {
+        return 0;
+    }
+    return signed_bits(static_cast<std::uint64_t>(value) << count);
+}
+
+std::int64_t shr(std::int64_t value, std::int64_t count) {
+    if (count < 0) {
+        throw ArithmeticError(ArithmeticFault::NegativeShiftCount);
+    }
+    if (count >= 64) {
+        return value < 0 ? -1 : 0;
+    }
+    if (count == 0) {
+        return value;
+    }
+    auto bits = static_cast<std::uint64_t>(value) >> count;
+    if (value < 0) {
+        bits |= std::numeric_limits<std::uint64_t>::max() << (64 - count);
+    }
+    return signed_bits(bits);
 }
 
 bool LineReader::readline(std::string &target) {

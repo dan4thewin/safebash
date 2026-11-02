@@ -1,14 +1,14 @@
 fn amend_options {
-    B[5]="${A[5]}!"
+    A[5]="${A[5]}!"
     unset A[9]
-    B[7]=--verbose
+    A[7]=--verbose
 }
 
 fn prepare_options {
     A[2]=""
     A[5]="Ada Lovelace"
     A[9]=--color
-    amend_options =A =A
+    amend_options =A
 }
 
 fn argument_report {

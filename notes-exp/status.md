@@ -1,3 +1,40 @@
+## Eighth pair: checked integer arithmetic complete
+
+DG selected checked functions in
+[DD#8](decisions/DD08-checked-integer-arithmetic.md). Integers remain
+ordinary `std::int64_t` values, with `add`, `sub`, `mul`, `neg`, `div`,
+`mod`, `pow`, `shl`, and `shr` retaining native DD#25's overflow and
+shift rules. Standard C++17 bounds checks and unsigned bits avoid
+undefined arithmetic; checked power uses bounded exponentiation by squaring.
+
+Arithmetic failures have their own fixed-payload `ArithmeticError`, not
+a command verdict. The ordinary body reports status 2 after unwinding,
+while END retains explicit handling with no automatic arithmetic catch.
+Discarding a function result does not suppress its evaluation failure.
+
+[`arithmetic_report.cpp`](../sash-cpp/examples/arithmetic_report.cpp)
+and its [sash counterpart](../sash-cpp/examples/arithmetic_report.sash)
+retain an int-returning subtotal function, counting for, while, if, and
+lazy ternary. Both match the independent ten-line golden.
+
+All 44 fixture groups and eight C++ goldens pass with GCC, Clang,
+supported Linux ASan, real Apple Clang/libc++, and Apple ASan. Both Linux
+compilers retain the fault gates and 169-case command/capture catalog.
+Arithmetic-only UBSan passes with two independent detection canaries;
+six isolated reversions fail their intended assertions. All eight sash
+pairs pass against checksum-pinned copies of the supplied compiler and
+archive. [Journal 015](journal/015-checked-integer-arithmetic.md) records
+the evidence and scope.
+
+DG's new reference DD#100 non-aliasing contract required the option pair
+to forward one collection slot rather than pass it twice. Its golden is
+unchanged; ordinary C++ references and generic alias-safety fixtures remain.
+No native code or producer changed. Numeric ingress/conversion, remaining
+text/regex/read families, general redirects, public wait, and
+forked-C++/background ownership remain on the
+[runtime roadmap](tasks/cpp-transpiler-runtime-before-ir.md).
+There is still no IR reader, emitter, or numeric wrapper.
+
 ## Seventh pair: collections and argument construction complete
 
 The standalone runtime now implements non-inserting typed-zero cell
@@ -8,7 +45,7 @@ through an alias. Explicit snapshots remain copies.
 
 [`option_report.cpp`](../sash-cpp/examples/option_report.cpp) and its
 [sash counterpart](../sash-cpp/examples/option_report.sash) retain real
-functions, forwarding and aliasing, sparse operations, joins, pairwise
+functions, slot forwarding, sparse operations, joins, pairwise
 map construction, and exact argument preparation. Both match the
 independent seventeen-line golden.
 

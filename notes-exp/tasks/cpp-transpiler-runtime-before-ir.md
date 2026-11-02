@@ -251,8 +251,8 @@ remaining value, argument, redirect, and wait operations.
 ## Seventh runnable milestone - collections and arguments implemented
 
 `option_report.cpp` and its sash counterpart use real preparation and
-argument-reporting functions. A forwarded collection is passed twice to
-an aliased helper; sparse writes/deletion, population length, typed-zero
+argument-reporting functions. A collection is forwarded to a preparation
+helper; sparse writes/deletion, population length, typed-zero
 reads, joins, pairwise map construction, copied keys, and argument
 dispositions produce an independent seventeen-line golden.
 
@@ -276,8 +276,40 @@ and 169-case catalog. Five isolated implementation mutations fail for the
 intended assertions, not timeouts. See
 [journal 014](../journal/014-collection-argument-runtime.md).
 
+The current pair forwards one slot to conform to DG's 2026-11-02 DD#100
+amendment in the active reference checkout, rather than passing the same
+collection twice. Its golden is unchanged. The library retains ordinary
+C++ references and generic alias-safety fixtures; the producer owns source
+call admission. Journal 014 records the earlier duplicate-slot demonstration.
+
 The IR reader, emitter, producer, native compiler, argv/environment ingress,
 and remaining value/read, redirect, and wait families are unchanged.
+
+## Eighth runnable milestone - checked arithmetic implemented
+
+`arithmetic_report.cpp` and its sash counterpart retain a real int-returning
+subtotal function, counting for, while, if, and a lazy ternary. Both match
+an independent ten-line report. Integers remain `std::int64_t`; checked
+functions implement native DD#25 overflow, division/remainder, power, and
+unbounded nonnegative shift semantics.
+
+[DD#8](../decisions/DD08-checked-integer-arithmetic.md) records DG's choice
+of functions rather than a numeric wrapper. The AI implemented standard
+bounds checks, unsigned-bit shifts, and checked exponentiation by squaring.
+`ArithmeticError` is distinct from command verdicts, reports status 2 at
+the ordinary body boundary, and receives no automatic END handling.
+
+All 44 groups and eight C++ goldens pass on GCC, Clang, supported Linux
+ASan, actual Apple Clang/libc++, and Apple ASan. The pinned supplied native
+CLI/archive match eight sash goldens; ordinary Linux compilers retain the
+fault gates and 169-case catalog. Arithmetic-only UBSan passes with two
+independent detection canaries, and six isolated mutations fail their
+intended assertions. See
+[journal 015](../journal/015-checked-integer-arithmetic.md).
+
+This completes checked operations, not accountable string-to-int
+conversion, numeric ingress, or the remaining text/read families. No IR
+reader, emitter, producer, or native code changed.
 
 ## Starting points selected by DG
 
@@ -287,6 +319,7 @@ and remaining value/read, redirect, and wait families are unchanged.
 | Language | C++17 |
 | Launch and threading | Single-threaded fork/exec, selected in DD#2 |
 | Sparse collections | `std::map`, with numeric keys for indexed arrays and string keys for maps |
+| Integer operations | Ordinary `std::int64_t` values with checked functions and native DD#25 arithmetic/shift rules, selected in DD#8 |
 | Regex | `std::regex` with `std::regex_constants::ECMAScript` |
 | General in-process stdout capture | Linux `memfd_create`, not a named temporary file or a synchronously filled pipe |
 | Failure propagation | Exceptions for uncaught failures; retain caught outcomes and explicit suppression rather than making every nonzero command exit throw |
@@ -380,7 +413,7 @@ forks with DG before building their assumptions throughout the library.
 
 | Choice | Alternatives and tradeoffs | Proposed way to settle it |
 |---|---|---|
-| Text and arithmetic | Counted byte strings are economical; Unicode-aware operations need more machinery. Checked arithmetic preserves faults; explicitly defined wrapping is another defensible choice. Locale-sensitive operations can vary between hosts. | Settle byte/character units, case/classification locale, numeric parsing, overflow, and shifts together; raw signed C++ overflow is never an implementation option |
+| Text and numeric ingress | Counted byte strings are economical; Unicode-aware operations need more machinery. Locale-sensitive operations can vary between hosts. Arithmetic width, checked operations, and shifts are already settled in DD#8/DD#25. | Settle remaining byte/character units, case/classification locale, and accountable numeric parsing separately; do not reopen arithmetic |
 | Regex results and replacement | Source-style backreferences require an adapter; standard C++ replacement notation reduces bespoke logic. Group layout, no-match results, and zero-length iteration remain operation-level choices even with the grammar fixed. | Compare readable examples and prefer standard facilities where they remove rather than conceal complexity |
 | Capture completion | Trailing-newline treatment and background writers holding the captured stdout affect which bytes a completed capture yields. | Specify the completion boundary and pin it with direct C++ examples; do not let regular-file EOF accidentally decide the language |
 
@@ -622,9 +655,10 @@ of most process work. Keep ordinary C++ representations visible.
   and integer zero where the selected rules require it.
 - [x] Cover assignment, deletion, clearing, key/value traversal, joins,
   splats, sparse indices, and array-to-map conversion.
-- [x] Preserve identity through reference parameters, forwarded slots,
-  and two parameters aliasing the same collection. Keep whole-container
-  copying distinct from passing a reference.
+- [x] Preserve identity through reference parameters and forwarded slots.
+  Keep whole-container copying distinct from passing a reference.
+  Generic C++ aliases remain safe; source pairs conform to the reference
+  producer's distinct-identity/no-overlapping-global DD#100 contract.
 - [x] Implement DD#7's live sorted traversal, including mutation and
   deletion through an alias without invalidated-iterator use. Keep explicit
   snapshots independent, and apply sorted-key order consistently, not
@@ -651,14 +685,17 @@ of most process work. Keep ordinary C++ representations visible.
   and EOF, using DD#99 as the reference rather than reviving retired
   `mapfile`, IFS, or flag-dependent read variants.
 
-### Arithmetic
+### Arithmetic - checked operations implemented
 
-- [ ] Implement the chosen integer width, overflow, conversion, and shift
-  rules without relying on signed C++ undefined behavior.
-- [ ] Cover add/subtract/multiply, negation, division/remainder edge cases,
-  shifts, exponentiation, and integer-text conversion.
-- [ ] Keep arithmetic faults distinct from normal boolean outcomes and
+- [x] Keep integers as `std::int64_t` with DD#8's checked functions and
+  native DD#25 overflow/shift rules, without signed C++ undefined behavior.
+- [x] Cover add/subtract/multiply, negation, division/remainder edge cases,
+  shifts, and exponentiation.
+- [x] Keep arithmetic faults distinct from normal boolean outcomes and
   command verdicts under the selected failure policy.
+- [ ] Implement accountable integer-text input/conversion under DD#77.
+  Existing integer rendering remains ordinary `std::to_string`; this
+  arithmetic unit adds no parser or new formatting family.
 
 ### ECMAScript regex
 
