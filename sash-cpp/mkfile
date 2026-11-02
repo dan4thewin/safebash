@@ -24,6 +24,7 @@ build:V:
 	$CXX $CPPFLAGS $CXXFLAGS $SANITIZE examples/pipeline_report.cpp $BUILD/libsash_cpp.a -o $BUILD/pipeline_report &&
 	$CXX $CPPFLAGS $CXXFLAGS $SANITIZE examples/capture_report.cpp $BUILD/libsash_cpp.a -o $BUILD/capture_report &&
 	$CXX $CPPFLAGS $CXXFLAGS $SANITIZE examples/lifecycle_report.cpp $BUILD/libsash_cpp.a -o $BUILD/lifecycle_report &&
+	$CXX $CPPFLAGS $CXXFLAGS $SANITIZE examples/option_report.cpp $BUILD/libsash_cpp.a -o $BUILD/option_report &&
 	$CXX $CPPFLAGS $CXXFLAGS $SANITIZE examples/error_paths.cpp $BUILD/libsash_cpp.a -o $BUILD/error_paths
 
 fixtures:V: build
@@ -47,7 +48,9 @@ test:V: fixtures
 	timeout 10 $BUILD/capture_report > $BUILD/capture_report.actual &&
 	cmp examples/capture_report.expected $BUILD/capture_report.actual &&
 	timeout 10 $BUILD/lifecycle_report > $BUILD/lifecycle_report.actual &&
-	cmp examples/lifecycle_report.expected $BUILD/lifecycle_report.actual
+	cmp examples/lifecycle_report.expected $BUILD/lifecycle_report.actual &&
+	timeout 10 $BUILD/option_report > $BUILD/option_report.actual &&
+	cmp examples/option_report.expected $BUILD/option_report.actual
 
 error-demo:V: fixtures
 	if test "$PLATFORM" != linux; then printf '%s\n' 'error-demo requires Linux (strace and subreaper containment)' >&2; exit 2; fi &&
@@ -126,4 +129,7 @@ sash-example:V:
 	cmp examples/capture_report.expected $BUILD/capture_report-sash.actual &&
 	SASH_RT_LIB=$SASH_RT_LIB $SASH examples/lifecycle_report.sash -o $BUILD/lifecycle_report-sash &&
 	timeout 10 $BUILD/lifecycle_report-sash > $BUILD/lifecycle_report-sash.actual &&
-	cmp examples/lifecycle_report.expected $BUILD/lifecycle_report-sash.actual
+	cmp examples/lifecycle_report.expected $BUILD/lifecycle_report-sash.actual &&
+	SASH_RT_LIB=$SASH_RT_LIB $SASH examples/option_report.sash -o $BUILD/option_report-sash &&
+	timeout 10 $BUILD/option_report-sash > $BUILD/option_report-sash.actual &&
+	cmp examples/option_report.expected $BUILD/option_report-sash.actual

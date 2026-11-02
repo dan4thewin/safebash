@@ -13,7 +13,7 @@ The runtime task is `../notes-exp/tasks/cpp-transpiler-runtime-before-ir.md`.
 
 Build and exercise changes with `mk -p 1 test` in this directory. Use distinct
 `BUILD` directories when changing compilers or sanitizer flags. `mk -p 1
-sash-example` additionally compiles all six sash examples with the real
+sash-example` additionally compiles all seven sash examples with the real
 CLI. Ordinary C++ tests do not require a Rust build or IR input.
 `mk -p 1 fault-test` adds Linux strace probes; run it without sanitizer
 instrumentation. The native command helper is deliberately unsanitized.
@@ -81,6 +81,20 @@ invalid directory must not break Linux memfd or external-only pipe capture.
 Keep generated-code examples source-shaped: real functions, ordinary control
 flow, and standard C++ values. Preserve command outcomes for caught/discarded
 uses; checking an outcome is what raises an aborting exception.
+
+Collections remain ordinary `Array<T>`/`Map<T>` standard-map aliases.
+Use `cell`, `set_cell`, and `unset` for source cell accesses: reads are
+owned typed-zero values without insertion, and negative array indices fail.
+Population length counts stored empty/zero cells.
+Use the shared live `values`/map-only `keys` ranges for source iteration,
+not a private iterator walk: a body or called alias may erase the current
+cell. They retain a copied key and advance via `upper_bound`; loop values
+are copies. Explicit key snapshots and completed argument vectors remain
+independent values. Do not accept a temporary in a borrowed live range.
+Keep scalar/cell dispositions shared and lazy, and preserve empty splat
+cells unless the source explicitly elides the entire empty collection.
+Prepare owned arguments before launch; NUL is rejected at the existing
+exec boundary, not silently removed by collection helpers.
 
 Function-result discard follows native DD#55's 2026-10-30 no-reach rule:
 ignoring a returned int/status must not catch failures inside the function,

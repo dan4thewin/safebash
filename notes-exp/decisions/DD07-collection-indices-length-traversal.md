@@ -72,3 +72,7 @@ functions, references, and a harmless C++/sash report pair. This decision
 adds no runtime implementation, source intrinsic, IR reader, emitter, or
 native compiler change. See
 [journal 013](../journal/013-collection-unit-policies.md).
+
+Implemented by the bounded collection/argument runtime unit on 2026-11-02;
+[journal 014](../journal/014-collection-argument-runtime.md) records its
+helpers, paired example, and controls. Native behavior remains unchanged.

@@ -42,6 +42,14 @@ and explicitly exit into END. END catches one failed command, discards
 another, and traverses the retained collection. All source functions are
 defined outside END; both reports match the adjacent eight-line golden.
 
+[option_report.cpp](examples/option_report.cpp) and
+[option_report.sash](examples/option_report.sash) add sparse cell operations,
+forwarded and aliased collection parameters, population length, joins,
+pairwise array-to-map conversion, independent key snapshots, and argument
+construction. The report retains empty arguments while explicitly eliding
+others; its real argument-reporting function invokes external printf.
+Both match the adjacent seventeen-line golden.
+
 On Linux or macOS, with a C++17 compiler, Plan 9 `mk`, and `timeout` on PATH:
 
 ```sh
@@ -53,6 +61,7 @@ mk -p 1 test
 ./build/pipeline_report
 ./build/capture_report
 ./build/lifecycle_report
+./build/option_report
 ```
 
 `greetings` prints `Hello, Ada!`; `job_report` prints the worker rounds;
@@ -60,6 +69,7 @@ mk -p 1 test
 `pipeline_report` prints sorted, deduplicated records and retained state;
 `capture_report` prints comma-joined summaries and their captured frames.
 `lifecycle_report` prints the captured count and explicitly handled END report.
+`option_report` prints the sparse options, copied keys, and exact argument list.
 The build produces a normal C++ static library, `build/libsash_cpp.a`;
 it does not build Rust or link sash-rt.
 For example, the C++ program can also be linked directly:
@@ -91,10 +101,13 @@ mk -p 1 CXX=clang++ BUILD=build/apple-asan \
 ./build/apple/capture_report
 ```
 
-Both hosts run the same 35 fixture groups and six expected C++ reports,
+Both hosts run the same 41 fixture groups and seven expected C++ reports,
 including large binary output, nested captures/readers, closed standard
 descriptors, partial setup, child/fd cleanup, typed exit, main-only END,
-and signal delivery during foreground work and capture. The Darwin build has been
+and signal delivery during foreground work and capture. Collection fixtures
+exercise live insertion/deletion through aliases, copied loop values, lazy
+dispositions, binary joins, and allocation failures before argument publication.
+The Darwin build has been
 exercised on Apple Silicon; this is not a claim of testing every Mac SDK
 or architecture. Tests need GNU `timeout`, which is not a stock macOS tool.
 The Linux fault/catalog targets below explicitly reject Darwin.
@@ -123,7 +136,7 @@ ptrace. The command helper is an ordinary unsanitized external executable;
 the library, test driver, and examples receive `SANITIZE`.
 
 With the real sash CLI and runtime already built in the parent checkout,
-`mk -p 1 sash-example` compiles and runs all six sash examples against
+`mk -p 1 sash-example` compiles and runs all seven sash examples against
 their expected output. Override `SASH` and `SASH_RT_LIB` for other locations.
 This additional target is not a prerequisite for native C++ tests.
 
@@ -246,6 +259,82 @@ argument evaluation keep their own checks, including under conditions
 (DG's 2026-10-29/30 native DD#55 ruling). No inherited unchecked mode is
 needed for this. Per-stage result suppression, background launch, and
 replacing `exec` are not implemented yet.
+
+### Collections and owned arguments
+
+`Array<T>` is an alias for `std::map<std::int64_t, T>`; `Map<T>` is
+`std::map<std::string, T>`. Source element types use `std::string` or
+`std::int64_t`. These remain ordinary containers and reference parameters,
+not handles into a runtime variable table. Whole-container assignment copies;
+passing a reference, including two aliases or forwarded references, does not.
+
+Use `cell(collection, key)` for non-inserting reads, `set_cell` for
+assignment, `unset` for cell deletion, and ordinary `.clear()` for clearing.
+`cell` returns an owned value: `""` for a missing string or `0` for a
+missing integer. `len` counts present cells, including stored empty/zero
+values, not the highest array index plus one.
+Negative array indices raise `SetupError`; string map keys such as `"-1"`
+remain valid. These helpers enforce source cell rules; direct C++ container
+access is not a substitute for them in emitted code.
+
+`values(collection)` and map-only `keys(map)` are live sorted ranges:
+
+```cpp
+for (const auto &value : sash::values(items)) {
+    sash::checkpoint();
+    sash::echo({value});
+}
+```
+
+They borrow an lvalue container, copy the current key, and advance with
+`upper_bound` after the body. Values and key loop variables are copies too,
+so erasing the current cell cannot leave a dangling loop variable.
+Later insertions are visited, earlier/current keys are not revisited,
+deleted pending cells are skipped, and pending value updates are observed.
+Continually inserting later keys can extend the walk indefinitely.
+Do not replace this with a plain map range-for when the body can erase
+the current cell. Temporary containers are rejected by the live-range API.
+Collection helpers do not insert lifecycle checkpoints.
+
+`snapshot_keys(map)` returns a separate dense string array, unchanged by
+later map mutations. `join(collection, separator)` joins sorted values,
+rendering integers and preserving counted binary bytes. Its default
+separator is a space; an explicitly empty separator stays empty, and there
+is no fixed-size result buffer.
+
+`map_pairs_elided(array)`, `map_pairs_or(array, key_callback)`, and
+`map_pairs_required(array, message_callback)` consume array values as
+alternating keys and values, retaining native DD#99's explicit odd-tail
+dispositions. They respectively drop an odd tail, use it as the value of
+a fallback key, or raise a requirement failure. An empty array is a valid
+empty map; callbacks run only for an odd count. Integer keys stringify,
+values keep their type, and later duplicate keys overwrite earlier ones.
+This is not an inverse of map value traversal.
+
+`default_value(value, fallback)` and `required_value(value, message)` use
+lazy callbacks, shared by scalars and cell reads. Their subject is the typed
+value, not membership: `""` or integer `0` triggers the operator, whereas
+string `"0"` does not. Requirements raise `CommandError` with status 2.
+Key-evaluation, allocation, and conversion failures are not missing values.
+
+Argument construction uses an ordinary owned `std::vector<std::string>`:
+
+| Helper | Contribution |
+|---|---|
+| `append_argument(args, value)` | One argument, including an empty string or integer zero rendered as `"0"` |
+| `append_elided(args, value)` | Zero arguments for `""` or integer `0`; otherwise one |
+| `append_splat(args, collection)` | Sorted present values, including empty/zero cells; zero for an empty collection |
+| `append_splat_or(args, collection, fallback)` | Present values, or exactly one lazy fallback argument, even if empty |
+| `append_splat_required(args, collection, message)` | Present values, or a lazy requirement failure on an empty collection |
+
+Splat preparation publishes no partial extension on allocation failure.
+Already-built arguments are independent of later source mutation; scalar
+appends are also safe when their source aliases the destination vector.
+Binary bytes are retained internally, but the existing exec boundary
+rejects NUL in executable/argument strings before any launch.
+There is no word splitting or inherited unchecked function mode.
+These helpers do not implement argv/environment ingress, numeric parsing,
+or the remaining string/read operation families.
 
 ### Program lifecycle and END
 

@@ -1,0 +1,17 @@
+options: 3
+missing: <unset>
+joined: |Ada Lovelace!|--verbose
+counts: 2; absent: 0
+count values: 0,7
+snapshot: color,label,z-extra
+config: color=blue
+config: z-extra=spare
+arguments: 6
+argument: <--name>
+argument: <Ada Lovelace!>
+argument: <>
+argument: <>
+argument: <Ada Lovelace!>
+argument: <--verbose>
+arguments: 1
+argument: <fallback>

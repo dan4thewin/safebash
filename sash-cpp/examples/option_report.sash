@@ -1,0 +1,41 @@
+fn amend_options {
+    B[5]="${A[5]}!"
+    unset A[9]
+    B[7]=--verbose
+}
+
+fn prepare_options {
+    A[2]=""
+    A[5]="Ada Lovelace"
+    A[9]=--color
+    amend_options =A =A
+}
+
+fn argument_report {
+    echo "arguments: $(len args)"
+    /usr/bin/printf 'argument: <%s>\n' @{args:~}
+}
+
+array options
+prepare_options =options
+echo "options: $(len options)"
+echo "missing: <${options[4]:-unset}>"
+echo "joined: $(join options '|')"
+int array counts
+counts[2]=0
+counts[5]=7
+echo "counts: $(len counts); absent: ${counts[8]}"
+echo "count values: $(join counts ,)"
+
+array pairs=(color blue label Ada spare)
+map config = @{pairs:-z-extra}
+keys config saved_keys
+unset config[label]
+echo "snapshot: $(join saved_keys ,)"
+for key in $(keys config) {
+    echo "config: $key=${config[$key]}"
+}
+
+argument_report --name "${options[5]:-guest}" "${options[2]:-}" ${options[2]:~} @{options:?expected options}
+array empty
+argument_report @{empty:-fallback}

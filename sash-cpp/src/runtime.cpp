@@ -3,6 +3,7 @@
 #include "platform.hpp"
 
 #include <algorithm>
+#include <limits>
 
 namespace sash {
 
@@ -207,6 +208,31 @@ bool LineReader::readline(std::string &target) {
 }
 
 namespace detail {
+
+void check_key(std::int64_t index) {
+    if (index < 0) {
+        throw SetupError(std::make_error_code(std::errc::invalid_argument),
+                         "array index must be nonnegative");
+    }
+}
+
+std::int64_t collection_count(std::size_t size) {
+    if (size > static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max())) {
+        throw SetupError(std::make_error_code(std::errc::value_too_large),
+                         "collection length exceeds integer capacity");
+    }
+    return static_cast<std::int64_t>(size);
+}
+
+std::string argument_text(std::string_view value) {
+    return value.empty() ? std::string{} : std::string(value.data(), value.size());
+}
+
+std::string argument_text(std::int64_t value) { return std::to_string(value); }
+
+[[noreturn]] void required_failure(std::string_view message) {
+    throw CommandError(2, "required value: " + argument_text(message));
+}
 
 void consume_lines(int fd, const std::function<void(LineReader &)> &body) {
     LineReader reader(fd);

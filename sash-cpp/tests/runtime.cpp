@@ -8,6 +8,7 @@
 #include <fcntl.h>
 #include <filesystem>
 #include <functional>
+#include <limits>
 #include <stdexcept>
 #include <sys/resource.h>
 #include <sys/stat.h>
@@ -1882,6 +1883,362 @@ void lifecycle_handoff_failure() {
     throw std::runtime_error("expected injected fatal lifecycle handoff failure");
 }
 
+void collection_cells() {
+    sash::Array<std::string> strings;
+    sash::Array<std::int64_t> integers;
+    sash::Map<std::string> labels;
+    sash::Map<std::int64_t> counts;
+    require(sash::cell(strings, 99).empty() && sash::cell(integers, 99) == 0 &&
+                sash::cell(labels, "absent").empty() && sash::cell(counts, "absent") == 0,
+            "missing cells must read typed zero");
+    require(strings.empty() && integers.empty() && labels.empty() && counts.empty(),
+            "reads must not insert missing cells");
+    sash::set_cell(strings, 2, "");
+    sash::set_cell(strings, 5, "present");
+    sash::set_cell(integers, 2, 0);
+    sash::set_cell(integers, 5, 7);
+    sash::set_cell(labels, "-1", "");
+    sash::set_cell(counts, "-1", 0);
+    require(sash::len(strings) == 2 && sash::len(integers) == 2 && sash::len(labels) == 1 &&
+                sash::len(counts) == 1,
+            "length must count present cells, including empty and zero values");
+    auto forwarded = [](sash::Array<std::int64_t> &first, sash::Array<std::int64_t> &second) {
+        sash::set_cell(first, 5, sash::cell(second, 5) + 1);
+        sash::unset(second, 2);
+    };
+    auto forward = [&](sash::Array<std::int64_t> &array) { forwarded(array, array); };
+    forward(integers);
+    require(sash::cell(integers, 5) == 8 && sash::len(integers) == 1,
+            "forwarded and aliased parameters must preserve collection identity");
+    auto copy = strings;
+    sash::set_cell(strings, 5, "changed");
+    require(sash::cell(copy, 5) == "present", "whole-container copies must be independent");
+
+    for (const auto index : {std::int64_t{-1}, std::numeric_limits<std::int64_t>::min()}) {
+        const std::function<void()> operations[] = {
+            [&] { (void)sash::cell(strings, index); },
+            [&] { sash::set_cell(strings, index, "invalid"); },
+            [&] { sash::unset(strings, index); },
+            [&] { (void)sash::cell(integers, index); },
+            [&] { sash::set_cell(integers, index, 3); },
+            [&] { sash::unset(integers, index); },
+        };
+        for (const auto &operation : operations) {
+            bool rejected = false;
+            try {
+                operation();
+            } catch (const sash::SetupError &error) {
+                rejected = error.code() == std::errc::invalid_argument &&
+                           std::string(error.what()).find("nonnegative") != std::string::npos;
+            }
+            require(rejected, "negative indices must fail for every indexed-cell operation");
+        }
+    }
+    require(sash::len(strings) == 2 && sash::cell(strings, 5) == "changed" &&
+                sash::len(integers) == 1 && sash::cell(integers, 5) == 8,
+            "invalid indices must leave collections unchanged");
+    sash::unset(labels, "-1");
+    sash::unset(counts, "absent");
+    require(labels.empty() && sash::cell(counts, "-1") == 0 && sash::len(counts) == 1,
+            "negative-looking string keys remain valid and missing deletion does not insert");
+    strings.clear();
+    integers.clear();
+    require(sash::len(strings) == 0 && sash::len(integers) == 0, "clear must remove all cells");
+}
+
+void collection_traversal() {
+    const std::string original(256, 'a');
+    sash::Array<std::string> array{{2, original}, {5, "old"}, {9, "deleted"}};
+    auto &alias = array;
+    std::vector<std::string> seen;
+    for (const auto &value : sash::values(array)) {
+        if (value == original) {
+            sash::unset(alias, 2);
+            require(value == original, "loop values must survive erasure of their source cell");
+            sash::set_cell(alias, 1, "earlier");
+            sash::set_cell(alias, 2, "reinserted");
+            sash::set_cell(alias, 3, "inserted");
+            sash::set_cell(alias, 5, "updated");
+            sash::unset(alias, 9);
+        } else if (value == "updated") {
+            alias.clear();
+            require(value == "updated", "loop values must survive clearing the collection");
+            sash::set_cell(alias, 0, "earlier after clear");
+            sash::set_cell(alias, 6, "last");
+        }
+        seen.push_back(value);
+    }
+    require(seen == std::vector<std::string>{original, "inserted", "updated", "last"},
+            "live traversal must resume at the next greater key after aliased mutations");
+
+    sash::Map<std::int64_t> map{{"delta", 4}, {"bravo", 2}, {"foxtrot", 6}};
+    std::vector<std::string> entries;
+    for (const auto &key : sash::keys(map)) {
+        const auto value = sash::cell(map, key);
+        if (key == "bravo") {
+            sash::unset(map, key);
+            require(key == "bravo", "key loop variables must survive erasing the current cell");
+            sash::set_cell(map, "alpha", 1);
+            sash::set_cell(map, "bravo", 20);
+            sash::set_cell(map, "charlie", 3);
+            sash::set_cell(map, "delta", 40);
+            sash::unset(map, "foxtrot");
+        }
+        entries.push_back(key + ":" + std::to_string(value));
+    }
+    require(entries == std::vector<std::string>{"bravo:2", "charlie:3", "delta:40"},
+            "map traversal must be sorted, live, and never revisit earlier/current keys");
+    sash::Map<std::int64_t> clear_map{{"a", 1}, {"b", 2}};
+    for (const auto value : sash::values(clear_map)) {
+        clear_map.clear();
+        require(value == 1, "map value traversal must copy the current value");
+    }
+    sash::Array<std::int64_t> numbers{{2, 2}, {5, 5}};
+    std::vector<std::int64_t> visited;
+    for (const auto value : sash::values(numbers)) {
+        visited.push_back(value);
+        if (value == 2) {
+            sash::set_cell(numbers, 3, 3);
+            continue;
+        }
+        break;
+    }
+    require(visited == std::vector<std::int64_t>{2, 3},
+            "continue must advance the live cursor and break must stop it");
+    const sash::Array<std::int64_t> empty;
+    for (const auto value : sash::values(empty)) {
+        (void)value;
+        require(false, "empty live traversal must not produce a value");
+    }
+}
+
+void collection_values() {
+    const std::string bytes("a\0b", 3);
+    sash::Map<std::string> map{{"z", "last"}, {"a", ""}, {"m", bytes}};
+    auto snapshot = sash::snapshot_keys(map);
+    sash::unset(map, "m");
+    sash::set_cell(map, "b", "new");
+    require(sash::join(snapshot, ",") == "a,m,z" && sash::len(snapshot) == 3,
+            "key snapshots must be sorted and independent from later mutation");
+    require(sash::join(map, "|") == "|new|last", "map join must traverse sorted values, not keys");
+    sash::Array<std::string> binary{{2, ""}, {5, bytes}, {9, std::string(8192, 'x')}};
+    require(sash::join(binary, std::string_view("\0", 1)) ==
+                std::string("\0", 1) + bytes + std::string("\0", 1) + std::string(8192, 'x'),
+            "join must retain empty cells, binary values/separators, and output beyond 4 KiB");
+    require(sash::join(binary, "") == bytes + std::string(8192, 'x'),
+            "an explicit empty separator must not become the default space");
+    sash::Array<std::int64_t> integers{{2, 0}, {5, std::numeric_limits<std::int64_t>::min()}};
+    require(sash::join(integers) == "0 -9223372036854775808",
+            "integer joins must render typed values, including zero and the signed minimum");
+    require(sash::join(sash::Array<std::string>{}).empty(), "empty joins must be empty");
+
+    sash::Array<std::string> pairs{{0, "z"},  {3, "one"},    {5, "a"},      {9, "two"},
+                                   {20, "z"}, {21, "three"}, {30, "orphan"}};
+    const auto elided = sash::map_pairs_elided(pairs);
+    require(
+        elided == sash::Map<std::string>{{"a", "two"}, {"z", "three"}},
+        "pair conversion must walk sparse values, overwrite duplicate keys and elide the odd tail");
+    bool used = false;
+    const auto filled = sash::map_pairs_or(pairs, [&] {
+        used = true;
+        return "extra";
+    });
+    require(used && sash::cell(filled, "extra") == "orphan" && sash::len(filled) == 3,
+            "an odd pair default must supply the key, not the value");
+    sash::Array<std::int64_t> numeric_pairs{{0, 2}, {1, 0}, {2, 3}, {3, -7}};
+    const auto numeric = sash::map_pairs_required(numeric_pairs, [] {
+        throw std::runtime_error("unused pair requirement evaluated");
+        return "";
+    });
+    require(numeric == sash::Map<std::int64_t>{{"2", 0}, {"3", -7}},
+            "integer pair conversion must format keys while retaining typed values");
+    require(sash::map_pairs_required(sash::Array<std::string>{},
+                                     [] {
+                                         throw std::runtime_error(
+                                             "empty even map evaluated an odd-tail requirement");
+                                         return "";
+                                     })
+                .empty(),
+            "an empty array is a valid empty pair map");
+}
+
+void collection_dispositions() {
+    sash::Array<std::string> strings{{2, ""}, {5, "present"}};
+    sash::Map<std::int64_t> numbers{{"zero", 0}, {"one", 1}};
+    std::size_t calls = 0;
+    auto fallback = [&] {
+        ++calls;
+        return "default";
+    };
+    require(sash::default_value(sash::cell(strings, 5), fallback) == "present" && calls == 0,
+            "defaults must not evaluate an unused fallback");
+    require(sash::default_value(sash::cell(strings, 2), fallback) == "default" &&
+                sash::default_value(sash::cell(strings, 99), fallback) == "default" && calls == 2 &&
+                sash::len(strings) == 2,
+            "stored empty and missing string cells must use the same lazy scalar default");
+    require(sash::default_value(sash::cell(numbers, "zero"), [] { return std::int64_t{8}; }) == 8 &&
+                sash::default_value(sash::cell(numbers, "missing"),
+                                    [] { return std::int64_t{9}; }) == 9,
+            "integer defaults must test typed zero, not key presence or text");
+    require(sash::default_value(std::string{"0"},
+                                [] {
+                                    throw std::runtime_error(
+                                        "nonempty string zero evaluated its fallback");
+                                    return "";
+                                }) == "0",
+            "string zero must remain distinct from integer zero for dispositions");
+    require(sash::required_value(sash::cell(strings, 5),
+                                 [] {
+                                     throw std::runtime_error("unused requirement evaluated");
+                                     return "";
+                                 }) == "present",
+            "required values must not evaluate the message on success");
+
+    const std::function<void()> failures[] = {
+        [&] { (void)sash::required_value(sash::cell(strings, 2), [] { return "empty cell"; }); },
+        [&] {
+            (void)sash::required_value(sash::cell(numbers, "zero"), [] { return "zero cell"; });
+        },
+        [&] {
+            std::vector<std::string> arguments{"kept"};
+            try {
+                sash::append_splat_required(arguments, sash::Array<std::string>{},
+                                            [] { return "empty splat"; });
+            } catch (const sash::CommandError &) {
+                require(arguments == std::vector<std::string>{"kept"},
+                        "a required empty splat must leave earlier arguments unchanged");
+                throw;
+            }
+        },
+        [&] {
+            (void)sash::map_pairs_required(sash::Array<std::string>{{2, "odd"}},
+                                           [] { return "odd pair"; });
+        },
+    };
+    for (const auto &failure : failures) {
+        bool rejected = false;
+        try {
+            failure();
+        } catch (const sash::CommandError &error) {
+            rejected =
+                error.status() == 2 && std::string(error.what()).find("required value: ") == 0;
+        }
+        require(rejected, "requirements must raise the ordinary checked failure");
+    }
+    std::vector<std::string> arguments;
+    sash::append_argument(arguments, "");
+    sash::append_elided(arguments, sash::cell(strings, 2));
+    sash::append_elided(arguments, sash::cell(numbers, "zero"));
+    sash::append_elided(arguments, sash::cell(numbers, "one"));
+    sash::append_elided(arguments, "0");
+    sash::append_splat_or(arguments, sash::Array<std::string>{}, [] { return ""; });
+    sash::append_splat_or(arguments, strings, [] {
+        throw std::runtime_error("unused splat default evaluated");
+        return "";
+    });
+    require(arguments == std::vector<std::string>{"", "1", "0", "", "", "present"},
+            "only explicit elision drops a scalar; splats retain present empty cells");
+    const auto escaped = run_child([] {
+        return sash::run("collection-report", [] {
+            (void)sash::required_value(std::string{}, [] { return "missing option"; });
+            std::_Exit(99);
+        });
+    });
+    require(escaped.status == 2 &&
+                escaped.diagnostic == "collection-report: required value: missing option\n",
+            "uncaught collection requirements must reach the existing program boundary once");
+}
+
+void collection_arguments(const std::string &helper) {
+    sash::Array<std::string> strings{{2, ""}, {7, "a b"}};
+    sash::Map<std::int64_t> numbers{{"z", -4}, {"a", 0}};
+    std::vector<std::string> arguments{"args"};
+    sash::append_argument(arguments, "");
+    sash::append_elided(arguments, "");
+    sash::append_elided(arguments, std::int64_t{0});
+    sash::append_argument(arguments, std::int64_t{0});
+    sash::append_splat(arguments, strings);
+    sash::append_splat_required(arguments, numbers, [] { return "expected counts"; });
+    sash::set_cell(strings, 7, "changed");
+    sash::set_cell(numbers, "a", 99);
+    const char expected[] = "\0"
+                            "0\0"
+                            "\0"
+                            "a b\0"
+                            "0\0"
+                            "-4\0";
+    require(sash::capture_pipeline({{helper, arguments}}) ==
+                std::string(expected, sizeof(expected) - 1),
+            "exec arguments must own snapshots, preserve empty cells and stringify integer splats");
+    require(sash::capture_pipeline({{helper, {"args"}}}).empty(),
+            "zero arguments must remain distinct from one empty argument");
+    std::vector<std::string> self{"owned"};
+    sash::append_argument(self, self.front());
+    require(self == std::vector<std::string>{"owned", "owned"},
+            "scalar argument construction must be safe when its source aliases the destination");
+    sash::Array<std::string> binary{{0, std::string("x\0y", 3)}};
+    std::vector<std::string> invalid{"args"};
+    sash::append_splat(invalid, binary);
+    require(invalid[1] == std::string("x\0y", 3) && sash::join(binary) == invalid[1],
+            "collection and argument preparation must retain counted binary bytes");
+    const auto failed = sash::try_execute(helper, invalid);
+    const auto *error = std::get_if<sash::SetupError>(&failed.outcome);
+    require(error != nullptr && error->code() == std::errc::invalid_argument &&
+                std::string(error->what()).find("argument 2 contains NUL") != std::string::npos,
+            "the existing exec boundary must reject NUL instead of truncating an argument");
+}
+
+void collection_allocation() {
+    sash::Array<std::string> array{{2, "short"}, {5, std::string(2048, 'x')}};
+    std::vector<std::string> arguments{"kept"};
+    bool failed = false;
+    {
+        AllocationFailure fault(1024);
+        try {
+            sash::append_splat(arguments, array);
+        } catch (const std::bad_alloc &) {
+            failed = true;
+        }
+    }
+    require(failed && arguments == std::vector<std::string>{"kept"} && sash::len(array) == 2,
+            "failed splat preparation must not publish partial arguments or change its source");
+    sash::Map<std::string> map{{std::string(2048, 'k'), "value"}};
+    sash::Array<std::string> snapshot{{0, "kept"}};
+    failed = false;
+    {
+        AllocationFailure fault(1024);
+        try {
+            snapshot = sash::snapshot_keys(map);
+        } catch (const std::bad_alloc &) {
+            failed = true;
+        }
+    }
+    require(failed && snapshot == sash::Array<std::string>{{0, "kept"}},
+            "failed key snapshots must not replace the previous destination");
+    failed = false;
+    {
+        AllocationFailure fault(1024);
+        try {
+            (void)sash::cell(array, 5);
+        } catch (const std::bad_alloc &) {
+            failed = true;
+        }
+        require(sash::cell(array, 99).empty(), "a missing valid cell must not need allocation");
+    }
+    require(failed && sash::len(array) == 2,
+            "allocation errors in a present-cell read must not become a missing-cell zero");
+    const auto reported = run_child([] {
+        return sash::run("collection-report", [] {
+            sash::Array<std::string> array{{2, std::string(2048, 'x')}};
+            std::vector<std::string> arguments;
+            AllocationFailure fault(1024);
+            sash::append_splat(arguments, array);
+        });
+    });
+    require(reported.status == 2 && reported.diagnostic == "collection-report: out of memory\n",
+            "collection allocation failures must reach the existing allocation-safe reporter");
+}
+
 bool run_test(const char *name, const std::function<void()> &body) {
     try {
         body();
@@ -1901,6 +2258,19 @@ int main(int argc, char **argv) {
         const std::string helper(argv[2]);
         if (std::getenv("SASH_CPP_TEST_TRACE") != nullptr) {
             sash::write("__SASH_CPP_TEST_BEGIN__\n", 2);
+        }
+        if (mode == "--collections") {
+            return run_test(argv[1],
+                            [&] {
+                                collection_cells();
+                                collection_traversal();
+                                collection_values();
+                                collection_dispositions();
+                                collection_arguments(helper);
+                                collection_allocation();
+                            })
+                       ? 0
+                       : 1;
         }
         if (mode == "--capture-storage") {
             return run_test(argv[1], [&] { capture_storage_contract(helper); }) ? 0 : 1;
@@ -2020,6 +2390,12 @@ int main(int argc, char **argv) {
         {"signal registration lifetime", lifecycle_signal_scopes},
         {"foreground and captured pipeline signals", [&] { lifecycle_foreground_signals(helper); }},
         {"main-only END", lifecycle_main_only},
+        {"collection cells and aliases", collection_cells},
+        {"live sorted collection traversal", collection_traversal},
+        {"collection joins, snapshots and pairs", collection_values},
+        {"lazy collection dispositions", collection_dispositions},
+        {"owned collection arguments", [&] { collection_arguments(helper); }},
+        {"collection allocation failures", collection_allocation},
     };
     for (const auto &test : tests) {
         if (!run_test(test.first, test.second)) {

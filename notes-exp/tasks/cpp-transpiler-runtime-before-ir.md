@@ -248,6 +248,37 @@ main-only END. See [journal 011](../journal/011-lifecycle-runtime.md).
 This milestone does not implement forked C++ stage ownership or the
 remaining value, argument, redirect, and wait operations.
 
+## Seventh runnable milestone - collections and arguments implemented
+
+`option_report.cpp` and its sash counterpart use real preparation and
+argument-reporting functions. A forwarded collection is passed twice to
+an aliased helper; sparse writes/deletion, population length, typed-zero
+reads, joins, pairwise map construction, copied keys, and argument
+dispositions produce an independent seventeen-line golden.
+
+The runtime keeps standard-map aliases visible. Shared live range adapters
+borrow the collection, save a copied key, and resume at its next greater
+present key after each body. They return copied loop values, safely
+handling current-cell deletion, clearing, later insertion, and mutation
+through aliases. This implements DD#7's sorted live walk, not a claim that
+the native table cursor has identical mutation behavior.
+
+Defaults and requirements share scalar/cell rules and evaluate operands
+lazily. Joins and argument snapshots preserve counted bytes, stored empty
+cells, and typed integer zeros. Only explicit elision removes a scalar
+identity; an empty splat default produces one argument. Prepared argument
+vectors are owned before launch and still use the existing NUL rejection.
+
+All 41 groups and seven C++ goldens pass with GCC, Clang, supported Linux
+ASan, real Apple Clang/libc++, and Apple ASan. The supplied native CLI
+matches seven sash goldens; both Linux compilers retain the fault gates
+and 169-case catalog. Five isolated implementation mutations fail for the
+intended assertions, not timeouts. See
+[journal 014](../journal/014-collection-argument-runtime.md).
+
+The IR reader, emitter, producer, native compiler, argv/environment ingress,
+and remaining value/read, redirect, and wait families are unchanged.
+
 ## Starting points selected by DG
 
 | Area | Starting point |
@@ -581,20 +612,20 @@ independent background jobs have different completion rules.
 This track can start after the common result conventions, independently
 of most process work. Keep ordinary C++ representations visible.
 
-### Sparse collections
+### Sparse collections - implemented
 
-- [ ] Use `std::map<std::int64_t, T>` and
+- [x] Use `std::map<std::int64_t, T>` and
   `std::map<std::string, T>` for string/int indexed arrays and maps.
-- [ ] Implement DD#6's typed-zero reads and DD#7's rejection of negative
+- [x] Implement DD#6's typed-zero reads and DD#7's rejection of negative
   array indices and population length.
   Use non-inserting lookup for reads; distinguish absence, empty string,
   and integer zero where the selected rules require it.
-- [ ] Cover assignment, deletion, clearing, key/value traversal, joins,
+- [x] Cover assignment, deletion, clearing, key/value traversal, joins,
   splats, sparse indices, and array-to-map conversion.
-- [ ] Preserve identity through reference parameters, forwarded slots,
+- [x] Preserve identity through reference parameters, forwarded slots,
   and two parameters aliasing the same collection. Keep whole-container
   copying distinct from passing a reference.
-- [ ] Implement DD#7's live sorted traversal, including mutation and
+- [x] Implement DD#7's live sorted traversal, including mutation and
   deletion through an alias without invalidated-iterator use. Keep explicit
   snapshots independent, and apply sorted-key order consistently, not
   just to `keys`.
@@ -605,10 +636,13 @@ of most process work. Keep ordinary C++ representations visible.
   numeric parsing/formatting, and the chosen character predicates.
 - [ ] Cover the same applicable operations for scalar strings and string
   cells rather than maintaining divergent implementations.
-- [ ] Preserve binary bytes internally, and distinguish an empty argument
+- [x] Preserve binary bytes internally, and distinguish an empty argument
   from zero arguments. Implement defaults, required-value failures, and
   elision without evaluating unused fallback expressions eagerly.
-- [ ] Provide argument snapshots and environment lookup, including unset
+- [x] Prepare owned command-argument vectors before launch, including
+  scalar arguments, sorted splats, lazy defaults/requirements, and explicit
+  elision. Allocation failure does not publish a partial splat.
+- [ ] Provide argv snapshots and environment lookup, including unset
   versus set-to-empty, without mirroring variables into the environment.
 - [ ] Implement scalar line reading, NUL-separated bulk reading, and
   string splitting. Cover empty records, consecutive/trailing separators,

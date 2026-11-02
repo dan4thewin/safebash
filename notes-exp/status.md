@@ -1,4 +1,31 @@
-## Collection runtime: next-unit policies settled
+## Seventh pair: collections and argument construction complete
+
+The standalone runtime now implements non-inserting typed-zero cell
+reads, rejection of negative array indices, population length, and live
+sorted traversal. Its shared range adapters copy cursor keys and loop
+values, remaining safe when a body clears or erases the current cell
+through an alias. Explicit snapshots remain copies.
+
+[`option_report.cpp`](../sash-cpp/examples/option_report.cpp) and its
+[sash counterpart](../sash-cpp/examples/option_report.sash) retain real
+functions, forwarding and aliasing, sparse operations, joins, pairwise
+map construction, and exact argument preparation. Both match the
+independent seventeen-line golden.
+
+All 41 fixture groups and seven C++ goldens pass with GCC, Clang, supported
+Linux ASan, real Apple Clang/libc++, and Apple ASan. The supplied native
+compiler matches seven sash goldens; both Linux compilers retain the
+fault gates and 169-case catalog. Five isolated mutations fail for their
+intended assertions. [Journal 014](journal/014-collection-argument-runtime.md)
+records scope and evidence.
+
+This completes the bounded collection/argument unit, not the whole
+[runtime roadmap](tasks/cpp-transpiler-runtime-before-ir.md).
+Argv/environment ingress, numeric/text and bulk-read families, general
+redirects, public wait, and forked-C++/background ownership remain.
+There is still no IR reader or emitter; no producer or native code changed.
+
+## Collection policies: DD#6 and DD#7
 
 DG selected [DD#6](decisions/DD06-missing-cell-reads.md): missing string
 cells read `""`, missing integer cells read `0`, and reads never insert.
@@ -14,10 +41,8 @@ are skipped, and alias mutation must be safe. Explicit snapshots remain
 copies. [Journal 013](journal/013-collection-unit-policies.md) records the
 choices.
 
-These policies unblock the proposed collection/argument unit, not the
-whole runtime roadmap. Implementation has not started; the next artifact
-is a harmless seventh C++/sash pair exercising the selected collection
-rules and argument construction.
+These policies are implemented by the seventh pair and its runtime
+helpers above. They do not settle the unrelated later operation families.
 
 ## Sixth pair: lifecycle, explicit END, and signals complete
 
