@@ -325,13 +325,22 @@ fork are withdrawn. Setup-failure suppressibility and residual assignment,
 list, and compound `-` forms remain in the native backlog; this update does
 not decide them.
 
-## Missing-cell reads are settled
+## Collection policies for the next unit are settled
 
 DG selected [DD#6](../decisions/DD06-missing-cell-reads.md): an ordinary
 missing-cell read returns `""` for strings or `0` for integers without
 inserting a key. Stored empty/zero cells remain present. Cell dispositions
 retain scalar value semantics, not an unset test. This policy does not
 hide failed key evaluation or other operation errors.
+
+[DD#7](../decisions/DD07-collection-indices-length-traversal.md) settles
+the remaining collection choices: reject negative array indices, define
+length as the number of present cells, and use live sorted traversal.
+Live iteration advances to the next greater present key, seeing later
+insertions and skipping deletions, including mutation through aliases.
+Explicit snapshots and already-prepared argument vectors remain copies.
+These choices unblock the next collection/argument unit without settling
+the unrelated later operation families below.
 
 ## Choices still requiring discussion
 
@@ -340,7 +349,6 @@ forks with DG before building their assumptions throughout the library.
 
 | Choice | Alternatives and tradeoffs | Proposed way to settle it |
 |---|---|---|
-| Remaining collection details | Negative indices, population versus highest-index length, and snapshot versus live iteration need explicit answers. | Present the native rules beside the simpler standard-map alternatives; keep DD#6's non-inserting typed-zero reads |
 | Text and arithmetic | Counted byte strings are economical; Unicode-aware operations need more machinery. Checked arithmetic preserves faults; explicitly defined wrapping is another defensible choice. Locale-sensitive operations can vary between hosts. | Settle byte/character units, case/classification locale, numeric parsing, overflow, and shifts together; raw signed C++ overflow is never an implementation option |
 | Regex results and replacement | Source-style backreferences require an adapter; standard C++ replacement notation reduces bespoke logic. Group layout, no-match results, and zero-length iteration remain operation-level choices even with the grammar fixed. | Compare readable examples and prefer standard facilities where they remove rather than conceal complexity |
 | Capture completion | Trailing-newline treatment and background writers holding the captured stdout affect which bytes a completed capture yields. | Specify the completion boundary and pin it with direct C++ examples; do not let regular-file EOF accidentally decide the language |
@@ -577,7 +585,8 @@ of most process work. Keep ordinary C++ representations visible.
 
 - [ ] Use `std::map<std::int64_t, T>` and
   `std::map<std::string, T>` for string/int indexed arrays and maps.
-- [ ] Implement the agreed missing-cell, negative-index, and length rules.
+- [ ] Implement DD#6's typed-zero reads and DD#7's rejection of negative
+  array indices and population length.
   Use non-inserting lookup for reads; distinguish absence, empty string,
   and integer zero where the selected rules require it.
 - [ ] Cover assignment, deletion, clearing, key/value traversal, joins,
@@ -585,9 +594,10 @@ of most process work. Keep ordinary C++ representations visible.
 - [ ] Preserve identity through reference parameters, forwarded slots,
   and two parameters aliasing the same collection. Keep whole-container
   copying distinct from passing a reference.
-- [ ] Pin snapshot versus live traversal, including mutation and deletion
-  through an alias. Apply sorted-key order consistently, not just to
-  `keys`.
+- [ ] Implement DD#7's live sorted traversal, including mutation and
+  deletion through an alias without invalidated-iterator use. Keep explicit
+  snapshots independent, and apply sorted-key order consistently, not
+  just to `keys`.
 
 ### Strings, arguments, and reads
 

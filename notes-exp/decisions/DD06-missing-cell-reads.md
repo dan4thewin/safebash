@@ -36,8 +36,8 @@ An empty string remains an empty argument unless explicitly elided.
 
 Absence alone is not an operation failure. This does not suppress failed
 key evaluation, allocation or conversion errors, or an invalid index:
-which indices are valid is a separate decision. Existing failure checks
-remain active.
+[DD#7](DD07-collection-indices-length-traversal.md) requires nonnegative
+array indices. Existing failure checks remain active.
 
 ## Basis and limits
 
@@ -48,7 +48,8 @@ Strict lookup would expose incorrect keys sooner, but would also make
 ordinary sparse reads fallible and deliberately diverge from those rules.
 DG chose typed zero.
 
-Negative indices, the meaning of length, and snapshot versus live traversal
-remain open. Sorted `std::map` traversal is already selected and unchanged.
-This records a policy, not implementation of collection helpers or an IR
+[DD#7](DD07-collection-indices-length-traversal.md) settles the remaining
+collection choices: reject negative indices, count present cells, and
+traverse live in the already-selected sorted-key order.
+This records policy, not implementation of collection helpers or an IR
 consumer. See [journal 012](../journal/012-collection-missing-cell-policy.md).
