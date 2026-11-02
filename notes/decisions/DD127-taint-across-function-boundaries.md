@@ -79,7 +79,7 @@ judged at the source.
 
 | channel | single-use `f` | shared `f` |
 |---|---|---|
-| stdout | A kernel-backed `$(f)` or `f \| reader` is tainted; a compiler-owned buffer capture introduces no taint. Attest the tainted result where DD#121 puts the attest for an external command. | The attest must be inside `f`. An attest of a tainted capture at a call site is rejected, naming `f` and its call sites. The capture stays tainted; `:!` at the use stays legal. |
+| stdout | A kernel-backed `$(f)` or `f \| reader` is tainted; a compiler-owned buffer capture introduces no taint. Attest the tainted result where DD#121 puts the attest for an external command. | Capture and attest inside `f`, then export through a compiler-owned buffer. An outside attest of its kernel-read output is rejected, naming `f` and its call sites. The result stays tainted; `:!` at the use stays legal. |
 | names outward | The call taints what `f` leaves own-tainted. Attest immediately after the call, or a later non-`:!` read is SB5020. | SB5067 at the source statement inside `f`, the last one per name. |
 | names inward | A use that would be rejected if the received taint were `f`'s own is rejected with the same code, at the call. | the same |
 
@@ -142,6 +142,26 @@ backstop classifies the actual buffer/kernel choice, not a separate
 "trusted producer" flag. Further buffering optimizations may expand the
 clean cases without weakening this rule. DD#88's SB4075 writer-preservation
 check remains a separate syntax policy, not a taint-safety proof.
+
+### Validation ownership
+
+The read boundary determines **whether data is tainted**. The shared-function
+rule separately determines **where it may be attested**. DG retained the
+inside-function requirement on 2026-11-02: a shared external-producing
+function captures and attests internally before exporting buffer-copyable
+output. Merely moving a check before a subsequent kernel read does not
+validate that read.
+
+With the existing transport paths, even a shared builtin-only writer sent
+through a real pipe can require `:!` at its receiver. A clean buffered
+`$(f)` needs no attest; attesting that already-clean name remains harmless.
+This is not a trusted-producer exception to the read rule.
+
+DG also identified the optimization opportunity: a completely known
+sash-generated pipe writer with no external calls could transfer through a
+compiler-owned buffer instead. That must replace the kernel read, not mark
+it trusted, and preserve DD#122's producer isolation, streaming, early-close
+and status semantics. Wider buffering remains separate from this port.
 
 ### Chains
 
@@ -440,8 +460,9 @@ below distinguishes what has landed from what remains.
 W1b-1 and W1b-2 implement **globals and collection slots** on the existing
 per-statement transfer functions (journals 557 and 559). They do not
 introduce an I/C/T state machine or re-walk a callee in each caller's
-context. W2a implements read-boundary classification (journal 560);
-shared-output attest provenance remains W2b.
+context. W2a implements read-boundary classification (journal 560).
+W2b adds shared-output ownership to those same summaries (journal 561);
+neither analysis re-walks a callee for a particular caller.
 
 ### Building a name summary
 
@@ -570,7 +591,51 @@ SSA `ReadLine` and `ReadArray` are unconditional taint sources.
 `CaptureEnd` carries only the emitted `buffered` choice, from which the
 backstop derives its result. The former `clean_pipe` and capture `tainted`
 annotations are removed. No output-analysis object is threaded into SSA
-construction, and the name-summary architecture is unchanged.
+construction.
+
+### Tracking output ownership
+
+The tainted-name state also carries possible shared output owners. Joins
+retain every possible owner; an unconditional replacement discards the old
+value's owners, while `+=` retains them. An attest of a clean name remains
+a no-op. An attest of an owned tainted value is **SB5100**, naming the shared
+producer and its call sites. Trust at a use (`:!`) remains legal: ownership
+does not reject merely capturing or retaining the value.
+
+Each existing function summary additionally holds:
+
+- **Stdout paths:** direct output paths and paths already owned by a shared
+  callee. A shared function takes ownership only of the still-direct paths,
+  so a shared wrapper cannot hide an inner shared producer. Structural bodies
+  and in-place integer calls contribute; an ordinary nested capture has its
+  own output boundary. Pipelines and redirects remain kernel-backed. These
+  paths never make a read clean or prove isolation from a pathname.
+- **True origin flows and generators:** singleton probes carry an explicit
+  incoming marker. Only outputs that retain it forward the caller's origins.
+  These flows are separate from W1's boolean flows: W1 preserves an incoming
+  name's identity when a fresh source re-taints that name, but the old output
+  provenance must not survive the replacement. Value splits and whole
+  collection unsets also discard the replaced value's origins without
+  changing W1's existing conservative boolean transfer.
+- **Attest obligations:** an attest of a symbolic incoming name or stdin is
+  recorded, then checked against the actual origins at a call. This covers
+  named readers, helper chains and slot generators without caller-specific
+  analysis. An external command may consume inherited stdin; it is not
+  whitelisted by executable name.
+
+The actual buffer/read classifier is consulted before assigning capture
+ownership. A buffered `$(f)` therefore acquires no tainted owner, including
+the internal capture/attest/echo repair. A later real pipe read does acquire
+taint and the producer's ownership; internal validation is not a trusted-pipe
+exception.
+
+Stdin obligations follow DD#122's lexical boundary. A parent reader consumes
+its private pipe; a function or anonymous capture called from that reader's
+body uses ordinary stdin instead. Forked stages receive the preceding
+stage's output as stdin. A redirected statement suspends the private reader
+binding; an explicit stdin open introduces a new read source, still tainted,
+while descriptor dups retain inherited-input obligations. This is source
+ownership, not a physical descriptor-alias or isolation proof.
 
 ## Cost
 
@@ -591,11 +656,10 @@ with globals named anywhere in the callee's call chain, even with
 `--no-taint`. W1b-2 retires the interim slot-taint analysis (journal 559).
 W2a replaces producer-based capture/pipe trust with the read boundary,
 sharing the existing buffer predicate with lowering (journal 560).
+W2b implements shared-output ownership, SB5100 and symbolic stdin/name
+attest obligations on the same independent summaries (journal 561).
 The following remain:
 
-- **W2b, shared output:** provenance and the outside-attest rejection are
-  not implemented. They must account for taint introduced by a later kernel
-  read, not restore the discarded descriptor-routing analysis.
 - **W3, ordinary loop edges; W4, per-process SSA checking; W5, END entry.**
   In particular, W4's backstop can still reject a parent read after a child
   taints its private copy; the B18 entry records a measured example.
@@ -674,9 +738,22 @@ The following remain:
   capture/attest/echo wrapper already buffers and remains clean
   (`outflow.11`); widening eligibility is separate work.
 
+### Landed in W2b
+
+- `outown.1`-`.34` pin shared and nested producers, multiple output paths,
+  scalar/array/loop readers, caught and converting attests, global/slot
+  summary mappings, returns, in-place value calls and symbolic stdin.
+- Replacement and lexical-scope controls distinguish true origin flow from
+  boolean taint, nested captures from in-place calls, and a private reader
+  pipe from the ordinary stdin of its calls and captures.
+- Existing buffered-capture controls (`outflow.10`-`.13`) remain valid.
+  The new ownership rule does not widen buffering or alter the SSA backstop.
+- `pipeown.4` uses explicit trust for its shared builtin writer's real pipes.
+  Its triple-nested reader scope and exact eight-line output assertion are
+  unchanged.
+
 ## Open
 
-- W2b: shared-output provenance and the code of its call-site rejection.
 - Buffer eligibility beyond the existing paths
   (`q-buffer-capture-eligibility`); kernel reads remain tainted.
 - W4: the per-process SSA backstop; validator name effects landed in W1b-1.

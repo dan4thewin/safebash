@@ -318,8 +318,19 @@ value's use check. There is no descriptor-routing or `clean_pipe` exemption.
 Source analysis shares buffer eligibility with lowering; the SSA backstop
 classifies the actual emitted capture path.
 
-Shared-output attest restrictions, ordinary loop edges, per-process SSA
-checking and END entry remain W2b-W5. The SSA backstop also has a separate
+**Shared output is validated inside its producer (DD#127).** SB5100 rejects
+an outside attest of tainted output owned by a shared function, naming that
+function and its call sites. Capturing it and using `:!` is still legal.
+Internal capture/attest/echo can export a clean compiler buffer; a subsequent
+kernel read reintroduces taint and is not exempted by the writer's validation.
+Existing per-function summaries carry stdout owners, true origin flows and
+symbolic stdin/name attest obligations. Origin flows are separate from boolean
+taint flows so a fresh replacement cannot inherit the old value's owner.
+Named readers and slot forwarding use those summaries, not caller-specific
+walks. A parent's private reader pipe is not the stdin of its calls or captures.
+
+Ordinary loop edges, per-process SSA checking and END entry remain W3-W5.
+The SSA backstop also has a separate
 future-array-version false positive. DD#127's "Implementation status" records these
 boundaries and the conservative value/capture precision limits.
 

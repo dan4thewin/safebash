@@ -1112,8 +1112,10 @@ the SSA highest-future-version check; that separate fault is recorded in
   introduces none (journal 560; `outflow.1`-`.14`, `sw.26`-`.28`).
   The fifteen parked fixtures are adapted without dropping their original
   runtime/status/grammar assertions; `dd82.4` now asserts located SB5020.
-  **W2b remains:** shared-output provenance and outside-attest enforcement,
-  including single-use chains. W2a does not claim that additional rejection.
+  W2b adds shared-output ownership and SB5100 outside-attest enforcement,
+  including single-use chains, mapped globals/slots and named stdin readers
+  (`outown.1`-`.34`, journal 561). It does not change read-boundary taint
+  or widen buffering.
 - [x] **B35** (fixed-on-branch under the old rule; superseded by DD127).
   `fn f { echo hi }; f | readline x` draws SB5020. That was a false
   positive under producer-based trust; DG's 2026-11-02 kernel-read rule

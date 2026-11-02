@@ -4477,7 +4477,9 @@ fn resolve_on_path(name: &str) -> bool {
 // SECURITY: This is definition-based, NOT name-based. There is no
 // "clean list" of variable names. Taint flows through assignment.
 
-use crate::output_taint::OutputTaint;
+use crate::output_taint::{
+    redirect_reads_new_input, stage_runs_in_parent, OutputPaths, OutputTaint,
+};
 use std::cell::{Cell, RefCell};
 use std::collections::BTreeSet;
 use std::collections::HashSet;
@@ -4494,7 +4496,7 @@ use std::collections::HashSet;
 /// DD#100 slots are mapped to the actual collection identities at each call.
 /// Positional arguments are checked at the call (DD#46).
 pub fn check_taint(program: &Program) -> Vec<Diagnostic> {
-    let mut tainted: HashSet<String> = HashSet::new();
+    let mut tainted = Tainted::default();
     let mut diags = Vec::new();
     let map_names = collect_map_names(program);
     let mut interface = HashSet::new();
@@ -4505,6 +4507,7 @@ pub fn check_taint(program: &Program) -> Vec<Diagnostic> {
     let census = take_census(program);
     let output = OutputTaint::new(program);
     let empty = HashMap::new();
+    let input = Origins::new();
     let scratch = BodyCx::default();
     let base = SlotCx {
         probing: false,
@@ -4516,6 +4519,8 @@ pub fn check_taint(program: &Program) -> Vec<Diagnostic> {
         fname: "",
         body: &scratch,
         log: None,
+        stdin: &input,
+        pipe_reader: None,
     };
     let summaries = build_summaries(program, &census, &base);
     let cx = SlotCx {
@@ -4543,11 +4548,86 @@ pub fn check_taint(program: &Program) -> Vec<Diagnostic> {
 /// no removal can cross a block boundary or a branch merge.
 type JustTainted = HashSet<String>;
 
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+enum TaintOrigin {
+    Shared(String),
+    Incoming,
+    Stdin,
+}
+
+type Origins = BTreeSet<TaintOrigin>;
+
+/// Read checks need only the name set. Mutations also maintain ownership;
+/// there is deliberately no mutable dereference to the underlying set.
+#[derive(Clone, Default, PartialEq, Eq)]
+struct Tainted {
+    names: HashSet<String>,
+    origins: HashMap<String, Origins>,
+}
+
+impl std::ops::Deref for Tainted {
+    type Target = HashSet<String>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.names
+    }
+}
+
+impl Tainted {
+    fn insert(&mut self, name: String) {
+        self.names.insert(name);
+    }
+
+    fn add_origins(&mut self, name: &str, origins: Origins) {
+        if !origins.is_empty() {
+            self.origins
+                .entry(name.to_string())
+                .or_default()
+                .extend(origins);
+        }
+    }
+
+    fn replace(&mut self, name: &str, origins: Origins) {
+        self.remove(name);
+        self.insert(name.to_string());
+        self.add_origins(name, origins);
+    }
+
+    fn remove(&mut self, name: &str) {
+        self.names.remove(name);
+        self.origins.remove(name);
+    }
+
+    fn retain(&mut self, keep: impl FnMut(&String) -> bool) {
+        self.names.retain(keep);
+        self.origins.retain(|name, _| self.names.contains(name));
+    }
+
+    fn origins(&self, name: &str) -> Origins {
+        self.origins.get(name).cloned().unwrap_or_default()
+    }
+
+    fn extend(&mut self, other: Self) {
+        self.names.extend(other.names);
+        for (name, origins) in other.origins {
+            self.add_origins(&name, origins);
+        }
+    }
+
+    fn is_subset(&self, other: &Self) -> bool {
+        self.names.is_subset(&other.names)
+            && self
+                .origins
+                .iter()
+                .all(|(name, origins)| origins.is_subset(&other.origins(name)))
+    }
+}
+
 /// One step of a DD#121 block walk: run `stmt`, then report the names it taints
 /// — the `just` set the *next* statement's attest is allowed to clear.
 fn taint_step(
     stmt: &Statement,
-    tainted: &mut HashSet<String>,
+    tainted: &mut Tainted,
     just: &JustTainted,
     cx: &SlotCx,
     diags: &mut Vec<Diagnostic>,
@@ -4584,7 +4664,7 @@ fn stmt_taints(stmt: &Statement, cx: &SlotCx) -> JustTainted {
         body: &scratch,
         ..*cx
     };
-    let mut probe = HashSet::new();
+    let mut probe = Tainted::default();
     let mut discard = Vec::new();
     taint_stmt(
         stmt,
@@ -4593,7 +4673,7 @@ fn stmt_taints(stmt: &Statement, cx: &SlotCx) -> JustTainted {
         &probe_cx,
         &mut discard,
     );
-    probe
+    probe.names
 }
 
 /// Walk a block of statements in order, threading DD#121's adjacency set.
@@ -4605,7 +4685,7 @@ fn stmt_taints(stmt: &Statement, cx: &SlotCx) -> JustTainted {
 /// `if attest v in a [[ … ]]`.
 fn taint_block(
     stmts: &[Statement],
-    tainted: &mut HashSet<String>,
+    tainted: &mut Tainted,
     initial_just: &JustTainted,
     cx: &SlotCx,
     diags: &mut Vec<Diagnostic>,
@@ -4624,22 +4704,25 @@ fn taint_block(
 /// to an adjacent pair inside one block, so unioning a pass's output back into
 /// its input is monotone. Probe diagnostics are discarded — the caller emits
 /// them once, walking against the stable set.
-fn loop_entry_fixpoint(bodies: &[&[Statement]], entry: &mut HashSet<String>, cx: &SlotCx) {
-    // Bounded by the number of distinct names, which cannot grow during the
-    // loop; the cap is a belt-and-braces guard against a future non-monotone
-    // edit turning this into a hang.
+fn loop_entry_fixpoint(bodies: &[&[Statement]], entry: &mut Tainted, cx: &SlotCx) {
+    // Both names and origins are finite; joining either is monotone.
     for _ in 0..MAX_TAINT_FIXPOINT_PASSES {
-        let mut probe = entry.clone();
-        let mut sink = Vec::new();
-        for b in bodies {
-            taint_block(b, &mut probe, &JustTainted::new(), cx, &mut sink);
-        }
-        let before = entry.len();
+        let probe = taint_loop_pass(bodies, entry, cx);
+        let before = entry.clone();
         entry.extend(probe);
-        if entry.len() == before {
+        if *entry == before {
             return;
         }
     }
+}
+
+fn taint_loop_pass(bodies: &[&[Statement]], entry: &Tainted, cx: &SlotCx) -> Tainted {
+    let mut probe = entry.clone();
+    let mut sink = Vec::new();
+    for body in bodies {
+        taint_block(body, &mut probe, &JustTainted::new(), cx, &mut sink);
+    }
+    probe
 }
 
 const MAX_TAINT_FIXPOINT_PASSES: usize = 64;
@@ -5942,7 +6025,7 @@ fn stmt_command(stmt: &Statement) -> Option<&Command> {
 
 fn taint_stmt(
     stmt: &Statement,
-    tainted: &mut HashSet<String>,
+    tainted: &mut Tainted,
     just: &JustTainted,
     sx: &SlotCx,
     diags: &mut Vec<Diagnostic>,
@@ -5995,7 +6078,7 @@ fn taint_stmt(
 /// `for`'s words — are leaves or heads, so no arm could do it for them.
 fn taint_cmdsub_bodies(
     stmt: &Statement,
-    tainted: &mut HashSet<String>,
+    tainted: &mut Tainted,
     sx: &SlotCx,
     diags: &mut Vec<Diagnostic>,
 ) {
@@ -6007,7 +6090,7 @@ fn taint_cmdsub_bodies(
 /// run, so its kills cannot clear the enclosing state.
 fn taint_capture_bodies(
     bodies: Vec<&[Statement]>,
-    tainted: &mut HashSet<String>,
+    tainted: &mut Tainted,
     sx: &SlotCx,
     diags: &mut Vec<Diagnostic>,
 ) {
@@ -6016,18 +6099,23 @@ fn taint_capture_bodies(
         let inner = SlotCx {
             fname: "",
             body: &frame,
+            pipe_reader: None,
             ..*sx
         };
         let mut body_tainted = tainted.clone();
         taint_block(body, &mut body_tainted, &JustTainted::new(), &inner, diags);
         tainted.extend(body_tainted);
         tainted.extend(frame.returns.take());
+        sx.body
+            .ownership
+            .borrow_mut()
+            .extend(frame.ownership.take());
     }
 }
 
 fn taint_child_bodies(
     stmt: &Statement,
-    tainted: &mut HashSet<String>,
+    tainted: &mut Tainted,
     just: &JustTainted,
     sx: &SlotCx,
     diags: &mut Vec<Diagnostic>,
@@ -6059,14 +6147,14 @@ fn taint_child_bodies(
 fn taint_if(
     i: &If,
     span: Span,
-    tainted: &mut HashSet<String>,
+    tainted: &mut Tainted,
     just: &JustTainted,
     sx: &SlotCx,
     diags: &mut Vec<Diagnostic>,
 ) {
     let mut fall = tainted.clone();
     // (out-state, does this path reach the merge?)
-    let mut paths: Vec<(HashSet<String>, bool)> = Vec::new();
+    let mut paths: Vec<(Tainted, bool)> = Vec::new();
     let mut lead = just.clone();
 
     let arms = std::iter::once((&i.condition, &i.then_body))
@@ -6113,12 +6201,12 @@ fn taint_if(
 /// DD#121: the merge of a branching construct is the union of the out-states of
 /// the paths that reach it. A path that diverts (`exit` / `return` / `break` /
 /// `continue`) contributes nothing, because its state never arrives.
-fn merge_paths(paths: &[(HashSet<String>, bool)], tainted: &mut HashSet<String>) {
-    let mut merged: Option<HashSet<String>> = None;
+fn merge_paths(paths: &[(Tainted, bool)], tainted: &mut Tainted) {
+    let mut merged: Option<Tainted> = None;
     for (out, _) in paths.iter().filter(|(_, f)| *f) {
         match merged {
             None => merged = Some(out.clone()),
-            Some(ref mut m) => m.extend(out.iter().cloned()),
+            Some(ref mut m) => m.extend(out.clone()),
         }
     }
     if let Some(m) = merged {
@@ -6205,7 +6293,7 @@ fn attest_clear_names(c: &Command) -> Vec<&str> {
 fn check_caught_resolution(
     names: &[&str],
     span: Span,
-    paths: &[(HashSet<String>, bool)],
+    paths: &[(Tainted, bool)],
     has_else: bool,
     diags: &mut Vec<Diagnostic>,
 ) {
@@ -6224,11 +6312,11 @@ fn check_caught_resolution(
         ));
         return;
     }
-    for n in names {
-        if paths.iter().any(|(out, falls)| *falls && out.contains(*n)) {
-            diags.push(Diagnostic::error_span(span, "SB5089", unresolved_msg(n)));
-            return;
-        }
+    if let Some(n) = names
+        .iter()
+        .find(|n| paths.iter().any(|(out, falls)| *falls && out.contains(**n)))
+    {
+        diags.push(Diagnostic::error_span(span, "SB5089", unresolved_msg(n)));
     }
 }
 
@@ -6284,7 +6372,7 @@ fn check_list_caught_resolution(
 /// DD#121: a `while` condition and body both run 0..n times, so the entry state
 /// is driven to a fixpoint and the merge unions the pre-loop set back in (the
 /// zero-trip path).
-fn taint_while(w: &While, tainted: &mut HashSet<String>, sx: &SlotCx, diags: &mut Vec<Diagnostic>) {
+fn taint_while(w: &While, tainted: &mut Tainted, sx: &SlotCx, diags: &mut Vec<Diagnostic>) {
     let mut entry = tainted.clone();
     loop_entry_fixpoint(&[&w.condition, &w.body], &mut entry, sx);
     let mut out = entry.clone();
@@ -6315,7 +6403,7 @@ fn block_taints(stmts: &[Statement], cx: &SlotCx) -> JustTainted {
 fn taint_list(
     l: &List,
     span: Span,
-    tainted: &mut HashSet<String>,
+    tainted: &mut Tainted,
     just: &JustTainted,
     sx: &SlotCx,
     diags: &mut Vec<Diagnostic>,
@@ -6343,7 +6431,7 @@ fn taint_list(
     // it on failure (the subject is still tainted).
     let mut right = if matches!(l.op, ListOp::Or) {
         let mut s = before.clone();
-        s.extend(tainted.iter().cloned());
+        s.extend(tainted.clone());
         s
     } else {
         tainted.clone()
@@ -6382,13 +6470,18 @@ fn taint_list(
 ///   must be attest-all'd first. Emitted as SB5020 directing to attest-all.
 /// - A clean source rebinds the loop var to clean values (it is removed
 ///   from the tainted set, e.g. `for x in a b c`).
-fn taint_for(f: &For, tainted: &mut HashSet<String>, sx: &SlotCx, diags: &mut Vec<Diagnostic>) {
+fn taint_for(f: &For, tainted: &mut Tainted, sx: &SlotCx, diags: &mut Vec<Diagnostic>) {
     check_for_words(&f.words, tainted, sx.output, diags);
     // The binder is rebound by the loop, so it takes the in-source's taint and
     // loses whatever it carried before.
     let from_source = f.words.iter().any(|word| is_taint_source(word, sx.output));
     if from_source {
-        tainted.insert(f.variable.clone());
+        let origins = f
+            .words
+            .iter()
+            .flat_map(|word| source_origins(word, sx))
+            .collect();
+        tainted.replace(&f.variable, origins);
     } else {
         tainted.remove(&f.variable);
     }
@@ -6485,7 +6578,7 @@ fn splat_array_name(w: &Expr) -> Option<&str> {
 fn taint_declaration(
     d: &Declaration,
     span: Span,
-    tainted: &mut HashSet<String>,
+    tainted: &mut Tainted,
     sx: &SlotCx,
     diags: &mut Vec<Diagnostic>,
 ) {
@@ -6502,7 +6595,7 @@ fn taint_declaration(
 
 fn taint_assignment(
     a: &Assignment,
-    tainted: &mut HashSet<String>,
+    tainted: &mut Tainted,
     sx: &SlotCx,
     diags: &mut Vec<Diagnostic>,
 ) {
@@ -6526,7 +6619,7 @@ fn taint_assignment(
         );
         return;
     }
-    taint_scalar_assignment(a, tainted, sx.output, diags);
+    taint_scalar_assignment(a, tainted, sx, diags);
 }
 
 /// The scalar (or string `+=`) case of an assignment.
@@ -6538,18 +6631,15 @@ fn taint_assignment(
 /// (`z=$(getenv X)`), which taints the target instead of being rejected.
 fn taint_scalar_assignment(
     a: &Assignment,
-    tainted: &mut HashSet<String>,
-    output: &OutputTaint,
+    tainted: &mut Tainted,
+    sx: &SlotCx,
     diags: &mut Vec<Diagnostic>,
 ) {
     // The RHS is read before the target is written: in `y="$y$(/bin/echo b)"`
     // the `$y` is the value `y` held before — clean here — and only the result
     // comes from a source.
-    reject_scalar_rhs_read(&a.value, tainted, output, diags);
-    let from_source = is_taint_source(&a.value, output);
-    if from_source {
-        tainted.insert(a.name.clone());
-    }
+    reject_scalar_rhs_read(&a.value, tainted, sx.output, diags);
+    let from_source = is_taint_source(&a.value, sx.output);
     // DD#121: a whole-variable assignment from a clean RHS KILLS the taint —
     // the name now holds a value that came from nowhere external. This is what
     // makes DD#24's sanctioned fallback (`attest v [[ … ]] || v=8080`) leave a
@@ -6558,8 +6648,12 @@ fn taint_scalar_assignment(
     //
     // `+=` appends to whatever is already there, and an indexed write replaces
     // one cell of a container. Neither kills; the latter returned above.
-    if a.op == AssignOp::Set && !from_source {
+    if a.op == AssignOp::Set {
         tainted.remove(&a.name);
+    }
+    if from_source {
+        tainted.insert(a.name.clone());
+        tainted.add_origins(&a.name, source_origins(&a.value, sx));
     }
 }
 
@@ -6658,7 +6752,7 @@ fn reject_scalar_rhs_read(
 /// a literal (and was handled).
 fn taint_array_literal_assignment(
     a: &Assignment,
-    tainted: &mut HashSet<String>,
+    tainted: &mut Tainted,
     sx: &SlotCx,
     diags: &mut Vec<Diagnostic>,
 ) -> bool {
@@ -6752,25 +6846,38 @@ fn tainted_into_collection_msg(name: &str, is_map: bool) -> String {
 /// Non-final stages run in children; their reads count, but their writes do not.
 fn taint_pipeline(
     p: &crate::ir::Pipeline,
-    tainted: &mut HashSet<String>,
+    tainted: &mut Tainted,
     sx: &SlotCx,
     diags: &mut Vec<Diagnostic>,
 ) {
+    let mut upstream = Origins::new();
     for (i, s) in p.commands.iter().enumerate() {
         let in_parent = i + 1 == p.commands.len() && stage_runs_in_parent(s);
-        taint_stage(s, in_parent, tainted, sx, diags);
+        let stage = pipe_stage_context(sx, &upstream, i, in_parent);
+        taint_stage(s, in_parent, tainted, &stage, diags);
+        let output = output_origins(std::slice::from_ref(s), &stage);
+        upstream.extend(output);
     }
 }
 
-fn stage_runs_in_parent(stmt: &Statement) -> bool {
-    let (body, _, negated) = stmt.stage_marks();
-    (matches!(body.kind, StmtKind::While(_)) && !negated) || body.is_pipe_reader()
+fn pipe_stage_context<'a>(
+    cx: &SlotCx<'a>,
+    upstream: &'a Origins,
+    index: usize,
+    in_parent: bool,
+) -> SlotCx<'a> {
+    let input = if index == 0 { cx.stdin } else { upstream };
+    SlotCx {
+        stdin: if in_parent { cx.stdin } else { input },
+        pipe_reader: in_parent.then_some(input),
+        ..*cx
+    }
 }
 
 fn taint_stage(
     stmt: &Statement,
     in_parent: bool,
-    tainted: &mut HashSet<String>,
+    tainted: &mut Tainted,
     sx: &SlotCx,
     diags: &mut Vec<Diagnostic>,
 ) {
@@ -6781,16 +6888,12 @@ fn taint_stage(
     }
 }
 
-fn taint_discarded(
-    stmt: &Statement,
-    tainted: &HashSet<String>,
-    sx: &SlotCx,
-    diags: &mut Vec<Diagnostic>,
-) {
+fn taint_discarded(stmt: &Statement, tainted: &Tainted, sx: &SlotCx, diags: &mut Vec<Diagnostic>) {
     let frame = BodyCx::default();
     let inner = SlotCx {
         body: &frame,
         log: None,
+        pipe_reader: None,
         ..*sx
     };
     taint_stmt(
@@ -6800,13 +6903,17 @@ fn taint_discarded(
         &inner,
         diags,
     );
+    sx.body
+        .ownership
+        .borrow_mut()
+        .extend(frame.ownership.take());
 }
 
 /// Taint a redirected statement. A redirect target is a read position, so a
 /// tainted target (`echo > $t`) is checked like any other read.
 fn taint_redirected(
     r: &crate::ir::Redirected,
-    tainted: &mut HashSet<String>,
+    tainted: &mut Tainted,
     just: &JustTainted,
     sx: &SlotCx,
     diags: &mut Vec<Diagnostic>,
@@ -6814,7 +6921,17 @@ fn taint_redirected(
     for rd in &r.redirects {
         check_expr_taint(&rd.target, tainted, sx.output, diags);
     }
-    taint_stmt(&r.body, tainted, just, sx, diags);
+    let input = Origins::new();
+    let inner = SlotCx {
+        stdin: if redirect_reads_new_input(r) {
+            &input
+        } else {
+            sx.stdin
+        },
+        pipe_reader: None,
+        ..*sx
+    };
+    taint_stmt(&r.body, tainted, just, &inner, diags);
 }
 
 /// Taint a dispatch's subject, its patterns and each arm body. A pattern is
@@ -6826,7 +6943,7 @@ fn taint_redirected(
 /// over-approximating whichever pattern order runs.
 fn taint_case_arms(
     c: &crate::ir::Case,
-    tainted: &mut HashSet<String>,
+    tainted: &mut Tainted,
     sx: &SlotCx,
     diags: &mut Vec<Diagnostic>,
 ) {
@@ -6836,7 +6953,7 @@ fn taint_case_arms(
     }
     // DD#121: the arms are alternative paths. No arm need match, so the
     // pre-state is itself a path to the merge.
-    let mut paths: Vec<(HashSet<String>, bool)> = vec![(tainted.clone(), true)];
+    let mut paths: Vec<(Tainted, bool)> = vec![(tainted.clone(), true)];
     for item in &c.items {
         let mut out = tainted.clone();
         taint_block(&item.body, &mut out, &JustTainted::new(), sx, diags);
@@ -6849,23 +6966,60 @@ fn taint_case_arms(
 fn taint_command(
     c: &Command,
     span: Span,
-    tainted: &mut HashSet<String>,
+    tainted: &mut Tainted,
     just: &JustTainted,
     sx: &SlotCx,
     diags: &mut Vec<Diagnostic>,
 ) {
     let name = expr_literal_str(&c.name);
     if name == "attest" {
-        taint_attest(c, span, tainted, just, sx.output, diags);
+        taint_attest(c, span, tainted, just, sx, diags);
         return; // Don't check args of attest for taint
     }
     // The words are read before the command runs, so they are checked against
     // the set before its effect: `f "${g[0]}" =g` reads the `g` that held
     // before `f` fills it.
     check_command_reads(c, tainted, sx.output, diags);
+    forget_replaced_origins(c, tainted);
     taint_call(c, name, span, tainted, sx, diags);
     if let Some(target) = tainted_read_target(c) {
-        tainted.insert(target.to_string());
+        tainted.replace(target, reader_origins(name, sx));
+    }
+}
+
+fn reader_origins(name: &str, cx: &SlotCx) -> Origins {
+    if name == "argv" {
+        return Origins::new();
+    }
+    cx.pipe_reader.unwrap_or(cx.stdin).clone()
+}
+
+/// W1's boolean transfer stays conservative, but a replaced value no longer
+/// carries its predecessor's output origins or symbolic incoming marker.
+fn forget_replaced_origins(c: &Command, tainted: &mut Tainted) {
+    match expr_literal_str(&c.name) {
+        "read" if is_value_split("read", c) => {
+            tainted.origins.remove(expr_literal_str(&c.args[1]));
+        }
+        "unset" => forget_unset_origins(c, tainted),
+        _ => {}
+    }
+}
+
+fn forget_unset_origins(c: &Command, tainted: &mut Tainted) {
+    // SB5063 checks binding operands after this pass. The lowering decoder
+    // requires literals; a malformed command has no effects to summarize.
+    if !c
+        .args
+        .iter()
+        .all(|arg| matches!(arg.kind, ExprKind::Literal(_)))
+    {
+        return;
+    }
+    for name in crate::transform::unset_targets(c) {
+        if !name.contains('[') {
+            tainted.origins.remove(&name);
+        }
     }
 }
 
@@ -7183,18 +7337,19 @@ fn check_adjacency(
 fn taint_attest(
     c: &Command,
     span: Span,
-    tainted: &mut HashSet<String>,
+    tainted: &mut Tainted,
     just: &JustTainted,
-    output: &OutputTaint,
+    sx: &SlotCx,
     diags: &mut Vec<Diagnostic>,
 ) {
     let Some((form, pred)) = classify_attest(&c.args) else {
         return;
     };
     check_adjacency(&attest_clear_names(c), span, tainted, just, diags);
+    check_attest_ownership(&form, span, tainted, sx, diags);
     // The attested name(s) are tainted by definition — vouching for them is the
     // point — but any OTHER tainted read in the predicate is rejected.
-    check_attest_predicate_reads(&form, &pred, span, tainted, output, diags);
+    check_attest_predicate_reads(&form, &pred, span, tainted, sx.output, diags);
     // DD#93 Part D: the conversion IS the predicate. It validates the source by
     // construction (it can only succeed on a valid, representable i64), so
     // there is no reference check to make — and it declassifies BOTH the
@@ -7202,8 +7357,8 @@ fn taint_attest(
     if let (AttestForm::Scalar { var }, AttestPredicate::ArithConvert { target, .. }) =
         (&form, &pred)
     {
-        tainted.remove(*var);
-        tainted.remove(*target);
+        tainted.remove(var);
+        tainted.remove(target);
         return;
     }
     let AttestPredicate::Test(test) = pred else {
@@ -7242,6 +7397,83 @@ fn attest_validation(form: AttestForm<'_>) -> (Vec<&str>, &str, String) {
             format!("map attest-all must validate both the key ${key} and value ${val} on the left of a test"),
         ),
     }
+}
+
+fn check_attest_ownership(
+    form: &AttestForm,
+    span: Span,
+    tainted: &Tainted,
+    cx: &SlotCx,
+    diags: &mut Vec<Diagnostic>,
+) {
+    let subject = match form {
+        AttestForm::Scalar { var } => var,
+        AttestForm::Indexed { array, .. } => array,
+        AttestForm::Map { map, .. } => map,
+    };
+    let location = if cx.fname.is_empty() {
+        "here".to_string()
+    } else {
+        format!("in `{}`", cx.fname)
+    };
+    let site = Diagnostic::error_span(
+        span,
+        "SB5100",
+        format!("attest of '{subject}' {location} is outside its shared output producer"),
+    );
+    report_output_ownership(&tainted.origins(subject), &site, cx, diags);
+}
+
+fn report_output_ownership(
+    origins: &Origins,
+    site: &Diagnostic,
+    cx: &SlotCx,
+    diags: &mut Vec<Diagnostic>,
+) {
+    for origin in origins {
+        match origin {
+            TaintOrigin::Shared(name) => {
+                let why = shared_reason(&cx.fns[name])
+                    .expect("an owned output path names a shared function");
+                let mut diag = site.clone();
+                diag.message = format!(
+                    "{}: `{name}` is shared ({why}). Capture and attest inside \
+                     `{name}`, then export through a compiler-owned buffer \
+                     (DD#127). Kernel reads remain tainted; use `:!` at the \
+                     use site to take the result on trust",
+                    site.message
+                );
+                diags.push(diag);
+            }
+            TaintOrigin::Incoming | TaintOrigin::Stdin => {
+                cx.body.defer_ownership(origin, site);
+            }
+        }
+    }
+}
+
+fn source_origins(expr: &Expr, cx: &SlotCx) -> Origins {
+    let mut origins = Origins::new();
+    crate::ir::walk_expr_tree(expr, &mut |node| {
+        let ExprKind::CommandSubstitution(body) = &node.kind else {
+            return;
+        };
+        if cx.output.capture(body) {
+            origins.extend(output_origins(body, cx));
+        }
+    });
+    origins
+}
+
+fn output_origins(body: &[Statement], cx: &SlotCx) -> Origins {
+    let paths = cx.output.paths(body, &|name| {
+        cx.summaries.get(name).map(|summary| summary.stdout.clone())
+    });
+    let mut origins: Origins = paths.owners.into_iter().map(TaintOrigin::Shared).collect();
+    if paths.stdin {
+        origins.extend(cx.stdin.iter().cloned());
+    }
+    origins
 }
 
 /// Check if an expression is a taint source.
@@ -9248,6 +9480,8 @@ struct SlotCx<'a> {
     fname: &'a str,
     body: &'a BodyCx,
     log: Option<&'a SiteLog>,
+    stdin: &'a Origins,
+    pipe_reader: Option<&'a Origins>,
     /// Set while `stmt_taints` is measuring one statement's taint effect. It
     /// suppresses the nested measurement, which would otherwise double the
     /// walk at every level of nesting.
@@ -9349,9 +9583,13 @@ fn is_int_fn(name: &str, fns: &HashMap<String, CallSites>) -> bool {
 
 #[derive(Default)]
 struct FnSummary {
-    gens: HashSet<String>,
+    gens: Tainted,
     flows: HashMap<String, HashSet<String>>,
     reads: HashMap<String, Vec<Diagnostic>>,
+    origin_flows: HashMap<String, HashSet<String>>,
+    origin_reads: HashMap<String, Vec<Diagnostic>>,
+    stdin_reads: Vec<Diagnostic>,
+    stdout: OutputPaths,
 }
 
 impl FnSummary {
@@ -9363,13 +9601,32 @@ impl FnSummary {
         for (name, reads) in other.reads {
             self.reads.entry(name).or_default().extend(reads);
         }
+        for (name, flow) in other.origin_flows {
+            self.origin_flows.entry(name).or_default().extend(flow);
+        }
+        for (name, reads) in other.origin_reads {
+            self.origin_reads.entry(name).or_default().extend(reads);
+        }
+        self.stdin_reads.extend(other.stdin_reads);
+        self.stdout.extend(other.stdout);
     }
 }
 
 #[derive(Default)]
 struct BodyCx {
-    returns: RefCell<HashSet<String>>,
-    back_edges: RefCell<HashSet<String>>,
+    returns: RefCell<Tainted>,
+    back_edges: RefCell<Tainted>,
+    ownership: RefCell<Vec<(TaintOrigin, Diagnostic)>>,
+}
+
+impl BodyCx {
+    fn defer_ownership(&self, origin: &TaintOrigin, site: &Diagnostic) {
+        let obligation = (origin.clone(), site.clone());
+        let mut pending = self.ownership.borrow_mut();
+        if !pending.contains(&obligation) {
+            pending.push(obligation);
+        }
+    }
 }
 
 #[derive(Default)]
@@ -9402,9 +9659,20 @@ impl SiteLog {
 }
 
 struct BodyWalk {
-    exit: HashSet<String>,
+    exit: Tainted,
     diags: Vec<Diagnostic>,
     log: SiteLog,
+    ownership: Vec<(TaintOrigin, Diagnostic)>,
+}
+
+impl BodyWalk {
+    fn ownership_reads(&self, origin: &TaintOrigin) -> Vec<Diagnostic> {
+        self.ownership
+            .iter()
+            .filter(|(source, _)| source == origin)
+            .map(|(_, diag)| diag.clone())
+            .collect()
+    }
 }
 
 struct SummaryBuilder<'a> {
@@ -9465,14 +9733,26 @@ fn build_summaries(
 }
 
 fn summarise_def(f: &Function, cx: &SlotCx) -> FnSummary {
-    let base = walk_body(f, HashSet::new(), cx);
+    let base = walk_body(f, Tainted::default(), cx);
+    let mut gens = base.exit.clone();
+    gens.retain(|name| cx.interface.contains(name));
+    let mut stdout = cx.output.paths(&f.body, &|name| {
+        cx.summaries.get(name).map(|summary| summary.stdout.clone())
+    });
+    if !cx.fns[&f.name].single_use() {
+        stdout.owned_by(&f.name);
+    }
     let mut summary = FnSummary {
-        gens: base.exit.intersection(cx.interface).cloned().collect(),
+        gens,
+        stdin_reads: base.ownership_reads(&TaintOrigin::Stdin),
+        stdout,
         ..FnSummary::default()
     };
     let names: BTreeSet<_> = cx.interface.iter().collect();
     for name in names {
-        let walk = walk_body(f, HashSet::from([name.clone()]), cx);
+        let mut entry = Tainted::default();
+        entry.replace(name, Origins::from([TaintOrigin::Incoming]));
+        let walk = walk_body(f, entry, cx);
         let flow = walk
             .exit
             .intersection(cx.interface)
@@ -9480,6 +9760,17 @@ fn summarise_def(f: &Function, cx: &SlotCx) -> FnSummary {
             .cloned()
             .collect();
         summary.flows.insert(name.clone(), flow);
+        summary.origin_flows.insert(
+            name.clone(),
+            walk.exit
+                .intersection(cx.interface)
+                .filter(|out| walk.exit.origins(out).contains(&TaintOrigin::Incoming))
+                .cloned()
+                .collect(),
+        );
+        summary
+            .origin_reads
+            .insert(name.clone(), walk.ownership_reads(&TaintOrigin::Incoming));
         summary
             .reads
             .insert(name.clone(), diag_difference(walk.diags, &base.diags));
@@ -9487,7 +9778,7 @@ fn summarise_def(f: &Function, cx: &SlotCx) -> FnSummary {
     summary
 }
 
-fn walk_body(f: &Function, mut entry: HashSet<String>, cx: &SlotCx) -> BodyWalk {
+fn walk_body(f: &Function, mut entry: Tainted, cx: &SlotCx) -> BodyWalk {
     loop {
         let (walk, back) = walk_body_once(f, &entry, cx);
         if back.is_subset(&entry) {
@@ -9497,18 +9788,17 @@ fn walk_body(f: &Function, mut entry: HashSet<String>, cx: &SlotCx) -> BodyWalk 
     }
 }
 
-fn walk_body_once(
-    f: &Function,
-    entry: &HashSet<String>,
-    cx: &SlotCx,
-) -> (BodyWalk, HashSet<String>) {
+fn walk_body_once(f: &Function, entry: &Tainted, cx: &SlotCx) -> (BodyWalk, Tainted) {
     let body = BodyCx::default();
     let log = SiteLog::default();
+    let input = Origins::from([TaintOrigin::Stdin]);
     let inner = SlotCx {
         fname: &f.name,
         body: &body,
         log: Some(&log),
         probing: false,
+        stdin: &input,
+        pipe_reader: None,
         ..*cx
     };
     let mut tainted = entry.clone();
@@ -9524,7 +9814,15 @@ fn walk_body_once(
     if block_falls_through(&f.body) {
         exit.extend(tainted);
     }
-    (BodyWalk { exit, diags, log }, body.back_edges.take())
+    (
+        BodyWalk {
+            exit,
+            diags,
+            log,
+            ownership: body.ownership.take(),
+        },
+        body.back_edges.take(),
+    )
 }
 
 fn diag_difference(diags: Vec<Diagnostic>, baseline: &[Diagnostic]) -> Vec<Diagnostic> {
@@ -9549,7 +9847,7 @@ fn as_function_def(stmt: &Statement) -> Option<(&Function, Span)> {
 }
 
 fn check_function_def(f: &Function, span: Span, cx: &SlotCx) -> Vec<Diagnostic> {
-    let base = walk_body(f, HashSet::new(), cx);
+    let base = walk_body(f, Tainted::default(), cx);
     let mut diags = base.diags.clone();
     report_shared_names(f, span, &base, cx, &mut diags);
     diags.sort_by(|a, b| (a.line, a.col, &a.message).cmp(&(b.line, b.col, &b.message)));
@@ -9630,7 +9928,7 @@ fn taint_call(
     c: &Command,
     name: &str,
     span: Span,
-    tainted: &mut HashSet<String>,
+    tainted: &mut Tainted,
     cx: &SlotCx,
     diags: &mut Vec<Diagnostic>,
 ) {
@@ -9661,18 +9959,18 @@ fn arith_calls_self(mut arith: &ArithExpr, name: &str) -> bool {
     }
 }
 
-fn record_exit(tainted: &HashSet<String>, self_tail: bool, cx: &SlotCx) {
+fn record_exit(tainted: &Tainted, self_tail: bool, cx: &SlotCx) {
     let target = if self_tail {
         &cx.body.back_edges
     } else {
         &cx.body.returns
     };
-    target.borrow_mut().extend(tainted.iter().cloned());
+    target.borrow_mut().extend(tainted.clone());
 }
 
 fn taint_return_producer(
     inner: &Statement,
-    tainted: &mut HashSet<String>,
+    tainted: &mut Tainted,
     just: &JustTainted,
     cx: &SlotCx,
     diags: &mut Vec<Diagnostic>,
@@ -9692,7 +9990,7 @@ fn apply_call(
     name: &str,
     passed: &[String],
     span: Span,
-    tainted: &mut HashSet<String>,
+    tainted: &mut Tainted,
     cx: &SlotCx,
     diags: &mut Vec<Diagnostic>,
 ) {
@@ -9710,12 +10008,14 @@ fn apply_call(
         .collect();
     if !cx.probing {
         relay_reads(name, span, &arrived, summary, &bindings, diags);
+        relay_ownership(name, span, tainted, &bindings, cx, diags);
     }
     apply_summary_effects(
         summary,
         &bindings,
         &arrived,
         cx.fns[name].single_use(),
+        cx.stdin,
         tainted,
     );
 }
@@ -9744,8 +10044,10 @@ fn apply_summary_effects(
     bindings: &SummaryBindings,
     arrived: &BTreeSet<String>,
     single_use: bool,
-    tainted: &mut HashSet<String>,
+    input: &Origins,
+    tainted: &mut Tainted,
 ) {
+    let before = tainted.clone();
     let replaced: HashSet<_> = bindings.values().copied().collect();
     tainted.retain(|name| !replaced.contains(name.as_str()));
     for name in arrived {
@@ -9753,19 +10055,96 @@ fn apply_summary_effects(
     }
     if single_use {
         extend_mapped_taint(tainted, &summary.gens, bindings);
+        extend_generator_origins(tainted, summary, bindings, input);
+    }
+    for name in arrived {
+        let origins = before.origins(bindings[name.as_str()]);
+        extend_mapped_origins(tainted, &summary.origin_flows[name], &origins, bindings);
     }
 }
 
-fn extend_mapped_taint(
-    tainted: &mut HashSet<String>,
+fn extend_mapped_taint(tainted: &mut Tainted, names: &HashSet<String>, bindings: &SummaryBindings) {
+    for name in names {
+        if let Some(actual) = bindings.get(name.as_str()) {
+            tainted.insert(actual.to_string());
+        }
+    }
+}
+
+fn extend_generator_origins(
+    tainted: &mut Tainted,
+    summary: &FnSummary,
+    bindings: &SummaryBindings,
+    input: &Origins,
+) {
+    let mapped =
+        summary.gens.origins.iter().filter_map(|(name, origins)| {
+            bindings.get(name.as_str()).map(|actual| (*actual, origins))
+        });
+    for (actual, origins) in mapped {
+        let mut exported = origins.clone();
+        if exported.remove(&TaintOrigin::Stdin) {
+            exported.extend(input.iter().cloned());
+        }
+        tainted.add_origins(actual, exported);
+    }
+}
+
+fn extend_mapped_origins(
+    tainted: &mut Tainted,
     names: &HashSet<String>,
+    origins: &Origins,
     bindings: &SummaryBindings,
 ) {
-    tainted.extend(
-        names
-            .iter()
-            .filter_map(|name| bindings.get(name.as_str()).map(|actual| actual.to_string())),
-    );
+    for actual in names.iter().filter_map(|name| bindings.get(name.as_str())) {
+        if tainted.contains(*actual) {
+            tainted.add_origins(actual, origins.clone());
+        }
+    }
+}
+
+fn relay_ownership(
+    callee: &str,
+    span: Span,
+    tainted: &Tainted,
+    bindings: &SummaryBindings,
+    cx: &SlotCx,
+    diags: &mut Vec<Diagnostic>,
+) {
+    let summary = &cx.summaries[callee];
+    let names: BTreeSet<_> = bindings.keys().copied().collect();
+    for name in names {
+        relay_owned_reads(
+            callee,
+            span,
+            &summary.origin_reads[name],
+            &tainted.origins(bindings[name]),
+            cx,
+            diags,
+        );
+    }
+    relay_owned_reads(callee, span, &summary.stdin_reads, cx.stdin, cx, diags);
+}
+
+fn relay_owned_reads(
+    callee: &str,
+    span: Span,
+    reads: &[Diagnostic],
+    origins: &Origins,
+    cx: &SlotCx,
+    diags: &mut Vec<Diagnostic>,
+) {
+    for site in reads {
+        let relayed = Diagnostic::error_span(
+            span,
+            site.code,
+            format!(
+                "`{callee}`, called here, reports at {}:{}: {}",
+                site.line, site.col, site.message
+            ),
+        );
+        report_output_ownership(origins, &relayed, cx, diags);
+    }
 }
 
 fn relay_reads(
@@ -9796,7 +10175,7 @@ fn relay_reads(
 
 fn taint_arith_calls(
     stmt: &Statement,
-    tainted: &mut HashSet<String>,
+    tainted: &mut Tainted,
     cx: &SlotCx,
     diags: &mut Vec<Diagnostic>,
 ) {
@@ -9808,7 +10187,7 @@ fn taint_arith_calls(
 fn taint_expr_arith_calls(
     expr: &Expr,
     span: Span,
-    tainted: &mut HashSet<String>,
+    tainted: &mut Tainted,
     cx: &SlotCx,
     diags: &mut Vec<Diagnostic>,
 ) {
@@ -9824,7 +10203,7 @@ fn taint_expr_arith_calls(
 fn taint_value_call(
     name: &str,
     span: Span,
-    tainted: &mut HashSet<String>,
+    tainted: &mut Tainted,
     cx: &SlotCx,
     diags: &mut Vec<Diagnostic>,
 ) {

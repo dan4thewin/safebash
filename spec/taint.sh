@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup taint
-plan=483
+plan=517
 echo "1..$plan" >&3
 
 set +e
@@ -3220,6 +3220,329 @@ fn f { int n=$(count); echo "$n" }
 str x=$(f)
 echo "$x"'
 [[ $rc != 0 && $err == *SB5020* && $err != *backstop* ]]; chk outflow.14
+
+# DD#127: shared output is attested inside its producer, not at each caller.
+run_sash 'fn raw { /bin/echo hello }
+str x=$(raw)
+attest x [[ $x == hello ]]
+str y=$(raw)
+attest y [[ $y == hello ]]
+echo "$x $y"'
+[[ $rc != 0 && $err == *:3:1:*SB5100* && $err == *'`raw`'* &&
+   $err == *'called at 2:9, 4:9'* && $err != *backstop* ]]; chk outown.1
+
+run_sash 'fn raw { /bin/echo hello }
+fn relay { raw }
+str x=$(relay)
+attest x [[ $x == hello ]]
+echo "$x"
+raw'
+[[ $rc != 0 && $err == *SB5100* && $err == *'`raw`'* ]]; chk outown.2
+
+# The innermost shared writer, not its shared wrapper.
+run_sash 'fn raw { /bin/echo hello }
+fn relay { raw }
+str x=$(relay)
+attest x [[ $x == hello ]]
+echo "$x"
+relay
+raw'
+[[ $rc != 0 && $err == *SB5100* && $err == *'`raw` is shared'* &&
+   $err != *'`relay` is shared'* ]]; chk outown.3
+
+run_sash 'fn left { /bin/echo left }
+fn right { /bin/echo right }
+fn relay { if [[ $1 == left ]] { left } else { right } }
+str x=$(relay left)
+attest x [[ -n $x ]]
+echo "$x"
+left
+right'
+[[ $rc != 0 && $err == *SB5100* && $err == *'`left` is shared'* &&
+   $err == *'`right` is shared'* ]]; chk outown.4
+
+run_sash 'fn raw { /bin/echo hello }
+raw | readline x
+attest x [[ $x == hello ]]
+echo "$x"
+raw'
+[[ $rc != 0 && $err == *SB5100* && $err == *'`raw` is shared'* ]]; chk outown.5
+
+# This still uses a real pipe; buffer optimization is a separate change.
+run_sash 'fn pure { echo hello }
+pure | readline x
+attest x [[ $x == hello ]]
+echo "$x"
+pure'
+[[ $rc != 0 && $err == *SB5100* && $err == *'`pure` is shared'* ]]; chk outown.6
+
+run_sash 'fn raw { /bin/echo hello }
+raw | read a
+attest v in a [[ -n $v ]]
+echo "${a[0]}"
+raw'
+[[ $rc != 0 && $err == *SB5100* && $err == *'`raw` is shared'* ]]; chk outown.7
+
+run_sash 'fn raw { /bin/echo hello }
+raw | while readline x {
+    attest x [[ $x == hello ]]
+    echo "$x"
+}
+raw'
+[[ $rc != 0 && $err == *SB5100* && $err == *'`raw` is shared'* ]]; chk outown.8
+
+run_sash 'fn raw { /bin/echo 7 }
+str x=$(raw)
+attest x (( n = x ))
+echo "$n"
+raw'
+[[ $rc != 0 && $err == *SB5100* && $err == *'`raw` is shared'* ]]; chk outown.9
+
+run_sash 'fn raw { /bin/echo hello }
+str x=$(raw)
+attest x [[ $x == hello ]] || x=fallback
+echo "$x"
+raw'
+[[ $rc != 0 && $err == *SB5100* && $err == *'`raw` is shared'* ]]; chk outown.10
+
+run_sash 'fn raw { /bin/echo hello }
+str x=$(raw)
+if attest x [[ $x == hello ]] { echo "$x" } else { x=fallback }
+raw'
+[[ $rc != 0 && $err == *SB5100* && $err == *'`raw` is shared'* ]]; chk outown.11
+
+# Ownership must survive the existing global and slot summaries.
+run_sash 'fn raw { /bin/echo hello }
+fn fill { raw | read A }
+array a=()
+fill =a
+attest v in a [[ -n $v ]]
+echo "${a[0]}"
+raw'
+[[ $rc != 0 && $err == *SB5100* && $err == *'`raw` is shared'* ]]; chk outown.12
+
+run_sash 'str x=""
+fn raw { /bin/echo hello }
+fn fill { x=$(raw) }
+fill
+attest x [[ $x == hello ]]
+echo "$x"
+raw'
+[[ $rc != 0 && $err == *SB5100* && $err == *'`raw` is shared'* ]]; chk outown.13
+
+run_sash 'fn raw { /bin/echo hello }
+fn fill { raw | read A }
+fn relay { fill =B }
+array a=()
+array b=()
+echo "$(len a)"
+relay =a =b
+attest v in b [[ -n $v ]]
+echo "${b[0]}"
+raw'
+[[ $rc != 0 && $err == *SB5100* && $err == *'`raw` is shared'* ]]; chk outown.14
+
+# A new source on one branch cannot erase the other branch's ownership.
+run_sash 'fn raw { /bin/echo hello }
+str x=$(raw)
+str choose=yes
+if [[ $choose == no ]] { x=$(/bin/echo other) }
+attest x [[ -n $x ]]
+echo "$x"
+raw'
+[[ $rc != 0 && $err == *SB5100* && $err == *'`raw` is shared'* ]]; chk outown.15
+
+# An unconditional new source does replace the old provenance, even at a call.
+run_sash 'str x=""
+fn raw { /bin/echo hello }
+fn replace { x=$(/bin/echo replacement) }
+x=$(raw)
+replace
+attest x [[ $x == replacement ]]
+echo "$x"
+raw'
+[[ $rc = 0 && $out = $'replacement\nhello' && -z $err && -z $rerr ]]; chk outown.16
+
+run_sash 'fn raw { /bin/echo hello }
+str x=$(raw)
+x=clean
+attest x [[ $x == clean ]]
+str y=$(raw)
+y=${y:!}
+attest y [[ $y == hello ]]
+echo "$x $y"'
+[[ $rc = 0 && $out = 'clean hello' && -z $err && -z $rerr ]]; chk outown.17
+
+run_sash 'fn raw { /bin/echo hello }
+str x=$(raw)
+echo "${x:!}"
+raw'
+[[ $rc = 0 && $out = $'hello\nhello' && -z $err && -z $rerr ]]; chk outown.18
+
+# The nested capture is not an output path of the outer capture.
+run_sash 'fn raw { /bin/echo inner }
+str x=$(str y=$(raw); echo "${y:!}"; /bin/echo outer)
+attest x [[ -n $x ]]
+echo "$x"
+raw'
+[[ $rc = 0 && $out = $'inner\nouter\ninner' && -z $err && -z $rerr ]]; chk outown.19
+
+# In-place value calls, unlike nested captures, write to the enclosing capture.
+run_sash 'fn count -> int { /bin/echo side; return 7 }
+str x=$(echo "$(( (count) ))")
+attest x [[ -n $x ]]
+echo "$x"
+: $(( (count) ))'
+[[ $rc != 0 && $err == *SB5100* && $err == *'`count` is shared'* ]]; chk outown.20
+
+run_sash 'str x=""
+fn left { /bin/echo left }
+fn right { /bin/echo right }
+fn fill {
+    if [[ $1 == left ]] { x=$(left); return 0 }
+    x=$(right)
+    return 0
+}
+fill left
+attest x [[ -n $x ]]
+echo "$x"
+left
+right'
+[[ $rc != 0 && $err == *SB5100* && $err == *'`left` is shared'* &&
+   $err == *'`right` is shared'* ]]; chk outown.21
+
+run_sash 'str x=""
+fn raw { /bin/echo hello }
+fn fill -> int { x=$(raw); return 7 }
+int n=$(( (fill) ))
+attest x [[ -n $x ]]
+echo "$x $n"
+raw'
+[[ $rc != 0 && $err == *SB5100* && $err == *'`raw` is shared'* ]]; chk outown.22
+
+# A named reader is not a way to move the attest outside the producer.
+run_sash 'fn raw { /bin/echo hello }
+fn consume { readline x; attest x [[ $x == hello ]]; echo "$x" }
+raw | consume
+raw'
+[[ $rc != 0 && $err == *SB5100* && $err == *'`raw` is shared'* &&
+   $err == *consume* ]]; chk outown.23
+
+run_sash 'fn raw { /bin/echo hello }
+fn consume { readline x; attest x [[ $x == hello ]]; echo "$x" }
+fn relay { consume }
+raw | relay
+raw'
+[[ $rc != 0 && $err == *SB5100* && $err == *'`raw` is shared'* &&
+   $err == *consume* ]]; chk outown.24
+
+printf 'file\n' > input-own
+run_sash 'fn raw { /bin/echo hello }
+fn consume {
+    readline ignored
+    : "${ignored:!}"
+    readline x <input-own
+    attest x [[ $x == file ]]
+    echo "$x"
+}
+raw | consume
+raw'
+[[ $rc = 0 && $out = $'file\nhello' && -z $err && -z $rerr ]]; chk outown.25
+
+# Calls and captures in a parent reader's body use stdin, not its private pipe.
+run_sash 'fn raw { /bin/echo hello }
+fn stdin_only { - readline z; attest z [[ $z == "" ]]; echo empty }
+raw | while readline x {
+    echo "${x:!}"
+    str y=$(- readline z; attest z [[ $z == "" ]]; echo empty)
+    echo "$y"
+    stdin_only
+}
+raw'
+[[ $rc = 0 && $out = $'hello\nempty\nempty\nhello' && -z $err && -z $rerr ]]; chk outown.26
+
+run_sash 'fn raw { /bin/echo hello }
+str x=$(raw)
+x+=$(/bin/echo suffix)
+attest x [[ -n $x ]]
+echo "$x"
+raw'
+[[ $rc != 0 && $err == *SB5100* && $err == *'`raw` is shared'* ]]; chk outown.27
+
+run_sash 'fn raw { /bin/echo hello }
+str x=$(raw)
+echo fresh | readline x
+attest x [[ $x == fresh ]]
+echo "$x"
+raw'
+[[ $rc = 0 && $out = $'fresh\nhello' && -z $err && -z $rerr ]]; chk outown.28
+
+run_sash 'fn raw { /bin/echo hello }
+fn consume { str x=$(/bin/cat); attest x [[ $x == hello ]]; echo "$x" }
+raw | consume
+raw'
+[[ $rc != 0 && $err == *SB5100* && $err == *'`raw` is shared'* &&
+   $err == *consume* ]]; chk outown.29
+
+run_sash 'fn raw { /bin/echo hello }
+fn fill { read A }
+fn consume {
+    array a=()
+    fill =a
+    attest v in a [[ -n $v ]]
+    echo "${a[0]}"
+}
+raw | consume
+raw'
+[[ $rc != 0 && $err == *SB5100* && $err == *'`raw` is shared'* &&
+   $err == *consume* ]]; chk outown.30
+
+run_sash 'str x=""
+str choose=no
+fn raw { /bin/echo hello }
+fn maybe_replace {
+    if [[ $choose == yes ]] { x=$(/bin/echo other) }
+    attest x [[ -n $x ]]
+}
+x=$(raw)
+maybe_replace
+echo "$x"
+raw'
+[[ $rc != 0 && $err == *SB5100* && $err == *'`raw` is shared'* &&
+   $err == *maybe_replace* ]]; chk outown.31
+
+run_sash 'fn raw { /bin/echo hello }
+fn consume { readline x 0<&0; attest x [[ $x == hello ]]; echo "$x" }
+raw | consume
+raw'
+[[ $rc != 0 && $err == *SB5100* && $err == *'`raw` is shared'* ]]; chk outown.32
+
+# These replace the old value without becoming a new external source.
+run_sash 'fn raw { /bin/echo hello }
+str choose=no
+fn replace {
+    read "clean" A
+    if [[ $choose == yes ]] { echo other | read A }
+}
+raw | read a
+replace =a
+attest v in a [[ $v == clean ]]
+echo "${a[0]}"
+raw'
+[[ $rc = 0 && $out = $'clean\nhello' && -z $err && -z $rerr ]]; chk outown.33
+
+run_sash 'fn raw { /bin/echo hello }
+str choose=no
+fn erase {
+    unset A
+    if [[ $choose == yes ]] { echo other | read A }
+}
+raw | read a
+erase =a
+attest v in a [[ -n $v ]]
+echo "$(len a)"
+raw'
+[[ $rc = 0 && $out = $'0\nhello' && -z $err && -z $rerr ]]; chk outown.34
 
 set -e
 tally

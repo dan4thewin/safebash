@@ -35,6 +35,12 @@ a subsequent kernel read never attests that read. An external redirected
 to `/dev/null` can reopen a saved parent memfd; pathname routing alone is
 not an isolation argument.
 
+DG also proposed compiler-owned buffer transfers from completely known
+sash-generated pipe writers with no external calls (2026-11-02). This
+would avoid the read rather than exempt it from taint. Preserve DD#122's
+producer isolation, concurrent consumption, early close and status handling;
+eagerly collecting an arbitrary producer's whole output is not equivalent.
+
 Measure the benefit and discuss the eligibility change with DG before
 implementation. Do not add dynamic taint tags, descriptor alias guards or
 process isolation as an incidental part of this optimization.

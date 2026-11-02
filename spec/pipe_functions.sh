@@ -610,12 +610,11 @@ run_sash 'fn inner {
 }'
 [[ $rc = 0 && $out = $'one child\ntwo child' && -z $rerr ]]; chk pipeown.3
 
+# The shared writer uses real pipes; this checks reader scope, not attest.
 run_sash 'fn pair { echo a; echo b }
 pair | while readline a {
-  attest a [[ -n $a ]]
   pair | while readline b {
-    attest b [[ -n $b ]]
-    pair | while readline c { attest c [[ -n $c ]]; echo $a$b$c }
+    pair | while readline c { echo "${a:!}${b:!}${c:!}" }
   }
 }'
 [[ $rc = 0 && $out = $'aaa\naab\naba\nabb\nbaa\nbab\nbba\nbbb' && -z $rerr ]]; chk pipeown.4
