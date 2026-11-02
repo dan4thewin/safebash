@@ -13,7 +13,7 @@ The runtime task is `../notes-exp/tasks/cpp-transpiler-runtime-before-ir.md`.
 
 Build and exercise changes with `mk -p 1 test` in this directory. Use distinct
 `BUILD` directories when changing compilers or sanitizer flags. `mk -p 1
-sash-example` additionally compiles all ten sash examples with the real
+sash-example` additionally compiles all eleven sash examples with the real
 CLI. Ordinary C++ tests do not require a Rust build or IR input.
 `mk -p 1 fault-test` adds Linux strace probes; run it without sanitizer
 instrumentation. The native command helper is deliberately unsanitized.
@@ -135,6 +135,27 @@ Print/graph require nonempty ASCII `0x20..0x7e` / `0x21..0x7e`; false is
 an ordinary result. No locale dependence, implicit trimming, Unicode
 normalization, malformed-number repair, or hidden helper checkpoints.
 
+Regex helpers use ordinary compiled ECMAScript `std::regex` values.
+`match` searches; `match_text` owns its whole match; out-array `match`
+stores whole plus groups, while `matchall` stores flattened groups or
+whole matches without groups. Empty/unmatched groups keep their slots.
+Subjects are fully counted, including NUL: this is a deliberate difference
+from native DD#63's first-NUL subject boundary, not a native bug fix.
+Use standard regex_iterator progress and original anchor context, not
+native-style suffix searches or immediate one-byte empty-match skips.
+Build owned captures locally and swap once: no-match clears the target,
+but exceptions preserve it and a target-borrowed subject remains safe.
+False is ordinary; regex errors use the existing status-2 exception and
+allocation failures escape. Native regcomp failure does not return a
+catchable verdict. Reject literal NUL in patterns with an explicit
+diagnostic directing to `\x00`; do not silently truncate or rewrite them.
+Copy-allocation faults use the host string capacity's exact allocation
+size; first prove scalar search and the complete standard iterator walk
+succeed under that fault. A broad size threshold can block libc++'s
+executor before the intended owned-copy boundary.
+No hidden checkpoints or backtracking/resource guarantees. Replacement
+templates remain a separate decision.
+
 A native undeclared word-loop binder is a string even over an int
 collection (DD#86), not automatically the range's C++ value type. Honor
 that source binding in a consumer; arithmetic-only pairs can use genuine
@@ -144,6 +165,12 @@ Function-result discard follows native DD#55's 2026-10-30 no-reach rule:
 ignoring a returned int/status must not catch failures inside the function,
 its arguments, or nested calls. Conditions leave called bodies checked too.
 Keep result handling at the call site, not in an inherited unchecked mode.
+
+Paired source examples also follow native DD#127: single-use captures with
+unattested external stdout are attested immediately after capture; shared
+stdout-producing functions attest their own data inside the definition.
+Do not add caller-side attests for a shared producer or runtime taint checks
+to C++ helpers. Preserve the independent golden when adapting source rules.
 
 The planned END-only contract is
 [DD#5](../notes-exp/decisions/DD05-planned-end-explicit-handling.md): no

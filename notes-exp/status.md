@@ -1,3 +1,40 @@
+## Eleventh pair: regex matching and owned extraction complete
+
+DG selected full counted subjects and standard C++ iteration, retaining
+the pragmatically chosen modified ECMAScript engine. Shared `match`,
+`match_text`, and `matchall` helpers own extracted values, retain empty
+capture slots, and publish output arrays atomically. Normal miss clears
+output; exceptions preserve it. No helpers add hidden checkpoints.
+[DD#11](decisions/DD11-regex-matching-and-extraction.md) records the choices
+and executed examples of deliberate native/target differences.
+
+Literal-NUL patterns now fail explicitly with guidance to use `\x00`,
+after a direct standard-library probe found incorrect matching. Subjects
+stay byte-transparent. DG's requested
+[native backlog](../notes/tasks/reject-literal-nul-patterns-and-source.md)
+separates pattern rejection from a possible raw-source ban; no native
+implementation changed.
+
+[`regex_report.cpp`](../sash-cpp/examples/regex_report.cpp) and its
+[sash counterpart](../sash-cpp/examples/regex_report.sash) retain a real
+function, captures, map construction, and numeric conversion. Both match
+an independent nine-line golden. The fresh reference compiler also required
+DD#127 attestation repairs in five older source pairs; their golden bytes
+remain unchanged.
+
+All 55 groups and eleven C++ goldens pass on GCC, Clang, supported Linux
+ASan, real Apple Clang/libc++, and Apple ASan. Both Linux fault gates and
+the unchanged 169-case catalog pass. Regex-only UBSan, an independent
+detection canary, nine isolated mutation controls, and all eleven pinned
+real-CLI source pairs pass.
+[Journal 018](journal/018-regex-matching-and-extraction.md) records the
+libc++ allocation-fixture correction, 53-file Mac parity, and extra inputs.
+
+Replacement templates, bulk reads/splitting, remaining formatting, general
+redirects, public wait, and forked-C++/background ownership remain on the
+[runtime roadmap](tasks/cpp-transpiler-runtime-before-ir.md). There is still
+no IR reader/emitter or producer implementation.
+
 ## Tenth pair: counted byte strings and ASCII operations complete
 
 DG authorized byte length/slicing, ASCII upper/lowercase conversion, and

@@ -156,6 +156,13 @@ void echo(std::initializer_list<std::string_view> words);
 template <typename T> using Array = std::map<std::int64_t, T>;
 template <typename T> using Map = std::map<std::string, T>;
 
+[[nodiscard]] bool match(std::string_view subject, const std::regex &pattern);
+[[nodiscard]] std::string match_text(std::string_view subject, const std::regex &pattern);
+[[nodiscard]] bool match(std::string_view subject, const std::regex &pattern,
+                         Array<std::string> &target);
+[[nodiscard]] bool matchall(std::string_view subject, const std::regex &pattern,
+                            Array<std::string> &target);
+
 [[nodiscard]] Array<std::string> argv(int count, const char *const *arguments,
                                       std::int64_t start = 0);
 [[nodiscard]] std::string arg(int count, const char *const *arguments, std::int64_t index);

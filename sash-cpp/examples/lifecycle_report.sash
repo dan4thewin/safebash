@@ -15,6 +15,7 @@ fn finished_status -> int {
 
 array workers
 summary=$(collect_workers =workers)
+attest summary [[ $summary =~ '^collected:[0-9]+$' ]]
 echo "capture: $summary"
 - finished_status
 echo "body complete"

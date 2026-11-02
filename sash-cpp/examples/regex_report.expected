@@ -1,0 +1,9 @@
+input: [COUNT=08;EMPTY=;RATE=0x7]
+first: [COUNT=08]; key: [COUNT]; value: [08]
+scalar: [COUNT=08]
+pairs: 6; keys: COUNT,EMPTY,RATE
+option: COUNT=[08]; number: 8
+option: EMPTY=[]; number: 0
+option: RATE=[0x7]; number: 7
+missing: no; captures: 0
+group-free: COUNT,EMPTY,RATE

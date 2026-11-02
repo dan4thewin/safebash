@@ -19,13 +19,18 @@
 
 namespace {
 
+enum class AllocationFailureMode { AtLeast, Exact };
+
 std::size_t allocation_failure_size = 0;
+AllocationFailureMode allocation_failure_mode = AllocationFailureMode::AtLeast;
 
 } // namespace
 
 // Test-only allocation faults leave the small launch allocations available.
 void *operator new(std::size_t size) {
-    if (allocation_failure_size != 0 && size >= allocation_failure_size) {
+    if (allocation_failure_size != 0 && (allocation_failure_mode == AllocationFailureMode::Exact
+                                             ? size == allocation_failure_size
+                                             : size >= allocation_failure_size)) {
         throw std::bad_alloc{};
     }
     if (void *memory = std::malloc(size == 0 ? 1 : size)) {
@@ -43,8 +48,15 @@ void operator delete[](void *memory, std::size_t) noexcept { ::operator delete(m
 namespace {
 
 struct AllocationFailure {
-    explicit AllocationFailure(std::size_t minimum) { allocation_failure_size = minimum; }
-    ~AllocationFailure() { allocation_failure_size = 0; }
+    explicit AllocationFailure(std::size_t size,
+                               AllocationFailureMode mode = AllocationFailureMode::AtLeast) {
+        allocation_failure_size = size;
+        allocation_failure_mode = mode;
+    }
+    ~AllocationFailure() {
+        allocation_failure_size = 0;
+        allocation_failure_mode = AllocationFailureMode::AtLeast;
+    }
 };
 
 struct HandshakeWriter {
@@ -2910,6 +2922,198 @@ void text_predicates() {
     }
 }
 
+void regex_values() {
+    const auto assignment = sash::compile_regex("[a-z]+=[0-9]+");
+    std::string subject = "prefix x=42 suffix";
+    require(sash::match(subject, assignment) && !sash::match("unassigned", assignment),
+            "regex match must search rather than require the entire subject");
+    const auto owned = sash::match_text(subject, assignment);
+    subject.assign("changed");
+    require(owned == "x=42" && sash::match_text("unassigned", assignment).empty(),
+            "whole-match extraction owns its bytes and returns empty on a normal miss");
+    const auto empty = sash::compile_regex("");
+    require(sash::match({}, empty) && sash::match("abc", empty) &&
+                sash::match_text({}, empty).empty(),
+            "an empty match is success even though its whole-match value is empty");
+    const std::string outside = "x=42 outside";
+    const std::string_view prefix(outside.data(), 4);
+    require(sash::match_text(prefix, assignment) == "x=42" &&
+                !sash::match(prefix, sash::compile_regex("outside")),
+            "regex subjects use counted ranges, not trailing bytes of partial views");
+    const std::string binary("a\0b\xff", 4);
+    const auto through_nul = sash::compile_regex("a(.)b");
+    require(sash::match(binary, through_nul) &&
+                sash::match_text(binary, through_nul) == std::string("a\0b", 3) &&
+                sash::match(binary, sash::compile_regex("b")) &&
+                sash::match_text(binary, sash::compile_regex(std::string_view("\xff", 1))) ==
+                    std::string("\xff", 1),
+            "regex search and extraction must inspect counted NUL and high bytes");
+    require(sash::match(binary, sash::compile_regex(R"(a\x00b)")),
+            "an escaped NUL pattern must match the counted NUL in its subject");
+    sash::Array<std::string> array{{0, "x=42"}};
+    sash::Map<std::string> map{{"text", "x=42"}};
+    require(sash::match(sash::cell(array, 0), assignment) &&
+                sash::match_text(sash::cell(map, "text"), assignment) == "x=42" &&
+                !sash::match(sash::cell(map, "missing"), assignment) && sash::len(map) == 1,
+            "regex value helpers share scalar and non-inserting string-cell behavior");
+}
+
+void regex_captures() {
+    const auto assignment = sash::compile_regex("([a-z]+)=([0-9]+)");
+    sash::Array<std::string> captures{{99, "stale"}};
+    require(sash::match("prefix x=42 suffix", assignment, captures) &&
+                captures == sash::Array<std::string>{{0, "x=42"}, {1, "x"}, {2, "42"}},
+            "single captures must replace the target with dense whole-plus-group values");
+    require(!sash::match("unassigned", assignment, captures) && captures.empty(),
+            "a normal single-match miss clears the previous target");
+    require(sash::match({}, sash::compile_regex("(a)?(b*)"), captures) &&
+                captures == sash::Array<std::string>{{0, ""}, {1, ""}, {2, ""}},
+            "unmatched and participating-empty groups occupy their own empty capture cells");
+    require(sash::match({}, sash::compile_regex(""), captures) &&
+                captures == sash::Array<std::string>{{0, ""}},
+            "a group-free empty single match stores one empty whole match");
+    const auto many = sash::compile_regex("(.)(.)(.)(.)(.)(.)(.)(.)(.)(.)(.)(.)");
+    require(sash::match("abcdefghijkl", many, captures) && sash::len(captures) == 13 &&
+                sash::cell(captures, 0) == "abcdefghijkl" && sash::cell(captures, 12) == "l",
+            "single extraction must retain every group, including groups beyond nine");
+    captures = {{99, "x=42"}};
+    const std::string_view borrowed = captures.at(99);
+    require(sash::match(borrowed, assignment, captures) &&
+                captures == sash::Array<std::string>{{0, "x=42"}, {1, "x"}, {2, "42"}},
+            "single extraction must finish reading a target-borrowed subject before replacement");
+    std::string binary("a\0b", 3);
+    require(sash::match(binary, sash::compile_regex("a(.)b"), captures), "binary capture setup");
+    binary[1] = 'X';
+    require(sash::cell(captures, 0) == std::string("a\0b", 3) &&
+                sash::cell(captures, 1) == std::string("\0", 1),
+            "capture cells must own interior NUL independently of the original subject");
+}
+
+void regex_repeated() {
+    sash::Array<std::string> captures{{99, "stale"}};
+    const auto assignments = sash::compile_regex("([a-z]+)=([^;]*)");
+    require(
+        sash::matchall("a=1;b=;c=3", assignments, captures) &&
+            captures ==
+                sash::Array<std::string>{{0, "a"}, {1, "1"}, {2, "b"}, {3, ""}, {4, "c"}, {5, "3"}},
+        "repeated extraction flattens groups only and retains empty values");
+    require(sash::matchall("one two", sash::compile_regex("[a-z]+"), captures) &&
+                captures == sash::Array<std::string>{{0, "one"}, {1, "two"}},
+            "group-free repeated extraction stores each whole match");
+    require(sash::matchall("ab", sash::compile_regex("(a)|(b)"), captures) &&
+                captures == sash::Array<std::string>{{0, "a"}, {1, ""}, {2, ""}, {3, "b"}},
+            "repeated alternatives retain nonparticipating group positions");
+    require(sash::matchall("ab", sash::compile_regex("^"), captures) &&
+                captures == sash::Array<std::string>{{0, ""}},
+            "standard iteration preserves the original beginning rather than reanchoring suffixes");
+    require(
+        sash::matchall("a", sash::compile_regex("(|a)"), captures) &&
+            captures == sash::Array<std::string>{{0, ""}, {1, "a"}, {2, ""}},
+        "standard iteration retries a nonempty match at the same position after an empty match");
+    require(sash::matchall("ab", sash::compile_regex(""), captures) &&
+                captures == sash::Array<std::string>{{0, ""}, {1, ""}, {2, ""}} &&
+                sash::matchall({}, sash::compile_regex(""), captures) &&
+                captures == sash::Array<std::string>{{0, ""}},
+            "empty-pattern iteration advances and includes the final boundary once");
+    require(sash::matchall("ab", sash::compile_regex("$"), captures) &&
+                captures == sash::Array<std::string>{{0, ""}},
+            "end-anchor iteration terminates after the final empty match");
+    require(!sash::matchall("ab", sash::compile_regex("z"), captures) && captures.empty(),
+            "a normal repeated-match miss clears the previous target");
+    const std::string binary("a\0b", 3);
+    require(sash::matchall(binary, sash::compile_regex("."), captures) &&
+                captures == sash::Array<std::string>{{0, "a"}, {1, std::string("\0", 1)}, {2, "b"}},
+            "standard repeated matching includes and continues past interior NUL");
+    captures = {{99, "a=1;b=2"}};
+    const std::string_view borrowed = captures.at(99);
+    require(sash::matchall(borrowed, assignments, captures) &&
+                captures == sash::Array<std::string>{{0, "a"}, {1, "1"}, {2, "b"}, {3, "2"}},
+            "repeated extraction owns every value before replacing a borrowed input target");
+}
+
+void regex_publication() {
+    const std::string_view nul_patterns[] = {
+        std::string_view("\0", 1),
+        std::string_view("a\0b", 3),
+        std::string_view("[\0]", 3),
+    };
+    for (const auto pattern : nul_patterns) {
+        bool rejected = false;
+        try {
+            (void)sash::compile_regex(pattern);
+        } catch (const sash::CommandError &error) {
+            rejected = error.status() == 2 && std::string_view(error.what()) ==
+                                                  R"(regex: literal NUL in pattern; use \x00)";
+        }
+        require(rejected,
+                "literal NUL patterns must fail explicitly rather than compile incorrectly");
+    }
+    bool invalid = false;
+    try {
+        (void)sash::compile_regex("[");
+    } catch (const sash::CommandError &error) {
+        invalid = error.status() == 2 && std::string_view(error.what()).substr(0, 7) == "regex: ";
+    }
+    require(invalid, "invalid regex is a catchable status-2 error, not a normal non-match");
+    const auto word = sash::compile_regex("([a-z]+)");
+    const std::string large(1024, 'x');
+    const std::string multiple = "tiny " + large;
+    const auto copy_size = large.capacity() + 1;
+    {
+        const AllocationFailure fault(copy_size, AllocationFailureMode::Exact);
+        require(sash::match(large, word),
+                "allocation control must permit regex searching before denying owned copies");
+        std::size_t count = 0;
+        std::size_t bytes = 0;
+        const std::regex_iterator<const char *> end;
+        for (std::regex_iterator<const char *> it(multiple.data(),
+                                                  multiple.data() + multiple.size(), word);
+             it != end; ++it) {
+            ++count;
+            bytes += static_cast<std::size_t>(it->length());
+        }
+        require(count == 2 && bytes == multiple.size() - 1,
+                "allocation control must permit every repeated search before denying owned copies");
+    }
+    bool copy_failed = false;
+    try {
+        const AllocationFailure fault(copy_size, AllocationFailureMode::Exact);
+        (void)sash::match_text(large, word);
+    } catch (const std::bad_alloc &) {
+        copy_failed = true;
+    }
+    require(copy_failed, "owned whole-match allocation must fail visibly under the copy fault");
+    const sash::Array<std::string> original{{99, "kept"}};
+    sash::Array<std::string> target = original;
+    bool single_failed = false;
+    try {
+        const AllocationFailure fault(copy_size, AllocationFailureMode::Exact);
+        (void)sash::match(large, word, target);
+    } catch (const std::bad_alloc &) {
+        single_failed = true;
+    }
+    require(single_failed && target == original,
+            "single capture allocation failure preserves the previous target");
+    bool repeated_failed = false;
+    try {
+        const AllocationFailure fault(copy_size, AllocationFailureMode::Exact);
+        (void)sash::matchall(multiple, word, target);
+    } catch (const std::bad_alloc &) {
+        repeated_failed = true;
+    }
+    require(repeated_failed && target == original,
+            "later repeated capture allocation failure publishes no partial replacement");
+    bool search_failed = false;
+    try {
+        const AllocationFailure fault(1);
+        (void)sash::matchall("tiny", word, target);
+    } catch (const std::bad_alloc &) {
+        search_failed = true;
+    }
+    require(search_failed && target == original,
+            "regex search allocation failure escapes instead of becoming false or clearing output");
+}
+
 bool run_test(const char *name, const std::function<void()> &body) {
     try {
         body();
@@ -2970,6 +3174,17 @@ int main(int argc, char **argv) {
                                 byte_substrings();
                                 ascii_text();
                                 text_predicates();
+                            })
+                       ? 0
+                       : 1;
+        }
+        if (mode == "--regex") {
+            return run_test(argv[1],
+                            [] {
+                                regex_values();
+                                regex_captures();
+                                regex_repeated();
+                                regex_publication();
                             })
                        ? 0
                        : 1;
@@ -3108,6 +3323,10 @@ int main(int argc, char **argv) {
         {"counted byte substrings", byte_substrings},
         {"owned ASCII case conversion", ascii_text},
         {"nonempty ASCII shape predicates", text_predicates},
+        {"owned regex search and whole matches", regex_values},
+        {"single regex capture arrays", regex_captures},
+        {"standard repeated regex extraction", regex_repeated},
+        {"regex failure publication boundaries", regex_publication},
     };
     for (const auto &test : tests) {
         if (!run_test(test.first, test.second)) {

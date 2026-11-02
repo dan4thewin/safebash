@@ -1,0 +1,41 @@
+fn show_records {
+    str text=${args[0]}
+    echo "input: [$text]"
+    array first
+    if match $text '([^;=]+)=([^;]*)' first {
+        echo "first: [${first[0]}]; key: [${first[1]}]; value: [${first[2]}]"
+    } else {
+        echo "first: no match"
+    }
+    str whole=$(match $text '([^;=]+)=([^;]*)')
+    echo "scalar: [$whole]"
+    array pairs
+    if matchall $text '([^;=]+)=([^;]*)' pairs {
+        map options=@{pairs:~}
+        keys options saved_keys
+        echo "pairs: $(len pairs); keys: $(join saved_keys ,)"
+        for key in $(keys options) {
+            str value=${options[$key]}
+            int integer=$(( ${value:-0} ))
+            echo "option: $key=[$value]; number: $integer"
+        }
+    } else {
+        echo "pairs: 0; keys:"
+    }
+    array missing=(stale)
+    if match $text NEVER missing {
+        echo "missing: yes; captures: $(len missing)"
+    } else {
+        echo "missing: no; captures: $(len missing)"
+    }
+    array names
+    if matchall $text '[A-Z]+' names {
+        echo "group-free: $(join names ,)"
+    } else {
+        echo "group-free:"
+    }
+}
+
+str input=$(arg 1 'COUNT=08;EMPTY=;RATE=0x7')
+attest input p?
+show_records $input

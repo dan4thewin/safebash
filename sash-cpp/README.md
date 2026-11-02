@@ -70,6 +70,12 @@ function handles `COUNT=08`: only the key becomes `count`, while unchanged
 `08` converts strictly to eight. String cells use the same operations.
 Both match the adjacent seven-line golden.
 
+[regex_report.cpp](examples/regex_report.cpp) and
+[regex_report.sash](examples/regex_report.sash) add whole-match extraction,
+capture arrays, repeated group extraction, and group-free matching. A real
+function extracts option pairs, creates a map, and converts their values.
+Both match the adjacent nine-line golden.
+
 On Linux or macOS, with a C++17 compiler, Plan 9 `mk`, and `timeout` on PATH:
 
 ```sh
@@ -85,6 +91,7 @@ mk -p 1 test
 ./build/arithmetic_report
 SASH_CPP_NUMERIC_RATE=0x7 ./build/numeric_report 08 0
 ./build/string_report COUNT=08
+./build/regex_report 'COUNT=08;EMPTY=;RATE=0x7'
 ```
 
 `greetings` prints `Hello, Ada!`; `job_report` prints the worker rounds;
@@ -96,6 +103,7 @@ SASH_CPP_NUMERIC_RATE=0x7 ./build/numeric_report 08 0
 `arithmetic_report` prints a weighted subtotal, arithmetic results, and a countdown.
 `numeric_report` prints converted options, defaults, cell values, and the charge.
 `string_report` prints the sliced option and ASCII string-cell results.
+`regex_report` prints whole/captured matches, extracted pairs, and converted options.
 The build produces a normal C++ static library, `build/libsash_cpp.a`;
 it does not build Rust or link sash-rt.
 For example, the C++ program can also be linked directly:
@@ -127,7 +135,7 @@ mk -p 1 CXX=clang++ BUILD=build/apple-asan \
 ./build/apple/capture_report
 ```
 
-Both hosts run the same 51 fixture groups and ten expected C++ reports,
+Both hosts run the same 55 fixture groups and eleven expected C++ reports,
 including large binary output, nested captures/readers, closed standard
 descriptors, partial setup, child/fd cleanup, typed exit, main-only END,
 and signal delivery during foreground work and capture. Collection fixtures
@@ -142,6 +150,9 @@ scalar/cell parity, and allocation and lifecycle failure boundaries.
 Text fixtures cover counted binary bytes, signed/clamped substring bounds,
 ASCII-only case changes, nonempty shape predicates, owned results,
 scalar/cell parity, and allocation failure without replacing a destination.
+Regex fixtures cover counted subjects, owned captures, unmatched/empty groups,
+normal misses, standard zero-length progress, original anchor context,
+target-borrowed inputs, and allocation failure without partial publication.
 The Darwin build has been
 exercised on Apple Silicon; this is not a claim of testing every Mac SDK
 or architecture. Tests need GNU `timeout`, which is not a stock macOS tool.
@@ -171,7 +182,7 @@ ptrace. The command helper is an ordinary unsanitized external executable;
 the library, test driver, and examples receive `SANITIZE`.
 
 With the real sash CLI and runtime already built in the parent checkout,
-`mk -p 1 sash-example` compiles and runs all ten sash examples against
+`mk -p 1 sash-example` compiles and runs all eleven sash examples against
 their expected output. Override `SASH` and `SASH_RT_LIB` for other locations.
 This additional target is not a prerequisite for native C++ tests.
 
@@ -510,6 +521,77 @@ There is no trimming or malformed-number repair. Regex replacement, bulk
 reads/splitting, remaining formatting, and IR consumption remain separate
 work. The required-value failure path retains DD#9's C++ status 2; the
 reference currently returns 1 for the same rejected numeric text.
+
+### Regex matching and owned extraction
+
+Compile ordinary `std::regex` values with `compile_regex(pattern)`, which
+selects the C++ standard library's modified ECMAScript grammar. Matching
+is unanchored unless the pattern supplies anchors:
+
+| Helper | Result |
+|---|---|
+| `match(subject, regex)` | Boolean search result; ordinary no-match is false |
+| `match_text(subject, regex)` | Owned whole match, or empty on no match |
+| `match(subject, regex, target)` | Boolean result; dense array `[whole, g1..gN]` |
+| `matchall(subject, regex, target)` | Boolean result; flattened groups per match, or whole matches when there are no groups |
+
+Every capture owns its bytes. Nonparticipating and participating-empty
+groups retain their empty slots; every group reported by the selected
+engine is retained. A successful empty match is true even when its scalar
+value is empty. Scalars and string-cell reads share the helpers.
+
+Output arrays are replaced atomically, not appended to. A completed miss
+replaces the previous target with empty; matching/copying failure preserves
+the previous target. Building locally and swapping on completion is the
+simplest C++ implementation and also handles an input view borrowed from
+that target without an extra subject snapshot. False is a value, not an
+automatic exception; source statement-level checking belongs at the future
+emitter's call site. No helper adds checkpoints.
+
+**Target differences are deliberate, not fixes to native sash.**
+[DD#11](../notes-exp/decisions/DD11-regex-matching-and-extraction.md) separates
+the pragmatic engine/iteration choices from their observable policies.
+
+Subjects use their full counted range, including interior NUL. For example,
+`std::string("a\0b", 3)` matched against `b` succeeds here and fails in native
+sash, whose Plan 9 subject boundary deliberately stops at NUL. Matching `.`
+repeatedly extracts three one-byte values here, including NUL; native
+extracts only `a`. This target keeps its strings byte-transparent.
+
+`matchall` uses standard `std::regex_iterator`, not repeated fresh suffix
+searches. The impact is visible even with a pattern both engines accept:
+
+| Subject / pattern | This target | Native suffix iteration |
+|---|---|---|
+| `ab` / `^` | One empty span at the original beginning | Three empty spans, as each suffix becomes a beginning |
+
+Standard iteration also tries a nonempty match at the same position after
+an empty match. Under the same ECMAScript engine, `a` / `(|a)` yields
+`["", "a", ""]`; an immediate one-byte skip would yield `["", ""]`.
+The latter comparison isolates the iteration policy, not Plan 9's different
+alternative ordering. End-of-input empty matches are emitted only once.
+
+Invalid patterns and standard regex errors become catchable
+`CommandError(2)` with a `regex: ` diagnostic. Allocation failures escape.
+Native dynamic `regcomp9` failure instead aborts status 2: an `if`/`||`
+does not resume in that process. C++ catching is its existing exception model,
+not a claim that native offers equivalent continuation.
+
+Literal NUL bytes in a counted **pattern** are rejected explicitly:
+`compile_regex(std::string_view("a\0b", 3))` throws and directs callers to
+the ordinary regex escape, `compile_regex(R"(a\x00b)")`. A direct
+standard-library probe on this host accepted the literal-NUL pattern but
+failed to match it; the escape worked. This small portability guard avoids
+silent wrong results without a pattern-rewriting adapter. It does not
+truncate or reject NUL-bearing subjects. DG requested a
+[native pattern/source backlog item](../notes/tasks/reject-literal-nul-patterns-and-source.md)
+separately.
+
+Use compiled regexes from the helper for its admission/error policy; a
+caller-supplied precompiled regex no longer exposes its original pattern.
+No linear-time or resource-bound guarantee is made for `std::regex`.
+Replacement templates (`sub`/`gsub`), bulk reads/splitting, and IR consumption
+remain separate work.
 
 ### Program lifecycle and END
 

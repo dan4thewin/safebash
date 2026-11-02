@@ -354,6 +354,39 @@ eight isolated negative controls, ten real-CLI source pairs, and the
 unchanged 169-case catalog are recorded in
 [journal 017](../journal/017-counted-byte-string-operations.md).
 
+## Eleventh runnable milestone - regex matching and extraction implemented
+
+`regex_report.cpp` and its sash counterpart retain a real function,
+whole-match extraction, capture arrays, repeated group extraction,
+pairwise map construction, and numeric conversion. The harmless
+`COUNT=08;EMPTY=;RATE=0x7` input matches an independent nine-line report.
+
+[DD#11](../decisions/DD11-regex-matching-and-extraction.md) separates DG's
+pragmatic engine/iteration choices from their observable target policies.
+Subjects remain fully counted through NUL, and standard regex_iterator
+preserves original anchor context and retries nonempty matches after empty
+ones. Native's retained first-NUL boundary and suffix progression are not
+silently copied or described as bugs.
+
+Output capture arrays are built locally and swapped on completion: no-match
+clears them, while exceptions preserve the previous target. This simple
+C++ strategy also supports a subject borrowed from its output target.
+Literal NUL patterns now fail explicitly with guidance to use `\x00`,
+after a direct standard-library probe found incorrect matching. DG requested
+a [native backlog item](../../notes/tasks/reject-literal-nul-patterns-and-source.md)
+separately; no native code changed.
+
+This completes matching/extraction, not replacement templates, bulk
+reads/splitting, remaining formatting, or IR consumption.
+The fresh reference compiler's DD#127 checks also required adjacent
+source attests in the job/reader/lifecycle pairs and an internal attest
+in the shared summary producer. Their golden bytes remain unchanged.
+All 55 groups and eleven goldens pass across GCC, Clang, Linux ASan,
+real Apple Clang/libc++, and Apple ASan. Regex-only UBSan, nine isolated
+mutations, eleven pinned real-CLI pairs, and the unchanged 169-case catalog
+are recorded in
+[journal 018](../journal/018-regex-matching-and-extraction.md).
+
 ## Starting points selected by DG
 
 | Area | Starting point |
@@ -456,7 +489,7 @@ forks with DG before building their assumptions throughout the library.
 
 | Choice | Alternatives and tradeoffs | Proposed way to settle it |
 |---|---|---|
-| Regex results and replacement | Source-style backreferences require an adapter; standard C++ replacement notation reduces bespoke logic. Group layout, no-match results, and zero-length iteration remain operation-level choices even with the grammar fixed. | Compare readable examples and prefer standard facilities where they remove rather than conceal complexity |
+| Regex replacement | Source-style backreferences require an adapter; standard C++ replacement notation reduces bespoke logic. Matching/capture layout, no-match results, and iteration are settled in DD#11. | Compare replacement examples and choose template notation before adding sub/gsub |
 | Capture completion | Trailing-newline treatment and background writers holding the captured stdout affect which bytes a completed capture yields. | Specify the completion boundary and pin it with direct C++ examples; do not let regular-file EOF accidentally decide the language |
 
 Ordinary command exit statuses remain outcomes even with exception-based
@@ -744,13 +777,17 @@ of most process work. Keep ordinary C++ representations visible.
 
 ### ECMAScript regex
 
-- [ ] Construct `std::regex` explicitly with ECMAScript grammar and the
-  selected locale/flags; do not rely on an incidental default elsewhere.
-- [ ] Implement search, whole-match extraction, capture arrays, repeated
-  matches, first replacement, and global replacement.
-- [ ] Pin no-match results, nonparticipating groups, empty matches,
-  zero-length progress, replacement escaping/backreferences, and binary
-  subjects. Use length-aware iterator ranges rather than C-string APIs.
+- [x] Construct ordinary `std::regex` explicitly with ECMAScript grammar,
+  retaining its normal standard-library locale/flags.
+- [x] Implement search, owned whole-match extraction, dense capture arrays,
+  and standard repeated group/whole-match extraction.
+- [x] Pin no-match results, nonparticipating/empty groups, zero-length
+  progression, original anchor context, and counted binary subjects.
+  Use length-aware iterator ranges rather than C-string APIs.
+- [x] Publish output arrays atomically and reject literal-NUL patterns
+  explicitly rather than allow silently incorrect compilation.
+- [ ] Implement first/global replacement and settle template notation,
+  escaping/backreferences and zero-length replacement behavior separately.
 - [x] Convert `std::regex_error` into an explicit operation failure,
   distinct from a successful no-match result. Do not assume a literal
   supplied by a C++ caller can never fail to compile.

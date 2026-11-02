@@ -1,15 +1,16 @@
 fn worker_summary {
-    /usr/bin/printf 'Grace\nAda\nGrace\nEdsger\nAda\n' |
+    str text=$(/usr/bin/printf 'Grace\nAda\nGrace\nEdsger\nAda\n' |
         /usr/bin/env LC_ALL=C /usr/bin/sort |
         /usr/bin/uniq |
         /usr/bin/paste -sd , - |
-        /usr/bin/tr -d '\n'
+        /usr/bin/tr -d '\n')
+    attest text [[ $text =~ '^[A-Za-z]+(,[A-Za-z]+)*$' ]]
+    echo $text
 }
 
 fn framed_summary {
-    /usr/bin/printf '['
-    worker_summary
-    /usr/bin/printf ']'
+    str value=$(worker_summary)
+    echo "[$value]"
 }
 
 array summaries

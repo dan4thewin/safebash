@@ -12,6 +12,7 @@ fn collect_workers {
             A[$seen]=$person
             (( kept += 1 ))
             label=$(worker_label $person)
+            attest label [[ $label =~ '^worker:[A-Z][a-z]+$' ]]
             echo "read $seen: $label"
         } else {
             echo "skip $seen: $person"

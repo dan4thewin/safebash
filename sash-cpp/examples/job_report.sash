@@ -13,6 +13,7 @@ while (( rounds > 0 )) {
     for person in @people {
         if [[ $person =~ '^[A-Z][a-z]+$' ]] {
             label=$(worker_label $person)
+            attest label [[ $label =~ '^worker:[A-Z][a-z]+$' ]]
             if /bin/test $person = Grace {
                 echo "$label: queued"
             } else {

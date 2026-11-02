@@ -83,6 +83,33 @@ void check(const PipelineResult &result) {
 
 namespace {
 
+using RegexMatches = std::match_results<const char *>;
+
+[[noreturn]] void regex_failure(const std::regex_error &error) {
+    throw CommandError(2, std::string("regex: ") + error.what());
+}
+
+const char *regex_begin(std::string_view subject) noexcept {
+    return subject.empty() ? "" : subject.data();
+}
+
+RegexMatches search_regex(std::string_view subject, const std::regex &pattern) {
+    const auto *begin = regex_begin(subject);
+    RegexMatches matches;
+    try {
+        std::regex_search(begin, begin + subject.size(), matches, pattern);
+    } catch (const std::regex_error &error) {
+        regex_failure(error);
+    }
+    return matches;
+}
+
+void append_captures(Array<std::string> &target, const RegexMatches &matches, std::size_t first) {
+    for (auto i = first; i < matches.size(); ++i) {
+        target.emplace(detail::collection_count(target.size()), matches[i].str());
+    }
+}
+
 std::int64_t signed_bits(std::uint64_t bits) noexcept {
     if (bits <= static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max())) {
         return static_cast<std::int64_t>(bits);
@@ -218,12 +245,50 @@ CommandResult try_echo(std::initializer_list<std::string_view> words) {
 void echo(std::initializer_list<std::string_view> words) { check(try_echo(words)); }
 
 std::regex compile_regex(std::string_view pattern) {
+    if (pattern.find('\0') != std::string_view::npos) {
+        throw CommandError(2, "regex: literal NUL in pattern; use \\x00");
+    }
     try {
         const char *begin = pattern.empty() ? "" : pattern.data();
         return std::regex(begin, begin + pattern.size(), std::regex_constants::ECMAScript);
     } catch (const std::regex_error &error) {
-        throw CommandError(2, std::string("regex: ") + error.what());
+        regex_failure(error);
     }
+}
+
+bool match(std::string_view subject, const std::regex &pattern) {
+    return !search_regex(subject, pattern).empty();
+}
+
+std::string match_text(std::string_view subject, const std::regex &pattern) {
+    const auto matches = search_regex(subject, pattern);
+    return matches.empty() ? std::string{} : matches[0].str();
+}
+
+bool match(std::string_view subject, const std::regex &pattern, Array<std::string> &target) {
+    const auto matches = search_regex(subject, pattern);
+    Array<std::string> result;
+    append_captures(result, matches, 0);
+    target.swap(result);
+    return !matches.empty();
+}
+
+bool matchall(std::string_view subject, const std::regex &pattern, Array<std::string> &target) {
+    const auto *begin = regex_begin(subject);
+    Array<std::string> result;
+    try {
+        const std::regex_iterator<const char *> end;
+        for (std::regex_iterator<const char *> it(begin, begin + subject.size(), pattern);
+             it != end; ++it) {
+            const auto &matches = *it;
+            append_captures(result, matches, matches.size() > 1 ? 1 : 0);
+        }
+    } catch (const std::regex_error &error) {
+        regex_failure(error);
+    }
+    const bool matched = !result.empty();
+    target.swap(result);
+    return matched;
 }
 
 std::int64_t add(std::int64_t left, std::int64_t right) {
