@@ -17,7 +17,7 @@ set -eu
 . common.sh
 setup collparam
 set +e
-plan=124
+plan=140
 echo "1..$plan" >&3
 
 # ── Part A: binding and reading ───────────────────────────────────
@@ -82,11 +82,11 @@ setit =a
 echo "${a[0]}"'
 [[ $rc = 0 && $out = "z" && -z $err ]]; chk 100.8
 
-# 100.9 the same collection in two slots is one object, not two copies
+# 100.9 DD#100's non-aliasing contract rejects one identity in two slots.
 run_sash 'fn two { A[0] = z; echo "${B[0]}" }
 array a=(k)
 two =a =a'
-[[ $rc = 0 && $out = "z" && -z $err ]]; chk 100.9
+[[ $rc != 0 && $err == *SB5099* && $err == *'distinct identities'* ]]; chk 100.9
 
 # 100.10 a bulk fill through a slot is an out-parameter. Unresolved, `read A`
 # filled a function-local array named `A` and the caller's collection was left
@@ -821,6 +821,121 @@ a_b'
 [[ $rc != 0 && -z $out && $err == *'tainted variable b_t_1 used'* \
    && $err == *'tainted variable t_1 used'* && $err == *'SSA taint backstop'* \
    && $err != *'__a_b_t'* ]]; chk bindscope.39
+
+# DD#100: strict non-aliasing, including read-only and taint-disabled calls.
+SASH_CFLAGS="${SASH_CFLAGS:-} --no-taint" \
+run_sash 'fn pair { echo "$(len A) $(len B)" }
+array a=(x)
+pair =a =a'
+[[ $rc != 0 && $err == *SB5099* && $err == *'distinct identities'* ]]; chk noalias.1
+
+run_sash 'fn pair { echo "$(len A) $(len B)" }
+fn forward { pair =A =A }
+array a=(x)
+forward =a'
+[[ $rc != 0 && $err == *SB5099* && $err == *'collection `A`'* \
+   && $err == *'distinct identities'* ]]; chk noalias.2
+
+run_sash 'array a=(x)
+fn f {
+echo "${A[0]} ${a[0]}"
+}
+f =a'
+[[ $rc != 0 ]] && grep -qE ':5: *1: error \[SB5099\]' <<< "$err" \
+   && [[ $err == *'global `a` in `f` at 3:1'* ]]; chk noalias.3
+
+run_sash 'array a=(old)
+fn f {
+a[0]=changed
+echo "${A[0]}"
+}
+f =a'
+[[ $rc != 0 && $err == *SB5099* \
+   && $err == *'global `a` in `f` at 3:1'* ]]; chk noalias.4
+
+run_sash 'array a=(x)
+fn f { unset a; echo "$(len A)" }
+f =a'
+[[ $rc != 0 && $err == *SB5099* && $err == *'global `a` in `f`'* ]]; chk noalias.5
+
+SASH_CFLAGS="${SASH_CFLAGS:-} --no-taint" \
+run_sash 'array a=(x)
+fn f { attest v in a [[ -n $v ]]; echo "$(len A)" }
+f =a'
+[[ $rc != 0 && $err == *SB5099* && $err == *'global `a` in `f`'* ]]; chk noalias.6
+
+# A global passed to a helper is an identity use, even without a value read.
+run_sash 'array a=(x)
+fn inspect { echo "$(len A)" }
+fn f { inspect =a; echo "$(len A)" }
+f =a'
+[[ $rc != 0 && $err == *SB5099* && $err == *'global `a` in `f`'* ]]; chk noalias.7
+
+run_sash 'array a=(x)
+fn leaf { echo "${a[0]}" }
+fn middle { leaf }
+fn f { middle; echo "$(len A)" }
+f =a'
+[[ $rc != 0 && $err == *SB5099* && $err == *'`f` is passed collection `a`'* \
+   && $err == *'global `a` in `leaf`'* ]]; chk noalias.8
+
+run_sash 'map m=([k]=value)
+fn leaf { echo "${m[k]}" }
+fn inner { leaf; echo "$(len A)" }
+fn outer { inner =A }
+outer =m'
+[[ $rc != 0 && $err == *SB5099* && $err == *'`outer` is passed collection `m`'* \
+   && $err == *'global `m` in `leaf`'* ]]; chk noalias.9
+
+run_sash 'array a=(x)
+fn f {
+str size=$(echo "$(len a)")
+echo "$size $(len A)"
+}
+f =a'
+[[ $rc != 0 && $err == *SB5099* && $err == *'global `a` in `f`'* ]]; chk noalias.10
+
+run_sash 'int array nums=(7)
+fn get -> int { return $(( nums[0] )) }
+fn f { echo "$(( get )) $(len A)" }
+f =nums'
+[[ $rc != 0 && $err == *SB5099* && $err == *'global `nums` in `get`'* ]]; chk noalias.11
+
+run_sash 'array a=(x)
+fn f {
+str choose=no
+if [[ $choose == yes ]] { echo "${a[0]}" }
+echo "$(len A)"
+}
+f =a'
+[[ $rc != 0 && $err == *SB5099* && $err == *'global `a` in `f`'* ]]; chk noalias.12
+
+run_sash 'array a=(x)
+END {
+fn f { echo "${a[0]} $(len A)" }
+f =a
+}'
+[[ $rc != 0 && $err == *SB5099* && $err == *'global `a` in `f`'* ]]; chk noalias.13
+
+run_sash 'fn key { : "$(len A)" "$(len B)"; echo k }
+map m=([k]=yes)
+str value="${m[$(key =m =m)]}"
+echo "$value"'
+[[ $rc != 0 && $err == *SB5099* && $err == *'distinct identities'* ]]; chk noalias.14
+
+# Unrelated globals and ordinary literal arguments remain legal.
+run_sash 'array a=(one)
+array b=(two)
+fn helper { echo "${a[0]}" }
+fn f { helper; A[0]=changed }
+f =b
+echo "${b[0]}"'
+[[ $rc = 0 && $out = $'one\nchanged' && -z $err ]]; chk noalias.15
+
+run_sash 'array a=(x)
+fn f { /bin/echo =a; echo "$(len A)" }
+f =a'
+[[ $rc = 0 && $out = $'=a\n1' && -z $err ]]; chk noalias.16
 
 set -e
 tally

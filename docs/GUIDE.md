@@ -307,6 +307,15 @@ B115's caller-visible in-body cleanup. The globals summary replaces neither
 this interim slot analysis nor W2's pending stdout classifier. DD#127's
 "Implementation status" records those boundaries.
 
+**Non-aliasing is already enforced (DD#100).** Collection arguments must
+have distinct identities, and none may overlap a global named in the
+callee or its transitive callees. Reads, writes, attests, metadata and
+identity forwarding all count, including conditional paths and captures.
+`check_collection_args` uses resolved identities and the shared call graph
+to report SB5099 at the call, with a conflicting body location. This
+language check runs even with `--no-taint`; it is the prerequisite for
+independent slot summaries, not a taint-safety guarantee on its own.
+
 **Taint sources:** `$(argv N)` (program arguments), `read`
 targets, `$(external cmd)`, environment variables via `$(getenv NAME)`.
 Function-local `$1`–`$N`/`$@` are always clean — passing a tainted

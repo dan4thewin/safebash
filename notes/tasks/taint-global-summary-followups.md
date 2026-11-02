@@ -62,9 +62,12 @@ valid source program has demonstrated another failure:
   the graph is being built. A probe must remain compile-only and retain the
   real recursion refusal; a zero-progress legal self-tail loop never
   terminates at runtime.
-- Slot aliases, globals aliased through slots, `len A`, and integer
-  self-tail calls with collection parameters belong to W1b-2's slot work.
-  They are not covered by the globals-only claim.
+- W1b-2 still owns independent slot transfers and integer self-tail calls
+  with collections. `len A` was measured accepted on 8ddfb52f; preserve its
+  existing behavior. Slot/slot and slot/global aliasing are no longer open
+  questions: DD100's strict contract is enforced by SB5099 (journal 558).
+  When mapping slot flows, an unused global's identity flow must not mask
+  cleanup through the slot bound to that global.
 
 Ordinary loop exits remain W3; the stage-write SSA false positive is B18/W4;
 END entry remains W5. A redirect on the final `while` was also checked:

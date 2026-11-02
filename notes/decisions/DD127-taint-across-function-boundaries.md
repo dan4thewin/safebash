@@ -411,6 +411,19 @@ For each definition of `f`, the compiler walks its body from an empty
 tainted set, then once for each global `g`, with only `g` tainted on entry.
 These are symbolic input probes, not walks for particular callers.
 
+The extension to collection slots relies on DD#100's **strict non-aliasing
+contract**, settled by DG on 2026-11-02. Collection arguments have distinct
+identities and cannot overlap globals accessed by the body or its callees.
+The rule includes forwarding and anonymous bodies, applies statically and
+has no read-only or taint-inert exceptions. It is a language check, not an
+optional taint check.
+
+This keeps one summary per function rather than introducing summaries
+specialised by alias pattern, caller taint, or ordered alias-dependent
+effects. It makes the independence assumption explicit for a reviewer.
+It does not by itself establish taint safety: the transfers and diagnostics
+below, including their control-flow handling, must still be sound.
+
 The summary holds:
 
 - **Generators:** globals tainted at an exit of the empty-entry walk.
@@ -486,11 +499,15 @@ into it: an attest after its capture becomes a rejection, and a name it
 leaves tainted becomes SB5067. Both messages name the call sites, so the
 cause is on the screen.
 
-## Implementation status after W1b-1
+## Implementation status
 
 The global summary, call-site relays, single-use global effects, shared
 global firewall and validator child isolation above are implemented.
 W1a already fixed local capture ordering and duplicate reads (journal 555).
+DD#100's strict non-aliasing contract is also implemented, as a prerequisite
+to W1b-2 (journal 558): SB5099 rejects duplicate slot identities and overlap
+with globals named anywhere in the callee's call chain, even with
+`--no-taint`. This does not change the interim slot-taint analysis.
 The following remain:
 
 - **W1b-2, slots:** `analyze_slots` still unions inward taint across call
@@ -527,6 +544,15 @@ The following remain:
 - The other `bfb` cases, `atslot.7`/`.8` and the collection-parameter specs
   retain their verdicts in this globals-only unit.
 
+### Landed before W1b-2
+
+- `100.9` now requires SB5099 for duplicate slot identities; the source is
+  unchanged and its former alias permission is deliberately retired.
+- `noalias.1`-`.16` pin direct and forwarded duplicates, direct/transitive
+  global access, metadata, writes, attests, captures, arithmetic calls,
+  conditional paths and END. Unrelated globals and literal `=name` words
+  remain legal; `--no-taint` does not bypass the contract.
+
 ### Still to land
 
 - W1b-2: `100.27` remains SB5020 but moves to the call; `100.28` becomes
@@ -542,9 +568,11 @@ The following remain:
 
 ## Open
 
-- W1b-2: `len A` on a tainted collection; aliasing slots; c2's call-site
-  diagnostic. Global source spans and the shared-function SB5067 message
-  are settled by the implementation above.
+- W1b-2: c2's call-site diagnostic and the independent slot transfers.
+  Alias policy is settled by DD#100 and enforced by SB5099. `len A` was
+  measured accepting received taint, like direct collection length, and
+  retains that behavior. Global source spans and the shared-function
+  SB5067 message are settled by the implementation above.
 - W2: the code of the call-site rejection; the reaches-stdout analysis
   (B114 lists what the branch's version got wrong).
 - W4: the per-process SSA backstop; validator name effects landed in W1b-1.

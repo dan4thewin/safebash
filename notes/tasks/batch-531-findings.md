@@ -1061,6 +1061,11 @@ self-tail sites. `gflow.1`-`.22` cover the new mechanism. Capture and value
 effects merge conservatively; `taint-global-summary-followups` records the
 precision limits. Slot summaries remain W1b-2, not part of this completion.
 
+Before W1b-2, DG settled strict non-aliasing (2026-11-02, journal 558).
+SB5099 now rejects duplicate collection arguments and direct/transitive
+global-name overlap. This replaces the alias-aware summary alternatives;
+it is a prerequisite, not a slot-summary landing or a fix for B115.
+
 - [x] **B29** (fixed-on-branch; DD24). A tainted capture argument is
   reported twice, at the same position.
   - Ported 2026-10-31 (journal 555; reimplemented on base's transfer

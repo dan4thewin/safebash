@@ -140,6 +140,10 @@ passes (DD#86). Do not reintroduce unqualified local-name maps or rebuild
 checked SSA from the original AST; that AST/source is retained for artifacts.
 Each function has one inferred collection count and full string/int
 array/map slot signature (DD#100), including forwarded slots.
+Collection arguments have distinct identities and cannot overlap globals
+named by the callee or anything it calls (DD#100, SB5099). Reads, writes,
+attests, metadata and identity forwarding all count, even in conditional
+paths and with `--no-taint`; there are no read-only or taint-inert exceptions.
 
 Every synthetic variable must go through `VersionState::reserve_temp_name`,
 with its actual `VarType`, before `define`. A counter or function-name prefix

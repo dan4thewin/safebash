@@ -24,7 +24,7 @@
 
 use crate::diagnostic::Diagnostic;
 use crate::ir::*;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::ops::RangeInclusive;
 
 // ── Entry point ────────────────────────────────────────────────────
@@ -8954,6 +8954,8 @@ fn collection_scalar_read_diag(name: &str, span: Span) -> Diagnostic {
 ///   introduced nowhere, has nothing to bind.
 /// - **Enough collections for the callee.** A slot the body uses but the call
 ///   never fills read as an empty collection: `$(len A)` silently returned 0.
+/// - **SB5099 — no aliases.** Slots have distinct identities and do not overlap
+///   globals accessed by the callee or anything it calls.
 ///
 /// The sigil is only meaningful at a **user-function** call. `echo =a` stays a
 /// plain word printing `=a` (spec `scope.sh` 86.21–86.24), and builtins take
@@ -8967,11 +8969,13 @@ pub fn check_collection_args(program: &Program) -> Vec<Diagnostic> {
         collect_bulk_targets(block, &mut colls);
     }
     let usage = slot_usage_map(program);
+    let global_uses = collection_global_uses(program, &funcs);
     let mut diags = Vec::new();
     let cx = CallArgCx {
         funcs: &funcs,
         colls: &colls,
         usage: &usage,
+        global_uses: &global_uses,
     };
     for block in program_blocks(program) {
         check_call_args_in(block, &cx, &mut diags);
@@ -8983,6 +8987,113 @@ struct CallArgCx<'a> {
     funcs: &'a HashSet<String>,
     colls: &'a HashSet<String>,
     usage: &'a HashMap<String, SlotUse>,
+    global_uses: &'a CollectionGlobalUses,
+}
+
+#[derive(Clone)]
+struct GlobalAccess {
+    function: String,
+    span: Span,
+}
+
+type CollectionGlobalUses = HashMap<String, BTreeMap<String, GlobalAccess>>;
+
+/// DD#100's non-aliasing contract is static and independent of taint.
+/// Resolved local names cannot collide with globals. Each function's footprint
+/// includes every definition and every reachable callee, without call contexts.
+fn collection_global_uses(program: &Program, funcs: &HashSet<String>) -> CollectionGlobalUses {
+    let mut globals = HashSet::new();
+    for block in program_blocks(program) {
+        collect_global_names(block, &mut globals);
+    }
+    let mut direct = CollectionGlobalUses::new();
+    for f in program.function_defs() {
+        let uses = direct.entry(f.name.clone()).or_default();
+        walk_stmt_tree(&f.body, &mut |stmt| {
+            record_global_accesses(stmt, &f.name, &globals, funcs, uses);
+        });
+    }
+    let census = take_census(program);
+    direct
+        .keys()
+        .map(|name| {
+            (
+                name.clone(),
+                reachable_global_accesses(name, &direct, &census.callees),
+            )
+        })
+        .collect()
+}
+
+fn record_global_accesses(
+    stmt: &Statement,
+    function: &str,
+    globals: &HashSet<String>,
+    funcs: &HashSet<String>,
+    uses: &mut BTreeMap<String, GlobalAccess>,
+) {
+    let mut names = HashSet::new();
+    collect_reads(std::slice::from_ref(stmt), &mut names);
+    stmt_bound_names(stmt, &mut |name| {
+        names.insert(name.to_string());
+    });
+    if let StmtKind::Command(c) = &stmt.kind {
+        collection_identity_uses(c, funcs, &mut names);
+    }
+    for name in names.intersection(globals) {
+        uses.insert(
+            name.clone(),
+            GlobalAccess {
+                function: function.to_string(),
+                span: stmt.span,
+            },
+        );
+    }
+}
+
+/// Identity forwarding and removal need not read a value, but still name the
+/// collection. An external or builtin's `=name` argument remains a literal.
+fn collection_identity_uses(c: &Command, funcs: &HashSet<String>, names: &mut HashSet<String>) {
+    let head = expr_literal_str(&c.name);
+    if funcs.contains(head) {
+        names.extend(collection_args(&c.args));
+    }
+    if head == "unset" {
+        names.extend(
+            crate::transform::unset_targets(c)
+                .into_iter()
+                .map(|target| {
+                    target
+                        .split_once('[')
+                        .map_or(target.as_str(), |(base, _)| base)
+                        .to_string()
+                }),
+        );
+    }
+}
+
+fn reachable_global_accesses(
+    name: &str,
+    direct: &CollectionGlobalUses,
+    callees: &HashMap<String, BTreeSet<String>>,
+) -> BTreeMap<String, GlobalAccess> {
+    let mut uses = BTreeMap::new();
+    let mut seen = HashSet::new();
+    let mut pending = vec![name];
+    while let Some(current) = pending.pop() {
+        if !seen.insert(current) {
+            continue;
+        }
+        uses.extend(direct[current].clone());
+        pending.extend(
+            callees
+                .get(current)
+                .into_iter()
+                .flatten()
+                .map(String::as_str),
+        );
+    }
+    uses
 }
 
 /// Bulk-fill targets (`read a`, `argv N a`, `mapfile a`, `matchall … a`)
@@ -9024,6 +9135,51 @@ fn check_one_call_args(c: &Command, span: Span, cx: &CallArgCx, diags: &mut Vec<
         check_slot_operand(name, span, cx, diags);
     }
     check_slot_arity(fname, passed.len(), span, cx, diags);
+    check_distinct_slots(fname, &passed, span, diags);
+    check_slot_global_overlap(fname, &passed, span, &cx.global_uses[fname], diags);
+}
+
+fn check_distinct_slots(fname: &str, passed: &[String], span: Span, diags: &mut Vec<Diagnostic>) {
+    let mut first = HashMap::new();
+    for (index, name) in passed.iter().enumerate() {
+        let previous = *first.entry(name).or_insert(index);
+        if previous != index {
+            diags.push(Diagnostic::error_span(
+                span,
+                "SB5099",
+                format!(
+                    "`{fname}` passes collection `{name}` more than once \
+                     (collection arguments {} and {}); slots must have distinct \
+                     identities (DD#100)",
+                    previous + 1,
+                    index + 1,
+                ),
+            ));
+        }
+    }
+}
+
+fn check_slot_global_overlap(
+    fname: &str,
+    passed: &[String],
+    span: Span,
+    uses: &BTreeMap<String, GlobalAccess>,
+    diags: &mut Vec<Diagnostic>,
+) {
+    for name in passed {
+        if let Some(access) = uses.get(name) {
+            diags.push(Diagnostic::error_span(
+                span,
+                "SB5099",
+                format!(
+                    "`{fname}` is passed collection `{name}` but also accesses \
+                     global `{name}` in `{}` at {}:{}; use only the slot or a \
+                     forwarded slot throughout the call (DD#100)",
+                    access.function, access.span.line, access.span.col,
+                ),
+            ));
+        }
+    }
 }
 
 /// Part C: every collection argument comes after every scalar one.

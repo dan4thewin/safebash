@@ -174,8 +174,56 @@ passes:
 | `f @foo` | the **values** | **yes** | a tainted `foo` is **SB5020** at the call |
 | `f =foo` | the **identity** | **no** | decided by what `f` does with the slot (DD#127) |
 
-`f @a` on a tainted array is rejected **SB5020** at the call site. `=foo` must therefore be excluded from taint's read detection
-— that is the one genuinely new rule this DD adds to the validator.
+`f @a` on a tainted array is rejected **SB5020** at the call site. `=foo` is
+excluded from taint's read detection, but still obeys the non-aliasing
+contract below.
+
+### Non-aliasing contract (DG, 2026-11-02)
+
+**Every collection argument has a distinct identity, and a collection passed
+through a slot is accessed only through that slot or a forwarded slot for
+the duration of the call.**
+
+- `f =foo =foo` is rejected, even if both slots are only read.
+- If `f` receives `=foo`, neither `f` nor a function it calls may access
+  `foo` by its global name. The restriction follows the whole call chain,
+  including calls in captures, arithmetic, pipeline stages and background
+  bodies. Extracting a helper does not evade it.
+- Access includes reads, writes, `unset`, `attest`, metadata operations such
+  as `len`, and passing `=foo` to another function. Forward `=A` instead.
+  A builtin or external command's literal word, such as `/bin/echo =foo`,
+  is not a collection access.
+- The rule is static: a use in a conditional or unreachable branch counts.
+  There are no read-only or taint-inert exceptions, and `--no-taint` does not
+  disable the contract.
+- Other globals remain available. A function that reads global `foo` may
+  receive a different collection through A. The caller may use `foo` again
+  after the call.
+
+Both violations are **SB5099** at the call. A global-overlap diagnostic also
+names a function and statement that accesses the global. Forwarding carries
+the restriction outward until the actual collection identity is known.
+
+This reverses the earlier permission for duplicate slots; it does **not**
+make slots copies or remove in-place mutation. It is the prerequisite for
+DD#127's one-summary-per-function slot analysis: the reviewer and checker
+need not reconstruct alias relationships for each caller. Non-aliasing is
+not, on its own, a taint-safety guarantee; source tracking, read/attest
+checks, summary composition and control-flow handling still supply that
+protection. The strict contract is simpler than alias-specialised or
+alias-parametric summaries; it is not a claim that the whole implementation
+is smaller than the former call-context walker.
+
+**Enforcement (journal 558).** `check_collection_args` runs on resolved
+lexical identities, outside the optional taint check. It rejects duplicate
+arguments and intersects the passed identities with the callee's global-use
+footprint. The shared read/binding walks collect the footprint; identity
+forwarding and the canonical `unset` parser cover uses that need not read a
+value. The existing command/arithmetic call graph supplies the transitive
+closure, with a body location retained for each global. Multiple definitions
+of a function conservatively contribute to the same footprint. This is
+implemented before the slot-summary port; it does not replace the interim
+slot-taint machinery below.
 
 ### Taint through a slot
 
@@ -185,10 +233,12 @@ taint may cross the call is DD#127's rule, applied to a slot like any other
 name:
 
 - **Inward.** A slot that arrives tainted carries taint `f` received. `f` may
-  read it with `:!` (DD#91). Any other use is rejected at the call, with the
-  code the statement would raise if the taint were `f`'s own: **SB5020** for
-  a read, **SB5021** for writing it into a collection cell, **SB5088** for an
-  attest. The caller attests before the call.
+  read it with `:!` (DD#91). An unescaped value use is rejected at the call,
+  with the code the statement would raise if the taint were `f`'s own:
+  **SB5020** for a read, **SB5021** for writing it into a collection cell,
+  **SB5088** for an attest. The caller attests before the call. Length is
+  metadata, not a tainted value read: `len A` retains the direct collection's
+  behavior.
 - **Outward.** A slot `f` fills (`fn fill { argv A }`) carries `f`'s own
   taint, and `f` may attest it adjacently, inside itself. If it does not, and
   `f` has exactly one call site, the caller attests immediately after the
@@ -200,10 +250,11 @@ name:
 - **Mutation and write-back need nothing new.** A function writing `A[0]=z`
   changes the caller's array.
 
-So Part E is *binding plus one exclusion*, not a new taint model. Until W1b-2
-lands, the compiler applies the rule recorded under "Slot taint crosses the
-boundary in both directions" below; DD#127's "Implementation status" lists
-the differences. W1b-1 implements the global-name channel, not the slots.
+The slot supplies the collection's identity; DD#127 supplies the taint
+model. Until W1b-2 lands, the compiler applies the interim analysis recorded
+under "Slot taint crosses the boundary in both directions" below; DD#127's
+"Implementation status" lists the differences. W1b-1 implements the
+global-name channel, not the slots.
 
 ### Consequences to expect
 
@@ -211,9 +262,6 @@ the differences. W1b-1 implements the global-name channel, not the slots.
   independently, so its own verdicts never depend on its callers. When a call
   passes in taint that `f` would use, the error is reported at the call and
   names the line in `f` that uses it (DD#127).
-- **Aliasing two slots to one collection** (`f =foo =foo`) is coherent under
-  substitution — writes through `A` are visible through `B`. Allowed, but
-  worth a spec pinning it.
 - **`=foo` alone does not satisfy SB5050.** If `f` only *writes* the slot,
   `foo` is still never read, and the dead-variable check fires unless the
   caller reads it afterwards — which is the correct shape for an out-param.
