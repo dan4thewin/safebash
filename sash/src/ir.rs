@@ -1216,6 +1216,18 @@ pub struct Command {
     pub args: Vec<Expr>,
 }
 
+/// SB5097 guarantees a positive decimal count. Overflow still clamps outward;
+/// an empty stack is valid during discarded lowering and taint probes.
+pub(crate) fn loop_jump_index(levels: Option<&str>, depth: usize) -> Option<usize> {
+    if depth == 0 {
+        return None;
+    }
+    let n = levels
+        .map(|n| n.parse::<usize>().unwrap_or(usize::MAX))
+        .unwrap_or(1);
+    Some(depth - n.min(depth))
+}
+
 /// DD#61: the parsed form of a `attest` command. The parser encodes the
 /// form positionally in `Command::args`; `classify_attest` decodes it.
 ///

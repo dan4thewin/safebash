@@ -329,10 +329,17 @@ taint flows so a fresh replacement cannot inherit the old value's owner.
 Named readers and slot forwarding use those summaries, not caller-specific
 walks. A parent's private reader pipe is not the stdin of its calls or captures.
 
-Ordinary loop edges, per-process SSA checking and END entry remain W3-W5.
-The SSA backstop also has a separate
-future-array-version false positive. DD#127's "Implementation status" records these
-boundaries and the conservative value/capture precision limits.
+**Loop paths retain complete state (DD#121).** Break exits and continue
+back edges carry both taint and ownership. Heads stabilize before the
+diagnostic walk; speculative passes keep nesting depth without exporting
+effects. While exits retain post-condition state. For words are checked at
+the stable head, and the binder changes only an entered iteration, not the
+zero-trip path. These transfers feed the existing independent summaries.
+
+Per-process SSA checking and END entry remain W4-W5. The SSA backstop also
+has separate array-timing and definition-order faults. DD#127's
+"Implementation status" records these boundaries, the clean-split and
+counted-capture defects, and conservative value/capture precision limits.
 
 **Non-aliasing is already enforced (DD#100).** Collection arguments must
 have distinct identities, and none may overlap a global named in the

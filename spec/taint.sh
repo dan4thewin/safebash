@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup taint
-plan=517
+plan=538
 echo "1..$plan" >&3
 
 set +e
@@ -3543,6 +3543,200 @@ attest v in a [[ -n $v ]]
 echo "$(len a)"
 raw'
 [[ $rc = 0 && $out = $'0\nhello' && -z $err && -z $rerr ]]; chk outown.34
+
+# DD#121: diverting loop paths retain their state at the actual target.
+run_sash 'str x=clean
+for k in a b {
+    if [[ $k == a ]] { x=$(/bin/echo dirty); break }
+    x=clean
+}
+echo "$x"'
+[[ $rc != 0 && $err == *':6:6: error [SB5020]'* ]]; chk loopflow.1
+
+run_sash 'str x=clean
+for k in b a {
+    if [[ $k == a ]] { x=$(/bin/echo dirty); continue }
+    x=clean
+}
+echo "$x"'
+[[ $rc != 0 && $err == *':6:6: error [SB5020]'* ]]; chk loopflow.2
+
+run_sash 'str x=clean
+int n=0
+while (( n < 2 )) {
+    echo "$x"
+    (( n += 1 ))
+    if (( n == 1 )) { x=$(/bin/echo dirty); continue }
+    x=clean
+}'
+[[ $rc != 0 && $err == *':4:10: error [SB5020]'* ]]; chk loopflow.3
+
+run_sash 'str x=clean
+int n=0
+while (( n < 2 )) {
+    (( n += 1 ))
+    if (( n == 1 )) { x=$(/bin/echo dirty); break }
+    x=clean
+}
+echo "$x"'
+[[ $rc != 0 && $err == *':8:6: error [SB5020]'* ]]; chk loopflow.4
+
+run_sash 'str x=$(/bin/echo dirty)
+array a=()
+for x in @a { : }
+echo "$x"'
+[[ $rc != 0 && $err == *':4:6: error [SB5020]'* ]]; chk loopflow.5
+
+run_sash 'str x=clean
+while x=$(/bin/sh -c "echo dirty; exit 1") { x=clean }
+echo "$x"'
+[[ $rc != 0 && $err == *':3:6: error [SB5020]'* ]]; chk loopflow.6
+
+run_sash 'str x=clean
+while readline x { x=clean }
+echo "[$x]"'
+[[ $rc != 0 && $err == *':3:6: error [SB5020]'* ]]; chk loopflow.7
+
+# The live collection is read again at subsequent loop heads.
+run_sash 'array a=(p)
+for x in @a { argv a; echo "$x" }' p q
+[[ $rc != 0 && $err == *':2:10: error [SB5020]'* &&
+   $err == *"iterating tainted array 'a'"* ]]; chk loopflow.8
+
+# Binding and its adjacency apply only to an entered iteration, every time.
+run_sash 'for x in $(argv 1) { attest x [[ $x == ok ]] }
+echo "[$x]"' ok
+[[ $rc = 0 && $out = '[ok]' && -z $err && -z $rerr ]]; chk loopflow.9
+
+run_sash 'for x in a b {
+    echo "$x"
+    x=$(/bin/echo dirty)
+}
+echo "${x:!}"'
+[[ $rc = 0 && $out = $'a\nb\ndirty' && -z $err && -z $rerr ]]; chk loopflow.10
+
+run_sash 'str x=clean
+for outer in a b { : "$outer"
+    for inner in c d {
+        if [[ $inner == c ]] { x=$(/bin/echo dirty); break 2 }
+        x=clean
+    }
+    x=clean
+}
+echo "$x"'
+[[ $rc != 0 && $err == *':9:6: error [SB5020]'* ]]; chk loopflow.11
+
+run_sash 'str x=clean
+for outer in a b { : "$outer"
+    for inner in c d {
+        if [[ $inner == c ]] { x=$(/bin/echo dirty); continue 2 }
+        x=clean
+    }
+    x=clean
+}
+echo "$x"'
+[[ $rc != 0 && $err == *':9:6: error [SB5020]'* ]]; chk loopflow.12
+
+# SB5097 permits oversized positive literals; they still clamp outward.
+run_sash 'str x=clean
+for outer in a b { : "$outer"
+    for inner in c d {
+        if [[ $inner == c ]] { x=$(/bin/echo dirty); break 999999999999999999999999999 }
+        x=clean
+    }
+    x=clean
+}
+echo "$x"'
+[[ $rc != 0 && $err == *':9:6: error [SB5020]'* ]]; chk loopflow.13
+
+# The while condition belongs to its own loop, not the enclosing for.
+run_sash 'str x=clean
+for k in a b { : "$k"
+    while x=$(/bin/echo dirty); break { x=clean }
+    x=clean
+}
+echo "$x"'
+[[ $rc = 0 && $out = clean && -z $err && -z $rerr ]]; chk loopflow.14
+
+# Nested capture loops do not hide the enclosing body's later cleanup.
+run_sash 'str x=clean
+for k in a b { : "$k"
+    y=$(
+        for j in c d {
+            if [[ $j == c ]] { x=$(/bin/echo dirty); break }
+        }
+        echo hi
+    )
+    x=clean
+}
+echo "$x $y"'
+[[ $rc = 0 && $out = 'clean hi' && -z $err && -z $rerr ]]; chk loopflow.15
+
+# DD#127 ownership travels with the taint, including diverted paths.
+run_sash 'fn raw { /bin/echo dirty }
+str x=clean
+for k in a b {
+    if [[ $k == a ]] { x=$(raw); break }
+    x=clean
+}
+attest x [[ $x == dirty ]]
+raw'
+[[ $rc != 0 && $err == *SB5100* && $err == *'`raw` is shared'* ]]; chk loopflow.16
+
+run_sash 'fn raw { /bin/echo dirty }
+str x=clean
+for k in b a {
+    if [[ $k == a ]] { x=$(raw); continue }
+    x=clean
+}
+attest x [[ $x == dirty ]]
+raw'
+[[ $rc != 0 && $err == *SB5100* && $err == *'`raw` is shared'* ]]; chk loopflow.17
+
+# The same exits feed single-use summaries and shared-function source sites.
+run_sash 'str x=clean
+fn fill {
+    for k in a b {
+        if [[ $k == a ]] { x=$(/bin/echo dirty); break }
+        x=clean
+    }
+}
+fill
+echo "$x"'
+[[ $rc != 0 && $err == *':9:6: error [SB5020]'* ]]; chk loopflow.18
+
+run_sash 'str x=clean
+fn fill {
+    for k in a b {
+        if [[ $k == a ]] {
+            x=$(/bin/echo dirty)
+            break
+        }
+        x=clean
+    }
+}
+fill
+fill
+echo "${x:!}"'
+[[ $rc != 0 && $err == *':5:13: error [SB5067]'* &&
+   $err == *'`fill`'* ]]; chk loopflow.19
+
+# Quiet inner-loop probes keep the enclosing depth without exporting exits.
+run_sash 'str x=clean
+for outer in a b { : "$outer"
+    x=clean
+    for inner in c d {
+        echo "$x"
+        if [[ $inner == c ]] { x=$(/bin/echo dirty); continue 2 }
+        x=clean
+    }
+}'
+[[ $rc = 0 && $out = $'clean\nclean' && -z $err && -z $rerr ]]; chk loopflow.20
+
+# The final head must retain a binder value tainted by the preceding body.
+run_sash 'for x in a b { x=$(/bin/echo dirty) }
+echo "$x"'
+[[ $rc != 0 && $err == *':2:6: error [SB5020]'* ]]; chk loopflow.21
 
 set -e
 tally

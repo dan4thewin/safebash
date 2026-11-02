@@ -542,16 +542,8 @@ pub(super) fn push_attest_retag(
 /// valid index; saturating on overflow keeps a huge literal clamping, where
 /// `unwrap_or(1)` used to turn every unparsable count into `continue 1`.
 fn loop_target(c: &Command, state: &VersionState) -> Option<(BlockId, BlockId)> {
-    let n = c
-        .args
-        .first()
-        .map(|a| literal_name_of(a).parse::<usize>().unwrap_or(usize::MAX))
-        .unwrap_or(1);
-    let depth = state.loop_stack.len();
-    if depth == 0 {
-        return None;
-    }
-    Some(state.loop_stack[depth - n.min(depth)])
+    let levels = c.args.first().map(literal_name_of);
+    crate::ir::loop_jump_index(levels, state.loop_stack.len()).map(|i| state.loop_stack[i])
 }
 
 fn handle_break_stmt(

@@ -4700,32 +4700,32 @@ fn taint_block(
 /// tainted at the *top* of the next iteration. One pass would miss that, so the
 /// entry state is driven to a fixpoint before the real walk.
 ///
-/// It converges because R1 makes the set grow-only: every removal is confined
-/// to an adjacent pair inside one block, so unioning a pass's output back into
-/// its input is monotone. Probe diagnostics are discarded — the caller emits
-/// them once, walking against the stable set.
-fn loop_entry_fixpoint(bodies: &[&[Statement]], entry: &mut Tainted, cx: &SlotCx) {
-    // Both names and origins are finite; joining either is monotone.
-    for _ in 0..MAX_TAINT_FIXPOINT_PASSES {
-        let probe = taint_loop_pass(bodies, entry, cx);
-        let before = entry.clone();
-        entry.extend(probe);
-        if *entry == before {
-            return;
+/// Names and origins are finite, and joining a back edge into the head is
+/// monotone. Probes retain the enclosing depth but discard every outward
+/// effect; diagnostics and source sites come from the final stable walk.
+fn loop_entry_fixpoint(
+    entry: &Tainted,
+    cx: &SlotCx,
+    mut back_edge: impl FnMut(&Tainted, &SlotCx, &mut Vec<Diagnostic>) -> Tainted,
+) -> Tainted {
+    let frame = BodyCx {
+        loops: RefCell::new(vec![LoopExits::default(); cx.body.loops.borrow().len()]),
+        ..BodyCx::default()
+    };
+    let probe_cx = SlotCx {
+        body: &frame,
+        log: None,
+        ..*cx
+    };
+    let mut head = entry.clone();
+    loop {
+        let next = back_edge(&head, &probe_cx, &mut Vec::new());
+        if next.is_subset(&head) {
+            return head;
         }
+        head.extend(next);
     }
 }
-
-fn taint_loop_pass(bodies: &[&[Statement]], entry: &Tainted, cx: &SlotCx) -> Tainted {
-    let mut probe = entry.clone();
-    let mut sink = Vec::new();
-    for body in bodies {
-        taint_block(body, &mut probe, &JustTainted::new(), cx, &mut sink);
-    }
-    probe
-}
-
-const MAX_TAINT_FIXPOINT_PASSES: usize = 64;
 
 // ── DD#46 / DD#60: top-level positional rejection (SB5024) ────────
 //
@@ -6033,10 +6033,9 @@ fn taint_stmt(
     // A capture runs before the statement that consumes its output, so its
     // body is walked against the set from before the statement's effect: in
     // `y=$(/bin/echo "$y")` the body reads the `y` held before, not the one
-    // the assignment writes. A `for`'s words likewise run before its loop. A
-    // declaration evaluates and binds one initializer at a time, so
-    // `taint_declaration` walks each initializer's bodies itself.
-    if !matches!(stmt.kind, StmtKind::Declaration(_)) {
+    // the assignment writes. Declarations interleave initializer evaluation
+    // with binding; for words are evaluated at each loop head.
+    if !matches!(stmt.kind, StmtKind::Declaration(_) | StmtKind::For(_)) {
         taint_cmdsub_bodies(stmt, tainted, sx, diags);
         taint_arith_calls(stmt, tainted, sx, diags);
     }
@@ -6074,8 +6073,7 @@ fn taint_stmt(
 /// capture body is walked: the expression checks see a `$( )` only as a value
 /// (a bare source used directly is SB5020) and leave its reads to this walk.
 /// `taint_stmt` calls it before a statement's own effect, because the capture
-/// runs first; the arms that carry a substitution — Command, Assignment, a
-/// `for`'s words — are leaves or heads, so no arm could do it for them.
+/// runs first. Declarations and for heads evaluate their expressions directly.
 fn taint_cmdsub_bodies(
     stmt: &Statement,
     tainted: &mut Tainted,
@@ -6373,16 +6371,38 @@ fn check_list_caught_resolution(
 /// is driven to a fixpoint and the merge unions the pre-loop set back in (the
 /// zero-trip path).
 fn taint_while(w: &While, tainted: &mut Tainted, sx: &SlotCx, diags: &mut Vec<Diagnostic>) {
-    let mut entry = tainted.clone();
-    loop_entry_fixpoint(&[&w.condition, &w.body], &mut entry, sx);
-    let mut out = entry.clone();
-    taint_block(&w.condition, &mut out, &JustTainted::new(), sx, diags);
     // `while readline v { attest v … }`: the condition is the statement
     // immediately above the body, so what it taints is adjacent to the body's
     // first statement.
     let lead = block_taints(&w.condition, sx);
-    taint_block(&w.body, &mut out, &lead, sx, diags);
-    tainted.extend(out);
+    let head = loop_entry_fixpoint(tainted, sx, |head, cx, diags| {
+        while_pass(w, head, &lead, cx, diags).0
+    });
+    *tainted = while_pass(w, &head, &lead, sx, diags).1;
+}
+
+fn while_pass(
+    w: &While,
+    head: &Tainted,
+    lead: &JustTainted,
+    sx: &SlotCx,
+    diags: &mut Vec<Diagnostic>,
+) -> (Tainted, Tainted) {
+    let ((cond, body), exits) = sx.body.in_loop(|| {
+        let mut cond = head.clone();
+        taint_block(&w.condition, &mut cond, &JustTainted::new(), sx, diags);
+        let mut body = cond.clone();
+        taint_block(&w.body, &mut body, lead, sx, diags);
+        (cond, body)
+    });
+    let mut next = exits.continues;
+    if block_falls_through(&w.body) {
+        next.extend(body);
+    }
+    let mut exit = exits.breaks;
+    exit.extend(head.clone());
+    exit.extend(cond);
+    (next, exit)
 }
 
 /// The union of what every statement in a block taints — the `just` set a
@@ -6471,48 +6491,62 @@ fn taint_list(
 /// - A clean source rebinds the loop var to clean values (it is removed
 ///   from the tainted set, e.g. `for x in a b c`).
 fn taint_for(f: &For, tainted: &mut Tainted, sx: &SlotCx, diags: &mut Vec<Diagnostic>) {
-    check_for_words(&f.words, tainted, sx.output, diags);
-    // The binder is rebound by the loop, so it takes the in-source's taint and
-    // loses whatever it carried before.
+    let head = loop_entry_fixpoint(tainted, sx, |head, cx, diags| {
+        for_pass(f, head, cx, diags).0
+    });
+    *tainted = for_pass(f, &head, sx, diags).1;
+}
+
+fn for_pass(
+    f: &For,
+    head: &Tainted,
+    sx: &SlotCx,
+    diags: &mut Vec<Diagnostic>,
+) -> (Tainted, Tainted) {
+    let mut words = head.clone();
+    taint_for_words(&f.words, &mut words, sx, diags);
+    let mut body = words.clone();
+    // Rebinding cannot change the zero-trip path.
     let from_source = f.words.iter().any(|word| is_taint_source(word, sx.output));
+    let mut lead = JustTainted::new();
     if from_source {
         let origins = f
             .words
             .iter()
             .flat_map(|word| source_origins(word, sx))
             .collect();
-        tainted.replace(&f.variable, origins);
-    } else {
-        tainted.remove(&f.variable);
-    }
-    // DD#121: the body runs 0..n times, so its entry state is a fixpoint and
-    // the merge unions the pre-loop set back in (the zero-trip path). And
-    // `for x in $(argv 1) { attest x … }`: the in-source taints the binder, so
-    // the body's first statement is adjacent to it.
-    let mut entry = tainted.clone();
-    loop_entry_fixpoint(&[&f.body], &mut entry, sx);
-    let mut out = entry.clone();
-    let mut lead = JustTainted::new();
-    if from_source {
+        body.replace(&f.variable, origins);
         lead.insert(f.variable.clone());
+    } else {
+        body.remove(&f.variable);
     }
-    taint_block(&f.body, &mut out, &lead, sx, diags);
-    tainted.extend(out);
+    let (_, exits) = sx
+        .body
+        .in_loop(|| taint_block(&f.body, &mut body, &lead, sx, diags));
+    let mut next = exits.continues;
+    if block_falls_through(&f.body) {
+        next.extend(body);
+    }
+    let mut exit = exits.breaks;
+    exit.extend(words);
+    (next, exit)
 }
 
 /// The iterated words of a `for`: a stored tainted array is a rejected read,
 /// and so is a bare source used as a word. The reads inside a `$(keys m)` are
-/// checked where its body is walked ([`taint_cmdsub_bodies`]).
-fn check_for_words(
+/// checked where its body is walked.
+fn taint_for_words(
     words: &[Expr],
-    tainted: &HashSet<String>,
-    output: &OutputTaint,
+    tainted: &mut Tainted,
+    sx: &SlotCx,
     diags: &mut Vec<Diagnostic>,
 ) {
     for w in words {
+        taint_capture_bodies(w.cmdsub_bodies(), tainted, sx, diags);
+        taint_expr_arith_calls(w, w.span, tainted, sx, diags);
         reject_tainted_array_iter(w, tainted, diags);
         if let ExprKind::CommandSubstitution(stmts) = &w.kind {
-            check_bare_cmdsub_taint(stmts, w.span, output, diags);
+            check_bare_cmdsub_taint(stmts, w.span, sx.output, diags);
         }
     }
 }
@@ -9616,10 +9650,28 @@ impl FnSummary {
 struct BodyCx {
     returns: RefCell<Tainted>,
     back_edges: RefCell<Tainted>,
+    loops: RefCell<Vec<LoopExits>>,
     ownership: RefCell<Vec<(TaintOrigin, Diagnostic)>>,
 }
 
+#[derive(Clone, Default)]
+struct LoopExits {
+    breaks: Tainted,
+    continues: Tainted,
+}
+
 impl BodyCx {
+    fn in_loop<T>(&self, walk: impl FnOnce() -> T) -> (T, LoopExits) {
+        self.loops.borrow_mut().push(LoopExits::default());
+        let result = walk();
+        let exits = self
+            .loops
+            .borrow_mut()
+            .pop()
+            .expect("taint loop scopes must remain balanced");
+        (result, exits)
+    }
+
     fn defer_ownership(&self, origin: &TaintOrigin, site: &Diagnostic) {
         let obligation = (origin.clone(), site.clone());
         let mut pending = self.ownership.borrow_mut();
@@ -9934,6 +9986,8 @@ fn taint_call(
 ) {
     if name == "return" {
         record_exit(tainted, is_self_tail_return(c, cx), cx);
+    } else if matches!(name, "break" | "continue") {
+        record_loop_exit(c, name, span, tainted, cx);
     } else if cx.fns.contains_key(name) {
         apply_call(name, &collection_args(&c.args), span, tainted, cx, diags);
     }
@@ -9966,6 +10020,24 @@ fn record_exit(tainted: &Tainted, self_tail: bool, cx: &SlotCx) {
         &cx.body.returns
     };
     target.borrow_mut().extend(tainted.clone());
+}
+
+fn record_loop_exit(c: &Command, name: &str, span: Span, tainted: &Tainted, cx: &SlotCx) {
+    // SB5097 is emitted later in the same validation batch.
+    if loop_count_diag(name, c, span).is_some() {
+        return;
+    }
+    let mut loops = cx.body.loops.borrow_mut();
+    let levels = c.args.first().map(expr_literal_str);
+    let Some(i) = crate::ir::loop_jump_index(levels, loops.len()) else {
+        return;
+    };
+    let target = if name == "break" {
+        &mut loops[i].breaks
+    } else {
+        &mut loops[i].continues
+    };
+    target.extend(tainted.clone());
 }
 
 fn taint_return_producer(

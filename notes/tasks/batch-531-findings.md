@@ -1140,19 +1140,26 @@ the SSA highest-future-version check; that separate fault is recorded in
 
 ### 18. W3 intra-procedural edges
 
-- [ ] **B94** (open; DD51). `verify_ssa_taint`'s first phase is one pass
+- [x] **B94** (open; DD51). `verify_ssa_taint`'s first phase is one pass
   with no fixpoint: under `--no-taint-cst`, `x=safe; if [[ $(echo a) == a ]]
   { if [[ $(echo b) == b ]] { x=$(getenv HOME) } }; echo "[$x]"` prints the
-  home directory.
-- [ ] **B95** (fixed-on-branch; DD24). CRITICAL: the AST taint walker
+  home directory. Still present in both backends on the W3 baseline;
+  the owned recheck uses `/bin/echo dirty` instead of environment data.
+  Filed as `bug-ssa-taint-definition-order`, not repaired by this port
+  or by W4's separate process partition.
+- [x] **B95** (fixed-on-branch; DD24). CRITICAL: the AST taint walker
   dropped the states at `break`, `continue` and `return`.
   - W1b-1 implements function returns and self-tail back edges
-    (`gflow.13`/`.14`, journal 557). Ordinary loop `break`/`continue`
-    deposits remain W3.
-- [ ] **B98** (fixed-on-branch; DD24). CRITICAL: `taint_for` applied the
-  loop binder to the pre-loop state.
-- [ ] **B99** (fixed-on-branch; DD24). CRITICAL: `taint_while`'s exit
-  ignored the state after the condition.
+    (`gflow.13`/`.14`, journal 557). W3 adds ordinary-loop deposits,
+    counted targets and full ownership state (`loopflow.1`-`.4`,
+    `.11`-`.13`, `.16`-`.19`, journal 562).
+- [x] **B98** (fixed-on-branch; DD24). CRITICAL: `taint_for` applied the
+  loop binder to the pre-loop state. W3 binds only an entered iteration;
+  zero-trip and final-head states remain separate (`loopflow.5`, `.9`,
+  `.10`, `.21`).
+- [x] **B99** (fixed-on-branch; DD24). CRITICAL: `taint_while`'s exit
+  ignored the state after the condition. W3 retains it independently of
+  the hypothetical body (`loopflow.6`/`.7`).
 - [x] **B100** (fixed-on-branch; DD24, DD86). The second phase walked
   deferred function bodies against the final top-level state.
   - Reimplemented in W1b-1 (journal 557). Global diagnostics depend on the
@@ -1161,25 +1168,46 @@ the SSA highest-future-version check; that separate fault is recorded in
 - [x] **B101** (fixed-on-branch; DD24). `lower_while` lowered the condition
   before pushing the loop stack. The transform half lands with F5's B60.
   - Ported in F5 unit A (journal 542): both hunks (H189, H190). Specs
-    cf.n22, cf.n23; DD68 addendum. W3 still re-probes the walker's view
-    of a condition `break` under T2/T3.
-- [ ] **B102** (fixed-on-branch; DD121). A for-binder global inside a
-  function is not an SB5067 site.
-- [ ] **B103** (fixed-on-branch; DD100, DD121). A slot out-parameter written
-  into a global is not an SB5067 site.
-- [ ] **B104** (fixed-on-branch; DD100). A slot's entry taint was resolved
-  through transitively bound callers.
-- [ ] **B105** (fixed-on-branch; DD86). A `$( )` body that writes an
-  enclosing function's name.
-- [ ] **B106** (question; DD99). A value split (`read $src A`) does not
-  clear the target's earlier taint (SB5088). Clearing is valid only on
-  success. The original clean-pipe half is superseded by DD127: every pipe
-  read introduces fresh taint; W2a removes that exemption, not the
-  value-split question.
-- [ ] **B107** (fixed-on-branch; DD24). CRITICAL: for-in words are
+    cf.n22, cf.n23; DD68 addendum. W3's `loopflow.14` pins the same
+    boundary in the taint walker; moving its condition outside the loop
+    frame produces a false SB5020. `loopflow.20` pins the enclosing depth
+    retained by a quiet inner-loop probe.
+- [x] **B102** (fixed-on-branch; DD121). A for-binder global inside a
+  function is not an SB5067 site. Already fixed by W1: adding a second
+  `f` call to `tb5/p1` reports SB5067 at the binder, 2:3, on both the
+  W3 baseline and final compiler, in both modes. The original single-use
+  fixture correctly reports SB5020 at its later read under DD127.
+- [x] **B103** (fixed-on-branch; DD100, DD121). A slot out-parameter written
+  into a global is not an SB5067 site. Already fixed by W1: the shared
+  `tb5/p2` variant reports SB5067 at the call to `h`, 6:3, on both compilers and
+  backends; the original single-use form gets later SB5020.
+- [x] **B104** (fixed-on-branch; DD100). A slot's entry taint was resolved
+  through transitively bound callers. W1's independent summaries already
+  reject `b104/a1` and `a3` with located call-site SB5020 on e5f4bcdb.
+- [x] **B105** (fixed-on-branch; DD86). A `$( )` body that writes an
+  enclosing function's name. W1 already rejects `b105/a1` and `a4`
+  with front-end SB5020 on e5f4bcdb.
+- [x] **B106** (open; DD99). A clean value split retains the target's
+  boolean taint. DD99 requires replacement even for empty input; the old
+  success-only premise was wrong. Both clean and empty splits falsely
+  reject a subsequent cell read while `--no-taint` confirms correct
+  runtime replacement. Filed as `bug-value-split-retains-taint`.
+  The archived `w0/c5` is a pipe, not a split; W2a already makes its
+  read tainting and its adjacent attest legal.
+- [x] **B107** (fixed-on-branch; DD24). CRITICAL: for-in words are
   re-evaluated each iteration but were checked against the pre-loop state.
-- [ ] **B108** (fixed-on-branch; DD100). Value-call out-parameters were
+  W3 checks the stabilized head (`loopflow.8`); a one-pass final walk
+  restores the missing refusal.
+- [x] **B108** (fixed-on-branch; DD100). Value-call out-parameters were
   invisible to the AST walker; only the SSA backstop rejected them.
+  W1 already reports front-end SB5020 for `vc/v2`, `v3` and `v7` on
+  e5f4bcdb. No caller-context walker is needed.
+
+The W3 control set also exposed a separate pre-existing lowering defect:
+a capture's `break 2` can target its caller's loop and bypass capture
+cleanup. It remains unchanged and is filed as
+`bug-counted-jump-crosses-capture-boundary`; the ordinary nested-capture
+control is `loopflow.15`, not a claim that the counted form is repaired.
 
 ### 18. W4 processes
 

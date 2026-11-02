@@ -70,8 +70,9 @@ valid source program has demonstrated another failure:
   missing-slot sexpr arity bug are unchanged; the latter was rechecked on
   both compilers, including inside a function body.
 
-Ordinary loop exits remain W3; the stage-write SSA false positive is B18/W4;
-END entry remains W5. A redirect on the final `while` was also checked:
+Ordinary loop exits are implemented in W3 (journal 562); the stage-write SSA
+false positive is B18/W4, and END entry remains W5. A redirect on the final
+`while` was also checked:
 it is rejected by SB4021 before taint analysis, so that spelling is not a
 missing parent-reader case. The separate, intra-process SSA array-timing
 fault exposed by `sflow.5` is

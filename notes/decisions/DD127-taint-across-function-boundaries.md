@@ -503,8 +503,13 @@ The summary holds:
 
 An exit combines explicit returns with the final state only when the body
 can fall through. Self-tail returns deposit a back-edge state instead; the
-entry grows to a fixpoint before the summary is accepted. Ordinary `while`
-and `for` edge refinements remain W3's work.
+entry grows to a fixpoint before the summary is accepted. Ordinary loops
+also separate break exits from continue/back-edge states. While exits retain
+the final condition's state; for words are checked at the stabilized head,
+and rebinding affects only an entered iteration, not the zero-trip path.
+These joins carry ownership as well as boolean taint. Speculative passes
+keep the enclosing loop depth but cannot write into the real body's exits
+or obligations (DD#121, journal 562).
 
 The census includes command calls and arithmetic calls, including bare
 int-function names, captures and END. Self-tail calls are excluded. DD#27
@@ -658,9 +663,11 @@ W2a replaces producer-based capture/pipe trust with the read boundary,
 sharing the existing buffer predicate with lowering (journal 560).
 W2b implements shared-output ownership, SB5100 and symbolic stdin/name
 attest obligations on the same independent summaries (journal 561).
+W3 implements ordinary loop transfers without replacing those summaries
+(journal 562).
 The following remain:
 
-- **W3, ordinary loop edges; W4, per-process SSA checking; W5, END entry.**
+- **W4, per-process SSA checking; W5, END entry.**
   In particular, W4's backstop can still reject a parent read after a child
   taints its private copy; the B18 entry records a measured example.
 - **Precision follow-ups:** eager value-call/capture overwrites and
@@ -671,6 +678,11 @@ The following remain:
   version, including a future fill. The reference branch's source retains
   the same lookup; W4's process partition alone does not repair it
   (`bug-ssa-taint-array-read-uses-future-version`).
+- **Other W3 rechecks:** the SSA definition-order hole under
+  `--no-taint-cst`, stale taint after a clean value split, and counted
+  jumps escaping an anonymous body in lowering remain separate backlog
+  items (`bug-ssa-taint-definition-order`, `bug-value-split-retains-taint`,
+  `bug-counted-jump-crosses-capture-boundary`).
 - **Arithmetic call arity:** a sexpr call with missing collection arguments
   can still escape SB5066 and reach a native ICE or invalid C output
   (`bug-sexpr-call-slot-arity-unchecked`). The mapper does not invent
@@ -751,6 +763,18 @@ The following remain:
 - `pipeown.4` uses explicit trust for its shared builtin writer's real pipes.
   Its triple-nested reader scope and exact eight-line output assertion are
   unchanged.
+
+### Landed in W3
+
+- `loopflow.1`-`.21` cover break/continue exits, counted and oversized
+  targets, zero-trip binding, while-condition effects, live collection
+  heads, per-iteration rebinding and output ownership.
+- Single-use summaries retain loop-generated globals; shared functions
+  report SB5067 at the original source. Quiet inner-loop probes preserve
+  target depth without exporting their effects.
+- Seventeen cases fail before the change: fifteen missing refusals and
+  two false rejections. Four preservation cases pass before; the ordinary
+  nested-capture control does not claim to fix the counted-capture bug.
 
 ## Open
 

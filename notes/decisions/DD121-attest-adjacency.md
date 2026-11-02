@@ -103,8 +103,8 @@ function's body counts as one compound statement of the caller, so an attest
 immediately below the call is adjacent to whatever the body tainted (DD#127).
 A body is not a position. A call does not produce the taint it passes in, so
 an attest inside a body, of taint the body received, is SB5088, reported at
-the call. (Until W1 lands, the compiler still accepts an attest of a received
-slot; DD#127 lists what it applies until then.)
+the call. This applies to globals and collection slots alike (DD#127,
+journals 557 and 559).
 
 ## The assignment kill
 
@@ -123,6 +123,31 @@ only works because the assignment itself resolves the subject.
 
 This is what AGENTS.md has claimed all along and the implementation did not
 honour: *"Taint is definition-based, not name-based."*
+
+## Loop paths
+
+`break` and `continue` preserve the complete current state at their actual
+loop target, including DD#127 output ownership. A break contributes to that
+loop's exit; a continue contributes to its next head. Neither state may
+disappear merely because the diverting branch does not fall through.
+Counts use the same default and outward-clamping decoder as lowering.
+
+A loop head joins its entry with body fallthrough and continue states until
+both names and origins stabilize. There is no arbitrary iteration cutoff.
+Quiet passes preserve the enclosing loop depth but cannot export return,
+jump, ownership-obligation or source-log effects.
+
+A while condition belongs to its own loop (DD68). Its conservative exit
+joins the head, post-condition and break states: a hypothetical body must
+not erase the final condition's effects. A for checks its words at the
+stabilized head, then binds the iteration variable only on the entered-body
+path. Its exit retains the pre-binding words state, including the zero-trip
+path and the final failed head.
+
+W3 implements these transfers on the existing independent summaries
+(journal 562; `loopflow.1`-`.21`). This does not claim that lowering already
+isolates every counted jump across body boundaries; the separately
+reproduced capture defect is `bug-counted-jump-crosses-capture-boundary`.
 
 ## What it fixes
 
