@@ -42,8 +42,27 @@ Fix direction: run `check_slot_arity` over sexpr calls through the shared
 `ir::walk_arith_funccalls` (journal 544). Do not write another private
 walker (`sweep-private-duplicates-of-shared-walkers`).
 
-Not probed: a `(( … ))` test (`if (( (f) > 0 ))`) and a sexpr inside a
-function body. Both go through the same check, so expect the same gap.
+Rechecked during W1b-2 (2026-11-02, journal 559), on 685ea2f1 and the slot
+summary implementation. The top-level example still ICEs natively;
+`--emit-c` still succeeds. The same holds for a call inside a function:
+
+```
+fn inner -> int { : "${A[0]}"; return 7 }
+fn outer -> int { : "$(len A)"; return $(( (inner) )) }
+argv 1 a
+int n=$(outer =a)
+echo "$n"
+```
+
+The native error is `undefined array: A`, not implicit inheritance of
+outer's collection. Generated C was not executed in this recheck. A mixed
+command-capture/arithmetic call still gets SB4030 ("both 1 and 0 collection
+arguments") in both compilers and both modes. No changed arity verdict or
+new lost taint check was observed. W1b-2's mapper tolerates missing actual
+arguments without inventing slot bindings; this P1 remains open.
+
+Not probed: a `(( … ))` test (`if (( (f) > 0 ))`).
 
 Probes: the session archive files/port-f5-probes.tar.gz (b73/v4*.sh,
-b73/v4-results.txt).
+b73/v4-results.txt); W1b-2's `arity-*` sources and before/after records are
+in files/port-w1b2-slots-probes.tar.gz.

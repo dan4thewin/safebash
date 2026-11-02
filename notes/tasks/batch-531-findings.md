@@ -1044,8 +1044,9 @@ atlazy.5/.6/.8/.9 and two new specs, atslot.7/.8.
     the pre-F10 binary, native ICE'd (`no codegen slot for A_3`,
     types.rs:72), and a later read of the slot was a false SSA-backstop
     rejection in both backends. atslot.7/.8 are new fill-then-attest specs,
-    which DD127 keeps legal (a body attests its own taint). atslot.1-6 stay
-    W1's.
+    which DD127 keeps legal (a body attests its own taint). Journal 559
+    adapts the useful claims of atslot.1-6 with atslot.9 and the sflow cases;
+    their inherited-attest premise is deliberately not restored.
 
 ### 17. W1 local checks and summaries
 
@@ -1059,12 +1060,21 @@ summaries, call-site transfers, shared-only global SB5067, returns and
 self-tail back edges. The census includes arithmetic calls but excludes
 self-tail sites. `gflow.1`-`.22` cover the new mechanism. Capture and value
 effects merge conservatively; `taint-global-summary-followups` records the
-precision limits. Slot summaries remain W1b-2, not part of this completion.
+precision limits.
 
 Before W1b-2, DG settled strict non-aliasing (2026-11-02, journal 558).
 SB5099 now rejects duplicate collection arguments and direct/transitive
 global-name overlap. This replaces the alias-aware summary alternatives;
 it is a prerequisite, not a slot-summary landing or a fix for B115.
+
+W1b-2 adds A-E to the same summaries (journal 559), maps formal inputs,
+flows, generators and diagnostics at each call, and removes `SlotInfo`
+entirely. `100.27` pins call-site SB5020; `100.28` now pins inherited-slot
+SB5088. Shared own slot taint is SB5067. `sflow.1`-`.18` and `atslot.9`
+cover cleanup, forwarding, call timing, shared sources and preservation.
+The earlier clean call in `sflow.5` passes the validator but still fails
+the SSA highest-future-version check; that separate fault is recorded in
+`bug-ssa-taint-array-read-uses-future-version`, not called fixed here.
 
 - [x] **B29** (fixed-on-branch; DD24). A tainted capture argument is
   reported twice, at the same position.
@@ -1081,11 +1091,17 @@ it is a prerequisite, not a slot-summary landing or a fix for B115.
   is involved.
   - Ported 2026-10-31 (journal 555). Specs capwalk.5-7 (a declaration, an
     `echo` argument, an array element).
-- [ ] **B115** (open; DD100, DD121, DD127). An attest of a slot inside the
-  function body is ignored, a false rejection on both binaries. Prerequisite
-  of DD127's outward slot rule. W1b-1 deliberately retains `SlotInfo`,
-  `tainted_slots_on_entry` and `taint_out_params`; W1b-2 owns this fix and
-  the incoming-slot attest change.
+- [x] **B115** (open on the reference branch; DD100, DD121, DD127). An attest
+  of a slot inside the function body was ignored, a false rejection.
+  - Fixed 2026-11-02 (journal 559) by applying the summary's mapped outgoing
+    flow instead of the old syntactic fill set. An unused passed-global
+    identity flow is omitted, so it cannot undo the slot's cleanup.
+    `sflow.1`-`.3`, `.13`, `.15`, `.17` and `atslot.9` pin caller-visible
+    own-fill/attest cleanup, including already-tainted, forwarded, local
+    and captured actuals. Captures retain their conservative incoming-state
+    union: `.13` deliberately starts clean. The independent inherited
+    attest refusal is `100.28`/`sflow.6`, and shared-slot SB5067 is
+    `sflow.8`/`.9`.
 
 ### 18. W2 stdout (T1)
 

@@ -62,14 +62,18 @@ valid source program has demonstrated another failure:
   the graph is being built. A probe must remain compile-only and retain the
   real recursion refusal; a zero-progress legal self-tail loop never
   terminates at runtime.
-- W1b-2 still owns independent slot transfers and integer self-tail calls
-  with collections. `len A` was measured accepted on 8ddfb52f; preserve its
-  existing behavior. Slot/slot and slot/global aliasing are no longer open
-  questions: DD100's strict contract is enforced by SB5099 (journal 558).
-  When mapping slot flows, an unused global's identity flow must not mask
-  cleanup through the slot bound to that global.
+- W1b-2 implements independent slot transfers (journal 559); `len A` still
+  accepts received taint. Slot/slot and slot/global aliasing are settled by
+  DD100 and enforced by SB5099 (journal 558). The mapper omits a passed
+  global's unused identity flow so it cannot mask cleanup through the slot.
+  Existing integer self-tail collection refusals and the separately filed
+  missing-slot sexpr arity bug are unchanged; the latter was rechecked on
+  both compilers, including inside a function body.
 
 Ordinary loop exits remain W3; the stage-write SSA false positive is B18/W4;
 END entry remains W5. A redirect on the final `while` was also checked:
 it is rejected by SB4021 before taint analysis, so that spelling is not a
-missing parent-reader case.
+missing parent-reader case. The separate, intra-process SSA array-timing
+fault exposed by `sflow.5` is
+`bug-ssa-taint-array-read-uses-future-version`; W4's process partition alone
+will not fix it.

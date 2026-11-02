@@ -17,7 +17,7 @@ set -eu
 . common.sh
 setup collparam
 set +e
-plan=140
+plan=158
 echo "1..$plan" >&3
 
 # ── Part A: binding and reading ───────────────────────────────────
@@ -202,20 +202,24 @@ f'
 
 # ── Taint across the call boundary ────────────────────────────────
 
-# 100.27 inward: passing a tainted collection taints the slot
+# 100.27 inward: the body's read is diagnosed at the tainted call.
 run_sash 'fn f { echo "${A[0]}" }
 argv a
 f =a'
-[[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk 100.27
+[[ $rc != 0 && -z $out && $err == *SB5020* \
+   && $err == *'`f`, called here with `a` tainted'* ]] \
+   && grep -qE ':3: *1: error \[SB5020\]' <<< "$err"; chk 100.27
 
-# 100.28 Part E: the attest may be deferred INTO the callee
+# 100.28 DD#127: a body cannot attest taint it received.
 run_sash 'fn f {
   attest v in A [[ $v =~ ^.*$ ]]
   echo "ok"
 }
 argv a
 f =a'
-[[ $rc = 0 && $out = "ok" && -z $err ]]; chk 100.28
+[[ $rc != 0 && -z $out && $err == *SB5088* \
+   && $err == *'`f`, called here with `a` tainted'* ]] \
+   && grep -qE ':6: *1: error \[SB5088\]' <<< "$err"; chk 100.28
 
 # 100.29 attesting BEFORE the call also clears the slot
 run_sash 'fn f { echo "ok${A[9]}" }
@@ -254,8 +258,8 @@ array a=(x y)
 f =a'
 [[ $rc = 0 && $out = "x" && -z $err ]]; chk 100.33
 
-# 100.34 `f =a` is not itself a read: passing a tainted collection is fine so
-# long as the callee attests (contrast `f @a`, which IS a read — SB5020)
+# 100.34 `f =a` passes identity, not a value; the body cannot read it unescaped.
+# In contrast, `f @a` IS a value read at the call — SB5020.
 run_sash 'fn f { for v in @A; do echo "$v"; done }
 argv a
 f @a'
@@ -936,6 +940,185 @@ run_sash 'array a=(x)
 fn f { /bin/echo =a; echo "$(len A)" }
 f =a'
 [[ $rc = 0 && $out = $'=a\n1' && -z $err ]]; chk noalias.16
+
+# DD#127: slots use the same independent summaries as globals.
+run_sash 'fn clean {
+argv 1 A
+attest v in A [[ -n $v ]] || exit 3
+}
+argv 1 a
+clean =a
+echo "${a[0]}"' safe
+[[ $rc = 0 && $out = safe && -z $err && -z $rerr ]]; chk sflow.1
+
+run_sash 'fn clean {
+argv 1 A
+attest v in A [[ -n $v ]]
+}
+array a=()
+array b=()
+clean =a
+clean =b
+echo "${a[0]} ${b[0]}"' safe
+[[ $rc = 0 && $out = 'safe safe' && -z $err && -z $rerr ]]; chk sflow.2
+
+# Forwarding permutes the input and output identities, not just their names.
+run_sash 'fn clean {
+argv 1 B
+attest v in B [[ -n $v ]]
+echo "${A[0]}"
+}
+fn outer { clean =B =A }
+argv 1 a
+array b=(keep)
+outer =a =b
+echo "${a[0]}"' safe
+[[ $rc = 0 && $out = $'keep\nsafe' && -z $err && -z $rerr ]]; chk sflow.3
+
+run_sash 'fn show { echo "${A[0]}" }
+argv 1 a
+show =a
+argv 1 a
+attest v in a [[ -n $v ]]
+echo "${a[0]}"' dirty
+[[ $rc != 0 && $err == *'`show`, called here with `a` tainted'* ]] \
+   && grep -qE ':3: *1: error \[SB5020\]' <<< "$err"; chk sflow.4
+
+run_sash 'fn show { echo "${A[0]}" }
+array a=(clean)
+show =a
+argv 1 a
+echo "${a[0]:!}"' dirty
+# The validator accepts the earlier clean call; the SSA backstop still reads
+# the future array version (bug-ssa-taint-array-read-uses-future-version).
+[[ $rc != 0 && $err != *SB5020* \
+   && $err == *'tainted array a[...] used'* \
+   && $err == *'SSA taint backstop'* ]]; chk sflow.5
+
+run_sash 'fn check { attest v in A [[ -n $v ]]; echo ok }
+fn outer { check =A }
+argv 1 a
+outer =a' safe
+[[ $rc != 0 && $err == *SB5088* \
+   && $err == *'`outer`, called here with `a` tainted'* \
+   && $err == *'`check`, called here with `A` tainted'* ]]; chk sflow.6
+
+# A read before a kill remains an obligation, but only for the dirty call.
+run_sash 'fn use {
+echo "${A[0]}"
+argv 1 A
+attest v in A [[ -n $v ]]
+}
+array clean=(safe)
+argv 1 dirty
+use =clean
+use =dirty' value
+[[ $rc != 0 && $err == *'`use`, called here with `dirty` tainted'* \
+   && $err != *'called here with `clean` tainted'* \
+   && $(grep -cE 'error \[SB5020\]' <<< "$err") = 1 ]] \
+   && grep -qE ':9: *1: error \[SB5020\]' <<< "$err"; chk sflow.7
+
+run_sash 'fn fill { argv 1 A }
+array a=()
+array b=()
+fill =a
+fill =b
+echo "$(len a) $(len b)"' x
+[[ $rc != 0 && $err == *SB5067* && $err == *'collection slot `A`'* \
+   && $err == *'`fill` is shared'* \
+   && $(grep -cE 'error \[SB5067\]' <<< "$err") = 1 ]]; chk sflow.8
+
+run_sash 'fn fill { argv 1 A }
+argv 1 a
+argv 1 b
+fill =a
+fill =b
+echo "$(len a) $(len b)"' x
+[[ $rc != 0 && $err == *SB5067* && $err == *'collection slot `A`'* \
+   && $err == *'`fill` is shared'* ]]; chk sflow.9
+
+# Received taint survives a shared metadata-only call without becoming its own.
+run_sash 'fn size { : "$(len A)" }
+argv 1 a
+size =a
+size =a
+echo "${a[0]}"' dirty
+[[ $rc != 0 && $err == *SB5020* && $err != *SB5067* ]] \
+   && grep -qE ':5: *6: error \[SB5020\]' <<< "$err"; chk sflow.10
+
+run_sash 'fn size { : "$(len A)" }
+argv 1 a
+size =a
+attest v in a [[ -n $v ]]
+echo "${a[0]}"' dirty
+[[ $rc != 0 && $err == *SB5088* ]] \
+   && grep -qE ':4: *1: error \[SB5088\]' <<< "$err"; chk sflow.11
+
+run_sash 'fn count -> int { : "${A[0]}"; return 7 }
+argv 1 a
+int n=$(count =a)
+echo "$n"' dirty
+[[ $rc != 0 && $err == *SB5020* \
+   && $err == *'`count`, called here with `a` tainted'* ]]; chk sflow.12
+
+run_sash 'fn clean {
+argv 1 A
+attest v in A [[ -n $v ]]
+echo ok
+}
+array a=()
+str result=$(clean =a)
+echo "$result ${a[0]}"' safe
+[[ $rc = 0 && $out = 'ok safe' && -z $err && -z $rerr ]]; chk sflow.13
+
+run_sash 'fn show { echo "${A[0]}" }
+argv 1 a
+show =a &
+- wait' dirty
+[[ $rc != 0 && $err == *SB5020* \
+   && $err == *'`show`, called here with `a` tainted'* ]] \
+   && grep -qE ':3: *1: error \[SB5020\]' <<< "$err"; chk sflow.14
+
+run_sash 'fn clean {
+argv 1 E
+attest v in E [[ -n $v ]]
+echo "$(len A) $(len B) $(len C) $(len D)"
+}
+array a=()
+array b=()
+array c=()
+array d=()
+argv 1 e
+clean =a =b =c =d =e
+echo "${e[0]}"' safe
+[[ $rc = 0 && $out = $'0 0 0 0\nsafe' && -z $err && -z $rerr ]]; chk sflow.15
+
+run_sash 'fn maybe {
+if [[ $1 == yes ]] { argv 1 A; attest v in A [[ -n $v ]] }
+}
+argv 1 a
+maybe no =a
+echo "${a[0]}"' dirty
+[[ $rc != 0 && $err == *SB5020* ]] \
+   && grep -qE ':6: *6: error \[SB5020\]' <<< "$err"; chk sflow.16
+
+run_sash 'fn clean { argv 1 A; attest v in A [[ -n $v ]] }
+fn outer {
+array buf=()
+clean =buf
+echo "${buf[0]}"
+}
+outer' safe
+[[ $rc = 0 && $out = safe && -z $err && -z $rerr ]]; chk sflow.17
+
+# A tainted array does not taint the clean map in another, forwarded slot.
+run_sash 'fn inspect {
+if attest k v in B [[ -n $k && -n $v ]] { echo "${B[k]} $(len A)" } else { exit 3 }
+}
+fn outer { map m=([k]=safe); inspect =A =m }
+argv 1 a
+outer =a' value
+[[ $rc = 0 && $out = 'safe 1' && -z $err && -z $rerr ]]; chk sflow.18
 
 set -e
 tally

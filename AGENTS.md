@@ -1619,8 +1619,11 @@ value came from:
 Across a function boundary there is one rule (DD#127): own taint is
 attested in the body that produced it, or — when that body has exactly
 one call site — immediately after that call; received taint is never
-attested inside a body. DD#127's "Implementation status" lists what the
-compiler does until W1 and W2 land.
+attested inside a body. Globals and A-E now share independent per-function
+summaries, mapped at each call; `SlotInfo` is gone. A passed global's unused
+identity flow must be omitted, or it undoes cleanup through its slot.
+DD#127's "Implementation status" lists the remaining W2-W5 and precision
+boundaries.
 
 Env vars ($HOME, $PATH, etc.) are NOT special — they're just
 `$(getenv NAME)`, which is tainted. The validator (SB5018) rejects

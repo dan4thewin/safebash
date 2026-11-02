@@ -279,33 +279,40 @@ taint and status-availability rules still apply (DD#55).
 
 ### Phase 3: Taint
 
-Flow-sensitive taint analysis (DD#24, DD#42–44), tracking each variable
-as `Tainted`, `Attested`, or `Clean`.
+Flow-sensitive taint analysis (DD#24, DD#42–44), tracking names whose
+current values remain tainted.
 
-**Global summaries (DD#127).** Each function is analysed independently of
+**Global/slot summaries (DD#127).** Each function is analysed independently of
 its callers: an empty-entry walk finds its own generators, and one walk per
-global finds incoming-taint flows and conditional diagnostics. Summaries are
-built bottom-up and applied at the actual calls, not against the final
-top-level state. Returns contribute to the exit set; self-tail back edges
-grow the entry to a fixpoint. Reads of inherited taint, including inherited
-attests (SB5088), are reported at the call with the original body location.
+global or symbolic slot A-E finds incoming-taint flows and conditional
+diagnostics. Summaries are built bottom-up and applied at the actual calls,
+not against the final top-level state. Returns contribute to the exit set;
+self-tail back edges grow the entry to a fixpoint. Inherited-taint reads and
+attests (SB5088) are reported at the call with the original body location.
 
 A single-use function may leave its own taint for the caller to attest
 immediately after the call. A shared function must attest it internally;
-SB5067 names the last global source and explains why the function is shared.
-Ordinary calls propagate clean overwrites as well as taint. Captures and
-arithmetic/value calls conservatively union their effects: an overwrite
-cannot hide an earlier read or clear a value when the call is skipped.
+SB5067 names the last global/slot source and explains why the function is
+shared. Ordinary calls propagate clean overwrites as well as taint.
+Captures and arithmetic/value calls conservatively union their effects:
+an overwrite cannot hide an earlier read or clear a value when the call is
+skipped.
 Background children and forked stages are checked on isolated states; the
 final parent reader retains its effects.
 
-**Collection slots (DD#100) are the remaining W1b-2 work.** They still use
-`analyze_slots`' call-graph fixpoint: inward taint is unioned across callers,
-and outward bulk fills taint the caller's collection. The slot portion of
-DD#127 is not implemented yet, including its inherited-attest refusal and
-B115's caller-visible in-body cleanup. The globals summary replaces neither
-this interim slot analysis nor W2's pending stdout classifier. DD#127's
-"Implementation status" records those boundaries.
+**Collection identities are mapped at each call (DD#100).** The formal
+slots map positionally to actual collections, including forwarded and
+function-local ones. A passed global's unused identity flow is omitted so
+it cannot undo cleanup through its slot. An in-body fill/attest now clears
+the actual collection at a statement call (B115); a read before that
+cleanup still produces a conditional diagnostic. Received taint is never
+freshly adjacent at body entry. The old `SlotInfo` fixpoints are removed;
+slot usage remains a separate arity/dead-variable analysis.
+
+Stdout classification, ordinary loop edges, per-process SSA checking and
+END entry remain W2-W5. The SSA backstop also has a separate future-array-
+version false positive. DD#127's "Implementation status" records these
+boundaries and the conservative value/capture precision limits.
 
 **Non-aliasing is already enforced (DD#100).** Collection arguments must
 have distinct identities, and none may overlap a global named in the

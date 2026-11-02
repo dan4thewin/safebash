@@ -221,16 +221,15 @@ footprint. The shared read/binding walks collect the footprint; identity
 forwarding and the canonical `unset` parser cover uses that need not read a
 value. The existing command/arithmetic call graph supplies the transitive
 closure, with a body location retained for each global. Multiple definitions
-of a function conservatively contribute to the same footprint. This is
-implemented before the slot-summary port; it does not replace the interim
-slot-taint machinery below.
+of a function conservatively contribute to the same footprint. This
+prerequisite landed before the slot summaries (journal 559).
 
 ### Taint through a slot
 
-Because every call is inlined, the binding is a **name substitution**: the
-existing passes see the caller's collection wherever `f` names its slot. What
-taint may cross the call is DD#127's rule, applied to a slot like any other
-name:
+In the transform, each inlined call substitutes the caller's collection
+wherever `f` names its slot. The pre-inlining taint check uses that same
+identity relation when applying a summary. What taint may cross the call is
+DD#127's rule, applied to a slot like any other name:
 
 - **Inward.** A slot that arrives tainted carries taint `f` received. `f` may
   read it with `:!` (DD#91). An unescaped value use is rejected at the call,
@@ -251,10 +250,9 @@ name:
   changes the caller's array.
 
 The slot supplies the collection's identity; DD#127 supplies the taint
-model. Until W1b-2 lands, the compiler applies the interim analysis recorded
-under "Slot taint crosses the boundary in both directions" below; DD#127's
-"Implementation status" lists the differences. W1b-1 implements the
-global-name channel, not the slots.
+model. Globals and slots now share the same independent summaries,
+described below. DD#127's "Implementation status" records the remaining
+stdout, control-flow and SSA limitations.
 
 ### Consequences to expect
 
@@ -338,13 +336,25 @@ out-parameter carrying external data is much of what out-parameters are for.
 A function with zero, two or more call sites attests what it fills, exactly
 as it would for a global (DD#127).
 
-`analyze_slots` resolves, before the walk, which caller collection each slot
-binds to, with a fixpoint over the call graph so forwarding
-(`fn g { f =A }`) closes too. Until W1 lands it also computes slot taint:
-inward as a union over call sites (a function called once with a tainted
-collection and once with a clean one is checked as tainted), outward as a
-fixpoint. W1 replaces that half with per-body summaries applied at each call
-(DD#127, "How it is checked"); the binding half stays.
+The implementation uses one summary per function over globals and symbolic
+slots A-E (journal 559; DD#127, "How it is checked"). Empty-entry walks find
+own taint; singleton inputs find flows and conditional diagnostics. At
+`f =a =b`, A maps to `a` and B to `b`; forwarding composes those mappings,
+including permutations. A call is checked against the taint arriving there,
+not the final top-level state or a union of its other callers.
+
+A passed global is not also mapped through its unused global identity:
+SB5099 forbids the callee from accessing that path, and retaining its
+identity flow would undo cleanup through the slot. An in-body fill/attest
+therefore clears the caller's collection at a statement call (B115).
+Read-before-cleanup obligations remain separate from the outgoing flow.
+Received taint is never freshly adjacent at body entry, so an inherited
+attest is SB5088 at the actual call.
+
+The old `SlotInfo`, `analyze_slots`, inward-entry union and outward-fill
+fixpoint are removed entirely. `slot_usage_map` remains for collection arity
+and dead-variable checks; it does not supply taint. Type-signature inference
+and transform name substitution are unchanged.
 
 This work also uncovered and fixed a **pre-existing** taint bypass unrelated
 to slots; see SB5067 in DD#24's lineage and `notes/journal/`.

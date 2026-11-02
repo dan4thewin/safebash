@@ -400,18 +400,21 @@ below distinguishes what has landed from what remains.
 
 ## How it is checked
 
-W1b-1 implements **globals** on the existing per-statement transfer
-functions (journal 557). It does not introduce an I/C/T state machine or
-re-walk a callee in each caller's context. Collection slots remain on their
-old machinery until W1b-2; stdout is W2's.
+W1b-1 and W1b-2 implement **globals and collection slots** on the existing
+per-statement transfer functions (journals 557 and 559). They do not
+introduce an I/C/T state machine or re-walk a callee in each caller's
+context. Stdout remains W2's work.
 
-### Building a global summary
+### Building a name summary
 
 For each definition of `f`, the compiler walks its body from an empty
-tainted set, then once for each global `g`, with only `g` tainted on entry.
-These are symbolic input probes, not walks for particular callers.
+tainted set, then once for each interface name, with only that name tainted
+on entry. The interface contains every global and the five symbolic slots
+A-E, including unused slots. The fixed slot domain adds five probes per
+definition and avoids a second slot-arity analysis. These are symbolic input
+probes, not walks for particular callers.
 
-The extension to collection slots relies on DD#100's **strict non-aliasing
+The collection-slot analysis relies on DD#100's **strict non-aliasing
 contract**, settled by DG on 2026-11-02. Collection arguments have distinct
 identities and cannot overlap globals accessed by the body or its callees.
 The rule includes forwarding and anonymous bodies, applies statically and
@@ -426,17 +429,18 @@ below, including their control-flow handling, must still be sound.
 
 The summary holds:
 
-- **Generators:** globals tainted at an exit of the empty-entry walk.
+- **Generators:** interface names tainted at an exit of the empty-entry walk.
   These are `f`'s own taint.
-- **Flows, indexed by incoming global:** globals tainted at an exit of the
+- **Flows, indexed by incoming name:** interface names tainted at an exit of the
   singleton-entry walk. Independently generated names are excluded, except
   the incoming name itself: re-tainting an inherited name must not erase its
   incoming flow.
-- **Conditional diagnostics, indexed by incoming global:** diagnostics
+- **Conditional diagnostics, indexed by incoming name:** diagnostics
   added by that singleton input. The empty-entry diagnostics are subtracted
   as a multiset, preserving repeated sites rather than deduplicating by code.
   This records reads, cell writes and inherited attests with their original
-  codes and locations.
+  codes and locations. A read before a clean overwrite remains an obligation
+  even when its outgoing flow is empty.
 
 An exit combines explicit returns with the final state only when the body
 can fall through. Self-tail returns deposit a back-edge state instead; the
@@ -445,27 +449,44 @@ and `for` edge refinements remain W3's work.
 
 The census includes command calls and arithmetic calls, including bare
 int-function names, captures and END. Self-tail calls are excluded. DD#27
-and SB5071 give a call graph with no legal inter-function cycles, so global
+and SB5071 give a call graph with no legal inter-function cycles, so name
 summaries are built bottom-up, without a cross-function fixpoint. A
 multiply-defined name is conservatively shared and its definitions' summaries
 are unioned; this does not model which definition is in force at each call.
 
 ### Applying a summary
 
+First map the summary's names to the caller's identities. A-E map
+positionally to the actual collection arguments: in `inner =B =A`, inner A
+maps to outer B and inner B to outer A. Qualified function-local collections
+use the same mapping. Unpassed slots have no mapping; a call without
+collection arguments does not inherit the caller's slots.
+
+A global normally maps to itself, except when that collection is passed
+through a slot. SB5099 forbids the callee and its call chain from accessing
+that global by name, so its dummy identity flow is omitted. Mapping it as
+well as the slot would restore taint the slot just cleared.
+
 At an ordinary statement call of `f`:
 
-- For each incoming tainted global, relay its conditional diagnostics at the
-  call, naming `f` and the original location. Transitive calls retain that
-  chain. An inherited attest is therefore SB5088 at the call.
-- Replace the incoming global state with the union of those globals' flows.
-  A global overwritten clean on every continuing path disappears; a
-  conditional overwrite does not clear it. Non-global names are unaffected.
+- For each mapped identity that arrives tainted, relay the formal input's
+  conditional diagnostics at the call. The message names `f`, the actual
+  caller identity and the original body location; the body's own text keeps
+  its formal slot name. Transitive calls retain that chain. An inherited
+  attest is therefore SB5088 at the call, never an entry adjacency exception.
+- Replace the mapped names' state with their mapped outgoing flows. A name
+  overwritten clean on every continuing path disappears; a conditional
+  overwrite does not clear it. Unmapped caller names are unaffected.
 - Add the generators only for a single-use `f`. For a shared `f`, report
-  SB5067 inside the definition instead, once per escaping global, at its last
-  recorded source. The message says why it is shared and lists its call sites
+  SB5067 inside the definition instead, once per escaping global or slot,
+  at its last recorded source. The message distinguishes a global from a
+  collection slot, says why the function is shared and lists its call sites
   when multiple calls, rather than multiple definitions, make it shared.
 
 Each definition's own diagnostics are reported independently of its callers.
+Every body entry starts with an empty adjacency set, including singleton
+probes of a received slot. `SlotInfo` and its inward/outward fixpoints are
+gone; `slot_usage_map` remains solely for arity and dead-variable checks.
 The top level starts empty, and END currently follows its final state; exits
 into END are W5's remaining work.
 
@@ -501,22 +522,15 @@ cause is on the screen.
 
 ## Implementation status
 
-The global summary, call-site relays, single-use global effects, shared
-global firewall and validator child isolation above are implemented.
+The global/slot summaries, call-site relays, single-use name effects, shared
+global/slot firewall and validator child isolation above are implemented.
 W1a already fixed local capture ordering and duplicate reads (journal 555).
 DD#100's strict non-aliasing contract is also implemented, as a prerequisite
 to W1b-2 (journal 558): SB5099 rejects duplicate slot identities and overlap
 with globals named anywhere in the callee's call chain, even with
-`--no-taint`. This does not change the interim slot-taint analysis.
+`--no-taint`. W1b-2 retires the interim slot-taint analysis (journal 559).
 The following remain:
 
-- **W1b-2, slots:** `analyze_slots` still unions inward taint across call
-  sites and computes outward fills by fixpoint. `tainted_slots_on_entry`
-  and `taint_out_params` remain. An inherited slot attest is still accepted,
-  B115 still prevents an in-body attest from clearing the caller's
-  collection, and slot-derived taint left on a global still uses the earlier
-  SB5067 rule, even for a single-use function. These are interim limitations,
-  not exceptions to the rule.
 - **W2, stdout:** the old user-function capture and pipeline source
   classifiers remain; there is no reaches-stdout witness or shared-capture
   rejection yet.
@@ -526,6 +540,15 @@ The following remain:
 - **Precision follow-ups:** eager value-call/capture overwrites and
   definition-specific summaries are recorded in
   `notes/tasks/taint-global-summary-followups.md`.
+- **SSA array timing:** `sflow.5` reaches the backstop after its earlier
+  clean call passes the validator. The backstop uses the array's highest
+  version, including a future fill. The reference branch's source retains
+  the same lookup; W4's process partition alone does not repair it
+  (`bug-ssa-taint-array-read-uses-future-version`).
+- **Arithmetic call arity:** a sexpr call with missing collection arguments
+  can still escape SB5066 and reach a native ICE or invalid C output
+  (`bug-sexpr-call-slot-arity-unchecked`). The mapper does not invent
+  implicit slot arguments to accommodate that existing bug.
 
 ## Spec consequences
 
@@ -553,14 +576,25 @@ The following remain:
   conditional paths and END. Unrelated globals and literal `=name` words
   remain legal; `--no-taint` does not bypass the contract.
 
+### Landed in W1b-2
+
+- `100.27` remains SB5020 but moves to the call; `100.28` becomes
+  SB5088 there. `100.29`/`.31`/`.33` retain their verdicts; `100.30`/`.32`
+  remain SB5020 at the read.
+- `sflow.1`-`.18` pin mapped cleanup, forwarding/permutation, conditional
+  reads and attests, shared-slot sources, preservation of received taint,
+  captures, background reads, the fifth slot and local/mixed collections.
+  `.5` explicitly pins the remaining SSA timing rejection, not acceptance.
+- `atslot.9` pins an own-fill caught attest whose failing cell exits. Along
+  with existing `atslot.7`/`.8` and the `sflow` cases, this replaces the
+  useful claims of the branch's `atslot.1`-`.6` without restoring their
+  now-rejected inherited-attest premise or duplicating existing specs.
+- B115 is fixed at statement calls, including an already-tainted actual
+  collection. c2 was rechecked and already had its call-site SB5021 under
+  W1b-1; it is not a new fix in this unit.
+
 ### Still to land
 
-- W1b-2: `100.27` remains SB5020 but moves to the call; `100.28` becomes
-  SB5088 there. `100.29`/`.31`/`.33` retain their verdicts; `100.30`/`.32`
-  remain SB5020 at the read. Rewrite `atslot.1`-`.6` as own-fill/attest
-  cases and pin B115's caller-visible cleanup.
-- W1b-2 also applies the shared-function firewall to an un-attested outgoing
-  slot; W1b-1's `gflow.5` already pins re-tainting a global on entry.
 - Fifteen specs still pin the old clean user-function capture:
   `supval.2/3/6/7/8/14/16/18/19/21/22`, `cap.20`, `88.28`, `cmt.11`,
   `dd82.4`. They change at W2, which re-measures each under the single-use
@@ -568,11 +602,6 @@ The following remain:
 
 ## Open
 
-- W1b-2: c2's call-site diagnostic and the independent slot transfers.
-  Alias policy is settled by DD#100 and enforced by SB5099. `len A` was
-  measured accepting received taint, like direct collection length, and
-  retains that behavior. Global source spans and the shared-function
-  SB5067 message are settled by the implementation above.
 - W2: the code of the call-site rejection; the reaches-stdout analysis
   (B114 lists what the branch's version got wrong).
 - W4: the per-process SSA backstop; validator name effects landed in W1b-1.

@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup taint
-plan=468
+plan=469
 echo "1..$plan" >&3
 
 set +e
@@ -3133,6 +3133,15 @@ x=$(/bin/echo dirty)
 int n=$(( 1 || clean ))
 echo "$x $n"'
 [[ $rc != 0 && $err == *SB5020* ]]; chk gflow.22
+
+run_sash 'fn f {
+argv 1 A
+if attest v in A [[ $v != z ]] { echo "ok ${A[0]}" } else { echo bad; exit 1 }
+}
+array a=()
+f =a
+echo "${a[0]}"' a z
+[[ $rc = 1 && $out = bad && -z $err && -z $rerr ]]; chk atslot.9
 
 set -e
 tally
