@@ -1,3 +1,34 @@
+## Ninth pair: numeric ingress and strict conversion complete
+
+DG authorized the bounded program-input/conversion unit. The runtime now
+has explicit argc/argv lookups and owned zero-reindexed snapshots, optional
+owned getenv values, and one shared strict parser for validation, default,
+and required scalar/string-cell conversion.
+[DD#9](decisions/DD09-numeric-ingress-and-conversion.md) records the contracts.
+
+Missing getenv is an ordinary result, not an automatic abort; present-empty
+stays present. Numeric invalidity and range failure follow disposition,
+valid zero stays zero, and required messages remain lazy. Actual
+metadata/allocation failures are visible, with existing body/END handling.
+
+[`numeric_report.cpp`](../sash-cpp/examples/numeric_report.cpp) and its
+[sash counterpart](../sash-cpp/examples/numeric_report.sash) retain a charge
+function, checked multiplication, validity branching, and argv traversal.
+Both match the independent eight-line golden.
+
+All 48 groups and nine C++ goldens pass on GCC, Clang, supported Linux ASan,
+real Apple Clang/libc++, and Apple ASan. Both Linux compilers retain the
+fault gates and unchanged 169-case catalog. Numeric-only UBSan and an
+independent detection canary pass; seven isolated mutations fail their
+intended assertions. Nine real-CLI sash pairs pass using pinned compiler
+and archive copies. [Journal 016](journal/016-numeric-ingress-and-conversion.md)
+records evidence, source-form corrections, and verified Mac parity.
+
+No native code or producer changed. Remaining text/read/regex families,
+general redirects, public wait, and forked-C++/background ownership remain
+on the [runtime roadmap](tasks/cpp-transpiler-runtime-before-ir.md).
+There is still no IR reader, emitter, or numeric wrapper.
+
 ## Eighth pair: checked integer arithmetic complete
 
 DG selected checked functions in
@@ -29,9 +60,9 @@ the evidence and scope.
 DG's new reference DD#100 non-aliasing contract required the option pair
 to forward one collection slot rather than pass it twice. Its golden is
 unchanged; ordinary C++ references and generic alias-safety fixtures remain.
-No native code or producer changed. Numeric ingress/conversion, remaining
+No native code or producer changed. At that milestone, numeric ingress/conversion, remaining
 text/regex/read families, general redirects, public wait, and
-forked-C++/background ownership remain on the
+forked-C++/background ownership remained on the
 [runtime roadmap](tasks/cpp-transpiler-runtime-before-ir.md).
 There is still no IR reader, emitter, or numeric wrapper.
 

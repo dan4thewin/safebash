@@ -3,6 +3,8 @@
 #include "platform.hpp"
 
 #include <algorithm>
+#include <charconv>
+#include <cstdlib>
 #include <limits>
 
 namespace sash {
@@ -87,6 +89,25 @@ std::int64_t signed_bits(std::uint64_t bits) noexcept {
     }
     // Avoid an implementation-defined out-of-range unsigned-to-signed cast.
     return -1 - static_cast<std::int64_t>(~bits);
+}
+
+const char *argument_pointer(int count, const char *const *arguments, std::int64_t index) {
+    if (count < 0 || (count > 0 && arguments == nullptr)) {
+        throw SetupError(std::make_error_code(std::errc::invalid_argument),
+                         "invalid program argument vector");
+    }
+    if (index < 0) {
+        throw SetupError(std::make_error_code(std::errc::invalid_argument),
+                         "argument index must be nonnegative");
+    }
+    if (index >= count) {
+        return nullptr;
+    }
+    if (arguments[index] == nullptr) {
+        throw SetupError(std::make_error_code(std::errc::invalid_argument),
+                         "program argument is null");
+    }
+    return arguments[index];
 }
 
 std::vector<std::string> command_words(std::string_view executable,
@@ -305,6 +326,88 @@ std::int64_t shr(std::int64_t value, std::int64_t count) {
         bits |= std::numeric_limits<std::uint64_t>::max() << (64 - count);
     }
     return signed_bits(bits);
+}
+
+std::optional<std::int64_t> parse_int(std::string_view text) noexcept {
+    if (text.empty()) {
+        return std::nullopt;
+    }
+    const bool negative = text.front() == '-';
+    if (negative || text.front() == '+') {
+        text.remove_prefix(1);
+    }
+    int base = 10;
+    if (text.size() >= 2 && text.front() == '0') {
+        switch (text[1]) {
+        case 'x':
+        case 'X':
+            base = 16;
+            break;
+        case 'o':
+        case 'O':
+            base = 8;
+            break;
+        case 'b':
+        case 'B':
+            base = 2;
+            break;
+        }
+        if (base != 10) {
+            text.remove_prefix(2);
+        }
+    }
+    if (text.empty()) {
+        return std::nullopt;
+    }
+    std::uint64_t magnitude = 0;
+    const char *end = text.data() + text.size();
+    const auto parsed = std::from_chars(text.data(), end, magnitude, base);
+    const auto maximum = static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max());
+    if (parsed.ec != std::errc{} || parsed.ptr != end || magnitude > maximum + negative) {
+        return std::nullopt;
+    }
+    return negative ? signed_bits(std::uint64_t{0} - magnitude)
+                    : static_cast<std::int64_t>(magnitude);
+}
+
+bool is_int(std::string_view text) noexcept { return parse_int(text).has_value(); }
+
+std::int64_t int_or(std::string_view text, std::int64_t fallback) noexcept {
+    return parse_int(text).value_or(fallback);
+}
+
+std::optional<std::string> getenv(std::string_view name) {
+    if (name.find('\0') != std::string_view::npos) {
+        throw SetupError(std::make_error_code(std::errc::invalid_argument),
+                         "getenv: name contains NUL");
+    }
+    const auto key = detail::argument_text(name);
+    const char *value = std::getenv(key.c_str());
+    return value == nullptr ? std::nullopt : std::optional<std::string>{value};
+}
+
+Array<std::string> argv(int count, const char *const *arguments, std::int64_t start) {
+    Array<std::string> result;
+    (void)argument_pointer(count, arguments, start);
+    for (std::int64_t index = start; index < count; ++index) {
+        result.emplace(index - start, argument_pointer(count, arguments, index));
+    }
+    return result;
+}
+
+std::string arg(int count, const char *const *arguments, std::int64_t index) {
+    const char *value = argument_pointer(count, arguments, index);
+    if (value == nullptr) {
+        throw SetupError(std::make_error_code(std::errc::result_out_of_range),
+                         "argument index out of range");
+    }
+    return value;
+}
+
+std::string arg(int count, const char *const *arguments, std::int64_t index,
+                std::string_view fallback) {
+    const char *value = argument_pointer(count, arguments, index);
+    return value == nullptr ? detail::argument_text(fallback) : std::string{value};
 }
 
 bool LineReader::readline(std::string &target) {

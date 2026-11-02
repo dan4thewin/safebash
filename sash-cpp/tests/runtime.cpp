@@ -5,6 +5,7 @@
 #include <csignal>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <fcntl.h>
 #include <filesystem>
 #include <functional>
@@ -2509,6 +2510,277 @@ void arithmetic_failures() {
             "unhandled END arithmetic must not receive automatic failure handling");
 }
 
+void numeric_parsing() {
+    constexpr auto minimum = std::numeric_limits<std::int64_t>::min();
+    constexpr auto maximum = std::numeric_limits<std::int64_t>::max();
+    const std::pair<std::string_view, std::int64_t> values[] = {
+        {"0", 0},
+        {"-0", 0},
+        {"+0", 0},
+        {"08", 8},
+        {"010", 10},
+        {"+42", 42},
+        {"-17", -17},
+        {"0xff", 255},
+        {"-0XFF", -255},
+        {"+0o10", 8},
+        {"0O377", 255},
+        {"0b1010", 10},
+        {"-0B1010", -10},
+        {"9223372036854775807", maximum},
+        {"-9223372036854775808", minimum},
+        {"0x7fffffffffffffff", maximum},
+        {"-0x8000000000000000", minimum},
+    };
+    for (const auto &value : values) {
+        require(sash::parse_int(value.first) == value.second && sash::is_int(value.first),
+                "strict integer parsing must preserve complete signed decimal/prefixed values");
+    }
+    const std::string_view invalid[] = {
+        {},
+        "",
+        "+",
+        "-",
+        " 42",
+        "42 ",
+        "42\n",
+        "42abc",
+        "16#ff",
+        "--1",
+        "+-1",
+        "0x",
+        "-0o",
+        "0b2",
+        "0o8",
+        "0x+1",
+        "1.0",
+        "1_000",
+        "9223372036854775808",
+        "-9223372036854775809",
+        "0x8000000000000000",
+        "184467440737095516160",
+        std::string_view{"42\0tail", 7},
+        std::string_view{"\xff", 1},
+    };
+    for (const auto text : invalid) {
+        require(!sash::parse_int(text) && !sash::is_int(text),
+                "strict integer parsing must reject partial, malformed and out-of-range input");
+    }
+    const std::string zeros = std::string(512, '0') + "8";
+    require(sash::parse_int(zeros) == 8, "long leading-zero input is still decimal data");
+    bool denied = false;
+    try {
+        const AllocationFailure fault(1);
+        const std::string control(128, 'x');
+        require(control.size() == 128, "integer parser allocation control");
+    } catch (const std::bad_alloc &) {
+        denied = true;
+    }
+    require(denied, "integer parser allocation control must actually deny allocation");
+    {
+        const AllocationFailure fault(1);
+        require(sash::parse_int("-0x8000000000000000") == minimum && sash::is_int(zeros) &&
+                    sash::int_or("bad", 7) == 7 &&
+                    sash::int_required("0", [] { return "unused"; }) == 0,
+                "integer validation and successful/default conversion must not allocate");
+    }
+}
+
+void program_arguments() {
+    char word[] = "two words";
+    const char *input[] = {"program", word, "", "08"};
+    auto snapshot = sash::argv(4, input);
+    const auto slice = sash::argv(4, input, 1);
+    require(sash::len(snapshot) == 4 && sash::cell(snapshot, 0) == "program" &&
+                sash::len(slice) == 3 && sash::cell(slice, 0) == "two words" &&
+                sash::cell(slice, 1).empty() && sash::cell(slice, 2) == "08",
+            "argv snapshots include argv0 and slices reindex without dropping empty arguments");
+    word[0] = 'T';
+    require(sash::cell(snapshot, 1) == "two words" && sash::cell(slice, 0) == "two words" &&
+                sash::arg(4, input, 1) == "Two words",
+            "argv snapshots must own copies independent of their C input");
+    sash::set_cell(snapshot, 0, "changed");
+    require(sash::arg(4, input, 0) == "program",
+            "changing a snapshot must not mutate the original program arguments");
+    require(sash::arg(4, input, 2, "fallback").empty() &&
+                sash::arg(4, input, 4, "fallback") == "fallback" &&
+                sash::argv(4, input, 4).empty() &&
+                sash::argv(4, input, std::numeric_limits<std::int64_t>::max()).empty() &&
+                sash::argv(0, nullptr).empty(),
+            "argument defaults test presence and oversized slices are empty");
+    bool caught = false;
+    try {
+        (void)sash::arg(4, input, 4);
+    } catch (const sash::SetupError &error) {
+        caught = error.code() == std::errc::result_out_of_range;
+    }
+    require(caught, "a missing required argument must not silently yield empty text");
+    const std::function<void()> invalid[] = {
+        [&] { (void)sash::argv(4, input, -1); },
+        [&] { (void)sash::arg(4, input, -1, "fallback"); },
+        [] { (void)sash::argv(-1, nullptr); },
+        [] { (void)sash::arg(1, nullptr, 0, "fallback"); },
+    };
+    for (const auto &operation : invalid) {
+        caught = false;
+        try {
+            operation();
+        } catch (const sash::SetupError &error) {
+            caught = error.code() == std::errc::invalid_argument;
+        }
+        require(caught, "invalid argument metadata and negative indices must fail explicitly");
+    }
+    const char *broken[] = {"program", nullptr};
+    sash::Array<std::string> target{{9, "kept"}};
+    caught = false;
+    try {
+        target = sash::argv(2, broken);
+    } catch (const sash::SetupError &) {
+        caught = true;
+    }
+    require(caught && target == sash::Array<std::string>{{9, "kept"}},
+            "a malformed argv snapshot must not publish partial replacement");
+    const std::string long_word(256, 'x');
+    const char *large[] = {"program", long_word.c_str()};
+    caught = false;
+    try {
+        const AllocationFailure fault(128);
+        target = sash::argv(2, large);
+    } catch (const std::bad_alloc &) {
+        caught = true;
+    }
+    require(caught && target == sash::Array<std::string>{{9, "kept"}},
+            "an argv allocation failure must preserve the destination after partial construction");
+}
+
+void environment_values() {
+    const auto child = run_child([] {
+        constexpr const char *key = "SASH_CPP_INPUT_TEST";
+        require(::unsetenv(key) == 0, "unset input fixture environment");
+        require(sash::run("missing-environment",
+                          [&] {
+                              require(!sash::getenv(key),
+                                      "an absent environment name has no value");
+                          }) == 0,
+                "an absent environment lookup is a result, not an automatic abort");
+        require(::setenv(key, "", 1) == 0, "set empty input fixture environment");
+        const auto empty = sash::getenv(key);
+        require(empty && empty->empty(),
+                "a present empty environment value is a successful lookup");
+        const std::string value = std::string("two words:") + char(0xff);
+        require(::setenv(key, value.c_str(), 1) == 0, "set counted input fixture environment");
+        const std::string extended_key = std::string(key) + ".unused";
+        const auto copy = sash::getenv(std::string_view(extended_key).substr(0, std::strlen(key)));
+        require(copy && *copy == value,
+                "getenv must honor the counted key and copy exact value bytes");
+        require(::setenv(key, "changed", 1) == 0 && copy && *copy == value,
+                "environment values must remain owned after the host environment changes");
+        bool caught = false;
+        const std::string binary_key = std::string(key) + std::string("\0tail", 5);
+        try {
+            (void)sash::getenv(binary_key);
+        } catch (const sash::SetupError &error) {
+            caught = error.code() == std::errc::invalid_argument;
+        }
+        require(caught, "getenv must reject a NUL key rather than look up its truncated prefix");
+        const std::string large(256, 'v');
+        require(::setenv(key, large.c_str(), 1) == 0, "set allocating environment value");
+        caught = false;
+        try {
+            const AllocationFailure fault(128);
+            (void)sash::getenv(key);
+        } catch (const std::bad_alloc &) {
+            caught = true;
+        }
+        require(caught, "an environment allocation failure must not become a missing lookup");
+        return 0;
+    });
+    if (child.status != 0 || !child.diagnostic.empty()) {
+        throw std::runtime_error("environment fixture child exited " +
+                                 std::to_string(child.status) + ": " + child.diagnostic);
+    }
+}
+
+void numeric_dispositions() {
+    const std::string partial = "12tail";
+    require(sash::default_value(partial, [] { return "unused"; }) == partial &&
+                sash::int_or(partial, 9) == 9 && sash::int_or("0", 9) == 0,
+            "numeric defaults trigger on invalid text, not nonempty text or valid zero");
+    sash::Array<std::string> strings{{0, "08"}, {2, "bad"}, {5, ""}};
+    sash::Map<std::string> map{{"zero", "0"}, {"large", "9223372036854775808"}};
+    require(sash::int_or(sash::cell(strings, 0), 3) == 8 &&
+                sash::int_or(sash::cell(strings, 2), 11) == 11 &&
+                sash::int_or(sash::cell(strings, 5), 13) == 13 &&
+                sash::int_or(sash::cell(strings, 99), 17) == 17 &&
+                sash::int_or(sash::cell(map, "large"), 19) == 19 &&
+                sash::int_required(sash::cell(map, "zero"), [] { return "unused"; }) == 0 &&
+                sash::len(strings) == 3 && sash::len(map) == 2,
+            "scalar and array/map cell conversions must share strict value semantics");
+    int messages = 0;
+    const auto message = [&] {
+        ++messages;
+        return "not an integer";
+    };
+    require(sash::int_required("0", message) == 0 &&
+                sash::int_required("-0x8000000000000000", message) ==
+                    std::numeric_limits<std::int64_t>::min() &&
+                messages == 0,
+            "valid required conversions must not evaluate their message");
+    for (std::string_view text : {"", "42tail", "9223372036854775808"}) {
+        bool caught = false;
+        try {
+            (void)sash::int_required(text, message);
+        } catch (const sash::CommandError &error) {
+            caught = error.status() == 2 &&
+                     std::string_view(error.what()) == "required value: not an integer";
+        }
+        require(
+            caught,
+            "invalid and out-of-range conversion must use the requirement, not ArithmeticError");
+    }
+    require(messages == 3, "each failed conversion must evaluate its requirement exactly once");
+    const auto failed = run_child([] {
+        std::int64_t target = 73;
+        int ends = 0;
+        const int status = sash::run(
+            "numeric-input",
+            [&] { target = sash::int_required("9223372036854775808", [] { return "bad count"; }); },
+            [&](const sash::Shutdown &shutdown) {
+                ++ends;
+                require(target == 73 && shutdown.reason == sash::ShutdownReason::Failure &&
+                            shutdown.status == 2,
+                        "failed numeric conversion must preserve assignment and unwind into END");
+            });
+        require(ends == 1, "a conversion requirement must enter owner END once");
+        return status;
+    });
+    require(failed.status == 2 && failed.diagnostic == "numeric-input: required value: bad count\n",
+            "out-of-range input must report its requested message, not arithmetic overflow");
+    bool handled = false;
+    require(sash::run(
+                "numeric-END", [] {},
+                [&](const sash::Shutdown &) {
+                    try {
+                        (void)sash::int_required("bad", [] { return "explicit"; });
+                    } catch (const sash::CommandError &) {
+                        handled = true;
+                    }
+                }) == 0 &&
+                handled,
+            "END can explicitly handle a numeric conversion requirement");
+    bool escaped = false;
+    try {
+        (void)sash::run(
+            "invalid-numeric-END", [] {},
+            [](const sash::Shutdown &) {
+                (void)sash::int_required("bad", [] { return "explicit"; });
+            });
+    } catch (const sash::CommandError &error) {
+        escaped = std::string_view(error.what()) == "required value: explicit";
+    }
+    require(escaped, "unhandled END numeric conversion must not get automatic handling");
+}
+
 bool run_test(const char *name, const std::function<void()> &body) {
     try {
         body();
@@ -2548,6 +2820,17 @@ int main(int argc, char **argv) {
                                 arithmetic_values();
                                 arithmetic_shifts();
                                 arithmetic_failures();
+                            })
+                       ? 0
+                       : 1;
+        }
+        if (mode == "--numeric") {
+            return run_test(argv[1],
+                            [] {
+                                numeric_parsing();
+                                program_arguments();
+                                environment_values();
+                                numeric_dispositions();
                             })
                        ? 0
                        : 1;
@@ -2679,6 +2962,10 @@ int main(int argc, char **argv) {
         {"checked integer arithmetic", arithmetic_values},
         {"defined integer shifts", arithmetic_shifts},
         {"arithmetic failure boundaries", arithmetic_failures},
+        {"strict integer input", numeric_parsing},
+        {"owned program arguments", program_arguments},
+        {"environment lookup values", environment_values},
+        {"numeric conversion boundaries", numeric_dispositions},
     };
     for (const auto &test : tests) {
         if (!run_test(test.first, test.second)) {

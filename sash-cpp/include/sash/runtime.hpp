@@ -141,9 +141,19 @@ void echo(std::initializer_list<std::string_view> words);
 [[nodiscard]] std::int64_t pow(std::int64_t base, std::int64_t exponent);
 [[nodiscard]] std::int64_t shl(std::int64_t value, std::int64_t count);
 [[nodiscard]] std::int64_t shr(std::int64_t value, std::int64_t count);
+[[nodiscard]] std::optional<std::int64_t> parse_int(std::string_view text) noexcept;
+[[nodiscard]] bool is_int(std::string_view text) noexcept;
+[[nodiscard]] std::int64_t int_or(std::string_view text, std::int64_t fallback) noexcept;
+[[nodiscard]] std::optional<std::string> getenv(std::string_view name);
 
 template <typename T> using Array = std::map<std::int64_t, T>;
 template <typename T> using Map = std::map<std::string, T>;
+
+[[nodiscard]] Array<std::string> argv(int count, const char *const *arguments,
+                                      std::int64_t start = 0);
+[[nodiscard]] std::string arg(int count, const char *const *arguments, std::int64_t index);
+[[nodiscard]] std::string arg(int count, const char *const *arguments, std::int64_t index,
+                              std::string_view fallback);
 
 namespace detail {
 void check_key(std::int64_t index);
@@ -288,6 +298,15 @@ template <typename T, typename Message> [[nodiscard]] T required_value(T value, 
         detail::required_failure(std::invoke(std::forward<Message>(message)));
     }
     return value;
+}
+
+template <typename Message>
+[[nodiscard]] std::int64_t int_required(std::string_view text, Message &&message) {
+    const auto value = parse_int(text);
+    if (!value) {
+        detail::required_failure(std::invoke(std::forward<Message>(message)));
+    }
+    return *value;
 }
 
 inline void append_argument(std::vector<std::string> &arguments, std::string_view value) {

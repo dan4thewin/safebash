@@ -1,0 +1,8 @@
+argc: 3; user args: 2
+quantity: 8; rate: 7; total: 56
+optional: spare
+zero: 0; valid: yes
+cells: 255,11,13,0,19
+string: 12tail; numeric: 9
+option: 08
+option: 0

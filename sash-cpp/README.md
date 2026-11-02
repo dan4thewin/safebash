@@ -57,6 +57,12 @@ branches. Checked integer functions handle nested arithmetic, negation,
 division/remainder, powers, and shifts without changing the integer type.
 Both match the adjacent ten-line golden.
 
+[numeric_report.cpp](examples/numeric_report.cpp) and
+[numeric_report.sash](examples/numeric_report.sash) add owned argv snapshots,
+optional environment lookup, strict string-to-integer conversion, a real
+charge function, and ordinary validity and traversal branches. With arguments
+`08 0` and `SASH_CPP_NUMERIC_RATE=0x7`, both match the adjacent eight-line golden.
+
 On Linux or macOS, with a C++17 compiler, Plan 9 `mk`, and `timeout` on PATH:
 
 ```sh
@@ -70,6 +76,7 @@ mk -p 1 test
 ./build/lifecycle_report
 ./build/option_report
 ./build/arithmetic_report
+SASH_CPP_NUMERIC_RATE=0x7 ./build/numeric_report 08 0
 ```
 
 `greetings` prints `Hello, Ada!`; `job_report` prints the worker rounds;
@@ -79,6 +86,7 @@ mk -p 1 test
 `lifecycle_report` prints the captured count and explicitly handled END report.
 `option_report` prints the sparse options, copied keys, and exact argument list.
 `arithmetic_report` prints a weighted subtotal, arithmetic results, and a countdown.
+`numeric_report` prints converted options, defaults, cell values, and the charge.
 The build produces a normal C++ static library, `build/libsash_cpp.a`;
 it does not build Rust or link sash-rt.
 For example, the C++ program can also be linked directly:
@@ -110,7 +118,7 @@ mk -p 1 CXX=clang++ BUILD=build/apple-asan \
 ./build/apple/capture_report
 ```
 
-Both hosts run the same 44 fixture groups and eight expected C++ reports,
+Both hosts run the same 48 fixture groups and nine expected C++ reports,
 including large binary output, nested captures/readers, closed standard
 descriptors, partial setup, child/fd cleanup, typed exit, main-only END,
 and signal delivery during foreground work and capture. Collection fixtures
@@ -119,6 +127,9 @@ dispositions, binary joins, and allocation failures before argument publication.
 Arithmetic fixtures cover signed limits, every multiplication sign pair,
 division/remainder faults, bounded power evaluation, defined shifts, ignored
 function results, failed conditions/arguments, and explicit END handling.
+Input fixtures cover complete signed parsing, owned argv/environment values,
+present-empty versus missing inputs, valid zero, lazy required messages,
+scalar/cell parity, and allocation and lifecycle failure boundaries.
 The Darwin build has been
 exercised on Apple Silicon; this is not a claim of testing every Mac SDK
 or architecture. Tests need GNU `timeout`, which is not a stock macOS tool.
@@ -148,7 +159,7 @@ ptrace. The command helper is an ordinary unsanitized external executable;
 the library, test driver, and examples receive `SANITIZE`.
 
 With the real sash CLI and runtime already built in the parent checkout,
-`mk -p 1 sash-example` compiles and runs all eight sash examples against
+`mk -p 1 sash-example` compiles and runs all nine sash examples against
 their expected output. Override `SASH` and `SASH_RT_LIB` for other locations.
 This additional target is not a prerequisite for native C++ tests.
 
@@ -350,8 +361,8 @@ appends are also safe when their source aliases the destination vector.
 Binary bytes are retained internally, but the existing exec boundary
 rejects NUL in executable/argument strings before any launch.
 There is no word splitting or inherited unchecked function mode.
-These helpers do not implement argv/environment ingress, numeric parsing,
-or the remaining string/read operation families.
+Program ingress and numeric conversion have separate helpers below; the
+remaining string/read operation families are still future work.
 
 ### Checked integer arithmetic
 
@@ -392,9 +403,67 @@ where their semantics fit. Keep fallible operands inside their lazy
 regions; ordinary function arguments do not impose source left-to-right
 order, so operands with observable effects or failures may need explicit
 temporaries.
-There is no checked-number wrapper, operator-overload layer, integer
-parser, or IR consumer. Source diagnostics such as SB5077 and SB5084
+There is no checked-number wrapper, operator-overload layer, or IR consumer.
+Source diagnostics such as SB5077 and SB5084
 remain the producer's responsibility.
+
+### Program inputs and strict integer conversion
+
+Program inputs use explicit C `argc`/`argv`, not hidden global state:
+
+| Helper | Result |
+|---|---|
+| `argv(count, arguments, start = 0)` | Owned dense string array, including argv0 by default; slices reindex from zero |
+| `arg(count, arguments, index)` | Owned argument string; absence raises `SetupError` |
+| `arg(count, arguments, index, fallback)` | Eager fallback only for absence, not a present empty argument |
+| `getenv(name)` | Owned optional string: absent is `nullopt`, present-empty is an engaged empty string |
+
+Use the ordinary host `argc` for the count, including the program name.
+Negative indices and malformed metadata raise `SetupError`; slices starting
+at or beyond the count are empty. A low-level empty C++ frame `(0, nullptr)`
+is valid, although a real sash program includes argv0. Callers must provide
+an actual C argument vector of the stated extent and lifetime; metadata
+guards cannot validate arbitrary bad pointer extents.
+
+Snapshots and lookups copy their values. Mutating a snapshot does not mutate
+the C frame, and later environment changes do not change a lookup's result.
+`getenv` reads the live host environment under the single-threaded model,
+without mirroring source variables. It honors counted names, rejects NUL
+instead of truncating a name, and never converts allocation failure into
+absence. **An unset environment name is an ordinary lookup result, not an
+automatic abort** (native DD#101); set-empty remains present.
+
+`parse_int(text)` returns `optional<int64_t>`. One allocation-free,
+locale-independent parser also implements `is_int`, `int_or`, and
+`int_required` for scalar strings and string cells:
+
+```cpp
+auto quantity = sash::int_or(sash::arg(count, arguments, 1, "08"), 3);
+auto factor = sash::int_required(sash::cell(options, "factor"), [] {
+    return "factor must be an integer";
+});
+auto amount = sash::mul(quantity, factor);
+```
+
+The grammar is native DD#72/DD#77: a complete optional sign followed by
+decimal digits or `0x`/`0o`/`0b` digits, with case-insensitive prefixes.
+Runtime leading zeros are decimal (`"08"` is eight). Whitespace, partial
+parses, missing digits, arbitrary `base#`, separators, NUL, and values
+outside signed i64 are invalid; `INT64_MIN` is valid.
+
+`int_or(text, fallback)` defaults on invalidity, including empty or
+out-of-range input. **Valid `"0"` returns zero**, not the fallback.
+`int_required(text, message)` calls its message exactly once on invalidity
+and uses the existing `required value: ` renderer and `CommandError(2)`;
+it does not evaluate the message on success. Invalid conversion is a
+disposition concern, not `ArithmeticError`. In word context, ordinary
+`default_value` still triggers on emptiness, not numeric invalidity.
+
+Failed required conversion preserves the assignment target and follows
+ordinary body unwinding. END still requires explicit handling and receives
+no new automatic guard. Source taint, default admission, and the `i?`
+predicate's source syntax remain producer responsibilities. There is no
+IR consumer or general text/read family in this unit.
 
 ### Program lifecycle and END
 

@@ -311,6 +311,26 @@ This completes checked operations, not accountable string-to-int
 conversion, numeric ingress, or the remaining text/read families. No IR
 reader, emitter, producer, or native code changed.
 
+## Ninth runnable milestone - numeric inputs implemented
+
+`numeric_report.cpp` and its sash counterpart use explicit program inputs,
+owned argv snapshots, optional getenv, shared strict conversion, and a real
+charge function feeding checked multiplication. With `08 0` and a hex rate,
+both match an independent eight-line report.
+
+[DD#9](../decisions/DD09-numeric-ingress-and-conversion.md) records the
+source-authoritative input/conversion contracts and the AI's reversible
+implementation choices. Missing getenv is a result, not an automatic abort;
+set-empty remains present. Invalid and out-of-range numeric text follows
+default/required disposition, valid zero stays zero, and scalar/string-cell
+conversion shares an allocation-free parser and lazy requirement renderer.
+Actual metadata/allocation failures remain visible; required conversion
+preserves the destination and existing body/END boundaries.
+
+This completes the bounded argv/environment and strict numeric unit, not
+the remaining text/read/regex families or IR consumption. No native code
+or producer changed.
+
 ## Starting points selected by DG
 
 | Area | Starting point |
@@ -667,8 +687,8 @@ of most process work. Keep ordinary C++ representations visible.
 ### Strings, arguments, and reads
 
 - [ ] Implement counted-string concatenation, slicing, case conversion,
-  numeric parsing/formatting, and the chosen character predicates.
-- [ ] Cover the same applicable operations for scalar strings and string
+  remaining formatting, and the chosen character predicates.
+- [ ] Cover the remaining applicable operations for scalar strings and string
   cells rather than maintaining divergent implementations.
 - [x] Preserve binary bytes internally, and distinguish an empty argument
   from zero arguments. Implement defaults, required-value failures, and
@@ -676,7 +696,7 @@ of most process work. Keep ordinary C++ representations visible.
 - [x] Prepare owned command-argument vectors before launch, including
   scalar arguments, sorted splats, lazy defaults/requirements, and explicit
   elision. Allocation failure does not publish a partial splat.
-- [ ] Provide argv snapshots and environment lookup, including unset
+- [x] Provide argv snapshots and environment lookup, including unset
   versus set-to-empty, without mirroring variables into the environment.
 - [ ] Implement scalar line reading, NUL-separated bulk reading, and
   string splitting. Cover empty records, consecutive/trailing separators,
@@ -685,7 +705,7 @@ of most process work. Keep ordinary C++ representations visible.
   and EOF, using DD#99 as the reference rather than reviving retired
   `mapfile`, IFS, or flag-dependent read variants.
 
-### Arithmetic - checked operations implemented
+### Arithmetic - checked operations and strict text conversion implemented
 
 - [x] Keep integers as `std::int64_t` with DD#8's checked functions and
   native DD#25 overflow/shift rules, without signed C++ undefined behavior.
@@ -693,9 +713,10 @@ of most process work. Keep ordinary C++ representations visible.
   shifts, and exponentiation.
 - [x] Keep arithmetic faults distinct from normal boolean outcomes and
   command verdicts under the selected failure policy.
-- [ ] Implement accountable integer-text input/conversion under DD#77.
-  Existing integer rendering remains ordinary `std::to_string`; this
-  arithmetic unit adds no parser or new formatting family.
+- [x] Implement accountable integer-text input/conversion under DD#77.
+  Validation/default/required conversion shares one strict parser for
+  scalars and string cells; valid zero and out-of-range disposition remain
+  distinct from arithmetic faults. Integer rendering stays `std::to_string`.
 
 ### ECMAScript regex
 

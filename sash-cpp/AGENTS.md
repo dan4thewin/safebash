@@ -13,7 +13,7 @@ The runtime task is `../notes-exp/tasks/cpp-transpiler-runtime-before-ir.md`.
 
 Build and exercise changes with `mk -p 1 test` in this directory. Use distinct
 `BUILD` directories when changing compilers or sanitizer flags. `mk -p 1
-sash-example` additionally compiles all eight sash examples with the real
+sash-example` additionally compiles all nine sash examples with the real
 CLI. Ordinary C++ tests do not require a Rust build or IR input.
 `mk -p 1 fault-test` adds Linux strace probes; run it without sanitizer
 instrumentation. The native command helper is deliberately unsanitized.
@@ -110,8 +110,19 @@ sign-fill right shifts, and treat discarded left-shift bits as bits rather
 than overflow. The implementation uses bounded checks and unsigned bits.
 Keep comparisons and lazy `&&`/`||`/`?:` source-shaped, and sequence operands
 when their effects or failures make order observable.
-Numeric input conversion remains DD#77 disposition work, not an operation
-overflow; no integer parser has been implemented here.
+`parse_int` is shared by `is_int`, `int_or`, and `int_required` for scalar
+strings and string cells. Keep DD#77's complete, signed-i64 grammar and
+allocation-free parsing. Invalid or out-of-range input follows disposition,
+not ArithmeticError; valid zero must not default. Required messages are
+lazy and use the existing status-2 renderer, with no automatic END handling.
+
+Pass ordinary C argc/argv explicitly to `arg`/`argv`; snapshots own their
+strings, include argv0 by default, and reindex slices from zero. Optional
+arg defaults are eager and test presence, not emptiness. `getenv` returns
+an owned optional string: missing is an ordinary lookup result, never an
+automatic abort (DD#101), and present-empty stays present. Reject NUL names
+and surface actual allocation/metadata failures rather than inventing absence.
+These helpers add no source taint/admission checks or environment mirroring.
 
 A native undeclared word-loop binder is a string even over an int
 collection (DD#86), not automatically the range's C++ value type. Honor

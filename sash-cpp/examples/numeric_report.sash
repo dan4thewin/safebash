@@ -1,0 +1,37 @@
+fn charge -> int {
+    int units=$(( ${args[0]:?bad units} ))
+    int rate=$(( ${args[1]:?bad rate} ))
+    return $(( units * rate ))
+}
+
+str quantity=$(arg 1 03)
+attest quantity [[ $quantity =~ '^[A-Za-z0-9+\-]*$' ]]
+str rate_text=""
+rate_text=$(getenv SASH_CPP_NUMERIC_RATE) || rate_text=07
+attest rate_text [[ $rate_text =~ '^[A-Za-z0-9+\-]*$' ]]
+str zero_text=$(arg 2 0)
+attest zero_text [[ $zero_text =~ '^[A-Za-z0-9+\-]*$' ]]
+str spare=$(arg 3 spare)
+attest spare [[ $spare =~ '^[A-Za-z0-9+\-]*$' ]]
+argv 1 options
+attest option in options [[ $option =~ '^[A-Za-z0-9+\-]*$' ]]
+
+int quantity_value=$(( ${quantity:-3} ))
+int rate_value=$(( ${rate_text:-7} ))
+int amount=$(charge $quantity_value $rate_value)
+echo "argc: $(argc); user args: $(len options)"
+echo "quantity: $quantity_value; rate: $rate_value; total: $amount"
+echo "optional: $spare"
+if [[ i? $zero_text ]] {
+    echo "zero: $(( ${zero_text:?bad zero} )); valid: yes"
+} else {
+    echo "zero: invalid; valid: no"
+}
+
+array hints=(0xff bad "" 0 "9223372036854775808")
+echo "cells: $(( ${hints[0]:?bad hex} )),$(( ${hints[1]:-11} )),$(( ${hints[2]:-13} )),$(( ${hints[3]:-17} )),$(( ${hints[4]:-19} ))"
+str partial=12tail
+echo "string: ${partial:-unused}; numeric: $(( ${partial:-9} ))"
+for option in @options {
+    echo "option: $option"
+}
