@@ -1,4 +1,22 @@
-## ══ STATUS (2026-11-03, latest) — W4: process-local SSA taint ══
+## ══ STATUS (2026-11-03, latest) — DD128 draft: EXIT, ERR and attest ══
+
+At DG's request, DD128 assembles the cleanup and taint discussion into a
+**draft**, not an accepted or implemented change (journal 564).
+- Ordinary checked EXIT for completion, zero exit and configured signals;
+  ERR for uncaught operational failures and explicit nonzero exits.
+- Conservative ERR inputs, explicit handling of its operational failures,
+  and named fatal exceptions for arithmetic faults and heap exhaustion.
+- Only legal adjacent attestation or failed-attest subject cleanup clears
+  outstanding taint; unrelated assignments no longer do.
+- Five draft choices remain marked: END migration, first-fatal routing,
+  helper-based fallback, fresh input inside ERR, and full-i64 versus
+  process-byte exit selection.
+
+**Next:** DG's review of
+`notes/decisions/DD128-exit-err-adjacent-attest.md`. Existing accepted DDs
+and compiler behavior are unchanged. W5 implementation has not started.
+
+## ══ STATUS (2026-11-03) — W4: process-local SSA taint ══
 
 W4 completes the remaining process-local backstop (journal 563), retaining
 the validator and lowering barriers already landed in F1/F2/W1.
