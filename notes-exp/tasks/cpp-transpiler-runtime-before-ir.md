@@ -973,3 +973,9 @@ capture-path selection and source comment preservation also belong there,
 not in this runtime task. Native replacement-template translation must
 handle evaluated strings and literal dollars/backslashes, not merely
 C++ literal escaping; it remains deferred to that consumer.
+
+Once the IR reader/emitter exists, the
+[checkpoint-emission regression task](ir-signal-checkpoint-emission.md)
+will assert that signal-free IR adds no checkpoints and relevant
+signal-bearing IR retains them. This is a future consumer test, not a
+prerequisite for completing the runtime.

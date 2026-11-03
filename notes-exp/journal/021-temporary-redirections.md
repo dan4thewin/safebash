@@ -171,3 +171,15 @@ remaining formatting, or IR consumption. Existing signal/checkpoint and
 explicit END policies remain unchanged. Experiment records remain under
 `notes-exp/`; no native code/notes changed. The protected proposal remains
 untracked and excluded from transfer and publication.
+
+## Follow-up: checkpoint-emission regression
+
+DG noticed frequent checkpoints despite the paired script having no signal
+handling. Those calls illustrate generic placement but perform no useful
+signal-exit work in that script. DG requested a test once the transpiler
+exists to require checkpoints only when the IR has signal handling.
+The AI recorded the
+[consumer regression task](../tasks/ir-signal-checkpoint-emission.md),
+with signal-free and cooperative-EXIT cases, whole-IR detection, and
+negative controls against unconditional insertion or complete omission.
+No runtime or example code changed.

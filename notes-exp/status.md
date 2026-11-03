@@ -29,6 +29,8 @@ masked by the main boundary, and sanitizer metadata initialization controls.
 Persistent exec/rebinding, public wait, forked-C++/background ownership,
 remaining formatting, and IR consumption remain on the
 [runtime roadmap](tasks/cpp-transpiler-runtime-before-ir.md).
+A [future checkpoint-emission test](tasks/ir-signal-checkpoint-emission.md)
+will pin omission for signal-free IR once the transpiler exists.
 There is still no IR reader/emitter or producer implementation. Exporting
 the compiler-computed FD set remains future producer work; the protected
 proposal is untouched.
