@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <charconv>
 #include <cstdlib>
+#include <iterator>
 #include <limits>
 
 namespace sash {
@@ -108,6 +109,32 @@ void append_captures(Array<std::string> &target, const RegexMatches &matches, st
     for (auto i = first; i < matches.size(); ++i) {
         target.emplace(detail::collection_count(target.size()), matches[i].str());
     }
+}
+
+std::string replace_regex(std::string_view subject, const std::regex &pattern,
+                          std::string_view replacement, bool first_only) {
+    const auto *begin = regex_begin(subject);
+    const auto *last = begin + subject.size();
+    const auto *format = regex_begin(replacement);
+    const auto *unmatched = begin;
+    std::string result;
+    try {
+        const std::regex_iterator<const char *> end;
+        for (std::regex_iterator<const char *> it(begin, last, pattern); it != end; ++it) {
+            const auto &matches = *it;
+            result.append(unmatched, matches[0].first);
+            // regex_replace's string-format overload can truncate embedded NULs.
+            matches.format(std::back_inserter(result), format, format + replacement.size());
+            unmatched = matches[0].second;
+            if (first_only) {
+                break;
+            }
+        }
+        result.append(unmatched, last);
+    } catch (const std::regex_error &error) {
+        regex_failure(error);
+    }
+    return result;
 }
 
 std::int64_t signed_bits(std::uint64_t bits) noexcept {
@@ -289,6 +316,15 @@ bool matchall(std::string_view subject, const std::regex &pattern, Array<std::st
     const bool matched = !result.empty();
     target.swap(result);
     return matched;
+}
+
+std::string sub(std::string_view subject, const std::regex &pattern, std::string_view replacement) {
+    return replace_regex(subject, pattern, replacement, true);
+}
+
+std::string gsub(std::string_view subject, const std::regex &pattern,
+                 std::string_view replacement) {
+    return replace_regex(subject, pattern, replacement, false);
 }
 
 std::int64_t add(std::int64_t left, std::int64_t right) {

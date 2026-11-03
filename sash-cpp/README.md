@@ -76,6 +76,12 @@ capture arrays, repeated group extraction, and group-free matching. A real
 function extracts option pairs, creates a map, and converts their values.
 Both match the adjacent nine-line golden.
 
+[rewrite_report.cpp](examples/rewrite_report.cpp) and
+[rewrite_report.sash](examples/rewrite_report.sash) add first/global regex
+replacement using equivalent C++/native templates. A real function retains
+the match branch, literal dollar/backslash output, and string-cell traversal.
+Both match the adjacent ten-line golden; no template translator exists yet.
+
 On Linux or macOS, with a C++17 compiler, Plan 9 `mk`, and `timeout` on PATH:
 
 ```sh
@@ -92,6 +98,7 @@ mk -p 1 test
 SASH_CPP_NUMERIC_RATE=0x7 ./build/numeric_report 08 0
 ./build/string_report COUNT=08
 ./build/regex_report 'COUNT=08;EMPTY=;RATE=0x7'
+./build/rewrite_report 'COUNT=08;RATE=7'
 ```
 
 `greetings` prints `Hello, Ada!`; `job_report` prints the worker rounds;
@@ -104,6 +111,7 @@ SASH_CPP_NUMERIC_RATE=0x7 ./build/numeric_report 08 0
 `numeric_report` prints converted options, defaults, cell values, and the charge.
 `string_report` prints the sliced option and ASCII string-cell results.
 `regex_report` prints whole/captured matches, extracted pairs, and converted options.
+`rewrite_report` prints first/global rewrites, literal template bytes, and rewritten cells.
 The build produces a normal C++ static library, `build/libsash_cpp.a`;
 it does not build Rust or link sash-rt.
 For example, the C++ program can also be linked directly:
@@ -135,7 +143,7 @@ mk -p 1 CXX=clang++ BUILD=build/apple-asan \
 ./build/apple/capture_report
 ```
 
-Both hosts run the same 55 fixture groups and eleven expected C++ reports,
+Both hosts run the same 58 fixture groups and twelve expected C++ reports,
 including large binary output, nested captures/readers, closed standard
 descriptors, partial setup, child/fd cleanup, typed exit, main-only END,
 and signal delivery during foreground work and capture. Collection fixtures
@@ -153,6 +161,9 @@ scalar/cell parity, and allocation failure without replacing a destination.
 Regex fixtures cover counted subjects, owned captures, unmatched/empty groups,
 normal misses, standard zero-length progress, original anchor context,
 target-borrowed inputs, and allocation failure without partial publication.
+Replacement fixtures cover first/global scope, standard C++ templates,
+counted binary formats, original match context, empty/nonempty retries,
+owned miss results, and allocation failures before caller assignment.
 The Darwin build has been
 exercised on Apple Silicon; this is not a claim of testing every Mac SDK
 or architecture. Tests need GNU `timeout`, which is not a stock macOS tool.
@@ -182,7 +193,7 @@ ptrace. The command helper is an ordinary unsanitized external executable;
 the library, test driver, and examples receive `SANITIZE`.
 
 With the real sash CLI and runtime already built in the parent checkout,
-`mk -p 1 sash-example` compiles and runs all eleven sash examples against
+`mk -p 1 sash-example` compiles and runs all twelve sash examples against
 their expected output. Override `SASH` and `SASH_RT_LIB` for other locations.
 This additional target is not a prerequisite for native C++ tests.
 
@@ -517,8 +528,8 @@ No helper adds a hidden checkpoint.
 
 The tenth pair's handling is application-specific: `COUNT=08` becomes key
 `count` and unchanged value `08`, then strict numeric conversion yields 8.
-There is no trimming or malformed-number repair. Regex replacement, bulk
-reads/splitting, remaining formatting, and IR consumption remain separate
+There is no trimming or malformed-number repair. Bulk reads/splitting,
+remaining formatting, and IR consumption remain separate
 work. The required-value failure path retains DD#9's C++ status 2; the
 reference currently returns 1 for the same rejected numeric text.
 
@@ -590,8 +601,45 @@ separately.
 Use compiled regexes from the helper for its admission/error policy; a
 caller-supplied precompiled regex no longer exposes its original pattern.
 No linear-time or resource-bound guarantee is made for `std::regex`.
-Replacement templates (`sub`/`gsub`), bulk reads/splitting, and IR consumption
-remain separate work.
+Bulk reads/splitting and IR consumption remain separate work.
+
+### Regex replacement
+
+[DD#12](../notes-exp/decisions/DD12-regex-replacement-templates.md) records
+DG's selection of standard C++ replacement notation:
+
+| Helper | Result |
+|---|---|
+| `sub(subject, regex, replacement)` | Owned subject with only its first match replaced |
+| `gsub(subject, regex, replacement)` | Owned subject with all standard-iteration matches replaced |
+
+Both preserve unmatched input; a normal miss returns an owned unchanged
+subject. Empty replacements delete matches. Empty matches retain DD#11's
+standard progression, including the final boundary and nonempty retry;
+`sub` stops after its first match, even when empty.
+
+Use `$&` for the whole match, `$1` through `$99` for numbered groups, `$$`
+for a literal dollar, and the standard per-match prefix/suffix expansions.
+Backslashes are ordinary bytes: `\1` is not a group reference here.
+Computed templates follow the same format rules as literals; no native
+backslash validator or runtime rewriting adapter is added.
+
+Subjects and templates are fully counted through NUL/high bytes, including
+partial views. Standard iterator matches feed `match_results::format` with
+explicit begin/end pointers: the convenience `regex_replace` string-format
+overload truncated a NUL-bearing template on this host. The formatter
+borrows its template; results own their bytes without a subject/format
+snapshot. Scalars and string-cell reads share the helpers.
+
+Regex errors retain the existing status-2 exception; allocation/length
+failures escape rather than return partial, empty, or unchanged success.
+Caller assignment happens only after successful evaluation, including
+destination-borrowed subject/template views. There are no hidden checkpoints
+or automatic END guards.
+
+The future IR consumer must translate native `\0`/`\1` notation, including
+evaluated templates and literal dollars/backslashes. That is separate from
+C++ source-string escaping and is not implemented by this runtime unit.
 
 ### Program lifecycle and END
 

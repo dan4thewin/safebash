@@ -162,6 +162,10 @@ template <typename T> using Map = std::map<std::string, T>;
                          Array<std::string> &target);
 [[nodiscard]] bool matchall(std::string_view subject, const std::regex &pattern,
                             Array<std::string> &target);
+[[nodiscard]] std::string sub(std::string_view subject, const std::regex &pattern,
+                              std::string_view replacement);
+[[nodiscard]] std::string gsub(std::string_view subject, const std::regex &pattern,
+                               std::string_view replacement);
 
 [[nodiscard]] Array<std::string> argv(int count, const char *const *arguments,
                                       std::int64_t start = 0);

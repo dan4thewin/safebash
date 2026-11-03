@@ -1,0 +1,32 @@
+fn show_rewrites {
+    str text=${args[0]}
+    echo "input: [$text]"
+    if match $text '([A-Za-z]+)=([0-9]+)' {
+        echo "found: yes"
+    } else {
+        echo "found: no"
+    }
+    str first=$(sub $text '([A-Za-z]+)=([0-9]+)' '\1:[\2]')
+    echo "first: [$first]"
+    str all=$(gsub $text '([A-Za-z]+)=([0-9]+)' '\1:[\2]')
+    echo "all: [$all]"
+    str whole=$(sub $text '([A-Za-z]+)=([0-9]+)' '<\0>')
+    echo "whole: [$whole]"
+    str literal=$(sub $text '^[A-Za-z]+' 'cost=$\\')
+    echo "literal: [$literal]"
+    str digits=$(gsub $text '[0-9]' '*')
+    echo "digits: [$digits]"
+    str missing=$(gsub $text NEVER gone)
+    echo "missing: [$missing]"
+    array samples
+    samples[2]='port=02'
+    samples[9]='RATE=0'
+    for value in @samples {
+        str replaced=$(gsub $value '([A-Za-z]+)=([0-9]+)' '\2/\1')
+        echo "cell: [$replaced]"
+    }
+}
+
+str input=$(arg 1 'COUNT=08;RATE=7')
+attest input p?
+show_rewrites $input

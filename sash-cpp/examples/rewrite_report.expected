@@ -1,0 +1,10 @@
+input: [COUNT=08;RATE=7]
+found: yes
+first: [COUNT:[08];RATE=7]
+all: [COUNT:[08];RATE:[7]]
+whole: [<COUNT=08>;RATE=7]
+literal: [cost=$\=08;RATE=7]
+digits: [COUNT=**;RATE=*]
+missing: [COUNT=08;RATE=7]
+cell: [02/port]
+cell: [0/RATE]

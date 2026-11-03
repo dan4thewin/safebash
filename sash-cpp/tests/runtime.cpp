@@ -3114,6 +3114,147 @@ void regex_publication() {
             "regex search allocation failure escapes instead of becoming false or clearing output");
 }
 
+void replacement_values() {
+    const auto assignment = sash::compile_regex("([a-z])=([0-9])");
+    std::string subject = "pre a=1;b=2 end";
+    require(
+        sash::sub(subject, assignment, "$2:$1") == "pre 1:a;b=2 end" &&
+            sash::gsub(subject, assignment, "$2:$1") == "pre 1:a;2:b end",
+        "sub replaces only the first match while gsub replaces all and preserves surrounding text");
+    const auto unchanged = sash::gsub(subject, sash::compile_regex("NONE"), "unused");
+    const auto owned = sash::sub(subject, assignment, "$2:$1");
+    subject.assign("changed");
+    require(unchanged == "pre a=1;b=2 end" && owned == "pre 1:a;b=2 end",
+            "replacement and normal-miss results own bytes independently of the subject");
+    require(sash::gsub("a1b2c", sash::compile_regex("[0-9]"), {}) == "abc" &&
+                sash::sub({}, assignment, "$1").empty(),
+            "empty replacement deletes matches and default-empty subjects remain valid");
+    const std::string source = "a=1 outside";
+    const std::string format = "$2:$1 outside";
+    require(sash::sub(std::string_view(source.data(), 3), assignment,
+                      std::string_view(format.data(), 5)) == "1:a",
+            "replacement subjects and templates honor counted partial views");
+    const std::string binary("a\0b\xff", 4);
+    const std::string binary_format("X\0$1Y", 5);
+    require(sash::sub(binary, sash::compile_regex("(b)"), binary_format) ==
+                    std::string("a\0X\0bY\xff", 7) &&
+                sash::gsub(binary, sash::compile_regex("a(.)b"), "$1") == std::string("\0\xff", 2),
+            "replacement searches and formats retain counted NUL and high bytes");
+    std::string target = "a=1";
+    const std::string_view borrowed_subject = target;
+    target = sash::sub(borrowed_subject, assignment, "$2:$1");
+    require(target == "1:a", "replacement consumes a target-borrowed subject before assignment");
+    target = "$&!";
+    const std::string_view borrowed_format = target;
+    target = sash::gsub("a a", sash::compile_regex("a"), borrowed_format);
+    require(target == "a! a!", "replacement consumes a target-borrowed template before assignment");
+    const sash::Array<std::string> array{{0, "a=1"}};
+    const sash::Map<std::string> map{{"text", "a=1"}};
+    require(sash::sub(sash::cell(array, 0), assignment, "$2:$1") == "1:a" &&
+                sash::gsub(sash::cell(map, "text"), assignment, "$2:$1") == "1:a" &&
+                sash::gsub(sash::cell(map, "missing"), assignment, "$1").empty() &&
+                sash::len(map) == 1,
+            "replacement helpers share scalar and non-inserting string-cell behavior");
+}
+
+void replacement_templates() {
+    const auto assignment = sash::compile_regex("([a-z])=([0-9])");
+    require(sash::sub("a=1", assignment, R"([$&][$2][$1][$$][\1])") == R"([a=1][1][a][$][\1])",
+            "C++ templates expand whole/groups and dollars while backslashes remain literal");
+    std::string computed = "$";
+    computed += "2:$1";
+    require(sash::gsub("a=1 b=2", assignment, computed) == "1:a 2:b",
+            "evaluated replacement strings use the same standard template notation");
+    require(sash::sub("b", sash::compile_regex("(a)?(b)"), "$1/$2/$9") == "/b/",
+            "nonparticipating and absent standard replacement groups contribute empty strings");
+    const auto many = sash::compile_regex("(a)(b)(c)(d)(e)(f)(g)(h)(i)(j)(k)(l)");
+    require(sash::sub("abcdefghijkl", many, "$12/$1") == "l/a",
+            "standard two-digit replacement references retain groups beyond nine");
+    require(sash::sub("a", sash::compile_regex("a"), R"($$:$x:$:\q)") == R"($:$x:$:\q)",
+            "standard literal dollar and backslash text is not rejected by native template rules");
+    require(sash::sub("preaafter", sash::compile_regex("a"), "$`<$&>$'") == "prepre<a>afterafter" &&
+                sash::gsub("aba", sash::compile_regex("a"), "[$`][$']") == "[][ba]b[b][]",
+            "prefix and suffix expansions use the standard per-match context");
+    const auto empty = sash::compile_regex("");
+    require(sash::sub("ab", empty, "X") == "Xab" && sash::gsub("ab", empty, "X") == "XaXbX" &&
+                sash::gsub({}, empty, "X") == "X" && sash::gsub("ab", empty, {}) == "ab",
+            "first and global empty replacements retain standard progress and the final boundary");
+    require(sash::gsub("ab", sash::compile_regex("^"), "X") == "Xab" &&
+                sash::gsub("ab", sash::compile_regex("$"), "X") == "abX",
+            "global replacement preserves original anchor context and terminates at the end");
+    const auto alternatives = sash::compile_regex("(|a)");
+    require(
+        sash::sub("a", alternatives, "[$1]") == "[]a" &&
+            sash::gsub("a", alternatives, "[$1]") == "[][a][]",
+        "global replacement retries a nonempty match after an empty one but sub stops at first");
+}
+
+void replacement_failures() {
+    const auto literal = sash::compile_regex("x");
+    const std::string subject = "lead:" + std::string(1024, 'x');
+    const auto first = sash::sub(subject, literal, "y");
+    const auto all = sash::gsub(subject, literal, "y");
+    require(first == "lead:y" + std::string(1023, 'x') && all == "lead:" + std::string(1024, 'y'),
+            "replacement allocation calibration has independently expected first/global results");
+    using ReplaceFunction = std::string (*)(std::string_view, const std::regex &, std::string_view);
+    const auto output_failure = [&](ReplaceFunction replace, const std::string &completed) {
+        const auto size = completed.capacity() + 1;
+        {
+            const AllocationFailure fault(size, AllocationFailureMode::Exact);
+            std::size_t count = 0;
+            const std::regex_iterator<const char *> end;
+            for (std::regex_iterator<const char *> it(subject.data(),
+                                                      subject.data() + subject.size(), literal);
+                 it != end; ++it) {
+                ++count;
+            }
+            require(count == 1024,
+                    "output fault control must permit the complete replacement search walk");
+        }
+        std::string target = "kept";
+        bool failed = false;
+        try {
+            const AllocationFailure fault(size, AllocationFailureMode::Exact);
+            target = replace(subject, literal, "y");
+        } catch (const std::bad_alloc &) {
+            failed = true;
+        }
+        require(failed && target == "kept",
+                "replacement output allocation failure preserves the caller assignment");
+    };
+    output_failure(sash::sub, first);
+    output_failure(sash::gsub, all);
+    const auto word = sash::compile_regex("([a-z]+)");
+    const std::string format(1024, 'R');
+    const auto expanded = sash::gsub("tiny", word, format);
+    require(expanded == format, "a long counted template produces independently expected output");
+    const auto format_size = expanded.capacity() + 1;
+    {
+        const AllocationFailure fault(format_size, AllocationFailureMode::Exact);
+        require(sash::match("tiny", word),
+                "template-output fault control must permit the intended regex search");
+    }
+    std::string target = "kept";
+    bool format_failed = false;
+    try {
+        const AllocationFailure fault(format_size, AllocationFailureMode::Exact);
+        target = sash::gsub("tiny", word, format);
+    } catch (const std::bad_alloc &) {
+        format_failed = true;
+    }
+    require(format_failed && target == "kept",
+            "long-template output allocation failure escapes without an empty replacement");
+    bool search_failed = false;
+    try {
+        const AllocationFailure fault(1);
+        target = sash::sub("tiny", word, "R");
+    } catch (const std::bad_alloc &) {
+        search_failed = true;
+    }
+    require(search_failed && target == "kept",
+            "replacement search allocation failure is not a success-shaped unchanged result");
+}
+
 bool run_test(const char *name, const std::function<void()> &body) {
     try {
         body();
@@ -3185,6 +3326,16 @@ int main(int argc, char **argv) {
                                 regex_captures();
                                 regex_repeated();
                                 regex_publication();
+                            })
+                       ? 0
+                       : 1;
+        }
+        if (mode == "--replacement") {
+            return run_test(argv[1],
+                            [] {
+                                replacement_values();
+                                replacement_templates();
+                                replacement_failures();
                             })
                        ? 0
                        : 1;
@@ -3327,6 +3478,9 @@ int main(int argc, char **argv) {
         {"single regex capture arrays", regex_captures},
         {"standard repeated regex extraction", regex_repeated},
         {"regex failure publication boundaries", regex_publication},
+        {"owned first and global replacements", replacement_values},
+        {"standard C++ replacement templates", replacement_templates},
+        {"replacement allocation boundaries", replacement_failures},
     };
     for (const auto &test : tests) {
         if (!run_test(test.first, test.second)) {

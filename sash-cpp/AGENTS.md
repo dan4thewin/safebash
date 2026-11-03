@@ -13,7 +13,7 @@ The runtime task is `../notes-exp/tasks/cpp-transpiler-runtime-before-ir.md`.
 
 Build and exercise changes with `mk -p 1 test` in this directory. Use distinct
 `BUILD` directories when changing compilers or sanitizer flags. `mk -p 1
-sash-example` additionally compiles all eleven sash examples with the real
+sash-example` additionally compiles all twelve sash examples with the real
 CLI. Ordinary C++ tests do not require a Rust build or IR input.
 `mk -p 1 fault-test` adds Linux strace probes; run it without sanitizer
 instrumentation. The native command helper is deliberately unsanitized.
@@ -153,8 +153,21 @@ Copy-allocation faults use the host string capacity's exact allocation
 size; first prove scalar search and the complete standard iterator walk
 succeed under that fault. A broad size threshold can block libc++'s
 executor before the intended owned-copy boundary.
-No hidden checkpoints or backtracking/resource guarantees. Replacement
-templates remain a separate decision.
+No hidden checkpoints or backtracking/resource guarantees.
+
+`sub`/`gsub` return owned first/global replacements using standard C++
+notation: `$&`, `$1` through `$99`, `$$`, and per-match prefix/suffix context.
+Backslashes remain literal data; computed templates use the same rules.
+Keep subjects and templates counted through NUL/high bytes. Use the
+standard iterator and explicit-range match formatter: this host's
+convenience replacement overload truncated NUL-bearing formats.
+Preserve unmatched input and return owned unchanged input on a normal miss,
+never as an exception fallback. Destination-borrowed views remain valid
+until evaluation completes. Native-template translation belongs to the
+future IR consumer, not a runtime adapter (experiment DD#12).
+Replacement allocation faults derive their exact size from the completed
+output capacity, not the borrowed template's capacity. First prove the
+search/complete iterator walk succeeds under that same fault.
 
 A native undeclared word-loop binder is a string even over an int
 collection (DD#86), not automatically the range's C++ value type. Honor

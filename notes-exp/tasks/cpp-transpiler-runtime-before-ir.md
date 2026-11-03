@@ -387,6 +387,30 @@ mutations, eleven pinned real-CLI pairs, and the unchanged 169-case catalog
 are recorded in
 [journal 018](../journal/018-regex-matching-and-extraction.md).
 
+## Twelfth runnable milestone - regex replacement implemented
+
+`rewrite_report.cpp` and its sash counterpart retain a real function,
+first/global rewrites, a condition, literal dollar/backslash output, and
+string-cell traversal. The harmless `COUNT=08;RATE=7` input matches an
+independent ten-line golden with equivalent C++/native templates.
+
+[DD#12](../decisions/DD12-regex-replacement-templates.md) records DG's
+selection of standard C++ notation. Subjects/formats are counted through
+NUL/high bytes; normal misses return owned unchanged input, and exceptions
+preserve caller assignment. Standard iteration and explicit-range match
+formatting avoid the measured convenience-overload format truncation.
+No bespoke parser, runtime adapter, or hidden checkpoint was introduced.
+
+All 58 groups and twelve goldens pass across GCC, Clang, Linux ASan,
+real Apple Clang/libc++, and Apple ASan. Replacement-only UBSan, eight
+compiled mutations, twelve pinned real-CLI pairs, independent extra inputs,
+and the unchanged 169-case catalog are recorded in
+[journal 019](../journal/019-regex-replacement-templates.md).
+
+This completes replacement, not bulk reads/splitting, remaining formatting,
+or IR consumption. Native-template translation remains deferred to the
+future consumer; no native implementation or producer changed.
+
 ## Starting points selected by DG
 
 | Area | Starting point |
@@ -397,6 +421,7 @@ are recorded in
 | Sparse collections | `std::map`, with numeric keys for indexed arrays and string keys for maps |
 | Integer operations | Ordinary `std::int64_t` values with checked functions and native DD#25 arithmetic/shift rules, selected in DD#8 |
 | Regex | `std::regex` with `std::regex_constants::ECMAScript` |
+| Regex replacement | Standard C++ templates, selected in DD#12; native-template translation belongs to the future consumer |
 | General in-process stdout capture | Linux `memfd_create`, not a named temporary file or a synchronously filled pipe |
 | Failure propagation | Exceptions for uncaught failures; retain caught outcomes and explicit suppression rather than making every nonzero command exit throw |
 | External pipeline completion | Retain every stage; checked pipelines fail on any stage and use the rightmost failure, selected in DD#3 |
@@ -482,6 +507,15 @@ Explicit snapshots and already-prepared argument vectors remain copies.
 These choices unblock the next collection/argument unit without settling
 the unrelated later operation families below.
 
+## Regex replacement notation is settled
+
+DG selected [DD#12](../decisions/DD12-regex-replacement-templates.md):
+standard C++ `$&`/`$1`/`$$` formatting for first/global replacements,
+including computed templates. Subjects and formats remain counted byte
+values, and DD#11's standard match context/progression applies.
+Native-template translation belongs to the future IR consumer, not a
+temporary runtime adapter or producer change.
+
 ## Choices still requiring discussion
 
 Do not reopen the starting points above. Resolve consequential remaining
@@ -489,7 +523,6 @@ forks with DG before building their assumptions throughout the library.
 
 | Choice | Alternatives and tradeoffs | Proposed way to settle it |
 |---|---|---|
-| Regex replacement | Source-style backreferences require an adapter; standard C++ replacement notation reduces bespoke logic. Matching/capture layout, no-match results, and iteration are settled in DD#11. | Compare replacement examples and choose template notation before adding sub/gsub |
 | Capture completion | Trailing-newline treatment and background writers holding the captured stdout affect which bytes a completed capture yields. | Specify the completion boundary and pin it with direct C++ examples; do not let regular-file EOF accidentally decide the language |
 
 Ordinary command exit statuses remain outcomes even with exception-based
@@ -786,14 +819,15 @@ of most process work. Keep ordinary C++ representations visible.
   Use length-aware iterator ranges rather than C-string APIs.
 - [x] Publish output arrays atomically and reject literal-NUL patterns
   explicitly rather than allow silently incorrect compilation.
-- [ ] Implement first/global replacement and settle template notation,
-  escaping/backreferences and zero-length replacement behavior separately.
+- [x] Implement first/global replacement with DD#12's standard C++
+  templates, owned normal-miss results, counted formats, and DD#11's
+  original context/zero-length progression.
 - [x] Convert `std::regex_error` into an explicit operation failure,
   distinct from a successful no-match result. Do not assume a literal
   supplied by a C++ caller can never fail to compile.
-- [ ] Exercise the selected behavior with libstdc++ and libc++ as their
-  hosts become available. Account for backtracking/resource costs rather
-  than promising linear-time matching or inventing a hidden timeout.
+- [x] Exercise matching/extraction and replacement with libstdc++ and
+  real Apple libc++. There is no linear-time/backtracking-cost guarantee
+  or hidden timeout.
 
 ### Paths and other OS values
 
@@ -871,4 +905,6 @@ The later consumer still has substantial work: binding/type mapping,
 expression evaluation order, source-shaped control flow, call-site result
 handling, reader-region exits, and signal-checkpoint placement. Automatic
 capture-path selection and source comment preservation also belong there,
-not in this runtime task.
+not in this runtime task. Native replacement-template translation must
+handle evaluated strings and literal dollars/backslashes, not merely
+C++ literal escaping; it remains deferred to that consumer.

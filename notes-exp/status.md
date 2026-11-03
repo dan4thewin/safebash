@@ -1,3 +1,32 @@
+## Twelfth pair: standard C++ regex replacement complete
+
+DG selected standard C++ replacement notation, leaving native-template
+translation to the future IR consumer. Owned `sub`/`gsub` preserve unmatched
+input, counted subjects/formats, and DD#11's standard iteration. A normal
+miss returns unchanged owned input; exceptions preserve caller assignment.
+[DD#12](decisions/DD12-regex-replacement-templates.md) records the contract.
+
+The shared helper uses explicit-range standard match formatting: a direct
+probe found that the convenience replacement overload truncated a
+NUL-bearing format. No bespoke template parser or runtime adapter was added.
+[`rewrite_report.cpp`](../sash-cpp/examples/rewrite_report.cpp) and its
+[sash counterpart](../sash-cpp/examples/rewrite_report.sash) retain a real
+function, condition, and string-cell traversal, matching an independent
+ten-line golden.
+
+All 58 groups and twelve C++ goldens pass on GCC, Clang, supported Linux
+ASan, real Apple Clang/libc++, and Apple ASan. Both Linux fault gates and
+the unchanged 169-case catalog pass. Replacement-only UBSan, its independent
+detection canary, eight compiled mutation controls, and all twelve pinned
+real-CLI source pairs pass.
+[Journal 019](journal/019-regex-replacement-templates.md) records the
+counted-format correction, 56-file Mac parity, and independent extra inputs.
+
+Bulk reads/splitting, remaining formatting, general redirects, public wait,
+and forked-C++/background ownership remain on the
+[runtime roadmap](tasks/cpp-transpiler-runtime-before-ir.md).
+There is still no IR reader/emitter or producer implementation.
+
 ## Eleventh pair: regex matching and owned extraction complete
 
 DG selected full counted subjects and standard C++ iteration, retaining
