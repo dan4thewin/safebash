@@ -3255,6 +3255,184 @@ void replacement_failures() {
             "replacement search allocation failure is not a success-shaped unchanged result");
 }
 
+void nul_read_values() {
+    using Records = sash::Array<std::string>;
+    require(sash::read(std::string_view{}).empty(), "empty NUL input produces no records");
+    require(sash::read(std::string_view("\0\0", 2)) == Records{{0, ""}, {1, ""}},
+            "each NUL terminates a real record, including empty records");
+    require(sash::read(std::string_view("a\0", 2)) == Records{{0, "a"}} &&
+                sash::read(std::string_view("a\0\0", 3)) == Records{{0, "a"}, {1, ""}} &&
+                sash::read("tail") == Records{{0, "tail"}},
+            "terminal NUL adds no synthetic record and an unterminated tail survives");
+    require(sash::read(std::string_view("\0Ada\0\0Grace\0", 12)) ==
+                Records{{0, ""}, {1, "Ada"}, {2, ""}, {3, "Grace"}},
+            "leading and interior empty NUL records retain dense zero-based indices");
+    std::string bytes("\xff\r\n\0z", 5);
+    const auto owned = sash::read(bytes);
+    bytes.assign("changed");
+    require(owned == Records{{0, "\xff\r\n"}, {1, "z"}} &&
+                sash::read(" \t\r\n ") == Records{{0, " \t\r\n "}},
+            "NUL reads own high bytes and preserve newline, CR and whitespace");
+    const std::string backing("a\0b ignored", 11);
+    require(sash::read(std::string_view(backing.data(), 3)) == Records{{0, "a"}, {1, "b"}},
+            "NUL splitting respects the counted view, not backing storage or a C-string end");
+    Records target{{8, std::string("a\0b", 3)}};
+    target = sash::read(std::string_view(target.at(8)));
+    require(target == Records{{0, "a"}, {1, "b"}},
+            "a target-borrowed cell remains valid until the owned read completes");
+    const sash::Map<std::string> cells{{"records", std::string("a\0b", 3)}};
+    require(sash::read(sash::cell(cells, "records")) == target &&
+                sash::read(sash::cell(cells, "missing")).empty() && cells.size() == 1,
+            "scalar and string-cell reads share NUL semantics without inserting a missing cell");
+    const auto encoded = sash::gsub("a||b|", sash::compile_regex("[|]"), std::string_view("\0", 1));
+    require(sash::read(encoded) == Records{{0, "a"}, {1, ""}, {2, "b"}},
+            "upstream counted replacement states the separator before NUL splitting");
+    target[27] = "stale";
+    target = sash::read("only");
+    require(target == Records{{0, "only"}}, "shorter NUL input replaces every old array cell");
+    target = sash::read(std::string_view{});
+    require(target.empty(), "empty NUL input clears a populated assignment target");
+}
+
+void nul_read_streams(const std::string &helper) {
+    using Records = sash::Array<std::string>;
+    Records target{{9, "old"}};
+    sash::read_from(helper, {"args", "", "Ada", "", "Grace", ""}, [&](sash::LineReader &input) {
+        target = input.read();
+        require(target == Records{{0, ""}, {1, "Ada"}, {2, ""}, {3, "Grace"}, {4, ""}},
+                "stream NUL reads retain real empty records, not a final sentinel");
+        target = input.read();
+        require(target.empty(), "repeated bulk EOF clears the assignment target");
+        std::string line = "old";
+        require(!input.readline(line) && line.empty(),
+                "a bulk read leaves the shared line reader at EOF");
+    });
+    sash::read_from(helper, {"records", "0"}, [&](sash::LineReader &input) {
+        std::string header;
+        require(input.readline(header) && header == "alpha", "read the line before bulk input");
+        target = input.read();
+    });
+    require(target == Records{{0, "\nnul"}, {1, "inside\r\nlast"}},
+            "bulk read consumes the line reader's prefetched tail before another fd read");
+    sash::read_from(helper, {"binary"}, [&](sash::LineReader &input) { target = input.read(); });
+    require(target == Records{{0, std::string(256 * 1024, 'x')}, {1, "end\n\n"}},
+            "bulk read spans buffers and pipe capacity without treating newlines as separators");
+    sash::read_from(helper, {"exit", "0"}, [&](sash::LineReader &input) { target = input.read(); });
+    require(target.empty(), "empty producer output is an empty array, not an empty record");
+    in_child([&] {
+        install_stdin(std::string_view("Ada\0\0Grace\0", 11));
+        const int flags = ::fcntl(0, F_GETFD);
+        require(flags >= 0, "inspect borrowed stdin");
+        require(sash::read() == Records{{0, "Ada"}, {1, ""}, {2, "Grace"}},
+                "default NUL read consumes stdin");
+        require(::fcntl(0, F_GETFD) == flags && sash::read(0).empty(),
+                "explicit fd NUL read preserves the borrowed descriptor and its EOF");
+    });
+}
+
+void nul_read_failures() {
+    using Records = sash::Array<std::string>;
+    const std::string long_record(1024, 'x');
+    const std::string source = std::string("tiny\0", 5) + long_record + std::string("\0last", 5);
+    const auto healthy = sash::read(source);
+    require(healthy == Records{{0, "tiny"}, {1, long_record}, {2, "last"}},
+            "NUL field-copy allocation calibration has independently expected records");
+    const auto size = healthy.at(1).capacity() + 1;
+    {
+        const AllocationFailure fault(size, AllocationFailureMode::Exact);
+        require(sash::read(std::string_view("a\0b", 3)) == Records{{0, "a"}, {1, "b"}},
+                "field-copy fault control permits complete small-record splitting");
+    }
+    Records target{{9, "kept"}};
+    bool failed = false;
+    try {
+        const AllocationFailure fault(size, AllocationFailureMode::Exact);
+        target = sash::read(source);
+    } catch (const std::bad_alloc &) {
+        failed = true;
+    }
+    require(failed && target == Records{{9, "kept"}},
+            "later field allocation failure preserves the caller's entire old array");
+    bool invalid = false;
+    try {
+        target = sash::read(-1);
+    } catch (const sash::SetupError &error) {
+        invalid = error.code().value() == EBADF &&
+                  std::string_view(error.what()).find("read NUL records") != std::string_view::npos;
+    }
+    require(invalid && target == Records{{9, "kept"}},
+            "invalid borrowed fd is a labeled read error, not empty input");
+    in_child([&] {
+        int channel[2];
+        require(::pipe(channel) == 0, "create post-prefix read-error pipe");
+        const int flags = ::fcntl(channel[0], F_GETFL);
+        require(flags >= 0 && ::fcntl(channel[0], F_SETFL, flags | O_NONBLOCK) == 0,
+                "make the test reader nonblocking");
+        sash::write(std::string_view("a\0b", 3), channel[1]);
+        Records old{{9, "kept"}};
+        bool read_failed = false;
+        try {
+            old = sash::read(channel[0]);
+        } catch (const sash::SetupError &error) {
+            read_failed =
+                error.code().value() == EAGAIN &&
+                std::string_view(error.what()).find("read NUL records") != std::string_view::npos;
+        }
+        require(read_failed && old == Records{{9, "kept"}},
+                "I/O failure after a consumed prefix cannot publish partial records");
+        char byte;
+        require(::read(channel[0], &byte, 1) < 0 && errno == EAGAIN &&
+                    ::fcntl(channel[0], F_GETFL) == (flags | O_NONBLOCK),
+                "post-prefix error consumed the bytes without closing or reflagging the fd");
+        require(::close(channel[1]) == 0, "close post-prefix writer");
+        old = sash::read(channel[0]);
+        require(old.empty() && ::fcntl(channel[0], F_GETFL) == (flags | O_NONBLOCK),
+                "normal EOF after a read error clears the target and still borrows the fd");
+        require(::close(channel[0]) == 0, "close post-prefix reader");
+    });
+}
+
+void nul_read_ownership(const std::string &helper) {
+    using Records = sash::Array<std::string>;
+    Records target;
+    sash::read_pipeline({{helper, {"args", "Ada", "", "Grace"}}, {helper, {"relay"}}},
+                        [&](sash::LineReader &input) { target = input.read(); });
+    require(target == Records{{0, "Ada"}, {1, ""}, {2, "Grace"}},
+            "pipeline bulk reads return owned exact NUL records");
+    const auto result = sash::try_read_from(
+        helper, {"records", "7"}, [&](sash::LineReader &input) { target = input.read(); });
+    const auto *exit = std::get_if<sash::ProcessExit>(&result.outcome);
+    const Records expected{{0, "alpha\n\nnul"}, {1, "inside\r\nlast"}};
+    require(exit != nullptr && exit->status == 7 && target == expected,
+            "producer failure retains its verdict and already-published bulk records");
+    bool checked = false;
+    try {
+        sash::check(result);
+    } catch (const sash::CommandError &error) {
+        checked = error.status() == 7;
+    }
+    require(checked && target == expected,
+            "checking a failed producer does not roll back completed consumer assignment");
+    in_child([&] {
+        default_signal(SIGPIPE);
+        Records old{{9, "kept"}};
+        bool failed = false;
+        try {
+            (void)sash::try_read_from(helper, {"binary"}, [&](sash::LineReader &input) {
+                const AllocationFailure fault(8192);
+                old = input.read();
+            });
+        } catch (const std::bad_alloc &) {
+            failed = true;
+        }
+        require(failed && old == Records{{9, "kept"}},
+                "bulk collector allocation failure escapes without a partial assignment");
+        int status;
+        require(::waitpid(-1, &status, WNOHANG) < 0 && errno == ECHILD,
+                "bulk collector unwinding closes the pipe before reaping its producer");
+    });
+}
+
 bool run_test(const char *name, const std::function<void()> &body) {
     try {
         body();
@@ -3274,6 +3452,17 @@ int main(int argc, char **argv) {
         const std::string helper(argv[2]);
         if (std::getenv("SASH_CPP_TEST_TRACE") != nullptr) {
             sash::write("__SASH_CPP_TEST_BEGIN__\n", 2);
+        }
+        if (mode == "--nul-read") {
+            return run_test(argv[1],
+                            [&] {
+                                nul_read_values();
+                                nul_read_streams(helper);
+                                nul_read_failures();
+                                nul_read_ownership(helper);
+                            })
+                       ? 0
+                       : 1;
         }
         if (mode == "--collections") {
             return run_test(argv[1],
@@ -3481,6 +3670,10 @@ int main(int argc, char **argv) {
         {"owned first and global replacements", replacement_values},
         {"standard C++ replacement templates", replacement_templates},
         {"replacement allocation boundaries", replacement_failures},
+        {"owned counted NUL records", nul_read_values},
+        {"buffered and borrowed-fd NUL reads", [&] { nul_read_streams(helper); }},
+        {"NUL read failure publication", nul_read_failures},
+        {"NUL reader producer ownership", [&] { nul_read_ownership(helper); }},
     };
     for (const auto &test : tests) {
         if (!run_test(test.first, test.second)) {

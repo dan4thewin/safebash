@@ -1,0 +1,25 @@
+fn collect_records {
+    str text=${args[0]}
+    str encoded=$(gsub $text '[|]' $'\x00')
+    array fields
+    read $encoded fields
+    echo "split: $(len fields)"
+    for value in @fields {
+        echo "field: <$value>"
+    }
+    A[27]=stale
+    /usr/bin/printf '%s\0' Edsger Barbara | read A
+    attest name in A [[ $name =~ '^[A-Za-z]+$' ]]
+    echo "stream: $(len A)"
+    for value in @A {
+        echo "saved: <$value>"
+    }
+    echo "joined: [$(join A ,)]"
+    read '' A
+    echo "cleared: $(len A)"
+}
+
+str input=$(arg 1 'Ada||Grace|Linus|')
+attest input p?
+array records
+collect_records $input =records

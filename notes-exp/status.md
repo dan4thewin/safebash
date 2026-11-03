@@ -1,3 +1,36 @@
+## Thirteenth pair: owned NUL record reads complete
+
+DG authorized DD#99's NUL-only, no-flags bulk-read/string-splitting unit.
+Shared helpers produce owned dense string arrays, preserving real empty
+records and unterminated tails without inventing a final field. Empty
+input/EOF clears old cells; exceptions preserve caller assignment.
+[DD#13](decisions/DD13-nul-record-reads.md) records the contract.
+
+The buffered method retains bytes prefetched by `readline`; raw fd reads
+borrow and never close or reflag their descriptor. A simple temporary
+input string shares one splitter across both forms. Existing pipe owners
+still close before waiting, and producer failure after completed
+assignment does not roll it back.
+
+[`record_report.cpp`](../sash-cpp/examples/record_report.cpp) and its
+[sash counterpart](../sash-cpp/examples/record_report.sash) retain a real
+function, upstream separator conversion, and caller-owned array traversal.
+Both match an independent ten-line golden. The fresh actual CLI requires
+`$'\x00'`, replacing the initial retired `$'\0'` source spelling.
+
+All 62 groups and thirteen C++ goldens pass on GCC, Clang, supported Linux
+ASan, real Apple Clang/libc++, and Apple ASan. Both Linux fault gates and
+the unchanged 169-case catalog pass. NUL-only UBSan/canary, ten compiled
+mutations, thirteen pinned source pairs, and four independent extra inputs
+pass. [Journal 020](journal/020-nul-record-reads.md) records 59-file Mac
+parity, post-prefix I/O failure, and allocation/ownership controls.
+
+Remaining formatting, general redirects, public wait, and forked-C++/
+background ownership remain on the
+[runtime roadmap](tasks/cpp-transpiler-runtime-before-ir.md).
+There is still no IR reader/emitter or producer implementation; the
+protected producer proposal remains untouched.
+
 ## Twelfth pair: standard C++ regex replacement complete
 
 DG selected standard C++ replacement notation, leaving native-template

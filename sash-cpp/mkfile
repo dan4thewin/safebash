@@ -30,6 +30,7 @@ build:V:
 	$CXX $CPPFLAGS $CXXFLAGS $SANITIZE examples/string_report.cpp $BUILD/libsash_cpp.a -o $BUILD/string_report &&
 	$CXX $CPPFLAGS $CXXFLAGS $SANITIZE examples/regex_report.cpp $BUILD/libsash_cpp.a -o $BUILD/regex_report &&
 	$CXX $CPPFLAGS $CXXFLAGS $SANITIZE examples/rewrite_report.cpp $BUILD/libsash_cpp.a -o $BUILD/rewrite_report &&
+	$CXX $CPPFLAGS $CXXFLAGS $SANITIZE examples/record_report.cpp $BUILD/libsash_cpp.a -o $BUILD/record_report &&
 	$CXX $CPPFLAGS $CXXFLAGS $SANITIZE examples/error_paths.cpp $BUILD/libsash_cpp.a -o $BUILD/error_paths
 
 fixtures:V: build
@@ -65,7 +66,9 @@ test:V: fixtures
 	timeout 10 $BUILD/regex_report 'COUNT=08;EMPTY=;RATE=0x7' > $BUILD/regex_report.actual &&
 	cmp examples/regex_report.expected $BUILD/regex_report.actual &&
 	timeout 10 $BUILD/rewrite_report 'COUNT=08;RATE=7' > $BUILD/rewrite_report.actual &&
-	cmp examples/rewrite_report.expected $BUILD/rewrite_report.actual
+	cmp examples/rewrite_report.expected $BUILD/rewrite_report.actual &&
+	timeout 10 $BUILD/record_report > $BUILD/record_report.actual &&
+	cmp examples/record_report.expected $BUILD/record_report.actual
 
 error-demo:V: fixtures
 	if test "$PLATFORM" != linux; then printf '%s\n' 'error-demo requires Linux (strace and subreaper containment)' >&2; exit 2; fi &&
@@ -162,4 +165,7 @@ sash-example:V:
 	cmp examples/regex_report.expected $BUILD/regex_report-sash.actual &&
 	SASH_RT_LIB=$SASH_RT_LIB $SASH examples/rewrite_report.sash -o $BUILD/rewrite_report-sash &&
 	timeout 10 $BUILD/rewrite_report-sash 'COUNT=08;RATE=7' > $BUILD/rewrite_report-sash.actual &&
-	cmp examples/rewrite_report.expected $BUILD/rewrite_report-sash.actual
+	cmp examples/rewrite_report.expected $BUILD/rewrite_report-sash.actual &&
+	SASH_RT_LIB=$SASH_RT_LIB $SASH examples/record_report.sash -o $BUILD/record_report-sash &&
+	timeout 10 $BUILD/record_report-sash > $BUILD/record_report-sash.actual &&
+	cmp examples/record_report.expected $BUILD/record_report-sash.actual

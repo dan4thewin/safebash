@@ -561,6 +561,33 @@ bool is_print(std::string_view text) noexcept { return has_ascii_shape(text, 0x2
 
 bool is_graph(std::string_view text) noexcept { return has_ascii_shape(text, 0x21); }
 
+Array<std::string> read(std::string_view source) {
+    Array<std::string> result;
+    std::size_t begin = 0;
+    while (begin < source.size()) {
+        const auto delimiter = source.find('\0', begin);
+        const auto end = delimiter == std::string_view::npos ? source.size() : delimiter;
+        result.emplace(detail::collection_count(result.size()),
+                       std::string(source.substr(begin, end - begin)));
+        if (delimiter == std::string_view::npos) {
+            break;
+        }
+        begin = delimiter + 1;
+    }
+    return result;
+}
+
+Array<std::string> read(int fd) {
+    LineReader reader(fd);
+    return reader.read();
+}
+
+void LineReader::refill(std::string_view operation) {
+    end_ = platform::read_some(fd_, buffer_.data(), buffer_.size(), operation);
+    begin_ = 0;
+    eof_ = end_ == 0;
+}
+
 bool LineReader::readline(std::string &target) {
     std::string line;
     while (true) {
@@ -579,9 +606,19 @@ bool LineReader::readline(std::string &target) {
             target = std::move(line);
             return found;
         }
-        end_ = platform::read_some(fd_, buffer_.data(), buffer_.size());
-        begin_ = 0;
-        eof_ = end_ == 0;
+        refill("read command output");
+    }
+}
+
+Array<std::string> LineReader::read() {
+    std::string bytes;
+    while (true) {
+        bytes.append(buffer_.data() + begin_, end_ - begin_);
+        begin_ = end_;
+        if (eof_) {
+            return sash::read(bytes);
+        }
+        refill("read NUL records");
     }
 }
 

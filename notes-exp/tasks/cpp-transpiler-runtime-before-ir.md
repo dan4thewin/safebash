@@ -411,6 +411,37 @@ This completes replacement, not bulk reads/splitting, remaining formatting,
 or IR consumption. Native-template translation remains deferred to the
 future consumer; no native implementation or producer changed.
 
+## Thirteenth runnable milestone - NUL record reads implemented
+
+`record_report.cpp` and its sash counterpart retain a real function,
+caller-owned array, and ordinary field traversal. The default
+`Ada||Grace|Linus|` input is converted upstream to NUL, preserving a real
+empty field. External NUL records replace a stale cell, are joined, and
+are cleared with empty input. Both match an independent ten-line golden.
+
+[DD#13](../decisions/DD13-nul-record-reads.md) retains DD#99's NUL-only
+terminator semantics: owned dense string arrays, no synthetic final field,
+and replacement at empty input/EOF. Counted strings, string-cell values,
+borrowed fds, and buffered command/pipeline readers share one splitter.
+The simple collector temporarily holds the full input and owned fields;
+an existing reader consumes its prefetched tail first.
+
+I/O/allocation failures preserve caller assignment without rewinding
+consumed bytes. Borrowed fds remain open and unchanged. Existing owners
+close before waiting during unwinding; producer failure after completed
+assignment does not roll it back. No flags or hidden checkpoints were added.
+
+All 62 groups and thirteen goldens pass across GCC, Clang, Linux ASan,
+real Apple Clang/libc++, and Apple ASan. NUL-only UBSan, ten compiled
+mutations, thirteen pinned real-CLI pairs, four independent extra inputs,
+59-file Mac parity, and the unchanged 169-case catalog are recorded in
+[journal 020](../journal/020-nul-record-reads.md).
+
+This completes bulk reads/splitting, not remaining formatting, general
+redirects, public wait, forked-C++/background ownership, or IR consumption.
+The actual CLI's current hex-NUL source spelling is used without changing
+the native implementation or the protected producer proposal.
+
 ## Starting points selected by DG
 
 | Area | Starting point |
@@ -422,6 +453,7 @@ future consumer; no native implementation or producer changed.
 | Integer operations | Ordinary `std::int64_t` values with checked functions and native DD#25 arithmetic/shift rules, selected in DD#8 |
 | Regex | `std::regex` with `std::regex_constants::ECMAScript` |
 | Regex replacement | Standard C++ templates, selected in DD#12; native-template translation belongs to the future consumer |
+| NUL record reads | Owned dense arrays with DD#99 terminator semantics, retained in DD#13; other separators are converted upstream |
 | General in-process stdout capture | Linux `memfd_create`, not a named temporary file or a synchronously filled pipe |
 | Failure propagation | Exceptions for uncaught failures; retain caught outcomes and explicit suppression rather than making every nonzero command exit throw |
 | External pipeline completion | Retain every stage; checked pipelines fail on any stage and use the rightmost failure, selected in DD#3 |
@@ -788,10 +820,10 @@ of most process work. Keep ordinary C++ representations visible.
   elision. Allocation failure does not publish a partial splat.
 - [x] Provide argv snapshots and environment lookup, including unset
   versus set-to-empty, without mirroring variables into the environment.
-- [ ] Implement scalar line reading, NUL-separated bulk reading, and
+- [x] Implement scalar line reading, NUL-separated bulk reading, and
   string splitting. Cover empty records, consecutive/trailing separators,
   final unterminated records, and read error versus EOF.
-- [ ] Pin replacement-on-read behavior, including clearing at empty input
+- [x] Pin replacement-on-read behavior, including clearing at empty input
   and EOF, using DD#99 as the reference rather than reviving retired
   `mapfile`, IFS, or flag-dependent read variants.
 

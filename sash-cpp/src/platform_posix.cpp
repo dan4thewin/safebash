@@ -433,13 +433,13 @@ PipelineResult read_pipeline(std::vector<std::vector<std::string>> &commands,
     return result;
 }
 
-std::size_t read_some(int fd, char *buffer, std::size_t capacity) {
+std::size_t read_some(int fd, char *buffer, std::size_t capacity, std::string_view operation) {
     ssize_t count;
     do {
         count = ::read(fd, buffer, capacity);
     } while (count < 0 && errno == EINTR);
     if (count < 0) {
-        throw SetupError(last_error(), "read command output");
+        throw SetupError(last_error(), operation);
     }
     return static_cast<std::size_t>(count);
 }

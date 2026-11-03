@@ -21,7 +21,8 @@ ProcessResult execute(std::vector<std::string> &command);
 ProcessResult read_from(std::vector<std::string> &command, const std::function<void(int)> &body);
 PipelineResult read_pipeline(std::vector<std::vector<std::string>> &commands,
                              const std::function<void(int)> &body);
-std::size_t read_some(int fd, char *buffer, std::size_t capacity);
+std::size_t read_some(int fd, char *buffer, std::size_t capacity,
+                      std::string_view operation = "read command output");
 
 class FileDescriptor {
   public:

@@ -13,7 +13,7 @@ The runtime task is `../notes-exp/tasks/cpp-transpiler-runtime-before-ir.md`.
 
 Build and exercise changes with `mk -p 1 test` in this directory. Use distinct
 `BUILD` directories when changing compilers or sanitizer flags. `mk -p 1
-sash-example` additionally compiles all twelve sash examples with the real
+sash-example` additionally compiles all thirteen sash examples with the real
 CLI. Ordinary C++ tests do not require a Rust build or IR input.
 `mk -p 1 fault-test` adds Linux strace probes; run it without sanitizer
 instrumentation. The native command helper is deliberately unsanitized.
@@ -168,6 +168,24 @@ future IR consumer, not a runtime adapter (experiment DD#12).
 Replacement allocation faults derive their exact size from the completed
 output capacity, not the borrowed template's capacity. First prove the
 search/complete iterator walk succeeds under that same fault.
+
+NUL reads return owned dense string arrays for counted strings, string
+cells, borrowed fds, and command-backed readers. Retain DD#99 terminator
+semantics: real empty records survive, a final NUL adds no synthetic field,
+and empty input/EOF replaces the old array with empty. Newline/CR/high bytes
+remain data; convert other separators upstream. The current source pair
+uses `$'\x00'`, not the reference compiler's retired `$'\0'` escape.
+Use `LineReader::read()` inside an existing callback so prefetched bytes
+are not lost. Raw `read(fd)` borrows and never closes/reflags the descriptor.
+The simple bulk collector temporarily holds the full input plus owned
+fields and shares the scalar splitter. I/O/allocation errors publish no
+partial result, but consumed bytes are not rolled back; producer failure
+after completed assignment does not undo that assignment. Existing
+close-before-wait cleanup and explicit checkpoint placement remain unchanged.
+Field-copy faults use the healthy field's exact allocation size and a
+complete small-field control; collector faults start inside the callback,
+after launch. A nonblocking pipe with its writer held open pins real
+post-prefix EAGAIN rather than manufacturing EOF.
 
 A native undeclared word-loop binder is a string even over an int
 collection (DD#86), not automatically the range's C++ value type. Honor

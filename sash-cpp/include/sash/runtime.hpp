@@ -172,6 +172,8 @@ template <typename T> using Map = std::map<std::string, T>;
 [[nodiscard]] std::string arg(int count, const char *const *arguments, std::int64_t index);
 [[nodiscard]] std::string arg(int count, const char *const *arguments, std::int64_t index,
                               std::string_view fallback);
+[[nodiscard]] Array<std::string> read(std::string_view source);
+[[nodiscard]] Array<std::string> read(int fd = 0);
 
 namespace detail {
 void check_key(std::int64_t index);
@@ -437,10 +439,13 @@ class LineReader {
     LineReader(const LineReader &) = delete;
     LineReader &operator=(const LineReader &) = delete;
     [[nodiscard]] bool readline(std::string &target);
+    [[nodiscard]] Array<std::string> read();
 
   private:
     friend void detail::consume_lines(int, const std::function<void(LineReader &)> &);
+    friend Array<std::string> read(int);
     explicit LineReader(int fd) noexcept : fd_(fd) {}
+    void refill(std::string_view operation);
 
     int fd_;
     std::array<char, 8192> buffer_{};

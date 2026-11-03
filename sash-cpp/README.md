@@ -82,6 +82,13 @@ replacement using equivalent C++/native templates. A real function retains
 the match branch, literal dollar/backslash output, and string-cell traversal.
 Both match the adjacent ten-line golden; no template translator exists yet.
 
+[record_report.cpp](examples/record_report.cpp) and
+[record_report.sash](examples/record_report.sash) add NUL-separated bulk
+reads and counted-string splitting. A real function converts `|` upstream,
+retains an empty field, reads external NUL records into its caller's array,
+and clears the old array with empty input. Both match the adjacent ten-line
+golden.
+
 On Linux or macOS, with a C++17 compiler, Plan 9 `mk`, and `timeout` on PATH:
 
 ```sh
@@ -99,6 +106,7 @@ SASH_CPP_NUMERIC_RATE=0x7 ./build/numeric_report 08 0
 ./build/string_report COUNT=08
 ./build/regex_report 'COUNT=08;EMPTY=;RATE=0x7'
 ./build/rewrite_report 'COUNT=08;RATE=7'
+./build/record_report
 ```
 
 `greetings` prints `Hello, Ada!`; `job_report` prints the worker rounds;
@@ -112,6 +120,7 @@ SASH_CPP_NUMERIC_RATE=0x7 ./build/numeric_report 08 0
 `string_report` prints the sliced option and ASCII string-cell results.
 `regex_report` prints whole/captured matches, extracted pairs, and converted options.
 `rewrite_report` prints first/global rewrites, literal template bytes, and rewritten cells.
+`record_report` prints split fields, owned stream records, and replacement-on-read results.
 The build produces a normal C++ static library, `build/libsash_cpp.a`;
 it does not build Rust or link sash-rt.
 For example, the C++ program can also be linked directly:
@@ -143,7 +152,7 @@ mk -p 1 CXX=clang++ BUILD=build/apple-asan \
 ./build/apple/capture_report
 ```
 
-Both hosts run the same 58 fixture groups and twelve expected C++ reports,
+Both hosts run the same 62 fixture groups and thirteen expected C++ reports,
 including large binary output, nested captures/readers, closed standard
 descriptors, partial setup, child/fd cleanup, typed exit, main-only END,
 and signal delivery during foreground work and capture. Collection fixtures
@@ -164,6 +173,9 @@ target-borrowed inputs, and allocation failure without partial publication.
 Replacement fixtures cover first/global scope, standard C++ templates,
 counted binary formats, original match context, empty/nonempty retries,
 owned miss results, and allocation failures before caller assignment.
+NUL-read fixtures cover real empty records, final terminators and tails,
+buffered line-to-bulk handoff, borrowed stdin/fds, binary data beyond pipe
+capacity, post-prefix I/O failure, allocation failure, and producer cleanup.
 The Darwin build has been
 exercised on Apple Silicon; this is not a claim of testing every Mac SDK
 or architecture. Tests need GNU `timeout`, which is not a stock macOS tool.
@@ -193,7 +205,7 @@ ptrace. The command helper is an ordinary unsanitized external executable;
 the library, test driver, and examples receive `SANITIZE`.
 
 With the real sash CLI and runtime already built in the parent checkout,
-`mk -p 1 sash-example` compiles and runs all twelve sash examples against
+`mk -p 1 sash-example` compiles and runs all thirteen sash examples against
 their expected output. Override `SASH` and `SASH_RT_LIB` for other locations.
 This additional target is not a prerequisite for native C++ tests.
 
@@ -396,7 +408,7 @@ Binary bytes are retained internally, but the existing exec boundary
 rejects NUL in executable/argument strings before any launch.
 There is no word splitting or inherited unchecked function mode.
 Program ingress and numeric conversion have separate helpers below; the
-remaining string/read operation families are still future work.
+remaining formatting and source-to-C++ emission are still future work.
 
 ### Checked integer arithmetic
 
@@ -751,6 +763,38 @@ producer ignores the closed pipe and keeps running.
 The `LineReader` is borrowed only for the callback's lifetime; a `return`
 in the callback ends that region, not its surrounding C++ function.
 The same explicit reader is also used by the multi-stage API below.
+
+### Owned NUL record reads
+
+`read(std::string_view)` splits a counted string; `read(int fd = 0)`
+consumes a borrowed descriptor through EOF, defaulting to stdin. Both
+return an owned `Array<std::string>` with dense zero-based indices.
+String-cell values use the same operation. For command/pipeline callbacks,
+use the existing reader's `read()` so prefetched line-reader bytes survive:
+
+```cpp
+auto fields = sash::read(std::string_view("a\0\0b\0", 5));
+sash::read_from("/usr/bin/printf", {"%s\\0", "Ada", "Grace"},
+                [&](sash::LineReader &input) { fields = input.read(); });
+fields = sash::read(std::string_view{});
+```
+
+Only NUL terminates records. Leading/interior empty records survive,
+a final NUL adds no synthetic field, and a nonempty unterminated tail
+survives. Newline, CR, whitespace, and high bytes remain ordinary data.
+Empty input/EOF returns an empty array; assigning it clears old cells.
+Any other separator is converted upstream, not supplied as a read flag.
+[DD#13](../notes-exp/decisions/DD13-nul-record-reads.md) records the contract.
+
+The raw-fd helper never closes or reflags its descriptor. The buffered
+method gathers remaining bytes locally and shares the string splitter,
+temporarily holding both the full input and owned fields. I/O failures
+raise a labeled `SetupError`, not EOF; allocation/length failures escape.
+Caller assignment remains unchanged on failure, including a source borrowed
+from that target. Already-consumed bytes are not rewound, and producer
+failure after completed assignment does not roll it back. Existing
+command/pipeline owners still close before waiting during unwinding.
+No read helper adds checkpoints, cancellation, taint checks, or END policy.
 
 ### External pipelines
 
