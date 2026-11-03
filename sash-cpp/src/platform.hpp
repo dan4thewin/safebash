@@ -2,6 +2,7 @@
 #define SASH_CPP_PLATFORM_HPP
 
 #include <functional>
+#include <initializer_list>
 #include <string>
 #include <string_view>
 #include <system_error>
@@ -10,6 +11,7 @@
 namespace sash {
 struct ProcessResult;
 struct PipelineResult;
+struct Redirect;
 } // namespace sash
 
 namespace sash::platform {
@@ -34,11 +36,60 @@ class FileDescriptor {
     FileDescriptor &operator=(FileDescriptor &&) = delete;
 
     [[nodiscard]] int get() const noexcept { return fd_; }
+    [[nodiscard]] static bool owns(int fd) noexcept;
     void close();
 
   private:
+    static FileDescriptor *head_;
     int fd_;
+    FileDescriptor *next_;
 };
+
+class SourceFds {
+  public:
+    explicit SourceFds(std::initializer_list<int> fds);
+    ~SourceFds() noexcept;
+    SourceFds(const SourceFds &) = delete;
+    SourceFds &operator=(const SourceFds &) = delete;
+    [[nodiscard]] static bool reserved(int fd) noexcept;
+
+  private:
+    static SourceFds *active_;
+    std::vector<int> fds_;
+    SourceFds *previous_;
+};
+
+struct SavedDescriptor {
+    explicit SavedDescriptor(int fd);
+    std::error_code restore() noexcept;
+
+    int fd;
+    int flags;
+    FileDescriptor saved;
+};
+
+class ProgramChannels {
+  public:
+    explicit ProgramChannels(std::initializer_list<int> source_fds);
+    ~ProgramChannels() noexcept;
+    ProgramChannels(const ProgramChannels &) = delete;
+    ProgramChannels &operator=(const ProgramChannels &) = delete;
+    void restore();
+    [[nodiscard]] static int diagnostic_fd() noexcept;
+    [[nodiscard]] static bool active() noexcept;
+
+  private:
+    std::error_code restore_all() noexcept;
+    static ProgramChannels *active_;
+    SourceFds source_fds_;
+    SavedDescriptor input_;
+    SavedDescriptor output_;
+    SavedDescriptor error_;
+    ProgramChannels *previous_;
+    bool restored_ = false;
+};
+
+void redirected(std::initializer_list<Redirect> redirects, const std::function<void()> &body);
 
 struct Pipe {
     FileDescriptor reader;

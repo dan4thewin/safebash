@@ -1,3 +1,38 @@
+## Fourteenth pair: temporary redirections and invoker channels complete
+
+DG authorized the trial after clarifying the compiler/runtime FD seam.
+`run` accepts the compiler's source-fd set; private pipes, captures,
+backups, and diagnostic copies avoid every reserved number.
+Private numbers remain runtime/OS allocations, not IR identities.
+[DD#14](decisions/DD14-temporary-redirections.md) records the contract.
+
+Owned redirect factories apply input/output/append/read-write/duplication
+left to right and restore nested bindings, closed state, and flags.
+Partial setup skips the body without undoing earlier filesystem effects.
+Runtime diagnostics use saved invoker stderr, and invoker stdio is restored
+before END. Failed setup/restoration prevents inappropriate END execution.
+
+[`file_report.cpp`](../sash-cpp/examples/file_report.cpp) and its
+[sash counterpart](../sash-cpp/examples/file_report.sash) retain real
+functions, both duplication orders, and explicit fd 3, matching an
+independent eleven-line golden in a cleaned private directory.
+
+All 68 groups and fourteen C++ goldens pass on GCC, Clang, supported Linux
+ASan, real Apple Clang/libc++, and Apple ASan. Existing Linux fault gates,
+fourteen new controls, the unchanged 169-case catalog, all-category
+redirection-only UBSan/canaries, ten compiled mutations, and fourteen
+pinned actual-CLI pairs pass.
+[Journal 021](journal/021-temporary-redirections.md) records 64-file Mac
+parity, repaired partial-construction leaks, an unwind assertion previously
+masked by the main boundary, and sanitizer metadata initialization controls.
+
+Persistent exec/rebinding, public wait, forked-C++/background ownership,
+remaining formatting, and IR consumption remain on the
+[runtime roadmap](tasks/cpp-transpiler-runtime-before-ir.md).
+There is still no IR reader/emitter or producer implementation. Exporting
+the compiler-computed FD set remains future producer work; the protected
+proposal is untouched.
+
 ## Thirteenth pair: owned NUL record reads complete
 
 DG authorized DD#99's NUL-only, no-flags bulk-read/string-splitting unit.

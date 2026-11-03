@@ -89,6 +89,13 @@ retains an empty field, reads external NUL records into its caller's array,
 and clears the old array with empty input. Both match the adjacent ten-line
 golden.
 
+[file_report.cpp](examples/file_report.cpp) and
+[file_report.sash](examples/file_report.sash) add scoped input/output/append
+redirects, nested function calls, both descriptor-duplication orders, and
+an explicitly declared fd 3. Real functions write and collect the files;
+a caught missing-input failure leaves stdout restored. Both match the
+adjacent eleven-line golden in a private, cleaned test directory.
+
 On Linux or macOS, with a C++17 compiler, Plan 9 `mk`, and `timeout` on PATH:
 
 ```sh
@@ -107,6 +114,8 @@ SASH_CPP_NUMERIC_RATE=0x7 ./build/numeric_report 08 0
 ./build/regex_report 'COUNT=08;EMPTY=;RATE=0x7'
 ./build/rewrite_report 'COUNT=08;RATE=7'
 ./build/record_report
+bash tests/file_report.sh ./build/file_report \
+  examples/file_report.expected build/file_report.actual
 ```
 
 `greetings` prints `Hello, Ada!`; `job_report` prints the worker rounds;
@@ -121,6 +130,8 @@ SASH_CPP_NUMERIC_RATE=0x7 ./build/numeric_report 08 0
 `regex_report` prints whole/captured matches, extracted pairs, and converted options.
 `rewrite_report` prints first/global rewrites, literal template bytes, and rewritten cells.
 `record_report` prints split fields, owned stream records, and replacement-on-read results.
+`file_report` reads back redirected files and demonstrates ordering and restoration;
+use its harness above to provide and clean the required work directory.
 The build produces a normal C++ static library, `build/libsash_cpp.a`;
 it does not build Rust or link sash-rt.
 For example, the C++ program can also be linked directly:
@@ -152,7 +163,7 @@ mk -p 1 CXX=clang++ BUILD=build/apple-asan \
 ./build/apple/capture_report
 ```
 
-Both hosts run the same 62 fixture groups and thirteen expected C++ reports,
+Both hosts run the same 68 fixture groups and fourteen expected C++ reports,
 including large binary output, nested captures/readers, closed standard
 descriptors, partial setup, child/fd cleanup, typed exit, main-only END,
 and signal delivery during foreground work and capture. Collection fixtures
@@ -176,6 +187,10 @@ owned miss results, and allocation failures before caller assignment.
 NUL-read fixtures cover real empty records, final terminators and tails,
 buffered line-to-bulk handoff, borrowed stdin/fds, binary data beyond pipe
 capacity, post-prefix I/O failure, allocation failure, and producer cleanup.
+Redirection fixtures cover ordered/nested scopes, file flags and umask,
+source-fd reservations, private-fd inheritance, originally closed targets,
+partial construction, caught-body restoration before the main boundary,
+invoker diagnostics, END channels, and bounded descriptor lifetime.
 The Darwin build has been
 exercised on Apple Silicon; this is not a claim of testing every Mac SDK
 or architecture. Tests need GNU `timeout`, which is not a stock macOS tool.
@@ -200,12 +215,16 @@ Capture probes calibrate the first and second positive data reads by fd,
 verify retained bytes after a wait error, and prove independence from memfd
 with an injection canary followed by an absence check. The probes check the
 observed `clone`/`wait4` syscalls and trace evidence, not just a matching
-surface diagnostic. Keep this target separate from sanitizer runs under
+surface diagnostic. Fourteen redirection controls cover setup, inspect,
+save, open, install, close, frame/invoker restoration, fatal unwind
+restoration, and EINTR recovery. Their baseline has no child, and their
+assertions remain enabled even under `PYTHONOPTIMIZE`.
+Keep this target separate from sanitizer runs under
 ptrace. The command helper is an ordinary unsanitized external executable;
 the library, test driver, and examples receive `SANITIZE`.
 
 With the real sash CLI and runtime already built in the parent checkout,
-`mk -p 1 sash-example` compiles and runs all thirteen sash examples against
+`mk -p 1 sash-example` compiles and runs all fourteen sash examples against
 their expected output. Override `SASH` and `SASH_RT_LIB` for other locations.
 This additional target is not a prerequisite for native C++ tests.
 
@@ -230,7 +249,7 @@ mk -p 1 error-demo
 
 The full catalog has 169 cases: 85 basic cases, 65 injected-fault cases,
 and 19 interrupted-operation recovery cases.
-The newer arithmetic/lifecycle fixtures and the six lifecycle
+The newer arithmetic/lifecycle/redirection fixtures and their
 injected-fault checks belong to `test` and `fault-test`, not this
 command/capture catalog.
 
@@ -318,10 +337,10 @@ stderr is still inherited.
 Launch uses single-threaded fork/exec with prebuilt argument storage:
 no PATH lookup, shell parsing, or ENOEXEC shell fallback. The child does
 not allocate or unwind parent objects. Private capture and completion
-descriptors are close-on-exec and avoid standard descriptor slots,
-including slots initially closed. The foreground caller reaps its child
-on ordinary completion and error paths; cleanup does not force-kill or
-set a runtime timeout.
+descriptors are close-on-exec and avoid standard and declared source
+descriptor slots, including slots initially closed. The foreground caller
+reaps its child on ordinary completion and error paths; cleanup does not
+force-kill or set a runtime timeout.
 
 Discard a function's returned int/status at the call site; do not catch its
 body failures merely because its answer is ignored. Function bodies and
@@ -329,6 +348,58 @@ argument evaluation keep their own checks, including under conditions
 (DG's 2026-10-29/30 native DD#55 ruling). No inherited unchecked mode is
 needed for this. Per-stage result suppression, background launch, and
 replacing `exec` are not implemented yet.
+
+### Temporary redirections and invoker channels
+
+Supply every nonstandard script-referenced descriptor at program entry:
+
+```cpp
+int main() {
+    return sash::run("report", {3}, [] {
+        sash::redirected({sash::Redirect::write("report.txt", 3)}, [] {
+            sash::write("ready\n", 3);
+        });
+    });
+}
+```
+
+The metadata overloads also accept END. Existing `run(program, body[, end])`
+forms supply an empty explicit set; 0, 1, and 2 are always reserved.
+The future producer should export its already-computed source-fd set.
+Private backup, capture, pipe, and diagnostic numbers are runtime/OS
+allocations, not compiler-assigned identities to encode in the IR.
+Undeclared redirect destinations/duplication sources and late reservations
+of already-owned private descriptors fail explicitly.
+
+| Factory | Effect |
+|---|---|
+| `Redirect::read(path, fd = 0)` | Open existing input |
+| `Redirect::write(path, fd = 1)` | Create or truncate output |
+| `Redirect::append(path, fd = 1)` | Create or append output |
+| `Redirect::read_write(path, fd = 0)` | Open/create read-write without truncation |
+| `Redirect::duplicate(destination, source)` | Duplicate the source's current channel |
+
+`redirected({specifications...}, void_body)` applies already-owned paths
+left to right. Thus `write(path), duplicate(2, 1)` differs from
+`duplicate(2, 1), write(path)`. All metadata and NUL-bearing paths are
+validated and every affected destination is saved before file effects.
+Creation uses 0666 filtered by the caller's umask. Normal completion and
+body unwinding restore the prior destination, closed state, and descriptor
+flags, including within nested captures/functions.
+Setup failure runs no body; earlier truncation or writes are not undone.
+Ordinary completion errors throw `SetupError`; failed unwind restoration
+retains the existing fatal cleanup policy.
+
+`run` saves invoker stdin/stdout/stderr after installing the reservation
+set. Runtime diagnostics and fatal cleanup use the saved invoker stderr,
+not temporarily redirected fd 2; a closed invoker stderr has no fallback.
+Invoker channels are restored before END. Channel initialization failure
+runs neither body nor END, and failed invoker restoration prevents END.
+The output helpers use raw writes; buffered stdio/iostream flushing
+remains the caller's responsibility at descriptor boundaries.
+Persistent `exec` redirects, channel rebinding, and IR consumption remain
+separate work. [DD#14](../notes-exp/decisions/DD14-temporary-redirections.md)
+records this contract.
 
 ### Collections and owned arguments
 
@@ -660,11 +731,13 @@ C++ source-string escaping and is not implemented by this runtime unit.
 `const Shutdown &`: its `reason` is `Completed`, `ExplicitExit`, `Failure`,
 or `Signal`; `status` is the incoming status, and `signal` retains the
 triggering signal separately. Normal void-body completion is zero.
+Both forms have metadata overloads taking the source-fd set before `body`.
 
 `exit_program(status)` raises a dedicated `ExitRequest`, not a command
 verdict or a function return. Successful body unwinding restores captures
-and closes pipeline endpoints before reaping, then END runs once on the
-program channels. Returning from END preserves the incoming status;
+and closes pipeline endpoints before reaping. Invoker stdin/stdout/stderr
+are restored, then END runs once on those channels.
+Returning from END preserves the incoming status;
 an explicit `exit_program` in END overrides it without re-entry.
 The callbacks are borrowed rather than copied into allocating closures.
 
@@ -839,7 +912,7 @@ explicit. Each endpoint is attempted even if another close fails.
 Consumer exceptions propagate unchanged after successful cleanup.
 
 This slice is external stages plus a terminal parent reader, not forked
-C++ stages, public wait, stage suppression, negation, or general redirects.
+C++ stages, public wait, stage suppression, negation, or persistent redirects.
 
 ### Raw external-pipeline capture
 
@@ -896,8 +969,9 @@ See [DD#4](../notes-exp/decisions/DD04-macos-posix-adapter.md).
 
 The runtime is initially single-threaded and its output helpers use raw
 descriptor writes. Captured code must not mix in buffered stdio/iostream
-output or retain background writers. Script-fd reservation, arbitrary
-redirection and further pipeline forms remain later work.
+output or retain background writers. Temporary redirections and source-fd
+reservation are implemented above; persistent redirects and further
+pipeline forms remain later work.
 Failure to restore descriptor state during unwinding is diagnosed
 and terminates rather than continuing on the wrong stdout.
 

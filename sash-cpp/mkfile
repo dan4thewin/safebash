@@ -31,6 +31,7 @@ build:V:
 	$CXX $CPPFLAGS $CXXFLAGS $SANITIZE examples/regex_report.cpp $BUILD/libsash_cpp.a -o $BUILD/regex_report &&
 	$CXX $CPPFLAGS $CXXFLAGS $SANITIZE examples/rewrite_report.cpp $BUILD/libsash_cpp.a -o $BUILD/rewrite_report &&
 	$CXX $CPPFLAGS $CXXFLAGS $SANITIZE examples/record_report.cpp $BUILD/libsash_cpp.a -o $BUILD/record_report &&
+	$CXX $CPPFLAGS $CXXFLAGS $SANITIZE examples/file_report.cpp $BUILD/libsash_cpp.a -o $BUILD/file_report &&
 	$CXX $CPPFLAGS $CXXFLAGS $SANITIZE examples/error_paths.cpp $BUILD/libsash_cpp.a -o $BUILD/error_paths
 
 fixtures:V: build
@@ -68,7 +69,8 @@ test:V: fixtures
 	timeout 10 $BUILD/rewrite_report 'COUNT=08;RATE=7' > $BUILD/rewrite_report.actual &&
 	cmp examples/rewrite_report.expected $BUILD/rewrite_report.actual &&
 	timeout 10 $BUILD/record_report > $BUILD/record_report.actual &&
-	cmp examples/record_report.expected $BUILD/record_report.actual
+	cmp examples/record_report.expected $BUILD/record_report.actual &&
+	bash tests/file_report.sh $BUILD/file_report examples/file_report.expected $BUILD/file_report.actual
 
 error-demo:V: fixtures
 	if test "$PLATFORM" != linux; then printf '%s\n' 'error-demo requires Linux (strace and subreaper containment)' >&2; exit 2; fi &&
@@ -123,7 +125,8 @@ fault-test:V: test
 	timeout 10 strace -f -qq -e trace=execve,write -e inject=write:error=ENOMEM:when=1 -o $BUILD/exec-failure.trace $BUILD/runtime-tests --exec-failure $BUILD/command-helper &&
 	grep -qE 'execve\(.*command-helper[.]missing.*ENOENT' $BUILD/exec-failure.trace &&
 	! grep -qE 'write\(([013-9]|[0-9]{2,}),' $BUILD/exec-failure.trace &&
-	bash tests/capture_faults.sh $BUILD
+	bash tests/capture_faults.sh $BUILD &&
+	bash tests/redirect_faults.sh $BUILD
 
 fmt:V:
 	clang-format --dry-run --Werror include/sash/runtime.hpp src/*.hpp src/*.cpp examples/*.cpp tests/*.cpp
@@ -168,4 +171,6 @@ sash-example:V:
 	cmp examples/rewrite_report.expected $BUILD/rewrite_report-sash.actual &&
 	SASH_RT_LIB=$SASH_RT_LIB $SASH examples/record_report.sash -o $BUILD/record_report-sash &&
 	timeout 10 $BUILD/record_report-sash > $BUILD/record_report-sash.actual &&
-	cmp examples/record_report.expected $BUILD/record_report-sash.actual
+	cmp examples/record_report.expected $BUILD/record_report-sash.actual &&
+	SASH_RT_LIB=$SASH_RT_LIB $SASH examples/file_report.sash -o $BUILD/file_report-sash &&
+	bash tests/file_report.sh $BUILD/file_report-sash examples/file_report.expected $BUILD/file_report-sash.actual

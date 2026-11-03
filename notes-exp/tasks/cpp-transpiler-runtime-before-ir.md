@@ -442,6 +442,37 @@ redirects, public wait, forked-C++/background ownership, or IR consumption.
 The actual CLI's current hex-NUL source spelling is used without changing
 the native implementation or the protected producer proposal.
 
+## Fourteenth runnable milestone - temporary redirections implemented
+
+`file_report.cpp` and its sash counterpart retain real writing/collection
+functions, ordered/nested redirects, both duplication orders, and explicit
+fd 3. The private-directory harness matches an independent eleven-line
+golden and leaves a caught failure's stderr file empty.
+
+[DD#14](../decisions/DD14-temporary-redirections.md) records DG's compiler/
+runtime seam: source descriptor numbers are metadata; private pipe, capture,
+backup, and diagnostic copies are runtime/OS allocations. `run` accepts the
+source-fd set before allocation, with 0/1/2 implicit. The future producer
+should export its already-computed set, without encoding private numbers
+or requiring duplicate consumer analysis. No producer changed.
+
+Temporary input/output/append/read-write/duplication applies left to right.
+All snapshots precede effects; partial failure skips the body, restores
+bindings/flags/closed state, and releases earlier allocations without
+undoing truncation. Runtime diagnostics use invoker stderr; invoker stdio
+is restored before END. Persistent exec/rebinding remains pending.
+
+All 68 groups and fourteen goldens pass across GCC, Clang, Linux ASan,
+real Apple Clang/libc++, and Apple ASan. Fourteen new fault controls,
+redirection-only complete-category UBSan/canaries, ten compiled mutations,
+fourteen pinned real-CLI pairs, 64-file Mac parity, and the unchanged
+169-case catalog are recorded in
+[journal 021](../journal/021-temporary-redirections.md).
+
+This completes temporary redirections, not persistent exec, public wait,
+forked-C++/background ownership, remaining formatting, or IR consumption.
+The protected producer proposal remains unchanged.
+
 ## Starting points selected by DG
 
 | Area | Starting point |
@@ -454,6 +485,7 @@ the native implementation or the protected producer proposal.
 | Regex | `std::regex` with `std::regex_constants::ECMAScript` |
 | Regex replacement | Standard C++ templates, selected in DD#12; native-template translation belongs to the future consumer |
 | NUL record reads | Owned dense arrays with DD#99 terminator semantics, retained in DD#13; other separators are converted upstream |
+| Descriptor seam | Compiler-supplied source-fd set; runtime/OS private allocation; temporary scopes and invoker channels retained in DD#14 |
 | General in-process stdout capture | Linux `memfd_create`, not a named temporary file or a synchronously filled pipe |
 | Failure propagation | Exceptions for uncaught failures; retain caught outcomes and explicit suppression rather than making every nonzero command exit throw |
 | External pipeline completion | Retain every stage; checked pipelines fail on any stage and use the rightmost failure, selected in DD#3 |
@@ -602,24 +634,25 @@ readability before the emitter is written.
 - [x] Isolate Linux-specific operations in a small platform implementation.
   Keep the shared library and future generated sources free of Linux-only
   headers, syscall numbers, and feature-exposure macros.
-- [ ] Implement owned descriptors, duplication, close-on-exec, complete
+- [x] Implement owned descriptors, duplication, close-on-exec, complete
   writes, bounded reads, and interrupted-operation handling. Do not
   blindly retry `close` after interruption across platforms.
-- [ ] Keep short writes, EOF, and read/write errors distinct. Preserve
+- [x] Keep short writes, EOF, and read/write errors distinct. Preserve
   embedded NUL and arbitrary byte values.
-- [ ] Provide the script-used descriptor set as ordinary runtime input.
+- [x] Provide the script-used descriptor set as ordinary runtime input.
   Private backups, pipes, diagnostic copies, and capture descriptors must
   avoid those numbers, including numbers initially closed.
-- [ ] Apply redirections left to right. Cover input, output, append,
+- [x] Apply redirections left to right. Cover input, output, append,
   read/write, and descriptor duplication, including nested redirects and
   originally closed targets.
-- [ ] On partial setup failure, do not run the command; restore descriptor
+- [x] On partial setup failure, do not run the command; restore descriptor
   state and release successful allocations. Do not claim to undo earlier
   filesystem effects such as truncation.
 - [ ] Separate temporary command redirects from persistent `exec`
-  redirects. Successful persistent redirects commit and rebind the
+  redirects. Temporary scopes are implemented; persistent redirects
+  remain pending. Successful persistent redirects commit and rebind the
   program's channels rather than being undone by a scope destructor.
-- [ ] Implement the chosen diagnostic-channel rule, using DD#120 as the
+- [x] Implement the chosen diagnostic-channel rule, using DD#120 as the
   reference alternative. Restore the appropriate channels before END.
 - [x] Choose a disciplined output mechanism. If iostreams and raw
   descriptors coexist, make flushing and fork/redirection boundaries

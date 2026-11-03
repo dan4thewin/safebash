@@ -13,7 +13,7 @@ The runtime task is `../notes-exp/tasks/cpp-transpiler-runtime-before-ir.md`.
 
 Build and exercise changes with `mk -p 1 test` in this directory. Use distinct
 `BUILD` directories when changing compilers or sanitizer flags. `mk -p 1
-sash-example` additionally compiles all thirteen sash examples with the real
+sash-example` additionally compiles all fourteen sash examples with the real
 CLI. Ordinary C++ tests do not require a Rust build or IR input.
 `mk -p 1 fault-test` adds Linux strace probes; run it without sanitizer
 instrumentation. The native command helper is deliberately unsanitized.
@@ -24,6 +24,36 @@ I/O, descriptor restoration, and child ownership stay in
 Darwin pipe flag setup is non-atomic under the selected single-threaded
 model and must own both endpoints before either fallible flag operation.
 Do not retry ordinary close on either supported host.
+
+Supply the compiler-computed script-fd set at `run` entry, before private
+allocation; 0/1/2 are implicit. Private pipes, captures, backups, and diagnostic
+copies must skip every reserved number, including closed ones. Their actual
+numbers are runtime/OS choices, not IR identities. Temporary redirect
+destinations and duplication sources require metadata; a late reservation
+of a still-owned private fd is an explicit setup error.
+
+Use `Redirect` factories and the void `redirected` callback for ordered
+temporary scopes. Save all affected destinations before file effects,
+restore closed state and fd flags, and preserve the body exception.
+Earlier truncation/writes are not rolled back. Runtime diagnostics use
+saved invoker stderr, never temporarily rebound fd 2; closed invoker stderr
+has no fallback. Restore invoker stdio before END. Persistent exec/rebinding
+and producer metadata export remain separate work.
+
+Complete fallible private pipe relocation in named owners before returning
+an aggregate of noexcept moves. Invoker snapshots are directly initialized
+members, not fallible aggregate elements: the used GCC toolchain leaked
+earlier owners on a later initialization failure. The fd-limit fixtures
+pin both released kernel fds and cleared ownership/reservation state.
+
+Fd-exhaustion fixtures initialize ordinary exception/vptr metadata before
+lowering limits. Otherwise this host's GCC UBSan tries to read mappings
+through a low fd it cannot relocate and loops inside sanitizer code.
+The independent cold/warm control is recorded in journal 021; keep all
+sanitizer categories and the real allocation failures enabled.
+Redirection fault probes use a child-free baseline and actual injection
+records. Their Python assertions ignore inherited optimization settings;
+an ineffective-injection negative control must still fail.
 
 Real macOS validation uses Apple Clang/libc++ and `BUILD=build/apple`;
 `BUILD=build/apple-asan` with the ordinary ASan flags also works.

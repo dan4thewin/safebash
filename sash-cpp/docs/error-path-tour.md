@@ -10,6 +10,11 @@ programs will use; it is hand-written, not generated. The Bash program
 launches it, supplies faults, and checks its observable behavior. Neither
 is the sash compiler or the native Rust runtime.
 
+Descriptor numbers in the trace examples illustrate roles, not fixed
+runtime addresses. `run` now reserves source fds and saves private invoker
+copies, so current numbers can differ. Runtime diagnostics use the saved
+invoker stderr, not a temporarily redirected fd 2.
+
 ## Get oriented
 
 Use Linux and an unsanitized build. Starting at the repository root:
@@ -180,8 +185,9 @@ error_paths.sh
 
 The C++ demo's stdout and stderr go to files through the shell's
 redirections. Contexts such as `stdout-closed` then close fd 1 inside the
-invocation subshell. The corresponding C++ scenarios report through fd 2,
-so closing stdout does not also destroy the observation channel.
+invocation subshell. Those scenarios send authored demo messages through
+fd 2; runtime errors use its saved invoker copy. Closing stdout does not
+also destroy the observation channel.
 
 `invoke` runs the command in an `if` condition. Thus `set -e` does not
 abort the runner on an expected nonzero demo status; the `else` arm
@@ -562,14 +568,15 @@ has already exited 7 and been reaped. That `CommandError` is unwinding;
 ```text
 write(1, "partial", 7)             = 7
 ... helper exits 7 and is reaped ...
-dup2(4, 1)                        = -1 EIO (...) (INJECTED)
-write(2, "sash-cpp: cleanup failed: ", 26) = 26
-write(2, "restore stdout", 14)     = 14
+dup2(7, 1)                        = -1 EIO (...) (INJECTED)
+write(5, "sash-cpp: cleanup failed: ", 26) = 26
+write(5, "restore stdout", 14)     = 14
 ...
 ```
 
 `cleanup_failed` formats the errno number into a stack buffer with
-`std::to_chars`, writes directly to fd 2, and calls `std::_Exit(2)`.
+`std::to_chars`, writes through saved invoker stderr (fd 5 in this trace),
+and calls `std::_Exit(2)`.
 There is no heap-built cleanup message, second thrown exception, outer
 catch, or `continued`. `_Exit` also bypasses remaining C++ destructors
 and stdio flushing. The kernel closes descriptors and unmaps memory;

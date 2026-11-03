@@ -78,6 +78,21 @@ struct Command {
     std::vector<std::string> arguments;
 };
 
+enum class RedirectOp { Read, Write, Append, ReadWrite, Duplicate };
+
+struct Redirect {
+    int fd = 1;
+    RedirectOp op = RedirectOp::Write;
+    std::string path;
+    int source = -1;
+
+    [[nodiscard]] static Redirect read(std::string_view path, int fd = 0);
+    [[nodiscard]] static Redirect write(std::string_view path, int fd = 1);
+    [[nodiscard]] static Redirect append(std::string_view path, int fd = 1);
+    [[nodiscard]] static Redirect read_write(std::string_view path, int fd = 0);
+    [[nodiscard]] static Redirect duplicate(int destination, int source);
+};
+
 struct PipelineSetupError {
     std::size_t stage;
     SetupError error;
@@ -429,8 +444,10 @@ ProcessResult read_from(std::string_view executable, const std::vector<std::stri
 PipelineResult read_pipeline(const std::vector<Command> &commands,
                              const std::function<void(LineReader &)> &body);
 std::string capture_stdout(const std::function<void()> &body);
+void redirected(std::initializer_list<Redirect> redirects, const std::function<void()> &body);
 int report_error(std::string_view program, std::string_view diagnostic, int status) noexcept;
-int run_program(std::string_view program, const std::function<void()> &body,
+int run_program(std::string_view program, std::initializer_list<int> source_fds,
+                const std::function<void()> &body,
                 const std::function<void(const Shutdown &)> &end);
 } // namespace detail
 
@@ -485,12 +502,28 @@ template <typename Body> [[nodiscard]] std::string capture_stdout(Body &&body) {
     return detail::capture_stdout(std::forward<Body>(body));
 }
 
-template <typename Body, typename End> int run(std::string_view program, Body &&body, End &&end) {
+template <typename Body> void redirected(std::initializer_list<Redirect> redirects, Body &&body) {
+    static_assert(std::is_same_v<std::invoke_result_t<Body &>, void>,
+                  "the redirected body must return void");
+    detail::redirected(redirects, std::ref(body));
+}
+
+template <typename Body, typename End>
+int run(std::string_view program, std::initializer_list<int> source_fds, Body &&body, End &&end) {
     static_assert(std::is_same_v<std::invoke_result_t<Body &>, void>,
                   "the program body must return void");
     static_assert(std::is_same_v<std::invoke_result_t<End &, const Shutdown &>, void>,
                   "the END body must return void");
-    return detail::run_program(program, std::ref(body), std::ref(end));
+    return detail::run_program(program, source_fds, std::ref(body), std::ref(end));
+}
+
+template <typename Body>
+int run(std::string_view program, std::initializer_list<int> source_fds, Body &&body) {
+    return run(program, source_fds, std::forward<Body>(body), [](const Shutdown &) {});
+}
+
+template <typename Body, typename End> int run(std::string_view program, Body &&body, End &&end) {
+    return run(program, {}, std::forward<Body>(body), std::forward<End>(end));
 }
 
 template <typename Body> int run(std::string_view program, Body &&body) {

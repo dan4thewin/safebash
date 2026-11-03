@@ -1,0 +1,60 @@
+fn write_records {
+    str directory=${args[0]}
+    /usr/bin/printf '%s\0' Ada
+    /usr/bin/printf '%s\0' Grace > "${directory:?}/nested"
+    /usr/bin/printf '%s\0' Edsger
+}
+
+fn write_merged {
+    /usr/bin/printf '%s\0' out
+    /usr/bin/printf '%s\0' err 1>&2
+}
+
+fn write_unmerged {
+    /usr/bin/printf '%s\0' out
+    echo unmerged: stderr 1>&2
+}
+
+fn write_reserved {
+    /usr/bin/printf '%s\0' reserved 1>&3
+}
+
+fn read_records {
+    str path=${args[0]}
+    read A < "${path:?}"
+    attest name in A [[ $name =~ '^[A-Za-z\-]+$' ]]
+}
+
+fn collect_files {
+    str directory=${args[0]}
+    write_records $directory > "${directory:?}/records"
+    /usr/bin/printf '%s\0' Barbara >> "${directory:?}/records"
+    write_merged > "${directory:?}/merged" 2>&1
+    write_unmerged 2>&1 > "${directory:?}/unmerged"
+    write_reserved 3> "${directory:?}/descriptor"
+    read_records "${directory:?}/records" =A
+    echo "records: $(len A)"
+    for value in @A {
+        echo "record: $value"
+    }
+    array other
+    read_records "${directory:?}/nested" =other
+    echo "nested: $(join other ,)"
+    read_records "${directory:?}/merged" =other
+    echo "merged: $(join other ,)"
+    read_records "${directory:?}/unmerged" =other
+    echo "unmerged: $(join other ,)"
+    read_records "${directory:?}/descriptor" =other
+    echo "descriptor: $(join other ,)"
+    if /usr/bin/printf 'unreachable\n' 2> "${directory:?}/failure" < "${directory:?}/missing" {
+        echo unexpected: input
+    } else {
+        echo caught: missing input
+    }
+    echo restored: stdout
+}
+
+str workdir=$(arg 1)
+attest workdir [[ $workdir =~ '^[/A-Za-z0-9._\-]+$' ]]
+array records
+collect_files $workdir =records

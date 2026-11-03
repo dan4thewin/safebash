@@ -16,6 +16,26 @@ CommandError::CommandError(int status, std::string diagnostic)
 SetupError::SetupError(std::error_code error, std::string_view operation)
     : std::system_error(error, std::string(operation)) {}
 
+Redirect Redirect::read(std::string_view path, int fd) {
+    return {fd, RedirectOp::Read, std::string(path)};
+}
+
+Redirect Redirect::write(std::string_view path, int fd) {
+    return {fd, RedirectOp::Write, std::string(path)};
+}
+
+Redirect Redirect::append(std::string_view path, int fd) {
+    return {fd, RedirectOp::Append, std::string(path)};
+}
+
+Redirect Redirect::read_write(std::string_view path, int fd) {
+    return {fd, RedirectOp::ReadWrite, std::string(path)};
+}
+
+Redirect Redirect::duplicate(int destination, int source) {
+    return {destination, RedirectOp::Duplicate, {}, source};
+}
+
 ArithmeticError::ArithmeticError(ArithmeticFault fault) noexcept : fault_(fault) {}
 
 const char *ArithmeticError::what() const noexcept {
@@ -674,6 +694,10 @@ std::string capture_stdout(const std::function<void()> &body) {
     platform::StdoutCapture capture;
     body();
     return capture.finish();
+}
+
+void redirected(std::initializer_list<Redirect> redirects, const std::function<void()> &body) {
+    platform::redirected(redirects, body);
 }
 
 int report_error(std::string_view program, std::string_view diagnostic, int status) noexcept {

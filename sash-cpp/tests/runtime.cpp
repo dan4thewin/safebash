@@ -8,6 +8,7 @@
 #include <cstring>
 #include <fcntl.h>
 #include <filesystem>
+#include <fstream>
 #include <functional>
 #include <limits>
 #include <stdexcept>
@@ -144,6 +145,53 @@ void in_child(const std::function<void()> &body) {
         throw std::runtime_error("test child failed: " + result.diagnostic);
     }
 }
+
+void prepare_fd_limit_fixture() {
+    require(::dup2(2, 0) == 0 && ::dup2(2, 1) == 1, "open fd-limit fixture stdio");
+    // Initialize sanitizer vptr metadata before restricting its own descriptor access.
+    const auto initialized = sash::try_execute(std::string("\0", 1), {});
+    const auto *error = std::get_if<sash::SetupError>(&initialized.outcome);
+    require(error != nullptr && error->code() == std::errc::invalid_argument,
+            "initialize runtime exception paths before limiting fds");
+}
+
+class RedirectFiles {
+  public:
+    RedirectFiles() {
+        require(::mkdtemp(directory_) != nullptr, "create redirect fixture directory");
+    }
+    ~RedirectFiles() noexcept {
+        std::error_code error;
+        std::filesystem::remove_all(directory_, error);
+        if (error) {
+            std::fprintf(stderr, "redirect fixture cleanup: %s\n", error.message().c_str());
+            std::_Exit(1);
+        }
+    }
+    RedirectFiles(const RedirectFiles &) = delete;
+    RedirectFiles &operator=(const RedirectFiles &) = delete;
+
+    std::string path(std::string_view name) const {
+        return std::string(directory_) + "/" + std::string(name);
+    }
+    void put(std::string_view name, std::string_view bytes) const {
+        std::ofstream output(path(name), std::ios::binary);
+        require(static_cast<bool>(output), "open redirect fixture output");
+        output.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+        output.close();
+        require(static_cast<bool>(output), "write redirect fixture output");
+    }
+    std::string get(std::string_view name) const {
+        std::ifstream input(path(name), std::ios::binary);
+        require(static_cast<bool>(input), "open redirect fixture input");
+        std::string bytes{std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>()};
+        require(!input.bad(), "read redirect fixture input");
+        return bytes;
+    }
+
+  private:
+    char directory_[sizeof("/tmp/sash-cpp-redirect.XXXXXX")] = "/tmp/sash-cpp-redirect.XXXXXX";
+};
 
 void command_outcomes() {
     const auto output = sash::capture_stdout([] {
@@ -3255,6 +3303,416 @@ void replacement_failures() {
             "replacement search allocation failure is not a success-shaped unchanged result");
 }
 
+void redirect_values(const std::string &helper) {
+    RedirectFiles files;
+    files.put("input", std::string_view("Ada\0\0Grace\0", 11));
+    files.put("output", "old");
+    const auto result = run_child([&] {
+        return sash::run("./redirect", [&] {
+            sash::Array<std::string> records;
+            sash::redirected({sash::Redirect::read(files.path("input"))},
+                             [&] { records = sash::read(); });
+            require(records == sash::Array<std::string>{{0, "Ada"}, {1, ""}, {2, "Grace"}},
+                    "redirected stdin must retain counted NUL records");
+            sash::redirected({sash::Redirect::write(files.path("output"))},
+                             [] { sash::write(std::string_view("first\0", 6)); });
+            sash::redirected({sash::Redirect::append(files.path("output"))},
+                             [] { sash::write("last"); });
+            require(files.get("output") == std::string("first\0last", 10),
+                    "write truncates and append preserves counted existing bytes");
+            sash::redirected({sash::Redirect::read(files.path("input")),
+                              sash::Redirect::write(files.path("external"))},
+                             [&] { sash::execute(helper, {"stdin"}); });
+            require(files.get("external") == files.get("input"),
+                    "external commands inherit redirected stdin and stdout");
+            files.put("rw", "abc");
+            sash::redirected({sash::Redirect::read_write(files.path("rw"))}, [] {
+                require((::fcntl(0, F_GETFL) & O_ACCMODE) == O_RDWR, "read/write redirect mode");
+                sash::write("z", 0);
+            });
+            require(files.get("rw") == "zbc", "read/write must not truncate existing files");
+            const mode_t previous = ::umask(0077);
+            sash::redirected({sash::Redirect::write(files.path("private"))}, [] {});
+            ::umask(previous);
+            struct stat metadata{};
+            require(::stat(files.path("private").c_str(), &metadata) == 0 &&
+                        (metadata.st_mode & 0777) == 0600,
+                    "new redirect files use ordinary 0666 filtered by umask");
+        });
+    });
+    require(result.status == 0 && result.diagnostic.empty(),
+            "ordinary file redirects must succeed without diagnostics");
+}
+
+void redirect_order() {
+    RedirectFiles files;
+    const auto result = run_child([&] {
+        const int baseline =
+            ::open(files.path("baseline").c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0600);
+        require(baseline >= 0 && ::dup2(baseline, 1) == 1, "install redirect ordering baseline");
+        ::close(baseline);
+        return sash::run("./order", [&] {
+            sash::redirected(
+                {sash::Redirect::write(files.path("merged")), sash::Redirect::duplicate(2, 1)}, [] {
+                    sash::write("out");
+                    sash::write("err", 2);
+                });
+            sash::redirected(
+                {sash::Redirect::duplicate(2, 1), sash::Redirect::write(files.path("unmerged"))},
+                [] {
+                    sash::write("out");
+                    sash::write("err", 2);
+                });
+            sash::redirected({sash::Redirect::write(files.path("outer"))}, [&] {
+                sash::write("before");
+                sash::redirected({sash::Redirect::write(files.path("inner"))},
+                                 [] { sash::write("inner"); });
+                sash::write("after");
+            });
+            sash::redirected({sash::Redirect::write(files.path("discarded")),
+                              sash::Redirect::write(files.path("last"))},
+                             [] { sash::write("last"); });
+            sash::write("restored");
+        });
+    });
+    require(result.status == 0 && result.diagnostic.empty(), "redirect order program succeeds");
+    require(files.get("merged") == "outerr" && files.get("unmerged") == "out" &&
+                files.get("baseline") == "errrestored",
+            "left-to-right duplication retains the channel at that exact point");
+    require(files.get("outer") == "beforeafter" && files.get("inner") == "inner",
+            "nested redirects restore the enclosing destination");
+    require(files.get("discarded").empty() && files.get("last") == "last",
+            "repeated targets apply every file effect but restore one original snapshot");
+}
+
+void redirect_ownership(const std::string &helper) {
+    RedirectFiles files;
+    const auto result = run_child([&] {
+        return sash::run("./owned", {99, 8, 7, 6, 5, 4, 3, 3}, [&] {
+            const auto require_reserved_closed = [] {
+                for (const int fd : {3, 4, 5, 6, 7, 8, 99}) {
+                    errno = 0;
+                    require(::fcntl(fd, F_GETFD) < 0 && errno == EBADF,
+                            "private runtime allocation occupied a source descriptor");
+                }
+            };
+            require_reserved_closed();
+            require(sash::capture_stdout([&] {
+                        require_reserved_closed();
+                        sash::execute(helper, {"fds"});
+                        sash::write("capture");
+                    }) == "capture",
+                    "capture storage and exec channels avoid every reserved descriptor");
+            sash::read_from(helper, {"records", "0"}, [&](sash::LineReader &input) {
+                require_reserved_closed();
+                const auto records = input.read();
+                require(!records.empty(), "reserved-fd reader still consumes producer output");
+                sash::redirected({sash::Redirect::write(files.path("fd3"), 3)}, [&] {
+                    require(::fcntl(3, F_GETFD) == 0, "source output descriptor survives exec");
+                    sash::execute(helper, {"fds", "3"});
+                    sash::write("source", 3);
+                });
+                require_reserved_closed();
+            });
+            require(files.get("fd3") == "source", "named descriptor writes survive private IO");
+            int source = ::open(files.path("self").c_str(), O_RDWR | O_CREAT | O_TRUNC, 0600);
+            require(source >= 0 && ::dup2(source, 3) == 3, "install inherited source fd");
+            if (source != 3) {
+                ::close(source);
+            }
+            require(::fcntl(3, F_SETFD, FD_CLOEXEC) == 0, "set inherited source flags");
+            sash::redirected({sash::Redirect::duplicate(3, 3)}, [] {
+                require(::fcntl(3, F_GETFD) == FD_CLOEXEC, "self duplication preserves fd flags");
+                sash::write("self", 3);
+            });
+            require(::fcntl(3, F_GETFD) == FD_CLOEXEC, "restore inherited descriptor flags");
+            require(::close(3) == 0, "close caller-owned source descriptor");
+            require(files.get("self") == "self", "self duplication retains the original open file");
+        });
+    });
+    require(result.status == 0 && result.diagnostic.empty(),
+            "source/private descriptor ownership remains separate");
+    const auto partial = run_child([&] {
+        prepare_fd_limit_fixture();
+        for (const int fd : {0, 1, 3, 4}) {
+            require(::close(fd) == 0 || errno == EBADF, "clear partial private pipe source slots");
+        }
+        return sash::run("./partial", [&] {
+            struct rlimit original{};
+            require(::getrlimit(RLIMIT_NOFILE, &original) == 0, "get partial pipe fd limit");
+            auto limited = original;
+            limited.rlim_cur = 5;
+            require(::setrlimit(RLIMIT_NOFILE, &limited) == 0, "allow exactly one pipe relocation");
+            const auto outcome = sash::try_execute(helper, {"exit", "0"});
+            require(::setrlimit(RLIMIT_NOFILE, &original) == 0, "restore partial pipe fd limit");
+            const auto *error = std::get_if<sash::SetupError>(&outcome.outcome);
+            require(error != nullptr && error->code() == std::errc::too_many_files_open,
+                    "second endpoint relocation must fail after the first succeeds");
+            errno = 0;
+            require(::fcntl(4, F_GETFD) < 0 && errno == EBADF,
+                    "failed pipe construction must release its first relocated endpoint");
+        });
+    });
+    require(partial.status == 0 && partial.diagnostic.empty(),
+            "partial private pipe construction leaves no leaked or dangling owner");
+    const auto channels = run_child([] {
+        prepare_fd_limit_fixture();
+        for (const int fd : {3, 4}) {
+            require(::close(fd) == 0 || errno == EBADF, "clear partial channel backup slots");
+        }
+        struct rlimit original{};
+        require(::getrlimit(RLIMIT_NOFILE, &original) == 0, "get partial channel fd limit");
+        auto limited = original;
+        limited.rlim_cur = 5;
+        require(::setrlimit(RLIMIT_NOFILE, &limited) == 0, "allow two of three channel backups");
+        bool called = false;
+        const int status = sash::run("./partial-channels", [&] { called = true; });
+        require(::setrlimit(RLIMIT_NOFILE, &original) == 0, "restore partial channel fd limit");
+        require(status == 2 && !called, "partial channel setup must not enter the program");
+        for (const int fd : {3, 4}) {
+            errno = 0;
+            require(::fcntl(fd, F_GETFD) < 0 && errno == EBADF,
+                    "partial channel construction must release earlier backups");
+        }
+        return sash::run("./after-channels", {3, 4}, [] {});
+    });
+    require(channels.status == 0 &&
+                channels.diagnostic ==
+                    "./partial-channels: save descriptor: " +
+                        std::error_code(EMFILE, std::generic_category()).message() + "\n",
+            "channel setup failure leaves no dangling source-fd reservation or private owner");
+}
+
+void redirect_failures() {
+    RedirectFiles files;
+    files.put("prefix", "old");
+    const auto result = run_child([&] {
+        return sash::run("./failures", {9}, [&] {
+            bool called = false;
+            bool failed = false;
+            try {
+                sash::redirected({sash::Redirect::write(files.path("prefix")),
+                                  sash::Redirect::read(files.path("missing"))},
+                                 [&] { called = true; });
+            } catch (const sash::SetupError &error) {
+                failed = error.code() == std::errc::no_such_file_or_directory;
+            }
+            require(failed && !called && files.get("prefix").empty(),
+                    "partial setup restores fds without undoing earlier file truncation");
+            files.put("prefix", "old");
+            failed = false;
+            try {
+                sash::redirected(
+                    {sash::Redirect::write(files.path("prefix")), sash::Redirect::duplicate(2, 9)},
+                    [&] { called = true; });
+            } catch (const sash::SetupError &error) {
+                failed = error.code() == std::errc::bad_file_descriptor;
+            }
+            require(failed && !called && files.get("prefix").empty(),
+                    "private backups cannot turn a closed duplication source into an open one");
+            int caught = 0;
+            files.put("original-input", std::string("original\0", 9));
+            files.put("temporary-input", std::string("temporary\0", 10));
+            const auto captured = sash::capture_stdout([&] {
+                sash::redirected(
+                    {sash::Redirect::read(files.path("original-input")),
+                     sash::Redirect::write(files.path("outer-errors"), 2)},
+                    [&] {
+                        try {
+                            sash::redirected({sash::Redirect::read(files.path("temporary-input")),
+                                              sash::Redirect::write(files.path("exception")),
+                                              sash::Redirect::write(files.path("inner-errors"), 2),
+                                              sash::Redirect::write(files.path("extra"), 9)},
+                                             [] {
+                                                 sash::write("prefix");
+                                                 sash::write("hidden", 2);
+                                                 sash::write("extra", 9);
+                                                 throw 37;
+                                             });
+                        } catch (int value) {
+                            caught = value;
+                        }
+                        require(sash::read() == sash::Array<std::string>{{0, "original"}},
+                                "caught-body unwinding restores the outer input");
+                        sash::echo({"stdout restored"});
+                        sash::write("stderr restored", 2);
+                        errno = 0;
+                        require(::fcntl(9, F_GETFD) < 0 && errno == EBADF,
+                                "caught-body unwinding closes its temporary source fd");
+                    });
+            });
+            require(
+                caught == 37 && captured == "stdout restored\n" &&
+                    files.get("exception") == "prefix" && files.get("inner-errors") == "hidden" &&
+                    files.get("outer-errors") == "stderr restored" && files.get("extra") == "extra",
+                "caught-body unwinding restores every channel before the main boundary");
+            bool empty_called = false;
+            bool allocated = false;
+            {
+                const AllocationFailure fault(1);
+                sash::redirected({}, [&] { empty_called = true; });
+                try {
+                    sash::redirected({sash::Redirect::duplicate(1, 2)}, [&] { called = true; });
+                } catch (const std::bad_alloc &) {
+                    allocated = true;
+                }
+            }
+            require(empty_called && allocated && !called,
+                    "snapshot allocation failure precedes descriptor changes and body execution");
+            files.put("prefix", "untouched");
+            for (const auto &redirect :
+                 {sash::Redirect::write(files.path("prefix"), 3),
+                  sash::Redirect::write(files.path("prefix") + std::string("\0hidden", 7))}) {
+                failed = false;
+                try {
+                    sash::redirected({redirect}, [&] { called = true; });
+                } catch (const sash::SetupError &error) {
+                    failed = error.code() == std::errc::invalid_argument;
+                }
+                require(failed && !called && files.get("prefix") == "untouched",
+                        "missing fd metadata and NUL paths fail before any file effect");
+            }
+        });
+    });
+    require(result.status == 0 && result.diagnostic.empty(),
+            "caught redirect failures and exceptions remain silent");
+    const auto allocation = run_child([] {
+        bool called = false;
+        bool ended = false;
+        int status;
+        {
+            const AllocationFailure fault(1);
+            status = sash::run(
+                "./metadata", {3}, [&] { called = true; },
+                [&](const sash::Shutdown &) { ended = true; });
+        }
+        require(status == 2 && !called && !ended,
+                "failed program channel setup runs neither body nor END");
+        return 0;
+    });
+    require(allocation.status == 0 && allocation.diagnostic == "./metadata: out of memory\n",
+            "source metadata allocation failure is reported before program entry");
+}
+
+void redirect_channels() {
+    RedirectFiles files;
+    const auto result = run_child([&] {
+        const int baseline = ::open(files.path("end").c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0600);
+        require(baseline >= 0 && ::dup2(baseline, 1) == 1, "install END baseline");
+        ::close(baseline);
+        return sash::run(
+            "./channels",
+            [&] {
+                sash::redirected({sash::Redirect::write(files.path("errors"), 2),
+                                  sash::Redirect::write(files.path("body"))},
+                                 [] {
+                                     sash::write("command", 2);
+                                     require(
+                                         sash::detail::report_error("./channels", "inside", 0) == 0,
+                                         "report through invoker stderr while redirected");
+                                     sash::write("partial");
+                                     (void)sash::div(1, 0);
+                                 });
+            },
+            [&](const sash::Shutdown &shutdown) {
+                require(shutdown.reason == sash::ShutdownReason::Failure && shutdown.status == 2,
+                        "END sees the original checked failure");
+                (void)sash::try_echo({"END: restored"});
+            });
+    });
+    require(result.status == 2 &&
+                result.diagnostic == "./channels: inside\n./channels: division by zero\n",
+            "runtime diagnostics use invoker stderr, including inside an active redirect");
+    require(files.get("errors") == "command" && files.get("body") == "partial" &&
+                files.get("end") == "END: restored\n",
+            "running-command output follows redirects while END uses restored invoker stdout");
+    const auto closed = run_child([&] {
+        require(::close(2) == 0, "close invoker stderr");
+        return sash::run("./closed", [&] {
+            sash::redirected({sash::Redirect::write(files.path("closed"), 2)}, [] {
+                sash::write("user", 2);
+                require(sash::detail::report_error("./closed", "not command output", 5) == 2,
+                        "closed invoker stderr does not fall back to the command channel");
+            });
+            errno = 0;
+            require(::fcntl(2, F_GETFD) < 0 && errno == EBADF, "restore originally closed stderr");
+        });
+    });
+    require(closed.status == 0 && closed.diagnostic.empty() && files.get("closed") == "user",
+            "a closed diagnostic baseline never leaks into a temporary stderr file");
+}
+
+void redirect_resources() {
+    RedirectFiles files;
+    const auto result = run_child([&] {
+        struct rlimit original{};
+        require(::getrlimit(RLIMIT_NOFILE, &original) == 0, "get redirect fd limit");
+        auto limited = original;
+        limited.rlim_cur = 32;
+        require(::setrlimit(RLIMIT_NOFILE, &limited) == 0, "limit redirect descriptors");
+        return sash::run("./resources", {3, 4, 5, 6, 7, 8, 99}, [&] {
+            for (int i = 0; i < 100; ++i) {
+                sash::redirected({sash::Redirect::write(files.path("loop"))}, [] {
+                    sash::write("outer");
+                    require(sash::capture_stdout([] { sash::write("inner"); }) == "inner",
+                            "capture within a redirect retains its own frame");
+                });
+            }
+            require(files.get("loop") == "outer", "repeated redirects retain the current output");
+            require(sash::capture_stdout([&] {
+                        struct stat current{};
+                        require(::fstat(1, &current) == 0, "inspect live capture");
+                        int owned = -1;
+                        for (int fd = 3; fd < 32; ++fd) {
+                            struct stat candidate{};
+                            if (::fstat(fd, &candidate) == 0 &&
+                                candidate.st_dev == current.st_dev &&
+                                candidate.st_ino == current.st_ino) {
+                                owned = fd;
+                                break;
+                            }
+                        }
+                        require(owned >= 0, "find existing runtime-owned capture descriptor");
+                        bool called = false;
+                        const int status = sash::run("./late", {owned}, [&] { called = true; });
+                        require(status == 2 && !called,
+                                "late metadata cannot reserve an already-owned private descriptor");
+                        sash::write("intact");
+                    }) == "intact",
+                    "rejected late metadata cannot damage enclosing runtime ownership");
+        });
+    });
+    const auto busy = std::error_code(EBUSY, std::generic_category()).message();
+    require(result.status == 0 &&
+                result.diagnostic ==
+                    "./late: source descriptor is already owned by the runtime: " + busy + "\n",
+            "repeated resources close and metadata conflicts are explicitly diagnosed");
+}
+
+int redirect_fault_probe(const std::string &directory, bool unwind) {
+    return sash::run(
+        "./redirect-probe", {3},
+        [&] {
+            sash::write("__REDIRECT_READY__\n", 2);
+            sash::redirected({sash::Redirect::write(directory + "/output"),
+                              sash::Redirect::write(directory + "/errors", 2)},
+                             [&] {
+                                 sash::write("__REDIRECT_INSTALLED__\n", 2);
+                                 sash::write("body");
+                                 (void)sash::detail::report_error("./redirect-probe",
+                                                                  "__REDIRECT_BODY__", 0);
+                                 if (unwind) {
+                                     throw sash::CommandError(7, "probe body failed");
+                                 }
+                             });
+            sash::write("__REDIRECT_FINISHED__\n", 2);
+        },
+        [](const sash::Shutdown &) {
+            (void)sash::try_write("END\n");
+            (void)sash::detail::report_error("./redirect-probe", "__REDIRECT_END__", 0);
+        });
+}
+
 void nul_read_values() {
     using Records = sash::Array<std::string>;
     require(sash::read(std::string_view{}).empty(), "empty NUL input produces no records");
@@ -3453,6 +3911,9 @@ int main(int argc, char **argv) {
         if (std::getenv("SASH_CPP_TEST_TRACE") != nullptr) {
             sash::write("__SASH_CPP_TEST_BEGIN__\n", 2);
         }
+        if (mode == "--redirect-probe" || mode == "--redirect-unwind-probe") {
+            return redirect_fault_probe(helper, mode == "--redirect-unwind-probe");
+        }
         if (mode == "--nul-read") {
             return run_test(argv[1],
                             [&] {
@@ -3460,6 +3921,19 @@ int main(int argc, char **argv) {
                                 nul_read_streams(helper);
                                 nul_read_failures();
                                 nul_read_ownership(helper);
+                            })
+                       ? 0
+                       : 1;
+        }
+        if (mode == "--redirects") {
+            return run_test(argv[1],
+                            [&] {
+                                redirect_values(helper);
+                                redirect_order();
+                                redirect_ownership(helper);
+                                redirect_failures();
+                                redirect_channels();
+                                redirect_resources();
                             })
                        ? 0
                        : 1;
@@ -3674,6 +4148,12 @@ int main(int argc, char **argv) {
         {"buffered and borrowed-fd NUL reads", [&] { nul_read_streams(helper); }},
         {"NUL read failure publication", nul_read_failures},
         {"NUL reader producer ownership", [&] { nul_read_ownership(helper); }},
+        {"temporary file redirect values", [&] { redirect_values(helper); }},
+        {"ordered nested fd redirects", redirect_order},
+        {"source and private fd ownership", [&] { redirect_ownership(helper); }},
+        {"redirect failure restoration", redirect_failures},
+        {"invoker diagnostic and END channels", redirect_channels},
+        {"redirect resource lifetime", redirect_resources},
     };
     for (const auto &test : tests) {
         if (!run_test(test.first, test.second)) {

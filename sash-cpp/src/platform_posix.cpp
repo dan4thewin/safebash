@@ -22,11 +22,12 @@ namespace sash::platform {
 [[noreturn]] void cleanup_failed(std::string_view operation, std::error_code error) noexcept {
     std::array<char, 32> number{};
     const auto end = std::to_chars(number.data(), number.data() + number.size(), error.value()).ptr;
-    (void)write_all(2, "sash-cpp: cleanup failed: ");
-    (void)write_all(2, operation);
-    (void)write_all(2, " (errno ");
-    (void)write_all(2, std::string_view(number.data(), end - number.data()));
-    (void)write_all(2, ")\n");
+    const int fd = ProgramChannels::diagnostic_fd();
+    (void)write_all(fd, "sash-cpp: cleanup failed: ");
+    (void)write_all(fd, operation);
+    (void)write_all(fd, " (errno ");
+    (void)write_all(fd, std::string_view(number.data(), end - number.data()));
+    (void)write_all(fd, ")\n");
     std::_Exit(2);
 }
 
@@ -42,27 +43,39 @@ int descriptor_flags(int fd) noexcept {
     return flags;
 }
 
-int stdout_flags() {
-    const int flags = descriptor_flags(1);
+int checked_descriptor_flags(int fd, std::string_view operation) {
+    const int flags = descriptor_flags(fd);
     if (flags < 0 && errno != EBADF) {
-        throw SetupError(last_error(), "inspect stdout");
+        throw SetupError(last_error(), operation);
     }
     return flags;
 }
 
 FileDescriptor duplicate(int fd) {
-    int copy;
-    do {
-        copy = ::fcntl(fd, F_DUPFD_CLOEXEC, 3);
-    } while (copy < 0 && errno == EINTR);
-    if (copy < 0) {
-        throw SetupError(last_error(), "save descriptor");
+    int minimum = 3;
+    while (true) {
+        int copy;
+        do {
+            copy = ::fcntl(fd, F_DUPFD_CLOEXEC, minimum);
+        } while (copy < 0 && errno == EINTR);
+        if (copy < 0) {
+            throw SetupError(last_error(), "save descriptor");
+        }
+        FileDescriptor saved(copy);
+        if (!SourceFds::reserved(copy)) {
+            return saved;
+        }
+        saved.close();
+        if (copy == std::numeric_limits<int>::max()) {
+            throw SetupError(std::make_error_code(std::errc::too_many_files_open),
+                             "save descriptor");
+        }
+        minimum = copy + 1;
     }
-    return FileDescriptor(copy);
 }
 
 FileDescriptor private_descriptor(FileDescriptor raw) {
-    if (raw.get() > 2) {
+    if (raw.get() > 2 && !SourceFds::reserved(raw.get())) {
         return raw;
     }
     auto raised = duplicate(raw.get());
@@ -74,7 +87,9 @@ FileDescriptor capture_storage() { return private_descriptor(os::capture_storage
 
 Pipe create_pipe(std::string_view operation) {
     auto pipe = os::create_pipe(operation);
-    return {private_descriptor(std::move(pipe.reader)), private_descriptor(std::move(pipe.writer))};
+    auto reader = private_descriptor(std::move(pipe.reader));
+    auto writer = private_descriptor(std::move(pipe.writer));
+    return {std::move(reader), std::move(writer)};
 }
 
 class Child {
@@ -210,6 +225,150 @@ std::error_code replace_descriptor(int source, int destination) noexcept {
     return result < 0 ? last_error() : std::error_code{};
 }
 
+std::error_code restore_descriptor(int fd, int flags, int saved) noexcept {
+    if (flags < 0) {
+        return ::close(fd) < 0 && errno != EBADF ? last_error() : std::error_code{};
+    }
+    if (const auto error = replace_descriptor(saved, fd)) {
+        return error;
+    }
+    int result;
+    do {
+        result = ::fcntl(fd, F_SETFD, flags);
+    } while (result < 0 && errno == EINTR);
+    return result < 0 ? last_error() : std::error_code{};
+}
+
+void validate_redirect(const Redirect &redirect) {
+    const auto require_source_fd = [](int fd) {
+        if (fd < 0 || !SourceFds::reserved(fd)) {
+            throw SetupError(std::make_error_code(std::errc::invalid_argument),
+                             "redirect descriptor is not in the source-fd set");
+        }
+    };
+    require_source_fd(redirect.fd);
+    switch (redirect.op) {
+    case RedirectOp::Duplicate:
+        require_source_fd(redirect.source);
+        break;
+    case RedirectOp::Read:
+    case RedirectOp::Write:
+    case RedirectOp::Append:
+    case RedirectOp::ReadWrite:
+        if (redirect.path.find('\0') != std::string::npos) {
+            throw SetupError(std::make_error_code(std::errc::invalid_argument),
+                             "redirect path contains NUL");
+        }
+        break;
+    default:
+        throw SetupError(std::make_error_code(std::errc::invalid_argument),
+                         "invalid redirection operation");
+    }
+}
+
+void apply_redirect(const Redirect &redirect) {
+    if (redirect.op == RedirectOp::Duplicate) {
+        if (const auto error = replace_descriptor(redirect.source, redirect.fd)) {
+            throw SetupError(error, "duplicate redirect descriptor");
+        }
+        return;
+    }
+    int flags = O_CLOEXEC;
+    switch (redirect.op) {
+    case RedirectOp::Read:
+        flags |= O_RDONLY;
+        break;
+    case RedirectOp::Write:
+        flags |= O_WRONLY | O_CREAT | O_TRUNC;
+        break;
+    case RedirectOp::Append:
+        flags |= O_WRONLY | O_CREAT | O_APPEND;
+        break;
+    case RedirectOp::ReadWrite:
+        flags |= O_RDWR | O_CREAT;
+        break;
+    case RedirectOp::Duplicate:
+        throw std::logic_error("duplicate redirection bypassed its dispatch");
+    }
+    int fd;
+    do {
+        fd = ::open(redirect.path.c_str(), flags, 0666);
+    } while (fd < 0 && errno == EINTR);
+    if (fd < 0) {
+        throw SetupError(last_error(), "open redirect " + redirect.path);
+    }
+    auto source = private_descriptor(FileDescriptor(fd));
+    if (const auto error = replace_descriptor(source.get(), redirect.fd)) {
+        throw SetupError(error, "install redirect descriptor");
+    }
+    source.close();
+}
+
+class RedirectFrame {
+  public:
+    explicit RedirectFrame(std::initializer_list<Redirect> redirects) {
+        if (!ProgramChannels::active()) {
+            throw SetupError(std::make_error_code(std::errc::operation_not_permitted),
+                             "redirection requires program channel setup");
+        }
+        for (const auto &redirect : redirects) {
+            validate_redirect(redirect);
+        }
+        saved_.reserve(redirects.size());
+        for (const auto &redirect : redirects) {
+            if (std::none_of(saved_.begin(), saved_.end(), [&](const SavedDescriptor &saved) {
+                    return saved.fd == redirect.fd;
+                })) {
+                saved_.emplace_back(redirect.fd);
+            }
+        }
+    }
+
+    ~RedirectFrame() noexcept {
+        if (const auto error = restore()) {
+            cleanup_failed("restore redirected descriptors", error);
+        }
+    }
+
+    RedirectFrame(const RedirectFrame &) = delete;
+    RedirectFrame &operator=(const RedirectFrame &) = delete;
+
+    void apply(std::initializer_list<Redirect> redirects) {
+        active_ = true;
+        for (const auto &redirect : redirects) {
+            apply_redirect(redirect);
+        }
+    }
+
+    void finish() {
+        if (const auto error = restore()) {
+            throw SetupError(error, "restore redirected descriptors");
+        }
+        for (auto &saved : saved_) {
+            saved.saved.close();
+        }
+    }
+
+  private:
+    std::error_code restore() noexcept {
+        if (!active_) {
+            return {};
+        }
+        std::error_code first;
+        for (auto saved = saved_.rbegin(); saved != saved_.rend(); ++saved) {
+            const auto error = saved->restore();
+            if (!first) {
+                first = error;
+            }
+        }
+        active_ = static_cast<bool>(first);
+        return first;
+    }
+
+    std::vector<SavedDescriptor> saved_;
+    bool active_ = false;
+};
+
 [[nodiscard]] std::optional<SetupError> launch(std::vector<std::string> &command,
                                                std::optional<Child> &child, Pipe *output = nullptr,
                                                int input = -1) {
@@ -330,8 +489,9 @@ std::error_code write_all(int fd, std::string_view bytes) noexcept {
 }
 
 int report_error(std::string_view program, std::string_view diagnostic, int status) noexcept {
-    if (write_all(2, program) || write_all(2, ": ") || write_all(2, diagnostic) ||
-        write_all(2, "\n")) {
+    const int fd = ProgramChannels::diagnostic_fd();
+    if (write_all(fd, program) || write_all(fd, ": ") || write_all(fd, diagnostic) ||
+        write_all(fd, "\n")) {
         return 2;
     }
     return status;
@@ -444,16 +604,32 @@ std::size_t read_some(int fd, char *buffer, std::size_t capacity, std::string_vi
     return static_cast<std::size_t>(count);
 }
 
-FileDescriptor::FileDescriptor(int fd) noexcept : fd_(fd) {}
+FileDescriptor *FileDescriptor::head_ = nullptr;
+
+FileDescriptor::FileDescriptor(int fd) noexcept : fd_(fd), next_(head_) { head_ = this; }
 
 FileDescriptor::~FileDescriptor() noexcept {
     if (fd_ >= 0 && ::close(fd_) < 0) {
         cleanup_failed("close descriptor", last_error());
     }
+    auto **entry = &head_;
+    while (*entry != this) {
+        entry = &(*entry)->next_;
+    }
+    *entry = next_;
 }
 
 FileDescriptor::FileDescriptor(FileDescriptor &&other) noexcept
-    : fd_(std::exchange(other.fd_, -1)) {}
+    : FileDescriptor(std::exchange(other.fd_, -1)) {}
+
+bool FileDescriptor::owns(int fd) noexcept {
+    for (auto *entry = head_; entry != nullptr; entry = entry->next_) {
+        if (entry->fd_ == fd) {
+            return true;
+        }
+    }
+    return false;
+}
 
 void FileDescriptor::close() {
     // Linux and Darwin release ordinary fds before reporting file-close errors; do not retry.
@@ -463,8 +639,95 @@ void FileDescriptor::close() {
     }
 }
 
+SourceFds *SourceFds::active_ = nullptr;
+
+SourceFds::SourceFds(std::initializer_list<int> fds) : fds_(fds), previous_(active_) {
+    std::sort(fds_.begin(), fds_.end());
+    fds_.erase(std::unique(fds_.begin(), fds_.end()), fds_.end());
+    for (const int fd : fds_) {
+        if (fd < 0) {
+            throw SetupError(std::make_error_code(std::errc::invalid_argument),
+                             "source descriptor must be nonnegative");
+        }
+        if (FileDescriptor::owns(fd)) {
+            throw SetupError(std::make_error_code(std::errc::device_or_resource_busy),
+                             "source descriptor is already owned by the runtime");
+        }
+    }
+    active_ = this;
+}
+
+SourceFds::~SourceFds() noexcept { active_ = previous_; }
+
+bool SourceFds::reserved(int fd) noexcept {
+    if (fd >= 0 && fd <= 2) {
+        return true;
+    }
+    for (auto *scope = active_; scope != nullptr; scope = scope->previous_) {
+        if (std::binary_search(scope->fds_.begin(), scope->fds_.end(), fd)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+SavedDescriptor::SavedDescriptor(int target)
+    : fd(target), flags(checked_descriptor_flags(target, "inspect redirect descriptor")),
+      saved(flags < 0 ? FileDescriptor{} : duplicate(target)) {}
+
+std::error_code SavedDescriptor::restore() noexcept {
+    return restore_descriptor(fd, flags, saved.get());
+}
+
+ProgramChannels *ProgramChannels::active_ = nullptr;
+
+ProgramChannels::ProgramChannels(std::initializer_list<int> source_fds)
+    : source_fds_(source_fds), input_(0), output_(1), error_(2), previous_(active_) {
+    active_ = this;
+}
+
+ProgramChannels::~ProgramChannels() noexcept {
+    if (!restored_) {
+        if (const auto error = restore_all()) {
+            cleanup_failed("restore invoker channels", error);
+        }
+    }
+    active_ = previous_;
+}
+
+bool ProgramChannels::active() noexcept { return active_ != nullptr; }
+
+int ProgramChannels::diagnostic_fd() noexcept {
+    return active_ != nullptr ? active_->error_.saved.get() : 2;
+}
+
+std::error_code ProgramChannels::restore_all() noexcept {
+    std::error_code first;
+    for (auto *saved : {&input_, &output_, &error_}) {
+        const auto error = saved->restore();
+        if (!first) {
+            first = error;
+        }
+    }
+    restored_ = !first;
+    return first;
+}
+
+void ProgramChannels::restore() {
+    if (const auto error = restore_all()) {
+        throw SetupError(error, "restore invoker channels");
+    }
+}
+
+void redirected(std::initializer_list<Redirect> redirects, const std::function<void()> &body) {
+    RedirectFrame frame(redirects);
+    frame.apply(redirects);
+    body();
+    frame.finish();
+}
+
 StdoutCapture::StdoutCapture()
-    : original_flags_(stdout_flags()), storage_(capture_storage()),
+    : original_flags_(checked_descriptor_flags(1, "inspect stdout")), storage_(capture_storage()),
       saved_stdout_(original_flags_ < 0 ? FileDescriptor{} : duplicate(1)) {
     if (const auto error = replace_descriptor(storage_.get(), 1)) {
         throw SetupError(error, "capture stdout");
@@ -482,21 +745,8 @@ std::error_code StdoutCapture::restore() noexcept {
     if (!active_) {
         return {};
     }
-    if (original_flags_ < 0) {
-        if (::close(1) < 0 && errno != EBADF) {
-            return last_error();
-        }
-    } else {
-        if (const auto error = replace_descriptor(saved_stdout_.get(), 1)) {
-            return error;
-        }
-        int result;
-        do {
-            result = ::fcntl(1, F_SETFD, original_flags_);
-        } while (result < 0 && errno == EINTR);
-        if (result < 0) {
-            return last_error();
-        }
+    if (const auto error = restore_descriptor(1, original_flags_, saved_stdout_.get())) {
+        return error;
     }
     active_ = false;
     return {};

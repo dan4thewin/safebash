@@ -461,10 +461,10 @@ fault cleanup-restore-closed capture-command-closed close '^close[(]1[)]' 2 erro
 fault cleanup-close capture-command close '^close[(]' 3 error=EIO '^sash-cpp: cleanup failed: close descriptor '
 fault cleanup-wait process read '^read[(]' 1 error=EIO '^sash-cpp: cleanup failed: wait for child '
 fault cleanup-status-storage process munmap '^munmap[(]' 1 error=EIO '^sash-cpp: cleanup failed: unmap child setup status '
-fault diagnostic-output exit7 write '^write[(]2, "error_paths"' 1 error=EIO none
-fault diagnostic-separator exit7 write '^write[(]2,' 2 error=EIO '^error_paths$'
-fault diagnostic-message exit7 write '^write[(]2,' 3 error=EIO '^error_paths: $'
-fault diagnostic-newline exit7 write '^write[(]2,' 4 error=EIO '^error_paths: .*command failed [(]exit 7[)]$'
+fault diagnostic-output exit7 write '^write[(][0-9]+, "error_paths"' 1 error=EIO none
+fault diagnostic-separator exit7 write '^write[(][0-9]+,' 2 error=EIO '^error_paths$'
+fault diagnostic-message exit7 write '^write[(][0-9]+,' 3 error=EIO '^error_paths: $'
+fault diagnostic-newline exit7 write '^write[(][0-9]+,' 4 error=EIO '^error_paths: .*command failed [(]exit 7[)]$'
 
 fault retry-write write write '^write[(]1, "written' 1 error=EINTR ''
 fault retry-stdout-inspect capture fcntl '^fcntl[(]1, F_GETFD' 1 error=EINTR ''
@@ -478,7 +478,7 @@ fault retry-pipe process pipe2 '^pipe2[(]' 1 error=EINTR ''
 fault retry-pipe-relocate process fcntl '^fcntl[(]0, F_DUPFD_CLOEXEC' 1 error=EINTR '' stdin-closed
 fault retry-completion-read process read '^read[(]' 1 error=EINTR ''
 fault retry-wait process wait4 '^wait4[(]' 1 error=EINTR ''
-fault retry-diagnostic exit7 write '^write[(]2, "error_paths"' 1 error=EINTR ''
+fault retry-diagnostic exit7 write '^write[(][0-9]+, "error_paths"' 1 error=EINTR ''
 fault retry-stream-read stream read '^read[(].*, 8192[)]' 1 error=EINTR ''
 fault retry-pipeline-pipe pipeline pipe2 '^pipe2[(]' 2 error=EINTR ''
 fault retry-pipeline-read pipeline-record read '^read[(].*, 8192[)]' 1 error=EINTR ''

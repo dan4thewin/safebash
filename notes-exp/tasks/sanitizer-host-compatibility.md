@@ -77,3 +77,21 @@ complete gate. Do not remove the fault fixture, globally disable vptr
 checks, change the runtime's exception type to appease instrumentation,
 or count the partial UBSan run as passing. Keep the memfd allocation
 failure real and distinguish it from later descriptor-duplication failure.
+
+## Fourteenth-unit evidence: initialize metadata before real fd limits
+
+The temporary-redirection controls exposed a related cold UBSan stall at
+RLIMIT_NOFILE=5, with fd 0 free but no allocatable private slot.
+GDB stopped in sanitizer `ReserveStandardFds` duplicating invalid fd -9
+after its lazy mapping read could not be relocated. An independent derived
+`std::system_error` control reproduces status 124; initialization before
+the same real constraint yields 0, and an unconstrained control yields 0.
+
+The new fd-limit scaffolding initializes ordinary exception/vptr metadata
+before closing slots or lowering limits. Both partial pipe/channel failures
+remain real, with no disabled UBSan category. The six-group redirect
+selector, file golden, and signed-overflow detection canary pass.
+[Journal 021](../journal/021-temporary-redirections.md) records the evidence.
+
+This does not close the task: the complete combined sanitizer gate and
+original zero-fd memfd case have not been rerun or claimed resolved.

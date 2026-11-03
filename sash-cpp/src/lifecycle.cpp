@@ -209,12 +209,28 @@ void checkpoint() {
 
 namespace detail {
 
-int run_program(std::string_view program, const std::function<void()> &body,
+int run_program(std::string_view program, std::initializer_list<int> source_fds,
+                const std::function<void()> &body,
                 const std::function<void(const Shutdown &)> &end) {
     ProgramScope scope;
+    std::optional<platform::ProgramChannels> channels;
+    try {
+        channels.emplace(source_fds);
+    } catch (const SetupError &error) {
+        return report_error(program, error.what(), 2);
+    } catch (const std::bad_alloc &) {
+        return report_error(program, "out of memory", 2);
+    } catch (const std::length_error &) {
+        return report_error(program, "source-fd set exceeds capacity", 2);
+    }
     const auto shutdown = finish_body(program, body);
     if (!scope.owner()) {
         ::_exit(shutdown.status);
+    }
+    try {
+        channels->restore();
+    } catch (const SetupError &error) {
+        return report_error(program, error.what(), 2);
     }
     scope.in_end = true;
     int status = shutdown.status;

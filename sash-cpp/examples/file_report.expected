@@ -1,0 +1,11 @@
+unmerged: stderr
+records: 3
+record: Ada
+record: Edsger
+record: Barbara
+nested: Grace
+merged: out,err
+unmerged: out
+descriptor: reserved
+caught: missing input
+restored: stdout
