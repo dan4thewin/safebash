@@ -1877,6 +1877,13 @@ impl SsaProgram {
         next
     }
 
+    /// Blocks of the process rooted here, in id order, excluding its children.
+    pub(crate) fn process_blocks(&self, roots: &[BlockId]) -> Vec<BlockId> {
+        let mut blocks: Vec<BlockId> = self.same_process_from(roots).into_iter().collect();
+        blocks.sort_unstable();
+        blocks
+    }
+
     /// The entry blocks of the child processes `block` forks: a background
     /// job's, and each forked stage of its pipelines.
     pub(crate) fn spawned_by(&self, block: &BasicBlock) -> Vec<BlockId> {

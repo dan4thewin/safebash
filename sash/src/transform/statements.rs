@@ -206,8 +206,9 @@ fn lower_function_stmt(
 ///
 /// `args_counter` is restored, so templates leave the numbering of the real
 /// calls' `args` arrays as it was; `reserve_temp_name` keeps the names
-/// distinct. The header must not be labelled `fn_…`: ssa_taint reads those
-/// labels as function names.
+/// distinct. Current versions are restored too: defining a function does not
+/// execute its writes. The header must not be labelled `fn_…`: ssa_taint reads
+/// those labels as function names.
 fn lower_fn_template(
     name: &str,
     body: &[Statement],
@@ -216,6 +217,7 @@ fn lower_fn_template(
     fn_entry: BlockId,
 ) -> BlockId {
     use super::functions as fns;
+    let saved_versions = state.snapshot();
     let saved_flag = std::mem::replace(&mut state.lowering_fn_template, true);
     state.inlining.push(name.to_string());
     let saved_args = fns::save_caller_args(state);
@@ -234,6 +236,7 @@ fn lower_fn_template(
     fns::restore_caller_args(saved_args, state);
     state.inlining.pop();
     state.lowering_fn_template = saved_flag;
+    state.restore(&saved_versions);
     fn_exit
 }
 

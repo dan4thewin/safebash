@@ -32,15 +32,15 @@ tainted array a[...] used as an argument to 'echo' without attest (SSA taint bac
 Both backends reject. `sflow.5` pins this intermediate boundary, not a
 claim that the program is accepted.
 
-Cause: `ssa_taint.rs::verify_ssa_taint` classifies every definition before
-checking any use. A bare-name collection read calls `taint_of_name`,
-which chooses the highest numbered version globally, not the version
-reaching that read (`ssa_taint.rs:39-55,368-382,890-903`).
+Cause: `ssa_taint.rs::check_process` classifies every definition in its
+process view before checking any use. A bare-name collection read calls
+`taint_of_name`, which chooses the highest numbered version in that
+completed view, not the version reaching that read.
 
-The reference branch retains that lookup and explicitly says its process
-view also includes parent definitions after a fork. W4's process partition
-alone therefore does not fix this. Per DG's port-scope rule, this separate,
-unported fault is backlog work, not folded into W1b-2.
+W4 (journal 563) isolates processes but retains this lookup and passes the
+completed parent view to each child, including definitions after the fork.
+It therefore does not fix this timing defect. Per DG's port-scope rule,
+this separate, unported fault remains backlog work.
 
 A fix needs a per-use collection version or proper reaching-definition
 state. Simply checking while iterating block IDs would not establish

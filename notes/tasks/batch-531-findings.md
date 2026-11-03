@@ -1211,7 +1211,7 @@ control is `loopflow.15`, not a claim that the counted form is repaired.
 
 ### 18. W4 processes
 
-- [ ] **B18** (fixed-on-branch; DD24, DD38). CRITICAL taint bypass:
+- [x] **B18** (fixed-on-branch; DD24, DD38). CRITICAL taint bypass:
   before the port, `x=$(getenv HOME); x=safe &; - wait; echo "$x"` compiled
   and printed the tainted value. The validator and transform both let the
   child's writes affect the parent's state.
@@ -1227,14 +1227,24 @@ control is `loopflow.15`, not a claim that the counted form is repaired.
     calls and final/non-final function stages; removing the clone turns
     `.9`-`.11` red. The old driver's ignored call-side clean overwrites
     happened to reject these already; summaries make isolation essential.
-  - The separate per-process SSA backstop (H167) remains W4, so this entry
-    is not closed wholesale.
-    Measured after W1b-1: `str x=clean; fn fill { x=$(/bin/echo dirty) };
-    - echo hi | fill; echo "$x"` reaches only the SSA backstop's rejection
-    of `x_2`. The old compiler rejected it with SB5067; the new validator
-    accepts it, and the native `--no-taint` binary prints `clean`.
-    Probe `w1b1-stage-write.sash` in `port-w1b1-probes.tar.gz`; this remains
-    a backstop false positive, not a claimed end-to-end acceptance.
+  - W4 completes the per-process SSA backstop (H167; journal 563).
+    Executable same-process closures exclude child definitions, and each
+    child receives an independent copy of the completed parent view.
+    `procflow.1`-`.14` cover parent/sibling isolation, inherited and nested
+    child taint, function/argument stages and real parent-side readers.
+  - The W1b-1 scalar reproducer, `str x=clean; fn fill {
+    x=$(/bin/echo dirty) }; - echo hi | fill; echo "$x"`, now compiles with
+    both gates enabled and prints `clean` in both backends (`procflow.1`).
+    The reference driver alone still rejected it: the parent's `x_2`
+    named an unreachable function-template assignment, not the child's
+    `x_3`. W4 also restores definition-time versions and excludes unbound
+    templates from executable views. `.14` pins the reverse missing
+    refusal from a never-called cleaner. Templates themselves are retained.
+    The original probe remains in `port-w1b1-probes.tar.gz`; the measured
+    SSA and final controls are in `port-w4-probes.tar.gz`.
+  - Per-use array timing and definition-order defects remain separately
+    filed. Process isolation does not make the inherited parent view
+    precise at the fork.
 
 ### 18. W5 END
 

@@ -816,15 +816,16 @@ run_sash '/bin/echo $(str token=$(getenv HOME); echo $token)'
 [[ $rc != 0 && -z $out && $err == *'tainted variable token_1 used'* \
    && $err == *'SSA taint backstop'* && $err != *'__top_capture'* ]]; chk bindscope.38
 
-# A formatted SSA version can equal another binding's qualified base name.
+# A live SSA version can equal another binding's qualified base name.
+# Version 1 belongs to the unexecuted template; the real calls define version 2.
 SASH_CFLAGS="${SASH_CFLAGS:-} --no-taint-cst" \
 run_sash 'fn a { str b_t=$(getenv HOME); echo $b_t }
-fn a_b { str t=$(getenv HOME); echo $t }
+fn a_b { str t_2=$(getenv HOME); echo $t_2 }
 a
 a_b'
-[[ $rc != 0 && -z $out && $err == *'tainted variable b_t_1 used'* \
-   && $err == *'tainted variable t_1 used'* && $err == *'SSA taint backstop'* \
-   && $err != *'__a_b_t'* ]]; chk bindscope.39
+[[ $rc != 0 && -z $out && $err == *'tainted variable b_t_2 used'* \
+   && $err == *'tainted variable t_2_2 used'* && $err == *'SSA taint backstop'* \
+   && $err != *'__a_b_t'* ]]; chk bindscope.40
 
 # DD#100: strict non-aliasing, including read-only and taint-disabled calls.
 SASH_CFLAGS="${SASH_CFLAGS:-} --no-taint" \

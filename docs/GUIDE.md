@@ -336,8 +336,21 @@ effects. While exits retain post-condition state. For words are checked at
 the stable head, and the binder changes only an entered iteration, not the
 zero-trip path. These transfers feed the existing independent summaries.
 
-Per-process SSA checking and END entry remain W4-W5. The SSA backstop also
-has separate array-timing and definition-order faults. DD#127's
+**SSA checks are process-local (DD#127).** The backstop checks the main
+process and each background job or lifted pipeline stage separately.
+Children inherit independent copies of the completed parent view; their
+definitions cannot taint or clean the parent or a sibling. The shared CFG
+walk follows same-process edges, then the verifier recursively checks
+spawned children. END stays an explicit main-process root.
+
+Unbound function templates remain for lowering diagnostics and metadata,
+but never enter those executable views. Lowering a definition restores
+current variable versions without rewinding their allocation counters:
+defining a function does not execute its assignments.
+
+END entry remains W5. The SSA backstop still has separate array-timing and
+definition-order faults, including its completed-parent view rather than
+a precise fork-time state. DD#127's
 "Implementation status" records these boundaries, the clean-split and
 counted-capture defects, and conservative value/capture precision limits.
 

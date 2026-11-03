@@ -41,20 +41,56 @@ pub fn verify_ssa_taint(program: &SsaProgram) -> Vec<String> {
     let mut errors = Vec::new();
 
     seed_clean_specials(&mut taint);
-    let user_functions = collect_user_functions(program);
-    let diverging = collect_diverging_blocks(program);
-
-    // Phase 1: classify every defined VarRef.
-    for block in program.blocks.values() {
-        classify_block_defs(block, &mut taint, &user_functions, &diverging);
-    }
-
-    // Phase 2: report tainted uses in output/external/index positions.
-    for block in program.blocks.values() {
-        check_block_uses(block, &taint, &mut errors, &program.source_names);
-    }
-
+    let pass = Pass {
+        program,
+        user_functions: collect_user_functions(program),
+        diverging: collect_diverging_blocks(program),
+    };
+    // Definitions' unbound templates never execute. END remains an explicit
+    // root because aborts enter it without an ordinary CFG edge.
+    let mut roots = vec![program.entry];
+    roots.extend(program.end_block);
+    let main = program.process_blocks(&roots);
+    check_process(&pass, &main, taint, &mut errors);
     errors
+}
+
+struct Pass<'a> {
+    program: &'a SsaProgram,
+    user_functions: std::collections::HashSet<String>,
+    diverging: std::collections::HashSet<BlockId>,
+}
+
+/// Classify definitions, then check uses in one process. Each child inherits
+/// a copy; its definitions cannot affect its parent or siblings.
+///
+/// This retains the existing single-pass ordering and completed-parent view,
+/// including definitions after a fork. Per-use array timing and forward-phi
+/// classification remain separate backstop defects.
+fn check_process(
+    pass: &Pass<'_>,
+    blocks: &[BlockId],
+    mut view: HashMap<String, Taint>,
+    errors: &mut Vec<String>,
+) {
+    let program = pass.program;
+    for &id in blocks {
+        classify_block_defs(
+            program.block(id),
+            &mut view,
+            &pass.user_functions,
+            &pass.diverging,
+        );
+    }
+    for &id in blocks {
+        check_block_uses(program.block(id), &view, errors, &program.source_names);
+    }
+    let roots = blocks
+        .iter()
+        .flat_map(|&id| program.spawned_by(program.block(id)));
+    for root in roots {
+        check_process(pass, &program.process_blocks(&[root]), view.clone(), errors);
+    }
 }
 
 /// DD#121 R2: blocks whose state never arrives anywhere, because they exit.

@@ -573,8 +573,8 @@ their reads still count, but their writes, returns and source log do not
 change the parent. The final parent reader keeps its effects (the supported
 `while` consumer and final `read`/`readline` paths). These calls still count
 in the census. This is B18's validator half, landed with W1b-1 because
-call-site clean overwrites make the separation necessary; W4 still owns the
-per-process SSA backstop.
+call-site clean overwrites make the separation necessary. W4's per-process
+SSA backstop completes it (journal 563).
 
 ### Classifying output
 
@@ -665,18 +665,26 @@ W2b implements shared-output ownership, SB5100 and symbolic stdin/name
 attest obligations on the same independent summaries (journal 561).
 W3 implements ordinary loop transfers without replacing those summaries
 (journal 562).
+W4 implements the per-process SSA backstop (journal 563): classify and check
+one process's executable blocks, then recursively check its children with
+independent copies of the completed parent view. Same-process closures
+exclude descendants and keep the existing ascending block order. The main
+roots are entry and END, including END's implicit abort entries.
+Unbound function templates are not executable parent definitions; their
+lowering also restores current variable versions without rewinding version
+counters. Both corrections are needed to keep definition-time effects out
+of real reads. Actual inlined calls and child reads remain checked.
 The following remain:
 
-- **W4, per-process SSA checking; W5, END entry.**
-  In particular, W4's backstop can still reject a parent read after a child
-  taints its private copy; the B18 entry records a measured example.
+- **W5, END entry.** Keeping END in the main process does not yet establish
+  the state on every abort, explicit exit or signal edge into it.
 - **Precision follow-ups:** eager value-call/capture overwrites and
   definition-specific summaries are recorded in
   `notes/tasks/taint-global-summary-followups.md`.
 - **SSA array timing:** `sflow.5` reaches the backstop after its earlier
   clean call passes the validator. The backstop uses the array's highest
-  version, including a future fill. The reference branch's source retains
-  the same lookup; W4's process partition alone does not repair it
+  version, including a future fill. W4 retains that lookup and gives each
+  child the completed parent view, not a precise fork-time state
   (`bug-ssa-taint-array-read-uses-future-version`).
 - **Other W3 rechecks:** the SSA definition-order hole under
   `--no-taint-cst`, stale taint after a clean value split, and counted
@@ -776,11 +784,28 @@ The following remain:
   two false rejections. Four preservation cases pass before; the ordinary
   nested-capture control does not claim to fix the counted-capture bug.
 
+### Landed in W4
+
+- `procflow.1`-`.6` accept clean parent and sibling reads after private
+  child writes, including background jobs, nested jobs and function stages.
+  Both taint layers remain enabled for these positives.
+- `.7`-`.14` isolate the SSA backstop. Child cleanup and attests cannot
+  clean the parent; sibling cleanup cannot clean another child. Inherited
+  child taint, grandchild reads and actual parent-side readers remain
+  checked. Lifted command-argument stages are child processes too.
+- `.14` rejects definition-only scalar cleanup: a function that is never
+  called cannot change the SSA version read by its parent.
+- Eleven checks fail before the change in each mode: six false rejections
+  and five missing refusals. `.9`-`.11` are preservation controls.
+- `bindscope.40` replaces `.39`, whose diagnostic assertion depended on an
+  unreachable template. Its collision now uses an actual call's version,
+  preserving the structured-name restoration claim rather than merely
+  loosening the expected suffix.
+
 ## Open
 
 - Buffer eligibility beyond the existing paths
   (`q-buffer-capture-eligibility`); kernel reads remain tainted.
-- W4: the per-process SSA backstop; validator name effects landed in W1b-1.
 - W5: END's entry state (B96).
 
 ## Provenance

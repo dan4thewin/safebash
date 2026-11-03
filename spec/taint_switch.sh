@@ -5,7 +5,7 @@
 set -eu
 . common.sh
 setup taint_switch
-plan=48
+plan=62
 echo "1..$plan" >&3
 
 set +e
@@ -389,6 +389,121 @@ array a=( k $t )
 map m = @{a:!?e}
 /bin/echo ${m[k]}'
 [[ $rc = 0 && $out = "$HOME" && -z $rerr ]]; chk bkstp.18
+unset SASH_CFLAGS
+
+# DD#127/W4: child definitions belong to that process, not its parent or
+# siblings. These first six programs keep both taint gates enabled.
+run_sash 'str x=clean
+fn fill { x=$(/bin/echo dirty) }
+- echo hi | fill
+echo "$x"'
+[[ $rc = 0 && $out = clean && -z $err && -z $rerr ]]; chk procflow.1
+
+run_sash 'array a=(clean)
+fn fill { argv 1 a }
+fill &
+- wait
+echo "${a[0]}"' dirty
+[[ $rc = 0 && $out = clean && -z $err && -z $rerr ]]; chk procflow.2
+
+run_sash 'array a=(clean)
+fn fill { argv 1 a }
+fill | /bin/cat
+echo "${a[0]}"' dirty
+[[ $rc = 0 && $out = clean && -z $err && -z $rerr ]]; chk procflow.3
+
+run_sash 'array a=(clean)
+fn fill { argv 1 a }
+fn show { echo "${a[0]}" }
+fill &
+show &
+- wait
+- wait
+echo "${a[0]}"' dirty
+[[ $rc = 0 && $out = $'clean\nclean' && -z $err && -z $rerr ]]; chk procflow.4
+
+run_sash 'array a=(clean)
+fn fill { argv 1 a }
+fn middle { fill &; - wait; echo "${a[0]}" }
+middle &
+- wait
+echo "${a[0]}"' dirty
+[[ $rc = 0 && $out = $'clean\nclean' && -z $err && -z $rerr ]]; chk procflow.5
+
+run_sash 'array a=(clean)
+fn fill { argv 1 a; echo ready }
+fn show {
+    readline line
+    attest line [[ $line == ready ]]
+    echo "${a[0]}"
+}
+fill | show
+echo "${a[0]}"' dirty
+[[ $rc = 0 && $out = $'clean\nclean' && -z $err && -z $rerr ]]; chk procflow.6
+
+# Exercise the independent backstop, not the validator's existing barrier.
+export SASH_CFLAGS=--no-taint-cst
+run_sash 'array a=()
+fn clean { a=(safe) }
+argv 1 a
+clean &
+- wait
+echo "${a[0]}"' dirty
+[[ $rc != 0 && -z $out && $err == *"tainted array a[...]"* && $err == *"SSA taint backstop"* ]]; chk procflow.7
+
+run_sash 'array a=()
+fn clean { attest item in a [[ -n $item ]] }
+argv 1 a
+clean &
+- wait
+echo "${a[0]}"' dirty
+[[ $rc != 0 && -z $out && $err == *"tainted array a[...]"* && $err == *"SSA taint backstop"* ]]; chk procflow.8
+
+run_sash 'array a=()
+fn show { echo "${a[0]}" }
+argv 1 a
+show &
+- wait' dirty
+[[ $rc != 0 && -z $out && $err == *"tainted array a[...]"* && $err == *"SSA taint backstop"* ]]; chk procflow.9
+
+run_sash 'fn read_child {
+    str value=clean
+    if /bin/true { value=$(/bin/echo dirty) }
+    echo "$value"
+}
+fn middle { read_child &; - wait }
+middle &
+- wait'
+[[ $rc != 0 && -z $out && $err == *"tainted variable value_"* && $err == *"SSA taint backstop"* ]]; chk procflow.10
+
+# A function producer is a child; the final named reader is still the parent.
+run_sash 'fn producer { echo data }
+producer | read a
+echo "${a[0]}"'
+[[ $rc != 0 && -z $out && $err == *"tainted array a[...]"* && $err == *"SSA taint backstop"* ]]; chk procflow.11
+
+# Lifting a command stage's argument creates a child too, not just fn stages.
+run_sash 'array a=()
+argv 1 a
+/bin/echo $(a=(safe); echo ready) | /bin/cat
+echo "${a[0]}"' dirty
+[[ $rc != 0 && -z $out && $err == *"tainted array a[...]"* && $err == *"SSA taint backstop"* ]]; chk procflow.12
+
+run_sash 'array a=()
+fn clean { a=(safe) }
+fn show { echo "${a[0]}" }
+argv 1 a
+clean &
+show &
+- wait
+- wait' dirty
+[[ $rc != 0 && -z $out && $err == *"tainted array a[...]"* && $err == *"SSA taint backstop"* ]]; chk procflow.13
+
+# Lowering a definition must not make its never-executed assignment current.
+run_sash 'str x=$(/bin/echo dirty)
+fn clean { x=safe }
+echo "$x"'
+[[ $rc != 0 && -z $out && $err == *"tainted variable x_"* && $err == *"SSA taint backstop"* ]]; chk procflow.14
 unset SASH_CFLAGS
 
 set -e
