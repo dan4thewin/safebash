@@ -2,7 +2,8 @@
 
 2026-11-03. After W4, DG asked for the W5 issues to be explained, then
 developed a different cleanup model in discussion. DG requested a draft DD;
-I wrote DD128. It is explicitly a draft, not an accepted decision or an
+I wrote DD128, initially leaving five choices explicitly open. DG's later
+rulings are recorded below. The document remains a draft, not an
 implementation.
 
 The proposed split is cause-based. Normal completion, explicit zero exit
@@ -30,13 +31,40 @@ fatal merely because they lack a handling form.
 DD89 settles the status representation: full i64 internally, low byte only
 at the process boundary. It does not settle the new handler selection:
 one could inspect the low byte without discarding the full value. The
-draft uses the full value, including ERR selection for `exit 256`, and
-marks this choice for review. Four further choices are END compatibility,
-whether a first fatal fault attempts ERR, lexical versus summary-proven
-helper fallback, and fresh input acquired inside ERR.
+initial draft used the full value, including ERR selection for `exit 256`,
+and marked this choice for review. Four further choices were END
+compatibility, whether a first fatal fault attempts ERR, lexical versus
+summary-proven helper fallback, and fresh input acquired inside ERR.
 
 Accepted DDs remain unchanged. The draft identifies their eventual coherent
 rewrites, the W5 evidence and the wider implementation requirements,
 including the existing handler type-check gap. No compiler, runtime or
 spec changes, implementation authorization, new probes or spec-history
 writes are part of this task.
+
+## DG settled the five choices
+
+Later on 2026-11-03, DG ruled:
+
+1. Reject END.
+2. Attempt ERR once after a first fatal fault.
+3. Write failed-attest replacement directly in the branch.
+4. Allow attestation of fresh input acquired inside ERR.
+5. Explicit exit calls route 0 to EXIT and nonzero to ERR; signal and
+   fall-through route to EXIT.
+
+I incorporated these into the DD's rules and replaced the alternatives
+table with the rulings. The fatal-fault choice reverses the initial draft's
+direct-termination default: a first main-process fault, including in EXIT,
+attempts ERR; a fault inside ERR terminates without re-entry. Entry itself
+must not need a fresh heap allocation, and the failed operation is not
+resumed. Child faults still do not execute parent handlers.
+
+The exit rule uses the full integer, so `exit 256` selects ERR while a
+signal's nonzero saved status does not. A helper's proven clean write is
+not a substitute for lexical failed-branch replacement. Fresh ERR input
+can be attested and ordinarily read; incoming potentially tainted data
+still requires the conservative escape policy.
+
+These are settled choices within the draft. No implementation has started,
+and the companion DD rewrites remain part of finalizing the design.

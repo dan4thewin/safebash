@@ -1,20 +1,20 @@
-## ══ STATUS (2026-11-03, latest) — DD128 draft: EXIT, ERR and attest ══
+## ══ STATUS (2026-11-03, latest) — DD128: five choices settled ══
 
-At DG's request, DD128 assembles the cleanup and taint discussion into a
-**draft**, not an accepted or implemented change (journal 564).
-- Ordinary checked EXIT for completion, zero exit and configured signals;
-  ERR for uncaught operational failures and explicit nonzero exits.
-- Conservative ERR inputs, explicit handling of its operational failures,
-  and named fatal exceptions for arithmetic faults and heap exhaustion.
-- Only legal adjacent attestation or failed-attest subject cleanup clears
-  outstanding taint; unrelated assignments no longer do.
-- Five draft choices remain marked: END migration, first-fatal routing,
-  helper-based fallback, fresh input inside ERR, and full-i64 versus
-  process-byte exit selection.
+DG has resolved all five open choices in the DD128 draft (journal 564).
+The rules now record:
+- Reject END with migration guidance; no compatibility form.
+- A first fatal fault in main or EXIT attempts ERR once. A fatal fault
+  inside ERR terminates without re-entry; children run neither handler.
+- Failed-attest replacement must be written directly in its branch, not
+  delegated to a reset helper. Unrelated writes do not clear taint.
+- Fresh input acquired inside ERR may use adjacent, caught attestation
+  followed by ordinary reads; the conservative incoming-data rule remains.
+- Explicit exit calls route full-integer 0 to EXIT and nonzero to ERR.
+  Signal and fall-through route to EXIT regardless of saved status.
 
-**Next:** DG's review of
-`notes/decisions/DD128-exit-err-adjacent-attest.md`. Existing accepted DDs
-and compiler behavior are unchanged. W5 implementation has not started.
+**Next:** DD128 finalization and W5 implementation planning. Recording these
+choices does not start implementation. Existing accepted companion DDs
+and compiler behavior are unchanged.
 
 ## ══ STATUS (2026-11-03) — W4: process-local SSA taint ══
 

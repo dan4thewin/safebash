@@ -1,14 +1,14 @@
 title: DD#128 - EXIT, ERR, and adjacent attest resolution
 status: draft
 
-Drafted 2026-11-03 at DG's request. **Not accepted or implemented.** The
-compiler still has DD56's `END`, and DD121 still permits general clean
-assignment kills. This document proposes their replacement; it does not
-silently change the authority of the accepted DDs.
+Drafted 2026-11-03 at DG's request. DG settled all five open choices that
+day; section 10 records the rulings, now incorporated into the rules below.
+**The document remains a draft; those choices are no longer open.**
+Implementation has not begun. The compiler still has DD56's `END`, and
+the accepted companion DDs have not yet been rewritten.
 
-DG supplied the design principles. The AI has assembled them into this
-proposal. Five concrete draft choices are identified at the end for DG's
-review.
+DG supplied the design principles and made the decisions. The AI assembled
+the writeup. Recording the rulings does not authorize implementation.
 
 ## The model
 
@@ -16,14 +16,15 @@ Separate orderly termination from failure cleanup:
 
 - **EXIT is ordinary checked code**, entered on normal fall-through,
   explicit `exit 0`, or shutdown requested by a configured EXIT signal.
-- **ERR is failure cleanup**, entered on an uncaught operational failure or
-  explicit nonzero exit. It makes no optimistic assumption that incoming
-  data was attested. Its own operational failures must be caught or
-  suppressed, not implicitly abort the handler.
+- **ERR is failure cleanup**, entered on an uncaught operational failure,
+  explicit nonzero exit, or a first fatal fault before ERR. It makes no
+  optimistic assumption that incoming data was attested. Its own operational
+  failures must be caught or suppressed, not implicitly abort the handler.
 - **Taint is resolved beside acquisition.** A legal adjacent attest, or
   clean replacement of its subject on the failed-attest branch, can clear
   outstanding taint. An unrelated later assignment cannot.
-- **Fatal runtime faults remain fatal.** Arithmetic faults and heap
+- **Fatal runtime faults remain fatal.** A first fault attempts ERR once;
+  a fault inside ERR terminates cleanup. Arithmetic faults and heap
   exhaustion are not made recoverable by entering an error handler.
 
 These are rules for reasoning about control flow and trust. They do not
@@ -82,10 +83,9 @@ background jobs do not run them. A child failure can become a parent-side
 failure through the existing pipeline or wait/status mechanisms; that is
 not the child executing the parent's handler.
 
-**Draft choice A:** replace the `END` spelling, with a migration diagnostic
-rather than a compatibility alias. An old END body is not automatically
-equivalent to either new body: its routing and error-checking contracts
-were different.
+Reject the `END` spelling with a migration diagnostic; there is no
+compatibility alias. An old END body is not automatically equivalent to
+either new body: its routing and error-checking contracts were different.
 
 ## 2. Selecting and leaving a handler
 
@@ -100,7 +100,7 @@ exit byte.
 | Explicit nonzero `exit N` | ERR |
 | An uncaught operational failure | ERR |
 | A caught or suppressed failure followed by continuation | Neither |
-| A fatal runtime fault | Terminal runtime path; draft choice B |
+| A first fatal runtime fault | ERR once |
 
 If the selected handler is absent, terminate without substituting the other
 handler. An absent ERR does not make an abort run EXIT.
@@ -111,11 +111,12 @@ that nonzero status does not select ERR.
 
 DD89 remains in force: an explicit exit argument is a full i64 internally,
 with no new range restriction or early truncation of the stored value.
-**Draft choice E:** zero/nonzero selection uses that full value. Thus
+Zero/nonzero selection uses that full value, as DG ruled for an explicit
+exit call: 0 routes to EXIT and nonzero routes to ERR. Thus
 `exit 256` selects ERR and supplies 256 to it, even though an unchanged
-final status is observed as 0 by the parent. DD89 settles value preservation,
-not this new selection rule: selecting by the eventual low byte while
-still delivering the full value to the handler is a distinct alternative.
+final status is observed as 0 by the parent. Signal and fall-through
+selection remains cause-based, not a test of the saved status. DD89 settles
+value preservation; DG's ruling here settles the new selection rule.
 
 ### No re-entry or return to the interrupted program
 
@@ -127,10 +128,10 @@ main -> ERR  -> termination
 main -> EXIT -> ERR -> termination
 ```
 
-An uncaught operational failure or explicit nonzero exit in EXIT enters
-ERR. EXIT is ordinary checked code, not the old unchecked END region.
-Completing EXIT does not run ERR simply because its saved entry status was
-nonzero, for example after a signal.
+An uncaught operational failure, explicit nonzero exit or first fatal fault
+in EXIT enters ERR. EXIT is ordinary checked code, not the old unchecked
+END region. Completing EXIT does not run ERR simply because its saved entry
+status was nonzero, for example after a signal.
 
 An explicit `exit 0` inside EXIT terminates; it does not restart EXIT.
 An explicit `exit N` inside ERR terminates with that status, including
@@ -204,7 +205,10 @@ This applies equally to scalars, whole collections, implicit rebinding,
 globals and collection slots, and writes performed by helpers. Ordinary
 `unset`, a clean loop binding, a buffer copy or a helper's literal assignment
 must not become an alternative spelling for clearing outstanding taint.
-**Draft choice C** defines the locality of helper-based failure cleanup.
+The failed-attest replacement must be written directly in that branch.
+Calling a reset helper does not count, even if its independent summary
+proves a clean whole-value replacement: the helper does not inherit the
+branch's permission to resolve its subject.
 
 ### What the rule does not mean
 
@@ -342,8 +346,10 @@ Neither literals nor the saved failure status require escape punctuation
 merely because they appear in ERR.
 
 This entry rule is not permission to repair inherited taint with a late
-attest or literal assignment. **Draft choice D** retains ordinary adjacent
-resolution for genuinely fresh input acquired inside ERR.
+attest or literal assignment. Genuinely fresh input acquired inside ERR
+may use ordinary adjacent, caught attestation and then ordinary reads.
+Its failure branch must comply with section 7, and any replacement that
+resolves the subject must be written directly in that branch.
 
 ## 7. ERR must handle operational failures explicitly
 
@@ -396,17 +402,24 @@ They remain fatal, including inside ERR. Neither `if` nor `-` promises
 recovery from them. Do not ban arithmetic or allocation merely because
 those fatal outcomes are possible.
 
-A fatal fault inside ERR may terminate cleanup. Its diagnostic must be
-best-effort and must not require another heap allocation; it must not
-re-enter ERR or transfer to EXIT. No substitute successful value is
-invented. This does not promise that diagnostic I/O succeeds or that the
-existing runtime shutdown work cannot block.
+A first fatal fault in the main process, including inside EXIT, attempts
+ERR once if it is declared. Without ERR, terminate directly. Entering ERR
+must not itself require another heap allocation. The failed operation is
+not retried, and the interrupted program is not resumed.
 
-**Draft choice B:** retain direct runtime termination for these faults
-before handler entry too. The current arithmetic and OOM paths call
-`sash_exit`/`sash_shutdown`, which perform runtime teardown and leave the
-process without dispatching the source END body. Trying ERR once after
-such a fault would be a separate policy, not implied by non-recoverability.
+A fatal fault inside ERR terminates cleanup. Its diagnostic must be
+best-effort and must not require another heap allocation; it must not
+re-enter ERR or transfer to EXIT. This also applies when ERR was originally
+entered for an ordinary failure rather than a fatal fault. No substitute
+successful value is invented. This does not promise that diagnostic I/O
+succeeds or that the existing runtime shutdown work cannot block.
+
+The current arithmetic and OOM paths call `sash_exit`/`sash_shutdown` for
+runtime teardown, leaving the process without dispatching the source END
+body. This rule requires a first-fault ERR transfer instead of
+unconditionally bypassing source handlers. The main-process-only rule
+still holds: a fatal fault in a forked child does not run either parent
+handler.
 
 Uncatchable signals and external process termination are outside the
 language's cleanup guarantee. Compiler/runtime defects are not a license
@@ -449,6 +462,8 @@ Acceptance needs focused real-CLI specs and reversion controls for:
   matching diagnostics or matching empty output between backends.
 - ERR fallback failures, same-process helpers, argument captures and setup
   failures; no suppression-reach regression.
+- First arithmetic and heap faults in main or EXIT attempting ERR once,
+  with direct termination when ERR is absent.
 - Arithmetic and heap faults inside ERR remaining terminal rather than
   re-entering handlers or being converted to success.
 
@@ -462,17 +477,17 @@ For new handler syntax, a pre-change parser rejection is not evidence that
 the new semantic checks work. Use targeted reversion controls once parsing
 exists, along with the ordinary spec gate and its predicted counts.
 
-## 10. Draft choices for DG
+## 10. DG's rulings, 2026-11-03
 
-These defaults make the proposal concrete; they are not recorded rulings.
+All five choices are settled, not proposed defaults:
 
-| Choice | Draft default | Alternative and tradeoff |
-|---|---|---|
-| A - END migration | Reject END with migration guidance. | A temporary compatibility form would need its own old/new routing and checking contract; it cannot safely be an unexplained alias. |
-| B - First fatal fault | Keep the current direct runtime termination, with no first attempt to run ERR. | Attempt ERR once before termination; potentially useful cleanup, but the handler may immediately encounter the same exhausted resource. A fatal fault already inside ERR never re-enters it either way. |
-| C - Failed-attest cleanup through a helper | Clearing permission is lexical to the failed-attest arm and its subject. Calling a generic reset helper does not grant that helper permission to clear received taint. | Admit a call as resolution when its independent summary proves a clean whole-value replacement. This needs a distinct replacement fact, not restoration of general helper assignment kills or caller-specific walks. |
-| D - Fresh input in ERR | The conservative `:!` rule governs incoming data. A genuinely new source inside ERR may use ordinary adjacent, caught attestation and then ordinary reads. | Require `:!` for such fresh input too, even after local validation. That is a blanket restriction on ERR reads, rather than a conservative entry contract. |
-| E - Zero/nonzero exit selection | Test the full i64 exit value, so `exit 256` selects ERR. | Select by the eventual process-status byte, so it selects EXIT. Either policy can preserve the full value for the handler as DD89 requires; the difference is which notion of success chooses the handler. |
+| Choice | Decision |
+|---|---|
+| A - END migration | Reject END with migration guidance; no compatibility form. |
+| B - First fatal fault | Attempt ERR once. A fatal fault inside ERR terminates without re-entry. |
+| C - Failed-attest replacement | Write the replacement directly in the failed-attest branch; a helper does not inherit clearing permission. |
+| D - Fresh input in ERR | Allow ordinary adjacent, caught attestation of freshly acquired input, followed by ordinary reads. |
+| E - Handler selection | An explicit exit call routes 0 to EXIT and nonzero to ERR, using the full integer. Signal and fall-through route to EXIT regardless of their saved status. |
 
 ## 11. Documents to replace on acceptance
 
