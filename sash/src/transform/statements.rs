@@ -163,9 +163,9 @@ fn lower_while_stmt(
 /// Function definition. Registers the body for inline expansion at call sites,
 /// then emits the body into a dedicated SSA block sequence terminating in Return.
 /// Special case: DD#55's SB4017. The name and its `-> int` return type were
-/// decided up front by `register_functions`, for every definition including
-/// END's. A call runs the definition in force, so the classes the calls lowered
-/// from here on check (DD#55) are recomputed as this one comes into force.
+/// decided up front by `register_functions`. A call runs the definition in
+/// force, so the classes checked by subsequent calls (DD#55) are recomputed
+/// as this definition comes into force.
 /// (The DD#56 END body is `Program::end_block`, seeded into `state.exit_trap`
 /// by `ir_to_ssa` — it is not a function and never reaches here.)
 fn lower_function_stmt(

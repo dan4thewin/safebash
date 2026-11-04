@@ -418,11 +418,7 @@ pub(crate) fn is_collection_intrinsic(name: &str) -> bool {
 /// Resolve every external command head in `program` to an absolute path.
 /// Returns fatal diagnostics for any command that cannot be resolved.
 pub(crate) fn resolve_commands(program: &mut Program) -> Vec<Diagnostic> {
-    let mut funcs = HashSet::new();
-    collect_functions(&program.statements, &mut funcs);
-    if let Some(end) = &program.end_block {
-        collect_functions(end, &mut funcs);
-    }
+    let funcs = program.function_defs().map(|f| f.name.clone()).collect();
 
     let mut diags = Vec::new();
     resolve_stmts(&mut program.statements, &funcs, &mut diags);
@@ -549,17 +545,6 @@ pub(crate) fn is_external_looking(name: &str) -> bool {
         return true;
     }
     !is_intrinsic(name)
-}
-
-fn collect_functions(stmts: &[Statement], funcs: &mut HashSet<String>) {
-    for stmt in stmts {
-        if let StmtKind::Function(f) = &stmt.kind {
-            funcs.insert(f.name.clone());
-        }
-        for body in stmt.structural_bodies() {
-            collect_functions(body, funcs);
-        }
-    }
 }
 
 fn resolve_stmts(stmts: &mut [Statement], funcs: &HashSet<String>, diags: &mut Vec<Diagnostic>) {

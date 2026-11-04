@@ -7,7 +7,7 @@ depends: []
 gates:
   - "an arithmetic use before the definition (`(f)` or a bare `f` in `$(( ))`) gets text naming the arithmetic use and advising to define the function before it"
   - "the command forms keep today's text, including the absolute-path advice (functions.sh pins it)"
-  - "56.97 and 56.98 assert the new text"
+  - "fresh specs pin both arithmetic spellings with program-level definitions"
 ---
 
 DD#81 Part A rejects a definition preceded, in execution order, by a use of
@@ -25,10 +25,10 @@ prog.sh:2:1: error [SB5041] 'f' is used as a command before this definition — 
 
 Here `f` was never used as a command, and the advice does not apply: there
 is no external to invoke. The fix is to define `f` above its first use.
-The same text appears for a bare `f` in `$(( ))` and, since batch-531 F3,
-for a use of an END-defined function before END defines it (56.97, 56.98).
-This wording predates F3: the pre-port binary gives the same text for a
-top-level arithmetic use.
+The same text appears for a bare `f` in `$(( ))`. This wording predates F3:
+the pre-port binary gives the same text for a top-level arithmetic use.
+F3's END-definition examples (56.97, 56.98) are retired by uniform SB5071
+(journal 566), but the program-level reproduction above remains applicable.
 
 Cause: `VersionState::externally_used` is a set of names, so the emission in
 `transform/statements.rs` `lower_function_stmt` cannot tell what kind of

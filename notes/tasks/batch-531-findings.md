@@ -696,22 +696,23 @@ DG 2026-10-28: F2 lands without the B82 wrap and without specs that pin
 - [x] **B22** (not-a-bug; no DD). Suspected loop on a pipeline-setup failure
   inside END; it does not occur, because the END region is unchecked.
 
-### 11. F3 END-defined functions
+### 11. F3 END-defined functions (exception retired by SB5071)
 
-- [x] **B8** (fixed-on-branch; DD58, DD56). The transform registers
-  top-level functions only. An END-defined `f` used as `(f)` in arithmetic
-  reads as a variable (0); an END-defined pipeline stage compiles to a bare
-  exec and dies at runtime.
-  - Ported in F3 (journal 541): `ir::Program::function_defs` feeds
-    `register_functions`, and the lazy `-> int` insert is gone. Specs
-    56.94-56.98 and 56.100; SB4019 and SB5041 now fire for END functions
-    (DD56 and DD81 addenda). Backlog: `q-fn-definitions-in-end`,
-    `bug-sb5041-text-for-arithmetic-uses`.
+- [x] **B8** (fixed-on-branch; DD58, DD56, DD86). Before F3, the transform
+  knew only program-level definitions: an END-defined `(f)` read a variable
+  and a function stage tried to exec a bare name. F3 completed support for
+  that accepted form (journal 541).
+  - Superseded in journal 566: the form should have been rejected by
+    SB5071 all along. `fnroot.1` pins that refusal and 56.94-56.100 are
+    retired. The shared inventory remains program-only; the redundant lazy
+    `-> int` insert stays deleted. `q-fn-definitions-in-end` is closed.
+    The independent `bug-sb5041-text-for-arithmetic-uses` remains open.
 - [x] **B16** (fixed-on-branch; DD86). `bindings.rs` builds its function set
-  from top level only, so names inside an END-defined function are not
-  resolved: a false SB5066.
-  - Ported in F3 (journal 541): `bindings::resolve` iterates
-    `function_defs`. Spec 56.99.
+  from top level only before F3, so names inside an END-defined function
+  were not resolved: a false SB5066.
+  - F3 moved `bindings::resolve` onto `function_defs` (journal 541).
+    That shared inventory remains, but journal 566 rejects the invalid
+    source instead of supporting it; 56.99 is retired.
 
 ### 12. F5 capture bodies are function bodies
 
@@ -1270,8 +1271,10 @@ control is `loopflow.15`, not a claim that the counted form is repaired.
 ### 19. Typing
 
 Closed as DD128/W5's typing prerequisite (journal 565), not by importing
-reference-branch hunks. `typeflow.1`-`.24` cover the six findings; the checked
-type map is now the sole input to lowering.
+reference-branch hunks. The `typeflow` specs cover the six findings; the
+checked type map is now the sole input to lowering. Journal 566 replaces
+four invalid-definition fixtures with `.25`-`.28`, retaining their typing
+claims with program-level helpers.
 
 - [x] **B1** (open on reference; DD100, DD93). The transform took its types from a
   second typing walker, `infer_types`, which never got DD100 slot typing or
@@ -1289,9 +1292,10 @@ type map is now the sole input to lowering.
   and collections now get SB4030; introductions are tracked for SB5082.
 - [x] **B5** (open on reference; DD56, DD30, DD100). `type_check` and `infer_types` never visited
   END: an END-local `int n=5; n+=1` printed `51`, and `strlen` of an int in
-  END compiled. Every checking pass now visits END, including its functions.
-  Collection signatures include END definitions and calls, with global
-  collection facts shared across both roots (`typeflow.21`-`.24`).
+  END compiled. Every checking pass now visits END and the functions it calls.
+  Collection signatures include program-level definitions and END calls,
+  with global collection facts shared across both roots (`typeflow.23`,
+  `.24`, `.27`, `.28`).
   - Also (F15, journal 534): `END { echo ${a[foo]} }` on an indexed array
     was a native ICE and printed `x` in C, because DD80's key check never
     ran in END. `typeflow.10` closes the END portion of

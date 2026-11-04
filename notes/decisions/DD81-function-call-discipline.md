@@ -414,16 +414,17 @@ it does not introduce multiple signatures or a new pipeline evaluation
 boundary. `functions.sh` `tmpcap.4`, `tmpcap.13`-`tmpcap.18`; journal 526.
 Tail producers use the same materializer and preserve splats (DD#27).
 
-## Addendum (2026-10-29) — functions defined in END
+## Cleanup calls and definition placement
 
-Part A's execution order includes `END { }`, which runs after the top level.
-A function defined in END is therefore not yet defined anywhere at the top
-level or earlier in END, and a use there is SB5041 at the definition
-(`56.97`, `56.98`). Until batch-531 F3 the transform registered top-level
-definitions only, so an arithmetic use there (`(f)`, a bare `f`) read a
-variable silently. See DD#56's addendum of the same date. The message still
-says "used as a command" when the earlier use was arithmetic
-(`bug-sb5041-text-for-arithmetic-uses`).
+Cleanup bodies may call program-level helpers under Part A's call
+discipline; they are not additional definition roots. SB5071 rejects a
+definition inside END and applies uniformly to DD128's EXIT and ERR.
+The former F3 exception was a misreading of DD86, corrected in journal 566
+and DD56. Its definition-order specs `56.97` and `56.98` are retired.
+
+The independent SB5041 wording defect remains for valid program-level
+definitions preceded by arithmetic uses: the message says "used as a
+command" (`bug-sb5041-text-for-arithmetic-uses`).
 
 ## Addendum (2026-10-29) — one signature, inferred once, checked at every call
 

@@ -1039,20 +1039,12 @@ pub struct Program {
 }
 
 impl Program {
-    /// Every function definition, for passes after structural validation.
-    /// SB5071 admits `fn` only as a direct statement of the top level or of
-    /// the DD#56 `END { }` body, so these two lists hold all of them. Private
-    /// scans of `statements` alone left END's functions unknown twice: the
-    /// transform exec'd them as commands and binding resolution never renamed
-    /// their collection arguments.
+    /// Program-level function definitions. SB5071 rejects every other placement.
     pub(crate) fn function_defs(&self) -> impl Iterator<Item = &Function> {
-        std::iter::once(self.statements.as_slice())
-            .chain(self.end_block.as_deref())
-            .flatten()
-            .filter_map(|stmt| match &stmt.kind {
-                StmtKind::Function(f) => Some(f),
-                _ => None,
-            })
+        self.statements.iter().filter_map(|stmt| match &stmt.kind {
+            StmtKind::Function(f) => Some(f),
+            _ => None,
+        })
     }
 }
 

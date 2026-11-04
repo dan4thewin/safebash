@@ -53,13 +53,13 @@ echo "$n"'
 run_sash 'END { int n=5; n+=1; echo "$n"; }'
 [[ $rc = 0 && $out = 6 && -z $err && -z $rerr ]]; chk typeflow.7
 
-run_sash 'END {
-fn count -> int { return 7; }
+run_sash 'fn count -> int { return 7; }
+END {
 v=$(count)
 v+=1
 echo "$v"
 }'
-[[ $rc = 0 && $out = 8 && -z $err && -z $rerr ]]; chk typeflow.8
+[[ $rc = 0 && $out = 8 && -z $err && -z $rerr ]]; chk typeflow.25
 
 run_sash 'END { int n=5; echo "${n:0:1}"; }'
 [[ $rc != 0 && $err == *SB4030* && $err == *'substring of int variable'* ]]; chk typeflow.9
@@ -110,11 +110,11 @@ x=$(value && echo bad)
 echo "$x"'
 [[ $rc != 0 && $err == *SB4030* && $err == *'int function `value` used in boolean context'* ]]; chk typeflow.17
 
-run_sash 'END {
-fn value -> int { return 1; }
+run_sash 'fn value -> int { return 1; }
+END {
 if value { echo bad; }
 }'
-[[ $rc != 0 && $err == *SB4030* && $err == *'int function `value` used in boolean context'* ]]; chk typeflow.18
+[[ $rc != 0 && $err == *SB4030* && $err == *'int function `value` used in boolean context'* ]]; chk typeflow.26
 
 # An int collection's element type does not make the collection itself a
 # legal scalar conversion target.
@@ -130,22 +130,22 @@ int map m=([key]=5)
 relay =m'
 [[ $rc = 0 && $out = 6 && -z $err && -z $rerr ]]; chk typeflow.20
 
-# Collection signatures include cleanup definitions and calls, sharing the
-# same globals as the main body.
-run_sash 'END {
-fn bump { x=${A[0]}; x+=1; echo "$x"; }
+# Collection signatures include cleanup calls, sharing the same globals
+# as the main body. Function definitions remain program-top-level only.
+run_sash 'fn bump { x=${A[0]}; x+=1; echo "$x"; }
+END {
 int array a=(5)
 bump =a
 }'
-[[ $rc = 0 && $out = 6 && -z $err && -z $rerr ]]; chk typeflow.21
+[[ $rc = 0 && $out = 6 && -z $err && -z $rerr ]]; chk typeflow.27
 
 run_sash 'int map m=([key]=5)
-END {
 fn leaf { x=${A[key]}; x+=1; echo "$x"; }
 fn relay { leaf =A; }
+END {
 relay =m
 }'
-[[ $rc = 0 && $out = 6 && -z $err && -z $rerr ]]; chk typeflow.22
+[[ $rc = 0 && $out = 6 && -z $err && -z $rerr ]]; chk typeflow.28
 
 run_sash 'fn show { echo "${A[0]}"; }
 int array a=(5)

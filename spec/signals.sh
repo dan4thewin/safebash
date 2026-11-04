@@ -1,7 +1,7 @@
 #!/bin/bash
 # DD#56 — signals and END block
 . common.sh
-plan=77
+plan=71
 setup signals
 
 set +e
@@ -423,14 +423,14 @@ echo bad'
 [[ $rc = 143 && -z $out && -z $rerr ]]; chk sig518.5
 
 run_sash 'signal 15 EXIT
+fn cleanup { /bin/echo end }
 END {
-  fn cleanup { /bin/echo end }
   cleanup
   for x in a b { /bin/echo $x }
 }
 /bin/kill -15 $$
 echo bad'
-[[ $rc = 143 && $out = $'end\na\nb' && -z $rerr ]]; chk sig518.6
+[[ $rc = 143 && $out = $'end\na\nb' && -z $rerr ]]; chk sig518.18
 
 # Delivery on the first authored write leaves a pending EXIT without an
 # external-command checkpoint masking the function/loop boundary under test.
@@ -544,58 +544,13 @@ echo main'
 [[ $rc = 0 && $out = $'main\ne\nend' && -z $rerr ]]; chk 56.93
 rm -f endk.ran
 
-# --- END-defined functions are functions everywhere (batch 531 B8/B16) ---
-# SB5071 admits a `fn` only at the top level or directly in `END { }`, but the
-# transform and binding resolution registered top-level definitions alone, so
-# an END function was unknown to both. Each spec below is the top-level
-# behaviour, which END now shares; the parenthesis says what it did before.
-
-# 56.94 `(f)` calls an END-defined int function (it read a variable f: 1)
-run_sash 'END { fn f -> int { return 7; }; echo $(( (f) + 1 )); }'
-[[ $rc = 0 && $out = 8 && -z $rerr ]]; chk 56.94
-
-# 56.95 an END-defined function runs as a pipeline stage (the stage exec'd the
-# bare name: "sash: bug: bare command passed to sash_exec")
-run_sash 'END { fn up { echo hi; }; up | /bin/cat; }'
-[[ $rc = 0 && $out = hi && -z $rerr ]]; chk 56.95
-
-# 56.96 a variable and an END-defined function may not share a name, SB4019 as
-# at the top level (it compiled and printed both)
-run_sash 'f=1
-echo "$f"
-END { fn f { echo a; }; f; }'
-[[ $rc != 0 && -z $out && $err == *":1:1: error [SB4019] variable 'f' collides with function 'f'"* ]]; chk 56.96
-
-# 56.97 a call before the END definition is SB5041, as at the top level
-# (DD#81 Part A; it read a variable f: 1)
-run_sash 'END { echo $(( (f) + 1 )); fn f -> int { return 7; } }'
-[[ $rc != 0 && -z $out && $err == *":1:28: error [SB5041] 'f' is used as a command before this definition"* ]]; chk 56.97
-
-# 56.98 so is a top-level call, which runs before END defines f (it printed 1)
-run_sash 'echo $(( (f) + 1 ))
-END { fn f -> int { return 7; } }'
-[[ $rc != 0 && -z $out && $err == *":2:7: error [SB5041] 'f' is used as a command before this definition"* ]]; chk 56.98
-
-# 56.99 a collection argument between END-defined functions binds (binding
-# resolution never renamed `h =a` there: a false SB5066)
+# A cleanup body shares global variables, not the program's definition root.
+# DD86's SB5071 applies here too; DD128 retains it for both EXIT and ERR.
 run_sash 'END {
-  fn h {
-    echo "${A[0]}"
-  }
-  fn g {
-    array a=(7 8)
-    h =a
-  }
-  g
-}
-echo main'
-[[ $rc = 0 && $out = $'main\n7' && -z $rerr ]]; chk 56.99
-
-# 56.100 control: a bare int-function name after its END definition. It worked
-# before only because the definition registered its `-> int` return type
-# lazily; the up-front registration that replaced that must cover END too.
-run_sash 'END { fn f -> int { return 7; }; echo $(( f + 1 )); }'
-[[ $rc = 0 && $out = 8 && -z $rerr ]]; chk 56.100
+fn cleanup { echo done; }
+cleanup
+}'
+[[ $rc != 0 && -z $out && $err == *':2:1: error [SB5071]'* && $err == *'Move `fn cleanup` to the top level.'* ]]; chk fnroot.1
 
 set -e
 tally

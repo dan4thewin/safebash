@@ -99,9 +99,7 @@ fn reserve_stmt_names(stmt: &Statement, names: &mut HashSet<String>) {
     });
 }
 
-/// Pre-register names and integer returns for forward references, including
-/// `END` functions: registering only top-level ones made `(f)` read a
-/// variable, a pipeline stage exec the bare name, and SB4019/SB5041 miss it.
+/// Pre-register names and integer returns for forward references.
 /// Each function's class whatever the call site (DD#55) is decided here too,
 /// over every definition, for the `fn_NAME` templates; a real call checks the
 /// class of the definition in force (`lower_function_stmt`).

@@ -80,17 +80,22 @@ deleted the copy: `build_function_pipeline_stage` now calls
 
 ## `Program::function_defs` and the scans it could replace (F3, journal 541)
 
-F3 added `ir::Program::function_defs`, every definition after SB5071 (top
-level and END), and moved the transform's `register_functions` and
-`bindings::resolve` onto it (B8, B16). Other private scans for definitions:
-- `resolve.rs` `collect_functions` recurses through every block, so it
-  covers END already. It runs after SB5071 and could use `function_defs`.
+F3 added `ir::Program::function_defs` and moved the transform's
+`register_functions` and `bindings::resolve` onto it (B8, B16). Journal 566
+corrects its scope: SB5071 permits program-level definitions only, not END
+definitions. The shared helper remains; the extra definition root is gone.
+- `resolve.rs`'s recursive `collect_functions` is deleted in journal 566;
+  command resolution uses `function_defs`. Handler commands still resolve.
 - `type_check.rs`'s scans are repaired in journal 565:
   `infer_collection_signatures` and `type_check` use `function_defs`, and
   `infer_types` is deleted. Collection calls in both roots share global
-  metadata; `typeflow.21`-`.24` pin the signature traversal as well.
+  metadata; `typeflow.23`, `.24`, `.27` and `.28` pin that traversal.
+- Predicate-definition collection, undeclared-read function names, scope
+  enumeration and taint definition checks use only program-level definitions.
+  Journal 566 removes their obsolete definition traversal.
 - `validate.rs` `collect_functions` runs before SB5071 rejects a misplaced
-  `fn`, so it must keep recursing. It is not a candidate.
+  `fn`, so it keeps recursing for diagnostics, including invalid source.
+  It does not grant placement permission and is not a candidate.
 
 ## Instances six and seven, found and fixed in F5 (B53, journal 543; B73, journal 544)
 

@@ -473,9 +473,9 @@ force where the call stands. Each `fn` statement recomputes the classes in
 force as it comes into force, so a name defined twice can be a status at one
 call and void at a later one (nonvoid.25-nonvoid.29). The `fn_NAME`
 template of each body, and SB4017's scan, have no call site. They use a table
-built before any body is lowered, over every definition at top level and in
-END (F3's `function_defs`). That table holds only the names defined once and
-the functions whose class depends only on those. A redefined name, and
+built before any body is lowered, over every program-level definition
+(`Program::function_defs`; SB5071 permits no others). That table holds only
+the names defined once and the functions whose class depends only on those. A redefined name, and
 anything whose class it decides, is checked where the call is inlined
 (nonvoid.26). Before, only `-> int` functions were classified, in textual
 order while lowering, so a body calling an int function defined after it went

@@ -71,19 +71,20 @@ reporting rather than swallowing.
 
 ## END block
 
-`END` is a top-level declaration (exactly one per program). It executes
+`END` is a top-level declaration (at most one per program). It executes
 immediately before process exit — from any cause (normal exit, `exit`
 builtin, or signal-triggered shutdown).
 
 Both halves of that sentence are enforced as of journal 309 — neither was
 before. `END { }` parses into `ir::Program::end_block`; **SB4054** rejects one
 anywhere but the top level, and **SB4055** rejects a second (previously the
-second silently won and the first never ran). The body is **top-level scope**,
-not a function body: it shares the top level's globals, and the same rules
-reject the same things in both places. Until then the block was lowered as a
-function literally named `__sash_end__`, which left `:end-block nil` in the
-DD#104 capture, leaked that name into user diagnostics, and let a user
-function of the same name compile and then die at runtime.
+second silently won and the first never ran). The body shares the program's
+**global variable scope**, but is not another program-level statement list:
+SB5071 rejects function definitions inside it. Helpers must be defined at
+program top level and may be called from END. Before journal 309, the block
+was lowered as a function literally named `__sash_end__`, which left
+`:end-block nil` in the DD#104 capture, leaked that name into user diagnostics,
+and let a user function of the same name compile and then die at runtime.
 
 ```bash
 END {
@@ -105,8 +106,8 @@ block, `return`, or `exit N` all terminate the process.
   FIRST action (an abort's failing code, an `exit N`, a signal's `128+n`, or
   the last command's status on normal exit) — the same handling-position rule
   as an `if`/`while` branch. `$?` after a command in END reads that command's
-  status, as usual. (Validator: the `__sash_end__` function starts its `$?`
-  state machine `Available`; other functions start fresh — no leak.)
+  status, as usual. (The validator seeds the cleanup body's `$?` state
+  machine as `Available`; ordinary functions start fresh — no leak.)
 
 ### END runs only in the main process (added 2026-10-28, batch-531 F2)
 
@@ -134,35 +135,25 @@ Specs 56.89 and 56.91-56.93 (signals.sh); findings B9, B10 and B17 in
 fork fails inside END is silent (no diagnostic, END continues), while a
 command that fails to start there is reported and END continues.
 
-### A function defined in END is a function everywhere (added 2026-10-29, batch-531 F3)
+### Function definitions belong only at program top level
 
-SB5071 admits a `fn` definition only as a direct statement of the top level
-or of `END { }`. A definition in END is a function in every respect, as one
-at the top level is:
-- `(f)` and a bare `f` in arithmetic call it, and it runs as a pipeline
-  stage;
-- its name may not also name a variable (SB4019, the collision DD#70 lists);
-- a collection argument between two such functions (`h =a`) binds;
-- DD#81 Part A applies in execution order. A use earlier in END is SB5041,
-  and so is a use at the top level, which runs before END defines the
-  function.
+DD86's SB5071 permits `fn` only as a direct element of the program's
+top-level statement list. A cleanup body is not an exception. Sharing
+global variables does not grant another place to define global functions.
+DG confirmed this rule on 2026-11-04 and directed that DD128's EXIT and ERR
+apply it uniformly.
 
-Before this, the transform and binding resolution registered top-level
-definitions only (B8, B16). `(f)` read a variable named `f`; the stage
-exec'd the bare name and died at runtime ("bare command passed to
-sash_exec"); the collision compiled; a use before the definition was
-silent, so `$(( (f) + 1 ))` printed 1; and `h =a` was never renamed, a
-false SB5066. Both passes now iterate `ir::Program::function_defs`, which
-yields the definitions of both bodies. A definition used to register its
-own `-> int` return type when lowered, which alone made a bare `f` after
-it work in END. That registration was redundant and is gone (56.100 pins
-the replacement).
+The former F3 section here incorrectly described END's acceptance as
+intentional. The validator had exempted the direct statements in both
+bodies, and F3 completed downstream support for that accidental exception.
+Journal 566 restores the stated rule: `fnroot.1` pins SB5071 in END;
+56.94-56.100, whose sole purpose was that exception, are retired.
 
-Specs 56.94-56.100 (signals.sh); findings B8 and B16 in
-`notes/tasks/batch-531-findings.md`. Still open: the type checker scans the
-top level only, END-defined functions included (B5, the typing family).
-Whether END should admit definitions at all is
-`notes/tasks/q-fn-definitions-in-end.md`.
+`Program::function_defs` remains the shared inventory, now of program-level
+definitions only. Handler calls, global bindings and executable statements
+still need their complete traversals. The B5 typing gap is closed
+(journal 565); `typeflow.25`-`.28`, `.23` and `.24` retain cleanup call and
+signature checks with helpers defined at program top level.
 
 ## signum keyword
 

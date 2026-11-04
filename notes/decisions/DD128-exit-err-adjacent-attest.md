@@ -4,11 +4,13 @@ status: draft
 Drafted 2026-11-03 at DG's request. DG settled all five open choices that
 day; section 10 records the rulings, now incorporated into the rules below.
 **The document remains a draft; those choices are no longer open.**
-Implementation has not begun. The compiler still has DD56's `END`, and
-the accepted companion DDs have not yet been rewritten.
+Implementation is authorized and underway. The typing prerequisite shipped
+in journal 565; journal 566 restores uniform SB5071. The compiler still has
+DD56's `END`; the new handler contracts and their remaining companion-DD
+rewrites are not implemented yet.
 
-DG supplied the design principles and made the decisions. The AI assembled
-the writeup. Recording the rulings does not authorize implementation.
+DG supplied the design principles, made the decisions and authorized
+implementation. The AI assembled the writeup and implements those decisions.
 
 ## The model
 
@@ -70,10 +72,11 @@ ERR {
 ```
 
 Each declaration is optional, appears at top level, and occurs at most once.
-They share top-level globals and retain the existing END scope rules,
-including the existing permission for direct function definitions. This
-does not settle the separate question of retiring handler-local function
-definitions. Every whole-program pass must visit both bodies.
+They share top-level globals, but neither body is a function-definition
+root. **SB5071 applies uniformly:** a `fn` is legal only as a direct element
+of the program's top-level statement list, never inside EXIT or ERR.
+Helpers are defined at program top level. Every whole-program pass must
+still visit both handler bodies for their executable statements and calls.
 
 `exit` remains the lowercase builtin. `signal N EXIT` keeps its existing
 disposition spelling, but dispatches to the new EXIT body.
@@ -441,11 +444,12 @@ Both handlers must participate in parsing, binding, resolution, validation,
 typing, summaries, lowering, emission and artifacts. The B5 typing
 prerequisite is closed (2026-11-04, journal 565): the existing END and all
 capture/function bodies are checked, and lowering uses the checked type map.
-Collection signatures include both roots' definitions, calls and shared
-global facts. The new handlers must preserve that coverage. This does not
+Collection signatures include program-level definitions, calls in both
+executable roots and shared global facts. The new handlers must preserve
+that coverage without restoring a second definition root. This does not
 implement their routing or failure contracts: the current blanket END
-unchecking must not
-be inherited by EXIT or used to disguise ERR's explicit-handling rule.
+unchecking must not be inherited by EXIT or used to disguise ERR's
+explicit-handling rule.
 
 The compiler and SSA backstop must agree on the new taint contract. Handler
 entry must preserve actual values on implicit and explicit transfers in
@@ -495,6 +499,11 @@ All five choices are settled, not proposed defaults:
 | D - Fresh input in ERR | Allow ordinary adjacent, caught attestation of freshly acquired input, followed by ordinary reads. |
 | E - Handler selection | An explicit exit call routes 0 to EXIT and nonzero to ERR, using the full integer. Signal and fall-through route to EXIT regardless of their saved status. |
 
+On 2026-11-04 DG also confirmed: retain SB5071 uniformly for EXIT/ERR,
+discard support solely for END-local function definitions, and correct
+DD56. This restores DD86's original rule rather than introducing a new
+placement restriction.
+
 ## 11. Documents to replace on acceptance
 
 Do not append contradictory exceptions to the old policies. Rewrite the
@@ -510,4 +519,4 @@ affected sections coherently, with history remaining in git:
 - GUIDE, the manual, converter guidance and AGENTS: remove obsolete END
   and general-overwrite descriptions when the implementation lands.
 
-The draft alone changes none of those accepted contracts.
+The remaining companion rewrites land with the corresponding implementation.

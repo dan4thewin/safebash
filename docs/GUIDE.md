@@ -441,8 +441,9 @@ fixed/variadic arity remains inferred from `args` usage. Collection-argument
 count, array/map kind and string/int element type must agree at every call,
 including forwarded slots. A call-graph fixpoint resolves collection types
 before checking conflicts; every checking visitor uses the same function
-environment. Main and cleanup definitions and calls all participate, using
-their shared global collection facts. Inlining does not make a function
+environment. Definitions are program-top-level only (SB5071); main and
+cleanup calls all participate, using shared global collection facts.
+Inlining does not make a function
 polymorphic.
 
 ### Phase 6: Transform

@@ -61,14 +61,12 @@ fn validate_block(
 pub fn validate(program: &Program) -> Vec<Diagnostic> {
     let mut diags = Vec::new();
 
-    // Top-level statements, plus the DD#56 `END { }` body, as a single list of
-    // blocks so every check runs over each.
+    // Both executable roots need checking; only `statements` admits definitions.
     let blocks: Vec<&[Statement]> = std::iter::once(program.statements.as_slice())
         .chain(program.end_block.as_deref())
         .collect();
 
-    // Collect declared function names across all blocks first, so a check
-    // in one block sees a function defined in another.
+    // Include misplaced definitions for diagnostics before the placement check.
     let mut functions = HashSet::new();
     for &block in &blocks {
         collect_functions(block, &mut functions);
@@ -85,7 +83,7 @@ pub fn validate(program: &Program) -> Vec<Diagnostic> {
     // SB5049 (DD#86): and no second declaration of a name within one scope.
     check_redeclaration(program, &mut diags);
     // SB5071 (DD#86): a `fn` definition is legal only at the top level.
-    check_fn_placement(&blocks, &mut diags);
+    check_fn_placement(program, &mut diags);
     // SB5072 (DD#86): a `const` binding inside a loop body.
     check_const_in_loop(&blocks, &mut diags);
     // SB5070 speaks only about *collection* splats. A splat of a scalar or of
@@ -249,11 +247,12 @@ fn attest_retag_target(c: &Command) -> Option<&str> {
 /// Nesting inside another function's body is rejected for the same reason
 /// rather than a weaker one — spec 18.3 pinned that such a function is an
 /// ordinary global, i.e. the placement never meant anything there either.
-fn check_fn_placement(blocks: &[&[Statement]], diags: &mut Vec<Diagnostic>) {
-    for &block in blocks {
-        for stmt in block {
-            flag_fns_below(stmt, diags);
-        }
+fn check_fn_placement(program: &Program, diags: &mut Vec<Diagnostic>) {
+    for stmt in &program.statements {
+        flag_fns_below(stmt, diags);
+    }
+    if let Some(end) = &program.end_block {
+        flag_nested_fns(end, diags);
     }
 }
 
@@ -1100,11 +1099,12 @@ fn check_predicate_definite_return(
     if predicate_uses.is_empty() {
         return;
     }
-    let mut fn_defs: Vec<(&str, Span, &[Statement])> = Vec::new();
-    collect_function_defs(&program.statements, &mut fn_defs);
-    if let Some(ref end) = program.end_block {
-        collect_function_defs(end, &mut fn_defs);
-    }
+    let fn_defs: Vec<_> = program
+        .statements
+        .iter()
+        .filter_map(as_function_def)
+        .map(|(f, span)| (f.name.as_str(), span, f.body.as_slice()))
+        .collect();
     report_non_returning_predicates(&fn_defs, &predicate_uses, diags);
 }
 
@@ -3884,22 +3884,6 @@ fn collect_functions(stmts: &[Statement], funcs: &mut HashSet<String>) {
 // implicit trailing-command status) is a compile error; the trailing
 // command would abort-on-fail rather than yield a status.
 
-/// Collect every function definition as (name, def-span, body), walking
-/// nested/local functions too.
-fn collect_function_defs<'a>(
-    stmts: &'a [Statement],
-    out: &mut Vec<(&'a str, Span, &'a [Statement])>,
-) {
-    for stmt in stmts {
-        if let StmtKind::Function(f) = &stmt.kind {
-            out.push((f.name.as_str(), stmt.span, f.body.as_slice()));
-        }
-        for body in stmt.child_bodies() {
-            collect_function_defs(body, out);
-        }
-    }
-}
-
 /// Collect the names of functions used in a boolean context.
 fn collect_predicate_uses(stmts: &[Statement], funcs: &HashSet<String>, out: &mut HashSet<String>) {
     for stmt in stmts {
@@ -4541,11 +4525,7 @@ pub fn check_taint(program: &Program) -> Vec<Diagnostic> {
     for block in program_blocks(program) {
         taint_block(block, &mut tainted, &JustTainted::new(), &cx, &mut diags);
     }
-    for (f, span) in program_blocks(program)
-        .into_iter()
-        .flatten()
-        .filter_map(as_function_def)
-    {
+    for (f, span) in program.statements.iter().filter_map(as_function_def) {
         diags.extend(check_function_def(f, span, &cx));
     }
     diags
@@ -8192,15 +8172,8 @@ pub fn check_undeclared_reads(program: &Program) -> Vec<Diagnostic> {
     // DD#58: a bare name in arithmetic may be a nullary int-function call
     // (`$((f))`), so a defined function name is a valid reference — collect
     // them so the B2 arith-read check doesn't flag them as undeclared.
-    collect_functions(&program.statements, &mut globals);
-    if let Some(ref end) = program.end_block {
-        collect_functions(end, &mut globals);
-    }
-    let mut funcs = HashSet::new();
-    collect_functions(&program.statements, &mut funcs);
-    if let Some(ref end) = program.end_block {
-        collect_functions(end, &mut funcs);
-    }
+    let funcs: HashSet<_> = program.function_defs().map(|f| f.name.clone()).collect();
+    globals.extend(funcs.iter().cloned());
     let mut sink = ReadSink {
         mode: SinkMode::Flag(&mut diags),
         funcs: &funcs,
@@ -8832,22 +8805,10 @@ pub fn check_scalar_subscript(program: &Program) -> Vec<Diagnostic> {
 /// program-wide union covers names introduced inside functions too. Sound
 /// because sash forbids shadowing: one name, one meaning, program-wide.
 fn program_scopes(program: &Program) -> Vec<&[Statement]> {
-    let mut work: Vec<&[Statement]> = std::iter::once(program.statements.as_slice())
+    std::iter::once(program.statements.as_slice())
         .chain(program.end_block.as_deref())
-        .collect();
-    let mut blocks = work.clone();
-    while let Some(block) = work.pop() {
-        work.extend(block.iter().flat_map(|s| s.child_bodies()));
-        blocks.extend(block.iter().filter_map(function_body));
-    }
-    blocks
-}
-
-fn function_body(stmt: &Statement) -> Option<&[Statement]> {
-    match &stmt.kind {
-        StmtKind::Function(f) => Some(&f.body),
-        _ => None,
-    }
+        .chain(program.function_defs().map(|f| f.body.as_slice()))
+        .collect()
 }
 
 /// Names a subscript may legitimately address: `-a`/`-A` declarations, plus the
