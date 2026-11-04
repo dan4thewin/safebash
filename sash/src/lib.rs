@@ -646,7 +646,7 @@ fn run_semantic_checks(
     program: &crate::ir::Program,
     flags: &[&str],
     names: &bindings::SourceNames,
-) -> HashMap<String, crate::ir::VarType> {
+) -> type_check::CheckedTypes {
     // SB4044 sits outside the taint switch: a const write is no taint
     // question, and `--no-taint` must not carry one into lowering, where
     // `VersionState::define` asserts it never arrives.
@@ -704,7 +704,7 @@ fn type_check_or_exit(
     input: &str,
     program: &crate::ir::Program,
     names: &bindings::SourceNames,
-) -> HashMap<String, crate::ir::VarType> {
+) -> type_check::CheckedTypes {
     let type_errors = match type_check::type_check(program) {
         Ok(types) => return types,
         Err(errors) => errors,
@@ -738,7 +738,7 @@ fn transform_or_exit(
     input: &str,
     program: &crate::ir::Program,
     names: &bindings::SourceNames,
-    type_map: HashMap<String, crate::ir::VarType>,
+    type_map: type_check::CheckedTypes,
 ) -> crate::ssa::SsaProgram {
     let (ssa, diags) = transform::ir_to_ssa_typed(program, type_map);
     if !diags.is_empty() {

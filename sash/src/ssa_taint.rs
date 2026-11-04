@@ -64,9 +64,9 @@ struct Pass<'a> {
 /// Classify definitions, then check uses in one process. Each child inherits
 /// a copy; its definitions cannot affect its parent or siblings.
 ///
-/// This retains the existing single-pass ordering and completed-parent view,
-/// including definitions after a fork. Per-use array timing and forward-phi
-/// classification remain separate backstop defects.
+/// Definitions converge before uses are checked, including forward phi inputs.
+/// Collection reads retain their reaching versions. Unlowered redirect operands
+/// still use the completed-parent name view, including definitions after a fork.
 fn check_process(
     pass: &Pass<'_>,
     blocks: &[BlockId],
@@ -74,14 +74,7 @@ fn check_process(
     errors: &mut Vec<String>,
 ) {
     let program = pass.program;
-    for &id in blocks {
-        classify_block_defs(
-            program.block(id),
-            &mut view,
-            &pass.user_functions,
-            &pass.diverging,
-        );
-    }
+    classify_process_defs(pass, blocks, &mut view);
     for &id in blocks {
         check_block_uses(program.block(id), &view, errors, &program.source_names);
     }
@@ -90,6 +83,39 @@ fn check_process(
         .flat_map(|&id| program.spawned_by(program.block(id)));
     for root in roots {
         check_process(pass, &program.process_blocks(&[root]), view.clone(), errors);
+    }
+}
+
+fn classify_process_defs(pass: &Pass<'_>, blocks: &[BlockId], view: &mut HashMap<String, Taint>) {
+    let reachable = blocks.iter().copied().collect();
+    let mut definitions = HashMap::new();
+    classify_process_pass(pass, blocks, &reachable, &mut definitions);
+    // Start local definitions at the least state; inherited definitions stay intact.
+    view.extend(definitions.into_keys().map(|key| (key, Taint::Clean)));
+    loop {
+        let previous = view.clone();
+        classify_process_pass(pass, blocks, &reachable, view);
+        if *view == previous {
+            break;
+        }
+    }
+}
+
+fn classify_process_pass(
+    pass: &Pass<'_>,
+    blocks: &[BlockId],
+    reachable: &std::collections::HashSet<BlockId>,
+    view: &mut HashMap<String, Taint>,
+) {
+    for &id in blocks {
+        classify_block_defs(
+            pass.program.block(id),
+            view,
+            &pass.user_functions,
+            &pass.diverging,
+            &pass.program.taint_predecessors,
+            reachable,
+        );
     }
 }
 
@@ -168,26 +194,28 @@ fn classify_block_defs(
     taint: &mut HashMap<String, Taint>,
     user_functions: &std::collections::HashSet<String>,
     diverging: &std::collections::HashSet<crate::ssa::BlockId>,
+    predecessors: &HashMap<VarRef, VarRef>,
+    reachable: &std::collections::HashSet<BlockId>,
 ) {
-    // Phi nodes — optimistic: default to clean, will be corrected by
-    // iteration if any incoming is tainted. Since the CST pass is the
-    // authority, false-clean here just means we don't catch a CST bug
-    // involving loops — acceptable for a backstop.
-    //
-    // A source from a diverging predecessor is skipped: that path exits, so its
-    // version never reaches this merge. See `collect_diverging_blocks`.
     for phi in &block.phis {
-        let key = var_key(&phi.target);
-        let t = phi
-            .sources
-            .iter()
-            .filter(|(bid, _)| !diverging.contains(bid))
-            .any(|(_bid, vref)| matches!(taint.get(&var_key(vref)), Some(&Taint::Tainted)));
-        taint.insert(key, if t { Taint::Tainted } else { Taint::Clean });
+        let t = phi_taint(phi, taint, diverging, reachable);
+        taint.insert(var_key(&phi.target), t);
     }
     for inst in &block.insts {
-        classify_inst_def(inst, taint, user_functions);
+        classify_inst_def(inst, taint, user_functions, predecessors);
     }
+}
+
+fn phi_taint(
+    phi: &crate::ssa::PhiNode,
+    taint: &HashMap<String, Taint>,
+    diverging: &std::collections::HashSet<BlockId>,
+    reachable: &std::collections::HashSet<BlockId>,
+) -> Taint {
+    // A returned or unreachable predecessor never reaches this merge.
+    taint_of_flag(phi.sources.iter().any(|(bid, vref)| {
+        reachable.contains(bid) && !diverging.contains(bid) && is_tainted(taint, vref)
+    }))
 }
 
 /// Classify the VarRef(s) defined by one instruction. Instructions that
@@ -196,11 +224,12 @@ fn classify_inst_def(
     inst: &SsaInst,
     taint: &mut HashMap<String, Taint>,
     user_functions: &std::collections::HashSet<String>,
+    predecessors: &HashMap<VarRef, VarRef>,
 ) {
     match inst {
         SsaInst::Assign { target, value } => {
             let t = value_is_tainted(value, taint, user_functions);
-            taint.insert(var_key(target), t);
+            classify_write(target, t, taint, predecessors);
         }
         SsaInst::Attest { target, .. } => {
             // Attest produces a clean version.
@@ -217,7 +246,7 @@ fn classify_inst_def(
         SsaInst::CaptureEnd {
             target, buffered, ..
         } => {
-            taint.insert(var_key(target), taint_of_flag(!buffered));
+            classify_write(target, taint_of_flag(!buffered), taint, predecessors);
         }
         SsaInst::Pipeline { capture, .. } => {
             taint.extend(capture.target().map(|target| (var_key(target), Taint::Tainted)));
@@ -234,13 +263,13 @@ fn classify_inst_def(
             // it — so the source map has no tainted key to hand over. This is
             // deliberately NOT the `ArgvFill` rule above: argv's bytes come
             // from outside the program, a map's keys were put there by it.
-            taint.insert(var_key(target), Taint::Clean);
+            classify_write(target, Taint::Clean, taint, predecessors);
         }
         SsaInst::SplitValue { source, target } => {
             // DD#99 `read $SRC ARR` — the array is as tainted as the scalar
             // whose bytes it splits.
             let t = value_is_tainted(source, taint, user_functions);
-            taint.insert(var_key(target), t);
+            classify_write(target, t, taint, predecessors);
         }
         SsaInst::MapFromArray {
             source,
@@ -249,7 +278,7 @@ fn classify_inst_def(
             ..
         } => {
             let t = map_fill_taint(source, *taint_off, taint);
-            taint.insert(var_key(target), t);
+            classify_write(target, t, taint, predecessors);
         }
 
         // Instructions that don't define a VarRef. Capture-form builtins are
@@ -266,6 +295,19 @@ fn classify_inst_def(
         | SsaInst::PipelineFinish { .. }
         | SsaInst::RedirectPop { .. } => {}
     }
+}
+
+fn classify_write(
+    target: &VarRef,
+    value: Taint,
+    taint: &mut HashMap<String, Taint>,
+    predecessors: &HashMap<VarRef, VarRef>,
+) {
+    let previous = predecessors
+        .get(target)
+        .and_then(|previous| taint.get(&var_key(previous)));
+    let unresolved = value == Taint::Tainted || previous == Some(&Taint::Tainted);
+    taint.insert(var_key(target), taint_of_flag(unresolved));
 }
 
 /// Phase-2 per-block driver: dispatch each instruction to `check_inst_uses`.
@@ -407,12 +449,10 @@ fn value_is_tainted(
         | SsaValue::FuncCall { .. }
         | SsaValue::IntFuncCall { .. } => Taint::Clean,
 
-        // Array reads inherit the named array's taint (DD#61). The array
-        // name is unversioned in SSA; reads resolve to the latest version,
-        // so we consult the latest classified version of that name.
+        // Collection reads inherit the version selected at their use site.
         SsaValue::Subscript { array, .. }
         | SsaValue::TableValue { array, .. }
-        | SsaValue::TableKey { array, .. } => taint_of_name(taint, array),
+        | SsaValue::TableKey { array, .. } => taint_of_var(taint, array),
 
         // DD#91: `${x:~}` carries the source's taint; the `:!` spelling
         // (taint_off) is a sanctioned per-use bypass → always Clean.
@@ -507,7 +547,7 @@ fn elide_taint(
 }
 
 /// DD#99/#91: taint of `map m = @{a:DISP}`. The map is as tainted as its
-/// source array (resolved by name — arrays read at their latest version),
+/// source array's reaching version,
 /// unless the `!` spelling vouched for the read, which answers Clean exactly
 /// as `splat_taint` does for `@a:!`.
 ///
@@ -515,11 +555,11 @@ fn elide_taint(
 /// value the splat can yield, so `!` must not vouch for it; a map fill's
 /// `:-KEY` and `:?MSG` are literals (SB4070), so neither can carry taint in
 /// the first place.
-fn map_fill_taint(source: &str, taint_off: bool, taint: &HashMap<String, Taint>) -> Taint {
+fn map_fill_taint(source: &VarRef, taint_off: bool, taint: &HashMap<String, Taint>) -> Taint {
     if taint_off {
         Taint::Clean
     } else {
-        taint_of_name(taint, source)
+        taint_of_var(taint, source)
     }
 }
 
@@ -537,13 +577,13 @@ fn map_fill_taint(source: &str, taint_off: bool, taint: &HashMap<String, Taint>)
 /// yields nothing and contributes no taint — exactly as `RequireValue`'s
 /// message does not.
 fn splat_taint(
-    array: &str,
+    array: &VarRef,
     disposition: &Option<crate::ssa::ArraySplatDisposition>,
     taint: &HashMap<String, Taint>,
     user_functions: &std::collections::HashSet<String>,
 ) -> Taint {
     let vouched = disposition.as_ref().is_some_and(|d| d.taint_off);
-    if !vouched && taint_of_name(taint, array) == Taint::Tainted {
+    if !vouched && taint_of_var(taint, array) == Taint::Tainted {
         return Taint::Tainted;
     }
     disposition
@@ -707,7 +747,7 @@ fn check_value_use(
         | SsaValue::TableKey { .. }
         | SsaValue::AssocArray(_) => unreachable!("{ASSIGN_ONLY_VALUE}"),
 
-        // ── Collection reads, resolved by bare name (DD#61) ─────────────
+        // ── Collection reads at their reaching version (DD#61) ─────────
         SsaValue::Subscript { array, index, .. } => {
             check_tainted_array(array, context, taint, errors, names);
             check_value_use(index, taint, errors, context, names);
@@ -844,7 +884,7 @@ fn check_param_expansion_use(
 /// vouches for the splat's own read, not for an unrelated variable spliced
 /// into the default.
 fn check_splat_use(
-    array: &str,
+    array: &VarRef,
     disposition: &Option<crate::ssa::ArraySplatDisposition>,
     taint: &HashMap<String, Taint>,
     errors: &mut Vec<String>,
@@ -900,16 +940,16 @@ fn check_tainted_var(
 
 /// Emit the backstop ICE if array `array` is tainted at a subscript read.
 fn check_tainted_array(
-    array: &str,
+    array: &VarRef,
     context: &str,
     taint: &HashMap<String, Taint>,
     errors: &mut Vec<String>,
     names: &SourceNames,
 ) {
-    if taint_of_name(taint, array) == Taint::Tainted {
+    if taint_of_var(taint, array) == Taint::Tainted {
         errors.push(format!(
             "tainted array {}[...] used as {} without attest (SSA taint backstop)",
-            names.original(array),
+            names.original(&array.name),
             names.restore(context)
         ));
     }
@@ -1028,7 +1068,7 @@ mod tests {
     fn table_value_cannot_reach_the_value_walk() {
         errors_for(
             &SsaValue::TableValue {
-                array: "m".into(),
+                array: vref("m"),
                 index: vref("i"),
             },
             &tainted("m_1"),
@@ -1040,7 +1080,7 @@ mod tests {
     fn table_key_cannot_reach_the_value_walk() {
         errors_for(
             &SsaValue::TableKey {
-                array: "m".into(),
+                array: vref("m"),
                 index: vref("i"),
             },
             &tainted("m_1"),

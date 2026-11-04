@@ -555,7 +555,7 @@ pub enum SsaInst {
     /// bypass. Dropping it here made the SSA taint pass disagree with
     /// `validate` about `map m = @{a:!~}`, which DD#91 forbids.
     MapFromArray {
-        source: String,
+        source: VarRef,
         target: VarRef,
         mode: u8,
         key: SsaValue,
@@ -1285,7 +1285,7 @@ pub enum SsaValue {
     AssocArray(Vec<(String, SsaValue)>),
     /// Associative array subscript: ${MAP[$KEY]}
     Subscript {
-        array: String,
+        array: VarRef,
         index: Box<SsaValue>,
         is_integer_key: bool,   // true = indexed array (key is raw i64 bytes)
         is_integer_value: bool, // DD#76: true = int-valued cell (val_len IS the i64)
@@ -1310,13 +1310,13 @@ pub enum SsaValue {
     /// Table element by positional index: sash_table_value(table, i)
     /// Used for `for x in "${arr[@]}"` iteration.
     TableValue {
-        array: String,
+        array: VarRef,
         index: VarRef,
     },
     /// Table key by positional index: sash_table_key(table, i)
     /// Used for `for k in "${!arr[@]}"` iteration.
     TableKey {
-        array: String,
+        array: VarRef,
         index: VarRef,
     },
     /// DD#20/DD#22: `@a` (= `${a[@]}`) in command-argument position.
@@ -1325,7 +1325,7 @@ pub enum SsaValue {
     /// args. Only valid in command-arg position (the backends' argv
     /// builders intercept it); elsewhere `@a` keeps its joined meaning.
     ArraySplat {
-        array: String,
+        array: VarRef,
         /// DD#69 external-splat empty-disposition (`@{a:-WORD}` /
         /// `@{a:?WORD}`). `None` = bare `@a` (empty → zero args).
         disposition: Option<ArraySplatDisposition>,
@@ -1620,6 +1620,7 @@ impl GlobalType {
 pub struct SsaProgram {
     pub(crate) source_names: crate::bindings::SourceNames,
     pub(crate) globals: BTreeMap<String, GlobalType>,
+    pub(crate) taint_predecessors: HashMap<VarRef, VarRef>,
     pub blocks: BTreeMap<BlockId, BasicBlock>,
     pub entry: BlockId,
     /// DD#56: dedicated END block — all exit paths goto here
@@ -1739,6 +1740,7 @@ impl SsaProgram {
         Self {
             source_names: crate::bindings::SourceNames::default(),
             globals: BTreeMap::new(),
+            taint_predecessors: HashMap::new(),
             blocks: BTreeMap::new(),
             entry: 0,
             end_block: None,
@@ -2020,6 +2022,10 @@ pub struct VersionState {
     current: HashMap<String, u32>,
     /// High-water mark — the next version to assign (never rolls back).
     counter: HashMap<String, u32>,
+    pub(crate) taint_predecessors: HashMap<VarRef, VarRef>,
+    pub(crate) failed_attests: Vec<String>,
+    pub(crate) live_locals: std::collections::HashSet<String>,
+    pub(crate) checked_collections: HashMap<String, bool>,
     /// Functions known at this point in the program.
     pub known_functions: std::collections::HashSet<String>,
     /// Function IR bodies for inline expansion at call sites.
@@ -2198,6 +2204,10 @@ impl VersionState {
         Self {
             current: HashMap::new(),
             counter: HashMap::new(),
+            taint_predecessors: HashMap::new(),
+            failed_attests: Vec::new(),
+            live_locals: std::collections::HashSet::new(),
+            checked_collections: HashMap::new(),
             known_functions: std::collections::HashSet::new(),
             function_bodies: HashMap::new(),
             exits_in_force: HashMap::new(),
@@ -2290,7 +2300,27 @@ impl VersionState {
                  every write to a const, so a second version would change one"
             );
         }
-        self.next_version(name)
+        let previous = self.lookup(name);
+        let target = self.next_version(name);
+        self.taint_predecessors.insert(target.clone(), previous);
+        target
+    }
+
+    /// A whole-value write may resolve only its enclosing failed attest's
+    /// subject. Its new value is still independently classified for taint.
+    pub(crate) fn define_replacement(&mut self, name: &str) -> VarRef {
+        let target = self.define(name);
+        if self.failed_attests.iter().any(|subject| subject == name) {
+            self.taint_predecessors.remove(&target);
+        }
+        target
+    }
+
+    /// A fresh body lifetime has no outstanding taint from its previous entry.
+    pub(crate) fn define_initial(&mut self, name: &str) -> VarRef {
+        let target = self.define(name);
+        self.taint_predecessors.remove(&target);
+        target
     }
 
     /// Define the version a phi joins at a merge. Each version it joins was
@@ -2358,6 +2388,7 @@ impl VersionState {
             return_target: self.return_target.take(),
             loop_stack: std::mem::take(&mut self.loop_stack),
             tail_loop: self.tail_loop.take(),
+            failed_attests: std::mem::take(&mut self.failed_attests),
         }
     }
 
@@ -2369,6 +2400,7 @@ impl VersionState {
         self.return_target = parent.return_target;
         self.loop_stack = parent.loop_stack;
         self.tail_loop = parent.tail_loop;
+        self.failed_attests = parent.failed_attests;
     }
 }
 
@@ -2384,6 +2416,7 @@ pub(crate) struct ParentContext {
     return_target: Option<usize>,
     loop_stack: Vec<(usize, usize)>,
     tail_loop: Option<TailLoop>,
+    failed_attests: Vec<String>,
 }
 
 /// `IntCell` is a **storage** annotation, never an expression.
@@ -2463,7 +2496,10 @@ pub(crate) fn unlowerable_scalar_value(backend: &str, value: &SsaValue) -> ! {
         // DD#20/#22: a splat is one value per element, so it only has a meaning
         // in a list position, where the argv / array-literal builder expands it.
         SsaValue::ArraySplat { array, .. } => {
-            format!("ArraySplat (@{array}) must be expanded by the argv builder")
+            format!(
+                "ArraySplat (@{}) must be expanded by the argv builder",
+                array.name
+            )
         }
         // DD#84: `:~` is legal only in an elidable list position, where the list
         // builder intercepts it. Reaching a scalar lowering means validate's
@@ -2642,7 +2678,7 @@ mod unlowerable_value_tests {
             ),
             (
                 SsaValue::ArraySplat {
-                    array: "a".into(),
+                    array: super::VarRef::new("a", 1),
                     disposition: None,
                 },
                 "ArraySplat (@a) must be expanded by the argv builder",

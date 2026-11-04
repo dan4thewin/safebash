@@ -43,10 +43,8 @@ fn lower_newread(
         ),
     };
     super::stmt_handlers::autodeclare_bulk_target(&target, ssa, state, block);
-    // Define a LATER version than the autodeclare's empty-array Assign, so the
-    // SSA taint backstop's max-version lookup resolves to the fill rather than
-    // to the clean empty array (a naive `{name}_0` insert loses that race).
-    let target = state.define(&target);
+    // The completed fill is a separate definition from the empty initialization.
+    let target = state.define_replacement(&target);
     let fd = state.pipe_reader.unwrap_or(0);
     let inst = match source {
         Some(source) => SsaInst::SplitValue { source, target },
@@ -198,7 +196,7 @@ fn unset_whole(name: &str, ssa: &mut SsaProgram, state: &mut VersionState, block
         "ICE: unset requires a collection name"
     );
     let value = SsaValue::Literal("__new_table__".to_string());
-    let target = state.define(&name);
+    let target = state.define_replacement(&name);
     ssa.block_mut(block)
         .insts
         .push(SsaInst::Assign { target, value });

@@ -44,8 +44,7 @@ fn emit_for_bound(
 /// node the SSA backstop sees the element read inherit the array's taint and
 /// rejects a bypass the author explicitly asked for, which is the whole
 /// reason `Trusted` exists.
-fn loop_binding_value(use_keys: bool, array_name: &str, index: &VarRef, vouched: bool) -> SsaValue {
-    let array = array_name.to_string();
+fn loop_binding_value(use_keys: bool, array: VarRef, index: &VarRef, vouched: bool) -> SsaValue {
     let index = index.clone();
     let bind = if use_keys {
         SsaValue::TableKey { array, index }
@@ -106,7 +105,7 @@ pub(super) fn lower_for_array(
     let loop_var = state.define(&f.variable);
     ssa.block_mut(body_block).insts.push(SsaInst::Assign {
         target: loop_var,
-        value: loop_binding_value(use_keys, array_name, &idx_ref, vouched),
+        value: loop_binding_value(use_keys, state.lookup(array_name), &idx_ref, vouched),
     });
 
     state.loop_stack.push((latch, exit_block));
@@ -146,7 +145,7 @@ pub(super) fn lower_for_array(
     let loop_var_2 = state.define(&f.variable);
     ssa.block_mut(body_block).insts.push(SsaInst::Assign {
         target: loop_var_2,
-        value: loop_binding_value(use_keys, array_name, &idx_ref_2, vouched),
+        value: loop_binding_value(use_keys, state.lookup(array_name), &idx_ref_2, vouched),
     });
 
     state.loop_stack.push((latch, exit_block));

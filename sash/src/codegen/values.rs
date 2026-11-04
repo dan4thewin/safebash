@@ -301,7 +301,7 @@ pub(super) fn lower_value(
             is_integer_key,
             is_integer_value,
         } => lower_subscript_value(
-            array,
+            &array.name,
             index,
             *is_integer_key,
             *is_integer_value,
@@ -316,10 +316,10 @@ pub(super) fn lower_value(
             lower_argv_index_value(idx_ref, builder, module, vars, externs)
         }
         SsaValue::TableValue { array, index } => {
-            lower_table_value_value(array, index, builder, module, vars, externs)
+            lower_table_value_value(&array.name, index, builder, module, vars, externs)
         }
         SsaValue::TableKey { array, index } => {
-            lower_table_key_value(array, index, builder, module, vars, externs)
+            lower_table_key_value(&array.name, index, builder, module, vars, externs)
         }
         SsaValue::Ternary {
             cond,
@@ -1110,7 +1110,7 @@ fn lower_indexed_array_value(
             // lossy: `("a b" "c")` and `(a b c)` both collapsed to "a b c".
             SsaValue::ArraySplat { array, disposition } => {
                 let eff = super::commands::resolve_splat_table(
-                    array,
+                    &array.name,
                     disposition.as_ref(),
                     builder,
                     module,
@@ -1254,7 +1254,7 @@ fn lower_disposition_as_int(
             is_integer_key,
             is_integer_value,
         } => Some(lower_subscript_as_int(
-            array,
+            &array.name,
             index,
             *is_integer_key,
             *is_integer_value,

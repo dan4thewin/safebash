@@ -33,7 +33,9 @@ echo "$x $y"
 DD86 makes the capture a fresh function body. Its one enclosing loop is
 the `j` loop, so the count must clamp there and the result must be
 `clean hi`. With a plain `break`, the same program does print `clean hi`;
-`loopflow.15` preserves that ordinary nested-loop case.
+`adjpolicy.8` preserves that ordinary nested-loop case. It replaces
+`loopflow.15` with a legal adjacent attest before the later clean overwrite
+(DD128, journal 568); it does not claim to repair counted jumps.
 
 `transform/stmt_handlers.rs::capture_body_into` saves the return target,
 reader, self-tail and condition contexts, but not `state.loop_stack`.

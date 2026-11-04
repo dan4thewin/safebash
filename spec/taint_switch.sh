@@ -5,7 +5,7 @@
 set -eu
 . common.sh
 setup taint_switch
-plan=62
+plan=78
 echo "1..$plan" >&3
 
 set +e
@@ -504,6 +504,100 @@ run_sash 'str x=$(/bin/echo dirty)
 fn clean { x=safe }
 echo "$x"'
 [[ $rc != 0 && -z $out && $err == *"tainted variable x_"* && $err == *"SSA taint backstop"* ]]; chk procflow.14
+unset SASH_CFLAGS
+
+# DD#128's binding continuity must also hold with the source taint gate off.
+export SASH_CFLAGS=--no-taint-cst
+run_sash 'x=$(arg 1)
+x=safe
+echo "$x"' dirty
+[[ $rc != 0 && $err == *'tainted variable x_'* && $err == *'SSA taint backstop'* ]]; chk adjssa.1
+
+run_sash 'x=$(arg 1)
+x=${x:!}
+echo "$x"' dirty
+[[ $rc != 0 && $err == *'tainted variable x_'* && $err == *'SSA taint backstop'* ]]; chk adjssa.2
+
+run_sash 'argv 1 a
+a=(safe)
+echo "${a[0]}"' dirty
+[[ $rc != 0 && $err == *'tainted array a[...]'* && $err == *'SSA taint backstop'* ]]; chk adjssa.3
+
+run_sash 'argv 1 a
+unset a
+echo "${a[0]:-missing}"' dirty
+[[ $rc != 0 && $err == *'tainted array a[...]'* && $err == *'SSA taint backstop'* ]]; chk adjssa.4
+
+# Discharging the predecessor cannot bless newly acquired bytes.
+run_sash 'x=$(arg 1)
+attest x [[ $x == allowed ]] || x=$(arg 2)
+echo "$x"' dirty other
+[[ $rc != 0 && $err == *'tainted variable x_'* && $err == *'SSA taint backstop'* ]]; chk adjssa.5
+
+run_sash 'str x
+fn reset { x=safe }
+x=$(arg 1)
+attest x [[ $x == allowed ]] || reset
+echo "$x"' dirty
+[[ $rc != 0 && $err == *'tainted variable x_'* && $err == *'SSA taint backstop'* ]]; chk adjssa.6
+
+run_sash 'fn reset { unset A }
+argv 1 a
+reset =a
+echo "${a[0]:-missing}"' dirty
+[[ $rc != 0 && $err == *'tainted array a[...]'* && $err == *'SSA taint backstop'* ]]; chk adjssa.7
+
+run_sash 'fn buffered { echo safe }
+x=$(arg 1)
+x=$(buffered)
+echo "$x"' dirty
+[[ $rc != 0 && $err == *'tainted variable x_'* && $err == *'SSA taint backstop'* ]]; chk adjssa.8
+
+run_sash 'x=$(arg 1)
+for x in safe { echo "$x" }' dirty
+[[ $rc != 0 && $err == *'tainted variable x_'* && $err == *'SSA taint backstop'* ]]; chk adjssa.9
+
+run_sash 'x=$(arg 1)
+attest x [[ $x == allowed ]] || : $(x=safe; echo fallback)
+echo "$x"' dirty
+[[ $rc != 0 && $err == *'tainted variable x_'* && $err == *'SSA taint backstop'* ]]; chk adjssa.10
+
+# Later attests must not clean an earlier collection read or derived value.
+run_sash 'argv 1 a
+echo "${a[0]}"
+attest item in a [[ -n $item ]]' dirty
+[[ $rc != 0 && $err == *'tainted array a[...]'* && $err == *'SSA taint backstop'* ]]; chk adjssa.11
+
+run_sash 'argv 1 a
+array b=(@a)
+attest item in a [[ -n $item ]]
+echo "${b[0]}"' dirty
+[[ $rc != 0 && $err == *'tainted array b[...]'* && $err == *'SSA taint backstop'* ]]; chk adjssa.12
+
+run_sash 'argv 1 a
+for v in @a { echo "$v" }
+attest item in a [[ -n $item ]]' dirty
+[[ $rc != 0 && $err == *'tainted variable v_'* && $err == *'SSA taint backstop'* ]]; chk adjssa.13
+
+run_sash 'argv 1 a
+map m = @{a:~}
+attest item in a [[ -n $item ]]
+echo "${m[key]}"' key dirty
+[[ $rc != 0 && $err == *'tainted array m[...]'* && $err == *'SSA taint backstop'* ]]; chk adjssa.14
+
+run_sash 'x=$(arg 1)
+attest x [[ $x == allowed ]] || x=$(arg 2)
+y=$x
+echo "$y"' dirty other
+[[ $rc != 0 && $err == *'tainted variable y_'* && $err == *'SSA taint backstop'* ]]; chk adjssa.15
+
+run_sash 'fn f {
+  str x=$(getenv HOME)
+  str result=$(x=clean; echo "$x")
+  echo "$result"
+}
+f'
+[[ $rc != 0 && $err == *'tainted variable x_'* && $err == *'SSA taint backstop'* ]]; chk adjssa.16
 unset SASH_CFLAGS
 
 set -e

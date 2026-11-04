@@ -14,6 +14,13 @@ pub struct TypeError {
     pub span: Span,
 }
 
+/// Checked scalar/element types and collection kinds, including body locals.
+pub struct CheckedTypes {
+    pub(crate) vars: HashMap<String, VarType>,
+    /// Collection identity -> whether it is a map.
+    pub(crate) collections: HashMap<String, bool>,
+}
+
 /// Environment tracking variable and function types.
 #[derive(Clone, PartialEq, Eq)]
 struct TypeEnv {
@@ -1051,7 +1058,7 @@ fn declared_collection_kind(d: &Declaration) -> Option<bool> {
 }
 
 /// Type-check every body and return the checked types used by lowering.
-pub fn type_check(program: &Program) -> Result<HashMap<String, VarType>, Vec<TypeError>> {
+pub fn type_check(program: &Program) -> Result<CheckedTypes, Vec<TypeError>> {
     let mut errors = Vec::new();
     let mut env = TypeEnv::new();
 
@@ -1093,7 +1100,19 @@ pub fn type_check(program: &Program) -> Result<HashMap<String, VarType>, Vec<Typ
     check_int_fn_predicates(program, &env, &mut errors);
 
     if errors.is_empty() {
-        Ok(env.vars)
+        let collections = env
+            .collections
+            .into_iter()
+            .filter(|name| env.vars.contains_key(name))
+            .map(|name| {
+                let is_map = env.assoc_arrays.contains(&name);
+                (name, is_map)
+            })
+            .collect();
+        Ok(CheckedTypes {
+            vars: env.vars,
+            collections,
+        })
     } else {
         Err(errors)
     }

@@ -1,17 +1,23 @@
 ---
 title: "A clean value split retains the target's previous taint"
-status: open
+status: done
 priority: P2
 kind: bug
 depends: []
 gates:
-  - "A clean value split over an argv-filled array permits a cell read without :! and prints clean"
-  - "An empty value split clears the old cells and permits the empty-cell fallback"
-  - "The same replacement works through a collection slot summary"
-  - "Kernel-backed reads remain tainted and split input reads are still checked before replacement"
+  - "Ordinary clean splitting preserves unresolved taint under DD128"
+  - "Direct clean splitting on the target's failed-attest branch resolves it"
+  - "A helper does not inherit its caller's replacement permission"
+  - "Kernel-backed reads remain tainted and split input reads are checked"
 ---
 
-B106, corrected during W3 (journal 562). DD99 already settles the behavior:
+Superseded by DD128, implemented in journal 568. The requested ordinary
+clean-split declassification is now deliberately forbidden: replacing bytes
+is distinct from resolving a live binding's taint. `adjresolve.14` permits
+a direct clean split on its subject's failed-attest branch, while `.9`/`.16`
+retain the helper/slot barrier. No runtime change is needed.
+
+B106 was corrected during W3 (journal 562). DD99 settles the value behavior:
 **every read replaces its target, including empty input and EOF**. The old
 finding's success-only premise was wrong. Runtime `sash_split_into_array`
 clears the table before its empty-input return.
@@ -29,11 +35,10 @@ Replacing `"clean"` with `""` is also rejected. With `--no-taint`, the two
 programs print `clean` and `empty`, respectively; the runtime replacement
 is correct.
 
-The validator excludes value splitting from `tainted_read_target`, while
-`forget_replaced_origins` removes only the target's ownership metadata.
-Its old boolean taint remains, including in an independent slot summary.
-The eventual repair must clear the complete replaced state, not relax
-adjacency or change fd-read taint.
+The old validator discarded ownership on replacement while retaining
+boolean taint. Under DD128 both remain unresolved together outside legal
+resolution; a direct failed-attest replacement clears both. The old proposal
+to clear the complete state for every clean split is withdrawn, not deferred.
 
 The recorded reference work did not settle this value-split case, and it
 does not block the ordinary loop port; its command transfer is untouched

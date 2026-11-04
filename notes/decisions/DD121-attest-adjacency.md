@@ -39,6 +39,8 @@ CMD`, `attest … || CMD`) must leave its subject **clean on every path that
 falls through** to the merge. A path that does not fall through — `exit`,
 `return`, `break`, `continue` — is exempt. The **no-else form is rejected**
 (**SB5089**): its implicit fall-through resolves nothing.
+Clean replacement must be written directly on that subject's failed-attest
+path; a helper does not inherit this permission (DD#128).
 
 The two legal ways to satisfy R2:
 
@@ -51,7 +53,7 @@ The two legal ways to satisfy R2:
 tainted.
 
 **R3 — unchanged.** Absent an attest, a tainted variable is readable only
-through `:!` (DD#91) or a `bless` predicate.
+through `:!` (DD#91) or its eligible attest predicate.
 
 ## Why: removal is the defect
 
@@ -71,12 +73,12 @@ found:
   `tainted_slots_on_entry` reads the *completed* top-level set, so a trailing
   attest retroactively cleans a slot that was tainted at the call.
 
-After this DD the attest is **folded into the definition**: a removal can only
-happen one statement below the insert, in the same block, so no removal
-survives a block boundary and nothing can observe the taint in between. Taint
-becomes ordinary **reaching definitions over a join-semilattice** — tainted if
-*any* reaching definition is tainted — so branches, loops, back-edges and the
-call graph are monotone and standard.
+The attest is **folded into the acquisition's resolution**: only a legal
+adjacent success or that subject's direct failed-branch replacement may clear
+a live binding. Joins retain unresolved states from every reaching path.
+DD#128 closes the ordinary-assignment escape, so replacing bytes elsewhere
+cannot silently discharge the protocol. Definition dependencies, branches
+and loop back edges are solved to a fixed point before uses are checked.
 
 ## What "adjacent" means, precisely
 
@@ -106,23 +108,31 @@ an attest inside a body, of taint the body received, is SB5088, reported at
 the call. This applies to globals and collection slots alike (DD#127,
 journals 557 and 559).
 
-## The assignment kill
+## Direct failed-attest replacement
 
-R2 has to be satisfiable, so DD#121 adds the missing half of
-"definition-based": **a whole-variable assignment from a clean RHS kills the
-taint.** `v=8080` and `a=(dflt)` replace the entire value with something that
-came from nowhere external, so the name is clean afterwards.
+DD#128 narrows the former general assignment-kill rule. Within a live
+binding, **a clean whole-value replacement resolves outstanding taint only
+on that subject's failed-attest path**. Thus `attest v [[ … ]] || v=8080`
+still works. An unrelated `v=8080`, buffer copy, clean loop binding or
+whole-collection unset changes the value but leaves it unresolved.
 
-Scoped tightly — `+=` appends to what is already there, and `a[i]=v` replaces
-one cell of a container. Neither kills.
+Permission is subject-specific and does not enter a named helper, anonymous
+capture or forked child. It survives ordinary control flow within the failed
+branch, so each continuing branch may write its own clean replacement.
+Whole-collection unset and a clean value split can supply that replacement.
+Scalar unset remains illegal. `+=`, cell writes and cell unsets never
+resolve the whole subject.
 
-The old flat walk got the same answer by accident, because `attest` removed
-the name unconditionally and nothing ever put it back. With per-path merges
-that accident is gone, and DD#24's sanctioned `attest v [[ … ]] || v=8080`
-only works because the assignment itself resolves the subject.
+A genuine new acquisition gets its own adjacency opportunity, even on an
+already-tainted target. A helper can acquire and resolve its own new input;
+it cannot merely overwrite received taint on its caller's behalf. `:!`
+authorizes one read, not self-copy declassification.
 
-This is what AGENTS.md has claimed all along and the implementation did not
-honour: *"Taint is definition-based, not name-based."*
+This is not a permanent name blacklist. Clean bindings stay clean, legal
+resolution restores ordinary use, and a new body entry initializes fresh
+private bindings rather than inheriting the previous call's taint. Globals,
+collection slots and captured enclosing bindings retain their live state.
+Implemented in journal 568 alongside the independent SSA backstop.
 
 ## Loop paths
 
@@ -145,7 +155,8 @@ path. Its exit retains the pre-binding words state, including the zero-trip
 path and the final failed head.
 
 W3 implements these transfers on the existing independent summaries
-(journal 562; `loopflow.1`-`.21`). This does not claim that lowering already
+(journal 562; `loopflow.1`-`.21`, with `.10`/`.14`/`.15`/`.20` subsequently
+replaced by `adjpolicy.6`-`.9` under DD128). This does not claim that lowering already
 isolates every counted jump across body boundaries; the separately
 reproduced capture defect is `bug-counted-jump-crosses-capture-boundary`.
 
@@ -226,8 +237,8 @@ immediately after the call, or a later non-`:!` read is SB5020. Taint a body
 receives is not its own, so it never makes SB5067, and the body cannot attest
 it either (see "What "adjacent" means, precisely").
 
-Until W1 lands, the compiler applies the 2026-09-30 rule recorded under
-History below, and `bfb.17`-`bfb.28`, `cov.264`-`cov.270` and `cov.341` pin
+Before W1 landed, the compiler applied the 2026-09-30 rule recorded under
+History below, and `bfb.17`-`bfb.28`, `cov.264`-`cov.270` and `cov.341` pinned
 that rule.
 
 **Why an in-body attest is enough.** The worry about any rule that lets a body
@@ -240,10 +251,9 @@ local and for a global). There is no order to depend on.
 blame the function and lose the location — the pass gathers syntactic taint
 sites with their spans *before* the walk and passes verdict *after*, reporting
 only sites whose name is still dirty at exit, deduped to the last site per name
-(the one actually responsible). `bfb.20` demonstrates it: the blame lands on the
-`else` branch, not the `if`. `bfb.20`'s function has one call site, so under
-DD#127 it is no longer SB5067; W1 gives it a second call site so that it keeps
-pinning the span.
+(the one actually responsible). This applies to shared named bodies under
+DD#127. The former single-use `bfb.20` example no longer pins this diagnostic:
+it retains its single call and now asserts SB5020 at the later caller read.
 
 **The number SB5067 is kept** — my call at the time, ratified by DG
 2026-09-30 ("we already reused SB5067? if so, let it stand"). The rule has

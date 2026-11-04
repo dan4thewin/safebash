@@ -2,12 +2,12 @@
 title: "Global-summary precision follow-ups"
 status: open
 priority: P2
-kind: bug
+kind: question
 depends: []
 gates:
-  - "Guaranteed eager overwrites clear inherited global taint; native and C outputs remain safe 7 and safe ok"
   - "gflow.20-.22 retain their located SB5020 diagnostics, including under each merge reversion control"
-  - "An ordered transfer checks each read before a later call can clear its taint, and does not apply skipped-call effects"
+  - "Any ordered transfer checks each read before a later legal resolution and does not apply skipped-call effects"
+  - "Ordinary clean overwrites remain unresolved as DD128 requires"
 ---
 
 Recorded with W1b-1, 2026-11-02 (journal 557). The unit uses a conservative
@@ -15,7 +15,12 @@ union for captures and arithmetic/value calls. This prevents laundering by
 a skipped call or by a call in a later operand, but also preserves incoming
 taint after a guaranteed eager clean overwrite.
 
-## Measured false positives
+DD128 supersedes the requested clean-overwrite repair (journal 568).
+Both programs below are intentional refusals now, even when the overwrite
+definitely executes. This file remains open only for the separately listed
+precision questions; it does not authorize ordinary-write declassification.
+
+## Former false positives, now intentional
 
 Both programs get SB5020 on the final read of `x`, on the pre-W1b-1 compiler
 and the globals-summary compiler. With `--no-taint`, the new native compiler
@@ -42,9 +47,10 @@ The errors are at 5:6 and 4:6. Evidence:
 
 Do not replace the union with an unconditional assignment. That was tried
 as an independent reversion: the capture change loses `gflow.20`, and the
-arithmetic change loses `.21`/`.22`. The needed precision is an ordered
-expression transfer, with lazy branches joined, not a different adjacency
-rule or a weaker diagnostic.
+arithmetic change loses `.21`/`.22`. A future ordered-expression transfer
+must preserve those refusals and DD128's strict resolution. Fresh acquisition
+and legal resolution, not these ordinary overwrites, would be the relevant
+precision case.
 
 ## Follow-up probes, not established bugs
 
@@ -70,11 +76,11 @@ valid source program has demonstrated another failure:
   missing-slot sexpr arity bug are unchanged; the latter was rechecked on
   both compilers, including inside a function body.
 
-Ordinary loop exits are implemented in W3 (journal 562); the stage-write SSA
-false positive is B18/W4, and END entry remains W5. A redirect on the final
+Ordinary loop exits are implemented in W3 (journal 562); W4 fixed the
+stage-write SSA false positive (B18), and handler entry remains W5. A redirect on the final
 `while` was also checked:
 it is rejected by SB4021 before taint analysis, so that spelling is not a
 missing parent-reader case. The separate, intra-process SSA array-timing
-fault exposed by `sflow.5` is
-`bug-ssa-taint-array-read-uses-future-version`; W4's process partition alone
-will not fix it.
+fault exposed by the retired `sflow.5` is fixed in journal 568:
+`sflow.19` now requires acceptance. Unlowered redirect operands and the
+completed-parent view are not covered by that timing repair.

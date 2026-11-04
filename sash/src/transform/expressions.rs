@@ -52,14 +52,14 @@ pub(super) fn arg_to_value(expr: &Expr, state: &VersionState) -> SsaValue {
     if let ExprKind::ParameterExpansion(pe) = &expr.kind {
         if let Some(disposition) = splat_disposition(pe, state) {
             return SsaValue::ArraySplat {
-                array: resolve_args_name(&pe.name, state),
+                array: state.lookup(&resolve_args_name(&pe.name, state)),
                 disposition: Some(disposition),
             };
         }
     }
     match command_arg_splat(&expr.kind) {
         Some(array) => SsaValue::ArraySplat {
-            array: resolve_args_name(&array, state),
+            array: state.lookup(&resolve_args_name(&array, state)),
             disposition: None,
         },
         None => expr_to_value(expr, state),
@@ -183,7 +183,7 @@ fn simple_expansion_to_value(var: &str, state: &VersionState) -> SsaValue {
 pub(super) fn positional_to_value(var: &str, state: &VersionState) -> Option<SsaValue> {
     if let Some(idx) = positional_arg_index(var) {
         return Some(SsaValue::Subscript {
-            array: state.current_args_name.clone(),
+            array: state.lookup(&state.current_args_name),
             index: Box::new(SsaValue::Literal(idx.to_string())),
             is_integer_key: true,
             is_integer_value: false,
@@ -398,7 +398,7 @@ pub(super) fn subscript_to_value(name: &str, index: &Expr, state: &VersionState)
     let is_integer = !state.assoc_arrays.contains(&resolved);
     let is_integer_value = state.type_map.get(&resolved).copied() == Some(crate::ir::VarType::Int);
     SsaValue::Subscript {
-        array: resolved,
+        array: state.lookup(&resolved),
         index: Box::new(expr_to_value(index, state)),
         is_integer_key: is_integer,
         is_integer_value,

@@ -3,17 +3,18 @@
 use super::statements::lower_stmts;
 use crate::ir::*;
 use crate::ssa::*;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 
 /// Transform an IR Program into SSA form with type information.
 pub fn ir_to_ssa_typed(
     program: &Program,
-    type_map: HashMap<String, VarType>,
+    types: crate::type_check::CheckedTypes,
 ) -> (SsaProgram, Vec<String>) {
     let mut ssa = SsaProgram::new();
-    ssa.globals = source_globals(program, &type_map);
+    ssa.globals = source_globals(program, &types);
     ssa.user_fds = program_referenced_fds(program);
-    let mut state = VersionState::with_types(type_map);
+    let mut state = VersionState::with_types(types.vars);
+    state.checked_collections = types.collections;
     reserve_source_names(program, &mut state.reserved_names);
 
     register_functions(program, &mut state);
@@ -30,11 +31,6 @@ pub fn ir_to_ssa_typed(
     ssa.block_mut(exit).terminator = Terminator::Return;
 
     install_end_block(&mut ssa, &mut state);
-    for (name, kind) in &mut ssa.globals {
-        if state.collections.contains(name) {
-            *kind = GlobalType::Table;
-        }
-    }
     super::reader_cleanup::install(&mut ssa, &state.reader_regions);
     ssa.assert_children_disjoint();
 
@@ -47,6 +43,7 @@ pub fn ir_to_ssa_typed(
     mark_unchecked_in_conditions(&mut ssa);
     mark_unchecked_in_end_blocks(&mut ssa);
     state.flush_expr_diagnostics();
+    ssa.taint_predecessors = std::mem::take(&mut state.taint_predecessors);
 
     // Exact-dedup diagnostics, preserving first-seen order. A function body is
     // lowered both as a standalone template (lower_function_stmt) and at each
@@ -64,17 +61,19 @@ pub fn ir_to_ssa_typed(
 
 fn source_globals(
     program: &Program,
-    type_map: &HashMap<String, VarType>,
+    types: &crate::type_check::CheckedTypes,
 ) -> std::collections::BTreeMap<String, GlobalType> {
     crate::bindings::global_names(program)
         .into_iter()
         .map(|name| {
-            let kind = match type_map
+            let var_type = types
+                .vars
                 .get(&name)
-                .expect("every source global has a checked type")
-            {
-                VarType::Int => GlobalType::Int,
-                VarType::String => GlobalType::String,
+                .expect("every source global has a checked type");
+            let kind = match (types.collections.contains_key(&name), var_type) {
+                (true, _) => GlobalType::Table,
+                (false, VarType::Int) => GlobalType::Int,
+                (false, VarType::String) => GlobalType::String,
             };
             (name, kind)
         })

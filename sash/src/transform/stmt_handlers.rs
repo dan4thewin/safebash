@@ -6,7 +6,7 @@ use super::expressions::{
 };
 use super::functions::{lift_int_func_args, lift_int_func_calls, needs_lift};
 use super::resolution::resolve_pipeline_command;
-use super::statements::{lower_one, lower_stmts, spill_scalar_redirect_targets};
+use super::statements::{lower_one, spill_scalar_redirect_targets};
 use crate::ir::*;
 use crate::ssa::*;
 
@@ -106,9 +106,12 @@ fn try_handle_match_into(
     ssa.block_mut(block).insts.push(SsaInst::MatchInto {
         subject,
         pattern,
-        array,
+        array: array.clone(),
         all: kind == BuiltinCmd::MatchAll,
     });
+    if state.failed_attests.contains(&array) {
+        push_attest_retag(ssa, state, block, &array);
+    }
     Some(block)
 }
 
@@ -745,12 +748,8 @@ fn handle_keys(
     let source = super::expressions::resolve_args_name(literal_name_of(map), state);
     let array = super::expressions::resolve_args_name(literal_name_of(dest), state);
     autodeclare_bulk_target(&array, ssa, state, block);
-    // A LATER version than the autodeclare's empty-array Assign, so the SSA
-    // taint backstop resolves the array to this fill rather than to the clean
-    // empty array the declaration produced. (Both are clean here — see
-    // `SsaInst::KeysFill` — but the versioning rule is the same for every
-    // bulk fill and diverging from it would be a trap for the next one.)
-    let target = state.define(&array);
+    // Later uses refer to the fill, not its empty initialization.
+    let target = state.define_replacement(&array);
     ssa.block_mut(block)
         .insts
         .push(SsaInst::KeysFill { source, target });
@@ -1500,7 +1499,7 @@ fn handle_plain_assign(
     }
     // DD#58 / Option C: lift IntFuncCall (from `$(f)` / `$((f))`) into a temp.
     let val = lift_int_func_calls(val, ssa, state, &mut block);
-    let target = state.define(&a.name);
+    let target = state.define_replacement(&a.name);
     ssa.block_mut(block)
         .insts
         .push(SsaInst::Assign { target, value: val });
@@ -1562,7 +1561,7 @@ fn try_capture_condition(
                 state,
                 &mut after,
             );
-            let target = state.define(name);
+            let target = state.define_replacement(name);
             ssa.block_mut(after)
                 .insts
                 .push(SsaInst::Assign { target, value });
@@ -1762,7 +1761,7 @@ pub(super) fn capture_func_into(
     super::functions::lower_inlined_body(fname, &body, call_block, restore_block, ssa, state);
     state.inlining.pop();
 
-    let target = state.define(target_name);
+    let target = state.define_replacement(target_name);
     ssa.block_mut(restore_block)
         .insts
         .push(SsaInst::CaptureEnd {
@@ -1833,14 +1832,16 @@ pub(super) fn capture_body_into(
     // capture *condition* consumes the status through `state.suppressed`,
     // which stays in force for the commands the body runs.
     let saved_condition = std::mem::take(&mut state.in_condition);
-    let exit_block = lower_stmts(body, ssa, state, call_block);
+    let failed_attests = std::mem::take(&mut state.failed_attests);
+    let exit_block = super::functions::lower_body(body, ssa, state, call_block);
+    state.failed_attests = failed_attests;
     state.in_condition = saved_condition;
     state.tail_loop = saved_tail;
     state.pipe_reader = pipe_reader;
     state.return_target = saved_return_target;
     ssa.block_mut(exit_block).terminator = Terminator::Goto(restore_block);
 
-    let target = state.define(target_name);
+    let target = state.define_replacement(target_name);
     ssa.block_mut(restore_block)
         .insts
         .push(SsaInst::CaptureEnd {

@@ -6,8 +6,10 @@ day; section 10 records the rulings, now incorporated into the rules below.
 **The document remains a draft; those choices are no longer open.**
 Implementation is authorized and underway. The typing prerequisite shipped
 in journal 565; journal 566 restores uniform SB5071; journal 567 implements
-process-static globals and their meaningful zero values. The compiler still
-has DD56's `END`; generated handler functions, the new handler contracts and
+process-static globals and their meaningful zero values. Journal 568
+implements strict adjacent resolution and fresh private lifetimes, with
+definition-convergent, versioned SSA taint checks. The compiler still has
+DD56's `END`; generated handler functions, the new handler contracts and
 their remaining companion-DD rewrites are not implemented yet.
 
 DG supplied the design principles, made the decisions and authorized
@@ -186,7 +188,7 @@ Outside that resolution, a clean assignment changes the runtime value but
 does not remove the binding's outstanding taint. This replaces DD121's
 general "assignment kill" rule.
 
-Under this proposal:
+Under this rule:
 
 ```sash
 v=$(getenv INPUT)
@@ -221,6 +223,12 @@ branch's permission to resolve its subject.
 It is not a permanent blacklist of names. A clean binding remains clean
 after a clean write. Once a valid resolution has cleared its taint, it is
 ordinarily usable until another operation taints it.
+
+The binding's lifetime matters. A new function/capture entry initializes its
+newly owned locals to meaningful zeros and starts fresh private taint state
+(DD86). That is a real value initialization, not a waiver for a still-live
+binding. Globals, collection slots and captured enclosing locals retain their
+existing values and unresolved state.
 
 A genuine new acquisition has its own adjacency opportunity, even if its
 target was already tainted. The acquisition itself does not clear anything;
@@ -463,6 +471,14 @@ each global collection and lazy backing allocation. Statement attestation
 aliases its source storage rather than creating a future-only copy.
 `gstate.1`/`.2` pin actual completed values on the existing END abort paths;
 they do not implement or prove the new handler-entry taint rules.
+
+Journal 568 implements strict resolution in the existing independent
+summaries and SSA backstop. The latter converges full definition
+classifications, uses actual-current predecessor links and carries reaching
+versions on ordinary collection operands. Fresh body-local initialization
+closes B14, which otherwise made a subsequent call inherit both stale
+values and expired private taint. Neither this prerequisite nor the static
+storage work exposes the new handler surface.
 
 ### Pipeline and acceptance
 

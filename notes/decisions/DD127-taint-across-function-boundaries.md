@@ -464,6 +464,14 @@ context. W2a implements read-boundary classification (journal 560).
 W2b adds shared-output ownership to those same summaries (journal 561);
 neither analysis re-walks a callee for a particular caller.
 
+DD#128's strict resolution uses these same transfers and summaries
+(journal 568). Ordinary clean writes preserve unresolved taint and its
+owners. Only a legal adjacent attest or a clean whole-subject replacement
+directly on its failed path resolves it. That replacement permission is
+subject-specific and is reset at named-body, capture and process boundaries.
+A genuine fresh acquisition replaces the old provenance and gets its own
+adjacency; a literal overwrite cannot manufacture one.
+
 ### Building a name summary
 
 For each definition of `f`, the compiler walks its body from an empty
@@ -498,7 +506,7 @@ The summary holds:
   added by that singleton input. The empty-entry diagnostics are subtracted
   as a multiset, preserving repeated sites rather than deduplicating by code.
   This records reads, cell writes and inherited attests with their original
-  codes and locations. A read before a clean overwrite remains an obligation
+  codes and locations. A read before a legal resolution remains an obligation
   even when its outgoing flow is empty.
 
 An exit combines explicit returns with the final state only when the body
@@ -539,8 +547,10 @@ At an ordinary statement call of `f`:
   its formal slot name. Transitive calls retain that chain. An inherited
   attest is therefore SB5088 at the call, never an entry adjacency exception.
 - Replace the mapped names' state with their mapped outgoing flows. A name
-  overwritten clean on every continuing path disappears; a conditional
-  overwrite does not clear it. Unmapped caller names are unaffected.
+  legally resolved on every continuing path disappears; an ordinary clean
+  overwrite does not resolve received taint. A helper may acquire and resolve
+  fresh input, but cannot inherit its caller's failed-attest replacement
+  permission. Unmapped caller names are unaffected.
 - Add the generators only for a single-use `f`. For a shared `f`, report
   SB5067 inside the definition instead, once per escaping global or slot,
   at its last recorded source. The message distinguishes a global from a
@@ -561,19 +571,20 @@ and merges its resulting taint back. It is single-use, so it has no SB5067
 firewall. Its reads and inherited attests are checked inside the body.
 
 Captures and arithmetic/value calls **union** their effects with the
-incoming state, rather than clearing names they overwrite. A capture or call
+incoming state, rather than clearing names they resolve. A capture or call
 can be skipped by a lazy expression, or follow an earlier operand's read;
-applying its clean overwrite before checking that read would hide the error.
-This is a conservative implementation: even a guaranteed eager clean
-overwrite in a value does not clear the enclosing taint. Precise ordered
-expression transfers are follow-up work, not a different adjacency rule.
+applying its resolution before checking that read would hide the error.
+This remains conservative for genuine fresh acquisition/resolution in a
+value. An ordinary clean overwrite, even when guaranteed eager, is not a
+resolution at all under DD#128. Ordered-expression precision questions must
+respect that distinction.
 
 A background child and each forked pipeline stage are walked on a clone:
 their reads still count, but their writes, returns and source log do not
 change the parent. The final parent reader keeps its effects (the supported
 `while` consumer and final `read`/`readline` paths). These calls still count
 in the census. This is B18's validator half, landed with W1b-1 because
-call-site clean overwrites make the separation necessary. W4's per-process
+call-site effects make the separation necessary. W4's per-process
 SSA backstop completes it (journal 563).
 
 ### Classifying output
@@ -601,8 +612,10 @@ construction.
 ### Tracking output ownership
 
 The tainted-name state also carries possible shared output owners. Joins
-retain every possible owner; an unconditional replacement discards the old
-value's owners, while `+=` retains them. An attest of a clean name remains
+retain every possible owner. A genuine new acquisition replaces the old
+provenance; an ordinary clean overwrite, split, unset or `+=` preserves
+unresolved taint and its owners. A permitted failed-attest replacement clears
+both together (DD#128). An attest of a clean name remains
 a no-op. An attest of an owned tainted value is **SB5100**, naming the shared
 producer and its call sites. Trust at a use (`:!`) remains legal: ownership
 does not reject merely capturing or retaining the value.
@@ -619,9 +632,10 @@ Each existing function summary additionally holds:
   incoming marker. Only outputs that retain it forward the caller's origins.
   These flows are separate from W1's boolean flows: W1 preserves an incoming
   name's identity when a fresh source re-taints that name, but the old output
-  provenance must not survive the replacement. Value splits and whole
-  collection unsets also discard the replaced value's origins without
-  changing W1's existing conservative boolean transfer.
+  provenance must not survive that new acquisition. Clean value splits and
+  whole-collection unsets now resolve both names and origins only when
+  permitted by the directly enclosing failed attest; they no longer discard
+  owners while leaving unresolved boolean taint behind.
 - **Attest obligations:** an attest of a symbolic incoming name or stdin is
   recorded, then checked against the actual origins at a call. This covers
   named readers, helper chains and slot generators without caller-specific
@@ -674,23 +688,31 @@ Unbound function templates are not executable parent definitions; their
 lowering also restores current variable versions without rewinding version
 counters. Both corrections are needed to keep definition-time effects out
 of real reads. Actual inlined calls and child reads remain checked.
+Journal 568 adds full definition-classification convergence before uses.
+Ordinary writes depend on the actual active predecessor definition, not
+the version counter minus one. Failed-attest replacement can drop that
+dependency only for its subject, and the new value is still classified.
+Phi sources outside the executable process view do not contribute.
+
+Collection cell reads, splats, table iteration and map-fill operands now
+carry their reaching `VarRef`. A later fill cannot taint an earlier clean
+read, and a later attest cannot clean an earlier read or derived value.
+The backend still addresses the binding's same physical table storage.
 The following remain:
 
 - **W5, END entry.** Keeping END in the main process does not yet establish
   the state on every abort, explicit exit or signal edge into it.
-- **Precision follow-ups:** eager value-call/capture overwrites and
+- **Precision follow-ups:** ordered value-call/capture effects and
   definition-specific summaries are recorded in
   `notes/tasks/taint-global-summary-followups.md`.
-- **SSA array timing:** `sflow.5` reaches the backstop after its earlier
-  clean call passes the validator. The backstop uses the array's highest
-  version, including a future fill. W4 retains that lookup and gives each
-  child the completed parent view, not a precise fork-time state
-  (`bug-ssa-taint-array-read-uses-future-version`).
-- **Other W3 rechecks:** the SSA definition-order hole under
-  `--no-taint-cst`, stale taint after a clean value split, and counted
-  jumps escaping an anonymous body in lowering remain separate backlog
-  items (`bug-ssa-taint-definition-order`, `bug-value-split-retains-taint`,
-  `bug-counted-jump-crosses-capture-boundary`).
+- **Unlowered redirect operands:** these retain the bare-name lookup in
+  the completed process view. Children also still inherit the completed
+  parent view, not a precise fork-time snapshot. The ordinary collection
+  timing repair does not claim to close those separate boundaries.
+- **Counted jumps escaping an anonymous body:** the lowering defect remains
+  `bug-counted-jump-crosses-capture-boundary`. B94's definition-order hole is
+  fixed; B106's requested ordinary clean-split declassification is instead
+  superseded by DD#128's deliberate strict rule.
 - **Arithmetic call arity:** a sexpr call with missing collection arguments
   can still escape SB5066 and reach a native ICE or invalid C output
   (`bug-sexpr-call-slot-arity-unchecked`). The mapper does not invent
@@ -730,7 +752,9 @@ The following remain:
 - `sflow.1`-`.18` pin mapped cleanup, forwarding/permutation, conditional
   reads and attests, shared-slot sources, preservation of received taint,
   captures, background reads, the fifth slot and local/mixed collections.
-  `.5` explicitly pins the remaining SSA timing rejection, not acceptance.
+  `.5` originally pinned the intermediate SSA timing rejection. Journal 568
+  replaces it with `sflow.19`, requiring the same source to compile and print
+  `clean` then `dirty`; the normal collection timing defect is fixed.
 - `atslot.9` pins an own-fill caught attest whose failing cell exits. Along
   with existing `atslot.7`/`.8` and the `sflow` cases, this replaces the
   useful claims of the branch's `atslot.1`-`.6` without restoring their
@@ -800,7 +824,27 @@ The following remain:
 - `bindscope.40` replaces `.39`, whose diagnostic assertion depended on an
   unreachable template. Its collision now uses an actual call's version,
   preserving the structured-name restoration claim rather than merely
-  loosening the expected suffix.
+  loosening the expected suffix. Journal 568's fresh initial definitions move
+  the live versions again: `.41`/`.42` replace `.38`/`.40`, with `.42` using
+  a real `t_4` collision. The joined-token restoration reversion still fails
+  exactly those two checks in both backends.
+
+### Landed as DD#128's strict-resolution prerequisite
+
+- `adjresolve.1`-`.18` cover ordinary writes, self-copy, arrays, loops,
+  buffers, helper and slot barriers, R2 without a later read, subject-specific
+  permission, direct fallback and fresh helper acquisition/resolution.
+- `adjpolicy.1`-`.9` replace old assignment-kill expectations without
+  erasing unrelated claims. `.1`-`.6` replace `div.8`, `gflow.18`,
+  `outown.17`, `.33`, `.34` and `loopflow.10` with strict refusals.
+  `.7`-`.9` adapt `loopflow.14`, `.15` and `.20` using legal resolution.
+  `.9` retains a tainted counted-continue deposit and pins executable phi
+  inputs; it does not attest immediately before that continue.
+- `adjssa.1`-`.16` independently cover live-binding continuity, named and
+  anonymous barriers, full classification convergence, four collection
+  timing channels and inherited private taint.
+- `flife.1`-`.8` cover fresh named/captured/child/tail entries, real scalar
+  and collection defaults, and preservation of enclosing locals and globals.
 
 ## Open
 

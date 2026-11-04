@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup taint
-plan=538
+plan=556
 echo "1..$plan" >&3
 
 set +e
@@ -2206,15 +2206,13 @@ run_sash 'argv a
 attest v in a [[ -n $v ]] || echo no
 for v in @a; do echo "$v"; done' one
 [[ $rc != 0 && $err == *SB5089* ]]; chk div.7
-# div.8 fault (2) standing alone, no attest at the merge: a clean value on the
-# surviving path, the other path exits. The phi unioned the diverting path's
-# tainted version, so the backstop rejected what the front end allows.
+# DD#128: even the sole surviving path cannot resolve taint by a later write.
 run_sash 'str c=$(arg 1)
 attest c [[ -n $c ]]
 str x=$(arg 2)
 if [[ $c == y ]]; then x=safe; else exit 1; fi
 echo "$x"' y tainted
-[[ $rc = 0 && $out = "safe" && -z $err && $err != *backstop* ]]; chk div.8
+[[ $rc != 0 && $err == *':5:6: error [SB5020]'* ]]; chk adjpolicy.1
 # div.9 the converse: when the other path FALLS THROUGH the tainted version
 # does reach the merge, and must still be caught
 run_sash 'str c=$(arg 1)
@@ -3097,13 +3095,13 @@ attest x [[ $x == dirty ]]
 echo "$n $x"'
 [[ $rc = 0 && $out = "7 dirty" && -z $err && -z $rerr ]]; chk gflow.17
 
-# A real parent-process call may overwrite an inherited tainted global.
+# A real parent-process call changes the value, not its unresolved taint.
 run_sash 'str x=clean
 fn clean { x=safe }
 x=$(/bin/echo dirty)
 clean
 echo "$x"'
-[[ $rc = 0 && $out = safe && -z $err && -z $rerr ]]; chk gflow.18
+[[ $rc != 0 && $err == *':5:6: error [SB5020]'* ]]; chk adjpolicy.2
 
 # A conditional overwrite is not a must-kill.
 run_sash 'str x=clean
@@ -3371,7 +3369,9 @@ str y=$(raw)
 y=${y:!}
 attest y [[ $y == hello ]]
 echo "$x $y"'
-[[ $rc = 0 && $out = 'clean hello' && -z $err && -z $rerr ]]; chk outown.17
+[[ $rc != 0 && $err == *':4:1: error [SB5088]'* &&
+   $err == *':4:1: error [SB5100]'* && $err == *':7:1: error [SB5088]'* &&
+   $err == *':7:1: error [SB5100]'* ]]; chk adjpolicy.3
 
 run_sash 'fn raw { /bin/echo hello }
 str x=$(raw)
@@ -3517,7 +3517,7 @@ raw | consume
 raw'
 [[ $rc != 0 && $err == *SB5100* && $err == *'`raw` is shared'* ]]; chk outown.32
 
-# These replace the old value without becoming a new external source.
+# Neither whole-value splitting nor unset discards unresolved ownership.
 run_sash 'fn raw { /bin/echo hello }
 str choose=no
 fn replace {
@@ -3529,7 +3529,8 @@ replace =a
 attest v in a [[ $v == clean ]]
 echo "${a[0]}"
 raw'
-[[ $rc = 0 && $out = $'clean\nhello' && -z $err && -z $rerr ]]; chk outown.33
+[[ $rc != 0 && $err == *':9:1: error [SB5100]'* &&
+   $err == *'`raw` is shared'* ]]; chk adjpolicy.4
 
 run_sash 'fn raw { /bin/echo hello }
 str choose=no
@@ -3542,7 +3543,8 @@ erase =a
 attest v in a [[ -n $v ]]
 echo "$(len a)"
 raw'
-[[ $rc = 0 && $out = $'0\nhello' && -z $err && -z $rerr ]]; chk outown.34
+[[ $rc != 0 && $err == *':9:1: error [SB5100]'* &&
+   $err == *'`raw` is shared'* ]]; chk adjpolicy.5
 
 # DD#121: diverting loop paths retain their state at the actual target.
 run_sash 'str x=clean
@@ -3613,7 +3615,7 @@ run_sash 'for x in a b {
     x=$(/bin/echo dirty)
 }
 echo "${x:!}"'
-[[ $rc = 0 && $out = $'a\nb\ndirty' && -z $err && -z $rerr ]]; chk loopflow.10
+[[ $rc != 0 && $err == *':2:10: error [SB5020]'* ]]; chk adjpolicy.6
 
 run_sash 'str x=clean
 for outer in a b { : "$outer"
@@ -3653,10 +3655,11 @@ echo "$x"'
 run_sash 'str x=clean
 for k in a b { : "$k"
     while x=$(/bin/echo dirty); break { x=clean }
+    attest x [[ $x == dirty ]]
     x=clean
 }
 echo "$x"'
-[[ $rc = 0 && $out = clean && -z $err && -z $rerr ]]; chk loopflow.14
+[[ $rc = 0 && $out = clean && -z $err && -z $rerr ]]; chk adjpolicy.7
 
 # Nested capture loops do not hide the enclosing body's later cleanup.
 run_sash 'str x=clean
@@ -3667,10 +3670,11 @@ for k in a b { : "$k"
         }
         echo hi
     )
+    attest x [[ $x == dirty ]]
     x=clean
 }
 echo "$x $y"'
-[[ $rc = 0 && $out = 'clean hi' && -z $err && -z $rerr ]]; chk loopflow.15
+[[ $rc = 0 && $out = 'clean hi' && -z $err && -z $rerr ]]; chk adjpolicy.8
 
 # DD#127 ownership travels with the taint, including diverted paths.
 run_sash 'fn raw { /bin/echo dirty }
@@ -3724,19 +3728,131 @@ echo "${x:!}"'
 # Quiet inner-loop probes keep the enclosing depth without exporting exits.
 run_sash 'str x=clean
 for outer in a b { : "$outer"
-    x=clean
+    x=$(/bin/echo clean)
+    attest x [[ $x == clean ]]
     for inner in c d {
         echo "$x"
         if [[ $inner == c ]] { x=$(/bin/echo dirty); continue 2 }
         x=clean
     }
 }'
-[[ $rc = 0 && $out = $'clean\nclean' && -z $err && -z $rerr ]]; chk loopflow.20
+[[ $rc = 0 && $out = $'clean\nclean' && -z $err && -z $rerr ]]; chk adjpolicy.9
 
 # The final head must retain a binder value tainted by the preceding body.
 run_sash 'for x in a b { x=$(/bin/echo dirty) }
 echo "$x"'
 [[ $rc != 0 && $err == *':2:6: error [SB5020]'* ]]; chk loopflow.21
+
+# DD#128: overwriting bytes does not discharge a live binding's taint.
+run_sash 'x=$(arg 1)
+x=safe
+echo "$x"' dirty
+[[ $rc != 0 && $err == *':3:6: error [SB5020]'* ]]; chk adjresolve.1
+
+run_sash 'x=$(arg 1)
+x=safe
+attest x [[ $x == safe ]]' dirty
+[[ $rc != 0 && $err == *':3:1: error [SB5088]'* ]]; chk adjresolve.2
+
+run_sash 'x=$(arg 1)
+x=${x:!}
+echo "$x"' dirty
+[[ $rc != 0 && $err == *':3:6: error [SB5020]'* ]]; chk adjresolve.3
+
+run_sash 'argv 1 a
+a=(safe)
+echo "${a[0]}"' dirty
+[[ $rc != 0 && $err == *':3:6: error [SB5020]'* ]]; chk adjresolve.4
+
+run_sash 'argv 1 a
+unset a
+echo "${a[0]:-missing}"' dirty
+[[ $rc != 0 && $err == *':3:6: error [SB5020]'* ]]; chk adjresolve.5
+
+run_sash 'x=$(arg 1)
+for x in safe { echo "$x" }' dirty
+[[ $rc != 0 && $err == *SB5020* && $err == *'$x'* ]]; chk adjresolve.6
+
+run_sash 'fn buffered { echo safe }
+x=$(arg 1)
+x=$(buffered)
+echo "$x"' dirty
+[[ $rc != 0 && $err == *':4:6: error [SB5020]'* ]]; chk adjresolve.7
+
+# A helper's literal write neither satisfies its own read nor clears a slot.
+run_sash 'str x
+fn reset { x=safe; echo "$x" }
+x=$(arg 1)
+reset' dirty
+[[ $rc != 0 && $err == *':4:1: error [SB5020]'* && $err == *'reset'* ]]; chk adjresolve.8
+
+run_sash 'fn reset { unset A }
+argv 1 a
+reset =a
+echo "${a[0]:-missing}"' dirty
+[[ $rc != 0 && $err == *':4:6: error [SB5020]'* ]]; chk adjresolve.9
+
+# R2 is mandatory even without a later read. Permission does not enter helpers.
+run_sash 'str x
+fn reset { x=safe }
+x=$(arg 1)
+attest x [[ $x == allowed ]] || reset' dirty
+[[ $rc != 0 && $err == *':4:1: error [SB5089]'* ]]; chk adjresolve.10
+
+# Only the failing path continues, so a mistaken permission for y cannot hide
+# behind the success path's still-tainted y at the merge.
+run_sash 'y=$(arg 2)
+x=$(arg 1)
+if attest x [[ $x == allowed ]] { exit 0 } else { x=safe; y=safe }
+echo "$y"' dirty other
+[[ $rc != 0 && $err == *':4:6: error [SB5020]'* ]]; chk adjresolve.11
+
+run_sash 'str mode=yes
+x=$(arg 1)
+if attest x [[ $x == allowed ]] {
+    :
+} else {
+    if [[ $mode == yes ]] { x=safe } else { x=fallback }
+}
+echo "$x"' dirty
+[[ $rc = 0 && $out = safe && -z $err && -z $rerr ]]; chk adjresolve.12
+
+run_sash 'argv 1 a
+attest v in a [[ $v == allowed ]] || unset a
+echo "[$(join a ,)]"' dirty
+[[ $rc = 0 && $out = '[]' && -z $err && -z $rerr ]]; chk adjresolve.13
+
+run_sash 'argv 1 a
+attest v in a [[ $v == allowed ]] || read "fallback" a
+echo "${a[0]}"' dirty
+[[ $rc = 0 && $out = fallback && -z $err && -z $rerr ]]; chk adjresolve.14
+
+# A genuine acquisition in a helper has its own adjacent resolution. Unlike
+# a reset helper, this can resolve taint that the slot carried on entry.
+run_sash 'fn recover {
+    argv 1 A
+    attest v in A [[ $v == allowed ]] || unset A
+}
+argv 1 a
+recover =a
+echo "[$(join a ,)]"' dirty
+[[ $rc = 0 && $out = '[]' && -z $err && -z $rerr ]]; chk adjresolve.15
+
+run_sash 'fn reset { unset A }
+argv 1 a
+attest v in a [[ $v == allowed ]] || reset =a' dirty
+[[ $rc != 0 && $err == *':3:1: error [SB5089]'* ]]; chk adjresolve.16
+
+run_sash 'x=$(arg 1)
+attest x [[ $x == allowed ]] || x=$(arg 2)' dirty other
+[[ $rc != 0 && $err == *':2:1: error [SB5089]'* ]]; chk adjresolve.17
+
+run_sash 'x=$(arg 1)
+if attest x [[ $x == allowed ]] { : } else {
+  : $(x=safe; echo "$x")
+  x=safe
+}' dirty
+[[ $rc != 0 && $err == *':3:20: error [SB5020]'* ]]; chk adjresolve.18
 
 set -e
 tally

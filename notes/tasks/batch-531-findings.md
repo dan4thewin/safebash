@@ -1142,13 +1142,14 @@ the SSA highest-future-version check; that separate fault is recorded in
 
 ### 18. W3 intra-procedural edges
 
-- [x] **B94** (open; DD51). `verify_ssa_taint`'s first phase is one pass
+- [x] **B94** (open on reference; DD51). `verify_ssa_taint`'s first phase was one pass
   with no fixpoint: under `--no-taint-cst`, `x=safe; if [[ $(echo a) == a ]]
   { if [[ $(echo b) == b ]] { x=$(getenv HOME) } }; echo "[$x]"` prints the
   home directory. Still present in both backends on the W3 baseline;
   the owned recheck uses `/bin/echo dirty` instead of environment data.
-  Filed as `bug-ssa-taint-definition-order`, not repaired by this port
-  or by W4's separate process partition.
+  Journal 568 fixes it with full definition-classification convergence before
+  uses. The one-pass reversion fails `adjssa.5`, `.6`, `.10` and `.15` in both
+  modes. W4's earlier process partition alone did not fix it.
 - [x] **B95** (fixed-on-branch; DD24). CRITICAL: the AST taint walker
   dropped the states at `break`, `continue` and `return`.
   - W1b-1 implements function returns and self-tail back edges
@@ -1189,11 +1190,13 @@ the SSA highest-future-version check; that separate fault is recorded in
 - [x] **B105** (fixed-on-branch; DD86). A `$( )` body that writes an
   enclosing function's name. W1 already rejects `b105/a1` and `a4`
   with front-end SB5020 on e5f4bcdb.
-- [x] **B106** (open; DD99). A clean value split retains the target's
-  boolean taint. DD99 requires replacement even for empty input; the old
-  success-only premise was wrong. Both clean and empty splits falsely
-  reject a subsequent cell read while `--no-taint` confirms correct
-  runtime replacement. Filed as `bug-value-split-retains-taint`.
+- [x] **B106** (superseded by DD128; DD99). A clean value split retains
+  unresolved taint. DD99 requires runtime replacement even for empty input,
+  but DD128 now deliberately distinguishes that from taint resolution.
+  Ordinary clean/empty splits must not clear taint. Journal 568 permits
+  direct failed-attest splitting (`adjresolve.14`) and preserves helper/slot
+  barriers. `bug-value-split-retains-taint` closes by this policy, not by
+  implementing its former unconditional-declassification proposal.
   The archived `w0/c5` is a pipe, not a split; W2a already makes its
   read tainting and its adjacent attest legal.
 - [x] **B107** (fixed-on-branch; DD24). CRITICAL: for-in words are
@@ -1244,9 +1247,9 @@ control is `loopflow.15`, not a claim that the counted form is repaired.
     refusal from a never-called cleaner. Templates themselves are retained.
     The original probe remains in `port-w1b1-probes.tar.gz`; the measured
     SSA and final controls are in `port-w4-probes.tar.gz`.
-  - Per-use array timing and definition-order defects remain separately
-    filed. Process isolation does not make the inherited parent view
-    precise at the fork.
+  - Journal 568 fixes ordinary collection timing and definition convergence.
+    Unlowered redirect operands retain the bare-name lookup, and process
+    isolation still does not make the inherited parent view precise at a fork.
 
 ### 18. W5 END
 
@@ -1278,6 +1281,8 @@ control is `loopflow.15`, not a claim that the counted form is repaired.
 - [ ] **e7** (question; DD56, DD24). `x=$(getenv HOME); x=clean; END { echo
   "end $x" }` prints `end clean` on both binaries. Which exits END must
   assume is W5's framing question (c). Branch specs: endck.1-11.
+  DD128 settles the policy; journal 568 implements the strict overwrite
+  rule. The new handler-entry and routing implementation remains W5.
 
 ### 19. Typing
 
@@ -1338,11 +1343,17 @@ claims with program-level helpers.
   empty. Journal 567 supplies each global its own zero header, with lazy
   backing on the first write. `gzero.1`-`.6` cover reads, joins, deletion,
   mutation/growth, int cells, distinct forwarded collections, empty splitting
-  and child isolation. Function-local initialization and lifetime remain B14.
-- [ ] **B14** (open; DD86). Function locals leak across calls in both
+  and child isolation. Journal 568 completes private lifetimes under B14.
+- [x] **B14** (open on reference; DD86). Function locals leaked across calls in both
   backends: `fn f { if [[ $1 == y ]] { x=hi }; echo "[$x]" }; f y; f n`
   prints `[hi]` twice. DD86 makes a local's lifetime positional, so each
-  call starts empty.
+  call starts empty. Journal 568 initializes newly owned locals with real
+  zero-value SSA assignments at every body entry, including self-tail,
+  anonymous, pipeline and background entries. The canonical lexical inventory
+  and checked collection kinds preserve globals, slots and enclosing locals.
+  `flife.1`-`.8` pin values and ownership; `adjssa.16` preserves inherited
+  private taint. This became coupled when strict definition continuity made
+  a second call inherit the previous call's expired private taint.
 
 ### 19. DD58 collisions
 

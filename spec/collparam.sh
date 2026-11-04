@@ -813,19 +813,19 @@ echo $(join items ,)'
 
 SASH_CFLAGS="${SASH_CFLAGS:-} --no-taint-cst" \
 run_sash '/bin/echo $(str token=$(getenv HOME); echo $token)'
-[[ $rc != 0 && -z $out && $err == *'tainted variable token_1 used'* \
-   && $err == *'SSA taint backstop'* && $err != *'__top_capture'* ]]; chk bindscope.38
+[[ $rc != 0 && -z $out && $err == *'tainted variable token_2 used'* \
+   && $err == *'SSA taint backstop'* && $err != *'__top_capture'* ]]; chk bindscope.41
 
 # A live SSA version can equal another binding's qualified base name.
-# Version 1 belongs to the unexecuted template; the real calls define version 2.
+# Each body first zero-initializes its locals: the live acquisition is version 4.
 SASH_CFLAGS="${SASH_CFLAGS:-} --no-taint-cst" \
 run_sash 'fn a { str b_t=$(getenv HOME); echo $b_t }
-fn a_b { str t_2=$(getenv HOME); echo $t_2 }
+fn a_b { str t_4=$(getenv HOME); echo $t_4 }
 a
 a_b'
-[[ $rc != 0 && -z $out && $err == *'tainted variable b_t_2 used'* \
-   && $err == *'tainted variable t_2_2 used'* && $err == *'SSA taint backstop'* \
-   && $err != *'__a_b_t'* ]]; chk bindscope.40
+[[ $rc != 0 && -z $out && $err == *'tainted variable b_t_4 used'* \
+   && $err == *'tainted variable t_4_4 used'* && $err == *'SSA taint backstop'* \
+   && $err != *'__a_b_t'* ]]; chk bindscope.42
 
 # DD#100: strict non-aliasing, including read-only and taint-disabled calls.
 SASH_CFLAGS="${SASH_CFLAGS:-} --no-taint" \
@@ -990,11 +990,7 @@ array a=(clean)
 show =a
 argv 1 a
 echo "${a[0]:!}"' dirty
-# The validator accepts the earlier clean call; the SSA backstop still reads
-# the future array version (bug-ssa-taint-array-read-uses-future-version).
-[[ $rc != 0 && $err != *SB5020* \
-   && $err == *'tainted array a[...] used'* \
-   && $err == *'SSA taint backstop'* ]]; chk sflow.5
+[[ $rc = 0 && $out = $'clean\ndirty' && -z $err && -z $rerr ]]; chk sflow.19
 
 run_sash 'fn check { attest v in A [[ -n $v ]]; echo ok }
 fn outer { check =A }

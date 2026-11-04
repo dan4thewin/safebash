@@ -86,7 +86,7 @@ impl SsaInst {
                 ..
             } => {
                 return self.emit_map_from_array(
-                    source,
+                    &source.name,
                     &target.name,
                     *mode,
                     key,

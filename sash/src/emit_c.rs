@@ -557,7 +557,7 @@ fn emit_user_fds(e: &mut Emit, fds: &[i64]) {
 
 /// Walk every assignment in the SSA and record the declared type
 /// of each `(name, version)` pair. Type comes from `VarRef::var_type`
-/// (populated by `ir_to_ssa_typed` from `infer_types`).
+/// (populated by `ir_to_ssa_typed` from the checked type map).
 ///
 /// Phi sources AND Var references in SSA values are also recorded:
 /// the SSA can reference an initial-version (`_v0`) for a variable
@@ -864,7 +864,7 @@ fn emit_read_inst(e: &mut Emit, inst: &SsaInst, types: &VarTypes) -> bool {
             mode,
             key,
             ..
-        } => emit_map_from_array(e, source, &target.name, *mode, key, types),
+        } => emit_map_from_array(e, &source.name, &target.name, *mode, key, types),
         // a+=( … ) — append at the next integer index (len). Mirrors native
         // emit_array_append (dispatch.rs:69).
         SsaInst::ArrayAppend { array, value } => emit_array_append_c(e, array, value, types),
@@ -1470,10 +1470,17 @@ fn lower_value_as_str_aggregate(e: &mut Emit, value: &SsaValue, types: &VarTypes
             index,
             is_integer_key,
             is_integer_value,
-        } => emit_subscript_value(e, array, index, *is_integer_key, *is_integer_value, types),
+        } => emit_subscript_value(
+            e,
+            &array.name,
+            index,
+            *is_integer_key,
+            *is_integer_value,
+            types,
+        ),
         // Phase 5: table iteration helpers (for x in "${arr[@]}").
-        SsaValue::TableValue { array, index } => emit_table_value(e, array, index, types),
-        SsaValue::TableKey { array, index } => emit_table_key(e, array, index, types),
+        SsaValue::TableValue { array, index } => emit_table_value(e, &array.name, index, types),
+        SsaValue::TableKey { array, index } => emit_table_key(e, &array.name, index, types),
         // DD#91: `${x:!}` is a pure taint annotation — emit exactly what the
         // bare expansion would. Without this arm it fell to the `_` catch-all
         // and emitted a `/* TODO */` comment in place of the value.
@@ -2578,16 +2585,17 @@ fn cache_splat_tables_c(
 ) -> Vec<(String, String)> {
     let mut splat_lens: Vec<(String, String)> = Vec::new();
     for arg in args {
-        if let SsaValue::ArraySplat { array, disposition } = arg {
-            let raw = lookup_table_var(array, types);
-            let tbl = match disposition {
-                None => raw,
-                Some(d) => emit_splat_disposition_c(e, ind, t, splat_lens.len(), &raw, d, types),
-            };
-            let len = format!("{}_len{}", t, splat_lens.len());
-            writeln!(e.out, "{ind}i64 {len} = sash_table_len((SashTable*){tbl});").unwrap();
-            splat_lens.push((tbl, len));
-        }
+        let SsaValue::ArraySplat { array, disposition } = arg else {
+            continue;
+        };
+        let raw = lookup_table_var(&array.name, types);
+        let tbl = match disposition {
+            None => raw,
+            Some(d) => emit_splat_disposition_c(e, ind, t, splat_lens.len(), &raw, d, types),
+        };
+        let len = format!("{}_len{}", t, splat_lens.len());
+        writeln!(e.out, "{ind}i64 {len} = sash_table_len((SashTable*){tbl});").unwrap();
+        splat_lens.push((tbl, len));
     }
     splat_lens
 }
@@ -4420,7 +4428,7 @@ fn emit_indexed_array(e: &mut Emit, elems: &[SsaValue], types: &VarTypes) -> CSt
         // `emit_splat_append`); anything else is one element.
         match val_ssa {
             SsaValue::ArraySplat { array, disposition } => {
-                emit_array_splat_element(e, &t, si, array, disposition.as_ref(), types);
+                emit_array_splat_element(e, &t, si, &array.name, disposition.as_ref(), types);
                 si += 1;
             }
             _ => emit_array_scalar_element(e, &t, val_ssa, types),

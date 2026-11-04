@@ -34,6 +34,11 @@ global) that a reviewer can't trace. Both are footguns.
   global. A `for` variable is not a declaration and is untouched.
 - **`local` is removed** (keyword + the save/restore machinery). Lifetime is now
   positional, so the DD#35 *lifetime* axis is retired.
+- **Every body entry starts a fresh private lifetime.** Strings and integers
+  begin at `""` and `0`; arrays and maps begin empty (DD#62). This includes
+  repeated calls, self-tail iterations and anonymous capture entries.
+  Captures preserve bindings owned by an enclosing live body; globals,
+  arguments and collection slots are not new private locals.
 - **`local fn` (DD#18) is abandoned** — it was the only other user of `local`,
   and "designed, not built."
 
@@ -130,6 +135,14 @@ lands on *another* declared global — fundamentally undetectable, and rare.
    amended (lifetime axis retired, `str` added). Remaining refinement: the
    converter does not yet detect+rename a bash local that *shadowed* a global
    (flag-for-review) — filed follow-up.**
+6. Fresh per-entry private values. **— completed in journal 568 (B14).**
+   Lowering uses the canonical lexical scope inventory and the type checker's
+   actual scalar/element types and collection kinds. One body-entry hook
+   emits real zero-value assignments for newly owned locals and starts their
+   fresh taint lifetime. Named bodies, templates and anonymous captures share
+   it; self-tail back edges execute it again. Active enclosing locals, globals
+   and slots are preserved. `flife.1`-`.8` cover values and ownership;
+   `adjssa.16` pins inherited private taint independently of the source gate.
 
 ## Amendment (2026-09-11, DG) — a `fn` must be defined at the top level
 

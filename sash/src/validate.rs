@@ -4516,6 +4516,7 @@ pub fn check_taint(program: &Program) -> Vec<Diagnostic> {
         log: None,
         stdin: &input,
         pipe_reader: None,
+        failed_attests: &[],
     };
     let summaries = build_summaries(program, &census, &base);
     let cx = SlotCx {
@@ -6089,6 +6090,7 @@ fn taint_capture_bodies(
             fname: "",
             body: &frame,
             pipe_reader: None,
+            failed_attests: &[],
             ..*sx
         };
         let mut body_tainted = tainted.clone();
@@ -6145,22 +6147,32 @@ fn taint_if(
     // (out-state, does this path reach the merge?)
     let mut paths: Vec<(Tainted, bool)> = Vec::new();
     let mut lead = just.clone();
+    let mut failed_attests = sx.failed_attests.to_vec();
 
     let arms = std::iter::once((&i.condition, &i.then_body))
         .chain(i.elif_clauses.iter().map(|e| (&e.condition, &e.body)));
     for (cond, body) in arms {
+        let arm_cx = SlotCx {
+            failed_attests: &failed_attests,
+            ..*sx
+        };
         let mut cond_out = fall.clone();
-        taint_block(cond, &mut cond_out, &lead, sx, diags);
+        taint_block(cond, &mut cond_out, &lead, &arm_cx, diags);
         let mut body_out = cond_out.clone();
         // DD#88 `if x=$(cmd) { attest x … }`: the condition taints `x` and the
         // body's first statement is immediately below it.
-        let body_lead = block_taints(cond, sx);
-        taint_block(body, &mut body_out, &body_lead, sx, diags);
+        let body_lead = block_taints(cond, &arm_cx);
+        taint_block(body, &mut body_out, &body_lead, &arm_cx, diags);
         paths.push((body_out, block_falls_through(body)));
         // The failing path keeps everything tainted before the condition plus
         // anything the condition itself tainted — a gate that did not pass
         // vouched for nothing.
         fall.extend(cond_out);
+        failed_attests.extend(
+            condition_attest(cond)
+                .and_then(attest_subject)
+                .map(str::to_string),
+        );
         // Only the leading condition is adjacent to the preceding statement.
         lead = JustTainted::new();
     }
@@ -6168,7 +6180,11 @@ fn taint_if(
     match &i.else_body {
         Some(eb) => {
             let mut else_out = fall.clone();
-            taint_block(eb, &mut else_out, &JustTainted::new(), sx, diags);
+            let failure_cx = SlotCx {
+                failed_attests: &failed_attests,
+                ..*sx
+            };
+            taint_block(eb, &mut else_out, &JustTainted::new(), &failure_cx, diags);
             paths.push((else_out, block_falls_through(eb)));
         }
         None => paths.push((fall, true)),
@@ -6271,6 +6287,10 @@ fn attest_clear_names(c: &Command) -> Vec<&str> {
     };
     names.extend(arith_target);
     names
+}
+
+fn attest_subject(c: &Command) -> Option<&str> {
+    attest_clear_names(c).first().copied()
 }
 
 /// DD#121 R2: a caught attest must leave its subject clean on every path that
@@ -6440,18 +6460,28 @@ fn taint_list(
     );
     // `&&` runs the right on success (the attest's removal stands); `||` runs
     // it on failure (the subject is still tainted).
+    let mut failed_attests = sx.failed_attests.to_vec();
     let mut right = if matches!(l.op, ListOp::Or) {
-        let mut s = before.clone();
+        failed_attests.extend(
+            condition_attest(std::slice::from_ref(l.left.as_ref()))
+                .and_then(attest_subject)
+                .map(str::to_string),
+        );
+        let mut s = before;
         s.extend(tainted.clone());
         s
     } else {
         tainted.clone()
     };
+    let right_cx = SlotCx {
+        failed_attests: &failed_attests,
+        ..*sx
+    };
     taint_block(
         std::slice::from_ref(l.right.as_ref()),
         &mut right,
         &JustTainted::new(),
-        sx,
+        &right_cx,
         diags,
     );
     check_list_caught_resolution(l, span, &right, diags);
@@ -6479,8 +6509,8 @@ fn taint_list(
 /// - Iterating a stored tainted **array** (`for x in @a` where `a` is
 ///   tainted) is a read of a stored variable — DD#61 rejects it; the array
 ///   must be attest-all'd first. Emitted as SB5020 directing to attest-all.
-/// - A clean source rebinds the loop var to clean values (it is removed
-///   from the tainted set, e.g. `for x in a b c`).
+/// - A clean source adds no taint, but rebinding cannot discharge an
+///   unresolved acquisition (DD#128), even for `for x in a b c`.
 fn taint_for(f: &For, tainted: &mut Tainted, sx: &SlotCx, diags: &mut Vec<Diagnostic>) {
     let head = loop_entry_fixpoint(tainted, sx, |head, cx, diags| {
         for_pass(f, head, cx, diags).0
@@ -6508,8 +6538,6 @@ fn for_pass(
             .collect();
         body.replace(&f.variable, origins);
         lead.insert(f.variable.clone());
-    } else {
-        body.remove(&f.variable);
     }
     let (_, exits) = sx
         .body
@@ -6665,20 +6693,14 @@ fn taint_scalar_assignment(
     // comes from a source.
     reject_scalar_rhs_read(&a.value, tainted, sx.output, diags);
     let from_source = is_taint_source(&a.value, sx.output);
-    // DD#121: a whole-variable assignment from a clean RHS KILLS the taint —
-    // the name now holds a value that came from nowhere external. This is what
-    // makes DD#24's sanctioned fallback (`attest v [[ … ]] || v=8080`) leave a
-    // clean, usable value on both paths; the old flat walk got the same answer
-    // by accident, because `attest` removed the name unconditionally.
-    //
-    // `+=` appends to whatever is already there, and an indexed write replaces
-    // one cell of a container. Neither kills; the latter returned above.
-    if a.op == AssignOp::Set {
-        tainted.remove(&a.name);
-    }
-    if from_source {
-        tainted.insert(a.name.clone());
-        tainted.add_origins(&a.name, source_origins(&a.value, sx));
+    match (a.op == AssignOp::Set, from_source) {
+        (true, true) => tainted.replace(&a.name, source_origins(&a.value, sx)),
+        (true, false) => sx.resolve_replacement(&a.name, tainted),
+        (false, true) => {
+            tainted.insert(a.name.clone());
+            tainted.add_origins(&a.name, source_origins(&a.value, sx));
+        }
+        (false, false) => {}
     }
 }
 
@@ -6798,12 +6820,8 @@ fn taint_array_literal_assignment(
         }
         _ => return false,
     }
-    // DD#121: every element was just rejected if tainted, so a whole-container
-    // literal assignment leaves nothing external behind — it kills the taint
-    // exactly as a scalar assignment from a clean RHS does. `+=` appends to
-    // what is already there and must not.
     if a.index.is_none() && a.op == AssignOp::Set {
-        tainted.remove(&a.name);
+        sx.resolve_replacement(&a.name, tainted);
     }
     true
 }
@@ -6919,6 +6937,7 @@ fn taint_discarded(stmt: &Statement, tainted: &Tainted, sx: &SlotCx, diags: &mut
         body: &frame,
         log: None,
         pipe_reader: None,
+        failed_attests: &[],
         ..*sx
     };
     taint_stmt(
@@ -7005,7 +7024,7 @@ fn taint_command(
     // the set before its effect: `f "${g[0]}" =g` reads the `g` that held
     // before `f` fills it.
     check_command_reads(c, tainted, sx.output, diags);
-    forget_replaced_origins(c, tainted);
+    resolve_command_replacement(c, tainted, sx);
     taint_call(c, name, span, tainted, sx, diags);
     if let Some(target) = tainted_read_target(c) {
         tainted.replace(target, reader_origins(name, sx));
@@ -7019,19 +7038,17 @@ fn reader_origins(name: &str, cx: &SlotCx) -> Origins {
     cx.pipe_reader.unwrap_or(cx.stdin).clone()
 }
 
-/// W1's boolean transfer stays conservative, but a replaced value no longer
-/// carries its predecessor's output origins or symbolic incoming marker.
-fn forget_replaced_origins(c: &Command, tainted: &mut Tainted) {
-    match expr_literal_str(&c.name) {
-        "read" if is_value_split("read", c) => {
-            tainted.origins.remove(expr_literal_str(&c.args[1]));
+fn resolve_command_replacement(c: &Command, tainted: &mut Tainted, sx: &SlotCx) {
+    match (expr_literal_str(&c.name), c.args.as_slice()) {
+        ("read" | "keys", [_, target]) | ("match" | "matchall", [_, _, target]) => {
+            sx.resolve_replacement(expr_literal_str(target), tainted);
         }
-        "unset" => forget_unset_origins(c, tainted),
+        ("unset", _) => resolve_unset_replacement(c, tainted, sx),
         _ => {}
     }
 }
 
-fn forget_unset_origins(c: &Command, tainted: &mut Tainted) {
+fn resolve_unset_replacement(c: &Command, tainted: &mut Tainted, sx: &SlotCx) {
     // SB5063 checks binding operands after this pass. The lowering decoder
     // requires literals; a malformed command has no effects to summarize.
     if !c
@@ -7043,7 +7060,7 @@ fn forget_unset_origins(c: &Command, tainted: &mut Tainted) {
     }
     for name in crate::transform::unset_targets(c) {
         if !name.contains('[') {
-            tainted.origins.remove(&name);
+            sx.resolve_replacement(&name, tainted);
         }
     }
 }
@@ -9488,6 +9505,7 @@ struct SlotCx<'a> {
     log: Option<&'a SiteLog>,
     stdin: &'a Origins,
     pipe_reader: Option<&'a Origins>,
+    failed_attests: &'a [String],
     /// Set while `stmt_taints` is measuring one statement's taint effect. It
     /// suppresses the nested measurement, which would otherwise double the
     /// walk at every level of nesting.
@@ -9495,6 +9513,12 @@ struct SlotCx<'a> {
 }
 
 impl SlotCx<'_> {
+    fn resolve_replacement(&self, name: &str, tainted: &mut Tainted) {
+        if self.failed_attests.iter().any(|subject| subject == name) {
+            tainted.remove(name);
+        }
+    }
+
     /// Whether `name` was declared as a map (`map m` / `declare -A m`).
     fn is_map(&self, name: &str) -> bool {
         self.map_names.contains(name)
@@ -9823,6 +9847,7 @@ fn walk_body_once(f: &Function, entry: &Tainted, cx: &SlotCx) -> (BodyWalk, Tain
         probing: false,
         stdin: &input,
         pipe_reader: None,
+        failed_attests: &[],
         ..*cx
     };
     let mut tainted = entry.clone();

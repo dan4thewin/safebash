@@ -228,7 +228,7 @@ fn lower_fn_template(
     let header = ssa.new_checkpoint_block(&format!("call_{}", name));
     ssa.block_mut(fn_entry).terminator = Terminator::Goto(header);
     let saved_tail = state.enter_tail_loop(name, header);
-    let fn_exit = lower_stmts(body, ssa, state, header);
+    let fn_exit = fns::lower_body(body, ssa, state, header);
     state.tail_loop = saved_tail;
     state.args_counter = saved_counter;
     fns::exit_fn_body_scope(state, saved_ro);
@@ -716,7 +716,7 @@ fn lower_one_declaration(
     }
     let val = compute_declaration_value(a, is_array, is_assoc, ssa, state, &mut block);
     let val = shape_declared_value(val, d, is_array || is_assoc);
-    let target = state.define(&a.name);
+    let target = state.define_replacement(&a.name);
     ssa.block_mut(block)
         .insts
         .push(SsaInst::Assign { target, value: val });
@@ -1051,17 +1051,16 @@ fn lower_map_from_array(
     let Some((source, mode, key, message, taint_off)) = map_from_array_parts(a, state) else {
         return false;
     };
+    let source = state.lookup(&source);
     state.collections.insert(a.name.clone());
     state.assoc_arrays.insert(a.name.clone());
-    let target = state.define(&a.name);
+    let target = state.define_replacement(&a.name);
     ssa.block_mut(block).insts.push(SsaInst::Assign {
         target,
         value: SsaValue::AssocArray(vec![]),
     });
-    // The fill defines a LATER version than the empty-map Assign above, so the
-    // SSA taint backstop's max-version lookup sees the fill's taint rather than
-    // the declaration's clean empty map.
-    let target = state.define(&a.name);
+    // The fill is a separate definition from the empty-map initialization.
+    let target = state.define_replacement(&a.name);
     ssa.block_mut(block).insts.push(SsaInst::MapFromArray {
         source,
         target,

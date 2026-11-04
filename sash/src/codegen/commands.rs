@@ -585,7 +585,7 @@ fn resolve_splat_tables(
     for v in values {
         if let SsaValue::ArraySplat { array, disposition } = v {
             let eff = resolve_splat_table(
-                array,
+                &array.name,
                 disposition.as_ref(),
                 builder,
                 module,

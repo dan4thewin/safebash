@@ -145,6 +145,13 @@ named by the callee or anything it calls (DD#100, SB5099). Reads, writes,
 attests, metadata and identity forwarding all count, even in conditional
 paths and with `--no-taint`; there are no read-only or taint-inert exceptions.
 
+`CheckedTypes` supplies the checker's actual scalar/element types and
+array/map kinds, including implicit reader targets. Do not infer them again.
+Named and anonymous body lowering shares `transform::functions::lower_body`:
+it initializes newly owned locals with real meaningful-zero assignments,
+including on self-tail entry. Preserve globals, slots, arguments and active
+enclosing locals; a fresh private lifetime must not inherit expired taint.
+
 Every synthetic variable must go through `VersionState::reserve_temp_name`,
 with its actual `VarType`, before `define`. A counter or function-name prefix
 does not avoid legal source globals or another live call's result. This also
@@ -1606,9 +1613,8 @@ panic *is* the claim that the shape is still unreachable.
 
 ## Taint system
 
-Taint is definition-based, not name-based. There is no "clean list"
-of variable names. A variable is clean or tainted based on where its
-value came from:
+Taint follows acquisitions and their legal resolution, not a "clean list"
+of names. Source classification is:
 
 - **Clean**: literals, arithmetic from clean operands, compiler-managed
   values ($#, $?, $$, $!), function args from clean callers, compiler-owned
@@ -1618,13 +1624,20 @@ value came from:
   copies introduce no taint and do not erase existing taint. Existing
   buffer eligibility stays unchanged; there is no `clean_pipe` exemption.
 
+Within a live binding, only a legal adjacent attest or a clean whole-subject
+replacement written directly on its failed path resolves taint (DD#128).
+Ordinary writes, unset, clean loop binding and self-copy through `:!` retain
+unresolved taint and its owners. Permission is subject-specific and does not
+enter helpers, captures or children. Fresh acquisition gets fresh adjacency;
+new private lifetimes are initialized rather than declassified.
+
 Across a function boundary there is one rule (DD#127): own taint is
 attested in the body that produced it, or — when that body has exactly
 one call site — immediately after that call; received taint is never
 attested inside a body. Globals and A-E now share independent per-function
 summaries, mapped at each call; `SlotInfo` is gone. A passed global's unused
 identity flow must be omitted, or it undoes cleanup through its slot.
-DD#127's "Implementation status" lists the remaining W2b-W5 and precision
+DD#127's "Implementation status" lists the remaining W5 and precision
 boundaries.
 
 Env vars ($HOME, $PATH, etc.) are NOT special — they're just

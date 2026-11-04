@@ -665,7 +665,7 @@ fn subscript_read_to_ssa(
         index: Box::new(arith_to_ssa(index, expr, state)),
         is_integer_key: !state.assoc_arrays.contains(&resolved),
         is_integer_value: state.type_map.get(&resolved).copied() == Some(crate::ir::VarType::Int),
-        array: resolved,
+        array: state.lookup(&resolved),
     }
 }
 

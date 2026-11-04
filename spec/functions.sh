@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup functions
-plan=245
+plan=253
 echo "1..$plan" >&3
 
 set +e
@@ -1780,6 +1780,85 @@ f 2 | /bin/cat &
 - wait
 echo after'
 [[ $rc = 0 && $out = $'n=2\nn=1\ndone\nafter' && -z $rerr ]]; chk stgcyc.3
+
+# A new body entry owns fresh locals, not the previous call's values or taint.
+DD128_LOCAL_INPUT=dirty run_sash 'fn f {
+  str x=clean
+  echo "$x"
+  x=$(getenv DD128_LOCAL_INPUT)
+}
+f
+f'
+[[ $rc = 0 && $out = $'clean\nclean' && -z $err ]]; chk flife.1
+
+run_sash 'fn f {
+  if [[ $1 == set ]] { str s=hi; int n=7 }
+  echo "[$s:$n]"
+}
+str first=$(f set)
+str second=$(f skip)
+echo "$first"
+echo "$second"'
+[[ $rc = 0 && $out = $'[hi:7]\n[:0]' && -z $err ]]; chk flife.2
+
+run_sash 'fn f {
+  if [[ $1 == set ]] { array a=(hi); map m=([key]=there) }
+  echo "${a[0]}:${m[key]}:$(len a):$(len m)"
+}
+f set
+f skip'
+[[ $rc = 0 && $out = $'hi:there:1:1\n::0:0' && -z $err ]]; chk flife.3
+
+run_sash 'fn f {
+  if [[ $1 == set ]] {
+    argv 1 a
+    for v in one { : "$v" }
+  }
+  echo "${a[0]:!}:$v"
+}
+f set
+f skip' dirty
+[[ $rc = 0 && $out = $'dirty:one\n:' && -z $err ]]; chk flife.4
+
+run_sash 'for mode in set skip {
+  str result=$(
+    if [[ $mode == set ]] { str x=seen; array a=(item) }
+    echo "[$x:${a[0]}]"
+  )
+  echo "$result"
+}'
+[[ $rc = 0 && $out = $'[seen:item]\n[:]' && -z $err ]]; chk flife.5
+
+# A nested body must not reset the enclosing body's captured bindings.
+run_sash 'str global=kept
+fn f {
+  str value=outer
+  array a=(base)
+  str output=$(echo "$global:$value:${a[0]}"; global=updated; value=inner; a[0]=changed)
+  echo "$output:$value:${a[0]}"
+}
+f
+echo "$global"'
+[[ $rc = 0 && $out = $'kept:outer:base:inner:changed\nupdated' && -z $err ]]; chk flife.6
+
+run_sash 'int left=1
+fn step -> int {
+  if (( left > 0 )) { int n=9; (( left -= 1 )); return step }
+  return $n
+}
+int result=$(step)
+echo "$result"'
+[[ $rc = 0 && $out = 0 && -z $err ]]; chk flife.7
+
+run_sash 'fn f {
+  if [[ $1 == set ]] { str x=seen }
+  echo "[$x]"
+}
+f set
+f skip | /bin/cat
+f skip &
+- wait'
+[[ $rc = 0 && $out = $'[seen]\n[]\n[]' && -z $err ]]; chk flife.8
 
 set -e
 tally

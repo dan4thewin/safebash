@@ -135,6 +135,7 @@ fn lower_if_attest_convert(
     let then_state = state.snapshot();
     merge_attest_branches(
         i.else_body.as_deref(),
+        source_name,
         ssa,
         state,
         block,
@@ -228,6 +229,7 @@ fn lower_if_attest(
     // version defined on exactly one path.
     merge_attest_branches(
         i.else_body.as_deref(),
+        kind.subject(),
         ssa,
         state,
         block,
@@ -248,6 +250,7 @@ fn lower_if_attest(
 #[allow(clippy::too_many_arguments)]
 fn merge_attest_branches(
     else_body: Option<&[Statement]>,
+    subject: &str,
     ssa: &mut SsaProgram,
     state: &mut VersionState,
     block: BlockId,
@@ -280,7 +283,10 @@ fn merge_attest_branches(
     };
 
     state.restore(pre_state);
+    let subject = super::expressions::resolve_args_name(subject, state);
+    state.failed_attests.push(subject);
     let else_exit = lower_stmts(else_body, ssa, state, else_block);
+    state.failed_attests.pop();
     ssa.block_mut(else_exit).terminator = Terminator::Goto(merge_block);
     let else_state = state.snapshot();
 

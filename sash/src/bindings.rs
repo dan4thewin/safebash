@@ -308,7 +308,7 @@ impl Resolver {
     }
 }
 
-fn local_name(name: &str) -> bool {
+pub(crate) fn local_name(name: &str) -> bool {
     is_plain_identifier(name)
         && !is_discard_binder(name)
         && !is_collection_slot(name)

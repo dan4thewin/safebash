@@ -168,7 +168,7 @@ of the build.
        │
   [5]  │  Type check
        ▼
- type_check.rs → checked variable types (int vs string)
+ type_check.rs → checked scalar/element types and collection kinds
        │
   [6]  │  Transform
        ▼
@@ -266,6 +266,14 @@ share the argument lifter; nested calls retain their caller's positionals,
 and splats remain splats. Pipeline arguments still execute inside their
 existing forked function stage, not in the parent (DD#81, DD#27).
 
+Every executable body entry initializes its newly owned private locals
+(DD#86): empty strings/collections and integer zero. Named bodies, templates
+and anonymous captures share one lowering hook; self-tail back edges run
+those assignments again. Canonical lexical ownership preserves active
+enclosing locals, globals, arguments and slots. The checker's `CheckedTypes`
+supplies collection kinds as well as scalar/element types, including implicit
+reader targets; lowering does not infer them again.
+
 A `-` discards the status of the one command or call it prefixes, and
 nothing else (DD#55 2026-10-30). The transform keeps a suppression depth on
 `VersionState`: `lower_suppressed_stmt` raises it, and each status check
@@ -280,7 +288,15 @@ taint and status-availability rules still apply (DD#55).
 ### Phase 3: Taint
 
 Flow-sensitive taint analysis (DD#24, DD#42–44), tracking names whose
-current values remain tainted.
+live bindings remain unresolved.
+
+**Resolution is adjacent (DD#121, DD#128).** A successful legal attest, or
+a clean whole-subject replacement written directly on its failed path,
+resolves outstanding taint. Ordinary overwrites, unset, clean loop binding,
+buffering and self-copy through `:!` do not. Permission is subject-specific
+and cannot enter helpers, captures or children. A fresh acquisition has its
+own adjacency; a fresh private lifetime does not inherit a previous call's
+taint. R2 still applies when no later read needs the subject.
 
 **Global/slot summaries (DD#127).** Each function is analysed independently of
 its callers: an empty-entry walk finds its own generators, and one walk per
@@ -293,9 +309,9 @@ attests (SB5088) are reported at the call with the original body location.
 A single-use function may leave its own taint for the caller to attest
 immediately after the call. A shared function must attest it internally;
 SB5067 names the last global/slot source and explains why the function is
-shared. Ordinary calls propagate clean overwrites as well as taint.
+shared. Ordinary calls propagate legal resolutions as well as taint.
 Captures and arithmetic/value calls conservatively union their effects:
-an overwrite cannot hide an earlier read or clear a value when the call is
+resolution cannot hide an earlier read or clear a binding when the call is
 skipped.
 Background children and forked stages are checked on isolated states; the
 final parent reader retains its effects.
@@ -325,7 +341,8 @@ Internal capture/attest/echo can export a clean compiler buffer; a subsequent
 kernel read reintroduces taint and is not exempted by the writer's validation.
 Existing per-function summaries carry stdout owners, true origin flows and
 symbolic stdin/name attest obligations. Origin flows are separate from boolean
-taint flows so a fresh replacement cannot inherit the old value's owner.
+taint flows so a genuine new acquisition cannot inherit the old value's owner.
+Ordinary clean writes preserve unresolved taint and owners together.
 Named readers and slot forwarding use those summaries, not caller-specific
 walks. A parent's private reader pipe is not the stdin of its calls or captures.
 
@@ -348,11 +365,17 @@ but never enter those executable views. Lowering a definition restores
 current variable versions without rewinding their allocation counters:
 defining a function does not execute its assignments.
 
-END entry remains W5. The SSA backstop still has separate array-timing and
-definition-order faults, including its completed-parent view rather than
-a precise fork-time state. DD#127's
-"Implementation status" records these boundaries, the clean-split and
-counted-capture defects, and conservative value/capture precision limits.
+Definitions now converge before use checks, including forward phis and
+values derived from them. Ordinary definitions retain the actual active
+predecessor's taint; legal failed-branch replacement can remove that link,
+but never bless a tainted new value. Unreachable phi predecessors are
+excluded. Cell reads, splats, iteration and map-fill operands carry their
+reaching collection version, not a future version selected by name.
+
+END entry remains W5. Unlowered redirect operands still use the completed
+bare-name view, and children still inherit the completed parent view rather
+than a precise fork-time snapshot. DD#127 records these boundaries,
+counted-capture lowering and conservative value/capture precision questions.
 
 **Non-aliasing is already enforced (DD#100).** Collection arguments must
 have distinct identities, and none may overlap a global named in the
@@ -370,8 +393,9 @@ value as a function argument is a read, which is a compile error.
 Top-level `$1`–`$N` are compile errors (DD#46: use `$(argv N)`).
 
 **Clean sources:** literals, arithmetic from clean operands, `$0`,
-`$#`, `$(status)`, `$(getpid)`, `$(getcpid)`, `$(waitstatus)`, variables assigned from
-clean expressions. The punctuation spellings `$?`/`$$`/`$!` are input
+`$#`, `$(status)`, `$(getpid)`, `$(getcpid)` and `$(waitstatus)`. A clean
+expression keeps a clean destination clean; it cannot by itself resolve a
+previously tainted binding. The punctuation spellings `$?`/`$$`/`$!` are input
 sugar for the last three (DD#75); the keyword form is canonical and is
 what `sash-convert` emits. As an arithmetic operand the spelling is the
 `(name)` sexpr — `$(( (status) + 1 ))` — not the command substitution,
@@ -391,8 +415,8 @@ attest port [[ $port =~ ^[0-9]+$ ]]
 echo $port   # clean — attested above
 ```
 
-**The rule:** you can write tainted data into a variable but cannot
-read it except inside `attest`. Diagnostic: SB4020.
+**The rule:** a tainted binding can be read only in its eligible attest
+predicate or through `:!`; ordinary unresolved reads receive SB5020.
 
 **Containers (DD#61):** a tainted value cannot enter an array/map via a
 literal, `+=` append, or `a[i]=` subscript (SB5021); tainted arrays come

@@ -636,13 +636,76 @@ pub(super) fn lower_inlined_body(
     let saved_tail = state.enter_tail_loop(name, call_block);
     let saved_condition = std::mem::take(&mut state.in_condition);
     let saved_suppressed = std::mem::take(&mut state.suppressed);
-    let exit_block = lower_stmts(body, ssa, state, call_block);
+    let failed_attests = std::mem::take(&mut state.failed_attests);
+    let exit_block = lower_body(body, ssa, state, call_block);
+    state.failed_attests = failed_attests;
     state.suppressed = saved_suppressed;
     state.in_condition = saved_condition;
     state.tail_loop = saved_tail;
     state.return_target = saved_return_target;
     ssa.block_mut(exit_block).terminator = Terminator::Goto(restore_block);
     exit_block
+}
+
+pub(super) fn lower_body(
+    body: &[Statement],
+    ssa: &mut SsaProgram,
+    state: &mut VersionState,
+    block: BlockId,
+) -> BlockId {
+    let inherited = initialize_body_locals(body, ssa, state, block);
+    let exit = lower_stmts(body, ssa, state, block);
+    state.live_locals = inherited;
+    exit
+}
+
+fn initialize_body_locals(
+    body: &[Statement],
+    ssa: &mut SsaProgram,
+    state: &mut VersionState,
+    block: BlockId,
+) -> std::collections::HashSet<String> {
+    let mut locals = std::collections::HashSet::new();
+    crate::validate::collect_scope_names(body, &mut locals);
+    locals.retain(|name| {
+        crate::bindings::local_name(name)
+            && !ssa.globals.contains_key(name)
+            && !state.live_locals.contains(name)
+    });
+    let inherited = state.live_locals.clone();
+    let mut locals: Vec<_> = locals.into_iter().collect();
+    locals.sort();
+    for name in locals {
+        state.live_locals.insert(name.clone());
+        let value = local_initial_value(&name, state);
+        let target = state.define_initial(&name);
+        ssa.block_mut(block)
+            .insts
+            .push(SsaInst::Assign { target, value });
+    }
+    inherited
+}
+
+fn local_initial_value(name: &str, state: &mut VersionState) -> SsaValue {
+    match state.checked_collections.get(name) {
+        Some(true) => {
+            state.collections.insert(name.to_string());
+            state.assoc_arrays.insert(name.to_string());
+            SsaValue::AssocArray(Vec::new())
+        }
+        Some(false) => {
+            state.collections.insert(name.to_string());
+            SsaValue::IndexedArray(Vec::new())
+        }
+        None => match state
+            .type_map
+            .get(name)
+            .expect("every source local has a checked type")
+        {
+            VarType::Int => SsaValue::Literal("0".to_string()),
+            VarType::String => SsaValue::Literal(String::new()),
+        },
+    }
 }
 
 /// DD#27/§5: emit a self tail-call as a loop back-edge. Rebinds the current
