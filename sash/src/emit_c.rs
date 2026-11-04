@@ -101,6 +101,7 @@ pub fn emit_c(ssa: &SsaProgram) -> String {
     let mut e = Emit::new();
     e.source_names = ssa.source_names.clone();
     emit_prologue(&mut e.out);
+    declare_globals(&mut e.out, &ssa.globals);
     emit_main(&mut e, ssa);
     e.out
 }
@@ -466,8 +467,21 @@ fn emit_reader_slots(e: &mut Emit) {
     }
 }
 
+fn collect_storage_types(ssa: &SsaProgram) -> VarTypes {
+    let mut types = collect_var_types(ssa);
+    for (name, kind) in &ssa.globals {
+        types.insert((name.clone(), 0), kind.var_type());
+    }
+    for ((name, _), kind) in &mut types {
+        if let Some(global) = ssa.globals.get(name) {
+            *kind = global.var_type();
+        }
+    }
+    types
+}
+
 fn emit_main(e: &mut Emit, ssa: &SsaProgram) {
-    let types = collect_var_types(ssa);
+    let types = collect_storage_types(ssa);
     e.end_block = ssa.end_block;
     e.end_region = ssa.end_region();
     e.child_region = ssa.child_region();
@@ -487,10 +501,9 @@ fn emit_main(e: &mut Emit, ssa: &SsaProgram) {
     writeln!(e.out, "    (void)__end_status;").unwrap();
     emit_slot_decls(e, ssa);
     emit_reader_slots(e);
-    declare_vars(&mut e.out, &types);
+    declare_vars(&mut e.out, &types, &ssa.globals);
 
-    // Phase 1: only main-body blocks. fn_* (function bodies) come
-    // in Phase 4 — they map to C function definitions.
+    // Source functions are inlined; their unused fn_* templates are not emitted.
     let reachable = ssa.reachable();
     let main_blocks = ssa
         .blocks
@@ -681,20 +694,42 @@ fn collect_value_vars(value: &SsaValue, types: &mut VarTypes) {
     }
 }
 
-/// Declare one C variable per distinct *name* (not per (name,
-/// version) pair — see c_var_name's doc). Mirrors codegen's
-/// `VarSlot` model where each bash variable maps to one
-/// Cranelift `Variable`: string vars are two C variables
-/// (`_ptr` plus `_len`), int vars are one. If a name appears at
-/// multiple versions with different declared types we take String
-/// (the table/ptr slot), since only an int-valued collection is
-/// mixed and it must be stored as a table.
-fn declare_vars(out: &mut String, types: &VarTypes) {
+/// Source globals have static process storage, including valid empty collections.
+fn declare_globals(out: &mut String, globals: &BTreeMap<String, GlobalType>) {
+    for (name, kind) in globals {
+        let base = c_var_name(name, 0);
+        match kind {
+            GlobalType::Int => writeln!(out, "static i64 {base} = 0;").unwrap(),
+            GlobalType::String => writeln!(
+                out,
+                "static const char* {base}_ptr = \"\"; static i64 {base}_len = 0;"
+            )
+            .unwrap(),
+            GlobalType::Table => {
+                writeln!(
+                    out,
+                    "static i64 {base}_empty[{}];\n\
+                     static const char* {base}_ptr = (const char*){base}_empty;\n\
+                     static i64 {base}_len = 0;",
+                    EMPTY_TABLE_BYTES / 8,
+                )
+                .unwrap();
+            }
+        }
+    }
+    writeln!(out).unwrap();
+}
+
+/// Locals and temporaries share one slot per binding, not per SSA version.
+fn declare_vars(out: &mut String, types: &VarTypes, globals: &BTreeMap<String, GlobalType>) {
     let storage = variable_storage_types(types);
     if storage.is_empty() {
         return;
     }
-    for (name, vtype) in storage {
+    for (name, vtype) in storage
+        .into_iter()
+        .filter(|(name, _)| !globals.contains_key(*name))
+    {
         let base = c_var_name(name, 0);
         match vtype {
             VarType::Int => writeln!(out, "    i64 {base} = 0; (void){base};").unwrap(),
@@ -722,13 +757,10 @@ fn variable_storage_types(types: &VarTypes) -> BTreeMap<&str, VarType> {
 }
 
 /// Map an SSA `(name, version)` to a C identifier stem. **Versions
-/// are dropped.** This mirrors Cranelift's SSA model: every SSA
-/// version of the same bash variable is represented by ONE
-/// Cranelift `Variable`, so phi nodes resolve implicitly via the
-/// last-write-wins discipline at `def_var` sites. emit_c does the
-/// same — one C local per variable name; assignments overwrite;
-/// phi nodes are no-ops (the assignment in the predecessor already
-/// wrote the right value).
+/// are dropped.** Both backends use one storage location per binding:
+/// static for source globals, function-local for locals and temporaries.
+/// Assignments overwrite that location; phi nodes are no-ops because the
+/// predecessor already stored the right value.
 ///
 /// Special vars like `1`, `2`, …, `9`, `#`, `?`, `$`, `@` are
 /// sanitised: each non-alphanumeric char becomes a distinct `_c<code>`
@@ -4682,7 +4714,7 @@ fn emit_readline_body(e: &mut Emit, target: &VarRef, fd: i64) {
     )
     .unwrap();
     let base = c_var_name(&target.name, target.version);
-    writeln!(e.out, "    {0}_ptr = {1}.ptr;", base, t).unwrap();
+    writeln!(e.out, "    {base}_ptr = {t}.ptr ? {t}.ptr : \"\";").unwrap();
     writeln!(e.out, "    {0}_len = {1}.len;", base, t).unwrap();
     // EOF iff the returned ptr is NULL — the runtime distinguishes true EOF
     // (NULL, 0) from an empty line (non-NULL, 0). This is the *loop

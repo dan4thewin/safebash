@@ -1989,6 +1989,9 @@ pub struct SashTable {
     live_count: u32,
 }
 
+// Both code generators reserve this C ABI header for an empty global table.
+const _: () = assert!(core::mem::size_of::<SashTable>() == 32);
+
 /// Safe view of the index array for table operations.
 /// entries_eq(i, key) returns true if entry i's key matches key.
 fn table_find_slot_inner(
@@ -2069,15 +2072,13 @@ unsafe fn table_grow(t: *mut SashTable) {
     }
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn sash_table_new(capacity: i64) -> *mut SashTable {
+unsafe fn table_contents(capacity: i64) -> SashTable {
     let cap = if capacity < 4 {
         4u32
     } else {
         (capacity as u32).next_power_of_two()
     };
     let index_size = (cap * 2).next_power_of_two();
-    let t = sash_alloc(core::mem::size_of::<SashTable>()) as *mut SashTable;
     let indices = sash_alloc((index_size as usize) * 4) as *mut i32;
     let idx_slice = core::slice::from_raw_parts_mut(indices, index_size as usize);
     for slot in idx_slice.iter_mut() {
@@ -2085,12 +2086,20 @@ pub unsafe extern "C" fn sash_table_new(capacity: i64) -> *mut SashTable {
     }
     let entries =
         sash_alloc((cap as usize) * core::mem::size_of::<TableEntry>()) as *mut TableEntry;
-    (*t).indices = indices;
-    (*t).entries = entries;
-    (*t).index_mask = index_size - 1;
-    (*t).entry_count = 0;
-    (*t).entry_capacity = cap;
-    (*t).live_count = 0;
+    SashTable {
+        indices,
+        entries,
+        index_mask: index_size - 1,
+        entry_count: 0,
+        entry_capacity: cap,
+        live_count: 0,
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn sash_table_new(capacity: i64) -> *mut SashTable {
+    let t = sash_alloc(core::mem::size_of::<SashTable>()) as *mut SashTable;
+    t.write(table_contents(capacity));
     t
 }
 
@@ -2102,6 +2111,9 @@ pub unsafe extern "C" fn sash_table_set(
     val_ptr: *const u8,
     val_len: i64,
 ) {
+    if (*t).entry_capacity == 0 {
+        t.write(table_contents(4));
+    }
     if (*t).entry_count * 4 >= ((*t).index_mask + 1) * 3 {
         table_grow(t);
     }
@@ -2170,6 +2182,10 @@ pub unsafe extern "C" fn sash_table_get(
     key_len: i64,
     out_len: *mut i64,
 ) -> *const u8 {
+    if (*t).live_count == 0 {
+        *out_len = 0;
+        return core::ptr::null();
+    }
     let key = core::slice::from_raw_parts(key_ptr, key_len as usize);
     let indices = core::slice::from_raw_parts((*t).indices, ((*t).index_mask + 1) as usize);
     let entries_ptr = (*t).entries;
@@ -2209,6 +2225,9 @@ pub unsafe extern "C" fn sash_table_len(t: *const SashTable) -> i64 {
 /// call replaces the array contents, and a no-match leaves it empty.
 #[no_mangle]
 pub unsafe extern "C" fn sash_table_clear(t: *mut SashTable) {
+    if (*t).entry_capacity == 0 {
+        return;
+    }
     let index_size = ((*t).index_mask + 1) as usize;
     let idx = core::slice::from_raw_parts_mut((*t).indices, index_size);
     for slot in idx.iter_mut() {
@@ -2224,6 +2243,9 @@ pub unsafe extern "C" fn sash_table_delete(
     key_ptr: *const u8,
     key_len: i64,
 ) -> i64 {
+    if (*t).live_count == 0 {
+        return 1;
+    }
     let key = core::slice::from_raw_parts(key_ptr, key_len as usize);
     let entries_ptr = (*t).entries;
     let indices = core::slice::from_raw_parts((*t).indices, ((*t).index_mask + 1) as usize);
@@ -2323,7 +2345,11 @@ pub unsafe extern "C" fn sash_table_join(
     sep_len: i64,
     out_len: *mut i64,
 ) -> *mut u8 {
-    let entries = core::slice::from_raw_parts((*t).entries, (*t).entry_count as usize);
+    let entries = if (*t).entry_count == 0 {
+        &[]
+    } else {
+        core::slice::from_raw_parts((*t).entries, (*t).entry_count as usize)
+    };
     let mut integer = [0; 21];
     let mut total = 0usize;
     let mut separator = 0usize;

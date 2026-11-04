@@ -5,9 +5,10 @@ Drafted 2026-11-03 at DG's request. DG settled all five open choices that
 day; section 10 records the rulings, now incorporated into the rules below.
 **The document remains a draft; those choices are no longer open.**
 Implementation is authorized and underway. The typing prerequisite shipped
-in journal 565; journal 566 restores uniform SB5071. The compiler still has
-DD56's `END`; the new handler contracts and their remaining companion-DD
-rewrites are not implemented yet.
+in journal 565; journal 566 restores uniform SB5071; journal 567 implements
+process-static globals and their meaningful zero values. The compiler still
+has DD56's `END`; generated handler functions, the new handler contracts and
+their remaining companion-DD rewrites are not implemented yet.
 
 DG supplied the design principles, made the decisions and authorized
 implementation. The AI assembled the writeup and implements those decisions.
@@ -433,6 +434,37 @@ to enlarge the ordinary fatal category.
 ## 9. Implementation and acceptance requirements
 
 This is wider than renaming END or fixing the six W5 findings.
+
+### Storage and terminal dispatch
+
+DG settled the representation on 2026-11-04: **sash globals use actual
+process-global storage, and ERR is a generated function.** C emits
+file-scope static objects; native code emits writable data symbols.
+Function-local bindings and compiler temporaries remain local. The storage
+is the backing representation of the existing sash scopes, not a new
+language-visible scope or a second copy of the values.
+
+Completed assignments update that storage, and handler reads observe it.
+The compiler must not substitute values from a hypothetical normal path
+or postpone publishing a completed write past a possible fatal transfer.
+The runtime calls the generated handler and terminates; it does not jump
+back into the generated main frame or return to the interrupted operation.
+The entry path needs no heap allocation. The existing once-only and
+main-process-only requirements apply to these calls.
+
+DG explicitly puts optimization below this reasoning model: shell-like
+programs making heavy use of external programs are unlikely to be limited
+by local memory accesses. Register-only globals are not a reason to retain
+nonlocal jumps or complicate handler-visible state.
+
+The storage prerequisite is implemented in journal 567. Both backends use
+the same checked global inventory, with a distinct valid empty header for
+each global collection and lazy backing allocation. Statement attestation
+aliases its source storage rather than creating a future-only copy.
+`gstate.1`/`.2` pin actual completed values on the existing END abort paths;
+they do not implement or prove the new handler-entry taint rules.
+
+### Pipeline and acceptance
 
 Keep DD127's one independent summary per function, DD100's non-aliasing
 contract, centralized lexical identities and W4's process isolation.

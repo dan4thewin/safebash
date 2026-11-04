@@ -1253,15 +1253,26 @@ control is `loopflow.15`, not a claim that the counted form is repaired.
 - [ ] **B96** (fixed-on-branch+question; DD56). CRITICAL: END's entry state
   was modelled from the main fall-through only. Question: which exits run
   END.
-- [ ] **B97** (open; DD56, DD51). Native and C disagree after an abort edge
+- [x] **B97** (open on reference; DD56, DD51). Native and C disagree after an abort edge
   into END: `x=safe; x=$(/bin/sh -c "echo evil; exit 3"); attest x …; END {
   echo "end [$x:!]" }` prints `[:!]` in native and `[safe:!]` in C.
+  - Journal 567: native statement attestation now aliases the source's
+    backing storage instead of copying into fresh locals only when the
+    attest runs. `gstate.1` retains `safe` after a failed capture assignment;
+    `.2` retains a completed parent read despite the producer's failure.
+    Both exit 3 with the right value in both backends. Reverting only the
+    alias makes exactly these two native checks fail; disabling global
+    metadata while keeping the alias does not. The storage prerequisite
+    alone is therefore not credited with fixing the retag bug.
 - [ ] **B109** (fixed-on-branch; DD56). CRITICAL: a pending EXIT signal was
   checked too late.
 - [ ] **B110** (open; DD56, DD24). Taint bypass on both binaries: `/bin/sh
   -c 'echo hi; exit 3' | readline x; attest x [[ $x == safe ]]; END { echo
   "end $x" }` reaches END through the abort edge before the attest; C prints
   `end hi` (native prints `end `, B97's divergence).
+  - Journal 567 fixes the native value discrepancy (`gstate.2`, with an
+    explicit `:!` read). The handler-entry taint bypass remains open for
+    DD128; a correct value is not a clean value.
 - [ ] **B111** (fixed-on-branch; DD56). A signal poll was lost, in both
   backends.
 - [ ] **e7** (question; DD56, DD24). `x=$(getenv HOME); x=clean; END { echo
@@ -1322,10 +1333,12 @@ claims with program-level helpers.
 
 ### 19. Lifetimes
 
-- [ ] **B13** (open; DD62). A collection unassigned on some path segfaults
-  (139) in both backends: under `--no-taint`, `if [[ $(argc) == 5 ]] { argv
-  1 a; }; echo "[${a[0]}]"`. DD62's Model B reads an unset container as
-  empty.
+- [x] **B13** (open on reference; DD62). A global collection whose binding
+  has not executed segfaults (139) in both backends instead of reading as
+  empty. Journal 567 supplies each global its own zero header, with lazy
+  backing on the first write. `gzero.1`-`.6` cover reads, joins, deletion,
+  mutation/growth, int cells, distinct forwarded collections, empty splitting
+  and child isolation. Function-local initialization and lifetime remain B14.
 - [ ] **B14** (open; DD86). Function locals leak across calls in both
   backends: `fn f { if [[ $1 == y ]] { x=hi }; echo "[$x]" }; f y; f n`
   prints `[hi]` twice. DD86 makes a local's lifetime positional, so each

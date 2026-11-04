@@ -107,8 +107,8 @@ fn init_pipeline_capture(
         PipelineCapture::Value(target) => {
             let (ptr, len) = super::values::lower_literal_value("", builder, module, ctx.literals);
             let slot = super::types::var_slot(ctx.vars, &target.display());
-            builder.def_var(slot.str_ptr(), ptr);
-            builder.def_var(slot.str_len(), len);
+            slot.str_ptr().store(builder, ptr);
+            slot.str_len().store(builder, len);
         }
         PipelineCapture::None => {}
     }
@@ -131,8 +131,8 @@ fn drain_pipeline_capture(
         let close = module.declare_func_in_func(ctx.externs.close, builder.func);
         builder.ins().call(close, &[fd]);
         let slot = super::types::var_slot(ctx.vars, &target.display());
-        builder.def_var(slot.str_ptr(), ptr);
-        builder.def_var(slot.str_len(), len);
+        slot.str_ptr().store(builder, ptr);
+        slot.str_len().store(builder, len);
     }
 }
 
@@ -811,9 +811,9 @@ fn handle_new_table_assign(
     let new_ref = module.declare_func_in_func(ctx.externs.table_new, builder.func);
     let call = builder.ins().call(new_ref, &[cap]);
     let tbl_ptr = builder.inst_results(call)[0];
-    builder.def_var(sv.str_ptr(), tbl_ptr);
+    sv.str_ptr().store(builder, tbl_ptr);
     let zero_len = builder.ins().iconst(I64, 0);
-    builder.def_var(sv.str_len(), zero_len);
+    sv.str_len().store(builder, zero_len);
 }
 
 /// Assignment to `$?` — the value goes into the dedicated
@@ -873,7 +873,7 @@ fn handle_regular_assign(
                 ctx.externs,
                 ctx.exit_status_var,
             );
-            builder.def_var(v, int_val);
+            v.store(builder, int_val);
         }
         VarSlot::Str { ptr, len } => {
             let (ptr_val, len_val) = lower_value(
@@ -885,8 +885,8 @@ fn handle_regular_assign(
                 ctx.externs,
                 ctx.exit_status_var,
             );
-            builder.def_var(ptr, ptr_val);
-            builder.def_var(len, len_val);
+            ptr.store(builder, ptr_val);
+            len.store(builder, len_val);
         }
     }
 }
@@ -1500,7 +1500,7 @@ pub(super) fn handle_match_into(
         ctx.exit_status_var,
     );
     let sv = find_array_slot(ctx.vars, array, "array");
-    let table_ptr = builder.use_var(sv.str_ptr());
+    let table_ptr = sv.str_ptr().load(builder);
 
     let func = if all {
         ctx.externs.regex_matchall_into
@@ -1538,7 +1538,7 @@ pub(super) fn handle_argv_fill(
     let call = builder.ins().call(snap_ref, &[start_val]);
     let table_ptr = builder.inst_results(call)[0];
     let sv = find_array_slot(ctx.vars, array, "array");
-    builder.def_var(sv.str_ptr(), table_ptr);
+    sv.str_ptr().store(builder, table_ptr);
     false
 }
 
@@ -1555,12 +1555,12 @@ pub(super) fn handle_keys_fill(
     ctx: &mut InstCtx,
 ) -> bool {
     let src = find_array_slot(ctx.vars, source, "map");
-    let src_ptr = builder.use_var(src.str_ptr());
+    let src_ptr = src.str_ptr().load(builder);
     let snap_ref = module.declare_func_in_func(ctx.externs.keys_snapshot, builder.func);
     let call = builder.ins().call(snap_ref, &[src_ptr]);
     let table_ptr = builder.inst_results(call)[0];
     let sv = find_array_slot(ctx.vars, array, "array");
-    builder.def_var(sv.str_ptr(), table_ptr);
+    sv.str_ptr().store(builder, table_ptr);
     false
 }
 
@@ -1580,7 +1580,7 @@ pub(super) fn handle_subscript_assign(
     let exit_status_var = ctx.exit_status_var;
 
     let sv = find_array_slot(vars, array, "array");
-    let table_ptr = builder.use_var(sv.str_ptr());
+    let table_ptr = sv.str_ptr().load(builder);
 
     let (key_ptr, key_len) = if *is_integer_key {
         let idx_int = lower_value_as_int(

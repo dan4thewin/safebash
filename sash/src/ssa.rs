@@ -1596,10 +1596,30 @@ fn sets_condition_status(inst: &SsaInst) -> bool {
     }
 }
 
+/// The zero-initialized C ABI header for `sash_rt::SashTable`.
+pub(crate) const EMPTY_TABLE_BYTES: usize = 32;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum GlobalType {
+    Int,
+    String,
+    Table,
+}
+
+impl GlobalType {
+    pub(crate) fn var_type(self) -> crate::ir::VarType {
+        match self {
+            Self::Int => crate::ir::VarType::Int,
+            Self::String | Self::Table => crate::ir::VarType::String,
+        }
+    }
+}
+
 /// The complete SSA representation of a program.
 #[derive(Debug)]
 pub struct SsaProgram {
     pub(crate) source_names: crate::bindings::SourceNames,
+    pub(crate) globals: BTreeMap<String, GlobalType>,
     pub blocks: BTreeMap<BlockId, BasicBlock>,
     pub entry: BlockId,
     /// DD#56: dedicated END block — all exit paths goto here
@@ -1718,6 +1738,7 @@ impl SsaProgram {
     pub fn new() -> Self {
         Self {
             source_names: crate::bindings::SourceNames::default(),
+            globals: BTreeMap::new(),
             blocks: BTreeMap::new(),
             entry: 0,
             end_block: None,

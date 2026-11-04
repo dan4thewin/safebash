@@ -1229,12 +1229,66 @@ impl<'a> Interner<'a> {
     }
 }
 
-/// Create Cranelift blocks and allocate variables for the SSA program.
-/// Returns the per-function compilation state.
+pub(super) fn define_globals(
+    module: &mut ObjectModule,
+    program: &SsaProgram,
+    empty_string: cranelift_module::DataId,
+) -> std::collections::BTreeMap<String, cranelift_module::DataId> {
+    let mut globals = std::collections::BTreeMap::new();
+    for (index, (name, kind)) in program.globals.iter().enumerate() {
+        let symbol = format!("__sash_global_{index}");
+        let id = module
+            .declare_data(&symbol, Linkage::Local, true, false)
+            .expect("declare global");
+        let data = global_initializer(module, &symbol, *kind, empty_string);
+        module.define_data(id, &data).expect("define global");
+        globals.insert(name.clone(), id);
+    }
+    globals
+}
+
+fn global_initializer(
+    module: &mut ObjectModule,
+    symbol: &str,
+    kind: crate::ssa::GlobalType,
+    empty_string: cranelift_module::DataId,
+) -> DataDescription {
+    let initial = match kind {
+        crate::ssa::GlobalType::Int => None,
+        crate::ssa::GlobalType::String => Some(empty_string),
+        crate::ssa::GlobalType::Table => {
+            let empty = module
+                .declare_data(&format!("{symbol}_empty"), Linkage::Local, true, false)
+                .expect("declare empty global table");
+            let mut table = DataDescription::new();
+            table.define_zeroinit(crate::ssa::EMPTY_TABLE_BYTES);
+            table.set_align(8);
+            module
+                .define_data(empty, &table)
+                .expect("define empty global table");
+            Some(empty)
+        }
+    };
+    let mut data = DataDescription::new();
+    if let Some(initial) = initial {
+        // A pointer relocation needs stored bytes; NOBITS storage stays zero.
+        data.define(vec![0; 16].into_boxed_slice());
+        let reference = module.declare_data_in_data(initial, &mut data);
+        data.write_data_addr(0, reference, 0);
+    } else {
+        data.define_zeroinit(8);
+    }
+    data.set_align(8);
+    data
+}
+
+/// Create Cranelift blocks and allocate the function's local/global slots.
 pub(super) fn allocate_variables(
     builder: &mut cranelift_frontend::FunctionBuilder,
+    module: &mut ObjectModule,
     program: &SsaProgram,
     reachable: &std::collections::HashSet<usize>,
+    globals: &std::collections::BTreeMap<String, cranelift_module::DataId>,
 ) -> super::types::FuncState {
     use super::types::FuncState;
 
@@ -1250,7 +1304,15 @@ pub(super) fn allocate_variables(
     // SAME Cranelift Variable pair. Cranelift's SSA builder handles the
     // merge at join points automatically — our SSA versioning is for the
     // oracle and printer, not for Cranelift.
-    let base_vars = collect_base_vars(builder, program);
+    let global_slots = program
+        .globals
+        .iter()
+        .map(|(name, kind)| {
+            let address = module.declare_data_in_func(globals[name], builder.func);
+            (name.clone(), super::types::VarSlot::global(*kind, address))
+        })
+        .collect();
+    let base_vars = collect_base_vars(builder, program, global_slots);
     let vars = map_versioned_names(program, &base_vars);
     let ambient = declare_ambient_vars(builder);
 
@@ -1284,8 +1346,8 @@ fn build_cl_blocks(
 
 fn make_str_slot(builder: &mut cranelift_frontend::FunctionBuilder) -> super::types::VarSlot {
     super::types::VarSlot::Str {
-        ptr: builder.declare_var(I64),
-        len: builder.declare_var(I64),
+        ptr: builder.declare_var(I64).into(),
+        len: builder.declare_var(I64).into(),
     }
 }
 
@@ -1294,7 +1356,7 @@ fn slot_for_var_type(
     var_type: &crate::ir::VarType,
 ) -> super::types::VarSlot {
     if *var_type == crate::ir::VarType::Int {
-        super::types::VarSlot::Int(builder.declare_var(I64))
+        super::types::VarSlot::Int(builder.declare_var(I64).into())
     } else {
         make_str_slot(builder)
     }
@@ -1303,19 +1365,27 @@ fn slot_for_var_type(
 fn collect_base_vars(
     builder: &mut cranelift_frontend::FunctionBuilder,
     program: &SsaProgram,
+    mut base_vars: HashMap<String, super::types::VarSlot>,
 ) -> HashMap<String, super::types::VarSlot> {
-    let mut base_vars = HashMap::new();
     for block in program.blocks.values() {
-        for inst in &block.insts {
-            declare_inst_bases(builder, inst, &mut base_vars);
-        }
-        for phi in &block.phis {
-            base_vars
-                .entry(phi.target.name.clone())
-                .or_insert_with(|| slot_for_var_type(builder, &phi.target.var_type));
-        }
+        declare_block_bases(builder, block, &mut base_vars);
     }
     base_vars
+}
+
+fn declare_block_bases(
+    builder: &mut cranelift_frontend::FunctionBuilder,
+    block: &crate::ssa::BasicBlock,
+    base_vars: &mut HashMap<String, super::types::VarSlot>,
+) {
+    for inst in &block.insts {
+        declare_inst_bases(builder, inst, base_vars);
+    }
+    for phi in &block.phis {
+        base_vars
+            .entry(phi.target.name.clone())
+            .or_insert_with(|| slot_for_var_type(builder, &phi.target.var_type));
+    }
 }
 
 /// Bulk fills reuse the collection's initializing Assign; only defining
@@ -1380,18 +1450,19 @@ fn map_versioned_names(
     program: &SsaProgram,
     base_vars: &HashMap<String, super::types::VarSlot>,
 ) -> HashMap<String, super::types::VarSlot> {
-    let mut vars = HashMap::new();
-    for block in program.blocks.values() {
-        for inst in &block.insts {
-            map_inst_versioned(inst, base_vars, &mut vars);
-        }
-        for phi in &block.phis {
-            vars.entry(phi.target.display())
-                .or_insert_with(|| base_vars[&phi.target.name]);
-            for (_, src) in &phi.sources {
-                vars.entry(src.display())
-                    .or_insert_with(|| base_vars[&src.name]);
-            }
+    let mut vars: HashMap<_, _> = base_vars
+        .iter()
+        .map(|(name, slot)| (format!("{name}_0"), *slot))
+        .collect();
+    for inst in program.blocks.values().flat_map(|block| &block.insts) {
+        map_inst_versioned(inst, base_vars, &mut vars);
+    }
+    for phi in program.blocks.values().flat_map(|block| &block.phis) {
+        vars.entry(phi.target.display())
+            .or_insert_with(|| base_vars[&phi.target.name]);
+        for (_, src) in &phi.sources {
+            vars.entry(src.display())
+                .or_insert_with(|| base_vars[&src.name]);
         }
     }
     vars
@@ -1603,8 +1674,8 @@ fn init_one_redirect_var(
     use cranelift_codegen::ir::types::I64;
 
     let sv = VarSlot::Str {
-        ptr: builder.declare_var(I64),
-        len: builder.declare_var(I64),
+        ptr: builder.declare_var(I64).into(),
+        len: builder.declare_var(I64).into(),
     };
     init_empty_var(builder, module, literals, &sv, var_name);
     sv
@@ -1628,8 +1699,8 @@ fn init_empty_var(
     let empty_gv = module.declare_data_in_func(empty_id, builder.func);
     let empty_ptr = builder.ins().global_value(I64, empty_gv);
     let empty_len = builder.ins().iconst(I64, 0);
-    builder.def_var(sv.str_ptr(), empty_ptr);
-    builder.def_var(sv.str_len(), empty_len);
+    sv.str_ptr().store(builder, empty_ptr);
+    sv.str_len().store(builder, empty_len);
 }
 
 /// Intern a string literal into the object module.

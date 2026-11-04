@@ -380,7 +380,7 @@ fn lookup_array_table(
     builder: &mut FunctionBuilder,
 ) -> cranelift_codegen::ir::Value {
     let sv = find_array_slot(vars, array, "array");
-    builder.use_var(sv.str_ptr())
+    sv.str_ptr().load(builder)
 }
 
 pub(super) fn lower_literal_value(
@@ -518,12 +518,12 @@ fn lower_slot_as_str_value(
             (zero, zero)
         }
         Some(&VarSlot::Int(v)) => {
-            let int_val = builder.use_var(v);
+            let int_val = v.load(builder);
             emit_int_to_str(builder, module, externs, int_val)
         }
         Some(&VarSlot::Str { ptr, len }) => {
-            let ptr = builder.use_var(ptr);
-            let len = builder.use_var(len);
+            let ptr = ptr.load(builder);
+            let len = len.load(builder);
             (ptr, len)
         }
     }
@@ -842,10 +842,10 @@ fn slot_as_int(
     externs: &ExternFuncs,
 ) -> cranelift_codegen::ir::Value {
     match slot {
-        VarSlot::Int(v) => builder.use_var(v),
+        VarSlot::Int(v) => v.load(builder),
         VarSlot::Str { ptr, len } => {
-            let ptr = builder.use_var(ptr);
-            let len = builder.use_var(len);
+            let ptr = ptr.load(builder);
+            let len = len.load(builder);
             atoi_call(builder, module, externs, ptr, len)
         }
     }
@@ -1499,7 +1499,7 @@ pub(super) fn lower_value_as_int(
         // every iteration.
         SsaValue::ParamExpansion { var, operator, .. } if operator == "arrlen" => {
             let sv = find_array_slot(vars, &var.name, "arrlen");
-            let table_ptr = builder.use_var(sv.str_ptr());
+            let table_ptr = sv.str_ptr().load(builder);
             let len_ref = module.declare_func_in_func(externs.table_len, builder.func);
             let call = builder.ins().call(len_ref, &[table_ptr]);
             builder.inst_results(call)[0]

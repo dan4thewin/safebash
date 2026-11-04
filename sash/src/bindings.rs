@@ -29,7 +29,10 @@ impl SourceNames {
 }
 
 pub(crate) fn resolve(program: &Program, source: &str) -> (Program, SourceNames) {
-    let globals = global_scope(program);
+    let globals: Scope = global_names(program)
+        .into_iter()
+        .map(|n| (n.clone(), n))
+        .collect();
     let mut resolver = Resolver {
         globals: globals.clone(),
         functions: program.function_defs().map(|f| f.name.clone()).collect(),
@@ -48,13 +51,13 @@ pub(crate) fn resolve(program: &Program, source: &str) -> (Program, SourceNames)
     (program, resolver.names)
 }
 
-fn global_scope(program: &Program) -> Scope {
+pub(crate) fn global_names(program: &Program) -> HashSet<String> {
     let mut globals = HashSet::new();
     crate::validate::collect_scope_names(&program.statements, &mut globals);
     if let Some(end) = &program.end_block {
         crate::validate::collect_scope_names(end, &mut globals);
     }
-    globals.into_iter().map(|n| (n.clone(), n)).collect()
+    globals
 }
 
 struct Resolver {

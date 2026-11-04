@@ -382,7 +382,7 @@ fn redirect_expr_simple_expansion(
     match redirect_slot_or_ice(var, vars) {
         VarSlot::Str { .. } => {
             let sv = redirect_slot_or_ice(var, vars);
-            (builder.use_var(sv.str_ptr()), builder.use_var(sv.str_len()))
+            (sv.str_ptr().load(builder), sv.str_len().load(builder))
         }
         // An int variable in a target is a path *component*, not a number:
         // `> "$p".log`. The braced spelling `${p}` is spilled to a scalar temp
@@ -391,7 +391,7 @@ fn redirect_expr_simple_expansion(
         // braced form and `echo $p`. DD#119 rejects the *unquoted* int target
         // upstream, so what reaches here is the converted form.
         VarSlot::Int(v) => {
-            let n = builder.use_var(*v);
+            let n = v.load(builder);
             emit_int_to_str(builder, module, externs, n)
         }
     }

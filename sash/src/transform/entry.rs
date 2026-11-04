@@ -11,6 +11,7 @@ pub fn ir_to_ssa_typed(
     type_map: HashMap<String, VarType>,
 ) -> (SsaProgram, Vec<String>) {
     let mut ssa = SsaProgram::new();
+    ssa.globals = source_globals(program, &type_map);
     ssa.user_fds = program_referenced_fds(program);
     let mut state = VersionState::with_types(type_map);
     reserve_source_names(program, &mut state.reserved_names);
@@ -29,6 +30,11 @@ pub fn ir_to_ssa_typed(
     ssa.block_mut(exit).terminator = Terminator::Return;
 
     install_end_block(&mut ssa, &mut state);
+    for (name, kind) in &mut ssa.globals {
+        if state.collections.contains(name) {
+            *kind = GlobalType::Table;
+        }
+    }
     super::reader_cleanup::install(&mut ssa, &state.reader_regions);
     ssa.assert_children_disjoint();
 
@@ -54,6 +60,25 @@ pub fn ir_to_ssa_typed(
         .cloned()
         .collect();
     (ssa, diags)
+}
+
+fn source_globals(
+    program: &Program,
+    type_map: &HashMap<String, VarType>,
+) -> std::collections::BTreeMap<String, GlobalType> {
+    crate::bindings::global_names(program)
+        .into_iter()
+        .map(|name| {
+            let kind = match type_map
+                .get(&name)
+                .expect("every source global has a checked type")
+            {
+                VarType::Int => GlobalType::Int,
+                VarType::String => GlobalType::String,
+            };
+            (name, kind)
+        })
+        .collect()
 }
 
 fn reserve_source_names(program: &Program, names: &mut HashSet<String>) {

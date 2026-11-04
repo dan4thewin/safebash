@@ -571,9 +571,9 @@ impl SsaInst {
         let src_key = format!("{}_{}", source.name, source.version);
         let src_slot = super::types::var_slot(vars, &src_key);
         let (val_ptr, val_len) = match src_slot {
-            VarSlot::Str { ptr, len } => (builder.use_var(ptr), builder.use_var(len)),
+            VarSlot::Str { ptr, len } => (ptr.load(builder), len.load(builder)),
             VarSlot::Int(v) => {
-                let val = builder.use_var(v);
+                let val = v.load(builder);
                 super::types::emit_int_to_str(builder, module, externs, val)
             }
         };
@@ -588,25 +588,9 @@ impl SsaInst {
         builder.switch_to_block(pass_block);
         builder.seal_block(pass_block);
 
-        // Copy source value to target — target is the new clean SSA version
+        // Attestation changes trust, not the binding's backing storage.
         let tgt_key = format!("{}_{}", target.name, target.version);
-        match src_slot {
-            VarSlot::Str { ptr, len } => {
-                let p = builder.use_var(ptr);
-                let l = builder.use_var(len);
-                let tp = builder.declare_var(I64);
-                let tl = builder.declare_var(I64);
-                builder.def_var(tp, p);
-                builder.def_var(tl, l);
-                vars.insert(tgt_key, VarSlot::Str { ptr: tp, len: tl });
-            }
-            VarSlot::Int(v) => {
-                let val = builder.use_var(v);
-                let tv = builder.declare_var(I64);
-                builder.def_var(tv, val);
-                vars.insert(tgt_key, VarSlot::Int(tv));
-            }
-        }
+        vars.insert(tgt_key, src_slot);
         false
     }
 
@@ -668,7 +652,7 @@ impl SsaInst {
         // Backing table pointer (tables live in `_0` slots).
         let table_ptr = {
             let sv = find_array_slot(ctx.vars, &source.name, "attest-all array");
-            builder.use_var(sv.str_ptr())
+            sv.str_ptr().load(builder)
         };
         let len_ref = module.declare_func_in_func(externs.table_len, builder.func);
         let len_call = builder.ins().call(len_ref, &[table_ptr]);
@@ -829,7 +813,7 @@ impl SsaInst {
         let externs = ctx.externs;
         let exit_status_var = ctx.exit_status_var;
         let sv = find_array_slot(vars, array, "array");
-        let table_ptr = builder.use_var(sv.str_ptr());
+        let table_ptr = sv.str_ptr().load(builder);
 
         // Get current length as the next integer key
         let len_ref = module.declare_func_in_func(externs.table_len, builder.func);
@@ -964,8 +948,8 @@ impl SsaInst {
         let pid = builder.use_var(ctx.test_result_var);
         let (str_ptr, str_len) = emit_int_to_str(builder, module, ctx.externs, pid);
         let sv = super::types::var_slot(ctx.vars, &vr.display());
-        builder.def_var(sv.str_ptr(), str_ptr);
-        builder.def_var(sv.str_len(), str_len);
+        sv.str_ptr().store(builder, str_ptr);
+        sv.str_len().store(builder, str_len);
         let failed = builder.ins().icmp_imm(IntCC::SignedLessThan, pid, 0);
         let failure = builder.create_block();
         let done = builder.create_block();
@@ -1127,9 +1111,9 @@ impl SsaInst {
             ctx.exit_status_var,
         );
         let src = find_array_slot(ctx.vars, source, "array");
-        let src_ptr = builder.use_var(src.str_ptr());
+        let src_ptr = src.str_ptr().load(builder);
         let dst = find_array_slot(ctx.vars, target, "map");
-        let dst_ptr = builder.use_var(dst.str_ptr());
+        let dst_ptr = dst.str_ptr().load(builder);
         let mode_val = builder.ins().iconst(I64, i64::from(mode));
         let fref = module.declare_func_in_func(ctx.externs.map_from_array, builder.func);
         builder
@@ -1160,7 +1144,7 @@ impl SsaInst {
             ctx.exit_status_var,
         );
         let sv = find_array_slot(ctx.vars, array, "array");
-        let table_ptr = builder.use_var(sv.str_ptr());
+        let table_ptr = sv.str_ptr().load(builder);
         let split_ref = module.declare_func_in_func(ctx.externs.split_into_array, builder.func);
         let nul = builder.ins().iconst(I64, 0);
         let terminator = builder.ins().iconst(I64, 1);
@@ -1226,8 +1210,8 @@ impl SsaInst {
         // string; a `-> int` function's return takes the `__intret_` path.
         // `str_ptr`/`str_len` are the shared guard for exactly this class of
         // caller — their INVARIANT note already lists capture targets.
-        builder.def_var(sv.str_ptr(), ptr);
-        builder.def_var(sv.str_len(), len);
+        sv.str_ptr().store(builder, ptr);
+        sv.str_len().store(builder, len);
         false
     }
 }
@@ -1327,8 +1311,13 @@ fn declare_attest_binders(
         let key = b.display();
         let bp = builder.declare_var(I64);
         let bl = builder.declare_var(I64);
-        ctx.vars
-            .insert(key.clone(), VarSlot::Str { ptr: bp, len: bl });
+        ctx.vars.insert(
+            key.clone(),
+            VarSlot::Str {
+                ptr: bp.into(),
+                len: bl.into(),
+            },
+        );
         keys.push(key);
         ptrs.push(bp);
         lens.push(bl);
@@ -1412,7 +1401,7 @@ fn emit_read_array_body(
 ) {
     let externs = ctx.externs;
     let sv = find_array_slot(&*ctx.vars, array, "array");
-    let table_ptr = builder.use_var(sv.str_ptr());
+    let table_ptr = sv.str_ptr().load(builder);
 
     let fd_val = super::inst_handlers::read_fd(fd, builder, ctx);
 
@@ -1451,18 +1440,13 @@ fn emit_readline_body(
     let read_line_ref = module.declare_func_in_func(externs.read_line, builder.func);
     let call = builder.ins().call(read_line_ref, &[fd_val]);
     let (ptr, len) = (builder.inst_results(call)[0], builder.inst_results(call)[1]);
-    let sv = &ctx.vars[&target.display()];
-    builder.def_var(sv.str_ptr(), ptr);
-    builder.def_var(sv.str_len(), len);
-    // Set test_result: 1 if a line was read, 0 at EOF. The runtime
-    // distinguishes the two by the *pointer*, not the length: true EOF
-    // returns (NULL, 0) while an empty line returns (non-NULL, 0)
-    // (sash-rt/src/lib.rs:1482). Testing `len > 0` treated a blank line as
-    // EOF and silently truncated the input at it, which contradicts DD#99 —
-    // `readline` is byte-for-byte `IFS= read -r`, and that succeeds on an
-    // empty line.
-    let zero = builder.ins().iconst(I64, 0);
+    let (empty, zero) = super::values::lower_literal_value("", builder, module, ctx.literals);
     let got_data = builder.ins().icmp(IntCC::NotEqual, ptr, zero);
+    // Keep EOF in the verdict; a stored string must not use the null integer-cell tag.
+    let string_ptr = builder.ins().select(got_data, ptr, empty);
+    let sv = &ctx.vars[&target.display()];
+    sv.str_ptr().store(builder, string_ptr);
+    sv.str_len().store(builder, len);
     let result = builder.ins().uextend(I64, got_data);
     builder.def_var(ctx.test_result_var, result);
 }

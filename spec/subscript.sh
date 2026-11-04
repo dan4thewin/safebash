@@ -10,7 +10,7 @@
 set -eu
 . common.sh
 setup subscript
-plan=133
+plan=141
 echo "1..$plan" >&3
 
 set +e
@@ -902,6 +902,56 @@ run_sash 'array a=(p q)
 echo "${a[${}]}"'
 [[ $rc != 0 && -z $out && $err == *SB4047* && $err == *'`${}` names no variable'* ]]; chk 80.135
 
+# DD62 meaningful zero also applies before a global collection's declaration runs.
+run_sash 'if [[ "$(argc)" == 99 ]] { array a=(old) }
+echo "[${a[0]}] $(len a) [$(join a ,)]"'
+[[ $rc = 0 && -z $err && -z $rerr && $out = '[] 0 []' ]]; chk gzero.1
+
+run_sash 'if [[ "$(argc)" == 99 ]] { map m=([old]=value) }
+unset m[missing]
+echo "[${m[missing]}] $(len m)"
+for key in a b c d e f g h i { m[$key]=$key }
+unset m[b]
+echo "${m[a]}/${m[i]} $(len m)"'
+[[ $rc = 0 && -z $err && -z $rerr && $out = $'[] 0\na/i 8' ]]; chk gzero.2
+
+run_sash 'if [[ "$(argc)" == 99 ]] { int array a=(5); int map m=([k]=6) }
+echo "${a[1]} ${m[k]}"
+a[1]=7
+m[k]=9
+echo "${a[1]} ${m[k]}"'
+[[ $rc = 0 && -z $err && -z $rerr && $out = $'0 0\n7 9' ]]; chk gzero.3
+
+run_sash 'if [[ "$(argc)" == 99 ]] { array a=(old); array b=(other) }
+fn fill { A[0]=x; echo "[${B[0]}]" }
+fill =a =b
+echo "[$(join a ,)] [$(join b ,)]"'
+[[ $rc = 0 && -z $err && -z $rerr && $out = $'[]\n[x] []' ]]; chk gzero.4
+
+# Splitting into an empty global clears its zero table without dereferencing backing.
+run_sash 'if [[ "$(argc)" == 99 ]] { array a=(old) }
+str empty=""
+read $empty a
+echo $(len a)'
+[[ $rc = 0 && -z $err && -z $rerr && $out = 0 ]]; chk gzero.5
+
+run_sash 'if [[ "$(argc)" == 99 ]] { map m=([k]=old) }
+fn fill { m[k]=child; echo "${m[k]}" }
+fill &
+- wait
+echo "parent[${m[k]}] $(len m)"'
+[[ $rc = 0 && -z $err && -z $rerr && $out = $'child\nparent[] 0' ]]; chk gzero.6
+
+run_sash 'if [[ "$(argc)" == 99 ]] { str s=old }
+array a=("$s")
+echo "[$(join a ,)]"'
+[[ $rc = 0 && -z $err && -z $rerr && $out = '[]' ]]; chk gzero.7
+
+run_sash 'str s=prior
+if readline s { echo wrong }
+array a=("${s:!}")
+echo "[$(join a ,)]"'
+[[ $rc = 0 && -z $err && -z $rerr && $out = '[]' ]]; chk gzero.8
 
 set -e
 tally

@@ -634,7 +634,7 @@ pub(super) fn array_table_ptr(
     builder: &mut FunctionBuilder,
 ) -> cranelift_codegen::ir::Value {
     let sv = super::types::find_array_slot(vars, array, "array");
-    builder.use_var(sv.str_ptr())
+    sv.str_ptr().load(builder)
 }
 
 /// DD#69: apply an external-splat empty-disposition, returning the table to

@@ -1,7 +1,7 @@
 #!/bin/bash
 # DD#56 — signals and END block
 . common.sh
-plan=71
+plan=73
 setup signals
 
 set +e
@@ -551,6 +551,19 @@ fn cleanup { echo done; }
 cleanup
 }'
 [[ $rc != 0 && -z $out && $err == *':2:1: error [SB5071]'* && $err == *'Move `fn cleanup` to the top level.'* ]]; chk fnroot.1
+
+# Actual completed writes, not the normal-path version after a skipped attest.
+run_sash 'x=safe
+x=$(/bin/sh -c "echo evil; exit 3")
+attest x [[ $x == allowed ]]
+END { echo "end[${x:!}]" }'
+[[ $rc = 3 && -z $err && $out = 'end[safe]' && $rerr == *'command failed (exit 3)'* ]]; chk gstate.1
+
+run_sash 'x=before
+/bin/sh -c "echo changed; exit 3" | readline x
+attest x [[ $x == allowed ]]
+END { echo "read[${x:!}]" }'
+[[ $rc = 3 && -z $err && $out = 'read[changed]' && $rerr == *'command failed (exit 3)'* ]]; chk gstate.2
 
 set -e
 tally

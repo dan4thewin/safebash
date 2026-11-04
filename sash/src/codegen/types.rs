@@ -4,15 +4,51 @@
 //! binaries. A reviewer should verify this matches sash-rt/src/lib.rs exactly.
 
 use cranelift_codegen::ir::types::I64;
-use cranelift_codegen::ir::{InstBuilder, StackSlotData, StackSlotKind, Value};
+use cranelift_codegen::ir::{
+    GlobalValue, InstBuilder, MemFlags, StackSlotData, StackSlotKind, Value,
+};
 use cranelift_frontend::{FunctionBuilder, Variable};
 use cranelift_module::Module;
 use cranelift_object::ObjectModule;
 
 #[derive(Debug, Clone, Copy)]
+pub(super) enum ScalarSlot {
+    Local(Variable),
+    Global { address: GlobalValue, offset: i32 },
+}
+
+impl ScalarSlot {
+    pub(super) fn load(self, builder: &mut FunctionBuilder) -> Value {
+        match self {
+            Self::Local(var) => builder.use_var(var),
+            Self::Global { address, offset } => {
+                let address = builder.ins().global_value(I64, address);
+                builder.ins().load(I64, MemFlags::new(), address, offset)
+            }
+        }
+    }
+
+    pub(super) fn store(self, builder: &mut FunctionBuilder, value: Value) {
+        match self {
+            Self::Local(var) => builder.def_var(var, value),
+            Self::Global { address, offset } => {
+                let address = builder.ins().global_value(I64, address);
+                builder.ins().store(MemFlags::new(), value, address, offset);
+            }
+        }
+    }
+}
+
+impl From<Variable> for ScalarSlot {
+    fn from(var: Variable) -> Self {
+        Self::Local(var)
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
 pub(super) enum VarSlot {
-    Str { ptr: Variable, len: Variable },
-    Int(Variable),
+    Str { ptr: ScalarSlot, len: ScalarSlot },
+    Int(ScalarSlot),
 }
 
 impl VarSlot {
@@ -28,16 +64,27 @@ impl VarSlot {
     // the unreachability claim for a caller that is not in the list above.
     // Int-valued reads dispatch via `match *sv` instead, so no
     // `is_int()`-then-panicking-accessor dance survives.
-    pub(super) fn str_ptr(&self) -> Variable {
+    pub(super) fn str_ptr(&self) -> ScalarSlot {
         match self {
             VarSlot::Str { ptr, .. } => *ptr,
             VarSlot::Int(_) => panic!("ICE: expected string var, got int"),
         }
     }
-    pub(super) fn str_len(&self) -> Variable {
+    pub(super) fn str_len(&self) -> ScalarSlot {
         match self {
             VarSlot::Str { ptr: _, len } => *len,
             VarSlot::Int(_) => panic!("ICE: expected string var, got int"),
+        }
+    }
+
+    pub(super) fn global(kind: crate::ssa::GlobalType, address: GlobalValue) -> Self {
+        let first = ScalarSlot::Global { address, offset: 0 };
+        match kind {
+            crate::ssa::GlobalType::Int => Self::Int(first),
+            crate::ssa::GlobalType::String | crate::ssa::GlobalType::Table => Self::Str {
+                ptr: first,
+                len: ScalarSlot::Global { address, offset: 8 },
+            },
         }
     }
 }
@@ -346,7 +393,7 @@ mod tests {
 
     #[test]
     fn str_ptr_on_an_int_slot_is_a_loud_ice() {
-        let slot = VarSlot::Int(Variable::from_u32(0));
+        let slot = VarSlot::Int(Variable::from_u32(0).into());
         let caught = std::panic::catch_unwind(|| slot.str_ptr());
         assert!(
             caught.is_err(),
@@ -356,7 +403,7 @@ mod tests {
 
     #[test]
     fn str_len_on_an_int_slot_is_a_loud_ice() {
-        let slot = VarSlot::Int(Variable::from_u32(0));
+        let slot = VarSlot::Int(Variable::from_u32(0).into());
         let caught = std::panic::catch_unwind(|| slot.str_len());
         assert!(
             caught.is_err(),

@@ -54,7 +54,7 @@ fn load_var(
     builder: &mut FunctionBuilder,
 ) -> (cranelift_codegen::ir::Value, cranelift_codegen::ir::Value) {
     let sv = super::types::var_slot(vars, &var.display());
-    (builder.use_var(sv.str_ptr()), builder.use_var(sv.str_len()))
+    (sv.str_ptr().load(builder), sv.str_len().load(builder))
 }
 
 fn emit_table_len(

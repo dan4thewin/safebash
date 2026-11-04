@@ -511,6 +511,21 @@ embeds the source, the IR capture and the manifest as `.sash_source`,
 `lib.rs` invokes `ld` to link the object with `libsash_rt.a` into a fully
 static ELF binary.
 
+Source globals have actual process-static storage: writable native data
+symbols and file-scope C static objects (DD#128, journal 567). The shared
+lexical inventory and checked types supply `SsaProgram::globals`; function
+locals and compiler temporaries remain local. All SSA versions of a global
+use the same backing cells. Attestation changes trust, not storage, so an
+abort before the attest still observes the last completed write.
+
+A global whose declaration has not executed starts at its meaningful zero:
+integer zero, an empty string, or its own empty collection header. Collection
+backing is allocated on first mutation, not at startup. The empty headers
+are distinct, so mutating one cannot change another; ordinary fork isolation
+still applies. Empty strings need a nonnull pointer because collection cells
+use a null pointer to tag integers. Initial string globals and stored
+`readline` EOF values preserve that distinction; EOF's verdict remains false.
+
 ---
 
 ## IR (Intermediate Representation)
@@ -538,7 +553,7 @@ ParameterExpansion, Array, AssocArray, Subscript, Test.
 
 Defined in `ssa.rs`.
 
-- **SsaProgram** — functions, each containing `Vec<BasicBlock>`
+- **SsaProgram** — functions, each containing `Vec<BasicBlock>`, and global storage metadata
 - **SsaInst** — Assign, Command, Pipeline, Test, ReadLine,
   ReadLineMulti, CaptureStart/End, Export, Attest, Trap, etc.
 - **SsaValue** — Literal, Var, ParamExpansion, ArithExpr,

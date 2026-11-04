@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup types
-plan=470
+plan=471
 echo "1..$plan" >&3
 
 set +e
@@ -2710,6 +2710,12 @@ run_sash 'map m=([18446744073709551616]=word); echo ${m["18446744073709551616"]}
 # Strict parsing does not extend the existing minus-only literal spelling.
 run_sash 'int n=+1; echo $n'
 [[ $rc != 0 && -z $out && $err == *SB4030* && $err == *'cannot assign string'* ]]; chk lit64.15
+
+run_sash 'int n=0
+readline n
+echo "${n:!}"'
+[[ $rc != 0 && -z $out && $err == *':2:1: error [SB4030]'* \
+   && $err == *'cannot fill int variable `n` with `readline`'* ]]; chk gtype.1
 
 set -e
 tally

@@ -2242,12 +2242,21 @@ fn collection_fill_target(c: &Command) -> Option<&Expr> {
 /// discarding the line. Silent data loss, so it is rejected here.
 ///
 /// An undeclared target stays legal — it becomes a scalar, which is the point.
-fn check_scalar_fill_target(c: &Command, span: Span, env: &TypeEnv, errors: &mut Vec<TypeError>) {
+fn check_scalar_fill_target(
+    c: &Command,
+    span: Span,
+    env: &mut TypeEnv,
+    errors: &mut Vec<TypeError>,
+) {
     let Some(first) = c.args.first() else {
         return;
     };
     let name = expr_to_name(first);
-    if name.is_empty() || !env.collections.contains(&name) {
+    if name.is_empty() {
+        return;
+    }
+    if !env.collections.contains(&name) {
+        register_readline_target(&name, span, env, errors);
         return;
     }
     let (what, fix) = if env.assoc_arrays.contains(&name) {
@@ -2268,6 +2277,25 @@ fn check_scalar_fill_target(c: &Command, span: Span, env: &TypeEnv, errors: &mut
         ),
         span,
     });
+}
+
+fn register_readline_target(
+    name: &str,
+    span: Span,
+    env: &mut TypeEnv,
+    errors: &mut Vec<TypeError>,
+) {
+    if env.var_type(name) == VarType::Int {
+        errors.push(TypeError {
+            message: format!(
+                "cannot fill int variable `{name}` with `readline` — this builtin \
+                 produces a string; read a string and convert explicitly"
+            ),
+            span,
+        });
+    } else {
+        env.declare(name, VarType::String);
+    }
 }
 
 /// DD#60 `argv [N] ARR`, DD#99 `read [SRC] ARR`, DD#63 `match`/`matchall
@@ -2299,6 +2327,7 @@ fn register_collection_target(
         errors.push(TypeError { message, span });
         return;
     }
+    env.declare(&name, VarType::String);
     env.collections.insert(name);
 }
 

@@ -123,6 +123,7 @@ pub fn compile_ssa(program: &SsaProgram, embedded: Embedded, trace: bool) -> Vec
     let externs = super::setup::declare_runtime_functions(&mut module);
     let (literals, space_id, nl_id) = super::setup::intern_literals(&mut module, program, trace);
     let mut literals = literals;
+    let globals = super::setup::define_globals(&mut module, program, literals[""]);
     // ── Build main() ───────────────────────────────────────────
     let main_sig = Signature::new(CallConv::SystemV);
     let main_func_id = module
@@ -135,7 +136,13 @@ pub fn compile_ssa(program: &SsaProgram, embedded: Embedded, trace: bool) -> Vec
     {
         let mut builder = FunctionBuilder::new(&mut func, &mut fbc);
 
-        let fs = super::setup::allocate_variables(&mut builder, program, &reachable);
+        let fs = super::setup::allocate_variables(
+            &mut builder,
+            &mut module,
+            program,
+            &reachable,
+            &globals,
+        );
         let cl_blocks = fs.cl_blocks;
         let mut vars = fs.vars;
         let test_result_var = fs.test_result_var;
