@@ -143,6 +143,9 @@ Constraints (DG, 2026-09-06):
   deferred) — **SB5053** otherwise.
 - **Scalar only** for now (the array analogue `attest e in a (( … ))` is a
   follow-up; the existing `attest e in a [[ … ]]` covers arrays meanwhile).
+- The target is an **int scalar binding**: an existing int can be assigned,
+  but a string or collection target is SB4030. An introduced target counts
+  for DD#86's prohibition on a later typed declaration (SB5082).
 - The **`if` form is supported** (DG, 2026-09-07): `if attest numstr
   (( myint = numstr ))` branches instead of aborting, and `myint` is
   *declared but not assigned* on the else path — it reads as `0`, which is
@@ -152,10 +155,11 @@ Constraints (DG, 2026-09-06):
 The bare `numstr` inside the `(( ))` is **exempt from SB4030** (DD#77 D1's
 "bare string in arith needs a disposition") precisely because the `attest`
 supplies the accountability — the whole point of the form. It is parsed as an
-attest predicate, never lowered as a free arithmetic statement, so SB4030 never
-applies. Two sibling rules written for `$(( … ))` *rvalues* needed the same
-narrow exemption once the form existed: **SB4020** (an assignment inside
-`$(( … ))` can't take effect — here it is an assignment by design, and the
+attest predicate, never lowered as a free arithmetic statement, so that
+source-string read does not trigger SB4030. The target still obeys the
+assignment type rules. Two sibling rules written for `$(( … ))` *rvalues*
+needed the same narrow exemption once the form existed: **SB4020** (an
+assignment inside `$(( … ))` can't take effect — here it is an assignment by design, and the
 transform emits the store) and **SB5031** (assigned nowhere — the attest
 *introduces* the target). This *completes* DD#77's `-i`/disposition split: `i?` validates-and-
 branches (keeps the string); the disposition converts inline; and now
@@ -281,13 +285,20 @@ construct whose entire job is to make the string↔int crossing accountable**.
 An author who did the conversion properly got a target the compiler believed
 was a string.
 
-Fixed in `761b3f4`: `check_attest_form` declares `AttestPredicate::ArithConvert`'s
-target as `VarType::Int`. No rule in Part D changes — this addendum records
-that the stated rule is now enforced, and that it was not before.
+`761b3f4` taught the checker that the target is `VarType::Int`, but lowering
+still used a separate inference walk that did not know this. The target's
+existing binding was also not checked. Those remaining gaps were repaired
+on 2026-11-04 (B1/B4, journal 565): lowering uses the checked type map, the
+conversion cannot retype a string or collection, and introducing its target
+counts for SB5082. These enforce Part D and DD#86 rather than adding a new
+conversion rule.
 
-The `if` form and the `[[ ]]` predicates are unaffected; they bind no value.
+The same target rules apply to the caught arithmetic `if attest` form.
+Its unassigned failure-path target still reads as integer zero. A `[[ ]]`
+predicate binds no conversion target.
 
-Spec `60.72`. Journal 414.
+Specs `60.72`, `typeflow.2`, `.4`-`.6`, `.19`; existing `93.34` and
+`ifcv.2` pin the caught-failure zero. Journals 414 and 565.
 
 ## Addendum (2026-10-31): a predicate's `&&` and `||` short-circuit
 

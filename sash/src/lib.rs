@@ -433,10 +433,10 @@ pub fn cli_main(args: Vec<String>) {
 
     let program = parse_and_resolve(input, &source);
     let (bound, names) = bindings::resolve(&program, &source);
-    run_semantic_checks(input, &bound, &parsed.flags, &names);
+    let type_map = run_semantic_checks(input, &bound, &parsed.flags, &names);
 
     // Transform-time compile errors precede the dead-variable gate for every backend.
-    let mut ssa = transform_or_exit(input, &bound, &names);
+    let mut ssa = transform_or_exit(input, &bound, &names, type_map);
     ssa.source_names = names.clone();
 
     // DD#86: more-specific semantic/type/transform errors win over SB5050.
@@ -646,7 +646,7 @@ fn run_semantic_checks(
     program: &crate::ir::Program,
     flags: &[&str],
     names: &bindings::SourceNames,
-) {
+) -> HashMap<String, crate::ir::VarType> {
     // SB4044 sits outside the taint switch: a const write is no taint
     // question, and `--no-taint` must not carry one into lowering, where
     // `VersionState::define` asserts it never arrives.
@@ -695,16 +695,20 @@ fn run_semantic_checks(
         std::process::exit(1);
     }
 
-    type_check_or_exit(input, program, names);
+    type_check_or_exit(input, program, names)
 }
 
 /// Type check, reporting every SB4030 before exiting. Split out of
 /// `run_semantic_checks` so that function stays a flat list of passes.
-fn type_check_or_exit(input: &str, program: &crate::ir::Program, names: &bindings::SourceNames) {
-    let type_errors = type_check::type_check(program);
-    if type_errors.is_empty() {
-        return;
-    }
+fn type_check_or_exit(
+    input: &str,
+    program: &crate::ir::Program,
+    names: &bindings::SourceNames,
+) -> HashMap<String, crate::ir::VarType> {
+    let type_errors = match type_check::type_check(program) {
+        Ok(types) => return types,
+        Err(errors) => errors,
+    };
     for te in &type_errors {
         eprintln!(
             "{}:{}:{}: error [SB4030] {}",
@@ -734,8 +738,8 @@ fn transform_or_exit(
     input: &str,
     program: &crate::ir::Program,
     names: &bindings::SourceNames,
+    type_map: HashMap<String, crate::ir::VarType>,
 ) -> crate::ssa::SsaProgram {
-    let type_map = type_check::infer_types(program);
     let (ssa, diags) = transform::ir_to_ssa_typed(program, type_map);
     if !diags.is_empty() {
         for d in &diags {

@@ -181,10 +181,10 @@ today.
   fix it draws the capture message, which that task rewords.
 - B37 in `batch-531-findings`: command resolution keeps its own walk, which
   skips a parameter expansion's index. It is the same shape in another pass.
-- B5 in `batch-531-findings` (the typing family): type_check never visits
-  the `END { }` block. So `END { echo ${a[foo]} }` reaches the same native
-  ICE, and prints `x` in C, even in the positions that are checked at top
-  level. This fix does not reach END; B5's does.
+- B5 in `batch-531-findings` closed the END traversal gap (journal 565):
+  `typeflow.10` pins the key check for `END { echo ${a[foo]} }`. The
+  position-specific omissions in this task remain separate; their eventual
+  repair will now reach both roots.
 
 Found during the batch-531 port (step F15), while probing the sed-index
 advice. Filed under DG's rule for the port that questions and uncovered cases

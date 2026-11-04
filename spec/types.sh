@@ -3,10 +3,160 @@
 set -eu
 . common.sh
 setup types
-plan=446
+plan=470
 echo "1..$plan" >&3
 
 set +e
+
+# Checked types must be the types lowering uses, including collection slots
+# and attest conversions (B1; the DD128 handler-typing prerequisite).
+run_sash 'fn bump { x=${A[0]}; x+=1; echo "$x"; }
+int array a=(5)
+bump =a'
+[[ $rc = 0 && $out = 6 && -z $err && -z $rerr ]]; chk typeflow.1
+
+run_sash 's=5
+attest s (( n = s ))
+n+=1
+echo "$n"'
+[[ $rc = 0 && $out = 6 && -z $err && -z $rerr ]]; chk typeflow.2
+
+# The normal body walk owns capture operands; a second pass must not
+# report the same error again (B2).
+run_sash 'int n=5
+str s=$(toupper $n)
+echo "$s"'
+[[ $rc != 0 && $err == *SB4030* && $err == *toupper* && $(printf '%s\n' "$err" | grep -c SB4030) = 1 ]]; chk typeflow.3
+
+# An attest conversion writes an int, but cannot retype an existing
+# binding or make a later declaration cease to be a redeclaration (B4).
+run_sash 's=5
+str n=word
+attest s (( n = s ))
+echo "$n"'
+[[ $rc != 0 && $err == *SB4030* && $err == *'`n`'* ]]; chk typeflow.4
+
+run_sash 's=5
+attest s (( n = s ))
+int n=7
+echo "$n"'
+[[ $rc != 0 && $err == *':3:1: error [SB5082]'* && $err == *'`n`'* && $err == *'earlier binding (line 2)'* ]]; chk typeflow.5
+
+run_sash 's=5
+n=word
+attest s (( n = s ))
+echo "$n"'
+[[ $rc != 0 && $err == *SB4030* && $err == *'`n`'* ]]; chk typeflow.6
+
+# The existing cleanup body must pass the complete checker before it is
+# replaced by DD128's two checked bodies (B5).
+run_sash 'END { int n=5; n+=1; echo "$n"; }'
+[[ $rc = 0 && $out = 6 && -z $err && -z $rerr ]]; chk typeflow.7
+
+run_sash 'END {
+fn count -> int { return 7; }
+v=$(count)
+v+=1
+echo "$v"
+}'
+[[ $rc = 0 && $out = 8 && -z $err && -z $rerr ]]; chk typeflow.8
+
+run_sash 'END { int n=5; echo "${n:0:1}"; }'
+[[ $rc != 0 && $err == *SB4030* && $err == *'substring of int variable'* ]]; chk typeflow.9
+
+run_sash 'END { array a=(x); echo "${a[foo]}"; }'
+[[ $rc != 0 && $err == *SB4030* && $err == *'indexed array'* ]]; chk typeflow.10
+
+run_sash 'END { int n=5; [[ $n == 5 ]] && echo yes; }'
+[[ $rc != 0 && $err == *SB4030* && $err == *'int value in a `[[ ]]` test, which compares strings'* ]]; chk typeflow.11
+
+# Global and inferred types do not depend on function-definition order or
+# which side of a loop first mentions a variable (B6).
+run_sash 'fn finish { exit $n; }
+int n=0
+finish
+echo unreachable'
+[[ $rc = 0 && -z $out && -z $err && -z $rerr ]]; chk typeflow.12
+
+run_sash 'fn show { echo "${m[key]}"; }
+map m=([key]=value)
+show'
+[[ $rc = 0 && $out = value && -z $err && -z $rerr ]]; chk typeflow.13
+
+run_sash 'fn bad { n=word; }
+int n=5
+bad
+echo "$n"'
+[[ $rc != 0 && $err == *SB4030* && $err == *'cannot assign string value to int variable `n`'* ]]; chk typeflow.14
+
+run_sash 'int i=0
+while (( i < 2 )) {
+  y=$z
+  y+=1
+  echo "$y"
+  int z=1
+  (( i++ ))
+}'
+[[ $rc = 0 && $out = $'1\n2' && -z $err && -z $rerr ]]; chk typeflow.15
+
+# Int-function predicates are equally invalid in capture bodies (B7).
+run_sash 'fn value -> int { return 1; }
+x=$(if value { echo bad; })
+echo "$x"'
+[[ $rc != 0 && $err == *SB4030* && $err == *'int function `value` used in boolean context'* ]]; chk typeflow.16
+
+run_sash 'fn value -> int { return 1; }
+x=$(value && echo bad)
+echo "$x"'
+[[ $rc != 0 && $err == *SB4030* && $err == *'int function `value` used in boolean context'* ]]; chk typeflow.17
+
+run_sash 'END {
+fn value -> int { return 1; }
+if value { echo bad; }
+}'
+[[ $rc != 0 && $err == *SB4030* && $err == *'int function `value` used in boolean context'* ]]; chk typeflow.18
+
+# An int collection's element type does not make the collection itself a
+# legal scalar conversion target.
+run_sash 'int array a=(1)
+s=5
+attest s (( a = s ))
+echo $(len a)'
+[[ $rc != 0 && $err == *SB4030* && $err == *'conversion target'* && $err == *'collection'* ]]; chk typeflow.19
+
+run_sash 'fn leaf { x=${A[key]}; x+=1; echo "$x"; }
+fn relay { leaf =A; }
+int map m=([key]=5)
+relay =m'
+[[ $rc = 0 && $out = 6 && -z $err && -z $rerr ]]; chk typeflow.20
+
+# Collection signatures include cleanup definitions and calls, sharing the
+# same globals as the main body.
+run_sash 'END {
+fn bump { x=${A[0]}; x+=1; echo "$x"; }
+int array a=(5)
+bump =a
+}'
+[[ $rc = 0 && $out = 6 && -z $err && -z $rerr ]]; chk typeflow.21
+
+run_sash 'int map m=([key]=5)
+END {
+fn leaf { x=${A[key]}; x+=1; echo "$x"; }
+fn relay { leaf =A; }
+relay =m
+}'
+[[ $rc = 0 && $out = 6 && -z $err && -z $rerr ]]; chk typeflow.22
+
+run_sash 'fn show { echo "${A[0]}"; }
+int array a=(5)
+show =a
+END { array b=(word); show =b; }'
+[[ $rc != 0 && $err == *SB4030* && $err == *'collection slot `A` has conflicting types'* && $err == *'int array'* && $err == *'string array'* ]]; chk typeflow.23
+
+run_sash 'fn bump { x=${A[key]}; x+=1; echo "$x"; }
+fn caller { bump =m; }
+END { int map m=([key]=5); caller; }'
+[[ $rc = 0 && $out = 6 && -z $err && -z $rerr ]]; chk typeflow.24
 
 # Array literals may put each element, including the final one, on its own line.
 run_sash 'array a=(

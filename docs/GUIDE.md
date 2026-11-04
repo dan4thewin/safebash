@@ -168,7 +168,7 @@ of the build.
        │
   [5]  │  Type check
        ▼
- type_check.rs → int vs string inference, declare -i stickiness
+ type_check.rs → checked variable types (int vs string)
        │
   [6]  │  Transform
        ▼
@@ -422,20 +422,28 @@ and in diagnostics still line up.
 
 ### Phase 5: Type Check
 
-`type_check.rs` infers int vs string for each variable. Tracks
-`declare -i` stickiness. Cross-type assignment without conversion
-is a compile-time error.
+`type_check.rs` infers int vs string for each lexical binding and returns
+the checked type map directly to lowering. There is no second inference
+walker. Cross-type assignment without conversion is a compile-time error.
 
-- `int x=5` / `declare int x=5` / `declare -i x` — int variables
-- `fn name() -> int { }` — int-returning functions
+- `int x=5` — an int variable
+- `fn name -> int { return 5; }` — an int-returning function
 - `$#`, `$(status)` (sugar: `$?`), `$((...))` — intrinsically int
+
+Top-level and cleanup statements establish global types before function
+bodies are checked. Forward references and loop-carried copies converge
+without a fixed iteration cap; inferred seeds are distinct from bindings
+encountered in the current pass. Only the stable pass reports errors.
+Captures and cleanup bodies receive every check, including predicate checks.
 
 Each function has **one inferred signature** (DD#81/DD#100). Scalar
 fixed/variadic arity remains inferred from `args` usage. Collection-argument
 count, array/map kind and string/int element type must agree at every call,
 including forwarded slots. A call-graph fixpoint resolves collection types
 before checking conflicts; every checking visitor uses the same function
-environment. Inlining does not make a function polymorphic.
+environment. Main and cleanup definitions and calls all participate, using
+their shared global collection facts. Inlining does not make a function
+polymorphic.
 
 ### Phase 6: Transform
 

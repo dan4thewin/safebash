@@ -15,9 +15,11 @@ pub struct TypeError {
 }
 
 /// Environment tracking variable and function types.
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Eq)]
 struct TypeEnv {
     vars: HashMap<String, VarType>,
+    /// Actual bindings in this pass, distinct from the previous pass's seeds.
+    bound: HashSet<String>,
     funcs: HashMap<String, VarType>,
     /// Variables that are intrinsically int ($#, $?)
     intrinsic_int: HashSet<String>,
@@ -61,6 +63,7 @@ impl TypeEnv {
             .collect();
         Self {
             vars: HashMap::new(),
+            bound: HashSet::new(),
             funcs: HashMap::new(),
             intrinsic_int,
             collections,
@@ -91,9 +94,7 @@ impl TypeEnv {
         self.declared_str.contains(name)
     }
 
-    /// Record a `str` *scalar* declaration. `type_check` and `infer_types` are
-    /// separate passes that each build their own env, so both call this — the
-    /// condition lives here rather than being restated at either site.
+    /// Record a `str` scalar declaration, not just an inferred string type.
     fn note_declared_str(&mut self, d: &Declaration) {
         if d.var_type == VarType::Int || is_collection_decl(d) {
             return;
@@ -117,14 +118,14 @@ impl TypeEnv {
     }
 
     fn declare(&mut self, name: &str, vtype: VarType) {
-        // Don't downgrade Int to String — once declared Int, it stays Int
-        if vtype == VarType::String {
-            if let Some(existing) = self.vars.get(name) {
-                if *existing == VarType::Int {
-                    return; // keep Int
-                }
-            }
+        if self.bound.contains(name) {
+            assert_eq!(
+                self.vars.get(name),
+                Some(&vtype),
+                "checked binding cannot change type"
+            );
         }
+        self.bound.insert(name.to_string());
         self.vars.insert(name.to_string(), vtype);
     }
 }
@@ -744,22 +745,17 @@ fn infer_collection_signatures(
     program: &Program,
     errors: &mut Vec<TypeError>,
 ) -> HashMap<String, CollectionSignature> {
-    let functions: HashSet<_> = program
-        .statements
-        .iter()
-        .filter_map(|s| match &s.kind {
-            StmtKind::Function(f) => Some(f.name.clone()),
-            _ => None,
-        })
-        .collect();
+    let functions: HashSet<_> = program.function_defs().map(|f| f.name.clone()).collect();
+    // Main and END share one global scope, including for earlier function bodies.
+    let mut globals = scope_collections(&program.statements, "", &HashMap::new());
+    if let Some(end) = &program.end_block {
+        globals = scope_collections(end, "", &globals);
+    }
     let mut calls = Vec::new();
-    collect_collection_calls(
-        &program.statements,
-        "",
-        &HashMap::new(),
-        &functions,
-        &mut calls,
-    );
+    for stmts in std::iter::once(program.statements.as_slice()).chain(program.end_block.as_deref())
+    {
+        collect_collection_calls(stmts, "", &globals, &functions, &mut calls);
+    }
     let signatures = propagate_collection_signatures(&calls);
     for call in &calls {
         check_collection_call(call, &signatures, errors);
@@ -1054,65 +1050,84 @@ fn declared_collection_kind(d: &Declaration) -> Option<bool> {
     }
 }
 
-/// Type-check a program. Returns a list of type errors (empty = OK).
-pub fn type_check(program: &Program) -> Vec<TypeError> {
+/// Type-check every body and return the checked types used by lowering.
+pub fn type_check(program: &Program) -> Result<HashMap<String, VarType>, Vec<TypeError>> {
     let mut errors = Vec::new();
     let mut env = TypeEnv::new();
 
-    // First pass: collect function types
-    for stmt in &program.statements {
-        if let StmtKind::Function(f) = &stmt.kind {
-            env.funcs.insert(f.name.clone(), f.return_type);
-        }
+    for f in program.function_defs() {
+        env.funcs.insert(f.name.clone(), f.return_type);
     }
 
     // DD#100: the full signature comes from the call sites, so infer it
     // before checking any body (a call may appear after the definition).
     env.slot_signatures = infer_collection_signatures(program, &mut errors);
 
-    // Second pass: check statements
-    for stmt in &program.statements {
-        check_stmt(stmt, &mut env, &mut errors);
-    }
+    check_body_types(program, &mut env, &mut errors);
 
-    // Third pass (DD#58/Option C): a string producer used in an arithmetic
+    // DD#58/Option C: a string producer used in an arithmetic
     // sexpr `(f …)` is a type error — it belongs in a `$()` capture, not
     // `$(( ))`. Covers the string intrinsics + user string
     // functions; closes the getenv/arg validator-bypass (they silently compiled
     // to 0 in a sexpr, sidestepping SB5020). bug-arith-sexpr-intrinsics-zero.
     run_stmt_pass(program, &env, &mut errors, check_sexpr_string_producers);
 
-    // Fourth pass (DG 2026-08-29): a value-context `${int_x:-D}` default must be
+    // DG 2026-08-29: a value-context `${int_x:-D}` default must be
     // an int literal (SB4030) — see check_int_value_defaults. Separate from the
     // arith pass, which owns `$(( … ))` defaults.
     run_stmt_pass(program, &env, &mut errors, check_int_value_defaults);
 
-    // Fifth pass: a string operation on an int variable. Codegen asks the slot
+    // A string operation on an int variable. Codegen asks the slot
     // for a string pointer and panics on the Int arm (`codegen/types.rs:29`),
     // whose comment asserts that arm is "not user-reachable input" — it was.
     run_stmt_pass(program, &env, &mut errors, check_int_string_ops);
 
-    // Sixth pass: the operand checks above only ever saw statement-level
-    // commands, so `$(toupper $n)` was checked in `echo $(…)` and skipped on
-    // an assignment RHS — see check_substituted_command_operands.
-    run_stmt_pass(
-        program,
-        &env,
-        &mut errors,
-        check_substituted_command_operands,
-    );
-
-    // Seventh pass (DD#30): `[[ ]]` compares strings, so an int operand is an
+    // DD#30: `[[ ]]` compares strings, so an int operand is an
     // implicit conversion — see check_test_operand_types.
     run_stmt_pass(program, &env, &mut errors, check_test_operand_types);
 
-    // Eighth pass (DD#74): an `-> int` function used as a predicate. Its own
+    // DD#74: an `-> int` function used as a predicate. Its own
     // pass rather than a hook in `check_if`, because the six boolean contexts
     // are spread across If/While/List/Pipeline and a single traversal is the
     // only way to apply the tail rule consistently.
     check_int_fn_predicates(program, &env, &mut errors);
 
-    errors
+    if errors.is_empty() {
+        Ok(env.vars)
+    } else {
+        Err(errors)
+    }
+}
+
+/// Forward references and loop-carried copies may refine a first binding's
+/// default String to Int. Keep the prior facts, but not its binding order;
+/// only the stable pass's diagnostics describe the completed type map.
+fn check_body_types(program: &Program, env: &mut TypeEnv, errors: &mut Vec<TypeError>) {
+    loop {
+        let previous = env.clone();
+        env.bound.clear();
+        let mut pending = Vec::new();
+        check_program_bodies(program, env, &mut pending);
+        if *env == previous {
+            errors.extend(pending);
+            return;
+        }
+    }
+}
+
+fn check_program_bodies(program: &Program, env: &mut TypeEnv, errors: &mut Vec<TypeError>) {
+    for stmt in program
+        .statements
+        .iter()
+        .chain(program.end_block.iter().flatten())
+    {
+        if !matches!(stmt.kind, StmtKind::Function(_)) {
+            check_stmt(stmt, env, errors);
+        }
+    }
+    for f in program.function_defs() {
+        check_function(f, env, errors);
+    }
 }
 
 /// Every pass uses the same function binding and visits each statement once.
@@ -1123,7 +1138,7 @@ fn run_stmt_pass(
     pass: fn(&Statement, &TypeEnv, &mut Vec<TypeError>),
 ) {
     let mut scopes = HashMap::new();
-    walk_scoped_stmts(&program.statements, "", &mut |stmt, owner| {
+    let mut visit = |stmt: &Statement, owner: &str| {
         let scope = scopes.entry(owner.to_string()).or_insert_with(|| {
             let mut scope = env.clone();
             if !owner.is_empty() {
@@ -1132,7 +1147,10 @@ fn run_stmt_pass(
             scope
         });
         pass(stmt, scope, errors);
-    });
+    };
+    for body in std::iter::once(program.statements.as_slice()).chain(program.end_block.as_deref()) {
+        walk_scoped_stmts(body, "", &mut visit);
+    }
 }
 
 /// Substring (`${n:1:2}`) is a string operation, so an int-typed subject is a
@@ -1283,50 +1301,6 @@ fn int_operand_message(name: &str, arg: &Expr) -> String {
          implicitly text. Convert explicitly by double-quoting the operand, \
          e.g. `$({name} \"${{…}}\" …)`"
     )
-}
-
-/// The operand checks above run from `check_stmt`, which only ever reaches a
-/// **statement-level** command. A command substitution is an *expression*, so
-/// `$(toupper $n)` was checked when it sat in a command's arguments
-/// (`echo $(toupper $n)` → SB4030) and silently skipped when it sat anywhere
-/// else — most importantly on an assignment RHS, which is the only spelling
-/// that actually does anything with the result:
-///
-/// ```text
-/// echo $(toupper $n)      # SB4030
-/// str t=$(toupper $n)     # compiled — same expression, same int operand
-/// ```
-///
-/// Every spec for this family used the `echo $(…)` spelling, so the whole
-/// cohort was green over a check that was vacuous in its useful case. This
-/// pass closes that by walking *expressions* rather than statements: for each
-/// command substitution anywhere in the program, re-run the operand checks on
-/// the commands inside it.
-fn check_substituted_command_operands(
-    stmt: &Statement,
-    env: &TypeEnv,
-    errors: &mut Vec<TypeError>,
-) {
-    for body in stmt.cmdsub_bodies() {
-        walk_scoped_structural_stmts(body, "", &mut |s, _| {
-            check_substituted_operands_in_stmt(s, env, errors);
-        });
-    }
-}
-
-/// Run the operand checks on one statement inside a command substitution,
-/// The owning traversal handles grouping, pipelines and nested captures.
-fn check_substituted_operands_in_stmt(
-    stmt: &Statement,
-    env: &TypeEnv,
-    errors: &mut Vec<TypeError>,
-) {
-    if let StmtKind::Command(c) = &stmt.kind {
-        // Collection-shape checks already run in check_stmt. This second
-        // pass needs only the final inferred types and the owning signature.
-        check_string_intrinsic_operands(c, stmt.span, env, errors);
-        check_int_sink_operands(c, stmt.span, env, errors);
-    }
 }
 
 /// `[[ ]]` compares strings, so a whole-int operand there is an implicit
@@ -2048,7 +2022,7 @@ fn record_bare_collection_value(a: &Assignment, env: &mut TypeEnv) {
 /// int and needs no disposition (DG, 2026-09-17). The word-list header is for
 /// words; the arithmetic header is for numbers.
 fn check_for_binding_type(f: &For, env: &mut TypeEnv, errors: &mut Vec<TypeError>) {
-    if !env.vars.contains_key(&f.variable) {
+    if !env.bound.contains(&f.variable) {
         env.declare(&f.variable, VarType::String);
         return;
     }
@@ -2093,7 +2067,7 @@ fn check_assign_type_match(
     env: &mut TypeEnv,
     errors: &mut Vec<TypeError>,
 ) {
-    if !env.vars.contains_key(&a.name) {
+    if !env.bound.contains(&a.name) {
         let rtype = expr_type(&a.value, env);
         env.declare(&a.name, rtype);
         return;
@@ -2123,6 +2097,16 @@ fn check_type_match(
     if ltype == rtype || (ltype == VarType::Int && is_numeric_literal(value)) {
         return;
     }
+    type_mismatch(ltype, rtype, name, span, errors);
+}
+
+fn type_mismatch(
+    ltype: VarType,
+    rtype: VarType,
+    name: &str,
+    span: Span,
+    errors: &mut Vec<TypeError>,
+) {
     errors.push(TypeError {
         message: format!(
             "cannot assign {} value to {} variable `{}`{}",
@@ -2368,16 +2352,33 @@ fn check_attest_form(c: &Command, span: Span, env: &mut TypeEnv, errors: &mut Ve
     if let Some(message) = attest_form_error(&form, env) {
         errors.push(TypeError { message, span });
     }
-    // DD#93 Part D: `attest s (( n = s ))` validates-converts-declassifies, and
-    // `n` is the int it converted to. Nothing else recorded that: the plain
-    // `(( n = s ))` parses as an *assignment*, so `check_assignment` declares
-    // the target, but wrapped in `attest` the whole thing stays a Command and
-    // the target was never entered in the environment at all. It therefore
-    // typed as String (`var_type` ends in `unwrap_or(String)`), which let
-    // `$(strlen $n)` through on an int — the silent int→string render DD#105
-    // exists to reject.
     if let AttestPredicate::ArithConvert { target, .. } = pred {
+        check_attest_convert_target(target, span, env, errors);
+    }
+}
+
+fn check_attest_convert_target(
+    target: &str,
+    span: Span,
+    env: &mut TypeEnv,
+    errors: &mut Vec<TypeError>,
+) {
+    if env.is_collection(target) {
+        errors.push(TypeError {
+            message: format!(
+                "attest conversion target `{target}` must be an int scalar, not a collection"
+            ),
+            span,
+        });
+        return;
+    }
+    if !env.bound.contains(target) {
         env.declare(target, VarType::Int);
+        return;
+    }
+    let ltype = env.var_type(target);
+    if ltype != VarType::Int {
+        type_mismatch(ltype, VarType::Int, target, span, errors);
     }
 }
 
@@ -2513,6 +2514,7 @@ fn check_function(f: &Function, env: &mut TypeEnv, errors: &mut Vec<TypeError>) 
     for j in 0..MAX_COLLECTION_SLOTS {
         let name = collection_slot_name(j);
         env.vars.remove(&name);
+        env.bound.remove(&name);
         env.assoc_arrays.remove(&name);
         env.known_slots.remove(&name);
     }
@@ -2530,6 +2532,7 @@ fn enter_function_slots(fname: &str, env: &mut TypeEnv) {
     for (j, kind) in slots.into_iter().enumerate() {
         let name = collection_slot_name(j);
         env.vars.remove(&name);
+        env.bound.remove(&name);
         env.assoc_arrays.remove(&name);
         env.known_slots.remove(&name);
         if let Some(kind) = kind {
@@ -2539,7 +2542,7 @@ fn enter_function_slots(fname: &str, env: &mut TypeEnv) {
 }
 
 fn bind_function_slot(name: String, kind: CollectionType, env: &mut TypeEnv) {
-    env.vars.insert(name.clone(), kind.element);
+    env.declare(&name, kind.element);
     if kind.is_map {
         env.assoc_arrays.insert(name.clone());
     }
@@ -2583,7 +2586,11 @@ fn check_if(if_stmt: &If, env: &mut TypeEnv, errors: &mut Vec<TypeError>) {
 /// correct — they would simply report it twice.
 fn check_int_fn_predicates(program: &Program, env: &TypeEnv, errors: &mut Vec<TypeError>) {
     let mut found: Vec<(Span, String)> = Vec::new();
-    walk_int_fn_predicates(&program.statements, env, &mut found);
+    for body in std::iter::once(program.statements.as_slice()).chain(program.end_block.as_deref()) {
+        walk_stmt_tree(body, &mut |stmt| {
+            stmt_predicate_positions(stmt, env, &mut found)
+        });
+    }
     for (span, name) in found {
         errors.push(TypeError {
             message: format!(
@@ -2593,15 +2600,6 @@ fn check_int_fn_predicates(program: &Program, env: &TypeEnv, errors: &mut Vec<Ty
             ),
             span,
         });
-    }
-}
-
-fn walk_int_fn_predicates(stmts: &[Statement], env: &TypeEnv, found: &mut Vec<(Span, String)>) {
-    for stmt in stmts {
-        stmt_predicate_positions(stmt, env, found);
-        for body in stmt.structural_bodies() {
-            walk_int_fn_predicates(body, env, found);
-        }
     }
 }
 
@@ -2718,102 +2716,18 @@ fn conversion_hint(from: VarType, to: VarType) -> String {
     }
 }
 
-/// Run type inference and return the variable type map.
-pub fn infer_types(program: &Program) -> HashMap<String, VarType> {
-    let mut env = TypeEnv::new();
-
-    // Collect function types
-    for stmt in &program.statements {
-        if let StmtKind::Function(f) = &stmt.kind {
-            env.funcs.insert(f.name.clone(), f.return_type);
-        }
-    }
-
-    // Walk statements to discover variable types
-    for stmt in &program.statements {
-        infer_stmt(stmt, &mut env);
-    }
-
-    env.vars
-}
-
-/// DD#30 refinement: a bare numeric literal assigned to an already-int variable
-/// keeps the int type (mirrors the error pass in check_assignment); otherwise
-/// it would be re-typed String and mis-slotted in codegen.
-fn infer_assignment_type(a: &crate::ir::Assignment, env: &TypeEnv) -> VarType {
-    if env.var_type(&a.name) == VarType::Int && is_numeric_literal(&a.value) {
-        VarType::Int
-    } else {
-        expr_type(&a.value, env)
-    }
-}
-
-fn infer_stmt(stmt: &Statement, env: &mut TypeEnv) {
-    match &stmt.kind {
-        StmtKind::Assignment(a) => {
-            env.declare(&a.name, infer_assignment_type(a, env));
-        }
-        StmtKind::Declaration(d) => infer_declaration_types(d, env),
-        // Default: walk all structural bodies. Covers For, While, Function
-        // (no per-arm pre-work in this pass), plus every wrapping
-        // StmtKind (Pipeline, Group, List, Subshell, Redirected,
-        // Suppressed, If, Case) so a `int x=5` declared inside any
-        // of them gets type-tracked. Bug parallel to journal 056 for
-        // check_stmt: the original `_ => {}` silently dropped them.
-        // structural_bodies() returns empty for the leaves (Assignment,
-        // Declaration, Command, Comment, ArithTest) which all have
-        // explicit arms or no-effect semantics.
-        _ => infer_stmt_bodies(stmt, env),
-    }
-    // Same reason as `check_stmt`: the leaf arms carry the substitutions.
-    for body in stmt.cmdsub_bodies() {
-        for s in body {
-            infer_stmt(s, env);
-        }
-    }
-}
-
-/// The nested-body half of [`infer_stmt`]. `structural_bodies` for the same
-/// reason as [`check_stmt_bodies`] — this walk mutates `env`.
-fn infer_stmt_bodies(stmt: &Statement, env: &mut TypeEnv) {
-    for s in stmt.structural_bodies().into_iter().flatten() {
-        infer_stmt(s, env);
-    }
-}
-
-/// `int x=…` declares with the explicit type; otherwise the RHS
-/// expression is type-inferred per-assignment.
-/// A non-`int` declaration takes each name's type from its initializer. A
-/// bare `str s` has none to infer from and is a string by declaration —
-/// exactly as the old in-band `Literal("")` sentinel typed it.
-fn infer_from_initializers(d: &crate::ir::Declaration, env: &mut TypeEnv) {
-    for a in &d.assignments {
-        let t = a
-            .value
-            .as_ref()
-            .map_or(VarType::String, |v| expr_type(v, env));
-        env.declare(&a.name, t);
-    }
-}
-
-fn infer_declaration_types(d: &crate::ir::Declaration, env: &mut TypeEnv) {
-    if d.var_type == VarType::Int {
-        for a in &d.assignments {
-            env.declare(&a.name, VarType::Int);
-        }
-    } else {
-        // A `str` *scalar* declaration is the one positive signal that a
-        // variable holds a string — record it so the subscript check can tell
-        // it apart from a bare `i=1` (see `is_declared_str`).
-        env.note_declared_str(d);
-        infer_from_initializers(d, env);
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::ir::ParameterExpansion;
+
+    #[test]
+    #[should_panic(expected = "checked binding cannot change type")]
+    fn bound_type_cannot_change() {
+        let mut env = TypeEnv::new();
+        env.declare("n", VarType::Int);
+        env.declare("n", VarType::String);
+    }
 
     #[test]
     fn unknown_collection_bindings_do_not_invent_a_slot_type() {

@@ -34,11 +34,11 @@ other rows are false acceptances. Both backends agree. The fault is
 pre-existing; D1's walker reaches these operands, and `expr_type` answers
 String.
 
-The cause is one match arm in `parameter_expansion_type`
-(sash/src/type_check.rs:721), line 727:
-`":-" | "-" => env.var_type(&pe.name)`. `:?` falls through to String. Both
-typing walkers ask `expr_type` (133): the checker, and `infer_types` (2749)
-through `infer_assignment_type` (2770). So the one arm fixes both.
+The cause is one match arm in `type_check::parameter_expansion_type`:
+`":-" | "-" => env.var_type(&pe.name)`. `:?` falls through to String.
+The checker asks `expr_type` and now supplies lowering's type map directly
+(journal 565); the separate `infer_types` walker was deleted. This expression
+classification remains unchanged.
 
 The arm's `"-"` alternative is unreachable from source: `${n-0}` and
 `${n?bad}` (no colon) are SB4034 (e3, e2). `${n:~}` is SB5046 (e1).
@@ -52,8 +52,8 @@ already is.
 ## Related
 
 - DD#30's addendum of 2026-10-25 cites this task.
-- B5 in `batch-531-findings`: END is not type-checked, so an int operand
-  there still compiles in every spelling.
+- B5 in `batch-531-findings` is closed (journal 565): END receives the
+  same operand checks. This `:?` classification gap remains in both roots.
 - The int sink (`a875d58`) asks `expr_type` too, so `int n=5` /
   `exit ${n:?bad}` is a false SB4030, "that operand is string-typed", in both
   backends, while `exit ${n:-0}` exits 5. Found 2026-10-27 in the F1+F4 port

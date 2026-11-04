@@ -172,8 +172,10 @@ Within a live binding, only these operations may discharge outstanding taint:
 
 The second permission belongs to **that subject**, not to every binding
 assigned in an `else` block. Replacement must cover the whole value. A
-whole-variable unset can supply the empty/zero replacement there; a cell
-write, cell unset or append does not resolve a tainted collection or scalar.
+whole-collection unset can supply an empty replacement there. Scalars
+require a clean assignment; this does not legalize scalar unset (DD30).
+A cell write, cell unset or append does not resolve a tainted collection
+or scalar.
 Existing refusals of reads or cell writes on tainted data remain in force.
 
 Outside that resolution, a clean assignment changes the runtime value but
@@ -436,9 +438,13 @@ do not reintroduce caller-context body walks. Distinguish runtime value
 replacement from permission to resolve outstanding taint.
 
 Both handlers must participate in parsing, binding, resolution, validation,
-typing, summaries, lowering, emission and artifacts. The existing B5
-type-check traversal gap cannot be retained while claiming either handler
-is checked as ordinary code. The current blanket END unchecking must not
+typing, summaries, lowering, emission and artifacts. The B5 typing
+prerequisite is closed (2026-11-04, journal 565): the existing END and all
+capture/function bodies are checked, and lowering uses the checked type map.
+Collection signatures include both roots' definitions, calls and shared
+global facts. The new handlers must preserve that coverage. This does not
+implement their routing or failure contracts: the current blanket END
+unchecking must not
 be inherited by EXIT or used to disguise ERR's explicit-handling rule.
 
 The compiler and SSA backstop must agree on the new taint contract. Handler

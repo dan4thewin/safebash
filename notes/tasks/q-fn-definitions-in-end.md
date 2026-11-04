@@ -28,8 +28,12 @@ What (b) removes:
   echo $(( (f) + 1 ))
   END { fn f -> int { return 7; } }
   ```
-- the END-function half of B5 (the type checker scans the top level only).
 
 What (b) costs: a narrower language surface. Programs that define helpers
 inside END are rejected. The affected specs and contrib scripts are not
 counted yet; count them when ruling.
+
+B5's typing gap is now closed (journal 565), including collection
+signatures. The DD128 draft rejects END and carries its definition
+permission into EXIT/ERR, so this question would apply to those handler
+bodies rather than to END compatibility.

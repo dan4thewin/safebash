@@ -39,6 +39,9 @@ base commit 1309385 and on the batch-531 branch.
 | ai11 | `int array a=(123)` / `echo ${a[0]:0:1}` | the same |
 | ai12 | `int y=123` / `str s="$y"` / `echo ${s:s/1/9/}` | prints `923`, through the explicit conversion |
 
+The historical `ai7` result includes B2's duplicated diagnostic, repaired
+in journal 565. That duplication fix does not change the sugar bug here.
+
 ## Cause
 
 The parser desugars `${y:s/1/9/}` to `$(sub "$y" "1" "9")`: `--emit-ir`

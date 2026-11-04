@@ -285,9 +285,8 @@ Plus the mechanism that makes it liveable:
 ### What that settles
 
 A name's type is fixed at its **first introduction**, whether that is a
-declaration or a binding. The three ways to bind without declaring — a bare
-assignment, an arithmetic assignment, and a `for` header — all fix the type,
-and all are now treated alike.
+declaration or a binding. Bare and arithmetic assignments, `for` headers,
+and DD#93's arithmetic-attest target all fix the type without a declaration.
 
 | form | introduces | why |
 |------|-----------|-----|
@@ -295,6 +294,7 @@ and all are now treated alike.
 | `(( x = 7 ))` | **int** | the arithmetic context means a number |
 | `for x in a b` | **string** | a word list binds words |
 | `for (( i = 0; … ))` | **int** | the arithmetic header means a number |
+| `attest s (( n = s ))` | **int scalar** | the validated conversion binds a number |
 
 Two rules follow, and both were unenforced:
 
@@ -316,6 +316,12 @@ int x=7
 `(( x = 7 )); echo "$x"; str x="a"` was the same bug in the other direction
 (`7` then `0`). A typed declaration of a name an earlier binding already
 introduced is now rejected, pointing at declaring before first use.
+
+The arithmetic-attest target participates in this rule too: an attest that
+introduces `n` followed by `int n=7` or `str n=x` is SB5082. Its target may
+already be an int scalar, but not a string or collection (SB4030).
+These missing checks were repaired with the unified type map in journal
+565 (`typeflow.4`-`.6`, `.19`).
 
 ### What stays legal
 

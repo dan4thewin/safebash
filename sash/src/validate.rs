@@ -383,7 +383,7 @@ fn check_redeclaration(program: &Program, diags: &mut Vec<Diagnostic>) {
 }
 
 /// DD#86 (SB5082): record a name introduced WITHOUT a declaration — a bare
-/// assignment, an arithmetic assignment, or a `for` header. Only the first
+/// assignment, an attest conversion, or a `for` header. Only the first
 /// introduction counts, and a name already declared is not an introduction.
 fn note_binding(
     name: &str,
@@ -428,13 +428,13 @@ fn scan_stmt_redecl(
     }
     match &stmt.kind {
         StmtKind::Declaration(d) => flag_redecl(d, stmt.span, seen, bound, diags),
-        // The three ways a name is introduced without a declaration. All bind
-        // like an assignment, so all fix the name's type (DD#86).
+        // Non-declaration bindings fix the name's type too (DD#86).
         StmtKind::Assignment(a) if a.index.is_none() => {
             note_binding(&a.name, stmt.span, seen, bound)
         }
         StmtKind::For(f) => note_binding(&f.variable, stmt.span, seen, bound),
         StmtKind::ArithTest(e) => note_arith_bindings(e, stmt.span, seen, bound),
+        StmtKind::Command(c) => note_attest_binding(c, stmt.span, seen, bound),
         _ => {}
     }
     for body in stmt.structural_bodies() {
@@ -442,6 +442,17 @@ fn scan_stmt_redecl(
     }
     for body in stmt.cmdsub_bodies() {
         scan_scope_redecl(body, &mut seen.clone(), &mut bound.clone(), diags);
+    }
+}
+
+fn note_attest_binding(
+    c: &Command,
+    span: Span,
+    seen: &HashMap<String, Span>,
+    bound: &mut HashMap<String, Span>,
+) {
+    if let Some(target) = attest_convert_target(c) {
+        note_binding(target, span, seen, bound);
     }
 }
 

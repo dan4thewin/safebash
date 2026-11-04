@@ -85,9 +85,10 @@ level and END), and moved the transform's `register_functions` and
 `bindings::resolve` onto it (B8, B16). Other private scans for definitions:
 - `resolve.rs` `collect_functions` recurses through every block, so it
   covers END already. It runs after SB5071 and could use `function_defs`.
-- `type_check.rs` has three top-level-only scans:
-  `infer_collection_signatures`, `type_check` and `infer_types`. They miss
-  END's functions; that is B5, in the typing family.
+- `type_check.rs`'s scans are repaired in journal 565:
+  `infer_collection_signatures` and `type_check` use `function_defs`, and
+  `infer_types` is deleted. Collection calls in both roots share global
+  metadata; `typeflow.21`-`.24` pin the signature traversal as well.
 - `validate.rs` `collect_functions` runs before SB5071 rejects a misplaced
   `fn`, so it must keep recursing. It is not a candidate.
 

@@ -287,7 +287,8 @@ not fix, and what does not block the rest of the port, goes to the backlog:
     subjects and patterns, and attest predicates; sash-convert quotes the
     int operands it writes. DD30, DD66 and DD57 addenda (2026-10-25). Specs
     `30.50`-`30.65` and `57.178`-`57.191`; 15 existing specs rewritten to
-    quote. END is not checked yet (see B5).
+    quote. B5 subsequently added the END checks (journal 565,
+    `typeflow.11`).
 
 Filed as backlog tasks during D1, under the same rule as F15's:
 
@@ -1268,42 +1269,52 @@ control is `loopflow.15`, not a claim that the counted form is repaired.
 
 ### 19. Typing
 
-- [ ] **B1** (open; DD100, DD93). The transform takes its types from a
+Closed as DD128/W5's typing prerequisite (journal 565), not by importing
+reference-branch hunks. `typeflow.1`-`.24` cover the six findings; the checked
+type map is now the sole input to lowering.
+
+- [x] **B1** (open on reference; DD100, DD93). The transform took its types from a
   second typing walker, `infer_types`, which never got DD100 slot typing or
   DD93's attest-target `int`: `x=${A[0]}; x+=1` through a slot, and an
-  attest-converted `n+=1`, concatenate (`51`) instead of adding, in both
-  backends.
-- [ ] **B2** (open; no DD). An SB4030 operand error inside a capture is
-  reported twice: `check_stmt` walks capture bodies and
-  `check_substituted_command_operands` walks them again.
-- [ ] **B4** (open; DD86, DD93). An attest arithmetic-conversion target is
-  invisible to the binding rules: `str n=x` then `attest s (( n = s ))` is
+  attest-converted `n+=1`, concatenated (`51`) instead of adding, in both
+  backends. The second walker is deleted.
+- [x] **B2** (open on reference; no DD). An SB4030 operand error inside a capture was
+  reported twice: `check_stmt` walked capture bodies and
+  `check_substituted_command_operands` walked them again. The duplicate pass
+  is deleted; the stable checking pass owns the diagnostic.
+- [x] **B4** (open on reference; DD86, DD93). An attest arithmetic-conversion target was
+  invisible to the binding rules: `str n=x` then `attest s (( n = s ))` was
   accepted where plain `n=$(( 5 ))` is SB4030, and the attest followed by
-  `int n=9` is accepted where a plain binding is SB5082.
-- [ ] **B5** (open; DD56, DD30). `type_check` and `infer_types` never visit
-  END: an END-local `int n=5; n+=1` prints `51`, and `strlen` of an int in
-  END compiles.
+  `int n=9` was accepted where a plain binding is SB5082. Existing strings
+  and collections now get SB4030; introductions are tracked for SB5082.
+- [x] **B5** (open on reference; DD56, DD30, DD100). `type_check` and `infer_types` never visited
+  END: an END-local `int n=5; n+=1` printed `51`, and `strlen` of an int in
+  END compiled. Every checking pass now visits END, including its functions.
+  Collection signatures include END definitions and calls, with global
+  collection facts shared across both roots (`typeflow.21`-`.24`).
   - Also (F15, journal 534): `END { echo ${a[foo]} }` on an indexed array
-    is a native ICE and prints `x` in C, because DD80's key check never
-    runs in END. `bug-subscript-key-check-skips-positions` leaves END to
-    this fix.
-  - Also (D1, journal 535): a whole-int `[[ ]]` operand in END still
-    compiles (`END { int n=5; [[ $n == 5 ]] && echo y }` prints `y`),
-    because D1's check runs in the pass that skips END. The B5 fix must
-    run `check_test_operand_types` there too.
-- [ ] **B6** (open; DD86). Typing depends on textual order, which DD86
-  forbids: `fn f { exit $n }; int n=1` is a false SB4030; a function that
-  assigns a string to a later `int` reaches a codegen ICE; a loop-carried
-  copy of a later int prints `01`/`11`.
-  - F13 note: F13 changes what one B6 program reports, not B6. Probe n1,
-    `fn f { keys m x; echo "${x[0]}" }; map m=([k]=v); f`, is still the
+    was a native ICE and printed `x` in C, because DD80's key check never
+    ran in END. `typeflow.10` closes the END portion of
+    `bug-subscript-key-check-skips-positions`.
+  - Also (D1, journal 535): a whole-int `[[ ]]` operand in END
+    compiled (`END { int n=5; [[ $n == 5 ]] && echo y }` printed `y`).
+    `typeflow.11` now pins `check_test_operand_types` there.
+- [x] **B6** (open on reference; DD86). Typing depended on textual order, which DD86
+  forbids: `fn f { exit $n }; int n=1` was a false SB4030; a function that
+  assigned a string to a later `int` reached a codegen ICE; a loop-carried
+  copy of a later int printed `01`/`11`. Global bodies now precede function
+  checking, and inferred first bindings converge separately from actual
+  binding order.
+  - F13 note: F13 changed what one B6 program reported, not B6. Probe n1,
+    `fn f { keys m x; echo "${x[0]}" }; map m=([k]=v); f`, remained the
     false SB4030 at 1:8 (`m` is not a map). Probe u2 is n1 plus
     `const x=1` and a read of `x`, so `keys m x` also writes a const. It
     now reports SB4044 at 1:8 instead of the SB4030, because validate's
     SB4044 runs before type_check and stops the compile.
-- [ ] **B7** (open; DD74). An int-function predicate inside a capture is
-  unchecked: `x=$(if f { … })` and `x=$(f && echo a)` compile, where the
-  top-level forms are SB4030.
+- [x] **B7** (open on reference; DD74). An int-function predicate inside a capture was
+  unchecked: `x=$(if f { … })` and `x=$(f && echo a)` compiled, where the
+  top-level forms are SB4030. The shared complete statement walk now covers
+  captures and END too.
 
 ### 19. Lifetimes
 
