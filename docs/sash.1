@@ -693,6 +693,70 @@ capture and external passthrough all carry arbitrary bytes intact.
 What is given up is authoring a lone byte \(>= 0x80
 .I inline.
 .
+.SH TERMINAL HANDLERS
+.B EXIT { ... }
+and
+.B ERR { ... }
+are optional top\-level declarations, at most once each (DD#128).
+Both share the program's global variables.
+Function definitions belong only directly in the main statement list
+.RB ( SB5071 ),
+not inside either handler.
+.PP
+Fallthrough, explicit
+.B exit 0
+and configured EXIT signals select
+.BR EXIT .
+Uncaught failures, explicit nonzero exits and a first fatal runtime fault select
+.BR ERR .
+A missing handler never substitutes the other.
+Selection uses the full integer for explicit exits; only the final process
+status is truncated to eight bits.
+.PP
+EXIT is ordinary checked code.
+Its failure may enter ERR.
+ERR must catch or suppress operational failures where they occur
+.RB ( SB5101 );
+handling a function's returned status does not catch failures in its body.
+Operations with uncatchable setup, operand or I/O failures are unavailable
+there unless proved safe.
+Arithmetic faults and heap exhaustion remain fatal: the first attempts ERR,
+and a further fault terminates without re\-entry.
+.PP
+Neither handler resumes the interrupted program.
+Forked children run neither.
+Completion preserves the entry status; explicit
+.B exit N
+overrides it.
+The incoming status is available as the handler's first
+.B $?
+use, subject thereafter to ordinary handling\-position rules.
+Handlers observe completed global writes, not hypothetical later values.
+.PP
+EXIT's ordinary uses must be clean on every applicable entry.
+ERR requires
+.B :!
+when reading incoming data that could have received taint, even if main
+normally attests it.
+Fresh input acquired inside ERR may be adjacently and caughtly attested.
+Only legal attestation or direct clean replacement of its subject in the
+failed\-attest branch resolves outstanding taint.
+An unrelated literal overwrite, unset or reset helper does not.
+.PP
+.B signal N EXIT
+records a pending shutdown and supplies status
+.B 128+N
+at a checkpoint.
+Dispatch is deferred across legal adjacent acquisition/resolution;
+signal receipt is not masked.
+Ordinary failures and explicit exits still transfer immediately.
+Signals inside either handler cannot dispatch another handler.
+.PP
+.B END
+is removed.
+Migrate its body deliberately to checked EXIT or explicitly handled ERR;
+neither is a compatibility alias.
+.
 .SH SPECIAL VALUES
 Three values that bash spells with punctuation have keyword names in sash,
 and the keyword name is the canonical one (DD#75).

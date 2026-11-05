@@ -6,7 +6,7 @@ set -eu
 # Run only in native mode to avoid 3× redundancy.
 [[ ${SASH_MODE:-native} != native ]] && exit 0
 setup convert
-plan=217
+plan=218
 echo "1..$plan" >&3
 
 set +e
@@ -1533,6 +1533,11 @@ run_sash "$converted"
 [[ $converted == *': "${x:?x must be set}"'* && $rc = 1 && -z $out \
    && $rerr == *": x must be set"* ]]; chk 57.192
 
+run_convert '#!/bin/bash
+trap "echo cleanup" EXIT'
+[[ $rc = 0 && $out == *'MANUAL: trap body'* &&
+   $out == *'checked EXIT { ... }'* && $out == *'ERR { ... } with explicit failure handling'* &&
+   $out != *'END {'* && -z $err ]]; chk 57.193
 
 set -e
 tally

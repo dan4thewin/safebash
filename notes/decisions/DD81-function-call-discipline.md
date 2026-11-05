@@ -418,7 +418,7 @@ Tail producers use the same materializer and preserve splats (DD#27).
 
 Cleanup bodies may call program-level helpers under Part A's call
 discipline; they are not additional definition roots. SB5071 rejects a
-definition inside END and applies uniformly to DD128's EXIT and ERR.
+definition inside EXIT or ERR uniformly.
 The former F3 exception was a misreading of DD86, corrected in journal 566
 and DD56. Its definition-order specs `56.97` and `56.98` are retired.
 

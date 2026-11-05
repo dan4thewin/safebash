@@ -35,10 +35,26 @@ pub(super) fn lower_one(
     block: BlockId,
 ) -> BlockId {
     let enclosing = std::mem::replace(&mut state.stmt_span, stmt.span);
+    let origin = ssa.enter_source(
+        stmt.span,
+        source_attest_span(stmt),
+        matches!(stmt.kind, StmtKind::For(_)),
+        block,
+    );
     let block = lower_stmt_kind(stmt, ssa, state, block);
+    ssa.leave_source(origin, block);
     state.flush_expr_diagnostics();
     state.stmt_span = enclosing;
     block
+}
+
+fn source_attest_span(stmt: &Statement) -> Option<Span> {
+    let candidate = match &stmt.kind {
+        StmtKind::If(i) if i.condition.len() == 1 => &i.condition[0],
+        StmtKind::List(l) => l.left.as_ref(),
+        _ => stmt,
+    };
+    attest_command(candidate).map(|_| candidate.span)
 }
 
 fn lower_stmt_kind(
@@ -166,8 +182,7 @@ fn lower_while_stmt(
 /// decided up front by `register_functions`. A call runs the definition in
 /// force, so the classes checked by subsequent calls (DD#55) are recomputed
 /// as this definition comes into force.
-/// (The DD#56 END body is `Program::end_block`, seeded into `state.exit_trap`
-/// by `ir_to_ssa` — it is not a function and never reaches here.)
+/// Terminal handlers have separate roots and never reach this definition arm.
 fn lower_function_stmt(
     f: &Function,
     stmt: &Statement,
@@ -447,7 +462,11 @@ pub(super) fn spill_scalar_redirect_targets(
 /// the suite, which stayed green; spec `rdr.47`-`rdr.49` cover the real path.
 fn attach_redirects_to_last_inst(ssa: &mut SsaProgram, blk_id: BlockId, redirects: &[Redirect]) {
     let blk = ssa.block_mut(blk_id);
-    let Some(inst) = blk.insts.last_mut() else {
+    let Some(inst) = blk
+        .insts
+        .iter_mut()
+        .rfind(|inst| !matches!(inst, SsaInst::SourceOrigin(..)))
+    else {
         panic!(
             "ICE: a statement carrying {} redirect(s) lowered to no instruction at all — \
              SB4046 (resolve::head_may_take_redirect) should have rejected it at parse",
@@ -478,6 +497,7 @@ fn attach_redirects_to_last_inst(ssa: &mut SsaProgram, blk_id: BlockId, redirect
         | SsaInst::CaptureEnd { .. }
         | SsaInst::RedirectPush { .. }
         | SsaInst::RedirectPop { .. }
+        | SsaInst::SourceOrigin(..)
         | SsaInst::PipelineFinish { .. }
         | SsaInst::Attest { .. }
         | SsaInst::AttestAll { .. }
@@ -1007,7 +1027,7 @@ fn lower_short_circuit(
 }
 
 /// `cmd &` — fork; the child runs the command and exits with its status
-/// (never through END — DD#56), the parent continues with the pid in `$!`.
+/// (never through a handler — DD#128), the parent continues with the pid in `$!`.
 /// The child is lowered in a forked context, so none of its versions,
 /// reader bindings or jump targets reach the parent's code.
 fn lower_background(

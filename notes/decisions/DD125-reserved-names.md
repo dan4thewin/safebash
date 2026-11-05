@@ -22,7 +22,7 @@ The reserved set is the union of three groups, assembled in
 
 | group | source | examples |
 |---|---|---|
-| keywords | `parse::lexer::classify_word_token` | `if` `fn` `for` `in` `do` `str` `int` `attest` `END` |
+| keywords | `parse::lexer::classify_word_token` | `if` `fn` `for` `in` `do` `str` `int` `attest` `EXIT` `ERR`; `END` remains reserved for its removal diagnostic |
 | statement and value builtins | `BuiltinCmd::from_name` | `echo` `cd` `wait` `exit` `read` `unset` `len` `sub` `match` |
 | value intrinsics | `resolve::INTRINSICS` | `status` `getpid` `argc` `random` `epochseconds` `getcwd` |
 

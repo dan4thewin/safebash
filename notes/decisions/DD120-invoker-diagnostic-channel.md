@@ -65,11 +65,12 @@ automatically when `execve` succeeds**, so a real command never inherits it.
 
 ### Why all three fds, and not just the diagnostic one
 
-Because the *diagnostic* is not the only thing the invoker emits. An END
-block is the invoker's code too, and `END { echo cleanup }` is an ordinary
+Because the *diagnostic* is not the only thing the invoker emits. A terminal
+handler is the invoker's code too, and `EXIT { echo cleanup }` is an ordinary
 write to fd 1 — not a diagnostic, so a diagnostic-only channel cannot rescue
 it. Saving 0/1/2 as one set covers both, under one rule and one lockstep
-invariant, and `sash_scope_restore` puts them back on entry to END.
+invariant, and `sash_scope_restore` puts them back before either EXIT or ERR
+is called (DD#128).
 
 The same distinction bash draws by accident, sash now draws on purpose: an
 EXIT trap follows a persistent `exec > f` and does **not** follow a
@@ -102,27 +103,29 @@ differs here:
   failure is a rare and graver event than bash's `command not found` — all the
   more reason it must not be swallowed into a child's log.
 
-## Consequence: END is restored, not each abort site
+## Consequence: restore at terminal entry, not each abort site
 
-An uncaught failure aborts through the END block (DD#56). END runs as the
-**invoker**, so it must not inherit the failed command's redirects.
+An uncaught failure enters ERR; orderly termination enters EXIT (DD#128).
+Both run as the **invoker**, so neither may inherit an interrupted command's
+redirects.
 
-This was a live bug in both backends, found while implementing this DD: the
-abort terminated the block before `emit_restore`, leaving the restore on an
-unreachable edge, so
+The old END implementation had a live bug in both backends: an abort
+terminated the block before `emit_restore`, leaving restoration on an
+unreachable edge. Its cleanup echo went into `out.txt` after a failing
+redirected command. The corresponding current program is:
 
 ```sh
-END { echo cleanup }
+ERR { - echo cleanup }
 /bin/false > out.txt
 ```
 
-wrote `cleanup` into `out.txt`. Bash prints it on stdout. Three abort paths
+Its cleanup belongs on the invoker's stdout. Three old abort paths
 leaked — nonzero-status abort, exec failure, and `echo` write failure — while
 the setup-failure path was correct only because it happened to restore
 explicitly.
 
 The fix is the same object, not a fourth patch: `sash_scope_restore()` runs
-on entry to the END block, which is the one place all of these unwind to. A
+before the selected generated callback, the common runtime dispatch point. A
 future abort site is then correct by construction rather than by remembering
 to restore, which is precisely the discipline this bug proves gets forgotten
 — both backends had it wrong, identically, so the differential oracle could

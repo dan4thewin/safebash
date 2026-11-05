@@ -42,8 +42,11 @@ The fault is the first `clone` failing with EAGAIN
 | e1 | `END { /bin/echo hi &; - wait; echo after }` then `echo main` | `main`, `after`, rc 0, no message |
 
 e1 was added 2026-10-28 (probe `bgf/endf4.sh` in `files/port-f2-probes.tar.gz`):
-the same before and after F2, in both backends. Outside END, F2 makes a
-background job report the pipeline way (below); inside END it is still silent.
+the same before and after F2, in both backends. At that time, outside END,
+F2 made a background job report the pipeline way (below); END kept it silent.
+DD128 now removes END and its blanket unchecked exception. EXIT is checked;
+ERR requires explicit failure handling. Row e1 is historical, not a remaining
+handler exception; the other by-form findings remain open.
 
 So there are three behaviours:
 - a simple command reports `<cmd>: error 11` (naming the command that never
@@ -80,8 +83,8 @@ others).
 Related: batch-531 B20, landed with F2 on 2026-10-28. A background job whose
 fork fails now reports the pipeline way: `fork: error 11`, status 1, an abort
 unless caught or suppressed, and `$!` reads -1 (`bgfork.1`-`bgfork.8` in
-commands.sh). Inside END it is still silent (e1). DD#55's addendum of
-2026-10-26 says "Fork failure is meant to abort as written".
+commands.sh). The former END-specific silence (e1) is retired by DD128.
+DD#55's addendum of 2026-10-26 says "Fork failure is meant to abort as written".
 
 ## Fix direction
 
@@ -89,7 +92,8 @@ One fork-failure path for every form: print `fork: <errno>`, leave one
 status, and follow DD#55's caught/uncaught handling. The failure belongs to
 the statement, not to the command that never ran, so `!` does not invert it.
 B20 landed first and took the pipeline behaviour, so a background job is now
-in the second group, and this fix covers it with the rest (e1 included).
+in the second group, and this fix covers it with the rest. DD128's handler
+contracts do not settle this general fork-status/reporting question.
 
 The question for DG is the status. **Recommended: 1**, as pipelines and
 captures leave today. 127 is what DD#55 gives an exec failure in the child

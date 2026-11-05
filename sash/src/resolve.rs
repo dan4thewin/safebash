@@ -351,7 +351,7 @@ pub(crate) fn head_may_take_redirect(name: &str) -> bool {
 const KEYWORDS: &[&str] = &[
     "if", "then", "else", "elif", "fi", "while", "until", "do", "done", "for", "in", "case",
     "esac", "fn", "function", "str", "int", "const", "array", "map", "attest", "signal", "END",
-    "return", "break", "continue",
+    "EXIT", "ERR", "return", "break", "continue",
 ];
 
 /// DD#125: is `name` the compiler's, rather than the user's to bind?
@@ -421,9 +421,8 @@ pub(crate) fn resolve_commands(program: &mut Program) -> Vec<Diagnostic> {
     let funcs = program.function_defs().map(|f| f.name.clone()).collect();
 
     let mut diags = Vec::new();
-    resolve_stmts(&mut program.statements, &funcs, &mut diags);
-    if let Some(end) = &mut program.end_block {
-        resolve_stmts(end, &funcs, &mut diags);
+    for body in program.bodies_mut() {
+        resolve_stmts(body, &funcs, &mut diags);
     }
     diags
 }

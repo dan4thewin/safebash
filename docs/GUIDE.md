@@ -358,7 +358,7 @@ process and each background job or lifted pipeline stage separately.
 Children inherit independent copies of the completed parent view; their
 definitions cannot taint or clean the parent or a sibling. The shared CFG
 walk follows same-process edges, then the verifier recursively checks
-spawned children. END stays an explicit main-process root.
+spawned children. EXIT and ERR are independent main-process roots.
 
 Unbound function templates remain for lowering diagnostics and metadata,
 but never enter those executable views. Lowering a definition restores
@@ -372,8 +372,16 @@ but never bless a tainted new value. Unreachable phi predecessors are
 excluded. Cell reads, splats, iteration and map-fill operands carry their
 reaching collection version, not a future version selected by name.
 
-END entry remains W5. Unlowered redirect operands still use the completed
-bare-name view, and children still inherit the completed parent view rather
+Handler entry is checked separately (DD128): EXIT requires its ordinary
+uses clean at each applicable zero-exit, fallthrough or signal entry; ERR
+conservatively treats any potentially tainted incoming binding as unresolved.
+Source summaries retain transient acquisitions, including inside called
+bodies and EXIT. Incoming-origin obligations reject late attests even when
+one branch reacquires the value. The SSA backstop independently checks
+incoming versions, mapped slots and fresh acquisitions.
+
+Unlowered redirect operands still use the completed bare-name view, and
+children still inherit the completed parent view rather
 than a precise fork-time snapshot. DD#127 records these boundaries,
 counted-capture lowering and conservative value/capture precision questions.
 
@@ -480,9 +488,10 @@ diagnostic raised while lowering reports at the statement being lowered
 
 #### Functions, inlining, and recursion (DD#27)
 
-Functions are **inlined**. There is no runtime call stack, so a function
-cannot in general call itself — inlining would not terminate. `SB5037`
-rejects those calls.
+User functions are **inlined**; their calls do not create runtime stack
+frames. A function cannot in general call itself — inlining would not
+terminate. `SB5037` rejects those calls. Generated EXIT/ERR callbacks are
+separate implementation functions, not exceptions to this source rule.
 
 **One shape is allowed: a direct self tail-call**, where the recursive call
 is the producer of a `return`. That compiles to a **loop**, so it runs in
@@ -667,7 +676,7 @@ and an unbounded count overran it (journal 290).
 
 Both backends use the same redirect metadata and runtime save/restore
 primitives. The transform reserves the script's literal fd operands across
-functions, captures and END; both backends register that set before running
+functions, captures and handlers; both backends register that set before running
 source code. Runtime-owned scope copies, backups, pipes and capture memfds
 avoid it. Private copies and pipe endpoints are close-on-exec; explicitly
 opened script descriptors remain inheritable. Backups also exclude every fd
@@ -692,7 +701,7 @@ the checked setup machinery; a failed setup never executes the stage body.
 A single unredirected external `$(command)` lowers to a one-stage pipeline
 with a private value-capture target. Arguments run in the parent before
 pipe/fork, stdout remains pipe-backed, and the parent drains it before
-waiting. It shares pipeline construction checks and caught/suppressed/END
+waiting. It shares pipeline construction checks and caught/suppressed/failure
 routing, without publishing or invalidating an enclosing lastpipe reader.
 
 Parent-reader pipelines stream before waiting (DD#122). Each site owns a
@@ -706,7 +715,7 @@ The shared `transform::reader_cleanup` pass places `PipelineFinish` on CFG
 edges leaving a reader region, inner first; conditional exits get bridge blocks
 with phi predecessors retargeted. Finishing closes before reaping and applies
 the existing suppression/pipefail fold. Nonlocal transfers retain their saved
-status after successful cleanup. Runtime abort/END cleanup closes all active
+status after successful cleanup. Runtime terminal cleanup closes all active
 readers before reaping, preserving the triggering status; forked children close
 inherited reader fds without adopting the parent's children. Public `wait`
 results are cached for a later owning-pipeline fold. Native and C share this
@@ -736,12 +745,16 @@ arithmetic runs its body where the call stands, so a fork in that body
 disqualifies the site too. A capture whose arguments make such a call takes
 the body path, so the call runs inside it (journal 545).
 
-The runtime keeps a **stack** of capture frames, because an impure capture
-can nest inside a pure one: the memfd path pushes a transparent frame that
-suspends buffer diversion for its duration. Depth is static: functions are
-inlined, and the one recursive shape sash accepts — a direct self tail-call —
-becomes a loop rather than a nested frame. Everything else is SB5037. (See
-[Functions, inlining, and recursion](#functions-inlining-and-recursion-dd27).)
+The runtime keeps a **heap-backed linked stack** of capture frames, because
+an impure capture can nest inside a pure one: the memfd path pushes a
+transparent frame that suspends buffer diversion for its duration. Depth is
+static: functions are inlined, and the one recursive shape sash accepts — a
+direct self tail-call — becomes a loop rather than a nested frame. Other
+recursive calls are SB5037 (see
+[Functions, inlining, and recursion](#functions-inlining-and-recursion-dd27)).
+There is no fixed nesting cap; allocation exhaustion follows the fatal ERR
+protocol. Main, EXIT and ERR have distinct heads, so cleanup cannot overwrite
+an interrupted capture's live frame.
 The purity walk nevertheless treats a revisited function as impure, so a
 self-tail function's capture currently takes the general path.
 
@@ -750,15 +763,38 @@ stdout (`[[ -p /dev/stdout ]]`) sees the caller's real stdout, while
 an impure one sees a regular file. Specs `cap.12` and `cap.17` pin both
 halves. See journal 277.
 
-### Signals
+### Terminal handlers and signals
+
+EXIT is ordinary checked code; ERR requires explicit handling of operational
+failures (DD128). Each is an optional generated function over real static
+globals, with private locals/temporaries and a saved entry status. Neither
+permits function definitions. The runtime selects by cause: fallthrough,
+zero exit and signals choose EXIT; failures, nonzero exit and first fatal
+faults choose ERR. Missing handlers do not substitute one another.
+
+The runtime marks progress before calling a handler. EXIT may fail into
+ERR, but neither re-enters and ERR never returns to EXIT. Children run
+neither. Dispatch requires no allocation and preserves completed global
+writes, including on heap startup failure; a second fatal fault terminates.
+Kernel reclamation handles abandoned local resources, while shared reader
+teardown and invoker-descriptor restoration precede the callback.
+
+`terminal.rs` checks live same-process SSA operations for SB5101. It sees
+actual lowered handling and inline call origins rather than guessing from an
+outer `-` or `if`. Empty/NUL/regex/collection facts permit proven-safe values;
+mutations invalidate those proofs. Arithmetic faults and heap exhaustion
+remain fatal exceptions, not banned operations.
 
 FLAG and EXIT handlers record delivery in separate runtime atomics (DD#56).
 Only EXIT requests shutdown; the most-recent-signal value alone cannot decide
 it. With any EXIT declaration, both backends poll at external/pipeline and
-loop/function boundaries, enter END with `128+signal`, or exit directly without
-END. Canonical END-region membership prevents re-entry. The transform installs
-loop/function checkpoint instructions after discovery passes finish, so those
-passes cannot clear them. FLAG-only programs receive no polling instructions.
+loop/function boundaries and enter EXIT with `128+signal`. `signals.rs`
+uses semantic source adjacency and the SSA CFG to defer dispatch across
+acquisition/attest resolution, including calls and parent-reader completion.
+It installs explicit checkpoints after discovery passes and marks backend
+direct polls with the same protection. Receipt remains immediate, explicit
+transfers retain precedence, and handler execution cannot dispatch again.
+FLAG-only programs receive no polling instructions.
 
 ### Environment
 

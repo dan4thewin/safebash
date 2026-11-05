@@ -100,6 +100,13 @@ bug, not a refactor:
 `:ir-version` is stamped so a consumer can refuse a capture it does not
 understand, rather than mis-read it.
 
+DD#128 advances the capture to **`:ir-version 2`**. The optional terminal
+bodies are recorded separately in `:exit-block` and `:err-block`; the old
+`:end-block` field is removed. An empty declared handler remains distinct
+from an absent handler. Both `--emit-ir` and the embedded/extracted IR use
+this shape. The data remains inert; consumers must refuse versions they
+cannot interpret rather than treating an unfamiliar handler as absent.
+
 ## Where the old code went
 
 Tag **`janet-babel`** (annotated, pushed) is the last commit with the

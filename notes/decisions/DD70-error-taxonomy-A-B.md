@@ -207,9 +207,9 @@ silent.
   (A)/(B) taxonomy and the diagnostic contract on top.
 - **DD#25** — arithmetic overflow is its own abort mechanism; it belongs
   to (A) for diagnostic purposes (`<argv0>: arithmetic overflow`).
-- **DD#56** — on abort with a trap set, the runtime routes through the
-  END block (traps run) rather than exiting directly; the diagnostic is
-  written before that jump.
+- **DD#56 / DD#128** — an uncaught failure reports its diagnostic, then
+  calls ERR if declared. Orderly termination and configured EXIT signals
+  select EXIT instead. Neither handler runs in a forked child.
 - **SB4016 / SB4017 / SB4018 / SB4019** — the "ignored result/value"
   family (DG: keep these adjacent). SB4016 = bare non-void `-> int` call,
   SB4017 = return-0-only `-> int`; SB4018 = discarded (B) boolean (bare

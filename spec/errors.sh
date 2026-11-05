@@ -1971,11 +1971,11 @@ f'
   [[ $rc != 0 && -z $out \
      && $err == *':1:1: error [SB4014] `-` suppresses a command, and a function definition is not one'* ]]; chk 55.114
 
-  # 55.115 `- END { }` (was SB5011)
+  # A handler is a declaration, not a suppressible command.
   run_sash 'echo hi
-- END { echo bye }'
+- EXIT { echo bye }'
   [[ $rc != 0 && -z $out \
-     && $err == *':2:1: error [SB4014] `-` suppresses a command, and an `END { }` block is not one'* ]]; chk 55.115
+     && $err == *':2:1: error [SB4014] `-` suppresses a command, and a terminal handler is not one'* ]]; chk h128.55.115
 
   # 55.116 `return N &`: the child returned into the caller's code, so
   #        `done` printed twice (batch-531 B11)
@@ -3220,12 +3220,12 @@ echo "[$n]"'
 # so none of them can be captured by a redirect written on the command. The
 # rd.5-rd.8 block above covers setup failure; these cover the other three
 # emitters, the lockstep rule that makes `exec 2>` different from `cmd 2>`,
-# and the END-block consequence.
+# and the terminal-handler consequence.
 #
 # The controls matter more than the checks here. "The file is empty" is
 # satisfied by a compiler that never writes to redirects at all, so iv.3
 # pins that a RUNNING command's own stderr still lands there, and iv.9 pins
-# that a persistent `exec >` is still honoured by END.
+# that a persistent `exec >` is still honoured by EXIT.
 
 # iv.1 exec failure — emitted by the forked CHILD after execve fails, which
 # is the case that only works because the scope fd is F_DUPFD_CLOEXEC: still
@@ -3262,39 +3262,39 @@ rm -f iv5_log.txt
 run_sash '/bin/false 2> iv5_log.txt'
 [[ $rc = 1 && -z $out && $rerr == *"command failed (exit 1)"*    && -f iv5_log.txt && ! -s iv5_log.txt ]]; chk iv.5
 
-# iv.6 END is the invoker's code, so it runs on the invoker's fds. The abort
+# iv.6 ERR is the invoker's code, so it runs on the invoker's fds. The abort
 # terminates the block before the command's restore can run, so without
-# sash_scope_restore() at END entry `cleanup` is written INTO iv6_log.txt.
+# sash_scope_restore() at handler entry `cleanup` is written INTO iv6_log.txt.
 # Both backends had this wrong together, so the oracle could not see it.
 rm -f iv6_log.txt
-run_sash 'END { echo cleanup }
+run_sash 'ERR { - echo cleanup }
 /bin/false > iv6_log.txt'
-[[ $rc = 1 && $out = "cleanup" && -f iv6_log.txt && ! -s iv6_log.txt ]]; chk iv.6
+[[ $rc = 1 && $out = "cleanup" && -f iv6_log.txt && ! -s iv6_log.txt ]]; chk h128.iv.6
 
 # iv.7 the same leak by the exec-failure route, which aborts from a
 # different place
 rm -f iv7_log.txt
-run_sash_vanish 'END { echo cleanup }
+run_sash_vanish 'ERR { - echo cleanup }
 SPEC_VANISH_CMD > iv7_log.txt'
-[[ $rc = 127 && $out = "cleanup" && -f iv7_log.txt && ! -s iv7_log.txt ]]; chk iv.7
+[[ $rc = 127 && $out = "cleanup" && -f iv7_log.txt && ! -s iv7_log.txt ]]; chk h128.iv.7
 
 # iv.8 and by the echo write-failure route — a third abort site, which is
-# why the fix belongs at END entry rather than at each of them
-run_sash 'END { echo cleanup }
+# why the fix belongs at handler entry rather than at each of them
+run_sash 'ERR { - echo cleanup }
 echo hi > /dev/full'
-[[ $rc = 1 && $out = "cleanup" && $rerr == *"write error"* ]]; chk iv.8
+[[ $rc = 1 && $out = "cleanup" && $rerr == *"write error"* ]]; chk h128.iv.8
 
-# iv.9 CONTROL for iv.6-iv.8: restoring at END entry must restore the
+# iv.9 CONTROL for iv.6-iv.8: restoring at handler entry must restore the
 # invoker's CURRENT fds, not the ones it started with. A persistent
-# `exec >` is the invoker rebinding its own stdout, so END follows it —
+# `exec >` is the invoker rebinding its own stdout, so EXIT follows it —
 # exactly as bash's EXIT trap does. A `sash_scope_restore` that reset to
 # the startup fds would put "cleanup" on the terminal and fail here.
 rm -f iv9_log.txt
-run_sash 'END { echo cleanup }
+run_sash 'EXIT { echo cleanup }
 exec > iv9_log.txt
 echo body'
 [[ $rc = 0 && -z $out && "$(cat iv9_log.txt)" = "body
-cleanup" ]]; chk iv.9
+cleanup" ]]; chk h128.iv.9
 
 
 # ── csc.1-csc.10: a `$( )` closer beats DD#71 absorb ────────────────
@@ -4032,9 +4032,9 @@ echo after'
    && $err != *':3:1:'* ]]; chk nonvoid.4
 
 run_sash 'fn s { return 3 }
-END { s }
+EXIT { s }
 echo after'
-[[ $rc != 0 && -z $out && $err == *':2:7: error [SB4016]'* ]]; chk nonvoid.5
+[[ $rc != 0 && -z $out && $err == *':2:8: error [SB4016]'* ]]; chk h128.nonvoid.5
 
 run_sash 'fn f { return 3 }
 f &

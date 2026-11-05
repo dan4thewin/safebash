@@ -33,8 +33,7 @@ use std::ops::RangeInclusive;
 /// Returns diagnostics for any violations found.
 /// Per-block checks. Split out of `validate` for the complexity gate.
 ///
-/// `index` is the position in `program_blocks` order: 0 is the top level,
-/// 1 the DD#56 `END { }` body.
+/// `index` is the body order: 0 is main, followed by the optional handlers.
 fn validate_block(
     block: &[Statement],
     index: usize,
@@ -46,7 +45,7 @@ fn validate_block(
     }
     check_commands(block, functions, diags); // SB5011: command resolution
 
-    // SB5012: $? availability. DD#56 — the END body is ENTERED because of a
+    // SB5012: a terminal handler is entered because of a
     // triggering status, so `$?` is available as its first action; the
     // top-level block starts with no status.
     let seed = if index == 0 {
@@ -61,10 +60,8 @@ fn validate_block(
 pub fn validate(program: &Program) -> Vec<Diagnostic> {
     let mut diags = Vec::new();
 
-    // Both executable roots need checking; only `statements` admits definitions.
-    let blocks: Vec<&[Statement]> = std::iter::once(program.statements.as_slice())
-        .chain(program.end_block.as_deref())
-        .collect();
+    // Only `statements` admits definitions.
+    let blocks: Vec<&[Statement]> = program.bodies().collect();
 
     // Include misplaced definitions for diagnostics before the placement check.
     let mut functions = HashSet::new();
@@ -251,8 +248,8 @@ fn check_fn_placement(program: &Program, diags: &mut Vec<Diagnostic>) {
     for stmt in &program.statements {
         flag_fns_below(stmt, diags);
     }
-    if let Some(end) = &program.end_block {
-        flag_nested_fns(end, diags);
+    for (_, body) in program.handlers() {
+        flag_nested_fns(body, diags);
     }
 }
 
@@ -370,14 +367,11 @@ fn const_reassign_diag(span: Span, name: &str) -> Diagnostic {
 /// *acquires* `const` — all three were accepted before, and the latter two
 /// silently changed a variable's contract.
 fn check_redeclaration(program: &Program, diags: &mut Vec<Diagnostic>) {
-    // The top level and the DD#56 `END { }` body are ONE scope: END's
-    // declarations are globals, and `collect_top_level_decls` already pools
-    // them, so `str x` in each is the same name declared twice.
+    // Handler declarations belong to the same global scope as main.
     let mut seen: HashMap<String, Span> = HashMap::new();
     let mut bound: HashMap<String, Span> = HashMap::new();
-    scan_scope_redecl(&program.statements, &mut seen, &mut bound, diags);
-    if let Some(ref end) = program.end_block {
-        scan_scope_redecl(end, &mut seen, &mut bound, diags);
+    for body in program.bodies() {
+        scan_scope_redecl(body, &mut seen, &mut bound, diags);
     }
 }
 
@@ -520,13 +514,11 @@ fn redecl_diag(span: Span, name: &str, prev_line: usize) -> Diagnostic {
 /// the global (allowed, and not flagged here).
 fn check_no_shadow(program: &Program, diags: &mut Vec<Diagnostic>) {
     let mut globals: HashSet<String> = HashSet::new();
-    collect_top_level_decls(&program.statements, &mut globals);
-    if let Some(ref end) = program.end_block {
-        collect_top_level_decls(end, &mut globals);
+    for body in program.bodies() {
+        collect_top_level_decls(body, &mut globals);
     }
-    scan_fn_shadow(&program.statements, &globals, diags);
-    if let Some(ref end) = program.end_block {
-        scan_fn_shadow(end, &globals, diags);
+    for body in program.bodies() {
+        scan_fn_shadow(body, &globals, diags);
     }
 }
 
@@ -1092,9 +1084,8 @@ fn check_predicate_definite_return(
     diags: &mut Vec<Diagnostic>,
 ) {
     let mut predicate_uses = HashSet::new();
-    collect_predicate_uses(&program.statements, functions, &mut predicate_uses);
-    if let Some(ref end) = program.end_block {
-        collect_predicate_uses(end, functions, &mut predicate_uses);
+    for body in program.bodies() {
+        collect_predicate_uses(body, functions, &mut predicate_uses);
     }
     if predicate_uses.is_empty() {
         return;
@@ -1825,7 +1816,7 @@ fn check_dynexec(name: &str, span: Span, diags: &mut Vec<Diagnostic>) {
 }
 
 /// SB4043 (DD#56): `trap` is not part of native sash. The signal model is the
-/// `signal N {IGN,DFL,FLAG,EXIT}` builtin plus the `END { }` block; the
+/// `signal N {IGN,DFL,FLAG,EXIT}` builtin plus the `EXIT { }` handler; the
 /// converter rewrites bash `trap` to those. Reject a hand-written `trap`,
 /// pointing at the native forms.
 fn check_trap(name: &str, span: Span, diags: &mut Vec<Diagnostic>) {
@@ -1834,7 +1825,7 @@ fn check_trap(name: &str, span: Span, diags: &mut Vec<Diagnostic>) {
             span,
             "SB4043",
             "`trap` is not part of sash — use the `signal` builtin \
-             (`signal N IGN|DFL|FLAG|EXIT`) and the `END { }` block (DD#56); \
+             (`signal N IGN|DFL|FLAG|EXIT`) and `EXIT { }` (DD#56/DD#128); \
              the converter rewrites bash `trap` to these"
                 .to_string(),
         ));
@@ -3366,11 +3357,11 @@ fn check_dq_list(l: &crate::ir::List, state: &mut FlowState, diags: &mut Vec<Dia
 /// A function body is checked in a fresh status context — the caller's `$?`
 /// state does not flow in.
 ///
-/// The DD#56 `END { }` body is *not* a function; it is `Program::end_block`,
-/// seeded with [`StatusState::Available`] by [`validate`], because it is
+/// Terminal handlers are seeded with [`StatusState::Available`] by
+/// [`validate`], because each is
 /// ENTERED because of a triggering status (an abort's exit code, `exit N`, a
 /// signal `128+n`, or the last command's status on normal exit). That status is
-/// available as the block's FIRST action, so `END { echo "exited $?" }` is valid.
+/// available as the block's FIRST action, so `EXIT { echo "exited $?" }` is valid.
 fn check_dq_function(f: &crate::ir::Function, diags: &mut Vec<Diagnostic>) {
     let mut fn_state = FlowState::new(StatusState::Undefined);
     for s in &f.body {
@@ -4490,7 +4481,40 @@ use std::collections::HashSet;
 ///
 /// DD#100 slots are mapped to the actual collection identities at each call.
 /// Positional arguments are checked at the call (DD#46).
-pub fn check_taint(program: &Program) -> Vec<Diagnostic> {
+#[derive(Default)]
+pub(crate) struct TaintAnalysis {
+    pub(crate) diagnostics: Vec<Diagnostic>,
+    pub(crate) signal_pairs: HashSet<(Span, Span)>,
+    exit_reads: std::collections::BTreeMap<String, Vec<Diagnostic>>,
+    sources: HashMap<String, (Span, String)>,
+}
+
+impl TaintAnalysis {
+    pub(crate) fn check_signal_entries(
+        &self,
+        entries: &[(Span, HashSet<String>)],
+    ) -> Vec<Diagnostic> {
+        let main = TerminalLog {
+            sources: self.sources.clone(),
+            exits: entries
+                .iter()
+                .map(|(span, names)| TerminalEntry {
+                    span: *span,
+                    via: "a signal checkpoint".to_string(),
+                    state: Tainted {
+                        names: names.clone(),
+                        ..Tainted::default()
+                    },
+                })
+                .collect(),
+        };
+        let mut diags = Vec::new();
+        report_exit_requirements(&self.exit_reads, &main, &mut diags);
+        diags
+    }
+}
+
+pub(crate) fn check_taint(program: &Program) -> TaintAnalysis {
     let mut tainted = Tainted::default();
     let mut diags = Vec::new();
     let map_names = collect_map_names(program);
@@ -4504,6 +4528,7 @@ pub fn check_taint(program: &Program) -> Vec<Diagnostic> {
     let empty = HashMap::new();
     let input = Origins::new();
     let scratch = BodyCx::default();
+    let signal_pairs = RefCell::new(HashSet::new());
     let base = SlotCx {
         probing: false,
         map_names: &map_names,
@@ -4517,19 +4542,171 @@ pub fn check_taint(program: &Program) -> Vec<Diagnostic> {
         stdin: &input,
         pipe_reader: None,
         failed_attests: &[],
+        terminal_live: program.handlers().next().is_some(),
+        signal_pairs: &signal_pairs,
     };
     let summaries = build_summaries(program, &census, &base);
     let cx = SlotCx {
         summaries: &summaries,
         ..base
     };
-    for block in program_blocks(program) {
-        taint_block(block, &mut tainted, &JustTainted::new(), &cx, &mut diags);
+    taint_block(
+        &program.statements,
+        &mut tainted,
+        &JustTainted::new(),
+        &cx,
+        &mut diags,
+    );
+    let mut terminals = scratch.terminals.take();
+    if block_falls_through(&program.statements) {
+        terminals.exits.push(TerminalEntry {
+            span: program
+                .statements
+                .last()
+                .map_or(Span::new(1, 1), |s| s.span),
+            via: "normal fall-through".to_string(),
+            state: tainted,
+        });
     }
+    let exit_reads = check_terminal_bodies(program, &terminals, &cx, &mut diags);
     for (f, span) in program.statements.iter().filter_map(as_function_def) {
         diags.extend(check_function_def(f, span, &cx));
     }
-    diags
+    TaintAnalysis {
+        diagnostics: diags,
+        signal_pairs: signal_pairs.into_inner(),
+        exit_reads,
+        sources: terminals.sources,
+    }
+}
+
+struct HandlerRequirements {
+    diags: Vec<Diagnostic>,
+    reads: std::collections::BTreeMap<String, Vec<Diagnostic>>,
+    sources: HashMap<String, (Span, String)>,
+}
+
+fn handler_requirements(body: &[Statement], cx: &SlotCx) -> HandlerRequirements {
+    let (base, _) = walk_scope(body, "", &Tainted::default(), cx);
+    let mut reads = std::collections::BTreeMap::new();
+    for name in cx.interface.iter().filter(|name| !is_collection_slot(name)) {
+        let mut entry = Tainted::default();
+        entry.replace(name, Origins::from([TaintOrigin::Incoming]));
+        let (walk, _) = walk_scope(body, "", &entry, cx);
+        let inherited = inherited_attest_requirements(&walk, name);
+        let mut required = diag_difference(walk.diags, &base.diags);
+        required.extend(inherited);
+        if !required.is_empty() {
+            reads.insert(name.clone(), required);
+        }
+    }
+    HandlerRequirements {
+        diags: base.diags,
+        reads,
+        sources: base.terminals.sources,
+    }
+}
+
+fn inherited_attest_requirements(walk: &BodyWalk, name: &str) -> Vec<Diagnostic> {
+    walk.ownership_reads(&TaintOrigin::Incoming)
+        .into_iter()
+        .map(|site| {
+            Diagnostic::error_at(
+                site.line,
+                site.col,
+                "SB5088",
+                format!(
+                    "attest of inherited `{name}` requires a fresh acquisition in this handler"
+                ),
+            )
+        })
+        .collect()
+}
+
+fn check_terminal_bodies(
+    program: &Program,
+    main: &TerminalLog,
+    cx: &SlotCx,
+    diags: &mut Vec<Diagnostic>,
+) -> std::collections::BTreeMap<String, Vec<Diagnostic>> {
+    let mut sources = main.sources.clone();
+    let mut exit_reads = std::collections::BTreeMap::new();
+    if let Some(body) = &program.exit_block {
+        let requirements = handler_requirements(body, cx);
+        report_exit_requirements(&requirements.reads, main, diags);
+        exit_reads = requirements.reads;
+        diags.extend(requirements.diags);
+        for (name, site) in requirements.sources {
+            sources.entry(name).or_insert(site);
+        }
+    }
+    if let Some(body) = &program.err_block {
+        report_err_requirements(handler_requirements(body, cx), &sources, diags);
+    }
+    exit_reads
+}
+
+fn report_err_requirements(
+    requirements: HandlerRequirements,
+    sources: &HashMap<String, (Span, String)>,
+    diags: &mut Vec<Diagnostic>,
+) {
+    for (name, reads) in requirements.reads {
+        let Some((source, via)) = sources.get(&name) else {
+            continue;
+        };
+        for read in reads {
+            diags.push(Diagnostic::error_at(
+                read.line,
+                read.col,
+                read.code,
+                format!(
+                    "ERR incoming `{name}` may be tainted by {via} at {}:{}; \
+                     inherited data requires `:!`: {}",
+                    source.line, source.col, read.message
+                ),
+            ));
+        }
+    }
+    diags.extend(requirements.diags);
+}
+
+fn report_exit_requirements(
+    requirements: &std::collections::BTreeMap<String, Vec<Diagnostic>>,
+    main: &TerminalLog,
+    diags: &mut Vec<Diagnostic>,
+) {
+    for entry in &main.exits {
+        report_exit_entry(requirements, &main.sources, entry, diags);
+    }
+}
+
+fn report_exit_entry(
+    requirements: &std::collections::BTreeMap<String, Vec<Diagnostic>>,
+    sources: &HashMap<String, (Span, String)>,
+    entry: &TerminalEntry,
+    diags: &mut Vec<Diagnostic>,
+) {
+    for (name, reads) in requirements
+        .iter()
+        .filter(|(name, _)| entry.state.contains(*name))
+    {
+        let source = sources.get(name).map_or_else(
+            || "incoming taint".to_string(),
+            |(span, via)| format!("{via} at {}:{}", span.line, span.col),
+        );
+        for read in reads {
+            diags.push(Diagnostic::error_span(
+                entry.span,
+                read.code,
+                format!(
+                    "{} enters EXIT with unresolved `{name}` ({source}); \
+                     EXIT requires it at {}:{}: {}",
+                    entry.via, read.line, read.col, read.message
+                ),
+            ));
+        }
+    }
 }
 
 /// DD#121 R1: the names the *immediately preceding* sibling statement tainted.
@@ -4538,7 +4715,39 @@ pub fn check_taint(program: &Program) -> Vec<Diagnostic> {
 /// the whole set grow-only: an insert and its matching removal are always one
 /// statement apart in one block, so nothing observes the taint in between and
 /// no removal can cross a block boundary or a branch merge.
-type JustTainted = HashSet<String>;
+#[derive(Clone, Default)]
+struct JustTainted {
+    names: HashSet<String>,
+    sites: HashMap<String, HashSet<Span>>,
+}
+
+impl std::ops::Deref for JustTainted {
+    type Target = HashSet<String>;
+    fn deref(&self) -> &Self::Target {
+        &self.names
+    }
+}
+
+impl JustTainted {
+    fn new() -> Self {
+        Self::default()
+    }
+
+    fn from_source(names: HashSet<String>, span: Span) -> Self {
+        let sites = names
+            .iter()
+            .map(|name| (name.clone(), HashSet::from([span])))
+            .collect();
+        Self { names, sites }
+    }
+
+    fn extend(&mut self, other: Self) {
+        self.names.extend(other.names);
+        for (name, sites) in other.sites {
+            self.sites.entry(name).or_default().extend(sites);
+        }
+    }
+}
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 enum TaintOrigin {
@@ -4630,10 +4839,23 @@ fn taint_step(
         return JustTainted::new();
     }
     let taints = stmt_taints(stmt, cx);
+    if cx.terminal_live {
+        record_terminal_sources(stmt.span, &taints, cx);
+    }
     if let Some((log, mark, before)) = snap {
         log_sites(log, mark, stmt, &before, tainted, &taints, cx.interface);
     }
     taints
+}
+
+fn record_terminal_sources(span: Span, taints: &JustTainted, cx: &SlotCx) {
+    let mut terminals = cx.body.terminals.borrow_mut();
+    for name in taints.intersection(cx.interface) {
+        terminals
+            .sources
+            .entry(name.clone())
+            .or_insert_with(|| (span, "acquisition".to_string()));
+    }
 }
 
 /// DD#121: the names `stmt` itself taints.
@@ -4665,7 +4887,7 @@ fn stmt_taints(stmt: &Statement, cx: &SlotCx) -> JustTainted {
         &probe_cx,
         &mut discard,
     );
-    probe.names
+    JustTainted::from_source(probe.names, stmt.span)
 }
 
 /// Walk a block of statements in order, threading DD#121's adjacency set.
@@ -4683,8 +4905,14 @@ fn taint_block(
     diags: &mut Vec<Diagnostic>,
 ) {
     let mut just = initial_just.clone();
+    let mut terminal_live = cx.terminal_live;
     for stmt in stmts {
-        just = taint_step(stmt, tainted, &just, cx, diags);
+        let inner = SlotCx {
+            terminal_live,
+            ..*cx
+        };
+        just = taint_step(stmt, tainted, &just, &inner, diags);
+        terminal_live &= block_falls_through(std::slice::from_ref(stmt));
     }
 }
 
@@ -4738,13 +4966,8 @@ fn loop_entry_fixpoint(
 /// value, so a non-list position has no meaning (use `:-` for a default).
 pub fn check_elide_positions(program: &Program) -> Vec<Diagnostic> {
     let mut diags = Vec::new();
-    for stmt in &program.statements {
+    for stmt in program.bodies().flatten() {
         check_elide_stmt(stmt, &mut diags);
-    }
-    if let Some(ref end) = program.end_block {
-        for stmt in end {
-            check_elide_stmt(stmt, &mut diags);
-        }
     }
     diags
 }
@@ -5001,13 +5224,8 @@ fn check_elide_test(t: &TestExpr, diags: &mut Vec<Diagnostic>) {
 
 pub fn check_positionals(program: &Program) -> Vec<Diagnostic> {
     let mut diags = Vec::new();
-    for stmt in &program.statements {
+    for stmt in program.bodies().flatten() {
         check_positionals_stmt(stmt, false, &mut diags);
-    }
-    if let Some(ref end) = program.end_block {
-        for stmt in end {
-            check_positionals_stmt(stmt, false, &mut diags);
-        }
     }
     diags
 }
@@ -5163,8 +5381,8 @@ fn flag_args_toplevel(name: &str, span: Span, diags: &mut Vec<Diagnostic>) {
 /// stay function-local (SB5024) rather than being rejected outright.
 pub fn check_dollar_at(program: &Program) -> Vec<Diagnostic> {
     let mut diags = Vec::new();
-    // Both blocks, at `in_fn = false`: the DD#56 END body is top-level scope,
-    // not a function, so `$@` there is the top-level reject and the advice
+    // Main and handlers have no function positionals, so `$@` there is
+    // the top-level reject and the advice
     // points at `$(argv 1)` rather than `@args`.
     for stmt in program_blocks(program).into_iter().flatten() {
         dollar_at_stmt(stmt, false, &mut diags);
@@ -5284,13 +5502,8 @@ fn dollar_at_diag(span: Span, sigil: &str, in_fn: bool, diags: &mut Vec<Diagnost
 /// Reject misuse of array splats and quoted splats.
 pub fn check_argv_splat(program: &Program) -> Vec<Diagnostic> {
     let mut diags = Vec::new();
-    for stmt in &program.statements {
+    for stmt in program.bodies().flatten() {
         check_argv_splat_stmt(stmt, &mut diags);
-    }
-    if let Some(ref end) = program.end_block {
-        for stmt in end {
-            check_argv_splat_stmt(stmt, &mut diags);
-        }
     }
     diags
 }
@@ -5348,14 +5561,10 @@ fn check_argv_splat_body(stmts: &[Statement], diags: &mut Vec<Diagnostic>) {
 /// and for-in are exempt (this only runs for external command statements).
 /// DD#92 addendum (DG 2026-09-05): reject every write to the immutable, always-
 /// clean function-argument array `args` (SB5052). Run as its own pass over the
-/// program (and the END block), like the other `check_*` gates.
+/// program and both handlers, like the other `check_*` gates.
 pub fn check_args_immutable(program: &Program) -> Vec<Diagnostic> {
     let mut diags = Vec::new();
-    for stmt in program
-        .statements
-        .iter()
-        .chain(program.end_block.iter().flatten())
-    {
+    for stmt in program.bodies().flatten() {
         check_args_immutable_stmt(stmt, &mut diags);
     }
     diags
@@ -6039,7 +6248,7 @@ fn taint_stmt(
         StmtKind::Pipeline(p) => taint_pipeline(p, tainted, sx, diags),
         StmtKind::Redirected(r) => taint_redirected(r, tainted, just, sx, diags),
         StmtKind::Case(c) => taint_case_arms(c, tainted, sx, diags),
-        StmtKind::For(f) => taint_for(f, tainted, sx, diags),
+        StmtKind::For(f) => taint_for(f, stmt.span, tainted, sx, diags),
         // DD#121: the three shapes with alternative paths. Each clones the set
         // per path and unions at the merge, so a removal on one path cannot be
         // seen by a sibling path or by anything after the construct.
@@ -6101,6 +6310,7 @@ fn taint_capture_bodies(
             .ownership
             .borrow_mut()
             .extend(frame.ownership.take());
+        sx.body.terminals.borrow_mut().merge(frame.terminals.take());
     }
 }
 
@@ -6511,15 +6721,16 @@ fn taint_list(
 ///   must be attest-all'd first. Emitted as SB5020 directing to attest-all.
 /// - A clean source adds no taint, but rebinding cannot discharge an
 ///   unresolved acquisition (DD#128), even for `for x in a b c`.
-fn taint_for(f: &For, tainted: &mut Tainted, sx: &SlotCx, diags: &mut Vec<Diagnostic>) {
+fn taint_for(f: &For, span: Span, tainted: &mut Tainted, sx: &SlotCx, diags: &mut Vec<Diagnostic>) {
     let head = loop_entry_fixpoint(tainted, sx, |head, cx, diags| {
-        for_pass(f, head, cx, diags).0
+        for_pass(f, span, head, cx, diags).0
     });
-    *tainted = for_pass(f, &head, sx, diags).1;
+    *tainted = for_pass(f, span, &head, sx, diags).1;
 }
 
 fn for_pass(
     f: &For,
+    span: Span,
     head: &Tainted,
     sx: &SlotCx,
     diags: &mut Vec<Diagnostic>,
@@ -6537,7 +6748,7 @@ fn for_pass(
             .flat_map(|word| source_origins(word, sx))
             .collect();
         body.replace(&f.variable, origins);
-        lead.insert(f.variable.clone());
+        lead = JustTainted::from_source(HashSet::from([f.variable.clone()]), span);
     }
     let (_, exits) = sx
         .body
@@ -6938,6 +7149,7 @@ fn taint_discarded(stmt: &Statement, tainted: &Tainted, sx: &SlotCx, diags: &mut
         log: None,
         pipe_reader: None,
         failed_attests: &[],
+        terminal_live: false,
         ..*sx
     };
     taint_stmt(
@@ -7388,6 +7600,7 @@ fn taint_attest(
         return;
     };
     check_adjacency(&attest_clear_names(c), span, tainted, just, diags);
+    record_signal_pairs(c, span, just, sx);
     check_attest_ownership(&form, span, tainted, sx, diags);
     // The attested name(s) are tainted by definition — vouching for them is the
     // point — but any OTHER tainted read in the predicate is rejected.
@@ -7418,6 +7631,22 @@ fn taint_attest(
         tainted.remove(clear);
     } else {
         diags.push(Diagnostic::error_span(span, "SB5020", msg));
+    }
+}
+
+fn record_signal_pairs(c: &Command, span: Span, just: &JustTainted, sx: &SlotCx) {
+    if sx.probing {
+        return;
+    }
+    let mut pairs = sx.signal_pairs.borrow_mut();
+    for name in attest_clear_names(c) {
+        pairs.extend(
+            just.sites
+                .get(name)
+                .into_iter()
+                .flatten()
+                .map(|source| (*source, span)),
+        );
     }
 }
 
@@ -8182,9 +8411,8 @@ fn handled_elsewhere(name: &str) -> bool {
 pub fn check_undeclared_reads(program: &Program) -> Vec<Diagnostic> {
     let mut diags = Vec::new();
     let mut globals = HashSet::new();
-    collect_scope_names(&program.statements, &mut globals);
-    if let Some(ref end) = program.end_block {
-        collect_scope_names(end, &mut globals);
+    for body in program.bodies() {
+        collect_scope_names(body, &mut globals);
     }
     // DD#58: a bare name in arithmetic may be a nullary int-function call
     // (`$((f))`), so a defined function name is a valid reference — collect
@@ -8195,9 +8423,8 @@ pub fn check_undeclared_reads(program: &Program) -> Vec<Diagnostic> {
         mode: SinkMode::Flag(&mut diags),
         funcs: &funcs,
     };
-    check_reads_in_scope(&program.statements, &globals, &mut sink);
-    if let Some(ref end) = program.end_block {
-        check_reads_in_scope(end, &globals, &mut sink);
+    for body in program.bodies() {
+        check_reads_in_scope(body, &globals, &mut sink);
     }
     diags
 }
@@ -8417,11 +8644,8 @@ fn check_dead_locals(
     }
 }
 
-/// The top-level statement list plus the `__END__` block, as separate scopes.
 fn program_blocks(program: &Program) -> Vec<&[Statement]> {
-    std::iter::once(program.statements.as_slice())
-        .chain(program.end_block.as_deref())
-        .collect()
+    program.bodies().collect()
 }
 
 /// Emit SB5050 for each write whose name `is_dead`, de-duplicating by name.
@@ -8638,13 +8862,11 @@ fn dead_var_diag(span: Span, name: &str) -> Diagnostic {
 pub fn check_len_operands(program: &Program) -> Vec<Diagnostic> {
     let mut diags = Vec::new();
     let mut globals = HashSet::new();
-    collect_scope_names(&program.statements, &mut globals);
-    if let Some(ref end) = program.end_block {
-        collect_scope_names(end, &mut globals);
+    for body in program.bodies() {
+        collect_scope_names(body, &mut globals);
     }
-    check_len_in_scope(&program.statements, &globals, false, &mut diags);
-    if let Some(ref end) = program.end_block {
-        check_len_in_scope(end, &globals, false, &mut diags);
+    for body in program.bodies() {
+        check_len_in_scope(body, &globals, false, &mut diags);
     }
     diags
 }
@@ -8662,11 +8884,7 @@ pub fn check_len_operands(program: &Program) -> Vec<Diagnostic> {
 /// it here guarantees `ir::literal_word_text` succeeds in the transform.
 pub fn check_join_form(program: &Program) -> Vec<Diagnostic> {
     let mut diags = Vec::new();
-    for stmt in program
-        .statements
-        .iter()
-        .chain(program.end_block.iter().flatten())
-    {
+    for stmt in program.bodies().flatten() {
         crate::ir::walk_all_exprs(stmt, &mut |e| {
             flag_join_arity(e, &mut diags);
             flag_join_separator(e, &mut diags);
@@ -8777,11 +8995,7 @@ pub fn check_collection_scalar_read(program: &Program) -> Vec<Diagnostic> {
     // earlier read that is correct as written.
     collections.extend(auto.into_iter().filter(|n| !scalars.contains(n)));
     let mut diags = Vec::new();
-    for stmt in program
-        .statements
-        .iter()
-        .chain(program.end_block.iter().flatten())
-    {
+    for stmt in program.bodies().flatten() {
         crate::ir::walk_all_exprs(stmt, &mut |e| {
             flag_collection_scalar_read(e, &collections, &mut diags);
         });
@@ -8822,8 +9036,8 @@ pub fn check_scalar_subscript(program: &Program) -> Vec<Diagnostic> {
 /// program-wide union covers names introduced inside functions too. Sound
 /// because sash forbids shadowing: one name, one meaning, program-wide.
 fn program_scopes(program: &Program) -> Vec<&[Statement]> {
-    std::iter::once(program.statements.as_slice())
-        .chain(program.end_block.as_deref())
+    program
+        .bodies()
         .chain(program.function_defs().map(|f| f.body.as_slice()))
         .collect()
 }
@@ -9506,6 +9720,8 @@ struct SlotCx<'a> {
     stdin: &'a Origins,
     pipe_reader: Option<&'a Origins>,
     failed_attests: &'a [String],
+    terminal_live: bool,
+    signal_pairs: &'a RefCell<HashSet<(Span, Span)>>,
     /// Set while `stmt_taints` is measuring one statement's taint effect. It
     /// suppresses the nested measurement, which would otherwise double the
     /// walk at every level of nesting.
@@ -9620,6 +9836,8 @@ struct FnSummary {
     origin_reads: HashMap<String, Vec<Diagnostic>>,
     stdin_reads: Vec<Diagnostic>,
     stdout: OutputPaths,
+    terminals: TerminalLog,
+    exit_flows: HashMap<String, Vec<TerminalEntry>>,
 }
 
 impl FnSummary {
@@ -9631,14 +9849,26 @@ impl FnSummary {
         for (name, reads) in other.reads {
             self.reads.entry(name).or_default().extend(reads);
         }
-        for (name, flow) in other.origin_flows {
-            self.origin_flows.entry(name).or_default().extend(flow);
-        }
-        for (name, reads) in other.origin_reads {
-            self.origin_reads.entry(name).or_default().extend(reads);
-        }
+        self.merge_origins(other.origin_flows, other.origin_reads);
         self.stdin_reads.extend(other.stdin_reads);
         self.stdout.extend(other.stdout);
+        self.terminals.merge(other.terminals);
+        for (name, entries) in other.exit_flows {
+            self.exit_flows.entry(name).or_default().extend(entries);
+        }
+    }
+
+    fn merge_origins(
+        &mut self,
+        flows: HashMap<String, HashSet<String>>,
+        reads: HashMap<String, Vec<Diagnostic>>,
+    ) {
+        for (name, flow) in flows {
+            self.origin_flows.entry(name).or_default().extend(flow);
+        }
+        for (name, reads) in reads {
+            self.origin_reads.entry(name).or_default().extend(reads);
+        }
     }
 }
 
@@ -9648,6 +9878,43 @@ struct BodyCx {
     back_edges: RefCell<Tainted>,
     loops: RefCell<Vec<LoopExits>>,
     ownership: RefCell<Vec<(TaintOrigin, Diagnostic)>>,
+    terminals: RefCell<TerminalLog>,
+}
+
+#[derive(Clone)]
+struct TerminalEntry {
+    span: Span,
+    via: String,
+    state: Tainted,
+}
+
+#[derive(Default)]
+struct TerminalLog {
+    sources: HashMap<String, (Span, String)>,
+    exits: Vec<TerminalEntry>,
+}
+
+impl TerminalLog {
+    fn merge(&mut self, other: Self) {
+        for (name, site) in other.sources {
+            self.sources.entry(name).or_insert(site);
+        }
+        for entry in other.exits {
+            self.merge_entry(entry);
+        }
+    }
+
+    fn merge_entry(&mut self, entry: TerminalEntry) {
+        if let Some(old) = self
+            .exits
+            .iter_mut()
+            .find(|old| old.span == entry.span && old.via == entry.via)
+        {
+            old.state.extend(entry.state);
+        } else {
+            self.exits.push(entry);
+        }
+    }
 }
 
 #[derive(Clone, Default)]
@@ -9711,6 +9978,7 @@ struct BodyWalk {
     diags: Vec<Diagnostic>,
     log: SiteLog,
     ownership: Vec<(TaintOrigin, Diagnostic)>,
+    terminals: TerminalLog,
 }
 
 impl BodyWalk {
@@ -9796,6 +10064,7 @@ fn summarise_def(f: &Function, cx: &SlotCx) -> FnSummary {
         stdout,
         ..FnSummary::default()
     };
+    summary.terminals = base.terminals;
     let names: BTreeSet<_> = cx.interface.iter().collect();
     for name in names {
         let mut entry = Tainted::default();
@@ -9820,6 +10089,9 @@ fn summarise_def(f: &Function, cx: &SlotCx) -> FnSummary {
             .origin_reads
             .insert(name.clone(), walk.ownership_reads(&TaintOrigin::Incoming));
         summary
+            .exit_flows
+            .insert(name.clone(), walk.terminals.exits);
+        summary
             .reads
             .insert(name.clone(), diag_difference(walk.diags, &base.diags));
     }
@@ -9828,7 +10100,7 @@ fn summarise_def(f: &Function, cx: &SlotCx) -> FnSummary {
 
 fn walk_body(f: &Function, mut entry: Tainted, cx: &SlotCx) -> BodyWalk {
     loop {
-        let (walk, back) = walk_body_once(f, &entry, cx);
+        let (walk, back) = walk_scope(&f.body, &f.name, &entry, cx);
         if back.is_subset(&entry) {
             return walk;
         }
@@ -9836,12 +10108,17 @@ fn walk_body(f: &Function, mut entry: Tainted, cx: &SlotCx) -> BodyWalk {
     }
 }
 
-fn walk_body_once(f: &Function, entry: &Tainted, cx: &SlotCx) -> (BodyWalk, Tainted) {
+fn walk_scope(
+    stmts: &[Statement],
+    fname: &str,
+    entry: &Tainted,
+    cx: &SlotCx,
+) -> (BodyWalk, Tainted) {
     let body = BodyCx::default();
     let log = SiteLog::default();
     let input = Origins::from([TaintOrigin::Stdin]);
     let inner = SlotCx {
-        fname: &f.name,
+        fname,
         body: &body,
         log: Some(&log),
         probing: false,
@@ -9852,15 +10129,9 @@ fn walk_body_once(f: &Function, entry: &Tainted, cx: &SlotCx) -> (BodyWalk, Tain
     };
     let mut tainted = entry.clone();
     let mut diags = Vec::new();
-    taint_block(
-        &f.body,
-        &mut tainted,
-        &JustTainted::new(),
-        &inner,
-        &mut diags,
-    );
+    taint_block(stmts, &mut tainted, &JustTainted::new(), &inner, &mut diags);
     let mut exit = body.returns.take();
-    if block_falls_through(&f.body) {
+    if block_falls_through(stmts) {
         exit.extend(tainted);
     }
     (
@@ -9869,6 +10140,7 @@ fn walk_body_once(f: &Function, entry: &Tainted, cx: &SlotCx) -> (BodyWalk, Tain
             diags,
             log,
             ownership: body.ownership.take(),
+            terminals: body.terminals.take(),
         },
         body.back_edges.take(),
     )
@@ -9981,13 +10253,35 @@ fn taint_call(
     cx: &SlotCx,
     diags: &mut Vec<Diagnostic>,
 ) {
-    if name == "return" {
-        record_exit(tainted, is_self_tail_return(c, cx), cx);
-    } else if matches!(name, "break" | "continue") {
-        record_loop_exit(c, name, span, tainted, cx);
-    } else if cx.fns.contains_key(name) {
-        apply_call(name, &collection_args(&c.args), span, tainted, cx, diags);
+    match name {
+        "exit" if cx.terminal_live && exit_may_be_zero(c) => {
+            let mut state = tainted.clone();
+            state.retain(|name| cx.interface.contains(name));
+            cx.body.terminals.borrow_mut().merge_entry(TerminalEntry {
+                span,
+                via: "explicit zero exit".to_string(),
+                state,
+            });
+        }
+        "return" => record_exit(tainted, is_self_tail_return(c, cx), cx),
+        "break" | "continue" => record_loop_exit(c, name, span, tainted, cx),
+        _ if cx.fns.contains_key(name) => {
+            apply_call(name, &collection_args(&c.args), span, tainted, cx, diags);
+        }
+        _ => {}
     }
+}
+
+fn exit_may_be_zero(c: &Command) -> bool {
+    let Some(arg) = c.args.first() else {
+        return true;
+    };
+    let value = match &arg.kind {
+        ExprKind::Literal(text) => text.parse::<i64>().ok(),
+        ExprKind::Arithmetic(value) => const_eval_arith(value),
+        _ => None,
+    };
+    value.is_none_or(|value| value == 0)
 }
 
 fn is_self_tail_return(c: &Command, cx: &SlotCx) -> bool {
@@ -10078,6 +10372,9 @@ fn apply_call(
     if !cx.probing {
         relay_reads(name, span, &arrived, summary, &bindings, diags);
         relay_ownership(name, span, tainted, &bindings, cx, diags);
+        if cx.terminal_live {
+            apply_terminal_effects(name, span, summary, &bindings, &arrived, cx);
+        }
     }
     apply_summary_effects(
         summary,
@@ -10087,6 +10384,38 @@ fn apply_call(
         cx.stdin,
         tainted,
     );
+}
+
+fn apply_terminal_effects(
+    name: &str,
+    span: Span,
+    summary: &FnSummary,
+    bindings: &SummaryBindings,
+    arrived: &BTreeSet<String>,
+    cx: &SlotCx,
+) {
+    let mut log = cx.body.terminals.borrow_mut();
+    let via = format!("call to `{name}` at {}:{}", span.line, span.col);
+    for (formal, (source, origin)) in &summary.terminals.sources {
+        if let Some(actual) = bindings.get(formal.as_str()) {
+            log.sources
+                .entry((*actual).to_string())
+                .or_insert_with(|| (*source, format!("{via}: {origin}")));
+        }
+    }
+    let inherited = arrived
+        .iter()
+        .filter_map(|name| summary.exit_flows.get(name))
+        .flatten();
+    for entry in summary.terminals.exits.iter().chain(inherited) {
+        let mut state = Tainted::default();
+        extend_mapped_taint(&mut state, &entry.state, bindings);
+        log.merge_entry(TerminalEntry {
+            span: entry.span,
+            via: format!("{via}: {}", entry.via),
+            state,
+        });
+    }
 }
 
 type SummaryBindings<'a> = HashMap<&'a str, &'a str>;
@@ -10444,11 +10773,7 @@ fn slot_toplevel_diag(name: &str, span: Span) -> Diagnostic {
 /// which have no keys.
 pub fn check_operand_spelling(program: &Program) -> Vec<Diagnostic> {
     let mut diags = Vec::new();
-    for stmt in program
-        .statements
-        .iter()
-        .chain(program.end_block.iter().flatten())
-    {
+    for stmt in program.bodies().flatten() {
         crate::ir::walk_all_exprs(stmt, &mut |e| flag_operand_spelling(e, &mut diags));
     }
     diags
@@ -11196,11 +11521,7 @@ fn check_test_reads(test: &TestExpr, known: &HashSet<String>, sink: &mut ReadSin
 /// `Result`-returning).
 pub fn check_malformed_sed(program: &Program) -> Vec<Diagnostic> {
     let mut diags = Vec::new();
-    for stmt in program
-        .statements
-        .iter()
-        .chain(program.end_block.iter().flatten())
-    {
+    for stmt in program.bodies().flatten() {
         crate::ir::walk_all_exprs(stmt, &mut |e| {
             flag_malformed_sed(e, &mut diags);
             flag_malformed_trust(e, &mut diags);
@@ -11268,11 +11589,7 @@ fn flag_malformed_sed(e: &Expr, diags: &mut Vec<Diagnostic>) {
 /// takes two visitors to state one rule.
 pub fn check_subscript_index(program: &Program) -> Vec<Diagnostic> {
     let mut diags = Vec::new();
-    for stmt in program
-        .statements
-        .iter()
-        .chain(program.end_block.iter().flatten())
-    {
+    for stmt in program.bodies().flatten() {
         crate::ir::walk_all_exprs(stmt, &mut |e| flag_subscript_index(e, &mut diags));
         crate::ir::walk_stmt_tree(std::slice::from_ref(stmt), &mut |s| {
             flag_assignment_index(s, &mut diags)
@@ -11396,11 +11713,7 @@ fn ambiguous_index_error(span: Span, idx: &str) -> Diagnostic {
 /// ban has nothing left to reject. The general rule subsumes the special case.
 pub fn check_disposition_defaults(program: &Program) -> Vec<Diagnostic> {
     let mut diags = Vec::new();
-    for stmt in program
-        .statements
-        .iter()
-        .chain(program.end_block.iter().flatten())
-    {
+    for stmt in program.bodies().flatten() {
         crate::ir::walk_all_exprs(stmt, &mut |e| {
             flag_arg_builtin(e, &mut diags);
         });
@@ -12230,11 +12543,7 @@ fn match_arity_diag(name: &str, n: usize, span: Span) -> Option<Diagnostic> {
 /// variable while `len A` / `join A` / `${A[0]}` read the slot.
 pub fn check_reserved_loop_var(program: &Program) -> Vec<Diagnostic> {
     let mut diags = Vec::new();
-    for stmt in program
-        .statements
-        .iter()
-        .chain(program.end_block.iter().flatten())
-    {
+    for stmt in program.bodies().flatten() {
         check_reserved_loop_var_stmt(stmt, &mut diags);
     }
     diags
@@ -12302,11 +12611,7 @@ pub enum ReservedScope {
 /// name the intrinsic rather than an undeclared variable.
 pub fn check_reserved_names(program: &Program, scope: ReservedScope) -> Vec<Diagnostic> {
     let mut diags = Vec::new();
-    for stmt in program
-        .statements
-        .iter()
-        .chain(program.end_block.iter().flatten())
-    {
+    for stmt in program.bodies().flatten() {
         check_reserved_names_stmt(stmt, scope, &mut diags);
     }
     diags
@@ -12391,11 +12696,7 @@ fn flag_reserved(name: &str, what: &str, span: Span, diags: &mut Vec<Diagnostic>
 /// non-numeric `continue abc` silently became `continue 1` via `unwrap_or(1)`.
 pub fn check_loop_control_context(program: &Program) -> Vec<Diagnostic> {
     let mut diags = Vec::new();
-    for stmt in program
-        .statements
-        .iter()
-        .chain(program.end_block.iter().flatten())
-    {
+    for stmt in program.bodies().flatten() {
         check_loop_control_stmt(stmt, false, &mut diags);
     }
     diags

@@ -45,6 +45,10 @@ static int xInitialized = 0;
  * touched: a large reservation costs address space, not memory. */
 __attribute__((weak)) size_t sash_heap_size = 256UL * 1024 * 1024;
 
+/* Strong compiler definitions make handlers available before heap startup. */
+__attribute__((weak)) void (*const sash_on_exit)(int64_t) = NULL;
+__attribute__((weak)) void (*const sash_on_error)(int64_t) = NULL;
+
 /* Initialize the heap from an externally provided region */
 void sash_heap_init(void *heap, size_t heap_size) {
     BlockLink_t *first;

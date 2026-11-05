@@ -1,48 +1,48 @@
 #!/bin/bash
-# DD#56 — signals and END block
+# DD#56 / DD#128 — signals and terminal handlers
 . common.sh
 plan=73
 setup signals
 
 set +e
 
-# --- END block ---
+# --- Terminal handlers ---
 
-# 56.1 END block executes at exit
-run_sash 'END {
+# EXIT executes on orderly completion.
+run_sash 'EXIT {
   echo bye
 }
 echo hello'
-[[ $rc = 0 && $out == *"hello"* && $out == *"bye"* && -z $err ]]; chk 56.1
+[[ $rc = 0 && $out == *"hello"* && $out == *"bye"* && -z $err ]]; chk h128.56.1
 
-# 56.2a reaching end of END terminates
-run_sash 'END {
+# Reaching the end of EXIT terminates.
+run_sash 'EXIT {
   echo done
 }
 echo main'
-[[ $rc = 0 && $out == *"done"* && -z $err ]]; chk 56.2a
+[[ $rc = 0 && $out == *"done"* && -z $err ]]; chk h128.56.2a
 
-# 56.2b return in END terminates (no re-entry)
-run_sash 'END {
+# Return in EXIT terminates without re-entry.
+run_sash 'EXIT {
   return
   echo unreachable
 }
 echo main'
-[[ $rc = 0 && $out != *"unreachable"* && -z $err ]]; chk 56.2b
+[[ $rc = 0 && $out != *"unreachable"* && -z $err ]]; chk h128.56.2b
 
-# 56.3 exit N in END overrides exit status
-run_sash 'END {
+# An explicit exit in ERR overrides the triggering status.
+run_sash 'ERR {
   exit 42
 }
 /bin/false'
-[[ $rc = 42 && -z $err ]]; chk 56.3
+[[ $rc = 42 && -z $err ]]; chk h128.56.3
 
 # 56.4 without exit N, preserves triggering status
-run_sash 'END {
-  echo cleanup
+run_sash 'ERR {
+  - echo cleanup
 }
 /bin/false'
-[[ $rc != 0 && $out == *"cleanup"* && -z $err ]]; chk 56.4
+[[ $rc != 0 && $out == *"cleanup"* && -z $err ]]; chk h128.56.4
 
 # --- signal builtin ---
 
@@ -64,23 +64,23 @@ run_sash 'signal 10 FLAG
 echo $(signum)'
 [[ $rc = 0 && $out = "10" && -z $err ]]; chk 56.7
 
-# 56.8 signal EXIT triggers END block
-run_sash 'END {
+# A configured signal selects EXIT, despite its nonzero status.
+run_sash 'EXIT {
   echo shutting_down
 }
 signal 15 EXIT
 /bin/kill -TERM $$
 echo should_not_reach'
-[[ $rc != 0 && $out == *"shutting_down"* && $out != *"should_not_reach"* && -z $err ]]; chk 56.8
+[[ $rc != 0 && $out == *"shutting_down"* && $out != *"should_not_reach"* && -z $err ]]; chk h128.56.8
 
 # 56.9 check points at external commands
-run_sash 'END {
+run_sash 'EXIT {
   echo caught
 }
 signal 2 EXIT
 /bin/kill -INT $$
 /bin/echo after_kill'
-[[ $rc != 0 && $out == *"caught"* && $out != *"after_kill"* && -z $err ]]; chk 56.9
+[[ $rc != 0 && $out == *"caught"* && $out != *"after_kill"* && -z $err ]]; chk h128.56.9
 
 # 56.10 FLAG has zero overhead (no early exit)
 run_sash 'signal 2 FLAG
@@ -111,9 +111,9 @@ echo ok'
 [[ $rc = 0 && $out = "ok" && -z $err ]]; chk 56.13
 
 # --- DD#56: `trap` is not a native form (SB4043) ---
-# The native signal model is the `signal` builtin + `END { }`; `trap` is a bash
+# The native signal model is the `signal` builtin + `EXIT { }`; `trap` is a bash
 # spelling the converter rewrites (57.14 below). A hand-written `trap` in sash
-# source is rejected, pointing at signal/END. (Validation reject — all modes.)
+# source is rejected, pointing at signal/EXIT. (Validation reject — all modes.)
 
 # 56.14 `trap … EXIT` (command handler) → SB4043
 run_sash 'trap "echo cleanup" EXIT; echo hi'
@@ -122,43 +122,35 @@ run_sash 'trap "echo cleanup" EXIT; echo hi'
 run_sash 'trap "" SIGINT; echo hi'
 [[ $rc != 0 && -z $out && $err == *SB4043* ]]; chk 56.15
 
-# --- DD#56: `$?` in the END block is the TRIGGERING status (first action) ---
-# The END block is entered because of a status — an abort's failing code, an
-# `exit N`, or the last command's status on normal exit — so that status is
-# available as its FIRST action, like a handling branch.
+# The handler's triggering status is available as its first action.
 
-# 56.30 abort (failed command) → `$?` in END is the failing exit code
-run_sash 'END { /bin/echo "s=$?" }
+run_sash 'ERR { - /bin/echo "s=$?" }
 /bin/false'
-[[ $rc != 0 && $out == *"s=1"* && -z $err ]]; chk 56.30
+[[ $rc != 0 && $out == *"s=1"* && -z $err ]]; chk h128.56.30
 
-# 56.31 `exit N` → `$?` in END is N (the requested exit code). Both modes as of
-# the c-backend fix: c's emit_exit went straight to the final `__exit` label and
-# skipped END entirely; it now routes through the END block carrying the code,
-# like native.
-run_sash 'END { /bin/echo "s=$?" }
+run_sash 'ERR { - /bin/echo "s=$?" }
 exit 5'
-[[ $rc = 5 && $out == *"s=5"* && -z $err ]]; chk 56.31
+[[ $rc = 5 && $out == *"s=5"* && -z $err ]]; chk h128.56.31
 
 # 56.34 DD#89: a bare `exit` is `exit 0`, NOT "keep the previous status". The c
 # backend left __exit_status untouched, so a bare exit after a `-`-suppressed
-# failure exited 1 there and 0 in native. END sees 0 too.
-run_sash 'END { /bin/echo "s=$?" }
+# failure exited 1 there and 0 in native. EXIT sees 0 too.
+run_sash 'EXIT { /bin/echo "s=$?" }
 - /bin/false
 exit'
-[[ $rc = 0 && $out == *"s=0"* && -z $err ]]; chk 56.34
+[[ $rc = 0 && $out == *"s=0"* && -z $err ]]; chk h128.56.34
 
-# 56.35 the same bare exit with no END block — the exit code itself is 0
+# 56.35 the same bare exit with no handler — the exit code itself is 0
 run_sash '- /bin/false
 exit'
 [[ $rc = 0 && -z $out && -z $err ]]; chk 56.35
 
-# 56.32 normal exit → `$?` in END is the last command's status (0 here)
-run_sash 'END { /bin/echo "s=$?" }
+# Normal completion preserves the last status.
+run_sash 'EXIT { /bin/echo "s=$?" }
 /bin/echo hi'
-[[ $rc = 0 && $out == *"s=0"* && -z $err ]]; chk 56.32
+[[ $rc = 0 && $out == *"s=0"* && -z $err ]]; chk h128.56.32
 
-# 56.33 guard: the END-entry status does NOT leak into a regular function — a
+# 56.33 guard: handler-entry status does NOT leak into a regular function — a
 # `$?` as the first action of an ordinary function is still SB5012 (all modes).
 run_sash 'fn f { /bin/echo "$?" }
 f'
@@ -176,52 +168,35 @@ run_convert '#!/bin/bash
 trap - SIGTERM'
 [[ $rc = 0 && $out == *'signal 15 DFL'* && -z $err ]]; chk 57.14b
 
-# --- END is a Program field, not a __sash_end__ function ---------------
-# DD#56. `END { }` parses into `Program::end_block`; it used to be emitted as
-# a function literally named `__sash_end__`, which leaked that name into user
-# diagnostics, let a second END silently win, and left `:end-block nil` in the
-# --emit-ir capture. Journal 309.
-
-# 56.36 an END block is not a statement — it cannot be nested or made
-# conditional. (It used to report SB5071 about `fn __sash_end__`.)
+# Handlers are separate Program fields, never nested statements.
 run_sash 'fn f {
-END {
+EXIT {
 /bin/echo a
 }
 }
 f'
-[[ $rc != 0 && -z $out && $err == *SB4054* && $err != *__sash_end__* ]]; chk 56.36
+[[ $rc != 0 && -z $out && $err == *SB4054* && $err != *__sash_end__* ]]; chk h128.56.36
 
-# 56.37 a second END block is rejected. It used to be accepted, with the
-# second silently winning and the first never running.
-run_sash 'END {
+# A second declaration of the same handler is rejected.
+run_sash 'EXIT {
 /bin/echo a
 }
-END {
+EXIT {
 /bin/echo b
 }'
-[[ $rc != 0 && -z $out && $err == *SB4055* ]]; chk 56.37
+[[ $rc != 0 && -z $out && $err == *SB4055* ]]; chk h128.56.37
 
-# 56.88 an END body that never closes is a parse error, reported and recovered
-# from rather than carried forward. `take_end_block`'s Err arm had never run:
-# every END in the suite parses, so the one path that reports a malformed one
-# was unexercised. It matters because the arm also decides what happens *next*
-# — it recovers and keeps parsing rather than registering a half-built body, so
-# a failure here would not be a missing message but a later pass walking an END
-# block the parser never finished.
+# A malformed handler must not reach downstream passes as a partial body.
 run_sash 'echo hi
-END {
+EXIT {
 /bin/echo bye'
-[[ $rc != 0 && -z $out && $err == *SB4014* ]]; chk 56.88
+[[ $rc != 0 && -z $out && $err == *SB4014* ]]; chk h128.56.88
 
-# 56.38 the END body is TOP-LEVEL scope, not a function body, so a positional
-# splat is the top-level reject (SB5045) exactly as it is outside END. While
-# END was encoded as a function, `$@` inside it was silently accepted as that
-# function's arguments.
-run_sash 'END {
+# The handler's scope is global, not a function's positional-argument scope.
+run_sash 'EXIT {
 /bin/echo $@
 }'
-[[ $rc != 0 && -z $out && $err == *SB5045* ]]; chk 56.38
+[[ $rc != 0 && -z $out && $err == *SB5045* ]]; chk h128.56.38
 
 # --- SB4059-SB4062: the shape of a `signal` declaration (DD#56) ---
 # Every one of these used to compile clean and silently do nothing.
@@ -288,115 +263,93 @@ signal 15 EXIT
 echo ok'
 [[ $rc = 0 && $out = "ok" && -z $err ]]; chk 56.51
 
-# --- 56.80+ a failure inside END must not route the abort THROUGH END ---
-#
-# DD#55 aborts route through the END block so cleanup runs. From *inside*
-# END that is a jump to the block already executing: the program looped
-# forever, emitting the diagnostic hundreds of thousands of times (rc=124
-# under timeout). `run_sash` is time-limited, so a regression here shows up
-# as a hang-class failure rather than a wrong-output one.
-#
-# Two separate holes fed it. The unchecked marking used a label test, but
-# `install_end_block` lowers the trap body with `lower_stmts`, so only the
-# *entry* block is named `__end__` and an `if`/`for` inside END produced
-# ordinary labels (56.81/56.82). And the redirect open(2) abort keys on
-# position, never on `checked`, so the marking could not reach it at all
-# (56.80, 56.83, 56.84). DG chose: diagnose, restore, keep cleaning up.
-
-# 56.80 a redirect open failure in END diagnoses and the cleanup continues
+# EXIT is checked, including nested blocks and redirect scopes.
+# Failures enter ERR once rather than restarting or silently continuing EXIT.
 run_sash 'echo main
-END {
+EXIT {
   echo hi > /nonexistent_dir_56/f
   echo tail
-}'
-[[ $rc = 0 && $out = "main
-tail" && $rerr == *"/nonexistent_dir_56/f: No such file or directory"* ]]; chk 56.80
+}
+ERR { - echo failed }'
+[[ $rc = 1 && $out = $'main\nfailed' &&
+   $rerr == *"/nonexistent_dir_56/f: No such file or directory"* ]]; chk h128.56.80
 
-# 56.81 a failing command inside an `if` inside END: the nested block gets
-# an ordinary label, so the label test left it checked and it aborted
 run_sash 'echo main
-END {
+EXIT {
   if /bin/true {
     /bin/false
     echo tail
   }
-}'
-[[ $rc = 0 && $out = "main
-tail" ]]; chk 56.81
+}
+ERR { - echo failed }'
+[[ $rc = 1 && $out = $'main\nfailed' ]]; chk h128.56.81
 
-# 56.82 ... and inside a `for`, where the abort re-entered per iteration
 run_sash 'echo main
-END {
+EXIT {
   for i in 1 2 {
     echo n$i
     /bin/false
   }
   echo tail
-}'
-[[ $rc = 0 && $out = "main
-n1
-n2
-tail" ]]; chk 56.82
+}
+ERR { - echo failed }'
+[[ $rc = 1 && $out = $'main\nn1\nfailed' ]]; chk h128.56.82
 
-# 56.83 the open failure nested inside an `if` inside END — both holes at
-# once (nested block AND the position-keyed redirect abort)
 run_sash 'echo main
-END {
+EXIT {
   if /bin/true {
     echo hi > /nonexistent_dir_56/f
     echo tail
   }
-}'
-[[ $rc = 0 && $out = "main
-tail" && $rerr == *"/nonexistent_dir_56/f: No such file or directory"* ]]; chk 56.83
+}
+ERR { - echo failed }'
+[[ $rc = 1 && $out = $'main\nfailed' &&
+   $rerr == *"/nonexistent_dir_56/f: No such file or directory"* ]]; chk h128.56.83
 
-# 56.84 a redirect *scope* on a function call in END behaves the same, and
-# reports — silence is for a caught failure (55.25), not a cleanup one
 run_sash 'fn f { echo hi }
 echo main
-END {
+EXIT {
   f > /nonexistent_dir_56/f
   echo tail
-}'
-[[ $rc = 0 && $out = "main
-tail" && $rerr == *"/nonexistent_dir_56/f: No such file or directory"* ]]; chk 56.84
+}
+ERR { - echo failed }'
+[[ $rc = 1 && $out = $'main\nfailed' &&
+   $rerr == *"/nonexistent_dir_56/f: No such file or directory"* ]]; chk h128.56.84
 
-# 56.85 `read` shares the guard, so it gets the same treatment
 run_sash 'echo main
-END {
+EXIT {
   read a < /nonexistent_dir_56/f
   echo "n=$(len a)"
-}'
-[[ $rc = 0 && $out = "main
-n=0" && $rerr == *"/nonexistent_dir_56/f: No such file or directory"* ]]; chk 56.85
+}
+ERR { - echo "n=$(len a)" }'
+[[ $rc = 1 && $out = $'main\nn=0' &&
+   $rerr == *"/nonexistent_dir_56/f: No such file or directory"* ]]; chk h128.56.85
 
-# 56.86 OUTSIDE END the abort is unchanged — it still aborts, and still
-# routes through END so the cleanup runs exactly once (guards the fix
-# against over-reach: `in_end_block` must be the region, not the program)
+# Main failures select ERR directly.
 run_sash 'echo main
-END {
-  echo cleanup
+ERR {
+  - echo cleanup
 }
 echo hi > /nonexistent_dir_56/f
 echo unreachable'
 [[ $rc != 0 && $out = "main
-cleanup" && $rerr == *"/nonexistent_dir_56/f: No such file or directory"* ]]; chk 56.86
+cleanup" && $rerr == *"/nonexistent_dir_56/f: No such file or directory"* ]]; chk h128.56.86
 
-# 56.87 an explicit `exit N` inside END still wins over a failed open
+# A caught setup failure can deliberately terminate with a chosen status.
 run_sash 'echo main
-END {
-  echo hi > /nonexistent_dir_56/f
+EXIT {
+  if echo hi > /nonexistent_dir_56/f { : }
   exit 7
 }'
-[[ $rc = 7 && $out = "main" ]]; chk 56.87
+[[ $rc = 7 && $out = "main" ]]; chk h128.56.87
 
 # FLAG cannot become an EXIT merely because another signal is EXIT-armed.
 run_sash 'signal 12 FLAG
 signal 15 EXIT
-END { echo $(signum) }
+EXIT { echo $(signum) }
 /bin/kill -12 $$
 echo survived'
-[[ $rc = 0 && $out = $'survived\n12' && -z $rerr ]]; chk sig518.1
+[[ $rc = 0 && $out = $'survived\n12' && -z $rerr ]]; chk h128.sig518.1
 
 run_sash 'signal 15 EXIT
 /bin/kill -15 $$
@@ -424,13 +377,13 @@ echo bad'
 
 run_sash 'signal 15 EXIT
 fn cleanup { /bin/echo end }
-END {
+EXIT {
   cleanup
   for x in a b { /bin/echo $x }
 }
 /bin/kill -15 $$
 echo bad'
-[[ $rc = 143 && $out = $'end\na\nb' && -z $rerr ]]; chk sig518.18
+[[ $rc = 143 && $out = $'end\na\nb' && -z $rerr ]]; chk h128.sig518.18
 
 # Delivery on the first authored write leaves a pending EXIT without an
 # external-command checkpoint masking the function/loop boundary under test.
@@ -501,37 +454,35 @@ out=$(timeout "$SPEC_TIMEOUT" "${SASH:-sash}" --emit-c flag.sash 2> flag.err)
 rc=$?
 [[ $rc = 0 && $out != *"= sash_exit_signum;"* && $out != *"__signal_checkpoint"* && ! -s flag.err ]]; chk sig518.17
 
-# ---- B9 (batch-531 port, F2): END runs only in the main process (DD#56
-# addendum 2026-10-28). A forked child — a background job, a function stage —
-# leaves with its own status and never runs END.
+# Forked children leave with their own status and never run either handler.
 
-# 56.89 `exit` in a background function: END runs once, in the parent
-run_sash 'END { echo "end $?" }
+run_sash 'EXIT { echo "end $?" }
+ERR { - echo unexpected }
 fn f { echo hi; exit 3 }
 f &
 - wait
 echo after'
-[[ $rc = 0 && $out = $'hi\nafter\nend 0' && -z $rerr ]]; chk 56.89
+[[ $rc = 0 && $out = $'hi\nafter\nend 0' && -z $rerr ]]; chk h128.56.89
 
 # 56.91 `exit 0` in a stage function
-run_sash 'END { echo "end $?" }
+run_sash 'EXIT { echo "end $?" }
+ERR { - echo unexpected }
 fn f { echo hi; exit 0 }
 f | /bin/cat
 echo after'
-[[ $rc = 0 && $out = $'hi\nafter\nend 0' && -z $rerr ]]; chk 56.91
+[[ $rc = 0 && $out = $'hi\nafter\nend 0' && -z $rerr ]]; chk h128.56.91
 
 # 56.92 a failing final-stage function: the parent aborts, names `f`, and runs
-# END exactly once
-run_sash 'END { echo "end $?" }
+# ERR exactly once
+run_sash 'ERR { - echo "end $?" }
 fn f { /bin/cat; exit 3 }
 /bin/echo a | f
 echo after'
-[[ $rc = 3 && $out = $'a\nend 3' && $rerr = "./test_bin: f: command failed (exit 3)" ]]; chk 56.92
+[[ $rc = 3 && $out = $'a\nend 3' && $rerr = "./test_bin: f: command failed (exit 3)" ]]; chk h128.56.92
 
-# 56.93 a background job started inside END does not re-enter END (it used to,
-# and a job in END forked without end; the marker file bounds this probe)
+# A job started inside EXIT does not re-enter it; the marker bounds regressions.
 rm -f endk.ran
-run_sash 'END {
+run_sash 'EXIT {
   if [[ -e endk.ran ]] { echo "re-entered"; exit 9 }
   /bin/touch endk.ran
   /bin/echo e &
@@ -541,29 +492,29 @@ run_sash 'END {
 /bin/true &
 - wait
 echo main'
-[[ $rc = 0 && $out = $'main\ne\nend' && -z $rerr ]]; chk 56.93
+[[ $rc = 0 && $out = $'main\ne\nend' && -z $rerr ]]; chk h128.56.93
 rm -f endk.ran
 
 # A cleanup body shares global variables, not the program's definition root.
 # DD86's SB5071 applies here too; DD128 retains it for both EXIT and ERR.
-run_sash 'END {
+run_sash 'EXIT {
 fn cleanup { echo done; }
 cleanup
 }'
-[[ $rc != 0 && -z $out && $err == *':2:1: error [SB5071]'* && $err == *'Move `fn cleanup` to the top level.'* ]]; chk fnroot.1
+[[ $rc != 0 && -z $out && $err == *':2:1: error [SB5071]'* && $err == *'Move `fn cleanup` to the top level.'* ]]; chk h128.fnroot.1
 
 # Actual completed writes, not the normal-path version after a skipped attest.
 run_sash 'x=safe
 x=$(/bin/sh -c "echo evil; exit 3")
 attest x [[ $x == allowed ]]
-END { echo "end[${x:!}]" }'
-[[ $rc = 3 && -z $err && $out = 'end[safe]' && $rerr == *'command failed (exit 3)'* ]]; chk gstate.1
+ERR { - echo "end[${x:!}]" }'
+[[ $rc = 3 && -z $err && $out = 'end[safe]' && $rerr == *'command failed (exit 3)'* ]]; chk h128.gstate.1
 
 run_sash 'x=before
 /bin/sh -c "echo changed; exit 3" | readline x
 attest x [[ $x == allowed ]]
-END { echo "read[${x:!}]" }'
-[[ $rc = 3 && -z $err && $out = 'read[changed]' && $rerr == *'command failed (exit 3)'* ]]; chk gstate.2
+ERR { - echo "read[${x:!}]" }'
+[[ $rc = 3 && -z $err && $out = 'read[changed]' && $rerr == *'command failed (exit 3)'* ]]; chk h128.gstate.2
 
 set -e
 tally

@@ -15,9 +15,10 @@ supports both:
    the program. `$? = 0`.
 2. **program replacement** — `exec CMD args`: `execve(2)` the current process
    with `CMD`. Control **never returns** on success — statements after it are
-   unreachable, and the replace form does not reach the `END` block / DD#55
-   exit checks (control leaves via execve). If execve fails, the process exits
-   127.
+   unreachable, and the replace form reaches neither terminal handler nor DD#55
+   exit checks (control leaves via execve). If execve fails, status 127 enters
+   ERR in the main process; a forked child terminates without a parent handler
+   (DD#128).
 
 ### Target discipline (same as any command — DD#23/#24)
 

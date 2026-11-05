@@ -472,7 +472,8 @@ Filed as backlog tasks while researching B55, under the same rule:
 - [x] **B112** (open; DD95). `while - { … } { … }` sidesteps SB4027, a bug
   per DD95. Fixing it rewrites the branch's endck.10 and endck.11.
   - Landed in F1+F4 (journal 537): a `{ }` group behind `-` is SB4027
-    (cnd.7). W5 rewrites endck.10 and endck.11 to match.
+    (cnd.7). DD128's terminal-handler specs replace the useful `endck`
+    claims without restoring the rejected condition forms (journal 569).
 - [x] **n1** (fixed-on-branch; DD55). `! - a | b`: SB4018 on base, SB4019 on
   the branch.
   - Landed in F1+F4 (journal 537), as on the branch (bng.13).
@@ -1251,11 +1252,21 @@ control is `loopflow.15`, not a claim that the counted form is repaired.
     Unlowered redirect operands retain the bare-name lookup, and process
     isolation still does not make the inherited parent view precise at a fork.
 
-### 18. W5 END
+### 18. W5 terminal handlers
 
-- [ ] **B96** (fixed-on-branch+question; DD56). CRITICAL: END's entry state
+Closed under DG's DD128 model, not by porting the reference's END entry
+walker. Main, EXIT and ERR use actual process-global storage and independent
+entry contracts; END is rejected. Journal 569 records the implementation
+and its separate source, SSA, backend-poll and runtime controls.
+
+- [x] **B96** (fixed-on-branch+question; DD56). CRITICAL: END's entry state
   was modelled from the main fall-through only. Question: which exits run
   END.
+  - DD128 selects by cause, preserves the full integer status and completed
+    global writes, and checks EXIT's actual incoming states. ERR uses the
+    conservative potential-source contract. `handler128.6`-`.17` and
+    `errentry.1`-`.8` pin the distinction; losing source requirements or SSA
+    input classification independently turns their corresponding checks red.
 - [x] **B97** (open on reference; DD56, DD51). Native and C disagree after an abort edge
   into END: `x=safe; x=$(/bin/sh -c "echo evil; exit 3"); attest x …; END {
   echo "end [$x:!]" }` prints `[:!]` in native and `[safe:!]` in C.
@@ -1267,22 +1278,37 @@ control is `loopflow.15`, not a claim that the counted form is repaired.
     alias makes exactly these two native checks fail; disabling global
     metadata while keeping the alias does not. The storage prerequisite
     alone is therefore not credited with fixing the retag bug.
-- [ ] **B109** (fixed-on-branch; DD56). CRITICAL: a pending EXIT signal was
+  - Journal 569 retains both value assertions as `h128.gstate.1`/`.2`
+    through generated ERR callbacks, with explicit `:!` reads.
+- [x] **B109** (fixed-on-branch; DD56). CRITICAL: a pending EXIT signal was
   checked too late.
-- [ ] **B110** (open; DD56, DD24). Taint bypass on both binaries: `/bin/sh
+  - The shared signal plan includes function returns and every direct
+    backend poll, while protecting a single-use call's caller-side adjacent
+    attest. `sigguard.1`-`.3` pin these boundaries. Independent explicit-poll
+    and backend-deferral reversions expose the premature dispatch.
+- [x] **B110** (open; DD56, DD24). Taint bypass on both binaries: `/bin/sh
   -c 'echo hi; exit 3' | readline x; attest x [[ $x == safe ]]; END { echo
   "end $x" }` reaches END through the abort edge before the attest; C prints
   `end hi` (native prints `end `, B97's divergence).
   - Journal 567 fixes the native value discrepancy (`gstate.2`, with an
-    explicit `:!` read). The handler-entry taint bypass remains open for
-    DD128; a correct value is not a clean value.
-- [ ] **B111** (fixed-on-branch; DD56). A signal poll was lost, in both
+    explicit `:!` read). Journal 569 closes the separate entry contract:
+    producer failure selects ERR, whose incoming value remains potentially
+    tainted. Parent reader effects survive; they are not thereby trusted.
+    The source requirements and independent SSA checks cover the refusal,
+    while `h128.gstate.2` retains the actual-value assertion.
+- [x] **B111** (fixed-on-branch; DD56). A signal poll was lost, in both
   backends.
-- [ ] **e7** (question; DD56, DD24). `x=$(getenv HOME); x=clean; END { echo
+  - Both backends now poll after reader completion and producer-status
+    handling. Removing those actual emission calls, without changing the
+    logical signal plan, makes exactly `sigguard.9` fail in each backend.
+- [x] **e7** (question; DD56, DD24). `x=$(getenv HOME); x=clean; END { echo
   "end $x" }` prints `end clean` on both binaries. Which exits END must
   assume is W5's framing question (c). Branch specs: endck.1-11.
-  DD128 settles the policy; journal 568 implements the strict overwrite
-  rule. The new handler-entry and routing implementation remains W5.
+  - DD128 settles the policy; journal 568 implements the strict overwrite
+    rule, and journal 569 applies the independent handler-entry contracts.
+    A later literal overwrite cannot resolve inherited taint in either
+    handler. The new `errentry`/`handler128` specs replace the branch's
+    `endck` expectations rather than crediting a parser rejection as a fix.
 
 ### 19. Typing
 

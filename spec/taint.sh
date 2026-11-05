@@ -2542,14 +2542,14 @@ y=$(echo ${m[$(cat b37.key)]:-dflt})
 echo "$y"'
 [[ $rc != 0 && -z $out \
    && $err == *':2:10: error [SB5020] tainted command substitution used without attest'* ]]; chk capres.15
-# capres.16 in END
+# Capture-index resolution also runs in EXIT.
 run_sash 'map m=([k]=v)
-END {
+EXIT {
   b=${m[$(cat b37.key)]:-dflt}
   echo "$b"
 }'
 [[ $rc != 0 && -z $out \
-   && $err == *':3:5: error [SB5020] tainted command substitution used without attest'* ]]; chk capres.16
+   && $err == *':3:5: error [SB5020] tainted command substitution used without attest'* ]]; chk h128.capres.16
 # capres.17 (positive) a builtin in the index stays a builtin, so it is clean
 run_sash 'map m=([k]=v)
 b=${m[$(echo k)]:-dflt}
@@ -2761,15 +2761,15 @@ echo "$x"' B
 [[ $rc != 0 && -z $out && $err == *:2:19:*SB5098* \
    && $err == *'`$(- …)` is a suppressed capture'* ]]; chk atpred.5
 
-# atpred.6 a statement builtin runs code; the rule reaches the END block
-run_sash 'END {
+# A statement builtin runs code; the predicate rule reaches EXIT.
+run_sash 'EXIT {
   x=$(getenv HOME)
   attest x [[ $x == $(read y) ]]
   echo "$x"
 }
 echo main'
 [[ $rc != 0 && -z $out && $err == *:3:21:*SB5098* \
-   && $err == *'`$(read …)` runs `read`'* ]]; chk atpred.6
+   && $err == *'`$(read …)` runs `read`'* ]]; chk h128.atpred.6
 
 # atpred.7 a shape rule, not a taint rule: it holds under --no-taint, where
 # SB5020 is silent

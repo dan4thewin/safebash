@@ -1637,8 +1637,18 @@ one call site — immediately after that call; received taint is never
 attested inside a body. Globals and A-E now share independent per-function
 summaries, mapped at each call; `SlotInfo` is gone. A passed global's unused
 identity flow must be omitted, or it undoes cleanup through its slot.
-DD#127's "Implementation status" lists the remaining W5 and precision
-boundaries.
+DD#127's "Implementation status" lists the remaining precision boundaries.
+
+EXIT and ERR are independent executable roots over actual process-global
+storage (DD#128), not continuations of main's final SSA state. EXIT checks
+its actual incoming states; ERR conservatively requires `:!` for potentially
+tainted incoming globals. A fresh acquisition inside a handler can be
+attested there; a partial refresh cannot justify an inherited-input attest.
+Definitions remain main-list-only (SB5071). The runtime calls private
+generated handlers once, never in children; fatal dispatch itself allocates
+nothing. Shared signal planning covers explicit and backend-emitted polls,
+deferring EXIT dispatch through legal acquisition/attest resolution without
+deferring ordinary failure or explicit exit.
 
 Env vars ($HOME, $PATH, etc.) are NOT special — they're just
 `$(getenv NAME)`, which is tainted. The validator (SB5018) rejects

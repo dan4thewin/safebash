@@ -663,7 +663,8 @@ fn convert_command(
                     // trap 'handler' SIG → MANUAL
                     prefix_lines.push((
                         line,
-                        "# MANUAL: trap with handler body — restructure as END { ... } block"
+                        "# MANUAL: trap body — choose checked EXIT { ... } for orderly \
+                         termination or ERR { ... } with explicit failure handling"
                             .into(),
                     ));
                 }

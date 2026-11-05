@@ -29,21 +29,16 @@ use super::lexer::{has_bare_spelling, Scanner, Tok};
 use crate::diagnostic::Diagnostic;
 use crate::ir::*;
 
-/// Parse sash-native source into IR.
-/// Returns the program or a list of diagnostics on failure.
-/// DD#56: consume one `END { }` at the top level into `end_block`.
-///
-/// Split out of `parse` for the complexity gate. `end_span` doubles as the
-/// seen-flag and as the line number SB4055 quotes back.
-fn take_end_block(
+fn take_handler(
     scanner: &mut Scanner,
-    end_block: &mut Option<Vec<Statement>>,
-    end_span: &mut Option<Span>,
+    program: &mut Program,
+    kind: HandlerKind,
+    spans: &mut std::collections::BTreeMap<HandlerKind, Span>,
     diags: &mut Vec<Diagnostic>,
 ) {
     let sp = scanner.peek().span;
     let span = span_from(scanner, sp.start);
-    let body = match parse_end_block(scanner) {
+    let body = match parse_handler_body(scanner, kind) {
         Ok(body) => body,
         Err(d) => {
             diags.push(d);
@@ -51,19 +46,23 @@ fn take_end_block(
             return;
         }
     };
-    match *end_span {
+    match spans.get(&kind) {
         Some(prev) => diags.push(parse_error(
             span,
             "SB4055",
             format!(
-                "a second `END {{ }}` block — a program has one exit handler, \
-                 and the first (line {}) would never run. Merge the two bodies.",
+                "a second `{} {{ }}` block — a program has at most one of each \
+                 handler. Merge it with the first (line {}).",
+                kind.name(),
                 prev.line
             ),
         )),
         None => {
-            *end_span = Some(span);
-            *end_block = Some(body);
+            spans.insert(kind, span);
+            match kind {
+                HandlerKind::Exit => program.exit_block = Some(body),
+                HandlerKind::Err => program.err_block = Some(body),
+            }
         }
     }
 }
@@ -125,23 +124,18 @@ pub(super) fn scanner_fatal(scanner: &Scanner) -> Option<Diagnostic> {
 
 pub fn parse(source: &str) -> Result<(Program, Vec<Diagnostic>), Vec<Diagnostic>> {
     let mut scanner = Scanner::new(source);
-    let mut stmts = Vec::new();
+    let mut program = Program {
+        statements: Vec::new(),
+        exit_block: None,
+        err_block: None,
+    };
     let mut diags = Vec::new();
-    let mut end_block: Option<Vec<Statement>> = None;
-    let mut end_span: Option<Span> = None;
+    let mut handler_spans = std::collections::BTreeMap::new();
 
+    skip_terminators(&mut scanner);
     while !scanner.at_eof() {
+        parse_top_level_item(&mut scanner, &mut program, &mut handler_spans, &mut diags);
         skip_terminators(&mut scanner);
-        if scanner.at_eof() {
-            break;
-        }
-        parse_top_level_item(
-            &mut scanner,
-            &mut stmts,
-            &mut end_block,
-            &mut end_span,
-            &mut diags,
-        );
     }
 
     if let Some(d) = scanner_fatal(&scanner) {
@@ -154,10 +148,6 @@ pub fn parse(source: &str) -> Result<(Program, Vec<Diagnostic>), Vec<Diagnostic>
         return Err(diags);
     }
 
-    let program = Program {
-        statements: stmts,
-        end_block,
-    };
     assert_no_magic_sugar(&program);
     Ok((program, diags))
 }
@@ -182,10 +172,7 @@ pub fn parse(source: &str) -> Result<(Program, Vec<Diagnostic>), Vec<Diagnostic>
 /// a status SB5012 never saw.
 fn assert_no_magic_sugar(program: &Program) {
     let check = |stmt: &Statement| crate::ir::walk_all_exprs(stmt, &mut assert_expr_no_magic_sugar);
-    for stmt in &program.statements {
-        check(stmt);
-    }
-    for stmt in program.end_block.iter().flatten() {
+    for stmt in program.bodies().flatten() {
         check(stmt);
     }
 }
@@ -210,21 +197,19 @@ fn assert_expr_no_magic_sugar(e: &Expr) {
     }
 }
 
-/// One top-level item: an `END { }` block or a statement. Split out of `parse`
-/// for the complexity gate.
 fn parse_top_level_item(
     scanner: &mut Scanner,
-    stmts: &mut Vec<Statement>,
-    end_block: &mut Option<Vec<Statement>>,
-    end_span: &mut Option<Span>,
+    program: &mut Program,
+    handler_spans: &mut std::collections::BTreeMap<HandlerKind, Span>,
     diags: &mut Vec<Diagnostic>,
 ) {
-    // DD#56: `END { }` is the program's exit handler, not a statement. It is
-    // intercepted here rather than in `dispatch_statement` so that it lands in
-    // `Program::end_block`, and so that an `END` anywhere else is by
-    // construction nested and rejected (SB4054).
-    if matches!(scanner.peek().token, Tok::End) {
-        take_end_block(scanner, end_block, end_span, diags);
+    let handler = match scanner.peek().token {
+        Tok::Exit => Some(HandlerKind::Exit),
+        Tok::Err => Some(HandlerKind::Err),
+        _ => None,
+    };
+    if let Some(kind) = handler {
+        take_handler(scanner, program, kind, handler_spans, diags);
         return;
     }
 
@@ -232,7 +217,7 @@ fn parse_top_level_item(
         // Constructs parsed only so they can be reported, not accepted.
         Ok(stmt) => {
             check_rejected(&stmt, diags);
-            stmts.push(stmt);
+            program.statements.push(stmt);
         }
         Err(d) => {
             diags.push(d);
@@ -327,12 +312,14 @@ fn dispatch_statement(scanner: &mut Scanner, reach: Reach) -> Result<Statement, 
         Tok::Const => parse_declaration(scanner, "const"),
         Tok::Array => parse_declaration(scanner, "array"),
         Tok::Map => parse_declaration(scanner, "map"),
-        Tok::End => Err(parse_error(
+        Tok::End => Err(retired_end_error(span)),
+        Tok::Exit | Tok::Err => Err(parse_error(
             span,
             "SB4054",
-            "an `END { }` block must be at the top level — it is the program's \
-             exit handler, not a statement that can be nested or made conditional"
-                .to_string(),
+            format!(
+                "`{} {{ }}` must be at program top level, not nested or conditional",
+                keyword_to_str(&tok).expect("handler keyword")
+            ),
         )),
         Tok::LBrace => parse_group(scanner),
         Tok::DblParen => parse_arith_stmt(scanner),
@@ -1255,7 +1242,7 @@ fn at_declaration_end(scanner: &mut Scanner) -> bool {
                 // Without this, `fn f { str x="a" }` consumed the `}` as a
                 // candidate name and reported SB4014 "expected variable name",
                 // pointing at a declaration that was already complete. It hit
-                // every brace form -- fn, for, if, while, and DD#56 END -- and
+                // every brace form -- fn, for, if, while, and handlers -- and
                 // only when the declaration was the LAST statement in the block,
                 // since otherwise a `;` stopped the loop first.
                 | Tok::RBrace
@@ -1343,18 +1330,32 @@ fn parse_one_decl_assignment(
     Ok(DeclAssignment { name, value: None })
 }
 
-// ── END block ────────────────────────────────────────────────
+fn retired_end_error(span: Span) -> Diagnostic {
+    parse_error(
+        span,
+        "SB4054",
+        "`END` is removed: use checked `EXIT { }` for orderly termination and \
+         `ERR { }` with explicit failure handling for errors. An old END body \
+         is not automatically equivalent to either handler (DD128)"
+            .to_string(),
+    )
+}
 
-/// Parse the body of an `END { }` block. The caller is [`parse`], which owns
-/// the top-level loop; an `END` reached through [`dispatch_statement`] is by
-/// construction *not* at the top level and is rejected there.
-fn parse_end_block(scanner: &mut Scanner) -> Result<Vec<Statement>, Diagnostic> {
+fn parse_handler_body(
+    scanner: &mut Scanner,
+    kind: HandlerKind,
+) -> Result<Vec<Statement>, Diagnostic> {
     let sp = scanner.peek().span;
     let span = span_from(scanner, sp.start);
-    scanner.next(); // consume 'END'
+    scanner.next();
 
     skip_terminators(scanner);
-    expect(scanner, &Tok::LBrace, span, "expected '{' after END")?;
+    expect(
+        scanner,
+        &Tok::LBrace,
+        span,
+        &format!("expected '{{' after {}", kind.name()),
+    )?;
     let body = parse_body_until(scanner, &[Tok::RBrace])?;
     expect(scanner, &Tok::RBrace, span, "expected '}'")?;
     Ok(body)
@@ -1712,9 +1713,10 @@ fn unsuppressible_error(next: &Tok, span: Span) -> Option<Diagnostic> {
              the `-`"
                 .to_string(),
         ),
-        Tok::End => (
+        Tok::End => return Some(retired_end_error(span)),
+        Tok::Exit | Tok::Err => (
             "SB4014",
-            "`-` suppresses a command, and an `END { }` block is not one — drop the \
+            "`-` suppresses a command, and a terminal handler is not one — drop the \
              `-`"
             .to_string(),
         ),

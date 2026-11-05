@@ -361,12 +361,12 @@ run_sash 'str a="1" b="2"
 echo "$a$b"'
 [[ $rc = 0 && $out = "12" && -z $err ]]; chk 86.36
 
-# 86.37 the top level and the DD#56 END body are ONE scope — END declarations
+# The top level and terminal handlers are ONE scope — handler declarations
 #       are globals — so a name declared in both is declared twice.
 run_sash 'str x="a"
 echo "$x"
-END { str x="b" }'
-[[ $rc != 0 && -z $out && $err == *SB5049* ]]; chk 86.37
+EXIT { str x="b" }'
+[[ $rc != 0 && -z $out && $err == *SB5049* ]]; chk h128.86.37
 
 # 86.38 control flow has no scope of its own (DD#86), so two branches each
 #       declaring the same name are two declarations of one global, not two

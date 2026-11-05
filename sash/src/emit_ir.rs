@@ -31,7 +31,7 @@ use std::fmt::Write;
 
 /// Bumped when the shape of the emitted data changes incompatibly, so a
 /// consumer can refuse a capture it does not understand.
-pub const IR_VERSION: u32 = 1;
+pub const IR_VERSION: u32 = 2;
 
 /// Render a whole program as the inert janet data literal.
 pub fn emit_ir(program: &Program) -> String {
@@ -41,10 +41,15 @@ pub fn emit_ir(program: &Program) -> String {
     let _ = writeln!(out, "{{:ir-version {}", IR_VERSION);
     out.push_str(" :statements ");
     stmt_list(&program.statements, 14, &mut out);
-    out.push_str("\n :end-block ");
-    match &program.end_block {
-        Some(body) => stmt_list(body, 13, &mut out),
-        None => out.push_str("nil"),
+    for (key, body) in [
+        ("exit-block", &program.exit_block),
+        ("err-block", &program.err_block),
+    ] {
+        let _ = write!(out, "\n :{key} ");
+        match body {
+            Some(body) => stmt_list(body, key.len() + 4, &mut out),
+            None => out.push_str("nil"),
+        }
     }
     out.push_str("}\n");
     out
@@ -791,7 +796,8 @@ mod invariant_tests {
                 }),
                 span: crate::ir::Span::new(7, 1),
             }],
-            end_block: None,
+            exit_block: None,
+            err_block: None,
         });
         assert!(
             rendered.contains("{:kind :declaration :line 7 :keyword :export "),

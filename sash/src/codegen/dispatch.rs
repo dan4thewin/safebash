@@ -35,6 +35,7 @@ impl SsaInst {
         let exit_status_var = ctx.exit_status_var;
         let capture_slots = ctx.capture_slots;
         match self {
+            SsaInst::SourceOrigin(..) => {}
             SsaInst::Assign { target, value } => {
                 return super::inst_handlers::handle_assign(target, value, builder, module, ctx);
             }
@@ -288,8 +289,8 @@ impl SsaInst {
             BuiltinCmd::TrapSignal => self.emit_trap_signal(args, builder, module, ctx),
             BuiltinCmd::SignalFlag => self.emit_signal_flag(args, builder, module, ctx),
             BuiltinCmd::SignalCheckpoint => {
-                let [] = BuiltinCmd::SignalCheckpoint.expect_ssa_args(args);
-                super::inst_handlers::emit_signal_exit_check(builder, module, ctx);
+                let deferred = BuiltinCmd::signal_deferred(args);
+                super::inst_handlers::emit_signal_exit_check(builder, module, deferred, ctx);
             }
             BuiltinCmd::TableDelete | BuiltinCmd::TableDeleteIdx => {
                 return self.emit_table_delete(args, *kind, builder, module, ctx)
@@ -507,7 +508,12 @@ impl SsaInst {
                     emit_exec_redirects_only(redirects, builder, module, ctx);
                     false
                 } else {
-                    super::inst_handlers::emit_signal_exit_check(builder, module, ctx);
+                    super::inst_handlers::emit_signal_exit_check(
+                        builder,
+                        module,
+                        ctx.signal_deferred,
+                        ctx,
+                    );
                     emit_exec_static_argv(args, builder, module, ctx);
                     true
                 }
@@ -969,7 +975,6 @@ impl SsaInst {
             module,
             ctx.externs,
             ctx.exit_status_var,
-            ctx.end_cl_block,
             checked,
             super::inst_handlers::AbortMsg::Errno {
                 seg1_ptr,
@@ -1048,11 +1053,10 @@ impl SsaInst {
     ) -> bool {
         let externs = ctx.externs;
         let exit_status_var = ctx.exit_status_var;
-        let saved_end_status_var = ctx.saved_end_status_var;
         // exit CODE — evaluate the argument as an integer. DD#89: ANY int
         // value / variable / return is a valid `exit` argument (not just a
         // literal). An out-of-range value is carried as a full i64 (readable in
-        // the END block via `$?`) and truncated to 8 bits only at the final
+        // the selected handler via `$?`) and truncated only at the final
         // `exit_group`. No argument → 0.
         let code_val = match args.first() {
             Some(arg) => super::values::lower_value_as_int(
@@ -1066,19 +1070,6 @@ impl SsaInst {
             ),
             None => builder.ins().iconst(I64, 0),
         };
-        // DD#56: from the main body, route `exit` to the END block carrying
-        // the code. Inside END, with no END, or in a forked child (whose
-        // `end_cl_block` is None: END runs only in the main process) exit
-        // directly.
-        let route_to_end = ctx.end_cl_block.filter(|_| !ctx.in_end_block);
-        if let Some(end_cl) = route_to_end {
-            builder.def_var(exit_status_var, code_val);
-            builder.ins().jump(end_cl, &[]);
-            return true;
-        }
-        // Direct exit. Inside END this also updates saved_end_status_var so
-        // Return uses it.
-        builder.def_var(saved_end_status_var, code_val);
         let exit_ref = module.declare_func_in_func(externs.exit, builder.func);
         builder.ins().call(exit_ref, &[code_val]);
         builder
@@ -1383,7 +1374,6 @@ fn emit_echo_body(
         module,
         ctx.externs,
         ctx.exit_status_var,
-        ctx.end_cl_block,
         checked,
         msg,
     );
@@ -1573,7 +1563,7 @@ mod invariant_tests {
         for (kind, count) in [
             (BuiltinCmd::TrapSignal, 2),
             (BuiltinCmd::SignalFlag, 2),
-            (BuiltinCmd::SignalCheckpoint, 0),
+            (BuiltinCmd::SignalCheckpoint, 1),
             (BuiltinCmd::SetTestFromPipe, 1),
             (BuiltinCmd::LetExit, 1),
             (BuiltinCmd::StoreBgPid, 1),

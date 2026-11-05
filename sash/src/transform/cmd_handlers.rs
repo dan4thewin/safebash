@@ -330,7 +330,7 @@ pub(super) fn inline_function_call(
         // skip edge is only *taken* in condition position (elsewhere the
         // scope has already aborted), but emitting it unconditionally keeps
         // the shape independent of the later `checked` rewrites that
-        // `mark_unchecked_in_conditions` and the END-block pass apply.
+        // `mark_unchecked_in_conditions` applies.
         let body_state = state.snapshot();
         ssa.block_mut(block).terminator = Terminator::Branch {
             condition: "redirect".to_string(),

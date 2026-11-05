@@ -214,13 +214,13 @@ exec /usr/bin/printf "[%s]" @{a:~}'
 run_sash 'exec /usr/bin/printf "[%s]" ok'
 [[ $rc = 0 && $out = "[ok]" && -z $rerr ]]; chk ex.22
 
-# Bare exec is a successful no-op, including its condition verdict and END.
+# Bare exec is a successful no-op, including its condition verdict and EXIT.
 run_sash 'exec; echo ok'
 [[ $rc = 0 && $out = ok && -z $rerr ]]; chk ex.23
 run_sash 'if exec { echo $(status) } else { echo failed }'
 [[ $rc = 0 && $out = 0 && -z $rerr ]]; chk ex.24
-run_sash 'END { echo end }; exec; echo body'
-[[ $rc = 0 && $out = $'body\nend' && -z $rerr ]]; chk ex.25
+run_sash 'EXIT { echo end }; exec; echo body'
+[[ $rc = 0 && $out = $'body\nend' && -z $rerr ]]; chk h128.ex.25
 
 run_sash 'if exec 9> ex_condition { echo $(status) } else { echo failed }; close 9'
 [[ $rc = 0 && $out = 0 && -f ex_condition && -z $rerr ]]; chk ex.26
@@ -230,12 +230,12 @@ run_sash '/bin/true
 if exec 9> ex_missing/file { echo bad } else { echo $(status) }
 echo done'
 [[ $rc = 0 && $out = $'1\ndone' && -z $rerr ]]; chk ex.27
-run_sash 'END { echo end }; exec 9> ex_missing/file; echo bad'
-[[ $rc != 0 && $out = end && $rerr == *'ex_missing/file: No such file or directory'* ]]; chk ex.28
+run_sash 'ERR { - echo end }; exec 9> ex_missing/file; echo bad'
+[[ $rc != 0 && $out = end && $rerr == *'ex_missing/file: No such file or directory'* ]]; chk h128.ex.28
 run_sash '- exec 9> ex_missing/file; echo after'
 [[ $rc != 0 && -z $out && $rerr == *'ex_missing/file: No such file or directory'* ]]; chk ex.29
-run_sash 'END { echo end }; exec /bin/echo bad > ex_missing/file; echo after'
-[[ $rc != 0 && $out = end && $rerr == *'ex_missing/file: No such file or directory'* ]]; chk ex.30
+run_sash 'ERR { - echo end }; exec /bin/echo bad > ex_missing/file; echo after'
+[[ $rc != 0 && $out = end && $rerr == *'ex_missing/file: No such file or directory'* ]]; chk h128.ex.30
 run_sash 'if exec /bin/echo bad 9> ex_missing/file { echo bad } else { echo $(status) }; echo done'
 [[ $rc = 0 && $out = $'1\ndone' && -z $rerr ]]; chk ex.31
 
@@ -291,8 +291,8 @@ run_sash "exec 9> ex_original; /bin/sh -c '$fd_scan' 9> ex_new; /bin/echo restor
 run_sash 'f() { exec }; f 2> ex_diag; false'
 [[ $rc != 0 && -z $out && ! -s ex_diag && $rerr == *false* ]]; chk ex.41
 
-run_sash 'END { echo end }; - close 3; exec 1>&3; echo bad'
-[[ $rc != 0 && $out = end && $rerr == *'3: Bad file descriptor'* ]]; chk ex.42
+run_sash 'ERR { - echo end }; - close 3; exec 1>&3; echo bad'
+[[ $rc != 0 && $out = end && $rerr == *'3: Bad file descriptor'* ]]; chk h128.ex.42
 
 # Numeric dup operands must fit the OS fd type, not fall back to fd 2.
 run_sash 'exec 1>&2147483648'
@@ -314,18 +314,18 @@ run_sash 'if exec 1>&2147483647 { echo bad } else { echo $(status) }; echo resto
 
 # A function's close operands must not name its enclosing redirect's backups.
 run_sash 'fn f { - close 3; - close 4; - close 5; - close 6; - close 7; - close 8; echo body }
-END { echo end }
+EXIT { echo end }
 f > ex_function
 echo after'
-[[ $rc = 0 && $out = $'after\nend' && $(cat ex_function) = body && -z $rerr ]]; chk ex.49
+[[ $rc = 0 && $out = $'after\nend' && $(cat ex_function) = body && -z $rerr ]]; chk h128.ex.49
 
 # The invoker's channel is private too, even when source names its old number.
 run_sash 'if close 100 { echo private } else { echo closed }'
 [[ $rc = 0 && $out = closed && -z $rerr ]]; chk ex.50
 run_sash '- close 102; false'
 [[ $rc != 0 && -z $out && $rerr == *'false: command failed (exit 1)'* ]]; chk ex.51
-run_sash 'echo main; END { if close 100 { echo private } else { echo closed } }'
-[[ $rc = 0 && $out = $'main\nclosed' && -z $rerr ]]; chk ex.52
+run_sash 'echo main; EXIT { if close 100 { echo private } else { echo closed } }'
+[[ $rc = 0 && $out = $'main\nclosed' && -z $rerr ]]; chk h128.ex.52
 
 # A capture's saved stdout and memfd must survive closes inside its body.
 run_sash 'str x=$(- close 3; - close 4; - close 5; - close 6; - close 7; - close 8; echo captured)

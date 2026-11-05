@@ -806,12 +806,11 @@ run_sash 'int x=0; if (( 1 ? 3 : (x=2) )); then echo "$x"; fi'
 run_sash 'int x=0; echo $(( ++x ))'
 [[ $rc != 0 && -z $out && $err == *SB4020* && $err == *"prefix ++x"* ]]; chk cov.176
 
-# cov.177 the predicate-return scan (SB4037) also walks the END block, so a
-# program needs both a predicate use and an `END { }` for that arm to run
+# The predicate-return scan also walks handler bodies.
 run_sash 'f() { return 0; }
 if f; then echo y; fi
-END { echo bye; }'
-[[ $rc = 0 && $out == $'y\nbye' && -z $err ]]; chk cov.177
+EXIT { echo bye; }'
+[[ $rc = 0 && $out == $'y\nbye' && -z $err ]]; chk h128.cov.177
 
 # cov.178 a function that is NOT used as a predicate sits in the same fn_defs
 # list and must be skipped — `g` never returns and that is fine
@@ -1464,9 +1463,9 @@ run_sash 'array a=(x y); map m; m[k]=v; echo ${a[1]}${m[k]}'
 [[ $rc == 0 && $out == yv ]]; chk cov.293
 run_sash 'str s=$(arg 1); attest s i?; int n=$(( ${s:-0} )); int c=0; if attest n (( c = n )); then echo $c; else exit 1; fi' 7
 [[ $rc == 0 && $out == 7 ]]; chk cov.294
-# DD#56 `END { }` — the one keyword the parser intercepts before dispatch.
-run_sash 'END { echo bye; }'
-[[ $rc == 0 && $out == bye ]]; chk cov.295
+# Handler declarations are intercepted before statement dispatch.
+run_sash 'EXIT { echo bye; }'
+[[ $rc == 0 && $out == bye ]]; chk h128.cov.295
 # `[[` / `]]` (scan_lbracket/scan_rbracket) and `!` (scan_bang_or_neq).
 run_sash 'v=abc; w=x; [[ $v == abc ]] && ! [[ $w == y ]] && echo ok'
 [[ $rc == 0 && $out == ok ]]; chk cov.296
@@ -1488,8 +1487,8 @@ run_sash 'echo if then else elif fi while until do done'
 [[ $rc == 0 && $out == "if then else elif fi while until do done" ]]; chk cov.299
 run_sash 'echo for in case esac fn function str int const'
 [[ $rc == 0 && $out == "for in case esac fn function str int const" ]]; chk cov.300
-run_sash 'echo array map attest END'
-[[ $rc == 0 && $out == "array map attest END" ]]; chk cov.301
+run_sash 'echo array map attest END EXIT ERR'
+[[ $rc == 0 && $out == "array map attest END EXIT ERR" ]]; chk h128.cov.301
 # The three non-argument word contexts the omission also broke.
 run_sash 'str s=str; echo $s'
 [[ $rc == 0 && $out == str ]]; chk cov.302

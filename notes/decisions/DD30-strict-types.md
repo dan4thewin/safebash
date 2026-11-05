@@ -70,9 +70,9 @@ variable or cell, `$(( … ))`, `$(f)` of an `-> int` function and `$$`
 stay legal. validate's codes run first, so a numeric test operator is still
 SB5019 whatever its operands.
 
-END operands are covered too as of 2026-11-04 (B5, journal 565,
-`typeflow.11`). The checker now covers every body and supplies lowering's
-actual type map. Still filed: `expr_type` types `${n:?msg}` on an int as
+EXIT and ERR operands are covered too (B5's typing prerequisite, journal 565,
+followed by DD128; `h128.typeflow.11`). The checker covers every body and
+supplies lowering's actual type map. Still filed: `expr_type` types `${n:?msg}` on an int as
 a string (`notes/tasks/bug-expr-type-int-disposition.md`).
 
 `sash-convert` quotes the operands it can tell are ints (DD#57 addendum of

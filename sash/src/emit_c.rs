@@ -31,6 +31,7 @@ use crate::ssa::*;
 /// cranelift_ir::Value)` return shape from `lower_value`.
 type CStr = (String, String);
 type VarTypes = HashMap<(String, u32), VarType>;
+const ABORT_LABEL: &str = "__abort";
 
 /// Mutable emission state — output buffer + temp-name counter.
 /// The counter lets us emit fresh `__tN` locals when a value needs
@@ -40,32 +41,19 @@ struct Emit {
     out: String,
     source_names: crate::bindings::SourceNames,
     next_temp: usize,
-    /// DD#56: the END-cleanup block id, if the program has one. A DD#55 (A)
-    /// abort routes THROUGH this block (so an `END { exit N }` / cleanup
-    /// still runs) rather than exiting directly. None → jump to `__exit`.
-    end_block: Option<BlockId>,
+    in_handler: bool,
+    signal_deferred: bool,
     /// DD#56: true when the program arms at least one `signal N EXIT` trap.
     /// Gates the post-external signal check-point (a FLAG-only program must
     /// NOT early-exit on a fired signal).
     has_exiting_signals: bool,
-    /// The block currently being emitted — lets the signal check-point skip
-    /// itself once we're at/after the END block (avoids a re-jump loop).
+    /// The block currently being emitted.
     cur_block: BlockId,
     /// True while emitting the final command of a block that terminates in a
     /// Branch/Loop (its status IS the condition). A redirect open(2) failure
     /// there is caught by the if/while, so it must not abort. Mirrors native
     /// `ctx.in_condition`.
     in_condition: bool,
-    /// DD#56: the blocks that make up the END handler. An abort inside END
-    /// would `goto` the block already executing, so a failure there reports
-    /// and lets the rest of the cleanup run. Mirrors native
-    /// `ctx.in_end_block`; the region itself comes from the shared
-    /// `SsaProgram::end_region` so the backends cannot disagree.
-    end_region: std::collections::HashSet<BlockId>,
-    /// DD#56: the blocks that run in a forked child. END runs only in the
-    /// main process, so an abort or `exit` there leaves through
-    /// `__child_exit` instead. Mirrors native `EmitCtx::child_region`.
-    child_region: std::collections::HashSet<BlockId>,
     /// DD#14: the forked pipeline stages, for their entry blocks and labels.
     compound_stages: crate::ssa::CompoundStages,
     readers: std::collections::BTreeMap<u32, crate::ssa::ReaderPipeline>,
@@ -77,12 +65,11 @@ impl Emit {
             out: String::new(),
             source_names: crate::bindings::SourceNames::default(),
             next_temp: 0,
-            end_block: None,
+            in_handler: false,
+            signal_deferred: false,
             has_exiting_signals: false,
             cur_block: 0,
             in_condition: false,
-            end_region: std::collections::HashSet::new(),
-            child_region: std::collections::HashSet::new(),
             compound_stages: crate::ssa::CompoundStages::default(),
             readers: std::collections::BTreeMap::new(),
         }
@@ -95,14 +82,26 @@ impl Emit {
 }
 
 /// Emit a complete C program from an `SsaProgram`. The output is
-/// self-contained: prologue with extern declarations, `int main`,
-/// and a `__exit:` label that calls sash_exit with the status.
+/// self-contained, with main and separate terminal callbacks over static globals.
 pub fn emit_c(ssa: &SsaProgram) -> String {
     let mut e = Emit::new();
     e.source_names = ssa.source_names.clone();
     emit_prologue(&mut e.out);
     declare_globals(&mut e.out, &ssa.globals);
-    emit_main(&mut e, ssa);
+    e.compound_stages = ssa.compound_stages.clone();
+    e.readers = ssa.reader_pipelines();
+    e.has_exiting_signals = !ssa.exiting_signals.is_empty();
+    emit_body(&mut e, ssa, None);
+    for &kind in ssa.handlers.keys() {
+        emit_body(&mut e, ssa, Some(kind));
+        writeln!(
+            e.out,
+            "void (*const {})(i64) = __sash_{};",
+            kind.callback_symbol(),
+            kind.name()
+        )
+        .unwrap();
+    }
     e.out
 }
 
@@ -155,7 +154,11 @@ fn emit_prologue(out: &mut String) {
     .unwrap();
     writeln!(
         out,
-        "extern void sash_exit(i64 status) __attribute__((noreturn));"
+        "extern void sash_exit(i64 status) __attribute__((noreturn));\n\
+         extern void sash_finish(i64 status) __attribute__((noreturn));\n\
+         extern void sash_abort(i64 status) __attribute__((noreturn));\n\
+         extern void sash_shutdown(i64 status) __attribute__((noreturn));\n\
+         extern void sash_signal_checkpoint(i64 deferred);"
     )
     .unwrap();
     writeln!(
@@ -480,31 +483,35 @@ fn collect_storage_types(ssa: &SsaProgram) -> VarTypes {
     types
 }
 
-fn emit_main(e: &mut Emit, ssa: &SsaProgram) {
+fn emit_body(e: &mut Emit, ssa: &SsaProgram, kind: Option<crate::ir::HandlerKind>) {
     let types = collect_storage_types(ssa);
-    e.end_block = ssa.end_block;
-    e.end_region = ssa.end_region();
-    e.child_region = ssa.child_region();
-    e.compound_stages = ssa.compound_stages.clone();
-    e.readers = ssa.reader_pipelines();
-    e.has_exiting_signals = !ssa.exiting_signals.is_empty();
-    writeln!(e.out, "int main(int argc, char** argv) {{").unwrap();
-    writeln!(e.out, "    (void)argc; (void)argv;").unwrap();
+    e.in_handler = kind.is_some();
+    let entry = match kind {
+        Some(kind) => {
+            writeln!(
+                e.out,
+                "static void __sash_{}(i64 __entry_status) {{",
+                kind.name()
+            )
+            .unwrap();
+            writeln!(e.out, "    i64 __exit_status = __entry_status;").unwrap();
+            ssa.handlers[&kind].block
+        }
+        None => {
+            writeln!(e.out, "int main(void) {{").unwrap();
+            writeln!(e.out, "    i64 __exit_status = 0;").unwrap();
+            ssa.entry
+        }
+    };
     emit_user_fds(e, &ssa.user_fds);
-    writeln!(e.out, "    i64 __exit_status = 0;").unwrap();
     writeln!(e.out, "    i64 __test_result = 0;").unwrap();
     writeln!(e.out, "    (void)__test_result;").unwrap();
-    // DD#56: the triggering status captured on entry to the END block, used
-    // as the final exit status (so `END { echo }; /bin/false` exits nonzero;
-    // an explicit `exit N` in END overrides it via emit_exit).
-    writeln!(e.out, "    i64 __end_status = 0;").unwrap();
-    writeln!(e.out, "    (void)__end_status;").unwrap();
     emit_slot_decls(e, ssa);
     emit_reader_slots(e);
     declare_vars(&mut e.out, &types, &ssa.globals);
 
     // Source functions are inlined; their unused fn_* templates are not emitted.
-    let reachable = ssa.reachable();
+    let reachable = ssa.reachable_from(&[entry]);
     let main_blocks = ssa
         .blocks
         .iter()
@@ -518,23 +525,15 @@ fn emit_main(e: &mut Emit, ssa: &SsaProgram) {
     writeln!(e.out, "}}").unwrap();
 }
 
-/// The labels every exit leaves `main` through.
 fn emit_exit_labels(e: &mut Emit) {
     writeln!(e.out, "__exit:").unwrap();
-    // DD#56: with an END block, the final status is the one captured on END
-    // entry (or an explicit `exit N` in END), not the END body's last command.
-    if e.end_block.is_some() {
-        writeln!(e.out, "    sash_exit(__end_status);").unwrap();
+    if e.in_handler {
+        writeln!(e.out, "    return;").unwrap();
     } else {
-        writeln!(e.out, "    sash_exit(__exit_status);").unwrap();
+        writeln!(e.out, "    sash_finish(__exit_status);").unwrap();
     }
-    writeln!(e.out, "    return 0;  /* unreachable */").unwrap();
-    // DD#56: a forked child exits with its own status and never runs END.
-    if !e.child_region.is_empty() {
-        writeln!(e.out, "__child_exit:").unwrap();
-        writeln!(e.out, "    sash_exit(__exit_status);").unwrap();
-        writeln!(e.out, "    return 0;  /* unreachable */").unwrap();
-    }
+    writeln!(e.out, "{ABORT_LABEL}:").unwrap();
+    writeln!(e.out, "    sash_abort(__exit_status);").unwrap();
 }
 
 fn emit_user_fds(e: &mut Emit, fds: &[i64]) {
@@ -793,13 +792,6 @@ fn emit_block(e: &mut Emit, id: BlockId, block: &BasicBlock, types: &VarTypes) {
     writeln!(e.out).unwrap();
     writeln!(e.out, "_blk_{}: /* {} */", id, block.label).unwrap();
     writeln!(e.out, "    ;").unwrap();
-    // DD#56: capture the triggering status on entry to the END block, before
-    // its body runs (a cleanup `echo` must not clobber the final status).
-    if block.label == "__end__" {
-        writeln!(e.out, "    __end_status = __exit_status;").unwrap();
-        // DD#120: see the native counterpart in codegen/entry.rs.
-        writeln!(e.out, "    sash_reader_cleanup(); sash_scope_restore();").unwrap();
-    }
     // Caught/uncaught $? model: mirror codegen/entry.rs — at the
     // start of a catching construct's exit block, reset __exit_status
     // to 0 so caught statuses do not leak to program exit.
@@ -812,6 +804,7 @@ fn emit_block(e: &mut Emit, id: BlockId, block: &BasicBlock, types: &VarTypes) {
     let cond_idx = crate::ssa::condition_inst_index(block);
     for (i, inst) in block.insts.iter().enumerate() {
         e.in_condition = cond_idx == Some(i);
+        e.signal_deferred = block.signal_deferred.contains(&i);
         emit_inst(e, inst, types);
     }
     e.in_condition = false;
@@ -1208,6 +1201,7 @@ fn emit_inst(e: &mut Emit, inst: &SsaInst, types: &VarTypes) {
         return;
     }
     match inst {
+        SsaInst::SourceOrigin(..) => {}
         SsaInst::Assign { target, value } => emit_assign(e, target, value, types),
         SsaInst::Command {
             name,
@@ -1917,7 +1911,7 @@ fn emit_cd_c(e: &mut Emit, args: &[SsaValue], checked: bool, types: &VarTypes) {
             t = t,
             ptr = ptr,
             len = len,
-            abort = abort_target(e)
+            abort = ABORT_LABEL
         )
         .unwrap();
     }
@@ -1997,7 +1991,7 @@ fn emit_store_bg_pid_c(e: &mut Emit, args: &[SsaValue], checked: bool) {
     writeln!(e.out, "    if (__test_result < 0) {{").unwrap();
     writeln!(e.out, "    __exit_status = 1; __test_result = 0;").unwrap();
     if checked {
-        let abort = abort_target(e);
+        let abort = ABORT_LABEL;
         writeln!(e.out, "    sash_emsg(\"fork\", 4, 0, 0); goto {abort};").unwrap();
     }
     writeln!(e.out, "    }}").unwrap();
@@ -2175,8 +2169,7 @@ fn emit_command_body(
         // status=0, test_result=1.
         BuiltinCmd::LetExit => emit_let_exit(e, args, types),
         BuiltinCmd::SignalCheckpoint => {
-            let [] = kind.expect_ssa_args(args);
-            emit_signal_exit_check(e);
+            emit_signal_exit_check(e, BuiltinCmd::signal_deferred(args));
         }
         BuiltinCmd::SetTestFromPipe => {
             let [arg] = kind.expect_ssa_args(args);
@@ -2285,7 +2278,7 @@ fn emit_let_exit(e: &mut Emit, args: &[SsaValue], types: &VarTypes) {
 /// sets __test_result so a Branch terminator reading it sees
 /// success ⇔ exit==0.
 fn emit_exec(e: &mut Emit, name: &str, args: &[SsaValue], checked: bool, types: &VarTypes) {
-    emit_signal_exit_check(e);
+    emit_signal_exit_check(e, e.signal_deferred);
     let argv = emit_argv(e, name, args, types, "    ");
     writeln!(
         e.out,
@@ -2303,7 +2296,7 @@ fn emit_exec(e: &mut Emit, name: &str, args: &[SsaValue], checked: bool, types: 
         // placement native uses in emit_status_abort_check. Without this the c
         // backend produced the right exit status and the child's errno line but
         // never the parent's `command failed (exit N)` (spec 55.30).
-        let abort = abort_target(e);
+        let abort = ABORT_LABEL;
         let esc = c_escape(name);
         writeln!(
             e.out,
@@ -2312,7 +2305,7 @@ fn emit_exec(e: &mut Emit, name: &str, args: &[SsaValue], checked: bool, types: 
         )
         .unwrap();
     }
-    emit_signal_exit_check(e);
+    emit_signal_exit_check(e, e.signal_deferred);
 }
 
 /// `unset m[key]` — delete one entry. The transform emits this as the internal
@@ -2364,7 +2357,7 @@ fn emit_close_builtin(e: &mut Emit, args: &[SsaValue], checked: bool, _types: &V
     writeln!(
         e.out,
         "    if ({t}_r < 0) {{ sash_emsg(\"close\", 5, {p2}, {l2}); goto {abort}; }}",
-        abort = abort_target(e)
+        abort = ABORT_LABEL
     )
     .unwrap();
 }
@@ -2393,7 +2386,7 @@ fn emit_exec_builtin(e: &mut Emit, args: &[SsaValue], types: &VarTypes) {
         writeln!(e.out, "    __exit_status = 0; __test_result = 1;").unwrap();
         return;
     }
-    emit_signal_exit_check(e);
+    emit_signal_exit_check(e, e.signal_deferred);
     let t = e.fresh();
     let argv = format!("{}_argv", t);
     // argv[0] is a value, not a literal: lower and guard it exactly as the
@@ -2417,49 +2410,22 @@ fn emit_exec_builtin(e: &mut Emit, args: &[SsaValue], types: &VarTypes) {
     writeln!(e.out, "    sash_exit(127);").unwrap();
 }
 
-/// DD#56: poll an EXIT request, never re-entering END.
-fn emit_signal_exit_check(e: &mut Emit) {
+/// Runtime dispatch distinguishes signal termination from an explicit exit.
+fn emit_signal_exit_check(e: &mut Emit, deferred: bool) {
     if !e.has_exiting_signals {
         return;
     }
-    if e.end_region.contains(&e.cur_block) {
-        return;
-    }
-    let pending = e.fresh();
-    let target = abort_target(e);
     writeln!(
         e.out,
-        "    i64 {pending} = sash_exit_signum; \
-         if ({pending} != 0) {{ __exit_status = 128 + {pending}; goto {target}; }}"
+        "    sash_signal_checkpoint({});",
+        i64::from(deferred)
     )
     .unwrap();
 }
 
-/// DD#56: where a DD#55 (A) abort jumps — the END-cleanup block if present
-/// (so cleanup / `END { exit N }` runs, with the triggering status in
-/// `__exit_status`), otherwise the terminal `__exit` label. A forked child
-/// has no END to run: it leaves through `__child_exit`.
-fn abort_target(e: &Emit) -> String {
-    if e.child_region.contains(&e.cur_block) {
-        return "__child_exit".to_string();
-    }
-    match e.end_block {
-        Some(id) => format!("_blk_{}", id),
-        None => "__exit".to_string(),
-    }
-}
-
-/// DD#55/DD#56: write the abort `goto` for an uncaught redirect `open(2)`
-/// failure — unless we are inside END, where [`abort_target`] names the
-/// block already executing and the jump would never terminate. The failure
-/// is still reported and still sets a failing status; only the abort is
-/// dropped, so the rest of the cleanup runs. Mirrors the native
-/// `emit_open_failure_abort` return value.
+/// Transfer after an uncaught redirect failure has been reported.
 fn emit_open_failure_goto(e: &mut Emit) {
-    if e.end_region.contains(&e.cur_block) {
-        return;
-    }
-    writeln!(e.out, "        goto {};", abort_target(e)).unwrap();
+    writeln!(e.out, "        goto {ABORT_LABEL};").unwrap();
 }
 
 /// Build a NUL-terminated `<tN>_argv` for `[name, args…]`, expanding any
@@ -2743,7 +2709,7 @@ fn emit_echo(e: &mut Emit, args: &[SsaValue], checked: bool, types: &VarTypes) {
             e.out,
             "    if ({t}_wf) {{ sash_emsg(\"echo\", 4, \"write error\", 11); goto {abort}; }}",
             t = t,
-            abort = abort_target(e)
+            abort = ABORT_LABEL
         )
         .unwrap();
     }
@@ -2756,13 +2722,7 @@ fn emit_echo(e: &mut Emit, args: &[SsaValue], checked: bool, types: &VarTypes) {
 /// untouched ("keeps the previous status"), so a bare `exit` after a
 /// suppressed failure exited 1 in the C backend and 0 in native.
 ///
-/// DD#56: from the main body the exit routes *through* the END block carrying
-/// the code — END runs, and its prologue captures the code into
-/// `__end_status`, which the final `__exit` label returns. Going straight to
-/// `__exit` skipped END entirely, so `END { }` + `exit N` ran no cleanup.
-/// Inside END (or with no END block) the exit is direct, and there
-/// `__end_status` must be set here so an `exit N` *inside* END overrides the
-/// triggering status. A forked child exits with the code and runs no END.
+/// DD128 routes the full integer and enforces handler/child progression.
 fn emit_exit(e: &mut Emit, args: &[SsaValue], types: &VarTypes) {
     match args.first() {
         Some(arg) => {
@@ -2771,21 +2731,7 @@ fn emit_exit(e: &mut Emit, args: &[SsaValue], types: &VarTypes) {
         }
         None => writeln!(e.out, "    __exit_status = 0;").unwrap(),
     }
-    emit_exit_jump(e);
-}
-
-/// Where an `exit` leaves for, once `__exit_status` holds its code.
-fn emit_exit_jump(e: &mut Emit) {
-    if e.child_region.contains(&e.cur_block) {
-        writeln!(e.out, "    goto __child_exit;").unwrap();
-        return;
-    }
-    if let Some(eb) = e.end_block.filter(|_| !e.end_region.contains(&e.cur_block)) {
-        writeln!(e.out, "    goto _blk_{};", eb).unwrap();
-        return;
-    }
-    writeln!(e.out, "    __end_status = __exit_status;").unwrap();
-    writeln!(e.out, "    goto __exit;").unwrap();
+    writeln!(e.out, "    sash_exit(__exit_status);").unwrap();
 }
 
 /// Mirrors codegen's terminator emission (codegen/entry.rs).
@@ -2811,7 +2757,7 @@ fn emit_terminator(e: &mut Emit, term: &Terminator) {
             .unwrap();
         }
         Terminator::ChildExit => {
-            writeln!(out, "    goto __child_exit;").unwrap();
+            writeln!(out, "    sash_shutdown(__exit_status);").unwrap();
         }
         Terminator::Branch {
             true_block,
@@ -3875,11 +3821,8 @@ fn emit_scope_open_failure(
     path_ptr: &str,
     path_len: &str,
 ) {
-    let in_end = e.end_region.contains(&e.cur_block);
-    if checked || in_end {
+    if checked {
         writeln!(e.out, "        sash_emsg({path_ptr}, {path_len}, 0, 0);").unwrap();
-    }
-    if checked && !in_end {
         emit_restore(e, saved);
         emit_open_failure_goto(e);
     }
@@ -3919,7 +3862,7 @@ fn emit_pipeline(
     negated: &[bool],
     types: &VarTypes,
 ) {
-    emit_signal_exit_check(e);
+    emit_signal_exit_check(e, e.signal_deferred);
     let n = stages.len();
 
     let p = declare_pipeline_pids(e, capture, n);
@@ -3963,7 +3906,7 @@ fn emit_pipeline(
         emit_pipeline_finish(e, &p, checked, suppressed, negated, &names, false);
     }
     writeln!(e.out, "{p}_done: ;").unwrap();
-    emit_signal_exit_check(e);
+    emit_signal_exit_check(e, e.signal_deferred);
 }
 
 fn declare_pipeline_pids(e: &mut Emit, capture: &PipelineCapture, n: usize) -> String {
@@ -4034,11 +3977,11 @@ fn emit_pipeline_finish(
     writeln!(e.out, "    __exit_status = {p}_status;", p = p).unwrap();
     writeln!(e.out, "    __test_result = (__exit_status == 0) ? 1 : 0;").unwrap();
     // DD#55: a nonzero aggregate aborts in a `checked` (statement) position;
-    // `checked` is false in condition / END positions (no abort there). The
+    // `checked` is false in condition or suppressed positions. The
     // diagnostic names the stage that actually failed, which `{p}_fail` carried
     // out of the first-nonzero fold in emit_pipeline_wait.
     if checked {
-        let abort = abort_target(e);
+        let abort = ABORT_LABEL;
         writeln!(
             e.out,
             "    if (__exit_status != 0) {{ sash_emsg_status({p}_fail, {p}_fail_len, \
@@ -4080,6 +4023,7 @@ fn emit_reader_finish(
         writeln!(e.out, "    __test_result = __test_result && {saved}_test;").unwrap();
     }
     writeln!(e.out, "    }}").unwrap();
+    emit_signal_exit_check(e, e.signal_deferred);
 }
 
 fn save_reader_status(e: &mut Emit, preserve_status: bool, verdict_joins: bool) -> String {
@@ -4122,7 +4066,7 @@ fn emit_pipeline_setup_failure(
     }
     writeln!(e.out, "    __exit_status = 1; __test_result = 0;").unwrap();
     if checked {
-        let abort = abort_target(e);
+        let abort = ABORT_LABEL;
         writeln!(
             e.out,
             "    sash_emsg(\"{operation}\", {}, 0, 0); goto {abort};",
@@ -5139,8 +5083,8 @@ mod tests {
             (BuiltinCmd::SignalFlag, vec![], "exactly 2 SSA arguments"),
             (
                 BuiltinCmd::SignalCheckpoint,
-                vec![SsaValue::Literal("0".into())],
-                "exactly 0 SSA arguments",
+                vec![],
+                "exactly 1 SSA arguments",
             ),
             (BuiltinCmd::Close, vec![], "exactly 1 SSA arguments"),
             (

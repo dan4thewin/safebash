@@ -26,7 +26,7 @@ use crate::ssa::*;
 ///   - phi → tainted if any incoming is tainted (conservative)
 ///   - copy of tainted → tainted
 ///   - arithmetic on tainted → tainted
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet, VecDeque};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum Taint {
@@ -46,19 +46,474 @@ pub fn verify_ssa_taint(program: &SsaProgram) -> Vec<String> {
         user_functions: collect_user_functions(program),
         diverging: collect_diverging_blocks(program),
     };
-    // Definitions' unbound templates never execute. END remains an explicit
-    // root because aborts enter it without an ordinary CFG edge.
-    let mut roots = vec![program.entry];
-    roots.extend(program.end_block);
-    let main = program.process_blocks(&roots);
-    check_process(&pass, &main, taint, &mut errors);
+    let main = program.process_blocks(&[program.entry]);
+    let main_view = check_process(&pass, &main, taint, &mut errors);
+    if !program.handlers.is_empty() {
+        check_handlers(&pass, &main_view, &mut errors);
+    }
     errors
+}
+
+fn check_handlers(pass: &Pass<'_>, main: &HashMap<String, Taint>, errors: &mut Vec<String>) {
+    let program = pass.program;
+    let main_states = terminal_states(program, program.entry, main, &HashSet::new());
+    let mut potential = main_states.potential;
+    if let Some(handler) = program.handlers.get(&crate::ir::HandlerKind::Exit) {
+        let view = check_handler(pass, handler, &main_states.exits, errors);
+        potential
+            .extend(terminal_states(program, handler.block, &view, &main_states.exits).potential);
+    }
+    if let Some(handler) = program.handlers.get(&crate::ir::HandlerKind::Err) {
+        check_handler(pass, handler, &potential, errors);
+    }
+}
+
+fn check_handler(
+    pass: &Pass<'_>,
+    handler: &HandlerEntry,
+    incoming: &HashSet<String>,
+    errors: &mut Vec<String>,
+) -> HashMap<String, Taint> {
+    let mut view = HashMap::new();
+    seed_clean_specials(&mut view);
+    for (name, input) in &handler.inputs {
+        view.insert(var_key(input), taint_of_flag(incoming.contains(name)));
+    }
+    let view = check_process(
+        pass,
+        &pass.program.process_blocks(&[handler.block]),
+        view,
+        errors,
+    );
+    check_inherited_attests(pass, handler.block, incoming, &view, errors);
+    view
+}
+
+fn check_inherited_attests(
+    pass: &Pass<'_>,
+    root: BlockId,
+    incoming: &HashSet<String>,
+    view: &HashMap<String, Taint>,
+    errors: &mut Vec<String>,
+) {
+    let mut states = HashMap::from([(root, incoming.clone())]);
+    let mut pending = VecDeque::from([root]);
+    let mut violations = std::collections::BTreeSet::new();
+    while let Some(id) = pending.pop_front() {
+        let block = pass.program.block(id);
+        let mut inherited = states[&id].clone();
+        inherited_attest_block(pass, block, view, &mut inherited, &mut violations);
+        propagate_inherited(block, &inherited, &mut states, &mut pending);
+    }
+    errors.extend(violations.into_iter().map(|name| format!(
+        "tainted handler input `{name}` cannot be attested without a fresh acquisition (SSA taint backstop)"
+    )));
+}
+
+fn inherited_attest_block(
+    pass: &Pass<'_>,
+    block: &BasicBlock,
+    view: &HashMap<String, Taint>,
+    inherited: &mut HashSet<String>,
+    violations: &mut std::collections::BTreeSet<String>,
+) {
+    for inst in crate::terminal::live_insts(block) {
+        record_inherited_attest(inst, inherited, violations);
+        if let Some((target, Taint::Tainted, _)) =
+            definition_taint(inst, view, &pass.user_functions)
+        {
+            inherited.remove(&target.name);
+        }
+    }
+}
+
+fn record_inherited_attest(
+    inst: &SsaInst,
+    inherited: &HashSet<String>,
+    violations: &mut std::collections::BTreeSet<String>,
+) {
+    match inst {
+        SsaInst::Attest { source, .. }
+        | SsaInst::AttestRetag { source, .. }
+        | SsaInst::AttestAll { source, .. }
+            if inherited.contains(&source.name) =>
+        {
+            violations.insert(var_key(source));
+        }
+        _ => {}
+    }
+}
+
+fn propagate_inherited(
+    block: &BasicBlock,
+    inherited: &HashSet<String>,
+    states: &mut HashMap<BlockId, HashSet<String>>,
+    pending: &mut VecDeque<BlockId>,
+) {
+    for next in crate::terminal::live_successors(block) {
+        let previous = states.get(&next).cloned();
+        states
+            .entry(next)
+            .or_default()
+            .extend(inherited.iter().cloned());
+        if states.get(&next) != previous.as_ref() {
+            pending.push_back(next);
+        }
+    }
+}
+
+#[derive(Default)]
+struct TerminalStates {
+    exits: HashSet<String>,
+    potential: HashSet<String>,
+    signals: HashMap<crate::ir::Span, HashSet<String>>,
+}
+
+#[derive(Clone, Default, PartialEq, Eq)]
+struct TerminalFlow {
+    tainted: HashSet<String>,
+    armed: HashSet<i64>,
+    pending: bool,
+}
+
+impl TerminalFlow {
+    fn extend(&mut self, other: &Self) {
+        self.tainted.extend(other.tainted.iter().cloned());
+        self.armed.extend(&other.armed);
+        self.pending |= other.pending;
+    }
+
+    fn receipt(&mut self) {
+        self.pending |= !self.armed.is_empty();
+    }
+
+    fn checkpoint(&mut self, deferred: bool, span: crate::ir::Span, result: &mut TerminalStates) {
+        self.receipt();
+        if deferred {
+            return;
+        }
+        if self.pending {
+            result
+                .signals
+                .entry(span)
+                .or_default()
+                .extend(self.tainted.iter().cloned());
+            result.exits.extend(self.tainted.iter().cloned());
+        }
+        // Continuing past a dispatch-enabled checkpoint means no request was pending.
+        self.pending = false;
+    }
+
+    fn disposition(&mut self, inst: &SsaInst) {
+        match inst {
+            SsaInst::Command {
+                kind: BuiltinCmd::SignalFlag,
+                args,
+                ..
+            } => {
+                let (signal, exiting) = BuiltinCmd::expect_signal_flag(args);
+                if exiting == 1 {
+                    self.armed.insert(signal);
+                } else {
+                    self.armed.remove(&signal);
+                }
+            }
+            SsaInst::Command {
+                kind: BuiltinCmd::TrapSignal,
+                args,
+                ..
+            } => {
+                let [signal, _] = BuiltinCmd::TrapSignal.expect_ssa_args(args);
+                self.armed
+                    .remove(&BuiltinCmd::TrapSignal.expect_literal_int(signal));
+            }
+            _ => {}
+        }
+    }
+
+    fn enter(&mut self, program: &SsaProgram, block: &BasicBlock, view: &HashMap<String, Taint>) {
+        for phi in &block.phis {
+            update_global_state(program, &phi.target, view, &mut self.tainted);
+        }
+    }
+
+    fn merge_at(&self, next: BlockId, states: &mut HashMap<BlockId, Self>) -> bool {
+        match states.get_mut(&next) {
+            Some(old) => {
+                let before = old.clone();
+                old.extend(self);
+                *old != before
+            }
+            None => {
+                states.insert(next, self.clone());
+                true
+            }
+        }
+    }
+
+    fn propagate(
+        &self,
+        block: &BasicBlock,
+        states: &mut HashMap<BlockId, Self>,
+        pending: &mut VecDeque<BlockId>,
+    ) {
+        for next in block.terminator.successors() {
+            if self.merge_at(next, states) {
+                pending.push_back(next);
+            }
+        }
+    }
+
+    fn before_instruction(
+        &mut self,
+        inst: &SsaInst,
+        span: crate::ir::Span,
+        deferred: bool,
+        result: &mut TerminalStates,
+    ) {
+        self.receipt();
+        if crate::signals::direct_polls(inst).0 {
+            self.checkpoint(deferred, span, result);
+        }
+        if let SsaInst::Command {
+            kind: BuiltinCmd::SignalCheckpoint,
+            args,
+            ..
+        } = inst
+        {
+            self.checkpoint(BuiltinCmd::signal_deferred(args), span, result);
+        }
+        self.disposition(inst);
+    }
+
+    fn record_definition(
+        &mut self,
+        program: &SsaProgram,
+        inst: &SsaInst,
+        view: &HashMap<String, Taint>,
+        result: &mut TerminalStates,
+    ) {
+        let Some(target) = instruction_target(inst) else {
+            return;
+        };
+        update_global_state(program, target, view, &mut self.tainted);
+        if self.tainted.contains(&target.name) {
+            result.potential.insert(target.name.clone());
+        }
+    }
+
+    fn explicit_exit(&self, inst: &SsaInst, result: &mut TerminalStates) -> bool {
+        let SsaInst::Command {
+            kind: BuiltinCmd::Exit,
+            args,
+            ..
+        } = inst
+        else {
+            return false;
+        };
+        if exit_may_be_zero(args) {
+            result.exits.extend(self.tainted.iter().cloned());
+        }
+        true
+    }
+
+    fn instruction(
+        &mut self,
+        program: &SsaProgram,
+        inst: &SsaInst,
+        view: &HashMap<String, Taint>,
+        poll: Option<(crate::ir::Span, bool)>,
+        result: &mut TerminalStates,
+    ) -> bool {
+        if let Some((span, deferred)) = poll {
+            self.before_instruction(inst, span, deferred, result);
+        }
+        self.record_definition(program, inst, view, result);
+        if let Some((span, deferred)) = poll.filter(|_| crate::signals::direct_polls(inst).1) {
+            self.checkpoint(deferred, span, result);
+        }
+        !self.explicit_exit(inst, result)
+    }
+}
+
+pub(crate) fn signal_entries(program: &SsaProgram) -> Vec<(crate::ir::Span, HashSet<String>)> {
+    if program.exiting_signals.is_empty() {
+        return Vec::new();
+    }
+    let classified = classify_main(program);
+    let result = terminal_states(program, program.entry, &classified.values, &HashSet::new());
+    let mut entries: Vec<_> = result.signals.into_iter().collect();
+    entries.sort_by_key(|(span, _)| (span.line, span.col));
+    entries
+}
+
+/// Follow completed global definitions, not the largest version number.
+/// An explicit exit stops this path even when lowering left dead successors.
+fn terminal_states(
+    program: &SsaProgram,
+    root: BlockId,
+    view: &HashMap<String, Taint>,
+    initial: &HashSet<String>,
+) -> TerminalStates {
+    let mut states = HashMap::from([(
+        root,
+        TerminalFlow {
+            tainted: initial.clone(),
+            ..TerminalFlow::default()
+        },
+    )]);
+    let mut pending = VecDeque::from([root]);
+    let mut result = TerminalStates::default();
+    while let Some(id) = pending.pop_front() {
+        let block = program.block(id);
+        let mut state = states[&id].clone();
+        state.enter(program, block, view);
+        let falls = terminal_block(
+            program,
+            block,
+            view,
+            &mut state,
+            &mut result,
+            root == program.entry,
+        );
+        if !falls {
+            continue;
+        }
+        state.propagate(block, &mut states, &mut pending);
+    }
+    result
+}
+
+fn terminal_block(
+    program: &SsaProgram,
+    block: &BasicBlock,
+    view: &HashMap<String, Taint>,
+    state: &mut TerminalFlow,
+    result: &mut TerminalStates,
+    signals: bool,
+) -> bool {
+    let mut origin = block.origin;
+    for (index, inst) in block.insts.iter().enumerate() {
+        let span = terminal_inst_span(program, inst, &mut origin);
+        let deferred = block.signal_deferred.contains(&index);
+        if !state.instruction(
+            program,
+            inst,
+            view,
+            signals.then_some((span, deferred)),
+            result,
+        ) {
+            return false;
+        }
+    }
+    if matches!(block.terminator, Terminator::Return) {
+        result.exits.extend(state.tainted.iter().cloned());
+    }
+    true
+}
+
+fn terminal_inst_span(
+    program: &SsaProgram,
+    inst: &SsaInst,
+    origin: &mut Option<usize>,
+) -> crate::ir::Span {
+    if let SsaInst::SourceOrigin(next, _) = inst {
+        *origin = *next;
+    }
+    origin.map_or(crate::ir::Span::new(1, 1), |id| program.origins[id].span)
+}
+
+fn exit_may_be_zero(args: &[SsaValue]) -> bool {
+    match args.first() {
+        None => true,
+        Some(SsaValue::Literal(value)) => value.parse::<i64>().is_ok_and(|value| value == 0),
+        Some(_) => true,
+    }
+}
+
+fn update_global_state(
+    program: &SsaProgram,
+    target: &VarRef,
+    view: &HashMap<String, Taint>,
+    state: &mut HashSet<String>,
+) {
+    if !program.globals.contains_key(&target.name) {
+        return;
+    }
+    if is_tainted(view, target) {
+        state.insert(target.name.clone());
+    } else {
+        state.remove(&target.name);
+    }
+}
+
+/// Total over SSA definitions; do not add a wildcard.
+pub(crate) fn instruction_target(inst: &SsaInst) -> Option<&VarRef> {
+    match inst {
+        SsaInst::Assign { target, .. }
+        | SsaInst::ReadLine { target, .. }
+        | SsaInst::ReadArray { target, .. }
+        | SsaInst::CaptureEnd { target, .. }
+        | SsaInst::ArgvFill { target, .. }
+        | SsaInst::KeysFill { target, .. }
+        | SsaInst::SplitValue { target, .. }
+        | SsaInst::MapFromArray { target, .. }
+        | SsaInst::Attest { target, .. }
+        | SsaInst::AttestRetag { target, .. } => Some(target),
+        SsaInst::Pipeline { capture, .. } => capture.target(),
+        SsaInst::Command { .. }
+        | SsaInst::Test(..)
+        | SsaInst::SubscriptAssign { .. }
+        | SsaInst::ArrayAppend { .. }
+        | SsaInst::MatchInto { .. }
+        | SsaInst::CaptureStart { .. }
+        | SsaInst::AttestAll { .. }
+        | SsaInst::RedirectPush { .. }
+        | SsaInst::PipelineFinish { .. }
+        | SsaInst::RedirectPop { .. }
+        | SsaInst::SourceOrigin(..) => None,
+    }
 }
 
 struct Pass<'a> {
     program: &'a SsaProgram,
     user_functions: std::collections::HashSet<String>,
     diverging: std::collections::HashSet<BlockId>,
+}
+
+pub(crate) struct Classification {
+    values: HashMap<String, Taint>,
+    functions: HashSet<String>,
+}
+
+impl Classification {
+    pub(crate) fn tainted(&self, var: &VarRef) -> bool {
+        is_tainted(&self.values, var)
+    }
+
+    pub(crate) fn acquisition<'a>(&self, inst: &'a SsaInst) -> Option<&'a VarRef> {
+        let (target, value, _) = definition_taint(inst, &self.values, &self.functions)?;
+        (value == Taint::Tainted).then_some(target)
+    }
+}
+
+pub(crate) fn classify_main(program: &SsaProgram) -> Classification {
+    let pass = Pass {
+        program,
+        user_functions: collect_user_functions(program),
+        diverging: collect_diverging_blocks(program),
+    };
+    let mut values = HashMap::new();
+    seed_clean_specials(&mut values);
+    classify_process_defs(
+        &pass,
+        &program.process_blocks(&[program.entry]),
+        &mut values,
+    );
+    Classification {
+        values,
+        functions: pass.user_functions,
+    }
 }
 
 /// Classify definitions, then check uses in one process. Each child inherits
@@ -72,7 +527,7 @@ fn check_process(
     blocks: &[BlockId],
     mut view: HashMap<String, Taint>,
     errors: &mut Vec<String>,
-) {
+) -> HashMap<String, Taint> {
     let program = pass.program;
     classify_process_defs(pass, blocks, &mut view);
     for &id in blocks {
@@ -84,6 +539,7 @@ fn check_process(
     for root in roots {
         check_process(pass, &program.process_blocks(&[root]), view.clone(), errors);
     }
+    view
 }
 
 fn classify_process_defs(pass: &Pass<'_>, blocks: &[BlockId], view: &mut HashMap<String, Taint>) {
@@ -140,7 +596,7 @@ fn collect_diverging_blocks(
         .values()
         .filter(|b| {
             matches!(
-                b.insts.last(),
+                b.last_operation(),
                 Some(SsaInst::Command {
                     kind: crate::ssa::BuiltinCmd::Exit,
                     ..
@@ -226,75 +682,61 @@ fn classify_inst_def(
     user_functions: &std::collections::HashSet<String>,
     predecessors: &HashMap<VarRef, VarRef>,
 ) {
-    match inst {
-        SsaInst::Assign { target, value } => {
-            let t = value_is_tainted(value, taint, user_functions);
-            classify_write(target, t, taint, predecessors);
-        }
-        SsaInst::Attest { target, .. } => {
-            // Attest produces a clean version.
-            taint.insert(var_key(target), Taint::Clean);
-        }
-        SsaInst::AttestRetag { target, .. } => {
-            // A passed attest's subject — scalar, array or map — is clean.
-            taint.insert(var_key(target), Taint::Clean);
-        }
+    let Some((target, value, preserves)) = definition_taint(inst, taint, user_functions) else {
+        return;
+    };
+    if preserves {
+        classify_write(target, value, taint, predecessors);
+    } else {
+        taint.insert(var_key(target), value);
+    }
+}
+
+/// Value provenance is separate from the outstanding obligation retained by a write.
+/// Total over instructions; do not add a wildcard.
+fn definition_taint<'a>(
+    inst: &'a SsaInst,
+    taint: &HashMap<String, Taint>,
+    user_functions: &HashSet<String>,
+) -> Option<(&'a VarRef, Taint, bool)> {
+    let (value, preserves) = match inst {
+        SsaInst::Assign { value, .. } => (value_is_tainted(value, taint, user_functions), true),
+        SsaInst::Attest { .. } | SsaInst::AttestRetag { .. } => (Taint::Clean, false),
         SsaInst::ReadLine { target, .. } | SsaInst::ReadArray { target, .. } => {
             // DD#127: kernel-read bytes are tainted, including builtin pipes.
-            taint.insert(var_key(target), Taint::Tainted);
+            return Some((target, Taint::Tainted, false));
         }
-        SsaInst::CaptureEnd {
-            target, buffered, ..
-        } => {
-            classify_write(target, taint_of_flag(!buffered), taint, predecessors);
-        }
+        SsaInst::CaptureEnd { buffered, .. } => (taint_of_flag(!buffered), true),
         SsaInst::Pipeline { capture, .. } => {
-            taint.extend(capture.target().map(|target| (var_key(target), Taint::Tainted)));
+            return capture
+                .target()
+                .map(|target| (target, Taint::Tainted, false));
         }
-
-        SsaInst::ArgvFill { target, .. } => {
-            // DD#60/#61: argv is a bulk-read source — always tainted.
-            taint.insert(var_key(target), Taint::Tainted);
-        }
-        SsaInst::KeysFill { target, .. } => {
-            // DD#75 §3 / DD#93: the keys of a map are always clean. Every
-            // route to a tainted map is closed at construction, and a tainted
-            // value reaches a subscript only through `attest`, which cleans
-            // it — so the source map has no tainted key to hand over. This is
-            // deliberately NOT the `ArgvFill` rule above: argv's bytes come
-            // from outside the program, a map's keys were put there by it.
-            classify_write(target, Taint::Clean, taint, predecessors);
-        }
-        SsaInst::SplitValue { source, target } => {
-            // DD#99 `read $SRC ARR` — the array is as tainted as the scalar
-            // whose bytes it splits.
-            let t = value_is_tainted(source, taint, user_functions);
-            classify_write(target, t, taint, predecessors);
+        SsaInst::ArgvFill { .. } => (Taint::Tainted, false),
+        SsaInst::KeysFill { .. } => (Taint::Clean, true),
+        SsaInst::SplitValue { source, .. } => {
+            (value_is_tainted(source, taint, user_functions), true)
         }
         SsaInst::MapFromArray {
-            source,
-            target,
-            taint_off,
-            ..
-        } => {
-            let t = map_fill_taint(source, *taint_off, taint);
-            classify_write(target, t, taint, predecessors);
-        }
-
-        // Instructions that don't define a VarRef. Capture-form builtins are
-        // governed by the CST pass; the SSA backstop does not yet re-derive
-        // them (see task ssa-taint-cmdsub-operand-propagation).
+            source, taint_off, ..
+        } => (map_fill_taint(source, *taint_off, taint), true),
         SsaInst::Command { .. }
         | SsaInst::Test(..)
         | SsaInst::SubscriptAssign { .. }
         | SsaInst::ArrayAppend { .. }
-        | SsaInst::MatchInto { .. } // fills a clean array (subject is clean); CST pass governs array taint
+        | SsaInst::MatchInto { .. }
         | SsaInst::CaptureStart { .. }
-        | SsaInst::AttestAll { .. } // validates in place; AttestRetag defines the clean version
-        | SsaInst::RedirectPush { .. } // moves fds around; defines no value
+        | SsaInst::AttestAll { .. }
+        | SsaInst::RedirectPush { .. }
         | SsaInst::PipelineFinish { .. }
-        | SsaInst::RedirectPop { .. } => {}
-    }
+        | SsaInst::RedirectPop { .. }
+        | SsaInst::SourceOrigin(..) => return None,
+    };
+    Some((
+        instruction_target(inst).expect("a defining instruction has a target"),
+        value,
+        preserves,
+    ))
 }
 
 fn classify_write(

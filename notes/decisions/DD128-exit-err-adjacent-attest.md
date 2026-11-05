@@ -1,19 +1,19 @@
 title: DD#128 - EXIT, ERR, and adjacent attest resolution
-status: draft
+status: accepted
 
 Drafted 2026-11-03 at DG's request. DG settled all five open choices that
 day; section 10 records the rulings, now incorporated into the rules below.
-**The document remains a draft; those choices are no longer open.**
-Implementation is authorized and underway. The typing prerequisite shipped
+Accepted and implemented 2026-11-05.
+Implementation was authorized after those choices. The typing prerequisite shipped
 in journal 565; journal 566 restores uniform SB5071; journal 567 implements
 process-static globals and their meaningful zero values. Journal 568
 implements strict adjacent resolution and fresh private lifetimes, with
-definition-convergent, versioned SSA taint checks. The compiler still has
-DD56's `END`; generated handler functions, the new handler contracts and
-their remaining companion-DD rewrites are not implemented yet.
+definition-convergent, versioned SSA taint checks. Journal 569 implements
+generated handlers, their distinct entry/failure contracts, cause-based
+runtime dispatch and shared signal protection, replacing END.
 
 DG supplied the design principles, made the decisions and authorized
-implementation. The AI assembled the writeup and implements those decisions.
+implementation. The AI assembled the writeup and implemented those decisions.
 
 ## The model
 
@@ -38,7 +38,7 @@ that a process survives an uncatchable signal.
 
 ## Why change END
 
-The existing END combines successful completion, early exits, aborts and
+The former END combined successful completion, early exits, aborts and
 signals in one block. Its incoming values can therefore be observed before
 the adjacent attest, and its blanket unchecked treatment hides which
 failures the author intended to ignore.
@@ -428,12 +428,10 @@ entered for an ordinary failure rather than a fatal fault. No substitute
 successful value is invented. This does not promise that diagnostic I/O
 succeeds or that the existing runtime shutdown work cannot block.
 
-The current arithmetic and OOM paths call `sash_exit`/`sash_shutdown` for
-runtime teardown, leaving the process without dispatching the source END
-body. This rule requires a first-fault ERR transfer instead of
-unconditionally bypassing source handlers. The main-process-only rule
-still holds: a fatal fault in a forked child does not run either parent
-handler.
+Arithmetic and OOM paths call `sash_abort`, which attempts ERR before final
+runtime shutdown. Startup heap-mapping failure uses that same path, before
+main has initialized its locals. A fatal fault in a forked child runs
+neither parent handler.
 
 Uncatchable signals and external process termination are outside the
 language's cleanup guarantee. Compiler/runtime defects are not a license
@@ -469,8 +467,8 @@ The storage prerequisite is implemented in journal 567. Both backends use
 the same checked global inventory, with a distinct valid empty header for
 each global collection and lazy backing allocation. Statement attestation
 aliases its source storage rather than creating a future-only copy.
-`gstate.1`/`.2` pin actual completed values on the existing END abort paths;
-they do not implement or prove the new handler-entry taint rules.
+The migrated `h128.gstate.1`/`.2` retain actual completed-value assertions;
+the handler-entry taint checks have separate controls.
 
 Journal 568 implements strict resolution in the existing independent
 summaries and SSA backstop. The latter converges full definition
@@ -478,7 +476,21 @@ classifications, uses actual-current predecessor links and carries reaching
 versions on ordinary collection operands. Fresh body-local initialization
 closes B14, which otherwise made a subsequent call inherit both stale
 values and expired private taint. Neither this prerequisite nor the static
-storage work exposes the new handler surface.
+storage work by itself exposed the new handler surface.
+
+Journal 569 lowers EXIT and ERR as independent SSA roots and emits private
+functions referenced by optional runtime callbacks. Handler input versions
+alias the real global cells; they are not copies of main's final SSA state.
+The runtime records terminal progress before cleanup or callback invocation.
+Dispatch closes existing readers, restores the invoker's descriptors and
+selects a separate capture head without allocating. Actual handler work can
+still allocate and fail.
+
+Capture frames are heap-backed linked stacks, separately owned by main,
+EXIT and ERR. They have no undocumented fixed 64-frame ceiling. A fault
+while appending to a live main/EXIT capture cannot make ERR reuse that
+borrowed frame. Capture memfd creation, descriptor duplication and rewind
+failures abort explicitly; they never return fabricated empty success.
 
 ### Pipeline and acceptance
 
@@ -490,14 +502,32 @@ replacement from permission to resolve outstanding taint.
 
 Both handlers must participate in parsing, binding, resolution, validation,
 typing, summaries, lowering, emission and artifacts. The B5 typing
-prerequisite is closed (2026-11-04, journal 565): the existing END and all
-capture/function bodies are checked, and lowering uses the checked type map.
-Collection signatures include program-level definitions, calls in both
-executable roots and shared global facts. The new handlers must preserve
-that coverage without restoring a second definition root. This does not
-implement their routing or failure contracts: the current blanket END
-unchecking must not be inherited by EXIT or used to disguise ERR's
-explicit-handling rule.
+prerequisite closed in journal 565. Both handlers and all capture/function
+bodies are checked, and lowering uses the checked type map. Collection
+signatures include program-level definitions, calls in every executable
+root and shared global facts. No second definition root or blanket
+handler-unchecking pass remains.
+
+The source checker derives handler requirements using the existing
+independent summaries and incoming-origin ownership obligations. A fresh
+acquisition on only one branch does not permit an inherited-input attest
+on the other. The SSA backstop independently checks incoming versions and
+fresh acquisitions, including mapped collection slots.
+
+`terminal::check_err` reports SB5101 from the live same-process lowered
+instructions, including called/inlined bodies, with the call and failure
+locations. It does not re-walk a function under caller-specific taint.
+Conservative value facts distinguish potentially empty/NUL-bearing values,
+dynamic regexes and unknown collection sizes from proven-safe forms.
+Collection mutation invalidates the relevant proofs. This currently makes
+descriptor captures, bulk/slurp reads and redirects unavailable in ERR:
+their uncatchable read or backup/restore failures remain operational
+failures even where an enclosing status is caught. Compiler-bounded argv
+iteration, known nonempty dispositions, even-length map conversion and
+valid static regexes need no fictitious extra failure handling.
+
+Artifact schema 2 has optional `:exit-block` and `:err-block` fields and no
+`:end-block`; empty handlers remain distinguishable from absent handlers.
 
 The compiler and SSA backstop must agree on the new taint contract. Handler
 entry must preserve actual values on implicit and explicit transfers in
@@ -552,10 +582,11 @@ discard support solely for END-local function definitions, and correct
 DD56. This restores DD86's original rule rather than introducing a new
 placement restriction.
 
-## 11. Documents to replace on acceptance
+## 11. Companion documents
 
-Do not append contradictory exceptions to the old policies. Rewrite the
-affected sections coherently, with history remaining in git:
+The affected operative sections are rewritten coherently, rather than
+retaining contradictory policies under later exceptions. History remains in
+git:
 
 - DD56: END surface, cause-based routing, handler status and checkpoints.
 - DD55: checked EXIT and explicit operational-failure handling in ERR.
@@ -564,7 +595,9 @@ affected sections coherently, with history remaining in git:
 - DD127: summary transfer rules, cleanup inputs and preserved ownership.
 - DD24 and DD89: align terminology and references without changing the
   retained source/escape or full-i64 exit rules.
-- GUIDE, the manual, converter guidance and AGENTS: remove obsolete END
-  and general-overwrite descriptions when the implementation lands.
+- GUIDE, the manual, converter guidance and AGENTS: generated handlers and
+  strict resolution replace obsolete END and general-overwrite descriptions.
 
-The remaining companion rewrites land with the corresponding implementation.
+DD104 also records artifact schema 2; DD120 puts descriptor restoration at
+the common terminal callback entry. The remaining scope, typing, function,
+reader, keyword and error-taxonomy references use the same model.

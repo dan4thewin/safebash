@@ -2057,6 +2057,8 @@ pub(super) fn keyword_to_str(tok: &Tok) -> Option<&'static str> {
         Tok::Map => "map",
         Tok::Attest => "attest",
         Tok::End => "END",
+        Tok::Exit => "EXIT",
+        Tok::Err => "ERR",
         _ => return None,
     })
 }

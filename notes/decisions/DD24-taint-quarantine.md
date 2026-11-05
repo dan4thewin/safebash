@@ -7,7 +7,7 @@ incorporating DD#43, DD#44, DD#47, DD#49.
 
 ## Taint sources
 
-A variable is tainted iff its defining instruction is one of:
+A binding acquires taint from:
 
 - `x=$(getenv VAR)` — environment variable read
 - `x=$(arg N)` — single program positional param (DD#60)
@@ -25,13 +25,23 @@ Heredocs and here-strings are not part of the language (DD#83).
 DD#127 says where output is attested: in the body that produced it or, when
 that body has exactly one call site, immediately after the call. The same
 rule covers what a function leaves in a global or a collection slot.
-W2a implements read-boundary classification; W2b still owns the rejection
-of an outside attest on a shared producer's output.
+Read-boundary classification and shared-output ownership are implemented
+(journals 560-561). An outside attest on a shared producer's kernel-read
+output is rejected.
+
+Acquisition is not the whole lifetime rule. Under DD#128, unresolved taint
+survives an ordinary overwrite, unset, clean loop binding or buffer copy.
+Only a legal adjacent attest or a clean whole-subject replacement written
+directly on its failed branch resolves it. EXIT checks its actual incoming
+states; ERR conservatively treats potentially tainted incoming globals as
+unresolved, even if main normally attests them.
 
 ## Clean sources
 
-Literals, arithmetic from clean operands, `$#`, `$?`, `$$`, `$!`,
-variables assigned from clean expressions.
+Literals, arithmetic from clean operands, `$#`, `$?`, `$$`, `$!`, and
+compiler-owned buffer captures introduce no taint. Assigning a clean
+expression keeps a clean binding clean; it does not resolve an already
+tainted live binding outside the failed-attest permission above.
 
 (`$LINENO` was removed from this list — DG 2026-08-19 rejected it as a
 magic var; it no longer exists in sash, so it is never a taint source.)
@@ -69,8 +79,10 @@ as a read and is rejected:
 - Passing as a function argument
 - `join @arr` when any element is tainted
 
-No propagation — taint is a property of a definition, not a flow.
-Per-definition classification with use-site rejection.
+There is no permission to propagate unresolved values through ordinary reads:
+reject at the use, rather than accepting a copy and waiting for a later sink.
+The analysis still tracks definition dependencies and unresolved state across
+control flow, including DD#128's persistent taint after ordinary overwrites.
 
 ### Enforcement note (2026-08-18) — the `b=$a` read was a hole
 
@@ -166,7 +178,7 @@ Two forms:
 
 | Form | On failure |
 |---|---|
-| `bless VAR [[ test ]]` | Writes "bless: validation failed" to stderr, exits 1 |
+| `bless VAR [[ test ]]` | Reports validation failure and enters ERR with status 1 (DD#128) |
 | `if bless VAR [[ test ]]` | False branch taken, VAR remains tainted |
 
 On success, VAR becomes clean from this point forward (new SSA
@@ -198,7 +210,9 @@ fallback assignment is exactly the resolution DD#121 R2 asks for. The
 `if bless VAR [[ test ]]` row above likewise stands for the **written** else:
 VAR is tainted inside that branch, and the branch must resolve it (or `exit` /
 `return` / `break` / `continue`) before falling through. A caught attest with
-no `else` at all is SB5089.
+no `else` at all is SB5089. An `exit 0` path must additionally satisfy any
+incoming clean-use requirements of EXIT; nonzero exit selects ERR. Other
+transfers retain unresolved state at their real continuation (DD#128).
 
 Lowering (`transform/statements.rs::lower_list_stmt`): a bless left operand of
 `&&`/`||` is rewritten to the if-bless form (`bless … || X` → `if bless {} else

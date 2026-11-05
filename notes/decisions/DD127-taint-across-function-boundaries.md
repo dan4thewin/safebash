@@ -31,10 +31,11 @@ checks them.
 ## Terms
 
 - **Body** — a named function's body, or an anonymous `$( … )` body (DD#86,
-  2026-09-29: "a body is a function body"). The top level and END follow rule
-  1 like any body. They have no call sites, so rules 2 and 3 never apply to
-  them; what END receives on entry is W5's question.
-- **Call site** — any syntactic call of a function: at the top level, in END,
+  2026-09-29: "a body is a function body"). Main, EXIT and ERR follow rule 1
+  like any body. Their entry is not an authored call site, so rules 2 and 3
+  do not apply to the roots themselves. DD#128 defines each handler's
+  incoming-data contract and requires fresh acquisition before its own attest.
+- **Call site** — any syntactic call of a function: at the top level, in EXIT/ERR,
   in a body, inside a capture, as a pipeline stage, under `&`, or as an
   arithmetic call `(f …)` (DD#58). Sites are counted per function definition.
   - A call inside a loop is one site. The rule is about where an attest is
@@ -520,7 +521,7 @@ keep the enclosing loop depth but cannot write into the real body's exits
 or obligations (DD#121, journal 562).
 
 The census includes command calls and arithmetic calls, including bare
-int-function names, captures and END. Self-tail calls are excluded. DD#27
+int-function names, captures and both handlers. Self-tail calls are excluded. DD#27
 and SB5071 give a call graph with no legal inter-function cycles, so name
 summaries are built bottom-up, without a cross-function fixpoint. A
 multiply-defined name is conservatively shared and its definitions' summaries
@@ -561,8 +562,14 @@ Each definition's own diagnostics are reported independently of its callers.
 Every body entry starts with an empty adjacency set, including singleton
 probes of a received slot. `SlotInfo` and its inward/outward fixpoints are
 gone; `slot_usage_map` remains solely for arity and dead-variable checks.
-The top level starts empty, and END currently follows its final state; exits
-into END are W5's remaining work.
+The top level starts empty. EXIT and ERR are independent roots, not walks
+from main's final state. EXIT's incoming clean-use requirements are checked
+at actual orderly entries, including explicit zero exits and signal polls.
+ERR conservatively receives any global that may acquire taint in main or
+EXIT, even if a normal path later attests it. Requirements include helper
+and slot uses and incoming-origin attest obligations. A partial fresh
+acquisition cannot excuse an inherited-input attest on the other path.
+DD#128's source analysis and SSA backstop enforce these contracts separately.
 
 ### Captures, value calls and child processes
 
@@ -682,8 +689,9 @@ W3 implements ordinary loop transfers without replacing those summaries
 W4 implements the per-process SSA backstop (journal 563): classify and check
 one process's executable blocks, then recursively check its children with
 independent copies of the completed parent view. Same-process closures
-exclude descendants and keep the existing ascending block order. The main
-roots are entry and END, including END's implicit abort entries.
+exclude descendants and keep the existing ascending block order. Main and
+the two terminal handlers are separate executable roots; handler inputs
+follow DD#128 rather than inheriting main's completed view.
 Unbound function templates are not executable parent definitions; their
 lowering also restores current variable versions without rewinding version
 counters. Both corrections are needed to keep definition-time effects out
@@ -698,10 +706,15 @@ Collection cell reads, splats, table iteration and map-fill operands now
 carry their reaching `VarRef`. A later fill cannot taint an earlier clean
 read, and a later attest cannot clean an earlier read or derived value.
 The backend still addresses the binding's same physical table storage.
+Journal 569 completes W5 under DD#128: checked EXIT, explicitly handled ERR,
+actual process-global values and generated terminal callbacks. A shared
+signal plan protects semantic acquisition/attest pairs, including explicit
+checkpoints and both backends' direct polls. Before-acquisition and
+post-reader checkpoints are real runtime operations; ordinary failure or
+explicit exit still takes precedence over deferred signal dispatch.
+
 The following remain:
 
-- **W5, END entry.** Keeping END in the main process does not yet establish
-  the state on every abort, explicit exit or signal edge into it.
 - **Precision follow-ups:** ordered value-call/capture effects and
   definition-specific summaries are recorded in
   `notes/tasks/taint-global-summary-followups.md`.
@@ -741,7 +754,7 @@ The following remain:
   unchanged and its former alias permission is deliberately retired.
 - `noalias.1`-`.16` pin direct and forwarded duplicates, direct/transitive
   global access, metadata, writes, attests, captures, arithmetic calls,
-  conditional paths and END. Unrelated globals and literal `=name` words
+  conditional paths and cleanup bodies. Unrelated globals and literal `=name` words
   remain legal; `--no-taint` does not bypass the contract.
 
 ### Landed in W1b-2
@@ -846,11 +859,27 @@ The following remain:
 - `flife.1`-`.8` cover fresh named/captured/child/tail entries, real scalar
   and collection defaults, and preservation of enclosing locals and globals.
 
+### Landed as DD#128's terminal-handler implementation
+
+- `handler128.1`-`.17` pin the new surface, uniform SB5071, full-i64 routing,
+  status overrides, independent source entry requirements and partial-refresh
+  refusals for scalars and mapped slots.
+- `errentry.1`-`.8` independently pin inherited-input restrictions through
+  the SSA backstop. `errfail.1`-`.21` and `errproof.1`-`.8` pin actual lowered
+  operational failures and the conservative value proofs that permit safe
+  forms.
+- `sigguard.1`-`.15` cover protected adjacency, function/loop/reader polls,
+  false-reader entry, pre-acquisition dispatch and transfer precedence.
+- `errresource.1`-`.12` cover capture setup failures, heap and arithmetic
+  faults, once-only entry, separate live capture stacks and child isolation.
+- Existing END fixtures migrate to fresh `h128.*` identities, retaining
+  their relevant assertions under the selected handler's new contract.
+  The branch's `endck` surface is not ported as a compatibility alias.
+
 ## Open
 
 - Buffer eligibility beyond the existing paths
   (`q-buffer-capture-eligibility`); kernel reads remain tainted.
-- W5: END's entry state (B96).
 
 ## Provenance
 

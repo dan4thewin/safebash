@@ -471,10 +471,10 @@ if /bin/echo bad 1>&9 | /bin/cat { echo bad } else { echo $(status) }'
 run_sash 'if echo data > /dev/full | /bin/cat { echo bad } else { echo $(status) }'
 [[ $rc = 0 && $out = 1 && -z $rerr ]]; chk p518.6
 
-run_sash 'END { echo $(status) }
+run_sash 'ERR { - echo $(status) }
 /bin/echo bad < missing | /bin/cat
 echo bad'
-[[ $rc = 1 && $out = 1 && $rerr == *"missing:"* ]]; chk p518.7
+[[ $rc = 1 && $out = 1 && $rerr == *"missing:"* ]]; chk h128.p518.7
 
 run_sash '- /bin/sh -c "touch marker" < missing | /bin/cat
 echo continued'
@@ -510,10 +510,10 @@ run_sash 'if echo bad > missing-dir/file > keep | /bin/cat { echo bad } else { e
 run_sash_under 'if echo data | /bin/cat { echo bad } else { echo $(status) }' prlimit --nofile=4:4
 [[ $rc = 0 && $out = 1 && -z $rerr ]]; chk p518.15
 
-run_sash_under 'END { echo $(status) }
+run_sash_under 'ERR { - echo $(status) }
 echo data | /bin/cat
 echo bad' strace -qq -o fault.log -e inject=pipe2:error=EIO:when=1
-[[ $rc = 1 && $out = 1 && $rerr == *": pipe: "* ]]; chk p518.16
+[[ $rc = 1 && $out = 1 && $rerr == *": pipe: "* ]]; chk h128.p518.16
 
 run_sash_under 'if /bin/touch marker | /bin/cat | /bin/cat { echo bad } else { echo $(status) }' \
     strace -qq -o fault.log -e inject=pipe2:error=EMFILE:when=2
@@ -523,10 +523,10 @@ run_sash_under 'if /bin/sh -c "sleep 0.05; echo done > finished" | /bin/cat { ec
     strace -qq -o fault.log -e inject=clone:error=EAGAIN:when=2
 [[ $rc = 0 && $out = done && -z $rerr ]]; chk p518.18
 
-run_sash_under 'END { echo $(status) }
+run_sash_under 'ERR { - echo $(status) }
 echo data | /bin/cat
 echo bad' strace -qq -o fault.log -e inject=clone:error=EAGAIN:when=1
-[[ $rc = 1 && $out = 1 && $rerr == *": fork: "* ]]; chk p518.19
+[[ $rc = 1 && $out = 1 && $rerr == *": fork: "* ]]; chk h128.p518.19
 
 rm -f finished
 run_sash_under 'if /bin/sh -c "sleep 0.05; echo done > finished" | /bin/cat { echo bad } else { /bin/cat finished }' \
@@ -571,16 +571,16 @@ echo "$(len a):${a[0]}"'
 # fails. This is still construction failure, before either output is consumed.
 # common.sh keeps fd 3 open, so the successful pair occupies fds 4 and 5.
 run_sash_under '- close 4
-END { echo $(status) }
+ERR { - echo $(status) }
 : | /bin/cat
 echo bad' prlimit --nofile=6:6
-[[ $rc = 1 && $out = 1 && $rerr == *": pipe: "* ]]; chk p518.28
+[[ $rc = 1 && $out = 1 && $rerr == *": pipe: "* ]]; chk h128.p518.28
 
 run_sash_under '- close 5
-END { echo $(status) }
+ERR { - echo $(status) }
 : | /bin/cat
 echo bad' prlimit --nofile=6:6
-[[ $rc = 1 && $out = 1 && $rerr == *": pipe: "* ]]; chk p518.29
+[[ $rc = 1 && $out = 1 && $rerr == *": pipe: "* ]]; chk h128.p518.29
 
 # Each nested reader retains its own pipe across outer-loop iterations.
 run_sash '/usr/bin/printf "one\ntwo\n" | while readline a {
@@ -633,13 +633,13 @@ attest e in a [[ -n $e ]]
 echo "$(len a):$(strlen ${a[0]})"'
 [[ $rc = 0 && $out = 1:1048576 && -z $rerr ]]; chk pipeown.6
 
-run_sash 'END { echo "end:$(status)" }
+run_sash 'ERR { - echo "end:$(status)" }
 /bin/sh -c "echo record; exit 7" | while readline v {
   attest v [[ -n $v ]]
   echo $v
 }
 echo bad'
-[[ $rc = 7 && $out = $'record\nend:7' && $rerr == *"command failed (exit 7)"* ]]; chk pipeown.7
+[[ $rc = 7 && $out = $'record\nend:7' && $rerr == *"command failed (exit 7)"* ]]; chk h128.pipeown.7
 
 run_sash 'if /bin/sh -c "echo record; exit 7" | while readline v {
   attest v [[ -n $v ]]
@@ -675,11 +675,11 @@ int p=$(( (wait) ))
 echo $p'
 [[ $rc = 0 && $out = $'1\n-1' && -z $rerr ]]; chk pipeown.12
 
-run_sash 'END { echo $(status) }
+run_sash 'ERR { - echo $(status) }
 /usr/bin/seq 1 200000 | readline v
 attest v [[ -n $v ]]
 echo $v'
-[[ $rc = 141 && $out = 141 && $rerr == *"command failed (exit 141)"* ]]; chk pipeown.13
+[[ $rc = 141 && $out = 141 && $rerr == *"command failed (exit 141)"* ]]; chk h128.pipeown.13
 
 run_sash 'int n=0
 - /usr/bin/seq 1 200000 | while readline v {
@@ -786,21 +786,21 @@ echo $answer $p'
 [[ $rc = 0 && $out = "42 -1" && -z $rerr ]]; chk pipeown.21
 
 rm -f finished
-run_sash 'END { echo "end:$(status)"; /bin/cat finished }
+run_sash 'ERR { - echo "end:$(status)"; - /bin/cat finished }
 /bin/sh -c "echo record; sleep 0.05; echo done > finished" | while readline v {
   attest v [[ -n $v ]]
   /bin/false
 }
 echo bad'
-[[ $rc = 1 && $out = $'end:1\ndone' && $rerr == *"command failed (exit 1)"* ]]; chk pipeown.22
+[[ $rc = 1 && $out = $'end:1\ndone' && $rerr == *"command failed (exit 1)"* ]]; chk h128.pipeown.22
 
 rm -f finished
-run_sash 'END { echo "end:$(status)"; /bin/cat finished }
+run_sash 'ERR { - echo "end:$(status)"; - /bin/cat finished }
 /bin/sh -c "echo record; sleep 0.05; echo done > finished" | while readline v {
   attest v [[ -n $v ]]
   exit 23
 }'
-[[ $rc = 23 && $out = $'end:23\ndone' && -z $rerr ]]; chk pipeown.23
+[[ $rc = 23 && $out = $'end:23\ndone' && -z $rerr ]]; chk h128.pipeown.23
 
 rm -f finished
 run_sash_under '/bin/sh -c "echo record; sleep 0.05; echo done > finished" | while readline v {
@@ -820,19 +820,19 @@ int p=$(( (wait) ))
 echo $n $p' prlimit --nofile=12:12
 [[ $rc = 0 && $out = "100 -1" && -z $rerr ]]; chk pipeown.25
 
-run_sash 'END {
-  echo "end:$(status)"
-  /bin/sh -c "echo cleanup; exit 9" | while readline x {
-    attest x [[ -n $x ]]
-    echo $x
-  }
-  echo complete
+run_sash 'ERR {
+  - echo "end:$(status)"
+  if /bin/sh -c "echo cleanup; exit 9" | while readline x {
+    attest x [[ -n $x ]] || x=empty
+    - echo $x
+  } { : } else { : }
+  - echo complete
 }
 echo record | while readline v {
   attest v [[ -n $v ]]
   /bin/false
 }'
-[[ $rc = 1 && $out = $'end:1\ncleanup\ncomplete' && $rerr == *"command failed (exit 1)"* ]]; chk pipeown.26
+[[ $rc = 1 && $out = $'end:1\ncleanup\ncomplete' && $rerr == *"command failed (exit 1)"* ]]; chk h128.pipeown.26
 
 run_sash_under '/usr/bin/printf "one\ntwo\n" | while readline a {
   attest a [[ -n $a ]]
@@ -1142,11 +1142,11 @@ h
 echo done'
 [[ $rc = 0 && $out = $'h:hi\ndone' && -z $rerr ]]; chk stgarg.13
 
-# stgarg.14 inside END
+# Stage-argument captures also work inside EXIT.
 run_sash 'fn g { echo hi }
-END { /bin/echo "end:$(g)" | /bin/cat }
+EXIT { /bin/echo "end:$(g)" | /bin/cat }
 echo main'
-[[ $rc = 0 && $out = $'main\nend:hi' && -z $rerr ]]; chk stgarg.14
+[[ $rc = 0 && $out = $'main\nend:hi' && -z $rerr ]]; chk h128.stgarg.14
 
 # stgarg.15 inside a capture
 run_sash 'fn g { echo hi }

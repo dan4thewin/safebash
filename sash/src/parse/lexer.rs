@@ -5,7 +5,7 @@
 //!
 //! Design:
 //!   - Tokens are designed for sash-native (not bash): int, const, array, map,
-//!     attest, signal, END, fn are first-class keywords. (`local fn` was
+//!     attest, signal, EXIT, ERR, fn are first-class keywords. (`local fn` was
 //!     abandoned by DD#86 — `local` is not a token, so it lexes as an
 //!     ordinary word and resolution reports it as an unknown command.)
 //!   - Heredocs are rejected at the scanner level (emits __HEREDOC__ sentinel).
@@ -66,6 +66,8 @@ pub enum Tok {
     Map,
     Attest,
     End,
+    Exit,
+    Err,
 
     // Operators
     Pipe,
@@ -2261,6 +2263,8 @@ fn classify_word_token(word: String) -> Tok {
         "attest" => Tok::Attest,
         "signal" => Tok::Word("signal".to_string()),
         "END" => Tok::End,
+        "EXIT" => Tok::Exit,
+        "ERR" => Tok::Err,
         "return" => Tok::Word("return".to_string()),
         "break" => Tok::Word("break".to_string()),
         "continue" => Tok::Word("continue".to_string()),

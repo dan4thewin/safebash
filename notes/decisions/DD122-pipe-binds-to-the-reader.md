@@ -110,7 +110,7 @@ they leave, inner first. Ordinary loop continuation retains its reader.
 Closing an early consumer may give its producer SIGPIPE; DD#55's existing
 per-stage suppression and aggregate-status rules still apply.
 
-Abort, explicit exit and END close all outstanding readers before reaping,
+Terminal dispatch to EXIT or ERR closes all outstanding readers before reaping,
 preserving the triggering status. A forked child closes inherited reader fds
 without adopting its parent's children. An authored `wait` may reap an owned
 producer; its status is retained for the owning pipeline's later aggregate,

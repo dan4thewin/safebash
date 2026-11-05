@@ -86,11 +86,17 @@ manifest section is built by the same one-path-per-line rule as
 `emit_manifest`, and specs 109.2/109.3 assert the equality directly, so the
 section and the flag cannot drift apart.
 
+DD#128's handler split advances both emitted and embedded IR to schema 2
+(DD#104), including programs without handlers. Extraction returns that
+capture unchanged; it does not translate back to schema 1.
+
 ## Specs
 
-`spec/cli.sh` 109.1–109.12: the IR round-trips out of a binary; IR and manifest
+The DD109 cohort in `spec/cli.sh` checks that IR round-trips out of a binary; IR and manifest
 sections equal their flag output byte-for-byte; an empty manifest extracts as
 empty at rc 0; the DD#45 no-argument spelling is preserved; an unknown section
 name is rejected; a non-sash binary still errors. Empty-source source and
 manifest extraction succeed, and all three artifact readers reject present
-but unreadable/non-UTF-8 section data.
+but unreadable/non-UTF-8 section data. The two version assertions migrate
+from `109.1`/`.9` to `h128.109.1`/`.9` under DD128, retaining the nonempty
+structure and byte-equality checks while requiring schema 2.

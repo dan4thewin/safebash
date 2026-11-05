@@ -108,7 +108,6 @@ fn manifest_text(ssa: &SsaProgram) -> String {
 }
 
 pub fn compile_ssa(program: &SsaProgram, embedded: Embedded, trace: bool) -> Vec<u8> {
-    let reachable = program.reachable();
     let shared_flags = settings::Flags::new(settings::builder());
     let isa = cranelift_native::builder()
         .expect("host ISA")
@@ -122,26 +121,72 @@ pub fn compile_ssa(program: &SsaProgram, embedded: Embedded, trace: bool) -> Vec
     super::setup::define_heap_size(&mut module);
     let externs = super::setup::declare_runtime_functions(&mut module);
     let (literals, space_id, nl_id) = super::setup::intern_literals(&mut module, program, trace);
-    let mut literals = literals;
     let globals = super::setup::define_globals(&mut module, program, literals[""]);
-    // ── Build main() ───────────────────────────────────────────
-    let main_sig = Signature::new(CallConv::SystemV);
-    let main_func_id = module
-        .declare_function("main", Linkage::Export, &main_sig)
-        .expect("declare main");
+    let mut shared = ProgramEmission {
+        program,
+        literals,
+        globals,
+        externs,
+        space_id,
+        nl_id,
+        trace,
+    };
+    compile_body(&mut module, &mut shared, None);
+    for &kind in program.handlers.keys() {
+        compile_body(&mut module, &mut shared, Some(kind));
+    }
 
-    let mut func = Function::with_name_signature(UserFuncName::user(0, 0), main_sig);
+    let mut product = module.finish();
+    embed_artifacts(&mut product, &embedded);
+    product.emit().expect("emit object")
+}
 
+struct ProgramEmission<'a> {
+    program: &'a SsaProgram,
+    literals: HashMap<String, cranelift_module::DataId>,
+    globals: std::collections::BTreeMap<String, cranelift_module::DataId>,
+    externs: super::types::ExternFuncs,
+    space_id: cranelift_module::DataId,
+    nl_id: cranelift_module::DataId,
+    trace: bool,
+}
+
+fn compile_body(
+    module: &mut ObjectModule,
+    shared: &mut ProgramEmission,
+    kind: Option<crate::ir::HandlerKind>,
+) {
+    let program = shared.program;
+    let mut signature = Signature::new(CallConv::SystemV);
+    let (name, entry, linkage) = match kind {
+        Some(kind) => {
+            signature
+                .params
+                .push(cranelift_codegen::ir::AbiParam::new(I64));
+            (
+                format!("__sash_{}", kind.name()),
+                program.handlers[&kind].block,
+                Linkage::Local,
+            )
+        }
+        None => ("main".to_string(), program.entry, Linkage::Export),
+    };
+    let function = module
+        .declare_function(&name, linkage, &signature)
+        .expect("declare generated body");
+    let reachable = program.reachable_from(&[entry]);
+    let mut func =
+        Function::with_name_signature(UserFuncName::user(0, function.as_u32()), signature);
     let mut fbc = FunctionBuilderContext::new();
     {
         let mut builder = FunctionBuilder::new(&mut func, &mut fbc);
-
         let fs = super::setup::allocate_variables(
             &mut builder,
-            &mut module,
+            module,
             program,
+            entry,
             &reachable,
-            &globals,
+            &shared.globals,
         );
         let cl_blocks = fs.cl_blocks;
         let mut vars = fs.vars;
@@ -150,56 +195,71 @@ pub fn compile_ssa(program: &SsaProgram, embedded: Embedded, trace: bool) -> Vec
         let readers = fs.readers;
         let capture_slots = fs.capture_slots;
         let redirect_slots = fs.redirect_slots;
-        let saved_end_status_var = fs.saved_end_status_var;
-        let end_cl_block = fs.end_cl_block;
-        let end_region = program.end_region();
-        let child_region = program.child_region();
-
-        super::setup::reserve_user_fds(&program.user_fds, &mut builder, &mut module, &externs);
+        if kind.is_some() {
+            let status = builder.block_params(cl_blocks[&entry])[0];
+            builder.def_var(exit_status_var, status);
+        }
+        super::setup::reserve_user_fds(&program.user_fds, &mut builder, module, &shared.externs);
         super::setup::init_undeclared_redirect_vars(
             &mut builder,
-            &mut module,
+            module,
             program,
             &mut vars,
-            &mut literals,
+            &mut shared.literals,
         );
         emit_all_blocks(EmitCtx {
             builder: &mut builder,
-            module: &mut module,
+            module,
             program,
             reachable: &reachable,
             cl_blocks: &cl_blocks,
             vars: &mut vars,
-            literals: &literals,
-            externs: &externs,
+            literals: &shared.literals,
+            externs: &shared.externs,
             test_result_var,
             exit_status_var,
             readers: &readers,
             capture_slots: &capture_slots,
             redirect_slots: &redirect_slots,
-            saved_end_status_var,
-            end_cl_block,
-            end_region: &end_region,
-            child_region: &child_region,
-            space_id,
-            nl_id,
-            trace,
+            entry,
+            handler: kind.is_some(),
+            space_id: shared.space_id,
+            nl_id: shared.nl_id,
+            trace: shared.trace,
         });
 
         builder.seal_all_blocks();
         builder.finalize();
     }
 
-    verify_function(&func, isa.as_ref()).expect("verify function");
+    verify_function(&func, module.isa()).expect("verify function");
 
     let mut ctx = cranelift_codegen::Context::for_function(func);
     module
-        .define_function(main_func_id, &mut ctx)
+        .define_function(function, &mut ctx)
         .expect("define function");
+    if let Some(kind) = kind {
+        define_handler_callback(module, kind, function);
+    }
+}
 
-    let mut product = module.finish();
-    embed_artifacts(&mut product, &embedded);
-    product.emit().expect("emit object")
+fn define_handler_callback(
+    module: &mut ObjectModule,
+    kind: crate::ir::HandlerKind,
+    function: cranelift_module::FuncId,
+) {
+    let id = module
+        .declare_data(kind.callback_symbol(), Linkage::Export, false, false)
+        .expect("declare handler callback");
+    let mut data = cranelift_module::DataDescription::new();
+    let width = module.target_config().pointer_bytes();
+    data.define(vec![0; width as usize].into_boxed_slice());
+    data.set_align(width as u64);
+    let reference = module.declare_func_in_data(function, &mut data);
+    data.write_function_addr(0, reference);
+    module
+        .define_data(id, &data)
+        .expect("define handler callback");
 }
 
 /// All the threading compile_ssa needs to hand to per-block / per-
@@ -219,12 +279,8 @@ struct EmitCtx<'a, 'b> {
     readers: &'a std::collections::BTreeMap<u32, super::types::ReaderSlot>,
     capture_slots: &'a [(cranelift_frontend::Variable, cranelift_frontend::Variable)],
     redirect_slots: &'a [Vec<cranelift_frontend::Variable>],
-    saved_end_status_var: cranelift_frontend::Variable,
-    end_cl_block: Option<cranelift_codegen::ir::Block>,
-    end_region: &'a std::collections::HashSet<BlockId>,
-    /// Blocks that run in a forked child: an abort there exits the child
-    /// directly instead of entering END (DD#56).
-    child_region: &'a std::collections::HashSet<BlockId>,
+    entry: BlockId,
+    handler: bool,
     space_id: cranelift_module::DataId,
     nl_id: cranelift_module::DataId,
     trace: bool,
@@ -251,18 +307,21 @@ fn is_catching_construct_exit(label: &str) -> bool {
 
 fn emit_all_blocks(mut ctx: EmitCtx) {
     let block_ids: Vec<BlockId> = ctx.program.blocks.keys().copied().collect();
-    for (idx, &ssa_id) in block_ids.iter().enumerate() {
+    for &ssa_id in &block_ids {
         let Some(ssa_block) = block_to_emit(&ctx, ssa_id) else {
             continue;
         };
-        if idx > 0 {
-            ctx.builder.switch_to_block(ctx.cl_blocks[&ssa_id]);
-        }
-        emit_block_entry_hooks(&mut ctx, &ssa_block.label);
-        let terminated = emit_block_insts(&mut ctx, ssa_block, ssa_id);
-        if !terminated {
-            emit_terminator(&mut ctx, ssa_block);
-        }
+        emit_block(&mut ctx, ssa_block);
+    }
+}
+
+fn emit_block(ctx: &mut EmitCtx, block: &BasicBlock) {
+    if block.id != ctx.entry {
+        ctx.builder.switch_to_block(ctx.cl_blocks[&block.id]);
+    }
+    emit_block_entry_hooks(ctx, &block.label);
+    if !emit_block_insts(ctx, block) {
+        emit_terminator(ctx, block);
     }
 }
 
@@ -286,25 +345,6 @@ fn block_to_emit<'a, 'b>(ctx: &EmitCtx<'a, 'b>, ssa_id: BlockId) -> Option<&'a B
 /// a Cranelift block (before any SSA instruction) selected by the
 /// block's SSA label.
 fn emit_block_entry_hooks(ctx: &mut EmitCtx, label: &str) {
-    // DD#56: save exit status on entering END block so the program
-    // exits with the status that triggered END, not whatever END
-    // itself did.
-    if label == "__end__" {
-        let es = ctx.builder.use_var(ctx.exit_status_var);
-        ctx.builder.def_var(ctx.saved_end_status_var, es);
-        let cleanup = ctx
-            .module
-            .declare_func_in_func(ctx.externs.reader_cleanup, ctx.builder.func);
-        ctx.builder.ins().call(cleanup, &[]);
-        // DD#120: END is the invoker's code, so it runs on the invoker's
-        // fds. An abort inside a redirected command jumps straight here,
-        // leaving that command's redirects applied — the restore that would
-        // have undone them sits on an unreachable edge behind the abort.
-        let sr = ctx
-            .module
-            .declare_func_in_func(ctx.externs.scope_restore, ctx.builder.func);
-        ctx.builder.ins().call(sr, &[]);
-    }
     // Caught/uncaught $? model: if/while/for/case CATCH the
     // statuses they contain. On exit from a catching construct,
     // the rc register is reset to 0 so the construct's internal
@@ -322,21 +362,20 @@ fn emit_block_entry_hooks(ctx: &mut EmitCtx, label: &str) {
 
 /// Emit all instructions in a block; return true if any instruction
 /// terminated the block early (e.g. `exit`).
-fn emit_block_insts(ctx: &mut EmitCtx, ssa_block: &BasicBlock, ssa_id: BlockId) -> bool {
-    let mut block_terminated = false;
+fn emit_block_insts(ctx: &mut EmitCtx, ssa_block: &BasicBlock) -> bool {
     // DD#55: the instruction in condition position has its redirect open(2)
     // failure caught by if/||/while, not aborted — distinct from `-`
     // suppression. `ssa::condition_inst_index` is shared with emit_c so the
     // two backends cannot disagree about which instruction that is.
     let cond_idx = crate::ssa::condition_inst_index(ssa_block);
-    let end_cl_block = abort_end_block(ctx, ssa_id);
-    for (idx, inst) in ssa_block.insts.iter().enumerate() {
-        if block_terminated {
-            break;
-        }
+    for (idx, inst) in ssa_block
+        .insts
+        .iter()
+        .enumerate()
+        .filter(|(_, inst)| !matches!(inst, SsaInst::SourceOrigin(..)))
+    {
         let in_condition = cond_idx == Some(idx);
-        let in_end_block = ctx.end_region.contains(&ssa_id);
-        block_terminated = inst.emit(
+        if inst.emit(
             ctx.builder,
             ctx.module,
             &mut InstCtx {
@@ -350,32 +389,21 @@ fn emit_block_insts(ctx: &mut EmitCtx, ssa_block: &BasicBlock, ssa_id: BlockId) 
                 readers: ctx.readers,
                 capture_slots: ctx.capture_slots,
                 redirect_slots: ctx.redirect_slots,
-                end_cl_block,
                 program: ctx.program,
-                saved_end_status_var: ctx.saved_end_status_var,
                 cl_blocks: ctx.cl_blocks,
                 in_condition,
-                in_end_block,
+                signal_deferred: ssa_block.signal_deferred.contains(&idx),
             },
-        );
+        ) {
+            return true;
+        }
     }
-    block_terminated
-}
-
-/// DD#56: where an abort in `ssa_id` enters END. END runs only in the main
-/// process, so a forked child has no END to route through — every abort in
-/// it exits the child directly.
-fn abort_end_block(ctx: &EmitCtx, ssa_id: BlockId) -> Option<cranelift_codegen::ir::Block> {
-    if ctx.child_region.contains(&ssa_id) {
-        None
-    } else {
-        ctx.end_cl_block
-    }
+    false
 }
 
 fn emit_terminator(ctx: &mut EmitCtx, ssa_block: &BasicBlock) {
     match &ssa_block.terminator {
-        Terminator::Return => emit_return(ctx, ssa_block),
+        Terminator::Return => emit_return(ctx),
         Terminator::Goto(target) => {
             let target_cl = ctx.cl_blocks[target];
             ctx.builder.ins().jump(target_cl, &[]);
@@ -393,7 +421,7 @@ fn emit_terminator(ctx: &mut EmitCtx, ssa_block: &BasicBlock) {
         Terminator::Fork { parent, child } => emit_fork(ctx, *parent, *child),
         Terminator::ChildExit => {
             let status = ctx.builder.use_var(ctx.exit_status_var);
-            emit_exit_call(ctx, status);
+            emit_terminal_call(ctx, ctx.externs.shutdown, status);
         }
     }
 }
@@ -430,20 +458,21 @@ fn emit_fork(ctx: &mut EmitCtx, parent: BlockId, child: BlockId) {
     ctx.builder.ins().brif(pid, parent_cl, &[], child_cl, &[]);
 }
 
-fn emit_return(ctx: &mut EmitCtx, ssa_block: &BasicBlock) {
-    // DD#56: if END block exists, use saved triggering status
-    let status = if ctx.program.end_block.is_some() && !ssa_block.label.starts_with("fn_") {
-        ctx.builder.use_var(ctx.saved_end_status_var)
-    } else {
-        ctx.builder.use_var(ctx.exit_status_var)
-    };
-    emit_exit_call(ctx, status);
+fn emit_return(ctx: &mut EmitCtx) {
+    if ctx.handler {
+        ctx.builder.ins().return_(&[]);
+        return;
+    }
+    let status = ctx.builder.use_var(ctx.exit_status_var);
+    emit_terminal_call(ctx, ctx.externs.finish, status);
 }
 
-fn emit_exit_call(ctx: &mut EmitCtx, status: cranelift_codegen::ir::Value) {
-    let exit_ref = ctx
-        .module
-        .declare_func_in_func(ctx.externs.exit, ctx.builder.func);
+fn emit_terminal_call(
+    ctx: &mut EmitCtx,
+    function: cranelift_module::FuncId,
+    status: cranelift_codegen::ir::Value,
+) {
+    let exit_ref = ctx.module.declare_func_in_func(function, ctx.builder.func);
     ctx.builder.ins().call(exit_ref, &[status]);
     ctx.builder
         .ins()
@@ -575,7 +604,8 @@ mod tests {
     fn codegen_ice_becomes_an_error_not_a_stacktrace() {
         let program = crate::ir::Program {
             statements: Vec::new(),
-            end_block: None,
+            exit_block: None,
+            err_block: None,
         };
         let ssa = crate::ssa::SsaProgram::new();
         assert!(
@@ -598,7 +628,8 @@ mod tests {
     fn a_reachable_function_template_is_an_invariant_violation() {
         let program = crate::ir::Program {
             statements: Vec::new(),
-            end_block: None,
+            exit_block: None,
+            err_block: None,
         };
         let mut ssa = crate::ssa::SsaProgram::new();
         ssa.new_block("fn_unbound");

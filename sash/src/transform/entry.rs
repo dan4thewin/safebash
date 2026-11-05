@@ -15,6 +15,7 @@ pub fn ir_to_ssa_typed(
     ssa.user_fds = program_referenced_fds(program);
     let mut state = VersionState::with_types(types.vars);
     state.checked_collections = types.collections;
+    seed_global_collections(program, &ssa, &mut state);
     reserve_source_names(program, &mut state.reserved_names);
 
     register_functions(program, &mut state);
@@ -22,15 +23,12 @@ pub fn ir_to_ssa_typed(
     let entry = ssa.new_block("entry");
     ssa.entry = entry;
 
-    // DD#56: the END body is its own field on the Program, not a statement, so
-    // it is seeded here rather than recognised by name while lowering.
-    state.exit_trap = program.end_block.clone();
-
     let exit = lower_stmts(&program.statements, &mut ssa, &mut state, entry);
-    // Ensure exit block terminates with Return before END rewrite
     ssa.block_mut(exit).terminator = Terminator::Return;
 
-    install_end_block(&mut ssa, &mut state);
+    for (kind, body) in program.handlers() {
+        lower_handler(kind, body, &mut ssa, &mut state);
+    }
     super::reader_cleanup::install(&mut ssa, &state.reader_regions);
     ssa.assert_children_disjoint();
 
@@ -41,9 +39,9 @@ pub fn ir_to_ssa_typed(
     ssa.external_deps = state.external_deps.borrow().clone();
 
     mark_unchecked_in_conditions(&mut ssa);
-    mark_unchecked_in_end_blocks(&mut ssa);
     state.flush_expr_diagnostics();
     ssa.taint_predecessors = std::mem::take(&mut state.taint_predecessors);
+    ssa.resolutions = std::mem::take(&mut state.resolutions);
 
     // Exact-dedup diagnostics, preserving first-seen order. A function body is
     // lowered both as a standalone template (lower_function_stmt) and at each
@@ -57,6 +55,23 @@ pub fn ir_to_ssa_typed(
         .cloned()
         .collect();
     (ssa, diags)
+}
+
+fn seed_global_collections(program: &Program, ssa: &SsaProgram, state: &mut VersionState) {
+    let mut declared = std::collections::HashMap::new();
+    for body in program.bodies() {
+        crate::type_check::collect_collection_kinds(body, &mut declared);
+    }
+    // The checker's provisional bare-literal types are not declarations (SB5055).
+    for (name, map) in declared
+        .into_iter()
+        .filter(|(name, _)| ssa.globals.contains_key(name))
+    {
+        state.collections.insert(name.clone());
+        if map {
+            state.assoc_arrays.insert(name);
+        }
+    }
 }
 
 fn source_globals(
@@ -81,7 +96,7 @@ fn source_globals(
 }
 
 fn reserve_source_names(program: &Program, names: &mut HashSet<String>) {
-    for body in std::iter::once(program.statements.as_slice()).chain(program.end_block.as_deref()) {
+    for body in program.bodies() {
         walk_stmt_tree(body, &mut |stmt| reserve_stmt_names(stmt, names));
     }
 }
@@ -137,37 +152,23 @@ fn register_functions(program: &Program, state: &mut VersionState) {
     state.class_static = super::functions::static_classes(program, &state.known_functions);
 }
 
-/// DD#56: install a dedicated `__end__` block that contains the
-/// body of the EXIT trap. All non-function Return terminators are
-/// rewritten to goto the new end block, ensuring the END handler
-/// runs regardless of how the program exits (normal, abort,
-/// explicit exit).
-fn install_end_block(ssa: &mut SsaProgram, state: &mut VersionState) {
-    let Some(trap_stmts) = state.exit_trap.take() else {
-        return;
-    };
-
-    let end_block = ssa.new_block("__end__");
-    let end_exit = lower_stmts(&trap_stmts, ssa, state, end_block);
-    ssa.block_mut(end_exit).terminator = Terminator::Return;
-
-    let return_blocks: Vec<usize> = ssa
-        .blocks
-        .iter()
-        .filter(|(_, b)| {
-            b.terminator == Terminator::Return
-                && !b.label.starts_with("fn_")
-                && !b.label.starts_with("__end__")
-        })
-        .map(|(&id, _)| id)
+fn lower_handler(
+    kind: HandlerKind,
+    body: &[Statement],
+    ssa: &mut SsaProgram,
+    state: &mut VersionState,
+) {
+    let saved = state.snapshot();
+    let inputs = ssa
+        .globals
+        .keys()
+        .map(|name| (name.clone(), state.define_input(name)))
         .collect();
-    for block_id in return_blocks {
-        if block_id != end_block && block_id != end_exit {
-            ssa.block_mut(block_id).terminator = Terminator::Goto(end_block);
-        }
-    }
-
-    ssa.end_block = Some(end_block);
+    let block = ssa.new_block(kind.name());
+    let end = lower_stmts(body, ssa, state, block);
+    ssa.block_mut(end).terminator = Terminator::Return;
+    ssa.handlers.insert(kind, HandlerEntry { block, inputs });
+    state.restore(&saved);
 }
 
 /// DD#55: the instruction whose status a Branch or Loop terminator reads is in
@@ -204,38 +205,5 @@ pub(super) fn uncheck_last_condition_inst(insts: &mut [SsaInst]) {
     | SsaInst::PipelineFinish { checked, .. } = &mut insts[idx]
     {
         *checked = false;
-    }
-}
-
-/// DD#56: every Command and Pipeline reachable from the `__end__`
-/// block runs as part of cleanup and must not abort the program if
-/// it fails (otherwise a failed cleanup step would skip the rest
-/// of END). Mark them all unchecked.
-fn mark_unchecked_in_end_blocks(ssa: &mut SsaProgram) {
-    // Reachability, not a label test. Only END's *entry* block is named
-    // `__end__`; the blocks an `if`/`for` inside END creates get ordinary
-    // labels, so the label test marked the first block and left the rest
-    // checked. A failing command inside `END { if … { … } }` then aborted,
-    // and the abort routes through END — from inside END, a jump to itself.
-    for id in ssa.end_region() {
-        mark_block_unchecked(ssa.block_mut(id));
-    }
-}
-
-fn mark_block_unchecked(block: &mut BasicBlock) {
-    for inst in block.insts.iter_mut() {
-        match inst {
-            SsaInst::Command { checked, .. }
-            | SsaInst::Pipeline { checked, .. }
-            | SsaInst::PipelineFinish { checked, .. }
-            // A redirect scope must be unchecked here for the same reason,
-            // and doubly so: its abort jumps to the END block, which inside
-            // END is a jump to itself. Unchecked, a failed open skips the
-            // call and the rest of the cleanup still runs.
-            | SsaInst::RedirectPush { checked, .. } => {
-                *checked = false;
-            }
-            _ => {}
-        }
     }
 }

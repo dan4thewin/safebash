@@ -917,10 +917,10 @@ f =a'
 
 run_sash 'array a=(x)
 fn f { echo "${a[0]} $(len A)" }
-END {
+EXIT {
 f =a
 }'
-[[ $rc != 0 && $err == *SB5099* && $err == *'global `a` in `f`'* ]]; chk noalias.17
+[[ $rc != 0 && $err == *SB5099* && $err == *'global `a` in `f`'* ]]; chk h128.noalias.17
 
 run_sash 'fn key { : "$(len A)" "$(len B)"; echo k }
 map m=([k]=yes)

@@ -175,11 +175,11 @@ out=$($SASH --manifest m5.sash 2>/dev/null); rc=$?
 # every compile makes "a new IR variant does not render" a failure of every
 # build instead of a latent gap in a rarely-taken path.
 
-# 109.1 a native binary carries its IR capture, retrievable by section name.
+# A native binary carries its schema-two IR capture, retrievable by section name.
 $SASH -c 'int n=3
 if (( n > 2 )) { echo big }' -o irbin 2>/dev/null
 out=$($SASH --extract irbin ir 2>/dev/null); rc=$?
-[[ $rc = 0 && $out == *":ir-version 1"* && $out == *":kind :if"* ]]; chk 109.1
+[[ $rc = 0 && $out == *":ir-version 2"* && $out == *":kind :if"* ]]; chk h128.109.1
 
 # 109.2 the embedded IR is byte-identical to what --emit-ir prints for the
 # same source. The section and the flag cannot drift apart.
@@ -233,14 +233,14 @@ timeout "$SPEC_TIMEOUT" ./emptyartifacts >empty-run.out 2>empty-run.err; run_rc=
    && ! -s empty-run.out && ! -s empty-run.err \
    && ! -s empty-default.out && ! -s empty-explicit.out ]]; chk 109.8
 
-# 109.9 the same binary has no dependencies; its nonempty IR survives even
+# The same binary has no dependencies; its nonempty IR survives even
 # when both of the other zero-length sections disappear at link time.
 "$SASH" --extract emptyartifacts manifest >empty-manifest.out 2>art.err; manifest_rc=$?
 "$SASH" --extract emptyartifacts ir >empty-ir.out 2>art.err; ir_rc=$?
 "$SASH" --emit-ir -c '' >empty-flag-ir.out 2>art.err; flag_rc=$?
 [[ $manifest_rc = 0 && ! -s empty-manifest.out && $ir_rc = 0 && $flag_rc = 0 ]] \
-    && grep -q ':ir-version 1' empty-ir.out \
-    && cmp -s empty-ir.out empty-flag-ir.out; chk 109.9
+    && grep -q ':ir-version 2' empty-ir.out \
+    && cmp -s empty-ir.out empty-flag-ir.out; chk h128.109.9
 
 # 109.10 a valid ordinary ELF is not an empty sash program.
 out=$("$SASH" --extract /bin/true source 2>art.err); source_rc=$?

@@ -46,6 +46,18 @@ pub(super) fn declare_runtime_functions(module: &mut ObjectModule) -> ExternFunc
     let exit_func = module
         .declare_function("sash_exit", Linkage::Import, &exit_sig)
         .expect("declare sash_exit");
+    let finish = module
+        .declare_function("sash_finish", Linkage::Import, &exit_sig)
+        .expect("declare sash_finish");
+    let abort = module
+        .declare_function("sash_abort", Linkage::Import, &exit_sig)
+        .expect("declare sash_abort");
+    let shutdown = module
+        .declare_function("sash_shutdown", Linkage::Import, &exit_sig)
+        .expect("declare sash_shutdown");
+    let signal_checkpoint = module
+        .declare_function("sash_signal_checkpoint", Linkage::Import, &exit_sig)
+        .expect("declare sash_signal_checkpoint");
     let mut reader_start_sig = Signature::new(CallConv::SystemV);
     push_i64s(&mut reader_start_sig, 4, 0);
     let reader_start = module
@@ -56,11 +68,6 @@ pub(super) fn declare_runtime_functions(module: &mut ObjectModule) -> ExternFunc
     let reader_finish = module
         .declare_function("sash_reader_finish", Linkage::Import, &reader_finish_sig)
         .expect("declare reader finish");
-    let mut reader_cleanup_sig = Signature::new(CallConv::SystemV);
-    push_i64s(&mut reader_cleanup_sig, 0, 0);
-    let reader_cleanup = module
-        .declare_function("sash_reader_cleanup", Linkage::Import, &reader_cleanup_sig)
-        .expect("declare reader cleanup");
 
     // sash_emsg(seg1_ptr, seg1_len, seg2_ptr, seg2_len) -> () — DD#55
     // abort diagnostic to stderr (no return value).
@@ -77,15 +84,6 @@ pub(super) fn declare_runtime_functions(module: &mut ObjectModule) -> ExternFunc
     let emsg_status_func = module
         .declare_function("sash_emsg_status", Linkage::Import, &emsg_status_sig)
         .expect("declare sash_emsg_status");
-
-    // sash_scope_restore() -> () — DD#120. Put the invoker's 0/1/2 back on
-    // entry to END, which an abort inside a redirected command reaches
-    // without ever running that command's restore.
-    let mut scope_restore_sig = Signature::new(CallConv::SystemV);
-    push_i64s(&mut scope_restore_sig, 0, 0);
-    let scope_restore_func = module
-        .declare_function("sash_scope_restore", Linkage::Import, &scope_restore_sig)
-        .expect("declare sash_scope_restore");
 
     // sash_scope_bind() -> () — DD#120. `exec 2>…` rebinds the INVOKER's own
     // stderr, so the diagnostic channel must follow it; `cmd 2>…` must not.
@@ -228,9 +226,6 @@ pub(super) fn declare_runtime_functions(module: &mut ObjectModule) -> ExternFunc
     let signum_data = module
         .declare_data("sash_signum", Linkage::Import, true, false)
         .expect("declare sash_signum");
-    let exit_signum_data = module
-        .declare_data("sash_exit_signum", Linkage::Import, true, false)
-        .expect("declare sash_exit_signum");
 
     let trace_flag_data = module
         .declare_data("sash_trace_flag", Linkage::Import, true, false)
@@ -859,14 +854,16 @@ pub(super) fn declare_runtime_functions(module: &mut ObjectModule) -> ExternFunc
     ExternFuncs {
         write: write_func,
         exit: exit_func,
+        finish,
+        abort,
+        shutdown,
+        signal_checkpoint,
         reader_start,
         reader_finish,
-        reader_cleanup,
         emsg: emsg_func,
         emsg_status: emsg_status_func,
         scope_bind: scope_bind_func,
         reserve_fds: reserve_fds_func,
-        scope_restore: scope_restore_func,
         attest_fail: attest_fail_func,
         arith_overflow: arith_overflow_func,
         arith_divzero: arith_divzero_func,
@@ -951,7 +948,6 @@ pub(super) fn declare_runtime_functions(module: &mut ObjectModule) -> ExternFunc
         require_value: require_value_func,
         signal_flag: signal_flag_func,
         signum: signum_data,
-        exit_signum: exit_signum_data,
         trace_flag: trace_flag_data,
     }
 }
@@ -1287,16 +1283,14 @@ pub(super) fn allocate_variables(
     builder: &mut cranelift_frontend::FunctionBuilder,
     module: &mut ObjectModule,
     program: &SsaProgram,
+    entry: BlockId,
     reachable: &std::collections::HashSet<usize>,
     globals: &std::collections::BTreeMap<String, cranelift_module::DataId>,
 ) -> super::types::FuncState {
     use super::types::FuncState;
 
     let cl_blocks = build_cl_blocks(builder, program, reachable);
-    let entry_cl = cl_blocks[&program.entry];
-    // DD#56: resolve end_block CL target for abort paths
-    let end_cl_block: Option<cranelift_codegen::ir::Block> =
-        program.end_block.and_then(|id| cl_blocks.get(&id).copied());
+    let entry_cl = cl_blocks[&entry];
     builder.append_block_params_for_function_params(entry_cl);
     builder.switch_to_block(entry_cl);
 
@@ -1324,8 +1318,6 @@ pub(super) fn allocate_variables(
         readers: declare_reader_slots(builder, program),
         capture_slots: declare_capture_slots(builder, program),
         redirect_slots: declare_redirect_slots(builder, program),
-        saved_end_status_var: ambient.saved_end_status_var,
-        end_cl_block,
     }
 }
 
@@ -1454,18 +1446,33 @@ fn map_versioned_names(
         .iter()
         .map(|(name, slot)| (format!("{name}_0"), *slot))
         .collect();
+    for input in program
+        .handlers
+        .values()
+        .flat_map(|handler| handler.inputs.values())
+    {
+        vars.insert(input.display(), base_vars[&input.name]);
+    }
     for inst in program.blocks.values().flat_map(|block| &block.insts) {
         map_inst_versioned(inst, base_vars, &mut vars);
     }
     for phi in program.blocks.values().flat_map(|block| &block.phis) {
-        vars.entry(phi.target.display())
-            .or_insert_with(|| base_vars[&phi.target.name]);
-        for (_, src) in &phi.sources {
-            vars.entry(src.display())
-                .or_insert_with(|| base_vars[&src.name]);
-        }
+        map_phi_versioned(phi, base_vars, &mut vars);
     }
     vars
+}
+
+fn map_phi_versioned(
+    phi: &PhiNode,
+    base_vars: &HashMap<String, super::types::VarSlot>,
+    vars: &mut HashMap<String, super::types::VarSlot>,
+) {
+    vars.entry(phi.target.display())
+        .or_insert_with(|| base_vars[&phi.target.name]);
+    for (_, src) in &phi.sources {
+        vars.entry(src.display())
+            .or_insert_with(|| base_vars[&src.name]);
+    }
 }
 
 fn map_inst_versioned(
@@ -1507,7 +1514,6 @@ fn map_inst_versioned(
 struct AmbientVars {
     test_result_var: cranelift_frontend::Variable,
     exit_status_var: cranelift_frontend::Variable,
-    saved_end_status_var: cranelift_frontend::Variable,
 }
 
 fn declare_ambient_vars(builder: &mut cranelift_frontend::FunctionBuilder) -> AmbientVars {
@@ -1524,8 +1530,6 @@ fn declare_ambient_vars(builder: &mut cranelift_frontend::FunctionBuilder) -> Am
         test_result_var: decl(builder),
         // $? — exit status of last command (0 = success)
         exit_status_var: decl(builder),
-        // DD#56: saved exit status for END block (preserves triggering status)
-        saved_end_status_var: decl(builder),
     }
 }
 
@@ -1755,7 +1759,7 @@ pub(super) fn reserve_user_fds(
         return;
     }
     let data = module
-        .declare_data("__sash_user_fds", Linkage::Local, false, false)
+        .declare_anonymous_data(false, false)
         .expect("declare source descriptor set");
     let mut desc = DataDescription::new();
     let bytes = fds

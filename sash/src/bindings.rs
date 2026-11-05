@@ -44,18 +44,16 @@ pub(crate) fn resolve(program: &Program, source: &str) -> (Program, SourceNames)
         next_scope: 0,
     };
     let mut program = program.clone();
-    resolver.statements(&mut program.statements, &globals, "top");
-    if let Some(end) = &mut program.end_block {
-        resolver.statements(end, &globals, "top");
+    for body in program.bodies_mut() {
+        resolver.statements(body, &globals, "top");
     }
     (program, resolver.names)
 }
 
 pub(crate) fn global_names(program: &Program) -> HashSet<String> {
     let mut globals = HashSet::new();
-    crate::validate::collect_scope_names(&program.statements, &mut globals);
-    if let Some(end) = &program.end_block {
-        crate::validate::collect_scope_names(end, &mut globals);
+    for body in program.bodies() {
+        crate::validate::collect_scope_names(body, &mut globals);
     }
     globals
 }
@@ -401,7 +399,8 @@ mod invariant_tests {
                 })),
                 span: Span::new(1, 1),
             }],
-            end_block: None,
+            exit_block: None,
+            err_block: None,
         };
         resolve(&program, "");
     }

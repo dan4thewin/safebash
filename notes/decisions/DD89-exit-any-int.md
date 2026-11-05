@@ -1,5 +1,5 @@
 ---
-title: DD#89 — `exit` accepts any int value/variable/return; full i64 to END, 8-bit at the process boundary
+title: DD#89 — `exit` accepts any int; full i64 to the handler, 8-bit at the process boundary
 status: accepted
 ---
 
@@ -31,49 +31,51 @@ not a compiler mandate.
 
 ## Value semantics
 
-- **Internally the value is a full i64.** `exit N` stores the untruncated value
-  in the exit-status channel, so an END block reads the exact value via `$?`
-  (e.g. `int code=$?`) — `exit 300` → END sees `300`, `exit -1` → END sees `-1`.
+- **Internally the value is a full i64.** `exit N` passes the untruncated value
+  to the selected handler, readable via `$?` (e.g. `int code=$?`).
+  DD#128 routes full-integer zero to EXIT and nonzero to ERR:
+  `exit 300` → ERR sees `300`, `exit -1` → ERR sees `-1`, and
+  `exit 256` → ERR sees `256`, not EXIT with zero.
 - **At the process boundary it is 8-bit (POSIX).** The final `exit_group(status)`
   passes only the low byte to the parent's `wait()`: `exit 300` → parent sees
   `300 & 0xFF = 44`; `exit -1` → `255`; `exit 256` → `0`. Same as bash.
 
-So an out-of-range value is faithful *inside* the program (and to END) and
-truncated only when it actually leaves the process.
+So an out-of-range value is faithful *inside* the program and truncated only
+when it actually leaves the process. Signal and fall-through termination
+select EXIT by cause, not by whether their saved status happens to be zero.
 
 ## What this enables (but does NOT mandate)
 
-Because the full value reaches END, a program *may* use an out-of-range exit
-code as a **tag** for "which `exit` preceded END", dispatch on it in END
+Because the full value reaches ERR, a program *may* use an out-of-range exit
+code as a **tag** for "which nonzero `exit` preceded ERR", dispatch on it in ERR
 (`int code=$?; if (( code > 255 )) { … }`), and re-exit with a real 0-255 code.
 DG (2026-09-03): this is **not** prescribed over just using a global variable —
 "it's up to them." The DD blesses the *mechanism* (any int works, value is
-faithful to END), not a particular idiom. A plain global read in END is an
-equally valid way to convey an exit-site marker (it keeps the exit code a clean
-0-255 but only covers explicit exits, not aborts).
+faithful to the handler), not a particular idiom. A global can instead record
+the phase reached before an exit or failure. DD#128's incoming-data rule still
+applies to any potentially tainted global read in ERR.
 
 ## Implementation
 
-- **Native codegen** (`codegen/dispatch.rs::emit_exit`): evaluate the argument
-  with `lower_value_as_int` (was literal-only, defaulting any non-literal to 0).
-- **c backend** (`emit_c.rs::emit_exit`): already used `lower_value_as_int` — no
-  change.
-- **type_check**: `check_exit_arg` (the `exit $intvar` reject) removed.
-- **Process exit**: `sash_rt::sash_exit(i64)` → `exit_group(status as i32)`; the
-  kernel truncates to 8 bits for the parent. (No change — this is the POSIX
-  boundary that makes >255/<0 "internal only".)
+Both backends evaluate the integer argument and pass it to
+`sash_rt::sash_exit(i64)`. The runtime selects EXIT or ERR and calls the
+generated handler with the full value. Final shutdown calls
+`exit_group(status as i32)`; the kernel exposes only the low byte to the
+parent. A handler's explicit exit may replace the value before that boundary.
+
+The original DD89 change removed native codegen's literal-only evaluation
+and the type check that rejected integer variables merely for their possible
+range. DD#128 adds common terminal routing without narrowing that domain.
 
 ## SB codes
 
-None. This REMOVES a type-check diagnostic (the `exit $intvar` reject); no new
-codes.
+No range diagnostic. String operands are rejected by SB4030; integer
+variables and out-of-range integer values remain valid.
 
 ## Related / open
 
-- DD#56 — `$?` in the END block is the triggering status (the channel that
-  carries an out-of-range tag into END). journal 237.
-- `bug-emit-c-exit-skips-end` — the c backend's main-body `exit N` skips END
-  (native routes through it); orthogonal to this DD but on the same path.
+- DD#56 / DD#128 — handler entry preserves the triggering status and
+  selection is cause-based. Both backends now use generated callbacks.
 - Whether to add a dedicated "exit-site" channel (like `$(signum)`) is left
   open; a plain global already suffices, so no new surface is planned.
 
@@ -118,7 +120,7 @@ value written in the source than about the same value in a variable.
 when written and is less true now.
 
 **Unchanged:** everything this DD was actually settled to decide — any int is
-a valid `exit` argument, no compile-time range restriction, full i64 to END,
+a valid `exit` argument, no compile-time range restriction, full i64 internally,
 8-bit at the process boundary. None of that depended on the struck clause.
 
 **~~Left open:~~ Resolved 2026-09-26 — they reject.** See below.

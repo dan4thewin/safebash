@@ -118,7 +118,7 @@ lands on *another* declared global — fundamentally undetectable, and rare.
    rejects a second typed declaration of a name within one scope, regardless of
    type match. Previously only the cross-scope half was enforced, so at top level
    a name could be re-declared, have its type changed, or silently acquire
-   `const`. The top level and the DD#56 `END { }` body are one scope. SB4044 no
+   `const`. Main, EXIT and ERR share the global scope (DD#128). SB4044 no
    longer fires on a declaration — it means only a bare assignment to a const.**
 4. Dead-variable rejection (new validate pass, dual of DD#62). **— shipped
    (journal 228): SB5050. Reuses the SB5031 read-enumerator (inverted via a

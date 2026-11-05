@@ -12,7 +12,7 @@
 //!   - Spans are preserved for error reporting.
 
 /// Source location for error reporting.
-#[derive(Debug, Clone, Copy, PartialEq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub struct Span {
     pub line: usize, // 1-based
     pub col: usize,  // 1-based
@@ -1034,11 +1034,57 @@ fn walk_test_exprs<'a>(t: &'a TestExpr, f: &mut impl FnMut(&'a Expr)) {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Program {
     pub statements: Vec<Statement>,
-    /// DD#56: dedicated END block (parsed as first-class syntax).
-    pub end_block: Option<Vec<Statement>>,
+    pub exit_block: Option<Vec<Statement>>,
+    pub err_block: Option<Vec<Statement>>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum HandlerKind {
+    Exit,
+    Err,
+}
+
+impl HandlerKind {
+    pub(crate) fn name(self) -> &'static str {
+        match self {
+            Self::Exit => "EXIT",
+            Self::Err => "ERR",
+        }
+    }
+
+    pub(crate) fn callback_symbol(self) -> &'static str {
+        match self {
+            Self::Exit => "sash_on_exit",
+            Self::Err => "sash_on_error",
+        }
+    }
 }
 
 impl Program {
+    pub(crate) fn bodies(&self) -> impl Iterator<Item = &[Statement]> {
+        std::iter::once(self.statements.as_slice())
+            .chain(self.exit_block.as_deref())
+            .chain(self.err_block.as_deref())
+    }
+
+    pub(crate) fn bodies_mut(&mut self) -> impl Iterator<Item = &mut [Statement]> {
+        std::iter::once(self.statements.as_mut_slice())
+            .chain(self.exit_block.as_deref_mut())
+            .chain(self.err_block.as_deref_mut())
+    }
+
+    pub(crate) fn handlers(&self) -> impl Iterator<Item = (HandlerKind, &[Statement])> {
+        self.exit_block
+            .as_deref()
+            .map(|body| (HandlerKind::Exit, body))
+            .into_iter()
+            .chain(
+                self.err_block
+                    .as_deref()
+                    .map(|body| (HandlerKind::Err, body)),
+            )
+    }
+
     /// Program-level function definitions. SB5071 rejects every other placement.
     pub(crate) fn function_defs(&self) -> impl Iterator<Item = &Function> {
         self.statements.iter().filter_map(|stmt| match &stmt.kind {
@@ -1817,10 +1863,10 @@ pub(crate) fn redirect_referenced_fds(redirects: &[Redirect]) -> Vec<i64> {
 }
 
 /// Keep runtime bookkeeping clear of source fds in every scope, including
-/// captures, functions and END. Ordinary numeric operands are not fd names.
+/// captures, functions and handlers. Ordinary numeric operands are not fd names.
 pub(crate) fn program_referenced_fds(program: &Program) -> Vec<i64> {
     let mut fds = std::collections::BTreeSet::new();
-    for body in std::iter::once(program.statements.as_slice()).chain(program.end_block.as_deref()) {
+    for body in program.bodies() {
         walk_stmt_tree(body, &mut |stmt| collect_stmt_fds(stmt, &mut fds));
     }
     fds.into_iter().collect()

@@ -108,6 +108,21 @@ an attest inside a body, of taint the body received, is SB5088, reported at
 the call. This applies to globals and collection slots alike (DD#127,
 journals 557 and 559).
 
+DD#128 applies the same locality rule to EXIT and ERR. An incoming global
+does not become newly acquired merely because a handler starts; its first
+statement cannot attest main's interrupted acquisition. Fresh input acquired
+inside either handler has ordinary adjacency, with ERR's operational failures
+explicitly handled.
+
+Signal dispatch into EXIT cannot split a legal acquisition/resolution pair.
+The compiler checks pending signals before acquisition, defers dispatch
+through the attest and its required failed-branch resolution, then resumes
+polls. Receipt still records the signal. This includes single-use calls and
+reader completion, not just adjacent instructions in one backend block.
+An ordinary failure or explicit transfer takes its own route before deferred
+dispatch. A path that bypasses the attest, such as a false reader condition,
+must satisfy EXIT's actual incoming-state requirements.
+
 ## Direct failed-attest replacement
 
 DD#128 narrows the former general assignment-kill rule. Within a live

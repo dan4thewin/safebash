@@ -1786,7 +1786,9 @@ fn tok_to_text(tok: &Tok) -> String {
         | Tok::Array
         | Tok::Map
         | Tok::Attest
-        | Tok::End => keyword_to_str(tok)
+        | Tok::End
+        | Tok::Exit
+        | Tok::Err => keyword_to_str(tok)
             .expect("every variant in this arm is in keyword_to_str's domain")
             .to_string(),
         // Operators and punctuation.

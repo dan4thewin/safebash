@@ -33,7 +33,7 @@ pub(super) fn handle_pipeline(
     ctx: &mut InstCtx,
 ) -> bool {
     let n = stages.len();
-    emit_signal_exit_check(builder, module, ctx);
+    emit_signal_exit_check(builder, module, ctx.signal_deferred, ctx);
     let pe = resolve_pipeline_externs(builder, module, ctx.externs);
     init_pipeline_capture(capture, builder, module, ctx);
 
@@ -87,7 +87,7 @@ pub(super) fn handle_pipeline(
     builder.ins().jump(setup.done, &[]);
     builder.switch_to_block(setup.done);
     builder.seal_block(setup.done);
-    emit_signal_exit_check(builder, module, ctx);
+    emit_signal_exit_check(builder, module, ctx.signal_deferred, ctx);
     false
 }
 
@@ -261,7 +261,6 @@ fn guard_pipeline_setup(
         module,
         ctx.externs,
         ctx.exit_status_var,
-        ctx.end_cl_block,
         setup.checked,
         AbortMsg::Errno {
             seg1_ptr: ptr,
@@ -600,6 +599,7 @@ pub(super) fn handle_pipeline_finish(
         let ok = builder.ins().band(producers_ok, saved_test);
         builder.def_var(ctx.test_result_var, ok);
     }
+    emit_signal_exit_check(builder, module, ctx.signal_deferred, ctx);
     false
 }
 
@@ -732,8 +732,7 @@ fn update_pipeline_status(
     builder.def_var(ctx.test_result_var, tr);
 }
 
-/// DD#55: implicit exit check for pipelines. On failure, jump to
-/// the END block if one exists; otherwise call `exit(worst)`.
+/// DD#55: an uncaught pipeline failure selects ERR in the main process.
 fn emit_pipeline_abort_check(
     builder: &mut FunctionBuilder,
     module: &mut ObjectModule,
@@ -758,16 +757,9 @@ fn emit_pipeline_abort_check(
         emsg_status_ref,
         &[fail_name_ptr, fail_name_len, final_worst],
     );
-    if let Some(end_cl) = ctx.end_cl_block {
-        builder.def_var(ctx.exit_status_var, final_worst);
-        builder.ins().jump(end_cl, &[]);
-    } else {
-        let exit_ref = module.declare_func_in_func(ctx.externs.exit, builder.func);
-        builder.ins().call(exit_ref, &[final_worst]);
-        builder
-            .ins()
-            .trap(cranelift_codegen::ir::TrapCode::user(1).unwrap());
-    }
+    let abort = module.declare_func_in_func(ctx.externs.abort, builder.func);
+    builder.ins().call(abort, &[final_worst]);
+    builder.ins().trap(TrapCode::unwrap_user(1));
 
     builder.switch_to_block(cont_block);
     builder.seal_block(cont_block);
@@ -908,7 +900,7 @@ pub(super) fn handle_general_command(
     // aborts unless caught; on success the command runs and its own exit
     // status applies.
     emit_redirect_guarded_body(redirects, in_condition, builder, module, ctx, |b, m, c| {
-        emit_signal_exit_check(b, m, c);
+        emit_signal_exit_check(b, m, c.signal_deferred, c);
         lower_exec(
             name,
             args,
@@ -929,55 +921,30 @@ pub(super) fn handle_general_command(
             m,
             c.externs,
             c.exit_status_var,
-            c.end_cl_block,
             checked,
             AbortMsg::Status {
                 name_ptr: np,
                 name_len: nl,
             },
         );
-        emit_signal_exit_check(b, m, c);
+        emit_signal_exit_check(b, m, c.signal_deferred, c);
     });
     false
 }
 
-/// DD#56: consume an EXIT request outside END; FLAG delivery is not a request.
+/// DD#128: a lowered program point decides whether signal dispatch is deferred.
 pub(super) fn emit_signal_exit_check(
     builder: &mut FunctionBuilder,
     module: &mut ObjectModule,
+    deferred: bool,
     ctx: &mut InstCtx,
 ) {
     if ctx.program.exiting_signals.is_empty() {
         return;
     }
-    if ctx.in_end_block {
-        return;
-    }
-    let signum_gv = module.declare_data_in_func(ctx.externs.exit_signum, builder.func);
-    let signum_base = builder.ins().global_value(I64, signum_gv);
-    let signum_val = builder.ins().atomic_load(I64, MemFlags::new(), signum_base);
-    let zero_sig = builder.ins().iconst(I64, 0);
-    let sig_fired = builder.ins().icmp(IntCC::NotEqual, signum_val, zero_sig);
-    let sig_end_block = builder.create_block();
-    let sig_cont_block = builder.create_block();
-    builder
-        .ins()
-        .brif(sig_fired, sig_end_block, &[], sig_cont_block, &[]);
-    builder.switch_to_block(sig_end_block);
-    builder.seal_block(sig_end_block);
-    // Set exit status to 128+signum (standard convention)
-    let c128 = builder.ins().iconst(I64, 128);
-    let exit_code = builder.ins().iadd(signum_val, c128);
-    builder.def_var(ctx.exit_status_var, exit_code);
-    if let Some(end_cl) = ctx.end_cl_block {
-        builder.ins().jump(end_cl, &[]);
-    } else {
-        let exit = module.declare_func_in_func(ctx.externs.exit, builder.func);
-        builder.ins().call(exit, &[exit_code]);
-        builder.ins().trap(TrapCode::unwrap_user(1));
-    }
-    builder.switch_to_block(sig_cont_block);
-    builder.seal_block(sig_cont_block);
+    let poll = module.declare_func_in_func(ctx.externs.signal_checkpoint, builder.func);
+    let deferred = builder.ins().iconst(I64, i64::from(deferred));
+    builder.ins().call(poll, &[deferred]);
 }
 
 /// DD#55 abort diagnostic. Either an errno-based message rendered by
@@ -1060,37 +1027,16 @@ fn emit_open_failure_msg(
     builder.def_var(ctx.exit_status_var, one);
 }
 
-/// DD#55: abort after [`emit_open_failure_msg`] reported the failure.
-/// Routes the abort through the END block (DD#56) when the program has
-/// one, so cleanup still runs; otherwise it exits directly. Shared by the
-/// per-command guard and the scope push, which differ only in *when* they
-/// decide a failure is uncaught.
-///
-/// Returns true when it did **not** terminate the block, which happens
-/// inside END itself: there the abort would jump to the block already
-/// executing (an unbounded loop), and END is cleanup that has to finish.
-/// The failure is still reported and still sets a failing status — only
-/// the abort is dropped, matching an exec failure in the same position.
-#[must_use]
+/// DD#55: abort after the uncaught redirect failure has been reported.
 fn emit_open_failure_terminate(
     builder: &mut FunctionBuilder,
     module: &mut ObjectModule,
     ctx: &mut InstCtx,
-) -> bool {
-    if ctx.in_end_block {
-        return true;
-    }
-    if let Some(end_cl) = ctx.end_cl_block {
-        builder.ins().jump(end_cl, &[]);
-    } else {
-        let one = builder.ins().iconst(I64, 1);
-        let exit_ref = module.declare_func_in_func(ctx.externs.exit, builder.func);
-        builder.ins().call(exit_ref, &[one]);
-        builder
-            .ins()
-            .trap(cranelift_codegen::ir::TrapCode::user(1).unwrap());
-    }
-    false
+) {
+    let one = builder.ins().iconst(I64, 1);
+    let abort = module.declare_func_in_func(ctx.externs.abort, builder.func);
+    builder.ins().call(abort, &[one]);
+    builder.ins().trap(TrapCode::unwrap_user(1));
 }
 
 pub(super) fn emit_redirect_guarded_body(
@@ -1160,15 +1106,15 @@ pub(super) fn emit_redirect_guarded(
     // Caught by if/|| — the failure decides the branch; no diagnostic
     // (55.25/55.50) and no abort. Otherwise report it on the invoker's scope
     // fd (DD#120 — the redirect belongs to the command, which never ran),
-    // then put the fds back, then abort — falling through to the merge only
-    // when the abort was dropped (inside END), which is why the restore
-    // stays between the two calls.
+    // then put the fds back before transferring to ERR.
     if !in_condition {
         emit_open_failure_msg(&rf, builder, module, ctx);
     }
     emit_restore(saved.clone(), builder, module, ctx.externs);
-    if in_condition || emit_open_failure_terminate(builder, module, ctx) {
+    if in_condition {
         builder.ins().jump(merge_block, &[]);
+    } else {
+        emit_open_failure_terminate(builder, module, ctx);
     }
 
     // Ok path: open succeeded — run the command body normally.
@@ -1253,15 +1199,13 @@ fn emit_scope_open_failure(
     module: &mut ObjectModule,
     ctx: &mut InstCtx,
 ) -> bool {
-    if checked || ctx.in_end_block {
-        emit_open_failure_msg(failure, builder, module, ctx);
-    }
-    // END continues through the normal pop. Only an actual abort bypasses it.
-    if !checked || ctx.in_end_block {
+    if !checked {
         return false;
     }
+    emit_open_failure_msg(failure, builder, module, ctx);
     emit_restore(saved, builder, module, ctx.externs);
-    !emit_open_failure_terminate(builder, module, ctx)
+    emit_open_failure_terminate(builder, module, ctx);
+    true
 }
 
 /// Close the scope `RedirectPush { site }` opened: put each saved fd back,
@@ -1287,8 +1231,7 @@ pub(super) fn emit_redirect_pop(
 
 /// DD#55 (A)-channel: emit the implicit exit check. When `abort` is true
 /// (the command was neither caught by `if`/`||` nor suppressed by `-`),
-/// branch on `exit_status_var != 0` to either the EXIT/END block (DD#56,
-/// runs traps) or a direct `sash_exit(status)`. When `msg` is provided,
+/// branch on `exit_status_var != 0` to `sash_abort(status)`.
 /// a `sash_emsg` diagnostic is written to stderr first (so caught/`-`
 /// suppressed failures, which never reach the abort block, stay silent).
 /// Shared by external commands and internal syscall-wrapping builtins
@@ -1298,7 +1241,6 @@ pub(super) fn emit_status_abort_check(
     module: &mut ObjectModule,
     externs: &ExternFuncs,
     exit_status_var: cranelift_frontend::Variable,
-    end_cl_block: Option<cranelift_codegen::ir::Block>,
     abort: bool,
     msg: AbortMsg,
 ) {
@@ -1337,17 +1279,9 @@ pub(super) fn emit_status_abort_check(
                 .call(emsg_status_ref, &[name_ptr, name_len, status]);
         }
     }
-    if let Some(end_cl) = end_cl_block {
-        // DD#56: jump to END block instead of exiting directly
-        builder.def_var(exit_status_var, status);
-        builder.ins().jump(end_cl, &[]);
-    } else {
-        let exit_ref = module.declare_func_in_func(externs.exit, builder.func);
-        builder.ins().call(exit_ref, &[status]);
-        builder
-            .ins()
-            .trap(cranelift_codegen::ir::TrapCode::user(1).unwrap());
-    }
+    let abort = module.declare_func_in_func(externs.abort, builder.func);
+    builder.ins().call(abort, &[status]);
+    builder.ins().trap(TrapCode::unwrap_user(1));
 
     builder.switch_to_block(cont_block);
     builder.seal_block(cont_block);
@@ -1407,7 +1341,6 @@ pub(super) fn handle_cd(
         module,
         ctx.externs,
         ctx.exit_status_var,
-        ctx.end_cl_block,
         checked,
         msg,
     );
@@ -1456,7 +1389,6 @@ pub(super) fn handle_close(
         module,
         ctx.externs,
         ctx.exit_status_var,
-        ctx.end_cl_block,
         checked,
         msg,
     );

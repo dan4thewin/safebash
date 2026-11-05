@@ -919,15 +919,15 @@ x=zz
 echo done'
 [[ $rc = 0 && $out = $'Q 1\ny=1\ndone' && -z $err && -z $rerr ]]; chk dsplazy.11
 
-# dsplazy.12 the subject is evaluated afresh on each loop iteration, and in END
+# The subject is evaluated afresh on each loop iteration, and in EXIT.
 SASH_CFLAGS=--no-taint run_sash 'fn f { echo hit >&2; echo a }
 for i in 1 2 {
   [[ $(f) == a { echo "A$i" } || { echo "O$i" } ]]
 }
-END { [[ $(f) == a { echo endA } || { echo endO } ]] }
+EXIT { [[ $(f) == a { echo endA } || { echo endO } ]] }
 echo main'
 [[ $rc = 0 && $out = $'A1\nA2\nmain\nendA' && -z $err \
-   && $rerr = $'hit\nhit\nhit' ]]; chk dsplazy.12
+   && $rerr = $'hit\nhit\nhit' ]]; chk h128.dsplazy.12
 
 # dsplazy.13 a failing capture is not run when an earlier arm matched
 SASH_CFLAGS="${SASH_CFLAGS:-} --no-taint" run_sash 'x=b

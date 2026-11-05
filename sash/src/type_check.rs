@@ -753,14 +753,12 @@ fn infer_collection_signatures(
     errors: &mut Vec<TypeError>,
 ) -> HashMap<String, CollectionSignature> {
     let functions: HashSet<_> = program.function_defs().map(|f| f.name.clone()).collect();
-    // Main and END share one global scope, including for earlier function bodies.
-    let mut globals = scope_collections(&program.statements, "", &HashMap::new());
-    if let Some(end) = &program.end_block {
-        globals = scope_collections(end, "", &globals);
+    let mut globals = HashMap::new();
+    for body in program.bodies() {
+        globals = scope_collections(body, "", &globals);
     }
     let mut calls = Vec::new();
-    for stmts in std::iter::once(program.statements.as_slice()).chain(program.end_block.as_deref())
-    {
+    for stmts in program.bodies() {
         collect_collection_calls(stmts, "", &globals, &functions, &mut calls);
     }
     let signatures = propagate_collection_signatures(&calls);
@@ -1135,11 +1133,7 @@ fn check_body_types(program: &Program, env: &mut TypeEnv, errors: &mut Vec<TypeE
 }
 
 fn check_program_bodies(program: &Program, env: &mut TypeEnv, errors: &mut Vec<TypeError>) {
-    for stmt in program
-        .statements
-        .iter()
-        .chain(program.end_block.iter().flatten())
-    {
+    for stmt in program.bodies().flatten() {
         if !matches!(stmt.kind, StmtKind::Function(_)) {
             check_stmt(stmt, env, errors);
         }
@@ -1167,7 +1161,7 @@ fn run_stmt_pass(
         });
         pass(stmt, scope, errors);
     };
-    for body in std::iter::once(program.statements.as_slice()).chain(program.end_block.as_deref()) {
+    for body in program.bodies() {
         walk_scoped_stmts(body, "", &mut visit);
     }
 }
@@ -2634,7 +2628,7 @@ fn check_if(if_stmt: &If, env: &mut TypeEnv, errors: &mut Vec<TypeError>) {
 /// correct — they would simply report it twice.
 fn check_int_fn_predicates(program: &Program, env: &TypeEnv, errors: &mut Vec<TypeError>) {
     let mut found: Vec<(Span, String)> = Vec::new();
-    for body in std::iter::once(program.statements.as_slice()).chain(program.end_block.as_deref()) {
+    for body in program.bodies() {
         walk_stmt_tree(body, &mut |stmt| {
             stmt_predicate_positions(stmt, env, &mut found)
         });

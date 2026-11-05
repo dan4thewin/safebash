@@ -1356,34 +1356,34 @@ str r="$(waitstatus)"
 echo "s=$r"'
 [[ $rc = 0 && $out = "s=7" && -z $err ]]; chk 126.41
 
-# Single external captures share checked pipeline construction and END routing.
-run_sash 'END { echo $(status) }
+# Single external captures share checked pipeline construction and ERR routing.
+run_sash 'ERR { - echo $(status) }
 str x=$(/bin/false)
 echo "bad=${x:!}"'
-[[ $rc = 1 && $out = 1 && $rerr == *"/bin/false: command failed (exit 1)"* ]]; chk capext.1
+[[ $rc = 1 && $out = 1 && $rerr == *"/bin/false: command failed (exit 1)"* ]]; chk h128.capext.1
 
 rm -f capext.marker
-run_sash_under 'END { echo $(status) }
+run_sash_under 'ERR { - echo $(status) }
 str x=$(/bin/sh -c "echo bad > capext.marker; echo leaked")
 echo "bad=${x:!}"' strace -qq -o capext.trace -e inject=pipe2:error=EIO:when=1
 [[ $rc = 1 && $out = 1 && ! -e capext.marker && $rerr == *": pipe: "* ]] &&
-    grep -q 'pipe2.*INJECTED' capext.trace; chk capext.2
+    grep -q 'pipe2.*INJECTED' capext.trace; chk h128.capext.2
 
-run_sash_under 'END { echo $(status) }
+run_sash_under 'ERR { - echo $(status) }
 str x=$(/bin/sh -c "echo bad > capext.marker; echo leaked")
 echo "bad=${x:!}"' strace -qq -o capext.trace -e inject=clone:error=EIO:when=1
 [[ $rc = 1 && $out = 1 && ! -e capext.marker && $rerr == *": fork: "* ]] &&
-    grep -q 'clone.*INJECTED' capext.trace; chk capext.3
+    grep -q 'clone.*INJECTED' capext.trace; chk h128.capext.3
 
-run_sash_under 'END { echo end }
+run_sash_under 'EXIT { echo end }
 str x=$(- /bin/sh -c "echo bad > capext.marker; echo leaked")
 echo "x=[${x:!}]"' strace -qq -o capext.trace -e inject=pipe2:error=EIO:when=1
-[[ $rc = 0 && $out = $'x=[]\nend' && ! -e capext.marker && -z $rerr ]]; chk capext.4
+[[ $rc = 0 && $out = $'x=[]\nend' && ! -e capext.marker && -z $rerr ]]; chk h128.capext.4
 
-run_sash_under 'END { echo end }
+run_sash_under 'EXIT { echo end }
 str x=$(- /bin/sh -c "echo bad > capext.marker; echo leaked")
 echo "x=[${x:!}]"' strace -qq -o capext.trace -e inject=clone:error=EIO:when=1
-[[ $rc = 0 && $out = $'x=[]\nend' && ! -e capext.marker && -z $rerr ]]; chk capext.5
+[[ $rc = 0 && $out = $'x=[]\nend' && ! -e capext.marker && -z $rerr ]]; chk h128.capext.5
 
 run_sash_under 'if x=$(/bin/sh -c "echo bad > capext.marker; echo leaked") {
   echo "bad=${x:!}"
@@ -1496,12 +1496,14 @@ run_sash_under '/usr/bin/printf "a\nb\n" | while readline line {
 [[ $rc = 0 && $out = $'caught=a\ndata\npipe=b' && -z $rerr ]]; chk capext.23
 
 run_sash 'echo main
-END {
+EXIT {
   str x=$(/bin/false)
   echo "x=[${x:!}]"
   echo tail
-}'
-[[ $rc = 0 && $out = $'main\nx=[]\ntail' && -z $rerr ]]; chk capext.24
+}
+ERR { - echo failed }'
+[[ $rc = 1 && $out = $'main\nfailed' &&
+   $rerr == *"/bin/false: command failed"* ]]; chk h128.capext.24
 
 rm -f capext.marker capext.trace
 
@@ -1567,13 +1569,13 @@ echo "pid [$p] done"' strace -qq -o bgfork.trace -e inject=clone:error=EAGAIN:wh
 [[ $rc = 1 && -z $out && $rerr = "./test_bin: fork: error 11" ]] &&
     grep -q 'clone.*INJECTED' bgfork.trace; chk bgfork.1
 
-# bgfork.2 the abort routes through END, which sees status 1
-run_sash_under 'END { echo "end $(status)" }
+# The abort routes through ERR, which sees status 1.
+run_sash_under 'ERR { - echo "end $(status)" }
 /bin/echo hi &
 - wait
 echo bad' strace -qq -o bgfork.trace -e inject=clone:error=EAGAIN:when=1
 [[ $rc = 1 && $out = 'end 1' && $rerr = "./test_bin: fork: error 11" ]] &&
-    grep -q 'clone.*INJECTED' bgfork.trace; chk bgfork.2
+    grep -q 'clone.*INJECTED' bgfork.trace; chk h128.bgfork.2
 
 # bgfork.3 a function job
 run_sash_under 'fn g { echo "in $1" }
@@ -1605,12 +1607,12 @@ echo "after"' strace -qq -o bgfork.trace -e inject=clone:error=EAGAIN:when=1
     grep -q 'clone.*INJECTED' bgfork.trace; chk bgfork.6
 
 # bgfork.7 suppressed, but the failure's status stays, as a suppressed failed
-# command's does: it reaches END's `$?` and the exit code
-run_sash_under 'END { echo "end $?" }
+# command's does: fallthrough selects EXIT even with a nonzero status.
+run_sash_under 'EXIT { echo "end $?" }
 echo main
 - /bin/echo hi &' strace -qq -o bgfork.trace -e inject=clone:error=EAGAIN:when=1
 [[ $rc = 1 && $out = $'main\nend 1' && -z $rerr ]] &&
-    grep -q 'clone.*INJECTED' bgfork.trace; chk bgfork.7
+    grep -q 'clone.*INJECTED' bgfork.trace; chk h128.bgfork.7
 
 # bgfork.8 `$!` after a failed fork is -1, not the previous job's pid (the
 # second clone fails; the first job is still waitable by its own pid)

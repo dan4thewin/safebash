@@ -127,15 +127,16 @@ pub(super) fn var_slot(vars: &std::collections::HashMap<String, VarSlot>, key: &
 pub(super) struct ExternFuncs {
     pub(super) write: cranelift_module::FuncId,
     pub(super) exit: cranelift_module::FuncId,
+    pub(super) finish: cranelift_module::FuncId,
+    pub(super) abort: cranelift_module::FuncId,
+    pub(super) shutdown: cranelift_module::FuncId,
+    pub(super) signal_checkpoint: cranelift_module::FuncId,
     pub(super) reader_start: cranelift_module::FuncId,
     pub(super) reader_finish: cranelift_module::FuncId,
-    pub(super) reader_cleanup: cranelift_module::FuncId,
     pub(super) emsg: cranelift_module::FuncId,
     pub(super) emsg_status: cranelift_module::FuncId,
     /// DD#120: re-bind the invoker's own 0/1/2 after an `exec`-scope redirect.
     pub(super) scope_bind: cranelift_module::FuncId,
-    /// DD#120: restore the invoker's own 0/1/2 on entry to END.
-    pub(super) scope_restore: cranelift_module::FuncId,
     pub(super) reserve_fds: cranelift_module::FuncId,
     pub(super) attest_fail: cranelift_module::FuncId,
     pub(super) arith_overflow: cranelift_module::FuncId,
@@ -222,7 +223,6 @@ pub(super) struct ExternFuncs {
     pub(super) require_value: cranelift_module::FuncId,
     pub(super) signal_flag: cranelift_module::FuncId,
     pub(super) signum: cranelift_module::DataId,
-    pub(super) exit_signum: cranelift_module::DataId,
     pub(super) trace_flag: cranelift_module::DataId,
 }
 
@@ -249,9 +249,7 @@ pub(super) struct InstCtx<'a> {
     /// nest, so — as with captures — a single shared set would let an inner
     /// `f > a` destroy the fds an enclosing one still has to put back.
     pub(super) redirect_slots: &'a [Vec<cranelift_frontend::Variable>],
-    pub(super) end_cl_block: Option<cranelift_codegen::ir::Block>,
     pub(super) program: &'a crate::ssa::SsaProgram,
-    pub(super) saved_end_status_var: cranelift_frontend::Variable,
     pub(super) cl_blocks: &'a std::collections::HashMap<usize, cranelift_codegen::ir::Block>,
     /// DD#55: true when this command is the condition of a catching
     /// construct (last Command/Pipeline of a `Branch`-terminated block).
@@ -259,12 +257,7 @@ pub(super) struct InstCtx<'a> {
     /// so a redirect open(2) setup-failure is caught by `if`/`||` but
     /// still aborts under bare/`-`.
     pub(super) in_condition: bool,
-    /// DD#56: true when this instruction is part of the END handler —
-    /// `end_block` or anything reachable from it. An abort from here would
-    /// route *through* END, which from inside END is a jump to the block
-    /// already executing, so a failure diagnoses and lets the rest of the
-    /// cleanup run instead. See `SsaProgram::end_region`.
-    pub(super) in_end_block: bool,
+    pub(super) signal_deferred: bool,
 }
 
 /// Per-function compilation state, built during variable allocation.
@@ -276,8 +269,6 @@ pub(super) struct FuncState {
     pub(super) readers: std::collections::BTreeMap<u32, ReaderSlot>,
     pub(super) capture_slots: Vec<(cranelift_frontend::Variable, cranelift_frontend::Variable)>,
     pub(super) redirect_slots: Vec<Vec<cranelift_frontend::Variable>>,
-    pub(super) saved_end_status_var: cranelift_frontend::Variable,
-    pub(super) end_cl_block: Option<cranelift_codegen::ir::Block>,
 }
 
 pub(super) struct ReaderSlot {

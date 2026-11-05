@@ -459,6 +459,15 @@ impl BuiltinCmd {
         (signal, exiting)
     }
 
+    pub(crate) fn signal_deferred(args: &[SsaValue]) -> bool {
+        let [deferred] = Self::SignalCheckpoint.expect_ssa_args(args);
+        match Self::SignalCheckpoint.expect_literal_int(deferred) {
+            0 => false,
+            1 => true,
+            _ => panic!("ICE: SignalCheckpoint deferral must be 0 or 1"),
+        }
+    }
+
     pub(crate) fn expect_close_fd(args: &[SsaValue]) -> (i64, &str) {
         let [arg] = Self::Close.expect_ssa_args(args);
         let SsaValue::Literal(text) = arg else {
@@ -503,6 +512,8 @@ pub(crate) fn ice_unreachable_command(kind: &BuiltinCmd, name: &str) -> ! {
 /// An SSA instruction — a versioned wrapper around an IR operation.
 #[derive(Debug, Clone, PartialEq)]
 pub enum SsaInst {
+    /// Compiler-only context, retained through folding and CFG rewrites.
+    SourceOrigin(Option<usize>, bool),
     /// x_n = value
     Assign { target: VarRef, value: SsaValue },
     /// A command (no variable defined)
@@ -846,6 +857,14 @@ fn push_test_reads<'a>(t: &'a SsaTest, out: &mut Vec<(TaintRead<'a>, String)>) {
 }
 
 impl SsaInst {
+    pub(crate) fn signal_checkpoint(deferred: bool) -> Self {
+        Self::internal(
+            BuiltinCmd::SignalCheckpoint,
+            vec![SsaValue::Literal(i64::from(deferred).to_string())],
+            true,
+        )
+    }
+
     /// Every operand this instruction reads in a position where a tainted
     /// value would **escape** — to an external process, to output, to a file
     /// descriptor, to a subscript index, or into a collection whose taint the
@@ -963,7 +982,8 @@ impl SsaInst {
             | SsaInst::KeysFill { .. }
             | SsaInst::CaptureStart { .. }
             | SsaInst::PipelineFinish { .. }
-            | SsaInst::RedirectPop { .. } => vec![],
+            | SsaInst::RedirectPop { .. }
+            | SsaInst::SourceOrigin(..) => vec![],
         }
     }
 
@@ -1470,6 +1490,24 @@ pub struct BasicBlock {
     pub phis: Vec<PhiNode>,
     pub insts: Vec<SsaInst>,
     pub terminator: Terminator,
+    pub(crate) origin: Option<usize>,
+    pub(crate) signal_deferred: std::collections::HashSet<usize>,
+}
+
+impl BasicBlock {
+    pub(crate) fn last_operation(&self) -> Option<&SsaInst> {
+        self.insts
+            .iter()
+            .rfind(|inst| !matches!(inst, SsaInst::SourceOrigin(..)))
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct SourceOrigin {
+    pub(crate) span: crate::ir::Span,
+    pub(crate) parent: Option<usize>,
+    pub(crate) attest: Option<crate::ir::Span>,
+    pub(crate) for_binding: bool,
 }
 
 /// How a basic block ends.
@@ -1498,8 +1536,8 @@ pub enum Terminator {
     /// (reader scopes, phis) never see it. See [`SsaProgram::child_region`].
     Fork { parent: BlockId, child: BlockId },
     /// A forked child (a background job or a forked pipeline stage) is
-    /// done: exit with `$?`. Never routed through END — DD#56: END runs
-    /// only in the main process.
+    /// done: exit with `$?`. Never routed through a terminal handler
+    /// (DD#128: handlers run only in the main process).
     ChildExit,
 }
 
@@ -1563,7 +1601,10 @@ fn sets_condition_status(inst: &SsaInst) -> bool {
     match inst {
         // DD#70: the `!` sigil follows the operand it negates and only
         // rewrites that operand's status; the operand is in condition position.
-        SsaInst::Command { name, .. } if name == "__negate_test_result" => false,
+        SsaInst::Command {
+            kind: BuiltinCmd::NegateTestResult | BuiltinCmd::SignalCheckpoint,
+            ..
+        } => false,
         SsaInst::Command { .. }
         | SsaInst::Pipeline { .. }
         | SsaInst::PipelineFinish { .. }
@@ -1592,7 +1633,8 @@ fn sets_condition_status(inst: &SsaInst) -> bool {
         | SsaInst::CaptureEnd { .. }
         | SsaInst::RedirectPop { .. }
         | SsaInst::Attest { .. }
-        | SsaInst::AttestRetag { .. } => false,
+        | SsaInst::AttestRetag { .. }
+        | SsaInst::SourceOrigin(..) => false,
     }
 }
 
@@ -1615,16 +1657,24 @@ impl GlobalType {
     }
 }
 
+#[derive(Debug)]
+pub(crate) struct HandlerEntry {
+    pub(crate) block: BlockId,
+    pub(crate) inputs: BTreeMap<String, VarRef>,
+}
+
 /// The complete SSA representation of a program.
 #[derive(Debug)]
 pub struct SsaProgram {
     pub(crate) source_names: crate::bindings::SourceNames,
     pub(crate) globals: BTreeMap<String, GlobalType>,
     pub(crate) taint_predecessors: HashMap<VarRef, VarRef>,
+    pub(crate) resolutions: std::collections::HashSet<VarRef>,
     pub blocks: BTreeMap<BlockId, BasicBlock>,
     pub entry: BlockId,
-    /// DD#56: dedicated END block — all exit paths goto here
-    pub end_block: Option<BlockId>,
+    pub(crate) handlers: BTreeMap<crate::ir::HandlerKind, HandlerEntry>,
+    pub(crate) origins: Vec<SourceOrigin>,
+    pub(crate) current_origin: Option<usize>,
     /// DD#56: signals with EXIT disposition (check points inserted)
     pub exiting_signals: std::collections::HashSet<i64>,
     /// DD#14: forked pipeline stages — each stage's entry block (run by a
@@ -1741,9 +1791,12 @@ impl SsaProgram {
             source_names: crate::bindings::SourceNames::default(),
             globals: BTreeMap::new(),
             taint_predecessors: HashMap::new(),
+            resolutions: std::collections::HashSet::new(),
             blocks: BTreeMap::new(),
             entry: 0,
-            end_block: None,
+            handlers: BTreeMap::new(),
+            origins: Vec::new(),
+            current_origin: None,
             exiting_signals: std::collections::HashSet::new(),
             compound_stages: CompoundStages::default(),
             external_deps: std::collections::BTreeSet::new(),
@@ -1764,6 +1817,8 @@ impl SsaProgram {
                 phis: Vec::new(),
                 insts: Vec::new(),
                 terminator: Terminator::Return,
+                origin: self.current_origin,
+                signal_deferred: std::collections::HashSet::new(),
             },
         );
         id
@@ -1775,6 +1830,35 @@ impl SsaProgram {
         id
     }
 
+    pub(crate) fn enter_source(
+        &mut self,
+        span: crate::ir::Span,
+        attest: Option<crate::ir::Span>,
+        for_binding: bool,
+        block: BlockId,
+    ) -> Option<usize> {
+        let parent = self.current_origin;
+        let id = self.origins.len();
+        self.origins.push(SourceOrigin {
+            span,
+            parent,
+            attest,
+            for_binding,
+        });
+        self.current_origin = Some(id);
+        self.block_mut(block)
+            .insts
+            .push(SsaInst::SourceOrigin(Some(id), true));
+        parent
+    }
+
+    pub(crate) fn leave_source(&mut self, parent: Option<usize>, block: BlockId) {
+        self.current_origin = parent;
+        self.block_mut(block)
+            .insts
+            .push(SsaInst::SourceOrigin(parent, false));
+    }
+
     pub(crate) fn install_signal_checkpoints(&mut self) {
         let blocks = std::mem::take(&mut self.checkpoint_blocks);
         if self.exiting_signals.is_empty() {
@@ -1782,10 +1866,9 @@ impl SsaProgram {
         }
         // Two-pass loop lowering clears its discovery instructions.
         for id in blocks {
-            self.block_mut(id).insts.insert(
-                0,
-                SsaInst::internal(BuiltinCmd::SignalCheckpoint, Vec::new(), true),
-            );
+            self.block_mut(id)
+                .insts
+                .insert(0, SsaInst::signal_checkpoint(false));
         }
     }
 
@@ -1797,16 +1880,21 @@ impl SsaProgram {
         self.blocks.get(&id).expect("block not found")
     }
 
-    /// Every block that can run, in this process or a forked child: block 0
-    /// and everything reachable from it (see [`Self::reachable_from`]).
+    pub(crate) fn roots(&self) -> Vec<BlockId> {
+        std::iter::once(self.entry)
+            .chain(self.handlers.values().map(|handler| handler.block))
+            .collect()
+    }
+
+    /// Every executable block, including handlers and their forked children.
     pub fn reachable(&self) -> std::collections::HashSet<BlockId> {
-        self.reachable_from(&[0])
+        self.reachable_from(&self.roots())
     }
 
     /// The blocks that run in a forked child — a background job or a
     /// forked pipeline stage, and anything those fork in turn. A block
-    /// here must not exit through END (DD#56: END runs only in the main
-    /// process), so an abort or `exit` from it exits the child directly.
+    /// here must not enter a terminal handler (DD#128), so an abort or
+    /// `exit` from it exits the child directly.
     pub fn child_region(&self) -> std::collections::HashSet<BlockId> {
         let roots: Vec<BlockId> = self
             .blocks
@@ -1818,14 +1906,12 @@ impl SsaProgram {
 
     /// ICE unless no block is shared between the main process and a forked
     /// child, and every child ends in [`Terminator::ChildExit`]. A child that
-    /// jumps into the parent's blocks — a `return` target, a loop exit, END —
+    /// jumps into the parent's blocks — a return, loop exit or handler —
     /// would run the parent's code a second time in the wrong process, and a
     /// child that reaches `Return` would exit as though it were the program;
     /// nothing downstream could tell either from correct code.
     pub(crate) fn assert_children_disjoint(&self) {
-        let mut roots = vec![0];
-        roots.extend(self.end_block);
-        let main = self.same_process_from(&roots);
+        let main = self.same_process_from(&self.roots());
         let children = self.child_region();
         let mut shared: Vec<BlockId> = children.intersection(&main).copied().collect();
         shared.sort_unstable();
@@ -1844,27 +1930,11 @@ impl SsaProgram {
         );
     }
 
-    /// The blocks that make up the END handler (DD#56): `end_block` and
-    /// everything reachable from it. Empty when the program has no END.
-    ///
-    /// A label test is *not* equivalent. `install_end_block` lowers the
-    /// trap body with `lower_stmts`, so only the entry block is named
-    /// `__end__` — an `if`/`for` inside END produces ordinary block
-    /// labels. Both the transform's unchecked marking and codegen's abort
-    /// routing need the whole region, and they share this so the two
-    /// cannot disagree about where END ends.
-    pub fn end_region(&self) -> std::collections::HashSet<BlockId> {
-        match self.end_block {
-            Some(b) => self.reachable_from(&[b]),
-            None => std::collections::HashSet::new(),
-        }
-    }
-
     /// Blocks reachable from `roots` by every route a block has to run
     /// another: its terminator's successors, the child a
     /// [`Terminator::Fork`] starts, and the forked stages its pipelines
-    /// fork. An END handler that backgrounds a job therefore owns the job's
-    /// blocks too, and follows END's rules in them.
+    /// fork. A handler's emitted function includes its jobs' blocks too,
+    /// but those children retain their own terminal guard.
     pub fn reachable_from(&self, roots: &[BlockId]) -> std::collections::HashSet<BlockId> {
         self.closure(roots, true)
     }
@@ -2023,6 +2093,7 @@ pub struct VersionState {
     /// High-water mark — the next version to assign (never rolls back).
     counter: HashMap<String, u32>,
     pub(crate) taint_predecessors: HashMap<VarRef, VarRef>,
+    pub(crate) resolutions: std::collections::HashSet<VarRef>,
     pub(crate) failed_attests: Vec<String>,
     pub(crate) live_locals: std::collections::HashSet<String>,
     pub(crate) checked_collections: HashMap<String, bool>,
@@ -2067,8 +2138,6 @@ pub struct VersionState {
     /// own status (DD#55 2026-10-30). A must-consume result (SB4016/SB4018) inside
     /// it is discarded rather than an error.
     pub suppressed: u32,
-    /// EXIT trap body statements (if set via `trap 'body' EXIT`).
-    pub exit_trap: Option<Vec<crate::ir::Statement>>,
     /// Signals registered with EXIT disposition (compiler inserts check points).
     pub exiting_signals: std::collections::HashSet<i64>,
     /// Diagnostics collected during SSA transformation.
@@ -2205,6 +2274,7 @@ impl VersionState {
             current: HashMap::new(),
             counter: HashMap::new(),
             taint_predecessors: HashMap::new(),
+            resolutions: std::collections::HashSet::new(),
             failed_attests: Vec::new(),
             live_locals: std::collections::HashSet::new(),
             checked_collections: HashMap::new(),
@@ -2223,7 +2293,6 @@ impl VersionState {
             readonly_vars: std::collections::HashSet::new(),
             loop_stack: Vec::new(),
             return_target: None,
-            exit_trap: None,
             exiting_signals: std::collections::HashSet::new(),
             diagnostics: Vec::new(),
             expr_diagnostics: std::cell::RefCell::new(Vec::new()),
@@ -2312,6 +2381,7 @@ impl VersionState {
         let target = self.define(name);
         if self.failed_attests.iter().any(|subject| subject == name) {
             self.taint_predecessors.remove(&target);
+            self.resolutions.insert(target.clone());
         }
         target
     }
@@ -2320,6 +2390,7 @@ impl VersionState {
     pub(crate) fn define_initial(&mut self, name: &str) -> VarRef {
         let target = self.define(name);
         self.taint_predecessors.remove(&target);
+        self.resolutions.insert(target.clone());
         target
     }
 
@@ -2328,6 +2399,11 @@ impl VersionState {
     /// reassignment: a `const` bound on one path of an `if` gets its phi at
     /// the merge like any other name.
     pub fn define_merge(&mut self, name: &str) -> VarRef {
+        self.next_version(name)
+    }
+
+    /// A handler loads a live global, not the normal path's final SSA value.
+    pub(crate) fn define_input(&mut self, name: &str) -> VarRef {
         self.next_version(name)
     }
 

@@ -1,9 +1,31 @@
 title: DD#55 — Implicit Exit Checks and Error Handling Model
 status: implemented
 
-No `set -e` at runtime. The compiler inserts implicit exit checks on
-every operation that can fail at runtime. Failure = nonzero exit or
-runtime error (e.g., `regcomp` on dynamic pattern). `- cmd` suppresses.
+No `set -e` at runtime. The compiler inserts implicit exit checks for
+operational failures: nonzero command status or a runtime error such as
+`regcomp` on a dynamic pattern. `- cmd` discards that command's status;
+it does not suppress every failure in its operands or body.
+
+## Terminal handlers (DD#128)
+
+An uncaught main-process failure enters **ERR**, not EXIT. Normal
+fall-through, explicit `exit 0` and a configured EXIT signal enter **EXIT**.
+Explicit nonzero `exit N` enters ERR, using the full i64 value before process
+exit truncation (DD#89). Children run neither handler.
+
+EXIT is ordinary checked code: its uncaught failure enters ERR. ERR must
+catch or suppress every operational failure where it actually occurs;
+otherwise SB5101 rejects the operation or call. This is not a blanket
+unchecked region. The no-reach rule below applies unchanged to helpers,
+operand captures and setup failures. If no existing form catches an
+operational failure, that operation is unavailable in ERR.
+
+Arithmetic faults and heap exhaustion remain fatal exceptions. A first
+fault in main or EXIT attempts ERR once without allocating for dispatch;
+a fault in ERR terminates. Neither handler resumes interrupted code or
+re-enters itself, and ERR cannot transfer back to EXIT. Falling off a handler
+preserves its entry status; explicit `exit N` overrides it. `$?` is available
+as the first evaluated expression on entry under the usual handling rule.
 
 ## What gets checked
 
@@ -113,7 +135,7 @@ The pipeline's truth value is **one** definition everywhere: the worst
 exit status over its **non-suppressed** segments (pipefail). *Position*
 decides only the consequence, never the aggregate:
 
-- **statement position** — a nonzero aggregate aborts (routes through END).
+- **statement position** — a nonzero aggregate aborts (routes to ERR).
 - **condition position** (`if` / `while` / `until` test, operand of `!`) —
   the aggregate is the truth value; it does not abort.
 
@@ -140,8 +162,8 @@ completion may cause producer SIGPIPE, handled by the same suppression and
 pipefail rules above. Successful cleanup preserves a nonlocal return or loop
 transfer's existing status; checked producer failure still follows the normal
 abort path. Abort/explicit exit closes all outstanding readers before reaping
-and retains its triggering status for END. No forced kills or termination
-timeouts.
+and retains its triggering status for the selected handler. No forced kills
+or termination timeouts.
 
 An authored `$(wait)` can reap a pending producer; the owning reader retains
 that status for its aggregate instead of attempting a second wait and reporting
@@ -164,7 +186,7 @@ target. Child fd wiring or redirect failure prevents that stage's body from
 running.
 
 A single external `$(command)` uses the same checked pipeline construction.
-Uncaught failure enters END; caught construction failure binds empty output
+Uncaught failure enters ERR; caught construction failure binds empty output
 and a false condition. `$(- command)` discards failure without aborting, but
 failed setup never executes the command. The capture drains its private pipe
 before waiting and does not replace an enclosing lastpipe reader.
@@ -415,8 +437,9 @@ assignment or `(( n = 1 ))` behind `-`, and a suppressed final reader
 (`a | - readline y &`, `a | - read ar &`) are SB4024. The first three compiled
 and lost their effect with the child; the readers drew the compound-stage
 SB4022. `-` prefixes a command: on `attest`, a declaration, `fn`/`function`
-or `END` it is SB4014 at the `-`. These drew SB5011 "command '-' not found" or
-an unrelated SB4014. `- until` now parses like `- while`.
+or either handler declaration it is SB4014 at the `-`. These drew SB5011
+"command '-' not found" or an unrelated SB4014. `- until` now parses like
+`- while`.
 
 **Correction to "Background processes" above.** "Exec failure … the parent
 aborts" is wrong for exec. The exec fails in the child, which prints the errno
@@ -425,8 +448,9 @@ by reaping it through DD#126's latch (55.16). Under `- cmd &` and `exec cmd &`
 the child prints the errno but not the "command failed" line. Fork failure
 aborts as written since F2 (2026-10-28, batch-531 B20, journal 539):
 `fork: error N`, status 1, abort unless checked or suppressed, and `$!` reads
--1. Inside END it is still silent (`bug-fork-failure-reporting-by-form`, row
-e1).
+-1. DD#128 removes END's silent-handler exception: EXIT is checked, and
+ERR requires an explicit handling form (`bug-fork-failure-reporting-by-form`,
+historical row e1).
 
 Specs: errors.sh 55.107-55.144, 71.4, bng.18, bng.25, csfx.4-csfx.8;
 pipe_functions.sh pf.52. Journal 537.
@@ -486,7 +510,7 @@ handled as a condition (`if`, `while`, the left side of `&&` or `||`), or
 its status is discarded with `-`. Anywhere else it is SB4016, "function 'f'
 returns a status — handle it with `if` or `||`, or discard it with `-`": a
 bare statement, the tail of a list (`/bin/true && f`), a background job
-(`f &`), in a function body or in END. Reading `$?` afterwards does not
+(`f &`), in a function body or in EXIT/ERR. Reading `$?` afterwards does not
 handle it. A capture `$(f)` binds the output and leaves the status nowhere
 to go, so it is SB4016 as well, with the advice `$(- f)` (`$(- f …)` when it
 has arguments). A capture as a condition, `if x=$(f)`, stays SB4025 (DD#88),

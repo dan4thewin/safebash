@@ -103,6 +103,16 @@ pub static sash_exit_signum: core::sync::atomic::AtomicI64 = core::sync::atomic:
 #[no_mangle]
 pub static mut sash_trace_flag: i64 = 0;
 
+const TERMINAL_EXIT: u8 = 1;
+const TERMINAL_ERR: u8 = 2;
+const TERMINAL_CHILD: u8 = 3;
+static TERMINAL_STATE: core::sync::atomic::AtomicU8 = core::sync::atomic::AtomicU8::new(0);
+
+extern "C" {
+    static sash_on_exit: Option<unsafe extern "C" fn(i64)>;
+    static sash_on_error: Option<unsafe extern "C" fn(i64)>;
+}
+
 // ═══════════════════════════════════════════════════════════════
 // Safe inner functions — no raw pointers, no unsafe
 // Defined in inner.rs, shared with tests via include!
@@ -120,7 +130,7 @@ include!("inner.rs");
 /// *that command's* output. It is not the invoking program's channel, and
 /// nothing the program itself emits may land in it — neither a diagnostic
 /// about the command (if the command could not be set up or exec'd, it
-/// produced no output at all) nor the output of an END block that runs after
+/// produced no output at all) nor the output of a terminal handler that runs after
 /// the command aborted.
 ///
 /// Index `i` holds a high-numbered `F_DUPFD_CLOEXEC` copy of fd `i`, or `-1`
@@ -174,15 +184,15 @@ pub extern "C" fn sash_scope_bind() {
     }
 }
 
-/// Put the invoker's fds back (DD#120). Called on entry to the END block.
+/// Put the invoker's fds back (DD#120) on entry to a terminal handler.
 ///
 /// An abort inside a redirected command terminates the block before its
-/// restore can run, so without this END would inherit the failed command's
-/// redirects and write `END { echo cleanup }` into that command's output
-/// file. Restoring here makes END's channel correct by construction rather
+/// restore can run, so without this the handler would inherit the failed
+/// command's redirects and write cleanup output into its output file.
+/// Restoring here makes the handler's channel correct by construction rather
 /// than by remembering to restore at each abort site.
 ///
-/// The saves stay open: END may itself abort, and the process exit closes
+/// The saves stay open: EXIT may fail into ERR, and the process exit closes
 /// them.
 #[no_mangle]
 pub extern "C" fn sash_scope_restore() {
@@ -438,7 +448,56 @@ pub extern "C" fn sash_shutdown(status: i64) -> ! {
 
 #[no_mangle]
 pub extern "C" fn sash_exit(status: i64) -> ! {
+    if status == 0 {
+        sash_finish(status)
+    } else {
+        sash_abort(status)
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn sash_finish(status: i64) -> ! {
+    terminal_dispatch(status, TERMINAL_EXIT)
+}
+
+#[no_mangle]
+pub extern "C" fn sash_abort(status: i64) -> ! {
+    terminal_dispatch(status, TERMINAL_ERR)
+}
+
+fn terminal_dispatch(status: i64, next: u8) -> ! {
+    use core::sync::atomic::Ordering::Relaxed;
+    if TERMINAL_STATE.load(Relaxed) >= next {
+        sash_shutdown(status);
+    }
+    TERMINAL_STATE.store(next, Relaxed);
+    let callback = unsafe {
+        if next == TERMINAL_EXIT {
+            sash_on_exit
+        } else {
+            sash_on_error
+        }
+    };
+    if let Some(callback) = callback {
+        unsafe { CAPTURE_SCOPE = next as usize };
+        sash_reader_cleanup();
+        sash_scope_restore();
+        unsafe { callback(status) };
+    }
     sash_shutdown(status)
+}
+
+#[no_mangle]
+pub extern "C" fn sash_signal_checkpoint(deferred: i64) {
+    use core::sync::atomic::Ordering::Relaxed;
+    let state = TERMINAL_STATE.load(Relaxed);
+    if deferred != 0 || matches!(state, TERMINAL_EXIT | TERMINAL_ERR) {
+        return;
+    }
+    let signum = sash_exit_signum.load(Relaxed);
+    if signum != 0 {
+        sash_finish(128 + signum);
+    }
 }
 
 /// Attest-gate failure diagnostic, then exit(1):
@@ -476,7 +535,7 @@ pub extern "C" fn sash_attest_fail(
     }
     let tail: &[u8] = b" failed the gate\n";
     diag_write(tail.as_ptr(), tail.len() as i64);
-    sash_exit(1)
+    sash_abort(1)
 }
 
 /// DD#25: integer overflow trap. Writes `<argv0>: arithmetic overflow\n`
@@ -529,7 +588,7 @@ fn arith_abort(msg: &[u8]) -> ! {
         }
     }
     diag_write(msg.as_ptr(), msg.len() as i64);
-    sash_exit(2)
+    sash_abort(2)
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -616,7 +675,7 @@ pub extern "C" fn sash_reader_finish(scope: *mut SashReader) {
     }
 }
 
-/// Abort/END closes every reader before waiting, retaining the triggering status.
+/// Terminal cleanup closes every reader before waiting, retaining the triggering status.
 #[no_mangle]
 pub extern "C" fn sash_reader_cleanup() {
     unsafe {
@@ -652,6 +711,7 @@ fn discard_inherited_readers() {
 pub extern "C" fn sash_fork() -> i64 {
     match unsafe { rustix::runtime::kernel_fork() } {
         Ok(rustix::runtime::Fork::Child(_)) => {
+            TERMINAL_STATE.store(TERMINAL_CHILD, core::sync::atomic::Ordering::Relaxed);
             discard_inherited_readers();
             0
         }
@@ -693,7 +753,7 @@ pub extern "C" fn sash_exec(argv: *const *const u8, envp: *const *const u8) -> !
         let e = rustix::runtime::execve(cmd_cstr, argv, envp);
         set_last_errno(e);
         sash_emsg(cmd, cmd_bytes.len() as i64, core::ptr::null(), 0);
-        sash_shutdown(127);
+        sash_abort(127);
     }
 }
 
@@ -1117,7 +1177,7 @@ pub unsafe extern "C" fn sash_splat_disposition(
             diag_write(word_ptr, word_len);
         }
         diag_write(b"\n".as_ptr(), 1);
-        sash_exit(1);
+        sash_abort(1);
     }
     if has_word != 0 {
         let t = sash_table_new(4);
@@ -1164,7 +1224,7 @@ pub unsafe extern "C" fn sash_argv_guard(ptr: *const u8, len: i64) {
         b"argument contains a NUL byte and would be truncated at exec\n".as_ptr(),
         60,
     );
-    sash_exit(1);
+    sash_abort(1);
 }
 
 /// DD#77: `${var:?MESSAGE}` — abort when the scalar is unset/empty. `s_len <= 0`
@@ -1188,7 +1248,7 @@ pub unsafe extern "C" fn sash_require_value(s_len: i64, msg_ptr: *const u8, msg_
         diag_write(msg_ptr, msg_len);
     }
     diag_write(b"\n".as_ptr(), 1);
-    sash_exit(1);
+    sash_abort(1);
 }
 
 #[cold]
@@ -1210,7 +1270,7 @@ fn sash_panic_argv(idx: i64, argc: i64) -> ! {
     buf[pos] = b'\n';
     pos += 1;
     diag_write(buf.as_ptr(), pos as i64);
-    sash_exit(1);
+    sash_abort(1);
 }
 
 /// Write an i64 into a byte buffer, return number of bytes written.
@@ -1302,15 +1362,11 @@ pub extern "C" fn sash_capture_drain(fd: i64) -> (*mut u8, usize) {
 // inner `$( )` whose fork gets a pipe rather than our stdout; a bare external
 // disqualifies the site at compile time.
 //
-// Depth is static: sash inlines functions and rejects recursion (SB5037), so
-// no construct produces dynamic capture nesting. A fixed array is sufficient
-// and an overflow is a compiler bug, not user input.
-
-const CAPTURE_STACK_MAX: usize = 64;
 const CAPTURE_BUF_INITIAL: usize = 256;
 
 #[derive(Clone, Copy)]
 struct CaptureFrame {
+    previous: *mut CaptureFrame,
     /// `false` is a transparent frame: fd 1 is genuinely redirected, so
     /// writes must reach the kernel rather than any enclosing buffer.
     buffered: bool,
@@ -1319,35 +1375,33 @@ struct CaptureFrame {
     cap: usize,
 }
 
-static mut CAPTURE_STACK: [CaptureFrame; CAPTURE_STACK_MAX] = [CaptureFrame {
-    buffered: false,
-    ptr: core::ptr::null_mut(),
-    len: 0,
-    cap: 0,
-}; CAPTURE_STACK_MAX];
-static mut CAPTURE_DEPTH: usize = 0;
+// Separate heads keep handlers from overwriting a faulting append's borrowed frame.
+static mut CAPTURE_TOP: [*mut CaptureFrame; 3] = [core::ptr::null_mut(); 3];
+static mut CAPTURE_SCOPE: usize = 0;
 
-fn capture_push(frame: CaptureFrame) {
+fn capture_push(mut frame: CaptureFrame) {
     unsafe {
-        if CAPTURE_DEPTH >= CAPTURE_STACK_MAX {
-            let fd = BorrowedFd::borrow_raw(2);
-            let _ = rustix::io::write(fd, b"sash: bug: capture nesting exceeded 64\n");
-            sash_shutdown(99);
-        }
-        CAPTURE_STACK[CAPTURE_DEPTH] = frame;
-        CAPTURE_DEPTH += 1;
+        let scope = CAPTURE_SCOPE;
+        frame.previous = CAPTURE_TOP[scope];
+        let storage = sash_alloc(core::mem::size_of::<CaptureFrame>()).cast::<CaptureFrame>();
+        storage.write(frame);
+        CAPTURE_TOP[scope] = storage;
     }
 }
 
 fn capture_pop() -> CaptureFrame {
     unsafe {
-        if CAPTURE_DEPTH == 0 {
+        let scope = CAPTURE_SCOPE;
+        let storage = CAPTURE_TOP[scope];
+        if storage.is_null() {
             let fd = BorrowedFd::borrow_raw(2);
             let _ = rustix::io::write(fd, b"sash: bug: capture end without start\n");
             sash_shutdown(99);
         }
-        CAPTURE_DEPTH -= 1;
-        CAPTURE_STACK[CAPTURE_DEPTH]
+        let frame = storage.read();
+        CAPTURE_TOP[scope] = frame.previous;
+        sash_free_ptr(storage.cast());
+        frame
     }
 }
 
@@ -1357,10 +1411,12 @@ fn capture_pop() -> CaptureFrame {
 /// is live, or the innermost one is transparent.
 fn capture_buf_append(buf: *const u8, len: usize) -> Option<i64> {
     unsafe {
-        if CAPTURE_DEPTH == 0 {
+        let scope = CAPTURE_SCOPE;
+        let storage = CAPTURE_TOP[scope];
+        if storage.is_null() {
             return None;
         }
-        let frame = &mut CAPTURE_STACK[CAPTURE_DEPTH - 1];
+        let frame = &mut *storage;
         if !frame.buffered {
             return None;
         }
@@ -1391,6 +1447,7 @@ fn capture_buf_append(buf: *const u8, len: usize) -> Option<i64> {
 pub extern "C" fn sash_capture_start_buf() {
     let ptr = unsafe { sash_alloc(CAPTURE_BUF_INITIAL) };
     capture_push(CaptureFrame {
+        previous: core::ptr::null_mut(),
         buffered: true,
         ptr,
         len: 0,
@@ -1444,13 +1501,19 @@ extern "C" {
 #[no_mangle]
 pub unsafe extern "C" fn sash_init_heap() {
     let size = sash_heap_size;
-    let ptr = rustix::mm::mmap_anonymous(
+    let ptr = match rustix::mm::mmap_anonymous(
         core::ptr::null_mut(),
         size,
         rustix::mm::ProtFlags::READ | rustix::mm::ProtFlags::WRITE,
         rustix::mm::MapFlags::PRIVATE | rustix::mm::MapFlags::NORESERVE,
-    )
-    .expect("sash: mmap failed for heap");
+    ) {
+        Ok(ptr) => ptr,
+        Err(error) => {
+            set_last_errno(error);
+            sash_emsg(b"heap mmap".as_ptr(), 9, core::ptr::null(), 0);
+            sash_abort(1);
+        }
+    };
     sash_heap_init(ptr as *mut u8, size);
 }
 
@@ -1513,7 +1576,7 @@ fn sash_panic_oom(n: usize) -> ! {
     buf[pos..pos + tail.len()].copy_from_slice(tail);
     pos += tail.len();
     diag_write(buf.as_ptr(), pos as i64);
-    sash_exit(1);
+    sash_abort(1);
 }
 
 /// DD#87 invariant: every sash **string** buffer is NUL-terminated at `[len]`,
@@ -1835,7 +1898,7 @@ fn fd_backup_abort(operation: &[u8]) -> ! {
         core::ptr::null(),
         0,
     );
-    sash_exit(1)
+    sash_abort(1)
 }
 
 /// Lexicographic string comparison. Returns <0, 0, or >0.
@@ -2457,7 +2520,7 @@ pub unsafe extern "C" fn sash_regex_match(
     let prog = regcomp9(pat_buf);
     if prog.is_null() {
         // Invalid regex is a runtime error — exit with failure
-        sash_exit(2);
+        sash_abort(2);
     }
     // Resub is 2 pointers (sp, ep) per entry = 16 bytes; 10 entries = 160
     // bytes. Over-allocated to 320 (matches sash_regex_replace).
@@ -2473,7 +2536,7 @@ pub unsafe extern "C" fn sash_regex_match(
 /// DD#63: whole-match extraction for `$(match S P)`.
 /// Returns (ptr, len) of `resub[0]` (the whole match) as a slice of the
 /// original subject. No match → `(str_ptr, 0)` (empty string). Invalid
-/// regex is a runtime error (`sash_exit(2)`), mirroring `sash_regex_match`.
+/// regex is a runtime error (`sash_abort(2)`), mirroring `sash_regex_match`.
 #[no_mangle]
 pub unsafe extern "C" fn sash_regex_match_str(
     str_ptr: *const u8,
@@ -2492,7 +2555,7 @@ pub unsafe extern "C" fn sash_regex_match_str(
 
     let prog = regcomp9(pat_buf);
     if prog.is_null() {
-        sash_exit(2);
+        sash_abort(2);
     }
     // Resub stride is 16 bytes (sp, ep); 10 entries, over-allocated to 320.
     let mut resub = [0u8; 320];
@@ -2516,7 +2579,7 @@ pub unsafe extern "C" fn sash_regex_match_str(
 /// (bash-parity: array length = N+1). A group that exists in the pattern
 /// but did not participate in the match is stored as the empty string.
 /// The table is cleared on entry, so a no-match leaves it empty. Returns 1
-/// if matched, 0 if not. Invalid regex aborts (`sash_exit(2)`), mirroring
+/// if matched, 0 if not. Invalid regex aborts (`sash_abort(2)`), mirroring
 /// `sash_regex_match`.
 #[no_mangle]
 pub unsafe extern "C" fn sash_regex_match_into(
@@ -2538,7 +2601,7 @@ pub unsafe extern "C" fn sash_regex_match_into(
 
     let prog = regcomp9(pat_buf);
     if prog.is_null() {
-        sash_exit(2);
+        sash_abort(2);
     }
     // Reprog.nsub (the capturing-group count) sits just past the leading
     // `startinst` pointer in the struct (sash DD#63 engine field).
@@ -2610,7 +2673,7 @@ pub unsafe extern "C" fn sash_regex_matchall_into(
 
     let prog = regcomp9(pat_buf);
     if prog.is_null() {
-        sash_exit(2);
+        sash_abort(2);
     }
     let nsub = (*(prog.add(core::mem::size_of::<*const u8>()) as *const i32)) as usize;
     let ngroups = if nsub > 127 { 127 } else { nsub };
@@ -2753,7 +2816,7 @@ pub unsafe extern "C" fn sash_regex_replace(
         // regex builtin (DD#39, DD#55). This used to return the subject as if
         // nothing had matched, so a bad interpolated pattern ran on with
         // status 0 after `regerror9` had already reported it.
-        sash_exit(2);
+        sash_abort(2);
     }
 
     // Build result incrementally
@@ -3432,15 +3495,18 @@ pub extern "C" fn sash_capture_start() -> (i64, i64) {
         }
         Err(e) => {
             set_last_errno(e);
-            return (saved, -1);
+            fd_backup_abort(b"capture memfd_create");
         }
     };
     // `dup2` makes fd 1 share `cap`'s file description, so the offset `cap` sees
     // also advances for writes made through fd 1 — including a forked child's.
-    sash_dup2(cap, 1);
+    if sash_dup2(cap, 1) < 0 {
+        fd_backup_abort(b"capture dup2");
+    }
     // Suspend any enclosing buffered capture: fd 1 now really is redirected,
     // so writes belong to this memfd, not to the outer string.
     capture_push(CaptureFrame {
+        previous: core::ptr::null_mut(),
         buffered: false,
         ptr: core::ptr::null_mut(),
         len: 0,
@@ -3458,13 +3524,11 @@ pub extern "C" fn sash_capture_end(saved_stdout: i64, cap_fd: i64) -> (*mut u8, 
     // Resume an enclosing buffered capture, if any.
     capture_pop();
 
-    if cap_fd < 0 {
-        return (core::ptr::null_mut(), 0);
-    }
     // The body left the offset at end-of-data; rewind before draining.
     let fd = unsafe { BorrowedFd::borrow_raw(cap_fd as i32) };
     if let Err(e) = rustix::fs::seek(fd, rustix::fs::SeekFrom::Start(0)) {
         set_last_errno(e);
+        fd_backup_abort(b"capture seek");
     }
     let (ptr, total) = sash_capture_drain(cap_fd);
     sash_close(cap_fd);
@@ -3632,7 +3696,7 @@ fn sash_glob_abs_prefix(dir: &[u8], out: &mut [u8; 4096]) -> usize {
                 seg2.as_ptr(),
                 seg2.len() as i64,
             );
-            sash_exit(1);
+            sash_abort(1);
         }
         let cwd = unsafe { core::slice::from_raw_parts(cwd_ptr, cwd_len as usize) };
         let cl = cwd.len().min(4095);
@@ -3923,7 +3987,7 @@ pub unsafe extern "C" fn sash_map_from_array(
                 diag_write(key_ptr, key_len);
             }
             diag_write(b"\n".as_ptr(), 1);
-            sash_exit(1);
+            sash_abort(1);
         }
         2 => {} // `:~` / `:!` — discard the trailing element
         _ => {
@@ -4064,7 +4128,7 @@ pub extern "C" fn sash_slurp_file(
 fn sash_panic_slurp(path_ptr: *const u8, path_len: i64) -> ! {
     let msg = b"cannot read file";
     sash_emsg(path_ptr, path_len, msg.as_ptr(), msg.len() as i64);
-    sash_exit(1);
+    sash_abort(1);
 }
 
 /// A failed `read` is not EOF. Reporting it as EOF handed the caller a
@@ -4074,5 +4138,5 @@ fn sash_panic_slurp(path_ptr: *const u8, path_len: i64) -> ! {
 fn sash_panic_read() -> ! {
     let msg = b"sash: read failed\n";
     diag_write(msg.as_ptr(), msg.len() as i64);
-    sash_exit(1);
+    sash_abort(1);
 }

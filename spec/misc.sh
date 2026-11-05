@@ -49,9 +49,10 @@ run_sash_emit_ir() {
 # 104.1 --emit-ir accepted, and stamps a version a consumer can refuse on
 if in_modes native; then
     run_sash_emit_ir 'echo hello'
-    [[ $rc = 0 && -z $err && $out == *":ir-version 1"* ]]; chk 104.1
+    [[ $rc = 0 && -z $err && $out == *":ir-version 2"* \
+       && $out == *":exit-block nil"* && $out == *":err-block nil"* ]]; chk h128.104.1
 else
-    skip_chk 104.1
+    skip_chk h128.104.1
 fi
 
 # 104.2 the capture is structural — IR node names, not an interpretation.
@@ -77,21 +78,20 @@ else
     skip_chk 104.3
 fi
 
-# 104.5 an END block is captured in `:end-block`, not as a function in
-#       `:statements`. The capture renders IR node names, never an
-#       interpretation (DD#104), so this is only truthful because `END { }`
-#       parses into `Program::end_block` — it used to emit a function named
-#       `__sash_end__` and leave `:end-block nil`, which told a reader the
-#       program had no exit handler. Journal 309.
+# Both handlers have their own structural fields, not synthetic definitions
+# in :statements. Schema 2 replaces :end-block (DD104, DD128).
 if in_modes native; then
     run_sash_emit_ir 'echo hi
-END {
+EXIT {
 echo bye
-}'
-    [[ $rc = 0 && -z $err && $out == *":end-block [{:kind :command"* \
-       && $out != *"__sash_end__"* && $out != *":end-block nil"* ]]; chk 104.5
+}
+ERR { - echo failed }'
+    [[ $rc = 0 && -z $err && $out == *":ir-version 2"* \
+       && $out == *":exit-block [{:kind :command"* \
+       && $out == *":err-block [{:kind :suppressed"* \
+       && $out != *":end-block"* ]]; chk h128.104.5
 else
-    skip_chk 104.5
+    skip_chk h128.104.5
 fi
 
 # 104.6-104.8 the capture never holds an arithmetic `++`/`--` or `a[i]`
