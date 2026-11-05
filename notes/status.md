@@ -1,4 +1,16 @@
-## ══ STATUS (2026-11-05, latest) — Reference port closed ══
+## ══ STATUS (2026-11-05, latest) — Root artifacts cleaned ══
+
+DG confirmed removal of seven root-level strays (journal 571): `c.sh`,
+`cfp`, two Copilot Node OOM reports, `a.out`, `e.txt` and the obsolete root
+`plan.md`. All seven are preserved in a private, byte-verified session
+archive. The active session plan is separate and retained.
+
+Future root Node diagnostic reports are ignored. Local databases,
+`Cargo.lock`, build/scratch directories and task-runner scripts remain.
+No compiler, runtime, spec or build rule changed. The reference port stays
+closed; coverage remains paused pending separate authorization.
+
+## ══ STATUS (2026-11-05) — Reference port closed ══
 
 DG authorized closeout and reference-branch deletion (journal 570).
 All 330 hunk rows are accounted for: 246 ported, 62 reimplemented,

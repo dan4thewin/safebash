@@ -37,6 +37,8 @@ spec/.trace/
 .agent-runs/
 .indexnudge-rust.db
 *.profraw
+# Node diagnostic reports can contain environment and process details.
+/report.[0-9]*.[0-9]*.[0-9]*.[0-9]*.json
 notes/tmux-*.log
 spec.db
 
