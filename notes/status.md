@@ -1,4 +1,25 @@
-## ══ STATUS (2026-11-05, latest) — Checked EXIT/ERR handlers ══
+## ══ STATUS (2026-11-05, latest) — Reference port closed ══
+
+DG authorized closeout and reference-branch deletion (journal 570).
+All 330 hunk rows are accounted for: 246 ported, 62 reimplemented,
+7 superseded and 15 dropped. Source-hunk records are intact; four earlier
+catalogue reclassifications are explicitly accounted for.
+The tracking task is done; its 26 unchecked entries have explicit independent
+backlog homes and are not falsely declared fixed.
+
+B77/B78/B80 remain in the function-name bug task, B121 in the classifier
+task, and B79's integer-stage status contract is now an explicit question.
+The already-fixed B7/B15 cases still reject. No further reference-code
+family remains.
+
+The local `taint-walker-redesign` branch is deleted. Commit `e98fca8` is
+preserved in a verified session bundle; both detached reference worktrees
+and their frozen files remain. No compiler, runtime or spec source changed;
+journal 569's accepted gate and spec-history boundary remain unchanged.
+Coverage stays paused: a separate go and a fresh union are required before
+ranking cold lines again.
+
+## ══ STATUS (2026-11-05) — Checked EXIT/ERR handlers ══
 
 DD128 is accepted and implemented; W5 is complete (journal 569).
 DG's actual-globals/generated-function architecture is retained.
@@ -26,8 +47,8 @@ DG's actual-globals/generated-function architecture is retained.
 The first full gate caught two schema-1 artifact assertions missed in the
 migration; both now require schema 2 at fresh IDs and fail on the original
 compiler. No pending hunk-ledger rows remain. Independent backlog and port
-wrap-up remain separate; reference branches are retained and coverage is
-still paused.
+wrap-up were separate from this implementation; journal 570 records the
+subsequent closeout and reference-branch deletion. Coverage is still paused.
 
 ## ══ STATUS (2026-11-04) — Strict resolution and fresh locals ══
 

@@ -1,12 +1,12 @@
 ---
-title: "Batch 531 findings: index and port status"
-status: open
+title: "Batch 531 findings: index and completed port dispositions"
+status: done
 priority: P1
 kind: tracking
 depends: []
 gates:
-  - "every finding below is fixed with a spec, or closed by a recorded decision"
-  - "every hunk of the reference branch is ported, re-implemented or dropped by a decision"
+  - "every finding is fixed with a spec, closed by a recorded decision, or explicitly assigned to independent backlog under DG's 2026-10-25 rule"
+  - "every reference hunk has a recorded ported, reimplemented, superseded or dropped disposition; none remains pending or drop-proposed"
 ---
 
 ## What
@@ -16,10 +16,11 @@ Coverage batch 531 (the last cold lines in `type_check.rs` and
 about seventy fixes, a rewritten taint walker, one new rejection (SB5098)
 and 101 new specs in one unreviewed WIP commit, `e98fca8`, on the local
 branch `taint-walker-redesign` (parent `1309385`). DG judged it too large
-and lacking the usual narrative. The branch is now a read-only reference.
-Its content is ported to `hand-parser` one family at a time, each step
-opening with a discussion with DG. Journal 531 records why, the decisions
-already settled (D1, the taint model T1-T3) and the order of the steps.
+and lacking the usual narrative. The branch was retained as a read-only
+reference while its content was ported to `hand-parser` one family at a
+time, each step opening with a discussion with DG. Journal 531 records why,
+the decisions already settled (D1, the taint model T1-T3) and the order of
+the steps.
 
 This file is the index: one entry per finding, grouped by the step that
 lands it, in landing order. Each entry gives the family (when it differs
@@ -47,12 +48,38 @@ Statuses:
 A compound status (`fixed-on-branch+question`) means the branch has a fix
 but the step must first settle a question.
 
-The taint walker itself (the branch's context-sensitive walker) is not
-ported. Track W re-implements the taint checks under T1-T3, which DD127
-now states in full, including DG's 2026-10-31 rule for a function with one
-call site. Most of
-track W's findings were fixed inside that walker, so W re-implements or
-re-probes them; some may vanish by construction, which the step records.
+The branch's context-sensitive taint walker was not ported. Track W
+reimplemented its obligations under DD127, including DG's single-use
+function rule, and DD128's strict resolution and checked EXIT/ERR roots.
+The individual entries retain their initial classifications and record
+what actually landed.
+
+## Closeout (2026-11-05)
+
+DG authorized closeout and deletion of the reference branch. All 330 hunk
+rows have final dispositions: **246 ported, 62 reimplemented, 7 superseded,
+15 dropped**. Closeout changes no ledger field. The source-hunk records
+match Step 0; four rows' earlier family/finding reclassifications are
+explicitly accounted for in journal 570, alongside reference preservation.
+
+This tracking task is complete; it does **not** declare every discovered
+bug fixed. DG's later scope rule sends independent findings that were not
+fixed on the reference and do not block the port to the backlog. All 26
+unchecked entries below have explicit backlog destinations. The 109 checked
+entries include implemented fixes, decisions, duplicates and controls.
+
+Current-tree native/C observations confirm the remaining B77-B80 and B121
+cases. B77/B78/B80 share `bug-function-name-read-as-variable`; B79's
+integer-value/process-status contract is `q-int-function-pipeline-status`;
+B121 remains in `bug-peel-family-classifiers`. B7 and B15 were already
+closed by journals 565 and 547, respectively; there is no unspecified
+DD74 port family left.
+
+The local `taint-walker-redesign` ref is deleted. Its commit `e98fca8` is
+preserved in the verified session bundle
+`files/port-reference-taint-walker-redesign.bundle`; both detached reference
+worktrees remain. This closeout changes no compiler, runtime or spec source.
+Coverage stays paused and requires separate authorization and a fresh union.
 
 ## Index
 
@@ -1389,10 +1416,25 @@ claims with program-level helpers.
   - Extended 2026-10-28 in `q-suppression-on-user-functions` (Related):
     `: $(( f ))`, Q2's replacement for `- f` on an `-> int` function,
     reads a non-int `f` as 0 without calling it.
+  - Still live on `09a5bd49`, native and C: `$f` is empty and bare
+    arithmetic `f` is zero. Backlog: `bug-function-name-read-as-variable`.
 - [ ] **B78** (open; DD58). DD58's variable/function collision is checked
   only for a plain assignment.
+  - Still live on `09a5bd49`: `int f=3` and `str f=3` compile in both
+    modes while `f=3` gets SB4019. Same backlog:
+    `bug-function-name-read-as-variable`.
 - [ ] **B79** (open; DD58, DD55). An int function as a pipeline stage: its
   value is read as an exit status, so `fn f -> int { echo hi; return 256 };
-  f | readline s` succeeds and prints `[hi]`.
+  f | readline s` succeeds; a subsequent echo prints `[hi]`.
+  - Still live on `09a5bd49`, with `:!` on the final reader-value use to
+    isolate status from taint. Return 256 succeeds; return 3 aborts with
+    the stage's exit 3. The stage-specific contract needs an explicit
+    disposition, not an assumed extension of the predicate rule:
+    `q-int-function-pipeline-status`.
 - [ ] **B80** (open; DD58, DD75). `(len f)` on a function name ICEs in
-  native and yields garbage in C; `$f` deserves SB4019's advice.
+  native and yields garbage in C.
+  - Still live on `09a5bd49`: native compilation exits 1 with
+    `ICE: undefined arrlen: f`; C executes and prints an arbitrary integer.
+    The ordinary `$(len f)` spelling already gets SB5039. Same backlog:
+    `bug-function-name-read-as-variable`; the fix must choose the proper
+    source diagnostic rather than supply a backend default.

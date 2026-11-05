@@ -126,7 +126,20 @@ Q1/Q2 of `q-suppression-on-user-functions`. Fix direction: peel
 those rulings.
 
 (2026-10-30) Q1 and Q2 are ruled. A `-` directly on a call of a void
-function is an error, which F6 adds. y22's and y23's f prints `x` and has no
-`return`, so it is void, and F6 rejects both. `if - status_f`, a `-` on a
+function is SB4076, implemented by F6 (journal 547). y22's and y23's f
+prints `x` and has no `return`, so it is void, and F6 rejects both.
+That does not fix the redirected calls. `if - status_f`, a `-` on a
 call whose status the condition consumes, stays with
 `q-suppression-and-stage-residuals` Q3.
+
+**Closeout recheck, 2026-11-05 (`09a5bd49`, journal 570).** With the same
+void `f`, all four distinct redirected forms still compile in native and C:
+`if f >file`, `f >file || ...`, `if ! f >file` and
+`if /bin/true && f >file`. Their outputs are respectively `yes`, empty,
+`no` and `yes`, all exit 0, with a writable file in the harness's temporary
+directory. The unredirected `if f` control gets SB4037.
+`mark_predicate_operand` still has no `Redirected` arm
+(`validate.rs:3937-3954` at this commit). B121 stays open here; neither
+F6's suppressed-void repair nor the later captured-int-predicate repair
+closes this wrapper gap. Sources and full mode xtraces are in
+`files/port-closeout-probes.tar.gz`.
