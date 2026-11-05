@@ -643,8 +643,8 @@ a scheduling guarantee. Do not wrap the full showcase in another
 harness-produced `.trace` files instead.
 
 The supervisor and timeout are fixture containment. They do not implement
-production background jobs, force-kill policy, END, or general shutdown.
-The runtime's newer [lifecycle and END](../README.md#program-lifecycle-and-end)
+production background jobs, force-kill policy, terminal handlers, or general shutdown.
+The runtime's [EXIT/ERR lifecycle](../README.md#program-lifecycle-exit-and-err)
 implementation is separate; its six signal-call fault checks live in
 `mk fault-test`, not the 169-case showcase.
 

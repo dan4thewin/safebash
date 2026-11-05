@@ -218,6 +218,9 @@ policy is introduced; the full runtime task remains open.
 
 ## Sixth runnable milestone - lifecycle implemented
 
+Historical END milestone, superseded by the fifteenth milestone and
+[DD#15](../decisions/DD15-checked-exit-explicit-err.md) below.
+
 `lifecycle_report.cpp` and its sash counterpart retain collection state
 from a real captured function, discard only another function's returned
 int, and explicitly exit into END. END catches one failed command,
@@ -473,6 +476,40 @@ This completes temporary redirections, not persistent exec, public wait,
 forked-C++/background ownership, remaining formatting, or IR consumption.
 The protected producer proposal remains unchanged.
 
+## Fifteenth runnable milestone - checked EXIT and explicitly handled ERR
+
+DG directed adoption of implemented native DD128.
+[DD#15](../decisions/DD15-checked-exit-explicit-err.md) supersedes DD#5:
+separate optional callbacks route by cause and full-i64 status, not its
+eventual process byte. EXIT is checked; its failure can enter ERR once.
+ERR handles operations explicitly, with one-shot fatal arithmetic/heap
+reporting rather than recursive cleanup.
+
+The migrated lifecycle pair uses actual globals and top-level source
+functions. New `terminal_report.cpp` and its sash counterpart demonstrate
+EXIT -> ERR with 256, a completed global write, an interrupted capture
+assignment, and an independent four-line golden.
+No hypothetical final-state copy or native capture-stack port was added.
+
+Compiler-owned `checkpoint(deferred)` protects acquisition/resolution
+without delaying receipt, ordinary failure, or explicit exit. Metadata is
+now borrowed and validated allocation-free by the driver, independently
+of snapshot construction, so startup heap-failure ERR retains source-fd
+reservations. Invoker channels are restored again on EXIT -> ERR.
+
+All 73 groups and fifteen goldens pass across GCC, Clang, Linux ASan,
+real Apple Clang/libc++, and Apple ASan. Both ordinary Linux fault gates,
+the unchanged 169-case catalog, focused all-category lifecycle UBSan,
+seventeen compiled reversions, and fifteen pinned actual-CLI pairs pass.
+[Journal 022](../journal/022-checked-exit-explicit-err.md) records effective
+negative controls, allocation-denied startup entry, and 67-file Mac parity.
+This is not a full/combined UBSan claim.
+
+Persistent redirects remain the next runtime unit. Top-level source
+definition placement, ERR admission/taint, schema-2 handler fields, global
+initialization, and protected poll planning remain future consumer work;
+there is still no IR reader, emitter, or producer implementation.
+
 ## Starting points selected by DG
 
 | Area | Starting point |
@@ -486,6 +523,7 @@ The protected producer proposal remains unchanged.
 | Regex replacement | Standard C++ templates, selected in DD#12; native-template translation belongs to the future consumer |
 | NUL record reads | Owned dense arrays with DD#99 terminator semantics, retained in DD#13; other separators are converted upstream |
 | Descriptor seam | Compiler-supplied source-fd set; runtime/OS private allocation; temporary scopes and invoker channels retained in DD#14 |
+| Terminal handlers | Checked EXIT and explicitly handled ERR; cause/full-i64 routing and compiler-owned signal deferral, adopted in DD#15 |
 | General in-process stdout capture | Linux `memfd_create`, not a named temporary file or a synchronously filled pipe |
 | Failure propagation | Exceptions for uncaught failures; retain caught outcomes and explicit suppression rather than making every nonzero command exit throw |
 | External pipeline completion | Retain every stage; checked pipelines fail on any stage and use the rightmost failure, selected in DD#3 |
@@ -523,7 +561,7 @@ number or copy an obsolete helper.
 | Descriptor and diagnostic channels | DD#120; runtime fd save/restore and reservation helpers | Invoker channels distinct from temporary command redirects, private descriptors avoiding source-used descriptors |
 | Pipeline reader lifetime | DD#122; pipeline lowering and reader-cleanup responsibilities under `sash/src/transform/` | Parent readers with private fds and pending children; cleanup on control-flow exits |
 | General and buffered capture | Runtime capture helpers; `transform/capture_purity.rs` or its successor | In-process capture, nested frames, and the difference between collecting helper writes and redirecting actual fd 1 |
-| Shutdown and signals | Experiment DD#5 for END-only handling; native DD#56 for signals/lifecycle | Explicit END handling, signal-safe recording, ordinary-context shutdown, END at most once |
+| Shutdown and signals | Experiment DD#15 adopting implemented native DD128 | Checked EXIT -> explicit ERR, cause/full-i64 status, actual globals, signal-safe recording, protected compiler-owned polls |
 | Explicit wait | DD#126; runtime wait and cached-reader-status helpers | Reaped pid separate from child status, shared ownership when public wait meets pipeline completion |
 | Collections, reads, and arguments | DD#79, DD#99, DD#100, DD#123; collection and read helpers | Sparse cells, replacement on read, reference parameters, forwarding, and aliasing |
 | Strings and arithmetic | DD#12, DD#25, DD#77, DD#87 | Counted bytes, OS string boundaries, conversions, and defined arithmetic faults |
@@ -653,7 +691,8 @@ readability before the emitter is written.
   remain pending. Successful persistent redirects commit and rebind the
   program's channels rather than being undone by a scope destructor.
 - [x] Implement the chosen diagnostic-channel rule, using DD#120 as the
-  reference alternative. Restore the appropriate channels before END.
+  reference alternative. Restore channels before each EXIT/ERR callback,
+  including a second restoration on EXIT -> ERR.
 - [x] Choose a disciplined output mechanism. If iostreams and raw
   descriptors coexist, make flushing and fork/redirection boundaries
   explicit so buffered bytes are neither duplicated nor misdirected.
@@ -686,7 +725,7 @@ such failures into success.
   every background process.
 - [ ] Give forked C++ function stages an explicit child entry/exit
   boundary. They must not unwind through inherited parent ownership or
-  run the parent's END by accident.
+  run the parent's terminal handlers by accident.
 
 Exercise launch errors using the native helper and controlled executable
 fixtures, not assumptions that a particular system utility exists.
@@ -700,7 +739,7 @@ fixtures, not assumptions that a particular system utility exists.
   and read the backing file, and release the frame. Retain the body's
   result separately from its output.
 - [ ] Handle early exit and failure at every step. Restore the enclosing
-  capture/output destination before reporting or entering END; preserve
+  capture/output destination before reporting or entering EXIT/ERR; preserve
   the triggering error if cleanup also fails.
 - [ ] Support nested capture, redirects within capture, external commands
   within capture, and capture inside a parent-reader loop.
@@ -769,33 +808,41 @@ reader control transfers, public wait, and suppression remain open.
 Both capture paths now reuse foreground external launch and child ownership;
 the integration does not add a second child-status registry.
 
-## 6. Implement shutdown, END, and signals as one lifecycle
+## 6. Implement shutdown, EXIT/ERR, and signals as one lifecycle
 
-Target [DD#5](../decisions/DD05-planned-end-explicit-handling.md), DG's
-planned END-only contract, rather than current native DD#56's automatic
-cleanup handling. Nothing outside END changes; called function bodies
-retain their existing rules.
+Target [DD#15](../decisions/DD15-checked-exit-explicit-err.md), adopting
+implemented native DD128 and superseding the old DD#5 END-only model.
+Source admission belongs to the future consumer, not a temporary parser.
 
-- [x] Provide one program-entry/shutdown driver with a user-supplied END
-  function and ordinary C++ global state.
-- [x] Keep source function definitions outside END.
-- [x] Demonstrate explicit catch or suppression for every fallible END
-  operation. Do not insert automatic END aborts or catch-and-continue
-  guards, and do not pass unchecked END state into ordinary functions.
-- [x] Exercise normal completion, explicit exit, uncaught operation
-  failure, and signal-requested shutdown through that driver.
-- [x] Run END at most once. Preserve the triggering status unless END
-  deliberately overrides it; END failures follow their explicit handling.
-- [x] Close outstanding readers before reaping, restore implemented capture
-  state, and enter END on the correct program channels.
+- [x] Provide one driver with optional borrowed EXIT/ERR functions and
+  actual C++ process-global source state, not final-state snapshots.
+- [x] Keep source-pair function definitions directly at program top level;
+  document that all nested source scopes, including both handlers, reject them.
+- [x] Retain ordinary checking in EXIT, including called bodies and setup;
+  demonstrate explicit handling in ERR without an inherited unchecked mode.
+- [x] Distinguish normal fall-through, full-i64 explicit exit, uncaught
+  failure, and cooperative signal causes. Truncate only at process exit;
+  nonzero fall-through selects EXIT, whereas explicit 256 selects ERR.
+- [x] Admit only main -> EXIT, main -> ERR, and main -> EXIT -> ERR.
+  Preserve entry status on success and never substitute an absent handler.
+- [x] Attempt ERR once on fatal arithmetic/heap failure in main or EXIT;
+  a second fault in ERR reports and terminates without re-entry/allocation.
+- [x] Close readers before reaping, restore captures before dispatch, and
+  restore invoker channels before each selected handler.
+- [x] Keep source reservations allocation-free and active independently
+  of invoker snapshots, including heap failure during bootstrap.
+- [x] Pin completed global writes, unpublished interrupted assignments,
+  isolated ERR captures, and allocation-free terminal entry.
 - [ ] Keep cleanup ownership separate in forked children. Discard
   inherited reader ownership rather than adopting the parent's children.
 - [x] Record signals using signal-safe state only. Perform C++ cleanup,
-  diagnostics, and END execution in ordinary execution context.
+  diagnostics, and terminal callbacks in ordinary execution context.
 - [x] Keep most-recent signal information distinct from a pending request
   to exit, so FLAG delivery cannot become an EXIT request accidentally.
-- [x] Expose checkpoints that hand-written functions and loops can call.
-  Their eventual placement in generated code belongs to the consumer.
+- [x] Expose compiler-owned checkpoint deferral through acquisition and
+  legal adjacent attest/replacement, including return and reader edges.
+  Receipt remains immediate; failure and explicit exit keep their routes.
+  Generated conditional presence/placement belongs to the consumer.
 - [x] Exercise interrupted reads/waits, FLAG versus EXIT, a signal during
   capture, and a signal while a pipeline is active. Define restart versus
   shutdown behavior without doing allocation or throwing in a handler.
@@ -805,12 +852,12 @@ retain their existing rules.
 
 The remaining unchecked child-ownership item is for future forked C++
 stages/jobs. Existing external pre-exec children never unwind inherited
-C++ owners; the lifecycle prevents parent END in children, but is not a
-new implementation of inherited-reader disposal. General redirects and
+C++ owners; the lifecycle prevents parent handlers in children, but is not a
+new implementation of inherited-reader disposal. Persistent redirects and
 public wait remain their own roadmap items.
 
 Do not use `std::exit` or a generic process destructor as a substitute for
-the lifecycle: automatic C++ objects, END, foreground children, and
+the lifecycle: automatic C++ objects, terminal handlers, foreground children, and
 independent background jobs have different completion rules.
 
 ## 7. Build value operations in parallel
@@ -949,7 +996,7 @@ Begin macOS bring-up after the first Linux launch/capture slice.
   permission for the runtime to force-kill user processes.
 - [ ] Cover large output, nested readers/captures, closed standard
   descriptors, descriptor-number collisions, partial construction,
-  early completion, public wait before reader finish, and failure in END.
+  early completion, public wait before reader finish, and EXIT/ERR failures.
 - [ ] Exercise failure of open/dup/pipe/launch/memfd/read/write/wait using
   controlled resource limits or focused platform-call fault injection.
   Confirm the intended failing operation, not just a matching message.
@@ -958,7 +1005,7 @@ Begin macOS bring-up after the first Linux launch/capture slice.
   ownership, lifetime, and arithmetic mistakes.
 - [ ] Supply harmless counterparts of the real-script roles: an external
   wrapper, a loop mutating state, a pipeline filling a collection, option
-  traversal, and END cleanup.
+  traversal, and terminal cleanup.
 - [ ] Never execute the supplied disk-preparation script or incorporate
   its destructive operations into fixtures.
 
@@ -968,8 +1015,13 @@ No part of that demonstration depends on new producer output.
 
 The later consumer still has substantial work: binding/type mapping,
 expression evaluation order, source-shaped control flow, call-site result
-handling, reader-region exits, and signal-checkpoint placement. Automatic
-capture-path selection and source comment preservation also belong there,
+handling, reader-region exits, and protected signal-checkpoint placement.
+Schema 2 has optional `:exit-block`/`:err-block` and no `:end-block`;
+absence differs from an empty handler. Source definitions are top-level
+only. ERR admission must cover operands/callees and conservative inherited
+taint, without inventing runtime taint guards. Generated handlers need
+actual global backing with source initializers inside the driver body.
+Automatic capture-path selection and source comment preservation also belong there,
 not in this runtime task. Native replacement-template translation must
 handle evaluated strings and literal dollars/backslashes, not merely
 C++ literal escaping; it remains deferred to that consumer.
@@ -977,5 +1029,6 @@ C++ literal escaping; it remains deferred to that consumer.
 Once the IR reader/emitter exists, the
 [checkpoint-emission regression task](ir-signal-checkpoint-emission.md)
 will assert that signal-free IR adds no checkpoints and relevant
-signal-bearing IR retains them. This is a future consumer test, not a
+signal-bearing IR retains them with protected return/reader/resolution
+placement and failure precedence. This is a future consumer test, not a
 prerequisite for completing the runtime.

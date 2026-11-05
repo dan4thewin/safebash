@@ -1,0 +1,24 @@
+int saved=0
+str pending=initial
+
+fn interrupt_cleanup {
+    saved=23
+    echo "private"
+    exit 256
+}
+
+saved=17
+echo "main: saved $saved"
+
+EXIT {
+    int incoming=$?
+    echo "EXIT: incoming $incoming"
+    pending=$(interrupt_cleanup)
+    attest pending [[ $pending =~ '^private$' ]]
+}
+
+ERR {
+    int failure=$?
+    - echo "ERR: incoming $failure"
+    - echo "ERR: saved $saved, pending ${pending:!}"
+}

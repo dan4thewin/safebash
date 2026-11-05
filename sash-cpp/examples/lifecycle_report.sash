@@ -21,15 +21,20 @@ echo "capture: $summary"
 echo "body complete"
 exit 0
 
-END {
+EXIT {
     int incoming=$?
-    - echo "END: incoming $incoming"
+    echo "EXIT: incoming $incoming"
     /usr/bin/false || {
-        - echo "END: caught $?"
+        echo "EXIT: caught $?"
     }
     - /usr/bin/false
-    - echo "END: discarded"
+    echo "EXIT: discarded"
     for person in @workers {
-        - echo "END: saved $person"
+        echo "EXIT: saved $person"
     }
+}
+
+ERR {
+    int failure=$?
+    - echo "ERR: incoming $failure"
 }

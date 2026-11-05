@@ -38,9 +38,10 @@ Both produce the adjacent eight-line expected report.
 [lifecycle_report.cpp](examples/lifecycle_report.cpp) and
 [lifecycle_report.sash](examples/lifecycle_report.sash) retain two workers
 from a captured function, discard a separate function's returned int,
-and explicitly exit into END. END catches one failed command, discards
-another, and traverses the retained collection. All source functions are
-defined outside END; both reports match the adjacent eight-line golden.
+and explicitly exit into checked EXIT. EXIT catches one failed command,
+discards another, and traverses the actual global collection; a separate
+ERR explicitly handles its report result. All source functions are defined
+directly at top level. Both reports match the adjacent eight-line golden.
 
 [option_report.cpp](examples/option_report.cpp) and
 [option_report.sash](examples/option_report.sash) add sparse cell operations,
@@ -96,6 +97,13 @@ an explicitly declared fd 3. Real functions write and collect the files;
 a caught missing-input failure leaves stdout restored. Both match the
 adjacent eleven-line golden in a private, cleaned test directory.
 
+[terminal_report.cpp](examples/terminal_report.cpp) and
+[terminal_report.sash](examples/terminal_report.sash) add checked EXIT to
+ERR progression. A real function updates global state and exits with 256
+inside EXIT's capture. ERR sees that completed write but not an interrupted
+assignment's private output; its incoming status is 256 although the
+process byte is zero. Both match the adjacent four-line golden.
+
 On Linux or macOS, with a C++17 compiler, Plan 9 `mk`, and `timeout` on PATH:
 
 ```sh
@@ -116,13 +124,14 @@ SASH_CPP_NUMERIC_RATE=0x7 ./build/numeric_report 08 0
 ./build/record_report
 bash tests/file_report.sh ./build/file_report \
   examples/file_report.expected build/file_report.actual
+./build/terminal_report
 ```
 
 `greetings` prints `Hello, Ada!`; `job_report` prints the worker rounds;
 `stream_report` prints streamed records and the retained worker list;
 `pipeline_report` prints sorted, deduplicated records and retained state;
 `capture_report` prints comma-joined summaries and their captured frames.
-`lifecycle_report` prints the captured count and explicitly handled END report.
+`lifecycle_report` prints the captured count and checked EXIT report.
 `option_report` prints the sparse options, copied keys, and exact argument list.
 `arithmetic_report` prints a weighted subtotal, arithmetic results, and a countdown.
 `numeric_report` prints converted options, defaults, cell values, and the charge.
@@ -132,6 +141,7 @@ bash tests/file_report.sh ./build/file_report \
 `record_report` prints split fields, owned stream records, and replacement-on-read results.
 `file_report` reads back redirected files and demonstrates ordering and restoration;
 use its harness above to provide and clean the required work directory.
+`terminal_report` prints full-width routing and the actual retained global state.
 The build produces a normal C++ static library, `build/libsash_cpp.a`;
 it does not build Rust or link sash-rt.
 For example, the C++ program can also be linked directly:
@@ -163,15 +173,15 @@ mk -p 1 CXX=clang++ BUILD=build/apple-asan \
 ./build/apple/capture_report
 ```
 
-Both hosts run the same 68 fixture groups and fourteen expected C++ reports,
+Both hosts run the same 73 fixture groups and fifteen expected C++ reports,
 including large binary output, nested captures/readers, closed standard
-descriptors, partial setup, child/fd cleanup, typed exit, main-only END,
+descriptors, partial setup, child/fd cleanup, typed exit, main-only EXIT/ERR,
 and signal delivery during foreground work and capture. Collection fixtures
 exercise live insertion/deletion through aliases, copied loop values, lazy
 dispositions, binary joins, and allocation failures before argument publication.
 Arithmetic fixtures cover signed limits, every multiplication sign pair,
 division/remainder faults, bounded power evaluation, defined shifts, ignored
-function results, failed conditions/arguments, and explicit END handling.
+function results, failed conditions/arguments, and fatal-fault ERR entry.
 Input fixtures cover complete signed parsing, owned argv/environment values,
 present-empty versus missing inputs, valid zero, lazy required messages,
 scalar/cell parity, and allocation and lifecycle failure boundaries.
@@ -190,7 +200,12 @@ capacity, post-prefix I/O failure, allocation failure, and producer cleanup.
 Redirection fixtures cover ordered/nested scopes, file flags and umask,
 source-fd reservations, private-fd inheritance, originally closed targets,
 partial construction, caught-body restoration before the main boundary,
-invoker diagnostics, END channels, and bounded descriptor lifetime.
+invoker diagnostics, terminal channels, and bounded descriptor lifetime.
+Terminal fixtures cover full-i64 cause-based routing, missing versus empty
+handlers, checked EXIT failures, one-shot arithmetic/heap dispatch, actual
+completed globals, interrupted captures, and protected signal windows.
+They also pin allocation-free startup ERR with surviving source reservations,
+a second invoker restoration, and no parent handlers in raw fork children.
 The Darwin build has been
 exercised on Apple Silicon; this is not a claim of testing every Mac SDK
 or architecture. Tests need GNU `timeout`, which is not a stock macOS tool.
@@ -206,9 +221,9 @@ mk -p 1 CXX=g++ BUILD=build/gcc fault-test
 They exercise failed first/later forks, interrupted wait, recovered wait
 errors with retained child outcomes, partial error-pipe setup,
 exec-error reporting without child writes, and raw capture read/cleanup.
-Six lifecycle checks inject signal installation in the body or END,
-mask setup within END, fatal disposition restoration, and lifecycle
-entry/restoration handoff failures with allocation denied. END catches
+Six lifecycle checks inject signal installation in the body or ERR,
+mask setup within ERR, fatal disposition restoration, and lifecycle
+entry/restoration handoff failures with allocation denied. ERR catches
 its setup faults explicitly; failed restoration remains a broken-runtime
 guarantee, not a suppressed source command.
 Capture probes calibrate the first and second positive data reads by fd,
@@ -224,7 +239,7 @@ ptrace. The command helper is an ordinary unsanitized external executable;
 the library, test driver, and examples receive `SANITIZE`.
 
 With the real sash CLI and runtime already built in the parent checkout,
-`mk -p 1 sash-example` compiles and runs all fourteen sash examples against
+`mk -p 1 sash-example` compiles and runs all fifteen sash examples against
 their expected output. Override `SASH` and `SASH_RT_LIB` for other locations.
 This additional target is not a prerequisite for native C++ tests.
 
@@ -363,8 +378,11 @@ int main() {
 }
 ```
 
-The metadata overloads also accept END. Existing `run(program, body[, end])`
-forms supply an empty explicit set; 0, 1, and 2 are always reserved.
+Metadata overloads also accept optional EXIT/ERR callbacks. Forms without
+metadata supply an empty explicit set; 0, 1, and 2 are always reserved.
+The synchronous driver borrows and validates the initializer list without
+allocation; its reservation scope outlives failed snapshot construction
+and both handlers. Duplicate/unsorted entries do not change membership.
 The future producer should export its already-computed source-fd set.
 Private backup, capture, pipe, and diagnostic numbers are runtime/OS
 allocations, not compiler-assigned identities to encode in the IR.
@@ -393,8 +411,11 @@ retains the existing fatal cleanup policy.
 `run` saves invoker stdin/stdout/stderr after installing the reservation
 set. Runtime diagnostics and fatal cleanup use the saved invoker stderr,
 not temporarily redirected fd 2; a closed invoker stderr has no fallback.
-Invoker channels are restored before END. Channel initialization failure
-runs neither body nor END, and failed invoker restoration prevents END.
+Invoker channels are restored before either handler and again for EXIT -> ERR.
+Ordinary channel initialization failure runs neither body nor handler;
+failed invoker restoration prevents the selected callback. A heap fault
+after valid source metadata is installed attempts ERR with those
+reservations still active, even if invoker snapshot construction failed.
 The output helpers use raw writes; buffered stdio/iostream flushing
 remains the caller's responsibility at descriptor boundaries.
 Persistent `exec` redirects, channel rebinding, and IR consumption remain
@@ -511,9 +532,9 @@ an overflowing unused final square. Exponent zero returns one, including
 Failures throw `ArithmeticError`, carrying an `ArithmeticFault` and a
 fixed diagnostic without an allocating string payload. It is not a
 `CommandError` or a returned command outcome. Ignoring an integer result
-does not suppress evaluation errors. The ordinary body boundary reports
-the diagnostic and returns status 2 after unwinding; END still requires
-explicit handling and receives no automatic arithmetic catch.
+does not suppress evaluation errors. Main and checked EXIT report the
+diagnostic and attempt ERR with status 2 after unwinding. A second fault
+in ERR reports and terminates without re-entry.
 
 Comparisons, bitwise operators, `&&`, `||`, and `?:` remain ordinary C++
 where their semantics fit. Keep fallible operands inside their lazy
@@ -577,9 +598,9 @@ disposition concern, not `ArithmeticError`. In word context, ordinary
 `default_value` still triggers on emptiness, not numeric invalidity.
 
 Failed required conversion preserves the assignment target and follows
-ordinary body unwinding. END still requires explicit handling and receives
-no new automatic guard. Source taint, default admission, and the `i?`
-predicate's source syntax remain producer responsibilities. There is no
+ordinary unwinding and ERR routing from main or checked EXIT. ERR must
+explicitly handle this operational failure. Source taint, default admission,
+and the `i?` predicate's source syntax remain producer responsibilities. There is no
 IR consumer or bulk-read family in this unit.
 
 ### Counted byte strings and ASCII operations
@@ -718,48 +739,72 @@ Regex errors retain the existing status-2 exception; allocation/length
 failures escape rather than return partial, empty, or unchanged success.
 Caller assignment happens only after successful evaluation, including
 destination-borrowed subject/template views. There are no hidden checkpoints
-or automatic END guards.
+or hidden lifecycle guards.
 
 The future IR consumer must translate native `\0`/`\1` notation, including
 evaluated templates and literal dollars/backslashes. That is separate from
 C++ source-string escaping and is not implemented by this runtime unit.
 
-### Program lifecycle and END
+### Program lifecycle, EXIT, and ERR
 
-`run(program, body)` keeps the original void-body entry form.
-`run(program, body, end)` additionally invokes a void END handler with
-`const Shutdown &`: its `reason` is `Completed`, `ExplicitExit`, `Failure`,
-or `Signal`; `status` is the incoming status, and `signal` retains the
-triggering signal separately. Normal void-body completion is zero.
-Both forms have metadata overloads taking the source-fd set before `body`.
+[DD#15](../notes-exp/decisions/DD15-checked-exit-explicit-err.md) adopts
+implemented native DD128, replacing the former END contract without an alias.
+`run(program, body[, on_exit[, on_error]])` borrows separate optional
+callbacks; pass `nullptr` for an absent slot. Metadata overloads take the
+source-fd set before `body`. A body returns void for zero completion or
+exactly `std::int64_t` for its full fall-through status.
 
-`exit_program(status)` raises a dedicated `ExitRequest`, not a command
-verdict or a function return. Successful body unwinding restores captures
-and closes pipeline endpoints before reaping. Invoker stdin/stdout/stderr
-are restored, then END runs once on those channels.
-Returning from END preserves the incoming status;
-an explicit `exit_program` in END overrides it without re-entry.
-The callbacks are borrowed rather than copied into allocating closures.
+Handlers return void and receive `const Shutdown &`. Its reason is
+`Completed`, `ExplicitExit`, `Failure`, or `Signal`; its full-i64 status
+and triggering signal remain separate. Only `run`'s process-boundary
+return reduces status to its low byte.
 
-END follows DG's [planned contract](../notes-exp/decisions/DD05-planned-end-explicit-handling.md):
-every fallible operation is explicitly caught or suppressed. The driver
-inserts no automatic catch-and-continue, diagnostic, or abort handling
-around END operations. Ordinary function bodies and argument evaluation
-remain checked, even when called from END. The example also explicitly
-catches setup/allocation/capacity failures and chooses exit 2 for them.
+| Cause | Selected handler |
+|---|---|
+| Normal fall-through with any saved status | EXIT |
+| Explicit full-i64 zero, including argumentless exit | EXIT |
+| Cooperative EXIT signal dispatched at a checkpoint | EXIT |
+| Explicit full-i64 nonzero exit | ERR |
+| Uncaught operational failure or first fatal arithmetic/heap fault | ERR |
 
-An unhandled fallible END operation is invalid source under that planned
-contract. The hand-written C++ API lets its exception escape to the C++
-caller; it does not invent a successful result or automatic END policy.
-Enforcing no source function definitions in END and mandatory handling
-belongs to the future front end, not a temporary C++ parser. The named
-generated END handler itself is not a source function definition in END.
-Neither native compiler policy nor producer output changed here.
+`exit_program(status = 0)` raises a dedicated `ExitRequest`, not a command
+verdict or function return. Selection uses cause and the complete integer,
+not the process byte: `exit_program(256)` enters ERR with 256, not EXIT.
+An absent handler never substitutes the other one.
 
-The lifecycle checks the owning PID before END. External fork children
-still exit without unwinding inherited C++ objects, and explicit program
-exit in a forked child uses `_exit`, not parent END. This does not add
-forked C++ stages or solve their future inherited-reader ownership.
+EXIT is checked like main, including called functions, operands, and setup.
+Uncaught failure or explicit nonzero exit in EXIT enters ERR once; explicit
+zero terminates. Explicit exit in ERR terminates without entering EXIT.
+Successful callback completion preserves its incoming status.
+First fatal arithmetic/heap failure in main or EXIT also attempts ERR;
+a fault in ERR reports and terminates without another entry or allocation.
+
+ERR's source operations need explicit handling; discarding a function's
+returned value does not suppress its body. An unhandled operational
+exception in a hand-written host ERR callback escapes the C++ caller,
+rather than receiving implicit catch-and-continue. Future source admission
+must enforce explicit handling, conservative incoming-taint use through
+`:!`, and the distinct adjacent opportunity for genuinely fresh ERR input.
+There is no temporary validator or runtime taint machinery.
+
+Source function definitions are directly top-level only, never in either
+handler or another nested scope. Generated handler functions read actual
+process-global storage, not a hypothetical final-state snapshot.
+Default-initialize that backing storage and execute source initializers
+inside the body. Completed writes survive; interrupted assignments do not
+publish. The terminal pair demonstrates this across an EXIT capture.
+
+C++ unwinding restores captures and closes pipeline endpoints before
+reaping and callback entry. Invoker stdio is restored before each handler,
+including EXIT -> ERR. Entry itself allocates nothing; source reservations
+remain valid through heap failure during channel bootstrap. Ordinary
+channel-setup failure still runs neither body nor handler, and failed
+restoration prevents invoking a callback on known-wrong channels.
+
+The lifecycle checks its owning PID before handlers and driver return.
+External pre-exec children never unwind inherited C++ objects; explicit
+program exit in a forked child uses `_exit`, not parent handlers.
+This does not solve future forked-C++/job inherited-reader ownership.
 Broken descriptor, reap, signal-restoration, or lifecycle-handoff guarantees
 retain the existing nonallocating fatal-cleanup policy.
 
@@ -769,7 +814,7 @@ Within `run`, the owner calls `signal(number, SignalDisposition::Ignore)`,
 `Default`, `Flag`, or `Exit`. Registration failures are `SetupError`;
 allocation may also fail before the kernel disposition changes.
 Original dispositions and the incoming mask are restored when the driver
-leaves, including after an escaping END exception.
+leaves, including after an escaping host ERR exception.
 
 The two signal handlers perform only lock-free integer stores.
 `signum()` reads the most recently delivered handled signal;
@@ -778,19 +823,27 @@ FLAG cannot become EXIT merely because another signal declares EXIT or
 the same signal is later rearmed. `Shutdown::signal` retains the pending
 EXIT identity even if a later FLAG changes `signum()`.
 
-`checkpoint()` raises a signal exit request in ordinary execution context.
-Hand-written code places it before/after external commands and pipelines,
-and at function/loop boundaries. The command, reader, and capture APIs
-do not secretly insert it; future generated placement belongs to the
-consumer. `run` checks body entry and normal completion too.
-Checkpoints while END is active prevent lifecycle re-entry; they do not
-disable command checks or change called function bodies.
+`checkpoint(bool deferred = false)` raises a signal exit request in ordinary
+execution context only when dispatch is allowed. A true argument defers
+dispatch, not receipt or `signum()` updates. Neither phase of terminal
+handling can redispatch; ordinary failure and explicit exit keep their
+own routes even while a signal is pending.
+
+Polls belong before/after relevant commands, pipelines, functions, and
+loops, including return and reader false/completion edges. The future
+consumer must derive deferral through acquisition and its legal adjacent
+attest or direct failed-branch replacement, not simply poll after every
+statement. Command, reader, and capture APIs add no hidden checkpoints.
+`run` has fixed body-entry and normal-completion checks; it installs no
+EXIT dispositions automatically. Signal-free generated code should add
+no polls. The [future regression task](../notes-exp/tasks/ir-signal-checkpoint-emission.md)
+pins both conditional emission and protected placement once a consumer exists.
 
 Blocking reads and waits retry EINTR. Signal recording does not interrupt
 ownership cleanup or automatically kill children: shutdown waits for the
 next checkpoint, which can be delayed by foreground work or pipe EOF.
 The fixtures use finite helpers and a two-way pipeline handshake.
-Linux traces confirm interrupted reads/waits before ordinary-context END;
+Linux traces confirm interrupted reads/waits before ordinary-context shutdown;
 the same behavior fixtures run on the real Mac using host signal constants.
 There is still no runtime timeout or force-kill policy.
 
@@ -867,7 +920,7 @@ Caller assignment remains unchanged on failure, including a source borrowed
 from that target. Already-consumed bytes are not rewound, and producer
 failure after completed assignment does not roll it back. Existing
 command/pipeline owners still close before waiting during unwinding.
-No read helper adds checkpoints, cancellation, taint checks, or END policy.
+No read helper adds checkpoints, cancellation, taint checks, or lifecycle policy.
 
 ### External pipelines
 
@@ -985,6 +1038,6 @@ archive so a stale backend member cannot remain active.
 
 Project [status](../notes-exp/status.md),
 [tasks](../notes-exp/tasks/cpp-transpiler-runtime-before-ir.md),
-[decisions](../notes-exp/decisions/DD03-external-pipeline-outcomes.md), and
-[journal](../notes-exp/journal/011-lifecycle-runtime.md) live in
+[decisions](../notes-exp/decisions/DD15-checked-exit-explicit-err.md), and
+[journal](../notes-exp/journal/022-checked-exit-explicit-err.md) live in
 `../notes-exp/`, not the native compiler's `notes/`.

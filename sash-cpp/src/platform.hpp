@@ -55,7 +55,7 @@ class SourceFds {
 
   private:
     static SourceFds *active_;
-    std::vector<int> fds_;
+    std::initializer_list<int> fds_;
     SourceFds *previous_;
 };
 
@@ -70,7 +70,7 @@ struct SavedDescriptor {
 
 class ProgramChannels {
   public:
-    explicit ProgramChannels(std::initializer_list<int> source_fds);
+    ProgramChannels();
     ~ProgramChannels() noexcept;
     ProgramChannels(const ProgramChannels &) = delete;
     ProgramChannels &operator=(const ProgramChannels &) = delete;
@@ -81,7 +81,6 @@ class ProgramChannels {
   private:
     std::error_code restore_all() noexcept;
     static ProgramChannels *active_;
-    SourceFds source_fds_;
     SavedDescriptor input_;
     SavedDescriptor output_;
     SavedDescriptor error_;

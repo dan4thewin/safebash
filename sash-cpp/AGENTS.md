@@ -13,7 +13,7 @@ The runtime task is `../notes-exp/tasks/cpp-transpiler-runtime-before-ir.md`.
 
 Build and exercise changes with `mk -p 1 test` in this directory. Use distinct
 `BUILD` directories when changing compilers or sanitizer flags. `mk -p 1
-sash-example` additionally compiles all fourteen sash examples with the real
+sash-example` additionally compiles all fifteen sash examples with the real
 CLI. Ordinary C++ tests do not require a Rust build or IR input.
 `mk -p 1 fault-test` adds Linux strace probes; run it without sanitizer
 instrumentation. The native command helper is deliberately unsanitized.
@@ -37,8 +37,11 @@ temporary scopes. Save all affected destinations before file effects,
 restore closed state and fd flags, and preserve the body exception.
 Earlier truncation/writes are not rolled back. Runtime diagnostics use
 saved invoker stderr, never temporarily rebound fd 2; closed invoker stderr
-has no fallback. Restore invoker stdio before END. Persistent exec/rebinding
-and producer metadata export remain separate work.
+has no fallback. Restore invoker stdio before EXIT or ERR and again on
+EXIT -> ERR. Keep source reservations allocation-free and independent of
+snapshot construction so startup ERR cannot lose them. The initializer list
+is borrowed through the full synchronous `run` call, including handlers.
+Persistent exec/rebinding and producer metadata export remain separate work.
 
 Complete fallible private pipe relocation in named owners before returning
 an aggregate of noexcept moves. Invoker snapshots are directly initialized
@@ -144,7 +147,8 @@ when their effects or failures make order observable.
 strings and string cells. Keep DD#77's complete, signed-i64 grammar and
 allocation-free parsing. Invalid or out-of-range input follows disposition,
 not ArithmeticError; valid zero must not default. Required messages are
-lazy and use the existing status-2 renderer, with no automatic END handling.
+lazy and use the existing status-2 renderer. EXIT remains checked; ERR
+must explicitly handle operational failures.
 
 Pass ordinary C argc/argv explicitly to `arg`/`argv`; snapshots own their
 strings, include argv0 by default, and reindex slices from zero. Optional
@@ -233,19 +237,41 @@ stdout-producing functions attest their own data inside the definition.
 Do not add caller-side attests for a shared producer or runtime taint checks
 to C++ helpers. Preserve the independent golden when adapting source rules.
 
-The planned END-only contract is
-[DD#5](../notes-exp/decisions/DD05-planned-end-explicit-handling.md): no
-source function definitions inside END, and every fallible END operation
-explicitly caught or suppressed. No automatic END abort/suppression guards;
-ordinary function bodies and all non-END behavior stay unchanged. This
-source contract is not yet enforced by the native compiler or a consumer.
-The hand-written lifecycle pair demonstrates it; invalid unhandled END
-exceptions escape the C++ caller rather than receiving automatic policy.
+The current terminal contract is
+[DD#15](../notes-exp/decisions/DD15-checked-exit-explicit-err.md), adopting
+implemented native DD128 and superseding DD#5. END is removed, not aliased.
+Source function definitions are allowed only directly at program top level;
+no handler or other nested source scope may contain one.
 
-`run` owns END and typed `ExitRequest` handling. Signal handlers only store
-lock-free most-recent/pending-EXIT integers; do not conflate them or clear
-the pending request with `clear_signum`. Checkpoints belong explicitly at
-hand-written/generated command, function, and loop boundaries, not hidden
-inside execute/read/capture helpers. Blocking work retries EINTR; there is
-no automatic cancellation or force-kill. END's checkpoint re-entry guard
-does not change ordinary command/function failure checks.
+`run` borrows optional EXIT/ERR callbacks; use `nullptr` for absence, never
+substitute the other handler. Bodies may return full-i64 fall-through status
+or void for zero. Route by cause and complete integer, not the process byte.
+Fall-through, explicit zero, and cooperative signals select EXIT; nonzero
+explicit exit and uncaught failure select ERR. Checked EXIT can fail into
+ERR once. Successful cleanup preserves entry status; only the final process
+boundary truncates it. Fatal arithmetic/heap faults attempt ERR once, even
+from EXIT; a fault in ERR terminates without allocating another handler.
+
+Use actual process-global source storage and generated handler functions,
+not a hypothetical final-state snapshot. Default-initialize backing storage;
+execute source initializer expressions inside the body. Preserve completed
+writes and leave interrupted assignments unpublished. Ordinary C++ unwinding
+closes readers/captures before dispatch; do not port native linked stacks.
+Keep parent handlers out of fork children.
+
+ERR's source operations, operands, setup and called bodies need explicit
+failure handling; result discard does not reach into callees. Invalid
+unhandled operational host ERR exceptions escape the C++ caller, rather
+than receiving automatic cleanup policy. Source admission, incoming-taint
+rules and top-level placement belong to the future front end/consumer;
+do not add runtime taint checks or a temporary validator.
+
+Signal handlers only store lock-free most-recent/pending-EXIT integers;
+do not conflate them or clear the pending request with `clear_signum`.
+`checkpoint(deferred)` consumes a compiler-owned decision: defer dispatch,
+not receipt, through acquisition/adjacent attest or replacement, including
+function returns and reader false/completion edges. Never defer failure or
+explicit exit. Polls during either handler cannot redispatch. Placement
+belongs in generated/hand-written code, not execute/read/capture helpers;
+signal-free IR must emit none. Blocking work retries EINTR, without
+automatic cancellation, a latency bound, or force-kill.

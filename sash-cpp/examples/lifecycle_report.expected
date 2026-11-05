@@ -1,8 +1,8 @@
 capture: collected:2
 result discarded
 body complete
-END: incoming 0
-END: caught 1
-END: discarded
-END: saved Ada
-END: saved Grace
+EXIT: incoming 0
+EXIT: caught 1
+EXIT: discarded
+EXIT: saved Ada
+EXIT: saved Grace

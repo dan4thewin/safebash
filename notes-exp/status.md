@@ -1,3 +1,40 @@
+## Fifteenth pair: checked EXIT and explicitly handled ERR complete
+
+DG directed adoption of implemented native DD128.
+[DD#15](decisions/DD15-checked-exit-explicit-err.md) supersedes the
+END-only contract: separate optional handlers, cause/full-i64 routing,
+checked EXIT -> ERR, and one-shot fatal arithmetic/heap dispatch.
+Actual global writes survive; interrupted assignments do not publish.
+Source functions are top-level only; no nested scope may define one.
+
+The runtime exposes compiler-owned checkpoint deferral without delaying
+receipt, ordinary failure, or explicit exit. Allocation-free source-fd
+reservations now outlive failed invoker snapshot construction, permitting
+startup heap-failure ERR without losing reserved numbers. C++ unwinding
+isolates captures/readers; invoker channels are restored before each handler.
+
+[`terminal_report.cpp`](../sash-cpp/examples/terminal_report.cpp) and its
+[sash counterpart](../sash-cpp/examples/terminal_report.sash) demonstrate
+EXIT -> ERR with 256, a completed global write, and an interrupted capture
+assignment. Both match an independent four-line golden.
+
+All 73 groups and fifteen goldens pass on GCC, Clang, supported Linux ASan,
+real Apple Clang/libc++, and Apple ASan. Both ordinary Linux fault gates,
+the unchanged 169-case catalog, focused all-category lifecycle UBSan,
+seventeen compiled reversions, effective negative controls, and fifteen
+pinned actual-CLI pairs pass.
+[Journal 022](journal/022-checked-exit-explicit-err.md) records 67-file Mac
+parity and the precise evidence. Full/combined UBSan remains open.
+
+Persistent redirects are next on the
+[runtime roadmap](tasks/cpp-transpiler-runtime-before-ir.md).
+The [future checkpoint regression](tasks/ir-signal-checkpoint-emission.md)
+now covers protected placement as well as conditional presence.
+Source admission, schema-2 handlers, global initialization, and poll planning
+remain future consumer work. No IR reader/emitter or producer implementation
+was added; the protected proposal remains untouched.
+Earlier milestone entries retain their historical contracts and counts.
+
 ## Fourteenth pair: temporary redirections and invoker channels complete
 
 DG authorized the trial after clarifying the compiler/runtime FD seam.

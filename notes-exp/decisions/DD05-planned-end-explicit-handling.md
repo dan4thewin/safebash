@@ -1,7 +1,12 @@
 ---
 title: "DD#5 - Planned END-only explicit failure handling"
-status: accepted
+status: superseded
 ---
+
+Superseded by [DD#15](DD15-checked-exit-explicit-err.md) after DG directed
+adoption of implemented native DD128. END is removed; checked EXIT and
+explicitly handled ERR replace it. The remainder is the historical
+decision and its original prototype milestone, not the current contract.
 
 DG expects two changes to END:
 

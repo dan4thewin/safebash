@@ -56,6 +56,8 @@ struct SignalRegistration {
 class ProgramScope;
 ProgramScope *active_program = nullptr;
 
+enum class TerminalPhase { Main, Exit, Error };
+
 class ProgramScope {
   public:
     ProgramScope() noexcept : owner_(::getpid()) {
@@ -93,7 +95,7 @@ class ProgramScope {
     ProgramScope &operator=(const ProgramScope &) = delete;
 
     bool owner() const noexcept { return owner_ == ::getpid(); }
-    bool in_end = false;
+    TerminalPhase phase = TerminalPhase::Main;
 
     void install(int number, const struct sigaction &action) {
         const SignalMask mask;
@@ -126,37 +128,63 @@ class ProgramScope {
     std::vector<SignalRegistration> signals_;
 };
 
-Shutdown finish_body(std::string_view program, const std::function<void()> &body) {
+int exit_byte(std::int64_t status) noexcept {
+    return static_cast<int>(static_cast<std::uint64_t>(status) & 255);
+}
+
+Shutdown failed(std::string_view program, std::string_view message, int status = 2) noexcept {
+    return {ShutdownReason::Failure, detail::report_error(program, message, status), 0};
+}
+
+template <typename Body> Shutdown checked(std::string_view program, Body &&body) {
     try {
-        checkpoint();
-        body();
-        checkpoint();
-        return {};
+        return body();
     } catch (const ExitRequest &request) {
         return {request.signal == 0 ? ShutdownReason::ExplicitExit : ShutdownReason::Signal,
                 request.status, request.signal};
     } catch (const CommandError &error) {
-        return {ShutdownReason::Failure,
-                detail::report_error(program, error.what(), error.status()), 0};
+        return failed(program, error.what(), error.status());
     } catch (const ArithmeticError &error) {
-        return {ShutdownReason::Failure, detail::report_error(program, error.what(), 2), 0};
+        return failed(program, error.what());
     } catch (const SetupError &error) {
-        return {ShutdownReason::Failure, detail::report_error(program, error.what(), 2), 0};
+        return failed(program, error.what());
     } catch (const std::regex_error &error) {
-        return {ShutdownReason::Failure, detail::report_error(program, error.what(), 2), 0};
+        return failed(program, error.what());
     } catch (const std::bad_alloc &) {
-        return {ShutdownReason::Failure, detail::report_error(program, "out of memory", 2), 0};
+        return failed(program, "out of memory");
     } catch (const std::length_error &) {
-        return {ShutdownReason::Failure,
-                detail::report_error(program, "value exceeds string capacity", 2), 0};
+        return failed(program, "value exceeds string capacity");
+    }
+}
+
+bool selects_error(const Shutdown &shutdown) noexcept {
+    return shutdown.reason == ShutdownReason::Failure ||
+           (shutdown.reason == ShutdownReason::ExplicitExit && shutdown.status != 0);
+}
+
+std::int64_t finish_error(std::string_view program,
+                          const std::function<void(const Shutdown &)> &on_error,
+                          const Shutdown &shutdown) {
+    if (!on_error) {
+        return shutdown.status;
+    }
+    try {
+        on_error(shutdown);
+        return shutdown.status;
+    } catch (const ExitRequest &request) {
+        return request.status;
+    } catch (const ArithmeticError &error) {
+        return detail::report_error(program, error.what(), 2);
+    } catch (const std::bad_alloc &) {
+        return detail::report_error(program, "out of memory", 2);
     }
 }
 
 } // namespace
 
-[[noreturn]] void exit_program(int status) {
+[[noreturn]] void exit_program(std::int64_t status) {
     if (active_program != nullptr && !active_program->owner()) {
-        ::_exit(status);
+        ::_exit(exit_byte(status));
     }
     throw ExitRequest{status};
 }
@@ -194,8 +222,8 @@ int signum() noexcept { return last_signal.load(std::memory_order_relaxed); }
 
 void clear_signum() noexcept { last_signal.store(0, std::memory_order_relaxed); }
 
-void checkpoint() {
-    if (active_program == nullptr || active_program->in_end) {
+void checkpoint(bool deferred) {
+    if (deferred || active_program == nullptr || active_program->phase != TerminalPhase::Main) {
         return;
     }
     const int number = exit_signal.load(std::memory_order_relaxed);
@@ -210,39 +238,67 @@ void checkpoint() {
 namespace detail {
 
 int run_program(std::string_view program, std::initializer_list<int> source_fds,
-                const std::function<void()> &body,
-                const std::function<void(const Shutdown &)> &end) {
+                const std::function<std::int64_t()> &body,
+                const std::function<void(const Shutdown &)> &on_exit,
+                const std::function<void(const Shutdown &)> &on_error) {
     ProgramScope scope;
+    std::optional<platform::SourceFds> sources;
     std::optional<platform::ProgramChannels> channels;
     try {
-        channels.emplace(source_fds);
+        sources.emplace(source_fds);
+        channels.emplace();
     } catch (const SetupError &error) {
         return report_error(program, error.what(), 2);
     } catch (const std::bad_alloc &) {
-        return report_error(program, "out of memory", 2);
+        if (!sources) {
+            return report_error(program, "out of memory", 2);
+        }
+        scope.phase = TerminalPhase::Error;
+        const auto shutdown = failed(program, "out of memory");
+        return exit_byte(finish_error(program, on_error, shutdown));
     } catch (const std::length_error &) {
         return report_error(program, "source-fd set exceeds capacity", 2);
     }
-    const auto shutdown = finish_body(program, body);
+    auto shutdown = checked(program, [&] {
+        checkpoint();
+        const auto status = body();
+        checkpoint();
+        return Shutdown{ShutdownReason::Completed, status, 0};
+    });
     if (!scope.owner()) {
-        ::_exit(shutdown.status);
+        ::_exit(exit_byte(shutdown.status));
     }
+    const bool error = selects_error(shutdown);
+    scope.phase = error ? TerminalPhase::Error : TerminalPhase::Exit;
     try {
         channels->restore();
     } catch (const SetupError &error) {
         return report_error(program, error.what(), 2);
     }
-    scope.in_end = true;
-    int status = shutdown.status;
-    try {
-        end(shutdown);
-    } catch (const ExitRequest &request) {
-        status = request.status;
+    if (!error && on_exit) {
+        shutdown = checked(program, [&] {
+            on_exit(shutdown);
+            return Shutdown{ShutdownReason::Completed, shutdown.status, shutdown.signal};
+        });
+        if (!scope.owner()) {
+            ::_exit(exit_byte(shutdown.status));
+        }
+        if (selects_error(shutdown)) {
+            scope.phase = TerminalPhase::Error;
+            try {
+                channels->restore();
+            } catch (const SetupError &failure) {
+                return report_error(program, failure.what(), 2);
+            }
+        }
     }
+    const auto status = scope.phase == TerminalPhase::Error
+                            ? finish_error(program, on_error, shutdown)
+                            : shutdown.status;
     if (!scope.owner()) {
-        ::_exit(status);
+        ::_exit(exit_byte(status));
     }
-    return status;
+    return exit_byte(status);
 }
 
 } // namespace detail

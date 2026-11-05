@@ -642,8 +642,6 @@ void FileDescriptor::close() {
 SourceFds *SourceFds::active_ = nullptr;
 
 SourceFds::SourceFds(std::initializer_list<int> fds) : fds_(fds), previous_(active_) {
-    std::sort(fds_.begin(), fds_.end());
-    fds_.erase(std::unique(fds_.begin(), fds_.end()), fds_.end());
     for (const int fd : fds_) {
         if (fd < 0) {
             throw SetupError(std::make_error_code(std::errc::invalid_argument),
@@ -664,7 +662,7 @@ bool SourceFds::reserved(int fd) noexcept {
         return true;
     }
     for (auto *scope = active_; scope != nullptr; scope = scope->previous_) {
-        if (std::binary_search(scope->fds_.begin(), scope->fds_.end(), fd)) {
+        if (std::find(scope->fds_.begin(), scope->fds_.end(), fd) != scope->fds_.end()) {
             return true;
         }
     }
@@ -681,8 +679,7 @@ std::error_code SavedDescriptor::restore() noexcept {
 
 ProgramChannels *ProgramChannels::active_ = nullptr;
 
-ProgramChannels::ProgramChannels(std::initializer_list<int> source_fds)
-    : source_fds_(source_fds), input_(0), output_(1), error_(2), previous_(active_) {
+ProgramChannels::ProgramChannels() : input_(0), output_(1), error_(2), previous_(active_) {
     active_ = this;
 }
 

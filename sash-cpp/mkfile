@@ -24,6 +24,7 @@ build:V:
 	$CXX $CPPFLAGS $CXXFLAGS $SANITIZE examples/pipeline_report.cpp $BUILD/libsash_cpp.a -o $BUILD/pipeline_report &&
 	$CXX $CPPFLAGS $CXXFLAGS $SANITIZE examples/capture_report.cpp $BUILD/libsash_cpp.a -o $BUILD/capture_report &&
 	$CXX $CPPFLAGS $CXXFLAGS $SANITIZE examples/lifecycle_report.cpp $BUILD/libsash_cpp.a -o $BUILD/lifecycle_report &&
+	$CXX $CPPFLAGS $CXXFLAGS $SANITIZE examples/terminal_report.cpp $BUILD/libsash_cpp.a -o $BUILD/terminal_report &&
 	$CXX $CPPFLAGS $CXXFLAGS $SANITIZE examples/option_report.cpp $BUILD/libsash_cpp.a -o $BUILD/option_report &&
 	$CXX $CPPFLAGS $CXXFLAGS $SANITIZE examples/arithmetic_report.cpp $BUILD/libsash_cpp.a -o $BUILD/arithmetic_report &&
 	$CXX $CPPFLAGS $CXXFLAGS $SANITIZE examples/numeric_report.cpp $BUILD/libsash_cpp.a -o $BUILD/numeric_report &&
@@ -56,6 +57,8 @@ test:V: fixtures
 	cmp examples/capture_report.expected $BUILD/capture_report.actual &&
 	timeout 10 $BUILD/lifecycle_report > $BUILD/lifecycle_report.actual &&
 	cmp examples/lifecycle_report.expected $BUILD/lifecycle_report.actual &&
+	timeout 10 $BUILD/terminal_report > $BUILD/terminal_report.actual &&
+	cmp examples/terminal_report.expected $BUILD/terminal_report.actual &&
 	timeout 10 $BUILD/option_report > $BUILD/option_report.actual &&
 	cmp examples/option_report.expected $BUILD/option_report.actual &&
 	timeout 10 $BUILD/arithmetic_report > $BUILD/arithmetic_report.actual &&
@@ -90,18 +93,18 @@ fault-test:V: test
 	grep -qE 'wait4.*EINTR.*INJECTED' $BUILD/wait-interrupted.trace &&
 	timeout 10 strace -qq -e trace=rt_sigaction -e inject=rt_sigaction:error=EIO:when=1 -o $BUILD/signal-install-failure.trace $BUILD/runtime-tests --signal-install-failure $BUILD/command-helper &&
 	grep -qE 'rt_sigaction\(SIGUSR1,.*EIO.*INJECTED' $BUILD/signal-install-failure.trace &&
-	timeout 10 strace -qq -e trace=rt_sigaction -e inject=rt_sigaction:error=EIO:when=1 -o $BUILD/signal-END-install-failure.trace $BUILD/runtime-tests --signal-END-install-failure $BUILD/command-helper &&
-	grep -qE 'rt_sigaction\(SIGUSR1,.*EIO.*INJECTED' $BUILD/signal-END-install-failure.trace &&
-	timeout 10 strace -qq -e trace=rt_sigprocmask,rt_sigaction -e inject=rt_sigprocmask:error=EIO:when=3 -o $BUILD/signal-END-mask-failure.trace $BUILD/runtime-tests --signal-END-mask-failure $BUILD/command-helper &&
-	grep -qE 'rt_sigprocmask\(SIG_BLOCK,.*EIO.*INJECTED' $BUILD/signal-END-mask-failure.trace &&
-	! grep -q 'rt_sigaction(' $BUILD/signal-END-mask-failure.trace &&
+	timeout 10 strace -qq -e trace=rt_sigaction -e inject=rt_sigaction:error=EIO:when=1 -o $BUILD/signal-ERR-install-failure.trace $BUILD/runtime-tests --signal-ERR-install-failure $BUILD/command-helper &&
+	grep -qE 'rt_sigaction\(SIGUSR1,.*EIO.*INJECTED' $BUILD/signal-ERR-install-failure.trace &&
+	timeout 10 strace -qq -e trace=rt_sigprocmask,rt_sigaction -e inject=rt_sigprocmask:error=EIO:when=3 -o $BUILD/signal-ERR-mask-failure.trace $BUILD/runtime-tests --signal-ERR-mask-failure $BUILD/command-helper &&
+	grep -qE 'rt_sigprocmask\(SIG_BLOCK,.*EIO.*INJECTED' $BUILD/signal-ERR-mask-failure.trace &&
+	! grep -q 'rt_sigaction(' $BUILD/signal-ERR-mask-failure.trace &&
 	if timeout 10 strace -qq -e trace=rt_sigaction -e inject=rt_sigaction:error=EIO:when=2 -o $BUILD/signal-restore-failure.trace $BUILD/runtime-tests --signal-restore-failure $BUILD/command-helper > $BUILD/signal-restore-failure.out 2> $BUILD/signal-restore-failure.err; then
 		printf '%s\n' 'signal restoration fault did not fail' >&2; exit 1
 	else
 		status=$?; test "$status" -eq 2
 	fi &&
 	grep -qE 'rt_sigaction\(SIGUSR1,.*EIO.*INJECTED' $BUILD/signal-restore-failure.trace &&
-	grep -q '__END_BEFORE_RESTORE__' $BUILD/signal-restore-failure.err &&
+	grep -q '__EXIT_BEFORE_RESTORE__' $BUILD/signal-restore-failure.err &&
 	grep -q 'cleanup failed: restore signal disposition' $BUILD/signal-restore-failure.err &&
 	if timeout 10 strace -qq -e trace=rt_sigprocmask -e inject=rt_sigprocmask:error=EIO:when=1 -o $BUILD/lifecycle-handoff-failure.trace $BUILD/runtime-tests --lifecycle-handoff-failure $BUILD/command-helper > $BUILD/lifecycle-handoff-failure.out 2> $BUILD/lifecycle-handoff-failure.err; then
 		printf '%s\n' 'lifecycle initialization fault did not fail' >&2; exit 1
@@ -110,7 +113,7 @@ fault-test:V: test
 	fi &&
 	grep -qE 'rt_sigprocmask\(SIG_BLOCK,.*EIO.*INJECTED' $BUILD/lifecycle-handoff-failure.trace &&
 	grep -q 'cleanup failed: initialize lifecycle signal state' $BUILD/lifecycle-handoff-failure.err &&
-	! grep -q '__HANDOFF_END__' $BUILD/lifecycle-handoff-failure.err &&
+	! grep -q '__HANDOFF_HANDLER__' $BUILD/lifecycle-handoff-failure.err &&
 	if timeout 10 strace -qq -e trace=rt_sigprocmask -e inject=rt_sigprocmask:error=EIO:when=3 -o $BUILD/lifecycle-restore-handoff-failure.trace $BUILD/runtime-tests --lifecycle-restore-handoff-failure $BUILD/command-helper > $BUILD/lifecycle-restore-handoff-failure.out 2> $BUILD/lifecycle-restore-handoff-failure.err; then
 		printf '%s\n' 'lifecycle restoration fault did not fail' >&2; exit 1
 	else
@@ -118,7 +121,7 @@ fault-test:V: test
 	fi &&
 	grep -qE 'rt_sigprocmask\(SIG_BLOCK,.*EIO.*INJECTED' $BUILD/lifecycle-restore-handoff-failure.trace &&
 	grep -q 'cleanup failed: block signals during lifecycle restoration' $BUILD/lifecycle-restore-handoff-failure.err &&
-	grep -q '__HANDOFF_END__' $BUILD/lifecycle-restore-handoff-failure.err &&
+	grep -q '__HANDOFF_HANDLER__' $BUILD/lifecycle-restore-handoff-failure.err &&
 	timeout 10 strace -qq -e trace=pipe2,fcntl,close,prlimit64 -o $BUILD/dup-failure.trace $BUILD/runtime-tests --dup-failure $BUILD/command-helper &&
 	grep -qE 'pipe2\(\[0, [0-9]+\], O_CLOEXEC\).* = 0' $BUILD/dup-failure.trace &&
 	grep -qE 'fcntl\(0, F_DUPFD_CLOEXEC, 3\).*EMFILE' $BUILD/dup-failure.trace &&
@@ -151,6 +154,9 @@ sash-example:V:
 	SASH_RT_LIB=$SASH_RT_LIB $SASH examples/lifecycle_report.sash -o $BUILD/lifecycle_report-sash &&
 	timeout 10 $BUILD/lifecycle_report-sash > $BUILD/lifecycle_report-sash.actual &&
 	cmp examples/lifecycle_report.expected $BUILD/lifecycle_report-sash.actual &&
+	SASH_RT_LIB=$SASH_RT_LIB $SASH examples/terminal_report.sash -o $BUILD/terminal_report-sash &&
+	timeout 10 $BUILD/terminal_report-sash > $BUILD/terminal_report-sash.actual &&
+	cmp examples/terminal_report.expected $BUILD/terminal_report-sash.actual &&
 	SASH_RT_LIB=$SASH_RT_LIB $SASH examples/option_report.sash -o $BUILD/option_report-sash &&
 	timeout 10 $BUILD/option_report-sash > $BUILD/option_report-sash.actual &&
 	cmp examples/option_report.expected $BUILD/option_report-sash.actual &&

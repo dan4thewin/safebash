@@ -95,3 +95,22 @@ selector, file golden, and signed-overflow detection canary pass.
 
 This does not close the task: the complete combined sanitizer gate and
 original zero-fd memfd case have not been rerun or claimed resolved.
+
+## Fifteenth-unit evidence: fatal entry and bad_alloc metadata
+
+The EXIT/ERR unit passes all 73 groups and fifteen goldens under supported
+GNU Linux ASan and actual Apple ASan. Fresh independent heap-use-after-free
+canaries are rejected on both; Apple reports the diagnostic and aborts
+with shell status 134, rather than GNU's status 1.
+
+The all-category GNU UBSan lifecycle selector and both lifecycle goldens
+pass with `-fno-sanitize-recover=all`; a fresh signed-overflow canary fails
+with its intended diagnostic. The real-limit fixture now initializes
+`bad_alloc` metadata alongside the existing exception/vptr warm-up before
+applying limits. Allocation remains denied during terminal entry, and
+the startup control proves exactly one denied allocation before recovery,
+not an allocating handler or a disabled sanitizer category.
+[Journal 022](../journal/022-checked-exit-explicit-err.md) records the scope.
+
+This focused result is not a full-runtime, combined-sanitizer, or original
+zero-fd resolution claim. The task remains open.

@@ -2,6 +2,7 @@
 #define SASH_CPP_RUNTIME_HPP
 
 #include <array>
+#include <cstddef>
 #include <cstdint>
 #include <exception>
 #include <functional>
@@ -116,22 +117,22 @@ enum class ShutdownReason { Completed, ExplicitExit, Failure, Signal };
 
 struct Shutdown {
     ShutdownReason reason = ShutdownReason::Completed;
-    int status = 0;
+    std::int64_t status = 0;
     int signal = 0;
 };
 
 struct ExitRequest {
-    int status;
+    std::int64_t status;
     int signal = 0;
 };
 
 enum class SignalDisposition { Ignore, Default, Flag, Exit };
 
-[[noreturn]] void exit_program(int status = 0);
+[[noreturn]] void exit_program(std::int64_t status = 0);
 void signal(int number, SignalDisposition disposition);
 [[nodiscard]] int signum() noexcept;
 void clear_signum() noexcept;
-void checkpoint();
+void checkpoint(bool deferred = false);
 
 void check(const CommandResult &result);
 void check(const ProcessResult &result);
@@ -447,8 +448,19 @@ std::string capture_stdout(const std::function<void()> &body);
 void redirected(std::initializer_list<Redirect> redirects, const std::function<void()> &body);
 int report_error(std::string_view program, std::string_view diagnostic, int status) noexcept;
 int run_program(std::string_view program, std::initializer_list<int> source_fds,
-                const std::function<void()> &body,
-                const std::function<void(const Shutdown &)> &end);
+                const std::function<std::int64_t()> &body,
+                const std::function<void(const Shutdown &)> &on_exit,
+                const std::function<void(const Shutdown &)> &on_error);
+
+template <typename Handler> std::function<void(const Shutdown &)> borrow_handler(Handler &handler) {
+    if constexpr (std::is_same_v<std::decay_t<Handler>, std::nullptr_t>) {
+        return {};
+    } else {
+        static_assert(std::is_same_v<std::invoke_result_t<Handler &, const Shutdown &>, void>,
+                      "a terminal handler must return void");
+        return std::ref(handler);
+    }
+}
 } // namespace detail
 
 class LineReader {
@@ -508,26 +520,49 @@ template <typename Body> void redirected(std::initializer_list<Redirect> redirec
     detail::redirected(redirects, std::ref(body));
 }
 
-template <typename Body, typename End>
-int run(std::string_view program, std::initializer_list<int> source_fds, Body &&body, End &&end) {
-    static_assert(std::is_same_v<std::invoke_result_t<Body &>, void>,
-                  "the program body must return void");
-    static_assert(std::is_same_v<std::invoke_result_t<End &, const Shutdown &>, void>,
-                  "the END body must return void");
-    return detail::run_program(program, source_fds, std::ref(body), std::ref(end));
+template <typename Body, typename OnExit, typename OnError>
+int run(std::string_view program, std::initializer_list<int> source_fds, Body &&body,
+        OnExit &&on_exit, OnError &&on_error) {
+    using Result = std::invoke_result_t<Body &>;
+    static_assert(std::is_same_v<Result, void> || std::is_same_v<Result, std::int64_t>,
+                  "the program body must return void or std::int64_t");
+    const auto main_body = [&body]() -> std::int64_t {
+        if constexpr (std::is_same_v<Result, void>) {
+            body();
+            return 0;
+        } else {
+            return body();
+        }
+    };
+    return detail::run_program(program, source_fds, std::ref(main_body),
+                               detail::borrow_handler(on_exit), detail::borrow_handler(on_error));
+}
+
+template <typename Body, typename OnExit>
+int run(std::string_view program, std::initializer_list<int> source_fds, Body &&body,
+        OnExit &&on_exit) {
+    return run(program, source_fds, std::forward<Body>(body), std::forward<OnExit>(on_exit),
+               nullptr);
 }
 
 template <typename Body>
 int run(std::string_view program, std::initializer_list<int> source_fds, Body &&body) {
-    return run(program, source_fds, std::forward<Body>(body), [](const Shutdown &) {});
+    return run(program, source_fds, std::forward<Body>(body), nullptr, nullptr);
 }
 
-template <typename Body, typename End> int run(std::string_view program, Body &&body, End &&end) {
-    return run(program, {}, std::forward<Body>(body), std::forward<End>(end));
+template <typename Body, typename OnExit, typename OnError>
+int run(std::string_view program, Body &&body, OnExit &&on_exit, OnError &&on_error) {
+    return run(program, {}, std::forward<Body>(body), std::forward<OnExit>(on_exit),
+               std::forward<OnError>(on_error));
+}
+
+template <typename Body, typename OnExit>
+int run(std::string_view program, Body &&body, OnExit &&on_exit) {
+    return run(program, {}, std::forward<Body>(body), std::forward<OnExit>(on_exit), nullptr);
 }
 
 template <typename Body> int run(std::string_view program, Body &&body) {
-    return run(program, std::forward<Body>(body), [](const Shutdown &) {});
+    return run(program, {}, std::forward<Body>(body), nullptr, nullptr);
 }
 
 } // namespace sash

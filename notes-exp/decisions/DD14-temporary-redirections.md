@@ -14,7 +14,7 @@ or its protected proposal.
 The native producer already records redirect `:fd`, `:op`, and `:target`.
 Its compiler also computes script-referenced descriptor numbers from
 redirect destinations, duplication sources, and `close` operands, including
-references in functions, captures, and END, and supplies that set to its
+references in functions, captures, and terminal handlers, and supplies that set to its
 runtime. An omitted redirect fd is an operator default, not a private
 channel identity.
 
@@ -27,12 +27,15 @@ The C++ entry forms are:
 
 ```cpp
 run(program, {source_fds...}, body);
-run(program, {source_fds...}, body, end);
+run(program, {source_fds...}, body, on_exit, on_error);
 ```
 
 The old forms delegate with an empty explicit set. Standard descriptors
-0/1/2 are always reserved. The supplied set is copied, validated, sorted,
-and deduplicated before any private channel allocation. Private allocation
+0/1/2 are always reserved. As updated by
+[DD#15](DD15-checked-exit-explicit-err.md), the synchronous driver borrows
+and validates the supplied initializer-list storage without allocating.
+Membership ignores duplicate entries and needs no sorting. The reservation
+scope outlives invoker snapshot failure and both handlers. Private allocation
 skips every active reserved number, including originally closed ones.
 A late reservation conflicting with a still-owned private descriptor is
 an explicit setup error rather than permission to overwrite it.
@@ -101,10 +104,12 @@ Runtime diagnostics and fatal cleanup use saved invoker stderr throughout
 temporary redirections, following native DD#120's channel rule.
 A closed original stderr never falls back to a temporary command file.
 
-Invoker channels are restored before END. Failed channel initialization
-runs neither body nor END; failed invoker restoration prevents END.
-Existing typed exit, signal ownership, explicit END handling, and
-cooperative checkpoint placement remain unchanged.
+Invoker channels are restored before EXIT or ERR and again on EXIT -> ERR.
+Ordinary failed channel initialization runs neither body nor handler;
+failed invoker restoration prevents the selected callback.
+DD#15 adds an allocation-free attempt at ERR on heap failure after source
+metadata is ready, without losing the descriptor reservations.
+Its checked EXIT/explicit ERR routing replaces the old END contract.
 
 Persistent `exec` redirects/channel rebinding, public wait, forked-C++ or
 background ownership, source admission, and IR consumption remain separate.

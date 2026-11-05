@@ -36,7 +36,7 @@ directory, status, baseline = run("baseline")
 assert status == 0, (status, (directory / "stderr").read_text())
 assert (directory / "output").read_bytes() == b"body"
 assert (directory / "errors").read_bytes() == b"__REDIRECT_INSTALLED__\n"
-assert (directory / "stdout").read_bytes() == b"END\n"
+assert (directory / "stdout").read_bytes() == b"terminal\n"
 
 counts = collections.Counter()
 sites = {}
@@ -93,9 +93,9 @@ for key, syscall, errno, message, ended, body in cases:
     assert status == 2, (key, status, diagnostic)
     assert re.search(rf"{syscall}\(.*{errno}.*INJECTED", trace), (key, trace)
     assert message in diagnostic, (key, diagnostic)
-    assert ("__REDIRECT_END__" in diagnostic) == ended, (key, diagnostic)
+    assert ("__REDIRECT_HANDLER__" in diagnostic) == ended, (key, diagnostic)
     assert ("__REDIRECT_BODY__" in diagnostic) == body, (key, diagnostic)
-    assert (directory / "stdout").read_bytes() == (b"END\n" if ended else b""), key
+    assert (directory / "stdout").read_bytes() == (b"terminal\n" if ended else b""), key
     if (directory / "errors").exists():
         assert (directory / "errors").read_bytes() in (b"", b"__REDIRECT_INSTALLED__\n"), key
     if body:
@@ -106,7 +106,7 @@ directory, status, trace = run("fatal-restore", ("dup2", "EIO", sites["restore"]
 diagnostic = (directory / "stderr").read_text()
 assert status == 2 and "cleanup failed: restore redirected descriptors" in diagnostic
 assert re.search(r"dup2\(.*EIO.*INJECTED", trace)
-assert "__REDIRECT_END__" not in diagnostic and (directory / "stdout").read_bytes() == b""
+assert "__REDIRECT_HANDLER__" not in diagnostic and (directory / "stdout").read_bytes() == b""
 assert (directory / "errors").read_bytes() == b"__REDIRECT_INSTALLED__\n"
 print("ok redirect fault fatal-restore")
 
@@ -115,6 +115,6 @@ for key, syscall in (("open-output", "openat"), ("install", "dup2"), ("restore-f
     assert status == 0, (key, (directory / "stderr").read_text())
     assert re.search(rf"{syscall}\(.*EINTR.*INJECTED", trace), key
     assert (directory / "output").read_bytes() == b"body", key
-    assert (directory / "stdout").read_bytes() == b"END\n", key
+    assert (directory / "stdout").read_bytes() == b"terminal\n", key
     print(f"ok redirect retry {key}")
 PY
