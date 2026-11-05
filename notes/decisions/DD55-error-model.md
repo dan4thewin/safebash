@@ -109,6 +109,12 @@ retired the tail-loop half (SB4076), and journal 548 the rest.)
 
 ## Pipelines
 
+An int-valued function is not a status producer and cannot be called
+directly as a stage, including with `-` (SB4030, DD#58). Suppression does
+not make an ill-typed stage legal. This type boundary was settled by DG
+on 2026-11-05; enforcement remains pending in
+`q-int-function-pipeline-status`. The rules below apply to legal stages.
+
 Pipefail always on (DD#20). Implicit check fires on the pipeline's
 aggregate status. Per-segment suppression with `-`:
 
@@ -484,14 +490,19 @@ This lands the rulings of 2026-10-29 and 2026-10-30 in
 `q-suppression-on-user-functions` (Q3, and Q2 for in-process calls), and
 batch-531 B15.
 
-**Three classes.** A function returns an int (`-> int`), a status, or
+**Three classes.** A well-typed function returns an int (`-> int`), a status, or
 nothing (void). It is void when its only exits are `return 0`, a bare
 `return` (which returns 0), falling off the end, and self-tail calls. A tail
 call `return g …` hands back g's result, so a function whose `return g`
-exits all reach void functions is void, and one that reaches an int or a
-status function returns a status (an int g's value becomes the status). Any
-other return producer gives a status: an external command, `[[ ]]`,
-`(( ))`, a status builtin, or a redirected call such as `return g >file`.
+exits all reach void functions is void, and one that reaches a status
+function returns a status. In a non-int function, an int g's value must not
+become a status: `return g` is SB4030, including under a redirect. An int
+function may still forward another int function's value. This replaces the
+earlier int-to-status coercion under DG's 2026-11-05 ruling in DD#58;
+enforcement remains pending in `q-int-function-pipeline-status`.
+Other valid return producers give a status: an external command, `[[ ]]`,
+`(( ))`, a status builtin, or a redirected status/void call such as
+`return g >file`.
 A call is checked against the definition it runs, which is the one in
 force where the call stands. Each `fn` statement recomputes the classes in
 force as it comes into force, so a name defined twice can be a status at one
@@ -556,8 +567,10 @@ div.2; types.sh constw.19. Journal 547.
 DG ruled on 2026-10-29 that a `-` on a call discards only the function's
 returned value (`q-suppression-on-user-functions` Q1 and Q4). Taken with
 DD#86 (a body is a function body, checked once), the rule for every `-` is:
-**a `-` discards the status of the one command or call it prefixes, and
-nothing else.** These are checked as if the `-` were absent:
+**a `-` discards the returned answer of the one command or call it prefixes,
+and nothing else.** Discarding an integer in a value context does not
+convert it to a status or make a status-only context legal (DD#58).
+These are checked as if the `-` were absent:
 
 - the body of a called function, whether the call is a statement (`- f`),
   an `-> int` call, a job (`- f &`), a capture (`$(- f)`), a stage, or an

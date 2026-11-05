@@ -527,13 +527,20 @@ direct translation of the textbook factorial produces: the multiply happens
 **Every function is int, status or void** (DD#55 addendum 2026-10-30). An
 `-> int` function returns an int. A function is void when every exit is
 `return 0`, a bare `return`, the end of its body, or a tail call `return g`
-of a void g (itself included). Any other function returns a status. A call
-must handle the status as a condition (`if`, `while`, the left side of `&&`
+of a void g (itself included). Any other well-typed function returns a status.
+A call must handle the status as a condition (`if`, `while`, the left side of `&&`
 or `||`) or discard it with `-` (`- f`, `$(- f)`). Anything else is SB4016,
 as an int function's unbound answer already was. `-` with nothing to discard
 is SB4076: on a void function, or in `$(- f)` on an int f, whose `$(f)`
 binds the int. Each call is checked against the definition in force where
 it stands.
+
+**Integer values are not statuses** (DD#58, DG 2026-11-05). Direct int
+function stages, including `- f | ...`, and `return int_fn` in a non-int
+function require SB4030; discard does not repair a type mismatch. Integer
+captures, int-to-int return forwarding and in-process value discard remain
+valid. Enforcement of the stage/return-producer boundary is pending in
+`q-int-function-pipeline-status`, not already implemented.
 
 ### Phases 7–9: Fold, Codegen, Link
 

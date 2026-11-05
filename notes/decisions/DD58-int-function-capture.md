@@ -86,6 +86,36 @@ This eliminates ambiguity inside `(( ))` where `f` could be either.
 ## Non-void enforcement (DD#55 gates 55.13, 55.16)
 
 `-> int` functions are non-void by definition. A bare call `f` in
-statement position (outside `(( ))`, `if`, `while`, `&&`, `||`) is
-a compile error [SB4016] — the return value would be silently
-discarded.
+statement position is a compile error [SB4016] — the return value would
+be silently discarded. Capture the value with `$(f)` or arithmetic call
+syntax, or explicitly discard it with an in-process `- f`. Boolean
+contexts are not value consumers: an int function used as a predicate is
+SB4030 (DD#74).
+
+## Integer values are not statuses
+
+DG ruled on 2026-11-05 (journal 573): integer and status results are
+different types. Using an integer function's answer as a status is a type
+error, in the same family as mixing string and integer values, not an
+unhandled-status error.
+
+A direct `-> int` function call is therefore not a legal pipeline stage,
+whether bare, negated or prefixed with `-`. The error is SB4030.
+Discarding a stage's status does not repair the stage's type mismatch.
+The rule holds in every otherwise valid pipeline position and surrounding
+handling context.
+
+Likewise, `return f` in a non-int function cannot turn an int f's answer
+into a status; redirects or a composite producer do not provide a cast.
+Int-to-int return forwarding remains valid. A wrapper must discard the
+integer as a value or deliberately produce its own status, rather than
+forwarding the integer as one.
+
+Ordinary integer captures, in-process integer-value discard, explicit
+numeric status construction (`return N`) and explicit predicate production
+(`return (( ... ))`) retain their existing contracts. No new declaration
+or conversion syntax is introduced.
+
+The pipeline/return-producer enforcement is **accepted but not yet
+implemented**. `notes/tasks/q-int-function-pipeline-status.md` retains the
+observed pipeline defect and the implementation gates.

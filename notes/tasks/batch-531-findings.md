@@ -1428,9 +1428,10 @@ claims with program-level helpers.
   f | readline s` succeeds; a subsequent echo prints `[hi]`.
   - Still live on `09a5bd49`, with `:!` on the final reader-value use to
     isolate status from taint. Return 256 succeeds; return 3 aborts with
-    the stage's exit 3. The stage-specific contract needs an explicit
-    disposition, not an assumed extension of the predicate rule:
-    `q-int-function-pipeline-status`.
+    the stage's exit 3. DG settled the contract on 2026-11-05: integer and
+    status results are distinct types, so an int stage is SB4030 even with
+    `-` (DD58, journal 573). Implementation remains open in
+    `q-int-function-pipeline-status`; this finding is not fixed.
 - [ ] **B80** (open; DD58, DD75). `(len f)` on a function name ICEs in
   native and yields garbage in C.
   - Still live on `09a5bd49`: native compilation exits 1 with

@@ -14,6 +14,11 @@ as int, status or void and enforces DD#55 at the call. Four shapes surfaced
 while writing it. None is an obvious bug, so the 2026-10-24 rule leaves them
 unchanged. Each repro was compiled with the F6 unit A binary.
 
+DD58's 2026-11-05 integer/status ruling settles implicit int-to-status
+conversion, tracked in `q-int-function-pipeline-status`. It does not settle
+Q1's choice of capture surface or Q4's void/status classification. A valid
+integer-value discard is distinct from interpreting an integer as a status.
+
 ## Q1. An int function's capture means two things
 
 `$(c)` on an int function binds the int, and the body's stdout goes to the

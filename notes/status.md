@@ -1,4 +1,20 @@
-## ══ STATUS (2026-11-05, latest) — Runtime syscall policy settled ══
+## ══ STATUS (2026-11-05, latest) — Integer and status results are distinct types ══
+
+DG settled B79: an int function used as a pipeline stage is a type error
+(SB4030), including with `-`. Suppression cannot repair a type mismatch.
+DD58/DD55/DD74 record the rule (journal 573).
+
+The same principle retires DD55's former `return int_fn` coercion in a
+non-int function. Integer captures, int-to-int forwarding, in-process
+integer discard and explicit numeric/predicate status construction remain
+valid. A wrapper must discard the value or produce its own status.
+
+The existing `q-int-function-pipeline-status` task now tracks the required
+implementation rather than an unresolved choice. B79 remains unfixed.
+No compiler/runtime/spec changes; DD129's runtime implementation also
+remains pending. Coverage stays paused.
+
+## ══ STATUS (2026-11-05) — Runtime syscall policy settled ══
 
 DG selected public rustix plus a project-owned Linux Rust syscall shim
 (DD129, journal 572). Keep the no-libc runtime and existing startup; stop

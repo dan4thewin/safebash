@@ -49,6 +49,13 @@ result. To yield a status, wrap it in `return`.
 
 ## `return` takes a status producer
 
+An int-valued function is not a status producer. In a non-int function,
+`return int_fn` is a type mismatch (SB4030), not an implicit conversion;
+neither a redirect nor suppression changes that. DG's 2026-11-05 ruling
+in DD#58 settles this boundary; enforcement is pending in
+`q-int-function-pipeline-status`. Explicit numeric status construction and
+the status-producing tests below are unchanged.
+
 | form | status |
 |---|---|
 | `return CMD [args]` | run CMD; its exit status. **The `return` is the handler — CMD never aborts** (its status is explicitly consumed), unlike a bare CMD. |
