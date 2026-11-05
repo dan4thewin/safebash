@@ -1,4 +1,21 @@
-## ══ STATUS (2026-11-05, latest) — Root artifacts cleaned ══
+## ══ STATUS (2026-11-05, latest) — Runtime syscall policy settled ══
+
+DG selected public rustix plus a project-owned Linux Rust syscall shim
+(DD129, journal 572). Keep the no-libc runtime and existing startup; stop
+depending on rustix's private runtime interface. The policy covers the
+whole runtime, not only the three calls behind the fresh-clone failure.
+
+macOS is assigned to the separately developed C++ transpiler, which can
+also cover exotic targets. The native Linux architecture matrix, migration
+staging, regex setjmp and existing C backend's link policy remain separate
+planning questions.
+
+The architecture question is closed; its P1 implementation task remains
+open. No compiler, runtime, dependency, spec or build rule changed.
+Coverage remains paused. The next ruling to discuss is B79: whether an
+integer-returning function may implicitly supply a pipeline stage's status.
+
+## ══ STATUS (2026-11-05) — Root artifacts cleaned ══
 
 DG confirmed removal of seven root-level strays (journal 571): `c.sh`,
 `cfp`, two Copilot Node OOM reports, `a.out`, `e.txt` and the obsolete root

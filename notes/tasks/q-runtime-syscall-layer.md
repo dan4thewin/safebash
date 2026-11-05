@@ -1,20 +1,36 @@
 ---
-title: "Question: what should sash-rt's syscall layer be? (rustix, vendored nolibc, or our own primitive)"
-status: open
+title: "Resolved: public rustix plus a Linux Rust syscall shim (DD129)"
+status: done
 priority: P1
 kind: question
 depends: []
 gates:
-  - "DG chooses the runtime's syscall layer; the choice and its reasons are recorded in a new DD"
-  - "the chosen remedy closes bug-fresh-clone-rustix-runtime-private, by that task's own gates"
-  - "sash-rt/src/lib.rs:3-4 and docs/GUIDE.md:470 describe the layer actually in use"
-  - "whatever the choice leaves for later is filed in cross-compile-and-setjmp-on-mac.md"
+  - "DG's syscall-layer choice and target split are recorded in DD129"
+  - "bug-fresh-clone-rustix-runtime-private retains the implementation and build/spec gates; it is not marked fixed by this ruling"
+  - "the remaining native-target, migration, setjmp and C-link-policy questions have a home in cross-compile-and-setjmp-on-mac.md"
 ---
 
-Captured from a discussion with DG on 2026-10-26, during the batch-531
-port. DG: "capture all of this for further discussion into a backlog item;
-keep working the port as-is for now". Nothing here is decided. The
-recommendations are mine and unruled. Measurements are against ec45535.
+## Decision, 2026-11-05
+
+DG chose **public rustix plus a project-owned Linux Rust syscall shim**
+(DD129, journal 572). Use the public APIs where they fit the runtime's
+requirements; centralize unsupported Linux calls in the shim. Do not use
+the private runtime module, vendor nolibc, or adopt musl as this remedy.
+
+DG also assigned macOS to the separately developed C++ transpiler, which
+can cover exotic targets too. The native runtime no longer needs a macOS
+port on that account. The exact native Linux target set is not settled by
+this choice.
+
+This closes the architecture question, **not the implementation**.
+`bug-fresh-clone-rustix-runtime-private` remains open. Its build/spec and
+runtime-documentation gates stay with the repair. Native cross-compilation,
+migration staging, regex error recovery and C-link policy remain in
+`cross-compile-and-setjmp-on-mac`.
+
+The research below was captured on 2026-10-26 during the batch-531 port,
+when DG asked to park the discussion and continue the port. Measurements
+and source line numbers are against ec45535, not the current tree.
 
 ## How it started
 
@@ -26,7 +42,7 @@ what the runtime's syscall layer should be at all, with DG's targets in
 view: "sash should ultimately be able to cross compile for arm, raspbery
 pi, and mac os (perhaps linking for that last)".
 
-## What sash-rt does today
+## Runtime snapshot (2026-10-26)
 
 The header (sash-rt/src/lib.rs:3-4) says "Uses `rustix` for all syscalls.
 The only `asm!` is _start". Neither is true any longer:
@@ -132,7 +148,7 @@ returns a `CString`. sash-rt has no alloc crate and no allocator.
 So rustix will not give us five calls: fork, execve, exit_group,
 rt_sigaction and getcwd.
 
-## Options considered
+## Options considered and disposition
 
 - **R-pin**: `rustix = "=1.1.4"`. A dead end: frozen on one release, and
   the module stays unsupported.
@@ -145,7 +161,8 @@ rt_sigaction and getcwd.
   libsash_rt.a). That removes the "libc.a at every sash link" cost, but not
   the all-or-nothing one. musl drops out. Its standalone setjmp and
   restorer files are not needed either (see setjmp and signal return).
-- **(N) vendored nolibc for the five** (my recommendation). The kernel's
+- **(N) vendored nolibc for the five** (the earlier recommendation, not
+  selected). The kernel's
   tools/include/nolibc, as read 2026-10-26: LGPL-2.1 OR MIT, about 8900
   lines, 15 architecture headers including arm and Thumb.
   - Has: fork (via clone), execve, dup2 (dup3 where needed), close, open
@@ -157,18 +174,24 @@ rt_sigaction and getcwd.
     target's UAPI headers (linux-libc-dev; present here). Linux only.
   - The kernel tests it under QEMU on arm64, arm and armthumb
     (tools/testing/selftests/nolibc/run-tests.sh).
-- **(R) our own Rust per-architecture primitive**: one small syscall
+- **(R) our own Rust per-architecture primitive** (selected by DD129):
+  one small syscall
   function per architecture, with numbers from linux-raw-sys, possibly
-  adapted from rustix's MIT/Apache code. Close to (N). The choice between
-  them is whether we would rather own Rust asm or vendor C headers.
+  adapted from rustix's MIT/Apache code. DG chose to own this Rust boundary
+  rather than add vendored C headers. Working public rustix bindings stay.
 - Seen, not vetted: the `syscalls` crate (0.8.1, 2026-02-02).
 
-In every option the ordinary calls move to rustix's public API, and only
-`_start` and the x86_64 restorer stay hand-written. Using all of nolibc in
-place of rustix would cost macOS (below), which is why (N) covers only the
-five.
+Under the selected policy, ordinary calls use rustix's public API and
+unsupported Linux calls use the shared Rust shim. Startup and signal-return
+ABI requirements remain explicit. The earlier reason to retain rustix for
+its macOS backend no longer applies: the C++ transpiler owns that target.
+A nolibc-only migration is now possible, but DG selected the smaller
+public-rustix/Rust-shim boundary instead.
 
 ## setjmp
+
+This is a separate, unruled error-recovery choice. DD129 does not select an
+option below; it remains in `cross-compile-and-setjmp-on-mac`.
 
 One use: Pike's regcomp error exit. `rcerror` longjmps
 (sash-rt/csrc/regcomp.c:115) to `regcomp1`'s setjmp (693), which frees and
@@ -192,7 +215,10 @@ Options:
 - **(D)** `__builtin_setjmp`. Ruled out: clang 20 rejects it on aarch64,
   and the GCC manual steers user code to libc.
 
-## Cross-compile and macOS facts gathered
+## Cross-compile and macOS facts gathered (2026-10-26)
+
+The macOS notes are historical research, not a native-runtime requirement
+after DD129's target split.
 
 - Signal return: only x86_64 needs `SA_RESTORER`. arm64 returns through
   the vDSO's sigtramp, 32-bit arm through the kernel's signal page. The
@@ -210,20 +236,17 @@ Options:
 - This host has no aarch64 or arm toolchain, sysroot or qemu. Nothing
   above was run on another architecture.
 
-## Proposed P1 scope, if (N) or (R) is chosen
+## Implementation follow-up
 
-Move fork, execve and exit_group off the runtime module. Drop sash's dead
-rustix dependency (sash/Cargo.toml:14 is its only mention; the root
-workspace builds without it). Fix lib.rs:3-4 and GUIDE:470. Write a DD for
-the runtime's syscall policy. The rest (the other asm sites, setjmp,
-cross-compile, macOS) goes to cross-compile-and-setjmp-on-mac.md.
+`bug-fresh-clone-rustix-runtime-private` owns moving fork, execve and
+exit_group off the private module and proving the fresh build. The dead
+compiler rustix dependency and runtime/GUIDE descriptions belong with that
+repair. DD129's policy also applies to the remaining hand-written syscall
+sites; the migration must account for them rather than preserve a third
+unexamined route.
 
-## Questions for DG
-
-1. Which layer for the five calls: (N), (R), or something else?
-2. setjmp: (A)?
-3. Should the P1 stay minimal as above, or move every asm site at once?
-4. Should C mode link with `-nostdlib`, so that it fails like native on a
-   stray libc reference? Is `-lpthread` still needed at all?
-5. Which cross-compile goal comes first? (The three readings in
-   cross-compile-and-setjmp-on-mac.md, question 1.)
+The native Linux target matrix, migration staging, regex setjmp choice and
+existing C backend's link policy remain unruled in
+`cross-compile-and-setjmp-on-mac.md`. They are not extra choices silently
+made by closing this architecture question. No implementation was performed
+when the ruling was recorded.

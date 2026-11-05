@@ -609,6 +609,14 @@ compile-time constant.
 `sash-rt/src/lib.rs` (~3750 lines) — a `#![no_std]` Rust crate.
 Uses `rustix` for raw Linux syscalls. No libc dependency.
 
+**Accepted direction, implementation pending (DD#129):** retain public
+rustix APIs and centralize unsupported Linux calls in a project-owned Rust
+syscall shim. The current private `rustix::runtime` dependency still needs
+removal; the fresh-clone build defect is not fixed by recording the choice.
+macOS support is assigned to a separate C++ transpiler, which can also
+cover exotic targets. This does not retire the existing `--emit-c` backend
+or claim complete native AArch64 support.
+
 ### Entry point
 
 `_start` — inline assembly for x86_64 and aarch64. Sets up argc,
@@ -969,6 +977,7 @@ architecturally significant:
 | 43 | Attest semantics | Validation-gated declassification |
 | 44 | Full taint quarantine | Read-blocked, not just command-blocked |
 | 45 | Source emitter architecture | Four-axis declarations, const, export-as-error |
+| 129 | Public rustix plus a Linux Rust syscall shim | Accepted runtime direction; implementation pending |
 
 ---
 

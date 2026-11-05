@@ -5,10 +5,14 @@ priority: P1
 kind: bug
 depends: [q-runtime-syscall-layer]
 gates:
-  - "DG rules on q-runtime-syscall-layer.md; the remedy and its reason are recorded in the DD that ruling writes"
+  - "implement DD129: public rustix plus the shared Linux Rust syscall shim, with no private runtime-module dependency"
   - "a copy of sash-rt with no Cargo.lock builds: `git archive HEAD sash-rt`, then `cargo generate-lockfile` and `cargo build --release` exit 0"
   - "`mk test` and the full spec sweep pass on the result, in both backends"
+  - "runtime comments and GUIDE describe the actual layer; remove the compiler's unused rustix dependency after confirming it remains unused"
 ---
+
+DG settled the architecture on 2026-11-05 in DD129. This task remains
+**open for implementation**; recording that choice did not repair the build.
 
 ## What
 
@@ -40,31 +44,30 @@ there. Measured 2026-10-26: with a fresh lockfile the root workspace
 builds. sash/Cargo.toml:14 is the crate's only mention of rustix, so that
 dependency is dead.
 
-## Fix
+## Required fix (DD129)
 
-Options:
+Keep the working public rustix APIs. Move the unsupported fork, execve and
+exit_group operations behind the project-owned Linux Rust syscall shim,
+then drop the private `runtime` feature dependency. Preserve the existing
+child initialization, descriptor ownership, errno and terminal-handler
+contracts; this is a binding change, not a process-semantics redesign.
 
-- **(a) Pin `rustix = "=1.1.4"` in sash-rt/Cargo.toml.** One line. It works
-  for as long as 1.1.4 is not yanked, and it holds sash-rt back from every
-  later rustix fix.
-- **(b) Track the Cargo.lock files.** Every dependency is then pinned, not
-  only rustix. Builds become reproducible, but any `cargo update` reopens the
-  break, and the policy covers the whole repo.
-- **(c) sash-rt issues the three syscalls itself and drops the `runtime`
-  feature.** On x86_64, fork is a `clone` with SIGCHLD. sash-rt already
-  builds an assembly stub (csrc/setjmp.S, via build.rs), and Rust's
-  `core::arch::asm!` would also do. This removes the dependency on an API
-  that rustix says is not for us.
+Do not use the deliberately mangled module name, freeze rustix at 1.1.4,
+vendor nolibc, or introduce musl as the remedy. Tracking lockfiles remains a
+separate reproducibility policy and would not repair the unsupported API
+dependency.
 
-Using the mangled name is not an option: rustix rotates it on purpose.
+The architecture applies to the runtime's other hand-written syscall sites
+too. Account for each under public rustix or the shared shim; migration
+staging and native target coverage remain planning work in
+`cross-compile-and-setjmp-on-mac.md`, alongside the independent regex setjmp
+and C-link-policy choices. macOS targeting is assigned to the separate C++
+transpiler, not a native `sash-rt` port.
 
-**Superseded 2026-10-26.** Discussing these options with DG widened the
-question to the runtime's whole syscall layer, with cross-compiling in
-view. It is captured, unruled, in q-runtime-syscall-layer.md, and this bug
-waits on it. In short: (a) is a dead end, since it freezes rustix and the
-module stays unsupported; (b) is a separate reproducibility policy; (c)
-became options (N) and (R) there. The earlier recommendation, (a) then
-(c), is withdrawn.
+`q-runtime-syscall-layer.md` preserves the research and resolution. A
+successful local build using the old lockfile is still not this task's
+acceptance gate: the fresh-lockfile build and full ordinary gates above
+must pass before it can be marked fixed.
 
 Found during the batch-531 port (step D1). Filed under DG's rule for the
 port that anything not blocking the rest of the plan goes to the backlog.
