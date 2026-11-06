@@ -429,7 +429,7 @@ fn emit_stage_setup_check(
         emit_open_failure_msg(&failure, builder, module, ctx);
     }
     let one = builder.ins().iconst(I64, 1);
-    let exit = module.declare_func_in_func(ctx.externs.exit, builder.func);
+    let exit = module.declare_func_in_func(ctx.externs.abort, builder.func);
     builder.ins().call(exit, &[one]);
     builder.ins().trap(TrapCode::unwrap_user(1));
     builder.switch_to_block(success);
@@ -487,7 +487,7 @@ fn lower_pipeline_builtin(
     }
     // echo / `:` in a pipeline stage exit 0 (true/false are now external).
     let exit_code = builder.ins().iconst(I64, 0);
-    let exit_ref = module.declare_func_in_func(ctx.externs.exit, builder.func);
+    let exit_ref = module.declare_func_in_func(ctx.externs.abort, builder.func);
     builder.ins().call(exit_ref, &[exit_code]);
     builder.ins().trap(TrapCode::unwrap_user(1));
     true
@@ -511,7 +511,7 @@ fn lower_exec_stage(
     builder.ins().call(pe.exec, &[argv_addr, envp]);
     // exec doesn't return on success; if it does, exit 127
     let code = builder.ins().iconst(I64, 127);
-    let exit_ref = module.declare_func_in_func(ctx.externs.exit, builder.func);
+    let exit_ref = module.declare_func_in_func(ctx.externs.abort, builder.func);
     builder.ins().call(exit_ref, &[code]);
     builder.ins().trap(TrapCode::unwrap_user(1));
 }

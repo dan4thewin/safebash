@@ -84,8 +84,8 @@ process-boundary truncation (DD89). The incoming status is available as the hand
 `$?` use. Subsequent `$?` uses follow DD55's normal handling-position rule.
 Handler completion preserves its entry status; explicit `exit N` or `fail N`
 replaces it. `exit` defaults to 0 and `fail` to 1; `fail 0` is permitted.
-The 2026-11-06 explicit-termination revision is accepted in DD128 and
-awaits `explicit-exit-and-fail` (journal 575).
+The 2026-11-06 explicit-termination revision is accepted in DD128
+(journal 575) and implemented in journal 576.
 
 EXIT is checked code. Its failure can enter ERR. ERR must explicitly handle
 its own operational failures; neither handler is blanket-unchecked.

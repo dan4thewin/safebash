@@ -113,6 +113,7 @@ pub enum BuiltinCmd {
     /// `:` — no-op.
     Noop,
     Exit,
+    Fail,
     Exec,
     Cd,
     Wait,
@@ -194,6 +195,7 @@ impl BuiltinCmd {
             "[[" => Self::Test,
             ":" => Self::Noop,
             "exit" => Self::Exit,
+            "fail" => Self::Fail,
             "exec" => Self::Exec,
             "cd" => Self::Cd,
             "wait" => Self::Wait,
@@ -275,6 +277,7 @@ impl BuiltinCmd {
             // No output: rejected with SB4046.
             Self::Test
             | Self::Exit
+            | Self::Fail
             | Self::Cd
             | Self::Wait
             | Self::Close
@@ -353,7 +356,7 @@ impl BuiltinCmd {
     pub fn acts_on_its_process(self) -> bool {
         match self {
             // Control flow of the process that runs them.
-            Self::Exit | Self::Return | Self::Break | Self::Continue => true,
+            Self::Exit | Self::Fail | Self::Return | Self::Break | Self::Continue => true,
             // Process state: cwd, descriptors, jobs, variables, dispositions.
             Self::Cd | Self::Close | Self::Wait | Self::Unset | Self::Signal => true,
             // Write a variable or collection of the process that runs them.

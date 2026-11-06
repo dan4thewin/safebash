@@ -1,5 +1,5 @@
 title: Separate orderly exit from explicit failure termination
-status: open
+status: complete
 priority: P2
 kind: feature
 depends: []
@@ -13,6 +13,9 @@ gates:
   - "focused native/C specs, meaningful before-controls and independent reversions precede the predicted ordinary unit/spec gate"
 
 ## Decision and authorization
+
+Implemented and verified in journal 576, including the recovered full gate
+after the host reboot. DG supplied the policy; Copilot implemented it.
 
 DG authorized implementation on 2026-11-06 after discussing orderly
 completion with a nonzero status, and explicitly chose to allow `fail 0`.

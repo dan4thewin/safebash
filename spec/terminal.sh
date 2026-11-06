@@ -6,76 +6,76 @@ setup terminal
 
 set +e
 
-run_sash 'exit 1; ERR { /bin/false }'
-[[ $err == *SB5101* && $err == *"uncaught command failure"* ]]; chk errfail.1
+run_sash 'fail 1; ERR { /bin/false }'
+[[ $err == *SB5101* && $err == *"uncaught command failure"* ]]; chk migratea.1
 
 run_sash '
 fn bad {
     /bin/false
 }
-exit 1
+fail 1
 ERR { bad }'
-[[ $err == *SB5101* && $err == *":6:7:"* && $err == *"at 3:5"* ]]; chk errfail.2
+[[ $err == *SB5101* && $err == *":6:7:"* && $err == *"at 3:5"* ]]; chk migratea.2
 
-run_sash 'exit 1; ERR { /bin/false || /bin/false }'
-[[ $err == *SB5101* && $err == *"uncaught command failure"* ]]; chk errfail.3
+run_sash 'fail 1; ERR { /bin/false || /bin/false }'
+[[ $err == *SB5101* && $err == *"uncaught command failure"* ]]; chk migratea.3
 
 run_sash '
 fn bad { cd /sash-dd128-nonexistent-directory }
-exit 1
+fail 1
 ERR { - echo "$(bad)" }'
-[[ $err == *SB5101* && $err == *'uncaught `cd` failure'* ]]; chk errfail.4
+[[ $err == *SB5101* && $err == *'uncaught `cd` failure'* ]]; chk migratea.4
 
-run_sash 'exit 1; ERR { if /bin/true >out { : } }'
-[[ $err == *SB5101* && $err == *"descriptor backup/restore"* ]]; chk errfail.5
+run_sash 'fail 1; ERR { if /bin/true >out { : } }'
+[[ $err == *SB5101* && $err == *"descriptor backup/restore"* ]]; chk migratea.5
 
-run_sash "exit 1; ERR { - /bin/echo \$'x\\x00y' }"
-[[ $err == *SB5101* && $err == *"NUL-byte argv guard"* ]]; chk errfail.6
+run_sash "fail 1; ERR { - /bin/echo \$'x\\x00y' }"
+[[ $err == *SB5101* && $err == *"NUL-byte argv guard"* ]]; chk migratea.6
 
 # A stage's argv guard is in the child; the parent handles its process status.
-run_sash "exit 1; ERR {
+run_sash "fail 1; ERR {
     if /bin/echo \$'x\\x00y' | /bin/cat { - echo unexpected } else { - echo caught }
 }"
-[[ $rc = 1 && $out = caught && $err != *SB5101* ]]; chk errfail.7
+[[ $rc = 1 && $out = caught && $err != *SB5101* ]]; chk migratea.7
 
 DD128_VALUE=allowed run_sash '
 v=$(getenv DD128_VALUE)
 attest v [[ $v == allowed ]]
-exit 1
+fail 1
 ERR { - /bin/echo "${v:!}" }'
-[[ $rc = 1 && $out = allowed && -z $err ]]; chk errfail.8
+[[ $rc = 1 && $out = allowed && -z $err ]]; chk migratea.8
 
 DD128_VALUE=allowed run_sash '
-exit 1
+fail 1
 ERR {
     v=$(getenv DD128_VALUE)
     attest v [[ $v == allowed ]] || v=replaced
     - /bin/echo "$v"
 }'
-[[ $rc = 1 && $out = allowed && -z $err ]]; chk errfail.9
+[[ $rc = 1 && $out = allowed && -z $err ]]; chk migratea.9
 
 DD128_VALUE=allowed run_sash '
-exit 1
+fail 1
 ERR {
     v=$(getenv DD128_VALUE)
     attest v [[ $v == allowed ]]
     - echo "$v"
 }'
-[[ $err == *SB5101* && $err == *"uncaught attest failure"* ]]; chk errfail.10
+[[ $err == *SB5101* && $err == *"uncaught attest failure"* ]]; chk migratea.10
 
 printf allowed >in
 run_sash '
-exit 1
+fail 1
 ERR {
     v=$(<in)
     attest v [[ $v == allowed ]] || v=replaced
     - echo "$v"
 }'
-[[ $err == *SB5101* && $err == *"slurp"* ]]; chk errfail.11
+[[ $err == *SB5101* && $err == *"slurp"* ]]; chk migratea.11
 
 # A second fatal fault terminates; arithmetic itself is not banned in ERR.
 run_sash '
-exit 1
+fail 1
 ERR {
     - echo attempted
     int n=1
@@ -83,25 +83,25 @@ ERR {
     n=$(( n / zero ))
     - echo unseen
 }'
-[[ $rc = 2 && $out = attempted && -z $err && $rerr == *"division by zero"* ]]; chk errfail.12
+[[ $rc = 2 && $out = attempted && -z $err && $rerr == *"division by zero"* ]]; chk migratea.12
 
-run_sash 'exit 1; ERR { str v=good; - echo "${v:?stop}" }'
-[[ $rc = 1 && $out = good && -z $err ]]; chk errfail.13
+run_sash 'fail 1; ERR { str v=good; - echo "${v:?stop}" }'
+[[ $rc = 1 && $out = good && -z $err ]]; chk migratea.13
 
-run_sash 'v=good; exit 1; ERR { - echo "${v:?stop}" }'
-[[ $err == *SB5101* && $err == *'unhandled `:?` failure'* ]]; chk errfail.14
+run_sash 'v=good; fail 1; ERR { - echo "${v:?stop}" }'
+[[ $err == *SB5101* && $err == *'unhandled `:?` failure'* ]]; chk migratea.14
 
-run_sash 'exit 1; ERR { - /bin/true | - /bin/true }'
-[[ $err == *SB5101* && $err == *"pipeline construction"* ]]; chk errfail.15
+run_sash 'fail 1; ERR { - /bin/true | - /bin/true }'
+[[ $err == *SB5101* && $err == *"pipeline construction"* ]]; chk migratea.15
 
 run_sash '
-exit 1
+fail 1
 ERR {
     array pairs=(key value other)
     map values = @{pairs:?odd}
     - echo "${values[key]}"
 }'
-[[ $err == *SB5101* && $err == *"odd-length map conversion"* ]]; chk errfail.16
+[[ $err == *SB5101* && $err == *"odd-length map conversion"* ]]; chk migratea.16
 
 # A single-use call owns the acquisition through the caller's adjacent attest.
 DD128_VALUE=bad run_sash '
@@ -150,10 +150,10 @@ if /bin/true | readline v {
     exit 0
 } else {
     /bin/true
-    exit 1
+    fail 1
 }
 EXIT { echo "$v" }'
-[[ $err == *"signal checkpoint"* && $err == *"EXIT requires it"* ]]; chk sigguard.4
+[[ $err == *"signal checkpoint"* && $err == *"EXIT requires it"* ]]; chk migratea.17
 
 SASH_CFLAGS=--no-taint-cst run_sash '
 signal 10 EXIT
@@ -162,10 +162,10 @@ if /bin/true | readline v {
     exit 0
 } else {
     /bin/true
-    exit 1
+    fail 1
 }
 EXIT { echo "$v" }'
-[[ $err == *"tainted variable"* && $err == *"SSA taint backstop"* ]]; chk sigguard.5
+[[ $err == *"tainted variable"* && $err == *"SSA taint backstop"* ]]; chk migratea.18
 
 DD128_VALUE=bad run_sash '
 str v=initial
@@ -173,9 +173,9 @@ signal 10 EXIT
 signal 10 IGN
 /bin/true
 v=$(getenv DD128_VALUE)
-exit 1
+fail 1
 EXIT { echo "$v" }'
-[[ $rc = 1 && -z $out && -z $err ]]; chk sigguard.6
+[[ $rc = 1 && -z $out && -z $err ]]; chk migratea.19
 
 # Changing disposition does not erase a previously received EXIT request.
 run_sash '
@@ -184,9 +184,9 @@ signal 10 EXIT
 signal 10 IGN
 v=$(getenv DD128_VALUE)
 /bin/true
-exit 1
+fail 1
 EXIT { echo "$v" }'
-[[ $err == *"signal checkpoint"* && $err == *"EXIT requires it"* ]]; chk sigguard.7
+[[ $err == *"signal checkpoint"* && $err == *"EXIT requires it"* ]]; chk migratea.20
 
 run_sash '
 int parent=$$
@@ -204,11 +204,11 @@ run_sash_under '
 signal 10 EXIT
 /bin/echo bad | readline v
 echo "${v:!}"
-exit 1
+fail 1
 EXIT { int code=$?; echo "$code:completed" }
 ' strace -qq -o signal-read.trace -e trace=read -e inject=read:signal=SIGUSR1:when=1
 [[ $rc = 138 && $out = 138:completed && -z $err ]] &&
-    grep -q SIGUSR1 signal-read.trace; chk sigguard.9
+    grep -q SIGUSR1 signal-read.trace; chk migratea.21
 
 run_sash_under '
 signal 10 EXIT
@@ -216,141 +216,141 @@ if /bin/true | readline v {
     attest v [[ -n $v ]]
     exit 0
 } else {
-    exit 1
+    fail 1
 }
 EXIT { echo "$v" }
 ERR { - echo explicit }
 ' strace -qq -o signal-transfer.trace -e trace=read -e inject=read:signal=SIGUSR1:when=1
 [[ $rc = 1 && $out = explicit && -z $err ]] &&
-    grep -q SIGUSR1 signal-transfer.trace; chk sigguard.10
+    grep -q SIGUSR1 signal-transfer.trace; chk migratea.22
 
 # The independent SSA gate must not allow a late attest of inherited input.
 SASH_CFLAGS=--no-taint-cst run_sash '
 v=$(getenv DD128_VALUE)
-exit 1
+fail 1
 ERR {
     attest v [[ $v == allowed ]] || v=clean
     - echo "$v"
 }'
-[[ $err == *"cannot be attested without a fresh acquisition"* ]]; chk errentry.1
+[[ $err == *"cannot be attested without a fresh acquisition"* ]]; chk migratea.23
 
 SASH_CFLAGS=--no-taint-cst run_sash '
 v=$(getenv DD128_VALUE)
-exit 1
+fail 1
 ERR {
     v=allowed
     attest v [[ $v == allowed ]] || v=clean
     - echo "$v"
 }'
-[[ $err == *"cannot be attested without a fresh acquisition"* ]]; chk errentry.2
+[[ $err == *"cannot be attested without a fresh acquisition"* ]]; chk migratea.24
 
 DD128_VALUE=allowed SASH_CFLAGS=--no-taint-cst run_sash '
 v=$(getenv DD128_VALUE)
-exit 1
+fail 1
 ERR {
     v=$(getenv DD128_VALUE)
     attest v [[ $v == allowed ]] || v=clean
     - echo "$v"
 }'
-[[ $rc = 1 && $out = allowed && -z $err ]]; chk errentry.3
+[[ $rc = 1 && $out = allowed && -z $err ]]; chk migratea.25
 
 SASH_CFLAGS=--no-taint-cst run_sash '
 v=$(getenv DD128_VALUE)
-exit 1
+fail 1
 ERR {
     if [[ "$$" == impossible ]] { v=$(getenv DD128_VALUE) }
     attest v [[ $v == allowed ]] || v=clean
     - echo "$v"
 }'
-[[ $err == *"cannot be attested without a fresh acquisition"* ]]; chk errentry.4
+[[ $err == *"cannot be attested without a fresh acquisition"* ]]; chk migratea.26
 
 SASH_CFLAGS=--no-taint-cst run_sash '
 argv a
-exit 1
+fail 1
 ERR {
     if attest item in a [[ -n $item ]] { - echo done } else { unset a }
 }'
-[[ $err == *"cannot be attested without a fresh acquisition"* ]]; chk errentry.5
+[[ $err == *"cannot be attested without a fresh acquisition"* ]]; chk migratea.27
 
 SASH_CFLAGS=--no-taint-cst run_sash '
 fn check { if attest item in A [[ -n $item ]] { - echo done } else { unset A } }
 argv a
-exit 1
+fail 1
 ERR { check =a }'
-[[ $err == *"cannot be attested without a fresh acquisition"* ]]; chk errentry.6
+[[ $err == *"cannot be attested without a fresh acquisition"* ]]; chk migratea.28
 
 SASH_CFLAGS=--no-taint-cst run_sash '
 str v=initial
 signal 10 EXIT
 v=$(getenv DD128_VALUE)
 /bin/true
-exit 1
+fail 1
 EXIT {
     attest v [[ $v == allowed ]] || v=clean
     echo "$v"
 }'
-[[ $err == *"cannot be attested without a fresh acquisition"* ]]; chk errentry.7
+[[ $err == *"cannot be attested without a fresh acquisition"* ]]; chk migratea.29
 
 SASH_CFLAGS=--no-taint-cst run_sash '
 v=$(getenv DD128_VALUE)
-exit 1
+fail 1
 ERR { v=clean; - echo "$v" }'
-[[ $err == *"tainted variable"* && $err == *"SSA taint backstop"* ]]; chk errentry.8
+[[ $err == *"tainted variable"* && $err == *"SSA taint backstop"* ]]; chk migratea.30
 
 # Collection mutations invalidate count and nonempty proofs in ERR.
 run_sash '
-exit 1
+fail 1
 ERR {
    array a=(key value)
    unset a[1]
    map m = @{a:?odd}
    - echo "${m[key]}"
 }'
-[[ $err == *SB5101* && $err == *"odd-length map conversion"* ]]; chk errproof.1
+[[ $err == *SB5101* && $err == *"odd-length map conversion"* ]]; chk migratea.31
 
 run_sash '
-exit 1
+fail 1
 ERR {
    array a=(x)
    unset a[0]
    - /bin/echo @{a:?empty}
 }'
-[[ $err == *SB5101* && $err == *"empty-splat"* ]]; chk errproof.2
+[[ $err == *SB5101* && $err == *"empty-splat"* ]]; chk migratea.32
 
 run_sash '
-exit 1
+fail 1
 ERR {
    array a=(x)
    - match none "^x$" a
    - /bin/echo @{a:?empty}
 }'
-[[ $err == *SB5101* && $err == *"empty-splat"* ]]; chk errproof.3
+[[ $err == *SB5101* && $err == *"empty-splat"* ]]; chk migratea.33
 
 run_sash '
-exit 1
+fail 1
 ERR {
    v=$(arg 999 good)
    attest v [[ $v == good ]] || v=good
    - /bin/echo "$v"
 }'
-[[ $rc = 1 && $out = good && -z $err ]]; chk errproof.4
+[[ $rc = 1 && $out = good && -z $err ]]; chk migratea.34
 
-SASH_CFLAGS=--no-taint run_sash "exit 1; ERR {
+SASH_CFLAGS=--no-taint run_sash "fail 1; ERR {
    v=\$(arg 999 \$'x\\x00y')
    - /bin/echo \"\$v\"
 }"
-[[ $err == *SB5101* && $err == *"NUL-byte argv guard"* ]]; chk errproof.5
+[[ $err == *SB5101* && $err == *"NUL-byte argv guard"* ]]; chk migratea.35
 
 # Implicit argv iteration is bounded by the compiler's loop guard.
 run_sash '
-exit 1
+fail 1
 ERR {
    for v in $(argv 1) {
        attest v [[ $v == good ]] || v=good
        - /bin/echo "$v"
    }
 }' good
-[[ $rc = 1 && $out = good && -z $err ]]; chk errproof.6
+[[ $rc = 1 && $out = good && -z $err ]]; chk migratea.36
 
 # Failed capture setup never executes the body or completes the assignment.
 run_sash_under '
@@ -389,13 +389,13 @@ ERR { - echo "err:$phase:${v:!}" }
    grep -q 'EIO.*INJECTED' capture-seek.trace; chk errresource.3
 
 run_sash '
-exit 1
+fail 1
 ERR {
    array a=(good)
    a+=(also)
    - /bin/echo @{a:?empty}
 }'
-[[ $rc = 1 && $out = "good also" && -z $err ]]; chk errproof.7
+[[ $rc = 1 && $out = "good also" && -z $err ]]; chk migratea.37
 
 DD128_VALUE=bad run_sash '
 signal 10 EXIT
@@ -437,11 +437,11 @@ ERR { - echo unexpected }
 
 run_sash '
 signal 10 EXIT
-exit 7
+fail 7
 EXIT { echo unexpected }
 ERR { - echo first; - /bin/kill -USR1 $$; - echo "$(signum):last" }
 '
-[[ $rc = 7 && $out = $'first\n10:last' && -z $err ]]; chk sigguard.14
+[[ $rc = 7 && $out = $'first\n10:last' && -z $err ]]; chk migratea.38
 
 # Startup dispatch needs neither a working heap nor an initialized main frame.
 run_sash_under '
@@ -505,12 +505,12 @@ fn fill {
         (( n++ ))
     }
 }
-exit 7
+fail 7
 EXIT { echo wrong }
 ERR { - echo attempted; str report=$(fill); - echo "$report" }
 '
 [[ $rc = 1 && $out = attempted && -z $err &&
-   $rerr == *"out of memory"* ]]; chk errresource.8
+   $rerr == *"out of memory"* ]]; chk migratea.39
 
 # Declaration diagnostics must name the actual placement or migration rule.
 run_sash 'END { echo old }'
@@ -534,31 +534,31 @@ run_sash 'ERR { int n=5; - echo "${n:0:1}" }'
 [[ $rc != 0 && $err == *SB4030* && $err == *'substring of int variable'* ]]; chk handler128.5
 
 # Selection uses the full integer and the cause, not the final exit byte.
-run_sash 'exit 256
+run_sash 'fail 256
 EXIT { echo wrong }
 ERR { int code=$?; - echo "$code" }'
-[[ $rc = 0 && $out = 256 && -z $err && -z $rerr ]]; chk handler128.6
+[[ $rc = 0 && $out = 256 && -z $err && -z $rerr ]]; chk migratea.40
 
-run_sash 'exit 3
+run_sash 'fail 3
 EXIT { echo wrong }'
-[[ $rc = 3 && -z $out && -z $err && -z $rerr ]]; chk handler128.7
+[[ $rc = 3 && -z $out && -z $err && -z $rerr ]]; chk migratea.41
 
 run_sash '- /bin/false
 ERR { - echo wrong }'
 [[ $rc = 1 && -z $out && -z $err && -z $rerr ]]; chk handler128.8
 
-run_sash 'exit 3
+run_sash 'fail 3
 EXIT { echo wrong }
 ERR { - echo err; exit 0; - echo wrong }'
-[[ $rc = 0 && $out = err && -z $err && -z $rerr ]]; chk handler128.9
+[[ $rc = 0 && $out = err && -z $err && -z $rerr ]]; chk migratea.42
 
 run_sash 'EXIT { echo exit; exit 0; echo wrong }
 ERR { - echo wrong }'
 [[ $rc = 0 && $out = exit && -z $err && -z $rerr ]]; chk handler128.10
 
-run_sash 'EXIT { echo exit; exit 9; echo wrong }
+run_sash 'EXIT { echo exit; fail 9; echo wrong }
 ERR { int code=$?; - echo "err:$code" }'
-[[ $rc = 9 && $out = $'exit\nerr:9' && -z $err && -z $rerr ]]; chk handler128.11
+[[ $rc = 9 && $out = $'exit\nerr:9' && -z $err && -z $rerr ]]; chk migratea.43
 
 DD128_VALUE=bad run_sash '
 v=$(getenv DD128_VALUE)
@@ -570,10 +570,10 @@ EXIT { echo "$v" }'
 DD128_VALUE=allowed run_sash '
 v=$(getenv DD128_VALUE)
 attest v [[ $v == allowed ]]
-exit 1
+fail 1
 ERR { - echo "$v" }'
 [[ $rc != 0 && $err == *'ERR incoming `v` may be tainted'* &&
-   $err == *'inherited data requires `:!`'* ]]; chk handler128.13
+   $err == *'inherited data requires `:!`'* ]]; chk migratea.44
 
 DD128_VALUE=allowed run_sash '
 str v=initial
@@ -584,20 +584,20 @@ ERR { - echo "$v" }'
 run_sash '
 str v=clean
 fn unused { v=$(getenv DD128_VALUE); attest v [[ $v == allowed ]] }
-exit 1
+fail 1
 ERR { - echo "$v" }'
-[[ $rc = 1 && $out = clean && -z $err && -z $rerr ]]; chk handler128.15
+[[ $rc = 1 && $out = clean && -z $err && -z $rerr ]]; chk migratea.45
 
 # A false refresh path must not permit a late attest of inherited input.
 run_sash '
 v=$(getenv DD128_VALUE)
-exit 1
+fail 1
 ERR {
     if [[ "$$" == impossible ]] { v=$(getenv DD128_VALUE) }
     attest v [[ $v == allowed ]] || v=clean
     - echo "$v"
 }'
-[[ $rc != 0 && $err == *'ERR incoming `v` may be tainted'* ]]; chk handler128.16
+[[ $rc != 0 && $err == *'ERR incoming `v` may be tainted'* ]]; chk migratea.46
 
 # Heap-backed capture frames have no unrelated fixed nesting limit.
 _captures='fn cap0 { - echo value; : }'
@@ -605,9 +605,9 @@ for (( _depth=1; _depth<=65; _depth++ )); do
     _captures+=$'\n'"fn cap$_depth { str v=\$(cap$((_depth-1))); - echo \"\$v\"; : }"
 done
 run_sash "$_captures
-exit 1
+fail 1
 ERR { str result=\$(cap65); - echo \"\$result\" }"
-[[ $rc = 1 && $out = value && -z $err && -z $rerr ]]; chk errresource.9
+[[ $rc = 1 && $out = value && -z $err && -z $rerr ]]; chk migratea.47
 
 # A second allocation fault after failed startup terminates ERR once.
 run_sash_under '
@@ -632,41 +632,41 @@ ERR { str report=$(- echo cleanup; :); - echo "${pending:!}:$report" }
    $rerr == *"division by zero"* ]]; chk errresource.11
 
 run_sash 'pattern=$(getenv DD128_PATTERN)
-exit 1
+fail 1
 ERR { - match x "${pattern:!}" }'
-[[ $err == *SB5101* && $err == *"dynamic-regex"* ]]; chk errfail.17
+[[ $err == *SB5101* && $err == *"dynamic-regex"* ]]; chk migratea.48
 
-run_sash 'exit 1; ERR {
+run_sash 'fail 1; ERR {
     v=$(arg 999)
     attest v [[ $v == allowed ]] || v=clean
     - echo "$v"
 }'
-[[ $err == *SB5101* && $err == *"argv-bounds"* ]]; chk errfail.18
+[[ $err == *SB5101* && $err == *"argv-bounds"* ]]; chk migratea.49
 
-run_sash 'exit 1; ERR {
+run_sash 'fail 1; ERR {
     array a
     read a
     attest item in a [[ -n $item ]] || unset a
 }'
-[[ $err == *SB5101* && $err == *"bulk read"* ]]; chk errfail.19
+[[ $err == *SB5101* && $err == *"bulk read"* ]]; chk migratea.50
 
 run_sash 'fn acquire { - /bin/true }
-exit 1
+fail 1
 ERR {
     v=$(acquire)
     attest v [[ $v == allowed ]] || v=clean
 }'
-[[ $err == *SB5101* && $err == *"descriptor capture"* ]]; chk errfail.20
+[[ $err == *SB5101* && $err == *"descriptor capture"* ]]; chk migratea.51
 
-run_sash 'exit 1; ERR { exec /bin/true }'
-[[ $err == *SB5101* && $err == *"replacing-exec"* ]]; chk errfail.21
+run_sash 'fail 1; ERR { exec /bin/true }'
+[[ $err == *SB5101* && $err == *"replacing-exec"* ]]; chk migratea.52
 
-run_sash 'exit 1; ERR {
+run_sash 'fail 1; ERR {
     array pairs=(key value)
     map values = @{pairs:?empty}
     if match x "^x$" { - echo "${values[key]}" }
 }'
-[[ $rc = 1 && $out = value && -z $err && -z $rerr ]]; chk errproof.8
+[[ $rc = 1 && $out = value && -z $err && -z $rerr ]]; chk migratea.53
 
 run_sash '
 fn check {
@@ -674,9 +674,9 @@ fn check {
     if attest item in A [[ -n $item ]] { : } else { unset A }
 }
 argv a
-exit 1
+fail 1
 ERR { check =a }'
-[[ $rc != 0 && $err == *'ERR incoming `a` may be tainted'* ]]; chk handler128.17
+[[ $rc != 0 && $err == *'ERR incoming `a` may be tainted'* ]]; chk migratea.54
 
 # Deliver SIGUSR1 during the next registration, before the acquisition.
 DD128_VALUE=bad run_sash_under '

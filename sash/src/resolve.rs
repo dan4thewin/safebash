@@ -105,6 +105,7 @@ fn builtin_denotation(k: BuiltinCmd) -> Option<ArithDenotation> {
         | B::Test
         | B::Noop
         | B::Exit
+        | B::Fail
         | B::Exec
         | B::Cd
         | B::Close

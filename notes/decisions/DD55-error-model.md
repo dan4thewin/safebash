@@ -18,8 +18,8 @@ Children run neither handler.
 Both builtins are terminal operations, not returned statuses that `if`,
 `||` or `-` can consume to resume execution. An `exit` inside either handler
 terminates directly; a `fail` inside EXIT enters ERR, while a `fail` inside
-ERR terminates without re-entry. This 2026-11-06 revision is accepted but
-awaits `explicit-exit-and-fail` (journal 575).
+ERR terminates without re-entry. This 2026-11-06 revision was accepted in
+journal 575 and implemented in journal 576.
 
 EXIT is ordinary checked code: its uncaught failure enters ERR. ERR must
 catch or suppress every operational failure where it actually occurs;

@@ -196,6 +196,7 @@ fn is_statement_builtin(kind: BuiltinCmd) -> bool {
         | BuiltinCmd::Test
         | BuiltinCmd::Noop
         | BuiltinCmd::Exit
+        | BuiltinCmd::Fail
         | BuiltinCmd::Exec
         | BuiltinCmd::Cd
         | BuiltinCmd::Close

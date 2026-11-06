@@ -2145,7 +2145,7 @@ fn emit_command_body(
 ) {
     match kind {
         BuiltinCmd::Echo => emit_echo(e, args, checked, types),
-        BuiltinCmd::Exit => emit_exit(e, args, types),
+        BuiltinCmd::Exit | BuiltinCmd::Fail => emit_exit(e, *kind, args, types),
         BuiltinCmd::Noop => {
             emit_args_for_effects(e, args, types, "    ");
             writeln!(e.out, "    __exit_status = 0;").unwrap();
@@ -2407,7 +2407,7 @@ fn emit_exec_builtin(e: &mut Emit, args: &[SsaValue], types: &VarTypes) {
         "    sash_exec((const char* const*){argv}, sash_envp);"
     )
     .unwrap();
-    writeln!(e.out, "    sash_exit(127);").unwrap();
+    writeln!(e.out, "    sash_abort(127);").unwrap();
 }
 
 /// Runtime dispatch distinguishes signal termination from an explicit exit.
@@ -2723,15 +2723,25 @@ fn emit_echo(e: &mut Emit, args: &[SsaValue], checked: bool, types: &VarTypes) {
 /// suppressed failure exited 1 in the C backend and 0 in native.
 ///
 /// DD128 routes the full integer and enforces handler/child progression.
-fn emit_exit(e: &mut Emit, args: &[SsaValue], types: &VarTypes) {
+fn emit_exit(e: &mut Emit, kind: BuiltinCmd, args: &[SsaValue], types: &VarTypes) {
     match args.first() {
         Some(arg) => {
             let int_expr = lower_value_as_int(e, arg, types);
             writeln!(e.out, "    __exit_status = {};", int_expr).unwrap();
         }
-        None => writeln!(e.out, "    __exit_status = 0;").unwrap(),
+        None => writeln!(
+            e.out,
+            "    __exit_status = {};",
+            i64::from(kind == BuiltinCmd::Fail)
+        )
+        .unwrap(),
     }
-    writeln!(e.out, "    sash_exit(__exit_status);").unwrap();
+    let target = if kind == BuiltinCmd::Fail {
+        "sash_abort"
+    } else {
+        "sash_exit"
+    };
+    writeln!(e.out, "    {target}(__exit_status);").unwrap();
 }
 
 /// Mirrors codegen's terminator emission (codegen/entry.rs).
@@ -4296,7 +4306,7 @@ fn emit_pipeline_child_failure(e: &mut Emit, failed: &str, report: bool, path: &
     if report {
         writeln!(e.out, "    sash_emsg({path}, {len}, 0, 0);").unwrap();
     }
-    writeln!(e.out, "    sash_exit(1); }}").unwrap();
+    writeln!(e.out, "    sash_abort(1); }}").unwrap();
 }
 
 /// Per-stage external exec. Same shape as emit_exec but uses

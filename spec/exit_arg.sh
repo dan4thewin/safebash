@@ -44,8 +44,8 @@ run_sash 'exit'
 run_sash 'int code=300
 ERR { int c=$?
 - /bin/echo "ERR c=$c" }
-exit $code'
-[[ $rc = 44 && $out == *"ERR c=300"* && -z $err ]]; chk h128.89.8
+fail $code'
+[[ $rc = 44 && $out == *"ERR c=300"* && -z $err ]]; chk migratea.56
 
 # 89.9 a non-numeric exit status is rejected (SB4030). It was lowered as an
 # integer constant with a fallback of 0, so `exit 1x` reported SUCCESS for a

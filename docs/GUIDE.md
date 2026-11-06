@@ -802,8 +802,8 @@ integer-sink rules, including `fail 0`; only the final process status is
 narrowed. Neither operation returns a catchable status. An `exit` inside
 either handler terminates directly; `fail` can transfer EXIT to ERR, but
 terminates directly inside ERR. This 2026-11-06 routing revision and the
-new builtin await `explicit-exit-and-fail` (journal 575); the handler
-infrastructure below is already implemented.
+new builtin are implemented in journal 576, following DG's journal 575
+decision.
 
 The runtime marks progress before calling a handler. EXIT may fail into
 ERR, but neither re-enters and ERR never returns to EXIT. Children run

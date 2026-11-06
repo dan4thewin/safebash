@@ -9,7 +9,7 @@ function — is a valid `exit` argument**, with no compile-time range restrictio
 
 DG extended the same integer domain to `fail [N]` on 2026-11-06 (DD128,
 journal 575). `fail` defaults to 1 and permits zero. The explicit-termination
-revision is accepted but awaits implementation in `explicit-exit-and-fail`.
+revision is implemented in journal 576 (`explicit-exit-and-fail`).
 
 ## The rule
 

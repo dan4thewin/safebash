@@ -83,14 +83,14 @@ impl Graph {
         let body = program.block(block);
         match live_insts(body).get(index) {
             Some(SsaInst::Command {
-                kind: BuiltinCmd::Exit,
+                kind: BuiltinCmd::Exit | BuiltinCmd::Fail,
                 ..
             }) => Vec::new(),
             Some(_) => vec![self.points[&(block, index + 1)]],
             None if matches!(
                 live_insts(body).last(),
                 Some(SsaInst::Command {
-                    kind: BuiltinCmd::Exit,
+                    kind: BuiltinCmd::Exit | BuiltinCmd::Fail,
                     ..
                 })
             ) =>

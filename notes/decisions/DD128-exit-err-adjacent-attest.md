@@ -14,9 +14,8 @@ runtime dispatch and shared signal protection, replacing END.
 
 On 2026-11-06 DG separated explicit orderly termination from explicit failure:
 `exit [N]` selects EXIT for any integer; `fail [N]` selects ERR, including
-`fail 0`. This revision is accepted and authorized for implementation in
-`explicit-exit-and-fail`; journal 575 records the decision. It is not yet
-implemented by the journal 569 compiler.
+`fail 0`. Journal 575 records the decision; journal 576 implements it in
+`explicit-exit-and-fail`, with independent source/SSA checks and native/C gates.
 
 DG supplied the design principles, made the decisions and authorized
 implementation. The AI assembled the writeup and implemented those decisions.

@@ -3747,6 +3747,7 @@ const BUILTINS: &[&str] = &[
     // Control flow
     ":",
     "exit",
+    "fail",
     "return",
     "break",
     "continue",
@@ -5044,6 +5045,7 @@ fn command_args_elidable(name: &str) -> bool {
         | B::Close
         | B::Signal
         | B::Exit
+        | B::Fail
         | B::Return
         | B::Break
         | B::Continue => false,
@@ -6455,7 +6457,7 @@ pub(crate) fn block_falls_through(stmts: &[Statement]) -> bool {
     match stmts.last().map(|s| &s.kind) {
         Some(StmtKind::Command(c)) => !matches!(
             expr_literal_str(&c.name),
-            "exit" | "return" | "break" | "continue"
+            "exit" | "fail" | "return" | "break" | "continue"
         ),
         Some(StmtKind::Group(g)) => block_falls_through(&g.body),
         _ => true,
@@ -10254,12 +10256,12 @@ fn taint_call(
     diags: &mut Vec<Diagnostic>,
 ) {
     match name {
-        "exit" if cx.terminal_live && exit_may_be_zero(c) => {
+        "exit" if cx.terminal_live => {
             let mut state = tainted.clone();
             state.retain(|name| cx.interface.contains(name));
             cx.body.terminals.borrow_mut().merge_entry(TerminalEntry {
                 span,
-                via: "explicit zero exit".to_string(),
+                via: "explicit exit".to_string(),
                 state,
             });
         }
@@ -10270,18 +10272,6 @@ fn taint_call(
         }
         _ => {}
     }
-}
-
-fn exit_may_be_zero(c: &Command) -> bool {
-    let Some(arg) = c.args.first() else {
-        return true;
-    };
-    let value = match &arg.kind {
-        ExprKind::Literal(text) => text.parse::<i64>().ok(),
-        ExprKind::Arithmetic(value) => const_eval_arith(value),
-        _ => None,
-    };
-    value.is_none_or(|value| value == 0)
 }
 
 fn is_self_tail_return(c: &Command, cx: &SlotCx) -> bool {
@@ -12248,7 +12238,19 @@ fn command_name_arity_diags(c: &crate::ir::Command, span: Span) -> Vec<Diagnosti
     out.extend(match_arity_diag(name, c.args.len(), span));
     out.extend(retired_bulk_read_diag(name, span));
     out.extend(wait_arity_diag(name, c.args.len(), span));
+    out.extend(termination_arity_diag(name, c.args.len(), span));
     out
+}
+
+fn termination_arity_diag(name: &str, got: usize, span: Span) -> Option<Diagnostic> {
+    if !matches!(name, "exit" | "fail") || got <= 1 {
+        return None;
+    }
+    Some(Diagnostic::error_span(
+        span,
+        "SB4045",
+        format!("`{name}` expects at most one integer status but got {got} arguments"),
+    ))
 }
 
 /// DD#126: `- wait` or `- wait PID`, and nothing else.

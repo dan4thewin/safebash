@@ -304,14 +304,13 @@ impl TerminalFlow {
 
     fn explicit_exit(&self, inst: &SsaInst, result: &mut TerminalStates) -> bool {
         let SsaInst::Command {
-            kind: BuiltinCmd::Exit,
-            args,
+            kind: kind @ (BuiltinCmd::Exit | BuiltinCmd::Fail),
             ..
         } = inst
         else {
             return false;
         };
-        if exit_may_be_zero(args) {
+        if *kind == BuiltinCmd::Exit {
             result.exits.extend(self.tainted.iter().cloned());
         }
         true
@@ -421,14 +420,6 @@ fn terminal_inst_span(
         *origin = *next;
     }
     origin.map_or(crate::ir::Span::new(1, 1), |id| program.origins[id].span)
-}
-
-fn exit_may_be_zero(args: &[SsaValue]) -> bool {
-    match args.first() {
-        None => true,
-        Some(SsaValue::Literal(value)) => value.parse::<i64>().is_ok_and(|value| value == 0),
-        Some(_) => true,
-    }
 }
 
 fn update_global_state(
@@ -598,7 +589,7 @@ fn collect_diverging_blocks(
             matches!(
                 b.last_operation(),
                 Some(SsaInst::Command {
-                    kind: crate::ssa::BuiltinCmd::Exit,
+                    kind: crate::ssa::BuiltinCmd::Exit | crate::ssa::BuiltinCmd::Fail,
                     ..
                 })
             )

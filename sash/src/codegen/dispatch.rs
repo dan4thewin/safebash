@@ -297,7 +297,9 @@ impl SsaInst {
             }
             BuiltinCmd::Noop => self.emit_noop(args, redirects, builder, module, ctx),
             BuiltinCmd::Match => self.emit_match(args, builder, module, ctx),
-            BuiltinCmd::Exit => return self.emit_exit(args, builder, module, ctx),
+            BuiltinCmd::Exit | BuiltinCmd::Fail => {
+                return self.emit_exit(*kind, args, builder, module, ctx)
+            }
             BuiltinCmd::Exec => return self.emit_exec(name, args, redirects, builder, module, ctx),
             BuiltinCmd::Cd => {
                 return super::inst_handlers::handle_cd(args, *checked, builder, module, ctx)
@@ -1046,6 +1048,7 @@ impl SsaInst {
 
     fn emit_exit(
         &self,
+        kind: BuiltinCmd,
         args: &[SsaValue],
         builder: &mut FunctionBuilder,
         module: &mut ObjectModule,
@@ -1053,11 +1056,7 @@ impl SsaInst {
     ) -> bool {
         let externs = ctx.externs;
         let exit_status_var = ctx.exit_status_var;
-        // exit CODE — evaluate the argument as an integer. DD#89: ANY int
-        // value / variable / return is a valid `exit` argument (not just a
-        // literal). An out-of-range value is carried as a full i64 (readable in
-        // the selected handler via `$?`) and truncated only at the final
-        // `exit_group`. No argument → 0.
+        // DD#89/#128: preserve the full integer until the process boundary.
         let code_val = match args.first() {
             Some(arg) => super::values::lower_value_as_int(
                 arg,
@@ -1068,9 +1067,16 @@ impl SsaInst {
                 externs,
                 exit_status_var,
             ),
-            None => builder.ins().iconst(I64, 0),
+            None => builder
+                .ins()
+                .iconst(I64, i64::from(kind == BuiltinCmd::Fail)),
         };
-        let exit_ref = module.declare_func_in_func(externs.exit, builder.func);
+        let target = if kind == BuiltinCmd::Fail {
+            externs.abort
+        } else {
+            externs.exit
+        };
+        let exit_ref = module.declare_func_in_func(target, builder.func);
         builder.ins().call(exit_ref, &[code_val]);
         builder
             .ins()
@@ -1272,7 +1278,7 @@ fn finalize_exec(
     let exec_ref = module.declare_func_in_func(externs.exec, builder.func);
     builder.ins().call(exec_ref, &[argv_addr, envp_val]);
     let code = builder.ins().iconst(I64, 127);
-    let exit_ref = module.declare_func_in_func(externs.exit, builder.func);
+    let exit_ref = module.declare_func_in_func(externs.abort, builder.func);
     builder.ins().call(exit_ref, &[code]);
     builder
         .ins()

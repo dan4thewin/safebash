@@ -798,9 +798,9 @@ rm -f finished
 run_sash 'ERR { - echo "end:$(status)"; - /bin/cat finished }
 /bin/sh -c "echo record; sleep 0.05; echo done > finished" | while readline v {
   attest v [[ -n $v ]]
-  exit 23
+  fail 23
 }'
-[[ $rc = 23 && $out = $'end:23\ndone' && -z $rerr ]]; chk h128.pipeown.23
+[[ $rc = 23 && $out = $'end:23\ndone' && -z $rerr ]]; chk migratea.57
 
 rm -f finished
 run_sash_under '/bin/sh -c "echo record; sleep 0.05; echo done > finished" | while readline v {

@@ -3809,26 +3809,26 @@ echo $((n + 1))'
 [[ $rc != 0 && -z $out && $err == *':2:7: error [SB4076]'* \
    && $err == *"binds the int that function 'count' returns"* ]]; chk supval.5
 
-SASH_CFLAGS=--no-taint run_sash 'fn fail { echo token; /bin/false }
+SASH_CFLAGS=--no-taint run_sash 'fn boom { echo token; /bin/false }
 fn use { echo "$1" }
-str x=$(- use $(fail))
+str x=$(- use $(boom))
 echo "[$x]"'
 [[ $rc != 0 && -z $out && $err == *':3:7: error [SB4076]'* \
-   && $err == *"function 'use' returns nothing"* ]]; chk supval.6
+   && $err == *"function 'use' returns nothing"* ]]; chk migratea.58
 
 # `-` discards only its own command's status, never that of a capture lifted
 # from the command's operands (DD#55 2026-10-30), so fail's /bin/false aborts.
 # supval.7, .8 and .18-.21 printed fail's output before that.
 # Bypass taint only to reach these status/lowering checks (DD#127).
-SASH_CFLAGS=--no-taint run_sash 'fn fail { echo token; /bin/false }
-str x=$(- toupper $(fail))
+SASH_CFLAGS=--no-taint run_sash 'fn boom { echo token; /bin/false }
+str x=$(- toupper $(boom))
 echo "[$x]"'
-[[ $rc = 1 && -z $out && -z $err && $rerr == *'/bin/false: command failed (exit 1)'* ]]; chk supval.7
+[[ $rc = 1 && -z $out && -z $err && $rerr == *'/bin/false: command failed (exit 1)'* ]]; chk migratea.59
 
-SASH_CFLAGS=--no-taint run_sash 'fn fail { echo token; /bin/false }
-str x=$(- echo $(fail))
+SASH_CFLAGS=--no-taint run_sash 'fn boom { echo token; /bin/false }
+str x=$(- echo $(boom))
 echo "[$x]"'
-[[ $rc = 1 && -z $out && -z $err && $rerr == *'/bin/false: command failed (exit 1)'* ]]; chk supval.8
+[[ $rc = 1 && -z $out && -z $err && $rerr == *'/bin/false: command failed (exit 1)'* ]]; chk migratea.60
 
 run_sash 'fn descend -> int {
 int n=$(($1))
@@ -3916,25 +3916,25 @@ echo after'
 [[ $rc != 0 && -z $out && $err == *':2:1: error [SB4076]'* \
    && $err == *"function 'speak' returns nothing"* ]]; chk supval.17
 
-SASH_CFLAGS=--no-taint run_sash 'fn fail { echo token; /bin/false }
-str x=$(- basename $(fail))
+SASH_CFLAGS=--no-taint run_sash 'fn boom { echo token; /bin/false }
+str x=$(- basename $(boom))
 echo "$x"'
-[[ $rc = 1 && -z $out && -z $err && $rerr == *'/bin/false: command failed (exit 1)'* ]]; chk supval.18
+[[ $rc = 1 && -z $out && -z $err && $rerr == *'/bin/false: command failed (exit 1)'* ]]; chk migratea.61
 
-SASH_CFLAGS=--no-taint run_sash 'fn fail { echo token; /bin/false }
-int n=$(- strlen $(fail))
+SASH_CFLAGS=--no-taint run_sash 'fn boom { echo token; /bin/false }
+int n=$(- strlen $(boom))
 echo "$n"'
-[[ $rc = 1 && -z $out && -z $err && $rerr == *'/bin/false: command failed (exit 1)'* ]]; chk supval.19
+[[ $rc = 1 && -z $out && -z $err && $rerr == *'/bin/false: command failed (exit 1)'* ]]; chk migratea.62
 
-SASH_CFLAGS=--no-taint run_sash 'fn fail { echo token; /bin/false }
-str x=$(- /bin/echo $(fail))
+SASH_CFLAGS=--no-taint run_sash 'fn boom { echo token; /bin/false }
+str x=$(- /bin/echo $(boom))
 echo "[$x]"'
-[[ $rc = 1 && -z $out && -z $err && $rerr == *'/bin/false: command failed (exit 1)'* ]]; chk supval.20
+[[ $rc = 1 && -z $out && -z $err && $rerr == *'/bin/false: command failed (exit 1)'* ]]; chk migratea.63
 
-SASH_CFLAGS=--no-taint run_sash 'fn fail { if (( 1 )) { /bin/false }; echo token }
-- /bin/echo $(fail)
+SASH_CFLAGS=--no-taint run_sash 'fn boom { if (( 1 )) { /bin/false }; echo token }
+- /bin/echo $(boom)
 echo after'
-[[ $rc = 1 && -z $out && -z $err && $rerr == *'/bin/false: command failed (exit 1)'* ]]; chk supval.21
+[[ $rc = 1 && -z $out && -z $err && $rerr == *'/bin/false: command failed (exit 1)'* ]]; chk migratea.64
 
 SASH_CFLAGS=--no-taint run_sash 'fn speak { if (( 1 )) { /bin/false }; echo token }
 str x=$(- speak 2>&1)

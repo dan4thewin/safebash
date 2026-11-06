@@ -1408,7 +1408,7 @@ fn check_test_operand(
 /// default in slot 1, which is left alone.
 fn int_sink_slots(name: &str) -> Option<usize> {
     match name {
-        "exit" | "wait" | "arg" => Some(1),
+        "exit" | "fail" | "wait" | "arg" => Some(1),
         _ => None,
     }
 }
@@ -1456,7 +1456,7 @@ fn int_sink_message(name: &str, arg: &Expr) -> String {
 
 fn int_sink_role(name: &str) -> &'static str {
     match name {
-        "exit" => "an exit status",
+        "exit" | "fail" => "an exit status",
         "wait" => "a process id",
         _ => "a positional index",
     }

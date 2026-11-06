@@ -1650,8 +1650,8 @@ nothing. Shared signal planning covers explicit and backend-emitted polls,
 deferring EXIT dispatch through legal acquisition/attest resolution without
 deferring ordinary failure or explicit exit/fail. DD#128's accepted
 2026-11-06 revision makes `exit [N]` orderly for every status and adds
-`fail [N]` for ERR (default 1, zero allowed); implementation is tracked in
-`explicit-exit-and-fail` until that task closes.
+`fail [N]` for ERR (default 1, zero allowed); journal 576 implements
+`explicit-exit-and-fail`.
 
 Env vars ($HOME, $PATH, etc.) are NOT special — they're just
 `$(getenv NAME)`, which is tainted. The validator (SB5018) rejects

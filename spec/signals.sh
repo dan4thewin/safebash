@@ -129,8 +129,8 @@ run_sash 'ERR { - /bin/echo "s=$?" }
 [[ $rc != 0 && $out == *"s=1"* && -z $err ]]; chk h128.56.30
 
 run_sash 'ERR { - /bin/echo "s=$?" }
-exit 5'
-[[ $rc = 5 && $out == *"s=5"* && -z $err ]]; chk h128.56.31
+fail 5'
+[[ $rc = 5 && $out == *"s=5"* && -z $err ]]; chk migratea.55
 
 # 56.34 DD#89: a bare `exit` is `exit 0`, NOT "keep the previous status". The c
 # backend left __exit_status untouched, so a bare exit after a `-`-suppressed

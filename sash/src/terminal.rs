@@ -75,7 +75,7 @@ fn is_exit(inst: &SsaInst) -> bool {
     matches!(
         inst,
         SsaInst::Command {
-            kind: BuiltinCmd::Exit,
+            kind: BuiltinCmd::Exit | BuiltinCmd::Fail,
             ..
         }
     )
@@ -709,6 +709,7 @@ fn command_failures(
         }
         BuiltinCmd::Noop
         | BuiltinCmd::Exit
+        | BuiltinCmd::Fail
         | BuiltinCmd::NegateTestResult
         | BuiltinCmd::SetTestFromStatus
         | BuiltinCmd::SetTestFromPipe

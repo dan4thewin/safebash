@@ -448,11 +448,7 @@ pub extern "C" fn sash_shutdown(status: i64) -> ! {
 
 #[no_mangle]
 pub extern "C" fn sash_exit(status: i64) -> ! {
-    if status == 0 {
-        sash_finish(status)
-    } else {
-        sash_abort(status)
-    }
+    sash_finish(status)
 }
 
 #[no_mangle]
