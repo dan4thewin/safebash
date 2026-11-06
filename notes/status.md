@@ -1,4 +1,15 @@
-## STATUS (2026-11-06, latest) — Explicit termination and return contracts shipped
+## STATUS (2026-11-06, latest) - Direct builtin stderr output backlogged
+
+DG identified unnecessary descriptor backup/restore behind SB5101 for
+`echo ... >&2` in ERR. The open P2 task
+`bug-builtin-stderr-backup-restore` covers direct output destinations for
+echo/write in both backends, without weakening ERR's write-failure rules
+or changing other redirect semantics. Journal 578 records the finding.
+
+This is backlog recording only. Compiler/runtime/spec code and journal
+577's accepted gate remain unchanged; implementation is pending.
+
+## STATUS (2026-11-06) — Explicit termination and return contracts shipped
 
 Both authorized units on `exit-fail-return-kinds` are implemented and
 verified. Journal 576 records explicit exit/fail (commit 0d0a8210);
