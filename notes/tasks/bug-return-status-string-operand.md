@@ -1,19 +1,34 @@
 ---
-title: "Bug: `return` is not an int sink — a string operand silently returns 0 (a literal ICEs native), though DD#89 records `return $s` as SB4030"
+title: "Require explicit arithmetic for return dispositions and finish operand/producer parsing"
 status: open
 priority: P1
 kind: bug
-depends: []
+depends: [bug-expr-type-int-disposition]
 gates:
   - "rt1, rt2, rt3, rt4, rt5, r6, r7 and r8 are SB4030 in both backends, with no ICE, and the message names a return status (not `int_sink_role`'s fallback, \"a positional index\")"
   - "r4 `return -1` compiles and returns -1, as `return $(( -1 ))` does (r9) — met by F1+F4 (journal 537), with a2 and a9"
   - "a4, a5 and s2 (in `r4/`) are SB4030 with a return-status message, as `exit`'s `r4/e1` and `r4/e2` are, and not SB5011 \"command not found\""
   - "a6, a7, a10, a11 and `fname/r1` are read as DG's ruling in bug-function-name-shadows-command-path implies"
   - "the controls are unchanged: 74.55, 74.56's first half, rt10, r2, r3, 84.46 (SB5046)"
-  - "74.56's second half (`return \"5\"`) and 74.57-74.61 follow DG's answer to the question below"
+  - "string-valued return dispositions are SB4030 outside explicit arithmetic; migrate 74.57-74.61 to explicit $(( )) spellings at fresh IDs without weakening their assertions"
+  - "already-integer dispositions retain their type and remain valid return operands; the :? typing prerequisite prevents false rejection"
   - "native and C agree on a non-numeric literal in an int position: neither silently reads it as 0"
-  - "a DD#89 addendum replaces the false `return $s` row; a spec pins each row in both modes"
+  - "DD89's accepted explicit-conversion rule is enforced and focused specs pin each repaired case in both modes; its historical return-row attribution is already corrected"
 ---
+
+## Decision, 2026-11-06
+
+DG chose **"require explicit"** (DD89, journal 579). `return` is not an
+exception to the other integer sinks: a string-valued disposition must
+be inside explicit arithmetic, such as `return $(( ${s:-7} ))` or
+`return $(( ${s:?bad} ))`. The rule covers status and integer results.
+Neither widening implicit conversion everywhere nor retaining a
+return-only exception was selected.
+
+Already-integer dispositions keep their type. Fix
+`bug-expr-type-int-disposition` before removing the exception, or in the
+same coherent change, so the stronger guard does not falsely reject them.
+This records policy only; implementation and the remaining gates are open.
 
 ## Found
 
@@ -25,10 +40,10 @@ strings are SB4030, not bare returns or implicit integers. `retkind.22`,
 turns all three red in both backends. `migrateb.6` preserves the old
 `74.56` output assertion using an explicit disposition-bearing arithmetic
 conversion. DD89's incorrect journal-411 attribution is corrected.
-Existing `74.57`-`74.61` return dispositions are unchanged: this does not
-choose among the policy options below. Numeral/producer parsing and the
-remaining gates stay open. The observations and cause analysis below
-describe the pre-fix compiler.
+Existing `74.57`-`74.61` return dispositions are still unchanged in code;
+the later ruling above now requires their explicit-arithmetic migration.
+Numeral/producer parsing and the remaining gates stay open. The observations
+and cause analysis below describe the pre-fix compiler.
 
 2026-10-27, while porting F1+F4 (journal 537). It is **pre-existing**: every
 row but r4 is the same at `8e28c61`, with F1+F4, and on `taint-walker-redesign`
@@ -128,7 +143,7 @@ out. The `undispositioned-string-to-int-sites` task (done) repeats the claim
   shared as `ir::is_int_sink_literal`. What remains is a numeral beyond i64,
   which still heads a producer (a4, a5, s2).
 
-## What is settled, and what is not
+## Settled operand rules
 
 Settled:
 - DD#89's Resolution is DG's ruling: `return $s` is SB4030 ("settled it the
@@ -140,42 +155,36 @@ Settled:
   (r4). 74.56 pins `return "5"` as a legal "quoted … status VALUE form", but
   it was added a day before `a875d58` (4578aed, 2026-09-25). The later call
   reasons from the whole language ("Quoting is the int->string conversion
-  everywhere else in sash"), so 74.56's second half flips (keep the id, the
-  F14 precedent).
+  everywhere else in sash"). Journal 577 migrated that fixture to
+  `migrateb.6`, preserving its output through explicit arithmetic.
 
-Question for DG: **the disposition forms.** `return ${s:-7}` converts with
-DD#77's arithmetic trigger (journal 411; 74.57-74.61): `abc` is not an
-integer, so the default applies (r1). No other int position converts a
-string-typed disposition outside `$(( ))`:
+**The disposition forms are now settled too.** The current compiler still
+converts `return ${s:-7}` with DD#77's arithmetic trigger (journal 411;
+74.57-74.61): `abc` is not an integer, so the default applies (r1). This is
+the exception to remove. Other integer sinks already require explicit
+arithmetic:
 - `exit ${s:-7}` and `exit ${s:?m}` are SB4030 (e2, e3). That comes from
   `a875d58`'s predicate; neither its message nor any spec mentions a bare
   disposition operand (its message shows `exit $(( ${s:?bad} ))`).
 - `int m=${s:-7}`, and `m=${s:-7}` on an int `m`, are SB4030 advising
   `$(( ${VAR:-0} ))` (x4, x6); `int m=$(( ${s:-7} ))` prints `[7]` (x5).
 
-The options:
-- (a) **One rule (recommended).** `return` joins the sink with the same
-  predicate, so `return ${s:-7}` is SB4030, and 74.57-74.61 are re-pinned
-  with the `$(( ))` spelling. Their assertions carry over (r2, r3). `return`
-  then takes the spelling the other int sinks and int assignment take, which
-  is DG's "prioritize sash self-consistency". Two consequences:
-  - `return ${n:?m}` on an int `n` works today (x3, `[5]`). It would become
-    the false SB4030 that `exit ${n:?m}` already is (x1), so
-    `bug-expr-type-int-disposition` lands first.
-  - The int-disposition arms (native `lower_value_as_int`'s, C's
-    `lower_disposition_as_int_c`) may lose their last producer. Enumerate
-    their producers, then apply the cold-arm rule.
-- (b) **Loosen every int position.** `exit`/`wait`/`arg` and int assignment
-  accept a string-typed disposition and convert it as `return` does. DD#89's
-  amendment called `return ${s:?bad}` "the spelling SB4030 itself
-  recommends"; today the sink's and the assignment checker's SB4030 advice
-  both say `$(( … ))`.
-- (c) **`return` only.** Reject the undispositioned forms but keep `return`'s
-  dispositions. `return` stays the one exception.
+Under the chosen rule, `return` uses the same operand predicate as the
+other sinks. Re-pin 74.57-74.61 with explicit arithmetic and fresh IDs,
+preserving their assertions (r2, r3); add refusal cases for the bare
+string-valued forms. `return ${n:?m}` on an int `n` must remain valid,
+which is why the expression-typing repair is a prerequisite.
+
+The int-disposition lowering arms may lose producers when the exception
+is removed. Enumerate their actual construction sites before applying the
+cold-arm rule; do not assume arithmetic or integer-valued dispositions
+have disappeared with the rejected string form.
 
 ## Fix direction
 
-Add `return` to `int_sink_slots` with its own `int_sink_role` arm. Then widen
+Finish the return operand guard installed by journal 577: remove its
+string-disposition exception after fixing the integer `:?` classification,
+while retaining the return-specific diagnostic role. Then widen
 `parse_return`'s value test from "the sink takes it" to "it is numeral-shaped"
 (an optional sign, then digits), so the sink rejects an out-of-range numeral
 with SB4030 as it does for `exit` (a4, a5, s2). This cannot be done before
@@ -184,6 +193,6 @@ ICE again, as it did at `8e28c61`. Whether a sign-led non-numeral (`-x`) heads
 a producer or is a value turns on which function names are legal
 (`bug-function-name-shadows-command-path`). Make C refuse a non-numeric
 literal the way native does, through one shared helper. Check first whether
-`SsaValue::Expr` reaches that arm with non-numeric text. Then write a DD#89
-addendum that corrects the row and records the disposition ruling, and a spec
-per row in both modes.
+`SsaValue::Expr` reaches that arm with non-numeric text. DD89 now records the
+disposition ruling and corrects the historical attribution; the remaining
+repair still needs focused specs in both modes.

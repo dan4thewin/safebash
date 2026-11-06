@@ -1,4 +1,19 @@
-## STATUS (2026-11-06, latest) - Direct builtin stderr output backlogged
+## STATUS (2026-11-06, latest) - Explicit return conversion settled
+
+DG requires explicit arithmetic for string-valued dispositions at integer
+sinks, including return operands. Use `return $(( ${s:-7} ))`, not
+`return ${s:-7}`. Already-integer dispositions retain their type.
+DD89/DD74 and GUIDE record the contract; journal 579 records the ruling.
+
+`bug-return-status-string-operand` remains open and now explicitly depends
+on `bug-expr-type-int-disposition`. Neither fix is implemented by this
+recording, and journal 577's accepted gate is unchanged.
+
+Next ruling: retain capture hoisting or evaluate words left to right
+(`q-capture-hoisting-order`). Its global-mutation example still prints
+`new X new` on the current compiler; the left-to-right result is `old X new`.
+
+## STATUS (2026-11-06) - Direct builtin stderr output backlogged
 
 DG identified unnecessary descriptor backup/restore behind SB5101 for
 `echo ... >&2` in ERR. The open P2 task

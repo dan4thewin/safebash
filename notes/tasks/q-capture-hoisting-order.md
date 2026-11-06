@@ -9,6 +9,12 @@ gates:
   - "under either ruling the two `$?` rows below are fixed (they contradict DD#55 whichever option is chosen), with specs in both modes"
 ---
 
+Rechecked 2026-11-06 at `51af4312`: the first global-mutation example below
+still compiles and prints `new X new` with the ordinary native compiler.
+The `$?` examples were not re-probed in this check. This remains an open
+evaluation-order decision, separate from the explicit-conversion ruling
+recorded in journal 579.
+
 Every `$( )` in a statement runs before the statement's other reads, so the
 order of the words in the text is not the order they are evaluated in. This
 is batch-531's "Capture-hoisting order" (`batch-531-findings.md`, section 12).

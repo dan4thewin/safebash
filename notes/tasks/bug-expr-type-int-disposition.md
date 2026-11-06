@@ -45,9 +45,13 @@ The arm's `"-"` alternative is unreachable from source: `${n-0}` and
 
 ## Fix
 
-Recommendation (made during D1, not yet ruled): add `":?"` to that arm.
+The type-preservation requirement is settled by the existing subject-type
+rule and DG's 2026-11-06 explicit-conversion ruling (DD89, journal 579).
+Add `":?"` to that arm.
 `${n:?msg}` yields `$n` or aborts, so its type is n's type, as `${n:-…}`'s
-already is.
+already is. This is a prerequisite for removing the return operand guard's
+string-disposition exception, not another language-policy question.
+Implementation remains pending.
 
 ## Related
 
@@ -58,8 +62,9 @@ already is.
   `exit ${n:?bad}` is a false SB4030, "that operand is string-typed", in both
   backends, while `exit ${n:-0}` exits 5. Found 2026-10-27 in the F1+F4 port
   (`files/port-f1f4-probes.tar.gz`, `rt3/` x1, x2). The same arm fixes it.
-  `bug-return-status-string-operand` depends on this task if DG makes
-  `return` an int sink: `return ${n:?bad}` returns 5 today (x3).
+  `bug-return-status-string-operand` now depends on this repair under DG's
+  explicit-conversion ruling: `return ${n:?bad}` returns 5 today (x3)
+  and must not become a false rejection.
 
 Found during the batch-531 port (step D1, probing the operand spellings the
 new rule must reach). Filed under DG's rule for the port that questions and

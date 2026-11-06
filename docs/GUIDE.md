@@ -462,6 +462,14 @@ walker. Cross-type assignment without conversion is a compile-time error.
 - `fn name -> int { return 5; }` — an int-returning function
 - `$#`, `$(status)` (sugar: `$?`), `$((...))` — intrinsically int
 
+String-valued dispositions require explicit arithmetic conversion at
+integer sinks, including return operands: `return $(( ${s:-7} ))`, not
+`return ${s:-7}` (DD89, DG's 2026-11-06 ruling). Already-integer dispositions
+keep their type. The return-only conversion exception and the separate
+integer `:?` typing bug remain pending implementation in
+`bug-return-status-string-operand` and `bug-expr-type-int-disposition`;
+the accepted rule is not yet fully enforced.
+
 Top-level and cleanup statements establish global types before function
 bodies are checked. Forward references and loop-carried copies converge
 without a fixed iteration cap; inferred seeds are distinct from bindings

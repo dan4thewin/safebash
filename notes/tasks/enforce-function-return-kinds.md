@@ -45,8 +45,9 @@ is not a bare return. Operand validity still belongs to the int-sink rules.
 Apply the body contract to anonymous capture bodies as required by DD86,
 without deciding their separate caller-side status-consumption question in
 `q-status-function-ceremony`. Preserve the existing redefinition policy;
-`q-nonvoid-classifier-residuals` Q3 remains open. Operand spellings and the
-disposition-conversion question remain in `bug-return-status-string-operand`.
+`q-nonvoid-classifier-residuals` Q3 remains open. Remaining operand parsing
+and enforcement of the now-settled explicit-conversion rule remain in
+`bug-return-status-string-operand` (DD89, journal 579).
 Do not broaden return grammar or alter EXIT/ERR's terminal protocol.
 
 This replaces the protection that SB4017 accidentally supplied for some
@@ -68,5 +69,6 @@ Implemented and verified in journal 577. Shared body lowering checks named
 and anonymous bodies with the canonical definition-in-force classifier.
 SB4037 rejects missing results; SB4030 rejects incompatible forwarding.
 The final ordinary gate passes 11345 checks (11332 passing, 13 skipped).
-The separate disposition-conversion and capture caller-status questions
-remain open.
+Explicit disposition conversion was subsequently settled in journal 579;
+its implementation remains separate. The capture caller-status question
+remains open.

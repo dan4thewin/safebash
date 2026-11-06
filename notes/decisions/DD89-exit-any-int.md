@@ -29,6 +29,35 @@ revision is implemented in journal 576 (`explicit-exit-and-fail`).
   accountable spelling. Quoting is the int→string conversion everywhere else
   in sash, so `exit "1"` is rejected too.
 
+## Explicit conversion at integer sinks (2026-11-06)
+
+DG chose **"require explicit"** for the remaining return-disposition
+question (journal 579). An integer destination does not itself establish
+an arithmetic context. A string-valued disposition must enter explicit
+arithmetic to produce an integer; `return` has no exception.
+
+For a string `s` and an integer `n`, the accepted contract is:
+
+| form | contract |
+|---|---|
+| `return ${s:-7}` / `return ${s:?bad}` | SB4030: a string-valued operand |
+| `return $(( ${s:-7} ))` | explicit DD77 conversion, with default 7 |
+| `return $(( ${s:?bad} ))` | explicit DD77 conversion, aborting on invalid input |
+| `return ${n:-7}` / `return ${n:?bad}` | already integer-valued; no conversion required |
+
+This applies to numeric status returns and `-> int` results alike, and
+keeps `return` consistent with `exit`, `fail`, `wait`, `arg` and integer
+assignment. It does not broaden string conversion at those other sinks or
+change string-context disposition semantics. Already-integer expressions
+retain their type; a disposition alone is not a request to stringify them.
+
+**Implementation is pending.** Journal 577 implemented the undispositioned
+return operand guard but preserved the old disposition exception.
+`bug-return-status-string-operand` owns its removal and spec migration,
+depending on `bug-expr-type-int-disposition` so `${n:?bad}` is not falsely
+rejected. Existing arithmetic conversion behavior and assertions must be
+preserved under the explicit spellings.
+
 The prior type-check reject of `exit $intvar` ("value may exceed 0-255; use
 `exit $((v<256?v:1))`") is **removed** — clamping is the programmer's choice,
 not a compiler mandate.
@@ -136,13 +165,13 @@ a valid `exit` argument, no compile-time range restriction, full i64 internally,
 
 ### Related
 
-Journal 411 records the casualty this clause's thinking produced: `return`
-lowered its value **as a string** and ran the lenient `sash_atoi`, never
-consulting the type, so `return ${s:?bad}` — the spelling SB4030 itself
-recommends — compiled to nothing and yielded 0 on native while the c backend
-aborted correctly. An explicit "abort if this is not an integer" guard that
-does nothing is worse than the coercion it was meant to replace. Fixed there;
-the surface question it left is resolved below.
+Journal 411 fixed a lowering bug in the then-accepted
+`return ${s:?bad}` spelling: `return` lowered its value **as a string** and
+ran the lenient `sash_atoi`, so native ignored the disposition and yielded
+0 while the C backend aborted correctly. That repaired execution, not the
+consistency of the conversion surface. The earlier claim here that SB4030
+recommended the bare disposition was wrong: its advice includes `$(( ))`.
+The 2026-11-06 ruling above requires `return $(( ${s:?bad} ))`.
 
 ## Resolution (2026-09-26) — every site closed, none by coercion
 
@@ -160,8 +189,9 @@ in every case: **by rejection**. Nothing was made to coerce.
 **Return-row correction (2026-11-06):** the earlier attribution to journal
 411 was wrong; it fixed disposition lowering, not undispositioned operand
 checking. Journal 577 supplies that guard, including empty and quoted
-strings. Existing `return ${s:-N}` / `${s:?message}` conversions are preserved;
-their separate policy question and numeral/producer grammar remain in
+strings. It left `return ${s:-N}` / `${s:?message}` conversions unchanged.
+Their policy is now settled by the explicit-conversion rule above; removing
+the exception and the remaining numeral/producer work stay in
 `bug-return-status-string-operand`.
 
 Three things are worth keeping from how this closed.

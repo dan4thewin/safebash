@@ -68,6 +68,13 @@ the status-producing tests below are unchanged.
 | `return CMD > f` | a producer with a trailing **redirect** |
 | `return` | no result; valid in a void function, not a status return |
 
+Numeric return operands follow DD89's explicit-conversion rule
+(DG, 2026-11-06): for a string `s`, write `return $(( ${s:-7} ))` or
+`return $(( ${s:?bad} ))`, not a bare string-valued disposition. An
+already-integer disposition retains its type. Removal of the compiler's
+old return-only exception is pending in `bug-return-status-string-operand`;
+this does not change producer forwarding or the function's result kind.
+
 A producer is not limited to a single command: `return` absorbs a full
 **composite** — a pipeline, an `&&`/`||` list, or a trailing redirect — exactly
 as a normal statement would. The `return` is still the handler for the whole
