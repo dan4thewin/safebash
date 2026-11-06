@@ -58,7 +58,8 @@ it is a must-consume compile error. Consume it (`if [[ … ]]`,
 `[[ … ]] || …`) or, if you truly don't care, `[[ … ]] || :`.
 
 Enforcement codes — **kept adjacent to the existing ignored-return family**
-(SB4016 = bare non-void `-> int` call, SB4017 = return-0-only `-> int`):
+(SB4016 = an unconsumed non-void function result; SB4017's zero-return
+ceremony rule is retired by DD#55's 2026-11-06 ruling, removal pending):
 - **SB4018** — a (B) boolean result is produced and discarded (bare
   `match` / bare `[[ … ]]`).
 - **SB4019** — `-` applied to a (B) construct (a must-consume result has
@@ -210,11 +211,14 @@ silent.
 - **DD#56 / DD#128** — an uncaught failure reports its diagnostic, then
   calls ERR if declared. Orderly termination and configured EXIT signals
   select EXIT instead. Neither handler runs in a forked child.
-- **SB4016 / SB4017 / SB4018 / SB4019** — the "ignored result/value"
-  family (DG: keep these adjacent). SB4016 = bare non-void `-> int` call,
-  SB4017 = return-0-only `-> int`; SB4018 = discarded (B) boolean (bare
+- **SB4016 / SB4018 / SB4019** — the "ignored result/value"
+  family (DG: keep these adjacent). SB4016 = an unconsumed non-void function
+  result; SB4018 = discarded (B) boolean (bare
   `match` / bare `[[ … ]]`), SB4019 = `-` on a (B) construct. Distinct
   from SB5012 (`$?`-staleness — reading a stale *status*, 50xx band).
+- **SB4017** — the former int-only zero-return check, retired by DG on
+  2026-11-06. Do not replace it with a same-result check or repurpose its
+  code. Source removal is pending in `retire-return-ceremony-check`.
 
 ## Implementation status (2026-06-25)
 

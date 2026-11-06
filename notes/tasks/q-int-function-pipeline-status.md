@@ -1,12 +1,11 @@
 ---
-title: "Enforce distinct integer and status function results"
+title: "Reject int-function calls as status-producing pipeline stages"
 status: open
 priority: P2
 kind: bug
 depends: []
 gates:
   - "direct int-function stages are SB4030 in every otherwise legal stage position, marking and status-handling context"
-  - "a non-int function cannot use return int_fn, including redirected/composite producer forms, to reinterpret the integer as status"
   - "ordinary integer captures, int-to-int return forwarding, in-process value discard and explicit numeric/predicate status construction remain valid"
   - "focused native/C specs reject both return 3 and return 256 as direct stage results, with before-controls and the ordinary unit/spec gate"
 ---
@@ -33,8 +32,10 @@ tests keep their existing contracts.
 
 This file keeps its old slug for incoming links, but is now an
 implementation bug rather than an unresolved question. No compiler or spec
-change accompanies the ruling. The return-producer consequence follows the
-documented former DD55 contract; it has not been newly execution-probed.
+change accompanies the ruling. As of 2026-11-06, the return-producer
+consequence is owned by `enforce-function-return-kinds`; this task owns
+direct pipeline-stage use. Neither task's completion implies the other is
+done. The return-producer consequence has not been newly execution-probed.
 
 ## Finding and scope
 
@@ -66,10 +67,11 @@ int n=$(( f )); echo "$n"`, still prints 7.
 Enforce the function-result type before lowering it into a process status,
 not by special-casing nonzero values or changing the eight-bit exit mapping.
 Cover bare, suppressed and negated stages, handled pipelines, and wrapper
-forms without weakening DD74's predicate rejection. Reconcile return-producer
-typing and classification with the same rule, including the definition in
-force at the call. A process having its own status does not make an int
-function's answer a status.
+forms without weakening DD74's predicate rejection. Use the existing
+definition-in-force classification; do not duplicate return-kind inference.
+A process having its own status does not make an int function's answer a
+status. Return-producer compatibility is tracked separately in
+`enforce-function-return-kinds`, not deferred from that task back into this one.
 
 Do not reject an ordinary value use merely because its enclosing body runs
 in a child. Pin a void wrapper's value discard and a status wrapper's

@@ -524,11 +524,20 @@ The non-tail case is the one worth naming explicitly, because it is what a
 direct translation of the textbook factorial produces: the multiply happens
 *after* the call returns, so there is nothing to turn into a loop.
 
-**Every function is int, status or void** (DD#55 addendum 2026-10-30). An
-`-> int` function returns an int. A function is void when every exit is
-`return 0`, a bare `return`, the end of its body, or a tail call `return g`
-of a void g (itself included). Any other well-typed function returns a status.
-A call must handle the status as a condition (`if`, `while`, the left side of `&&`
+**Every function is int, status or void** (DD#55). Under the accepted
+2026-11-06 contract, bare return and fall-through supply no result and are
+valid only for void functions. Status and integer functions supply their
+own kind on every returning path. `return 0` supplies a status in an
+unannotated function or an integer in an `-> int` function, never void.
+Compatible forwarding preserves the callee's kind through redirects;
+self-tail calls are loop edges, not exits.
+
+Constant results are legal, including zero. The old int-only SB4017 check
+is retired without a general constant-result check replacing it. The
+kind/completeness changes and check removal await
+`enforce-function-return-kinds` and `retire-return-ceremony-check`.
+
+A call must handle a status as a condition (`if`, `while`, the left side of `&&`
 or `||`) or discard it with `-` (`- f`, `$(- f)`). Anything else is SB4016,
 as an int function's unbound answer already was. `-` with nothing to discard
 is SB4076: on a void function, or in `$(- f)` on an int f, whose `$(f)`
@@ -539,8 +548,8 @@ it stands.
 function stages, including `- f | ...`, and `return int_fn` in a non-int
 function require SB4030; discard does not repair a type mismatch. Integer
 captures, int-to-int return forwarding and in-process value discard remain
-valid. Enforcement of the stage/return-producer boundary is pending in
-`q-int-function-pipeline-status`, not already implemented.
+valid. Enforcement is pending: `q-int-function-pipeline-status` owns stages,
+and `enforce-function-return-kinds` owns return-producer compatibility.
 
 ### Phases 7–9: Fold, Codegen, Link
 

@@ -1,4 +1,24 @@
-## ══ STATUS (2026-11-05, latest) — Integer and status results are distinct types ══
+## ══ STATUS (2026-11-06, latest) — Return kinds settled; ceremony checks retired ══
+
+DG separated bare return from explicit zero: void uses bare return or
+fall-through; status and integer functions supply their own kind on every
+returning path. Compatible forwarding preserves the callee's kind through
+redirects, and self-tail calls are loop edges, not result exits.
+
+Constant results are legal, including zero. Both the proposed same-result
+check and the old int-only SB4017 rule are discarded. DD55/DD58/DD70/DD74
+and GUIDE record the contract; journal 574 records the ruling.
+
+Two P2 tasks own implementation: `enforce-function-return-kinds`, then
+`retire-return-ceremony-check` (they may land together). B79's existing task
+retains pipeline-stage rejection; its return-producer work moved to the kind
+task. Missing integer returns and redirected forwarding are no longer
+unruled classifier questions.
+
+No compiler/runtime/spec changes. These repairs and DD129 remain pending;
+coverage stays paused.
+
+## ══ STATUS (2026-11-05) — Integer and status results are distinct types ══
 
 DG settled B79: an int function used as a pipeline stage is a type error
 (SB4030), including with `-`. Suppression cannot repair a type mismatch.

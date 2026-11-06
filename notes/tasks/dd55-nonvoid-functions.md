@@ -6,47 +6,28 @@ gates: [55.12, 55.13, 55.14, 55.15]
   - tests
   - commit
 
-DD#55 requires:
-- Any function with a `return` statement is non-void
-- `return 0` alone (only possible return is zero) → compile error
-- Bare call of non-void function → compile error
-- Non-void must be handled: `if func`, `func || handle`, `- func`
+## Completed enforcement
 
-### Detection
+F6 unit A implemented B15: a bare call or list tail of a status function is
+an error unless its status is handled or discarded with `-`. Integer
+results must be captured, used as values or explicitly discarded, not used
+directly as predicates. Journal 547 records that implementation.
 
-Walk function IR bodies. Collect all `return` statements. If any
-exist, function is non-void. If ALL return statements are `return 0`
-(or `return` with no argument, which defaults to 0), that's a
-compile error — the return is ceremony.
+## Current contract and follow-up
 
-### Call-site enforcement
+DG's 2026-11-06 ruling replaces this task's original bare-return/zero
+conflation and ceremony rule. Bare return supplies no result; explicit
+zero supplies a status or integer according to the function's kind.
+Non-void functions must supply their result on every returning path.
+Compatible forwarding remains legal, and constant results are legal.
 
-For every bare function call (not in `if`/`while` condition, not
-on LHS of `||`/`&&`, not prefixed with `-`), check whether the
-function is non-void. If so, compile error with diagnostic:
-"function 'X' returns a status — handle with if/||/- or capture".
+This completed task is not reopened to imply that the new contract already
+ships. Implementation is tracked in:
 
-### Where to implement
+- `enforce-function-return-kinds` — kind classification, completeness and
+  compatible forwarding;
+- `retire-return-ceremony-check` — remove SB4017 after the replacement guards
+  are in place, without introducing any same-result check.
 
-Could be a validation pass after lowering (needs function table),
-or integrated into transform where function calls are resolved.
-
-### int-typed functions
-
-Bare call of int-typed function → compile error (discards return
-value). Must capture: `x=$(func)` or handle: `if func`.
-
-## Follow-up (2026-10-28)
-
-A bare call of a status-returning (void) function still discards its
-`return` (batch-531 B15); that, and whether `- myfunc` stays legal, are open
-in `q-suppression-on-user-functions` Q3 and Q2.
-
-## Follow-up (2026-10-30)
-
-Both are ruled (`q-suppression-on-user-functions`, "Rulings, 2026-10-30").
-B15 is enforced: a bare call or a list tail of a status function is an error
-unless it is caught or discarded with `-`. The original design's bare
-`return` = `return 0` stands. F6 implements this. The ceremony rule for
-status functions is not enforced; it moved to `q-status-function-ceremony`.
-Landed in F6 unit A (journal 547; DD55 addendum 2026-10-30).
+DD55/DD58/DD74 are authoritative. `q-status-function-ceremony` now retains
+only the separate anonymous-capture status-handling question.

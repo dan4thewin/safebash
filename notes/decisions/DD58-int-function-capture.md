@@ -52,6 +52,19 @@ arithmetic expression; both surfaces work for every int producer.
 
 Int→string conversion follows DD#30: `echo "$x"` at output.
 
+## Integer return completeness
+
+Under DD#55's return-kind ruling (DG, 2026-11-06), an `-> int` function
+supplies an integer on every returning path. Bare return and fall-through
+are not implicit integer zero. Compatible integer forwarding remains legal;
+a self-tail call is a loop edge, and process termination is not a return.
+
+Constant results, including zero, are legal. The int-only SB4017
+"returns 0" check is retired, with no general constant-result check replacing
+it. Implementation is pending in `enforce-function-return-kinds` and
+`retire-return-ceremony-check`; this is not a claim that the current
+compiler already accepts the newly permitted cases.
+
 ## S-expression call syntax
 
 Inside `$(( ))` and `(( ))`, `(name args...)` where `name` is a
@@ -118,4 +131,5 @@ or conversion syntax is introduced.
 
 The pipeline/return-producer enforcement is **accepted but not yet
 implemented**. `notes/tasks/q-int-function-pipeline-status.md` retains the
-observed pipeline defect and the implementation gates.
+pipeline defect; `enforce-function-return-kinds` owns compatible and
+incompatible return-producer forwarding.

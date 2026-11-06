@@ -5,19 +5,21 @@ priority: P3
 kind: question
 depends: []
 gates:
-  - "DG rules on each question; DD#55 records the ruling"
+  - "DG rules on the remaining Q1/Q3 questions; DD55 records the ruling"
   - "the specs the chosen option flips are rewritten, and new specs pin it in both modes"
 ---
 
 F6 unit A (journal 547, DD#55 addendum 2026-10-30) classifies every function
 as int, status or void and enforces DD#55 at the call. Four shapes surfaced
-while writing it. None is an obvious bug, so the 2026-10-24 rule leaves them
-unchanged. Each repro was compiled with the F6 unit A binary.
+while writing it; each repro below was compiled with the F6 unit A binary.
+Q2 and Q4 are now settled by the 2026-11-06 return-kind ruling and await
+`enforce-function-return-kinds`. Q1 and Q3 remain questions.
 
 DD58's 2026-11-05 integer/status ruling settles implicit int-to-status
-conversion, tracked in `q-int-function-pipeline-status`. It does not settle
-Q1's choice of capture surface or Q4's void/status classification. A valid
-integer-value discard is distinct from interpreting an integer as a status.
+conversion. Pipeline-stage enforcement is in `q-int-function-pipeline-status`;
+return-producer compatibility is in `enforce-function-return-kinds`.
+Q1's choice of capture surface remains separate. A valid integer-value
+discard is distinct from interpreting an integer as a status.
 
 ## Q1. An int function's capture means two things
 
@@ -36,16 +38,18 @@ So `$(- c)` is SB4076 but `$(- c 2>&1)` is legal. Question: should one
 capture spelling mean one thing (for example, `$(c)` of an int function is
 an error that points at `$((c))`), or does the split stand?
 
-## Q2. `-> int` with no `return`
+## Q2. `-> int` with no `return` — settled, implementation pending
 
 ```sh
 fn f -> int { echo hi }
 int n=$(( f ))      # prints hi; n=0
 ```
 
-It compiles and returns 0. SB4017 rejects an int function whose only
-`return` is `return 0`, but not one with no `return` at all, which also
-returns only 0. Question: is this SB4017 too?
+The F6 binary compiled this and supplied zero. Under DG's 2026-11-06 rule,
+the missing integer is an error: a returning path must supply a result.
+It is not a ceremony error, and SB4017 is being retired. An explicit
+integer `return 0` is legal. The new kind/completeness task owns the
+missing-result refusal.
 
 ## Q3. A redefinition that changes a function's class
 
@@ -67,7 +71,7 @@ second definition of a name be rejected, or at least one that changes the
 name's class? `q-fn-definitions-in-end` is related, and
 `bug-int-call-by-name-redefinition` is a miscompile of the same shape.
 
-## Q4. A redirected tail call is a status
+## Q4. A redirected tail call is a status — settled, implementation pending
 
 ```sh
 fn g { echo hi }
@@ -75,12 +79,16 @@ fn f { return g >/dev/null }
 f                   # SB4016 "returns a status"
 ```
 
-`return g` alone would make f void, as g is. With a redirect, unit A
+`return g` alone made f void, as g is. With a redirect, unit A
 classifies the producer as a status, because the redirect is part of the
 producer. A redirect-open failure aborts whether or not `-` is present
 (`q-suppression-on-user-functions` y02/y08/y11), so the status the call can
-return is g's own. Question: should a redirected `return g` be classified as
-a plain `return g` is, so that f is void when g is?
+return is g's own.
+
+The accepted kind-preserving forwarding rule settles this: a redirect does
+not invent a status result. f remains void when it forwards void g;
+status/integer forwarding likewise retains its kind. This is part of
+`enforce-function-return-kinds`, not a new exception to the return rule.
 
 Pointers: `sash/src/transform/functions.rs` (`classify_producer`,
 `exit_summary`, `returned_callees`, `classify`, `static_classes`), `ssa.rs`

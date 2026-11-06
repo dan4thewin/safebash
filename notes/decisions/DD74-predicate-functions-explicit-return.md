@@ -53,7 +53,7 @@ An int-valued function is not a status producer. In a non-int function,
 `return int_fn` is a type mismatch (SB4030), not an implicit conversion;
 neither a redirect nor suppression changes that. DG's 2026-11-05 ruling
 in DD#58 settles this boundary; enforcement is pending in
-`q-int-function-pipeline-status`. Explicit numeric status construction and
+`enforce-function-return-kinds`. Explicit numeric status construction and
 the status-producing tests below are unchanged.
 
 | form | status |
@@ -66,7 +66,7 @@ the status-producing tests below are unchanged.
 | `return A \| B` | a **pipeline** producer — the pipeline's aggregate status (DD#55) |
 | `return A && B`, `return A \|\| B` | an **and/or-list** producer — the list's short-circuit status |
 | `return CMD > f` | a producer with a trailing **redirect** |
-| `return` | status 0 |
+| `return` | no result; valid in a void function, not a status return |
 
 A producer is not limited to a single command: `return` absorbs a full
 **composite** — a pipeline, an `&&`/`||` list, or a trailing redirect — exactly
@@ -92,23 +92,34 @@ maps nonzero → status 0 (true), zero → status 1 (false). So
 
 ## `return N` drives the condition (the bug fix)
 
-Every `return` sets **both** `$?` (exit-status) **and** `test_result_var`
-(= status == 0), so `if f` / `while f` / `! f` / `&&` / `||` branch on the
+Every status-producing `return` sets **both** `$?` (exit-status) **and**
+`test_result_var` (= status == 0), so `if f` / `while f` / `! f` / `&&` / `||` branch on the
 returned status. A nonzero `return 2` is `$?` = 2 in the handling branch and
 *false* (nonzero) for the branch — meaningful error codes propagate.
 
-## Definite return required in a boolean context
+## Return completeness follows the function's kind
 
-A function used in a boolean context must be a **predicate**: **every** exit
-path is an explicit `return <status>` (full definite-return analysis — an
-`if` with no `else`, or a fall-through past the last `return`, is a reachable
-non-returning path and is rejected). Using a **void** function (no `return`)
-or a function that can fall off its end in a boolean context is a compile
-error ("not a predicate — return a status"). An `-> int` **value** function
-in a boolean context stays SB4030 (it is a value, not a predicate).
+DG's 2026-11-06 ruling in DD#55 requires a status on every returning path of
+a status function, whether or not a caller uses it as a predicate. Bare
+return supplies no result, and fall-through does not manufacture status
+zero. The same completeness requirement applies to integer results.
+Paths that terminate the process and self-tail back edges are not missing
+returns. Compatible forwarding preserves the callee's kind, including
+through redirects.
 
-DD#55's "`return 0` alone is ceremony" stands: a function whose only possible
-return is 0 is void/always-true, not a predicate.
+A function used as a predicate must supply a status, not a void or integer
+result. Using a void function is still an error ("not a predicate — return
+a status"); an `-> int` value function in that context stays SB4030.
+
+An unannotated function returning only `return 0` is a status function and
+a valid predicate, not void. Constant status results of any value are legal;
+their callers still have the ordinary non-void handling obligation.
+There is no ceremony or constant-result check.
+
+The kind/completeness refinement and SB4017 removal are accepted but await
+`enforce-function-return-kinds` and `retire-return-ceremony-check`. The
+current predicate-use-only completeness check does not implement this
+whole contract.
 
 ## Canonical predicates
 
@@ -128,7 +139,7 @@ No defensive quotes — sash has no word-splitting (DD#22).
 
 - **DD#55** — supersedes its "implicit trailing status makes a function a
   predicate" behavior; keeps non-void call-site handling (`if`/`||`/`-`), the
-  `return 0`-ceremony rule, and bare-command abort.
+  distinction between void and status results, and bare-command abort.
 - **DD#70 / reject-nonstatus-in-boolean-context** — the must-consume /
   boolean-context type discipline; `return <producer>` is the predicate
   producer, and a bare non-returning function is no longer a valid producer.
@@ -137,7 +148,7 @@ No defensive quotes — sash has no word-splitting (DD#22).
   which returns a **status** via `return <producer>` and is consumed by a
   boolean context.
 
-## Implementation (spec-first, native/c/janet)
+## Original implementation (spec-first, native/c/janet)
 
 1. `return N` sets `test_result_var` alongside `$?` (a return→test-result
    sigil, mirrored in c/janet), so `if f`/`while f`/`!`/`&&`/`||` see it.
@@ -148,6 +159,10 @@ No defensive quotes — sash has no word-splitting (DD#22).
    remove the implicit-trailing-status predicate path.
 
 ### Implemented (native/c/janet, 0 native regressions)
+
+This is the historical implementation record. Its return scan counted a
+bare return as status zero; the accepted 2026-11-06 refinement above has
+separate implementation tasks.
 
 - Phase 1 (`return N` drives the condition) — commit `62fa5c1`.
 - Phase 2 (`return <producer>`) — commit `679262a`.

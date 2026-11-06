@@ -240,41 +240,61 @@ unconsumed-value rule, not the implicit-check rule.
 
 ## User-defined functions
 
+### Return kinds (DG, 2026-11-06)
+
+Return kind is independent of the numeric value returned:
+
+| Kind | Normal returns |
+|---|---|
+| Void | Bare `return`, fall-through, or forwarding a void callee |
+| Status | An explicit status on every returning path |
+| Integer (`-> int`) | An explicit integer on every returning path |
+
+Bare `return` supplies no result; it is not shorthand for `return 0`.
+Status and integer functions may neither use a bare return nor fall off
+the end on a returning path. Mixed result kinds are errors, regardless of
+whether a caller uses the function as a predicate or discards its answer.
+Paths that terminate the process are not returning paths.
+
+Compatible `return g` forwarding remains legal and preserves g's result
+kind, including through a redirect. A self-tail call is a loop edge, not
+an exit that supplies zero. No implicit void/status/integer conversion is
+introduced by forwarding.
+
+**Constant results are legal.** There is no same-result check, and the
+int-only "returns 0" ceremony rule (SB4017) is retired. In an unannotated
+function, `return 0` produces a status; in an `-> int` function it produces
+an integer. Neither means void, even when it is the only result.
+
+This contract is accepted but not yet implemented. The backlog is
+`enforce-function-return-kinds`, followed by `retire-return-ceremony-check`
+(or both in one coherent change). Journal 574 records the ruling.
+
 ### Void functions
 
-No `return` statement, or unreachable (all paths abort or loop).
-Bare call at call site is fine — no check needed.
+Bare returns, fall-through and compatible void forwarding supply no result.
+Bare call at the call site is fine; an in-process `-` has nothing to discard.
 
 ### Non-void functions
 
-Any `return` statement makes the function non-void. Call sites must
-explicitly handle the return value:
+A status or integer result makes a function non-void. Call sites must
+consume or explicitly discard that result:
 
-- `if myfunc` / `myfunc || handle` — explicit handling
-- `- myfunc` — suppressed
+- `if myfunc` / `myfunc || handle` — handling a status, not an integer
+- value capture or arithmetic composition — consuming an integer
+- `- myfunc` — discarding the function's own answer
 - bare `myfunc` — **compile error** (unhandled non-void return)
 
-(**Under question, 2026-10-28:** whether `- myfunc` stays legal, and how a
-bare call of a status-returning function is handled (B15), are open in
-`notes/tasks/q-suppression-on-user-functions.md` Q2 and Q3. **Ruled
-2026-10-29/30** (that task's two "Rulings" sections). `- myfunc` stays
-legal on a function that returns a value, a status or an int, and is an
-error on a void one. A bare call of a status function is an error unless it
-is caught (`if`, `||`) or discarded with `-`, as above. A bare `return`
-counts as `return 0`, and a tail call `return g` passes g's status through.
-F6 landed the ruling on 2026-10-30 (addendum at the end). F6's unit B (the
-last addendum) makes `- myfunc` discard only myfunc's own answer; a failure
-inside its body still aborts. The ceremony rule
-below stays `-> int`-only (SB4017) until `q-status-function-ceremony` is
-ruled.)
-
-`return 0` alone is a compile error — if the only possible return
-is zero, the `return` is ceremony. Omit it (void function).
+These call-site obligations do not disappear for a constant result.
+`-` still does not reach into the body or repair a type mismatch. The
+remaining question in `q-status-function-ceremony` concerns how an anonymous
+capture's status is consumed, not whether constant results are legal.
 
 ### Bare call of int-typed function
 
-Compile error. If the function returns a value, capture it or
-handle it. A bare call discards the return value.
+Compile error. Capture the integer, use it in arithmetic, or explicitly
+discard it with `-`. A bare call silently discards the value; using the
+function directly as a predicate or pipeline stage is a type error.
 
 ### `return $?`
 
@@ -486,29 +506,25 @@ Specs `errors.sh` 55.76-55.87; journal 542.
 
 ## Addendum (2026-10-30, batch-531 port F6): a non-void function's answer is handled or discarded
 
-This lands the rulings of 2026-10-29 and 2026-10-30 in
-`q-suppression-on-user-functions` (Q3, and Q2 for in-process calls), and
-batch-531 B15.
+This records the F6 implementation of the 2026-10-29 and 2026-10-30 rulings
+in `q-suppression-on-user-functions` (Q3, and Q2 for in-process calls), and
+batch-531 B15. The contract is kept current below; the 2026-11-06 return-kind
+and ceremony changes remain pending, as stated under User-defined functions.
 
-**Three classes.** A well-typed function returns an int (`-> int`), a status, or
-nothing (void). It is void when its only exits are `return 0`, a bare
-`return` (which returns 0), falling off the end, and self-tail calls. A tail
-call `return g …` hands back g's result, so a function whose `return g`
-exits all reach void functions is void, and one that reaches a status
-function returns a status. In a non-int function, an int g's value must not
-become a status: `return g` is SB4030, including under a redirect. An int
-function may still forward another int function's value. This replaces the
-earlier int-to-status coercion under DG's 2026-11-05 ruling in DD#58;
-enforcement remains pending in `q-int-function-pipeline-status`.
-Other valid return producers give a status: an external command, `[[ ]]`,
-`(( ))`, a status builtin, or a redirected status/void call such as
-`return g >file`.
+**Three classes.** A function returns an int (`-> int`), a status, or
+nothing (void), under the kind-based contract above. F6's numeric/bare-zero
+classification does not yet implement that contract. A forwarded result
+keeps its kind; `return g >file` does not turn a void g into a status
+producer. Incompatible forwarding, including int-to-status, is a type
+error. `enforce-function-return-kinds` owns that enforcement.
+
+**Definition in force.** The existing redefinition policy is unchanged.
 A call is checked against the definition it runs, which is the one in
 force where the call stands. Each `fn` statement recomputes the classes in
 force as it comes into force, so a name defined twice can be a status at one
 call and void at a later one (nonvoid.25-nonvoid.29). The `fn_NAME`
-template of each body, and SB4017's scan, have no call site. They use a table
-built before any body is lowered, over every program-level definition
+templates have no call site. They use a table built before any body is
+lowered, over every program-level definition
 (`Program::function_defs`; SB5071 permits no others). That table holds only
 the names defined once and the functions whose class depends only on those. A redefined name, and
 anything whose class it decides, is checked where the call is inlined
@@ -535,26 +551,25 @@ int that function 'f' returns, so `-` has nothing to discard — capture it
 without `-`". A stage or a job is a process with a status of its own, so
 `- v | /bin/cat` and `- v &` stay legal for a void v (nonvoid.24).
 
-**SB4017 sees return producers.** The ceremony rule stays `-> int`-only
-until `q-status-function-ceremony` is ruled. Its scan skipped producers, so
-an int function with `return 0` on one path and `return g` (an int g) on
-another was rejected as "only returns 0" (nonvoid.20), and `return g` with a
-void g compiled and returned 0 (nonvoid.16). The first now compiles; the
-second is SB4017. A function whose only exits are self-tail calls is void
-and draws no SB4017.
+**Return completeness replaces ceremony.** SB4017 is retired by DG's
+2026-11-06 ruling. An explicit integer zero is valid, including alongside
+integer forwarding; forwarding a void result into an integer function is
+still invalid, but because its kind is wrong. The new kind/completeness
+guards must be in place before removing the old check, or in the same
+change. Journal 547 records the original guard and its specs; the removal
+task is `retire-return-ceremony-check`.
 
 **Deleted.** The suppressed int self-tail specialization (journal 530)
 lowered `return $(- f …)` inside an int f as a second, suppressed copy of
 the loop. That spelling is now SB4076, so nothing reaches it. It is gone,
 with `TailLoop.entry_readonly`.
 
-Decide-and-report (DG may veto): the three classes as stated, `return g
->file` as a status, `f &` as SB4016, SB4025 superseding SB4016, SB4076 for
-`$(- int_f)`, the advice texts, and the class in force at each call. Not
-changed here: whether a `-` on a call reaches into the body, or into a
-capture among the call's arguments (`q-suppression-on-user-functions` Q1
-and Q4, the next F6 unit). The questions this unit raised are in
-`notes/tasks/q-nonvoid-classifier-residuals.md`.
+The other F6 choices remain: `f &` as SB4016, SB4025 superseding SB4016,
+SB4076 for `$(- int_f)`, the advice texts, and the class in force at each
+call. The blanket classification of redirected return calls as statuses
+is superseded by kind-preserving forwarding. The following F6 unit settled
+whether `-` reaches into a body or an argument capture. Remaining questions
+are in `notes/tasks/q-nonvoid-classifier-residuals.md`.
 
 Specs: errors.sh nonvoid.1-nonvoid.29. Rewritten to the rule: errors.sh
 rdr.39, supval.1-supval.6, supval.9-supval.12, supval.14-supval.17,
