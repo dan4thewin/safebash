@@ -184,9 +184,10 @@ rest of the work lives in other tasks:
 - Q6 → `q-pipe-stage-never-writes-or-reads` (after W2);
 - Q7 → `retire-suppression-on-compounds`;
 - the command groups → `retire-command-groups`;
-- an anonymous capture body's caller-side status handling →
-  `q-status-function-ceremony`; return kinds and ceremony are already
-  settled and implemented (journal 577);
+- explicit status returns from anonymous captures are now rejected by
+  policy; `q-status-function-ceremony` is closed and
+  `reject-anonymous-capture-status-returns` owns enforcement (journal 584).
+  Return kinds and ceremony were already implemented in journal 577;
 - unit A's classifier questions are now resolved in
   `q-nonvoid-classifier-residuals`; duplicate-definition and integer-capture
   enforcement remain in `reject-duplicate-function-definitions` and

@@ -492,8 +492,11 @@ expressions earlier while leaving their reads deferred.
 
 "A `$( … )` body is an anonymous function" was settled above for *scope*. It
 has a second consequence, and leaving it unstated cost three nested bugs
-(journal 444): **every statement legal in a function body is legal in a `$( )`
-body, and gets the same validation.**
+(journal 444): **ordinary function-body statements are available in a `$( )`
+body and get the same validation, subject to the capture's result contract.**
+DG's 2026-11-06 restriction on explicit status returns is stated below;
+the blanket claim that every named-function return form is legal in a
+capture no longer holds.
 
 Both halves were false in the implementation.
 
@@ -507,6 +510,20 @@ sash_exec` into its own stdout and exited 0.
 never entered a body, so `$(signal INT ignore)` panicked the compiler,
 `$(mapfile -m q)` ICEd at runtime, and `$(break)`, `$(read -a "q")` and
 `$(for args in …)` were accepted in silence.
+
+### A capture body does not return a status (DG, 2026-11-06)
+
+An explicit status-producing return from an anonymous capture body is
+an error (DD#55), including zero, status forwarding and redirected
+producers. Bare `return`, fall-through and compatible void forwarding
+remain legal. The rule follows the return's owning body: it does not
+forbid status returns inside a named function called by that body.
+
+Use a named status function and its existing explicit handling/discard
+forms when that result is needed. This adds no capture-level status
+consumer and changes neither lexical scope nor enclosing-binding access.
+Enforcement is pending in `reject-anonymous-capture-status-returns`;
+journal 584 records the decision.
 
 ### The IR contract this establishes
 

@@ -1,4 +1,23 @@
-## STATUS (2026-11-06, latest) - Integer capture keeps its result channel
+## STATUS (2026-11-06, latest) - Anonymous capture status returns rejected
+
+DG rejects explicit status returns from anonymous capture bodies, including
+zero and status-producing forwarding through redirects. Bare return,
+fall-through and compatible void forwarding remain legal. A body needing
+a status result must be named; its existing handling/discard forms apply.
+DD55/DD86 record the policy; DD58/DD74/DD88 and GUIDE agree.
+Journal 584 records the decision and the existing native control evidence.
+
+The new P2 `reject-anonymous-capture-status-returns` owns enforcement.
+`q-status-function-ceremony` is closed as a question, not as implemented
+behavior. Named callees retain their return contracts; no new anonymous
+result consumer, implicit check or capture-condition form was introduced.
+
+This is documentation/backlog recording only. No compiler/runtime/spec
+code changed, and journal 577's accepted gate remains the implementation
+baseline. Attached-redirect timing is the next unresolved question,
+separate from the settled left-to-right evaluation order.
+
+## STATUS (2026-11-06) - Integer capture keeps its result channel
 
 DG requires integer-function captures to consume only the returned integer,
 including through redirects. Stdout remains a permitted side effect.

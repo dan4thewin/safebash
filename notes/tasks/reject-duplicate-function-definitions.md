@@ -49,7 +49,8 @@ Preserve unique-definition forward references and the settled return-kind,
 scalar/collection-signature, no-shadowing, taint and self-tail contracts.
 Integer-capture semantics are now settled separately (DD58, journal 583);
 `bug-int-capture-redirect-switches-kind` owns their enforcement.
-Anonymous-capture caller-status handling remains a separate question.
+Anonymous-capture status-return rejection is also settled separately
+(DD55/DD86, journal 584); `reject-anonymous-capture-status-returns` owns it.
 The single-definition function-name-as-variable bug also remains
 independently owned by `bug-function-name-read-as-variable`.
 

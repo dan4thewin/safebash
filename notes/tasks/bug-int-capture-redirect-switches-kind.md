@@ -31,8 +31,10 @@ capture; the latter must get the same SB4076 as `$(- f)`.
 
 A void adapter, `fn output_f { - f }`, remains valid: `$(output_f)` captures
 that body's stdout after its ordinary statement discards f's integer.
-Anonymous non-integer bodies retain the same existing body/result rules;
-the separate anonymous status-consumption question is not settled here.
+Anonymous bodies retain void returns and compatible void forwarding.
+Their explicit status returns are now rejected by policy (DD55/DD86,
+journal 584); `reject-anonymous-capture-status-returns` owns that separate
+enforcement.
 
 ## Implementation boundaries
 

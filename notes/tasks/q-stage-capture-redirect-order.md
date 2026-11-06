@@ -1,11 +1,11 @@
 ---
-title: "Question: a stage applies its redirects before evaluating its arguments; a statement after"
+title: "Question: when attached redirects take effect relative to argument evaluation"
 status: open
 priority: P3
 kind: question
 depends: []
 gates:
-  - "DG rules (a) or (b) below, and the ruling is recorded in DD55 or DD122"
+  - "DG chooses attached-redirect timing, and the ruling is recorded in DD55 or DD122"
   - "stgarg.33-36 are re-pinned to the ruling in both backends"
 ---
 
@@ -35,8 +35,19 @@ The difference is visible when a capture reads stdin or writes stderr:
 
 - (a) Keep. A stage's I/O is set up before it runs anything, so everything
   the stage does, its arguments included, sees the stage's redirects.
-- (b) Statement order in both forms, so `cmd "$(x)" 2>f` means the same
-  thing whether or not it is a stage.
+- (b) Arguments first in both forms: evaluate arguments, then install
+  the command's redirects. This retains standalone-command timing and
+  changes stages.
+- (c) I/O-first in both forms: install attached redirects before argument
+  evaluation in standalone commands too. Argument captures then see the
+  command's own redirected stdin/stderr in either context.
+
+The consistency options change different existing programs: (b) changes
+stages, while (c) changes standalone commands. The chosen rule must account
+for redirect-target evaluation as well as descriptor installation, preserve
+DD86's value-evaluation order and keep argument captures in the stage child.
+Pipeline plumbing is distinct from the timing of the command's attached
+redirects. No option is chosen.
 
 No DD settles it. DD55 and DD122 describe the stage child, not the order.
 

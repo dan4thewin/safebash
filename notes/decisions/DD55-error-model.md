@@ -333,9 +333,35 @@ consume or explicitly discard that result:
 - bare `myfunc` — **compile error** (unhandled non-void return)
 
 These call-site obligations do not disappear for a constant result.
-`-` still does not reach into the body or repair a type mismatch. The
-remaining question in `q-status-function-ceremony` concerns how an anonymous
-capture's status is consumed, not whether constant results are legal.
+`-` still does not reach into the body or repair a type mismatch.
+
+### Anonymous capture returns (DG, 2026-11-06)
+
+An anonymous `$( ... )` body may not explicitly return a status. Reject
+`return 3`, `return 0`, `return $?` and status-producing forwarding such as
+`return status_f`, a command, test, pipeline or list producer. Redirects
+and nesting inside the body's control flow do not change that result kind.
+The status must not be silently dropped, converted into the captured value,
+or given an implicit failure check in place of the required rejection.
+
+Bare `return`, fall-through and compatible void forwarding remain legal:
+they supply no result. This is a result-kind restriction, not a ban on the
+`return` keyword or on constant results. Process termination is not a return.
+
+If a body needs to return a status, give it a name. Its ordinary call sites
+must handle or discard that status; `$(- status_f)` captures its stdout and
+explicitly discards its returned status. A named function called from an
+anonymous body keeps its own return contract. A `-` on the first statement
+inside a capture discards only that statement's result, not the body's return.
+
+No anonymous-result handling syntax is added. Direct integer captures
+(DD#58), ordinary command/pipeline captures and DD#88/DD#101's existing
+capture-conditions are unchanged; user-function and multi-statement
+capture-conditions remain excluded.
+
+**Accepted, implementation pending** in
+`reject-anonymous-capture-status-returns` (journal 584).
+`q-status-function-ceremony` is closed as a policy question, not as a fix.
 
 ### Bare call of int-typed function
 

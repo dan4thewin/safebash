@@ -42,11 +42,14 @@ Reuse the canonical function-class and definition-in-force machinery.
 Preserve operand presence separately from its rendered value: `return ""`
 is not a bare return. Operand validity still belongs to the int-sink rules.
 
-Apply the body contract to anonymous capture bodies as required by DD86,
-without deciding their separate caller-side status-consumption question in
-`q-status-function-ceremony`. This completed unit preserved the then-existing
-redefinition behavior. DG subsequently rejected duplicates (DD86,
-journal 582); `reject-duplicate-function-definitions` owns that separate
+This completed unit applied the body contract to anonymous capture bodies
+as required by DD86 without deciding their caller-side status consumption.
+DG subsequently rejected explicit status returns from anonymous captures
+(DD55/DD86, journal 584); `reject-anonymous-capture-status-returns` owns
+that separate enforcement, and `q-status-function-ceremony` is closed.
+This unit also preserved the then-existing redefinition behavior.
+DG subsequently rejected duplicates (DD86, journal 582);
+`reject-duplicate-function-definitions` owns that separate
 enforcement, and classifier Q3 is no longer open. Remaining operand parsing
 and enforcement of the now-settled explicit-conversion rule remain in
 `bug-return-status-string-operand` (DD89, journal 579).
@@ -72,5 +75,5 @@ and anonymous bodies with the canonical definition-in-force classifier.
 SB4037 rejects missing results; SB4030 rejects incompatible forwarding.
 The final ordinary gate passes 11345 checks (11332 passing, 13 skipped).
 Explicit disposition conversion was subsequently settled in journal 579;
-its implementation remains separate. The capture caller-status question
-remains open.
+its implementation remains separate. Anonymous-capture status-return
+rejection is also accepted but awaits its separately owned enforcement.

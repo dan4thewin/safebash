@@ -56,6 +56,12 @@ in DD#58 settles this boundary; journal 577 implements it in
 `enforce-function-return-kinds`. Explicit numeric status construction and
 the status-producing tests below are unchanged.
 
+In an anonymous capture body, the status-producing return forms below are
+rejected (DG, 2026-11-06; DD#55/DD#86). Bare return and compatible void
+forwarding remain legal. A named status function retains these forms,
+including when called and explicitly handled/discarded inside a capture.
+Enforcement is pending in `reject-anonymous-capture-status-returns`.
+
 | form | status |
 |---|---|
 | `return CMD [args]` | run CMD; its exit status. **The `return` is the handler — CMD never aborts** (its status is explicitly consumed), unlike a bare CMD. |

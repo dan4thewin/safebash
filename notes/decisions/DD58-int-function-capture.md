@@ -83,8 +83,10 @@ No purity check or stdout prohibition is introduced.
 To capture that output, use a non-integer wrapper that explicitly discards
 the integer, for example `fn output_f { - f }` followed by `$(output_f)`.
 The wrapper is void and its capture collects stdout. An anonymous
-non-integer body follows the same body/result rules; this does not relax
-the separate handling requirements of a body that returns a status.
+body can use an ordinary value discard too, but may not explicitly return
+a status (DG, 2026-11-06; DD#55). Bare return and compatible void forwarding
+remain legal; `reject-anonymous-capture-status-returns` owns that pending
+enforcement separately from the integer-capture repair.
 Normal taint and failure rules still apply. The adapter discards one value
 and exposes output; it is not an integer-to-string or integer-to-status cast.
 

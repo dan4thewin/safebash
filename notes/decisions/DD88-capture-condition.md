@@ -53,6 +53,11 @@ In a **boolean context** (an `if`/`while`/`until` condition, or the operand of
 - **`$?` after:** no new rule — the existing DD#55 handling-position machinery
   applies (a capture-condition assignment provides `$?` like a command).
 
+DD#55's anonymous-status-return rejection (DG, 2026-11-06) adds no new
+capture-condition form. A function or multi-statement capture does not
+become a condition by containing an explicit status return. Existing
+external-command/pipeline forms and DD#101's `getenv` exception are unchanged.
+
 ## Why this shape
 
 The narrowed semantics are the union of two mechanisms that already exist, so

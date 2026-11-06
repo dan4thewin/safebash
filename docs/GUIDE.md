@@ -567,6 +567,15 @@ as an int function's unbound answer already was. `-` with nothing to discard
 is SB4076: on a void function, or in `$(- f)` on an int f, whose `$(f)`
 binds the int.
 
+**Anonymous captures may not explicitly return a status** (DD#55/DD#86,
+DG, 2026-11-06). This includes `return 0` and status-producing forwarding,
+with or without redirects. Bare return, fall-through and compatible void
+forwarding remain legal. Give a status-returning body a name; `$(- f)`
+then captures its stdout while explicitly discarding its status.
+No new anonymous-result consumer or capture-condition form is introduced.
+The rule is accepted; enforcement is pending in
+`reject-anonymous-capture-status-returns` (journal 584).
+
 **Integer captures stay integer-valued through redirects** (DD#58, DG,
 2026-11-06). `$(f 2>&1)` and `$(f >file)` consume f's returned integer;
 stdout is a permitted side effect, following those redirects.

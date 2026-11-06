@@ -51,8 +51,9 @@ to discard the integer and expose stdout through its own capture; for
 example, `fn output_c { - c }` followed by `$(output_c)`.
 `bug-int-capture-redirect-switches-kind` owns the native/C fix, including
 keeping integer captures out of SB4075's stdout-writer test. Anonymous
-capture caller-status handling remains separate in
-`q-status-function-ceremony`.
+capture status returns were separately rejected (DD55/DD86, journal 584);
+`q-status-function-ceremony` is closed, with enforcement pending in
+`reject-anonymous-capture-status-returns`.
 
 ## Q2. `-> int` with no `return` — implemented
 
