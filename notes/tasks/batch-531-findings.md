@@ -894,8 +894,11 @@ DG 2026-10-28: F2 lands without the B82 wrap and without specs that pin
     2026-10-30). A status function's call is handled as a condition or
     discarded with `-`; a bare call, a list tail, `f &` or `$(f)` is
     SB4016. `-` on a void function is SB4076 (new). A call is checked
-    against the definition in force. Specs nonvoid.1-nonvoid.29. The
-    questions left are in `q-nonvoid-classifier-residuals`.
+    against the definition in force. Specs nonvoid.1-nonvoid.29.
+    DG subsequently rejected duplicate definitions (DD86, journal 582);
+    `reject-duplicate-function-definitions` owns enforcement and migration
+    of the affected old specs. Only the capture-surface Q1 remains open in
+    `q-nonvoid-classifier-residuals`.
 - [x] **B76** (fixed-on-branch; DD55, DD88). In `if x=$(/bin/echo $(f))` the
   fast path lifted the inner `$(f)` out of the condition capture's
   suppression, so a `/bin/false` inside `f` aborted. DD55 (2026-10-20) and

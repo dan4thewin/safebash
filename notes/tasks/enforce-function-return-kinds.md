@@ -44,8 +44,10 @@ is not a bare return. Operand validity still belongs to the int-sink rules.
 
 Apply the body contract to anonymous capture bodies as required by DD86,
 without deciding their separate caller-side status-consumption question in
-`q-status-function-ceremony`. Preserve the existing redefinition policy;
-`q-nonvoid-classifier-residuals` Q3 remains open. Remaining operand parsing
+`q-status-function-ceremony`. This completed unit preserved the then-existing
+redefinition behavior. DG subsequently rejected duplicates (DD86,
+journal 582); `reject-duplicate-function-definitions` owns that separate
+enforcement, and classifier Q3 is no longer open. Remaining operand parsing
 and enforcement of the now-settled explicit-conversion rule remain in
 `bug-return-status-string-operand` (DD89, journal 579).
 Do not broaden return grammar or alter EXIT/ERR's terminal protocol.

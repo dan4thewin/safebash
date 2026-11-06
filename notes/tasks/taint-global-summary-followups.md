@@ -58,9 +58,11 @@ The implementation has other conservative seams worth checking before
 extending it. These are questions recorded during W1b-1, not claims that a
 valid source program has demonstrated another failure:
 
-- The census and summary cache are keyed by name. Multiple definitions are
-  treated as shared and their read/flow summaries unioned, rather than
-  selected by the definition in force at each call.
+- Duplicate-definition precision is no longer a supported-language question:
+  DG rejects all repeated function names (DD86, journal 582).
+  `reject-duplicate-function-definitions` owns enforcement before the
+  name-keyed census/cache; do not specialize summaries to support replacement.
+  Until that guard lands, the existing union remains an implementation fact.
 - Return-producer traversal and a capture's final-state union may include
   states that do not actually fall through. Keep explicit returns separate
   when testing this; `gflow.13` already pins the named-function exit union.

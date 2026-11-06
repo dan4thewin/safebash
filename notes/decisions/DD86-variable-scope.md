@@ -42,6 +42,30 @@ global) that a reviewer can't trace. Both are footguns.
 - **`local fn` (DD#18) is abandoned** — it was the only other user of `local`,
   and "designed, not built."
 
+## Function names: one definition each (DG, 2026-11-06)
+
+A function name has exactly one source definition in a program. A second
+definition is a compile-time error, even if its body and signature are
+identical, its return kind is unchanged, or neither definition is called.
+There is no function replacement or overloading by return kind, scalar
+arity or collection signature.
+
+Function names remain global and hoisted; definitions remain legal only
+in the program's main statement list (SB5071). Calls before or after the
+single definition refer to that same function. The rule does not change
+variable scope, anonymous capture bodies, generated implementation
+functions or DD#27's permitted self-tail calls.
+
+DG chose rejection over same-signature replacement or changing definitions.
+One name therefore denotes one body, one result kind and one inferred
+signature, without a textual "definition in force" choice.
+
+**Enforcement is pending** in `reject-duplicate-function-definitions`.
+That task also removes the accepted duplicate-definition programs behind
+`bug-int-call-by-name-redefinition`; neither task is complete merely because
+the policy is settled. DD#55's former definition-in-force contract is
+replaced by this rule. Journal 582 records the decision.
+
 ## Declaring globals — the `str` keyword
 
 Globals must be introduced at top level, so a way to declare each type

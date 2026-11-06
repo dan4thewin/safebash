@@ -61,7 +61,10 @@ Which diagnostic a read gets: SB4019 (the name belongs to a function),
 SB5031 (no variable of that name is assigned), or, for a bare `f` in
 arithmetic, the SB4030 that `(f)` gets. Any of them states the rule. The fix
 picks one per position and records it in a DD#58 addendum.
-`bug-int-call-by-name-redefinition`'s i3 gate depends on the choice.
+`bug-int-call-by-name-redefinition`'s i3 used to depend on this choice.
+DD86 now rejects its duplicate definition (DG, 2026-11-06; journal 582),
+so its gate belongs to `reject-duplicate-function-definitions`.
+The single-definition cases in this task remain independent and unfixed.
 
 ## Port closeout recheck (2026-11-05)
 

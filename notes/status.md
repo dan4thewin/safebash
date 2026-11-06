@@ -1,4 +1,23 @@
-## STATUS (2026-11-06, latest) - Recoverable failures and fatal faults settled
+## STATUS (2026-11-06, latest) - One definition per function name settled
+
+DG rejects duplicate function definitions: one name, one body, one result
+kind and one inferred signature. Identical, same-kind and uncalled
+duplicates are errors too. Global hoisting, main-list-only placement,
+forward calls and legal self-tail calls remain.
+DD86/DD55/DD58 and GUIDE record the contract; journal 582 records the ruling.
+
+The new P1 `reject-duplicate-function-definitions` owns enforcement and
+directly dependent definition/class bookkeeping. The existing P1
+`bug-int-call-by-name-redefinition` depends on it; its reproducers must
+now reject, not run as replacements. It remains open until that happens.
+Classifier Q3 is closed as a question; Q1's capture-surface question and
+anonymous-capture caller-status handling remain open.
+
+This is documentation/backlog recording only. No compiler/runtime/spec
+code changed, and journal 577's accepted gate remains the implementation
+baseline. Duplicate rejection is not yet implemented.
+
+## STATUS (2026-11-06) - Recoverable failures and fatal faults settled
 
 DG chose recovery class, not setup position: catch/suppress may continue
 after a recoverable failure, while a fatal fault must stop execution.

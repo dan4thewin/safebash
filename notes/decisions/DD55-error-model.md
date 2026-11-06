@@ -283,6 +283,11 @@ unconsumed-value rule, not the implicit-check rule.
 
 ## User-defined functions
 
+Each function name has one source definition (DD#86; DG, 2026-11-06).
+A repeated definition is an error regardless of body, signature, result
+kind or use. Duplicate rejection is accepted but not yet implemented;
+`reject-duplicate-function-definitions` owns enforcement.
+
 ### Return kinds (DG, 2026-11-06)
 
 Return kind is independent of the numeric value returned:
@@ -562,19 +567,20 @@ keeps its kind; `return g >file` does not turn a void g into a status
 producer. Incompatible forwarding, including int-to-status, is a type
 error, enforced by `enforce-function-return-kinds`.
 
-**Definition in force.** The existing redefinition policy is unchanged.
-A call is checked against the definition it runs, which is the one in
-force where the call stands. Each `fn` statement recomputes the classes in
-force as it comes into force, so a name defined twice can be a status at one
-call and void at a later one (nonvoid.25-nonvoid.29). The `fn_NAME`
-templates have no call site. They use a table built before any body is
-lowered, over every program-level definition
-(`Program::function_defs`; SB5071 permits no others). That table holds only
-the names defined once and the functions whose class depends only on those. A redefined name, and
-anything whose class it decides, is checked where the call is inlined
-(nonvoid.26). Before, only `-> int` functions were classified, in textual
-order while lowering, so a body calling an int function defined after it went
-unchecked (nonvoid.9).
+**One definition per name.** DG's 2026-11-06 ruling replaces F6's
+definition-in-force behavior: duplicate source definitions are rejected,
+including same-kind and identical definitions (DD#86). Every call and
+template must describe the same single body and its result kind.
+
+Enforcement remains pending in `reject-duplicate-function-definitions`.
+F6 currently recomputes the classes as definitions are lowered, and its
+template table excludes redefined names and their dependents.
+`nonvoid.25`-`nonvoid.29` record that old behavior, not an exception to the
+new rule; migrate the affected cases when enforcement lands.
+Preserve classification of forward references to unique definitions
+(`nonvoid.9`). The name-based integer-call miscompile is tracked by
+`bug-int-call-by-name-redefinition` until its duplicate-definition
+reproducers are rejected.
 
 **A status function's status is handled or discarded (B15).** A call is
 handled as a condition (`if`, `while`, the left side of `&&` or `||`), or

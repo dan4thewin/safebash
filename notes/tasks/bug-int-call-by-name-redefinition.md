@@ -3,13 +3,28 @@ title: "bug: an int call is chosen by name, so a redefinition miscompiles it"
 status: open
 priority: P1
 kind: bug
-depends: []
+depends: [reject-duplicate-function-definitions]
 gates:
-  - "i1 below prints `x=[one]`, as it does without the later `-> int` definition (today: `one` on the real stdout, then `x=[0]`)"
-  - "i2's second capture gives `x=[one]` (today: `one` on the real stdout, then `x=[0]`)"
-  - "i3 behaves as it does without the later definition (today it runs the void f: `one` on stdout, then `n=0`). Without it, `$(( f ))` reads an unassigned variable and prints only `n=0`, which is itself `bug-function-name-read-as-variable`; i3 follows that task's ruling"
-  - "the same in both backends, pinned by specs in both modes"
+  - "i1-i3 below reject at the duplicate source definition under DD86, in both modes"
+  - "the duplicate refusal, not an unrelated result/type error, is pinned by focused specs and negative/reversion controls"
+  - "valid single-definition captures and integer calls retain their results and output routing"
 ---
+
+## Decision, 2026-11-06
+
+DG rejects all duplicate function definitions, including identical and
+same-kind repeats (DD86/DD55, journal 582). The new P1
+`reject-duplicate-function-definitions` owns enforcement and directly
+dependent bookkeeping. This bug remains open until the duplicate programs
+below are rejected; the policy recording is not a fix.
+
+The original "make the selected definition run correctly" gates are
+superseded. i3 no longer depends on a diagnostic choice for a single
+function name read as a variable: it has a duplicate and must reject for
+that reason. The independently invalid single-definition counterpart
+remains in `bug-function-name-read-as-variable`.
+
+## Historical reproducers
 
 A silent miscompile in a program the compiler accepts. Found 2026-10-30 in
 F6 unit A (journal 547). The binary before F6 gives the same output, so it is
@@ -58,10 +73,12 @@ real stdout and the "int" is 0.
 F6 unit A fixed the same shape for DD#55's class check. A call now checks
 the class of the definition in force (`VersionState::call_class`), and only
 the `fn_NAME` templates use a table, which holds only names defined once.
-The likely fix mirrors that: decide the int lowering from the class in force
-(`FnClass::Int`).
+The original proposed repair mirrored that: decide the int lowering from
+the class in force (`FnClass::Int`). That is no longer the target contract;
+accepted programs must have only one definition to classify.
 
 F6 did not touch these functions, so by the 2026-10-26 rule this goes to the
-backlog. A DG ruling in `q-nonvoid-classifier-residuals` Q3 that
-rejects a redefinition which changes a function's class would also make
-these programs illegal. The remaining sites would then become an ICE guard.
+backlog. `q-nonvoid-classifier-residuals` Q3 is now decided. Enforce the
+unique-definition invariant before these consumers, then simplify only
+the paths proved obsolete by that guard; do not add a separate duplicate
+check at each use.

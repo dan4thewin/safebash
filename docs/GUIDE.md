@@ -504,6 +504,13 @@ including DD55's first-expression `$?` handling.
 
 #### Functions, inlining, and recursion (DD#27)
 
+**One definition per function name: accepted, enforcement pending.**
+DG's 2026-11-06 rule rejects every second source definition, including an
+identical body or unchanged signature/result kind (DD#86). Names remain
+global and hoisted, so all calls refer to the same body. There is no
+replacement or overload selection by source position.
+`reject-duplicate-function-definitions` owns implementation (journal 582).
+
 User functions are **inlined**; their calls do not create runtime stack
 frames. A function cannot in general call itself — inlining would not
 terminate. `SB5037` rejects those calls. Generated EXIT/ERR callbacks are
@@ -558,8 +565,7 @@ A call must handle a status as a condition (`if`, `while`, the left side of `&&`
 or `||`) or discard it with `-` (`- f`, `$(- f)`). Anything else is SB4016,
 as an int function's unbound answer already was. `-` with nothing to discard
 is SB4076: on a void function, or in `$(- f)` on an int f, whose `$(f)`
-binds the int. Each call is checked against the definition in force where
-it stands.
+binds the int.
 
 **Integer values are not statuses** (DD#58, DG 2026-11-05). Direct int
 function stages, including `- f | ...`, and `return int_fn` in a non-int

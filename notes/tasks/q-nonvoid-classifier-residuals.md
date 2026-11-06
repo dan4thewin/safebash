@@ -5,7 +5,7 @@ priority: P3
 kind: question
 depends: []
 gates:
-  - "DG rules on the remaining Q1/Q3 questions; DD55 records the ruling"
+  - "DG rules on the remaining Q1 capture-surface question; DD55/DD58 record the ruling"
   - "the specs the chosen option flips are rewritten, and new specs pin it in both modes"
 ---
 
@@ -13,7 +13,10 @@ F6 unit A (journal 547, DD#55 addendum 2026-10-30) classifies every function
 as int, status or void and enforces DD#55 at the call. Four shapes surfaced
 while writing it; each repro below was compiled with the F6 unit A binary.
 Q2 and Q4 were settled by the 2026-11-06 return-kind ruling and implemented
-in journal 577 (`enforce-function-return-kinds`). Q1 and Q3 remain questions.
+in journal 577 (`enforce-function-return-kinds`). Q3 is now settled:
+DG rejects duplicate definitions (DD86, journal 582); enforcement remains
+pending in `reject-duplicate-function-definitions`. Only Q1 remains a
+policy question here.
 
 DD58's 2026-11-05 integer/status ruling settles implicit int-to-status
 conversion. Pipeline-stage enforcement is in `q-int-function-pipeline-status`;
@@ -52,25 +55,31 @@ integer `return 0` is legal. The new kind/completeness task owns the
 missing-result refusal, implemented in journal 577 with SB4037 even for an
 uncalled definition.
 
-## Q3. A redefinition that changes a function's class
+## Q3. Duplicate function definitions — decided, enforcement pending
 
-A call is checked against the definition in force where it stands (DD#55
-addendum 2026-10-30, nonvoid.25-nonvoid.29), so one name can be void at one
-call and a status at the next:
+DG chose "reject duplicates" on 2026-11-06. One function name has one
+source definition: same-kind, same-signature and identical repetitions
+are errors too, even when uncalled. Names stay global and hoisted; this
+is neither a new function scope nor an overloading rule.
+
+F6 checked the definition in force at each call (nonvoid.25-nonvoid.29),
+which allowed one name to be void at one call and a status at the next.
+The recorded example now requires rejection at the second definition:
 
 ```sh
 fn f { echo two }
-f                   # legal: the f in force is void
-fn f { return 3 }
-f                   # 4:1 SB4016 "returns a status"
+f
+fn f { return 3 }    # duplicate definition: compile-time error required
+f
 ```
 
-No DD says whether a name may be defined twice, or which body a call runs.
-DD#86 says only that the compiler hoists the name. The transform inlines the
-definition lowered last before the call, in textual order. Question: should a
-second definition of a name be rejected, or at least one that changes the
-name's class? `q-fn-definitions-in-end` is related, and
-`bug-int-call-by-name-redefinition` is a miscompile of the same shape.
+DD86 and DD55 record the contract. The new P1 task
+`reject-duplicate-function-definitions` owns enforcement and related
+definition/class bookkeeping. The existing
+`bug-int-call-by-name-redefinition` remains open until its reproducers
+are rejected, rather than being repaired to support replacement.
+Function placement is already settled separately: definitions are
+main-list-only, not legal inside EXIT/ERR.
 
 ## Q4. A redirected tail call is a status — implemented
 

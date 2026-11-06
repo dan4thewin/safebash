@@ -76,10 +76,14 @@ disambiguation is a compile-time decision.
 
 ## Name collision
 
-Function names and variable names must not collide. Each may have
-local shadows (a local can shadow an outer local or global of the
-same kind), but `fn f` and `var f` coexisting is a compile error.
-This eliminates ambiguity inside `(( ))` where `f` could be either.
+Function names and variable names must not collide: `fn f` and a variable
+named `f` coexisting is a compile error. This eliminates ambiguity inside
+`(( ))` where `f` could be either.
+
+DD#86 governs scope and shadowing. Function names are global and each has
+one source definition, not local shadows or source-order replacements.
+Duplicate rejection is accepted but remains pending in
+`reject-duplicate-function-definitions` (DG, 2026-11-06; journal 582).
 
 ## Interaction with existing syntax
 
