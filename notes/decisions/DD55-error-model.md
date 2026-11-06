@@ -77,6 +77,19 @@ command executes, the status is consumed and unavailable. This
 prevents stale-status bugs where `$?` refers to something other
 than the command that caused entry to the branch.
 
+### Evaluation order (DG, 2026-11-06)
+
+DD86 now requires left-to-right evaluation of words and their component
+expressions. A later capture cannot run ahead of an earlier `$?` read:
+`cmd || echo "[$?]" "$(f)"` reads the status that entered the branch before
+calling `f`. Reversing the arguments makes `$?` no longer the first
+expression, so it is SB5012, not permission to read the capture's status.
+
+This ruling is accepted but its enforcement remains pending in
+`q-capture-hoisting-order` (journal 580). It does not decide whether a
+capture body itself inherits the caller's status; that separate entry-state
+question remains in `bug-sb5012-sb5094-nested-body-flow`.
+
 ## `local` declarations
 
 `local x=$(cmd)` — the capture's exit check fires regardless of

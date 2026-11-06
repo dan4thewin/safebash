@@ -431,6 +431,39 @@ and is now SB4030. It used to be accepted, and accepting it is how a
 
 Specs `spec/scope.sh` 86.59–86.70, `spec/types.sh` 75.101–75.107; journal 434.
 
+## Evaluation order (DG, 2026-11-06)
+
+DG chose **left-to-right**, applying the principle of least surprise
+(journal 580). Words and their component expressions are evaluated in
+source order, not in a separate captures-first pass. This applies across
+an argument list and within one interpolated word, test operand or reached
+dispatch pattern alike.
+
+An earlier read takes its value before a later capture runs. The capture's
+effects are visible to later reads, but cannot retroactively change the
+value already read:
+
+```sh
+str g=old
+fn f { g=new; echo X }
+echo "$g" "$(f)" "$g"     # required result: old X new
+```
+
+Putting those expansions into one quoted word does not change their order.
+The same principle applies to value-producing function calls, not just
+stdout captures.
+
+Existing control-flow and body boundaries remain: an unreached lazy operand
+or dispatch pattern does not run; a stage's operand evaluation stays in its
+child; captures do not acquire subshell isolation. This changes neither
+collection-identity passing nor the rule that same-process global writes
+survive. DD55's first-expression rule for `$?` follows the same order.
+
+**Implementation is pending** in `q-capture-hoisting-order`, now a bug task.
+The current compiler still prints `new X new` for the example. Removing
+capture hoisting must preserve earlier values, not merely visit their
+expressions earlier while leaving their reads deferred.
+
 ## Addendum (2026-09-29) — the body is validated as a function body
 
 "A `$( … )` body is an anonymous function" was settled above for *scope*. It

@@ -283,6 +283,12 @@ subject is not a literal, the subject is first copied to a reserved temporary
 (`__dispatch_subject_N`, DD#125). The copy is load-bearing: without it,
 dsplazy.6 and .7 fail.
 
+Within the subject or an individual reached pattern, DD86's 2026-11-06
+left-to-right rule also applies: a later capture cannot precede an earlier
+component read. That finer-grained ordering is accepted but still pending
+in `q-capture-hoisting-order` (journal 580); the lazy pattern chain and
+subject preservation described here are already implemented.
+
 The `--trace` block labels are unchanged: `case.{i}`, `case.check.{i}`,
 `case.{i}.pat.{j}`, `case.nomatch` and `dispatch.merge`. Two traced probes
 print the same lines before and after the port, one with static patterns

@@ -1,4 +1,22 @@
-## STATUS (2026-11-06, latest) - Explicit return conversion settled
+## STATUS (2026-11-06, latest) - Left-to-right evaluation settled
+
+DG chose left-to-right evaluation for the principle of least surprise:
+across argument lists and within words/reached operands, earlier reads
+keep their values before later captures run. Existing lazy evaluation and
+body/process boundaries remain. DD86/DD55/DD66 and GUIDE record the
+contract; journal 580 records the ruling.
+
+`q-capture-hoisting-order` is now an open implementation bug, not a policy
+question. No compiler/runtime/spec code changed. The required result for
+its global-mutation example is `old X new`; the current compiler still
+prints `new X new`.
+
+Next ruling: whether `-` may discard fork/pipe/redirect setup failures
+(`q-setup-failure-suppressibility`). Fresh native probes confirm the
+job/stage/statement split. Heap exhaustion is already fatal under DD128,
+not part of that remaining choice.
+
+## STATUS (2026-11-06) - Explicit return conversion settled
 
 DG requires explicit arithmetic for string-valued dispositions at integer
 sinks, including return operands. Use `return $(( ${s:-7} ))`, not

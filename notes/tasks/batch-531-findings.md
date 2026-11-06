@@ -840,7 +840,8 @@ DG 2026-10-28: F2 lands without the B82 wrap and without specs that pin
   55.84-55.86.
   - Ported in F5 unit A (journal 542): `capture_body_into` takes
     `in_condition` too.
-- [ ] **Capture-hoisting order** (question; DD55, DD66, DD86; pre-existing,
+- [ ] **Capture-hoisting order** (bug under DG's 2026-11-06 ruling; DD55,
+  DD66, DD86; pre-existing,
   the same on the branch where it compiles). Every capture in a statement runs
   before the statement's other reads, so text order is not evaluation order.
   `⏎` marks a newline; `fn t { /bin/true }` precedes each `ev` row.
@@ -854,7 +855,7 @@ DG 2026-10-28: F2 lands without the B82 wrap and without specs that pin
   - That the write happens is settled, so F5's simplification candidate
     "captures may not write outer names" is closed: DD86's 2026-09-28
     addendum (DG: changes to globals survive "unless a fork is required").
-    Only the order is open.
+    The order is now settled as left-to-right; implementation remains open.
   - `$?` to the left of a function capture: ev6 `/bin/sh -c "exit 3" || echo
     "[$?]" "$(t)"` prints `[0] `, where DD55 (`$?` is the handling branch's
     first expression) and bash give `[3]`. ev9 (`t` is `return 0`) and ev11
@@ -871,12 +872,14 @@ DG 2026-10-28: F2 lands without the B82 wrap and without specs that pin
     "[$?]"` prints `hi [3]`, ev10 `[3] x`.
   - On the branch, ev5-ev8, ev11, ev13 and ev14 are SB5020 (B114), so it says
     nothing about their order.
-  - Options carried from the ledger: (a) keep hoisting and document it;
-    (b) evaluate left to right, word by word.
+  - DG chose left-to-right on 2026-11-06, for the principle of least
+    surprise (journal 580). This includes component reads within a word
+    or reached operand, not only the order of whole arguments.
   - Probes: `files/port-f1f4-probes.tar.gz`, `cb/ev1`-`ev14` (ev1, ev2 and
     ev4 use an external capture and are SB5020).
-  - Filed as `q-capture-hoisting-order` (P2). Its `$?` rows are bugs under
-    either option. The ab133dd2 re-probes (hn1, ev5, ev6) are in
+  - Filed as `q-capture-hoisting-order` (P2), now an implementation bug.
+    Its `$?` rows already contradicted DD55. The ab133dd2 re-probes
+    (hn1, ev5, ev6) are in
     `files/port-f5-probes.tar.gz`.
 
 ### 13. F6 suppression scope

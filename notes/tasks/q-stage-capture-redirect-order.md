@@ -11,6 +11,11 @@ gates:
 
 ## What
 
+DG's 2026-11-06 left-to-right ruling (DD86, journal 580) settles the order
+of word/component evaluation, including captures. This task's remaining
+question is the phase at which stage I/O is installed relative to that
+evaluation, not another choice about capture hoisting within the words.
+
 A pipeline stage applies its own redirects and then evaluates its argument
 captures. A statement evaluates its arguments first and then applies its
 redirects. Since F2 (B81, journal 539) a command stage's captures run inside

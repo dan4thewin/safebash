@@ -494,6 +494,14 @@ graph construction. Function inlining. Arithmetic evaluation. A
 diagnostic raised while lowering reports at the statement being lowered
 (`VersionState::stmt_span`).
 
+**Evaluation order: accepted, implementation pending.** DD86 requires
+left-to-right evaluation across argument lists and within individual words
+and reached operands (DG, 2026-11-06; journal 580). Earlier reads retain
+their values before later captures or value calls mutate state. Existing
+lazy branches and process/body boundaries remain intact. The compiler's
+captures-first behavior is queued for repair in `q-capture-hoisting-order`,
+including DD55's first-expression `$?` handling.
+
 #### Functions, inlining, and recursion (DD#27)
 
 User functions are **inlined**; their calls do not create runtime stack

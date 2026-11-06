@@ -1,23 +1,37 @@
 ---
-title: "Question: a statement's captures run before its other words (capture-hoisting order)"
+title: "Evaluate words and expressions left to right"
 status: open
 priority: P2
-kind: question
+kind: bug
 depends: []
 gates:
-  - "DG rules (a) keep hoisting and document it, or (b) evaluate left to right, word by word; the ruling is recorded in DD#55 and DD#86"
-  - "under either ruling the two `$?` rows below are fixed (they contradict DD#55 whichever option is chosen), with specs in both modes"
+  - "DD86's left-to-right rule holds across argument lists and within words and reached operands, for captures and value calls, in both backends"
+  - "earlier reads retain their values before a later capture mutates the source; visiting an expression without materializing its value is not enough"
+  - "the two `$?` rows below obey DD55, with specs in both modes"
+  - "existing lazy evaluation and function/capture/process boundaries are preserved; an unreached operand or pattern never runs"
+  - "status and taint analysis do not apply a later capture's effects to an earlier read"
 ---
+
+## Decision, 2026-11-06
+
+DG chose **left-to-right**, for the principle of least surprise. DD86,
+DD55 and journal 580 record the rule. It covers both the order of words
+and the component reads/captures inside one word or reached operand;
+retaining capture hoisting is no longer an option.
+
+The existing task slug is retained for its links, but this is now an open
+implementation bug, not an unanswered language question. No implementation
+is included in the decision recording.
+
+## Evidence
 
 Rechecked 2026-11-06 at `51af4312`: the first global-mutation example below
 still compiles and prints `new X new` with the ordinary native compiler.
-The `$?` examples were not re-probed in this check. This remains an open
-evaluation-order decision, separate from the explicit-conversion ruling
-recorded in journal 579.
+The `$?` examples were not re-probed in this check.
 
-Every `$( )` in a statement runs before the statement's other reads, so the
-order of the words in the text is not the order they are evaluated in. This
-is batch-531's "Capture-hoisting order" (`batch-531-findings.md`, section 12).
+Within a lowered argument list or word, captures run before its other
+reads, so source order is not evaluation order. This is batch-531's
+"Capture-hoisting order" (`batch-531-findings.md`, section 12).
 It was found during F1+F4, exists on base, and is the same on the branch
 wherever the branch compiles the program.
 
@@ -26,39 +40,45 @@ Measured at ab133dd2; native and C are identical:
 ```
 str g=old
 fn f { g=new; echo X }
-echo "$g" "$(f)" "$g"      # new X new   (bash's subshell: old X old)
+echo "$g" "$(f)" "$g"      # current: new X new; required: old X new
 ```
 
 That the write happens is settled: a capture body writes globals like any
 other code (DD#86 addendum 2026-09-28, DG: "changes to globals … survive
-unless a fork is required"). What is open is *when* it happens. Evaluating in
-text order would print `old X new`.
+unless a fork is required"). The timing is now settled too: evaluating in
+text order must print `old X new`.
 
 ```
 fn t { /bin/true }
-/bin/sh -c "exit 3" || echo "[$?]" "$(t)"   # prints "[0] "; DD#55 and bash say [3]
+/bin/sh -c "exit 3" || echo "[$?]" "$(t)"   # prints "[0] "; DD#55 requires status 3
 /bin/sh -c "exit 3" || echo "$(t)" "[$?]"   # prints " [0]" and compiles
 ```
 
-**The `$?` rows are bugs under either option.** In the first, `$?` is the
+**The `$?` rows already contradicted DD55 before this ruling.** In the first, `$?` is the
 handling branch's first expression, yet it reads the status that `$(t)` left
 behind. In the second, `$?` is not the first expression, and DD#55 makes
-that SB5012. The ruling decides only how the fix is built:
-- the first row must print `[3]`;
+that SB5012. Under left-to-right evaluation:
+- the first row must read the original status 3;
 - the second row must be SB5012.
 
-## Options
+## Implementation boundaries
 
-- **(a) Keep hoisting, and document it.** The name row stays `new X new`.
-  `$?` has to be read before the hoisted captures run, and SB5012 has to
-  count a capture to the left of `$?` as an earlier expression.
-- **(b) Evaluate left to right, word by word.** The name row prints
-  `old X new`, and the first `$?` row prints `[3]` with no special case.
-  `[[ && || ]]` operands and DD#66 dispatch patterns are already lazy on
-  hand-parser, since F8 (B87, journal 550) and F9 (B86, journal 551): one
-  that is never reached never runs. Within one operand or pattern, its
-  captures still run before its other reads, as in an argument list. Under
-  (b), argument lists would follow the same left-to-right rule.
+`[[ && || ]]` operands and DD66 dispatch patterns are already lazy, since
+F8 (B87, journal 550) and F9 (B86, journal 551): one that is never reached
+never runs. Preserve that while repairing the order inside each reached
+operand, just as inside an argument list or interpolated word. Preserve
+the once-only dispatch subject value too.
+
+Keep evaluation in its owning body/process, and preserve collection
+identity arguments. Use the existing shared lowering rather than a
+private capture walker or a backend-specific order. Both backends must
+consume the ordered values; a later load from mutable storage would undo
+an earlier visitor-order fix.
+
+This does not settle a capture body's inherited `$?` permission
+(`bug-sb5012-sb5094-nested-body-flow`) or the phase at which a stage installs
+its redirects (`q-stage-capture-redirect-order`). Neither permits
+captures-first evaluation of the words themselves.
 
 ## Pointers
 

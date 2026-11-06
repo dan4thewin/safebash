@@ -188,8 +188,10 @@ same verdict either way.
   can find, no existing spec flips: 23.31 keeps cb5's shape, and 57.189 is
   converter text.
 - **(b) Inherited, as today.** Then what a body reads depends on capture
-  order (ev12-ev14 below), which is F5's capture-hoisting question
-  (`batch-531-findings` §12).
+  order (ev12-ev14 below). DG settled that order as left-to-right on
+  2026-11-06 (DD86, journal 580), with implementation pending in
+  `q-capture-hoisting-order`. Whether the body may inherit the status
+  remains this task's separate question.
 
 | Program | Result |
 |---|---|
@@ -208,7 +210,8 @@ both with SB5020 (B114).
 
 ## Not this task
 
-- Capture-hoisting order (ev5-ev11, ev13, ev14): F5, `batch-531-findings` §12.
+- Left-to-right evaluation (ev5-ev11, ev13, ev14): the accepted rule's
+  implementation is in `q-capture-hoisting-order`, `batch-531-findings` §12.
 - The latch dropped after a branch's first statement (l1):
   `bug-handling-branch-drops-latch`.
 - What SB5012 says ("no preceding command"):
