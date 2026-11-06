@@ -1241,6 +1241,11 @@ fn build_function_pipeline_stage(
     idx: usize,
 ) -> Option<String> {
     let body = state.function_bodies.get(name).cloned()?;
+    if state.call_class(name) == Some(FnClass::Int) {
+        state.error_at_stmt(format!(
+            "[SB4030] int function `{name}` used as a pipeline stage — integer values are not process statuses, even with `-`"
+        ));
+    }
     let entry = ssa.new_checkpoint_block(&format!("pipe_fn_{}_{}", name, idx));
     let parent = state.enter_forked_child();
     let end = super::cmd_handlers::inline_function_call(name, &body, c, ssa, state, entry);

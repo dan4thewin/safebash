@@ -12,8 +12,8 @@ gates:
 F6 unit A (journal 547, DD#55 addendum 2026-10-30) classifies every function
 as int, status or void and enforces DD#55 at the call. Four shapes surfaced
 while writing it; each repro below was compiled with the F6 unit A binary.
-Q2 and Q4 are now settled by the 2026-11-06 return-kind ruling and await
-`enforce-function-return-kinds`. Q1 and Q3 remain questions.
+Q2 and Q4 were settled by the 2026-11-06 return-kind ruling and implemented
+in journal 577 (`enforce-function-return-kinds`). Q1 and Q3 remain questions.
 
 DD58's 2026-11-05 integer/status ruling settles implicit int-to-status
 conversion. Pipeline-stage enforcement is in `q-int-function-pipeline-status`;
@@ -38,7 +38,7 @@ So `$(- c)` is SB4076 but `$(- c 2>&1)` is legal. Question: should one
 capture spelling mean one thing (for example, `$(c)` of an int function is
 an error that points at `$((c))`), or does the split stand?
 
-## Q2. `-> int` with no `return` — settled, implementation pending
+## Q2. `-> int` with no `return` — implemented
 
 ```sh
 fn f -> int { echo hi }
@@ -49,7 +49,8 @@ The F6 binary compiled this and supplied zero. Under DG's 2026-11-06 rule,
 the missing integer is an error: a returning path must supply a result.
 It is not a ceremony error, and SB4017 is being retired. An explicit
 integer `return 0` is legal. The new kind/completeness task owns the
-missing-result refusal.
+missing-result refusal, implemented in journal 577 with SB4037 even for an
+uncalled definition.
 
 ## Q3. A redefinition that changes a function's class
 
@@ -71,7 +72,7 @@ second definition of a name be rejected, or at least one that changes the
 name's class? `q-fn-definitions-in-end` is related, and
 `bug-int-call-by-name-redefinition` is a miscompile of the same shape.
 
-## Q4. A redirected tail call is a status — settled, implementation pending
+## Q4. A redirected tail call is a status — implemented
 
 ```sh
 fn g { echo hi }
@@ -89,6 +90,8 @@ The accepted kind-preserving forwarding rule settles this: a redirect does
 not invent a status result. f remains void when it forwards void g;
 status/integer forwarding likewise retains its kind. This is part of
 `enforce-function-return-kinds`, not a new exception to the return rule.
+Journal 577 implements kind preservation and checks that a redirect-open
+failure cannot become a void or integer result.
 
 Pointers: `sash/src/transform/functions.rs` (`classify_producer`,
 `exit_summary`, `returned_callees`, `classify`, `static_classes`), `ssa.rs`

@@ -2067,7 +2067,7 @@ pub(crate) struct TailLoop {
 /// DD#55: what a call of a user function hands back to its caller.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum FnClass {
-    /// Nothing: every exit yields 0.
+    /// No result: bare return, fall-through, or void forwarding.
     Void,
     /// A status the caller must handle or discard.
     Status,
@@ -2082,7 +2082,7 @@ pub(crate) enum ExitSummary {
     Int,
     /// Some exit hands back a status of its own.
     Status,
-    /// Every other exit yields 0, so the class is that of the functions these
+    /// Every other exit is void, so the class is that of the functions these
     /// `return g` exits hand the result to: void when there are none.
     Returns(Vec<String>),
 }

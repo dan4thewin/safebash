@@ -534,8 +534,9 @@ self-tail calls are loop edges, not exits.
 
 Constant results are legal, including zero. The old int-only SB4017 check
 is retired without a general constant-result check replacing it. The
-kind/completeness changes and check removal await
-`enforce-function-return-kinds` and `retire-return-ceremony-check`.
+kind/completeness changes and check removal are implemented in shared
+`lower_body` checking, for named functions and anonymous capture bodies
+alike (journal 577). They reuse the canonical function classifier.
 
 A call must handle a status as a condition (`if`, `while`, the left side of `&&`
 or `||`) or discard it with `-` (`- f`, `$(- f)`). Anything else is SB4016,
@@ -548,8 +549,9 @@ it stands.
 function stages, including `- f | ...`, and `return int_fn` in a non-int
 function require SB4030; discard does not repair a type mismatch. Integer
 captures, int-to-int return forwarding and in-process value discard remain
-valid. Enforcement is pending: `q-int-function-pipeline-status` owns stages,
-and `enforce-function-return-kinds` owns return-producer compatibility.
+valid. Both boundaries are enforced: `q-int-function-pipeline-status` covers
+stages, and `enforce-function-return-kinds` covers return-producer
+compatibility (journal 577).
 
 ### Phases 7–9: Fold, Codegen, Link
 

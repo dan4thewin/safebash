@@ -1,6 +1,6 @@
 ---
 title: "Reject int-function calls as status-producing pipeline stages"
-status: open
+status: complete
 priority: P2
 kind: bug
 depends: []
@@ -10,7 +10,13 @@ gates:
   - "focused native/C specs reject both return 3 and return 256 as direct stage results, with before-controls and the ordinary unit/spec gate"
 ---
 
-## Settled policy, implementation pending
+## Settled policy, implemented
+
+Implemented and verified in journal 577. The existing definition-in-force
+classifier supplies the direct-stage SB4030 guard. Six focused checks per
+backend turn red when that guard alone is reverted; integer captures,
+in-process discard and explicit-status wrappers remain valid. The final
+ordinary gate passes 11345 checks with no failures.
 
 DG ruled on 2026-11-05:
 
@@ -31,11 +37,10 @@ forwarding are unchanged. Explicit numeric status construction and status
 tests keep their existing contracts.
 
 This file keeps its old slug for incoming links, but is now an
-implementation bug rather than an unresolved question. No compiler or spec
-change accompanies the ruling. As of 2026-11-06, the return-producer
+implementation bug rather than an unresolved question. As of 2026-11-06, the return-producer
 consequence is owned by `enforce-function-return-kinds`; this task owns
 direct pipeline-stage use. Neither task's completion implies the other is
-done. The return-producer consequence has not been newly execution-probed.
+done. Both are now implemented and execution-probed in journal 577.
 
 ## Finding and scope
 

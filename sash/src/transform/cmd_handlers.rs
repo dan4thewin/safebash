@@ -298,7 +298,9 @@ pub(super) fn inline_function_call(
     let bracket = scope.map(|redirects| {
         let site = state.alloc_redirect_site();
         let fds: Vec<i64> = redirects.iter().map(|r| r.resolved_fd()).collect();
-        let checked = state.in_condition == 0;
+        // Only a status result can represent an open failure. Void and integer
+        // forwarding must not turn that failure into a result of another kind.
+        let checked = state.in_condition == 0 || state.call_class(name) != Some(FnClass::Status);
         ssa.block_mut(block).insts.push(SsaInst::RedirectPush {
             site,
             redirects,

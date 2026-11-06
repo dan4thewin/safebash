@@ -1408,7 +1408,7 @@ fn check_test_operand(
 /// default in slot 1, which is left alone.
 fn int_sink_slots(name: &str) -> Option<usize> {
     match name {
-        "exit" | "fail" | "wait" | "arg" => Some(1),
+        "exit" | "fail" | "return" | "wait" | "arg" => Some(1),
         _ => None,
     }
 }
@@ -1425,14 +1425,14 @@ fn operand_satisfies_int_sink(arg: &Expr, env: &TypeEnv) -> bool {
     expr_type(arg, env) == VarType::Int
 }
 
-/// Reject a non-int operand to `exit` / `wait` / `arg` (SB4030).
+/// Reject non-int sink operands (SB4030), retaining return's legacy dispositions.
 fn check_int_sink_operands(c: &Command, span: Span, env: &TypeEnv, errors: &mut Vec<TypeError>) {
     let name = expr_to_name(&c.name);
     let Some(slots) = int_sink_slots(&name) else {
         return;
     };
     for arg in c.args.iter().take(slots) {
-        if operand_satisfies_int_sink(arg, env) {
+        if operand_satisfies_int_sink(arg, env) || legacy_return_disposition(&name, arg) {
             continue;
         }
         errors.push(TypeError {
@@ -1440,6 +1440,13 @@ fn check_int_sink_operands(c: &Command, span: Span, env: &TypeEnv, errors: &mut 
             span,
         });
     }
+}
+
+fn legacy_return_disposition(name: &str, arg: &Expr) -> bool {
+    // Preserve the conversion until bug-return-status-string-operand is settled.
+    name == "return"
+        && matches!(&arg.kind, ExprKind::ParameterExpansion(pe)
+            if matches!(pe.operator.as_deref(), Some(":-" | ":?")))
 }
 
 /// The SB4030 message for a non-int operand of an int sink, naming what the
@@ -1457,6 +1464,7 @@ fn int_sink_message(name: &str, arg: &Expr) -> String {
 fn int_sink_role(name: &str) -> &'static str {
     match name {
         "exit" | "fail" => "an exit status",
+        "return" => "an integer result",
         "wait" => "a process id",
         _ => "a positional index",
     }

@@ -1,5 +1,5 @@
 title: Remove SB4017 and keep constant function results legal
-status: open
+status: complete
 priority: P2
 kind: bug
 depends: [enforce-function-return-kinds]
@@ -40,4 +40,8 @@ refused. Reconcile old source-level rejections with fresh spec IDs and the
 usual retirement predictions. Preserve SB4016/SB4076 and the integer/status
 boundary: a constant integer is still not a legal status-producing stage.
 
-No compiler or spec change accompanies this filing.
+Implemented with the replacement return-kind guards in journal 577.
+SB4017, its scan and its zero-result helpers/assertions are removed.
+Native/C before-controls distinguish explicit integer zero from the old
+rejection; independent reversions pin missing/mismatched-result guards.
+The final ordinary gate passes 11345 checks with no failures.

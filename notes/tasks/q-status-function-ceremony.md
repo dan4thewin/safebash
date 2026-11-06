@@ -13,7 +13,7 @@ gates:
 
 DG separated bare return from explicit zero and declined all constant-result
 checking, including the existing int-only SB4017 rule. The current contract
-is in DD55/DD58/DD74; implementation belongs to
+is in DD55/DD58/DD74; journal 577 implements
 `enforce-function-return-kinds` and `retire-return-ceremony-check`.
 
 The body contract applies to anonymous function bodies as well (DD86).

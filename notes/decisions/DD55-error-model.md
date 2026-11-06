@@ -121,8 +121,8 @@ retired the tail-loop half (SB4076), and journal 548 the rest.)
 An int-valued function is not a status producer and cannot be called
 directly as a stage, including with `-` (SB4030, DD#58). Suppression does
 not make an ill-typed stage legal. This type boundary was settled by DG
-on 2026-11-05; enforcement remains pending in
-`q-int-function-pipeline-status`. The rules below apply to legal stages.
+on 2026-11-05 and implemented in journal 577
+(`q-int-function-pipeline-status`). The rules below apply to legal stages.
 
 Pipefail always on (DD#20). Implicit check fires on the pipeline's
 aggregate status. Per-segment suppression with `-`:
@@ -275,9 +275,8 @@ int-only "returns 0" ceremony rule (SB4017) is retired. In an unannotated
 function, `return 0` produces a status; in an `-> int` function it produces
 an integer. Neither means void, even when it is the only result.
 
-This contract is accepted but not yet implemented. The backlog is
-`enforce-function-return-kinds`, followed by `retire-return-ceremony-check`
-(or both in one coherent change). Journal 574 records the ruling.
+Implemented together in journal 577 (`enforce-function-return-kinds` and
+`retire-return-ceremony-check`). Journal 574 records DG's ruling.
 
 ### Void functions
 
@@ -518,14 +517,15 @@ Specs `errors.sh` 55.76-55.87; journal 542.
 This records the F6 implementation of the 2026-10-29 and 2026-10-30 rulings
 in `q-suppression-on-user-functions` (Q3, and Q2 for in-process calls), and
 batch-531 B15. The contract is kept current below; the 2026-11-06 return-kind
-and ceremony changes remain pending, as stated under User-defined functions.
+and ceremony changes are implemented in journal 577, as stated under
+User-defined functions.
 
 **Three classes.** A function returns an int (`-> int`), a status, or
-nothing (void), under the kind-based contract above. F6's numeric/bare-zero
-classification does not yet implement that contract. A forwarded result
+nothing (void), under the kind-based contract above. Journal 577 replaces
+F6's numeric/bare-zero classification with that contract. A forwarded result
 keeps its kind; `return g >file` does not turn a void g into a status
 producer. Incompatible forwarding, including int-to-status, is a type
-error. `enforce-function-return-kinds` owns that enforcement.
+error, enforced by `enforce-function-return-kinds`.
 
 **Definition in force.** The existing redefinition policy is unchanged.
 A call is checked against the definition it runs, which is the one in

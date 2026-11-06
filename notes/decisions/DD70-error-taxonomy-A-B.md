@@ -59,7 +59,7 @@ it is a must-consume compile error. Consume it (`if [[ … ]]`,
 
 Enforcement codes — **kept adjacent to the existing ignored-return family**
 (SB4016 = an unconsumed non-void function result; SB4017's zero-return
-ceremony rule is retired by DD#55's 2026-11-06 ruling, removal pending):
+ceremony rule is retired by DD#55's 2026-11-06 ruling and removed in journal 577):
 - **SB4018** — a (B) boolean result is produced and discarded (bare
   `match` / bare `[[ … ]]`).
 - **SB4019** — `-` applied to a (B) construct (a must-consume result has
@@ -218,7 +218,7 @@ silent.
   from SB5012 (`$?`-staleness — reading a stale *status*, 50xx band).
 - **SB4017** — the former int-only zero-return check, retired by DG on
   2026-11-06. Do not replace it with a same-result check or repurpose its
-  code. Source removal is pending in `retire-return-ceremony-check`.
+  code. Source removal shipped in journal 577 (`retire-return-ceremony-check`).
 
 ## Implementation status (2026-06-25)
 

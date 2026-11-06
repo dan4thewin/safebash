@@ -52,7 +52,7 @@ result. To yield a status, wrap it in `return`.
 An int-valued function is not a status producer. In a non-int function,
 `return int_fn` is a type mismatch (SB4030), not an implicit conversion;
 neither a redirect nor suppression changes that. DG's 2026-11-05 ruling
-in DD#58 settles this boundary; enforcement is pending in
+in DD#58 settles this boundary; journal 577 implements it in
 `enforce-function-return-kinds`. Explicit numeric status construction and
 the status-producing tests below are unchanged.
 
@@ -116,10 +116,10 @@ a valid predicate, not void. Constant status results of any value are legal;
 their callers still have the ordinary non-void handling obligation.
 There is no ceremony or constant-result check.
 
-The kind/completeness refinement and SB4017 removal are accepted but await
-`enforce-function-return-kinds` and `retire-return-ceremony-check`. The
-current predicate-use-only completeness check does not implement this
-whole contract.
+The kind/completeness refinement and SB4017 removal are implemented in
+journal 577 (`enforce-function-return-kinds` and
+`retire-return-ceremony-check`). Shared body lowering enforces the contract
+independently of predicate use, including anonymous capture bodies.
 
 ## Canonical predicates
 

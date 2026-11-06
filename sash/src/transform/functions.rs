@@ -653,10 +653,105 @@ pub(super) fn lower_body(
     state: &mut VersionState,
     block: BlockId,
 ) -> BlockId {
+    check_body_returns(body, state);
     let inherited = initialize_body_locals(body, ssa, state, block);
     let exit = lower_stmts(body, ssa, state, block);
     state.live_locals = inherited;
     exit
+}
+
+fn check_body_returns(body: &[Statement], state: &mut VersionState) {
+    let name = state
+        .tail_loop
+        .as_ref()
+        .map_or_else(String::new, |tail| tail.func.clone());
+    let name = name.as_str();
+    let Some(expected) = body_class(name, body, state) else {
+        return;
+    };
+    let sites = collect_return_sites(body);
+    if expected != FnClass::Void && body_lacks_result(body, &sites) {
+        state.error_at_stmt(format!(
+            "[SB4037] function `{}` must supply its {} result on every returning path — bare return and fall-through supply no result",
+            body_name(name), class_name(expected)
+        ));
+    }
+    check_return_producers(name, &sites.producers, expected, state);
+}
+
+fn body_lacks_result(body: &[Statement], sites: &ReturnSites<'_>) -> bool {
+    sites.values.iter().any(Option::is_none) || !crate::validate::body_always_returns(body)
+}
+
+fn body_class(name: &str, body: &[Statement], state: &VersionState) -> Option<FnClass> {
+    let integer = matches!(state.exits_in_force.get(name), Some(ExitSummary::Int));
+    let summary = body_exit_summary(name, body, integer, |n| state.known_functions.contains(n));
+    let mut exits: HashMap<_, _> = state
+        .known_functions
+        .iter()
+        .filter_map(|n| {
+            state
+                .call_class(n)
+                .map(|class| (n.clone(), class_summary(class)))
+        })
+        .collect();
+    exits.insert(name.to_string(), summary);
+    let absent = if state.lowering_fn_template {
+        Absent::Unknown
+    } else {
+        Absent::Status
+    };
+    let classes = classify(&exits, absent);
+    classes.get(name).copied()
+}
+
+fn class_summary(class: FnClass) -> ExitSummary {
+    match class {
+        FnClass::Int => ExitSummary::Int,
+        FnClass::Status => ExitSummary::Status,
+        FnClass::Void => ExitSummary::Returns(Vec::new()),
+    }
+}
+
+fn class_name(class: FnClass) -> &'static str {
+    match class {
+        FnClass::Int => "integer",
+        FnClass::Status => "status",
+        FnClass::Void => "void",
+    }
+}
+
+fn body_name(name: &str) -> &str {
+    if name.is_empty() {
+        "anonymous capture"
+    } else {
+        name
+    }
+}
+
+fn check_return_producers(
+    name: &str,
+    producers: &[&Statement],
+    expected: FnClass,
+    state: &mut VersionState,
+) {
+    for producer in producers {
+        let actual = producer_class(producer, name, state);
+        if let Some(actual) = actual.filter(|actual| *actual != expected) {
+            state.error_at_stmt(format!(
+                "[SB4030] function `{}` returns {}, but this return producer supplies {} — return kinds do not implicitly convert",
+                body_name(name), class_name(expected), class_name(actual)
+            ));
+        }
+    }
+}
+
+fn producer_class(producer: &Statement, name: &str, state: &VersionState) -> Option<FnClass> {
+    match classify_producer(producer, name, |n| state.known_functions.contains(n)) {
+        ProducerStatus::SelfTail | ProducerStatus::Terminates => None,
+        ProducerStatus::Calls(callee) => state.call_class(callee),
+        ProducerStatus::Status => Some(FnClass::Status),
+    }
 }
 
 fn initialize_body_locals(
@@ -1127,7 +1222,7 @@ fn sig_record_arith_names(a: &ArithExpr, sig: &mut ArgSig) {
 /// (`values`, as [`maybe_collect_return`] reads them) and the statements a
 /// `return <producer>` returns the status of (`producers`, DD#74).
 pub(super) struct ReturnSites<'a> {
-    pub(super) values: Vec<Option<String>>,
+    pub(super) values: Vec<Option<&'a Expr>>,
     pub(super) producers: Vec<&'a Statement>,
 }
 
@@ -1140,32 +1235,80 @@ pub(super) fn collect_return_sites(stmts: &[Statement]) -> ReturnSites<'_> {
     sites
 }
 
-/// **Total over `StmtKind` on purpose — do not add a wildcard.**
 fn collect_return_sites_inner<'a>(stmts: &'a [Statement], sites: &mut ReturnSites<'a>) {
     for stmt in stmts {
-        match &stmt.kind {
-            StmtKind::Command(c) => maybe_collect_return(c, &mut sites.values),
-            // Nested function definitions have their own returns.
-            StmtKind::Function(_) => {}
-            StmtKind::ReturnProducer(inner) => {
-                sites.producers.push(inner);
-                collect_return_sites_bodies(stmt, sites);
-            }
-            StmtKind::Assignment(_)
-            | StmtKind::Declaration(_)
-            | StmtKind::Pipeline(_)
-            | StmtKind::If(_)
-            | StmtKind::While(_)
-            | StmtKind::For(_)
-            | StmtKind::Case(_)
-            | StmtKind::Redirected(_)
-            | StmtKind::List(_)
-            | StmtKind::Group(_)
-            | StmtKind::Suppressed(_)
-            | StmtKind::Negated(_)
-            | StmtKind::ArithTest(_) => collect_return_sites_bodies(stmt, sites),
+        collect_return_site(stmt, sites);
+        if crate::validate::stmt_always_returns(stmt) {
+            break;
         }
     }
+}
+
+/// **Total over `StmtKind` on purpose — do not add a wildcard.**
+fn collect_return_site<'a>(stmt: &'a Statement, sites: &mut ReturnSites<'a>) {
+    match &stmt.kind {
+        StmtKind::Command(c) => maybe_collect_return(c, &mut sites.values),
+        // Nested function definitions have their own returns.
+        StmtKind::Function(_) => {}
+        StmtKind::ReturnProducer(inner) => {
+            sites.producers.push(inner);
+            collect_return_sites_bodies(stmt, sites);
+        }
+        StmtKind::If(i) => collect_if_returns(i, sites),
+        StmtKind::While(w) => {
+            collect_conditional_returns(&w.condition, &w.body, sites);
+        }
+        StmtKind::List(l) if matches!(l.op, ListOp::And | ListOp::Or) => {
+            collect_short_circuit_returns(l, sites);
+        }
+        StmtKind::Assignment(_)
+        | StmtKind::Declaration(_)
+        | StmtKind::Pipeline(_)
+        | StmtKind::For(_)
+        | StmtKind::Case(_)
+        | StmtKind::Redirected(_)
+        | StmtKind::List(_)
+        | StmtKind::Group(_)
+        | StmtKind::Suppressed(_)
+        | StmtKind::Negated(_)
+        | StmtKind::ArithTest(_) => collect_return_sites_bodies(stmt, sites),
+    }
+}
+
+fn collect_short_circuit_returns<'a>(list: &'a List, sites: &mut ReturnSites<'a>) {
+    collect_return_site(&list.left, sites);
+    if !crate::validate::stmt_always_returns(&list.left) {
+        collect_return_site(&list.right, sites);
+    }
+}
+
+fn collect_if_returns<'a>(i: &'a If, sites: &mut ReturnSites<'a>) {
+    if !collect_conditional_returns(&i.condition, &i.then_body, sites) {
+        return;
+    }
+    if !i
+        .elif_clauses
+        .iter()
+        .all(|e| collect_conditional_returns(&e.condition, &e.body, sites))
+    {
+        return;
+    }
+    if let Some(body) = &i.else_body {
+        collect_return_sites_inner(body, sites);
+    }
+}
+
+fn collect_conditional_returns<'a>(
+    condition: &'a [Statement],
+    body: &'a [Statement],
+    sites: &mut ReturnSites<'a>,
+) -> bool {
+    collect_return_sites_inner(condition, sites);
+    if crate::validate::body_always_returns(condition) {
+        return false;
+    }
+    collect_return_sites_inner(body, sites);
+    true
 }
 
 /// The nested-body half of [`collect_return_sites_inner`]. `structural_bodies`,
@@ -1183,11 +1326,13 @@ pub(super) enum ProducerStatus<'a> {
     /// `return f …` inside `f`: the loop's back edge (DD#27), so the result is
     /// whatever the function's other returns give.
     SelfTail,
+    /// Process termination does not hand a result to the caller.
+    Terminates,
     /// A call of another user function, which hands back that function's
     /// result: nothing when it is void.
     Calls(&'a str),
     /// Anything else — an external, `[[ … ]]`, `(( … ))`, a pipeline, a
-    /// negation, a redirected call — yields a status the caller can see.
+    /// negation — yields a status the caller can see.
     Status,
 }
 
@@ -1196,64 +1341,61 @@ pub(super) fn classify_producer<'a>(
     function: &str,
     is_function: impl Fn(&str) -> bool,
 ) -> ProducerStatus<'a> {
+    if let StmtKind::Redirected(r) = &producer.kind {
+        return classify_producer(&r.body, function, is_function);
+    }
     let StmtKind::Command(c) = &producer.kind else {
         return ProducerStatus::Status;
     };
     let head = literal_command_name(&c.name);
-    if head == function {
-        ProducerStatus::SelfTail
-    } else if is_function(head) {
-        ProducerStatus::Calls(head)
-    } else {
-        ProducerStatus::Status
+    match head {
+        "exit" | "fail" => ProducerStatus::Terminates,
+        _ if head == function => ProducerStatus::SelfTail,
+        _ if is_function(head) => ProducerStatus::Calls(head),
+        _ => ProducerStatus::Status,
     }
-}
-
-impl ProducerStatus<'_> {
-    /// Whether this `return <producer>` exit can only hand back 0, given which
-    /// functions are void; `None` for a self tail-call, which is the loop's
-    /// back edge rather than an exit (DD#27).
-    pub(super) fn exit_yields_zero(&self, is_void: impl Fn(&str) -> bool) -> Option<bool> {
-        match self {
-            ProducerStatus::SelfTail => None,
-            ProducerStatus::Calls(g) => Some(is_void(g)),
-            ProducerStatus::Status => Some(false),
-        }
-    }
-}
-
-/// A literal `return 0`, or a bare `return` (an implicit 0).
-pub(super) fn returns_zero(value: &Option<String>) -> bool {
-    matches!(value.as_deref(), Some("0") | Some(""))
 }
 
 /// DD#55: what one definition's own exits decide. An `-> int` function always
 /// has a result; any other has a status when some exit can hand back one — a
-/// `return` with a nonzero or computed value, or a status-producing `return
+/// `return` with an operand, or a status-producing `return
 /// <producer>` — and otherwise has the class of the functions its `return g`
 /// exits hand the result to. `is_function` names every function the program
 /// defines, so a `return g` is recorded whichever definition of `g` is in
 /// force where the result is decided.
 pub(super) fn exit_summary(f: &Function, is_function: impl Fn(&str) -> bool) -> ExitSummary {
-    if f.return_type == VarType::Int {
+    body_exit_summary(&f.name, &f.body, f.return_type == VarType::Int, is_function)
+}
+
+fn body_exit_summary(
+    name: &str,
+    body: &[Statement],
+    integer: bool,
+    is_function: impl Fn(&str) -> bool,
+) -> ExitSummary {
+    if integer {
         return ExitSummary::Int;
     }
-    returned_callees(f, is_function).map_or(ExitSummary::Status, ExitSummary::Returns)
+    returned_callees(name, body, is_function).map_or(ExitSummary::Status, ExitSummary::Returns)
 }
 
 /// The functions a non-int definition's `return g` exits hand the result to,
 /// or `None` when some exit already yields a status.
-fn returned_callees(f: &Function, is_function: impl Fn(&str) -> bool) -> Option<Vec<String>> {
-    let sites = collect_return_sites(&f.body);
+fn returned_callees(
+    name: &str,
+    body: &[Statement],
+    is_function: impl Fn(&str) -> bool,
+) -> Option<Vec<String>> {
+    let sites = collect_return_sites(body);
     let mut callees = Vec::new();
     for producer in sites.producers {
-        match classify_producer(producer, &f.name, &is_function) {
-            ProducerStatus::SelfTail => {}
+        match classify_producer(producer, name, &is_function) {
+            ProducerStatus::SelfTail | ProducerStatus::Terminates => {}
             ProducerStatus::Calls(g) => callees.push(g.to_string()),
             ProducerStatus::Status => return None,
         }
     }
-    sites.values.iter().all(returns_zero).then_some(callees)
+    sites.values.iter().all(Option::is_none).then_some(callees)
 }
 
 /// What a `return g` into a name with no exit summary runs.
@@ -1363,21 +1505,12 @@ pub(super) fn static_classes(
     classify(&exits, Absent::Unknown)
 }
 
-/// If `c` is a `return` command, push its target into `returns`:
-/// `None` = computed/non-trivial value, `Some(s)` = literal value
-/// (empty string means bare `return` → implicit 0).
-fn maybe_collect_return(c: &Command, returns: &mut Vec<Option<String>>) {
+/// Operand presence, not its rendered text, distinguishes a value from void.
+fn maybe_collect_return<'a>(c: &'a Command, returns: &mut Vec<Option<&'a Expr>>) {
     if literal_command_name(&c.name) != "return" {
         return;
     }
-    let val = if c.args.is_empty() {
-        Some(String::new())
-    } else if let Some(ExprKind::Literal(s)) = c.args.first().map(|a| &a.kind) {
-        Some(s.clone())
-    } else {
-        None
-    };
-    returns.push(val);
+    returns.push(c.args.first());
 }
 
 fn literal_command_name(name: &Expr) -> &str {
@@ -1434,7 +1567,11 @@ mod invariant_tests {
             (Arity::Fixed { min: 1, max: 1 }, vec![])
         );
         assert_eq!(
-            collect_return_sites(&body).values,
+            collect_return_sites(&body)
+                .values
+                .iter()
+                .map(|v| v.map(|e| literal_command_name(e).to_string()))
+                .collect::<Vec<_>>(),
             vec![Some("0".to_string())]
         );
     }

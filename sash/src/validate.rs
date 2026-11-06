@@ -3954,32 +3954,41 @@ fn mark_predicate_operand(stmt: &Statement, funcs: &HashSet<String>, out: &mut H
     }
 }
 
-/// DD#74 definite-return: does every path through this body end in an
-/// explicit `return`?
-fn body_always_returns(stmts: &[Statement]) -> bool {
-    stmts.last().is_some_and(stmt_always_returns)
+/// Does every path leave this body by returning or terminating the process?
+pub(crate) fn body_always_returns(stmts: &[Statement]) -> bool {
+    stmts.iter().any(stmt_always_returns)
 }
 
-fn stmt_always_returns(stmt: &Statement) -> bool {
+pub(crate) fn stmt_always_returns(stmt: &Statement) -> bool {
     match &stmt.kind {
         StmtKind::ReturnProducer(_) => true,
-        StmtKind::Command(c) => expr_literal_str(&c.name) == "return",
+        StmtKind::Command(c) => matches!(expr_literal_str(&c.name), "return" | "exit" | "fail"),
         StmtKind::If(i) => if_always_returns(i),
+        StmtKind::While(w) => body_always_returns(&w.condition),
         StmtKind::Group(g) => body_always_returns(&g.body),
         StmtKind::Redirected(r) => stmt_always_returns(&r.body),
+        StmtKind::Suppressed(inner) | StmtKind::Negated(inner) => stmt_always_returns(inner),
         StmtKind::Case(c) => case_always_returns(c),
+        StmtKind::List(l) if matches!(l.op, ListOp::And | ListOp::Or) => {
+            stmt_always_returns(&l.left)
+        }
         _ => false,
     }
 }
 
-/// An `if` definite-returns iff it has an `else` and every branch
-/// (then, each elif, else) definite-returns.
 fn if_always_returns(i: &If) -> bool {
-    i.else_body
+    let otherwise = i
+        .else_body
         .as_ref()
-        .is_some_and(|eb| body_always_returns(eb))
-        && body_always_returns(&i.then_body)
-        && i.elif_clauses.iter().all(|e| body_always_returns(&e.body))
+        .is_some_and(|eb| body_always_returns(eb));
+    let otherwise = i.elif_clauses.iter().rev().fold(otherwise, |rest, e| {
+        conditional_paths_return(&e.condition, &e.body, rest)
+    });
+    conditional_paths_return(&i.condition, &i.then_body, otherwise)
+}
+
+fn conditional_paths_return(condition: &[Statement], body: &[Statement], otherwise: bool) -> bool {
+    body_always_returns(condition) || (body_always_returns(body) && otherwise)
 }
 
 /// A dispatch (`case`) definite-returns iff it has a default arm and

@@ -17,6 +17,19 @@ gates:
 
 ## Found
 
+**Partial implementation, 2026-11-06 (journal 577):** return-kind work now
+checks parsed, undispositioned return operands with the existing integer
+sink predicate and a return-specific diagnostic role. Empty and quoted
+strings are SB4030, not bare returns or implicit integers. `retkind.22`,
+`.23` and `.49` pin these cases; independently removing this operand guard
+turns all three red in both backends. `migrateb.6` preserves the old
+`74.56` output assertion using an explicit disposition-bearing arithmetic
+conversion. DD89's incorrect journal-411 attribution is corrected.
+Existing `74.57`-`74.61` return dispositions are unchanged: this does not
+choose among the policy options below. Numeral/producer parsing and the
+remaining gates stay open. The observations and cause analysis below
+describe the pre-fix compiler.
+
 2026-10-27, while porting F1+F4 (journal 537). It is **pre-existing**: every
 row but r4 is the same at `8e28c61`, with F1+F4, and on `taint-walker-redesign`
 (`e98fca8`), in both backends unless noted. F1+F4 fixed r4.

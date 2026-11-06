@@ -5,10 +5,7 @@
 
 use super::control_flow::{flatten_elif, lower_case, lower_for, lower_if, lower_while};
 use super::expressions::{arg_to_value, expr_to_value, literal_name_of};
-use super::functions::{
-    classify, classify_producer, collect_return_sites, exit_summary, lift_int_func_calls,
-    returns_zero, Absent,
-};
+use super::functions::{classify, exit_summary, lift_int_func_calls, Absent};
 use crate::ir::*;
 use crate::ssa::*;
 
@@ -178,7 +175,7 @@ fn lower_while_stmt(
 
 /// Function definition. Registers the body for inline expansion at call sites,
 /// then emits the body into a dedicated SSA block sequence terminating in Return.
-/// Special case: DD#55's SB4017. The name and its `-> int` return type were
+/// The name and its `-> int` return type were
 /// decided up front by `register_functions`. A call runs the definition in
 /// force, so the classes checked by subsequent calls (DD#55) are recomputed
 /// as this definition comes into force.
@@ -204,7 +201,6 @@ fn lower_function_stmt(
     state.exits_in_force.insert(f.name.clone(), exits);
     state.class_in_force = classify(&state.exits_in_force, Absent::Status);
     report_arity_defects(f, stmt, state);
-    analyze_function_returns(f, stmt, state);
     let fn_entry = ssa.new_block(&format!("fn_{}", f.name));
     let fn_exit = lower_fn_template(&f.name, &f.body, ssa, state, fn_entry);
     ssa.block_mut(fn_exit).terminator = Terminator::Return;
@@ -273,36 +269,6 @@ fn report_arity_defects(f: &Function, stmt: &Statement, state: &mut VersionState
         };
         state.diagnostics.push(msg);
     }
-}
-
-/// DD#55: an `-> int` function whose every exit yields 0 should be void
-/// (SB4017). A `return g` exit yields what `g` does: a self tail-call is a
-/// loop, not an exit, a void function yields 0, and any other command can
-/// yield a non-zero status. Checked once per definition, so `g` counts as
-/// void only when it is whatever the call site — a redefined `g` may not be.
-fn analyze_function_returns(f: &Function, stmt: &Statement, state: &mut VersionState) {
-    if f.return_type != crate::ir::VarType::Int {
-        return;
-    }
-    let sites = collect_return_sites(&f.body);
-    let producer_exits = sites.producers.iter().filter_map(|p| {
-        classify_producer(p, &f.name, |n| state.known_functions.contains(n))
-            .exit_yields_zero(|g| state.class_static.get(g) == Some(&FnClass::Void))
-    });
-    // One entry per exit: whether it can only hand back 0.
-    let yields_zero: Vec<bool> = sites
-        .values
-        .iter()
-        .map(returns_zero)
-        .chain(producer_exits)
-        .collect();
-    if yields_zero.is_empty() || yields_zero.contains(&false) {
-        return;
-    }
-    state.diagnostics.push(format!(
-        "{}:{}: error [SB4017] function '{}' only returns 0 — omit the return (void function) or return a meaningful status",
-        stmt.span.line, stmt.span.col, f.name
-    ));
 }
 
 /// Statement wrapped in a redirect.

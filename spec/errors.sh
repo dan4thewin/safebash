@@ -13,30 +13,27 @@ set +e
 # silently skip elif clauses caused either spurious diagnostics or
 # silent acceptance of invalid code. Regressions for journal 057.
 
-# 0.5 collect_returns_inner must walk elif branches when deciding if
-# a -> int function is non-void. Without this, only `return 0` in
-# the `then` branch is seen and SB4017 fires spuriously even though
-# the elif returns a meaningful status.
+# Return completeness includes every elif branch and the unmatched path.
 run_sash 'fn f -> int {
     if /bin/false; then
         return 0
     elif /bin/true; then
         return 5
+    else
+        return 9
     fi
 }
 int x=$((f))
 echo "$x"'
-[[ $rc = 0 && $out = "5" && -z $err ]]; chk 0.5
+[[ $rc = 0 && $out = "5" && -z $err ]]; chk migrateb.1
 
-# 0.5q the bare `return` spelling of SB4017. 55.14 below covers `return 0`;
-# the rule's test is `s.is_empty() || s == "0"`, so the empty return is the
-# other half of one arm and nothing reached it.
+# A bare integer return is missing a result, not constant-result ceremony.
 run_sash 'fn f -> int {
     return
 }
 int x=$((f))
 echo "$x"'
-[[ $rc != 0 && -z $out && $err == *SB4017* ]]; chk 0.5q
+[[ $rc != 0 && -z $out && $err == *SB4037* && $err == *"integer result"* ]]; chk migrateb.2
 
 # 0.6 scan_expr_positionals_stmt must walk elif branches when
 # computing the highest positional read inside a function body.
@@ -226,12 +223,9 @@ run_sash 'fn f -> int { return 42; }
 f'
 [[ $rc != 0 && -z $out && $err == *SB4016* ]]; chk 55.13
 
-# 55.14 return 0 as only return path → compile error (SB4017), likewise named.
-# This was SB4017's ONLY live assertion in the suite — 0.5 near the top of the
-# file is a negative (the rule must not fire spuriously) and would pass if the
-# rule were deleted outright.
-run_sash 'fn f -> int { return 0; }'
-[[ $rc != 0 && -z $out && $err == *SB4017* && $err == *'only returns 0'* ]]; chk 55.14
+# Explicit integer zero is a legal result.
+run_sash 'fn f -> int { return 0; }; int n=$(f); echo "$n"'
+[[ $rc = 0 && $out = 0 && -z $err ]]; chk migrateb.3
 
 # 55.15 - cmd; return $? → compile error ($? unavailable after -)
 run_sash 'fn f -> int { - /bin/false; return $?; }'
@@ -4101,13 +4095,13 @@ if x=$(f) { echo "yes [$x]" } else { echo "no [$x]" }'
 [[ $rc != 0 && -z $out && $err == *':2:6: error [SB4025]'* \
    && $err != *SB4016* ]]; chk nonvoid.15
 
-# `return g` with a void g returns only 0
+# Void forwarding cannot supply an integer result.
 run_sash 'fn g { echo g }
 fn f -> int { return g }
 int n=$(( f ))
 echo "[$n]"'
-[[ $rc != 0 && -z $out && $err == *':2:1: error [SB4017]'* \
-   && $err == *"function 'f' only returns 0"* ]]; chk nonvoid.16
+[[ $rc != 0 && -z $out && $err == *SB4030* \
+   && $err == *"return producer supplies void"* ]]; chk migrateb.4
 
 # ... and makes a status function void
 run_sash 'fn d { echo d }

@@ -195,13 +195,13 @@ int r=$(( (fact 5 1) )); echo "$r"'
 [[ $rc = 0 && $out = "120" && -z $err ]]; chk 27.3
 # 27.4 void tail recursion (`return F $x`) loops, running the body each iteration
 run_sash 'fn f {
-  if (( $1 <= 0 )); then echo done; return 0; fi
+  if (( $1 <= 0 )); then echo done; return; fi
   echo "T$1"
   int m=$(( $1 - 1 ))
   return f $m
 }
 f 3'
-[[ $rc = 0 && $out = $'T3\nT2\nT1\ndone' && -z $err ]]; chk 27.4
+[[ $rc = 0 && $out = $'T3\nT2\nT1\ndone' && -z $err ]]; chk migrateb.5
 # 27.5 a tail self-call is the ONLY allowed recursion — a non-tail call in the
 # same function (before the tail return) still rejects
 run_sash 'fn f -> int {
@@ -1064,17 +1064,18 @@ return 7
 f || echo "rc=$?"'
 [[ $rc = 0 && $out = "rc=7" && -z $err ]]; chk 74.55
 
-# 74.56 ...and so do the quoted / arithmetic status VALUE forms
+# Arithmetic conversion makes a numeric string an explicit integer.
 run_sash 'f() {
 return $(( 1 + 1 ))
 }
 f || echo "a=$?"
 g() {
-return "5"
+str value="5"
+return $(( ${value:?not an integer} ))
 }
 g || echo "b=$?"'
 [[ $rc = 0 && $out = "a=2
-b=5" && -z $err ]]; chk 74.56
+b=5" && -z $err ]]; chk migrateb.6
 
 # 74.57 DD#77: `return`'s status is an INT sink, so a string operand's
 # disposition uses the arith trigger ("not a valid integer"), not the word
@@ -1648,11 +1649,11 @@ fn next { (( ticks += 1 )); echo $ticks }
 fn walk {
   if [[ $1 == start ]] { return walk $(next) }
   echo $1
-  return 0
+  return
 }
 walk start
 echo $ticks'
-[[ $rc = 0 && $out = $'1\n1' && -z $err && -z $rerr ]]; chk tmpcap.19
+[[ $rc = 0 && $out = $'1\n1' && -z $err && -z $rerr ]]; chk migrateb.7
 
 run_sash 'fn walk {
   int at=0
@@ -1662,10 +1663,10 @@ run_sash 'fn walk {
     return walk @follow
   }
   echo $(join args ,)
-  return 0
+  return
 }
 walk start'
-[[ $rc = 0 && $out = 'done,extra' && -z $err && -z $rerr ]]; chk tmpcap.20
+[[ $rc = 0 && $out = 'done,extra' && -z $err && -z $rerr ]]; chk migrateb.8
 
 run_sash 'fn walk {
   if [[ -n ${A[0]} ]] { return walk =A }
@@ -1677,7 +1678,7 @@ array a=(word)
 
 run_sash 'fn unused -> int { echo unused }
 echo ok'
-[[ $rc = 0 && $out = ok && -z $err && -z $rerr ]]; chk fnnoret.1
+[[ $rc != 0 && $err == *SB4037* && $err == *'function `unused` must supply its integer result'* ]]; chk migrateb.9
 
 run_sash 'fn leaf -> int { return $(( ${A[0]} + 1 )) }
 fn caller -> int { return $(leaf =A) }

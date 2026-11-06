@@ -61,9 +61,9 @@ a self-tail call is a loop edge, and process termination is not a return.
 
 Constant results, including zero, are legal. The int-only SB4017
 "returns 0" check is retired, with no general constant-result check replacing
-it. Implementation is pending in `enforce-function-return-kinds` and
-`retire-return-ceremony-check`; this is not a claim that the current
-compiler already accepts the newly permitted cases.
+it. Implemented in journal 577 (`enforce-function-return-kinds` and
+`retire-return-ceremony-check`), with native/C checks for integer zero,
+missing results and compatible forwarding.
 
 ## S-expression call syntax
 
@@ -129,7 +129,7 @@ numeric status construction (`return N`) and explicit predicate production
 (`return (( ... ))`) retain their existing contracts. No new declaration
 or conversion syntax is introduced.
 
-The pipeline/return-producer enforcement is **accepted but not yet
-implemented**. `notes/tasks/q-int-function-pipeline-status.md` retains the
-pipeline defect; `enforce-function-return-kinds` owns compatible and
-incompatible return-producer forwarding.
+Pipeline and return-producer enforcement are implemented in journal 577.
+`q-int-function-pipeline-status` covers direct stages;
+`enforce-function-return-kinds` covers compatible and incompatible
+return-producer forwarding.

@@ -152,10 +152,17 @@ in every case: **by rejection**. Nothing was made to coerce.
 | sink | was | now | closed by |
 |---|---|---|---|
 | `exit $s` | atoi → 0 | **SB4030** | int-only sink (`a875d58`) |
-| `return $s` | atoi → 0 | **SB4030** | journal 411 |
+| `return $s` | atoi → 0 | **SB4030** | return operand guard (journal 577) |
 | `wait $s` | accepted | **SB4030** | int-only sink (`a875d58`) |
 | `$(arg $s)` | **argv[0]**, silently | **SB4030** | int-only sink (`a875d58`) |
 | `[[ -t $s ]]` | accepted | **SB5028** | the operator is retired (journal 418) |
+
+**Return-row correction (2026-11-06):** the earlier attribution to journal
+411 was wrong; it fixed disposition lowering, not undispositioned operand
+checking. Journal 577 supplies that guard, including empty and quoted
+strings. Existing `return ${s:-N}` / `${s:?message}` conversions are preserved;
+their separate policy question and numeral/producer grammar remain in
+`bug-return-status-string-operand`.
 
 Three things are worth keeping from how this closed.
 

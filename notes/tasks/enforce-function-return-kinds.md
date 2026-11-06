@@ -1,5 +1,5 @@
 title: Enforce distinct void, status and integer return kinds
-status: open
+status: complete
 priority: P2
 kind: bug
 depends: []
@@ -64,6 +64,9 @@ on these guards; the two tasks may land in one coherent implementation unit.
 - Compatible forwarding works, including redirected void forwarding and
   self-tail control flow; incompatible forwarding rejects.
 
-The policy is recorded, not implemented. Re-measure affected specs and
-diagnostic sites before editing; the old ceremony task's eight-flip estimate
-was for a different rule.
+Implemented and verified in journal 577. Shared body lowering checks named
+and anonymous bodies with the canonical definition-in-force classifier.
+SB4037 rejects missing results; SB4030 rejects incompatible forwarding.
+The final ordinary gate passes 11345 checks (11332 passing, 13 skipped).
+The separate disposition-conversion and capture caller-status questions
+remain open.
