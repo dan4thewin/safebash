@@ -1,12 +1,12 @@
 ---
-title: "Question: may `-` discard a setup failure (fork, pipe creation, a redirect's open)?"
-status: open
+title: "Resolved: failure recovery depends on cause and state, not setup position"
+status: done
 priority: P2
 kind: question
 depends: []
 gates:
-  - "DG rules (a), (b), (c) or another option; DD#55 and DD#70 record the ruling"
-  - "every row of the evidence tables prints what the ruling says, in both backends, with specs"
+  - "DD130 records DG's recoverable/fatal distinction, fork fatality and recoverable path-specific file errors; DD55/DD70/DD128 agree"
+  - "implementation and native/C proof obligations from the evidence tables have explicit open backlog owners"
   - "`bug-fork-failure-reporting-by-form` and `retire-suppression-on-compounds` are updated to the ruling"
   - "DD128's fatal arithmetic/heap behavior and terminal exit/fail semantics remain unchanged"
 ---
@@ -18,14 +18,25 @@ alternative to the || : bash spelling."
 DG, 2026-10-30: "I'm not at all sure that failure to fork, create a pipe,
 or allocate memory should be suppressible..."
 
-## Current boundary (2026-11-06)
+## Resolution (2026-11-06)
 
-DD128 now settles heap exhaustion and arithmetic faults: they are fatal,
-not suppressible results, and handler dispatch never resumes the
-interrupted code. Do not reopen that choice. The remaining question here
-is whether `-` discards fork/pipe/redirect setup failures as well as the
-command's own result. Existing condition handling is a separate capability;
-choosing (a) does not remove a condition's ability to catch redirect open.
+DG chose a different axis from the three original options: **recoverable
+versus fatal**, not setup versus execution. Catching or suppressing a
+recoverable failure permits predictable, useful continuation. A fatal
+fault must stop the executing process because continuing is worse.
+DD130 is the authority; journal 581 records the decision.
+
+Fork failure is fatal like heap exhaustion: neither a condition, `||`,
+`!` nor `-` may resume after it. Path-specific file errors are recoverable,
+including an attached redirect's failed open. Its command must not run or
+write to the original descriptor. Unhandled recoverable failures still
+abort normally. Resource/error-state classification is implementation
+work, not permission to label every setup failure alike.
+
+The question is closed, **not the implementation**. DD128's existing
+arithmetic/heap, handler ownership and explicit exit/fail rules remain.
+The historical observations below are retained as evidence, not desired
+behavior or a claim that every row has been remeasured.
 
 ## Evidence
 
@@ -36,7 +47,7 @@ column records the post-F2 behavior at filing; the fresh subset below
 does not claim to remeasure the whole table. In short:
 
 - Statement-level `-` never discards a redirect's open failure (y02, y08,
-  y11, k05; DD#70 :159–161). A condition does (e1–e5).
+  y11, k05; the former DD70 redirect rule). A condition does (e1–e5).
 - A stage `-` discards it, because the open runs in the child
   (y10, z01, z03, z05).
 - A job `-` discards a fork failure (y14, y16, j1, j4).
@@ -63,15 +74,15 @@ as EAGAIN with `INJECTED`. These are native-only probes; C was not re-run.
 Evidence: session `files/setup-policy-20261106/`. No spec-history rows
 were written.
 
-## Options (from Q5)
+## Implementation owners
 
-- (a) `-` never discards a setup failure, in any position. On a stage or a
-  job it discards only the process's own status.
-- (b) `-` discards a setup failure wherever `||` or a condition handles
-  one. This reverses DD#70 :159–161.
-- (c) Keep the split, and document which positions discard one.
+- `runtime-failure-classification`: shared operation/cause/state policy,
+  including resource errors and the actual ERR effect model.
+- `bug-fork-failure-reporting-by-form`: fatal fork handling across all
+  forms, replacing the old caught-fork and negation behavior.
+- `recoverable-file-failures`: real catch/suppress handling for ordinary
+  file errors, including the statement/stage redirect mismatch.
 
-DG's 2026-10-30 remark leans toward (a). Under (a), p518.22/.23 flip,
-`retire-suppression-on-compounds` needs no new spelling, and a job's `-`
-(`- f &`, which F6 keeps legal) discards only the child's report of its
-own status (x16).
+`retire-suppression-on-compounds` retains this completed decision as its
+dependency. Fatal construction faults need no replacement discard spelling.
+No new process-tree failure protocol or function-result coercion is implied.

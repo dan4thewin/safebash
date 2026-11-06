@@ -1,15 +1,29 @@
 ---
-title: "Bug: a fork failure is reported three different ways by form, and `!` turns it into success"
+title: "Bug: make fork failure uniformly fatal across execution forms"
 status: open
 priority: P2
 kind: bug
 depends: []
 gates:
-  - "every form in the table reports a fork failure the same way: one message naming the fork, one status, in both backends"
-  - "`!` does not invert a fork failure: f1 and f2 take the failure path (f2 prints `n`), as f3 already does"
-  - "the status a fork failure leaves is the one DG rules on below, and DD#55 records it"
-  - "specs pin g1, g2s, g6, g8s, f1 and f2 under an injected fork failure, in both backends"
+  - "ordinary commands, jobs, pipelines and captures report failed forks through one fatal path, with one fork diagnostic and a consistent documented status in both backends"
+  - "a failed fork cannot enter either condition branch, an || alternative, or later code via ! or -; no ordinary result is manufactured"
+  - "DD128 dispatch remains once-only: main/EXIT attempts ERR, ERR terminates, and forked children run neither parent handler"
+  - "partial construction closes pipes and waits for started stages without force-killing them; no invalid pid, empty-success capture or EOF fallback leaks out"
+  - "valid current-language native/C controls prove successful forks and the actual injected failures, including negation, suppression and handler entry"
+  - "pre-change/reversion proofs and the predicted ordinary gate pass; DD55 and implementation notes agree"
 ---
+
+## Accepted contract (2026-11-06)
+
+DG requires fork failure to abort like heap exhaustion: an unpredictable
+mixture of progress and failure is worse than stopping. DD130 settles this
+for all forms, not only the `-` spelling. No handling branch resumes the
+process whose fork failed. This task remains open for implementation.
+
+The table below is historical evidence. Its END forms and some old
+function/return spellings are no longer valid source; use current-language
+counterparts for new controls rather than treating a parse rejection as a
+successful fork-failure test.
 
 ## Found
 
@@ -45,8 +59,9 @@ e1 was added 2026-10-28 (probe `bgf/endf4.sh` in `files/port-f2-probes.tar.gz`):
 the same before and after F2, in both backends. At that time, outside END,
 F2 made a background job report the pipeline way (below); END kept it silent.
 DD128 now removes END and its blanket unchecked exception. EXIT is checked;
-ERR requires explicit failure handling. Row e1 is historical, not a remaining
-handler exception; the other by-form findings remain open.
+ERR requires explicit handling of recoverable failures. DD130 makes fork
+failure a fatal fault in either handler. Row e1 is historical, not a
+remaining handler exception; the general by-form repair remains open.
 
 So there are three behaviours:
 - a simple command reports `<cmd>: error 11` (naming the command that never
@@ -84,29 +99,36 @@ Related: batch-531 B20, landed with F2 on 2026-10-28. A background job whose
 fork fails now reports the pipeline way: `fork: error 11`, status 1, an abort
 unless caught or suppressed, and `$!` reads -1 (`bgfork.1`-`bgfork.8` in
 commands.sh). The former END-specific silence (e1) is retired by DD128.
-DD#55's addendum of 2026-10-26 says "Fork failure is meant to abort as written".
+This is the implementation behavior DD130 replaces with fatal routing;
+the accepted rule is no longer "abort unless caught or suppressed".
 
 ## Fix direction
 
-One fork-failure path for every form: print `fork: <errno>`, leave one
-status, and follow DD#55's caught/uncaught handling. The failure belongs to
-the statement, not to the command that never ran, so `!` does not invert it.
-B20 landed first and took the pipeline behaviour, so a background job is now
-in the second group, and this fix covers it with the rest. DD128's handler
-contracts do not settle this general fork-status/reporting question.
+Use the existing fatal-dispatch machinery rather than returning an ordinary
+failed command result. Name the fork, not an exec that never happened.
+Correct the runtime and both generated-code paths, including background
+and capture construction. B20's reporting repair was not this fatality fix.
 
-The question for DG is the status. **Recommended: 1**, as pipelines and
-captures leave today. 127 is what DD#55 gives an exec failure in the child
-("command failed (exit 127)"), and a command that was never forked did not
-fail to exec.
+Keep the existing cleanup and process boundaries. A failure in a child
+terminates that child without running parent handlers; actual child
+completion is still observed through the established status mechanism.
+This task does not add process-tree broadcasts, forced asynchronous waits
+or child killing.
 
-## Related (2026-10-28)
+DG selected fatality, not a new numeric status. Establish one documented
+fork-fault status using the existing fatal conventions; if that leaves a
+genuine policy choice, present it before changing the contract. The old
+recommendation of 1 was not a ruling, and a numeric status must not encode
+whether the fault is recoverable.
 
-Whether `-` may discard a fork failure, and on which forms (`- f &`,
-`- f |` for a user function), is open in `q-suppression-on-user-functions`
-Q5 (setup failures), with Q2 (may `-` prefix a user-function call at all).
+This settled fork case need not wait for classification of unrelated I/O
+errors in `runtime-failure-classification`. Use successful syscall controls
+and traces proving the intended failed fork; late injected clone counts
+must account for restarted entries.
 
-(2026-10-30) Q2 is settled for these forms: every stage may carry its own
-`-`, and a job `- f &` stays legal. Q5 moved to
-`q-setup-failure-suppressibility`, where DG doubts that a failure to fork,
-create a pipe or allocate memory should be suppressible at all.
+## Related
+
+Q5 is resolved in `q-setup-failure-suppressibility` and DD130. Existing
+legal stage/job suppression remains legal for its ordinary result; it
+cannot suppress a failed fork. Result-kind restrictions, including the
+rejection of integer-function pipeline stages, are unchanged.

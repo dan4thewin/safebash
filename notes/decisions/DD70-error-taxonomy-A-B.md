@@ -8,29 +8,38 @@ implicit failure checks; this DD names the **two distinct kinds of
 suppression rule, and the diagnostic contract. It is the authoritative
 framing every fallible operation must follow.
 
+DD130 (DG, 2026-11-06) separately distinguishes **recoverable failures**
+from **fatal faults**. The channels below concern result handling; a fatal
+fault is not a result to consume in either channel. A value-producing
+operation can encounter a fatal fault without changing its result kind.
+
 ## The two channels
 
-There are two unrelated notions of failure, and conflating them is the
-mistake this DD prevents.
+There are two result-handling channels, and conflating them is the mistake
+this DD prevents.
 
-### (A) Runtime abort-if-unchecked
+### (A) Recoverable runtime failures: abort-if-unchecked
 
-A *genuine failure the runtime observes at run time*. The compiler emits
+A *recoverable failure the runtime observes at run time*. The compiler emits
 an implicit check; an **uncaught** failure aborts the program (DD#55),
 printing a diagnostic (below). Members:
 
-- **Syscalls we issue**: `chdir` (cd), `open` (redirects), `write`
-  (echo) — and, by extension, any future builtin that wraps a syscall.
-- **Child exit status** reaped via `wait`: the implicit foreground wait
-  after an external command/pipeline, and an explicit `wait` on a `&`
-  job. Nonzero is a failure (pipefail always on, DD#20).
+- **Recoverable syscall failures**: `chdir` (cd), path-specific `open`
+  errors (redirects), `write` (echo) — and, by extension, future builtins
+  wrapping syscalls. DD130 requires cause-specific classification rather
+  than assuming every failure of one syscall belongs here.
+- **Child exit status** from the implicit foreground wait after an
+  external command/pipeline. Nonzero is a failure (pipefail always on,
+  DD#20). Explicit `wait` follows DD126's pid/result-latch contract;
+  it does not implicitly abort on a nonzero child status.
 - **Dynamic `regcomp`** (a pattern not known at compile time can fail to
   compile at run time). Literal regex is validated at compile time and
   cannot reach (A).
 
 Levers:
-- **`-` suppresses** the command's *result-verdict* (DD#55): the command
-  runs, its status is discarded, `$?` is unavailable afterward.
+- **`-` suppresses** the operation's recoverable result (DD#55/DD130);
+  its status is discarded and `$?` is unavailable afterward. A failed
+  required redirect still prevents the command from running.
 - **`if` / `while` / `&&` / `||`** *catch* the verdict — it becomes the
   branch condition (no abort, `$(status)` available in the handling
   position per DD#55).
@@ -152,27 +161,31 @@ Specs: `regex.sh` 63.2f, 63.cap7, 63.dash1-dash3; `errors.sh` e.b70.tdash,
 bng.5, bng.11.
 
 
-## Redirect open(2) is an (A) setup-failure, not a verdict
+## Redirect failures follow their recovery class (DG, 2026-11-06)
 
-`echo foo > /bad` is, semantically, `exec 4>/bad; echo foo >&4` (DG). The
-`open` is a checked syscall that runs **first**. A failed open makes the
-command fail **without writing** (no misroute — the historical bug was the
-open's `-1` being discarded, leaving fd 1 = stdout). Consequences:
+DD130 replaces the rule that a redirect open was excluded from `-` merely
+because it happened before the command. A path-specific open failure is
+part of the owning operation's recoverable failure surface:
 
-- The open's abort is governed by **context**: it aborts unless it sits in
-  a **condition** (`if`/`||`), where the failed final-command result
-  decides the branch instead.
-- **`-` does not reach the open** — the `-` binds to the *command*
-  (echo's write verdict), not the prior implicit `exec N>file`. So
-  `- echo > /bad` still **aborts**.
-- Implementation note (no new IR field): the "in condition" signal is
-  derived, and kept distinct from the `-`-polluted `checked` flag. It was
-  first the last `Command`/`Pipeline` of a `Branch`-terminated block. Since
-  2026-10-26 (DD#55's addendum of that date) it is the instruction
-  `ssa::condition_inst_index` selects: the last instruction that sets the
-  status, in a block that ends in a `Branch` or a `Loop`. That is the same
-  instruction the transform's `mark_unchecked_in_conditions` unchecks, and
-  both backends call the one function.
+- Unchecked, it follows the ordinary implicit abort.
+- In a legal condition, it supplies the failed operation's result.
+- Under a legal `-`, it is discarded and execution continues.
+- A classified fatal cause still aborts under any of those forms.
+
+A failed open must prevent the command from running. Never discard the
+open's `-1` and let output go to the original stdout. Restore scoped
+descriptor state before continuation; stop at the first failed redirect,
+and report the actual failing path. Earlier file side effects are not
+rolled back.
+
+This covers the attached redirect, not a failure inside its operand
+capture or a called body. It does not change function result kinds.
+Descriptor integrity and resource-error classification are obligations,
+not a blanket exemption for redirects or backup/restore machinery.
+
+**Implementation is pending** in `runtime-failure-classification` and
+`recoverable-file-failures`. The old statement-level `- echo > /bad`
+abort remains a compiler behavior to repair, not the accepted rule.
 
 ## Diagnostic contract
 

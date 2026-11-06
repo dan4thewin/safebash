@@ -1,4 +1,25 @@
-## STATUS (2026-11-06, latest) - Left-to-right evaluation settled
+## STATUS (2026-11-06, latest) - Recoverable failures and fatal faults settled
+
+DG chose recovery class, not setup position: catch/suppress may continue
+after a recoverable failure, while a fatal fault must stop execution.
+Path-specific file errors are recoverable; fork failure is fatal like
+heap exhaustion. DD130 records the rule; DD55/DD70/DD128 and GUIDE agree.
+Journal 581 records the decision and its boundaries.
+
+Two new P2 tasks own shared runtime classification and recoverable file
+handling: `runtime-failure-classification`, then
+`recoverable-file-failures`. The existing
+`bug-fork-failure-reporting-by-form` now requires fatal routing in every
+form and need not await unrelated I/O classifications.
+`q-setup-failure-suppressibility` is closed as a question; compound
+suppression's policy prerequisite is satisfied.
+
+Implementation remains pending. Function result kinds, no-reach and
+process/handler ownership are unchanged. The direct builtin stderr fix
+remains independent. No compiler/runtime/spec code changed, and journal
+577's accepted gate remains the implementation baseline.
+
+## STATUS (2026-11-06) - Left-to-right evaluation settled
 
 DG chose left-to-right evaluation for the principle of least surprise:
 across argument lists and within words/reached operands, earlier reads
@@ -11,10 +32,9 @@ question. No compiler/runtime/spec code changed. The required result for
 its global-mutation example is `old X new`; the current compiler still
 prints `new X new`.
 
-Next ruling: whether `-` may discard fork/pipe/redirect setup failures
-(`q-setup-failure-suppressibility`). Fresh native probes confirm the
-job/stage/statement split. Heap exhaustion is already fatal under DD128,
-not part of that remaining choice.
+The subsequent setup-suppression discussion produced DD130 (journal 581).
+The fresh native probes here still document the uncorrected
+job/stage/statement split, not the new accepted contract.
 
 ## STATUS (2026-11-06) - Explicit return conversion settled
 

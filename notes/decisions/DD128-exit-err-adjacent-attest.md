@@ -17,8 +17,14 @@ On 2026-11-06 DG separated explicit orderly termination from explicit failure:
 `fail 0`. Journal 575 records the decision; journal 576 implements it in
 `explicit-exit-and-fail`, with independent source/SSA checks and native/C gates.
 
-DG supplied the design principles, made the decisions and authorized
-implementation. The AI assembled the writeup and implemented those decisions.
+DD130's later 2026-11-06 ruling distinguishes recoverable failures from
+fatal faults and makes fork failure fatal. Sections 7-8 incorporate that
+contract; its classification/fork/file-error implementation tasks remain
+open. This does not claim that the shipped handler checks already enforce
+the new classification in every form.
+
+DG supplied the design principles and decisions. The AI assembled the
+writeup and implemented the handler/termination work described above.
 
 ## The model
 
@@ -35,8 +41,9 @@ Separate orderly termination from failure cleanup:
   clean replacement of its subject on the failed-attest branch, can clear
   outstanding taint. An unrelated later assignment cannot.
 - **Fatal runtime faults remain fatal.** A first fault attempts ERR once;
-  a fault inside ERR terminates cleanup. Arithmetic faults and heap
-  exhaustion are not made recoverable by entering an error handler.
+  a fault inside ERR terminates cleanup. Arithmetic faults, heap
+  exhaustion and fork failure are not made recoverable by entering an
+  error handler (DD130).
 
 These are rules for reasoning about control flow and trust. They do not
 promise that cleanup always finishes, that external commands terminate, or
@@ -386,12 +393,12 @@ may use ordinary adjacent, caught attestation and then ordinary reads.
 Its failure branch must comply with section 7, and any replacement that
 resolves the subject must be written directly in that branch.
 
-## 7. ERR must handle operational failures explicitly
+## 7. ERR must handle recoverable operational failures explicitly
 
-An operation whose failure could implicitly abandon ERR must be caught or
-suppressed by a form that actually handles that failure. Otherwise it is a
-compile-time error. Do not implement this by marking the entire handler
-unchecked.
+An operation whose recoverable failure could implicitly abandon ERR must
+be caught or suppressed by a form that actually handles that failure.
+Otherwise it is a compile-time error. Do not implement this by marking
+the entire handler unchecked.
 
 The requirement applies to every branch, including failure reporting and
 fallbacks. In `cmd || fallback`, fallback must itself comply. A deliberate
@@ -414,16 +421,23 @@ its body has an uncaught operational failure. Report the call and the
 internal failure site; do not silently change the helper's behavior based
 on who called it.
 
-Setup and operand failures count where they can terminate the handler.
-For example, a statement-level `-` does not currently suppress a redirect's
-open failure, whereas a condition can catch it. A `-` on every pipeline
-stage is not proof that pipeline construction cannot abort.
+DD130 classifies setup and execution failures by recoverability, not by
+their position. A recoverable failure of the command's own attached
+redirect belongs to its handling context; a prefix still does not reach
+into an operand capture or a helper. Fatal faults cannot be caught or
+suppressed, including pipeline construction's failed fork.
 
-This DD does not settle the separate global question of which setup
-failures `-` should discard. Use a valid existing handling form; where none
-exists, the operation is unavailable in ERR unless it belongs to the
-explicit fatal category below. A missing handling form does not itself
-make an ordinary error fatal.
+Where no real handling form exists for a recoverable failure, the
+operation remains unavailable in ERR until that support is implemented.
+A missing handling form does not make an ordinary error fatal. Conversely,
+the possibility of a genuinely fatal fault is not itself a reason to ban
+the operation, as arithmetic and allocation already demonstrate.
+
+Implementation remains coupled to `runtime-failure-classification` and
+`recoverable-file-failures`: today's statement-level `-` still misses a
+redirect-open failure, and some backup/restore failures have no handling
+form. Do not loosen SB5101 merely on the strength of the new terminology;
+the runtime path and its checked effect model must agree.
 
 ## 8. Fatal runtime faults
 
@@ -432,10 +446,13 @@ The named exceptions to ERR's operational-failure guarantee are:
 - DD25 arithmetic faults: overflow, division by zero and negative shift
   counts.
 - Exhaustion of the runtime heap.
+- Fork failure (DD130; uniform by-form implementation pending).
 
 They remain fatal, including inside ERR. Neither `if` nor `-` promises
-recovery from them. Do not ban arithmetic or allocation merely because
-those fatal outcomes are possible.
+recovery from them. Do not ban an operation merely because those fatal
+outcomes are possible. Other resource/I/O failure paths follow DD130's
+cause-and-state classification; an operation's name or an unavailable
+handling form is not sufficient evidence to add a fatal exception.
 
 A first fatal fault in the main process, including inside EXIT, attempts
 ERR once if it is declared. Without ERR, terminate directly. Entering ERR

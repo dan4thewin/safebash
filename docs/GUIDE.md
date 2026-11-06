@@ -414,7 +414,7 @@ for 26 environment variables and 25 commands.
 
 **`attest VAR EXPR`** — evaluates EXPR (tainted VAR readable inside
 the expression). If truthy, marks VAR clean. If falsy:
-- Bare `attest` → fatal exit
+- Bare `attest` → implicit abort on failure
 - `if attest` → false branch taken
 
 ```bash
@@ -674,8 +674,9 @@ null-terminated C interop for `execve` without copying (DD#12).
 Both backends use `sash_table_join` for collection joins. It sizes the live
 values and separators before allocating one terminated result, preserving
 insertion order, integer-cell formatting and embedded NUL bytes. There is
-no 4 KiB join limit; insufficient heap reports the ordinary allocation
-failure (DD#107), rather than truncating or overrunning a scratch buffer.
+no 4 KiB join limit; insufficient heap follows the fatal allocation
+failure path (DD#107/DD#128), rather than truncating or overrunning a
+scratch buffer.
 
 ### Regex
 
@@ -726,6 +727,26 @@ named by their redirect list, including closed dup sources. Scoped commands rest
 originally closed descriptor by closing it again; successful `exec` commits
 the redirects and closes its backups instead. Failed opens or dups take the
 shared setup-failure path, so the command never runs on the wrong fds.
+
+### Failure classes (accepted, implementation pending)
+
+DD130 distinguishes recoverable failures, where known-state continuation
+is useful, from fatal faults, where stopping is preferable. This is not a
+setup-versus-execution distinction. Path-specific file errors are
+recoverable and may be caught or suppressed; an unchecked one still aborts.
+A failed redirect must skip its command and restore descriptor state,
+never send output to the original destination or invent a successful value.
+
+Fork failure joins heap exhaustion and arithmetic faults in the fatal
+class: conditions, negation and suppression cannot resume the failed
+operation. Resource errors from other I/O paths require explicit
+cause/state classification. Function result kinds, no-reach into helpers
+or operand captures, and DD128's process/handler ownership remain unchanged.
+
+The work is queued in `runtime-failure-classification`,
+`bug-fork-failure-reporting-by-form` and `recoverable-file-failures`.
+The runtime paths described below are implemented; their remaining
+failure-class inconsistencies are not claimed fixed by this decision.
 
 ### Process management
 
@@ -834,7 +855,9 @@ teardown and invoker-descriptor restoration precede the callback.
 actual lowered handling and inline call origins rather than guessing from an
 outer `-` or `if`. Empty/NUL/regex/collection facts permit proven-safe values;
 mutations invalidate those proofs. Arithmetic faults and heap exhaustion
-remain fatal exceptions, not banned operations.
+remain fatal exceptions, not banned operations. DD130 adds fork failure
+to that contract; its runtime routing and corresponding effect-model
+updates remain backlog work.
 
 FLAG and EXIT handlers record delivery in separate runtime atomics (DD#56).
 Only EXIT requests shutdown; the most-recent-signal value alone cannot decide

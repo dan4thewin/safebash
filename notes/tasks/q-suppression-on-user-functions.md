@@ -11,6 +11,20 @@ gates:
   - "`bug-peel-family-classifiers`, `bug-fork-failure-reporting-by-form` and `dd55-nonvoid-functions` are updated to the rulings"
 ---
 
+## Q5 resolution, 2026-11-06
+
+DD130 replaces setup position with recoverability. Fork failure is fatal
+like heap exhaustion; path-specific file errors are recoverable and may
+be caught or suppressed. `q-setup-failure-suppressibility` is closed as a
+question, not as implemented behavior. The open work is in
+`runtime-failure-classification`, `bug-fork-failure-reporting-by-form` and
+`recoverable-file-failures`.
+
+Q7's decision prerequisite is therefore satisfied. Fatal construction
+faults need no replacement discard spelling. The dated discussions and
+tables below retain the old observations/options as history, not current
+rules; no-reach and function-result-kind restrictions remain.
+
 ## Rulings, 2026-10-29
 
 DG, four messages:
@@ -165,7 +179,8 @@ and Q2's in-process half in unit A (journal 547), Q1 and Q4 in unit B
 (journal 548). B76 and B82 are not bugs, and B84 is fixed (unit C). The
 rest of the work lives in other tasks:
 
-- Q5 → `q-setup-failure-suppressibility`;
+- Q5 → DD130; classification/fork/file-error implementation remains open
+  in the tasks named in the 2026-11-06 resolution above;
 - Q6 → `q-pipe-stage-never-writes-or-reads` (after W2);
 - Q7 → `retire-suppression-on-compounds`;
 - the command groups → `retire-command-groups`;
@@ -476,9 +491,11 @@ body (DD#86, 2026-09-29), so this is Q1's boundary again.
 - (b) Keep the reach. B76 is then a bug (v06 should not abort), and its
   fix lands with F6.
 
-### Q5. Setup failures, and what "maybe a system call result" covers
+### Q5. Historical setup-failure discussion (resolved by DD130)
 
-DD#70 :149–161: a redirect's `open` "is a checked syscall that runs
+The 2026-11-06 resolution and implementation owners are at the top of
+this record. At filing, DD70's redirect section said that an `open`
+"is a checked syscall that runs
 **first**"; it "aborts unless it sits in a **condition** (`if`/`||`)",
 and "**`-` does not reach the open** … So `- echo > /bad` still
 **aborts**."

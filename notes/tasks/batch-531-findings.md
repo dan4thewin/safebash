@@ -942,8 +942,10 @@ DG 2026-10-28: F2 lands without the B82 wrap and without specs that pin
     and `done` prints. That is the ruled shape. A stage's status is its
     process's status, whatever ended the child (`q-suppression-on-user-functions`,
     2026-10-30, Q2 process forms), and a head `-` binds stage 1 only
-    (`q-suppression-reach-residuals` R6). Whether a stage's `-` should
-    also discard a setup failure is `q-setup-failure-suppressibility`.
+    (`q-suppression-reach-residuals` R6). DD130 now distinguishes fatal
+    faults from recoverable setup errors; the child-status boundary above
+    is unchanged. The former setup question is resolved, with classification,
+    fork routing and file-error handling still in their implementation tasks.
 - [x] **B84** (fixed-on-branch; DD55). A suppressed `a || b` reset `$?` to 0
   although `b` is unchecked. Branch specs: 55.88.
   - Ported in F6 unit C (journal 549): H219 in `lower_list_stmt`; specs

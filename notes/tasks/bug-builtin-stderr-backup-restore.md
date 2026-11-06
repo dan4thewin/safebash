@@ -30,8 +30,9 @@ The otherwise identical suppressed stdout echo compiles, prints `error`
 to stdout and exits 7.
 
 The desired stderr form prints `error` plus newline to stderr, nothing to
-stdout, and preserves status 7. A failed write must remain an ordinary
-catchable/suppressible write failure, not silently succeed.
+stdout, and preserves status 7. Recoverable write failures must remain
+catchable/suppressible, not silently succeed; classified fatal faults
+remain fatal (DD130).
 
 ## Cause and scope
 
@@ -52,8 +53,10 @@ DD128's explicit failure-handling requirement.
 Do not generalize this into dropping arbitrary redirect lists. Preserve
 ordered file-open side effects, descriptor mappings, diagnostic routing,
 operand/capture behavior and the existing handling rules wherever real
-setup or restoration remains. General redirect-failure catchability is
-outside this task.
+setup or restoration remains. General file-error classification and
+redirect catchability belong to `runtime-failure-classification` and
+`recoverable-file-failures`. This direct-destination repair is independent:
+remove the unnecessary operations, not just their SB5101 rejection.
 
 ## Evidence required
 

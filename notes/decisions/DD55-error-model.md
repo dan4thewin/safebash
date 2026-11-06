@@ -2,9 +2,18 @@ title: DD#55 — Implicit Exit Checks and Error Handling Model
 status: implemented
 
 No `set -e` at runtime. The compiler inserts implicit exit checks for
-operational failures: nonzero command status or a runtime error such as
-`regcomp` on a dynamic pattern. `- cmd` discards that command's status;
-it does not suppress every failure in its operands or body.
+recoverable operational failures: nonzero command status or a runtime error
+such as `regcomp` on a dynamic pattern. DD130 distinguishes these from
+fatal faults, which abort rather than produce a resumable result.
+`- cmd` discards that operation's result, including a recoverable failure
+of its attached redirect; it does not suppress every failure in its
+operands or body.
+
+**DD130's 2026-11-06 classification extension is accepted, with
+implementation pending.** It replaces the former setup-position split:
+fork failure is fatal, while path-specific file errors are recoverable.
+The existing runtime/handler implementation is not yet a claim that every
+form enforces this contract.
 
 ## Terminal handlers (DD#128)
 
@@ -22,14 +31,15 @@ ERR terminates without re-entry. This 2026-11-06 revision was accepted in
 journal 575 and implemented in journal 576.
 
 EXIT is ordinary checked code: its uncaught failure enters ERR. ERR must
-catch or suppress every operational failure where it actually occurs;
+catch or suppress every recoverable failure where it actually occurs;
 otherwise SB5101 rejects the operation or call. This is not a blanket
 unchecked region. The no-reach rule below applies unchanged to helpers,
-operand captures and setup failures. If no existing form catches an
-operational failure, that operation is unavailable in ERR.
+and operand captures; attached redirects follow DD130's classification.
+If no existing form catches a recoverable failure, that operation is
+unavailable in ERR until its handling support is implemented.
 
-Arithmetic faults and heap exhaustion remain fatal exceptions. A first
-fault in main or EXIT attempts ERR once without allocating for dispatch;
+Arithmetic faults, heap exhaustion and fork failure are fatal faults.
+A first fault in main or EXIT attempts ERR once without allocating for dispatch;
 a fault in ERR terminates. Neither handler resumes interrupted code or
 re-enters itself, and ERR cannot transfer back to EXIT. Falling off a handler
 preserves its entry status; explicit `exit N` or `fail N` replaces it as
@@ -58,6 +68,10 @@ Anything that can fail due to external state or data:
 status is discarded. `$?` is not available after `- cmd` — reading
 `$?` after `-` is a compile error. You said you don't care; you
 don't get to inspect it.
+
+The operation's recoverable attached-redirect failure is discarded too
+(DD130). A fatal fault is never discarded or inverted into a normal
+result. Function result-kind restrictions and the no-reach rule remain.
 
 ## Explicit handling
 
@@ -204,8 +218,10 @@ close its pipes, and wait for the stages already started. Do not send
 SIGKILL or otherwise force their termination: as DG put it, "we can't know
 the harm a SIGKILL could cause - close and wait". Waiting may take as long
 as those stages need; that is deliberate, not a reason to add a kill timeout.
-The construction failure still follows the normal caught/uncaught error
-handling above.
+DD130 determines the failure's class before any catching or suppression
+decision. Fork failure is fatal; other construction failures must be
+classified by their actual cause. A fatal construction failure cannot
+become a false condition or a suppressed success after cleanup.
 
 Both backends check allocation/fork results before consuming pipe outputs or
 recording a pid. A failed capturing pipeline skips its reader/loop entirely;
@@ -214,10 +230,13 @@ target. Child fd wiring or redirect failure prevents that stage's body from
 running.
 
 A single external `$(command)` uses the same checked pipeline construction.
-Uncaught failure enters ERR; caught construction failure binds empty output
-and a false condition. `$(- command)` discards failure without aborting, but
-failed setup never executes the command. The capture drains its private pipe
-before waiting and does not replace an enclosing lastpipe reader.
+Uncaught recoverable failure enters ERR; a caught recoverable failure keeps
+the capture's actual output/status contract, including empty output when
+the command never ran. `$(- command)` may discard that recoverable result,
+not a fatal construction fault. Failed setup never executes the command.
+The capture drains its private pipe before waiting and does not replace an
+enclosing lastpipe reader. The lifecycle machinery is implemented; the
+DD130 failure-class routing remains pending.
 
 ### `&&` / `||` / `!` do not take a pipeline operand
 
@@ -249,8 +268,10 @@ command, `[[ ]]`, `(( ))`) is fine, and binds only that unit — `! X && Y` is
 
 ## Background processes (`cmd &`)
 
-Exec failure (fork or exec fails) is checked — the parent aborts.
-(**Corrected for exec**, and the `&` forms narrowed — addendum 2026-10-26.)
+A failed fork is fatal in the parent (DD130), not a child's returned status.
+An exec failure occurs in the child; the parent observes the child's
+completion under the existing process-status rules (details in the
+2026-10-26 addendum).
 A successfully forked background process runs independently and
 can outlive the sash program. `wait` is optional.
 
@@ -488,16 +509,17 @@ or either handler declaration it is SB4014 at the `-`. These drew SB5011
 "command '-' not found" or an unrelated SB4014. `- until` now parses like
 `- while`.
 
-**Correction to "Background processes" above.** "Exec failure … the parent
-aborts" is wrong for exec. The exec fails in the child, which prints the errno
-and "command failed (exit 127)" and exits 127. The parent sees the status only
+**Background failure ownership.** The exec fails in the child, which prints
+the errno and "command failed (exit 127)" and exits 127. The parent sees the status only
 by reaping it through DD#126's latch (55.16). Under `- cmd &` and `exec cmd &`
-the child prints the errno but not the "command failed" line. Fork failure
-aborts as written since F2 (2026-10-28, batch-531 B20, journal 539):
-`fork: error N`, status 1, abort unless checked or suppressed, and `$!` reads
--1. DD#128 removes END's silent-handler exception: EXIT is checked, and
-ERR requires an explicit handling form (`bug-fork-failure-reporting-by-form`,
-historical row e1).
+the child prints the errno but not the "command failed" line. F2
+(2026-10-28, batch-531 B20, journal 539) implemented background fork failure
+as `fork: error N`, status 1, abort unless checked or suppressed, with `$!`
+set to -1. DD130 now requires a fatal path instead, so no handling branch
+continues after the failed fork. That change remains in
+`bug-fork-failure-reporting-by-form`. DD128's main-process-only handlers
+and once-only fatal dispatch remain; END's old silent exception is gone
+(historical row e1).
 
 Specs: errors.sh 55.107-55.144, 71.4, bng.18, bng.25, csfx.4-csfx.8;
 pipe_functions.sh pf.52. Journal 537.

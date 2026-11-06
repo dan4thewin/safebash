@@ -28,11 +28,20 @@ Six spec lines use the blanket:
 | pf.47, pf.48 | pipe_functions.sh:337, :344 | `\| - while readline x { … }` |
 | p518.22, p518.23 | pipe_functions.sh:543, :547 | `- { a \| b }` |
 
-## Why it waits
+## Decision dependency resolved (2026-11-06)
 
 p518.22/.23 discard a pipeline's construction failure (fork, pipe), and a
-group is today's only way to write that. A `-` at a pipeline's head binds
-to the first stage alone, so `- /bin/echo x | /bin/false` aborts. Whether
-such a failure may be discarded at all is `q-setup-failure-suppressibility`.
-If it may not, these two specs flip and need no new spelling. If it may, the
-ruling has to supply one before the blanket goes.
+group was the only suppression spelling for that whole construction.
+A `-` at a pipeline's head binds to the first stage alone.
+
+DD130 now settles the governing policy: recoverable failures can be
+handled; fatal faults cannot. Fork failure is explicitly fatal, so no
+replacement discard spelling is needed for it. Re-pin the old compound
+spellings to the rejection, rather than preserve a way to suppress fatal
+construction faults.
+
+The dependency above was on the decision and is now satisfied; it does not
+silently become a dependency on every failure-class implementation task.
+Any actual recoverable-setup handling gap found during implementation
+belongs with `runtime-failure-classification` and its consumers, not a
+reopening of DG's ban on compound suppression.
