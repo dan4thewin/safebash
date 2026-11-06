@@ -7,6 +7,10 @@ Settled with DG (2026-09-03). `exit`'s argument is an ordinary integer sink:
 **any int — a literal, a variable, an arithmetic result, or an int-returning
 function — is a valid `exit` argument**, with no compile-time range restriction.
 
+DG extended the same integer domain to `fail [N]` on 2026-11-06 (DD128,
+journal 575). `fail` defaults to 1 and permits zero. The explicit-termination
+revision is accepted but awaits implementation in `explicit-exit-and-fail`.
+
 ## The rule
 
 - `exit 5`, `exit 300`, `exit -1` (literals, including out-of-range).
@@ -31,11 +35,13 @@ not a compiler mandate.
 
 ## Value semantics
 
-- **Internally the value is a full i64.** `exit N` passes the untruncated value
-  to the selected handler, readable via `$?` (e.g. `int code=$?`).
-  DD#128 routes full-integer zero to EXIT and nonzero to ERR:
-  `exit 300` → ERR sees `300`, `exit -1` → ERR sees `-1`, and
-  `exit 256` → ERR sees `256`, not EXIT with zero.
+- **Internally the value is a full i64.** `exit N` or `fail N` passes the
+  untruncated value to the selected handler, readable via `$?`
+  (e.g. `int code=$?`).
+  DD#128 selects by the operation, not by the integer:
+  `exit 300` -> EXIT sees `300`, `exit -1` -> EXIT sees `-1`, and
+  `exit 256` -> EXIT sees `256`. The corresponding `fail` forms supply
+  those same values to ERR; `fail 0` selects ERR with zero.
 - **At the process boundary it is 8-bit (POSIX).** The final `exit_group(status)`
   passes only the low byte to the parent's `wait()`: `exit 300` → parent sees
   `300 & 0xFF = 44`; `exit -1` → `255`; `exit 256` → `0`. Same as bash.
@@ -46,9 +52,10 @@ select EXIT by cause, not by whether their saved status happens to be zero.
 
 ## What this enables (but does NOT mandate)
 
-Because the full value reaches ERR, a program *may* use an out-of-range exit
-code as a **tag** for "which nonzero `exit` preceded ERR", dispatch on it in ERR
-(`int code=$?; if (( code > 255 )) { … }`), and re-exit with a real 0-255 code.
+Because the full value reaches the selected handler, a program *may* use an
+out-of-range `fail` code as a **tag** for "which `fail` preceded ERR",
+dispatch on it in ERR (`int code=$?; if (( code > 255 )) { … }`), and re-exit
+with a real 0-255 code.
 DG (2026-09-03): this is **not** prescribed over just using a global variable —
 "it's up to them." The DD blesses the *mechanism* (any int works, value is
 faithful to the handler), not a particular idiom. A global can instead record
@@ -58,8 +65,10 @@ applies to any potentially tainted global read in ERR.
 ## Implementation
 
 Both backends evaluate the integer argument and pass it to
-`sash_rt::sash_exit(i64)`. The runtime selects EXIT or ERR and calls the
-generated handler with the full value. Final shutdown calls
+the runtime without narrowing. The existing runtime has separate orderly
+and failure entries; the accepted DD128 revision routes `exit` to the former
+and `fail` to the latter, calling the selected generated handler with the
+full value. Final shutdown calls
 `exit_group(status as i32)`; the kernel exposes only the low byte to the
 parent. A handler's explicit exit may replace the value before that boundary.
 

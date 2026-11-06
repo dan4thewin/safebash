@@ -564,8 +564,8 @@ probes of a received slot. `SlotInfo` and its inward/outward fixpoints are
 gone; `slot_usage_map` remains solely for arity and dead-variable checks.
 The top level starts empty. EXIT and ERR are independent roots, not walks
 from main's final state. EXIT's incoming clean-use requirements are checked
-at actual orderly entries, including explicit zero exits and signal polls.
-ERR conservatively receives any global that may acquire taint in main or
+at actual orderly entries, including explicit exits of any status and signal
+polls. ERR conservatively receives any global that may acquire taint in main or
 EXIT, even if a normal path later attests it. Requirements include helper
 and slot uses and incoming-origin attest obligations. A partial fresh
 acquisition cannot excuse an inherited-input attest on the other path.

@@ -9,9 +9,17 @@ it does not suppress every failure in its operands or body.
 ## Terminal handlers (DD#128)
 
 An uncaught main-process failure enters **ERR**, not EXIT. Normal
-fall-through, explicit `exit 0` and a configured EXIT signal enter **EXIT**.
-Explicit nonzero `exit N` enters ERR, using the full i64 value before process
-exit truncation (DD#89). Children run neither handler.
+fall-through, every explicit `exit [N]` and a configured EXIT signal enter
+**EXIT**. Explicit `fail [N]` enters ERR. Defaults are 0 for `exit` and 1
+for `fail`; `fail 0` is legal. Handler selection is independent of the full
+i64 status, which is preserved until process exit truncation (DD#89).
+Children run neither handler.
+
+Both builtins are terminal operations, not returned statuses that `if`,
+`||` or `-` can consume to resume execution. An `exit` inside either handler
+terminates directly; a `fail` inside EXIT enters ERR, while a `fail` inside
+ERR terminates without re-entry. This 2026-11-06 revision is accepted but
+awaits `explicit-exit-and-fail` (journal 575).
 
 EXIT is ordinary checked code: its uncaught failure enters ERR. ERR must
 catch or suppress every operational failure where it actually occurs;
@@ -24,8 +32,9 @@ Arithmetic faults and heap exhaustion remain fatal exceptions. A first
 fault in main or EXIT attempts ERR once without allocating for dispatch;
 a fault in ERR terminates. Neither handler resumes interrupted code or
 re-enters itself, and ERR cannot transfer back to EXIT. Falling off a handler
-preserves its entry status; explicit `exit N` overrides it. `$?` is available
-as the first evaluated expression on entry under the usual handling rule.
+preserves its entry status; explicit `exit N` or `fail N` replaces it as
+described above. `$?` is available as the first evaluated expression on entry
+under the usual handling rule.
 
 ## What gets checked
 

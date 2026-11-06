@@ -704,14 +704,26 @@ Function definitions belong only directly in the main statement list
 not inside either handler.
 .PP
 Fallthrough, explicit
-.B exit 0
+.B exit [N]
 and configured EXIT signals select
 .BR EXIT .
-Uncaught failures, explicit nonzero exits and a first fatal runtime fault select
+Uncaught failures, explicit
+.B fail [N]
+and a first fatal runtime fault select
 .BR ERR .
 A missing handler never substitutes the other.
-Selection uses the full integer for explicit exits; only the final process
-status is truncated to eight bits.
+Selection is independent of the integer status.
+.B exit
+defaults to 0 and
+.B fail
+to 1; both take at most one integer argument.
+.B fail 0
+is legal.
+The full integer reaches the selected handler; only the final process status
+is truncated to eight bits.
+Both operations terminate rather than returning a catchable status.
+This explicit\-termination revision was accepted on 2026\-11\-06;
+implementation is pending in the explicit\-exit\-and\-fail task (journal 575).
 .PP
 EXIT is ordinary checked code.
 Its failure may enter ERR.
@@ -728,6 +740,8 @@ Forked children run neither.
 Completion preserves the entry status; explicit
 .B exit N
 overrides it.
+An exit inside either handler terminates directly for any status.
+A fail inside EXIT enters ERR; inside ERR it terminates without re\-entry.
 The incoming status is available as the handler's first
 .B $?
 use, subject thereafter to ordinary handling\-position rules.
@@ -749,7 +763,7 @@ records a pending shutdown and supplies status
 at a checkpoint.
 Dispatch is deferred across legal adjacent acquisition/resolution;
 signal receipt is not masked.
-Ordinary failures and explicit exits still transfer immediately.
+Ordinary failures and explicit exit/fail still transfer immediately.
 Signals inside either handler cannot dispatch another handler.
 .PP
 .B END

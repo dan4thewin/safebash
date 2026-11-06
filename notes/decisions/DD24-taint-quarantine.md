@@ -209,10 +209,11 @@ implicit fall-through resolves nothing. The `||` row stands unchanged — the
 fallback assignment is exactly the resolution DD#121 R2 asks for. The
 `if bless VAR [[ test ]]` row above likewise stands for the **written** else:
 VAR is tainted inside that branch, and the branch must resolve it (or `exit` /
-`return` / `break` / `continue`) before falling through. A caught attest with
-no `else` at all is SB5089. An `exit 0` path must additionally satisfy any
-incoming clean-use requirements of EXIT; nonzero exit selects ERR. Other
-transfers retain unresolved state at their real continuation (DD#128).
+`fail` / `return` / `break` / `continue`) before falling through. A caught
+attest with no `else` at all is SB5089. Every `exit N` path must additionally
+satisfy any incoming clean-use requirements of EXIT; `fail N` selects ERR
+for any N. Other transfers retain unresolved state at their real
+continuation (DD#128).
 
 Lowering (`transform/statements.rs::lower_list_stmt`): a bless left operand of
 `&&`/`||` is rewritten to the if-bless form (`bless … || X` → `if bless {} else

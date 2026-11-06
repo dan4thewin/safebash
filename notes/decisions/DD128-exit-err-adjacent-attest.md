@@ -1,9 +1,9 @@
 title: DD#128 - EXIT, ERR, and adjacent attest resolution
 status: accepted
 
-Drafted 2026-11-03 at DG's request. DG settled all five open choices that
-day; section 10 records the rulings, now incorporated into the rules below.
-Accepted and implemented 2026-11-05.
+Drafted 2026-11-03 at DG's request. Section 10 records DG's original rulings
+and the 2026-11-06 revision to explicit termination, incorporated below.
+The handler infrastructure was accepted and implemented 2026-11-05.
 Implementation was authorized after those choices. The typing prerequisite shipped
 in journal 565; journal 566 restores uniform SB5071; journal 567 implements
 process-static globals and their meaningful zero values. Journal 568
@@ -11,6 +11,12 @@ implements strict adjacent resolution and fresh private lifetimes, with
 definition-convergent, versioned SSA taint checks. Journal 569 implements
 generated handlers, their distinct entry/failure contracts, cause-based
 runtime dispatch and shared signal protection, replacing END.
+
+On 2026-11-06 DG separated explicit orderly termination from explicit failure:
+`exit [N]` selects EXIT for any integer; `fail [N]` selects ERR, including
+`fail 0`. This revision is accepted and authorized for implementation in
+`explicit-exit-and-fail`; journal 575 records the decision. It is not yet
+implemented by the journal 569 compiler.
 
 DG supplied the design principles, made the decisions and authorized
 implementation. The AI assembled the writeup and implemented those decisions.
@@ -20,9 +26,10 @@ implementation. The AI assembled the writeup and implemented those decisions.
 Separate orderly termination from failure cleanup:
 
 - **EXIT is ordinary checked code**, entered on normal fall-through,
-  explicit `exit 0`, or shutdown requested by a configured EXIT signal.
+  explicit `exit [N]` with any status, or shutdown requested by a configured
+  EXIT signal.
 - **ERR is failure cleanup**, entered on an uncaught operational failure,
-  explicit nonzero exit, or a first fatal fault before ERR. It makes no
+  explicit `fail [N]`, or a first fatal fault before ERR. It makes no
   optimistic assumption that incoming data was attested. Its own operational
   failures must be caught or suppressed, not implicitly abort the handler.
 - **Taint is resolved beside acquisition.** A legal adjacent attest, or
@@ -81,8 +88,10 @@ of the program's top-level statement list, never inside EXIT or ERR.
 Helpers are defined at program top level. Every whole-program pass must
 still visit both handler bodies for their executable statements and calls.
 
-`exit` remains the lowercase builtin. `signal N EXIT` keeps its existing
-disposition spelling, but dispatches to the new EXIT body.
+`exit` remains the lowercase orderly-termination builtin; `fail` is the
+lowercase failure-termination builtin. `signal N EXIT` keeps its existing
+disposition spelling and dispatches to the EXIT body. Handlers remain blocks:
+this change does not add source-level handler functions, arguments or returns.
 
 Both handlers belong to the **main process only**. Forked stages and
 background jobs do not run them. A child failure can become a parent-side
@@ -101,9 +110,9 @@ exit byte.
 | Event while executing ordinary main-process code | Destination |
 |---|---|
 | Normal fall-through | EXIT |
-| Explicit `exit 0`, including argumentless `exit` | EXIT |
+| Explicit `exit [N]`, for any integer N | EXIT |
 | A checkpoint dispatches a configured EXIT signal | EXIT |
-| Explicit nonzero `exit N` | ERR |
+| Explicit `fail [N]`, for any integer N | ERR |
 | An uncaught operational failure | ERR |
 | A caught or suppressed failure followed by continuation | Neither |
 | A first fatal runtime fault | ERR once |
@@ -111,18 +120,29 @@ exit byte.
 If the selected handler is absent, terminate without substituting the other
 handler. An absent ERR does not make an abort run EXIT.
 
+`exit` defaults to 0; `fail` defaults to 1. Each takes at most one argument,
+with DD89's existing integer-sink rules. `fail 0` is legal: the operation
+selects failure cleanup, while the integer independently selects the reported
+status. Neither builtin prints an implicit command-failure message merely
+because it was called.
+
+Both operations terminate the current execution path rather than returning a
+catchable status. An `if`, `||` or `-` cannot make a reached `exit` or `fail`
+resume the interrupted program. Operand evaluation happens before transfer;
+an uncaught failure during that evaluation retains its normal ERR behavior.
+Existing process-placement restrictions apply to `fail` as they do to `exit`.
+
 The last predicate's truth value does not turn normal fall-through into an
 abort. Likewise, a signal-triggered EXIT normally carries `128 + signum`;
 that nonzero status does not select ERR.
 
-DD89 remains in force: an explicit exit argument is a full i64 internally,
-with no new range restriction or early truncation of the stored value.
-Zero/nonzero selection uses that full value, as DG ruled for an explicit
-exit call: 0 routes to EXIT and nonzero routes to ERR. Thus
-`exit 256` selects ERR and supplies 256 to it, even though an unchanged
-final status is observed as 0 by the parent. Signal and fall-through
-selection remains cause-based, not a test of the saved status. DD89 settles
-value preservation; DG's ruling here settles the new selection rule.
+DD89 remains in force for both builtins: the argument is a full i64
+internally, with no new range restriction or early truncation. `exit 256`
+selects EXIT and supplies 256 to it; `fail 256` selects ERR and supplies 256
+to it. In either case an unchanged final status is observed as 0 by the
+parent. Neither the full integer's zero/nonzero value nor its eventual low
+byte selects the handler. Signal and fall-through selection remains
+cause-based too.
 
 ### No re-entry or return to the interrupted program
 
@@ -134,15 +154,17 @@ main -> ERR  -> termination
 main -> EXIT -> ERR -> termination
 ```
 
-An uncaught operational failure, explicit nonzero exit or first fatal fault
-in EXIT enters ERR. EXIT is ordinary checked code, not the old unchecked
+An uncaught operational failure, explicit `fail` or first fatal fault in
+EXIT enters ERR. EXIT is ordinary checked code, not the old unchecked
 END region. Completing EXIT does not run ERR simply because its saved entry
 status was nonzero, for example after a signal.
 
-An explicit `exit 0` inside EXIT terminates; it does not restart EXIT.
-An explicit `exit N` inside ERR terminates with that status, including
-zero; it does not enter EXIT. Deliberate source-level termination remains
-visible control flow, distinct from an implicit failure exit.
+An explicit `exit [N]` inside either handler terminates directly with N,
+including nonzero values; it never restarts EXIT or transfers to the other
+handler. An explicit `fail [N]` inside ERR also terminates directly with N,
+including zero; it does not restart ERR. Defaults remain 0 for `exit` and
+1 for `fail`. Deliberate source-level termination remains visible control
+flow, distinct from an implicit failure exit.
 
 Neither handler returns to the interrupted code. Neither handler can
 re-enter itself, and ERR never transfers back to EXIT. Configured EXIT
@@ -153,8 +175,8 @@ but do not dispatch another handler. IGN, DFL and FLAG retain their meanings.
 
 Save the status that caused handler entry. Falling off the handler preserves
 it; successful cleanup commands must not accidentally replace a failure
-status with zero. Explicit `exit N` overrides it as described above.
-If EXIT fails into ERR, ERR receives the new failure's status.
+status with zero. Explicit `exit N` or `fail N` replaces it as described
+above. If EXIT fails into ERR, ERR receives the new failure's status.
 
 The incoming status is available through `$?` as the first evaluated
 expression, under DD55's handling-position rules, for example `int code=$?`.
@@ -264,7 +286,7 @@ forms, principally `:!` and its eligible attest predicate.
 EXIT is checked as ordinary code. Its ordinary uses of incoming data must
 be valid on every entry that can reach those uses. A successful attest on
 one path cannot justify an ordinary read also reached by an uncleared
-`exit 0` path.
+`exit N` path, whether N is zero, nonzero or not statically known.
 
 ```sash
 v=$(getenv INPUT)
@@ -278,8 +300,8 @@ EXIT {
 }
 ```
 
-The failed branch can resolve v before `exit 0`, take a nonzero exit to
-ERR, or leave it unresolved when EXIT does not require it clean. An
+The failed branch can resolve v before `exit`, use `fail` to enter ERR,
+or leave it unresolved when EXIT does not require it clean. An
 explicit `:!` use remains available. A literal assignment inside EXIT
 cannot repair the unresolved incoming binding, and a first-statement
 attest in EXIT is not adjacent to the interrupted source in main.
@@ -293,11 +315,11 @@ the incoming value.
 This narrows the old non-fall-through exemption **at actual EXIT entries**,
 not indiscriminately at every `return`, `break` or `continue`. Those
 transfers retain their taint state at their real continuation; they do not
-necessarily enter EXIT. An ERR-bound exit need not satisfy EXIT's contract.
+necessarily enter EXIT. An ERR-bound transfer need not satisfy EXIT's contract.
 
 There is an acknowledged nonlocal dependency: adding an ordinary use in
-EXIT can invalidate an earlier zero exit. A diagnostic must identify both
-the unresolved source/transfer and the requiring use in EXIT.
+EXIT can invalidate an earlier explicit exit of any status. A diagnostic
+must identify both the unresolved source/transfer and the requiring use in EXIT.
 
 ## 5. Signals must not split acquisition from resolution
 
@@ -313,7 +335,7 @@ resume ordinary signal checkpoints
 
 Signal receipt still records the pending flag immediately. Only dispatch
 into EXIT is deferred. This is not a signal mask and does not defer ordinary
-failures, explicit exits or fatal faults.
+failures, explicit `exit`/`fail` or fatal faults.
 
 The protection follows semantic adjacency, including reader conditions,
 captures, and a single-use function returning taint to its caller's
@@ -332,7 +354,7 @@ directly by either backend. Closing only the explicit SSA checkpoint path
 would leave the same hole elsewhere. Reader completion must have its
 appropriate post-operation checkpoint.
 
-A failure or explicit exit encountered before deferred signal dispatch
+A failure or explicit `exit`/`fail` encountered before deferred signal dispatch
 takes its normal transfer. A pending signal does not convert an abort into
 EXIT. Resolution can include a compound source or work in a failed-attest
 branch, so this policy does **not** promise bounded shutdown latency.
@@ -537,13 +559,13 @@ ones represented by an explicit checkpoint instruction.
 Acceptance needs focused real-CLI specs and reversion controls for:
 
 - The routing matrix, missing handlers, status preservation and explicit
-  overrides, including full-i64 exits and signal status.
+  overrides, including full-i64 `exit`/`fail`, `fail 0` and signal status.
 - EXIT-to-ERR transfer, no handler re-entry and no child execution of either
   handler.
 - Ordinary overwrite/unset/rebinding not clearing taint, failed-attest
   replacement resolving only its subject, and helper/slot equivalents.
-- Caught-attest zero exits with and without EXIT clean-use requirements,
-  and conservative ERR reads even after normal-path attestation.
+- Caught-attest exits of every status with and without EXIT clean-use
+  requirements, and conservative ERR reads even after normal-path attestation.
 - Signals pending between acquisition and resolution, function return,
   reader completion, and the false-reader path; no timing-only evidence.
 - Real values after early aborts and reader-producer failure, not merely
@@ -565,9 +587,10 @@ For new handler syntax, a pre-change parser rejection is not evidence that
 the new semantic checks work. Use targeted reversion controls once parsing
 exists, along with the ordinary spec gate and its predicted counts.
 
-## 10. DG's rulings, 2026-11-03
+## 10. DG's rulings
 
-All five choices are settled, not proposed defaults:
+The initial five choices were settled on 2026-11-03. A-D remain in force;
+E was revised on 2026-11-06 rather than retained as a conflicting rule:
 
 | Choice | Decision |
 |---|---|
@@ -575,12 +598,18 @@ All five choices are settled, not proposed defaults:
 | B - First fatal fault | Attempt ERR once. A fatal fault inside ERR terminates without re-entry. |
 | C - Failed-attest replacement | Write the replacement directly in the failed-attest branch; a helper does not inherit clearing permission. |
 | D - Fresh input in ERR | Allow ordinary adjacent, caught attestation of freshly acquired input, followed by ordinary reads. |
-| E - Handler selection | An explicit exit call routes 0 to EXIT and nonzero to ERR, using the full integer. Signal and fall-through route to EXIT regardless of their saved status. |
+| E - Handler selection | Revised 2026-11-06: explicit `exit` selects EXIT and explicit `fail` selects ERR, independently of status. Signal and fall-through select EXIT. Section 2 is the current rule. |
 
 On 2026-11-04 DG also confirmed: retain SB5071 uniformly for EXIT/ERR,
 discard support solely for END-local function definitions, and correct
 DD56. This restores DD86's original rule rather than introducing a new
 placement restriction.
+
+On 2026-11-06 DG authorized recording and implementing orderly `exit`
+and explicit `fail`, then explicitly chose to allow `fail 0`. The
+function-shaped EXIT idea was set aside. The implementation is authorized
+as an unattended session on a new branch alongside the already-recorded
+return-kind work; this does not authorize unrelated backlog or coverage work.
 
 ## 11. Companion documents
 

@@ -37,17 +37,19 @@ tainted its subject. A non-adjacent attest is **SB5088**.
 **R2 — Caught resolution.** A *caught* attest (`if attest …`, `attest … &&
 CMD`, `attest … || CMD`) must leave its subject **clean on every path that
 falls through** to the merge. A path that does not fall through — `exit`,
-`return`, `break`, `continue` — is exempt. The **no-else form is rejected**
+`fail`, `return`, `break`, `continue` — is exempt. The **no-else form is rejected**
 (**SB5089**): its implicit fall-through resolves nothing.
 Clean replacement must be written directly on that subject's failed-attest
-path; a helper does not inherit this permission (DD#128).
+path; a helper does not inherit this permission (DD#128). Every `exit N`
+must also satisfy EXIT's incoming-data requirements; `fail N` selects ERR
+instead, independently of its status.
 
 The two legal ways to satisfy R2:
 
 | | |
 |---|---|
 | resolve | `attest v [[ … ]] \|\| v=8080` · `if attest v …; then …; else v=0; fi` |
-| don't fall through | `if attest v …; then …; else exit 1; fi` |
+| don't fall through | `if attest v …; then …; else fail 1; fi` |
 
 `else :` is **not** one of them — it falls through and leaves the subject
 tainted.
@@ -223,7 +225,7 @@ if attest v [[ … ]]; then process "$v"; else /bin/echo bad; fi
 # v never read again
 ```
 
-is **sound and rejected**. The author writes `else exit 1` or `else v=""`.
+is **sound and rejected**. The author writes `else fail 1` or `else v=""`.
 The payoff is that a caught attest is checkable by looking at the caught attest
 — no downstream analysis, the same locality R1 buys at the definition.
 

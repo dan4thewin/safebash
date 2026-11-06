@@ -1,4 +1,21 @@
-## ══ STATUS (2026-11-06, latest) — Return kinds settled; ceremony checks retired ══
+## ══ STATUS (2026-11-06, latest) — Explicit termination approved; unattended implementation authorized ══
+
+DG approved orderly `exit [N]` for every integer status and explicit
+`fail [N]` for ERR. Defaults are 0 and 1 respectively; `fail 0` is explicitly
+allowed. Existing handler ownership, no-re-entry, incoming-data and
+operational-failure rules remain. DD128 and its companion documents now
+state one coherent contract; journal 575 records the decision.
+
+The new branch `exit-fail-return-kinds` owns the authorized unattended work:
+first `explicit-exit-and-fail`, then the two return-kind/ceremony tasks
+together with the settled integer/status pipeline boundary. The separate
+session is `ed4c7981-c5a0-4e82-9832-9557dc269030`.
+
+This recording changes no compiler/runtime/spec code. Implementation and
+its normal quality gates remain pending. No handler-function redesign,
+runtime syscall migration, unrelated backlog or coverage run is authorized.
+
+## ══ STATUS (2026-11-06) — Return kinds settled; ceremony checks retired ══
 
 DG separated bare return from explicit zero: void uses bare return or
 fall-through; status and integer functions supply their own kind on every

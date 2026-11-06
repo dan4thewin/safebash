@@ -74,22 +74,25 @@ ERR {
 
 Selection is by cause:
 
-- Fallthrough, explicit zero exit and signal checkpoints select EXIT.
-- Uncaught failures, explicit nonzero exits and first fatal faults select ERR.
+- Fallthrough, every explicit `exit [N]` and signal checkpoints select EXIT.
+- Uncaught failures, explicit `fail [N]` and first fatal faults select ERR.
 - An absent handler does not substitute the other one.
 
 A checkpoint supplies `128 + signal` to EXIT; that nonzero status does not
-select ERR. Explicit exits use the full i64 before process-boundary
-truncation (DD89). The incoming status is available as the handler's first
+select ERR. Both explicit termination builtins use the full i64 before
+process-boundary truncation (DD89). The incoming status is available as the handler's first
 `$?` use. Subsequent `$?` uses follow DD55's normal handling-position rule.
-Handler completion preserves its entry status; an explicit `exit N`
-overrides it.
+Handler completion preserves its entry status; explicit `exit N` or `fail N`
+replaces it. `exit` defaults to 0 and `fail` to 1; `fail 0` is permitted.
+The 2026-11-06 explicit-termination revision is accepted in DD128 and
+awaits `explicit-exit-and-fail` (journal 575).
 
 EXIT is checked code. Its failure can enter ERR. ERR must explicitly handle
 its own operational failures; neither handler is blanket-unchecked.
 The only progression is main → EXIT → termination, main → ERR → termination,
 or main → EXIT → ERR → termination. Neither resumes interrupted execution.
-An exit inside ERR terminates, including `exit 0`; it never enters EXIT.
+An `exit` inside either handler terminates directly, for any status.
+A `fail` inside EXIT enters ERR; inside ERR it terminates without re-entry.
 
 ### Main process only
 

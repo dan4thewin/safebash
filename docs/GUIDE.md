@@ -373,7 +373,7 @@ excluded. Cell reads, splats, iteration and map-fill operands carry their
 reaching collection version, not a future version selected by name.
 
 Handler entry is checked separately (DD128): EXIT requires its ordinary
-uses clean at each applicable zero-exit, fallthrough or signal entry; ERR
+uses clean at each applicable explicit-exit, fallthrough or signal entry; ERR
 conservatively treats any potentially tainted incoming binding as unresolved.
 Source summaries retain transient acquisitions, including inside called
 bodies and EXIT. Incoming-origin obligations reject late attests even when
@@ -792,9 +792,18 @@ halves. See journal 277.
 EXIT is ordinary checked code; ERR requires explicit handling of operational
 failures (DD128). Each is an optional generated function over real static
 globals, with private locals/temporaries and a saved entry status. Neither
-permits function definitions. The runtime selects by cause: fallthrough,
-zero exit and signals choose EXIT; failures, nonzero exit and first fatal
-faults choose ERR. Missing handlers do not substitute one another.
+permits function definitions. The accepted termination contract selects by
+cause: fallthrough, every explicit `exit [N]` and signals choose EXIT;
+uncaught failures, explicit `fail [N]` and first fatal faults choose ERR.
+Missing handlers do not substitute one another.
+
+`exit` defaults to 0; `fail` defaults to 1. Both accept any i64 under the
+integer-sink rules, including `fail 0`; only the final process status is
+narrowed. Neither operation returns a catchable status. An `exit` inside
+either handler terminates directly; `fail` can transfer EXIT to ERR, but
+terminates directly inside ERR. This 2026-11-06 routing revision and the
+new builtin await `explicit-exit-and-fail` (journal 575); the handler
+infrastructure below is already implemented.
 
 The runtime marks progress before calling a handler. EXIT may fail into
 ERR, but neither re-enters and ERR never returns to EXIT. Children run
