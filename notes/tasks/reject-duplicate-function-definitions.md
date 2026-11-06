@@ -47,9 +47,11 @@ matrix. Check current specs and spec.db history before choosing fresh ids;
 
 Preserve unique-definition forward references and the settled return-kind,
 scalar/collection-signature, no-shadowing, taint and self-tail contracts.
-Integer-capture syntax and anonymous-capture caller-status handling remain
-separate questions. The single-definition function-name-as-variable bug
-also remains independently owned by `bug-function-name-read-as-variable`.
+Integer-capture semantics are now settled separately (DD58, journal 583);
+`bug-int-capture-redirect-switches-kind` owns their enforcement.
+Anonymous-capture caller-status handling remains a separate question.
+The single-definition function-name-as-variable bug also remains
+independently owned by `bug-function-name-read-as-variable`.
 
 This task records required work, not an implemented guard. No diagnostic
 code or sweep-count prediction has been selected before the implementation

@@ -567,6 +567,16 @@ as an int function's unbound answer already was. `-` with nothing to discard
 is SB4076: on a void function, or in `$(- f)` on an int f, whose `$(f)`
 binds the int.
 
+**Integer captures stay integer-valued through redirects** (DD#58, DG,
+2026-11-06). `$(f 2>&1)` and `$(f >file)` consume f's returned integer;
+stdout is a permitted side effect, following those redirects.
+`$(- f 2>&1)` must reject just like `$(- f)`, rather than select stdout.
+A void wrapper such as `fn output_f { - f }` can discard the integer and
+expose stdout through `$(output_f)`, subject to normal taint/failure rules.
+The connected-writer check (SB4075) applies to stdout captures, not integer
+values. This rule is accepted but its redirect-preserving enforcement is
+pending in `bug-int-capture-redirect-switches-kind` (journal 583).
+
 **Integer values are not statuses** (DD#58, DG 2026-11-05). Direct int
 function stages, including `- f | ...`, and `return int_fn` in a non-int
 function require SB4030; discard does not repair a type mismatch. Integer

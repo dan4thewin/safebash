@@ -1,34 +1,42 @@
 ---
-title: "Questions left by F6's function classifier (journal 547)"
-status: open
+title: "Resolved policy questions from F6's function classifier (journal 547)"
+status: done
 priority: P3
 kind: question
 depends: []
 gates:
-  - "DG rules on the remaining Q1 capture-surface question; DD55/DD58 record the ruling"
-  - "the specs the chosen option flips are rewritten, and new specs pin it in both modes"
+  - "DG's Q1-Q4 rulings are recorded in DD55/DD58/DD86"
+  - "unimplemented enforcement has explicit backlog owners; closing this question record does not claim those fixes"
 ---
 
 F6 unit A (journal 547, DD#55 addendum 2026-10-30) classifies every function
 as int, status or void and enforces DD#55 at the call. Four shapes surfaced
 while writing it; each repro below was compiled with the F6 unit A binary.
-Q2 and Q4 were settled by the 2026-11-06 return-kind ruling and implemented
-in journal 577 (`enforce-function-return-kinds`). Q3 is now settled:
-DG rejects duplicate definitions (DD86, journal 582); enforcement remains
-pending in `reject-duplicate-function-definitions`. Only Q1 remains a
-policy question here.
+All four policy questions are settled. Q2 and Q4 were implemented in
+journal 577 (`enforce-function-return-kinds`). Q3 rejects duplicate
+definitions (DD86, journal 582); enforcement remains pending in
+`reject-duplicate-function-definitions`. Q1 requires integer captures to
+consume only the returned integer through redirects too (DD58, journal 583);
+`bug-int-capture-redirect-switches-kind` owns that pending repair.
+This record is closed as a question, not as implementation.
 
 DD58's 2026-11-05 integer/status ruling settles implicit int-to-status
 conversion. Pipeline-stage enforcement is in `q-int-function-pipeline-status`;
 return-producer compatibility is in `enforce-function-return-kinds`.
-Q1's choice of capture surface remains separate. A valid integer-value
-discard is distinct from interpreting an integer as a status.
+A valid integer-value discard is distinct from interpreting an integer as
+a status. Q1 preserves typed capture rather than restoring arithmetic-only
+integer calls.
 
-## Q1. An int function's capture means two things
+## Q1. Integer capture has one result channel — decided, enforcement pending
 
-`$(c)` on an int function binds the int, and the body's stdout goes to the
-real stdout. A redirect makes the capture body a statement, so the same call
-captures stdout and must discard the int:
+DG ruled on 2026-11-06 that capturing an integer function consumes only
+its returned integer. A redirect cannot select stdout instead. Stdout
+writes remain legal side effects; no purity restriction is introduced.
+`$(c)` and `$(c 2>&1)` therefore both produce c's integer, while
+`$(- c)` and `$(- c 2>&1)` both require SB4076.
+
+The original F6 observation below records the behavior to replace, not
+the accepted contract:
 
 ```sh
 fn c -> int { echo out; return 7 }
@@ -37,9 +45,14 @@ str y=$(c 2>&1)     # SB4016 "returns an int — capture with $((c)) or discard 
 str y=$(- c 2>&1)   # y=out
 ```
 
-So `$(- c)` is SB4076 but `$(- c 2>&1)` is legal. Question: should one
-capture spelling mean one thing (for example, `$(c)` of an int function is
-an error that points at `$((c))`), or does the split stand?
+F6 rejected `$(- c)` but allowed `$(- c 2>&1)` to capture stdout.
+That split is now rejected. A non-integer wrapper can use ordinary `- c`
+to discard the integer and expose stdout through its own capture; for
+example, `fn output_c { - c }` followed by `$(output_c)`.
+`bug-int-capture-redirect-switches-kind` owns the native/C fix, including
+keeping integer captures out of SB4075's stdout-writer test. Anonymous
+capture caller-status handling remains separate in
+`q-status-function-ceremony`.
 
 ## Q2. `-> int` with no `return` — implemented
 

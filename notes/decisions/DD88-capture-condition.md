@@ -140,12 +140,16 @@ supported"* — and then, on seeing the rule written down: *"the idea that the
 capture needs a writer even after redirects makes sense for all captures, not
 just ones after `if`."*
 
-So the rule is **not** a capture-condition rule. It is a rule about every
-`$( … )`.
+So the rule is **not** limited to capture-conditions. It applies to every
+**stdout-capturing** `$( … )`. DD#58's integer-value captures consume a
+returned integer instead, including through redirects (DG, 2026-11-06).
+They need no connected stdout writer; applying this check to them would
+confuse two different result channels.
 
 ### The rule
 
-Inside a substitution the body starts with fd 1 attached to the capture pipe.
+Inside a stdout substitution the body starts with fd 1 attached to the
+capture pipe.
 A redirect list may move that pipe around. The capture is meaningful while
 **some fd still holds it**, and nonsense otherwise — the value could only ever
 be `""`. Simulated left to right, exactly as the kernel applies the list
@@ -174,6 +178,14 @@ that is unambiguously abandoned.
 
 Fully decidable: `>&`/`<&` targets are literal fd numbers or the parser
 already rejected them (SB4048), so there is no dynamic case.
+
+The capture's result kind must be classified before applying this writer
+test. For an integer function f, `$(f >file)` still consumes its integer
+and routes its output to the file; it is not an abandoned stdout capture.
+Enforcement of that distinction is pending in
+`bug-int-capture-redirect-switches-kind` (journal 583). Real stdout
+captures keep the SB4075 rule unchanged. This does not widen DD#88's
+separate restrictions on which captures can be conditions.
 
 ### Why a new code rather than SB4025
 

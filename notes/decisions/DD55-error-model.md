@@ -343,6 +343,14 @@ Compile error. Capture the integer, use it in arithmetic, or explicitly
 discard it with `-`. A bare call silently discards the value; using the
 function directly as a predicate or pipeline stage is a type error.
 
+An integer-function capture consumes only the returned integer, including
+through redirects (DD#58; DG, 2026-11-06). `$(- f)` and `$(- f 2>&1)` are
+both SB4076: redirecting I/O does not make the already-consumed integer
+available to discard. Stdout remains a legal side effect. A non-integer
+wrapper can discard the integer with a statement `- f` and expose stdout
+through its own capture. Redirect-preserving enforcement is pending in
+`bug-int-capture-redirect-switches-kind`.
+
 ### `return $?`
 
 Valid only in handling position: `cmd || return $?`. Propagates
@@ -591,15 +599,19 @@ bare statement, the tail of a list (`/bin/true && f`), a background job
 handle it. A capture `$(f)` binds the output and leaves the status nowhere
 to go, so it is SB4016 as well, with the advice `$(- f)` (`$(- f …)` when it
 has arguments). A capture as a condition, `if x=$(f)`, stays SB4025 (DD#88),
-and the SB4016 at the same position is dropped. A redirected capture body,
-`$(s 2>&1)`, lowers as a statement and gets the bare-call text.
+and the SB4016 at the same position is dropped. A redirected capture of a
+status function, `$(s 2>&1)`, still needs explicit status handling/discard;
+the current statement path gives it the bare-call text. This is not a rule
+that a redirect converts an integer capture into a stdout capture (DD#58).
 
 **`-` on a void function is SB4076** (new): "function 'f' returns nothing,
 so `-` has nothing to discard — call it without `-`". A capture of an int
 function binds the int, so `$(- f)` on one is SB4076 too: "`$(f)` binds the
 int that function 'f' returns, so `-` has nothing to discard — capture it
-without `-`". A stage or a job is a process with a status of its own, so
-`- v | /bin/cat` and `- v &` stay legal for a void v (nonvoid.24).
+without `-`". The same refusal is required with attached redirects, such
+as `$(- f 2>&1)`; that extension is pending in
+`bug-int-capture-redirect-switches-kind`. A stage or job has its own process
+status, so `- v | /bin/cat` and `- v &` stay legal for a void v (nonvoid.24).
 
 **Return completeness replaces ceremony.** SB4017 is retired by DG's
 2026-11-06 ruling. An explicit integer zero is valid, including alongside
@@ -614,12 +626,14 @@ lowered `return $(- f …)` inside an int f as a second, suppressed copy of
 the loop. That spelling is now SB4076, so nothing reaches it. It is gone,
 with `TailLoop.entry_readonly`.
 
-The other F6 choices remain: `f &` as SB4016, SB4025 superseding SB4016,
-SB4076 for `$(- int_f)`, the advice texts, and the class in force at each
-call. The blanket classification of redirected return calls as statuses
-is superseded by kind-preserving forwarding. The following F6 unit settled
-whether `-` reaches into a body or an argument capture. Remaining questions
-are in `notes/tasks/q-nonvoid-classifier-residuals.md`.
+The other F6 call-site choices remain: `f &` as SB4016, SB4025 superseding
+SB4016, SB4076 for `$(- int_f)`, and their advice texts. Definition-in-force
+replacement is superseded by DD#86's unique-definition rule. Redirects
+preserve both a forwarded result's kind and an integer capture's result
+channel; their implementation owners are identified above. The following
+F6 unit settled whether `-` reaches into a body or an argument capture.
+`notes/tasks/q-nonvoid-classifier-residuals.md` now records the resolved
+questions and the still-open enforcement tasks.
 
 Specs: errors.sh nonvoid.1-nonvoid.29. Rewritten to the rule: errors.sh
 rdr.39, supval.1-supval.6, supval.9-supval.12, supval.14-supval.17,

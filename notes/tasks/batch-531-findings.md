@@ -897,8 +897,11 @@ DG 2026-10-28: F2 lands without the B82 wrap and without specs that pin
     against the definition in force. Specs nonvoid.1-nonvoid.29.
     DG subsequently rejected duplicate definitions (DD86, journal 582);
     `reject-duplicate-function-definitions` owns enforcement and migration
-    of the affected old specs. Only the capture-surface Q1 remains open in
-    `q-nonvoid-classifier-residuals`.
+    of the affected old specs. Q1's integer-only capture channel is also
+    settled (DD58, journal 583), with enforcement in
+    `bug-int-capture-redirect-switches-kind`.
+    `q-nonvoid-classifier-residuals` is closed as a policy record, not a
+    claim that those pending fixes have landed.
 - [x] **B76** (fixed-on-branch; DD55, DD88). In `if x=$(/bin/echo $(f))` the
   fast path lifted the inner `$(f)` out of the condition capture's
   suppression, so a `/bin/false` inside `f` aborted. DD55 (2026-10-20) and

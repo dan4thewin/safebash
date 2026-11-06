@@ -1,4 +1,23 @@
-## STATUS (2026-11-06, latest) - One definition per function name settled
+## STATUS (2026-11-06, latest) - Integer capture keeps its result channel
+
+DG requires integer-function captures to consume only the returned integer,
+including through redirects. Stdout remains a permitted side effect.
+`$(- f 2>&1)` must reject like `$(- f)` rather than switch to stdout;
+a non-integer wrapper can explicitly discard the integer and expose output.
+DD58/DD55 and GUIDE record the contract. DD88's connected-writer rule
+continues to protect stdout captures, not integer-value captures.
+Journal 583 records the ruling and its consequences.
+
+The new P2 `bug-int-capture-redirect-switches-kind` owns enforcement in both
+backends. Classifier Q1 is settled; `q-nonvoid-classifier-residuals` is closed
+as a question record, with Q1/Q3 implementation still pending in their
+separate tasks. Anonymous capture caller-status handling remains open.
+
+This is documentation/backlog recording only. No compiler/runtime/spec
+code changed, and journal 577's accepted gate remains the implementation
+baseline. No stdout ban, arithmetic-only capture rule or new syntax was added.
+
+## STATUS (2026-11-06) - One definition per function name settled
 
 DG rejects duplicate function definitions: one name, one body, one result
 kind and one inferred signature. Identical, same-kind and uncalled

@@ -184,10 +184,14 @@ rest of the work lives in other tasks:
 - Q6 → `q-pipe-stage-never-writes-or-reads` (after W2);
 - Q7 → `retire-suppression-on-compounds`;
 - the command groups → `retire-command-groups`;
-- the ceremony rule and a capture body's `return` →
-  `q-status-function-ceremony`;
-- what units A and B left as they were →
-  `q-nonvoid-classifier-residuals` and `q-suppression-reach-residuals`.
+- an anonymous capture body's caller-side status handling →
+  `q-status-function-ceremony`; return kinds and ceremony are already
+  settled and implemented (journal 577);
+- unit A's classifier questions are now resolved in
+  `q-nonvoid-classifier-residuals`; duplicate-definition and integer-capture
+  enforcement remain in `reject-duplicate-function-definitions` and
+  `bug-int-capture-redirect-switches-kind` (journals 582-583);
+- unit B's remaining scope questions → `q-suppression-reach-residuals`.
 
 The wait ruling needs no task, because `- wait` is unchanged. The
 sections below remain the evidence for those tasks.

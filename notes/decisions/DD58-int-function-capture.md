@@ -52,6 +52,48 @@ arithmetic expression; both surfaces work for every int producer.
 
 Int→string conversion follows DD#30: `echo "$x"` at output.
 
+## Integer capture has one result channel (DG, 2026-11-06)
+
+A direct capture of an integer function consumes only its returned
+integer. Attached redirects do not turn it into a stdout capture or change
+its result kind. This preserves Option C, including the uniform treatment
+of integer functions and intrinsics; it does not restore arithmetic-only
+integer calls or grant new redirect syntax to an intrinsic.
+
+For an `-> int` function f, the required behavior is:
+
+| Form | Meaning |
+|---|---|
+| `$(f)` | Capture f's returned integer |
+| `$(f 2>&1)` | Capture that same integer; apply the redirect to f's I/O |
+| `$(f >file)` | Capture that same integer; send f's stdout to the file |
+| `$(- f)` or `$(- f 2>&1)` | SB4076: the capture already consumes the integer |
+
+Quoting/interpolating one of these integer captures renders the integer
+under DD#30; it never substitutes the function's stdout instead.
+SB4075's connected-writer requirement concerns stdout captures (DD#88),
+not integer-value captures: `$(f >file)` does not need a stdout writer
+feeding a capture pipe.
+
+Writing to stdout from an integer function remains legal. It is an
+ordinary side effect, following the active output destination and any
+attached redirects, not a second result selected by capture syntax.
+No purity check or stdout prohibition is introduced.
+
+To capture that output, use a non-integer wrapper that explicitly discards
+the integer, for example `fn output_f { - f }` followed by `$(output_f)`.
+The wrapper is void and its capture collects stdout. An anonymous
+non-integer body follows the same body/result rules; this does not relax
+the separate handling requirements of a body that returns a status.
+Normal taint and failure rules still apply. The adapter discards one value
+and exposes output; it is not an integer-to-string or integer-to-status cast.
+
+**Accepted, implementation pending** in
+`bug-int-capture-redirect-switches-kind` (journal 583). The old
+redirect-dependent switch to stdout is not an exception to this contract.
+DD#55's no-reach rule and DD130's failure classes remain: a failed setup
+cannot manufacture an integer zero or turn an absent return into success.
+
 ## Integer return completeness
 
 Under DD#55's return-kind ruling (DG, 2026-11-06), an `-> int` function
