@@ -488,6 +488,42 @@ The current compiler still prints `new X new` for the example. Removing
 capture hoisting must preserve earlier values, not merely visit their
 expressions earlier while leaving their reads deferred.
 
+### Arguments before attached redirects (DG, 2026-11-07)
+
+DG chose **arguments first**, uniformly for standalone commands and
+pipeline stages (journal 585):
+
+1. Evaluate and retain the command's arguments, following the left-to-right
+   word/component rule above.
+2. Process its attached redirects from left to right. Evaluate each target
+   at that redirect's turn, then apply the redirect; stop at the first
+   failure.
+3. Run the command or enter the called function body only after its
+   redirects succeed.
+
+A redirect target therefore sees effects from argument evaluation, while
+an already-evaluated argument cannot change because of later work. DD119's
+target restrictions remain: this adds no command substitution or intrinsic
+in a filename target.
+
+The command's own attached redirects do not affect its argument captures.
+Redirects already active in an enclosing scope still apply, and a capture
+retains its own capture routing and inner redirect scopes. For a forked
+stage, arguments still run in the stage child, after pipeline plumbing but
+before that command's attached redirects. Do not move them to the parent.
+DD122's parent-process readers and lexical pipe ownership are unchanged.
+
+Failure during argument evaluation follows its own checks and no-reach
+rules, before any attached redirect runs. A later redirect failure does
+not undo completed argument effects; DD130 still governs recovery and
+ordered partial setup.
+
+**Implementation is pending** in `q-stage-capture-redirect-order`, now a
+bug task. The current compiler installs a stage's attached redirects before
+its argument captures, unlike standalone commands. This phase-order repair
+is distinct from the within-argument repair in `q-capture-hoisting-order`;
+neither task may weaken the other's contract.
+
 ## Addendum (2026-09-29) — the body is validated as a function body
 
 "A `$( … )` body is an anonymous function" was settled above for *scope*. It

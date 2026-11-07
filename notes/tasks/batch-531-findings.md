@@ -930,8 +930,11 @@ DG 2026-10-28: F2 lands without the B82 wrap and without specs that pin
     captures are evaluated in its child after its redirects, as a function
     stage's are, and a `:` stage runs its captures, as the statement `:`
     now does (stgarg.11-stgarg.20 and stgarg.22-stgarg.36; stgarg.34 and
-    stgarg.36 are controls). Whether that order is right is open in
-    `q-stage-capture-redirect-order`.
+    stgarg.36 were F2 controls). DG chose arguments before attached
+    redirects in both contexts on 2026-11-07 (DD86, journal 585).
+    `q-stage-capture-redirect-order` is now an open implementation bug;
+    the repair must retain B81's stage-child evaluation and the pipeline
+    plumbing that precedes it.
 - [x] **B82** (open; DD55). A stage's suppression is not threaded into
   `build_function_pipeline_stage` or into B81's child; both backends ICE.
   - Not ported with F2: the trialed wrap would cement `-` reaching into a

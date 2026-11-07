@@ -30,6 +30,21 @@ bash does. A command in a reader-loop's **body** is not a stage — the loop
 runs in the parent, so the command inherits the parent's stdin. Nothing
 rebinds fd 0 in the parent, ever.
 
+## Stage arguments and attached redirects (DG, 2026-11-07)
+
+**Arguments first** applies here too (DD86, journal 585). A forked stage
+establishes its pipeline descriptors, evaluates its arguments in that
+child, then processes its own attached redirects and runs the command.
+Argument captures can therefore read pipeline-fed stdin, but not the
+command's later `< file`. Their own capture routing and inner redirects
+keep their scopes; an outer active redirect is still inherited.
+
+Pipeline plumbing is not an attached command redirect. This ruling does
+not move argument work into the parent, rebind a parent reader's fd 0 or
+change lexical reader ownership. Enforcement remains pending in
+`q-stage-capture-redirect-order`; the present stage implementation still
+installs attached redirects before argument captures.
+
 ## Why the loop runs in the parent
 
 This is the whole reason the rule exists.

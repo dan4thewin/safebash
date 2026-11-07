@@ -52,7 +52,10 @@ do not fabricate empty success or turn a void/int result into a status.
 Raise any genuine language-surface fork with DG.
 
 This does not extend a prefix into a helper body or argument capture.
-It does not settle stage descriptor-setup timing
-(`q-stage-capture-redirect-order`). The direct builtin stderr optimization
-is independently owned by `bug-builtin-stderr-backup-restore`; retain its
-actual-effect proof rather than suppressing SB5101 around unused machinery.
+DD86 separately settles attached-redirect timing: arguments first in both
+standalone commands and stages (2026-11-07; journal 585). Coordinate with
+`q-stage-capture-redirect-order`, which owns that pending repair: a failed
+open must not undo or pretend to skip completed argument effects. The
+direct builtin stderr optimization is independently owned by
+`bug-builtin-stderr-backup-restore`; retain its actual-effect proof rather
+than suppressing SB5101 around unused machinery.

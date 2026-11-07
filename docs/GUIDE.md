@@ -502,6 +502,16 @@ lazy branches and process/body boundaries remain intact. The compiler's
 captures-first behavior is queued for repair in `q-capture-hoisting-order`,
 including DD55's first-expression `$?` handling.
 
+**Arguments before attached redirects: accepted, implementation pending.**
+DG chose the same timing for standalone commands and pipeline stages
+(2026-11-07; DD86, journal 585). Evaluate and retain arguments first, then
+evaluate each redirect target and apply its redirect in order, then run
+the command. Pipeline plumbing remains earlier, and stage arguments stay
+in the child; active enclosing redirects and capture routing retain their
+scopes (DD122). A later redirect failure cannot undo earlier argument
+effects (DD130). `q-stage-capture-redirect-order` owns the phase-order
+repair; the current stage path still installs attached redirects first.
+
 #### Functions, inlining, and recursion (DD#27)
 
 **One definition per function name: accepted, enforcement pending.**

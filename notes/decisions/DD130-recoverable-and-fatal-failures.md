@@ -79,6 +79,9 @@ attached redirect change a function's void/status/integer kind.
 Redirects remain ordered, stopping at the first failure. Later redirects
 and the command body do not run. Earlier file creation, truncation or
 writes are not rolled back; recoverability is not transactional execution.
+DD86's 2026-11-07 arguments-first ruling places argument evaluation before
+this redirect phase, including in stages. Its completed effects are not
+undone by a later redirect failure either.
 Do not invent a successful empty value to conceal a failed file operation.
 
 ## Cleanup and process boundaries

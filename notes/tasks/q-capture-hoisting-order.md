@@ -76,9 +76,11 @@ consume the ordered values; a later load from mutable storage would undo
 an earlier visitor-order fix.
 
 This does not settle a capture body's inherited `$?` permission
-(`bug-sb5012-sb5094-nested-body-flow`) or the phase at which a stage installs
-its redirects (`q-stage-capture-redirect-order`). Neither permits
-captures-first evaluation of the words themselves.
+(`bug-sb5012-sb5094-nested-body-flow`). Attached-redirect timing is now
+separately settled: arguments first in both standalone commands and stages
+(DD86, 2026-11-07; journal 585). `q-stage-capture-redirect-order` owns that
+pending phase-order repair. Neither task permits captures-first evaluation
+of the words themselves or moving stage arguments back to the parent.
 
 ## Pointers
 

@@ -104,6 +104,19 @@ This ruling is accepted but its enforcement remains pending in
 capture body itself inherits the caller's status; that separate entry-state
 question remains in `bug-sb5012-sb5094-nested-body-flow`.
 
+### Attached redirects follow arguments (DG, 2026-11-07)
+
+DD86 requires arguments to be evaluated before the command's attached
+redirects, in standalone commands and pipeline stages alike. Targets are
+then evaluated and redirects applied in redirect order, before the command
+body runs. Stage arguments remain in the child (DD122).
+
+An outer condition or `-` still does not handle failures inside argument
+captures or value calls. A recoverable redirect failure skips the command,
+not the argument effects that already happened; DD130's failure classes
+and restoration requirements remain. Enforcement of the timing rule is
+pending in `q-stage-capture-redirect-order` (journal 585).
+
 ## `local` declarations
 
 `local x=$(cmd)` — the capture's exit check fires regardless of

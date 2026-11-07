@@ -1,4 +1,25 @@
-## STATUS (2026-11-06, latest) - Anonymous capture status returns rejected
+## STATUS (2026-11-07, latest) - Arguments before attached redirects settled
+
+DG chose arguments first for both standalone commands and pipeline stages.
+Arguments are evaluated and retained before redirect targets are read and
+redirects applied in order; the command body runs only after setup succeeds.
+Stage arguments remain in the child after pipeline plumbing. Capture
+routing, active enclosing redirects and DD122 reader ownership retain
+their scopes. DD86/DD55/DD122/DD130 and GUIDE record the contract;
+journal 585 records the ruling and preceding native/Bash example.
+
+`q-stage-capture-redirect-order` is now an open P3 implementation bug,
+not a policy question. The current stage path still installs attached
+redirects before argument captures. Within-word/argument ordering remains
+separately queued in `q-capture-hoisting-order`; recoverable file handling
+remains in its DD130 tasks. A later redirect failure does not undo earlier
+argument effects.
+
+This is documentation/backlog recording only. No compiler/runtime/spec
+code changed, and journal 577's accepted gate remains the implementation
+baseline.
+
+## STATUS (2026-11-06) - Anonymous capture status returns rejected
 
 DG rejects explicit status returns from anonymous capture bodies, including
 zero and status-producing forwarding through redirects. Bare return,
