@@ -172,9 +172,20 @@ statement — no special case.
 
 Reads are checked against the *incoming* latch, before the statement's own
 transition, so `- wait $!` reads a fresh `$!` and then latches the status it
-reaped. A function body is a fresh context: it cannot see its caller's latch.
-A `{ … }` group is braces, not a catching construct, so the latch crosses it;
-`if`/`while`/`for`/`case` and `&&`/`||` do not.
+reaped. A named or anonymous function body is a fresh context: it cannot
+see its caller's latch. Captures are anonymous bodies under DD86; their
+own spawn/reap operations can establish fresh latches. This is availability,
+not a separate job table: a `wait` inside the body can still reap an
+existing child owned by the process.
+
+A `{ … }` group is braces, not a catching construct, so the latch crosses
+it; `if`/`while`/`for`/`case` and `&&`/`||` do not.
+
+DG's 2026-11-07 no-inheritance ruling settles capture-entry `$?` too
+(DD55/DD86, journal 586). The capture checker repair remains pending in
+`bug-sb5012-sb5094-nested-body-flow`. Direct value reads such as
+`$(getcpid)` and `$(waitstatus)` do not introduce an executable body:
+they read the context in which the expression occurs.
 
 ### The spellings
 

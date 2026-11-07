@@ -75,20 +75,26 @@ private capture walker or a backend-specific order. Both backends must
 consume the ordered values; a later load from mutable storage would undo
 an earlier visitor-order fix.
 
-This does not settle a capture body's inherited `$?` permission
-(`bug-sb5012-sb5094-nested-body-flow`). Attached-redirect timing is now
-separately settled: arguments first in both standalone commands and stages
-(DD86, 2026-11-07; journal 585). `q-stage-capture-redirect-order` owns that
-pending phase-order repair. Neither task permits captures-first evaluation
-of the words themselves or moving stage arguments back to the parent.
+Capture entry is separately settled: DG chose no caller-status inheritance
+(DD55/DD86, 2026-11-07; journal 586). The body starts fresh, and its own
+handling flow can establish status. `bug-sb5012-sb5094-nested-body-flow`
+owns that pending checker repair; word order cannot authorize an inherited
+read. Direct intrinsic value expressions retain their surrounding context.
+
+Attached-redirect timing is settled too: arguments first in both standalone
+commands and stages (DD86, 2026-11-07; journal 585).
+`q-stage-capture-redirect-order` owns that pending phase-order repair.
+Neither task permits captures-first evaluation of the words themselves or
+moving stage arguments back to the parent.
 
 ## Pointers
 
-- The findings index entry has the remaining rows: ev3/ev10 (a pure `echo`
-  capture leaves `$?` alone) and ev12-ev14 (a body's own `$?`).
+- The findings index entry has ev3/ev10 (a pure `echo` capture leaves `$?`
+  alone). ev12-ev14's inherited body reads now require refusal, not an
+  ordering-dependent captured status.
 - The probes are in the session archive `files/port-f1f4-probes.tar.gz`
   (`cb/ev1`-`ev14`), and the name rows are under `files/p531-ledger.md`.
   The ab133dd2 re-probes of the rows above are in `files/port-f5-probes.tar.gz`
   (`q/hn1.sh`, `q/ev5.sh`, `q/ev6.sh`).
-- Related: `bug-sb5012-sb5094-nested-body-flow` asks whether a body inherits
-  `$?` at all. If it does not, ev13 and ev14 become SB5012.
+- Related: `bug-sb5012-sb5094-nested-body-flow` owns SB5012 for ev12-ev14
+  under the no-inheritance ruling.

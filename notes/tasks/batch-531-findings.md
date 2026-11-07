@@ -551,8 +551,10 @@ touches is fixed here, and any other finding goes to the backlog.
   `&&`/`||` group, a latch read right after its write is a false SB5094.
 - `bug-sb5012-sb5094-nested-body-flow` (P2): `$?` and latch reads in a
   capture body, a `-`-wrapped or negated compound, or a reader body are
-  checked against the enclosing flow. Question: does a capture body start
-  fresh (recommended) or inherit?
+  checked against the enclosing flow. DG chose fresh capture entry with
+  no caller-status inheritance on 2026-11-07 (DD55/DD86, journal 586).
+  The checker repair remains open; body-local handling and direct
+  intrinsic value reads must retain their own contexts.
 - `bug-validator-taints-clean-pipe-while-reader` (P2): a `while readline`
   loop fed by a clean pipe is a false SB5020; the SSA backstop binds it
   clean.
@@ -863,11 +865,12 @@ DG 2026-10-28: F2 lands without the B82 wrap and without specs that pin
   - `$?` to the right of one: ev5 `… || echo "$(t)" "[$?]"` and ev7 (in an
     `else`) print ` [0]`. They compile, though `$?` is not the first
     expression, which DD55 makes SB5012.
-  - A capture body's own `$?`: ev14 `… || echo "$(echo "in=$?")" "$(t)"`
+  - A capture body's inherited `$?`: ev14 `… || echo "$(echo "in=$?")" "$(t)"`
     prints `in=0`, because `$(t)` runs first (bash: `in=3`); ev13 reads the
     status `$(t)` left. Without a function capture, ev12 prints `in=3`.
-    `bug-sb5012-sb5094-nested-body-flow` asks whether a body inherits `$?` at
-    all; if it does not, these rows become SB5012.
+    DG rejected inheritance on 2026-11-07 (DD55/DD86, journal 586).
+    `bug-sb5012-sb5094-nested-body-flow` now owns SB5012 for all three;
+    no evaluation order makes an inherited body read legal.
   - A pure `echo` capture leaves `$?` alone: ev3 `… || echo "$(echo hi)"
     "[$?]"` prints `hi [3]`, ev10 `[3] x`.
   - On the branch, ev5-ev8, ev11, ev13 and ev14 are SB5020 (B114), so it says

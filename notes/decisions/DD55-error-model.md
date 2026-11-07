@@ -100,9 +100,47 @@ calling `f`. Reversing the arguments makes `$?` no longer the first
 expression, so it is SB5012, not permission to read the capture's status.
 
 This ruling is accepted but its enforcement remains pending in
-`q-capture-hoisting-order` (journal 580). It does not decide whether a
-capture body itself inherits the caller's status; that separate entry-state
-question remains in `bug-sb5012-sb5094-nested-body-flow`.
+`q-capture-hoisting-order` (journal 580). Capture entry state is separately
+settled below: evaluation order does not grant a body its caller's status.
+
+### Capture bodies do not inherit status (DG, 2026-11-07)
+
+DG chose **no inheritance**. An anonymous capture body starts with status
+unavailable, like a named function body. It cannot read the caller's `$?`,
+even when the capture is the first expression of an outer handling branch.
+Only the body's own flow can make a status read legal under this DD.
+
+```sash
+/bin/sh -c "exit 3" || echo "$(echo "$?")"  # required: SB5012
+```
+
+The boundary applies at every nested executable capture body, whether it
+appears in an assignment, argument or interpolation. Redirects and outer
+conditions or suppression do not grant entry permission. A handling branch
+established inside the body still receives its own status normally.
+
+When the caller's status is needed, read it at a legal outer handling
+position into an ordinary binding, then use that binding inside the
+capture. DD86's lexical access and global effects are unchanged. Fresh
+availability is not a fabricated zero result or subshell-style state
+isolation.
+
+The direct value intrinsic `$(status)` is a read in its surrounding
+context, not an anonymous executable body: `/bin/false || echo "$(status)"`
+still reads that failure's status. `$?` and the arithmetic spelling of
+`status` obey the same availability rule. Putting any spelling inside an
+executable body cannot bypass its fresh entry state.
+
+DD126's fresh-function-context rule for `$!`/`$(getcpid)` and
+`$(waitstatus)` applies to anonymous bodies too. The body's own spawn/reap
+operations can establish fresh latches; a caller's latch cannot be borrowed.
+Direct intrinsic value reads retain their surrounding context.
+
+**Accepted, implementation pending** in
+`bug-sb5012-sb5094-nested-body-flow` (journal 586). That task also owns the
+existing errors caused by checking a body's internal reads against its
+enclosing statement. This ruling does not change function result kinds,
+capture-condition legality or the rejection of anonymous status returns.
 
 ### Attached redirects follow arguments (DG, 2026-11-07)
 

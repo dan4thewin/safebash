@@ -5,12 +5,39 @@ priority: P2
 kind: bug
 depends: []
 gates:
+  - "anonymous capture bodies start with unavailable status and no inherited latch; caller-derived reads get SB5012/SB5094 regardless of spelling, outer handling or nesting"
+  - "legal handling, spawn/reap and latch reads in the body's own flow remain valid, as does access to a status saved into an enclosing binding"
+  - "direct status/getcpid/waitstatus value expressions retain their surrounding context and are not mistaken for executable capture bodies"
   - "every false row compiles and runs as its twin does, in both backends"
   - "every missed row draws its twin's code"
   - "the controls keep their results"
-  - "a spec pins each row in both backends; each fails on the pre-fix binary"
+  - "focused specs pin each distinct defect in both backends with pre-fix or targeted reversion failures; preservation controls and the predicted ordinary gate pass"
   - "if `q-compound-as-condition` rules (A) first, the negated-compound rows are its rejections instead and leave this task"
 ---
+
+## Entry policy settled, 2026-11-07
+
+DG chose **"no inheritance"**: an anonymous capture body starts without
+the caller's `$?`, like a named function body. Its own handling flow can
+make status available. DD55/DD86 and journal 586 record the decision;
+DD126's existing fresh-function latch rule applies to captures too.
+The entry-state question is closed, but this P2 implementation bug remains
+open. No checker repair is included in the decision recording.
+
+Freshness belongs to executable body entry, not every `$()` token.
+Direct `$(status)`, `$(getcpid)` and `$(waitstatus)` are value reads in the
+surrounding context. Inside a real capture body, those same reads use its
+own context and cannot borrow an outer permission. Preserve the canonical
+punctuation and arithmetic spellings. Saving a status at a legal outer
+handling position and reading that ordinary binding inside remains valid.
+
+## Evidence scope
+
+The tables below retain the original measurements, not new results.
+Revalidate them against the current DDs when implementing, including
+separately settled return-kind and compound-suppression changes. The
+entry-state table now specifies the required refusals; the historical
+claim that no existing spec would change is not a sweep prediction.
 
 ## Found
 
@@ -119,21 +146,20 @@ Probes: `files/port-f1f4-probes.tar.gz`, directories `cb/` (cb*, cl*, ev*),
 
 ## Why it is a bug
 
-- DD86's 2026-09-28 addendum (351-356) makes a `$( )` body an anonymous
-  function. The 2026-09-29 one (415-420) adds that "every statement legal in a
-  function body is legal in a `$( )` body, and gets the same validation". Each
-  capture row and its `fn` twin get different verdicts.
-- DD126:175: "A function body is a fresh context: it cannot see its caller's
-  latch." 149-157: the latch is readable only in the statement immediately
-  after its write. cl2, cl9 and l3 write and read inside one body and are
-  rejected. cl3, cl7 and l2 read a latch that this rule makes stale there (l2's
-  read is inside an `if` body, which DD126 says the latch does not cross), and
-  are accepted.
-- DD55:26-29: no `$?` after `- cmd`. The table at 35-39, and 41-47: `$?` is
-  the first expression of the handling branch. The addendum at 373: `-` at a
-  statement's head takes the whole statement.
+- DD86 makes an executable `$( )` body an anonymous function body with its
+  own validation and lexical context, subject to the capture's result
+  contract. The 2026-11-07 entry rule is now explicit too. The historical
+  capture rows and their `fn` twins get different flow verdicts.
+- DD126 requires a fresh function context and a latch read in the statement
+  immediately after its write. cl2, cl9 and l3 write and read inside one body
+  and are rejected. cl3, cl7 and l2 read a latch that this rule makes stale
+  there (l2's read is inside an `if` body, which DD126 says the latch does
+  not cross), and are accepted.
+- DD55 forbids `$?` after `- cmd` and requires it to be the first evaluated
+  expression in a legal handling position. A wrapper cannot grant the
+  body's reads permission from an unrelated enclosing statement.
 
-## Cause
+## Cause at filing
 
 `check_dq_stmt` (validate.rs 3311-3330) has its own arms for List, Group,
 Function, If, While, For and Case. Every other kind goes to `check_dq_leaf`
@@ -168,50 +194,61 @@ already peel Suppressed and Redirected. The other dispatchers are
 
 ## Fix direction
 
-- Check each nested body with its own `FlowState`, and stop
-  `find_status_reads` and `find_latch_reads` at body boundaries.
-  `walk_expr_tree` (ir.rs 511-538) already stops at `$( )` (journal 308).
+- Give each executable capture body a fresh status/latch `FlowState`, as
+  named bodies already have. Check its statements in order rather than
+  judging its reads against the enclosing statement. Nested bodies start
+  fresh in turn.
+- Stop the enclosing status/latch read collectors at executable body
+  boundaries, using the existing shared body/expression classification.
+  Do not treat direct intrinsic value reads as new bodies merely because
+  their spelling or AST uses command substitution.
+- Structural branches and reader loops still derive their entry flow from
+  their own conditions and existing DD55/DD126 rules. Do not initialize
+  every block as a fresh function or erase a body's internally established
+  handling status.
 - Peel `-` and model what it discards: a `$?` read after a suppressed command
   is SB5012, but a condition still feeds its own branch (w3, w3b).
 - Check a pipeline's reader body as a plain `while` body (p1t, p2t and l3t
   are the oracle), and a negated compound's body as the plain compound's.
 - Cover both codes, and the `(( ))` statements in each body.
 
-## Question for DG (not gated): a capture body's entry state
+## Capture-entry regressions required by the ruling
 
-A body checked on its own needs an entry state. Every gated row above gets the
-same verdict either way.
+No outer status or latch permission enters the body. The caller's
+left-to-right order remains independently required, but no ordering can
+make these inherited body reads legal. Nor should a runtime zero replace
+the missing permission.
 
-- **(a) Fresh, as a function body (recommended).** That is DD86's "anonymous
-  function" and DD126:175. cb13, cb16, cl1 and ev12 below become errors. The
-  rewrite reads the value in the outer statement, as cb15 does. As far as I
-  can find, no existing spec flips: 23.31 keeps cb5's shape, and 57.189 is
-  converter text.
-- **(b) Inherited, as today.** Then what a body reads depends on capture
-  order (ev12-ev14 below). DG settled that order as left-to-right on
-  2026-11-06 (DD86, journal 580), with implementation pending in
-  `q-capture-hoisting-order`. Whether the body may inherit the status
-  remains this task's separate question.
-
-| Program | Result |
-|---|---|
-| cb13 `echo hi ⏎ x=$(echo "in=$?") ⏎ echo "${x:!}"` | prints `hi`, `in=0` |
-| cb16 `if /bin/sh -c "exit 3" { echo t } else { x=$(echo "in=$?"); echo "$x" }` | prints `in=3` |
-| cl1 `- /bin/true & ⏎ x=$(echo "$!") ⏎ if [[ -n "${x:!}" ]] { echo nonempty }` | prints `nonempty` |
-| ev12 `/bin/sh -c "exit 3" \|\| echo "$(echo "in=$?")"` | prints `in=3` |
-| ev14 `fn t { /bin/true } ⏎ /bin/sh -c "exit 3" \|\| echo "$(echo "in=$?")" "$(t)"` | prints `in=0`: `$(t)` runs first (bash prints `in=3`) |
-| ev13 `fn t { /bin/sh -c "exit 5" \|\| : } ⏎ /bin/sh -c "exit 3" \|\| echo "$(t)" "$(echo "in=$?")"` | prints ` in=0`, the status `$(t)` left |
-| cl5 `fn g { echo "$!" } ⏎ - /bin/true & ⏎ x=$(g) ⏎ …` | SB5094 1:13: a named body does not inherit |
-| cb14 `echo hi ⏎ fn f { echo "in=$?" } ⏎ f` | SB5012 2:13 |
-| cb15 `echo hi ⏎ x="in=$?" ⏎ echo "$x"` | prints `hi`, `in=0` |
+| Program | Recorded result | Required under the entry rule |
+|---|---|---|
+| cb13 `echo hi ⏎ x=$(echo "in=$?") ⏎ echo "${x:!}"` | prints `hi`, `in=0` | SB5012 inside the capture |
+| cb16 `if /bin/sh -c "exit 3" { echo t } else { x=$(echo "in=$?"); echo "$x" }` | prints `in=3` | SB5012 inside the capture |
+| cl1 `- /bin/true & ⏎ x=$(echo "$!") ⏎ if [[ -n "${x:!}" ]] { echo nonempty }` | prints `nonempty` | SB5094 inside the capture |
+| ev12 `/bin/sh -c "exit 3" \|\| echo "$(echo "in=$?")"` | prints `in=3` | SB5012 inside the capture |
+| ev14 `fn t { /bin/true } ⏎ /bin/sh -c "exit 3" \|\| echo "$(echo "in=$?")" "$(t)"` | prints `in=0`: `$(t)` runs first (bash prints `in=3`) | SB5012 inside the capture |
+| ev13 `fn t { /bin/sh -c "exit 5" \|\| : } ⏎ /bin/sh -c "exit 3" \|\| echo "$(t)" "$(echo "in=$?")"` | prints ` in=0`, the status `$(t)` left | SB5012 inside the capture |
+| cl5 `fn g { echo "$!" } ⏎ - /bin/true & ⏎ x=$(g) ⏎ …` | SB5094 1:13: a named body does not inherit | Preserve the named-body refusal |
+| cb14 `echo hi ⏎ fn f { echo "in=$?" } ⏎ f` | SB5012 2:13 | Preserve the named-body refusal |
+| cb15 `echo hi ⏎ x="in=$?" ⏎ echo "$x"` | prints `hi`, `in=0` | No capture body; existing outer DD55 rules are unchanged |
 
 ev13 and ev14 were run on `8e28c61` and the F1+F4 tree. The branch rejects
 both with SB5020 (B114).
 
+Required positive controls include a capture's own handled failure
+(cb3/cb6), fresh body-local spawn/reap latches (cl2/cl4), and a wait inside
+the body establishing a new latch after reaping an existing process-owned
+child (cl9/cl10). Preserve direct status/latch intrinsic reads in legal
+outer contexts and a status explicitly saved into an enclosing binding.
+Exercise nested bodies and equivalent punctuation/intrinsic/arithmetic
+reads without allowing an unrelated diagnostic to satisfy the assertion.
+Choose fresh spec ids and predict the sweep from the current database,
+not from this filing's old counts.
+
 ## Not this task
 
-- Left-to-right evaluation (ev5-ev11, ev13, ev14): the accepted rule's
-  implementation is in `q-capture-hoisting-order`, `batch-531-findings` §12.
+- Left-to-right evaluation (ev5-ev11): the accepted rule's implementation
+  is in `q-capture-hoisting-order`, `batch-531-findings` §12. ev12-ev14's
+  inherited reads now belong to this task's refusal coverage instead.
 - The latch dropped after a branch's first statement (l1):
   `bug-handling-branch-drops-latch`.
 - What SB5012 says ("no preceding command"):

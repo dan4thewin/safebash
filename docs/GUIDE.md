@@ -586,6 +586,16 @@ No new anonymous-result consumer or capture-condition form is introduced.
 The rule is accepted; enforcement is pending in
 `reject-anonymous-capture-status-returns` (journal 584).
 
+**Anonymous captures do not inherit caller status** (DD#55/DD#86,
+DG, 2026-11-07). Entry starts without `$?` permission; handling inside the
+body can establish its own. Save a caller status at a legal outer handling
+position before using it as ordinary data in the capture. DD126's fresh
+function-latch boundary applies too. Direct `$(status)`, `$(getcpid)` and
+`$(waitstatus)` are value expressions in their surrounding context, not
+new executable bodies. This changes neither lexical binding access nor
+global effects. Enforcement and the existing per-body flow bugs remain
+in `bug-sb5012-sb5094-nested-body-flow` (journal 586).
+
 **Integer captures stay integer-valued through redirects** (DD#58, DG,
 2026-11-06). `$(f 2>&1)` and `$(f >file)` consume f's returned integer;
 stdout is a permitted side effect, following those redirects.

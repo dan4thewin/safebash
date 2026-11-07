@@ -588,6 +588,31 @@ DD#70/#71's boolean contexts stop at it, exactly as they stop at `fn`.
 
 Specs `spec/errors.sh` csc.11–csc.34; journal 444.
 
+### Status entry is fresh too (DG, 2026-11-07)
+
+DG chose **no inheritance** of the caller's status by an anonymous capture
+body (DD55, journal 586). The body starts without permission to read `$?`;
+its own handling flow can establish that permission. Each nested capture
+body has the same fresh boundary, regardless of the outer expression's
+position, redirects or marks.
+
+This is not isolation of ordinary bindings. A status saved into an
+enclosing binding at a legal handling position remains accessible under
+this DD's lexical rules. Global writes still survive in the same process.
+DD126's fresh-function latch context applies as well: `$!`/`getcpid` and
+`waitstatus` need a producer in the body's own flow.
+
+Distinguish executable bodies from direct intrinsic value expressions.
+`$(status)` is the same current-context read as `$?`, not a new body;
+the same distinction preserves direct `$(getcpid)` and `$(waitstatus)`.
+A getter inside an executable capture reads that body's context instead.
+Neither evaluating captures earlier nor inventing an initial zero is a
+substitute for the required refusal.
+
+Enforcement remains pending in `bug-sb5012-sb5094-nested-body-flow`.
+The separate return-kind, left-to-right and redirect-timing contracts are
+unchanged.
+
 ### Addendum (2026-09-29, later) — the type pass descends too
 
 The walker-classification rule above is stated for passes in general, but the

@@ -1,4 +1,27 @@
-## STATUS (2026-11-07, latest) - Arguments before attached redirects settled
+## STATUS (2026-11-07, latest) - Capture status inheritance rejected
+
+DG chose no caller-status inheritance for anonymous capture bodies.
+Entry starts with `$?` unavailable, like a named function; the body's
+own handling flow can establish status. Save a caller status at a legal
+outer handling position before using it as ordinary data in the capture.
+DD55/DD86 record the rule, DD126 clarifies the existing fresh latch
+boundary, and GUIDE agrees. Journal 586 records the decision.
+
+Direct status/getcpid/waitstatus value expressions retain their surrounding
+context; they are not new executable bodies. Nested bodies start fresh
+in turn. Lexical binding access, global effects and body-local handling
+remain intact.
+
+The existing P2 `bug-sb5012-sb5094-nested-body-flow` owns enforcement and
+the per-body checker repair. Its entry question is closed, not the bug.
+Word ordering, attached-redirect timing and anonymous status-return
+rejection remain separate pending repairs.
+
+This is documentation/backlog recording only. No compiler/runtime/spec
+code changed, and journal 577's accepted gate remains the implementation
+baseline.
+
+## STATUS (2026-11-07) - Arguments before attached redirects settled
 
 DG chose arguments first for both standalone commands and pipeline stages.
 Arguments are evaluated and retained before redirect targets are read and
