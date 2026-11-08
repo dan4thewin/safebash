@@ -104,12 +104,12 @@ pipeline-head `-` likewise belongs only to its first stage. Binding and
 consumption are distinct checks: the subsequent ruling below rejects
 `- a || b` and `- a && b` because their left status is consumed.
 
-Adjacency is necessary, not sufficient: existing result-kind and
-context restrictions still apply. `[[ ... ]]` and `(( ... ))` are single
-commands, not compound bodies; this ruling does not decide the remaining
-inert-prefix questions. Their operand captures remain checked, including
-inside an arithmetic write. A `-` on that arithmetic command cannot
-suppress a command nested in its expression.
+Adjacency is necessary, not sufficient: result-kind and context
+restrictions still apply. `[[ ... ]]` and `(( ... ))` are single forms,
+not compound bodies; adjacency alone does not license a prefix. DD31's
+subsequent 2026-11-08 ruling rejects arithmetic prefixes. Operand captures
+remain checked, including inside an arithmetic write; lowering that write
+cannot create permission to suppress a command nested in its expression.
 
 The existing ban on compound prefixes remains
 `retire-suppression-on-compounds`. DD88/DD101 capture conditions remain
@@ -243,14 +243,38 @@ It permits discard only where the handling form is otherwise legal, so
 an attached redirect is not an exception to this prefix rejection.
 The no-op `:` is not a control transfer: DD70 preserves it as an
 intentional no-op and retains the meaningful `- : >optional.log` file
-operation. Arithmetic-write prefix eligibility remains a separate
-question; discarded-test usefulness is settled by DD70.
+operation. Arithmetic prefixes are separately rejected by DD31's
+2026-11-08 result/context rule; discarded-test usefulness follows DD70.
 
 **Enforcement pending:** `reject-control-transfer-suppression` owns the
 located refusal and preservation controls. Q1's control-transfer cohort
-in `q-suppression-and-stage-residuals` is settled, not its non-control
-forms or the implementation. Journal 591 records the decision; no new
-diagnostic number or implementation architecture is selected here.
+in `q-suppression-and-stage-residuals` is settled. Its other forms follow
+DD70 and the arithmetic ruling below; implementation remains queued.
+Journal 591 records the decision; no new diagnostic number or
+implementation architecture is selected here.
+
+### Assignments and mutations have no result (DG, 2026-11-08)
+
+DD31/DD71 require assignments and arithmetic mutations to produce no
+result, not an always-successful status. Reject their source `-` prefixes.
+An arithmetic comparison does produce a result and must be consumed in a
+permitted context; a bare or suppressed arithmetic comparison is an
+error. Bare arithmetic tests/calculations are likewise not statements.
+
+A write cannot supply an operand value to another calculation, and
+parentheses cannot give it a result. It establishes no fresh `$?` or
+`$(status)` permission. Legal operand reads of an already available
+status still obey the handling rules below. DD88/DD101 capture conditions
+consume the captured operation's result, not the binding's.
+
+This does not make operand failures unchecked or arithmetic faults
+recoverable. It is independent of DD70's effect/use check and does not
+retire discard for other eligible operations.
+
+**Enforcement pending:** `q-arith-test-statement-status` is now an open
+implementation bug for the arithmetic contract. Ordinary assignment
+prefixes and the no-reach repair retain their owner in
+`reject-nonadjacent-suppression`. Journal 593 records the policy.
 
 ## Explicit handling
 
@@ -648,7 +672,11 @@ Bash `set -e` has known blind spots:
 
 sash has none of these. Checks are inserted per-operation by the
 compiler. Condition position is recognized syntactically. `local`
-doesn't swallow. Arithmetic doesn't produce exit codes.
+doesn't swallow. Arithmetic mutations produce no result; arithmetic
+comparisons supply a condition result, not an implicit failure check.
+Bare `(( 0 ))` is rejected by DD31, not a way to set a failing status.
+The remaining arithmetic enforcement is tracked in
+`q-arith-test-statement-status`.
 
 ## Compound-condition catch + list/body abort (2026-08-19, DG)
 
@@ -977,6 +1005,10 @@ status-less value-intrinsic captures; enforcement is queued in
 `reject-statusless-intrinsic-suppression` (journal 590). The historical
 noreach.12 spelling needs review when that rule lands: a refusal for an
 inert prefix cannot stand in for proof of the operand barrier.
+DD31 also rejects arithmetic prefixes (journal 593). Review historical
+arithmetic barrier fixtures, including noreach.14, with
+`q-arith-test-statement-status`; an earlier source refusal is not proof
+that a lowering barrier works.
 
 Specs: errors.sh noreach.1-noreach.16. Rewritten to the rule: errors.sh
 supval.7, supval.8 and supval.18-supval.21. Journal 548.

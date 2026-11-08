@@ -5,12 +5,59 @@ Three arithmetic contexts, each with a single purpose:
 
 | Context | Purpose | Accepts | Rejects |
 |---|---|---|---|
-| `(( ))` statement | Mutation | `=`, `+=`, `-=`, `x++`, `x--` | Comparisons, prefix `++x`/`--x` |
+| `(( ))` statement | Mutation, no result | `=`, `+=`, `-=`, `x++`, `x--` | Comparisons, bare tests/values, prefix `++x`/`--x` |
 | `if (( ))` condition | Comparison | `==`, `!=`, `<`, `>`, `<=`, `>=` | Mutations |
 | `$(( ))` expression | Pure evaluation | Arithmetic on clean operands | Mutations |
 
 `$(( ))` is a read context — it returns a value. Mutation inside a
 read context (`$((x=10))`) is invalid sash (compile error).
+
+## Results and statement use (DG, 2026-11-08)
+
+**Assignments and mutations produce no result. Comparisons do.** A write
+does not yield its assigned value, a truth value, or an always-zero
+success status. This applies to DD71's value bindings and to arithmetic
+assignment, compound assignment and increment/decrement.
+
+Reject source `-` on an arithmetic mutation: there is no result to
+discard. A comparison must be consumed in a permitted context, not left
+as an arithmetic statement; `-` cannot make that statement legal either.
+The same statement restriction rejects bare tests and calculations such
+as `(( 0 ))`, `(( n ))` and `(( n + 1 ))`. They are not a way to manufacture
+a readable status without a command.
+
+```sash
+(( n += 1 ))                # mutation statement, no result
+if (( n > 0 )) { echo yes }  # comparison result consumed
+- (( n += 1 ))              # rejected: no result to discard
+(( n > 0 ))                 # rejected: unused comparison
+- (( n > 0 ))               # rejected: discard cannot legalize it
+(( n = (m += 1) ))          # rejected: the inner write supplies no value
+```
+
+Parentheses alone do not turn a write into a result-producing test.
+An otherwise legal parenthesized mutation follows the same statement
+rule; using that write as the value of another expression is invalid.
+Comma sequencing remains the distinct desugaring below, not an
+assignment-expression result.
+
+Writes establish no fresh `$?`/`$(status)` permission. Reading an already
+available status in an operand still follows DD55's handling and
+first-expression rules. DD88/DD101 capture conditions consume the captured
+operation's result, not a result of assigning its value.
+
+This is a result/context rule, independent of DD70's conservative
+pointless-statement check. Operand effects or uncertainty do not turn an
+arithmetic comparison into a legal statement. Ordinary operand checks
+and fatal arithmetic faults remain unchanged. An outer prefix cannot
+discard an operand's failure, and fatal faults remain fatal.
+
+**Enforcement pending:** `q-arith-test-statement-status` retains its slug
+and P3 priority but is now an implementation bug. It owns this arithmetic
+contract and the migration of status-source fixtures. Ordinary assignment
+prefixes remain with `reject-nonadjacent-suppression`; the comma tasks
+retain their shared classification and list-placement work. Journal 593
+records the ruling; no compiler change is claimed here.
 
 ## Increment/decrement (Go rule)
 
@@ -20,7 +67,7 @@ and `x = x - 1`.
 
 Valid:
 - `(( count++ ))` — standalone mutation statement
-- `(( x++, x > 0 ))` — non-final position in comma expression
+- `if (( x++, x > 0 ))` — mutation in a non-final comma part, comparison consumed
 
 Invalid:
 - `(( x = y++ ))` — `++` inside expression (not a statement)
@@ -30,9 +77,9 @@ Invalid:
 ## Comma operator
 
 The comma in `(( ))` is syntactic sugar that splits one `(( ))` into
-multiple statements. Each non-final expression must be a mutation.
-In condition position (`if`/`while`), the final expression must be a
-comparison:
+multiple statements. In statement position every part must be a mutation.
+In condition position each non-final part must be a mutation and the final
+part must supply the comparison:
 
 ```bash
 # desugars to: (( count = count - 1 )); if (( count > 0 ))
@@ -49,13 +96,13 @@ increments and prints `0 1 2`, while `for (( ; k++, k<3; ))` increments
 first and prints `1 2`. The equivalent without the comma writes the mutation
 twice, `for (( k++; k<3; k++ ))`.
 
-Enforcement is shared, so the diagnostics are too. A comma holding a mutation
-anywhere classifies as a mutation and is split into statements before
-validation; whether the final part is a comparison is then decided on the
-split form by the ordinary mutation-in-condition rule (SB5007), the same one
-that rejects `while (( k=1 ))`. Only the other half — every non-final part
-must be a mutation — is checked on the comma itself, because nothing else
-can see it.
+The non-final rule must hold before and after splitting, and parentheses
+must not disguise a mutation as a test. The final part obeys its enclosing
+context; a preceding write cannot make a discarded final comparison or
+calculation legal. The existing enforcement misses these distinctions in
+some forms, as recorded below and in `bug-arith-comma-nonfinal-part-unchecked`.
+The 2026-11-08 ruling settles the result contract, not the separate question
+of which logical-list positions accept an arithmetic comma.
 
 ## Bash-mode coercion
 
@@ -64,8 +111,9 @@ can see it.
   to statement, comparison stays as expression in context where it
   has meaning)
 
-Statement `(( ))` exit status is always 0. Condition `if (( ))`
-produces a boolean. `(( x > 0 ))` as bare statement → compile error.
+Extracting a mutation does not give it a result. Condition `if (( ))`
+produces a boolean; a mutation statement produces none, not status zero.
+`(( x > 0 ))` as bare statement → compile error.
 `if (( x++ ))` → compile error.
 
 ## Addendum (2026-10-27): a comma with a write is an assignment, not a compound
@@ -90,8 +138,10 @@ assignment may not stand, it gets the assignment's answer, as `(( a = 1 ))` woul
 | before a redirect: as a statement, before `&&`, under `!` | SB4046 "a redirect cannot attach to a variable assignment" |
 | under `&` | SB4024 "a variable assignment isn't allowed in a background job" |
 
-The write need not come first: `(( a<3, a++ ))` gets the same answers. A `-`
-in front changes nothing, and neither does a `!` before a redirect.
+The write need not come first: `(( a<3, a++ ))` got the same answers in
+these probes. A `-` did not change those placement diagnostics; DD31's
+2026-11-08 rule now independently rejects that prefix. A `!` before a
+redirect does not license a redirect on a write.
 
 **Held: `&&` and `||`.** Before or after `&&`/`||`, the group keeps the
 compound's SB4023 for now. Whether that operand is a condition position is
@@ -116,16 +166,17 @@ inventing a new one. The question is filed as
 in DD#31's own rules. Both are in validator functions this change does not
 touch, so both are filed rather than fixed:
 
-- The non-final rule is checked only on a comma that is still unsplit, in a
+- The non-final rule was checked only on a comma that was still unsplit, in a
   condition. So `(( a<3, a>1 ))`, `(( a, a++ ))` and `if (( a, a++, a<3 ))`
-  compile, and `if (( a<3, a++, a<3 ))` is given the bare-statement advice.
-  "Enforcement is shared" above claims more than the code does. Filed as
+  compiled, and `if (( a<3, a++, a<3 ))` was given the bare-statement advice.
+  The former "enforcement is shared" description claimed too much. Filed as
   `bug-arith-comma-nonfinal-part-unchecked`.
-- A lone test statement, such as `(( a ))` or `(( 0 ))`, compiles, sets `$?`
-  from its value and does not abort. The suite uses `(( 0 ))` as its
-  non-aborting failing status. That conflicts with the table above and with
-  "exit status is always 0". Filed as the question
-  `q-arith-test-statement-status`.
+- A lone test statement, such as `(( a ))` or `(( 0 ))`, compiled, set `$?`
+  from its value and did not abort. The suite used it as a non-aborting
+  status source. DG rejected that statement form on 2026-11-08 and settled
+  mutations as no-result writes, replacing the former "exit status is
+  always 0" claim. `q-arith-test-statement-status` now owns enforcement;
+  these are historical measurements, not a new fixture census.
 
 **Mechanics.**
 - The parser's compound test no longer counts the group.

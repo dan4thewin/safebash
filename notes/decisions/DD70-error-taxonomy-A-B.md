@@ -154,9 +154,10 @@ value nor makes a terminal or loop transfer resumable. Ordinary `- f`
 at a non-void call site remains eligible for discard; no-reach and
 result kinds stay.
 `reject-control-transfer-suppression` owns pending enforcement (journal
-591). Arithmetic-write prefix eligibility remains separate. The
-statement-effect rule below preserves intentional no-ops without
-exempting pointless computations.
+591). DD31 separately rejects arithmetic prefixes (journal 593): a
+mutation has no result, and a comparison cannot become an arithmetic
+statement by discarding its result. The statement-effect rule below
+preserves intentional no-ops without exempting pointless computations.
 
 ### Statement effects and unused computation (DG, 2026-11-08)
 
@@ -213,7 +214,10 @@ other effects. No same-result check or SB4017 ceremony is reintroduced.
 This is a new rejection, not permission to bypass existing syntax,
 typing, placement, taint, result-channel or status-consumption rules.
 In particular, it does not relax DD31's arithmetic placement discipline
-or legalize `-` on a void call or control transfer.
+or legalize `-` on a void call, control transfer or no-result write.
+DD31's 2026-11-08 ruling rejects arithmetic comparison/test statements
+even when operands have effects; the context rule is not an effect
+analysis. Other eligible boolean discard retains the rule above.
 
 **Enforcement pending:** `reject-pointless-statements` owns the check,
 its diagnostic and the directly affected advice/specs. SB4018 must not

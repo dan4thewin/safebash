@@ -71,6 +71,10 @@ The existing `validate_arith_as_statement` SB5007 comparison check is
 narrower than this rule. Do not mistake it for a general effect analysis
 or silently relax DD31's separate arithmetic placement restrictions.
 The new check grants no otherwise forbidden syntax or result channel.
+DD31's 2026-11-08 rule makes mutations no-result writes and rejects bare
+or suppressed arithmetic comparisons/tests, independently of operand
+effects. `q-arith-test-statement-status` owns that enforcement; its
+source refusals must not masquerade as proof of this effect analysis.
 
 Coordinate with the adjacency, discarded-status-consumer, control-prefix
 and status-less-intrinsic enforcement owners. Their refusals remain

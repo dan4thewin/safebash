@@ -318,8 +318,17 @@ prefix, not the transfer. Non-void calls remain eligible for result
 discard; return forwarding, operand checks and DD128 terminal routing
 remain unchanged.
 `reject-control-transfer-suppression` owns pending enforcement. The no-op
-`:` is separate from control transfers; arithmetic-write prefix eligibility
-remains an open question.
+`:` is separate from control transfers.
+
+DD31/DD71 make assignments and arithmetic mutations no-result writes
+(DG, 2026-11-08), not successful status producers. Reject `- (( n += 1 ))`;
+keep the unprefixed mutation. An arithmetic comparison must be consumed,
+not stand alone, even with `-`; bare `(( 0 ))`/`(( n + 1 ))` are rejected
+too. A write cannot supply another expression's operand value, and
+parentheses cannot create a result. Writes establish no fresh
+`$?`/`$(status)` permission. Existing operand checks, capture-condition
+results and fatal faults remain. `q-arith-test-statement-status` now owns
+pending arithmetic enforcement and migration of the old status idiom.
 
 DD70 separates legal discard from useful statements (DG, 2026-11-08).
 Reject known result-only computation whose answer is ignored, including

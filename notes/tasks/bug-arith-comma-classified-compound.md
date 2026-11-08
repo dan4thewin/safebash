@@ -7,7 +7,7 @@ depends: []
 gates:
   - "DG rules on the question below, and DD#31 records the ruling"
   - "every row of the first table gets the ruling's verdict, in both backends; none calls the comma list a compound command"
-  - "acm.11 and acm.12 (spec/errors.sh) are rewritten to the ruling, keeping their ids; z4 gets a spec"
+  - "acm.11 and acm.12 (spec/errors.sh) are reviewed against the ruling; changed contracts receive fresh ids, and z4 gets coverage"
   - "`reject_arith_comma_list_op` (sash/src/parse/parser.rs) is deleted, or becomes the ruling's diagnostic"
 ---
 
@@ -57,20 +57,27 @@ d/ rows) and `pc/` (z rows).
 
 ## The question: is an `&&` / `||` operand a condition position?
 
+DD31's 2026-11-08 ruling settles results, not this comma-placement
+question: writes produce no result, and a comparison cannot be an unused
+arithmetic statement. d02 now requires rejection for its source `-`
+independently of either placement choice. The tables above are historical;
+return-kind enforcement also requires revalidating their bare-call fixtures.
+
 DD#31 says "'Condition position' is all four of them": `if`, `while`,
 `until`, and a C-style `for`'s test slot. It does not list an `&&`/`||`
 operand.
 
-- **(a) Yes.** p2, z1, x02, d02 and z4 compile as d05 does, and DD#31 lists
+- **(a) Yes.** p2, z1, x02 and z4 compile as d05 does, and DD#31 lists
   the operand as a fifth position. Recommended:
   - The SB5007 rows already read the operand as a condition.
   - The `!` and return-producer twins already compile.
   - z4 stands inside an `if`, which is a condition position by DD#31's own
     list.
-- **(b) No.** Then the operand is a statement, whose status DD#31 fixes at 0.
-  The SB5007 rows change too, and so do d05, z3, x01 and x05. One diagnostic
-  that names the comma list replaces SB4023, and DD#31 says why the operand
-  is not a condition.
+- **(b) No.** Then this comma form is unavailable as a logical-list
+  operand; it cannot fall back to a successful mutation status, because
+  a write has no result. Plain writes remain invalid condition operands.
+  d05, z3, x01 and x05 need the same comma-placement treatment. One
+  diagnostic naming that restriction replaces SB4023, and DD31 explains it.
 
 ## Fix direction
 
@@ -79,4 +86,5 @@ here.
 - Under (a), delete it. Then check that the transform takes a group's last
   part as a list operand's status, as it already does under `!` (d05) and in
   a return producer (x01). Do not assume this.
-- Under (b), it becomes that diagnostic, and the SB5007 rows move to it.
+- Under (b), it becomes that comma-placement diagnostic. The independent
+  no-result-write and discarded-status-consumer guards remain.

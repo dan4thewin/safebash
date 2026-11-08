@@ -31,6 +31,9 @@ change is claimed here; journal 588 records the ruling. R5 remains with
 the existing compound-retirement tasks. R3 is now rejected as well
 (journal 590). Discarded-status consumption is also rejected (Q3,
 journal 589), with enforcement in `reject-discarded-status-consumers`.
+DD31 subsequently rejected arithmetic prefixes as well (journal 593);
+`q-arith-test-statement-status` owns that enforcement. R2's operand
+boundary remains a separate obligation, not proven by a prefix refusal.
 
 ## Historical evidence
 
@@ -67,20 +70,23 @@ Do not silently rewrite the first three to an inner `-` or merely arrange
 for the last two to abort. Suppress the intended command explicitly inside
 its capture; the surrounding binding has no result of its own to discard.
 
-## R2. An arithmetic assignment's operand captures stay suppressed
+## R2. Arithmetic prefixes rejected; operand-barrier repair remains
 
 `map m; m[k]=1; int n=0; - (( n = ${m[$(/bin/false)]:-0} )); echo "after $n"`
 prints `after 0`. `hoist_arith_mutations` (transform/statements.rs) lowers
 the store as a suppressed assignment, so its operand capture inherits the
 `-`. The test form (noreach.14) aborts.
 
-**Required by no-reach:** its operand capture must remain checked, as in
-the test form. `(( ... ))` is a single command, unlike R1's binding
-prefix; adjacency does not settle whether a directly attached prefix is
-otherwise inert. That eligibility question is retained among Q1's
-non-control forms in `q-suppression-and-stage-residuals`. The repair
-must not let mutation hoisting turn the prefix into permission to
-discard an operand's failure.
+**Ruled, 2026-11-08:** reject this source prefix. DD31 makes mutations
+no-result writes; adjacency does not create a result to discard.
+`q-arith-test-statement-status` owns the refusal and the migration of
+arithmetic status/barrier fixtures.
+
+**Required independently by no-reach:** mutation hoisting must not grant
+permission to discard an operand's failure. `reject-nonadjacent-suppression`
+retains that repair. Preserve evidence on legal paths and account for any
+now-unreachable implementation path; do not call the barrier repaired
+merely because this historical source now rejects earlier.
 
 ## R3. Status-less value-intrinsic captures: reject
 

@@ -5,7 +5,7 @@ priority: P3
 kind: question
 depends: []
 gates:
-  - "DG rules on the remaining questions below; Q1 control transfers/no-op, Q3 and Q5 are settled in DD55/DD70, with separate enforcement tasks"
+  - "DG rules on the remaining questions below; Q1, Q3 and Q5 are settled in DD31/DD55/DD70, with separate enforcement tasks"
   - "every program in the tables prints what its ruling says or is rejected with a diagnostic naming the rule, in both backends"
   - "SB4018's `[[ … ]]` advice and SB5073's message for a stage say only what the rulings on Q5 and Q6 allow"
   - "Q5 enforcement and advice belong to reject-pointless-statements; bug-peel-family-classifiers retains its shared-classifier repairs"
@@ -24,14 +24,16 @@ F1+F4) and with F1+F4, in both backends, unless a row says otherwise.
 Probes: `files/port-f1f4-probes.tar.gz`, directories `dr/`, `bk/`, `bl/`,
 `rw/`, `adv/`, `fin2/`, `t6/` and `t6b/`.
 
-### Q1. Control transfers rejected; intentional no-op retained
+### Q1. Settled: control/arithmetic prefixes rejected; intentional no-op retained
 
 DG chose **reject** on 2026-11-08 for source `-` on `return`, `exit`,
 `fail`, `break` and `continue`. DD55 records the rule; the new P3
 `reject-control-transfer-suppression` owns enforcement and journal 591
 records the choice. This cohort is settled as policy, not implemented.
 DD70's subsequent statement-effect ruling retains the intentional no-op.
-Arithmetic-write prefix eligibility below remains a separate question.
+DD31 then settled arithmetic mutations as no-result writes and rejected
+arithmetic prefixes (journal 593). Q1 is settled as policy; the
+implementation owners remain open.
 
 The tables retain historical F1+F4 evidence, not fresh execution or a
 claim that later return-kind and capture rules leave every fixture legal.
@@ -98,9 +100,17 @@ calling every `- :` inert is therefore wrong. The statement-effect rule
 also preserves explicit `:` without effects, including an otherwise
 legal `- :`. It is a permitted no-op, not an effect that excuses a
 pointless enclosing test. Q5 and journal 592 record that distinction.
-The eligibility of a direct arithmetic-write prefix, `- (( ... ))`,
-remains separate (R2 in `q-suppression-reach-residuals`); its required
-operand-barrier repair does not decide that question.
+
+**Arithmetic prefixes are rejected (DG, 2026-11-08; DD31).** Assignments
+and mutations have no result, so `- (( n += 1 ))` has nothing to discard.
+Comparisons produce results and cannot be arithmetic statements, even
+with `-`; bare `(( 0 ))`/`(( n + 1 ))` are not status-producing statements
+either. Parentheses do not give a write a result, and a write cannot
+supply another calculation's operand value.
+`q-arith-test-statement-status` now owns arithmetic enforcement and fixture
+migration. R2's operand barrier retains its independent owner in
+`reject-nonadjacent-suppression`; a prefix refusal is not proof of that
+barrier. DD70's discard/effect rule for other operations remains intact.
 
 ### Q2. `exec` in a forked child: rejected as a stage, legal under `&`
 

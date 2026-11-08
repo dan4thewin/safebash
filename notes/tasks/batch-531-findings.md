@@ -576,9 +576,11 @@ touches is fixed here, and any other finding goes to the backlog.
   last stage is a false SB4073.
 - `bug-sb4025-advice-misdescribes-rhs` (P3): SB4025's advice calls every
   rejected capture an intrinsic or a concatenation.
-- `q-arith-test-statement-status` (P3): a bare `(( 0 ))` or `(( a ))`
-  statement sets `$?` without aborting, and the suite relies on it; DD#31
-  accepts only a mutation as a statement, with status 0.
+- `q-arith-test-statement-status` (P3): now an implementation bug. DG
+  settled writes as no-result operations and rejected arithmetic
+  comparison/test statements and arithmetic prefixes (DD31, journal 593).
+  Retire the historical bare-test status idiom without losing its
+  status-consumption coverage; enforcement remains open.
 - `q-clause-on-next-line` (P3): an `else` or `elif` on the line after a brace
   body's `}` is SB4072 (SB5011 before F1+F4), though every other newline in
   an `if` or a loop is accepted. Recommended: accept it.

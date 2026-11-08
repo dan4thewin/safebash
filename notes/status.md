@@ -1,4 +1,25 @@
-## STATUS (2026-11-08, latest) - Legal discard, separate statement-effect check
+## STATUS (2026-11-08, latest) - Assignments and mutations produce no result
+
+DG chose no-result writes, not an always-successful mutation status.
+Keep `(( n += 1 ))`; reject `- (( n += 1 ))`. Arithmetic comparisons
+must be consumed, not stand alone, even with `-`. Bare tests/calculations
+such as `(( 0 ))` and `(( n + 1 ))` are not status-producing statements.
+Parentheses do not give a write a result, and a write cannot supply
+another calculation's operand value.
+
+Writes establish no fresh `$?`/`$(status)` permission. Existing legal
+operand reads, capture-condition results, comma sequencing and fatal
+arithmetic behavior remain; logical-list comma placement stays separate.
+DD31/DD55/DD70/DD71 and GUIDE agree. Q1's arithmetic-prefix question is
+settled, and `q-arith-test-statement-status` is now an open P3
+implementation bug. The comma and suppression owners retain their
+distinct obligations. Journal 593 records the ruling.
+
+This is documentation/backlog recording only. No compiler/runtime/spec
+code changed, and no new behavior probe, full sweep or coverage run was
+made. Journal 577 remains the accepted implementation baseline.
+
+## STATUS (2026-11-08) - Legal discard, separate statement-effect check
 
 DG kept result discard legal and chose a separate error for a statement
 known to do nothing beyond computing an ignored result. This covers

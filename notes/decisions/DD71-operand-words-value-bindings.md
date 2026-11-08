@@ -70,7 +70,7 @@ structure the test stay operators.
 
 The assignment case is licensed by a language-identity choice: **an
 assignment (and typed declaration) is a value binding, not a command.** It
-has no meaningful exit status, and cannot be the source of a pipe, a
+has no result or exit status, and cannot be the source of a pipe, a
 background job, or a `&&`/`||` chain. Empirically these forms already do
 not work in sash (`x=hi && echo $x` prints empty; `a=foo | cat` loses the
 assignment to a subshell), so nothing useful is lost. Consequently
@@ -92,6 +92,15 @@ existing refusal. DD55 records the full rule and pending
 `reject-nonadjacent-suppression` enforcement. DD88/DD101's explicit
 capture-condition exceptions remain handling forms, not permission for
 an assignment-level `-`.
+
+**No-result writes (DG, 2026-11-08).** DD31 applies the same contract to
+arithmetic mutations: a write neither returns its assigned value nor
+manufactures a success status. It cannot supply an operand value to
+another calculation or create fresh `$?`/`$(status)` permission.
+Capture conditions consume the captured operation's result, not an
+assignment result. Arithmetic enforcement is queued in
+`q-arith-test-statement-status`; ordinary assignment-prefix enforcement
+remains with `reject-nonadjacent-suppression`.
 
 ## Multi-exact dispatch arms (falls out of the operand rule)
 

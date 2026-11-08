@@ -48,9 +48,12 @@ rejected. All its outer-assignment examples now require compile-time
 refusal, not merely a runtime abort.
 
 R2 was historically lowered by `hoist_arith_mutations` into a suppressed
-assignment, allowing an operand capture's failure to disappear. Preserve
-the same operand barrier as the arithmetic-test route; do not allow an
-internal store to recreate the source-level alias being rejected.
+assignment, allowing an operand capture's failure to disappear. DD31 now
+rejects that arithmetic prefix; `q-arith-test-statement-status` owns its
+refusal. Preserve the operand barrier on legal paths and account for
+unreachable paths rather than letting an earlier source refusal stand
+as proof of a lowering fix. An internal store must not recreate
+source-level suppression reach.
 
 The list-binding repair must also review errors.sh 55.145-55.147.
 They pin B84's historical status-retention repair on the accepted
@@ -83,7 +86,9 @@ on legal source rather than treating an earlier prefix refusal as cover.
 Q1's control-transfer prefix rejection has its own owner,
 `reject-control-transfer-suppression`. The no-op/arithmetic-write
 boundary is separate from adjacency: DD70 preserves the intentional
-no-op, while arithmetic-write prefix eligibility remains open.
+no-op, while DD31 rejects arithmetic prefixes. Coordinate with
+`q-arith-test-statement-status`, including its historical status-source
+and noreach.14 fixture review, without duplicate checks or barrier claims.
 Q5 is settled by DD70's independent statement-effect check, owned by
 `reject-pointless-statements`. Result-kind-valid discard can still be
 pointless; do not make either check a substitute for the other.

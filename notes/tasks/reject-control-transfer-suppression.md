@@ -58,8 +58,8 @@ conflating authored prefixes with internal unchecked-handling flags.
 The no-op `:` is not in this cohort. DD70 preserves it, including its
 otherwise legal suppressed form, while separately rejecting pointless
 result-only statements. Q5 is settled with enforcement in
-`reject-pointless-statements`; arithmetic-write prefix eligibility
-remains a separate question.
+`reject-pointless-statements`. DD31 separately rejects arithmetic
+prefixes; `q-arith-test-statement-status` owns that enforcement.
 
 ## Evidence and regression obligations
 
