@@ -529,10 +529,11 @@ neither task may weaken the other's contract.
 "A `$( … )` body is an anonymous function" was settled above for *scope*. It
 has a second consequence, and leaving it unstated cost three nested bugs
 (journal 444): **ordinary function-body statements are available in a `$( )`
-body and get the same validation, subject to the capture's result contract.**
-DG's 2026-11-06 restriction on explicit status returns is stated below;
-the blanket claim that every named-function return form is legal in a
-capture no longer holds.
+body and get the same validation, subject to the capture's result and
+process-replacement restrictions.** DG's restrictions on explicit status
+returns (2026-11-06) and process-replacing `exec` (2026-11-08) are stated
+below. Status returns remain owned by their lexical body; the `exec`
+restriction also follows calls into other functions.
 
 Both halves were false in the implementation.
 
@@ -560,6 +561,42 @@ forms when that result is needed. This adds no capture-level status
 consumer and changes neither lexical scope nor enclosing-binding access.
 Enforcement is pending in `reject-anonymous-capture-status-returns`;
 journal 584 records the decision.
+
+### No process-replacing exec in a capture (DG, 2026-11-08)
+
+DG chose **"reject exec within capture"**. A source-level
+`exec PROGRAM ...` is a compile-time error inside a **stdout-capture
+body**, directly or through one or more called functions. This includes
+anonymous bodies and captures of named functions. A helper's return kind
+does not exempt an `exec` reached while evaluating such a body.
+
+The restriction follows the body, not the capture's placement in an
+assignment, argument or interpolation. Conditional paths, nested captures,
+redirects, suppression and forked child bodies do not provide exceptions.
+It is a structural rejection, independent of taint checking, not a claim
+that every particular process arrangement would lose the captured output.
+
+The distinction is the **source command**, not the `execve` syscall.
+Ordinary external commands inside captures remain legal: their execution
+forks a child and replaces that child with the external program. The
+capturing process remains to collect the output and check completion.
+The fd-only form, such as `exec >file`, does not replace a process and
+retains its existing descriptor semantics.
+
+This does not turn a capture body into a subshell or introduce an automatic
+fork to accommodate `exec`. Same-process global effects keep this DD's
+existing rules. Nor is it a blanket ban on non-returning paths: DD128's
+`exit` and `fail` contracts remain unchanged.
+
+Apply the semantic body/value distinction, not a test for `$()` punctuation.
+A direct DD58 integer-value call is not a stdout-capture body merely
+because it is written `$(f)` rather than as an arithmetic call; redirects
+do not change its result kind. An integer helper called *inside* a stdout
+capture is still subject to the body's `exec` restriction.
+
+**Accepted, implementation pending** in `q-exec-in-capture`, retained as
+an open P3 implementation bug. Journal 587 records the decision. Existing
+acceptance of the process-replacing forms is a gap, not an exception.
 
 ### The IR contract this establishes
 

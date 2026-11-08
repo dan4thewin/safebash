@@ -596,6 +596,15 @@ new executable bodies. This changes neither lexical binding access nor
 global effects. Enforcement and the existing per-body flow bugs remain
 in `bug-sb5012-sb5094-nested-body-flow` (journal 586).
 
+**No process-replacing `exec` inside stdout captures** (DD#86, DG,
+2026-11-08). The source command `exec PROGRAM ...` is rejected directly
+and through called functions; wrappers, conditional paths and child bodies
+do not make it legal. Ordinary external commands still fork/exec their
+children, and fd-only `exec >file` retains its existing semantics.
+No subshell is introduced, and DD58's direct integer-value calls keep
+their uniform spelling-independent contract. The rule is accepted;
+enforcement remains pending in `q-exec-in-capture` (journal 587).
+
 **Integer captures stay integer-valued through redirects** (DD#58, DG,
 2026-11-06). `$(f 2>&1)` and `$(f >file)` consume f's returned integer;
 stdout is a permitted side effect, following those redirects.
@@ -840,14 +849,16 @@ paths, chosen per site at compile time by `capture_purity`:
 * `sash_capture_start` / `sash_capture_end` — the general path. fd 1 is
   pointed at a **memfd** (not a pipe: a captured body runs in-process with
   nobody draining, so a pipe self-deadlocks past 64 KiB). Used whenever the
-  body contains a pipeline, a redirect, a bare external, or an `exec`.
+  body contains a pipeline, a redirect or a bare external.
 
 A body may contain an external and still be pure, so long as the external's
 output arrives through an *inner* `$( )` — that child gets a pipe of its own.
-Direct externals and `exec CMD` disqualify a site; `exec` replaces this
-process with a CMD that writes fd 1 itself (journal 546). The predicate is
-conservative: every pipeline or redirect selects the general path, even
-when the intended output comes only from builtins. A value
+Direct externals disqualify a site. The current implementation also still
+classifies `exec CMD` as impure (journal 546), but DD86 now rejects that
+source operation in stdout-capture bodies; enforcement is pending in
+`q-exec-in-capture`. The recording does not change either capture transport.
+The predicate is conservative: every pipeline or redirect selects the
+general path, even when the intended output comes only from builtins. A value
 call counts: an int function called as `$(f)`, `(f)` or a bare `f` in
 arithmetic runs its body where the call stands, so a fork in that body
 disqualifies the site too. A capture whose arguments make such a call takes

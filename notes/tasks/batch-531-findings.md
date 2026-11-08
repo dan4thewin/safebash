@@ -746,17 +746,24 @@ DG 2026-10-28: F2 lands without the B82 wrap and without specs that pin
 
 ### 12. F5 capture bodies are function bodies
 
-- [ ] **B34** (question; DD86, DD24). `exec` inside a capture replaces the
-  whole program: `echo before; x=$(exec /bin/echo hi); echo "after [$x]"`
-  prints `before`, exits 0 and never runs the rest. The branch's SB5020 is a
-  taint verdict (B114), not a rule; hand-parser compiles it with taint on.
-  Question: no DD covers `exec` in a capture.
+- [ ] **B34** (policy settled; enforcement pending; DD86). DG rejected
+  process-replacing `exec PROGRAM` inside stdout-capture bodies on
+  2026-11-08, directly or through called functions. Ordinary external
+  commands and fd-only `exec` retain their contracts; no subshell is added.
+  - The filing's main-process example,
+    `echo before; x=$(exec /bin/echo hi); echo "after [$x]"`, printed
+    `before`, exited 0 and never ran the rest. The reference branch's
+    SB5020 was a taint verdict (B114), not an `exec` rule. These are
+    historical measurements, not new current-tree executions.
   - Until F5 unit E (journal 546) it also printed `hi`, to the real stdout,
     whenever the purity walk put the site on the buffer path; a body made
     impure by an unrelated external kept `hi` in the capture. Unit E marks
     `exec` impure, so both paths agree (cap.35, cap.36). That fixes the
-    optimisation and answers nothing here.
-  - Filed as `q-exec-in-capture` (P3; recommends (a) reject).
+    optimisation, not the now-required refusal; changed contracts need
+    fresh spec ids during implementation.
+  - `q-exec-in-capture` remains open P3, now an implementation bug.
+    DD86/DD55/DD58 and journal 587 record the decision; B34 stays unchecked
+    until enforcement lands.
 - [x] **B49** (F1; fixed-on-branch; DD55). `cmdsub_reads_whole_args` does
   not peel: `fn f { echo $(- join args) }; f a b c` is a false SB5043. Fixed
   by F5's rewrite of the signature scan (B53).

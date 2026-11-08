@@ -1,4 +1,26 @@
-## STATUS (2026-11-07, latest) - Capture status inheritance rejected
+## STATUS (2026-11-08, latest) - Process-replacing exec rejected in captures
+
+DG chose to reject `exec PROGRAM` inside stdout-capture bodies, directly
+or through called functions. Wrappers, conditional paths, nested captures
+and child bodies do not provide exceptions. Ordinary external commands
+still fork/exec their children; fd-only `exec >file` remains legal under
+its existing rules.
+
+No automatic subshell is introduced, so same-process global effects stay
+unchanged. DD58's direct integer-value calls retain their uniform contract;
+an integer helper evaluated inside a stdout capture cannot hide an `exec`.
+DD128's `exit`/`fail` rules are unchanged.
+
+DD86 records the ruling, DD55/DD58 and GUIDE agree, and journal 587 records
+the decision. The existing `q-exec-in-capture` keeps its slug and P3
+priority but is now an open implementation bug. Its policy question is
+closed; B34 and enforcement remain pending.
+
+This is documentation/backlog recording only. No compiler/runtime/spec
+code changed, and no new behavior probe, full sweep or coverage run was
+made. Journal 577 remains the accepted implementation baseline.
+
+## STATUS (2026-11-07) - Capture status inheritance rejected
 
 DG chose no caller-status inheritance for anonymous capture bodies.
 Entry starts with `$?` unavailable, like a named function; the body's

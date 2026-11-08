@@ -414,6 +414,17 @@ capture-conditions remain excluded.
 `reject-anonymous-capture-status-returns` (journal 584).
 `q-status-function-ceremony` is closed as a policy question, not as a fix.
 
+### Process replacement inside captures (DG, 2026-11-08)
+
+DD86 rejects source-level `exec PROGRAM ...` inside a stdout-capture body,
+directly or through called functions. Suppression or a handling context
+cannot make that operation legal. Ordinary external-command captures and
+fd-only `exec >file` remain legal under their existing rules.
+
+This is a source restriction, not a new failure class or a change to
+DD128's `exit`/`fail` routing. Enforcement remains pending in
+`q-exec-in-capture` (journal 587).
+
 ### Bare call of int-typed function
 
 Compile error. Capture the integer, use it in arithmetic, or explicitly

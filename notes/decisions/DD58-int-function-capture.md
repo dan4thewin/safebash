@@ -80,6 +80,14 @@ ordinary side effect, following the active output destination and any
 attached redirects, not a second result selected by capture syntax.
 No purity check or stdout prohibition is introduced.
 
+DD86's process-replacing `exec` rejection (DG, 2026-11-08) applies when
+an integer helper is called inside a **stdout-capture body**, just as it
+does to other helpers. A direct integer-value call is not such a body;
+`$(f)` and arithmetic call syntax keep their uniform semantics, including
+the result-kind rule through redirects. This is not a punctuation-based
+ban on `$()`. Enforcement of the `exec` rejection belongs to
+`q-exec-in-capture`.
+
 To capture that output, use a non-integer wrapper that explicitly discards
 the integer, for example `fn output_f { - f }` followed by `$(output_f)`.
 The wrapper is void and its capture collects stdout. An anonymous
