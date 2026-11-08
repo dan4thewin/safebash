@@ -314,11 +314,23 @@ possible fatal faults do not change the result kind.
 
 DD55 rejects source `-` on `return`, `exit`, `fail`, `break` and
 `continue` too (DG, 2026-11-08), including through redirects. Remove the
-prefix, not the transfer. Ordinary `- f` at a non-void call site, return
-forwarding, operand checks and DD128 terminal routing remain unchanged.
+prefix, not the transfer. Non-void calls remain eligible for result
+discard; return forwarding, operand checks and DD128 terminal routing
+remain unchanged.
 `reject-control-transfer-suppression` owns pending enforcement. The no-op
-`:`, arithmetic-write prefix eligibility and discarded tests remain
-separate questions; this is not a general no-effect or constant-result ban.
+`:` is separate from control transfers; arithmetic-write prefix eligibility
+remains an open question.
+
+DD70 separates legal discard from useful statements (DG, 2026-11-08).
+Reject known result-only computation whose answer is ignored, including
+`- [[ $s == yes ]]` and the statement-level `[[ $s == yes ]] || :`.
+Writes, I/O, observable operand/body effects and uncertainty prevent this
+rejection. A silently discarded recoverable failure or incidental OOM
+does not make the computation useful. Explicit `:` remains the intentional
+no-op, not an effect that excuses an enclosing test. Constant-returning
+functions remain legal; only a known pointless invocation is rejected.
+`reject-pointless-statements` owns pending enforcement and diagnostic
+advice. Existing typing, placement, taint and failure rules remain.
 
 ### Phase 3: Taint
 

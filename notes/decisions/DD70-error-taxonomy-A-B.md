@@ -1,4 +1,4 @@
-title: DD#70 — Error-handling taxonomy: (A) runtime abort-if-unchecked vs (B) compile-time must-consume
+title: DD#70 — Error-handling taxonomy: (A) runtime abort-if-unchecked vs (B) compile-time must-consume-or-discard
 status: accepted
 
 Decided with DG 2026-06-25, refining DD#55 (Implicit Exit Checks and
@@ -44,55 +44,62 @@ Levers:
   branch condition (no abort, `$(status)` available in the handling
   position per DD#55).
 
-### (B) Compile-time must-consume
+### (B) Compile-time must-consume-or-discard
 
-A *pure, in-process logical result* — there is no syscall and nothing the
-runtime can "fail" at. Members:
+A logical or typed value, rather than a recoverable operation's failure
+verdict. The producing operation can still have operand/body effects or
+encounter runtime failures; those are not the value being consumed.
+Members:
 
 - **`match SUBJECT PATTERN`** as a boolean command (DD#63).
 - **`[[ … ]]` tests** / comparisons (DD#62).
 - **`-> int` function return values** (DD#55).
 
-**A boolean (or any (B) result) must be consumed — enforced by the
-compiler (DG, 2026-06-25).** Producing a (B) result and then **discarding
-it is a compile error**, uniformly: a bare `match S P`, a bare `[[ … ]]`,
-and a bare `-> int` call are all errors. There is **no synthetic `$?`**
-for a (B) result, so there is nothing to "abort" at run time — a *false*
-boolean is not a *failure*; the language simply makes you say what the
-result means.
+**A boolean (or any (B) result) must be consumed or explicitly discarded**
+(DG, 2026-09-09, refining the original 2026-06-25 rule). Producing a
+(B) result and then **silently discarding it is a compile error**:
+a bare `match S P`, a bare `[[ ... ]]` and a bare `-> int` call are
+all errors. A false boolean is not a recoverable failure; it is a
+result whose use must be explicit.
 
 This resolves the bare-`[[ … ]]` question: a bare test is **not** an
 allowed assertion that aborts on false (that would be the (A) reading) —
-it is a must-consume compile error. Consume it (`if [[ … ]]`,
-`[[ … ]] || …`) or, if you truly don't care, `[[ … ]] || :`.
+it is a must-consume-or-discard compile error. Consume it (`if [[ ... ]]`,
+`[[ ... ]] || ...`) or explicitly discard its result. The separate
+statement-effect check below rejects known pointless computation even
+when the discard itself is legal; `[[ ... ]] || :` is not an escape.
 
 Enforcement codes — **kept adjacent to the existing ignored-return family**
 (SB4016 = an unconsumed non-void function result; SB4017's zero-return
 ceremony rule is retired by DD#55's 2026-11-06 ruling and removed in journal 577):
-- **SB4018** — a (B) boolean result is produced and discarded (bare
+- **SB4018** — a (B) boolean result is produced and silently discarded (bare
   `match` / bare `[[ … ]]`).
-- **SB4019** — `-` applied to a (B) construct (a must-consume result has
-  no runtime verdict to suppress).
+- **SB4019** — invalid `-`/`!` composition, not a ban on discarding a
+  (B) result. The unrelated variable/function collision also uses this
+  code. The new pointless-statement diagnostic is not yet assigned.
 
-(SB4018/SB4019 are the proposed adjacent numbers; the constraint is that
-the "ignored result/value" diagnostics stay together in the SB401x band.
-The `$?`-staleness diagnostic SB5012 — reading a stale *status* — is a
-separate concern and stays in the 50xx validator band.)
+The `$?`-staleness diagnostic SB5012, reading a stale status, is a
+separate concern in the 50xx validator band.
 
 Levers:
-- **No `-` suppression** (→ SB4019). `-` is meaningless on a (B) construct.
-- To genuinely ignore a (B) result, **consume it explicitly**: `cmd || :`
-  (`:` is the no-op), or handle it with `if` / `||`.
+- **`-` explicitly discards** an otherwise discardable result, without
+  reaching into operands or called bodies (DD55).
+- **`if` / `while` / `&&` / `||` consume a status**, not an integer
+  value. `cmd || :` can discard a status indirectly; the same
+  statement-effect rule applies as for `- cmd`.
+- **Known result-only unused work is an error**, independently of
+  whether its discard is explicit. Intentional `:` is exempt.
 
-## The distinguishing principle
+## Original distinguishing principle (superseded)
 
 > `-` is for **opaque externals** (`grep`, whose no-match→1 you cannot
 > change — you suppress the verdict). For **in-process logic you control**
 > (`match`, a comparison, your own `-> int` function), you **restructure**
 > (`if` / `||` / `|| :`) rather than suppress. — DG
 
-This is *why* (B) has no suppression: you authored the logic, so the
-language makes you say what the result means.
+This was the rationale for the original prohibition. DG replaced it
+with explicit result discard on 2026-09-09, then separately required
+the conservative statement-effect check on 2026-11-08.
 
 ## Addendum (2026-09-09) — `-` discards ANY result
 
@@ -102,14 +109,17 @@ suppression (→ SB4019)" lever above and the distinguishing principle that
 justified it.
 
 `- X` now uniformly means **"run X, discard its result"**, whether X is an
-opaque external (A) or in-process logic (B): `- match`, `- matchall`,
-`- [[ … ]]`, `- ! cmd`, and `- f` for an `-> int` function are all legal.
-(**`- ! cmd` is SB4019 again** — addendum 2026-10-26.)
+opaque external (A) or in-process logic (B). Boolean tests and non-void
+calls are eligible for explicit discard; eligibility does not guarantee
+that a whole statement is useful. The result/context restrictions below
+and the separate statement-effect check both apply.
+`- ! cmd` is SB4019 again (addendum 2026-10-26).
 (**Under question, 2026-10-28:** `- f` on a user-function call; see
 `notes/tasks/q-suppression-on-user-functions.md`. **Ruled 2026-10-29/30,
-landed by F6 (DD#55 addenda 2026-10-30):** `- f` stays legal on a function
-that returns an int or a status, is SB4076 on a void one, and discards
-only f's own answer, not the failures inside its body.)
+landed by F6 (DD#55 addenda 2026-10-30):** `- f` stays eligible for discard
+when f returns an int or a status, is SB4076 on a void one, and discards
+only f's own answer, not the failures inside its body. The separate
+statement-effect check still applies.)
 
 **Command adjacency (DG, 2026-11-08; DD55).** The `X` being prefixed is
 one command or call, not an assignment or a whole logical list.
@@ -141,14 +151,81 @@ status. `reject-statusless-intrinsic-suppression` owns pending enforcement
 Reject source `-` on `return`, `exit`, `fail`, `break` and `continue`,
 including through redirects. It neither discards an outgoing return
 value nor makes a terminal or loop transfer resumable. Ordinary `- f`
-at a non-void call site remains legal; no-reach and result kinds stay.
+at a non-void call site remains eligible for discard; no-reach and
+result kinds stay.
 `reject-control-transfer-suppression` owns pending enforcement (journal
-591). The no-op, arithmetic-write and discarded-test questions remain
-separate; this is not a blanket prohibition on redundant work.
+591). Arithmetic-write prefix eligibility remains separate. The
+statement-effect rule below preserves intentional no-ops without
+exempting pointless computations.
+
+### Statement effects and unused computation (DG, 2026-11-08)
+
+DG proposed keeping discard legal while giving an error for a pointless
+statement, and approved the conservative effect-based rule:
+
+**Reject a statement whose only work is computing an ignored result,
+when the absence of other observable effects is known.** This is an
+error about the statement, not about `-` being an invalid discard
+operator. Do not silently delete it or turn a discarded false result
+into an assertion failure.
+
+For otherwise legal string operands:
+
+```sash
+- [[ $s == yes ]]        # reject: only the discarded comparison
+[[ $s == yes ]] || :     # reject in statement position for the same reason
+- match "$s" "^a" hits   # retain: populates hits
+- : >optional.log        # retain: file operation
+```
+
+Inspect the whole unused statement, not just its prefix. Routing an answer
+through a condition solely to choose no-ops does not give the computation
+a purpose. Equivalent handling spellings follow the same rule. Using a
+result to choose observable work or supply a return or stored value is
+different; this does not require proving that every stored value is later
+read.
+
+Writes, I/O and observable effects in operands or called bodies prevent
+this rejection. Uncertain effects do too: do not infer that a command or
+call is harmless merely because its result is ignored. Account for
+redirects, nested value/capture evaluation and lazy control flow. Capture
+buffer eligibility is not proof of effect freedom.
+
+Only failures that remain observable can count. A recoverable regex
+failure that `-` also discards is not a purpose for the statement: this
+DD's diagnostic contract makes handled failures silent. A checked
+operand failure, such as a `:?` abort, is different because no-reach
+leaves it observable. Incidental allocation and possible OOM do not
+justify otherwise pointless calculation. None of this changes DD130's
+failure classification or suppresses fatal faults in retained programs.
+
+**Explicit `:` remains the intentional no-op**, including its otherwise
+legal `- :` form. It still evaluates arguments and follows redirects
+(DD69). It is permitted without effects, not classified as an effect
+that can rescue an enclosing `test || :`.
+
+**Constant-returning functions remain legal.** The check concerns the
+use of an invocation, not the values a definition may return. A known
+effect-free `- f` can be pointless even though f is non-void; using f's
+result remains legal, as does discarding a result when the invocation has
+other effects. No same-result check or SB4017 ceremony is reintroduced.
+
+This is a new rejection, not permission to bypass existing syntax,
+typing, placement, taint, result-channel or status-consumption rules.
+In particular, it does not relax DD31's arithmetic placement discipline
+or legalize `-` on a void call or control transfer.
+
+**Enforcement pending:** `reject-pointless-statements` owns the check,
+its diagnostic and the directly affected advice/specs. SB4018 must not
+recommend `-` or `|| :` as an unconditional escape for a pointless test.
+No diagnostic number or implementation architecture is selected here.
+Q5 in `q-suppression-and-stage-residuals` is settled as policy; journal
+592 records the decision.
 
 ### Why the original rule did not hold up
 
-Two things, neither visible when this DD was written.
+Two observations motivated the 2026-09-09 change; they do not exempt a
+statement from the separate 2026-11-08 effect check.
 
 1. **`|| :` was always allowed.** So the result was already discardable, and
    the rule never protected it — it only dictated *which* explicit discard the
@@ -160,8 +237,9 @@ Two things, neither visible when this DD was written.
 
 2. **(B) gained members whose primary effect is a side effect.** When this DD
    was written, (B) was bare `match S P`, `[[ … ]]`, and an `-> int` return —
-   all *purely* about their result, where "you authored the logic, say what
-   the result means" is compelling. `match S P ARR` and DD#63's `matchall`
+   treated as *purely* about their result, where "you authored the logic,
+   say what the result means" seemed compelling. `match S P ARR` and
+   DD#63's `matchall`
    are different: the ARRAY is the point and the boolean is incidental, so
    "I don't care about the boolean" is the normal case rather than a smell.
    The old rule forced the noisiest spelling precisely where the result
@@ -181,10 +259,9 @@ failure, and `$(status)` availability.
   composition error, so the addendum does not reach it. (It keeps SB4019,
   which that code is also used for elsewhere — the `-`/`!` combination and a
   variable/function name collision.)
-- **`- a | b` still suppresses only the first segment** (DD#55). But a
-  *negated* pipeline keeps the suppression outside, because there the `-`
-  applies to the negation's result; pushing it into the first segment left
-  the `!` unsuppressed and still must-consume.
+- **`- a | b` suppresses only the first segment** (DD#55). Neither
+  `- !` nor `! -` is legal; the former negated-pipeline exception was
+  retired on 2026-10-26.
 
 ### Retired
 
@@ -261,8 +338,8 @@ silent.
   select EXIT instead. Neither handler runs in a forked child.
 - **SB4016 / SB4018 / SB4019** — the "ignored result/value"
   family (DG: keep these adjacent). SB4016 = an unconsumed non-void function
-  result; SB4018 = discarded (B) boolean (bare
-  `match` / bare `[[ … ]]`), SB4019 = `-` on a (B) construct. Distinct
+  result; SB4018 = silently discarded (B) boolean (bare
+  `match` / bare `[[ … ]]`), SB4019 = invalid `-`/`!` composition. Distinct
   from SB5012 (`$?`-staleness — reading a stale *status*, 50xx band).
 - **SB4017** — the former int-only zero-return check, retired by DG on
   2026-11-06. Do not replace it with a same-result check or repurpose its
@@ -372,11 +449,11 @@ an operand of `&&`/`||`"* as the positions where a function is a **predicate**
 **value**, and a nonzero value is a **false** status, so using one as a
 predicate is a category error (SB4030).
 
-That makes `f || :` — offered above as the discard — a boolean context.
+That makes `f || :`, originally offered as the discard, a boolean context.
 
 Two things were already true before this was noticed:
 
-1. **The distinguishing principle above (line 82) was already partly dead.**
+1. **The original distinguishing principle above was already partly dead.**
    It tells the author to restructure in-process logic, *"your own `-> int`
    function"* included, with *"`if` / `||` / `|| :`"*. SB4030 has rejected
    `if f` for as long as it has existed, so that advice could not be followed
@@ -392,17 +469,19 @@ Two things were already true before this was noticed:
     - f            # run f, discard the int
     int n=$(( f )) # run f, keep the int
 
-**Scope: `-> int` functions only.** `|| :` is unchanged as a discard for the
-other (B) members — a bare `match` / `matchall` / `[[ … ]]` — and for opaque
-externals. Those produce a *status*, which is exactly what `||` consumes.
+**This type restriction concerns `-> int` functions.** `|| :` remains
+result-kind-legal for `match` / `matchall` / `[[ ... ]]` and opaque
+externals. Those produce a status, which is what `||` consumes. The
+2026-11-08 statement-effect rule separately rejects known pointless
+uses of either discard spelling.
 
-Line 82's *"`if` / `||` / `|| :`"* should be read as `$(( f ))` / `-` for an
-`-> int` function.
+The original principle's *"`if` / `||` / `|| :`"* advice is replaced by
+`$(( f ))` / `-` for an `-> int` function, subject to that effect check.
 
 Specs: `e.b70.fndisc` (the rejection), `74.47`/`74.48` (the two replacements).
 
-(**Under question, 2026-10-28:** the user-function cases of this addendum are
-open in `notes/tasks/q-suppression-on-user-functions.md` Q2. Unruled.)
+DG retained non-void call-site discard on 2026-10-29/30 (DD55; F6).
+Q2 in `notes/tasks/q-suppression-on-user-functions.md` is settled.
 
 ## Addendum 2026-09-25 — multiple redirects are left-to-right, stop-at-first-failure
 
@@ -453,8 +532,11 @@ starts with `!`, so `push_suppression_into_pipeline`'s negated arm is an ICE.
 
 **SB4018's advice for `!`** said "discard with `-` or `|| :`", which spelled
 `- ! cmd` (now SB4019) or `! cmd || :` (`- cmd`, said indirectly). It now says
-"or write `- cmd` without the `!`". The advice for the other (B) results keeps
-both discards; `- [[ … ]]` and `- match` stay legal (2026-09-09).
+"or write `- cmd` without the `!`". The advice for the other (B) results
+still recommends both discards. The 2026-11-08 statement-effect rule
+requires qualifying that advice: legal discard does not rescue a known
+pointless test. `reject-pointless-statements` owns the pending message
+change; the discard operators themselves remain available.
 
 **A terminal `!` that nothing consumes is SB4018 (decide-and-report).**
 2026-08-31 lets the final stage take "the same `!` a standalone simple command

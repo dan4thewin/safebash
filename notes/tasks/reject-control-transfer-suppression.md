@@ -6,7 +6,7 @@ depends: []
 gates:
   - "Source - on return, exit, fail, break or continue receives a located refusal in native and C, independent of taint switches"
   - "Bare/valued/forwarding returns, default/explicit termination statuses, counted loop transfers, redirects and nested bodies cannot evade the rule"
-  - "Unprefixed transfers, non-void call-site discard, compatible forwarding, constant results, no-reach and terminal routing retain their contracts"
+  - "Unprefixed transfers, non-void call-site discard eligibility, compatible forwarding, constant results, no-reach and terminal routing retain their contracts"
   - "Fixtures are otherwise legal under current return/capture/type rules; historical Q1 results are not treated as fresh evidence"
   - "Changed contracts use fresh global ids; focused before/reversion controls and the predicted ordinary gate pass"
 
@@ -41,7 +41,10 @@ does not turn a forbidden prefix into a legal one. Coordinate with
 unprefixed transfers.
 
 Preserve `- f` at a non-void function's call site and ordinary integer/pid
-discard. Rejecting `- return` is not a ban on returning a nonzero or
+discard as result-kind-legal forms. DD70's separate statement-effect check
+can reject a known pointless invocation; that belongs to
+`reject-pointless-statements`, not this prefix guard.
+Rejecting `- return` is not a ban on returning a nonzero or
 constant answer, compatible forwarding or self-tail calls. Preserve
 ordinary return-producer handling, counted-loop targets and DD128's
 exit/fail routing and once-only process ownership.
@@ -52,9 +55,11 @@ anonymous status returns. Coordinate with those enforcement owners,
 and with `reject-nonadjacent-suppression`, without duplicate checks or
 conflating authored prefixes with internal unchecked-handling flags.
 
-The no-op `:` is not in this cohort. Its meaningful redirected form,
-arithmetic-write prefix eligibility and boolean-only test discard remain
-separate Q1/Q5 questions; no general no-effect restriction was selected.
+The no-op `:` is not in this cohort. DD70 preserves it, including its
+otherwise legal suppressed form, while separately rejecting pointless
+result-only statements. Q5 is settled with enforcement in
+`reject-pointless-statements`; arithmetic-write prefix eligibility
+remains a separate question.
 
 ## Evidence and regression obligations
 

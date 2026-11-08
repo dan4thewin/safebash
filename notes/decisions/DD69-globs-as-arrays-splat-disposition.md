@@ -258,3 +258,11 @@ allocator never frees) and no DD#99 interior-NUL check, which guards the
 execve(2) boundary that `:` never crosses. A NUL-bearing argument to `:` is
 not an error (noop.13). Specs: commands.sh noop.1-noop.13, convert.sh
 57.192.
+
+DD70's statement-effect rule (DG, 2026-11-08) preserves explicit `:` as
+the intentional no-op, including an otherwise legal `- :`. This does
+not make `:` an observable effect: a result-only `[[ ... ]] || :` at
+statement level is still pointless. Argument effects remain evaluated;
+`- : >optional.log` also retains its real file operation and DD130
+recoverable-open handling. Enforcement of the new statement check is
+queued in `reject-pointless-statements`.

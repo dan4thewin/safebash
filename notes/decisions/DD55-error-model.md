@@ -73,6 +73,13 @@ The operation's recoverable attached-redirect failure is discarded too
 (DD130). A fatal fault is never discarded or inverted into a normal
 result. Function result-kind restrictions and the no-reach rule remain.
 
+Discard eligibility and statement usefulness are separate. DD70's
+2026-11-08 rule rejects known result-only computation when its result is
+ignored, whether expressed with `-` or an equivalent `test || :`.
+Observable effects and uncertainty prevent that rejection; intentional
+`:` remains permitted. This does not change result kinds or ban constant
+function results. Enforcement is queued in `reject-pointless-statements`.
+
 ### Command adjacency (DG, 2026-11-08)
 
 DG: **"reject the - not adjacent to the command"**. A source `-` must
@@ -226,16 +233,18 @@ separate result to discard at the return statement. A prefix cannot turn
 failures retain their ordinary checks and fatal-fault behavior.
 
 This does not reject discard at a non-void function's **call site**:
-`- f` remains legal when f returns a status or integer, even though its
-body uses `return`. Ordinary return-producer handling, compatible tail
-forwarding, constant results and DD128's terminal routing are unchanged.
+`- f` remains result-kind-legal when f returns a status or integer, even
+though its body uses `return`. DD70 separately checks whether the
+invocation is pointless. Ordinary return-producer handling, compatible
+tail forwarding, constant results and DD128's terminal routing are unchanged.
 
 DD130 still classifies recoverable file failures independently of syntax.
 It permits discard only where the handling form is otherwise legal, so
 an attached redirect is not an exception to this prefix rejection.
-The no-op `:` is not a control transfer: its status and meaningful
-`- : >optional.log` file operation remain separate. Arithmetic-write
-prefix eligibility and discarded tests also remain open questions.
+The no-op `:` is not a control transfer: DD70 preserves it as an
+intentional no-op and retains the meaningful `- : >optional.log` file
+operation. Arithmetic-write prefix eligibility remains a separate
+question; discarded-test usefulness is settled by DD70.
 
 **Enforcement pending:** `reject-control-transfer-suppression` owns the
 located refusal and preservation controls. Q1's control-transfer cohort
@@ -561,6 +570,10 @@ consume or explicitly discard that result:
 
 These call-site obligations do not disappear for a constant result.
 `-` still does not reach into the body or repair a type mismatch.
+Meeting the result-handling obligation is necessary, not sufficient:
+DD70 also rejects an invocation known to do nothing beyond producing an
+ignored result. That does not restrict constant-returning definitions or
+calls whose results are used.
 
 ### Anonymous capture returns (DG, 2026-11-06)
 

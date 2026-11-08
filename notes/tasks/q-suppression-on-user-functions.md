@@ -192,6 +192,10 @@ rest of the work lives in other tasks:
   `q-nonvoid-classifier-residuals`; duplicate-definition and integer-capture
   enforcement remain in `reject-duplicate-function-definitions` and
   `bug-int-capture-redirect-switches-kind` (journals 582-583);
+- result-kind-valid discard is also subject to DD70's separate
+  statement-effect rule: `reject-pointless-statements` owns refusal of
+  known unused computation, not a constant-function-result ban
+  (journal 592);
 - unit B's residuals → `q-suppression-reach-residuals`. DG's 2026-11-08
   adjacency rule now rejects assignment prefixes and whole-list reach;
   `reject-nonadjacent-suppression` owns enforcement and the arithmetic
@@ -724,7 +728,8 @@ stage or a job.
   `fn f -> int { - /bin/false; return $?; }`, is SB5012 1:36 (d55/s15),
   and the void twin under `if f` is SB5012 1:29 (d55/s15b).
   `dd55-nonvoid-functions` records it.
-- `q-suppression-and-stage-residuals` asks the same question of `-` on a
-  command where its status is read (its Q3, `if - cmd`), and of a `-`
-  that leaves the statement with no effect (its Q5, `- [[ … ]]`,
-  `- match`). Read a ruling here against those.
+- The related Q3/Q5 questions in `q-suppression-and-stage-residuals`
+  are now settled: reject consumption of discarded status (DD55,
+  journal 589), and retain legal discard while rejecting known pointless
+  computation (DD70, journal 592). Their enforcement remains in
+  `reject-discarded-status-consumers` and `reject-pointless-statements`.

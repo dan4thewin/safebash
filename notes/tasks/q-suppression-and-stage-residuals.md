@@ -5,10 +5,10 @@ priority: P3
 kind: question
 depends: []
 gates:
-  - "DG rules on the remaining questions below; Q1 control transfers and Q3 are settled in DD55, with separate enforcement tasks"
+  - "DG rules on the remaining questions below; Q1 control transfers/no-op, Q3 and Q5 are settled in DD55/DD70, with separate enforcement tasks"
   - "every program in the tables prints what its ruling says or is rejected with a diagnostic naming the rule, in both backends"
   - "SB4018's `[[ … ]]` advice and SB5073's message for a stage say only what the rulings on Q5 and Q6 allow"
-  - "`bug-peel-family-classifiers`, which defers a case to Q5, is updated to the ruling"
+  - "Q5 enforcement and advice belong to reject-pointless-statements; bug-peel-family-classifiers retains its shared-classifier repairs"
 ---
 
 ## What
@@ -24,13 +24,14 @@ F1+F4) and with F1+F4, in both backends, unless a row says otherwise.
 Probes: `files/port-f1f4-probes.tar.gz`, directories `dr/`, `bk/`, `bl/`,
 `rw/`, `adv/`, `fin2/`, `t6/` and `t6b/`.
 
-### Q1. Control-transfer prefixes rejected; non-control forms remain open
+### Q1. Control transfers rejected; intentional no-op retained
 
 DG chose **reject** on 2026-11-08 for source `-` on `return`, `exit`,
 `fail`, `break` and `continue`. DD55 records the rule; the new P3
 `reject-control-transfer-suppression` owns enforcement and journal 591
 records the choice. This cohort is settled as policy, not implemented.
-The no-op and arithmetic-write forms below remain separate questions.
+DD70's subsequent statement-effect ruling retains the intentional no-op.
+Arithmetic-write prefix eligibility below remains a separate question.
 
 The tables retain historical F1+F4 evidence, not fresh execution or a
 claim that later return-kind and capture rules leave every fixture legal.
@@ -85,18 +86,20 @@ explanation. Bare/valued returns, return producers and forwarding,
 default/explicit termination statuses and counted loop transfers all
 follow the rule. Wrappers, attached redirects and body placement do not
 grant an exception. Independent typing and placement refusals remain.
-Ordinary non-void call-site discard, return handling, constant results,
+Non-void call-site discard eligibility, return handling, constant results,
 no-reach and terminal routing are unchanged. Keeping the redundant
 control-transfer spellings was the alternative, not the chosen rule.
 
-**The no-op remains a separate case.** DD69 treats `:` as status-producing
-(`! :` supplies the opposite verdict), and its arguments have effects.
+**The intentional no-op is retained (DG, 2026-11-08; DD70).** DD69 treats
+`:` as status-producing (`! :` supplies the opposite verdict), and its
+arguments can have effects.
 Under DD130, `- : >optional.log` can discard a recoverable open failure;
-calling every `- :` inert is therefore wrong. Any proposal to reject
-the bare redundant form must distinguish this real file operation,
-not silently remove its handling. No new policy on `:` is selected here.
+calling every `- :` inert is therefore wrong. The statement-effect rule
+also preserves explicit `:` without effects, including an otherwise
+legal `- :`. It is a permitted no-op, not an effect that excuses a
+pointless enclosing test. Q5 and journal 592 record that distinction.
 The eligibility of a direct arithmetic-write prefix, `- (( ... ))`,
-also remains separate (R2 in `q-suppression-reach-residuals`); its required
+remains separate (R2 in `q-suppression-reach-residuals`); its required
 operand-barrier repair does not decide that question.
 
 ### Q2. `exec` in a forked child: rejected as a stage, legal under `&`
@@ -233,14 +236,18 @@ never at the `<<<`.
   the `<<<`.
 - (b) Keep the order as it is.
 
-### Q5. Whether to retain explicit discard of a boolean-only test
+### Q5. Settled: legal discard, separate pointless-statement error
 
-This is a proposal to restrict DD70's accepted explicit-discard rule,
-not another prefix with no result to discard. The 2026-09-09 decision
-deliberately permits `- [[ ... ]]` and boolean `- match` so that ignoring
-a result need not be spelled indirectly as `test || :`. The subsequent
-control-transfer and status-less-intrinsic rulings do not repeal it.
-The rows below are historical measurements, not fresh execution.
+DG proposed keeping discard allowed while rejecting a pointless
+statement, then approved the conservative effect-based rule on
+2026-11-08. DD70 records it; `reject-pointless-statements` owns
+enforcement, and journal 592 records the decision. The question is
+settled, not the implementation.
+
+Discarding a real boolean remains legal as an operation. Reject the
+whole statement when its only work is computing an ignored result and
+the absence of other observable effects is known. The rows below are
+historical measurements, not fresh execution.
 
 | Id | Program | Result |
 |---|---|---|
@@ -255,27 +262,35 @@ DD#63 binds only the out-array form, `match SUBJECT PATTERN OUTARRAY`
 (spec/regex.sh: `match "abc" "b" g`); "the boolean form still binds
 nothing", and `[[ =~ ]]` is that form's sugar. In pk3 the subject is the
 literal word `s`, so the row shows only that nothing is bound. With
-effect-free operands and no redirects, discarding the boolean leaves no
-useful output; that motivated the original rejection recommendation.
-It does not prove that every such statement has no effects. Operands
-are still evaluated, dynamic regex compilation can fail, and otherwise
-legal attached redirects have DD130's real file effects and failures.
-No-reach and fatal-fault rules remain independent of boolean discard.
+effect-free operands and no redirects, k01 and pk3 require the new
+pointless-statement refusal. Statement-level `[[ $s == yes ]] || :`
+requires it too: the intermediate branch does not give unused computation
+a purpose. Choosing observable work or supplying a return/value is
+different; a condition selecting only no-ops is not an escape.
 
-- **(b) Recommended after the 2026-11-08 review.** Retain DD70's
-  explicit-discard permission. The prefix discards a real result, unlike
-  the rejected intrinsic and control-transfer cases. Bare tests still
-  require handling or explicit discard; this grants no new syntax.
-- (a) Reject `- [[ ... ]]` and boolean-only `- match`, adding a
-  structural restriction on tests whose result is intentionally unused.
-  That choice must specify its treatment of operand effects, dynamic
-  regex failures and attached redirects, and whether `test || :`
-  remains legal. A blanket ban on effect-free work or constant function
-  results does not follow. Out-array `match`/`matchall` remain separate.
+Writes, I/O and observable operand/body effects prevent rejection, as
+does uncertainty. Out-array `match`/`matchall`, effectful calls and
+`- : >optional.log` retain their work even when their result is discarded.
+Plain `:` remains an intentional no-op, not a way to make an enclosing
+result-only test useful. Existing result-kind and placement rules remain.
 
-No new Q5 policy has been selected. If restricted, reconcile DD70 and
-SB4018's advice and update `bug-peel-family-classifiers`; do not leave
-the current accepted spellings advertised as alternatives.
+The preceding question framing overstated dynamic-regex failure as an
+effect: when that recoverable failure is itself discarded, DD70 requires
+silence and continuation. It does not rescue the statement. A checked
+operand failure remains observable under no-reach. Incidental allocation
+or possible OOM also does not justify pointless computation; fatal faults
+in retained programs remain fatal.
+
+This is not a constant-result ban. A constant-returning function and
+calls that use its result remain legal; a known effect-free `- f` can
+still be a pointless invocation. Uncertain effects must not be assumed
+away. No general dead-store or whole-program usefulness proof is required.
+
+Neither the old blanket test-discard ban nor unconditional permission
+for every discarded test was selected. Reconcile SB4018's advice with
+the two independent checks: `-` and `|| :` cannot be advertised as
+unconditional escapes for a pointless test. The shared-classifier work
+in `bug-peel-family-classifiers` remains required on effectful forms.
 
 ### Q6. A value intrinsic as a pipeline stage
 

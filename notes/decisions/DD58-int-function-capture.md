@@ -88,6 +88,12 @@ ordinary side effect, following the active output destination and any
 attached redirects, not a second result selected by capture syntax.
 No purity check or stdout prohibition is introduced.
 
+DD70's separate statement-effect check (DG, 2026-11-08) concerns an
+unused invocation, not which integers a function may return. A known
+effect-free `- f` is pointless; discarding f's integer while retaining
+its stdout or other effects remains legal. Constant-returning definitions
+and calls whose integer is consumed remain legal.
+
 DD86's process-replacing `exec` rejection (DG, 2026-11-08) applies when
 an integer helper is called inside a **stdout-capture body**, just as it
 does to other helpers. A direct integer-value call is not such a body;

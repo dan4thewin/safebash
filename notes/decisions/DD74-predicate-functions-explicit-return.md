@@ -153,6 +153,13 @@ a valid predicate, not void. Constant status results of any value are legal;
 their callers still have the ordinary non-void handling obligation.
 There is no ceremony or constant-result check.
 
+DD70's 2026-11-08 statement-effect check does not change that definition
+rule. It can reject a known effect-free call whose result is ignored,
+including an otherwise valid `- f`. A consumed result or observable
+invocation effect is different; `return [[ ... ]]` consumes its result
+and is not an unused-test statement. The new check remains pending in
+`reject-pointless-statements`.
+
 The kind/completeness refinement and SB4017 removal are implemented in
 journal 577 (`enforce-function-return-kinds` and
 `retire-return-ceremony-check`). Shared body lowering enforces the contract

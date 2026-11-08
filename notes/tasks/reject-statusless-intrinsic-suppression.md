@@ -51,9 +51,12 @@ fatal faults remain fatal (DD130); they do not justify the prefix.
 Recoverable attached-redirect handling requires an otherwise legal form
 and cannot change a callee's result kind or manufacture a successful
 empty value. Control-transfer prefixes are separately rejected by DD55,
-with enforcement in `reject-control-transfer-suppression`. No-op,
-arithmetic-write and discarded-test questions remain in
-`q-suppression-and-stage-residuals`.
+with enforcement in `reject-control-transfer-suppression`. DD70 preserves
+intentional no-ops and separately rejects known pointless statements;
+`reject-pointless-statements` owns that check. Arithmetic-write prefix
+eligibility remains in `q-suppression-and-stage-residuals`. Preserving
+integer discard here is result-kind permission, not an exemption from
+the new statement-effect check.
 
 Coordinate integer capture classification with
 `bug-int-capture-redirect-switches-kind`, and operand-barrier coverage

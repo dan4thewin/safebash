@@ -81,8 +81,12 @@ R3's status-less value-intrinsic capture is now rejected by policy;
 the historical noreach.12 spelling. Preserve the operand-barrier proof
 on legal source rather than treating an earlier prefix refusal as cover.
 Q1's control-transfer prefix rejection has its own owner,
-`reject-control-transfer-suppression`. Its no-op/arithmetic-write
-questions and Q5's discarded-test question remain separate.
+`reject-control-transfer-suppression`. The no-op/arithmetic-write
+boundary is separate from adjacency: DD70 preserves the intentional
+no-op, while arithmetic-write prefix eligibility remains open.
+Q5 is settled by DD70's independent statement-effect check, owned by
+`reject-pointless-statements`. Result-kind-valid discard can still be
+pointless; do not make either check a substitute for the other.
 Q3 is now settled: reject the consumed discard. Coordinate its check and
 the 55.145-55.147 migration with `reject-discarded-status-consumers`,
 without duplicate specs or retaining whole-list binding underneath a new

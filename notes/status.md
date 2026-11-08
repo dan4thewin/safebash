@@ -1,4 +1,25 @@
-## STATUS (2026-11-08, latest) - No suppression prefix on control transfers
+## STATUS (2026-11-08, latest) - Legal discard, separate statement-effect check
+
+DG kept result discard legal and chose a separate error for a statement
+known to do nothing beyond computing an ignored result. This covers
+effect-free discarded tests and the equivalent statement-level `test || :`.
+Writes, I/O, observable operand/body effects and uncertainty prevent
+rejection; silently discarded failures and incidental OOM do not justify
+pointless work.
+
+Intentional `:` remains permitted, including its otherwise legal
+suppressed form. Constant-returning functions remain legal; a known
+effect-free unused invocation can still be pointless. DD70 records the
+rule, DD55/DD58/DD69/DD74 and GUIDE agree, and new P3
+`reject-pointless-statements` owns enforcement and advice. Q5 and Q1's
+no-op question are settled; arithmetic-write prefix eligibility remains
+separate. Journal 592 records the decision.
+
+This is documentation/backlog recording only. No compiler/runtime/spec
+code changed, and no new behavior probe, full sweep or coverage run was
+made. Journal 577 remains the accepted implementation baseline.
+
+## STATUS (2026-11-08) - No suppression prefix on control transfers
 
 DG rejected source `-` on `return`, `exit`, `fail`, `break` and
 `continue`, including through redirects. Drop the prefix, not the

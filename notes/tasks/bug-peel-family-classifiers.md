@@ -89,9 +89,14 @@ One peel authority, called by every classifier above. Or make
 Suppressed/Redirected statement attributes rather than wrapper nodes, so
 no classifier can forget them (the refinement F1's plan names). Each panic
 above names the rule that should have fired, and after the fix each program
-should get that rule's diagnostic, as its control does. Whether a pure `-`
-form (`- [[ … ]]`, `- match s P`) should be legal at all is Q5 of
-`q-suppression-and-stage-residuals`.
+should get that rule's diagnostic, as its control does.
+
+Q5 in `q-suppression-and-stage-residuals` is now settled (DG,
+2026-11-08; DD70): result discard stays legal, with a separate error for
+known pointless computation. `reject-pointless-statements` owns that
+check and the affected advice/specs. Effectful or uncertain forms still
+need this task's correct shared classifiers; rejecting a result-only
+fixture is not proof that its underlying peel defect was repaired.
 
 ## B121: a redirected predicate call escapes SB4037
 
