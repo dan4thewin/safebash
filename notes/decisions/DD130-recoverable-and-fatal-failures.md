@@ -76,6 +76,12 @@ never its attached open failure. It does not extend suppression into a
 called function's body, an argument capture or a value call. Nor does an
 attached redirect change a function's void/status/integer kind.
 
+Source-prefix eligibility remains DD55's separate rule. In particular,
+its 2026-11-08 rejection of `-` on `return`, `exit`, `fail`, `break` and
+`continue` also covers attached redirects. A recoverable open failure
+does not legalize that prefix or become fatal merely because it lacks
+that spelling of a handler.
+
 Redirects remain ordered, stopping at the first failure. Later redirects
 and the command body do not run. Earlier file creation, truncation or
 writes are not rolled back; recoverability is not transactional execution.

@@ -1,4 +1,22 @@
-## STATUS (2026-11-08, latest) - No inert prefix on value-intrinsic captures
+## STATUS (2026-11-08, latest) - No suppression prefix on control transfers
+
+DG rejected source `-` on `return`, `exit`, `fail`, `break` and
+`continue`, including through redirects. Drop the prefix, not the
+transfer. Ordinary non-void call-site discard, compatible forwarding,
+constant results, operand checks and DD128 terminal routing remain.
+
+DD55/DD70/DD74/DD128/DD130 and GUIDE record the rule. New P3
+`reject-control-transfer-suppression` owns enforcement; Q1's
+control-transfer cohort is settled as policy. The no-op, arithmetic-write
+and discarded-test questions remain separate. Q5 now distinguishes a
+real boolean discard from an inert prefix; no new Q5 ruling was made.
+Journal 591 records the decision.
+
+This is documentation/backlog recording only. No compiler/runtime/spec
+code changed, and no new behavior probe, full sweep or coverage run was
+made. Journal 577 remains the accepted implementation baseline.
+
+## STATUS (2026-11-08) - No inert prefix on value-intrinsic captures
 
 DG rejected `-` on a captured value intrinsic with no separate status.
 `$(- toupper abc)` must reject; write `$(toupper abc)`. The capture

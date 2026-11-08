@@ -310,8 +310,15 @@ already consumes its value; write `$(toupper abc)`. This includes
 status-less integer intrinsics, but preserves `getenv`'s lookup status
 and ordinary explicit value discard such as `- wait`. Redirects and
 possible fatal faults do not change the result kind.
-`reject-statusless-intrinsic-suppression` owns pending enforcement;
-the control-word/no-op and discarded-test questions remain separate.
+`reject-statusless-intrinsic-suppression` owns pending enforcement.
+
+DD55 rejects source `-` on `return`, `exit`, `fail`, `break` and
+`continue` too (DG, 2026-11-08), including through redirects. Remove the
+prefix, not the transfer. Ordinary `- f` at a non-void call site, return
+forwarding, operand checks and DD128 terminal routing remain unchanged.
+`reject-control-transfer-suppression` owns pending enforcement. The no-op
+`:`, arithmetic-write prefix eligibility and discarded tests remain
+separate questions; this is not a general no-effect or constant-result ban.
 
 ### Phase 3: Taint
 

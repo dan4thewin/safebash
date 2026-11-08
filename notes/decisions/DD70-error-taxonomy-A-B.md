@@ -135,7 +135,16 @@ discards nothing. `getenv`'s lookup status remains a distinct channel.
 Ordinary `- int_fn` and `- wait` still discard their actual values,
 rather than capture them. Fatal faults do not create a discardable
 status. `reject-statusless-intrinsic-suppression` owns pending enforcement
-(journal 590); the control-word and discarded-test questions remain open.
+(journal 590).
+
+**A control transfer is not a discard site (DG, 2026-11-08; DD55).**
+Reject source `-` on `return`, `exit`, `fail`, `break` and `continue`,
+including through redirects. It neither discards an outgoing return
+value nor makes a terminal or loop transfer resumable. Ordinary `- f`
+at a non-void call site remains legal; no-reach and result kinds stay.
+`reject-control-transfer-suppression` owns pending enforcement (journal
+591). The no-op, arithmetic-write and discarded-test questions remain
+separate; this is not a blanket prohibition on redundant work.
 
 ### Why the original rule did not hold up
 

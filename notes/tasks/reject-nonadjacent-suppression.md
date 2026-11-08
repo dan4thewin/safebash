@@ -80,7 +80,9 @@ R3's status-less value-intrinsic capture is now rejected by policy;
 `reject-statusless-intrinsic-suppression` owns that check and review of
 the historical noreach.12 spelling. Preserve the operand-barrier proof
 on legal source rather than treating an earlier prefix refusal as cover.
-Q1/Q5's control-word/no-op and discarded-test questions remain separate.
+Q1's control-transfer prefix rejection has its own owner,
+`reject-control-transfer-suppression`. Its no-op/arithmetic-write
+questions and Q5's discarded-test question remain separate.
 Q3 is now settled: reject the consumed discard. Coordinate its check and
 the 55.145-55.147 migration with `reject-discarded-status-consumers`,
 without duplicate specs or retaining whole-list binding underneath a new

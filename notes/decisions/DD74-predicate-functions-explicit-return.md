@@ -71,6 +71,13 @@ forwarding remain legal. A named status function retains these forms,
 including when called and explicitly handled/discarded inside a capture.
 Enforcement is pending in `reject-anonymous-capture-status-returns`.
 
+The `return` statement itself cannot carry a source `-` (DG,
+2026-11-08; DD55). Reject `- return N`, `- return CMD` and the bare or
+forwarding variants, including through redirects. Remove the prefix;
+ordinary producer handling and the outgoing result are unchanged.
+This is distinct from legal discard at a non-void function's call site.
+Enforcement is pending in `reject-control-transfer-suppression`.
+
 | form | status |
 |---|---|
 | `return CMD [args]` | run CMD; its exit status. **The `return` is the handler — CMD never aborts** (its status is explicitly consumed), unlike a bare CMD. |

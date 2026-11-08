@@ -138,6 +138,12 @@ resume the interrupted program. Operand evaluation happens before transfer;
 an uncaught failure during that evaluation retains its normal ERR behavior.
 Existing process-placement restrictions apply to `fail` as they do to `exit`.
 
+DD55 additionally rejects the source spellings `- exit` and `- fail`
+(DG, 2026-11-08), with or without a status operand or attached redirect.
+Remove the prefix; it is not permission to discard a transfer or an
+operand failure. Enforcement is pending in
+`reject-control-transfer-suppression`; the routing above is unchanged.
+
 The last predicate's truth value does not turn normal fall-through into an
 abort. Likewise, a signal-triggered EXIT normally carries `128 + signum`;
 that nonzero status does not select ERR.

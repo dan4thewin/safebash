@@ -200,7 +200,48 @@ requires an otherwise legal handling form and does not change result kind.
 the refusal and preservation controls. R3 closes the last policy question
 in `q-suppression-reach-residuals`, not its queued implementation work.
 Journal 590 records the ruling. Control-word/no-op prefixes and discarded
-tests remain separate questions in `q-suppression-and-stage-residuals`.
+tests are tracked separately in `q-suppression-and-stage-residuals`;
+the control-transfer ruling follows.
+
+### No prefix on a control transfer (DG, 2026-11-08)
+
+DG chose **reject** for source `-` on `return`, `exit`, `fail`, `break`
+and `continue`. Drop the prefix, not the transfer:
+
+```bash
+- exit 3                 # rejected
+exit 3                   # orderly termination with status 3
+```
+
+The rule covers bare and valued returns, return producers and compatible
+forwarding, explicit/default exit or fail statuses, and counted loop
+transfers wherever those forms are otherwise legal. It applies inside
+named bodies, captures and handlers as well as ordinary statement lists.
+Wrapping the transfer or attaching redirects does not make the prefix
+legal; independent placement, typing and return-kind restrictions remain.
+
+`return` may pass a result to the body's caller; it does not yield a
+separate result to discard at the return statement. A prefix cannot turn
+`exit`/`fail` into a resumable failure or cancel a loop transfer. Operand
+failures retain their ordinary checks and fatal-fault behavior.
+
+This does not reject discard at a non-void function's **call site**:
+`- f` remains legal when f returns a status or integer, even though its
+body uses `return`. Ordinary return-producer handling, compatible tail
+forwarding, constant results and DD128's terminal routing are unchanged.
+
+DD130 still classifies recoverable file failures independently of syntax.
+It permits discard only where the handling form is otherwise legal, so
+an attached redirect is not an exception to this prefix rejection.
+The no-op `:` is not a control transfer: its status and meaningful
+`- : >optional.log` file operation remain separate. Arithmetic-write
+prefix eligibility and discarded tests also remain open questions.
+
+**Enforcement pending:** `reject-control-transfer-suppression` owns the
+located refusal and preservation controls. Q1's control-transfer cohort
+in `q-suppression-and-stage-residuals` is settled, not its non-control
+forms or the implementation. Journal 591 records the decision; no new
+diagnostic number or implementation architecture is selected here.
 
 ## Explicit handling
 

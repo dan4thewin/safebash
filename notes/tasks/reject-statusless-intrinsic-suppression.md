@@ -50,8 +50,10 @@ No-reach still protects operands and bodies. Heap exhaustion and other
 fatal faults remain fatal (DD130); they do not justify the prefix.
 Recoverable attached-redirect handling requires an otherwise legal form
 and cannot change a callee's result kind or manufacture a successful
-empty value. Control-word/no-op prefixes and discarded tests remain
-separate questions in `q-suppression-and-stage-residuals`.
+empty value. Control-transfer prefixes are separately rejected by DD55,
+with enforcement in `reject-control-transfer-suppression`. No-op,
+arithmetic-write and discarded-test questions remain in
+`q-suppression-and-stage-residuals`.
 
 Coordinate integer capture classification with
 `bug-int-capture-redirect-switches-kind`, and operand-barrier coverage

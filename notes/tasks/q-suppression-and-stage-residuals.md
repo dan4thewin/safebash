@@ -5,7 +5,7 @@ priority: P3
 kind: question
 depends: []
 gates:
-  - "DG rules on the remaining questions below; Q3 is settled in DD55 with enforcement in reject-discarded-status-consumers"
+  - "DG rules on the remaining questions below; Q1 control transfers and Q3 are settled in DD55, with separate enforcement tasks"
   - "every program in the tables prints what its ruling says or is rejected with a diagnostic naming the rule, in both backends"
   - "SB4018's `[[ … ]]` advice and SB5073's message for a stage say only what the rulings on Q5 and Q6 allow"
   - "`bug-peel-family-classifiers`, which defers a case to Q5, is updated to the ruling"
@@ -24,14 +24,20 @@ F1+F4) and with F1+F4, in both backends, unless a row says otherwise.
 Probes: `files/port-f1f4-probes.tar.gz`, directories `dr/`, `bk/`, `bl/`,
 `rw/`, `adv/`, `fin2/`, `t6/` and `t6b/`.
 
-### Q1. Control-transfer prefixes; the no-op is a separate case
+### Q1. Control-transfer prefixes rejected; non-control forms remain open
+
+DG chose **reject** on 2026-11-08 for source `-` on `return`, `exit`,
+`fail`, `break` and `continue`. DD55 records the rule; the new P3
+`reject-control-transfer-suppression` owns enforcement and journal 591
+records the choice. This cohort is settled as policy, not implemented.
+The no-op and arithmetic-write forms below remain separate questions.
 
 The tables retain historical F1+F4 evidence, not fresh execution or a
 claim that later return-kind and capture rules leave every fixture legal.
-The remaining control-transfer choice covers `return`, `exit`, `break`
-and `continue`, and now `fail` under DD128. A reached `exit` or `fail`
+The rejected cohort includes DD128's newer `fail`, which those old
+probes did not exercise. A reached `exit` or `fail`
 terminates rather than returning a catchable status; `-` cannot undo
-that transfer. No prefix-acceptance ruling has been made for this cohort.
+that transfer.
 
 | Id | Program | Result |
 |---|---|---|
@@ -44,7 +50,7 @@ that transfer. No prefix-acceptance ruling has been made for this cohort.
 | dr6 | `fn f { - return /bin/false }` then `f` then `echo "[$?]"` | `[1]` |
 | r6 | dr6 without the `-` | `[1]` |
 
-The control-transfer rows leave the transfer unchanged. `return` and
+The historical control-transfer rows left the transfer unchanged. `return` and
 `exit` pass their status on, while `break` and `continue` transfer within
 the loop. In dr6 DD74 already makes `return` the handler of its producer.
 A failing capture argument does not give the prefix reach into that
@@ -74,14 +80,16 @@ failures. The q1k/q1g captured-status behavior is historical B15 evidence,
 not permission to capture a status function without the handling/discard
 now required by DD55.
 
-- **(a) Recommended for control transfers.** Reject a prefix on `return`,
-  `exit`, `fail`, `break` or `continue`, with a located "drop the `-`"
-  diagnostic. The prefix neither cancels the transfer nor handles
-  failures inside an operand.
-- (b) Keep those control-transfer spellings legal and inert, and document
-  that they do not suppress the transfer.
+**Required:** reject the source prefix with a located "drop the `-`"
+explanation. Bare/valued returns, return producers and forwarding,
+default/explicit termination statuses and counted loop transfers all
+follow the rule. Wrappers, attached redirects and body placement do not
+grant an exception. Independent typing and placement refusals remain.
+Ordinary non-void call-site discard, return handling, constant results,
+no-reach and terminal routing are unchanged. Keeping the redundant
+control-transfer spellings was the alternative, not the chosen rule.
 
-**The no-op is a separate case.** DD69 treats `:` as status-producing
+**The no-op remains a separate case.** DD69 treats `:` as status-producing
 (`! :` supplies the opposite verdict), and its arguments have effects.
 Under DD130, `- : >optional.log` can discard a recoverable open failure;
 calling every `- :` inert is therefore wrong. Any proposal to reject
@@ -225,7 +233,14 @@ never at the `<<<`.
   the `<<<`.
 - (b) Keep the order as it is.
 
-### Q5. A `-` that leaves a statement with no effect
+### Q5. Whether to retain explicit discard of a boolean-only test
+
+This is a proposal to restrict DD70's accepted explicit-discard rule,
+not another prefix with no result to discard. The 2026-09-09 decision
+deliberately permits `- [[ ... ]]` and boolean `- match` so that ignoring
+a result need not be spelled indirectly as `test || :`. The subsequent
+control-transfer and status-less-intrinsic rulings do not repeal it.
+The rows below are historical measurements, not fresh execution.
 
 | Id | Program | Result |
 |---|---|---|
@@ -239,17 +254,28 @@ A `[[ … ]]`, and a `match` with no out array, produce nothing but a status.
 DD#63 binds only the out-array form, `match SUBJECT PATTERN OUTARRAY`
 (spec/regex.sh: `match "abc" "b" g`); "the boolean form still binds
 nothing", and `[[ =~ ]]` is that form's sugar. In pk3 the subject is the
-literal word `s`, so the row shows only that nothing is bound. Discard the
-status and the statement does nothing, which
-is SB5007's case for `(( 1 > 2 ))` with or without the `-`. SB4018's advice
-recommends k01's spelling, and its other suggestion, `[[ … ]] || :`, is
-just as empty. An operand capture is the one effect such a statement can
-still have; whether that counts is part of the question.
+literal word `s`, so the row shows only that nothing is bound. With
+effect-free operands and no redirects, discarding the boolean leaves no
+useful output; that motivated the original rejection recommendation.
+It does not prove that every such statement has no effects. Operands
+are still evaluated, dynamic regex compilation can fail, and otherwise
+legal attached redirects have DD130's real file effects and failures.
+No-reach and fatal-fault rules remain independent of boolean discard.
 
-- **(a) Recommended.** Reject `- [[ … ]]` and a `- match` with no out
-  array as having no effect, as SB5007 does, and drop the "discard with
-  `-` or `|| :`" half of SB4018's `[[ … ]]` advice.
-- (b) Keep them legal, and say in DD#70 that a discarded test is a no-op.
+- **(b) Recommended after the 2026-11-08 review.** Retain DD70's
+  explicit-discard permission. The prefix discards a real result, unlike
+  the rejected intrinsic and control-transfer cases. Bare tests still
+  require handling or explicit discard; this grants no new syntax.
+- (a) Reject `- [[ ... ]]` and boolean-only `- match`, adding a
+  structural restriction on tests whose result is intentionally unused.
+  That choice must specify its treatment of operand effects, dynamic
+  regex failures and attached redirects, and whether `test || :`
+  remains legal. A blanket ban on effect-free work or constant function
+  results does not follow. Out-array `match`/`matchall` remain separate.
+
+No new Q5 policy has been selected. If restricted, reconcile DD70 and
+SB4018's advice and update `bug-peel-family-classifiers`; do not leave
+the current accepted spellings advertised as alternatives.
 
 ### Q6. A value intrinsic as a pipeline stage
 
