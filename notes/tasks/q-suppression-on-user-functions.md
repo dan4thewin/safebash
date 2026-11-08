@@ -197,7 +197,9 @@ rest of the work lives in other tasks:
   `reject-nonadjacent-suppression` owns enforcement and the arithmetic
   operand barrier (journal 588). Consuming a discarded status is now
   rejected too; `reject-discarded-status-consumers` owns enforcement
-  (journal 589). Directly prefixed status-less intrinsics remain a question.
+  (journal 589). Status-less value-intrinsic captures are also rejected;
+  `reject-statusless-intrinsic-suppression` owns enforcement (journal 590).
+  The residual record is now closed as a question, not as implemented work.
 
 The wait ruling needs no task, because `- wait` is unchanged. The
 sections below remain the evidence for those tasks.

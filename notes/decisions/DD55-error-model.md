@@ -162,6 +162,46 @@ source-level refusals and preservation controls. Q3 in
 `q-suppression-and-stage-residuals` is settled as a policy question;
 journal 589 records the decision. No new diagnostic code is selected here.
 
+### No inert prefix on a value-intrinsic capture (DG, 2026-11-08)
+
+DG rejected `-` on a captured value intrinsic that has no separate
+status to discard:
+
+```bash
+str x=$(- toupper abc)    # rejected
+str x=$(toupper abc)      # consume the string value
+```
+
+The capture consumes the intrinsic's value. If that is its only result,
+`-` has nothing left to discard. This applies to string and integer value
+intrinsics, including an otherwise valid use inside an argument or
+interpolation. Neither wrapping the capture nor attaching redirects
+creates another result channel; existing placement and redirect-syntax
+restrictions remain.
+
+This is a result-channel rule, not a test of whether particular arguments
+make failure likely. DD101's `getenv` has a real lookup status in addition
+to its value, so it is not in this class. Its legal status discard and
+ordinary capture-condition handling remain, with the consumer rule above.
+An external command's status is likewise distinct from captured stdout.
+
+Nor does this ban ordinary explicit value discard: `- int_fn` discards
+that call's integer, and `- wait` discards its returned pid (DD126).
+Neither form simultaneously captures the value it discards.
+The child outcome saved in `waitstatus` is not a status returned by `wait`.
+No new statement-position meaning is granted to value-only intrinsics.
+
+Operand and body failures retain the no-reach rule. Heap exhaustion and
+other fatal faults remain fatal under DD130; they do not supply a status
+for this prefix to discard. Recoverable attached-redirect handling still
+requires an otherwise legal handling form and does not change result kind.
+
+**Enforcement pending:** `reject-statusless-intrinsic-suppression` owns
+the refusal and preservation controls. R3 closes the last policy question
+in `q-suppression-reach-residuals`, not its queued implementation work.
+Journal 590 records the ruling. Control-word/no-op prefixes and discarded
+tests remain separate questions in `q-suppression-and-stage-residuals`.
+
 ## Explicit handling
 
 Three patterns for a command that can fail:
@@ -878,9 +918,11 @@ DG's 2026-11-08 adjacency ruling above rejects the assignment prefixes,
 including the void-function-capture route, and the no-reach rule requires
 arithmetic-write operands to stay checked. Enforcement is queued in
 `reject-nonadjacent-suppression`; compound refusal remains separately
-queued in `retire-suppression-on-compounds`. Whether a directly prefixed
-status-less value intrinsic must reject remains R3, not an adjacency
-exception.
+queued in `retire-suppression-on-compounds`. DG also rejected R3's
+status-less value-intrinsic captures; enforcement is queued in
+`reject-statusless-intrinsic-suppression` (journal 590). The historical
+noreach.12 spelling needs review when that rule lands: a refusal for an
+inert prefix cannot stand in for proof of the operand barrier.
 
 Specs: errors.sh noreach.1-noreach.16. Rewritten to the rule: errors.sh
 supval.7, supval.8 and supval.18-supval.21. Journal 548.

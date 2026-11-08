@@ -24,7 +24,14 @@ F1+F4) and with F1+F4, in both backends, unless a row says otherwise.
 Probes: `files/port-f1f4-probes.tar.gz`, directories `dr/`, `bk/`, `bl/`,
 `rw/`, `adv/`, `fin2/`, `t6/` and `t6b/`.
 
-### Q1. `-` on a control word is always inert
+### Q1. Control-transfer prefixes; the no-op is a separate case
+
+The tables retain historical F1+F4 evidence, not fresh execution or a
+claim that later return-kind and capture rules leave every fixture legal.
+The remaining control-transfer choice covers `return`, `exit`, `break`
+and `continue`, and now `fail` under DD128. A reached `exit` or `fail`
+terminates rather than returning a catchable status; `-` cannot undo
+that transfer. No prefix-acceptance ruling has been made for this cohort.
 
 | Id | Program | Result |
 |---|---|---|
@@ -37,10 +44,11 @@ Probes: `files/port-f1f4-probes.tar.gz`, directories `dr/`, `bk/`, `bl/`,
 | dr6 | `fn f { - return /bin/false }` then `f` then `echo "[$?]"` | `[1]` |
 | r6 | dr6 without the `-` | `[1]` |
 
-`return` and `exit` pass their status on, and `break`, `continue` and `:`
-cannot fail, so the `-` has nothing to discard. In dr6 DD#74 already makes
-`return` the handler of its producer. A failing capture argument does not
-give the `-` a job either:
+The control-transfer rows leave the transfer unchanged. `return` and
+`exit` pass their status on, while `break` and `continue` transfer within
+the loop. In dr6 DD74 already makes `return` the handler of its producer.
+A failing capture argument does not give the prefix reach into that
+argument:
 
 | Id | Program | Result |
 |---|---|---|
@@ -51,25 +59,37 @@ give the `-` a job either:
 | dr14 | `fn f { - return $(/bin/sh -c 'echo 3; exit 1') }` then `f` then `echo "[$?]"` | SB5020 |
 | dr15 | dr14 without the `-` | SB5020 |
 
-dr10 and dr11 compile only because `return` coerces a string operand, which
-is `bug-return-status-string-operand`. With that fixed they are SB4030 like
-dr12 and dr13, and the question stands as it is.
+The historical dr10/dr11 string coercion belongs to
+`bug-return-status-string-operand`. It is not a reason to preserve the
+prefix. Later capture/return-kind rules must also be considered before
+reusing these fixtures.
 
 Nor does the `-` discard an argument's own abort. `return ${s:?empty}` and
 `exit ${s:?empty}` (with `str s=""`), and `return $(( 1 / z ))` and
 `exit $(( 1 / z ))` (with `int z=0`), abort the same with and without it
-(`t6b/` q1a–q1f, q1j). `:` aborts on neither today, because it drops every
-argument effect except a capture's; that is `bug-noop-drops-argument-effects`,
-and with it fixed the `-` on `:` still discards nothing. `: $(g)` and
-`- : $(g)`, where g echoes and returns 1, both print `after` (q1k, q1g): a
-function capture's own `return` status is unchecked in every position
-(the batch-531 B15 family).
+(`t6b/` q1a–q1f, q1j). The old claim that `:` skipped these effects was
+repaired in journal 539 (`bug-noop-drops-argument-effects`, DD69):
+its arguments are evaluated, and a prefix does not suppress their
+failures. The q1k/q1g captured-status behavior is historical B15 evidence,
+not permission to capture a status function without the handling/discard
+now required by DD55.
 
-- **(a) Recommended.** Add `return`, `exit`, `break`, `continue` and `:` to
-  `unsuppressible_error`: SB4014 at the `-`, "drop the `-`", beside `fn`
-  and `END`. It is the principle F1+F4 applied to those: a `-` that
-  discards nothing is a choice the reader should not have to evaluate.
-- (b) Keep them legal and inert, and say so in DD#55.
+- **(a) Recommended for control transfers.** Reject a prefix on `return`,
+  `exit`, `fail`, `break` or `continue`, with a located "drop the `-`"
+  diagnostic. The prefix neither cancels the transfer nor handles
+  failures inside an operand.
+- (b) Keep those control-transfer spellings legal and inert, and document
+  that they do not suppress the transfer.
+
+**The no-op is a separate case.** DD69 treats `:` as status-producing
+(`! :` supplies the opposite verdict), and its arguments have effects.
+Under DD130, `- : >optional.log` can discard a recoverable open failure;
+calling every `- :` inert is therefore wrong. Any proposal to reject
+the bare redundant form must distinguish this real file operation,
+not silently remove its handling. No new policy on `:` is selected here.
+The eligibility of a direct arithmetic-write prefix, `- (( ... ))`,
+also remains separate (R2 in `q-suppression-reach-residuals`); its required
+operand-barrier repair does not decide that question.
 
 ### Q2. `exec` in a forked child: rejected as a stage, legal under `&`
 

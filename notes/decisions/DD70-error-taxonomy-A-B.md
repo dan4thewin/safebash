@@ -128,6 +128,15 @@ aggregate. A final `a || - b` at statement level remains legal.
 `reject-discarded-status-consumers` owns enforcement; Q3 in
 `q-suppression-and-stage-residuals` is settled (journal 589).
 
+**A consumed value is not a spare status (DG, 2026-11-08; DD55).**
+Reject `$(- toupper abc)` and other value-intrinsic captures with no
+separate status. The capture already consumes the value; the prefix
+discards nothing. `getenv`'s lookup status remains a distinct channel.
+Ordinary `- int_fn` and `- wait` still discard their actual values,
+rather than capture them. Fatal faults do not create a discardable
+status. `reject-statusless-intrinsic-suppression` owns pending enforcement
+(journal 590); the control-word and discarded-test questions remain open.
+
 ### Why the original rule did not hold up
 
 Two things, neither visible when this DD was written.

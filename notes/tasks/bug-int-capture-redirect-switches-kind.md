@@ -36,6 +36,12 @@ Their explicit status returns are now rejected by policy (DD55/DD86,
 journal 584); `reject-anonymous-capture-status-returns` owns that separate
 enforcement.
 
+DD55 also rejects inert prefixes on status-less value-intrinsic captures
+(DG, 2026-11-08; journal 590). `reject-statusless-intrinsic-suppression`
+owns that enforcement. Coordinate the shared capture-kind interpretation,
+including integer intrinsics, without duplicate checks or allowing a
+redirect wrapper to change which result is consumed.
+
 ## Implementation boundaries
 
 Use the canonical function-kind and capture classification across validation,

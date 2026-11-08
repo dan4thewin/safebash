@@ -23,6 +23,15 @@ x=$(if [[ 1 = 1 ]]; then status; fi)   # SB5073 — nested, so nothing rewrites 
 echo "$(echo a; echo $?)"       # fine — `$?` is punctuation, legal anywhere
 ```
 
+The whole-substitution exemption does not make every prefixed spelling
+legal. DG rejected `$(- toupper abc)` and other value-intrinsic captures
+with no separate status to discard (DD55, 2026-11-08; journal 590).
+The capture consumes their value. `getenv` is different because DD101
+gives it a lookup status as well; existing status-consumer and taint
+rules still apply. Enforcement is queued in
+`reject-statusless-intrinsic-suppression`. This grants no new
+statement-position meaning to an intrinsic.
+
 ## Why
 
 Variables are not magic in sash. `$?` is not a special parameter the way bash

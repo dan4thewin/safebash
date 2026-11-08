@@ -282,8 +282,8 @@ of a `(( ))` test, and every inlined body run at depth zero, so a capture
 among a suppressed command's operands, or a failure inside a called
 function, is checked as it would be without the `-`. A suppressed capture
 `$(- cmd …)` passes a flag to its own command instead of raising the depth.
-Suppressed captures retain their normal value and type; structural validation,
-taint and status-availability rules still apply (DD#55).
+Legal suppressed captures retain their normal value and type; structural
+validation, taint and status-availability rules still apply (DD#55).
 
 DD55/DD71 also require the prefix to be adjacent to that command (DG,
 2026-11-08): `- x=$(cmd)` is rejected, not shorthand for `x=$(- cmd)`.
@@ -303,6 +303,15 @@ discard followed by a fresh `return 0`, and testing a capture's text
 rather than its discarded status remain legal. Ordinary handling is not
 source discard merely because it disables an implicit abort.
 `reject-discarded-status-consumers` owns pending enforcement.
+
+DD55 also rejects a value-intrinsic capture such as `$(- toupper abc)`
+when it has no separate status to discard (DG, 2026-11-08). The capture
+already consumes its value; write `$(toupper abc)`. This includes
+status-less integer intrinsics, but preserves `getenv`'s lookup status
+and ordinary explicit value discard such as `- wait`. Redirects and
+possible fatal faults do not change the result kind.
+`reject-statusless-intrinsic-suppression` owns pending enforcement;
+the control-word/no-op and discarded-test questions remain separate.
 
 ### Phase 3: Taint
 

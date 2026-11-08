@@ -1,4 +1,24 @@
-## STATUS (2026-11-08, latest) - Discarded statuses cannot be consumed
+## STATUS (2026-11-08, latest) - No inert prefix on value-intrinsic captures
+
+DG rejected `-` on a captured value intrinsic with no separate status.
+`$(- toupper abc)` must reject; write `$(toupper abc)`. The capture
+already consumes the value. The rule covers string and integer
+intrinsics without changing result kinds through wrappers or redirects.
+`getenv`'s lookup status and ordinary value discard such as `- wait`
+remain distinct; fatal faults remain fatal.
+
+DD55/DD58/DD70/DD111 and GUIDE record the contract. New P3
+`reject-statusless-intrinsic-suppression` owns enforcement and review of
+the historical noreach.12 fixture. `q-suppression-reach-residuals` is
+closed as a question, with all implementation owners still open.
+Control-word/no-op prefixes and discarded tests remain separate questions.
+Journal 590 records the ruling.
+
+This is documentation/backlog recording only. No compiler/runtime/spec
+code changed, and no new behavior probe, full sweep or coverage run was
+made. Journal 577 remains the accepted implementation baseline.
+
+## STATUS (2026-11-08) - Discarded statuses cannot be consumed
 
 DG chose rejection for testing a result after `-` discards it.
 Conditions, tested logical-list clauses, capture conditions and DD74

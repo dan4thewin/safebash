@@ -1,16 +1,21 @@
 ---
-title: "Suppression residuals: adjacency settled; status-less intrinsic question remains"
-status: open
+title: "Suppression residuals: decisions settled; enforcement queued"
+status: done
 priority: P3
 kind: question
 depends: []
 gates:
-  - "DG rules on R3's directly prefixed status-less intrinsics; DD55 records the choice"
-  - "R3 enforcement has an explicit owner after the ruling; settled repairs remain open in reject-nonadjacent-suppression and retire-suppression-on-compounds"
+  - "R3 is rejected by policy in DD55; reject-statusless-intrinsic-suppression owns enforcement"
+  - "Other settled repairs retain their owners in reject-nonadjacent-suppression and the compound/group retirement tasks"
   - "Discarded-status consumption is rejected by policy; reject-discarded-status-consumers owns enforcement independently of R3"
 ---
 
 ## Decision update (2026-11-08)
+
+Closed as a policy-question record, not as an implementation claim.
+DG rejected R3's status-less value-intrinsic captures; the new P3
+`reject-statusless-intrinsic-suppression` owns enforcement (journal 590).
+All remaining repairs below have their own open implementation owners.
 
 DG chose **"reject the - not adjacent to the command"**. DD55/DD71 reject
 `- x=$(cmd)` rather than retaining it as an alias of `x=$(- cmd)`.
@@ -23,9 +28,9 @@ R2's operand reach violates the existing no-reach rule: the `(( ... ))`
 command is not permission to discard a nested capture's failure. The
 new P3 `reject-nonadjacent-suppression` owns these repairs. No compiler
 change is claimed here; journal 588 records the ruling. R5 remains with
-the existing compound-retirement tasks. R3 remains open. DG subsequently
-rejected discarded-status consumption (Q3, journal 589);
-`reject-discarded-status-consumers` owns that enforcement.
+the existing compound-retirement tasks. R3 is now rejected as well
+(journal 590). Discarded-status consumption is also rejected (Q3,
+journal 589), with enforcement in `reject-discarded-status-consumers`.
 
 ## Historical evidence
 
@@ -54,7 +59,8 @@ return-kind and capture rulings. Revalidate fixtures before implementation.
 
 The historical noreach.12 control, `int n=$(- strlen $(/bin/false))`,
 aborted at its nested capture. It illustrated the operand boundary, not a
-decision on R3's directly prefixed intrinsics.
+permission retained after R3's ruling. Its contract needs review during
+intrinsic enforcement; preserve the operand-barrier proof on a legal form.
 
 **Ruled:** all five assignment-prefix rows must reject at compile time.
 Do not silently rewrite the first three to an inner `-` or merely arrange
@@ -71,18 +77,31 @@ the store as a suppressed assignment, so its operand capture inherits the
 **Required by no-reach:** its operand capture must remain checked, as in
 the test form. `(( ... ))` is a single command, unlike R1's binding
 prefix; adjacency does not settle whether a directly attached prefix is
-otherwise inert. The implementation task must not let mutation hoisting
-turn the prefix into permission to discard an operand's failure.
+otherwise inert. That eligibility question is retained among Q1's
+non-control forms in `q-suppression-and-stage-residuals`. The repair
+must not let mutation hoisting turn the prefix into permission to
+discard an operand's failure.
 
-## R3. A `-` on a value intrinsic that has no status
+## R3. Status-less value-intrinsic captures: reject
 
-`str x=$(- toupper abc); echo "[$x]"` prints `[ABC]`. The `-` is dead,
-because toupper has no failure to discard. Some intrinsics do report one
-(getenv, DD#101).
+Historically, `str x=$(- toupper abc); echo "[$x]"` printed `[ABC]`.
+The capture consumed the string value and the `-` had no separate status
+to discard. Some intrinsics do report one (`getenv`, DD101).
 
-Question: is a `-` on a status-less intrinsic an error, as `- void_f` is
-(SB4076, DD#55 2026-10-30)? Pointer: the value-intrinsic arm of
-`lift_suppressed_capture` (transform/functions.rs).
+**Ruled:** reject the prefix; write `$(toupper abc)`. This applies to
+string and integer value-intrinsic captures with no separate status.
+Argument/interpolation positions and redirects cannot manufacture another
+result channel. Fatal allocation faults remain fatal, not discardable
+statuses. Preserve real status-producing captures such as `getenv`,
+ordinary explicit value discard (`- int_fn`, `- wait`), no-reach,
+taint and existing value-placement rules.
+
+`reject-statusless-intrinsic-suppression` owns enforcement, including
+review of the historical noreach.12 fixture and its operand-barrier claim.
+Coordinate capture-kind interpretation with the integer-capture repair.
+The historical implementation pointer is the value-intrinsic arm of
+`lift_suppressed_capture` (`transform/functions.rs`), not a new source
+trace or a requirement to fix only that path.
 
 ## R4. A dead `-` on a void function's capture escapes SB4076
 

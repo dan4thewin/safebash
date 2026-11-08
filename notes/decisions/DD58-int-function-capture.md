@@ -69,6 +69,14 @@ For an `-> int` function f, the required behavior is:
 | `$(f >file)` | Capture that same integer; send f's stdout to the file |
 | `$(- f)` or `$(- f 2>&1)` | SB4076: the capture already consumes the integer |
 
+DD55's 2026-11-08 intrinsic ruling applies the same channel distinction
+to status-less value intrinsics: `$(- strlen abc)` cannot consume the
+integer and also claim to discard a separate status that does not exist.
+Ordinary `$(strlen abc)` and arithmetic calls remain legal. This neither
+grants intrinsic redirect syntax nor forbids ordinary integer-value
+discard such as `- wait`. Intrinsic enforcement is separately queued in
+`reject-statusless-intrinsic-suppression` (journal 590).
+
 Quoting/interpolating one of these integer captures renders the integer
 under DD#30; it never substitutes the function's stdout instead.
 SB4075's connected-writer requirement concerns stdout captures (DD#88),
