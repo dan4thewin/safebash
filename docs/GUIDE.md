@@ -292,8 +292,17 @@ discard a later `&&`/`||` operand's result, just as a pipeline-head `-`
 cannot discard a later stage's status. `reject-nonadjacent-suppression`
 owns pending assignment refusal, list binding/classification and the
 remaining arithmetic-write operand barrier. Capture conditions retain
-their handling contract; the separate question of consuming a discarded
-status remains open.
+their handling contract.
+
+DD55 also rejects consuming a status explicitly discarded by `-` (DG,
+2026-11-08). This covers conditions, tested `&&`/`||` clauses, capture
+conditions and DD74 status return producers. All-suppressed pipelines
+cannot supply such a status; partial pipelines still supply their
+unsuppressed-stage aggregate. A final `a || - b` at statement level,
+discard followed by a fresh `return 0`, and testing a capture's text
+rather than its discarded status remain legal. Ordinary handling is not
+source discard merely because it disables an implicit abort.
+`reject-discarded-status-consumers` owns pending enforcement.
 
 ### Phase 3: Taint
 

@@ -29,6 +29,11 @@ recipient: an unprefixed void `b` is not a reason to reject the prefix on
 `a`; a directly prefixed void call cannot escape its existing refusal
 by appearing in a list.
 
+DG subsequently rejected consuming the discarded result (Q3, journal
+589). Thus those leading-prefix logical lists must reject, not acquire
+whole-list reach or an always-successful status. The separate
+`reject-discarded-status-consumers` owns that consumer check.
+
 `[[ ... ]]` and `(( ... ))` remain single commands, not compound bodies.
 Their operands are separate evaluations. In particular, lowering an
 arithmetic write into a store must not suppress a capture or value call
@@ -71,14 +76,14 @@ DD101 capture conditions, including `if ! x=$(cmd)`, without treating
 handling as an assignment-level discard. Keep DD130's recoverable
 redirect/fatal-fault distinction and existing child ownership.
 
-R3's status-less intrinsic question, Q1/Q5's inert-prefix questions and
-Q3's consumption of a discarded status remain separate policy choices
-in the two residual-question tasks. List binding is settled regardless
-of Q3's outcome: if Q3 rejects a form, pin that refusal; if it allows the
-form, pin command-local checking. Do not decide Q3 incidentally while
-repairing adjacency, or use it to defer the settled assignment and
-operand-boundary repairs. Compound rejection remains with
-`retire-suppression-on-compounds`.
+R3's status-less intrinsic question and Q1/Q5's inert-prefix questions
+remain separate policy choices in the two residual-question tasks.
+Q3 is now settled: reject the consumed discard. Coordinate its check and
+the 55.145-55.147 migration with `reject-discarded-status-consumers`,
+without duplicate specs or retaining whole-list binding underneath a new
+refusal. Valid statement-level `a || - b` and partially suppressed
+pipelines still need command-local interpretation. Compound rejection
+remains with `retire-suppression-on-compounds`.
 
 Give changed contracts fresh ids above the spec.db historical high-water
 mark. Prove the focused refusals and barriers against the before binary

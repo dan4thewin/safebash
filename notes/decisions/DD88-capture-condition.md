@@ -63,14 +63,30 @@ handling forms, including `if ! x=$(cmd)`. It rejects `- x=$(cmd)` as a
 discard spelling; write `x=$(- cmd)` instead. A capture-condition is not
 permission to move `-` outside the assignment.
 
+DG also rejected consuming a discarded status (2026-11-08; DD55).
+`if x=$(- cmd) { ... }` and an all-suppressed pipeline capture condition
+must reject; the same applies in loop conditions and logical-list
+consumers. Remove the source `-` when the command's status is needed.
+A partially suppressed pipeline capture condition remains legal and
+uses only its unsuppressed stages' aggregate.
+
+Ordinary `if x=$(cmd)` and `if ! x=$(cmd)` remain handling forms. The
+lowering's unchecked/suppressed flags do not make those source-level
+discard: the condition consumes the status. Conversely, `x=$(- cmd)`
+without a status consumer remains a legal stdout capture. Enforcement
+is pending in `reject-discarded-status-consumers` (journal 589).
+
 ## Why this shape
 
-The narrowed semantics are the union of two mechanisms that already exist, so
-the implementation is mostly wiring, not new machinery:
+The implementation reuses two existing mechanisms:
 
-1. `x=$(- cmd)` — captures stdout, suppresses the abort, stores the status.
+1. Capture stdout and disable the implicit abort while retaining the
+   command's status for the explicit handler.
 2. `while read x` — an operation that binds a variable AND yields a condition
    truth value.
+
+This is implementation sharing, not source equivalence to `x=$(- cmd)`:
+an authored `-` discards precisely the status the condition needs.
 
 ## Implementation
 

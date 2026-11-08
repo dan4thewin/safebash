@@ -93,9 +93,9 @@ bindings do not acquire a discardable result from an operand.
 A prefix belongs to one command, not a whole `&&`/`||` list. In
 `- a || b` or `- a && b` it belongs only to `a`; it cannot discard `b`'s
 result. To discard `b`, put a separate `-` directly before `b`. A
-pipeline-head `-` likewise belongs only to its first stage. This fixes
-binding; it does not settle whether a condition may consume a result that
-the adjacent `-` discards (`q-suppression-and-stage-residuals`, Q3).
+pipeline-head `-` likewise belongs only to its first stage. Binding and
+consumption are distinct checks: the subsequent ruling below rejects
+`- a || b` and `- a && b` because their left status is consumed.
 
 Adjacency is necessary, not sufficient: existing result-kind and
 context restrictions still apply. `[[ ... ]]` and `(( ... ))` are single
@@ -113,6 +113,54 @@ No body, operand, taint or fatal-fault boundary changes.
 refusals, command-local list binding/classification and the remaining
 arithmetic-operand reach repair. Journal 588 records this policy-only
 change.
+
+### A discarded status cannot be consumed (DG, 2026-11-08)
+
+DG chose **reject** for testing a result after `-` discards it. A source
+`-` removes that command's result from the available status producers;
+it does not supply an always-successful replacement or leave the original
+status available to a consumer.
+
+Reject a directly suppressed command in `if`, `elif`, `while` or `until`,
+and wherever its status decides an `&&`/`||` continuation. This includes
+middle clauses and the final clause when the whole list is a condition.
+For example, both `- a || b` and `if a || - b { ... }` reject. A final
+`a || - b` at statement level remains legal: nothing consumes `b`'s
+result. Existing result-kind restrictions still apply.
+
+Capture conditions obey the same rule: `if x=$(- cmd) { ... }` rejects.
+Remove `-` when the captured command's status is needed. A pipeline used
+as a condition must have at least one stage whose status was not
+explicitly discarded. Thus an all-suppressed condition pipeline rejects,
+including inside a capture condition. A partially suppressed pipeline
+remains legal: the condition uses the aggregate over its unsuppressed
+stages, not the excluded statuses.
+
+DD74's `return <producer>` explicitly consumes its producer's status too.
+It cannot forward a discarded status, including a suppressed final list
+clause or an all-suppressed pipeline. A body may still discard a command
+and then return a fresh authored status, such as `- cmd; return 0`.
+This is not a ban on constant results or on discard inside a predicate
+function's body.
+
+This is not a blanket ban on `-` anywhere inside a condition. A legal
+`$(- cmd)` used as a text operand discards status but supplies stdout;
+testing that text consumes the enclosing test's boolean, not the
+discarded status. Normal taint, type and body-boundary rules remain.
+Ordinary discard, stdout captures without a status consumer and
+all-suppressed pipelines at statement level remain legal.
+
+Handling and discard are not interchangeable compiler flags: an ordinary
+condition or return producer disables an implicit abort because it
+**consumes** status, not because the author wrote `-`. Preserve those
+forms, existing `!`/`-` refusals and `$?` availability rules. This does
+not reset process exit bookkeeping or child outcomes. In particular,
+`- wait` discards its pid, not DD126's separate `waitstatus` output.
+
+**Enforcement pending:** `reject-discarded-status-consumers` owns the
+source-level refusals and preservation controls. Q3 in
+`q-suppression-and-stage-residuals` is settled as a policy question;
+journal 589 records the decision. No new diagnostic code is selected here.
 
 ## Explicit handling
 
@@ -272,6 +320,12 @@ decides only the consequence, never the aggregate:
 - **statement position** — a nonzero aggregate aborts (routes to ERR).
 - **condition position** (`if` / `while` / `until` test, operand of `!`) —
   the aggregate is the truth value; it does not abort.
+
+The 2026-11-08 consumer rule requires a nonempty set of unsuppressed
+stages when that aggregate is consumed. An all-suppressed pipeline is
+still a legal statement, but not a condition or status return producer.
+This changes which forms are admitted, not the aggregation of legal
+partially suppressed pipelines.
 
 So `if /bin/false | /bin/true; then …` takes the **else** branch — a
 first-segment failure counts, exactly like bash `set -o pipefail`. A
@@ -840,7 +894,8 @@ suppress a whole list.
 
 DG's 2026-11-08 rule closes R6's binding question: the prefix belongs to
 the adjacent command only. Result-kind checks must inspect that command,
-not an unprefixed later operand (R7). Consuming a discarded status remains
-Q3 in `q-suppression-and-stage-residuals`. The enforcement task must review
-55.145-55.147, use fresh ids for changed contracts and preserve genuine
-status-retention coverage on legal routes.
+not an unprefixed later operand (R7). DG also rejected consuming the
+discarded status (Q3, journal 589), so these leading-prefix logical lists
+must reject. The adjacency and consumer enforcement tasks must coordinate
+review of 55.145-55.147, use fresh ids for changed contracts and preserve
+genuine status-retention coverage on legal routes.

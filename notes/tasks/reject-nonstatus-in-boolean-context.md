@@ -14,6 +14,12 @@ gates:
 
 # Reject non-status constructs in boolean contexts
 
+This is the historical July implementation record. DD88/DD101 later
+introduced capture-condition exceptions. DD55's 2026-11-08 ruling now
+also rejects explicitly discarded statuses in consumer positions;
+`reject-discarded-status-consumers` owns that pending extension, not this
+completed task.
+
 DG 2026-07-04: "the reject should apply to any non-boolean/non-exit-status
 used in a boolean context." This is the **dual** of the DD#70 must-consume
 rule — DD#70 says a boolean/status *producer* must be consumed; this says a
@@ -70,14 +76,16 @@ in_condition)` (`sash/src/validate.rs:74`), with `validate_if`/
 ## Watch out
 
 - Do **not** reject genuine status producers: a command/pipeline
-  (`if grep -q x f; then`), `[[ … ]]`, `(( … ))`, a function call, a
-  suppressed command (`-cmd`), all still valid conditions.
+  (`if grep -q x f; then`), `[[ … ]]`, `(( … ))` or a status-function call.
+  The former inclusion of a suppressed command is superseded by DD55's
+  2026-11-08 consumer rule. A partially suppressed pipeline remains valid;
+  an all-suppressed one does not.
 - The dispatch `[[ … { } ]]` statement already rejects as a condition
   (SB4028); leave that, keep codes adjacent.
 - Confirm `for`/`case`-style bodies (context-reset) are unaffected.
-- `x=$(cmd)` as a condition: rejected too (assignments aren't status
-  producers in sash — a failed cmdsub aborts via DD#55 (A), you don't gate
-  on it). Note this divergence from bash in the spec comment.
+- The original rejection of `x=$(cmd)` as a condition was superseded by
+  DD88/DD101's scoped capture-condition forms. Preserve those handlers;
+  an explicit inner `-` cannot discard the status they consume.
 
 ## Refs
 

@@ -114,11 +114,19 @@ only f's own answer, not the failures inside its body.)
 **Command adjacency (DG, 2026-11-08; DD55).** The `X` being prefixed is
 one command or call, not an assignment or a whole logical list.
 `- x=$(cmd)` is rejected; write `x=$(- cmd)`. In `- a || b` the prefix
-belongs only to `a`, never to `b`. Whether the surrounding condition may
-consume the discarded result is a separate open question
-(`q-suppression-and-stage-residuals`, Q3). Enforcement of adjacency is
-queued in `reject-nonadjacent-suppression`; result-kind, no-reach and
-fatal-fault rules remain unchanged.
+belongs only to `a`, never to `b`. Enforcement of adjacency is queued in
+`reject-nonadjacent-suppression`; result-kind, no-reach and fatal-fault
+rules remain unchanged.
+
+**Discard is not a status producer (DG, 2026-11-08; DD55).** A directly
+suppressed result cannot feed a condition, an `&&`/`||` decision or a
+DD74 status return producer. This rejects `- a || b` and capture
+conditions that consume a discarded status, rather than inventing success
+or exposing the discarded result. An all-suppressed pipeline has no status for
+such a consumer. Partial pipelines still supply their unsuppressed-stage
+aggregate. A final `a || - b` at statement level remains legal.
+`reject-discarded-status-consumers` owns enforcement; Q3 in
+`q-suppression-and-stage-residuals` is settled (journal 589).
 
 ### Why the original rule did not hold up
 

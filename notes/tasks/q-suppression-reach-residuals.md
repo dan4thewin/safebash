@@ -7,7 +7,7 @@ depends: []
 gates:
   - "DG rules on R3's directly prefixed status-less intrinsics; DD55 records the choice"
   - "R3 enforcement has an explicit owner after the ruling; settled repairs remain open in reject-nonadjacent-suppression and retire-suppression-on-compounds"
-  - "Consuming an already discarded status is Q3 in q-suppression-and-stage-residuals, not an unresolved adjacency question"
+  - "Discarded-status consumption is rejected by policy; reject-discarded-status-consumers owns enforcement independently of R3"
 ---
 
 ## Decision update (2026-11-08)
@@ -23,8 +23,9 @@ R2's operand reach violates the existing no-reach rule: the `(( ... ))`
 command is not permission to discard a nested capture's failure. The
 new P3 `reject-nonadjacent-suppression` owns these repairs. No compiler
 change is claimed here; journal 588 records the ruling. R5 remains with
-the existing compound-retirement tasks. R3 and the separate consumer
-question Q3 remain open.
+the existing compound-retirement tasks. R3 remains open. DG subsequently
+rejected discarded-status consumption (Q3, journal 589);
+`reject-discarded-status-consumers` owns that enforcement.
 
 ## Historical evidence
 
@@ -118,10 +119,10 @@ either way, so the program's exit status is right, but b's failure no
 longer aborts.
 
 **Ruled:** the prefix binds only the adjacent command, as a pipeline-head
-prefix already does. It cannot make a later operand unchecked. Whether
-`(- a) || b` is legal when `||` consumes the discarded status remains Q3
-in `q-suppression-and-stage-residuals`; this ruling does not select a
-consumer policy or make a discarded status mean success.
+prefix already does. It cannot make a later operand unchecked. DG also
+rejected consuming the discarded result (Q3, journal 589), so
+`(- a) || b` is not a legal use of the prefix. Neither ruling makes
+discarded status mean success.
 
 ## R7. Result-kind checks belong to the prefixed command
 
@@ -134,8 +135,9 @@ aborted at its `/bin/false` (no reach).
 R6 now settles the recipient: `- /bin/false || f` does not prefix `f`,
 so its void kind is not a reason for SB4076 there. Conversely, in
 `- f || other`, the prefix really does target the void function and must
-not evade its existing refusal. Q3 still owns the validity and diagnostic
-policy for consuming a discarded result.
+not evade its existing refusal. Q3 now rejects consuming either discarded
+result; its implementation owner must provide a diagnostic that explains
+the applicable refusal rather than inspecting an unprefixed list tail.
 
 ## B84 is fixed on every route
 

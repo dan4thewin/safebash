@@ -1,4 +1,24 @@
-## STATUS (2026-11-08, latest) - Suppression must be command-adjacent
+## STATUS (2026-11-08, latest) - Discarded statuses cannot be consumed
+
+DG chose rejection for testing a result after `-` discards it.
+Conditions, tested logical-list clauses, capture conditions and DD74
+status return producers cannot consume that discarded result.
+All-suppressed pipeline consumers reject; partial pipelines keep their
+unsuppressed-stage aggregate. Unconsumed statement tails such as
+`a || - b`, captured text operands and discard followed by a fresh
+authored return remain legal.
+
+DD55/DD70/DD74/DD88 and GUIDE record the contract. Q3 in
+`q-suppression-and-stage-residuals` is settled, and new P3
+`reject-discarded-status-consumers` owns enforcement. The adjacency task
+and residual records agree; inert-prefix questions remain separate.
+Journal 589 records the choice and its preservation boundaries.
+
+This is documentation/backlog recording only. No compiler/runtime/spec
+code changed, and no new behavior probe, full sweep or coverage run was
+made. Journal 577 remains the accepted implementation baseline.
+
+## STATUS (2026-11-08) - Suppression must be command-adjacent
 
 DG chose to reject a `-` that is not adjacent to its command.
 `- x=$(cmd)` is not an alias: write `x=$(- cmd)`. Append and cell

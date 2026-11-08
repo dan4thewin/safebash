@@ -5,7 +5,7 @@ priority: P3
 kind: question
 depends: []
 gates:
-  - "DG rules on each question below; each ruling is recorded in the DD it names"
+  - "DG rules on the remaining questions below; Q3 is settled in DD55 with enforcement in reject-discarded-status-consumers"
   - "every program in the tables prints what its ruling says or is rejected with a diagnostic naming the rule, in both backends"
   - "SB4018's `[[ … ]]` advice and SB5073's message for a stage say only what the rulings on Q5 and Q6 allow"
   - "`bug-peel-family-classifiers`, which defers a case to Q5, is updated to the ruling"
@@ -133,13 +133,15 @@ changes it for `cmd &`.
 
 Probes: directory `exq/` in `files/port-exec-probes.tar.gz`.
 
-### Q3. `-` where the status is consumed
+### Q3. Settled: reject consuming a discarded status
 
 DD55's 2026-11-08 adjacency ruling settles the prefix's recipient:
 `- a || b` prefixes only `a`, not the whole list or `b`.
-`reject-nonadjacent-suppression` owns enforcement. This question remains
-about consuming that discarded result, not about allowing wider reach;
-the historical results below are not a fresh measurement of the ruling.
+`reject-nonadjacent-suppression` owns that enforcement. DG then chose
+**reject** for consuming the discarded result. DD55/DD70/DD74/DD88 record
+the rule; `reject-discarded-status-consumers` owns enforcement and journal
+589 records the choice. This question is closed, not the implementation;
+the other questions in this file remain open.
 
 DD#55, "Suppression with `-`": "`- cmd` … its exit status is discarded.
 `$?` is not available after `- cmd` — reading `$?` after `-` is a compile
@@ -147,6 +149,9 @@ error. You said you don't care; you don't get to inspect it." Its
 2026-07-24 section:
 a pipeline's status is the worst over its *non-suppressed* segments, and a
 `-` on a segment excludes it.
+
+The following are historical F1+F4 measurements, not fresh execution or
+claims that later typing/return rules leave every fixture legal.
 
 | Id | Program | Result |
 |---|---|---|
@@ -159,22 +164,30 @@ a pipeline's status is the worst over its *non-suppressed* segments, and a
 | e09 | `if - /bin/true \| /bin/false { echo t } else { echo f }` | `f` |
 | e10 | `- /bin/false \| /bin/true` then `echo "[$?]"` | `[0]` |
 
-e04, dc2, e07 and v9 read the status DD#55 says was discarded. e03 applies
-the aggregate rule to zero segments, which gives success, so it disagrees
-with e04 about the same `- /bin/false`. e08–e10 follow DD#55. A stage `-`
-that excludes a SIGPIPE-prone producer is meaningful (DD#55, lines 94–97)
-and stays legal under every option.
+e04, dc2, e07 and v9 read the discarded status. e03 instead formed a
+successful aggregate over zero unsuppressed stages. All five shapes now
+require refusal. The partial-pipeline principle in e08/e09 remains:
+the condition consumes only unsuppressed stages. Status availability in
+other positions retains DD55's separate rules; e10's historical result is
+not a new permission to read `$?` after an ordinary statement.
 
-- **(a) Recommended.** Reject a `-` whose discarded status is the one
-  being read: a lone `- cmd` as an `if`/`while`/`until` condition, a `-`
-  on the left operand of `&&`/`||`, a `-` on a capture condition, and a
-  condition pipeline whose every segment is suppressed. A final `a || - b`
-  at statement level stays legal, since nothing reads that status. This
-  is DD#55's "reading `$?` after `-` is a compile error", applied to the
-  other places a status is read.
-- (b) Define a discarded status as success everywhere, so `if - cmd` is
-  always true, as e03 already is.
-- (c) Document the split in DD#55.
+Reject a directly suppressed result used by `if`/`elif`/`while`/`until`,
+an `&&`/`||` decision, a capture condition or a status return producer.
+DD74's existing context rule includes middle clauses and the final clause
+of a consumed list: `a || - b` is legal as a statement, but
+`if a || - b { ... }` and `return a || - b` are not. An all-suppressed
+pipeline cannot supply a consumed status; partial pipelines retain their
+aggregate and statement-level all-suppressed pipelines remain legal.
+
+The rule is about the result being consumed, not the mere presence of
+`-` inside a condition or function. Captured stdout may be used as a text
+operand, subject to taint, while its command's status is discarded.
+Likewise `- cmd; return 0` supplies a fresh status rather than forwarding
+the discarded one. Ordinary condition/return handling may disable an
+implicit abort internally without being source-level discard.
+
+The alternatives of making discard mean success or preserving the
+single-command/all-suppressed-pipeline split were not selected.
 
 ### Q4. A here-string on a compound reports the redirect, not the here-string
 

@@ -41,6 +41,15 @@ through `mark_condition_predicate` → `mark_predicate_operand`, which recurses
 into *both* operands of a list, while a bare list statement marks only its
 left.
 
+**Discarded statuses (DG, 2026-11-08; DD55).** These same predicate
+contexts reject a command whose result the source explicitly discards
+with `-`. A middle clause is consumed by the next connector; a final
+clause is consumed when the whole list is a condition. Thus
+`a || - b` remains legal as a statement, but `if a || - b { ... }`
+rejects. Per-stage discard remains legal when a pipeline's aggregate
+still has an unsuppressed stage. Enforcement is pending in
+`reject-discarded-status-consumers`.
+
 A predicate's status comes **only** from an explicit `return`. There is **no
 implicit trailing status**: a bare trailing `grep` / `[[ … ]]` / `(( … ))` as
 a function's last statement is an ordinary statement — subject to DD#55
@@ -91,6 +100,14 @@ status. Without this, `return A | B` parsed as `Pipeline([return A, B])` — the
 predicate; a silent abort as a statement). Fixed by folding the parsed producer
 through the same `maybe_wrap_redirects` a statement gets (`parse_return`, DG
 2026-08-31).
+
+Because `return` is a status consumer, it cannot forward a status already
+discarded by an explicit source `-` (DD55, DG 2026-11-08). This includes
+`return A || - B` and all-suppressed pipeline producers. Partial pipeline
+producers retain their usual aggregate. A body may still execute `- cmd`
+and then `return 0` or another fresh status; constant results remain
+legal. Ordinary producer handling is not source-level discard merely
+because lowering disables its implicit abort check.
 
 `return [[ … ]]` also discharges the DD#70 must-consume obligation on `[[ … ]]`
 — the `return` consumes the test — so the natural predicate spelling compiles

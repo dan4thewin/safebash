@@ -195,8 +195,9 @@ rest of the work lives in other tasks:
 - unit B's residuals → `q-suppression-reach-residuals`. DG's 2026-11-08
   adjacency rule now rejects assignment prefixes and whole-list reach;
   `reject-nonadjacent-suppression` owns enforcement and the arithmetic
-  operand barrier. Directly prefixed status-less intrinsics and consuming
-  a discarded status remain separate questions (journal 588).
+  operand barrier (journal 588). Consuming a discarded status is now
+  rejected too; `reject-discarded-status-consumers` owns enforcement
+  (journal 589). Directly prefixed status-less intrinsics remain a question.
 
 The wait ruling needs no task, because `- wait` is unchanged. The
 sections below remain the evidence for those tasks.

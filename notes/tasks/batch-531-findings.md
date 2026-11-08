@@ -973,7 +973,9 @@ DG 2026-10-28: F2 lands without the B82 wrap and without specs that pin
     longer permits whole-list suppression. The status-retention fix
     remains historical fact; `reject-nonadjacent-suppression` owns the
     new binding rule and review of these specs at fresh ids where their
-    contracts change. Enforcement is not complete.
+    contracts change. `reject-discarded-status-consumers` owns the
+    subsequent refusal of their consumed discard (journal 589); the
+    tasks must coordinate migration. Enforcement is not complete.
   - 55.88 is not ported (decide-and-report). Its premise, that the `-`
     reaches a function stage's body, was removed by DG's Q1 ruling
     (2026-10-29); noreach.6 pins the no-reach form of the same shape.
