@@ -50,7 +50,9 @@ under the usual handling rule.
 
 Anything that can fail due to external state or data:
 
-- External commands (fork/exec → wait → check status)
+- External commands whose caller remains to check them (fork/exec → wait →
+  check status); single-external-command background jobs instead exec
+  directly, as specified below
 - Builtins that wrap syscalls (`cd`, `echo`/`printf` via `write(2)`)
 - Runtime calls that can fail on data (`regcomp` on dynamic patterns)
 - Command substitution (`x=$(cmd)` — check before assignment)
@@ -528,12 +530,61 @@ command, `[[ ]]`, `(( ))`) is fine, and binds only that unit — `! X && Y` is
 
 ## Background processes (`cmd &`)
 
+**Direct command identity (DG, 2026-11-08).** A background job consisting
+of one external command execs that command directly in the background
+child. There is no implicit sash wrapper that forks a second process,
+waits for it and reports its failure. Arguments and attached redirects do
+not require such a wrapper.
+
+`$(getcpid)` / `$!` names the command's process. A signal addressed to
+that pid reaches the command itself, not an intermediate sash process.
+This is a process pid, not a process-group or descendant-tree handle;
+the command's own signal behavior still applies.
+
+After a successful exec, no sash wrapper remains to print
+`command failed (exit N)` when the command later exits nonzero. Its own
+stderr is unaffected. The parent can still reap its actual outcome
+through `wait` and `$(waitstatus)`, without an automatic diagnostic,
+parent abort or ERR dispatch merely because the child failed.
+DG chose simpler signalling over the automatic completion diagnostic.
+
+An explicit user function retains the checked-wrapper option:
+
+```sh
+fn job {
+    /path/to/command arg
+}
+job &
+```
+
+Here the background child runs the function, and its ordinary command
+check still reports a failure. `$!` names that function's process; the
+parent reaps its outcome. Signalling that wrapper can leave its external
+command running. This is now an explicit choice, not a hidden process
+added to every external job. Do not elide the function boundary merely
+because its inlined body contains only one external command.
+
+This ruling changes single-external-command jobs, not the execution of
+background functions, builtins, pipelines or multi-command lists. It adds
+no process-tree signalling, parent-side failure reporter or automatic
+wait. Existing `exec cmd &` remains legal and now has the same direct
+process behavior; rejecting that redundant spelling was not selected.
+An otherwise legal `- cmd &` also uses the direct child and does not
+reintroduce a wrapper. Result-kind, operand/body and redirect rules remain.
+
 A failed fork is fatal in the parent (DD130), not a child's returned status.
-An exec failure occurs in the child; the parent observes the child's
-completion under the existing process-status rules (details in the
-2026-10-26 addendum).
+If exec itself fails, the child still reports the exec errno and exits
+127; removing the wrapper removes the extra status-abort line, not that
+startup diagnostic. Other pre-exec failures retain their existing
+operation-specific rules and DD130 classification. The parent observes
+an actual child's completion under the existing process-status rules.
 A successfully forked background process runs independently and
 can outlive the sash program. `wait` is optional.
+
+**Implementation pending:** `background-external-direct-exec` owns this
+process-model change. The compiler still has the implicit wrapper recorded
+by the historical Q2 probes in `q-suppression-and-stage-residuals`.
+Journal 594 records the accepted policy, not an implementation.
 
 **Amended by DD#126 (2026-10-09).** `wait` no longer returns a status and is
 no longer subject to the implicit check: it is an int intrinsic yielding the
@@ -788,18 +839,14 @@ it would act on the child and be lost.
   `ssa::BuiltinCmd::acts_on_its_process`, shared with the stage gate (DD#122
   addendum 2026-10-26).
 - Still legal: `cmd &`; `a | b &` (§Pipelines above; it drew a false SB4022,
-  B23); `a && - b &`; and `exec cmd &`, which is not `cmd &`. (Corrected
-  2026-10-27: this bullet first said `exec cmd &` replaced the child as
-  `cmd &` would.) A job `cmd &` is a sash child that runs `cmd` as a second
-  process, checks it and reports a failure. `$!` names that child, so a
-  signal sent to `$!` stops the child and leaves `cmd` running. Under `exec`
-  the child becomes `cmd`: `$!` names the command and a signal reaches it.
-  As with a foreground `exec`, nothing is left to report a failure, so it
-  reports as `- cmd &` does. Either way the status reaches `$(waitstatus)`
-  through `wait` (DD#126). A pipeline stage's child already becomes its
-  command, and the parent checks it, so `exec` there changes nothing and
-  `a | exec b` is SB4022. Whether `exec cmd &` stays legal is open:
-  `notes/tasks/q-suppression-and-stage-residuals.md`, Q2.
+  B23); `a && - b &`; and `exec cmd &`. The accepted 2026-11-08 rule in
+  §Background processes makes a single external job exec directly, with
+  `$!` naming its command. The old implicit wrapper and its automatic
+  failure diagnostic are being retired; an explicit function can retain
+  them. `exec cmd &` stays legal but is no longer needed for direct PID
+  ownership. A pipeline stage's child already becomes its command, and
+  the parent checks it, so `exec` there changes nothing and
+  `a | exec b` remains SB4022.
 
 **Who may read its status.** A job as a condition's last statement, or as a
 return producer, is SB4024: the consumer would act on a status the job never
@@ -827,10 +874,15 @@ or either handler declaration it is SB4014 at the `-`. These drew SB5011
 "command '-' not found" or an unrelated SB4014. `- until` now parses like
 `- while`.
 
-**Background failure ownership.** The exec fails in the child, which prints
-the errno and "command failed (exit 127)" and exits 127. The parent sees the status only
-by reaping it through DD#126's latch (55.16). Under `- cmd &` and `exec cmd &`
-the child prints the errno but not the "command failed" line. F2
+**Background failure ownership.** Under the accepted direct-exec rule,
+an exec failure is reported by the child as an errno diagnostic followed
+by exit 127; there is no implicit wrapper to add `command failed (exit 127)`.
+The parent obtains the outcome by reaping through DD#126's latch, not by
+an implicit check. A successfully exec'd command's later nonzero exit
+likewise produces no sash completion diagnostic. An explicit function
+wrapper retains its ordinary body checks. The old unmarked job's extra
+status line is historical implementation behavior, retained in Q2's
+evidence until `background-external-direct-exec` lands. F2
 (2026-10-28, batch-531 B20, journal 539) implemented background fork failure
 as `fork: error N`, status 1, abort unless checked or suppressed, with `$!`
 set to -1. DD130 now requires a fatal path instead, so no handling branch

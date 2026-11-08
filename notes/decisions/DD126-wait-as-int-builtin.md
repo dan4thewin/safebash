@@ -193,6 +193,20 @@ they read the context in which the expression occurs.
 parser-level punctuation sugar for the first two (DD#111). The diagnostics
 name the long form, as SB5012's message already did.
 
+### Which process the background pid names
+
+DD55's accepted 2026-11-08 rule makes a single-external-command background
+job exec directly: `getcpid` / `$!` names the command, and `wait` reaps
+that direct child's outcome. An explicitly backgrounded user function
+still runs in its own child; its pid and outcome belong to that function
+process. This changes neither the one-statement latch rule nor `wait`'s
+pid result, separate `waitstatus` output and never-abort contract.
+
+The direct-exec change is pending in `background-external-direct-exec`.
+It removes the ordinary job's implicit wrapper and completion diagnostic,
+not the parent's ability to reap a status. It introduces no process-group
+handle, automatic wait or parent-side failure report.
+
 ### What this changes about program exit status
 
 An uncaught background failure no longer colours the parent's exit code:

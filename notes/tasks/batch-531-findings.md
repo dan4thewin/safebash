@@ -588,7 +588,12 @@ touches is fixed here, and any other finding goes to the backlog.
   under `!`, supply a consumed status?
 - `q-suppression-and-stage-residuals` (P3): the residual `-` forms, `exec`
   in a forked child, a here-string on a compound, and a value intrinsic as
-  a stage.
+  a stage. Q1/Q3/Q5 are settled; Q2 now chooses direct exec for single
+  external background jobs (DD55, journal 594).
+- `background-external-direct-exec` (P3): remove the implicit wrapper so
+  `$!` names the command; retain explicit function wrappers and reaped
+  outcomes without an automatic completion diagnostic. Implementation
+  remains open.
 - `bug-strace-count-injection-drifts-on-restart` (P3): the harness's, not
   the compiler's. strace's `when=N` counts a restarted clone, so pipeown.28's
   injected fault can land on the fork before its target (once in 266 stub

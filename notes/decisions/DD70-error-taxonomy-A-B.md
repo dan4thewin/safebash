@@ -322,13 +322,22 @@ exits with the failure status:
 - **arithmetic overflow** (DD#25) → `<argv0>: arithmetic overflow`
 - **regcomp** → `<argv0>: regexp error: <msg>`
 
+DD55's accepted 2026-11-08 direct-exec rule removes the implicit checked
+wrapper from a single-external-command background job. After successful
+exec, no sash process remains there to emit a completion diagnostic;
+neither does the parent's `wait` emit one. A user function backgrounded
+explicitly retains ordinary body checks and their diagnostics.
+`background-external-direct-exec` owns this pending change.
+
 `<reason>` is the OS `strerror` text (ENOENT "No such file or directory",
 ENOSPC "No space left on device", …) via a hand-rolled errno→string table
-(`sash-rt` is `#![no_std]`, no libc). The diagnostic fires **only on the
-actual abort** — a *caught* (`if`/`||`) or `-`-*suppressed* failure prints
+(`sash-rt` is `#![no_std]`, no libc). The abort-site diagnostic fires
+**only on the actual abort** — a *caught* (`if`/`||`) or `-`-*suppressed* failure prints
 **nothing** (it is handled, not fatal). Implementation lives at the codegen
 abort site, not in the syscall wrapper, precisely so caught failures stay
-silent.
+silent. The existing child-owned exec errno report is separate: if exec
+itself fails, the child reports that error and exits 127, including
+without a wrapper (`bg-exec-errno-message`, resolved 2026-07-08).
 
 ## Relationship to other decisions
 

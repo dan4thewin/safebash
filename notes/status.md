@@ -1,4 +1,28 @@
-## STATUS (2026-11-08, latest) - Assignments and mutations produce no result
+## STATUS (2026-11-08, latest) - A single external background job is the command
+
+DG chose to drop the implicit sash wrapper: simpler signalling outweighs
+its automatic failure diagnostic. Under the accepted rule, `cmd &` execs
+directly in its child, and `getcpid` / `$!` names the actual command.
+The parent still reaps its outcome through `wait` / `waitstatus`; no
+parent-side reporter or automatic failure propagation replaces the wrapper.
+
+An explicitly backgrounded user function retains checked-wrapper
+behavior, including a one-command body. Command stderr and exec-startup
+diagnostics remain, as do fatal fork handling, child-handler exclusion,
+optional waiting and other job forms. `exec cmd &` remains legal but
+becomes redundant; no extra spelling ban was selected.
+
+DD55/DD70/DD126 and GUIDE agree. Q2 in
+`q-suppression-and-stage-residuals` is settled as policy, and new P3
+`background-external-direct-exec` owns implementation and fixture
+migration. Journal 594 records the reasoning and the explicit-wrapper
+alternative DG identified.
+
+This is documentation/backlog recording only. No compiler/runtime/spec
+code changed, and no new behavior probe, full sweep or coverage run was
+made. Journal 577 remains the accepted implementation baseline.
+
+## STATUS (2026-11-08) - Assignments and mutations produce no result
 
 DG chose no-result writes, not an always-successful mutation status.
 Keep `(( n += 1 ))`; reject `- (( n += 1 ))`. Arithmetic comparisons

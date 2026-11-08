@@ -115,6 +115,13 @@ completion is still observed through the established status mechanism.
 This task does not add process-tree broadcasts, forced asynchronous waits
 or child killing.
 
+DD55's 2026-11-08 direct-background-exec rule removes the second launch
+fork for a single external job; `background-external-direct-exec` owns
+that process-model change. Coordinate the remaining spawn's fatal path
+and fault controls with that task. Removing a fork is not proof that
+failure of the remaining fork is handled correctly; explicit function
+wrappers still exercise their own ordinary external-command forks.
+
 DG selected fatality, not a new numeric status. Establish one documented
 fork-fault status using the existing fatal conventions; if that leaves a
 genuine policy choice, present it before changing the contract. The old

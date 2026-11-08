@@ -5,7 +5,7 @@ priority: P3
 kind: question
 depends: []
 gates:
-  - "DG rules on the remaining questions below; Q1, Q3 and Q5 are settled in DD31/DD55/DD70, with separate enforcement tasks"
+  - "DG rules on the remaining questions below; Q1, Q2, Q3 and Q5 are settled in DD31/DD55/DD70, with separate implementation tasks"
   - "every program in the tables prints what its ruling says or is rejected with a diagnostic naming the rule, in both backends"
   - "SB4018's `[[ … ]]` advice and SB5073's message for a stage say only what the rulings on Q5 and Q6 allow"
   - "Q5 enforcement and advice belong to reject-pointless-statements; bug-peel-family-classifiers retains its shared-classifier repairs"
@@ -112,7 +112,33 @@ migration. R2's operand barrier retains its independent owner in
 `reject-nonadjacent-suppression`; a prefix refusal is not proof of that
 barrier. DD70's discard/effect rule for other operations remains intact.
 
-### Q2. `exec` in a forked child: rejected as a stage, legal under `&`
+### Q2. Settled: single external background jobs exec directly
+
+DG, 2026-11-08: **"let's drop the wrapper - the simplification for
+signalling outweighs the diagnostic"**. DD55 now requires a job of one
+external command to exec directly in the background child. `$!` names
+the command, not a sash wrapper. The parent can still reap its outcome
+through DD126's `wait` / `waitstatus`; the automatic completion
+diagnostic goes, without a new parent-side reporter.
+
+A backgrounded user function remains an explicit checked-wrapper option,
+including when its body contains only one external command. Functions,
+builtins, pipelines and multi-command lists retain their existing
+process/body semantics. Command stderr and exec-startup errno diagnostics
+are not silenced. Fork failure remains fatal under DD130.
+
+This chooses the direct-process behavior of former option (d), not its
+bundled assumption that redundant `exec cmd &` must also be rejected.
+That existing spelling remains legal, as does an otherwise legal
+`- cmd &`; neither requires an implicit wrapper. The pipeline-stage
+`exec` refusal is unchanged. No additional spelling ban was selected.
+
+New P3 `background-external-direct-exec` owns implementation and fixture
+migration; journal 594 records the ruling. Q2 is settled as policy, not
+implemented. The tables below retain historical evidence, not fresh
+measurements or gate predictions.
+
+#### Historical evidence
 
 | Id | Program | `8e28c61` | F1+F4 |
 |---|---|---|---|
@@ -122,8 +148,8 @@ barrier. DD70's discard/effect rule for other operations remains intact.
 | ex1 | `exit 3 &` then `- wait` then `echo after` | `after` | SB4024 1:1, the same reason |
 
 F1+F4 rejected the stage (batch-531 B12: it crashed) and kept ex3 legal on
-purpose, because ex3 works and its fate is a language question rather than a
-bug.
+purpose, because ex3 worked and its fate was a language question rather
+than a bug.
 
 Corrected 2026-10-27. This question first said that ex3 and ex2 each equal
 the command without `exec`, and recommended rejecting ex3. That holds for the
@@ -146,31 +172,17 @@ stage, not for the job. Measured at `d60e74f`, both backends unless a row says
 | w2 | `exec /bin/false &`, the same | `st=1`, nothing else |
 | fg1 | `exec /bin/false` then `echo after` | rc 1, nothing printed |
 
-In a stage `exec` changes nothing: the stage's child already becomes its
-command, and the parent checks its status. Under `&` it changes what the job
-is. A plain job is a sash child that forks the command, checks it and reports
-a failure. `$!` names that child, so a signal sent to `$!` stops the child and
-leaves the command running. `exec cmd &` is the only spelling whose job is the
-command itself: one process, named by `$!`, reached by a signal. Like a
-foreground `exec`, it leaves nothing behind to report a failure, so it reports
-as `- cmd &` does. The status still reaches `$(waitstatus)`.
+In those measurements, a pipeline stage already exec'd directly while an
+ordinary background job kept a wrapper. `exec cmd &` supplied direct PID
+ownership, and `- cmd &` kept the wrapper without its completion report.
+All three exposed the outcome through `waitstatus`.
 
-- **(c) Recommended.** Keep the split, and record the reasons above in DD#55.
-  `exec` as a stage is a spelling that does nothing, and SB4022 says to drop
-  it. `exec cmd &` is how a job is made signallable, and its unreported
-  failure is what `exec` means.
-- (a) Reject `exec cmd &` with SB4024. Then no job can be signalled through
-  `$!` without orphaning its command, unless (d) is chosen too.
-- (b) Accept `a | exec b` as `a | b`: a second spelling of the same stage.
-- (d) Run a job of one external command as a stage runs: its child execs the
-  command. `$!` then names the command and `exec cmd &` is redundant, so (a)
-  follows. But an unmarked job's failure is then reported by nobody; only
-  `wait` and `$(waitstatus)` see it, unless the parent reports what it reaps.
-
-Whichever option: is it acceptable that a signal sent to a plain job's `$!`
-stops only the sash child and orphans the command (k1, k3)? Under (c) the
-answer is to write `exec cmd &` when the job must be signalled. Only (d)
-changes it for `cmd &`.
+The AI initially recommended retaining that split. DG asked what the
+wrapper actually provided, confirmed that status collection did not need
+it, and identified a backgrounded user function as the explicit
+replacement when checking was wanted. DG then chose to remove the
+implicit wrapper. Neither a parent-side reporting mechanism nor allowing
+redundant pipeline-stage `exec` was selected.
 
 Probes: directory `exq/` in `files/port-exec-probes.tar.gz`.
 

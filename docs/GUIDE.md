@@ -679,6 +679,19 @@ valid. Both boundaries are enforced: `q-int-function-pipeline-status` covers
 stages, and `enforce-function-return-kinds` covers return-producer
 compatibility (journal 577).
 
+**Single external background jobs exec directly** (DD#55, DG,
+2026-11-08). The accepted model removes the implicit sash wrapper:
+`cmd &` gives `$(getcpid)` / `$!` the command's actual pid, so signalling
+it does not target an intermediate process. The automatic completion
+diagnostic goes; the command's own stderr and exec-startup diagnostics
+remain. The parent can still reap the outcome with `wait` /
+`$(waitstatus)`, without automatic failure propagation.
+Backgrounding a user function explicitly retains a checked wrapper.
+Functions, builtins, pipelines and multi-command jobs keep their existing
+body/process semantics; `exec cmd &` remains legal but is redundant.
+Implementation is pending in `background-external-direct-exec`
+(journal 594).
+
 ### Phases 7–9: Fold, Codegen, Link
 
 Constant folding, then `codegen/` lowers SSA to Cranelift IR. Declares
