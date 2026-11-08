@@ -84,6 +84,15 @@ filed as `reject-nonstatus-in-boolean-context` (that is where
 `x=… && …` / `if x=…; then` become clean rejects instead of silently
 empty).
 
+**Suppression adjacency (DG, 2026-11-08).** Reject `- x=$(cmd)` rather
+than treating it as shorthand for `x=$(- cmd)`: `-` belongs directly on
+the command whose result is discarded, not on its value binding. The same
+rule covers append and cell assignments; declarations retain their
+existing refusal. DD55 records the full rule and pending
+`reject-nonadjacent-suppression` enforcement. DD88/DD101's explicit
+capture-condition exceptions remain handling forms, not permission for
+an assignment-level `-`.
+
 ## Multi-exact dispatch arms (falls out of the operand rule)
 
 Because a `[[ ]]` operand consumes to whitespace, a dispatch arm may carry

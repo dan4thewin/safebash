@@ -58,6 +58,11 @@ capture-condition form. A function or multi-statement capture does not
 become a condition by containing an explicit status return. Existing
 external-command/pipeline forms and DD#101's `getenv` exception are unchanged.
 
+DD55's command-adjacent `-` rule (DG, 2026-11-08) does not remove these
+handling forms, including `if ! x=$(cmd)`. It rejects `- x=$(cmd)` as a
+discard spelling; write `x=$(- cmd)` instead. A capture-condition is not
+permission to move `-` outside the assignment.
+
 ## Why this shape
 
 The narrowed semantics are the union of two mechanisms that already exist, so

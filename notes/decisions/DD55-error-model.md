@@ -73,6 +73,47 @@ The operation's recoverable attached-redirect failure is discarded too
 (DD130). A fatal fault is never discarded or inverted into a normal
 result. Function result-kind restrictions and the no-reach rule remain.
 
+### Command adjacency (DG, 2026-11-08)
+
+DG: **"reject the - not adjacent to the command"**. A source `-` must
+directly prefix the command or call whose result it discards. It cannot
+prefix an assignment and reach through that binding to a command in its
+value or index:
+
+```bash
+- x=$(/bin/false)    # rejected, not an alias
+x=$(- /bin/false)    # discard /bin/false's status, capture its stdout
+```
+
+The rejection also covers append and cell assignments (`- x+=...`,
+`- a[i]=...`, `- a[i]+=...`), whether or not their value contains a
+capture. Declarations retain their existing refusal. DD71's value
+bindings do not acquire a discardable result from an operand.
+
+A prefix belongs to one command, not a whole `&&`/`||` list. In
+`- a || b` or `- a && b` it belongs only to `a`; it cannot discard `b`'s
+result. To discard `b`, put a separate `-` directly before `b`. A
+pipeline-head `-` likewise belongs only to its first stage. This fixes
+binding; it does not settle whether a condition may consume a result that
+the adjacent `-` discards (`q-suppression-and-stage-residuals`, Q3).
+
+Adjacency is necessary, not sufficient: existing result-kind and
+context restrictions still apply. `[[ ... ]]` and `(( ... ))` are single
+commands, not compound bodies; this ruling does not decide the remaining
+inert-prefix questions. Their operand captures remain checked, including
+inside an arithmetic write. A `-` on that arithmetic command cannot
+suppress a command nested in its expression.
+
+The existing ban on compound prefixes remains
+`retire-suppression-on-compounds`. DD88/DD101 capture conditions remain
+legal handling forms; they do not license an outer assignment `-`.
+No body, operand, taint or fatal-fault boundary changes.
+
+**Enforcement pending:** `reject-nonadjacent-suppression` owns assignment
+refusals, command-local list binding/classification and the remaining
+arithmetic-operand reach repair. Journal 588 records this policy-only
+change.
+
 ## Explicit handling
 
 Three patterns for a command that can fail:
@@ -774,25 +815,32 @@ in `unsuppressed`, which every barrier calls, and the one in
 fail on the pre-unit binary, which is their negative control.
 
 Decide-and-report (DG may veto): the rule's reach as listed, including a
-stage's operand capture aborting only its stage child. Not changed here,
-and recorded as questions in `notes/tasks/q-suppression-reach-residuals.md`:
-an assignment's own captures (`- x=$(cmd)`, `- x=$(strlen $(cmd))`,
-`- a[$(cmd)]=v`) are still discarded; the store of `- (( n = … ))` is
-lowered as a suppressed assignment, so a capture in its value is discarded
-too; `$(- value_intrinsic …)` has no status of its own to discard; `-` on
-`x=$(void_f)` escapes SB4076; and a `-` on a compound still covers the
-compound's own direct commands (`retire-suppression-on-compounds`).
+stage's operand capture aborting only its stage child. F6 left assignment
+prefixes, arithmetic-write operands, status-less value intrinsics and
+compound prefixes unchanged; the historical probes remain in
+`notes/tasks/q-suppression-reach-residuals.md`.
+
+DG's 2026-11-08 adjacency ruling above rejects the assignment prefixes,
+including the void-function-capture route, and the no-reach rule requires
+arithmetic-write operands to stay checked. Enforcement is queued in
+`reject-nonadjacent-suppression`; compound refusal remains separately
+queued in `retire-suppression-on-compounds`. Whether a directly prefixed
+status-less value intrinsic must reject remains R3, not an adjacency
+exception.
 
 Specs: errors.sh noreach.1-noreach.16. Rewritten to the rule: errors.sh
 supval.7, supval.8 and supval.18-supval.21. Journal 548.
 
-**Addendum 2026-10-30 (F6 unit C, batch-531 B84).** A suppressed `||` list
-consumes its status the way a condition does. Under `-` the right operand
-runs unchecked, so the top-level reset of `$?` to 0 after `||` no longer
-applies, and the list ends with its right side's status. Before,
-`- /bin/false || /bin/false` exited 0; now it exits 1, as a lone
-`- /bin/false` does. This is a bug fix, not a new rule. Two questions stay
-open in `notes/tasks/q-suppression-reach-residuals.md`: R6, whether a
-statement `-` should bind only the first operand (today it covers the whole
-list, while a pipeline-head `-` binds stage 1 only), and R7, SB4076 not
-looking through a list. Specs: errors.sh 55.145-55.147. Journal 549.
+**F6 unit C history (2026-10-30, batch-531 B84).** Journal 549 repaired
+status retention on the then-accepted whole-list suppression route: its
+unchecked right operand's status was no longer reset to zero.
+`- /bin/false || /bin/false` changed from exit 0 to exit 1. Specs
+errors.sh 55.145-55.147 record that repair, not an enduring permission to
+suppress a whole list.
+
+DG's 2026-11-08 rule closes R6's binding question: the prefix belongs to
+the adjacent command only. Result-kind checks must inspect that command,
+not an unprefixed later operand (R7). Consuming a discarded status remains
+Q3 in `q-suppression-and-stage-residuals`. The enforcement task must review
+55.145-55.147, use fresh ids for changed contracts and preserve genuine
+status-retention coverage on legal routes.

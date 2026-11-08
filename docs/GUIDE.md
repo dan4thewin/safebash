@@ -274,7 +274,7 @@ enclosing locals, globals, arguments and slots. The checker's `CheckedTypes`
 supplies collection kinds as well as scalar/element types, including implicit
 reader targets; lowering does not infer them again.
 
-A `-` discards the status of the one command or call it prefixes, and
+A `-` discards the result of the one command or call it prefixes, and
 nothing else (DD#55 2026-10-30). The transform keeps a suppression depth on
 `VersionState`: `lower_suppressed_stmt` raises it, and each status check
 reads it as the check is emitted. Operand and argument lifting, the operands
@@ -284,6 +284,16 @@ function, is checked as it would be without the `-`. A suppressed capture
 `$(- cmd …)` passes a flag to its own command instead of raising the depth.
 Suppressed captures retain their normal value and type; structural validation,
 taint and status-availability rules still apply (DD#55).
+
+DD55/DD71 also require the prefix to be adjacent to that command (DG,
+2026-11-08): `- x=$(cmd)` is rejected, not shorthand for `x=$(- cmd)`.
+Append and cell bindings follow the same rule. A leading `-` cannot
+discard a later `&&`/`||` operand's result, just as a pipeline-head `-`
+cannot discard a later stage's status. `reject-nonadjacent-suppression`
+owns pending assignment refusal, list binding/classification and the
+remaining arithmetic-write operand barrier. Capture conditions retain
+their handling contract; the separate question of consuming a discarded
+status remains open.
 
 ### Phase 3: Taint
 

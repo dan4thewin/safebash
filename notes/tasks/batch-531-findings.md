@@ -969,6 +969,11 @@ DG 2026-10-28: F2 lands without the B82 wrap and without specs that pin
   although `b` is unchecked. Branch specs: 55.88.
   - Ported in F6 unit C (journal 549): H219 in `lower_list_stmt`; specs
     55.145-55.147.
+  - DG's command-adjacency ruling (2026-11-08, DD55; journal 588) no
+    longer permits whole-list suppression. The status-retention fix
+    remains historical fact; `reject-nonadjacent-suppression` owns the
+    new binding rule and review of these specs at fresh ids where their
+    contracts change. Enforcement is not complete.
   - 55.88 is not ported (decide-and-report). Its premise, that the `-`
     reaches a function stage's body, was removed by DG's Q1 ruling
     (2026-10-29); noreach.6 pins the no-reach form of the same shape.

@@ -135,9 +135,16 @@ Probes: directory `exq/` in `files/port-exec-probes.tar.gz`.
 
 ### Q3. `-` where the status is consumed
 
-DD#55 (lines 26–29): "`- cmd` … its exit status is discarded. `$?` is not
-available after `- cmd` — reading `$?` after `-` is a compile error. You
-said you don't care; you don't get to inspect it." Its 2026-07-24 section:
+DD55's 2026-11-08 adjacency ruling settles the prefix's recipient:
+`- a || b` prefixes only `a`, not the whole list or `b`.
+`reject-nonadjacent-suppression` owns enforcement. This question remains
+about consuming that discarded result, not about allowing wider reach;
+the historical results below are not a fresh measurement of the ruling.
+
+DD#55, "Suppression with `-`": "`- cmd` … its exit status is discarded.
+`$?` is not available after `- cmd` — reading `$?` after `-` is a compile
+error. You said you don't care; you don't get to inspect it." Its
+2026-07-24 section:
 a pipeline's status is the worst over its *non-suppressed* segments, and a
 `-` on a segment excludes it.
 

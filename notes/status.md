@@ -1,4 +1,24 @@
-## STATUS (2026-11-08, latest) - Process-replacing exec rejected in captures
+## STATUS (2026-11-08, latest) - Suppression must be command-adjacent
+
+DG chose to reject a `-` that is not adjacent to its command.
+`- x=$(cmd)` is not an alias: write `x=$(- cmd)`. Append and cell
+assignments follow the same rule. A prefix on `a` in `- a || b` or
+`- a && b` cannot discard `b`'s result; result-kind checks follow the
+actually prefixed command. Arithmetic-write operands retain the
+existing no-reach requirement.
+
+DD55/DD71 record the rule, DD70/DD88 and GUIDE agree, and journal 588
+records the choice. New P3 `reject-nonadjacent-suppression` owns
+assignment refusals, list binding/classification and the remaining
+arithmetic operand barrier. The residual tasks now separate those
+settled repairs from the open inert-prefix and discarded-status-consumer
+questions. Compound rejection remains in its existing task.
+
+This is documentation/backlog recording only. No compiler/runtime/spec
+code changed, and no new behavior probe, full sweep or coverage run was
+made. Journal 577 remains the accepted implementation baseline.
+
+## STATUS (2026-11-08) - Process-replacing exec rejected in captures
 
 DG chose to reject `exec PROGRAM` inside stdout-capture bodies, directly
 or through called functions. Wrappers, conditional paths, nested captures

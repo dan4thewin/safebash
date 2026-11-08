@@ -111,6 +111,15 @@ landed by F6 (DD#55 addenda 2026-10-30):** `- f` stays legal on a function
 that returns an int or a status, is SB4076 on a void one, and discards
 only f's own answer, not the failures inside its body.)
 
+**Command adjacency (DG, 2026-11-08; DD55).** The `X` being prefixed is
+one command or call, not an assignment or a whole logical list.
+`- x=$(cmd)` is rejected; write `x=$(- cmd)`. In `- a || b` the prefix
+belongs only to `a`, never to `b`. Whether the surrounding condition may
+consume the discarded result is a separate open question
+(`q-suppression-and-stage-residuals`, Q3). Enforcement of adjacency is
+queued in `reject-nonadjacent-suppression`; result-kind, no-reach and
+fatal-fault rules remain unchanged.
+
 ### Why the original rule did not hold up
 
 Two things, neither visible when this DD was written.
