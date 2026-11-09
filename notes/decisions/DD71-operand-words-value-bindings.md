@@ -129,6 +129,13 @@ a preceding semicolon. This preserves `fn greet { echo hello }`.
 Ordinary commands remain open-ended: `echo one echo two` is one command,
 not two inferred commands.
 
+DD68 permits a brace-form `else`/`elif` to follow its preceding body
+across newlines and comments, but not across `;` or another statement.
+That clause-only exception does not attach next-line operators, redirects
+or background marks to a completed statement. Its enforcement belongs to
+`q-clause-on-next-line`; the other separator/binding-list work remains in
+`q-statement-form-residuals`.
+
 **One or more adjacent assignments form a binding list.** Plain
 assignments and typed declarations use the same boundary rule: before
 another statement, write `;` or a newline, unless an enclosing closer

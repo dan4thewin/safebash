@@ -39,6 +39,12 @@ Recognize the grammatical role, not just the spelling: `else`/`elif`,
 connectors and legal redirects remain attached to their own construct.
 This does not legalize a pointless bare test or a retired command group.
 
+DD68 now explicitly allows `else`/`elif` across newlines and comments
+after a brace body, but not across `;` or another statement.
+`q-clause-on-next-line` owns that local parser/diagnostic change.
+Preserve the exception when enforcing boundaries here; do not turn it
+into next-line attachment for connectors, redirects or `&`.
+
 Quotes, `${...}`, `$()`, `$((...))` and collection-literal closers are
 inside operands. They do not end the surrounding binding list or
 command. A command remains open-ended; do not split its arguments by

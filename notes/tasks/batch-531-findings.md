@@ -587,9 +587,11 @@ touches is fixed here, and any other finding goes to the backlog.
   comparison/test statements and arithmetic prefixes (DD31, journal 593).
   Retire the historical bare-test status idiom without losing its
   status-consumption coverage; enforcement remains open.
-- `q-clause-on-next-line` (P3): an `else` or `elif` on the line after a brace
-  body's `}` is SB4072 (SB5011 before F1+F4), though every other newline in
-  an `if` or a loop is accepted. Recommended: accept it.
+- `q-clause-on-next-line` (P3): now implementation work. DG allows
+  brace-form `else`/`elif` across newlines and blank/comment lines
+  (DD68, journal 601), but not across `;` or another statement.
+  Keep the exception clause-only; migrate the old same-line diagnostic
+  and skw.20 without claiming a general recovery fix.
 - `q-compound-as-condition` (P3): now implementation work. `if` and
   loops are statements with no result (DD68, journal 597); reject
   consuming their outcome, but preserve otherwise legal unconsumed
@@ -640,10 +642,12 @@ Appended to existing tasks:
 - `bug-parse-error-in-block-cascades-sb4072`: F1+F4's new errors cascade
   too (cnd.7, pf.36, pf.37). The cause is traced. A second shape, an error
   before a block's `{` (h1, h3, cov.13, cnd.22-cnd.24), is pre-existing;
-  F1+F4 adds m4, r7 and r8 (skw.20), each a lone SB5011 on 8e28c61. A third
-  option, giving `}` the stray-keyword guard, fails the task's own gate: it
-  hides z1's and z2's real SB4072. Recommended, not yet ruled: brace-aware
-  `recover`, then recovery inside the block.
+  F1+F4 added m4, r7 and r8 (skw.20), each a lone SB5011 on 8e28c61.
+  DG's later DD68 ruling makes m4/r7 valid; their acceptance belongs to
+  `q-clause-on-next-line`, not recovery. r8's second `else` stays invalid.
+  A third option, giving `}` the stray-keyword guard, fails the task's
+  own gate: it hides z1's and z2's real SB4072. Recommended, not yet ruled:
+  brace-aware `recover`, then recovery inside the block.
 - `bug-expr-type-int-disposition`: `exit ${n:?bad}` on an int is a false
   SB4030 through the same arm.
 - `bug-digit-led-names`: a declaration binds a digit-led name until

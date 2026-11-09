@@ -5,11 +5,24 @@ priority: P4
 kind: bug
 depends: []
 gates:
-  - "every program under What and Cause reports its own diagnostics and nothing at a block's closing `}` (k4 reports SB4020 alone)"
+  - "every still-invalid program under What and Cause reports its own diagnostics and nothing at a block's closing `}` (k4 reports SB4020 alone)"
   - "a genuinely stray `}` (one that closes nothing) keeps SB4072 (z1, z2)"
   - "specs pin v1, w2 and cs1 in both backends, asserting that SB4072 is absent"
-  - "an error before a block's `{` (h1, c13, c22, m4, r7, r8) reports nothing at that block's `}`; skw.20 and cnd.22-cnd.24 assert it"
+  - "an error before a block's `{` (h1, c13, c22, r8) reports nothing at that block's `}`; cnd.22-cnd.24 and a genuine duplicate-clause case pin recovery"
+  - "coordinate skw.20 with q-clause-on-next-line: m4/r7 are now legal under DD68, and their acceptance must not count as proof of this recovery fix"
 ---
+
+## Clause-policy coordination (DG, 2026-11-09)
+
+DD68 now permits next-line `else`/`elif`, including blank/comment lines.
+The historical m4/r7 programs below therefore require acceptance, not
+one primary error with its cascade removed. `q-clause-on-next-line`
+owns that implementation and migration of skw.20 at fresh ids.
+Removing the original error in a newly legal program does not prove
+recovery after a real error works. r8's second `else` remains invalid
+and retains its recovery obligation here; so do the other malformed
+programs. The tables below retain their original measurements and were
+not rerun for this policy recording.
 
 ## What
 
@@ -117,8 +130,9 @@ and p3 are c22's. m4, r7 and r8 are new: on 8e28c61 a clause keyword at a
 statement head was a command name, and its SB5011 was the only diagnostic.
 F1+F4 made the keyword SB4072 (skw.5, skw.6, skw.20), and `recover` then
 leaves the clause's `}` behind like any other. Every row was run on both
-binaries in native mode, and m4, r7 and r8 in C too. skw.20 and
-cnd.22-cnd.24 leave this SB4072 unasserted and cite this task.
+binaries in native mode, and m4, r7 and r8 in C too. At that time,
+skw.20 and cnd.22-cnd.24 left this SB4072 unasserted and cited this
+task. skw.20's contract now changes under DD68, as noted above.
 
 ## Fix
 

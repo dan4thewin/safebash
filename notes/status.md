@@ -1,4 +1,26 @@
-## STATUS (2026-11-09, latest) - Conservative function names
+## STATUS (2026-11-09, latest) - Next-line clauses
+
+DG allows brace-form `else`/`elif` on following lines, including
+blank/comment lines, provided the implementation stays cheap. Source
+inspection confirms a local route through existing buffered,
+comment-skipping lookahead; no new AST or backend behavior is needed.
+
+The allowance is clause-only. An intervening `;` or statement ends
+attachment; operators, redirects and `&` do not gain next-line
+attachment. Existing nesting, header layouts, keyword forms and
+explicit continuation remain unchanged.
+
+DD68 records the rule; DD71 and GUIDE agree. The existing P3
+`q-clause-on-next-line` now owns implementation and diagnostic/spec
+migration. skw.20's newly legal case must not masquerade as proof of
+general error recovery; the recovery task and statement-boundary
+task retain their independent work. Journal 601 records the decision.
+
+This is policy/backlog recording only. No compiler/runtime/converter/
+spec/build code changed, and no new behavior probe, sweep or coverage
+run was made. Journal 577 remains the accepted implementation baseline.
+
+## STATUS (2026-11-09) - Conservative function names
 
 DG accepted the variable identifier grammar for source function names:
 `[A-Za-z_][A-Za-z0-9_]*`, plus existing reserved-name exclusions. The

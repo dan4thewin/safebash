@@ -241,6 +241,14 @@ adjacency step, and capture/attest resolution stays local to its
 acquisition (DD121/DD128). Clean captures and `:!` remain unchanged.
 Enforcement is pending in `q-statement-form-residuals`.
 
+Brace-form `else`/`elif` clauses may follow the preceding body's `}`
+across newlines, including blank/comment lines, without a backslash.
+An intervening `;` or statement ends that attachment. This is a
+clause-only exception, not next-line attachment for operators, redirects
+or `&`; existing header layouts and keyword forms remain unchanged.
+DD68 records the rule; implementation and diagnostic/spec migration
+are pending in `q-clause-on-next-line`.
+
 ### Phase 2: Validate
 
 `validate.rs` walks the AST once. (The old `rules/` directory and its

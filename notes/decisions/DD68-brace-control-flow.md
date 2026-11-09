@@ -24,6 +24,39 @@ for ((init; cond; incr)) { … }
 The classic `if COND; then …; [elif …; then …;] [else …;] fi` and
 `while/until/for …; do …; done` remain accepted (DD#67 sugar).
 
+**Next-line clauses (DG, 2026-11-09; implementation pending):**
+after a brace-form `if` or `elif` body, its next `elif` or `else` may
+follow one or more newlines, including blank and comment-only lines.
+No backslash continuation is needed:
+
+```sash
+if /bin/false { echo first }
+# Try the next branch.
+elif /bin/false { echo second }
+
+else { echo last }
+```
+
+The clause must still belong to that `if`. An intervening `;` or
+statement prevents attachment; the parser must not search past another
+token or an enclosing closer. A second `else`, or an `elif` after an
+`else`, remains invalid. Existing nesting and `else if` desugaring stay
+unchanged.
+
+This is a **clause-only formatting exception**, not a general rule that
+an optional suffix can reach backward across a newline. It does not
+enable next-line attachment of pipes, logical connectors, redirects or
+`&`, or give another construct `else`/`elif` clauses. Existing header/body
+placements, keyword forms, required continuations and DD64's explicit
+backslash continuation remain legal.
+
+DG accepted the allowance provided it was cheap. The parser already has
+buffered, comment-skipping lookahead: look past newlines for a clause
+keyword and consume those newlines only when a clause follows. No new
+AST form or backend behavior is needed. The existing P3
+`q-clause-on-next-line` owns implementation and diagnostic/spec migration;
+journal 601 records the decision and the source inspection.
+
 **Statement boundaries (DG, 2026-11-09; implementation pending):**
 the closing `}` of a completed construct, or its `fi`/`done`, needs
 no additional semicolon before the next statement. `else`/`elif` still
@@ -315,13 +348,15 @@ passed the parser as a word (skw.31). A later `$( … )` or `$(( … ))` does
 not close the open one. When the `$(` is closed, the keyword keeps SB4072
 (skw.16, skw.17).
 
-**Not decided here.**
-- A newline between a brace body's `}` and its `else` or `elif` (skw.20) is
-  SB4072 at the keyword, plus a cascade SB4072 at the `}` that closes the
-  clause's own body. Before, it was a lone SB5011 at the keyword. The new
-  messages state the rule the parser has always applied (the clause shares
-  the `}`'s line); no DD states it, and whether the form should be legal is
-  `q-clause-on-next-line`.
+**Questions left by this port.**
+- A newline between a brace body's `}` and its `else` or `elif` (skw.20)
+  was reported as SB4072 at the keyword, plus a cascade SB4072 at the `}`
+  that closes the clause's own body. Before, it was a lone SB5011 at
+  the keyword. The messages described the parser's same-line restriction,
+  not a placement decision made by this port. **DG subsequently allowed
+  next-line clauses on 2026-11-09**, as specified in Forms above.
+  `q-clause-on-next-line` now owns enforcement and migration of skw.20;
+  accepting that valid clause is not a fix for general error recovery.
 - A missing command before a closer (`a && fi`) is SB4072 at the closer.
   With nothing after the operator it is SB4056 at the operator (`a &&` at
   the end of the input). Which code and position both should take is
