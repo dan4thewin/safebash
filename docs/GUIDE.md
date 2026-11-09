@@ -214,6 +214,13 @@ retired. Scope, body checks, control transfers and status/latch flow
 match the corresponding `if`. DD95 still forbids mixed `&&`/`||` lists.
 DD55/DD68/DD70 record the rule; `retire-command-groups` owns enforcement.
 
+`if`, `while`, `until` and `for` are statements with no value or status
+result (DD68). Reject consuming a compound's result, including through
+negation, return or a logical continuation; an otherwise legal unconsumed
+final action remains a statement. Inner condition handling, explicit
+function returns, capture output and pipeline statuses keep their own
+contracts. Enforcement is pending in `q-compound-as-condition`.
+
 ### Phase 2: Validate
 
 `validate.rs` walks the AST once. (The old `rules/` directory and its

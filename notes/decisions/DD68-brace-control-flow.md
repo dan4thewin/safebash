@@ -33,6 +33,55 @@ DD70 defines the source boundary, DD55 the matching scope/status/checking
 rules, and `retire-command-groups` owns implementation. Function and
 dispatch bodies are not command groups and are unaffected.
 
+## Statements do not produce results (DG, 2026-11-09)
+
+DG rejected treating control flow as an expression:
+
+> sash is not a lisp.  there's a clear distinction between an expression
+> context and a statement context. I think this is valuable because it
+> necessitates a procedural approach that is easy to reason about.
+
+`if`, `while`, `until` and `for` are **statements with no result**.
+They use conditions and perform actions; neither their last condition
+nor their last body command becomes the construct's value or status.
+A skipped `if` body and a zero-iteration loop do not manufacture a
+success result either. Brace/keyword spellings and C-style `for`
+follow the same rule.
+
+Reject a use that requires the construct's result: a condition,
+negation, a status-return producer, or an `&&`/`||` continuation
+decided by that result. Marks, redirects and placement inside another
+body do not create a result.
+
+This is a **result-use rule**, not a ban on every compound appearing
+near a connector. DD74's distinction applies: a left/middle logical
+clause supplies a decision, as does the tail of a consumed list;
+an otherwise legal final action in a statement list does not.
+Thus `cmd && if other { action }` remains an ordinary unconsumed action,
+while using that final `if` to decide an enclosing condition rejects.
+An earlier statement in an otherwise legal sequential condition list
+also remains a statement, not the list's final result producer.
+
+The conditional-block shorthands above are `if` statements too, not
+exceptions with an implicit result. Ordinary statement execution,
+inner condition handling and body checks remain. `$?` inside a legal
+handling branch belongs to its condition; the control-flow statement
+does not grant fresh permission after completion.
+
+An explicit `return` inside a body still returns from its enclosing
+function. A function can therefore perform procedural work and return
+its chosen status or value; that is the function's result, not an
+implicit result of its final `if` or loop. Likewise, an otherwise legal
+stdout capture may contain control flow: its value is captured output.
+DD55/DD122 pipeline aggregates and reader bodies keep their contracts.
+Do not confuse those enclosing operations' results with a body
+statement's nonexistent result.
+
+**Enforcement is pending** in the existing P3
+`q-compound-as-condition`, now implementation work rather than an open
+question. General-group retirement retains its separate owner.
+Journal 597 records the ruling; no diagnostic code is allocated here.
+
 ## The condition grammar (the disambiguation)
 
 In the **brace form**, the condition is a **command list** (pipelines,
@@ -142,10 +191,11 @@ those source groups must reject (`retire-command-groups`, DD70).
 The conditional-block shorthands above do not turn a group into a
 condition or alter this header delimiter rule.
 
-A negated loop is a compound, not a group. Whether it or an `if` may
-supply a consumed status remains `q-compound-as-condition`; the old
-`if ! for x in a b { … } || /bin/true { … }` evidence belongs there.
-DD66's dispatch-as-boolean refusal remains separate and unchanged.
+A negated loop is a compound, not a group, but it now also requires
+rejection: the statement has no result for `!` to consume. The old
+`if ! for x in a b { … } || /bin/true { … }` evidence belongs to the
+pending enforcement in `q-compound-as-condition`, not an open policy
+choice. DD66's dispatch-as-boolean refusal remains unchanged.
 
 Specs: errors.sh cnd.1-cnd.7, cnd.11, cnd.12, cnd.22, bng.21-bng.24.
 Journal 537.

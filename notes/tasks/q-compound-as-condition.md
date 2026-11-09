@@ -1,15 +1,64 @@
 ---
-title: "Question: may a non-group compound (`if`, `while`, `until`, `for`) supply a consumed status?"
+title: "Reject using `if`, `while`, `until` and `for` statements as result producers"
 status: open
 priority: P3
-kind: question
+kind: work
 depends: []
 gates:
-  - "DG rules on the options below; the ruling is a DD#68 addendum"
-  - "every remaining non-group program is rejected with a diagnostic naming the rule or prints what the ruling says, in both backends"
-  - "the citations of this task in `parse_negated` (sash/src/parse/parser.rs) and in DD#68's 2026-10-26 addendum are rewritten to the ruling"
-  - "bng.24 and other still-legal compound cases match the ruling; group-only bng.22/bng.23 migration belongs to retire-command-groups"
+  - "DD68's no-result rule rejects consumed control-flow statements through conditions, negation, status returns and logical-list decisions in native and C, independently of taint checking"
+  - "otherwise legal unconsumed final actions and sequential statement prefixes remain valid; consumption propagates to a list tail only when its result is required"
+  - "ordinary inner condition handling, body checks, explicit function returns, capture output and pipeline/reader contracts are preserved"
+  - "update parse_negated's task citation and take a current fixture census; changed bng.24 contracts use fresh ids, while group-only bng.22/bng.23 migration retains its group-retirement owner"
+  - "focused before-binary and targeted reversion controls prove the result-use guard and its boundaries; the predicted ordinary gate passes"
 ---
+
+## Decision settled, 2026-11-09
+
+DG rejected consumed compound results, emphasizing that sash separates
+expression contexts from statement contexts to make procedural code
+easy to reason about. DD68 is authoritative; DD55/DD70/DD74/DD95 and
+journal 597 record the consequences. This task keeps its slug and P3
+priority as implementation work, not an open policy question.
+
+## Accepted rule
+
+`if`, `while`, `until` and `for` have no result. Neither the final
+condition nor the final body command supplies an implicit value or
+status; empty/skipped paths do not synthesize success. Brace/keyword
+spellings, C-style `for` and the conditional-block shorthands follow
+the same statement/result distinction.
+
+Reject consuming the compound's result: a condition, `!`, a status
+return producer, or a logical continuation decided by that result.
+Additional marks, redirects, conditional paths or body placement do
+not make a result appear. General groups and compound suppression
+already have separate refusal owners.
+
+Use DD74's actual consumer boundary, not the old option A's overbroad
+"either operand" wording. An otherwise legal final action in a
+statement-level logical list is not a predicate. Historical c8
+(`cmd && if ...`) therefore remains legal; c10's consumed condition
+tail does not. A middle clause supplies the following connector's
+decision, and the final clause supplies the result when the enclosing
+list is itself consumed. A non-final member of an otherwise legal
+sequential condition list remains a statement.
+
+Normal conditions inside the statement still supply their own
+handling status. Body commands keep their checks, including the last
+one, and no new status permission follows the compound. Explicit
+returns inside bodies belong to their enclosing function. A function
+can perform the work and return an explicit status; this neither
+changes return kinds nor adds a compound-statement forwarding form.
+
+An otherwise legal capture may contain control flow and produce
+stdout; the capture, not its `if`/loop, supplies the value. Preserve
+pipeline aggregate status, reader-loop behavior and function/process
+boundaries under DD55/DD122. This rule does not turn every statement
+inside a result-producing operation into an expression.
+
+No new diagnostic code or lowering architecture is selected here.
+Keep source-form/result classification distinct from internal
+sequence/body carriers, including arithmetic and loop desugaring.
 
 ## Group boundary settled, 2026-11-09
 
@@ -20,11 +69,12 @@ shorthands: `cmd && { a; b }` is `if cmd { a; b }`, and
 `return { ... }` refusals. Those are no longer choices in this task.
 
 An allowed right-hand block is the corresponding `if` body, not a
-group with its own status. This task still owns whether the remaining
-non-group compounds can supply a consumed status; the sugar creates no
-exception to whatever rule applies to its explicit `if` form.
+group with its own status. This task now owns enforcement of the
+no-result rule on those `if` statements too. Coordinate with the
+group-retirement task so a consumed shorthand does not retain the old
+group's implicit status.
 
-## What
+## Historical measurements (2026-10-27; not rerun)
 
 The evidence below predates the accepted group retirement and has not
 been rerun. DD#68 rejected a group condition (SB4027), and F1+F4 extended
@@ -109,33 +159,43 @@ A right-hand conditional block is now settled separately:
 sugar, not a surviving command group. Q3 of
 `q-statement-form-residuals` records that same boundary.
 
-For still-legal compounds, the nested `$?`/latch defect belongs to
-`bug-sb5012-sb5094-nested-body-flow`. Under (A) its remaining
-negated-compound rows become rejections. Group retirement already
-settles its group-only rows; an earlier syntax refusal is not a flow fix.
+The consumed-compound rows of `bug-sb5012-sb5094-nested-body-flow`
+now require refusals here, while group-only rows belong to retirement.
+That task remains open for its still-legal bodies. An earlier syntax
+or result-kind refusal does not prove a nested-flow repair.
 
 Filed under DG's rule for the port that questions and uncovered cases become
 backlog tasks.
 
-## Options for non-group compounds
+## Implementation evidence
 
-- **(A) Reject a compound wherever its status is consumed**: as a condition,
-  as either operand of `&&`/`||`, under `!`, and as a `return` producer.
-  This is one rule, in the SB4023/SB4027 family. It extends DD#68's reasoning
-  that a group is not a condition, and DD#95's that a list needing grouping is
-  asking to be an `if`. The advice is the one SB4023 already gives: wrap the
-  compound in a function, whose `return` states the status. bng.24 flips.
-  Recommended.
+The no-result choice replaces the former alternatives of assigning
+last-test/last-body results to every compound, or keeping results only
+for `if`. Normal body checking is unchanged. The accepted rule does
+not reject an unconsumed statement tail merely because it follows a
+connector.
 
-  The conditional-block shorthands retain their ordinary `if` meaning;
-  they do not supply a separate group's status. General groups and
-  their former bng.22/bng.23 positives already belong to the retirement
-  task, regardless of which option is selected here.
-- **(B) Keep them legal with bash's status** (the last body command, or 0),
-  and decide whether body commands in that position are checked. Today they
-  abort, as they do at statement level. This does not reopen groups.
-- **(C) Keep `if` only.** Reject the loops, and give `if` bash's
-  status when no branch runs (c9b differs today).
+Use real CLI controls in both backends, with and without taint
+checking. Pin direct, negated, returned and list-tail consumers,
+including an effectful body and a path where no body runs. Pair a
+consumed tail with an otherwise legal unconsumed action. Preserve
+inner condition/status handling, explicit returns inside bodies,
+ordinary captures and reader pipelines.
+
+Measure the current fixtures before predicting the migration. The
+historical c8 is a preservation, not a new refusal. c1-c5, c9b, c10
+and their variants require refusals; existing c9/e1-e3/c6/c7 refusals
+are controls, not evidence that the formerly accepted paths were
+guarded. A stage or group diagnostic must not masquerade as proof of
+the new result-use guard.
+
+Review bng.24 and any other affected positives at implementation time.
+Use fresh ids above the database high-water marks for changed
+contracts, and preserve independent body/flow assertions in legal
+forms before retiring their old spellings. Prove the new refusal with
+before-binary and appropriate reversion controls, then run the gate
+with measured predictions. No current impact count is inferred from
+these historical tables.
 
 Probes: `files/port-f1f4-probes.tar.gz`, directories `cq/` (c1–c10, c2b,
 c3t, c9b), `sq3/` (e1–e3) and `wr2/` (g1–g4, g1t; rt1 is `rpt`).

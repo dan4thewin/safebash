@@ -18,9 +18,10 @@ Boolean contexts (DD#70 dual / `reject-nonstatus-in-boolean-context`):
 
 **Addendum (DG, 2026-09-07): the TAIL of an `&&`/`||` *statement* is not a
 boolean context.** A function is a predicate when something branches on its
-status. In a bare `A || B` statement the final clause's status is simply the
-statement's own status — nothing branches on it — so it is no more a predicate
-than a bare `f` statement is, and requiring `return` there was wrong:
+status. In a bare `A || B` statement nothing branches on the final
+clause's result: it is an ordinary action, not a predicate, and may
+supply no result. Requiring a `return` there was wrong. A non-void
+operation still has its ordinary DD55 handling/discard obligation:
 
     [[ -n $x ]] || warn      # `warn` needs no `return`
 
@@ -50,6 +51,15 @@ rejects. Per-stage discard remains legal when a pipeline's aggregate
 still has an unsuppressed stage. Enforcement is pending in
 `reject-discarded-status-consumers`.
 
+**Resultless control flow (DG, 2026-11-09; DD68).** The same consumer
+boundary applies to `if`, `while`, `until` and `for`: they are
+statements, not status producers. A left/middle clause or a consumed
+list tail cannot be such a statement; an otherwise legal unconsumed
+final action can. A condition inside a compound has a result, but
+the compound itself does not inherit it. This includes the DD70
+conditional-block shorthands. Enforcement is pending in
+`q-compound-as-condition`.
+
 A predicate's status comes **only** from an explicit `return`. There is **no
 implicit trailing status**: a bare trailing `grep` / `[[ … ]]` / `(( … ))` as
 a function's last statement is an ordinary statement — subject to DD#55
@@ -64,6 +74,14 @@ neither a redirect nor suppression changes that. DG's 2026-11-05 ruling
 in DD#58 settles this boundary; journal 577 implements it in
 `enforce-function-return-kinds`. Explicit numeric status construction and
 the status-producing tests below are unchanged.
+
+`if` and loops are not return producers either (DD68). Reject
+`return if ...`, `return ! if ...` and a returned logical list whose
+consumed tail is a resultless compound or conditional-block shorthand.
+Execute the control flow as statements and return an explicit result.
+An explicit `return` inside an `if` or loop still belongs to the
+enclosing function; compatible forwarding of a function call remains
+unchanged. This does not add a compound-statement forwarding syntax.
 
 In an anonymous capture body, the status-producing return forms below are
 rejected (DG, 2026-11-06; DD#55/DD#86). Bare return and compatible void

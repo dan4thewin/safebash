@@ -1,4 +1,26 @@
-## STATUS (2026-11-09, latest) - Conditional blocks are `if` sugar
+## STATUS (2026-11-09, latest) - Statements are not expressions
+
+DG rejected consumed `if`/loop results: the distinction between
+expression and statement contexts supports procedural code that is
+easy to reason about. `if`, `while`, `until` and `for` have no value
+or status result, including the new conditional-block shorthands.
+
+Reject their use as conditions, through negation, in status returns
+or to decide logical continuations. This is a result-use rule:
+otherwise legal unconsumed final actions remain statements. Inner
+condition handling, normal body checks, explicit function returns,
+capture output and pipeline/reader contracts remain unchanged.
+
+DD68 records the rule; DD55/DD70/DD74/DD95 and GUIDE agree. The
+existing P3 `q-compound-as-condition` is now implementation work,
+not an open question. The group-retirement and nested-flow records
+are reconciled; journal 597 records DG's rationale and the boundary.
+
+This is policy/backlog recording only. No compiler/runtime/spec/build
+code changed, and no new behavior probe, sweep or coverage run was
+made. Journal 577 remains the accepted implementation baseline.
+
+## STATUS (2026-11-09) - Conditional blocks are `if` sugar
 
 DG accepted `cmd && { a; b }` as exactly `if cmd { a; b }`, alongside
 the already accepted `cmd || { a; b }` / `if ! cmd { a; b }`.

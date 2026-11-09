@@ -52,8 +52,10 @@ DD95 still rejects mixing `&&` and `||` in one list. The body's own
 lists are separate, so `cmd && { other || recover }` follows
 `if cmd { other || recover }`, not mixed-list grouping. Header braces
 still delimit the body under DD68. Do not make a block an independent
-status producer; the remaining non-group compound-status question is
-`q-compound-as-condition`.
+status producer. DD68's 2026-11-09 ruling now makes every `if`/loop a
+resultless statement; `q-compound-as-condition` owns enforcement.
+Coordinate the two changes so a consumed shorthand cannot retain a
+group's old status, while an unconsumed final action stays legal.
 
 The diagnostic code and internal representation are implementation
 work, not unresolved language choices. Advise inlining ordinary
@@ -93,8 +95,10 @@ that a nested-flow defect was repaired; use a still-legal `if` form for
 that evidence.
 
 The group-only rows in `q-compound-as-condition` and Q3 of
-`q-statement-form-residuals` now have a rule. The other questions in those
-files remain open. `compound-redirects`, `c-compound-pipeline-stage`,
+`q-statement-form-residuals` now have a rule. The former task also has a
+settled no-result rule for non-group compounds (journal 597); the latter
+retains its separate separator/declaration questions.
+`compound-redirects`, `c-compound-pipeline-stage`,
 `block-falls-through-blind-to-group` and
 `compound-condition-abort-catch` are already completed historical
 records, not new implementation owners. Retire only their group-only

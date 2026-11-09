@@ -121,8 +121,8 @@ backlog tasks.
   legal non-group followers only; it cannot preserve sp1/sp5/bc.g6's
   retired groups.
 - **`return {`** (rt1, rt2), `return ! { ... }` and rt3's split-off
-  group are settled refusals under `retire-command-groups`, not status
-  producer choices in `q-compound-as-condition`.
+  group are settled refusals under `retire-command-groups`, not part
+  of the non-group result-use enforcement in `q-compound-as-condition`.
 - **Q2's non-group declaration separation** follows Q1. sp8/sp9's
   groups now require rejection either way, with advice about the
   forbidden block rather than the valid variable name. Their parser

@@ -80,6 +80,12 @@ A body has its own lists, just like an explicit `if`, so
 An actually mixed outer list still gets SB4053. This is not a way to
 parenthesize a command list or supply a group's status to an operator.
 
+DD68's no-result rule applies to these `if` shorthands as well as direct
+control-flow statements. They cannot decide a further connector or
+supply a condition's result. An otherwise legal unconsumed final action
+is different; DD74 defines that boundary. This result-kind rule is
+independent of the mixed-operator check.
+
 ## What this buys
 
 The inconsistency is **removed**, not papered over: after this, no text means

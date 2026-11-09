@@ -278,6 +278,27 @@ implementation bug for the arithmetic contract. Ordinary assignment
 prefixes and the no-reach repair retain their owner in
 `reject-nonadjacent-suppression`. Journal 593 records the policy.
 
+### Control-flow statements have no result (DG, 2026-11-09)
+
+DD68 distinguishes statement and expression contexts: `if`, `while`,
+`until` and `for` perform control flow but supply no value or status.
+Their last condition/body command is not an implicit result. Reject
+using such a result in a condition, through `!`, in a status return,
+or to decide a logical-list continuation.
+
+Use the actual consumer boundary (DD74), not a blanket ban on list
+operands: an otherwise legal unconsumed final action remains a
+statement. Ordinary inner conditions still supply their own handling
+status; no fresh status permission follows the compound's completion.
+Body checks, explicit returns inside bodies, function-call results,
+capture output and pipeline aggregates remain under their existing
+contracts. This is not a new way to catch a body failure.
+
+`q-compound-as-condition` owns pending enforcement. The earlier
+compound-suppression ban retains its owner in
+`retire-suppression-on-compounds`; a `-` cannot give a statement a
+result. Journal 597.
+
 ## Explicit handling
 
 Three patterns for a command that can fail:
@@ -316,9 +337,10 @@ is no special raw-status exception for a braced failure block, nor new
 permission after the construct.
 
 **Enforcement pending:** `retire-command-groups` owns both shorthands
-and removal of general source groups. This does not settle whether a
-non-group compound can itself supply a consumed status; that remains
-`q-compound-as-condition`. Journal 596.
+and removal of general source groups (journal 596). DD68's subsequent
+no-result ruling applies to these `if` shorthands too; consuming the
+construct's own result is rejected. That enforcement remains in
+`q-compound-as-condition` (journal 597).
 
 ### Evaluation order (DG, 2026-11-06)
 

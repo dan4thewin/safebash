@@ -1,5 +1,5 @@
 ---
-title: "Bug: SB5012/SB5094 check `$?` and latch reads inside a capture body, a `-`-wrapped compound, a negated compound and a pipeline's reader body against the enclosing statement's state, not the body's own flow"
+title: "Bug: SB5012/SB5094 check nested executable bodies against the enclosing statement's state, not the body's own flow"
 status: open
 priority: P2
 kind: bug
@@ -8,11 +8,11 @@ gates:
   - "anonymous capture bodies start with unavailable status and no inherited latch; caller-derived reads get SB5012/SB5094 regardless of spelling, outer handling or nesting"
   - "legal handling, spawn/reap and latch reads in the body's own flow remain valid, as does access to a status saved into an enclosing binding"
   - "direct status/getcpid/waitstatus value expressions retain their surrounding context and are not mistaken for executable capture bodies"
-  - "every false row compiles and runs as its twin does, in both backends"
-  - "every missed row draws its twin's code"
-  - "the controls keep their results"
+  - "every still-legal false row compiles and runs as its twin does, in both backends"
+  - "every still-legal missed row draws its twin's code"
+  - "still-legal controls keep their results; changed source contracts are migrated by their policy owners"
   - "focused specs pin each distinct defect in both backends with pre-fix or targeted reversion failures; preservation controls and the predicted ordinary gate pass"
-  - "group-only rows become retire-command-groups refusals; if q-compound-as-condition rules (A), its remaining negated-compound rows also leave this task"
+  - "group-only rows become retire-command-groups refusals; consumed if/loop rows become q-compound-as-condition refusals, not claimed nested-flow fixes"
 ---
 
 ## Entry policy settled, 2026-11-07
@@ -32,6 +32,14 @@ punctuation and arithmetic spellings. Saving a status at a legal outer
 handling position and reading that ordinary binding inside remains valid.
 
 ## Evidence scope
+
+DD68's 2026-11-09 no-result rule also settles the consumed `if`/loop
+cases: they must reject (`q-compound-as-condition`, journal 597).
+Group retirement and compound-suppression refusals retain their own
+owners. This task still covers legal capture/reader bodies and ordinary
+statement execution, including the conditional-block shorthands through
+their `if` flow. An earlier refusal is not evidence that those bodies'
+status/latch checks were repaired.
 
 The tables below retain the original measurements, not new results.
 Revalidate them against the current DDs when implementing, including
@@ -122,17 +130,18 @@ Two readings here are decide-and-report:
 l1 `- if /bin/true { - /bin/true & ⏎ - wait $! }` is SB5094 2:8, but so is its
 plain twin l1t: that is `bug-handling-branch-drops-latch`, not this task.
 
-### Negated compounds
+### Negated compounds (historical; now require rejection)
 
 General-group rows now require rejection under `retire-command-groups`
-(DD70, journal 596), independently of the remaining `if`/loop question.
-The other rows exist only while `q-compound-as-condition` leaves those
-`!`-hidden compounds legal; under its (A) they become rejections too.
-The un-negated twins n3t and n4t were SB4023.
+(DD70, journal 596). The consumed `if`/loop rows also require rejection
+under `q-compound-as-condition` (DD68, journal 597): `!` cannot consume
+a statement's nonexistent result. The un-negated twins n3t and n4t
+were SB4023.
 
 The accepted `&&`/`||` block shorthands must instead follow their
 ordinary `if` flow. An earlier group-syntax refusal does not prove a
-status/latch-flow fix; preserve that evidence with still-legal bodies.
+status/latch-flow fix, nor does the new result-use refusal; preserve
+that evidence with still-legal bodies.
 
 | Program | Result | Twin |
 |---|---|---|
@@ -261,4 +270,5 @@ not from this filing's old counts.
   `bug-sb5012-message-names-no-command`.
 - The false SB5020 on a clean pipe's reader variable (w5):
   `bug-validator-taints-clean-pipe-while-reader`.
-- Whether `!` may hide a compound at all: `q-compound-as-condition`.
+- Refusing consumed `if`/loop results, including through `!`:
+  `q-compound-as-condition` (policy settled, implementation pending).

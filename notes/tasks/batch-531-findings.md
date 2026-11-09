@@ -584,9 +584,11 @@ touches is fixed here, and any other finding goes to the backlog.
 - `q-clause-on-next-line` (P3): an `else` or `elif` on the line after a brace
   body's `}` is SB4072 (SB5011 before F1+F4), though every other newline in
   an `if` or a loop is accepted. Recommended: accept it.
-- `q-compound-as-condition` (P3): may a non-group compound (`if` or a
-  loop) supply a consumed status? General-group cases are settled
-  refusals, not part of that remaining question.
+- `q-compound-as-condition` (P3): now implementation work. `if` and
+  loops are statements with no result (DD68, journal 597); reject
+  consuming their outcome, but preserve otherwise legal unconsumed
+  final actions and ordinary body behavior. General-group refusals
+  retain their retirement owner.
 - `retire-command-groups` (P3): both `cmd && { ... }` and
   `cmd || { ... }` are their corresponding `if` shorthands; general
   groups are rejected (DD70, journal 596). Policy is settled;

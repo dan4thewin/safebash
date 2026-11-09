@@ -360,8 +360,11 @@ capture and dispatch bodies remain.
 The corresponding `if` owns scope, checking, control transfers and
 status availability (DD55). DD95 still rejects mixing `&&` and `||`
 in one list; the body's own lists are separate, just as in an explicit
-`if`. This does not decide the remaining `if`/loop status question in
-`q-compound-as-condition`.
+`if`. DD68 now also settles that `if` and loops are resultless
+statements: neither a direct construct nor its shorthand supplies a
+value or status to consume. An otherwise legal unconsumed final action
+remains a statement (DD74); body failures keep their normal checks.
+`q-compound-as-condition` owns that pending enforcement (journal 597).
 
 **Implementation is pending** in the existing P3
 `retire-command-groups`; no new diagnostic code is allocated here.
@@ -622,7 +625,8 @@ At this implementation's landing, SB4023 still did not see through `!`:
 echo y` was SB4023. The accepted command-group retirement above now
 requires the negated group to reject; enforcement is pending in
 `retire-command-groups`. A negated loop also slips past SB4023 (c4);
-that distinct compound-status question remains in
-`q-compound-as-condition`.
+DD68's no-result rule now requires its rejection too, with enforcement
+pending in `q-compound-as-condition`. The former exception is not an
+ongoing language permission.
 
 Specs: errors.sh rdr.50-rdr.57, csfx.9-csfx.20. Journal 537.
