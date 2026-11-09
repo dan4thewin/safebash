@@ -688,9 +688,12 @@ remain. The parent can still reap the outcome with `wait` /
 `$(waitstatus)`, without automatic failure propagation.
 Backgrounding a user function explicitly retains a checked wrapper.
 Functions, builtins, pipelines and multi-command jobs keep their existing
-body/process semantics; `exec cmd &` remains legal but is redundant.
-Implementation is pending in `background-external-direct-exec`
-(journal 594).
+body/process semantics. DG's 2026-11-09 follow-up rejects the redundant
+direct-job spelling `exec cmd &`: write `cmd &`. Otherwise legal `exec`
+inside a function or multi-command body remains meaningful and unchanged.
+The direct-exec default and prefix refusal must ship together;
+implementation is pending in `background-external-direct-exec`
+(journals 594 and 595).
 
 ### Phases 7–9: Fold, Codegen, Link
 

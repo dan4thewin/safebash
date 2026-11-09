@@ -567,10 +567,25 @@ because its inlined body contains only one external command.
 This ruling changes single-external-command jobs, not the execution of
 background functions, builtins, pipelines or multi-command lists. It adds
 no process-tree signalling, parent-side failure reporter or automatic
-wait. Existing `exec cmd &` remains legal and now has the same direct
-process behavior; rejecting that redundant spelling was not selected.
-An otherwise legal `- cmd &` also uses the direct child and does not
-reintroduce a wrapper. Result-kind, operand/body and redirect rules remain.
+wait. An otherwise legal `- cmd &` also uses the direct child and does
+not reintroduce a wrapper. Result-kind, operand/body and redirect rules
+remain.
+
+**No redundant job prefix (DG, 2026-11-09).** Reject `exec cmd &` when
+the job consists of that one external command. The direct-exec default
+already supplies the same process identity; write `cmd &`. Arguments,
+attached redirects and an additional mark do not justify retaining the
+redundant `exec`. The diagnostic should point at it and say to drop
+`exec`, not `&`: making a foreground replacement would change the program.
+
+This is a rule about the direct job form, wherever it appears. It is not
+a blanket ban on `exec` in forked code. An otherwise legal `exec` inside
+a user function or multi-command body can still replace that body's
+process meaningfully. For example, `fn replace { exec /path/to/command }`
+followed by `replace &` keeps that explicit replacement, whereas
+`fn launch { exec /path/to/command & }` contains a redundant direct job
+and is rejected. Ordinary foreground `exec` and the existing fd-only
+rules remain; pipeline-stage `exec` is still rejected.
 
 A failed fork is fatal in the parent (DD130), not a child's returned status.
 If exec itself fails, the child still reports the exec errno and exits
@@ -582,9 +597,11 @@ A successfully forked background process runs independently and
 can outlive the sash program. `wait` is optional.
 
 **Implementation pending:** `background-external-direct-exec` owns this
-process-model change. The compiler still has the implicit wrapper recorded
+process-model change and its redundant-prefix refusal. They must land
+together: do not remove the current direct-PID spelling while ordinary
+jobs still have wrappers. The compiler still has the behavior recorded
 by the historical Q2 probes in `q-suppression-and-stage-residuals`.
-Journal 594 records the accepted policy, not an implementation.
+Journals 594 and 595 record the accepted policy, not an implementation.
 
 **Amended by DD#126 (2026-10-09).** `wait` no longer returns a status and is
 no longer subject to the implicit check: it is an int intrinsic yielding the
@@ -839,14 +856,15 @@ it would act on the child and be lost.
   `ssa::BuiltinCmd::acts_on_its_process`, shared with the stage gate (DD#122
   addendum 2026-10-26).
 - Still legal: `cmd &`; `a | b &` (§Pipelines above; it drew a false SB4022,
-  B23); `a && - b &`; and `exec cmd &`. The accepted 2026-11-08 rule in
+  B23); and `a && - b &`. The accepted 2026-11-08 rule in
   §Background processes makes a single external job exec directly, with
   `$!` naming its command. The old implicit wrapper and its automatic
   failure diagnostic are being retired; an explicit function can retain
-  them. `exec cmd &` stays legal but is no longer needed for direct PID
-  ownership. A pipeline stage's child already becomes its command, and
-  the parent checks it, so `exec` there changes nothing and
-  `a | exec b` remains SB4022.
+  them. DG's 2026-11-09 follow-up rejects redundant direct `exec cmd &`;
+  write `cmd &`. This does not ban an otherwise legal `exec` inside a
+  function or multi-command body. A pipeline stage's child already
+  becomes its command, and the parent checks it, so `exec` there changes
+  nothing and `a | exec b` remains SB4022.
 
 **Who may read its status.** A job as a condition's last statement, or as a
 return producer, is SB4024: the consumer would act on a status the job never

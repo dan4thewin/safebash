@@ -1,4 +1,25 @@
-## STATUS (2026-11-08, latest) - A single external background job is the command
+## STATUS (2026-11-09, latest) - Reject redundant direct background exec
+
+DG rejected the now-redundant single-command job spelling `exec cmd &`.
+Write `cmd &`, keeping the background job rather than making it a
+foreground replacement. Arguments, redirects, marks and placement inside
+a body do not justify that direct-job prefix.
+
+This is not a ban on all exec in forked code. Otherwise legal exec
+inside a user function or multi-command body remains meaningful;
+foreground exec, fd-only rules and the pipeline-stage refusal remain.
+Explicit checked function wrappers and the direct default's status,
+diagnostic and signalling contracts are unchanged.
+
+DD55, GUIDE, Q2 and the findings index agree. The existing P3
+`background-external-direct-exec` owns both the direct default and the
+prefix refusal; they must ship together. Journal 595 records the ruling.
+
+This is documentation/backlog recording only. No compiler/runtime/spec
+code changed, and no new behavior probe, full sweep or coverage run was
+made. Journal 577 remains the accepted implementation baseline.
+
+## STATUS (2026-11-08) - A single external background job is the command
 
 DG chose to drop the implicit sash wrapper: simpler signalling outweighs
 its automatic failure diagnostic. Under the accepted rule, `cmd &` execs

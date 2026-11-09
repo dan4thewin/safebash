@@ -112,7 +112,7 @@ migration. R2's operand barrier retains its independent owner in
 `reject-nonadjacent-suppression`; a prefix refusal is not proof of that
 barrier. DD70's discard/effect rule for other operations remains intact.
 
-### Q2. Settled: single external background jobs exec directly
+### Q2. Settled: direct external jobs; reject the redundant `exec` prefix
 
 DG, 2026-11-08: **"let's drop the wrapper - the simplification for
 signalling outweighs the diagnostic"**. DD55 now requires a job of one
@@ -127,14 +127,24 @@ builtins, pipelines and multi-command lists retain their existing
 process/body semantics. Command stderr and exec-startup errno diagnostics
 are not silenced. Fork failure remains fatal under DD130.
 
-This chooses the direct-process behavior of former option (d), not its
-bundled assumption that redundant `exec cmd &` must also be rejected.
-That existing spelling remains legal, as does an otherwise legal
-`- cmd &`; neither requires an implicit wrapper. The pipeline-stage
-`exec` refusal is unchanged. No additional spelling ban was selected.
+The first recording chose former option (d)'s direct-process behavior
+without inferring its additional spelling ban. Asked separately on
+2026-11-09, DG chose **reject** for a direct single-command `exec cmd &`
+job. Advise `cmd &`: dropping `&` would turn it into foreground process
+replacement. Arguments, redirects and additional marks do not make
+the direct-job prefix useful.
 
-New P3 `background-external-direct-exec` owns implementation and fixture
-migration; journal 594 records the ruling. Q2 is settled as policy, not
+This is not a blanket ban on exec in forked code. An otherwise legal
+exec inside a user function or multi-command body remains meaningful.
+Conversely, placing the redundant direct job inside a function does
+not exempt it. Ordinary foreground exec, the existing fd-only rules
+and the pipeline-stage refusal remain unchanged. An otherwise legal
+`- cmd &` still uses the direct child.
+
+Existing P3 `background-external-direct-exec` owns both changes and
+fixture migration. The refusal must ship with the direct-exec default,
+not remove the current direct-PID route before its replacement exists.
+Journals 594 and 595 record the rulings. Q2 is settled as policy, not
 implemented. The tables below retain historical evidence, not fresh
 measurements or gate predictions.
 
