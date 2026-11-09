@@ -33,6 +33,50 @@ DD70 defines the source boundary, DD55 the matching scope/status/checking
 rules, and `retire-command-groups` owns implementation. Function and
 dispatch bodies are not command groups and are unaffected.
 
+## Word-list `for` requires an iteration list (DG, 2026-11-09)
+
+A word-list `for` requires **`in` and at least one source item**.
+Reject all three forms:
+
+```sash
+for x { ... }                 # missing in
+for x; in a b { ... }         # semicolon before in
+for x in { ... }              # explicitly empty list
+```
+
+The same requirements apply to keyword bodies: `for x; do ...; done`
+and `for x in; do ...; done` reject too. A newline before `in` remains
+legal; a semicolon does not. The ordinary semicolon after a populated
+list in `for x in a b; do ...; done` is unaffected. C-style
+`for ((init; cond; incr))` is a separate form and keeps its grammar.
+
+DG rejected the proposed empty-list exception:
+
+> an explicitly empty list does no work - pointless code should be an
+> error, as it must be an unintended mistake
+
+This is a pointless-code error, not an implicit argument loop or a
+quiet no-op. Effects written in a body that cannot execute do not
+give the loop work. Body placement, marks and redirects cannot supply
+the missing list or legalize an invalid header.
+
+**Data-dependent emptiness is different.** A written list or splat can
+yield no items at runtime; this header rule adds no non-emptiness check
+or proof obligation on that data. An empty string is one item, not an
+empty list: `for x in "" { echo "[$x]" }` still iterates once.
+
+For argument iteration, write `for x in @args` in a function or
+`for x in $(argv 1)` at top level (DD75/DD60), retaining ordinary
+taint and arity rules. The converter must expand Bash's omitted-list
+argument iteration to those explicit forms. A genuinely empty Bash
+`in` list is not the omitted-list form and must not become an argument
+loop or be silently erased to evade the refusal.
+
+**Enforcement is pending** in the existing P2 `q-for-without-in-list`,
+now implementation work covering compiler and converter. DD70 records
+the pointless-code rationale; journal 598 records the ruling. No new
+diagnostic code or implementation architecture is selected here.
+
 ## Statements do not produce results (DG, 2026-11-09)
 
 DG rejected treating control flow as an expression:
@@ -44,7 +88,7 @@ DG rejected treating control flow as an expression:
 `if`, `while`, `until` and `for` are **statements with no result**.
 They use conditions and perform actions; neither their last condition
 nor their last body command becomes the construct's value or status.
-A skipped `if` body and a zero-iteration loop do not manufacture a
+A skipped `if` body and a legal zero-iteration loop do not manufacture a
 success result either. Brace/keyword spellings and C-style `for`
 follow the same rule.
 

@@ -199,6 +199,13 @@ This resolves the `@` double-duty (splat operator in `@a` vs. special-name in
 It also makes function args uniform with named arrays and with DD#60's
 program-arg model (`argv`/`arg`/`argc`).
 
+**Argument iteration is explicit** (DG, 2026-11-09; DD68):
+`for x in @args` in a function, or `for x in $(argv 1)` at top level.
+A word-list `for` must contain `in` and at least one source item;
+omitting the list does not implicitly select arguments, and writing
+an empty `in` list is a pointless-code error. Runtime-empty data is
+different. Enforcement is pending in `q-for-without-in-list`.
+
 ### Implemented (2026-08-21) — core
 
 The **core** args model shipped native + c (0 spec regressions, all 3 modes):
@@ -243,6 +250,14 @@ The converter emits the canonical forms and accepts the bash forms as input:
 - `${!m[@]}` → `$(keys m)`; `${!a[@]}` on an indexed array → a counting `for (( ))`.
 - `$?` / `$!` / `$$` → `$(status)` / `$(getcpid)` / `$(getpid)`.
 - Positionals per DD#46/#60 and §5.
+- Bash's omitted-list argument loops (`for x; do`, `for x do`, and
+  `for x` followed by newline and `do`) need an explicit `in @args`
+  in a function or `in $(argv 1)` at top level. This preserves Bash's
+  meaning; it does not add an implicit iteration source to sash.
+  A genuinely empty `in` list is different and must not be rewritten
+  as argument iteration or silently removed to evade DD68's error.
+  Compiler/converter enforcement is pending in `q-for-without-in-list`
+  (journal 598), including default and canonicalized body spellings.
 
 ## 7. Follow-on bugs (not part of the decision; fix separately)
 

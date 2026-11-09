@@ -221,6 +221,14 @@ final action remains a statement. Inner condition handling, explicit
 function returns, capture output and pipeline statuses keep their own
 contracts. Enforcement is pending in `q-compound-as-condition`.
 
+Word-list `for` requires `in` and at least one source item; a semicolon
+before `in` is rejected, while newline continuation remains legal.
+An explicitly empty list is pointless code, not a quiet no-op. A list
+that yields no items at runtime is different, and `""` is one item.
+C-style `for` keeps its grammar. DD68/DD70/DD75 record the rule;
+`q-for-without-in-list` owns pending compiler/converter enforcement.
+The converter must spell out Bash's implicit argument iteration.
+
 ### Phase 2: Validate
 
 `validate.rs` walks the AST once. (The old `rules/` directory and its

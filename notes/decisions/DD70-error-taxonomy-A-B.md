@@ -87,8 +87,9 @@ Levers:
 - **`if` / `while` / `&&` / `||` consume a status**, not an integer
   value. `cmd || :` can discard a status indirectly; the same
   statement-effect rule applies as for `- cmd`.
-- **Known result-only unused work is an error**, independently of
-  whether its discard is explicit. Intentional `:` is exempt.
+- **Known pointless statements are an error**, including result-only
+  unused computation and an explicitly empty word-list `for`.
+  Intentional `:` remains the deliberate no-op.
 
 ## Original distinguishing principle (superseded)
 
@@ -159,7 +160,7 @@ mutation has no result, and a comparison cannot become an arithmetic
 statement by discarding its result. The statement-effect rule below
 preserves intentional no-ops without exempting pointless computations.
 
-### Statement effects and unused computation (DG, 2026-11-08)
+### Pointless statements (DG, 2026-11-08 and 2026-11-09)
 
 DG proposed keeping discard legal while giving an error for a pointless
 statement, and approved the conservative effect-based rule:
@@ -169,6 +170,15 @@ when the absence of other observable effects is known.** This is an
 error about the statement, not about `-` being an invalid discard
 operator. Do not silently delete it or turn a discarded false result
 into an assertion failure.
+
+The principle is not limited to computations that produce an unused
+answer. DG also rejected an explicitly empty word-list `for` on
+2026-11-09: it has nothing to iterate, so the body cannot do any work.
+DD68 requires `in` and at least one source item, and rejects `;`
+before `in`. This is a source-header rule; effects written in an
+unreachable body cannot rescue it, nor do outer marks/redirects make
+the header legal. A written item such as `""` is not an empty list,
+and data-dependent runtime emptiness remains ordinary iteration.
 
 For otherwise legal string operands:
 
@@ -219,8 +229,11 @@ DD31's 2026-11-08 ruling rejects arithmetic comparison/test statements
 even when operands have effects; the context rule is not an effect
 analysis. Other eligible boolean discard retains the rule above.
 
-**Enforcement pending:** `reject-pointless-statements` owns the check,
-its diagnostic and the directly affected advice/specs. SB4018 must not
+**Enforcement pending:** `reject-pointless-statements` owns the
+result-only effect/use check, its diagnostic and directly affected
+advice/specs. `q-for-without-in-list` separately owns the word-list
+header refusals, including the explicitly empty list (journal 598).
+Neither guard's refusal is evidence that the other works. SB4018 must not
 recommend `-` or `|| :` as an unconditional escape for a pointless test.
 No diagnostic number or implementation architecture is selected here.
 Q5 in `q-suppression-and-stage-residuals` is settled as policy; journal

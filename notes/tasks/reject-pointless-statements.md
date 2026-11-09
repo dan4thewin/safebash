@@ -61,6 +61,15 @@ this into a same-result test on definitions.
 
 ## Implementation and coordination
 
+DG also rejected explicitly empty word-list `for` lists on
+2026-11-09: pointless code is an error even when it supplies no result
+to discard (DD68/DD70, journal 598). `q-for-without-in-list` owns that
+source-header refusal, independently of this task's effect/use check.
+Unreachable body effects cannot rescue an empty header. Use legal
+headers when proving this check; an earlier header refusal is not its
+regression evidence. Neither task is an implementation prerequisite
+for the other.
+
 Use the shared statement/expression traversal and resolved command/call
 identities for one effect/use classification. Include wrappers, redirects,
 nested captures/value calls and the actual lazy/handling context. Reuse

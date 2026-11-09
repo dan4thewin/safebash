@@ -1,4 +1,26 @@
-## STATUS (2026-11-09, latest) - Statements are not expressions
+## STATUS (2026-11-09, latest) - A `for` needs something to do
+
+DG requires `in` in word-list `for`, rejects the stray semicolon
+before it, and rejects explicitly empty lists as pointless code.
+The empty-list exception proposed in the discussion was not accepted:
+a body that can never execute does no work.
+
+Newline continuation before `in`, a populated keyword-form list's
+separator, and C-style `for` grammar remain. Runtime-empty input data
+is different from an empty source list; `""` is one item. The converter
+must expand Bash's omitted-list argument iteration explicitly, not
+conflate it with a genuinely empty `in` list.
+
+DD68/DD70/DD75 and GUIDE record the rule. The existing P2
+`q-for-without-in-list` is now implementation work for compiler and
+converter; `reject-pointless-statements` retains its independent
+effect/use analysis. Journal 598 records the ruling and boundaries.
+
+This is policy/backlog recording only. No compiler/runtime/converter/
+spec/build code changed, and no new behavior probe, sweep or coverage
+run was made. Journal 577 remains the accepted implementation baseline.
+
+## STATUS (2026-11-09) - Statements are not expressions
 
 DG rejected consumed `if`/loop results: the distinction between
 expression and statement contexts supports procedural code that is

@@ -558,9 +558,11 @@ touches is fixed here, and any other finding goes to the backlog.
 - `bug-validator-taints-clean-pipe-while-reader` (P2): a `while readline`
   loop fed by a clean pipe is a false SB5020; the SSA backstop binds it
   clean.
-- `q-for-without-in-list` (P2): a `for` with no `in` list compiles and never
-  runs (bash iterates `"$@"`), and `for x; in a b` is accepted. Recommended:
-  reject the first, keep the second.
+- `q-for-without-in-list` (P2): now implementation work. Word-list
+  `for` requires `in` and at least one source item; reject `;` before
+  `in` and explicitly empty lists (DD68, journal 598). Runtime-empty
+  data is different. The converter must expand Bash's omitted-list
+  argument iteration explicitly.
 - `bug-arith-comma-classified-compound` (P3): an arithmetic comma list is
   called a compound command, and its `&&` verdict differs from its `!`
   twin's.
