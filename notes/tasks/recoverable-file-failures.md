@@ -51,6 +51,17 @@ that handling consistently with the existing types before changing it;
 do not fabricate empty success or turn a void/int result into a status.
 Raise any genuine language-surface fork with DG.
 
+DD131 (2026-11-09) provisionally supplies a concrete directory-selector
+surface: `glob`/`rglob` have operational statuses, succeed on zero
+matches, and publish no destination change on an operation error.
+`q-glob-semantics` owns their separate-branch trial and the related
+accumulation/scratch model. Coordinate its open/read/getcwd and partial-
+progress paths with this task; no assignment/loop status is invented.
+The trial's all-or-nothing collection update does not roll back consumed
+input or prior argument/file effects, and fatal causes remain fatal.
+This is queued work, not a claim that the current glob silently-empty
+failure paths have been repaired.
+
 This does not extend a prefix into a helper body or argument capture.
 DD86 separately settles attached-redirect timing: arguments first in both
 standalone commands and stages (2026-11-07; journal 585). Coordinate with

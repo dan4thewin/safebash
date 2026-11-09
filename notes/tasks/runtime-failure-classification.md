@@ -20,11 +20,20 @@ the handling decision is made.
 
 Inventory sash-owned syscall and runtime error paths, including process
 creation, file open/read/write, exec, pipes, descriptor backup/dup/restore,
-captures and existing fatal arithmetic/allocation paths. Use actual
-producer and cleanup paths, not merely a census of diagnostic text.
+captures, directory enumeration and existing fatal arithmetic/allocation
+paths. Use actual producer and cleanup paths, not merely a census of
+diagnostic text.
 Retain an explicit disposition for each affected family; do not silently
 leave an ordinary file failure fatal because its current API cannot
 return an error.
+
+DD131's provisional `glob`/`rglob` and scratch-collection branch trial
+(`q-glob-semantics`) needs the affected operation/cause/publication
+classification. In particular, EOF/no matches are not read/open errors,
+and partially produced entries must not escape on failure. Account for
+allocation faults and actual globals visible to ERR without weakening
+their fatal class. The trial is a consumer of this shared policy, not a
+reason to create another per-backend classifier.
 
 The mapping may depend on the operation, errno and known post-failure
 state. In particular, do not classify every open failure as path-local,

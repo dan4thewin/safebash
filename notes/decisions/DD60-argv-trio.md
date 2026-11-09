@@ -49,6 +49,11 @@ array is the trailing positional, like `mapfile -m m` / `read -a a` /
     argv a        # fill array a with all program args (incl. argv[0])
     argv N a      # fill a with the slice argv[N:]   (array last; N optional)
 
+The shipped fill replaces the destination. DD131 provisionally includes
+`argv` in an accumulation/fresh-scratch destination model to evaluate
+on a separate branch; it is not implemented. The snapshot's source slice,
+taint and the existing splat/scalar forms are unchanged by that proposal.
+
 This deletes the lone case in the language where a command substitution
 *yields an array* (the `ArgvSnapshot` value + the `array a=$(argv)`
 detection in `compute_declaration_value`), unifying bulk array population

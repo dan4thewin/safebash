@@ -391,9 +391,15 @@ keys m k            # k = (alpha beta), in iteration order
 - **The array is a snapshot, not a view.** Deleting a key afterwards leaves it
   alone. `$(keys m)` walks the live map; this copies out of it.
 - **Order is the map's iteration order**, the same order `$(keys m)` yields.
-- The target **auto-declares** and is **replaced**, as every bulk fill is.
+- **Shipped destination behavior:** the target auto-declares and is replaced.
 - The source may be a DD#100 collection-parameter slot, so a function can
   snapshot the keys of a map it was passed.
+
+DD131 provisionally includes `keys` in an accumulation/fresh-scratch
+branch trial. Each produced batch is still an independent key snapshot,
+but an ordinary destination could then contain several accumulated
+snapshots. That changed use pattern must be evaluated, not presented
+as the current replacement behavior.
 
 ### The result is clean
 

@@ -17,6 +17,12 @@ normalized absolute path**, not a bare directory-entry name.
 - `array a=(./*)` → `/work/foo`  (no relative segment survives)
 - `array a=(/etc/*)` → `/etc/passwd`  (already absolute)
 
+DD39's 2026-11-09 bounded-glob rule preserves these **literal** directory
+prefixes. Only the final filename component may contain a wildcard, and
+at most one `*` is allowed. Each glob opens/enumerates one directory, not a
+tree. DD69 composes several expansions in source order; each expansion
+is sorted bytewise and needs a literal leading `.` to select dotfiles.
+
 ## Why
 
 Two independent rationales, correctness first (DG):
@@ -60,13 +66,37 @@ is the best partial fix available and it is a strict improvement).
    symlink resolution — composes with rule 1). `./*` → `/cwd/foo`;
    `../x/*` → the normalized parent path; `sub/./*` → `/cwd/sub/foo`.
 
-3. **Failed `getcwd` is an ordinary syscall failure.** If `getcwd` fails
-   (e.g. an unlinked cwd), abort through the standard DD#55 abort channel
-   (`sash_emsg`: `<argv0>: <ctx>: <errno reason>`), exactly like a failed
-   `chdir` / `open` / `write`. It must **not** silently fall back to the
-   bare, cwd-relative, injectable form — that would defeat both rationales.
-   (DG: "probably" handled like any failed syscall; revisit only if a
-   concrete case argues otherwise.)
+3. **Failed `getcwd` is an operation failure.** If `getcwd` fails
+   (e.g. an unlinked cwd), follow the standard DD55/DD130 error model,
+   retaining the operation/cause and normal contextual diagnostic. An
+   unchecked recoverable failure aborts; otherwise-legal handling may
+   continue, while fatal faults remain fatal. It must **not** silently
+   fall back to the bare, cwd-relative, injectable form — that would
+   defeat both rationales. The original 2026-07-29 ordinary-syscall rule
+   now follows DD130's recoverable/fatal distinction, not a glob-specific
+   blanket abort.
+
+4. **No matches is not a failed enumeration.** Successful enumeration
+   with no matching names produces zero elements (DD69). Failed
+   directory open/read operations follow the same DD130 classification
+   and legal handling rules, including suppression where eligible.
+   Missing-directory and not-a-directory open failures do not acquire
+   an errno-only empty-success exception. A failed read must not be
+   mistaken for EOF or silently publish an incomplete successful array.
+   DG directed errors to follow established patterns on 2026-11-09.
+
+DD131 provisionally supplies the command interface: `glob`/`rglob` have
+an operational status and an array destination. Successful zero-match
+enumeration succeeds; destination publication follows its accumulation/
+scratch rules and is unchanged on an operation error. A new target
+starts empty. `q-glob-semantics` owns the separate-branch trial, coordinating
+with `recoverable-file-failures`, not claiming that recovery already works.
+
+Assignments and loops remain resultless, and suppression does not reach
+into helpers or operand captures. Lacking implemented handling is not
+grounds to relabel an ordinary failure fatal. Both selectors retain the
+absolute-path contract; `rglob` names its directory explicitly and matches
+basenames rather than trying to split a path out of regex syntax.
 
 ## Burden (deliberately flipped)
 
@@ -82,10 +112,13 @@ the default and brevity is the explicit request.
   element"). Everything else in DD#69 stands unchanged: glob *is* an array;
   inline `*` in command-argument position is a compile error (SB5029/5030);
   an external-command splat still needs the empty-disposition `@{a:?}` /
-  `@{a:-WORD}` (SB5032); glob arrays remain **clean** (no taint, no bless).
-  Absolutization is orthogonal to both the empty-disposition (cardinality)
-  and taint (value).
-- **DD#39** — star-only (`*`; no `?` / `[]` / `**`) unchanged.
+  `@{a:-WORD}` (SB5032); newly produced glob elements remain **clean**.
+  Accumulating them does not clear an existing destination's taint
+  (DD131/DD128). Absolutization is orthogonal to both empty-disposition
+  (cardinality) and taint (value).
+- **DD#39** — at most one `*` in the final component; no additional
+  `?`/`[]` wildcard operators, multiple stars or wildcard directory
+  traversal (2026-11-09).
 - **Byte-identical-to-Bash** — deliberately relaxed here (DG owns that
   goal): using glob names as *data* (`echo`/`join`/display) now differs
   from bash (`/work/foo` vs `foo`). Accepted as the price of
@@ -97,7 +130,7 @@ the default and brevity is the explicit request.
   *target's* cwd at *runtime* (`sash_glob` → `getdents64`), not at compile
   time, so the absolute path is the target's, computed on the target.
 
-## Implementation hook
+## Original implementation hook (2026-07-29)
 
 Single runtime site: `sash_glob` / `sash_glob_regex` in `sash-rt/src/lib.rs`
 build each element (today: the bare dirent name). Prepend the
@@ -119,7 +152,7 @@ whether sash adopts a broader rule (auto-`--` where supported, reject
 
 - `glob-absolute-paths` — implement §Decision + §Form (runtime, specs, docs).
 
-## Implemented (2026-07-29)
+## Implemented (2026-07-29; cwd-only scope)
 
 Runtime-only change in `sash-rt` (`sash_normalize_abs`, `sash_glob_abs_prefix`;
 `sash_glob`/`sash_glob_regex` store `<abs-dir>/name`; `sash_getcwd` records
@@ -131,3 +164,9 @@ does not expand file globs (out of scope). Specs: new `spec/glob.sh` g.1–g.6
 (incl. the `-rf` option-injection pin and a `cd /` referential-stability
 pin) + `wordsplit.sh` 20.6; native+c 0 regressions. Journal 135. A separate
 pre-existing c-backend bug surfaced (`bug-emit-c-splat-vla-jump`), filed.
+
+This did **not** implement the literal-directory cases in the Decision.
+They remain in `bug-glob-directory-portion`; the historical completion
+record in `glob-absolute-paths` is qualified accordingly. The new
+2026-11-09 matching/composition/error policies are also pending, not
+covered by the July result.

@@ -90,6 +90,22 @@ this redirect phase, including in stages. Its completed effects are not
 undone by a later redirect failure either.
 Do not invent a successful empty value to conceal a failed file operation.
 
+**Directory selectors follow this rule too** (DG, 2026-11-09;
+DD39/DD69/DD73/DD131). A directory successfully enumerated with no
+matches produces zero elements; a failed directory open/read or required
+`getcwd` is an operation failure. Preserve the cause, rather than treating
+an errno as empty success or a read error as EOF. DD131 provisionally supplies explicit
+`glob`/`rglob` commands with operational statuses, including success on
+zero matches, and unchanged-on-error collection publication. Its scratch
+and accumulation modes are a branch experiment, not shipped behavior.
+
+Coordinate the trial with `recoverable-file-failures` and the classification
+inventory. It neither grants a status to an assignment/loop nor changes
+fatal-fault handling. An atomic collection update is not rollback of
+already consumed input or other completed effects. The implementation must
+account for allocation failures and the actual destination visible to ERR,
+not assume staging some entries alone proves the publication guarantee.
+
 ## Cleanup and process boundaries
 
 DD128 still governs termination: a first fatal fault in main or EXIT

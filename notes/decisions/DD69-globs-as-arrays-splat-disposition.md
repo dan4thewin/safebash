@@ -7,28 +7,75 @@ commands.
 
 ## 1. A glob is sugar for an array
 
-> **Amended by DD#73 (2026-07-29):** a glob element is no longer the
-> *verbatim* directory-entry name but a **lexically normalized absolute
-> path** (`array a=(*)` in `/work` → `/work/foo`). Rationale: referential
-> stability across `chdir`, and closing glob-sourced option-injection
-> (`-rf` → `/work/-rf`). Everything else in this section is unchanged.
+A glob expands to an **array**, with **one lexically normalized absolute
+path per matching directory entry** (DD73). In `/work`, `array a=(*)`
+contains paths such as `/work/foo`, not cwd-relative names. This preserves
+referential stability across `chdir` and closes glob-sourced
+option-injection (`-rf` becomes `/work/-rf`). There is no word splitting
+(DD22): spaces and newlines in a filename stay within one element.
 
-`*` (star-only, DD#39 — no `?`/`[]`/`**`) expands to an **array**, with
-**one verbatim element per directory entry**: no word splitting (DD#22),
-so a filename containing spaces or newlines is exactly one element. The
-array is the *only* representation of a glob.
+DD39's 2026-11-09 rule permits **at most one `*` in the final filename
+component of each glob**, with a literal directory prefix. Leading-dot entries
+require an explicit leading dot in that component; `.` and `..` are
+never wildcard results. Each expansion is sorted bytewise.
 
-- **Array literal:** `array a=(*)` / `(*.sh)` — globs (already so).
-- **for-in:** `for f in *` ≡ `array tmp=(*); for f in @tmp` — per-element
-  iteration; **zero matches → the loop body never runs** (for-in's
-  built-in empty handling). for-in is therefore exempt from §2.
-- **Command-argument position:** inline `*` (e.g. `echo *`, `ls *.sh`) is
-  a **compile error** — "globs go through arrays" (`array a=(*); … @{a:?}`).
+**Globs compose in list positions** (DG, 2026-11-09):
+
+- **Array literal:** `array f=(.* *)` concatenates the dotfile expansion
+  and the ordinary expansion. A glob is not restricted to being the
+  literal's sole element; other legal elements retain their order.
+- **Array append:** `array f=(.*); f+=(*)` appends the expanded ordinary
+  entries, not a table handle, joined string or literal `*`.
+- **for-in:** `for f in .* * { ... }` iterates the concatenated expansions,
+  just as materializing that list into an array and iterating it would.
+  The single-glob form remains `for f in *` ≡
+  `array tmp=(*); for f in @tmp`.
+- **Ordinary command-argument position:** inline `*` (e.g. `echo *`,
+  `ls *.sh`) is a **compile error** — "globs go through arrays"
+  (`array a=(*); … @{a:?}`).
   There is no inline glob expansion and no runtime nullglob/failglob.
+  DD131's explicit selectors instead interpret ordinary string pattern
+  operands; that is not argument expansion.
 
-Glob results are **clean**: a directory entry is a compiler-trusted value
-like `$(getppid)`, so glob arrays carry no taint, do not trip SB5021, and
-need no value-bless. Their only obligation is cardinality (§2).
+Each glob contributes its sorted elements **at its source position**.
+There is no sort of the whole initializer/append/iteration list, no
+deduplication of overlapping patterns, and no new ordering of elements
+already in an append target. The one-directory limit is per expansion,
+not per statement: `.* *` may enumerate the same directory separately.
+This selects no caching or filesystem-snapshot guarantee.
+
+**Successful expansion with zero matches contributes zero elements**;
+if the entire `for` list is empty at runtime, its body never runs. This
+is for-in's built-in empty handling, so §2 does not apply there. It does
+not legalize a syntactically empty `in` list (DD68). Nor does multiple-glob
+composition change the separate rules for named splats or `$(keys ...)`.
+
+An open/enumeration failure is not a successful zero-match expansion.
+DD73/DD130 govern its error handling. No assignment-level `-`, fabricated
+status or empty-success fallback is introduced here.
+
+New glob elements are **clean**: a directory entry is a compiler-trusted
+value like `$(getppid)`, so a fresh glob result carries no taint and needs
+no value-bless. Splat use still declares cardinality (§2). Under DD131's
+provisional accumulation model, adding a clean batch does not resolve
+existing destination taint or its owners; DD128 still governs that state.
+
+**The 2026-11-09 package is provisional and not implemented (DD131).**
+`glob ARRAY PATTERN...` is the proposed canonical operation. Its
+operational status is separate from the array; successful zero-match
+enumeration succeeds. Normal fill targets accumulate, while a leading-
+underscore target requests a fresh scratch binding. The companion
+`rglob ARRAY DIRECTORY REGEX...` matches basenames with ordinary regexes.
+
+Assignment sugar still replaces and append sugar still appends. A
+replacement needs a fresh result before assignment, not a direct
+accumulating fill into its old destination. DD131 owns the unchanged-on-
+error contract, scratch scope/re-execution rules and the sugar/quoting
+questions to evaluate on a separate branch.
+
+`q-glob-semantics` owns that trial, coordinating the directory-prefix,
+multi-star-rejection and file-failure tasks. The historical single-glob
+implementation below is not evidence that these new forms already work.
 
 ## 2. External-command array splats state their empty behavior
 
@@ -122,10 +169,11 @@ args, i.e. `echo`.
 - `array-splat-command-arg` — per-element splat (prerequisite).
 - `glob-as-array-splat-disposition` — §1 + §2 implementation.
 
-## Implemented (2026-07-08)
+## Implemented (2026-07-08; original single-glob forms)
 
 Part 1 (globs-are-arrays: for-in glob per-element, inline-`*` → SB5029) and
-Part 2 (external-splat empty-disposition) are both done.
+Part 2 (external-splat empty-disposition) were completed for that scope.
+The later composition and bounded-pattern policy in §1 remains pending.
 
 Part 2 (`glob-splat-disposition-word`): a bare `@a` into an external command
 (post-DD#23 resolution, a `/`-prefixed head) is **SB5032**; `@{a:-WORD}`

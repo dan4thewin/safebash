@@ -1,4 +1,3 @@
----
 title: "Question: should `-`, `if` and `||` catch a dynamic regex that fails to compile?"
 status: open
 priority: P3
@@ -9,9 +8,16 @@ gates:
   - "the ruling is pinned by specs in both backends for each lever: `-`, `if`, `||`, a `=~` test, and a capture of `sub`"
   - "SB4025's capture advice no longer says that a sash intrinsic cannot fail, or the ruling makes that true"
   - "the open `A.regcomp` line in `dd70-error-model-contract-spec.md` is closed one way or the other"
----
 
 ## What
+
+DD131 (2026-11-09) adds a **provisional** `rglob` directory selector to
+be evaluated on a separate branch. It has an operational status and
+an array destination, unlike a value-only replacement intrinsic.
+Coordinate its runtime pattern validation and unchanged-on-error
+publication with this question. The new selector does not settle the
+broader `match`/test/`sub` handling question or authorize changing those
+consumers by a shared-runtime side effect.
 
 DD#70 lists dynamic `regcomp` as an (A) member, "a pattern not known at
 compile time can fail to compile at run time", and gives (A) two levers:
@@ -49,11 +55,13 @@ Two specs already pin the abort: `e.a70.regcomp` (spec/errors.sh) under
 
 ## Cause
 
-Every runtime entry point that compiles a pattern calls `sash_exit(2)` when
-`regcomp9` returns null, after `regerror9` has printed the message:
+Every runtime entry point that compiles a pattern takes a terminal error
+path when `regcomp9` returns null, after `regerror9` has printed the message:
 `sash_regex_match`, `sash_regex_match_str`, `sash_regex_match_into`,
 `sash_regex_matchall_into` and `sash_regex_replace` (sash-rt). None returns
-a status, so no lever has anything to catch or discard.
+the compilation failure as a status, so no lever has that failure to
+catch or discard. The table above is historical F15 evidence, not a new
+runtime measurement for DD131.
 
 ## The documents disagree
 

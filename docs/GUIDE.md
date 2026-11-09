@@ -933,8 +933,9 @@ or operand captures, and DD128's process/handler ownership remain unchanged.
 
 The work is queued in `runtime-failure-classification`,
 `bug-fork-failure-reporting-by-form` and `recoverable-file-failures`.
-The runtime paths described below are implemented; their remaining
-failure-class inconsistencies are not claimed fixed by this decision.
+The existing runtime paths described below are implemented; changes
+marked pending and remaining failure-class inconsistencies are not
+claimed fixed by this decision.
 
 ### Process management
 
@@ -1072,6 +1073,57 @@ FLAG-only programs receive no polling instructions.
 
 `SashTable` — hash table implementation used for both indexed and
 associative arrays (DD#33).
+
+### Directory selectors and scratch collections (provisional)
+
+DD131 records a package to implement and evaluate **on a separate branch**,
+not a shipped interface or a final commitment:
+
+```sash
+glob files '.*' '*'
+rglob files /var/log '^app\.[0-9]+\.log$'
+glob _batch '*.log'
+```
+
+Patterns are ordinary strings. DD39 bounds each glob to **at most one `*`
+in the final filename component**, with a non-wildcard directory prefix:
+`sub/*.sh` is legal, `*/file` and `a*b*c` are errors. Validate known
+patterns statically and unknown ones at runtime. One glob enumerates one
+directory; use `/usr/bin/find` for traversal. Dotfiles need a literal
+leading dot; wildcards never select `.` or `..`.
+
+`rglob` takes its directory separately and applies ordinary regexes to
+**basenames**, including dotfiles when they match, but excluding `.` and
+`..`. It does not restore the retired combined glob/regex-filter shorthand.
+
+DD69 requires composition in `array f=(.* *)`,
+`array f=(.*); f+=(*)`, and `for f in .* * { ... }`. Each expansion is
+sorted bytewise and spliced at its source position; the enclosing list
+is neither globally sorted nor deduplicated. Results remain clean,
+normalized absolute paths, one element per name, without word splitting.
+Successful zero-match expansion contributes no elements.
+
+The selectors have an operational status: successful enumeration succeeds
+even with zero matches. Errors follow DD130, never empty or partial
+success. Assignments/loops remain resultless; `=` still replaces, `+=`
+appends, and iteration sugar uses a fresh result where needed.
+
+The trial also covers existing array fillers (`read`, `argv`, `keys`,
+`match`, `matchall`): ordinary targets accumulate, while `_batch`-style
+targets request **fresh scratch bindings**, rejecting already-bound names.
+Bare `_` remains the write-only discard binder. Scratch is not const, a
+taint exemption, a new scope or a mode inherited through parameter aliases.
+One scratch binding site can execute repeatedly; successful executions
+replace its batch, while an operation error retains its previous value.
+Empty results and EOF/no-match predicates retain their distinct meanings.
+
+No failed fill may publish a partial update. This is a collection-state
+guarantee, not rollback of consumed input or earlier effects. Current
+fillers still use their documented replacement behavior; the new commands
+and scratch model are unimplemented. `q-glob-semantics` owns the trial,
+including migration costs, loop/parameter behavior, failure publication,
+sugar/quoting and native/C evidence, before DG's adoption review
+(journal 603).
 
 ---
 

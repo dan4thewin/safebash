@@ -1,4 +1,39 @@
-## STATUS (2026-11-09, latest) - Const and validation are independent
+## STATUS (2026-11-09, latest) - Provisional selectors and scratch collections
+
+DG provisionally adopted `glob`, `rglob` and scratch collections.
+Implementation will use a **separate branch** to evaluate their utility
+and ramifications before landing behavior on main. DD131 records the
+working model; this is not a final language commitment or an
+implementation go.
+
+The explicit selectors take ordinary string patterns and have operational
+statuses, succeeding on zero matches. Glob is bounded to at most one
+star in the final component of one directory; dotfiles need a literal
+leading dot. `rglob` names its directory separately and applies ordinary
+regexes to basenames. Per-pattern bytewise sorting, source-order
+composition and normalized absolute output are recorded.
+
+Normal array-fill destinations accumulate. A `_batch`-style scratch
+target requests a fresh source binding, not permission to overwrite an
+existing one; bare `_` remains discard. Existing scope, parameter
+identity, result kinds and taint ownership stay. A repeated scratch
+site replaces its successfully computed batch but retains its prior
+value on an operation error. Failed fills must not publish partial
+updates; input and earlier side effects are not rolled back.
+
+The existing P2 `q-glob-semantics` owns the integrated branch trial,
+including existing fillers, migration/quoting, loop and slot behavior,
+failure publication and native/C evidence. Directory-prefix,
+multi-star-refusal, regex-correctness and shared failure owners retain
+their obligations. DD60/DD63/DD75/DD99 still describe the shipped
+replacement behavior; the new model is explicitly provisional.
+
+Journal 603 records the discussion and source-inspected baseline.
+No implementation branch, compiler/runtime/converter/spec/build change,
+new behavior probe, sweep or coverage run accompanies this recording.
+Journal 577 remains the accepted implementation baseline.
+
+## STATUS (2026-11-09) - Const and validation are independent
 
 DG separated immutability from validation. A const may hold tainted
 input and undergo an otherwise legal attest without changing its value.

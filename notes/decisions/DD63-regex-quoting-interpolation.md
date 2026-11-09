@@ -28,6 +28,13 @@ and delete `right_is_quoted` + the duplicate `lower_subscript`.
 
 ## The builtins
 
+The out-array fill contracts below describe the shipped replacement/
+clear behavior. DD131 provisionally includes `match`/`matchall` in an
+accumulation/fresh-scratch branch trial, preserving their own no-match
+verdicts and capture layout within each produced batch. It also proposes
+the separate basename selector `rglob`; neither that command nor the new
+destination model is implemented by this recording.
+
 Join the existing builtin family (`keys`/`join`/`len`). Reserved names:
 `match`, `sub`, `gsub`, `toupper`, `tolower`.
 

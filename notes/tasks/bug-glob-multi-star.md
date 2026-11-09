@@ -1,16 +1,25 @@
----
-title: "Bug: a glob with two or more `*` matches only names containing a literal `*`"
+title: Reject unsupported multi-star glob patterns
 status: open
 priority: P2
 kind: bug
 depends: []
 gates:
-  - "`a*b*c` yields `ab.c`, `abc` and `axbxc` (bash's rule; a name literally `a*c` does not match), in both backends"
-  - "a spec pins a multi-star pattern in both backends; it fails on the pre-fix binary"
+  - "known multi-star glob patterns such as a*b*c and ** are rejected in explicit calls and every glob sugar position, not silently matched or normalized"
+  - "computed glob patterns enforce the same limit at runtime, reporting failure without changing the destination"
+  - "valid single-star patterns and zero-star explicit patterns remain legal; regex patterns and ordinary literal text do not acquire a glob star limit"
+  - "native/C CLI specs pin refusal and preservation with before/reversion controls and fresh ids for changed contracts"
   - "the `sash_glob` doc comment lists what the matcher supports, accurately"
----
 
-## What
+## Selected remedy (DG, 2026-11-09)
+
+DD39 now limits a glob to **at most one star**, and DD131 provisionally
+packages the command/sugar enforcement in a separate-branch experiment.
+This task owns rejection, not a general multi-star matcher.
+`q-glob-semantics` coordinates that trial with literal directory support,
+dynamic string patterns and recoverable errors. Implementation remains
+open; the policy recording did not change the compiler.
+
+## Historical F13 observation
 
 In a directory holding `abc`, `axbxc`, `ab.c` and `a*c`:
 
@@ -30,17 +39,20 @@ suffix is `b*c`, compared byte for byte, so only a name literally ending in
 `"prefix*"`, `"prefix*suffix"` and `"*"`, the one-star shapes. Nothing at
 compile time rejects a second star.
 
-DD#39 reads "Star-only glob for files (`*` only, no `?` or `[abc]`)". It
-does not limit the number of stars, so a multi-star pattern is in the
-language and the silent empty result is a bug.
+At the time, DD39 read "Star-only glob for files (`*` only, no `?` or
+`[abc]`)" without a star-count limit. That is why this was filed as a
+matcher bug. DG's 2026-11-09 choice supersedes the old expectation that
+the example should match like Bash; the required outcome is now refusal.
+The historical probe was not rerun for the policy recording.
 
 ## Fix
 
-Either a general star matcher (segments between stars, matched greedily
-left to right, first anchored at the start and last at the end), or a
-compile-time rejection with a DD#39 addendum. The first follows DD#39 as
-written. It is independent of `bug-glob-directory-portion` but touches the
-same function, so the two may land together.
+Use one pattern boundary shared by static validation and dynamic
+operation handling. Reject a second star before enumeration; do not
+silently collapse it or report no matches. Preserve the literal-prefix
+repair in `bug-glob-directory-portion`. The two share classification
+and runtime work and may land together; no new diagnostic or ABI was
+chosen by the provisional decision.
 
 Found during the batch-531 port (F13 glob probes, `m1`), unrelated to the
 port itself.

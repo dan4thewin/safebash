@@ -1,10 +1,60 @@
-title: DD#39 — Star-only glob + regex mutation
-status: implemented
+title: DD#39 — Single-star file globs + regex mutation
+status: accepted
 
-Star-only glob for files (`*` only, no `?` or `[abc]`).
+The selected file-glob policy is deliberately coarse: at most one `*`
+in the final filename component, with a non-wildcard directory prefix.
+No additional `?`/`[abc]` wildcard operators, multiple stars or wildcard
+directory traversal. DD131 packages this in a provisional branch trial
+with explicit `glob`/`rglob` commands and scratch collections.
 Perl-style regex for string mutation: `var =~ s/re/str/flags` (statement, mutates).
 Expression form: `${var:s/re/str/flags}` (returns value, no mutation).
 `${var/pat/rep}` family accepted via glob→regex coercion.
+
+## File glob contract (DG, 2026-11-09)
+
+DG chose a small directory-selection tool, not a second `find`:
+
+> no to anything that needs multiple opendir calls
+
+> no to more than one * in a glob - it should be a coarse tool, regex
+> can refine the result
+
+- **One directory per glob.** `*`, `prefix*`, `*suffix` and
+  `prefix*suffix` select entries from one directory. A literal directory
+  prefix is legal: `sub/*.sh`, `./*`, `../x/*`, `/etc/*`. Open that
+  directory once and read its entries; this is not a one-`getdents` limit.
+- **Reject broader patterns.** `a*b*c`, `**`, `*/file`
+  and `sub*/f*` are not supported patterns, not successful empty matches.
+  Validate known patterns statically and computed string patterns at
+  runtime (DD131). Do not normalize several stars into one or require a
+  star in an explicit `glob` pattern. Use `/usr/bin/find` for traversal.
+- **Leading dots are explicit.** The filename pattern must start with
+  a literal `.` to select a leading-dot entry. `*` excludes `.config`;
+  `.*` includes it, but no wildcard selects `.` or `..`. Literal `.` and
+  `..` in the directory prefix remain legal.
+- **Sort each expansion bytewise.** No locale or filesystem-enumeration
+  order dependence. Composition preserves source order, rather than
+  globally sorting or deduplicating the enclosing list (DD69).
+
+The limits are **per glob**, not per array or statement. DD69 allows
+several such expansions in array literals, array appends and `for` lists.
+This does not change `*` in arithmetic, regexes or literal text outside
+glob syntax, introduce inline command-argument globbing, or restore a
+retired inline glob/regex-filter form.
+
+DD73 still requires normalized absolute paths; DD69 still supplies clean
+array elements without word splitting. Directory-operation failures follow
+DD130, not a blanket fatality rule or an invented empty-success value.
+
+**Implementation is a provisional branch experiment (DD131).**
+`q-glob-semantics` owns the composed behavior and evaluation;
+`bug-glob-multi-star` now owns rejection, not a general matcher.
+`bug-glob-directory-portion` retains the already-required literal-prefix
+repair. This revision narrows the old unrestricted count of `*` characters;
+it does not claim that the current compiler enforces the new contract.
+The explicit regex selector uses ordinary regexes rather than the glob
+star limit and does not restore DD108's combined shorthand. Journal 603
+records the decisions and provisional implementation boundary.
 
 ## Regex engine
 

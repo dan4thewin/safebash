@@ -42,6 +42,15 @@ global) that a reviewer can't trace. Both are footguns.
 - **`local fn` (DD#18) is abandoned** — it was the only other user of `local`,
   and "designed, not built."
 
+## Provisional scratch collection bindings (DG, 2026-11-09)
+
+DD131 proposes leading-underscore **fill targets** such as `_batch` as
+fresh scratch introductions. The separate-branch trial retains this DD's
+scope: no shadowing, no new block scope and no fresh private lifetime
+merely because a loop re-executes a binding site. Scratch is not const,
+and ordinary writes do not acquire a taint-resolution exemption.
+The naming model is provisional, not implemented.
+
 ## Function names: one definition each (DG, 2026-11-06)
 
 A function name has exactly one source definition in a program. A second

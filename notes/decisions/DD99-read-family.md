@@ -26,12 +26,17 @@ readline TARGET         # consume one line (terminated by newline)
 - **`readline` binds a scalar.** One record is one value.
 - **`read` always produces an array.** No declaration-dependent behaviour, no
   second target kind. An undeclared target auto-declares (DG, 2026-07-08).
-- **Each read replaces its target.** Empty input clears it; shorter input
-  leaves no old suffix. This also holds at stdin EOF (implementation corrected
-  in journal 518).
+- **Shipped destination behavior: each read replaces its target.**
+  Empty input clears it; shorter input leaves no old suffix. This also
+  holds at stdin EOF (implementation corrected in journal 518).
 - **`$SRC`, if given, is a scalar to split** instead of stdin. This is the
   operation that would otherwise be called `split` — DG's observation that it
   is just a two-argument `read`.
+
+DD131 provisionally includes the **array** forms in an accumulation/
+fresh-scratch branch trial. It does not change scalar `readline`, the
+NUL boundary, source selection or EOF's meaning. The replacement rule
+above remains the shipped baseline until that experiment is evaluated.
 
 ```sh
 readline ln                     # one line → scalar

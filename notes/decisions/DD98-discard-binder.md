@@ -84,9 +84,16 @@ and `read _ b _` (a repeated target) was already tolerated. The whole feature is
 three checks: an exemption in `report_dead`, an exemption in the attest-all
 both-binders rule, and the new SB5056 read reject.
 
-Names *prefixed* with `_` (`_n`, `_args`) are untouched — they remain ordinary
-variables, still subject to SB5050. Only the bare name `_` is special. Nothing
-in `spec/` or `contrib/` used `_` as a variable, so migration cost was zero.
+In the shipped language, names *prefixed* with `_` (`_n`, `_args`) remain
+ordinary variables, still subject to SB5050. Only the bare name `_` has
+this discard meaning. Nothing in `spec/` or `contrib/` used `_` as a
+variable in the original census, so that migration cost was zero.
+
+DD131's 2026-11-09 **provisional** branch trial proposes `_batch`-style
+scratch collection fill targets. They remain readable and subject to
+normal taint and unused-variable rules; none inherits bare `_`'s
+exemptions. Bare `_` stays repeatable, write-only discard, not a fresh
+readable scratch binding. The proposed prefix rule is not shipped.
 
 ## The arithmetic hole this exposed
 

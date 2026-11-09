@@ -108,6 +108,14 @@ yield no items at runtime; this header rule adds no non-emptiness check
 or proof obligation on that data. An empty string is one item, not an
 empty list: `for x in "" { echo "[$x]" }` still iterates once.
 
+DD69's 2026-11-09 glob-composition rule permits
+`for f in .* * { ... }`: concatenate each glob's independently sorted
+expansion in source order, then iterate. Those are written source items
+even when neither matches. The rule applies to keyword bodies too;
+its implementation remains in `q-glob-semantics`, now DD131's provisional
+separate-branch trial. This neither gives the loop a result nor creates a
+per-iteration scope for scratch collections.
+
 For argument iteration, write `for x in @args` in a function or
 `for x in $(argv 1)` at top level (DD75/DD60), retaining ordinary
 taint and arity rules. The converter must expand Bash's omitted-list

@@ -73,6 +73,16 @@ This supersedes the sketch in journal 042, which proposed `arr=(* =~ re)` as
 the "full power" replacement for the dropped `?` and `[abc]` glob characters.
 That need is real; the loop serves it.
 
+## Provisional directory-selector counterpart (2026-11-09)
+
+DD131 proposes `rglob ARRAY DIRECTORY REGEX...` for a separate-branch
+trial. It selects directory entries using **one** pattern language,
+regex, with an explicit directory and documented basename subject.
+It is not a glob followed by a regex filter and does not restore the
+content/arity-sensitive array shorthand or `sash_glob_regex`.
+The loop remains the explicit way to refine existing arrays or choose
+a different subject. No new selector is implemented by this recording.
+
 ## Not affected
 
 - `arr=(*.sh)` — the single-glob shorthand. Unambiguous, retained.

@@ -1,4 +1,3 @@
----
 title: "Batch 531 findings: index and completed port dispositions"
 status: done
 priority: P1
@@ -7,7 +6,6 @@ depends: []
 gates:
   - "every finding is fixed with a spec, closed by a recorded decision, or explicitly assigned to independent backlog under DG's 2026-10-25 rule"
   - "every reference hunk has a recorded ported, reimplemented, superseded or dropped disposition; none remains pending or drop-proposed"
----
 
 ## What
 
@@ -154,12 +152,16 @@ not obviously a bug stays unchanged in the port:
   - Fixed in F1+F4 (journal 537): SB4028 at the dispatch, in every boolean
     position (cnd.8-cnd.10, cnd.13-cnd.17, cnd.19-cnd.21; DD66 addendum
     2026-10-26).
-- `bug-glob-multi-star` (P2): `a*b*c` matches only names containing a
-  literal `*`.
+- `bug-glob-multi-star` (P2): the historical matcher treated later stars
+  literally. DG selected at-most-one-star refusal (2026-11-09,
+  DD39/DD131), not a general matcher; enforcement remains open.
 - `bug-glob-directory-portion` (P2): `sub/*`, `./*` and `/etc/*` match
   nothing, where DD73 specifies them.
-- `q-glob-semantics` (P2): dotfiles, order, directory-open errors, and a
-  `*` in a non-final segment.
+- `q-glob-semantics` (P2, implementation/evaluation work): DD131
+  provisionally adopts `glob`, `rglob` and fresh scratch collection
+  bindings. Implement on a separate branch, evaluate utility,
+  migration/failure/scope consequences and return to DG before adoption.
+  The coarse matching/composition choices are recorded, not shipped.
 - `q-attest-retag-of-const` (P3, implementation work): DG separates
   immutability from validation (2026-11-09, DD86). Allow value-preserving
   const attests, including conversion sources; real writes, conversion

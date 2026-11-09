@@ -164,6 +164,13 @@ collides with SB5025's own advice, which currently recommends `$(join @a)`.
 **modify** it. This is deliberate: it removes any need for out-parameters or
 multiple return values — a function can fill several collections in place.
 
+DD131's provisional scratch-collection trial preserves this identity.
+Scratch is a source introduction request, not a refill-mode attribute
+carried through aliases: an existing A-E target accumulates regardless
+of the caller's original name. A fresh-binding request cannot target
+an already-bound slot. Forwarding, non-aliasing and the one-signature
+rule remain; the trial must evaluate this interaction explicitly.
+
 ### `=foo` is not a read; `@foo` is
 
 This is the load-bearing distinction, and it falls out of what each form
