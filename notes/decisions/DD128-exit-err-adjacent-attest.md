@@ -282,6 +282,15 @@ condition-to-body/branch positions, for-source-to-body positions, and the
 DD127 single-use-call rule. Shared-function ownership and the prohibition
 on attesting received taint inside another body remain.
 
+DD71's binding lists do not make several acquisitions a joint adjacency
+unit (DG, 2026-11-09). DD121 measures each plain or declared binding
+separately: a later binding intervenes, and a sequence of later attests
+cannot resolve the list as a batch. Signal planning must preserve each
+legal acquisition/resolution pair rather than extending permission or
+deferring dispatch across such a batch. The grammar/adjacency work is
+pending in `q-statement-form-residuals`; existing handler ownership,
+failed-attest replacement and `:!` contracts are unchanged.
+
 `:!` authorizes a particular read; it does not clear the source binding.
 In particular, `v=${v:!}` is still an unrelated assignment when written
 outside the permitted failed-attest resolution, and leaves v tainted.

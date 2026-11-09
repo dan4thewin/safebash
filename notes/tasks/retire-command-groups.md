@@ -97,7 +97,10 @@ that evidence.
 The group-only rows in `q-compound-as-condition` and Q3 of
 `q-statement-form-residuals` now have a rule. The former task also has a
 settled no-result rule for non-group compounds (journal 597); the latter
-retains its separate separator/declaration questions.
+now owns the settled statement-boundary/binding-list rule (journal 599).
+Preserve its no-extra-separator permission after otherwise legal completed
+constructs; it cannot preserve a retired source group merely because
+the group has a closing brace.
 `compound-redirects`, `c-compound-pipeline-stage`,
 `block-falls-through-blind-to-group` and
 `compound-condition-abort-catch` are already completed historical

@@ -43,6 +43,14 @@ Sash has no prefix-assignment syntax for env vars. The coercion from
 bash `FOO=bar cmd` prepends `/usr/bin/env`. This keeps all env var
 manipulation outside the compiler and runtime.
 
+DD71's 2026-11-09 boundary rule also rejects `FOO=bar cmd` as an
+implicit sequence of a sash binding and a command. Write `FOO=bar; cmd`
+for that sequence, or use a newline; neither form sets the command's
+environment. One or several bindings follow the same rule, with or
+without a declaration keyword. Enforcement is pending in
+`q-statement-form-residuals`; `/usr/bin/env` remains the explicit
+environment mechanism.
+
 ## Rationale
 
 The bash model — where shell variables and env vars share a namespace,

@@ -7,7 +7,7 @@ depends: []
 gates:
   - "`=~` RHS parses as an operand word: bare metachars work (`^(a|b)$`), a quoted space works (`[[ $x =~ 'a b' ]]` matches `a b`), and `[[ $x =~ foo bar ]]` is NOT silent `foobar` (dangling `bar` → clean error)"
   - "`parse_regex_rhs`/`regex_rhs_step`/`regex_punct_char` deleted; the `{` whitespace-gap heuristic gone"
-  - "assignment/declaration RHS absorbs metachars to `;`/newline/whitespace: `a=foo|cat` → literal `foo|cat`; `a=foo bar` → `a=foo` then `bar`; `a='x y'` → `x y`"
+  - "assignment/declaration RHS absorbs metachars to `;`/newline/whitespace: `a=foo|cat` → literal `foo|cat`; `a=foo bar` → `a=foo` then `bar` was the original gate (retired by DD71's 2026-11-09 boundary policy); `a='x y'` → `x y`"
   - "multi-exact dispatch arm `[[ $x == a b c { … } ]]` runs the group for a|b|c (first-match); backends unchanged (CaseItem.patterns already Vec)"
   - "dynamic `=~ \"$x\"` supported (validate-static / runtime-abort-dynamic); native+c+janet identical; 0 regressions"
 ---
@@ -17,6 +17,13 @@ gates:
 Implements the DD#71 operand-word model. Supersedes
 `bug-regex-rhs-space-quote` (resolved by construction) and enables the
 multi-exact dispatch arms discussed alongside DD#66.
+
+The original whitespace-only assignment-to-command split is historical,
+not current language policy. DG retired it on 2026-11-09: DD71 now
+requires a separator after one or more bindings before a following
+statement, while preserving actual whole-statement boundaries.
+`q-statement-form-residuals` owns enforcement; this completed lexer
+task is not reopened, and its operand-word extent rule stays unchanged.
 
 ## Scope
 

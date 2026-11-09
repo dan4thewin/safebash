@@ -455,8 +455,10 @@ Filed as backlog tasks while researching B55, under the same rule:
   - Landed in F1+F4 (journal 537): a declaration stops at `|`, `&`, `&&`
     and `||`, as an assignment does, and gets the same verdicts
     (71.1-71.5). In a control-flow header the body's `{` ends it too, so a
-    header declaration is SB4025 (71.6-71.8). Outside a header 71.9 still
-    pins SB4014, which `q-statement-form-residuals` asks about.
+    header declaration is SB4025 (71.6-71.8). Outside a header 71.9
+    historically pins SB4014; its group now belongs to
+    `retire-command-groups`. `q-statement-form-residuals` owns the
+    settled non-group separator/binding-list rule (journal 599).
 - [x] **B31** (open; DD24, DD122). False positive: a wrapped clean-pipe
   reader, `echo hi | - read x`, is tainted, because
   `taint_stmt_no_read_taint` peels only a direct command.
@@ -618,10 +620,13 @@ touches is fixed here, and any other finding goes to the backlog.
 - `q-sb4072-closer-diagnostics` (P4): `a && fi` and `{ a && }` are SB4072 at
   the closer, while `a &&` at the end of the input is SB4056 at the
   operator; and SB4072 does not name the open block.
-- `q-statement-form-residuals` (P4): a word after a complete statement (`}
-  2`) and declaration/separator questions. Q3's grouping and the
-  `return {` cases are settled by conditional-block sugar and general
-  group retirement; an earlier group refusal does not fix a word split.
+- `q-statement-form-residuals` (P4): policy settled, implementation open.
+  Whole-statement boundaries need no extra separator; one or more plain
+  or declared bindings require `;`/newline before a following statement.
+  Capture/attest adjacency stays per binding, not a list-wide batch
+  (DD71/DD121, journal 599). Group-only and `return {` cases retain
+  their retirement owner; an earlier group refusal does not prove the
+  non-group separator guard.
 - `dedupe-external-head-predicates` (P4): four functions and two name lists
   answer one question.
 - `doc-keyword-lexing-claims` (P4): DD#125 and a resolve.rs comment say `in`

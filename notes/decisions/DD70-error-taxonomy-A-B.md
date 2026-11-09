@@ -631,7 +631,12 @@ found" at statement level, SB4022 on a last stage, and a parser ICE after a
 `-`. `2>f` on a compound now gets `>f`'s verdict, code and position wherever
 the compound stands (csfx.12-csfx.18). A digit word with a blank before the
 operator is not a tag, so `{ … } 2 >f` still starts a new statement at the
-`2` (csfx.19). What that word should start is `q-statement-form-residuals`.
+`2` in that historical measurement (csfx.19). The source group now
+requires rejection under `retire-command-groups`. DD71's 2026-11-09
+boundary rule allows a following statement after an otherwise legal
+completed construct without another separator; it does not make `2`
+a valid command. `q-statement-form-residuals` owns that non-group
+boundary rule, not preservation of this retired-group fixture.
 
 At this implementation's landing, SB4023 still did not see through `!`:
 `! { /bin/false } && echo y` printed `y` (bng.22), where `{ /bin/false } &&

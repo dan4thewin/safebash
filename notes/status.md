@@ -1,4 +1,28 @@
-## STATUS (2026-11-09, latest) - A `for` needs something to do
+## STATUS (2026-11-09, latest) - Visible boundaries, local resolution
+
+DG accepted no extra separators where a whole statement has a clear
+ending, and consistent lists of one or more plain or declared bindings.
+Before a following statement, a binding list needs `;` or newline
+unless an enclosing closer or EOF already ends it. Closing an operand
+does not close the statement. Binding order and existing type/scope
+rules remain; there is no environment-prefix or simultaneous-write form.
+
+Capture/attest resolution stays an individual unit. Grouping bindings
+does not make several acquisitions adjacent to later batch attests:
+each binding advances adjacency, including an intervening clean one.
+Clean captures, whole-collection attest-all and explicit `:!` remain.
+Signal deferral protects actual legal resolution pairs, not a batch.
+
+DD71/DD121 record the rules; DD53/DD68/DD128 and GUIDE agree.
+The existing P4 `q-statement-form-residuals` becomes implementation
+work. Group retirement and identifier validation retain their own
+owners. Journal 599 records the discussion and source-read evidence.
+
+This is policy/backlog recording only. No compiler/runtime/converter/
+spec/build code changed, and no new behavior probe, sweep or coverage
+run was made. Journal 577 remains the accepted implementation baseline.
+
+## STATUS (2026-11-09) - A `for` needs something to do
 
 DG requires `in` in word-list `for`, rejects the stray semicolon
 before it, and rejects explicitly empty lists as pointless code.

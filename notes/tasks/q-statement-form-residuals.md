@@ -1,33 +1,111 @@
 ---
-title: "Question: statement separators and declarations; conditional-block policy settled"
+title: "Enforce statement boundaries, uniform binding lists and local capture/attest pairs"
 status: open
 priority: P4
-kind: question
+kind: work
 depends: []
 gates:
-  - "DG rules on the remaining separator/declaration questions; DD53/DD71 record them; Q3's DD95 policy is already settled"
-  - "every program in the tables prints what its ruling says or is rejected with a diagnostic naming the rule, in both backends"
-  - "sp8 and sp9 get a diagnostic that names the actual problem, not the variable name"
-  - "the citations of this task in `at_declaration_end` (sash/src/parse/parser.rs) and in the comments of errors.sh 71.9 and csfx.19 are rewritten to the ruling"
+  - "DD71's whole-statement boundaries need no extra separator; a value's closer is not a statement boundary, in native and C"
+  - "one or several plain assignments and typed declarators have consistent list boundaries and ordered effects; a following statement requires an explicit separator unless a recognized enclosing closer or EOF ends the list"
+  - "DD121 adjacency is per binding, not per list: reject batch or late attests, including after an intervening clean binding, preserving individual pairs, clean captures and explicit :! reads"
+  - "preserve existing type, scope, const, result-kind, operand-word, capture-condition and signal-resolution contracts without introducing environment-prefix or transactional semantics"
+  - "coordinate retired-group and invalid-name diagnostics with their owners; their earlier refusals must not masquerade as proof of the non-group boundary rule"
+  - "take a current fixture census, allocate fresh ids for changed contracts, and prove each new guard with real CLI before/reversion controls before the predicted gate"
+  - "update the source/spec citations of this task to the accepted rule, retaining only coverage of legal forms or the proper refusal"
 ---
 
-## What
+## Accepted policy (DG, 2026-11-09)
+
+DG first rejected the implicit assignment-to-command split, then asked
+for the declaration asymmetry and self-delimiting forms to be considered
+together. After that discussion:
+
+> yes to no extra separators when there are clear boundaries and yes to ;
+> after >=1 assignment. a capture followed by an attest should be a unit
+> rather than multiple catures in one statement followed by multiple attests
+
+DD71 is authoritative for the grammar; DD121 for binding-level adjacency.
+DD53, DD68, DD128 and GUIDE agree. Journal 599 records the discussion.
+The questions are settled; implementation remains open in this task.
+
+### Visible boundaries, not mandatory semicolons everywhere
+
+Completed brace-bodied forms, `fi`/`done`, and otherwise legal
+self-delimiting statement forms need no additional separator. Preserve
+`if /bin/true { echo yes } echo done`, a function definition followed
+by a call, and a mutating `(( ... ))` followed by a command.
+An enclosing closer or EOF ends the last statement without a semicolon.
+Recognize the grammatical role, not just the spelling: `else`/`elif`,
+connectors and legal redirects remain attached to their own construct.
+This does not legalize a pointless bare test or a retired command group.
+
+Quotes, `${...}`, `$()`, `$((...))` and collection-literal closers are
+inside operands. They do not end the surrounding binding list or
+command. A command remains open-ended; do not split its arguments by
+recognizing a later word as another command.
+
+### Uniform binding lists
+
+These are separate valid examples:
+
+```sash
+a=one b=two; echo "$a $b"
+str a=one b=two; echo "$a $b"
+int a=1 b=2; echo "$a $b"
+```
+
+Before a following statement, one binding needs the same `;` or newline
+as several. Reject `a=one b=two /bin/echo hi`; a declaration cannot run
+that following command either. Bare declarators remain legal, so
+`str a b` is not inferred to mean a declaration followed by a call to
+`b`. Do not use command/function lookup to guess declaration boundaries.
+
+Evaluate and write each binding before the next, preserving source
+order and existing per-binding constraints. No environment prefix,
+scope, atomicity or simultaneous RHS snapshot is introduced. Lists
+produce no result or status and gain no condition/pipeline/background
+eligibility. Preserve the existing DD88/DD101 capture-condition forms,
+not a new result-bearing binding-list extension.
+
+### Local acquisition/resolution
+
+Each binding, declared or plain, advances adjacency independently.
+A list cannot acquire several subjects and then grant adjacency to
+several later attests. A clean binding also intervenes; the final
+binding alone can have the immediately following attest.
+
+Keep `a=$(getenv A); attest a p?` together before acquiring and attesting
+`b`. This is an ordinary acquisition/resolution pair, not new syntax.
+It preserves DD128's signal-deferral unit and failed-path obligations.
+Grouping must not silently change locality because one AST node happens
+to contain several bindings.
+
+Do not turn this into a ban on all grouped `$()` expressions or mandate
+attests for clean string/integer producers. DD91's explicit `:!` remains:
+an earlier unresolved binding can be read through it, but a later
+binding's attest does not clear the earlier one. Whole-collection
+attest-all and the existing structural adjacency positions also remain.
+
+## Ownership and historical evidence
 
 **Policy boundary, 2026-11-09:** general command groups are retired.
 Both `cmd && { a; b }` and `cmd || { a; b }` remain solely as their
 corresponding `if` shorthands (DD70/DD95, journal 596).
 `retire-command-groups` owns enforcement, including `return { ... }`
 and groups accidentally split off after another statement.
-Q1/Q2's non-group separator/declaration issues remain separate. A group
-refusal cannot prove the ordinary `s=x cmd` split was fixed.
+Q1/Q2's non-group separator/declaration enforcement belongs here.
+A group refusal cannot prove the ordinary `s=x cmd` split was fixed.
+`bug-declaration-names-unvalidated` retains its independent identifier
+validation work. None of these tasks needs a new policy decision.
 
 Found 2026-10-27, while porting F1+F4 (batch-531 B28, journal 537). F1+F4
 made a header `{` end a declaration, so `if int n=$(cmd) {` is DD#88's SB4025
 (specs 71.6–71.8). It left the statement level alone (71.9). These are the
-questions it did not decide. All results are the same at `8e28c61` and with
-F1+F4, in both backends.
+questions it did not decide then. The following tables are historical:
+results were the same at `8e28c61` and with F1+F4, in both backends.
+They were not rerun for the policy recording.
 
-### Q1. A word after a complete statement silently starts a new one
+### Historical Q1: implicit statement splitting
 
 | Id | Program | Result |
 |---|---|---|
@@ -37,13 +115,13 @@ F1+F4, in both backends.
 | bc.g6 | `echo a { echo z }` | `a`, `z` |
 | csfx.19 | `{ /bin/echo hi } 2 >/dev/null` | SB5011 1:18 "command '2' not found — use absolute path or define as function" |
 
-bc.g6 is a decision on record (spec/brace.sh: "Pinned so the divergence is
-a decision on record rather than an accident"). sp1, d3 and sp5 are not
-recorded. d3 is bash's prefix assignment `FOO=bar cmd`, which DD#53 says sash
-does not have ("Sash has no prefix-assignment syntax for env vars"; the
-converter prepends `/usr/bin/env`, and spec 53.6 pins only that form). sash
-runs it as two statements with no diagnostic: a reader expecting bash's
-meaning gets a different program.
+bc.g6 was pinned as a decision, but its source group is now retired,
+as are sp1 and sp5. The earlier filing incorrectly called d3 unrecorded:
+DD71 explicitly permitted `a=foo bar` to split after the binding. DG
+has now retired that permission, not merely corrected an undocumented
+accident. d3 must reject; its semicolon/newline-separated twin remains.
+DD53's `/usr/bin/env` conversion remains the per-command environment
+form, not the meaning of either sash binding sequence.
 
 The split also happens after `return`, and there it deletes code:
 
@@ -65,7 +143,7 @@ not say what a `{` is, so the value form takes it as the end. For comparison,
 returns the group's status (bng.23). rt3 is the plain Q1 split after a
 producer.
 
-### Q2. A declaration does not split the way an assignment does
+### Historical Q2: declaration/assignment asymmetry
 
 | Id | Program | Result |
 |---|---|---|
@@ -77,8 +155,10 @@ producer.
 The original question compared declaration splitting with sp1. Group
 retirement now settles sp1/sp8/sp9 as refusals, with advice about the
 block rather than the valid variable name. Separation before an
-otherwise legal non-group statement remains Q1/Q2's question; d2's
-invalid names belong to `bug-declaration-names-unvalidated`.
+otherwise legal non-group statement now follows the uniform boundary
+rule. d1 remains valid; d2 needs a separator to run a command and must
+not bind a path as a name. The independent name guard belongs to
+`bug-declaration-names-unvalidated`.
 
 ### Q3. Settled: conditional-block sugar, not command-list grouping
 
@@ -110,27 +190,52 @@ braces delimit an `if` body, so its operators are in separate lists.
 Filed under DG's rule for the port that questions and uncovered cases become
 backlog tasks.
 
-## Options
+## Implementation evidence
 
-- **Q1 (a) reject a word that follows a complete statement on the same
-  line** (a statement ends at a newline, `;` or an operator). For d3, point
-  to `/usr/bin/env` (DD#53). Group-only bc.g6 already belongs to the
-  retirement task; retain non-group controls for the split. Recommended.
-- **Q1 (b) keep the split for otherwise legal statements**, and record
-  the prefix-assignment-looking d3 in DD53. This option now concerns
-  legal non-group followers only; it cannot preserve sp1/sp5/bc.g6's
-  retired groups.
-- **`return {`** (rt1, rt2), `return ! { ... }` and rt3's split-off
-  group are settled refusals under `retire-command-groups`, not part
-  of the non-group result-use enforcement in `q-compound-as-condition`.
-- **Q2's non-group declaration separation** follows Q1. sp8/sp9's
-  groups now require rejection either way, with advice about the
-  forbidden block rather than the valid variable name. Their parser
-  handling belongs with group retirement; d2's invalid declared names
-  retain their separate bug owner.
-- **Q3 is settled.** The rejected alternatives were retaining general
-  grouping, or deleting the multi-statement shorthand altogether.
-  Conditional-block sugar preserves the useful spelling without either.
+The 2026-11-09 read of `sash/src/parse/parser.rs` at `b6c26a9a` explains
+the asymmetry without a new runtime measurement. `parse_assignment`
+returned one Assignment after one RHS (2620-2678); the outer loop
+skipped zero or more terminators (125-139,229-233). `parse_declaration`
+instead owned a list (1157-1173,1220-1229), including bare declarators
+(1329-1330). The policy selects no particular AST representation or
+implementation strategy.
+
+Take a fresh fixture census when implementation starts. Pin one/many
+bindings, typed/untyped lists, ordered RHS effects, newline/semicolon
+separation, final statements before enclosing closers/EOF, and valid
+self-delimiting forms followed by ordinary statements. Pin operand
+closers that must not supply a whole-statement boundary. Use meaningful
+mutations, dispatch or attest forms rather than relying on an unused
+test that another rule already rejects.
+
+For adjacency, cover ordinary pairs, a capture as the last binding
+after a clean prefix, multiple captured subjects followed by later
+attests in either order, and a clean binding intervening before attest.
+Cover declarations and plain lists, the legal `:!` alternative, clean
+captures and whole-collection attest-all. Ensure later attests cannot
+borrow adjacency from a list container or from a preceding attest.
+Preserve signal deferral only across actual legal resolution pairs.
+
+Check converter-generated binding/attest sequences and preserve DD53's
+explicit `/usr/bin/env` conversion. Do not silently reorder input effects
+to manufacture adjacent capture/attest pairs; use the existing conversion
+diagnostic workflow where the ordering cannot be preserved.
+
+An earlier group/name/result-use error is not proof of this guard.
+Use valid used names, legal command heads and legal bodies; assert the
+distinguishing diagnostic and execute the preserved programs in both
+backends. Independently disable the separator and adjacency enforcement
+to prove their controls. Allocate fresh ids above database history for
+changed contracts; predict additions, retirements, flips and totals
+only from that actual census.
+
+`return {`, `return ! { ... }`, rt3, sp1/sp5/bc.g6 and sp8/sp9 remain
+the group-retirement owner's refusals. csfx.19 is also group-only;
+neither preserving its old unknown-command error nor rejecting its
+group proves the legal whole-statement boundary rule. Update the
+citations in `at_declaration_end` and the comments of errors.sh 71.9
+and csfx.19 to these owners and rules when implementation lands.
+No separator diagnostic number is selected by this recording.
 
 Probes: `files/port-f1f4-probes.tar.gz`, directories `bk/` (sp1, sp5, sp8,
 sp9), `sq2/` (d1–d3), `bl/` (g4a–g4c, cs19) and `wr2/` (rt1 is `rpt`, rt2

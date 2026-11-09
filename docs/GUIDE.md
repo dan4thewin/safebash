@@ -229,6 +229,18 @@ C-style `for` keeps its grammar. DD68/DD70/DD75 record the rule;
 `q-for-without-in-list` owns pending compiler/converter enforcement.
 The converter must spell out Bash's implicit argument iteration.
 
+Whole-statement boundaries need no extra separator (DD71/DD68):
+completed brace/keyword forms and self-delimiting statements can be
+followed directly by another statement. A closer within a value does
+not count. One or more plain assignments or typed declarators form a
+binding list; use `;` or newline before a following statement, unless
+an enclosing closer or EOF already ends the list. Bindings execute in
+order, not as environment prefixes or simultaneous assignments.
+Their grouping does not batch attest permissions: each binding is an
+adjacency step, and capture/attest resolution stays local to its
+acquisition (DD121/DD128). Clean captures and `:!` remain unchanged.
+Enforcement is pending in `q-statement-form-residuals`.
+
 ### Phase 2: Validate
 
 `validate.rs` walks the AST once. (The old `rules/` directory and its

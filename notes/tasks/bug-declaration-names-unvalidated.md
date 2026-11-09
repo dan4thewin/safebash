@@ -38,7 +38,7 @@ Most rows fail only because the dead-variable check happens to fire, and
 it reports the wrong fault. The last two compile and run: a declaration
 binds a name that plain assignment rejects.
 
-Controls, correct today:
+Controls observed in the 2026-10-27 probes (not remeasured here):
 
 | Program | Result |
 |---|---|
@@ -51,7 +51,7 @@ Controls, correct today:
 | `int a=1 b=2 c`; `c=3`; `echo "$a$b$c"` | `123` |
 | `str _x1=ok` | binds `_x1` |
 | `str x="a"b=1` | `x` is `ab=1` |
-| `s=x /bin/echo hi` then `echo "$s"` | runs the command |
+| `s=x /bin/echo hi` then `echo "$s"` | ran the command; now a required separator refusal (DD71, 2026-11-09) |
 
 Probes: `files/port-f1f4-probes.tar.gz`, directories `sq2/`, `sq3/`, `sq4/`.
 
@@ -97,6 +97,13 @@ There are two identical identifier predicates: `ir::is_plain_identifier`
 - Make one of the two identifier predicates call the other, or delete one.
 - `bug-digit-led-names` assumes nothing can bind a digit-led name, which is
   false until this lands. Either can land first.
+
+DD71's 2026-11-09 policy makes plain and declared binding lists obey the
+same separator rule; `q-statement-form-residuals` owns that enforcement.
+Keep this name guard independent: an explicit separator does not make
+`str 9z=1` a legal declaration, and a path-name refusal alone does not
+prove that a legal untyped binding followed by a command requires a
+separator. Valid multi-name declarations retain their syntax and types.
 
 ## Function names
 

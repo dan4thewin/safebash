@@ -32,7 +32,9 @@ What was missing was enforcement of the first clause.
 
 **R1 — Adjacency.** An `attest` clears taint only when it is the
 **immediately following statement, in the same block**, of the statement that
-tainted its subject. A non-adjacent attest is **SB5088**.
+tainted its subject. A non-adjacent attest is **SB5088**. A binding list
+does not enlarge this unit: adjacency is measured per binding, as
+specified below.
 
 **R2 — Caught resolution.** A *caught* attest (`if attest …`, `attest … &&
 CMD`, `attest … || CMD`) must leave its subject **clean on every path that
@@ -101,6 +103,40 @@ tainting operation is the syntactic head of the block it precedes:
 Everything else is plain statement order within one block. A compound
 statement is measured like any other: `h=$(getenv X) \|\| h=DEF` taints `h`,
 so the attest below it is adjacent.
+
+**Binding lists (DG, 2026-11-09).** DD71 permits one or more adjacent
+bindings before a separator. This is syntactic convenience, not a batch
+acquisition/attestation protocol. Plain assignments and typed declarations
+follow the same rule: each binding is its own adjacency step. A later
+binding intervenes even if its value is clean. The list's final binding
+may therefore have an adjacent attest, but an earlier acquisition cannot
+borrow that position.
+
+Write acquisition and resolution together:
+
+```sash
+a=$(getenv FIRST)
+attest a p?
+b=$(getenv SECOND)
+attest b p?
+echo "$a $b"
+```
+
+Do not acquire `a` and `b` in one binding list and then attest them as
+a batch. Adding `str`, splitting the captures with semicolons, or
+reordering the later attests cannot make both acquisitions adjacent.
+The same applies when a clean binding intervenes between an acquisition
+and its proposed attest. Separate each acquisition/resolution pair
+instead; no new combined syntax is needed.
+
+This is not a count of `$(` tokens or a blanket ban on grouped captures.
+Clean producers still need no attest, a whole collection may still use
+its ordinary attest-all, and R3 still permits explicit `:!` reads of
+unresolved input. An earlier binding left unresolved cannot be cleared
+by an attest of the final binding. No batch-scoped signal deferral is
+introduced: DD128 protects each legal acquisition/resolution unit.
+The binding-list enforcement and preservation controls are pending in
+`q-statement-form-residuals`; journal 599 records the ruling.
 
 A call to a function with exactly one call site is measured the same way: the
 function's body counts as one compound statement of the caller, so an attest

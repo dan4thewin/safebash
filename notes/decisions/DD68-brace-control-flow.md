@@ -24,6 +24,16 @@ for ((init; cond; incr)) { … }
 The classic `if COND; then …; [elif …; then …;] [else …;] fi` and
 `while/until/for …; do …; done` remain accepted (DD#67 sugar).
 
+**Statement boundaries (DG, 2026-11-09; implementation pending):**
+the closing `}` of a completed construct, or its `fi`/`done`, needs
+no additional semicolon before the next statement. `else`/`elif` still
+belong to their `if`; this is not a rule that every `}` token ends a
+statement. An enclosing closer also ends its body's final statement
+without a semicolon. DD71 defines the whole-statement/value distinction
+and the separator required after a binding list; enforcement belongs
+to `q-statement-form-residuals`. Only otherwise legal constructs qualify,
+not the retired standalone command groups.
+
 **Conditional-block shorthand (DG, 2026-11-09; implementation pending):**
 `cmd && { a; b }` is `if cmd { a; b }`, and `cmd || { a; b }` is
 `if ! cmd { a; b }`. DG had already chosen the latter when retiring

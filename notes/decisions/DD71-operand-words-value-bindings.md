@@ -76,7 +76,10 @@ not work in sash (`x=hi && echo $x` prints empty; `a=foo | cat` loses the
 assignment to a subshell), so nothing useful is lost. Consequently
 `a=foo|cat`, `a=foo&`, `a=foo&&bar` are the **literal values**
 `foo|cat` / `foo&` / `foo&&bar`; `;`/newline still sequence statements and
-whitespace still bounds the value (`a=foo bar` → `a=foo`, then `bar`).
+whitespace still bounds the value. It does not by itself separate a binding
+list from a following command: `a=foo bar` requires `a=foo; bar` or a
+newline under the 2026-11-09 rule below. The original permission to split
+that spelling into two statements is retired; operand-word lexing is not.
 
 The dual of this — **a boolean context must be fed a boolean/exit-status;
 a value binding used there is a compile error** — is the DD#70 extension
@@ -101,6 +104,75 @@ Capture conditions consume the captured operation's result, not an
 assignment result. Arithmetic enforcement is queued in
 `q-arith-test-statement-status`; ordinary assignment-prefix enforcement
 remains with `reject-nonadjacent-suppression`.
+
+## Statement boundaries and binding lists (DG, 2026-11-09)
+
+**A visible whole-statement boundary needs no extra separator.** An
+otherwise legal statement may follow a completed brace-bodied construct,
+a keyword construct ending in `fi` or `done`, or a self-delimiting
+statement form such as `(( n += 1 ))`. The final `]]` of a dispatch or
+full attest predicate likewise provides its statement's boundary.
+The existing result-use rules still apply: this does not legalize an
+unused test or calculation.
+
+```sash
+if /bin/true { echo yes } echo done
+fn greet { echo hello } greet
+int n=0; (( n += 1 )) echo "$n"
+```
+
+The delimiter must close the **whole construct**, in its grammatical
+role. `else`/`elif` and other legal continuations still attach to their
+construct; a closer does not discard an operator or legal redirect.
+An enclosing closer or end-of-file also ends the final statement without
+a preceding semicolon. This preserves `fn greet { echo hello }`.
+Ordinary commands remain open-ended: `echo one echo two` is one command,
+not two inferred commands.
+
+**One or more adjacent assignments form a binding list.** Plain
+assignments and typed declarations use the same boundary rule: before
+another statement, write `;` or a newline, unless an enclosing closer
+or end-of-file already supplies the boundary.
+
+```sash
+a=one b=two; echo "$a $b"
+str c=one d=two; echo "$c $d"
+int n=1 m=2; echo "$n $m"
+```
+
+Reject `a=one b=two /bin/echo hi` rather than silently starting the
+command. A declaration does not run a following command either.
+Its legal bare declarators remain legal: `str a b` declares two names.
+Do not guess where a command begins by looking up known command or
+function names among the declarators.
+
+Bindings execute in source order, with each write completed before the
+next binding is evaluated. This is neither simultaneous assignment nor
+a transaction, and introduces no scope or environment prefix. Each
+binding keeps its existing type, declaration, const, name and ownership
+rules. Binding lists have no result or status; they create no new
+condition, pipeline, background or logical-list form. DD88/DD101's
+existing capture-condition productions remain separate.
+
+**A value's closer is not a statement boundary.** Quotes, `${...}`,
+`$(...)`, `$((...))` and collection initializers close operands inside
+their surrounding binding or command. Thus `a=$(f) echo "$a"` still
+needs a separator, as does a declaration followed by a command after
+its final initializer. Quoting or parenthesizing the last value does
+not create an exception.
+
+**Capture/attest pairs are not a batch.** The binding-list syntax does
+not make all its acquisitions adjacent to later attests. DD121 measures
+adjacency per binding, for declarations and plain assignments alike:
+finish a capture's adjacent resolution before starting the next pair.
+Clean captures and DD91's explicit `:!` reads retain their existing
+contracts; this is not a new requirement to attest every `$()` expression.
+
+Enforcement is pending in the existing P4 `q-statement-form-residuals`,
+now implementation work. DD53 retains `/usr/bin/env` for environment
+prefixes; DD68 retains the real body forms and conditional-block sugar.
+General command groups remain retired. Journal 599 records the ruling;
+no diagnostic number or internal representation is selected here.
 
 ## Multi-exact dispatch arms (falls out of the operand rule)
 
@@ -173,9 +245,13 @@ In a control-flow header the `{` that opens the body ends a declaration too,
 as it ends a command's words there (DD#68). The declaration took it as its
 next name and said SB4014, so `if int n=$(cmd) { … }` now gets DD#88's
 SB4025, which the keyword spelling `if int n=$(cmd); then` already got.
-Outside a header a `{` does not end a declaration (decide-and-report):
-`int n=1 { … }` stays SB4014, while the untyped `s=x { echo hi }` splits in
-silence into `s=x` and a `{ }` group and prints `hi`. Which of the two is
-right is `q-statement-form-residuals`.
+At that implementation's landing, outside a header a `{` did not end a
+declaration (decide-and-report): `int n=1 { … }` stayed SB4014, while
+the untyped `s=x { echo hi }` split into a binding and a group.
+Those source groups now require rejection under `retire-command-groups`,
+with advice about the block rather than the valid variable name.
+The 2026-11-09 boundary rule above settles the separate non-group
+assignment/declaration asymmetry; `q-statement-form-residuals` owns its
+pending implementation. Neither refusal changes the operand-word rule.
 
 Specs: errors.sh 71.1-71.9. Journal 537.
