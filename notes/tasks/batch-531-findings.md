@@ -245,7 +245,10 @@ not obviously a bug stays unchanged in the port:
 - `bug-malformed-index-generic-sb4047` (P3): an index with an unclosed
   quote, parenthesis or `]` gets the generic SB4047.
 - `bug-echo-partial-line-before-abort` (P2): `echo` and `write` print part
-  of their line before an argument aborts.
+  of their line before an argument aborts. It also owns DD55's accepted
+  2026-11-09 single-write rule for both builtins (journal 605;
+  `q-f2-residuals` R2), including stable staging and progress/error
+  accounting. Both repairs remain unimplemented.
 
 ### 4. F15 regex and sed operands
 

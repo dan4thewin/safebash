@@ -87,6 +87,13 @@ commands and stages (DD86, 2026-11-07; journal 585).
 Neither task permits captures-first evaluation of the words themselves or
 moving stage arguments back to the parent.
 
+DD55's 2026-11-09 single-write rule adds a downstream publication
+requirement for `echo`/`write`, owned by
+`bug-echo-partial-line-before-abort`. That task must consume stable,
+source-ordered values, not merely collect pointers after captures have
+already run. This task's ordering repair does not by itself prove one
+output request; the two owners must preserve each other's contracts.
+
 ## Pointers
 
 - The findings index entry has ev3/ev10 (a pure `echo` capture leaves `$?`

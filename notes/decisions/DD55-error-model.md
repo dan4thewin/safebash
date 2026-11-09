@@ -66,6 +66,53 @@ Anything that can fail due to external state or data:
   the shipped model; DD132's trial replaces that interface as above)
 - Command substitution (`x=$(cmd)` — check before assignment)
 
+### Builtin output is one write request (DG, 2026-11-09)
+
+DG chose **"yes to a single write"** for `echo`, and for `write` without
+the final newline (journal 605).
+
+An fd-backed invocation submits its complete output in **one write
+request**: all argument bytes, inter-argument separators and, for `echo`,
+the final newline. Do not issue separate writes for words, interpolated
+components, spaces or the newline. This applies to standalone, redirected
+and child/stage execution alike; it is not a background-only special case.
+The existing byte and formatting rules remain, including interior NULs,
+real empty arguments and optional-argument elision. It adds no flags or
+newline to `write`.
+
+Evaluate and retain the arguments under DD86's source-order and
+arguments-before-attached-redirects rules. A later mutation or reused
+formatting buffer cannot change earlier captured bytes. The builtin emits
+none of its own output until argument evaluation and redirect setup have
+succeeded. This does not undo effects performed by argument expressions or
+earlier operations.
+
+The concurrency guarantee is deliberately bounded. A pipe/FIFO request
+whose **total byte count**, including separators and newline, is at most
+`PIPE_BUF` is not interleaved with another writer. Larger requests may
+interleave; other destinations have no blanket line-atomicity guarantee.
+`PIPE_BUF` limits that guarantee, not permitted output length. There is no
+launch-order guarantee, global writer lock or serialization across
+invocations. This follows the
+[POSIX write contract](https://pubs.opengroup.org/onlinepubs/9799919799/functions/write.html).
+
+One request is not an all-or-nothing transaction: a syscall may fail or
+transfer only a prefix. Interrupted/short-write handling must account for
+actual progress and must not silently lose a suffix while reporting
+complete success. DD55/DD130 still govern operation failures and legal
+catching/suppression; allocation failure while staging remains fatal.
+This decision selects neither retry mechanics nor a new errno/status ABI.
+
+Compiler-owned buffer captures remain buffer copies, not forced kernel
+writes. DD127's read-boundary taint rule and capture eligibility do not
+change. A contiguous staging buffer versus a write vector is an
+implementation choice; neither permits an ordinary per-fragment fallback.
+
+**Implementation pending:** the existing P2
+`bug-echo-partial-line-before-abort` owns operand staging and single-request
+emission together. R2 in `q-f2-residuals` is settled as policy only. The
+current native/C emitters still write fragments separately.
+
 ## What does not get checked
 
 - Variable assignment (`x="hello"`)

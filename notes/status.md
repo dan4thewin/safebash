@@ -1,4 +1,34 @@
-## STATUS (2026-11-09, latest) - Immutable scratch and validated regex trial
+## STATUS (2026-11-09, latest) - Single-write builtin output
+
+DG chose one write request per `echo` invocation, including argument
+bytes, separators and final newline; `write` follows the same rule
+without adding a newline. It applies to standalone, redirected and
+child/stage execution, not only background output.
+
+DD86's source-order values and arguments-before-redirects phases remain.
+A later argument failure cannot leave the builtin's own output prefix;
+earlier argument bytes must survive later mutation or formatting.
+Memory captures remain buffer copies with unchanged DD127 taint.
+
+Non-interleaving is guaranteed for pipe/FIFO requests only when the
+complete byte count fits `PIPE_BUF`. Larger output remains allowed,
+without a blanket guarantee for other destinations, launch order or
+global locking. One request is not a transaction: short writes and
+failures must preserve progress/error accounting, and staging allocation
+faults remain fatal.
+
+DD55 records the accepted rule; DD86/DD130 and GUIDE agree. The existing
+P2 `bug-echo-partial-line-before-abort` owns operand staging and
+single-request emission, coordinated with the evaluation-order and
+failure-classification tasks. `q-f2-residuals` R2 is answered as a policy
+question only. Journal 605 records the decision and source evidence.
+
+No compiler/runtime/converter/spec/build change or new behavior
+measurement accompanies this recording. Implementation remains queued;
+the scratch/regex branch trial below is still separate. Journal 577
+remains the accepted implementation baseline.
+
+## STATUS (2026-11-09) - Immutable scratch and validated regex trial
 
 DG provisionally adopted the combined DD131/DD132 model. Scratch scalar
 and collection constructions make **fresh immutable instances** each

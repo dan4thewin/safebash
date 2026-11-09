@@ -933,6 +933,22 @@ and an unbounded count overran it (journal 290).
 `sash_echo`, `sash_write`, `sash_read_line`,
 `sash_heredoc_redirect`.
 
+**Single-write output (DD55, accepted; implementation pending).** Each
+fd-backed `echo` invocation submits all its output, including separators
+and newline, in one write request. `write` follows the same rule without
+adding a newline. Arguments retain DD86's source-order values and complete
+before the builtin emits output; a later argument failure cannot leave
+its own partially printed prefix. Existing byte/empty/elision semantics
+and memory-only capture routing stay.
+
+For pipes/FIFOs, non-interleaving is guaranteed only when the complete
+request fits `PIPE_BUF`. Larger output remains allowed but may interleave;
+there is no universal destination guarantee, launch-order guarantee or
+global lock. One request can still fail or write only a prefix, which must
+not become silent complete success. Staging allocation failures remain
+fatal. `bug-echo-partial-line-before-abort` owns this combined output work;
+the shipped native/C paths still issue separate fragment writes.
+
 Both backends use the same redirect metadata and runtime save/restore
 primitives. The transform reserves the script's literal fd operands across
 functions, captures and handlers; both backends register that set before running

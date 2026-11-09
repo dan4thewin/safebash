@@ -1,16 +1,19 @@
----
-title: "Questions left by F2: wait on pid <= 0, echo interleaving, bare `:?`, END-forked children"
+title: "F2 residuals: wait, output and historical END behavior"
 status: open
 priority: P3
 kind: question
 depends: []
 gates:
-  - "DG rules R1-R4; each ruling is recorded in its DD (DD55, DD77 or DD56)"
-  - "every row below is pinned by a spec in both backends"
----
+  - "R2's accepted DD55 single-write rule is implemented by bug-echo-partial-line-before-abort; this question record does not duplicate that work"
+  - "remaining questions are reconciled with current DDs before selecting new behavior; retained live reproducers have specs in both backends"
 
 Found during F2 (journal 539). Each is pre-existing unless it says
 otherwise. Probes in files/port-f2-probes.tar.gz.
+
+The tables retain historical measurements, not new runs at the decision
+date. R2 is settled below; this file stays open for the other residuals.
+The END examples predate DD128's implemented replacement and are not
+evidence about current EXIT/ERR behavior.
 
 ## R1. `wait` with a pid <= 0 reaps an arbitrary job
 
@@ -27,13 +30,34 @@ Question: should a pid <= 0 be a runtime error (or, for a literal, a
 compile error), rather than "any child"? The `emit_wait_value` comment
 "waitpid(0) is process group" is also imprecise.
 
-## R2. Concurrent echo children interleave mid-line
+## R2. Settled: one write request per builtin-output invocation
+
+DG, 2026-11-09: **"yes to a single write"**. DD55 records the rule for
+`echo` and `write`: submit the complete fd-backed output as one request,
+including separators and `echo`'s final newline. Do not split words,
+interpolation components or the newline into separate writes. The rule
+also applies outside background children.
+
+The guarantee is bounded to pipe/FIFO requests of at most `PIPE_BUF`,
+counting all emitted bytes. Larger output is allowed but can interleave;
+other destinations have no universal guarantee. No launch-order promise,
+global lock or rollback of a failed/partial write is introduced.
+Buffer captures stay in memory, and DD55/DD130 failure handling remains.
+
+The existing P2 `bug-echo-partial-line-before-abort` owns implementation
+and proof, including stable operand staging, exact syscall shape and
+short-write/error accounting. It already owns the same fragment-emission
+path. Journal 605 records the ruling; no compiler/runtime change or new
+concurrency measurement accompanies it.
+
+### Historical evidence
 
 | Id | Program | Result |
 |---|---|---|
 | b17a | `/bin/printf "1\n2\n3\n" \| while readline x { attest x [[ -n $x ]]` ⏎ `echo "got $x" &` ⏎ `- wait }` ⏎ `echo done` | lines interleave mid-line (`donegot \|3\|`; one run printed `got 3done`) |
 
-echo does not write a line with one write(2). Question: should it?
+The native/C source still emits fragments separately. The historical
+question is answered; this table is not evidence that the repair shipped.
 
 ## R3. A bare `${s:?}` aborts with an empty message
 

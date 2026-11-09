@@ -90,6 +90,16 @@ this redirect phase, including in stages. Its completed effects are not
 undone by a later redirect failure either.
 Do not invent a successful empty value to conceal a failed file operation.
 
+**Single-write builtin output retains these failure rules** (DD55,
+DG, 2026-11-09; journal 605). `echo` and `write` submit their complete
+fd-backed output as one request, not one request per fragment. That is
+not transactional publication: a failed or short write can leave a
+prefix at the destination. Preserve actual progress and error causes;
+never report complete success after silently dropping the unwritten
+suffix. Staging allocation faults remain fatal. The syscall's bounded
+pipe/FIFO non-interleaving guarantee does not change any failure class,
+extend suppression into argument evaluation, or choose retry mechanics.
+
 **Directory selectors follow this rule too** (DG, 2026-11-09;
 DD39/DD69/DD73/DD131). A directory successfully enumerated with no
 matches produces zero elements; a failed directory open/read or required

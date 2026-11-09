@@ -597,6 +597,14 @@ its argument captures, unlike standalone commands. This phase-order repair
 is distinct from the within-argument repair in `q-capture-hoisting-order`;
 neither task may weaken the other's contract.
 
+DD55's 2026-11-09 single-write rule applies these phases to `echo` and
+`write`: prepare stable argument values before publishing the complete
+output request. A failing later argument must not leave the builtin's own
+prefix on stdout or in its redirect target. This does not roll back an
+argument's independent effects. `bug-echo-partial-line-before-abort` owns
+that output repair; assembling one request alone does not repair
+captures-first evaluation or unstable earlier reads.
+
 ## Addendum (2026-09-29) — the body is validated as a function body
 
 "A `$( … )` body is an anonymous function" was settled above for *scope*. It

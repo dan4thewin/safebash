@@ -27,6 +27,14 @@ Retain an explicit disposition for each affected family; do not silently
 leave an ordinary file failure fatal because its current API cannot
 return an error.
 
+DD55's accepted single-write `echo`/`write` rule (2026-11-09,
+`bug-echo-partial-line-before-abort`) is another consumer. Classify
+failures with the actual bytes transferred and remaining progress, not
+just a negative-return test. A short write is not complete success, and
+one request is not a rollback guarantee. Preserve ordinary legal
+catching/suppression, fatal staging allocation, and operand/body
+boundaries. The ruling did not choose retry mechanics or a new error ABI.
+
 DD131/DD132's provisional selectors/immutable-scratch/regex branch trial
 (`q-glob-semantics`) needs the affected operation/cause/publication
 classification. In particular, EOF/no matches are not read/open errors,
