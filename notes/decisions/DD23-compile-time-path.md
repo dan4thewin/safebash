@@ -27,6 +27,13 @@ Sash-native scripts use absolute paths directly:
 An absolute path skips the PATH search, but it is held to the same
 standard — see the SB5095 addendum below.
 
+Function definitions cannot claim a path as a name. DD#125's accepted
+2026-11-09 identifier rule rejects `/bin/true`, `./x` and every other
+slash-containing function name at the definition, rather than allowing
+checks to inspect an external while lowering calls a function.
+Enforcement remains queued in `bug-function-name-shadows-command-path`.
+This does not restrict external filenames or change their resolution.
+
 ## Existence testing
 
 `[[ -x /path/to/binary ]]` replaces bash's `command -v`. No

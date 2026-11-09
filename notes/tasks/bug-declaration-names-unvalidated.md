@@ -107,10 +107,12 @@ separator. Valid multi-name declarations retain their syntax and types.
 
 ## Function names
 
-A function name's spelling is asked in `bug-function-name-shadows-command-path`,
-which found what an unchecked one costs: a path-named function is checked
-as the external program but runs as the function. These compile too, and its
-table carries them:
+DG settled function-name spelling on 2026-11-09: the same ASCII identifier
+grammar as variables, plus existing reserved-name rules (DD125).
+`bug-function-name-shadows-command-path` owns that enforcement. It found
+what an unchecked name costs: a path-named function was checked as the
+external program but ran as the function. These historical probes were
+accepted too; their definitions must now reject under the chosen policy:
 
 | Program | Result |
 |---|---|
@@ -118,8 +120,10 @@ table carries them:
 | `fn 9z { echo hi }` then `9z` | prints `hi` |
 | `fn a[0] { echo hi }` | accepted |
 
-If DG chooses the variable rule there, both fixes use the one identifier
-predicate this task settles on.
+Both fixes should use one identifier predicate. Keep their guard evidence
+independent: rejecting a malformed function definition does not prove that
+a declaration or `for` target is checked. Neither implementation is
+complete merely because the shared spelling rule is settled.
 
 ## Not this task
 

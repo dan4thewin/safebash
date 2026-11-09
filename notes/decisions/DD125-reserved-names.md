@@ -26,6 +26,52 @@ The reserved set is the union of three groups, assembled in
 | statement and value builtins | `BuiltinCmd::from_name` | `echo` `cd` `wait` `exit` `read` `unset` `len` `sub` `match` |
 | value intrinsics | `resolve::INTRINSICS` | `status` `getpid` `argc` `random` `epochseconds` `getcwd` |
 
+## Function-name spelling (DG, 2026-11-09)
+
+A source function name must match the same ASCII identifier grammar as a
+variable name:
+
+```text
+[A-Za-z_][A-Za-z0-9_]*
+```
+
+The first character is a letter or underscore; subsequent characters may
+also be digits. This applies to every accepted function-definition spelling
+and to void, status and integer functions alike. A malformed name is an
+error at its definition, even when the function is never called.
+
+Thus `read_file`, `_helper2` and `__helper` satisfy the spelling rule;
+`read-file`, `a.b`, `%f`, `-x`, `9`, `9z`, `a[0]`, `/bin/true` and `./x`
+do not. Non-ASCII names are outside this grammar too. Passing the spelling
+check does not bypass the existing reserved-name, name-collision or
+single-definition rules. The `__` namespace remains available to source;
+compiler temporaries must still avoid it rather than reserve it.
+
+DG chose "yes to conservative names", accepting the identifier rule over
+a narrower ban on paths/numerals or arbitrary names with function-first
+lookup. The recorded path-name bug let checks inspect an external program
+while lowering called a function with that path as its name. Rejecting such
+definitions removes the collision; changing lookup precedence is not the
+selected remedy. Numeric function names likewise cannot compete with
+numeric return operands.
+
+This restricts function names, not external program filenames, arguments
+or map keys. It does not change function scope, hoisting, return kinds or
+legal return forwarding. Existing integer-operand checks remain necessary:
+rejecting an invalid definition is not proof that an out-of-range return
+literal is checked correctly.
+
+The cost is that Bash names such as `read-file` need valid replacement
+names when converting to sash. No automatic renaming scheme or spelling
+normalization is selected; conversion must preserve identities rather
+than silently collapse distinct names onto one identifier.
+
+**Enforcement is pending** in `bug-function-name-shadows-command-path`,
+including converter impact. `bug-declaration-names-unvalidated` owns the
+existing variable-grammar gaps and should share the identifier predicate.
+No new diagnostic code is selected by this recording. Journal 600 records
+the decision; SB5092 above continues to name reserved-name violations.
+
 ## Why
 
 Not tidiness. sash resolves a bare name differently in three positions, and

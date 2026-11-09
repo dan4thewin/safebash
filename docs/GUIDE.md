@@ -605,6 +605,15 @@ repair; the current stage path still installs attached redirects first.
 
 #### Functions, inlining, and recursion (DD#27)
 
+**Conservative function names: accepted, enforcement pending.**
+Source function names use the variable identifier grammar,
+`[A-Za-z_][A-Za-z0-9_]*`, plus existing reserved-name exclusions (DD#125).
+The rule covers every definition spelling and return kind, including
+unused definitions. `read_file` is a valid spelling; `read-file`, `9`
+and `/bin/true` are not. No new reservation of `__` or automatic renaming
+is introduced. `bug-function-name-shadows-command-path` owns enforcement
+and converter impact (journal 600).
+
 **One definition per function name: accepted, enforcement pending.**
 DG's 2026-11-06 rule rejects every second source definition, including an
 identical body or unchanged signature/result kind (DD#86). Names remain

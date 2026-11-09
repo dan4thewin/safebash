@@ -66,6 +66,13 @@ That task also removes the accepted duplicate-definition programs behind
 the policy is settled. DD#55's former definition-in-force contract is
 replaced by this rule. Journal 582 records the decision.
 
+Function-name spelling is separately settled by DD#125 (2026-11-09):
+the ASCII variable-identifier grammar, with existing reserved-name rules.
+Invalid definitions must reject even if unused; no path/numeric-name
+lookup exception remains. Enforcement is queued in
+`bug-function-name-shadows-command-path`, independently of duplicate
+definition rejection.
+
 ## Declaring globals — the `str` keyword
 
 Globals must be introduced at top level, so a way to declare each type

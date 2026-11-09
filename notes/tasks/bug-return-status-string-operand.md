@@ -8,7 +8,8 @@ gates:
   - "rt1, rt2, rt3, rt4, rt5, r6, r7 and r8 are SB4030 in both backends, with no ICE, and the message names a return status (not `int_sink_role`'s fallback, \"a positional index\")"
   - "r4 `return -1` compiles and returns -1, as `return $(( -1 ))` does (r9) — met by F1+F4 (journal 537), with a2 and a9"
   - "a4, a5 and s2 (in `r4/`) are SB4030 with a return-status message, as `exit`'s `r4/e1` and `r4/e2` are, and not SB5011 \"command not found\""
-  - "a6, a7, a10, a11 and `fname/r1` are read as DG's ruling in bug-function-name-shadows-command-path implies"
+  - "fname/r1 and fname/r2 reject invalid function definitions under DD125; legal-name fixtures independently pin return numeral/type checks and producer classification"
+  - "a6, a7, a10 and a11 cannot name user functions under DD125; preserve otherwise legal external return producers and assert the actual operand/producer diagnostic"
   - "the controls are unchanged: 74.55, 74.56's first half, rt10, r2, r3, 84.46 (SB5046)"
   - "string-valued return dispositions are SB4030 outside explicit arithmetic; migrate 74.57-74.61 to explicit $(( )) spellings at fresh IDs without weakening their assertions"
   - "already-integer dispositions retain their type and remain valid return operands; the :? typing prerequisite prevents false rejection"
@@ -29,6 +30,15 @@ Already-integer dispositions keep their type. Fix
 `bug-expr-type-int-disposition` before removing the exception, or in the
 same coherent change, so the stronger guard does not falsely reject them.
 This records policy only; implementation and the remaining gates are open.
+
+**Function-name decision, 2026-11-09:** DD125 now requires
+`[A-Za-z_][A-Za-z0-9_]*` for source function names. The `fname/r1` and
+`fname/r2` numeric definitions must reject under
+`bug-function-name-shadows-command-path`; they are no longer alternative
+call targets. That earlier refusal cannot prove this task's operand guard.
+Use legal-name fixtures to check out-of-range numerals and malformed
+operands independently. The spelling rule does not restrict external
+filenames or assign a new diagnostic to every non-identifier producer head.
 
 ## Found
 
@@ -100,10 +110,13 @@ integer" (`r4/e1`; `r4/e2` for `-99999999999999999999`, `r4/e3` for `-x`).
 `exit +1` exits 1 (`r4/e4`).
 
 So F1+F4 traded the a4/s2 ICE for an SB5011 that reads the numeral as a
-command name. The value/producer split is now the i64 range. A function may be
-named `99999999999999999999`, and then `return 99999999999999999999` calls it
-(`fname/r1` in `bug-function-name-shadows-command-path`). `return 9` stays the
-value 9 even when a function is named `9` (`fname/r2`).
+command name. The observed value/producer split was the i64 range. Those
+probes could define a function named `99999999999999999999`, and then
+`return 99999999999999999999` called it (`fname/r1` in
+`bug-function-name-shadows-command-path`). `return 9` stayed the value 9
+even with a function named `9` (`fname/r2`). DD125's 2026-11-09 rule
+rejects both definitions; standalone out-of-range return literals remain
+this task's responsibility.
 
 Probes: `files/port-f1f4-probes.tar.gz`, directory `r4/` (a1-a12, s1-s3,
 e1-e4; `after.txt` holds the F1+F4 results).
@@ -189,10 +202,12 @@ while retaining the return-specific diagnostic role. Then widen
 (an optional sign, then digits), so the sink rejects an out-of-range numeral
 with SB4030 as it does for `exit` (a4, a5, s2). This cannot be done before
 `return` is a sink: the out-of-range value would reach native int lowering and
-ICE again, as it did at `8e28c61`. Whether a sign-led non-numeral (`-x`) heads
-a producer or is a value turns on which function names are legal
-(`bug-function-name-shadows-command-path`). Make C refuse a non-numeric
-literal the way native does, through one shared helper. Check first whether
-`SsaValue::Expr` reaches that arm with non-numeric text. DD89 now records the
-disposition ruling and corrects the historical attribution; the remaining
-repair still needs focused specs in both modes.
+ICE again, as it did at `8e28c61`. A sign-led non-numeral such as `-x`
+cannot name a user function under DD125. Resolve the remaining
+value/producer diagnostics without using an invalid function definition
+as evidence or accidentally restricting legal external forwarding.
+Make C refuse a non-numeric literal the way native does, through one shared
+helper. Check first whether `SsaValue::Expr` reaches that arm with
+non-numeric text. DD89 now records the disposition ruling and corrects the
+historical attribution; the remaining repair still needs focused specs in
+both modes.

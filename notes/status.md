@@ -1,4 +1,26 @@
-## STATUS (2026-11-09, latest) - Visible boundaries, local resolution
+## STATUS (2026-11-09, latest) - Conservative function names
+
+DG accepted the variable identifier grammar for source function names:
+`[A-Za-z_][A-Za-z0-9_]*`, plus existing reserved-name exclusions. The
+rule covers every definition spelling and return kind, including unused
+definitions. Paths, numerals, digit-led names and punctuation are not
+function names. The `__` namespace is not newly reserved.
+
+DD125 records the decision; DD23/DD86 and GUIDE agree. The existing P2
+`bug-function-name-shadows-command-path` owns enforcement and converter
+impact. Hyphenated Bash names need valid replacement names; no automatic
+renaming scheme or function-first path lookup has been selected.
+
+Declaration/for targets share the identifier rule but retain their own
+guard task. Numeric function definitions must reject, without disguising
+the independent return-operand range/type repair. Journal 600 records
+the choice and these boundaries.
+
+This is policy/backlog recording only. No compiler/runtime/converter/
+spec/build code changed, and no new behavior probe, sweep or coverage
+run was made. Journal 577 remains the accepted implementation baseline.
+
+## STATUS (2026-11-09) - Visible boundaries, local resolution
 
 DG accepted no extra separators where a whole statement has a clear
 ending, and consistent lists of one or more plain or declared bindings.

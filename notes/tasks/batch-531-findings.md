@@ -547,8 +547,10 @@ touches is fixed here, and any other finding goes to the backlog.
   three ways by form, and `!` turns one into success. It lands with B20.
 - `bug-function-name-shadows-command-path` (P2): a function may be named
   like a path (`fn /bin/true`); the validator then checks the external
-  program while the compiled code calls the function. Question: which names
-  a function may take.
+  program while the compiled code calls the function. DG chose the
+  ASCII variable-identifier grammar for every function name on 2026-11-09
+  (DD125, journal 600), retaining reserved-name rules. The policy question
+  is closed; compiler/converter enforcement remains open.
 - `bug-handling-branch-drops-latch` (P2): in an if/elif/else body or an
   `&&`/`||` group, a latch read right after its write is a false SB5094.
 - `bug-sb5012-sb5094-nested-body-flow` (P2): `$?` and latch reads in a
