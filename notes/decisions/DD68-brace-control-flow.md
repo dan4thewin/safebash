@@ -24,6 +24,15 @@ for ((init; cond; incr)) { … }
 The classic `if COND; then …; [elif …; then …;] [else …;] fi` and
 `while/until/for …; do …; done` remain accepted (DD#67 sugar).
 
+**Conditional-block shorthand (DG, 2026-11-09; implementation pending):**
+`cmd && { a; b }` is `if cmd { a; b }`, and `cmd || { a; b }` is
+`if ! cmd { a; b }`. DG had already chosen the latter when retiring
+general command groups on 2026-10-30; the success-path spelling is now
+accepted too. These braces open an `if` body, not a standalone group.
+DD70 defines the source boundary, DD55 the matching scope/status/checking
+rules, and `retire-command-groups` owns implementation. Function and
+dispatch bodies are not command groups and are unaffected.
+
 ## The condition grammar (the disambiguation)
 
 In the **brace form**, the condition is a **command list** (pipelines,
@@ -125,14 +134,18 @@ part (DD#31), and a C-style `for` lowered to its init followed by the loop.
 Each is still the one command the user wrote, so `if (( a++, a > 0 )) { … }`
 and `while (( a++, a < 3 )) { … }` stay legal.
 
-The ban is syntactic: in a header, the first top-level `{` opens the body. It
-covers header conditions only, so `! { … }` stays legal as an `&&` operand at
-statement level and as a `return` producer, where no body follows. (DD#66's
-2026-10-26 addendum is different: a dispatch is not a boolean, so its ban
-covers every boolean position.) A negated loop is a compound, not a group:
-`if ! for x in a b { … } || /bin/true { … }` stays legal. Whether a compound
-may supply a condition's status at all is a separate question, filed as
-`q-compound-as-condition`.
+This header check is syntactic: the first top-level `{` opens the body.
+Its implementation left `! { … }` legal as a statement-level `&&`
+operand and as a `return` producer. That is historical implementation
+behavior, not a permission under the accepted command-group retirement:
+those source groups must reject (`retire-command-groups`, DD70).
+The conditional-block shorthands above do not turn a group into a
+condition or alter this header delimiter rule.
+
+A negated loop is a compound, not a group. Whether it or an `if` may
+supply a consumed status remains `q-compound-as-condition`; the old
+`if ! for x in a b { … } || /bin/true { … }` evidence belongs there.
+DD66's dispatch-as-boolean refusal remains separate and unchanged.
 
 Specs: errors.sh cnd.1-cnd.7, cnd.11, cnd.12, cnd.22, bng.21-bng.24.
 Journal 537.

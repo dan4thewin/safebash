@@ -584,8 +584,13 @@ touches is fixed here, and any other finding goes to the backlog.
 - `q-clause-on-next-line` (P3): an `else` or `elif` on the line after a brace
   body's `}` is SB4072 (SB5011 before F1+F4), though every other newline in
   an `if` or a loop is accepted. Recommended: accept it.
-- `q-compound-as-condition` (P3): may a compound command, or a `{ }` group
-  under `!`, supply a consumed status?
+- `q-compound-as-condition` (P3): may a non-group compound (`if` or a
+  loop) supply a consumed status? General-group cases are settled
+  refusals, not part of that remaining question.
+- `retire-command-groups` (P3): both `cmd && { ... }` and
+  `cmd || { ... }` are their corresponding `if` shorthands; general
+  groups are rejected (DD70, journal 596). Policy is settled;
+  implementation remains open, preserving normal body/flow semantics.
 - `q-suppression-and-stage-residuals` (P3): the residual `-` forms, `exec`
   in a forked child, a here-string on a compound, and a value intrinsic as
   a stage. Q1/Q3/Q5 are settled; Q2 now chooses direct exec for single
@@ -610,7 +615,9 @@ touches is fixed here, and any other finding goes to the backlog.
   the closer, while `a &&` at the end of the input is SB4056 at the
   operator; and SB4072 does not name the open block.
 - `q-statement-form-residuals` (P4): a word after a complete statement (`}
-  2`), a declaration beside a block (71.9), DD95's grouping, and `return {`.
+  2`) and declaration/separator questions. Q3's grouping and the
+  `return {` cases are settled by conditional-block sugar and general
+  group retirement; an earlier group refusal does not fix a word split.
 - `dedupe-external-head-predicates` (P4): four functions and two name lists
   answer one question.
 - `doc-keyword-lexing-claims` (P4): DD#125 and a resolve.rs comment say `in`

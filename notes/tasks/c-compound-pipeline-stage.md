@@ -13,6 +13,11 @@ gates:
 
 # c/janet compound pipeline stages are unimplemented
 
+**Historical completed record.** The accepted command-group retirement
+(DD70, journal 596) requires source group stages to reject; enforcement
+belongs to `retire-command-groups`. The completed function-stage backend
+support below remains required and must not be deleted with group syntax.
+
 Surfaced 2026-07-05 while fixing `bug-function-in-pipeline` (functions as
 pipeline stages). The native fix routes a function stage through the DD#14
 `__compound_<id>` mechanism (the transform inlines the body into its own

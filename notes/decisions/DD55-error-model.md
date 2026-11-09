@@ -296,6 +296,30 @@ command executes, the status is consumed and unavailable. This
 prevents stale-status bugs where `$?` refers to something other
 than the command that caused entry to the branch.
 
+### Conditional-block shorthand (DG, 2026-11-09)
+
+`cmd && { a; b }` is exactly `if cmd { a; b }`; the previously accepted
+`cmd || { a; b }` is exactly `if ! cmd { a; b }`. DD70 records the
+grammar: these are `if` bodies, not general command groups.
+
+The command's result selects the body once, and a skipped body does
+nothing. Normal condition/result-kind rules apply to that command;
+handling its result does not reach into its operands or a called body.
+Every executed body statement keeps its ordinary checks, including the
+last one. The shorthand must not catch a bare body command's failure.
+
+Bindings, taint flow, `return`, `break` and `continue` behave exactly as
+in the corresponding `if`, with no new function or process boundary.
+`$?`, `$(status)` and the DD126 latches follow that same `if` flow,
+including negation's status transformation in the `||` spelling. There
+is no special raw-status exception for a braced failure block, nor new
+permission after the construct.
+
+**Enforcement pending:** `retire-command-groups` owns both shorthands
+and removal of general source groups. This does not settle whether a
+non-group compound can itself supply a consumed status; that remains
+`q-compound-as-condition`. Journal 596.
+
 ### Evaluation order (DG, 2026-11-06)
 
 DD86 now requires left-to-right evaluation of words and their component

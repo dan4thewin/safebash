@@ -71,6 +71,15 @@ else needs restricting. `!` is unaffected — unary, binds tightest, verified
 identical in both contexts. The error-handling idiom (`cmd || die`,
 `cmd && next`) is untouched.
 
+**Conditional blocks are not grouping (DG, 2026-11-09).** The accepted
+shorthands are `cmd && { a; b }` for `if cmd { a; b }` and
+`cmd || { a; b }` for `if ! cmd { a; b }` (DD70). General command
+groups are retired; implementation is pending in `retire-command-groups`.
+A body has its own lists, just like an explicit `if`, so
+`cmd && { other || recover }` does not mix operators in one list.
+An actually mixed outer list still gets SB4053. This is not a way to
+parenthesize a command list or supply a group's status to an operator.
+
 ## What this buys
 
 The inconsistency is **removed**, not papered over: after this, no text means

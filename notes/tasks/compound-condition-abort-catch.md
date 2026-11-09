@@ -15,6 +15,12 @@ gates:
 
 # Compound-condition abort: a non-terminal condition command aborts instead of catching
 
+**Relation to conditional-block sugar (2026-11-09):** this completed
+DD55 rule also governs `cmd && { ... }` and `cmd || { ... }` through
+their explicit `if` counterparts (DD70, journal 596). Condition handling
+must not catch a bare body's failure. General-group retirement does
+not retire this condition/body distinction or reopen the settled rule.
+
 ## Discovery
 
 Surfaced 2026-07-30 while **externalizing `true`/`false`** (they were

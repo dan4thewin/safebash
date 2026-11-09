@@ -206,6 +206,14 @@ whatever the sub-parse returned (DD#114, DD#115). Text the arithmetic
 lexer rebuilds from tokens maps back to no source position, so it
 reports the enclosing expression's (`Origin::Within`).
 
+**Accepted grammar, implementation pending:** `cmd && { a; b }` is
+exactly `if cmd { a; b }`, and `cmd || { a; b }` is exactly
+`if ! cmd { a; b }`. These are conditional bodies, not general command
+groups; standalone groups and their marked/stage/return forms are
+retired. Scope, body checks, control transfers and status/latch flow
+match the corresponding `if`. DD95 still forbids mixed `&&`/`||` lists.
+DD55/DD68/DD70 record the rule; `retire-command-groups` owns enforcement.
+
 ### Phase 2: Validate
 
 `validate.rs` walks the AST once. (The old `rules/` directory and its

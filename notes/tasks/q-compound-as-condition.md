@@ -1,24 +1,38 @@
 ---
-title: "Question: may a compound command (`if`, `while`, `until`, `for`, or a `{ }` group under `!`) supply a consumed status?"
+title: "Question: may a non-group compound (`if`, `while`, `until`, `for`) supply a consumed status?"
 status: open
 priority: P3
 kind: question
 depends: []
 gates:
   - "DG rules on the options below; the ruling is a DD#68 addendum"
-  - "every program in both tables is either rejected with a diagnostic that names the rule or prints what the ruling says, in both backends"
+  - "every remaining non-group program is rejected with a diagnostic naming the rule or prints what the ruling says, in both backends"
   - "the citations of this task in `parse_negated` (sash/src/parse/parser.rs) and in DD#68's 2026-10-26 addendum are rewritten to the ruling"
-  - "the comments and verdicts of bng.22, bng.23 and bng.24 (spec/errors.sh) match the ruling"
+  - "bng.24 and other still-legal compound cases match the ruling; group-only bng.22/bng.23 migration belongs to retire-command-groups"
 ---
+
+## Group boundary settled, 2026-11-09
+
+DG retired general command groups and accepted both conditional-block
+shorthands: `cmd && { a; b }` is `if cmd { a; b }`, and
+`cmd || { a; b }` is `if ! cmd { a; b }` (DD70, journal 596).
+`retire-command-groups` owns enforcement, including `! { ... }` and
+`return { ... }` refusals. Those are no longer choices in this task.
+
+An allowed right-hand block is the corresponding `if` body, not a
+group with its own status. This task still owns whether the remaining
+non-group compounds can supply a consumed status; the sugar creates no
+exception to whatever rule applies to its explicit `if` form.
 
 ## What
 
-DD#68 settles that a group `{ … }` cannot be a condition (SB4027), and F1+F4
-extended that to a negated group in a header (journal 537). Other compound
-commands are still accepted as an `if`/`while` condition, as the right
+The evidence below predates the accepted group retirement and has not
+been rerun. DD#68 rejected a group condition (SB4027), and F1+F4 extended
+that to a negated group in a header (journal 537). Other compound
+commands were accepted as an `if`/`while` condition, as the right
 operand of `&&`/`||`, and under `!`. In those positions their status is not
 bash's, and a failing command in the body still aborts the program. Outside
-a header, a group under `!` is still accepted too (see "Groups under `!`").
+a header, a group under `!` was accepted too (see the historical table).
 
 Found 2026-10-27, while porting F1+F4 (journal 537). Pre-existing: the
 results below are the same at `8e28c61` (before F1+F4) and with F1+F4, in
@@ -62,7 +76,7 @@ So SB4023 rejects a compound only as a left operand. `!` hides it there
 Only bng.24 (spec/errors.sh) pins a compound condition as a positive:
 `if ! for x in a b { echo $x } || /bin/true { echo y }` prints `a`, `b`, `y`.
 
-### Groups under `!`
+### Groups under `!` (historical; now require rejection)
 
 SB4027 covers header conditions only (DD#68's 2026-10-26 addendum). Where no
 body follows, a group under `!` is still accepted, as an `&&`/`||` left
@@ -90,18 +104,20 @@ prints `after`, as c3 does. Without the `!`, `return` never sees a group
 (rt1), so it cannot reject one as it rejects `if` (c9). bash's `return`
 takes no producer, so g2 has no bash result.
 
-A group as a right operand is a different case. `/bin/false || { echo a; echo
-b; }` (bc.g4, spec/brace.sh) is idiomatic, and whether DD#95 allows it is Q3
-of `q-statement-form-residuals`.
+A right-hand conditional block is now settled separately:
+`/bin/false || { echo a; echo b; }` (bc.g4, spec/brace.sh) is `if`
+sugar, not a surviving command group. Q3 of
+`q-statement-form-residuals` records that same boundary.
 
-While any of these stay legal, a `$?` or latch read inside the body is judged
-against the enclosing statement's state: the negated-compound rows of
-`bug-sb5012-sb5094-nested-body-flow`. Under (A) those rows become rejections.
+For still-legal compounds, the nested `$?`/latch defect belongs to
+`bug-sb5012-sb5094-nested-body-flow`. Under (A) its remaining
+negated-compound rows become rejections. Group retirement already
+settles its group-only rows; an earlier syntax refusal is not a flow fix.
 
 Filed under DG's rule for the port that questions and uncovered cases become
 backlog tasks.
 
-## Options
+## Options for non-group compounds
 
 - **(A) Reject a compound wherever its status is consumed**: as a condition,
   as either operand of `&&`/`||`, under `!`, and as a `return` producer.
@@ -111,16 +127,14 @@ backlog tasks.
   compound in a function, whose `return` states the status. bng.24 flips.
   Recommended.
 
-  For groups, "either operand" would also reject bc.g4's right operand,
-  which Q3 of `q-statement-form-residuals` decides. The narrower reading
-  rejects a group under `!` as a left operand and as a `return` producer:
-  bng.22 and bng.23 flip, and rt1 would draw c9's SB4014. The ruling picks
-  one.
+  The conditional-block shorthands retain their ordinary `if` meaning;
+  they do not supply a separate group's status. General groups and
+  their former bng.22/bng.23 positives already belong to the retirement
+  task, regardless of which option is selected here.
 - **(B) Keep them legal with bash's status** (the last body command, or 0),
   and decide whether body commands in that position are checked. Today they
-  abort, as they do at statement level. A group's status is already bash's;
-  only its earlier commands are in question (g3).
-- **(C) Keep `if` only.** Reject the loops and groups, and give `if` bash's
+  abort, as they do at statement level. This does not reopen groups.
+- **(C) Keep `if` only.** Reject the loops, and give `if` bash's
   status when no branch runs (c9b differs today).
 
 Probes: `files/port-f1f4-probes.tar.gz`, directories `cq/` (c1–c10, c2b,

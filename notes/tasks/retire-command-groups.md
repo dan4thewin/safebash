@@ -1,14 +1,15 @@
 ---
-title: "Retire command groups; keep `cmd || { a; b }` as sugar for `if ! cmd { a; b }`"
+title: "Retire command groups; keep `&&` and `||` blocks as `if` sugar"
 status: open
 priority: P3
-kind: decision
+kind: work
 depends: []
 gates:
-  - "DG rules on the open questions below; DD#55 records the `||` sugar and DD#70 the grammar"
-  - "a group anywhere the ruling removes it is rejected with a diagnostic naming the replacement (an `if`, or a function), in both backends"
-  - "`cmd || { a; b }` behaves exactly as `if ! cmd { a; b }`, `$?` included, in both backends, with specs"
-  - "every spec that uses a group is rewritten or re-pinned, and the five related tasks below are updated or closed"
+  - "implement DD55/DD68/DD70/DD95's accepted conditional-block sugar and general-group retirement in native and C"
+  - "both shorthands match their explicit `if` counterparts for evaluation, scope, checking, status/latches, taint flow and control transfers"
+  - "retired source groups reject through marks and all former placements, with advice for ordinary statements, an `if` or a function as appropriate"
+  - "take a current parser-derived fixture census; migrate changed contracts to fresh global ids without losing coverage of still-legal bodies"
+  - "before-binary and targeted reversion controls independently pin the refusals and sugar equivalence; the predicted ordinary gate passes"
 ---
 
 DG, 2026-10-30 (`q-suppression-on-user-functions`, "Rulings, 2026-10-30"):
@@ -17,9 +18,55 @@ DG, 2026-10-30 (`q-suppression-on-user-functions`, "Rulings, 2026-10-30"):
 > I don't think I see any reason to support the groups. the foo || { a; b }
 > can be allowed as a sugaring of if ! foo { a; b }.
 
-## Today
+DG accepted the symmetric `cmd && { a; b }` shorthand on 2026-11-09.
+DD55/DD68/DD70/DD95 and journal 596 record the combined policy. The
+decision is settled; compiler implementation remains open in this task.
 
-`parse_group` (parser.rs:1365–1380) accepts a `{ … }` group in five places:
+## Accepted rule
+
+```sh
+cmd && { a; b }          # exactly: if cmd { a; b }
+cmd || { a; b }          # exactly: if ! cmd { a; b }
+```
+
+The right-hand braces open the corresponding `if` body, not a general
+command group. Use ordinary `if` scope and checking, without a new
+function or process boundary. The condition runs once and only the
+selected body runs. Body failures retain ordinary implicit checks,
+including on the body's last command; condition handling does not
+reach into operands or called bodies.
+
+Status values and availability, DD126 latches, taint/attest flow,
+bindings and `return`/`break`/`continue` must match that `if`. In
+particular, `||` sugar inherits the negated condition's status behavior;
+it has no special raw-status rule merely because the source uses `||`.
+There is no new status permission after the construct.
+
+General source groups reject: standalone, under `!` or `-`, as return
+producers, stages, background jobs or redirected commands, including
+inside other bodies. No wrapper or placement revives them. Ordinary
+function, capture, control-flow and dispatch bodies remain legal under
+their own rules. A literal quoted brace is not a group.
+
+DD95 still rejects mixing `&&` and `||` in one list. The body's own
+lists are separate, so `cmd && { other || recover }` follows
+`if cmd { other || recover }`, not mixed-list grouping. Header braces
+still delimit the body under DD68. Do not make a block an independent
+status producer; the remaining non-group compound-status question is
+`q-compound-as-condition`.
+
+The diagnostic code and internal representation are implementation
+work, not unresolved language choices. Advise inlining ordinary
+statements or naming a function as appropriate; a former group stage
+or redirected group needs a function, not another group spelling.
+Do not delete internal body/carrier machinery merely because source
+groups go: functions, readers and parser-generated arithmetic/loop
+sequences still need their existing semantics.
+
+## Historical inventory (2026-10-30, not remeasured)
+
+The recorded `parse_group` (parser.rs:1365–1380) accepted a `{ … }`
+group in five places:
 
 - as a statement: bc.g4–bc.g8 (brace.sh:180–207);
 - after `||` or `&&`: 55.51–55.56 (errors.sh:1475–1502) and 18.8
@@ -31,20 +78,31 @@ DG, 2026-10-30 (`q-suppression-on-user-functions`, "Rulings, 2026-10-30"):
 
 Journal 453 has the history of the brace token.
 
-## Open
+## Implementation evidence
 
-1. Is `cmd && { a; b }` sugar for `if cmd { a; b }`, or rejected? DG named
-   only `||`.
-2. A statement group `{ a; b }` (bc.g5) is rejected. Which diagnostic,
-   and does its advice say to inline the statements or to name a function?
-3. A group as a stage or with a redirect: is it rejected, with the
-   advice to write a function?
-4. `compound-redirects`, `c-compound-pipeline-stage`,
-   `q-compound-as-condition`, `block-falls-through-blind-to-group` and
-   `compound-condition-abort-catch` all assume groups exist. Each is
-   updated or closed by the ruling.
+Take the fixture census when implementation starts, from the parser
+rather than a text grep. A grep for `|| {` / `&& {` also matches dispatch
+bodies; it found 88 lines in 13 files on 2026-10-30, 41 in dispatch.sh.
+Those are historical counts, not a current migration or gate prediction.
 
-The census of specs that use a group is taken when the work starts, from
-the parser rather than by grep. A grep for `|| {` / `&& {` also matches
-dispatch bodies; it found 88 lines in 13 files on 2026-10-30, 41 of them in
-dispatch.sh.
+Pin both shorthands against their explicit `if` forms: success/failure
+selection, skipped effects, operand/body failure boundaries, status
+reads and control transfers. Preserve legal attest-diversion behavior
+and still-required refusals. A new group-syntax rejection is not proof
+that a nested-flow defect was repaired; use a still-legal `if` form for
+that evidence.
+
+The group-only rows in `q-compound-as-condition` and Q3 of
+`q-statement-form-residuals` now have a rule. The other questions in those
+files remain open. `compound-redirects`, `c-compound-pipeline-stage`,
+`block-falls-through-blind-to-group` and
+`compound-condition-abort-catch` are already completed historical
+records, not new implementation owners. Retire only their group-only
+source permissions; preserve the still-legal function/body mechanisms
+and assertions they established.
+
+Coordinate with `retire-suppression-on-compounds` and the nested-status
+flow task so an earlier syntax error does not masquerade as proof of
+their independent checks. Allocate fresh ids above the database
+high-water marks for changed contracts, then predict additions,
+retirements, flips and totals from the actual fixture migration.

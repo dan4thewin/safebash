@@ -339,6 +339,34 @@ silent. The existing child-owned exec errno report is separate: if exec
 itself fails, the child reports that error and exits 127, including
 without a wrapper (`bg-exec-errno-message`, resolved 2026-07-08).
 
+## Conditional blocks are `if` sugar (DG, 2026-11-09)
+
+DG retired general command groups on 2026-10-30, retaining the failure
+block as an `if` shorthand. He has now accepted the symmetric success
+block:
+
+```sh
+cmd && { a; b }          # exactly: if cmd { a; b }
+cmd || { a; b }          # exactly: if ! cmd { a; b }
+```
+
+The braces delimit an `if` body, not an independent command-list
+operand. This does not restore standalone `{ a; b }`, a group under
+`!` or `-`, a group return producer, or a group used as a stage,
+background job or redirected command. Use ordinary statements, an `if`,
+or a named function as appropriate. Ordinary function, control-flow,
+capture and dispatch bodies remain.
+
+The corresponding `if` owns scope, checking, control transfers and
+status availability (DD55). DD95 still rejects mixing `&&` and `||`
+in one list; the body's own lists are separate, just as in an explicit
+`if`. This does not decide the remaining `if`/loop status question in
+`q-compound-as-condition`.
+
+**Implementation is pending** in the existing P3
+`retire-command-groups`; no new diagnostic code is allocated here.
+Journal 596 records the ruling.
+
 ## Relationship to other decisions
 
 - **DD#55** — parent: implicit checks, `-` suppression, `$?` scoping,
@@ -589,9 +617,12 @@ the compound stands (csfx.12-csfx.18). A digit word with a blank before the
 operator is not a tag, so `{ … } 2 >f` still starts a new statement at the
 `2` (csfx.19). What that word should start is `q-statement-form-residuals`.
 
-`&&` and `||` are the exception: SB4023 still does not see through `!`.
-`! { /bin/false } && echo y` prints `y` (bng.22), where `{ /bin/false } &&
-echo y` is SB4023, and a negated loop slips past the same way (c4 in
-`q-compound-as-condition`). Whether it should is that task's question.
+At this implementation's landing, SB4023 still did not see through `!`:
+`! { /bin/false } && echo y` printed `y` (bng.22), where `{ /bin/false } &&
+echo y` was SB4023. The accepted command-group retirement above now
+requires the negated group to reject; enforcement is pending in
+`retire-command-groups`. A negated loop also slips past SB4023 (c4);
+that distinct compound-status question remains in
+`q-compound-as-condition`.
 
 Specs: errors.sh rdr.50-rdr.57, csfx.9-csfx.20. Journal 537.

@@ -8,6 +8,12 @@ gates:
 
 # `block_falls_through` cannot see through a `{ … }` group
 
+**Historical completed record.** DD70's accepted conditional-block
+sugar now makes `cmd || { ... }` an `if ! cmd { ... }`, not a surviving
+general group. `retire-command-groups` must preserve the legal
+attest-diversion behavior and the guard rails below through that `if`
+flow; retiring groups alone is not proof of correct branch merging.
+
 `validate.rs::block_falls_through` decides whether a branch reaches the merge
 by inspecting the block's **last statement** and matching a literal
 `exit` / `return` / `break` / `continue` command. A `Group` is not a command,

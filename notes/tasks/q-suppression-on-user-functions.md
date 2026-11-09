@@ -113,7 +113,10 @@ The AI's reading. Decide-and-report items are marked; DG may veto them.
   withdrawn. `- wait` discards a value, as `- int_f` does.
 - **Groups go**, and `foo || { a; b }` becomes sugar for
   `if ! foo { a; b }`. This language change is not on the branch, so it
-  is `retire-command-groups` in the backlog, with its open sub-questions.
+  is `retire-command-groups` in the backlog. **Follow-up, 2026-11-09:**
+  DG also accepted `foo && { a; b }` as `if foo { a; b }`.
+  The policy is settled in DD55/DD68/DD70/DD95; implementation remains
+  with that task, not a reopened general-group permission (journal 596).
 - **Q7: ruled. A `-` never prefixes a compound** (`{`, `if`, `while`,
   `until`, `for`, `case`). That is `retire-suppression-on-compounds` in
   the backlog. It cannot land before Q5, because p518.22/.23 are today's

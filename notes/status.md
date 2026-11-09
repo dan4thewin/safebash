@@ -1,4 +1,25 @@
-## STATUS (2026-11-09, latest) - Reject redundant direct background exec
+## STATUS (2026-11-09, latest) - Conditional blocks are `if` sugar
+
+DG accepted `cmd && { a; b }` as exactly `if cmd { a; b }`, alongside
+the already accepted `cmd || { a; b }` / `if ! cmd { a; b }`.
+General command groups remain retired; ordinary function, control-flow,
+capture and dispatch bodies are not removed.
+
+Both shorthands inherit their `if`'s scope, checking, status/latch and
+taint flow, and control transfers. In particular, the guard does not
+catch body failures. DD95 still rejects mixed lists; the body's lists
+are separate. Non-group compound status remains a separate question.
+
+DD55/DD68/DD70/DD95 and GUIDE agree. The existing P3
+`retire-command-groups` now owns a settled policy, not another decision
+request. Related question and historical implementation records are
+reconciled; journal 596 records the ruling.
+
+This is policy/backlog recording only. No compiler/runtime/spec/build
+code changed, and no new behavior probe, sweep or coverage run was made.
+Journal 577 remains the accepted implementation baseline.
+
+## STATUS (2026-11-09) - Reject redundant direct background exec
 
 DG rejected the now-redundant single-command job spelling `exec cmd &`.
 Write `cmd &`, keeping the background job rather than making it a

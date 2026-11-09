@@ -12,7 +12,7 @@ gates:
   - "every missed row draws its twin's code"
   - "the controls keep their results"
   - "focused specs pin each distinct defect in both backends with pre-fix or targeted reversion failures; preservation controls and the predicted ordinary gate pass"
-  - "if `q-compound-as-condition` rules (A) first, the negated-compound rows are its rejections instead and leave this task"
+  - "group-only rows become retire-command-groups refusals; if q-compound-as-condition rules (A), its remaining negated-compound rows also leave this task"
 ---
 
 ## Entry policy settled, 2026-11-07
@@ -124,9 +124,15 @@ plain twin l1t: that is `bug-handling-branch-drops-latch`, not this task.
 
 ### Negated compounds
 
-These rows exist only while `q-compound-as-condition` leaves `!`-hidden
-compounds legal. Under its (A) they become rejections. The un-negated twins
-n3t and n4t are SB4023.
+General-group rows now require rejection under `retire-command-groups`
+(DD70, journal 596), independently of the remaining `if`/loop question.
+The other rows exist only while `q-compound-as-condition` leaves those
+`!`-hidden compounds legal; under its (A) they become rejections too.
+The un-negated twins n3t and n4t were SB4023.
+
+The accepted `&&`/`||` block shorthands must instead follow their
+ordinary `if` flow. An earlier group-syntax refusal does not prove a
+status/latch-flow fix; preserve that evidence with still-legal bodies.
 
 | Program | Result | Twin |
 |---|---|---|
