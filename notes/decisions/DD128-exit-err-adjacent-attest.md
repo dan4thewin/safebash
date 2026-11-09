@@ -211,8 +211,11 @@ Within a live binding, only these operations may discharge outstanding taint:
 2. Clean replacement of that attest's subject on its failed branch.
 
 The second permission belongs to **that subject**, not to every binding
-assigned in an `else` block. Replacement must cover the whole value. A
-whole-collection unset can supply an empty replacement there. Scalars
+assigned in an `else` block. Replacement must also be a legal write:
+DD86 permits validation of a const, not replacement of its value on
+failure. That allowance does not relax adjacency, ownership or the
+requirement to resolve every continuing path. Replacement must cover the
+whole value. A whole-collection unset can supply an empty replacement there. Scalars
 require a clean assignment; this does not legalize scalar unset (DD30).
 A cell write, cell unset or append does not resolve a tainted collection
 or scalar.

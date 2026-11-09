@@ -160,8 +160,11 @@ not obviously a bug stays unchanged in the port:
   nothing, where DD73 specifies them.
 - `q-glob-semantics` (P2): dotfiles, order, directory-open errors, and a
   `*` in a non-final segment.
-- `q-attest-retag-of-const` (P3): may `attest` re-tag a const? Still
-  SB4044, now at the statement.
+- `q-attest-retag-of-const` (P3, implementation work): DG separates
+  immutability from validation (2026-11-09, DD86). Allow value-preserving
+  const attests, including conversion sources; real writes, conversion
+  targets and failed-attest replacements remain forbidden. Enforcement
+  is pending; F13's retained SB4044 is still the compiler's behavior.
 - `q-empty-keyword-condition` (P3): `if then … fi` and `while do … done`
   compile and are false.
   - Answered in F1+F4 (journal 537; decide-and-report): SB4027 "this

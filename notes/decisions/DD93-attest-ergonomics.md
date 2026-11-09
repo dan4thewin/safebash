@@ -106,6 +106,14 @@ predicate). On success it declassifies **both** names —
   named-var model), and
 - `myint` is **bound clean** to the i64 value of `numstr`.
 
+The source may be **const** (DD#86, DG 2026-11-09): validation does not
+change its bytes or type. This applies to both standalone and legal
+caught conversions, just as to full and shorthand `[[ ]]` attests.
+Const-attest enforcement is pending in `q-attest-retag-of-const`.
+The target is different: conversion really writes it, so an existing
+const target remains SB4044. The distinction does not permit same-name
+retyping or replacement of a const source on failure.
+
 ### Addendum — wider RHS, and predicate reads (DG, 2026-09-07)
 
 DG hit `attest x (( y = x*2 ))` and it ICE'd. Two rules came out of it.
@@ -143,9 +151,10 @@ Constraints (DG, 2026-09-06):
   deferred) — **SB5053** otherwise.
 - **Scalar only** for now (the array analogue `attest e in a (( … ))` is a
   follow-up; the existing `attest e in a [[ … ]]` covers arrays meanwhile).
-- The target is an **int scalar binding**: an existing int can be assigned,
-  but a string or collection target is SB4030. An introduced target counts
-  for DD#86's prohibition on a later typed declaration (SB5082).
+- The target is an **int scalar binding**: an existing mutable int can be
+  assigned; a const target is SB4044, and a string or collection target is
+  SB4030. An introduced target counts for DD#86's prohibition on a later
+  typed declaration (SB5082).
 - The **`if` form is supported** (DG, 2026-09-07): `if attest numstr
   (( myint = numstr ))` branches instead of aborting, and `myint` is
   *declared but not assigned* on the else path — it reads as `0`, which is

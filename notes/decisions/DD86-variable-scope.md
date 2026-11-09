@@ -87,6 +87,45 @@ Full type-keyword set is now `str` (string) / `int` / `array` / `map`, with
 (inferred string), same as today; `str` is for the declare-without-assign case
 (and for making a string declaration explicit).
 
+## Const freezes the value, not validation (DG, 2026-11-09)
+
+> yes, separate immutability from validation
+
+A `const` may be initialized from an otherwise legal taint source.
+Immutability does not make that input clean. An otherwise legal `attest`
+may validate the const and clear its taint without changing its value:
+
+```sash
+const home=$(getenv HOME)
+attest home -n
+echo "$home"
+```
+
+The rule is uniform across full predicates, unary shorthands, standalone
+attests and legal caught forms. It also permits a const as the **source**
+of DD#93's arithmetic conversion: the source's bytes and type are
+unchanged, while a distinct target receives the computed integer.
+Creating a new internal SSA version to carry the successful verdict is
+not a source-level reassignment.
+
+Actual writes remain forbidden. Assignments, mutations, command out-params
+and conversion **targets** still obey SB4044; a failed attest does not
+permit replacing its const subject with a default. Same-name conversion,
+collection consts, redeclaration and const-in-loop restrictions are not
+relaxed.
+
+DD#121/DD#127/DD#128 still govern adjacency, ownership and every continuing
+path. Being const grants no late or inherited-input attest, no batch
+resolution, and no new clean-read permission on failure. `:!` remains an
+explicit read override, not validation of the binding. Signal deferral and
+EXIT/ERR entry requirements continue to follow the actual legal resolution.
+
+**Enforcement is pending** in `q-attest-retag-of-const`. The current
+compiler still rejects the retag with SB4044. This supersedes F13's
+retained retag rejection, not its real-write checks. No new declaration
+syntax, diagnostic code or lowering architecture is selected. Journal 602
+records the ruling and the implementation boundary.
+
 ## Use-before-**and**-after: reject unused variables
 
 DD#62 already rejects a **read** with no reaching assignment (SB5031, "assigned
@@ -730,8 +769,10 @@ journal 525.
 
 Phase 3 above says SB4044 "means only a bare assignment to a const". That
 described the enforcement, not the rule: a const is immutable, so every
-channel that binds the name writes it. Validate's check ran before binding
-resolution, over flat names, in textual order, and enumerated only some
+actual write channel needs checking. A value-preserving attest retag is
+not such a write under the 2026-11-09 ruling above; F13 retained its old
+rejection while that question was deferred. Before F13, validate ran
+before binding resolution, over flat names, in textual order, and enumerated only some
 channels. `VersionState::define` caught some of the rest during lowering and
 reported them at `1:1`. Measured on `1309385`:
 
@@ -747,12 +788,14 @@ reported them at `1:1`. Measured on `1309385`:
   `x`, or a sibling capture's.
 
 DG approved the refinement with the rest of F13: validate's SB4044 covers
-every binding channel, and the backstop becomes an invariant.
+the then-enumerated binding channels, and the backstop becomes an invariant.
 
-**The rule.** SB4044 rejects every statement that binds a const other than its
-declaration: an assignment, a `for` variable, a `(( ))` write, a command
-out-param (`readline`, `read`, `argv`, `mapfile`, a `keys` or `match` fill), an
-attest's re-tag of its subject, and DD#93's conversion target. Every write is
+**The rule, with the 2026-11-09 validation distinction.** SB4044 rejects
+every actual write to a const other than its initialization: an assignment,
+a `for` variable, a `(( ))` write, a command out-param (`readline`, `read`,
+`argv`, `mapfile`, a `keys` or `match` fill), and DD#93's conversion target.
+An attest's value-preserving retag of its subject is allowed; removing the
+current rejection is queued in `q-attest-retag-of-const`. Every real write is
 reported, each at the innermost statement that makes it, whether that comes
 before or after the declaration in the text (a binding does not depend on
 textual order, above). Two channels stay with
@@ -765,8 +808,8 @@ the program `bindings::resolve` returns, so a single program-wide set of
 qualified names is exact. It sits outside the taint switch: `--no-taint` does
 not carry a const write into lowering.
 
-**The backstop is an invariant.** `VersionState::define` now panics if lowering
-binds a const twice, and a unit test pins it
+**The current backstop is an invariant.** `VersionState::define` panics if
+lowering binds a const twice, and a unit test pins it
 (`defining_a_const_twice_is_an_invariant_failure`). It is orthogonal to
 validate: it sees lowering's own bindings, so it also notices lowering binding
 a name twice by itself. That needed every lowering path that did so fixed
@@ -774,6 +817,8 @@ first. Both merge sites, a two-way branch's phis and a dispatch's, use
 `define_merge`; a function's template runs its self tail call as a loop; a
 captured function owns its tail loop (batch-531 B58); and the suppressed tail
 specialization restarts from the readonly set its body was entered with.
+The queued retag change must distinguish validation versions without
+weakening this guard against real writes or making the binding mutable.
 
 **Decide-and-report.**
 
@@ -784,7 +829,8 @@ specialization restarts from the readonly set its body was entered with.
   structural rule now reports that rule alone (SB5007, SB4025, SB4064), and
   one that reached lowering loses its lowering diagnostics (SB4018). SB4044
   now accompanies semantic-batch codes instead, such as SB5020 and SB5068.
-  Every one of these programs was rejected before and still is.
+  At F13's landing, every one of these programs was rejected before and
+  after; the later const-validation allowance is separate.
 
 Specs `spec/types.sh` 35.3-35.9 and `constw.1`-`constw.21`, `spec/glob.sh`
 `forglob.3`; journal 532.

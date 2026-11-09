@@ -298,6 +298,16 @@ asserts the result: binding a const twice in `VersionState::define` is an
 ICE. A merge phi binds through `define_merge` instead, because each version
 it joins was checked where it was written.
 
+**Const validation policy (DD#86, enforcement pending).** Immutability
+freezes a value, not its validation state. A const may acquire tainted
+input and undergo an otherwise legal attest, including as a conversion's
+source. Full predicates, shorthands and legal caught forms follow the
+same rule. Real writes, conversion targets and failed-attest replacements
+remain forbidden; adjacency, ownership and failure resolution are unchanged.
+The compiler still includes scalar attest retags in its const-write check.
+`q-attest-retag-of-const` owns separating those value-preserving versions
+from real writes without weakening the lowering invariant.
+
 Compiler temporaries use the same reserved-name set, through
 `VersionState::reserve_temp_name`: a private-looking spelling cannot alias a
 source global or another call's live result. The `__` namespace remains legal
@@ -390,7 +400,7 @@ Flow-sensitive taint analysis (DD#24, DD#42–44), tracking names whose
 live bindings remain unresolved.
 
 **Resolution is adjacent (DD#121, DD#128).** A successful legal attest, or
-a clean whole-subject replacement written directly on its failed path,
+a legal clean whole-subject replacement written directly on its failed path,
 resolves outstanding taint. Ordinary overwrites, unset, clean loop binding,
 buffering and self-copy through `:!` do not. Permission is subject-specific
 and cannot enter helpers, captures or children. A fresh acquisition has its

@@ -1,4 +1,27 @@
-## STATUS (2026-11-09, latest) - Next-line clauses
+## STATUS (2026-11-09, latest) - Const and validation are independent
+
+DG separated immutability from validation. A const may hold tainted
+input and undergo an otherwise legal attest without changing its value.
+The allowance covers full predicates, shorthands, standalone and legal
+caught forms, including a const used as an arithmetic conversion's source.
+
+Actual writes remain forbidden: conversion targets and failed-attest
+replacements do not gain exceptions. Adjacency, per-binding locality,
+ownership, failed-path resolution, `:!` and handler/signal contracts stay.
+Const does not imply clean input or permit same-name conversion.
+
+DD86 records the rule and reconciles F13's retained retag refusal;
+DD24/DD35/DD93/DD128 and GUIDE agree. The existing P3
+`q-attest-retag-of-const` now owns implementation, with real CLI
+acceptance/refusal, before/reversion and spec-migration obligations.
+Journal 602 records the decision and source-inspected mechanism.
+
+This is policy/backlog recording only. The compiler still rejects const
+attests with SB4044. No compiler/runtime/converter/spec/build code changed,
+and no new behavior probe, sweep or coverage run was made. Journal 577
+remains the accepted implementation baseline.
+
+## STATUS (2026-11-09) - Next-line clauses
 
 DG allows brace-form `else`/`elif` on following lines, including
 blank/comment lines, provided the implementation stays cheap. Source
