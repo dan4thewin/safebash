@@ -308,6 +308,12 @@ The compiler still includes scalar attest retags in its const-write check.
 `q-attest-retag-of-const` owns separating those value-preserving versions
 from real writes without weakening the lowering invariant.
 
+The later **provisional** DD131/DD132 trial adds fresh immutable scratch
+instances, including collections, without generally changing ordinary
+const declarations or loop rules. Its caught-attest permissions are
+region-limited and separate from the accepted ordinary-const allowance;
+the selector/scratch overview below describes that unimplemented model.
+
 Compiler temporaries use the same reserved-name set, through
 `VersionState::reserve_temp_name`: a private-looking spelling cannot alias a
 source global or another call's live result. The `__` namespace remains legal
@@ -534,6 +540,14 @@ echo $port   # clean — attested above
 
 **The rule:** a tainted binding can be read only in its eligible attest
 predicate or through `:!`; ordinary unresolved reads receive SB5020.
+
+DD132 provisionally permits a caught immutable-scratch attest to leave
+its candidate unresolved: ordinary reads are confined to the success
+arm, with explicit trusted data reads outside it. Regex patterns need
+successful `r?` proof and cannot use `:!`, even with taint disabled.
+Standalone attest still permits subsequent use; ordinary bindings keep
+their existing resolution rules. This is branch-trial policy, not
+implemented behavior.
 
 **Containers (DD#61):** a tainted value cannot enter an array/map via a
 literal, `+=` append, or `a[i]=` subscript (SB5021); tainted arrays come
@@ -878,6 +892,20 @@ clears the array on entry, and returns the boolean. `sub`/`gsub`
 replacements expand `\0`–`\9` backrefs and `\\`; any other `\<char>` is a
 compile error (SB4033).
 
+**Provisional regex revision (DD132).** Runtime patterns must be immutable
+and successfully checked by `r?` before use; invalid candidates give quiet
+false, while actual literal regex use remains statically validated.
+Validate the final composed value, not just its pieces. Cleanliness,
+constness, `:!` and taint-disable switches cannot supply proof.
+Pattern operands forbid trusted reads; subjects/replacements retain
+their ordinary rules. `sub`/`gsub` would produce text plus a matched/
+no-match boolean, consumed through a regex capture-condition or
+explicitly discarded (`$(- sub ...)`). No match supplies the original
+text and false; identity replacement can still be true. Substitution
+sugar explicitly projects text, with no chain-wide boolean.
+The integrated separate-branch trial is queued in `q-glob-semantics`,
+not implemented by this recording.
+
 **Two boundaries are worth knowing, because they are the whole dialect's
 sharp edges.** Full treatment in `sash.1` §REGULAR EXPRESSIONS.
 
@@ -1074,10 +1102,10 @@ FLAG-only programs receive no polling instructions.
 `SashTable` — hash table implementation used for both indexed and
 associative arrays (DD#33).
 
-### Directory selectors and scratch collections (provisional)
+### Directory selectors and immutable scratch (provisional)
 
-DD131 records a package to implement and evaluate **on a separate branch**,
-not a shipped interface or a final commitment:
+DD131/DD132 record a package to implement and evaluate **on a separate
+branch**, not a shipped interface or a final commitment:
 
 ```sash
 glob files '.*' '*'
@@ -1094,7 +1122,9 @@ leading dot; wildcards never select `.` or `..`.
 
 `rglob` takes its directory separately and applies ordinary regexes to
 **basenames**, including dotfiles when they match, but excluding `.` and
-`..`. It does not restore the retired combined glob/regex-filter shorthand.
+`..`. Runtime regex operands need DD132's successful proof for their
+immutable final values. It does not restore the retired combined
+glob/regex-filter shorthand.
 
 DD69 requires composition in `array f=(.* *)`,
 `array f=(.*); f+=(*)`, and `for f in .* * { ... }`. Each expansion is
@@ -1111,19 +1141,35 @@ appends, and iteration sugar uses a fresh result where needed.
 The trial also covers existing array fillers (`read`, `argv`, `keys`,
 `match`, `matchall`): ordinary targets accumulate, while `_batch`-style
 targets request **fresh scratch bindings**, rejecting already-bound names.
-Bare `_` remains the write-only discard binder. Scratch is not const, a
-taint exemption, a new scope or a mode inherited through parameter aliases.
-One scratch binding site can execute repeatedly; successful executions
-replace its batch, while an operation error retains its previous value.
-Empty results and EOF/no-match predicates retain their distinct meanings.
+Each scratch instance is **immutable**, including contents and writes
+through A-E aliases. The same source construction site may execute again,
+starting a new instance without the preceding value, taint state or
+regex proof. Ordinary existing targets are unchanged on operation error;
+a scratch array attempt remains fresh and empty, never stale or partial.
 
-No failed fill may publish a partial update. This is a collection-state
-guarantee, not rollback of consumed input or earlier effects. Current
-fillers still use their documented replacement behavior; the new commands
-and scratch model are unimplemented. `q-glob-semantics` owns the trial,
-including migration costs, loop/parameter behavior, failure publication,
-sugar/quoting and native/C evidence, before DG's adoption review
-(journal 603).
+The uniform model includes scalar initialization/captures, scalar
+`readline`, `for` binders, conversion targets and array/map construction.
+It does not add block scope, reconstruct skipped sites or imply destruction
+at loop exit. Ordinary scalar readline still replaces rather than appends.
+Bare `_` remains write-only discard; scratch names gain no unused-variable
+or implicit-cleanliness exemption. Exact scalar declaration spelling
+remains open; no `readonly` command or general const-collection syntax
+has been adopted.
+
+A caught scratch attest permits ordinary reads only in its success arm,
+with regex use additionally requiring `r?`. Failure/post-construct code
+may retain the candidate and explicitly trust it as data, never as a
+pattern. Even an exiting failed arm does not export the permission;
+standalone attest still permits later successful uses. Ordinary consts
+retain their separate rules.
+
+Array publication is not rollback of consumed input or earlier effects,
+and does not replace DD88's partial-stdout rule for a failed external
+capture. Current fillers still use their documented replacement behavior.
+`q-glob-semantics` owns the integrated trial, migration/native-C evidence
+and **exact DD revision inventory**, including the pre-revision commit
+and the contracts to reconcile if a part proves untenable. Journals
+603-604 record the original package and its correction/extension.
 
 ---
 

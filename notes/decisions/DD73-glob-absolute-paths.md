@@ -87,9 +87,10 @@ is the best partial fix available and it is a strict improvement).
 
 DD131 provisionally supplies the command interface: `glob`/`rglob` have
 an operational status and an array destination. Successful zero-match
-enumeration succeeds; destination publication follows its accumulation/
-scratch rules and is unchanged on an operation error. A new target
-starts empty. `q-glob-semantics` owns the separate-branch trial, coordinating
+enumeration succeeds. On operation error an ordinary existing destination
+is unchanged, while an immutable scratch attempt leaves its fresh empty
+instance, never a previous batch. A new ordinary target starts empty.
+`q-glob-semantics` owns the separate-branch trial, coordinating
 with `recoverable-file-failures`, not claiming that recovery already works.
 
 Assignments and loops remain resultless, and suppression does not reach
@@ -97,6 +98,8 @@ into helpers or operand captures. Lacking implemented handling is not
 grounds to relabel an ordinary failure fatal. Both selectors retain the
 absolute-path contract; `rglob` names its directory explicitly and matches
 basenames rather than trying to split a path out of regex syntax.
+DD132 requires successful proof for its runtime regex operands; that
+does not convert directory errors into no-match verdicts.
 
 ## Burden (deliberately flipped)
 

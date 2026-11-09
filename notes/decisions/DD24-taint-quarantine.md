@@ -36,6 +36,15 @@ directly on its failed branch resolves it. EXIT checks its actual incoming
 states; ERR conservatively treats potentially tainted incoming globals as
 unresolved, even if main normally attests them.
 
+**Provisional scratch exception (DD131/DD132, 2026-11-09).** Re-executing
+a scratch construction site starts a fresh immutable instance, not a
+taint-clearing write to a live binding. After a caught scratch attest,
+ordinary reads are confined to its success arm; failure and post-merge
+code may retain the unresolved candidate and read it explicitly through
+`:!` as data. Regex-pattern use instead requires successful `r?` proof
+and forbids trusted reads. Ordinary bindings retain DD128's resolution
+rule. This experiment is unimplemented and tracked in `q-glob-semantics`.
+
 ## Clean sources
 
 Literals, arithmetic from clean operands, `$#`, `$?`, `$$`, `$!`, and

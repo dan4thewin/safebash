@@ -9,6 +9,14 @@ fatal faults, which abort rather than produce a resumable result.
 of its attached redirect; it does not suppress every failure in its
 operands or body.
 
+**DD132's 2026-11-09 regex revision is provisional and unimplemented.**
+It moves malformed runtime regex data to `r?` (quiet false), requires
+successful proof before an immutable pattern is consumed, and gives
+`sub`/`gsub` a match/no-match boolean alongside their text. The current
+`regcomp` consumer path below describes the shipped baseline, not an
+exception to that proposed prerequisite. Fatal faults and ordinary I/O
+failures retain DD130's classification.
+
 **DD130's 2026-11-06 classification extension is accepted, with
 implementation pending.** It replaces the former setup-position split:
 fork failure is fatal, while path-specific file errors are recoverable.
@@ -54,7 +62,8 @@ Anything that can fail due to external state or data:
   check status); single-external-command background jobs instead exec
   directly, as specified below
 - Builtins that wrap syscalls (`cd`, `echo`/`printf` via `write(2)`)
-- Runtime calls that can fail on data (`regcomp` on dynamic patterns)
+- Runtime calls that can fail on data (`regcomp` on dynamic patterns in
+  the shipped model; DD132's trial replaces that interface as above)
 - Command substitution (`x=$(cmd)` — check before assignment)
 
 ## What does not get checked
@@ -193,6 +202,14 @@ make failure likely. DD101's `getenv` has a real lookup status in addition
 to its value, so it is not in this class. Its legal status discard and
 ordinary capture-condition handling remain, with the consumer rule above.
 An external command's status is likewise distinct from captured stdout.
+
+Under DD132's provisional model, `sub`/`gsub` also have a real second
+result: a boolean beside the text. A text capture may explicitly discard
+that boolean with `$(- sub ...)`, or consume it as a regex
+capture-condition (DD88). This is not permission for an inert prefix
+on `toupper`, `strlen` or another status-less producer. Substitution
+sugar explicitly projects text and discards the boolean; assignment
+and mutation themselves still have no result.
 
 Nor does this ban ordinary explicit value discard: `- int_fn` discards
 that call's integer, and `- wait` discards its returned pid (DD126).

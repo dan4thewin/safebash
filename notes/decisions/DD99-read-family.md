@@ -33,10 +33,14 @@ readline TARGET         # consume one line (terminated by newline)
   operation that would otherwise be called `split` — DG's observation that it
   is just a two-argument `read`.
 
-DD131 provisionally includes the **array** forms in an accumulation/
-fresh-scratch branch trial. It does not change scalar `readline`, the
-NUL boundary, source selection or EOF's meaning. The replacement rule
-above remains the shipped baseline until that experiment is evaluated.
+DD131 provisionally gives ordinary **array** fill targets accumulation
+and scratch targets fresh immutable instances. The revised trial also
+covers scalar `readline _line`: every execution constructs a fresh
+immutable scalar, including an EOF attempt, without resurrecting the
+previous line. Ordinary scalar `readline` still replaces, not appends.
+The NUL boundary, source selection and EOF's meaning remain. The
+replacement rule above is the shipped baseline until the trial is
+evaluated; it does not yet implement either scratch form.
 
 ```sh
 readline ln                     # one line → scalar

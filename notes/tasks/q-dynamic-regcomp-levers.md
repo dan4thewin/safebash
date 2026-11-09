@@ -1,23 +1,43 @@
-title: "Question: should `-`, `if` and `||` catch a dynamic regex that fails to compile?"
-status: open
+title: "Dynamic regex handling: provisionally settled by validation before use"
+status: done
 priority: P3
 kind: question
 depends: []
 gates:
-  - "DG rules on the question below; the ruling is recorded as an addendum to DD#70, and to DD#55 where its text changes"
-  - "the ruling is pinned by specs in both backends for each lever: `-`, `if`, `||`, a `=~` test, and a capture of `sub`"
-  - "SB4025's capture advice no longer says that a sash intrinsic cannot fail, or the ruling makes that true"
-  - "the open `A.regcomp` line in `dd70-error-model-contract-spec.md` is closed one way or the other"
+  - "DG's provisional validation-before-use choice is recorded in DD132 and the existing error/regex DDs are reconciled"
+  - "implementation, native/C proofs, diagnostic/spec migration and evaluation are explicitly owned by q-glob-semantics, not claimed complete here"
+  - "the implementation owner tracks every modified/new DD and its pre-revision baseline for coherent revision or withdrawal"
 
-## What
+## Provisional answer, 2026-11-09
 
-DD131 (2026-11-09) adds a **provisional** `rglob` directory selector to
-be evaluated on a separate branch. It has an operational status and
-an array destination, unlike a value-only replacement intrinsic.
-Coordinate its runtime pattern validation and unchanged-on-error
-publication with this question. The new selector does not settle the
-broader `match`/test/`sub` handling question or authorize changing those
-consumers by a shared-runtime side effect.
+DG chose a different interface from the two historical alternatives:
+`r?` tests a whole candidate, returning quiet false for invalid regex
+data, and the compiler requires successful proof for every immutable
+runtime pattern before use. `:!` and taint-disable switches cannot
+replace proof. Regex operations then supply logical match/no-match
+answers; `sub`/`gsub` have text plus a boolean, with explicit consumption
+or discard and the selected sugar projection.
+
+DD131/DD132 combine that choice with fresh immutable scratch and DG's
+caught-attest rule: ordinary reads and proved regex use only in the
+attest-success arm; failure and post-construct reads only as explicitly
+trusted data, never trusted pattern operands. Ordinary consts retain
+their independent rules. Directory selectors keep operational statuses.
+
+The choice is **provisional**, to be implemented and evaluated on a
+separate branch before DG decides what lands. This record is done
+**as a policy question only**. All compiler/runtime/converter/spec work
+is open in the integrated P2 `q-glob-semantics` owner, including its
+exact DD revision inventory. Journal 604 records the adoption.
+No implementation or new runtime measurement accompanies this closure.
+
+That owner must cover the real CLI in both modes, distinguish invalid
+candidates from no match and fatal faults, migrate changed contracts
+at fresh ids and reconcile diagnostics such as SB4025's old "cannot fail"
+advice. The historical `A.regcomp` contract row is transferred there,
+not marked implemented by answering the question.
+
+## Historical F15 evidence (not rerun)
 
 DD#70 lists dynamic `regcomp` as an (A) member, "a pattern not known at
 compile time can fail to compile at run time", and gives (A) two levers:
@@ -53,7 +73,7 @@ Two specs already pin the abort: `e.a70.regcomp` (spec/errors.sh) under
 `if` (`p="[bad"`; `if match hello "$p"`; asserts a nonzero exit and
 `regexp error`), and `39.56` (spec/regex.sh) under `-` with `sub`.
 
-## Cause
+## Cause at the recorded baseline
 
 Every runtime entry point that compiles a pattern takes a terminal error
 path when `regcomp9` returns null, after `regerror9` has printed the message:
@@ -61,9 +81,11 @@ path when `regcomp9` returns null, after `regerror9` has printed the message:
 `sash_regex_matchall_into` and `sash_regex_replace` (sash-rt). None returns
 the compilation failure as a status, so no lever has that failure to
 catch or discard. The table above is historical F15 evidence, not a new
-runtime measurement for DD131.
+runtime measurement for DD131/DD132.
 
-## The documents disagree
+## Document conflict recorded during F15
+
+These are historical quotations, not the current reconciled contracts:
 
 - DD#55: "Failure = nonzero exit or runtime error (e.g., `regcomp` on
   dynamic pattern). `- cmd` suppresses." Its list of checked operations
@@ -84,30 +106,23 @@ runtime measurement for DD131.
 - `dd70-error-model-contract-spec.md` is marked done, but its `A.regcomp`
   line is still unchecked.
 
-## Open question
+## Superseded alternatives and remaining mechanism
 
-- **(a) Keep the abort.** A dynamic pattern that fails to compile aborts
-  whatever the lever. Amend DD#55 and DD#70 to say so, keeping DD#71's
-  wording. Correct SB4025's "cannot fail", and close the contract task's
-  line as "aborts regardless of lever". No code change.
-- **(b) Implement the levers.** A failed compile becomes a failure status
-  that `if`, `||` and `-` act on. That needs three more rulings: what a
-  caught or suppressed `sub` yields (the unchanged subject, as base did,
-  or empty); what `$?` holds; and how `if match` tells "no match" from
-  "bad pattern", since both would take the `else` branch. `e.a70.regcomp`
-  would flip.
-
-Recommendation (made during F15, not yet ruled): (a). Every regex consumer
-already behaves this way, DD#39's 2026-05-24 clarification already says so,
-and F15 made `sub` and `gsub` agree. Under (b), `if match`
-and `match … || …` could not tell a bad pattern from a non-match, so the
-catch would hide the bug it reports.
+F15 offered blanket abort regardless of handling, or consumer-side
+compile-error statuses with a separately chosen failed-substitution
+value. The AI recommended blanket abort. DG did not select that
+recommendation; the current DD55/DD70/DD130 recoverability contract
+was not grounds to make invalid data fatal for lack of a good API.
+DD132 now chooses validation before use, not an empty/unchanged-text
+fallback for malformed regexes. No-match substitution text is a valid
+result for a valid pattern, a different case.
 
 Found during the batch-531 port (step F15, finding B51). Filed under DG's
 rule for the port that questions and uncovered cases become backlog tasks.
 
 Interacts with the regex error-recovery choice in
 `cross-compile-and-setjmp-on-mac.md`. DD129 settles the syscall layer, not
-that choice. Making the runtime's `regerror9` exit instead of returning
-would settle this question as (a) by side effect. Rule on this one first,
-or rule on both together.
+the recovery mechanism. Invalid candidates must be able to return
+quiet false from `r?`, so a blanket terminal `regerror9` is incompatible
+with the provisional model. Ordinary error returns versus an appropriate
+jump bridge remains a mechanism decision; no replacement was selected.

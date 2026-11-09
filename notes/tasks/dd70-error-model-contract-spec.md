@@ -44,7 +44,11 @@ Legend: [✓]=passing today  [~]=abort works, diagnostic pending  [ ]=new.
 - [~] A.cmdsub.diag`x=$(/bin/false)` (bare)          → rc!=0 + diag         (55.8 abort ✓)
 - [~] A.bg.diag    `/nonexistent & wait` (bare)      → rc!=0 + `*: <name>: <reason>`  (55.16 abort ✓)
 - [~] A.ovf.diag   `int x=MAX;(( x+=1 ));echo $x`     → rc!=0 + `*: arithmetic overflow`  (25.x abort ✓)
-- [ ] A.regcomp    dynamic bad pattern (e.g. `match $s "$(getenv RE)"` w/ bad RE) → rc!=0 + `*: regexp error: …`
+- [ ] A.regcomp — historical dynamic-consumer abort contract, provisionally
+  superseded by DD132 (2026-11-09). Invalid candidates give quiet false at
+  `r?`; runtime regex use requires successful proof. Implementation and
+  migration of `e.a70.regcomp` / `39.56` remain open in `q-glob-semantics`,
+  not completed by recording the policy.
 
 ### (B) must-consume  (booleans must be consumed — compiler-enforced, DG)
 

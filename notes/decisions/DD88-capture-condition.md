@@ -58,6 +58,31 @@ capture-condition form. A function or multi-statement capture does not
 become a condition by containing an explicit status return. Existing
 external-command/pipeline forms and DD#101's `getenv` exception are unchanged.
 
+### Provisional regex extension (DG, 2026-11-09; DD132)
+
+The integrated DD131/DD132 trial adds capture-conditions for regex
+operations that really supply **text plus a boolean**: scalar `match`
+and the proposed `sub`/`gsub` result contract. For example,
+`if _out=$(sub "$text" "$_re" replacement) { ... }` binds the text and
+branches on whether a match occurred. For `sub`/`gsub`, no match supplies
+valid original-subject text and false, not a failed/empty substitution fallback.
+Runtime patterns require successful proof for their immutable values.
+
+This is not a status on assignment itself, a scalar `matchall` form,
+or permission for arbitrary function, multi-statement, concatenated
+or status-less intrinsic conditions. Existing declaration-position
+restrictions remain; final scratch declaration spelling is an explicit
+trial design item. To consume only text, discard the real boolean
+inside the capture (`_out=$(- sub ...)`), not outside the binding.
+
+DD131's fresh scratch lifetime also applies to an external capture
+target, but does not overwrite this DD's partial-stdout rule: on failure,
+this attempt's bytes remain, not the preceding instance's bytes.
+Atomic array publication is not a new scalar-capture transaction.
+Implementation and the DD revision inventory are in `q-glob-semantics`.
+
+### Handling and discard (DD55)
+
 DD55's command-adjacent `-` rule (DG, 2026-11-08) does not remove these
 handling forms, including `if ! x=$(cmd)`. It rejects `- x=$(cmd)` as a
 discard spelling; write `x=$(- cmd)` instead. A capture-condition is not
@@ -76,7 +101,7 @@ discard: the condition consumes the status. Conversely, `x=$(- cmd)`
 without a status consumer remains a legal stdout capture. Enforcement
 is pending in `reject-discarded-status-consumers` (journal 589).
 
-## Why this shape
+## Why the original shape
 
 The implementation reuses two existing mechanisms:
 

@@ -114,7 +114,11 @@ expansion in source order, then iterate. Those are written source items
 even when neither matches. The rule applies to keyword bodies too;
 its implementation remains in `q-glob-semantics`, now DD131's provisional
 separate-branch trial. This neither gives the loop a result nor creates a
-per-iteration scope for scratch collections.
+per-iteration block scope. DD131's revised scratch model does give each
+execution of a scratch construction site, including `for _item` and
+`while readline _line`, a fresh immutable instance. A skipped site does
+not reset its binding, and loop exit is not automatic destruction.
+Ordinary binders and const-in-loop restrictions remain unchanged.
 
 For argument iteration, write `for x in @args` in a function or
 `for x in $(argv 1)` at top level (DD75/DD60), retaining ordinary

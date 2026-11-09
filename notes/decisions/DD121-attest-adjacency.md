@@ -18,7 +18,8 @@ The second clause ships today and needed no change:
   (`str y=$t`), comparison (`[[ $t == foo ]]`), command argument
   (`/bin/echo "$t"`). Arithmetic is SB4030.
 - **`:!` (DD#91) is already the sanctioned per-use bypass**, and since that
-  DD's 2026-09-09 split it is valid in every position a bare expansion is.
+  DD's 2026-09-09 split it is valid in ordinary data-read positions where
+  a bare expansion is. DD132 provisionally excludes regex-pattern operands.
 - **An anonymous taint source is already forced to bind a name**:
   `/bin/echo $(getenv HOME)` is *"tainted command substitution used without
   attest — assign it to a variable and attest before use"*. So "the operation
@@ -36,9 +37,10 @@ tainted its subject. A non-adjacent attest is **SB5088**. A binding list
 does not enlarge this unit: adjacency is measured per binding, as
 specified below.
 
-**R2 — Caught resolution.** A *caught* attest (`if attest …`, `attest … &&
-CMD`, `attest … || CMD`) must leave its subject **clean on every path that
-falls through** to the merge. A path that does not fall through — `exit`,
+**R2 — Caught resolution for ordinary bindings.** A *caught* attest
+(`if attest …`, `attest … && CMD`, `attest … || CMD`) must leave its
+subject **clean on every path that falls through** to the merge.
+A path that does not fall through — `exit`,
 `fail`, `return`, `break`, `continue` — is exempt. The **no-else form is rejected**
 (**SB5089**): its implicit fall-through resolves nothing.
 Clean replacement must be written directly on that subject's failed-attest
@@ -56,8 +58,25 @@ The two legal ways to satisfy R2:
 `else :` is **not** one of them — it falls through and leaves the subject
 tainted.
 
-**R3 — unchanged.** Absent an attest, a tainted variable is readable only
-through `:!` (DD#91) or its eligible attest predicate.
+**R3 — Explicit unresolved reads.** Absent an attest, a tainted variable is
+readable only through `:!` (DD#91) or its eligible attest predicate.
+DD132's separate regex-validity check is not supplied by that trust escape.
+
+**Provisional scratch exception (DG, 2026-11-09; DD131/DD132).** A caught
+attest on immutable scratch may leave its failed instance unresolved on
+a fall-through path, including a no-else form. Ordinary reads are confined
+to the attest-success arm; failure and post-construct reads require `:!`
+as data. Pattern operands prohibit trusted reads and require actual
+successful `r?` proof. Negation swaps the successful arm. Even a failed
+arm that exits or continues does not export permission beyond the caught
+construct. Standalone attest still permits subsequent use on success.
+
+The candidate is not abandoned, changed or cleaned at the merge.
+Adjacency and received-taint ownership still apply; ordinary consts
+do not gain this exception. The model is unimplemented work in
+`q-glob-semantics`. R2's existing non-fall-through exemption above is
+not a new scratch permission; references to ordinary R2 resolution
+below retain that distinction.
 
 ## Why: removal is the defect
 

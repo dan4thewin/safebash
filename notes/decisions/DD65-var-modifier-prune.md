@@ -25,7 +25,11 @@ dropped or moved into the awk-style string-builtin family
   and `$((…))` are clean.
 - **`${var:off:len}`** — substring. Useful, no glob/regex.
 - **`${var:s/re/sub/[g]}`** — regex replace; per DD#63 this is sugar for
-  `$(sub|gsub var "re" "sub")`.
+  `$(sub|gsub var "re" "sub")` in the shipped model. DD132 provisionally
+  adds a boolean beside substitution text: the sugar explicitly projects
+  text and discards that boolean, while every dynamic pattern still needs
+  proof for its final immutable value. Mutation sugar remains resultless
+  and cannot write immutable scratch. The trial is not implemented.
 
 (Implemented 2026-07-04: `${x:-$y}` now interpolates via the `:- ≡ "…"`
 model above — a `DoubleQuoted` operand lowered to `SsaValue::DefaultValue`

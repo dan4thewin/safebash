@@ -395,11 +395,12 @@ keys m k            # k = (alpha beta), in iteration order
 - The source may be a DD#100 collection-parameter slot, so a function can
   snapshot the keys of a map it was passed.
 
-DD131 provisionally includes `keys` in an accumulation/fresh-scratch
+DD131 provisionally includes `keys` in an accumulation/immutable-scratch
 branch trial. Each produced batch is still an independent key snapshot,
 but an ordinary destination could then contain several accumulated
-snapshots. That changed use pattern must be evaluated, not presented
-as the current replacement behavior.
+snapshots. A scratch result is fresh and frozen; later source-map changes
+or mutation through an alias cannot change it. That changed use pattern
+must be evaluated, not presented as the current replacement behavior.
 
 ### The result is clean
 

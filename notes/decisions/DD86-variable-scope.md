@@ -42,14 +42,29 @@ global) that a reviewer can't trace. Both are footguns.
 - **`local fn` (DD#18) is abandoned** — it was the only other user of `local`,
   and "designed, not built."
 
-## Provisional scratch collection bindings (DG, 2026-11-09)
+## Provisional immutable scratch bindings (DG, 2026-11-09)
 
-DD131 proposes leading-underscore **fill targets** such as `_batch` as
-fresh scratch introductions. The separate-branch trial retains this DD's
-scope: no shadowing, no new block scope and no fresh private lifetime
-merely because a loop re-executes a binding site. Scratch is not const,
-and ordinary writes do not acquire a taint-resolution exemption.
-The naming model is provisional, not implemented.
+DD131's separate-branch trial now gives scalar and collection scratch
+constructions fresh **immutable instances**. The same source site may
+execute again, beginning a new lifetime without the preceding value or
+proof; arbitrary writes and second declaration sites remain forbidden.
+The leading-underscore notation is provisional, with the exact scalar
+declaration spelling still to be finalized.
+
+Positional visibility and no shadowing remain. Freshness at construction
+does not create block scope, reconstruct a skipped site, or imply
+destruction at loop exit. Readers, for binders, conversion targets and
+array/map constructors follow the same model. Mutability restrictions
+cover collection contents and A-E aliases, not just the source name.
+This is not general permission for ordinary const declarations in loops
+or for ordinary writes to remove unresolved taint.
+
+DD132 adds regex proof and the caught-scratch rule: ordinary reads only
+in the attest-success arm; outside it, only explicit trusted data reads,
+never trusted pattern operands. Failed scratch may remain unresolved
+without being replaced or abandoned. This exception is not granted to
+ordinary consts. `q-glob-semantics` owns the integrated trial and DD revision
+inventory; neither model is implemented by this recording.
 
 ## Function names: one definition each (DG, 2026-11-06)
 
@@ -123,11 +138,14 @@ permit replacing its const subject with a default. Same-name conversion,
 collection consts, redeclaration and const-in-loop restrictions are not
 relaxed.
 
-DD#121/DD#127/DD#128 still govern adjacency, ownership and every continuing
-path. Being const grants no late or inherited-input attest, no batch
-resolution, and no new clean-read permission on failure. `:!` remains an
-explicit read override, not validation of the binding. Signal deferral and
-EXIT/ERR entry requirements continue to follow the actual legal resolution.
+DD#121/DD#127/DD#128 still govern adjacency, ownership and resolution of
+fall-through paths. Being an ordinary const grants no late or
+inherited-input attest, no batch resolution, and no new clean-read
+permission on failure. `:!` remains an explicit data-read override,
+not validation of the binding or a regex
+proof (DD132). The provisional scratch exception above is separate.
+Signal deferral and EXIT/ERR entry requirements continue to follow the
+actual legal resolution.
 
 **Enforcement is pending** in `q-attest-retag-of-const`. The current
 compiler still rejects the retag with SB4044. This supersedes F13's

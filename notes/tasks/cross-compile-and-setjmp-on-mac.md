@@ -81,10 +81,14 @@ is historical research, not required by DD129's target split.
    from x86_64 Linux to AArch64 Linux the first native cross target?
    Compiler-host support is separate from the generated program's target.
 2. **Regex error recovery.** Replace `setjmp` with ordinary error returns,
-   provide the required architecture-specific jump implementation, or make
-   the runtime's regex error path terminate? The last choice interacts with
-   `q-dynamic-regcomp-levers` and must not settle it by side effect.
-   The earlier recommendation was ordinary returns; DG has not selected it.
+   or provide the required architecture-specific jump implementation?
+   DD132's provisional `r?` contract requires invalid candidates to return
+   quiet false, so making every runtime regex compiler error terminate is
+   no longer a compatible option for that trial. Resource faults remain
+   fatal. `q-dynamic-regcomp-levers` records the policy answer;
+   `q-glob-semantics` owns implementation/evaluation and the DD inventory.
+   The earlier mechanism recommendation was ordinary returns; DG has
+   not selected that implementation or a replacement for setjmp.
 3. **Migration staging.** Land the three private-rustix replacements first,
    or migrate the remaining raw syscall sites in the same unit? DD129's
    public-API/shim policy applies to all of them either way; staging is not

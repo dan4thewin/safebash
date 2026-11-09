@@ -64,14 +64,17 @@ existing destination taint or its owners; DD128 still governs that state.
 `glob ARRAY PATTERN...` is the proposed canonical operation. Its
 operational status is separate from the array; successful zero-match
 enumeration succeeds. Normal fill targets accumulate, while a leading-
-underscore target requests a fresh scratch binding. The companion
-`rglob ARRAY DIRECTORY REGEX...` matches basenames with ordinary regexes.
+underscore target requests a fresh immutable scratch binding. The companion
+`rglob ARRAY DIRECTORY REGEX...` matches basenames with ordinary regexes;
+runtime patterns require DD132's successful validation proof.
 
 Assignment sugar still replaces and append sugar still appends. A
 replacement needs a fresh result before assignment, not a direct
-accumulating fill into its old destination. DD131 owns the unchanged-on-
-error contract, scratch scope/re-execution rules and the sugar/quoting
-questions to evaluate on a separate branch.
+accumulating fill into its old destination. Immutable scratch cannot be
+an append/mutation target. DD131 preserves an ordinary existing target
+on operation error, but a failed scratch construction leaves the fresh
+empty instance, never the previous batch. It owns scope/re-execution
+and sugar/quoting questions in the separate-branch trial.
 
 `q-glob-semantics` owns that trial, coordinating the directory-prefix,
 multi-star-rejection and file-failure tasks. The historical single-glob

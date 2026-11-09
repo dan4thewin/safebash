@@ -161,15 +161,22 @@ collides with SB5025's own advice, which currently recommends `$(join @a)`.
 ## Part E — a slot *is* the caller's collection (DG 2026-09-11)
 
 `f =foo` binds `A` to the **identical underlying collection**, and `f` may
-**modify** it. This is deliberate: it removes any need for out-parameters or
-multiple return values — a function can fill several collections in place.
+**modify** a mutable actual. This is deliberate: it removes any need for
+out-parameters or multiple return values — a function can fill several
+collections in place.
 
-DD131's provisional scratch-collection trial preserves this identity.
-Scratch is a source introduction request, not a refill-mode attribute
-carried through aliases: an existing A-E target accumulates regardless
-of the caller's original name. A fresh-binding request cannot target
-an already-bound slot. Forwarding, non-aliasing and the one-signature
-rule remain; the trial must evaluate this interaction explicitly.
+DD131's provisional immutable-scratch trial preserves this identity
+and the actual collection's immutability. A read-only helper may accept
+scratch, but writes, fills, append and unset must reject, including
+through transitive forwarding. Mutable A-E targets accumulate under
+the proposed fill policy, independent of the caller's original name.
+A fresh-binding request cannot target an already-bound slot.
+
+DD132 additionally requires real regex proof when a received element
+serves as a pattern; cleanliness or identity alone is not validation.
+No call may launder a trusted read into proof or export a caught
+scratch attest's limited permission. Non-aliasing, element/kind typing
+and the one-signature rule remain; the integrated trial owns enforcement.
 
 ### `=foo` is not a read; `@foo` is
 

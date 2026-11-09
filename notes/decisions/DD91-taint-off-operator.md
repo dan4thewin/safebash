@@ -94,9 +94,10 @@ change, so no existing program silently changes meaning.)
 
 An empty bare `$u` in a list position contributes an **empty argument**, not
 nothing (`echo A $u B` passes three arguments). So removing the elide from `:!`
-leaves it behaving exactly like the bare expansion. The modifier changes trust
-and nothing else — which is why it is now valid in every position a bare
-expansion is valid, including a scalar assignment.
+leaves it behaving exactly like the bare expansion. The modifier changes
+trust and nothing else, so it is valid in ordinary data-read positions
+where a bare expansion is valid, including a scalar assignment.
+DD132's provisional regex-pattern restriction below is separate.
 
 That reverses this DD's original *"`:!` is not a way to assign a trusted value
 to a scalar; use `bless` for that."* The justification given there was *"This
@@ -104,6 +105,21 @@ mirrors `:~`"* — i.e. the restriction was inherited from the elide mechanics,
 not chosen on trust-policy grounds. With the elide gone the rationale goes with
 it. `bless` remains the predicate-bearing form; `:!` remains the
 predicate-less one.
+
+### Provisional regex and scratch boundary (DG, 2026-11-09)
+
+DD132 requires successful `r?` proof for runtime regex operands and
+forbids `:!`-bearing reads in those operands, even in a successful attest
+arm or with taint checking disabled. Trust is not regex validation.
+Subjects and replacement text keep their ordinary trust rules; the ban
+is on the pattern role, not the whole invocation.
+
+A caught attest on DD131's immutable scratch grants ordinary reads only
+in its success arm. Failure/post-construct code may retain the unchanged
+candidate and use `:!` for data reads, not pattern use. A trusted copy is
+ordinary data and needs its own successful check before becoming a regex.
+This is a provisional, unimplemented extension, not general const
+reassignment or a revocation of the ordinary data-read escape hatch.
 
 ### `@a:!` becomes an error, and should
 

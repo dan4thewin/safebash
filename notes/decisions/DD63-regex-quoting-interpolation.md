@@ -30,10 +30,19 @@ and delete `right_is_quoted` + the duplicate `lower_subscript`.
 
 The out-array fill contracts below describe the shipped replacement/
 clear behavior. DD131 provisionally includes `match`/`matchall` in an
-accumulation/fresh-scratch branch trial, preserving their own no-match
+accumulation/immutable-scratch branch trial, preserving their own no-match
 verdicts and capture layout within each produced batch. It also proposes
 the separate basename selector `rglob`; neither that command nor the new
 destination model is implemented by this recording.
+
+DD132 extends that **provisional** trial: runtime patterns require
+successful `r?` proof for the same immutable value, and `sub`/`gsub`
+return a match/no-match boolean alongside their text. No match yields
+the original subject and false; an identity replacement can yield true.
+Existing text-producing regex forms may use a capture-condition to
+consume the boolean; text-only explicit calls discard it with
+`$(- sub ...)` / `$(- gsub ...)`. This does not invent a scalar
+`matchall` form or unrestricted bare value-intrinsic statements.
 
 Join the existing builtin family (`keys`/`join`/`len`). Reserved names:
 `match`, `sub`, `gsub`, `toupper`, `tolower`.
@@ -54,6 +63,10 @@ Join the existing builtin family (`keys`/`join`/`len`). Reserved names:
 - **`toupper STRING`** / **`tolower STRING`** — case fold (awk names;
   DD#65). Compensates for the engine's missing `i` flag — case-insensitive
   match is `match $(tolower $x) $(tolower $pat)`.
+
+The case-folded-pattern example describes the existing value interface.
+In the DD132 trial, construct and validate the **folded result** first;
+proof for the original pattern or for a substring does not certify it.
 
 `g` is therefore the `sub`/`gsub` choice, not a flag argument. There are
 **no other flags** — `regcomp9` takes only a pattern and the vendored
@@ -104,9 +117,13 @@ engine. In the **function form** this is just argument evaluation. In the
 - Metachar collisions in an interpolated value are the user's concern
   (use `'…'` in the function form, or `fgrep`/`grep -F` for literal
   containment — see "Compromises").
-- Dynamic patterns (containing interpolation) compile at runtime; a
-  literal pattern can still be pre-validated at compile time via
-  `regcomp9` (as DD#39 intended).
+- Dynamic patterns (containing interpolation) compile at runtime in the
+  shipped model. DD132's trial requires a previously validated immutable
+  finished pattern instead: interpolation that assembles new bytes needs
+  its own construction and `r?` check. A literal pattern retains
+  compile-time validation via `regcomp9` (DD#39). Neither `:!` nor disabled
+  taint checking supplies regex proof, and pattern operands forbid trusted
+  reads even when subject/replacement trust is legal.
 
 ## `\xnn` byte escape
 
@@ -130,6 +147,15 @@ function form.
   **`var =~ s/RE/SUB/g`** → `var = $(gsub $var "RE" "SUB")`.
 - **`${var:s/RE/SUB/}`** → `$(sub $var "RE" "SUB")`;
   **`${var:s/RE/SUB/g}`** → `$(gsub $var "RE" "SUB")`.
+
+These are the shipped text-only desugarings. Under the DD132 trial,
+substitution value sugar explicitly projects text and discards the new
+boolean (equivalent to consuming the value from `$(- sub ...)` or
+`$(- gsub ...)`). Mutation sugar still performs a resultless write,
+so it cannot target immutable scratch. Chained edits retain their order,
+projecting each text result without inventing a chain-wide verdict.
+Every pattern, including an interpolated sugar operand, owes the same
+proof as an explicit call.
 
 The `s///` sugar is `/`-delimited **only** and **always interpolating**
 (the fields desugar to double-quoted, i.e. interpolating, args). To make
@@ -270,7 +296,12 @@ separates, so `key=val=ue` keeps its value intact.
   filed bug (`bug-match-outarray-no-autodeclare`), not a rule.
 
 Boolean like `match`: exit 0 when at least one match. The array is cleared on
-entry, so the no-match path leaves it empty.
+entry in the shipped model, so the no-match path leaves it empty.
+DD131's trial instead appends this batch to an ordinary target, or
+constructs a fresh immutable scratch batch. No match appends nothing
+or leaves the new scratch empty, and is false regardless of prior
+destination contents. An operation error preserves an ordinary target
+but cannot resurrect a preceding scratch instance.
 
 ### Arity is now enforced
 

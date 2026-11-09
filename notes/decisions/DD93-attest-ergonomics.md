@@ -69,11 +69,12 @@ unchanged.
 
 ### Part C — content-shape tests `i?` / `p?` / `g?`
 
-Three sash-native unary tests that validate the **shape of a value's bytes**,
-spelled with a `?` suffix to distinguish them from bash's `-X` file/emptiness
-tests (whose one-letter space is saturated). They are **general test
-operators**, usable anywhere a unary test is (`if`, `while`, bare `[[ ]]`) —
-exactly as `-i` is today — not only inside `attest`.
+Three implemented sash-native unary tests validate the **shape of a value's
+bytes**, spelled with a `?` suffix to distinguish them from bash's `-X`
+file/emptiness tests (whose one-letter space is saturated). They are
+**general test operators**, usable anywhere a unary test is legal, not
+only inside `attest`. Ordinary result-consumption and useful-statement
+rules still apply.
 
 | op   | true iff the value is …                                    |
 |------|------------------------------------------------------------|
@@ -95,6 +96,28 @@ exactly as `-i` is today — not only inside `attest`.
   operator token + runtime dispatch are built so adding one is a one-liner. Not
   implemented now.
 
+#### Provisional addition: `r?` (DG, 2026-11-09)
+
+DD132 adds `r?`: true iff the whole candidate is an accepted sash regex.
+It follows the same ordinary-test, unary-shorthand and attest-all forms,
+but not `p?`/`g?`'s ASCII character-class/nonempty definition. Invalid
+regex data is quiet false, including a literal being tested as data;
+resource exhaustion remains fatal. Literal regex *use* still gets
+compile-time validation.
+
+An ordinary predicate tests validity without clearing taint. An attest
+also grants its normal validation permission. Runtime regex use requires
+successful proof for the same immutable value, not just cleanliness or
+an earlier test. Composition needs a new check; attest-all certifies
+present elements, not missing-index defaults.
+
+DD131's immutable scratch may be attested without a write. In caught
+forms its normal reads and `r?` proof are confined to the success arm;
+failure/post-merge reads require explicit trust as data, and pattern
+operands forbid `:!` altogether. Ordinary consts retain their separate
+caught-resolution rules. This is provisional, unimplemented work in
+`q-glob-semantics`, not a relaxation of predicate shape or locality.
+
 ### Part D — arith-assign attest: `attest numstr (( myint = numstr ))`
 
 A new attest predicate form where an **int-assignment is the predicate**. The
@@ -113,6 +136,13 @@ Const-attest enforcement is pending in `q-attest-retag-of-const`.
 The target is different: conversion really writes it, so an existing
 const target remains SB4044. The distinction does not permit same-name
 retyping or replacement of a const source on failure.
+
+DD131's provisional scratch conversion target is a **new instance** at
+each execution of its construction site, not a write to an existing
+const. For example, `attest s (( _n = s ))` constructs an immutable integer;
+a failed attempt cannot expose the preceding iteration's `_n`, and its
+meaningful-zero target remains `0`. The source's failed-attest obligations
+are separate. Existing scalar/type/distinct-name rules still apply.
 
 ### Addendum — wider RHS, and predicate reads (DG, 2026-09-07)
 

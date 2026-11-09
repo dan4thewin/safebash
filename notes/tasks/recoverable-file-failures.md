@@ -53,12 +53,18 @@ Raise any genuine language-surface fork with DG.
 
 DD131 (2026-11-09) provisionally supplies a concrete directory-selector
 surface: `glob`/`rglob` have operational statuses, succeed on zero
-matches, and publish no destination change on an operation error.
+matches, and preserve an ordinary existing destination on operation
+error. A scratch construction leaves a fresh empty instance, not the
+preceding batch or a partially produced one.
 `q-glob-semantics` owns their separate-branch trial and the related
-accumulation/scratch model. Coordinate its open/read/getcwd and partial-
-progress paths with this task; no assignment/loop status is invented.
+accumulation/immutable-scratch model. DD132 adds validated runtime regex
+operands, not an exemption from directory failures. Coordinate
+open/read/getcwd and partial-progress paths with this task; no
+assignment/loop status is invented.
 The trial's all-or-nothing collection update does not roll back consumed
 input or prior argument/file effects, and fatal causes remain fatal.
+External capture failures still preserve this attempt's partial stdout
+under DD88; do not extend array atomicity to every scalar producer.
 This is queued work, not a claim that the current glob silently-empty
 failure paths have been repaired.
 

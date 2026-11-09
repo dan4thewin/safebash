@@ -40,6 +40,14 @@ legal status discard and ordinary capture-condition handling, while
 discarded status. Preserve legal external stdout captures too.
 Taint and status-availability rules remain in force.
 
+DD132 provisionally gives `sub`/`gsub` a real boolean beside their text,
+so the integrated `q-glob-semantics` branch trial must classify them
+accordingly: a text capture may discard that boolean or consume it in
+a regex capture-condition. That is not an exception for status-less
+intrinsics, and is not implemented by this recording. Keep this rule
+result-driven rather than freezing today's producer names into a private
+list. The trial's substitution sugar explicitly projects text.
+
 Ordinary `- int_fn` and `- wait` discard the actual integer or pid rather
 than simultaneously capturing it. Preserve them and the separate
 `waitstatus` latch. A getter's integer value is not itself a new status

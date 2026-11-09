@@ -1,6 +1,13 @@
 title: Provisional directory selectors and scratch collections
 date: 2026-11-09
 
+**Later the same day:** journal 604 records DG's correction and the
+combined provisional immutable-scratch/validated-regex model. The
+scratch-retention/no-new-lifetime interpretation below was the AI's
+extrapolation, not a separately selected DG rule. DD131 is reconciled
+in place; DD132 and `q-glob-semantics`' DD revision inventory cover the
+extended trial. This entry preserves the original recording as history.
+
 ## From a glob policy question to a branch experiment
 
 DG selected a deliberately coarse file glob: dotfiles need a literal
@@ -59,7 +66,7 @@ where necessary. The exact raw/quoted/computed-string boundary needs an
 explicit branch evaluation, not automatic globbing of arbitrary strings
 whose contents happen to contain a star.
 
-## Fresh introduction versus accumulation
+## Original working interpretation: introduction versus accumulation
 
 The working destination model includes existing array fillers:
 `read`, `argv`, `keys`, `match` and `matchall`. Ordinary targets append

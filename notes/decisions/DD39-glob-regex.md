@@ -67,18 +67,26 @@ via `regcomp9` — unsupported syntax is a compile error, not a silent
 no-match. Validated literal patterns are precompiled once at runtime
 init and reused at every match site.
 
-Dynamic patterns (containing `$var`) are compiled at runtime; `regcomp9`
-failure prints an error to stderr.
+In the shipped implementation, dynamic patterns (containing `$var`) are
+compiled at runtime; `regcomp9` failure prints an error to stderr.
+DD132 provisionally replaces that consumer-side invalid-data path:
+runtime regex operands must be immutable and successfully checked with
+`r?` before use. Invalid candidates give quiet false at the predicate;
+actual literal regex use retains static validation, and allocation
+faults remain fatal. The integrated trial is not yet implemented.
 
-## Clarification (2026-05-24): Runtime regex abort
+## Clarification (2026-05-24): Runtime regex abort (shipped baseline)
 
 When a dynamic pattern (containing $variables) fails regcomp9 at
-runtime, the program aborts with exit code 2. This is consistent
-with DD#55's error model: runtime calls that can fail on data are
-checked, and failure = abort.
+runtime, the program aborts with exit code 2. That supplies DD55's
+unchecked-failure behavior, but does not establish that its handling
+levers work; the F15 section below records that discrepancy. DD132's
+provisional validation-before-use model supersedes this as the proposed
+dynamic-pattern interface, not as a claim about the current binary.
 
 Literal patterns are validated at compile time (SB5023) and cannot
-fail at runtime.
+fail at runtime for invalid syntax. This does not make allocation
+infallible.
 
 ## Clarification (2026-07-08): `{n,m}` supported; literal `{`/`[` need `\{`/`\[`
 
@@ -228,14 +236,18 @@ A dynamic pattern still compiles at runtime. `sub`/`gsub` used to print
 now exit 2, as `match`, `matchall` and `[[ =~ ]]` already did. That covers the
 `${x:s/…}` sugar and the statement form, which run on `sub`/`gsub`.
 
-**Open, not settled here.** DD#55 says `-` suppresses a dynamic regcomp
+**Historical discrepancy, now provisionally addressed by DD132.**
+DD#55 says `-` suppresses a dynamic regcomp
 failure, and DD#70 (A) adds that `if`/`||` catch it. This DD's 2026-05-24
 clarification says only that it aborts. DD#71 says it "aborts via the DD#55
 (A) channel" and names no lever, though that channel is the one DD#70 gives
 levers. No regex builtin honours either lever. `match`, `matchall` and
 `[[ =~ ]]` exit 2 regardless, before this change and after it; `sub` and
 `gsub` carried on regardless before it, and now exit 2 regardless. Filed as
-`notes/tasks/q-dynamic-regcomp-levers.md`; this addendum takes no position.
+`notes/tasks/q-dynamic-regcomp-levers.md`. The 2026-11-09 choice is instead
+validation before use, not blanket runtime abort or a failed-substitution
+fallback. `q-glob-semantics` owns that integrated branch trial and the
+DD revision inventory. These F15 observations have not been remeasured.
 
 Specs: 39.36–39.56 (regex.sh). Earlier pins: 39.5 (wordsplit.sh, the
 statement form) and e.a70.regcomp (errors.sh, the exit under `if match`).

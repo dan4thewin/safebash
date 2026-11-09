@@ -90,10 +90,13 @@ this discard meaning. Nothing in `spec/` or `contrib/` used `_` as a
 variable in the original census, so that migration cost was zero.
 
 DD131's 2026-11-09 **provisional** branch trial proposes `_batch`-style
-scratch collection fill targets. They remain readable and subject to
-normal taint and unused-variable rules; none inherits bare `_`'s
-exemptions. Bare `_` stays repeatable, write-only discard, not a fresh
-readable scratch binding. The proposed prefix rule is not shipped.
+fresh immutable scratch bindings, including scalar constructions and
+loop binders as well as collections. They remain readable and subject
+to normal unused-variable and taint rules, with DD132's explicit
+caught-attest/proof restrictions; none inherits bare `_`'s exemptions.
+Bare `_` stays repeatable, write-only discard, not a fresh readable
+scratch binding. The proposed prefix rule is not shipped, and final
+scalar declaration spelling remains to be settled.
 
 ## The arithmetic hole this exposed
 

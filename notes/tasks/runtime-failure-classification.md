@@ -27,13 +27,16 @@ Retain an explicit disposition for each affected family; do not silently
 leave an ordinary file failure fatal because its current API cannot
 return an error.
 
-DD131's provisional `glob`/`rglob` and scratch-collection branch trial
+DD131/DD132's provisional selectors/immutable-scratch/regex branch trial
 (`q-glob-semantics`) needs the affected operation/cause/publication
 classification. In particular, EOF/no matches are not read/open errors,
 and partially produced entries must not escape on failure. Account for
 allocation faults and actual globals visible to ERR without weakening
-their fatal class. The trial is a consumer of this shared policy, not a
-reason to create another per-backend classifier.
+their fatal class. Ordinary targets retain their old data on operation
+error; scratch attempts remain fresh and empty. Invalid regex candidates
+give quiet false at `r?`, not a fatal fault or a directory/no-match error.
+Regex validity does not erase possible I/O failures. The trial is a consumer
+of this shared policy, not a reason to create another per-backend classifier.
 
 The mapping may depend on the operation, errno and known post-failure
 state. In particular, do not classify every open failure as path-local,

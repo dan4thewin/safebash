@@ -43,9 +43,18 @@ unrelated write through.
 Existing adjacency, per-binding locality, ownership and failed-path
 resolution remain. A late attest or an in-body attest of received taint
 does not become legal because its subject is const. A failed gate does
-not authorize a clean read or continuing with an unresolved subject.
+not authorize a clean read or unresolved fall-through at the caught
+construct's merge; DD121 already exempts non-fall-through transfers.
 Explicit `:!` reads, handler entry requirements and signal deferral
 retain their contracts.
+
+The later DD131/DD132 **provisional** model is distinct: immutable
+scratch has fresh per-construction instances and a restricted
+caught-attest exception. `q-glob-semantics` owns that integrated branch
+trial and its DD revision inventory, with this accepted const-validation
+work as a prerequisite. Do not silently extend scratch lifetimes or
+failed-attest permission to ordinary consts, or treat successful taint
+validation alone as regex proof.
 
 The policy question is closed; **implementation remains open** here,
 with the existing slug and P3 priority. DD24/DD35/DD93/DD128, GUIDE and

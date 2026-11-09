@@ -23,6 +23,12 @@ contract; its classification/fork/file-error implementation tasks remain
 open. This does not claim that the shipped handler checks already enforce
 the new classification in every form.
 
+DD131/DD132's 2026-11-09 **provisional** trial adds fresh immutable scratch
+instances and restricted unresolved fall-through after their caught
+attests. Section 3 states that narrow exception; ordinary bindings and
+the handler contracts remain. Implementation is queued in
+`q-glob-semantics`, whose DD revision inventory tracks the experiment.
+
 DG supplied the design principles and decisions. The AI assembled the
 writeup and implemented the handler/termination work described above.
 
@@ -213,8 +219,10 @@ Within a live binding, only these operations may discharge outstanding taint:
 The second permission belongs to **that subject**, not to every binding
 assigned in an `else` block. Replacement must also be a legal write:
 DD86 permits validation of a const, not replacement of its value on
-failure. That allowance does not relax adjacency, ownership or the
-requirement to resolve every continuing path. Replacement must cover the
+failure. That allowance does not relax adjacency, ownership or ordinary
+caught-attest resolution on fall-through paths. DD132's separate
+immutable-scratch exception below permits restricted unresolved use,
+not replacement or global declassification. Replacement must cover the
 whole value. A whole-collection unset can supply an empty replacement there. Scalars
 require a clean assignment; this does not legalize scalar unset (DD30).
 A cell write, cell unset or append does not resolve a tainted collection
@@ -267,6 +275,14 @@ newly owned locals to meaningful zeros and starts fresh private taint state
 binding. Globals, collection slots and captured enclosing locals retain their
 existing values and unresolved state.
 
+DD131 provisionally adds another genuine lifetime boundary: execution of
+an immutable scratch construction site starts a new instance. It cannot
+inherit the preceding value, unresolved state or regex proof. No reset
+occurs if the site is skipped, and this gives no ordinary overwrite a
+taint-clearing privilege. This is not a new block scope or automatic
+destruction at loop exit; the trial must cover actual global state and
+handler-visible publication as well as local loops.
+
 A genuine new acquisition has its own adjacency opportunity, even if its
 target was already tainted. The acquisition itself does not clear anything;
 its legal attest can resolve the newly acquired value. A literal overwrite
@@ -298,12 +314,40 @@ failed-attest replacement and `:!` contracts are unchanged.
 In particular, `v=${v:!}` is still an unrelated assignment when written
 outside the permitted failed-attest resolution, and leaves v tainted.
 Reading through `:!` into a different clean binding remains the existing
-explicit trust override; this DD does not revoke the escape hatch.
+explicit data-trust override. DD132 provisionally forbids trusted reads
+in regex-pattern operands: neither `:!` nor disabled taint checking
+supplies successful regex-validation proof. A trusted copy needs its own
+check before pattern use.
 
-Both R2 and R3 continue to apply. A caught attest must resolve its subject
-on every continuing path, even if no later read happens to need it. A
-deliberately unattested value is read only through the existing permitted
+For ordinary bindings, both R2 and R3 continue to apply. A caught attest
+must resolve its subject on every path that falls through to its merge,
+even if no later read happens to need it. DD121 already exempts paths
+that do not fall through, including `return`, `break` and `continue`;
+their actual outgoing state still participates in the corresponding
+body/loop/handler checks. A deliberately unattested value is read only
+through the existing permitted
 forms, principally `:!` and its eligible attest predicate.
+
+### Provisional exception: a caught attest on immutable scratch
+
+DG's 2026-11-09 rule (DD132) lets the failed instance remain intact,
+immutable and unresolved, including on a fall-through path or in a
+no-else caught form. Normal reads are allowed only in the attest-success
+arm. Elsewhere only explicit trusted reads as ordinary data are allowed;
+regex-pattern operands cannot use `:!` and additionally require successful
+`r?` validation. Negation swaps which arm is successful.
+
+Permission does not escape past the caught construct, even if its failed
+arm exits or continues. Standalone attest still permits subsequent uses
+because failure does not continue. This changes neither ordinary consts'
+R2 obligations nor adjacency and received-taint ownership.
+
+There is no failed-instance abandonment, default replacement or clean
+retag at the merge. Signal planning and EXIT/ERR checks must respect
+the unresolved state and limited proof region; do not extend signal
+deferral over the instance's entire lifetime. Failure of construction
+is different from failure of attest: the former cannot revive an earlier
+scratch instance, while the latter preserves the candidate just tested.
 
 ## 4. EXIT's entry contract
 

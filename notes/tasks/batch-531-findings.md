@@ -157,11 +157,13 @@ not obviously a bug stays unchanged in the port:
   DD39/DD131), not a general matcher; enforcement remains open.
 - `bug-glob-directory-portion` (P2): `sub/*`, `./*` and `/etc/*` match
   nothing, where DD73 specifies them.
-- `q-glob-semantics` (P2, implementation/evaluation work): DD131
-  provisionally adopts `glob`, `rglob` and fresh scratch collection
-  bindings. Implement on a separate branch, evaluate utility,
-  migration/failure/scope consequences and return to DG before adoption.
-  The coarse matching/composition choices are recorded, not shipped.
+- `q-glob-semantics` (P2, integrated implementation/evaluation work):
+  DD131/DD132 provisionally combine `glob`/`rglob`, fresh immutable
+  scalar/collection scratch, required regex proof, restricted caught
+  attests and regex boolean/text results. Implement on a separate branch,
+  measure utility and consequences, and return to DG before adoption.
+  The task inventories every revised/new DD for coherent withdrawal or
+  revision. These contracts are recorded, not shipped.
 - `q-attest-retag-of-const` (P3, implementation work): DG separates
   immutability from validation (2026-11-09, DD86). Allow value-preserving
   const attests, including conversion sources; real writes, conversion
@@ -290,10 +292,11 @@ not fix, and what does not block the rest of the port, goes to the backlog:
 - `bug-sed-expansion-extent` (P2; B62-B65, B67, B68): five scanners decide
   where a `${…:s/…}` payload ends; only the statement form's follows DD63
   and DD96. It also covers `$'…'` in a payload (DD63 vs DD65).
-- `q-dynamic-regcomp-levers` (P3): DD55 and DD70 (A) say `-` suppresses,
-  and `if`/`||` catch, a dynamic regcomp failure; no regex builtin honours
-  either lever. DD39's 2026-05-24 clarification says only that it aborts,
-  and DD71 names no lever.
+- `q-dynamic-regcomp-levers` (P3, done as a provisionally answered
+  question): DD132 selects validation before use rather than blanket
+  consumer abort or failed-substitution fallbacks. Historical F15
+  evidence is retained; implementation/evaluation is still open in
+  the integrated `q-glob-semantics` trial.
 - `bug-subscript-key-check-skips-positions` (P1): DD80's key-type check
   runs on a private walker. A word index ICEs natively and reads index 0 in
   C in twelve positions, and fourteen more programs compile.

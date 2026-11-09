@@ -83,6 +83,12 @@ content/arity-sensitive array shorthand or `sash_glob_regex`.
 The loop remains the explicit way to refine existing arrays or choose
 a different subject. No new selector is implemented by this recording.
 
+The coordinated DD132 trial requires successful `r?` proof for runtime
+immutable patterns. `rglob` still reports operational success even on
+zero matches; directory failure is not a regex no-match boolean.
+Its destination obeys DD131's ordinary accumulation or fresh immutable
+scratch publication, not the retired filtering shorthand.
+
 ## Not affected
 
 - `arr=(*.sh)` — the single-glob shorthand. Unambiguous, retained.

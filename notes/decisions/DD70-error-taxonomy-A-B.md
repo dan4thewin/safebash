@@ -32,9 +32,11 @@ printing a diagnostic (below). Members:
   external command/pipeline. Nonzero is a failure (pipefail always on,
   DD#20). Explicit `wait` follows DD126's pid/result-latch contract;
   it does not implicitly abort on a nonzero child status.
-- **Dynamic `regcomp`** (a pattern not known at compile time can fail to
-  compile at run time). Literal regex is validated at compile time and
-  cannot reach (A).
+- **Dynamic `regcomp` in the shipped consumer interface** (a pattern not
+  known at compile time can fail to compile at run time). DD132's
+  provisional trial moves this invalid-data verdict to `r?` before use,
+  rather than treating invalid syntax as a later consumer failure.
+  Literal regex use retains compile-time validation.
 
 Levers:
 - **`-` suppresses** the operation's recoverable result (DD#55/DD130);
@@ -54,6 +56,8 @@ Members:
 - **`match SUBJECT PATTERN`** as a boolean command (DD#63).
 - **`[[ … ]]` tests** / comparisons (DD#62).
 - **`-> int` function return values** (DD#55).
+- **Provisionally, `r?` and `sub`/`gsub`'s match boolean** (DD132), the
+  latter separate from their text. Implementation remains queued.
 
 **A boolean (or any (B) result) must be consumed or explicitly discarded**
 (DG, 2026-09-09, refining the original 2026-06-25 rule). Producing a
@@ -90,6 +94,27 @@ Levers:
 - **Known pointless statements are an error**, including result-only
   unused computation and an explicitly empty word-list `for`.
   Intentional `:` remains the deliberate no-op.
+
+### Provisional regex value-plus-boolean contract (DG, 2026-11-09)
+
+DD132 requires proof for runtime immutable regex patterns. An invalid
+candidate returns quiet false from `r?`; it is not a consumer-side
+recoverable regcomp error, nor a fatal reclassification of invalid data.
+Allocation faults remain fatal. Cleanliness, constness, `:!` and
+taint-disable switches do not substitute for that proof.
+
+`sub`/`gsub` provide text plus a boolean meaning **a match occurred**.
+No match is false with original-subject text. Capturing that text must
+consume the real boolean via a regex capture-condition or discard it
+explicitly with `$(- sub ...)` / `$(- gsub ...)`. Other status-less
+intrinsic captures retain their prefix refusal. DD63/DD65's substitution
+sugar explicitly projects text and discards the boolean at each step;
+mutation remains resultless, with no new chain-wide result.
+
+`rglob` is not a match predicate: successful enumeration, even of zero
+matches, has an operational success status. All ordinary result-kind,
+no-reach, useful-statement and fatal-fault rules remain. The integrated
+trial and exact DD revision inventory live in `q-glob-semantics`.
 
 ## Original distinguishing principle (superseded)
 
@@ -333,7 +358,8 @@ exits with the failure status:
 - **external/pipeline/cmdsub** → `<argv0>: <name>: command failed (exit N)`
 - **background exec** → `<argv0>: <name>: <reason>`
 - **arithmetic overflow** (DD#25) → `<argv0>: arithmetic overflow`
-- **regcomp** → `<argv0>: regexp error: <msg>`
+- **regcomp, shipped consumer abort** → `<argv0>: regexp error: <msg>`;
+  not DD132's proposed quiet-false `r?` verdict
 
 DD55's accepted 2026-11-08 direct-exec rule removes the implicit checked
 wrapper from a single-external-command background job. After successful

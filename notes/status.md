@@ -1,4 +1,42 @@
-## STATUS (2026-11-09, latest) - Provisional selectors and scratch collections
+## STATUS (2026-11-09, latest) - Immutable scratch and validated regex trial
+
+DG provisionally adopted the combined DD131/DD132 model. Scratch scalar
+and collection constructions make **fresh immutable instances** each
+time the same site executes. Ordinary array fillers accumulate and
+preserve their destination on error; a failed scratch fill leaves the
+new empty instance, never the preceding batch. The earlier scratch-
+retention text was the AI's extrapolation and is corrected in place.
+
+Runtime regex operands require successful `r?` proof for their immutable
+final values. Invalid candidates give quiet false; literal regex use
+retains static validation and resource faults remain fatal. Trusted
+pattern reads are forbidden; neither `:!` nor disabled taint checking
+supplies proof. `sub`/`gsub` gain a boolean alongside text in the proposed
+model, with explicit handling/discard and text-projecting sugar.
+
+For caught scratch attests, ordinary reads and proved regex use remain
+inside the attest-success arm. Elsewhere only explicit trusted data
+reads are allowed; the failed candidate stays intact and unresolved.
+Even an exiting/continuing failed arm does not export permission.
+Standalone attest and ordinary bindings retain their separate rules.
+DD121 already exempts non-fall-through transfers; allowing `continue`
+was not the obstacle the earlier AI discussion suggested.
+
+The existing P2 `q-glob-semantics` owns the **integrated separate-branch
+implementation/evaluation** and an exact inventory of every modified/new
+DD, with baseline `2a70e7dd` and reconciliation obligations if a part
+proves untenable. `q-dynamic-regcomp-levers` is closed as a provisionally
+answered question only; its implementation and historical spec migration
+are transferred to that owner. Ordinary const validation remains its
+independently accepted prerequisite.
+
+Journal 604 records the adoption and corrections. Scalar scratch spelling
+and proof/publication mechanisms are not silently selected. No implementation
+branch, compiler/runtime/converter/spec/build change or new behavior
+measurement accompanies this documentation. Journal 577 remains the
+accepted implementation baseline.
+
+## STATUS (2026-11-09) - Initial provisional selectors and scratch package
 
 DG provisionally adopted `glob`, `rglob` and scratch collections.
 Implementation will use a **separate branch** to evaluate their utility
@@ -16,10 +54,11 @@ composition and normalized absolute output are recorded.
 Normal array-fill destinations accumulate. A `_batch`-style scratch
 target requests a fresh source binding, not permission to overwrite an
 existing one; bare `_` remains discard. Existing scope, parameter
-identity, result kinds and taint ownership stay. A repeated scratch
-site replaces its successfully computed batch but retains its prior
-value on an operation error. Failed fills must not publish partial
-updates; input and earlier side effects are not rolled back.
+identity, result kinds and taint ownership stay. The original AI
+recording also retained the preceding scratch batch on operation error.
+That interpretation is corrected by the later entry above and journal
+604: scratch starts a fresh immutable instance. Failed fills must not
+publish partial updates; input and earlier effects are not rolled back.
 
 The existing P2 `q-glob-semantics` owns the integrated branch trial,
 including existing fillers, migration/quoting, loop and slot behavior,

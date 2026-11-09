@@ -32,6 +32,14 @@ rules still apply. Enforcement is queued in
 `reject-statusless-intrinsic-suppression`. This grants no new
 statement-position meaning to an intrinsic.
 
+DD132's 2026-11-09 **provisional** trial gives `sub`/`gsub` a real
+match/no-match boolean alongside their text. Captures may then discard
+that boolean with `$(- sub ...)` / `$(- gsub ...)`, or consume it through
+DD88's regex capture-condition extension. This does not exempt other
+status-less intrinsics, widen the sole-statement rule, or invent an
+unrestricted bare statement form. Substitution sugar explicitly projects
+text and discards the boolean; the trial remains unimplemented.
+
 ## Why
 
 Variables are not magic in sash. `$?` is not a special parameter the way bash

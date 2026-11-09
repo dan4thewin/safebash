@@ -96,8 +96,15 @@ matches produces zero elements; a failed directory open/read or required
 `getcwd` is an operation failure. Preserve the cause, rather than treating
 an errno as empty success or a read error as EOF. DD131 provisionally supplies explicit
 `glob`/`rglob` commands with operational statuses, including success on
-zero matches, and unchanged-on-error collection publication. Its scratch
-and accumulation modes are a branch experiment, not shipped behavior.
+zero matches. On operation error an ordinary existing target is unchanged;
+an immutable scratch construction leaves a fresh empty instance, not
+its previous batch. These modes are a branch experiment, not shipped behavior.
+
+DD132 adds required validation before runtime regex use: `r?` returns
+quiet false for an invalid candidate, while allocation/resource faults
+remain fatal. Regex consumers' logical no-match results are distinct
+from their I/O or redirect failures. Neither failed validation nor
+`rglob`'s zero matches may disguise an actual operation failure.
 
 Coordinate the trial with `recoverable-file-failures` and the classification
 inventory. It neither grants a status to an assignment/loop nor changes
