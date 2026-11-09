@@ -1499,6 +1499,25 @@ Bypass for one commit: `SKIP_COMPLEXITY_GATE=1 git commit ...`
 (prefer fixing the function or amending the surrounding code if at
 all possible; bypass should be rare and never routine).
 
+**Missing-index policy (DG, 2026-11-09; enforcement pending).** A commit
+whose staged changes touch `sash/src/` must be blocked when
+`.indexnudge-rust.db` is unavailable, unless `SKIP_COMPLEXITY_GATE=1` is
+explicitly set. Missing tooling is not an automatic exemption. Without
+staged changes in that scope, this gate needs no index; documentation-only
+commits remain possible, subject to the other checks.
+
+Determine that scope from staged paths, including additions, deletions and
+renames into or out of `sash/src/`, not from unstaged work or merely whether
+the hunk extractor found added lines. The compiler-only rubric, current
+means, dispatcher exemptions and explicit override remain unchanged.
+`SKIP_COMPLEXITY=1` skips the report, not this requirement.
+
+The hook currently still warns and passes when the index is missing.
+`notes/tasks/require-complexity-index-for-compiler-commits.md` owns the
+enforcement change. This ruling does not settle worktree-versus-staged
+measurement; Q2 in `notes/tasks/q-complexity-gate-without-index.md` remains
+open. No automatic stashing or snapshot strategy is selected.
+
 **Residuals vs. Mozilla.** Both metrics are close to
 `rust-code-analysis-cli` but not identical. The large majority of functions
 agree exactly. Of those that do not, the divergence is a few points and has a

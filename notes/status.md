@@ -1,4 +1,28 @@
-## STATUS (2026-11-09, latest) - Single-write builtin output
+## STATUS (2026-11-09, latest) - Missing-index complexity gate policy
+
+DG chose to block commits whose staged changes touch `sash/src/` when
+`.indexnudge-rust.db` is unavailable, unless `SKIP_COMPLEXITY_GATE=1` is
+explicitly set. Commits outside that scope, including documentation-only
+commits, need no complexity index. Other hook checks remain.
+
+The requirement follows staged paths, including additions, deletions and
+renames across the scope boundary, not just added-line hunk ranges.
+The existing compiler-only rubric, current means and dispatcher exemptions
+stay. `SKIP_COMPLEXITY=1` still controls only the report.
+
+AGENTS.md records the accepted policy; new P3 work item
+`require-complexity-index-for-compiler-commits` owns enforcement and
+before/reversion controls. Q1 in `q-complexity-gate-without-index` is
+answered as policy; Q2, worktree-versus-staged measurement, remains open
+without blocking this repair. No automatic stashing or snapshot strategy
+was selected.
+
+Journal 606 records the decision and source evidence. The hook still
+warns and passes when the index is missing: this is documentation/backlog
+work, not implementation. No hook/compiler/runtime/spec/build change or
+new behavior measurement accompanies it.
+
+## STATUS (2026-11-09) - Single-write builtin output
 
 DG chose one write request per `echo` invocation, including argument
 bytes, separators and final newline; `write` follows the same rule
