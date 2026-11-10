@@ -5,12 +5,12 @@ kind: work
 depends: []
 gates:
   - "Without .indexnudge-rust.db, a commit touching sash/src/ is blocked with an explicit missing-measurement diagnostic unless SKIP_COMPLEXITY_GATE=1 is set"
-  - "Commits with no staged path in sash/src/ need no complexity index, including documentation-only commits with unrelated unstaged compiler edits"
+  - "Commits with no staged path in sash/src/ need no complexity index; a separate checked-input mismatch may still refuse the commit"
   - "Staged additions, deletions and renames into or out of sash/src/ cannot evade the requirement through empty added-line hunk output"
   - "With a valid index, an actual touched violator fails and a nonviolating change passes under the unchanged current-means rubric"
   - "SKIP_COMPLEXITY=1 skips only the report; a required gate-query or staged-scope inspection failure is not accepted as an empty successful result"
   - "Focused before/reversion controls run under the hook's real set -euo pipefail options without moving the live index or disturbing user work"
-  - "Normal repository gates pass and AGENTS.md, journal and status distinguish implemented enforcement from the still-open staged-snapshot question"
+  - "Normal repository gates pass and AGENTS.md, journal and status distinguish this enforcement from the separately owned checked-input agreement guard"
 
 ## Accepted policy
 
@@ -27,8 +27,10 @@ indexnudge setup or an explicit bypass, not an automatic exemption.
 
 AGENTS.md's complexity section is the contributor-policy authority.
 Journal 606 records the decision. Q1 in `q-complexity-gate-without-index`
-is answered as policy; Q2 remains a separate question. This task owns
-enforcement, which is not yet implemented.
+is answered as policy; DG subsequently settled Q2 by choosing refusal of
+mismatched checked inputs (journal 607). That existing task now owns
+Q2 enforcement. This task owns the missing-index refusal; neither change
+is implemented yet.
 
 ## Scope and preservation
 
@@ -37,6 +39,10 @@ Include additions, deletions and renames with either side in `sash/src/`.
 The existing hunk extractor records only new-side ranges with a positive
 line count; its empty output cannot serve as this broader scope test.
 Unstaged changes alone do not change the staged commit's scope.
+They can still violate the independent checked-input agreement rule:
+a docs-only commit may need no complexity index yet be refused because
+its hooks would read unstaged compiler source. "No index required" is
+not a blanket permission to commit mismatched inputs.
 
 Keep the existing compiler-only, grandfather-on-modify complexity rubric:
 current measured means, the 3x threshold and both dispatcher exemptions.
@@ -80,7 +86,14 @@ scope, additions/deletions and both rename directions. Preserve valid-index
 pass/violation and required-query-error controls. Revert the new guard on
 the final implementation and confirm the missing-index controls go red.
 
-Q2 remains open: the hook currently checks worktree contents while selecting
-touched functions from staged hunks. This task neither implements a staged
-snapshot strategy nor requires Q2 to be settled first. Do not claim that a
-new missing-index refusal fixes partial-staging attribution.
+`q-complexity-gate-without-index` owns Q2's accepted refusal of differences
+between checked worktree inputs and Git's staged snapshot. The guards can
+land independently or together, with no hard dependency inferred from
+their shared hook file. Do not claim that missing-index refusal alone
+fixes partial-staging attribution.
+
+Keep controls independent: a missing-index refusal case must have matching
+checked inputs, or an earlier snapshot refusal could mask the absent guard.
+A docs-only/no-index preservation case must likewise satisfy the input
+agreement rule. No automatic stashing or isolated staged-tree check is
+introduced by either task.

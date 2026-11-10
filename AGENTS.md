@@ -1514,9 +1514,9 @@ means, dispatcher exemptions and explicit override remain unchanged.
 
 The hook currently still warns and passes when the index is missing.
 `notes/tasks/require-complexity-index-for-compiler-commits.md` owns the
-enforcement change. This ruling does not settle worktree-versus-staged
-measurement; Q2 in `notes/tasks/q-complexity-gate-without-index.md` remains
-open. No automatic stashing or snapshot strategy is selected.
+enforcement change. The separate checked-input rule below also applies:
+not needing a complexity index does not waive the other checks' requirement
+to assess the staged source.
 
 **Residuals vs. Mozilla.** Both metrics are close to
 `rust-code-analysis-cli` but not identical. The large majority of functions
@@ -1554,6 +1554,34 @@ with E0308.
 When setting an absolute threshold, allow a few points of slop rather than
 trusting either tool to the unit. The enforced gate uses the indexnudge
 numbers on both sides of its comparison, so the residual does not affect it.
+
+## Hook snapshot consistency
+
+**Accepted policy (DG, 2026-11-09; enforcement pending): refuse when checked
+inputs differ from staging.** Worktree-based hook checks may run only when
+their repository source/configuration inputs match Git's staged snapshot.
+Check whole relevant files, not just staged hunks or files listed in the
+commit. This covers formatting, lint, totality and complexity, including
+configuration or local dependency inputs those checks consume.
+
+Partial staging of a checked file therefore requires staging or setting
+aside the remaining edits first. A docs-only commit can also be refused if
+its hooks would read unstaged compiler edits. Unrelated files may remain
+unstaged; local databases and generated build products need not be staged.
+Repository source/configuration files get no exemption merely because
+they are generated or untracked. An untracked source/configuration file
+actually consumed by a check is not an unrelated artifact.
+
+Refusal must name the mismatched inputs and leave the worktree, staging
+area and stash untouched. Do not automatically stash/restore changes,
+stage them, or substitute checks in an isolated staged checkout. Preserve
+the normal freshness requirements for derived indexes. A complexity-only
+override does not waive consistency for other checks; no new bypass is
+selected.
+
+`notes/tasks/q-complexity-gate-without-index.md` now owns this enforcement
+work. Its two policy questions are answered, but neither this guard nor the
+separately owned missing-index refusal is implemented yet.
 
 ## Completion checklist
 

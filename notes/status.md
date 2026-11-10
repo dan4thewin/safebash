@@ -1,4 +1,30 @@
-## STATUS (2026-11-09, latest) - Missing-index complexity gate policy
+## STATUS (2026-11-09, latest) - Checked hook inputs must match staging
+
+DG chose refusal when checked files differ between Git's staged snapshot
+and the worktree. The rule covers repository source/configuration inputs
+to formatting, lint, totality and complexity, including relevant
+dependencies and inputs outside the staged diff. Whole checked files must
+agree.
+
+No automatic staging, stash/restore or isolated staged-checkout strategy.
+Refusal names the mismatched inputs and preserves user work. Unrelated
+unstaged files and generated databases/build outputs remain allowed;
+untracked source actually consumed by a check is not an unrelated artifact.
+
+A docs-only commit still needs no complexity index under the preceding
+policy, but can be refused if its hooks would read unstaged source.
+The complexity override does not waive the other checks' input agreement.
+
+AGENTS.md records the shared policy. `q-complexity-gate-without-index`
+retains its slug/P3/open status and becomes work owning the snapshot guard.
+Its two questions are answered; `require-complexity-index-for-compiler-commits`
+retains the independent missing-index guard. Neither is implemented yet.
+Their controls must not mistake one guard's refusal for proof of the other.
+
+Journal 607 records the decision. This is documentation/backlog work:
+no hook/compiler/runtime/spec/build change or new behavior measurement.
+
+## STATUS (2026-11-09) - Missing-index complexity gate policy
 
 DG chose to block commits whose staged changes touch `sash/src/` when
 `.indexnudge-rust.db` is unavailable, unless `SKIP_COMPLEXITY_GATE=1` is
