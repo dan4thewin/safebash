@@ -1,25 +1,36 @@
----
 title: "Native Linux cross-compilation and regex error recovery"
 status: open
 priority: P2
----
 
 # Native Linux cross-compilation and regex error recovery
 
-## Scope settled by DD129 (2026-11-05)
+## Scope settled by DD129
 
-DG assigned macOS to the separately developed C++ transpiler, which can
-also cover exotic targets. A native macOS runtime/Mach-O port is no longer
-the goal of this task. The filename is retained for existing links.
+On 2026-11-05 DG assigned macOS to the separately developed C++ transpiler,
+which can also cover exotic targets. A native macOS runtime/Mach-O port is
+no longer the goal of this task. The filename is retained for existing links.
 
-DG selected public rustix plus a shared Linux Rust syscall shim. That
-settles the layer, not the complete native Linux architecture matrix,
-cross-compilation seam, migration staging or regex error-recovery strategy.
+On 2026-11-10 DG confirmed **x86-64 and AArch64** as the native Linux
+output targets, including Raspberry Pi systems running 64-bit Linux.
+32-bit ARM and other architectures are outside that native commitment.
+The separate C++ path is an option, not verified support or a new
+implementation claim about that project.
+
+Public rustix plus the shared Linux Rust syscall shim and the native
+architecture set are now settled. This task owns their end-to-end target
+delivery, not another vote on which native architectures to support.
+Compiler-host support, the cross-compilation seam, migration staging and
+regex error recovery still require planning.
 `bug-fresh-clone-rustix-runtime-private` owns the immediate build defect.
 
 The inventory below was recorded on 2026-10-26, following DG's original
 2026-09-16 macOS build report. Its line numbers and counts are historical;
-re-measure the selected sites before implementing.
+re-measure the selected sites before implementing. Narrow source inspection
+at `d9332af1` confirmed the remaining architecture seams: AArch64 `_start`
+at `sash-rt/src/lib.rs:1650-1669`, ungated x86 registers in
+`sash_fcntl_dupfd_cloexec` at 213-229, unconditional `setjmp.S` compilation
+at `sash-rt/build.rs:24`, and host-ISA selection at
+`sash/src/codegen/entry.rs:112`. No cross-target build or execution was run.
 
 ## 1. `sash-rt/csrc/setjmp.S` is unguarded x86_64 ELF assembly
 
@@ -69,17 +80,20 @@ produce a working cross compile:
 | `codegen/entry.rs` | `embed_sash_source` writes a `.sash_source` **ELF section**. |
 
 That inventory describes host-ISA emission and static ELF linking, not a
-complete cross-compilation interface. Native x86_64-Linux to AArch64-Linux
-compilation remains a possible target; the existence of both `_start`s
-alone does not establish support. The Mach-O-specific work in the table
-is historical research, not required by DD129's target split.
+complete cross-compilation interface. Native ARM cross-compilation remains
+the goal; x86_64-Linux to AArch64-Linux was the proposed first direction,
+not a completed capability or a decision on the full host/target matrix.
+The existence of both `_start`s alone does not establish support.
+The Mach-O-specific work in the table is historical research, not required
+by DD129's target split.
 
-## Questions for DG before any work starts
+## Remaining planning choices
 
-1. **Native Linux targets and host support.** Which architectures require a
-   native backend, and which may use the C++ transpiler? Is cross-compiling
-   from x86_64 Linux to AArch64 Linux the first native cross target?
-   Compiler-host support is separate from the generated program's target.
+1. **Compiler hosts and cross-compilation delivery.** The output targets
+   are x86_64 and AArch64 Linux. Select the supported compiler hosts and
+   cross combinations, target/runtime/linker selection and the delivery
+   sequence. Do not equate supporting an output target with porting the
+   compiler to every host, or remove the native ARM goal.
 2. **Regex error recovery.** Replace `setjmp` with ordinary error returns,
    or provide the required architecture-specific jump implementation?
    DD132's provisional `r?` contract requires invalid candidates to return
@@ -98,11 +112,19 @@ is historical research, not required by DD129's target split.
    This concerns the existing `--emit-c` differential backend, not the
    separately developed C++ transpiler.
 
-No choice above was made when DD129 was recorded, and no implementation
-has started under this task.
+The target-set approval does not select those remaining mechanisms or
+authorize implementation. Journal 612 records the decision and the
+source-only readiness check.
 
 ## Gate
 
 Any change here must keep `mk test` and the spec sweep green on x86_64
-Linux, and `sash-rt` is a **separate cargo workspace** — build it with
+Linux. End-to-end native-target completion also needs the real CLI and
+generated programs exercised for AArch64, with runtime identity and the
+execution environment recorded; merely compiling an object or retaining
+an `_start` arm is not evidence that it works. Preserve native/C behavior
+on the supported targets, and distinguish implemented target coverage
+from remaining delivery work in every handoff.
+
+`sash-rt` is a **separate cargo workspace** — build it with
 `(cd sash-rt && cargo build --release)`, not `cargo build -p sash-rt`.

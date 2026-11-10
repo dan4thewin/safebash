@@ -865,8 +865,16 @@ rustix APIs and centralize unsupported Linux calls in a project-owned Rust
 syscall shim. The current private `rustix::runtime` dependency still needs
 removal; the fresh-clone build defect is not fixed by recording the choice.
 macOS support is assigned to a separate C++ transpiler, which can also
-cover exotic targets. This does not retire the existing `--emit-c` backend
-or claim complete native AArch64 support.
+cover exotic targets. That is a planned route, not a claim about its
+current platform readiness, and it does not retire the existing
+`--emit-c` differential backend.
+
+The accepted native Linux output targets are **x86_64 and AArch64**
+(including 64-bit Raspberry Pi OS). This commits the project to both;
+it does not claim that AArch64 works end to end today. Runtime syscall/
+startup/regex portability and target selection still need delivery and
+target-specific execution evidence. Compiler-host support and the
+cross-compilation interface remain separate planning work.
 
 ### Entry point
 

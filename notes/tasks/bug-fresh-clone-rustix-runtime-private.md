@@ -1,4 +1,3 @@
----
 title: "BUG: a fresh clone cannot build sash-rt: rustix 1.1.5 made `rustix::runtime` private"
 status: open
 priority: P1
@@ -9,7 +8,6 @@ gates:
   - "a copy of sash-rt with no Cargo.lock builds: `git archive HEAD sash-rt`, then `cargo generate-lockfile` and `cargo build --release` exit 0"
   - "`mk test` and the full spec sweep pass on the result, in both backends"
   - "runtime comments and GUIDE describe the actual layer; remove the compiler's unused rustix dependency after confirming it remains unused"
----
 
 DG settled the architecture on 2026-11-05 in DD129. This task remains
 **open for implementation**; recording that choice did not repair the build.
@@ -59,10 +57,17 @@ dependency.
 
 The architecture applies to the runtime's other hand-written syscall sites
 too. Account for each under public rustix or the shared shim; migration
-staging and native target coverage remain planning work in
-`cross-compile-and-setjmp-on-mac.md`, alongside the independent regex setjmp
-and C-link-policy choices. macOS targeting is assigned to the separate C++
-transpiler, not a native `sash-rt` port.
+staging remains planning work. DG confirmed **x86_64 and AArch64 Linux**
+as the native output targets on 2026-11-10 (DD129, journal 612), so the
+shared syscall boundary must account for both ABIs rather than silently
+make x86-specific assumptions.
+
+`cross-compile-and-setjmp-on-mac.md` owns end-to-end delivery of that
+target set, compiler-host/cross-compilation planning, and the independent
+regex setjmp and C-link-policy choices. A fresh x86_64 build alone does
+not prove AArch64 runtime or cross-compilation support. macOS targeting
+remains assigned to the separate C++ transpiler, not a native `sash-rt`
+port; that assignment is not evidence of its current platform readiness.
 
 `q-runtime-syscall-layer.md` preserves the research and resolution. A
 successful local build using the old lockfile is still not this task's

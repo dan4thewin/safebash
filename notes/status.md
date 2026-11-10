@@ -1,4 +1,21 @@
-## STATUS (2026-11-10, latest) - CLI stdout-failure policy
+## STATUS (2026-11-10, latest) - Native Linux target set
+
+DG confirmed **x86_64 and AArch64** as the native Linux output targets,
+including Raspberry Pi systems running 64-bit Linux. DD129 now records
+that commitment rather than a working assumption. The shared runtime
+boundary must account for both ABIs; this is not a claim of working
+end-to-end AArch64 support.
+
+GUIDE and the existing syscall/cross-compilation tasks agree. Compiler-host
+support, cross-compilation delivery and the remaining mechanisms still
+need planning. The C++ route comes from DG's earlier macOS/exotic-target
+direction, not a new inspection or verified platform-support claim.
+
+Journal 612 records the decision and the current source seams. Both
+implementation owners remain open; no product/spec/build source change,
+cross-target build/run, full sweep or fresh coverage accompanies it.
+
+## STATUS (2026-11-10) - CLI stdout-failure policy
 
 DG chose quiet EPIPE with exit 1 for `sash`, `sash-expand` and
 `sash-convert`; other stdout write/flush failures report the cause and

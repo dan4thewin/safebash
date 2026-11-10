@@ -1,4 +1,3 @@
----
 title: "Resolved: public rustix plus a Linux Rust syscall shim (DD129)"
 status: done
 priority: P1
@@ -7,10 +6,9 @@ depends: []
 gates:
   - "DG's syscall-layer choice and target split are recorded in DD129"
   - "bug-fresh-clone-rustix-runtime-private retains the implementation and build/spec gates; it is not marked fixed by this ruling"
-  - "the remaining native-target, migration, setjmp and C-link-policy questions have a home in cross-compile-and-setjmp-on-mac.md"
----
+  - "the chosen native target set and remaining host/cross-compilation, migration, setjmp and C-link-policy work have a home in cross-compile-and-setjmp-on-mac.md"
 
-## Decision, 2026-11-05
+## Decisions, 2026-11-05 and 2026-11-10
 
 DG chose **public rustix plus a project-owned Linux Rust syscall shim**
 (DD129, journal 572). Use the public APIs where they fit the runtime's
@@ -19,14 +17,16 @@ the private runtime module, vendor nolibc, or adopt musl as this remedy.
 
 DG also assigned macOS to the separately developed C++ transpiler, which
 can cover exotic targets too. The native runtime no longer needs a macOS
-port on that account. The exact native Linux target set is not settled by
-this choice.
+port on that account. On 2026-11-10 he confirmed **x86_64 and AArch64
+Linux** as the native output targets (DD129, journal 612). This is a
+support commitment, not a claim that the current compiler/runtime works
+on both, or that the separate C++ path has verified platform support.
 
 This closes the architecture question, **not the implementation**.
 `bug-fresh-clone-rustix-runtime-private` remains open. Its build/spec and
-runtime-documentation gates stay with the repair. Native cross-compilation,
-migration staging, regex error recovery and C-link policy remain in
-`cross-compile-and-setjmp-on-mac`.
+runtime-documentation gates stay with the repair. Target delivery and the
+remaining host/cross-compilation, migration, regex error-recovery and
+C-link-policy work stay in `cross-compile-and-setjmp-on-mac`.
 
 The research below was captured on 2026-10-26 during the batch-531 port,
 when DG asked to park the discussion and continue the port. Measurements
@@ -245,8 +245,9 @@ repair. DD129's policy also applies to the remaining hand-written syscall
 sites; the migration must account for them rather than preserve a third
 unexamined route.
 
-The native Linux target matrix, migration staging, regex setjmp choice and
-existing C backend's link policy remain unruled in
-`cross-compile-and-setjmp-on-mac.md`. They are not extra choices silently
-made by closing this architecture question. No implementation was performed
-when the ruling was recorded.
+The native architecture set is settled; compiler-host support,
+cross-compilation delivery, migration staging, regex setjmp choice and the
+existing C backend's link policy remain planning work in
+`cross-compile-and-setjmp-on-mac.md`. Those mechanisms were not selected
+by closing the layer or target-set questions. No implementation was
+performed when either ruling was recorded.
