@@ -10,6 +10,7 @@ gates:
   - "fatal causes remain fatal under conditions, negation and suppression; handled file errors never invent a successful default value"
   - "actual failing paths, ordered earlier side effects, diagnostics, captures and saved handler status remain correct"
   - "function result kinds and no-reach into helpers/operand captures remain intact; ERR analysis agrees with the actual handling"
+  - "DD88 direct file-read capture-conditions consume real read status: empty completed reads succeed, handled errors bind this attempt's bytes, and unhandled reads remain checked before assignment"
   - "focused native/C specs fail on the original behavior or targeted reversions, and the predicted ordinary gate passes"
 
 ## Decision
@@ -50,6 +51,60 @@ operations. If a form has no way to expose its recoverable failure, design
 that handling consistently with the existing types before changing it;
 do not fabricate empty success or turn a void/int result into a status.
 Raise any genuine language-surface fork with DG.
+
+## Direct file-read capture-conditions
+
+DG selected **"yes to capture-condition"** on 2026-11-10 (DD88,
+journal 610). This task owns that extension; `dollar-lt-file-policy` is
+closed as a decision, not a second implementation owner.
+
+Admit the direct `SlurpFile` RHS in the existing untyped capture-condition
+contexts: branches, loops, negation and logical-list consumers. It binds
+text and consumes the read's operational status, not a truth value invented
+for assignment. Completion is success, including an empty file.
+
+On handled recoverable failure, bind this attempt's bytes, possibly empty
+or partial, never the target's old value. An open failure supplies empty
+data **and failure**; an error after progress can supply partial data.
+Keep existing byte/newline behavior. Ordinary unhandled slurps remain checked
+before assignment, and fatal causes remain fatal. A scratch target in the
+separate DD131 trial gets its new instance, not a previous one.
+
+Preserve the first-class in-process file read; do not lower the new form to
+an external `cat` or introduce a reader command. Share classification and
+result handling across native/C and ERR analysis. Release the read's owned
+descriptor before recoverable continuation and preserve actual error causes
+and progress. No runtime ABI is selected by this policy.
+
+The outer handler does not catch filename-evaluation failures, nested
+captures or called-body failures. Taint, adjacency, ownership, declaration
+restrictions, source-order evaluation and ordinary status-latch rules remain.
+Concatenated RHSs, arbitrary function/multi-statement captures and other
+ineligible values stay excluded. There is no new `$(- <file)` spelling or
+permission for `- text=$(<file)`.
+
+Acceptance must distinguish the independent mechanisms:
+
+- Pin direct-file acceptance and real success/failure in the existing
+  consuming contexts, including `$?` and negation, with normal taint checks.
+  Empty-file success must not be mistaken for an error or EOF falsehood.
+- Exercise missing/unreadable paths and a recoverable read error after
+  actual progress. Trace the intended file/failed syscall before claiming
+  partial-data coverage; an empty open failure does not prove that path.
+  Use a target with prior data to prove that failure does not reuse it.
+- Retain unhandled aborts, fatal-fault controls, byte/newline behavior,
+  filename-operand no-reach, rejected RHS shapes and ordinary external/
+  `getenv` capture-conditions. Do not use a blanket SB5101 exemption in ERR.
+- Run focused native/C before-controls and independent reversions for
+  classification, status consumption and failure-data publication. Choose
+  fresh spec ids from history and predict the full gate only after the
+  actual fixture inventory is known.
+
+The initial native evidence is in `dollar-lt-file-policy`. It demonstrates
+the current SB4025 refusal and unchecked abort, with a working external
+capture control; it is not proof of C behavior or mid-read publication.
+
+## Related accepted work
 
 DD131 (2026-11-09) provisionally supplies a concrete directory-selector
 surface: `glob`/`rglob` have operational statuses, succeed on zero

@@ -1,63 +1,68 @@
----
-title: "`$(<file)` failure policy needs a DD"
-status: open
+title: "`$(<file)` failure policy and capture-condition decision"
+status: done
 priority: P3
 kind: decision
 depends: []
 gates:
-  - "a DD states what `$(<f)` does when the file is missing/unreadable"
-  - "the `for w in $(<f)` word-split question is answered"
----
+  - "DD88 records direct file-read capture-conditions under DD130, without fabricated successful emptiness"
+  - "the old word-splitting question is reconciled with DD22/DD99; implementation is separately owned by recoverable-file-failures"
 
-## Why now
+## Decision, 2026-11-10
 
-Until 2026-09-13 `$(<file)` was a parse-time desugar to `$(cat file)`, so its
-failure behaviour was not a sash decision at all — it was whatever `cat`
-plus the general command-substitution machinery happened to do. It is now a
-first-class node (`ExprKind::SlurpFile` → `sash_slurp_file`), so the
-behaviour is ours and should be stated deliberately.
+DG selected **"yes to capture-condition"**. DD88 admits a direct
+`$(<file)` RHS to the existing capture-condition contexts, including
+branches, loops, negation and logical-list conditions. The read supplies
+the operational result; assignment itself does not gain one.
 
-The implementation **preserved** the existing observable behaviour rather
-than changing it unilaterally. Nothing is broken; this is ratification.
+A completed read succeeds even when the file is empty. A handled recoverable
+error binds this attempt's bytes, possibly empty or partial, and supplies
+failure. It does not retain previous target data or pretend the read
+completed. Ordinary unhandled reads remain checked before assignment.
+Fatal faults, taint, filename evaluation and body boundaries are unchanged.
 
-## Question 1 — missing or unreadable file
+The AI recommended this existing surface over either a new whole-file reader
+command or retaining the always-checked shorthand and requiring an external
+`cat` capture whenever recovery is wanted. The external route remains legal.
 
-sash **aborts** with a diagnostic naming the path and the errno:
+This record is **done as a decision**, not as an implementation.
+The existing P2 `recoverable-file-failures` owns the file-read extension,
+sharing `runtime-failure-classification`; there is no duplicate implementation
+task. Journal 610 records the ruling and current evidence.
 
-```
-./prog: /no/such/file: cannot read file: No such file or directory
-```
+## What happened to the original questions
 
-bash prints a warning and evaluates to the **empty string**, continuing.
+The original filing followed the 2026-09-13 first-class slurp implementation.
+That implementation preserved the earlier `cat` desugar's unchecked abort.
+The filing's abort-versus-Bash-empty choice predates DD130 and is no longer
+the choice to make: path-specific errors are recoverable, unhandled failures
+still abort, and successful emptiness must not conceal failure. DD88 now
+settles the missing handling surface.
 
-Both are defensible:
+The `for w in $(<f)` IFS question is already governed by DD22 and DD99:
+**no implicit word splitting**. A scalar is not silently split into words
+or lines; explicit conversion supplies separators. This does not broaden
+for-header legality or relax input taint. No new loop behavior was measured
+or selected with this decision.
 
-- **abort (current)** matches sash's general posture — a program that cannot
-  read its input should not proceed with an empty value it never checked. It
-  also composes with taint: there is no "silently empty, but tainted" state.
-- **bash-compatible empty** matters if oracle parity on this construct is
-  wanted, but it hands the program an empty string that looks exactly like a
-  successfully-read empty file.
+The historical change from "tainted command substitution" to "tainted
+variable $w" is not a remaining language choice. Apply the ordinary located,
+source-named taint diagnostics; no separate wording defect was established.
 
-Related precedent: DD#42 forbids a silent empty return for `argv` bounds, and
-DD#101 declined to force handling on `getenv` because taint already requires
-it. Neither settles this one.
+## Evidence before implementation
 
-**Recommendation: keep the abort, write it down.** A slurp that fails is not
-a value.
+Fresh native CLI controls at `52b05642`, with ordinary taint checking:
 
-## Question 2 — word-splitting in `for-in`
+| form | outcome |
+|---|---|
+| `if text=$(<missing) { ... }` | compile-time SB4025 at 1:4 |
+| ordinary `text=$(<missing)` followed by attest/use | compiles; exits 1 with the path and ENOENT diagnostic, without continuing |
+| `if text=$(/bin/cat missing) { ... } else { echo handled }` | prints `handled`, exits 0; cat's own stderr remains |
 
-`for w in $(<f)` currently makes `w` tainted and the loop is rejected at the
-use site unless attested. Whether the slurped value should *word-split* at
-all in that position was never investigated — it inherited whatever the
-cmdsub path did. If `$(<f)` is meant to be the `mapfile -t` replacement
-(DD#99), splitting on IFS rather than newlines is arguably the wrong shape
-and `matchall` is the intended route.
+The gap is the built-in form's handling interface, not an inability to recover
+from file reads anywhere in sash. Current source constructs `SlurpFile`,
+while the capture-condition classifier accepts only `CommandSubstitution`;
+the runtime slurp aborts on a failed open.
 
-## Question 3 — diagnostic wording change (minor, no action may be needed)
-
-`for w in $(<f)` was rejected with "tainted command substitution"; it is now
-rejected with "tainted variable $w". Both reject. The new message names the
-variable the user must attest, which is arguably more actionable, but it is
-a user-visible wording change and DG may prefer the construct be named.
+Sources, compile/run output, return codes and identities are in the session's
+`files/slurp-handling-20261110.gYttda/`. No C behavior measurement, partial-read
+fault injection, source change or spec sweep accompanied this recording.

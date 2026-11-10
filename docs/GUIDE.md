@@ -46,9 +46,10 @@ Three dimensions:
    `$(getenv NAME)` also reports a *lookup* status (DD#101) — success when
    the name is present, including when it is set to the empty string;
    failure when it is unset — so `home=$(getenv HOME) || home=/root`
-   distinguishes absent from empty. It is the one intrinsic admitted to
-   the DD#88 capture-condition; the rest are pure functions of their
-   arguments and cannot fail.
+   distinguishes absent from empty. Its DD#88 capture-condition support
+   is implemented. DD#88 also accepts direct file-read capture-conditions
+   (`if text=$(<file)`), with implementation pending. A value-only producer
+   does not gain a separate condition result merely by using `$()` notation.
 
 3. **Supply-chain safety.** Compiled artifacts are signed. The system
    refuses to run binaries whose signature or integrity check fails.
@@ -968,6 +969,14 @@ setup-versus-execution distinction. Path-specific file errors are
 recoverable and may be caught or suppressed; an unchecked one still aborts.
 A failed redirect must skip its command and restore descriptor state,
 never send output to the original destination or invent a successful value.
+
+DD88 supplies the accepted direct-file handling form,
+`if text=$(<file) { ... }`: completion, including an empty file, is success;
+a recoverable error is failure. A handled failure binds this attempt's
+bytes, possibly empty or partial, not the target's previous value.
+Ordinary slurps remain checked before assignment. This is still queued in
+`recoverable-file-failures`; it adds neither a reader command nor a fork,
+and does not relax taint or filename-operand checks.
 
 Fork failure joins heap exhaustion and arithmetic faults in the fatal
 class: conditions, negation and suppression cannot resume the failed

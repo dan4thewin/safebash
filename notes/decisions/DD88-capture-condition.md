@@ -1,17 +1,20 @@
----
-title: DD#88 — Capture-condition: `if x=$(cmd)` binds stdout and branches on the command's status
+title: DD#88 - Capture-conditions bind values and consume producer results
 status: accepted
----
 
-Settled with DG (2026-09-02) and implemented the same session. A scoped,
-shipped subset of the `multi-assignment-and-capture-trio` decision — enough to
-make the long-standing `if ! out=$(cmd) { … }` idiom work — deferring the
-general multi-value `return` / `(stdout, status, stderr)` trio to that task.
+The external-command form was settled with DG on 2026-09-02 and implemented
+the same session. DD101 later added the implemented `getenv` lookup form.
+DG accepted direct file-read capture-conditions on 2026-11-10:
+**"yes to capture-condition"** (journal 610). That extension is not yet
+implemented; `recoverable-file-failures` owns it.
+
+These are scoped forms, not general multi-value binding. The general
+multi-value `return` / `(stdout, status, stderr)` trio remains deferred to
+`multi-assignment-and-capture-trio`. The regex extension below is provisional.
 
 ## The gap
 
-Capturing a command's stdout **and** branching on its exit status had no
-working form (see the `multi-assignment-and-capture-trio` motivation table):
+Originally, capturing a command's stdout **and** branching on its exit status
+had no working form (see the `multi-assignment-and-capture-trio` motivation table):
 `if ! out=$(cmd)` was SB4025; the "sequence it" workaround aborts on failure;
 DD#55's `out=$(cmd) || …` idiom was itself SB4025. Root cause: DD#71 treats an
 assignment as a value binding with "no meaningful exit status" — true for
@@ -19,15 +22,17 @@ assignment as a value binding with "no meaningful exit status" — true for
 
 ## The decision
 
-In a **boolean context** (an `if`/`while`/`until` condition, or the operand of
-`!`), an assignment whose RHS is a single **external** command substitution —
-`x=$(/path/cmd)` or a pipeline `x=$(a | b)` — is a **capture-condition**:
+In an existing **boolean/status-consuming context**, an untyped assignment
+whose RHS is one eligible producer is a **capture-condition**. The accepted
+producers are a single external command, an external pipeline, DD101's
+`getenv` lookup, and a direct `$(<file)` read:
 
-- the **condition truth value is the command's actual exit status** (`test =
-  status == 0`); a nonzero exit does **not** abort (the status is consumed —
-  DD#55's "binding the status" rule);
-- the command's **stdout is captured into the target** (tainted external
-  output — bless before use, DD#61);
+- the **condition consumes the producer's actual operational status**
+  (`test = status == 0`); a recoverable nonzero result does **not** abort
+  (the status is consumed — DD#55's "binding the status" rule);
+- the producer's **text is bound to the target**. External output, environment
+  data and file input retain their taint; handling acquisition failure is
+  not validation of the acquired data;
 - `$?` is available as the **first expression of the handling branch** (the
   existing DD#55 handling-position rule), so `if x=$(cmd) { … } else { echo $? }`
   reads the real failing code in the else branch;
@@ -37,26 +42,77 @@ In a **boolean context** (an `if`/`while`/`until` condition, or the operand of
   like `if ! cmd`. To read the numeric code in-branch, use the non-negated
   `if x=$(cmd) { use $x } else { echo "failed: $?" }` form.
 
-### Scope (DG-chosen, 2026-09-02)
+### Scope
 
 - **RHS shape:** a single external `$(cmd)` OR a pipeline `$(a | b)` of external
-  stages. Excluded (stay SB4025): a user-function capture `$(f)` (functions
-  convey status via `return` — DD#74 predicates), an intrinsic `$(getenv X)`, a
-  concatenation `foo$(cmd)`, a multi-statement `$(a; b)`, and any literal RHS.
+  stages, `$(getenv NAME)`, or a direct `$(<file)`. Excluded (stay SB4025):
+  a user-function capture `$(f)` (functions convey status via `return` —
+  DD#74 predicates), other value-only intrinsics, a concatenation such as
+  `foo$(cmd)`, a multi-statement `$(a; b)`, and any literal RHS.
 - **Untyped only:** `if int n=$(cmd)` (typed declaration) is NOT a
   capture-condition — declarations stay SB4025.
-- **`while`/`until` included:** the same form works as a loop condition.
-- **stdout on failure:** left as-is (whatever partial bytes were captured); the
-  target is meant to be used on success. A truly-unused captured target is a
-  dead variable (SB5050) — if you do not need the stdout, use the
+- **Existing consumers:** `if`/`elif`, `while`/`until`, negation and logical-list
+  conditions use the same producer-result rule.
+- **External stdout on failure:** this attempt's partial bytes remain.
+  File reads follow the corresponding rule below; `getenv` retains DD101's
+  lookup-value contract. A truly-unused captured target is a dead variable
+  (SB5050). For an external command whose stdout is not needed, use the
   non-capturing `if ! cmd { … }` form.
 - **`$?` after:** no new rule — the existing DD#55 handling-position machinery
   applies (a capture-condition assignment provides `$?` like a command).
 
 DD#55's anonymous-status-return rejection (DG, 2026-11-06) adds no new
 capture-condition form. A function or multi-statement capture does not
-become a condition by containing an explicit status return. Existing
-external-command/pipeline forms and DD#101's `getenv` exception are unchanged.
+become a condition by containing an explicit status return. The eligible
+producer forms above do not admit arbitrary executable capture bodies.
+
+### Direct file-read capture-conditions (DG, 2026-11-10)
+
+Use the existing capture-condition surface for the existing file-read
+operation, without a new reader command or a fork through `cat`:
+
+```sash
+if text=$(<config) {
+    attest text -n
+    echo "$text"
+} else {
+    echo "read failed: $?" >&2
+}
+```
+
+The read succeeds when it completes, **including an empty file**. Its result
+does not test the length or content of `text`; the example's `attest` is a
+separate content check. A recoverable open/read error supplies failure to
+the condition. DD130's fatal faults remain fatal and do not enter a recovery
+branch. Existing handling-position and negation rules apply to the real
+operation status.
+
+On a **handled failure**, bind the bytes read in **this attempt**, possibly
+none. An open failure therefore binds empty text and reports failure, not
+successful emptiness. A later read failure can leave partial text. Do not
+retain the target's previous value or present partial input as a completed
+read. Existing slurp byte/newline handling stays unchanged.
+
+This is the scalar capture rule, not DD131's atomic array-fill rule. If the
+target is an immutable scratch introduction in that separate trial, the
+same-site execution creates its new instance; it cannot recover an older
+instance's value or proof. No new scratch spelling is selected here.
+
+An ordinary `text=$(<file)` remains implicitly checked **before assignment**.
+It still aborts on an unhandled failure. Filename evaluation, helper bodies
+and nested operand captures keep their own checks: handling the read does
+not catch those failures. Taint, attest adjacency/ownership, scope and
+result-kind rules are unchanged.
+
+Only the direct eligible RHS gains this handling. No arbitrary string
+expression, declaration, function capture or multi-statement body gains a
+condition result. Assignment itself still has no result. This decision adds
+no new suppression spelling such as `$(- <file)` and does not permit
+`- text=$(<file)`. The external `cat` capture remains available.
+
+**Implementation pending:** `recoverable-file-failures`, with
+`runtime-failure-classification`, owns the runtime result, native/C lowering,
+source and ERR analysis, and independent failure/publication proofs.
 
 ### Provisional regex extension (DG, 2026-11-09; DD132)
 
@@ -113,7 +169,7 @@ The implementation reuses two existing mechanisms:
 This is implementation sharing, not source equivalence to `x=$(- cmd)`:
 an authored `-` discards precisely the status the condition needs.
 
-## Implementation
+## Original implementation
 
 - **transform** (`transform/stmt_handlers.rs::try_capture_condition`): in
   `state.in_condition > 0`, a `CmdSubst` (single external) RHS lowers to a
@@ -149,8 +205,8 @@ No new codes. Reuses SB4025 (non-capture value binding in boolean context),
 SB5050 (dead captured target), SB5020 (tainted target used without bless),
 SB5012 (`$?` outside a handling position).
 
-The SB4025 message is context-aware: a plain value binding (`if x=hi`) gets the
-"value binding — sequence it" advice; a `$(…)` capture that ISN'T a single
+The original SB4025 message is context-aware: a plain value binding
+(`if x=hi`) gets the "value binding — sequence it" advice; a `$(…)` capture that ISN'T a single
 external command (a concatenation, or an intrinsic/builtin capture that can't
 fail) gets a Group-B message that names the working form ("a capture-condition
 branches on a single external command's exit status") rather than claiming the
@@ -169,19 +225,20 @@ messages (user-fn / concat / intrinsic / builtin / literal → SB4025). journal
 
 The general feature — multiple-value `return`, multi-target binding, and the
 external `(stdout, status, stderr)` trio — remains in
-`multi-assignment-and-capture-trio`. This DD is the external-command
-capture-condition subset only. A related open idea: extending presence-testing
-to the getenv intrinsic (`getenv-presence-handling`) — either as a
-capture-condition or via an optional getenv default argument.
+`multi-assignment-and-capture-trio`. The enumerated producer forms above
+do not grant that general feature.
 
 ## Addendum 2026-09-12 — `getenv` joins the capture-condition
 
-The rule above is restricted to a single **external** command substitution,
-on the grounds that a sash intrinsic "can't fail". [DD#101](DD101-getenv-lookup-status.md)
-carves out one exception: `$(getenv NAME)` interrogates external state and can
-report a not-found **result**, so it composes with both `x=$(getenv N) || …`
-and `if ! x=$(getenv N) { … }`. All other intrinsics remain can't-fail, and
-SB4025's advice text still applies to them.
+The original rule was restricted to **external** command substitutions,
+on the grounds that a sash intrinsic "can't fail".
+[DD#101](DD101-getenv-lookup-status.md) established the first intrinsic
+exception: `$(getenv NAME)` interrogates external state and can report a
+not-found **result**, so it composes with both `x=$(getenv N) || …`
+and `if ! x=$(getenv N) { … }`. This lookup extension is implemented.
+The accepted file-read extension and provisional regex extension are
+specified above; value-only producers do not gain a separate result merely
+by using `$()` notation.
 
 ## Addendum 2026-10-12 — redirects, and the capture that has no writer
 

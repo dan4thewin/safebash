@@ -189,11 +189,16 @@ revert fails exactly **2** per mode: `sl.2` (the diagnostic mentions neither
 pass either way by design — they pin the *byte-identical* gate and the taint
 behaviour, which the fix was required not to change.
 
-### Left for DG
+### Follow-up policy (settled 2026-11-10)
 
-`$(<f)` on a missing file **aborts** in sash; bash warns and yields `""`. The
-pre-existing sash behaviour is preserved, but now that `$(<f)` is first-class
-rather than a `cat` desugar, the divergence deserves ratifying in a DD. Also:
-the `for w in $(<f)` diagnostic moved from "tainted command substitution" to
-"tainted variable $w" — both reject, wording changed. Filed in
-`notes/tasks/dollar-lt-file-policy.md`.
+This implementation preserved the earlier unchecked abort. DD130 now
+classifies path-specific failures as recoverable, and DD88 accepts direct
+file-read capture-conditions, with this attempt's bytes on handled failure.
+Ordinary unhandled slurps still abort before assignment.
+`dollar-lt-file-policy` is closed as a decision; the new handling remains
+queued in `recoverable-file-failures`, not implemented by this older task.
+
+DD22/DD99 already settle the filing's IFS question: no implicit splitting.
+The historical change to a variable-naming taint diagnostic is not a
+separate language policy. Neither point reopens this completed first-class
+read implementation.

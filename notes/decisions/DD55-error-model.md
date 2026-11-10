@@ -65,6 +65,15 @@ Anything that can fail due to external state or data:
 - Runtime calls that can fail on data (`regcomp` on dynamic patterns in
   the shipped model; DD132's trial replaces that interface as above)
 - Command substitution (`x=$(cmd)` — check before assignment)
+- Direct file reads (`x=$(<file)` — check before assignment)
+
+DD88's accepted 2026-11-10 extension lets a direct file read supply its
+real operational result to a capture-condition. A completed empty read
+is success; a recoverable error is failure, with this attempt's bytes
+bound to the target, not its previous value. Ordinary unhandled reads,
+fatal faults, operand checks and taint rules remain unchanged.
+Implementation is pending in `recoverable-file-failures`; this is not
+a result on assignment itself or a new suppression spelling.
 
 ### Builtin output is one write request (DG, 2026-11-09)
 

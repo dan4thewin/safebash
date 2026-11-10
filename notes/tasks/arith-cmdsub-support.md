@@ -51,8 +51,10 @@ Three options:
 - DD#23 maps every external to an absolute path; there are no bare externals.
 - The taint rule is operational: anything through `execve(2)` is tainted.
 
-## Also unresolved from the same session
+## Related file-read decision
 
-Whether `$(<f)` should word-split in `for w in $(<f)` position — see
-`dollar-lt-file-policy.md`. Same shape of question (a bash behaviour sash
-neither implements nor has explicitly declined).
+`dollar-lt-file-policy` is resolved as a decision (2026-11-10): DD88
+accepts direct file-read capture-conditions, with implementation queued in
+`recoverable-file-failures`. Its old IFS question is already settled by
+DD22/DD99's no-implicit-splitting rule. Neither resolves this task's
+arithmetic-position question.

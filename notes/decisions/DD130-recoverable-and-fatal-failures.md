@@ -90,6 +90,20 @@ this redirect phase, including in stages. Its completed effects are not
 undone by a later redirect failure either.
 Do not invent a successful empty value to conceal a failed file operation.
 
+**Direct file reads have an accepted handling surface** (DG, 2026-11-10;
+DD88, journal 610): `if text=$(<file) { ... }` binds the read's text and
+consumes its actual operational status. A completed read, including an
+empty file, succeeds. On a handled recoverable failure, the target receives
+this attempt's bytes, possibly empty or partial, never stale earlier data.
+Failure is still reported as failure; partial input is not a completed read.
+An ordinary unhandled slurp remains checked before assignment.
+
+This reuses capture-conditions without a new reader command or an external
+process. Fatal faults, filename-operand checks, taint and body boundaries
+remain. The scalar failure-data rule does not change atomic array fills;
+scratch instances still cannot inherit earlier data. Implementation is
+queued in `recoverable-file-failures`, not supplied by this decision.
+
 **Single-write builtin output retains these failure rules** (DD55,
 DG, 2026-11-09; journal 605). `echo` and `write` submit their complete
 fd-backed output as one request, not one request per fragment. That is

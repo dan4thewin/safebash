@@ -1,4 +1,23 @@
-## STATUS (2026-11-10, latest) - Review hints for captures in conditions
+## STATUS (2026-11-10, latest) - File reads gain capture-conditions by policy
+
+DG accepted direct `$(<file)` capture-conditions. A completed read succeeds,
+including an empty file; a handled recoverable error binds this attempt's
+bytes, possibly empty or partial, never the previous target value.
+Ordinary unhandled slurps remain checked before assignment. Fatal faults,
+taint and filename-operand/body boundaries stay unchanged.
+
+DD88 records the extension; DD55/DD130/GUIDE agree. The existing P2
+`recoverable-file-failures` owns implementation and proof. The older
+`dollar-lt-file-policy` closes as a decision, with its no-splitting and
+diagnostic questions reconciled rather than left as new language choices.
+
+Journal 610 records the ruling and three native controls: the direct
+condition currently gets SB4025, an ordinary missing-file read aborts,
+and the external `cat` capture handles the same failure. This does not
+claim a new compiler capability: implementation is queued, with no product/
+spec/build source change, C measurement, full sweep or fresh coverage.
+
+## STATUS (2026-11-10) - Review hints for captures in conditions
 
 DG chose `# CHECK:` guidance for command captures used as conditional test
 operands. The converter must explain that the outer test does not handle
