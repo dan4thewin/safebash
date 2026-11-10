@@ -1,24 +1,52 @@
----
-title: "Question: sash-convert copies `[[ … $(cmd) … ]]` verbatim, and since F7 a failing `cmd` aborts"
+title: "Add CHECK hints for command captures in conditional test operands"
 status: open
 priority: P3
-kind: question
+kind: work
 depends: []
 gates:
-  - "DG rules on the options below; the ruling is recorded in the converter's DD (DD#57) or in this task if it changes nothing"
-  - "if the converter changes, convert.sh specs pin the `if` and the `&&` forms, and the output of the `if` form compiles and runs as bash does under `--no-taint`"
----
+  - "DD57's CHECK hint explains the capture-operand failure boundary without adding suppression, a fallback or a hard converter error"
+  - "convert.sh covers branch, loop and logical-list test conditions, including quoted/interpolated and nested capture operands"
+  - "Controls distinguish literal text, actual status consumers and explicit inner handling; unrelated conversions and annotations retain their contracts"
+  - "Hint assertions identify this message rather than any CHECK comment; before and reversion controls prove the new guidance, and normal gates pass"
 
-## What
+## Decision (DG, 2026-11-10)
 
-In bash, `set -e` does not apply inside a condition, so a failing command in
-a test operand is harmless: `if [[ -n $(grep zzzq "$f") ]]` takes the else
-branch. sash-convert copies the line unchanged. Since F7 (DD#55's addendum
-of 2026-10-26, journal 536), a failed capture in a `[[ … ]]` operand aborts,
-because the capture is an argument and the test is the condition.
+DG chose:
 
-Probe `conv/g.sh`, bash with `set -e`, converted and with the `set -e` line
-removed (`g2.sash`):
+> hint
+
+DD57 now requires a `# CHECK:` review hint for command captures used as
+conditional test operands, not automatic rewriting or silence. The
+converter leaves the code unchanged apart from the comment and its existing
+independent conversions. It does not insert `-`, manufacture a fallback,
+or refuse conversion.
+
+The message explains the separate failure boundary: the enclosing test
+handles its own boolean result, not failures inside its capture operand.
+The author chooses appropriate handling or legal explicit discard. Apply
+this to the test conditions of `if`/`elif`, `while`/`until` and `&&`/`||`;
+quotes, interpolation and negation do not change the boundary. Equivalent
+Bash test and capture spellings must be classified by their parsed roles,
+not by searching for `$(` bytes.
+
+The compiler's DD55 no-reach rule is already settled and stays unchanged.
+Taint requirements remain independent. The direct external example below
+is normally SB5020, but extracting and attesting the value does not itself
+handle a failing acquisition.
+
+This task retains its slug, P3 priority and open status; only the question
+is answered. Implementation is pending. Journal 609 records the decision.
+
+## Historical evidence (F7, 2026-10-26; not rerun for this ruling)
+
+In the Bash example, `set -e` does not abort for a failing command inside
+the conditional test operand: `if [[ -n $(grep zzzq "$f") ]]` takes the else
+branch. The converter copied the line. F7 corrected sash's condition-status
+classifier, so the capture's implicit check fires instead of being mistaken
+for the enclosing test's handled result (DD55; journal 536).
+
+Probe `conv/g.sh`, Bash with `set -e`, converted and with the `set -e` line
+removed (`g2.sash`), as recorded then:
 
 ```
 #!/bin/bash
@@ -36,30 +64,50 @@ echo done
 
 Both backends agree in every cell.
 
-So the change is visible only under `--no-taint`. In the default mode
-SB5020 already stops the program at the capture. The rewrite it forces,
-`x=$(grep …)` then an `attest` then `[[ -n $x ]]` (`g3`), aborts on both
-binaries unless the capture is the last command before a `[[ … ]]`
-condition, where `fec83f7`'s scan unchecked it (B85; spec 55.99 pins the
-fix). So the tolerance seen before F7 was B85, not a converter feature.
-`$(- grep …)` keeps bash's meaning on both binaries, as an assignment
-(`g4`) and inside the operand (`g7`).
+For this fixture the runtime difference is visible only under `--no-taint`;
+normally SB5020 stops it before execution. The extracted form,
+`x=$(grep ...)` then an `attest` then `[[ -n $x ]]` (`g3`), aborted on both
+binaries except where `fec83f7` incorrectly unchecked the command just
+before a test condition. That was B85, not a converter feature; spec 55.99
+pins the fix.
 
-The converter has a precedent: `add_true_false_hint` writes a `# CHECK:` line
-where sash aborts and bash only sets `$?`. Its helper `status_is_consumed`
-treats any `$(…)` as reading its command's status, which is not true of a
-capture inside a `[[ … ]]` operand.
+The simple `$(- grep ...)` probes (`g4`, assignment; `g7`, operand) continued
+on both recorded binaries. That is evidence for those direct external
+commands, not a universal repair for functions or compound capture bodies.
+The prefix discards only a legal result at its own operation; it does not
+suppress nested operand/body checks or DD130 fatal faults. Status-less
+intrinsics, void functions and integer captures have their own result-kind
+restrictions. The old option describing this as suppressing every failure
+is superseded.
 
-## Options
+Probes: `files/port-f7-probes.tar.gz`, directory `conv/` (g.sh, g2-g7).
 
-- **(a) a `# CHECK:` hint** on a capture in a condition's test operand
-  (`if`, `elif`, `while`, `until`, `&&`/`||`), saying that sash aborts when
-  the command fails and that `$(- …)` tolerates it. This follows the
-  `false` precedent and changes no code meaning. Recommended.
-- **(b) rewrite to `$(- …)`.** This keeps bash's meaning, but it silently
-  suppresses every failure, including a missing binary, which DD#55 asks the
-  author to state explicitly.
-- **(c) leave it.** SB5020 already flags the site in the default mode, so
-  only `--no-taint` users see the change.
+## Implementation and proof
 
-Probes: `files/port-f7-probes.tar.gz`, directory `conv/` (g.sh, g2–g7).
+Use the existing converter annotation mechanism. Current source inspection
+at the recording baseline `34a48bad` confirms `add_true_false_hint` emits
+`# CHECK:` lines and `status_is_consumed` treats `command_substitution` as
+consuming status. That classification cannot establish that an outer test
+handles the command inside its operand. Reconcile any affected existing
+hints rather than producing contradictory advice at the same site.
+
+The hint should identify the capture boundary and prompt review, not
+prescribe `$(- ...)` indiscriminately. Keep actual direct command conditions
+and legal capture conditions distinct from operand captures. Preserve
+explicit handling within a capture; do not describe that handled result as
+uncaught. Single-quoted literal capture text and comments are not captures.
+
+Add focused `spec/convert.sh` assertions for the message and its placement,
+including the historical `if` and `&&` forms and the related contexts above.
+Pin distinguishing text: an existing ShellCheck or `true`/`false` hint must
+not satisfy the assertion merely because it also starts with `# CHECK:`.
+Check that the new comment does not swallow following code and that
+executable output remains unchanged apart from independent conversions.
+Before/reversion controls must prove missing guidance, not a compiler
+refusal the fixture already receives for taint.
+
+The former gate requiring the unchanged converted program to run like Bash
+under `--no-taint` is withdrawn: annotation does not repair runtime
+semantics. No new compiler behavior or native/C spec flip is intended.
+Choose fresh converter spec ids above the database high-water mark, derive
+the actual gate predictions during implementation, and run the normal gates.

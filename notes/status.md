@@ -1,4 +1,20 @@
-## STATUS (2026-11-10, latest) - Bash option flags are a converter concern
+## STATUS (2026-11-10, latest) - Review hints for captures in conditions
+
+DG chose `# CHECK:` guidance for command captures used as conditional test
+operands. The converter must explain that the outer test does not handle
+failures inside the capture, without inserting suppression or a fallback
+or adding a hard conversion error. Taint requirements stay independent.
+
+DD57 records the policy; DD55's no-reach rule stays unchanged.
+`q-convert-capture-in-condition-operand` retains its P3/open status and
+becomes work. Its old Bash-equivalent execution gate is replaced with
+message, placement and code-preservation checks: a hint changes no runtime
+semantics, and `$(- ...)` is not a universal repair for capture bodies.
+
+Journal 609 records the decision. Converter implementation remains queued;
+no product/spec/build code change, behavior probe, sweep or fresh coverage.
+
+## STATUS (2026-11-10) - Bash option flags are a converter concern
 
 DG kept native `$-` as literal text in words and double quotes. Bash's
 option-flags expansion belongs to `sash-convert`'s usual handling of

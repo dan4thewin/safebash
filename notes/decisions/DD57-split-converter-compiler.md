@@ -42,6 +42,35 @@ conversions from ambiguous intent.
 | Bash construct | SC code | Ambiguity |
 |---|---|---|
 | Unquoted `$var` in command args | SC2086 | Could be intentional word splitting. In sash, no splitting occurs. If the script relied on splitting, behavior changes silently. Converter emits `# CHECK: $var is unquoted — word splitting won't occur in sash. Was splitting intended?` |
+| Command capture in a conditional test operand | None required | The test handles its own result, not failures inside the capture (DD#55). Emit a review hint, not automatic suppression. Implementation queued below. |
+
+**Conditional-test captures (DG, 2026-11-10; implementation pending).**
+Emit a `# CHECK:` hint when a Bash conditional test uses a command capture
+as an operand. This includes tests in `if`/`elif`, `while`/`until` and
+`&&`/`||` conditions. Quoting, interpolation or negating the test does not
+make the operand capture's failure its result.
+
+The hint explains that an uncaught capture failure can abort in sash even
+when Bash would continue to test the captured text. The author must review
+whether to handle the capture's status or explicitly discard it where
+legal. Preserve the code apart from the annotation and independently
+required conversions: do not insert `-`, invent a fallback, or add a hard
+conversion error.
+
+This is not a claim that `$(- ...)` repairs every capture. DD#55's no-reach
+rule keeps nested operand and called-body failures checked; result-kind
+restrictions and DD#130's fatal faults remain. An actual status consumer,
+such as a legal capture condition, is distinct from a capture used as a
+test operand. Existing explicit handling must not be described as absent.
+
+Taint is independent. A direct external capture in a test operand already
+gets SB5020 normally, but satisfying taint requirements does not itself
+handle its failure. The hint is guidance, not a promise that unchanged
+output compiles or reproduces Bash behavior.
+
+`q-convert-capture-in-condition-operand` owns implementation and focused
+converter specs. Journal 609 records the ruling. Compiler semantics do not
+change with this policy.
 
 ### Manual — emit `# MANUAL:` annotation, pass through unchanged
 
@@ -88,7 +117,7 @@ with this policy recording.
 
 1. `sash-convert` produces valid sash-native source from bash input
 2. All mechanical conversions produce correct sash-native syntax
-3. Ambiguous cases (SC2086) are annotated with `# CHECK:` hints
+3. Ambiguous cases are annotated with `# CHECK:` hints, including SC2086 and conditional-test captures (the latter remains queued above)
 4. Unconvertible constructs are annotated with `# MANUAL:` and left unchanged
 5. Known externals get real `bless` lines; unknown externals get `# BLESS:` hints
 6. `--annotate` adds `# was: original` comments to mechanical conversions

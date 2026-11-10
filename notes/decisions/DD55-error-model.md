@@ -935,6 +935,11 @@ block that ends in a `Branch` or `Loop`: on such an edge it adds a bridging
 Ported from the batch-531 reference branch (finding B85), as-is. Specs:
 errors.sh 55.89-55.106. Journal 536.
 
+For Bash conversion, DG selected a `# CHECK:` review hint for captures in
+conditional test operands on 2026-11-10 (DD#57; journal 609), not an
+automatic `$(- ...)` rewrite. The compiler rule above stays unchanged.
+Converter implementation is queued in `q-convert-capture-in-condition-operand`.
+
 ## Addendum (2026-10-26, DG): what may run under `&`, and where `-` reaches
 
 DG: *"I don't see reserved words being meaningful within a pipeline or in

@@ -377,9 +377,10 @@ Filed as backlog tasks during F7, under the same rule as F15's:
   The 2-argument `match` and `$(match …)` work. Same shape as the done
   `bug-fn-capture-in-test-operand-ice`.
 - `q-convert-capture-in-condition-operand` (P3): converted bash with an
-  external capture in a test operand now aborts under `--no-taint` where
-  bash carries on; whether the converter should flag it, rewrite it to
-  `$(- …)`, or leave it.
+  external capture in a test operand exposed the no-reach difference under
+  `--no-taint` in F7's probes. DG chose `# CHECK:` guidance, not automatic
+  `$(- ...)` rewriting (DD57; journal 609, 2026-11-10). The compiler rule
+  stays; converter implementation remains open in the same task.
 - `q-condition-classifier-pipelinefinish` (P4): the classifier's
   `PipelineFinish` arm cannot be reached and would be wrong for a finish
   that preserves the status; ICE or precise answer. Also notes that its
