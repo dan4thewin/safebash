@@ -1,4 +1,22 @@
-## STATUS (2026-11-10, latest) - File reads gain capture-conditions by policy
+## STATUS (2026-11-10, latest) - CLI stdout-failure policy
+
+DG chose quiet EPIPE with exit 1 for `sash`, `sash-expand` and
+`sash-convert`; other stdout write/flush failures report the cause and
+exit 1, not panic. Deliberately closed stdout remains an explicit discard,
+without masking other errors. Completed artifacts are retained even if
+their completion message fails.
+
+DD133 records this CLI-only contract. GUIDE, the existing P3
+`bug-stdout-write-failure-panics` and its findings pointer agree.
+Implementation remains queued, including quieting the converter's current
+EPIPE diagnostic; compiled-script I/O and DD130 are unchanged.
+
+Journal 611 records the choice and fresh `sash --help` controls: normal
+output succeeds, EPIPE/ENOSPC still panic with exit 101, and inherited
+closed stdout succeeds silently. No product/spec/build source change,
+full sweep or fresh coverage accompanies the recording.
+
+## STATUS (2026-11-10) - File reads gain capture-conditions by policy
 
 DG accepted direct `$(<file)` capture-conditions. A completed read succeeds,
 including an empty file; a handled recoverable error binds this attempt's

@@ -405,8 +405,11 @@ Filed as backlog tasks while researching B55, under the same rule:
   - a symlink with that name is written through.
 - `bug-stdout-write-failure-panics` (P3): every stdout write in `sash` and
   `sash-expand` panics on EPIPE or ENOSPC, even after the binary is built.
-  `sash-convert` already reports the error and exits 1. Question: should
-  EPIPE be quiet?
+  `sash-convert` already reports the error and exits 1. DD133 settles the
+  policy (DG, 2026-11-10): EPIPE is quiet exit 1 in all three tools;
+  other write errors are reported exit 1; deliberately closed stdout is
+  an explicit discard. Implementation remains with that task, including
+  changing the converter's EPIPE diagnostic; this is not a B55 fix.
 
 ### 8. F1 + F4 wrappers, operand and condition grammar
 

@@ -81,6 +81,20 @@ Typical workflow:
 bash script.bash → sash-convert → script.sh (review) → sash → binary
 ```
 
+### CLI stdout failures (DD#133; implementation pending)
+
+The accepted policy covers `sash`, `sash-expand` and `sash-convert`:
+broken-pipe output (`EPIPE`) is quiet **exit 1**; other stdout write/flush
+failures report the cause to stderr and exit 1, not panic. Deliberately
+closed stdout remains an explicit discard, like `/dev/null`, without
+masking input or compilation errors.
+
+Quiet EPIPE is still failure under a host shell's `pipefail`. Output already
+sent and binaries already built are not rolled back; a failed completion
+message follows the same rule as emitted source. The existing
+`bug-stdout-write-failure-panics` owns implementation, including changing
+the converter's EPIPE diagnostic. Compiled-script I/O rules are unchanged.
+
 ---
 
 ## Repository Structure
