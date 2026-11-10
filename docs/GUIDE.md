@@ -1021,6 +1021,13 @@ The existing runtime paths described below are implemented; changes
 marked pending and remaining failure-class inconsistencies are not
 claimed fixed by this decision.
 
+**Default `:?` diagnostics (DD77; implementation pending).** An omitted or
+empty literal message will produce a diagnostic naming the subject and the
+applicable failure: empty value/collection, or invalid integer conversion.
+Nonempty custom messages retain their text; abort triggers, status and
+handler routing stay unchanged. `default-require-diagnostics` owns delivery;
+exact wording and implementation remain deferred.
+
 ### Process management
 
 `sash_exec` — execve with absolute path (no PATH walk; DD#23).

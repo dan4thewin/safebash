@@ -94,8 +94,10 @@ command** is a compile error. The splat must carry an empty-disposition:
   bare `@{a:-}` yields **one empty arg** (empty-word default — bash
   `"${a[@]:-}"` parity, and consistent with the scalar `${x:-}`; corrected
   2026-09-04, was "zero args").
-- `@{a:?WORD}` — when `a` is empty, **abort** at runtime with `WORD` on
-  stderr. The explicit, local replacement for failglob.
+- `@{a:?WORD}` — when `a` is empty, **abort** at runtime with the nonempty
+  literal `WORD` on stderr. If omitted or empty, use a generated diagnostic
+  naming the collection and its emptiness (DD77; accepted 2026-11-10,
+  implementation pending). The explicit, local replacement for failglob.
 - `@{a:~}` — **elide** (DD#84): when `a` is empty, the splat contributes
   **zero args** — the sole drop-if-empty disposition (the array analog of the
   scalar `${x:~}`). Like the scalar form it takes **no word** (`@{a:~WORD}` is
@@ -107,6 +109,11 @@ command** is a compile error. The splat must carry an empty-disposition:
 A non-empty array splats to one verbatim arg per element. These forms map
 1-to-1 onto bash `"${a[@]:-WORD}"` / `"${a[@]:?WORD}"` (DD#67 sugar) — incl.
 bare `@{a:-}` ≡ `"${a[@]:-}"` → one empty arg.
+
+`default-require-diagnostics` owns the new omitted/empty-message behavior.
+The current splat runtime still emits only the program prefix in that case.
+Nonempty custom literal text, cardinality, abort status and handler routing
+are unchanged; exact diagnostic wording and implementation remain deferred.
 
 ## Scope (deliberately minimal)
 

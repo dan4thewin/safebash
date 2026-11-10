@@ -5,13 +5,14 @@ kind: question
 depends: []
 gates:
   - "R2's accepted DD55 single-write rule is implemented by bug-echo-partial-line-before-abort; this question record does not duplicate that work"
+  - "R3's accepted DD77 default-message rule is implemented by default-require-diagnostics; this question record does not duplicate that work"
   - "remaining questions are reconciled with current DDs before selecting new behavior; retained live reproducers have specs in both backends"
 
 Found during F2 (journal 539). Each is pre-existing unless it says
 otherwise. Probes in files/port-f2-probes.tar.gz.
 
 The tables retain historical measurements, not new runs at the decision
-date. R2 is settled below; this file stays open for the other residuals.
+date. R2 and R3 are settled below; this file stays open for the other residuals.
 The END examples predate DD128's implemented replacement and are not
 evidence about current EXIT/ERR behavior.
 
@@ -59,14 +60,33 @@ concurrency measurement accompanies it.
 The native/C source still emits fragments separately. The historical
 question is answered; this table is not evidence that the repair shipped.
 
-## R3. A bare `${s:?}` aborts with an empty message
+## R3. Settled: an informative default for omitted or empty `:?` messages
+
+DG, 2026-11-10: **"yes to better default"**. DD77 now requires a generated
+diagnostic naming the subject and the applicable failure when the literal
+message is omitted or empty. The rule covers scalar/cell word contexts,
+arithmetic string conversion and array splats. Their different existing
+triggers stay; an invalid integer is not necessarily an empty value.
+
+Nonempty custom literal messages retain their text. No message interpolation,
+new evaluation, changed abort status or changed ERR routing is introduced.
+The alternative of requiring a nonempty message at every site was not chosen.
+Exact wording and implementation are deferred.
+
+The new P3 `default-require-diagnostics` owns delivery and native/C proof.
+Journal 617 records the choice. This settles the question, not the
+implementation; the historical reproducer below was not rerun.
+
+### Historical evidence
 
 | Id | Program | Result |
 |---|---|---|
 | sq | `str s=""` ⏎ `echo "${s:?}"` ⏎ `echo after` | aborts; runtime stderr is `./test_bin: ` and nothing more |
 
-`: ${s:?}` does the same. DD77 does not say what the default message is.
-Recommendation: name the variable, as bash does.
+`: ${s:?}` had the same result. Source inspection at `ba49c22c` confirms
+the empty-message path still writes only the program prefix and newline.
+DD77 previously left the default unspecified; the new contract is a sash
+diagnostic-quality decision, not a requirement for Bash-identical wording.
 
 ## R4. Children forked inside END are unchecked (B9's open question)
 

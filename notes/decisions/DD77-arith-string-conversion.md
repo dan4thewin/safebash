@@ -40,6 +40,30 @@ The arith trigger for the disposition is **"not a valid integer"**, which
 context `${s:-x}`/`${s:?x}` keep their unset-or-empty-only trigger — DD#65;
 "valid" simply means "valid int" in arithmetic.)
 
+### Default `:?` diagnostics (2026-11-10; implementation pending)
+
+DG accepted **"yes to better default"**: when a failing `:?` has no message,
+or its supplied literal message is empty, generate a diagnostic identifying
+the source-level subject and the applicable failure. A nonempty custom
+literal message retains its text under DD65's existing literal parsing.
+Do not require authors to supply a message at every failsafe.
+
+The reason follows the existing operation: an empty scalar/cell in word
+context, an empty collection for DD69's splat, or a string that is not a
+valid representable integer in arithmetic. Non-numeric and out-of-range
+arithmetic input must not be described as merely empty. Scalar/cell parity
+and every otherwise-legal spelling remain; this is not a new interpolation
+context or permission to evaluate the subject/index again for a diagnostic.
+
+Only the missing/empty-message behavior changes. Successful values, abort
+triggers, status, DD128 handler routing, taint and placement rules stay.
+The `:-` and `:~` dispositions are unchanged. Exact wording, subject
+rendering and implementation are deferred until the task is undertaken.
+
+`default-require-diagnostics` owns implementation and native/C proof.
+R3 in `q-f2-residuals` is settled as policy only; the current runtime still
+prints only the program prefix when the message is empty.
+
 ### Validity — strict (D3)
 
 A string is a valid integer iff it is a **complete** integer: optional sign then

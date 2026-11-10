@@ -300,6 +300,12 @@ str z=${y:?'costs $5'}   # ok — aborts with:  ./prog: costs $5
 echo @{a:?$(g)}          # SB4070 — the array form obeys the same rule
 ```
 
+**Default diagnostic (DG, 2026-11-10; implementation pending).** An omitted
+or empty `:?` literal message will get a generated diagnostic naming the
+subject and its applicable failure (DD77). Nonempty custom messages retain
+their text. This does not reintroduce interpolation or change `:-` defaults;
+`default-require-diagnostics` owns the work.
+
 **Why the message is not an interpolating word.** It was, briefly, and that was
 a mistake worth recording. DD#78 groups `:-` and `:?` operands together, but it
 groups them by *purpose* — a purity constraint on what the operand may contain.

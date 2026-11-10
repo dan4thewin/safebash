@@ -1,4 +1,21 @@
-## STATUS (2026-11-10, latest) - Better regex diagnostics; approach deferred
+## STATUS (2026-11-10, latest) - Useful default `:?` diagnostics
+
+DG accepted a generated diagnostic naming the subject and the applicable
+failure when a `:?` literal message is omitted or empty. Nonempty custom
+messages retain their text. Scalar/cell word checks, arithmetic string
+conversion and array splats keep their existing distinct failure triggers,
+abort status and handler routing.
+
+DD77 records the rule; DD65/DD69 and GUIDE agree. The new P3
+`default-require-diagnostics` owns implementation, while R3 in the mixed
+F2 residuals record is settled as policy. Exact wording and implementation
+remain deferred.
+
+Journal 617 records the choice and current source evidence. No product,
+spec or build source changed; no new runtime probe, sweep or coverage
+measurement accompanies this recording.
+
+## STATUS (2026-11-10) - Better regex diagnostics; approach deferred
 
 DG accepted clearer identification of offending static regexes in SB5023,
 including multi-pattern constructs. Implementation specifics are deferred
