@@ -1,4 +1,22 @@
-## STATUS (2026-11-09, latest) - Checked hook inputs must match staging
+## STATUS (2026-11-10, latest) - Bash option flags are a converter concern
+
+DG kept native `$-` as literal text in words and double quotes. Bash's
+option-flags expansion belongs to `sash-convert`'s usual handling of
+unsupported bashisms: `# MANUAL:` annotation and pass-through, not a new hard
+rejection or fabricated replacement. Equivalent `${-}` expansions follow
+that converter rule; literal occurrences do not.
+
+DD57/DD64 record the boundary. Existing arithmetic/braced refusals,
+literal-dollar fallback elsewhere and `s///` anchor rules stay.
+`q-word-dollar-dash` retains its P3/open status and becomes work. A current
+converter-only probe also found `${-}` rewritten as `${:-}`; preserving
+the unsupported parameter is part of the same queued repair.
+
+Journal 608 records the decision and probe. This is policy/backlog work:
+no compiler/converter/runtime/spec/build change, spec sweep or fresh
+coverage. Converter implementation remains pending.
+
+## STATUS (2026-11-09) - Checked hook inputs must match staging
 
 DG chose refusal when checked files differ between Git's staged snapshot
 and the worktree. The rule covers repository source/configuration inputs

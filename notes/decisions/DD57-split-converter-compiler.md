@@ -50,11 +50,31 @@ conversions from ambiguous intent.
 | `eval "..."` | Dynamic execution. No mechanical conversion. |
 | `source` / `.` | File inclusion. Sash has no source; use sash-expand pipeline (DD#54). |
 | `export VAR=val` | No export in sash (DD#53). Env isolation by design. |
+| `$-` / `${-}` option-flags expansions | Bash shell options have no sash equivalent. Manual review, not a compiler ban on literal `$-` (DD#64). Annotation queued below. |
 | `${!var}` indirect expansion | Pointer-like indirection. No sash equivalent. |
 | `declare -n` / nameref | Alias indirection. No sash equivalent. |
 | `<(...)` / `>(...)` process substitution | No sash equivalent. |
 | `${var@Q}` / `${var@E}` etc. | Parameter transformations rejected. |
 | Heredoc with `$(cmd)` inside | Untraceable taint (SB5002). Extract to variable + bless. |
+
+**Option flags (DG, 2026-11-10; implementation pending).** Actual Bash
+option-flags expansions get the ordinary `# MANUAL:` annotation and
+pass-through treatment. This is an unsupported bashism, not a new hard
+conversion error, an emulation of Bash's flags, or a rewrite to a fabricated
+literal value. The equivalent `$-` and `${-}` spellings follow the same rule,
+including inside double quotes.
+
+The distinction is syntactic: literal text containing `$-`, including
+single-quoted, C-quoted or Bash-escaped text, is not an option-flags expansion.
+It must not receive this annotation merely for containing those bytes.
+Other conversions and annotations retain their existing contracts.
+
+Native sash keeps its word-level literal-dollar fallback (DD#64);
+conversion does not impose Bash parameter meanings on native source.
+`q-word-dollar-dash` owns the converter work, including preventing `${-}`
+from being mistaken for a `${NAME-default}` expansion. Journal 608 records
+the decision and a current converter-only probe. No converter change ships
+with this policy recording.
 
 ### Best-effort bless — emit `bless` line or `# BLESS:` hint
 

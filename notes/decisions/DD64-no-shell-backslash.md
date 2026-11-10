@@ -102,6 +102,30 @@ Two backslash *interpreters* remain, both downstream and contextual:
 `$'…'` (shell C-escapes) and the regex engine (`\.`, `\\`). The shell
 proper interprets none.
 
+## Non-expanding dollars (DG, 2026-11-10)
+
+Keep the compiler's existing literal fallback: a `$` in an unquoted word
+or double-quoted string that starts no recognized expansion remains literal.
+In particular, `$-` is the two characters `$-`, not Bash's shell-option
+flags. `"$%"` and `"cost: $"` retain their literal dollars too; no general
+stray-dollar rejection is added to words.
+
+Intentional literal text can use `'$-'` or a C-string. This does not add
+a `\$` escape: backslash retains the rules above. DD#65's `:-` defaults
+still follow double-quoted-body interpolation.
+
+The fallback does not turn malformed recognized forms into text: existing
+`${…}`, `$(…)` and `$'…'` diagnostics remain. In particular, native `${-}`
+keeps its existing rejection; it does not become an alternative spelling
+of literal `$-`. DD#72's stray-dollar rejection is arithmetic-specific,
+and DD#63's `s///` fields retain their separate regex-anchor rule.
+
+The language boundary belongs in `sash-convert`: when Bash source actually
+expands its option flags, `$-` or `${-}` gets DD#57's ordinary `# MANUAL:`
+annotation and pass-through for unsupported bashisms, not a new refusal.
+Literal occurrences are not option-flags expansions. Converter implementation
+is queued in `q-word-dollar-dash`; this recording preserves compiler behavior.
+
 ## Addendum (DG, 2026-06-21): `$'…'` expands inside `"…"`
 
 A `$'…'` C-string is recognized **inside double quotes** as a

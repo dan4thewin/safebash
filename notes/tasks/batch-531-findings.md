@@ -187,10 +187,13 @@ not obviously a bug stays unchanged in the port:
 
 ### 3. F14 malformed names and arithmetic
 
-- [ ] **B38** (open+question; no DD). Invalid parameter names are
-  accepted or swallowed in arithmetic and expansions: `$(( $0 ))` and `$((
-  ${0} ))` print empty, where the word `${0}` is SB5017. Questions on
-  `${10}` and `$-`.
+- [ ] **B38** (open+question; dollar-word policy in DD57/DD64). Invalid
+  parameter names are accepted or swallowed in arithmetic and expansions:
+  `$(( $0 ))` and `$(( ${0} ))` print empty, where the word `${0}` is
+  SB5017. Questions on
+  `${10}` remain. DG settled `$-` on 2026-11-10: keep native word literals;
+  annotate actual Bash option-flags expansions as unsupported during
+  conversion. Converter implementation remains queued.
   - Corrected in F14 (journal 533): Step 0 recorded it as
     fixed-on-branch+question, but base, the branch and F14 give the same
     verdict on each of its shapes. The one probe the branch changes,
@@ -239,7 +242,10 @@ not obviously a bug stays unchanged in the port:
   `$1..$9`; the task asks which.
 - `bug-reserved-names-in-arithmetic` (P2; B40, B41, B38's `$0`): reserved
   and environment names escape SB5017 and SB5018 outside a word.
-- `q-word-dollar-dash` (P3, B38): `$-` in a word is literal text.
+- `q-word-dollar-dash` (P3 work, B38): retain compiler literal `$-`;
+  add converter `# MANUAL:` handling for Bash option flags, including
+  preventing `${-}` from being rewritten as `${:-}`. Policy settled,
+  implementation pending (journal 608).
 - `bug-convert-dollar-ten` (P2, B38): sash-convert reads `$10`, `$01` and
   `$1x` as one positional name at top level.
 - `bug-malformed-index-generic-sb4047` (P3): an index with an unclosed
