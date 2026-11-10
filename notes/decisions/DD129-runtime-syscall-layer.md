@@ -166,6 +166,13 @@ repair and its fresh-lockfile, unit and dual-mode spec gates. Runtime
 comments and GUIDE must describe the actual layer after it is implemented;
 this recording alone changes no dependency, syscall, binary or build rule.
 
+DG separately chose tracked lockfiles and locked normal builds/tests on
+2026-11-10 (journal 615). AGENTS.md defines that build policy, with
+`notes/tasks/track-cargo-lockfiles.md` owning enforcement. It does not
+replace this decision's public-API/shim repair: its compatibility control
+must deliberately resolve fresh dependencies in an isolated source copy,
+even once the ordinary build uses a checked-in lockfile.
+
 `notes/tasks/cross-compile-and-setjmp-on-mac.md` owns delivery of the chosen
 native host/target matrix and the selected regex jump support. The
 cross-compilation interface and artifact/tool selection, migration staging,

@@ -252,6 +252,31 @@ output is `sash-rt/target/release/libsash_rt.a`; the c/native backends link
 it via `SASH_RT_LIB`. Rebuild it after touching `sash-rt/src` before an
 `--emit-c` link, or gcc reports undefined references to new runtime symbols.
 
+### Cargo dependency resolution
+
+**Accepted policy (DG, 2026-11-10; implementation pending): track both
+workspace lockfiles and use `--locked` for normal builds/tests.**
+`Cargo.lock` covers the root workspace (`sash`, `sash-convert`,
+`sash-expand`); `sash-rt/Cargo.lock` covers the separate runtime workspace.
+They are reviewed build inputs, not disposable local artifacts.
+
+Dependency updates are deliberate changes: refresh the affected lockfile,
+review the dependency changes and run the applicable gates before landing.
+Ordinary builds must not silently select a new resolution or rewrite a
+missing/stale lockfile. `--locked` still permits fetching locked dependencies;
+this is not an offline-build requirement, toolchain pin or promise of
+byte-identical binaries.
+
+DD129's private-rustix repair remains independent. Locking the old working
+resolution does not repair the unsupported API dependency. Its acceptance
+control must still resolve fresh dependencies in an isolated source copy,
+discarding only that copy's lockfile before the deliberate refresh.
+Do not delete or regenerate the working checkout's locks for that control.
+
+`notes/tasks/track-cargo-lockfiles.md` owns tracking and locked-build
+enforcement; journal 615 records the choice. This recording does not yet
+change `.gitignore`, either lockfile or the build/test commands.
+
 ### Spec tests
 
 Spec tests live in `spec/*.sh`. Run with `cd spec && bash run.sh`.

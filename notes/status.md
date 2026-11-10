@@ -1,4 +1,21 @@
-## STATUS (2026-11-10, latest) - Both native Linux hosts and cross directions
+## STATUS (2026-11-10, latest) - Track both Cargo lockfiles
+
+DG chose **tracked root and runtime lockfiles**, with `--locked` for
+normal builds/tests and deliberate reviewed dependency updates.
+AGENTS.md records the build policy; GUIDE and DD129 preserve its boundary
+from the independently required private-rustix repair.
+
+The new P2 `track-cargo-lockfiles` owns tracking and enforcement. The P1
+repair still needs a fresh-resolution control in an isolated source copy,
+explicitly discarding that copy's lockfile once archives include it.
+A working old resolution is not the API repair.
+
+Journal 615 records the choice and current two-workspace/ignore-rule
+evidence. Implementation remains queued: `.gitignore`, both lockfiles,
+manifests and build commands are unchanged. No dependency refresh,
+full sweep or fresh coverage accompanied this recording.
+
+## STATUS (2026-11-10) - Both native Linux hosts and cross directions
 
 DG selected **x86_64 Linux and AArch64 Linux compiler hosts, each able
 to produce either Linux target**. DD129 now requires same-architecture

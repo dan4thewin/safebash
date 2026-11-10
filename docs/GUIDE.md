@@ -1368,6 +1368,17 @@ phases, and those of its `mk build` prerequisite, are chained with `&&`: a
 failed compiler build/unit phase must not be hidden by later successful
 crate phases.
 
+**Accepted dependency policy (2026-11-10; implementation pending):**
+track both root `Cargo.lock` and `sash-rt/Cargo.lock`, and use `--locked`
+for normal builds/tests. The root workspace and separate runtime each
+retain their own resolution; dependency updates become deliberate,
+reviewed changes rather than an incidental effect of a fresh environment.
+This stabilizes Cargo dependencies, not all toolchain/environment inputs,
+and does not require offline builds. DD129's private-API repair still
+requires an independent fresh-resolution check in an isolated source copy.
+AGENTS.md defines the contributor policy; `track-cargo-lockfiles` owns
+implementation, and journal 615 records the decision.
+
 ---
 
 ## Key Design Decisions

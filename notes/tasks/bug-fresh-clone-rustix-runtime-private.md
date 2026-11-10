@@ -5,22 +5,26 @@ kind: bug
 depends: [q-runtime-syscall-layer]
 gates:
   - "implement DD129: public rustix plus the shared Linux Rust syscall shim, with no private runtime-module dependency"
-  - "a copy of sash-rt with no Cargo.lock builds: `git archive HEAD sash-rt`, then `cargo generate-lockfile` and `cargo build --release` exit 0"
+  - "an isolated tracked-source copy of sash-rt, with only that copy's Cargo.lock removed, resolves fresh dependencies and then builds with cargo build --locked --release; the working checkout's locks are untouched"
   - "`mk test` and the full spec sweep pass on the result, in both backends"
   - "runtime comments and GUIDE describe the actual layer; remove the compiler's unused rustix dependency after confirming it remains unused"
 
 DG settled the architecture on 2026-11-05 in DD129. This task remains
 **open for implementation**; recording that choice did not repair the build.
 
-## What
+## Recorded failure (2026-10-25/26)
 
-sash-rt calls three functions that rustix provides only in its `runtime`
+The following versions and source locations are the original measurements,
+not a fresh resolution for the 2026-11-10 lockfile-policy recording.
+
+sash-rt called three functions that rustix provided only in its `runtime`
 module: `exit_group` (sash-rt/src/lib.rs:436), `kernel_fork` (653–658) and
-`execve` (693). Both crates ask for `rustix = "1.1"` (sash-rt/Cargo.toml:15,
-sash/Cargo.toml:14), and no Cargo.lock is tracked (`.gitignore` line 2). The
-locks on this machine pin 1.1.4 (sash-rt/Cargo.lock:51, Cargo.lock:488), so
-the build works here. A fresh clone resolves 1.1.5, and there the module is
-private. rustix 1.1.5's src/lib.rs:308–323 says why:
+`execve` (693). Both crates asked for `rustix = "1.1"`
+(sash-rt/Cargo.toml:15, sash/Cargo.toml:14), and no Cargo.lock was tracked
+(`.gitignore` line 2). The local locks pinned 1.1.4
+(sash-rt/Cargo.lock:51, Cargo.lock:488), masking the failure. A fresh clone
+resolved 1.1.5, where the module was private. rustix 1.1.5's
+src/lib.rs:308–323 says why:
 
 > "runtime" is also a public API module, but it's only for libc-like users.
 > People have been observed using it in the wild, so as a counter-measure,
@@ -51,9 +55,19 @@ child initialization, descriptor ownership, errno and terminal-handler
 contracts; this is a binding change, not a process-semantics redesign.
 
 Do not use the deliberately mangled module name, freeze rustix at 1.1.4,
-vendor nolibc, or introduce musl as the remedy. Tracking lockfiles remains a
-separate reproducibility policy and would not repair the unsupported API
-dependency.
+vendor nolibc, or introduce musl as the remedy. DG separately accepted
+tracking both workspace lockfiles and using locked normal builds/tests
+on 2026-11-10 (AGENTS.md, journal 615). `track-cargo-lockfiles.md` owns
+that implementation; a locked build does not repair the unsupported API
+dependency or close this task.
+
+Preserve the fresh-resolution gate deliberately: after making an isolated
+tracked-source copy, remove only that copy's runtime lockfile, generate a
+fresh one and build with `--locked`. Once lockfiles are tracked, merely
+extracting `git archive HEAD sash-rt` no longer creates a lock-free copy.
+Leave the working checkout's locks untouched. This compatibility control
+is an explicit dependency refresh, not an exception allowing ordinary
+builds to resolve dependencies silently.
 
 The architecture applies to the runtime's other hand-written syscall sites
 too. Account for each under public rustix or the shared shim; migration
