@@ -73,7 +73,42 @@ host/target combination or select new flag spellings. The existing
 `--emit-c` differential backend is not the separate C++ transpiler and is
 not retired by this decision.
 
-## Why this choice
+## Native regex recovery
+
+DG separately selected the regex compiler's recovery mechanism on
+2026-11-10 (journal 613):
+
+> jump support for both
+
+Retain the Plan 9 engine's regex-local `setjmp`/`longjmp` recovery and
+provide ABI-correct jump support for **x86_64 and AArch64 Linux**.
+Rewriting the shared regex compiler to propagate ordinary error returns
+was the alternative, not the selected approach. Keeping jumps retains
+its existing error-control structure at the cost of per-architecture
+recovery support.
+
+The jump must return to a live recovery point inside regex compilation,
+preserving cleanup and the failure result delivered to the caller.
+Jump-buffer layout, saved registers/stack, C declarations and build
+selection must agree for each target. This does not introduce general
+nonlocal unwinding through Rust or replace DD128's terminal-handler
+dispatch.
+
+The choice retains the no-libc runtime model. It does not select a
+particular implementation provider, adopt musl/libc startup, change the
+regex engine/dialect, or choose a compiled-regex cache or new public ABI.
+
+Recovery and reporting remain separate. Under DD132's provisional model,
+an invalid `r?` candidate must return quiet false; resource faults remain
+fatal under DD130. Keeping the jump does not authorize an unconditional
+diagnostic or process exit for every regex compilation failure. The
+current runtime's printing and caller-side abort behavior still need
+the separately owned trial's changes.
+
+This is an accepted implementation direction, not delivered AArch64
+support or authorization to begin the implementation.
+
+## Why this syscall layer
 
 The runtime uses rustix's unsupported runtime interface for `exit_group`,
 `kernel_fork` and `execve`. The fresh-resolution failure recorded on
@@ -100,12 +135,18 @@ comments and GUIDE must describe the actual layer after it is implemented;
 this recording alone changes no dependency, syscall, binary or build rule.
 
 `notes/tasks/cross-compile-and-setjmp-on-mac.md` owns delivery of the chosen
-native target set and retains the separate planning questions:
-compiler-host support and cross-compilation, migration staging, regex
-`setjmp` error recovery, and whether the existing C backend's link command
-should forbid accidental libc references. Neither the syscall-layer choice
-nor the target-set approval decides those remaining mechanisms.
+native target set and the selected regex jump support. Compiler-host
+support and cross-compilation, migration staging, and whether the existing
+C backend's link command should forbid accidental libc references remain
+separate planning questions. The syscall-layer, target-set and regex
+recovery choices do not settle those remaining mechanisms.
+
+`notes/tasks/q-glob-semantics.md` retains DD131/DD132's integrated
+separate-branch trial, including quiet invalid-candidate reporting and
+the distinction from fatal faults. It must coordinate with the jump
+support work; the accepted native recovery mechanism is not a
+trial-only choice.
 
 The research and resolution are in `notes/tasks/q-runtime-syscall-layer.md`;
-journals 572 and 612 record the layer choice and target-set confirmation,
-respectively.
+journals 572, 612 and 613 record the layer, target-set and regex recovery
+choices, respectively.

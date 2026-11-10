@@ -242,10 +242,14 @@ affected operations with them rather than duplicate runtime or backend
 error policy; the trial need not wait for unrelated file-API work.
 DD132 now supplies the provisional regex-consumer policy. This owner
 implements it together with scratch, rather than letting an `rglob`
-runtime change settle the old question accidentally. Coordinate the
-regex error-return mechanism with `cross-compile-and-setjmp-on-mac`;
-quiet invalid-candidate falsehood rules out a blanket terminal
-`regerror9` path for validation, but selects no setjmp replacement.
+runtime change settle the old question accidentally. Coordinate with
+`cross-compile-and-setjmp-on-mac`, which owns DD129's now-selected
+regex-local jump support for x86_64 and AArch64 (journal 613), not an
+ordinary-return rewrite. Quiet invalid-candidate falsehood still rules
+out a blanket terminal `regerror9` path for validation; preserving the
+jump does not supply that reporting change. Resource faults stay fatal.
+This accepted native recovery choice is independent of the provisional
+trial and is not a trial-only DD revision to withdraw.
 
 Bindings and loops have no status. Do not invent `- array ...`/
 `- f+=(...)`, extend suppression into a body/operand, change result kinds

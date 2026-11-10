@@ -1,4 +1,21 @@
-## STATUS (2026-11-10, latest) - Native Linux target set
+## STATUS (2026-11-10, latest) - Regex jump recovery on both native targets
+
+DG chose **jump support for both x86_64 and AArch64 Linux**. DD129 keeps
+the Plan 9 regex compiler's local `setjmp`/`longjmp` recovery rather than
+the proposed ordinary-return rewrite. The no-libc model stays; no
+particular jump-code provider or new public ABI was selected.
+
+The existing cross-compilation task owns the jump port and target-specific
+proof. The integrated scratch/regex trial still owes DD132's quiet false
+for invalid `r?` candidates while preserving DD130's fatal-resource
+policy. Recovery does not supply reporting or change classification.
+Regex jumps do not replace DD128's handler dispatch.
+
+Journal 613, GUIDE and the existing task records agree. Implementation
+remains queued; this recording changes no product/spec/build source and
+includes no runtime/cross-target execution, full sweep or fresh coverage.
+
+## STATUS (2026-11-10) - Native Linux target set
 
 DG confirmed **x86_64 and AArch64** as the native Linux output targets,
 including Raspberry Pi systems running 64-bit Linux. DD129 now records

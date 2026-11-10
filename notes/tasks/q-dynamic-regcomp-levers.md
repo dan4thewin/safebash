@@ -106,7 +106,7 @@ These are historical quotations, not the current reconciled contracts:
 - `dd70-error-model-contract-spec.md` is marked done, but its `A.regcomp`
   line is still unchecked.
 
-## Superseded alternatives and remaining mechanism
+## Superseded alternatives and selected mechanism
 
 F15 offered blanket abort regardless of handling, or consumer-side
 compile-error statuses with a separately chosen failed-substitution
@@ -120,9 +120,13 @@ result for a valid pattern, a different case.
 Found during the batch-531 port (step F15, finding B51). Filed under DG's
 rule for the port that questions and uncovered cases become backlog tasks.
 
-Interacts with the regex error-recovery choice in
-`cross-compile-and-setjmp-on-mac.md`. DD129 settles the syscall layer, not
-the recovery mechanism. Invalid candidates must be able to return
-quiet false from `r?`, so a blanket terminal `regerror9` is incompatible
-with the provisional model. Ordinary error returns versus an appropriate
-jump bridge remains a mechanism decision; no replacement was selected.
+DG selected **jump support for both x86_64 and AArch64 Linux** on
+2026-11-10 (DD129, journal 613). `cross-compile-and-setjmp-on-mac.md` owns
+that regex-local `setjmp`/`longjmp` support; the proposed ordinary-return
+rewrite was not selected. No particular jump-code provider was chosen.
+
+Invalid candidates must still return quiet false from `r?`, so a
+blanket terminal `regerror9` remains incompatible with the provisional
+model. The jump and the caller's reporting/result policy are separate:
+keeping the former neither supplies quiet validation nor makes resource
+faults recoverable. The integrated trial retains that implementation.

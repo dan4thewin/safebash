@@ -19,8 +19,16 @@ implementation claim about that project.
 Public rustix plus the shared Linux Rust syscall shim and the native
 architecture set are now settled. This task owns their end-to-end target
 delivery, not another vote on which native architectures to support.
+
+DG subsequently chose **"jump support for both"** native targets
+(DD129, journal 613). Retain the regex compiler's `setjmp`/`longjmp`
+recovery and provide ABI-correct x86_64/AArch64 implementations, rather
+than refactor the shared parser to ordinary error propagation. No
+particular jump-code provider or new public ABI was selected; the
+no-libc runtime and existing engine/dialect stay.
+
 Compiler-host support, the cross-compilation seam, migration staging and
-regex error recovery still require planning.
+the existing C backend's link policy still require planning.
 `bug-fresh-clone-rustix-runtime-private` owns the immediate build defect.
 
 The inventory below was recorded on 2026-10-26, following DG's original
@@ -63,9 +71,9 @@ Note the aarch64 `_start` uses `:lo12:` relocation syntax, which is
 today means aarch64 *Linux*, not macOS.
 
 Who needs it: `setjmp`/`longjmp` is the Plan 9 `regcomp` error-recovery
-path (DD#63), reached from `regcomp.c`. q-runtime-syscall-layer.md
-lists four ways to drop or replace it; (A), plain error returns, removes
-`setjmp` entirely.
+path, reached from `regcomp.c`. `q-runtime-syscall-layer.md` preserves
+the historical alternatives. DD129 now selects jump support for both
+native architectures; the ordinary-return rewrite was not selected.
 
 ## 2. Native cross-compilation needs an explicit target seam
 
@@ -94,27 +102,44 @@ by DD129's target split.
    cross combinations, target/runtime/linker selection and the delivery
    sequence. Do not equate supporting an output target with porting the
    compiler to every host, or remove the native ARM goal.
-2. **Regex error recovery.** Replace `setjmp` with ordinary error returns,
-   or provide the required architecture-specific jump implementation?
-   DD132's provisional `r?` contract requires invalid candidates to return
-   quiet false, so making every runtime regex compiler error terminate is
-   no longer a compatible option for that trial. Resource faults remain
-   fatal. `q-dynamic-regcomp-levers` records the policy answer;
-   `q-glob-semantics` owns implementation/evaluation and the DD inventory.
-   The earlier mechanism recommendation was ordinary returns; DG has
-   not selected that implementation or a replacement for setjmp.
-3. **Migration staging.** Land the three private-rustix replacements first,
+2. **Migration staging.** Land the three private-rustix replacements first,
    or migrate the remaining raw syscall sites in the same unit? DD129's
    public-API/shim policy applies to all of them either way; staging is not
    permission to leave an unaccounted third route.
-4. **Existing C backend's link policy.** Should its link use `-nostdlib` so
+3. **Existing C backend's link policy.** Should its link use `-nostdlib` so
    an accidental libc reference fails like native? Is `-lpthread` needed?
    This concerns the existing `--emit-c` differential backend, not the
    separately developed C++ transpiler.
 
-The target-set approval does not select those remaining mechanisms or
-authorize implementation. Journal 612 records the decision and the
-source-only readiness check.
+The layer, target-set and regex-recovery choices do not settle those
+remaining planning questions or authorize implementation.
+
+## Required regex jump support
+
+Select the appropriate implementation when building for each native
+target. The jump buffer, saved registers/stack, C declarations and
+exported symbols must agree with the actual ABI and compiler assumptions.
+Keep recovery inside the live regex compiler invocation; this is not
+general unwinding through Rust or a new EXIT/ERR transfer mechanism.
+
+Prove ordinary and jumped returns on each target, including required
+state preservation, partial-program cleanup and a later successful
+compilation after a failed one. Preserve compile-time pattern diagnostics
+and the shared engine's accepted language. An assembled object alone
+cannot establish that recovery works; use target execution and negative
+controls.
+
+Coordinate reporting with `q-glob-semantics`, which owns the integrated
+DD131/DD132 trial and its DD revision inventory. Invalid `r?` candidates
+must return quiet false, while resource faults remain fatal. The runtime
+currently prints in `regerror9` and aborts in its regex callers: retaining
+the jump does not implement that reporting split or permit a blanket
+terminal path for validation. `q-dynamic-regcomp-levers` records the
+policy answer. Do not select a regex cache or change result kinds as a
+side effect of the jump port.
+
+Journal 613 records the selection and narrow current-source confirmation.
+No implementation or cross-target execution accompanied the ruling.
 
 ## Gate
 

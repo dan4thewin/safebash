@@ -6,7 +6,7 @@ depends: []
 gates:
   - "DG's syscall-layer choice and target split are recorded in DD129"
   - "bug-fresh-clone-rustix-runtime-private retains the implementation and build/spec gates; it is not marked fixed by this ruling"
-  - "the chosen native target set and remaining host/cross-compilation, migration, setjmp and C-link-policy work have a home in cross-compile-and-setjmp-on-mac.md"
+  - "the chosen native targets and regex jump support, plus remaining host/cross-compilation, migration and C-link-policy work, have a home in cross-compile-and-setjmp-on-mac.md"
 
 ## Decisions, 2026-11-05 and 2026-11-10
 
@@ -22,11 +22,17 @@ Linux** as the native output targets (DD129, journal 612). This is a
 support commitment, not a claim that the current compiler/runtime works
 on both, or that the separate C++ path has verified platform support.
 
+Later on 2026-11-10 DG selected **jump support for both** native targets:
+retain regex-local `setjmp`/`longjmp`, not the proposed ordinary-return
+rewrite (DD129, journal 613). The implementation provider remains
+unselected; this does not adopt musl/libc startup or alter the no-libc
+runtime model.
+
 This closes the architecture question, **not the implementation**.
 `bug-fresh-clone-rustix-runtime-private` remains open. Its build/spec and
-runtime-documentation gates stay with the repair. Target delivery and the
-remaining host/cross-compilation, migration, regex error-recovery and
-C-link-policy work stay in `cross-compile-and-setjmp-on-mac`.
+runtime-documentation gates stay with the repair. Target delivery,
+selected regex jump support and the remaining host/cross-compilation,
+migration and C-link-policy work stay in `cross-compile-and-setjmp-on-mac`.
 
 The research below was captured on 2026-10-26 during the batch-531 port,
 when DG asked to park the discussion and continue the port. Measurements
@@ -153,14 +159,16 @@ rt_sigaction and getcwd.
 - **R-pin**: `rustix = "=1.1.4"`. A dead end: frozen on one release, and
   the module stays unsupported.
 - **R-origin**: use origin. Broken by the same rename (above).
-- **Static musl**: reverses the no-libc property, which no DD decides.
+- **Static musl**: reverses the no-libc property retained by DD129.
   musl's fork, errno and sigaction depend on musl's own startup (its
   `__pthread_self()` and `libc.*` state), so it is all or nothing, and our
   `_start` goes. DG pointed out that any machine code gcc can compile can
   be embedded in our runtime library (build.rs already compiles csrc/ into
   libsash_rt.a). That removes the "libc.a at every sash link" cost, but not
-  the all-or-nothing one. musl drops out. Its standalone setjmp and
-  restorer files are not needed either (see setjmp and signal return).
+  the all-or-nothing one. Whole musl startup/runtime was not selected.
+  Standalone jump routines are a separate possible source for the
+  selected recovery mechanism, not adoption of musl's runtime; no
+  particular jump-code provider has been chosen.
 - **(N) vendored nolibc for the five** (the earlier recommendation, not
   selected). The kernel's
   tools/include/nolibc, as read 2026-10-26: LGPL-2.1 OR MIT, about 8900
@@ -188,30 +196,37 @@ its macOS backend no longer applies: the C++ transpiler owns that target.
 A nolibc-only migration is now possible, but DG selected the smaller
 public-rustix/Rust-shim boundary instead.
 
-## setjmp
+## setjmp: jump support selected
 
-This is a separate, unruled error-recovery choice. DD129 does not select an
-option below; it remains in `cross-compile-and-setjmp-on-mac`.
+DG chose **"jump support for both"** on 2026-11-10: keep the regex
+compiler's jump-based recovery and provide it for x86_64 and AArch64
+Linux (DD129, journal 613). `cross-compile-and-setjmp-on-mac` owns the
+implementation and target-specific proof; the exact provider is not
+selected. Quiet invalid-candidate reporting remains DD132's requirement,
+not a property the jump supplies.
 
-One use: Pike's regcomp error exit. `rcerror` longjmps
+Historical inventory, 2026-10-26: Pike's regcomp error exit. `rcerror` longjmps
 (sash-rt/csrc/regcomp.c:115) to `regcomp1`'s setjmp (693), which frees and
 returns NULL. regcomp.c is built four times: the runtime, the compiler
 (sash/build.rs, literal-pattern validation), sash-regex and test_regex
 (mkfile). Only the runtime build lacks a libc setjmp, and its
 csrc/setjmp.S is x86_64 only. In the runtime, `regerror9`
 (lib.rs:2382-2402) prints and returns, and every `regcomp9` caller exits 2
-on NULL. So at run time the jump fires only for a bad interpolated
-pattern.
+on NULL. Journal 613 records a narrow current-source confirmation, not
+a new full inventory or an AArch64 build/run.
 
-Options:
+Historical alternatives and their disposition:
 
-- **(A)** plain error returns in regcomp.c, no setjmp anywhere (my
-  recommendation). 10 of the 18 `rcerror` sites already return or break
-  (72, 99, 244, 532, 565, 572, 577, 598, 612, 732). 8 carry on (128, 157,
-  160, 182, 191, 397, 431, 793).
-- **(B)** the runtime's `regerror9` exits instead of returning. Needs a
-  build-flag fork, and forecloses q-dynamic-regcomp-levers.
-- **(C)** musl's per-architecture setjmp.
+- **(A)** plain error returns in regcomp.c, no setjmp anywhere (the AI's
+  recommendation, **not selected**). 10 of the 18 `rcerror` sites already
+  return or break (72, 99, 244, 532, 565, 572, 577, 598, 612, 732).
+  8 carry on (128, 157, 160, 182, 191, 397, 431, 793).
+- **(B)** the runtime's `regerror9` exits instead of returning. Not
+  selected; blanket termination is incompatible with DD132's quiet
+  false for invalid `r?` candidates. Resource faults remain fatal.
+- **(C)** musl's per-architecture setjmp: one possible jump provider.
+  DG selected support for both native architectures, not this particular
+  implementation.
 - **(D)** `__builtin_setjmp`. Ruled out: clang 20 rejects it on aarch64,
   and the GCC manual steers user code to libc.
 
@@ -245,9 +260,9 @@ repair. DD129's policy also applies to the remaining hand-written syscall
 sites; the migration must account for them rather than preserve a third
 unexamined route.
 
-The native architecture set is settled; compiler-host support,
-cross-compilation delivery, migration staging, regex setjmp choice and the
-existing C backend's link policy remain planning work in
-`cross-compile-and-setjmp-on-mac.md`. Those mechanisms were not selected
-by closing the layer or target-set questions. No implementation was
-performed when either ruling was recorded.
+The native architecture set and regex jump recovery are settled.
+`cross-compile-and-setjmp-on-mac.md` owns their delivery, with compiler-host
+support, cross-compilation delivery, migration staging and the existing
+C backend's link policy still requiring planning. Those remaining choices
+were not made by selecting the layer, targets or regex recovery.
+No implementation was performed when these rulings were recorded.

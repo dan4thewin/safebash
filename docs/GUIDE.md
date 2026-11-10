@@ -876,6 +876,12 @@ startup/regex portability and target selection still need delivery and
 target-specific execution evidence. Compiler-host support and the
 cross-compilation interface remain separate planning work.
 
+Regex compilation retains `setjmp`/`longjmp` recovery, with native jump
+support required for both architectures (DD129). The AArch64 work remains
+pending. Jumps are local to regex compilation, not a replacement for
+DD128's handler dispatch. DD132's quiet invalid-candidate handling for
+`r?` is a separate reporting requirement, not supplied by the jump itself.
+
 ### Entry point
 
 `_start` — inline assembly for x86_64 and aarch64. Sets up argc,
