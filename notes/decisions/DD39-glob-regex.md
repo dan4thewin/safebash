@@ -64,8 +64,12 @@ repetition, `\d`/`\w` shortcuts, or lookahead/lookbehind.
 
 Literal patterns (no variable expansions) are validated at compile time
 via `regcomp9` — unsupported syntax is a compile error, not a silent
-no-match. Validated literal patterns are precompiled once at runtime
-init and reused at every match site.
+no-match. The original design also called for validated literals to be
+precompiled once at runtime init and reused. The earlier claim that this
+was delivered is not supported by the current match/substitution runtime
+entrypoints, which call `regcomp9` on use (source inspection, 2026-11-10).
+`dd39-precompile-literal-regex` is reopened to reconcile that record and
+the outstanding work; it is separate from the diagnostic goal below.
 
 In the shipped implementation, dynamic patterns (containing `$var`) are
 compiled at runtime; `regcomp9` failure prints an error to stderr.
@@ -219,7 +223,22 @@ the runtime compiles:
 A `$` in a static pattern is an anchor (DD#63), so an RE containing one is
 checked like any other: `x =~ s/(c$/Z/` is SB5023.
 
-One constructor, `validate.rs::check_static_regex`, raises it for all three
+**Diagnostic-quality objective (DG, 2026-11-10; implementation pending).**
+SB5023 must clearly identify the offending static regex, including when
+one test, attest predicate or substitution chain contains several
+patterns. The approach is deferred until the task is undertaken:
+per-pattern source positions, explicit pattern text and a catalogue of
+unique regexes are candidates to evaluate, not selected mechanisms.
+Neither exact-character locations nor diagnostic grouping is prescribed.
+`q-sb5023-names-the-test-not-the-pattern` owns the work.
+
+The diagnostic code, regex dialect and validation scope remain unchanged.
+DD132's provisional quiet-false contract for invalid `r?` candidates stays;
+better diagnostics do not make those candidates static-regex errors or
+select runtime caching.
+
+**Current implementation baseline, not the new diagnostic design:**
+one constructor, `validate.rs::check_static_regex`, raises it for all three
 callers (the `[[ ]]` walk, the builtin operand, the dispatch arm). The message
 is `invalid regex in substitution: …` for `sub`/`gsub` and
 `invalid regex pattern: …` otherwise. An operand or a dispatch arm reports its

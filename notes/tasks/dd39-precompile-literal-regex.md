@@ -1,10 +1,33 @@
 title: Precompile literal regex patterns at runtime init
-status: done
+status: open
+priority: P3
+kind: work
 depends:
   - dd39-compiletime-regex-validation
-gates: [39.9]
+gates:
+  - "Verify that the implementation actually reuses compiled literal patterns; ordinary match correctness alone does not establish reuse"
   - tests
   - commit
+
+## Status correction (2026-11-10)
+
+The housekeeping commit `c958d3d9` marked this task done. Current source
+inspection at `7a378603` does not support that completion claim: native
+and C emission call the pattern-string runtime interfaces, and the five
+match/substitution entrypoints in `sash-rt/src/lib.rs` call `regcomp9`
+on use (lines 2516, 2552, 2598, 2670 and 2809).
+
+Reopened to reconcile DD39's original requirement with the implementation.
+Recheck the original 39.9 gate when undertaking this task. No new runtime
+measurement or cache design is claimed. DG's accepted
+SB5023 diagnostic improvement is separately owned by
+`q-sb5023-names-the-test-not-the-pattern`; its possible diagnostic catalogue
+does not select this runtime mechanism or depend on delivering it.
+
+## Original implementation sketch
+
+Retained as the earlier proposal, not a new implementation selection.
+Revisit the approach when undertaking the task.
 
 For literal regex patterns, emit one `regcomp9` call per unique
 pattern at binary startup (or lazily on first use). Store the

@@ -1,4 +1,24 @@
-## STATUS (2026-11-10, latest) - Track both Cargo lockfiles
+## STATUS (2026-11-10, latest) - Better regex diagnostics; approach deferred
+
+DG accepted clearer identification of offending static regexes in SB5023,
+including multi-pattern constructs. Implementation specifics are deferred
+until the task is undertaken: source positions, pattern text and a
+catalogue of unique regexes remain alternatives, not selected mechanisms.
+
+DD39 records the objective while retaining current positions as the
+implementation baseline. The existing P3 diagnostic task is now open work,
+not an unanswered policy question. Regex validation scope and DD132's
+provisional quiet-false contract for invalid `r?` candidates stay unchanged.
+
+The older literal-precompilation task is separately reopened: its done
+status did not match the inspected runtime calls to `regcomp9` on use.
+No runtime cache design or dependency on that work was selected.
+
+Journal 616 records the discussion. No product/spec/build source changed;
+implementation remains queued, with no new behavior probe, full sweep
+or fresh coverage.
+
+## STATUS (2026-11-10) - Track both Cargo lockfiles
 
 DG chose **tracked root and runtime lockfiles**, with `--locked` for
 normal builds/tests and deliberate reviewed dependency updates.
