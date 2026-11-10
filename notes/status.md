@@ -1,4 +1,26 @@
-## STATUS (2026-11-10, latest) - Regex jump recovery on both native targets
+## STATUS (2026-11-10, latest) - Both native Linux hosts and cross directions
+
+DG selected **x86_64 Linux and AArch64 Linux compiler hosts, each able
+to produce either Linux target**. DD129 now requires same-architecture
+compilation on both hosts and cross-compilation in both directions.
+This is a support commitment, not delivered AArch64 or cross support.
+
+The existing cross-compilation task owns the full matrix and its proof.
+Target-aware Cranelift selection, matching runtime archives and linker
+selection remain implementation work; supplying a C toolchain does not
+provide those pieces. The compiler's regex validator and a generated
+program's runtime must each match the architecture where they execute.
+
+Journal 614, GUIDE and the existing syscall/build records agree. CLI
+spelling, target defaults, distribution/packaging and delivery order
+remain unselected. The P1 private-rustix repair stays open, and the
+separate C++ target route is unchanged.
+
+Implementation remains queued. No product/spec/build source changed;
+no cross-target execution, full sweep or fresh coverage accompanied this
+recording.
+
+## STATUS (2026-11-10) - Regex jump recovery on both native targets
 
 DG chose **jump support for both x86_64 and AArch64 Linux**. DD129 keeps
 the Plan 9 regex compiler's local `setjmp`/`longjmp` recovery rather than

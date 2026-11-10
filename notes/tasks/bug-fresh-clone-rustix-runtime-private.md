@@ -64,12 +64,16 @@ make x86-specific assumptions.
 
 `cross-compile-and-setjmp-on-mac.md` owns end-to-end delivery of that
 target set and the selected x86_64/AArch64 regex jump support (DD129,
-journal 613), plus remaining compiler-host/cross-compilation and
-C-link-policy planning. The jump port is not a new syscall-layer choice.
-A fresh x86_64 build alone does not prove AArch64 runtime or
-cross-compilation support. macOS targeting remains assigned to the
-separate C++ transpiler, not a native `sash-rt` port; that assignment is
-not evidence of its current platform readiness.
+journal 613). DG also selected both Linux architectures as compiler
+hosts, each producing either target (journal 614). The same owner retains
+that matrix's delivery and the remaining cross-compilation interface/
+artifact/tool selection and C-link-policy planning. The jump port and
+host matrix are not new syscall-layer choices.
+
+A fresh x86_64 build alone does not prove AArch64 runtime/compiler-host
+support or either cross direction. macOS targeting remains assigned to
+the separate C++ transpiler, not a native `sash-rt` port; that assignment
+is not evidence of its current platform readiness.
 
 `q-runtime-syscall-layer.md` preserves the research and resolution. A
 successful local build using the old lockfile is still not this task's

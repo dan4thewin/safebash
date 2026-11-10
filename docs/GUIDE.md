@@ -870,11 +870,14 @@ current platform readiness, and it does not retire the existing
 `--emit-c` differential backend.
 
 The accepted native Linux output targets are **x86_64 and AArch64**
-(including 64-bit Raspberry Pi OS). This commits the project to both;
-it does not claim that AArch64 works end to end today. Runtime syscall/
-startup/regex portability and target selection still need delivery and
-target-specific execution evidence. Compiler-host support and the
-cross-compilation interface remain separate planning work.
+(including 64-bit Raspberry Pi OS). Both are also accepted compiler
+hosts: **each must produce either target**, including cross-compilation
+in both directions. This is a support commitment, not a claim that
+AArch64 or cross-compilation works end to end today. Runtime syscall/
+startup/regex portability, target-aware code generation and runtime/linker
+selection still need delivery and host/target-specific execution evidence.
+CLI details and toolchain/runtime distribution remain planning work.
+Other host operating systems are outside this native commitment.
 
 Regex compilation retains `setjmp`/`longjmp` recovery, with native jump
 support required for both architectures (DD129). The AArch64 work remains

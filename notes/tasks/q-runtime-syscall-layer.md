@@ -6,7 +6,7 @@ depends: []
 gates:
   - "DG's syscall-layer choice and target split are recorded in DD129"
   - "bug-fresh-clone-rustix-runtime-private retains the implementation and build/spec gates; it is not marked fixed by this ruling"
-  - "the chosen native targets and regex jump support, plus remaining host/cross-compilation, migration and C-link-policy work, have a home in cross-compile-and-setjmp-on-mac.md"
+  - "the chosen native host/target matrix and regex jump support, plus remaining delivery, migration and C-link-policy work, have a home in cross-compile-and-setjmp-on-mac.md"
 
 ## Decisions, 2026-11-05 and 2026-11-10
 
@@ -28,11 +28,18 @@ rewrite (DD129, journal 613). The implementation provider remains
 unselected; this does not adopt musl/libc startup or alter the no-libc
 runtime model.
 
+DG then selected **both Linux architectures as compiler hosts, each
+producing either target**, including both cross-compilation directions
+(DD129, journal 614). This is a support commitment, not delivered
+AArch64 compiler-host or cross-compilation capability. Other host
+operating systems are outside the native commitment.
+
 This closes the architecture question, **not the implementation**.
 `bug-fresh-clone-rustix-runtime-private` remains open. Its build/spec and
-runtime-documentation gates stay with the repair. Target delivery,
-selected regex jump support and the remaining host/cross-compilation,
-migration and C-link-policy work stay in `cross-compile-and-setjmp-on-mac`.
+runtime-documentation gates stay with the repair. Host/target-matrix
+delivery, selected regex jump support and the remaining interface/tool/
+artifact, migration and C-link-policy work stay in
+`cross-compile-and-setjmp-on-mac`.
 
 The research below was captured on 2026-10-26 during the batch-531 port,
 when DG asked to park the discussion and continue the port. Measurements
@@ -260,9 +267,10 @@ repair. DD129's policy also applies to the remaining hand-written syscall
 sites; the migration must account for them rather than preserve a third
 unexamined route.
 
-The native architecture set and regex jump recovery are settled.
-`cross-compile-and-setjmp-on-mac.md` owns their delivery, with compiler-host
-support, cross-compilation delivery, migration staging and the existing
-C backend's link policy still requiring planning. Those remaining choices
-were not made by selecting the layer, targets or regex recovery.
+The native host/target matrix and regex jump recovery are settled.
+`cross-compile-and-setjmp-on-mac.md` owns their delivery. Cross-compilation
+interface and artifact/tool selection, migration staging and the existing
+C backend's link policy still require planning. No flag, target default,
+toolchain/runtime distribution mechanism or delivery order was selected
+by the layer, host/target-matrix or regex-recovery rulings.
 No implementation was performed when these rulings were recorded.

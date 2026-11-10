@@ -66,12 +66,44 @@ program evidence, not just a successful compiler build. The current runtime
 still has x86-only syscall and regex jump assembly, and native codegen
 selects the host ISA.
 
-Compiler-host support, the cross-compilation interface, target/runtime/linker
-selection and delivery order remain separate planning work. The native ARM
-cross-compilation goal remains; this ruling does not promise every
-host/target combination or select new flag spellings. The existing
-`--emit-c` differential backend is not the separate C++ transpiler and is
-not retired by this decision.
+The existing `--emit-c` differential backend is not the separate C++
+transpiler and is not retired by this decision.
+
+## Native compiler hosts and cross-compilation
+
+DG confirmed the compiler-host and cross-compilation scope on 2026-11-10
+(journal 614):
+
+> yes to x86-64 and AArch64 and each to the other
+
+Support **x86_64 Linux and AArch64 Linux as compiler hosts**, each able
+to produce either native Linux output target. The required matrix is:
+
+| Compiler host | x86_64 Linux output | AArch64 Linux output |
+|---|---|---|
+| x86_64 Linux | same-architecture compilation | cross-compilation |
+| AArch64 Linux | cross-compilation | same-architecture compilation |
+
+This includes compiling directly on a 64-bit Linux Pi/ARM server and
+cross-compiling in both directions. There is no x86-only compiler-host
+restriction or one-way cross-compilation restriction. Other host operating
+systems and architectures are outside this commitment; the C++ target
+route does not by itself establish native compiler-host support.
+
+The compiler must select the output ISA, compatible ABI/settings, runtime
+archive and linker independently of its own architecture. The regex
+validator linked into the compiler is built for the compiler's own
+architecture; the runtime linked into generated programs is built for
+their target. Existing `--sysroot` command resolution does not select
+the machine-code target.
+
+This is a support commitment, not delivered cross-compilation or AArch64
+compiler-host support. Providing C compilers/linkers does not supply
+Cranelift target selection or a matching Rust/C runtime archive. The
+discussion considered user-provided toolchains, but this ruling selects
+no toolchain-distribution or runtime-packaging mechanism, new flag
+spelling, target default or delivery order. Those remain implementation
+planning, not a reason to reopen the selected matrix.
 
 ## Native regex recovery
 
@@ -135,11 +167,12 @@ comments and GUIDE must describe the actual layer after it is implemented;
 this recording alone changes no dependency, syscall, binary or build rule.
 
 `notes/tasks/cross-compile-and-setjmp-on-mac.md` owns delivery of the chosen
-native target set and the selected regex jump support. Compiler-host
-support and cross-compilation, migration staging, and whether the existing
-C backend's link command should forbid accidental libc references remain
-separate planning questions. The syscall-layer, target-set and regex
-recovery choices do not settle those remaining mechanisms.
+native host/target matrix and the selected regex jump support. The
+cross-compilation interface and artifact/tool selection, migration staging,
+and whether the existing C backend's link command should forbid accidental
+libc references remain separate planning work. The syscall-layer,
+host/target-matrix and regex-recovery choices do not settle those remaining
+mechanisms or authorize implementation.
 
 `notes/tasks/q-glob-semantics.md` retains DD131/DD132's integrated
 separate-branch trial, including quiet invalid-candidate reporting and
@@ -148,5 +181,5 @@ support work; the accepted native recovery mechanism is not a
 trial-only choice.
 
 The research and resolution are in `notes/tasks/q-runtime-syscall-layer.md`;
-journals 572, 612 and 613 record the layer, target-set and regex recovery
-choices, respectively.
+journals 572, 612, 613 and 614 record the layer, output targets, regex
+recovery and compiler-host/cross-compilation matrix, respectively.

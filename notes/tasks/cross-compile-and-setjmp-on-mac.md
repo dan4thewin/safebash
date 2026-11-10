@@ -27,9 +27,18 @@ than refactor the shared parser to ordinary error propagation. No
 particular jump-code provider or new public ABI was selected; the
 no-libc runtime and existing engine/dialect stay.
 
-Compiler-host support, the cross-compilation seam, migration staging and
-the existing C backend's link policy still require planning.
-`bug-fresh-clone-rustix-runtime-private` owns the immediate build defect.
+DG then confirmed **"x86-64 and AArch64 and each to the other"**
+(DD129, journal 614). Both Linux architectures are compiler hosts, and
+each must emit both Linux targets: same-architecture compilation on each
+host plus cross-compilation in both directions. This is no longer an
+unanswered host/matrix choice, nor a claim of working support today.
+Other host operating systems and architectures are outside this commitment.
+
+The cross-compilation interface and artifact/tool selection, migration
+staging and the existing C backend's link policy still require planning.
+No new CLI spelling, target default, toolchain-distribution mechanism or
+delivery order was selected. `bug-fresh-clone-rustix-runtime-private`
+owns the immediate build defect.
 
 The inventory below was recorded on 2026-10-26, following DG's original
 2026-09-16 macOS build report. Its line numbers and counts are historical;
@@ -88,20 +97,46 @@ produce a working cross compile:
 | `codegen/entry.rs` | `embed_sash_source` writes a `.sash_source` **ELF section**. |
 
 That inventory describes host-ISA emission and static ELF linking, not a
-complete cross-compilation interface. Native ARM cross-compilation remains
-the goal; x86_64-Linux to AArch64-Linux was the proposed first direction,
-not a completed capability or a decision on the full host/target matrix.
-The existence of both `_start`s alone does not establish support.
-The Mach-O-specific work in the table is historical research, not required
-by DD129's target split.
+complete cross-compilation interface. The initial x86_64-to-AArch64
+proposal does not limit the now-selected matrix: DD129 requires both
+Linux compiler hosts and both cross directions. The existence of both
+`_start`s alone does not establish support. The Mach-O-specific work in
+the table is historical research, not required by DD129's target split.
+
+## Required cross-target plumbing
+
+Source inspection at `762687bb` confirmed the remaining selection seams:
+
+- `sash/src/codegen/entry.rs:110-119` selects the host ISA through
+  `cranelift_native::builder`; the locked/offline Cargo feature tree
+  shows `cranelift-codegen` using its default `host-arch` feature.
+  Enable both required backends and select the requested output target
+  and compatible ABI/settings rather than copying the compiler host.
+- `sash/src/lib.rs:1030-1056` hardcodes `ld` and the sibling
+  `sash-rt/target/release/libsash_rt.a`. Select a target-appropriate
+  linker and runtime archive. That archive contains Rust plus the C
+  regex engine/jump assembly and must be built for the output target.
+- `sash/build.rs:19-27` builds the compiler's regex validator separately.
+  Keep that library built for the compiler's own architecture, distinct
+  from the generated program's target runtime.
+- `sash/src/resolve.rs:431-458` already honors `--sysroot` for external
+  command resolution. Preserve target-filesystem resolution; this flag
+  is not currently a machine-code target selector.
+
+User-provided C compilers/linkers were the premise of the discussion,
+not a selection of distribution policy. They do not replace Cranelift
+target selection or the target runtime build. A target runtime may be
+built separately or supplied prebuilt; no packaging choice was made.
+The matrix calls for shared target-selection machinery, not a separate
+implementation for each direction. No cross build or execution
+accompanied this inspection.
 
 ## Remaining planning choices
 
-1. **Compiler hosts and cross-compilation delivery.** The output targets
-   are x86_64 and AArch64 Linux. Select the supported compiler hosts and
-   cross combinations, target/runtime/linker selection and the delivery
-   sequence. Do not equate supporting an output target with porting the
-   compiler to every host, or remove the native ARM goal.
+1. **Cross-compilation interface and delivery.** The Linux host/target
+   matrix is settled. Plan target/runtime/linker selection, artifact
+   provision and the delivery sequence without narrowing that matrix.
+   No particular flag, default target or packaging mechanism is selected.
 2. **Migration staging.** Land the three private-rustix replacements first,
    or migrate the remaining raw syscall sites in the same unit? DD129's
    public-API/shim policy applies to all of them either way; staging is not
@@ -111,8 +146,8 @@ by DD129's target split.
    This concerns the existing `--emit-c` differential backend, not the
    separately developed C++ transpiler.
 
-The layer, target-set and regex-recovery choices do not settle those
-remaining planning questions or authorize implementation.
+The layer, host/target-matrix and regex-recovery choices do not settle
+those remaining mechanisms or authorize implementation.
 
 ## Required regex jump support
 
@@ -144,12 +179,18 @@ No implementation or cross-target execution accompanied the ruling.
 ## Gate
 
 Any change here must keep `mk test` and the spec sweep green on x86_64
-Linux. End-to-end native-target completion also needs the real CLI and
-generated programs exercised for AArch64, with runtime identity and the
-execution environment recorded; merely compiling an object or retaining
-an `_start` arm is not evidence that it works. Preserve native/C behavior
-on the supported targets, and distinguish implemented target coverage
-from remaining delivery work in every handoff.
+Linux. End-to-end matrix completion requires the real compiler CLI
+executing on each compiler architecture and producing programs for both
+targets from each host. Verify the emitted architecture and execute the
+generated programs in the appropriate target environment, recording
+compiler/runtime identities and the execution environment. Merely
+cross-building the compiler, assembling an object or retaining an
+`_start` arm does not prove the full matrix.
+
+Preserve native/C behavior on both targets and the language/runtime
+contracts in all four combinations. Distinguish implemented coverage
+from remaining delivery work in every handoff. Journal 614 records the
+matrix ruling, not completion of these gates.
 
 `sash-rt` is a **separate cargo workspace** — build it with
 `(cd sash-rt && cargo build --release)`, not `cargo build -p sash-rt`.
