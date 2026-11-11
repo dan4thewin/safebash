@@ -1,7 +1,7 @@
-//! sash-rt: pure Rust runtime for compiled safebash binaries.
+//! Runtime for compiled safebash binaries, without std or libc.
 //!
-//! No C, no std, no libc. Uses `rustix` for all syscalls.
-//! The only `asm!` is _start (~8 instructions per arch).
+//! Uses public `rustix` APIs and the shared Linux syscall shim, plus vendored
+//! C regex/allocator code and architecture-specific startup/jump assembly.
 //!
 //! DD#34: unsafe is confined to boundaries (syscalls, extern "C" entry points,
 //! sash_alloc, _start). All pure data manipulation lives in safe inner functions.
@@ -16,6 +16,7 @@ use rustix::fs::{memfd_create, MemfdFlags};
 
 #[cfg(feature = "coverage")]
 mod coverage;
+mod linux_syscalls;
 
 // ═══════════════════════════════════════════════════════════════
 // Libc stubs — required in no_std without libc.
@@ -207,25 +208,11 @@ pub extern "C" fn sash_scope_restore() {
     }
 }
 
-/// `fcntl(fd, F_DUPFD_CLOEXEC, min)`. Raw syscall, matching [`sash_dup`] —
-/// rustix is used where it reads well, but the fd-plumbing helpers in this
-/// file are deliberately syscall-level.
+/// `fcntl(fd, F_DUPFD_CLOEXEC, min)`, retaining negative errno for fd bookkeeping.
 fn sash_fcntl_dupfd_cloexec(fd: i64, min: i64) -> i64 {
-    const SYS_FCNTL: i64 = 72;
-    const F_DUPFD_CLOEXEC: i64 = 1030;
-    unsafe {
-        let result: i64;
-        core::arch::asm!(
-            "syscall",
-            in("rax") SYS_FCNTL,
-            in("rdi") fd,
-            in("rsi") F_DUPFD_CLOEXEC,
-            in("rdx") min,
-            lateout("rax") result,
-            lateout("rcx") _,
-            lateout("r11") _,
-        );
-        result
+    match linux_syscalls::fcntl_dupfd_cloexec(fd as i32, min as i32) {
+        Ok(fd) => fd as i64,
+        Err(error) => -(error.raw_os_error() as i64),
     }
 }
 
@@ -443,7 +430,7 @@ pub extern "C" fn sash_shutdown(status: i64) -> ! {
     sash_reader_cleanup();
     #[cfg(feature = "coverage")]
     coverage::dump();
-    rustix::runtime::exit_group(status as i32)
+    linux_syscalls::exit_group(status as i32)
 }
 
 #[no_mangle]
@@ -705,13 +692,13 @@ fn discard_inherited_readers() {
 /// Fork. Returns child pid in parent, 0 in child, -1 on error.
 #[no_mangle]
 pub extern "C" fn sash_fork() -> i64 {
-    match unsafe { rustix::runtime::kernel_fork() } {
-        Ok(rustix::runtime::Fork::Child(_)) => {
+    match unsafe { linux_syscalls::fork() } {
+        Ok(0) => {
             TERMINAL_STATE.store(TERMINAL_CHILD, core::sync::atomic::Ordering::Relaxed);
             discard_inherited_readers();
             0
         }
-        Ok(rustix::runtime::Fork::ParentOf(pid)) => pid.as_raw_nonzero().get() as i64,
+        Ok(pid) => pid as i64,
         Err(e) => {
             set_last_errno(e);
             -1
@@ -730,7 +717,7 @@ pub extern "C" fn sash_exec(argv: *const *const u8, envp: *const *const u8) -> !
 
         let cmd_bytes = cstr_bytes(cmd);
         let has_slash = cmd_bytes.iter().any(|&b| b == b'/');
-        let cmd_cstr = core::ffi::CStr::from_ptr(cmd as *const i8);
+        let cmd_cstr = core::ffi::CStr::from_ptr(cmd.cast());
 
         if !has_slash {
             // DD#23: sash never walks PATH. The compiler resolves all
@@ -746,7 +733,7 @@ pub extern "C" fn sash_exec(argv: *const *const u8, envp: *const *const u8) -> !
         // <errno>` at the point of failure (covers fg via sash_run, bg, and
         // pipeline stages), then exit 127. The parent's `command failed
         // (exit N)` is separate and fires only when the failure is uncaught.
-        let e = rustix::runtime::execve(cmd_cstr, argv, envp);
+        let e = linux_syscalls::execve(cmd_cstr, argv, envp);
         set_last_errno(e);
         sash_emsg(cmd, cmd_bytes.len() as i64, core::ptr::null(), 0);
         sash_abort(127);
@@ -895,22 +882,11 @@ pub extern "C" fn sash_redirect(fd: i64, path: *const u8, flags: i64) -> i64 {
 /// dup2(src_fd, dst_fd).
 #[no_mangle]
 pub extern "C" fn sash_dup2(src_fd: i64, dst_fd: i64) -> i64 {
-    unsafe {
-        let result: i64;
-        core::arch::asm!(
-            "syscall",
-            in("rax") 33_i64,
-            in("rdi") src_fd,
-            in("rsi") dst_fd,
-            lateout("rax") result,
-            lateout("rcx") _,
-            lateout("r11") _,
-        );
-        if result < 0 {
-            set_last_errno_raw(-result);
+    match unsafe { linux_syscalls::dup2(src_fd as i32, dst_fd as i32) } {
+        Ok(()) => 0,
+        Err(error) => {
+            set_last_errno(error);
             -1
-        } else {
-            0
         }
     }
 }
@@ -950,23 +926,11 @@ pub extern "C" fn sash_pipe(out_ptr: *mut i64) -> i64 {
 /// Close a file descriptor.
 #[no_mangle]
 pub extern "C" fn sash_close(fd: i64) -> i64 {
-    unsafe {
-        let result: i64;
-        core::arch::asm!(
-            "syscall",
-            in("rax") 3_i64,
-            in("rdi") fd,
-            lateout("rax") result,
-            lateout("rcx") _,
-            lateout("r11") _,
-        );
-        if result < 0 {
-            // Raw syscall: the negative return is `-errno`. Record it so a
-            // DD#55 `close` abort renders the real reason (e.g. EBADF).
-            set_last_errno_raw(-result);
+    match unsafe { linux_syscalls::close(fd as i32) } {
+        Ok(()) => 0,
+        Err(error) => {
+            set_last_errno(error);
             -1
-        } else {
-            0
         }
     }
 }
@@ -3370,28 +3334,17 @@ pub extern "C" fn sash_chdir(path_ptr: *const u8, path_len: i64) -> i64 {
 pub extern "C" fn sash_getcwd(out_len: *mut i64) -> *const u8 {
     static mut CWD_BUF: [u8; 4096] = [0u8; 4096];
     unsafe {
-        // Use raw syscall since rustix::process::getcwd wants a Vec
-        let ret: i64;
-        core::arch::asm!(
-            "syscall",
-            in("rax") 79_i64,  // __NR_getcwd
-            in("rdi") CWD_BUF.as_mut_ptr(),
-            in("rsi") 4096_i64,
-            lateout("rax") ret,
-            lateout("rcx") _,
-            lateout("r11") _,
-        );
-        if ret < 0 {
-            // Record errno so a caller that aborts (DD#73 glob) renders the
-            // real reason via sash_emsg.
-            SASH_LAST_ERRNO = -ret;
-            *out_len = 0;
-            return core::ptr::null();
+        match linux_syscalls::getcwd(&mut CWD_BUF) {
+            Ok(len) => {
+                *out_len = (len - 1) as i64;
+                CWD_BUF.as_ptr()
+            }
+            Err(error) => {
+                set_last_errno(error);
+                *out_len = 0;
+                core::ptr::null()
+            }
         }
-        // ret includes null terminator, we want length without it
-        let len = ret - 1;
-        *out_len = len;
-        CWD_BUF.as_ptr()
     }
 }
 
@@ -3555,40 +3508,7 @@ fn signal_registration_failed(signum: i64) -> ! {
 /// Returns 0 on success; aborts on registration failure.
 #[no_mangle]
 pub extern "C" fn sash_trap(signum: i64, handler: i64) -> i64 {
-    use core::mem;
-
-    // sigaction struct for x86_64 Linux (kernel ABI)
-    #[repr(C)]
-    struct KernelSigaction {
-        sa_handler: u64,
-        sa_flags: u64,
-        sa_restorer: u64,
-        sa_mask: [u64; 16], // 128 bytes = 1024 bits
-    }
-
-    let mut act: KernelSigaction = unsafe { mem::zeroed() };
-    act.sa_handler = handler as u64;
-    // SA_RESTORER = 0x04000000, SA_RESTART = 0x10000000
-    act.sa_flags = 0x04000000 | 0x10000000;
-
-    act.sa_restorer = sash_flag_restorer as *const () as u64;
-
-    // rt_sigaction syscall (13)
-    let ret: i64;
-    unsafe {
-        core::arch::asm!(
-            "syscall",
-            in("rax") 13i64,           // __NR_rt_sigaction
-            in("rdi") signum,
-            in("rsi") &act as *const _ as i64,
-            in("rdx") 0i64,           // NULL oldact
-            in("r10") 8i64,           // sigsetsize
-            lateout("rax") ret,
-            lateout("rcx") _,
-            lateout("r11") _,
-        );
-    }
-    if ret < 0 {
+    if unsafe { linux_syscalls::sigaction(signum as i32, handler as usize) }.is_err() {
         signal_registration_failed(signum);
     }
     0
@@ -3617,14 +3537,6 @@ extern "C" fn sash_flag_handler(sig: i32) {
 extern "C" fn sash_exit_handler(sig: i32) {
     sash_flag_handler(sig);
     sash_exit_signum.store(sig as i64, core::sync::atomic::Ordering::Relaxed);
-}
-
-#[unsafe(naked)]
-extern "C" fn sash_flag_restorer() {
-    core::arch::naked_asm!(
-        "mov rax, 15", // __NR_rt_sigreturn
-        "syscall",
-    );
 }
 
 // ── Directory reading (glob support) ─────────────────────────
@@ -3724,6 +3636,9 @@ pub extern "C" fn sash_glob(
     pat_ptr: *const u8,
     pat_len: usize,
 ) -> *mut u8 {
+    use rustix::fd::IntoRawFd;
+    use rustix::fs::{open, Mode, OFlags, RawDir};
+
     let dir = unsafe { core::slice::from_raw_parts(dir_ptr, dir_len) };
     let pat = unsafe { core::slice::from_raw_parts(pat_ptr, pat_len) };
 
@@ -3740,104 +3655,68 @@ pub extern "C" fn sash_glob(
     dir_path[..dlen].copy_from_slice(&dir[..dlen]);
     dir_path[dlen] = 0;
 
-    // Use raw getdents64 syscall
-    let dir_fd: i64;
-    unsafe {
-        core::arch::asm!(
-            "syscall",
-            in("rax") 2i64, // __NR_open
-            in("rdi") dir_path.as_ptr() as i64,
-            in("rsi") 0x10000i64, // O_RDONLY | O_DIRECTORY
-            in("rdx") 0i64,
-            lateout("rax") dir_fd,
-            lateout("rcx") _,
-            lateout("r11") _,
-        );
-    }
-    if dir_fd < 0 {
-        return unsafe { sash_table_new(16) } as *mut u8;
-    }
+    let path = unsafe { core::ffi::CStr::from_ptr(dir_path.as_ptr().cast()) };
+    let dir_fd = match open(path, OFlags::RDONLY | OFlags::DIRECTORY, Mode::empty()) {
+        Ok(fd) => fd,
+        Err(_) => return unsafe { sash_table_new(16) } as *mut u8,
+    };
 
     let table = unsafe { sash_table_new(16) } as *mut u8;
-    let mut buf = [0u8; 4096];
+    let mut buf = [core::mem::MaybeUninit::uninit(); 4096];
     let mut idx: i64 = 0;
     // DD#73: every element is `<abs-dir>/name`, not the bare dirent name.
     let mut prefix_buf = [0u8; 4096];
     let prefix_len = sash_glob_abs_prefix(dir, &mut prefix_buf);
 
-    loop {
-        let nread: i64;
-        unsafe {
-            core::arch::asm!(
-                "syscall",
-                in("rax") 217i64, // __NR_getdents64
-                in("rdi") dir_fd,
-                in("rsi") buf.as_mut_ptr() as i64,
-                in("rdx") buf.len() as i64,
-                lateout("rax") nread,
-                lateout("rcx") _,
-                lateout("r11") _,
-            );
-        }
-        if nread <= 0 {
-            break;
-        }
+    let mut entries = RawDir::new(&dir_fd, &mut buf);
+    while let Some(entry) = entries.next() {
+        let entry = match entry {
+            Ok(entry) => entry,
+            Err(_) => break,
+        };
+        let name = entry.file_name().to_bytes();
 
-        let mut pos = 0usize;
-        while pos < nread as usize {
-            // struct linux_dirent64: d_ino(8), d_off(8), d_reclen(2), d_type(1), d_name(...)
-            let reclen = u16::from_ne_bytes([buf[pos + 16], buf[pos + 17]]) as usize;
-            let name_start = pos + 19;
-            let name_end = buf[name_start..pos + reclen]
-                .iter()
-                .position(|&b| b == 0)
-                .map(|p| name_start + p)
-                .unwrap_or(pos + reclen);
-            let name = &buf[name_start..name_end];
-
-            // Skip . and ..
-            if name != b"." && name != b".." {
-                // Match: prefix + * + suffix
-                let matches = if star_pos.is_none() {
-                    name == pat
-                } else {
-                    name.len() >= prefix.len() + suffix.len()
-                        && name.starts_with(prefix)
-                        && name.ends_with(suffix)
-                };
-                if matches {
-                    // Key is raw i64 bytes (same format as codegen IndexedArray)
-                    let idx_bytes = idx.to_ne_bytes();
-                    // DD#73: store `<prefix>/name` (absolute), not the bare name.
-                    let total = prefix_len + 1 + name.len();
-                    let elem = unsafe { alloc_cstr(total) };
-                    unsafe {
-                        core::ptr::copy_nonoverlapping(prefix_buf.as_ptr(), elem, prefix_len);
-                        *elem.add(prefix_len) = b'/';
-                        core::ptr::copy_nonoverlapping(
-                            name.as_ptr(),
-                            elem.add(prefix_len + 1),
-                            name.len(),
-                        );
-                    }
-                    unsafe {
-                        sash_table_set(
-                            table as *mut SashTable,
-                            idx_bytes.as_ptr(),
-                            8,
-                            elem,
-                            total as i64,
-                        );
-                    }
-                    idx += 1;
+        // Skip . and ..
+        if name != b"." && name != b".." {
+            // Match: prefix + * + suffix
+            let matches = if star_pos.is_none() {
+                name == pat
+            } else {
+                name.len() >= prefix.len() + suffix.len()
+                    && name.starts_with(prefix)
+                    && name.ends_with(suffix)
+            };
+            if matches {
+                // Key is raw i64 bytes (same format as codegen IndexedArray)
+                let idx_bytes = idx.to_ne_bytes();
+                // DD#73: store `<prefix>/name` (absolute), not the bare name.
+                let total = prefix_len + 1 + name.len();
+                let elem = unsafe { alloc_cstr(total) };
+                unsafe {
+                    core::ptr::copy_nonoverlapping(prefix_buf.as_ptr(), elem, prefix_len);
+                    *elem.add(prefix_len) = b'/';
+                    core::ptr::copy_nonoverlapping(
+                        name.as_ptr(),
+                        elem.add(prefix_len + 1),
+                        name.len(),
+                    );
                 }
+                unsafe {
+                    sash_table_set(
+                        table as *mut SashTable,
+                        idx_bytes.as_ptr(),
+                        8,
+                        elem,
+                        total as i64,
+                    );
+                }
+                idx += 1;
             }
-            pos += reclen;
         }
     }
 
     // Close directory
-    sash_close(dir_fd);
+    sash_close(dir_fd.into_raw_fd() as i64);
     table
 }
 

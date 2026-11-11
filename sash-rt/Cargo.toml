@@ -12,7 +12,8 @@ crate-type = ["staticlib"]
 coverage = []
 
 [dependencies]
-rustix = { version = "1.1", default-features = false, features = ["process", "runtime", "fs", "pipe", "mm", "termios", "time", "rand"] }
+rustix = { version = "1.1", default-features = false, features = ["process", "fs", "pipe", "mm", "termios", "time", "rand"] }
+linux-raw-sys = { version = "0.12", default-features = false, features = ["general", "no_std"] }
 
 [build-dependencies]
 cc = "1"

@@ -2,6 +2,7 @@ RT=sash-rt
 SASH=sash
 CONVERT=sash-convert
 EXPAND=sash-expand
+RTSRC=`ls sash-rt/src/*.rs | tr '\n' ' '`
 CSRC=`ls sash-rt/csrc/*.c sash-rt/csrc/*.S sash-rt/csrc/*.h | tr '\n' ' '`
 
 build:V: $RT/target/release/libsash_rt.a target/release/sash-regex target/release/sash-getopt
@@ -17,7 +18,7 @@ target/release/sash-getopt: sash-getopt/sash-getopt.c
 	mkdir -p target/release
 	cc -O2 -o target/release/sash-getopt sash-getopt/sash-getopt.c
 
-$RT/target/release/libsash_rt.a: $RT/src/lib.rs $CSRC
+$RT/target/release/libsash_rt.a: $RTSRC $RT/Cargo.toml $RT/build.rs $CSRC
 	(cd $RT && cargo clean -p sash-rt 2>/dev/null; cargo build --release)
 
 test:V: build regex-test sash-grep-test sash-getopt-test status

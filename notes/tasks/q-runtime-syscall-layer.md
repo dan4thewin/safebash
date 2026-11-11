@@ -6,7 +6,7 @@ depends: []
 gates:
   - "DG's syscall-layer choice and target split are recorded in DD129"
   - "bug-fresh-clone-rustix-runtime-private retains the implementation and build/spec gates; it is not marked fixed by this ruling"
-  - "the chosen native host/target matrix and regex jump support, plus remaining delivery, migration and C-link-policy work, have a home in cross-compile-and-setjmp-on-mac.md"
+  - "the chosen native host/target matrix and regex jump support, plus remaining delivery and C-link-policy work, have a home in cross-compile-and-setjmp-on-mac.md"
 
 ## Decisions, 2026-11-05 and 2026-11-10
 
@@ -34,11 +34,13 @@ producing either target**, including both cross-compilation directions
 AArch64 compiler-host or cross-compilation capability. Other host
 operating systems are outside the native commitment.
 
-This closes the architecture question, **not the implementation**.
-`bug-fresh-clone-rustix-runtime-private` remains open. Its build/spec and
-runtime-documentation gates stay with the repair. Host/target-matrix
-delivery, selected regex jump support and the remaining interface/tool/
-artifact, migration and C-link-policy work stay in
+Those rulings closed the architecture question, **not the implementation**.
+The separately authorized repair of `bug-fresh-clone-rustix-runtime-private`
+is now complete (2026-11-11, journal 619), including all existing raw
+syscall sites, fresh-resolution builds and native/C gates. The shim
+assembled for both architectures; no AArch64 runtime execution is claimed.
+Host/target-matrix delivery, selected regex jump support and the remaining
+interface/tool/artifact and C-link-policy work stay in
 `cross-compile-and-setjmp-on-mac`.
 
 The research below was captured on 2026-10-26 during the batch-531 port,

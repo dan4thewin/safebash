@@ -5,8 +5,10 @@ Decided by DG on 2026-11-05:
 
 > yes to public rustix and syscall shim; record and present the next question
 
-This settles the runtime's syscall-layer architecture. Implementation is
-pending; it does not claim that the fresh-clone build defect is fixed.
+This settles the runtime's syscall-layer architecture. The layer and
+fresh-clone build repair were implemented on 2026-11-11 (journal 619).
+The full native host/cross matrix and AArch64 regex jump support remain
+separately owned work.
 
 ## Decision
 
@@ -62,9 +64,11 @@ because an AArch64 startup routine exists.
 
 This is a target commitment, **not an announcement of working end-to-end
 AArch64 support**. Completion requires target-specific runtime and emitted
-program evidence, not just a successful compiler build. The current runtime
-still has x86-only syscall and regex jump assembly, and native codegen
-selects the host ISA.
+program evidence, not just a successful compiler build. The syscall shim
+now has implementations compiled to objects for both architectures.
+The runtime's regex jump assembly is still x86-only, and native codegen
+still selects the host ISA. No AArch64 execution is claimed by the
+syscall-layer repair.
 
 The existing `--emit-c` differential backend is not the separate C++
 transpiler and is not retired by this decision.
@@ -142,8 +146,8 @@ support or authorization to begin the implementation.
 
 ## Why this syscall layer
 
-The runtime uses rustix's unsupported runtime interface for `exit_group`,
-`kernel_fork` and `execve`. The fresh-resolution failure recorded on
+The runtime previously used rustix's unsupported runtime interface for
+`exit_group`, `kernel_fork` and `execve`. The fresh-resolution failure recorded on
 2026-10-25 came from rustix 1.1.5 hiding that interface; local lockfiles
 pinning 1.1.4 masked the failure.
 
@@ -161,10 +165,30 @@ no-libc model. DG chose the public-rustix/Rust-shim boundary instead.
 
 ## Implementation and remaining questions
 
-`notes/tasks/bug-fresh-clone-rustix-runtime-private.md` remains open for the
-repair and its fresh-lockfile, unit and dual-mode spec gates. Runtime
-comments and GUIDE must describe the actual layer after it is implemented;
-this recording alone changes no dependency, syscall, binary or build rule.
+The 2026-11-11 implementation puts the unsupported fork, execve and
+exit_group calls in `sash-rt/src/linux_syscalls.rs`, together with the
+existing raw fcntl/dup2/close/getcwd/signal operations and signal restorer.
+Architecture-specific registers, syscall numbers and negative-result
+decoding are confined there. Linux ABI constants come from
+`linux-raw-sys`; errors use public rustix `Errno`. Native startup remains
+in `lib.rs`.
+
+The former directory open/getdents64 assembly instead uses public rustix
+`open` and allocation-free `RawDir`. Raw-fd helpers stay in the shim:
+they must accept possibly closed descriptors and return kernel errors
+without fabricating a valid `BorrowedFd` or `OwnedFd`. Public rustix's
+allocating getcwd does not fit the runtime's fixed-buffer contract.
+Directory selection and its separately owned failure-policy changes
+were not redesigned by this migration.
+
+`notes/tasks/bug-fresh-clone-rustix-runtime-private.md` is complete.
+An isolated before build still failed on fresh rustix 1.1.6; the fixed
+runtime and full workspace built with fresh locks, and the documented
+`mk -p 1 build` succeeded. Existing native/C specs passed against that
+fresh build, followed by the ordinary unit/static/full-spec/history gate.
+Both shim variants were assembled and their object architectures checked;
+that is component evidence, not an AArch64 runtime or cross-compiler.
+Journal 619 records the commands, counts and preservation controls.
 
 DG separately chose tracked lockfiles and locked normal builds/tests on
 2026-11-10 (journal 615). AGENTS.md defines that build policy, with
@@ -175,11 +199,12 @@ even once the ordinary build uses a checked-in lockfile.
 
 `notes/tasks/cross-compile-and-setjmp-on-mac.md` owns delivery of the chosen
 native host/target matrix and the selected regex jump support. The
-cross-compilation interface and artifact/tool selection, migration staging,
+cross-compilation interface and artifact/tool selection,
 and whether the existing C backend's link command should forbid accidental
-libc references remain separate planning work. The syscall-layer,
-host/target-matrix and regex-recovery choices do not settle those remaining
-mechanisms or authorize implementation.
+libc references remain separate planning work. All existing hand-written
+runtime syscall sites were accounted for in the repair rather than left
+for a later migration. This repair does not select the remaining
+mechanisms or authorize the cross-compilation/regex implementation.
 
 `notes/tasks/q-glob-semantics.md` retains DD131/DD132's integrated
 separate-branch trial, including quiet invalid-candidate reporting and
@@ -189,4 +214,5 @@ trial-only choice.
 
 The research and resolution are in `notes/tasks/q-runtime-syscall-layer.md`;
 journals 572, 612, 613 and 614 record the layer, output targets, regex
-recovery and compiler-host/cross-compilation matrix, respectively.
+recovery and compiler-host/cross-compilation matrix, respectively;
+journal 619 records the syscall-layer implementation.

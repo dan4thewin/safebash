@@ -857,13 +857,18 @@ compile-time constant.
 
 ## Runtime (sash-rt)
 
-`sash-rt/src/lib.rs` (~3750 lines) — a `#![no_std]` Rust crate.
-Uses `rustix` for raw Linux syscalls. No libc dependency.
+`sash-rt` is a `#![no_std]` Rust runtime with vendored C regex/allocator
+code and native startup/jump assembly. It has no libc dependency.
 
-**Accepted direction, implementation pending (DD#129):** retain public
-rustix APIs and centralize unsupported Linux calls in a project-owned Rust
-syscall shim. The current private `rustix::runtime` dependency still needs
-removal; the fresh-clone build defect is not fixed by recording the choice.
+**Implemented syscall layer (DD#129):** public rustix APIs handle the
+operations whose allocation and descriptor contracts fit the runtime.
+`sash-rt/src/linux_syscalls.rs` owns fork/exec/exit, raw-fd plumbing,
+fixed-buffer getcwd and signal setup/return. It centralizes the x86_64
+and AArch64 register conventions, Linux ABI constants and errno decoding.
+Directory opening and allocation-free iteration use public rustix
+`open`/`RawDir`; no private `rustix::runtime` API remains.
+Journal 619 records the fresh-resolution build repair and its gates.
+
 macOS support is assigned to a separate C++ transpiler, which can also
 cover exotic targets. That is a planned route, not a claim about its
 current platform readiness, and it does not retire the existing
@@ -873,9 +878,11 @@ The accepted native Linux output targets are **x86_64 and AArch64**
 (including 64-bit Raspberry Pi OS). Both are also accepted compiler
 hosts: **each must produce either target**, including cross-compilation
 in both directions. This is a support commitment, not a claim that
-AArch64 or cross-compilation works end to end today. Runtime syscall/
-startup/regex portability, target-aware code generation and runtime/linker
-selection still need delivery and host/target-specific execution evidence.
+AArch64 or cross-compilation works end to end today. The syscall shim
+has been compiled to objects for both architectures, not executed on
+AArch64. Full target-runtime/startup/regex validation, target-aware code
+generation and runtime/linker selection still need delivery and
+host/target-specific execution evidence.
 CLI details and toolchain/runtime distribution remain planning work.
 Other host operating systems are outside this native commitment.
 
@@ -1381,8 +1388,9 @@ for normal builds/tests. The root workspace and separate runtime each
 retain their own resolution; dependency updates become deliberate,
 reviewed changes rather than an incidental effect of a fresh environment.
 This stabilizes Cargo dependencies, not all toolchain/environment inputs,
-and does not require offline builds. DD129's private-API repair still
-requires an independent fresh-resolution check in an isolated source copy.
+and does not require offline builds. DD129's private-API repair passed an
+independent fresh-resolution check in an isolated source copy (journal 619);
+locking normal builds must not replace that compatibility control.
 AGENTS.md defines the contributor policy; `track-cargo-lockfiles` owns
 implementation, and journal 615 records the decision.
 
@@ -1405,7 +1413,7 @@ architecturally significant:
 | 43 | Attest semantics | Validation-gated declassification |
 | 44 | Full taint quarantine | Read-blocked, not just command-blocked |
 | 45 | Source emitter architecture | Four-axis declarations, const, export-as-error |
-| 129 | Public rustix plus a Linux Rust syscall shim | Accepted runtime direction; implementation pending |
+| 129 | Public rustix plus a Linux Rust syscall shim | Private-API dependency removed; full native host/cross matrix remains pending |
 
 ---
 

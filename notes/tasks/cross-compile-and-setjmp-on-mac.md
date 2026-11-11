@@ -34,17 +34,25 @@ host plus cross-compilation in both directions. This is no longer an
 unanswered host/matrix choice, nor a claim of working support today.
 Other host operating systems and architectures are outside this commitment.
 
-The cross-compilation interface and artifact/tool selection, migration
-staging and the existing C backend's link policy still require planning.
+The cross-compilation interface and artifact/tool selection and the
+existing C backend's link policy still require planning.
 No new CLI spelling, target default, toolchain-distribution mechanism or
-delivery order was selected. `bug-fresh-clone-rustix-runtime-private`
-owns the immediate build defect.
+delivery order was selected.
+
+The 2026-11-11 repair of `bug-fresh-clone-rustix-runtime-private`
+implemented the shared Linux syscall layer and migrated all existing
+raw syscall sites (journal 619). Its syscall module assembled for both
+architectures, and fresh x86_64 runtime/workspace builds and native/C
+gates passed. That is not an AArch64 runtime or compiler-host execution
+result. The unported regex jump assembly and target-selection plumbing
+below still belong to this task; no cross C toolchain or emulator was added
+by the build repair.
 
 The inventory below was recorded on 2026-10-26, following DG's original
 2026-09-16 macOS build report. Its line numbers and counts are historical;
 re-measure the selected sites before implementing. Narrow source inspection
-at `d9332af1` confirmed the remaining architecture seams: AArch64 `_start`
-at `sash-rt/src/lib.rs:1650-1669`, ungated x86 registers in
+at `d9332af1`, before that repair, confirmed the architecture seams:
+AArch64 `_start` at `sash-rt/src/lib.rs:1650-1669`, ungated x86 registers in
 `sash_fcntl_dupfd_cloexec` at 213-229, unconditional `setjmp.S` compilation
 at `sash-rt/build.rs:24`, and host-ISA selection at
 `sash/src/codegen/entry.rs:112`. No cross-target build or execution was run.
@@ -137,17 +145,14 @@ accompanied this inspection.
    matrix is settled. Plan target/runtime/linker selection, artifact
    provision and the delivery sequence without narrowing that matrix.
    No particular flag, default target or packaging mechanism is selected.
-2. **Migration staging.** Land the three private-rustix replacements first,
-   or migrate the remaining raw syscall sites in the same unit? DD129's
-   public-API/shim policy applies to all of them either way; staging is not
-   permission to leave an unaccounted third route.
-3. **Existing C backend's link policy.** Should its link use `-nostdlib` so
+2. **Existing C backend's link policy.** Should its link use `-nostdlib` so
    an accidental libc reference fails like native? Is `-lpthread` needed?
    This concerns the existing `--emit-c` differential backend, not the
    separately developed C++ transpiler.
 
-The layer, host/target-matrix and regex-recovery choices do not settle
-those remaining mechanisms or authorize implementation.
+The layer, host/target-matrix and regex-recovery choices, and the completed
+build repair, do not settle those remaining mechanisms or authorize this
+cross-compilation/regex implementation.
 
 ## Required regex jump support
 

@@ -99,7 +99,8 @@ on a consequential fork violates Decision authority.
 ## Current state
 
 - **sash/** — the compiler (Rust, Cranelift backend)
-- **sash-rt/** — pure Rust `#![no_std]` runtime crate (rustix, no libc)
+- **sash-rt/** — `#![no_std]` runtime: public rustix/Linux Rust syscall shim,
+  vendored C regex/allocator code and native assembly; no libc
 - **sash-convert/** — bash → sash-native converter
 - **sash-expand/** — expansion utilities
 - **sash-getopt/** — option-parsing helper (`mk sash-getopt-test`)
@@ -252,6 +253,11 @@ output is `sash-rt/target/release/libsash_rt.a`; the c/native backends link
 it via `SASH_RT_LIB`. Rebuild it after touching `sash-rt/src` before an
 `--emit-c` link, or gcc reports undefined references to new runtime symbols.
 
+Project-owned Linux syscall bindings live in `sash-rt/src/linux_syscalls.rs`
+(DD129), not scattered through `lib.rs`. Use public rustix where its
+allocation and descriptor contracts fit. The runtime archive's mk rule
+tracks `src/*.rs`, its manifest/build script and the C/assembly inputs.
+
 ### Cargo dependency resolution
 
 **Accepted policy (DG, 2026-11-10; implementation pending): track both
@@ -267,15 +273,15 @@ missing/stale lockfile. `--locked` still permits fetching locked dependencies;
 this is not an offline-build requirement, toolchain pin or promise of
 byte-identical binaries.
 
-DD129's private-rustix repair remains independent. Locking the old working
-resolution does not repair the unsupported API dependency. Its acceptance
-control must still resolve fresh dependencies in an isolated source copy,
-discarding only that copy's lockfile before the deliberate refresh.
+DD129's private-rustix repair is implemented (journal 619), independently
+of this lockfile-policy rollout. Its acceptance included fresh dependency
+resolution in an isolated source copy. Keep that compatibility control
+independent of ordinary locked builds: discard only the copy's lockfile
+before the deliberate refresh.
 Do not delete or regenerate the working checkout's locks for that control.
 
 `notes/tasks/track-cargo-lockfiles.md` owns tracking and locked-build
-enforcement; journal 615 records the choice. This recording does not yet
-change `.gitignore`, either lockfile or the build/test commands.
+enforcement; journal 615 records the choice. That rollout remains pending.
 
 ### Spec tests
 
