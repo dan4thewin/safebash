@@ -1,0 +1,42 @@
+sash-rt licensing
+=================
+
+The project-authored runtime code in sash-rt is licensed under the GNU
+General Public License, version 3 only, with the additional permissions
+of the GCC Runtime Library Exception, version 3.1.
+
+SPDX-License-Identifier: GPL-3.0-only WITH GCC-exception-3.1
+
+The full license texts are in:
+
+  ../LICENSE          GNU General Public License, version 3
+  ../COPYING.RUNTIME  GCC Runtime Library Exception, version 3.1
+
+The exception applies to project-authored code and modifications in the
+Rust, C and assembly sources used to build the sash-rt runtime library.
+It does not apply to the sash compiler or standalone tools.
+
+Subject to the exception's terms, independent programs linked with this
+runtime may be distributed under licenses of their authors' choice.
+The exception does not make the runtime itself permissively licensed:
+distribution of the runtime on its own remains subject to GPLv3.
+
+Third-party material
+--------------------
+
+Third-party portions retain their existing copyright notices and licenses.
+Neither the project license nor the runtime exception replaces those terms.
+In particular:
+
+  - The Plan 9-derived regex sources in csrc/ are accompanied by
+    ../contrib/plan9port-regexp/LICENSE.
+  - The original FreeRTOS allocator notice in csrc/heap4.c is retained;
+    its upstream license is in ../contrib/freertos-heap4/LICENSE.md.
+  - Rust dependencies and other linked third-party components retain
+    their respective licenses.
+
+Retain the third-party notices when distributing copies or compiled
+programs incorporating that material, as required by those licenses.
+
+There is no warranty, to the extent permitted by applicable law.
+See GPLv3 sections 15-17 for the warranty and liability terms.

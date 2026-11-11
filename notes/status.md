@@ -1,4 +1,31 @@
-## STATUS (2026-11-11, latest) - Retired external suites
+## STATUS (2026-11-11, latest) - README and GPLv3 licensing
+
+DG approved committing the README and licensing files. The short README
+covers purpose, one example, build/use, reviewed Bash conversion, safety
+boundaries and current limitations. Contributor onboarding, internal DD
+links and detailed test-database mechanics are omitted; GUIDE and the
+future public specification remain separate work.
+
+safebash is the language; `sash` is the compiler. The README uses `.sb`
+for safebash examples and `.bash` for Bash input. Its example totals integer
+input, using `attest` for checked conversion rather than action dispatch.
+Build instructions lead with Cargo for the separate runtime and Rust
+workspaces; Plan 9 mk is optional.
+
+`LICENSE` is GPLv3; `COPYING.RUNTIME` is the standard GCC Runtime Library
+Exception 3.1. The notices specify GPL-3.0-only, with the exception scoped
+by `sash-rt/LICENSE` to project-authored runtime code. Third-party licenses
+are preserved, and the Plan 9 vendor README's stale Lucent label is aligned
+with its existing MIT license.
+
+Journal 618 records the drafts, their build/example evidence and DG's
+approval. The README and licensing files retain their verified content.
+Source-file application/exception notices and Cargo licensing metadata
+remain in [apply-source-license-notices](tasks/apply-source-license-notices.md).
+No compiler/runtime implementation, dependency, GUIDE or spec changes
+accompany this commit.
+
+## STATUS (2026-11-11) - Retired external suites
 
 Removed `suites/`, including the historical runners and ignored Bash,
 Oils and ShellCheck downloads. Annotated tag `archive/legacy-suites`
@@ -9,8 +36,8 @@ AGENTS and GUIDE no longer list the directory as current; GUIDE points
 to the tag. The authoritative `spec/` suite is unchanged. Future converter
 tests may reuse the upstream material, but no migration is started.
 
-Journal 621 records the sources and removal. Root README/licensing drafts
-remain uncommitted.
+Journal 621 records the sources and removal. README/licensing work was
+kept separate from the cleanup.
 
 ## STATUS (2026-11-11) - Retired Goose launchers
 
@@ -20,7 +47,7 @@ The logs were archived privately before removal. `AGENTS.md`, historical
 agent branches and journal records remain; the pending delegate-management
 skill task no longer depends on the retired runner.
 
-Journal 620 records the cleanup. README/licensing drafts remain uncommitted.
+Journal 620 records the cleanup. README/licensing work was kept separate.
 
 ## STATUS (2026-11-11) - Fresh-clone build repaired
 

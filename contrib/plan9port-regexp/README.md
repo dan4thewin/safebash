@@ -6,7 +6,8 @@ Files: `regcomp.c`, `regexec.c`, `regaux.c`, `regexp9.h`, `regcomp.h`
 
 ## License
 
-Lucent Public License Version 1.02
+MIT - see [LICENSE](LICENSE), which also records the 2021 relicensing
+by the Plan 9 Foundation.
 
 These files are the original, unmodified sources from plan9port's
 `src/libregexp/` directory. The copies in `sash-rt/csrc/` may be
