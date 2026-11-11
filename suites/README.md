@@ -1,23 +1,44 @@
 # External Test Suites
 
-Three external bash test suites, gitignored (not committed).
-Populate locally:
+The downloaded corpora are upstream material, gitignored and not committed.
+The `archive/legacy-suites` tag preserves this retrieval guide and the
+historical runners for possible reuse in converter tests, not the corpora.
+The runners contain obsolete compiler paths and are not current test gates.
+
+Run these commands from the safebash repository root. They preserve the
+upstream `spec/`, `tests/` and `src/` directory layout expected below:
 
 ```bash
+fetch_dir=$(mktemp -d)
+mkdir -p suites/oils suites/bash suites/shellcheck
+
 # Oils spec tests (~2MB, 222 files, 3964 cases)
-cd /tmp && git clone --depth 1 https://github.com/oilshell/oil.git
-cp -r /tmp/oil/spec suites/oils/
+git clone --depth 1 https://github.com/oilshell/oil.git "$fetch_dir/oil" &&
+    cp -R "$fetch_dir/oil/spec" suites/oils/
 
 # Bash test suite (~3MB, 80 .tests files + 391 .sub + 84 .right)
-cd /tmp && wget -q https://ftp.gnu.org/gnu/bash/bash-5.2.37.tar.gz && tar xzf bash-5.2.37.tar.gz
-cp -r /tmp/bash-5.2.37/tests suites/bash/
+curl --fail --location https://ftp.gnu.org/gnu/bash/bash-5.2.37.tar.gz \
+    --output "$fetch_dir/bash-5.2.37.tar.gz" &&
+    tar xzf "$fetch_dir/bash-5.2.37.tar.gz" -C "$fetch_dir" &&
+    cp -R "$fetch_dir/bash-5.2.37/tests" suites/bash/
 
 # ShellCheck source (~856KB, rules embedded in Haskell)
-cd /tmp && git clone --depth 1 https://github.com/koalaman/shellcheck.git
-cp -r /tmp/shellcheck/src suites/shellcheck/
+git clone --depth 1 https://github.com/koalaman/shellcheck.git "$fetch_dir/shellcheck" &&
+    cp -R "$fetch_dir/shellcheck/src" suites/shellcheck/
+
+printf 'Temporary upstream sources: %s\n' "$fetch_dir"
 ```
 
-## Suite comparison
+The copies land in `suites/oils/spec/`, `suites/bash/tests/` and
+`suites/shellcheck/src/`. Remove the printed temporary directory when it is
+no longer needed. Oils and ShellCheck follow their current default branches;
+these commands do not reproduce the exact historical downloaded copies.
+
+`brush_runner.py` instead reads a separate
+[Brush checkout](https://github.com/reubeno/brush), historically at
+`~/src/brush/brush-shell/tests/cases/`. Its inputs were never stored here.
+
+## Historical suite comparison
 
 | Suite | Cases | Format | Use |
 |-------|-------|--------|-----|
