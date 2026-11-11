@@ -1,4 +1,14 @@
-## STATUS (2026-11-11, latest) - Fresh-clone build repaired
+## STATUS (2026-11-11, latest) - Retired Goose launchers
+
+Removed the obsolete root `run-compiler-tasks.sh`, `run-converter-tasks.sh`
+and `.goosehints` at DG's request. `AGENTS.md` remains the project
+instructions. Historical logs, agent branches and journal records are
+retained; the pending delegate-management skill task no longer depends
+on the retired runner.
+
+Journal 620 records the cleanup. README/licensing drafts remain uncommitted.
+
+## STATUS (2026-11-11) - Fresh-clone build repaired
 
 DD129's public-rustix/shared-Linux-Rust-shim architecture is implemented.
 The runtime no longer calls private `rustix::runtime` APIs; the compiler's

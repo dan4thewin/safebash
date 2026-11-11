@@ -45,10 +45,10 @@ Verbatim from journal 053:
 
 ## Approach
 
-1. Run a small experiment: launch an autonomous batch via
-   `run-compiler-tasks.sh` and let an agent (with no prompt
-   modification) handle the "process is running" state. Capture the
-   tool-call trace.
+1. Run a small experiment: launch a bounded autonomous batch and let an
+   agent (with no prompt modification) handle the "process is running"
+   state. Capture the tool-call trace. Select the runner when undertaking
+   this task; the former root Goose runners were retired in journal 620.
 2. Identify which of the five rules the agent violates and which it
    honors naturally.
 3. Design an intervention — a pre-flight check, a one-shot
@@ -71,6 +71,6 @@ rather than a hopeful documentation entry.
 ## Related
 
 - Journal 053 (the source rules)
-- `run-compiler-tasks.sh` (the canonical autonomous-batch entry point)
+- Journal 620 (retirement of the old Goose runners)
 - Future skill could live in `contrib/` or be packaged as a Copilot CLI
   skill artifact
