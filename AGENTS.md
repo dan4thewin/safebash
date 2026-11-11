@@ -108,7 +108,6 @@ on a consequential fork violates Decision authority.
 - **notes/** — iwe knowledge graph: journal, decisions, tasks, status, architecture
 - **audit/** — adversarial audit findings and remediation
 - **contrib/** — contributed scripts/tools
-- **suites/** — test suites
 - **exp/** — git submodule → safebash-exp (historical experiments, not needed for build)
 - **spec.db** — SQLite database of all spec test results (repo root,
   **untracked and gitignored** — a local development artifact, not in git)

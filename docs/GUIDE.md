@@ -142,10 +142,14 @@ safebash/
 │   └── run-1/             — 5 models, 3 passes, remediation done
 ├── spec/                  — Spec test suite (41 files; results in spec.db)
 ├── contrib/               — Vendored: plan9port-regexp, freertos-heap4
-├── suites/                — brush/oils test runners
 ├── exp/                   — Git submodule (safebash-exp, optional)
 └── mkfile                 — Plan 9 mk build system (build, test, clean)
 ```
+
+The retired external test runners and upstream retrieval instructions are
+preserved at tag `archive/legacy-suites`:
+`git show archive/legacy-suites:suites/README.md`.
+The tag does not contain the downloaded corpora.
 
 **The compiler has no tree-sitter dependency.** `sash-convert` uses *stock*
 `tree-sitter-bash 0.25`, and it uses it on *bash* input — the language it

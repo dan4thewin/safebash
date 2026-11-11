@@ -1,4 +1,18 @@
-## STATUS (2026-11-11, latest) - Retired Goose launchers
+## STATUS (2026-11-11, latest) - Retired external suites
+
+Removed `suites/`, including the historical runners and ignored Bash,
+Oils and ShellCheck downloads. Annotated tag `archive/legacy-suites`
+preserves the four tracked files and corrected upstream retrieval
+instructions; no downloaded corpora were added to Git.
+
+AGENTS and GUIDE no longer list the directory as current; GUIDE points
+to the tag. The authoritative `spec/` suite is unchanged. Future converter
+tests may reuse the upstream material, but no migration is started.
+
+Journal 621 records the sources and removal. Root README/licensing drafts
+remain uncommitted.
+
+## STATUS (2026-11-11) - Retired Goose launchers
 
 Removed the obsolete root `run-compiler-tasks.sh`, `run-converter-tasks.sh`,
 `.goosehints` and the ignored `.agent-runs` directory at DG's request.

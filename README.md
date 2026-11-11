@@ -175,7 +175,6 @@ docs/           GUIDE.md, TIMELINE.md
 notes/          iwe knowledge graph (journal, decisions, tasks, status)
 audit/          adversarial review results (5 models, 3 passes)
 contrib/        vendored deps (plan9port-regexp, freertos-heap4)
-suites/         brush/oils test runners and results
 spec/           spec test suite (236 passing)
 exp/            git submodule (safebash-exp, optional, pre-alpha experiments)
 mkfile          build system (Plan 9 mk, not make)
