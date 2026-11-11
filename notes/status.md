@@ -1,4 +1,23 @@
-## STATUS (2026-11-11, latest) - README and GPLv3 licensing
+## STATUS (2026-11-11, latest) - Architecture and review guides refreshed
+
+DG approved rewriting GUIDE as a shorter account of the shipped compiler
+and runtime, and REVIEW as a current review checklist. Both are now
+organized around the real CLI, checked identities/types/SSA, taint,
+process and reader ownership, captures, terminal handlers and runtime
+boundaries.
+
+The new source map replaces copied enum/API inventories and obsolete
+file-size budgets. Inspection output is distinguished from executable
+backend acceptance; known analysis limits and current platform delivery
+remain explicit. Pending policy stays in DDs/tasks instead of being
+presented as implementation.
+
+Journal 622 records the assessment, rewrite and source evidence.
+README, licensing and the deferred public specification are unchanged.
+This is documentation-only; no new implementation gate or coverage
+measurement is claimed, and the existing generated gate block is retained.
+
+## STATUS (2026-11-11) - README and GPLv3 licensing
 
 DG approved committing the README and licensing files. The short README
 covers purpose, one example, build/use, reviewed Bash conversion, safety

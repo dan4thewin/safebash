@@ -1,165 +1,138 @@
-# Security Review Guide
+# Reviewing sash
 
-*Reading order and verification checklist for human reviewers.*
+Review against the safebash contract, not Bash byte parity. A deliberate
+divergence is not a bug; compiler acceptance alone is not proof of intended
+semantics. The [design decisions](../notes/decisions/), their implementation
+records and [current status](../notes/status.md) establish the distinction.
 
-## What sash guarantees
+Use [GUIDE.md](GUIDE.md) for the architecture and source map, and
+[AGENTS.md](../AGENTS.md) for the development and evidence procedures.
+This checklist is a review aid, not a claim that the implementation is
+free of defects.
 
-A compiled sash binary:
-1. Executes only commands visible in the source (no eval, no dynamic dispatch)
-2. Cannot use external data without explicit validation (`attest`)
-3. Contains no implicit environment fallbacks ($HOME "just working")
-4. Runs external commands via direct execve (no shell interpretation)
-5. Has its source embedded in `.sash_source` for reproducibility
+## Establish the scope
 
-## Architecture overview
+- [ ] Identify the governing decision and whether the relevant behavior
+  is delivered, accepted but pending, or provisional. State the intended
+  change and preservation cases before judging its implementation.
+- [ ] Trace the affected path from `cli_main` in
+  [`lib.rs`](../sash/src/lib.rs) through the relevant gates, lowering,
+  backends and runtime. Include converter behavior when the change affects
+  migration. Do not review only the file containing the final symptom.
+- [ ] Find the shared walkers, builders and classifiers before adding
+  another implementation. Declared-total enum walkers must retain explicit
+  variant coverage; a wildcard can hide the next language extension.
 
-```
-Source → Parse (tree-sitter) → Validate (rules/) → Taint check
-       → Lower (CST→IR) → Type check → Transform (IR→SSA)
-       → Constant fold → Codegen (Cranelift) → Link → Static ELF
-```
+## Frontend and representation
 
-Every stage rejects — none silently passes through unknown constructs.
-If a construct isn't explicitly handled, compilation fails.
+- [ ] Exercise the real CLI for source-level claims. Structural checks,
+  resolution, bindings, semantic checks and typing must reach the exact
+  SSA used by emission. `compile_to_object` is not a validation API.
+  Inspection exits (`--emit-ir`, `--manifest`) and executable backends
+  have different final gates; use the route the claim concerns.
+- [ ] Follow nested operands and bodies: defaults, subscripts, arithmetic
+  calls, captures, wrappers, redirects, functions and EXIT/ERR. An earlier
+  refusal of the outer form must not masquerade as proof of the inner rule.
+- [ ] Preserve lexical binding identities and source-name restoration.
+  Lowering must consume `CheckedTypes`, including implicit reader targets
+  and collection element/slot types, rather than infer a second answer.
+- [ ] Check collection count/kind/element signatures through forwarding.
+  Distinct slot identities and non-overlap with transitively named globals
+  must hold independently of taint switches.
+- [ ] Allocate every synthetic name through `reserve_temp_name` with its
+  real type. Preserve meaningful-zero initialization of newly owned locals,
+  including self-tail entry, without resetting live outer state. Do not
+  confuse an SSA version with a distinct physical storage cell.
+- [ ] Preserve source origins and diagnostic identity through nested
+  parsing and desugaring. User errors must not become panics or successful
+  empty defaults. Internal invariant guards need construction evidence,
+  not merely a green source sweep.
 
-## Recommended reading order
+## Taint and executable roots
 
-### Phase 1: The specification (what's allowed)
+- [ ] Classify the acquisition, not the writer's reputation or pathname.
+  Kernel reads introduce taint; compiler-owned copies introduce none and
+  erase none. Buffer eligibility and lowering must agree, and the SSA
+  backstop must inspect the transport actually emitted.
+- [ ] Check legal adjacency, subject identity and ownership at resolution.
+  Ordinary overwrite, unset or trusted self-copy must not clear unresolved
+  taint. Received taint cannot be attested in a callee; single-use outward
+  resolution and shared-function ownership have different obligations.
+- [ ] Check summary application and reaching definitions across calls,
+  lazy branches, loop back-edges, counted transfers and returns. Preserve
+  formal-to-actual slot mapping without an unused global identity flow
+  undoing slot cleanup.
+- [ ] Keep main, handlers and forked children separate. Non-executed
+  function templates are not parent definitions; child writes cannot
+  update parent analysis state. Check both source analysis and the SSA
+  backstop, not just one layer's refusal.
+- [ ] Be precise about analysis limits.
+  [DD127](../notes/decisions/DD127-taint-across-function-boundaries.md#implementation-status)
+  records the completed-parent view inherited by children and remaining
+  redirect lookup limits. Do not describe those as exact fork-time state.
+  `:!` and taint-disable switches establish no data-validation proof and
+  must not disable independent type, placement or aliasing checks.
 
-| File | What to verify |
-|------|---------------|
-| `notes/decisions/` (DD#*) | The safe subset definition (one DD per decision) |
-| `sash/src/validate.rs` | Each rejected construct has a validator rule, all registered/run |
+## Execution, cleanup and failures
 
-**Key question:** Is there any Bash construct that isn't covered by a DD in
-`notes/decisions/` and also isn't rejected by a validator rule?
+- [ ] Check word/component evaluation, lazy operands and redirect timing
+  against the governing contract and the change's stated scope. Preserve
+  already-evaluated values across later effects. Handling an operation's
+  status must not suppress checks in its operands or called bodies.
+- [ ] Keep void, status, integer and stdout channels distinct through
+  captures, redirects, forwarding and pipelines. Explicit discard does
+  not repair a type mismatch; constant function results are not errors.
+- [ ] Account for every descriptor, child and capture frame on normal,
+  failed and control-transfer paths. Parent readers must consume before
+  waiting, close before reaping, finish in nesting order and preserve the
+  required outcome. A fork child must not inherit parent cleanup duties or
+  branch into parent continuation code.
+- [ ] Check failure cause separately from reported status and from the
+  syntactic location of setup. Consult the current DD/task delivery state
+  rather than silently presenting a pending failure-policy rollout as
+  complete. Failed setup must not run the operation against unintended I/O
+  or be replaced by success-shaped output.
+- [ ] Check EXIT/ERR against actual completed global writes and their
+  separate incoming-state rules. `exit` selects EXIT regardless of status;
+  `fail` selects ERR, including zero. Preserve once-only, main-process-only
+  dispatch, EXIT-to-ERR progression and allocation-free fatal dispatch.
+  Signal deferral must protect legal resolution without postponing ordinary
+  failures or explicit termination.
 
-### Phase 2: Data provenance (taint model)
+## Backends and runtime
 
-| File | What to verify |
-|------|---------------|
-| `src/taint.rs` | CST-level taint tracking |
-| `src/ssa_taint.rs` | SSA-level taint verification |
+- [ ] Follow the shared SSA into both native and C emission. Equivalent
+  output is useful evidence, but agreement cannot rule out a shared
+  frontend, lowering or runtime bug. Direct backend tests must not be
+  presented as end-to-end compiler tests.
+- [ ] Verify runtime ABI types, lengths, terminators, ownership and
+  lifetimes. Check size arithmetic before allocation/copying and integer
+  fault behavior in both backends. Pointer/length strings and Rust source
+  do not by themselves prove the unsafe, C or assembly boundaries sound.
+- [ ] Verify syscall, signal and assembly contracts for the selected
+  target. Build shared C changes into both consumers where applicable and
+  rebuild the separate runtime before linking. A shim that compiles for an
+  architecture is not evidence that the full compiler/runtime works there.
 
-**Key question:** Can tainted data reach a sensitive position (command
-name, file path) without passing through `attest`?
+## Evidence and handoff
 
-Sources of taint (must ALL be tracked):
-- `$(getenv NAME)` — environment variables
-- `$(argv N)` — positional parameters
-- `read VAR` — stdin/fd input
-- `$()` command substitution of external commands
-
-Clean values (must NOT be taintable from outside):
-- String literals in source
-- Arithmetic on clean operands
-- Compiler-managed: `$?`, `$$`, `$#`, `$!`
-
-### Phase 3: Lowering (faithful translation)
-
-| File | What to verify |
-|------|---------------|
-| `src/lower.rs` | CST → IR is faithful (no invented semantics) |
-| `src/ir.rs` | IR can only represent safe-subset constructs |
-| `src/transform.rs` | IR → SSA preserves semantics |
-| `src/ssa.rs` | SSA representation (instructions, values, blocks) |
-
-**Key question:** Does the lowering introduce any behavior not present
-in the source? (e.g., implicit variable initialization, hidden fallbacks)
-
-### Phase 4: Code generation (the trust boundary)
-
-| File | What to verify |
-|------|---------------|
-| `src/codegen.rs` | SSA → machine code |
-| `sash-rt/src/lib.rs` | Runtime: what syscalls can the binary make? |
-
-**Key questions:**
-- Does the codegen emit any instructions not derivable from the SSA?
-- Does the runtime provide any capabilities not needed by the safe subset?
-- Are string operations bounds-checked (ptr+len, null terminator)?
-- Is fork/exec the only way to run external commands? (no `system()`)
-
-### Phase 5: Command resolution (supply chain)
-
-| File | What to verify |
-|------|---------------|
-| `src/rules/command_resolution.rs` | Bare commands resolved at compile time |
-| `src/transform.rs` (`resolve_command_path`) | PATH resolution logic |
-
-**Key question:** Can a compiled binary execute a command not visible
-at compile time? (Answer should be NO — all paths are absolute after
-resolution, embedded in the binary.)
-
-## Trust annotations in source
-
-The codebase uses inline trust annotations:
-
-```rust
-// TRUST: <assertion about why this is safe>
-// REJECT: <this arm should be unreachable — validator gates it>
-// SAFETY: <unsafe operation — why it's correct>
-```
-
-`grep -r "TRUST:\|REJECT:\|SAFETY:" sash/src/` to find all trust claims.
-
-## Specific attack surfaces to verify
-
-### 1. Validator bypass
-Can any input reach codegen without passing through validation?
-- Check: `compile_to_object` in `codegen.rs` — does it always validate first?
-- Check: test helpers that call `compile_ssa` directly bypass validation
-  (this is intentional for testing but reviewers should note it)
-
-### 2. Taint escape
-Can tainted data reach command execution?
-- Check: `lower_exec` in `codegen.rs` — where does the command name come from?
-- Check: pipeline stages — are names always from SSA (which was validated)?
-- Check: `attest` — does it actually gate usage or just mark?
-
-### 3. Environment injection
-Can environment variables influence compiled binary behavior?
-- Check: `sash_getenv` in runtime — only called for explicit `$(getenv NAME)`
-- Check: no implicit env-var mirroring in codegen (removed by DD#53)
-- Check: PATH is only used at *compile* time, not runtime
-
-### 4. Integer overflow
-Can arithmetic overflow cause unexpected behavior?
-- Check: `emit_arith_op` in `codegen.rs` — overflow model
-- Check: DD#25 overflow decision
-
-### 5. String buffer overflow
-Can string operations write past allocated memory?
-- Check: all string ops in runtime use explicit length
-- Check: `sash_concat` — does it allocate len1+len2+1?
-- Check: null terminator always written
-
-## Files by size (complexity budget)
-
-```
-codegen.rs      6593 lines  — instruction emission (largest, most critical)
-transform.rs    4012 lines  — IR→SSA (second largest)
-lower.rs        3043 lines  — CST→IR
-emit_janet.rs   1280 lines  — Janet backend (not security-critical)
-taint.rs         975 lines  — taint tracking
-lib.rs           607 lines  — CLI and preprocessing
-type_check.rs    555 lines  — type checker
-ssa.rs           516 lines  — SSA data structures
-ssa_taint.rs     330 lines  — SSA taint verification
-ssa_printer.rs   287 lines  — SSA pretty-printing (debug only)
-```
-
-## Design decisions relevant to security
-
-| DD# | Topic | Security relevance |
-|-----|-------|-------------------|
-| DD#12 | String representation | Ptr+len prevents buffer overflows |
-| DD#14 | Pipeline primitives | Fork/exec only, no shell interpretation |
-| DD#23 | Command resolution | Compile-time PATH, no runtime lookup |
-| DD#24 | Taint/attest model | All external data tracked |
-| DD#42-44 | getenv/argv/argc | Explicit data entry points |
-| DD#53 | Env/var separation | No implicit env-var mirroring |
-| DD#55 | Exit checks | Nonzero exit aborts (fail-closed) |
-| DD#56 | Signal model | Controlled signal handling |
-
-Full decisions in `notes/decisions/` (one file per DD#).
+- [ ] Add source behavior coverage to the existing spec suite using the
+  actual built CLI and helpers. Reserve direct unit tests for internal
+  contracts source programs cannot exercise; avoid rival assertions already
+  pinned by specs.
+- [ ] Show the intended assertion fails before the change or under a
+  targeted reversion, then passes afterward. A diagnostic assertion must
+  identify the intended rule/site, not just nonempty stderr or a co-fired
+  code. Read the harness's retained xtrace before explaining a failure.
+- [ ] Follow the [spec gate procedure](../AGENTS.md#spec-tests): historical
+  ID high-water marks, count predictions, native/C scope and result-history
+  accounting matter. A passing build or `spec/run.sh` exit status is not a
+  substitute for the applicable `mk gate` result.
+- [ ] Treat coverage as reachability, not assertion strength. Check
+  measurement freshness and use positive controls before concluding an
+  arm is unreachable. Enumerate producers before narrowing a type or
+  deleting a path; the new program compiling does not prove equivalence.
+- [ ] Record what changed, what was actually proved and what remains open.
+  Keep the journal/status and affected architecture documentation coherent,
+  while leaving detailed procedures and language policy in their canonical
+  records. Do not turn old measurements into claims about the new tree.
