@@ -1,4 +1,24 @@
-## STATUS (2026-11-11, latest) - Architecture and review guides refreshed
+## STATUS (2026-11-11, latest) - Compiler man page refreshed
+
+DG approved rebuilding `docs/sash.1` as a concise compiler-command
+reference. It now covers the shipped invocation, options, output,
+command resolution, environment, archive location, exit statuses and
+examples, using safebash and `.sb` terminology.
+
+The obsolete builtin-flag survey and historical diagnostic/bug catalogue
+are removed. Current defaults and limitations remain explicit, including
+`.sb.out` output naming, inspection versus executable validation, native
+runtime-archive lookup and the known driver/regex bugs.
+
+The existing deferred specification task preserves a section map and
+retrieval instructions for the useful language material at the frozen
+pre-rewrite revision. No new language reference or specification design
+is started. Journal 623 records the rewrite and its evidence.
+
+This is documentation-only; no new implementation gate or coverage
+measurement is claimed. The existing generated gate block is retained.
+
+## STATUS (2026-11-11) - Architecture and review guides refreshed
 
 DG approved rewriting GUIDE as a shorter account of the shipped compiler
 and runtime, and REVIEW as a current review checklist. Both are now

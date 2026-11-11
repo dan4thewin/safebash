@@ -69,6 +69,55 @@ backends); the document needs to hang off it rather than beside it.
 5. **Scope.** Language reference only, or also the taint model, error model
    (DD#70) and the runtime/ABI surface?
 
+## Material retained from the former man page
+
+On 2026-11-11 DG approved replacing the mixed `sash(1)` manual with a
+compiler-command reference, while preserving its useful language material
+for this effort. The complete former page remains in Git at
+[`7e8150b5:docs/sash.1`](https://github.com/dan4thewin/safebash/blob/7e8150b5e038c2c969d253cc66b5354aa7e404f1/docs/sash.1).
+Retrieve it with:
+
+```sh
+git show 7e8150b5e038c2c969d253cc66b5354aa7e404f1:docs/sash.1
+```
+
+This is a source-material map, not another specification or a certification
+of the old prose. Line ranges refer to that frozen revision, not the current
+command manual.
+
+| Former section | Lines | Reuse boundary |
+|---|---:|---|
+| Redirection | 349-444 | Retain the syntax inventory; reconcile failure handling with current decisions and delivery. |
+| Test operators | 445-586 | Retain the operator explanations; check current typing, consumption and regex contracts. |
+| String escapes | 587-695 | Useful lexical examples; verify each context rather than importing Bash escape rules. |
+| EXIT/ERR handlers | 696-773 | Recent material agrees with shipped DD128 cause-based routing, including `exit N` and `fail 0`. |
+| Special values, status and process latches | 774-847 | Separate current behavior from accepted-but-pending capture-entry changes. |
+| Functions and tail recursion | 848-888 | Integrate with the current void/status/integer return-kind rules. |
+| Regex dialect and quoting | 889-1134 | Useful material with the corrections and limitations below. |
+
+Known exclusions and corrections from the assessment:
+
+- Do not carry forward the `read` flags, `mapfile` or `echo -n` survey
+  (220-348), its old BUGS catalogue (1160-1253), or the retired diagnostic
+  entries. DD99's shipped interface uses flagless `read`/`readline` and
+  `echo`/`write`; provisional scratch/accumulation policy is not implemented.
+- The regex additions preamble wrongly says Bash does not accept counted
+  repetition. A Bash control accepts `^a{2}$`; do not reproduce that claim.
+- The whole-subject anchor promise contradicts the still-open
+  [anchor bug](bug-regex-line-anchors.md), including global-match resumption.
+  Do not turn the faulty implementation into an intentional dialect rule.
+- The regex interior-NUL restriction (1066-1099) is instead a
+  [deliberately documented limitation](limitation-regex-stops-at-interior-nul.md):
+  matching stops at the first NUL although scalar storage retains the suffix.
+- DD132's runtime-pattern proof model is provisional and unimplemented.
+  DD39's literal-regex precompilation/cache delivery is also pending;
+  neither may be inferred from older prose.
+
+Use safebash for the language, sash for the compiler, and `.sb` for source
+examples. Journal 623 records the manual refresh. This preservation does not
+select the specification's organization, IDs, authoring model or authority,
+and the effort remains deferred.
+
 ## Related
 
 - `spec-db-clause-text` — the requirement text, and the `spec/clauses.sql`

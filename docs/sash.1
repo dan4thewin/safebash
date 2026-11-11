@@ -1,1312 +1,285 @@
-.\" sash.1 - DRAFT man page for every switch-taking surface in safebash.
-.\" Every behavior below was verified empirically against
-.\" target/release/sash on 2026-09-08, not read off the source comments.
-.TH SASH 1 "2026-09-08" "safebash" "General Commands Manual"
-.
+.TH SASH 1 "2026-11-11" "safebash" "User Commands"
 .SH NAME
-sash \- compile a safe subset of bash to a static native binary
-.
+sash \- compile safebash programs to static Linux executables
 .SH SYNOPSIS
 .B sash
-.RI [ options ]
-.I script.sh
-.RB [ \-o
-.IR output ]
+.RI [ option " ...] " file.sb
 .br
 .B sash
-.B \-c
-.I 'script'
-.RB [ \-o
-.IR output ]
+.RI [ option " ...]"
+.BI "\-c " source
 .br
-.B sash
-.B \-\-extract
+.B sash \-\-extract
 .I binary
-.br
-.B sash
-.B \-\-help
-.
+.RB [ source | ir | manifest ]
 .SH DESCRIPTION
 .B sash
-compiles a script written in the safe subset of bash to a static ELF
-binary. The subset is defined by safebash's own design decisions, not by
-.BR bash (1)
-compatibility: where the two differ,
-.B sash
-implements the behaviour its design decisions specify.
+compiles safebash, a deliberately constrained, Bash-derived language.
+It checks the source, generates native code and links a static ELF
+executable against the safebash runtime.
+It does not interpret the source or run the resulting program.
 .PP
-This page documents every surface in safebash that takes a switch: the
-compiler driver, the three builtins that accept flags
-.RB ( read ,
-.BR mapfile ,
-.BR echo ),
-the
-.RB \[dq] [[ \ ]] \[dq]
-test operators that share the same
-.BI \- X
-namespace, and
-.BR sash\-convert (1).
-.
+Input is a UTF-8 source file or the text supplied with
+.BR \-c .
+The recommended source suffix is
+.BR .sb ;
+the compiler does not require a particular suffix.
+.PP
+safebash is not a drop-in Bash replacement.
+For Bash input, use the separate
+.B sash-convert
+tool and review its generated source and annotations before compiling.
+This page describes the compiler command, not the full language.
 .SH OPTIONS
-.SS Input and output
 .TP
-.BI \-c \ script
-Compile
-.I script
-given inline instead of reading a file.
+.BI "\-c " source
+Compile the supplied source text instead of reading a file.
+Quote it for the invoking shell so that shell does not expand it first.
 .TP
-.BI \-o \ output
-Write the binary to
+.BI "\-o " output
+Write the native executable to
 .IR output .
+Without this option,
+.B \-c
+uses
+.BR a.out .
+File input loses a trailing
+.B .sh
+or
+.B .bash
+suffix; other filenames have
+.B .out
+appended.
+Thus
+.B program.sb
+defaults to
+.BR program.sb.out .
+An explicit output path is recommended.
+This option does not redirect inspection or C output.
 .TP
-.B \-h ", " \-\-help
-Print the usage summary on standard output and exit 0.
-.
-.SS Alternative backends
-Each writes to standard output and exits; no binary is produced.
+.B \-\-emit-c
+Write C source to standard output instead of creating an executable.
+The generated C uses the same runtime ABI as native output and must be
+compiled and linked against a matching
+.BR libsash_rt.a .
+It is not a standalone libc-based translation.
 .TP
-.B \-\-emit\-ir
-Emit the IR as an inert Janet data literal \(em data, not a program.
-Intended for out-of-tree consumers such as the decoupled oracle
-(DD#104); the leading
-.B :ir\-version
-key lets a consumer refuse a capture it does not understand.
-.TP
-.B \-\-emit\-c
-Emit C source. Link against
-.B libsash_rt.a
-.RB ( SASH_RT_LIB ).
+.B \-\-emit-ir
+Write the frontend IR as inert Janet data to standard output.
+This is the parsed program before internal lexical-name qualification,
+not lowered SSA or executable Janet code.
 .TP
 .B \-\-manifest
-Emit the manifest (external dependencies).
-.
-.SS Inspection
+Write resolved external-command dependencies to standard output,
+one absolute path per line.
+The manifest does not describe libraries or further commands that those
+external programs may themselves need.
 .TP
-.BI \-\-extract \ binary
-Dump the
-.B .sash_source
-ELF section of a compiled
-.IR binary .
-The binary must follow the flag directly
-.RB ( sash \ \-\-extract \ BIN );
-it is read positionally.
+.BI "\-\-extract " binary
+Read an embedded artifact from an existing executable, without compiling
+source or executing the binary.
+An optional following selector chooses
+.BR source ,
+.B ir
+or
+.BR manifest ;
+the default is
+.BR source .
+An invalid selector or an unreadable or missing artifact is an error.
 .TP
-.B \-\-trace
-Enable tracing in the emitted binary.
-Native backend only, and opt\-in twice over: the flag compiles the trace
-sites in, and
-.B SASH_TRACE=1
-activates them at run time. A binary built without it ignores the
-variable.
-.TP
-.BI \-\-heap\-size= size
-Set the runtime heap reservation, as a byte count with an optional
+.BI \-\-heap-size= size
+Set the generated program's runtime heap reservation.
+The default is
+.B 256M
+(256 MiB).
+Use a positive decimal byte count, optionally followed by
 .BR K ,
-.BR M ,
+.B M
 or
 .B G
-suffix \(em for example
+for powers of 1024; lowercase suffixes are also accepted.
+For example:
 .BR 512K ,
 .BR 64M ,
 .BR 2G .
-Default 256M (DD#107).
-.
-The heap is a single fixed region, so this is a hard ceiling rather than a
-starting size; exceeding it is a clean
-.B sash: out of memory
-diagnostic with a non\-zero status, never a segfault. The region is mapped
-.BR MAP_NORESERVE ,
-so a large reservation costs address space rather than memory.
-.
-The size is compiled into the binary and is deliberately
-.B not
-readable from the environment: there is no
-.BR $SASH_HEAP .
-.
-.SS Taint bypasses
-See DD#82. These weaken the guarantee that
-.B sash
-exists to provide; use them deliberately.
+This setting is compiled into native and C output, not read from the
+program's environment.
+It does not limit compiler memory or external-command memory.
 .TP
-.B \-\-no\-taint\-cst
-.B A testing aid only \(em not for general use.
-Disable the front-end (CST) taint pass only. The SSA taint backstop still
-runs, which is how the backstop is exercised in isolation. Deliberately
-absent from
-.BR "sash \-\-help" :
-it exists to test the compiler, not to be reached for while writing
-programs. Use
-.B \-\-no\-taint
-if you genuinely need a bypass.
-.TP
-.B \-\-no\-taint
-Disable both taint passes.
-.
-.SS Environment
-.TP
-.BI \-\-sysroot= path
-Set the sysroot used for command resolution (DD#23). A directory or a
+.BI \-\-sysroot= root
+Check external-command paths against a directory or a SquashFS image
+instead of the build host's root.
+Image filenames must end in
 .B .squashfs
-/
-.B .sqsh
-image. Every command path \(em whether found by the PATH search or written
-out in full \(em is checked against this root rather than the build host.
-A root that cannot be read \(em a missing directory, or an image
+or
+.BR .sqsh ,
+and require
 .B unsquashfs
-cannot open \(em is a usage error reported before compilation starts, not a
-per\-command diagnostic.
-.PP
-A command path must name a
-.B regular file with an execute bit
-in that root. A bare name that matches nothing executable on PATH is
-.BR SB5011 ;
-a relative path is
-.BR SB5051 ;
-an absolute path that is absent, a directory, a device node, or not
-executable is
-.BR SB5095 ,
-and the message names which. Use
-.RB \[dq] "[[ \-x /path ]]" \[dq]
-to test for a program at
-.I run
-time, and
-.B /usr/bin/env
-to defer the search to one.
-.PP
-A command name is a literal path. There is no globbing in command position:
-.B *
-is a glob only in an array context (DD#39), so
-.B /bin/ech*
-names a program that does not exist rather than matching one.
-.PP
-A command name whose text has no bare spelling \(em most often a path
-containing a space \(em may be written in
-.B single
-quotes, which denote the literal name:
-.RB \[dq] "\[aq]/opt/my tool\[aq]" \[dq] .
-Every quoted
-.I constant
-name is judged at parse time, by whichever rule is true of it.
-Quoting a name that could have been written bare is
-.BR SB5096 ;
-so is a name that genuinely needs quoting but is said some other way \(em
-double\-quoted
-.RB ( \[dq]/opt/my\ tool\[dq] ),
-or assembled from several quoted and bare pieces \(em with the opposite
-advice.
-One rule earns one code: a command name is one bare word, or one
-single\-quoted word when it has no bare spelling.
-An empty name
-.RB ( \[aq]\[aq] " or " \[dq]\[dq] )
-is
-.BR SB4074 :
-a zero\-length name can denote neither an intrinsic nor a program, so it is a
-syntax error rather than a resolution failure.
-.PP
-.B SB5011
-is left for a head that really is resolved at runtime \(em one containing a
-variable, an expansion or a capture \(em which is what its text has always
-said.
-.
-.SS Rejected here, accepted by sash\-convert
-.B \-\-emit\-source ,
-.B \-\-annotate ,
-and
-.B \-\-nolint
-are rejected with a message directing you to
-.BR sash\-convert (1).
-Source transformation belongs to the converter, not the compiler (DD#57).
-.
-.SH BUILTINS THAT TAKE FLAGS
-.SS read
-.B read
-.RB [ \-a
-.IR array ]
-.RB [ \-d
-.IR delim ]
-.RB [ \-f
-.IR sep ]
-.RB [ \-r ]
-.RI [ name ...]
-.PP
-A byte-valued flag may be joined
-.RB ( \-d: )
-or split
-.RB ( \-d\ : ).
-An empty value
-.RB ( \-d\ '' ,
-or a bare trailing
-.BR \-d )
-means NUL, following the bash
-.B read -d ''
-convention.
+on the compiler's PATH.
+The selected root is not prepended to the paths embedded in the program.
+This option does not select a machine architecture, target runtime or linker,
+and does not run the program in a chroot.
 .TP
-.BI \-a \ array
-Read into
-.IR array .
-See BUGS: the split here uses
-.BR \-d ,
-not
-.BR \-f .
+.B \-\-trace
+Include branch and loop outcome tracing in a native executable.
+Enable it when running that executable with
+.BR SASH_TRACE=1 .
+Trace records go to standard error; this is not shell command tracing.
+The C emitter does not provide this tracing.
 .TP
-.BI \-d \ delim
-Record delimiter \(em the byte that
-.B terminates the line.
-Reading stops there. This is
-.B not
-the field separator.
+.B \-\-no-taint
+Disable both frontend and SSA taint checking.
+Parsing, structural validation and type checking remain enabled.
+This is an explicit trust bypass, not validation of external data.
 .TP
-.BI \-f \ sep
-Field separator \(em the byte that separates fields
-.I within
-the line. This is bash's
-.B IFS
-for a single command.
-.TP
-.B \-r
-Accepted and ignored. sash reads are always raw, so
-.B \-r
-requests the default.
-.PP
-Any other
-.BI \- flag
-is rejected with
-.BR SB5015 .
-.PP
-With one target, the whole line is assigned. With several, each target but
-the last takes one field and
-.B the last takes the remainder:
-.PP
-.RS
-.EX
-echo "a b c d" | read x y      # x=a  y="b c d"
-echo "a:b:c:d" | read -f: x y  # x=a  y="b:c:d"
-echo "a:b:c:d" | read -d: x y  # x=a  y=""      (line ends at the first ':')
-.EE
-.RE
-.PP
-.B read
-targets are tainted (DD#24); reading one requires
-.BR attest .
-Use
-.B _
-to bind and discard a field you do not want (DD#98).
-.
-.SS mapfile
-.B mapfile
-.RB [ \-m ]
-.RB [ \-f c ]
-.RB [ \-t ]
-.I target
-.TP
-.B \-m
-Map mode: read
-.IB key sep value
-lines into a map rather than an array.
-.TP
-.BI \-f c
-The map key/value separator, default
-.BR = .
-Joined
-.RB ( \-f: )
-or split
-.RB ( \-f\ : ).
-.TP
-.B \-t
-Accepted and ignored. sash always strips the trailing newline.
-.PP
-.B readarray
-is
-.B not
-supported \(em it is rejected by command resolution
-.RB ( SB5011 ).
-Use
-.BR mapfile .
-.PP
-Unknown flags are
-.B silently ignored
-here. See BUGS.
-.
-.SS echo
-.B echo
-.RB [ \-n ]
-.RI [ arg ...]
-.TP
-.B \-n
-Suppress the trailing newline. Recognized
-.B only as the first argument;
-elsewhere
-.B \-n
-is an ordinary word and is printed.
-.PP
-There is no
-.BR \-e .
-sash does not interpret backslash escapes in
-.BR echo ;
-.B \-e
-is printed literally, as is the text after it.
-.
-.SH REDIRECTION
-A redirect may attach only to something that produces output or consumes
-input. That is
-.BR echo ,
-.BR write ,
-.BR exec ,
-.BR read ,
-.BR readline ,
-an external command, a user function, or a pipeline \[em] plus
-.BR : ,
-which is a deliberate exception described below.
-.PP
-Every other builtin writes to no descriptor, so a redirect on it can only
-create and truncate the file as a side effect. bash does exactly that; sash
-rejects it with
-.B SB4046
-rather than copy the wart:
-.PP
-.RS 4
-.nf
-cd /tmp > f                  # SB4046
-exit 0 > f                   # SB4046
-close 9 > f                  # SB4046
-unset m[k] > f               # SB4046
-argv 1 a > f                 # SB4046
-match \[dq]$s\[dq] /a/ > f           # SB4046
-attest s [[ \-n $s ]] > f     # SB4046
-return 0 > f                 # SB4046
-.fi
-.RE
-.PP
-The same rule covers a value\-producing intrinsic. These are read as a
-capture \[em]
-.BR getenv ,
-.BR arg ,
-.BR argc ,
-.BR status ,
-.BR epochseconds ,
-.BR random ,
-.BR getpid ,
-.BR getppid ,
-.BR getcpid ,
-.BR waitstatus ,
-.BR getcwd ,
-.BR signum
-\[em] and a capture has no descriptor to redirect, so
-.B \[dq]$(getcwd 2>/dev/null)\[dq]
-is
-.BR SB4046 .
-.PP
-The same rule covers a function definition, a variable declaration, a bare
-assignment, an arithmetic test and a
-.RB \[dq] [[ \ ]] \[dq]
-test.
-.PP
-.B \[dq]:\[dq]
-is the exception. It produces no output either, but
-.B \[dq]: > f\[dq]
-is the universal spelling for truncating a file, so it honours its redirects
-and creates or truncates the target.
-.PP
-.B return
-follows the shape of its operand.
-.B \[dq]return N\[dq]
-names the status outright and is rejected above;
-.B \[dq]return CMD\[dq]
-derives the status from a producer that does produce output, so
-.B \[dq]return /bin/true 2>/dev/null\[dq]
-is accepted and the redirect applies to the producer (DD#74).
-.PP
-.B \[dq]exec CMD > f\[dq]
-installs the redirect and then replaces the process, so
-.B CMD
-inherits it \[em] bash's behaviour. The no\-argument form
-.B \[dq]exec > f\[dq]
-rebinds the invoker's own descriptors for the rest of the program, and is the
-one redirect form that also moves the diagnostic channel (DD#120).
-.PP
-A redirect says where output goes; it does not dispose of the exit status.
-.B \[dq]cmd > f\[dq]
-sets
-.B $?
-exactly as
-.B cmd
-does. Suppression is the one wrapper that does dispose of it:
-.B \[dq]\- cmd\[dq]
-elects the
-.I ignored
-disposition, so reading
-.B $?
-afterwards is
-.BR SB5012 .
-DD#55 puts it as
-.I
-\[dq]you said you don't care; you don't get to inspect it\[dq].
-.
-.SH TEST OPERATORS
-The
-.RB \[dq] [[ \ ]] \[dq]
-operators occupy the same
-.BI \- X
-namespace as the flags above but are
-.B operators, not switches.
-This is the most common source of confusion \(em see BUGS.
-.SS Unary
-.TP
-.B \-e \-f \-d \-s \-r \-w \-x \-h \-L \-b \-c \-p \-S \-t \-O \-G \-N \-a
-File and descriptor tests, as in
-.BR bash (1).
-.TP
-.B \-n \-z
-Non-empty / empty string.
-.TP
-.B \-v \-o \-R
-Parsed but
-.B rejected
-.RB ( SB5028 ),
-each with a hint:
-.B \-v
-\(em use
-.B \-n
-instead, since under DD#62 an unset or empty variable is just the empty
-string;
-.B \-o
-\(em sash has no shell options;
-.B \-R
-\(em sash has no namerefs.
-.SS Content shape (DD#93)
-.TP
-.B i? p? g?
-Integer-representable / all-printable / all-graph. These are
-.B prefix
-operators and carry no dash:
-.RB \[dq] [[\ i?\ $x\ ]] \[dq].
-They also have an
-.B attest
-shorthand:
-.RB \[dq] attest\ x\ p? \[dq].
-The
-.B ?
-suffix keeps them out of bash's saturated
-.BI \- X
-namespace.
-.SS Numeric comparison
-.B \-eq \-ne \-lt \-le \-gt \-ge
-are
-.B rejected
-.RB ( SB5019 ).
-Arithmetic comparison belongs in
-.RB \[dq] ((\ )) \[dq]:
-write
-.RB \[dq] ((\ a\ ==\ b\ )) \[dq],
-not
-.RB \[dq] [[\ $a\ \-eq\ $b\ ]] \[dq].
-.SS String comparison (DD#118)
-.TP
-.B ==  !=
-String equality and inequality.
-.B A single
-.B =
-is
-.B rejected
-.RB ( SB4067 ):
-it always
-.BR assigns ,
-so
-.RB \[dq] [[\ $x\ =\ y\ ]] \[dq]
-would read as a comparison while
-.RB \[dq] [[\ $x=y\ ]] \[dq]
-is one word. Write
-.B ==
-for equality, everywhere.
-.TP
-.B <  >
-Byte-order comparison, via the same locale-free compare the runtime uses.
-.SS No implicit \-n (DD#118)
-A bare word is
-.B not
-a test
-.RB ( SB4068 ).
-bash reads
-.RB \[dq] [[\ word\ ]] \[dq]
-as
-.RB \[dq] [[\ \-n\ word\ ]] \[dq];
-sash requires the
-.B \-n
-(or
-.BR \-z )
-to be written. This is what makes
-.RB \[dq] [[\ $x=y\ ]] \[dq]
-an error rather than a silently constant
-.BR true .
-.SS Vacuous tests (DD#118)
-A test whose answer is fixed by the source text is
-.B rejected
-.RB ( SB5086 ):
-.RB \[dq] [[\ \-n\ foo\ ]] \[dq],
-.RB \[dq] [[\ \-z\ \[dq]\[dq]\ ]] \[dq],
-.RB \[dq] [[\ foo\ ==\ foo\ ]] \[dq],
-and a
-.RB \[dq] [[\ subj\ pat\ {\ }\ ]] \[dq]
-dispatch whose subject and patterns are all literal.
-The rule is
-.BR syntactic :
-it stops at the first variable and never constant-folds, so the mechanical
-escape always works \(em
-.RB \[dq] str\ s=foo;\ [[\ \-n\ $s\ ]] \[dq].
-File tests are exempt (a static operand, a runtime answer), and so are the
-numeric operators, so that
-.B SB5086
-cannot shadow
-.BR SB5019 .
-.
-.SS Glued operators need a \[dq]$\[dq] (DD#118)
-A comparison written without spaces is recognised only when the left operand
-.B starts with an expansion
-\(em
-.RB \[dq] $x==a \[dq],
-.RB \[dq] $x$y==ab \[dq],
-.RB \[dq] ${m[$k]}==a \[dq].
-A word beginning with static text
-.RB ( \[dq] ab==$x \[dq],
-.RB \[dq] a$x==ab \[dq],
-.RB \[dq] [[a==a]] \[dq])
-is
-.B rejected
-.RB ( SB4069 ).
-Bash reads such a word as a bare word, so accepting a glued operator there
-answered differently from bash without saying so.
-Since
-.B ==
-commutes, the diagnostic offers both the spaced form
-.RB ( \[dq] ab\ ==\ $x \[dq])
-and the swap
-.RB ( \[dq] $x==ab \[dq]);
-.B =~
-is offered only the spaced form, because its subject must stay on the left.
-.
-.SH STRING ESCAPES
-Backslash is interpreted in
-.B exactly two
-places (DD#64): inside
-.RB \[dq] $'\|.\|.\|.' \[dq]
-and as a line continuation at end of line.
-Everywhere else \(em unquoted,
-.RB \[dq] '\|.\|.\|.' \[dq]
-and
-.RB \[dq] \[rs]"\|.\|.\|.\[rs]" \[dq]
-\(em a backslash is a verbatim byte.
-There is no
-.B \[rs]"
-or
-.B \[rs]$
-inside double quotes; escape by quoting and concatenation instead.
-.PP
-.RB \[dq] $'\|.\|.\|.' \[dq]
-works anywhere a
-.B $
-form does, including inside
-.RB \[dq] \[rs]"\|.\|.\|.\[rs]" \[dq].
-The escape set is fixed by DD#115.
-.SS Accepted
-.TP
-.B \[rs]n \[rs]t \[rs]r \[rs]a \[rs]b \[rs]e \[rs]E \[rs]f \[rs]v \[rs]\[rs] \[rs]' \[rs]"
-The named escapes, as in
-.BR bash (1).
-.TP
-.BI \[rs]x NN
-One or two hex digits naming a
-.BR byte ,
-capped at
-.BR \[rs]x7f .
-.TP
-.BI \[rs]u HHHH \fR,\fP \[rs]U HHHHHHHH
-Up to four or eight hex digits naming a
-.BR character ,
-emitted as UTF\-8.
-.TP
-.B \[rs]q \[rs]z \fR\(em anything bash does not read as an escape\fP
-Stays a literal backslash and byte, exactly as bash leaves it.
-.SS Rejected with SB4063
-Never silently \(em each names its replacement.
-.TP
-.B octal
-.BR \[rs]0 ,
-.BR \[rs]012 ,
-.BR \[rs]101 ,
-.BR \[rs]777 .
-bash reads
-.BI \[rs] nnn
-as one to
-.B three digits total,
-so
-.B \[rs]0101
-is
-.B \[rs]010
-then
-.BR 1 ,
-which is easy to misread and which sash got wrong.
-Write the byte as
-.BI \[rs]x NN
-or the character as
-.BI \[rs]u HHHH .
-.B \[rs]0
-is included:
-.B \[rs]0
-.I is
-the octal escape, so a NUL is
-.BR $'\[rs]x00' .
-.TP
-.BI \[rs]c X
-Archaic control notation.
-.B \[rs]cA
-is
-.BR \[rs]x01 .
-.TP
-.BI \[rs]x NN \fP\ above\ \fB\[rs]x7f
-A lone byte above ASCII is not UTF\-8 text.
-Write the character \(em type it in the UTF\-8 source, or use
-.BI \[rs]u HHHH .
-.TP
-.B a prefix with no digits
-.B \[rs]x
-and
-.BR \[rs]u ,
-as DD#72 rejects a bare
-.BR 0x .
-.TP
-.BI \[rs]u HHHH\fP\ that\ is\ not\ a\ character
-A surrogate
-.RB ( D800 \- DFFF )
-or above
-.BR 10FFFF .
-bash encodes these anyway and emits invalid UTF\-8.
-.PP
-The cap is a
-.B source-literal
-constraint only.
-The runtime is byte\-clean:
-.BR read ,
-.BR $(arg\ N) ,
-.BR $(getenv\ NAME) ,
-.RB \[dq] $(\|.\|.\|.) \[dq]
-capture and external passthrough all carry arbitrary bytes intact.
-What is given up is authoring a lone byte \(>= 0x80
-.I inline.
-.
-.SH TERMINAL HANDLERS
-.B EXIT { ... }
-and
-.B ERR { ... }
-are optional top\-level declarations, at most once each (DD#128).
-Both share the program's global variables.
-Function definitions belong only directly in the main statement list
-.RB ( SB5071 ),
-not inside either handler.
-.PP
-Fallthrough, explicit
-.B exit [N]
-and configured EXIT signals select
-.BR EXIT .
-Uncaught failures, explicit
-.B fail [N]
-and a first fatal runtime fault select
-.BR ERR .
-A missing handler never substitutes the other.
-Selection is independent of the integer status.
-.B exit
-defaults to 0 and
-.B fail
-to 1; both take at most one integer argument.
-.B fail 0
-is legal.
-The full integer reaches the selected handler; only the final process status
-is truncated to eight bits.
-Both operations terminate rather than returning a catchable status.
-This explicit\-termination revision was accepted on 2026\-11\-06
-(journal 575) and implemented in journal 576.
-.PP
-EXIT is ordinary checked code.
-Its failure may enter ERR.
-ERR must catch or suppress operational failures where they occur
-.RB ( SB5101 );
-handling a function's returned status does not catch failures in its body.
-Operations with uncatchable setup, operand or I/O failures are unavailable
-there unless proved safe.
-Arithmetic faults and heap exhaustion remain fatal: the first attempts ERR,
-and a further fault terminates without re\-entry.
-.PP
-Neither handler resumes the interrupted program.
-Forked children run neither.
-Completion preserves the entry status; explicit
-.B exit N
-overrides it.
-An exit inside either handler terminates directly for any status.
-A fail inside EXIT enters ERR; inside ERR it terminates without re\-entry.
-The incoming status is available as the handler's first
-.B $?
-use, subject thereafter to ordinary handling\-position rules.
-Handlers observe completed global writes, not hypothetical later values.
-.PP
-EXIT's ordinary uses must be clean on every applicable entry.
-ERR requires
-.B :!
-when reading incoming data that could have received taint, even if main
-normally attests it.
-Fresh input acquired inside ERR may be adjacently and caughtly attested.
-Only legal attestation or direct clean replacement of its subject in the
-failed\-attest branch resolves outstanding taint.
-An unrelated literal overwrite, unset or reset helper does not.
-.PP
-.B signal N EXIT
-records a pending shutdown and supplies status
-.B 128+N
-at a checkpoint.
-Dispatch is deferred across legal adjacent acquisition/resolution;
-signal receipt is not masked.
-Ordinary failures and explicit exit/fail still transfer immediately.
-Signals inside either handler cannot dispatch another handler.
-.PP
-.B END
-is removed.
-Migrate its body deliberately to checked EXIT or explicitly handled ERR;
-neither is a compatibility alias.
-.
-.SH SPECIAL VALUES
-Three values that bash spells with punctuation have keyword names in sash,
-and the keyword name is the canonical one (DD#75).
-The punctuation is accepted as input sugar; it is what
-.B sash\-convert
-rewrites away.
-.TP
-.B $(status)
-The exit status of the most recent command.
-bash spells this
-.BR $? .
-.TP
-.B $(getpid)
-This process's pid.
-bash spells this
-.BR $$ .
-.TP
-.B $(getcpid)
-The pid of the job backgrounded by the immediately preceding statement.
-bash spells this
-.BR $! .
-.TP
-.B $(waitstatus)
-The exit status of the child reaped by the immediately preceding
-.BR wait ,
-or
-.B \-1
-if it reaped nothing.
-.PP
-.B $(getcpid)
-and
-.B $(waitstatus)
-read single-slot latches that the next statement overwrites without warning,
-so each is readable only in the statement
-.I immediately following
-the one that wrote it
-.RB ( SB5094 ).
-.PP
-.B The spelling depends on where the value sits.
-In command position the keyword is a command substitution,
-.BR $(status) .
-As an arithmetic operand it is the
-.RB \[dq] (name\ args\|.\|.\|.) \[dq]
-call form,
-.BR (status) ,
-with no
-.BR $ :
-.PP
-.RS
-.EX
-echo $(status)              # command position
-n=$(( (status) + 1 ))       # arithmetic operand
-.EE
-.RE
-.PP
-These are not interchangeable.
-.B $(status)
-inside
-.RB \[dq] $((\ )) \[dq]
-is
-.BR SB4020 ,
-because a command substitution is not an arithmetic operand.
-The punctuation sugar
-.RB ( $? )
-reads the same in both, which is why a mechanical rewrite has to know
-which context it is in.
-.PP
-.B $(status)
-is rejected with
-.B SB5012
-where no command has run yet \(em at the top of a script, and after a
-background job, which does not set it.
-The punctuation spelling is rejected in exactly the same places.
-.
-.SH FUNCTIONS AND RECURSION
-Functions are
-.B inlined.
-There is no runtime call stack, so in general a function cannot call itself \[em]
-inlining would not terminate \[em] and such calls are rejected with
-.BR SB5037 .
-.PP
-.B One shape is allowed:
-a direct self
-.I tail
-call, where the recursive call is the producer of a
-.BR return .
-That is compiled to a loop and runs in constant stack.
-Write recursion in accumulator form:
-.PP
-.EX
-fn fact \-> int {
-  int n=$(($1)); int acc=$(($2))
-  if (( n <= 1 )); then return $(( acc )); fi
-  int n1=$(( n \- 1 )); int a1=$(( n * acc ))
-  return $(( (fact n1 a1) ))
-}
-int r=$(( (fact 5 1) ))          # 120
-.EE
-.PP
-Everything else is
-.BR SB5037 :
-.TP
-.B non\-tail self\-call
-.RB \[dq] return\ $((\ n\ *\ (f\ m)\ ))\[dq]
-\[em] the multiply happens
-.I after
-the call returns, so there is nothing to turn into a loop.
-This is what a direct translation of the textbook factorial produces.
-.TP
-.B mutual recursion
-.I f
-calls
-.IR g ,
-which calls
-.IR f .
-.SH REGULAR EXPRESSIONS
-Regexes appear in
-.RB \[dq] "[[ $v =~ RE ]]" \[dq],
-in the
-.BR match ,
-.BR sub ,
-and
-.B gsub
-builtins, and in the
-.RB \[dq] s/RE/SUB/ \[dq]
-sugar.
-.PP
-The engine is
-.BR "Rob Pike's Plan\ 9 regexp" ,
-used deliberately. It is a Thompson NFA: no backtracking, so match time is
-linear in the subject and no pattern can be made to blow up exponentially.
-.B POSIX compliance is not a goal.
-A handful of additions have been made for convenience, not for conformance.
-Expect a close relative of bash's
-.BR =~ ,
-not a drop\-in replacement; the differences are listed below and are
-intentional.
-.SS Core
-.TP
-.B . * + ? | ( ) ^ $
-As in POSIX ERE.
-.B .
-matches any byte except newline;
-.B ^
-and
-.B $
-anchor at the subject's start and end.
-.TP
-.B [abc] [a\-c] [^abc]
-Bracket expressions, with ranges and negation.
-.TP
-.B \e.
-A backslash makes any metacharacter literal.
-.SS Additions
-These are
-.B not
-in POSIX ERE and are
-.B not
-accepted by
-.BR bash (1).
-.TP
-.BI { n } "\fR, \fP" { n , m } "\fR, \fP" { n ,}
-Counted repetition of the preceding atom. Each bound is at most
-.BR 32 ;
-a larger one is rejected
-.RB ( "repetition count too large" ).
-The open form
-.BI { n ,}
-is unbounded above.
-.TP
-.B \ed \eD \ew \eW \es \eS
-Digit, word, and whitespace classes, and their complements.
-.TP
-.BI \ex NN
-The byte with hex value
-.IR NN ,
-exactly two digits. Lets a pattern hold any literal byte \(em a delimiter, a
-space, a control character \(em without quoting gymnastics. A non\-hex digit
-after
-.B \ex
-is an error.
-.SS Divergences from bash
-.TP
-.B Matching is byte\-oriented.
-.B .
-consumes one byte, not one character, so
-.RB \[dq] "é =~ ^.$" \[dq]
-is false and
-.RB \[dq] "é =~ ^..$" \[dq]
-is true.
-.BR bash (1)
-in a UTF\-8 locale matches whole characters. Literal non\-ASCII text in a
-pattern still works, because both sides are the same bytes. This matches
-.BR strlen ,
-which is likewise a byte count.
-.TP
-.B POSIX character classes are not supported.
-.RB \[dq] [[:alpha:]] \[dq]
-is read as an ordinary bracket expression followed by the literal text
-.RB \[dq] :] \[dq],
-so it
-.B silently fails to match
-rather than being rejected. Use
-.B \ew
-or an explicit range. This is the one unsupported construct that does not
-announce itself.
-.TP
-.B No backreferences in a pattern.
-.B \e1
-is the literal character
-.BR 1 ,
-so
-.RB \[dq] "(a)\e1" \[dq]
-matches
-.RB \[dq] a1 \[dq],
-not
-.RB \[dq] aa \[dq].
-.RB ( sub
-and
-.B gsub
-do take
-.B \e0
-\-
-.B \e9
-in the
-.IR replacement ;
-that is a different position.)
-.TP
-.B No lookahead, lookbehind, or non\-capturing groups.
-.RB \[dq] (?= \[dq],
-.RB \[dq] (?<= \[dq],
-and
-.RB \[dq] (?: \[dq]
-are rejected
-.RB ( SB5023 ).
-.TP
-.B No word boundary.
-.B \eb
-is the literal character
-.BR b .
-.TP
-.B A literal hyphen in a bracket must be escaped.
-Write
-.RB \[dq] [ab\e\-] \[dq];
-.RB \[dq] [ab\-] \[dq]
-is rejected as a malformed range.
-.TP
-.B No counted repetition of a group.
-.RB \[dq] (ab){2} \[dq]
-is rejected
-.RB ( SB5023 ).
-Write
-.RB \[dq] (ab)(ab) \[dq]
-instead.
-.IP
-This is a limitation of the engine rather than an oversight. The compiler
-expands a bound by re\-lexing the single preceding
-.IR atom ;
-.RB \[dq] ( \[dq]
-and
-.RB \[dq] ) \[dq]
-are operators, not atoms, so the atom it would repeat is the group's last
-element rather than the group. Earlier versions did exactly that:
-.RB \[dq] (ab){2} \[dq]
-compiled as
-.RB \[dq] (ab)b \[dq]
-and reported no match on
-.RB \[dq] ababababab \[dq],
-where bash matches. Rejecting is the deliberate choice \(em a wrong answer
-with no diagnostic is worse than a diagnostic. The rejection covers every
-position, not just a leading group:
-.RB \[dq] a(bc){2} \[dq],
-.RB \[dq] (a)(b){2} \[dq]
-and
-.RB \[dq] (a){2}b \[dq]
-are all rejected, while
-.RB \[dq] (ab)x{2} \[dq]
-is accepted because the repeated atom there is
-.BR x .
-.TP
-.B No empty alternative.
-.RB \[dq] (a|) \[dq]
-is rejected;
-.BR bash (1)
-accepts it. Write
-.RB \[dq] (a)? \[dq].
-.TP
-.B No case\-insensitive matching.
-The engine has no
-.BR REG_ICASE .
-Fold both sides instead:
-.RB \[dq] "match $(tolower $x) $(tolower $pat)" \[dq].
-.SS Interior NUL bytes
-A regex operation examines its subject only
-.B up to the subject's first interior NUL byte.
-Bytes after that are neither matched nor replaced, and are preserved
-unchanged. Like the POSIX bracket classes above, this boundary
-.B does not announce itself:
-the operation reports success and returns a wrong answer.
-.PP
-This applies to
-.RB \[dq] "[[ =~ ]]" \[dq],
-.BR match ,
-.BR matchall ,
-.BR sub ,
-.BR gsub ,
-and the
-.RB \[dq] ${x:s/\[u2026]/\[u2026]/} \[dq]
-and
-.RB \[dq] "x =~ s/\[u2026]/\[u2026]/" \[dq]
-mutation forms. A scalar itself is byte\-transparent \(em
-.B strlen
-counts the whole string, and NULs survive assignment, pipes, redirects and
-command substitution. It is only the regex engine, which is C\-string based,
-that stops early.
-.PP
-In practice a NUL is the
-.B record separator
-(DD#99), and text within one record does not contain one. If a scalar holds
-NULs it is mid\-split, and the operation to reach for is
-.B read
-or
-.BR matchall ,
-which work on the fields, not
-.RB \[dq] =~ \[dq]
-on the joined subject.
-.SS Quoting
-The pattern is an ordinary argument \(em one word \(em not a specially parsed
-field. Quote it whenever it contains characters the shell would otherwise
-take: a space, a
-.RB \[dq] # \[dq],
-or a doubled
-.RB \[dq] (( \[dq]
-\(em which an unquoted pattern hands to the arithmetic lexer, ending the
-pattern there, so
-.RB \[dq] "=~ ^((a))$" \[dq]
-is rejected
-.RB ( SB4014 )
-while
-.RB \[dq] "=~ '^((a))$'" \[dq]
-is fine. The trigger is adjacency, not nesting \(em
-.RB \[dq] "^(a(b))$" \[dq]
-has the same depth and compiles. A single
-.RB \[dq] ( \[dq]
-needs no quoting.
-.RB \[dq] "=~ '^(a|b)$'" \[dq]
-is literal,
-.RB \[dq] "=~ \[dq]^$p$\[dq]" \[dq]
-interpolates, and
-.RB \[dq] "=~ $p" \[dq]
-takes the whole pattern from a variable. Single quotes are the usual choice,
-since a regex is full of characters that mean something to both languages.
-.SS Validation
-A pattern that is a compile\-time literal is compiled by the same engine
-during compilation, so a malformed one is a
-.B compile
-error
-.RB ( SB5023 ).
-A pattern that comes from a variable is compiled at run time; a malformed one
-then exits with status 2.
-.
-.SH SASH-CONVERT
-.B sash\-convert
-.RB [ \-\-annotate ]
-.RB [ \-o
-.IR output ]
-.RI [ input.sh ]
-.PP
-Converts a bash script to sash-native source. Reads standard input when no
-input file is given.
-.TP
-.B \-\-annotate
-Annotate the output.
-.TP
-.BI \-o \ output
-Write to
-.IR output .
+.B \-\-no-taint-cst
+Testing switch: disable frontend/AST taint checking while retaining the
+SSA taint check for native and C emission.
+The spelling is historical; the compiler no longer has a CST.
 .TP
 .BR \-h ", " \-\-help
-Print usage and exit.
+Print usage and the main options to standard output, then exit successfully.
+.SH OUTPUT
+The default operation creates a native executable and prints a completion
+message to standard output.
+Diagnostics go to standard error; most source diagnostics include a source
+location and an
+.B SBnnnn
+code, while driver and I/O errors may be unnumbered.
 .PP
-Unlike
-.BR sash ,
-.B sash\-convert
-rejects an unknown flag.
-.
-.SH BUGS
-.SS The \-d / \-f collision
-One spelling means three different things depending on where it sits. This
-is the confusion this page was written for:
+Use one of
+.BR \-\-emit-c ,
+.B \-\-emit-ir
+or
+.B \-\-manifest
+instead of native compilation.
+Their payload goes to standard output; use shell redirection to save it.
 .PP
-.RS
-.TS
-l l l l.
-spelling	in read	in mapfile	in [[ ]]
-_
-\-d	record delimiter	(not a flag)	is a directory
-\-f	field separator	key/value separator	is a regular file
-\-a	array target	(not a flag)	file exists
-\-t	(not a flag)	accepted no-op	rejected (SB5028)
-\-n	(not a flag)	(not a flag)	string is non-empty
-.TE
-.RE
+IR and manifest output follow the frontend checks and lowering, but do
+not run the final SSA taint check used by native and C emission.
+Successful inspection is therefore not proof that executable emission
+will be accepted.
+Extraction is a separate artifact-reading operation.
 .PP
-Choosing
-.B \-d
-when you meant
-.B \-f
-fails silently \(em the read stops at the first delimiter and the trailing
-targets are left empty, with no diagnostic.
-.SS read \-a ignores \-f
-With
-.BR \-a ,
-splitting uses the
-.B record delimiter
-.RB ( \-d ),
-and
-.B \-f is silently ignored:
+Native executables embed the source, IR and command manifest for
+.BR \-\-extract .
+Embedded source is recoverable text, not encrypted or authenticated.
+.SH COMMAND RESOLUTION
+Bare external-command names are resolved at compile time using the
+compiler process's PATH.
+Only absolute PATH entries participate; relative and empty entries are
+ignored.
+Explicit absolute command paths are checked directly.
+Candidates must be regular files with execute permission.
 .PP
-.RS
-.EX
-echo "a:b:c" | read -a arr -d:   # 3 elements
-echo "a:b:c" | read -a arr -f:   # 1 element; -f discarded
-.EE
-.RE
-.PP
-The
-.B \-d
-behavior is deliberate (it is what makes the
-.BR sash\-getopt (1)
-NUL-splitting idiom work, spec 22.26/22.27). The silent discard of
-.B \-f
-is not spec'd. bash splits an array read on
-.BR IFS ,
-i.e. on the field separator.
-.SS Standalone and pipeline read disagree
-.B read
-is lowered by two different paths, and they do not enforce the same rules:
-.PP
-.RS
-.EX
-read -f: x                 # SB5016 (field separator needs several targets)
-echo "a:b" | read -f: x    # accepted; x gets the whole line
-.EE
-.RE
-.PP
-The same divergence affects the DD#86 acknowledgment
-.RB \[dq] :\ $v \[dq],
-which is accepted after a pipeline
-.B read
-but rejected after a standalone one \(em and rejected by the SSA taint
-backstop, with no
-.B SB
-code at all. See
-.BR notes/tasks/read\-taint\-backstop\-no\-sb\-code.md .
-.SS Unknown flags are handled two different ways
-.RS
+Resolved absolute paths are compiled into the program.
+Those commands must be available at the corresponding paths when it runs.
+Static linking does not bundle external commands or their dependencies.
+.SH ENVIRONMENT
 .TP
-.B read
-rejects \(em
-.BR SB5015 .
+.B PATH
+Used for external-command resolution and to locate build-host tools:
+.B ld
+for native linking, and
+.B unsquashfs
+when inspecting an image sysroot.
 .TP
-.B mapfile
-silently ignores.
+.B SASH_TRACE
+Read by the generated program, not a replacement for the compiler's
+.B \-\-trace
+option.
+Set it to
+.B 1
+to enable tracing in a trace-enabled native binary.
+An unset or empty value, or a value beginning with
+.BR 0 ,
+disables tracing.
+.SH FILES
 .TP
+.I sash-rt/target/release/libsash_rt.a
+Runtime archive used by the native linker.
+Its path is tied to the checkout where
 .B sash
-(the driver) rejects.
+was built, not the current directory or the installed compiler's directory.
+Keep that build checkout and archive available.
+.B SASH_RT_LIB
+is not an override honored by the native driver.
+.SH EXIT STATUS
 .TP
-.B sash\-convert
-rejects.
-.RE
+.B 0
+The requested compilation, inspection, extraction or help operation succeeded.
+.TP
+.B 1
+A reported usage, input, validation, compilation or linking error occurred.
 .PP
-.B mapfile
-is the remaining outlier. The driver used to ignore an unknown flag too \(em
-.B sash --bogus script.sh
-compiled and exited 0 \(em so a typo such as
-.B \-\-emit\-C
-silently produced a different artifact than the one requested. Fixed; see
-.BR notes/tasks/cli\-usage\-and\-unknown\-flags.md .
-.
-.SH DIAGNOSTICS
-Every rejection carries an
-.B SB
-code. Those referenced here:
-.RS
-.TP
-.B SB5011
-command resolution failed (e.g.
-.BR readarray ).
-.TP
-.B SB5095
-an absolute command path that is not an executable file (DD#23).
-.TP
-.B SB5096
-a quoted constant command name that is not said the one accepted way \(em
-either it needed no quotes at all, or it needs them and was double\-quoted or
-concatenated.
-.TP
-.B SB4074
-an empty command name
-.RB ( \[aq]\[aq] " or " \[dq]\[dq] ).
-.TP
-.B SB5015
-.BR read :
-unknown flag.
-.TP
-.B SB5016
-.BR read \ \-f
-with a single target and no array \(em
-.B standalone shape only,
-see BUGS.
-.TP
-.B SB5019
-numeric operator in
-.RB \[dq] [[\ ]] \[dq];
-use
-.RB \[dq] ((\ )) \[dq].
-.TP
-.B SB5020
-tainted value used without
-.BR attest .
-.TP
-.B SB5050
-variable assigned but never read.
-.TP
-.B SB5056
-read of the don't-care binder
-.BR _ .
-.RE
-.
+Unexpected compiler failures may return another nonzero status; see BUGS.
+These are compiler exit statuses, not the exit status of the generated
+program, which runs separately.
+.SH EXAMPLES
+Compile a safebash file and run the resulting program:
+.PP
+.EX
+sash program.sb \-o program
+\&./program
+.EE
+.PP
+Compile inline source, then run it:
+.PP
+.EX
+sash \-c 'echo hello' \-o hello
+\&./hello
+.EE
+.PP
+Inspect source without linking, or retrieve source from a native binary:
+.PP
+.EX
+sash \-\-manifest program.sb
+sash \-\-emit-ir program.sb > program.ir
+sash \-\-emit-c program.sb > program.c
+sash \-\-extract program source > recovered.sb
+.EE
+.PP
+Trace a branch in a native executable:
+.PP
+.EX
+sash \-\-trace \-c 'int n=1; if (( n > 0 )) { echo yes }' \-o traced
+SASH_TRACE=1 ./traced
+.EE
+.SH LIMITATIONS
+The verified native platform is x86-64 Linux.
+Full AArch64 support and cross-compilation are not yet delivered.
+The compiler, language and runtime remain under active development.
+.PP
+Validation is not a sandbox or proof that an authored validation predicate
+is correct.
+Programs retain their operating-system permissions.
+Explicit trust operations and taint-bypass switches weaken taint protection.
+Compilation alone does not sign a binary or make it tamper-evident.
+.PP
+Regex operations stop at the first interior NUL even though scalar strings
+retain later bytes.
+.SH BUGS
+Native builds use
+.I output.o
+as an intermediate object filename.
+An existing file at that name can be overwritten and removed.
+Concurrent builds to the same output are not safe.
+.PP
+Some driver I/O failures still cause a Rust panic, usually exiting 101,
+rather than a normal diagnostic.
+These include object-file writes, starting the linker, and stdout writes
+to a broken pipe or full device.
+A failed completion message can occur after an executable has been created.
+.PP
+Regex anchors have known bugs around internal newlines and global-match
+resumption.
+They are not reliable whole-subject validation boundaries.
 .SH SEE ALSO
-.BR bash (1),
-.BR sash\-convert (1),
-.BR sash\-getopt (1)
+.BR ld (1)
 .PP
-.B docs/GUIDE.md
-for architecture;
-.B notes/decisions/
-for the design decisions that define the safe subset.
+The project README covers building and first use;
+.I docs/GUIDE.md
+describes the compiler architecture.
+.PP
+.UR https://github.com/dan4thewin/safebash
+.UE
