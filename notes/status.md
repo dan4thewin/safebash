@@ -1,10 +1,10 @@
 ## STATUS (2026-11-11, latest) - Retired Goose launchers
 
-Removed the obsolete root `run-compiler-tasks.sh`, `run-converter-tasks.sh`
-and `.goosehints` at DG's request. `AGENTS.md` remains the project
-instructions. Historical logs, agent branches and journal records are
-retained; the pending delegate-management skill task no longer depends
-on the retired runner.
+Removed the obsolete root `run-compiler-tasks.sh`, `run-converter-tasks.sh`,
+`.goosehints` and the ignored `.agent-runs` directory at DG's request.
+The logs were archived privately before removal. `AGENTS.md`, historical
+agent branches and journal records remain; the pending delegate-management
+skill task no longer depends on the retired runner.
 
 Journal 620 records the cleanup. README/licensing drafts remain uncommitted.
 
