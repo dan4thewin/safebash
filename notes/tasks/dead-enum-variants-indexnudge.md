@@ -1,4 +1,3 @@
----
 title: "indexnudge enum_variant_refs shipped — dead-variant audit (HereDoc + 4 more)"
 status: done
 priority: P3
@@ -10,7 +9,6 @@ gates:
   - "SsaInst::Phi removed (or a TODO filed): variant + 3 arms (codegen/dispatch.rs:53, emit_c.rs:327, ssa_taint.rs:164) — only if phi insertion is genuinely not planned"
   - "StmtKind::Subshell and TestExpr::Paren: confirm dead vs deferred-feature, then remove or annotate"
   - "spec suite stays green after each removal (source of truth)"
----
 
 # Response to the dead-code FR: `enum_variant_refs` is shipped
 

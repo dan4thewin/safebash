@@ -1,4 +1,4 @@
-title: DD#100 — Collection parameters: `=name` at the call site, `A`–`E` in the callee
+title: "DD#100 — Collection parameters: `=name` at the call site, `A`–`E` in the callee"
 status: accepted
 
 Settled with DG (2026-09-11). sash has no first-class collection values, so a

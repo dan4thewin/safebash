@@ -1,4 +1,3 @@
----
 title: "Global-summary precision follow-ups"
 status: open
 priority: P2
@@ -8,7 +7,6 @@ gates:
   - "gflow.20-.22 retain their located SB5020 diagnostics, including under each merge reversion control"
   - "Any ordered transfer checks each read before a later legal resolution and does not apply skipped-call effects"
   - "Ordinary clean overwrites remain unresolved as DD128 requires"
----
 
 Recorded with W1b-1, 2026-11-02 (journal 557). The unit uses a conservative
 union for captures and arithmetic/value calls. This prevents laundering by

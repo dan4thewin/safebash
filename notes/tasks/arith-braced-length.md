@@ -1,4 +1,3 @@
----
 title: "Arith `${#a}` / `${#s}` read as 0 — parse-level length in $(( ))"
 status: done
 priority: P2
@@ -9,7 +8,6 @@ gates:
   - "`$(( ${#s} + 1 ))` yields the string byte length + 1"
   - "`$(( ${#m} ))` yields the map entry count"
   - "0 native/c/janet spec regressions; specs in arithmetic.sh"
----
 
 ## Resolution (2026-08-14, unattended)
 

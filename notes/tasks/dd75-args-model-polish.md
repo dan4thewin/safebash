@@ -1,4 +1,3 @@
----
 title: "DD#75 §5 args model — remaining polish (len/join/keys on args, $* removal, $@→@args for >9, recursion guard)"
 status: closed
 closed: 2026-09-12
@@ -11,7 +10,6 @@ gates:
   - "$@ with >9 args: switch the $@ pre-expansion to an @args splat so all args flow (today $@ pre-expands to $1..$argc and $10+ lower to empty — pre-existing cap, unchanged)"
   - "recursion via inlining currently stack-overflows the compiler — add a recursion guard (clean SB error, not a crash)"
   - "friendlier `shift` removal diagnostic (SB5011 → a 'use for x in @args' hint)"
----
 
 # DD#75 §5 args model — remaining polish
 

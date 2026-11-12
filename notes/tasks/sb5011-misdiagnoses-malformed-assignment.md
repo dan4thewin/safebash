@@ -1,4 +1,3 @@
----
 title: "SB5011 blames a variable/expansion for a word that has neither"
 status: done
 priority: P4
@@ -7,7 +6,6 @@ depends: []
 gates:
   - "`a-b=1` and `9x=1` report a message that names the actual cause (a malformed assignment target / an unrunnable word), not \"a variable or expansion can't be resolved\""
   - "the genuine dynamic-head case (`$x foo`) keeps its current wording"
----
 
 ## What
 

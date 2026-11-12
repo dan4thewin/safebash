@@ -1,4 +1,3 @@
----
 title: "bug: `$(( args[0] ))` (bare args subscript in arith) ICEs at codegen — masked by SB5031"
 status: done
 priority: P3
@@ -7,7 +6,6 @@ depends: []
 gates:
   - "`$(( args[i] ))` inside a function reads the positional as an int (or gives a clean error), not a codegen `undefined array: args` panic"
   - "no regression"
----
 
 ## RESOLVED (2026-08-29)
 

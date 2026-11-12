@@ -1,4 +1,3 @@
----
 title: "Recognize $'...' inside \"...\" (DD#64 addendum: C-string as in-string escape hatch)"
 status: done
 priority: P3
@@ -12,7 +11,6 @@ gates:
   - "$' claims its sequence inside \"...\"; a lone ' (not preceded by $) stays a literal apostrophe (\"it's\" -> it's)"
   - "C-string content is a compile-time constant -> always clean (no taint)"
   - "spec tests (wordsplit/types); native + c + janet; no net regression"
----
 
 # Recognize `$'…'` inside `"…"` (DD#64 addendum)
 

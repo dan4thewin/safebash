@@ -1,4 +1,3 @@
----
 title: "DD#99 implementation — read/readline, NUL-only, no flags"
 status: done
 priority: P1
@@ -11,7 +10,6 @@ gates:
   - "read -a / -f / -d / -r, mapfile, readarray and multi-target `read a b c` are all rejected"
   - "an argv entry containing an interior NUL aborts at runtime rather than truncating silently"
   - "3-mode sweep with 0 regressions at every stage"
----
 
 # Staged plan
 

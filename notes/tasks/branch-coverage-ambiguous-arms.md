@@ -1,9 +1,8 @@
----
+title: "Branch-coverage leads the counts could not settle"
 status: open
 priority: P3
 depends:
 gates:
----
 
 # Branch-coverage leads the counts could not settle
 

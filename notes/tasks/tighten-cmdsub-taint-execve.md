@@ -1,4 +1,3 @@
----
 title: "tighten cmdsub taint: execve(2)/execveat(2) output is tainted; delete the 'clean iff args clean' pass-through"
 status: done
 priority: P2
@@ -10,7 +9,6 @@ gates:
   - "getenv/argv/arg stay tainted (external input); user-function captures stay clean (DD#24)"
   - "the args-inspection / 'pass-through builtins: clean iff all args clean' path is DELETED from cmd_subst_taint and its CST twin"
   - "an unblessed external cmdsub yields a clean SB5020 from the front-end (span-bearing), NOT the SSA ICE backstop"
----
 
 # Tighten cmdsub taint — execve is the taint source
 

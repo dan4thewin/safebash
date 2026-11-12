@@ -1,4 +1,3 @@
----
 title: "bug: the read family does not abort on a failed redirect open"
 status: done
 priority: P2
@@ -7,7 +6,6 @@ depends: []
 gates:
   - "`readline v < nosuchfile` aborts (DD#55), as `/bin/cat < nosuchfile` does"
   - "`read arr < nosuchfile` likewise, rather than yielding an empty array"
----
 
 ## What
 

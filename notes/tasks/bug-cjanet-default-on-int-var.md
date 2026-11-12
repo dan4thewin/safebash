@@ -1,4 +1,3 @@
----
 title: "BUG: `${int_var:-default}` broken in c and janet backends (native ok)"
 status: done
 priority: P2
@@ -6,7 +5,6 @@ kind: bug
 depends: []
 gates:
   - "`int x=5; int n=${x:-0}; echo $n` prints 5 in c and janet (native already does)"
----
 
 ## RESOLVED (2026-08-29, DG identity-element semantic)
 

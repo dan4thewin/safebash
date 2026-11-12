@@ -1,4 +1,3 @@
----
 title: "Bug: a declaration or a `for` binds any word as a variable name (`str a-b=1`, `int /bin/x=1`, `str 9z=1`, `int a[0]=5`)"
 status: open
 priority: P3
@@ -8,7 +7,6 @@ gates:
   - "every program in the first table is a compile error at the name, naming it and the rule a name follows, in both backends; none binds a variable"
   - "the controls keep their results"
   - "a spec pins each rejected shape in both backends; each fails on the pre-fix binary"
----
 
 ## Found
 

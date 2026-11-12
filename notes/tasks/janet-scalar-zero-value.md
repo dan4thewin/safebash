@@ -1,4 +1,3 @@
----
 title: "janet: scalar zero-value semantics diverge (typed decl no-init; bare-scalar env-fallback)"
 status: deferred
 priority: P3
@@ -9,7 +8,6 @@ gates:
   - "janet `int n; echo $n` → `0` (typed scalar decl zero-inits), not `(var n )` (empty value = janet syntax error)"
   - "janet a KNOWN-but-unassigned scalar read → the meaningful zero value (\"\" untyped / 0 int), NOT `(os/getenv NAME)` env-fallback — a plain sash scalar is not an env var (DD#53; env is only via `$(getenv NAME)`)"
   - "un-guard spec/undeclared.sh ud.5, ud.6, ud.11 to include janet once both are fixed"
----
 
 # janet scalar zero-value semantics diverge from native/c
 

@@ -1,4 +1,3 @@
----
 title: "Bug: a name that starts with a digit (`${1x}`, `${1_}`, `$1x` in arithmetic) reads a variable nothing can bind"
 status: open
 priority: P2
@@ -9,7 +8,6 @@ gates:
   - "in a word, `$1x` stays `$1` followed by `x` and `$12` stays `$1` followed by `2` (bash's rule; the controls below are unchanged)"
   - "the existing neighbours keep their diagnostics: `${?}` `${-}` `${#}` `${/a/b}` SB4034, `${$}` SB4047, `${1[0]}` `${[0]}` `${12[0]}` SB4047 (vm.un7-vm.un10)"
   - "a spec pins each rejected shape in both backends; each fails on the pre-fix binary"
----
 
 ## What
 

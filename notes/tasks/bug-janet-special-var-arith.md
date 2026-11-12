@@ -1,4 +1,3 @@
----
 title: "bug: janet backend can't use `$$` (pid) as an arithmetic operand — emits unknown symbol `$`"
 status: deferred
 deferred-by: DD104
@@ -9,7 +8,6 @@ gates:
   - "`echo $(( $$ > 0 ))` compiles + runs on the janet backend (currently a janet compile error)"
   - "parity with native/c, which compute the pid; specs 31.20-24 can widen from `native,c` to all modes"
   - "no janet regression"
----
 
 ## Symptom
 

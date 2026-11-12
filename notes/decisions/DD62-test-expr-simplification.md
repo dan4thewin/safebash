@@ -1,4 +1,4 @@
-title: DD#62 — [[ ]] test simplification: exact-only ==/!=, =~ quoting, drop -v
+title: "DD#62 — [[ ]] test simplification: exact-only ==/!=, =~ quoting, drop -v"
 status: accepted
 
 Language decisions for `[[ ]]` test expressions, captured from the
@@ -163,7 +163,7 @@ Related: the file-age operators `-nt` / `-ot` compare mtime and `-ef`
 compares (device, inode); `-nt`/`-ot` compare at **nanosecond**
 (timespec) resolution with a strict `>`, which is what bash does — verified
 three-way on files 1 ms apart inside the same whole second. (`-N` is the
-operator with the `>=` subtlety; see `bug-file-test-N-diverges-from-bash`,
+operator with the `>=` subtlety; see `bug-file-test-n-diverges-from-bash`,
 closed.) Both backends share the one runtime comparator, so c inherited
 that correction for free. They are grouped here
 only because they landed with `<`/`>` — c implemented none of the five

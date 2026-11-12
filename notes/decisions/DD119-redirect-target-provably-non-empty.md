@@ -1,7 +1,5 @@
----
 title: DD#119 — a redirect target must be provably non-empty
 status: accepted
----
 
 Settled with DG (2026-09-26). DG's framing: *"what if we require any variable
 that is a redirect target to use a disposition, save perhaps an observably

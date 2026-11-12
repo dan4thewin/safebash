@@ -1,6 +1,5 @@
----
+title: "DD#110 — a `#` opens a comment only after a blank"
 status: accepted
----
 
 # DD#110 — a `#` opens a comment only after a blank
 

@@ -1,4 +1,3 @@
----
 title: "DECISION: bare `{` in a regex — literal (bash-compatible) or require `\\{`?"
 status: done
 priority: P2
@@ -7,7 +6,6 @@ depends: []
 resolution: "KEEP `\\{`-required (DG 2026-07-08). A literal `{`/`[` needs its escape (`\\{`/`\\[`); a bare/invalid one is an error, never a silent literal. Bash-faithful (glibc regcomp errors on bare `{` too) + uniform with `[`. Recorded in DD#39; no spec change (63.g3 already uses `\\{`)."
 gates:
   - "RESOLVED: keep `\\{`-required. See DD39-glob-regex.md 'Clarification (2026-07-08)'."
----
 
 ## RESOLUTION (DG, 2026-07-08): keep `\{`-required
 

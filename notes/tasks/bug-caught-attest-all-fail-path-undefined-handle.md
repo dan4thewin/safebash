@@ -1,11 +1,9 @@
----
 title: "SIGSEGV: a caught attest-all whose gate fails leaves the array handle undefined for code after the `if`"
 status: done
 priority: P1
 kind: bug
 depends: []
 gates: []
----
 
 # `sash_table_len` faults on the failing path of `if attest … in …`
 

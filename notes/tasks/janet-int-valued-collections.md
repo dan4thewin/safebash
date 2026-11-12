@@ -1,4 +1,3 @@
----
 title: "janet backend: int-valued collections (int array / int map)"
 status: deferred
 deferred-by: DD104
@@ -8,7 +7,6 @@ depends: []
 gates:
   - "`int array a=(…)` / `int map m=(…)` run in janet mode (currently: janet treats the collection variable as a scalar int → `scan-number` on the table)"
   - "arithmetic.sh ivc.1-8,11 pass in janet mode (widen the `in_modes native,c` guard to include janet)"
----
 
 # Problem
 

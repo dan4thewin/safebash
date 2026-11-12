@@ -1,4 +1,3 @@
----
 title: "janet: positional ${N:-DEF} returns the default even when the arg is present"
 status: deferred
 deferred-by: DD104
@@ -8,7 +7,6 @@ depends: []
 gates:
   - "janet: `fn f { echo ${1:-DEF} }; f VAL` prints VAL (not DEF)"
   - "the fix applies equally to the brace-less spelling `$1:-DEF` (same lowering)"
----
 
 ## Found
 

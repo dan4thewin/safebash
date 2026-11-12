@@ -1,4 +1,3 @@
----
 title: "A capture as a subscript index: accepted in a declaration, SB4030 in an argument"
 status: done
 priority: P1
@@ -8,7 +7,6 @@ gates:
   - "DG rules on whether DD#80 permits `${a[$(f)]}`"
   - "whichever way, the three positions agree"
   - "the ICE below is closed"
----
 
 ## Two bugs, one undecided question between them
 

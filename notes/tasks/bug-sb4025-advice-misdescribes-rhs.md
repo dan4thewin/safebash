@@ -1,4 +1,3 @@
----
 title: "Bug: SB4025's capture advice says every rejected capture is an intrinsic or a concatenation"
 status: open
 priority: P3
@@ -9,7 +8,6 @@ gates:
   - "k8, sa5, v6 and v13 (a typed declaration) say DD#88's rule: a typed declaration is not a capture condition, so assign without the type"
   - "DG rules on Q1 and Q2; a4 and b1 then agree, and v2 and cv1 agree with DG's answer to Q2 in both sash and sash-convert"
   - "specs pin the advice of each row by its distinguishing text, not the bare code, in both backends"
----
 
 ## Found
 

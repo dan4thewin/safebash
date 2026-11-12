@@ -1,9 +1,7 @@
----
 title: Dead ir::Program::end_block field
 status: done
 depends: []
 gates: []
----
 
 # `ir::Program::end_block` is always `None`
 

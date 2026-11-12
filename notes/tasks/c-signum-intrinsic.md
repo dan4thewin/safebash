@@ -1,4 +1,3 @@
----
 title: "c backend doesn't implement the `signum` value intrinsic (emits a TODO stub)"
 status: done
 scope: c/janet backends only (native complete)
@@ -10,7 +9,6 @@ gates:
   - "[c] spec arithmetic.sh sx.7 widened native -> native,c (janet still stubbed; deferred)"
   - "[PENDING janet] janet backend still execs/omits the intrinsic"
   - "no regression"
----
 
 > **c DONE (2026-08-20):** `try_native_intrinsic_c` gained a `signum` arm
 > that reads the `extern i64 sash_signum;` global (via `sash_itoa`). Both the

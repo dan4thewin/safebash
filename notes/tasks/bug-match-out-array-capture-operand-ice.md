@@ -1,4 +1,3 @@
----
 title: "ICE: a capture as the subject or pattern of the out-array `match`/`matchall`"
 status: open
 priority: P1
@@ -9,7 +8,6 @@ gates:
   - "`if match $(f) \"a(b)\" m { echo \"${m[1]}\" }` prints `b`"
   - "the forms that work today (through a variable, the 2-argument `match`, `$(match …)`, `[[ =~ ]]`) are unchanged"
   - "specs pin the fixed forms in both backends, including one under `--no-taint` for an external capture"
----
 
 ## Found
 

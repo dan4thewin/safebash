@@ -1,7 +1,5 @@
----
 title: DD#118 — `==` is the only equality, `-n` is never implied, and a vacuous test is an error
 status: accepted
----
 
 Settled with DG (2026-09-25). DG's framing: *"erring on the side of clarity,
 we want the vacuity rule, the `-n` test as explicit and not implied, and `==`

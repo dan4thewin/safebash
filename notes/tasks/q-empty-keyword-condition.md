@@ -1,4 +1,3 @@
----
 title: "Question: an empty condition in the `then`/`do` spelling compiles and is false"
 status: done
 priority: P3
@@ -7,7 +6,6 @@ depends: []
 gates:
   - "DG rules whether an empty condition is legal in the keyword spelling; the ruling is a DD#68 addendum"
   - "if rejected: `if then`, `elif then`, `while do` and `until do` are a compile error with a message about the missing condition, pinned by specs in both backends"
----
 
 ## What
 

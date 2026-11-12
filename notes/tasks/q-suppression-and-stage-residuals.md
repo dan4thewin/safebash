@@ -1,4 +1,3 @@
----
 title: "Question: the residual `-` forms, `exec` in a forked child, a here-string on a compound, and a value intrinsic as a stage"
 status: open
 priority: P3
@@ -9,7 +8,6 @@ gates:
   - "every program in the tables prints what its ruling says or is rejected with a diagnostic naming the rule, in both backends"
   - "SB4018's `[[ … ]]` advice and SB5073's message for a stage say only what the rulings on Q5 and Q6 allow"
   - "Q5 enforcement and advice belong to reject-pointless-statements; bug-peel-family-classifiers retains its shared-classifier repairs"
----
 
 ## What
 

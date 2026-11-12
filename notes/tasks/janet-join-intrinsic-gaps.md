@@ -1,4 +1,3 @@
----
 title: "janet: join intrinsic gaps — bare-name join a, and separator join @a SEP"
 status: deferred
 deferred-by: DD104
@@ -10,7 +9,6 @@ gates:
   - "janet `$(join a)` (bare-name array) space-joins, instead of exec'ing /usr/bin/join"
   - "janet `$(join @a SEP)` / `$(join a SEP)` joins with SEP, instead of erroring (`bad slot, expected string, got array`)"
   - "un-guard spec/types.sh 33.19–33.21 to include janet once both work"
----
 
 # janet join intrinsic gaps
 

@@ -1,4 +1,3 @@
----
 title: "ICE: capturing a string function's stdout as a command argument (`echo $(greet)`)"
 status: done
 priority: P2
@@ -8,7 +7,6 @@ gates:
   - "`echo $(greet)` (greet is a normal stdout function) either works (prints greet's stdout) or is a clean compile error — never an ICE panic"
   - "no `panic!(\"ICE: non-constant elidable function call not yet supported\")` reachable from user source"
   - "0 native spec regressions; specs across native/c/janet"
----
 
 ## Resolution (2026-08-14, unattended — DG: lift-and-print)
 

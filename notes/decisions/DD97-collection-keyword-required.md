@@ -1,7 +1,5 @@
----
 title: DD#97 — a collection is introduced by the `array`/`map` keyword
 status: accepted
----
 
 Settled with DG (2026-09-08), from his bug report: *"when I do `f=(*)` I see
 `$(len f)` return 0 despite the array having elements."*

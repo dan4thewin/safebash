@@ -1,4 +1,3 @@
----
 title: "Converter: $@ / $* → @args / $(join args); warn on quoted splat \"$@\""
 status: done
 priority: P3
@@ -10,7 +9,6 @@ gates:
   - "when it cannot determine intent, emit a review WARNING pointing at @args vs $(join args) (a bare `\"@args\"` literal is NOT a valid target — see below)"
   - "no regression in sash-convert tests"
   - "`$#` left alone (DD#46: sash-native); braced `${#}` → `$#` (SB4034)"
----
 
 ## Context
 

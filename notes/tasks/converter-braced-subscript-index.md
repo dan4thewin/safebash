@@ -1,4 +1,3 @@
----
 title: "sash-convert: map bash arithmetic subscripts to sash explicit braced-index forms (DD#80)"
 status: done
 priority: P3
@@ -9,7 +8,6 @@ gates:
   - "bash `${a[i+1]}` / `${a[expr]}` converts to `${a[$(( … ))]}`"
   - "bash `${a[a[0]]}` (nested) converts to `${a[${a[0]}]}`"
   - "no regression in convert.sh"
----
 
 ## Context
 

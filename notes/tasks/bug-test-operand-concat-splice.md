@@ -1,4 +1,3 @@
----
 title: "BUG — a `[[ ]]` test operand spliced from a literal + a variable (`run$suf`) doesn't concatenate at runtime"
 status: done
 priority: P3
@@ -8,7 +7,6 @@ gates:
   - "`suf=ing; x=running; [[ $x == run$suf ]]` is true (RHS builds `running`)"
   - "same for `=~`: `suf=ing; x=running; [[ $x =~ run$suf ]]` matches"
   - "native + c + janet identical; spec added"
----
 
 # BUG — literal+var test operand doesn't concatenate
 

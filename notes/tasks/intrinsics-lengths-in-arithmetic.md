@@ -1,4 +1,3 @@
----
 title: "Intrinsics and lengths in arithmetic: `$(( (len a) + 1 ))`, `$(( ${#a} + 1 ))`"
 status: done
 priority: P2
@@ -11,7 +10,6 @@ gates:
   - "[deferred] string intrinsics (toupper/join/basename/…) in arith → a clean compile error"
   - "[was already ok] `echo $(( <funccall> ))` compiles (arith-in-arg)"
   - "[done] 0 native/c spec regressions (janet len-in-arith guarded — janet-join-intrinsic-gaps)"
----
 
 # Intrinsics / lengths don't evaluate inside arithmetic
 

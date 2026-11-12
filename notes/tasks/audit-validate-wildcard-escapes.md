@@ -1,4 +1,4 @@
-title: audit: sweep validate.rs for wildcard arms that silently skip checks
+title: "audit: sweep validate.rs for wildcard arms that silently skip checks"
 status: done
 priority: P1
 kind: audit

@@ -1,4 +1,3 @@
----
 title: "native: arithmetic ternary eagerly evaluates both branches (side effects leak)"
 status: done
 priority: P2
@@ -8,7 +7,6 @@ gates:
   - "`int x=0; echo $(( x>0 ? 10/x : 42 ))` prints `42` with NO `division by 0` on stderr (matches bash and the c backend)"
   - "the untaken branch's side effects (div/mod-by-zero diagnostic, overflow trap) do not fire"
   - "oracle_tests / a spec pins native == bash for a side-effecting untaken ternary branch"
----
 
 ## RESOLVED 2026-08-27 (journal 193)
 

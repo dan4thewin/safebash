@@ -1,4 +1,3 @@
----
 title: "BUG (P0/security) — runtime integer overflow silently wraps (DD#25 violation); itoa(i64::MIN) panics"
 status: done
 priority: P0
@@ -15,7 +14,6 @@ gates:
   - "[RESOLVED 2026-06-27, DG] Shl left-shift: NO overflow check — shifts are bit manipulation, not arithmetic. `1 << 63` evaluates (the `<<` lexing bug was fixed 2026-06-26). Already correct in codegen (plain `ishl`, no trap). By design, not deferral."
   - "[RESOLVED 2026-06-27, DG] const-fold overflow: runtime trap STANDS. DG: runtime sufficient unless compile-time detection is essentially free — investigated, it is NOT free. The fold detection (`checked_*`→None, expr_handlers.rs) is immediately discarded into a runtime ArithBinOp; surfacing it as a compile error needs a mutable diagnostics sink threaded through the entire `&VersionState`-immutable arith recursion (arith_to_ssa/binop_to_ssa/unaryop_to_ssa), or a new constant-evaluator in the validator (which does NOT fold today). Neither is free. All-literal overflow (e.g. `(( 2**63 + 1 ))`) already traps correctly at runtime."
   - "[SPLIT OFF] out-of-range integer *literal* → 0 — see `bug-arith-literal-out-of-range`"
----
 
 # BUG — runtime integer overflow silently wraps (DD#25 violation)
 

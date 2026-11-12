@@ -1,4 +1,4 @@
-title: DD#81 — function-call discipline: one name one meaning, arity from `args`
+title: "DD#81 — function-call discipline: one name one meaning, arity from `args`"
 status: accepted
 
 Settled with DG (2026-08-25). Two coupled decisions about user-function calls:

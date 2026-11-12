@@ -1,4 +1,4 @@
-title: bug: sash-convert conflates hashes and arrays
+title: "bug: sash-convert conflates hashes and arrays"
 status: done
 absorbed-by: dd75-len-collection-only-strlen
 priority: P2

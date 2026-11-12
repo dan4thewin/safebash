@@ -1,9 +1,8 @@
----
+title: "Undispositioned string→int sites outside assignment and arithmetic"
 status: done
 priority: P2
 depends: []
 gates: none — DG decided 2026-09-26
----
 
 # Undispositioned string→int sites outside assignment and arithmetic
 

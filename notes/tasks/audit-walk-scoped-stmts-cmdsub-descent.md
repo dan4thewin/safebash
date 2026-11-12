@@ -1,4 +1,3 @@
----
 title: "`walk_scoped_stmts` now enters `$( )` bodies — thirteen callers unaudited"
 status: done
 priority: P3
@@ -6,7 +5,6 @@ kind: audit
 depends: []
 gates:
   - "each of the thirteen callers is classified as correct-by-design or pinned"
----
 
 # What
 

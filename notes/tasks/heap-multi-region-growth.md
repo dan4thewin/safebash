@@ -1,9 +1,8 @@
----
+title: "Grow the heap on demand instead of reserving one fixed region"
 status: ready
 priority: P3
 kind: feature
 depends: []
----
 
 # Grow the heap on demand instead of reserving one fixed region
 

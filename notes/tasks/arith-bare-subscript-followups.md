@@ -1,4 +1,3 @@
----
 title: "arith bare-subscript follow-ups: $a[i] form, nested index, string-array cell"
 status: done
 priority: P3
@@ -9,7 +8,6 @@ gates:
   - "DONE (edge 2): nested index `$(( a[a[0]] ))` parses (lexer subscript-depth tracking; the `]]` closes two subscripts, not a `[[ ]]` dispatch)"
   - "DONE (edge 4): substring `${a[i]:o:l}` and sed `${a[i]:s/…/}` on a cell reach scalar parity — sed desugars to `$(sub|gsub \"${a[i]}\" …)`; substring lowers via a new source-carrying `SsaValue::Substring` (native/c/janet)"
   - "no regression"
----
 
 ## Context
 

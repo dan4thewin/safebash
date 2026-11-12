@@ -1,4 +1,3 @@
----
 title: "janet backend pipelines are flaky (os/spawn pipe EAGAIN: 'Resource temporarily unavailable')"
 status: done
 priority: P4
@@ -7,7 +6,6 @@ depends: []
 gates:
   - "[DONE] a janet-emitted pipeline produces identical output on 100 consecutive runs — verified 2-stage 0/100, 3-stage 0/60, 5000-line stress 0/60"
   - "[DONE] wordsplit 22.18/22.19 un-guarded — now pass under janet"
----
 
 # RESOLVED 2026-07-03
 

@@ -1,11 +1,9 @@
----
 title: "argv with a dynamic slice start (`argv $n a`)"
 status: wontfix
 priority: P3
 kind: feature
 depends: []
 gates: []
----
 
 # `argv $n a` — a dynamic slice start — **wontfix**
 

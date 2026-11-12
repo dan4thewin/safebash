@@ -1,4 +1,3 @@
----
 title: "De-collide spec chk ids (cross-file + within-file duplicates)"
 status: done
 priority: P2
@@ -7,7 +6,6 @@ depends: []
 gates:
   - "no test_id is emitted by two spec files"
   - "no id has two executing `chk` lines in one file"
----
 
 ## Done (2026-08-29)
 

@@ -1,4 +1,3 @@
----
 title: "bug: an arith-sexpr call arg that is a nested $(( )) silently lowers to 0"
 status: done
 priority: P2
@@ -8,7 +7,6 @@ gates:
   - "`int x=$(( (dbl $(( 2 + 1 ))) ))` computes dbl(3)=6, not 0 (nested $(( )) arg to a DD#58 sexpr call)"
   - "a plain arg `(dbl 3)` and a bare-var arg `(dbl m)` already work — only the nested $(( )) arg is wrong"
   - "0 native/c/janet spec regressions"
----
 
 # bug: nested `$(( ))` arg to an arith-sexpr call → silent 0
 

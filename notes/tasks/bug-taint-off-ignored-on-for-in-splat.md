@@ -1,11 +1,9 @@
----
 title: "`:!` is silently ignored on a for-in splat — `for v in @{a:!}` is rejected SB5020 despite DD#91"
 status: done
 priority: P2
 kind: bug
 depends: []
 gates: []
----
 
 # `reject_tainted_array_iter` never reads `pe.taint_off`
 

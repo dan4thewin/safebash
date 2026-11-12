@@ -1,9 +1,7 @@
----
 title: Consider wider compiler-owned capture buffering
 status: backlog
 priority: P3
 depends: []
----
 
 DG chose existing buffer paths first for DD127's read boundary (2026-11-02,
 journal 560). Kernel reads introduce taint; a compiler-owned buffer copy

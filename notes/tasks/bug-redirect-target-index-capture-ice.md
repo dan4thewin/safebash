@@ -1,4 +1,3 @@
----
 title: "ICE: a capture inside a redirect target's subscript (`>${m[$(f)]:-d}`)"
 status: open
 priority: P1
@@ -9,7 +8,6 @@ gates:
   - "the forms in the second table keep their results"
   - "following the SB4030 advice for `>$m[…]` (`${m[…]:?message}`) no longer panics"
   - "specs pin the chosen behaviour in both backends, including an external capture under `--no-taint`"
----
 
 ## Found
 

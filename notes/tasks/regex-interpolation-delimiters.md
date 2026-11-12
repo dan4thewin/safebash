@@ -1,4 +1,3 @@
----
 title: "regex builtins match/sub/gsub + thin sugar + captures (DD#63)"
 status: done
 priority: P2
@@ -13,7 +12,6 @@ gates:
   - "\\xnn (2 hex) in regcomp; \\x + non-hex = error"
   - "Path B: lexer treats / as a quote-delimiter after :s — bare {/} in RE/SUB are literal; malformed :s payload (incl. missing mandatory trailing /) is SB4032, not a silent fallback"
   - "native spec clean (only cf.c7/cf.c8); rust suite no net regression; complexity gate green"
----
 
 # regex builtins (match / sub / gsub) + thin sugar (DD#63)
 

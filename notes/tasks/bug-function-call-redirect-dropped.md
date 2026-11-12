@@ -1,4 +1,3 @@
----
 title: "BUG: a redirect on a user-function CALL is silently dropped (`f > out.txt`)"
 status: done
 priority: P1
@@ -9,7 +8,6 @@ gates:
   - "`fn f { echo hi; }; f > out.txt` either writes out.txt or is a clean compile error — never silently writes to stdout"
   - "same for `>>`, `<`, `2>`, and with arguments"
   - "no redirect reaches codegen without either taking effect or being rejected"
----
 
 # A redirect on a function call is silently dropped
 

@@ -1,4 +1,3 @@
----
 title: "codegen var map keys a (name, version) pair into a String, then parses it back"
 status: open
 priority: P3
@@ -7,7 +6,6 @@ depends: []
 gates:
   - "no codegen helper re-derives a base name by parsing an SSA key suffix"
   - "sweep unchanged (5583, 0 failing) — this is behaviour-preserving"
----
 
 # The var map encodes a pair as a string
 

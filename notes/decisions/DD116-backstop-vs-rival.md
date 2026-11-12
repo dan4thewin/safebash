@@ -1,8 +1,6 @@
----
 title: "Backstop vs. rival: when unreachable code stays and when it goes"
 status: accepted
 date: 2026-09-21
----
 
 # DD#116 — Backstop vs. rival
 

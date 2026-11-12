@@ -1,4 +1,4 @@
-title: DD#70 — Error-handling taxonomy: (A) runtime abort-if-unchecked vs (B) compile-time must-consume-or-discard
+title: "DD#70 — Error-handling taxonomy: (A) runtime abort-if-unchecked vs (B) compile-time must-consume-or-discard"
 status: accepted
 
 Decided with DG 2026-06-25, refining DD#55 (Implicit Exit Checks and

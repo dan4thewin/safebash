@@ -1,4 +1,3 @@
----
 title: "janet: `if attest …` is emitted as an external command"
 status: deferred
 deferred-by: DD104
@@ -8,7 +7,6 @@ depends: []
 gates:
   - "janet: `s=abc; if attest s [[ -n $s ]]; then echo yes; else echo no; fi` prints `yes` (matches native/c)"
   - "janet: `s=abc; if attest s (( c = s )); then echo ok; else echo 'not an int'; fi` prints `not an int`"
----
 
 ## Found
 

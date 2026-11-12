@@ -1,4 +1,3 @@
----
 title: "bug: `match S P ARR` does not auto-declare its out-array, unlike every other bulk fill"
 status: done
 priority: P2
@@ -8,7 +7,6 @@ gates:
   - "`if match abc \"(a)(b)\" g { … }; echo $(len g)` compiles with no prior `array g=()` — as `read -a g` and `mapfile g` already do"
   - "the fix registers the out-array in BOTH the transform (autodeclare_bulk_target) and the type checker (register_bulk_read_target), matching the existing bulk-fill precedent"
   - "a spec pins the undeclared form for `match`, alongside the existing ones for read -a / mapfile / argv"
----
 
 ## Found
 

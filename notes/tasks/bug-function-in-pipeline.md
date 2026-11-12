@@ -1,4 +1,3 @@
----
 title: "BUG — a user function used in a pipeline hits runtime `bug: bare command passed to sash_exec`; breaks the SB4021-4024 escape hatch"
 status: done
 note: native complete; the c/janet half lives in c-janet-compound-pipeline-stage
@@ -11,7 +10,6 @@ gates:
   - "`echo hi | f | cat` runs (function as a middle stage)"
   - "the SB4022 escape hatch works end-to-end: a compound wrapped in a function AND piped (`fn g { echo hi }; g | cat`) runs — no runtime `sash: bug:` message"
   - "function args pass through (`fn f { echo $1 }; f x | cat` — if args in pipeline position are supported); native + c + janet identical; specs added"
----
 
 # BUG — functions don't work as pipeline stages (runtime `sash: bug:`)
 

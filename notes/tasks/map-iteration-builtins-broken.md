@@ -1,4 +1,3 @@
----
 title: map iteration ("keys"/"values" broken) — RESOLVED, diagnosis was wrong
 status: done
 priority: P1
@@ -9,7 +8,6 @@ gates:
   - keys + dynamic subscript idiom iterates a clean map (types.sh 33.10)
   - keys of a tainted unblessed map rejects SB5020 (taint.sh 60.35)
   - blessed map keys idiom works (taint.sh 60.36)
----
 
 # map iteration — RESOLVED (corrected diagnosis)
 

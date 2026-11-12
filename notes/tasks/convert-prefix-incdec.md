@@ -1,4 +1,3 @@
----
 title: "sash-convert emits prefix ++/-- verbatim, which DD#31 forbids"
 status: done
 priority: P2
@@ -8,7 +7,6 @@ gates:
   - "`for (( i=0; i < 3; ++i ))` converts to something `sash` accepts"
   - "`(( ++i ))` and `$(( ++i ))` likewise"
   - "converter spec coverage for all three contexts"
----
 
 DD#31 is categorical: *"Only postfix `x++` and `x--`. No prefix forms."*
 `sash-convert` does not implement it — it passes prefix through verbatim

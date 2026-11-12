@@ -1,4 +1,3 @@
----
 title: "Bug: an array literal's elements are lexed as command arguments, against DD#71's operand-word rule"
 status: open
 priority: P3
@@ -10,7 +9,6 @@ gates:
   - "ar6 gets one diagnostic, naming the `;`"
   - "no program in the first table reports a bare \"expected expression\""
   - "specs pin each operator in an indexed element and in a map value, in both modes"
----
 
 ## Found
 

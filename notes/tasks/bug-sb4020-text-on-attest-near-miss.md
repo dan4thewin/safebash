@@ -1,4 +1,3 @@
----
 title: "bug: an attest `(( … ))` near-miss co-fires SB4020 with `$(( … ))` text"
 status: open
 priority: P3
@@ -7,7 +6,6 @@ depends: []
 gates:
   - "`s=$(arg 1); attest s (( n = (strlen s) ))` reports SB5054 only, or a second diagnostic that names the attest's `(( … ))` correctly"
   - "a plain `x=$(( n = 1 ))` still gets SB4020's `$(( … ))` text"
----
 
 Found 2026-10-31 while porting F10 (journal 552). It reproduces on the pre-F10
 binary too.

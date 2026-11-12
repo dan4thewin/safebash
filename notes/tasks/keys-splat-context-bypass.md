@@ -1,4 +1,3 @@
----
 title: "P1 memory-safety: $(keys m) bypasses the SB5025 array-splat context guard (silent join + garbage bytes)"
 status: done
 priority: P1
@@ -9,7 +8,6 @@ gates:
   - "for k in $(keys m) still splats correctly (the sanctioned splat context)"
   - "no compiled binary reads uninitialized memory for a keys splat (the `printf ==%s==\\n $(keys m)` garbage repro is gone)"
   - "0 native spec regressions; add a spec pinning the reject + the working for-in"
----
 
 # `$(keys m)` bypasses the array-splat context guard (memory-unsafe)
 

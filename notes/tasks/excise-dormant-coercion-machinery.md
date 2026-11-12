@@ -1,4 +1,3 @@
----
 title: "Excise (or revive) the dormant Coercion machinery in emit_source.rs"
 status: done
 priority: P6
@@ -9,7 +8,6 @@ gates:
   - "if removed: embed_sash_source stores the raw source directly; Coercion/COERCIONS/annotate plumbing deleted; .sash_source section byte-identical to today (verbatim source)"
   - "if kept: a recorder actually populates COERCIONS, or the dead code carries a clear 'reserved' note + a test pinning the verbatim behavior"
   - "no spec/rust regression; --extract still round-trips the source"
----
 
 > **DONE / already excised — verified 2026-07-08.** Commit `3a352ef`
 > ("dead code: remove vestigial emit_source module — Coercion never

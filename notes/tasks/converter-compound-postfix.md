@@ -1,9 +1,7 @@
----
 title: Converter handles compound-command postfix rejections
 status: ready
 depends: [align-parser-with-decisions]
 gates: []
----
 
 # Converter: compound-command postfix operators
 

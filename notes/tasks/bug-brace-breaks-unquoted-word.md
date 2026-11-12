@@ -1,4 +1,3 @@
----
 title: "`{` in an argument position silently opens a block — `echo a{echo z}` prints `a\\nz`, bash prints `a{echo z}`"
 status: done
 priority: P1
@@ -8,7 +7,6 @@ gates:
   - "`echo a{echo z}` either prints `a{echo z}` or is rejected — it must not silently run `echo z`"
   - "`echo a}b` prints `a}b`, or `}` is rejected with a message that says why"
   - "`${s}`, `if c { … }`, `f() { … }` and a statement-position `{ … }` are unaffected"
----
 
 ## This was filed P2 on a false premise — DG corrected it 2026-09-30
 

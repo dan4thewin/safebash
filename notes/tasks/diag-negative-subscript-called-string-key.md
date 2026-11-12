@@ -1,4 +1,3 @@
----
 title: "`${a[-1]}` is reported as a \"string key\", and advised to \"use an integer\""
 status: open
 priority: P2
@@ -7,7 +6,6 @@ depends: []
 gates:
   - "a negative literal subscript names negative indexing as the reason, not string-vs-int"
   - "the `map` arm keeps accepting `-1` as an ordinary string key"
----
 
 ```sh
 array a=(1 2 3); echo "${a[-1]}"

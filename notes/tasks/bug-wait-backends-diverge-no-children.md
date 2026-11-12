@@ -1,4 +1,3 @@
----
 title: "bare `wait` with no children: native sets `$?`=127, `--emit-c` sets 0 — a differential divergence no spec catches"
 status: done
 priority: P2
@@ -8,7 +7,6 @@ gates:
   - "native and `--emit-c` agree on `$?` after a childless `wait`"
   - "a spec reads `$?` after `wait` in both modes"
   - "`codegen/dispatch.rs::emit_wait`'s inline `_<digits>` stripper is gone (see below)"
----
 
 **Closed by DD#126 (2026-10-09).** All three gates met, and the divergence is
 closed by the ABI rather than by a matching pair of branches:

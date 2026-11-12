@@ -1,4 +1,3 @@
----
 title: "DD#86 scope model — phases 2–5 (drop local, structural scope, no-shadow, dead-var, converter)"
 status: done
 priority: P1
@@ -9,7 +8,6 @@ gates:
   - "Phase 3: no-shadowing — a typed re-declaration inside a function of a name that is a top-level global is an error (redeclaration); a bare assignment writes the global"
   - "Phase 4: dead-variable rejection — a variable assigned but never read is a hard error (dual of DD#62 SB5031); const included; NO warnings"
   - "Phase 5: `local fn` (DD#18) abandoned; converter maps bash `local` to the keyword-free form; all specs/tests using `local` rewritten; GUIDE/SUBSET updated; DD#35 amended (lifetime axis retired)"
----
 
 # DD#86 phases 2–5
 

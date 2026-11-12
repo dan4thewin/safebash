@@ -1,4 +1,3 @@
----
 title: Audit DDs for scope boundaries stated out loud but never enforced
 status: next
 depends: []
@@ -6,7 +5,6 @@ gates:
   - every DD grepped for a sentence that grants a form in another position
   - each one checked by probing that position against the live binary
   - findings filed as bugs, not as notes
----
 
 DD#117 fixed the declaration form of an assignment shape bug and wrote, in the
 sentence that *granted* the statement form:

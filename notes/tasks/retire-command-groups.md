@@ -1,4 +1,3 @@
----
 title: "Retire command groups; keep `&&` and `||` blocks as `if` sugar"
 status: open
 priority: P3
@@ -10,7 +9,6 @@ gates:
   - "retired source groups reject through marks and all former placements, with advice for ordinary statements, an `if` or a function as appropriate"
   - "take a current parser-derived fixture census; migrate changed contracts to fresh global ids without losing coverage of still-legal bodies"
   - "before-binary and targeted reversion controls independently pin the refusals and sugar equivalence; the predicted ordinary gate passes"
----
 
 DG, 2026-10-30 (`q-suppression-on-user-functions`, "Rulings, 2026-10-30"):
 

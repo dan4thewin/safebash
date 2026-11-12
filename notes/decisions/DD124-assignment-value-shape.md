@@ -1,7 +1,5 @@
----
 title: DD#124 — an assignment's value must match the target's kind, and a map has no append position
 status: accepted
----
 
 Settled with DG (2026-10-08), out of a cold-line investigation: the assoc-array
 branch of `handle_append_assign` had never executed in any spec run.

@@ -1,4 +1,3 @@
----
 title: "Bug: before `&&`/`||`, an arithmetic comma list is still called a compound command, while its `!` twin compiles"
 status: open
 priority: P3
@@ -9,7 +8,6 @@ gates:
   - "every row of the first table gets the ruling's verdict, in both backends; none calls the comma list a compound command"
   - "acm.11 and acm.12 (spec/errors.sh) are reviewed against the ruling; changed contracts receive fresh ids, and z4 gets coverage"
   - "`reject_arith_comma_list_op` (sash/src/parse/parser.rs) is deleted, or becomes the ruling's diagnostic"
----
 
 ## Found
 

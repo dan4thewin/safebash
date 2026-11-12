@@ -1,4 +1,3 @@
----
 title: "bug: an auto-declared bulk-read target inside a `while` body segfaults"
 status: done
 priority: P1
@@ -8,7 +7,6 @@ gates:
   - "`while … { read ARR; … }` allocates its table and runs correctly"
   - "`read $s ARR` in the same position likewise"
   - "specs pin both, plus a control (explicit declaration) that was never affected"
----
 
 ## Found
 

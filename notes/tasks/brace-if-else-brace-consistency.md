@@ -1,4 +1,3 @@
----
 title: "brace-`if` must require braces on `else`/`elif` consistently (mixed/missing braces silently mis-parse)"
 status: done
 priority: P2
@@ -6,7 +5,6 @@ kind: bug
 depends: []
 gates:
   - "a brace-form `if` requires `{ }` on every clause (if / elif / else); a bare or missing-brace clause is a clear compile error, not a silent mis-parse"
----
 
 # brace-`if`: `else`/`elif` must also be braced (and preceded by the closing `}`)
 

@@ -1,4 +1,3 @@
----
 title: "BUG: sash-convert emits programs that fail to compile, without a `# MANUAL:` marker that says why"
 status: open
 priority: P3
@@ -9,7 +8,6 @@ gates:
   - "a `# MANUAL:` marker's reason is true: g01, g04 and x10 today say \"operands too complex for auto-convert\" about one variable, `$?` and `$((n))`"
   - "m9 converts to one statement, not two"
   - "specs in spec/convert.sh pin one row from each group"
----
 
 ## What
 

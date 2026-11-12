@@ -1,4 +1,3 @@
----
 title: "sash-convert + docs — emit/teach the canonical keyword specials ($? → $(status), $! → $(getcpid), $$ → $(getpid))"
 status: done
 priority: P3
@@ -8,7 +7,6 @@ gates:
   - "sash-convert rewrites bash `$?`→`$(status)`, `$!`→`$(getcpid)`, `$$`→`$(getpid)` on output (input sugar still accepted by the compiler)"
   - "GUIDE.md / SUBSET.md teach the keyword forms as canonical and note the punctuation forms as accepted sugar"
   - "round-trips: converted output compiles clean; the equivalence (misc.sh spv.1-4) still holds"
----
 
 ## Why
 

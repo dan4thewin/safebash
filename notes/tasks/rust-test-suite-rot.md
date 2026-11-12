@@ -1,4 +1,3 @@
----
 title: Rust test suite rot — ~158 pre-existing failures at HEAD
 status: done
 superseded-by: audit-rust-test-suites
@@ -8,7 +7,6 @@ depends: []
 gates:
   - mk test (cargo test --release in sash/) is green, OR
   - stale tests are migrated/removed and the remaining set passes
----
 
 > **SUPERSEDED 2026-07-06** — consolidated into
 > `notes/tasks/audit-rust-test-suites.md` (the canonical Rust-test-rot

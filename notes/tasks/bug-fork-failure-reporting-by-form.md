@@ -1,4 +1,3 @@
----
 title: "Bug: make fork failure uniformly fatal across execution forms"
 status: open
 priority: P2
@@ -11,7 +10,6 @@ gates:
   - "partial construction closes pipes and waits for started stages without force-killing them; no invalid pid, empty-success capture or EOF fallback leaks out"
   - "valid current-language native/C controls prove successful forks and the actual injected failures, including negation, suppression and handler entry"
   - "pre-change/reversion proofs and the predicted ordinary gate pass; DD55 and implementation notes agree"
----
 
 ## Accepted contract (2026-11-06)
 

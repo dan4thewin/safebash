@@ -1,4 +1,3 @@
----
 title: "Require explicit arithmetic for return dispositions and finish operand/producer parsing"
 status: open
 priority: P1
@@ -15,7 +14,6 @@ gates:
   - "already-integer dispositions retain their type and remain valid return operands; the :? typing prerequisite prevents false rejection"
   - "native and C agree on a non-numeric literal in an int position: neither silently reads it as 0"
   - "DD89's accepted explicit-conversion rule is enforced and focused specs pin each repaired case in both modes; its historical return-row attribution is already corrected"
----
 
 ## Decision, 2026-11-06
 

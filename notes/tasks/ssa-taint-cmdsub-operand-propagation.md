@@ -1,4 +1,3 @@
----
 title: "SSA taint defense-in-depth: cmd_subst_taint should propagate operand taint"
 status: done
 priority: P2
@@ -10,7 +9,6 @@ gates:
   - "len stays Clean (cardinality only, DD#24-exempt); generators (epochseconds/random/argc/getpid/…/getcwd/status/signum) stay Clean"
   - "check_inst_uses extended to cover Test operands and Redirect targets (currently only Command/Pipeline/SubscriptAssign/ArrayAppend args), so the SSA backstop matches the CST positions"
   - "0 spec regressions native/c/janet"
----
 
 Context: the CST taint pass (validate.rs) is the authoritative, user-facing
 gate and was made position-uniform (journal 185): a `$( )` that reads

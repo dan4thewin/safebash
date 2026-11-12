@@ -1,10 +1,9 @@
----
+title: "`block_falls_through` cannot see through a `{ … }` group"
 status: done
 priority: P3
 resolved: 2026-10-02
 depends:
 gates:
----
 
 # `block_falls_through` cannot see through a `{ … }` group
 

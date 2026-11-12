@@ -1,4 +1,3 @@
----
 title: "fail-open `/* TODO */` arms remain in emit_c.rs (the P1 fix covered only command dispatch)"
 status: done
 completed: 2026-09-13
@@ -9,7 +8,6 @@ gates:
   - "every `_ =>` arm in emit_c.rs that emits a `/* TODO … */` comment and returns an empty/zero value is either implemented or converted to an ICE"
   - "a reachability probe for each arm is recorded in the task or its journal entry, so an 'unreachable' claim is measured rather than asserted"
   - "no spec regressions"
----
 
 # The fail-open class was only half-closed
 

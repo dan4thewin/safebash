@@ -1,4 +1,3 @@
----
 title: "Bug: the C backend prints i64::MIN as the bare literal `-9223372036854775808`, which C reads as unary minus on an unsigned constant"
 status: open
 priority: P4
@@ -8,7 +7,6 @@ gates:
   - "the emitted C for m1, a9, m2 and m3 compiles under `gcc -std=c11 -Wall` with no \"integer constant is so large that it is unsigned\" warning"
   - "every site that renders an i64 into C source goes through one helper, which spells i64::MIN `(-9223372036854775807L - 1)`"
   - "m1, a9, m2 and m3 print the same values in both modes as today; a spec pins each one"
----
 
 ## Found
 

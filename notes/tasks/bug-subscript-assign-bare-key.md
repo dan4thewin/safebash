@@ -1,4 +1,3 @@
----
 title: "Subscript-sigil enforcement asymmetry: a[i]= (bare string key) accepted on indexed array, but ${a[i]} rejected"
 status: done
 priority: P2
@@ -8,7 +7,6 @@ gates:
   - "a[i]=… on an indexed array (bare word key) rejects with SB4030, same as the read ${a[i]}"
   - "a[$i]=… (sigilled variable index) and a[1]=… (literal) still work"
   - "0 native spec regressions; add a spec pinning the assignment reject"
----
 
 ## Resolution (2026-08-14, unattended)
 

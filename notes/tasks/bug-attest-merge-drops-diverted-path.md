@@ -1,10 +1,9 @@
----
+title: "A caught scalar attest whose failure path diverts is still rejected"
 status: done
 priority: P1
 resolved: 2026-10-02
 depends:
 gates:
----
 
 # A caught scalar attest whose failure path diverts is still rejected
 

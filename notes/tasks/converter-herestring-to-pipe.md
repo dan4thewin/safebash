@@ -1,4 +1,3 @@
----
 title: "converter: rewrite bash here-strings `<<<` to a pipe (DD#83)"
 status: done
 priority: P3
@@ -7,7 +6,6 @@ depends: []
 gates:
   - "a converted bash `cmd <<< WORD` no longer emits `<<<` (sash rejects it, SB4050) — it becomes `producer | cmd` or a MANUAL comment"
   - "the common `read v <<< \"$x\"` and `cmd <<< \"$(...)\"` forms convert to a runnable pipe where safe"
----
 
 ## Why
 

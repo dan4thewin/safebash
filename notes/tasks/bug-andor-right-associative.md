@@ -1,4 +1,3 @@
----
 title: "BUG — && / || parse right-associative (false && A || B runs neither)"
 status: done
 priority: P1
@@ -9,7 +8,6 @@ gates:
   - "false && echo A || echo B -> B; [[ 1 = 2 ]] && echo A || echo B -> B"
   - "mixed/deep chains correct: A && B || C && D == ((A && B) || C) && D"
   - "no rust/spec regression (every && / || chain re-associates — verify the whole suite)"
----
 
 > **Done in `dad1dfe` (fix(parser): && / || are left-associative).**
 > Verified 2026-06-21: `false && echo A || echo B` → B; `[[ 1 = 2 ]] && echo

@@ -1,4 +1,3 @@
----
 title: "Question: is a pipe stage known never to write (on the left) or never to read (on the right) an error?"
 status: open
 priority: P3
@@ -7,7 +6,6 @@ depends: []
 gates:
   - "DG rules (a) or (b); DD#55 or DD#122 records the ruling"
   - "under (a), n1, n2 and n4's g are rejected with a diagnostic naming the rule, in both backends, and n6 stays legal; the flipped specs are rewritten"
----
 
 Moved here from `q-suppression-on-user-functions` (Q6) when that task
 closed at the F6 wrap-up (journal 549). That section keeps the full

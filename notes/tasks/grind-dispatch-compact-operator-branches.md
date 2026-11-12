@@ -1,4 +1,3 @@
----
 title: "grind: dispatch compact-operator Literal/leading-op branches are never-run (extract_from_literal, extract_leading_operator)"
 status: done
 priority: P3
@@ -6,7 +5,6 @@ kind: coverage
 depends: []
 gates:
   - "extract_from_literal and extract_leading_operator either flip 0→>0 with a targeted dispatch spec, or are proven shadowed-dead and removed"
----
 
 ## Resolution (2026-08-31) — shadowed-dead, REMOVED (bucket B)
 

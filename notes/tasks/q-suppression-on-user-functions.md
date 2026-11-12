@@ -1,4 +1,3 @@
----
 title: "Question: what `-` may discard on a user-function call, and how far it reaches"
 status: done
 priority: P2
@@ -9,7 +8,6 @@ gates:
   - "every program in the tables prints what its ruling says or is rejected with a diagnostic naming the rule, in both backends"
   - "SB4016's advice and the texts of DD#55 and DD#70 say only what the rulings allow"
   - "`bug-peel-family-classifiers`, `bug-fork-failure-reporting-by-form` and `dd55-nonvoid-functions` are updated to the rulings"
----
 
 ## Q5 resolution, 2026-11-06
 

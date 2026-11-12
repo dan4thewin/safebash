@@ -1,4 +1,3 @@
----
 title: "BUG: a redirected function definition `f(){…} >file` isn't registered (SB5011 on call)"
 status: done
 priority: P2
@@ -7,7 +6,6 @@ depends: []
 gates:
   - "`f() { echo hi } >/tmp/x; f` defines and runs f (or is a clean compile error), not SB5011 'command f not found'"
   - "the existing `lower_redirected_function` transform path is reachable"
----
 
 ## Resolution (2026-08-28) — reject + delete (DG-chosen, option B)
 

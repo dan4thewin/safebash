@@ -1,4 +1,3 @@
----
 title: "`:~` syntax collision — DD#84 elide (no word) vs the `${var:~DEFAULT}` bless-fallback (never built)"
 status: done
 priority: P2
@@ -6,7 +5,6 @@ kind: decision
 depends: []
 gates:
   - "RESOLVED (DG 2026-09-01): bless-fallback delivered via `bless V [[t]] || V=dflt` (fixed); `:~` stays DD#84 elide; no `:!` operator; no re-validation of the default"
----
 
 ## Resolution (2026-09-01) — `||`, not a new operator
 

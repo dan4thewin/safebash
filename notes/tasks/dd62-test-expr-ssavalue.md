@@ -1,4 +1,3 @@
----
 title: "[[ ]] value operands → SsaValue: drop right_is_quoted + lower_subscript (DD#62)"
 status: done
 priority: P2
@@ -12,7 +11,6 @@ gates:
   - "lower_subscript (codegen/values.rs, test-path) is deleted (zero callers); subscripts in [[ ]] go through lower_subscript_value"
   - "==/!= are exact-only (no glob); =~ quoted RHS is regex-grouping (not literal); -v is removed"
   - "native spec clean (only pre-existing cf.c7/cf.c8); rust suite no net regression (--test-threads=1); complexity gate green"
----
 
 > **DONE (2026-06-20, section A).** Operand→`SsaValue` refactor landed —
 > see [journal 114](../journal/114-dd62-section-a.md). `SsaTest`/

@@ -1,4 +1,3 @@
----
 title: "getenv: presence handling — capture-condition, or an optional default param"
 status: done
 completed: 2026-09-12
@@ -8,7 +7,6 @@ kind: task
 depends: []
 gates:
   - "DG decides how a script tests whether an environment variable is present/absent. Two candidate forms: (a) allow `$(getenv NAME)` as a capture-condition whose status reflects presence (`if x=$(getenv NAME) { use $x }`), or (b) give getenv an optional second argument as a default (`$(getenv NAME DEFAULT)`, absent → DEFAULT), mirroring `$(arg N DEFAULT)`. Pick one (or both)."
----
 
 # getenv presence handling
 

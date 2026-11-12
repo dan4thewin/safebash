@@ -1,4 +1,3 @@
----
 title: "`$(<file)` forks instead of reading the file directly"
 status: done
 priority: P2
@@ -9,7 +8,6 @@ gates:
   - "the value is byte-identical to today's (trailing newline stripped)"
   - "the emitted binary contains no reference to `/usr/bin/cat`"
   - "the slurped value is still TAINTED — file content is external input"
----
 
 ## What
 

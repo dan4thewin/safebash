@@ -1,4 +1,3 @@
----
 title: BUG — subscript append `a[i]+=v` discards the existing element value
 status: done
 priority: P2
@@ -7,7 +6,6 @@ depends: []
 gates:
   - a[i]+=v appends to the existing element (bash parity)
   - a types.sh/spec test locks indexed and map subscript append
----
 
 # subscript `+=` append discards the current value
 

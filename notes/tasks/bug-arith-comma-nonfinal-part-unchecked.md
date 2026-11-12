@@ -1,4 +1,3 @@
----
 title: "Bug: a comma's non-final part is checked only on an unsplit comma in a condition — `(( a, a++ ))`, `if (( a, a++, a<3 ))` and `(( a<3, a>1 ))` compile, though DD#31 says each non-final part must be a mutation"
 status: open
 priority: P3
@@ -13,7 +12,6 @@ gates:
   - "31.57 and cov.2 assert the message they were written for, not the bare code (see Spec impact)"
   - "a spec pins each row in both modes, and each fails on the pre-fix binary"
   - "DD31's result/context rules are enforced before and after splitting; only measured implementation claims are recorded"
----
 
 ## Found
 

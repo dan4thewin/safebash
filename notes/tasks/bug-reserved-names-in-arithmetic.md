@@ -1,4 +1,3 @@
----
 title: "Bug: reserved and environment names escape SB5017/SB5018 outside a word — arithmetic reads them as empty or 0, and `len HOME` ICEs (native) or reads a string as a table (C)"
 status: open
 priority: P2
@@ -11,7 +10,6 @@ gates:
   - "every program under Correctly rejected today keeps its diagnostic"
   - "the old rejections are a subset of the new: a temporary sentinel, proved able to fire, finds no program the old check rejects and the new one accepts"
   - "a spec pins each read channel in both backends; each fails on the pre-fix binary"
----
 
 ## What
 

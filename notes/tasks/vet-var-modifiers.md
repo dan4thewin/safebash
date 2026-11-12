@@ -1,4 +1,3 @@
----
 title: "vet the ${var:OP} modifier family — keep / drop / rework each"
 status: done
 priority: P2
@@ -9,7 +8,6 @@ gates:
   - "for each kept operator: backslash handling under DD#64, operand interpolation, and brace-} behaviour are specified"
   - "dropped operators are rejected with a diagnostic pointing at the replacement"
   - "TDD: spec tests below (V1-) written first and red before code; :- is a word (interpolation+concat+quoting), unquoted } closes, quoted } is literal"
----
 
 # vet the `${var:OP}` modifier family
 

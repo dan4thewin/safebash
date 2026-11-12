@@ -1,4 +1,3 @@
----
 title: "BUG — a here-string `<<<` with non-simple data (`<<< ${x:-f}`, `<<< $a[i]`, `<<< $(cmd)`) silently feeds EMPTY stdin"
 status: done
 priority: P2
@@ -7,7 +6,6 @@ depends: []
 gates:
   - "`cat <<< ${miss:-hi}` feeds `hi` (or rejects) — never silently feeds empty stdin"
   - "here-string data forms are consistent with bash's trailing-newline behavior, or the divergence is a documented decision"
----
 
 > **Superseded by DD#83 (2026-08-30): sash has no here-strings.** DG ruled that
 > `<<<` is dropped entirely (rejected at parse, SB4050) rather than fixed — it's

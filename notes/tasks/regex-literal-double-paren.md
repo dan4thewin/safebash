@@ -1,11 +1,10 @@
----
+title: "An unquoted regex containing `((` is rejected as \"expected `]]`\""
 status: blocked
 priority: P3
 depends:
 gates:
   - "DONE: rejected by a diagnostic that names the real cause (SB4014, 2026-09-13)"
   - "DG decides whether an unquoted `=~` pattern may contain `((` at all"
----
 
 # An unquoted regex containing `((` is rejected as "expected `]]`"
 

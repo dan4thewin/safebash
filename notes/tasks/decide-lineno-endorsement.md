@@ -1,10 +1,8 @@
----
 title: "DECIDE: endorse or reject $LINENO (un-endorsed bash carryover)"
 status: done
 priority: P3
 kind: decision
 depends: []
----
 
 # $LINENO — RESOLVED (DG, 2026-08-19): reject, no special handling
 

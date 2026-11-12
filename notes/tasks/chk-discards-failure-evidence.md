@@ -1,4 +1,3 @@
----
 title: "CLOSED: chk discards failure evidence, so a transient cannot be diagnosed"
 status: closed
 closed: 2026-10-14
@@ -8,7 +7,6 @@ source: journal 508 (the c:cli.31/32/40/41/42 flake)
 depends: []
 gates:
   - Withdrawn in place. The premise was false; see below.
----
 
 ## Closed — the premise was wrong
 

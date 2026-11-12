@@ -1,4 +1,3 @@
----
 title: "bug: pid/random keyword intrinsics as arithmetic operands silently yield 0 (only `len` is wired as an arith int-intrinsic)"
 status: done
 priority: P2
@@ -9,7 +8,6 @@ gates:
   - "a keyword pid/random intrinsic as a compound operand (`$(( (getpid) > 0 ))`) computes correctly"
   - "decision: does `$(getpid)` command-substitution work inside `$(( ))` (currently SB4020), or is the `(getpid)` sexpr the only in-arith spelling? (DD#58 sexpr vs command-sub in arith)"
   - "native + c + janet; specs pin the values; no regression"
----
 
 ## Symptom
 

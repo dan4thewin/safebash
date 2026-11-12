@@ -1,4 +1,3 @@
----
 title: "janet: an undeclared arith counter `(( f++ ))` emits `unknown symbol f`"
 status: deferred
 deferred-by: DD104
@@ -10,7 +9,6 @@ gates:
   - "janet `(( f++ ))` on an undeclared `f` auto-declares it (starts 0 → 1), matching native/c"
   - "un-guard arithmetic.sh b2a.3 for janet"
   - "no janet regression"
----
 
 ## Symptom
 

@@ -1,4 +1,3 @@
----
 title: "SB5041 says 'used as a command' for an arithmetic use"
 status: open
 priority: P3
@@ -8,7 +7,6 @@ gates:
   - "an arithmetic use before the definition (`(f)` or a bare `f` in `$(( ))`) gets text naming the arithmetic use and advising to define the function before it"
   - "the command forms keep today's text, including the absolute-path advice (functions.sh pins it)"
   - "fresh specs pin both arithmetic spellings with program-level definitions"
----
 
 DD#81 Part A rejects a definition preceded, in execution order, by a use of
 the name that did not reach the function (SB5041). The message assumes the

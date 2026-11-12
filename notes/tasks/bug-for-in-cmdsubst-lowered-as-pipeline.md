@@ -1,4 +1,3 @@
----
 title: "for-in over a `$( )` capture was lowered as a pipeline — three miscompiles"
 status: done
 priority: P1
@@ -10,7 +9,6 @@ gates:
   - "`fn g { echo a }` + `for k in $(g)` does not abort the compiled program in `sash_exec`"
   - "`for k in $(< file)` does not bind the whole file as one iteration"
   - "`for x in $(argv …)` and `for k in $(keys m)` keep working"
----
 
 ## Found
 

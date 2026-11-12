@@ -1,4 +1,3 @@
----
 title: "Reject int-function calls as status-producing pipeline stages"
 status: complete
 priority: P2
@@ -8,7 +7,6 @@ gates:
   - "direct int-function stages are SB4030 in every otherwise legal stage position, marking and status-handling context"
   - "ordinary integer captures, int-to-int return forwarding, in-process value discard and explicit numeric/predicate status construction remain valid"
   - "focused native/C specs reject both return 3 and return 256 as direct stage results, with before-controls and the ordinary unit/spec gate"
----
 
 ## Settled policy, implemented
 

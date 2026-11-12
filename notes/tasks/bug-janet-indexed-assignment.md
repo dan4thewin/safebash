@@ -1,4 +1,3 @@
----
 title: "BUG — janet backend: indexed assignment a[i]=v / a[i]+=v ignores the index (sets the whole variable)"
 status: done
 priority: P2
@@ -8,7 +7,6 @@ gates:
   - "janet: `array a=(x y z); a[1]=NEW; echo ${a[1]}` prints NEW (and the map form)"
   - "janet: `a[i]+=v` appends onto the current element"
   - "drop the in_modes native,c guard on spec types.sh 33.11-33.13 (subscript append)"
----
 
 # BUG — janet indexed assignment ignores the index
 

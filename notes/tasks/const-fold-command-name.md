@@ -1,4 +1,3 @@
----
 title: "Const-fold a command name: allow `const x=/path; $x arg` via compile-time resolution"
 status: done
 priority: P3
@@ -9,7 +8,6 @@ gates:
   - "a NON-const `x=/usr/bin/touch; $x foo` stays rejected (SB5011) — a mutable var is a runtime-chosen command"
   - "the folded head still goes through DD#23 resolution (unresolved → SB5011) and manifest recording"
   - "0 native spec regressions; add specs for the const (accept) and non-const (reject) forms"
----
 
 # Const-fold a command name
 

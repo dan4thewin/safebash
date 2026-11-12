@@ -1,4 +1,3 @@
----
 title: "`(( ))` internals: multi-line separator semantics + comments inside arithmetic"
 status: done
 priority: P3
@@ -9,7 +8,6 @@ gates:
   - "DECIDE: are `;` and `,` equivalent sequence separators in a standalone `(( ))`?"
   - "DECIDE: allow whitespace-preceded `#…EOL` comments inside `(( ))` / `$(( ))` (super-bash), or keep the bash-parity rejection?"
   - "If any 'allow': implement in the arith re-lexer + comma loop (and/or arith_hash_word), add specs, note the divergence in DD#72 / a new DD"
----
 
 # `(( ))` internals — separators and comments (DECIDED, implemented)
 

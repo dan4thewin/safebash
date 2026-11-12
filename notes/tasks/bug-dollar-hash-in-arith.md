@@ -1,4 +1,3 @@
----
 title: "BUG — `$#` (and likely other specials) read as empty/0 inside (( ))"
 status: done
 priority: P2
@@ -8,7 +7,6 @@ gates:
   - "specials in (( )) read through the normal var path: $?/$$/$! clean; positionals function-local + top-level SB error (DD#46) — same as outside arith"
   - "audit other specials in arith: $?, $$, $!, positionals $1.. — each reads its value inside (( ))"
   - "re-enable the #[ignore]d numeric_with_argc codegen_test"
----
 
 # BUG — `$#` reads empty inside `(( ))`
 

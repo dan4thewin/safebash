@@ -1,4 +1,3 @@
----
 title: "argv snapshot → out-param builtin: array a=$(argv N) becomes `argv [N] a`"
 status: done
 priority: P2
@@ -12,7 +11,6 @@ gates:
   - "splat `$(argv)`/`$(argv N)` (for-in) and scalars `$(arg N)`/`$(argc)` unchanged"
   - "taint/bless unchanged: `argv a` fills a tainted array, bless-all before reading"
   - "native spec clean (only cf.c7/cf.c8); rust suite no net regression; complexity gate green"
----
 
 # argv snapshot → out-param builtin (DD#60 revision)
 

@@ -1,4 +1,3 @@
----
 title: "investigate: the `s///` sugar silently truncates at any unhandled token — `$'…'`, and the metachars `= # & < > ;`"
 status: done
 priority: P2
@@ -9,7 +8,6 @@ gates:
   - "if accepted: `s =~ s/:/$'\\0'/g` behaves as `$(gsub $s \":\" $'\\0')` does today"
   - "if accepted: the meaning of a decoded delimiter (`$'\\x2f'` → `/`) in the replacement is pinned by a spec, not left to fall out of the implementation"
   - "`s =~ s/=/-/g` (and `#`, `&`, `<`, `>`, `;` in the RE) either works or is rejected for a *stated* reason — today all give a misleading SB4032 \"malformed … expected three `/` delimiters\" when the payload is well-formed"
----
 
 ## The asymmetry
 

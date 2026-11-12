@@ -1,4 +1,3 @@
----
 title: "glob-splat Part 2: `@{a:-WORD}` / `@{a:?WORD}` external-splat empty-disposition (DD#69)"
 status: done
 priority: P2
@@ -11,7 +10,6 @@ gates:
   - "only `:-` and `:?` valid after `@{a` (no `:=`/`:+`), consistent with the DD#65 scalar prune"
   - "taint composes: disposition = cardinality-only, bless = value/taint-only; no diagnostic collision"
   - "native + c + janet; spec tests"
----
 
 # glob-splat Part 2: external-splat empty-disposition (`@{a:-WORD}` / `@{a:?WORD}`)
 

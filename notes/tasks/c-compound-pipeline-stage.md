@@ -1,4 +1,3 @@
----
 title: "c backend: implement compound (group/for/if/function) pipeline stages"
 status: done
 priority: P2
@@ -9,7 +8,6 @@ gates:
   - "a user function as a pipeline stage runs in c and janet (`fn f { echo hi }; f | cat` -> hi)"
   - "then spec/pipe_functions.sh can drop its native-only guard and run in all three modes"
   - "no runtime `sash: bug: bare command` / janet `unknown symbol pN` from a compilable compound-pipeline program"
----
 
 # c/janet compound pipeline stages are unimplemented
 

@@ -1,7 +1,5 @@
----
 title: DD#125 — a name the compiler already understands is not the user's to bind
 status: accepted
----
 
 Settled with DG (2026-10-09), out of a bug found while probing a `wait` idiom.
 

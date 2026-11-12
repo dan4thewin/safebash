@@ -1,4 +1,3 @@
----
 title: "cleanup: retire the now-unreachable legacy `:s`/`=~` regex_replace machinery"
 status: done
 priority: P3
@@ -7,7 +6,6 @@ depends: []
 gates:
   - "no runtime behavior change (the paths below are already unreachable); all specs stay green"
   - "remove the dead transform + codegen + IR encodings once confirmed no producer remains"
----
 
 ## Done (2026-08-21)
 

@@ -1,4 +1,3 @@
----
 title: "BUG: `${n:s/…/…/}` on an `int` compiles, because the desugar writes the `\"$n\"` conversion the author did not (DD#105)"
 status: open
 priority: P3
@@ -8,7 +7,6 @@ gates:
   - "`${n:s/…}` on an int-typed scalar or cell is SB4030, as `$(sub $n …)` and `n =~ s/…/` already are"
   - "`str s=\"$n\"` then `${s:s/…}` stays legal"
   - "every row listed as already correct keeps its verdict"
----
 
 ## What
 

@@ -1,4 +1,3 @@
----
 title: "$(arg -N) negative index is not a compile error (DD#60 says it should be)"
 status: done
 priority: P3
@@ -8,7 +7,6 @@ gates:
   - "`x=$(arg -1)` is a compile error (SB code), not a compile-success that only aborts at runtime"
   - "`$(arg -1 DEFAULT)` — decide: reject the negative literal at compile time too, OR treat negative as out-of-range → default (currently the runtime returns the default for negative)"
   - "argv.sh av.t7 rejects for the *negative-index* reason, not (only) the downstream unblessed-read taint check"
----
 
 ## Symptom
 

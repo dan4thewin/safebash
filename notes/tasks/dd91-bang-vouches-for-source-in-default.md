@@ -1,4 +1,3 @@
----
 title: "DD#91: does `!` vouch for a taint SOURCE materialised in the `:-` default?"
 status: done
 priority: P2
@@ -7,7 +6,6 @@ depends: []
 gates:
   - "DG decides whether `${x:!-$(getenv HOME)}` is legal"       # DONE — reading 2
   - "whichever way: the answer is a spanned diagnostic or a clean compile, never the bare SSA backstop"  # DONE — SB5020
----
 
 # The question
 

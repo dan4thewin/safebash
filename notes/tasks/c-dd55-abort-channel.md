@@ -1,4 +1,3 @@
----
 title: "C backend lacks the DD#55 (A)-channel implicit-exit abort"
 status: done
 scope: c/janet backends only (native complete)
@@ -9,7 +8,6 @@ gates:
   - "[DONE] bare `/bin/false` aborts (nonzero exit) in C and janet, matching native (spec 55.1 green all modes)"
   - "[DONE] the implicit exit check fires for bare EXTERNAL commands + honors `-` suppress / if / || catch, routing through END (DD#56)"
   - "[SPLIT OFF -> dd55-abort-channel-remaining] pipefail-on-non-last (21.3/55.10), c cmdsub abort (55.7-9), cd/echo-write/redirect descriptive-message parity (55.20-29), janet pipeline abort, and the janet-diagnostic DECISION"
----
 
 # PARTIAL 2026-07-03 (external abort landed; see dd55-abort-channel-remaining)
 

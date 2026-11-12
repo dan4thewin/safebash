@@ -1,4 +1,3 @@
----
 title: "Enforce conservative identifier-only function names"
 status: open
 priority: P2
@@ -13,7 +12,6 @@ gates:
   - "reestablish valid-name taint controls under current DD127/DD128; invalid path-name programs and the former clean-function shortcut are not preservation evidence"
   - "converter impact is measured and affected names are handled explicitly without changing identities or silently presenting unhandled names as valid native output"
   - "specs for the new refusals fail before the naming guard and under its reversion; valid-name controls and existing unit/static/spec gates pass with measured predictions"
----
 
 ## Decision, 2026-11-09
 

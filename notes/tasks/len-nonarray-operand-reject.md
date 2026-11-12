@@ -1,4 +1,3 @@
----
 title: "`len` on a non-array operand: garbage (string) / segfault (undefined) — reject at compile time"
 status: done
 superseded_by: dd75-len-polymorphic (DD#75 §2)
@@ -11,7 +10,6 @@ gates:
   - "`len arr` on a real array still works (element count)"
   - "the misleading `BuiltinCmd::Len` doc comment (`\"string or array length\"`) is corrected to array-only (per DD#41)"
   - "0 native spec regressions; add specs pinning the two rejects + the working array case"
----
 
 # `len` is array-only but silently misbehaves on non-array operands
 

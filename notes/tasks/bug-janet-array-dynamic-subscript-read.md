@@ -1,4 +1,3 @@
----
 title: "BUG — janet backend: dynamic subscript read of an indexed array in value context returns empty"
 status: done
 priority: P3
@@ -7,7 +6,6 @@ depends: []
 gates:
   - "janet: `array a=(x y z); i=2; echo ${a[$i]}` prints `z` (and the non-brace `$a[$i]`)"
   - "drop the janet exclusion / un-fail spec types.sh 33.5 and 33.14"
----
 
 # BUG — janet dynamic indexed-array subscript read (value context)
 

@@ -1,9 +1,8 @@
----
+title: "SB5088 claims non-adjacency for attests that are adjacent"
 status: open
 priority: P3
 depends:
 gates:
----
 
 # SB5088 claims non-adjacency for attests that are adjacent
 

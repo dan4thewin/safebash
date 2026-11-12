@@ -1,4 +1,3 @@
----
 title: "`!` precedence vs `&&`/`||` left-operand + `- ! X` → SB4019"
 status: done
 priority: P2
@@ -11,7 +10,6 @@ gates:
   - "`- ! X` emits SB4019 (`-` cannot suppress a boolean), not the current garbage SB4014 (`expected operand in test expression`)"
   - "`!` matches the ratified `[[ ]]` positional template on ALL rows (bare→SB4018, left-of-&&/||→accept, consequent→SB4018, if/while→negate)"
   - "0 native spec regressions; add specs pinning `! X && Y` / `! X || Y` / `- ! X`"
----
 
 # Remaining `!`-as-boolean work (precedence + suppress)
 

@@ -1,4 +1,3 @@
----
 title: Collapse the six out-target predicates in validate.rs onto one function
 status: open
 priority: P4
@@ -10,7 +9,6 @@ gates:
   - its doc states the question and names the DD for every name in the set
   - the dead `mapfile` alternatives are branch-probed before deletion
   - sweep green with the total predicted in advance; mk test green
----
 
 # Collapse the six out-target predicates in validate.rs
 

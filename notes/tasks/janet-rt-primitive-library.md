@@ -1,4 +1,3 @@
----
 title: "EFFORT (architecture): janet backend = thin IR lowering + `sash-rt.janet` primitive library"
 status: deferred
 deferred-by: DD104
@@ -11,7 +10,6 @@ gates:
   - "emit_janet keeps lowering the IR's STRUCTURED control flow (if/while/for/case/pipeline) itself — control flow is NOT delegated to the library (that independence is the janet oracle's whole point)"
   - "the library is independently unit-testable in janet; the native-vs-janet parity gate (janet-parity-gate) stays green"
   - "the janet failing-spec count ratchets down as each primitive family lands + its guarded specs un-skip; bundled sub-tasks (effort-janet-backend-parity) fold into this"
----
 
 # Decision (2026-08-16, DG)
 

@@ -1,4 +1,4 @@
-title: DD#71 — Operand words: `=~`/`==` RHS and assignment values are plain words; value positions aren't connectable commands
+title: "DD#71 — Operand words: `=~`/`==` RHS and assignment values are plain words; value positions aren't connectable commands"
 status: accepted
 implemented: 2026-07-04 (Cluster A — see journal 128; commits 9424d66,60c667b,e9fc520,1c2e74f,000dd5a)
 

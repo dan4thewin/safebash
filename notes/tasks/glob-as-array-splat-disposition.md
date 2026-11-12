@@ -1,4 +1,3 @@
----
 title: "globs are array sugar; @a splat into external commands requires an empty-disposition (@{a:-foo}/@{a:?bang})"
 status: done
 priority: P2
@@ -12,7 +11,6 @@ gates:
   - "rule applies to external commands ONLY (sash resolves external-vs-builtin at compile time, DD#23); builtins (echo/printf/…) and for-in are exempt. NO static-non-empty exemption — even a literal array needs a disposition at an external splat. NO dominating-guard recognition — keep it dead simple"
   - "`@{a:-WORD}` / `@{a:?WORD}` map 1-to-1 onto bash `\"${a[@]:-WORD}\"` / `\"${a[@]:?WORD}\"` (DD#67 sugar)"
   - "spec tests for: for-in glob (incl. 0-match), inline-* reject, bare-@a-external reject, each disposition form (native + c at least); no net regression; complexity gate green"
----
 
 # Globs are array sugar + external-splat empty-disposition
 

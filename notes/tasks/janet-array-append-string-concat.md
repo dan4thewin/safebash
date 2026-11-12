@@ -1,4 +1,3 @@
----
 title: "janet: array append `a+=(x)` is emitted as string concatenation"
 status: deferred
 deferred-by: DD104
@@ -9,7 +8,6 @@ gates:
   - "janet: `array f=(a b c); f+=(d); echo $(len f)` prints `4` (matches native/c)"
   - "janet: `array f=(a b c); f+=(d e); echo $(join f)` prints `a b c d e`"
   - "spec `undeclared.sh` ud.29 passes in janet mode"
----
 
 ## Found
 

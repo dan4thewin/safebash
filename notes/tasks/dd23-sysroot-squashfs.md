@@ -3,7 +3,6 @@ status: done
 severity: feature
 depends: [dd23-sysroot]
 gates: []
----
 
 `sash --sysroot=image.squashfs script.sh` resolves commands against
 a squashfs image without mounting it.

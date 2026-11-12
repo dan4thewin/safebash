@@ -1,4 +1,3 @@
----
 title: "SB5031 reports a `$( )`-body array declaration as 'introduced nowhere'"
 status: done
 priority: P2
@@ -9,7 +8,6 @@ gates:
   - "`@nosuch` is still SB5031 everywhere it is genuinely undeclared"
   - "`fn f { array a=(1 2); … }; f; /bin/echo @{a:-z}` is SB5031 — a fn-local name is not readable outside"
   - "`check_scalar_splat` reads the scope-aware `known`, not a flat program-wide union"
----
 
 > **Fixed 2026-09-28 (journal 437).** The splat read is recorded through
 > `ReadSink::record_splat` against the current scope's `known`, like every

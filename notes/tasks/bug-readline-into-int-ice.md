@@ -1,4 +1,3 @@
----
 title: "BUG: `readline` into an int crashes the compiler (native) or emits C that does not compile"
 status: open
 priority: P2
@@ -8,7 +7,6 @@ gates:
   - "every program under What that reads into a declared int is rejected with a diagnostic, in both backends; none reaches codegen"
   - "k3 and the migration under Fix keep printing what they print today"
   - "specs pin r1 and r3 in both backends, asserting the code (not a bare `-n $err`)"
----
 
 ## What
 

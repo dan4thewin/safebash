@@ -1,4 +1,3 @@
----
 title: "Dispatch `[[ … ]]` requires spaces around `==`/`=~`, unlike the boolean test"
 status: done
 priority: P3
@@ -7,7 +6,6 @@ depends: []
 gates:
   - "`[[ $x==a { … } ]]` (compact operator) parses like `[[ $x == a { … } ]]`, OR the boolean test is made to match (both require spaces) — DG decides which direction"
   - "boolean `[[a==a]]` and dispatch `[[$x==a{…}]]` agree on operator spacing"
----
 
 ## Resolution (2026-08-10, 3bca6b1)
 

@@ -1,4 +1,3 @@
----
 title: "A clean value split retains the target's previous taint"
 status: done
 priority: P2
@@ -9,7 +8,6 @@ gates:
   - "Direct clean splitting on the target's failed-attest branch resolves it"
   - "A helper does not inherit its caller's replacement permission"
   - "Kernel-backed reads remain tainted and split input reads are checked"
----
 
 Superseded by DD128, implemented in journal 568. The requested ordinary
 clean-split declassification is now deliberately forbidden: replacing bytes

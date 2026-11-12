@@ -1,4 +1,3 @@
----
 title: "BUG: `sash-convert --annotate` writes its `# was:` comment mid-line, which comments out the rest of the line"
 status: open
 priority: P2
@@ -8,7 +7,6 @@ gates:
   - "with `--annotate`, every program under What converts to one that prints what bash prints, as it already does without `--annotate`"
   - "no `# was:` comment is followed on its line by code or by string text"
   - "specs in spec/convert.sh pin i2 and d2 (the silent shapes) and i3 (a loud one); 57.187 keeps passing"
----
 
 ## What
 

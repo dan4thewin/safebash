@@ -1,4 +1,3 @@
----
 title: "Evaluate words and expressions left to right"
 status: open
 priority: P2
@@ -10,7 +9,6 @@ gates:
   - "the two `$?` rows below obey DD55, with specs in both modes"
   - "existing lazy evaluation and function/capture/process boundaries are preserved; an unreached operand or pattern never runs"
   - "status and taint analysis do not apply a later capture's effects to an earlier read"
----
 
 ## Decision, 2026-11-06
 

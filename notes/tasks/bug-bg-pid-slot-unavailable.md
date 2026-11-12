@@ -1,4 +1,3 @@
----
 title: "`$!` / `$(getcpid)` before any `&` is a silent empty string, where `$(status)` is SB5012"
 status: done
 priority: P1
@@ -9,7 +8,6 @@ gates:
   - "`echo $(( getcpid ))` yields an int, never the empty string — `$(( … ))` producing `\"\"` is a value-model violation"
   - "native and `--emit-c` agree"
   - "specs pin the chosen behaviour in both modes"
----
 
 # `$!` has no availability rule
 

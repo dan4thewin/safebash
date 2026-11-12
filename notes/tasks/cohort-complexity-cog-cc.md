@@ -1,4 +1,3 @@
----
 title: Ongoing complexity reduction via cog/cc rubric
 status: active
 priority: P2
@@ -8,7 +7,6 @@ gates:
   - top non-grandfathered function clears the rubric on touch
   - new violators never land (gate blocks them)
   - plan to tighten threshold 3× → 2× → 1.5× as cohort clears
----
 
 # Ongoing complexity reduction via cog/cc rubric
 

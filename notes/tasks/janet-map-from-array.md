@@ -1,4 +1,3 @@
----
 title: "janet: `map m = @{a:DISP}` (DD#99 array→map) is not emitted"
 status: deferred
 deferred-by: DD104
@@ -8,7 +7,6 @@ depends: []
 gates:
   - "janet: `array a=(k1 v1 k2 v2); map m = @{a:-X}; echo ${m[k1]}` prints `v1`"
   - "spec `var_modifiers.sh` mp.2, mp.3, mp.4, mp.6, mp.9 pass in janet mode"
----
 
 ## Found
 

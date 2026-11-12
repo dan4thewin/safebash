@@ -1,4 +1,3 @@
----
 title: "docs: full write-up of the regex dialect (man page)"
 status: done
 priority: P2
@@ -10,7 +9,6 @@ gates:
   - "the deliberate divergences are listed with their spelling: `\\-`, `\\{`, `\\[`"
   - "the unsupported surface is listed (lookahead/lookbehind)"
   - "each claim is verified against the binary, not against DD text"
----
 
 ## What
 

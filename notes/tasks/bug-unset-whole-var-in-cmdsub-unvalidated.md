@@ -1,4 +1,3 @@
----
 title: "`$(unset zz)` of an undeclared whole variable is silently accepted"
 status: done
 priority: P3
@@ -7,7 +6,6 @@ depends: []
 gates:
   - "`$(unset zz)` reports the same diagnostic as a top-level `unset zz`"
   - "a body-local name is NOT visible to the enclosing scope afterwards"
----
 
 # What
 

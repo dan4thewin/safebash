@@ -1,4 +1,3 @@
----
 title: "MEMORY DISCLOSURE: an auto-declared collection read with `$name` leaks a heap pointer to argv"
 status: done
 priority: P0
@@ -9,7 +8,6 @@ gates:
   - "`str x=safe; read x` is a diagnostic (SB5049-class), not a silent retype"
   - "`int x=1; read x` is a diagnostic, not `ICE: expected string var, got int`"
   - "SB5064's collection set includes auto-declared targets (`read`/`argv`/3-arg `match`/`matchall`)"
----
 
 # An auto-declared collection read with the scalar sigil leaks a heap pointer
 

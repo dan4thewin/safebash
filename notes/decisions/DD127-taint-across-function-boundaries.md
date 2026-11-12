@@ -1,7 +1,5 @@
----
 title: DD#127 — taint across function boundaries
 status: accepted
----
 
 # DD#127 — taint across function boundaries
 

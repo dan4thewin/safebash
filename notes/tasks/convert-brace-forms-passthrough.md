@@ -1,4 +1,3 @@
----
 title: "sash-convert emits bash brace forms verbatim — a literal `a{b}` now fails to compile, and a redirected group always has"
 status: open
 priority: P2
@@ -8,7 +7,6 @@ gates:
   - "bash `echo a{b}` converts to something `sash` accepts and that still prints `a{b}`"
   - "a redirected or piped group either converts to an accepted form or is reported as unconvertible — it must not emit output that fails to compile"
   - "a plain `{ …; }` group keeps converting (it is still a sash surface) and keeps its meaning"
----
 
 ## What happens
 

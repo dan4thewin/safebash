@@ -1,4 +1,3 @@
----
 title: "BUG: inside `$(( ))`, an operator-free `${a[K]}` parses K with a second, smaller index grammar, so legal indexes are SB4041"
 status: open
 priority: P2
@@ -9,7 +8,6 @@ gates:
   - "every row of the first What table prints its expected value in both backends"
   - "every row of the second table draws its expected diagnostic, and none compiles"
   - "ig11 and ig12 stay SB4041, and the rows that work today are unchanged"
----
 
 ## What
 

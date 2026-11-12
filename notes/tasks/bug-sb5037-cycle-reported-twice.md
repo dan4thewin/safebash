@@ -1,4 +1,3 @@
----
 title: "SB5037: a mutual-recursion cycle is reported once or twice, depending on definition order"
 status: open
 priority: P4
@@ -7,7 +6,6 @@ depends: []
 gates:
   - "DG picks R1 or R2 (no DD settles the count)"
   - "the bf24 family reports the same count in both definition orders, both backends"
----
 
 ## What
 

@@ -1,4 +1,3 @@
----
 title: "BUG: const reassignment panics the compiler (ssa.rs:926) instead of a clean diagnostic"
 status: done
 priority: P1
@@ -8,7 +7,6 @@ gates:
   - "`const x=1; x=2` produces a clean SBxxxx compile error (not a Rust `thread 'main' panicked` / rc 101)"
   - "all reassignment paths of a const are covered: plain `x=2`, compound `x+=1`, arith `(( x=5 ))` / `(( x++ ))`, and re-`const x=2`"
   - "a spec pins const-reassignment → the SB code (errors.sh)"
----
 
 ## RESOLVED (2026, fork C — DG-approved)
 

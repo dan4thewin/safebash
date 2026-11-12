@@ -1,4 +1,3 @@
----
 title: "bug: `$(status)` inside a double-quoted string is not desugared"
 status: done
 priority: P1
@@ -7,7 +6,6 @@ depends: []
 gates:
   - "`echo \"s=$(status)\"` prints the status, exactly as `echo \"s=$?\"` does"
   - "no spelling of `status` reaches `sash_exec` as a bare command name"
----
 
 ## What
 

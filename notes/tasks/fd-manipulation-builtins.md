@@ -1,11 +1,9 @@
----
 title: "Consider fd manipulation (dup, close, …) as explicit builtins rather than `>&`/`<&` syntax"
 status: done
 kind: design
 depends: []
 gates:
   - "DG decision on whether fd dup/close is builtin functions vs redirect syntax"
----
 
 ## Resolved (2026-09-04, DG)
 

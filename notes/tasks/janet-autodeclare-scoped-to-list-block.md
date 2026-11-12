@@ -1,4 +1,3 @@
----
 title: "janet: an auto-declared collection inside a list/`||` is scoped to that block"
 status: deferred
 deferred-by: DD104
@@ -8,7 +7,6 @@ depends: []
 gates:
   - "`argv 1 fresh || :` then `$(len fresh)` compiles and runs under --janet"
   - "same for `matchall S P fresh || :` and the other bulk-fill builtins"
----
 
 ## What
 

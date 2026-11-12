@@ -1,6 +1,5 @@
----
+title: "DD#114 — a subscript index is a read, in every position"
 status: accepted
----
 
 # DD#114 — a subscript index is a read, in every position
 

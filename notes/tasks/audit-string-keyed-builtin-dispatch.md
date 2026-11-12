@@ -1,4 +1,3 @@
----
 title: "SUPERSEDED: audit string-keyed builtin dispatch outside BuiltinCmd::from_name"
 status: superseded
 closed: 2026-10-14
@@ -6,7 +5,6 @@ superseded-by: collapse-validate-out-target-predicates
 kind: hardening
 depends: []
 gates: []
----
 
 # Audit string-keyed builtin dispatch outside BuiltinCmd::from_name
 

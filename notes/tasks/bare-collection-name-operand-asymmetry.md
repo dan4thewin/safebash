@@ -1,4 +1,3 @@
----
 title: "asymmetry: bare collection-name operands to builtins vs user-defined functions"
 status: closed
 priority: P2
@@ -6,7 +5,6 @@ kind: decision
 depends: []
 gates:
   - "DG decides whether a bare collection name to a user function should splat/pass-by-reference like it does to len/join/keys, or stay a literal string requiring @splat — and whether the builtin bare-name form should be kept, deprecated, or unified"
----
 
 # Bare collection-name operands: builtins vs user functions
 

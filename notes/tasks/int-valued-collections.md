@@ -1,4 +1,3 @@
----
 title: "DD#76 — int-valued collections (int array / int map) + bare a[i] arith lvalue"
 status: done
 priority: P2
@@ -14,7 +13,6 @@ gates:
   - "bare `a[i]` in `(( ))` — int index expr, rvalue + lvalue (`(( a[i]++ ))`, `(( a[i] = … ))`, `(( a[i] op= … ))`); bare `m[k]` → error"
   - "missing key / int 0 both read zero-value (DD#53) — no bounds error (DD#76)"
   - "native + c + janet (or per-mode guards filed); spec tests; no regression"
----
 
 ## POSTSCRIPT 2026-09-15 (journal 321) — the gates above missed a segfault
 

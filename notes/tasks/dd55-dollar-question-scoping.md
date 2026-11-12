@@ -5,7 +5,9 @@ depends:
 severity: correctness
 example: check (sash/src/rules/dynamic_execution.rs)
 index_keyword: dollar_question
-gates: [55.5, 55.6]
+gates:
+  - 55.5
+  - 55.6
   - tests
   - commit
 

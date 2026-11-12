@@ -1,4 +1,3 @@
----
 title: "limitation: regex ops see only up to the first interior NUL"
 status: done
 priority: P3
@@ -7,7 +6,6 @@ depends: []
 gates:
   - "the limitation is stated in the DD#63 regex documentation"
   - "revisit if a real program needs to match across a NUL"
----
 
 ## What
 

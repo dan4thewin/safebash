@@ -1,4 +1,3 @@
----
 title: "janet: capture-condition (`if x=$(cmd)`) support"
 status: deferred
 deferred-by: DD104
@@ -7,7 +6,6 @@ kind: feature
 depends: []
 gates:
   - "janet emits the capture-condition (DD#88): `if x=$(cmd)` / `while x=$(cmd)` and the pipeline form, binding the captured stdout and branching on the command's exit status. Blocked on janet's `$(cmd)` capture, which is a stub (`render_capture` → `(sash/capture …)`)."
----
 
 # janet capture-condition support
 

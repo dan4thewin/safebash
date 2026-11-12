@@ -1,4 +1,3 @@
----
 title: "bare nested $(…) as a command argument fails to parse (SB4014)"
 status: done
 priority: P3
@@ -8,7 +7,6 @@ gates:
   - "`p=$(dirname $(getcwd))` parses (bare nested command substitution as an arg)"
   - "`$(arg 1 $(getcwd))` parses (currently only the quoted `\"$(getcwd)\"` form works)"
   - "no regression to the quoted-nested form"
----
 
 ## Symptom
 

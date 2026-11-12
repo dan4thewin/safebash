@@ -1,4 +1,3 @@
----
 title: "janet: implement the getpid-class intrinsics (getenv/argc/getpid/getppid/getcwd/epochseconds/random) instead of exec'ing them"
 status: deferred
 priority: P3
@@ -11,7 +10,6 @@ gates:
   - "janet `$(random)` → a non-negative i64 (os/cryptorand or math/rng); janet-is-illustration, exact range not required but non-negative"
   - "un-guard the getpid-class specs (functions.sh 42.x, taint.sh getenv) to include janet where they are currently native,c only"
   - "un-guard argv.sh av.d4 (`$(arg 9 \"$(getcwd)\")` default) for janet once getcwd is an intrinsic"
----
 
 # janet getpid-class intrinsics — currently exec'd as fake commands
 

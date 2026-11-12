@@ -1,4 +1,3 @@
----
 title: "janet: a compound `if` condition is emitted as `(if true …)`"
 status: deferred
 deferred-by: DD104
@@ -9,7 +8,6 @@ gates:
   - "janet: `if [[ -z x ]] || [[ -z y ]]; then echo yes; else echo no; fi` prints `no` (matches native/c)"
   - "janet: `if [[ -n x ]] && [[ -z y ]]; then echo yes; else echo no; fi` prints `no`"
   - "janet: `if false || false; then echo yes; else echo no; fi` prints `no`"
----
 
 ## Found
 

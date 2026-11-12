@@ -1,4 +1,3 @@
----
 title: "Audit: every diagnostic that recommends a spelling must recommend one that compiles"
 status: done
 priority: P2
@@ -8,7 +7,6 @@ gates:
   - "every diagnostic message in sash/src containing a suggested sash spelling is extracted and compiled"
   - "each suggestion either compiles clean or the message is corrected"
   - "a spec pins the corrected advice for each one found wrong — message text AND a run of the recommended form"
----
 
 ## Context
 

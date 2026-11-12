@@ -1,4 +1,3 @@
----
 title: Replace tree-sitter with hand-written parser
 status: done
 depends: []
@@ -10,7 +9,6 @@ gates:
 resolved: 2026-06-07
 resolution: Shipped via the tree-sitter-removal arc and the logos migration. logos integrated as the structural lexer (DD#59), hand-written recursive descent parser in sash/src/parse/ produces ir::Program directly, tree-sitter dependency removed from sash/Cargo.toml and source tree. 291/291 spec gates green on hand-parser branch. The "no new dependencies except logos" gate was honored — logos is the only addition.
 landed: DD#59-logos-structural-lexer + status.md 2026-05-24 "tree-sitter removal complete"
----
 
 # Replace tree-sitter + lower/ with a hand-written recursive descent parser
 

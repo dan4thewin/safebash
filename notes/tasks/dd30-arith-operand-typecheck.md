@@ -1,7 +1,11 @@
 title: Type-check arithmetic operands
 status: done
 depends: []
-gates: [30.1, 30.2, 30.3, 30.4]
+gates:
+  - 30.1
+  - 30.2
+  - 30.3
+  - 30.4
   - tests
   - commit
 

@@ -1,4 +1,3 @@
----
 title: argv/arg/argc trio — bug-for-in-$@ closure
 status: done
 priority: P0
@@ -11,7 +10,6 @@ gates:
   - cf.f4 passes under native, c, and (if applicable) janet backends
   - bug-for-in-dollar-at-taint-ice.md updated with resolution frontmatter
   - bug-for-in-dollar-at-taint-ice.md status flipped to done with pointer to this task chain
----
 
 # argv/arg/argc trio — bug-for-in-$@ closure
 

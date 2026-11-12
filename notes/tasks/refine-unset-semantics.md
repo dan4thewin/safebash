@@ -2,7 +2,6 @@ title: Refine unset semantics — scalar vs collection
 status: done
 severity: correctness
 gates: [30.7, 30.8, 30.9, 30.10, 30.11]
----
 
 Converter: unset var (scalar) → var="" (30.7)
 Compiler: unset var (scalar) → compile error (30.8)

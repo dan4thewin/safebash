@@ -1,4 +1,3 @@
----
 title: "bug: subscripting a scalar (`${s[0]}`) segfaults"
 status: done
 priority: P1
@@ -7,7 +6,6 @@ depends: []
 gates:
   - "`s=hello; echo ${s[0]}` is a COMPILE error naming the type mistake, not a segfault"
   - "the undefined case stays SB5031 (it already is)"
----
 
 ## What
 

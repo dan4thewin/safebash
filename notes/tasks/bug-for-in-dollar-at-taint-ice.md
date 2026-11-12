@@ -1,39 +1,14 @@
----
 title: BUG — for-loop variable from $@ is taint-mishandled, causes ICE
 status: done
 priority: P0
 kind: bug
 resolved: 2026-06-16
-resolution: |
-  Closed by the argv/arg/argc trio task chain (argv-trio-*, DD#60).
-  Root cause was three latent gaps:
-    - DD#46 not enforced for top-level $@ codegen — bypassed the
-      validator into a working-but-DD-violating program-argv splat path
-      (ArgvIndex), and the SSA-taint backstop ICE'd on the tainted loop
-      var the CST pass never saw.
-    - DD#42 $(argv N) was scalar-only — no clean way to express
-      "iterate user args" at top level.
-    - DD#22 tolerated decorative quotes around array splats, masking the
-      real surface form.
-
-  Fix:
-    - DD#60 (new): C-semantics argv/arg/argc trio. $(argv)/$(argv N) are
-      array splats (for-in / array-snapshot only); $(arg N) is the scalar.
-    - check_positionals (SB5024) rejects top-level $@/$*/$1..$N/$# with a
-      directed message, BEFORE transform — so the ICE path is unreachable.
-    - Inside a function, $@/$* expand to the caller's args ($1..$N) at
-      inline time (was incorrectly splicing program argv — a second bug).
-    - $(argv N) for-in lowers to an argv-slice loop (0-based, $(argc)
-      bound); array a=$(argv N) snapshots into a tainted indexed array.
-    - sash-convert rewrites top-level positionals to the builtins,
-      context-aware (inside-function forms preserved per DD#46).
-  resolution-spec-tests: cf.f4, cf.dd46.1-6, cf.f11-14, e.dd46.t1-5, av.*
+resolution: "Closed by the argv/arg/argc trio task chain (argv-trio-*, DD#60).\nRoot cause was three latent gaps:\n  - DD#46 not enforced for top-level $@ codegen — bypassed the\n    validator into a working-but-DD-violating program-argv splat path\n    (ArgvIndex), and the SSA-taint backstop ICE'd on the tainted loop\n    var the CST pass never saw.\n  - DD#42 $(argv N) was scalar-only — no clean way to express\n    \"iterate user args\" at top level.\n  - DD#22 tolerated decorative quotes around array splats, masking the\n    real surface form.\n\nFix:\n  - DD#60 (new): C-semantics argv/arg/argc trio. $(argv)/$(argv N) are\n    array splats (for-in / array-snapshot only); $(arg N) is the scalar.\n  - check_positionals (SB5024) rejects top-level $@/$*/$1..$N/$# with a\n    directed message, BEFORE transform — so the ICE path is unreachable.\n  - Inside a function, $@/$* expand to the caller's args ($1..$N) at\n    inline time (was incorrectly splicing program argv — a second bug).\n  - $(argv N) for-in lowers to an argv-slice loop (0-based, $(argc)\n    bound); array a=$(argv N) snapshots into a tainted indexed array.\n  - sash-convert rewrites top-level positionals to the builtins,\n    context-aware (inside-function forms preserved per DD#46).\nresolution-spec-tests: cf.f4, cf.dd46.1-6, cf.f11-14, e.dd46.t1-5, av.*\n"
 gates:
-  - `for x in "$@"; do echo "$x"; done` (top level) → SB5024 (was ICE) ✓
+  - "`for x in \"$@\"; do echo \"$x\"; done` (top level) → SB5024 (was ICE) ✓"
   - inside-function `for x in $@` / `echo "$@"` iterate the caller's args ✓
   - replacement `for x in $(argv 1); do bless x …; done` works ✓
   - cf.f4 passes (native + c) ✓
----
 
 # BUG — for-loop over $@ ICEs when loop var is used (RESOLVED)
 

@@ -1,9 +1,8 @@
----
+title: "`$(keys m)` has no array snapshot, and DD#75 says it does"
 status: done
 priority: P3
 depends:
 gates:
----
 
 # `$(keys m)` has no array snapshot, and DD#75 says it does
 

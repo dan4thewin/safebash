@@ -1,7 +1,6 @@
----
+title: "Purge the `PreIncDec` dead node (or decide it stays)"
 status: done
 priority: P3
----
 
 # Purge the `PreIncDec` dead node (or decide it stays)
 

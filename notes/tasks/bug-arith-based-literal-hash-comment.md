@@ -1,4 +1,3 @@
----
 title: "BUG — arithmetic based literal `base#digits` drops the digits (`#` eaten as comment)"
 status: done
 priority: P2
@@ -9,7 +8,6 @@ gates:
   - "the `base#digits` scanner (scan_based_literal) is actually reached"
   - "out-of-range base (not 2..=64) and >64-bit based value are compile errors (SB4026), consistent with Policy A bit-pattern rules"
   - "native + c + janet consistent"
----
 
 # BUG — based integer literals silently lose their digits
 

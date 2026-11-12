@@ -1,4 +1,3 @@
----
 title: "BUG: DD#80's key-type check (SB4030) runs on a private walker that misses most positions — a native ICE and a silent C miscompile"
 status: open
 priority: P1
@@ -10,7 +9,6 @@ gates:
   - "every row listed as already correct or masked keeps its verdict, and no diagnostic is reported twice"
   - "no subscript index reaches codegen's non-integer-literal ICE"
   - "reversion proof: restoring the private walker turns the new specs red"
----
 
 ## What
 

@@ -1,4 +1,3 @@
----
 title: "BUG: the native driver's temporary object `<output>.o` panics on a failed write or ld spawn, and overwrites, then deletes, whatever already has that name"
 status: open
 priority: P2
@@ -9,7 +8,6 @@ gates:
   - "a failure leaves no object behind, and `sash` never deletes or writes through a file it did not create"
   - "a pre-existing `<output>.o`, regular file or symlink, is untouched by a compile"
   - "every new spec fails on the pre-fix binary (its negative control)"
----
 
 ## What
 

@@ -1,4 +1,4 @@
-title: DD#54 — Source replacement: sash-expand pipeline
+title: "DD#54 — Source replacement: sash-expand pipeline"
 status: implemented
 
 `. ./file` and `source ./file` are rejected (SB4002). The runtime

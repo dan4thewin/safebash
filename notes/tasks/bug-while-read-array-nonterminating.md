@@ -1,4 +1,3 @@
----
 title: "bug: `while read ARR` never terminates — reject it (DD#99)"
 status: done
 priority: P1
@@ -8,7 +7,6 @@ gates:
   - "`while read ARR; do … done` is REJECTED with an SB code naming `while readline v`"
   - "`while readline v` keeps working (it already does)"
   - "a spec pins the rejection, and the diagnostic says what to write instead"
----
 
 ## Found
 

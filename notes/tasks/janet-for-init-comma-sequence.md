@@ -1,4 +1,3 @@
----
 title: "janet: a comma-sequenced C-style for-init is not emitted"
 status: deferred
 deferred-by: DD104
@@ -8,7 +7,6 @@ depends: []
 gates:
   - "janet: `for (( i = 0, j = 10; i < 3; i++ )); do echo $i$j; done` prints 010/110/210 (matches native/c)"
   - "janet: control_flow.sh cf.f9 passes (`for (( i=0, j=10; i < 3; i++, j-- ))` — comma in BOTH the init and step slots)"
----
 
 ## Found
 

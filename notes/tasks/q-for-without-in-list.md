@@ -1,4 +1,3 @@
----
 title: "Require `in` and source items in word-list `for`; reject `;` before `in`"
 status: open
 priority: P2
@@ -11,7 +10,6 @@ gates:
   - "sash-convert rewrites Bash's omitted-list argument loops with in @args in functions or in $(argv 1) at top level, preserving both default and canonicalized body spellings"
   - "a genuinely empty Bash in list is not converted into argument iteration or silently erased to evade the error"
   - "current fixtures are measured before migration; changed contracts use fresh global ids and focused before/reversion controls pin each refusal and the converter repair before the predicted gate passes"
----
 
 ## Decision settled, 2026-11-09
 

@@ -1,4 +1,3 @@
----
 title: "chk-id collision: commands.sh and wordsplit.sh both use 14.4-14.9"
 status: done
 priority: P2
@@ -7,7 +6,6 @@ depends: []
 gates:
   - "no test_id is emitted by two spec files"
   - "a failure in either file's 14.x test is visible in spec.db (not masked)"
----
 
 ## Done (2026-08-29) — superseded by decollide-spec-chk-ids.md
 

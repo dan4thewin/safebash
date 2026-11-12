@@ -1,4 +1,3 @@
----
 title: "NOT A BUG: nested tainted `$( … $() … )` is correctly rejected (SB5020)"
 status: done
 priority: P1
@@ -6,7 +5,6 @@ kind: bug
 depends: []
 gates:
   - "resolved — SB5020 is the correct behavior; specs fixed + collision filed"
----
 
 ## Resolution (2026-08-29) — mischaracterized; SB5020 is correct
 

@@ -1,11 +1,9 @@
----
 title: Align parser with postmortem decisions
 status: done
 depends: []
 gates: [tree-sitter-removal]
 resolved: 2026-06-07
 resolution: All 7 phases shipped in the tree-sitter-removal arc (status.md 2026-05-24 entry). Phase 1 Pratt arithmetic landed in parse/arith.rs (5 Pratt hits). Phase 2 Tok::Dash restored in parse/lexer.rs. Validator and taint reimplemented as IR walkers in validate.rs (~650 lines). Janet emitter retargeted to the new parser output. tree-sitter removed from compile path (no tree_sitter refs in sash/Cargo.toml or sash/src/). Single-parser architecture is in place.
----
 
 # Align parser with postmortem decisions
 

@@ -4,7 +4,7 @@ priority: P1
 kind: review
 source: https://github.com/dan4thewin/safebash/blob/f02477dd31e67a0fe6fe3c4a359935569c4715d8/notes/opus-47-review.md
 resolved: 2026-06-05
-resolution: Audit performed across checkpoints 005-006 (initial CC>14 list, 90 functions) and 023-024 (post-Phase-10 audit of remaining 13). Verdicts recorded; refactor follow-ups filed and executed under DG oversight as Phases 8-11 (journals 070-107). Net: max live CC dropped 88 → 26; the live 26 is in emit_janet (separately tracked by emit-janet-from-ssa).
+resolution: "Audit performed across checkpoints 005-006 (initial CC>14 list, 90 functions) and 023-024 (post-Phase-10 audit of remaining 13). Verdicts recorded; refactor follow-ups filed and executed under DG oversight as Phases 8-11 (journals 070-107). Net: max live CC dropped 88 → 26; the live 26 is in emit_janet (separately tracked by emit-janet-from-ssa)."
 landed: 2026-06-05
 depends: []
 gates:

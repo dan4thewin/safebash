@@ -1,11 +1,9 @@
----
 title: Improve autonomous agent prompt for spec-gated tasks
 status: done
 severity: infrastructure
 gates: []
 resolved: 2026-06-07
-resolution: All four deliverables shipped in run-compiler-tasks.sh. (1) `example:` field added to 16 task frontmatters. (2) Prompt template rewritten — no reading lists, agent encouraged to discover via indexnudge. (3) extract_example() function programmatically pulls code from `example: file:symbol` via sqlite3 queries to .indexnudge-rust.db. (4) sqlite3/indexnudge appears 9 times in the script with explicit "compile after every edit, test frequently" loop guidance. Validated on subsequent task waves.
----
+resolution: "All four deliverables shipped in run-compiler-tasks.sh. (1) `example:` field added to 16 task frontmatters. (2) Prompt template rewritten — no reading lists, agent encouraged to discover via indexnudge. (3) extract_example() function programmatically pulls code from `example: file:symbol` via sqlite3 queries to .indexnudge-rust.db. (4) sqlite3/indexnudge appears 9 times in the script with explicit \"compile after every edit, test frequently\" loop guidance. Validated on subsequent task waves."
 
 The current `run-compiler-tasks.sh` prompt causes agents to fail because it
 prescribes too much reading and too little discovery. Rewrite the prompt template:

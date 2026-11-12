@@ -1,4 +1,3 @@
----
 title: "`${x:?MESSAGE}` — the message is literal text, not an interpolating context"
 status: done
 priority: P2
@@ -8,7 +7,6 @@ gates:
   - "`y=\"\"; str z=${y:?$m}` with `str m=boom` aborts with `<prog>: boom`, not `<prog>: $m`"
   - "a tainted message (`str h=$(getenv HOME); ${y:?$h}`) is rejected SB5020, as DD#78 requires — today it is SB5050 (dead variable), i.e. not walked as a read at all"
   - "a spec pins native == c == bash for an interpolated `:?` message"
----
 
 ## Symptom
 

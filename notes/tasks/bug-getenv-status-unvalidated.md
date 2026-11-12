@@ -1,4 +1,4 @@
-title: bug: getenv and status bypass arity validation, ICE at runtime
+title: "bug: getenv and status bypass arity validation, ICE at runtime"
 status: done
 priority: P1
 completed: 2026-09-12

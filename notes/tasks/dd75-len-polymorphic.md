@@ -1,4 +1,3 @@
----
 title: "DD#75 §2 — len is type-polymorphic (array/map → count, string → bytes); ${#x} is Int sugar for $(len x)"
 status: done
 priority: P2
@@ -11,7 +10,6 @@ gates:
   - "[deferred → intrinsics-lengths-in-arithmetic] $(( (len a) + 1 )) and $(( ${#a} + 1 )) evaluate the count (still 1 — arith path unresolved)"
   - "[deferred] len <undefined> → compile error (today: strlen of empty → 0; SAFE — no garbage/segfault — but not yet a hard reject)"
   - "[done] 0 native/c/janet spec regressions"
----
 
 # DD#75 §2 — polymorphic `len`; `${#x}` Int sugar
 

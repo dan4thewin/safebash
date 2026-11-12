@@ -1,4 +1,3 @@
----
 title: "[[ ]] parser under-accepts file tests -k/-g/-u (setuid/setgid/sticky)"
 status: done
 priority: P4
@@ -7,7 +6,6 @@ depends: []
 gates:
   - "[[ -k f ]] / [[ -g f ]] / [[ -u f ]] parse as unary tests and codegen (file_test_op_code already implements codes 10/12/13)"
   - "spec coverage for the three; 0 regressions native/c/janet"
----
 
 ## Context
 
@@ -55,7 +53,7 @@ rather than an ICE — journal 177's fix holds. No action there.
 Sweeping all 18 file-test operators against bash (3 target types each) turned
 up exactly one divergence, and it is not in this task's three: `[[ -N f ]]`
 answers `no` where bash answers `yes`. Filed separately as
-`bug-file-test-N-diverges-from-bash` (P2). Worth doing that sweep as a spec
+`bug-file-test-n-diverges-from-bash` (P2). Worth doing that sweep as a spec
 while adding `-k`/`-g`/`-u` coverage here.
 
 ## DONE 2026-09-12

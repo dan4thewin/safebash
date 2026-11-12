@@ -1,4 +1,3 @@
----
 title: "bug: braced ${RANDOM}/${BASH_VERSION}/env-var forms bypass SB5017/SB5018 (silent empty)"
 status: done
 priority: P2
@@ -9,7 +8,6 @@ gates:
   - "`echo ${RANDOM}` rejects (SB5017) exactly like `echo $RANDOM` — never silently compiles to empty"
   - "`echo ${HOME}` rejects (SB5018) exactly like `echo $HOME`"
   - "no regression on legitimate braced reads (`${x}` for a declared x) or disposition forms"
----
 
 # Braced rejected/env vars silently compile to empty
 

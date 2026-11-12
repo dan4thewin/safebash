@@ -1,4 +1,3 @@
----
 title: "Question: which code and position for a missing command before a closer, and should SB4072 name the open block?"
 status: open
 priority: P4
@@ -7,7 +6,6 @@ depends: []
 gates:
   - "DG rules on Q1 and Q2; the rulings are recorded in DD#68 beside its F1+F4 addendum"
   - "o1-o5 give the ruled code at the ruled position, in both backends, and a spec pins each shape"
----
 
 ## What
 

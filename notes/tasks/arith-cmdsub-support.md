@@ -1,4 +1,3 @@
----
 title: "should a command substitution be allowed inside $(( ))?"
 status: ready
 priority: P3
@@ -6,7 +5,6 @@ kind: design
 depends: []
 gates:
   - "a DD (or an explicit no) covering `$(( $(cmd) + 1 ))`"
----
 
 # `$(( $(cmd) ))` — rejected consistently, but never decided
 

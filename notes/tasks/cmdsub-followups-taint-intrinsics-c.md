@@ -1,4 +1,3 @@
----
 title: "cmdsub follow-ups: unblessed-external ICE vs clean SB5020, getpid-class intrinsics, C Phase-4 exec"
 status: done
 priority: P3
@@ -8,7 +7,6 @@ gates:
   - "an UNBLESSED bare-external command substitution (e.g. `x=$(cat f); echo $x`) is rejected with a clean SB5020 from the CST/validation taint pass, NOT the SSA ICE backstop ('CST taint pass missed this')"
   - "`$(getpid)` / `$(getppid)` / `$(getcwd)` / `$(epochseconds)` / `$(random)` / `$(argc)` etc. are intercepted as in-process intrinsics in command substitution (like getenv/argv/arg), not exec'd → no 'bare command' error"
   - "the C backend implements cmdsub exec (currently `/* TODO cmdsub exec … (Phase 4) */` → empty capture); `$(printf hi)` in c yields `hi`"
----
 
 # Command-substitution follow-ups (surfaced by bug-cmdsubst-builtin-not-resolved)
 

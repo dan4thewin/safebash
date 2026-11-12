@@ -1,4 +1,3 @@
----
 title: BUG — dynamic map subscript inside `[[ ]]` does an integer lookup (test-path)
 status: done
 priority: P2
@@ -8,7 +7,6 @@ superseded_by: dd62-test-expr-ssavalue
 gates:
   - "[[ ${m[$k]} = v ]] evaluates the map string key (parity with echo/assign)"
   - a types.sh test locks dynamic map subscript in a test expression
----
 
 # `[[ ${m[$k]} ]]` does an integer lookup on a map
 

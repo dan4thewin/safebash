@@ -1,4 +1,3 @@
----
 title: "Dedupe the external-head predicates: four functions and two name lists answer one question"
 status: open
 priority: P4
@@ -8,7 +7,6 @@ gates:
   - "one predicate decides whether a literal command head runs an external program, for the validator's taint walk, the transform's clean-pipe test and SB4025's capture classification"
   - "one list of compiler-owned names: `BUILTINS` is derived from `resolve::is_intrinsic`, or a unit test pins both inclusions"
   - "a full sweep has no flips"
----
 
 ## Found
 

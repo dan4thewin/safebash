@@ -1,4 +1,3 @@
----
 title: "bug: a sexpr call of a slot function escapes the slot-arity check"
 status: open
 priority: P1
@@ -9,7 +8,6 @@ gates:
   - "the same under an arithmetic subscript index, `$(( a[(f)] ))`"
   - "the advice does not say `pass it with =name`: a sexpr cannot pass a collection (`$(( (f =x) ))` is SB4020), so it says to capture first, `int n=$(f =x)`"
   - "`int k=$(f)` and a bare `f` keep today's SB5066"
----
 
 A function whose body uses a collection slot needs every call to pass the
 collection (DD100). SB5066 enforces that for a command call and a capture,

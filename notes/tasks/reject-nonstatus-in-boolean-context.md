@@ -1,4 +1,3 @@
----
 title: "Reject a non-boolean/non-exit-status construct used in a boolean context (DD#70 dual)"
 status: done
 priority: P1
@@ -10,7 +9,6 @@ gates:
   - "declarations in a boolean context rejected too (`if int x=5; then`)"
   - "a real status producer is still accepted in a boolean context: commands/pipelines (`if grep -q x f; then`), `[[ … ]]`, `(( … ))`, function calls"
   - "the dispatch `[[ … { } ]]` statement in a boolean context keeps its existing SB4028; codes stay adjacent in the SB401x family; native+c+janet; specs added"
----
 
 # Reject non-status constructs in boolean contexts
 
@@ -89,6 +87,6 @@ in_condition)` (`sash/src/validate.rs:74`), with `validate_if`/
 
 ## Refs
 
-- `notes/decisions/DD70-error-taxonomy-A-B.md` (the model this extends)
+- `notes/decisions/DD70-error-taxonomy-a-b.md` (the model this extends)
 - `notes/decisions/DD71-operand-words-value-bindings.md` (assignments =
   value bindings, which licenses the reject)

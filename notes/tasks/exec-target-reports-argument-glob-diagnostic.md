@@ -1,4 +1,3 @@
----
 title: "`exec` target with a `*` reports SB5029 \"in command arguments\" alongside SB5095"
 status: open
 priority: P4
@@ -6,7 +5,6 @@ kind: diagnostic
 depends: []
 gates:
   - "`exec /bin/ech*` reports one diagnostic, and it names the exec TARGET rather than a command argument"
----
 
 # What happens
 

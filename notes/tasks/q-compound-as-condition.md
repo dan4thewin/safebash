@@ -1,4 +1,3 @@
----
 title: "Reject using `if`, `while`, `until` and `for` statements as result producers"
 status: open
 priority: P3
@@ -10,7 +9,6 @@ gates:
   - "ordinary inner condition handling, body checks, explicit function returns, capture output and pipeline/reader contracts are preserved"
   - "update parse_negated's task citation and take a current fixture census; changed bng.24 contracts use fresh ids, while group-only bng.22/bng.23 migration retains its group-retirement owner"
   - "focused before-binary and targeted reversion controls prove the result-use guard and its boundaries; the predicted ordinary gate passes"
----
 
 ## Decision settled, 2026-11-09
 

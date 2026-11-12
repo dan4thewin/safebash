@@ -1,7 +1,6 @@
----
+title: "Two `is_identifier` copies disagree, and one contradicts its own doc"
 status: done
 priority: P3
----
 
 # Two `is_identifier` copies disagree, and one contradicts its own doc
 

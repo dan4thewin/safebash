@@ -1,4 +1,3 @@
----
 title: "Eight hand-written `ArithTest` compensations beside `direct_exprs` calls"
 status: next
 priority: P3
@@ -8,7 +7,6 @@ gates:
   - "`StmtKind::ArithTest` either yields its `Expansion` payloads from `direct_exprs` or the eight compensations are justified in writing"
   - "no caller double-reports — `check_positionals_arith` and `dollar_at_arith` are read individually"
   - "the specs that assert SB codes in a given order still pass unchanged"
----
 
 # The compensation that eight callers each wrote for themselves
 

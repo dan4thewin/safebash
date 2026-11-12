@@ -1,4 +1,3 @@
----
 title: "BUG — `[[ ]]` dispatch treats literal `*` as a catch-all wildcard (`||` is the only default)"
 status: done
 priority: P1
@@ -9,7 +8,6 @@ gates:
   - "`x='*'; [[ $x == * { echo star } || { echo default } ]]` prints `star` (literal `*` == `*`)"
   - "the `|| { }` default still runs when no arm matches (its representation no longer relies on a `*` pattern)"
   - "native + c + janet identical; 0 spec regressions"
----
 
 # BUG — dispatch `*` is a wildcard, but DD#66 dispatch has no wildcards
 

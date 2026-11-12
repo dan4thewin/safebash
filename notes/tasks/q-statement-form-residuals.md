@@ -1,4 +1,3 @@
----
 title: "Enforce statement boundaries, uniform binding lists and local capture/attest pairs"
 status: open
 priority: P4
@@ -12,7 +11,6 @@ gates:
   - "coordinate retired-group and invalid-name diagnostics with their owners; their earlier refusals must not masquerade as proof of the non-group boundary rule"
   - "take a current fixture census, allocate fresh ids for changed contracts, and prove each new guard with real CLI before/reversion controls before the predicted gate"
   - "update the source/spec citations of this task to the accepted rule, retaining only coverage of legal forms or the proper refusal"
----
 
 ## Accepted policy (DG, 2026-11-09)
 

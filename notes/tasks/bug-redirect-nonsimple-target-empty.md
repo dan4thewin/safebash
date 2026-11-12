@@ -1,4 +1,3 @@
----
 title: "BUG — a non-simple redirect target expr (`> $(cmd)`, `> ${x:-f}`, …) silently redirects to an EMPTY filename"
 status: done
 priority: P2
@@ -6,7 +5,6 @@ kind: bug
 depends: []
 gates:
   - "`echo hi > $(echo f)` either writes to file `f` (if implemented) or rejects at compile time — never silently redirects to `\"\"`"
----
 
 ## Symptom (native; same silent-degrade class as the fd-dup bug)
 

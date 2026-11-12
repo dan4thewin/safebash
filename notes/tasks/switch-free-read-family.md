@@ -1,4 +1,3 @@
----
 title: "switch-free builtins: decompose `read`/`mapfile`/`echo` flags into distinct commands + sigils (the readr/readc question)"
 status: done
 priority: P2
@@ -7,7 +6,6 @@ depends: []
 gates:
   - "DG decides how far to take switch-free builtins: read → readr/readc + drop -a/-f/-d/-z (via @arr sigil + sed-style split ops), and whether mapfile/echo flags follow"
   - "the two inconsistent `parse_read_flags` are unified or deleted; the -r three-way inconsistency is resolved"
----
 
 > **UPDATE (DG, 2026-09-02): `readc` was DROPPED.** The cooked-read approach
 > (parse getopt's shell-quoting with a backslash-honoring read) was retired as

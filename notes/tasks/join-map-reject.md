@@ -1,4 +1,3 @@
----
 title: "`join <map>` silently drops the keys — reject it (SB4030)"
 status: closed
 priority: P2
@@ -8,7 +7,6 @@ gates:
   - "`$(join m)` on a map is a compile error (SB4030), like `keys` on an array"
   - "`$(join a)` on an array is unchanged"
   - "a spec pins the rejection"
----
 
 ## Decided 2026-09-10 (DG): reject (option A)
 

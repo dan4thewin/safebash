@@ -1,4 +1,3 @@
----
 title: "`write` failures are reported as `echo:`"
 status: open
 priority: P4
@@ -6,7 +5,6 @@ kind: bug
 depends: []
 gates:
   - "w1 and w2 below name `write`, both backends"
----
 
 ## What
 

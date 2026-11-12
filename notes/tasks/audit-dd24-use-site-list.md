@@ -1,4 +1,3 @@
----
 title: "Audit DD#24's use-site list against the code, entry by entry"
 status: open
 priority: P1
@@ -7,7 +6,6 @@ depends: []
 gates:
   - "every entry in DD#24's use-site list has a spec pinning it in every position the 2026-08-26 amendment names (argument, assignment RHS, `[[ ]]` operand, subscript index, array-literal element, redirect target, arithmetic operand, function argument, nested cmdsub)"
   - "any entry found unimplemented is filed as its own bug and fixed under the Bug policy, not folded into this task"
----
 
 ## Why
 

@@ -1,3 +1,4 @@
+title: "Rust integration tests: migrate to specs, discard the rest"
 status: done
 priority: P1
 depends: []

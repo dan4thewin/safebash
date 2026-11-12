@@ -1,9 +1,8 @@
----
+title: "`$(f)` on a user function hangs forever when the function writes more than the pipe buffer"
 status: done
 priority: P2
 kind: bug
 depends: []
----
 
 # `$(f)` on a user function hangs forever when the function writes more
 # than the pipe buffer

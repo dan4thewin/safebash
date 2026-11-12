@@ -1,4 +1,3 @@
----
 title: "Reject a scalar read of a name introduced nowhere in scope (typo check; DD#62 Model B)"
 status: done
 priority: P2
@@ -13,7 +12,6 @@ gates:
   - "functions see enclosing (global) names; a name introduced only inside another function is unknown"
   - "specials ($?/$$/$!/$#/$LINENO) and positionals ($1/$@) are not flagged (handled elsewhere / auto-excluded); ENV_VARS/REJECTED_VARS keep their own codes"
   - "spec tests; native + c + janet identical (front-end check); no net regression"
----
 
 # Reject a scalar read of a nowhere-introduced name (typo check)
 

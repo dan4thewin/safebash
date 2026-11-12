@@ -1,4 +1,3 @@
----
 title: "`$( )` classified by its FIRST statement: `argv` silently drops the rest, and the `argv N a` fill form is rejected as a splat"
 status: done
 priority: P1
@@ -9,7 +8,6 @@ gates:
   - "a statement after `$(argv …)` in a for-in source cannot be silently discarded"
   - "no diagnostic names the splat form when the author wrote the fill form"
   - "specs in both modes for both directions"
----
 
 # The predicate
 

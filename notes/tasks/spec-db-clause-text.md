@@ -1,4 +1,3 @@
----
 title: "spec.db clause text: 1255 clause ids have no requirement text"
 status: blocked
 priority: P3
@@ -11,7 +10,6 @@ gates:
   - "DONE (2026-09-12): the seed exists — `spec/clauses.tsv`, tracked, 225 rows, applied idempotently by `run.sh` alongside `spec/schema.sql`"
   - "DECIDE: what `dd` value the named suites (`cov.*`, `vm.*`, `dp.*`, …) get — they are not DD-numbered but most map to a governing DD"
   - "Each slice: clause rows added, `SELECT COUNT(*) FROM tests WHERE NOT EXISTS (…clause…)` drops, `PRAGMA foreign_key_check` shrinks"
----
 
 # Clause text for the 1255 unbacked clause ids
 

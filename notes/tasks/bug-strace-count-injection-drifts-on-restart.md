@@ -1,4 +1,3 @@
----
 title: "Bug: a count-based strace fault (`when=N`, N ≥ 2) can land on an earlier fork, because strace counts a restarted syscall entry; pipeown.28 is exposed"
 status: open
 priority: P3
@@ -8,7 +7,6 @@ gates:
   - "pipeown.28 cannot pass or fail on an off-target fault: under the natural-restart recipe below, its log shows no restarted clone before the injected entry, in both modes"
   - "`run_sash_under` fails a strace-prefixed spec whose log shows a restarted entry (`= ? ERESTART…`) of the faulted syscall before its `(INJECTED)` line, with a message saying the fault landed off target. It is proven on such a log, and every current injection spec passes it"
   - "the census below is re-run, and every count-based rule with N ≥ 2 on a restartable syscall is on target by construction or covered by the detector"
----
 
 ## Found
 

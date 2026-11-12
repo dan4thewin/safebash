@@ -1,9 +1,8 @@
----
+title: "Nested function capture clobbers the outer capture's handles"
 status: done
 priority: P2
 kind: bug
 depends: []
----
 
 # Nested function capture clobbers the outer capture's handles
 

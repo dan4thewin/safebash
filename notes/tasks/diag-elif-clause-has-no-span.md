@@ -1,4 +1,3 @@
----
 title: "Diagnostic: an `elif` clause records no position, so its errors point at the `if`"
 status: done
 priority: P3
@@ -8,7 +7,6 @@ gates:
   - "`ElifClause` carries the span of its `elif` keyword, set by the parser in both spellings"
   - "every parse error about an elif clause (empty condition, missing `{` body, missing `then`) reports the elif's position; specs pin p1, p3, q1 and q2 in both backends"
   - "every `If` that `flatten_elif` builds carries the elif's span; a unit test pins that none has `Span::default()`"
----
 
 ## What
 

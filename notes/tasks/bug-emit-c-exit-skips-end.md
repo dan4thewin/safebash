@@ -1,4 +1,3 @@
----
 title: "bug: c backend — `exit N` in the main body skips the END block"
 status: done
 priority: P2
@@ -6,7 +5,6 @@ kind: bug
 depends: []
 gates:
   - "In the c backend, `END { … }` followed by a main-body `exit N` runs the END block (DD#56: END executes on the exit builtin), matching native. Then ungate spec/signals.sh 56.31 back to `in_modes native,c`."
----
 
 # c backend: `exit N` in main skips END
 

@@ -1,4 +1,3 @@
----
 title: "BUG: nested/parenthesized arith assignment silently drops its side-effect"
 status: done
 priority: P1
@@ -8,7 +7,6 @@ gates:
   - "`(( (a=2) )); echo $a` prints 2 (bash), not 0"
   - "`(( 1 + (a=2) )); echo $a` prints 2"
   - "either the side-effect is emitted, or the nested-assignment form is a compile error — never a silent wrong value"
----
 
 ## Resolution (2026-08-28) — fork A (DG-chosen), statement-only
 

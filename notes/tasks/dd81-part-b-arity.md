@@ -1,4 +1,3 @@
----
 title: "DD#81 Part B: uniform exact arity from `args` usage (SB5042/43/44)"
 status: done
 priority: P2
@@ -11,7 +10,6 @@ gates:
   - "applied on all three call paths: plain (inline_function_call), pipeline (build_function_pipeline_stage), capture ($() — now carries arg count after 50474e9)"
   - "existing un-coded 'reads $N but called with only M' diagnostic folds into SB5042"
   - "0 regressions native/c/janet; native gate 0"
----
 
 ## Context
 

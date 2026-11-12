@@ -1,4 +1,3 @@
----
 title: "DD#55 (A)-channel abort — remaining: pipefail, c cmdsub, descriptive messages, janet pipeline"
 status: done
 priority: P2
@@ -10,7 +9,6 @@ gates:
   - "cd / echo-write(EPIPE/ENOSPC) / redirect-open failures abort with the native descriptive message in c (55.20-29 un-guarded to native,c)"
   - "janet pipeline abort (bare failing pipeline aborts)"
   - "[RESOLVED, DG 2026-07-04] janet abort diagnostics use janet's OWN argv[0] (`(dyn :args) 0`) — that's faithful (`<argv0>: <reason>`); janet is a script, not a `test_bin`. The message-exact specs must NOT hardcode `test_bin`: assert the message SUFFIX (the `: <detail>` after the program name, which is backend-independent) or derive the expected progname per mode. Then un-guard 55.20-29 to all three modes."
----
 
 # DD#55 (A) abort — remaining work
 

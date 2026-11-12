@@ -1,4 +1,3 @@
----
 title: "DD#75 §4 — retire the [@]/[*] bracket-subscript collection forms; @a is the sole splat"
 status: done
 priority: P3

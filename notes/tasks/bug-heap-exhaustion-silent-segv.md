@@ -1,9 +1,8 @@
----
+title: "Heap exhaustion is a silent SIGSEGV: the heap is a fixed 1 MB and allocation failure is never checked"
 status: done
 priority: P1
 kind: bug
 depends: []
----
 
 # Heap exhaustion is a silent SIGSEGV: the heap is a fixed 1 MB and
 # allocation failure is never checked

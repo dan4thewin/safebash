@@ -1,4 +1,3 @@
----
 title: "sash-convert — `cmd \"$@\"` has no faithful conversion; pick the empty-case default"
 status: blocked
 priority: P3
@@ -8,7 +7,6 @@ blocked_on: DG
 gates:
   - "DG picks: MANUAL-only (current), `@{a:-WORD}` scaffold, or `@{a:?WORD}` scaffold"
   - "if a scaffold is chosen, conv.x7 asserts it round-trips"
----
 
 ## The fork
 

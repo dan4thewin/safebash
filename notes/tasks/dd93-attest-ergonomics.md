@@ -1,3 +1,4 @@
+title: "DD#93 attest ergonomics — live tracker"
 status: done
 depends: DD93
 gates:

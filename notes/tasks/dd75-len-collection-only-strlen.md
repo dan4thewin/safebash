@@ -1,4 +1,3 @@
----
 title: "DD#75 §2 amendment: `len` is collection-only; add `strlen` for scalars"
 status: done
 priority: P2
@@ -10,7 +9,6 @@ gates:
   - "`strlen <scalar>` → byte length; `strlen <collection>` → compile error"
   - "both remain int-typed in `$( )` and inside `$(( ))`"
   - "the ~16 scalar `len` spec sites migrate to `strlen`"
----
 
 ## Decided 2026-09-10 (DG)
 

@@ -1,4 +1,3 @@
----
 title: "Bug: a final-stage loop that reads under `!` (`until ! readline x`) is a false SB4073"
 status: open
 priority: P3
@@ -8,7 +7,6 @@ gates:
   - "w5 and w7–w10 compile and read their input in both backends: w5, w7, w8 and w10 print `got a`, `got b`, `after`; w9 prints `after`"
   - "a final-stage loop that really does not read its input is still SB4073 (pf specs unchanged)"
   - "specs pin w7, w9 and w10 in both backends"
----
 
 ## Found
 

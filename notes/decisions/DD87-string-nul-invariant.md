@@ -1,4 +1,4 @@
-title: DD#87 — Runtime invariant: every sash string is NUL-terminated
+title: "DD#87 — Runtime invariant: every sash string is NUL-terminated"
 status: accepted
 
 Settled with DG (2026-09-01). Every **string** value produced by the sash

@@ -1,3 +1,4 @@
+title: "bug: native aborts on a failed redirect open in a `while` condition"
 status: done
 priority: P2
 kind: bug

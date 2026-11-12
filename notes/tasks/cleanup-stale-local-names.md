@@ -1,4 +1,3 @@
----
 title: "cleanup: `local`-era names and doc comments outlived DD#86"
 status: done
 priority: P4
@@ -7,7 +6,6 @@ depends: []
 gates:
   - "no reference to `parse_local` remains (it does not exist)"
   - "`save_locals`/`restore_locals` are named for what they do"
----
 
 ## What
 

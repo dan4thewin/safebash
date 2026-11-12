@@ -1,4 +1,3 @@
----
 title: "read: behaviors not wired in (survey — DG to decide which matter)"
 status: done
 priority: P2
@@ -6,7 +5,6 @@ kind: decision
 depends: []
 gates:
   - "DONE (2026-09-02): DG approved both top recommendations — (1) accept `-r` as an ignored no-op, and (2) `-d` terminator semantics (drop the trailing empty from a final delimiter). Both shipped: journal 233, specs wordsplit.sh 22.25-22.27. The remaining gaps (`-n`/`-N`/`-u`/interactive) stay unimplemented unless a use case appears."
----
 
 # `read` — behaviors not wired in
 

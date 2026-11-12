@@ -1,4 +1,3 @@
----
 title: "Bug: sash-convert reads `$10`, `$01` and `$1x` as one positional name at top level"
 status: open
 priority: P2
@@ -9,7 +8,6 @@ gates:
   - "the converted programs below print what bash prints, in both backends"
   - "braced `${10}` and `${01}`, top-level `$1` (57.13, conv.x3a) and the in-function pass-through (conv.x8) keep their current conversion"
   - "a convert.sh spec pins each form; it fails on the pre-fix converter"
----
 
 ## What
 

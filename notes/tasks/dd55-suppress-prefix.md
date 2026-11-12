@@ -3,7 +3,10 @@ status: done
 depends:
   - dd55-implicit-exit-checks
 severity: feature
-gates: [55.4, 55.9, 55.11]
+gates:
+  - 55.4
+  - 55.9
+  - 55.11
   - tests
   - commit
 

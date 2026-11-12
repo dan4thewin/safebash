@@ -1,8 +1,7 @@
----
+title: "`[[ $x==a ]]` answers F where bash answers T"
 status: done
 priority: P3
 kind: question
----
 
 # `[[ $x==a ]]` answers F where bash answers T
 

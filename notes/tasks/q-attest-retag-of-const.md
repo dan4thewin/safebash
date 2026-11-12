@@ -1,4 +1,3 @@
----
 title: "Allow validation of const values without permitting writes"
 status: open
 priority: P3
@@ -11,7 +10,6 @@ gates:
   - "preserve adjacency, per-binding locality, shared/inherited-taint ownership, explicit :! reads and EXIT/ERR requirements; const grants no exception to any of them"
   - "cover global, function-local and capture-local subjects without losing immutability across retags or merges; preserve the real-write lowering invariant and non-const attest behavior"
   - "drive the real CLI in both modes, prove before/reversion controls, migrate any changed existing contracts at fresh ids and run the gate with measured predictions"
----
 
 ## Accepted policy (DG, 2026-11-09)
 

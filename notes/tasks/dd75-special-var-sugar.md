@@ -1,4 +1,3 @@
----
 title: "DD#75 §1 — special vars are sugar for keyword forms ($? → $(status), $! → $(getcpid), $$ → $(getpid))"
 status: done
 priority: P3
@@ -9,7 +8,6 @@ gates:
   - "DD#24 taint framing updated: clean status attaches to the keyword forms; $?/$!/$$ sugar inherits it; no value changes taint class"
   - "$LINENO remains a compile-time literal (exempt — no keyword form)"
   - "0 native/c/janet spec regressions; specs pin both spellings compiling to the same behaviour"
----
 
 # DD#75 §1 — canonical/sugar inversion for punctuation specials
 

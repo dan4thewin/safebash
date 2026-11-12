@@ -1,4 +1,3 @@
----
 title: "c-backend parity: argv-index read should be is_int-total (emit_c.rs:1244)"
 status: done
 completed: 2026-09-13
@@ -8,7 +7,6 @@ depends: []
 gates:
   - "emit_c_argv_value reads an int index var directly (no sash_atoi on a nonexistent _ptr/_len) — parity with native index_var_to_int"
   - "no regression"
----
 
 ## Context
 

@@ -1,4 +1,3 @@
----
 title: non-brace dynamic subscript `$a[$i]` not recognised (brace form works)
 status: done
 priority: P3
@@ -7,7 +6,6 @@ depends: []
 gates:
   - $a[$i] (non-brace) reads the same as ${a[$i]} (brace)
   - a spec test locks the non-brace dynamic read
----
 
 # non-brace dynamic subscript read `$a[$i]`
 

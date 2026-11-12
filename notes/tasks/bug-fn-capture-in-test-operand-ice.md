@@ -1,4 +1,3 @@
----
 title: "ICE: a user-function capture `$(f)` as a `[[ ]]` test operand"
 status: done
 priority: P1
@@ -8,7 +7,6 @@ gates:
   - "`fn f { echo x; }` + `if [[ $(f) = x ]]; then …` compiles (or is rejected with a diagnostic) — never panics"
   - "same for an `-> int` function: `if [[ $(f) = 1 ]]`"
   - "the equivalent outside a test (`v=$(f)`) keeps working"
----
 
 ## Found
 

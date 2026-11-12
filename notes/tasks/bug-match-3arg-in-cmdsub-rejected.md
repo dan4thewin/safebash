@@ -1,4 +1,3 @@
----
 title: "`$(match S P arr)` bare reports SB4045 (\"expects 2 arguments\") when the 3-arg statement form is meant"
 status: done
 priority: P4
@@ -6,7 +5,6 @@ kind: diagnostic
 depends: []
 gates:
   - "the diagnostic for a bare `$(match S P arr)` names the real problem"
----
 
 # Correction — the original filing was wrong
 

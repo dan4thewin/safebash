@@ -1,4 +1,3 @@
----
 title: "audit: a single report file listing every bless / taint bypass site"
 status: blocked
 priority: P2
@@ -7,7 +6,6 @@ depends: []
 gates:
   - "one generated report enumerates every taint-relevant construct: bless / bless-all / map-bless, the `:!` taint-off operator (DD#91), --no-taint / --no-taint-cst usage, and (for context) every external-capture taint source"
   - "each entry carries file:line and the variable/subject, so a security reviewer can audit every bypass without grepping"
----
 
 ## Why (DG 2026-09-04)
 

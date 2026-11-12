@@ -1,4 +1,3 @@
----
 title: argv/arg/argc trio — existing test migration
 status: done
 priority: P0
@@ -10,7 +9,6 @@ gates:
   - all $(argc) expectations updated if intent was user-arg count
   - all top-level $@/$N/$# in spec source migrated to argv builtin forms
   - 291 + new tests pass with zero regressions after T2+T3 land
----
 
 # argv/arg/argc trio — existing test migration
 

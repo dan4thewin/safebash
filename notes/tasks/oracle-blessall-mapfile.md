@@ -1,4 +1,3 @@
----
 title: C/Janet oracle support for bless-all + mapfile
 status: done
 scope: c/janet backends only (native complete)
@@ -10,7 +9,6 @@ gates:
   - emit_c handles SsaInst::Mapfile / ReadArray + RedirectPush/Pop
   - DD#61 runtime tests (taint.sh 60.* native-guarded) un-guard for c
   - decide whether janet (IR oracle, elides bless) should grow bless-all
----
 
 # C/Janet oracle support for bless-all + mapfile
 

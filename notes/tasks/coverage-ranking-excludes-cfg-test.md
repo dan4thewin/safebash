@@ -1,8 +1,7 @@
----
+title: "coverage ranking counts `#[cfg(test)]` code as production cold lines"
 status: done
 priority: P3
 kind: chore
----
 
 # coverage ranking counts `#[cfg(test)]` code as production cold lines
 

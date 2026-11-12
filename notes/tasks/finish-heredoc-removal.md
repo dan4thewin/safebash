@@ -1,4 +1,3 @@
----
 title: "finish removing heredoc support — RedirectOp::HereDoc is dead code"
 status: done
 priority: P3
@@ -8,7 +7,6 @@ gates:
   - "RedirectOp::HereDoc is removed from the IR (ir.rs) and every match on it (codegen/redirects.rs, emit_c.rs, emit_janet.rs, validate.rs, ssa_taint.rs, convert.rs)"
   - "the lexer's `__HEREDOC__` sentinel + validate's SB5002 rejection remain the single path for `<<` / `<<-` (a clear 'heredocs not supported' error)"
   - "no behavior change: `<<` / `<<-` still rejected with SB5002; spec suite stays green"
----
 
 # Finish removing heredoc support
 

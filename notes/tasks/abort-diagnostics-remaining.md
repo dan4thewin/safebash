@@ -1,4 +1,3 @@
----
 title: "DD#55 abort diagnostics — remaining abort classes (external / pipeline / cmdsub / bg-exec / overflow)"
 status: done
 priority: P2
@@ -14,7 +13,6 @@ gates:
   - "regerror9 reprefixed from `sash:` to argv[0] for consistency"
   - "diagnostics fire only on the actual abort — caught (if/||) and `-`-suppressed stay silent"
   - "existing cross-mode abort specs (55.1, 55.8, 55.10, 55.16, 25.x) assert the message in `rerr` (native), guarded native-only until C/janet parity lands"
----
 
 ## Context
 

@@ -1,4 +1,3 @@
----
 title: "emit_c's `_ =>` arms emit a TODO *comment* for unimplemented builtins/insts (fail-open)"
 status: done
 priority: P1
@@ -8,7 +7,6 @@ gates:
   - "an unimplemented `BuiltinCmd` in the c backend fails at compile time rather than emitting `/* TODO command: … */` and a silently-missing statement"
   - "same for the `SsaInst` `_ =>` arm (`/* TODO inst: … */`)"
   - "whatever the chosen mechanism, a spec pins it: a program using an unimplemented surface must not compile-and-silently-do-nothing"
----
 
 ## Symptom
 

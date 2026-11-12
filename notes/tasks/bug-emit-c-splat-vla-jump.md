@@ -1,4 +1,3 @@
----
 title: "BUG (emit_c) — external `@`{a:?} splat after a preceding statement emits non-compiling C (jump into VLA scope)"
 status: done
 priority: P2
@@ -8,7 +7,6 @@ gates:
   - "`/usr/bin/touch z; array a=(x y); /usr/bin/printf \"[%s]\" @{a:?x}` compiles under --emit-c (gcc) and prints `[x][y]` (matches native)"
   - "no `jump into scope of identifier with variably modified type` from any `@{a:?}`/`@{a:-}` external splat"
   - "0 native spec regressions; c oracle re-greens for the affected forms"
----
 
 # BUG — emit_c `@{a:?}` splat generates a goto that jumps into a VLA scope
 

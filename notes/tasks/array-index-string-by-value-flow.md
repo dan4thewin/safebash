@@ -1,9 +1,8 @@
----
+title: "Array indices that are provably strings but not *declared* `str`"
 status: done
 priority: P3
 depends: DD80-braced-key-discipline
 gates: closed by the DD#80 amendment (2026-09-26)
----
 
 # Array indices that are provably strings but not *declared* `str`
 

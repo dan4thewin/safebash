@@ -1,4 +1,3 @@
----
 title: "janet: `write` (DD#99 echo-without-newline) is not emitted"
 status: deferred
 deferred-by: DD104
@@ -8,7 +7,6 @@ depends: []
 gates:
   - "janet: `write \"a\"; write \"b\"; echo \"|\"` prints `ab|`"
   - "spec `commands.sh` wr.1, wr.2, wr.4, wr.5 pass in janet mode"
----
 
 ## Found
 

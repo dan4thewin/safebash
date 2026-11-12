@@ -1,4 +1,3 @@
----
 title: "Audit the remaining downstream `ArithExpr::PreIncDec` arms"
 status: open
 priority: P4
@@ -7,7 +6,6 @@ depends: []
 gates:
   - "each remaining site is either proven reachable or removed"
   - "no spec flips"
----
 
 DD#31 is categorical: no prefix `++`/`--`. `reject_prefix_incdec` enforces it
 at **both** parse entry points — `parse_arith_slot` (the `(( … ))` statement

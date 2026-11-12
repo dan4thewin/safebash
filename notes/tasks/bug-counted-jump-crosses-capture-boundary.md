@@ -1,4 +1,3 @@
----
 title: "A counted jump inside a capture can escape into its caller's loop"
 status: open
 priority: P1
@@ -9,7 +8,6 @@ gates:
   - "Break and continue counts clamp within the current body, never into its caller"
   - "Nested captures, named calls and self-tail calls retain their own loop and return targets"
   - "Leaving a capture always reaches its proper cleanup; an enclosing loop resumes normally"
----
 
 Found while writing W3's body-boundary control (journal 562). This program
 compiles with no diagnostics, exits zero and prints **nothing**, in both

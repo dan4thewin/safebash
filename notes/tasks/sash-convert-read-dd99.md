@@ -1,4 +1,3 @@
----
 title: "sash-convert emits `read` spellings the compiler now rejects"
 status: done
 priority: P1
@@ -8,7 +7,6 @@ gates:
   - "`read -r line` converts to `readline line`"
   - "a multi-target or flagged bash `read` produces a diagnostic, never silently-invalid output"
   - "spec convert.sh 57.37 asserts the converted output, not the passthrough"
----
 
 ## What
 

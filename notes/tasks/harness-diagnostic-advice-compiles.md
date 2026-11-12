@@ -1,4 +1,3 @@
----
 title: "Harness: every diagnostic's suggested spelling compiles, as a standing gate"
 status: ready
 priority: P3
@@ -8,7 +7,6 @@ gates:
   - "a harness triggers each diagnostic that suggests a spelling and compiles the suggestion"
   - "runs as part of the spec suite, so a message that rots fails a gate rather than reaching a user"
   - "the extraction reads rendered stderr, not source text"
----
 
 ## Context
 

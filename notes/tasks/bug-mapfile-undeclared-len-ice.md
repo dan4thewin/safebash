@@ -1,4 +1,3 @@
----
 title: "bug: mapfile / read -a into an UNDECLARED array ICEs on len/element-read (undefined array a)"
 status: done
 priority: P2
@@ -8,7 +7,6 @@ resolved: "2026-08-19 — auto-declare the target (mirrors argv, DD#60): a share
 gates:
   - "`mapfile -t a < f; echo $(len a)` (no prior `array a=()`) must NOT ICE — either auto-declare fully (like `argv [N] a` now does) or reject at compile time"
   - "same for `read -a a` and a subsequent `$a[0]` / `@a` read"
----
 
 # mapfile / read -a undeclared target: ICE on len/element-read
 

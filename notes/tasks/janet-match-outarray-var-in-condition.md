@@ -1,4 +1,3 @@
----
 title: "bug: janet emits the out-array `var` inside the if-condition expression"
 status: deferred
 deferred-by: DD104
@@ -9,7 +8,6 @@ gates:
   - "`if matchall abc \"[a-c]\" g { echo hit }` runs under --janet"
   - "`if match abc \"(a)(b)\" g { echo hit }` likewise"
   - "spec 63.mi1-63.mi3 run in janet mode instead of being skipped"
----
 
 ## What
 

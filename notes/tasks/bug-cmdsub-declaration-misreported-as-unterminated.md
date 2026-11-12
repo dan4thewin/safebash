@@ -1,4 +1,4 @@
-title: bug: `$(int x=1)` is reported as an unterminated `$(`
+title: "bug: `$(int x=1)` is reported as an unterminated `$(`"
 status: done
 completed: 2026-09-28
 priority: P3

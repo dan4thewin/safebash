@@ -1,4 +1,3 @@
----
 title: "SSA taint backstop: capture-form builtins decide taint before taint analysis runs"
 status: open
 priority: P2
@@ -8,7 +7,6 @@ gates:
   - "under `--no-taint-cst` a builtin capture whose operands are tainted (`x=$(join @a)` for a tainted `a`) is rejected by the SSA backstop"
   - "0 spec regressions with the CST pass ON — a clean builtin capture must not false-positive"
   - "spec `taint_switch.sh` gains sw.* cases for the capture form"
----
 
 Split out of `ssa-taint-full-backstop.md` on 2026-09-30, when that task's other
 two gaps closed. This is the last one.

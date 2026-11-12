@@ -1,4 +1,3 @@
----
 title: "How is a cell spelled as a `strlen` operand?"
 status: done
 priority: P2
@@ -8,7 +7,6 @@ gates:
   - "DG picks a spelling"
   - "`$(strlen <cell>)` returns the element's byte length in all three backends"
   - "`bug-convert-hash-array-conflation` can emit it"
----
 
 # The question
 

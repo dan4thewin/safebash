@@ -3,7 +3,9 @@ status: done
 severity: feature
 depends:
   - dd23-compile-time-resolve
-gates: [23.3, 23.4]
+gates:
+  - 23.3
+  - 23.4
   - tests
   - commit
 

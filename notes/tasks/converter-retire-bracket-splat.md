@@ -1,4 +1,3 @@
----
 title: "sash-convert — rewrite retired `${a[@]}`/`${a[*]}`/`${#a[@]}`/`${!a[@]}` bracket forms to canonical DD#75 spellings"
 status: done
 priority: P3
@@ -11,7 +10,6 @@ gates:
   - "`${!a[@]}` / `${!a[*]}` → `$(keys a)` for a map; for an indexed array the keys are `0..len-1` (emit a CHECK comment — sash has no index-range sugar)"
   - "unaffected: `${a[$i]}` / `${a[1]}` element access; `a[$i]=` element assign"
   - "round-trips through the compiler (converted output compiles clean, no SB4038)"
----
 
 ## Why
 

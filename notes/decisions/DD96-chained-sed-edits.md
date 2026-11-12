@@ -1,7 +1,5 @@
----
 title: DD#96 — sed edits chain with `,`
 status: accepted
----
 
 Settled with DG (2026-09-08), from: *"I like the sed-like edits, e.g. `$foo =~
 s/a/b/`; I want to be able to chain them, e.g. `$foo =~ s/a/b/ s/c/d/`; or with

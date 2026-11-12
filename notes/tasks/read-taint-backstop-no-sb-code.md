@@ -1,4 +1,3 @@
----
 title: "standalone `read` taint reports via the SSA backstop with no SB code (pipeline `read` does not)"
 status: done
 priority: P2
@@ -8,7 +7,6 @@ gates:
   - "`read a b; attest b p?; : $a; echo $b` reports a clean SB5020 (or compiles), never 'SSA taint backstop'"
   - "the standalone and pipeline `read` shapes agree: whatever `cmd | read a b` allows, `read a b` allows"
   - "no user-reachable diagnostic is emitted without an SB code"
----
 
 ## Found
 

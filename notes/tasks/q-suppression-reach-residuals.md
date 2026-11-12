@@ -1,4 +1,3 @@
----
 title: "Suppression residuals: decisions settled; enforcement queued"
 status: done
 priority: P3
@@ -8,7 +7,6 @@ gates:
   - "R3 is rejected by policy in DD55; reject-statusless-intrinsic-suppression owns enforcement"
   - "Other settled repairs retain their owners in reject-nonadjacent-suppression and the compound/group retirement tasks"
   - "Discarded-status consumption is rejected by policy; reject-discarded-status-consumers owns enforcement independently of R3"
----
 
 ## Decision update (2026-11-08)
 

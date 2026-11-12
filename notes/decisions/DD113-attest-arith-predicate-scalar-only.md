@@ -1,6 +1,5 @@
----
+title: "DD#113 — the `(( … ))` attest predicate is scalar-only"
 status: accepted
----
 
 # DD#113 — the `(( … ))` attest predicate is scalar-only
 

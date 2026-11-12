@@ -1,7 +1,6 @@
----
+title: "Redirect-open failure inside `END { }` never terminates"
 status: done
 priority: P1
----
 
 # Redirect-open failure inside `END { }` never terminates
 

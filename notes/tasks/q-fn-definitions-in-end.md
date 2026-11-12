@@ -1,4 +1,3 @@
----
 title: "Resolved: cleanup bodies cannot define functions"
 status: done
 priority: P4
@@ -7,7 +6,6 @@ depends: []
 gates:
   - "DD56 and DD128 state program-top-level-only definitions"
   - "SB5071 rejects a fn in END; definition-only support and 56.94-56.100 are removed"
----
 
 DG resolved this on 2026-11-04: retain SB5071 uniformly for EXIT/ERR and
 remove support solely for the old END exception (journal 566).

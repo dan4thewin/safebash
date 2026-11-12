@@ -1,4 +1,3 @@
----
 title: Retarget emit_janet to consume SSA instead of IR
 status: done
 priority: P3
@@ -6,12 +5,11 @@ kind: refactor
 depends: []
 superseded-by: add-c-oracle
 resolved: 2026-06-07
-resolution: Superseded by add-c-oracle (now also done). DG decided 2026-06-06 that the SSA-stage oracle should be emit_c (which maps 1:1 to SSA via goto+labels without a structurization pass) rather than retargeting emit_janet. The Janet emitter stays on IR as the IR-stage oracle and joined the complexity-gate cohort. emit_c now provides the SSA-stage inspection + differential-oracle role this task was meant to give Janet. See notes/tasks/add-c-oracle.md. REAFFIRMED 2026-08-16: DG revisited "make janet like c (thin + shared runtime)" and again kept janet on IR — but adopted the primitive-library refinement (a `sash-rt.janet` runtime + thin leaf lowering, control flow stays IR-based). See notes/tasks/janet-rt-primitive-library.md.
+resolution: "Superseded by add-c-oracle (now also done). DG decided 2026-06-06 that the SSA-stage oracle should be emit_c (which maps 1:1 to SSA via goto+labels without a structurization pass) rather than retargeting emit_janet. The Janet emitter stays on IR as the IR-stage oracle and joined the complexity-gate cohort. emit_c now provides the SSA-stage inspection + differential-oracle role this task was meant to give Janet. See notes/tasks/add-c-oracle.md. REAFFIRMED 2026-08-16: DG revisited \"make janet like c (thin + shared runtime)\" and again kept janet on IR — but adopted the primitive-library refinement (a `sash-rt.janet` runtime + thin leaf lowering, control flow stays IR-based). See notes/tasks/janet-rt-primitive-library.md."
 gates:
   - all 401 lines of janet_tests.rs pass after the rewrite
   - 291/291 spec gates remain green
   - no regression in cross-output property tests
----
 
 # Retarget emit_janet to consume SSA instead of IR
 

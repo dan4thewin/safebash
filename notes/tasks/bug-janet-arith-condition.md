@@ -1,4 +1,3 @@
----
 title: "BUG — janet backend: (( )) used as an if/while condition always takes the true branch"
 status: done
 priority: P2
@@ -7,7 +6,6 @@ depends: []
 gates:
   - "janet: `if (( 7 < 3 )); then …; else …; fi` runs the else branch (and all comparison/false (( )) conditions branch correctly)"
   - "drop the in_modes native,c guard on spec arithmetic.sh 31.17/31.18"
----
 
 # BUG — janet `(( ))` condition always true
 

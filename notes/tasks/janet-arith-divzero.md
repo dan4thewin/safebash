@@ -1,4 +1,3 @@
----
 title: "janet backend: disposition for a zero divisor (DD#25 amendment)"
 status: deferred
 priority: P4
@@ -7,7 +6,6 @@ depends: []
 gates:
   - "janet `$(( 1 / z ))` with z=0 has a decided, documented disposition"
   - "DD#25's janet paragraph is updated to state it"
----
 
 DD#25's amendment (2026-09-14) made a zero divisor abort with
 `<argv0>: division by zero`, exit 2, in the **native and c** backends,

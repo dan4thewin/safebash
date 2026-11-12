@@ -1,4 +1,3 @@
----
 title: "SSA taint backstop: make it a complete gate (capture path + arrays + positions)"
 status: done
 priority: P2
@@ -8,7 +7,6 @@ gates:
   - "under `--no-taint-cst` the SSA backstop rejects the FULL laundering class the CST pass catches: `$(join @a)`/`$(join a)`, `echo $(getenv)` inline, `${a[0]}` of a mapfile/argv/read array, `[[ ]]` operands, redirect targets"
   - "0 spec regressions native/c/janet with the CST pass ON (blessed/clean arrays must not false-positive at SSA)"
   - "spec taint_switch.sh gains sw.* cases proving each newly-caught position under `--no-taint-cst`"
----
 
 ## Done 2026-09-28 (journal 435) — the enumeration is total
 

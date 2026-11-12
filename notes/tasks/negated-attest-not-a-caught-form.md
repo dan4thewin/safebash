@@ -1,9 +1,8 @@
----
+title: "`if ! attest …` is not recognised as a caught attest"
 status: done
 priority: P2
 depends:
 gates:
----
 
 # `if ! attest …` is not recognised as a caught attest
 

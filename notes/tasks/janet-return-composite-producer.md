@@ -1,9 +1,8 @@
----
+title: "janet: `return <&&/|| list>` producer collapses to one operand"
 status: deferred
 deferred-by: DD104
 depends: []
 gates: [janet]
----
 
 # janet: `return <&&/|| list>` producer collapses to one operand
 

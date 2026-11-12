@@ -1,7 +1,6 @@
----
+title: "`walk_node` is cc 39 / cog 44, outside the gate by scope"
 status: open
 priority: P4
----
 
 # `walk_node` is cc 39 / cog 44, outside the gate by scope
 

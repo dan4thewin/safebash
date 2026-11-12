@@ -1,4 +1,3 @@
----
 title: "c/janet control-flow gaps surfaced by DD#68 brace specs (elif, continue, until, list-cond)"
 status: done
 priority: P3
@@ -9,7 +8,6 @@ gates:
   - "janet continue skips to the next iteration (not break): for x in a b c { if b { continue }; echo } -> a,c"
   - "c/janet: until (( )) loop, && / || compound conditions, list conditions, C-style for run correctly"
   - "then brace.sh can run in all three modes (drop its native-only guard)"
----
 
 # Pre-existing c/janet control-flow gaps (surfaced, not caused, by DD#68)
 

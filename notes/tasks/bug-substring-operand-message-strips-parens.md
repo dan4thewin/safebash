@@ -1,4 +1,3 @@
----
 title: "bug: SB4030's substring message quotes the operand with its parens stripped"
 status: open
 priority: P3
@@ -7,7 +6,6 @@ depends: []
 gates:
   - "`s=abc; echo \"${s:0:$(( 1 ))}\"` quotes the operand as written (`$(( 1 ))`), not \"`$ 1 `\""
   - "`${s:(-2)}` still compiles and prints `bc`"
----
 
 Found 2026-10-31 while porting F10 (journal 552). It reproduces on the pre-F10
 binary too.

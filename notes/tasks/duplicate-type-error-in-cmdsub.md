@@ -1,3 +1,4 @@
+title: "`for k in $(keys …)` reports its type error twice"
 status: done
 priority: P3
 depends:

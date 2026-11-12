@@ -1,4 +1,3 @@
----
 title: "janet: int arrays miscompile (scan-number on the array literal); int-cell `:-` too"
 status: deferred
 priority: P3
@@ -7,7 +6,6 @@ depends: []
 gates:
   - "`int array a=(4 5 6); echo ${a[1]}` prints 5 in janet (native+c already do)"
   - "`int array a=(1 2 3); echo ${a[0]:-0}` prints 1 in janet (cov.85, currently native+c only)"
----
 
 ## Symptom
 

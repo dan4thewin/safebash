@@ -1,7 +1,6 @@
----
+title: "A map's literal key cannot contain `}` or `{`, but a runtime key can"
 status: open
 priority: P3
----
 
 # A map's literal key cannot contain `}` or `{`, but a runtime key can
 

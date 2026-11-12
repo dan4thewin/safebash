@@ -1,4 +1,3 @@
----
 title: "Support the `exec` builtin: fd manipulation + program replacement"
 status: done
 priority: P1
@@ -10,7 +9,6 @@ gates:
   - "`exec cmd` resolves `cmd` via DD#23 compile-time path resolution (absolute path / defined function), like any external command"
   - "taint/security: `exec`-ing a tainted command path is rejected or blessed, consistent with DD#23/DD#24"
   - "specs: an exec-redirect form and an exec-replace form, native (+ c if the backend supports it); the exec cluster (emit_exec/build_argv_on_stack/finalize_exec/emit_exec_redirects_only/emit_exec_static_argv) becomes covered"
----
 
 ## Why (DG 2026-08-28)
 

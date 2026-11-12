@@ -1,4 +1,3 @@
----
 title: "SB5021's advice names the retired `mapfile`, and calls a map an array"
 status: done
 priority: P2
@@ -8,7 +7,6 @@ gates:
   - "SB5021 does not name `mapfile` (retired by DD#99; following it gets SB5060)"
   - "the message says `map` when the target is a map"
   - "the advice for a map names the actual route: read -> attest -> `map m = @{a:DISP}`"
----
 
 ## What
 

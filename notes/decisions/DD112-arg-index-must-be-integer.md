@@ -1,6 +1,5 @@
----
+title: "DD#112 — a literal `arg` index must be a non-negative integer (SB5078)"
 status: accepted
----
 
 # DD#112 — a literal `arg` index must be a non-negative integer (SB5078)
 

@@ -1,4 +1,4 @@
-title: bug: [[ -N file ]] disagrees with bash when mtime equals atime
+title: "bug: [[ -N file ]] disagrees with bash when mtime equals atime"
 status: done
 priority: P2
 kind: bug

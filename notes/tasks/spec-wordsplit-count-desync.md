@@ -1,4 +1,3 @@
----
 title: "spec hygiene: wordsplit.sh native emits plan+1 (count desync vs c/janet)"
 status: done
 priority: P6
@@ -7,7 +6,6 @@ depends: []
 gates:
   - "wordsplit.sh emits the same number of TAP results in native, c, and janet (plan exact in all modes)"
   - "find the chk/skip_chk that runs in native but not c/janet (somewhere before the 62.8-62.10 in_modes block) and balance it"
----
 
 # wordsplit.sh native/c count desync
 

@@ -1,4 +1,3 @@
----
 title: "Bug: an index with an unclosed quote, parenthesis or `]` is reported as an unrecognised parameter operator (SB4047)"
 status: open
 priority: P3
@@ -10,7 +9,6 @@ gates:
   - "`${a[$(( 1 + ))]}` keeps SB4020 at the index (B39, DD#80's addendum of 2026-10-24)"
   - "an operator that really is unrecognised keeps SB4047: `${x&y}`, `${x:foo}`, and every existing SB4047 spec"
   - "a spec pins each opener in both backends; each fails on the pre-fix binary"
----
 
 ## What
 

@@ -1,4 +1,3 @@
----
 title: "Allow brace-form else/elif clauses on following lines"
 status: open
 priority: P3
@@ -11,7 +10,6 @@ gates:
   - "SB4072 else/elif advice describes the accepted placement instead of requiring the same line, and diagnostics retain the actual clause's source position"
   - "migrate skw.20's changed contract at fresh ids; acceptance of m4/r7 is not evidence that general block-error recovery was repaired"
   - "prove new behavior with real CLI before/reversion controls and a predicted gate; preserve existing legal forms without unrelated diagnostic masking"
----
 
 ## Accepted policy (DG, 2026-11-09)
 

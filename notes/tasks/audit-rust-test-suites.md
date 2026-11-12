@@ -1,4 +1,3 @@
----
 title: "audit / prune / rehabilitate the Rust test suites (sash/tests/) — significant bit-rot"
 status: done
 priority: P2
@@ -10,7 +9,6 @@ gates:
   - "the Rust suites no longer depend on shared in-process global compiler state (ARITH_MAP, SYSROOT, squashfs cache) leaking between test calls — full-run results match isolated-run results"
   - "tests that assert behavior we have deliberately dropped (heredocs, `echo -e`, `declare`, `let`, …) are removed, not left failing"
   - "`sash-rt-tests` links and runs (drop dead `sash_streq` / `sash_arith_eval` externs) and is added to `mk test` so the extern-`C` runtime unit tests can't rot unnoticed"
----
 
 > **RESOLVED 2026-09-14 (journal 304).** Closed by the test redux, which
 > answered the task's question differently than the task assumed. The task

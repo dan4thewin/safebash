@@ -1,6 +1,5 @@
----
+title: "Nested `@`-splat loops: the outer loop ran once"
 status: done
----
 
 # Nested `@`-splat loops: the outer loop ran once
 

@@ -1,4 +1,3 @@
----
 title: "BUG — redirect fd-dup target isn't validated; malformed/non-numeric targets silently dup to fd 2"
 status: done
 priority: P2
@@ -7,7 +6,6 @@ depends: []
 gates:
   - "`echo hi >&foo` and `echo hi 2>&1x` reject at compile time (not silently dup to fd 2)"
   - "`>&-` / `N>&-` either closes the fd (if implemented) or rejects — never dups to fd 2"
----
 
 ## RESOLVED (2026-08-29, DG: reject-only)
 

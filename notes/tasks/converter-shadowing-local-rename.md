@@ -1,4 +1,3 @@
----
 title: "converter: flag/rename a bash `local` that shadowed a global (DD#86 no-shadow)"
 status: ready
 priority: P3
@@ -6,7 +5,6 @@ kind: feature
 depends: []
 gates:
   - "sash-convert detects when a bash `local x` inside a function shadows a same-named top-level global and either renames it (with a MANUAL/CHECK marker) or emits a review comment — since sash (DD#86) forbids shadowing (SB5049)"
----
 
 # Converter: shadowing-local detection (DD#86 Phase 5 refinement)
 

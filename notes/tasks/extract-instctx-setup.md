@@ -1,11 +1,9 @@
----
 title: Extract InstCtx setup boilerplate from codegen handlers
 status: deferred
 depends: []
 gates: []
 investigated: 2026-06-08
-investigation: Cluster A removed 100 dead `let _xxx = ctx.field` lines, dropping the active sites from 26 to 17. Tested the task's recommended option (method on InstCtx returning a tuple): does not work for handlers that interleave (vars, literals, externs) usage with access to other ctx fields. `ctx.env() -> (vars, literals, externs)` requires `&mut self`, which mutably borrows *all* of ctx. Any later `ctx.other_field` access produces E0503 'use of borrowed *ctx'. The current 3-line destructure compiles because each `let X = ctx.field` is a split borrow that only ties up the named field. Reduction options that remain are (a) rewrite all 17 handler bodies to use `ctx.<field>` everywhere — works, mechanical, but big diff; (b) macro_rules to hide the 3 lines behind one. Neither is a clear win.
----
+investigation: "Cluster A removed 100 dead `let _xxx = ctx.field` lines, dropping the active sites from 26 to 17. Tested the task's recommended option (method on InstCtx returning a tuple): does not work for handlers that interleave (vars, literals, externs) usage with access to other ctx fields. `ctx.env() -> (vars, literals, externs)` requires `&mut self`, which mutably borrows *all* of ctx. Any later `ctx.other_field` access produces E0503 'use of borrowed *ctx'. The current 3-line destructure compiles because each `let X = ctx.field` is a split borrow that only ties up the named field. Reduction options that remain are (a) rewrite all 17 handler bodies to use `ctx.<field>` everywhere — works, mechanical, but big diff; (b) macro_rules to hide the 3 lines behind one. Neither is a clear win."
 
 # Extract InstCtx setup boilerplate from codegen handlers
 

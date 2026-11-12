@@ -1,4 +1,3 @@
----
 title: "BUG — `until (( cond ))` is not negated (infinite loop); until only negates [[ ]] Test conditions"
 status: done
 priority: P2
@@ -8,7 +7,6 @@ gates:
   - "until (( cond )) runs the body while cond is false and exits when true, matching bash (e.g. `x=5; until (( x < 10 )); do …; done` exits immediately)"
   - "until <command> (non-[[ ]] condition) is also negated by exit status"
   - "re-enable the #[ignore]d until_basic / until_immediate_exit / until_countdown codegen_tests"
----
 
 # BUG — `until (( ))` / `until <cmd>` not negated
 

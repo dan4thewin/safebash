@@ -1,4 +1,3 @@
----
 title: "DD#125 and resolve.rs say `in` and `do` lex as words outside their position; they lex as keywords everywhere"
 status: open
 priority: P4
@@ -7,7 +6,6 @@ depends: []
 gates:
   - "DD#125's \"Contextual keywords are included\" and the doc comment on `KEYWORDS` (sash/src/resolve.rs) describe the lexer and parser as they are"
   - "no DD, comment or spec repeats the old claim"
----
 
 ## What
 

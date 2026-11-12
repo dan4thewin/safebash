@@ -1,4 +1,3 @@
----
 title: "value intrinsics with a PATH twin silently exec it in statement position"
 status: done
 priority: P1
@@ -8,7 +7,6 @@ gates:
   - "`basename /a/b`, `dirname /a/b`, and `join a \",\"` in statement position are a compile error (SB5073), not a silent fork of the coreutils program"
   - "the same holds for every value intrinsic regardless of what is installed on the build host — `len`, `keys`, `toupper`, `tolower`, `strlen`, `sub`, `gsub`, `random` included"
   - "a spec pins at least one name that has a real PATH twin and one that does not, so the invariant cannot regress into being host-dependent again"
----
 
 ## Symptom
 

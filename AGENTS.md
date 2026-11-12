@@ -244,6 +244,19 @@ backend, removed by DD#104 in favour of the `--emit-ir` seam),
 - the safe subset is defined by the DDs in `notes/decisions/` (SUBSET.md was
   removed 2026-08-29 — it had drifted from the DDs and was misleading)
 
+Decision filenames use `DD<number>-lowercase-kebab-case.md`; task filenames
+use `lowercase-kebab-case.md`. Both start with valid bare YAML containing
+`title` and `status`, without `---` fences. Preserve existing dispositions
+and optional fields when repairing formatting; do not invent classifications.
+Quote prose where YAML requires it, and do not mix inline and block lists.
+**The first blank line ends iwe's bare frontmatter**, even inside a literal
+block. Keep the header contiguous; encode necessary paragraph breaks as
+`\n` in a quoted value. Long narrative normally belongs in the body.
+
+With the current virtual-directory configuration, even `iwe find`
+materializes `notes/_decisions.md`, `notes/_journal.md` and `notes/_tasks.md`.
+Do not commit these generated directory indexes as maintained notes.
+
 ## Build and test
 
 Build system uses Plan 9 `mk` (not `make`). Top-level `mkfile` has

@@ -1,4 +1,3 @@
----
 title: Remove implementations of retired language surfaces
 status: done
 priority: P2
@@ -8,7 +7,6 @@ gates:
   - "no codegen path implements `echo -n`, `mapfile`/`readarray`, or the `read` flag set"
   - "SB5059 and SB5060 still fire, with their current wording — recognition for diagnosis is kept, implementation is not"
   - "`read -a a` / `read x y` do not silently become literal words in any backend"
----
 
 # Remove the codegen implementations of DD#99-retired surfaces
 

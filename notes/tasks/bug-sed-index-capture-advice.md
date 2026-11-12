@@ -1,4 +1,3 @@
----
 title: "BUG: a sed-expansion index on an indexed array gets the capture advice, which it cannot follow"
 status: open
 priority: P3
@@ -7,7 +6,6 @@ depends: []
 gates:
   - "a `${k:s/…/…/}` index on an indexed array is still SB4030 in every spelling, with advice the author can follow"
   - "a written-out `$( … )` index keeps the capture message"
----
 
 ## What
 

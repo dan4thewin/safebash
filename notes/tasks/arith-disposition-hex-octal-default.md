@@ -1,4 +1,3 @@
----
 title: "arith `${s:-N}` disposition default: support DD#72 0x/0o/0b prefixes"
 status: done
 priority: P3
@@ -9,7 +8,6 @@ gates:
   - "0o/0b prefixes and the DD#72 grammar accepted as arith `:-` defaults across native/c/janet"
   - "D4's `check_arith_default_literals` widened from decimal-only to the full DD#72 literal grammar (shared parser)"
   - "no regression"
----
 
 ## Context
 

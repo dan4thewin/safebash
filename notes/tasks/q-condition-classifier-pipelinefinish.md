@@ -1,4 +1,3 @@
----
 title: "Question: the condition classifier's `PipelineFinish` arm is unreachable — ICE, or answer by `preserve_status`?"
 status: open
 priority: P4
@@ -9,7 +8,6 @@ gates:
   - "if (a): the arm is `unreachable!()` with a message that names reader cleanup's bridging, and a `#[should_panic]` unit test pins it"
   - "if (b): a unit test asserts both answers (`preserve_status` true → false, false → true)"
   - "either way, `uncheck_last_condition_inst`'s `PipelineFinish` arm follows the same ruling"
----
 
 ## What
 

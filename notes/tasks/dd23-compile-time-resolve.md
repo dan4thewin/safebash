@@ -2,7 +2,9 @@ title: Compiler path resolution pass (bare name → absolute path)
 status: done
 severity: feature
 depends: []
-gates: [23.1, 23.2]
+gates:
+  - 23.1
+  - 23.2
   - tests
   - commit
 

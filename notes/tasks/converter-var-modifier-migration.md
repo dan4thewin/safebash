@@ -1,4 +1,3 @@
----
 title: "sash-convert: migrate dropped ${var:OP} modifiers → native builtins/forms"
 status: ready
 priority: P3
@@ -13,7 +12,6 @@ gates:
   - "`${x:+alt}` → `[[ -n $x ]] && …` form or a conditional; MANUAL if not 1-to-1"
   - "`${x:?msg}` → an explicit emptiness check + error; MANUAL (murky under sash's no-unset model)"
   - "ambiguous/non-1-to-1 cases fall back to a MANUAL annotation (never emit wrong code)"
----
 
 # sash-convert: migrate the dropped `${var:OP}` modifiers
 

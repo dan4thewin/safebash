@@ -1,4 +1,3 @@
----
 title: "BUG: a substring or sed expansion imported into arithmetic converts to int with no disposition (DD#77)"
 status: open
 priority: P2
@@ -9,7 +8,6 @@ gates:
   - "`:-` and `:?` still discharge the obligation (ao7, ac3, ao9), and every row listed as unchanged keeps its verdict"
   - "relex.19 keeps SB5011"
   - "the arithmetic rows of `bug-sed-expansion-extent` (see its Caution) are re-coded by whichever of the two tasks lands second"
----
 
 ## What
 

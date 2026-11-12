@@ -1,7 +1,5 @@
----
 title: DD#89 — `exit` accepts any int; full i64 to the handler, 8-bit at the process boundary
 status: accepted
----
 
 Settled with DG (2026-09-03). `exit`'s argument is an ordinary integer sink:
 **any int — a literal, a variable, an arithmetic result, or an int-returning

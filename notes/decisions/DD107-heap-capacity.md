@@ -1,4 +1,4 @@
-title: DD#107 — Heap capacity: a 256 MB compiled-in default, set by `--heap-size`
+title: "DD#107 — Heap capacity: a 256 MB compiled-in default, set by `--heap-size`"
 status: accepted
 
 The runtime heap is a single fixed region. It reserves **256 MB** by

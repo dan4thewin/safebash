@@ -14,7 +14,7 @@ blocked on DG decisions that the work itself surfaced.
 | # | item | outcome |
 |---|---|---|
 | 1 | `bug-getenv-status-unvalidated` (P1) | fixed — every value intrinsic now has an arity |
-| 2 | `bug-file-test-N-diverges-from-bash` (P2) | fixed — plus the C backend was *stubbing file tests entirely* |
+| 2 | `bug-file-test-n-diverges-from-bash` (P2) | fixed — plus the C backend was *stubbing file tests entirely* |
 | 3 | `dd55-while-condition-redirect-divergence` (P2) | fixed — one shared condition-position predicate |
 | 4 | `dd75-len-collection-only-strlen` | `strlen` added; `len` is collection-only |
 | 5 | `dollar-lt-file-forks` (P2) | **blocked** — heap-capacity decision |

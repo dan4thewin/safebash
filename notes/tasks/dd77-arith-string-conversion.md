@@ -1,4 +1,3 @@
----
 title: "DD#77 Stage C — disposition discipline (:? un-prune, strict trigger, bare-string error)"
 status: done
 priority: P2
@@ -11,7 +10,6 @@ gates:
   - "C3 D4: ${s:-N} default N in arith must be a numeric literal (static check)"
   - "C3 migrate: DD#72 arith_literals.sh bare-coercion → dispositions; amend DD#72"
   - "native+c+janet (or filed guards); spec tests; no regression"
----
 
 # Staging (DG-directed 2026-08-17)
 

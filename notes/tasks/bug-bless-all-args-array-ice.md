@@ -1,4 +1,3 @@
----
 title: "bless-all on the function `args` array ICEs (codegen/types.rs:188)"
 status: done
 priority: P2
@@ -7,7 +6,6 @@ depends: []
 gates:
   - "`fn f { bless x in args [[ -n $x ]]; echo $1 }; f a` compiles and runs (no panic)"
   - "the fix covers `@args` splat after the bless too"
----
 
 ## Resolved (2026-09-05) — rejected, not fixed
 

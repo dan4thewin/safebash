@@ -1,7 +1,5 @@
----
 title: DD#94 — newlines, `;` and comments as trivia inside `(( ))` and `[[ ]]`
 status: accepted
----
 
 Settled with DG (2026-09-07), from the deferred task
 `notes/tasks/arith-block-separators-and-comments.md` (decisions 1b, 2b, 3b)

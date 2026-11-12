@@ -1,4 +1,3 @@
----
 title: "c parity: a `-> int` function used in `|| :` (discard) fails to compile/run"
 status: done
 scope: c/janet backends only (native complete)
@@ -9,7 +8,6 @@ gates:
   - "c: `fn f -> int { return 3 }; f || :; echo done` — emitted C must compile (today gcc errors 'In function main') and run → `done`"
   - "janet: the same program must run → `done` (today: a janet runtime error, `user0: <tuple>`)"
   - "un-guard spec/errors.sh e.b70.fndisc to all modes once fixed"
----
 
 # `-> int` function in `|| :` discard: c/janet backend gap
 

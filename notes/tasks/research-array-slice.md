@@ -1,4 +1,3 @@
----
 title: "research: a general array-slice operation (post-beta) — subsumes the dropped `shift`"
 status: research
 priority: post-beta
@@ -9,7 +8,6 @@ gates:
   - "decide syntax (lean: a `slice` intrinsic, not bash `${a[@]:s:l}`)"
   - "decide negative/from-end + out-of-range disposition (consistency with DD#60)"
   - "confirm taint propagation (element-wise, DD#61) and `args[1:]` as the shift replacement"
----
 
 # research: a general array-slice operation (post-beta)
 

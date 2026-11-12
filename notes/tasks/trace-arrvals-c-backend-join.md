@@ -1,4 +1,3 @@
----
 title: Trace the `arrvals` path through the C backend's join
 status: open
 priority: P2
@@ -7,7 +6,6 @@ depends: []
 gates:
   - "either a spec drives `arrjoin_separator` with a non-`arrjoin` operator, or the `arrvals` alternative is removed from `emit_c.rs`'s join dispatch"
   - "the answer is a trace through the passes, not an inference from a green sweep"
----
 
 # Is `arrvals` a second ghost in the C backend's join?
 

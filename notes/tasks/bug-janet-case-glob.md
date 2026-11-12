@@ -1,4 +1,3 @@
----
 title: "c/janet: case glob patterns (h*) not matched (only exact literals + bare *)"
 status: done
 priority: P2
@@ -7,7 +6,6 @@ depends: []
 gates:
   - "spec control_flow cf.c6 (`case $x in h*) …`) passes in janet (and c if also affected)"
   - "star-only globs (DD#39) in case patterns match in all backends"
----
 
 # BUG — janet case emits glob patterns as exact literals
 

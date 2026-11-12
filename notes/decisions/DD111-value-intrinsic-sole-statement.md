@@ -1,6 +1,5 @@
----
+title: "DD#111 — a value intrinsic is exempt inside `$( )` only when it *is* the substitution"
 status: accepted
----
 
 # DD#111 — a value intrinsic is exempt inside `$( )` only when it *is* the substitution
 

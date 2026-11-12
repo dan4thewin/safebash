@@ -1,4 +1,3 @@
----
 title: "Bug: in an if/elif/else body or an `&&`/`||` group, a latch read in the statement right after its write is a false SB5094 (`- cmd &` then `- wait $!`)"
 status: open
 priority: P2
@@ -9,7 +8,6 @@ gates:
   - "`$?` keeps DD55's first-expression rule in those bodies: every SB5012 row of `bug-sb5012-message-names-no-command` keeps its verdict"
   - "the controls keep their results"
   - "a spec pins each row in both backends; each fails on the pre-fix binary"
----
 
 ## Found
 

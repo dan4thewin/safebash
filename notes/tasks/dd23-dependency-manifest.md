@@ -3,7 +3,6 @@ status: done
 severity: feature
 depends: []
 gates: []
----
 
 After compile-time path resolution, emit a manifest listing every
 external binary the compiled script depends on:

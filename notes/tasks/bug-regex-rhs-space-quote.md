@@ -1,4 +1,3 @@
----
 title: "BUG — `[[ =~ ]]` regex RHS silently drops spaces and rejects quotes (no way to match a space)"
 status: done
 priority: P1
@@ -10,7 +9,6 @@ gates:
   - "`x='foo bar'; [[ $x =~ <space-form> ]]` prints yes; `x=foobar` prints no (no silent concatenation)"
   - "no silent miscompile: an unrepresentable/ambiguous space form is a clean compile error, never a wrong match"
   - "native + c + janet identical; dispatch `=~` arms consistent with boolean `=~`"
----
 
 # BUG — `=~` boolean RHS mangles whitespace and drops quotes
 

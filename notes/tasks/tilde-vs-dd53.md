@@ -1,4 +1,3 @@
----
 title: Tilde expansion produces SB5018-rejected $HOME
 status: done
 priority: P3
@@ -9,7 +8,6 @@ gates:
   - "literal `~` stays available (quoted '~'/\"~\", mid-word a~b — already works)"
   - "sash-convert: rewrite bash `~`/`~/path` → $(getenv HOME) (+ bless) so converted sash compiles"
   - "new e2e_tests case for `echo ~` (compiler error) and a sash-convert test for the rewrite"
----
 
 # Tilde expansion produces SB5018-rejected $HOME
 

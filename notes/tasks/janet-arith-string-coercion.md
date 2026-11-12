@@ -1,4 +1,3 @@
----
 title: "janet: coerce string variables to int in arithmetic ($((x+0)) where x is a string)"
 status: done
 priority: P3
@@ -8,7 +7,6 @@ gates:
   - "janet: `x=42; echo $((x + 0))` -> 42 (string var coerced to int in arith)"
   - "janet honors DD#72 string coercion: 0x/0o/0b prefixes + decimal with leading zeros ignored (x=010 -> 10)"
   - "then spec/arith_literals.sh nl.s1-s10 can drop their `in_modes native,c` guard"
----
 
 # janet doesn't coerce a string variable to int in arithmetic
 

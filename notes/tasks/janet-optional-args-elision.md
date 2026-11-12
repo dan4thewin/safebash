@@ -1,4 +1,3 @@
----
 title: "janet: optional args (`:-`/`:~`) and the `:~` elide operator (DD#84)"
 status: deferred
 deferred-by: DD104
@@ -8,7 +7,6 @@ depends: []
 gates:
   - "janet `${args[i]:-D}` / `${args[i]:~}` optional trailing args work (arity [min,max])"
   - "janet `:~` elides an empty token from an arg list / array literal (native/c parity)"
----
 
 ## What
 

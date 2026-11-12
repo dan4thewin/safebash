@@ -1,4 +1,3 @@
----
 title: "bug: `for v in $(getcwd)` compiles, then aborts the program with exit 127"
 status: done
 priority: P1
@@ -10,7 +9,6 @@ gates:
   - "the same holds in the C backend, not only native"
   - "a for-in source that is a single scalar is SB5009 whatever spelling carries it, quoted or not"
   - "`for v in $(echo a b c)`, `$(argv)`, `$(keys A)`, `@g`, globs and literal lists still work"
----
 
 ## What
 

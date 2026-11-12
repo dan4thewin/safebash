@@ -1,4 +1,3 @@
----
 title: BUG — case patterns ? and [...] silently never match (validator + runtime gap)
 status: done
 priority: P0
@@ -8,7 +7,6 @@ gates:
   - case patterns with ? or [...] either (a) get SB5006 at compile time, or (b) match correctly at runtime
   - control_flow.sh cf.c7 and cf.c8 pass under all 3 modes
   - SB5006 documentation updated to clarify which contexts it covers
----
 
 # BUG — case patterns ? and [...] silently produce no-match
 

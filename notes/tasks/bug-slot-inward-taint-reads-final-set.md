@@ -1,11 +1,9 @@
----
 title: "Taint bypass: inward slot taint consults the FINAL top-level set, so a later attest cleans an earlier read"
 status: done
 priority: P1
 kind: bug
 depends: []
 gates: []
----
 
 # A `attest` written *after* a call retroactively cleans the read inside it
 

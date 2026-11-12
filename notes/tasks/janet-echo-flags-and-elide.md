@@ -1,4 +1,3 @@
----
 title: "janet: builtin echo lacks -n flag handling and :~/:! elide"
 status: deferred
 deferred-by: DD104
@@ -8,7 +7,6 @@ depends: []
 gates:
   - "janet: `echo -n X` suppresses the trailing newline and does NOT print a literal `-n`"
   - "janet: `echo a ${x:~} b` with empty x prints `a b` (the elide arg contributes nothing — no value, no separator), matching native/c"
----
 
 ## Found
 

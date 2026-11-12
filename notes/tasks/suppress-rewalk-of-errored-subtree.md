@@ -1,4 +1,3 @@
----
 title: "Should a pass skip re-walking a subtree it has already reported an error in?"
 status: open
 priority: P3
@@ -6,7 +5,6 @@ kind: design
 depends: []
 gates:
   - "DG decides whether this is a policy or a non-problem"
----
 
 ## Where it came from
 

@@ -1,4 +1,3 @@
----
 title: "bug: SB5012 is blind to arithmetic status reads"
 status: done
 priority: P2
@@ -10,7 +9,6 @@ gates:
   - "`$(( a[(status)] ))` likewise: a subscript index is not a blind spot"
   - "one `$(( … ))` holding several reads reports one diagnostic, not one per read"
   - "a preceding command still makes the arithmetic read legal"
----
 
 ## What
 

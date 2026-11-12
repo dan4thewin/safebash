@@ -1,4 +1,3 @@
----
 title: "The specification document (built from the DDs + spec work)"
 status: deferred
 priority: P3
@@ -9,7 +8,6 @@ gates:
   - "DECIDE: generated/derived vs authored — and what mechanically checks it against the DDs and specs"
   - "Every normative statement traces to a DD and to at least one spec test; the inverse query (clauses with no test) is answerable"
   - "SUBSET.md's failure mode cannot recur: no claim survives in the document that the specs contradict"
----
 
 # The specification document
 

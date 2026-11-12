@@ -1,4 +1,3 @@
----
 title: "BUG — arithmetic integer literal > i64::MAX silently parses as 0"
 status: done
 priority: P2
@@ -10,7 +9,6 @@ gates:
   - "[DONE] non-arith `int x=NNN` out-of-range → SB4026 (validate.rs); i64::MIN still works"
   - "[DONE] native + c consistent (janet skips i64::MAX/MIN boundary values — double rounds)"
   - "[SPLIT OFF] based literals `base#digits` — separately broken (the `#` is eaten as a comment before the scanner); deferred to bug-arith-based-literal-hash-comment"
----
 
 # RESOLVED 2026-06-27 (Policy A, DG)
 

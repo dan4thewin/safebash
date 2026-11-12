@@ -1,4 +1,4 @@
-title: DD#93 — attest: declassification ergonomics (rename + shorthands + shape tests)
+title: "DD#93 — attest: declassification ergonomics (rename + shorthands + shape tests)"
 status: accepted
 
 Settled with DG (2026-09-06). A bundle of ergonomic improvements to the taint

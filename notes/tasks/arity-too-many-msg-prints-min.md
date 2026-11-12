@@ -1,4 +1,3 @@
----
 title: "`arity_too_many_msg` prints `min` where it means `max`"
 status: done
 priority: P4
@@ -6,7 +5,6 @@ kind: bug
 depends: []
 gates:
   - "a too-many-arguments diagnostic names the maximum, not the minimum"
----
 
 # What
 

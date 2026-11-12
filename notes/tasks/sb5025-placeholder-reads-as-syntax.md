@@ -1,4 +1,3 @@
----
 title: "SB5025 renders placeholder `[N]` as code, inviting a literal reading"
 status: done
 completed: 2026-09-28
@@ -8,7 +7,6 @@ depends: []
 gates:
   - "no diagnostic renders metavariable placeholders inside backticks where they could be mistaken for literal syntax"
   - "`argv [2] a` (literal brackets) is rejected at compile time rather than ICEing at runtime"
----
 
 ## Symptom
 

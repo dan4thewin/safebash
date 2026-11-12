@@ -75,6 +75,6 @@ No harness exists: no `sash/fuzz/`, and no `cargo-fuzz` / `proptest` /
 The filing's central argument — that the dangerous class is
 **accepted-but-divergent**, not panics or taint bypasses — was independently
 confirmed this session. `[[ -N f ]]` compiles cleanly and returns the wrong
-answer versus bash (`bug-file-test-N-diverges-from-bash`), found by exactly
+answer versus bash (`bug-file-test-n-diverges-from-bash`), found by exactly
 the differential-vs-bash method this task proposes, run by hand over one
 operator family. A crash-only or taint-only fuzzer would not have flagged it.

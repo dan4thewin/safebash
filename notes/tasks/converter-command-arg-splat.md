@@ -1,4 +1,3 @@
----
 title: sash-convert — command-arg $@ has no clean sash-native target
 status: done
 superseded-by: converter-positional-use-needs-bless
@@ -8,7 +7,6 @@ depends: []
 gates:
   - top-level `cmd "$@"` → a converter error/MANUAL marker (not non-compiling output)
   - conv.x1 spec test asserts the loud-failure behaviour
----
 
 **SUPERSEDED by [converter-positional-use-needs-bless](converter-positional-use-needs-bless.md)**
 — the gap is broader than the `$@` command-arg splat: *every* top-level

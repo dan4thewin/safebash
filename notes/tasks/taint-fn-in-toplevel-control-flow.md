@@ -1,4 +1,3 @@
----
 title: "A function defined inside top-level control flow keeps the definition-point taint walk"
 status: done
 priority: P2
@@ -7,7 +6,6 @@ depends: []
 gates:
   - "a function defined inside a top-level `if`/`while`/`for` is taint-checked against the completed top-level tainted set, like every other function"
   - "no duplicate diagnostics for such a function"
----
 
 ## Context
 

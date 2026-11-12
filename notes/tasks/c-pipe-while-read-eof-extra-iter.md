@@ -1,4 +1,3 @@
----
 title: "c backend: for-in-cmdsubst (pipe-while-read) does an extra empty iteration at EOF"
 status: done
 priority: P3
@@ -7,7 +6,6 @@ depends: []
 gates:
   - "`for x in $(echo a b c); do bless x [[ -n $x ]]; echo \"$x\"; done` in the c backend produces NO `bless: x failed the gate` on stderr (matches native)"
   - "the pipe-while-read loop stops at EOF without a trailing empty-`$x` iteration"
----
 
 ## Symptom
 

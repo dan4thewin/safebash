@@ -1,4 +1,3 @@
----
 title: "implement getpid-class internal builtins (getpid/getppid/getcwd/epochseconds/random/argc); $$ = sugar for getpid"
 status: done
 priority: P3
@@ -9,7 +8,6 @@ gates:
   - "$$ is sugar for getpid (same value, clean)"
   - "getcwd is a builtin (not the external /usr/bin/pwd, which would be tainted)"
   - "native + c + janet; spec tests; no net regression"
----
 
 # Implement the getpid-class internal builtins
 

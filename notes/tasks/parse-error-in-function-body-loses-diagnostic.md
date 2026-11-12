@@ -1,9 +1,8 @@
----
+title: "A parse error inside a function body loses its own diagnostic"
 status: open
 priority: P2
 depends:
 gates:
----
 
 # A parse error inside a function body loses its own diagnostic
 

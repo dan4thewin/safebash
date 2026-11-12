@@ -1,4 +1,3 @@
----
 title: Add C oracle — emit_c that consumes SSA
 status: done
 priority: P1
@@ -13,7 +12,6 @@ gates:
   - all smoke tests pass: gcc-compiled C output matches bash output
   - design doc / DD written if shape stabilizes
   - cross-check with Cranelift output works (differential oracle)
----
 
 # Add C oracle
 

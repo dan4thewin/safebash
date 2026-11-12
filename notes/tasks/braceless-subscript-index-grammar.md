@@ -1,4 +1,3 @@
----
 title: "braceless `$a[K]` accepts a narrower index grammar than braced `${a[K]}` — and fails as SB5064"
 status: done
 priority: P2
@@ -10,7 +9,6 @@ gates:
   - "`echo $a[$i]` and `echo \"$a[$i]\"` agree"
   - "`str s=z; echo $s[$(( 0 ))]` is SB5068, like `$s[1]` and `$s[$i]` already are"
   - "specs pin every row of the matrix below in whichever direction DG chooses"
----
 
 # braceless `$a[K]` has a narrower index grammar than `${a[K]}`
 

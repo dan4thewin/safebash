@@ -1,4 +1,3 @@
----
 title: "Sweep for other private duplicates of shared walkers"
 status: next
 priority: P2
@@ -8,7 +7,6 @@ gates:
   - "every module-private function whose body duplicates a `crate::ir` / `crate::ssa` walker is listed"
   - "each is either deleted in favour of the shared one, or its divergence is justified in writing"
   - "any behaviour difference found is treated as a bug, not a style issue"
----
 
 # A fix reached the original and not the copy — twice now
 

@@ -1,4 +1,3 @@
----
 title: "bug: regex `^`/`$` anchor at lines, and a global match re-anchors after every match"
 status: open
 priority: P1
@@ -13,7 +12,6 @@ gates:
   - "a non-global `${z:s/^c/X/}` and a `.`/`[^…]` across a newline keep today's answers (neither matches a newline)"
   - "sash.1 says `[^…]` never matches a newline, beside the `.` sentence"
   - "DD39 addendum: the first local change to the vendored matcher"
----
 
 Two bugs in how the runtime uses the vendored Plan 9 matcher. The first is
 P1 because it lets a value past an attest gate. Neither is fixed on the

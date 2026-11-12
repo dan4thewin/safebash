@@ -1,4 +1,3 @@
----
 title: "DD#75 §5 — function args become the implicit `args` array (Model B); $1/$@/$# are operator sugar; $* removed"
 status: done
 priority: P3
@@ -10,7 +9,6 @@ gates:
   - "$@ → @args (splat); $# → ${#args} (= $(len args) = n); no bare $args scalar; `args` is reserved inside function bodies"
   - "$* is removed → $(join args); $0 stays the program name ($(arg 0)), not part of args"
   - "0 native/c/janet spec regressions; specs pin $1/$@/$# equivalences and the $* removal"
----
 
 # DD#75 §5 — the `args` model (Model B)
 

@@ -1,11 +1,9 @@
----
 title: "Taint bypass: an `attest` inside conditional control flow cleans the name for everything after it"
 status: done
 priority: P1
 kind: bug
 depends: []
 gates: []
----
 
 # The taint set is mutated linearly, with no join at control-flow merges
 

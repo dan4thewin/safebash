@@ -1,11 +1,9 @@
----
 title: "SB5035 (`$(random)` in a `:-` default) justifies itself by eagerness that no longer applies"
 status: resolved
 priority: P3
 kind: question
 depends: []
 gates: []
----
 
 ## The premise, and why it may have expired
 

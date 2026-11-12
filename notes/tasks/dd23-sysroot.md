@@ -3,7 +3,6 @@ status: done
 severity: feature
 depends: []
 gates: []
----
 
 `sash --sysroot=/mnt/target script.sh` resolves bare command
 names against the target filesystem instead of the build host.

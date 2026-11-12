@@ -1,4 +1,4 @@
-title: bug: int-function boolean-context check covers 1 of DD#74's 6 contexts
+title: "bug: int-function boolean-context check covers 1 of DD#74's 6 contexts"
 status: done
 priority: P2
 kind: bug

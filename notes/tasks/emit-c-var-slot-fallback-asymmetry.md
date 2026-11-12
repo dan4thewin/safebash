@@ -1,4 +1,3 @@
----
 title: emit_c's var-slot fallback is wider than native's, and it is live
 status: ready
 priority: P2
@@ -8,7 +7,6 @@ gates:
   - explain all 20 exact-version misses in load_var_or_empty_c
   - decide per tier: legitimate, or a missing entry in the emit_c type map
   - the two backends make the same claim about a missing slot
----
 
 # emit_c's var-slot fallback is wider than native's, and it is live
 

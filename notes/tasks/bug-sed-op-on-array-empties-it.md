@@ -1,4 +1,3 @@
----
 title: "bug: `a =~ s/…/…/` on an ARRAY silently empties it; `gsub @a …` silently joins the splat"
 status: done
 priority: P1
@@ -8,7 +7,6 @@ gates:
   - "`array a=(x:1 y:2); a =~ s/:/-/g` is REJECTED with an SB code — no silent `len 0`, no segfault"
   - "`$(gsub @a \":\" \"-\")` is likewise rejected — it must not silently behave as `$(gsub \"$(join a)\" …)`"
   - "a spec pins the rejection for both the statement (`=~`) and function (`$(gsub …)`) forms"
----
 
 ## Found
 

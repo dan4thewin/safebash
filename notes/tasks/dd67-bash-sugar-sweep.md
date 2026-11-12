@@ -1,4 +1,3 @@
----
 title: "DD#67 sweep: re-add name() func sugar, the convert switch, review rejected bash forms"
 status: done
 priority: P3
@@ -10,7 +9,6 @@ gates:
   - "[DONE 45648a9] single-bracket `[` is an ordinary literal char (no longer starts a test)"
   - "[DONE 2026-06-21] keep/drop table ratified by DG"
   - "[SPLIT OUT -> sash-convert-canonicalize-mode] §3 sash-convert canonicalize mode; dd68 brace forms now exist, so it is unblocked Tier-6 convert work tracked in its own task"
----
 
 # DONE 2026-08-10: compiler sugar complete; §3 split to its own Tier-6 task
 

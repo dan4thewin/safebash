@@ -1,4 +1,3 @@
----
 title: argv/arg/argc trio — codegen + runtime phase
 status: done
 priority: P0
@@ -11,7 +10,6 @@ gates:
   - splat path unifies with the existing $@ in-function path where natural
   - av.t1..t7, av.s1..s4, cf.f11..f14 pass under native and c backends
   - no regressions in existing 291 native spec tests
----
 
 # argv/arg/argc trio — codegen + runtime phase
 

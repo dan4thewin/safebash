@@ -1,4 +1,3 @@
----
 title: "BUG — janet backend: integer arithmetic does not trap i64 overflow (DD#25)"
 status: done
 priority: P2
@@ -6,7 +5,6 @@ kind: bug
 depends: []
 gates:
   - "RESOLVED by design (2026-06-21): janet uses idiomatic numbers; native/c are the arithmetic reference. Overflow specs 25.1-25.3 stay in_modes native,c."
----
 
 # BUG — janet `(( ))` integer overflow does not abort
 

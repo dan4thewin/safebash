@@ -1,4 +1,3 @@
----
 title: argv/arg/argc trio — validator phase
 status: done
 priority: P0
@@ -13,7 +12,6 @@ gates:
   - mixed-taint for-in rejected (av.m1..m3 pass)
   - SB5020 fires for all bare uses of $(arg)/$(argv) (av.x* pass)
   - no regressions in existing 291 native spec tests
----
 
 # argv/arg/argc trio — validator phase
 

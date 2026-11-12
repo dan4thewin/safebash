@@ -1,4 +1,3 @@
----
 title: "BUG: a parse error inside a block also reports SB4072 at the block's closing `}`"
 status: open
 priority: P4
@@ -10,7 +9,6 @@ gates:
   - "specs pin v1, w2 and cs1 in both backends, asserting that SB4072 is absent"
   - "an error before a block's `{` (h1, c13, c22, r8) reports nothing at that block's `}`; cnd.22-cnd.24 and a genuine duplicate-clause case pin recovery"
   - "coordinate skw.20 with q-clause-on-next-line: m4/r7 are now legal under DD68, and their acceptance must not count as proof of this recovery fix"
----
 
 ## Clause-policy coordination (DG, 2026-11-09)
 

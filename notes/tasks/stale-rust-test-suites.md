@@ -1,10 +1,8 @@
----
 title: "Stale Rust test suites: sash-rt-tests broken + cargo core suites use old syntax"
 status: done
 superseded-by: audit-rust-test-suites
 priority: P3
 kind: chore
----
 
 > **SUPERSEDED 2026-07-06** — consolidated into
 > `notes/tasks/audit-rust-test-suites.md` (the canonical Rust-test-rot

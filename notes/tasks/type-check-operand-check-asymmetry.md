@@ -1,4 +1,3 @@
----
 title: "`check_command` and `check_subscript_in_stmt` disagree on which operand checks run"
 status: next
 priority: P3
@@ -8,7 +7,6 @@ gates:
   - "the difference is explained: either a documented reason, or a bug with a probe that demonstrates it"
   - "if a gap: a spec pins each operand check at each site"
   - "if deliberate: a comment at both sites naming why the sets differ"
----
 
 # Two type-check entry points, two different check sets
 

@@ -1,4 +1,3 @@
----
 title: Eliminate ICE panic arms by pushing invariants into the type system
 status: done
 depends: []
@@ -7,7 +6,6 @@ gates:
   - each refactor lands in its own commit with all gates green
   - remaining sites carry a comment naming the upstream pass that
     establishes the invariant
----
 
 # Eliminate ICE panic arms by pushing invariants into the type system
 

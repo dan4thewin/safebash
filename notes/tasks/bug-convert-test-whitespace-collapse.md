@@ -1,4 +1,3 @@
----
 title: "BUG: sash-convert collapses whitespace inside a quoted test operand, and splits the operand at `&&` / `||`"
 status: open
 priority: P2
@@ -8,7 +7,6 @@ gates:
   - "every program under What converts to one that prints what bash prints (w8 prints `nonempty`)"
   - "a converted test keeps the exact bytes of every operand it does not rewrite: blank runs, tabs, newlines, and an `&&`, `||`, `=` or `!` inside quotes"
   - "specs in spec/convert.sh pin w5, w7 and w8; the controls w4 and w9 keep converting as they do today"
----
 
 ## What
 

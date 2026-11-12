@@ -1,4 +1,3 @@
----
 title: "janet: `read -a` produces one element too many"
 status: done
 priority: P2
@@ -7,7 +6,6 @@ depends: []
 gates:
   - "janet: `array a=(); echo \"p q\" | read -a a; echo $(len a)` prints `2` (native/c print 2; janet prints 3)"
   - "spec `taint.sh` tl.8 passes in janet mode (currently gated native,c)"
----
 
 ## Found
 

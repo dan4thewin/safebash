@@ -1,4 +1,3 @@
----
 title: "A `-` never prefixes a compound (`{`, `if`, `while`, `until`, `for`, `case`)"
 status: open
 priority: P3
@@ -8,7 +7,6 @@ gates:
   - "`dash_prefixes_command` (parser.rs) rejects a `-` before a compound, with a diagnostic that says to put the `-` on the command inside, in both backends"
   - "the six spec lines below are rewritten or re-pinned to the new diagnostic"
   - "DD#55 and DD#70 say a `-` prefixes one command"
----
 
 DG, 2026-10-30 (`q-suppression-on-user-functions`, "Rulings, 2026-10-30"):
 "suppression should never apply to a construct like for or while". This

@@ -1,4 +1,3 @@
----
 title: "bug: a function's name escapes binding and read checks, including arithmetic len"
 status: open
 priority: P1
@@ -10,7 +9,6 @@ gates:
   - "a bare `f` in `$(( ))` still calls an int function f, and `(g)` still passes the read check"
   - "B80: `(len f)` where f is only a function gets a located source diagnostic in both modes, never a native ICE or a C garbage value; ordinary `$(len f)` remains rejected"
   - "specs in both modes; the SB census stays clean in both directions"
----
 
 Found 2026-10-30 in F6 unit A (journal 547), while checking a probe. The
 binary before F6 gives the same results, so it is pre-existing. F6 did not

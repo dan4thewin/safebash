@@ -1,4 +1,3 @@
----
 title: "`mk gate` does not automate the negative control (new specs red on the pre-change binary) or the running of reversion stubs"
 status: open
 priority: P3
@@ -8,7 +7,6 @@ gates:
   - "one command runs the last gate sweep's first-ever ids against a binary built from a named base revision, in both modes, and lists each id that passes there"
   - "that command is shown to fail: a spec that passes on both binaries appears in its list"
   - "AGENTS.md's `mk gate` paragraph names the command"
----
 
 `mk gate` (journal 540) automates every spec.db check in AGENTS.md's Spec
 tests section except two, and both are still done by hand each family:

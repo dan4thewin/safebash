@@ -1,4 +1,4 @@
----
+title: "Counted repetition of a group: reject (now) or support?"
 status: blocked
 priority: P3
 depends:
@@ -6,7 +6,6 @@ gates: DG decides whether `(...)` may carry a counted repetition
 note: the rejection is shipped, specced (39.28/39.29) and documented in
   docs/sash.1 as an engine limitation (DG, 2026-09-14). Only "should it be
   *supported*" is still open, and nothing is blocked on it.
----
 
 # Counted repetition of a group: reject (now) or support?
 

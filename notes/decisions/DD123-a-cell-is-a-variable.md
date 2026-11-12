@@ -1,7 +1,5 @@
----
-title: DD#123 — a cell is a variable: every spelling reads, every spelling disposes, every spelling owes the crossing
+title: "DD#123 — a cell is a variable: every spelling reads, every spelling disposes, every spelling owes the crossing"
 status: accepted
----
 
 # DD#123 — a cell is a variable
 

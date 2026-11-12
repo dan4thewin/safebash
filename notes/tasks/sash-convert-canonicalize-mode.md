@@ -1,4 +1,3 @@
----
 title: "sash-convert canonicalize mode: rewrite all sugar -> native-only forms"
 status: ready
 priority: P3
@@ -8,7 +7,6 @@ gates:
   - "sash-convert mode that rewrites ALL accepted sugar to native-only: then…fi / do…done -> { }, name()/function name -> fn name, flat `cmd` -> $(cmd)"
   - "compiler default stays PRESERVE (accepts either form); only the converter canonicalizes"
   - "spec/convert.sh cases for each rewrite; converted output compiles + runs byte-identical to the sugar form"
----
 
 # sash-convert canonicalize mode (DD#67 §3)
 

@@ -1,6 +1,5 @@
----
+title: "A `for` variable could take a reserved collection name"
 status: done
----
 
 # A `for` variable could take a reserved collection name
 

@@ -1,4 +1,3 @@
----
 title: "Bug: a `[[ … { } ]]` dispatch is accepted as an `elif` condition and as a `&&`/`||` right operand"
 status: done
 priority: P2
@@ -9,7 +8,6 @@ gates:
   - "a dispatch as the right operand of `&&` or `||`, as a statement or inside an `if`/`while` condition, is SB4028"
   - "one predicate decides every position DD#66 names; no boolean position is checked by a private test"
   - "specs pin each position in both backends; each fails on the pre-fix binary"
----
 
 ## What
 

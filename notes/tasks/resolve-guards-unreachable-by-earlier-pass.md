@@ -1,9 +1,8 @@
----
+title: "`resolve.rs` guards made unreachable by `run_structural_checks`"
 status: open
 priority: P4
 depends: none
 gates: none
----
 
 # `resolve.rs` guards made unreachable by `run_structural_checks`
 

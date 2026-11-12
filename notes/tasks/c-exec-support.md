@@ -1,4 +1,3 @@
----
 title: "c backend: emit the `exec` builtin (currently native-only)"
 status: done
 priority: P2
@@ -10,7 +9,6 @@ gates:
   - "c/janet backend: `close N` closes the fd (native works; c no-ops the TODO, janet mis-emits it as an external `os/execute [\"close\"]`)"
   - "janet backend: either implement exec (if the runtime allows execve/dup2) or emit a clean compile-time 'exec unsupported in janet' rather than a runtime error"
   - "spec/exec.sh un-guarded from native-only for whichever backends gain support"
----
 
 ## Context
 

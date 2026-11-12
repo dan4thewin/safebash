@@ -1,4 +1,3 @@
----
 title: "Int-type the `${#…}` length operator: `int n=${#s}` and `int n=${#a[@]}`"
 status: done
 superseded_by: dd75-len-polymorphic (DD#75 §2)
@@ -10,7 +9,6 @@ gates:
   - "`int n=${#a[@]}` (array cardinality) compiles — int-typed"
   - "does NOT mis-type the prefix-strip `${var#pat}` (operator `#` WITH an operand) as int — only the length form (no operand / `[@]`) is int"
   - "0 native spec regressions; add specs (types.sh) pinning `int n=${#s}` and `int n=${#a[@]}`"
----
 
 # `${#…}` length is typed string, so `int n=${#s}` is wrongly rejected
 

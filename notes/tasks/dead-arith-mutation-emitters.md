@@ -1,4 +1,3 @@
----
 title: "Trace the arith-mutation emitters that survive DD#109 uncovered"
 status: done
 priority: P3
@@ -6,7 +5,6 @@ kind: cleanup
 depends: []
 gates:
   - "each of ar_incdec / ar_subscript_assign / hoist_mutation_node is either spec-covered or removed/ICEd"
----
 
 # The arith-mutation cluster: reachable, or lowered away in the parser?
 

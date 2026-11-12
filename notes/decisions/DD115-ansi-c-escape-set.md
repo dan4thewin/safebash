@@ -1,6 +1,5 @@
----
+title: "DD#115 — the `$'…'` escape set"
 status: accepted
----
 
 # DD#115 — the `$'…'` escape set
 

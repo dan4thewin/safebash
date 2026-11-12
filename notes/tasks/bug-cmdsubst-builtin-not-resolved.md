@@ -1,4 +1,3 @@
----
 title: "bug: $(printf …) and other abs-path builtins not resolved inside command substitution → bare command passed to sash_exec"
 status: done
 priority: P3
@@ -8,7 +7,6 @@ gates:
   - "$(printf '%s' x) resolves printf to its absolute path (like a direct `printf` command does) instead of passing the bare name to sash_exec"
   - "the fix matches direct-command resolution (DD#23 resolve_pipeline_command / BuiltinCmd path-resolution) so cmdsubst and direct commands agree"
   - "spec test: a command substitution capturing an abs-path builtin (printf) produces the expected output in native + c"
----
 
 # `$(printf …)` passes a bare command name to sash_exec
 

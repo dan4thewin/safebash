@@ -1,4 +1,3 @@
----
 title: "docs: tail-recursion example + function/args/recursion drift (SUBSET/GUIDE)"
 status: done
 priority: P3
@@ -9,7 +8,6 @@ gates:
   - "MOOT: SUBSET.md was removed 2026-08-29 — it had drifted from the DDs. Re-measured: GUIDE.md already lists `shift` correctly (as an unimplemented builtin getting SB5011), and neither surviving doc mentions `$*`"
   - "MOOT as written — `$# ≡ ${#args}` is wrong twice over (see below). GUIDE.md and sash.1 now carry the recursion model; the args model is covered by the DD#46/DD#75 corrections made in journal 300"
   - "no doc-only test breakage (docs aren't linted, but keep examples compile-clean if pasted)"
----
 
 # docs: tail recursion + function/args/recursion drift
 

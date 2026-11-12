@@ -1,4 +1,3 @@
----
 title: argv/arg/argc trio — sash-convert updates
 status: done
 priority: P0
@@ -12,7 +11,6 @@ gates:
   - quoted array splats `"${arr[@]}"` → bare `@arr`
   - spec/convert.sh extended with conv.* test cases for each form
   - no regressions in existing convert tests
----
 
 # argv/arg/argc trio — sash-convert updates
 

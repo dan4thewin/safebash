@@ -1,4 +1,3 @@
----
 title: "join: support a dynamic (non-literal) separator"
 status: ready
 priority: P3
@@ -9,7 +8,6 @@ gates:
   - "`$(join a \"$(cmd)\")` likewise"
   - "`$(join a)` still means a space; `$(join a \"\")` still concatenates"
   - "SB5074 is retired and its `jsep.1`-`jsep.3` specs are rewritten as positive cases"
----
 
 # `join` with a dynamic separator
 

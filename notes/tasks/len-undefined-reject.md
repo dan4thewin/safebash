@@ -1,4 +1,3 @@
----
 title: "len <undefined> → compile error (DD#75 §2), safely (needs loop-var/param tracking)"
 status: done
 priority: P3
@@ -8,7 +7,6 @@ gates:
   - "`len nope` (a name declared nowhere — not a collection, scalar, loop var, or param) → compile error, not a silent 0"
   - "no false positive: `len s` (string), `len a` (array), `len <loopvar>` (`for e in @a; do … $(len e)`), `len <param>` all stay OK"
   - "0 native/c/janet spec regressions"
----
 
 # `len <undefined>` hard reject — the DD#75 §2 remainder
 

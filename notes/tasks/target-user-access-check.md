@@ -1,4 +1,3 @@
----
 title: "`--target-user` — check command paths against a specific user's access, not just any execute bit"
 status: next
 priority: P3
@@ -7,7 +6,6 @@ depends: []
 gates:
   - "a mode-0700 root-owned program is rejected for a non-root target user"
   - "the coarse behaviour is unchanged when the flag is absent"
----
 
 ## What
 

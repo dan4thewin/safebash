@@ -1,7 +1,10 @@
 title: DD#49 — bless test anti-tautology check
 status: done
 depends: []
-gates: [24.10, 24.11, 24.16]
+gates:
+  - 24.10
+  - 24.11
+  - 24.16
   - tests
 example: check_taint (sash/src/taint.rs)
 index_keyword: bless

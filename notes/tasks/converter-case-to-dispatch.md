@@ -1,4 +1,3 @@
----
 title: "sash-convert: mechanically rewrite bash `case…esac` → `[[ ]]` dispatch"
 status: ready
 priority: P3
@@ -9,7 +8,6 @@ gates:
   - "ANY arm needing REGEX SYNTHESIS (a glob metachar `*`/`?`/`[…]`) → do NOT auto-rewrite: emit the best-effort anchored-`=~` dispatch (exact→`^a$`, alt→`^(a|b)$`, `*.sh`→`^.*\\.sh$`) as a `# sash-convert:` COMMENT and leave the original `case` in place — it fails to compile (SB4029), forcing the human to review the converter-written regex"
   - "`;&`/`;;&` fall-through arms get the SAME conservative treatment (comment + original kept): dispatch has no fall-through, semantics changed"
   - "MANUAL annotation retained only for genuinely unparseable input"
----
 
 ## Policy resolved (2026-07-06) — split by risk (DG)
 

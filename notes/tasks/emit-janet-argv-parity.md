@@ -1,4 +1,3 @@
----
 title: emit_janet — argv/arg/argc backend parity (DD#60)
 status: done
 priority: P2
@@ -7,7 +6,6 @@ depends: []
 gates:
   - "[DONE] $(argc), $(arg N), $(argv)/$(argv N) for-in, array a=$(argv N) work in --janet"
   - "[DONE] argv.sh passes fully under SASH_MODE=janet"
----
 
 # RESOLVED 2026-07-03
 

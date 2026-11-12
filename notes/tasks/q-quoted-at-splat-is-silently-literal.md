@@ -1,11 +1,9 @@
----
 title: "`\"@g\"` is silently literal text, while every other quoted-splat spelling is an error"
 status: done
 priority: P3
 kind: question
 depends: []
 gates: []
----
 
 # Retraction first
 

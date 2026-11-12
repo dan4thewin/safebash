@@ -1,4 +1,3 @@
----
 title: "bug: splatting a non-collection (`@s`) segfaults"
 status: done
 priority: P1
@@ -8,7 +7,6 @@ gates:
   - "`str s=hi; for x in @s { … }` is a COMPILE error naming the type mistake, not a segfault"
   - "`@nosuch` is a compile error, not a codegen ICE"
   - "array and map splats still traverse — no over-rejection"
----
 
 ## What
 

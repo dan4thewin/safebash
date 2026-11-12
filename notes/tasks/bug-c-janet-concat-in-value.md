@@ -1,4 +1,3 @@
----
 title: "BUG — c/janet backends don't lower a Concat value in non-echo position (assignments, subscript-assign)"
 status: done
 priority: P2
@@ -8,7 +7,6 @@ gates:
   - "c and janet lower SsaValue::Concat wherever it appears (assignment RHS, subscript-assign value), not only as an echo/command arg"
   - "`b=world; a=hello$b; echo $a` -> `helloworld` in c and janet"
   - "drop the in_modes native guard on spec types.sh 33.11-33.13 (subscript append)"
----
 
 # BUG — c/janet Concat-in-value not lowered
 

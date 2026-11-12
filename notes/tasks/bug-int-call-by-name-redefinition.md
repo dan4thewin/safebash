@@ -1,4 +1,3 @@
----
 title: "bug: an int call is chosen by name, so a redefinition miscompiles it"
 status: open
 priority: P1
@@ -8,7 +7,6 @@ gates:
   - "i1-i3 below reject at the duplicate source definition under DD86, in both modes"
   - "the duplicate refusal, not an unrelated result/type error, is pinned by focused specs and negative/reversion controls"
   - "valid single-definition captures and integer calls retain their results and output routing"
----
 
 ## Decision, 2026-11-06
 

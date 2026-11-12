@@ -1,4 +1,3 @@
----
 title: "remove dead sash_strip_prefix/sash_strip_suffix runtime + externs"
 status: done
 priority: P3
@@ -9,7 +8,6 @@ gates:
   - "ExternFuncs.strip_prefix / .strip_suffix fields + their setup.rs declarations removed"
   - "emit_c.rs extern C prototypes for sash_strip_prefix/suffix removed"
   - "sash-rt rebuilds; native + c spec modes green (0 regressions)"
----
 
 # remove the now-dead strip runtime functions
 

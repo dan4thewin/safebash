@@ -1,4 +1,3 @@
----
 title: "sash-convert: emit a CHECK comment on bash `true`/`false`"
 status: done
 priority: P3
@@ -8,7 +7,6 @@ gates:
   - "bash `true` / `false` in converted output gets a `# CHECK:` hint noting sash resolves them to /usr/bin/true|false (externalized), so a bare `false` aborts (DD#55) and `true`/`false` are no longer non-forking builtins"
   - "the hint fires on statement-position `true`/`false` (conditions, bodies, bare); does not fire inside strings/comments"
   - "0 converter-spec regressions"
----
 
 # sash-convert CHECK hint for `true` / `false`
 

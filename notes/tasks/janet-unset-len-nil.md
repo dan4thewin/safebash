@@ -1,4 +1,3 @@
----
 title: "janet backend: $(len a) after unset crashes on nil"
 status: deferred
 deferred-by: DD104
@@ -8,7 +7,6 @@ depends: []
 gates:
   - "janet `array a=(...); unset a; echo $(len a)` prints 0 (matches native/c), not a `(length nil)` crash"
   - "spec types.sh 30.11 un-guarded back to all three modes (drop the native,c guard)"
----
 
 ## Symptom
 

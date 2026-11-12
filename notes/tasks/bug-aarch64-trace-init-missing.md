@@ -1,9 +1,8 @@
----
+title: "aarch64 `_start` never calls `sash_trace_init`, so `--trace` is dead there"
 status: done
 priority: P3
 kind: bug
 depends: []
----
 
 # aarch64 `_start` never calls `sash_trace_init`, so `--trace` is dead there
 

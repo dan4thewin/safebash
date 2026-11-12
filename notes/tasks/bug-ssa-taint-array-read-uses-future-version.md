@@ -1,4 +1,3 @@
----
 title: "SSA array reads use a future version's taint"
 status: done
 priority: P2
@@ -8,7 +7,6 @@ gates:
   - "The reproducer compiles in native and C modes and prints clean then dirty"
   - "sflow.19 replaces sflow.5 with an acceptance assertion over the same source"
   - "Earlier array reads cannot be cleaned by a later attest or overwrite in the backstop"
----
 
 Fixed for ordinary collection operands in journal 568. Cell reads, splats,
 table iteration and map-fill sources retain their reaching `VarRef` instead

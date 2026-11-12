@@ -1,11 +1,9 @@
----
 title: "EFFORT: janet structural parse-map (--janet-map) — staged rewrite"
 status: deferred
 priority: P2
 kind: effort
 depends: []
 supersedes-strategy: janet-rt-primitive-library
----
 
 # janet structural parse-map (DD#15 amendment, 2026-08-20)
 

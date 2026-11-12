@@ -1,4 +1,3 @@
----
 title: "record: the map 2-binder `attest` is validation-only now (its taint role is dead)"
 status: done
 completed: 2026-09-12
@@ -8,7 +7,6 @@ depends: []
 gates:
   - "DD#93 (and/or DD#99) records that `attest k v in m` no longer has a taint role"
   - "no behaviour change — DG decided 2026-09-10 to keep the form"
----
 
 > **DONE 2026-09-12** — recorded in `notes/decisions/DD93-attest-ergonomics.md`
 > under "The map 2-binder form is validation-only". All four routes were

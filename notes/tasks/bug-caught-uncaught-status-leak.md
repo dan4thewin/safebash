@@ -1,40 +1,16 @@
----
 title: BUG — caught/uncaught $? leak from if/while/for/case (FIXED)
 status: done
 priority: P0
 kind: bug
 depends: []
 resolved: 2026-06-11
-resolution: |
-  Fixed in this branch. Root cause was a missing implementation
-  of the caught/uncaught model for $?:
-
-  - **Validator gap**: SB5012 only transitioned state→Undefined
-    after If/While; For and Case fell through to check_dq_leaf
-    and didn't transition, so `cmd; for/case; echo $?` passed
-    validation when it shouldn't.
-  - **Codegen gap**: catching constructs (if/while/for/case)
-    never reset exit_status_var on construct exit, so caught
-    internal statuses (condition rc, body cmd rc) leaked to
-    program exit.
-
-  Fix:
-  - `sash/src/validate.rs` — added check_dq_for and check_dq_case,
-    each transitions *state = Undefined after construct
-  - `sash/src/codegen/entry.rs` — added is_catching_construct_exit
-    helper; at start of any matching block, def_var(exit_status_var, 0)
-  - `sash/src/emit_c.rs` — mirrors the same predicate; emits
-    __exit_status = 0 at start of catching exit blocks
-  - `spec/control_flow.sh` cf.w1–w7, cf.c1–c12, cf.f1–f10, cf.i1–i3
-    now pass under native and c modes (29/32 in native; remaining
-    3 are blocked by separate filed bugs cf.c7/c8/f4)
+resolution: "Fixed in this branch. Root cause was a missing implementation\nof the caught/uncaught model for $?:\n\n- **Validator gap**: SB5012 only transitioned state→Undefined\n  after If/While; For and Case fell through to check_dq_leaf\n  and didn't transition, so `cmd; for/case; echo $?` passed\n  validation when it shouldn't.\n- **Codegen gap**: catching constructs (if/while/for/case)\n  never reset exit_status_var on construct exit, so caught\n  internal statuses (condition rc, body cmd rc) leaked to\n  program exit.\n\nFix:\n- `sash/src/validate.rs` — added check_dq_for and check_dq_case,\n  each transitions *state = Undefined after construct\n- `sash/src/codegen/entry.rs` — added is_catching_construct_exit\n  helper; at start of any matching block, def_var(exit_status_var, 0)\n- `sash/src/emit_c.rs` — mirrors the same predicate; emits\n  __exit_status = 0 at start of catching exit blocks\n- `spec/control_flow.sh` cf.w1–w7, cf.c1–c12, cf.f1–f10, cf.i1–i3\n  now pass under native and c modes (29/32 in native; remaining\n  3 are blocked by separate filed bugs cf.c7/c8/f4)\n"
 gates:
   - while/if/for/case rc at program exit is 0 unless overridden by
     a subsequent uncaught command ✓
   - SB5012 fires uniformly after all four catching constructs ✓
   - 291 baseline native spec tests pass (no regressions) ✓
   - c_tests differential oracle: 67/67 (no Cranelift↔C divergence) ✓
----
 
 # BUG — caught/uncaught $? leak from if/while/for/case
 

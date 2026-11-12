@@ -1,7 +1,6 @@
----
+title: "`array a=(GLOB =~ 'RE')` silently yields literal words when GLOB isn't bare `*`"
 status: done
 priority: P2
----
 
 > **RESOLVED 2026-09-14 — DD#108, journal 305.** Neither of the two fix
 > options this task listed was taken. DG's ruling: the shorthand is retired

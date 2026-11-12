@@ -1,4 +1,3 @@
----
 title: "`arith_brief`'s \"dead\" arms are live, and \"x = ...\" was rendered in four places"
 status: done
 priority: P3
@@ -8,7 +7,6 @@ gates:
   - "the `Assign` and `CompoundAssign` arms of `arith_brief` are removed, or a comment records why they are kept"
   - "the independent renderings of the `x = ...` brief are reconciled to one, or each is documented as deliberate"
   - "the arms are reached by specs, so a third mis-measurement costs a red sweep"
----
 
 # `arith_brief`: the arms are **live**
 

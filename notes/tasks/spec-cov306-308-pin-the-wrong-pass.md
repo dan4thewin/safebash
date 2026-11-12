@@ -1,4 +1,3 @@
----
 title: "spec: cov.306–308 pin validate's SB4044, not the transform-time gate they describe"
 status: open
 priority: P3
@@ -8,7 +7,6 @@ gates:
   - "each of `--emit-ir`, `--manifest` and `--emit-c` is shown to reject a program whose ONLY diagnostic is raised by the transform"
   - "the new checks take fresh ids above the spec.db high-water mark for their prefix; cov.306–308 are retired or re-pointed, with the comment corrected"
   - "a reversion proof: making the alt-flag path skip the transform's diagnostics turns the new checks red"
----
 
 ## What
 

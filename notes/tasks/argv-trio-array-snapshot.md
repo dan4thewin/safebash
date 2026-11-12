@@ -1,17 +1,15 @@
----
 title: argv/arg/argc trio — array a=$(argv) snapshot
 status: done
 priority: P1
 kind: feature
 depends: [argv-trio-codegen]
 gates:
-  - `array a=$(argv)` lowers to a snapshot of pointers + lengths
-  - `array a=$(argv N)` lowers to a slice snapshot starting at N
+  - "`array a=$(argv)` lowers to a snapshot of pointers + lengths"
+  - "`array a=$(argv N)` lowers to a slice snapshot starting at N"
   - resulting named array is tainted; DD#61 array-bless rules apply
     (`array a=$(argv)` is a DD#61 bulk-read construction source)
   - av.n1..n3 pass under native and c backends
   - independent snapshots: modifying one does not affect another
----
 
 # argv/arg/argc trio — `array a=$(argv)` snapshot
 

@@ -1,4 +1,3 @@
----
 title: "Reject process-replacing exec inside stdout captures"
 status: open
 priority: P3
@@ -9,7 +8,6 @@ gates:
   - "Capture placement, conditional paths, wrappers, nested captures and forked child bodies cannot bypass the prohibition"
   - "Ordinary external captures, fd-only exec, exec outside captures and DD58's direct integer-value-call contracts are preserved"
   - "Changed cap.35/cap.36 contracts use fresh global ids; focused before/reversion evidence and a full gate pass with measured predictions"
----
 
 ## Decision settled; enforcement pending
 

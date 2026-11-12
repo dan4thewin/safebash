@@ -1,4 +1,3 @@
----
 title: "Three partial renderers for one idea: quoting an arith mutation back"
 status: done
 priority: P3
@@ -8,7 +7,6 @@ depends: []
 gates:
   - "one renderer, total over ArithExpr; no `_ =>` that silently degrades"
   - "31.59, 31.63, 31.72-31.74, 31.90-31.106, cov.150-151 must all still pass"
----
 
 # `arith_brief` / `expansion_mutation_brief` / `brief_arith`
 

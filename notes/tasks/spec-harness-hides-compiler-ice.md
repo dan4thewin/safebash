@@ -1,4 +1,3 @@
----
 title: "spec harness: a compiler ICE reaches specs with an empty $err (rc 1 native, 101 C)"
 status: open
 priority: P2
@@ -9,7 +8,6 @@ gates:
   - "the same decision is made, explicitly, for a compiler hang (rc 124), which today passes a check that asserts only `$rc != 0 && -z $out`"
   - "a sweep with the change shows which passing specs, if any, were masking an ICE; each one is a finding"
   - "a reversion proof: a stubbed compiler that ICEs in native codegen turns a spec red that asserts only `$rc != 0 && -z $out`"
----
 
 ## What
 

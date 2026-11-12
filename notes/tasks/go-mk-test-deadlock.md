@@ -1,4 +1,3 @@
----
 title: Investigate the installed Go mk dependency scheduler deadlock
 status: open
 priority: P2
@@ -9,7 +8,6 @@ gates:
   - reproduce and identify the runner failure independently of Rust assertions
   - default mk test completes without a runner deadlock
   - cov-reset completes its recursive build without a runner deadlock
----
 
 During journal 511's parser work, plain `timeout 900 mk test` exited 2 with
 `fatal error: all goroutines are asleep - deadlock!` after the regex checks.

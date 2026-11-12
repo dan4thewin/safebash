@@ -1,4 +1,3 @@
----
 title: argv/arg/argc trio — DD updates and spec test contract
 status: done
 priority: P0
@@ -14,7 +13,6 @@ gates:
   - spec/wordsplit.sh extended with ws.q*
   - spec/errors.sh extended with e.dd46.*
   - sub-decisions Q1..Q5 resolved with DG
----
 
 # argv/arg/argc trio — DD updates and spec test contract
 

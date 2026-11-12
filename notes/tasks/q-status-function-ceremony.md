@@ -1,4 +1,3 @@
----
 title: "Resolved: anonymous captures may not explicitly return a status"
 status: done
 priority: P3
@@ -7,7 +6,6 @@ depends: []
 gates:
   - "DG's rejection of explicit anonymous-capture status returns is recorded in DD55/DD86"
   - "pending enforcement has an explicit backlog owner; closing this question does not claim implementation"
----
 
 ## Return-kind and ceremony questions resolved, 2026-11-06
 

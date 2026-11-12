@@ -1,4 +1,3 @@
----
 title: "The two structural getters that still end in a wildcard"
 status: done
 priority: P2
@@ -9,7 +8,6 @@ gates:
   - "`Statement::direct_exprs()` is total over `StmtKind` with no `_ => {}`"
   - "both carry the `do not add a wildcard` marker, so `contrib/totality-check.py` holds them"
   - "every behaviour change from newly-yielded children is read, not silenced"
----
 
 > **Half done, 2026-09-29 (journal 436).** `SsaValue::child_values()` is now
 > total over all 30 variants with the `do not add a wildcard` marker; the

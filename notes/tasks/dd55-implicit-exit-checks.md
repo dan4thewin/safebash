@@ -2,7 +2,14 @@ title: DD#55 — implicit exit checks in codegen
 status: done
 depends: []
 severity: correctness
-gates: [55.1, 55.2, 55.3, 55.7, 55.8, 55.10, 55.16]
+gates:
+  - 55.1
+  - 55.2
+  - 55.3
+  - 55.7
+  - 55.8
+  - 55.10
+  - 55.16
   - tests
   - commit
 

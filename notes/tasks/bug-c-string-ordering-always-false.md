@@ -1,4 +1,3 @@
----
 title: "`[[ a < b ]]` / `[[ a > b ]]` silently evaluate false in the C backend"
 status: done
 completed: 2026-09-13
@@ -10,7 +9,6 @@ gates:
   - "the reverse (`[[ abd < abc ]]`) is false in both backends"
   - "spec tests cover both operators in both directions, with NO mode guard"
   - "`emit_test_binary_op`'s fall-through arm is an ICE, not a `/* TODO */` comment returning \"0\""
----
 
 # `<` and `>` string comparison is a silent wrong answer in c
 

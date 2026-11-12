@@ -1,4 +1,3 @@
----
 title: "Exprs nested inside a subscript index carry sub-scanner spans"
 status: done
 priority: P3
@@ -6,7 +5,6 @@ kind: diagnostic
 depends: []
 gates:
   - "a diagnostic on an expression nested inside a subscript index (e.g. the `$j` in `${a[$((j+1))]}`) reports the real source line:col, not one relative to the index text"
----
 
 ## What
 

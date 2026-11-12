@@ -1,4 +1,3 @@
----
 title: "cleanup: remove dead sash_toupper_first/sash_tolower_first runtime"
 status: done
 priority: P4
@@ -7,7 +6,6 @@ depends: []
 gates:
   - "sash-rt no longer defines sash_toupper_first / sash_tolower_first (no front-end reference remains)"
   - "sash-rt builds; c-mode links; 0 spec regressions"
----
 
 # Remove the dead first-char case-conversion runtime
 

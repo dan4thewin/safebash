@@ -1,4 +1,3 @@
----
 title: "bug: sash-convert never introduces the DD#97 `array`/`map` keyword"
 status: done
 priority: P2
@@ -8,7 +7,6 @@ gates:
   - "bash `a=(x y z)` converts to a program that compiles"
   - "`a[0]=x`, `mapfile -t a` and `read -a a` likewise"
   - "a name already covered by `declare -a`/`-A` does not get a second keyword"
----
 
 ## What
 

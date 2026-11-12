@@ -1,4 +1,3 @@
----
 title: "Bug: `$(- intrinsic …)`, a nested `keys` and a redirected predicate call skip classifiers that do not peel — ICEs, false SB5050, skipped checks"
 status: open
 priority: P1
@@ -10,7 +9,6 @@ gates:
   - "specs pin every row in both backends"
   - "B121: a redirected predicate call (y05, y06, y12, y18, y19) is SB4037 like its unredirected control (y24, y25, y20, y21), in both backends; its Suppressed half (y22, y23) follows the suppression rulings"
   - "batch-531-findings.md ticks B27, B43–B48, B50 and B121, and ticks B42 together with bug-reserved-names-in-arithmetic (which owns B42's `len HOME` half)"
----
 
 ## Found
 

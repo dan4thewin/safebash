@@ -1,4 +1,3 @@
----
 title: "Remove four unreachable arms from `tok_to_text`"
 status: next
 priority: P4
@@ -8,7 +7,6 @@ gates:
   - "`LParen`/`RParen`/`DblParen`/`DblParenClose` arms removed from `tok_to_text`"
   - "the remaining default is `unreachable!()` or an explicit diagnostic, not a silent fallthrough"
   - "spec suite unchanged; no new specs needed (the arms are unreachable)"
----
 
 # Four dead arms in `tok_to_text`
 

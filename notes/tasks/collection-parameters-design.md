@@ -1,4 +1,3 @@
----
 title: Collection parameters and the name sigil — symbol or reference?
 status: done
 priority: P2
@@ -8,7 +7,6 @@ gates:
   - DG rules on symbol-vs-reference framing
   - DG rules on call-site marking (the remaining gap)
   - sigil character and placement chosen against the nine-slot inventory
----
 
 DG (2026-09-11) proposed passing collections to functions through a distinct
 reserved set — `A`, `B`, `C`… — parallel to the scalar `$1`, `$2`: `A` is the

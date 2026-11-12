@@ -1,4 +1,3 @@
----
 title: "Evaluate arguments before attached redirects"
 status: open
 priority: P3
@@ -11,7 +10,6 @@ gates:
   - "argument failures retain their own checks and no-reach; redirect failure skips later redirects and the command without undoing completed argument effects"
   - "stgarg.33-36 are reconciled with the ruling, with fresh ids for changed contracts and focused native/C before and reversion controls"
   - "external, builtin and function command paths agree, including redirected calls and captured arguments; the predicted ordinary gate passes"
----
 
 ## Decision, 2026-11-07
 

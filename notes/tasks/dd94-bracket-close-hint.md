@@ -1,4 +1,3 @@
----
 title: "`[[ ]]` does not explain a comment that ate its `]]`"
 status: todo
 priority: P4
@@ -6,7 +5,6 @@ kind: diagnostic
 depends: []
 gates:
   - "must not fire for an ordinary missing `]]` with no comment on the line"
----
 
 # A comment that eats `]]` gets no explanation
 

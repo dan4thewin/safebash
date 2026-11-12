@@ -1,4 +1,3 @@
----
 title: "Bug: SB5012/SB5094 check nested executable bodies against the enclosing statement's state, not the body's own flow"
 status: open
 priority: P2
@@ -13,7 +12,6 @@ gates:
   - "still-legal controls keep their results; changed source contracts are migrated by their policy owners"
   - "focused specs pin each distinct defect in both backends with pre-fix or targeted reversion failures; preservation controls and the predicted ordinary gate pass"
   - "group-only rows become retire-command-groups refusals; consumed if/loop rows become q-compound-as-condition refusals, not claimed nested-flow fixes"
----
 
 ## Entry policy settled, 2026-11-07
 

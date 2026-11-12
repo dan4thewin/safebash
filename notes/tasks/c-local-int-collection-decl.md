@@ -1,4 +1,3 @@
----
 title: "emit_c: function-local int collection (`local int array`) leaves the table var undeclared"
 status: done
 priority: P3
@@ -7,7 +6,6 @@ depends: []
 gates:
   - "`fn f { local int array a=(7 8); echo ${a[1]}; }; f` compiles+runs in c mode"
   - "arithmetic.sh ivc.8 widened from native-only to native,c"
----
 
 # Problem
 

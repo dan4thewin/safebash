@@ -1,4 +1,3 @@
----
 title: "brace-block control flow (if/while/until/for) + then/fi/do/done sugar (DD#68)"
 status: done
 priority: P2
@@ -12,7 +11,6 @@ gates:
   - "[DONE] else if accepted as else + nested if; elif unchanged"
   - "[DONE] $? / break / continue / redirects unchanged (parser-only, verified brace==keyword IR)"
   - "[DONE] native spec clean (25/25); 0 regressions; parser unit tests green; complexity gate green"
----
 
 # DONE 2026-07-04
 

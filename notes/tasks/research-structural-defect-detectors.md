@@ -1,4 +1,3 @@
----
 title: "Research: structural defect detectors beyond coverage"
 status: open
 priority: P3
@@ -6,7 +5,6 @@ kind: research
 depends: []
 gates:
   - "a candidate is adopted only if it finds a defect on code where the answer was NOT already known"
----
 
 # Research: structural defect detectors beyond coverage
 

@@ -1,4 +1,3 @@
----
 title: "sash-native intrinsics silently yield 0 in arithmetic sexpr `$(( (f …) ))` — only `len` works"
 status: done
 priority: P2
@@ -11,7 +10,6 @@ gates:
   - "`random` is consistently int-typed: `int n=$(random)` (word form) no longer rejects SB4030 (it returns an int)"
   - "native + c + janet parity (or per-mode guards with the janet gap filed); spec tests pin every func's sexpr behaviour"
   - "no spec regression"
----
 
 # What
 

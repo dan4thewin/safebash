@@ -1,4 +1,3 @@
----
 title: "BUG — janet/c backends evaluate && / || chains by value-truthiness, not exit status"
 status: done
 priority: P2
@@ -7,7 +6,6 @@ depends: []
 gates:
   - "[DONE] janet & c run nested && / || chains by exit status (matching native)"
   - "[DONE] spec wordsplit 62.8-62.11 pass under all 3 modes (guard dropped; 62.11 added as a per-command-status pin)"
----
 
 # RESOLVED 2026-07-03
 

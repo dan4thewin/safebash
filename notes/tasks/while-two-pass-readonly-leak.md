@@ -1,4 +1,3 @@
----
 title: "`lower_while`'s two-pass lowering leaks `readonly_vars` into pass 2"
 status: done
 priority: P3
@@ -7,7 +6,6 @@ depends: []
 gates:
   - "either `const r=…` inside a `while` body behaves the same as inside a `for` body, or a DD says why a loop body may not bind a const at all"
   - "whichever way it goes, a spec pins it"
----
 
 ## Found
 

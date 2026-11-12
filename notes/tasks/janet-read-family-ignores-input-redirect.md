@@ -1,4 +1,3 @@
----
 title: "janet: the read family ignores an input redirect and reads stdin instead"
 status: deferred
 deferred-by: DD104
@@ -9,7 +8,6 @@ gates:
   - "janet: `read a < f` fills `a` from `f`, not from stdin"
   - "janet: `readline v < f` likewise"
   - "spec `errors.sh` 55.65 and 55.66 pass in janet mode (currently gated native,c)"
----
 
 ## What
 

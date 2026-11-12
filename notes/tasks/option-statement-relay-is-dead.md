@@ -1,4 +1,3 @@
----
 title: The Option<Statement> relay is dead — 8 cold lines and a third false diagnostic
 status: done
 priority: P2
@@ -9,7 +8,6 @@ gates:
   - full sweep green, zero flips
   - mk test green
   - mk cov-union shows parser.rs cold cohort down from 20
----
 
 ## What was measured
 

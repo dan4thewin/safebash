@@ -1,4 +1,3 @@
----
 title: "SB5042/SB5043 count compile-time SsaValues, so a splat or elide at a call site is miscounted in BOTH directions"
 status: done
 priority: P1
@@ -10,7 +9,6 @@ gates:
   - "no diagnostic states an argument count that is not the count"
   - "a splat or elide into a VARIADIC callee is accepted and delivers per-element"
   - "specs for both directions, in both modes"
----
 
 # The bug
 

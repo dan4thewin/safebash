@@ -1,7 +1,5 @@
----
 title: DD#126 — `wait` is wait(2)/waitpid(2), returning a pid and never aborting
 status: accepted
----
 
 Settled with DG (2026-10-09), in the same conversation as DD#125.
 

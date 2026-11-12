@@ -1,4 +1,3 @@
----
 title: "Resolved: failure recovery depends on cause and state, not setup position"
 status: done
 priority: P2
@@ -9,7 +8,6 @@ gates:
   - "implementation and native/C proof obligations from the evidence tables have explicit open backlog owners"
   - "`bug-fork-failure-reporting-by-form` and `retire-suppression-on-compounds` are updated to the ruling"
   - "DD128's fatal arithmetic/heap behavior and terminal exit/fail semantics remain unchanged"
----
 
 DG, 2026-10-28: "the point of suppression is to say I-don't-care about an
 external program or maybe a system call result, to make a better

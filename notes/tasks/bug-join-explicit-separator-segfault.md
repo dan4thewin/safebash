@@ -1,4 +1,3 @@
----
 title: "P1 memory-safety: join <arr> <sep> (explicit separator) segfaults"
 status: done
 priority: P1
@@ -8,7 +7,6 @@ gates:
   - "$(join a \",\") — join with an explicit separator — produces the joined string, never segfaults"
   - "$(join a) (default space separator) still works"
   - "0 native/c/janet spec regressions; add a spec pinning explicit-separator join"
----
 
 # `join` explicit separator + non-array operand (RESOLVED)
 

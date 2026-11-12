@@ -1,11 +1,9 @@
----
 title: "Malformed value-intrinsic arity falls through to sash_exec (runtime `bug:` abort)"
 status: done
 priority: P1
 kind: bug
 depends: []
 gates: []
----
 
 ## RESOLVED (2026, fork C — DG-approved)
 

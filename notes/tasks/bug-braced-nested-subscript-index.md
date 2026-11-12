@@ -1,4 +1,3 @@
----
 title: "bug: braced ${a[a[0]]} nested subscript index reads the inner cell, not the outer"
 status: done
 priority: P3
@@ -7,7 +6,6 @@ depends: []
 gates:
   - "`${a[a[0]]}` evaluates the index `a[0]` then reads that outer cell (bash parity), instead of silently returning the inner cell value"
   - "no regression"
----
 
 ## Context
 

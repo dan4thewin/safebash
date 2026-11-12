@@ -1,4 +1,3 @@
----
 title: "bug: `@a` splatted into a user function collapses to ONE joined argument"
 status: done
 priority: P1
@@ -9,7 +8,6 @@ gates:
   - "each element is its own argument (`for v in @args` yields x, y, z separately)"
   - "an element containing a space stays one argument"
   - "all of the above hold in a PIPELINE stage, not only a plain statement"
----
 
 ## What
 

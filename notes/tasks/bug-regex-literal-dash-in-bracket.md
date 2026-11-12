@@ -1,4 +1,3 @@
----
 title: "NOT A BUG: literal `-` in a bracket expression is spelled `\\-`"
 status: closed
 priority: P1
@@ -10,7 +9,6 @@ gates:
   - "`[[ $s =~ ^[a-z_-]+$ ]]` compiles"
   - "a genuinely malformed class (`[a-]-z]`-style) still rejects"
   - "runtime match results agree with bash for each of the above"
----
 
 ## Context
 

@@ -1,4 +1,3 @@
----
 title: "Bug: SB5012 says \"no preceding command\" when a command did precede and its status was discarded, scoped away or consumed"
 status: open
 priority: P4
@@ -8,7 +7,6 @@ gates:
   - "each row of the table gets a message naming its actual reason; only the two rows with nothing before the read keep \"no preceding command\""
   - "the code stays SB5012 and every verdict is unchanged, in both backends"
   - "a spec pins each reason's text in both backends, and 55.15 asserts the code and text instead of bare `-n $err`"
----
 
 ## Found
 

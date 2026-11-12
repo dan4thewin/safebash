@@ -1,4 +1,3 @@
----
 title: "`echo @a` array splat: reject with a clean error directing to `echo $(join @a)` (currently ICEs)"
 status: done
 priority: P2
@@ -10,7 +9,6 @@ gates:
   - "`echo $(join @a)` compiles and prints the joined string; `echo a b c` (literals) still prints `a b c`"
   - "the reject fires for any array splat in `echo` arg position (bare or mixed, e.g. `echo x @a y`)"
   - "native + c + janet identical; spec (positive `$(join @a)` + negative bare `@a`); 0 regressions"
----
 
 # `echo @a` → reject, direct to `echo $(join @a)` (DD#69 §3)
 

@@ -1,4 +1,3 @@
----
 title: "BUG — left-shift `<<` in `(( ))` is mis-lexed (heredoc), gives wrong result; `<<=` no-op"
 status: done
 priority: P2
@@ -8,7 +7,6 @@ gates:
   - "[DONE] `int x=3; (( y = x << 2 )); echo $y` → 12"
   - "[DONE] `int x=3; (( x <<= 2 )); echo $x` → 12"
   - "[DONE] native + c + janet (spec 31.1j-m)"
----
 
 # BUG — `<<` / `<<=` in arithmetic mis-lexed via heredoc  [FIXED 2026-06-26]
 

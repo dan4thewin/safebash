@@ -1,4 +1,3 @@
----
 title: "BUG: ${var:OP…} inside (( ))/$(( )) silently compiles to 0"
 status: done
 priority: P1
@@ -9,7 +8,6 @@ resolved: "2026-08-19 — done for the native/c gate (verified: no silent-0; $((
 gates:
   - "`s=5; echo $(( ${s:-9} ))` yields 5 (not 0/empty) — or the form is a clean reject, never silent-0"
   - "no `${var:OP…}` param-expansion in any arith context silently miscompiles"
----
 
 # Symptom (silent miscompile — zero-tolerance) — FIXED
 

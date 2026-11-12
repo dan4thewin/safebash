@@ -1,4 +1,3 @@
----
 title: "janet backend has no DD#100 collection parameters"
 status: deferred
 priority: P2
@@ -8,7 +7,6 @@ gates:
   - "`show \"nums\" =nums` binds slot A in janet, as in native/c"
   - "spec/collparam.sh runs unguarded in all three modes (drop the 17 `in_modes native,c` guards)"
   - "slot writes are visible to the caller in janet (100.8, 100.9)"
----
 
 ## Context
 

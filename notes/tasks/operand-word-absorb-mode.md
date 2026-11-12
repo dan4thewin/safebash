@@ -1,4 +1,3 @@
----
 title: "Operand-word lexer mode: `=~`/`==` RHS + assignment values absorb to whitespace; delete parse_regex_rhs; multi-exact dispatch arms"
 status: done
 priority: P1
@@ -10,7 +9,6 @@ gates:
   - "assignment/declaration RHS absorbs metachars to `;`/newline/whitespace: `a=foo|cat` → literal `foo|cat`; `a=foo bar` → `a=foo` then `bar` was the original gate (retired by DD71's 2026-11-09 boundary policy); `a='x y'` → `x y`"
   - "multi-exact dispatch arm `[[ $x == a b c { … } ]]` runs the group for a|b|c (first-match); backends unchanged (CaseItem.patterns already Vec)"
   - "dynamic `=~ \"$x\"` supported (validate-static / runtime-abort-dynamic); native+c+janet identical; 0 regressions"
----
 
 # Operand-word lexer mode (DD#71)
 

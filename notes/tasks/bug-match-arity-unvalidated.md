@@ -1,4 +1,3 @@
----
 title: "bug: `match` accepts a wrong arity silently and matches nothing"
 status: done
 priority: P2
@@ -8,7 +7,6 @@ gates:
   - "`match S P ARR EXTRA` is a compile error, not a silent success"
   - "`match S` (no pattern) is a compile error"
   - "no `match` form reports success while filling no array"
----
 
 ## What
 

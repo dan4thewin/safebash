@@ -1,6 +1,5 @@
----
+title: "`break` and `continue` were silent no-ops in every `@`-splat loop"
 status: done
----
 
 # `break` and `continue` were silent no-ops in every `@`-splat loop
 

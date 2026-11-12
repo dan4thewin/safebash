@@ -1,4 +1,3 @@
----
 title: "BUG: the extent of a `${…:s/…}` expansion is decided by five scanners, and only the statement form's follows DD#63 and DD#96"
 status: open
 priority: P2
@@ -10,7 +9,6 @@ gates:
   - "every row of the What tables reaches its expected result in both backends, and every row listed as already correct is unchanged"
   - "the `s_malformed` sentinel is gone (see Fix)"
   - "DG rules on the `$'…'` question below, and the ruling is recorded as a DD#63 addendum"
----
 
 ## What
 

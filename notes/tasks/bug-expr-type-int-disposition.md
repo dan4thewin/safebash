@@ -1,4 +1,3 @@
----
 title: "BUG: `${n:?msg}` on an int is typed as a string, unlike `$n` and `${n:-…}`"
 status: open
 priority: P2
@@ -9,7 +8,6 @@ gates:
   - "d6 compiles and prints 6, and k4 prints `[5]`"
   - "x1 `int n=5` / `exit ${n:?bad}` compiles and exits 5"
   - "specs pin d1 and d6 in both backends"
----
 
 ## What
 

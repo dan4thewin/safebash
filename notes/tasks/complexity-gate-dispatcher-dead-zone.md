@@ -1,4 +1,3 @@
----
 title: "Complexity gate: pure dispatchers with cc in (3×mean, 3×mean+15) cannot be exempted"
 status: open
 priority: P3
@@ -6,7 +5,6 @@ kind: decision
 depends: []
 gates:
   - "the gate's dispatcher exemption is reachable for a cc≈13 / cog=1 function, or the dead zone is accepted deliberately"
----
 
 ## The finding
 

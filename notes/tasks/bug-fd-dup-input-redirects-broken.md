@@ -1,4 +1,3 @@
----
 title: "`<&` and `<>` redirects are accepted but wrong in BOTH backends"
 status: done
 completed: 2026-09-13
@@ -9,7 +8,6 @@ gates:
   - "DG decides the disposition first: implement `<&`/`<>`, or reject them at parse with a real diagnostic"
   - "whichever is chosen, the construct never again compiles to a silently-dropped redirect"
   - "spec tests pin the chosen behaviour in both backends, with no mode guard"
----
 
 # `readline l <&9` and `readline l <> f` silently do nothing
 

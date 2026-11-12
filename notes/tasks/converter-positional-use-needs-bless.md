@@ -1,4 +1,3 @@
----
 title: sash-convert — top-level positional USES need a bless the converter can't author
 status: done
 priority: P2
@@ -8,7 +7,6 @@ supersedes: converter-command-arg-splat
 gates:
   - converter output for a used top-level positional either compiles or carries a MANUAL marker
   - conv.x* spec tests assert the chosen behaviour (no silently non-compiling output)
----
 
 # sash-convert — top-level positional uses need bless
 

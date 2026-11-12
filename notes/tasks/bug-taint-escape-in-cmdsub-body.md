@@ -1,4 +1,3 @@
----
 title: "`check_taint` does not walk statements inside a `$( )` body"
 status: done
 priority: P2
@@ -9,7 +8,6 @@ gates:
   - "`$(str h=$(getenv T); if [[ -n $h ]] { … })` is SB5020 with a span"
   - "a declaration inside a `$( )` body extends the tainted set for the rest of that body"
   - "the walk over a `$( )` body is total over `StmtKind` — no `if let StmtKind::Command`"
----
 
 > **2026-09-29 — DONE (journal 445, specs `cbt.1`-`cbt.10`).** `taint_stmt`
 > now descends unconditionally into `cmdsub_bodies()` via `taint_cmdsub_bodies`,

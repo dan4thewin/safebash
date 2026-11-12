@@ -1,7 +1,11 @@
 title: Compile-time regex validation for literal patterns
 status: done
 depends: []
-gates: [39.5, 39.6, 39.7, 39.8]
+gates:
+  - 39.5
+  - 39.6
+  - 39.7
+  - 39.8
   - tests
 example: check (sash/src/rules/param_transform.rs)
 index_keyword: regex

@@ -1,7 +1,5 @@
----
 title: DD#98 — `_` is the don't-care binder
 status: accepted
----
 
 Settled with DG (2026-09-08), from his question: *"how did we address discarding
 unwanted fields when doing read? was it only the `: $x` mechanism? I'm thinking

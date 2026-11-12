@@ -1,4 +1,3 @@
----
 title: "janet: command-substitution capture is broken (user fns exec'd, multi-statement bodies truncated)"
 status: deferred
 deferred-by: DD104
@@ -9,7 +8,6 @@ gates:
   - "janet: `fn f() { echo x }; v=$(f); echo \"[$v]\"` prints `[x]` (currently crashes in os/spawn)"
   - "janet: `v=$(echo a; echo b); echo \"[$v]\"` prints `[a\\nb]` (currently `[a]`)"
   - "spec `functions.sh` ice.1, ice.2, ice.4, ice.5, ice.6 pass in janet mode"
----
 
 ## Found
 

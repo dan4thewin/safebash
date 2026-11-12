@@ -1,4 +1,3 @@
----
 title: "bug: an input redirect on a pipeline STAGE is silently dropped"
 status: done
 priority: P1
@@ -8,7 +7,6 @@ gates:
   - "`/usr/bin/tr '\\n' '\\0' < f | newread a` fills `a` from `f` (today: empty, no diagnostic)"
   - "`/bin/cat < f | /bin/cat` prints f's contents"
   - "a redirect that cannot be honoured on a stage is a compile error, never a silent empty read"
----
 
 ## Found
 

@@ -1,4 +1,3 @@
----
 title: "DD#84 elision ICEs in eleven commands — patch the denylist, or invert it?"
 status: done
 priority: P1
@@ -10,7 +9,6 @@ gates:
   - "echo / printf / external commands / user-function args / array-literal elements still elide (they are the genuinely variadic positions)"
   - "spec coverage for each newly-rejected command, in both modes"
   - "sweep zero flips against the baseline at a22e0f3 (6750 passing / 13 skipped / 6763 rows)"
----
 
 # The bug
 

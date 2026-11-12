@@ -1,8 +1,7 @@
----
+title: "janet: `${args[N]}` inside a function emits an unbound symbol"
 status: deferred
 deferred-by: DD104
 priority: P2
----
 
 # janet: `${args[N]}` inside a function emits an unbound symbol
 

@@ -1,4 +1,3 @@
----
 title: "c: function stdout capture ($(f)) unimplemented — CaptureStart/End TODO"
 status: done
 priority: P3
@@ -9,7 +8,6 @@ gates:
   - "c: SsaInst::CaptureStart/CaptureEnd are emitted (redirect fn stdout into a buffer, store into the target), not `/* TODO inst */` — `s=$(f)` and `echo $(f)` capture f's stdout"
   - "janet: `$(f)` on a user function captures the function's stdout (inline/with-out-str), not `(os/spawn [\"f\"])` exec of the name"
   - "un-guard spec/functions.sh 17.3 / 17.4 to include c and janet"
----
 
 # c/janet function stdout capture is unimplemented
 

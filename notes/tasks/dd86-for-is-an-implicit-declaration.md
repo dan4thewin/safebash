@@ -1,8 +1,7 @@
----
+title: "`for` introduces a name that outlives the loop — is it a declaration?"
 status: done
 depends: DD86, DD100
 gates: spec/scope.sh
----
 
 # `for` introduces a name that outlives the loop — is it a declaration?
 

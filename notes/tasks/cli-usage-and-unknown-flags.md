@@ -1,4 +1,4 @@
-title: bug: contradictory usage strings, no --help, unknown flags silently ignored
+title: "bug: contradictory usage strings, no --help, unknown flags silently ignored"
 status: done
 priority: P2
 kind: bug

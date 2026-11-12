@@ -1,4 +1,3 @@
----
 title: "Bug: `:` drops its arguments' effects — `: ${s:?msg}`, `: @{a:?}` and `: $(( 1 / z ))` never abort"
 status: done
 priority: P1
@@ -10,7 +9,6 @@ gates:
   - "the controls are unchanged: sp7 prints `after [x]`, nc1 prints `[5]`, nc6 prints `after`, `: >f` still truncates f, and `cmd || :` still discards"
   - "cv1, converted, aborts with its message, as bash does"
   - "a spec pins each row in both modes, and cv1 in convert.sh"
----
 
 ## Found
 

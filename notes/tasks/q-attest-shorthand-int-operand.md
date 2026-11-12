@@ -1,4 +1,3 @@
----
 title: "Question: should the attest shorthand on an int (`attest n -n`, `attest n i?`) stay SB4030, as D1 makes it?"
 status: open
 priority: P4
@@ -7,7 +6,6 @@ depends: []
 gates:
   - "DG rules on the question below; the ruling is recorded as an addendum to DD#93 (Part B)"
   - "the ruling is pinned by specs in both backends: `attest n -n` and `attest n i?` on an int"
----
 
 ## What
 

@@ -1,4 +1,3 @@
----
 title: "@a array splat in command-arg position expands to N verbatim args, not one joined string"
 status: done
 priority: P2
@@ -9,7 +8,6 @@ gates:
   - "arg boundaries verified (e.g. an arg-boundary-visible consumer shows one element per arg, not a single space-joined arg)"
   - "works in native, janet, and c backends"
   - "spec tests added; native/janet/c no net regression; complexity gate green"
----
 
 # `@a` command-arg splat → N verbatim args (bug)
 

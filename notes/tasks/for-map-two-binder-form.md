@@ -1,4 +1,3 @@
----
 title: "for over a map: should `for k v in m` mirror `attest k v in m`?"
 status: open
 priority: P3
@@ -8,7 +7,6 @@ gates:
   - "DG decides between the zsh-style generic N-binder `for` and the attest-style map-aware two-binder form, or rejects both"
   - "if rejected, the parser names the cause instead of `SB4014 expected a { } body or do`"
   - "samples written both ways are compared on ergonomics and implementation cost before deciding"
----
 
 ## The finding
 

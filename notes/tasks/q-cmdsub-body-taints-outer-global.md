@@ -1,4 +1,3 @@
----
 title: "Should a `$( )` body that taints an outer global be SB5067?"
 status: done
 priority: P2
@@ -7,7 +6,6 @@ depends: []
 gates:
   - "DG has chosen between extending SB5067 to bodies and merging taint outward"
   - "DONE 2026-09-30: DG chose (a); implemented, specs bfb.23-bfb.28"
----
 
 # A `$( )` body can taint an outer global and nothing says so
 

@@ -1,7 +1,5 @@
----
 title: DD#117 — a declaration's initializer must match the kind declared
 status: accepted
----
 
 Settled with DG (2026-09-22), out of a cold-line investigation: the `+=` arm
 of `parse_one_decl_assignment` had never executed in any spec run.

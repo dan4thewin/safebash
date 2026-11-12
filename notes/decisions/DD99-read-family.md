@@ -1,7 +1,5 @@
----
-title: DD#99 — the read family: `read` / `readline`, NUL-only, no flags
+title: "DD#99 — the read family: `read` / `readline`, NUL-only, no flags"
 status: accepted
----
 
 Settled with DG over 2026-09-08, from his observation that `read` and `mapfile`
 *"are hovering around the same set of operations and the distinctions are

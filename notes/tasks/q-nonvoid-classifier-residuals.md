@@ -1,4 +1,3 @@
----
 title: "Resolved policy questions from F6's function classifier (journal 547)"
 status: done
 priority: P3
@@ -7,7 +6,6 @@ depends: []
 gates:
   - "DG's Q1-Q4 rulings are recorded in DD55/DD58/DD86"
   - "unimplemented enforcement has explicit backlog owners; closing this question record does not claim those fixes"
----
 
 F6 unit A (journal 547, DD#55 addendum 2026-10-30) classifies every function
 as int, status or void and enforces DD#55 at the call. Four shapes surfaced

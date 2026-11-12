@@ -1,4 +1,3 @@
----
 title: "bug: multi-statement command substitution silently emits the literal placeholder $(...)"
 status: done
 priority: P2
@@ -10,7 +9,6 @@ gates:
   - "`echo $(x=1; echo $x)` must execute (print `1`) — never the literal `$(...)`"
   - "`x=$(a | b)` (pipeline body — same code path) executes; its stages appear in `--manifest`"
   - "the `expr_to_string` `$(...)` / `$(( ... ))` debug arms are unreachable from codegen (assert/restructure)"
----
 
 # Multi-statement / pipeline `$(…)` — DG: IMPLEMENT
 

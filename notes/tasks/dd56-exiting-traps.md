@@ -3,7 +3,6 @@ status: done
 depends: [dd56-flag-traps, bug-exit-trap-wrong-scope]
 severity: feature
 gates: [56.8, 56.9]
----
 
 `signal SIG EXIT` registers a flag trap AND inserts compiler check
 points. When check fires, jump to END block.

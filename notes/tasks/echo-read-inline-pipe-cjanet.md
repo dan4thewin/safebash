@@ -1,4 +1,3 @@
----
 title: "c/janet: `echo | read` lastpipe inline-pipe (read consumes pipe + sets parent var)"
 status: done
 priority: P3
@@ -8,7 +7,6 @@ gates:
   - "`echo \"clean\" | read x; echo $x` yields `clean` (rc 0, no stderr) in c and janet"
   - "the c invalid-pipe-fd crash (`assertion failed: fd != u32::MAX as RawFd`) is fixed"
   - "un-guard wordsplit 22.12 back to all modes"
----
 
 # c/janet: `echo | read` inline-pipe unsupported
 

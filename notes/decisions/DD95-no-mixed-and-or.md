@@ -1,7 +1,5 @@
----
 title: DD#95 — mixing `&&` and `||` in one list is rejected
 status: accepted
----
 
 Settled with DG (2026-09-08), from his question: *"do `!`, `&&` and `||` behave
 identically outside `[[ ]]` as within?"*

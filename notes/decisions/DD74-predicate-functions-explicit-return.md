@@ -1,4 +1,4 @@
-title: DD#74 — Predicate functions: explicit `return <producer>`, no implicit trailing status
+title: "DD#74 — Predicate functions: explicit `return <producer>`, no implicit trailing status"
 status: accepted
 
 Decided with DG 2026-08-09. Refines the user-defined-function / `return`

@@ -1,4 +1,3 @@
----
 title: "DD#75 §3 — keys is map-only (indexed/scalar → compile error)"
 status: done
 priority: P3
@@ -9,7 +8,6 @@ gates:
   - "the indexed-keys blank-output bug is gone (replaced by the reject)"
   - "map values via @m and ${m[$k]} still work; no `values` intrinsic added"
   - "0 native/c/janet spec regressions; specs pin keys-on-map OK, keys-on-array/scalar rejected"
----
 
 ## Resolution (2026-08-14, unattended)
 

@@ -9,7 +9,7 @@ gates:
   - "every (B) member is a compile error when its result is discarded; `if`/`||`/`|| :` consume it; `-` on a (B) construct is a compile error"
   - "the spec contract lives in spec/errors.sh (native) and is the regression gate for DD#70"
 
-Tracks turning DD#70 (notes/decisions/DD70-error-taxonomy-A-B.md) into a
+Tracks turning DD#70 (notes/decisions/DD70-error-taxonomy-a-b.md) into a
 complete, regression-gated spec contract. Much is already implemented and
 tested; this task fills the gaps and consolidates the contract.
 

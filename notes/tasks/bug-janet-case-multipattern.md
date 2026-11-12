@@ -1,4 +1,3 @@
----
 title: BUG — Janet backend miscompiles multi-pattern case arms (a|b) → catch-all
 status: done
 priority: P1
@@ -7,7 +6,6 @@ depends: []
 gates:
   - "[DONE] janet multi-pattern case matches ONLY the listed keys (a|b matches a or b, not everything)"
   - "[DONE] spec control_flow cf.c5b covers a multi-pattern arm with a non-matching subject reaching a later arm (native+c+janet green). Rust janet_tests is benched (spec is source of truth)."
----
 
 # RESOLVED 2026-07-03
 

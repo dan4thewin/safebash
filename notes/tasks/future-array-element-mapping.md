@@ -1,4 +1,3 @@
----
 title: "future: element-wise string ops on an array (map over elements)"
 status: deferred
 priority: P3
@@ -6,7 +5,6 @@ kind: decision
 depends: ["bug-sed-op-on-array-empties-it"]
 gates:
   - "a decision recorded, not necessarily an implementation"
----
 
 ## What
 

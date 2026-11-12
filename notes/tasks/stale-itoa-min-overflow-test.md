@@ -1,4 +1,3 @@
----
 title: "sash-rt-tests overflow_tests: itoa_min_i64_panics is stale (i64::MIN no longer panics)"
 status: done
 priority: P3
@@ -7,7 +6,6 @@ depends: []
 gates:
   - "overflow_tests.rs `itoa_min_i64_panics` reflects current behavior — sash_itoa(i64::MIN) formats correctly (via unsigned_abs, journal 120) rather than panicking"
   - "sash-rt-tests overflow_tests suite green"
----
 
 ## Symptom
 

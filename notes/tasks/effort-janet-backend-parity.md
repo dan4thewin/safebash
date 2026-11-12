@@ -1,4 +1,3 @@
----
 title: "EFFORT: janet backend parity (bundled, deferred)"
 status: deferred
 priority: P3
@@ -8,7 +7,6 @@ strategy: janet-rt-primitive-library
 gates:
   - "the bundled janet-primary tasks below are resumed together as one effort, not surfaced as individual priorities"
   - "each sub-task's own gates are met and its guarded specs un-skipped for janet"
----
 
 > **Strategy set 2026-08-16 (DG):** this effort is now organized around
 > `janet-rt-primitive-library` — build a `sash-rt.janet` primitive library

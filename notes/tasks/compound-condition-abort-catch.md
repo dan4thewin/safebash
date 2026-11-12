@@ -1,4 +1,3 @@
----
 title: "Compound if/while conditions abort on a non-terminal command's failure (should catch) — plus if-body failing-command disposition"
 status: done
 priority: P2
@@ -11,7 +10,6 @@ gates:
   - "Once decided: `if a && b`/`if a || b`/`if a; b` conditions never abort on a caught side (per decision); un-skip brace.sh bc.a6b, bc.a7"
   - "Once decided: if-body failing-command behavior pinned; un-skip/rewrite brace.sh bc.e1, bc.e2"
   - "0 native spec regressions; c/janet parity noted (all reproduce with /bin/false in all backends)"
----
 
 # Compound-condition abort: a non-terminal condition command aborts instead of catching
 

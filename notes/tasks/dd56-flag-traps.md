@@ -3,7 +3,6 @@ status: done
 depends: [dd56-signum-keyword]
 severity: feature
 gates: [56.7, 56.10, 56.11]
----
 
 `signal SIG FLAG` registers a handler that sets `sash_signum`.
 Program resumes. No compiler-inserted checks. Zero overhead.

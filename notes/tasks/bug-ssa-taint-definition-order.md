@@ -1,4 +1,3 @@
----
 title: "SSA taint classification depends on block order"
 status: done
 priority: P2
@@ -8,7 +7,6 @@ gates:
   - "The nested-branch reproducer is rejected by the SSA backstop under --no-taint-cst in native and C modes"
   - "Definition classification reaches a fixpoint rather than assuming block order is data-flow order"
   - "Existing clean phi and attest-retag cases remain accepted"
----
 
 Fixed with DD128's strict-resolution prerequisite (journal 568). Every
 process's complete definition classifier now converges before uses are

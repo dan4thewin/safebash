@@ -1,10 +1,8 @@
----
 title: "exec-failure errno diagnostic: distinguish a missing-binary 127 from a real exit-127"
 status: done
 priority: P3
 kind: bug
 depends: []
----
 
 > **RESOLVED + DONE (DG, 2026-07-08).** DG's model dissolved the
 > entanglement without a CLOEXEC pipe: split the diagnostic by **who owns

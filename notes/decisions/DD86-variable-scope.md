@@ -1,4 +1,4 @@
-title: DD#86 — Variable scope: no `local`, no shadowing, use-before-and-after
+title: "DD#86 — Variable scope: no `local`, no shadowing, use-before-and-after"
 status: accepted
 
 Settled with DG (2026-09-01). Replaces bash's `local`/dynamic-scope model with a

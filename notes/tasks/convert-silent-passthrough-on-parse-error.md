@@ -1,7 +1,6 @@
----
+title: "sash-convert silently passes through input tree-sitter cannot parse"
 status: done
 priority: P2
----
 
 # sash-convert silently passes through input tree-sitter cannot parse
 

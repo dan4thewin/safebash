@@ -1,7 +1,6 @@
----
+title: "DD#122 — a pipe binds to the reader, not to fd 0"
 status: accepted
 date: 2026-10-03
----
 
 # DD#122 — a pipe binds to the reader, not to fd 0
 

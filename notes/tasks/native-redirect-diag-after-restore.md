@@ -1,8 +1,7 @@
----
+title: "native writes a redirect-failure diagnostic after restoring the fds"
 status: done
 priority: P2
 kind: bug
----
 
 # native writes a redirect-failure diagnostic after restoring the fds
 

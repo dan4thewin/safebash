@@ -1,4 +1,3 @@
----
 title: "An arithmetic `:-` default inside a subscript index escaped SB4030 — ICE natively, silent miscompile in C"
 status: done
 priority: P1
@@ -9,7 +8,6 @@ gates:
   - "both backends agree — neither compiles it"
   - "the private duplicate walker in `type_check.rs` is gone"
   - "specs pin the read, condition, and assign positions"
----
 
 # The private copy of a walker that was fixed only in `ir.rs`
 

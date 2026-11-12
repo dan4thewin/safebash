@@ -1,4 +1,3 @@
----
 title: "Bug: `${10}` and `${01}` read an unbound variable inside a function; four functions disagree about what a positional is"
 status: open
 priority: P2
@@ -9,7 +8,6 @@ gates:
   - "one shared function decides whether a name is a positional and which argument it reads; the read, the arity scan, SB5024 and `classify_read` all call it"
   - "every program in the table reads the argument bash reads or is a compile error, in both backends; none reads an unbound variable"
   - "a spec pins each row in both backends; each fails on the pre-fix binary"
----
 
 ## What
 

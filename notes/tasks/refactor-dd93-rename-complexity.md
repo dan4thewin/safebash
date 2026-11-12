@@ -1,3 +1,4 @@
+title: "Refactor complexity violators exposed by the DD#93 rename"
 status: closed
 closed: 2026-09-12
 priority: P4

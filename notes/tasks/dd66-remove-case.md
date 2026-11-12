@@ -1,4 +1,3 @@
----
 title: "DD#66 remove case/esac + =glob/fnmatch/;&/;;& (dispatch replaces it)"
 status: done
 priority: P2
@@ -12,7 +11,6 @@ gates:
   - "existing case specs (control_flow cf.c3-c9, misc) migrated to the [[ ]] dispatch form"
   - "sash-convert rewrites bash `case … esac` -> [[ ]] dispatch (exact -> ==; a|b|c/glob -> =~ regex; *) -> || { })"
   - "docs GUIDE.md/SUBSET.md replace case with the dispatch form; native+c+janet clean; 0 regressions"
----
 
 # Remove `case` — the DD#66 dispatch form replaces it
 

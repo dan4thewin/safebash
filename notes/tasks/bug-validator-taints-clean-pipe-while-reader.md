@@ -1,4 +1,3 @@
----
 title: "Bug: the validator taints a `while readline` loop fed by a clean pipe, though the SSA backstop binds it clean"
 status: open
 priority: P2
@@ -10,7 +9,6 @@ gates:
   - "the validator and the SSA backstop decide a pipe reader's taint from the same upstream stages, whether the reader is a bare stage or a `while` condition"
   - "a reader inside a capture, a function body, a redirected command or a background child within the loop does not inherit the loop's clean pipe (the suspension rule `state.pipe_reader` follows in the transform)"
   - "specs pin each row in both modes; l15 is pinned when B35 lands too"
----
 
 ## Found
 

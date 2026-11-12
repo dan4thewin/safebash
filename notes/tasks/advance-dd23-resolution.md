@@ -1,4 +1,3 @@
----
 title: "advance DD#23: hoist command resolution ahead of the front-end; unresolved = fatal; --sysroot incl. squashfs"
 status: done
 priority: P2
@@ -9,7 +8,6 @@ gates:
   - "an unresolved command (not a builtin, not a user function, not found in the resolution root) is a FATAL compile error (not a runtime 'bare command passed to sash_exec')"
   - "resolution honors --sysroot=<dir> AND --sysroot=<image.squashfs> (read the squashfs to resolve); build host is the default root"
   - "the 'bare command passed to sash_exec' runtime error becomes unreachable (it was a symptom of late resolution)"
----
 
 # Advance DD#23 — compile-time resolution ahead of the front-end
 

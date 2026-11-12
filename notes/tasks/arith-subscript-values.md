@@ -1,4 +1,3 @@
----
 title: "array subscripts in arithmetic — bare `a[i]` (int-index lvalue+rvalue), `${…}` as rvalue value-import; DG design"
 status: done
 priority: P2
@@ -12,7 +11,6 @@ gates:
   - "index is a full arith expression: `a[i]`, `a[i+1]`, `a[0]`, `a[$i]`"
   - "native + c + janet (or per-mode guards + filed); spec tests pin reads, bare lvalue mutation, the map-bare error, and the map-via-statement path"
   - "no spec regression"
----
 
 # Model (DG, 2026-08-16)
 

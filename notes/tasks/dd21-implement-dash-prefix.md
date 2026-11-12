@@ -3,7 +3,10 @@ status: done
 severity: feature
 depends:
   - dd21-grammar-dash-prefix
-gates: [21.1, 21.2, 21.3]
+gates:
+  - 21.1
+  - 21.2
+  - 21.3
   - tests
   - commit
 
