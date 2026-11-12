@@ -3,7 +3,7 @@ status: closed
 closed: 2026-10-14
 priority: P7
 kind: work
-source: opus-47-review
+source: https://github.com/dan4thewin/safebash/blob/f02477dd31e67a0fe6fe3c4a359935569c4715d8/notes/opus-47-review.md
 depends: []
 gates:
   - "WITHDRAWN — every gate below names sash/tests/validate/, a surface deleted"

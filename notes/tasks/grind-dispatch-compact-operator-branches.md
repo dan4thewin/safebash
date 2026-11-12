@@ -79,4 +79,4 @@ branches are **shadowed-dead** (bucket B → remove, like `strip_matching_quotes
   `extract_from_concat` (1381) → `extract_leading_operator` (1409).
 - `parse_test_binary_tail` default arm (~1474) is the single caller.
 - Specs: `spec/dispatch.sh` `dp.co1`–`dp.co8`.
-- Accounting: `notes/coverage-accounting.md` 2026-08-31 section.
+- Accounting: [historical coverage ledger](https://github.com/dan4thewin/safebash/blob/f02477dd31e67a0fe6fe3c4a359935569c4715d8/notes/coverage-accounting.md), 2026-08-31 section.

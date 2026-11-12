@@ -2,7 +2,7 @@ title: Generate status.md spec section from spec.db
 status: done
 priority: P4
 kind: work
-source: opus-47-review
+source: https://github.com/dan4thewin/safebash/blob/f02477dd31e67a0fe6fe3c4a359935569c4715d8/notes/opus-47-review.md
 resolved: 2026-06-05
 resolution: contrib/status-update.sh regenerates the BEGIN/END mk-status block in notes/status.md from sqlite3 spec.db output. Called via mk status (and presumably wired into mk test/check). Currently reads "291 passing / 0 failing of 291 (spec.db @ <commit>)" with auto-updating commit reference. Hand-edited prose outside the markers stays intact.
 landed: 2026-06-03

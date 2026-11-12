@@ -2,12 +2,12 @@ title: Decide whether status.md is a generated build artifact
 status: done
 priority: D2
 kind: decision
-source: opus-47-review
+source: https://github.com/dan4thewin/safebash/blob/f02477dd31e67a0fe6fe3c4a359935569c4715d8/notes/opus-47-review.md
 resolved: 2026-05-26
 resolution: Make status.md dynamically updated.
 depends: []
 gates:
-  - DD or short note in notes/architecture.md
+  - DD or short note in notes/architecture.md (historical snapshot linked below)
 
 ## Resolution (DG, 2026-05-26)
 
@@ -53,5 +53,6 @@ counts).
 
 ## Output
 
-A short note (DD or amendment to `notes/architecture.md`) that records
+A short note (DD or amendment to the
+[then-current architecture note](https://github.com/dan4thewin/safebash/blob/f02477dd31e67a0fe6fe3c4a359935569c4715d8/notes/architecture.md)) that records
 the choice. Gates `r47-status-md-from-spec-db` (P4).

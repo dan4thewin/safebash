@@ -72,6 +72,7 @@ found.
 
 ## Note
 
-Found while auditing coverage (the `notes/coverage-accounting.md` grind):
+Found while auditing coverage (the
+[historical coverage ledger](https://github.com/dan4thewin/safebash/blob/f02477dd31e67a0fe6fe3c4a359935569c4715d8/notes/coverage-accounting.md)):
 ssa.rs:926 was a "missed" line; testing it revealed the panic. Exactly the kind
 of reachable-panic the audit is meant to surface.

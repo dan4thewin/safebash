@@ -2,7 +2,7 @@ title: Decide logos vs hand-roll for the fixed-token layer
 status: done
 priority: D1
 kind: decision
-source: opus-47-review
+source: https://github.com/dan4thewin/safebash/blob/f02477dd31e67a0fe6fe3c4a359935569c4715d8/notes/opus-47-review.md
 resolved: 2026-05-26
 resolution: Switch to logos on a new branch. If it goes well, cement in a DD.
 landed: 2026-05-27

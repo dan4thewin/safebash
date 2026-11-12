@@ -31,7 +31,8 @@ Function coverage: **95.03% (73/1469 never-run)** — a tractable, trustworthy
 list. Every named never-run function has ≥1 caller (none structurally dead), so
 each is reachable-in-principle and classified by whether a spec can reach it:
 A (untested → add spec), B (shadowed by an upstream reject → dead), C (non-`-c`
-CLI only), D (defensive). Full classification in `notes/coverage-accounting.md`.
+CLI only), D (defensive). Full classification in the
+[historical coverage ledger](https://github.com/dan4thewin/safebash/blob/f02477dd31e67a0fe6fe3c4a359935569c4715d8/notes/coverage-accounting.md).
 
 ## Specs added (cov.70-75), per-function count 0→>0 verified
 

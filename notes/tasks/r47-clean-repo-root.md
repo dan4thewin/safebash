@@ -2,7 +2,7 @@ title: Clean repo root and harden .gitignore
 status: done
 priority: P5
 kind: work
-source: opus-47-review
+source: https://github.com/dan4thewin/safebash/blob/f02477dd31e67a0fe6fe3c4a359935569c4715d8/notes/opus-47-review.md
 resolved: 2026-06-05
 resolution: Removed 14 stray artifacts from repo root (a.out, dangling-link, fifo-file, file.txt, link, out.txt, output.txt, stderr.txt, stdout.txt, test-dir, test-file, test.txt, valid-link, and the literal ~/work/lsg-talk/ dir). All but fifo-* were already gitignored (just untracked debris); added fifo-* glob to .gitignore for completeness. Used explicit './~' addressing for the tilde-dir to avoid accidental $HOME expansion.
 landed: 2026-06-05

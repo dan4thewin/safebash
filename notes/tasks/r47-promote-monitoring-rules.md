@@ -2,7 +2,7 @@ title: Build a "delegate management" skill from monitoring-postmortem rules
 status: pending
 priority: P3
 kind: process
-source: opus-47-review
+source: https://github.com/dan4thewin/safebash/blob/f02477dd31e67a0fe6fe3c4a359935569c4715d8/notes/opus-47-review.md
 depends: []
 redirected: 2026-06-07
 gates:

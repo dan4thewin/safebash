@@ -1,5 +1,13 @@
 # Parser Migration: Post-Mortem
 
+**Historical process record (May 2026), not current technical guidance.**
+The original explanations and DG's corrective addenda are preserved together:
+the mistaken justifications are part of the evidence, not recommendations.
+The lasting lesson is to present consequential choices rather than silently
+narrow the options or rationalize an unapproved deferral.
+For the shipped architecture see [GUIDE](../docs/GUIDE.md); for current
+decision authority and verification practice see [AGENTS](../AGENTS.md).
+
 ## Summary
 
 Hand-written parser migration: 274/281 spec tests passing (97.5%).

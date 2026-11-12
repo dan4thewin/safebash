@@ -84,6 +84,10 @@ mass delete, force-push).
 Read `notes/status.md`. It tells you the current priority and
 what was just completed.
 
+Keep it a concise current handoff, not an accumulating session log.
+Replace superseded progress; put dated history in `notes/journal/`.
+Preserve the generated `mk-status` block rather than editing its figures.
+
 Read `notes/decisions/` before changing any behavior that might
 be deliberate. These are the authoritative source for what's
 intentional vs. what's a gap.
@@ -782,6 +786,12 @@ The headline figure is `cargo llvm-cov report`'s, printed by `mk cov`,
 computed from the covmap. `coverage.db`'s is the lcov's, and was wrong by 36
 points for three days without anything noticing. Quote the former; use the
 latter only for ranking.
+
+**A demangled short name is not a function identity.** Cold closures and
+generic instantiations can appear under a live enclosing function's name.
+Check the full symbol and defining source file/range before attributing a
+zero count; do not merge records by short name alone. Journal 359 records
+the distinction between a cold instantiation and an unexecuted function.
 
 **And a WARM line is not coverage.** The converse failure is silent and the
 coverage tooling cannot see it at all: a rule can be raised, reached, and

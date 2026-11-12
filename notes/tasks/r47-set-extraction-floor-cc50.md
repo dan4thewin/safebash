@@ -2,7 +2,7 @@ title: Stop extracting functions below CC 50
 status: done
 priority: P3
 kind: process
-source: opus-47-review
+source: https://github.com/dan4thewin/safebash/blob/f02477dd31e67a0fe6fe3c4a359935569c4715d8/notes/opus-47-review.md
 depends: []
 resolved: 2026-06-07
 resolution: Superseded by the cognitive-complexity rubric (journal 108) and the enforced complexity gate (commit 323eeb4). The gate currently triggers at CC > 16.8 (3× mean), strictly tighter than the CC > 50 floor this task proposed; the grandfather-on-modify mechanic plus the cog-vs-cc delta-aware framing also handles the original concern (don't extract for noise) more precisely than a single numeric floor would. Phase 11/12 refactors validated the new framework in practice. The task's intent — codify a discipline so 4.6-style noise commits stop happening — is fulfilled by the gate + rubric.

@@ -2,7 +2,7 @@ title: Decide enforcement thresholds for fmt, coverage, complexity
 status: done
 priority: D3
 kind: decision
-source: opus-47-review
+source: https://github.com/dan4thewin/safebash/blob/f02477dd31e67a0fe6fe3c4a359935569c4715d8/notes/opus-47-review.md
 resolved: 2026-05-26
 resolution: fmt + lint = commit hooks (enforced). Complexity + coverage = report at commit time, thresholds enforced soon.
 depends: []
@@ -59,7 +59,7 @@ extractions called out in the review.
 
 - Current `mkfile` (top-level)
 - `bash contrib/cyclo.sh sash/src --top 25` (current state)
-- `notes/opus-47-review.md` — sections #2 and #3
+- [Historical review](https://github.com/dan4thewin/safebash/blob/f02477dd31e67a0fe6fe3c4a359935569c4715d8/notes/opus-47-review.md) — sections #2 and #3
 - The fact that mass-formatting is a single noisy commit but pays back
   on every future PR
 

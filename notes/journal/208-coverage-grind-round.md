@@ -50,4 +50,4 @@ Each was re-measured and confirmed to hit an adjacent path, not the named fn:
   masking hazard as the id-collision work). Re-swept: authoritative
   `test_status` 0 native / 0 c failing.
 - Grind state tracked in the session `grind` table; accounting updated in
-  `notes/coverage-accounting.md`.
+  the [historical coverage ledger](https://github.com/dan4thewin/safebash/blob/f02477dd31e67a0fe6fe3c4a359935569c4715d8/notes/coverage-accounting.md).
