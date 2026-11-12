@@ -12,6 +12,11 @@ with DG and the individual [task records](tasks/).
 
 ## Just completed
 
+- **Getenv status handling required by policy.** DD101 now requires an
+  explicit consumer or discard; using or attesting the string is not enough.
+  Taint remains independent. Enforcement is queued in
+  [require-getenv-status-handling](tasks/require-getenv-status-handling.md);
+  [journal 629](journal/629-explicit-getenv-status.md) records the ruling.
 - **Named predicate capture policy accepted.** DD88 now permits an
   otherwise-legal predicate call to bind stdout and consume its explicit
   returned status, without weakening body checks, taint or same-process

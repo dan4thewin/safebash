@@ -65,6 +65,12 @@ consume a discarded result and must reject. Coordinate direct/redirected
 call handling and advice with `predicate-capture-conditions`; do not reject
 the valid form through the old blanket function-capture exclusion.
 
+DD101 likewise requires explicit lookup-status handling or discard.
+`x=$(- getenv NAME)` retains the value while discarding status, but
+`if x=$(- getenv NAME)` cannot then consume it. Coordinate the getter's
+source-discard distinction with `require-getenv-status-handling`; do not
+mistake an ordinary handled lookup for explicit source `-`.
+
 Check nested list consumption, wrappers and all executable bodies.
 `a || - b` is legal as a statement, but its tail is consumed in
 `if a || - b { ... }`, `a || - b || c` and `return a || - b`.

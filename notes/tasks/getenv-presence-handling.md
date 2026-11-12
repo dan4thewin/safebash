@@ -10,6 +10,13 @@ gates:
 
 # getenv presence handling
 
+**Current policy (DG, 2026-11-12):** DD101 now requires explicit handling or
+discard of every lookup status. The original lookup-status delivery below
+remains done; `require-getenv-status-handling` owns the new enforcement.
+Historical observations below are not current acceptance gates. In particular,
+taint validation does not establish presence, and `||` excludes only
+unconditional abort, not checking an unhandled failure.
+
 > **DECIDED (DG, 2026-09-12).** Presence is signalled by the **exit status of
 > the lookup**, and there is **no default argument**. See "Decision" at the
 > bottom; the two candidate designs above are kept for context only.
@@ -88,21 +95,23 @@ SB4025 currently reserves for external commands.
 
 DG settled both open points:
 
-- **Uncaught is allowed** (option A: status-only). A bare
+- ~~**Uncaught is allowed** (option A: status-only). A bare
   `home=$(getenv NOPE)` compiles, binds `""`, sets a failure status nothing
   reads. Handling is *not* mandatory — taint already forces an `attest`
   before any use, and a second mandatory gate would break every existing
-  `x=$(getenv HOME)` for no added safety.
+  `x=$(getenv HOME)` for no added safety.~~ Superseded by DD101's
+  2026-11-12 explicit handling/discard requirement.
 - **Present-but-empty reports success.** `NAME=""` is a successful lookup
   (POSIX `getenv` semantics); only *unset* fails. Without this the
   unset/set-to-empty distinction — the entire point of the feature — stays
   unrecoverable.
 
-No default argument (contrast DD#60's `$(arg N DEFAULT)`); no abort (which
-would be incompatible with `||`). Written up as
+No default argument (contrast DD#60's `$(arg N DEFAULT)`).
+~~No abort (which would be incompatible with `||`).~~ No abort was the
+original status-only choice, not a consequence of `||`. Written up as
 **`notes/decisions/DD101-getenv-lookup-status.md`**.
 
-### Correction 2026-09-12: abort is NOT forced (and is self-contradictory)
+### Correction 2026-09-12: abort is NOT forced ~~(and is self-contradictory)~~
 
 An earlier revision of this file claimed DD#42 forced uncaught absence to
 abort. **That was a misreading.** DD#42's sentence —
@@ -114,6 +123,8 @@ abort. **That was a misreading.** DD#42's sentence —
 It is a statement about array bounds, not a general principle about intrinsic
 results, and it says nothing about `getenv` presence.
 
+<del>
+
 Worse, abort-by-default **contradicts the shape DG chose**:
 
     home=$(getenv HOME) || home=/home/dg
@@ -122,7 +133,13 @@ Worse, abort-by-default **contradicts the shape DG chose**:
 fallback could never fire. Picking the `||` form already rules out abort. No
 decision needed — the two are incompatible.
 
-### Measured: handling is ALREADY required, via taint
+</del>
+
+That argument was overbroad. Handled failure can branch while unhandled
+failure aborts; DD101 now chooses the distinct compile-time obligation
+to handle or discard lookup status.
+
+### Historical taint measurements, not presence handling
 
 The interesting finding. `getenv` results are tainted (DD#24/#53), so the
 value cannot be used at all without an `attest`:
@@ -138,9 +155,10 @@ aborts at runtime** — no getenv-specific rule required:
     attest home [[ -d $home ]]
     → attest: home failed the gate     (rc=1)
 
-So `getenv` already sits much closer to the "handling required" model than to
+~~So `getenv` already sits much closer to the "handling required" model than to
 the external-command model. The enforcement simply lives in the taint system
-rather than in `getenv`.
+rather than in `getenv`.~~ Value validation and presence handling are separate
+obligations under the revised DD101 contract.
 
 **The residual hole is narrow.** An attest predicate that *admits* empty lets
 absence through silently:
@@ -148,7 +166,9 @@ absence through silently:
     attest home [[ $home != /root ]]
     → got:[]     (rc=0)
 
-That is a general property of weak attest predicates, not a `getenv` defect.
+~~That is a general property of weak attest predicates, not a `getenv` defect.~~
+Allowing empty text need not be weak validation; it cannot establish that the
+environment name existed. The explicit lookup-status obligation is independent.
 
 **What no predicate can fix:** unset and set-to-empty are indistinguishable —
 measured identical output for `NOPE1` unset and `NOPE1=''`. The information

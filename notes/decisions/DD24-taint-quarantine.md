@@ -26,12 +26,16 @@ incorporating DD#43, DD#44, DD#47, DD#49.
 
 A binding acquires taint from:
 
-- `x=$(getenv VAR)` — environment variable read
+- `x=$(- getenv VAR)` — environment read with explicit lookup-status discard
 - `x=$(arg N)` — single program positional param (DD#60)
 - `array a=$(argv)` / `array a=$(argv N)` — whole/sliced argv snapshot (DD#60)
 - `read ARR` or `readline x` from any fd, including a builtin-produced pipe
 - any kernel-backed `$( … )`, whether it captures an external command,
   a user function or an anonymous body
+
+DD101 requires the environment lookup's status to be handled or explicitly
+discarded. Both outcomes remain tainted; consuming status does not validate
+contents, and attest or `:!` does not consume lookup status.
 
 DD#127's boundary is the **kernel read**, not whether the intended producer
 execs. A compiler-owned buffer capture introduces no taint; every pipe and
@@ -121,8 +125,10 @@ rejects. Every other read site (`arr=($a)` SB5021, `(( a ))` SB4030, `f $a`
 SB5020, `m=([k]=$a)` SB5021) rejected correctly; scalar assignment was the lone
 offender. Now `b=$a` (and `b="$a"`, `b=${a}`, `b=${x:-$a}`, `b+=$a`) is a
 rejected read (SB5020) directing to bless-at-source. Assignment *from a source*
-(`b=$(getenv X)`) is unchanged — that is the sanctioned way to obtain external
-data. This also closed a related DD#78 hole (`b=${x:-$(getenv)}`, a source in a
+is still the sanctioned way to obtain external data. The old
+~~`b=$(getenv X)`~~ spelling now needs DD101 status handling or explicit
+discard (`b=$(- getenv X)`); this does not change its taint.
+This also closed a related DD#78 hole (`b=${x:-$(getenv)}`, a source in a
 `:-` default at a store site). See journal 149.
 
 ## Bless (DD#43)

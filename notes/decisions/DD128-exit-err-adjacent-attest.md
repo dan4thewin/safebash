@@ -267,10 +267,11 @@ Outside that resolution, a clean assignment changes the runtime value but
 does not remove the binding's outstanding taint. This replaces DD121's
 general "assignment kill" rule.
 
-Under this rule:
+The examples explicitly discard `getenv`'s lookup status (DD101), leaving
+the value's independent taint obligation in view. Under this rule:
 
 ```sash
-v=$(getenv INPUT)
+v=$(- getenv INPUT)
 v=known
 echo "$v"                       # rejected: v remains unresolved
 ```
@@ -278,7 +279,7 @@ echo "$v"                       # rejected: v remains unresolved
 But:
 
 ```sash
-v=$(getenv INPUT)
+v=$(- getenv INPUT)
 attest v [[ $v == allowed ]] || v=known
 echo "$v"                       # permitted: both outcomes resolve v
 ```
@@ -391,7 +392,7 @@ one path cannot justify an ordinary read also reached by an uncleared
 `exit N` path, whether N is zero, nonzero or not statically known.
 
 ```sash
-v=$(getenv INPUT)
+v=$(- getenv INPUT)
 if attest v [[ $v == allowed ]] {
     :
 } else {

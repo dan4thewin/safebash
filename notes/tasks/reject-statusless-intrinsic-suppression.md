@@ -38,6 +38,11 @@ DD101's `getenv` has a lookup status as well as a value. Preserve its
 legal status discard and ordinary capture-condition handling, while
 `reject-discarded-status-consumers` forbids consuming an explicitly
 discarded status. Preserve legal external stdout captures too.
+
+DD101's 2026-11-12 revision makes that lookup-status handling/discard
+mandatory, independently of taint. `require-getenv-status-handling` owns
+the new obligation; this task must not reject its legal `$(- getenv NAME)`
+form as though it had no second result.
 Taint and status-availability rules remain in force.
 
 DD132 provisionally gives `sub`/`gsub` a real boolean beside their text,

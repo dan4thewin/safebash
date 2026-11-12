@@ -5,8 +5,8 @@ status: accepted
    statement, where it is rewritten to a value. It has no ordinary
    statement-position meaning, including elsewhere in a capture body.
 2. Capturing a statusless value leaves no result for `-` to discard.
-   A separate real status, such as `getenv`'s lookup verdict, follows its
-   own handling and taint rules.
+   `getenv`'s separate lookup status must be explicitly handled or discarded;
+   the string's taint is independent (DD101).
 
 ---
 
@@ -45,10 +45,12 @@ The whole-substitution exemption does not make every prefixed spelling
 legal. DG rejected `$(- toupper abc)` and other value-intrinsic captures
 with no separate status to discard (DD55, 2026-11-08; journal 590).
 The capture consumes their value. `getenv` is different because DD101
-gives it a lookup status as well; existing status-consumer and taint
-rules still apply. Enforcement is queued in
-`reject-statusless-intrinsic-suppression`. This grants no new
-statement-position meaning to an intrinsic.
+gives it a lookup status as well. That status must be explicitly consumed
+or discarded, even when the string is used; `$(- getenv NAME)` discards
+only the status and leaves the value tainted. The 2026-11-12 obligation is
+pending in `require-getenv-status-handling`; statusless-prefix rejection
+remains with `reject-statusless-intrinsic-suppression`. Neither grants new
+statement-position meaning to an intrinsic or changes the sole-statement rule.
 
 DD132's 2026-11-09 **provisional** trial gives `sub`/`gsub` a real
 match/no-match boolean alongside their text. Captures may then discard

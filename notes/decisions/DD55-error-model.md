@@ -18,6 +18,8 @@ status: implemented
    non-void call results require compatible consumption or explicit discard.
    DD88 named-predicate captures bind stdout and consume the returned status,
    without handling operand/body failures.
+   `getenv` lookup status likewise requires explicit handling or discard
+   independently of its string value and taint (DD101).
 6. Anonymous stdout bodies may return void, not explicit statuses.
    Process-replacing exec is excluded from stdout bodies and their callees;
    direct integer captures retain their integer channel through redirects.
@@ -296,8 +298,11 @@ restrictions remain.
 
 This is a result-channel rule, not a test of whether particular arguments
 make failure likely. DD101's `getenv` has a real lookup status in addition
-to its value, so it is not in this class. Its legal status discard and
-ordinary capture-condition handling remain, with the consumer rule above.
+to its value, so it is not in this class. That status must be consumed
+through a legal capture-condition or discarded inside `$(- getenv NAME)`;
+capturing the string alone is not handling. Unhandled lookups are compile
+errors, independently of taint or an enclosing condition. This November 12
+revision is pending in `require-getenv-status-handling`.
 An external command's status is likewise distinct from captured stdout.
 
 Under DD132's provisional model, `sub`/`gsub` also have a real second
@@ -855,7 +860,9 @@ context, including otherwise-legal redirects. It invokes the function once,
 retains this attempt's output on a false return and preserves same-process
 effects and taint. The body remains independently checked.
 [`predicate-capture-conditions`](../tasks/predicate-capture-conditions.md)
-owns implementation; this is not `getenv`'s exception to mandatory handling.
+owns implementation. ~~This is not `getenv`'s exception to mandatory
+handling.~~ DD101 now requires explicit handling or discard for lookup status
+too; its separate implementation owner is `require-getenv-status-handling`.
 
 ### Anonymous capture returns (DG, 2026-11-06)
 

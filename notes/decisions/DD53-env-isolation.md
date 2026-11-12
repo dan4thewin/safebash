@@ -3,8 +3,8 @@ status: implemented
 
 1. Sash bindings and environment variables are separate namespaces with no
    implicit mirroring.
-2. Read environment data through `getenv`; its taint and lookup status follow
-   DD24/DD101 independently.
+2. Read environment data through `getenv`; explicitly handle or discard its
+   lookup status. Taint checks are independent (DD24/DD101).
 3. Delegate per-command environments to `/usr/bin/env`. A sash binding is
    resultless and needs a separator before a following command (DD71).
 4. `cd` requires exactly one directory argument, literal or computed.
@@ -19,6 +19,12 @@ namespaces. There is no implicit mirroring in either direction.
 The only way to read an environment variable is `$(getenv NAME)`.
 The result is tainted (DD#24) and ~~must be blessed before use.~~ requires
 legal attest or an explicit trusted read under DD91/DD93.
+
+DD101 also requires explicit handling of lookup status through a legal
+capture-condition, or discard inside `$(- getenv NAME)`. Using the string
+does not consume that status, and taint validation does not replace presence
+handling. This 2026-11-12 revision is pending in
+`require-getenv-status-handling`.
 
 `$HOME` in sash source refers to a sash variable named `HOME`. It
 does NOT implicitly read the `HOME` environment variable. If no sash
@@ -96,9 +102,10 @@ The implicit getenv fallback from experiment 027.
 
 `$(getenv NAME)` now carries a **lookup status**: unset is a failure, set
 (including set-to-empty) is a success. This makes unset and `NAME=""`
-distinguishable, which they were not before. Uncaught is allowed; the value is
-`""` either way and taint still gates every use. See
-[DD#101](DD101-getenv-lookup-status.md).
+distinguishable, which they were not before. ~~Uncaught is allowed.~~
+The value is `""` for both absence and present-empty, but status must now
+be explicitly handled or discarded (DG, 2026-11-12). Taint remains independent.
+See [DD#101](DD101-getenv-lookup-status.md).
 
 Note the examples above use `bless`, which DD#93 renamed to **`attest`**.
 
@@ -116,10 +123,13 @@ is not a runtime-chosen descriptor, so `cd $dir` stays legal. A script that
 wants the home directory must say so under the usual rules:
 
 ```bash
-h=$(getenv HOME)
+h=$(- getenv HOME)
 attest h [[ -d $h ]]
 cd $h
 ```
+
+Here presence is deliberately discarded; the directory attest checks the
+value instead. The explicit `-` satisfies DD101 without weakening taint.
 
 This closes the last of the "defensive" silent-no-op branches in the two
 filesystem/fd builtins: the guards in `handle_cd`, `handle_close`, `emit_cd_c`

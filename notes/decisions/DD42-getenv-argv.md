@@ -5,14 +5,14 @@ superseded-by: DD60
 1. `$(getenv NAME)` is the explicit environment read and takes exactly one
    argument; its string result is tainted.
 2. The lookup succeeds for a present name, including an empty value, and
-   fails for an absent name. Absent lookup yields empty text without an
-   implicit abort; its status can be handled through DD101's capture condition.
+   fails with empty text for an absent name. Explicitly handle or discard
+   its status; a string consumer alone does not handle it (DD101).
 
 ---
 
 **The argv/argc half of this DD is superseded by [DD#60](DD60-argv-trio.md)**
-(C-semantics `argv`/`arg`/`argc` trio). `$(getenv VAR)` is unchanged and
-remains the canonical env-var read. The historical argv/argc text below is
+(C-semantics `argv`/`arg`/`argc` trio). `$(getenv VAR)` remains the canonical
+env-var read; DD101 governs its status. The historical argv/argc text below is
 retained for context; for current behavior see DD#60.
 
 `$(getenv VAR)` reads an environment variable. ~~`$(argv N)` reads
@@ -45,6 +45,11 @@ is a legal capture-condition. The value semantics above are unchanged: the
 result is still a tainted string, still `""` when the name is absent, and
 `getenv` still takes exactly one argument (DD#101 deliberately did **not**
 adopt the `$(arg N DEFAULT)` shape).
+
+DD101's 2026-11-12 revision requires explicit handling or discard of that
+status. An unhandled lookup is a compile error; `$(- getenv NAME)` retains
+the value while explicitly discarding presence. Neither handling nor discard
+resolves taint. Enforcement is pending in `require-getenv-status-handling`.
 
 Note for readers arriving from the abort discussion: this file's "There is no
 silent empty return" is scoped to `$(argv N)` **out-of-range bounds**, the

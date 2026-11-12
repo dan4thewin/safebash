@@ -54,8 +54,9 @@ the whole body's return. Do not introduce anonymous-body result handling or
 general multi-statement conditions. DD88's named-predicate extension must
 not inherit condition or suppression context into the callee's body. Ordinary
 external-command and pipeline captures still have their existing status
-checks; this rule does not ban those captures. DD101's getenv exception
-and DD58's direct integer captures remain.
+checks; this rule does not ban those captures. DD101's lookup-status
+handling/discard obligation and DD58's direct integer captures remain;
+neither introduces an anonymous-body status return.
 
 Preserve scope, taint, return completeness and typed forwarding.
 Duplicate-definition enforcement, integer-capture redirect repair and

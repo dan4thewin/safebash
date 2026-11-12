@@ -161,12 +161,15 @@ borrow that position.
 Write acquisition and resolution together:
 
 ```sash
-a=$(getenv FIRST)
+a=$(- getenv FIRST)
 attest a p?
-b=$(getenv SECOND)
+b=$(- getenv SECOND)
 attest b p?
 echo "$a $b"
 ```
+
+These lookups deliberately discard presence under DD101; each value still
+needs its own adjacent attest. Handling lookup status would not attest it.
 
 Do not acquire `a` and `b` in one binding list and then attest them as
 a batch. Adding `str`, splitting the captures with semicolons, or

@@ -131,9 +131,10 @@ This is a new consumer for a named predicate's existing status, not a result
 on assignment or an anonymous body's return. Integer/void calls, typed
 declarations, concatenations and multi-statement bodies remain ineligible.
 Outside a handling context, a status-function stdout capture still requires
-explicit discard (`text=$(- f)`); DD101's permission to ignore lookup absence
-belongs to `getenv`, not to functions. Conversely, `if text=$(- f)` cannot
-consume the status that source `-` discards.
+explicit discard (`text=$(- f)`). ~~DD101's permission to ignore lookup
+absence belongs to `getenv`, not to functions.~~ DD101 now requires explicit
+handling or discard of lookup status too. Conversely, neither `if text=$(- f)`
+nor `if text=$(- getenv NAME)` can consume the status that source `-` discards.
 
 **Implementation pending:** `predicate-capture-conditions` owns eligibility,
 result plumbing and native/C behavior. Preserve the existing shared
@@ -317,6 +318,11 @@ on the grounds that a sash intrinsic "can't fail".
 exception: `$(getenv NAME)` interrogates external state and can report a
 not-found **result**, so it composes with both `x=$(getenv N) || …`
 and `if ! x=$(getenv N) { … }`. This lookup extension is implemented.
+DG's later 2026-11-12 revision requires explicit handling or discard:
+a plain value-only capture is a compile error, while `$(- getenv NAME)`
+discards lookup status without declassifying its value. That enforcement
+is pending in `require-getenv-status-handling`; it does not broaden the
+capture-condition grammar.
 The accepted file-read extension and provisional regex extension are
 specified above; value-only producers do not gain a separate result merely
 by using `$()` notation.

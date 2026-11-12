@@ -2,9 +2,9 @@ title: "DD#70 — Error-handling taxonomy: (A) runtime abort-if-unchecked vs (B)
 status: accepted
 
 1. Recoverable operational failures abort if unchecked; legal handlers
-   consume their verdicts. Boolean and non-void function results require
-   explicit consumption or discard. Integer values are not statuses, and
-   fatal faults are never resumable results (DD55/DD58/DD130).
+   consume their verdicts. Boolean, non-void function and `getenv` lookup
+   results require explicit consumption or discard. Integer values are not
+   statuses; fatal faults are never resumable results (DD55/DD58/DD130).
 2. Source `-` discards one eligible adjacent command/call result, without
    reaching operands or bodies. A discarded result cannot also feed a
    condition, list decision, forwarding return or value capture. Writes,
@@ -82,6 +82,9 @@ Members:
 - **`match SUBJECT PATTERN`** as a boolean command (DD#63).
 - **`[[ … ]]` tests** / comparisons (DD#62).
 - **`-> int` function return values** (DD#55).
+- **`getenv` lookup status** (DD101, revised 2026-11-12), separate from
+  its string value and taint. Enforcement is pending in
+  `require-getenv-status-handling`.
 - **Provisionally, `r?` and `sub`/`gsub`'s match boolean** (DD132), the
   latter separate from their text. Implementation remains queued.
 
@@ -91,6 +94,12 @@ Members:
 a bare `match S P`, a bare `[[ ... ]]` and a bare `-> int` call are
 all errors. A false boolean is not a recoverable failure; it is a
 result whose use must be explicit.
+
+`getenv` follows the compile-time obligation, not an implicit runtime
+assertion on absence. Capturing its text alone does not consume lookup
+status; `$(- getenv NAME)` explicitly discards status while retaining the
+tainted string. DD88's existing legal capture-conditions consume it.
+No taint switch or outer body/operand handler supplies that consumption.
 
 This resolves the bare-`[[ … ]]` question: a bare test is **not** an
 allowed assertion that aborts on false (that would be the (A) reading) —
@@ -197,7 +206,8 @@ aggregate. A final `a || - b` at statement level remains legal.
 **A consumed value is not a spare status (DG, 2026-11-08; DD55).**
 Reject `$(- toupper abc)` and other value-intrinsic captures with no
 separate status. The capture already consumes the value; the prefix
-discards nothing. `getenv`'s lookup status remains a distinct channel.
+discards nothing. `getenv`'s lookup status remains a distinct channel and
+must itself be explicitly handled or discarded (DD101).
 Ordinary `- int_fn` and `- wait` still discard their actual values,
 rather than capture them. Fatal faults do not create a discardable
 status. `reject-statusless-intrinsic-suppression` owns pending enforcement

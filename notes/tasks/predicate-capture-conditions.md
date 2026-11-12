@@ -10,7 +10,7 @@ gates:
   - "same-process global/collection effects persist, while operand/body checks, fatal faults and terminal transfers keep their existing boundaries"
   - "taint source classification, shared-output ownership, adjacency, failed-path resolution and handler analysis remain intact; success is not attest"
   - "void/integer calls, invalid RHS shapes, typed declarations and source-discarded status consumers remain refused without widening anonymous-return rules"
-  - "ordinary status-function captures still require explicit discard outside a handling context; external, pipeline and getenv contracts remain unchanged"
+  - "ordinary status-function captures still require explicit discard outside a handling context; preserve external/pipeline contracts and coordinate DD101 lookup-status enforcement separately"
   - "focused native/C specs have meaningful before/reversion controls; changed contracts use fresh global ids and the ordinary predicted gate passes"
 
 ## Accepted contract
@@ -38,8 +38,10 @@ Attached redirects keep DD130's operation/failure contract.
 
 Outside a handling context, capture alone does not consume a predicate's
 status: `text=$(- f)` remains the explicit stdout-only form. Conversely,
-`if text=$(- f)` discards the very status it needs. `getenv` alone retains
-its permission to leave lookup absence unhandled.
+`if text=$(- f)` discards the very status it needs. DD101 now requires
+explicit handling or discard of `getenv` lookup status too;
+`require-getenv-status-handling` owns that enforcement. Neither permission
+to ignore status nor implicit value validation is part of this extension.
 
 ## Starting evidence
 
@@ -116,6 +118,7 @@ does not thereby gain a result. `reject-discarded-status-consumers` keeps
 source discard distinct from internal unchecked handling.
 
 `recoverable-file-failures` owns direct slurp and recoverable file handling;
+`require-getenv-status-handling` owns the lookup-status obligation;
 `bug-int-capture-redirect-switches-kind` owns integer capture's separate
 channel. `bug-sb4025-advice-misdescribes-rhs` owns the broader advice repair
 and its separate inner-negation/quoted-RHS questions. Preserve the accepted
