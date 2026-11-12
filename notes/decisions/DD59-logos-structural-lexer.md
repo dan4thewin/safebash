@@ -1,6 +1,15 @@
 title: DD#59 — Logos for structural-operator tokenisation
 status: implemented
 
+1. Use a generated Logos DFA for structural operator families and retain
+   hand-written scanning for stateful expansions, quoting and word boundaries.
+2. Keyword classification has one authority; unreachable duplicate keyword
+   definitions are rivals, not guards (DD116).
+3. Doubled test brackets tokenize at adjacent word boundaries; single brackets
+   retain their subscript role.
+
+---
+
 The lexer dispatches the first byte of every token. The
 "structural" subset — newline, `#`-comment, semicolon family
 (`;`, `;;`, `;&`, `;;&`), pipe family (`|`, `||`), ampersand
@@ -25,7 +34,7 @@ hand-rolled.
 | `+=` / `+` (word char)                   | `>` `>>` `>&`        |
 | `[` / `[[`, `]` / `]]`                   |                      |
 | word scanning + keyword promotion        |                      |
-| `<<<` HereString (handled in `scan_lt`)  |                      |
+| ~~`<<<` HereString (handled in `scan_lt`)~~ | DD83 retires here-strings |
 
 ## Why this split
 
@@ -40,12 +49,13 @@ bare `[` as word char vs `[[` operator), and word-boundary
 semantics tangled with keyword promotion. Those stay where they
 already work.
 
-`<` is hand-rolled (and not delegated) because `<<` is the
+~~`<` is hand-rolled (and not delegated) because `<<` is the
 heredoc sentinel — it must consume the delimiter word and emit
 `Tok::Word("__HEREDOC__")` so the validator can reject heredocs
 cleanly. Logos would happily tokenise `<<<` and `<&` and `<>`,
 but mixing the heredoc state into a logos rule defeats the
-purpose of using a regular-language tool.
+purpose of using a regular-language tool.~~ DD01-09's later scanner rejection
+supersedes the heredoc-sentinel route.
 
 ## Implementation shape
 
@@ -109,10 +119,11 @@ under CC 10. `scan_via_logos` itself is CC 6.
 
 Keyword promotion. `if`/`then`/`fn`/etc. still come out of
 `scan_word`'s post-match lookup, because the word-boundary
-semantics are entangled with the rest of word scanning. The
+semantics are entangled with the rest of word scanning. ~~The
 keyword variants in `LogosTok` exist purely as guard rails — the
 equivalence tests in `tests.rs` pin logos' word-boundary
-behaviour on them, useful if we ever revisit that decision.
+behaviour on them, useful if we ever revisit that decision.~~ DD116 deletes
+these rivals to the real keyword classifier.
 
 ## Open follow-ups
 

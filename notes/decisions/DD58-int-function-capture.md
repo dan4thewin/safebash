@@ -1,6 +1,19 @@
 title: DD#58 — Integer Function Capture Syntax
 status: implemented
 
+1. Integer functions and intrinsics yield integers through both direct captures
+   and arithmetic calls; only integer producers may be arithmetic callees.
+2. Direct integer captures consume the returned integer through redirects;
+   stdout remains an ordinary side effect, not an alternative result channel.
+3. Every returning path of an integer function supplies an integer, including
+   compatible forwarding. Constant results are legal; void is not implicit zero.
+4. Integer results must be consumed or explicitly discarded, never used as
+   statuses, predicates or direct pipeline stages.
+5. Capturing a value and discarding that same value is invalid. A stdout
+   wrapper must discard the integer separately under ordinary body checks.
+
+---
+
 > **Amendment — Option C (2026-08-15, commit `a8ac707`).** The original
 > rule below — "`$(f)` for a `-> int` function is a type error" — was
 > **superseded**. `$(...)` is now **return-type-polymorphic**: it captures
@@ -156,8 +169,9 @@ Duplicate rejection is accepted but remains pending in
 - `int x` remains the declaration keyword (DD#16). `int` is only
   dropped as a keyword for function return types if `-> int` is
   used instead.
-- `(( ))` is the arithmetic statement form for reassignment and
-  boolean tests. It is NOT a declaration form — `int x` is.
+- ~~`(( ))` is the arithmetic statement form for reassignment and
+  boolean tests.~~ DD31 separates mutation statements from consumed comparison
+  contexts. It is NOT a declaration form — `int x` is.
 - `$(( ))` is the arithmetic expression form that produces a value.
 - DD#17/Option C: `$(func)` is a capture-call whose result **type is the
   callee's return type** — a string for string functions, the integer

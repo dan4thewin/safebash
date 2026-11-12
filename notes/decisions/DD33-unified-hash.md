@@ -1,6 +1,13 @@
 title: DD#33 — Unified hash table for arrays
 status: implemented
 
+1. Indexed arrays and maps share one compact hash-table representation with
+   owned keys, sparse indexing and dense entries.
+2. Array keys are integers; map keys are strings. Reject a key of the wrong
+   type rather than silently converting it; quoting makes conversion explicit.
+
+---
+
 Single `SashTable` for both indexed and associative arrays. Python
 compact dict layout: sparse index array + dense entry array. FNV-1a
 hash on byte slices. Open addressing with linear probing.

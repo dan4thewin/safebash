@@ -2,6 +2,35 @@ title: "DD#122 — a pipe binds to the reader, not to fd 0"
 status: accepted
 date: 2026-10-03
 
+1. A pipe binds lexically to its designated reader, not to the parent's
+   fd 0. Unpiped readers and ordinary commands inside a parent reader
+   loop use ordinary stdin; forked stages receive pipeline stdin.
+2. Each reader owns its pipe and pending producers. Nested pipelines
+   preserve outer ownership; calls, captures, redirects and background
+   bodies do not inherit an ambient reader binding.
+3. Forked stages perform pipe plumbing, then evaluate and retain their
+   arguments in the child, then apply attached redirects and run
+   (DD#86). Operand work is not moved into the parent.
+4. Eligible output commands, externals and user functions may be forked
+   stages, subject to DD#55/DD#58's result-kind rules. `read`/`readline`
+   and reader-owning `while` loops run only as final parent stages;
+   bulk `read` cannot itself be a loop condition (DD#99).
+5. Final `read`/`readline` commands may discard their own status with `-`
+   or negate it where consumed; unsuppressed producer status still
+   contributes. A consumed pipeline needs an unsuppressed status-producing
+   stage. Final readers take no attached redirects. A final loop is
+   resultless and accepts neither `-` nor `!`; its body checks and the
+   producer-status aggregate remain separate (DD#55/DD#70).
+6. Start producers and consume concurrently; close the reader, reap,
+   then evaluate producer status. Exiting reader scopes closes and
+   reaps them inner-first; ordinary loop continuation retains its reader.
+   Terminal cleanup preserves the triggering status, and children do
+   not adopt parent producers. No forced killing or timeout is added.
+7. Every fd-backed read introduces taint regardless of producer or marks
+   (DD#127); reader ownership does not confer trust.
+
+---
+
 # DD#122 — a pipe binds to the reader, not to fd 0
 
 ## The rule
@@ -165,11 +194,15 @@ While(_))` — because SB4073 now guarantees what it used to assume.
 
 ### 4. Legal final stages, exhaustively
 
-- an ordinary command — forked, inherits the pipe as fd 0
+- an ~~ordinary~~ eligible command — forked, inherits the pipe as fd 0
 - a user function — the same, inlined as a forked compound child
 - `readline NAME` — DD#99 scalar lastpipe, parent
 - `read ARRAY` — DD#99 NUL-split lastpipe, parent
-- `while` — parent, with a `readline`/`read` in its condition or body
+- `while` — parent, ~~with a `readline`/`read` in its condition or body~~
+
+The stage restrictions below qualify command eligibility. DD#99 excludes
+bulk `read` from loop conditions; `readline` in the condition or a legal
+reader in the body can own the pipe.
 
 The reader search (`Statement::binds_a_pipe_reader`) deliberately does not
 descend into a nested `Pipeline`, a `Function` definition, or a `Redirected`
@@ -231,11 +264,17 @@ statement, beneath its `-`/`!` marks (`Statement::stage_marks`), is a
   in C the producer died of SIGPIPE. So `stage_marks` peels only the `-`/`!`
   marks, while `stage_body` also peels a redirect for classifiers that ask
   what a stage runs.
-- A `while` final stage may carry `-` but not `!`, which is SB4022
+- A `while` final stage ~~may carry `-` but~~ does not accept `!`, which is SB4022
   (decide-and-report). The loop's own status never joins the pipeline's, so
   `!` would have nothing to invert. Both forms used to ICE. This SB4022 and
   SB4073 (a last-stage loop that never reads the pipe) name the loop the
   user wrote: SB4073 said `while` for an `until`.
+
+DD#55's later compound-prefix ban also rejects `-` on the final loop.
+DD#55/DD#70 treat it as resultless: its body remains checked, and
+unsuppressed producer status supplies the separate pipeline aggregate.
+This does not withdraw the status-handling forms on final
+`read`/`readline` commands above.
 
 A mark on a reader no longer changes its taint (DD#24 addendum 2026-10-26).
 

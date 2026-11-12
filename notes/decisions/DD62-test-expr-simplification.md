@@ -1,6 +1,18 @@
 title: "DD#62 — [[ ]] test simplification: exact-only ==/!=, =~ quoting, drop -v"
 status: accepted
 
+1. `==` and `!=` compare strings exactly, independent of quoting. String
+   ordering by `<` and `>` uses unsigned bytes, without locale collation.
+2. `=~` uses an unanchored regex; quoting groups its ordinary string operand,
+   rather than literalizing the regex (DD63).
+3. Known bindings have meaningful zeros on unassigned paths: `""`, `0`, or
+   an empty collection. Names must be in lexical scope; body entry initializes
+   newly owned private bindings (DD86).
+4. File-age tests compare nanosecond mtimes strictly; `-ef` compares device
+   and inode identity.
+
+---
+
 Language decisions for `[[ ]]` test expressions, captured from the
 2026-06-17 discussion. (SUBSET.md is stale and not authoritative; this
 DD + the implementation task `dd62-test-expr-ssavalue` are.)
@@ -20,7 +32,9 @@ lowered to `SsaValue`, retiring the duplicate lowering (and the
 
 ## Decisions
 
-### 1. `==` / `!=` / `=` are exact string comparison only (no glob)
+### 1. `==` / `!=` / ~~`=`~~ are exact string comparison only (no glob)
+
+DD118 makes `==` the sole equality spelling.
 
 Today the unquoted RHS of `==`/`!=` is glob-matched (`emit_eq`/`emit_ne`
 call `sash_fnmatch`); a quoted RHS is exact. **Drop the glob branch:**
@@ -29,9 +43,9 @@ call `sash_fnmatch`); a quoted RHS is exact. **Drop the glob branch:**
 changes `==`/`!=` semantics. **Pattern matching is done with `=~`**
 (regex), which is strictly more expressive and explicit.
 
-`case` is unaffected — it lowers patterns to its own `=glob` operator
+~~`case` is unaffected — it lowers patterns to its own `=glob` operator
 (`emit_glob`), which keeps `sash_fnmatch`. This decision is only about
-`[[ ]]` `==`/`!=`/`=`.
+`[[ ]]` `==`/`!=`/`=`.~~ DD66 replaces that surface with dispatch.
 
 ### 2. `=~` quoting is grouping, not literalization
 
@@ -49,8 +63,8 @@ regex containing a space.)
 
 ### 3. Remove `-v`
 
-sash has **no unset state**: an undeclared scalar reads as the zero
-value (empty string / `0`), and `unset` of a scalar is rejected
+sash has **no unset state**: ~~an undeclared scalar reads as the zero
+value (empty string / `0`),~~ and `unset` of a scalar is rejected
 (SB4030). So bash's `-v` (distinguish *declared-empty* from *undeclared*)
 tests a distinction that does not exist. sash's actual `-v`
 (`emit_var_set_test`) just tests non-emptiness — a misnamed alias for
@@ -62,9 +76,10 @@ tests a distinction that does not exist. sash's actual `-v`
 
 With `==`/`!=` glob gone and the dead `=~` quoted-literal branch
 removed, `right_is_quoted` has no reachable callers and is deleted. With
-`-v` gone, the only `[[ ]]` operands that are *not* plain values are the
+`-v` gone, ~~the only `[[ ]]` operands that are *not* plain values are the
 `=~`/`case` **pattern** operands (raw regex/glob text — never a
-subscript). Every other operand (LHS of all ops; RHS of `==`/`!=`/`<`/
+subscript).~~ DD63 makes regex operands ordinary strings; DD66 removes case.
+Every other operand (LHS of all ops; RHS of `==`/`!=`/`<`/
 `>`; unary `-n`/`-z`/`-f`/… args; `case` subject) is a value, and value
 operands can be lowered to `SsaValue` in transform. Then test
 subscripts flow through the SSA path (`lower_subscript_value`), the
@@ -88,6 +103,8 @@ Remaining open here (zero-value model, from decision #3):
   instead of a silent empty? (Footgun in a "safe subset".)
 
 ## Resolved (DG, 2026-06-21): definite-assignment, `${x:-}` opt-out
+
+<del>
 
 **A bare scalar read (`$x` / `${x}`) is rejected if `x` can be reached
 without having been assigned on *some* path** — i.e. **strict
@@ -113,6 +130,8 @@ A typed declaration's zero-init (`int x` → 0, `array a` → empty) counts as
 an assignment — settle the exact "declaration zero-inits" set in the task.
 See task `reject-undeclared-scalar-read`.
 
+</del>
+
 ## Amendment (DG, 2026-07-08) — Model B: meaningful zero + typo check only
 
 The definite-assignment escalation above is **superseded**. DG: "the
@@ -126,16 +145,16 @@ useless."
   is **allowed** and yields the zero value (Go-like). `if c; then x=1; fi;
   echo $x` is fine (prints the zero on the else path), NOT an error.
 - **The only rejection is the typo:** a scalar read `$x` / `${x}` whose
-  name is introduced **nowhere in scope** (assignment, declaration, loop
+  name is introduced **nowhere in scope** ~~(assignment, declaration, loop
   var, `read`/`mapfile` target — anywhere in the current function scope or
-  the enclosing top-level scope). That is a cheap single-pass **scope
+  the enclosing top-level scope)~~. That is a cheap single-pass **scope
   membership** check (a "may"/union analysis), NOT the definite-assignment
   dataflow (no branch intersection, no zero-trip-loop modeling, no SSA
   backstop).
-- `${x:-WORD}` stays the explicit "non-empty default" opt-out (always
-  allowed). Containers (`${a[i]}`) are out of scope for the typo check for
+- `${x:-WORD}` stays the explicit "non-empty default" opt-out ~~(always
+  allowed)~~. ~~Containers (`${a[i]}`) are out of scope for the typo check for
   now (element reads yield the zero value; a nowhere-introduced container
-  is a possible follow-up).
+  is a possible follow-up).~~ DD86 governs positional scope for all bindings.
 - Rationale/tradeoff: this catches the high-value footgun (typo → silent
   empty → `rm -rf "$PREFIX/"`), which is a *scope* property, not a
   dataflow one. The price (a forgot-to-assign-on-one-branch logic bug

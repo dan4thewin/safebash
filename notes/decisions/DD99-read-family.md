@@ -1,6 +1,31 @@
 title: "DD#99 — the read family: `read` / `readline`, NUL-only, no flags"
 status: accepted
 
+1. `read [SOURCE] ARRAY` splits only on NUL, using stdin when SOURCE is
+   absent and a scalar value otherwise. It always fills an array and
+   auto-declares an eligible target. `readline SCALAR` reads one
+   newline-terminated record, preserving other bytes. Neither takes flags.
+2. Ordinary reads replace their targets: empty input, shorter input and
+   stdin EOF leave no old contents or suffix. Every fd-backed read
+   introduces taint; splitting an in-memory value introduces none and
+   does not clear unresolved destination taint (DD#127/DD#128).
+3. Bulk `read` is not a `while`/`until` condition, including through a
+   pipeline. `readline` is the streaming iteration form; `if read` and
+   bulk reads in loop bodies remain available.
+4. Maps are constructed pairwise from arrays with an explicit disposition:
+   `:-KEY` gives an odd trailing value the supplied literal key, `:?MSG`
+   aborts on odd count, and `:~` drops the trailing element; `:!~` also
+   explicitly trusts the read. Empty arrays form empty maps. Ordinary
+   taint checks and adjacent validation still apply.
+5. Collection operands and fill targets are bare names; sigils yield
+   values. DD#75 governs value splats and the rejected map-to-array
+   pseudo-inverse.
+6. External-command argv rejects interior NUL with a diagnostic rather
+   than truncating. NUL remains valid in-process data. `echo` adds a
+   newline and `write` does not; neither output form takes flags.
+
+---
+
 Settled with DG over 2026-09-08, from his observation that `read` and `mapfile`
 *"are hovering around the same set of operations and the distinctions are
 historical/arbitrary"*, and his proposal: **"split only on NUL, terminate read
@@ -19,8 +44,8 @@ readline TARGET         # consume one line (terminated by newline)
 ```
 
 - **NUL is the only separator.** Nothing else splits, ever.
-- **`readline` stops at a newline; `read` does not.** That is the only
-  difference between them.
+- **`readline` stops at a newline; `read` does not.** ~~That is the only
+  difference between them.~~ Their scalar/array result distinction follows.
 - **`readline` binds a scalar.** One record is one value.
 - **`read` always produces an array.** No declaration-dependent behaviour, no
   second target kind. An undeclared target auto-declares (DG, 2026-07-08).
@@ -55,11 +80,19 @@ in the file. It is the same defect DD#97 had just removed from bare `f=(*)`.
 
 Maps are made by converting an array:
 
+<del>
+
 ```sh
 read a                              # always an array
 if (( (len a) % 2 == 0 )) { … }     # optional checkpoint — works today
 map m = @{a:-EXTRA}                 # pairwise: k1 v1 k2 v2 …
 ```
+
+</del>
+
+The input acquisition also needs its adjacent attest before ordinary
+value use, or an explicit trusted read (DD#121/DD#127/DD#128); the
+unvalidated conversion above is not a current checked example.
 
 The array is consumed **pairwise**: element 0 is a key, element 1 its value,
 and so on. An **odd** count leaves a trailing element with no partner, and the
@@ -119,7 +152,8 @@ the array or scalar."* The rule that falls out:
 
 This matches what targets already do (`read -a @a` does not bind `a`). It also
 gives `bare-collection-name-operand-asymmetry` a direction: bare-as-reference
-is canonical, and `len @a` — accepted today — is the redundant spelling.
+is canonical, and ~~`len @a` — accepted today — is the redundant spelling~~.
+DD#100 requires the bare collection-name operand.
 
 ## Why NUL only
 
@@ -144,7 +178,7 @@ from that drift. This DD does not invent a rule; it finishes DD#22.
 
 | retired | replacement |
 |---|---|
-| `read -a arr` | `read arr` (kind from the declaration) |
+| `read -a arr` | `read arr` ~~(kind from the declaration)~~ (always an array) |
 | `read -f<c>` | convert upstream: `tr '<c>' '\0'`, or in-process `s =~ s/<c>/$sep/g` |
 | `read -d<c>` | `read` (no terminator) or `readline` (newline) |
 | `read -r` | always raw; the flag was already a no-op |
@@ -216,22 +250,25 @@ would not be, which cuts slightly toward the array form. It does not move the
 
 ### The inverse conversion is rejected, not built
 
-`array a = @m` (map → flattened pairs) is a **compile error**. It parses today
+`array a = @m` (~~map → flattened pairs~~) is a **compile error**. It parses today
 and silently yields an empty array, so something must change; rejecting is the
 cheap, reversible move.
 
-It is *well-defined* — sash maps preserve **insertion order** (verified: a map
+~~It is *well-defined*~~ — sash maps preserve **insertion order** (verified: a map
 built `zebra apple mango kiwi` iterates in that order, stably across runs), so a
-flattened array would round-trip deterministically. And it is *not needed*: a
+~~flattened array would round-trip deterministically~~. And it is *not needed*: a
 map is already emittable with the keys loop,
 
 ```sh
 for k in $(keys m) { /usr/bin/printf "%s=%s " $k ${m[$k]} }
 ```
 
-so flattening is a convenience, not a capability. Because the ordering
-semantics are settled, it can be added later without reopening any question.
+so flattening is a convenience, not a capability. ~~Because the ordering
+semantics are settled, it can be added later without reopening any question.~~
 Building it now would be symmetry for its own sake.
+
+DD#75's values-only splat rule replaces the pair-flattening interpretation;
+the later Stage 8 correction below records the broken-round-trip reason.
 
 ### Interior NUL crossing argv: a runtime check, not static analysis
 
@@ -323,11 +360,18 @@ argv crosses `execve(2)` as C strings, so a NUL-bearing value was truncated
 there: silently, with a zero exit, and the callee received a **different,
 shorter argument** than the program computed.
 
+<del>
+
 ```sh
 s="abc$'\0'HIDDEN"
 echo "$(len s)"          # 10
 /usr/bin/printf "[%s]" $s # [abc]   ← 7 bytes gone, rc 0
 ```
+
+</del>
+
+DD#75's scalar byte-count operation is `strlen`; the NUL guard below
+replaces the recorded truncation.
 
 DD#99 is what makes this urgent rather than exotic: scalars are
 byte-transparent and NUL is now *the* field separator, so "read a
@@ -357,9 +401,9 @@ It was **accepted**, and silently produced an **empty** array — the same
 "accepts input and gives an undefined answer" shape as the ICE batch and the
 `f=(*)` collection bug.
 
-A map is built FROM an array (`map m = @{a:DISP}`). The reverse was never
+A map is built FROM an array (`map m = @{a:DISP}`). ~~The reverse was never
 specified, and picking a flatten order on the author's behalf is exactly the
-silent mis-pairing that DD#69 and DD#99 make you state a disposition to avoid.
+silent mis-pairing that DD#69 and DD#99 make you state a disposition to avoid.~~
 Adding a disposition does not rescue it (`array a = @{m:~}` is equally
 rejected) — the direction is the problem, not the emptiness policy.
 
@@ -465,7 +509,9 @@ sent them there.
 
 ### A failed redirect open aborts the read (2026-09-11)
 
-DD#55 makes a failed `open(2)` on a redirect an abort. The read family did not
+~~DD#55 makes a failed `open(2)` on a redirect an abort.~~ DD#130 classifies
+the cause and permits otherwise-legal handling of recoverable failures.
+The read family did not
 get that guard: `read a < nosuch` and `readline v < nosuch` both exited 0 with
 an empty result, so a mistyped path was indistinguishable from an empty file.
 
@@ -482,13 +528,18 @@ DD#55: push/pop bracket an arbitrary span of blocks with no body to skip, so
 "skip the body and flow the status to the condition" has nowhere to live there.
 
 Consequences, native and c agreeing: a bare `read`/`readline` with a bad open
-aborts with the usual `<path>: No such file or directory`; `- read a < nosuch`
-still aborts, because `-` binds the read's own verdict and not the prior open;
+aborts with the usual `<path>: No such file or directory`; ~~`- read a < nosuch`
+still aborts, because `-` binds the read's own verdict and not the prior open~~;
 and `if read a < nosuch`, `read a < nosuch || …` catch it, leaving the target
 at its zero value (empty string, length 0) because the body never ran.
 
-janet is unaffected in both directions: it emits reads from the IR rather than
+DD#130 includes an attached recoverable open failure in the command's
+otherwise-legal suppression surface; setup position alone does not make
+the failure fatal.
+
+~~janet is unaffected in both directions: it emits reads from the IR rather than
 the SSA and drops the redirect entirely — `janet-read-family-ignores-input-
-redirect`, and it has no abort channel at all (`c-janet-dd55-abort-channel`).
+redirect`, and it has no abort channel at all (`c-janet-dd55-abort-channel`).~~
+DD#104 removes that backend.
 
 Specs: `errors.sh` 55.60-55.66.

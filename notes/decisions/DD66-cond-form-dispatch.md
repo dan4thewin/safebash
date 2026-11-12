@@ -1,6 +1,23 @@
 title: DD#66 — `[[ ]]` gains a dispatch (cond) form; `case`/`esac` removed
 status: accepted
 
+1. `[[ … ]]` has a boolean-test form and a statement-only dispatch form.
+   Dispatch chooses one comparison mode, exact `==` or unanchored regex `=~`.
+   Integer subjects and patterns require explicit string conversion.
+2. Evaluate the subject once, retaining its value; evaluate patterns in
+   source order only until the first match. Run that arm alone, or the
+   optional `||` default if none matches; otherwise do nothing.
+3. Exact arms may list several alternatives (DD71); regex arms use one
+   pattern. Reached words/components evaluate left-to-right and pattern
+   reads obey ordinary taint rules.
+4. Dispatch supplies no condition, negation, logical-decision or forwarded
+   status result. Its arm bodies retain their ordinary checks.
+5. Conversion automatically maps literal Bash cases to exact dispatch.
+   Glob-pattern or fall-through translations require human review rather
+   than silently accepting converter-generated regexes.
+
+---
+
 `[[ ]]` becomes sash's single match construct, in **two forms**: the
 familiar **boolean test** (yields `$?`) and a new **dispatch statement**
 (runs one of several command groups). The dispatch form replaces `case`
@@ -58,11 +75,13 @@ The two forms differ deliberately on exit status:
 - The **boolean form is a *test*** — it *produces* `$?` (the match
   result), for `if [[ … ]]`, `[[ … ]] || cmd`, etc.
 - The **dispatch form is a *statement* and a *catching construct*** —
-  exactly like `if`/`while`/`for`/`case`. After it, **`$?` is reset to 0**;
+  exactly like `if`/`while`/`for`/~~`case`~~. ~~After it, **`$?` is reset to 0**;~~
   it does *not* expose "which group's status," removing that ambiguity. A
   group that needs its own status handles it *internally*
   (`[[ $x == foo { cmd || die; } ]]`), the same way you would inside an
   `if` body.
+
+Completion grants no fresh status permission (DD55/DD68).
 
 Mechanically the dispatch merge block joins the catching-construct set in
 `is_catching_construct_exit` (`codegen/entry.rs:263`, mirrored
@@ -74,8 +93,8 @@ machinery `case.merge` already used — it transfers, it is not new.
 dispatch form is a *statement*, not a test, it may **not** appear where a
 boolean is expected — it is a **diagnostic** (new SB code) to use a
 dispatch `[[ … ]]` (groups present) as the condition of `if`/`while`/
-`until`, as the operand of `!`, or as an operand of `&&`/`||`. Otherwise
-its always-`0` status would make such chains silently always-succeed —
+`until`, as the operand of `!`, or as an operand of `&&`/`||`. ~~Otherwise
+its always-`0` status would make such chains silently always-succeed~~ —
 exactly the footgun this construct removes. The fix the diagnostic points
 to: make the dispatch a standalone statement (move the conditional logic
 *inside* a group, or use `if BOOLEAN; then DISPATCH; fi`). The boolean
@@ -145,8 +164,9 @@ construct to the comment path anyway.
 - **Supersedes** the case-as-regex idea and the `case`-glob P0 bug fix-(a)
   (`bug-case-pattern-glob-not-validated`): the bug dissolves because
   `case` (and its glob) no longer exist.
-- **Subsumes** `bug-janet-case-multipattern`: the Janet case emitter is
-  rewritten for the dispatch form (it becomes a regression gate).
+- ~~**Subsumes** `bug-janet-case-multipattern`: the Janet case emitter is
+  rewritten for the dispatch form (it becomes a regression gate).~~
+  DD104 replaces the in-tree Janet backend with the external IR seam.
 - **Closes** DD#63's open "desugar `case =glob` to a glob/match builtin."
 - **Builds on** DD#62 (`==` exact) and DD#63 (`=~`/`match` regex,
   unanchored).
@@ -242,7 +262,8 @@ Unchanged: a dispatch on the left of `&&`/`||` is SB4023 and a dispatch as a
 pipeline stage SB4022 (both are compound-command rules). A dispatch that is a
 capture's whole body is a statement in a body (DD#86) and stays legal
 (`cnd.18`). The same capture as a condition is SB4025, as before, because a
-capture condition takes only a single external command or `$(getenv NAME)`.
+~~capture condition takes only a single external command or `$(getenv NAME)`~~.
+DD88 also permits otherwise-legal pipelines and direct file reads.
 
 Specs: `spec/errors.sh` `cnd.8`-`cnd.10`, `cnd.13`-`cnd.19`. Journal 537.
 
@@ -303,11 +324,11 @@ no code and no position. An external `$( )` pattern was caught only by the
 ICE above. Each pattern is now checked with `check_expr_taint`, which
 reports SB5020 at the pattern's position.
 
-The check uses the taint set from before the dispatch, and that is sound.
+~~The check uses the taint set from before the dispatch, and that is sound.
 SB5067 forbids a capture body from leaving a global newly tainted, so no
 pattern can read taint the set lacks. It is also conservative: if a
 pattern's capture clears a global's taint, a later pattern gets no credit
-for that.
+for that.~~ DD127 governs single-use capture effects; DD128 governs resolution.
 
 **Specs.** `control_flow.sh` `dsplazy.1`-`15` and `taint.sh` `dsptaint.1`-`3`
 pin this addendum.

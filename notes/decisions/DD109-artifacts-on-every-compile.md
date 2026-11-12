@@ -1,6 +1,16 @@
 title: DD#109 — Every native compile embeds its IR and manifest
 status: implemented
 
+1. Every native compile carries source, inert IR and dependency manifest in
+   the output artifact; extraction returns their original text.
+2. Emitted and embedded IR/manifest use the same representation. Extraction
+   defaults to source and does not translate IR schema versions.
+3. An absent source or manifest section is empty only in an identified sash
+   output. Missing IR, unreadable data and non-UTF-8 data are errors.
+4. Terminal stdout emission modes remain separate from native binary creation.
+
+---
+
 Every native compile now embeds three artifacts in the linked ELF as note
 sections: the source (`.sash_source`, DD#45), the IR capture (`.sash_ir`,
 DD#104) and the manifest (`.sash_manifest`). They are retrieved with

@@ -1,6 +1,22 @@
 title: DD#94 — newlines, `;` and comments as trivia inside `(( ))` and `[[ ]]`
 status: accepted
 
+1. Bracketed arithmetic and tests allow line breaks and comments without
+   losing their closing-delimiter requirement; quoted and unquoted arithmetic
+   use the same boundary rules.
+2. Arithmetic commas require an expression on each side. Semicolons and
+   newlines terminate completed expressions, may repeat, and continue an
+   expression while an operand is owed. C-style `for` reserves semicolons
+   for its three slots.
+3. Sequencing retains DD31's context discipline: mutation statements have
+   no result; a consumed comparison supplies its own result.
+4. A dispatch arm's patterns stay on one line; newlines separate arm
+   pattern lists, while arm bodies keep ordinary statement separators.
+5. Preserve physical token adjacency: whitespace must neither manufacture
+   operators nor split compact operators.
+
+---
+
 Settled with DG (2026-09-07), from the deferred task
 `notes/tasks/arith-block-separators-and-comments.md` (decisions 1b, 2b, 3b)
 plus DG's addition of line breaks and comments inside a dispatch block. DG
@@ -38,7 +54,8 @@ newline inside carries no information.
 
 ### Arithmetic: newline and `;` sequence like `,`
 
-A standalone `(( ))` is a sequence block; the value is the last expression.
+A standalone `(( ))` is a sequence block; ~~the value is the last expression~~.
+DD31 requires mutation statements without a result.
 
     (( total = price * qty
        tax   = total * 7 / 100
@@ -73,8 +90,9 @@ error it always was rather than silently becoming a sequence.
 A whitespace-preceded `#…EOL` is a comment inside `(( ))` and `$(( ))`.
 
 A `#` **immediately after an alnum** is still the DD#72 base-literal marker and
-still a loud `SB4035` — `16#ff` must never silently truncate to `16`. That
-adjacency test is the whole safety story for this change.
+still a loud `SB4035` — `16#ff` must never silently truncate to `16`. ~~That
+adjacency test is the whole safety story for this change.~~ DD110 extends
+the boundary rule to every attached hash, not just alphanumeric predecessors.
 
 **Consequence:** a comment runs to end of line, so a `))` on a commented line
 is part of the comment. `(( a = 1 # x ))` is therefore *unterminated*, and

@@ -2,6 +2,24 @@ title: "DD#71 — Operand words: `=~`/`==` RHS and assignment values are plain w
 status: accepted
 implemented: 2026-07-04 (Cluster A — see journal 128; commits 9424d66,60c667b,e9fc520,1c2e74f,000dd5a)
 
+1. Comparison operands and binding values are ordinary operand words.
+   Use ordinary quoting and expansion rules; regex interpretation belongs
+   to the operation, not a separate word grammar.
+2. Bindings and mutations have no value or status to consume, suppress or
+   forward. Capture-conditions consume their eligible producer's result,
+   not an assignment result.
+3. Adjacent bindings execute left-to-right, one write before the next
+   value evaluation. They create neither scope nor an environment prefix,
+   and need a separator before a following statement.
+4. A whole-statement closer supplies a boundary; an operand's closing quote,
+   expansion or initializer does not. Each binding separately advances
+   attest adjacency.
+5. Exact dispatch arms may list several patterns; regex arms take one.
+   Static regexes are validated at compile time, dynamic ones at runtime
+   under the ordinary failure-handling contract.
+
+---
+
 Decided with DG 2026-07-04, out of the DD#66 dispatch follow-up. Started
 as "how does a `=~` regex include a space?" and generalised into a single
 lexing principle plus a language-identity choice about assignments. Builds
@@ -25,11 +43,13 @@ An **operand word** is a single word that:
 - treats regex/shell metacharacters (`( ) { } [ ] | ^ $ . * + ?` …) as
   **ordinary characters** — in operand position none of them is a shell
   operator (no pipe/subshell/brace-group there),
-- still honours **`$`/`` ` ``/quotes** as sub-structure starters
+- still honours **`$`/~~`` ` ``~~/quotes** as sub-structure starters
   (expansions, command substitution, quoting) — so interpolation and
   quoting are the established behaviours,
-- includes a **literal space only when quoted/escaped** (`'a b'`,
-  `"a b"`, `a\ b`), because whitespace is the word terminator.
+- includes a **literal space only when quoted/~~escaped~~** (`'a b'`,
+  `"a b"`, ~~`a\ b`~~), because whitespace is the word terminator.
+
+DD64 governs literal backslashes; DD67 retires backtick substitution.
 
 So `[[ $x =~ ^(a|b)$ ]]` works bare, `[[ $x =~ 'a b' ]]` matches a space,
 and `[[ $x =~ foo bar ]]` is *not* a silent `foobar` — it is `foo`, then a
@@ -209,8 +229,9 @@ rule, in favour of the simpler "the pattern is just a string arg to
 An interpolated pattern (`[[ $y =~ "$x" ]]`, `=~ $pat`) is supported. When
 the pattern is **static** (bare or single-quoted literal) it is validated
 at compile time (DD#39/#63, `regex_validate.rs`); when it is **dynamic**
-(interpolated) it defers to the runtime regcomp, whose failure aborts via
-the DD#55 (A) channel. Validate-when-static / abort-when-dynamic.
+(interpolated) it defers to the runtime regcomp, whose failure ~~aborts~~
+is handled via the DD#55 (A) channel. ~~Validate-when-static / abort-when-dynamic.~~
+Unchecked recoverable failures abort; legal handling or discard remains available.
 
 That is the shipped interface, not the 2026-11-09 trial's contract.
 DD132 provisionally requires successful `r?` proof for the exact

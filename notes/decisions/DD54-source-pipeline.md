@@ -1,14 +1,29 @@
 title: "DD#54 — Source replacement: sash-expand pipeline"
 status: implemented
 
+1. Load configuration as data through an explicit external-tool pipeline,
+   without executing it or round-tripping it through the environment.
+2. `sash-expand` emits validated-format key/value text; read, split and construct
+   collections using DD99's reader and array-to-map contracts.
+3. Kernel-read configuration remains tainted and requires the ordinary
+   adjacent attest/trust discipline.
+
+---
+
 `. ./file` and `source ./file` are rejected (SB4002). The runtime
 config-loading use case is served by an explicit pipeline:
+
+<del>
 
 ```bash
 map config
 sash-expand ./vars.conf | mapfile -m config
 bless config [[ ... ]]
 ```
+
+</del>
+
+DD99 replaces this reader surface; DD93 renames the validation operation.
 
 ## Components
 
@@ -18,13 +33,14 @@ prefix/suffix stripping), outputs KEY=VALUE lines to stdout. Dies on
 non-conforming input. This is the same tool from DD#01-09 Decision 1,
 unchanged in function — only its integration point changes.
 
-**`mapfile -m`** — new switch. Reads KEY=VALUE lines from stdin into
+~~**`mapfile -m`** — new switch. Reads KEY=VALUE lines from stdin into
 a map variable. Each line is split on the first `=`: key is the map
 key, remainder is the value. Blank lines and `#` comment lines are
-skipped (matching sash-expand output conventions).
+skipped (matching sash-expand output conventions).~~
 
-**`bless`** — standard taint gate (DD#24). `sash-expand` is an external
-command, so its output is tainted. The map must be blessed before use.
+~~**`bless`** — standard taint gate (DD#24). `sash-expand` is an external
+command, so its output is tainted. The map must be blessed before use.~~
+DD127 classifies the kernel read, and DD93/DD128 govern attest and resolution.
 
 ## Rationale
 
@@ -40,7 +56,7 @@ via `sash_getenv` into sash variables. This:
   fundamentally different
 
 The pipeline approach is explicit, auditable, and composes from
-existing primitives (external command, pipe, mapfile, bless).
+existing primitives (external command, pipe, ~~mapfile, bless~~).
 
 ## Supersedes
 

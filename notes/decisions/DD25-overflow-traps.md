@@ -1,8 +1,20 @@
 title: DD#25 — Arithmetic Overflow Traps
 status: implemented
 
-Integer overflow traps at runtime (not silent wraparound). Call depth
-limited to prevent stack exhaustion.
+1. Integer overflow and arithmetic faults never silently wrap or yield a
+   success-shaped fallback; runtime faults are fatal under DD128/DD130.
+2. Folder-proven zero divisors and negative shift counts are compile-time
+   errors, including in dead branches. Proven overflow is deferred to the
+   runtime trap.
+3. Shift counts are non-negative and unbounded: large left shifts yield zero;
+   signed right shifts retain sign fill, including at counts of 64 or more.
+4. The minimum integer modulo minus one is zero, not an overflow fault.
+
+---
+
+Integer overflow traps at runtime (not silent wraparound). ~~Call depth
+limited to prevent stack exhaustion.~~ DD27 permits self-tail loops and
+rejects other recursion instead of supplying a runtime call-depth limit.
 
 ## Implementation (corrected 2026-06-26)
 
@@ -120,7 +132,7 @@ Current state, all verified by execution:
 | `**` | **traps**, exit 2 | `25.9` |
 | unary `-` (i64::MIN) | **traps**, exit 2 | `25.11` |
 | `%` (i64::MIN % -1) | `0` — not a fault | `25.12` |
-| `<<` | masks the count, **matches bash** | `25.13` |
+| `<<` | ~~masks the count, **matches bash**~~ | `25.13` |
 
 **`Shl` was the only one left — settled below.**
 
@@ -183,9 +195,10 @@ a correct program uses — are untouched and still match bash exactly.
 **Four sites had to agree** and are cross-checked by spec `25.17`:
 `codegen/arithmetic.rs::emit_shift` (native), `emit_c.rs::emit_shift_c` (C),
 and `transform/expr_handlers.rs::fold_arith_op`, which `validate.rs`'s
-`const_eval_arith` shares. The folder **declines to fold a negative count**
+`const_eval_arith` shares. ~~The folder **declines to fold a negative count**
 and defers to the runtime trap rather than producing a value, following the
-constant-folding rule for overflow stated at the top of this file.
+constant-folding rule for overflow stated at the top of this file.~~
+The 2026-09-21 ruling below requires compile-time rejection when proven.
 
 The C guard is not only semantic: in C a shift by >= 64 or by a negative count
 is *undefined behaviour*, so clamping before the shift is also what keeps the

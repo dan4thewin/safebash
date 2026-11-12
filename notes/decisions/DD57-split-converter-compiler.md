@@ -1,6 +1,20 @@
 title: DD#57 — Split Converter and Compiler
 status: implemented
 
+1. Keep Bash conversion and native compilation separate: `sash-convert`
+   produces source; `sash` compiles the native language.
+2. Convert mechanical cases; annotate ambiguous intent for review and leave
+   unsupported cases with manual guidance rather than inventing semantics.
+3. ShellCheck is converter-internal analysis, not a compilation precondition.
+4. Generate explicit attests for known input patterns and review hints for
+   unknown ones; conversion does not waive taint rules.
+5. Conditional-test capture hints must explain uncaught operand failures
+   without automatically suppressing them or inventing fallbacks.
+6. Preserve type boundaries in converted tests and distinguish actual Bash
+   expansions from literal text.
+
+---
+
 > **Implemented (status updated 2026-06-21).** The split is done:
 > `sash-convert` is a separate crate on **stock** `tree-sitter-bash` (runs
 > shellcheck, parses findings, emits `# CHECK:` hints); `sash` is the
@@ -13,7 +27,8 @@ status: implemented
 Two programs: `sash-convert` (bash → sash-native source) and `sash` (sash-native → binary).
 Motivated by parser divergence — one tree-sitter fork serving two languages accumulates
 syntax compromises. The converter uses unmodified upstream tree-sitter-bash. The compiler
-keeps the modified fork (future: purpose-built sash-native parser).
+~~keeps the modified fork (future: purpose-built sash-native parser).~~
+The hand-written compiler parser supersedes that plan.
 
 Shellcheck is an internal analysis tool, not a precondition. The converter runs shellcheck
 on the input, consumes its JSON output, and uses specific SC codes to distinguish mechanical
@@ -30,7 +45,7 @@ conversions from ambiguous intent.
 | `declare -A m=(...)` | `map m=(...)` | |
 | `declare -r x=5` / `readonly x=5` | `const x=5` | |
 | `declare -ri x=5` | `const int x=5` | Composite flags |
-| `local -i x=5` | `local int x=5` | |
+| `local -i x=5` | ~~`local int x=5`~~ | DD86 replaces keyword lifetime with positional scope |
 | `typeset x=5` | `x=5` | Bare assignment |
 | `let "expr"` | `(( expr ))` | SC2219 confirms; convert regardless |
 | `` `cmd` `` | `$(cmd)` | SC2006 confirms; convert regardless |
@@ -84,7 +99,7 @@ change with this policy.
 | `declare -n` / nameref | Alias indirection. No sash equivalent. |
 | `<(...)` / `>(...)` process substitution | No sash equivalent. |
 | `${var@Q}` / `${var@E}` etc. | Parameter transformations rejected. |
-| Heredoc with `$(cmd)` inside | Untraceable taint (SB5002). Extract to variable + bless. |
+| Heredoc with `$(cmd)` inside | ~~Untraceable taint (SB5002). Extract to variable + bless.~~ Heredocs are wholly retired, not conditional on their contents (DD01-09). |
 
 **Option flags (DG, 2026-11-10; implementation pending).** Actual Bash
 option-flags expansions get the ordinary `# MANUAL:` annotation and
@@ -107,11 +122,18 @@ with this policy recording.
 
 ### Best-effort bless — emit `bless` line or `# BLESS:` hint
 
+<del>
+
 | Pattern | Action |
 |---|---|
 | `x=$(date +%F)` and similar known externals | Emit `bless x [[ $x =~ pattern ]]` with the known pattern from the externals list |
 | `x=$(somecommand)` where command is not in known list | Emit `# BLESS: x is assigned from 'somecommand' — add a bless with appropriate pattern` |
 | `read x` | Emit `# BLESS: x is read from stdin — add a bless with appropriate pattern` |
+
+</del>
+
+DD93 renames the operation to `attest`; DD99 specifies current reader
+conversion and `# ATTEST:` guidance.
 
 ## Acceptance criteria
 
@@ -119,7 +141,7 @@ with this policy recording.
 2. All mechanical conversions produce correct sash-native syntax
 3. Ambiguous cases are annotated with `# CHECK:` hints, including SC2086 and conditional-test captures (the latter remains queued above)
 4. Unconvertible constructs are annotated with `# MANUAL:` and left unchanged
-5. Known externals get real `bless` lines; unknown externals get `# BLESS:` hints
+5. Known externals get real ~~`bless`~~ attest lines; unknown externals get ~~`# BLESS:`~~ `# ATTEST:` hints
 6. `--annotate` adds `# was: original` comments to mechanical conversions
 7. `sash-convert foo.sh | sash -o binary` produces working binaries for scripts in the safe subset
 8. `sash` compiles sash-native source without any bash validation rules

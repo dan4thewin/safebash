@@ -2,27 +2,36 @@ title: DD#42 — getenv and argv as builtins
 status: superseded
 superseded-by: DD60
 
+1. `$(getenv NAME)` is the explicit environment read and takes exactly one
+   argument; its string result is tainted.
+2. The lookup succeeds for a present name, including an empty value, and
+   fails for an absent name. Absent lookup yields empty text without an
+   implicit abort; its status can be handled through DD101's capture condition.
+
+---
+
 **The argv/argc half of this DD is superseded by [DD#60](DD60-argv-trio.md)**
 (C-semantics `argv`/`arg`/`argc` trio). `$(getenv VAR)` is unchanged and
 remains the canonical env-var read. The historical argv/argc text below is
 retained for context; for current behavior see DD#60.
 
-`$(getenv VAR)` reads an environment variable. `$(argv N)` reads
+`$(getenv VAR)` reads an environment variable. ~~`$(argv N)` reads
 positional parameter N (1-based). `$(argc)` returns the count of
-positional params (equivalent to `$#`).
+positional params (equivalent to `$#`).~~
 
 These are the explicit-origin forms for external data. Environment
-variables accessed via getenv are tainted (auto-blessed if in
-known_externals). Positional params via argv are tainted.
+variables accessed via getenv are tainted ~~(auto-blessed if in
+known_externals)~~. Positional params via argv are tainted.
+Converter-generated attests are not implicit compiler validation (DD57/DD93).
 
-All three always refer to the **program's** arguments, never a
-function's. Functions receive their args via `$1..$N`.
+~~All three always refer to the **program's** arguments, never a
+function's.~~ Functions receive their args via `$1..$N`.
 
-Out-of-range `$(argv N)` aborts with a clear error message, consistent
-with integer overflow behavior (DD#26). There is no silent empty return.
+~~Out-of-range `$(argv N)` aborts with a clear error message, consistent
+with integer overflow behavior (DD#26). There is no silent empty return.~~
 
-Codegen calls `sash_argv_get` in the runtime, which does bounds
-checking and panics on violation.
+~~Codegen calls `sash_argv_get` in the runtime, which does bounds
+checking and panics on violation.~~
 
 ## Addendum 2026-09-12 — `$(getenv NAME)` also reports a lookup status
 

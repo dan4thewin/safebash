@@ -1,8 +1,22 @@
 title: DD#30 — Strict Type Separation
 status: implemented
 
+1. String and integer types remain distinct; conversions are explicit.
+   Arithmetic string operands require DD77's default-or-abort disposition;
+   quoting converts integers to strings.
+2. New untyped numeric bindings are strings. An established integer target,
+   including a collection cell, accepts a bare numeric literal without
+   accepting an unwrapped arithmetic expression.
+3. String-test operands must be strings; use arithmetic comparisons for numbers
+   or explicitly stringify them.
+4. `unset` targets collections or their cells, never scalars or undeclared
+   names. Missing cells in a declared collection are harmless.
+
+---
+
 No implicit conversion between int and string. Conversion happens
-explicitly at boundaries: `$(( ))` for string→int, `"$var"` for
+explicitly at boundaries: ~~`$(( ))` for string→int,~~ (DD77 requires a
+disposition on each string operand), `"$var"` for
 int→string (at output).
 
 ## Bare numeric assignment

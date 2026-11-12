@@ -1,6 +1,18 @@
 title: DD#72 — Numeric literals in arithmetic
 status: accepted
 
+1. Authored integer literals use decimal or explicit `0x`, `0o`, `0b`
+   prefixes, with valid digits and representable range. Decimal zero is
+   `0`; longer decimal literals have no leading zero. Output is decimal.
+2. Runtime string conversion accepts complete, representable integers,
+   including prefixed values and decimal leading zeros. A string enters
+   arithmetic only through an explicit disposition (DD77), not partial parsing.
+3. Unknown arithmetic bytes are errors. A dollar must start a recognized
+   variable form; use plain parentheses for arithmetic grouping and the
+   integer-call syntax for calls.
+
+---
+
 Numeric literals in `$(( ))` had no governing decision. The arith lexer
 accepted C-octal (`0377`), hex (`0x`), and bash arbitrary-base
 (`base#digits`), but `base#` and the modern prefixes silently miscompiled
@@ -36,10 +48,12 @@ to pick a clean, minimal set.
 ### Runtime string→int coercion (a variable's/data's value used in arith)
 
 `atoi_inner` / `sash_atoi`. Lenient, because data is not authored:
-- **honors `0x`/`0o`/`0b` prefixes** — `x=0xff; $((x+0))` → 255.
-- **otherwise decimal, leading zeros ignored** — `x=010; $((x+0))` → 10,
-  `x=08` → 8 (NOT octal). A non-prefixed `base#`-looking value parses its
-  leading decimal digits atoi-style (`"16#ff"` → 16).
+- **honors `0x`/`0o`/`0b` prefixes** — ~~`x=0xff; $((x+0))` → 255~~.
+- **otherwise decimal, leading zeros ignored** — ~~`x=010; $((x+0))` → 10~~,
+  `x=08` → 8 (NOT octal). ~~A non-prefixed `base#`-looking value parses its
+  leading decimal digits atoi-style (`"16#ff"` → 16).~~
+
+DD77 requires a disposition and a complete valid integer, as amended below.
 
 Rationale: data from `read`/`$(…)`/argv/env can't be required to be clean;
 plain-decimal leniency is robust and makes bash's `10#$var` decimal-forcing

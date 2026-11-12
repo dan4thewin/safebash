@@ -1,6 +1,48 @@
 title: "DD#86 — Variable scope: no `local`, no shadowing, use-before-and-after"
 status: accepted
 
+1. Scope is positional. Top-level bindings are globals, freely readable
+   and writable by functions. Named functions see globals, not caller
+   locals; captures inherit live enclosing bindings and own new local
+   names. Control flow introduces no scope.
+2. No binding shadows an enclosing name. A name has one declaration per
+   scope and a type fixed at first introduction; a later typed declaration
+   cannot retype an existing binding. Loop binders introduce or write
+   ordinary variables, preserving their types and outliving the loop.
+3. Every function/capture entry, including self-tail entry, initializes
+   newly owned private bindings to meaningful zeros: empty strings,
+   zero integers and empty collections. Globals, arguments, slots and
+   active enclosing bindings retain their values and unresolved taint.
+4. Const freezes the value, not validation. Otherwise-legal attest may
+   validate it, including as a conversion source; actual writes and
+   conversion targets still require mutability. Ordinary const
+   declarations are not legal in loop bodies.
+5. Apply DD#62's unbound-read checks in every scope. Every assigned name
+   must be read; consts, reader targets and loop variables are not exempt.
+6. Each function has exactly one hoisted, global source definition,
+   directly in the main statement list, and one result kind and inferred
+   signature. Names use DD#125's ASCII identifier grammar and exclusions,
+   including for unused definitions.
+7. Resolve lexical identities once for semantic checks, typing and SSA.
+   Downstream passes share those identities and checked types; artifacts
+   and diagnostics retain source spellings. Compiler temporaries must
+   reserve distinct names rather than assume a private prefix (DD#125).
+8. Anonymous executable captures receive ordinary function-body validation
+   and fresh condition, loop/tail, status-read and child/wait-latch
+   contexts. Same-process writes to inherited bindings persist.
+   Anonymous bodies may return void, not explicit status; stdout-capture
+   bodies exclude process-replacing `exec`, including through callees.
+   Ordinary externals and fd-only `exec` retain their contracts.
+   Direct integer calls and intrinsic getters are not anonymous stdout bodies.
+9. Evaluate reached words and their components left-to-right and retain
+   earlier values before later effects. Unreached lazy operands do not run.
+10. Evaluate arguments before attached redirects; evaluate and apply each
+    redirect sequentially, stopping at failure, before entering the command
+    body. Stage arguments stay in the child after pipe plumbing. Completed
+    operand effects are not rolled back by later redirect failure.
+
+---
+
 Settled with DG (2026-09-01). Replaces bash's `local`/dynamic-scope model with a
 **structural** one. Supersedes the *lifetime* axis of DD#35, abandons DD#18
 (`local fn`), and pairs the DD#62 read-side typo check with a new write-side one.
@@ -31,7 +73,8 @@ global) that a reviewer can't trace. Both are footguns.
   rejected. What stays legal is what lives in a genuinely different scope: two
   sibling functions may each declare `str x`. Control flow has no scope of its
   own (below), so two branches declaring one name are two declarations of one
-  global. A `for` variable is not a declaration and is untouched.
+  global. ~~A `for` variable is not a declaration and is untouched.~~
+  The later loop-binding ruling below replaces this claimed exemption.
 - **`local` is removed** (keyword + the save/restore machinery). Lifetime is now
   positional, so the DD#35 *lifetime* axis is retired.
 - **Every body entry starts a fresh private lifetime.** Strings and integers
@@ -216,13 +259,14 @@ lands on *another* declared global — fundamentally undetectable, and rare.
    type match. Previously only the cross-scope half was enforced, so at top level
    a name could be re-declared, have its type changed, or silently acquire
    `const`. Main, EXIT and ERR share the global scope (DD#128). SB4044 no
-   longer fires on a declaration — it means only a bare assignment to a const.**
+   longer fires on a declaration — ~~it means only a bare assignment to a const~~.**
+   F13 below covers every actual write; value-preserving validation is separate.
 4. Dead-variable rejection (new validate pass, dual of DD#62). **— shipped
    (journal 228): SB5050. Reuses the SB5031 read-enumerator (inverted via a
    shared `ReadSink`: Flag mode = SB5031, Collect mode = dead-var) so the two
    never disagree on what a read is; value-fn bare operands (`len`/`join`/
    `keys`) added on top. DG rulings (2026-09-02): (a) more-specific error wins
-   — dead-var runs LAST, after taint/type/transform; (b) `read`/`mapfile` targets and `for` variables ARE checked; (c) `: $v` is the
+   — dead-var runs LAST, after taint/type/transform; (b) `read`/~~`mapfile`~~ targets and `for` variables ARE checked; (c) `: $v` is the
    acknowledgment escape hatch (a real read, per DD#81 arity). Filed
    `bare-collection-name-operand-asymmetry` (builtin bare-name vs user-fn
    splat).**
@@ -486,8 +530,9 @@ existing global persists.
 Three independent reasons, any one of which is sufficient:
 
 - **It contradicted this DD.** A global is read *and written* with no friction
-  from any scope. A capture body is not a scope boundary; nothing in the model
-  said it was.
+  from any scope. ~~A capture body is not a scope boundary; nothing in the model
+  said it was.~~ A capture owns its new locals without isolating writes
+  to inherited live bindings.
 - **It contradicted itself.** Measured before the change:
 
   ```sh
@@ -692,12 +737,13 @@ For a new pass:
   `child_bodies()` and get the body for free;
 - its own handling already → use `structural_bodies()` and keep it.
 
-A walk that **mutates** scope state is the exception and must say
+~~A walk that **mutates** scope state is the exception and must say
 `structural_bodies()` regardless, until it opens a child scope for the body the
 way `check_function` does — otherwise the body's local names leak outward,
 which is precisely the rule this DD establishes. `type_check.rs` is pinned for
 that reason, and `$(unset zz)` of a whole variable remains silently accepted
-because of it.
+because of it.~~ The later type-pass correction and centralized lexical
+resolution below replace this implementation advice.
 
 ### Condition context does not cross the boundary
 
@@ -739,10 +785,11 @@ read too broadly for `type_check.rs`. Two corrections:
 
 - **`check_function` does not open a child scope.** It saves and restores the
   implicit `args` collection and the DD#100 slot kinds, and nothing else.
-  Ordinary names declared in a function body are written into the shared
+  ~~Ordinary names declared in a function body are written into the shared
   `TypeEnv`. A `$( )` body is treated the same way, which is what "an anonymous
   function body" already implied — giving bodies their own name scope here
-  would make them *stricter* than the construct they are defined in terms of.
+  would make them *stricter* than the construct they are defined in terms of.~~
+  The lexical-identity addendum below supersedes that unqualified-name model.
 
 - **The pin was never what blocked the descent.** `check_stmt` and
   `infer_stmt` now take `cmdsub_bodies()` unconditionally, after their `match`,
@@ -828,7 +875,7 @@ the then-enumerated binding channels, and the backstop becomes an invariant.
 **The rule, with the 2026-11-09 validation distinction.** SB4044 rejects
 every actual write to a const other than its initialization: an assignment,
 a `for` variable, a `(( ))` write, a command out-param (`readline`, `read`,
-`argv`, `mapfile`, a `keys` or `match` fill), and DD#93's conversion target.
+`argv`, ~~`mapfile`,~~ a `keys` or `match` fill), and DD#93's conversion target.
 An attest's value-preserving retag of its subject is allowed; removing the
 current rejection is queued in `q-attest-retag-of-const`. Every real write is
 reported, each at the innermost statement that makes it, whether that comes

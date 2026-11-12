@@ -1,6 +1,20 @@
 title: DD#73 — Glob expansion yields normalized absolute paths
 status: accepted
 
+1. Every glob result is a lexically normalized absolute path computed at
+   runtime. Join relative directory prefixes to the target process's cwd,
+   collapse textual `.`/`..`/redundant separators, and do not resolve symlinks.
+2. Literal directory prefixes and DD#39's bounded final-component wildcard
+   follow this same rule; DD#69 governs ordering and composition.
+3. Failed cwd lookup or directory open/read is an operation failure under
+   DD#130, never a relative-path fallback, EOF or empty success. Successful
+   enumeration with no matches yields zero elements.
+4. Absolutization protects glob-produced paths, not arbitrary external
+   arguments. Use an explicit basename operation when a shorter value is
+   wanted; cardinality dispositions and taint remain separate concerns.
+
+---
+
 Decided with DG 2026-07-29. Amends DD#69 §1 ("one *verbatim* element per
 directory entry"): a glob element is now a **normalized absolute path**.
 Motivated by a demo-prep observation that nothing in the value model stops
@@ -45,7 +59,7 @@ Two independent rationales, correctness first (DG):
 
 This closes the **glob-sourced** slice of option-injection only. A
 `-`-leading value from any *other* runtime source — a blessed-tainted
-`$x`, a `read -a` / `mapfile` element, a `$(…)` capture — is **not**
+`$x`, a ~~`read -a` / `mapfile`~~ element, a `$(…)` capture — is **not**
 addressed. Globs are special only because a glob element is *always a
 path*, so absolutization is a natural, lossless fix. This DD is **not**
 sold as general option-injection safety; a universal "no option-ambiguous
@@ -138,15 +152,16 @@ the default and brevity is the explicit request.
 Single runtime site: `sash_glob` / `sash_glob_regex` in `sash-rt/src/lib.rs`
 build each element (today: the bare dirent name). Prepend the
 normalized-absolute directory there, reusing the existing `sash_getcwd`
-(syscall 79) for the relative case; on `getcwd` failure, route to the
-`sash_emsg` abort path. Codegen / emit_c / emit_janet only pass the
+(syscall 79) for the relative case; ~~on `getcwd` failure, route to the
+`sash_emsg` abort path.~~ DD#130 now governs failure classification.
+Codegen / emit_c / ~~emit_janet~~ only pass the
 (now absolute) strings through — no front-end decision change (globs remain
 arrays). Tracked as `notes/tasks/glob-absolute-paths.md`.
 
 ## Open / deferred (not decided here)
 
 The general external-argument option-injection policy for non-glob runtime
-sources (blessed-tainted strings, `read -a` / `mapfile` elements, `$(…)`
+sources (blessed-tainted strings, ~~`read -a` / `mapfile`~~ elements, `$(…)`
 captures that begin with `-`). Globs are the first, easiest instance;
 whether sash adopts a broader rule (auto-`--` where supported, reject
 `-`-leading, a disposition, …) is unsettled.

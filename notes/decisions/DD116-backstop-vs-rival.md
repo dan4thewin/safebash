@@ -2,6 +2,18 @@ title: "Backstop vs. rival: when unreachable code stays and when it goes"
 status: accepted
 date: 2026-09-21
 
+1. Keep an unreachable backstop only when it prevents silent wrong answers,
+   enforces totality or preserves the specified rule independently of pass order.
+2. Remove rival answers to an already-authoritative decision; redundancy is
+   not an independent safeguard.
+3. Establish that the containing function is correct and that the arm is
+   unreachable before applying this distinction; cold coverage alone is not proof.
+4. Document the specific property that justifies retention, and protect a
+   dangerous fallback at its boundary rather than duplicating per-arm guards.
+5. User-reachable invalid input requires a diagnostic, not an invariant panic.
+
+---
+
 # DD#116 — Backstop vs. rival
 
 ## The question
@@ -61,13 +73,15 @@ character-identical to the one three other sites actually produce.
 
 | site | verdict | property |
 |---|---|---|
-| `transform/expr_handlers.rs` — `len`/`join` arrvals arms | keep | 1 — the fallback emits `strlen` of an undefined var, a silent `0` where a count belongs |
+| `transform/expr_handlers.rs` — `len`/`join` arrvals arms | ~~keep~~ (see DD100) | ~~1 — the fallback emits `strlen` of an undefined var, a silent `0` where a count belongs~~ |
 | `transform/expressions.rs` — `expr_to_string`'s six unreachable arms | keep | 2 — exhaustive match makes a new `ExprKind` a compile error here first |
 | `transform/capture_purity.rs` — the function-body walk | keep | 3 — makes the disqualification correct for any call seen before inlining flattens it |
 | `validate.rs` — the DD#31 non-final-comma mutation test | keep | 3 — states what DD#31 specifies, not what the current ordering delivers |
 | `parse/logos_tokens.rs` — 27 keyword variants | **delete** | rival to `classify_word_token` |
 | `validate.rs` — `arith_brief`'s `Assign`/`CompoundAssign` arms | **delete** | rival — a third copy of the `x = ...` brief |
 | `parse/arith.rs` — `tok_to_text`'s paren arms | keep | 2 — subsumed: the whole renderer was made total, see below |
+
+DD100's bare-name-only builtin contract supersedes the arrvals precedent.
 
 ## When the rival test is the wrong question
 

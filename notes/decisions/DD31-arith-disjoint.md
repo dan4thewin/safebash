@@ -1,6 +1,19 @@
 title: DD#31 — Arithmetic mutations and comparisons are disjoint
 status: implemented
 
+1. Arithmetic statements mutate and produce no result; arithmetic conditions
+   consume a read-only result; arithmetic value expressions are read-only.
+2. Assignment, compound assignment and postfix increment/decrement cannot
+   supply a value, a condition result or fresh status permission.
+3. Read-only arithmetic results must be consumed; bare tests/calculations and
+   source `-` on arithmetic statements are errors.
+4. In statement-position comma sequencing, every part must mutate. In condition
+   position, non-final parts mutate and the final read-only result is consumed.
+   Parentheses do not give a write a result.
+5. Prefix increment/decrement is invalid; postfix forms are statement-only.
+
+---
+
 Three arithmetic contexts, each with a single purpose:
 
 | Context | Purpose | Accepts | Rejects |

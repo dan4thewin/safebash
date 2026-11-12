@@ -1,6 +1,33 @@
 title: "DD#100 — Collection parameters: `=name` at the call site, `A`–`E` in the callee"
 status: accepted
 
+1. A user-function call passes scalar values first, then up to five
+   collection identities as `=name`, bound to slots `A` through `E`.
+   Quoted `=name` and other ordinary words remain scalar strings.
+   Slots and `args` are compiler-managed names, not user bindings.
+2. Each function has one inferred collection count and full slot
+   signature: string array, integer array, string map or integer map.
+   All calls, including transitive forwarding, must agree; every type
+   check uses that signature.
+3. A slot denotes the caller's actual collection, so legal mutations
+   affect that collection. Language constructs keep bare collection-name
+   operands rather than call-site sigils or splats.
+4. Collection arguments have distinct identities and cannot overlap
+   globals accessed by the callee or any transitive callee. Reads, writes,
+   attests, metadata and identity forwarding all count, even in
+   conditional or unreachable paths and under `--no-taint`. Forward
+   the slot rather than reintroducing its actual global name.
+5. Passing identity alone is not a value read. Actual callee reads count
+   for taint and unused-variable checking; a write-only out-param still
+   needs a real reader. Scalar or undeclared actuals are invalid.
+6. DD#127/DD#128 govern slots like globals: received taint cannot be
+   attested in the callee; own taint is resolved in its producing body
+   or immediately after its sole call site. Shared bodies retain their
+   producer-local obligation. Ordinary clean writes do not clear a live
+   slot's unresolved taint.
+
+---
+
 Settled with DG (2026-09-11). sash has no first-class collection values, so a
 function could read and mutate a caller's array only by **hard-coding its
 name**. Contents were parameterisable (splat `@a`, read-only); identity was
@@ -93,19 +120,20 @@ which is exactly the sigil shape. See journal 261 and spec `scope.sh`
 ### Escape hatch
 
 Quoting yields a value, not a name. `f '=foo'` and `f "=foo"` pass the
-literal string `=foo`; only a bare `ExprKind::Literal` beginning `=` is a
-sigil. The three forms are structurally distinct in the AST
+literal string `=foo`; ~~only a bare `ExprKind::Literal` beginning `=` is a
+sigil~~. The three forms are structurally distinct in the AST
 (`Literal` / `SingleQuoted` / `DoubleQuoted`).
+Part F records the all-literal `Concat` representation too.
 
 ## Part B — the callee sees `A`–`E`
 
 - **Five slots, `A` through `E`**, filled in call order.
 - **Reserved names**, on the `args` precedent: rejected as user variables at
   top level and inside functions.
-- **Array and map are both usable** in any slot. Because every call is
+- **Array and map are both usable** in any slot. ~~Because every call is
   inlined, each instantiation is monomorphic — the slot's type is whatever
   was passed at that site, and `len`/`keys`/`join` type-check against it
-  there.
+  there.~~ The one-signature addendum above governs every call.
 - A sixth collection argument is a compile error.
 
 ## Part C — scalars first, then collections
@@ -144,10 +172,11 @@ calls in the relevant sense:
 - `read a` is **double duty**: it declares `a` *and* populates it. That is
   why it resisted the pattern; it is part declaration, part call.
 
-Removing splats from `len`/`join` is **deferred** into
+~~Removing splats from `len`/`join` is **deferred** into
 `dd75-len-collection-only-strlen`, which has to decide `len`'s operand set
 anyway — doing it once avoids churning the same 19 sites twice. Note it
-collides with SB5025's own advice, which currently recommends `$(join @a)`.
+collides with SB5025's own advice, which currently recommends `$(join @a)`.~~
+Part D's bare-name rule is current.
 
 ## Related fixes that made this coherent
 
@@ -234,8 +263,9 @@ arguments and intersects the passed identities with the callee's global-use
 footprint. The shared read/binding walks collect the footprint; identity
 forwarding and the canonical `unset` parser cover uses that need not read a
 value. The existing command/arithmetic call graph supplies the transitive
-closure, with a body location retained for each global. Multiple definitions
-of a function conservatively contribute to the same footprint. This
+closure, with a body location retained for each global. ~~Multiple definitions
+of a function conservatively contribute to the same footprint.~~ DD#86
+requires exactly one source definition. This
 prerequisite landed before the slot summaries (journal 559).
 
 ### Taint through a slot
@@ -307,9 +337,10 @@ So each function's slot kinds are inferred from its call sites, and call sites
 that **disagree** are rejected (SB4030). This narrows Part B, which allows any
 kind in any slot: a genuinely kind-agnostic helper (only `len A`, `@A`,
 `join A`) called with an array at one site and a map at another is now an
-error. Strict-first for the same reason Part C gives — per-instantiation
+error. ~~Strict-first for the same reason Part C gives — per-instantiation
 checking can be allowed later without breaking an accepted program, whereas
-tightening later would break them. (DG confirmed, 2026-09-11.)
+tightening later would break them. (DG confirmed, 2026-09-11.)~~ The later
+one-signature ruling fixes both kind and element type.
 
 ### `=foo` *is* a read when the callee reads the slot
 
@@ -418,19 +449,20 @@ so the behaviour cannot drift silently in the meantime.
 
 - Whether the DD#58 arith sexpr slot (`$(( (len a) ))`) ever needs the
   sigil; today the arith lexer owns `=` and `$(( (len =a) ))` is SB4020.
-- The janet backend has no slot support (`notes/tasks/janet-collection-
+- ~~The janet backend has no slot support (`notes/tasks/janet-collection-
   parameters.md`); the 17 runtime tests in `spec/collparam.sh` are guarded
-  `in_modes native,c`.
+  `in_modes native,c`.~~ DD#104 removes that backend.
 
 ## Addendum (2026-09-17) — Part B's reservation is now enforced for `for` variables
 
 Part B states that `A`–`E` are "reserved names, on the `args` precedent:
 rejected as user variables at top level and inside functions". That was prose
 only: nothing rejected a **`for` variable** taking a slot name, because a loop
-variable falls between the two gates that would otherwise catch it — DD#86
+variable falls between the two gates that would otherwise catch it — ~~DD#86
 explicitly exempts a for variable from the shadowing rule ("a `for` variable
 is not a declaration and is untouched"), and SB5052 gates *writes*
-(assignments, declarations, bulk fills), which a loop variable is not.
+(assignments, declarations, bulk fills), which a loop variable is not.~~
+DD#86 retracts that exemption: a loop binds or writes the ordinary typed name.
 
 Inside a function that gave one name two simultaneous meanings: `$A` read the
 loop variable while `len A`, `join A`, and `${A[0]}` read the slot.
@@ -454,6 +486,8 @@ and `join @a SEP` are SB5062 (specs `75.69`/`75.70`). That left the
 `ParameterExpansion(arrvals)` arm in both `try_len_intrinsic` and
 `join_intrinsic` unreachable from any accepted program.
 
+<del>
+
 Both arms are kept as `unreachable!` guards rather than deleted, because the
 fallback each one shadows degrades **silently**. `expr_to_string` renders a
 parameter expansion as `${NAME}{OP}`, so `@a` becomes the string
@@ -464,6 +498,11 @@ declare. A regression in SB5062 would therefore produce a wrong answer, not a
 crash. Unit tests in `transform/expr_handlers.rs` simulate the regression and
 assert the panic names SB5062; a third test pins the silent-degradation shape
 itself, so if the fallback ever fails loudly the guards can be reconsidered.
+
+</del>
+
+The later backstop-versus-rival ruling removes this duplicate guard
+prescription; it does not restore the rejected splat operands.
 
 (An earlier version of this addendum said the fallback yields the literal text
 `"@a"`. That was asserted from reading and is wrong — corrected by execution.)

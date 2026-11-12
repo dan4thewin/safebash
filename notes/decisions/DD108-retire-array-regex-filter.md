@@ -1,6 +1,15 @@
 title: DD#108 — Retire the `arr=(GLOB =~ 'RE')` regex-filter shorthand
 status: implemented
 
+1. Array literals retain ordinary list semantics. An element whose
+   literal value is `=~` must be quoted, independent of its position or
+   neighboring elements.
+2. Filter existing arrays explicitly with a loop and a regex test of the
+   chosen value. Plain glob expansion retains DD#69/DD#73's array and
+   absolute-path semantics.
+
+---
+
 The array regex-filter shorthand is removed. `arr=(GLOB =~ 're')` is rejected
 with **SB5075**, which names the loop that replaces it. The plain single-glob
 form `arr=(*.sh)` is unaffected and stays.

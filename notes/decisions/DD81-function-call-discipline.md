@@ -1,6 +1,22 @@
 title: "DD#81 — function-call discipline: one name one meaning, arity from `args`"
 status: accepted
 
+1. Each function name denotes one unique hoisted definition in the main
+   statement list; calls before and after it mean the same body (DD86).
+2. Static function overrides are uniform; absolute paths explicitly name
+   externals, and function names obey DD125's identifier/exclusion rules.
+3. Infer one scalar-argument signature from the body's `args` accesses and
+   check every call route. Literal positions are contiguous; DD84 governs
+   optional trailing positions.
+4. Whole-argument access or dynamic indexing makes a signature variadic;
+   merely counting arguments does not.
+5. Runtime-sized splats/elisions require a variadic callee and must guarantee
+   every required position before later positions become indeterminate.
+6. Materialize arguments before replacing the caller's context or applying
+   attached redirects; pipeline-stage arguments remain in that child.
+
+---
+
 Settled with DG (2026-08-25). Two coupled decisions about user-function calls:
 **(A)** a bareword name resolves *consistently* — command/function shadowing is
 rejected; **(B)** a function's arity is inferred from its `args` usage and
@@ -34,6 +50,8 @@ rejected, not faithfully emulated.
 
 ### Rule
 
+<del>
+
 A bareword command name resolves, at each point it executes, to a **user
 function** if one by that name is in scope (defined earlier in execution order),
 otherwise to an **external command**. It is a compile error (**SB5041**) for a
@@ -46,13 +64,18 @@ Detection is a simple forward pass: record each name resolved as an external; on
 inline time, i.e. at their call's execution point, so an external use inside a
 body that runs before the definition is caught too.)
 
+</del>
+
+DD86 supersedes execution-order lookup: unique main-list definitions are
+hoisted, and a call on either side resolves to the same body.
+
 ### Rejected vs kept
 
 | rejected (SB5041) | kept |
 |---|---|
-| dynamic shadowing: `cat …; fn cat {…}; cat …` | **static override**: `fn cat {…}` used throughout (call the real one as `/bin/cat`) |
-| forward function call: `echo $(f); fn f {…}` (f resolves external, then is defined) | **helper below caller**: `fn a { b }; fn b {…}; a` — `b` is only ever *called* (when `a` runs, `b` is defined) and never resolves external |
-| forward plain call: `f x; fn f {…}` | **explicit external**: `/bin/cat` always reaches the real command |
+| ~~dynamic shadowing: `cat …; fn cat {…}; cat …`~~ | **static override**: `fn cat {…}` used throughout (call the real one as `/bin/cat`) |
+| ~~forward function call: `echo $(f); fn f {…}` (f resolves external, then is defined)~~ | **helper below caller**: `fn a { b }; fn b {…}; a` — `b` is only ever *called* (when `a` runs, `b` is defined) and never resolves external |
+| ~~forward plain call: `f x; fn f {…}`~~ | **explicit external**: `/bin/cat` always reaches the real command |
 
 ### Rationale
 
@@ -65,17 +88,17 @@ explicit external) survives.
 
 ### Consequences
 
-- **The forward-reference policy is subsumed** — a forward call is a
+- ~~**The forward-reference policy is subsumed** — a forward call is a
   use-before-definition, which is a collision. No separate forward-ref rule is
-  needed.
+  needed.~~
 - **`func_constants` / `lower_func_call_value` / `fold_function_outputs` become
   provably dead → removed.** That machinery existed only to (badly) handle a
   name used before its function definition; forbid that and it evaporates. This
   is the "dead code" question that started the thread — it is dead *by
   correctness*, once Part A holds.
-- **The `$(f)` capture path unifies onto the plain-call `function_bodies`
+- ~~**The `$(f)` capture path unifies onto the plain-call `function_bodies`
   gate** (function-if-defined-so-far, else external command substitution). This
-  restores bash-faithful `$( )` shadowing and removes the forward-`$(f)` ICE.
+  restores bash-faithful `$( )` shadowing and removes the forward-`$(f)` ICE.~~
 
 ## Part B — function arity from `args`
 
@@ -92,11 +115,12 @@ all referring to the *same* per-function `args`:
 | `$#` | `$(len args)` | length (`${#args}` is operator sugar) |
 | `$*` | *(removed)* → `$(join args)` | — |
 
-`$0` is separate — the program name (DD#60), not part of `args`. So `$@` is
-**this function's own args** (≡ `@args`), *not* the caller's.
+~~`$0` is separate — the program name (DD#60), not part of `args`. So `$@` is
+**this function's own args** (≡ `@args`), *not* the caller's.~~
+Use `$(arg 0)` for the program name and `@args` for this function's values.
 
-Two current-state notes: indexed access is unchecked today (`${args[2]}` with
-one arg yields empty); and — **`$@`/`$*` are dropped** (DG 2026-08-25;
+Two current-state notes: ~~indexed access is unchecked today (`${args[2]}` with
+one arg yields empty);~~ and — **`$@`/`$*` are dropped** (DG 2026-08-25;
 extended to `$*` and made universal 2026-08-26): a `$`-sigil that splats/joins
 contradicts DD#75 §4, so `$@`/`$*` (and the braced `${@}`/`${*}`, and inside
 `$(( ))`) are rejected **everywhere** (**SB5045** "sash has no `$@`/`$*`") — in
@@ -110,7 +134,7 @@ makes the surface a checked signature over `@args`/`${args[i]}`/`$N`.
   is the contiguous set `{0..max}`; a gap is a **hole** (**SB5044**). A function
   with only literal indices and no whole-args access has **fixed arity =
   max+1**.
-- **Whole-args access** — `@args`, `$(join args)` / `$(keys args)`, or a
+- **Whole-args access** — `@args`, `$(join args)` / ~~`$(keys args)`~~, or a
   **dynamic** index `${args[$i]}` — makes the function **variadic** (any
   count; floor = highest literal index + 1 if any is also present).
   *Amended 2026-09-28 (see the addendum): `$(len args)` / `$#` are **not**
@@ -118,8 +142,9 @@ makes the surface a checked signature over `@args`/`${args[i]}`/`$N`.
 
 ### Checking — at *every* call site
 
-Enabled by Part A (every call resolves to an already-defined function, so its
-signature is always known):
+~~Enabled by Part A (every call resolves to an already-defined function, so its
+signature is always known):~~ DD86's unique hoisted definitions make the
+signature available independently of source order.
 
 - **fixed arity N** → the call must pass **exactly N** (too few → **SB5042**;
   too many → **SB5043**).
@@ -137,7 +162,7 @@ signature is always known):
   access (amended 2026-09-28 — was "→ variadic").
 - dynamic index `${args[$i]}` → variadic (a runtime index can't be a static
   slot).
-- `shift` → variadic (moot today; `shift` is unimplemented, SB5011).
+- ~~`shift` → variadic (moot today; `shift` is unimplemented, SB5011).~~
 
 ### Holes — decided (a)
 
@@ -162,17 +187,18 @@ unused slot — chosen against for clarity; DG 2026-08-25.)
 
 ## Implementation plan (staged, each a green commit)
 
-1. **Unify the `$(f)` gate** onto `function_bodies` + external-command fallback
+1. ~~**Unify the `$(f)` gate** onto `function_bodies` + external-command fallback
    (bug fix on its own: restores `$( )` shadowing, kills the forward-`$(f)`
-   ICE). Spec the shadowing idiom (plain and `$( )`).
-2. **Add the SB5041 collision check** (reject `fn NAME` after an external use of
-   `NAME`).
+   ICE). Spec the shadowing idiom (plain and `$( )`).~~
+2. ~~**Add the SB5041 collision check** (reject `fn NAME` after an external use of
+   `NAME`).~~
 3. **Remove the dead `func_constants` machinery** (`fold_function_outputs`,
    `lower_func_call_value`, the `FuncCall` value arm, the threading).
 4. **Signature inference + uniform arity check** across plain / pipeline / `$( )`
    paths, including `${args[i]}` bounds → arity and the hole check.
-5. **Clean the runtime message**: a genuinely-unresolved external →
-   `command not found` / 127 (not `bug: bare command passed to sash_exec`).
+5. ~~**Clean the runtime message**: a genuinely-unresolved external →
+   `command not found` / 127 (not `bug: bare command passed to sash_exec`).~~
+   DD23 requires compile-time resolution; a bare external at runtime is an invariant failure.
 6. **Fix `$(f arg)`**: a defined function called with args in `$( )` currently
    drops the args and ICEs (`undefined array`); pass and arity-check them.
 
@@ -185,13 +211,14 @@ unused slot — chosen against for clarity; DG 2026-08-25.)
 
 ## Relates
 
-DD#23 (compile-time command resolution), DD#60 (caller's `$@`/`$*`), DD#75
+DD#23 (compile-time command resolution), DD#60 ~~(caller's `$@`/`$*`),~~
+(program arguments), DD#75
 (uniform collections / the `args` array), DD#84 (optional trailing args and
 the `:~` elide — the minimum-token table the 2026-09-28 addendum below rests
 on), DD#69 (splat dispositions — `@{a:-W}`/`@{a:?W}` are what let a splat fill
-a fixed argument position), DD#18 (local functions — the natural
+a fixed argument position), ~~DD#18 (local functions — the natural
 home for an *explicit* unshadow mechanism, e.g. `unset -f` / scoped functions,
-should controlled dynamic behaviour ever be wanted back).
+should controlled dynamic behaviour ever be wanted back).~~
 
 ## Implemented
 
@@ -201,7 +228,7 @@ should controlled dynamic behaviour ever be wanted back).
 - **Part B** — `transform/functions.rs::analyze_arity` infers `Arity`
   (`Fixed(n)` / `Variadic{floor}`) by walking the body's `args` reads
   (`$N`/`${args[k]}` literal → fixed index; `@args`/`$(join args)`/
-  `$(keys args)`/`$@`/dynamic index → variadic; **including inside `$(( ))`** —
+  ~~`$(keys args)`/`$@`~~/dynamic index → variadic; **including inside `$(( ))`** —
   arith is scanned via `sig_scan_arith`, else a positional in a condition is
   missed). Checked on
   all three call paths (plain, pipeline, `$( )` capture): fixed → exactly N
@@ -243,7 +270,7 @@ whether it counts them:
 | `${args[k]:-}` / `${args[k]:~}` | fixed index `k` (optional, DD#84) |
 | `${args[$i]}` dynamic index | **variadic** |
 | `@args` splat | **variadic** |
-| `$(join args)` / `$(keys args)` | **variadic** (both read every element) |
+| `$(join args)` / ~~`$(keys args)`~~ | **variadic** ~~(both read every element)~~ — `keys` is map-only |
 | `$(len args)` / `$#` | **nothing** |
 
 `len` earns its place in a variadic function as the *loop bound*, and the
@@ -422,9 +449,10 @@ definition inside EXIT or ERR uniformly.
 The former F3 exception was a misreading of DD86, corrected in journal 566
 and DD56. Its definition-order specs `56.97` and `56.98` are retired.
 
-The independent SB5041 wording defect remains for valid program-level
+~~The independent SB5041 wording defect remains for valid program-level
 definitions preceded by arithmetic uses: the message says "used as a
-command" (`bug-sb5041-text-for-arithmetic-uses`).
+command" (`bug-sb5041-text-for-arithmetic-uses`).~~ DD86's hoisting rule
+governs those calls; source order is not a collision.
 
 ## Addendum (2026-10-29) — one signature, inferred once, checked at every call
 
@@ -446,10 +474,11 @@ Batch-531 F5 unit B (journal 543).
   a default, a redirect target, a map literal and `$(<$1)`, so a function
   reading `$1` only there drew a false SB5043 at every call (B53,
   `81.47`-`81.53`).
-- **`$(- join args)` is whole-args access**, like `$(join args)` (B49,
+- ~~**`$(- join args)` is whole-args access**, like `$(join args)` (B49,
   `81.54`). `-` changes how a status is checked (DD#55), not what runs, and
   `join` is an intrinsic, so this is not `-` on a user function
-  (`q-suppression-on-user-functions`).
+  (`q-suppression-on-user-functions`).~~ DD55 now rejects status-less
+  value-intrinsic suppression; ordinary `$(join args)` remains whole-args access.
 - **`$(keys args)` is not whole-args access.** Part B and the table above
   list it, but `keys` takes a map, so it is SB4030 (`75.100`). The scan no
   longer looks for it.

@@ -1,11 +1,15 @@
 title: DD#36 — Fixed-point arithmetic via dtoi/itod
 status: superseded
 
+1. No current requirements.
+
+---
+
 **SUPERSEDED 2026-09-13 (DG): `dtoi`/`itod` are YAGNI and have been removed.**
 
-The original decision: `dtoi(digits, string) → int` and
+~~The original decision: `dtoi(digits, string) → int` and
 `itod(digits, int) → string`. Explicit scale, no silent truncation.
-Not a float type. Runtime builtins alongside atoi/itoa.
+Not a float type. Runtime builtins alongside atoi/itoa.~~
 
 ## Why it went
 

@@ -1,6 +1,17 @@
 title: DD#133 - Compiler-tool stdout failures
 status: accepted
 
+1. Apply this stdout contract to `sash`, `sash-expand` and `sash-convert`,
+   including buffered flushes and completion messages.
+2. EPIPE stops output and exits 1 quietly. Other write errors report to
+   stderr and exit 1; failed reporting must not panic.
+3. Deliberately inherited closed stdout is explicit discard, not failure.
+   Preserve independent errors and ordinary successful results.
+4. Do not claim delivery from buffering, invent successful partial output,
+   roll back emitted bytes or remove completed artifacts.
+
+---
+
 DG selected this policy on 2026-11-10 (journal 611):
 
 > Quiet EPIPE with exit 1; report other write errors with exit 1;

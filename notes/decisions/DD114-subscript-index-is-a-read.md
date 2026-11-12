@@ -1,6 +1,17 @@
 title: "DD#114 — a subscript index is a read, in every position"
 status: accepted
 
+1. Every subscript index is an ordinary read, including indices on writes,
+   assignment values and test operands. Check its taint independently of the
+   collection; trusting a cell does not trust its index.
+2. A rejected index read identifies the index variable, not an innocent
+   container, and carries the source position of the read.
+3. Nested parsing preserves the origin of verbatim source. Reconstructed
+   arithmetic text uses its enclosing expression's position rather than
+   inventing an exact location.
+
+---
+
 # DD#114 — a subscript index is a read, in every position
 
 DD#24 already said this. Its use-site list names `arr[$x]=v` — "index
@@ -33,7 +44,7 @@ and the result was treated as clean, with no diagnostic anywhere.
 
 The other four were *rejected*, but only by the SSA taint backstop — which
 `notes/tasks/ssa-taint-full-backstop.md` describes as defense-in-depth behind
-an authoritative CST gate. Its message is
+an authoritative ~~CST~~ AST gate. Its message is
 
 ```
 c.sh: tainted variable i_1 used as argument to command 'echo' without attest (SSA taint backstop)
@@ -66,9 +77,9 @@ columns from the start of that substring, so every index expression carried a
 
 `Span` is `{line, col}`, not a byte offset, so the sub-scanner cannot simply be
 given a base. The index expression is re-anchored to the span of the enclosing
-`${name[…]}` — which is where the read is. Exprs nested deeper inside an index
+`${name[…]}` — which is where the read is. ~~Exprs nested deeper inside an index
 still carry relative spans; filed as
-`notes/tasks/subscript-index-nested-span.md`.
+`notes/tasks/subscript-index-nested-span.md`.~~ Resolved by the addendum below.
 
 ### Addendum (2026-10-24, batch-531 port step F13) — nested spans are exact
 

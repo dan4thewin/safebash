@@ -1,9 +1,25 @@
 title: DD#91 — the `:!` taint-off modifier (a per-use bless-without-predicate)
 status: accepted
 
-Settled with DG (2026-09-04). `:!` is a new disposition operator: **`:~` (elide)
-plus the taint guard disabled**. `${x:!}` / `$x:!` / `@a:!` / `@{a:!}` use a
-tainted value *without* a `bless` predicate — a sanctioned per-use taint bypass.
+1. `:!` trusts one subject read without changing its value or type, clearing
+   its binding's taint, or trusting its index/other operands.
+2. Trust is independent of disposition: `:!` reads the value, `:!~` elides,
+   `:!-W` defaults and `:!?M` requires. Trust comes first; defaults and
+   messages retain DD65's literal-only contract.
+3. Scalar `:!` is legal wherever the corresponding data read is legal.
+   Splats still require an explicit emptiness disposition; cells follow
+   the same read/type rules as scalar variables.
+4. Ordinary writes, including a self-copy through `:!`, do not resolve a
+   live binding's outstanding taint (DD128). Other name, type, scope and
+   ownership constraints remain.
+5. A generated audit report must expose attest sites, per-use and
+   compiler-wide taint bypasses, and external taint sources.
+
+---
+
+Settled with DG (2026-09-04). ~~`:!` is a new disposition operator: **`:~` (elide)
+plus the taint guard disabled**.~~ `${x:!}` / `$x:!` / ~~`@a:!` / `@{a:!}`~~ use a
+tainted value *without* a ~~`bless`~~ attest predicate — a sanctioned per-use taint bypass.
 
 ## Motivation
 
@@ -18,25 +34,27 @@ single use site**: the programmer vouches for this one value.
 
 ## Semantics
 
-- **`:!` = `:~` + taint-off.** It **elides** when the value is the identity
+- ~~**`:!` = `:~` + taint-off.** It **elides** when the value is the identity
   element (empty → zero tokens) and yields the value otherwise, exactly like
   `:~`; additionally the value is treated as **clean**, so a tainted subject is
   used without `bless` (no SB5020) and the result **does not propagate taint**
-  (`array a=(${x:!} lit)` leaves `a` clean).
+  (`array a=(${x:!} lit)` leaves `a` clean).~~
 - **Wordless**, like `:~`: `${x:!foo}` is SB4051 (scalar), `@{a:!WORD}` is SB5033
   (array).
-- **Elidable-position-only**, like `:~`: valid only where a token may disappear
+- ~~**Elidable-position-only**, like `:~`: valid only where a token may disappear
   — a command argument or an array-literal element. A non-elidable position
   (e.g. a scalar assignment `z=${x:!}`) is **SB5046**. (So `:!` is *not* a way to
-  assign a trusted value to a scalar; use `bless` for that. This mirrors `:~`.)
-- Works for **scalar** (`${x:!}` / `$x:!`) and **array splat** (`@{a:!}` /
-  `@a:!`), **braced and brace-less** (DD#90). `@a:!` bypasses the bless-all
-  requirement on a tainted array.
+  assign a trusted value to a scalar; use `bless` for that. This mirrors `:~`.)~~
+- Works for **scalar** (`${x:!}` / `$x:!`) and ~~**array splat** (`@{a:!}` /
+  `@a:!`)~~, **braced and brace-less** (DD#90). ~~`@a:!` bypasses the bless-all
+  requirement on a tainted array.~~ The split below requires a splat disposition.
 - Does **not** bypass unrelated checks: an undeclared subject still trips the
-  typo guard (SB5031) exactly as `:~`/`:-` do (all dispositions suppress it
-  equally — `:!` is not special there).
+  typo guard (SB5031) exactly as `:~`/`:-` do ~~(all dispositions suppress it
+  equally — `:!` is not special there)~~.
 
 ## Implementation
+
+<del>
 
 Scalar `:!` lowers to `SsaValue::ElideEmpty { source, taint_off: true }` (the
 `:~` spelling sets `taint_off: false`); array `@a:!` uses the `arrvals_trust`
@@ -57,6 +75,10 @@ Parser: `split_operator` gains `:!`; `parse_splat_op` maps `@…:!` →
 wordless. Backends: native/c go through the SSA `ArraySplat`/`ElideEmpty`
 (taint_off ignored at codegen — the emitted splat is identical to a wordless
 `arrvals_default`); janet's `janet_splat_splice` gains an `arrvals_trust` arm.
+
+</del>
+
+The modifier split below replaces this coupled elision/trust representation.
 
 No new SB code (reuses SB4051 / SB5033 / SB5046).
 
@@ -158,10 +180,12 @@ said what taint `W` itself carries. DG settled it:
 > read of the variable's stored value"
 
 So `!` is scoped to **the read of its own subject**. It is not a trust claim
-about the expansion's result. In `${x:!-$y}` the `!` covers `x`; `$y` is a
+about the expansion's result. ~~In `${x:!-$y}` the `!` covers `x`; `$y` is a
 separate read that owes its own `!` (or an `attest`). The rule runs in both
 directions — a `!` in the default does not vouch for the subject either, so
-`${x:-${y:!}}` is still SB5020 on `x`.
+`${x:-${y:!}}` is still SB5020 on `x`.~~ DD65 later rejects interpolating defaults.
+
+<del>
 
 | spelling | verdict |
 |---|---|
@@ -169,6 +193,8 @@ directions — a `!` in the default does not vouch for the subject either, so
 | `${x:!-$y}` | SB5020 on `y` |
 | `${x:!-$(getenv C)}` | SB5020 — nobody asked to bypass the `getenv` |
 | `${x:-${y:!}}` | SB5020 on `x` |
+
+</del>
 
 This also answers the question filed as `dd91-bang-vouches-for-source-in-default`:
 reading 2, and the outcome is a **spanned** diagnostic rather than the bare SSA

@@ -3,6 +3,15 @@ status: accepted
 depends: [DD15]
 supersedes: DD15
 
+1. `--emit-ir` emits inert, versioned Janet data; an independent oracle consumes
+   that capture as a separate program without coupling compiler delivery to it.
+2. Emit every IR node exhaustively, without wildcard fallbacks or semantic
+   interpretation; tags name IR nodes.
+3. Consumers must refuse unsupported schema versions. Schema 2 represents
+   optional EXIT and ERR bodies separately and distinguishes absent from empty.
+
+---
+
 Settled with DG 2026-09-12.
 
 The janet backend is **removed from the compiler**. The oracle idea is

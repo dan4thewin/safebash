@@ -1,6 +1,26 @@
 title: DD#61 — Array taint construction restriction and bless-all
 status: implemented
 
+1. Program-written collection literals, appends and cell assignments may
+   not introduce tainted values. Tainted arrays come from bulk input;
+   validate scalar input before inserting it as an element.
+2. `attest e in a [[ ... ]]` validates every array element;
+   `attest k v in m [[ ... ]]` validates every map key and value.
+   Binder count must match collection kind, and every binder must be
+   tested in its predicate, on the left for binary tests. Binders are
+   predicate-local under DD#86.
+3. Attest-all is universal and short-circuits at the first failing cell.
+   Empty collections pass. Standalone failure reports and enters ERR;
+   caught failure must obey DD#121/DD#128's resolution rules.
+4. DD#93's unary shorthand applies to every binder. Predicates obey its
+   value-test and clean-other-input restrictions; arithmetic conversion
+   is scalar-only (DD#113). Map attest remains runtime validation of
+   program-constructed maps (DD#93/DD#99).
+5. Taint acquisition, ownership and legal live-binding resolution follow
+   DD#127/DD#128; ordinary clean writes do not declassify a tainted array.
+
+---
+
 How tainted data enters arrays, and how arrays are blessed.
 
 ## Motivation
@@ -25,11 +45,13 @@ A tainted value may **not** enter an array through program syntax:
 - `a+=( $(getenv X) )` — tainted element appended — rejected.
 - `a[i]=$(getenv X)` — tainted value into a slot — rejected.
 
-The **only** way an array comes to hold tainted data is a bulk external
+~~The **only** way an array comes to hold tainted data is a bulk external
 read: `read -a`, `mapfile` / `readarray`, and the planned
 `array a=$(argv)`. Element-wise taint introduction is a compile error
 (SB5021) that directs the user to read/mapfile or to bless a scalar
-first and place the clean value into the array.
+first and place the clean value into the array.~~ The current bulk-input
+forms are DD#99's fd-backed `read a` and DD#60's `argv [N] a`;
+validation uses `attest` (DD#93).
 
 ### Why
 
@@ -37,11 +59,12 @@ This makes every tainted array **dynamic-arity and homogeneous** by
 construction (all elements share one origin: lines of a file, fields of
 a record, program args). Consequences:
 
-- Whole-array taint (a `HashSet<String>` of variable names) becomes
-  *correct*, not a compromise: per-element and whole-array taint coincide
+- Whole-array taint (~~a `HashSet<String>` of variable names~~) becomes
+  *correct*, not a compromise: ~~per-element and whole-array taint coincide
   because all elements are uniformly tainted. DD#24's "each element
   carries its own taint" stays literally true — they all carry it
-  together.
+  together.~~ DD#86 supplies lexical identities; DD#128 tracks unresolved
+  live-binding obligations even after clean bytes replace input.
 - "Validate every element with one predicate" (bless-all, below) is the
   complete and sound bless mechanism. Heterogeneous tainted arrays — the
   only case that would need per-element bless — cannot exist.
@@ -50,7 +73,9 @@ a record, program args). Consequences:
 
 ### Escape hatch
 
-To put external data into an array slot, bless a scalar first:
+To put external data into an array slot, ~~bless~~ attest a scalar first:
+
+<del>
 
 ```bash
 h=$(getenv HOME)
@@ -58,16 +83,25 @@ bless h [[ $h =~ ^/ ]]
 array cfg=( "$h" )    # literal now holds only clean values
 ```
 
+</del>
+
 This validates per value with a per-value predicate — strictly more
 precise than bless-all for heterogeneous data. Heterogeneous data should
 generally be scalars, not an array.
 
 ## Decision: bless-all syntax (Go/for-style)
 
+<del>
+
 ```bash
 mapfile -t a < f
 bless x in a [[ $x =~ ^[0-9]+$ ]]
 ```
+
+</del>
+
+DD#93/DD#99 replace the keyword and reader spellings; the universal
+validation contract remains.
 
 - Fresh binder `$x` = each element; universal quantification is implied
   by bless's all-or-nothing semantics (a single tainted element is
@@ -75,34 +109,41 @@ bless x in a [[ $x =~ ^[0-9]+$ ]]
 - Spelling chosen for cross-language intuition: Go `for _, x := range a`,
   Rust `a.iter().all(|x| …)`, Python `all(… for x in a)` all use an
   explicit per-element binder. `in` is already a sash keyword.
-- The scalar form `bless port [[ $port =~ P ]]` is unchanged. Applying
+- ~~The scalar form `bless port [[ $port =~ P ]]` is unchanged.~~ Applying
   the scalar form to an array variable, or the bless-all form to a
   scalar, is a type error directing to the correct form.
 
 ### Maps: two binders
 
-A map (associative array) from an external read has **both keys and
-values tainted**. bless-all for a map binds both:
+~~A map (associative array) from an external read has **both keys and
+values tainted**. bless-all for a map binds both:~~
+
+<del>
 
 ```bash
 sash-expand cfg | mapfile -m m
 bless k v in m [[ $k =~ ^[A-Z_]+$ && $v =~ ^[[:print:]]*$ ]]
 ```
 
+</del>
+
+DD#99 builds maps from checked array values; DD#93 retains the two-binder
+form as a runtime validation gate, not a direct-input declassification path.
+
 - Two binders `k v` = key and value of each pair; both fresh, test-
-  scoped, shadowing.
+  scoped, ~~shadowing~~. DD#86 governs lexical scope and no shadowing.
 - Both binders must appear on the LHS of a test operator (DD#49 extended
   to every binder) — a key that escapes unvalidated would be unsound,
   so the predicate must validate both. Use a permissive pattern if a
   side is genuinely unconstrained.
-- All pairs pass → whole map clean. Any pair fails → fail (statement
-  form exit 1; if-form false branch, map stays tainted).
+- ~~All pairs pass → whole map clean. Any pair fails → fail (statement
+  form exit 1; if-form false branch, map stays tainted).~~
 
 ### Binder arity
 
-- 1 binder (`bless x in a`) ⇒ `a` must be an indexed array; `$x` is each
+- 1 binder (~~`bless x in a`~~) ⇒ `a` must be an indexed array; `$x` is each
   element value (integer keys are clean/program-generated).
-- 2 binders (`bless k v in m`) ⇒ `m` must be a map; `$k`/`$v` are each
+- 2 binders (~~`bless k v in m`~~) ⇒ `m` must be a map; `$k`/`$v` are each
   pair's key and value.
 - Arity/kind mismatch (1 binder on a map, 2 on an indexed array) is a
   type error directing to the correct form.
@@ -117,8 +158,9 @@ Specs `93.62`/`93.63`. Arithmetic attest-all remains DD#113's SB5054 in
 ### Semantics
 
 - Runs the predicate once per element, binding `$x` to that element.
-- **Statement form**: any element fails → "bless: validation failed" to
-  stderr, exit 1. All pass → whole array becomes clean (new SSA version).
+- **Statement form**: any element fails → ~~"bless: validation failed" to
+  stderr, exit 1~~. All pass → whole array becomes clean (new SSA version).
+  DD#93 names `attest`; DD#128 routes unhandled failure through ERR.
 - **if-form** (DD#47): any element fails → false branch taken, array
   stays tainted.
 - **Empty array** (zero elements, e.g. mapfile of an empty file):
@@ -126,9 +168,10 @@ Specs `93.62`/`93.63`. Arithmetic attest-all remains DD#113's SB5054 in
   `all([]) == True` (Python) and `[].iter().all() == true` (Rust). There
   is no data to leak.
 - **Binder scope**: `$x` is confined to the `[[ ]]` test and never leaks
-  out. If `x` already names a variable in scope, the binder shadows it
+  out. ~~If `x` already names a variable in scope, the binder shadows it
   only inside the test; the outer value is untouched afterward (Go/Rust/
-  Python loop-binder intuition).
+  Python loop-binder intuition).~~ DD#86 governs lexical identity and
+  no-shadowing.
 
 **Provisional immutable-scratch extension (DD131/DD132, 2026-11-09).**
 An otherwise-legal attest-all may validate an immutable collection
@@ -154,8 +197,8 @@ restrictions, and is not implemented by this recording.
 
 `spec/taint.sh` section DD#61 (`60.*`). Construction-restriction tests
 are compile-time (check rc/err); bless-all runtime semantics use a
-tainted source readable at runtime: `mapfile -t a < file` (file read =
-tainted) or a map via `mapfile -m`.
+tainted source readable at runtime: ~~`mapfile -t a < file` (file read =
+tainted) or a map via `mapfile -m`~~.
 
 ## See also
 

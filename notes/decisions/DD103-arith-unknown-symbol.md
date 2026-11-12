@@ -1,6 +1,15 @@
 title: DD#103 — An unrecognized symbol in arithmetic context is an error
 status: implemented
 
+1. Every arithmetic read or call must resolve to an in-scope variable,
+   intrinsic or function; an unknown name is an error, never a zero value.
+2. A legal assignment target may introduce a binding; names read in its
+   value or index still require resolution.
+3. Arithmetic calls must denote integer producers and satisfy their ordinary
+   arity/type rules. Apply the same resolution discipline to every spelling.
+
+---
+
 DG, 2026-09-13: *"Shouldn't any unrecognized symbol in arithmetic
 context be an error except an assignment?"*
 
@@ -56,10 +65,11 @@ At that one node, decide instead of abstaining:
   (`check_undeclared_reads` calls `collect_functions` into `globals`), so
   `(g)` on a real function stays clean and only a true unknown is flagged
   → **SB5031**.
-- **carries arguments, not an intrinsic** → unambiguously a call, and not
+- ~~**carries arguments, not an intrinsic** → unambiguously a call, and not
   a callable thing. A user function with arguments does not even parse in
   a sexpr (SB4014), so an intrinsic is the only legal callee there
-  → **SB5011**.
+  → **SB5011**.~~ DD58 permits integer-function sexpr calls with arguments;
+  DD81 checks their signatures. A genuinely unknown callee still rejects.
 
 `resolve::is_intrinsic` was added as the single source of truth for
 "is this name the compiler's": `BuiltinCmd::from_name(name) != Other ||

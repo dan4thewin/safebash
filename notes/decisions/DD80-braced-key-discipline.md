@@ -1,6 +1,25 @@
 title: DD#80 — braced subscript key/index discipline (`${a[K]}` is direct, not arithmetic)
 status: accepted
 
+1. A direct subscript key is one explicit value: a decimal integer literal, a
+   variable expansion, an explicitly nested value/arithmetic expression,
+   a quoted string, or an ASCII identifier used as a literal map key.
+   Bare mixed words, operators and implicit nested subscripts are rejected.
+2. Array indices must be integer-typed; a bare decimal index must be in
+   `0..9223372036854775807`. Map keys must be strings; quote digit-only
+   keys and integer values. A string disposition alone does not convert
+   it to an integer index.
+3. Reads and assignments share the key grammar and type checks.
+   `$a[K]` and its quoted spelling desugar to `${a[K]}`, including in
+   arithmetic (DD#123); bare arithmetic subscripts retain DD#79's
+   separate rvalue/lvalue grammar.
+4. Nested explicit contexts obey sequential value evaluation without an
+   arbitrary nesting cap, retaining earlier values in DD#86 order.
+   An explicit index's parse failure reports its own error; leftover
+   implicit text remains an ambiguous-index error.
+
+---
+
 Companion to DD#79 (arithmetic subscripts, model B). DD#79 governs a **bare**
 subscript inside `(( ))` (arithmetic). This DD governs the **braced** form
 `${a[K]}` / `${m[K]}` in every context: what a valid key/index is, and why it
@@ -55,15 +74,16 @@ Anything else — a bareword carrying `[`/`]`, arithmetic operators, an embedded
 
 Resolved at type-check, where the collection type is known:
 
-- **int-indexed array** `${a[K]}` — `K` must be an **integer literal**, a
-  **`$var`**, or an **expansion** (which must yield a number). A clean bareword
+- **int-indexed array** `${a[K]}` — ~~`K` must be an **integer literal**, a
+  **`$var`**, or an **expansion** (which must yield a number).~~ `K` must
+  have integer type. A clean bareword
   or a quoted string is a *string* key and does not index an int array →
   **SB4030** (the existing type-check "string key on indexed array" — the same
   string→int discipline as DD#77; type_check emits a uniform SB4030). A quoted
   numeric (`${a["5"]}`) is likewise rejected — use the unquoted integer
   `${a[5]}`.
-- **map** `${m[K]}` — `K` may be a clean bareword, a quoted string, a `$var`,
-  or an expansion (string key building). Any string is a valid key.
+- **map** `${m[K]}` — ~~`K` may be a clean bareword, a quoted string, a `$var`,
+  or an expansion (string key building).~~ Any string is a valid key.
 
 ## The unrolling invariant (governing implementation)
 
@@ -330,11 +350,12 @@ stands alone, and SB5064 is accurate (`80.33`). Bash would print `p[foo`.
 
 ### Carve-out: inside `(( ))` the desugar does not fire
 
-`$(( $a[1] ))` stays **SB4035** by design (DD#79 model B: inside arithmetic
+~~`$(( $a[1] ))` stays **SB4035** by design (DD#79 model B: inside arithmetic
 the subscript spelling is the bare `a[i]`). `collect_arith_content`
 re-serialises the main lexer's tokens through `tok_to_text`, so an un-gated
 desugar would have flipped that deliberate rejection to an accept silently.
-The desugar is gated on `Scanner::arith_depth == 0`.
+The desugar is gated on `Scanner::arith_depth == 0`.~~ DD#123 removes this
+carve-out: the braceless spelling is the braced value import in arithmetic too.
 
 ## Amendment 2026-10-04 — the rule is the index's, not the position's
 

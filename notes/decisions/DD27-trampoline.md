@@ -1,9 +1,24 @@
 title: DD#27 — Trampoline Function Model
 status: implemented
 
-Functions are blocks within the single Cranelift `_start` function, not
-separate Cranelift functions. Call = branch, return = branch back.
-Positional params saved/restored around calls. Enables inlining without
+1. Source function calls lower into inline control flow rather than a runtime
+   call stack.
+2. Direct self-tail calls become loops; non-tail and mutual recursion are
+   compile-time errors on every call route.
+3. Materialize new arguments in the current context before rebinding the next
+   iteration's arguments. Collection-slot tail rebinding is not supported.
+4. Every fresh private body lifetime is initialized; globals, arguments,
+   collection slots and active enclosing bindings remain distinct (DD86).
+5. An anonymous capture body cannot borrow its enclosing function's tail loop.
+
+---
+
+Functions are blocks ~~within the single Cranelift `_start` function, not
+separate Cranelift functions.~~ within their owning executable root.
+Call = branch, return = branch back.
+DD128 also has separate private generated handler roots.
+~~Positional params saved/restored around calls.~~ DD86's lexical identities
+and fresh private lifetimes govern call storage. Enables inlining without
 ABI overhead.
 
 ## Recursion (amended 2026-08-21)
@@ -34,9 +49,9 @@ overflow the *compiler's* own stack. So:
     a1=$(( … )); return $(( (go n1 a1) )); }`. (Bind a local first; a nested
     `$(( ))` *directly* as a sexpr arg hits a separate pre-existing bug —
     `bug-arith-sexpr-nested-cmdsub-arg`.)
-  - The janet oracle keeps its own emit (real recursive `defn` calls); the
+  - ~~The janet oracle keeps its own emit (real recursive `defn` calls); the
     tail transform is native/c (SSA). All three agree on results and on the
-    SB5037 rejects.
+    SB5037 rejects.~~ DD104 replaces the in-tree oracle with an external seam.
   - Specs: `functions.sh` 27.1–27.5.
 
 A general array **slice** (post-beta, `research-array-slice`) will subsume the

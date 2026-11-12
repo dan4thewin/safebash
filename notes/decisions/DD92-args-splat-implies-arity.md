@@ -1,6 +1,21 @@
 title: DD#92 — a bare `@args` splat to an external command implies min arity ≥1
 status: accepted
 
+1. A bare `@args` argument to an external command in a function requires
+   at least one scalar argument at every call site. That static arity
+   obligation replaces the ordinary external-splat empty-disposition.
+2. This exemption belongs only to the function's `args`; named collections
+   retain DD#69's disposition requirement. Iterating `@args` alone does
+   not impose an arity floor.
+3. Dispositioned `args` splats do not impose that floor: `:-` supplies
+   one default argument on empty, `:?` aborts on empty, and `:~` elides.
+4. `args` is the function's immutable, clean argument collection.
+   Attest-all cannot target `args`. Passing scalar arguments reads them
+   at the call site and therefore requires legal clean or explicitly
+   trusted values.
+
+---
+
 Settled with DG (2026-09-05). A bare `@args` splat passed to an **external
 command** inside a function is **valid without a disposition** — it is exempt
 from SB5032 (DD#69). Instead, it makes the function require **≥1 argument**: the
@@ -25,8 +40,8 @@ expressed structurally instead of with a runtime `:?` abort.
 
 ## The rule
 
-A bare `@args` splat (operator `arrvals`, name `args`; unquoted or a single-part
-`"${args[@]}"`) as an argument to an **external** command (post-DD#23 resolution,
+A bare `@args` splat (operator `arrvals`, name `args`; unquoted ~~or a single-part
+`"${args[@]}"`~~) as an argument to an **external** command (post-DD#23 resolution,
 an absolute-path head):
 
 - **Waives SB5032** — it is valid without a disposition (validate,
@@ -52,7 +67,7 @@ Consequences, all from the existing arity machinery:
 - **Top level is unaffected.** `@args` does not exist at top level (SB5024), so
   the rule only ever applies inside a function.
 - **The disposition forms still work and mean something different:**
-  `@{args:-}` accepts 0 args (empty → zero args, no floor); `@{args:?}` accepts
+  `@{args:-}` accepts 0 args (empty → ~~zero args,~~ one empty argument, no floor); `@{args:?}` accepts
   the call and aborts at *runtime* on empty. Use those when the function should
   accept 0 args; bare `@args` when it should not.
 
@@ -88,7 +103,7 @@ Specs `glob_splat.sh` (gs.31+). No new SB code (reuses SB5042 / SB5032 / SB5024)
 DG: "could I ever pass a tainted arg to a function — I don't think so; passing
 the arg counts as a read of the value." Correct, and confirmed: a value passed to
 a function is read at the call site, so a **tainted** one is SB5020 unless blessed
-first — even a tainted *default* (`${1:-$(getenv HOME)}`) is caught. So the args a
+first — ~~even a tainted *default* (`${1:-$(getenv HOME)}`) is caught~~. So the args a
 function **receives** are unconditionally clean; the SSA backstop already relies
 on this (it seeds `$1..$9`/`$@`/`$*` as Clean "by DD#24", `ssa_taint.rs`).
 
@@ -97,9 +112,9 @@ received"), DG chose (2026-09-05) to make the `args` array **immutable**: every
 write to it is rejected with **SB5052** —
 
 - assignment / subscript-assign: `args=…`, `args[i]=…`
-- bulk fill: `read -a args`, `argv … args`, `mapfile args`
+- bulk fill: ~~`read -a args`~~, `argv … args`, ~~`mapfile args`~~
 - declaration: `array args=…` / `map args=…`
-- **`bless … in args`** — now a clean SB5052 rejection (it was a codegen ICE,
+- ~~**`bless … in args`**~~ **`attest … in args`** — now a clean SB5052 rejection (it was a codegen ICE,
   `bug-bless-all-args-array-ice`), and meaningless anyway: `args` can't be
   tainted, so there is nothing to bless.
 

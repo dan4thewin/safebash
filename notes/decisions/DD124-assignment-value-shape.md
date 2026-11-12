@@ -1,6 +1,19 @@
 title: DD#124 — an assignment's value must match the target's kind, and a map has no append position
 status: accepted
 
+1. Whole-value assignments must match the target's scalar, array or map
+   kind. Indexed lists and keyed map literals are not interchangeable;
+   collection values do not implicitly turn scalar bindings into
+   collections.
+2. Array append requires an array-shaped value on an existing mutable
+   array. A map has no append position: write its named cells instead.
+   Declaration initializers retain DD#117's separate no-append rule.
+3. A cell assignment takes a scalar value of the collection's element
+   type. Explicit fills and DD#99's array-to-map conversion retain their
+   own contracts rather than becoming arbitrary whole-value assignments.
+
+---
+
 Settled with DG (2026-10-08), out of a cold-line investigation: the assoc-array
 branch of `handle_append_assign` had never executed in any spec run.
 

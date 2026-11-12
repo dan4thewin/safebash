@@ -1,6 +1,17 @@
 title: DD#118 — `==` is the only equality, `-n` is never implied, and a vacuous test is an error
 status: accepted
 
+1. String equality is spelled `==`; `=` assigns. Tests state their operator
+   explicitly, including `-n` or `-z` for emptiness.
+2. Reject string tests whose answer is fixed by their written operands,
+   without constant propagation through variables. File tests retain their
+   runtime meaning; numeric-operator restrictions are separate.
+3. Dispatch is vacuous when its subject and every pattern are static.
+4. A glued comparison requires a left operand beginning with `$`; otherwise
+   space the operator. Regex subjects and patterns are not interchangeable.
+
+---
+
 Settled with DG (2026-09-25). DG's framing: *"erring on the side of clarity,
 we want the vacuity rule, the `-n` test as explicit and not implied, and `==`
 the only spelling of equality."*

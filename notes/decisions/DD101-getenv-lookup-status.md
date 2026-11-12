@@ -2,6 +2,18 @@ title: DD#101 — `$(getenv NAME)` reports a lookup status
 status: implemented
 depends: [DD53, DD88, DD24]
 
+1. `$(getenv NAME)` returns the environment value and a lookup status:
+   a present name succeeds even when empty; an absent name fails and
+   returns an empty string. It takes one name, without a default operand.
+2. Lookup absence does not itself abort or require a handler.
+   DD#88's capture conditions and status-handling forms can distinguish
+   absent from present-but-empty input.
+3. Both outcomes remain tainted acquisitions. DD#121/DD#127/DD#128 govern
+   their validation and reads; a fallback assignment on acquisition
+   failure is not failed-attest resolution.
+
+---
+
 Settled with DG 2026-09-12.
 
 `$(getenv NAME)` gains a **lookup status**. It does not gain a default
@@ -27,8 +39,9 @@ and, via DD#88's capture-condition:
     if ! home=$(getenv HOME) { … }
 
 **Uncaught is allowed.** A bare `home=$(getenv NOPE)` compiles, binds `""`,
-and sets a failure status that nothing reads — exactly like an uncaught
-external command. See "Why handling is not mandatory" below.
+and sets a failure status that nothing reads — ~~exactly like an uncaught
+external command~~. See "Why handling is not mandatory" below.
+Ordinary unhandled operational failures remain checked under DD#55/DD#130.
 
 ## Rationale
 
@@ -104,8 +117,9 @@ care about. The `||` form is what lets a script that *does* care express it.
 - SB4025's capture-condition carve-out must admit `getenv` specifically —
   not intrinsics generally. `status` and the pure builtins stay can't-fail.
 - Taint is unchanged: `$(getenv …)` remains a tainted source in both the
-  success and failure paths, and the `||` fallback value follows the ordinary
-  DD#78 read-position rules.
+  success and failure paths, and ~~the `||` fallback value follows the ordinary
+  DD#78 read-position rules~~. DD#128 requires legal adjacent resolution;
+  replacing the value on acquisition failure does not itself clear taint.
 - Distinguishing unset from set-to-empty requires the runtime to return a
   found/not-found flag, not merely a string — `getenv` cannot be implemented
   as "return the pointer, treat NULL as empty" at the boundary.
@@ -118,5 +132,5 @@ care about. The `||` form is what lets a script that *does* care express it.
 - DD#60 — `$(arg N DEFAULT)`, the default-argument shape deliberately *not*
   taken here
 - `notes/tasks/bug-getenv-status-unvalidated.md` — `getenv`/`status` have no
-  `type_check.rs` entry at all; fix that first, since this work adds a second
-  arity to `getenv`
+  `type_check.rs` entry at all; ~~fix that first, since this work adds a second
+  arity to `getenv`~~

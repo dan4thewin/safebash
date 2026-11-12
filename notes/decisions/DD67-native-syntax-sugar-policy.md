@@ -1,6 +1,17 @@
 title: DD#67 — Native syntax, with unambiguous bash forms kept as 1-to-1 sugar
 status: accepted
 
+1. Accepted syntax aliases must preserve structure and semantics
+   unambiguously; a form requiring semantic translation is not mere sugar.
+2. Brace control-flow bodies and their keyword spellings share one meaning.
+   `fn name { }`, `name() { }` and `function name { }` share one function
+   contract, including current name, placement and result-kind rules.
+3. Preserve accepted input spelling by default. Source canonicalization and
+   semantic migration belong to `sash-convert`, not the compiler.
+4. DG ratifies new keep/drop classifications before sugar is implemented.
+
+---
+
 sash prefers clean, regular native syntax, but to avoid turning away
 bash users it does **not** gratuitously break familiar forms. The policy
 (from the 2026-06-19 discussion):
@@ -21,7 +32,7 @@ structure, same semantics, unambiguous, reversible. Otherwise drop.
 | bash form | native | 1-to-1? | verdict |
 |-----------|--------|---------|---------|
 | `then…fi` / `do…done` | `{ }` block | yes — pure bracket alias | **keep** (DD#68) |
-| `name() { }` | `fn name { }` | yes | **re-add candidate** (currently rejected) |
+| `name() { }` | `fn name { }` | yes | ~~**re-add candidate** (currently rejected)~~ accepted below |
 | `case…esac` | `[[ ]]` dispatch | **no** — glob patterns → `==`/`=~` is a translation | **drop** (DD#66) |
 | `;&` / `;;&` | (none) | no native equivalent | **drop** (DD#66) |
 | `` `cmd` `` | `$(cmd)` | **no** — nesting needs `\``, which DD#64 removes | **drop** (2026-09-14) |
@@ -47,8 +58,8 @@ native-only; there is no bash-compat sugar for them.
 ## Default + convert switch
 
 - **Default:** accepted bash sugar is **preserved** on output —
-  `--emit-source` round-trips what the user wrote.
-- **Convert / canonicalize:** a switch (an `--emit-source` mode or a
+  ~~`--emit-source` round-trips what the user wrote~~.
+- **Convert / canonicalize:** a switch (~~an `--emit-source` mode or~~ a
   `sash-convert` option) rewrites *all* sugar → native-only — the
   one-true-form for users who want the clean look. Built on the existing
   `--emit-source` / `--annotate` / `sash-convert` tooling.
@@ -69,7 +80,7 @@ semantic.
 - **DD#68** (brace-block control flow): a *keep* — `then/fi/do/done` are
   1-to-1 sugar over `{ }`; both supported.
 - `fn name { }` already replaced bash `name()`; under this policy
-  `name()` is a re-add candidate (see Open).
+  ~~`name()` is a re-add candidate (see Open).~~ The resolution below accepts it.
 
 ## Resolved (DG, 2026-06-21)
 

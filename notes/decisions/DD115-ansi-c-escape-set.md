@@ -1,6 +1,18 @@
 title: "DD#115 — the `$'…'` escape set"
 status: accepted
 
+1. `$'…'` literals support the named escapes `\n \t \r \a \b \e \E \f \v`,
+   `\\`, `\'` and `\"`; `\x` takes one or two hex digits up to `7f`.
+2. `\u` and `\U` take up to four and eight hex digits respectively and
+   emit a valid Unicode scalar as UTF-8. Missing digits, surrogates and
+   out-of-range values are errors.
+3. Unrecognized nonnumeric escapes retain their backslash literally.
+   Literal escape errors must survive nested scanning and re-lexing.
+4. The UTF-8 constraint applies to authored literals, not runtime data:
+   reads, arguments, environment values and captures remain byte-clean.
+
+---
+
 # DD#115 — the `$'…'` escape set
 
 Decided 2026-09-19 (DG). `$'…'` had no governing decision: the escape

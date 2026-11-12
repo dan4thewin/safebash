@@ -2,6 +2,17 @@ title: DD#17 — Function Call Syntax
 status: implemented
 superseded-by: DD#58 (for -> int functions)
 
+1. A direct `$(f ...)` consumes an integer function's returned integer;
+   a legal non-integer capture collects stdout.
+2. Integer producers also compose through arithmetic calls (DD58).
+3. Void calls may stand alone. Status and integer function results must be
+   consumed in a compatible context or explicitly discarded (DD55).
+
+---
+
+DD55 distinguishes void, status and integer returns. The historical phrase
+"string function" below describes stdout, not a fourth return kind.
+
 > **Amendment — Option C (2026-08-15, commit `a8ac707`).** The rule below —
 > "`$(func)` for a `-> int` function is a type error" — was **superseded**.
 > `$(...)` is **return-type-polymorphic**: it captures the callee's declared
@@ -15,8 +26,9 @@ Three forms:
 - `$(func args)` — capture call. The captured value's **type is the
   callee's return type**: a string (stdout) for a string function, the
   integer `return` for a `-> int` function (Option C). 
-- `func args` — bare call. Side-effect only, no capture. For string
-  functions whose purpose is mutation (globals, output, map population).
+- `func args` — bare call. Side-effect only, no capture. ~~For string
+  functions whose purpose is mutation (globals, output, map population).~~
+  Only a void function needs no result handling (DD55).
   For `-> int` functions, bare call is a compile error [SB4016] — the
   return value would be silently discarded.
 - `$((func))` / `((x = func))` — use a `-> int` function's return

@@ -1,6 +1,17 @@
 title: "DD#113 — the `(( … ))` attest predicate is scalar-only"
 status: accepted
 
+1. Arithmetic attest conversion has one scalar subject and an assignment
+   predicate `(( TARGET = EXPR ))`; it is not an attest-all form.
+2. The expression must read the subject, call no code, and read other data
+   only under DD24/DD93's predicate restrictions. Conversion validates the
+   source and binds a distinct integer target.
+3. An immutable source may be validated without being written; the actual
+   conversion target must satisfy ordinary mutability and type rules (DD86).
+   Adjacency, ownership and failed-path resolution remain unchanged.
+
+---
+
 # DD#113 — the `(( … ))` attest predicate is scalar-only
 
 DD#93 Part D gave `attest` a second predicate shape: instead of a `[[ … ]]`

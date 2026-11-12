@@ -1,6 +1,29 @@
 title: DD#69 — Globs are array sugar; external-command array splats require an empty-disposition
 status: accepted
 
+1. Globs produce clean arrays of lexically normalized absolute paths,
+   preserving each filename as one element. Each pattern has a literal
+   directory prefix and at most one `*`, in its final component; matching
+   dotfiles requires an explicit leading dot, and `.`/`..` are excluded.
+2. Glob expansions compose in array literals, appends and `for` lists.
+   Each expansion is bytewise sorted at its source position, without
+   whole-list sorting or deduplication. Zero matches contributes no elements;
+   enumeration failures follow DD#73/DD#130, not empty-success semantics.
+3. Globs do not expand inline in ordinary command arguments. External
+   command splats require an explicit empty-disposition, with no static
+   nonempty or dominating-guard exemption; DD#92 governs bare `@args`.
+4. An empty `@{a:-WORD}` supplies one literal argument, including an empty
+   argument when WORD is empty; `@{a:?WORD}` aborts, with DD#77's default
+   diagnostic when its literal message is absent or empty; `@{a:~}` supplies
+   zero arguments and takes no word. Nonempty splats preserve element
+   boundaries. Taint validation is independent of cardinality.
+5. Named splats are not scalars. A named `for` source is the sole, bare
+   splat; DD#99 separately defines array-to-map conversion. `echo`
+   requires an explicit `join` rather than a splat. `:` evaluates its
+   operands in DD#86 order and discards their values.
+
+---
+
 Decided with DG 2026-06-20; ratified 2026-06-21. Reframes the glob lines
 of DD#20 and adds a compile-time rule for array splats passed to external
 commands.
@@ -84,7 +107,7 @@ implementation below is not evidence that these new forms already work.
 
 The hazard "an array expands to nothing, so an external command silently
 runs with too few/zero args" is general — it applies to any runtime-sized
-array (glob, `read -a`, `mapfile`, `$(argv)`, or an array mutated to
+array (glob, ~~`read -a`, `mapfile`,~~ `$(argv)`, or an array mutated to
 empty), so the rule lives on the **splat site**, not on globs.
 
 **Rule:** a bare `@a` splat passed as an argument to an **external
@@ -119,18 +142,20 @@ are unchanged; exact diagnostic wording and implementation remain deferred.
 
 - **External programs only.** The rule in §2 (empty-disposition) applies to
   external programs (anything resolved to an absolute path — DD#23). The
-  **sash-language constructs that splice their argv in-process are exactly
+  ~~**sash-language constructs that splice their argv in-process are exactly
   `echo` and `:`** (`transform/resolution.rs`); `printf`, `true`, `false`
   and everything else resolve to an absolute path and are therefore
-  **external programs** — a bare `@a` to `printf`/`ls`/`true`/etc. requires
+  **external programs**~~ — a bare `@a` to `printf`/`ls`/`true`/etc. requires
   `@{a:?}` like any external program. (Earlier drafts wrongly listed
   `printf` — and `true`/`false` — as exempt.) for-in is exempt (its
   zero-match handling is built in).
+  DD#99 adds `write`; language constructs retain their own operand rules.
 - **No static-non-empty exemption.** Even `array a=(x y z); ls @a` errors;
   use `@{a:?}`. (May revisit if friction warrants.)
-- **No dominating-guard recognition.** A surrounding `(( ${#a[@]} ))`
+- **No dominating-guard recognition.** A surrounding ~~`(( ${#a[@]} ))`~~
   test does not discharge the obligation — only the `@{a:…}` form does.
   Keeps the check purely local, with no flow analysis.
+  DD#75's current length form is `len a`.
 - **No new keyword and no array "trait."** The disposition lives in the
   splat syntax; nothing is tracked through the type system. (Rejected
   alternatives: a `gate`/`check`/`qualify` statement, or a bless-style
@@ -150,7 +175,7 @@ downstream from `("a" "b" "c")` — reintroducing the word-splitting
 ambiguity sash eliminates, right at echo's output (worst in a pipeline).
 
 **Rule:** an array splat (`@a`) passed to `echo` is a **compile error**;
-use an explicit join — **`echo $(join @a)`** (the `join` intrinsic, DD#41/
+use an explicit join — ~~**`echo $(join @a)`**~~ (the `join` intrinsic, DD#41/
 DD#60). Literal args are unaffected: `echo a b c` is fine (three literals,
 no array structure to lose). `:` ignores its args, so this is moot for it
 (`true`/`false` are now external programs — a bare `@a` to them is SB5032
@@ -171,8 +196,11 @@ args, i.e. `echo`.
 - **Taint composes orthogonally:** a tainted-source array splat needs the
   cardinality disposition here AND its elements blessed for taint
   (Q5 / DD#61). Disposition is cardinality-only; bless is value-only.
-- **Size is arithmetic:** `${#a[@]}` / cardinality tests belong on the
+- **Size is arithmetic:** ~~`${#a[@]}`~~ / cardinality tests belong on the
   `(( ))` path, not `[[ ]]` (see the for-loop-arith-condition cleanup).
+
+DD#93 names validation `attest`; DD#75/DD#100 use `len a` and `join a`,
+including `echo $(join a)`.
 
 ## Tasks
 
@@ -189,8 +217,9 @@ Part 2 (`glob-splat-disposition-word`): a bare `@a` into an external command
 (post-DD#23 resolution, a `/`-prefixed head) is **SB5032**; `@{a:-WORD}`
 (empty → the single arg WORD; bare `@{a:-}` → one empty arg), `@{a:?WORD}`
 (empty → abort, exit 1, `<progname>: WORD`), and `@{a:~}` (empty → zero args,
-elide) carry the disposition. Only `:-`/`:?`/`:~` (SB5033 otherwise). WORD is a
-`${x:-WORD}`-style interpolating word, substituted as ONE element. The
+elide) carry the disposition. Only `:-`/`:?`/`:~` (SB5033 otherwise). ~~WORD is a
+`${x:-WORD}`-style interpolating word, substituted as ONE element.~~ DD#65
+now requires literal operands. The
 argv-splicing constructs (echo still SB5030), user functions, value functions
 (join/len/…), and for-in are exempt.
 
@@ -209,20 +238,21 @@ Ratified with DG. Clarifies where the `@{a:…}` disposition and the bare
 
 **A splat is a distinct syntactic category, not a scalar.** A named-array
 splat (`@a`, or a dispositioned `@{a:-WORD}` / `@{a:?WORD}`) is legal
-**only** in a splat position:
+~~**only**~~ in a splat position:
 
 - as an **argument to a command** (external: bare `@a` is SB5032, must
   carry a disposition; `@{a:?}` / `@{a:-}` OK. `echo` still SB5030), and
 - as the **sole source of a for-in header**, where it must be the **bare**
   `@a` (for-in has its own zero-match handling — DD#69 §1).
 
-Every other position is a compile error — mirroring DD#60's rule for
-`$(argv)`, now extended to the native `@a` form:
+~~Every other position is a compile error — mirroring DD#60's rule for
+`$(argv)`, now extended to the native `@a` form:~~ DD#99 later adds
+the explicit array-to-map conversion source; ordinary scalar uses still reject.
 
 - **scalar assignment** `x=@a` / `x=@{a:?}` → **SB5025** (a splat is not a
-  scalar; use `$(join @a)` for a joined string, or `${a[i]}` for one
+  scalar; use ~~`$(join @a)`~~ for a joined string, or `${a[i]}` for one
   element). *(Previously silently flattened to a joined string.)*
-- **the empty-disposition outside a command argument** → **SB5034**. In
+- ~~**the empty-disposition outside a command argument** → **SB5034**.~~ In
   particular `for f in @{a:?}` is rejected — a for-in source is the bare
   `@a` (the `:-`/`:?` cardinality behavior only means something when
   splatting into a command's argv). (A splat in a test / arith context is
@@ -236,7 +266,8 @@ and `echo "@{a:?}"` prints `@{a:?}`, exactly as bash does — these are **not**
 quoted splats and are **not** rejected. DD#22's "quoting an array splat is a
 compile error" targets the *recognizable* bash-style spellings
 (`"${a[@]}"` / `"$(argv)"`, which sash-convert coerces), not the native
-literal `"@a"`. For an array's contents as a string, use `$(join @a)`.
+literal `"@a"`. For an array's contents as a string, use ~~`$(join @a)`.~~
+DD#100 requires `$(join a)`.
 
 Codes: SB5025 (splat in scalar context — reused), **SB5034** (empty-
 disposition outside a command argument — new).
@@ -249,8 +280,9 @@ Directed by DG. Two coupled cleanups.
 `BuiltinCmd::True`/`False` that just set `$?`, never forking). They now
 resolve to `/usr/bin/true`/`/usr/bin/false` (DD#23) like any other program.
 Rationale (DG, least surprise): "if there is a program named `false`, you
-should be able to run it." There is no sash-language boolean type; the
-argv-splicing set shrinks to exactly `echo` and `:`. An internal always-fail
+should be able to run it." ~~There is no sash-language boolean type; the
+argv-splicing set shrinks to exactly `echo` and `:`.~~ DD#74 defines boolean
+function results; DD#99 adds `write`. An internal always-fail
 is `! :` (or a function that `return 1`s); a bare `false` is a deliberate
 invocation of `/usr/bin/false` and aborts (DD#55) like any failing command.
 sash-convert emits a CHECK comment on bash `true`/`false` so a reader can
@@ -262,8 +294,9 @@ command) obscured what these names are. Reframed: `echo`, `break`, `:`,
 `join`, `sub`, `gsub`, `match`, `basename`, `dirname`, `argv`, `getenv`,
 `epochseconds`, …), etc. are **parts of the sash language**; anything
 resolved to a path is an **external program**, *not* part of the language.
-The value functions are legal only inside `$( )` (rejected as a command —
-SB5011). This addendum's wording (and the §Scope / §3 edits above) use
+~~The value functions are legal only inside `$( )` (rejected as a command —
+SB5011).~~ DD#58 also provides arithmetic value calls, and out-param
+forms retain their own statement contracts. This addendum's wording (and the §Scope / §3 edits above) use
 "sash-language construct" and "external program" throughout.
 
 ## Addendum (2026-09-28) — the disposition is now load-bearing at a call site
@@ -306,8 +339,9 @@ did bash's own parameter-assertion idiom after conversion
 (`notes/tasks/bug-noop-drops-argument-effects.md`). Settled by §2 here,
 DD#77 ("`:?` un-prune scope — everywhere") and DD#86 (c) (`: $v` is a real
 read). `:` now evaluates every argument for its effects, in the order the
-argv builder uses (splat dispositions first, then each value left to
-right), and discards the values. A disposition aborts on `:` exactly as on
+argv builder uses ~~(splat dispositions first, then each value left to
+right)~~, and discards the values. DD#86 now requires source-order evaluation
+with earlier values retained. A disposition aborts on `:` exactly as on
 `echo`, in a statement, a condition, under a redirect and as a stage.
 
 Decide-and-report: `:` builds no argv, so the lowering reuses the builder's

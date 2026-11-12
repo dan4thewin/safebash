@@ -1,6 +1,18 @@
 title: DD#76 — Int-valued collections (val_len double-duty encoding)
 status: accepted
 
+1. `int array` and `int map` declare homogeneous integer-valued collections;
+   without `int`, collection values are strings. Element type is fixed,
+   including through DD#100's collection slots.
+2. Initializers and cell writes must satisfy that element type. An integer
+   cell supplies an integer directly in arithmetic; writing an integer
+   expression into a string cell requires explicit string conversion.
+3. Integer cells store and read the i64 value directly, without string
+   parsing or a string round trip. A missing integer cell reads as zero.
+   Ordinary string-output contexts render the integer as text.
+
+---
+
 Makes DD#35's orthogonality concrete for the *value* half of a collection: an
 `int` type keyword may stack onto `array`/`map`, giving a collection whose
 elements are integers (`int array a=(10 20 30)`, `int map m=([k]=5)`). This is
@@ -8,8 +20,9 @@ the value-side mirror of DD#33's two *key* representations.
 
 ## Motivation
 
-DD#35 declares four orthogonal, stackable axes — mutability (`const`), lifetime
-(`local`), type (`int`), structure (`array`/`map`). The type axis was wired for
+~~DD#35 declares four orthogonal, stackable axes — mutability (`const`), lifetime
+(`local`), type (`int`), structure (`array`/`map`).~~ DD#86 makes lifetime
+positional. The type axis was wired for
 scalars only; `int array`/`int map` errored (SB4014). DD#33 already gives keys a
 dual representation (int index vs string key) in the shared `(key_ptr, key_len)`
 fields. The same idea applies to values — DG, 2026-08-16: "how we accomplished
@@ -22,7 +35,12 @@ type then structure):
 
     int array a=(10 20 30)      # indexed, int-valued
     int map m=([k]=5 [j]=7)     # string keys, int values
+
+<del>
+
     local const int array a=…   # all axes stack
+
+</del>
 
 A collection is **homogeneous**: all-int or all-string, fixed at declaration.
 The default (no `int`) is string-valued, unchanged. Element initializers of an
@@ -81,7 +99,7 @@ int-cell store/read → the bare `a[i]` arith lvalue). c/janet backends get the
 int-cell path or a filed per-backend guard. See
 notes/tasks/int-valued-collections.md.
 
-This change adds only the **`int`+structure** stack (`int array`/`int map`) at
-top level; `local int array` already stacked via parse_local. Whether **const**
+This change adds only the **`int`+structure** stack (`int array`/`int map`) ~~at
+top level; `local int array` already stacked via parse_local~~. Whether **const**
 should stack onto a collection (`const array` — today a compile error, spec
 35.2) is a separate DD#35-orthogonality question left to DG, not decided here.

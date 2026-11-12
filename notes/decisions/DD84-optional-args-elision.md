@@ -1,6 +1,21 @@
 title: DD#84 — optional trailing args (`:-`/`:~`) and the scalar elision operator `:~`
 status: accepted
 
+1. An argument index read only through `:-` or `:~` is optional; a bare or
+   `:?` read requires it. Fixed signatures use contiguous required indices
+   followed by optional ones, without mixing required and optional reads
+   of one index. `$N` and `args[N-1]` agree.
+2. Scalar `:~` takes no operand: an empty string contributes no item to a list,
+   while a nonempty string contributes one. `:-` supplies a value, including
+   one empty item, rather than eliding.
+3. Elision belongs only in variadic/list positions, not scalar-value
+   positions. Runtime-sized arguments require a variadic callee and must
+   satisfy its fixed prefix before uncertain-length arguments shift positions.
+4. Elided echo arguments reserve no separator; a real empty argument does.
+   Captures preserve that runtime argument-list behavior.
+
+---
+
 Settled with DG (2026-08-31). Two coupled additions to the args/positional
 model:
 
@@ -66,9 +81,12 @@ counts toward `min`.
   which parameter it binds.)
 
 ### Variadic is unchanged
-`@args` / `$(len args)` / `${#args}` / `$#` / a dynamic `${args[$i]}` still makes
+`@args` / ~~`$(len args)` / `${#args}` / `$#` /~~ a dynamic `${args[$i]}` still makes
 the function variadic (any count ≥ floor). A disposition on a variadic access is
 allowed but confers no extra optionality (the floor already permits omission).
+
+DD81 distinguishes counting arguments from accessing them: a length query
+alone does not make the signature variadic.
 
 ### Absent optional args at the call site
 Functions inline per call site with the exact `arg_values` (DD#75 unique-name

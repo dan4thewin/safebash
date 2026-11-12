@@ -1,6 +1,28 @@
 title: DD#63 — Regex as a builtin family (match / sub / gsub) with thin sugar
 status: accepted
 
+1. Regex builtins take ordinary string arguments. Matching is unanchored;
+   `sub` replaces the first match and `gsub` all matches. Quoting controls
+   string evaluation, not regex literalization.
+2. Literal patterns are checked at compile time; dynamic patterns compile
+   at runtime under the ordinary recoverable-failure contract. Patterns
+   support exact two-digit `\xNN` escapes; replacements support only
+   `\0`-`\9` backreferences and `\\` as backslash escapes.
+3. `match` supplies a boolean, a whole-match value, or a boolean with an
+   out-array of whole match and up to nine groups. `matchall` requires an
+   out-array and collects each match's groups, or whole matches if ungrouped.
+   Both out-array forms introduce their target if needed and clear it before
+   filling; no match leaves it empty. Boolean results obey DD70.
+4. `[[ SUBJECT =~ PATTERN ]]` is regex-test sugar. Substitution sugar uses
+   slash-delimited interpolating words, a mandatory final slash, and optional
+   `g`; mutation writes its subject without producing a result.
+5. Regex subjects are examined only before the first interior NUL; later
+   bytes are preserved. Case folding uses `toupper`/`tolower`.
+6. Attest predicates may use regex tests, but not substitution captures or
+   their expansion sugar.
+
+---
+
 Regex is a family of **builtins** that take ordinary sash string
 arguments; the familiar syntaxes (`[[ =~ ]]`, `s/re/sub/`,
 `${var:s/re/sub/}`) are **thin sugar** that desugar to those builtins.
@@ -21,10 +43,11 @@ The user can always express anything via the function form; the sugar is
 a convenience for the common case.
 
 This also **unifies with DD#62**: `[[ $x =~ re ]]` desugars to a `match`
-*command*, so `=~` leaves the `TestExpr` entirely. The `[[ ]]` test path
+*command*, ~~so `=~` leaves the `TestExpr` entirely. The `[[ ]]` test path
 then has no pattern operand at all — every operand is a value — which is
 exactly the precondition DD#62 needs to lower test operands to `SsaValue`
-and delete `right_is_quoted` + the duplicate `lower_subscript`.
+and delete `right_is_quoted` + the duplicate `lower_subscript`.~~
+The attest-predicate addendum below retains a regex test node.
 
 ## The builtins
 
@@ -50,15 +73,16 @@ Join the existing builtin family (`keys`/`join`/`len`). Reserved names:
 - **`match SUBJECT PATTERN`** — regex match (unanchored).
   - As a command: exit status 0 if it matched, non-zero otherwise (the
     boolean form, used by `if` / `&&` / the `[[ =~ ]]` sugar).
-  - As `$(match SUBJECT PATTERN)`: prints the whole match (`resub[0]`)
-    to stdout — an ordinary scalar command substitution.
+  - As `$(match SUBJECT PATTERN)`: ~~prints~~ the whole match (`resub[0]`)
+    ~~to stdout — an ordinary scalar command substitution~~.
+    This is a value-intrinsic capture (DD111).
   - **`match SUBJECT PATTERN OUTARRAY`** — out-array form (the array is
-    the trailing positional, consistent with `mapfile -m m` / `read -a a`):
+    the trailing positional, ~~consistent with `mapfile -m m` / `read -a a`~~):
     fills `OUTARRAY` with `[whole, g1 … g9]` and returns
     the boolean exit status. This is how capture groups are surfaced — no
     array-returning command-subs, no scalar-vs-array context detection.
 - **`sub SUBJECT PATTERN REPLACEMENT`** — replace the **first** match,
-  print the result to stdout.
+  ~~print the result to stdout~~. Capture its value (DD111).
 - **`gsub SUBJECT PATTERN REPLACEMENT`** — replace **all** matches.
 - **`toupper STRING`** / **`tolower STRING`** — case fold (awk names;
   DD#65). Compensates for the engine's missing `i` flag — case-insensitive
@@ -121,7 +145,8 @@ engine. In the **function form** this is just argument evaluation. In the
   shipped model. DD132's trial requires a previously validated immutable
   finished pattern instead: interpolation that assembles new bytes needs
   its own construction and `r?` check. A literal pattern retains
-  compile-time validation via `regcomp9` (DD#39). Neither `:!` nor disabled
+  compile-time validation via `regcomp9` (DD#39). Within that trial:
+  Neither `:!` nor disabled
   taint checking supplies regex proof, and pattern operands forbid trusted
   reads even when subject/replacement trust is legal.
 
@@ -158,7 +183,7 @@ Every pattern, including an interpolated sugar operand, owes the same
 proof as an explicit call.
 
 The `s///` sugar is `/`-delimited **only** and **always interpolating**
-(the fields desugar to double-quoted, i.e. interpolating, args). To make
+~~(the fields desugar to double-quoted, i.e. interpolating, args)~~. To make
 this work inside the `${var:s/…}` form, the **lexer treats `/` as a
 quote-delimiter after `:s`** (Path B, 2026-06-18): exactly as `'…'` and
 `"…"` already suppress brace-counting inside `${…}`, the `:s/RE/SUB/[g]`
@@ -224,10 +249,12 @@ aspirational; DD#39 is also stale on `{n,m}` (counted repetition works).
 
 ## Default/replacement context unification (DG, 2026-06-21)
 
-The `sub`/`gsub` **replacement** and the `${var:-default}` **default** are
+~~The `sub`/`gsub` **replacement** and the `${var:-default}` **default** are
 the **same interpolating word context**, differing in exactly one way: the
 replacement runs an extra **`\0`–`\9` backref template pass** over the
-evaluated string; the default has no second pass. In that shared context:
+evaluated string; the default has no second pass.~~ DD65 later makes defaults
+literal-only; replacement words retain the interpolation rules below.
+In that ~~shared~~ context:
 
 - `$var`/`${var}` interpolate; `'…'` literal; `"…"` interpolating;
   **`$'…'` C-string works** (DD#64 addendum — control bytes/escapes in
@@ -235,8 +262,8 @@ evaluated string; the default has no second pass. In that shared context:
   `$` = interpolation (word layer), `\` = backref (template layer, replacement
   only).
 - **`$(cmd)` is allowed** (not rejected): an external capture is tainted and
-  needs bless, and a user-function capture is tainted as DD#127 says —
-  taint handles both, same as a `${var:-…}` default (DD#65). Arithmetic
+  needs ~~bless,~~ now attest, and a user-function capture is tainted as DD#127 says —
+  taint handles both, ~~same as a `${var:-…}` default (DD#65)~~. Arithmetic
   `$((…))` allowed.
 
 **Desugar correction.** The `s/RE/SUB/` sugar must desugar its fields to
@@ -272,11 +299,18 @@ raw text, so no NUL is ever created and the bug is never reached.
 
 That one rule serves both shapes the migration needs:
 
+<del>
+
 ```sh
 matchall $s "[^\x0a]+" lines                      # mapfile -t : the lines
 matchall $s "([^=\x0a]*)=([^\x0a]*)" pairs       # mapfile -m : k1 v1 k2 v2 …
 map m = @{pairs:~}
 ```
+
+</del>
+
+These historical calls omit result handling; use a legal consumer or
+`- matchall` when the array fill is the intended effect (DD70).
 
 The second lands exactly on the pairwise array `map m = @{a:DISP}` already
 consumes (DD#99) — the two features fit without adapting either. It also
@@ -292,8 +326,8 @@ separates, so `key=val=ue` keeps its value intact.
 - **The out-array is mandatory.** There is no boolean/value 2-arg form,
   because "all matches" has no single value to be.
 - **The target auto-declares**, following the argv / read / newread bulk-fill
-  precedent (DG 2026-07-08). Singular `match` does not; that asymmetry is a
-  filed bug (`bug-match-outarray-no-autodeclare`), not a rule.
+  precedent (DG 2026-07-08). ~~Singular `match` does not; that asymmetry is a
+  filed bug (`bug-match-outarray-no-autodeclare`), not a rule.~~
 
 Boolean like `match`: exit 0 when at least one match. The array is cleared on
 entry in the shipped model, so the no-match path leaves it empty.
@@ -355,6 +389,8 @@ string** and examines it only **up to the first interior NUL**. Bytes past
 that are neither matched nor replaced, and are preserved unchanged. The
 operation reports success.
 
+<del>
+
 ```sh
 nul=$'\0'
 s="a${nul}bcd"
@@ -362,6 +398,11 @@ echo "$(strlen $s)"        # 5 — the scalar is byte-transparent
 [[ $s =~ cd ]]             # false; the bytes are there
 u=$(gsub $s "cd" "Z")      # unchanged, strlen 5
 ```
+
+</del>
+
+The NUL example's `$'\0'` spelling is superseded by DD115's `$'\x00'`;
+the bare test also needs a consumer (DD70).
 
 The length is not lost at the runtime boundary — `sash_regex_replace` and the
 `sash_regex_match*` family all receive an explicit `str_len` and build a

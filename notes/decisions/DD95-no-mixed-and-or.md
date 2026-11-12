@@ -1,6 +1,16 @@
 title: DD#95 — mixing `&&` and `||` in one list is rejected
 status: accepted
 
+1. Do not mix `&&` and `||` at one list level. Use explicit parentheses
+   within tests, or procedural `if`/dispatch structure between commands.
+2. Both operators short-circuit: an unreached operand has no evaluation,
+   output, mutation or failure. Negation acts on the result actually produced.
+3. Conditional-block shorthands are exact `if`/`if !` sugar with independent
+   body lists, not grouping. They produce no result for a further consumer;
+   an otherwise legal unconsumed final action remains distinct.
+
+---
+
 Settled with DG (2026-09-08), from his question: *"do `!`, `&&` and `||` behave
 identically outside `[[ ]]` as within?"*
 

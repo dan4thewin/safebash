@@ -1,6 +1,22 @@
 title: DD#88 - Capture-conditions bind values and consume producer results
 status: accepted
 
+1. An untyped single-producer binding may consume the actual status of a single
+   external command, an otherwise-legal pipeline, `getenv` lookup or direct file
+   slurp. Capture preserves pipeline-stage eligibility, including user functions
+   used as filters.
+2. Bind this attempt's bytes, including partial/empty output on handled
+   recoverable failure; a completed empty read succeeds. Handling is not attest.
+3. Assignment itself has no result. Declarations, arbitrary expressions,
+   direct named-function captures and multi-statement bodies gain no condition
+   result.
+4. Ordinary handling-position, negation, taint and no-reach rules apply;
+   discarded statuses cannot also be consumed.
+5. Stdout captures must retain a possible connected writer after redirects;
+   direct integer captures consume an integer and are outside that writer test.
+
+---
+
 The external-command form was settled with DG on 2026-09-02 and implemented
 the same session. DD101 later added the implemented `getenv` lookup form.
 DG accepted direct file-read capture-conditions on 2026-11-10:
@@ -24,8 +40,8 @@ assignment as a value binding with "no meaningful exit status" — true for
 
 In an existing **boolean/status-consuming context**, an untyped assignment
 whose RHS is one eligible producer is a **capture-condition**. The accepted
-producers are a single external command, an external pipeline, DD101's
-`getenv` lookup, and a direct `$(<file)` read:
+producers are a single external command, an ~~external~~ otherwise-legal
+pipeline, DD101's `getenv` lookup, and a direct `$(<file)` read:
 
 - the **condition consumes the producer's actual operational status**
   (`test = status == 0`); a recoverable nonzero result does **not** abort
@@ -44,8 +60,8 @@ producers are a single external command, an external pipeline, DD101's
 
 ### Scope
 
-- **RHS shape:** a single external `$(cmd)` OR a pipeline `$(a | b)` of external
-  stages, `$(getenv NAME)`, or a direct `$(<file)`. Excluded (stay SB4025):
+- **RHS shape:** a single external `$(cmd)` OR a pipeline `$(a | b)` ~~of external
+  stages~~, `$(getenv NAME)`, or a direct `$(<file)`. Excluded (stay SB4025):
   a user-function capture `$(f)` (functions convey status via `return` —
   DD#74 predicates), other value-only intrinsics, a concatenation such as
   `foo$(cmd)`, a multi-statement `$(a; b)`, and any literal RHS.
@@ -60,6 +76,13 @@ producers are a single external command, an external pipeline, DD101's
   non-capturing `if ! cmd { … }` form.
 - **`$?` after:** no new rule — the existing DD#55 handling-position machinery
   applies (a capture-condition assignment provides `$?` like a command).
+
+Capture does not narrow an otherwise-legal pipeline's stage eligibility
+(DG, 2026-11-12). User functions behaving as filters remain legal stages;
+the condition consumes the pipeline's aggregate. Existing stage/result-kind,
+connected-writer, taint, no-reach and fatal-failure rules still apply. This
+does not admit a direct `if text=$(f)` capture condition, anonymous status
+returns or a new purity/filter annotation.
 
 DD#55's anonymous-status-return rejection (DG, 2026-11-06) adds no new
 capture-condition form. A function or multi-statement capture does not
@@ -184,20 +207,21 @@ an authored `-` discards precisely the status the condition needs.
   (__exit_status == 0) ? 1 : 0`). Pipelines honor `state.suppressed` for their
   `checked` flag (`handle_regular_pipeline`).
 - **validate** (`is_capture_condition_rhs`): the SB4025 carve-out. `validate`
-  runs BEFORE command resolution, so the command head is still bare — the
+  ~~runs BEFORE command resolution, so the command head is still bare — the
   external test is `resolve::is_external_looking` (excludes intrinsics +
   builtins), NOT a post-resolution `/` check. It cannot consult the function
   table, so a bare user-function name also passes here; the **transform**
   rejects the residual `$(user_fn)` capture-condition (SB4025, via
-  `reject_nonexternal_capture_condition`) since it has the function table. The
+  `reject_nonexternal_capture_condition`) since it has the function table.~~ DD23
+  requires resolution before semantic validation. The
   capture-condition also registers as a `$?`-provider in the SB5012 state
   machine. The transform path is guarded on a `CommandSubstitution` source expr
   so an arithmetic mutation `x=1` inside `(( … ))` (also lowered with
   `in_condition` set) is untouched.
-- **janet**: not implemented — janet emits from the IR (not the SSA sigils) and
+- ~~**janet**: not implemented — janet emits from the IR (not the SSA sigils) and
   its `$(cmd)` capture is a stub. Positive-behavior specs are gated `native,c`;
   filed `janet-capture-condition`. The rejects (SB4025/SB5050/SB5020) are
-  backend-independent and pass in all modes.
+  backend-independent and pass in all modes.~~ DD104 retires that backend.
 
 ## SB codes
 

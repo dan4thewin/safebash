@@ -1,6 +1,13 @@
 title: DD#83 — sash has no here-strings (`<<<`)
 status: accepted
 
+1. Feed produced data to stdin with `producer | consumer`; a supported
+   terminal reader updates its bindings in the current process.
+2. Pipe reads introduce taint even for builtin-only producers. Validate or
+   explicitly trust the acquired data under DD127/DD128.
+
+---
+
 Settled with DG (2026-08-30). The here-string operator `<<<` is **removed** from
 the language. `producer | consumer` is the one spelling for feeding data to a
 command's stdin. `<<<` on any operand is rejected at parse — **SB4050**.
@@ -20,11 +27,12 @@ Working it through (probed against the compiler, not just bash lore):
   `echo $x | read v` runs the loop in a *subshell* and loses `v`. **sash has no
   subshell**, so `echo $x | read v` already persists `v` (verified). The one job
   `<<<` does in bash is a non-problem here.
-- **Clean-vs-tainted stdin is provenance, not channel.** `read v <<< $x` yields a
+- ~~**Clean-vs-tainted stdin is provenance, not channel.** `read v <<< $x` yields a
   clean `v` for clean `x` — but so does `echo $x | read v` (inline `echo` =
   clean); `/bin/echo $x | read v` and `<<< $(extcmd)` are both tainted. The
   cleanliness never came from the here-string; it came from the *source* being
-  inline/literal. Pipes and here-strings taint identically.
+  inline/literal. Pipes and here-strings taint identically.~~
+  DD127 instead classifies every kernel-backed read as a taint acquisition.
 - **No word-splitting in sash**, so there is not even a quoted/unquoted subtlety:
   `<<< $x` == `echo $x |` == `echo "$x" |`, byte for byte (modulo a trailing
   newline the here-string was *buggily* dropping).
@@ -49,7 +57,7 @@ trailing newline) instead of fixing dead-on-arrival machinery.
    `sash_herestring_redirect` extern/runtime symbol; the `emit_c` emitter +
    extern; the whole `emit_janet` here-string family; the validate taint
    exception (`read/mapfile <<< literal` → clean) and the `ssa_taint`
-   clean-literal source. `read` is clean now only via a clean pipe.
+   clean-literal source. ~~`read` is clean now only via a clean pipe.~~
 3. **The `SB5002` heredoc message** no longer points at here-strings; it points
    at pipes.
 

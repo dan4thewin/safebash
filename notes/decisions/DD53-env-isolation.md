@@ -1,24 +1,42 @@
 title: DD#53 — Env var isolation
 status: implemented
 
+1. Sash bindings and environment variables are separate namespaces with no
+   implicit mirroring.
+2. Read environment data through `getenv`; its taint and lookup status follow
+   DD24/DD101 independently.
+3. Delegate per-command environments to `/usr/bin/env`. A sash binding is
+   resultless and needs a separator before a following command (DD71).
+4. `cd` requires exactly one directory argument, literal or computed.
+
+---
+
 Sash variables and environment variables are completely separate
 namespaces. There is no implicit mirroring in either direction.
 
 ## Reading env vars
 
 The only way to read an environment variable is `$(getenv NAME)`.
-The result is tainted (DD#24) and must be blessed before use.
+The result is tainted (DD#24) and ~~must be blessed before use.~~ requires
+legal attest or an explicit trusted read under DD91/DD93.
 
 `$HOME` in sash source refers to a sash variable named `HOME`. It
 does NOT implicitly read the `HOME` environment variable. If no sash
-variable named `HOME` has been assigned, `$HOME` is empty.
+variable named `HOME` has been assigned, ~~`$HOME` is empty.~~ its read is
+subject to the ordinary undeclared-name check.
 
 Scripts that need env values must be explicit:
+
+<del>
 
 ```bash
 home=$(getenv HOME)
 bless home [[ -d $home ]]
 ```
+
+</del>
+
+The current `attest` spelling appears in the `cd` example below.
 
 Auto-bless patterns in `known_externals.rs` provide conservative
 validation for common env vars, but the `$(getenv NAME)` call is
@@ -58,8 +76,10 @@ with `export` flagging which ones propagate — is a source of confusion
 and security bugs. Sash makes the boundary explicit:
 
 - Env vars are external input → tainted by default
-- Sash vars are program state → clean unless assigned from tainted source
-- The boundary crossing is always visible in source (`getenv` + `bless`)
+- Sash vars are program state → ~~clean unless assigned from tainted source~~
+  unresolved taint persists until legal resolution (DD128)
+- The boundary crossing is always visible in source ~~(`getenv` + `bless`)~~
+  through getenv and attest.
 - Auditors can grep for `getenv` to find every env-var dependency
 
 ## Supersedes

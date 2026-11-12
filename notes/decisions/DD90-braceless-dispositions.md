@@ -1,6 +1,19 @@
 title: DD#90 — brace-less disposition expansions (`$x:-foo`, `@a:~`)
 status: accepted
 
+1. Dispositions and trust modifiers have equivalent braced and brace-less
+   spellings on scalars, positionals, cells and splats where their grammar
+   permits (DD91/DD123). Their ordinary type, taint and placement rules remain.
+2. Use braces to bound trailing concatenation, unquoted whitespace in operands
+   and dispositions inside double quotes. Default/message operands remain
+   literal-only under DD65.
+3. Substring and substitution expansions remain braced. Other brace-less
+   colon text retains its literal-concatenation meaning.
+4. A brace-less `@` opens a splat only at word start; mid-word it is literal
+   text. Explicit braced splats retain their no-concatenation rule.
+
+---
+
 Settled with DG (2026-09-04). The `{ }` in a disposition expansion is optional:
 `$x:-foo` ≡ `${x:-foo}`, `@a:~` ≡ `@{a:~}`. Braces remain **available** (never
 removed) and are **required** in the cases below.
@@ -15,22 +28,26 @@ extends the same ergonomics to the disposition family.
 
 ## Scope — the disposition family ONLY
 
-Brace-less applies to exactly the three disposition operators, for both a scalar
+Brace-less applies to ~~exactly the three~~ disposition operators, for both a scalar
 `$name` / positional `$N` and an array splat `@name`:
 
 - **`:-`** default — `$x:-foo`, `$1:-foo`, `@a:-foo`
 - **`:?`** error/abort — `$x:?msg`, `@a:?msg`
 - **`:~`** elide — `$x:~`, `@a:~`
 
+DD91 adds the orthogonal trust modifier; DD123 applies scalar rules to cells.
+
 Substring `${x:off:len}` and regex `${x:s/re/sub/}` stay **braced** (DG
 2026-09-04). Their `:digit` / `:s` forms collide badly with the common literal
 colon-concatenation (`$x:3`), so the ergonomics aren't worth the ambiguity.
 
-## Disambiguation — only `:-`/`:?`/`:~` open a disposition
+## Disambiguation — ~~only~~ `:-`/`:?`/`:~` open a disposition
 
 After `$name` / `$N` / `@name`, a disposition opens **only** when the very next
-bytes are `:-`, `:?`, or `:~`. Every other `:X` stays **literal colon
-concatenation**, unchanged:
+bytes are `:-`, `:?`, or `:~`. ~~Every other `:X` stays **literal colon
+concatenation**, unchanged:~~
+
+The `:!` family is governed by DD91; unrelated colon text remains literal.
 
     $x:/bin   → "hi:/bin"     (path-like — preserved)
     $x:3      → "hi:3"        (colon-digit — preserved)
@@ -48,43 +65,46 @@ available as `${x}:-foo` or by quoting.
    operand runs to the word boundary, so `$x:-foobar` makes `foobar` the whole
    default; there is no way to append after it without braces.
 2. **Unquoted whitespace** in the default/error word — `${x:-a b}`. Brace-less
-   `$x:-a b` is default `a` then a separate word `b` (quotes are literal bytes,
+   `$x:-a b` is default `a` then a separate word `b` ~~(quotes are literal bytes,
    DD#65, so they do not group either — braces are the only way to a spaced
-   operand).
-3. **An embedded literal `}`** in the operand.
-4. **A `$( )` / `$(( ))` / `` `…` `` substitution** in the operand — brace-less
+   operand).~~ DD65's literal-only follow-on strips a wholly single-quoted
+   default/message operand.
+3. ~~**An embedded literal `}`** in the operand.~~ DD65's literal default
+   grammar cannot represent it, even with braces.
+4. ~~**A `$( )` / `$(( ))` / `` `…` `` substitution** in the operand — brace-less
    supports literal text and `$name` / `${…}` interpolation, but a command /
    arithmetic / backtick operand must be braced (`${x:-$(cmd)}`). A brace-less
-   operand that reaches one falls back transparently to the pre-DD#90 tokenization.
+   operand that reaches one falls back transparently to the pre-DD#90 tokenization.~~
 
-   **SUPERSEDED — DD#91 follow-up (DG, 2026-09-04).** Rule 4 no longer holds:
+   ~~**SUPERSEDED — DD#91 follow-up (DG, 2026-09-04).** Rule 4 no longer holds:
    a `$( )` / `$(( ))` / `` `…` `` run IS a valid brace-less operand and is
    consumed whole. `scan_braceless_operand` follows the construct to its close
    (`skip_paren_to_close`, counting depth and skipping quoted regions so a `)`
    inside `'…'`/`"…"` does not miscount; `skip_backtick_to_close`;
    `skip_braced_to_close`) and only returns `None` — falling back to the
-   pre-DD#90 tokenization — when the run is *unterminated*. Specs vm.bl13–bl18.
+   pre-DD#90 tokenization — when the run is *unterminated*. Specs vm.bl13–bl18.~~
 
-   Note the backtick case is 1-to-1 with the braced spelling but not with
+   ~~Note the backtick case is 1-to-1 with the braced spelling but not with
    `$( )`: the operand becomes a `"…"` body, where a backtick is a literal
    character (DG 2026-08-28), so `` ${x:-`cmd`} `` and `` $x:-`cmd` `` both
-   yield the backticks verbatim while `${x:-$(cmd)}` runs the command.
+   yield the backticks verbatim while `${x:-$(cmd)}` runs the command.~~
+   DD65's later literal-only rule supersedes both interpolation prescriptions.
 5. **Interpolation inside `"…"`** — DG 2026-09-04, "err on the side of clarity":
    a bare `"$x:-foo"` is `$x` + the literal `:-foo`, NOT a disposition. Inside
    double quotes the disposition must be braced (`"${x:-foo}"`).
 
-   **Extended — DG, 2026-09-27.** Rule 5 also covers a **disposition's own
+   ~~**Extended — DG, 2026-09-27.** Rule 5 also covers a **disposition's own
    operand**, which is parsed as an interpolating parts list and so inherits the
    exclusion "by construction". In `$x:!-$y:!` the inner `$y:!` is `$y` plus the
    literal text `:!`; the working spellings are `$x:!-${y:!}` and
    `${x:!-${y:!}}`. Asked whether to extend brace-less into the operand instead,
    DG chose to leave it: *"I'd actually use attest, so avoid over-indexing on
-   taint-bypass ergonomics."*
+   taint-bypass ergonomics."*~~
 
-   The consequence to know is that the literal reading is **silent** when the
+   ~~The consequence to know is that the literal reading is **silent** when the
    operand is clean: `str x=""; str y=abc; z=$x:-$y:!` yields `abc:!`. Pinned by
    `var_modifiers.sh` vm.bl24, paired with vm.bl25 for the braced spelling so
-   the two readings cannot drift apart.
+   the two readings cannot drift apart.~~
 
 ## Semantics = the braced form, exactly
 
@@ -152,7 +172,7 @@ Specs: `gs.52`-`gs.55`.
 ## See also
 
 - DD#41 — `$a[i]` brace-less subscripts (the precedent).
-- DD#65 — the surviving `${var:OP}` family and the `:- ≡ "…"` default body.
+- DD#65 — the surviving `${var:OP}` family and the ~~`:- ≡ "…"`~~ literal default body.
 - DD#69 / DD#84 — the array-splat dispositions and the `:-`/`:~` distinction.
 - Task `janet-positional-default-present` — a pre-existing janet bug surfaced by
   vm.bl4 (braced `${1:-DEF}` with an arg present also returns DEF in janet).

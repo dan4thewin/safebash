@@ -1,6 +1,16 @@
 title: "DD#87 — Runtime invariant: every sash string is NUL-terminated"
 status: accepted
 
+1. Every runtime string has `len` content bytes and a NUL terminator at
+   `[len]`, while internal operations retain the explicit length.
+2. String producers allocate room for the terminator; partial slices copy
+   into terminated storage, and reused buffers rewrite the terminator.
+   Existing compliant storage may be shared.
+3. This invariant applies to strings, not binary allocations. It does not
+   make an interior NUL safe at an external argv boundary (DD99).
+
+---
+
 Settled with DG (2026-09-01). Every **string** value produced by the sash
 runtime (`sash-rt`) is NUL-terminated at `[len]`: a buffer of `len` content
 bytes is allocated as `len + 1` bytes with `buf[len] = 0`.

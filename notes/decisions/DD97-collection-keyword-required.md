@@ -1,6 +1,17 @@
 title: DD#97 — a collection is introduced by the `array`/`map` keyword
 status: accepted
 
+1. An ordinary collection assignment or append requires an already
+   introduced collection. Explicit introductions use `array` or `map`;
+   a scalar assignment does not infer a collection from its value.
+2. Reassignment of mutable collections and append to mutable arrays
+   retain their ordinary kind, value-shape and element-type checks (DD#124).
+3. Unambiguous collection-fill commands may auto-declare eligible targets
+   under their own contracts. They may not retype an existing scalar or
+   incompatible collection (DD#86/DD#100).
+
+---
+
 Settled with DG (2026-09-08), from his bug report: *"when I do `f=(*)` I see
 `$(len f)` return 0 despite the array having elements."*
 
@@ -87,18 +98,22 @@ a signal to carry it.
   (`types.rs:190`, "ICE: undefined array"). It is now SB5055. This is the same
   shape as ud.19 (`${z[0]}` on an undeclared array), on the write side.
 - `len`/`join`/`unset` can no longer disagree about whether a name is a
-  collection, because there is exactly one way to introduce one.
+  collection, because ~~there is exactly one way to introduce one~~.
+  The explicit keyword and the unambiguous auto-declaring fills below
+  must register the same collection identity and kind.
 
 ## Not in scope
 
-- The bulk-read auto-declares (`argv a`, `read -a a`, `mapfile a`) still
+- The bulk-read auto-declares (`argv a`, ~~`read -a a`, `mapfile a`~~) still
   introduce a collection without an `array` keyword. They name the target in a
   command that is unambiguously a collection fill, and both the transform
   (`autodeclare_bulk_target`) and the type checker (`register_bulk_read_target`)
   already register them. Unchanged.
-- The janet backend renders array append as string concatenation
+- ~~The janet backend renders array append as string concatenation
   (`(set f (string f @["d"]))`). Independent of this DD — janet emits from the
-  AST, not the SSA — and filed as `janet-array-append-string-concat`.
+  AST, not the SSA — and filed as `janet-array-append-string-concat`.~~
+  DD#99 supplies the current `read` form; DD#104 removes the in-tree
+  Janet backend.
 
 ## Specs
 

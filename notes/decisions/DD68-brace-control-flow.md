@@ -1,12 +1,29 @@
 title: DD#68 — Brace-block control flow (`if`/`while`/`until`/`for`); `then/fi/do/done` as sugar
 status: accepted
 
+1. `if`, `while`, `until` and both `for` forms use brace bodies or equivalent
+   keyword bodies, without mixing delimiters within one construct.
+2. Conditions must be present and consume a real result. Control-flow
+   statements produce neither a value nor status; an otherwise legal
+   unconsumed final action is distinct from a result consumer.
+3. `cmd && { … }` is exactly `if cmd { … }`; `cmd || { … }` is exactly
+   `if ! cmd { … }`, including scope, checks and handling permissions.
+4. Word-list `for` requires `in` and a source item. Newline before `in` is
+   allowed, semicolon is not; data-dependent empty lists remain legal.
+5. A completed whole-statement closer needs no extra separator. Brace
+   `else`/`elif` may follow newlines and comments, but not a semicolon or
+   another statement; this does not extend to other suffixes.
+6. Control flow introduces no lexical scope. A `while`/`until` condition
+   belongs to that loop for `break` and `continue`.
+
+---
+
 `if`, `while`, `until`, and `for` (incl. C-style `for ((;;))`) gain
 **brace `{ }` bodies**, matching `fn name { … }` (already brace-bodied)
 and the DD#66 dispatch form. The bash `then…fi` / `do…done` keywords are
 kept as **1-to-1 sugar** (DD#67). From the 2026-06-19 discussion. This is
 a **parser-only** change: the brace and sugar forms lower to the *same*
-existing IR, so all semantics (catching-construct `$?`, `break`/`continue`,
+existing IR, so all semantics (~~catching-construct `$?`,~~ `break`/`continue`,
 redirects) are unchanged.
 
 ## Forms
@@ -108,7 +125,7 @@ yield no items at runtime; this header rule adds no non-emptiness check
 or proof obligation on that data. An empty string is one item, not an
 empty list: `for x in "" { echo "[$x]" }` still iterates once.
 
-DD69's 2026-11-09 glob-composition rule permits
+In DD131's provisional trial, DD69's 2026-11-09 glob-composition rule permits
 `for f in .* * { ... }`: concatenate each glob's independently sorted
 expansion in source order, then iterate. Those are written source items
 even when neither matches. The rule applies to keyword bodies too;
@@ -200,7 +217,7 @@ This is unambiguous because of three existing choices:
 Banning a brace-group *condition* costs nothing: a group condition is
 exactly a `;`-list, which is still allowed —
 `if { a; b; }; then c; fi` ≡ `if a; b { c }`. All real conditions work:
-`if cmd { }`, `if [[ x ]] { }`, `if a && b { }`, `if a | b { }`,
+`if cmd { }`, ~~`if [[ x ]] { }`,~~ `if a && b { }`, `if a | b { }`,
 `if a; b { }`, `if ! cmd { }`, `if (( x )) { }`.
 
 **Newlines:** the condition runs *to* the `{` (newlines separate condition
@@ -215,9 +232,9 @@ after the condition — `then` ⇒ sugar (expect `fi`), `{` ⇒ brace (expect
 
 ## What does NOT change
 
-Parser-only. Both forms build the existing `If`/`While`/`For` IR. The
+Parser-only. Both forms build the existing `If`/`While`/`For` IR. ~~The
 catching-construct `$?` reset (`is_catching_construct_exit`,
-`codegen/entry.rs:263` + `emit_c.rs`), `break`/`continue`, redirects on the
+`codegen/entry.rs:263` + `emit_c.rs`)~~, `break`/`continue`, redirects on the
 head or body, and `elif`/`else` chaining are all unchanged.
 
 ## Relations

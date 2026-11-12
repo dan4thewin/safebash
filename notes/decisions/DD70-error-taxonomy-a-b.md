@@ -1,6 +1,32 @@
 title: "DD#70 — Error-handling taxonomy: (A) runtime abort-if-unchecked vs (B) compile-time must-consume-or-discard"
 status: accepted
 
+1. Recoverable operational failures abort if unchecked; legal handlers
+   consume their verdicts. Boolean and non-void function results require
+   explicit consumption or discard. Integer values are not statuses, and
+   fatal faults are never resumable results (DD55/DD58/DD130).
+2. Source `-` discards one eligible adjacent command/call result, without
+   reaching operands or bodies. A discarded result cannot also feed a
+   condition, list decision, forwarding return or value capture. Writes,
+   control transfers and resultless statements supply nothing to discard.
+3. `!` consumes a single unit's status, or a terminal pipeline stage's
+   status before aggregation; its boolean must be consumed. It cannot combine
+   with `-` on that unit. Partial pipelines retain their unsuppressed aggregate.
+4. Reject known result-only unused work, however its result is discarded,
+   and explicitly empty word-list loops. Preserve writes, I/O, observable
+   operand/body effects, uncertain cases and intentional `:`. Constant
+   function results remain legal.
+5. Conditional blocks are exact `if`/`if !` sugar with ordinary body checks,
+   scope and handling permissions. They produce no result of their own.
+6. Apply attached redirects left-to-right, stopping at the first failure.
+   Do not run the command after failed setup; restore descriptor state before
+   legal continuation. Earlier effects are not rolled back.
+7. An unchecked operational abort reports one contextual line on the
+   invoker's stderr, prefixed by verbatim `argv[0]`, then exits with failure.
+   Handled failures are silent; a child's exec-error report remains separate.
+
+---
+
 Decided with DG 2026-06-25, refining DD#55 (Implicit Exit Checks and
 Error Handling Model). DD#55 established *that* the compiler inserts
 implicit failure checks; this DD names the **two distinct kinds of
@@ -118,10 +144,14 @@ trial and exact DD revision inventory live in `q-glob-semantics`.
 
 ## Original distinguishing principle (superseded)
 
+<del>
+
 > `-` is for **opaque externals** (`grep`, whose no-match→1 you cannot
 > change — you suppress the verdict). For **in-process logic you control**
 > (`match`, a comparison, your own `-> int` function), you **restructure**
 > (`if` / `||` / `|| :`) rather than suppress. — DG
+
+</del>
 
 This was the rationale for the original prohibition. DG replaced it
 with explicit result discard on 2026-09-09, then separately required
@@ -414,8 +444,9 @@ Journal 596 records the ruling.
 - **DD#55** — parent: implicit checks, `-` suppression, `$?` scoping,
   void/non-void functions, pipelines, background. This DD adds the
   (A)/(B) taxonomy and the diagnostic contract on top.
-- **DD#25** — arithmetic overflow is its own abort mechanism; it belongs
-  to (A) for diagnostic purposes (`<argv0>: arithmetic overflow`).
+- **DD#25** — arithmetic overflow is its own abort mechanism; ~~it belongs
+  to (A) for diagnostic purposes~~ (`<argv0>: arithmetic overflow`).
+  DD130 classifies it as a fatal fault, not a channel-(A) result.
 - **DD#56 / DD#128** — an uncaught failure reports its diagnostic, then
   calls ERR if declared. Orderly termination and configured EXIT signals
   select EXIT instead. Neither handler runs in a forked child.
@@ -442,15 +473,16 @@ Journal 596 records the ruling.
 ## Addendum (2026-07-24): `!` (negation) is a (B) must-consume boolean
 
 `! X` produces a logical negation of `X`'s truth value — pure in-process
-logic you authored — so it is a channel-(B) result for **any** operand
-(`! external`, `! pipeline`, `! [[ … ]]`, `! match`). It has **exactly**
+logic you authored — so it is a channel-(B) result for ~~**any**~~ operand
+(`! external`, ~~`! pipeline`,~~ `! [[ … ]]`, `! match`). It has **exactly**
 `[[ … ]]`'s positional rules:
 
 - bare `! X` → **SB4018** (result unused). *(Previously a bare `! external`
   was silently accepted and aborted at run time — a bug: `! /bin/false;
   echo done` never printed `done`.)*
 - `Y && ! X` / `Y || ! X` (consequent position) → **SB4018**.
-- `- ! X` → **SB4019** (`-` is meaningless on a (B) construct).
+- `- ! X` → **SB4019** (~~`-` is meaningless on a (B) construct~~).
+  The current reason is the incompatible discard/negation composition.
 - consumed positions — `if`/`while`/`until ! X`, `! X && …`, `! X || …`,
   `! X || :` — negate the aggregate. The operand is **caught** (unchecked,
   no abort); `!` flips the resulting truth value.
@@ -473,12 +505,12 @@ review than bash — see DD#55):
   `(( … ))`. It binds only that unit, so `! X && Y` is `(!X) && Y` (bash-
   consistent), not `!(X && Y)`. (Previously `! X && Y` was wrongly SB4018,
   because `!` greedily wrapped the whole `X && Y`.)
-- **`!` on a multi-stage pipeline is rejected — SB4040.** A reviewer can't tell
+- ~~**`!` on a multi-stage pipeline is rejected — SB4040.**~~ A reviewer can't tell
   how far `!` reaches in `! a | b`. Escape hatch: wrap the pipeline in a
   predicate function and negate that — `f() { if a | b; then return 0; fi;
-  return 1 }` then `if ! f; then …`. (This mirrors SB4023 for `pipeline &&/||`;
+  return 1 }` then `if ! f; then …`. ~~(This mirrors SB4023 for `pipeline &&/||`;
   a pipeline may be a whole `if`/`while` condition but never inline with
-  `!`/`&&`/`||`.)
+  `!`/`&&`/`||`.)~~ The terminal-stage refinement below governs.
 
 The rest of the positional template still holds: bare `! X` → SB4018, `- ! X`
 → SB4019 (now emitted at parse time, so it reaches all backends, not just
@@ -490,15 +522,19 @@ native), consumed positions negate the aggregate. Implemented in
 
 The 2026-08-19 line ("`!` on a multi-stage pipeline is rejected — SB4040") is
 **refined**, not reversed. DG: `-` and `!` are both *per-segment* pipeline
-operators. `-Si` suppresses a segment from the DD#55 aggregate; the **terminal**
+operators. `-Si` suppresses a segment from the DD#55 aggregate; ~~the **terminal**
 segment supplies the pipeline's result, so it may take the same `!` a standalone
-simple command takes.
+simple command takes.~~
+
+Only the terminal stage may be negated; all unsuppressed stages still
+participate in the aggregate.
 
 - **`a | ! b` — negating the FINAL stage — is allowed.** The stage still runs;
   its status is inverted (0↔nonzero) *before* the DD#55 worst-of fold (a
   per-segment negate, **not** a whole-pipeline negate — that would revive the
   "how far does `!` reach?" ambiguity). So `echo abc | ! grep -q z` is true
-  exactly when `grep` fails. `a | b | ! c` (negate the terminal of a 3-stage)
+  ~~exactly when `grep` fails.~~ Other unsuppressed stages also affect the result.
+  `a | b | ! c` (negate the terminal of a 3-stage)
   likewise.
 - **`!` on a NON-terminal stage stays SB4040.** `! a | b` (= `(!a) | b`, negate
   segment 0) and `a | ! b | c` (negate a middle stage) are rejected — a
@@ -595,10 +631,11 @@ Specs: `rd.1` (the path named is the one that failed), `rd.2` (a redirect after
 a failure creates no file), `rd.3` (a first-redirect failure is still reported),
 `rd.4` (two good redirects both apply).
 
-**Not settled here:** *where* the diagnostic is written when the redirections
+~~**Not settled here:** *where* the diagnostic is written when the redirections
 applied so far include stderr. bash writes it through them; the C backend
 matches bash; native restores the fds first and does not. Filed as
-`notes/tasks/native-redirect-diag-after-restore.md`.
+`notes/tasks/native-redirect-diag-after-restore.md`.~~ DD120 settles this:
+diagnostics use the invoker's stderr, not the command's redirected channel.
 
 ## Addendum (2026-10-26, DG): `- !` is SB4019 again; an unused terminal `!` is SB4018
 
@@ -628,7 +665,8 @@ A terminal `!` escaped that rule: `a | ! b` as a statement compiled, and when
 `b` succeeded the program aborted with "b: command failed (exit 1)", the bug
 2026-07-24 fixed for `! cmd`. It is now SB4018 at statement level, under `&`,
 and as a capture's last statement. A condition and a return producer consume it
-as before, and a `!` inside a `-` scope (`- { ! cmd }`) is discarded by the `-`.
+as before, ~~and a `!` inside a `-` scope (`- { ! cmd }`) is discarded by the `-`~~.
+The later no-reach rule and command-group retirement remove that form.
 
 Specs: errors.sh e.b70.ndash and bng.5 (now SB4019; ids kept), bng.13-bng.20;
 pipe_functions.sh pf.65, pf.66 (a negated final reader); bng.7-bng.9 still

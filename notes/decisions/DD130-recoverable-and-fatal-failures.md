@@ -1,6 +1,25 @@
 title: DD#130 - Recoverable failures and fatal faults
 status: accepted
 
+1. Classify failure by its cause and resulting execution state, not by
+   setup position, numeric status or available handling syntax.
+2. Recoverable operation errors use ordinary implicit checks or otherwise-legal
+   handling. Fatal faults cannot become resumable results.
+3. Path-specific file errors are recoverable. Fork failure, heap exhaustion
+   and DD25 arithmetic faults are fatal. Classify other causes explicitly.
+4. A failed attached redirect prevents the command from running. Stop at
+   the first failure and restore scoped descriptors before continuation.
+5. Preserve result kinds, operand/body boundaries, actual errors and
+   completed effects; neither fabricated success nor rollback is implied.
+6. Direct slurp capture-conditions succeed on complete reads, including
+   empty ones. Handled failure binds this attempt's bytes, never old data;
+   unhandled slurps remain checked before assignment.
+7. Apply DD128's once-only, allocation-free fatal dispatch and process
+   ownership. Partial pipelines close pipes and wait for started stages
+   without forced termination.
+
+---
+
 Decided by DG on 2026-11-06 (journal 581). DG distinguishes failures where
 catching or suppressing permits predictable, useful continuation from those
 where "continuing is a worse choice than aborting". Path-specific file

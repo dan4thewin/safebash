@@ -1,6 +1,19 @@
 title: DD#23 — External Command Resolution
 status: partial
 
+1. Resolve external command heads to absolute executable regular-file paths
+   at compile time, using the build host or the selected directory/image sysroot.
+2. Relative paths in command heads are errors; PATH search skips relative
+   entries. Literal absolute heads and exec targets undergo the same
+   executable-file check.
+3. Resolution precedes semantic checks and reaches every executable capture
+   body through the shared expression traversal.
+4. Record resolved external dependencies in the manifest. Runtime execution
+   does not search PATH; explicit `/usr/bin/env` delegation may do so.
+5. Runtime `[[ -x path ]]` remains a test, not a compile-time command head.
+
+---
+
 Sash does not walk PATH at runtime. External commands are resolved to
 absolute paths at compile time.
 
@@ -80,7 +93,8 @@ search.
 
 ## See also
 
-- DD#53 — Env var isolation (PATH not readable unless via getenv+bless)
+- DD#53 — Env var isolation ~~(PATH not readable unless via getenv+bless)~~
+  Explicit getenv input follows current attest/trust rules.
 - DD#45 — Export rejected (can't modify inherited PATH)
 
 ## Clarification (DG, 2026-06-21)
@@ -89,11 +103,12 @@ search.
   absolute path; this resolution must run **ahead of the front-end checks**
   (validate/taint/type-check), not in the transform as it does today. See
   `advance-dd23-resolution`.
-- **Taint source = `execve(2)`/`execveat(2)`.** Any captured output that
+- ~~**Taint source = `execve(2)`/`execveat(2)`.** Any captured output that
   passed through an exec is tainted (e.g. `printf`, `pwd` — real programs).
   In-process internal builtins (echo, getcwd, getpid, …) and inlined user
   functions are clean; `getenv`/`argv`/`arg` are tainted external input.
-  See `tighten-cmdsub-taint-execve`.
+  See `tighten-cmdsub-taint-execve`.~~ DD127 makes every kernel-backed read
+  tainted, including builtin output; buffer copies introduce no taint.
 - **--sysroot incl. squashfs** is part of resolution (build host default,
   or a target dir / squashfs image root).
 
@@ -122,10 +137,11 @@ the **relative** path `./sash-getopt` (a `.`-in-PATH match), and:
   pipeline stage). An **absolute** `/x` path is unaffected; a bare unknown name
   is still "not found" (**SB5011**), which is distinct from a relative-path
   error.
-- **CST taint hardening (defense-in-depth).** `command_name_is_taint_source`
+- ~~**CST taint hardening (defense-in-depth).** `command_name_is_taint_source`
   now uses `contains('/')` (not `starts_with('/')`), so a relative external
   would be tainted even if one ever slipped the rejection. The SSA backstop was
-  already fail-closed (basename → tainted unless a known clean builtin/user fn).
+  already fail-closed (basename → tainted unless a known clean builtin/user fn).~~
+  The historical classifier is replaced by DD127's read-boundary rule.
 
 Impl: `resolve.rs` (`resolve_command_path` dir-skip; `resolve_command` SB5051;
 `is_valid_command` defers relative heads so `resolve` owns the diagnostic),
@@ -178,8 +194,9 @@ The resolution root is the same one the PATH search uses: the build host, or
 
 The rule applies uniformly in every position a command head appears —
 top-level, pipeline stage, `$( )`, `&`, `-` — exactly as SB5051 does, and
-to an `exec` target, where it matters most: a failed `exec` has already torn
-down the process image that would have reported it.
+to an `exec` target, where it matters most: ~~a failed `exec` has already torn
+down the process image that would have reported it.~~ DD14 specifies failure
+reporting in the still-running process; successful replacement does not return.
 
 ### Scope boundaries
 
@@ -243,11 +260,12 @@ SB5095 is a new code.
 
 ## Addendum (2026-10-27) — resolution reaches every `$( … )` body (B37)
 
-Resolution is a rewrite that the taint pass depends on: a capture is a
+~~Resolution is a rewrite that the taint pass depends on: a capture is a
 taint source when its head contains a `/`
 (`validate::command_name_is_taint_source`), and a bare head is left clean
 because it might be a user function. So a command that resolution never
-reaches keeps its bare head and reads as clean.
+reaches keeps its bare head and reads as clean.~~ This records the classifier
+before DD127, not a clean-producer exception to the current read boundary.
 
 `resolve.rs` walked statements with a private copy of the expression walk,
 and the copy skipped three places that the checkers' walk

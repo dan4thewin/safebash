@@ -1,7 +1,15 @@
 title: DD#28 — No Word-Split Loops
 status: implemented
 
-`for x in $choices` is a compile error. Use `for x in "${arr[@]}"`.
+1. A scalar variable or stdout/file capture is one value, not an iteration
+   stream; it cannot supply a word-splitting `for` source.
+2. Iterate explicit collections, including the collection-valued `argv` and
+   map `keys` forms. Use `read` to split fields or `while readline` to stream.
+
+---
+
+`for x in $choices` is a compile error. ~~Use `for x in "${arr[@]}"`.~~
+Use `for x in @arr` (DD75).
 Consequence of DD#22 — no word splitting means unquoted expansion
 in loop headers cannot split into multiple items.
 
@@ -35,4 +43,5 @@ and let everything else through, which is why three miscompiles lived under it
 unnoticed — see `notes/journal/458-*.md`.
 
 Replacements the diagnostic names: `cmd | while readline x { … }` to stream,
-`read -a arr` to split into an array, or `match` to pick a value apart.
+~~`read -a arr`~~ `read arr` to split into an array, or `match` to pick a value apart.
+DD99 governs the flagless reader.

@@ -1,6 +1,18 @@
 title: DD#89 — `exit` accepts any int; full i64 to the handler, 8-bit at the process boundary
 status: accepted
 
+1. `exit` and `fail` accept any representable integer expression, without
+   a 0-255 restriction. Defaults are 0 and 1 respectively; `fail 0` is valid.
+2. Integer sinks, including numeric returns, require an integer value.
+   A string-valued disposition needs explicit arithmetic conversion;
+   an already-integer disposition retains its type.
+3. Preserve the full i64 for the selected handler; only the final process
+   boundary exposes the low eight bits to the parent.
+4. `exit` selects orderly EXIT handling and `fail` selects ERR, independently
+   of the numeric value. Status reads retain their handling-position rules.
+
+---
+
 Settled with DG (2026-09-03). `exit`'s argument is an ordinary integer sink:
 **any int — a literal, a variable, an arithmetic result, or an int-returning
 function — is a valid `exit` argument**, with no compile-time range restriction.
@@ -119,8 +131,8 @@ variables and out-of-range integer values remain valid.
 
 The rule list above ends with:
 
-> A string argument coerces to int (atoi), as in every other int context;
-> `exit` imposes no extra type restriction.
+> ~~A string argument coerces to int (atoi), as in every other int context;
+> `exit` imposes no extra type restriction.~~
 
 DG, on re-reading it: **"plain wrong."** He is right, and the interesting part
 is *how* it got here. This DD was settled to answer a **range** question —

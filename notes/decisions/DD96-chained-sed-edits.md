@@ -1,6 +1,18 @@
 title: DD#96 — sed edits chain with `,`
 status: accepted
 
+1. Commas chain `s///` edits in mutation and expansion forms. Apply edits
+   left-to-right to the preceding text result; each edit owns its `g` flag.
+2. A pending comma permits whitespace and newline continuation but requires
+   another edit. Reject missing edits and trailing junk rather than absorbing
+   them as flags.
+3. Chains retain slash delimiters and the same form throughout. Mutation is
+   a resultless write; expansion produces text under DD63's ordinary contract.
+4. Scalar-operand intrinsics require scalar values, not implicit collection
+   joins. Collection-name operands use the distinct DD100 contract.
+
+---
+
 Settled with DG (2026-09-08), from: *"I like the sed-like edits, e.g. `$foo =~
 s/a/b/`; I want to be able to chain them, e.g. `$foo =~ s/a/b/ s/c/d/`; or with
 some other syntax (commas/semicolons/brackets). What seems consistent and
@@ -55,7 +67,7 @@ defect:
 ## Only `s///`
 
 `,` chains `s///` and nothing else. The other modifiers (`:1:3`, `:-`, `:?`,
-`:~`, `#`/`%`, `^`/`,`) are unaffected and do not chain. DG's grounds were
+`:~`, ~~`#`/`%`, `^`/`,`~~) are unaffected and do not chain. DG's grounds were
 practical: substitution is the one edit people actually want to repeat, and a
 general "chain any modifier" rule would have to settle what `${x:1:3,:-y}`
 means before it could ship. Left open, not foreclosed.
@@ -108,9 +120,10 @@ every one, in every argument position, bare or carrying a disposition
 (`@{a:-W}`, `@{a:?W}`).
 
 `len`, `join` and `keys` are **excluded on principle**, not for expedience:
-their operand slot is declared to name a collection, so `@a` there is not a
+their operand slot is declared to name a collection, ~~so `@a` there is not a
 reinterpretation of intent — `len @a` genuinely returns the element count. What
-`len @a` and `join @a` *should* accept is DD#75's open question and stays open.
+`len @a` and `join @a` *should* accept is DD#75's open question and stays open.~~
+DD100 settles these operands as bare collection names, without a splat.
 
 The diagnostic names `$(join a SEP)`, which is what an author writing
 `gsub @a …` was reaching for. Spec 96.20 runs that advice to confirm it

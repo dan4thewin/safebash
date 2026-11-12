@@ -1,6 +1,21 @@
 title: DD#126 — `wait` is wait(2)/waitpid(2), returning a pid and never aborting
 status: accepted
 
+1. `wait` takes zero or one pid operand and reaps one child, returning its pid
+   or `-1` on error; it never implicitly aborts.
+2. Consume or explicitly discard the pid as an integer, never as a predicate
+   status. Draining all children requires a loop.
+3. The child's outcome is a separate `waitstatus` latch, set to `-1` when no
+   child is reaped; `wait` does not modify `status`.
+4. `waitstatus` and `getcpid` are readable only in the immediately following
+   statement, under the specified control-flow rules.
+5. Named and anonymous executable bodies start with fresh latch availability;
+   direct intrinsic reads use their surrounding context.
+6. A single external background job's pid names the command itself; an explicit
+   function job retains its own process identity (DD55).
+
+---
+
 Settled with DG (2026-10-09), in the same conversation as DD#125.
 
 > I don't want to invent a new job control. I think it makes more sense to
@@ -52,8 +67,9 @@ which one it is.
 
 There is **no condition escape**. A boolean context consumes a *status*, and
 `wait`'s value is a pid, so `if wait { … }` would read "the reaped pid was
-zero" — an accident, not an idiom. (The int-function case has an escape
-because a function's int can be a meaningful truth value; a pid cannot.)
+zero" — an accident, not an idiom. ~~(The int-function case has an escape
+because a function's int can be a meaningful truth value; a pid cannot.)~~
+DD58 excludes integer functions from status contexts too.
 
 ### `-` discards the pid
 
@@ -176,8 +192,9 @@ own spawn/reap operations can establish fresh latches. This is availability,
 not a separate job table: a `wait` inside the body can still reap an
 existing child owned by the process.
 
-A `{ … }` group is braces, not a catching construct, so the latch crosses
-it; `if`/`while`/`for`/`case` and `&&`/`||` do not.
+~~A `{ … }` group is braces, not a catching construct, so the latch crosses
+it;~~ `if`/`while`/`for`/`case` and `&&`/`||` do not.
+DD55/DD70 make conditional blocks exact `if` sugar, not general groups.
 
 DG's 2026-11-07 no-inheritance ruling settles capture-entry `$?` too
 (DD55/DD86, journal 586). The capture checker repair remains pending in
@@ -209,10 +226,17 @@ handle, automatic wait or parent-side failure report.
 
 An uncaught background failure no longer colours the parent's exit code:
 
+<del>
+
 ```sh
 /nonexistent_binary_xyz &
 - wait                     # exits 0 now; used to exit 127
 ```
+
+</del>
+
+DD23 requires the external to exist at compile time; this historical spelling
+must instead exercise disappearance after resolution.
 
 That 127 was a side effect of the SB5012 exception — `- wait` left the
 reaped status *available*, and an available-but-unconsumed status at the end
@@ -220,12 +244,16 @@ of a program is the program's exit status. With the exception gone so is the
 accident. The author wrote `-` and read no latch; they said "I do not care"
 twice. The spelling that propagates it is explicit:
 
+<del>
+
 ```sh
 /nonexistent_binary_xyz &
 - wait
 int s=$(waitstatus)
 exit $s                    # 127
 ```
+
+</del>
 
 (`spec/errors.sh` 55.16, `spec/commands.sh` 126.36.)
 

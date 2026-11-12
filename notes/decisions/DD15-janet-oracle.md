@@ -2,8 +2,16 @@ title: DD#15 — Janet Oracle Defines Semantics
 status: superseded
 superseded-by: DD104
 
-The Janet backend is the reference implementation for what sash programs
-should do. Discrepancies between native and Janet output are bugs.
+1. Independent semantic checking must implement sash's decided behavior,
+   not treat Bash agreement as authority.
+2. The independent oracle consumes inert IR as a separate program, through
+   DD104's external seam.
+
+---
+
+~~The Janet backend is the reference implementation for what sash programs
+should do. Discrepancies between native and Janet output are bugs.~~
+DD104 preserves the independence principle but replaces the in-tree backend.
 
 Janet externalizes the compiler's reasoning in a legible, inspectable
 form. `(string/slice x 0 (string/find "/" x))` is a readable claim
@@ -35,6 +43,8 @@ This sharpens the original legibility intent from **semantic** legibility
 (`${x%%/*}` → `(string/slice …)`, "what it does") to **structural / parse**
 legibility (`(sash/trim-suffix …)`, "how it parsed"). Ratified decisions:
 
+<del>
+
 - **Structural, sash-hugging vocabulary.** Every AST node renders to a named
   `sash/*` form mirroring the construct: `sash/echo`, `sash/run`/`sash/ok?`
   (a bare *checked* command vs a *caught* condition — the position-based
@@ -54,6 +64,10 @@ legibility (`(sash/trim-suffix …)`, "how it parsed"). Ratified decisions:
   `sash-rt.janet` preamble is prepended), to eventually replace `--janet`.
   DG: "I prefer something that runs so I can refine by experimenting; the first
   pass doesn't need all the features."
+
+</del>
+
+DD104 instead requires exhaustive, inert IR-node data without semantic macros.
 
 **Reprioritization noted:** this trades a little oracle *structural*
 independence (janet now mirrors the parse on purpose) for a lot of

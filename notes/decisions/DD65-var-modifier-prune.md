@@ -1,6 +1,22 @@
 title: DD#65 — Prune the ${var:OP} modifier family
 status: accepted
 
+1. `:-` defaults, `:?` messages and `arg N DEFAULT` take literal operands.
+   A dollar in a disposition operand requires whole-operand single quoting;
+   `arg` rejects expansions structurally.
+2. `:-` selects its default for the subject's meaningful zero: empty string
+   or integer zero. Integer defaults are integer literals. Arithmetic string
+   conversion uses DD77's validity-based disposition instead.
+3. An omitted or empty `:?` message identifies the subject and applicable
+   failure; a nonempty custom literal keeps its text.
+4. Length, substring and regex substitution remain distinct operations.
+   Substitution fields are interpolating words, not disposition defaults;
+   `basename`/`dirname` are compiler sugar without an external dependency.
+5. Unknown parameter suffixes and nameless braced expansions are errors,
+   never silently discarded text. Scalar and cell spellings share this rule.
+
+---
+
 The `${var:OP}` family had accumulated bash creep. Vetted 2026-06-18
 (task `vet-var-modifiers`). Kept only what earns its place; the rest is
 dropped or moved into the awk-style string-builtin family
@@ -9,7 +25,7 @@ dropped or moved into the awk-style string-builtin family
 ## Kept
 
 - **`${var:-default}`** — default if unset/empty. Pure, useful, no glob.
-  The default is **exactly a double-quoted-string body** (`:- ≡ "…"`, DG
+  ~~The default is **exactly a double-quoted-string body** (`:- ≡ "…"`, DG
   2026-07-04): `$name`/`${name}`/`$(…)`/`$((…))`/`$'…'`/`` `…` `` interpolate
   and concatenate; **every other byte is literal**, including whitespace
   (kept verbatim) and quotes (`'` and `"` are ordinary literal bytes — they
@@ -22,7 +38,7 @@ dropped or moved into the awk-style string-builtin family
   flows normally: `${n:-$clean}` clean, `${n:-$tainted}` tainted (bless
   first); a bare env var is rejected (SB5018 — it is a real interpolation
   context, so use `$(getenv HOME)`); `$(external)` is tainted, `$(user_fn)`
-  and `$((…))` are clean.
+  and `$((…))` are clean.~~ The final literal-only follow-on below governs.
 - **`${var:off:len}`** — substring. Useful, no glob/regex.
 - **`${var:s/re/sub/[g]}`** — regex replace; per DD#63 this is sugar for
   `$(sub|gsub var "re" "sub")` in the shipped model. DD132 provisionally
@@ -38,10 +54,11 @@ textual-first-pass; `:off:len` takes integer operands.)
 
 ## Dropped (reject with a diagnostic pointing at the replacement)
 
-- **`:=` `:+` `:?`** — broken today and each redundant: `:=` is
+- **`:=` `:+` ~~`:?`~~** — broken today and each redundant: `:=` is
   `var=${var:-default}` (and mutates inside a read — a side-effect wart);
-  `:+` is `[[ -n $var ]] && …`; `:?` is murky under sash's no-unset model
-  (undeclared already reads empty), collapsing to a plain emptiness test.
+  `:+` is `[[ -n $var ]] && …`; ~~`:?` is murky under sash's no-unset model
+  (undeclared already reads empty), collapsing to a plain emptiness test.~~
+  DD77 restores `:?` in word and arithmetic contexts.
 - **`#` `##` `%` `%%`** (prefix/suffix strip) — real ergonomic value, but
   the community reaches for **`basename`/`dirname`**, not the strip ops,
   so they don't earn the muscle-memory exception. Use `basename`/`dirname`
@@ -63,7 +80,7 @@ basename/dirname) or the kept forms :- / :off:len / :s/"*. Per-op
 migration is **sash-convert's** job, not the compiler's (task
 `converter-var-modifier-migration`).
 
-Dropped set = every `split_operator` op except `:-`: `:=` `:+` `:?` `#`
+Dropped set = every `split_operator` op except `:-`: `:=` `:+` ~~`:?`~~ `#`
 `##` `%` `%%` `^` `^^` `,` `,,`, plus the `/`-family glob-replace. The
 `/`-family is remapped to an internal `glob_replace` operator at parse
 (`parse_standard_operator`) so it is **distinguishable from the kept `:s/`
@@ -116,40 +133,40 @@ reach the existing loud refusal, not silently become an ordinary join.
 - **`${#var}` length: KEPT.** Orthogonal to the pruned `:OP` family, O(1),
   essential. **`@X` transforms** (`${var@U}`/`@Q`/…): **stay rejected**
   (SB4015), unchanged.
-- **`${var:-default}` allows `$(cmd)`.** The earlier "command substitution
+- ~~**`${var:-default}` allows `$(cmd)`.** The earlier "command substitution
   is rejected in the default" was an over-restriction. Only an **external**
   capture is tainted (`$(getenv|argv|arg …)` or `$(/abs …)` —
   `cmdsub_is_taint_source`, validate.rs:1925); a **user-function** capture
   `$(my_fn)` is **clean** and useful. So `$(cmd)` is allowed; taint does
   its normal job (clean user-fn works; external needs bless, as
-  everywhere). Arithmetic `$((…))` was already allowed.
-- **`:?` is rejected for SCALAR `${var:?…}` only.** The `:?` *empty-
+  everywhere). Arithmetic `$((…))` was already allowed.~~
+- ~~**`:?` is rejected for SCALAR `${var:?…}` only.** The `:?` *empty-
   disposition* is reintroduced for the **array-splat** form `@{a:?WORD}`
-  (DD#69) — a different construct. DD#65 drops only the scalar `${var:?}`.
-- **The default is an interpolating context** — see the 2026-07-04
-  resolution below, which settled its exact shape.
+  (DD#69) — a different construct. DD#65 drops only the scalar `${var:?}`.~~
+- ~~**The default is an interpolating context** — see the 2026-07-04
+  resolution below, which settled its exact shape.~~
 
 ## Resolved (DG, 2026-07-04) — the `:- ≡ "…"` model
 
 The 2026-06-21 note framed the default as "an interpolating **word**
 context … like any command argument / assignment RHS, `'…'` literal" —
-i.e. the bash **word** model where single-quotes *strip*. DG replaced this
+i.e. the bash **word** model where single-quotes *strip*. ~~DG replaced this
 with a simpler, fully-consistent rule: **the default is exactly a
-double-quoted-string body** (`${var:-X}` ≡ `"X"`).
+double-quoted-string body** (`${var:-X}` ≡ `"X"`).~~
 
-- **Quotes are ordinary literal bytes.** `'` and `"` do not strip or group
-  (`${x:-'a'}` → `'a'`). This collapses the rule to one sentence and
+- **Quotes are ordinary literal bytes.** ~~`'` and `"` do not strip or group
+  (`${x:-'a'}` → `'a'`).~~ This collapses the rule to one sentence and
   preserves whitespace verbatim (`${x:-a  b}` → `a  b`).
   **Superseded in part (2026-09-30 follow-on, below): a *fully*
   single-quoted operand now strips**, as the hatch for a literal `$` —
   `${x:-'a'}` → `a`, `${x:-'costs $5'}` → `costs $5`. A `'` anywhere
   else, and `"` everywhere, remain ordinary bytes, so `${x:-"7"}` is
   still the three bytes `"7"`.
-- **The C-string is the any-byte hatch.** Because `$'…'` decodes
+- ~~**The C-string is the any-byte hatch.** Because `$'…'` decodes
   `\xNN`/octal/`\n` and is recognised inside `"…"` (DD#64 addendum), any
   byte is expressible: `${x:-$'a\x7db'}` → `a}b`. This is *why* stripping
   single-quotes is unnecessary — its only unique job (embedding a `}`) is
-  already covered, without a literal `}` byte to confuse the parser.
+  already covered, without a literal `}` byte to confuse the parser.~~
 - **Consequence — quotes are plain in the brace matcher too.** For `'` to
   be genuinely plain, the lexer's `${…}` brace matcher (both the bare
   `scan_brace_expansion` and the in-`"…"` `consume_dq_brace_expansion`)
@@ -157,8 +174,8 @@ double-quoted-string body** (`${var:-X}` ≡ `"X"`).
   the first unnested literal `}` closes. `${n:-'a}b'}` = `${n:-'a}` +
   literal `b'}`. (Only affects an expansion with a literal `}` *inside*
   quotes; `${m["key"]}` and friends are unchanged, having no interior `}`.)
-- **Divergence from bash** (accepted): bash strips quotes in `:-` and
-  quote-protects a `}`; sash does neither. The C-string replaces both.
+- ~~**Divergence from bash** (accepted): bash strips quotes in `:-` and
+  quote-protects a `}`; sash does neither. The C-string replaces both.~~
 
 Lowering: the operand lowers to `SsaValue::DefaultValue { var, default }`
 and both backends select var-or-default. (Stale as written: the operand

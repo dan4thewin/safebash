@@ -2,6 +2,15 @@ title: DD#105 — a string intrinsic rejects an int-typed operand
 status: accepted
 depends: [DD16, DD65, DD102]
 
+1. Every string-operand slot of a string intrinsic requires a string, whatever
+   the operand's spelling. Integers do not silently render as text.
+2. Double quoting explicitly converts an integer to a string; a bare word
+   literal in a string slot already is a string.
+3. Check subjects, patterns and replacements alike. Collection targets and
+   collection-name operands retain their separate contracts.
+
+---
+
 Settled with DG 2026-09-13.
 
 A string intrinsic applied to an int-typed operand is a **type error**

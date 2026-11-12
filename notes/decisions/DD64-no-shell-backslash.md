@@ -1,6 +1,19 @@
 title: DD#64 — No shell-level backslash escaping; quoting + concatenation instead
 status: accepted
 
+1. Shell backslash processing is limited to `$'…'` escapes and line
+   continuation. Otherwise backslash is literal in words and quotes;
+   use quoting and concatenation for shell metacharacters.
+2. A continuation joins across newline; a final unquoted backslash at
+   end-of-input is discarded too. Single-quoted strings remain literal.
+3. `$'…'` expands inside double quotes, with DD115's ASCII-byte and Unicode
+   escape set. Nested captures use the same quote, escape and comment rules.
+4. A dollar that starts no recognized expansion remains literal in ordinary
+   words and double quotes. Malformed recognized expansions remain errors;
+   arithmetic and regex-sugar fields retain their own dollar rules.
+
+---
+
 The shell interprets backslash in **exactly two** places — `$'…'`
 (C-escapes) and `\` at end-of-line (line continuation). Everywhere else —
 unquoted, `'…'`, `"…"` — `\` is a verbatim literal byte. Escaping shell
@@ -72,11 +85,15 @@ plus the in-`"…"` `${}` skip at ~824 and `skip_balanced_dquote`) and the
 brace/glob-matching machinery removed when Path B (DD#63) and the
 `/`-glob-replace drop (DD#65) land.
 
+<del>
+
 > Scope: this covers backslash in *string* and *regex-argument* contexts.
 > Backslash *inside* `${var:OP}` expansions — the brace-scan `\}` and the
 > `/`-operator `\/` (`find_unescaped_slash`) — is **deferred to the
 > var-modifier vet** (`vet-var-modifiers`), since several of those
 > operators may be dropped.
+
+</del>
 
 ## Why
 
@@ -111,8 +128,9 @@ flags. `"$%"` and `"cost: $"` retain their literal dollars too; no general
 stray-dollar rejection is added to words.
 
 Intentional literal text can use `'$-'` or a C-string. This does not add
-a `\$` escape: backslash retains the rules above. DD#65's `:-` defaults
-still follow double-quoted-body interpolation.
+a `\$` escape: backslash retains the rules above. ~~DD#65's `:-` defaults
+still follow double-quoted-body interpolation.~~ Defaults remain literal-only
+under DD65's 2026-09-30 follow-on; the word-level dollar rule does not change it.
 
 The fallback does not turn malformed recognized forms into text: existing
 `${…}`, `$(…)` and `$'…'` diagnostics remain. In particular, native `${-}`
@@ -142,11 +160,12 @@ only in `$'…'`, now usable everywhere including inside `"…"`.*
 
 **Universal escape hatch.** Because `$'…'` is escape-aware and can encode
 every structural char (`$'\x22'`→`"`, `$'\x24'`→`$`, `$'\''`→`'`,
-`$'\\'`→`\`, any byte via `\xNN`), a C-string nested in `"…"` gives
-**complete literal-byte control inside an interpolated string with no
-concatenation** — even a literal `"` (`"a$'\x22'b"` → `a"b`), since the
+`$'\\'`→`\`, ~~any byte via `\xNN`~~), a C-string nested in `"…"` gives
+~~**complete literal-byte control inside an interpolated string with no
+concatenation**~~ — even a literal `"` (`"a$'\x22'b"` → `a"b`), since the
 C-string region is opaque to the double-quote scanner. So `"…"` + `$'…'`
-together express any byte string *with* interpolation.
+together express ~~any byte string~~ UTF-8 text *with* interpolation.
+DD115 governs the literal escape set.
 
 **`$'` claims its sequence.** Inside `"…"`, the adjacency `$'` always
 opens a C-string (exactly as `${`/`$(` claim theirs). A literal `$'` in a
@@ -161,11 +180,12 @@ existing **escape-aware** `scan_ansi_c_quoted` (verified: `$'a\'b'` →
 part of the double-quoted concat. A C-string is a compile-time constant →
 always **clean** (no taint).
 
-**Resolves the default/replacement context (DD#63/DD#65).** Because a
+~~**Resolves the default/replacement context (DD#63/DD#65).** Because a
 `$'…'` is recognized wherever a `$`-form is, it works uniformly in `"…"`,
 in `${var:-default}`, and in the `sub`/`gsub` replacement. There is no
 "word context (C-string lives) vs double-quoted (C-string inert)"
-split — they are the same interpolating context (see DD#65/DD#63).
+split — they are the same interpolating context (see DD#65/DD#63).~~
+DD65's literal-default follow-on retires the default half.
 
 ## Escaping by quoting + concatenation
 
@@ -204,9 +224,9 @@ in-operand backslash handlers are removed:
   `sub`/`gsub`), which deletes `find_unescaped_slash`.
 - The brace-scan `\}` (lexer.rs:660) is **removed outright** — no kept
   operator needs it. `:s/…}` protects a bare `{`/`}` via **Path B**
-  (DD#63: the lexer treats `/` as a quote-delimiter after `:s`); `:-`
+  (DD#63: the lexer treats `/` as a quote-delimiter after `:s`); ~~`:-`
   includes a literal `}` by **quoting** (`${foo:-'a}b'}` → `a}b`, since the
-  lexer already skips `'…'`); `:off:len` takes integer operands. A literal
+  lexer already skips `'…'`)~~; `:off:len` takes integer operands. A literal
   `}` that still needs a byte escape is `\x7d` (DD#63 `\xnn`), but it is no
   longer load-bearing for either kept operator.
 

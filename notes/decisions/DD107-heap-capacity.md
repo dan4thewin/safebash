@@ -1,6 +1,16 @@
 title: "DD#107 — Heap capacity: a 256 MB compiled-in default, set by `--heap-size`"
 status: accepted
 
+1. The runtime heap is one fixed reservation, defaulting to 256 MB with
+   `MAP_NORESERVE`; physical pages are committed as touched.
+2. `--heap-size=SIZE` selects the compiled-in capacity using a byte count
+   or `K`/`M`/`G` suffix. Runtime environment variables do not set it.
+3. Allocator exhaustion is a diagnosed fatal fault, not a resumable
+   result or a successful partial allocation. DD#128/DD#130 govern its
+   allocation-free terminal dispatch.
+
+---
+
 The runtime heap is a single fixed region. It reserves **256 MB** by
 default, mapped `MAP_NORESERVE` so pages are committed only when touched.
 `sash --heap-size=<size>` changes the reservation at compile time; the
@@ -44,12 +54,15 @@ both directions — `--heap-size=1M` reproduces the old failure exactly.
 
 ## Mechanism
 
-`heap4.c` defines `sash_heap_size` **weakly** at 256 MB. When
+~~`heap4.c`~~ defines `sash_heap_size` **weakly** at 256 MB. When
 `--heap-size` is given, the compiler emits a **strong** definition of the
 same symbol into the object it generates — a Cranelift data object in the
 native backend, a C global in `--emit-c` — and the linker prefers it. An
 ordinary build emits no such symbol and picks up the weak default, so the
 flag costs nothing when unused and needs no runtime branch.
+
+DD#129 moves the runtime to Rust; the filename above records the earlier
+C implementation, not a current source location.
 
 ## Specs
 

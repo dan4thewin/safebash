@@ -1,6 +1,15 @@
 title: DD#46 — Positional parameters are function-local only
 status: implemented
 
+1. `$1` through `$N` and `$#` are function-local sugar for that function's
+   `args` cells and count.
+2. Program arguments use the explicit `arg`/`argv`/`argc` interface (DD60);
+   function splatting and joining use `@args` and `join args`.
+3. Every function call must satisfy the signature inferred from its argument
+   accesses (DD81/DD84).
+
+---
+
 Sash-native: `$1..$N` and `$#` are only valid inside function bodies.
 `$@` / `$*` are **not part of the language at all** (see the 2026-08-26
 amendment). Top-level references → compile error directing to the DD#60

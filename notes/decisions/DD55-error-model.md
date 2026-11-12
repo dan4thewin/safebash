@@ -1,6 +1,44 @@
 title: DD#55 — Implicit Exit Checks and Error Handling Model
 status: implemented
 
+1. Keep operational failure statuses, boolean answers, integers and void
+   distinct. Recoverable failures abort when unchecked; fatal faults cannot
+   become resumable results (DD130).
+2. Source `-` discards one eligible adjacent command result, not operand or
+   body failures. A discarded result cannot also be captured, tested or
+   forwarded as that same result.
+3. Bindings, mutations and control-flow statements produce no result or fresh
+   status permission. Discard does not legalize them, control transfers or
+   known pointless computation (DD31/DD68/DD70).
+4. Status reads are confined to the first evaluated handling expression.
+   Evaluation is left-to-right; executable bodies start with fresh status and
+   latch availability, unlike direct intrinsic reads.
+5. Every returning function path supplies its declared/inferred kind.
+   Compatible forwarding preserves kind; constant results are legal, and
+   non-void call results require compatible consumption or explicit discard.
+6. Anonymous stdout bodies may return void, not explicit statuses.
+   Process-replacing exec is excluded from stdout bodies and their callees;
+   direct integer captures retain their integer channel through redirects.
+7. Pipelines aggregate the worst unsuppressed stage status. Consuming the
+   aggregate requires an unsuppressed stage; direct integer calls are not stages.
+   Capturing output preserves otherwise-legal stage eligibility, including
+   user functions used as filters.
+   Parent readers stream before waiting; early exits close and wait without
+   forced kills. Construction failures close pipes and wait for already-started
+   stages.
+8. Single-external background jobs exec directly; their pid names the command.
+   Explicit function jobs retain their own checked body and process identity.
+   Reaping is optional and uses DD126's pid and separate child-status latch.
+9. Each fd-backed `echo`/`write` submits its complete output in one request,
+   after arguments and redirects succeed. `PIPE_BUF` bounds pipe/FIFO
+   non-interleaving, not output size or all-or-nothing completion.
+10. EXIT handles orderly termination at every status; ERR handles failure,
+    including `fail 0`. Both are once-only main-process roots over actual
+    globals, never child handlers or resumable continuations. Fatal dispatch
+    itself allocates nothing (DD128).
+
+---
+
 No `set -e` at runtime. The compiler inserts implicit exit checks for
 recoverable operational failures: nonzero command status or a runtime error
 such as `regcomp` on a dynamic pattern. DD130 distinguishes these from
@@ -127,7 +165,8 @@ current native/C emitters still write fragments separately.
 - Variable assignment (`x="hello"`)
 - Arithmetic evaluation (`(( x = x + 1 ))`)
 - Pure string operations
-- Literal regex (validated at compile time, can't fail at runtime)
+- Literal regex ~~(validated at compile time, can't fail at runtime)~~
+  Static validation excludes syntax failure, not allocation faults.
 
 ## Suppression with `-`
 
@@ -479,12 +518,19 @@ not the argument effects that already happened; DD130's failure classes
 and restoration requirements remain. Enforcement of the timing rule is
 pending in `q-stage-capture-redirect-order` (journal 585).
 
+<del>
+
 ## `local` declarations
 
 `local x=$(cmd)` — the capture's exit check fires regardless of
 `local`. sash does not swallow exit codes in declaration context.
 This is an explicit departure from bash, where `local` is the
 command and its success masks the substitution's failure.
+
+</del>
+
+DD86 retires `local`; declaration initializers retain their ordinary operand
+checks without a keyword-specific exception.
 
 ## Command substitution
 
@@ -507,10 +553,12 @@ would be without the `-`. DG ruled this on 2026-10-29
 (`notes/tasks/q-suppression-on-user-functions.md` Q1 and Q4), and F6
 landed it (addendum 2026-10-30, "a `-` does not reach").
 
-Suppression does not change the produced value or its type: a captured
+Suppression does not change the produced value or its type: ~~a captured
 `-> int` function still yields its integer return (DD#58), and a string
 function still yields stdout. Sole value intrinsics retain their value
-position. Structural arity checks, taint and status availability remain in
+position.~~ The kind rules above reject consuming and discarding the same
+integer, and reject status-less intrinsic prefixes. Structural arity checks,
+taint and status availability remain in
 force; this is not a validation bypass.
 
 (The 2026-10-20 correction said the opposite: the prefix covered argument
@@ -526,6 +574,14 @@ not make an ill-typed stage legal. This type boundary was settled by DG
 on 2026-11-05 and implemented in journal 577
 (`q-int-function-pipeline-status`). The rules below apply to legal stages.
 
+Capturing a pipeline's output does not narrow its otherwise-legal stage
+eligibility (DG, 2026-11-12). A user function behaving as a filter remains
+legal whether or not the pipeline's output is captured. In a capture-condition
+the consumed result is the pipeline aggregate, not a direct function
+capture's result. DD88's direct `if text=$(f)` exclusion and the ban on
+anonymous status returns remain. No filter or purity annotation is introduced;
+existing writer, taint, no-reach and fatal-failure rules are unchanged.
+
 Pipefail always on (DD#20). Implicit check fires on the pipeline's
 aggregate status. Per-segment suppression with `-`:
 
@@ -535,6 +591,7 @@ cmd1 | - cmd2       # cmd1 checked, cmd2 failure suppressed
 - cmd1 | - cmd2     # both suppressed
 ```
 
+In unchecked statement position:
 If any unsuppressed segment fails, the program aborts. SIGPIPE is
 the programmer's responsibility — use `- cmd` on the producing
 side or choose tools that don't trigger it (`sed -n 1p` over
@@ -553,8 +610,11 @@ exit status over its **non-suppressed** segments (pipefail). *Position*
 decides only the consequence, never the aggregate:
 
 - **statement position** — a nonzero aggregate aborts (routes to ERR).
-- **condition position** (`if` / `while` / `until` test, operand of `!`) —
+- **condition position** (`if` / `while` / `until` test, ~~operand of `!`~~) —
   the aggregate is the truth value; it does not abort.
+
+The pipeline grammar below excludes whole-pipeline `!`; terminal-stage
+negation is a separate operation.
 
 The 2026-11-08 consumer rule requires a nonempty set of unsuppressed
 stages when that aggregate is consumed. An all-suppressed pipeline is
@@ -858,8 +918,8 @@ Bash `set -e` has known blind spots:
 - Subshells inherit errexit inconsistently
 
 sash has none of these. Checks are inserted per-operation by the
-compiler. Condition position is recognized syntactically. `local`
-doesn't swallow. Arithmetic mutations produce no result; arithmetic
+compiler. Condition position is recognized syntactically. ~~`local`
+doesn't swallow.~~ Arithmetic mutations produce no result; arithmetic
 comparisons supply a condition result, not an implicit failure check.
 Bare `(( 0 ))` is rejected by DD31, not a way to set a failing status.
 The remaining arithmetic enforcement is tracked in
@@ -996,8 +1056,9 @@ produced. `if /bin/false & { … }` took the branch (B26), and
 `return /bin/true &` made `if f` true (n4). A terminal `!` in a job inverts a
 status nobody reads: `a | ! b &` is SB4018 (DD#70 addendum 2026-10-26).
 
-**Where `-` reaches.** At a statement's head `-` takes the whole statement,
-a trailing `&` included (DD#126). What follows the `&` is a new statement, as
+**Where `-` reaches.** ~~At a statement's head `-` takes the whole statement,
+a trailing `&` included (DD#126).~~ The command-adjacency ruling above
+supersedes whole-list reach. What follows the `&` is a new statement, as
 it is without the `-`: `- a & && b`, `- a & || b`, `- a & | b`, `- a & >f` and
 `- a & &` are SB4014, as `a & && b` is. The parser folded the statement a
 second time and joined what followed the `&` to the job: three of them
@@ -1013,8 +1074,8 @@ assignment or `(( n = 1 ))` behind `-`, and a suppressed final reader
 and lost their effect with the child; the readers drew the compound-stage
 SB4022. `-` prefixes a command: on `attest`, a declaration, `fn`/`function`
 or either handler declaration it is SB4014 at the `-`. These drew SB5011
-"command '-' not found" or an unrelated SB4014. `- until` now parses like
-`- while`.
+"command '-' not found" or an unrelated SB4014. ~~`- until` now parses like
+`- while`.~~ Current resultless-compound rules reject those prefixes.
 
 **Background failure ownership.** Under the accepted direct-exec rule,
 an exec failure is reported by the child as an errno diagnostic followed
@@ -1026,8 +1087,8 @@ wrapper retains its ordinary body checks. The old unmarked job's extra
 status line is historical implementation behavior, retained in Q2's
 evidence until `background-external-direct-exec` lands. F2
 (2026-10-28, batch-531 B20, journal 539) implemented background fork failure
-as `fork: error N`, status 1, abort unless checked or suppressed, with `$!`
-set to -1. DD130 now requires a fatal path instead, so no handling branch
+~~as `fork: error N`, status 1, abort unless checked or suppressed, with `$!`
+set to -1.~~ DD130 now requires a fatal path instead, so no handling branch
 continues after the failed fork. That change remains in
 `bug-fork-failure-reporting-by-form`. DD128's main-process-only handlers
 and once-only fatal dispatch remain; END's old silent exception is gone
@@ -1054,8 +1115,9 @@ The call's own status is still the condition's. When the body runs as a
 forked pipeline stage (`if a | h`), the abort ends that child, with its own
 report, and the condition consumes the child's failure.
 
-Suppression is not part of this change. Whether `-` should apply to a user
-function at all is `q-suppression-on-user-functions` (DG, 2026-10-28).
+Suppression is not part of this change. ~~Whether `-` should apply to a user
+function at all is `q-suppression-on-user-functions` (DG, 2026-10-28).~~
+The following F6 rulings settle command-local result discard.
 
 Specs `errors.sh` 55.76-55.87; journal 542.
 
@@ -1156,7 +1218,8 @@ These are checked as if the `-` were absent:
 - a capture among the command's operands, for an external, a builtin, a
   value intrinsic or a `[[ ]]` test, and the body of a function captured
   there (`- echo $(g)`);
-- a capture or `-> int` call in the operands of a suppressed `(( ))` test.
+- ~~a capture or `-> int` call in the operands of a suppressed `(( ))` test.~~
+  DD31 rejects the prefixed form itself; legal arithmetic operands remain checked.
 
 So `fn f { /bin/false; echo x; return 1 }; - f` now aborts at the
 `/bin/false`; it used to print `x` and carry on. `f`'s `return 1` is still

@@ -2,6 +2,15 @@ title: DD#102 — `strlen` takes a value, like every other scalar operation
 status: implemented
 depends: [DD75, DD65, DD100]
 
+1. `strlen` measures the byte length of a scalar string value, not a named
+   variable or collection. A bare word is literal text; expansions supply values.
+2. Collection splats are not implicitly joined. Integer operands require
+   explicit string conversion (DD105); ordinary taint checks apply.
+3. Capture and arithmetic-call spellings preserve the same operand meaning,
+   including the distinction between a bare word and a dollar-prefixed read.
+
+---
+
 Settled with DG 2026-09-12.
 
 `$(strlen X)` resolves its operand as a **value**, lowered exactly as
@@ -81,10 +90,10 @@ gate is lifted.
   `taint_of_var` through `ParamExpansion`, and the new one reaches
   `any_tainted` through the operand, so `strlen` of a tainted value is
   tainted in both. `strlen $(getenv HOME)` is SB5020 before and after.
-- An int variable still silently stringifies (`strlen $n` → 2, matching
+- ~~An int variable still silently stringifies (`strlen $n` → 2, matching
   `toupper $n` → "42"). DG has separately directed that the string intrinsics
   reject int variables; that is a follow-up across the whole family, not a
-  `strlen` special case.
+  `strlen` special case.~~ DD105 requires explicit string conversion.
 
 ## The arith sexpr operand
 

@@ -1,6 +1,21 @@
 title: DD#39 — Single-star file globs + regex mutation
 status: accepted
 
+1. A file glob selects one directory, with at most one `*` in the final
+   filename component and a literal directory prefix.
+2. Leading dots must be explicit; wildcards never select `.` or `..`.
+   Sort each expansion bytewise and preserve enclosing source order.
+3. Glob results are clean array elements without word splitting and use
+   normalized absolute paths (DD69/DD73); directory failures follow DD130.
+4. Regex operations use the chosen Plan 9 dialect, not Bash/POSIX equivalence.
+   Construct-opening metacharacters must be escaped to denote literals.
+5. Validate every static regex at compile time and identify the offending
+   pattern; validated literals are to be compiled once for runtime reuse.
+6. Dynamic invalid-pattern failures retain DD55/DD70's ordinary operational
+   handling contract, distinct from fatal faults.
+
+---
+
 The selected file-glob policy is deliberately coarse: at most one `*`
 in the final filename component, with a non-wildcard directory prefix.
 No additional `?`/`[abc]` wildcard operators, multiple stars or wildcard
@@ -8,7 +23,7 @@ directory traversal. DD131 packages this in a provisional branch trial
 with explicit `glob`/`rglob` commands and scratch collections.
 Perl-style regex for string mutation: `var =~ s/re/str/flags` (statement, mutates).
 Expression form: `${var:s/re/str/flags}` (returns value, no mutation).
-`${var/pat/rep}` family accepted via glob→regex coercion.
+~~`${var/pat/rep}` family accepted via glob→regex coercion.~~ DD65 retires it.
 
 ## File glob contract (DG, 2026-11-09)
 
@@ -59,8 +74,8 @@ records the decisions and provisional implementation boundary.
 ## Regex engine
 
 Plan 9 regexp library. Supports POSIX ERE subset: `.`, `*`, `+`, `?`,
-`|`, `()`, `[]`, `[^]`, `^`, `$`. Does **not** support `{n,m}` counted
-repetition, `\d`/`\w` shortcuts, or lookahead/lookbehind.
+`|`, `()`, `[]`, `[^]`, `^`, `$`. Does **not** support ~~`{n,m}` counted
+repetition, `\d`/`\w` shortcuts, or~~ lookahead/lookbehind.
 
 Literal patterns (no variable expansions) are validated at compile time
 via `regcomp9` — unsupported syntax is a compile error, not a silent
@@ -81,8 +96,8 @@ faults remain fatal. The integrated trial is not yet implemented.
 
 ## Clarification (2026-05-24): Runtime regex abort (shipped baseline)
 
-When a dynamic pattern (containing $variables) fails regcomp9 at
-runtime, the program aborts with exit code 2. That supplies DD55's
+~~When a dynamic pattern (containing $variables) fails regcomp9 at
+runtime, the program aborts with exit code 2.~~ That supplies DD55's
 unchecked-failure behavior, but does not establish that its handling
 levers work; the F15 section below records that discrepancy. DD132's
 provisional validation-before-use model supersedes this as the proposed
@@ -96,7 +111,8 @@ infallible.
 
 **Correction:** the engine **does** now support `{n,m}` counted repetition
 (the "Regex engine" paragraph above is stale on this point) — e.g.
-`^a{2,3}$` matches. `\d`/`\w`/lookaround remain unsupported.
+`^a{2,3}$` matches. ~~`\d`/`\w`/lookaround remain unsupported.~~
+The September correction below retains only the lookaround restriction.
 
 **Ruling (DG, 2026-07-08) — bare `{` / `[` are not silent literals.**
 A `{` opens a `{n,m}` interval and a `[` opens a `[…]` class. To match a
@@ -120,10 +136,10 @@ Rationale (surveyed the field, 2026-07-08):
   treats a bare `[` as a silent literal. sash already matches this.
 - **`{` splits:** the GNU command-line tools / Perl / RE2 are lenient
   (literal), but **bash's own `=~` engine (glibc `regcomp REG_EXTENDED`)
-  errors**, exactly like sash. Since sash subsets bash and targets
+  errors**, exactly like sash. ~~Since sash subsets bash and targets
   bash-faithful semantics, we keep the strict behavior — a bash user's
   `[[ $x =~ a{b ]]` already errors in bash. Going lenient would match GNU
-  grep but *diverge from bash*.
+  grep but *diverge from bash*.~~ The later engine-choice ruling is authoritative.
 - Keeping strict also makes `{` and `[` behave the same (both need their
   escape), which is cleaner than GNU/Perl's internal inconsistency, and
   avoids relying on POSIX-ERE-undefined behavior.

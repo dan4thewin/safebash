@@ -1,6 +1,13 @@
 title: "DD#112 — a literal `arg` index must be a non-negative integer (SB5078)"
 status: accepted
 
+1. A literal `arg` index is a non-negative decimal integer written as digits;
+   leading zeros are allowed, partial parses and malformed spellings are not.
+2. Computed indices must be integer-valued (DD89) and retain runtime
+   bounds checks. Literal negative indices reject at compile time.
+
+---
+
 # DD#112 — a literal `arg` index must be a non-negative integer (SB5078)
 
 ## The rule
@@ -18,6 +25,9 @@ x=$(arg -1)      # SB5038 — still the DD#60 negative-index rule
 x=$(arg 01)      # fine — digits, not spelling
 x=$(arg $i)      # fine — computed, a runtime concern
 ```
+
+The computed example requires an integer `i` (DD89); it does not permit
+implicit conversion of a string variable.
 
 ## Why
 

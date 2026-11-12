@@ -1,6 +1,34 @@
 title: "DD#93 — attest: declassification ergonomics (rename + shorthands + shape tests)"
 status: accepted
 
+1. `attest` is explicit, named validation. Scalar predicates test their
+   subject; array attest-all has one element binder, and map attest-all
+   has key and value binders, each tested. Every subject/binder must
+   occur in a tested operand, on the left for binary tests. Unary
+   shorthand applies its operator to the subject or to every binder.
+2. `i?` tests complete i64 representability; `p?` and `g?` require
+   nonempty ASCII printable and graph bytes respectively. They are
+   ordinary unary tests, subject to normal result-consumption rules.
+3. Predicates may read their attested subject but every other input must
+   be clean. `[[ ... ]]` predicates contain no captures, intrinsic calls,
+   sed-substitution sugar or arithmetic expansions, including in indices
+   and defaults. This shape restriction remains under `--no-taint` (DD#24).
+4. Scalar `attest SOURCE (( TARGET = EXPR ))` validates the source as an
+   integer and binds a clean integer result. EXPR must reference SOURCE
+   and call nothing; imported values retain the predicate restrictions.
+   SOURCE and TARGET are distinct scalar names; TARGET must be a new
+   integer binding or an existing mutable integer.
+5. Validation may leave a const source's value unchanged (DD#86);
+   conversion targets and failed-attest replacements still require
+   mutability. A newly introduced conversion target reads as zero on
+   failure, while a tainted source remains unresolved.
+6. A caught predicate runs once; `&&`/`||` short-circuit, and attest-all
+   stops at its first counterexample. Standalone failure enters ERR;
+   caught resolution, adjacency and ownership follow DD#121/DD#127/DD#128.
+   The map form remains a runtime validation gate on constructed maps.
+
+---
+
 Settled with DG (2026-09-06). A bundle of ergonomic improvements to the taint
 **declassification** primitive (formerly `bless`), keeping its defining
 property — every declassification stays **explicit, named, and greppable**.
@@ -31,12 +59,15 @@ the evidence — and sits in current security vocabulary (SLSA / sigstore /
 in-toto attestations), directly answering the reviewer's objection.
 
 Vocabulary split this resolves: the **unchecked** bypasses stay "trust"
-(`--no-taint` DD#82; `:!` / `arrvals_trust` DD#91 — declassify with *no*
-predicate); the **checked** primitive is "attest" (declassify *with* a
+(`--no-taint` DD#82; `:!` / `arrvals_trust` DD#91 — ~~declassify with *no*
+predicate~~); the **checked** primitive is "attest" (declassify *with* a
 predicate). Using "trust" for the keyword would have blurred that line.
 
 Diagnostics follow the rename ("attest condition must validate $x"). SB codes
 are unchanged (SB5020 etc.).
+
+DD#128 makes the distinction precise: `:!` authorizes a read, not
+declassification of its live source binding.
 
 ### Part B — unary shorthand: `attest VAR OP` ≡ `attest VAR [[ OP $VAR ]]`
 
@@ -148,7 +179,8 @@ are separate. Existing scalar/type/distinct-name rules still apply.
 
 DG hit `attest x (( y = x*2 ))` and it ICE'd. Two rules came out of it.
 
-**The RHS may be any expression that REFERENCES the attested name.** Computing
+**The RHS may be ~~any expression~~ a call-free arithmetic expression that
+REFERENCES the attested name.** Computing
 a wider RHS still requires the conversion to succeed, so the `i?` gate proves
 exactly what it proves for the plain `(( t = s ))`; the target simply binds the
 computed value instead of the bare conversion:
@@ -178,9 +210,10 @@ every bare string in the predicate.
 Constraints (DG, 2026-09-06):
 - **Both clean** (source and target).
 - **Distinct names** required: `myint` ≠ `numstr` (same-name in-place retype is
-  deferred) — **SB5053** otherwise.
-- **Scalar only** for now (the array analogue `attest e in a (( … ))` is a
-  follow-up; the existing `attest e in a [[ … ]]` covers arrays meanwhile).
+  ~~deferred~~) — **SB5053** otherwise.
+- **Scalar only** ~~for now (the array analogue `attest e in a (( … ))` is a
+  follow-up~~; the existing `attest e in a [[ … ]]` covers arrays ~~meanwhile)~~.
+  The "not pursued" decision below and DD#113 retain scalar-only conversion.
 - The target is an **int scalar binding**: an existing mutable int can be
   assigned; a const target is SB4044, and a string or collection target is
   SB4030. An introduced target counts for DD#86's prohibition on a later

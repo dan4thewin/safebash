@@ -2,6 +2,14 @@ title: DD#106 — `join`'s separator is a compile-time literal
 status: accepted
 depends: [DD75]
 
+1. `join` takes a literal separator word; expansions are errors, never
+   source text substituted as a separator.
+2. An omitted separator means one space. An explicitly empty separator
+   means concatenation with no intervening bytes.
+3. Validation and lowering must share the same literal-word interpretation.
+
+---
+
 Settled with DG 2026-09-13.
 
 `$(join arr SEP)` requires `SEP` to be a **literal word**. An expansion

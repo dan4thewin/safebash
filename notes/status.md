@@ -12,12 +12,13 @@ with DG and the individual [task records](tasks/).
 
 ## Just completed
 
-- **Notes conventions repaired.** All decisions/tasks now have readable
-  bare metadata and consistent names, with existing dispositions preserved.
-  [Journal 626](journal/626-note-record-conventions.md) records the repairs.
-  Top-level notes remain this handoff and the historical parser-migration
-  postmortem; [journal 625](journal/625-top-level-notes-pruning.md) records
-  the twelve-file pruning and retrieval revision.
+- **Decision rules made readable.** All 121 decision documents now begin with
+  a concise numbered list of current requirements; superseded body claims are
+  struck, with history and metadata retained. DG confirmed that capturing a pipeline
+  does not exclude otherwise-legal user-function filters.
+  [Journal 627](journal/627-current-decision-principles.md) records the pass.
+  The earlier [metadata/naming repair](journal/626-note-record-conventions.md)
+  and [top-level pruning](journal/625-top-level-notes-pruning.md) remain intact.
 - **Public references refreshed.** README, architecture/review guides and
   `sash(1)` now describe the shipped system. Added `sash-getopt(1)`,
   `sash-expand(1)` and `sash-convert(1)`. The legacy grep sample/harness,

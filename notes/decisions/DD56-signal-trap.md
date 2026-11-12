@@ -1,6 +1,19 @@
 title: DD#56 — Signal model and orderly EXIT
 status: implemented
 
+1. Signal handlers only record delivery; `signum` reports the latest FLAG/EXIT
+   signal, and EXIT requests are dispatched at compiler checkpoints.
+2. `signal` takes a literal catchable signal number and one of `IGN`, `DFL`,
+   `FLAG`, `EXIT`; the disposition at delivery determines the recorded request.
+3. Only EXIT-enabled programs poll. Legal acquisition/attest resolution defers
+   signal dispatch, not receipt, explicit termination or failure.
+4. EXIT and ERR are separate once-only main-process handlers over actual
+   globals, selected by cause under DD128; children run neither.
+5. Handlers retain ordinary checks and cannot resume interrupted execution or
+   re-enter. Definitions remain unique and main-list-only.
+
+---
+
 ## Mechanism
 
 Signal handlers only record delivery in atomics. `$(signum)` reads the

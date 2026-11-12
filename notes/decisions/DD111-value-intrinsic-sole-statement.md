@@ -1,6 +1,15 @@
 title: "DD#111 — a value intrinsic is exempt inside `$( )` only when it *is* the substitution"
 status: accepted
 
+1. A value-only intrinsic is legal in `$(…)` only as its lone top-level
+   statement, where it is rewritten to a value. It has no ordinary
+   statement-position meaning, including elsewhere in a capture body.
+2. Capturing a statusless value leaves no result for `-` to discard.
+   A separate real status, such as `getenv`'s lookup verdict, follows its
+   own handling and taint rules.
+
+---
+
 # DD#111 — a value intrinsic is exempt inside `$( )` only when it *is* the substitution
 
 ## The rule
@@ -18,9 +27,19 @@ substitution body. Anywhere else in the body it is SB5073.
 echo "$(status)"                # fine — the intrinsic IS the substitution
 echo "$(echo a; status)"        # SB5073
 echo "$(status; echo a)"        # SB5073
+```
+
+<del>
+
+```sh
 x=$(if [[ 1 = 1 ]]; then status; fi)   # SB5073 — nested, so nothing rewrites it
 echo "$(echo a; echo $?)"       # fine — `$?` is punctuation, legal anywhere
 ```
+
+</del>
+
+DD118 governs equality and vacuous tests; DD55 governs status permission,
+including fresh permission at capture entry.
 
 The whole-substitution exemption does not make every prefixed spelling
 legal. DG rejected `$(- toupper abc)` and other value-intrinsic captures
@@ -70,8 +89,8 @@ left the rest.
 
 The alternative was to give a bare `status` a statement-position meaning inside
 a body, so `$(echo hi; status)` would print `hi` then `0`. Rejected: **that
-spelling already exists and already works.** `$(echo hi; echo $?)` prints
-exactly that, today, because `$?` is legal punctuation in statement position.
+spelling already exists and already works.** ~~`$(echo hi; echo $?)` prints
+exactly that, today, because `$?` is legal punctuation in statement position.~~
 Widening would buy a second spelling for the same thing at the cost of
 contradicting the rule SB5073 states — that a value intrinsic has no statement
 position — everywhere else in the language.

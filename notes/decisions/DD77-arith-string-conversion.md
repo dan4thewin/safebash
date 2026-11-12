@@ -1,11 +1,35 @@
 title: DD#77 — String→int conversion discipline in arithmetic
 status: accepted
 
+1. Arithmetic consumes integer operands directly. A string scalar or cell
+   must carry `:-N` or `:?MESSAGE` for explicit conversion; DD#93's
+   scalar attest-conversion is the separate validation form.
+2. Conversion accepts only a complete, i64-representable integer under
+   DD#72's sign, decimal and base-prefix grammar. Empty, nonnumeric,
+   partial and out-of-range input all trigger the disposition.
+3. Arithmetic `:-N` requires a canonical decimal integer literal.
+   `:?MESSAGE` uses literal text; an absent or empty message generates a
+   diagnostic identifying the subject and actual conversion failure,
+   without reevaluating the subject or index.
+4. Word-context `:-` defaults on the subject's meaningful zero without
+   changing its type; it does not convert strings to integers.
+   Scalar/cell `:~` elides empty strings and keeps integer zero rendered
+   as `0` (DD#84). The `i?` predicate tests representability without
+   changing the string's type or replacing the required arithmetic
+   disposition.
+5. Cells and scalars owe the same conversion in every reading spelling.
+   Taint checks remain independent of successful integer parsing or an
+   explicit trusted read (DD#123).
+
+---
+
 Crossing the string→int boundary inside `(( ))` / `$(( ))` / `if (( ))` must be
 **explicit and accountable**. A string operand carries a required failure
 *disposition* (borrowed from DD#69's array-splat `@{a:-WORD}`/`@{a:?WORD}`), and
-a new `[[ -i … ]]` test lets an author validate/branch before converting.
+a new ~~`[[ -i … ]]`~~ test lets an author validate/branch before converting.
 Decided 2026-08-17 (DG).
+
+DD#93 names that test `i?`.
 
 ## Motivation
 
@@ -78,32 +102,37 @@ Empty/unset are likewise invalid → disposition.
 In `${s:-N}` the default `N` must be a **numeric literal** (statically checked);
 `${s:-hello}` in arith is a compile error. Guarantees the fallback is a real int.
 
-## `[[ -i EXPR ]]` — integer-validity test
+## ~~`[[ -i EXPR ]]`~~ — integer-validity test
 
-`[[ -i $s ]]` is true iff `$s`'s value is a valid strict integer (same grammar
+~~`[[ -i $s ]]`~~ is true iff `$s`'s value is a valid strict integer (same grammar
 as D3) **and it fits i64** (range-checked, DG 2026-08-17). Empty/unset → false;
 a well-formed but out-of-range value (`> i64::MAX` / `< i64::MIN`) → false. So
-`[[ -i $s ]]` means "valid AND representable" — a validated value is guaranteed
+~~`[[ -i $s ]]`~~ means "valid AND representable" — a validated value is guaranteed
 to convert without an overflow trap. A sash-specific unary test (bash has no
 `-i`).
 
 It lets an author validate and branch instead of (or before) converting:
 
+<del>
+
     s=42abc
     [[ -i $s ]] || s =~ s/\D//g      # not an int? strip non-digits → "42"
     (( n = ${s:?bad count} ))        # now safe; disposition still required
 
-**Composition model:** `-i` *validates/branches*; the disposition *converts*.
-There is **no** flow-sensitive narrowing — after `[[ -i $s ]]` the compiler still
+</del>
+
+**Composition model:** ~~`-i`~~ `i?` *validates/branches*; the disposition *converts*.
+There is **no** flow-sensitive narrowing — after ~~`[[ -i $s ]]`~~ the compiler still
 sees `s` as a string, so using it in arith still requires a disposition
-(`${s:?}` / `${s:-N}`). `-i` and the disposition are complementary, not
+(`${s:?}` / `${s:-N}`). ~~`-i`~~ `i?` and the disposition are complementary, not
 substitutes: branch-beforehand vs handle-inline.
 
-**Out-of-range conversion.** If an out-of-range value reaches a conversion
+~~**Out-of-range conversion.** If an out-of-range value reaches a conversion
 anyway (unvalidated), the runtime `sash_atoi` traps cleanly via
 `sash_arith_overflow` (`<prog>: arithmetic overflow`, exit 2) — the same trap as
 arithmetic overflow (DD#25/#26), not a Rust panic. (Range-checking `-i` and the
-clean atoi trap were added together, 2026-08-17.)
+clean atoi trap were added together, 2026-08-17.)~~ The resolved sub-decision
+below makes out-of-range input a disposition failure, not arithmetic overflow.
 
 ## What does NOT change
 
@@ -128,9 +157,11 @@ backends get the same or a filed per-backend guard.
 
 ## Scope / follow-ups (not decided here)
 
-- **Subscript index** `a[$s]` and **string `$(cmd)`** in arith are related
+- ~~**Subscript index** `a[$s]` and **string `$(cmd)`** in arith are related
   string→int sites; this DD governs the `(( ))`/`$(( ))` operand path. Whether
-  the same disposition requirement extends to those is a follow-up.
+  the same disposition requirement extends to those is a follow-up.~~
+  DD#80 governs typed indices; DD#58 governs integer calls, not implicit
+  stdout-to-integer conversion.
 - Only `:-` and `:?` dispositions (matching DD#69 splat); other operators
   (`:+`, `#`, `%`, `:s/`) in an arith operand position → compile error
   (a string-producing op still needs a disposition to become int).
@@ -207,13 +238,14 @@ exactly like a scalar `${s:OP}`, in both word and arith contexts.
   integer conversion. Installing its environment in every type-checking
   visitor closed that bypass (2026-10-18, specs `bsx.8`/`bsx.9`).
 - **Operator parity.** The pruned families reject identically to a scalar:
-  `${a[i]#x}`/`${a[i]/x/y}` → SB4034, `${a[i]@U}` → SB4015. Substring
+  `${a[i]#x}`/`${a[i]/x/y}` → SB4034, `${a[i]@U}` → SB4015. ~~Substring
   (`${a[i]:o:l}`) and sed (`${a[i]:s/…/}`) have no cell-source lowering yet —
   they reject **explicitly** with **SB4039** (never a silent drop) and are a
-  filed follow-up (`arith-bare-subscript-followups`).
-- **DD#78 default discipline rides for free.** A cell disposition's default is
+  filed follow-up (`arith-bare-subscript-followups`).~~ DD#123 applies scalar
+  operator parity to cells while retaining genuine operator restrictions.
+- ~~**DD#78 default discipline rides for free.** A cell disposition's default is
   still taint-checked (`${a[9]:-$(getenv X)}` → SB5020) and non-`random`
-  (`${a[9]:-$(random)}` → SB5035).
+  (`${a[9]:-$(random)}` → SB5035).~~ DD#65 makes defaults literal-only.
 
 Representation: `ir::ParameterExpansion` gained an optional `index`; the SSA
 disposition nodes generalized from `var: VarRef` to `source: Box<SsaValue>`

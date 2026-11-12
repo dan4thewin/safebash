@@ -253,6 +253,13 @@ Quote prose where YAML requires it, and do not mix inline and block lists.
 block. Keep the header contiguous; encode necessary paragraph breaks as
 `\n` in a quoted value. Long narrative normally belongs in the body.
 
+Every DD body starts with one concise numbered list of its current enforceable
+rules, reconciled against later decisions. Omit retired rules and features;
+scope provisional rules explicitly as trials. Keep nuance and history below,
+striking superseded claims in place rather than adding contradictory addenda.
+Use `~~...~~` for prose; wrap obsolete code blocks or tables in `<del>` blocks
+with blank lines inside so the Markdown still renders.
+
 With the current virtual-directory configuration, even `iwe find`
 materializes `notes/_decisions.md`, `notes/_journal.md` and `notes/_tasks.md`.
 Do not commit these generated directory indexes as maintained notes.

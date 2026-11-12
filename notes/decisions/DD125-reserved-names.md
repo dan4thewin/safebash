@@ -1,6 +1,19 @@
 title: DD#125 — a name the compiler already understands is not the user's to bind
 status: accepted
 
+1. User bindings and function definitions cannot claim compiler keywords,
+   builtins or intrinsic names; reads must not advise binding a reserved name.
+2. Function names use `[A-Za-z_][A-Za-z0-9_]*`, with the existing collision
+   and unique-definition restrictions, even when unused.
+3. Leading underscores are ordinary source names. Compiler temporaries must
+   avoid all source bindings and prior temporaries rather than reserve a namespace.
+4. A bare compiler-owned arithmetic name denotes its nullary call, subject to
+   the same denotation and arity checks as the explicit call.
+5. Diagnose malformed bindings before semantic checks that assume valid names;
+   command-target extraction still follows command-shape validation.
+
+---
+
 Settled with DG (2026-10-09), out of a bug found while probing a `wait` idiom.
 
 > I'm thinking it should be an error to declare any function, variable, or
@@ -157,12 +170,13 @@ Specs `functions.sh` `tmpcap.1`-`tmpcap.12`.
 
 ## Diagnostic placement
 
-SB5092 runs in `lib.rs`'s second validation batch, beside its sibling
+~~SB5092 runs in `lib.rs`'s second validation batch, beside its sibling
 `check_reserved_loop_var` (SB5080), **not** in `validate()`. From the earlier
 batch it masked better diagnostics: it reads a name out of a shape an earlier
 check may already have rejected, so `read -a arr -d :` — a four-argument
 `read`, SB5057 — reported "rename the variable `:`" and suppressed the arity
-error entirely.
+error entirely.~~ The later gate split below retains this ordering only for
+command targets, not direct bindings.
 
 ## Precedent
 

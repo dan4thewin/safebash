@@ -1,6 +1,40 @@
 title: DD#128 - EXIT, ERR, and adjacent attest resolution
 status: accepted
 
+1. EXIT and ERR are optional, unique, top-level blocks belonging only to the
+   main process. Function definitions remain program-top-level-only.
+2. Select handlers by cause, independently of status:
+   1. Fall-through, configured EXIT signals and `exit [N]` enter EXIT;
+      `exit` defaults to 0.
+   2. Uncaught failures, first fatal faults and `fail [N]` enter ERR;
+      `fail` defaults to 1 and permits 0.
+   3. Failure inside EXIT may enter ERR. `exit` in either handler and `fail`
+      in ERR terminate directly. An absent handler means termination.
+3. Never resume interrupted code or re-enter a handler. Preserve the full
+   entry status unless explicitly replaced; `$?` is available at entry's
+   first evaluated expression.
+4. Globals use actual process-global storage. Handlers observe completed
+   writes, not main's hypothetical final state.
+5. EXIT's incoming uses must be valid at every reaching orderly entry.
+   ERR requires trusted reads of potentially tainted incoming values;
+   fresh input acquired inside either handler may be attested there.
+6. Every recoverable failure reachable during ERR needs explicit handling
+   at its own operation, including inside same-process callees and operands.
+7. First-fatal dispatch attempts ERR once without allocation. A fatal fault
+   inside ERR terminates; cleanup is not guaranteed to finish.
+8. Within a live binding, resolve taint only by legal adjacent attest or a
+   clean whole-subject replacement written directly on its failed branch.
+   Replacement requires mutability; helpers inherit no clearing permission.
+9. Ordinary writes, unset, rebinding and self-trust copies preserve unresolved
+   taint. Fresh private lifetimes initialize their own values instead.
+10. Ordinary caught attests must resolve every continuing path; outgoing
+    transfers retain their real state and handler obligations.
+11. Defer signal dispatch into EXIT across legal acquisition/resolution pairs,
+    including call and reader boundaries. Do not defer signal receipt,
+    ordinary failure, explicit termination or fatal faults.
+
+---
+
 Drafted 2026-11-03 at DG's request. Section 10 records DG's original rulings
 and the 2026-11-06 revision to explicit termination, incorporated below.
 The handler infrastructure was accepted and implemented 2026-11-05.

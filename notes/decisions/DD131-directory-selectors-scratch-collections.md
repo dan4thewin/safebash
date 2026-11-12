@@ -1,6 +1,33 @@
 title: DD#131 - Directory selectors and immutable scratch bindings
 status: provisional
 
+1. **Trial only:** evaluate the combined DD131/DD132 model on a separate
+   branch; DG reviews evidence and revisions before adoption on main.
+2. `glob ARRAY PATTERN...` and `rglob ARRAY DIRECTORY REGEX...` produce
+   string arrays from ordinary operands; runtime regexes require DD132 proof.
+3. Each glob pattern permits at most one star, in the final component, and
+   literal directory prefixes. Glob needs a leading dot for dotfiles;
+   both selectors exclude `.` and `..`. Regex selection tests basenames
+   without an extra dotfile filter.
+4. Concatenate bytewise-sorted per-pattern batches in source order, retaining
+   duplicates. Results are clean, lexically normalized absolute paths.
+5. Completed enumeration succeeds even with no matches; errors are not empty
+   success. Preserve DD130 failure classes and handling.
+6. Array fillers append complete batches to ordinary destinations.
+   Leading-underscore introductions construct fresh immutable scratch;
+   existing bindings cannot be reused or shadowed. Bare `_` remains discard.
+7. Re-executing a construction site starts a new instance without old values,
+   taint or proof. Skipping it changes nothing; block scope is unchanged.
+8. Immutability survives aliases and collection slots. Validation may refine
+   checked properties, not mutate the value.
+9. Failed array fills leave existing ordinary targets unchanged and fresh
+   scratch empty; publish no partial batch. Preserve each producer's own
+   EOF/no-match result, independently of destination contents.
+10. Assignment replaces, append adds and iteration supplies items through
+    checked fresh results; none gains a status or implicit argument globbing.
+
+---
+
 DG adopted this package provisionally on 2026-11-09 (journal 603):
 
 > let's adopt glob, rglob, and scratch collections as a provisional

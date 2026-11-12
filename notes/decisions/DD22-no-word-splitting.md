@@ -1,9 +1,20 @@
 title: DD#22 — No Word Splitting, No IFS
 status: implemented
 
-`$var` and `"$var"` are identical. No implicit splitting. IFS doesn't
-exist. `for x in $choices` is a compile error — use
-`for x in "${arr[@]}"`.
+1. Scalar expansion never implicitly splits into words; iteration over stored
+   elements uses an explicit collection splat.
+2. Quotes produce one string, including explicit integer-to-string conversion;
+   they cannot enclose a collection splat.
+3. Explicit splitting and line input use DD99's flagless `read` and `readline`
+   contracts.
+
+---
+
+~~`$var` and `"$var"` are identical.~~ No implicit splitting. IFS doesn't
+exist. `for x in $choices` is a compile error — ~~use
+`for x in "${arr[@]}"`.~~ Use `for x in @arr` (DD75).
+
+<del>
 
 Read taxonomy (finalized):
 
@@ -15,6 +26,10 @@ Read taxonomy (finalized):
 | `mapfile -t arr` | Many lines → array | newline |
 
 `-r` always implied. `-d` replaces all `IFS=x read` patterns.
+
+</del>
+
+DD99 replaces this taxonomy with `read [SRC] TARGET` and `readline TARGET`.
 
 ## Addendum 2026-06-13: quotes always yield a single string
 

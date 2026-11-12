@@ -1,6 +1,16 @@
 title: "DD#110 — a `#` opens a comment only after a blank"
 status: accepted
 
+1. A comment-opening `#` is at source start or immediately follows space,
+   tab or newline. Other hashes remain word content; quoting preserves them.
+2. A hash glued to `;`, `&`, `|`, `<`, `>` or `(` receives a clear boundary
+   error rather than becoming a comment. Expansion-closing `)` and `}` do
+   not trigger that special error.
+3. Arithmetic still rejects malformed numeric literals containing a hash,
+   rather than silently truncating them.
+
+---
+
 # DD#110 — a `#` opens a comment only after a blank
 
 `#` starts a comment when it is at the start of the source, or when the byte

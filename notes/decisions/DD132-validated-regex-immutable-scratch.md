@@ -1,6 +1,34 @@
 title: DD#132 - Validated regex values, immutable scratch and boolean results
 status: provisional
 
+1. **Trial only:** evaluate with DD131 on a separate branch before DG's
+   adoption decision. Freshness, immutability, cleanliness and regex validity
+   are independent properties.
+2. `r?` tests the complete candidate using the consumers' regex dialect.
+   Invalid syntax, including literal candidates, gives quiet false;
+   resource faults remain fatal.
+3. Every runtime pattern must be immutable and successfully validated on
+   the reaching path. Proof follows the same value/instance; composition
+   needs a new check. Literal patterns retain static validation.
+4. Regex-pattern reads cannot use `:!`; disabling taint checks supplies no
+   validity proof. Subject and replacement reads retain ordinary rules.
+5. A caught attest of immutable scratch permits ordinary reads only in its
+   success arm. Elsewhere only trusted data reads are allowed, not pattern
+   use; the unchanged failed instance may remain unresolved.
+6. That permission never escapes the caught construct, even after a
+   noncontinuing failure arm. Standalone attest permits subsequent uses.
+   Ordinary bindings retain their resolution obligations.
+7. `match`, `matchall` and substitutions return matched/no-match booleans.
+   Substitution also returns text: no match preserves the subject;
+   unchanged bytes can match.
+8. Value-bearing regex captures can consume the boolean with their text;
+   `-` may discard that boolean. Value substitution sugar projects text;
+   mutation remains resultless. Every pattern still requires proof.
+9. Keep selector operational statuses, I/O errors and fatal faults distinct
+   from invalid-candidate and no-match answers.
+
+---
+
 DG provisionally adopted this model on 2026-11-09 (journal 604), together
 with the revisions to DD131 and the existing DDs:
 

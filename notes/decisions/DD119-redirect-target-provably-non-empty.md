@@ -1,6 +1,18 @@
 title: DD#119 — a redirect target must be provably non-empty
 status: accepted
 
+1. Filename redirect targets must be string-typed and provably non-empty.
+   Nonempty literals qualify; each string-variable or string-cell read needs
+   its own nonempty-guaranteeing disposition.
+2. Integer variables and cells qualify when explicitly quoted as strings.
+   Concatenation does not let literal neighbors excuse an unguarded string read.
+3. Direct command captures and intrinsics are not redirect-target operands.
+   Bind an eligible value first and satisfy the same target rules.
+4. Empty defaults and elision do not prove a usable filename. Target operand
+   evaluation retains its own taint and failure checks.
+
+---
+
 Settled with DG (2026-09-26). DG's framing: *"what if we require any variable
 that is a redirect target to use a disposition, save perhaps an observably
 non-empty const, and excluded direct use of commands or intrinsics"*.
@@ -125,5 +137,6 @@ by the existing SB4049 scalar rule — DD#119 does not weaken it.
 ## Not decided here
 
 - Whether intrinsics deserve their own `ExprKind` (see above).
-- Here-strings (`<<<`) and heredocs are unaffected: they feed stdin *data*, not
-  a filename, and were already excluded from the scalar rule.
+- ~~Here-strings (`<<<`) and heredocs are unaffected: they feed stdin *data*, not
+  a filename, and were already excluded from the scalar rule.~~ DD83's
+  producer/pipe contract governs stdin feeding.

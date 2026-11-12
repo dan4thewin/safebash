@@ -1,6 +1,25 @@
 title: "DD#123 — a cell is a variable: every spelling reads, every spelling disposes, every spelling owes the crossing"
 status: accepted
 
+1. A cell follows scalar value, type and disposition rules in every
+   reading spelling. `$a[K]` desugars to `${a[K]}` even in arithmetic;
+   both retain DD#80's direct-index grammar and are never lvalues.
+   Bare arithmetic `a[EXPR]` retains DD#79's integer-index/lvalue rules.
+2. Braceless cell dispositions use the same tight colon and word boundary
+   as scalar dispositions. Interpolation requires the braced disposition
+   form; no cell-specific parsing exception is introduced.
+3. Every string-cell read used as an integer requires DD#77's explicit
+   conversion disposition, even if its bytes look numeric or it is read
+   with `:!`. Value-function operands instead obey their own signatures.
+4. Word-context `:-` retains the subject type and defaults on its
+   meaningful zero: empty string or integer zero. Scalar/cell `:~`
+   elides empty strings and keeps integer zero rendered as `0` (DD#84).
+   Arithmetic string conversion retains its distinct validity trigger.
+5. Trust on a cell read does not trust its index. The index is a separate
+   read and retains its own binding, taint and type checks.
+
+---
+
 # DD#123 — a cell is a variable
 
 **DG, 2026-10-04.** Three changes, one rule. A cell — `a[i]` or `m[k]` — is a

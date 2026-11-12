@@ -1,6 +1,18 @@
 title: DD#120 — The invoker's channel
 status: implemented
 
+1. Diagnostics emitted by the invoking program use the invoker's stderr,
+   not the invoked command's attached redirects. Only the running
+   command's own output follows those redirects.
+2. Persistent fd-only `exec` redirects rebind the invoker's own channels.
+   Saved descriptors follow those bindings, survive a failed exec and
+   close on successful exec.
+3. Restore the invoker's saved stdin, stdout and stderr before entering
+   EXIT or ERR; neither handler inherits an interrupted command's
+   temporary redirects.
+
+---
+
 A diagnostic emitted by the **invoking program** goes to the **invoker's
 stderr**. A redirect written on a command establishes a channel for that
 command's own output, and never captures the invoker's diagnostics.

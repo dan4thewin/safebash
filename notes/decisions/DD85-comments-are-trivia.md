@@ -1,6 +1,16 @@
 title: DD#85 — Comments are lexical trivia (dropped by the scanner)
 status: accepted
 
+1. Recognized comments are scanner trivia, absent from the AST and ignored
+   uniformly in every grammatical position. They run through end-of-line,
+   including any apparent delimiters on that line.
+2. Comment recognition follows DD110's boundary rule and DD94's arithmetic
+   rules; comment removal must not silently truncate a word or expression.
+3. Source extraction preserves comments through the verbatim embedded source,
+   independently of the AST.
+
+---
+
 Settled with DG (2026-08-31). A `#`-comment is **lexical trivia**: the Scanner
 drops `# … EOL` tokens entirely, so a comment never reaches the parser. Comments
 have no representation in the AST.
@@ -55,8 +65,9 @@ DG chose **B**.
 
 ## Consequences
 
-- `#` is still not a comment inside `$(( ))` (DD#72 — it lexes as a Word via
-  `arith_hash_word`), so arithmetic is untouched.
+- ~~`#` is still not a comment inside `$(( ))` (DD#72 — it lexes as a Word via
+  `arith_hash_word`), so arithmetic is untouched.~~ DD94 admits properly
+  separated arithmetic comments; DD110 governs the boundary.
 - A comment still runs to end-of-line: `echo a # ; echo b` runs only `echo a`
   (the `;` is inside the comment), and a same-line `# c }` eats the `}` — both
   match bash.

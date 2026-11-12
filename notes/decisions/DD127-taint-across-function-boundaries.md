@@ -1,6 +1,25 @@
 title: DD#127 — taint across function boundaries
 status: accepted
 
+1. Environment and command-line acquisitions, fd/pipe reads and kernel-backed
+   captures introduce taint. Compiler-owned buffer copies introduce none
+   and erase none.
+2. Resolve own taint beside its acquisition, or immediately after the body's
+   sole call site. A callee cannot attest received taint.
+3. Count syntactic call sites, not executions; exclude self-tail calls.
+   Anonymous bodies are single-use; zero or multiple sites make a body shared.
+4. Shared bodies cannot leave their own unresolved taint in globals or slots.
+   A shared producer's tainted output cannot be attested by its caller;
+   clean buffered output and explicit trusted reads remain available.
+5. Apply DD128's strict resolution: ordinary writes do not clear unresolved
+   taint or its owners. A fresh acquisition has fresh provenance and adjacency.
+6. Check each function through one independent summary, mapping actual global
+   and collection identities at calls. Report inherited-use obligations there.
+7. Isolate child-process effects; parent readers retain their own effects.
+   EXIT and ERR are independent roots with DD128's incoming-data contracts.
+
+---
+
 # DD#127 — taint across function boundaries
 
 ## The rule
@@ -86,10 +105,14 @@ Where DD#121 puts the attest for an external command — and so for a
 single-use `$(f)` or `f | reader`:
 
 - after `y=$(f)`: the next statement;
-- `if y=$(f) {`: the first statement of each branch;
-- `for x in $(f) {`: the first statement of the body;
+- ~~`if y=$(f) {`: the first statement of each branch;~~
+- ~~`for x in $(f) {`: the first statement of the body;~~
 - `f | while readline x {`: the first statement of the body;
 - after `f | readline x`: the next statement.
+
+DD88 excludes the direct function capture-condition sketch; DD28 excludes
+iteration over stdout captures. Those old sketches do not widen producer
+eligibility; DD121 still governs adjacency for legal acquisitions.
 
 **Names inward, in detail.** For a name a call passes in tainted, a statement
 of `f` that uses it is rejected exactly as it would be if `f` had tainted the
@@ -165,11 +188,14 @@ and status semantics. Wider buffering remains separate from this port.
 ### Chains
 
 Transposition composes: a single-use function called from a single-use
-function is transposed twice. An attest after a capture is legal only if every
+function is transposed twice. ~~An attest after a capture is legal only if every
 function on every path from the capture to the producing command is
 single-use. Otherwise the rejection names, for each offending path, the
 innermost shared function — the one nearest the command, which must hold the
-attest — and its call sites.
+attest — and its call sites.~~ The read-boundary and ownership rules above
+qualify this: already-clean buffered output needs no attest, and a harmless
+attest of it remains legal. An actual shared-output rejection still names
+each offending path's innermost shared producer and its call sites.
 
 In example e7 below, `current` and `head_id` each have one call site, so the
 attest after `$(current)` is legal. If `head_id` gained a second call site,
@@ -182,7 +208,9 @@ would have to capture and attest: `x=$(head_id); attest x …; echo "$x"`.
   a single-use function, or holds a `$( )`, and leaves own taint behind taints
   those names exactly as an `argv` statement does: the attest follows it, and
   in a shared caller it is the site SB5067 reports.
-- **Attesting a clean name** is a no-op, legal anywhere. The doc comment on
+- **Attesting a clean name** ~~is a no-op, legal anywhere.~~ changes no taint
+  and requires no acquisition adjacency. Other attest-eligibility rules still
+  apply, including DD#92's managed-`args` restriction. The doc comment on
   `check_adjacency` (validate.rs), which implements DD#121's rule, says:
   "Attesting a name that is already clean stays harmless — that is a no-op,
   not a bypass."
@@ -234,7 +262,8 @@ taint it passes in, so a body is not a fourth position.
 ## Examples
 
 Each program was compiled at 0149c49b; the verdict table preserves that
-baseline. "W2b" marks the shared-output call-site rejection still to implement.
+baseline. "W2b" marks the shared-output call-site rejection ~~still to implement.~~
+(Implemented in journal 561.)
 
 ### stdout
 
@@ -931,20 +960,20 @@ The following remain:
 Each text below is rewritten in place to agree with this DD; the earlier text
 is in git at 0149c49b.
 
-- DD#24: "User-defined sash functions are trusted: `$(user_func ...)` capture
-  is clean", and "`user_func | read x` → clean".
-- DD#63: "a user-function capture is clean".
-- DD#100 Part E: the slot attest "deferred into `f`", inward slot taint as a
+- DD#24: ~~"User-defined sash functions are trusted: `$(user_func ...)` capture
+  is clean", and "`user_func | read x` → clean".~~
+- DD#63: ~~"a user-function capture is clean".~~
+- DD#100 Part E: ~~the slot attest "deferred into `f`", inward slot taint as a
   union over call sites, and a callee's diagnostics that depend on which call
-  instantiated it. Outward slot taint is kept for single-use functions.
-- DD#121: the fourth structural position ("DD#100 slot arrival → the body"),
+  instantiated it.~~ Outward slot taint is kept for single-use functions.
+- DD#121: ~~the fourth structural position ("DD#100 slot arrival → the body"),
   and the 2026-09-30 addendum (SB5067 as a net-effect rule, extended to
-  `$( )` bodies). Its successor is the section "SB5067 — what a body may
+  `$( )` bodies).~~ Its successor is the section "SB5067 — what a body may
   leave behind".
-- AGENTS.md's Taint system list, which counted "user function capture" as
-  clean.
-- The 2026-10-23 reading of T2, under which every body was a firewall for
-  names going outward. It survives for shared functions.
+- AGENTS.md's Taint system list, which ~~counted "user function capture" as
+  clean.~~
+- The 2026-10-23 reading of T2, ~~under which every body was a firewall for
+  names going outward.~~ It survives for shared functions.
 
 ## See also
 

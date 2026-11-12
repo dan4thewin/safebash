@@ -1,6 +1,15 @@
 title: DD#20 — Shell Options Are Compile-Time Decisions
 status: implemented
 
+1. Shell behavior is fixed by the language, not changed by runtime options.
+2. Parent-reader pipeline behavior and pipefail are always enabled.
+3. File globs produce arrays without word splitting, obey DD39's single-star
+   limits, and require explicit empty disposition when splatted to externals.
+4. Glob matching is case-sensitive; leading-dot entries require an explicit
+   leading dot in the filename pattern.
+
+---
+
 No `shopt` or `set` commands at runtime. Options are baked in:
 
 - `lastpipe` — always on

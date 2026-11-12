@@ -1,6 +1,19 @@
 title: "DD#74 — Predicate functions: explicit `return <producer>`, no implicit trailing status"
 status: accepted
 
+1. A function supplies its result explicitly, never from its trailing command;
+   every returning path must match its void, status or integer kind.
+2. Predicate consumers require status/boolean results, not void or integer
+   values. An unconsumed final action in a logical-list statement is not a
+   predicate.
+3. `return` forwards only compatible producer results, including legal
+   composites and redirects; it cannot forward a discarded or nonexistent result.
+4. Producer handling does not catch operand/body failures or fatal faults.
+5. Constant results are legal. Anonymous stdout bodies may return void, not
+   explicit statuses; source `-` cannot prefix a return.
+
+---
+
 Decided with DG 2026-08-09. Refines the user-defined-function / `return`
 sections of **DD#55** (error model) and composes with **Option C** (a `-> int`
 value function's `$(f)`/`$((f))` capture). Motivated by a confirmed bug: a
@@ -61,10 +74,13 @@ conditional-block shorthands. Enforcement is pending in
 `q-compound-as-condition`.
 
 A predicate's status comes **only** from an explicit `return`. There is **no
-implicit trailing status**: a bare trailing `grep` / `[[ … ]]` / `(( … ))` as
+implicit trailing status**: a bare trailing `grep` / ~~`[[ … ]]` / `(( … ))`~~ as
 a function's last statement is an ordinary statement — subject to DD#55
 (a bare fallible command **aborts** on failure) — **not** the function's
 result. To yield a status, wrap it in `return`.
+
+DD70 rejects an unused test; DD31 permits only mutations as arithmetic
+statements, so those trailing test forms are not ordinary actions.
 
 ## `return` takes a status producer
 
@@ -98,7 +114,7 @@ Enforcement is pending in `reject-control-transfer-suppression`.
 
 | form | status |
 |---|---|
-| `return CMD [args]` | run CMD; its exit status. **The `return` is the handler — CMD never aborts** (its status is explicitly consumed), unlike a bare CMD. |
+| `return CMD [args]` | run CMD; its exit status. **The `return` is the handler — ~~CMD never aborts~~** (its status is explicitly consumed), unlike a bare CMD. Operand/body checks and fatal faults remain. |
 | `return [[ TEST ]]` | the test's boolean — 0 (true) / 1 (false) |
 | `return (( EXPR ))` | the arith truth — 0 if `EXPR` ≠ 0, else 1 |
 | `return N` | an explicit status code — **meaningful codes beyond 0/1** |
@@ -118,9 +134,10 @@ this does not change producer forwarding or the function's result kind.
 A producer is not limited to a single command: `return` absorbs a full
 **composite** — a pipeline, an `&&`/`||` list, or a trailing redirect — exactly
 as a normal statement would. The `return` is still the handler for the whole
-composite: every stage / operand runs under the return (no uncaught abort), and
+composite: ~~every stage / operand runs under the return (no uncaught abort),~~ and
 the composite's aggregate status (DD#55 pipeline semantics) becomes the returned
-status. Without this, `return A | B` parsed as `Pipeline([return A, B])` — the
+status. Only the producer result is handled, not operand/body failures
+or fatal faults (DD55/DD130). Without this, `return A | B` parsed as `Pipeline([return A, B])` — the
 `return` trapped in stage 0, with `B` running uncaught after it (SB4037 in a
 predicate; a silent abort as a statement). Fixed by folding the parsed producer
 through the same `maybe_wrap_redirects` a statement gets (`parse_return`, DG
@@ -228,6 +245,9 @@ separate implementation tasks.
 
 - Phase 1 (`return N` drives the condition) — commit `62fa5c1`.
 - Phase 2 (`return <producer>`) — commit `679262a`.
+
+<del>
+
 - Phase 3 (definite-return, **SB4037**) — `check_predicate_definite_return`
   in `validate.rs`. A function is a *predicate* iff it is used in a boolean
   context (an `if`/`elif`/`while`/`until` condition, a `! f` negation, or a
@@ -239,6 +259,10 @@ separate implementation tasks.
   return; groups/redirections recurse. A function called **only** bare (a
   procedure) needs no `return`. Enforced in the front end, so it covers native
   and c (shared SSA); janet inherits the same front-end diagnostic.
+
+</del>
+
+DD55's kind-based completeness rule supersedes this predicate-use-only scan.
 
 ## Addendum (2026-10-27): which word is `N`
 

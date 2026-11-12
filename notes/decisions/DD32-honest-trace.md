@@ -1,6 +1,13 @@
 title: DD#32 — Honest trace + embedded source
 status: partial
 
+1. Native binaries embed their native source, retrievable with `--extract`.
+2. Runtime tracing reports branch/loop outcomes and evaluated values.
+3. Trace machinery is a compile-time opt-in; the runtime environment may
+   activate included sites but cannot add tracing to a binary built without it.
+
+---
+
 `.sash_source` ELF section embeds sash-native source (implemented).
 `sash --extract <binary>` dumps the embedded source.
 

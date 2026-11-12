@@ -1,8 +1,20 @@
 title: DD#14 — Composable Process Primitives
 status: implemented
 
+1. Compose process execution from fork, exec, wait and pipe.
+2. Fd-only `exec` changes the running process's descriptors persistently;
+   command-bearing `exec` replaces it with a statically resolved external.
+3. Exec targets obey ordinary resolution, taint and manifest rules. Successful
+   replacement does not return or run terminal handlers.
+4. `close` takes one literal descriptor in the OS descriptor range; its
+   operational failure follows DD55/DD130.
+5. DD55 governs direct background command identity and DD86 excludes process
+   replacement inside stdout-capture bodies, including their callees.
+
+---
+
 Fork, exec, wait, pipe as building blocks. All higher-level constructs
-(pipelines, subshells, command substitution) composed from these four
+(pipelines, ~~subshells,~~ command substitution) composed from these four
 primitives.
 
 ## The `exec` builtin (amended 2026-08-28, DG)
@@ -32,7 +44,8 @@ exactly like a command head:
 - A bare name is resolved to its external absolute path (DD#23), bypassing the
   `echo`/`:` inline shortcut — `exec echo` runs `/bin/echo`, the external.
 - The exec'd program's `args` follow normal **taint** rules (DD#24): a tainted
-  arg without `bless` is SB5020, like any command.
+  arg ~~without `bless`~~ is SB5020, like any command. DD93/DD127/DD128 govern
+  attest; DD91 permits explicit trusted reads.
 - The resolved target is recorded in the `--manifest` external-dependency set.
 
 ### Implementation
@@ -44,8 +57,9 @@ to its external path). Codegen: `codegen/dispatch.rs` `emit_exec` →
 `build_argv_on_stack` → `finalize_exec` (replace form, calls the no-return
 `sash_exec`). Specs: `spec/exec.sh` (`ex.1`–`ex.11`).
 
-**Native-only for now:** the c and janet backends do not yet emit `exec` (c
-emits a no-op TODO; janet errors). See task `c-janet-exec-support`.
+~~**Native-only for now:** the c and janet backends do not yet emit `exec` (c
+emits a no-op TODO; janet errors). See task `c-janet-exec-support`.~~
+DD104 retires the in-tree Janet backend; this is not a current backend contract.
 
 ## The `close` builtin (amended 2026-09-04, DG)
 
@@ -64,14 +78,15 @@ syntax; only close is a builtin (DG 2026-09-04: close-only, dup stays on
   discipline as a `N>&M` dup target). Both operands must fit the OS descriptor
   type, **0..2147483647**; overflowing literals are rejected, never wrapped or
   replaced with another descriptor.
-- **Semantics:** void; `$?` = 0 on success, 1 on failure. Per DD#55 a **bare**
+- **Semantics:** ~~void;~~ `$?` = 0 on success, 1 on failure. Per DD#55 a **bare**
   `close` on a failed `close(2)` (e.g. EBADF) **aborts** with
   `<argv0>: close: <fd>: <reason>`; a **caught** (`if`/`while`/`&&`/`||`) or
-  **`-`-suppressed** close does not abort (its failure is the branch verdict).
-- **Native-only for now** (like `exec`): c no-ops the TODO, janet emits it as an
-  external command. Runtime is `sash_close` (already present; now records the
-  errno via `SASH_LAST_ERRNO` on failure so the abort reason renders). c/janet
-  wiring rides with `c-janet-exec-support`.
+  **`-`-suppressed** close does not abort ~~(its failure is the branch verdict)~~.
+  A catch consumes the operational result; `-` discards it.
+- ~~**Native-only for now** (like `exec`): c no-ops the TODO, janet emits it as an
+  external command.~~ Runtime is `sash_close` (already present; now records the
+  errno via `SASH_LAST_ERRNO` on failure so the abort reason renders). ~~c/janet
+  wiring rides with `c-janet-exec-support`.~~
 
 Impl: `ssa.rs` (`BuiltinCmd::Close`), `validate.rs` (`close` in `BUILTINS` +
 `check_close_arg` → SB4052), `codegen/dispatch.rs` + `codegen/inst_handlers.rs`

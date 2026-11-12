@@ -1,6 +1,32 @@
 title: DD#75 — Named/keyword forms are canonical; `$`-sigils are sugar; collections are uniform
 status: accepted
 
+1. Named forms are canonical; retained punctuation forms are sugar with
+   the same meaning, type, taint and availability rules.
+2. `status`, `getcpid` and `getpid` have the sugar `$?`, `$!` and `$$`.
+   These compiler-managed values are clean; DD#55/DD#126 govern when their
+   status and child-result contexts are available.
+3. `len NAME` counts array elements or map entries; `strlen VALUE` counts
+   string bytes. Both return integers in value and arithmetic contexts.
+   Collection operands are bare names, not values or splats (DD#100).
+4. `keys MAP` yields keys only as the sole `for` source;
+   `keys MAP ARRAY` replaces an eligible, auto-declared array with an
+   independent clean key snapshot in map iteration order. Existing
+   unresolved destination taint remains subject to DD#128.
+5. `@a` splats array elements and `@m` splats map values, not indices.
+   String joining is explicit with `join NAME [SEPARATOR]`; its literal
+   separator defaults to a space, and an explicit empty separator stays
+   empty. Join preserves complete values, order and embedded bytes.
+6. Each function has its own immutable, clean, zero-indexed `args` array.
+   `$1` through `$N` read its corresponding elements and `$#` is `len args`;
+   `$0` denotes the program name, not a function argument.
+   Argument iteration names its source explicitly.
+7. Map-to-array assignment is not the inverse of DD#99's pairwise
+   array-to-map conversion and is rejected; use explicit key or value
+   traversal instead.
+
+---
+
 Decided with DG 2026-08-11. Codifies a **pivot** that has been implicit for
 several DDs: sash no longer optimizes for bash compatibility but for being
 **unambiguous, self-consistent, symmetrical, and transparent**. Where those
@@ -22,8 +48,8 @@ which kept `$?`/`$!`/`$$` as canonical "punctuation specials." DG's intent has
 evolved since 050 (see pivot above): a keyword (`status`, `getcpid`, `len`,
 `join`, `keys`) is self-documenting; a punctuation sigil is not.
 
-Consequences, made concrete below: `$?`/`$!`/`$$` become sugar; a length is
-always the `len` intrinsic (with `${#x}` its operator sugar); positional
+Consequences, made concrete below: `$?`/`$!`/`$$` become sugar; ~~a length is
+always the `len` intrinsic (with `${#x}` its operator sugar)~~; positional
 parameters become one real array (`args`) reached through the ordinary
 collection surface; and there is exactly **one** spelling for a splat (`@a`).
 
@@ -76,16 +102,16 @@ there. The old `ParamExpansion(strlen)` slot-length fallback is gone.
 
 **Original type-polymorphic rule (superseded by the amendment above):**
 
-`len x` yields an **int**, dispatching on `x`'s type (the transform already
-knows collection-ness via `state.collections`):
+`len x` yields an **int**, ~~dispatching on `x`'s type (the transform already
+knows collection-ness via `state.collections`)~~:
 
 - `len <array>` / `len <map>` → element / entry count.
-- `len <string>` → **byte** length (DD#12 counted strings; matches Go's
-  `len(string)`, which is bytes, not runes).
+- ~~`len <string>` → **byte** length (DD#12 counted strings; matches Go's
+  `len(string)`, which is bytes, not runes).~~
 - `len <undefined / unknown name>` → **compile error** (no runtime garbage).
 
-`$(len x)` (value context) and `(len x)` (inside `$(( ))`) are the **sole**
-length spellings. Both are int, so `int n=$(len a)` and `$(( (len a) + 1 ))`
+~~`$(len x)` (value context) and `(len x)` (inside `$(( ))`) are the **sole**
+length spellings.~~ Both are int, so `int n=$(len a)` and `$(( (len a) + 1 ))`
 type-check and evaluate. This retires the syntactic `$`-sigil dispatch of the
 old `len` (`len a` = array vs `len $a` = string), the source of the
 scalar-`len` garbage bug.
@@ -162,15 +188,15 @@ intrinsic call:
 |-------|-----------|----------|
 | `$1`..`$n` | `${args[0]}`..`${args[n-1]}` | subscript |
 | `$@`       | *(removed)* → `@args`      | splat |
-| `$#`       | `$(len args)`              | length (`${#args}` is operator sugar) |
+| `$#`       | `$(len args)`              | length (~~`${#args}` is operator sugar~~) |
 | `$*`       | *(removed)* → `$(join args)` | — |
 
 - **Amended 2026-08-25 (DG): `$#`'s canonical form is `$(len args)`, not
   `${#args}`.** The table originally placed the `${#args}` *operator* in the
-  canonical column, contradicting §1 (the `len` intrinsic is canonical; `${#x}`
-  is its operator sugar, and `$#` is bash sugar on top). Length is the one row
+  canonical column, contradicting §1 (the `len` intrinsic is canonical; ~~`${#x}`
+  is its operator sugar, and `$#` is bash sugar on top~~). ~~Length is the one row
   where the operator form is itself sugar — the splat (`@args`) and subscript
-  (`${args[i]}`) operators *are* canonical, but `${#}` desugars to `$(len …)`.
+  (`${args[i]}`) operators *are* canonical, but `${#}` desugars to `$(len …)`.~~
 
 - **`args` is 0-indexed** (`args[0]..args[n-1]`, keys `0..n-1` in the DD#33
   table; `args[0]` is the first argument). **Amended 2026-08-20 (DG): 0-indexed,
@@ -183,10 +209,10 @@ intrinsic call:
   every 0-indexed-array language keeps args 0-indexed — Elvish (a 0-indexed list
   literally named `args`, `$args[0]` = first arg), Oil/YSH (`ARGV[0]`), Python,
   Ruby, Perl, Go, Node, Tcl. So `$1 ≡ ${args[0]}`; the `$1..$n` → `${args[0..]}`
-  sugar absorbs the off-by-one at desugar time. `$# ≡ ${#args} = n` is unchanged
+  sugar absorbs the off-by-one at desugar time. ~~`$# ≡ ${#args} = n`~~ is unchanged
   (length is base-independent).
 - **No bare `$args`.** `args` is only reached via `@args`, `${args[$i]}`,
-  `${#args}`, `$(join args)` — the named-array surface. `args` is a reserved
+  ~~`${#args}`~~, `$(join args)` — the named-array surface. `args` is a reserved
   name inside function bodies.
 - **`$0` is not part of `args`.** Inside a function `$0` is still the program
   name (`$(arg 0)`, DD#60), unrelated to the function's own arguments. (This
@@ -209,12 +235,12 @@ different. Enforcement is pending in `q-for-without-in-list`.
 ### Implemented (2026-08-21) — core
 
 The **core** args model shipped native + c (0 spec regressions, all 3 modes):
-`$1..$9` → `${args[0]}..${args[8]}`, `$@` (via pre-expansion) and `$#` →
-`${#args}`, resolved through the current function's `args` array. Both the
+`$1..$9` → `${args[0]}..${args[8]}`, ~~`$@` (via pre-expansion) and `$#` →
+`${#args}`~~, resolved through the current function's `args` array. Both the
 expression path (`simple_expansion_to_value`) and the arithmetic path
 (`arith_leaf_to_ssa`) route positionals through a shared
 `expressions::positional_to_value`, so `$1`/`$#` mean the same inside and
-outside `$(( ))`. User-written `${args[i]}`, `@args`, `${#args}`, and
+outside `$(( ))`. User-written ~~`${args[i]}`~~, `@args`, ~~`${#args}`~~, and
 `for x in @args` all work (native + c; janet keeps its own `_args` model).
 Specs: `types.sh` 75.17–75.22.
 
@@ -229,24 +255,28 @@ a function reading a positional *after calling another function* got the
 callee's value (arrays are name-slotted in codegen, not SSA-versioned). A
 user-written `args` is remapped to the current unique name via
 `expressions::resolve_args_name` at each array-name resolution site (subscript,
-splat, `${#…}`, `for`-in).
+splat, ~~`${#…}`~~, `for`-in).
+
+DD#125 requires actual reservation against source names and every live
+temporary; a prefix and counter alone are not a uniqueness guarantee.
 
 **`shift` dropped** (see §5 amendment note and `research-array-slice`): it was a
 degenerate slice. Removed the opcode, handler, codegen, and spec 48.2.
 
-**Deferred** (see `dd75-args-model-polish`): `$(len/join/keys args)` (intrinsic
+~~**Deferred** (see `dd75-args-model-polish`): `$(len/join/keys args)` (intrinsic
 recognition still gates on `collections.contains("args")`); `$*` removal (still
 pre-expands); `$@`→`@args` splat for >9 args (pre-expansion caps the tail —
 pre-existing); a recursion guard (recursive inlining overflows the compiler —
-pre-existing); a friendlier `shift`-removed diagnostic.
+pre-existing); a friendlier `shift`-removed diagnostic.~~
 
 ## 6. Migration (sash-convert)
 
 The converter emits the canonical forms and accepts the bash forms as input:
 
 - `${a[@]}` / `${a[*]}` → `@a`; `"${a[*]}"` / `"$*"` → `$(join a)` / `$(join args)`.
-- `${#x}` / `${#a}` / `${#a[@]}` / `${#a[i]}` → `$(len x)` (DD#75 §2 amendment:
-  the `${#…}` sugar is fully retired; `$(len …)` is the sole spelling).
+- ~~`${#x}` / `${#a}` / `${#a[@]}` / `${#a[i]}` → `$(len x)` (DD#75 §2 amendment:
+  the `${#…}` sugar is fully retired; `$(len …)` is the sole spelling).~~
+  The scalar/collection split above requires `strlen` for string values.
 - `${!m[@]}` → `$(keys m)`; `${!a[@]}` on an indexed array → a counting `for (( ))`.
 - `$?` / `$!` / `$$` → `$(status)` / `$(getcpid)` / `$(getpid)`.
 - Positionals per DD#46/#60 and §5.
@@ -263,7 +293,7 @@ The converter emits the canonical forms and accepts the bash forms as input:
 
 - `join <arr> <sep>` (explicit separator) currently **segfaults** — must work,
   since explicit-separator join is the replacement for every `*` join.
-- `${#a}` on a bare array currently returns `0` — must become `len a` (§2).
+- ~~`${#a}` on a bare array currently returns `0` — must become `len a` (§2).~~
 - `keys` on an indexed array currently returns blanks — resolved by §3 (reject).
 - `$@`-into-array-literal (`array t=($@)`) was broken — moot under `@args`.
 - **Subscript-sigil enforcement asymmetry:** the *read* `${a[i]}` rejects a
@@ -279,10 +309,10 @@ The converter emits the canonical forms and accepts the bash forms as input:
 
 ## See also
 
-- DD#12 (counted strings — `len string` is bytes), DD#24 (taint sources move
-  to the keyword forms), DD#33 (unified table — `args` 1-indexed keys),
+- DD#12 (counted strings — ~~`len string` is bytes~~), DD#24 (taint sources move
+  to the keyword forms), DD#33 (unified table — ~~`args` 1-indexed keys~~),
   DD#41 (`@arr`, `len`/`keys`/`join`), DD#46/#60 (positionals; now the `args`
-  model), DD#65 (`${var#pat}` strip already dropped, so `${#…}` owns `#`),
+  model), DD#65 (~~`${var#pat}` strip already dropped, so `${#…}` owns `#`~~),
   DD#69 (glob arrays; `@` splat disposition).
 
 ## Clarification (2026-09-11, DG) — a splat yields **values**, not indices

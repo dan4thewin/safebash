@@ -1,8 +1,25 @@
 title: DD#24 — Taint Quarantine and Bless
 status: implemented
 
-All external input is tainted. Tainted variables cannot be used at any
-site until blessed. This is the canonical taint/bless decision,
+1. Environment values and program argument values are tainted. Fd/pipe reads,
+   including kernel-backed captures, introduce taint; compiler-owned buffer
+   copies introduce none and do not clear existing taint.
+2. Quarantine applies at every value-use site, not only dangerous sinks.
+   Explicit `:!` reads override the guard without validating the binding.
+3. Own taint is resolved in its producing body or immediately after that body's
+   sole call site; received taint cannot be attested in a callee (DD127).
+4. Within a live binding, only legal adjacent attest or clean whole-subject
+   replacement directly on its failed branch resolves taint (DD128).
+5. Attest predicates test values under DD93/DD113's shape and purity rules.
+   Successful validation does not write the subject; constness is independent.
+6. Collections and terminal handlers obey the same quarantine, with their
+   specific ownership and incoming-state rules.
+
+---
+
+All external input is tainted. ~~Tainted variables cannot be used at any
+site until blessed.~~ DD91 permits explicit trusted reads; DD93 renames the
+validation operation to attest. This is the canonical taint/bless decision,
 incorporating DD#43, DD#44, DD#47, DD#49.
 
 ## Taint sources
@@ -59,7 +76,7 @@ magic var; it no longer exists in sash, so it is never a taint source.)
 intrinsics `$(status)`/`$(getcpid)`/`$(getpid)` — DD#75 §1. The clean
 status attaches to the keyword form; the sugar inherits it.)
 
-Function positional params (`$1`..`$9`, `$@`) are clean within
+Function positional params (`$1`..`$9`, ~~`$@`~~) are clean within
 functions — the compiler sees the caller's arguments and knows
 their taint status. Top-level positionals are program argv (tainted,
 use `$(arg N)`).
@@ -68,11 +85,12 @@ use `$(arg N)`).
 to `$(arg 0)`.
 
 For-in iteration is a **bind** or a **read** by iterand. Iterating a
-*source* (`for x in $(argv)`, `while read x`) binds each element to the
+*source* (`for x in $(argv)`, ~~`while read x`~~) binds each element to the
 loop var from the source — assignment-from-source, so per-iteration
-body-bless is valid. Iterating a stored tainted *variable* (`for x in @a`
+~~body-bless~~ attest is valid. The scalar reader is `while readline x` (DD99).
+Iterating a stored tainted *variable* (`for x in @a`
 where `a` is a tainted named array) reads its elements (the `b=$a` case)
-and is rejected; bless-all the array first (DD#61).
+and is rejected; ~~bless-all the array first~~ attest the array first (DD#61).
 
 ## Quarantine (DD#44)
 
@@ -86,7 +104,7 @@ as a read and is rejected:
 - `arr[$x]=v` — index expression
 - `(( x ))` / `$(( x ))` — arithmetic operand
 - Passing as a function argument
-- `join @arr` when any element is tainted
+- ~~`join @arr`~~ `join arr` when any element is tainted (DD100)
 
 There is no permission to propagate unresolved values through ordinary reads:
 reject at the use, rather than accepting a copy and waiting for a later sink.
@@ -111,19 +129,27 @@ data. This also closed a related DD#78 hole (`b=${x:-$(getenv)}`, a source in a
 
 Assign first, validate second:
 
+<del>
+
 ```bash
 port=$(arg 1)
 bless port [[ $port =~ ^[0-9]+$ ]]
 ```
 
-`bless VAR [[ test ]]` — VAR explicitly named, must appear in test
+</del>
+
+DD93's spelling is `attest`; DD121/DD127/DD128 govern its legal placement.
+
+~~`bless VAR [[ test ]]`~~ — VAR explicitly named, must appear in test
 expression (DD#49: SB4012 rejects tests not containing `$VAR`).
 Additionally, `$VAR` must appear on the LHS of the test operator, not
 the RHS — `bless x [[ "$x" == "$x" ]]` is rejected because the var
 appears on the RHS (tautological, no real validation).
 
-The test expression is a `[[ ]]` test — string comparisons, regex
-match, file tests only. No external commands. No arithmetic. The
+~~The test expression is a `[[ ]]` test — string comparisons, regex
+match, file tests only. No external commands. No arithmetic.~~
+DD93 also permits its constrained arithmetic-assignment predicate; the
+purity rules are specified in the addendum below and DD113. The
 tainted VAR is readable inside the test expression. Other tainted
 vars are not (standard use-site rejection applies). (Enforced since
 2026-10-31 by SB5098, strictly: see the addendum below.)
@@ -187,8 +213,10 @@ Two forms:
 
 | Form | On failure |
 |---|---|
-| `bless VAR [[ test ]]` | Reports validation failure and enters ERR with status 1 (DD#128) |
-| `if bless VAR [[ test ]]` | False branch taken, VAR remains tainted |
+| ~~`bless VAR [[ test ]]`~~ | Reports validation failure and enters ERR with status 1 (DD#128) |
+| ~~`if bless VAR [[ test ]]`~~ | False branch taken, VAR remains tainted |
+
+Both use `attest` now; a caught failure must satisfy DD121/DD128's resolution rule.
 
 On success, VAR becomes clean from this point forward without changing its
 value (a new SSA version carries the verdict). A later legal assignment
@@ -209,10 +237,10 @@ fall out of the existing control-flow model, with no new operator:
 
 | Form | On failure |
 |---|---|
-| `bless VAR [[ t ]] \|\| VAR=DEFAULT` | run the fallback; VAR := DEFAULT (clean) |
+| ~~`bless VAR [[ t ]] \|\| VAR=DEFAULT`~~ | run the fallback; VAR := DEFAULT (clean) |
 | ~~`bless VAR [[ t ]] && CMD`~~ | **superseded by DD#121** — see below |
 
-`bless port [[ $port =~ ^[0-9]+$ ]] || port=8080` yields `port` when it validates
+~~`bless port [[ $port =~ ^[0-9]+$ ]] || port=8080`~~ yields `port` when it validates
 (clean, blessed) and `8080` otherwise (clean literal) — usable either way. The
 fallback is **trusted, not re-validated** (DG: caveat programmer — a default
 that wouldn't pass the gate is the author's responsibility). This supersedes the
@@ -276,9 +304,10 @@ already-tainted data* is rejected. `len` stays exempt (cardinality,
 not element data); `join`/`keys` expose element data and are reads.
 
 This closed a laundering-bypass class where those positions silently
-compiled and leaked at runtime. CST is the authoritative gate
+compiled and leaked at runtime. ~~CST is the authoritative gate
 (clean SB5020); the SSA pass is defense-in-depth (see task
-`ssa-taint-cmdsub-operand-propagation`). Spec: taint.sh 60.37–60.46.
+`ssa-taint-cmdsub-operand-propagation`).~~ The AST source check is authoritative;
+SSA is the independent backstop. Spec: taint.sh 60.37–60.46.
 
 ## Pipeline taint: the read boundary (2026-11-02)
 

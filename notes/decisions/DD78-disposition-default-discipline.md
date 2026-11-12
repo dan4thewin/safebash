@@ -1,12 +1,18 @@
 title: DD#78 — disposition-default discipline (clean, side-effect-free)
 status: accepted
 
+1. No current requirements.
+
+---
+
 A **disposition default** is the fallback/message operand of a `:-`/`:?`
 expansion or the new `$(arg N DEFAULT)` (DD#60 addendum). This DD constrains
 what that operand may be, and in doing so closes a pre-existing taint hole.
 Decided 2026-08-17 (DG), during the `arg N DEFAULT` design.
 
 ## The rule
+
+<del>
 
 A disposition default must be a **clean, non-`random` value**:
 
@@ -35,6 +41,11 @@ Rejected (→ capture into a variable and bless, or inline a literal):
 `$(getenv X)`, `$(arg N)`, `$(argv)`, external `$(cmd)`, `$(random)`, and any
 tainted variable read.
 
+</del>
+
+DD#65's final literal-only rule supersedes this read discipline, as the
+closing amendment records.
+
 ## Why — the taint hole this closes
 
 The taint checker walked the *var* of a `:-`/`:?` disposition but **not its
@@ -49,25 +60,28 @@ The store path already propagated correctly (`z=${x:-$y}` taints `z`, and a
 later read of `z` is caught), so the leak was direct-use only. Treating the
 default as a checked read position closes it uniformly.
 
-Note `z=$y` (direct source→target assignment) stays legal (DD#24), but
+~~Note `z=$y` (direct source→target assignment) stays legal (DD#24), but
 `z=${x:-$y}` does **not**: nesting `$y` inside an expansion makes it a read,
 not a direct source assignment. This is the same distinction DD#24 already
-draws — this DD just extends the checker to see it inside a disposition.
+draws — this DD just extends the checker to see it inside a disposition.~~
+DD#121/DD#127 distinguish acquisition from reading an already-tainted binding.
 
 ## Eager evaluation
 
-sash evaluates a `:-` default **eagerly** (`emit_default_value` computes both
+~~sash evaluates a `:-` default **eagerly** (`emit_default_value` computes both
 arms and `select`s — branchless), unlike bash's lazy `:-`. That is why a
 side-effecting default is a problem: it runs whether or not the fallback is
 taken, diverging from bash for a side-effecting/nondeterministic default. The
 clean-and-non-`random` rule makes eager evaluation **safe**: a clean, stateless
 default has no observable effect regardless of which arm is chosen, so eager ==
 lazy for every legal default. (Keeping eager avoids per-backend branching; the
-arith `DefaultValue` lowering, DD#77, is the same shape.)
+arith `DefaultValue` lowering, DD#77, is the same shape.)~~
 
 ## Scope
 
 Applies uniformly to every disposition default:
+
+<del>
 
 - `${x:-DEFAULT}` — the fallback value (a read).
 - `${x:?MESSAGE}` — the abort message (printed to stderr; constrained for
@@ -77,6 +91,9 @@ Applies uniformly to every disposition default:
   stricter than taint-correctness requires — but the uniform rule is simpler
   and the cost is negligible (a tainted fallback is captured+blessed first,
   which you would do anyway).
+
+</del>
+
 - The DD#77 arith `${s:-N}` default is already **stricter** (a decimal integer
   literal — D4), which trivially satisfies clean + non-`random`; no change.
 
@@ -110,6 +127,8 @@ parity:
 
 So the rule is now split by whether the operand can have an effect:
 
+<del>
+
 - **No capture in the operand** (literals, clean variable/subscript reads,
   `$(( … ))`, stateless intrinsics) — **unchanged, still eager**. These are
   exactly the operands the original reasoning contemplated, `emit_default_value`
@@ -120,11 +139,13 @@ So the rule is now split by whether the operand can have an effect:
   through a phi. bash parity in both backends, and it also keeps the capture
   off the `DefaultValue` operand that codegen cannot lower.
 
+</del>
+
 Because the laziness is built during transform, neither backend grew a special
 case — the cost the original section wanted to avoid ("keeping eager avoids
-per-backend branching") is not incurred. The clean/non-`random` rule is
+per-backend branching") is not incurred. ~~The clean/non-`random` rule is
 untouched: `$(random)` stays rejected, and its justification no longer needs to
-lean on eagerness.
+lean on eagerness.~~
 
 Pinned by `spec/functions.sh` `lift.4`-`lift.10`; `lift.6` is the one that
 fails if the operand is hoisted (the untaken `f`'s stderr appears).
@@ -155,8 +176,8 @@ DD does not make every rule stated about one of them apply to the other. When a
 DD appears to settle a question about a form it merely *mentions*, check which
 DD actually owns that question.
 
-The rest of this DD — the clean/non-`random` read discipline on `:-`,
-`arg N DEFAULT`, and the laziness amendment — is unaffected.
+~~The rest of this DD — the clean/non-`random` read discipline on `:-`,
+`arg N DEFAULT`, and the laziness amendment — is unaffected.~~
 
 ### Amendment (2026-09-30) — the read discipline dissolves; this DD is spent
 

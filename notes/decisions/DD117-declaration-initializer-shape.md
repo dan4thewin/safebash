@@ -1,6 +1,18 @@
 title: DD#117 — a declaration's initializer must match the kind declared
 status: accepted
 
+1. An initializer must match its declared kind: scalar, array list or
+   associative-map literal. Scalars are not promoted to collections, and
+   array/map literals are not interchangeable (DD124).
+2. Explicit collection-conversion forms retain their own rules; an omitted
+   initializer is distinct from an explicitly empty scalar value.
+3. A declaration creates a binding and cannot append to a preceding value.
+   Later writes retain the target's kind and ordinary mutability rules.
+4. Represent absent initializers explicitly; declaration IR must not encode
+   statement-only append or indexed-assignment shapes.
+
+---
+
 Settled with DG (2026-09-22), out of a cold-line investigation: the `+=` arm
 of `parse_one_decl_assignment` had never executed in any spec run.
 
@@ -56,7 +68,8 @@ collection.
 **A declaration's initializer must have the shape of the kind declared
 (SB4064).**
 
-- `array`/`map` require a `( … )` literal. A scalar does **not** become a
+- ~~`array`/`map` require a `( … )` literal.~~ DD124 distinguishes array lists
+  from associative-map literals. A scalar does **not** become a
   one-element collection. sash has no implicit promotion, so `array a=x` is
   rejected rather than read as `a=(x)` — it is far more often a typo than an
   intent, and DG's standing principle is that the compiler rejects anything it

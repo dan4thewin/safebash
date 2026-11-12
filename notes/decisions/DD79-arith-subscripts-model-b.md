@@ -1,6 +1,21 @@
 title: DD#79 — arithmetic subscripts (model B) + undeclared-read strictness (B2)
 status: accepted
 
+1. In arithmetic, a bare integer-array cell `a[EXPR]` is an integer
+   rvalue or lvalue with a full arithmetic index. Maps use explicit
+   value imports for reads and ordinary keyed assignments for writes.
+2. `${...}` imports a value and never denotes an assignable location.
+   `$a[K]` desugars to `${a[K]}` even in arithmetic (DD#123), retaining
+   DD#80's direct-index grammar rather than bare arithmetic indexing.
+3. Missing integer cells read as zero; integer cells carry raw i64
+   values. String cells require DD#77's conversion disposition.
+4. A name read in arithmetic must have a binding in its lexical scope,
+   just as outside arithmetic. Assignment and read-modify-write forms
+   can introduce integer bindings; reading alone does not. Valid
+   nullary integer-function calls remain calls, not undeclared variables.
+
+---
+
 Two decisions about names inside `(( ))` / `$(( ))`, settled with DG
 (2026-08-16 model B; 2026-08-18 Stage 2 + B2). Formalizes the model the
 `arith-subscript-values` task implemented across two stages.
@@ -25,10 +40,11 @@ NEVER denotes a location — it means "the value of" everywhere.
 - Out-of-range index / absent key reads the DD#53 zero-value (0), uniform with
   an unset variable — **no bounds check** (arrays and maps are sparse
   table-backed; a missing index == a missing key). Decided, not a bug.
-- `int` cells read/write the raw i64 (no atoi). A **string**-array cell in arith
+- `int` cells read/write the raw i64 (no atoi). ~~A **string**-array cell in arith
   currently atoi's silently; whether it should require a disposition like a bare
   scalar string (DD#77 D1) is a filed follow-up
-  (`arith-bare-subscript-followups`).
+  (`arith-bare-subscript-followups`).~~ DD#77/DD#123 require the disposition
+  in every spelling.
 
 ### Implementation
 
@@ -50,10 +66,13 @@ later `$i` was rejected — same name, opposite treatment.
 
 **Decision (DG, 2026-08-18):** extend SB5031 into arithmetic. A bare name
 **read** in `(( ))` that is *assigned nowhere* is a typo error, exactly like a
-read outside arithmetic. "Assigned nowhere" is program-wide and already counts
+read outside arithmetic. "Assigned nowhere" is ~~program-wide~~ and already counts
 arithmetic assignments — `(( f++ ))`, `(( g = … ))`, and the `for (( i=0; … ))`
 init all *assign* their name, so it is in scope and reading it is fine ("anything
 you assign exists"). Only a pure read of an unassigned name errors:
+
+DD#86 resolves this against each lexical binding; one body's private
+assignment does not declare a name in another body.
 
 - `$(( y + 1 ))` with undeclared `y` → SB5031.
 - the index `i` in `(( a[i]++ ))` with undeclared `i` → SB5031 (declare `int

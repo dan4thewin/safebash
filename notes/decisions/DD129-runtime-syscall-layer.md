@@ -1,6 +1,21 @@
 title: DD#129 - Public rustix and a Linux Rust syscall shim
 status: accepted
 
+1. Keep the native runtime `no_std` and no-libc, using public rustix APIs and
+   one project-owned Rust syscall boundary for uncovered Linux operations.
+2. Confine architecture-specific syscall numbers, registers and raw-result
+   decoding to that boundary; preserve existing process, fd and handler contracts.
+3. Support x86_64 and AArch64 Linux compiler hosts and native targets in all
+   four same-architecture/cross-compilation combinations.
+4. Select target ISA, ABI, runtime and linker independently of the compiler
+   host; command-resolution sysroots do not select machine-code targets.
+5. Keep regex-local jump recovery with correct support for both Linux ABIs;
+   do not unwind generally through Rust or replace terminal-handler dispatch.
+6. The separately developed C++ transpiler owns the macOS route and may serve
+   exotic targets; it is distinct from the existing C differential backend.
+
+---
+
 Decided by DG on 2026-11-05:
 
 > yes to public rustix and syscall shim; record and present the next question

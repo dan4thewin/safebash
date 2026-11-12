@@ -1,6 +1,33 @@
 title: DD#121 — attest adjacency, and caught-attest resolution
 status: accepted
 
+1. To clear taint, attest must immediately follow its subject's acquisition
+   in the same block. A condition may supply adjacency to its branches/body,
+   and a source iteration to its body. Each binding advances adjacency;
+   binding lists do not create a batch-validation unit.
+2. Within a live binding, only legal attest success or a clean
+   whole-subject replacement directly on that attest's failed path
+   resolves taint (DD#128). Permission is subject-specific and does not
+   enter helpers, captures or children; writes still require mutability.
+3. A caught attest of unresolved ordinary input must resolve it on every
+   falling-through path. An unresolved implicit failure path is rejected.
+   Non-fall-through transfers are exempt from the merge obligation, but retain their real
+   outgoing state; `exit` must satisfy EXIT's entry contract.
+   Negated `if attest` obeys the same success/failure rule.
+4. An unresolved value is readable only through an eligible attest
+   predicate or explicit `:!`. Trusting a read or overwriting ordinary
+   bytes does not clear the source binding. Fresh acquisition supplies
+   new adjacency, not automatic resolution.
+5. DD#127 governs ownership: received taint is not attested in a callee;
+   a single-use body's own acquisitions may be resolved immediately
+   after its call, while shared bodies resolve their own taint inside.
+   Branches and loop transfers retain every reaching unresolved obligation.
+6. EXIT and ERR do not acquire adjacency merely by starting. Signals must
+   not split legal acquisition/resolution, but ordinary failure and
+   explicit transfers keep their own routes (DD#128).
+
+---
+
 Settled with DG (2026-09-30), out of a session that started as an explanation
 of taint scoping and turned up three P1 bugs.
 
@@ -288,7 +315,11 @@ The payoff is that a caught attest is checkable by looking at the caught attest
 
 DD#24's 2026-09-01 amendment table row:
 
+<del>
+
 > | `bless VAR [[ t ]] && CMD` | short-circuit; CMD skipped; execution continues |
+
+</del>
 
 The no-else form is now rejected outright (SB5089), so there is no
 continue-on-failure path left to specify. The `|| DEFAULT` row stands unchanged
@@ -348,7 +379,7 @@ redundant. The backstop cannot be the authority:
 - its messages carry no line or column (`tainted variable $x used as …
   (SSA taint backstop)`);
 - it reports at the *use* site, not the definition;
-- `taint_of_name` is flow-insensitive in the permissive direction;
+- ~~`taint_of_name` is flow-insensitive in the permissive direction;~~
 - it honours `:!`;
 - `--no-taint` disables it.
 
@@ -357,26 +388,30 @@ use site; it does not diagnose.
 
 That change landed 2026-09-30. The four fills carry `target: VarRef` and call
 `state.define()` *after* the autodeclare. That gives a monotone layering —
-clean empty declaration, tainted fill, clean attest — which `taint_of_name`'s
-max-version rule reads correctly with no special-casing. A leaked bulk fill is
+clean empty declaration, tainted fill, clean attest — ~~which `taint_of_name`'s
+max-version rule reads correctly with no special-casing~~. A leaked bulk fill is
 therefore caught twice: by the validator, with a span at the taint site, and
 by the backstop at the use. Only the first is a diagnosis. Detail, and the two
 bugs it exposed: `notes/tasks/ssa-taint-full-backstop.md`, journal 450.
+
+DD#128's independent SSA backstop instead follows versioned definitions
+and reaching unresolved state to convergence; the old name/max-version
+description is not its current contract.
 
 ### History
 
 - **2026-09-30, the net-effect rule.** This DD first left SB5067 "in place,
   re-decided separately with DG". DG relaxed it from a syntactic rule (any
-  taint of a global anywhere in a body) to a net-effect one: a body may not
+  taint of a global anywhere in a body) to a net-effect one: ~~a body may not
   leave a global tainted that it did not inherit ("no net insert", measured
-  against the body's entry set). The backstop work above was its pair. Specs
+  against the body's entry set)~~. The backstop work above was its pair. Specs
   `bfb.17`-`bfb.22`.
 - **2026-09-30, extended to `$( … )` bodies**, closing
   `q-cmdsub-body-taints-outer-global`. Sash inlines an anonymous body, so it
   could leave an outer global tainted with no located error. Specs
   `bfb.23`-`bfb.28`, journal 451; the sweep went 7071 → 7083, all of it the
-  new specs. The extension is what makes `taint_cmdsub_bodies`'s
-  clone-and-discard sound. DG observed that `:!` on a body-tainted global is
+  new specs. ~~The extension is what makes `taint_cmdsub_bodies`'s
+  clone-and-discard sound.~~ DG observed that `:!` on a body-tainted global is
   no exception, because SB5067 judges the body at its exit and never examines
   the read. That still holds for shared functions.
 - **2026-10-31, DD#127 replaces both.** A shared function keeps a firewall,

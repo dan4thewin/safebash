@@ -1,6 +1,15 @@
 title: DD#98 — `_` is the don't-care binder
 status: accepted
 
+1. Bare `_` is a repeatable, write-only discard target in every otherwise
+   legal binder position, including conversion targets and attest-all binders.
+2. Every read of `_` is an error. Because its value cannot be observed,
+   discarding needs neither an unused-variable acknowledgment nor validation.
+3. Names merely beginning with underscore remain ordinary readable bindings,
+   subject to the usual unused-variable, scope and taint rules.
+
+---
+
 Settled with DG (2026-09-08), from his question: *"how did we address discarding
 unwanted fields when doing read? was it only the `: $x` mechanism? I'm thinking
 a 'don't care' variable like `_` might have value."*
@@ -27,15 +36,15 @@ value you are explicitly throwing away**. That is backwards: attest exists to
 state what you have checked, and you have checked nothing, because you do not
 care.
 
-(Measured caveat: `: $v` *does* work after a **pipeline** read
+~~(Measured caveat: `: $v` *does* work after a **pipeline** read
 `cmd | read a b`. The two read shapes disagree — filed separately as
-`read-taint-backstop-no-sb-code`.)
+`read-taint-backstop-no-sb-code`.)~~ DD127 makes every pipe read a taint source.
 
 ## The rule
 
 `_` is the **don't-care binder**, legal **everywhere a binder appears**:
 assignment LHS, `int`/`array`/`map`/`const` declarations, `for` variables,
-`read`/`mapfile`/`readarray`/`argv` targets, DD#93 attest-convert targets, and
+`read`/~~`mapfile`/`readarray`/~~`argv` targets, DD#93 attest-convert targets, and
 attest-all binders.
 
 It is **write-only**:
@@ -44,15 +53,23 @@ It is **write-only**:
 |---|---|
 | exempt from SB5050 | being unread is the point |
 | taint-safe | its value can never be observed, so there is nothing to attest |
-| repeatable | `read _ b _` binds three fields, keeps one |
+| repeatable | ~~`read _ b _` binds three fields, keeps one~~ |
 | **every read is SB5056** | `$_`, `${_}`, `${_[0]}`, `@_`, and a bare `_` in `(( … ))` |
-| still binds | `read _ b` consumes field 1, so `b` gets field 2 |
+| still binds | ~~`read _ b` consumes field 1, so `b` gets field 2~~ |
+
+DD99's readers have one target; the multi-target examples are historical.
+
+<del>
 
 ```sh
 /usr/bin/printf "xx yy\n" | read _ b
 attest b p?
 echo "b=$b"                    # b=yy — no acknowledgment, no attest
+```
 
+</del>
+
+```sh
 map m=([A]=1 [B]=2)
 attest _ v in m [[ -n $v ]]    # discard the key; DD#61 normally demands both
 ```
@@ -78,7 +95,7 @@ variable that is exempt from SB5050".
 
 `_` is an ordinary identifier the language now reserves a meaning for. No
 lexer or parser change was needed — `is_plain_identifier` already accepted it,
-and `read _ b _` (a repeated target) was already tolerated. The whole feature is
+and ~~`read _ b _` (a repeated target) was already tolerated~~. The whole feature is
 three checks: an exemption in `report_dead`, an exemption in the attest-all
 both-binders rule, and the new SB5056 read reject.
 

@@ -1,6 +1,14 @@
 title: DD#35 — Type keywords and declaration axes
 status: implemented
 
+1. Mutability, element/scalar type and collection structure are separate
+   declaration axes: `const`, `str`/`int`, and `array`/`map`.
+2. Ordinary `const` is scalar-only and prohibits writes, not validation;
+   immutability does not imply cleanliness.
+3. Scope and lifetime are positional under DD86.
+
+---
+
 Three orthogonal axes: mutability (`const`), type (`int`, `str`),
 structure (`array`, `map`). Freely stackable: `const int x=5`.
 Ordinary `const` applies to scalars only.
