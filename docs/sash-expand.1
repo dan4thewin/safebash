@@ -1,0 +1,151 @@
+.TH SASH-EXPAND 1 "2026-11-12" "safebash" "User Commands"
+.SH NAME
+sash-expand \- expand a restricted KEY=value configuration file
+.SH SYNOPSIS
+.B sash-expand
+.I file
+.SH DESCRIPTION
+.B sash-expand
+reads a UTF-8 configuration file, expands a small set of variable
+operations and writes the resulting assignments to standard output.
+It does not execute or source shell code, export variables, or change
+the invoking process's environment.
+Its syntax is not the safebash language or a complete Bash assignment syntax.
+.PP
+Exactly one filename is required.
+There are no options, stdin mode, or special
+.B \-
+filename.
+In particular,
+.B \-\-help
+is treated as a filename, not a help request.
+.SH INPUT FORMAT
+Each nonblank, non-comment physical line contains
+.BR KEY=value .
+Leading and trailing whitespace on the whole line is removed.
+Lines beginning with
+.B #
+after that trimming are comments.
+Inline
+.B #
+characters are data.
+.PP
+The first equals sign separates the key and value.
+Keys must match
+.BR [A\-Za\-z_][A\-Za\-z0\-9_]* ;
+spaces before the equals sign are not allowed.
+Spaces immediately after it belong to the value.
+A matching outer pair of single or double quotes is removed.
+Both quote forms still permit expansion; single quotes do not have their
+Bash literal meaning here.
+.PP
+The variable table starts with the inherited environment.
+Each expanded assignment updates that table before the next line is read,
+so later assignments can refer to earlier ones.
+Repeated keys are allowed and each assignment is emitted.
+.SH EXPANSIONS
+.TP
+.B $VAR, ${VAR}
+Substitute the variable's current value, or an empty string if absent.
+.TP
+.B ${VAR:\-WORD}
+Use WORD when VAR is absent or empty; otherwise use its value.
+.TP
+.B ${VAR:+WORD}
+Use WORD when VAR is present and nonempty; otherwise use an empty string.
+.TP
+.B ${VAR%PAT}, ${VAR%%PAT}
+Remove the shortest or longest matching suffix, respectively.
+.TP
+.B ${VAR#PAT}, ${VAR##PAT}
+Remove the shortest or longest matching prefix, respectively.
+.PP
+Default and alternate text, and stripping patterns, are not recursively
+expanded.
+Stripping patterns recognize
+.B *
+and
+.BR ? ,
+not bracket classes or filesystem globbing.
+A pattern that does not match leaves the value unchanged.
+.PP
+A backslash removes itself and quotes the next byte; it does not turn
+.B \en
+into a newline.
+Command substitution, arithmetic substitution and backticks are not
+evaluated and their expansion forms are rejected, as is indirect
+parameter expansion.
+.SH OUTPUT
+Each processed assignment is written as
+.B KEY=value
+followed by a newline.
+Only file assignments are emitted, not the whole inherited environment.
+Values are not shell-quoted or escaped.
+Do not source or evaluate this output as shell code.
+.PP
+Earlier assignments may have been written before a later input error.
+The output is not transactional.
+Embedded newlines from variable values are not escaped, so values are
+not guaranteed to occupy a single output line.
+.PP
+The output is newline-delimited text, not the NUL-delimited field format
+used by
+.BR sash-getopt (1).
+In safebash,
+.B readline
+reads a line into a scalar;
+.B read
+reads NUL-delimited array elements, not KEY=value map entries.
+Constructing a map requires explicit parsing.
+Pipe input remains tainted and must satisfy the application's normal
+validation or explicit trust rules.
+.SH EXIT STATUS
+.TP
+.B 0
+The file was processed.
+.TP
+.B 1
+Wrong argument count, an unreadable/non-UTF-8 file, or a reported
+configuration/expansion error.
+.PP
+The implementation defects below can instead cause a Rust panic and
+exit 101.
+.SH EXAMPLE
+Given
+.BR settings.conf :
+.PP
+.EX
+ROOT=/srv/demo
+BIN=${ROOT}/bin
+LABEL='two words'
+.EE
+.PP
+Run:
+.PP
+.EX
+sash-expand settings.conf
+.EE
+.PP
+Output:
+.PP
+.EX
+ROOT=/srv/demo
+BIN=/srv/demo/bin
+LABEL=two words
+.EE
+.SH BUGS
+Non-ASCII literal value text is currently corrupted by byte-wise
+character conversion.
+Prefix/suffix stripping of non-ASCII values can panic at an invalid
+UTF-8 boundary.
+These are implementation bugs, not a deliberate ASCII-only input contract.
+.PP
+A value consisting of a lone single or double quote currently panics
+instead of being handled as input.
+.PP
+Some stdout write failures, including a broken pipe or full device,
+also cause a Rust panic.
+.SH SEE ALSO
+.BR sash (1),
+.BR sash-getopt (1),
+.BR sash-convert (1)

@@ -1,4 +1,4 @@
-.TH SASH 1 "2026-11-11" "safebash" "User Commands"
+.TH SASH 1 "2026-11-12" "safebash" "User Commands"
 .SH NAME
 sash \- compile safebash programs to static Linux executables
 .SH SYNOPSIS
@@ -27,7 +27,7 @@ the compiler does not require a particular suffix.
 .PP
 safebash is not a drop-in Bash replacement.
 For Bash input, use the separate
-.B sash-convert
+.BR sash-convert (1)
 tool and review its generated source and annotations before compiling.
 This page describes the compiler command, not the full language.
 .SH OPTIONS
@@ -275,6 +275,9 @@ Regex anchors have known bugs around internal newlines and global-match
 resumption.
 They are not reliable whole-subject validation boundaries.
 .SH SEE ALSO
+.BR sash-convert (1),
+.BR sash-expand (1),
+.BR sash-getopt (1),
 .BR ld (1)
 .PP
 The project README covers building and first use;

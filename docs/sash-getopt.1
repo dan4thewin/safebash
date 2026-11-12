@@ -1,0 +1,185 @@
+.TH SASH-GETOPT 1 "2026-11-12" "safebash" "User Commands"
+.SH NAME
+sash-getopt \- normalize command options into NUL-terminated fields
+.SH SYNOPSIS
+.B sash-getopt
+.RI [ option " ...]"
+.BI "\-o " shortopts
+.RB [ "\-l " longopts ]
+.B \-\-
+.RI [ argument " ...]"
+.SH DESCRIPTION
+.B sash-getopt
+is a standalone option parser derived from util-linux
+.BR getopt (1).
+It recognizes short and long options and writes a normalized argument
+sequence.
+Unlike ordinary getopt output, every field is unquoted and terminated
+by a NUL byte; there is no final newline.
+No shell-quoting parser or shell evaluation is needed.
+.PP
+Use
+.B \-o
+to specify the short options, including an empty string when there are none.
+Use
+.B \-\-
+to separate this helper's options from the arguments to parse.
+The older form with a positional short-option specification is also accepted.
+.SH OPTION SPECIFICATIONS
+Each letter in
+.I shortopts
+declares a short option.
+A following colon requires an argument; two colons make it optional.
+An optional short-option argument must be attached, as in
+.BR \-cblue .
+.PP
+.I longopts
+is a comma- or whitespace-separated list of long-option names.
+One or two trailing colons likewise declare required or optional arguments.
+Supply optional long-option arguments with
+.BR \-\-color=blue ,
+not as a separate word.
+Recognized abbreviations are expanded to the full declared name.
+.PP
+Normally options are moved before positional arguments, preserving the
+order within each group.
+A leading
+.B +
+in
+.I shortopts
+stops option parsing at the first non-option.
+A leading
+.B \-
+instead emits non-options as they are encountered.
+.SH OPTIONS
+.TP
+.BI "\-o, \-\-options " shortopts
+Declare the short options to recognize.
+.TP
+.BI "\-l, \-\-longoptions " longopts
+Declare long options.
+This option may be repeated to add more names.
+.TP
+.B \-a, \-\-alternative
+Also recognize long options introduced by a single dash.
+.TP
+.BI "\-n, \-\-name " name
+Use
+.I name
+in diagnostics about the arguments being parsed.
+.TP
+.B \-q, \-\-quiet
+Suppress option-parser diagnostics for those arguments.
+This does not suppress errors in the helper's own invocation.
+.TP
+.B \-Q, \-\-quiet-output
+Suppress normal field output.
+The exit status still reports parsing errors.
+.TP
+.B \-U, \-\-unknown
+Retain unknown-option material in the output outside
+.B POSIXLY_CORRECT
+mode.
+Also suppress option-parser diagnostics.
+This does not make an invalid option successful: parsing still exits 1.
+.TP
+.BI "\-s, \-\-shell " shell
+Accepted for compatibility and ignored.
+Output is always NUL-terminated and unquoted.
+.TP
+.B \-u, \-\-unquoted
+Accepted for compatibility and ignored.
+.TP
+.B \-T, \-\-test
+Produce no normal output and exit 4.
+.TP
+.B \-h, \-\-help
+Print usage to standard output and exit 0.
+.TP
+.B \-V, \-\-version
+Print version information to standard output and exit 0.
+.SH OUTPUT
+Short-option clusters become separate fields.
+Each option argument is a separate field, including an empty field for
+an absent optional argument.
+A
+.B \-\-
+field precedes the remaining positional arguments.
+Spaces, quotes and newlines inside an argument remain part of that field.
+.PP
+Check the exit status before accepting the normalized sequence.
+A failing parse can already have written fields; output is not transactional.
+NUL bytes cannot be retained in a Bash scalar command substitution.
+Use a NUL-aware reader rather than splitting on whitespace or evaluating
+the output as shell code.
+.PP
+In safebash,
+.B read
+is the NUL-delimited array reader.
+Reading these fields from a pipe still introduces taint.
+Recognizing an option does not validate its argument for the application's
+use; normal attestation or explicit trust rules remain.
+.SH ENVIRONMENT
+.TP
+.B POSIXLY_CORRECT
+When present, stops parsing at the first non-option.
+.TP
+.B GETOPT_COMPATIBLE
+When present, selects the legacy interface: the first argument is the
+short-option specification rather than a helper option.
+This changes even the interpretation of
+.B \-\-help
+and
+.BR \-T .
+Unset it when using the interface described in the synopsis.
+.SH EXIT STATUS
+.TP
+.B 0
+Arguments parsed successfully, or help/version requested.
+.TP
+.B 1
+An error in the arguments being parsed.
+.TP
+.B 2
+An invalid invocation of the helper.
+.TP
+.B 3
+Memory allocation failed.
+.TP
+.B 4
+The
+.B \-\-test
+probe.
+.SH EXAMPLES
+.EX
+sash-getopt \-o ab: \-\- \-a \-b val 'has space'
+.EE
+.PP
+The output bytes are shown below with each NUL represented as
+.BR \e0 :
+.PP
+.EX
+\-a\e0\-b\e0val\e0\-\-\e0has space\e0
+.EE
+.PP
+Long options, including an optional value:
+.PP
+.EX
+sash-getopt \-o '' \-l help,output:,color:: \-\- \e
+    \-\-color=blue \-\-output report.txt input.txt
+.EE
+.SH BUILDING
+.B mk build
+builds this helper.
+It is a standalone C program, not a Cargo workspace member.
+To build it directly from the repository root:
+.PP
+.EX
+mkdir \-p target/release
+cc \-O2 \-o target/release/sash-getopt sash-getopt/sash-getopt.c
+.EE
+.SH SEE ALSO
+.BR sash (1),
+.BR sash-expand (1),
+.BR sash-convert (1),
+.BR getopt (3)

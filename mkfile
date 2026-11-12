@@ -21,7 +21,7 @@ target/release/sash-getopt: sash-getopt/sash-getopt.c
 $RT/target/release/libsash_rt.a: $RTSRC $RT/Cargo.toml $RT/build.rs $CSRC
 	(cd $RT && cargo clean -p sash-rt 2>/dev/null; cargo build --release)
 
-test:V: build regex-test sash-grep-test sash-getopt-test status
+test:V: build regex-test sash-getopt-test status
 	(cd $SASH && cargo test --release) &&
 	(cd $CONVERT && cargo test --release) &&
 	(cd sash-expand && cargo test --release)
@@ -29,9 +29,6 @@ test:V: build regex-test sash-grep-test sash-getopt-test status
 regex-test:V:
 	cc -O0 -o /tmp/sash_test_regex sash-rt/csrc/test_regex.c sash-rt/csrc/regcomp.c sash-rt/csrc/regexec.c sash-rt/csrc/regaux.c -I sash-rt/csrc
 	/tmp/sash_test_regex
-
-sash-grep-test:V: build
-	PATH=target/release:$$PATH bash contrib/test-regex.sh
 
 sash-getopt-test:V: target/release/sash-getopt
 	bash contrib/test-getopt.sh

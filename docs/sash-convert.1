@@ -1,0 +1,150 @@
+.TH SASH-CONVERT 1 "2026-11-12" "safebash" "User Commands"
+.SH NAME
+sash-convert \- translate Bash source into a safebash starting point
+.SH SYNOPSIS
+.B sash-convert
+.RB [ \-\-annotate ]
+.RB [ "\-o " output.sb ]
+.RI [ input.bash ]
+.SH DESCRIPTION
+.B sash-convert
+rewrites supported Bash constructs into safebash source and adds guidance
+where human review is needed.
+It is a separate source-conversion tool, not a mode of
+.BR sash (1).
+It does not execute the input, compile the output, or prove that the two
+programs are equivalent.
+.PP
+With no input filename, it reads standard input.
+Otherwise it reads the named file.
+Input must be UTF-8.
+Output goes to standard output unless
+.B \-o
+is supplied.
+The recommended suffix for generated safebash source is
+.BR .sb ;
+the converter does not choose an output filename automatically.
+.PP
+Conversion is a starting point for editing.
+Unsupported constructs may remain in the output with annotations.
+Even an exit status of 0 does not mean that
+.B sash
+will accept the result or that generated validation predicates suit
+the application.
+.SH OPTIONS
+.TP
+.B \-\-annotate
+Add
+.B "# was:"
+comments showing the original text of mechanical rewrites.
+Manual-review annotations are produced independently of this option.
+See BUGS before using annotated output.
+.TP
+.BI "\-o " output.sb
+Write to the named file instead of standard output.
+An existing file is replaced; no backup is made.
+.TP
+.B \-h, \-\-help
+Print usage to standard error and exit 0.
+.PP
+These are the supported options.
+There is no
+.BR \-\-emit-source ,
+.BR \-\-nolint ,
+or
+.B \-\-version
+option.
+Neither
+.B \-
+as a stdin alias nor
+.B \-\-
+as an option terminator is implemented.
+Omit the input filename to read stdin; prefix a dash-leading filename
+with a directory such as
+.BR ./ .
+.SH REVIEW ANNOTATIONS
+.TP
+.B "# MANUAL:"
+An unsupported form or author decision needs manual conversion.
+.TP
+.B "# CHECK:"
+A possible semantic change needs review, such as Bash word splitting
+that safebash will not perform.
+.TP
+.B "# ATTEST:"
+Acquired data needs application-specific validation.
+.TP
+.B "# was:"
+Original text associated with a rewrite, requested by
+.BR \-\-annotate .
+.PP
+Some recognized external commands produce actual
+.B attest
+statements rather than hints.
+Other rewrites can introduce placeholder predicates with a request to
+tighten them.
+Review both the comments and executable validation: a generated predicate
+is not blanket approval of the data or its intended use.
+.SH SHELLCHECK
+The converter attempts to run
+.B shellcheck
+from
+.B PATH
+with JSON output, all optional checks enabled, and Bash syntax selected.
+The source is passed to ShellCheck on standard input.
+Findings can inform conversion and annotations.
+.PP
+ShellCheck is optional analysis, not a compiler-validation gate.
+If it cannot be started, the converter warns and continues without its
+findings.
+Do not interpret successful conversion as proof that ShellCheck ran or
+reported a clean program.
+.SH EXIT STATUS
+.TP
+.B 0
+Conversion and output completed, or help was requested.
+The generated program can still require manual changes.
+.TP
+.B 1
+An invocation, input or output error was reported.
+.SH EXAMPLES
+Given
+.BR input.bash :
+.PP
+.EX
+#!/bin/bash
+declare \-i count=3
+echo "$count"
+.EE
+.PP
+Convert, review the generated file, then compile it:
+.PP
+.EX
+sash-convert \-o program.sb input.bash
+sash program.sb \-o program
+\&./program
+.EE
+.PP
+The program prints
+.BR 3 .
+Compilation uses the file, not a pipe into the compiler.
+.PP
+Read Bash source from stdin and retain rewrite annotations for review:
+.PP
+.EX
+sash-convert \-\-annotate < input.bash > review.sb
+.EE
+.SH BUGS
+Some
+.B \-\-annotate
+rewrites insert
+.B "# was:"
+mid-line.
+The comment can hide later code or become part of a string, changing
+the generated program.
+Review comment placement; successful conversion does not detect this defect.
+.SH SEE ALSO
+.BR sash (1),
+.BR sash-getopt (1),
+.BR sash-expand (1),
+.BR shellcheck (1)
