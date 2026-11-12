@@ -16,6 +16,8 @@ status: implemented
 5. Every returning function path supplies its declared/inferred kind.
    Compatible forwarding preserves kind; constant results are legal, and
    non-void call results require compatible consumption or explicit discard.
+   DD88 named-predicate captures bind stdout and consume the returned status,
+   without handling operand/body failures.
 6. Anonymous stdout bodies may return void, not explicit statuses.
    Process-replacing exec is excluded from stdout bodies and their callees;
    direct integer captures retain their integer channel through redirects.
@@ -835,6 +837,8 @@ A status or integer result makes a function non-void. Call sites must
 consume or explicitly discard that result:
 
 - `if myfunc` / `myfunc || handle` — handling a status, not an integer
+- `if text=$(myfunc)` — capturing stdout and handling the predicate's status
+  (DD88; accepted 2026-11-12, implementation pending)
 - value capture or arithmetic composition — consuming an integer
 - `- myfunc` — discarding the function's own answer
 - bare `myfunc` — **compile error** (unhandled non-void return)
@@ -845,6 +849,13 @@ Meeting the result-handling obligation is necessary, not sufficient:
 DD70 also rejects an invocation known to do nothing beyond producing an
 ignored result. That does not restrict constant-returning definitions or
 calls whose results are used.
+
+DD88's named-predicate capture form applies in every existing capture-condition
+context, including otherwise-legal redirects. It invokes the function once,
+retains this attempt's output on a false return and preserves same-process
+effects and taint. The body remains independently checked.
+[`predicate-capture-conditions`](../tasks/predicate-capture-conditions.md)
+owns implementation; this is not `getenv`'s exception to mandatory handling.
 
 ### Anonymous capture returns (DG, 2026-11-06)
 
@@ -867,8 +878,9 @@ inside a capture discards only that statement's result, not the body's return.
 
 No anonymous-result handling syntax is added. Direct integer captures
 (DD#58), ordinary command/pipeline captures and DD#88/DD#101's existing
-capture-conditions are unchanged; user-function and multi-statement
-capture-conditions remain excluded.
+capture-conditions are unchanged; ~~user-function and multi-statement
+capture-conditions remain excluded.~~ DD88 now accepts named-predicate
+capture-conditions; anonymous multi-statement bodies remain excluded.
 
 **Accepted, implementation pending** in
 `reject-anonymous-capture-status-returns` (journal 584).
@@ -1157,11 +1169,13 @@ its status is discarded with `-`. Anywhere else it is SB4016, "function 'f'
 returns a status — handle it with `if` or `||`, or discard it with `-`": a
 bare statement, the tail of a list (`/bin/true && f`), a background job
 (`f &`), in a function body or in EXIT/ERR. Reading `$?` afterwards does not
-handle it. A capture `$(f)` binds the output and leaves the status nowhere
-to go, so it is SB4016 as well, with the advice `$(- f)` (`$(- f …)` when it
-has arguments). A capture as a condition, `if x=$(f)`, stays SB4025 (DD#88),
-and the SB4016 at the same position is dropped. A redirected capture of a
-status function, `$(s 2>&1)`, still needs explicit status handling/discard;
+handle it. An unhandled capture `$(f)` binds the output but does not consume
+the status, so it remains SB4016, with the advice `$(- f)` (`$(- f …)` when it
+has arguments). ~~A capture as a condition, `if x=$(f)`, stays SB4025 (DD#88),
+and the SB4016 at the same position is dropped.~~ DD88's accepted November 12
+extension makes that condition a consumer of f's status; implementation is
+pending in `predicate-capture-conditions`. A redirected capture of a
+status function, `$(s 2>&1)`, likewise needs explicit status handling/discard;
 the current statement path gives it the bare-call text. This is not a rule
 that a redirect converts an integer capture into a stdout capture (DD#58).
 
@@ -1187,8 +1201,9 @@ lowered `return $(- f …)` inside an int f as a second, suppressed copy of
 the loop. That spelling is now SB4076, so nothing reaches it. It is gone,
 with `TailLoop.entry_readonly`.
 
-The other F6 call-site choices remain: `f &` as SB4016, SB4025 superseding
-SB4016, SB4076 for `$(- int_f)`, and their advice texts. Definition-in-force
+The other F6 call-site choices remain: `f &` as SB4016, ~~SB4025 superseding
+SB4016,~~ and SB4076 for `$(- int_f)`. Advice must reflect DD88's accepted
+named-predicate consumer. Definition-in-force
 replacement is superseded by DD#86's unique-definition rule. Redirects
 preserve both a forwarded result's kind and an integer capture's result
 channel; their implementation owners are identified above. The following

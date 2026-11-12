@@ -59,6 +59,12 @@ suppressed lowering flag: ordinary conditions, capture conditions and
 return producers disable implicit aborts because they handle status.
 Rejecting those would break the feature this rule is meant to clarify.
 
+DD88's accepted named-predicate extension follows the same distinction:
+`if text=$(f)` consumes f's status, whereas `if text=$(- f)` attempts to
+consume a discarded result and must reject. Coordinate direct/redirected
+call handling and advice with `predicate-capture-conditions`; do not reject
+the valid form through the old blanket function-capture exclusion.
+
 Check nested list consumption, wrappers and all executable bodies.
 `a || - b` is legal as a statement, but its tail is consumed in
 `if a || - b { ... }`, `a || - b || c` and `return a || - b`.

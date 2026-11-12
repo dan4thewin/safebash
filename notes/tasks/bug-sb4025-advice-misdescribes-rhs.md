@@ -4,10 +4,23 @@ priority: P3
 kind: bug
 depends: []
 gates:
-  - "every row of the first table gets advice that describes its own RHS; v4 and v5 keep today's advice"
+  - "every still-rejected row of the first table gets advice that describes its own RHS; v4 and v5 retain their intrinsic/concatenation explanation"
   - "k8, sa5, v6 and v13 (a typed declaration) say DD#88's rule: a typed declaration is not a capture condition, so assign without the type"
   - "DG rules on Q1 and Q2; a4 and b1 then agree, and v2 and cv1 agree with DG's answer to Q2 in both sash and sash-convert"
   - "specs pin the advice of each row by its distinguishing text, not the bare code, in both backends"
+
+## Current producer scope
+
+DD88's November 12 rules admit otherwise-legal pipelines, including function
+filters, and direct named predicates. Do not advise that every non-external
+stage or every function capture is forbidden. `predicate-capture-conditions`
+owns the direct-predicate extension and its coupled advice; void/integer
+results and invalid RHS shapes retain appropriate refusals. Direct file-read
+handling is separately owned by `recoverable-file-failures`.
+
+The tables below are October 27 observations, not current acceptance gates.
+Q1/Q2 about inner negation and a lone quoted RHS remain separate; this
+extension does not choose their answers.
 
 ## Found
 
@@ -43,7 +56,8 @@ It is wrong for:
 
 The advice is right for v4 `if x=$(strlen abc)` (an intrinsic) and v5
 `if x=a$(/bin/echo hi)` (a concatenation). v3 `if x=$(f)`, a user function,
-gets its own correct message from the transform.
+got its own transform message under the former blanket function exclusion.
+Its present verdict must follow the actual function result kind.
 
 These work (all four builds): k8u `s=$(/bin/echo hi) && /bin/echo ok` prints
 `ok`, `hi`; sa5u `if s=$(/bin/echo hi)` prints `hi`; v14
@@ -100,7 +114,7 @@ program does not compile.
 Have `is_capture_condition_rhs` say why it refused (or classify the RHS once,
 in a helper both callers use), and give `nonstatus_in_condition_diag` one
 advice per reason: typed declaration, multi-statement or compound capture,
-pipeline with a non-external stage, intrinsic, concatenation, and whatever Q1
+pipeline with an ineligible stage, intrinsic, concatenation, and whatever Q1
 and Q2 leave refused. A typed declaration should say DD#88's rule ("untyped
 only"): assign without the type, `if s=$(cmd) { … }`, or bind first and
 test after.

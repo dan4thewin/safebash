@@ -79,8 +79,10 @@ and progress. No runtime ABI is selected by this policy.
 The outer handler does not catch filename-evaluation failures, nested
 captures or called-body failures. Taint, adjacency, ownership, declaration
 restrictions, source-order evaluation and ordinary status-latch rules remain.
-Concatenated RHSs, arbitrary function/multi-statement captures and other
-ineligible values stay excluded. There is no new `$(- <file)` spelling or
+Concatenated RHSs, multi-statement captures and other ineligible values stay
+excluded. DD88 separately accepts named-predicate capture-conditions;
+`predicate-capture-conditions` owns that extension, with the same existing
+redirect-failure boundaries. There is no new `$(- <file)` spelling or
 permission for `- text=$(<file)`.
 
 Acceptance must distinguish the independent mechanisms:

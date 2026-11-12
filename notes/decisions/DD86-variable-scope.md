@@ -682,9 +682,12 @@ producers. Bare `return`, fall-through and compatible void forwarding
 remain legal. The rule follows the return's owning body: it does not
 forbid status returns inside a named function called by that body.
 
-Use a named status function and its existing explicit handling/discard
-forms when that result is needed. This adds no capture-level status
-consumer and changes neither lexical scope nor enclosing-binding access.
+Use a named status function and explicit handling/discard when that result
+is needed. DD88 now includes `if text=$(status_f)` (accepted 2026-11-12,
+implementation pending in `predicate-capture-conditions`). That consumes
+the named callee's result, not an anonymous body's return. It changes neither
+lexical scope nor enclosing-binding access: global effects persist on false
+as on true, and the callee starts with its ordinary fresh execution context.
 Enforcement is pending in `reject-anonymous-capture-status-returns`;
 journal 584 records the decision.
 

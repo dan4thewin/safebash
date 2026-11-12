@@ -12,6 +12,12 @@ with DG and the individual [task records](tasks/).
 
 ## Just completed
 
+- **Named predicate capture policy accepted.** DD88 now permits an
+  otherwise-legal predicate call to bind stdout and consume its explicit
+  returned status, without weakening body checks, taint or same-process
+  effects. Compiler implementation is queued in
+  [predicate-capture-conditions](tasks/predicate-capture-conditions.md);
+  [journal 628](journal/628-predicate-capture-conditions.md) records the ruling.
 - **Decision rules made readable.** All 121 decision documents now begin with
   a concise numbered list of current requirements; superseded body claims are
   struck, with history and metadata retained. DG confirmed that capturing a pipeline

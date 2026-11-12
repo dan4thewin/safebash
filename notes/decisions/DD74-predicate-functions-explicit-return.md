@@ -5,7 +5,8 @@ status: accepted
    every returning path must match its void, status or integer kind.
 2. Predicate consumers require status/boolean results, not void or integer
    values. An unconsumed final action in a logical-list statement is not a
-   predicate.
+   predicate. DD88 named-predicate captures bind stdout and consume the
+   function's explicit status without extending handling into its body.
 3. `return` forwards only compatible producer results, including legal
    composites and redirects; it cannot forward a discarded or nonexistent result.
 4. Producer handling does not catch operand/body failures or fatal faults.
@@ -28,6 +29,13 @@ trailing command.
 Boolean contexts (DD#70 dual / `reject-nonstatus-in-boolean-context`):
 `if f`, `elif`, `while f`, `until f`, `! f`, and `f` as an operand of
 `&&`/`||`.
+
+DD88 also admits an otherwise-legal stdout capture of a named predicate in
+those consuming contexts: `if text=$(f)` binds text and tests f's explicit
+returned status. The function runs once, in the same process, with ordinary
+body/operand checks and taint rules. Direct and redirected calls follow the
+same rule. This extension was accepted on 2026-11-12; implementation is
+pending in [`predicate-capture-conditions`](../tasks/predicate-capture-conditions.md).
 
 **Addendum (DG, 2026-09-07): the TAIL of an `&&`/`||` *statement* is not a
 boolean context.** A function is a predicate when something branches on its

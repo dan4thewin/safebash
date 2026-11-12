@@ -105,14 +105,18 @@ Where DD#121 puts the attest for an external command — and so for a
 single-use `$(f)` or `f | reader`:
 
 - after `y=$(f)`: the next statement;
-- ~~`if y=$(f) {`: the first statement of each branch;~~
+- `if y=$(f) {`: the first statement of each branch (named predicate,
+  accepted in DD88; implementation pending);
 - ~~`for x in $(f) {`: the first statement of the body;~~
 - `f | while readline x {`: the first statement of the body;
 - after `f | readline x`: the next statement.
 
-DD88 excludes the direct function capture-condition sketch; DD28 excludes
-iteration over stdout captures. Those old sketches do not widen producer
-eligibility; DD121 still governs adjacency for legal acquisitions.
+~~DD88 excludes the direct function capture-condition sketch.~~ Its
+2026-11-12 extension now admits named predicates, without treating success
+as validation or relaxing shared-output ownership. DD121/DD128 govern
+adjacency and resolution on both outcomes; ordinary unhandled status-function
+captures still require explicit discard. DD28 continues to exclude iteration
+over stdout captures; that struck sketch does not widen producer eligibility.
 
 **Names inward, in detail.** For a name a call passes in tainted, a statement
 of `f` that uses it is rejected exactly as it would be if `f` had tainted the

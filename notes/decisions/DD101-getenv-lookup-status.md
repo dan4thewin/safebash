@@ -97,8 +97,11 @@ at runtime with no getenv-specific rule in play:
     → attest: home failed the gate    (rc=1)
 
 Mandating `||` would stack a second gate behind the one taint already forces,
-break every existing `x=$(getenv HOME)`, and be unique in the language —
-nothing else requires its status be consumed.
+break every existing `x=$(getenv HOME)`, ~~and be unique in the language —
+nothing else requires its status be consumed~~.
+DD55 requires non-void function results to be consumed or explicitly
+discarded. DD88's named-predicate capture extension does not inherit
+`getenv`'s permission to leave lookup absence unhandled.
 
 **The residual hole, stated honestly.** An attest predicate that *admits* the
 empty string lets absence through silently:

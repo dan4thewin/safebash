@@ -8,6 +8,7 @@ gates:
   - "the rejection follows the return's owning body through nested control flow and captures, in assignment, argument and interpolation positions and through redirects"
   - "bare return, fall-through and compatible void forwarding remain legal, including redirected void forwarding"
   - "named status functions retain their returns and explicit call-site handling/discard, including when called inside a capture"
+  - "DD88 named-predicate capture conditions consume the named callee's status, not an anonymous-body return; coordinate with predicate-capture-conditions"
   - "direct integer captures, ordinary command/pipeline captures and existing DD88/DD101 capture-conditions retain their contracts"
   - "a located compile-time diagnostic explains the anonymous-body restriction without suggesting unsupported discard or condition syntax"
   - "focused native/C specs have meaningful before/reversion controls and the ordinary predicted gate passes"
@@ -27,8 +28,10 @@ fall-through remain legal too. Process termination is not a return.
 
 A body that needs to return a status must be named. Its call sites use
 ordinary explicit handling/discard; `$(- status_f)` captures stdout and
-discards the returned status. Do not prohibit status returns in a named
-callee merely because its caller is an anonymous capture.
+discards the returned status. DD88 also accepts `if text=$(status_f)` and
+the other existing capture-condition consumers (2026-11-12); the separate
+`predicate-capture-conditions` task owns that extension. Do not prohibit
+status returns in a named callee merely because its caller is a capture.
 
 ## Evidence and implementation boundaries
 
@@ -47,8 +50,9 @@ Do not silently drop a status, turn it into an integer/stdout result or
 replace the rejection with an implicit runtime failure check.
 
 Preserve no-reach: a minus on the first inner statement does not consume
-the whole body's return. Do not introduce capture-level suppression or
-widen DD88's user-function/multi-statement condition surface. Ordinary
+the whole body's return. Do not introduce anonymous-body result handling or
+general multi-statement conditions. DD88's named-predicate extension must
+not inherit condition or suppression context into the callee's body. Ordinary
 external-command and pipeline captures still have their existing status
 checks; this rule does not ban those captures. DD101's getenv exception
 and DD58's direct integer captures remain.

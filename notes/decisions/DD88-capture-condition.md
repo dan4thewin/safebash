@@ -2,17 +2,17 @@ title: DD#88 - Capture-conditions bind values and consume producer results
 status: accepted
 
 1. An untyped single-producer binding may consume the actual status of a single
-   external command, an otherwise-legal pipeline, `getenv` lookup or direct file
-   slurp. Capture preserves pipeline-stage eligibility, including user functions
-   used as filters.
-2. Bind this attempt's bytes, including partial/empty output on handled
-   recoverable failure; a completed empty read succeeds. Handling is not attest.
-3. Assignment itself has no result. Declarations, arbitrary expressions,
-   direct named-function captures and multi-statement bodies gain no condition
-   result.
-4. Ordinary handling-position, negation, taint and no-reach rules apply;
+   external command, named predicate, otherwise-legal pipeline, `getenv` lookup
+   or direct file slurp. Capture preserves pipeline-stage eligibility.
+2. Invoke a named predicate once: bind its stdout and consume its explicit
+   returned status. Same-process effects persist on either result.
+3. Bind this attempt's bytes on false too, including partial/empty text;
+   a completed empty read succeeds. Handling is not attest.
+4. Assignment itself has no result. Declarations, void/integer function calls,
+   arbitrary expressions and multi-statement bodies gain no condition result.
+5. Ordinary handling-position, negation, taint and no-reach rules apply;
    discarded statuses cannot also be consumed.
-5. Stdout captures must retain a possible connected writer after redirects;
+6. Stdout captures must retain a possible connected writer after redirects;
    direct integer captures consume an integer and are outside that writer test.
 
 ---
@@ -22,6 +22,10 @@ the same session. DD101 later added the implemented `getenv` lookup form.
 DG accepted direct file-read capture-conditions on 2026-11-10:
 **"yes to capture-condition"** (journal 610). That extension is not yet
 implemented; `recoverable-file-failures` owns it.
+DG accepted named predicate-function capture-conditions on 2026-11-12
+(journal 628). That extension is also **unimplemented**;
+[`predicate-capture-conditions`](../tasks/predicate-capture-conditions.md)
+owns it.
 
 These are scoped forms, not general multi-value binding. The general
 multi-value `return` / `(stdout, status, stderr)` trio remains deferred to
@@ -41,9 +45,10 @@ assignment as a value binding with "no meaningful exit status" — true for
 In an existing **boolean/status-consuming context**, an untyped assignment
 whose RHS is one eligible producer is a **capture-condition**. The accepted
 producers are a single external command, an ~~external~~ otherwise-legal
-pipeline, DD101's `getenv` lookup, and a direct `$(<file)` read:
+pipeline, a named predicate function, DD101's `getenv` lookup, and a direct
+`$(<file)` read:
 
-- the **condition consumes the producer's actual operational status**
+- the **condition consumes the producer's actual status**
   (`test = status == 0`); a recoverable nonzero result does **not** abort
   (the status is consumed — DD#55's "binding the status" rule);
 - the producer's **text is bound to the target**. External output, environment
@@ -61,15 +66,18 @@ pipeline, DD101's `getenv` lookup, and a direct `$(<file)` read:
 ### Scope
 
 - **RHS shape:** a single external `$(cmd)` OR a pipeline `$(a | b)` ~~of external
-  stages~~, `$(getenv NAME)`, or a direct `$(<file)`. Excluded (stay SB4025):
-  a user-function capture `$(f)` (functions convey status via `return` —
-  DD#74 predicates), other value-only intrinsics, a concatenation such as
+  stages~~, a named predicate `$(f args...)`, `$(getenv NAME)`, or a direct
+  `$(<file)`. ~~Excluded (stay SB4025): a user-function capture `$(f)`
+  (functions convey status via `return` — DD#74 predicates).~~
+  Excluded: void/integer function calls, other value-only intrinsics,
+  a concatenation such as
   `foo$(cmd)`, a multi-statement `$(a; b)`, and any literal RHS.
 - **Untyped only:** `if int n=$(cmd)` (typed declaration) is NOT a
   capture-condition — declarations stay SB4025.
 - **Existing consumers:** `if`/`elif`, `while`/`until`, negation and logical-list
   conditions use the same producer-result rule.
-- **External stdout on failure:** this attempt's partial bytes remain.
+- **Stdout on a returned failure:** this attempt's partial/empty bytes remain,
+  including for a named predicate.
   File reads follow the corresponding rule below; `getenv` retains DD101's
   lookup-value contract. A truly-unused captured target is a dead variable
   (SB5050). For an external command whose stdout is not needed, use the
@@ -80,14 +88,57 @@ pipeline, DD101's `getenv` lookup, and a direct `$(<file)` read:
 Capture does not narrow an otherwise-legal pipeline's stage eligibility
 (DG, 2026-11-12). User functions behaving as filters remain legal stages;
 the condition consumes the pipeline's aggregate. Existing stage/result-kind,
-connected-writer, taint, no-reach and fatal-failure rules still apply. This
-does not admit a direct `if text=$(f)` capture condition, anonymous status
-returns or a new purity/filter annotation.
+connected-writer, taint, no-reach and fatal-failure rules still apply.
+~~This does not admit a direct `if text=$(f)` capture condition.~~
+Direct named predicates are separately admitted below; no anonymous status
+returns or purity/filter annotation are added.
 
 DD#55's anonymous-status-return rejection (DG, 2026-11-06) adds no new
-capture-condition form. A function or multi-statement capture does not
-become a condition by containing an explicit status return. The eligible
-producer forms above do not admit arbitrary executable capture bodies.
+anonymous capture-condition form. ~~A function or multi-statement capture
+does not become a condition by containing an explicit status return.~~
+A named status-returning function qualifies as specified below; an anonymous
+body does not gain a result by containing a `return`. The eligible producer
+forms above do not admit arbitrary executable capture bodies.
+
+### Named predicate capture-conditions (DG, 2026-11-12)
+
+A call legal as `if f`, whose stdout is otherwise legally capturable, may
+supply both results: `if text=$(f args...)` binds its output and branches
+on its returned status. This applies to every existing capture-condition
+consumer, including loops, negation and logical-list decisions, and to
+otherwise-legal redirected calls. No new function annotation is needed.
+
+Invoke the function **once**. On return, use its explicit DD74 status:
+zero is true, nonzero is false. Do not test the output's emptiness or the
+last internal command's status. Preserve the full returned status for the
+existing handling-position `$?`; negation retains its existing 0/1 rule.
+A false return still binds this attempt's stdout, possibly empty or partial,
+not the target's previous value. Existing capture byte/newline handling stays.
+
+The condition handles the function's returned result, **not failures inside
+its body or operands**. An unchecked command inside `f` still aborts;
+`return command` explicitly forwards that command's result. Attached
+redirects retain DD130's failure rules. Fatal faults and `exit`/`fail`
+remain terminal, not false returns.
+
+Execution stays in the existing same-process model (DD86). Global and
+collection effects persist on either returned result; capture introduces
+neither a subshell nor rollback. Success is not attest: DD127/DD128 still
+govern buffer/kernel-read taint, ownership, adjacency and legal resolution.
+Writer and process-replacing-`exec` restrictions remain.
+
+This is a new consumer for a named predicate's existing status, not a result
+on assignment or an anonymous body's return. Integer/void calls, typed
+declarations, concatenations and multi-statement bodies remain ineligible.
+Outside a handling context, a status-function stdout capture still requires
+explicit discard (`text=$(- f)`); DD101's permission to ignore lookup absence
+belongs to `getenv`, not to functions. Conversely, `if text=$(- f)` cannot
+consume the status that source `-` discards.
+
+**Implementation pending:** `predicate-capture-conditions` owns eligibility,
+result plumbing and native/C behavior. Preserve the existing shared
+result-kind and body-boundary rules rather than merely deleting the
+function-name rejection.
 
 ### Direct file-read capture-conditions (DG, 2026-11-10)
 
@@ -128,10 +179,11 @@ not catch those failures. Taint, attest adjacency/ownership, scope and
 result-kind rules are unchanged.
 
 Only the direct eligible RHS gains this handling. No arbitrary string
-expression, declaration, function capture or multi-statement body gains a
+expression, declaration or multi-statement body gains a
 condition result. Assignment itself still has no result. This decision adds
 no new suppression spelling such as `$(- <file)` and does not permit
 `- text=$(<file)`. The external `cat` capture remains available.
+Named predicates have the separate accepted extension above.
 
 **Implementation pending:** `recoverable-file-failures`, with
 `runtime-failure-classification`, owns the runtime result, native/C lowering,
@@ -148,7 +200,7 @@ valid original-subject text and false, not a failed/empty substitution fallback.
 Runtime patterns require successful proof for their immutable values.
 
 This is not a status on assignment itself, a scalar `matchall` form,
-or permission for arbitrary function, multi-statement, concatenated
+or permission for void/integer function, multi-statement, concatenated
 or status-less intrinsic conditions. Existing declaration-position
 restrictions remain; final scratch declaration spelling is an explicit
 trial design item. To consume only text, discard the real boolean
@@ -234,7 +286,10 @@ The original SB4025 message is context-aware: a plain value binding
 external command (a concatenation, or an intrinsic/builtin capture that can't
 fail) gets a Group-B message that names the working form ("a capture-condition
 branches on a single external command's exit status") rather than claiming the
-feature is unsupported. A `$(user_fn)` capture gets its own transform message.
+feature is unsupported. ~~A `$(user_fn)` capture gets its own transform
+message.~~ That blanket refusal remains in the compiler, but is superseded
+for named predicates by the accepted extension above. Preserve meaningful
+void/integer and invalid-shape diagnostics; no new code is selected here.
 
 ## Tests
 
@@ -242,8 +297,10 @@ feature is unsupported. A `$(user_fn)` capture gets its own transform message.
 code, negated form, `$?`-first-in-then, pipeline + pipefail status, `while`
 form, bare-external head (88.17), taint bless (SB5020), dead-var (SB5050), the
 `!` vs `else` `$?`-magnitude contrast (88.15/16), and the exclusions with their
-messages (user-fn / concat / intrinsic / builtin / literal → SB4025). journal
-236.
+messages (~~user-fn /~~ concat / intrinsic / builtin / literal → SB4025).
+Journal 236 records that original scope. Inventory function cases by their
+actual result kind before changing specs: void/integer refusals remain,
+while named-predicate refusals need new contracts at fresh ids.
 
 ## Deferred
 
@@ -341,10 +398,13 @@ redirect is lowered by the ordinary statement machinery), so it fell to
 rejection. **`if x=$(cmd 2>/dev/null)` was told that capturing a function's
 output is not a condition, with no function anywhere in the program.**
 
-Now a `CmdSubstBody` qualifies when its single statement peels to a pipeline or
-to a command that is not a user function — the function-table check moves with
-the relaxation, so `$(f 2>&1)` stays on DD#88's side of the line with its
-unredirected twin. The body is lowered with `state.suppressed` bumped *and*
+In that implementation, a `CmdSubstBody` qualified when its single statement
+peeled to a pipeline or ~~to a command that is not a user function — the
+function-table check moves with the relaxation, so `$(f 2>&1)` stays on
+DD#88's side of the line with its unredirected twin~~ a non-function command.
+The November 12 extension requires direct and redirected named predicates
+to qualify by their status result, not be excluded by name.
+The body was lowered with `state.suppressed` bumped *and*
 `uncheck_emitted_since` applied: only `handle_regular_pipeline` reads
 `state.suppressed` at emission time, so a plain Command needs the post-pass to
 be unchecked at all. Verified byte-identical to bash, including `$?` carrying
@@ -359,8 +419,8 @@ SB4025 on that account.
 
 `spec/capture_cond.sh` 88.19-88.28 (surviving redirects in `if`/`while`, the
 `2>&1 >f` idiom with its file and its `$?`, fd 0, an unrelated fd, `-`
-suppression, a pipeline stage, an earlier stage, and the user function that
-still earns SB4025) and cap4075.1-8 (the rejections, in condition / assignment
+suppression, a pipeline stage, an earlier stage, and the original
+user-function refusal) and cap4075.1-8 (the rejections, in condition / assignment
 / argument position, both orders of the idiom, `&>`, a dup, a pipeline tail,
 and the multi-statement body that is still fed).
 

@@ -34,7 +34,11 @@ Use a named status function when that result is needed. Its call sites
 must handle/discard it, and `$(- status_f)` is the existing stdout-capture
 form that discards the status explicitly. A prefix on the first statement
 inside an anonymous body does not discard the body's result.
-DD88's user-function/multi-statement capture-condition exclusions remain.
+DD88's 2026-11-12 extension separately accepts direct named-predicate
+capture-conditions; `predicate-capture-conditions` owns implementation.
+Multi-statement anonymous capture-conditions remain excluded. The named
+callee's legitimate return is not an anonymous return, so this question
+remains closed.
 
 DD55/DD86 record the accepted policy; journal 584 records the decision.
 The open P2 `reject-anonymous-capture-status-returns` owns enforcement,
