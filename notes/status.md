@@ -1,5 +1,5 @@
 title: Status
-modified: 2026-11-12
+modified: 2026-11-13
 
 # Current status
 
@@ -9,6 +9,15 @@ Documentation and repository cleanup, directed by DG. This is a current
 handoff, not a second journal: replace superseded progress and keep the
 dated account in [journal/](journal/). Implementation priorities remain
 with DG and the individual [task records](tasks/).
+
+## Draft for review
+
+[Language-specification outline](../docs/SPEC-outline.md): one terse nested
+list, treating provisional and pending DD rules as complete for this draft
+only. DG requested preserving the original on `spec-outline` before
+pedagogic reordering; [journal 630](journal/630-language-specification-outline.md)
+records the scope. This is not a shipped-language reference or a completed
+specification.
 
 ## Just completed
 
